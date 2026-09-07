@@ -491,6 +491,57 @@ func TestClassifyDeployFailure_Transport(t *testing.T) {
 			wantSignal:   "transport:git-non-fast-forward",
 		},
 		{
+			// A protected-branch rejection. The push was authenticated and the
+			// objects transferred fine — the server's pre-receive hook refused
+			// the ref. NOT auth: a fresh PAT can never fix it, and the standing
+			// "auth rejected -> re-run git-push-setup with a fresh PAT" advice
+			// sends the agent round a token-minting loop. The fix is a branch
+			// and a pull request. Measured on a live Gitea whose `main` was
+			// protected with the agent off the push whitelist.
+			name: "git-protected-branch-gitea-push-git",
+			input: FailureInput{
+				Phase:    PhaseTransport,
+				Strategy: "git-push",
+				TransportErr: &platform.SSHExecError{
+					Hostname: "app",
+					Output:   "remote: Gitea: Not allowed to push to protected branch main\n ! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs to 'https://git.example.com/mate/shortlink'",
+					Err:      errors.New("exit status 1"),
+				},
+			},
+			wantCategory: topology.FailureClassConfig,
+			wantSignal:   "transport:git-protected-branch",
+		},
+		{
+			// The same wall on GitHub, which names it GH006.
+			name: "git-protected-branch-github-push-git",
+			input: FailureInput{
+				Phase:    PhaseTransport,
+				Strategy: "git-push",
+				TransportErr: &platform.SSHExecError{
+					Hostname: "app",
+					Output:   "remote: error: GH006: Protected branch update failed for refs/heads/main.\n ! [remote rejected] main -> main (protected branch hook declined)",
+					Err:      errors.New("exit status 1"),
+				},
+			},
+			wantCategory: topology.FailureClassConfig,
+			wantSignal:   "transport:git-protected-branch",
+		},
+		{
+			// GitLab's phrasing, so the signal is not one vendor's wording.
+			name: "git-protected-branch-gitlab-push-git",
+			input: FailureInput{
+				Phase:    PhaseTransport,
+				Strategy: "git-push",
+				TransportErr: &platform.SSHExecError{
+					Hostname: "app",
+					Output:   "remote: GitLab: You are not allowed to push code to protected branches on this project.\n ! [remote rejected] main -> main (pre-receive hook declined)",
+					Err:      errors.New("exit status 1"),
+				},
+			},
+			wantCategory: topology.FailureClassConfig,
+			wantSignal:   "transport:git-protected-branch",
+		},
+		{
 			// F1c: a shallow/incomplete recipe clone missing a delta-base
 			// object — the push aborts with "did not receive expected object".
 			// NOT network/auth (p2 #2 misclassified it as network → the agent

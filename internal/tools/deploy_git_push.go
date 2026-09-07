@@ -495,7 +495,7 @@ func handleGitPush(
 		return convertError(platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
 			fmt.Sprintf("git-push from %s failed: %s", hostname, detail),
-			"See the git error above and `failureClassification` for the specific fix. Common cases: non-fast-forward (remote has commits you lack) → `git pull --rebase` then re-push or force-push; auth rejected → re-run zerops_workflow action=\"git-push-setup\" with a fresh PAT; GIT_TOKEN missing → restart the runtime via zerops_manage action=\"restart\" then retry.",
+			"See the git error above and `failureClassification` for the specific fix. Common cases: non-fast-forward (remote has commits you lack) → `git pull --rebase` then re-push or force-push; protected branch (the ref was refused by a pre-receive hook, NOT a credential fault) → push a topic branch and open a pull request, and do not rotate the token; auth rejected → re-run zerops_workflow action=\"git-push-setup\" with a fresh PAT; GIT_TOKEN missing → restart the runtime via zerops_manage action=\"restart\" then retry.",
 		), WithFailureClassification(classification)), nil, nil
 	}
 

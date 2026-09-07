@@ -339,6 +339,24 @@ func buildSignalLibrary() []failureSignal {
 			build:      transportGitShallowObjectMissing,
 		},
 		{
+			// The server's pre-receive hook refused the ref: the branch is
+			// protected and this identity may not push it. The push
+			// authenticated and the objects transferred — nothing about the
+			// credential is wrong, so the standing "auth rejected -> fresh PAT"
+			// advice sends the agent round a token-minting loop that can never
+			// succeed. Pre-fix this fell through to the transport baseline
+			// (category=network), same defect class as the two signals below.
+			// Placed before non-fast-forward so a "[remote rejected]" line
+			// resolves to the protection cause rather than a divergence.
+			id:         "transport:git-protected-branch",
+			phases:     []DeployFailurePhase{PhaseTransport},
+			strategies: []string{"git-push"},
+			logRegex: regexp.MustCompile(
+				`(?i:pre-receive hook declined|protected branch hook declined|GH006|protected branch|not allowed to push (?:to|code to))`),
+			requireLog: true,
+			build:      transportGitProtectedBranch,
+		},
+		{
 			// A non-fast-forward push rejection: the remote branch has
 			// commits the local push lacks ("fetch first"). NOT auth, NOT
 			// network — the fix is to integrate the remote (pull/rebase) or
@@ -713,6 +731,20 @@ func transportGitShallowObjectMissing(_ string) *topology.DeployFailureClassific
 		LikelyCause:     "The source container's git clone is shallow or incomplete (a recipe-bootstrapped service often ships a `--depth 1` clone) and is missing an object the push needs — git can't assemble a complete pack, so the transfer aborts. This is NOT a network or auth fault.",
 		SuggestedAction: "Complete the object graph, then re-push. If the original (recipe) remote is still reachable: `ssh <hostname> \"cd /var/www && git fetch --unshallow\"`. If it isn't (origin already repointed) or the object is gone: flatten to a self-contained snapshot — `ssh <hostname> \"cd /var/www && git checkout --orphan _zcp_flat && git add -A && git commit -m 'flatten for git-push' && git branch -M _zcp_flat main\"`. Then re-run zerops_deploy strategy=\"git-push\". Do NOT pull/rebase or rotate the PAT — neither addresses a missing local object.",
 		Signals:         []string{"transport:git-shallow-object-missing"},
+	}
+}
+
+func transportGitProtectedBranch(_ string) *topology.DeployFailureClassification {
+	return &topology.DeployFailureClassification{
+		Category: topology.FailureClassConfig,
+		LikelyCause: "The remote refused the ref: that branch is protected and this identity is not allowed to push it. " +
+			"The push authenticated and the objects transferred — this is NOT a credential fault, and a fresh token cannot change it. " +
+			"A repository run this way expects work to arrive as a pull request that a person merges.",
+		SuggestedAction: "Do NOT rotate the token or re-run git-push-setup — neither can lift branch protection. " +
+			"Push a branch instead and open a pull request against the protected branch: in the source container " +
+			"`git checkout -b <topic>` then `git push origin <topic>`, then open the PR through the host's API or web UI and say so in your reply — " +
+			"a person reviews and merges. If you believe this branch should be directly pushable, that is a repository setting only its owner can change; ask rather than retrying.",
+		Signals: []string{"transport:git-protected-branch"},
 	}
 }
 
