@@ -412,3 +412,81 @@ resolved from the platform read is a `blocked` row, never a silent pass; when a
 URL resolves, the row is decided by an actual HTTP request. Resolving the URL
 and proving application behavior over HTTP/SQL belong to the application-oracle
 contract, not this section.
+
+### 10.3 One application oracle: Node runtime + managed PostgreSQL
+
+The platform rows of §10.1 prove that services exist and are ACTIVE; they
+cannot tell a working application from one that answers HTTP 201 and stores
+nothing. This section owns the one independent application check the
+behavioral runner carries: fixture-specific, verifier-held values, an
+independent database read. It is not a verifier registry, a DSL, or a
+generic HTTP/SQL assertion language — a second application shape gets its
+own section and its own gate.
+
+**Declaration.** A scenario may declare
+
+```yaml
+verification:
+  mode: required
+  nodePostgresRecord:
+    stage: appstage      # Node runtime serving POST/GET /records
+    database: db         # managed PostgreSQL the record must land in
+    unrelated: other     # runtime whose deployed artifact must not change
+```
+
+All three are hostnames, resolved by the runner through `ListServicesDirect`
+at the task-end freeze. The block counts as an executable check for
+`required` mode (§10.1). It has exactly this shape; there is no
+`application:` umbrella field.
+
+**Rows** (snake_case; this list extends the §10.1 id table):
+
+| id | passed when | failed when | blocked when |
+|---|---|---|---|
+| `node_postgres_record/<stage>/record_roundtrip` | `POST /records {nonce,value}` → 201 with an `id`, and `GET /records/<id>` returns that `id`, the verifier's `nonce` and `value` | any of those differ, or a non-2xx status | URL unresolvable, HTTP unreachable, or the freeze is unsettled |
+| `node_postgres_record/<stage>/environment` | the GET body's `environment` equals the literal `stage` | it differs | as above |
+| `node_postgres_record/<database>/db_row` | `SELECT id, value FROM records WHERE nonce = $1` returns exactly one row whose `value` equals the verifier's and whose `id` equals the GET-returned id | zero rows, more than one, or a mismatch (the plausible in-memory fake fails HERE) | DB unreachable, credentials unresolvable, or the freeze is unsettled |
+| `unrelated_artifact/<unrelated>/unchanged` | the service's active app-version id at the freeze equals the one recorded at scenario start | it differs | either observation missing |
+
+**Independence.** The verifier generates a fresh unpredictable `nonce` and
+`value` per run. The URL comes from `ops.ResolveSubdomainURL` over the
+resolved `stage` service — never from anything the candidate printed. The
+database connection is built only from the `database` service's
+platform-generated env (`ops.FetchServiceEnv`: `hostname`, `port`, `user`,
+`password`, `dbName`), and the connect host must equal the `database`
+hostname; a user-set override on that service is refused. The SELECT is
+parameterised, runs in a read-only transaction, and keys on the nonce —
+never on the app-returned id. Redirects, a host other than the resolved
+subdomain, or a project other than the run's are refused before any request.
+Credentials stay in memory and never enter rows, messages, meta, or the
+capture bundle; driver errors are sanitised before they become a `message`.
+
+**Baseline.** Right after seed and init, before the initial agent invocation,
+the runner records the `unrelated` service's active app-version id in
+`meta.json` as `baseline: {unrelatedAppVersion, observedAt}`. The
+`unchanged` row compares against it at the freeze.
+
+**Ordering and settle.** The verifier runs inside the task-end freeze
+(§10.2) after the platform rows and only when the observation is settled;
+an unsettled freeze emits its four rows `blocked` with zero HTTP or SQL
+calls. The existing `subdomainProbe` row resolves its URL the same way
+(`ops.ResolveSubdomainURL`); the earlier "unresolvable" stub is retired.
+
+**Calibration before any agent.** The verifier is exported and is proven
+standalone, on a manually prepared disposable fixture, before a scenario
+relies on it: a known-good app must pass all four rows; a plausible fake that
+answers 201/200 with matching JSON but stores only in memory must fail
+`db_row` and nothing else. That calibration is an `e2e`-tagged test inside
+`internal/eval` that invokes the exported verifier directly — it never calls
+the runner, `Seed*`, `CleanupProject`, or the `./e2e` package (whose
+`TestMain` deletes prefixed services). Its inputs are `ZCP_EVAL_ORACLE_API_HOST`,
+`_TOKEN`, `_PROJECT_ID`, `_STAGE`, `_DATABASE`, `_UNRELATED`,
+`_STAGE_ID`, `_DB_ID`, `_OTHER_ID` (cross-checks that must equal the
+resolved services), `_OTHER_APPVERSION` (the baseline the operator read before
+deploying the fake) and `_ACK_DISPOSABLE_PROJECT`. With no oracle input the
+test skips; with any input it either has all of them and matching
+cross-checks or fails before any network call. A skipped calibration is not
+acceptance. It runs where the managed database is reachable — the disposable
+project's own container or a laptop with the project VPN up. The
+acknowledgement is an operator assertion the code cannot verify; the code's
+own protection is the cross-check refusal.
