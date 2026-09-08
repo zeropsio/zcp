@@ -129,6 +129,11 @@ exit 0
 // Fake loopback Zerops REST API
 // ---------------------------------------------------------------------------
 
+// goosLinux names the one platform where the §10.4 process-identity
+// observation is implemented; used by every GOOS-gated assertion in this
+// file so the literal appears once (goconst).
+const goosLinux = "linux"
+
 // fakeRequest records one HTTP request the fake server observed.
 type fakeRequest struct {
 	Method string
@@ -171,14 +176,14 @@ func newFakeZeropsServer(t *testing.T, appStatus string) *fakeZeropsServer {
 
 func (f *fakeZeropsServer) URL() string { return f.srv.URL }
 
-// hideAppForFirstDirectCalls makes the "app" service invisible on the first
-// n direct GET /project/{id}/service-stack reads (the preflight fresh-target
-// check), then visible from call n+1 onward (the task-end freeze read) —
-// see the directServiceCalls field doc.
-func (f *fakeZeropsServer) hideAppForFirstDirectCalls(n int) {
+// hideAppForFirstDirectCall makes the "app" service invisible on the first
+// direct GET /project/{id}/service-stack read (the preflight fresh-target
+// check), then visible from the second call onward (the task-end freeze
+// read) — see the directServiceCalls field doc.
+func (f *fakeZeropsServer) hideAppForFirstDirectCall() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.appHiddenForCalls = n
+	f.appHiddenForCalls = 1
 }
 
 func (f *fakeZeropsServer) record(r *http.Request) {
@@ -423,7 +428,7 @@ func writeRequiredScenario(t *testing.T, dir, id, mode string) string {
 // non-parallel: builds and runs the zcp binary with a private HOME.
 func TestBehavioralCLI_RequiredFailure_NonzeroWithExplicitDimensions(t *testing.T) {
 	h := newCLIHarness(t, "FAILED")
-	h.server.hideAppForFirstDirectCalls(1) // preflight fresh-target read sees an empty project; the task-end freeze sees the seeded FAILED "app"
+	h.server.hideAppForFirstDirectCall() // preflight fresh-target read sees an empty project; the task-end freeze sees the seeded FAILED "app"
 	scenarioDir := t.TempDir()
 	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-required-fail", "required")
 
@@ -514,7 +519,7 @@ func TestBehavioralCLI_ObserveMode_PreservesExecutionOnlyExit(t *testing.T) {
 // non-parallel: builds and runs the zcp binary with a private HOME.
 func TestBehavioralCLI_FailedTask_CompleteCaptureRemainsReadable(t *testing.T) {
 	h := newCLIHarness(t, "FAILED")
-	h.server.hideAppForFirstDirectCalls(1)
+	h.server.hideAppForFirstDirectCall()
 	scenarioDir := t.TempDir()
 	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-required-fail-capture", "required")
 
@@ -665,12 +670,23 @@ func assertOnlyAuthAndDiscoveryRequests(t *testing.T, server *fakeZeropsServer) 
 // non-parallel: builds and runs the zcp binary with a private HOME.
 func TestBehavioralCLI_OwnedScopedChild_FinalizesThenReturnsAcceptance(t *testing.T) {
 	h := newCLIHarness(t, "ACTIVE")
+	h.server.hideAppForFirstDirectCall()
 	scenarioDir := t.TempDir()
 	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-required-pass", "required")
 
-	exitCode, stderr := h.run(t, nil, "eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw")
-	if exitCode != 0 {
-		t.Fatalf("exit code = %d, want 0\nstderr:\n%s", exitCode, stderr)
+	args := append([]string{"eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw"}, cliBindingArgs(t)...)
+	exitCode, stderr := h.run(t, nil, args...)
+	// The task itself passes regardless of platform (asserted below via
+	// stderr + meta.json), but §10.4's fourth acceptance dimension (process
+	// identity) is always "unsupported" on a non-Linux machine — a bound
+	// required run can only exit 0 here on Linux (see
+	// TestBehavioralCLI_Bound_RequiredRefusesOnUnsupportedOS_OrAcceptsOnLinux).
+	if runtime.GOOS == goosLinux {
+		if exitCode != 0 {
+			t.Fatalf("exit code = %d, want 0 on linux\nstderr:\n%s", exitCode, stderr)
+		}
+	} else if exitCode == 0 {
+		t.Fatalf("exit code = 0, want nonzero on %s (process identity is always unsupported)\nstderr:\n%s", runtime.GOOS, stderr)
 	}
 	if !strings.Contains(stderr, "Task:         required passed") {
 		t.Errorf("stderr missing required-pass task line\nstderr:\n%s", stderr)
@@ -716,7 +732,7 @@ func TestBehavioralCLI_OwnedScopedChild_FinalizesThenReturnsAcceptance(t *testin
 // non-parallel: builds and runs the zcp binary with a private HOME.
 func TestBehavioralCLI_CaptureCloseFailure_NonzeroEvenIfTaskPassed(t *testing.T) {
 	h := newCLIHarness(t, "ACTIVE")
-	h.server.hideAppForFirstDirectCalls(1)
+	h.server.hideAppForFirstDirectCall()
 	scenarioDir := t.TempDir()
 	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-required-broken-capture", "required")
 
@@ -776,7 +792,7 @@ func errOrNil2(_ *capture.InspectionReport, err error) error       { return err 
 
 // cliBindingArgs builds a valid §10.4 binding flag set for the CLI harness:
 // a candidate that is a byte-identical copy of the binary under test, bound
-// to fakeProjectID. h.server.hideAppForFirstDirectCalls(1) must be called
+// to fakeProjectID. h.server.hideAppForFirstDirectCall() must be called
 // separately by tests whose fake server pre-populates a non-system service,
 // so the preflight's fresh-target read (the 1st direct GET) sees an empty
 // project while the task-end freeze (the 2nd) sees the seeded state.
@@ -876,7 +892,7 @@ func TestBehavioralCLI_Bound_RequiredRefusesOnUnsupportedOS_OrAcceptsOnLinux(t *
 		"--ack-disposable-project", "yes",
 	)
 
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != goosLinux {
 		if exitCode == 0 {
 			t.Fatalf("exit code = 0, want nonzero on %s\nstderr:\n%s", runtime.GOOS, stderr)
 		}
