@@ -409,11 +409,17 @@ func (r *Runner) freezeTaskEnd(
 				settled = true
 				break
 			}
-			if time.Now().After(deadline) {
+			if time.Now().After(deadline) || ctx.Err() != nil {
 				settled = false
 				break
 			}
-			time.Sleep(interval)
+			select {
+			case <-ctx.Done():
+				settled = false
+			case <-time.After(interval):
+				continue
+			}
+			break
 		}
 		rows = generateRequiredChecks(ctx, sc, observation, r.httpDoer, startedAt, r.projectID)
 		if !settled {
@@ -431,37 +437,46 @@ func (r *Runner) freezeTaskEnd(
 		Simulator: TaskEndSimulator{TerminatedBy: userSimTerminatedBy(result), Error: errString(simulatorErr)},
 	}
 
-	persistErr := persistTaskEndArtifacts(outDir, VerificationDocument{
-		FormatVersion: VerificationDocumentFormat2, Mode: mode, Result: taskResult,
-		FrozenAt: frozenAt, Checks: rows, Advisory: findings,
-	}, snapshot)
-	result.TaskEnd.Persisted = persistErr == nil
-	if persistErr == nil {
-		persistErr = writeBehavioralResult(outDir, result)
+	// Persist in the order that keeps the frozen artifacts in agreement
+	// (§10.2 step 5): the snapshot first, so a failure there downgrades the
+	// verdict BEFORE verification.json is written; then verification.json;
+	// then meta.json, which carries every persistence error. A failure never
+	// removes what was already written.
+	var errs []error
+	if err := WritePlatformSnapshot(outDir, snapshot); err != nil {
+		errs = append(errs, err)
+		if result.Task.Result == CheckPassed {
+			result.Task.Result = CheckBlocked
+		}
 	}
-	if persistErr != nil {
+	if err := WriteVerificationDocument(outDir, VerificationDocument{
+		FormatVersion: VerificationDocumentFormat2, Mode: mode, Result: result.Task.Result,
+		FrozenAt: frozenAt, Checks: rows, Advisory: findings,
+	}); err != nil {
+		errs = append(errs, err)
+	}
+	if len(errs) == 0 {
+		if err := writeBehavioralResult(outDir, result); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if persistErr := errors.Join(errs...); persistErr != nil {
 		result.TaskEnd.Persisted = false
 		result.TaskEnd.PersistError = persistErr.Error()
 		if result.Task.Result == CheckPassed {
 			result.Task.Result = CheckBlocked
 		}
 		logBehavioralResultWrite(outDir, result)
+		return
 	}
-}
-
-// persistTaskEndArtifacts writes verification.json and platform-snapshot.json
-// via temp+fsync+rename, continuing past the first failure so a persistence
-// problem in one file never removes what was already written in the other
-// (§10.2 step 5).
-func persistTaskEndArtifacts(outDir string, doc VerificationDocument, snapshot PlatformSnapshot) error {
-	var errs []error
-	if err := WriteVerificationDocument(outDir, doc); err != nil {
-		errs = append(errs, err)
+	result.TaskEnd.Persisted = true
+	if err := writeBehavioralResult(outDir, result); err != nil {
+		result.TaskEnd.Persisted = false
+		result.TaskEnd.PersistError = err.Error()
+		if result.Task.Result == CheckPassed {
+			result.Task.Result = CheckBlocked
+		}
 	}
-	if err := WritePlatformSnapshot(outDir, snapshot); err != nil {
-		errs = append(errs, err)
-	}
-	return errors.Join(errs...)
 }
 
 // userSimTerminatedBy returns the user-sim loop's termination reason, or ""

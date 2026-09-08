@@ -126,8 +126,11 @@ func runBehavioralRun(args []string) int {
 		return 1
 	}
 	accepted, reason := behavioralAccepted(result)
+	// The window's status is an evidence fact, not the task verdict: a failed
+	// task inside a complete capture is a normal bundle
+	// (docs/spec-capture-inspector.md §8). Only an execution error degrades it.
 	status := capture.CaptureComplete
-	if !accepted {
+	if result.Error != "" {
 		status = capture.CapturePartial
 	}
 	runner.EndCaptureEvalRun(ctx, suiteID, status, errorFromString(result.Error))

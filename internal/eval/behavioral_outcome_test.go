@@ -624,3 +624,75 @@ func TestBehavioralOutcome_MetaPersistenceFailure_Blocked(t *testing.T) { // non
 		t.Errorf("DeleteService called %d times, want 0", client.CallCounts["DeleteService"])
 	}
 }
+
+// TestBehavioralOutcome_ExecutionFailureBeforeAgent_NotRun pins
+// docs/spec-testing-architecture.md §10.1 point 7: when the agent never ran,
+// the declared rows are frozen as not-run and the task result is not-run —
+// never passed — in both meta.json and verification.json.
+func TestBehavioralOutcome_ExecutionFailureBeforeAgent_NotRun(t *testing.T) { // non-parallel: process environment
+	h := newBehavioralHarness(t)
+	h.writeClaudeScript(t, "#!/bin/sh\nexit 3\n")
+	scenarioPath := h.writeScenario(t, requiredExpectedAppScenario("required-not-run"))
+	client := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
+	cfg := h.config()
+	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
+	cfg.CaptureOwned = true
+	runner := NewRunner(cfg, nil, client, "offline-project")
+
+	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Error == "" {
+		t.Fatal("Error empty, want the spawn failure")
+	}
+	if result.Task == nil || result.Task.Result != CheckNotRun {
+		t.Fatalf("Task = %+v, want not-run", result.Task)
+	}
+	doc := readVerificationDocument(t, h.outDir("required-not-run"))
+	if doc.Result != CheckNotRun || len(doc.Checks) == 0 {
+		t.Fatalf("verification.json = %+v, want result not-run with the declared rows", doc)
+	}
+	for _, row := range doc.Checks {
+		if row.Result != CheckNotRun {
+			t.Errorf("row %s = %s, want not-run", row.ID, row.Result)
+		}
+	}
+}
+
+// TestBehavioralOutcome_SnapshotPersistenceFailure_ArtifactsAgree pins the
+// ordering half of docs/spec-testing-architecture.md §10.2 step 5: a
+// persistence failure that is known before verification.json is written is
+// reflected IN verification.json, so the frozen artifacts never disagree on
+// the verdict.
+func TestBehavioralOutcome_SnapshotPersistenceFailure_ArtifactsAgree(t *testing.T) { // non-parallel: process environment
+	h := newBehavioralHarness(t)
+	h.writeClaudeScript(t, defaultFakeClaudeDone)
+	t.Setenv("RETRO_MARKER", filepath.Join(h.root, "retro-marker"))
+	scenarioPath := h.writeScenario(t, requiredExpectedAppScenario("required-snapshot-fails"))
+	client := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
+	cfg := h.config()
+	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
+	cfg.CaptureOwned = true
+	runner := NewRunner(cfg, nil, client, "offline-project")
+
+	outDir := h.outDir("required-snapshot-fails")
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(outDir, "platform-snapshot.json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Task == nil || result.Task.Result != CheckBlocked || result.TaskEnd == nil || result.TaskEnd.Persisted {
+		t.Fatalf("Task = %+v TaskEnd = %+v, want blocked and not persisted", result.Task, result.TaskEnd)
+	}
+	doc := readVerificationDocument(t, outDir)
+	if doc.Result != CheckBlocked {
+		t.Fatalf("verification.json result = %s, want blocked (must agree with meta.json)", doc.Result)
+	}
+}

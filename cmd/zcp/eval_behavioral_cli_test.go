@@ -489,6 +489,24 @@ func TestBehavioralCLI_FailedTask_CompleteCaptureRemainsReadable(t *testing.T) {
 	if !report.Integrity.Valid || !report.Integrity.Complete {
 		t.Fatalf("Integrity = %+v, want Valid && Complete", report.Integrity)
 	}
+	// A failed task is a normal, complete capture (spec-capture-inspector §8):
+	// the eval-run lifecycle end must say complete, not partial.
+	records, err := capture.ReadLifecycleRecords(filepath.Join(sessionDir, "lifecycle.jsonl"))
+	if err != nil {
+		t.Fatalf("read lifecycle: %v", err)
+	}
+	sawRunEnd := false
+	for _, record := range records {
+		if record.Kind == capture.LifecycleEvalRunEnd {
+			sawRunEnd = true
+			if record.Status != capture.CaptureComplete || record.Error != "" {
+				t.Fatalf("eval_run.end = status %q error %q, want complete with no error for a failed task", record.Status, record.Error)
+			}
+		}
+	}
+	if !sawRunEnd {
+		t.Fatal("no eval_run.end lifecycle record")
+	}
 
 	bundled := findResultFile(t, filepath.Join(sessionDir, "eval"), "cli-required-fail-capture", "verification.json")
 	bundledBytes, err := os.ReadFile(bundled)

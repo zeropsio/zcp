@@ -63,21 +63,23 @@ type TaskEndEvidence struct {
 
 // aggregateTaskResult combines result rows into one task result per
 // docs/spec-testing-architecture.md §10.1: any failed → failed; else any
-// blocked → blocked; else every row passed → passed; no rows (no task work)
-// → not-run.
+// blocked → blocked; else every row passed → passed; no decided row (no rows,
+// or every row not-run because task work never happened) → not-run.
 func aggregateTaskResult(rows []RequiredCheck) CheckResult {
-	if len(rows) == 0 {
-		return CheckNotRun
-	}
-	sawBlocked := false
+	sawBlocked, sawDecided := false, false
 	for _, row := range rows {
 		switch row.Result {
 		case CheckFailed:
 			return CheckFailed
 		case CheckBlocked:
-			sawBlocked = true
-		case CheckPassed, CheckNotRun:
+			sawBlocked, sawDecided = true, true
+		case CheckPassed:
+			sawDecided = true
+		case CheckNotRun:
 		}
+	}
+	if !sawDecided {
+		return CheckNotRun
 	}
 	if sawBlocked {
 		return CheckBlocked
