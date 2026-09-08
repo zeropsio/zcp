@@ -38,7 +38,7 @@ func TestStart_UnknownService(t *testing.T) {
 }
 
 func TestStart_KnownService_ArgsCorrect(t *testing.T) {
-	// Not parallel — mutates runFunc.
+	// Not parallel — mutates runFunc + tuneFunc.
 	type captured struct {
 		binary string
 		args   []string
@@ -50,7 +50,10 @@ func TestStart_KnownService_ArgsCorrect(t *testing.T) {
 		got.args = args
 		return nil
 	})
-	t.Cleanup(func() { service.ResetRunFunc() })
+	// vscode declares a TasksMax tune; stub it so this test never shells out
+	// to `sudo systemctl set-property` (docs: TestServiceStart_TasksMaxTunerStubbed_NoSudo).
+	service.SetTuneFunc(func(string, int) error { return nil })
+	t.Cleanup(func() { service.ResetRunFunc(); service.ResetTuneFunc() })
 
 	tests := []struct {
 		name     string
@@ -125,6 +128,36 @@ func TestStart_VSCode_RaisesTasksMax(t *testing.T) {
 	_ = service.Start("nginx")
 	if tuned {
 		t.Error("Start(nginx) must NOT tune TasksMax (none declared)")
+	}
+}
+
+// TestServiceStart_TasksMaxTunerStubbed_NoSudo pins that TestStart_VSCode_
+// RaisesTasksMax's stub-tuneFunc pattern is the only path any test in this
+// package takes to a vscode TasksMax tune: the two other tests exercising
+// Start("vscode") (TestStart_KnownService_ArgsCorrect and
+// TestStart_OtherServices_UnaffectedByMateGuard) now stub tuneFunc too, so
+// no test in this package shells out to `sudo systemctl set-property`. This
+// test proves the stub itself still receives the real call the production
+// code makes — it does not merely assert absence.
+func TestServiceStart_TasksMaxTunerStubbed_NoSudo(t *testing.T) {
+	// Not parallel — mutates runFunc + tuneFunc.
+	var tunedUnit string
+	var tunedMax int
+	service.SetRunFunc(func(string, []string, []string) error { return nil })
+	service.SetTuneFunc(func(unit string, tasksMax int) error {
+		tunedUnit, tunedMax = unit, tasksMax
+		return nil
+	})
+	t.Cleanup(func() { service.ResetRunFunc(); service.ResetTuneFunc() })
+
+	// The tune runs before binary resolution (see TestStart_VSCode_RaisesTasksMax),
+	// so this assertion is meaningful even when code-server isn't installed
+	// (CI / dev box) — only a LookPath failure ("find ...") is tolerated.
+	if err := service.Start("vscode"); err != nil && !strings.Contains(err.Error(), "find") {
+		t.Fatalf("Start(vscode): %v", err)
+	}
+	if tunedUnit != "zerops@vscode.service" || tunedMax != 1600 {
+		t.Fatalf("tuneFunc called with (%q, %d), want (zerops@vscode.service, 1600)", tunedUnit, tunedMax)
 	}
 }
 
@@ -335,10 +368,13 @@ func TestStart_Mate_GuardAllowsWhenEnabled(t *testing.T) {
 // TestStart_OtherServices_UnaffectedByMateGuard: nginx and vscode declare no
 // guard, so they must launch regardless of ZCP_MATE_ENABLED.
 func TestStart_OtherServices_UnaffectedByMateGuard(t *testing.T) {
-	// Not parallel — mutates runFunc and ZCP_MATE_ENABLED.
+	// Not parallel — mutates runFunc, tuneFunc, and ZCP_MATE_ENABLED.
 	t.Setenv("ZCP_MATE_ENABLED", "")
 	service.SetRunFunc(func(string, []string, []string) error { return nil })
-	t.Cleanup(func() { service.ResetRunFunc() })
+	// vscode declares a TasksMax tune; stub it so this test never shells out
+	// to `sudo systemctl set-property` (docs: TestServiceStart_TasksMaxTunerStubbed_NoSudo).
+	service.SetTuneFunc(func(string, int) error { return nil })
+	t.Cleanup(func() { service.ResetRunFunc(); service.ResetTuneFunc() })
 
 	for _, name := range []string{"nginx", "vscode"} {
 		if err := service.Start(name); err != nil {
