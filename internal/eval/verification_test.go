@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -396,8 +397,53 @@ func TestEvaluateSubdomainProbeRow_NoSubdomainAccess(t *testing.T) {
 	got := evaluateSubdomainProbeRow(context.Background(), exp, svc, httpDoerFunc(func(*http.Request) (*http.Response, error) {
 		t.Fatal("HTTP probe should not fire when subdomain access disabled")
 		return nil, errProbeShouldNotFire
-	}), time.Now())
+	}), nil, "p1", time.Now())
 	if got.Check != "subdomain_probe" || got.Result != CheckFailed || got.ID != "expected_service/appdev/subdomain_probe" {
 		t.Errorf("expected failed subdomain_probe row, got %+v", got)
 	}
+}
+
+// TestSubdomainProbe_ResolvedURL_ActualRequest pins
+// docs/spec-testing-architecture.md §10.2 "Probe honesty": the subdomainProbe
+// row now resolves its URL via ops.ResolveSubdomainURL and performs one real
+// HTTP request against it — the earlier "unresolvable" stub is retired.
+// SubdomainAccess=false still fails (S1); the row is blocked only when the
+// resolver itself returns "".
+func TestSubdomainProbe_ResolvedURL_ActualRequest(t *testing.T) {
+	t.Parallel()
+
+	t.Run("resolvable URL — actual request decides the row", func(t *testing.T) {
+		t.Parallel()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+		exp := ExpectedService{Hostname: "appdev", SubdomainProbe: &SubdomainProbe{Path: "/", ExpectStatus: "2xx"}}
+		svc := &platform.ServiceStack{
+			ID: "appdev-1", Name: "appdev", SubdomainAccess: true,
+			Ports: []platform.Port{{Port: 80, Scheme: "http"}},
+		}
+		client := platform.NewMock().WithProject(&platform.Project{ID: "p1", SubdomainHost: "testproj.example.com"})
+		got := evaluateSubdomainProbeRow(context.Background(), exp, svc, loopbackHTTPClient(server), client, "p1", time.Now())
+		if got.Result != CheckPassed {
+			t.Errorf("row = %+v, want passed (actual request against the resolved URL)", got)
+		}
+	})
+
+	t.Run("unresolvable URL (no project subdomainHost) — blocked", func(t *testing.T) {
+		t.Parallel()
+		exp := ExpectedService{Hostname: "appdev", SubdomainProbe: &SubdomainProbe{Path: "/", ExpectStatus: "2xx"}}
+		svc := &platform.ServiceStack{
+			ID: "appdev-1", Name: "appdev", SubdomainAccess: true,
+			Ports: []platform.Port{{Port: 80, Scheme: "http"}},
+		}
+		client := platform.NewMock().WithProject(&platform.Project{ID: "p1", SubdomainHost: ""})
+		got := evaluateSubdomainProbeRow(context.Background(), exp, svc, httpDoerFunc(func(*http.Request) (*http.Response, error) {
+			t.Fatal("HTTP probe should not fire when the URL is unresolvable")
+			return nil, errProbeShouldNotFire
+		}), client, "p1", time.Now())
+		if got.Result != CheckBlocked {
+			t.Errorf("row = %+v, want blocked (resolver returned \"\")", got)
+		}
+	})
 }

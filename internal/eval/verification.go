@@ -52,7 +52,7 @@ func RunVerification(
 		len(sc.Verification.ExpectedServices) > 0,
 		sc.Verification.NoFailedProcesses,
 	)
-	return runVerificationWithObservation(ctx, sc, observation, httpDoer, retrospectiveText, runStart, projectID)
+	return runVerificationWithObservation(ctx, sc, observation, httpDoer, retrospectiveText, runStart, projectID, client, true, nil)
 }
 
 // runVerificationWithObservation derives the legacy advisory findings list
@@ -67,11 +67,14 @@ func runVerificationWithObservation(
 	retrospectiveText string,
 	runStart time.Time,
 	projectID string,
+	client platform.Client,
+	settled bool,
+	baseline *ScenarioBaseline,
 ) []VerificationFinding {
 	if sc == nil || sc.Verification == nil {
 		return nil
 	}
-	rows := generateRequiredChecks(ctx, sc, observation, httpDoer, runStart, projectID)
+	rows := generateRequiredChecks(ctx, sc, observation, httpDoer, runStart, projectID, client, settled, baseline)
 	findings := projectRowsToFindings(rows)
 	findings = append(findings, retrospectivePhraseFindings(sc, retrospectiveText)...)
 	return findings
@@ -129,18 +132,49 @@ func generateRequiredChecks(
 	httpDoer ops.HTTPDoer,
 	runStart time.Time,
 	projectID string,
+	client platform.Client,
+	settled bool,
+	baseline *ScenarioBaseline,
 ) []RequiredCheck {
 	if sc == nil || sc.Verification == nil {
 		return nil
 	}
 	var rows []RequiredCheck
 	for _, exp := range sc.Verification.ExpectedServices {
-		rows = append(rows, evaluateExpectedService(ctx, exp, observation, httpDoer)...)
+		rows = append(rows, evaluateExpectedService(ctx, exp, observation, httpDoer, client, projectID)...)
 	}
 	if sc.Verification.NoFailedProcesses {
 		rows = append(rows, evaluateNoFailedProcesses(observation, runStart, projectID))
 	}
+	if sc.Verification.NodePostgresRecord != nil {
+		rows = append(rows, evaluateNodePostgresRecordCheck(ctx, sc.Verification.NodePostgresRecord, client, httpDoer, projectID, settled, baseline)...)
+	}
 	return rows
+}
+
+// evaluateNodePostgresRecordCheck adapts the exported NodePostgresVerifier
+// into the generateRequiredChecks pipeline. §10.2 ordering: the oracle runs
+// only when the task-end observation settled; an unsettled freeze emits its
+// four rows blocked with zero HTTP/SQL calls, so the verifier itself is
+// never constructed in that case.
+func evaluateNodePostgresRecordCheck(
+	ctx context.Context,
+	cfg *NodePostgresRecordConfig,
+	client platform.Client,
+	httpDoer ops.HTTPDoer,
+	projectID string,
+	settled bool,
+	baseline *ScenarioBaseline,
+) []RequiredCheck {
+	in := NodePostgresInput{ProjectID: projectID, Stage: cfg.Stage, Database: cfg.Database, Unrelated: cfg.Unrelated}
+	if baseline != nil {
+		in.BaselineUnrelatedAppVersion = baseline.UnrelatedAppVersion
+	}
+	if !settled {
+		return blockedNodePostgresRows(in, time.Now().UTC(), "task-end observation unsettled")
+	}
+	verifier := NodePostgresVerifier{Client: client, HTTP: httpDoer, DB: PgxNodePostgresDB{}, Nonce: randomNodePostgresNonce}
+	return verifier.Verify(ctx, in)
 }
 
 // evaluateExpectedService evaluates one ExpectedService assertion against
@@ -153,6 +187,8 @@ func evaluateExpectedService(
 	exp ExpectedService,
 	observation platformObservation,
 	httpDoer ops.HTTPDoer,
+	client platform.Client,
+	projectID string,
 ) []RequiredCheck {
 	now := observation.observedAt
 	if observation.servicesErr != nil {
@@ -200,7 +236,7 @@ func evaluateExpectedService(
 		})
 	}
 	if exp.SubdomainProbe != nil {
-		rows = append(rows, evaluateSubdomainProbeRow(ctx, exp, found, httpDoer, now))
+		rows = append(rows, evaluateSubdomainProbeRow(ctx, exp, found, httpDoer, client, projectID, now))
 	}
 	if len(rows) == 0 {
 		rows = append(rows, RequiredCheck{
@@ -221,6 +257,8 @@ func evaluateSubdomainProbeRow(
 	exp ExpectedService,
 	svc *platform.ServiceStack,
 	httpDoer ops.HTTPDoer,
+	client platform.Client,
+	projectID string,
 	now time.Time,
 ) RequiredCheck {
 	id := expectedServiceRowID(exp.Hostname, "subdomain_probe")
@@ -232,7 +270,10 @@ func evaluateSubdomainProbeRow(
 		}
 	}
 	probe := exp.SubdomainProbe
-	url := probeURLFromService(svc, probe.Path)
+	url := ops.ResolveSubdomainURL(ctx, client, projectID, svc)
+	if url != "" && probe.Path != "" {
+		url = strings.TrimRight(url, "/") + "/" + strings.TrimLeft(probe.Path, "/")
+	}
 	if url == "" {
 		return RequiredCheck{
 			ID: id, Check: "subdomain_probe", Scope: exp.Hostname,
@@ -311,21 +352,6 @@ func evaluateNoFailedProcesses(observation platformObservation, runStart time.Ti
 		Result: CheckFailed, Expected: expected, Observed: strings.Join(failedIDs, ", "), ObservedAt: now, Source: "GetProjectProcessesDirect",
 		Message: strings.Join(messages, "; "),
 	}
-}
-
-// probeURLFromService derives the public subdomain URL from a ServiceStack
-// when possible. ServiceStack itself doesn't carry the resolved subdomain
-// — that lives in env vars (${zeropsSubdomain}). We can't form the URL
-// from ServiceStack alone, so this returns "" — caller emits a blocked row
-// (§10.2 probe honesty).
-//
-// A future iteration can pass a resolved URL through the VerificationConfig
-// (e.g. `subdomainProbe.url: ${zeropsSubdomain}` parsed at scenario load
-// after services are up).
-func probeURLFromService(svc *platform.ServiceStack, path string) string {
-	_ = svc
-	_ = path
-	return ""
 }
 
 // findServiceByHostname returns the first service whose Name matches host.

@@ -277,3 +277,64 @@ Do the thing.
 		t.Errorf("error should mention verification.mode, got: %v", err)
 	}
 }
+
+// TestScenario_NodePostgresRecord_ParsedAndCountsAsExecutable pins
+// docs/spec-testing-architecture.md §10.3: the nodePostgresRecord block
+// parses into VerificationConfig, counts as an executable check for
+// required mode on its own, and rejects a block missing any hostname.
+func TestScenario_NodePostgresRecord_ParsedAndCountsAsExecutable(t *testing.T) { // non-parallel: process environment
+	dir := t.TempDir()
+	good := `---
+id: node-postgres-good
+seed: empty
+retrospective:
+  promptStyle: briefing-future-agent
+verification:
+  mode: required
+  nodePostgresRecord:
+    stage: appstage
+    database: db
+    unrelated: other
+---
+Do the thing.
+`
+	path := filepath.Join(dir, "good.md")
+	if err := os.WriteFile(path, []byte(good), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sc, err := ParseScenario(path)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if sc.Verification == nil || sc.Verification.NodePostgresRecord == nil {
+		t.Fatal("expected VerificationConfig.NodePostgresRecord to be set")
+	}
+	npr := sc.Verification.NodePostgresRecord
+	if npr.Stage != "appstage" || npr.Database != "db" || npr.Unrelated != "other" {
+		t.Errorf("NodePostgresRecord = %+v, want stage=appstage database=db unrelated=other", npr)
+	}
+
+	missing := `---
+id: node-postgres-missing-hostname
+seed: empty
+retrospective:
+  promptStyle: briefing-future-agent
+verification:
+  mode: required
+  nodePostgresRecord:
+    stage: appstage
+    database: db
+    unrelated: ""
+---
+Do the thing.
+`
+	missingPath := filepath.Join(dir, "missing.md")
+	if err := os.WriteFile(missingPath, []byte(missing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseScenario(missingPath); err == nil {
+		t.Fatal("expected parse error for nodePostgresRecord missing a hostname")
+	} else if !strings.Contains(err.Error(), "nodePostgresRecord") {
+		t.Errorf("error should mention nodePostgresRecord, got: %v", err)
+	}
+}

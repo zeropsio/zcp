@@ -117,6 +117,21 @@ type VerificationConfig struct {
 	// red-flag phrases the agent shouldn't admit to in success retros
 	// (e.g. "smuggled", "hand-edited", "had to overwrite").
 	RetrospectiveMustNotMention []string `yaml:"retrospectiveMustNotMention,omitempty"`
+	// NodePostgresRecord declares the one application-oracle check
+	// (docs/spec-testing-architecture.md §10.3): a Node runtime serving
+	// POST/GET /records backed by a managed PostgreSQL database, plus an
+	// unrelated service whose deployed artifact must not change. Counts as
+	// an executable check for required mode.
+	NodePostgresRecord *NodePostgresRecordConfig `yaml:"nodePostgresRecord,omitempty"`
+}
+
+// NodePostgresRecordConfig declares the three hostnames the node-postgres
+// application oracle resolves at task-end freeze (docs/spec-testing-architecture.md
+// §10.3). All three are required when the block is present.
+type NodePostgresRecordConfig struct {
+	Stage     string `yaml:"stage"`
+	Database  string `yaml:"database"`
+	Unrelated string `yaml:"unrelated"`
 }
 
 // VerificationObserve and VerificationRequired are the two
@@ -244,8 +259,13 @@ func (s *Scenario) validate() error {
 			return fmt.Errorf("invalid verification.mode %q (want observe|required)", s.Verification.Mode)
 		}
 		if s.Verification.Mode == VerificationRequired {
-			if len(s.Verification.ExpectedServices) == 0 && !s.Verification.NoFailedProcesses {
-				return fmt.Errorf("verification.mode required needs at least one executable check (expectedServices or noFailedProcesses; retrospectiveMustNotMention is advisory and does not count)")
+			if len(s.Verification.ExpectedServices) == 0 && !s.Verification.NoFailedProcesses && s.Verification.NodePostgresRecord == nil {
+				return fmt.Errorf("verification.mode required needs at least one executable check (expectedServices, noFailedProcesses, or nodePostgresRecord; retrospectiveMustNotMention is advisory and does not count)")
+			}
+		}
+		if npr := s.Verification.NodePostgresRecord; npr != nil {
+			if npr.Stage == "" || npr.Database == "" || npr.Unrelated == "" {
+				return fmt.Errorf("verification.nodePostgresRecord requires stage, database, and unrelated hostnames")
 			}
 		}
 	}
