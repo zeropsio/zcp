@@ -54,6 +54,14 @@ func parseEvalCaptureArgs(args []string) (clean []string, requested bool, err er
 // runEvalWithOptionalScopedCapture intercepts only explicit --capture raw.
 // Global capture remains automatic inside initEvalRunner even without the flag.
 func runEvalWithOptionalScopedCapture(args []string) (handled bool, exitCode int) {
+	// `eval behavioral report --capture <dir>` is a read-only projection of an
+	// already-finalized window, not a run — its --capture takes a session
+	// directory, never the literal "raw" scoped-capture-creation flag this
+	// wrapper otherwise intercepts (docs/spec-capture-inspector.md §8.5).
+	// Leave it alone so it falls through to plain runEval/runEvalBehavioral.
+	if len(args) >= 2 && args[0] == "behavioral" && args[1] == "report" {
+		return false, 0
+	}
 	clean, requested, err := parseEvalCaptureArgs(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "eval capture: %v\n", err)

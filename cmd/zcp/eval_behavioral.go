@@ -33,6 +33,8 @@ func runEvalBehavioral(args []string) int {
 		return runBehavioralRunLocal(args[1:])
 	case "all":
 		return runBehavioralAll(args[1:])
+	case "report":
+		return runBehavioralReport(args[1:], os.Stdout, os.Stderr)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown behavioral subcommand: %s\n", args[0])
 		printBehavioralUsage()
@@ -54,6 +56,10 @@ Commands:
   run-local  --id <id> [--scenarios-dir <dir>] [--cleanup-workdir] [--capture raw]
                                                Run one scenario in LOCAL mode on this Mac
                                                (isolated workdir + claude HOME under /tmp).
+  report     --capture <dir> --eval <id> --scenario <id> [--format text|json]
+                                               Read-only deterministic single-run report
+                                               from a finalized capture window (no network/
+                                               provider/platform/model call).
 
 The 'run' family runs the agent inside a Zerops container (existing flow-eval).
 'run-local' runs the agent directly on this machine: requires ZCP_API_KEY env
