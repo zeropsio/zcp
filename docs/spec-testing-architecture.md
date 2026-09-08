@@ -496,3 +496,77 @@ env `hostname` to equal the declared database hostname (single-project VPN
 and in-project runs leave it empty). The acknowledgement is an operator
 assertion the code cannot verify; the code's own protection is the
 cross-check refusal.
+
+### 10.4 Explicit candidate binding and preflight
+
+A comparison is only as good as the certainty about *what ran*. Today the
+behavioral runner is its own candidate: the capture MCP config names the
+runner's executable, and the agent-facing files come from the runner's own
+embedded content. This section separates the two and makes the target
+explicit. It does not add a remote driver, a lock, a receipt, or any OS-hard
+isolation from a malicious agent sharing the Unix user.
+
+**Binding.** `zcp eval behavioral run` accepts an explicit execution binding:
+
+| flag | meaning |
+|---|---|
+| `--candidate <abs path>` | the binary the agent must use as `zcp` |
+| `--candidate-sha256` | its expected SHA-256 |
+| `--project-id` | the only project this run may touch |
+| `--ack-disposable-project yes` | operator assertion the project is disposable |
+| `--work-dir`, `--results-dir` | override `ZCP_EVAL_WORK_DIR` / `ZCP_EVAL_RESULTS_DIR` (one input) |
+| `--run-id` | capture window label and `meta.json.binding.runId` only (default: the suite id) |
+
+A `required` scenario refuses to start without a complete binding. A binding
+is per `run`; `behavioral all` with a binding is refused before any work
+(required-mode retention makes a second scenario on the same target fail
+freshness by design). A binding given to an `observe` scenario is honoured
+the same way; only the acceptance rule stays observe. Binding values land in
+`meta.json` as `binding` (paths, digests, project id, run id — never a
+token).
+
+**Candidate owns the agent surface.** With a binding the runner never uses
+its own executable as the agent's tool. `zcp init` for the work dir runs as
+a subprocess of the candidate (`<candidate> init`) with `HOME` = the run's
+private Claude home, `PATH` starting with a private bin dir whose `zcp` is a
+symlink to the candidate, `ZCP_AUTO_UPDATE=0`, the run's `projectId` /
+`serviceId` passed through, and the credentials env the runner itself
+resolved. Every `claude` child gets the same HOME/PATH/update setting. In
+capture mode (every required run) the capture MCP config names the candidate
+by absolute path under `--strict-mcp-config`; the PATH symlink covers shell
+`zcp` calls and observe runs. The only evaluator-side writes into the work
+dir or the private home are the guided-marker reset and the Claude memory
+clean; everything agent-facing comes from `<candidate> init`.
+
+**Preflight — zero mutation.** The preflight runs immediately after the
+owned-window gate, before the scenario-start marker and before any defer is
+registered. It checks, in order: the candidate is a regular executable whose
+SHA-256 equals `--candidate-sha256`; `--project-id` equals the project the
+credentials resolve to; the acknowledgement is exactly `yes`; the target is
+fresh (a direct service read shows only system services plus the protected
+control service `zcp`; a direct process read shows no live process); work dir
+and results dir are absolute, distinct, not nested in each other, not `/`,
+not a home directory root; the binding writes the sentinel into the work dir
+and exports `ZCP_EVAL_SENTINEL_FILE` for the run. A failing check returns
+`binding: <reason>` with `task.result = not-run`. The only writes that may
+precede a refusal are the results dir creation, the refusal `meta.json`, and
+the scoped capture window's own session dir and proxy; no platform write, no
+scenario-start marker, no bundle, no cleanup defer. Cancellation during the
+preflight is also zero-mutation.
+
+**Observed process identity.** While an agent invocation runs, the runner
+polls the owned capture window for new `mcp/zcp-<pid>.jsonl` files (written
+by the candidate `serve` process under the env the agent inherited). For
+each pid still alive it reads `/proc/<pid>/environ`; an observation counts
+only when that environment carries this window's `ZCP_CAPTURE_SESSION_ID`,
+otherwise it is `unobservable` (pid reuse, foreign process) and never
+contradicts. For a counted observation it hashes the executable by opening
+`/proc/<pid>/exe` (the inode, so a replaced on-disk binary cannot fake it)
+and reads the effective `projectId`, `serviceId`, `ZCP_AUTO_UPDATE`. Each
+observation is recorded in `meta.json` as `processIdentity[]` with pid,
+digest, `matchesCandidate`, the env triple, classification and time.
+Required acceptance gains a fourth dimension, `Process identity`: at least
+one counted observation whose digest equals the candidate and whose
+`projectId` equals the binding, and no counted observation contradicting
+either; none, or an unsupported OS, is `blocked`. An observation cannot undo
+actions already taken, and a missing one never claims seed did not happen.
