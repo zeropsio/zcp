@@ -1,0 +1,434 @@
+package eval
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/platform"
+)
+
+// NodePostgresConn carries the managed PostgreSQL connection parameters the
+// oracle uses to prove a record landed in the database, in memory only.
+// Deliberately carries no String()/GoString() — the default struct
+// formatting for an unexported-method-free struct via %+v would print
+// Password, so no caller may add one (docs/spec-testing-architecture.md
+// §10.3 "Independence": credentials never enter rows, messages, meta, or
+// the capture bundle).
+type NodePostgresConn struct {
+	Host     string
+	Port     string
+	User     string
+	Password string
+	DBName   string
+}
+
+// NodePostgresDB is the tiny read interface the node-postgres oracle uses.
+// The pgx implementation is the production value; tests supply a fake.
+type NodePostgresDB interface {
+	QueryRecordByNonce(ctx context.Context, conn NodePostgresConn, nonce string) (id, value string, count int, err error)
+}
+
+// PgxNodePostgresDB is the production NodePostgresDB: connects fresh per
+// call, runs the SELECT in a read-only transaction, parameterised on nonce.
+type PgxNodePostgresDB struct{}
+
+func (PgxNodePostgresDB) QueryRecordByNonce(ctx context.Context, conn NodePostgresConn, nonce string) (id, value string, count int, err error) {
+	dsn := fmt.Sprintf("postgres://%s:%s@%s/%s",
+		url.QueryEscape(conn.User), url.QueryEscape(conn.Password), net.JoinHostPort(conn.Host, conn.Port), conn.DBName)
+	pconn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("connect: %w", err)
+	}
+	defer func() { _ = pconn.Close(ctx) }()
+
+	tx, err := pconn.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return "", "", 0, fmt.Errorf("begin read-only tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	rows, err := tx.Query(ctx, "SELECT id, value FROM records WHERE nonce = $1", nonce)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("select: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		count++
+		if count == 1 {
+			if scanErr := rows.Scan(&id, &value); scanErr != nil {
+				return "", "", 0, fmt.Errorf("scan: %w", scanErr)
+			}
+			continue
+		}
+		// Keep counting past the first row (a >1-row result is itself the
+		// failure signal) without overwriting id/value.
+		var extraID, extraValue string
+		_ = rows.Scan(&extraID, &extraValue)
+	}
+	if err := rows.Err(); err != nil {
+		return "", "", 0, fmt.Errorf("rows: %w", err)
+	}
+	return id, value, count, nil
+}
+
+// NodePostgresVerifier is the exported, standalone application oracle of
+// docs/spec-testing-architecture.md §10.3. It holds its own nonce/value,
+// resolves the three declared hostnames independently of anything the
+// candidate printed, and proves the record landed in the managed database
+// via a read keyed on the nonce.
+type NodePostgresVerifier struct {
+	Client platform.Client
+	HTTP   ops.HTTPDoer
+	DB     NodePostgresDB
+	Nonce  func() (nonce, value string)
+}
+
+// NodePostgresInput is one Verify call's parameters.
+// ExpectStageID/ExpectDatabaseID/ExpectUnrelatedID are optional cross-checks:
+// when set, a resolved service id that disagrees is treated as a foreign
+// binding and blocks every row before any data-plane call.
+type NodePostgresInput struct {
+	ProjectID                   string
+	Stage, Database, Unrelated  string
+	BaselineUnrelatedAppVersion string
+	ExpectStageID               string
+	ExpectDatabaseID            string
+	ExpectUnrelatedID           string
+}
+
+const (
+	checkNodePostgresRecord = "node_postgres_record"
+	checkUnrelatedArtifact  = "unrelated_artifact"
+)
+
+func nodePostgresRoundtripRowID(stage string) string {
+	return fmt.Sprintf("node_postgres_record/%s/record_roundtrip", stage)
+}
+func nodePostgresEnvironmentRowID(stage string) string {
+	return fmt.Sprintf("node_postgres_record/%s/environment", stage)
+}
+func nodePostgresDBRowID(database string) string {
+	return fmt.Sprintf("node_postgres_record/%s/db_row", database)
+}
+func unrelatedArtifactRowID(unrelated string) string {
+	return fmt.Sprintf("unrelated_artifact/%s/unchanged", unrelated)
+}
+
+// blockedNodePostgresRows builds the four blocked rows with a shared
+// message and zero data-plane calls — used whenever resolution fails before
+// any HTTP/SQL work is safe to attempt (§10.3 "Independence").
+func blockedNodePostgresRows(in NodePostgresInput, now time.Time, message string) []RequiredCheck {
+	return []RequiredCheck{
+		{ID: nodePostgresRoundtripRowID(in.Stage), Check: checkNodePostgresRecord, Scope: in.Stage, Result: CheckBlocked, ObservedAt: now, Message: message},
+		{ID: nodePostgresEnvironmentRowID(in.Stage), Check: checkNodePostgresRecord, Scope: in.Stage, Result: CheckBlocked, ObservedAt: now, Message: message},
+		{ID: nodePostgresDBRowID(in.Database), Check: checkNodePostgresRecord, Scope: in.Database, Result: CheckBlocked, ObservedAt: now, Message: message},
+		{ID: unrelatedArtifactRowID(in.Unrelated), Check: checkUnrelatedArtifact, Scope: in.Unrelated, Result: CheckBlocked, ObservedAt: now, Message: message},
+	}
+}
+
+// Verify evaluates the four §10.3 rows against a fresh nonce/value pair.
+// Resolution order (§10.3 "Independence" + point 4 of the brief contract):
+// resolve the three hostnames; a cross-check id mismatch blocks all four
+// with zero data-plane calls; resolve the stage URL; fetch+validate the
+// database connection; POST then GET (refusing redirects); then the
+// nonce-keyed SELECT.
+func (v NodePostgresVerifier) Verify(ctx context.Context, in NodePostgresInput) []RequiredCheck {
+	now := time.Now().UTC()
+
+	services, err := v.Client.ListServicesDirect(ctx, in.ProjectID)
+	if err != nil {
+		return blockedNodePostgresRows(in, now, fmt.Sprintf("ListServicesDirect failed: %v", err))
+	}
+	stageSvc := findServiceByHostname(services, in.Stage)
+	dbSvc := findServiceByHostname(services, in.Database)
+	unrelatedSvc := findServiceByHostname(services, in.Unrelated)
+
+	if stageSvc == nil || dbSvc == nil || unrelatedSvc == nil {
+		return v.missingServiceRows(in, now, stageSvc, dbSvc, unrelatedSvc)
+	}
+
+	if (in.ExpectStageID != "" && in.ExpectStageID != stageSvc.ID) ||
+		(in.ExpectDatabaseID != "" && in.ExpectDatabaseID != dbSvc.ID) ||
+		(in.ExpectUnrelatedID != "" && in.ExpectUnrelatedID != unrelatedSvc.ID) {
+		return blockedNodePostgresRows(in, now, "binding mismatch")
+	}
+
+	unchangedRow := v.evaluateUnchanged(in, unrelatedSvc, now)
+
+	stageURL := ops.ResolveSubdomainURL(ctx, v.Client, in.ProjectID, stageSvc)
+	if stageURL == "" {
+		return []RequiredCheck{
+			blockedRow(nodePostgresRoundtripRowID(in.Stage), in.Stage, now, "URL unresolvable"),
+			blockedRow(nodePostgresEnvironmentRowID(in.Stage), in.Stage, now, "URL unresolvable"),
+			blockedRow(nodePostgresDBRowID(in.Database), in.Database, now, "URL unresolvable"),
+			unchangedRow,
+		}
+	}
+
+	envVars, err := ops.FetchServiceEnv(ctx, v.Client, dbSvc.ID)
+	if err != nil {
+		msg := "credentials unresolvable"
+		return []RequiredCheck{
+			blockedRow(nodePostgresRoundtripRowID(in.Stage), in.Stage, now, msg),
+			blockedRow(nodePostgresEnvironmentRowID(in.Stage), in.Stage, now, msg),
+			blockedRow(nodePostgresDBRowID(in.Database), in.Database, now, msg),
+			unchangedRow,
+		}
+	}
+	conn := buildNodePostgresConn(envVars)
+
+	nonce, value := v.Nonce()
+	roundtripRow, envRow, gotID, httpErr := v.doHTTP(ctx, stageURL, in, nonce, value, now)
+
+	var dbRow RequiredCheck
+	switch {
+	case conn.Host != in.Database:
+		// Point 4: db host override refused — HTTP still runs normally, but
+		// the SELECT never fires against an operator/user-set override.
+		dbRow = blockedRow(nodePostgresDBRowID(in.Database), in.Database, now, "db host override refused")
+	case httpErr != nil:
+		dbRow = blockedRow(nodePostgresDBRowID(in.Database), in.Database, now, "HTTP unreachable, no id to verify against")
+	default:
+		dbRow = v.evaluateDBRow(ctx, in, conn, nonce, value, gotID, now)
+	}
+
+	return []RequiredCheck{roundtripRow, envRow, dbRow, unchangedRow}
+}
+
+// missingServiceRows handles the case where at least one declared hostname
+// didn't resolve: the rows tied to a missing host are failed ("not found");
+// rows tied to a resolved host are blocked (a dependency is missing, so no
+// data-plane call is safe).
+func (v NodePostgresVerifier) missingServiceRows(in NodePostgresInput, now time.Time, stageSvc, dbSvc, unrelatedSvc *platform.ServiceStack) []RequiredCheck {
+	const depMissing = "dependent service missing"
+	row := func(id, check, scope string, found bool) RequiredCheck {
+		if !found {
+			return RequiredCheck{ID: id, Check: check, Scope: scope, Result: CheckFailed, Expected: "exists", Observed: "not found", ObservedAt: now, Source: "ListServicesDirect", Message: fmt.Sprintf("service %q not found in project", scope)}
+		}
+		return RequiredCheck{ID: id, Check: check, Scope: scope, Result: CheckBlocked, ObservedAt: now, Message: depMissing}
+	}
+	return []RequiredCheck{
+		row(nodePostgresRoundtripRowID(in.Stage), checkNodePostgresRecord, in.Stage, stageSvc != nil),
+		row(nodePostgresEnvironmentRowID(in.Stage), checkNodePostgresRecord, in.Stage, stageSvc != nil),
+		row(nodePostgresDBRowID(in.Database), checkNodePostgresRecord, in.Database, dbSvc != nil),
+		row(unrelatedArtifactRowID(in.Unrelated), checkUnrelatedArtifact, in.Unrelated, unrelatedSvc != nil),
+	}
+}
+
+// blockedRow builds one blocked node_postgres_record row — the only check
+// family every blockedRow call site in this file needs.
+func blockedRow(id, scope string, now time.Time, message string) RequiredCheck {
+	return RequiredCheck{ID: id, Check: checkNodePostgresRecord, Scope: scope, Result: CheckBlocked, ObservedAt: now, Message: message}
+}
+
+// evaluateUnchanged decides the unrelated_artifact/<unrelated>/unchanged
+// row: passed when the active app-version id at the freeze equals the one
+// recorded at scenario start; blocked when no baseline was recorded.
+func (v NodePostgresVerifier) evaluateUnchanged(in NodePostgresInput, unrelatedSvc *platform.ServiceStack, now time.Time) RequiredCheck {
+	id := unrelatedArtifactRowID(in.Unrelated)
+	if in.BaselineUnrelatedAppVersion == "" {
+		return RequiredCheck{ID: id, Check: checkUnrelatedArtifact, Scope: in.Unrelated, Result: CheckBlocked, ObservedAt: now, Source: "ListServicesDirect", Message: "no baseline recorded"}
+	}
+	current := ""
+	if unrelatedSvc.ActiveAppVersion != nil {
+		current = unrelatedSvc.ActiveAppVersion.ID
+	}
+	if current == in.BaselineUnrelatedAppVersion {
+		return RequiredCheck{ID: id, Check: checkUnrelatedArtifact, Scope: in.Unrelated, Result: CheckPassed, Expected: in.BaselineUnrelatedAppVersion, Observed: current, ObservedAt: now, Source: "ListServicesDirect", Message: "unrelated artifact unchanged"}
+	}
+	return RequiredCheck{ID: id, Check: checkUnrelatedArtifact, Scope: in.Unrelated, Result: CheckFailed, Expected: in.BaselineUnrelatedAppVersion, Observed: current, ObservedAt: now, Source: "ListServicesDirect", Message: "unrelated active app-version changed"}
+}
+
+// nodePostgresGETBody is the shape the record-roundtrip's GET /records/<id>
+// is expected to answer with.
+type nodePostgresGETBody struct {
+	ID          string `json:"id"`
+	Nonce       string `json:"nonce"`
+	Value       string `json:"value"`
+	Environment string `json:"environment"`
+}
+
+// expectedEnvironmentLiteral is the fixed string a well-formed stage
+// deployment persists as `environment` (§10.3 row table).
+const expectedEnvironmentLiteral = "stage"
+
+// doHTTP performs POST /records then GET /records/<id> against baseURL,
+// refusing redirects and never following a server-supplied absolute URL
+// (the GET target is always built from baseURL + the POST-returned id).
+// Returns the roundtrip/environment rows and the id the app returned, for
+// the caller to cross-check against the database row.
+func (v NodePostgresVerifier) doHTTP(ctx context.Context, baseURL string, in NodePostgresInput, nonce, value string, now time.Time) (roundtripRow, envRow RequiredCheck, gotID string, err error) {
+	roundtripID := nodePostgresRoundtripRowID(in.Stage)
+	envID := nodePostgresEnvironmentRowID(in.Stage)
+
+	postBody, marshalErr := json.Marshal(map[string]string{"nonce": nonce, "value": value})
+	if marshalErr != nil {
+		msg := fmt.Sprintf("marshal POST body: %v", marshalErr)
+		return blockedRow(roundtripID, in.Stage, now, msg), blockedRow(envID, in.Stage, now, msg), "", marshalErr
+	}
+	req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/records", bytes.NewReader(postBody))
+	if reqErr != nil {
+		msg := fmt.Sprintf("build POST request: %v", reqErr)
+		return blockedRow(roundtripID, in.Stage, now, msg), blockedRow(envID, in.Stage, now, msg), "", reqErr
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, doErr := v.HTTP.Do(req)
+	if doErr != nil {
+		msg := fmt.Sprintf("POST %s: %v", baseURL, doErr)
+		return blockedRow(roundtripID, in.Stage, now, msg), blockedRow(envID, in.Stage, now, msg), "", doErr
+	}
+	defer resp.Body.Close()
+	if isRedirect(resp.StatusCode) {
+		msg := fmt.Sprintf("POST %s returned redirect %d — refused", baseURL, resp.StatusCode)
+		return blockedRow(roundtripID, in.Stage, now, msg), blockedRow(envID, in.Stage, now, msg), "", fmt.Errorf("redirect refused")
+	}
+	postBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		msg := fmt.Sprintf("POST %s returned %d", baseURL, resp.StatusCode)
+		row := RequiredCheck{ID: roundtripID, Check: checkNodePostgresRecord, Scope: in.Stage, Result: CheckFailed, Expected: "201", Observed: fmt.Sprintf("%d", resp.StatusCode), ObservedAt: now, Source: "HTTP POST " + baseURL, Message: msg}
+		return row, blockedRow(envID, in.Stage, now, "POST did not succeed"), "", fmt.Errorf("non-2xx")
+	}
+	var postResp nodePostgresGETBody
+	_ = json.Unmarshal(postBytes, &postResp)
+	if postResp.ID == "" {
+		msg := "POST response carried no id"
+		return failedRoundtripRow(roundtripID, in.Stage, now, msg), blockedRow(envID, in.Stage, now, msg), "", fmt.Errorf("no id")
+	}
+
+	getURL := strings.TrimRight(baseURL, "/") + "/records/" + postResp.ID
+	getReq, getReqErr := http.NewRequestWithContext(ctx, http.MethodGet, getURL, http.NoBody)
+	if getReqErr != nil {
+		msg := fmt.Sprintf("build GET request: %v", getReqErr)
+		return blockedRow(roundtripID, in.Stage, now, msg), blockedRow(envID, in.Stage, now, msg), "", getReqErr
+	}
+	getResp, getErr := v.HTTP.Do(getReq)
+	if getErr != nil {
+		msg := fmt.Sprintf("GET %s: %v", getURL, getErr)
+		return blockedRow(roundtripID, in.Stage, now, msg), blockedRow(envID, in.Stage, now, msg), "", getErr
+	}
+	defer getResp.Body.Close()
+	if isRedirect(getResp.StatusCode) {
+		msg := fmt.Sprintf("GET %s returned redirect %d — refused", getURL, getResp.StatusCode)
+		return blockedRow(roundtripID, in.Stage, now, msg), blockedRow(envID, in.Stage, now, msg), "", fmt.Errorf("redirect refused")
+	}
+	getBytes, _ := io.ReadAll(io.LimitReader(getResp.Body, 4<<10))
+	if getResp.StatusCode < 200 || getResp.StatusCode >= 300 {
+		msg := fmt.Sprintf("GET %s returned %d", getURL, getResp.StatusCode)
+		row := RequiredCheck{ID: roundtripID, Check: checkNodePostgresRecord, Scope: in.Stage, Result: CheckFailed, Expected: "200", Observed: fmt.Sprintf("%d", getResp.StatusCode), ObservedAt: now, Source: "HTTP GET " + getURL, Message: msg}
+		return row, blockedRow(envID, in.Stage, now, "GET did not succeed"), "", fmt.Errorf("non-2xx")
+	}
+	var getBody nodePostgresGETBody
+	_ = json.Unmarshal(getBytes, &getBody)
+
+	roundtripPass := getBody.ID == postResp.ID && getBody.Nonce == nonce && getBody.Value == value
+	roundtripRow = RequiredCheck{
+		ID: roundtripID, Check: checkNodePostgresRecord, Scope: in.Stage,
+		Expected:   fmt.Sprintf("id=%s nonce=%s value=%s", postResp.ID, nonce, value),
+		Observed:   fmt.Sprintf("id=%s nonce=%s value=%s", getBody.ID, getBody.Nonce, getBody.Value),
+		ObservedAt: now, Source: "HTTP GET " + getURL,
+	}
+	if roundtripPass {
+		roundtripRow.Result = CheckPassed
+		roundtripRow.Message = "POST/GET roundtrip matched the verifier's own nonce/value/id"
+	} else {
+		roundtripRow.Result = CheckFailed
+		roundtripRow.Message = "POST/GET roundtrip did not match the verifier's own nonce/value/id"
+	}
+
+	envPass := getBody.Environment == expectedEnvironmentLiteral
+	envRow = RequiredCheck{
+		ID: envID, Check: checkNodePostgresRecord, Scope: in.Stage,
+		Expected: expectedEnvironmentLiteral, Observed: getBody.Environment,
+		ObservedAt: now, Source: "HTTP GET " + getURL,
+	}
+	if envPass {
+		envRow.Result = CheckPassed
+		envRow.Message = "GET body environment matched"
+	} else {
+		envRow.Result = CheckFailed
+		envRow.Message = "GET body environment did not match"
+	}
+
+	return roundtripRow, envRow, postResp.ID, nil
+}
+
+func failedRoundtripRow(id, stage string, now time.Time, message string) RequiredCheck {
+	return RequiredCheck{ID: id, Check: checkNodePostgresRecord, Scope: stage, Result: CheckFailed, ObservedAt: now, Message: message}
+}
+
+func isRedirect(status int) bool { return status >= 300 && status < 400 }
+
+// evaluateDBRow decides the node_postgres_record/<database>/db_row row: the
+// SELECT is keyed on nonce only (never on the app-returned id — §10.3
+// "Independence"); the id/value it returns are then compared against the
+// verifier's own value and the GET-returned id.
+func (v NodePostgresVerifier) evaluateDBRow(ctx context.Context, in NodePostgresInput, conn NodePostgresConn, nonce, value, gotID string, now time.Time) RequiredCheck {
+	id := nodePostgresDBRowID(in.Database)
+	dbID, dbValue, count, err := v.DB.QueryRecordByNonce(ctx, conn, nonce)
+	if err != nil {
+		return RequiredCheck{ID: id, Check: checkNodePostgresRecord, Scope: in.Database, Result: CheckBlocked, ObservedAt: now, Source: "SELECT records WHERE nonce=$1", Message: sanitizeSecretError(err.Error(), conn.Password)}
+	}
+	if count == 0 {
+		return RequiredCheck{ID: id, Check: checkNodePostgresRecord, Scope: in.Database, Result: CheckFailed, Expected: "exactly 1 row", Observed: "0 rows", ObservedAt: now, Source: "SELECT records WHERE nonce=$1", Message: "no row found for the verifier's nonce"}
+	}
+	if count > 1 {
+		return RequiredCheck{ID: id, Check: checkNodePostgresRecord, Scope: in.Database, Result: CheckFailed, Expected: "exactly 1 row", Observed: fmt.Sprintf("%d rows", count), ObservedAt: now, Source: "SELECT records WHERE nonce=$1", Message: "more than one row found for the verifier's nonce"}
+	}
+	if dbID != gotID || dbValue != value {
+		return RequiredCheck{
+			ID: id, Check: checkNodePostgresRecord, Scope: in.Database, Result: CheckFailed,
+			Expected: fmt.Sprintf("id=%s value=%s", gotID, value), Observed: fmt.Sprintf("id=%s value=%s", dbID, dbValue),
+			ObservedAt: now, Source: "SELECT records WHERE nonce=$1", Message: "database row does not match the app's response",
+		}
+	}
+	return RequiredCheck{
+		ID: id, Check: checkNodePostgresRecord, Scope: in.Database, Result: CheckPassed,
+		Expected: fmt.Sprintf("id=%s value=%s", gotID, value), Observed: fmt.Sprintf("id=%s value=%s", dbID, dbValue),
+		ObservedAt: now, Source: "SELECT records WHERE nonce=$1", Message: "database row matches",
+	}
+}
+
+// sanitizeSecretError replaces an error string with a fixed sentence when it
+// contains the database password or a full DSN — driver errors must never
+// leak credentials into a row's Message (§10.3 "Independence").
+func sanitizeSecretError(msg, password string) string {
+	const sentinel = "database error (details withheld)"
+	if password != "" && strings.Contains(msg, password) {
+		return sentinel
+	}
+	if strings.Contains(msg, "postgres://") || strings.Contains(msg, "postgresql://") {
+		return sentinel
+	}
+	return msg
+}
+
+// buildNodePostgresConn builds a NodePostgresConn from a service's env vars
+// (hostname/port/user/password/dbName only — §10.3 "Independence").
+func buildNodePostgresConn(envVars []platform.ServiceEnvVar) NodePostgresConn {
+	var conn NodePostgresConn
+	for _, e := range envVars {
+		switch e.Key {
+		case "hostname":
+			conn.Host = e.Content
+		case "port":
+			conn.Port = e.Content
+		case "user":
+			conn.User = e.Content
+		case "password":
+			conn.Password = e.Content
+		case "dbName":
+			conn.DBName = e.Content
+		}
+	}
+	return conn
+}
