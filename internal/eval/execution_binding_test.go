@@ -70,7 +70,7 @@ func TestExecutionBinding_CandidateMismatch_ZeroMutation(t *testing.T) { // non-
 	cfg := h.config()
 	cfg.Capture = realCaptureConnection(t, sessionDir)
 	cfg.CaptureOwned = true
-	cfg.Binding = h.binding(candidate, "0000000000000000000000000000000000000000000000000000000000000000"[:64], "offline-project")
+	cfg.Binding = h.binding(candidate, "0000000000000000000000000000000000000000000000000000000000000000"[:64])
 	runner := NewRunner(cfg, nil, client, "offline-project")
 
 	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
@@ -114,7 +114,7 @@ func TestExecutionBinding_NonFreshTarget_ZeroMutation(t *testing.T) { // non-par
 	cfg := h.config()
 	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
 	cfg.CaptureOwned = true
-	cfg.Binding = h.binding(candidate, sha, "offline-project")
+	cfg.Binding = h.binding(candidate, sha)
 	runner := NewRunner(cfg, nil, client, "offline-project")
 
 	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
@@ -186,7 +186,7 @@ fi
 	cfg := h.config()
 	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
 	cfg.CaptureOwned = true
-	cfg.Binding = h.binding(candidate, sha, "offline-project")
+	cfg.Binding = h.binding(candidate, sha)
 	cfg.ClaudeHome = cfg.Binding.ClaudeHome // production wiring: cmd/zcp's initEvalRunnerFor sets ClaudeHome from the binding when bound
 	runner := NewRunner(cfg, nil, client, "offline-project")
 
