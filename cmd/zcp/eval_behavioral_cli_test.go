@@ -304,7 +304,7 @@ func newCLIHarness(t *testing.T, appStatus string) *cliHarness {
 // run executes the built zcp binary with args, appending extraEnv, and
 // returns exit code + combined stdout/stderr (stderr is where every
 // behavioral CLI diagnostic is printed).
-func (h *cliHarness) run(t *testing.T, extraEnv []string, args ...string) (exitCode int, stderr string) {
+func (h *cliHarness) run(t *testing.T, extraEnv []string, args ...string) (exitCode int, stderr string) { //nolint:unparam // extraEnv is nil in the tests written so far; TestBehavioralCLI_CaptureCloseFailure_NonzeroEvenIfTaskPassed (next) passes ZCP_EVAL_FAKE_CLAUDE_BREAK_CAPTURE through it
 	t.Helper()
 	bin := buildZCPBinary(t)
 	cmd := exec.CommandContext(context.Background(), bin, args...)
@@ -509,4 +509,64 @@ func findCaptureSessionDir(t *testing.T, home string) string {
 		t.Fatalf("capture root entries = %v, want exactly one session directory", entries)
 	}
 	return filepath.Join(root, entries[0].Name())
+}
+
+// ---------------------------------------------------------------------------
+// TestBehavioralCLI_SharedCapture_RefusedBeforeMutation
+// ---------------------------------------------------------------------------
+
+// non-parallel: builds and runs the zcp binary with a private HOME.
+func TestBehavioralCLI_SharedCapture_RefusedBeforeMutation(t *testing.T) {
+	t.Run("no capture window at all", func(t *testing.T) {
+		h := newCLIHarness(t, "ACTIVE")
+		scenarioDir := t.TempDir()
+		scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-required-no-window", "required")
+
+		exitCode, stderr := h.run(t, nil, "eval", "behavioral", "run", "--file", scenarioPath)
+		if exitCode == 0 {
+			t.Fatalf("exit code = 0, want nonzero\nstderr:\n%s", stderr)
+		}
+		if !strings.Contains(stderr, "capture: required mode needs this invocation's own scoped capture window") {
+			t.Errorf("stderr does not name the capture refusal\nstderr:\n%s", stderr)
+		}
+		assertOnlyAuthAndDiscoveryRequests(t, h.server)
+	})
+
+	t.Run("inherited outer capture window", func(t *testing.T) {
+		h := newCLIHarness(t, "ACTIVE")
+		scenarioDir := t.TempDir()
+		scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-required-inherited", "required")
+		outerCaptureRoot := t.TempDir()
+		bin := buildZCPBinary(t)
+
+		exitCode, stderr := h.run(t, nil,
+			"capture", "raw", "--output-dir", outerCaptureRoot, "--",
+			bin, "eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw",
+		)
+		if exitCode == 0 {
+			t.Fatalf("exit code = 0, want nonzero\nstderr:\n%s", stderr)
+		}
+		if !strings.Contains(stderr, "capture: required mode needs this invocation's own scoped capture window") {
+			t.Errorf("stderr does not name the capture refusal\nstderr:\n%s", stderr)
+		}
+		assertOnlyAuthAndDiscoveryRequests(t, h.server)
+	})
+}
+
+// assertOnlyAuthAndDiscoveryRequests asserts the fake server saw at most the
+// auth/project-discovery reads (user/info, project/search) and nothing that
+// would mutate or read project-scoped state — i.e. the refused scenario made
+// zero platform calls beyond identity resolution.
+func assertOnlyAuthAndDiscoveryRequests(t *testing.T, server *fakeZeropsServer) {
+	t.Helper()
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	for _, req := range server.requests {
+		switch {
+		case req.Method == http.MethodGet && req.Path == "/api/rest/public/user/info":
+		case req.Method == http.MethodPost && req.Path == "/api/rest/public/project/search":
+		default:
+			t.Errorf("unexpected platform request after refusal: %s %s", req.Method, req.Path)
+		}
+	}
 }
