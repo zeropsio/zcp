@@ -36,9 +36,20 @@ var (
 	errZCPBuild   error
 )
 
-// zcpRepoRoot is this worktree's module root — cmd/zcp/eval_behavioral_cli_test.go
-// lives two levels below it.
-const zcpRepoRoot = "/Users/macbook/Documents/Zerops-MCP/zcp-wt/zcp-evolution"
+// zcpRepoRoot resolves the module root from the test's working directory —
+// `go test` runs a package's tests with cwd = the package directory, and
+// cmd/zcp lives two levels below the root. Verified by the presence of go.mod
+// so a moved checkout fails loudly instead of building a stranger's tree.
+func zcpRepoRoot() (string, error) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		return "", fmt.Errorf("resolve module root: %w", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
+		return "", fmt.Errorf("module root %s: %w", root, err)
+	}
+	return root, nil
+}
 
 func buildZCPBinary(t *testing.T) string {
 	t.Helper()
@@ -48,9 +59,14 @@ func buildZCPBinary(t *testing.T) string {
 			errZCPBuild = fmt.Errorf("create build tempdir: %w", err)
 			return
 		}
+		root, err := zcpRepoRoot()
+		if err != nil {
+			errZCPBuild = err
+			return
+		}
 		out := filepath.Join(dir, "zcp")
 		cmd := exec.CommandContext(context.Background(), "go", "build", "-o", out, "./cmd/zcp")
-		cmd.Dir = zcpRepoRoot
+		cmd.Dir = root
 		var stderr bytes.Buffer
 		cmd.Stdout = &stderr
 		cmd.Stderr = &stderr
