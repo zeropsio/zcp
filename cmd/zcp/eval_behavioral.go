@@ -60,7 +60,10 @@ The 'run' family runs the agent inside a Zerops container (existing flow-eval).
 and 'zcp' on PATH (via 'make install'); workdir/results live under
 /tmp/zcp-flow-eval-local/<suite>/<id>/ with results mirrored back to
 eval/behavioral/runs-local/<suite>/<id>/. Outputs from container-mode runs land
-under $ZCP_EVAL_RESULTS_DIR/<suiteId>/<scenarioId>/.`)
+under $ZCP_EVAL_RESULTS_DIR/<suiteId>/<scenarioId>/.
+
+A scenario with 'verification.mode: required' needs --capture raw on its own
+'run'/'all' invocation — a global or inherited capture window is refused.`)
 }
 
 func runBehavioralList(args []string) int {
@@ -122,13 +125,15 @@ func runBehavioralRun(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	accepted, reason := behavioralAccepted(result)
 	status := capture.CaptureComplete
-	if result.Error != "" {
+	if !accepted {
 		status = capture.CapturePartial
 	}
 	runner.EndCaptureEvalRun(ctx, suiteID, status, errorFromString(result.Error))
 	printBehavioralResult(result)
-	if result.Error != "" {
+	if !accepted {
+		fmt.Fprintf(os.Stderr, "rejected: %s\n", reason)
 		return 1
 	}
 	return 0
@@ -178,7 +183,9 @@ func runBehavioralAll(args []string) int {
 			continue
 		}
 		printBehavioralResult(result)
-		if result.Error != "" {
+		accepted, reason := behavioralAccepted(result)
+		if !accepted {
+			fmt.Fprintf(os.Stderr, "rejected: %s\n", reason)
 			failures++
 		}
 		// Honor cancellation between scenarios.
@@ -226,6 +233,60 @@ func printBehavioralResult(r *eval.BehavioralResult) {
 	if r.Error != "" {
 		fmt.Fprintf(os.Stderr, "Error:        %s\n", r.Error)
 	}
+	printBehavioralDimensions(r)
+}
+
+// printBehavioralDimensions prints the three CLI acceptance dimensions
+// (docs/spec-testing-architecture.md §10.1 "CLI acceptance"): Execution,
+// Task, and Task-end evidence. Required mode also names retention, since the
+// CLI claims no copy and no cleanup (§10.2).
+func printBehavioralDimensions(r *eval.BehavioralResult) {
+	if r.Error != "" {
+		fmt.Fprintf(os.Stderr, "Execution:    error: %s\n", r.Error)
+	} else {
+		fmt.Fprintln(os.Stderr, "Execution:    ok")
+	}
+	if r.Task != nil {
+		if r.Task.Mode == eval.VerificationObserve {
+			fmt.Fprintf(os.Stderr, "Task:         observe %s (advisory)\n", r.Task.Result)
+		} else {
+			fmt.Fprintf(os.Stderr, "Task:         %s %s\n", r.Task.Mode, r.Task.Result)
+		}
+	}
+	if r.TaskEnd != nil {
+		persisted := "persisted"
+		if !r.TaskEnd.Persisted {
+			persisted = fmt.Sprintf("not persisted: %s", r.TaskEnd.PersistError)
+		}
+		settled := "settled"
+		if !r.TaskEnd.Settled {
+			settled = fmt.Sprintf("unsettled (%s)", strings.Join(r.TaskEnd.LiveProcesses, ", "))
+		}
+		fmt.Fprintf(os.Stderr, "Task-end evidence: %s, %s\n", persisted, settled)
+	}
+	if r.Task != nil && r.Task.Mode == eval.VerificationRequired {
+		fmt.Fprintln(os.Stderr, "Retained:     project and results left in place for operator copy/cleanup")
+	}
+}
+
+// behavioralAccepted decides the CLI exit rule (docs/spec-testing-architecture.md
+// §10.1 "CLI acceptance"): observe mode accepts on execution success alone;
+// required mode also needs a passed task result with persisted task-end
+// evidence. reason names the failing dimension for the caller to print.
+func behavioralAccepted(r *eval.BehavioralResult) (ok bool, reason string) {
+	if r.Error != "" {
+		return false, fmt.Sprintf("execution: %s", r.Error)
+	}
+	if r.Task == nil || r.Task.Mode != eval.VerificationRequired {
+		return true, ""
+	}
+	if r.Task.Result != eval.CheckPassed {
+		return false, fmt.Sprintf("task: required result %s", r.Task.Result)
+	}
+	if r.TaskEnd == nil || !r.TaskEnd.Persisted {
+		return false, "task-end evidence: not persisted"
+	}
+	return true, ""
 }
 
 func printScenarioListEntry(sc *eval.Scenario) {
