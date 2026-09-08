@@ -570,3 +570,54 @@ func assertOnlyAuthAndDiscoveryRequests(t *testing.T, server *fakeZeropsServer) 
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// TestBehavioralCLI_OwnedScopedChild_FinalizesThenReturnsAcceptance
+// ---------------------------------------------------------------------------
+
+// non-parallel: builds and runs the zcp binary with a private HOME.
+func TestBehavioralCLI_OwnedScopedChild_FinalizesThenReturnsAcceptance(t *testing.T) {
+	h := newCLIHarness(t, "ACTIVE")
+	scenarioDir := t.TempDir()
+	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-required-pass", "required")
+
+	exitCode, stderr := h.run(t, nil, "eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw")
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr:\n%s", exitCode, stderr)
+	}
+	if !strings.Contains(stderr, "Task:         required passed") {
+		t.Errorf("stderr missing required-pass task line\nstderr:\n%s", stderr)
+	}
+
+	resultIdx := strings.Index(stderr, "=== Behavioral cli-required-pass ===")
+	completeIdx := strings.Index(stderr, "capture: complete")
+	if resultIdx < 0 || completeIdx < 0 || completeIdx < resultIdx {
+		t.Fatalf("wrapper's 'capture: complete' line did not appear after the runner's result block\nstderr:\n%s", stderr)
+	}
+
+	sessionDir := findCaptureSessionDir(t, h.home)
+	manifest, err := capture.ReadSessionManifest(filepath.Join(sessionDir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	if manifest.Status != "complete" {
+		t.Fatalf("manifest status = %q, want complete", manifest.Status)
+	}
+
+	metaPath := findResultFile(t, h.resultsDir, "cli-required-pass", "meta.json")
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("read meta.json: %v", err)
+	}
+	var meta struct {
+		TaskEnd struct {
+			Persisted bool `json:"persisted"`
+		} `json:"taskEnd"`
+	}
+	if err := json.Unmarshal(data, &meta); err != nil {
+		t.Fatalf("parse meta.json: %v\n%s", err, data)
+	}
+	if !meta.TaskEnd.Persisted {
+		t.Errorf("meta.json taskEnd.persisted = false, want true")
+	}
+}
