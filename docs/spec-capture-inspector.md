@@ -495,6 +495,25 @@ keyboard edge selection, reveal gating, escaped hostile markup, strict CSP,
 single-detail ownership, and responsive 1024/2560 px layouts. Playwright and its
 browser remain outside the Go/runtime dependency graph and embedded binary.
 
+### 8.5 Read-only eval report consumer
+
+A finalized capture window can be read by one eval-side consumer:
+`zcp eval behavioral report --capture <dir> --eval <id> --scenario <id>
+[--format text|json]` (testing spec §10.5). It opens the window through
+`InspectSession` and `FilterInspection`, then reads the selected scenario's
+eval artifacts through a capture-owned reader that resolves the path the
+same way inspection does (inside the window, no symlink component, regular
+file, listed in the manifest) and re-verifies size and SHA-256 against the
+manifest immediately before returning the bytes — the same rule §8 states
+for detail files; it shares the inspection path resolver and hash helper
+rather than re-implementing them. A path outside the inventory, a file that
+no longer matches the manifest, a manifest-less legacy window, or a foreign
+or ambiguous `--eval`/`--scenario` yields a diagnostic, never bytes. The
+consumer performs no network, provider, platform or model call, never joins
+a session, and never writes into the window; running the report leaves
+every canonical file byte-identical. It reads finalized windows only; a
+running window is the inspector's provisional view (§8.3).
+
 ## 9. Compatibility and non-goals
 
 The first supported transport lane is the empirically verified Claude Code

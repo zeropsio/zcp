@@ -570,3 +570,51 @@ one counted observation whose digest equals the candidate and whose
 `projectId` equals the binding, and no counted observation contradicting
 either; none, or an unsupported OS, is `blocked`. An observation cannot undo
 actions already taken, and a missing one never claims seed did not happen.
+
+### 10.5 Deterministic single-run report
+
+The report is a read-only projection of one scenario run's frozen evidence
+for a human reader (capture spec §8.5). It has no verdict authority: the
+task result it prints is `verification.json`'s, capture validity is
+`InspectSession`'s, the process-identity numbers are counts of recorded
+observations; the report adds nothing that is not in a file. Text and JSON
+carry the same sections (the JSON mirrors the text; it is not a versioned
+wire contract in M0):
+
+1. **Result** — `task {mode, result, frozenAt}`, `execution {error}`,
+   `taskEnd {persisted, settled}`, `capture {status, valid, complete}`, the
+   `binding` record when present, and `processIdentity` as copied counts
+   (observations, counted, matching the candidate digest, project
+   mismatches) — never a re-derived acceptance verdict. Each value names its
+   source file.
+2. **Checks** — every `RequiredCheck` row: id, result, expected, observed,
+   source.
+3. **Invocations** — by recorded lifecycle phase: status, joined provider
+   exchange count, MCP tool-call count from its streams, and usage summed
+   over its joined exchanges as four numbers each with an `observed` flag.
+   A number whose exchanges lack the field prints `unknown`, never `0`; an
+   invocation with no joined exchanges prints `unknown` usage and its
+   exchanges as unattributed. Agent phases and overhead phases (user
+   simulation, retrospective) are two separate totals, never one sum; the
+   phase-to-total mapping is the report's own and is printed.
+4. **MCP** — per stream: file, tool calls, results, bytes. The number of
+   tools advertised in the MCP schema is never printed as a call count.
+5. **Findings** — at most five sentences, each a fact with a coordinate
+   (`file:seq` or artifact path). No quality score, no causal diagnosis, no
+   "wasted call" or "token savings" claim; a repeated retrieval or a
+   corrective deploy is a count, not a defect.
+6. **Gaps** — mandatory: every dimension that is unknown, missing or
+   unobserved (no process-identity observation, usage unobserved, no
+   verification block, incomplete capture), plus the fixed sentence that
+   later copy and cleanup are operator notes outside the capture and are
+   not assessed.
+
+Exit codes: 0 when the selected run was read from a valid and complete
+window (a failed task is still a successful report); 1 when the window is
+invalid or the scope does not resolve (diagnostic-only output), and 1 when
+the window is valid but incomplete (the full report is printed from the
+verified prefix with the gap listed). Untrusted text (prompts, tool
+results, self-review) is never executed or followed and appears only as
+bounded quoted excerpts where a finding needs one; hidden thinking is
+excluded. Two reports are compared by a human; the tool has no pair mode
+and no explanation mode.
