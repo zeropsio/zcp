@@ -99,7 +99,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	if sc.IsRequired() && (r.config.Capture == nil || !r.config.CaptureOwned) {
 		result.Error = "capture: required mode needs this invocation's own scoped capture window (run with --capture raw)"
 		result.Duration = Duration(time.Since(startedAt))
-		writeBehavioralResult(outDir, result)
+		logBehavioralResultWrite(outDir, result)
 		return result, nil
 	}
 
@@ -186,7 +186,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 			r.observeTaskEnd(context.WithoutCancel(ctx), sc, outDir, result, startedAt, selfReview)
 		}
 		result.Duration = Duration(time.Since(startedAt))
-		writeBehavioralResult(outDir, result)
+		logBehavioralResultWrite(outDir, result)
 		return result, nil
 	}
 	result.RetroWallTime = Duration(time.Since(retroStart))
@@ -213,7 +213,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	}
 
 	result.Duration = Duration(time.Since(startedAt))
-	writeBehavioralResult(outDir, result)
+	logBehavioralResultWrite(outDir, result)
 
 	return result, nil
 }
@@ -325,7 +325,7 @@ func (r *Runner) runInitialAgent(ctx, scenarioCtx context.Context, sc *Scenario,
 func (r *Runner) notRunFailure(ctx context.Context, sc *Scenario, outDir string, result *BehavioralResult, startedAt time.Time) *BehavioralResult {
 	r.freezeTaskEnd(context.WithoutCancel(ctx), sc, outDir, result, startedAt, false, nil)
 	result.Duration = Duration(time.Since(startedAt))
-	writeBehavioralResult(outDir, result)
+	logBehavioralResultWrite(outDir, result)
 	return result
 }
 
@@ -435,16 +435,18 @@ func (r *Runner) freezeTaskEnd(
 		FormatVersion: VerificationDocumentFormat2, Mode: mode, Result: taskResult,
 		FrozenAt: frozenAt, Checks: rows, Advisory: findings,
 	}, snapshot)
+	result.TaskEnd.Persisted = persistErr == nil
+	if persistErr == nil {
+		persistErr = writeBehavioralResult(outDir, result)
+	}
 	if persistErr != nil {
 		result.TaskEnd.Persisted = false
 		result.TaskEnd.PersistError = persistErr.Error()
 		if result.Task.Result == CheckPassed {
 			result.Task.Result = CheckBlocked
 		}
-	} else {
-		result.TaskEnd.Persisted = true
+		logBehavioralResultWrite(outDir, result)
 	}
-	writeBehavioralResult(outDir, result)
 }
 
 // persistTaskEndArtifacts writes verification.json and platform-snapshot.json
@@ -767,10 +769,16 @@ func detectCompaction(logFile string) bool {
 	return false
 }
 
-func writeBehavioralResult(outDir string, r *BehavioralResult) {
-	data, err := json.MarshalIndent(r, "", "  ")
-	if err != nil {
-		return
+// writeBehavioralResult persists meta.json via temp+fsync+rename
+// (docs/spec-testing-architecture.md §10.2 step 5). Callers outside the
+// task-end freeze only log the error: meta.json is the persisted task-end
+// artifact there, and a plain progress write elsewhere.
+func writeBehavioralResult(outDir string, r *BehavioralResult) error {
+	return writeJSONAtomic(outDir, "meta.json", r)
+}
+
+func logBehavioralResultWrite(outDir string, r *BehavioralResult) {
+	if err := writeBehavioralResult(outDir, r); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: write meta.json: %v\n", err)
 	}
-	_ = os.WriteFile(filepath.Join(outDir, "meta.json"), data, 0o600)
 }

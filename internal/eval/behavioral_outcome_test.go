@@ -580,3 +580,47 @@ func (c *deleteTrackingClient) ListServices(ctx context.Context, projectID strin
 	}
 	return c.Mock.ListServices(ctx, projectID)
 }
+
+// TestBehavioralOutcome_MetaPersistenceFailure_Blocked pins the meta.json
+// half of docs/spec-testing-architecture.md §10.2 step 5: meta.json is a
+// persisted task-end artifact, so a failure to write it is a persistence
+// failure — Persisted=false, a would-be passed result reads blocked, and the
+// already-written verification.json / platform-snapshot.json are retained.
+func TestBehavioralOutcome_MetaPersistenceFailure_Blocked(t *testing.T) { // non-parallel: process environment
+	h := newBehavioralHarness(t)
+	h.writeClaudeScript(t, defaultFakeClaudeDone)
+	t.Setenv("RETRO_MARKER", filepath.Join(h.root, "retro-marker"))
+	scenarioPath := h.writeScenario(t, requiredExpectedAppScenario("required-meta-fails"))
+	client := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
+	cfg := h.config()
+	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
+	cfg.CaptureOwned = true
+	runner := NewRunner(cfg, nil, client, "offline-project")
+
+	outDir := h.outDir("required-meta-fails")
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(outDir, "meta.json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.TaskEnd == nil || result.TaskEnd.Persisted || result.TaskEnd.PersistError == "" {
+		t.Fatalf("TaskEnd = %+v, want Persisted=false with a PersistError naming meta.json", result.TaskEnd)
+	}
+	if result.Task == nil || result.Task.Result != CheckBlocked {
+		t.Fatalf("Task = %+v, want blocked", result.Task)
+	}
+	for _, name := range []string{"verification.json", "platform-snapshot.json"} {
+		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
+			t.Errorf("%s missing after meta.json persist failure: %v", name, err)
+		}
+	}
+	if client.CallCounts["DeleteService"] != 0 {
+		t.Errorf("DeleteService called %d times, want 0", client.CallCounts["DeleteService"])
+	}
+}
