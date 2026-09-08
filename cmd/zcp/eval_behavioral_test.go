@@ -170,3 +170,19 @@ func TestExecutionBinding_ParseFlags_AllOrNothing(t *testing.T) {
 		}
 	})
 }
+
+// TestExecutionBinding_AllRefusesDirAndRunIDFlags pins that `behavioral all`
+// refuses --work-dir/--results-dir/--run-id as it refuses the binding flags,
+// instead of accepting and silently ignoring them.
+func TestExecutionBinding_AllRefusesDirAndRunIDFlags(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{
+		{"--scenarios-dir", "x", "--work-dir", "/tmp/w"},
+		{"--scenarios-dir", "x", "--results-dir", "/tmp/r"},
+		{"--scenarios-dir", "x", "--run-id", "r1"},
+	} {
+		if err := rejectBindingFlagsForAll(args); err == nil {
+			t.Errorf("rejectBindingFlagsForAll(%v) = nil, want an error", args)
+		}
+	}
+}

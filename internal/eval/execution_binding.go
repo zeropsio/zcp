@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -211,7 +212,9 @@ func isPathNested(outer, inner string) bool {
 	if err != nil {
 		return false
 	}
-	return rel != "." && rel != ".." && len(rel) > 0 && rel[0] != '.'
+	// Only a ".."-prefixed relative path escapes outer; a dot-named first
+	// segment (".results") is still nested.
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // createCandidateOwnedSurface creates the work dir + sentinel (exporting

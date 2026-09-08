@@ -520,7 +520,7 @@ func rejectBindingFlagsForAll(args []string) error {
 	if err != nil {
 		return err
 	}
-	if flags.any {
+	if flags.any || flags.workDir != "" || flags.resultsDir != "" || flags.runID != "" {
 		return fmt.Errorf("'behavioral all' does not accept an explicit binding — required-mode retention makes a second scenario on the same target fail freshness by design; run the scenario directly with 'behavioral run'")
 	}
 	return nil

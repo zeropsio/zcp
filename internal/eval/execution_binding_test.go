@@ -39,6 +39,8 @@ func TestExecutionBinding_UnsafeOrOverlappingPaths_Refused(t *testing.T) {
 		{"results dir is root", work, "/"},
 		{"work dir is home", home, results},
 		{"results dir is home", work, home},
+		{"nested: dot-named results inside work", work, filepath.Join(work, ".results")},
+		{"nested: dot-named work inside results", filepath.Join(results, ".work"), results},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

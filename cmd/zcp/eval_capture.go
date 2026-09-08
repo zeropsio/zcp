@@ -124,6 +124,9 @@ func runEvalScopedCaptureRaw(wrapperArgs []string) int {
 	windowID := filepath.Base(result.SessionDir)
 	if result.ChildErr != nil {
 		fmt.Fprintf(os.Stderr, "capture: child process: %v\n", result.ChildErr)
+		if result.CloseErr != nil || result.Status != capture.CaptureComplete {
+			fmt.Fprintf(os.Stderr, "capture: window %s closed %s: %v\n", windowID, result.Status, result.CloseErr)
+		}
 		return 1
 	}
 	if result.CloseErr != nil || result.Status != capture.CaptureComplete {
