@@ -685,9 +685,22 @@ func TestBehavioralCLI_OwnedScopedChild_FinalizesThenReturnsAcceptance(t *testin
 		if exitCode != 0 {
 			t.Fatalf("exit code = %d, want 0 on linux\nstderr:\n%s", exitCode, stderr)
 		}
-	} else if exitCode == 0 {
-		t.Fatalf("exit code = 0, want nonzero on %s (process identity is always unsupported)\nstderr:\n%s", runtime.GOOS, stderr)
+		if !strings.Contains(stderr, "Process identity: ok") {
+			t.Errorf("stderr missing 'Process identity: ok' on linux\nstderr:\n%s", stderr)
+		}
+	} else {
+		if exitCode == 0 {
+			t.Fatalf("exit code = 0, want nonzero on %s (process identity is always unsupported)\nstderr:\n%s", runtime.GOOS, stderr)
+		}
+		if !strings.Contains(stderr, "Process identity: blocked") {
+			t.Errorf("stderr missing 'Process identity: blocked' on %s\nstderr:\n%s", runtime.GOOS, stderr)
+		}
+		if !strings.Contains(stderr, "rejected:") || !strings.Contains(stderr, "process identity") {
+			t.Errorf("stderr missing a 'rejected:' line naming process identity on %s\nstderr:\n%s", runtime.GOOS, stderr)
+		}
 	}
+	// Asserted on both OSes: the task itself still passes, and finalization
+	// still completes, even when the fourth dimension blocks acceptance.
 	if !strings.Contains(stderr, "Task:         required passed") {
 		t.Errorf("stderr missing required-pass task line\nstderr:\n%s", stderr)
 	}
