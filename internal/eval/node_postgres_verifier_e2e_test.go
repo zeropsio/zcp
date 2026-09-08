@@ -23,6 +23,7 @@ type nodePostgresOracleInputs struct {
 	stage, database, unrelated            string
 	stageID, databaseID, unrelatedID      string
 	otherAppVersion, ackDisposableProject string
+	dbResolveDomain                       string
 }
 
 // readNodePostgresOracleInputs reads the ZCP_EVAL_ORACLE_* environment
@@ -43,6 +44,7 @@ func readNodePostgresOracleInputs(t *testing.T) (in nodePostgresOracleInputs, fo
 		"ZCP_EVAL_ORACLE_OTHER_ID":               &in.unrelatedID,
 		"ZCP_EVAL_ORACLE_OTHER_APPVERSION":       &in.otherAppVersion,
 		"ZCP_EVAL_ORACLE_ACK_DISPOSABLE_PROJECT": &in.ackDisposableProject,
+		"ZCP_EVAL_ORACLE_DB_RESOLVE_DOMAIN":      &in.dbResolveDomain,
 	}
 	for name, dst := range vars {
 		v, ok := os.LookupEnv(name)
@@ -100,9 +102,29 @@ func newNodePostgresOracleVerifier(t *testing.T, in nodePostgresOracleInputs) (N
 	return NodePostgresVerifier{
 		Client: client,
 		HTTP:   httpClient,
-		DB:     PgxNodePostgresDB{},
+		DB:     resolveDomainDB{Domain: in.dbResolveDomain, Inner: PgxNodePostgresDB{}},
 		Nonce:  randomNodePostgresNonce,
 	}, client
+}
+
+// resolveDomainDB is a calibration-harness-only dial adapter. The verifier
+// has already required the managed env `hostname` to equal the declared
+// database hostname before this is reached; the adapter only qualifies that
+// host for DNS when the operator runs the calibration over a multi-project
+// VPN, whose resolver knows `<host>.<routingDomain>.zerops-project` and not
+// the bare `<host>` (single-project VPN and in-project containers resolve
+// the bare name, so Domain stays empty there). It never changes which host
+// is compared, only how the same host is dialled — verified live 2026-09-08.
+type resolveDomainDB struct {
+	Domain string
+	Inner  NodePostgresDB
+}
+
+func (d resolveDomainDB) QueryRecordByNonce(ctx context.Context, conn NodePostgresConn, nonce string) (id, value string, count int, err error) {
+	if d.Domain != "" {
+		conn.Host = conn.Host + "." + d.Domain
+	}
+	return d.Inner.QueryRecordByNonce(ctx, conn, nonce)
 }
 
 func nodePostgresOracleInput(in nodePostgresOracleInputs) NodePostgresInput {
@@ -128,6 +150,7 @@ func TestE2E_EvalNodePostgres_KnownGood_Passes(t *testing.T) {
 
 	verifier, _ := newNodePostgresOracleVerifier(t, in)
 	rows := verifier.Verify(context.Background(), nodePostgresOracleInput(in))
+	logNodePostgresRows(t, rows)
 	for _, row := range rows {
 		if row.Result != CheckPassed {
 			t.Errorf("row %s = %s, want passed against the known-good fixture (message: %s)", row.ID, row.Result, row.Message)
@@ -148,6 +171,7 @@ func TestE2E_EvalNodePostgres_FakeWithoutRow_FailsDBRowOnly(t *testing.T) {
 
 	verifier, _ := newNodePostgresOracleVerifier(t, in)
 	rows := verifier.Verify(context.Background(), nodePostgresOracleInput(in))
+	logNodePostgresRows(t, rows)
 	for _, row := range rows {
 		wantFail := row.Check == checkNodePostgresRecord && row.Scope == in.database
 		if wantFail && row.Result != CheckFailed {
@@ -156,5 +180,15 @@ func TestE2E_EvalNodePostgres_FakeWithoutRow_FailsDBRowOnly(t *testing.T) {
 		if !wantFail && row.Result != CheckPassed {
 			t.Errorf("row %s = %s, want passed (only db_row should fail against the plausible fake)", row.ID, row.Result)
 		}
+	}
+}
+
+// logNodePostgresRows prints every row so a calibration run leaves the
+// decided evidence in the test log, not only a pass/fail line. Rows never
+// carry credentials (§10.3 "Independence"), so logging them is safe.
+func logNodePostgresRows(t *testing.T, rows []RequiredCheck) {
+	t.Helper()
+	for _, row := range rows {
+		t.Logf("row %s = %s (expected %q, observed %q, source %s): %s", row.ID, row.Result, row.Expected, row.Observed, row.Source, row.Message)
 	}
 }

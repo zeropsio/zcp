@@ -487,6 +487,12 @@ deploying the fake) and `_ACK_DISPOSABLE_PROJECT`. With no oracle input the
 test skips; with any input it either has all of them and matching
 cross-checks or fails before any network call. A skipped calibration is not
 acceptance. It runs where the managed database is reachable — the disposable
-project's own container or a laptop with the project VPN up. The
-acknowledgement is an operator assertion the code cannot verify; the code's
-own protection is the cross-check refusal.
+project's own container or a laptop with the project VPN up. A
+multi-project VPN resolves services only as
+`<host>.<routingDomain>.zerops-project`, never as the bare `<host>`; the
+calibration takes that routing domain as `_DB_RESOLVE_DOMAIN` and applies
+it to dialling only, after the verifier has already required the managed
+env `hostname` to equal the declared database hostname (single-project VPN
+and in-project runs leave it empty). The acknowledgement is an operator
+assertion the code cannot verify; the code's own protection is the
+cross-check refusal.

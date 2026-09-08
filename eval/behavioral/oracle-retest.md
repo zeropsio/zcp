@@ -60,6 +60,10 @@ export ZCP_EVAL_ORACLE_DB_ID=...           # db's service id
 export ZCP_EVAL_ORACLE_OTHER_ID=...        # other's service id
 export ZCP_EVAL_ORACLE_OTHER_APPVERSION=...# from step 1
 export ZCP_EVAL_ORACLE_ACK_DISPOSABLE_PROJECT=yes
+# Multi-project VPN only (zcli multi mode): the tunnel's routingDomain from
+# `zcli vpn status --json`, e.g. g8h...c90.zerops-project. Leave unset on a
+# single-project VPN or inside the project's own container.
+export ZCP_EVAL_ORACLE_DB_RESOLVE_DOMAIN=...
 
 go test ./internal/eval -tags e2e -run '^TestE2E_EvalNodePostgres_KnownGood_Passes$' -v
 ```
