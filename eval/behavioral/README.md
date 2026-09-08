@@ -141,6 +141,28 @@ when resumes share one Claude session ID. The bundle includes provider/MCP raw,
 lifecycle markers, and copies of the scenario artifacts. See
 `docs/spec-capture-inspector.md`.
 
+### Explicit candidate binding (required mode only)
+
+A `required`-mode run must name the exact binary under test and the one
+project it may touch — see `docs/spec-testing-architecture.md` §10.4. The
+runner refuses to start (zero platform mutation) on a candidate mismatch, a
+non-fresh target, or a missing binding.
+
+```
+zcp eval behavioral run --scenarios-dir <dir> --id <id> --capture raw \
+  --candidate /path/to/candidate-zcp \
+  --candidate-sha256 "$(sha256sum /path/to/candidate-zcp | cut -d' ' -f1)" \
+  --project-id <disposable-project-id> \
+  --ack-disposable-project yes
+```
+
+The candidate becomes the agent's `zcp`: `<candidate> init` (not the
+evaluator's own init) writes the work dir's agent-facing files, and every
+`claude` child's `PATH` is shadowed by a private symlink to the candidate.
+`--work-dir`/`--results-dir` override `ZCP_EVAL_WORK_DIR`/`ZCP_EVAL_RESULTS_DIR`;
+`--run-id` defaults to the suite id. `behavioral all` refuses any of these
+flags — bind and run one scenario at a time.
+
 ## Operational contract
 
 Every `flow-eval.sh <id>` invocation runs unconditionally, in this order,
