@@ -570,3 +570,14 @@ func TestNodePostgresVerifier_NumericJSONID_Accepted(t *testing.T) {
 		}
 	}
 }
+
+// TestNodePostgresRecordQuery_IDAsText pins that the production SELECT casts
+// the id column to text: an app may use SERIAL, uuid or text ids, and the
+// verifier compares string forms (live S5 run 4 scanned a uuid id as 16 raw
+// bytes and failed a correct app).
+func TestNodePostgresRecordQuery_IDAsText(t *testing.T) {
+	t.Parallel()
+	if nodePostgresRecordQuery != "SELECT id::text, value FROM records WHERE nonce = $1" {
+		t.Fatalf("query = %q", nodePostgresRecordQuery)
+	}
+}

@@ -57,6 +57,10 @@ type NodePostgresDB interface {
 	QueryRecordByNonce(ctx context.Context, conn NodePostgresConn, nonce string) (id, value string, count int, err error)
 }
 
+// nodePostgresRecordQuery is the one SELECT the oracle runs. The id is cast
+// to text so SERIAL, uuid and text ids all compare by their string form.
+const nodePostgresRecordQuery = "SELECT id::text, value FROM records WHERE nonce = $1"
+
 // PgxNodePostgresDB is the production NodePostgresDB: connects fresh per
 // call, runs the SELECT in a read-only transaction, parameterised on nonce.
 type PgxNodePostgresDB struct{}
@@ -74,27 +78,23 @@ func (PgxNodePostgresDB) QueryRecordByNonce(ctx context.Context, conn NodePostgr
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	rows, err := tx.Query(ctx, "SELECT id, value FROM records WHERE nonce = $1", nonce)
+	rows, err := tx.Query(ctx, nodePostgresRecordQuery, nonce)
 	if err != nil {
 		return "", "", 0, fmt.Errorf("select: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		count++
-		// The id column is whatever the app created (SERIAL, uuid, text);
-		// scan it as a generic value and compare its string form.
-		var rawID any
 		if count == 1 {
-			if scanErr := rows.Scan(&rawID, &value); scanErr != nil {
+			if scanErr := rows.Scan(&id, &value); scanErr != nil {
 				return "", "", 0, fmt.Errorf("scan: %w", scanErr)
 			}
-			id = fmt.Sprint(rawID)
 			continue
 		}
 		// Keep counting past the first row (a >1-row result is itself the
 		// failure signal) without overwriting id/value.
-		var extraValue string
-		_ = rows.Scan(&rawID, &extraValue)
+		var extraID, extraValue string
+		_ = rows.Scan(&extraID, &extraValue)
 	}
 	if err := rows.Err(); err != nil {
 		return "", "", 0, fmt.Errorf("rows: %w", err)
