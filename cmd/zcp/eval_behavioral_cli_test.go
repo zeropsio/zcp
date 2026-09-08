@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -784,5 +785,68 @@ func TestExecutionBinding_WrongProject_RefusedBeforeRunner(t *testing.T) {
 	}
 	if n := h.server.deleteCount(); n != 0 {
 		t.Errorf("DELETE requests = %d, want 0", n)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestBehavioralCLI_Bound_RequiredRefusesOnUnsupportedOS_OrAcceptsOnLinux
+// ---------------------------------------------------------------------------
+
+// non-parallel: builds and runs the zcp binary with a private HOME.
+//
+// TestBehavioralCLI_Bound_RequiredRefusesOnUnsupportedOS_OrAcceptsOnLinux
+// pins docs/spec-testing-architecture.md §10.4's fourth acceptance
+// dimension end to end: on a non-Linux CI/dev machine the process-identity
+// observation is always "unsupported", so a required run with a binding
+// must exit nonzero and print the exact blocked line; on Linux the same
+// scenario must actually observe the candidate `serve` process and accept.
+// Both branches are real assertions (runtime.GOOS decides which), not a
+// skip.
+func TestBehavioralCLI_Bound_RequiredRefusesOnUnsupportedOS_OrAcceptsOnLinux(t *testing.T) {
+	h := newCLIHarness(t, "")
+	scenarioDir := t.TempDir()
+	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-bound-identity", "required")
+
+	bin := buildZCPBinary(t)
+	candidate := filepath.Join(t.TempDir(), "zcp-candidate")
+	copyExecutableFile(t, bin, candidate)
+	sha := sha256HexFile(t, candidate)
+
+	exitCode, stderr := h.run(t, nil,
+		"eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw",
+		"--candidate", candidate,
+		"--candidate-sha256", sha,
+		"--project-id", fakeProjectID,
+		"--ack-disposable-project", "yes",
+	)
+
+	if runtime.GOOS != "linux" {
+		if exitCode == 0 {
+			t.Fatalf("exit code = 0, want nonzero on %s\nstderr:\n%s", runtime.GOOS, stderr)
+		}
+		if !strings.Contains(stderr, "Process identity: blocked: unsupported OS") {
+			t.Errorf("stderr missing 'Process identity: blocked: unsupported OS'\nstderr:\n%s", stderr)
+		}
+		return
+	}
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0 on linux\nstderr:\n%s", exitCode, stderr)
+	}
+	if !strings.Contains(stderr, "Process identity: ok") {
+		t.Errorf("stderr missing 'Process identity: ok'\nstderr:\n%s", stderr)
+	}
+}
+
+// copyExecutableFile copies src to dst preserving the executable bit — used
+// to give a CLI test a "candidate" binary that is byte-identical to (but a
+// different path from) the binary under test.
+func copyExecutableFile(t *testing.T, src, dst string) {
+	t.Helper()
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("read %s: %v", src, err)
+	}
+	if err := os.WriteFile(dst, data, 0o700); err != nil {
+		t.Fatalf("write %s: %v", dst, err)
 	}
 }

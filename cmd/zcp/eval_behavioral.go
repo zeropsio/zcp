@@ -330,6 +330,13 @@ func printBehavioralDimensions(r *eval.BehavioralResult) {
 	if r.Task != nil && r.Task.Mode == eval.VerificationRequired {
 		fmt.Fprintln(os.Stderr, "Retained:     project and results left in place for operator copy/cleanup")
 	}
+	if r.Binding != nil {
+		if ok, reason := eval.ProcessIdentityAccepted(r); ok {
+			fmt.Fprintf(os.Stderr, "Process identity: ok (pid %d)\n", eval.MatchingProcessIdentityPID(r))
+		} else {
+			fmt.Fprintf(os.Stderr, "Process identity: blocked: %s\n", strings.TrimPrefix(reason, "process identity: "))
+		}
+	}
 }
 
 // behavioralAccepted decides the CLI exit rule (docs/spec-testing-architecture.md
@@ -348,6 +355,11 @@ func behavioralAccepted(r *eval.BehavioralResult) (ok bool, reason string) {
 	}
 	if r.TaskEnd == nil || !r.TaskEnd.Persisted {
 		return false, "task-end evidence: not persisted"
+	}
+	if r.Binding != nil {
+		if ok, reason := eval.ProcessIdentityAccepted(r); !ok {
+			return false, reason
+		}
 	}
 	return true, ""
 }
