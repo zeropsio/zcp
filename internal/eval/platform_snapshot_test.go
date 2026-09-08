@@ -105,7 +105,10 @@ func TestCollectBehavioralPlatformEvidence_QueryFailuresAreDiagnosticsNotEmptyTr
 	if len(findings) != 2 {
 		t.Fatalf("findings = %+v, want two explicit query failures", findings)
 	}
-	if findings[0].Check != "platform_query" || findings[1].Check != "no_failed_processes" {
+	// findings[0]: ListServicesDirect error is now a blocked row (§10.1),
+	// projected to an "expected_service" warn advisory — a query failure
+	// can't prove the assertion false, only unevaluated.
+	if findings[0].Check != "expected_service" || findings[1].Check != "no_failed_processes" {
 		t.Fatalf("findings = %+v", findings)
 	}
 }

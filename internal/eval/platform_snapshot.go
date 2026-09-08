@@ -2,10 +2,7 @@ package eval
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"time"
 
@@ -82,11 +79,27 @@ func CollectBehavioralPlatformEvidence(
 	runStart time.Time,
 ) (PlatformSnapshot, []VerificationFinding) {
 	observation := collectPlatformObservation(ctx, client, projectID, true, true)
-	findings := runVerificationWithObservation(ctx, scenario, observation, httpDoer, retrospectiveText, runStart)
+	findings := runVerificationWithObservation(ctx, scenario, observation, httpDoer, retrospectiveText, runStart, projectID)
 	if findings == nil {
 		findings = []VerificationFinding{}
 	}
 
+	snapshot := buildPlatformSnapshotFromObservation(projectID, runStart, observation, findings)
+	return snapshot, findings
+}
+
+// buildPlatformSnapshotFromObservation projects one platformObservation into
+// the persisted PlatformSnapshot shape, attaching the already-computed
+// advisory findings list.
+func buildPlatformSnapshotFromObservation(
+	projectID string,
+	runStart time.Time,
+	observation platformObservation,
+	findings []VerificationFinding,
+) PlatformSnapshot {
+	if findings == nil {
+		findings = []VerificationFinding{}
+	}
 	snapshot := PlatformSnapshot{
 		FormatVersion:        PlatformSnapshotFormat1,
 		ProjectID:            projectID,
@@ -163,16 +176,11 @@ func CollectBehavioralPlatformEvidence(
 			return snapshot.Processes[i].ID < snapshot.Processes[j].ID
 		})
 	}
-	return snapshot, findings
+	return snapshot
 }
 
 func WritePlatformSnapshot(outputDir string, snapshot PlatformSnapshot) error {
-	data, err := json.MarshalIndent(snapshot, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal platform snapshot: %w", err)
-	}
-	data = append(data, '\n')
-	if err := os.WriteFile(filepath.Join(outputDir, "platform-snapshot.json"), data, 0o600); err != nil {
+	if err := writeJSONAtomic(outputDir, "platform-snapshot.json", snapshot); err != nil {
 		return fmt.Errorf("write platform snapshot: %w", err)
 	}
 	return nil
