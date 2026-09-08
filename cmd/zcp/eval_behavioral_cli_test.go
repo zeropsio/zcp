@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/capture"
 )
 
 // This file exercises the ACTUAL `zcp` binary (built once, run via
@@ -436,4 +438,75 @@ func TestBehavioralCLI_ObserveMode_PreservesExecutionOnlyExit(t *testing.T) {
 	if n := h.server.esSearchCount(); n < 2 {
 		t.Errorf("POST /service-stack/search count = %d, want >= 2 (seed + post-run cleanup)", n)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// TestBehavioralCLI_FailedTask_CompleteCaptureRemainsReadable
+// ---------------------------------------------------------------------------
+
+// non-parallel: builds and runs the zcp binary with a private HOME.
+func TestBehavioralCLI_FailedTask_CompleteCaptureRemainsReadable(t *testing.T) {
+	h := newCLIHarness(t, "FAILED")
+	scenarioDir := t.TempDir()
+	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-required-fail-capture", "required")
+
+	exitCode, stderr := h.run(t, nil, "eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw")
+	if exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1\nstderr:\n%s", exitCode, stderr)
+	}
+
+	sessionDir := findCaptureSessionDir(t, h.home)
+	manifest, err := capture.ReadSessionManifest(filepath.Join(sessionDir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	if manifest.Status != "complete" {
+		t.Fatalf("manifest status = %q, want complete", manifest.Status)
+	}
+
+	report, err := capture.InspectSession(sessionDir)
+	if err != nil {
+		t.Fatalf("InspectSession: %v", err)
+	}
+	if !report.Integrity.Valid || !report.Integrity.Complete {
+		t.Fatalf("Integrity = %+v, want Valid && Complete", report.Integrity)
+	}
+
+	bundled := findResultFile(t, filepath.Join(sessionDir, "eval"), "cli-required-fail-capture", "verification.json")
+	bundledBytes, err := os.ReadFile(bundled)
+	if err != nil {
+		t.Fatalf("read bundled verification.json: %v", err)
+	}
+	resultVerification := findResultFile(t, h.resultsDir, "cli-required-fail-capture", "verification.json")
+	resultBytes, err := os.ReadFile(resultVerification)
+	if err != nil {
+		t.Fatalf("read result-dir verification.json: %v", err)
+	}
+	if string(bundledBytes) != string(resultBytes) {
+		t.Fatalf("bundled verification.json differs from result-dir copy\nbundled:\n%s\nresult:\n%s", bundledBytes, resultBytes)
+	}
+	var doc struct {
+		Result string `json:"result"`
+	}
+	if err := json.Unmarshal(bundledBytes, &doc); err != nil {
+		t.Fatalf("parse bundled verification.json: %v", err)
+	}
+	if doc.Result != "failed" {
+		t.Errorf("bundled verification.json result = %q, want failed", doc.Result)
+	}
+}
+
+// findCaptureSessionDir returns the single capture session directory created
+// under $HOME/.local/state/zcp/captures.
+func findCaptureSessionDir(t *testing.T, home string) string {
+	t.Helper()
+	root := filepath.Join(home, ".local", "state", "zcp", "captures")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("read capture root %s: %v", root, err)
+	}
+	if len(entries) != 1 || !entries[0].IsDir() {
+		t.Fatalf("capture root entries = %v, want exactly one session directory", entries)
+	}
+	return filepath.Join(root, entries[0].Name())
 }
