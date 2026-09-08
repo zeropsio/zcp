@@ -276,6 +276,19 @@ discuss; the assistant is the grader, with full project context.
 - `zcli` authenticated on `zcp`, scope visible to `eval-zcp` project
   (per `CLAUDE.local.md` — login uses token from `.mcp.json`).
 
+## Deterministic single-run report
+
+`zcp eval behavioral report --capture <session-dir> --eval <id> --scenario <id>
+[--format text|json]` prints a read-only projection of one finalized capture
+window's frozen evidence — task result, checks, per-invocation usage/MCP
+call counts, findings, and gaps — with zero network, provider, platform, or
+model calls (docs/spec-capture-inspector.md §8.5,
+docs/spec-testing-architecture.md §10.5). It has no verdict authority: every
+value is copied from a file the run already wrote. Exit 0 means the window
+was valid and complete (a failed task is still a successful report); exit 1
+means the window is invalid, the scope doesn't resolve, or the window is
+valid but incomplete (the report still prints, with the gap listed).
+
 ## Status
 
 POC complete. First live run captured in `audits/phase2-live-run.md`.
