@@ -293,3 +293,29 @@ func TestBehavioralReport_ValidButIncomplete_FullReportExit1(t *testing.T) {
 		t.Fatalf("Gaps = %v, want \"incomplete capture\"", report.Gaps)
 	}
 }
+
+// TestBehavioralReport_MCPCallsJoinedByInvocation pins §10.5 item 3: an
+// invocation's mcpCalls is the tool-call count of the MCP streams the
+// inspection attributed to that invocation (live S5 run 3 printed 0 for an
+// invocation whose stream recorded 15 calls).
+func TestBehavioralReport_MCPCallsJoinedByInvocation(t *testing.T) {
+	t.Parallel()
+	report := &BehavioralReport{Sources: map[string]string{}}
+	scenario := capture.EvalScenarioInspection{Invocations: []capture.EvalInvocationInspection{
+		{InvocationID: "s/agent.initial", Phase: "agent.initial", Status: "complete"},
+		{InvocationID: "s/retrospective", Phase: "retrospective", Status: "complete"},
+	}}
+	streams := []capture.MCPStreamInspection{
+		{File: "mcp/zcp-1.jsonl", InvocationID: "s/agent.initial", ToolCalls: 15},
+		{File: "mcp/zcp-2.jsonl", InvocationID: "s/agent.initial", ToolCalls: 2},
+		{File: "mcp/zcp-3.jsonl", InvocationID: "s/retrospective", ToolCalls: 0},
+	}
+	fillInvocations(report, scenario, nil, streams)
+	got := map[string]int{}
+	for _, row := range report.Invocations {
+		got[row.InvocationID] = row.MCPCalls
+	}
+	if got["s/agent.initial"] != 17 || got["s/retrospective"] != 0 {
+		t.Fatalf("mcpCalls by invocation = %v, want agent.initial=17 retrospective=0", got)
+	}
+}

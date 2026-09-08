@@ -81,16 +81,20 @@ func (PgxNodePostgresDB) QueryRecordByNonce(ctx context.Context, conn NodePostgr
 	defer rows.Close()
 	for rows.Next() {
 		count++
+		// The id column is whatever the app created (SERIAL, uuid, text);
+		// scan it as a generic value and compare its string form.
+		var rawID any
 		if count == 1 {
-			if scanErr := rows.Scan(&id, &value); scanErr != nil {
+			if scanErr := rows.Scan(&rawID, &value); scanErr != nil {
 				return "", "", 0, fmt.Errorf("scan: %w", scanErr)
 			}
+			id = fmt.Sprint(rawID)
 			continue
 		}
 		// Keep counting past the first row (a >1-row result is itself the
 		// failure signal) without overwriting id/value.
-		var extraID, extraValue string
-		_ = rows.Scan(&extraID, &extraValue)
+		var extraValue string
+		_ = rows.Scan(&rawID, &extraValue)
 	}
 	if err := rows.Err(); err != nil {
 		return "", "", 0, fmt.Errorf("rows: %w", err)
@@ -283,10 +287,33 @@ func (v NodePostgresVerifier) evaluateUnchanged(in NodePostgresInput, unrelatedS
 // nodePostgresGETBody is the shape the record-roundtrip's GET /records/<id>
 // is expected to answer with.
 type nodePostgresGETBody struct {
-	ID          string `json:"id"`
-	Nonce       string `json:"nonce"`
-	Value       string `json:"value"`
-	Environment string `json:"environment"`
+	ID          jsonScalarString `json:"id"`
+	Nonce       string           `json:"nonce"`
+	Value       string           `json:"value"`
+	Environment string           `json:"environment"`
+}
+
+// jsonScalarString accepts a JSON string or number for an id (a SERIAL
+// primary key is a number; the comparison is by string form either way).
+type jsonScalarString string
+
+func (v *jsonScalarString) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "null" {
+		*v = ""
+		return nil
+	}
+	var asString string
+	if err := json.Unmarshal(data, &asString); err == nil {
+		*v = jsonScalarString(asString)
+		return nil
+	}
+	var asNumber json.Number
+	if err := json.Unmarshal(data, &asNumber); err != nil {
+		return fmt.Errorf("id must be a JSON string or number: %w", err)
+	}
+	*v = jsonScalarString(asNumber.String())
+	return nil
 }
 
 // expectedEnvironmentLiteral is the fixed string a well-formed stage
@@ -331,12 +358,12 @@ func (v NodePostgresVerifier) doHTTP(ctx context.Context, baseURL string, in Nod
 	}
 	var postResp nodePostgresGETBody
 	_ = json.Unmarshal(postBytes, &postResp)
-	if postResp.ID == "" {
+	if string(postResp.ID) == "" {
 		msg := "POST response carried no id"
 		return failedRoundtripRow(roundtripID, in.Stage, now, msg), blockedRow(envID, in.Stage, now, msg), "", fmt.Errorf("no id")
 	}
 
-	getURL := strings.TrimRight(baseURL, "/") + "/records/" + postResp.ID
+	getURL := strings.TrimRight(baseURL, "/") + "/records/" + string(postResp.ID)
 	getReq, getReqErr := http.NewRequestWithContext(ctx, http.MethodGet, getURL, http.NoBody)
 	if getReqErr != nil {
 		msg := fmt.Sprintf("build GET request: %v", getReqErr)
@@ -364,8 +391,8 @@ func (v NodePostgresVerifier) doHTTP(ctx context.Context, baseURL string, in Nod
 	roundtripPass := getBody.ID == postResp.ID && getBody.Nonce == nonce && getBody.Value == value
 	roundtripRow = RequiredCheck{
 		ID: roundtripID, Check: checkNodePostgresRecord, Scope: in.Stage,
-		Expected:   fmt.Sprintf("id=%s nonce=%s value=%s", postResp.ID, nonce, value),
-		Observed:   fmt.Sprintf("id=%s nonce=%s value=%s", getBody.ID, getBody.Nonce, getBody.Value),
+		Expected:   fmt.Sprintf("id=%s nonce=%s value=%s", string(postResp.ID), nonce, value),
+		Observed:   fmt.Sprintf("id=%s nonce=%s value=%s", string(getBody.ID), getBody.Nonce, getBody.Value),
 		ObservedAt: now, Source: "HTTP GET " + getURL,
 	}
 	if roundtripPass {
@@ -390,7 +417,7 @@ func (v NodePostgresVerifier) doHTTP(ctx context.Context, baseURL string, in Nod
 		envRow.Message = "GET body environment did not match"
 	}
 
-	return roundtripRow, envRow, postResp.ID, nil
+	return roundtripRow, envRow, string(postResp.ID), nil
 }
 
 func failedRoundtripRow(id, stage string, now time.Time, message string) RequiredCheck {

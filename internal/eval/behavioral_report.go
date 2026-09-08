@@ -167,7 +167,7 @@ func BuildBehavioralReport(sessionDir, evalRunID, scenarioRunID string) (*Behavi
 	if verification != nil {
 		report.Checks = verification.Checks
 	}
-	fillInvocations(report, scenario, filtered.ModelContexts)
+	fillInvocations(report, scenario, filtered.ModelContexts, filtered.MCPStreams)
 	fillMCP(report, filtered.MCPStreams)
 	fillFindings(report, &result, verification)
 	fillGaps(report, &result, verification, inspection.Integrity)
@@ -228,12 +228,19 @@ func invocationPhaseBucket(phase string) string {
 	}
 }
 
-func fillInvocations(report *BehavioralReport, scenario capture.EvalScenarioInspection, contexts []capture.ModelContextInspection) {
+func fillInvocations(report *BehavioralReport, scenario capture.EvalScenarioInspection, contexts []capture.ModelContextInspection, streams []capture.MCPStreamInspection) {
 	byExchange := make(map[string]capture.ModelContextInspection, len(contexts))
 	for _, context := range contexts {
 		byExchange[context.ExchangeID] = context
 	}
+	// An invocation's MCP call count is the sum over the streams the
+	// inspection attributed to it (§10.5 item 3).
 	mcpCallsByInvocation := make(map[string]int)
+	for _, stream := range streams {
+		if stream.InvocationID != "" {
+			mcpCallsByInvocation[stream.InvocationID] += stream.ToolCalls
+		}
+	}
 	report.Totals.PhaseMapping = map[string]string{}
 
 	invocations := append([]capture.EvalInvocationInspection(nil), scenario.Invocations...)

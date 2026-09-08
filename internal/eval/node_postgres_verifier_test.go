@@ -45,6 +45,7 @@ func (f *fakeNodePostgresDB) QueryRecordByNonce(_ context.Context, _ NodePostgre
 // replays it, with knobs for the failure-shape tests.
 type nodePostgresAppServer struct {
 	environment   string
+	numericIDs    bool
 	nonceOverride string
 	postCalls     int
 	getCalls      int
@@ -56,6 +57,17 @@ type storedRecord struct {
 	Nonce       string `json:"nonce"`
 	Value       string `json:"value"`
 	Environment string `json:"environment"`
+}
+
+// encode renders a record the way the app under test would: string ids by
+// default, JSON numbers when numericIDs is set (a SERIAL primary key).
+func (s *nodePostgresAppServer) encode(rec storedRecord) any {
+	if !s.numericIDs {
+		return rec
+	}
+	var n int
+	_, _ = fmt.Sscanf(rec.ID, "%d", &n)
+	return map[string]any{"id": n, "nonce": rec.Nonce, "value": rec.Value, "environment": rec.Environment}
 }
 
 func newNodePostgresAppServer(environment string) *nodePostgresAppServer {
@@ -77,10 +89,13 @@ func (s *nodePostgresAppServer) handler() http.HandlerFunc {
 			if s.nonceOverride != "" {
 				nonce = s.nonceOverride
 			}
+			if s.numericIDs {
+				id = fmt.Sprintf("%d", len(s.stored)+1)
+			}
 			rec := storedRecord{ID: id, Nonce: nonce, Value: in.Value, Environment: s.environment}
 			s.stored[id] = rec
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(rec)
+			_ = json.NewEncoder(w).Encode(s.encode(rec))
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/records/"):
 			s.getCalls++
 			id := strings.TrimPrefix(r.URL.Path, "/records/")
@@ -90,7 +105,7 @@ func (s *nodePostgresAppServer) handler() http.HandlerFunc {
 				return
 			}
 			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(rec)
+			_ = json.NewEncoder(w).Encode(s.encode(rec))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -525,5 +540,33 @@ func TestNodePostgresDSN_SpecialCharacters_Escaped(t *testing.T) {
 	}
 	if pw, _ := parsed.User.Password(); pw != "p+a/s@s w" || parsed.User.Username() != "u ser" || parsed.Path != "/d b" {
 		t.Fatalf("round trip = user %q password %q path %q", parsed.User.Username(), pw, parsed.Path)
+	}
+}
+
+// TestNodePostgresVerifier_NumericJSONID_Accepted pins that an application
+// answering with a JSON number id (`{"id":1,...}`, what a SERIAL primary key
+// naturally produces) is a valid roundtrip: the verifier compares ids as
+// strings and never rejects a numeric id as "no id" (live S5 run 3, 2026-09-08).
+func TestNodePostgresVerifier_NumericJSONID_Accepted(t *testing.T) {
+	app := newNodePostgresAppServer("stage")
+	app.numericIDs = true
+	server := httptest.NewServer(app.handler())
+	defer server.Close()
+
+	client := mockWithSubdomainFixture(
+		platform.ServiceStack{ID: "db-1", Name: "db", Status: "ACTIVE"},
+		platform.ServiceStack{ID: "other-1", Name: "other", Status: "ACTIVE", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-1"}},
+	).WithServiceEnv("db-1", []platform.ServiceEnvVar{
+		{Key: "hostname", Content: "db"}, {Key: "port", Content: "5432"}, {Key: "user", Content: "u"}, {Key: "password", Content: "p"}, {Key: "dbName", Content: "d"},
+	})
+	db := &fakeNodePostgresDB{rowsByNonce: map[string]fakeDBRow{"nonce-1": {id: "1", value: "value-1"}}}
+	v := NodePostgresVerifier{Client: client, HTTP: loopbackHTTPClient(server), DB: db, Nonce: fixedNonce()}
+	rows := v.Verify(context.Background(), NodePostgresInput{
+		ProjectID: "proj-1", Stage: "appstage", Database: "db", Unrelated: "other", BaselineUnrelatedAppVersion: "av-1",
+	})
+	for _, row := range rows {
+		if row.Result != CheckPassed {
+			t.Errorf("row %s = %s (%s), want passed with a numeric JSON id", row.ID, row.Result, row.Message)
+		}
 	}
 }
