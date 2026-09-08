@@ -445,7 +445,12 @@ func (r *Runner) freezeTaskEnd(
 		for {
 			observation = collectPlatformObservation(ctx, r.client, r.projectID, true, true)
 			liveProcesses = livePIDsAfter(observation, startedAt)
-			if len(liveProcesses) == 0 {
+			if observation.processesErr != nil {
+				// A failed process read proves nothing about in-flight
+				// mutations; the freeze is unsettled until a read succeeds
+				// or the budget runs out (§10.2 step 3).
+				liveProcesses = []string{"process read failed: " + observation.processesErr.Error()}
+			} else if len(liveProcesses) == 0 {
 				settled = true
 				break
 			}
@@ -489,13 +494,21 @@ func (r *Runner) freezeTaskEnd(
 			result.Task.Result = CheckBlocked
 		}
 	}
-	if err := WriteVerificationDocument(outDir, VerificationDocument{
-		FormatVersion: VerificationDocumentFormat2, Mode: mode, Result: result.Task.Result,
-		FrozenAt: frozenAt, Checks: rows, Advisory: findings,
-	}); err != nil {
-		errs = append(errs, err)
+	// verification.json exists only for scenarios that declare a
+	// verification block — the same rule the observe success path applies.
+	if sc.Verification != nil {
+		if err := WriteVerificationDocument(outDir, VerificationDocument{
+			FormatVersion: VerificationDocumentFormat2, Mode: mode, Result: result.Task.Result,
+			FrozenAt: frozenAt, Checks: rows, Advisory: findings,
+		}); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	if len(errs) == 0 {
+	// meta.json is written once, claiming Persisted=true; a failure of that
+	// very write (or of anything before it) downgrades the in-memory result
+	// and re-writes meta.json best-effort with the truthful state.
+	result.TaskEnd.Persisted = len(errs) == 0
+	if result.TaskEnd.Persisted {
 		if err := writeBehavioralResult(outDir, result); err != nil {
 			errs = append(errs, err)
 		}
@@ -507,15 +520,6 @@ func (r *Runner) freezeTaskEnd(
 			result.Task.Result = CheckBlocked
 		}
 		logBehavioralResultWrite(outDir, result)
-		return
-	}
-	result.TaskEnd.Persisted = true
-	if err := writeBehavioralResult(outDir, result); err != nil {
-		result.TaskEnd.Persisted = false
-		result.TaskEnd.PersistError = err.Error()
-		if result.Task.Result == CheckPassed {
-			result.Task.Result = CheckBlocked
-		}
 	}
 }
 

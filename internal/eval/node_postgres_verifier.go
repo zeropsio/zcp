@@ -62,9 +62,7 @@ type NodePostgresDB interface {
 type PgxNodePostgresDB struct{}
 
 func (PgxNodePostgresDB) QueryRecordByNonce(ctx context.Context, conn NodePostgresConn, nonce string) (id, value string, count int, err error) {
-	dsn := fmt.Sprintf("postgres://%s:%s@%s/%s",
-		url.QueryEscape(conn.User), url.QueryEscape(conn.Password), net.JoinHostPort(conn.Host, conn.Port), conn.DBName)
-	pconn, err := pgx.Connect(ctx, dsn)
+	pconn, err := pgx.Connect(ctx, nodePostgresDSN(conn))
 	if err != nil {
 		return "", "", 0, fmt.Errorf("connect: %w", err)
 	}
@@ -98,6 +96,20 @@ func (PgxNodePostgresDB) QueryRecordByNonce(ctx context.Context, conn NodePostgr
 		return "", "", 0, fmt.Errorf("rows: %w", err)
 	}
 	return id, value, count, nil
+}
+
+// nodePostgresDSN builds the connection URL with every component escaped
+// as a URL component (not as a query string): a platform-generated password
+// containing '+', '/', '@' or a space must connect, not block db_row on a
+// parse error.
+func nodePostgresDSN(conn NodePostgresConn) string {
+	u := url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(conn.User, conn.Password),
+		Host:   net.JoinHostPort(conn.Host, conn.Port),
+		Path:   "/" + conn.DBName,
+	}
+	return u.String()
 }
 
 // NodePostgresVerifier is the exported, standalone application oracle of

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -802,5 +803,61 @@ Finish the offline fixture application.
 		if !seen[id] {
 			t.Errorf("checks = %+v, want a row for %s", doc.Checks, id)
 		}
+	}
+}
+
+// TestBehavioralOutcome_ProcessReadFails_UnsettledBlocked pins
+// docs/spec-testing-architecture.md §10.2 step 3: a task-end observation
+// whose process read failed is NOT settled — the freeze cannot prove no
+// mutation is in flight, so the platform rows are blocked, never passed.
+func TestBehavioralOutcome_ProcessReadFails_UnsettledBlocked(t *testing.T) { // non-parallel: process environment
+	h := newBehavioralHarness(t)
+	h.writeClaudeScript(t, defaultFakeClaudeDone)
+	t.Setenv("RETRO_MARKER", filepath.Join(h.root, "retro-marker"))
+	scenarioPath := h.writeScenario(t, requiredExpectedAppScenario("required-process-read-fails"))
+	client := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
+	client.WithError("GetProjectProcessesDirect", errors.New("process read unavailable"))
+	cfg := h.config()
+	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
+	cfg.CaptureOwned = true
+	runner := NewRunner(cfg, nil, client, "offline-project")
+
+	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.TaskEnd == nil || result.TaskEnd.Settled {
+		t.Fatalf("TaskEnd = %+v, want Settled=false when the process read failed", result.TaskEnd)
+	}
+	if result.Task == nil || result.Task.Result != CheckBlocked {
+		t.Fatalf("Task = %+v, want blocked", result.Task)
+	}
+}
+
+// TestBehavioralOutcome_ObserveWithoutVerification_NotRunWritesNoVerificationFile
+// pins that the not-run path and the success path agree: a legacy scenario
+// with no verification block never gets a verification.json, whichever way
+// the run ends.
+func TestBehavioralOutcome_ObserveWithoutVerification_NotRunWritesNoVerificationFile(t *testing.T) { // non-parallel: process environment
+	h := newBehavioralHarness(t)
+	h.writeClaudeScript(t, "#!/bin/sh\nexit 3\n")
+	scenarioPath := h.writeScenario(t, `---
+id: observe-no-verification
+seed: empty
+retrospective:
+  promptStyle: briefing-future-agent
+---
+Do the thing.
+`)
+	runner := NewRunner(h.config(), nil, platform.NewMock(), "offline-project")
+	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Error == "" {
+		t.Fatal("Error empty, want the spawn failure")
+	}
+	if _, err := os.Stat(filepath.Join(h.outDir("observe-no-verification"), "verification.json")); err == nil {
+		t.Fatal("verification.json written for a scenario with no verification block")
 	}
 }

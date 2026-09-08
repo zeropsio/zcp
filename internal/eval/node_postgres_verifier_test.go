@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -502,5 +503,27 @@ func TestNodePostgresVerifier_SecretsInDriverError_NotExposed(t *testing.T) {
 		if strings.Contains(row.Message, password) || strings.Contains(row.Expected, password) || strings.Contains(row.Observed, password) {
 			t.Errorf("row %s leaked the password: %+v", row.ID, row)
 		}
+	}
+}
+
+// TestNodePostgresDSN_SpecialCharacters_Escaped pins that the production
+// DSN escapes user, password and database name as URL components, so a
+// platform-generated password with '+', ' ', '/' or '@' connects instead of
+// blocking db_row on a parse error.
+func TestNodePostgresDSN_SpecialCharacters_Escaped(t *testing.T) {
+	t.Parallel()
+	dsn := nodePostgresDSN(NodePostgresConn{Host: "db", Port: "5432", User: "u ser", Password: "p+a/s@s w", DBName: "d b"})
+	// '+' is a literal in URL userinfo (RFC 3986), so it stays as-is; every
+	// other reserved character is percent-encoded and round-trips exactly.
+	want := "postgres://u%20ser:p+a%2Fs%40s%20w@db:5432/d%20b"
+	if dsn != want {
+		t.Fatalf("dsn = %q, want %q", dsn, want)
+	}
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("parse dsn: %v", err)
+	}
+	if pw, _ := parsed.User.Password(); pw != "p+a/s@s w" || parsed.User.Username() != "u ser" || parsed.Path != "/d b" {
+		t.Fatalf("round trip = user %q password %q path %q", parsed.User.Username(), pw, parsed.Path)
 	}
 }
