@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -176,6 +178,19 @@ func (f *fakeZeropsServer) esSearchCount() int {
 		}
 	}
 	return n
+}
+
+// requestPaths returns every request path this server has observed, in
+// order — used by tests asserting a preflight refusal made zero platform
+// reads beyond the auth handshake.
+func (f *fakeZeropsServer) requestPaths() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.requests))
+	for i, req := range f.requests {
+		out[i] = req.Path
+	}
+	return out
 }
 
 func (f *fakeZeropsServer) deleteCount() int {
@@ -717,3 +732,57 @@ func TestBehavioralCLI_CaptureCloseFailure_NonzeroEvenIfTaskPassed(t *testing.T)
 
 func errOrNil(_ *capture.SessionManifestDocument, err error) error { return err }
 func errOrNil2(_ *capture.InspectionReport, err error) error       { return err }
+
+// ---------------------------------------------------------------------------
+// TestExecutionBinding_WrongProject_RefusedBeforeRunner
+// ---------------------------------------------------------------------------
+
+// sha256HexFile hashes a file for use as --candidate-sha256 in tests.
+func sha256HexFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// non-parallel: builds and runs the zcp binary with a private HOME.
+//
+// TestExecutionBinding_WrongProject_RefusedBeforeRunner pins
+// docs/spec-testing-architecture.md §10.4: a binding whose --project-id
+// does not match the project the credentials resolve to is refused before
+// the runner is built — zero service/process/DELETE requests against the
+// fake Zerops API.
+func TestExecutionBinding_WrongProject_RefusedBeforeRunner(t *testing.T) {
+	h := newCLIHarness(t, "")
+	scenarioDir := t.TempDir()
+	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-wrong-project", "required")
+
+	bin := buildZCPBinary(t)
+	sha := sha256HexFile(t, bin)
+
+	exitCode, stderr := h.run(t, nil,
+		"eval", "behavioral", "run", "--file", scenarioPath,
+		"--candidate", bin,
+		"--candidate-sha256", sha,
+		"--project-id", "not-"+fakeProjectID,
+		"--ack-disposable-project", "yes",
+	)
+
+	if exitCode == 0 {
+		t.Fatalf("exit code = 0, want nonzero\nstderr:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "binding: wrong project") {
+		t.Errorf("stderr missing 'binding: wrong project'\nstderr:\n%s", stderr)
+	}
+	for _, req := range h.server.requestPaths() {
+		if strings.Contains(req, "service-stack") || strings.Contains(req, "/process") {
+			t.Errorf("unexpected platform request %s — wrong-project binding must refuse before any service/process read", req)
+		}
+	}
+	if n := h.server.deleteCount(); n != 0 {
+		t.Errorf("DELETE requests = %d, want 0", n)
+	}
+}

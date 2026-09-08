@@ -87,7 +87,13 @@ func runBehavioralList(args []string) int {
 	return 0
 }
 
-func runBehavioralRun(args []string) int {
+func runBehavioralRun(rawArgs []string) int {
+	args, bindingFlags, err := parseExecutionBindingFlags(rawArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
+
 	file := flagValue(args, "--file")
 	dir := flagValue(args, "--scenarios-dir")
 	id := flagValue(args, "--id")
@@ -111,11 +117,14 @@ func runBehavioralRun(args []string) int {
 		return 1
 	}
 
-	runner, _, ctx, ok := initEvalRunner()
+	suiteID := time.Now().UTC().Format("20060102-150405")
+	applyEvalDirOverrides(bindingFlags)
+	binding := buildExecutionBinding(bindingFlags, suiteID)
+
+	runner, _, ctx, ok := initEvalRunnerFor(binding)
 	if !ok {
 		return 1
 	}
-	suiteID := time.Now().UTC().Format("20060102-150405")
 
 	fmt.Fprintf(os.Stderr, "Running behavioral scenario: %s (suite=%s)\n", path, suiteID)
 	runner.BeginCaptureEvalRun(ctx, suiteID)
@@ -142,7 +151,58 @@ func runBehavioralRun(args []string) int {
 	return 0
 }
 
+// applyEvalDirOverrides implements §10.4 "--work-dir/--results-dir override
+// ZCP_EVAL_WORK_DIR/ZCP_EVAL_RESULTS_DIR before initEvalRunner resolves
+// them" by setting the environment the resolver functions read.
+func applyEvalDirOverrides(flags executionBindingFlags) {
+	if flags.workDir != "" {
+		_ = os.Setenv("ZCP_EVAL_WORK_DIR", flags.workDir)
+	}
+	if flags.resultsDir != "" {
+		_ = os.Setenv("ZCP_EVAL_RESULTS_DIR", flags.resultsDir)
+	}
+}
+
+// buildExecutionBinding builds an eval.ExecutionBinding from parsed CLI
+// flags, or nil when no binding flags were given. defaultRunID is the suite
+// id (§10.4 "--run-id defaults to the suite id"). PrivateBin/ClaudeHome are
+// derived siblings of the (possibly overridden) work dir so the candidate's
+// own PATH/HOME never collide with the evaluator's.
+func buildExecutionBinding(flags executionBindingFlags, defaultRunID string) *eval.ExecutionBinding {
+	if !flags.any {
+		return nil
+	}
+	runID := flags.runID
+	if runID == "" {
+		runID = defaultRunID
+	}
+	workDir, _ := evalWorkDir()
+	if flags.workDir != "" {
+		workDir = flags.workDir
+	}
+	resultsDir := evalResultsDir()
+	if flags.resultsDir != "" {
+		resultsDir = flags.resultsDir
+	}
+	base := filepath.Dir(workDir)
+	return &eval.ExecutionBinding{
+		Candidate:       flags.candidate,
+		CandidateSHA256: flags.sha256,
+		ProjectID:       flags.projectID,
+		AckDisposable:   flags.ack,
+		WorkDir:         workDir,
+		ResultsDir:      resultsDir,
+		RunID:           runID,
+		PrivateBin:      filepath.Join(base, "candidate-bin"),
+		ClaudeHome:      filepath.Join(base, "candidate-claude-home"),
+	}
+}
+
 func runBehavioralAll(args []string) int {
+	if err := rejectBindingFlagsForAll(args); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
 	dir := flagValue(args, "--scenarios-dir")
 	if dir == "" {
 		fmt.Fprintln(os.Stderr, "error: --scenarios-dir <dir> required")
