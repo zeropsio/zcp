@@ -121,10 +121,11 @@ func loopbackHTTPClient(server *httptest.Server) *http.Client {
 // mockWithSubdomainFixture builds a platform.Mock wired so
 // ops.ResolveSubdomainURL(ctx, client, projectID, stageSvc) resolves to a
 // deterministic https URL an httptest server can be dialed through (see
-// loopbackHTTPClient). hostname is the service (e.g. "appstage").
-func mockWithSubdomainFixture(hostname string, extraServices ...platform.ServiceStack) *platform.Mock {
+// loopbackHTTPClient), for the "appstage" hostname every test in this file
+// uses as its stage service.
+func mockWithSubdomainFixture(extraServices ...platform.ServiceStack) *platform.Mock {
 	svc := platform.ServiceStack{
-		ID: hostname + "-1", Name: hostname, Status: "ACTIVE",
+		ID: "appstage-1", Name: "appstage", Status: "ACTIVE",
 		SubdomainAccess: true,
 		Ports:           []platform.Port{{Port: 80, Scheme: "http"}},
 	}
@@ -134,8 +135,10 @@ func mockWithSubdomainFixture(hostname string, extraServices ...platform.Service
 		WithProject(&platform.Project{ID: "proj-1", SubdomainHost: "testproj.example.com"})
 }
 
-func fixedNonce(nonce, value string) func() (string, string) {
-	return func() (string, string) { return nonce, value }
+// fixedNonce returns a Nonce func fixed at "nonce-1"/"value-1" — every test
+// in this file that needs a deterministic pair uses the same one.
+func fixedNonce() func() (string, string) {
+	return func() (string, string) { return "nonce-1", "value-1" }
 }
 
 // TestNodePostgresVerifier_KnownGood_AllRowsPassed pins
@@ -147,7 +150,7 @@ func TestNodePostgresVerifier_KnownGood_AllRowsPassed(t *testing.T) {
 	server := httptest.NewServer(app.handler())
 	defer server.Close()
 
-	client := mockWithSubdomainFixture("appstage",
+	client := mockWithSubdomainFixture(
 		platform.ServiceStack{ID: "db-1", Name: "db", Status: "ACTIVE"},
 		platform.ServiceStack{ID: "other-1", Name: "other", Status: "ACTIVE", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-1"}},
 	).WithServiceEnv("db-1", []platform.ServiceEnvVar{
@@ -164,7 +167,7 @@ func TestNodePostgresVerifier_KnownGood_AllRowsPassed(t *testing.T) {
 		Client: client,
 		HTTP:   loopbackHTTPClient(server),
 		DB:     db,
-		Nonce:  fixedNonce("nonce-1", "value-1"),
+		Nonce:  fixedNonce(),
 	}
 	rows := v.Verify(context.Background(), NodePostgresInput{
 		ProjectID: "proj-1", Stage: "appstage", Database: "db", Unrelated: "other",
@@ -195,5 +198,283 @@ func TestNodePostgresVerifier_KnownGood_AllRowsPassed(t *testing.T) {
 	}
 	if db.calls != 1 {
 		t.Errorf("db.calls = %d, want 1", db.calls)
+	}
+}
+
+// TestNodePostgresVerifier_PlausibleHTTPWithoutManagedRow_Failed pins
+// docs/spec-testing-architecture.md §10.3's central defense: a fake app that
+// answers 201/200 correctly but stores only in memory fails db_row alone —
+// the row table's "plausible in-memory fake fails HERE".
+func TestNodePostgresVerifier_PlausibleHTTPWithoutManagedRow_Failed(t *testing.T) {
+	app := newNodePostgresAppServer("stage")
+	server := httptest.NewServer(app.handler())
+	defer server.Close()
+
+	client := mockWithSubdomainFixture(
+		platform.ServiceStack{ID: "db-1", Name: "db", Status: "ACTIVE"},
+		platform.ServiceStack{ID: "other-1", Name: "other", Status: "ACTIVE", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-1"}},
+	).WithServiceEnv("db-1", []platform.ServiceEnvVar{
+		{Key: "hostname", Content: "db"}, {Key: "port", Content: "5432"},
+		{Key: "user", Content: "u"}, {Key: "password", Content: "p"}, {Key: "dbName", Content: "d"},
+	})
+	db := &fakeNodePostgresDB{} // no rows at all — the plausible fake
+
+	v := NodePostgresVerifier{Client: client, HTTP: loopbackHTTPClient(server), DB: db, Nonce: fixedNonce()}
+	rows := v.Verify(context.Background(), NodePostgresInput{
+		ProjectID: "proj-1", Stage: "appstage", Database: "db", Unrelated: "other",
+		BaselineUnrelatedAppVersion: "av-1",
+	})
+	got := rowsByID(t, rows)
+	assertResult(t, got, "node_postgres_record/appstage/record_roundtrip", CheckPassed)
+	assertResult(t, got, "node_postgres_record/appstage/environment", CheckPassed)
+	assertResult(t, got, "node_postgres_record/db/db_row", CheckFailed)
+	assertResult(t, got, "unrelated_artifact/other/unchanged", CheckPassed)
+}
+
+func rowsByID(t *testing.T, rows []RequiredCheck) map[string]RequiredCheck {
+	t.Helper()
+	out := make(map[string]RequiredCheck, len(rows))
+	for _, r := range rows {
+		out[r.ID] = r
+	}
+	return out
+}
+
+func assertResult(t *testing.T, rows map[string]RequiredCheck, id string, want CheckResult) {
+	t.Helper()
+	row, ok := rows[id]
+	if !ok {
+		t.Errorf("missing row %q", id)
+		return
+	}
+	if row.Result != want {
+		t.Errorf("row %s = %s, want %s (message: %s)", id, row.Result, want, row.Message)
+	}
+}
+
+func nodePostgresBaseInput() NodePostgresInput {
+	return NodePostgresInput{ProjectID: "proj-1", Stage: "appstage", Database: "db", Unrelated: "other", BaselineUnrelatedAppVersion: "av-1"}
+}
+
+func nodePostgresFixtureClient() *platform.Mock {
+	return mockWithSubdomainFixture(
+		platform.ServiceStack{ID: "db-1", Name: "db", Status: "ACTIVE"},
+		platform.ServiceStack{ID: "other-1", Name: "other", Status: "ACTIVE", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-1"}},
+	).WithServiceEnv("db-1", []platform.ServiceEnvVar{
+		{Key: "hostname", Content: "db"}, {Key: "port", Content: "5432"},
+		{Key: "user", Content: "u"}, {Key: "password", Content: "p"}, {Key: "dbName", Content: "d"},
+	})
+}
+
+// TestNodePostgresVerifier_AppReturnsDifferentNonce_Failed pins §10.3: a GET
+// reply that echoes a different nonce than the verifier's own fails
+// record_roundtrip only.
+func TestNodePostgresVerifier_AppReturnsDifferentNonce_Failed(t *testing.T) {
+	app := newNodePostgresAppServer("stage")
+	app.nonceOverride = "not-the-verifiers-nonce"
+	server := httptest.NewServer(app.handler())
+	defer server.Close()
+
+	client := nodePostgresFixtureClient()
+	db := &fakeNodePostgresDB{rowsByNonce: map[string]fakeDBRow{"not-the-verifiers-nonce": {id: "rec-1", value: "value-1"}}}
+
+	v := NodePostgresVerifier{Client: client, HTTP: loopbackHTTPClient(server), DB: db, Nonce: fixedNonce()}
+	rows := v.Verify(context.Background(), nodePostgresBaseInput())
+	got := rowsByID(t, rows)
+	assertResult(t, got, "node_postgres_record/appstage/record_roundtrip", CheckFailed)
+}
+
+// TestNodePostgresVerifier_WrongEnvironment_Failed pins §10.3: a GET body
+// whose environment differs from the literal "stage" fails the environment
+// row only.
+func TestNodePostgresVerifier_WrongEnvironment_Failed(t *testing.T) {
+	app := newNodePostgresAppServer("dev")
+	server := httptest.NewServer(app.handler())
+	defer server.Close()
+
+	client := nodePostgresFixtureClient()
+	db := &fakeNodePostgresDB{rowsByNonce: map[string]fakeDBRow{"nonce-1": {id: "rec-1", value: "value-1"}}}
+
+	v := NodePostgresVerifier{Client: client, HTTP: loopbackHTTPClient(server), DB: db, Nonce: fixedNonce()}
+	rows := v.Verify(context.Background(), nodePostgresBaseInput())
+	got := rowsByID(t, rows)
+	assertResult(t, got, "node_postgres_record/appstage/record_roundtrip", CheckPassed)
+	assertResult(t, got, "node_postgres_record/appstage/environment", CheckFailed)
+}
+
+// TestNodePostgresVerifier_UnrelatedArtifactChanged_Failed pins §10.3's
+// baseline: a differing active app-version id fails unchanged; a missing
+// baseline blocks it instead.
+func TestNodePostgresVerifier_UnrelatedArtifactChanged_Failed(t *testing.T) {
+	app := newNodePostgresAppServer("stage")
+	server := httptest.NewServer(app.handler())
+	defer server.Close()
+	db := &fakeNodePostgresDB{rowsByNonce: map[string]fakeDBRow{"nonce-1": {id: "rec-1", value: "value-1"}}}
+
+	t.Run("changed", func(t *testing.T) {
+		client := nodePostgresFixtureClient()
+		v := NodePostgresVerifier{Client: client, HTTP: loopbackHTTPClient(server), DB: db, Nonce: fixedNonce()}
+		in := nodePostgresBaseInput()
+		in.BaselineUnrelatedAppVersion = "av-old"
+		rows := v.Verify(context.Background(), in)
+		got := rowsByID(t, rows)
+		assertResult(t, got, "unrelated_artifact/other/unchanged", CheckFailed)
+	})
+
+	t.Run("missing baseline", func(t *testing.T) {
+		client := nodePostgresFixtureClient()
+		v := NodePostgresVerifier{Client: client, HTTP: loopbackHTTPClient(server), DB: db, Nonce: fixedNonce()}
+		in := nodePostgresBaseInput()
+		in.BaselineUnrelatedAppVersion = ""
+		rows := v.Verify(context.Background(), in)
+		got := rowsByID(t, rows)
+		assertResult(t, got, "unrelated_artifact/other/unchanged", CheckBlocked)
+	})
+}
+
+// TestNodePostgresVerifier_RequiredDBUnavailable_Blocked pins §10.3: a DB
+// connection error blocks db_row only — the HTTP rows are unaffected.
+func TestNodePostgresVerifier_RequiredDBUnavailable_Blocked(t *testing.T) {
+	app := newNodePostgresAppServer("stage")
+	server := httptest.NewServer(app.handler())
+	defer server.Close()
+
+	client := nodePostgresFixtureClient()
+	db := &fakeNodePostgresDB{err: fmt.Errorf("dial tcp: connection refused")}
+
+	v := NodePostgresVerifier{Client: client, HTTP: loopbackHTTPClient(server), DB: db, Nonce: fixedNonce()}
+	rows := v.Verify(context.Background(), nodePostgresBaseInput())
+	got := rowsByID(t, rows)
+	assertResult(t, got, "node_postgres_record/appstage/record_roundtrip", CheckPassed)
+	assertResult(t, got, "node_postgres_record/appstage/environment", CheckPassed)
+	assertResult(t, got, "node_postgres_record/db/db_row", CheckBlocked)
+	assertResult(t, got, "unrelated_artifact/other/unchanged", CheckPassed)
+}
+
+// TestNodePostgresVerifier_ForeignOrMissingBinding_ZeroDataPlaneCalls pins
+// §10.3's independence rule: a cross-check id mismatch, an unresolvable URL,
+// and a DB env hostname override all block the affected rows with zero HTTP
+// and zero DB calls where the contract says zero.
+func TestNodePostgresVerifier_ForeignOrMissingBinding_ZeroDataPlaneCalls(t *testing.T) {
+	t.Run("cross-check id mismatch — zero HTTP and zero DB calls", func(t *testing.T) {
+		app := newNodePostgresAppServer("stage")
+		server := httptest.NewServer(app.handler())
+		defer server.Close()
+		client := nodePostgresFixtureClient()
+		db := &fakeNodePostgresDB{rowsByNonce: map[string]fakeDBRow{"nonce-1": {id: "rec-1", value: "value-1"}}}
+
+		v := NodePostgresVerifier{Client: client, HTTP: loopbackHTTPClient(server), DB: db, Nonce: fixedNonce()}
+		in := nodePostgresBaseInput()
+		in.ExpectStageID = "not-the-resolved-id"
+		rows := v.Verify(context.Background(), in)
+		got := rowsByID(t, rows)
+		for _, id := range []string{
+			"node_postgres_record/appstage/record_roundtrip", "node_postgres_record/appstage/environment",
+			"node_postgres_record/db/db_row", "unrelated_artifact/other/unchanged",
+		} {
+			assertResult(t, got, id, CheckBlocked)
+		}
+		if app.postCalls != 0 || app.getCalls != 0 {
+			t.Errorf("postCalls=%d getCalls=%d, want 0 and 0", app.postCalls, app.getCalls)
+		}
+		if db.calls != 0 {
+			t.Errorf("db.calls = %d, want 0", db.calls)
+		}
+	})
+
+	t.Run("unresolvable URL — zero HTTP and zero DB calls", func(t *testing.T) {
+		app := newNodePostgresAppServer("stage")
+		server := httptest.NewServer(app.handler())
+		defer server.Close()
+		// No SubdomainAccess — ResolveSubdomainURL yields "".
+		client := platform.NewMock().WithServicesDirect([]platform.ServiceStack{
+			{ID: "appstage-1", Name: "appstage", Status: "ACTIVE", SubdomainAccess: false},
+			{ID: "db-1", Name: "db", Status: "ACTIVE"},
+			{ID: "other-1", Name: "other", Status: "ACTIVE", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-1"}},
+		}).WithProject(&platform.Project{ID: "proj-1", SubdomainHost: "testproj.example.com"})
+		db := &fakeNodePostgresDB{}
+
+		v := NodePostgresVerifier{Client: client, HTTP: loopbackHTTPClient(server), DB: db, Nonce: fixedNonce()}
+		rows := v.Verify(context.Background(), nodePostgresBaseInput())
+		got := rowsByID(t, rows)
+		assertResult(t, got, "node_postgres_record/appstage/record_roundtrip", CheckBlocked)
+		assertResult(t, got, "node_postgres_record/appstage/environment", CheckBlocked)
+		assertResult(t, got, "node_postgres_record/db/db_row", CheckBlocked)
+		if app.postCalls != 0 || app.getCalls != 0 {
+			t.Errorf("postCalls=%d getCalls=%d, want 0 and 0", app.postCalls, app.getCalls)
+		}
+		if db.calls != 0 {
+			t.Errorf("db.calls = %d, want 0", db.calls)
+		}
+	})
+
+	t.Run("db env hostname override — zero DB calls", func(t *testing.T) {
+		app := newNodePostgresAppServer("stage")
+		server := httptest.NewServer(app.handler())
+		defer server.Close()
+		client := mockWithSubdomainFixture(
+			platform.ServiceStack{ID: "db-1", Name: "db", Status: "ACTIVE"},
+			platform.ServiceStack{ID: "other-1", Name: "other", Status: "ACTIVE", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-1"}},
+		).WithServiceEnv("db-1", []platform.ServiceEnvVar{
+			{Key: "hostname", Content: "user-overridden-host"}, {Key: "port", Content: "5432"},
+			{Key: "user", Content: "u"}, {Key: "password", Content: "p"}, {Key: "dbName", Content: "d"},
+		})
+		db := &fakeNodePostgresDB{}
+
+		v := NodePostgresVerifier{Client: client, HTTP: loopbackHTTPClient(server), DB: db, Nonce: fixedNonce()}
+		rows := v.Verify(context.Background(), nodePostgresBaseInput())
+		got := rowsByID(t, rows)
+		assertResult(t, got, "node_postgres_record/db/db_row", CheckBlocked)
+		if db.calls != 0 {
+			t.Errorf("db.calls = %d, want 0", db.calls)
+		}
+	})
+}
+
+// TestNodePostgresVerifier_RedirectRefused_Blocked pins §10.3: a 302 answer
+// to the POST blocks record_roundtrip without a second request.
+func TestNodePostgresVerifier_RedirectRefused_Blocked(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "https://attacker.example/records")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer server.Close()
+
+	client := nodePostgresFixtureClient()
+	db := &fakeNodePostgresDB{}
+
+	v := NodePostgresVerifier{Client: client, HTTP: loopbackHTTPClient(server), DB: db, Nonce: fixedNonce()}
+	rows := v.Verify(context.Background(), nodePostgresBaseInput())
+	got := rowsByID(t, rows)
+	assertResult(t, got, "node_postgres_record/appstage/record_roundtrip", CheckBlocked)
+	if db.calls != 0 {
+		t.Errorf("db.calls = %d, want 0 (POST never got past the redirect)", db.calls)
+	}
+}
+
+// TestNodePostgresVerifier_SecretsInDriverError_NotExposed pins §10.3
+// "Independence": a driver error embedding the password never reaches a row
+// or message.
+func TestNodePostgresVerifier_SecretsInDriverError_NotExposed(t *testing.T) {
+	app := newNodePostgresAppServer("stage")
+	server := httptest.NewServer(app.handler())
+	defer server.Close()
+
+	const password = "s3cr3t-password"
+	client := mockWithSubdomainFixture(
+		platform.ServiceStack{ID: "db-1", Name: "db", Status: "ACTIVE"},
+		platform.ServiceStack{ID: "other-1", Name: "other", Status: "ACTIVE", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-1"}},
+	).WithServiceEnv("db-1", []platform.ServiceEnvVar{
+		{Key: "hostname", Content: "db"}, {Key: "port", Content: "5432"},
+		{Key: "user", Content: "u"}, {Key: "password", Content: password}, {Key: "dbName", Content: "d"},
+	})
+	db := &fakeNodePostgresDB{err: fmt.Errorf("dial postgres://u:%s@db:5432/d: connection refused", password)}
+
+	v := NodePostgresVerifier{Client: client, HTTP: loopbackHTTPClient(server), DB: db, Nonce: fixedNonce()}
+	rows := v.Verify(context.Background(), nodePostgresBaseInput())
+	for _, row := range rows {
+		if strings.Contains(row.Message, password) || strings.Contains(row.Expected, password) || strings.Contains(row.Observed, password) {
+			t.Errorf("row %s leaked the password: %+v", row.ID, row)
+		}
 	}
 }
