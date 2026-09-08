@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -694,5 +695,112 @@ func TestBehavioralOutcome_SnapshotPersistenceFailure_ArtifactsAgree(t *testing.
 	doc := readVerificationDocument(t, outDir)
 	if doc.Result != CheckBlocked {
 		t.Fatalf("verification.json result = %s, want blocked (must agree with meta.json)", doc.Result)
+	}
+}
+
+// baselineOrderClient records whether its first ListServicesDirect call (the
+// node-postgres baseline read) happened before the agent-started marker
+// file existed, so the ordering half of docs/spec-testing-architecture.md
+// §10.3 "Baseline" is independently verifiable.
+type baselineOrderClient struct {
+	*platform.Mock
+	agentMarker         string
+	calls               int
+	baselineBeforeAgent bool
+}
+
+func (c *baselineOrderClient) ListServicesDirect(ctx context.Context, projectID string) ([]platform.ServiceStack, error) {
+	c.calls++
+	if c.calls == 1 {
+		_, err := os.Stat(c.agentMarker)
+		c.baselineBeforeAgent = os.IsNotExist(err)
+	}
+	return c.Mock.ListServicesDirect(ctx, projectID)
+}
+
+// TestBehavioralOutcome_NodePostgresRecord_BaselineRecordedBeforeAgent pins
+// docs/spec-testing-architecture.md §10.3 "Baseline": the unrelated
+// service's active app-version id is recorded into meta.json before the
+// fake claude agent runs, and the freeze produces the four oracle rows.
+func TestBehavioralOutcome_NodePostgresRecord_BaselineRecordedBeforeAgent(t *testing.T) { // non-parallel: process environment
+	h := newBehavioralHarness(t)
+	agentMarker := filepath.Join(h.root, "agent-marker")
+	retroMarker := filepath.Join(h.root, "retro-marker")
+	t.Setenv("AGENT_MARKER", agentMarker)
+	t.Setenv("RETRO_MARKER", retroMarker)
+	h.writeClaudeScript(t, `#!/bin/sh
+: > "$AGENT_MARKER"
+if [ "$1" = "--resume" ]; then
+    : > "$RETRO_MARKER"
+fi
+printf '%s\n' '{"type":"system","subtype":"init","session_id":"offline-probe","model":"fake-offline"}'
+printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]}}'
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"offline-probe","result":"Done."}'
+`)
+
+	scenario := `---
+id: required-node-postgres-baseline
+seed: empty
+retrospective:
+  promptStyle: briefing-future-agent
+verification:
+  mode: required
+  nodePostgresRecord:
+    stage: appstage
+    database: db
+    unrelated: other
+---
+Finish the offline fixture application.
+`
+	scenarioPath := h.writeScenario(t, scenario)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError) // app not implemented offline — rows may fail/block, not the point of this test
+	}))
+	defer server.Close()
+
+	client := &baselineOrderClient{agentMarker: agentMarker, Mock: platform.NewMock().
+		WithServicesDirect([]platform.ServiceStack{
+			{ID: "appstage-1", Name: "appstage", Status: "ACTIVE", SubdomainAccess: true, Ports: []platform.Port{{Port: 80, Scheme: "http"}}},
+			{ID: "db-1", Name: "db", Status: "ACTIVE"},
+			{ID: "other-1", Name: "other", Status: "ACTIVE", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-1"}},
+		}).
+		WithProject(&platform.Project{ID: "offline-project", SubdomainHost: "testproj.example.com"}).
+		WithServiceEnv("db-1", []platform.ServiceEnvVar{
+			{Key: "hostname", Content: "db"}, {Key: "port", Content: "5432"},
+			{Key: "user", Content: "u"}, {Key: "password", Content: "p"}, {Key: "dbName", Content: "d"},
+		})}
+
+	cfg := h.config()
+	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
+	cfg.CaptureOwned = true
+	runner := NewRunner(cfg, nil, client, "offline-project")
+	runner.httpDoer = loopbackHTTPClient(server)
+
+	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Baseline == nil || result.Baseline.UnrelatedAppVersion != "av-1" {
+		t.Fatalf("Baseline = %+v, want UnrelatedAppVersion=av-1", result.Baseline)
+	}
+	if !client.baselineBeforeAgent {
+		t.Error("baseline ListServicesDirect call happened after (or without observing) the agent-started marker — want before")
+	}
+
+	outDir := h.outDir("required-node-postgres-baseline")
+	doc := readVerificationDocument(t, outDir)
+	wantIDs := []string{
+		"node_postgres_record/appstage/record_roundtrip", "node_postgres_record/appstage/environment",
+		"node_postgres_record/db/db_row", "unrelated_artifact/other/unchanged",
+	}
+	seen := map[string]bool{}
+	for _, row := range doc.Checks {
+		seen[row.ID] = true
+	}
+	for _, id := range wantIDs {
+		if !seen[id] {
+			t.Errorf("checks = %+v, want a row for %s", doc.Checks, id)
+		}
 	}
 }
