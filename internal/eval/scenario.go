@@ -66,13 +66,12 @@ type Scenario struct {
 	UserPersona string
 	UserSim     *UserSimConfig
 
-	// Verification (optional, behavioral mode only) asserts platform-side
-	// outcomes BEFORE cleanup wipes services. Captures the gap exposed by
-	// Tier-1 kanban retros: agent self-reports "Kanban is live" but the
-	// cleanup hook deletes services before manual verify can confirm. With
-	// Verification set, the runner queries the live platform between
-	// retrospective + cleanup and writes findings to verification.json
-	// alongside self-review.md. See VerificationConfig for the schema.
+	// Verification (optional, behavioral mode only) declares platform-side
+	// assertions the runner decides from a direct platform read and writes
+	// as result rows to verification.json. In observe mode (the default)
+	// the rows are advisory and decided after the retrospective, before
+	// cleanup; in required mode they are frozen at task end and gate the CLI
+	// exit (docs/spec-testing-architecture.md §10). See VerificationConfig.
 	Verification *VerificationConfig
 }
 
@@ -97,14 +96,11 @@ type RetrospectiveConfig struct {
 	PromptStyle string `yaml:"promptStyle"`
 }
 
-// VerificationConfig declares post-run platform-side assertions the runner
-// evaluates between retrospective + cleanup. Each block is optional; an
-// empty VerificationConfig produces no findings (no-op).
-//
-// Captured findings land in verification.json alongside self-review.md.
-// Sprint 3 wires this to behavioral runs; failures are warn-only at this
-// stage (the suite verdict still propagates from the retrospective). A
-// later sprint may promote findings to gate the exit code.
+// VerificationConfig declares the platform-side assertions of a behavioral
+// scenario. Each block is optional. Mode decides what the rows mean:
+// observe (default) writes them as advisory rows next to self-review.md and
+// never gates; required freezes them at task end and carries the result to
+// the CLI exit (docs/spec-testing-architecture.md §10.1).
 type VerificationConfig struct {
 	// Mode selects observe (default, warn-only) or required (deterministic
 	// task result gate). See docs/spec-testing-architecture.md §10.1.

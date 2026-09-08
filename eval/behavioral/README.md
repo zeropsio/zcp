@@ -182,10 +182,14 @@ retrospective-prompt.txt     The retrospective question (call 2)
 transcript.jsonl             Stream-json from call 1 (full scenario run)
 retrospective.jsonl          Stream-json from call 2 (resume)
 self-review.md               Extracted assistant text from call 2 — what you read first
-verification.json            Scenario assertions derived from the pre-cleanup direct platform read
-platform-snapshot.json       Allowlisted services/processes observed directly before cleanup
+verification.json            Result rows (passed/failed/blocked/not-run) from a direct platform
+                              read + advisory findings; one object, formatVersion
+                              zcp-eval-verification-2 (spec-testing-architecture.md §10.1)
+platform-snapshot.json       Allowlisted services/processes from that same read
 meta.json                    Run metadata: scenarioId, sessionId, model, wall times,
-                              compaction flag, paths
+                              compaction flag, paths, plus the task / taskEnd dimensions
+                              (required mode: frozen before the retrospective, project
+                              retained — no cleanup; spec §10.2)
 ```
 
 ## Interactive playbook (after `self-review.md` lands)
