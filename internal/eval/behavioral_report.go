@@ -84,11 +84,11 @@ type ResultSection struct {
 // is a count of recorded tool calls — never the number of tools advertised
 // in the stream's MCP schema.
 type MCPStreamRow struct {
-	File       string `json:"file"`
-	ToolCalls  int    `json:"toolCalls"`
-	Results    int    `json:"results"`
-	InputBytes int64  `json:"inputBytes"`
-	OutputByte int64  `json:"outputBytes"`
+	File          string `json:"file"`
+	ToolCalls     int    `json:"toolCalls"`
+	Notifications int    `json:"notifications"`
+	InputBytes    int64  `json:"inputBytes"`
+	OutputByte    int64  `json:"outputBytes"`
 }
 
 // Finding is one fact with a coordinate (§10.5 item 5).
@@ -137,7 +137,9 @@ func BuildBehavioralReport(sessionDir, evalRunID, scenarioRunID string) (*Behavi
 
 	manifest, manifestErr := capture.ReadSessionManifest(filepath.Join(sessionDir, "manifest.json"))
 	if manifestErr != nil {
-		manifest = nil
+		// InspectSession has already validated the manifest, so this is
+		// unexpected; surface the real error instead of a "legacy window".
+		return nil, inspection, fmt.Errorf("manifest: %w", manifestErr)
 	}
 
 	metaPath := path.Join("eval", evalRunID, scenarioRunID, "meta.json")
@@ -194,6 +196,12 @@ func fillResultSection(report *BehavioralReport, result *BehavioralResult, integ
 	report.Result.Binding = result.Binding
 	summary := ProcessIdentitySummary{Observations: len(result.ProcessIdentity)}
 	for _, observation := range result.ProcessIdentity {
+		// Only observations the runner classified as counted carry a digest
+		// and an environment; unobservable/unsupported ones are listed in
+		// Observations and nowhere else.
+		if observation.Classification != processIdentityCounted {
+			continue
+		}
 		summary.Counted++
 		if observation.MatchesCandidate {
 			summary.MatchesCandidate++
@@ -299,11 +307,11 @@ func addUsageToTotal(report *BehavioralReport, bucket string, usage UsageTotals)
 func fillMCP(report *BehavioralReport, streams []capture.MCPStreamInspection) {
 	for _, stream := range streams {
 		report.MCP = append(report.MCP, MCPStreamRow{
-			File:       stream.File,
-			ToolCalls:  stream.ToolCalls,
-			Results:    stream.ToolCalls,
-			InputBytes: stream.InputBytes,
-			OutputByte: stream.OutputBytes,
+			File:          stream.File,
+			ToolCalls:     stream.ToolCalls,
+			Notifications: stream.ProgressNotifications,
+			InputBytes:    stream.InputBytes,
+			OutputByte:    stream.OutputBytes,
 		})
 	}
 }
@@ -394,14 +402,19 @@ func RenderBehavioralReportText(report *BehavioralReport) string {
 	}
 	line("  totals.agent:    %s", renderUsage(report.Totals.Agent))
 	line("  totals.overhead: %s", renderUsage(report.Totals.Overhead))
-	for phase, bucket := range report.Totals.PhaseMapping {
-		line("  phase mapping: %s -> %s", phase, bucket)
+	phases := make([]string, 0, len(report.Totals.PhaseMapping))
+	for phase := range report.Totals.PhaseMapping {
+		phases = append(phases, phase)
+	}
+	sort.Strings(phases)
+	for _, phase := range phases {
+		line("  phase mapping: %s -> %s", phase, report.Totals.PhaseMapping[phase])
 	}
 
 	line("")
 	line("MCP:")
 	for _, stream := range report.MCP {
-		line("  %s: calls=%d results=%d inputBytes=%d outputBytes=%d", stream.File, stream.ToolCalls, stream.Results, stream.InputBytes, stream.OutputByte)
+		line("  %s: calls=%d notifications=%d inputBytes=%d outputBytes=%d", stream.File, stream.ToolCalls, stream.Notifications, stream.InputBytes, stream.OutputByte)
 	}
 
 	line("")

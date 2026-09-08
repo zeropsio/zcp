@@ -243,8 +243,9 @@ func TestBehavioralReport_ProcessIdentity_CopiedCountsOnly(t *testing.T) {
 		metaResult: &TaskOutcome{Mode: "required", Result: CheckPassed, FrozenAt: time.Now().UTC()},
 		binding:    &ExecutionBindingRecord{ProjectID: "proj-a"},
 		processIDs: []ProcessIdentity{
-			{PID: 100, MatchesCandidate: true, ProjectID: "proj-a", Classification: "match"},
-			{PID: 200, MatchesCandidate: false, ProjectID: "proj-b", Classification: "mismatch"},
+			{PID: 100, MatchesCandidate: true, ProjectID: "proj-a", Classification: "counted"},
+			{PID: 200, MatchesCandidate: false, ProjectID: "proj-b", Classification: "counted"},
+			{PID: 300, Classification: "unobservable"},
 		},
 	})
 
@@ -252,7 +253,7 @@ func TestBehavioralReport_ProcessIdentity_CopiedCountsOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildBehavioralReport() error = %v", err)
 	}
-	if report.Result.ProcessIdentity.Observations != 2 || report.Result.ProcessIdentity.MatchesCandidate != 1 || report.Result.ProcessIdentity.ProjectMismatches != 1 {
+	if report.Result.ProcessIdentity.Observations != 3 || report.Result.ProcessIdentity.Counted != 2 || report.Result.ProcessIdentity.MatchesCandidate != 1 || report.Result.ProcessIdentity.ProjectMismatches != 1 {
 		t.Fatalf("ProcessIdentity summary = %+v", report.Result.ProcessIdentity)
 	}
 	rendered := RenderBehavioralReportText(report)

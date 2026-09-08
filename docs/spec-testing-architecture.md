@@ -597,8 +597,10 @@ wire contract in M0):
    exchanges as unattributed. Agent phases and overhead phases (user
    simulation, retrospective) are two separate totals, never one sum; the
    phase-to-total mapping is the report's own and is printed.
-4. **MCP** — per stream: file, tool calls, results, bytes. The number of
-   tools advertised in the MCP schema is never printed as a call count.
+4. **MCP** — per stream: file, tool calls, progress notifications, bytes
+   (what the stream inspection records; result counts are not a recorded
+   field). The number of tools advertised in the MCP schema is never printed
+   as a call count.
 5. **Findings** — at most five sentences, each a fact with a coordinate
    (`file:seq` or artifact path). No quality score, no causal diagnosis, no
    "wasted call" or "token savings" claim; a repeated retrieval or a
