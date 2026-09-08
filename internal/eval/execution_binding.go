@@ -342,10 +342,21 @@ func (r *Runner) pollProcessIdentityDuring(ctx context.Context, result *Behavior
 		interval = 500 * time.Millisecond
 	}
 	sessionDir := r.config.Capture.SessionDir
-	windowID := filepath.Base(sessionDir)
+	// The window identity the candidate's environ must carry is the capture
+	// id itself (what the wrapper exported as ZCP_CAPTURE_SESSION_ID), not a
+	// path component.
+	windowID := r.config.Capture.CaptureID
 	candidateSHA := r.config.Binding.CandidateSHA256
+	// A pid observed in an earlier phase is never re-observed: the same map
+	// state is carried across agent.initial and every agent.resume.<n>.
 	seen := make(map[int]bool)
 	sawUnsupported := false
+	for _, o := range result.ProcessIdentity {
+		seen[o.PID] = true
+		if o.Classification == processIdentityUnsupported {
+			sawUnsupported = true
+		}
+	}
 	appendObservations := func(obs []ProcessIdentity) {
 		for _, o := range obs {
 			if o.Classification == processIdentityUnsupported {
