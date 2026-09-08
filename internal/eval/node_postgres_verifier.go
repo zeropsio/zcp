@@ -164,9 +164,9 @@ func unrelatedArtifactRowID(unrelated string) string {
 // any HTTP/SQL work is safe to attempt (§10.3 "Independence").
 func blockedNodePostgresRows(in NodePostgresInput, now time.Time, message string) []RequiredCheck {
 	return []RequiredCheck{
-		{ID: nodePostgresRoundtripRowID(in.Stage), Check: checkNodePostgresRecord, Scope: in.Stage, Result: CheckBlocked, ObservedAt: now, Message: message},
-		{ID: nodePostgresEnvironmentRowID(in.Stage), Check: checkNodePostgresRecord, Scope: in.Stage, Result: CheckBlocked, ObservedAt: now, Message: message},
-		{ID: nodePostgresDBRowID(in.Database), Check: checkNodePostgresRecord, Scope: in.Database, Result: CheckBlocked, ObservedAt: now, Message: message},
+		blockedRow(nodePostgresRoundtripRowID(in.Stage), in.Stage, now, message),
+		blockedRow(nodePostgresEnvironmentRowID(in.Stage), in.Stage, now, message),
+		blockedRow(nodePostgresDBRowID(in.Database), in.Database, now, message),
 		{ID: unrelatedArtifactRowID(in.Unrelated), Check: checkUnrelatedArtifact, Scope: in.Unrelated, Result: CheckBlocked, ObservedAt: now, Message: message},
 	}
 }

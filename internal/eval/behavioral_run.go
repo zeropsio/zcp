@@ -283,7 +283,7 @@ func (r *Runner) observeTaskEnd(ctx context.Context, sc *Scenario, outDir string
 	readServices := sc.Verification != nil && len(sc.Verification.ExpectedServices) > 0
 	readProcesses := sc.Verification != nil && sc.Verification.NoFailedProcesses
 	observation := collectPlatformObservation(evidenceCtx, r.client, r.projectID, readServices, readProcesses)
-	rows := generateRequiredChecks(evidenceCtx, sc, observation, r.httpDoer, startedAt, r.projectID, r.client, true, nil)
+	rows := generateRequiredChecks(evidenceCtx, sc, observation, r.httpDoer, startedAt, r.projectID, r.client, true, result.Baseline)
 	findings := projectRowsToFindings(rows)
 	findings = append(findings, retrospectivePhraseFindings(sc, selfReview)...)
 	snapshot := buildPlatformSnapshotFromObservation(r.projectID, startedAt, observation, findings)

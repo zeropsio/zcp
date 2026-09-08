@@ -133,12 +133,12 @@ func runEvalScopedCaptureRaw(wrapperArgs []string) int {
 	if result.ChildErr != nil {
 		fmt.Fprintf(os.Stderr, "capture: child process: %v\n", result.ChildErr)
 		if result.CloseErr != nil || result.Status != capture.CaptureComplete {
-			fmt.Fprintf(os.Stderr, "capture: window %s closed %s: %v\n", windowID, result.Status, result.CloseErr)
+			fmt.Fprintln(os.Stderr, captureCloseDiagnostic(windowID, result.Status, result.CloseErr))
 		}
 		return 1
 	}
 	if result.CloseErr != nil || result.Status != capture.CaptureComplete {
-		fmt.Fprintf(os.Stderr, "capture: window %s closed %s: %v\n", windowID, result.Status, result.CloseErr)
+		fmt.Fprintln(os.Stderr, captureCloseDiagnostic(windowID, result.Status, result.CloseErr))
 		return 1
 	}
 	report, err := capture.InspectSession(result.SessionDir)
@@ -152,4 +152,13 @@ func runEvalScopedCaptureRaw(wrapperArgs []string) int {
 	}
 	fmt.Fprintln(os.Stderr, "capture: complete")
 	return result.ChildExit
+}
+
+// captureCloseDiagnostic names the window's terminal status and, only when
+// there is one, the close error.
+func captureCloseDiagnostic(windowID, status string, closeErr error) string {
+	if closeErr != nil {
+		return fmt.Sprintf("capture: window %s closed %s: %v", windowID, status, closeErr)
+	}
+	return fmt.Sprintf("capture: window %s closed %s", windowID, status)
 }
