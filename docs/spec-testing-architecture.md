@@ -364,8 +364,11 @@ non-passed required scenario as a failure.
 ### 10.2 Task-end freeze and retention
 
 **Task end** is the instant after the initial agent invocation and every
-user-simulation resume have returned, and before the retrospective. It is
-recorded once and is the only point the task result is decided.
+user-simulation resume have returned, and before the retrospective. In
+`required` mode it is recorded once and is the only point the task result is
+decided. `observe` mode keeps its legacy ordering: its rows are decided by one
+platform read taken AFTER the retrospective (so the advisory phrase check can
+see the self-review), and nothing gates on them.
 
 At task end the runner, in this order:
 
