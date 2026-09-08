@@ -151,6 +151,14 @@ type fakeZeropsServer struct {
 	requests    []fakeRequest
 	appStatus   string // "" omits the "app" service entirely
 	appCategory string
+	// directServiceCalls counts GET /project/{id}/service-stack (direct)
+	// requests seen so far. appHiddenForCalls, when > 0, makes the "app"
+	// service invisible on direct reads until directServiceCalls exceeds
+	// it — used by §10.4 binding tests where the same fake project must
+	// look fresh (no app) at preflight time and populated (app present) at
+	// the task-end freeze, both direct-GET reads against this same server.
+	directServiceCalls int
+	appHiddenForCalls  int
 }
 
 func newFakeZeropsServer(t *testing.T, appStatus string) *fakeZeropsServer {
@@ -162,6 +170,16 @@ func newFakeZeropsServer(t *testing.T, appStatus string) *fakeZeropsServer {
 }
 
 func (f *fakeZeropsServer) URL() string { return f.srv.URL }
+
+// hideAppForFirstDirectCalls makes the "app" service invisible on the first
+// n direct GET /project/{id}/service-stack reads (the preflight fresh-target
+// check), then visible from call n+1 onward (the task-end freeze read) —
+// see the directServiceCalls field doc.
+func (f *fakeZeropsServer) hideAppForFirstDirectCalls(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.appHiddenForCalls = n
+}
 
 func (f *fakeZeropsServer) record(r *http.Request) {
 	f.mu.Lock()
@@ -230,11 +248,12 @@ func (f *fakeZeropsServer) handle(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case r.Method == http.MethodGet && r.URL.Path == "/api/rest/public/project/"+fakeProjectID+"/service-stack":
-		fmt.Fprint(w, `{"list":[`+f.serviceStackItemsJSON()+`],"totalCount":`+fmt.Sprint(f.serviceStackCount())+`}`)
+		appVisible := f.directServiceStackAppVisible()
+		fmt.Fprint(w, `{"list":[`+f.serviceStackItemsJSON(appVisible)+`],"totalCount":`+fmt.Sprint(f.serviceStackCount(appVisible))+`}`)
 		return
 
 	case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/service-stack/search":
-		fmt.Fprint(w, `{"limit":1000,"offset":0,"totalHits":`+fmt.Sprint(f.serviceStackCount())+`,"items":[`+f.serviceStackItemsJSON()+`]}`)
+		fmt.Fprint(w, `{"limit":1000,"offset":0,"totalHits":`+fmt.Sprint(f.serviceStackCount(true))+`,"items":[`+f.serviceStackItemsJSON(true)+`]}`)
 		return
 
 	case r.Method == http.MethodGet && r.URL.Path == "/api/rest/public/project/"+fakeProjectID+"/process":
@@ -248,8 +267,20 @@ func (f *fakeZeropsServer) handle(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (f *fakeZeropsServer) serviceStackCount() int {
-	if f.appStatus == "" {
+// directServiceStackAppVisible decides, for THIS direct-GET call, whether
+// the "app" service should appear — see the directServiceCalls field doc.
+func (f *fakeZeropsServer) directServiceStackAppVisible() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.directServiceCalls++
+	if f.appHiddenForCalls > 0 && f.directServiceCalls <= f.appHiddenForCalls {
+		return false
+	}
+	return true
+}
+
+func (f *fakeZeropsServer) serviceStackCount(appVisible bool) int {
+	if f.appStatus == "" || !appVisible {
 		return 1
 	}
 	return 2
@@ -261,9 +292,9 @@ func (f *fakeZeropsServer) serviceStackCount() int {
 // category — CORE keeps it out of CleanupProject's delete-candidate set too,
 // so this harness never needs to model the delete-and-poll lifecycle to get
 // a stable pre-task platform state.
-func (f *fakeZeropsServer) serviceStackItemsJSON() string {
+func (f *fakeZeropsServer) serviceStackItemsJSON(appVisible bool) string {
 	items := []string{f.serviceStackJSON(fakeZCPServiceID, "zcp", "ACTIVE", "CORE")}
-	if f.appStatus != "" {
+	if f.appStatus != "" && appVisible {
 		items = append(items, f.serviceStackJSON(fakeAppServiceID, "app", f.appStatus, f.appCategory))
 	}
 	return strings.Join(items, ",")
@@ -392,10 +423,12 @@ func writeRequiredScenario(t *testing.T, dir, id, mode string) string {
 // non-parallel: builds and runs the zcp binary with a private HOME.
 func TestBehavioralCLI_RequiredFailure_NonzeroWithExplicitDimensions(t *testing.T) {
 	h := newCLIHarness(t, "FAILED")
+	h.server.hideAppForFirstDirectCalls(1) // preflight fresh-target read sees an empty project; the task-end freeze sees the seeded FAILED "app"
 	scenarioDir := t.TempDir()
 	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-required-fail", "required")
 
-	exitCode, stderr := h.run(t, nil, "eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw")
+	args := append([]string{"eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw"}, cliBindingArgs(t)...)
+	exitCode, stderr := h.run(t, nil, args...)
 
 	if exitCode != 1 {
 		t.Fatalf("exit code = %d, want 1\nstderr:\n%s", exitCode, stderr)
@@ -481,10 +514,12 @@ func TestBehavioralCLI_ObserveMode_PreservesExecutionOnlyExit(t *testing.T) {
 // non-parallel: builds and runs the zcp binary with a private HOME.
 func TestBehavioralCLI_FailedTask_CompleteCaptureRemainsReadable(t *testing.T) {
 	h := newCLIHarness(t, "FAILED")
+	h.server.hideAppForFirstDirectCalls(1)
 	scenarioDir := t.TempDir()
 	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-required-fail-capture", "required")
 
-	exitCode, stderr := h.run(t, nil, "eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw")
+	args := append([]string{"eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw"}, cliBindingArgs(t)...)
+	exitCode, stderr := h.run(t, nil, args...)
 	if exitCode != 1 {
 		t.Fatalf("exit code = %d, want 1\nstderr:\n%s", exitCode, stderr)
 	}
@@ -681,11 +716,12 @@ func TestBehavioralCLI_OwnedScopedChild_FinalizesThenReturnsAcceptance(t *testin
 // non-parallel: builds and runs the zcp binary with a private HOME.
 func TestBehavioralCLI_CaptureCloseFailure_NonzeroEvenIfTaskPassed(t *testing.T) {
 	h := newCLIHarness(t, "ACTIVE")
+	h.server.hideAppForFirstDirectCalls(1)
 	scenarioDir := t.TempDir()
 	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-required-broken-capture", "required")
 
-	exitCode, stderr := h.run(t, []string{"ZCP_EVAL_FAKE_CLAUDE_BREAK_CAPTURE=1"},
-		"eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw")
+	args := append([]string{"eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw"}, cliBindingArgs(t)...)
+	exitCode, stderr := h.run(t, []string{"ZCP_EVAL_FAKE_CLAUDE_BREAK_CAPTURE=1"}, args...)
 
 	if exitCode == 0 {
 		t.Fatalf("exit code = 0, want nonzero even though the task passed\nstderr:\n%s", stderr)
@@ -737,6 +773,26 @@ func errOrNil2(_ *capture.InspectionReport, err error) error       { return err 
 // ---------------------------------------------------------------------------
 // TestExecutionBinding_WrongProject_RefusedBeforeRunner
 // ---------------------------------------------------------------------------
+
+// cliBindingArgs builds a valid §10.4 binding flag set for the CLI harness:
+// a candidate that is a byte-identical copy of the binary under test, bound
+// to fakeProjectID. h.server.hideAppForFirstDirectCalls(1) must be called
+// separately by tests whose fake server pre-populates a non-system service,
+// so the preflight's fresh-target read (the 1st direct GET) sees an empty
+// project while the task-end freeze (the 2nd) sees the seeded state.
+func cliBindingArgs(t *testing.T) []string {
+	t.Helper()
+	bin := buildZCPBinary(t)
+	candidate := filepath.Join(t.TempDir(), "zcp-candidate")
+	copyExecutableFile(t, bin, candidate)
+	sha := sha256HexFile(t, candidate)
+	return []string{
+		"--candidate", candidate,
+		"--candidate-sha256", sha,
+		"--project-id", fakeProjectID,
+		"--ack-disposable-project", "yes",
+	}
+}
 
 // sha256HexFile hashes a file for use as --candidate-sha256 in tests.
 func sha256HexFile(t *testing.T, path string) string {
