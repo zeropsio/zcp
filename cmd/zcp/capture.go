@@ -281,60 +281,96 @@ func runCaptureInspectTo(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func runCaptureRaw(args []string) int {
+// captureRawFlags is the parsed configuration for `capture raw`, shared by
+// the standalone command and the eval owned-window wrapper
+// (cmd/zcp/eval_capture.go).
+type captureRawFlags struct {
+	Label     string
+	OutputDir string
+	Listen    string
+	Upstream  string
+	Command   []string
+}
+
+// parseCaptureRawFlags parses `capture raw` flags. done=true means the
+// caller must return exitCode immediately (help, parse error, or missing
+// command); any diagnostic has already been written to stderr.
+func parseCaptureRawFlags(args []string) (flags captureRawFlags, exitCode int, done bool) {
 	defaultRoot, err := defaultCaptureRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "capture: %v\n", err)
-		return 1
+		return captureRawFlags{}, 1, true
 	}
-	flags := flag.NewFlagSet("capture raw", flag.ContinueOnError)
-	flags.SetOutput(os.Stderr)
-	label := flags.String("label", "capture", "capture label")
-	outputDir := flags.String("output-dir", defaultRoot, "capture root directory")
-	listen := flags.String("listen", "127.0.0.1:0", "loopback listen address")
-	upstream := flags.String("upstream", captureUpstreamFromEnv(), "fixed provider upstream")
-	if err := flags.Parse(args); err != nil {
+	fs := flag.NewFlagSet("capture raw", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	label := fs.String("label", "capture", "capture label")
+	outputDir := fs.String("output-dir", defaultRoot, "capture root directory")
+	listen := fs.String("listen", "127.0.0.1:0", "loopback listen address")
+	upstream := fs.String("upstream", captureUpstreamFromEnv(), "fixed provider upstream")
+	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			return 0
+			return captureRawFlags{}, 0, true
 		}
-		return 2
+		return captureRawFlags{}, 2, true
 	}
-	command := flags.Args()
+	command := fs.Args()
 	if len(command) == 0 {
 		fmt.Fprintln(os.Stderr, "capture: command required after --")
-		return 2
+		return captureRawFlags{}, 2, true
 	}
+	return captureRawFlags{Label: *label, OutputDir: *outputDir, Listen: *listen, Upstream: *upstream, Command: command}, 0, false
+}
 
+// captureRawResult is the typed outcome of one `capture raw` run: the
+// session directory, terminal manifest status, any close error, and the
+// child process's own exit. docs/spec-capture-inspector.md §6 — the required
+// eval acceptance is decided from this value, not from the child's exit
+// alone.
+type captureRawResult struct {
+	SessionDir string
+	Status     string
+	CloseErr   error
+	ChildExit  int
+	ChildErr   error
+}
+
+// runCaptureRawWork starts a scoped capture runtime, runs command as its
+// child, and closes the window. extraChildEnv, when non-nil, is invoked with
+// the generated session ID and its return value is appended to the child's
+// environment (used by the eval wrapper to hand over window ownership).
+// A returned error means setup failed before the child ever ran; the
+// diagnostic has already been written to stderr.
+func runCaptureRawWork(flags captureRawFlags, extraChildEnv func(sessionID string) []string) (captureRawResult, error) {
 	sessionID, err := newCaptureSessionID()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "capture: create session ID: %v\n", err)
-		return 1
+		return captureRawResult{}, err
 	}
 	controlDir, err := os.MkdirTemp(os.TempDir(), "zcp-capture-control-")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "capture: create control directory: %v\n", err)
-		return 1
+		return captureRawResult{}, err
 	}
 	defer func() { _ = os.RemoveAll(controlDir) }()
 	if err := os.Chmod(controlDir, 0o700); err != nil {
 		fmt.Fprintf(os.Stderr, "capture: secure control directory: %v\n", err)
-		return 1
+		return captureRawResult{}, err
 	}
 	controlToken, err := newCaptureControlToken()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "capture: create control token: %v\n", err)
-		return 1
+		return captureRawResult{}, err
 	}
 	runtimeCtx := context.Background()
 	runtime, err := capture.StartRuntime(runtimeCtx, capture.RuntimeConfig{
-		RootDir:       *outputDir,
+		RootDir:       flags.OutputDir,
 		CaptureID:     sessionID,
-		Label:         *label,
-		ListenAddr:    *listen,
-		UpstreamURL:   *upstream,
+		Label:         flags.Label,
+		ListenAddr:    flags.Listen,
+		UpstreamURL:   flags.Upstream,
 		ControlSocket: filepath.Join(controlDir, "control.sock"),
 		ControlToken:  controlToken,
-		Command:       command,
+		Command:       flags.Command,
 		Build: capture.CaptureBuildInfo{
 			Version: server.Version,
 			Commit:  server.Commit,
@@ -343,7 +379,7 @@ func runCaptureRaw(args []string) int {
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "capture: start runtime: %v\n", err)
-		return 1
+		return captureRawResult{}, err
 	}
 
 	fmt.Fprintln(os.Stderr, "CAPTURE ON — plaintext prompts, source code, and tool data")
@@ -353,24 +389,45 @@ func runCaptureRaw(args []string) int {
 	fmt.Fprintf(os.Stderr, "manifest: %s\n", filepath.Join(runtime.SessionDir(), "manifest.json"))
 
 	childEnv := captureChildEnv(os.Environ(), runtime.ProxyURL(), sessionID, runtime.SessionDir(), runtime.ControlSocket(), controlToken)
-	exitCode, childErr := runCaptureChild(command, childEnv)
+	if extraChildEnv != nil {
+		childEnv = append(childEnv, extraChildEnv(sessionID)...)
+	}
+	exitCode, childErr := runCaptureChild(flags.Command, childEnv)
 	requestedStatus := capture.CaptureComplete
 	if childErr != nil {
 		requestedStatus = capture.CapturePartial
 	}
 	status, closeErr := runtime.CloseChild(runtimeCtx, requestedStatus, exitCode)
-	if childErr != nil {
-		fmt.Fprintf(os.Stderr, "capture: child process: %v\n", childErr)
-	}
-	if closeErr != nil {
-		fmt.Fprintf(os.Stderr, "capture: close runtime: %v\n", closeErr)
-	}
-	fmt.Fprintf(os.Stderr, "child: exit %d\ncapture: %s\n", exitCode, status)
+	return captureRawResult{
+		SessionDir: runtime.SessionDir(),
+		Status:     status,
+		CloseErr:   closeErr,
+		ChildExit:  exitCode,
+		ChildErr:   childErr,
+	}, nil
+}
 
-	if childErr != nil {
+func runCaptureRaw(args []string) int {
+	flags, exitCode, done := parseCaptureRawFlags(args)
+	if done {
+		return exitCode
+	}
+	result, err := runCaptureRawWork(flags, nil)
+	if err != nil {
 		return 1
 	}
-	return exitCode
+	if result.ChildErr != nil {
+		fmt.Fprintf(os.Stderr, "capture: child process: %v\n", result.ChildErr)
+	}
+	if result.CloseErr != nil {
+		fmt.Fprintf(os.Stderr, "capture: close runtime: %v\n", result.CloseErr)
+	}
+	fmt.Fprintf(os.Stderr, "child: exit %d\ncapture: %s\n", result.ChildExit, result.Status)
+
+	if result.ChildErr != nil {
+		return 1
+	}
+	return result.ChildExit
 }
 
 func defaultCaptureRoot() (string, error) {
