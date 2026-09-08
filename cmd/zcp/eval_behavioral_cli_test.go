@@ -146,6 +146,18 @@ func (f *fakeZeropsServer) record(r *http.Request) {
 	f.requests = append(f.requests, fakeRequest{Method: r.Method, Path: r.URL.Path, At: time.Now()})
 }
 
+func (f *fakeZeropsServer) esSearchCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, req := range f.requests {
+		if req.Method == http.MethodPost && req.Path == "/api/rest/public/service-stack/search" {
+			n++
+		}
+	}
+	return n
+}
+
 func (f *fakeZeropsServer) deleteCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -396,4 +408,32 @@ func findResultFile(t *testing.T, resultsDir, scenarioID, name string) string {
 		t.Fatalf("result file %s under %s/*/%s: got %d matches, want 1: %v", name, resultsDir, scenarioID, len(matches), matches)
 	}
 	return matches[0]
+}
+
+// ---------------------------------------------------------------------------
+// TestBehavioralCLI_ObserveMode_PreservesExecutionOnlyExit
+// ---------------------------------------------------------------------------
+
+// non-parallel: builds and runs the zcp binary with a private HOME.
+func TestBehavioralCLI_ObserveMode_PreservesExecutionOnlyExit(t *testing.T) {
+	h := newCLIHarness(t, "FAILED")
+	scenarioDir := t.TempDir()
+	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-observe-fail", "")
+
+	exitCode, stderr := h.run(t, nil, "eval", "behavioral", "run", "--file", scenarioPath)
+
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr:\n%s", exitCode, stderr)
+	}
+	if !strings.Contains(stderr, "Task:         observe failed (advisory)") {
+		t.Errorf("stderr missing observe-mode advisory task line\nstderr:\n%s", stderr)
+	}
+
+	// Legacy cleanup runs the ES service-stack search at least twice: once
+	// during SeedEmpty (before task work) and once more from the deferred
+	// post-scenario CleanupProject (after the run) — the execution-only exit
+	// and legacy cleanup path observe mode keeps.
+	if n := h.server.esSearchCount(); n < 2 {
+		t.Errorf("POST /service-stack/search count = %d, want >= 2 (seed + post-run cleanup)", n)
+	}
 }
