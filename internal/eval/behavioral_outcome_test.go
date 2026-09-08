@@ -1011,3 +1011,48 @@ Do the thing.
 		t.Fatal("verification.json written for a scenario with no verification block")
 	}
 }
+
+// TestBehavioralOutcome_AgentExitNonZeroAfterWork_GradedNotNotRun pins the
+// §10.1 point 7 amendment: an agent that ran (its transcript carries a
+// session and a terminal result, e.g. error_max_turns) and exited non-zero
+// is graded from the platform like any other task end — the exit lands in
+// `error`, the rows are decided, and the retrospective is skipped. Only a
+// run that produced no session is not-run.
+func TestBehavioralOutcome_AgentExitNonZeroAfterWork_GradedNotNotRun(t *testing.T) { // non-parallel: process environment
+	h := newBehavioralHarness(t)
+	h.writeClaudeScript(t, `#!/bin/sh
+if [ "$1" = "--resume" ]; then
+    : > "$RETRO_MARKER"
+    exit 0
+fi
+printf '%s\n' '{"type":"system","subtype":"init","session_id":"offline-maxturns","model":"fake-offline"}'
+printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Still working."}]}}'
+printf '%s\n' '{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":100,"session_id":"offline-maxturns"}'
+exit 1
+`)
+	t.Setenv("RETRO_MARKER", filepath.Join(h.root, "retro-marker"))
+	scenarioPath := h.writeScenario(t, requiredExpectedAppScenario("required-maxturns"))
+	mock := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "FAILED"}})
+	cfg := h.config()
+	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
+	cfg.CaptureOwned = true
+	h.requiredBinding(t, &cfg)
+	runner := NewRunner(cfg, nil, &freshThenRealClient{Client: mock}, "offline-project")
+
+	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result.Error, "claude exit") {
+		t.Fatalf("Error = %q, want the agent exit recorded", result.Error)
+	}
+	if result.SessionID != "offline-maxturns" {
+		t.Fatalf("SessionID = %q, want the session bound from the transcript", result.SessionID)
+	}
+	if result.Task == nil || result.Task.Result != CheckFailed {
+		t.Fatalf("Task = %+v, want failed (graded from the platform), not not-run", result.Task)
+	}
+	if _, err := os.Stat(filepath.Join(h.root, "retro-marker")); err == nil {
+		t.Fatal("retrospective ran after an agent error exit; it must be skipped")
+	}
+}

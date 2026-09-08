@@ -317,8 +317,12 @@ Rows are never dropped: a `blocked` row sits next to a `failed` one.
 
 **Result.** The scenario's task result aggregates the rows: any `failed` →
 `failed`; else any `blocked` → `blocked`; else every row `passed` → `passed`;
-no task work (the initial agent invocation did not complete) → `not-run`. A
-known failure stays `failed` when another row is blocked. Evidence completeness
+no task work → `not-run`. "No task work" means the initial agent invocation
+left no session: an agent that ran and then exited non-zero (a turn cap, a
+client error after real work) is graded from the platform like any other
+task end, with the exit recorded in `error` and the user simulation and
+retrospective skipped. A known failure stays `failed` when another row is
+blocked. Evidence completeness
 (capture status, §10.2 persistence) is a separate dimension and never turns a
 `failed` into anything else.
 

@@ -180,9 +180,23 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	defer cancelScenario()
 
 	sessionID, errMsg := r.runInitialAgent(ctx, scenarioCtx, sc, suiteID, transcriptFile, result)
-	if errMsg != "" {
+	if errMsg != "" && sessionID == "" {
 		result.Error = errMsg
 		return r.notRunFailure(ctx, sc, outDir, result, startedAt), nil
+	}
+	if errMsg != "" {
+		// Task work happened and the agent exited non-zero: record the exit
+		// as the execution error, grade the platform at task end, skip the
+		// user simulation and the retrospective (no session to continue).
+		result.Error = errMsg
+		if sc.IsRequired() {
+			r.freezeTaskEnd(context.WithoutCancel(ctx), sc, outDir, result, startedAt, true, nil)
+		} else {
+			r.observeTaskEnd(context.WithoutCancel(ctx), sc, outDir, result, startedAt, "")
+		}
+		result.Duration = Duration(time.Since(startedAt))
+		logBehavioralResultWrite(outDir, result)
+		return result, nil
 	}
 
 	// User-sim loop — drive multi-turn realistic conversation while the agent
@@ -382,12 +396,21 @@ func (r *Runner) runInitialAgent(ctx, scenarioCtx context.Context, sc *Scenario,
 	spawnErr := r.pollProcessIdentityDuring(scenarioCtx, result, func() error {
 		return r.spawnClaudeFresh(scenarioCtx, sc.Prompt, transcriptFile, captureProcessScope{evalRunID: suiteID, scenarioRunID: sc.ID, invocationID: initialInvocationID, phase: "agent.initial"})
 	})
+	result.ScenarioWallTime = Duration(time.Since(scenarioStart))
 	if err := spawnErr; err != nil {
+		// The agent exited non-zero. If it ran far enough to leave a session
+		// (a turn cap or a client error after real work), bind it so the
+		// exchanges join and let the caller grade the platform (§10.1 point
+		// 7); only a run with no session at all is not-run.
+		if sessionID, sessionErr := extractSessionID(transcriptFile); sessionErr == nil && sessionID != "" {
+			result.SessionID = sessionID
+			initialInvocation.Bind(scenarioCtx, sessionID)
+			initialInvocation.End(scenarioCtx, capture.CapturePartial, err)
+			return sessionID, fmt.Sprintf("agent: claude exit: %v", err)
+		}
 		initialInvocation.End(scenarioCtx, capture.CapturePartial, err)
-		result.ScenarioWallTime = Duration(time.Since(scenarioStart))
 		return "", fmt.Sprintf("scenario spawn: %v", err)
 	}
-	result.ScenarioWallTime = Duration(time.Since(scenarioStart))
 
 	sessionID, err := extractSessionID(transcriptFile)
 	if err != nil {
