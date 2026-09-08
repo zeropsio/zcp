@@ -39,6 +39,13 @@ type RunnerConfig struct {
 	// before declaring the observation unsettled. Default 60s.
 	// (docs/spec-testing-architecture.md §10.2 step 3.)
 	TaskEndSettle time.Duration
+	// Binding is an explicit execution binding (docs/spec-testing-
+	// architecture.md §10.4). nil means the runner uses its own executable
+	// as the agent's tool, as before this section.
+	Binding *ExecutionBinding
+	// IdentityPollInterval overrides the default 500ms process-identity
+	// poll cadence (§10.4 "Observed process identity"). Test-tunable only.
+	IdentityPollInterval time.Duration
 }
 
 // Runner executes single recipe evaluations.
@@ -74,6 +81,9 @@ func NewRunner(config RunnerConfig, store *knowledge.Store, client platform.Clie
 	}
 	if config.TaskEndSettle == 0 {
 		config.TaskEndSettle = 60 * time.Second
+	}
+	if config.IdentityPollInterval == 0 {
+		config.IdentityPollInterval = 500 * time.Millisecond
 	}
 	return &Runner{
 		config:    config,

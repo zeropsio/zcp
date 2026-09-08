@@ -81,3 +81,92 @@ func TestSelectForAll_RealScenarios_ExcludesLaunchDelegated(t *testing.T) {
 		}
 	}
 }
+
+// TestExecutionBinding_ParseFlags_AllOrNothing pins
+// docs/spec-testing-architecture.md §10.4 "Binding": the four core binding
+// flags are all-or-nothing, `behavioral all` refuses any binding flag, and
+// --work-dir/--results-dir are extracted regardless of whether a binding is
+// present.
+func TestExecutionBinding_ParseFlags_AllOrNothing(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no binding flags at all", func(t *testing.T) {
+		t.Parallel()
+		clean, flags, err := parseExecutionBindingFlags([]string{"--file", "scenario.md"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if flags.any {
+			t.Fatalf("flags.any = true, want false")
+		}
+		if len(clean) != 2 || clean[0] != "--file" || clean[1] != "scenario.md" {
+			t.Fatalf("clean = %v, want passthrough of non-binding args", clean)
+		}
+	})
+
+	t.Run("partial binding is a usage error", func(t *testing.T) {
+		t.Parallel()
+		_, _, err := parseExecutionBindingFlags([]string{"--candidate", "/bin/zcp"})
+		if err == nil {
+			t.Fatal("expected an error for a partial binding, got nil")
+		}
+	})
+
+	t.Run("complete binding parses clean", func(t *testing.T) {
+		t.Parallel()
+		clean, flags, err := parseExecutionBindingFlags([]string{
+			"--file", "scenario.md",
+			"--candidate", "/bin/zcp",
+			"--candidate-sha256", "deadbeef",
+			"--project-id", "proj-1",
+			"--ack-disposable-project", "yes",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !flags.any {
+			t.Fatal("flags.any = false, want true")
+		}
+		if flags.candidate != "/bin/zcp" || flags.sha256 != "deadbeef" || flags.projectID != "proj-1" || flags.ack != "yes" {
+			t.Fatalf("flags = %+v, want the four core binding values", flags)
+		}
+		if len(clean) != 2 || clean[0] != "--file" || clean[1] != "scenario.md" {
+			t.Fatalf("clean = %v, want binding flags stripped", clean)
+		}
+	})
+
+	t.Run("work and results dir override the env value", func(t *testing.T) {
+		t.Parallel()
+		_, flags, err := parseExecutionBindingFlags([]string{"--work-dir", "/tmp/w", "--results-dir", "/tmp/r"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if flags.workDir != "/tmp/w" || flags.resultsDir != "/tmp/r" {
+			t.Fatalf("flags = %+v, want workDir=/tmp/w resultsDir=/tmp/r", flags)
+		}
+	})
+
+	t.Run("all rejects any binding flag", func(t *testing.T) {
+		t.Parallel()
+		_, _, err := parseExecutionBindingFlags([]string{
+			"--candidate", "/bin/zcp",
+			"--candidate-sha256", "deadbeef",
+			"--project-id", "proj-1",
+			"--ack-disposable-project", "yes",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error building flags: %v", err)
+		}
+		if err := rejectBindingFlagsForAll([]string{
+			"--candidate", "/bin/zcp",
+			"--candidate-sha256", "deadbeef",
+			"--project-id", "proj-1",
+			"--ack-disposable-project", "yes",
+		}); err == nil {
+			t.Fatal("rejectBindingFlagsForAll: expected an error, got nil")
+		}
+		if err := rejectBindingFlagsForAll([]string{"--scenarios-dir", "dir"}); err != nil {
+			t.Fatalf("rejectBindingFlagsForAll: unexpected error for a non-binding arg set: %v", err)
+		}
+	})
+}

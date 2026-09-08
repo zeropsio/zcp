@@ -87,7 +87,13 @@ func runBehavioralList(args []string) int {
 	return 0
 }
 
-func runBehavioralRun(args []string) int {
+func runBehavioralRun(rawArgs []string) int {
+	args, bindingFlags, err := parseExecutionBindingFlags(rawArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
+
 	file := flagValue(args, "--file")
 	dir := flagValue(args, "--scenarios-dir")
 	id := flagValue(args, "--id")
@@ -111,11 +117,14 @@ func runBehavioralRun(args []string) int {
 		return 1
 	}
 
-	runner, _, ctx, ok := initEvalRunner()
+	suiteID := time.Now().UTC().Format("20060102-150405")
+	applyEvalDirOverrides(bindingFlags)
+	binding := buildExecutionBinding(bindingFlags, suiteID)
+
+	runner, _, ctx, ok := initEvalRunnerFor(binding)
 	if !ok {
 		return 1
 	}
-	suiteID := time.Now().UTC().Format("20060102-150405")
 
 	fmt.Fprintf(os.Stderr, "Running behavioral scenario: %s (suite=%s)\n", path, suiteID)
 	runner.BeginCaptureEvalRun(ctx, suiteID)
@@ -142,7 +151,58 @@ func runBehavioralRun(args []string) int {
 	return 0
 }
 
+// applyEvalDirOverrides implements §10.4 "--work-dir/--results-dir override
+// ZCP_EVAL_WORK_DIR/ZCP_EVAL_RESULTS_DIR before initEvalRunner resolves
+// them" by setting the environment the resolver functions read.
+func applyEvalDirOverrides(flags executionBindingFlags) {
+	if flags.workDir != "" {
+		_ = os.Setenv("ZCP_EVAL_WORK_DIR", flags.workDir)
+	}
+	if flags.resultsDir != "" {
+		_ = os.Setenv("ZCP_EVAL_RESULTS_DIR", flags.resultsDir)
+	}
+}
+
+// buildExecutionBinding builds an eval.ExecutionBinding from parsed CLI
+// flags, or nil when no binding flags were given. defaultRunID is the suite
+// id (§10.4 "--run-id defaults to the suite id"). PrivateBin/ClaudeHome are
+// derived siblings of the (possibly overridden) work dir so the candidate's
+// own PATH/HOME never collide with the evaluator's.
+func buildExecutionBinding(flags executionBindingFlags, defaultRunID string) *eval.ExecutionBinding {
+	if !flags.any {
+		return nil
+	}
+	runID := flags.runID
+	if runID == "" {
+		runID = defaultRunID
+	}
+	workDir, _ := evalWorkDir()
+	if flags.workDir != "" {
+		workDir = flags.workDir
+	}
+	resultsDir := evalResultsDir()
+	if flags.resultsDir != "" {
+		resultsDir = flags.resultsDir
+	}
+	base := filepath.Dir(workDir)
+	return &eval.ExecutionBinding{
+		Candidate:       flags.candidate,
+		CandidateSHA256: flags.sha256,
+		ProjectID:       flags.projectID,
+		AckDisposable:   flags.ack,
+		WorkDir:         workDir,
+		ResultsDir:      resultsDir,
+		RunID:           runID,
+		PrivateBin:      filepath.Join(base, "candidate-bin"),
+		ClaudeHome:      filepath.Join(base, "candidate-claude-home"),
+	}
+}
+
 func runBehavioralAll(args []string) int {
+	if err := rejectBindingFlagsForAll(args); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
 	dir := flagValue(args, "--scenarios-dir")
 	if dir == "" {
 		fmt.Fprintln(os.Stderr, "error: --scenarios-dir <dir> required")
@@ -270,6 +330,13 @@ func printBehavioralDimensions(r *eval.BehavioralResult) {
 	if r.Task != nil && r.Task.Mode == eval.VerificationRequired {
 		fmt.Fprintln(os.Stderr, "Retained:     project and results left in place for operator copy/cleanup")
 	}
+	if r.Binding != nil {
+		if ok, reason := eval.ProcessIdentityAccepted(r); ok {
+			fmt.Fprintf(os.Stderr, "Process identity: ok (pid %d)\n", eval.MatchingProcessIdentityPID(r))
+		} else {
+			fmt.Fprintf(os.Stderr, "Process identity: blocked: %s\n", strings.TrimPrefix(reason, "process identity: "))
+		}
+	}
 }
 
 // behavioralAccepted decides the CLI exit rule (docs/spec-testing-architecture.md
@@ -288,6 +355,11 @@ func behavioralAccepted(r *eval.BehavioralResult) (ok bool, reason string) {
 	}
 	if r.TaskEnd == nil || !r.TaskEnd.Persisted {
 		return false, "task-end evidence: not persisted"
+	}
+	if r.Binding != nil {
+		if ok, reason := eval.ProcessIdentityAccepted(r); !ok {
+			return false, reason
+		}
 	}
 	return true, ""
 }
@@ -346,6 +418,112 @@ func loadBehavioralScenarios(dir string) ([]*eval.Scenario, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
+}
+
+// executionBindingFlags is the parsed §10.4 explicit-candidate-binding flag
+// set. any reports whether at least one of the four core binding flags
+// (candidate/sha256/project-id/ack) was present.
+type executionBindingFlags struct {
+	candidate, sha256, projectID, ack string
+	workDir, resultsDir, runID        string
+	any                               bool
+}
+
+// bindingFlagNames are the four core binding flags: all-or-nothing
+// (docs/spec-testing-architecture.md §10.4 "Binding").
+var bindingFlagNames = []string{"--candidate", "--candidate-sha256", "--project-id", "--ack-disposable-project"}
+
+// parseExecutionBindingFlags extracts the §10.4 binding flags from args,
+// returning the remaining args untouched (order preserved) plus the parsed
+// flags. --work-dir/--results-dir/--run-id are extracted unconditionally;
+// the four core binding flags are all-or-nothing.
+func parseExecutionBindingFlags(args []string) (clean []string, flags executionBindingFlags, err error) {
+	clean = make([]string, 0, len(args))
+	present := map[string]bool{}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch a {
+		case "--candidate":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.candidate = args[i+1]
+			present[a] = true
+			i++
+		case "--candidate-sha256":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.sha256 = args[i+1]
+			present[a] = true
+			i++
+		case "--project-id":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.projectID = args[i+1]
+			present[a] = true
+			i++
+		case "--ack-disposable-project":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.ack = args[i+1]
+			present[a] = true
+			i++
+		case "--work-dir":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.workDir = args[i+1]
+			i++
+		case "--results-dir":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.resultsDir = args[i+1]
+			i++
+		case "--run-id":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.runID = args[i+1]
+			i++
+		default:
+			clean = append(clean, a)
+		}
+	}
+	for _, name := range bindingFlagNames {
+		if present[name] {
+			flags.any = true
+			break
+		}
+	}
+	if flags.any {
+		var missing []string
+		for _, name := range bindingFlagNames {
+			if !present[name] {
+				missing = append(missing, name)
+			}
+		}
+		if len(missing) > 0 {
+			return nil, flags, fmt.Errorf("--candidate/--candidate-sha256/--project-id/--ack-disposable-project must all be given together; missing %s", strings.Join(missing, ", "))
+		}
+	}
+	return clean, flags, nil
+}
+
+// rejectBindingFlagsForAll implements §10.4 "behavioral all with a binding
+// is refused": `behavioral all` never accepts an explicit binding.
+func rejectBindingFlagsForAll(args []string) error {
+	_, flags, err := parseExecutionBindingFlags(args)
+	if err != nil {
+		return err
+	}
+	if flags.any {
+		return fmt.Errorf("'behavioral all' does not accept an explicit binding — required-mode retention makes a second scenario on the same target fail freshness by design; run the scenario directly with 'behavioral run'")
+	}
+	return nil
 }
 
 func flagValue(args []string, name string) string {

@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -126,6 +129,11 @@ exit 0
 // Fake loopback Zerops REST API
 // ---------------------------------------------------------------------------
 
+// goosLinux names the one platform where the §10.4 process-identity
+// observation is implemented; used by every GOOS-gated assertion in this
+// file so the literal appears once (goconst).
+const goosLinux = "linux"
+
 // fakeRequest records one HTTP request the fake server observed.
 type fakeRequest struct {
 	Method string
@@ -148,6 +156,14 @@ type fakeZeropsServer struct {
 	requests    []fakeRequest
 	appStatus   string // "" omits the "app" service entirely
 	appCategory string
+	// directServiceCalls counts GET /project/{id}/service-stack (direct)
+	// requests seen so far. appHiddenForCalls, when > 0, makes the "app"
+	// service invisible on direct reads until directServiceCalls exceeds
+	// it — used by §10.4 binding tests where the same fake project must
+	// look fresh (no app) at preflight time and populated (app present) at
+	// the task-end freeze, both direct-GET reads against this same server.
+	directServiceCalls int
+	appHiddenForCalls  int
 }
 
 func newFakeZeropsServer(t *testing.T, appStatus string) *fakeZeropsServer {
@@ -159,6 +175,16 @@ func newFakeZeropsServer(t *testing.T, appStatus string) *fakeZeropsServer {
 }
 
 func (f *fakeZeropsServer) URL() string { return f.srv.URL }
+
+// hideAppForFirstDirectCall makes the "app" service invisible on the first
+// direct GET /project/{id}/service-stack read (the preflight fresh-target
+// check), then visible from the second call onward (the task-end freeze
+// read) — see the directServiceCalls field doc.
+func (f *fakeZeropsServer) hideAppForFirstDirectCall() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.appHiddenForCalls = 1
+}
 
 func (f *fakeZeropsServer) record(r *http.Request) {
 	f.mu.Lock()
@@ -176,6 +202,19 @@ func (f *fakeZeropsServer) esSearchCount() int {
 		}
 	}
 	return n
+}
+
+// requestPaths returns every request path this server has observed, in
+// order — used by tests asserting a preflight refusal made zero platform
+// reads beyond the auth handshake.
+func (f *fakeZeropsServer) requestPaths() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.requests))
+	for i, req := range f.requests {
+		out[i] = req.Path
+	}
+	return out
 }
 
 func (f *fakeZeropsServer) deleteCount() int {
@@ -214,11 +253,12 @@ func (f *fakeZeropsServer) handle(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case r.Method == http.MethodGet && r.URL.Path == "/api/rest/public/project/"+fakeProjectID+"/service-stack":
-		fmt.Fprint(w, `{"list":[`+f.serviceStackItemsJSON()+`],"totalCount":`+fmt.Sprint(f.serviceStackCount())+`}`)
+		appVisible := f.directServiceStackAppVisible()
+		fmt.Fprint(w, `{"list":[`+f.serviceStackItemsJSON(appVisible)+`],"totalCount":`+fmt.Sprint(f.serviceStackCount(appVisible))+`}`)
 		return
 
 	case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/service-stack/search":
-		fmt.Fprint(w, `{"limit":1000,"offset":0,"totalHits":`+fmt.Sprint(f.serviceStackCount())+`,"items":[`+f.serviceStackItemsJSON()+`]}`)
+		fmt.Fprint(w, `{"limit":1000,"offset":0,"totalHits":`+fmt.Sprint(f.serviceStackCount(true))+`,"items":[`+f.serviceStackItemsJSON(true)+`]}`)
 		return
 
 	case r.Method == http.MethodGet && r.URL.Path == "/api/rest/public/project/"+fakeProjectID+"/process":
@@ -232,8 +272,20 @@ func (f *fakeZeropsServer) handle(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (f *fakeZeropsServer) serviceStackCount() int {
-	if f.appStatus == "" {
+// directServiceStackAppVisible decides, for THIS direct-GET call, whether
+// the "app" service should appear — see the directServiceCalls field doc.
+func (f *fakeZeropsServer) directServiceStackAppVisible() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.directServiceCalls++
+	if f.appHiddenForCalls > 0 && f.directServiceCalls <= f.appHiddenForCalls {
+		return false
+	}
+	return true
+}
+
+func (f *fakeZeropsServer) serviceStackCount(appVisible bool) int {
+	if f.appStatus == "" || !appVisible {
 		return 1
 	}
 	return 2
@@ -245,9 +297,9 @@ func (f *fakeZeropsServer) serviceStackCount() int {
 // category — CORE keeps it out of CleanupProject's delete-candidate set too,
 // so this harness never needs to model the delete-and-poll lifecycle to get
 // a stable pre-task platform state.
-func (f *fakeZeropsServer) serviceStackItemsJSON() string {
+func (f *fakeZeropsServer) serviceStackItemsJSON(appVisible bool) string {
 	items := []string{f.serviceStackJSON(fakeZCPServiceID, "zcp", "ACTIVE", "CORE")}
-	if f.appStatus != "" {
+	if f.appStatus != "" && appVisible {
 		items = append(items, f.serviceStackJSON(fakeAppServiceID, "app", f.appStatus, f.appCategory))
 	}
 	return strings.Join(items, ",")
@@ -376,10 +428,12 @@ func writeRequiredScenario(t *testing.T, dir, id, mode string) string {
 // non-parallel: builds and runs the zcp binary with a private HOME.
 func TestBehavioralCLI_RequiredFailure_NonzeroWithExplicitDimensions(t *testing.T) {
 	h := newCLIHarness(t, "FAILED")
+	h.server.hideAppForFirstDirectCall() // preflight fresh-target read sees an empty project; the task-end freeze sees the seeded FAILED "app"
 	scenarioDir := t.TempDir()
 	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-required-fail", "required")
 
-	exitCode, stderr := h.run(t, nil, "eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw")
+	args := append([]string{"eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw"}, cliBindingArgs(t)...)
+	exitCode, stderr := h.run(t, nil, args...)
 
 	if exitCode != 1 {
 		t.Fatalf("exit code = %d, want 1\nstderr:\n%s", exitCode, stderr)
@@ -465,10 +519,12 @@ func TestBehavioralCLI_ObserveMode_PreservesExecutionOnlyExit(t *testing.T) {
 // non-parallel: builds and runs the zcp binary with a private HOME.
 func TestBehavioralCLI_FailedTask_CompleteCaptureRemainsReadable(t *testing.T) {
 	h := newCLIHarness(t, "FAILED")
+	h.server.hideAppForFirstDirectCall()
 	scenarioDir := t.TempDir()
 	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-required-fail-capture", "required")
 
-	exitCode, stderr := h.run(t, nil, "eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw")
+	args := append([]string{"eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw"}, cliBindingArgs(t)...)
+	exitCode, stderr := h.run(t, nil, args...)
 	if exitCode != 1 {
 		t.Fatalf("exit code = %d, want 1\nstderr:\n%s", exitCode, stderr)
 	}
@@ -614,13 +670,37 @@ func assertOnlyAuthAndDiscoveryRequests(t *testing.T, server *fakeZeropsServer) 
 // non-parallel: builds and runs the zcp binary with a private HOME.
 func TestBehavioralCLI_OwnedScopedChild_FinalizesThenReturnsAcceptance(t *testing.T) {
 	h := newCLIHarness(t, "ACTIVE")
+	h.server.hideAppForFirstDirectCall()
 	scenarioDir := t.TempDir()
 	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-required-pass", "required")
 
-	exitCode, stderr := h.run(t, nil, "eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw")
-	if exitCode != 0 {
-		t.Fatalf("exit code = %d, want 0\nstderr:\n%s", exitCode, stderr)
+	args := append([]string{"eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw"}, cliBindingArgs(t)...)
+	exitCode, stderr := h.run(t, nil, args...)
+	// The task itself passes regardless of platform (asserted below via
+	// stderr + meta.json), but §10.4's fourth acceptance dimension (process
+	// identity) is always "unsupported" on a non-Linux machine — a bound
+	// required run can only exit 0 here on Linux (see
+	// TestBehavioralCLI_Bound_RequiredRefusesOnUnsupportedOS_OrAcceptsOnLinux).
+	if runtime.GOOS == goosLinux {
+		if exitCode != 0 {
+			t.Fatalf("exit code = %d, want 0 on linux\nstderr:\n%s", exitCode, stderr)
+		}
+		if !strings.Contains(stderr, "Process identity: ok") {
+			t.Errorf("stderr missing 'Process identity: ok' on linux\nstderr:\n%s", stderr)
+		}
+	} else {
+		if exitCode == 0 {
+			t.Fatalf("exit code = 0, want nonzero on %s (process identity is always unsupported)\nstderr:\n%s", runtime.GOOS, stderr)
+		}
+		if !strings.Contains(stderr, "Process identity: blocked") {
+			t.Errorf("stderr missing 'Process identity: blocked' on %s\nstderr:\n%s", runtime.GOOS, stderr)
+		}
+		if !strings.Contains(stderr, "rejected:") || !strings.Contains(stderr, "process identity") {
+			t.Errorf("stderr missing a 'rejected:' line naming process identity on %s\nstderr:\n%s", runtime.GOOS, stderr)
+		}
 	}
+	// Asserted on both OSes: the task itself still passes, and finalization
+	// still completes, even when the fourth dimension blocks acceptance.
 	if !strings.Contains(stderr, "Task:         required passed") {
 		t.Errorf("stderr missing required-pass task line\nstderr:\n%s", stderr)
 	}
@@ -665,11 +745,12 @@ func TestBehavioralCLI_OwnedScopedChild_FinalizesThenReturnsAcceptance(t *testin
 // non-parallel: builds and runs the zcp binary with a private HOME.
 func TestBehavioralCLI_CaptureCloseFailure_NonzeroEvenIfTaskPassed(t *testing.T) {
 	h := newCLIHarness(t, "ACTIVE")
+	h.server.hideAppForFirstDirectCall()
 	scenarioDir := t.TempDir()
 	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-required-broken-capture", "required")
 
-	exitCode, stderr := h.run(t, []string{"ZCP_EVAL_FAKE_CLAUDE_BREAK_CAPTURE=1"},
-		"eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw")
+	args := append([]string{"eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw"}, cliBindingArgs(t)...)
+	exitCode, stderr := h.run(t, []string{"ZCP_EVAL_FAKE_CLAUDE_BREAK_CAPTURE=1"}, args...)
 
 	if exitCode == 0 {
 		t.Fatalf("exit code = 0, want nonzero even though the task passed\nstderr:\n%s", stderr)
@@ -717,3 +798,140 @@ func TestBehavioralCLI_CaptureCloseFailure_NonzeroEvenIfTaskPassed(t *testing.T)
 
 func errOrNil(_ *capture.SessionManifestDocument, err error) error { return err }
 func errOrNil2(_ *capture.InspectionReport, err error) error       { return err }
+
+// ---------------------------------------------------------------------------
+// TestExecutionBinding_WrongProject_RefusedBeforeRunner
+// ---------------------------------------------------------------------------
+
+// cliBindingArgs builds a valid §10.4 binding flag set for the CLI harness:
+// a candidate that is a byte-identical copy of the binary under test, bound
+// to fakeProjectID. h.server.hideAppForFirstDirectCall() must be called
+// separately by tests whose fake server pre-populates a non-system service,
+// so the preflight's fresh-target read (the 1st direct GET) sees an empty
+// project while the task-end freeze (the 2nd) sees the seeded state.
+func cliBindingArgs(t *testing.T) []string {
+	t.Helper()
+	bin := buildZCPBinary(t)
+	candidate := filepath.Join(t.TempDir(), "zcp-candidate")
+	copyExecutableFile(t, bin, candidate)
+	sha := sha256HexFile(t, candidate)
+	return []string{
+		"--candidate", candidate,
+		"--candidate-sha256", sha,
+		"--project-id", fakeProjectID,
+		"--ack-disposable-project", "yes",
+	}
+}
+
+// sha256HexFile hashes a file for use as --candidate-sha256 in tests.
+func sha256HexFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// non-parallel: builds and runs the zcp binary with a private HOME.
+//
+// TestExecutionBinding_WrongProject_RefusedBeforeRunner pins
+// docs/spec-testing-architecture.md §10.4: a binding whose --project-id
+// does not match the project the credentials resolve to is refused before
+// the runner is built — zero service/process/DELETE requests against the
+// fake Zerops API.
+func TestExecutionBinding_WrongProject_RefusedBeforeRunner(t *testing.T) {
+	h := newCLIHarness(t, "")
+	scenarioDir := t.TempDir()
+	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-wrong-project", "required")
+
+	bin := buildZCPBinary(t)
+	sha := sha256HexFile(t, bin)
+
+	exitCode, stderr := h.run(t, nil,
+		"eval", "behavioral", "run", "--file", scenarioPath,
+		"--candidate", bin,
+		"--candidate-sha256", sha,
+		"--project-id", "not-"+fakeProjectID,
+		"--ack-disposable-project", "yes",
+	)
+
+	if exitCode == 0 {
+		t.Fatalf("exit code = 0, want nonzero\nstderr:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "binding: wrong project") {
+		t.Errorf("stderr missing 'binding: wrong project'\nstderr:\n%s", stderr)
+	}
+	for _, req := range h.server.requestPaths() {
+		if strings.Contains(req, "service-stack") || strings.Contains(req, "/process") {
+			t.Errorf("unexpected platform request %s — wrong-project binding must refuse before any service/process read", req)
+		}
+	}
+	if n := h.server.deleteCount(); n != 0 {
+		t.Errorf("DELETE requests = %d, want 0", n)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestBehavioralCLI_Bound_RequiredRefusesOnUnsupportedOS_OrAcceptsOnLinux
+// ---------------------------------------------------------------------------
+
+// non-parallel: builds and runs the zcp binary with a private HOME.
+//
+// TestBehavioralCLI_Bound_RequiredRefusesOnUnsupportedOS_OrAcceptsOnLinux
+// pins docs/spec-testing-architecture.md §10.4's fourth acceptance
+// dimension end to end: on a non-Linux CI/dev machine the process-identity
+// observation is always "unsupported", so a required run with a binding
+// must exit nonzero and print the exact blocked line; on Linux the same
+// scenario must actually observe the candidate `serve` process and accept.
+// Both branches are real assertions (runtime.GOOS decides which), not a
+// skip.
+func TestBehavioralCLI_Bound_RequiredRefusesOnUnsupportedOS_OrAcceptsOnLinux(t *testing.T) {
+	h := newCLIHarness(t, "")
+	scenarioDir := t.TempDir()
+	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-bound-identity", "required")
+
+	bin := buildZCPBinary(t)
+	candidate := filepath.Join(t.TempDir(), "zcp-candidate")
+	copyExecutableFile(t, bin, candidate)
+	sha := sha256HexFile(t, candidate)
+
+	exitCode, stderr := h.run(t, nil,
+		"eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw",
+		"--candidate", candidate,
+		"--candidate-sha256", sha,
+		"--project-id", fakeProjectID,
+		"--ack-disposable-project", "yes",
+	)
+
+	if runtime.GOOS != goosLinux {
+		if exitCode == 0 {
+			t.Fatalf("exit code = 0, want nonzero on %s\nstderr:\n%s", runtime.GOOS, stderr)
+		}
+		if !strings.Contains(stderr, "Process identity: blocked: unsupported OS") {
+			t.Errorf("stderr missing 'Process identity: blocked: unsupported OS'\nstderr:\n%s", stderr)
+		}
+		return
+	}
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0 on linux\nstderr:\n%s", exitCode, stderr)
+	}
+	if !strings.Contains(stderr, "Process identity: ok") {
+		t.Errorf("stderr missing 'Process identity: ok'\nstderr:\n%s", stderr)
+	}
+}
+
+// copyExecutableFile copies src to dst preserving the executable bit — used
+// to give a CLI test a "candidate" binary that is byte-identical to (but a
+// different path from) the binary under test.
+func copyExecutableFile(t *testing.T, src, dst string) {
+	t.Helper()
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("read %s: %v", src, err)
+	}
+	if err := os.WriteFile(dst, data, 0o700); err != nil {
+		t.Fatalf("write %s: %v", dst, err)
+	}
+}

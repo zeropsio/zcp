@@ -313,8 +313,24 @@ func initPlatformClient() (client platform.Client, projectID string, ctx context
 // evalMCPConfig / evalWorkDir) — the caller must return a nonzero code up to
 // the dispatcher without printing again.
 func initEvalRunner() (runner *eval.Runner, store *knowledge.Store, ctx context.Context, ok bool) {
+	return initEvalRunnerFor(nil)
+}
+
+// initEvalRunnerFor wires the eval.Runner exactly like initEvalRunner, but
+// when binding is non-nil it additionally: refuses before the runner is
+// built when binding.ProjectID doesn't match the project the credentials
+// resolve to (docs/spec-testing-architecture.md §10.4 "initEvalRunner ...
+// compares Binding.ProjectID with authInfo.ProjectID"; the two auth reads
+// are the only platform-adjacent calls this makes), applies
+// binding.WorkDir/ResultsDir as overrides, sets ClaudeHome to
+// binding.ClaudeHome, and attaches binding to RunnerConfig.
+func initEvalRunnerFor(binding *eval.ExecutionBinding) (runner *eval.Runner, store *knowledge.Store, ctx context.Context, ok bool) {
 	client, projectID, ctx, ok := initPlatformClient()
 	if !ok {
+		return nil, nil, nil, false
+	}
+	if binding != nil && binding.ProjectID != projectID {
+		fmt.Fprintf(os.Stderr, "error: binding: wrong project (candidate binds %s, credentials resolve %s)\n", binding.ProjectID, projectID)
 		return nil, nil, nil, false
 	}
 
@@ -332,6 +348,19 @@ func initEvalRunner() (runner *eval.Runner, store *knowledge.Store, ctx context.
 	if !ok {
 		return nil, nil, nil, false
 	}
+	resultsDir := evalResultsDir()
+	claudeHome := evalClaudeHome()
+	if binding != nil {
+		if binding.WorkDir != "" {
+			workDir = binding.WorkDir
+		}
+		if binding.ResultsDir != "" {
+			resultsDir = binding.ResultsDir
+		}
+		if binding.ClaudeHome != "" {
+			claudeHome = binding.ClaudeHome
+		}
+	}
 
 	captureConnection, err := activeEvalCapture(ctx)
 	if err != nil {
@@ -340,11 +369,12 @@ func initEvalRunner() (runner *eval.Runner, store *knowledge.Store, ctx context.
 	}
 	config := eval.RunnerConfig{
 		MCPConfig:    mcpConfig,
-		ResultsDir:   evalResultsDir(),
+		ResultsDir:   resultsDir,
 		WorkDir:      workDir,
-		ClaudeHome:   evalClaudeHome(),
+		ClaudeHome:   claudeHome,
 		Capture:      captureConnection,
 		CaptureOwned: captureConnection != nil && os.Getenv(evalCaptureOwnerEnv) == captureConnection.CaptureID,
+		Binding:      binding,
 	}
 	if captureConnection != nil {
 		fmt.Fprintf(os.Stderr, "capture: attached %s (%s)\n", captureConnection.CaptureID, captureConnection.SessionDir)

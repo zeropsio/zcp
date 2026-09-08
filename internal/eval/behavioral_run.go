@@ -55,6 +55,12 @@ type BehavioralResult struct {
 	// after seed/init and before the initial agent invocation. Nil when the
 	// scenario doesn't declare verification.nodePostgresRecord.
 	Baseline *ScenarioBaseline `json:"baseline,omitempty"`
+	// Binding and ProcessIdentity are the §10.4 explicit-candidate-binding
+	// dimensions: Binding is nil unless this run carried an explicit
+	// binding; ProcessIdentity accumulates every observation taken while an
+	// agent invocation ran.
+	Binding         *ExecutionBindingRecord `json:"binding,omitempty"`
+	ProcessIdentity []ProcessIdentity       `json:"processIdentity,omitempty"`
 }
 
 // ScenarioBaseline is the node-postgres oracle's baseline reading
@@ -97,6 +103,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 		StartedAt:  startedAt,
 		Model:      r.config.Model,
 		WorkDir:    r.config.WorkDir,
+		Binding:    bindingRecord(r.config.Binding),
 	}
 
 	outDir := filepath.Join(r.config.ResultsDir, suiteID, sc.ID)
@@ -106,14 +113,24 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	result.OutputDir = outDir
 
 	// Owned-window gate for required results (docs/spec-capture-inspector.md
-	// §6): a required scenario accepts only the private scoped window its
-	// own invocation created. Refused before seed, init, or cleanup
+	// §6) and the §10.4 binding requirement: a required scenario accepts
+	// only the private scoped window its own invocation created AND an
+	// explicit candidate binding. Refused before seed, init, or cleanup
 	// registration — zero platform calls.
-	if sc.IsRequired() && (r.config.Capture == nil || !r.config.CaptureOwned) {
-		result.Error = "capture: required mode needs this invocation's own scoped capture window (run with --capture raw)"
+	if sc.IsRequired() && (r.config.Capture == nil || !r.config.CaptureOwned || r.config.Binding == nil) {
+		result.Error = "capture: required mode needs this invocation's own scoped capture window (run with --capture raw) and an explicit binding"
 		result.Duration = Duration(time.Since(startedAt))
 		logBehavioralResultWrite(outDir, result)
 		return result, nil
+	}
+
+	// Preflight (§10.4 "Preflight — zero mutation"): runs immediately after
+	// the owned-window gate, before the scenario-start marker and before any
+	// defer is registered, so a refusal here makes zero platform mutation.
+	if r.config.Binding != nil {
+		if reason := r.preflightBinding(ctx); reason != "" {
+			return r.bindingRefusalResult(sc, outDir, result, startedAt, reason), nil
+		}
 	}
 
 	r.captureScenarioStart(ctx, suiteID, sc.ID)
@@ -318,7 +335,7 @@ func (r *Runner) prepareBehavioralWork(ctx context.Context, sc *Scenario, suiteI
 	if err := resetGuidedForScenario(r.config.WorkDir); err != nil {
 		return fmt.Sprintf("init: %v", err)
 	}
-	if err := initcmd.Run(r.config.WorkDir, runtime.Detect()); err != nil {
+	if err := r.runInit(ctx); err != nil {
 		return fmt.Sprintf("init: %v", err)
 	}
 	if err := r.prepareCaptureMCPConfig(outDir); err != nil {
@@ -328,6 +345,28 @@ func (r *Runner) prepareBehavioralWork(ctx context.Context, sc *Scenario, suiteI
 		return fmt.Sprintf("preseed: %v", err)
 	}
 	return ""
+}
+
+// runInit runs `zcp init` for the work dir. With a binding (§10.4 "Candidate
+// owns the agent surface") this runs as `<candidate> init` under the
+// candidate environment instead of the evaluator's own initcmd.Run — the
+// only evaluator-side writes into the work dir then remain the
+// guided-marker reset and the Claude memory clean.
+func (r *Runner) runInit(ctx context.Context) error {
+	if r.config.Binding == nil {
+		return initcmd.Run(r.config.WorkDir, runtime.Detect())
+	}
+	b := r.config.Binding
+	cmd := exec.CommandContext(ctx, b.Candidate, "init") //nolint:gosec // b.Candidate is the operator-supplied binding, SHA-256-verified by preflightBinding before this runs
+	cmd.Dir = r.config.WorkDir
+	cmd.Env = r.candidateEnv()
+	var out strings.Builder
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s init: %w (%s)", b.Candidate, err, out.String())
+	}
+	return nil
 }
 
 // runInitialAgent spawns the agent's initial invocation and extracts its
@@ -340,7 +379,10 @@ func (r *Runner) runInitialAgent(ctx, scenarioCtx context.Context, sc *Scenario,
 	scenarioStart := time.Now()
 	initialInvocationID := sc.ID + "/agent.initial"
 	initialInvocation := r.captureInvocationStart(ctx, suiteID, sc.ID, initialInvocationID, "agent.initial", "")
-	if err := r.spawnClaudeFresh(scenarioCtx, sc.Prompt, transcriptFile, captureProcessScope{evalRunID: suiteID, scenarioRunID: sc.ID, invocationID: initialInvocationID, phase: "agent.initial"}); err != nil {
+	spawnErr := r.pollProcessIdentityDuring(scenarioCtx, result, func() error {
+		return r.spawnClaudeFresh(scenarioCtx, sc.Prompt, transcriptFile, captureProcessScope{evalRunID: suiteID, scenarioRunID: sc.ID, invocationID: initialInvocationID, phase: "agent.initial"})
+	})
+	if err := spawnErr; err != nil {
 		initialInvocation.End(scenarioCtx, capture.CapturePartial, err)
 		result.ScenarioWallTime = Duration(time.Since(scenarioStart))
 		return "", fmt.Sprintf("scenario spawn: %v", err)
@@ -618,7 +660,7 @@ func (r *Runner) spawnClaudeResumeAppend(ctx context.Context, sessionID, userMsg
 // active. Eval capture is injected here because an isolated HOME does not read
 // the operator's persistent Claude settings.
 func (r *Runner) claudeEnv() []string {
-	if r.config.ClaudeHome == "" && r.config.Capture == nil {
+	if r.config.ClaudeHome == "" && r.config.Capture == nil && r.config.Binding == nil {
 		return nil
 	}
 	overrides := make(map[string]string)
@@ -629,6 +671,16 @@ func (r *Runner) claudeEnv() []string {
 		overrides["ANTHROPIC_BASE_URL"] = r.config.Capture.ProxyURL
 		overrides[capture.EnvSessionID] = r.config.Capture.CaptureID
 		overrides[capture.EnvSessionDir] = r.config.Capture.SessionDir
+	}
+	// §10.4 "Every claude child gets the same HOME/PATH/update setting":
+	// HOME already comes from ClaudeHome above (RunnerConfig.ClaudeHome is
+	// set to Binding.ClaudeHome when bound); PATH/ZCP_AUTO_UPDATE are added
+	// here so the candidate symlink shadows any other `zcp` on PATH.
+	if r.config.Binding != nil {
+		if r.config.Binding.PrivateBin != "" {
+			overrides["PATH"] = r.config.Binding.PrivateBin + string(os.PathListSeparator) + os.Getenv("PATH")
+		}
+		overrides["ZCP_AUTO_UPDATE"] = "0"
 	}
 	return environmentWithOverrides(os.Environ(), overrides)
 }

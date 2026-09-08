@@ -3,6 +3,7 @@ package eval
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -78,6 +80,139 @@ func (h *behavioralHarness) config() RunnerConfig {
 
 func (h *behavioralHarness) outDir(scenarioID string) string {
 	return filepath.Join(h.resultsDir, "suite", scenarioID)
+}
+
+// writeFakeCandidate writes an executable "candidate" script into h.root and
+// returns its path and SHA-256, for §10.4 execution-binding tests.
+func (h *behavioralHarness) writeFakeCandidate(t *testing.T, script string) (path, sha string) {
+	t.Helper()
+	path = filepath.Join(h.root, "candidate-zcp")
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	return path, hex.EncodeToString(sum[:])
+}
+
+// binding builds a valid ExecutionBinding pointing at candidate/sha for
+// project — WorkDir/ResultsDir are the harness's own (siblings under root,
+// so assertSafeRoots' nesting/distinctness checks pass).
+func (h *behavioralHarness) binding(candidate, sha string) *ExecutionBinding {
+	return &ExecutionBinding{
+		Candidate: candidate, CandidateSHA256: sha, ProjectID: "offline-project", AckDisposable: "yes",
+		WorkDir: h.work, ResultsDir: h.resultsDir, RunID: "run-1",
+		PrivateBin: filepath.Join(h.root, "candidate-bin"), ClaudeHome: filepath.Join(h.root, "candidate-claude-home"),
+	}
+}
+
+// realCaptureConnection builds a live capture.Connection backed by a real
+// lifecycle recorder + control server (the docs/spec-testing-architecture.md
+// §10.4 tests need to inspect lifecycle.jsonl for the ABSENCE of a
+// scenario.start marker, which a Connection without a Control client can
+// never produce in the first place — mirrors
+// TestRunnerCaptureLifecycle_LateBindsInvocationWithoutChangingProtocol's
+// setup).
+func realCaptureConnection(t *testing.T, sessionDir string) *capture.Connection {
+	t.Helper()
+	recorder, err := capture.NewLifecycleRecorder(sessionDir, "capture-binding-test")
+	if err != nil {
+		t.Fatalf("NewLifecycleRecorder: %v", err)
+	}
+	socketDir, err := os.MkdirTemp("/tmp", "zcp-eval-binding-control-") //nolint:usetesting // short absolute path required by Unix socket limits on macOS
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	server, err := capture.StartControlServer(context.Background(), capture.ControlServerConfig{
+		SocketPath: filepath.Join(socketDir, "control.sock"),
+		Token:      "binding-test-secret",
+		Recorder:   recorder,
+		Status: capture.ControlStatus{
+			CaptureID: "capture-binding-test", Status: capture.CaptureRunning,
+			ProxyURL: "http://127.0.0.1:1", SessionDir: sessionDir, ProcessID: os.Getpid(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("StartControlServer: %v", err)
+	}
+	connection := &capture.Connection{
+		CaptureID: "capture-binding-test", ProxyURL: "http://127.0.0.1:1", SessionDir: sessionDir,
+		Control: capture.NewControlClient(server.SocketPath(), "binding-test-secret"),
+	}
+	t.Cleanup(func() {
+		connection.Close()
+		_ = server.Close(context.Background())
+		_ = recorder.Close(capture.CaptureComplete)
+	})
+	return connection
+}
+
+// freshThenRealClient wraps a platform.Client so its FIRST ListServicesDirect
+// call (the §10.4 preflight's fresh-target read) always succeeds with an
+// empty result — the project looks fresh — while every subsequent call (the
+// task-end freeze, or a test's own ordering probe) delegates to the wrapped
+// client unchanged. This lets a test seed a platform.Mock with the
+// freeze-time state it wants to observe (services, processes, errors)
+// without that same static state also failing the new preflight, which a
+// single static Mock snapshot cannot represent on its own (the same read is
+// taken twice, at two different points in the run, and must answer
+// differently each time).
+type freshThenRealClient struct {
+	platform.Client
+	mu           sync.Mutex
+	serviceCalls int
+	processCalls int
+}
+
+func (c *freshThenRealClient) ListServicesDirect(ctx context.Context, projectID string) ([]platform.ServiceStack, error) {
+	c.mu.Lock()
+	c.serviceCalls++
+	first := c.serviceCalls == 1
+	c.mu.Unlock()
+	if first {
+		return nil, nil
+	}
+	return c.Client.ListServicesDirect(ctx, projectID)
+}
+
+func (c *freshThenRealClient) GetProjectProcessesDirect(ctx context.Context, projectID string) ([]platform.Process, error) {
+	c.mu.Lock()
+	c.processCalls++
+	first := c.processCalls == 1
+	c.mu.Unlock()
+	if first {
+		return nil, nil
+	}
+	return c.Client.GetProjectProcessesDirect(ctx, projectID)
+}
+
+// requiredBinding attaches a valid §10.4 binding to cfg using a fake
+// candidate script, for tests exercising required-mode behavior that
+// predates explicit candidate binding.
+func (h *behavioralHarness) requiredBinding(t *testing.T, cfg *RunnerConfig) {
+	t.Helper()
+	candidate, sha := h.writeFakeCandidate(t, "#!/bin/sh\nexit 0\n")
+	cfg.Binding = h.binding(candidate, sha)
+	cfg.ClaudeHome = cfg.Binding.ClaudeHome
+}
+
+// lifecycleKinds reads lifecycle.jsonl under sessionDir and returns the set
+// of record kinds observed.
+func lifecycleKinds(t *testing.T, sessionDir string) map[string]bool {
+	t.Helper()
+	records, err := capture.ReadLifecycleRecords(filepath.Join(sessionDir, "lifecycle.jsonl"))
+	if err != nil {
+		t.Fatalf("ReadLifecycleRecords: %v", err)
+	}
+	kinds := make(map[string]bool, len(records))
+	for _, r := range records {
+		kinds[r.Kind] = true
+	}
+	return kinds
 }
 
 // defaultFakeClaudeDone is the offline claude stand-in: it emits one
@@ -202,11 +337,12 @@ func TestBehavioralOutcome_RequiredFalseAssertion_Failed(t *testing.T) { // non-
 	h.writeClaudeScript(t, defaultFakeClaudeDone)
 	t.Setenv("RETRO_MARKER", filepath.Join(h.root, "retro-marker"))
 	scenarioPath := h.writeScenario(t, requiredExpectedAppScenario("required-false-assertion"))
-	client := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "FAILED"}})
+	mock := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "FAILED"}})
 	cfg := h.config()
 	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
 	cfg.CaptureOwned = true
-	runner := NewRunner(cfg, nil, client, "offline-project")
+	h.requiredBinding(t, &cfg)
+	runner := NewRunner(cfg, nil, &freshThenRealClient{Client: mock}, "offline-project")
 	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -235,8 +371,8 @@ func TestBehavioralOutcome_RequiredFalseAssertion_Failed(t *testing.T) { // non-
 	if found.Result != CheckFailed || found.Expected != "[ACTIVE]" || found.Observed != "FAILED" {
 		t.Errorf("row = %+v, want failed [ACTIVE] vs FAILED", found)
 	}
-	if client.CallCounts["DeleteService"] != 0 {
-		t.Errorf("DeleteService called %d times, want 0 (required mode retains the project)", client.CallCounts["DeleteService"])
+	if mock.CallCounts["DeleteService"] != 0 {
+		t.Errorf("DeleteService called %d times, want 0 (required mode retains the project)", mock.CallCounts["DeleteService"])
 	}
 }
 
@@ -266,12 +402,13 @@ verification:
 Finish the offline fixture application.
 `
 	scenarioPath := h.writeScenario(t, scenario)
-	client := platform.NewMock()
-	client.WithError("ListServicesDirect", fmt.Errorf("network timeout"))
+	mock := platform.NewMock()
+	mock.WithError("ListServicesDirect", fmt.Errorf("network timeout"))
 	cfg := h.config()
 	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
 	cfg.CaptureOwned = true
-	runner := NewRunner(cfg, nil, client, "offline-project")
+	h.requiredBinding(t, &cfg)
+	runner := NewRunner(cfg, nil, &freshThenRealClient{Client: mock}, "offline-project")
 	guard := &noHTTPGuard{t: t}
 	runner.httpDoer = guard
 	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
@@ -301,7 +438,7 @@ func TestBehavioralOutcome_SimulatorOrLiveProcessUnsettled_NotPassed(t *testing.
 	t.Setenv("RETRO_MARKER", filepath.Join(h.root, "retro-marker"))
 	scenarioPath := h.writeScenario(t, requiredExpectedAppScenario("required-unsettled"))
 
-	client := platform.NewMock().
+	mock := platform.NewMock().
 		WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}}).
 		WithProjectProcesses([]platform.Process{
 			{ID: "p-live", ActionName: "stack.build", Status: platform.ProcessStatusRunning, Created: time.Now().Add(time.Minute).Format(time.RFC3339)},
@@ -309,7 +446,8 @@ func TestBehavioralOutcome_SimulatorOrLiveProcessUnsettled_NotPassed(t *testing.
 	cfg := h.config()
 	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
 	cfg.CaptureOwned = true
-	runner := NewRunner(cfg, nil, client, "offline-project")
+	h.requiredBinding(t, &cfg)
+	runner := NewRunner(cfg, nil, &freshThenRealClient{Client: mock}, "offline-project")
 	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -349,7 +487,8 @@ func TestBehavioralOutcome_TaskEndPrecedesRetrospective_Frozen(t *testing.T) { /
 	cfg := h.config()
 	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
 	cfg.CaptureOwned = true
-	runner := NewRunner(cfg, nil, client, "offline-project")
+	h.requiredBinding(t, &cfg)
+	runner := NewRunner(cfg, nil, &freshThenRealClient{Client: client}, "offline-project")
 	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -410,11 +549,12 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 `
 	h.writeClaudeScript(t, script)
 	scenarioPath := h.writeScenario(t, requiredExpectedAppScenario("required-retro-fails"))
-	client := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
+	mock := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
 	cfg := h.config()
 	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
 	cfg.CaptureOwned = true
-	runner := NewRunner(cfg, nil, client, "offline-project")
+	h.requiredBinding(t, &cfg)
+	runner := NewRunner(cfg, nil, &freshThenRealClient{Client: mock}, "offline-project")
 	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -464,11 +604,12 @@ func TestBehavioralOutcome_PersistenceFailure_RetainsEvidenceAndNoCleanup(t *tes
 	h.writeClaudeScript(t, defaultFakeClaudeDone)
 	t.Setenv("RETRO_MARKER", filepath.Join(h.root, "retro-marker"))
 	scenarioPath := h.writeScenario(t, requiredExpectedAppScenario("required-persist-fails"))
-	client := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
+	mock := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
 	cfg := h.config()
 	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
 	cfg.CaptureOwned = true
-	runner := NewRunner(cfg, nil, client, "offline-project")
+	h.requiredBinding(t, &cfg)
+	runner := NewRunner(cfg, nil, &freshThenRealClient{Client: mock}, "offline-project")
 
 	outDir := h.outDir("required-persist-fails")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
@@ -497,8 +638,8 @@ func TestBehavioralOutcome_PersistenceFailure_RetainsEvidenceAndNoCleanup(t *tes
 	if _, err := os.Stat(filepath.Join(outDir, "platform-snapshot.json")); err != nil {
 		t.Errorf("platform-snapshot.json missing after verification.json persist failure: %v", err)
 	}
-	if client.CallCounts["DeleteService"] != 0 {
-		t.Errorf("DeleteService called %d times, want 0", client.CallCounts["DeleteService"])
+	if mock.CallCounts["DeleteService"] != 0 {
+		t.Errorf("DeleteService called %d times, want 0", mock.CallCounts["DeleteService"])
 	}
 }
 
@@ -593,11 +734,12 @@ func TestBehavioralOutcome_MetaPersistenceFailure_Blocked(t *testing.T) { // non
 	h.writeClaudeScript(t, defaultFakeClaudeDone)
 	t.Setenv("RETRO_MARKER", filepath.Join(h.root, "retro-marker"))
 	scenarioPath := h.writeScenario(t, requiredExpectedAppScenario("required-meta-fails"))
-	client := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
+	mock := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
 	cfg := h.config()
 	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
 	cfg.CaptureOwned = true
-	runner := NewRunner(cfg, nil, client, "offline-project")
+	h.requiredBinding(t, &cfg)
+	runner := NewRunner(cfg, nil, &freshThenRealClient{Client: mock}, "offline-project")
 
 	outDir := h.outDir("required-meta-fails")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
@@ -622,8 +764,8 @@ func TestBehavioralOutcome_MetaPersistenceFailure_Blocked(t *testing.T) { // non
 			t.Errorf("%s missing after meta.json persist failure: %v", name, err)
 		}
 	}
-	if client.CallCounts["DeleteService"] != 0 {
-		t.Errorf("DeleteService called %d times, want 0", client.CallCounts["DeleteService"])
+	if mock.CallCounts["DeleteService"] != 0 {
+		t.Errorf("DeleteService called %d times, want 0", mock.CallCounts["DeleteService"])
 	}
 }
 
@@ -635,10 +777,15 @@ func TestBehavioralOutcome_ExecutionFailureBeforeAgent_NotRun(t *testing.T) { //
 	h := newBehavioralHarness(t)
 	h.writeClaudeScript(t, "#!/bin/sh\nexit 3\n")
 	scenarioPath := h.writeScenario(t, requiredExpectedAppScenario("required-not-run"))
-	client := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
+	// Execution fails before agent.initial completes, so freezeTaskEnd's
+	// !taskCompleted branch makes zero platform reads — only the §10.4
+	// preflight's single fresh-target read happens, which must see an empty
+	// (fresh) project, not the freeze-time state this scenario never reaches.
+	client := platform.NewMock()
 	cfg := h.config()
 	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
 	cfg.CaptureOwned = true
+	h.requiredBinding(t, &cfg)
 	runner := NewRunner(cfg, nil, client, "offline-project")
 
 	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
@@ -672,11 +819,12 @@ func TestBehavioralOutcome_SnapshotPersistenceFailure_ArtifactsAgree(t *testing.
 	h.writeClaudeScript(t, defaultFakeClaudeDone)
 	t.Setenv("RETRO_MARKER", filepath.Join(h.root, "retro-marker"))
 	scenarioPath := h.writeScenario(t, requiredExpectedAppScenario("required-snapshot-fails"))
-	client := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
+	mock := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
 	cfg := h.config()
 	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
 	cfg.CaptureOwned = true
-	runner := NewRunner(cfg, nil, client, "offline-project")
+	h.requiredBinding(t, &cfg)
+	runner := NewRunner(cfg, nil, &freshThenRealClient{Client: mock}, "offline-project")
 
 	outDir := h.outDir("required-snapshot-fails")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
@@ -775,7 +923,8 @@ Finish the offline fixture application.
 	cfg := h.config()
 	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
 	cfg.CaptureOwned = true
-	runner := NewRunner(cfg, nil, client, "offline-project")
+	h.requiredBinding(t, &cfg)
+	runner := NewRunner(cfg, nil, &freshThenRealClient{Client: client}, "offline-project")
 	runner.httpDoer = loopbackHTTPClient(server)
 
 	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
@@ -815,12 +964,13 @@ func TestBehavioralOutcome_ProcessReadFails_UnsettledBlocked(t *testing.T) { // 
 	h.writeClaudeScript(t, defaultFakeClaudeDone)
 	t.Setenv("RETRO_MARKER", filepath.Join(h.root, "retro-marker"))
 	scenarioPath := h.writeScenario(t, requiredExpectedAppScenario("required-process-read-fails"))
-	client := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
-	client.WithError("GetProjectProcessesDirect", errors.New("process read unavailable"))
+	mock := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
+	mock.WithError("GetProjectProcessesDirect", errors.New("process read unavailable"))
 	cfg := h.config()
 	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
 	cfg.CaptureOwned = true
-	runner := NewRunner(cfg, nil, client, "offline-project")
+	h.requiredBinding(t, &cfg)
+	runner := NewRunner(cfg, nil, &freshThenRealClient{Client: mock}, "offline-project")
 
 	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
 	if err != nil {
