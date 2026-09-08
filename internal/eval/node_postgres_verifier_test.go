@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -449,6 +450,31 @@ func TestNodePostgresVerifier_RedirectRefused_Blocked(t *testing.T) {
 	assertResult(t, got, "node_postgres_record/appstage/record_roundtrip", CheckBlocked)
 	if db.calls != 0 {
 		t.Errorf("db.calls = %d, want 0 (POST never got past the redirect)", db.calls)
+	}
+}
+
+// TestNodePostgresVerifier_UnsettledFreeze_BlockedWithoutCalls pins
+// docs/spec-testing-architecture.md §10.2/§10.3 "Ordering and settle": an
+// unsettled task-end freeze emits the four oracle rows blocked, through
+// generateRequiredChecks, without constructing the verifier at all — zero
+// HTTP and zero DB calls.
+func TestNodePostgresVerifier_UnsettledFreeze_BlockedWithoutCalls(t *testing.T) {
+	sc := &Scenario{Verification: &VerificationConfig{
+		Mode:               VerificationRequired,
+		NodePostgresRecord: &NodePostgresRecordConfig{Stage: "appstage", Database: "db", Unrelated: "other"},
+	}}
+	client := nodePostgresFixtureClient()
+	guardHTTP := &noHTTPGuard{t: t}
+	rows := generateRequiredChecks(context.Background(), sc, platformObservation{}, guardHTTP, time.Now(), "proj-1", client, false, &ScenarioBaseline{UnrelatedAppVersion: "av-1"})
+	got := rowsByID(t, rows)
+	for _, id := range []string{
+		"node_postgres_record/appstage/record_roundtrip", "node_postgres_record/appstage/environment",
+		"node_postgres_record/db/db_row", "unrelated_artifact/other/unchanged",
+	} {
+		assertResult(t, got, id, CheckBlocked)
+	}
+	if guardHTTP.calls != 0 {
+		t.Errorf("HTTP calls = %d, want 0", guardHTTP.calls)
 	}
 }
 

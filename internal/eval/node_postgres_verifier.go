@@ -3,6 +3,8 @@ package eval
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +18,23 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 )
+
+// randomNodePostgresNonce is the production Nonce func: a fresh
+// cryptographically random nonce and value per run (§10.3 "Independence").
+func randomNodePostgresNonce() (nonce, value string) {
+	return randomHex(16), randomHex(16)
+}
+
+func randomHex(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand.Read failing is effectively unrecoverable on any
+		// supported platform; fall back to a fixed-but-unique-enough value
+		// rather than panicking mid-verification.
+		return fmt.Sprintf("fallback-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
+}
 
 // NodePostgresConn carries the managed PostgreSQL connection parameters the
 // oracle uses to prove a record landed in the database, in memory only.

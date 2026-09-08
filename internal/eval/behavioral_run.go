@@ -49,6 +49,19 @@ type BehavioralResult struct {
 	// from Error.
 	Task    *TaskOutcome     `json:"task,omitempty"`
 	TaskEnd *TaskEndEvidence `json:"taskEnd,omitempty"`
+	// Baseline is the node-postgres application oracle's pre-agent reading
+	// of the unrelated service's active app-version id
+	// (docs/spec-testing-architecture.md §10.3 "Baseline"), recorded right
+	// after seed/init and before the initial agent invocation. Nil when the
+	// scenario doesn't declare verification.nodePostgresRecord.
+	Baseline *ScenarioBaseline `json:"baseline,omitempty"`
+}
+
+// ScenarioBaseline is the node-postgres oracle's baseline reading
+// (docs/spec-testing-architecture.md §10.3 "Baseline").
+type ScenarioBaseline struct {
+	UnrelatedAppVersion string    `json:"unrelatedAppVersion"`
+	ObservedAt          time.Time `json:"observedAt"`
 }
 
 // RunBehavioralScenario executes a behavioral scenario (two-shot resume).
@@ -133,6 +146,14 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 
 	if err := cleanClaudeMemory(r.config.ClaudeHome); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: clean memory: %v\n", err)
+	}
+
+	// Baseline (§10.3 "Baseline"): recorded right after seed/init, before the
+	// initial agent invocation, so the unchanged row has something to compare
+	// against at the freeze — a baseline read after the agent has run would
+	// no longer prove the artifact was untouched.
+	if sc.Verification != nil && sc.Verification.NodePostgresRecord != nil {
+		r.recordNodePostgresBaseline(ctx, sc, result)
 	}
 
 	transcriptFile := filepath.Join(outDir, "transcript.jsonl")
@@ -231,7 +252,7 @@ func (r *Runner) observeTaskEnd(ctx context.Context, sc *Scenario, outDir string
 	readServices := sc.Verification != nil && len(sc.Verification.ExpectedServices) > 0
 	readProcesses := sc.Verification != nil && sc.Verification.NoFailedProcesses
 	observation := collectPlatformObservation(evidenceCtx, r.client, r.projectID, readServices, readProcesses)
-	rows := generateRequiredChecks(evidenceCtx, sc, observation, r.httpDoer, startedAt, r.projectID)
+	rows := generateRequiredChecks(evidenceCtx, sc, observation, r.httpDoer, startedAt, r.projectID, r.client, true, nil)
 	findings := projectRowsToFindings(rows)
 	findings = append(findings, retrospectivePhraseFindings(sc, selfReview)...)
 	snapshot := buildPlatformSnapshotFromObservation(r.projectID, startedAt, observation, findings)
@@ -264,6 +285,25 @@ func (r *Runner) observeTaskEnd(ctx context.Context, sc *Scenario, outDir string
 		}
 		fmt.Fprintf(os.Stderr, "warning: write platform-snapshot.json: %v\n", err)
 	}
+}
+
+// recordNodePostgresBaseline reads the unrelated service's active
+// app-version id via one ListServicesDirect call and records it on result
+// (§10.3 "Baseline"). Best-effort: a read failure or a not-yet-deployed
+// unrelated service leaves result.Baseline nil, which the freeze-time
+// unchanged row reads as "no baseline recorded" → blocked, never a silent
+// pass.
+func (r *Runner) recordNodePostgresBaseline(ctx context.Context, sc *Scenario, result *BehavioralResult) {
+	services, err := r.client.ListServicesDirect(ctx, r.projectID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: node-postgres baseline: ListServicesDirect: %v\n", err)
+		return
+	}
+	svc := findServiceByHostname(services, sc.Verification.NodePostgresRecord.Unrelated)
+	if svc == nil || svc.ActiveAppVersion == nil || svc.ActiveAppVersion.ID == "" {
+		return
+	}
+	result.Baseline = &ScenarioBaseline{UnrelatedAppVersion: svc.ActiveAppVersion.ID, ObservedAt: time.Now().UTC()}
 }
 
 // prepareBehavioralWork runs seed → init → capture MCP config → preseed,
@@ -421,7 +461,7 @@ func (r *Runner) freezeTaskEnd(
 			}
 			break
 		}
-		rows = generateRequiredChecks(ctx, sc, observation, r.httpDoer, startedAt, r.projectID)
+		rows = generateRequiredChecks(ctx, sc, observation, r.httpDoer, startedAt, r.projectID, r.client, settled, result.Baseline)
 		if !settled {
 			rows = blockRowsForUnsettled(rows, liveProcesses)
 		}

@@ -79,7 +79,7 @@ func CollectBehavioralPlatformEvidence(
 	runStart time.Time,
 ) (PlatformSnapshot, []VerificationFinding) {
 	observation := collectPlatformObservation(ctx, client, projectID, true, true)
-	findings := runVerificationWithObservation(ctx, scenario, observation, httpDoer, retrospectiveText, runStart, projectID)
+	findings := runVerificationWithObservation(ctx, scenario, observation, httpDoer, retrospectiveText, runStart, projectID, client, true, nil)
 	if findings == nil {
 		findings = []VerificationFinding{}
 	}
