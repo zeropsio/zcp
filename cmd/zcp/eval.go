@@ -339,11 +339,12 @@ func initEvalRunner() (runner *eval.Runner, store *knowledge.Store, ctx context.
 		os.Exit(1)
 	}
 	config := eval.RunnerConfig{
-		MCPConfig:  mcpConfig,
-		ResultsDir: evalResultsDir(),
-		WorkDir:    workDir,
-		ClaudeHome: evalClaudeHome(),
-		Capture:    captureConnection,
+		MCPConfig:    mcpConfig,
+		ResultsDir:   evalResultsDir(),
+		WorkDir:      workDir,
+		ClaudeHome:   evalClaudeHome(),
+		Capture:      captureConnection,
+		CaptureOwned: captureConnection != nil && os.Getenv(evalCaptureOwnerEnv) == captureConnection.CaptureID,
 	}
 	if captureConnection != nil {
 		fmt.Fprintf(os.Stderr, "capture: attached %s (%s)\n", captureConnection.CaptureID, captureConnection.SessionDir)

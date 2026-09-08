@@ -5,12 +5,23 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/capture"
 )
 
 const evalCaptureModeRaw = "raw"
+
+// evalCaptureOwnerEnv carries the capture session ID of a scoped window this
+// invocation's own `--capture raw` created, from the wrapper to its child
+// `zcp eval` process. initEvalRunner compares it against the attached
+// connection's CaptureID to decide RunnerConfig.CaptureOwned — the only
+// signal that satisfies verification.mode: required
+// (docs/spec-capture-inspector.md §6 "Owned window for required results").
+// A global or inherited window never sets this variable in the child's
+// environment, so it never satisfies required mode.
+const evalCaptureOwnerEnv = "ZCP_EVAL_CAPTURE_OWNER"
 
 func parseEvalCaptureArgs(args []string) (clean []string, requested bool, err error) {
 	clean = make([]string, 0, len(args))
@@ -91,5 +102,43 @@ func runEvalWithOptionalScopedCapture(args []string) (handled bool, exitCode int
 	wrapperArgs := make([]string, 0, 3+len(command))
 	wrapperArgs = append(wrapperArgs, "--label", label, "--")
 	wrapperArgs = append(wrapperArgs, command...)
-	return true, runCaptureRaw(wrapperArgs)
+	return true, runEvalScopedCaptureRaw(wrapperArgs)
+}
+
+// runEvalScopedCaptureRaw creates the private scoped capture window this
+// eval invocation owns, hands its identity to the child via
+// evalCaptureOwnerEnv, and decides the final exit from the typed result
+// (docs/spec-capture-inspector.md §6): the child's own exit is provisional
+// until the window closed complete and its manifest validates.
+func runEvalScopedCaptureRaw(wrapperArgs []string) int {
+	flags, exitCode, done := parseCaptureRawFlags(wrapperArgs)
+	if done {
+		return exitCode
+	}
+	result, err := runCaptureRawWork(flags, func(sessionID string) []string {
+		return []string{evalCaptureOwnerEnv + "=" + sessionID}
+	})
+	if err != nil {
+		return 1
+	}
+	windowID := filepath.Base(result.SessionDir)
+	if result.ChildErr != nil {
+		fmt.Fprintf(os.Stderr, "capture: child process: %v\n", result.ChildErr)
+		return 1
+	}
+	if result.CloseErr != nil || result.Status != capture.CaptureComplete {
+		fmt.Fprintf(os.Stderr, "capture: window %s closed %s: %v\n", windowID, result.Status, result.CloseErr)
+		return 1
+	}
+	report, err := capture.InspectSession(result.SessionDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "capture: window %s inspection failed: %v\n", windowID, err)
+		return 1
+	}
+	if !report.Integrity.Valid || !report.Integrity.Complete {
+		fmt.Fprintf(os.Stderr, "capture: window %s manifest invalid or incomplete\n", windowID)
+		return 1
+	}
+	fmt.Fprintln(os.Stderr, "capture: complete")
+	return result.ChildExit
 }
