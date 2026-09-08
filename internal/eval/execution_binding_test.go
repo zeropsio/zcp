@@ -162,3 +162,74 @@ func TestExecutionBinding_RequiredWithoutBinding_Refused(t *testing.T) { // non-
 		}
 	}
 }
+
+// TestExecutionBinding_CandidateOwnsAgentSurface pins §10.4 "Candidate owns
+// the agent surface": `<candidate> init` (not the evaluator's own
+// initcmd.Run) writes the agent-facing files, every claude child's PATH
+// starts with PrivateBin and HOME is ClaudeHome with ZCP_AUTO_UPDATE=0, and
+// the capture MCP config names the candidate by absolute path.
+func TestExecutionBinding_CandidateOwnsAgentSurface(t *testing.T) { // non-parallel: process environment
+	h := newBehavioralHarness(t)
+	candidate, sha := h.writeFakeCandidate(t, "#!/bin/sh\nif [ \"$1\" = \"init\" ]; then\n  printf 'CANDIDATE-INIT\\n' > AGENTS.md\n  exit 0\nfi\nexit 1\n")
+
+	envDump := filepath.Join(h.root, "claude-env-dump.txt")
+	t.Setenv("CLAUDE_ENV_DUMP", envDump)
+	t.Setenv("RETRO_MARKER", filepath.Join(h.root, "retro-marker"))
+	h.writeClaudeScript(t, `#!/bin/sh
+if [ -n "$CLAUDE_ENV_DUMP" ]; then
+  { echo "PATH=$PATH"; echo "HOME=$HOME"; echo "ZCP_AUTO_UPDATE=$ZCP_AUTO_UPDATE"; } > "$CLAUDE_ENV_DUMP"
+fi
+`+defaultFakeClaudeDone[len("#!/bin/sh\n"):])
+
+	scenarioPath := h.writeScenario(t, requiredExpectedAppScenario("binding-owns-surface"))
+	client := platform.NewMock()
+	cfg := h.config()
+	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
+	cfg.CaptureOwned = true
+	cfg.Binding = h.binding(candidate, sha, "offline-project")
+	cfg.ClaudeHome = cfg.Binding.ClaudeHome // production wiring: cmd/zcp's initEvalRunnerFor sets ClaudeHome from the binding when bound
+	runner := NewRunner(cfg, nil, client, "offline-project")
+
+	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Error != "" {
+		t.Fatalf("result.Error = %q, want empty", result.Error)
+	}
+
+	agentsMD, err := os.ReadFile(filepath.Join(h.work, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	if !strings.Contains(string(agentsMD), "CANDIDATE-INIT") {
+		t.Errorf("AGENTS.md = %q, want it written by the candidate's own init", agentsMD)
+	}
+	claudeMDMarker := filepath.Join(h.work, "CLAUDE.md")
+	if data, err := os.ReadFile(claudeMDMarker); err == nil && strings.Contains(string(data), "REFLOG") {
+		t.Errorf("CLAUDE.md contains a REFLOG managed-section marker, want none — evaluator initcmd.Run must not have run: %q", data)
+	}
+
+	envDumpData, err := os.ReadFile(envDump)
+	if err != nil {
+		t.Fatalf("read claude env dump: %v", err)
+	}
+	dump := string(envDumpData)
+	if !strings.Contains(dump, "PATH="+cfg.Binding.PrivateBin) {
+		t.Errorf("claude env dump PATH does not start with PrivateBin %q:\n%s", cfg.Binding.PrivateBin, dump)
+	}
+	if !strings.Contains(dump, "HOME="+cfg.Binding.ClaudeHome) {
+		t.Errorf("claude env dump HOME != ClaudeHome %q:\n%s", cfg.Binding.ClaudeHome, dump)
+	}
+	if !strings.Contains(dump, "ZCP_AUTO_UPDATE=0") {
+		t.Errorf("claude env dump missing ZCP_AUTO_UPDATE=0:\n%s", dump)
+	}
+
+	mcpConfigData, err := os.ReadFile(filepath.Join(h.outDir("binding-owns-surface"), "capture-mcp.json"))
+	if err != nil {
+		t.Fatalf("read capture-mcp.json: %v", err)
+	}
+	if !strings.Contains(string(mcpConfigData), candidate) {
+		t.Errorf("capture-mcp.json does not name the candidate %q:\n%s", candidate, mcpConfigData)
+	}
+}
