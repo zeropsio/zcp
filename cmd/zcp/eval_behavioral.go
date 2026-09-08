@@ -348,6 +348,112 @@ func loadBehavioralScenarios(dir string) ([]*eval.Scenario, error) {
 	return out, nil
 }
 
+// executionBindingFlags is the parsed §10.4 explicit-candidate-binding flag
+// set. any reports whether at least one of the four core binding flags
+// (candidate/sha256/project-id/ack) was present.
+type executionBindingFlags struct {
+	candidate, sha256, projectID, ack string
+	workDir, resultsDir, runID        string
+	any                               bool
+}
+
+// bindingFlagNames are the four core binding flags: all-or-nothing
+// (docs/spec-testing-architecture.md §10.4 "Binding").
+var bindingFlagNames = []string{"--candidate", "--candidate-sha256", "--project-id", "--ack-disposable-project"}
+
+// parseExecutionBindingFlags extracts the §10.4 binding flags from args,
+// returning the remaining args untouched (order preserved) plus the parsed
+// flags. --work-dir/--results-dir/--run-id are extracted unconditionally;
+// the four core binding flags are all-or-nothing.
+func parseExecutionBindingFlags(args []string) (clean []string, flags executionBindingFlags, err error) {
+	clean = make([]string, 0, len(args))
+	present := map[string]bool{}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch a {
+		case "--candidate":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.candidate = args[i+1]
+			present[a] = true
+			i++
+		case "--candidate-sha256":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.sha256 = args[i+1]
+			present[a] = true
+			i++
+		case "--project-id":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.projectID = args[i+1]
+			present[a] = true
+			i++
+		case "--ack-disposable-project":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.ack = args[i+1]
+			present[a] = true
+			i++
+		case "--work-dir":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.workDir = args[i+1]
+			i++
+		case "--results-dir":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.resultsDir = args[i+1]
+			i++
+		case "--run-id":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.runID = args[i+1]
+			i++
+		default:
+			clean = append(clean, a)
+		}
+	}
+	for _, name := range bindingFlagNames {
+		if present[name] {
+			flags.any = true
+			break
+		}
+	}
+	if flags.any {
+		var missing []string
+		for _, name := range bindingFlagNames {
+			if !present[name] {
+				missing = append(missing, name)
+			}
+		}
+		if len(missing) > 0 {
+			return nil, flags, fmt.Errorf("--candidate/--candidate-sha256/--project-id/--ack-disposable-project must all be given together; missing %s", strings.Join(missing, ", "))
+		}
+	}
+	return clean, flags, nil
+}
+
+// rejectBindingFlagsForAll implements §10.4 "behavioral all with a binding
+// is refused": `behavioral all` never accepts an explicit binding.
+func rejectBindingFlagsForAll(args []string) error {
+	_, flags, err := parseExecutionBindingFlags(args)
+	if err != nil {
+		return err
+	}
+	if flags.any {
+		return fmt.Errorf("'behavioral all' does not accept an explicit binding — required-mode retention makes a second scenario on the same target fail freshness by design; run the scenario directly with 'behavioral run'")
+	}
+	return nil
+}
+
 func flagValue(args []string, name string) string {
 	for i, a := range args {
 		if a == name && i+1 < len(args) {
