@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/capture"
 	initcmd "github.com/zeropsio/zcp/internal/init"
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
@@ -41,6 +43,12 @@ type BehavioralResult struct {
 	// before any classifier check (rare — the loop runs unconditionally).
 	UserSim *UserSimResult `json:"userSim,omitempty"`
 	Error   string         `json:"error,omitempty"`
+	// Task and TaskEnd are the task-result and task-end-evidence dimensions
+	// (docs/spec-testing-architecture.md §10.1/§10.2). Error keeps its
+	// execution-only meaning; these are separate dimensions, never derived
+	// from Error.
+	Task    *TaskOutcome     `json:"task,omitempty"`
+	TaskEnd *TaskEndEvidence `json:"taskEnd,omitempty"`
 }
 
 // RunBehavioralScenario executes a behavioral scenario (two-shot resume).
@@ -77,67 +85,43 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 		Model:      r.config.Model,
 		WorkDir:    r.config.WorkDir,
 	}
-	var selfReview string
 
 	outDir := filepath.Join(r.config.ResultsDir, suiteID, sc.ID)
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create output dir: %w", err)
 	}
 	result.OutputDir = outDir
+
+	// Owned-window gate for required results (docs/spec-capture-inspector.md
+	// §6): a required scenario accepts only the private scoped window its
+	// own invocation created. Refused before seed, init, or cleanup
+	// registration — zero platform calls.
+	if sc.IsRequired() && (r.config.Capture == nil || !r.config.CaptureOwned) {
+		result.Error = "capture: required mode needs this invocation's own scoped capture window (run with --capture raw)"
+		result.Duration = Duration(time.Since(startedAt))
+		writeBehavioralResult(outDir, result)
+		return result, nil
+	}
+
 	r.captureScenarioStart(ctx, suiteID, sc.ID)
+	// Retention (§10.2): required mode performs no post-task cleanup, so its
+	// cleanup defer is never registered. Registration order matters — the
+	// cleanup defer (when present) is registered BEFORE the bundle defer so
+	// it runs AFTER the bundle (LIFO): bundle → cleanup.
+	if !sc.IsRequired() {
+		defer func() {
+			if cleanErr := CleanupProject(context.WithoutCancel(ctx), r.client, r.projectID, r.config.WorkDir); cleanErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: post-scenario cleanup: %v\n", cleanErr)
+			}
+		}()
+	}
 	defer func() {
 		r.finishBehavioralCapture(context.WithoutCancel(ctx), suiteID, sc.ID, scenarioPath, outDir, result, returnErr)
 	}()
-	defer func() {
-		evidenceCtx, cancelEvidence := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		snapshot, findings := CollectBehavioralPlatformEvidence(
-			evidenceCtx, sc, r.projectID, r.client, r.httpDoer, selfReview, startedAt,
-		)
-		cancelEvidence()
-		if sc.Verification != nil {
-			if err := WriteVerificationFindings(outDir, findings); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: write verification.json: %v\n", err)
-			}
-		}
-		if err := WritePlatformSnapshot(outDir, snapshot); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: write platform-snapshot.json: %v\n", err)
-		}
-		if cleanErr := CleanupProject(context.WithoutCancel(ctx), r.client, r.projectID, r.config.WorkDir); cleanErr != nil {
-			fmt.Fprintf(os.Stderr, "warning: post-scenario cleanup: %v\n", cleanErr)
-		}
-	}()
 
-	if err := r.seedScenario(ctx, sc, suiteID); err != nil {
-		result.Error = fmt.Sprintf("seed: %v", err)
-		result.Duration = Duration(time.Since(startedAt))
-		writeBehavioralResult(outDir, result)
-		return result, nil
-	}
-
-	if err := resetGuidedForScenario(r.config.WorkDir); err != nil {
-		result.Error = fmt.Sprintf("init: %v", err)
-		result.Duration = Duration(time.Since(startedAt))
-		writeBehavioralResult(outDir, result)
-		return result, nil
-	}
-	if err := initcmd.Run(r.config.WorkDir, runtime.Detect()); err != nil {
-		result.Error = fmt.Sprintf("init: %v", err)
-		result.Duration = Duration(time.Since(startedAt))
-		writeBehavioralResult(outDir, result)
-		return result, nil
-	}
-	if err := r.prepareCaptureMCPConfig(outDir); err != nil {
-		result.Error = fmt.Sprintf("capture MCP config: %v", err)
-		result.Duration = Duration(time.Since(startedAt))
-		writeBehavioralResult(outDir, result)
-		return result, nil
-	}
-
-	if err := r.runPreseedScript(ctx, sc, suiteID); err != nil {
-		result.Error = fmt.Sprintf("preseed: %v", err)
-		result.Duration = Duration(time.Since(startedAt))
-		writeBehavioralResult(outDir, result)
-		return result, nil
+	if errMsg := r.prepareBehavioralWork(ctx, sc, suiteID, outDir); errMsg != "" {
+		result.Error = errMsg
+		return r.notRunFailure(ctx, sc, outDir, result, startedAt), nil
 	}
 
 	if err := os.WriteFile(filepath.Join(outDir, "task-prompt.txt"), []byte(sc.Prompt), 0o600); err != nil {
@@ -157,30 +141,11 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	scenarioCtx, cancelScenario := context.WithTimeout(ctx, r.config.Timeout)
 	defer cancelScenario()
 
-	scenarioStart := time.Now()
-	initialInvocationID := sc.ID + "/agent.initial"
-	initialInvocation := r.captureInvocationStart(ctx, suiteID, sc.ID, initialInvocationID, "agent.initial", "")
-	if err := r.spawnClaudeFresh(scenarioCtx, sc.Prompt, transcriptFile, captureProcessScope{evalRunID: suiteID, scenarioRunID: sc.ID, invocationID: initialInvocationID, phase: "agent.initial"}); err != nil {
-		initialInvocation.End(scenarioCtx, capture.CapturePartial, err)
-		result.Error = fmt.Sprintf("scenario spawn: %v", err)
-		result.ScenarioWallTime = Duration(time.Since(scenarioStart))
-		result.Duration = Duration(time.Since(startedAt))
-		writeBehavioralResult(outDir, result)
-		return result, nil
+	sessionID, errMsg := r.runInitialAgent(ctx, scenarioCtx, sc, suiteID, transcriptFile, result)
+	if errMsg != "" {
+		result.Error = errMsg
+		return r.notRunFailure(ctx, sc, outDir, result, startedAt), nil
 	}
-	result.ScenarioWallTime = Duration(time.Since(scenarioStart))
-
-	sessionID, err := extractSessionID(transcriptFile)
-	if err != nil {
-		initialInvocation.End(scenarioCtx, capture.CapturePartial, err)
-		result.Error = fmt.Sprintf("extract session_id: %v", err)
-		result.Duration = Duration(time.Since(startedAt))
-		writeBehavioralResult(outDir, result)
-		return result, nil
-	}
-	result.SessionID = sessionID
-	initialInvocation.Bind(scenarioCtx, sessionID)
-	initialInvocation.End(scenarioCtx, capture.CaptureComplete, nil)
 
 	// User-sim loop — drive multi-turn realistic conversation while the agent
 	// is awaiting input. Cumulative resumes append to the same transcriptFile
@@ -188,8 +153,17 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	// scenario context's remaining budget when scenario.UserSim sets a tighter
 	// cap. Errors here are non-fatal: we still want the retrospective to fire
 	// and capture whatever the agent / user-sim produced.
-	if loopErr := r.runBehavioralUserSim(ctx, sc, suiteID, sessionID, transcriptFile, result); loopErr != nil {
+	loopErr := r.runBehavioralUserSim(ctx, sc, suiteID, sessionID, transcriptFile, result)
+	if loopErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: user-sim loop: %v\n", loopErr)
+	}
+
+	// Task end (docs/spec-testing-architecture.md §10.2): decided and
+	// persisted here, BEFORE the retrospective. Required mode's task result
+	// and the frozen artifacts never change after this call — a
+	// retrospective failure below sets result.Error only.
+	if sc.IsRequired() {
+		r.freezeTaskEnd(context.WithoutCancel(ctx), sc, outDir, result, startedAt, true, loopErr)
 	}
 
 	retroFile := filepath.Join(outDir, "retrospective.jsonl")
@@ -200,13 +174,17 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	retroCtx, cancelRetro := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancelRetro()
 
+	var selfReview string
 	retroStart := time.Now()
 	retroInvocationID := sc.ID + "/retrospective"
 	retroInvocation := r.captureInvocationStart(retroCtx, suiteID, sc.ID, retroInvocationID, "retrospective", sessionID)
 	if err := r.spawnClaudeResume(retroCtx, sessionID, retroPrompt, retroFile, captureProcessScope{evalRunID: suiteID, scenarioRunID: sc.ID, invocationID: retroInvocationID, phase: "retrospective"}); err != nil {
 		retroInvocation.End(retroCtx, capture.CapturePartial, err)
-		result.Error = fmt.Sprintf("retrospective spawn: %v", err)
+		result.Error = fmt.Sprintf("retrospective: %v", err)
 		result.RetroWallTime = Duration(time.Since(retroStart))
+		if !sc.IsRequired() {
+			r.observeTaskEnd(context.WithoutCancel(ctx), sc, outDir, result, startedAt, selfReview)
+		}
 		result.Duration = Duration(time.Since(startedAt))
 		writeBehavioralResult(outDir, result)
 		return result, nil
@@ -226,10 +204,279 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	}
 
 	result.CompactedDuringResume = detectCompaction(retroFile)
+
+	// Observe mode keeps its legacy exit semantics: platform evidence is
+	// collected AFTER the retrospective (so the advisory phrase check sees
+	// the self-review), and cleanup runs after that (registered above).
+	if !sc.IsRequired() {
+		r.observeTaskEnd(context.WithoutCancel(ctx), sc, outDir, result, startedAt, selfReview)
+	}
+
 	result.Duration = Duration(time.Since(startedAt))
 	writeBehavioralResult(outDir, result)
 
 	return result, nil
+}
+
+// observeTaskEnd is observe mode's evidence-collection step: a single
+// platform read taken AFTER the retrospective (so the advisory
+// retrospective-phrase check sees the self-review), matching the legacy
+// exit semantics documented in docs/spec-testing-architecture.md §10.2. It
+// also records the observe-mode Task/TaskEnd dimensions
+// (docs/spec-testing-architecture.md §10.1 point 8).
+func (r *Runner) observeTaskEnd(ctx context.Context, sc *Scenario, outDir string, result *BehavioralResult, startedAt time.Time, selfReview string) {
+	evidenceCtx, cancelEvidence := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelEvidence()
+
+	readServices := sc.Verification != nil && len(sc.Verification.ExpectedServices) > 0
+	readProcesses := sc.Verification != nil && sc.Verification.NoFailedProcesses
+	observation := collectPlatformObservation(evidenceCtx, r.client, r.projectID, readServices, readProcesses)
+	rows := generateRequiredChecks(evidenceCtx, sc, observation, r.httpDoer, startedAt, r.projectID)
+	findings := projectRowsToFindings(rows)
+	findings = append(findings, retrospectivePhraseFindings(sc, selfReview)...)
+	snapshot := buildPlatformSnapshotFromObservation(r.projectID, startedAt, observation, findings)
+
+	frozenAt := observation.observedAt
+	taskResult := aggregateTaskResult(rows)
+	result.Task = &TaskOutcome{Mode: VerificationObserve, Result: taskResult, FrozenAt: frozenAt}
+	result.TaskEnd = &TaskEndEvidence{
+		ObservedAt: frozenAt, Settled: true,
+		Simulator: TaskEndSimulator{TerminatedBy: userSimTerminatedBy(result)},
+	}
+
+	if sc.Verification != nil {
+		if err := WriteVerificationDocument(outDir, VerificationDocument{
+			FormatVersion: VerificationDocumentFormat2, Mode: VerificationObserve, Result: taskResult,
+			FrozenAt: frozenAt, Checks: rows, Advisory: findings,
+		}); err != nil {
+			result.TaskEnd.PersistError = err.Error()
+			fmt.Fprintf(os.Stderr, "warning: write verification.json: %v\n", err)
+		} else {
+			result.TaskEnd.Persisted = true
+		}
+	} else {
+		result.TaskEnd.Persisted = true
+	}
+	if err := WritePlatformSnapshot(outDir, snapshot); err != nil {
+		result.TaskEnd.Persisted = false
+		if result.TaskEnd.PersistError == "" {
+			result.TaskEnd.PersistError = err.Error()
+		}
+		fmt.Fprintf(os.Stderr, "warning: write platform-snapshot.json: %v\n", err)
+	}
+}
+
+// prepareBehavioralWork runs seed → init → capture MCP config → preseed,
+// returning a human-readable error prefix ("seed: ...", "init: ...", etc.)
+// on the first failure, or "" on success. Factored out of
+// RunBehavioralScenario purely to keep that function's cyclomatic
+// complexity in check — each step's failure meaning is unchanged.
+func (r *Runner) prepareBehavioralWork(ctx context.Context, sc *Scenario, suiteID, outDir string) string {
+	if err := r.seedScenario(ctx, sc, suiteID); err != nil {
+		return fmt.Sprintf("seed: %v", err)
+	}
+	if err := resetGuidedForScenario(r.config.WorkDir); err != nil {
+		return fmt.Sprintf("init: %v", err)
+	}
+	if err := initcmd.Run(r.config.WorkDir, runtime.Detect()); err != nil {
+		return fmt.Sprintf("init: %v", err)
+	}
+	if err := r.prepareCaptureMCPConfig(outDir); err != nil {
+		return fmt.Sprintf("capture MCP config: %v", err)
+	}
+	if err := r.runPreseedScript(ctx, sc, suiteID); err != nil {
+		return fmt.Sprintf("preseed: %v", err)
+	}
+	return ""
+}
+
+// runInitialAgent spawns the agent's initial invocation and extracts its
+// session id, binding/ending the capture invocation appropriately. Returns
+// ("", "") is never valid — either sessionID is non-empty and errMsg is ""
+// on success, or sessionID is "" and errMsg names the failure ("scenario
+// spawn: ...", "extract session_id: ..."). Factored out of
+// RunBehavioralScenario to keep its cyclomatic complexity in check.
+func (r *Runner) runInitialAgent(ctx, scenarioCtx context.Context, sc *Scenario, suiteID, transcriptFile string, result *BehavioralResult) (sessionID, errMsg string) {
+	scenarioStart := time.Now()
+	initialInvocationID := sc.ID + "/agent.initial"
+	initialInvocation := r.captureInvocationStart(ctx, suiteID, sc.ID, initialInvocationID, "agent.initial", "")
+	if err := r.spawnClaudeFresh(scenarioCtx, sc.Prompt, transcriptFile, captureProcessScope{evalRunID: suiteID, scenarioRunID: sc.ID, invocationID: initialInvocationID, phase: "agent.initial"}); err != nil {
+		initialInvocation.End(scenarioCtx, capture.CapturePartial, err)
+		result.ScenarioWallTime = Duration(time.Since(scenarioStart))
+		return "", fmt.Sprintf("scenario spawn: %v", err)
+	}
+	result.ScenarioWallTime = Duration(time.Since(scenarioStart))
+
+	sessionID, err := extractSessionID(transcriptFile)
+	if err != nil {
+		initialInvocation.End(scenarioCtx, capture.CapturePartial, err)
+		return "", fmt.Sprintf("extract session_id: %v", err)
+	}
+	result.SessionID = sessionID
+	initialInvocation.Bind(scenarioCtx, sessionID)
+	initialInvocation.End(scenarioCtx, capture.CaptureComplete, nil)
+	return sessionID, ""
+}
+
+// notRunFailure freezes the task end as not-run (§10.1 point 7), stamps
+// Duration, persists the final meta.json, and returns result — the shared
+// tail of every early-failure branch (seed/init/preseed/spawn/session
+// extract) before agent.initial has completed.
+func (r *Runner) notRunFailure(ctx context.Context, sc *Scenario, outDir string, result *BehavioralResult, startedAt time.Time) *BehavioralResult {
+	r.freezeTaskEnd(context.WithoutCancel(ctx), sc, outDir, result, startedAt, false, nil)
+	result.Duration = Duration(time.Since(startedAt))
+	writeBehavioralResult(outDir, result)
+	return result
+}
+
+// livePIDsAfter returns the ids of processes created after startedAt whose
+// status is still in flight (PENDING/RUNNING/ROLLBACKING/CANCELING).
+func livePIDsAfter(observation platformObservation, startedAt time.Time) []string {
+	var ids []string
+	for _, process := range observation.processes {
+		if !processCreatedAfter(process.Created, startedAt) {
+			continue
+		}
+		switch process.Status {
+		case platform.ProcessStatusPending, platform.ProcessStatusRunning, platform.ProcessStatusRollbacking, platform.ProcessStatusCanceling:
+			ids = append(ids, process.ID)
+		}
+	}
+	return ids
+}
+
+// blockRowsForUnsettled forces every non-not-run row to blocked when the
+// task-end observation never settled, so an in-flight mutation can never
+// read as passed (§10.2 step 3).
+func blockRowsForUnsettled(rows []RequiredCheck, liveProcesses []string) []RequiredCheck {
+	observed := strings.Join(liveProcesses, ", ")
+	for i := range rows {
+		if rows[i].Result == CheckNotRun {
+			continue
+		}
+		rows[i].Result = CheckBlocked
+		rows[i].Observed = observed
+		rows[i].Message = fmt.Sprintf("task-end observation unsettled: live process(es) %s", observed)
+	}
+	return rows
+}
+
+// freezeTaskEnd implements docs/spec-testing-architecture.md §10.2: the
+// task-end freeze and its persistence. Called once, before the optional
+// retrospective, for both verification modes. When taskCompleted is false
+// (execution failed before agent.initial finished), every declared row is
+// frozen as not-run without any platform read (§10.1 point 7).
+func (r *Runner) freezeTaskEnd(
+	ctx context.Context,
+	sc *Scenario,
+	outDir string,
+	result *BehavioralResult,
+	startedAt time.Time,
+	taskCompleted bool,
+	simulatorErr error,
+) {
+	mode := VerificationObserve
+	if sc.Verification != nil && sc.Verification.Mode != "" {
+		mode = sc.Verification.Mode
+	}
+	frozenAt := time.Now().UTC()
+
+	var rows []RequiredCheck
+	var snapshot PlatformSnapshot
+	settled := true
+	var liveProcesses []string
+	var findings []VerificationFinding
+
+	if !taskCompleted {
+		rows = notRunRows(sc, r.projectID)
+		snapshot = PlatformSnapshot{
+			FormatVersion: PlatformSnapshotFormat1, ProjectID: r.projectID,
+			ScenarioStartedAt: startedAt.UTC(), ObservedAt: frozenAt,
+			Diagnostics: []PlatformSnapshotDiagnostic{}, VerificationFindings: []VerificationFinding{},
+		}
+	} else {
+		settleTimeout := r.config.TaskEndSettle
+		if settleTimeout <= 0 {
+			settleTimeout = 60 * time.Second
+		}
+		interval := max(settleTimeout/10, 50*time.Millisecond)
+		deadline := time.Now().Add(settleTimeout)
+		var observation platformObservation
+		for {
+			observation = collectPlatformObservation(ctx, r.client, r.projectID, true, true)
+			liveProcesses = livePIDsAfter(observation, startedAt)
+			if len(liveProcesses) == 0 {
+				settled = true
+				break
+			}
+			if time.Now().After(deadline) {
+				settled = false
+				break
+			}
+			time.Sleep(interval)
+		}
+		rows = generateRequiredChecks(ctx, sc, observation, r.httpDoer, startedAt, r.projectID)
+		if !settled {
+			rows = blockRowsForUnsettled(rows, liveProcesses)
+		}
+		findings = projectRowsToFindings(rows)
+		frozenAt = observation.observedAt
+		snapshot = buildPlatformSnapshotFromObservation(r.projectID, startedAt, observation, findings)
+	}
+
+	taskResult := aggregateTaskResult(rows)
+	result.Task = &TaskOutcome{Mode: mode, Result: taskResult, FrozenAt: frozenAt}
+	result.TaskEnd = &TaskEndEvidence{
+		ObservedAt: frozenAt, Settled: settled, LiveProcesses: liveProcesses,
+		Simulator: TaskEndSimulator{TerminatedBy: userSimTerminatedBy(result), Error: errString(simulatorErr)},
+	}
+
+	persistErr := persistTaskEndArtifacts(outDir, VerificationDocument{
+		FormatVersion: VerificationDocumentFormat2, Mode: mode, Result: taskResult,
+		FrozenAt: frozenAt, Checks: rows, Advisory: findings,
+	}, snapshot)
+	if persistErr != nil {
+		result.TaskEnd.Persisted = false
+		result.TaskEnd.PersistError = persistErr.Error()
+		if result.Task.Result == CheckPassed {
+			result.Task.Result = CheckBlocked
+		}
+	} else {
+		result.TaskEnd.Persisted = true
+	}
+	writeBehavioralResult(outDir, result)
+}
+
+// persistTaskEndArtifacts writes verification.json and platform-snapshot.json
+// via temp+fsync+rename, continuing past the first failure so a persistence
+// problem in one file never removes what was already written in the other
+// (§10.2 step 5).
+func persistTaskEndArtifacts(outDir string, doc VerificationDocument, snapshot PlatformSnapshot) error {
+	var errs []error
+	if err := WriteVerificationDocument(outDir, doc); err != nil {
+		errs = append(errs, err)
+	}
+	if err := WritePlatformSnapshot(outDir, snapshot); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// userSimTerminatedBy returns the user-sim loop's termination reason, or ""
+// when the loop never ran.
+func userSimTerminatedBy(result *BehavioralResult) string {
+	if result.UserSim == nil {
+		return ""
+	}
+	return result.UserSim.TerminatedBy
+}
+
+// errString returns err.Error(), or "" for a nil err.
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // userSimRunner returns the UserSimRunner the loop should call for the given

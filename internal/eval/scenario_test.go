@@ -229,3 +229,51 @@ Run the thing.
 		t.Errorf("PreseedScript: got %q, want scripts/seed-state.sh", sc.PreseedScript)
 	}
 }
+
+// TestScenario_RequiredWithoutChecks_RejectedBeforeMutation pins
+// docs/spec-testing-architecture.md §10.1: mode=required with no executable
+// check is a parse error, mode=bogus is rejected, and — driven through the
+// runner — the rejection happens before any platform call or cleanup.
+func TestScenario_RequiredWithoutChecks_RejectedBeforeMutation(t *testing.T) { // non-parallel: process environment
+	dir := t.TempDir()
+	noChecks := `---
+id: required-no-checks
+seed: empty
+retrospective:
+  promptStyle: briefing-future-agent
+verification:
+  mode: required
+---
+Do the thing.
+`
+	path := filepath.Join(dir, "no-checks.md")
+	if err := os.WriteFile(path, []byte(noChecks), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseScenario(path); err == nil {
+		t.Fatal("expected parse error for required mode with no executable check")
+	} else if !strings.Contains(err.Error(), "executable check") {
+		t.Errorf("error should mention executable check, got: %v", err)
+	}
+
+	bogus := `---
+id: bogus-mode
+seed: empty
+retrospective:
+  promptStyle: briefing-future-agent
+verification:
+  mode: bogus
+  noFailedProcesses: true
+---
+Do the thing.
+`
+	bogusPath := filepath.Join(dir, "bogus.md")
+	if err := os.WriteFile(bogusPath, []byte(bogus), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseScenario(bogusPath); err == nil {
+		t.Fatal("expected parse error for invalid verification.mode")
+	} else if !strings.Contains(err.Error(), "verification.mode") {
+		t.Errorf("error should mention verification.mode, got: %v", err)
+	}
+}

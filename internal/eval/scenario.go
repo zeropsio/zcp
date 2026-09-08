@@ -106,6 +106,9 @@ type RetrospectiveConfig struct {
 // stage (the suite verdict still propagates from the retrospective). A
 // later sprint may promote findings to gate the exit code.
 type VerificationConfig struct {
+	// Mode selects observe (default, warn-only) or required (deterministic
+	// task result gate). See docs/spec-testing-architecture.md §10.1.
+	Mode string `yaml:"mode,omitempty"`
 	// ExpectedServices lists per-service assertions: hostname must exist,
 	// status must match one of the allowed values, optional subdomain HTTP
 	// probe, optional type-glob.
@@ -119,6 +122,13 @@ type VerificationConfig struct {
 	// (e.g. "smuggled", "hand-edited", "had to overwrite").
 	RetrospectiveMustNotMention []string `yaml:"retrospectiveMustNotMention,omitempty"`
 }
+
+// VerificationObserve and VerificationRequired are the two
+// VerificationConfig.Mode values. "" (unset) means observe.
+const (
+	VerificationObserve  = "observe"
+	VerificationRequired = "required"
+)
 
 // ExpectedService is one per-service assertion in a VerificationConfig.
 type ExpectedService struct {
@@ -231,6 +241,18 @@ func (s *Scenario) validate() error {
 	if s.Retrospective != nil && s.Retrospective.PromptStyle == "" {
 		return fmt.Errorf("retrospective.promptStyle required when retrospective is set")
 	}
+	if s.Verification != nil {
+		switch s.Verification.Mode {
+		case "", VerificationObserve, VerificationRequired:
+		default:
+			return fmt.Errorf("invalid verification.mode %q (want observe|required)", s.Verification.Mode)
+		}
+		if s.Verification.Mode == VerificationRequired {
+			if len(s.Verification.ExpectedServices) == 0 && !s.Verification.NoFailedProcesses {
+				return fmt.Errorf("verification.mode required needs at least one executable check (expectedServices or noFailedProcesses; retrospectiveMustNotMention is advisory and does not count)")
+			}
+		}
+	}
 	if s.UserSim != nil {
 		if s.UserSim.MaxTurns < 0 {
 			return fmt.Errorf("userSim.maxTurns must be >= 0 (got %d)", s.UserSim.MaxTurns)
@@ -246,6 +268,12 @@ func (s *Scenario) validate() error {
 // (two-shot resume) execution. Detected by presence of retrospective config.
 func (s *Scenario) IsBehavioral() bool {
 	return s.Retrospective != nil
+}
+
+// IsRequired reports whether the scenario's verification.mode is "required"
+// (a deterministic task-result gate) rather than the default "observe".
+func (s *Scenario) IsRequired() bool {
+	return s.Verification != nil && s.Verification.Mode == VerificationRequired
 }
 
 // splitFrontmatter returns the YAML block between the first two --- lines and

@@ -262,8 +262,12 @@ func TestRunVerification_ListServicesError(t *testing.T) {
 	}}
 	client := platform.NewMock().WithError("ListServicesDirect", errors.New("network timeout"))
 	got := RunVerification(context.Background(), sc, "p1", client, nil, "", time.Time{})
-	if len(got) != 1 || got[0].Check != "platform_query" || got[0].Severity != "fail" {
-		t.Errorf("expected single platform_query fail finding, got %+v", got)
+	// An unavailable observation is a blocked row (§10.1), projected to a
+	// warn advisory finding — no longer a hard "fail platform_query". Rows
+	// are now the single owner of the verdict; a query failure can't prove
+	// the assertion false, only that it couldn't be evaluated.
+	if len(got) != 1 || got[0].Check != "expected_service" || got[0].Severity != "warn" {
+		t.Errorf("expected single expected_service warn finding, got %+v", got)
 	}
 }
 
@@ -296,41 +300,71 @@ func TestStatusMatches(t *testing.T) {
 }
 
 // TestWriteVerificationFindings_RoundTrip pins the on-disk artifact —
-// verification.json shape, including the "empty findings still writes
-// empty array" convention so operator-side tooling can tell
-// "verification ran with no failures" apart from "didn't run".
+// verification.json is now ONE object (docs/spec-testing-architecture.md
+// §10.1: formatVersion/mode/result/frozenAt/checks/advisory), replacing the
+// retired bare-array format. Checks/advisory round-trip as empty arrays
+// (never null) when nothing was declared.
 func TestWriteVerificationFindings_RoundTrip(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	findings := []VerificationFinding{
-		{Severity: "fail", Check: "service_status", Message: "service appdev status FAILED not in [ACTIVE]"},
+	frozenAt := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	doc := VerificationDocument{
+		FormatVersion: VerificationDocumentFormat2,
+		Mode:          VerificationRequired,
+		Result:        CheckFailed,
+		FrozenAt:      frozenAt,
+		Checks: []RequiredCheck{
+			{ID: "expected_service/appdev/status", Check: "service_status", Scope: "appdev", Result: CheckFailed, Expected: "[ACTIVE]", Observed: "FAILED"},
+		},
+		Advisory: []VerificationFinding{
+			{Severity: "fail", Check: "service_status", Message: "service appdev status FAILED not in [ACTIVE]"},
+		},
 	}
-	if err := WriteVerificationFindings(dir, findings); err != nil {
-		t.Fatalf("WriteVerificationFindings: %v", err)
+	if err := WriteVerificationDocument(dir, doc); err != nil {
+		t.Fatalf("WriteVerificationDocument: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "verification.json"))
 	if err != nil {
 		t.Fatalf("read verification.json: %v", err)
 	}
-	var got []VerificationFinding
+	var got VerificationDocument
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(got) != 1 || got[0].Check != "service_status" || got[0].Severity != "fail" {
-		t.Errorf("round-trip mismatch: %+v", got)
+	if got.FormatVersion != VerificationDocumentFormat2 || got.Mode != VerificationRequired || got.Result != CheckFailed {
+		t.Fatalf("round-trip identity mismatch: %+v", got)
+	}
+	if len(got.Checks) != 1 || got.Checks[0].Check != "service_status" || got.Checks[0].Result != CheckFailed {
+		t.Errorf("checks round-trip mismatch: %+v", got.Checks)
+	}
+	if len(got.Advisory) != 1 || got.Advisory[0].Check != "service_status" || got.Advisory[0].Severity != "fail" {
+		t.Errorf("advisory round-trip mismatch: %+v", got.Advisory)
+	}
+	if !got.FrozenAt.Equal(frozenAt) {
+		t.Errorf("frozenAt = %v, want %v", got.FrozenAt, frozenAt)
 	}
 
-	// Empty findings → still writes [].
+	// Nil checks/advisory → still writes [] (never null), so operator-side
+	// tooling can tell "ran with nothing to report" apart from "didn't run".
 	dir2 := t.TempDir()
-	if err := WriteVerificationFindings(dir2, nil); err != nil {
-		t.Fatalf("WriteVerificationFindings(nil): %v", err)
+	if err := WriteVerificationDocument(dir2, VerificationDocument{
+		FormatVersion: VerificationDocumentFormat2, Mode: VerificationObserve, Result: CheckPassed, FrozenAt: frozenAt,
+	}); err != nil {
+		t.Fatalf("WriteVerificationDocument(empty): %v", err)
 	}
 	data2, err := os.ReadFile(filepath.Join(dir2, "verification.json"))
 	if err != nil {
-		t.Fatalf("read verification.json (nil case): %v", err)
+		t.Fatalf("read verification.json (empty case): %v", err)
 	}
-	if strings.TrimSpace(string(data2)) != "[]" {
-		t.Errorf("nil findings: expected [], got %q", data2)
+	var got2 map[string]any
+	if err := json.Unmarshal(data2, &got2); err != nil {
+		t.Fatalf("decode empty case: %v", err)
+	}
+	if checks, ok := got2["checks"].([]any); !ok || len(checks) != 0 {
+		t.Errorf("checks: expected empty array, got %v (%T)", got2["checks"], got2["checks"])
+	}
+	if advisory, ok := got2["advisory"].([]any); !ok || len(advisory) != 0 {
+		t.Errorf("advisory: expected empty array, got %v (%T)", got2["advisory"], got2["advisory"])
 	}
 }
 
@@ -347,20 +381,23 @@ func (f httpDoerFunc) Do(req *http.Request) (*http.Response, error) { return f(r
 // before this value is consumed.
 var errProbeShouldNotFire = errors.New("http probe should not fire under this configuration")
 
-// TestProbeSubdomain_NoSubdomainAccess pins the immediate fail when
-// subdomain isn't enabled on the service.
-func TestProbeSubdomain_NoSubdomainAccess(t *testing.T) {
+// TestEvaluateSubdomainProbeRow_NoSubdomainAccess pins the immediate fail
+// when subdomain isn't enabled on the service. Replaces the retired
+// probeSubdomain (which returned several distinct legacy Check names for
+// one hostname's probe) — the row model collapses every subdomain-probe
+// outcome for one hostname into a single subdomain_probe row (§10.1).
+func TestEvaluateSubdomainProbeRow_NoSubdomainAccess(t *testing.T) {
 	t.Parallel()
 	exp := ExpectedService{
 		Hostname:       "appdev",
 		SubdomainProbe: &SubdomainProbe{Path: "/", ExpectStatus: "2xx"},
 	}
 	svc := &platform.ServiceStack{Name: "appdev", SubdomainAccess: false}
-	got := probeSubdomain(context.Background(), exp, svc, httpDoerFunc(func(*http.Request) (*http.Response, error) {
+	got := evaluateSubdomainProbeRow(context.Background(), exp, svc, httpDoerFunc(func(*http.Request) (*http.Response, error) {
 		t.Fatal("HTTP probe should not fire when subdomain access disabled")
 		return nil, errProbeShouldNotFire
-	}))
-	if len(got) != 1 || got[0].Check != "subdomain_access" || got[0].Severity != "fail" {
-		t.Errorf("expected single subdomain_access fail finding, got %+v", got)
+	}), time.Now())
+	if got.Check != "subdomain_probe" || got.Result != CheckFailed || got.ID != "expected_service/appdev/subdomain_probe" {
+		t.Errorf("expected failed subdomain_probe row, got %+v", got)
 	}
 }
