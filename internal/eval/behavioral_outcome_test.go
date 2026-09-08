@@ -3,6 +3,7 @@ package eval
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -78,6 +79,90 @@ func (h *behavioralHarness) config() RunnerConfig {
 
 func (h *behavioralHarness) outDir(scenarioID string) string {
 	return filepath.Join(h.resultsDir, "suite", scenarioID)
+}
+
+// writeFakeCandidate writes an executable "candidate" script into h.root and
+// returns its path and SHA-256, for §10.4 execution-binding tests.
+func (h *behavioralHarness) writeFakeCandidate(t *testing.T, script string) (path, sha string) {
+	t.Helper()
+	path = filepath.Join(h.root, "candidate-zcp")
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	return path, hex.EncodeToString(sum[:])
+}
+
+// binding builds a valid ExecutionBinding pointing at candidate/sha for
+// project — WorkDir/ResultsDir are the harness's own (siblings under root,
+// so assertSafeRoots' nesting/distinctness checks pass).
+func (h *behavioralHarness) binding(candidate, sha, project string) *ExecutionBinding {
+	return &ExecutionBinding{
+		Candidate: candidate, CandidateSHA256: sha, ProjectID: project, AckDisposable: "yes",
+		WorkDir: h.work, ResultsDir: h.resultsDir, RunID: "run-1",
+		PrivateBin: filepath.Join(h.root, "candidate-bin"), ClaudeHome: filepath.Join(h.root, "candidate-claude-home"),
+	}
+}
+
+// realCaptureConnection builds a live capture.Connection backed by a real
+// lifecycle recorder + control server (the docs/spec-testing-architecture.md
+// §10.4 tests need to inspect lifecycle.jsonl for the ABSENCE of a
+// scenario.start marker, which a Connection without a Control client can
+// never produce in the first place — mirrors
+// TestRunnerCaptureLifecycle_LateBindsInvocationWithoutChangingProtocol's
+// setup).
+func realCaptureConnection(t *testing.T, sessionDir string) *capture.Connection {
+	t.Helper()
+	recorder, err := capture.NewLifecycleRecorder(sessionDir, "capture-binding-test")
+	if err != nil {
+		t.Fatalf("NewLifecycleRecorder: %v", err)
+	}
+	socketDir, err := os.MkdirTemp("/tmp", "zcp-eval-binding-control-") //nolint:usetesting // short absolute path required by Unix socket limits on macOS
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	server, err := capture.StartControlServer(context.Background(), capture.ControlServerConfig{
+		SocketPath: filepath.Join(socketDir, "control.sock"),
+		Token:      "binding-test-secret",
+		Recorder:   recorder,
+		Status: capture.ControlStatus{
+			CaptureID: "capture-binding-test", Status: capture.CaptureRunning,
+			ProxyURL: "http://127.0.0.1:1", SessionDir: sessionDir, ProcessID: os.Getpid(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("StartControlServer: %v", err)
+	}
+	connection := &capture.Connection{
+		CaptureID: "capture-binding-test", ProxyURL: "http://127.0.0.1:1", SessionDir: sessionDir,
+		Control: capture.NewControlClient(server.SocketPath(), "binding-test-secret"),
+	}
+	t.Cleanup(func() {
+		connection.Close()
+		_ = server.Close(context.Background())
+		_ = recorder.Close(capture.CaptureComplete)
+	})
+	return connection
+}
+
+// lifecycleKinds reads lifecycle.jsonl under sessionDir and returns the set
+// of record kinds observed.
+func lifecycleKinds(t *testing.T, sessionDir string) map[string]bool {
+	t.Helper()
+	records, err := capture.ReadLifecycleRecords(filepath.Join(sessionDir, "lifecycle.jsonl"))
+	if err != nil {
+		t.Fatalf("ReadLifecycleRecords: %v", err)
+	}
+	kinds := make(map[string]bool, len(records))
+	for _, r := range records {
+		kinds[r.Kind] = true
+	}
+	return kinds
 }
 
 // defaultFakeClaudeDone is the offline claude stand-in: it emits one
