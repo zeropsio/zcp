@@ -76,10 +76,12 @@ func buildZCPBinary(t *testing.T) string {
 // runner's usersim classifier resolves VerdictDone on the first pass without
 // spawning a user-sim resume), and one successful result event. When invoked
 // with --resume AND $ZCP_EVAL_FAKE_CLAUDE_BREAK_CAPTURE is set, it first
-// deletes $ZCP_CAPTURE_SESSION_DIR/lifecycle.jsonl — used to force the owned
-// capture window to fail finalization/inspection after a task already
-// passed (docs/spec-capture-inspector.md §8 "task result and capture status
-// are different facts").
+// chmods $ZCP_CAPTURE_SESSION_DIR read-only (0500) so the runtime cannot
+// write its terminal manifest/lifecycle-end record on close — a
+// deterministic close/manifest failure even though the task result already
+// froze "passed" before the retrospective ran (docs/spec-testing-
+// architecture.md §10.2 "only after step 5 does the optional retrospective
+// run").
 func writeFakeClaude(t *testing.T, dir string) string {
 	t.Helper()
 	script := `#!/bin/sh
@@ -89,7 +91,7 @@ for a in "$@"; do
   if [ "$a" = "--resume" ]; then IS_RESUME=1; fi
 done
 if [ "$IS_RESUME" = "1" ] && [ -n "$ZCP_EVAL_FAKE_CLAUDE_BREAK_CAPTURE" ] && [ -n "$ZCP_CAPTURE_SESSION_DIR" ]; then
-  rm -f "$ZCP_CAPTURE_SESSION_DIR/lifecycle.jsonl"
+  chmod 0500 "$ZCP_CAPTURE_SESSION_DIR"
 fi
 SESSION_ID="fake-session-$$"
 printf '{"type":"system","subtype":"init","session_id":"%s"}\n' "$SESSION_ID"
@@ -304,7 +306,7 @@ func newCLIHarness(t *testing.T, appStatus string) *cliHarness {
 // run executes the built zcp binary with args, appending extraEnv, and
 // returns exit code + combined stdout/stderr (stderr is where every
 // behavioral CLI diagnostic is printed).
-func (h *cliHarness) run(t *testing.T, extraEnv []string, args ...string) (exitCode int, stderr string) { //nolint:unparam // extraEnv is nil in the tests written so far; TestBehavioralCLI_CaptureCloseFailure_NonzeroEvenIfTaskPassed (next) passes ZCP_EVAL_FAKE_CLAUDE_BREAK_CAPTURE through it
+func (h *cliHarness) run(t *testing.T, extraEnv []string, args ...string) (exitCode int, stderr string) {
 	t.Helper()
 	bin := buildZCPBinary(t)
 	cmd := exec.CommandContext(context.Background(), bin, args...)
@@ -621,3 +623,63 @@ func TestBehavioralCLI_OwnedScopedChild_FinalizesThenReturnsAcceptance(t *testin
 		t.Errorf("meta.json taskEnd.persisted = false, want true")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// TestBehavioralCLI_CaptureCloseFailure_NonzeroEvenIfTaskPassed
+// ---------------------------------------------------------------------------
+
+// non-parallel: builds and runs the zcp binary with a private HOME.
+func TestBehavioralCLI_CaptureCloseFailure_NonzeroEvenIfTaskPassed(t *testing.T) {
+	h := newCLIHarness(t, "ACTIVE")
+	scenarioDir := t.TempDir()
+	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-required-broken-capture", "required")
+
+	exitCode, stderr := h.run(t, []string{"ZCP_EVAL_FAKE_CLAUDE_BREAK_CAPTURE=1"},
+		"eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw")
+
+	if exitCode == 0 {
+		t.Fatalf("exit code = 0, want nonzero even though the task passed\nstderr:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "Task:         required passed") {
+		t.Errorf("stderr missing required-pass task line (task result must stay passed)\nstderr:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "capture:") {
+		t.Errorf("stderr does not name the capture dimension\nstderr:\n%s", stderr)
+	}
+
+	metaPath := findResultFile(t, h.resultsDir, "cli-required-broken-capture", "meta.json")
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("read meta.json: %v", err)
+	}
+	var meta struct {
+		Task struct {
+			Result string `json:"result"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(data, &meta); err != nil {
+		t.Fatalf("parse meta.json: %v\n%s", err, data)
+	}
+	if meta.Task.Result != "passed" {
+		t.Fatalf("meta.json task.result = %q, want passed (capture failure must not downgrade an already-frozen task result)", meta.Task.Result)
+	}
+
+	sessionDir := findCaptureSessionDir(t, h.home)
+	t.Cleanup(func() { _ = os.Chmod(sessionDir, 0o700) }) // restore before TempDir's own removal cleanup runs (LIFO)
+
+	info, statErr := os.Stat(sessionDir)
+	if statErr != nil {
+		t.Fatalf("stat session dir: %v", statErr)
+	}
+	if info.Mode().Perm()&0o200 != 0 {
+		t.Fatalf("session dir %s is still writable — fake claude's break-capture step did not fire", sessionDir)
+	}
+	manifestErr := errOrNil(capture.ReadSessionManifest(filepath.Join(sessionDir, "manifest.json")))
+	inspectErr := errOrNil2(capture.InspectSession(sessionDir))
+	if manifestErr == nil && inspectErr == nil {
+		t.Fatalf("both manifest read and InspectSession(%s) succeeded, want at least one failure (session dir is read-only)", sessionDir)
+	}
+}
+
+func errOrNil(_ *capture.SessionManifestDocument, err error) error { return err }
+func errOrNil2(_ *capture.InspectionReport, err error) error       { return err }
