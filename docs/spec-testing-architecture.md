@@ -385,11 +385,14 @@ At task end the runner, in this order:
    (observed = those ids) — the result is never `passed` over an in-flight
    mutation;
 4. decides the rows and result (§10.1);
-5. persists `verification.json`, `platform-snapshot.json`, and `meta.json`
-   (temp file + fsync + rename). A persistence failure sets
+5. persists `platform-snapshot.json`, then `verification.json`, then
+   `meta.json` (each temp file + fsync + rename). A persistence failure sets
    `taskEnd.persisted=false` with `persistError`, turns a would-be `passed`
    into `blocked`, leaves a `failed` as `failed`, and never removes anything
-   already written.
+   already written. The order is what keeps the frozen artifacts in
+   agreement: a snapshot failure is known before `verification.json` is
+   written and lands in its `result`; a later `meta.json` failure leaves no
+   `meta.json` to disagree with.
 
 Only after step 5 does the optional retrospective run. A retrospective failure
 lands in `error` (execution) and never in `task.result`; the bytes of
