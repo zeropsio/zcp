@@ -690,26 +690,67 @@ func TestNativeAddonProbeArgs_OpensTheLazilyLoadedAddons(t *testing.T) {
 // could be wired to the wrong directory and nothing would notice: a `node -e`
 // that resolves from the wrong cwd fails the same way it would if it ran
 // nowhere at all.
-func TestDefaultSmokeTestInstall_FailsWhenAnAddonIsMissing(t *testing.T) {
-	if _, err := exec.LookPath("node"); err != nil {
-		t.Skip("node is not on PATH; the probe cannot be exercised here")
-	}
-
-	versionDir := t.TempDir()
+// stageSmokeInstall lays out what `npm install --prefix` leaves for a release:
+// the bin shim and the package directory, plus fake resolvable packages at the
+// given paths (relative to the version directory).
+func stageSmokeInstall(t *testing.T, versionDir string, packages ...string) {
+	t.Helper()
 	binDir := filepath.Join(versionDir, "node_modules", ".bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", binDir, err)
 	}
-	bin := filepath.Join(binDir, mate.BinName)
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho 'mate v0.0.0-test'\n"), 0o700); err != nil {
-		t.Fatalf("write bin: %v", err)
+	writeFakeBin(t, filepath.Join(binDir, mate.BinName), "#!/bin/sh\necho 'mate v0.0.0-test'\n")
+	pkgDir := filepath.Join(versionDir, "node_modules", mate.PackageName)
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", pkgDir, err)
 	}
+	for _, rel := range packages {
+		dir := filepath.Join(versionDir, rel)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+		name := filepath.Base(rel)
+		body := `{"name":"` + name + `","version":"0.0.0","main":"index.js"}`
+		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(body), 0o644); err != nil {
+			t.Fatalf("write package.json: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "index.js"), []byte("module.exports = {};\n"), 0o644); err != nil {
+			t.Fatalf("write index.js: %v", err)
+		}
+	}
+}
 
-	err := mate.DefaultSmokeTestInstall(t.Context(), versionDir)
-	if err == nil {
-		t.Fatal("DefaultSmokeTestInstall() = nil, want an error naming the addon that would not load")
+func TestDefaultSmokeTestInstall_ResolvesAddonsAsTheServerDoes(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is not on PATH; the probe cannot be exercised here")
 	}
-	if !strings.Contains(err.Error(), "node-pty") {
-		t.Errorf("DefaultSmokeTestInstall() error = %v, want it to name node-pty", err)
+	hoisted := filepath.Join("node_modules", "msgpackr-extract")
+	bundled := filepath.Join("node_modules", mate.PackageName, "node_modules", "node-pty")
+
+	tests := []struct {
+		name     string
+		packages []string
+		wantErr  string
+	}{
+		{"both hoisted into the prefix", []string{hoisted, filepath.Join("node_modules", "node-pty")}, ""},
+		{"node-pty bundled under the package", []string{hoisted, bundled}, ""},
+		{"node-pty missing", []string{hoisted}, "node-pty"},
+		{"msgpackr-extract missing", []string{bundled}, "msgpackr-extract"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			versionDir := t.TempDir()
+			stageSmokeInstall(t, versionDir, tt.packages...)
+			err := mate.DefaultSmokeTestInstall(t.Context(), versionDir)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("DefaultSmokeTestInstall() error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("DefaultSmokeTestInstall() error = %v, want it to name %s", err, tt.wantErr)
+			}
+		})
 	}
 }

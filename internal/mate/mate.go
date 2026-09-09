@@ -246,6 +246,12 @@ func CurrentLink() string { return filepath.Join(Prefix(), "current") }
 // `npm install --prefix <dir>` always lands it at the same relative spot.
 func binIn(dir string) string { return filepath.Join(dir, "node_modules", ".bin", BinName) }
 
+// packageIn is the installed package's own directory under a version
+// directory: where the server's runtime imports resolve from. Its bundled
+// dependencies (node-pty, since mate 0.8.1) live in the package's own
+// node_modules, one level below the prefix's, and Node finds both from here.
+func packageIn(dir string) string { return filepath.Join(dir, "node_modules", PackageName) }
+
 // BinPath is the bundle's entry point — what a supervised `mate serve` runs.
 // It always resolves through CurrentLink(), so it names whichever version
 // EnsureInstalled last activated, with no version check and no network in the
@@ -352,7 +358,8 @@ const nativeAddonProbe = `await import("node-pty"); await import("msgpackr-extra
 
 // NativeAddonProbeArgs is the argv that runs nativeAddonProbe (argv[0]
 // included). It resolves from the working directory the caller sets, which must
-// be the version directory `npm install --prefix` wrote.
+// be the installed package's directory (packageIn), the same place the server
+// resolves its own runtime imports from.
 func NativeAddonProbeArgs() []string {
 	return []string{"node", "--input-type=module", "-e", nativeAddonProbe}
 }
@@ -382,9 +389,11 @@ func defaultSmokeTestInstall(ctx context.Context, versionDir string) error {
 
 	args := NativeAddonProbeArgs()
 	probe := exec.CommandContext(ctx, args[0], args[1:]...) //nolint:gosec // argv is package constants only; the staged directory is the working directory, never an argument
-	// node resolves a bare specifier passed to -e from the working directory,
-	// so this is what points the probe at the staged install's node_modules.
-	probe.Dir = versionDir
+	// node resolves a bare specifier passed to -e from the working directory.
+	// Probing from the package directory, not the prefix, sees what the server
+	// sees: a bundled dependency sits in the package's own node_modules and is
+	// invisible from the prefix root (0.8.1 failed its smoke test that way).
+	probe.Dir = packageIn(versionDir)
 	if out, err := probe.CombinedOutput(); err != nil {
 		return fmt.Errorf("native addons in %s: %w: %s", versionDir, err, strings.TrimSpace(string(out)))
 	}
