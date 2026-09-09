@@ -19,6 +19,11 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
+// pinnedTestVersion stands in for whatever the release manifest names, in
+// tests that stub mateEnsureInstalled directly and so never resolve a real
+// manifest — an arbitrary version label, not a pin.
+const pinnedTestVersion = "0.8.1"
+
 // mateRig is one container-mode init with every outside effect captured: the
 // commands run, whether the bundle installer fired, and where the unit file
 // would be.
@@ -59,7 +64,7 @@ func newMateRig(t *testing.T) *mateRig {
 }
 
 // writeBundleFiles lays down what installing the verified release tarball
-// leaves behind, at mate.PinnedVersion: an executable entry point (reached
+// leaves behind, at pinnedTestVersion: an executable entry point (reached
 // through mate.CurrentLink()) whose `serve --help` advertises --base-path.
 // Pure filesystem — it does not touch the mateEnsureInstalled stub, so a test
 // that installs the bundle as a SIDE EFFECT of its own stub (see
@@ -67,7 +72,7 @@ func newMateRig(t *testing.T) *mateRig {
 // recursively reconfiguring the seam it is itself running inside.
 func (r *mateRig) writeBundleFiles(t *testing.T) {
 	t.Helper()
-	versionDir := filepath.Join(r.home, ".zcp", "mate", "versions", mate.PinnedVersion)
+	versionDir := filepath.Join(r.home, ".zcp", "mate", "versions", pinnedTestVersion)
 	bin := filepath.Join(versionDir, "node_modules", ".bin", mate.BinName)
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		t.Fatalf("mkdir bundle: %v", err)
@@ -77,13 +82,13 @@ func (r *mateRig) writeBundleFiles(t *testing.T) {
 	}
 	current := filepath.Join(r.home, ".zcp", "mate", "current")
 	_ = os.Remove(current)
-	if err := os.Symlink(filepath.Join("versions", mate.PinnedVersion), current); err != nil {
-		t.Fatalf("symlink current -> versions/%s: %v", mate.PinnedVersion, err)
+	if err := os.Symlink(filepath.Join("versions", pinnedTestVersion), current); err != nil {
+		t.Fatalf("symlink current -> versions/%s: %v", pinnedTestVersion, err)
 	}
 }
 
 // installBundle is writeBundleFiles plus the stub most tests actually want:
-// mateEnsureInstalled reporting that mate.PinnedVersion is already live (a
+// mateEnsureInstalled reporting that pinnedTestVersion is already live (a
 // successful no-op ensure), so enableMate proceeds straight to the
 // --base-path check, the env file and the unit. A test asserting something
 // about the ensure-install call itself overrides the stub again afterward.
@@ -92,7 +97,7 @@ func (r *mateRig) installBundle(t *testing.T) {
 	r.writeBundleFiles(t)
 	zcpinit.SetMateEnsureInstalled(func(mate.EnsureOptions) (mate.Result, error) {
 		r.installs++
-		return mate.Result{Action: mate.ActionNone, From: mate.PinnedVersion, To: mate.PinnedVersion}, nil
+		return mate.Result{Action: mate.ActionNone, From: pinnedTestVersion, To: pinnedTestVersion}, nil
 	})
 }
 
@@ -129,6 +134,42 @@ func TestRun_Mate_EnsureInstalledReportsNone_StillRegistersUnit(t *testing.T) {
 	}
 }
 
+// TestRun_Mate_ManifestUnreachable_KeepsInstalled is MD-10's second half: an
+// unreachable/invalid release manifest with something already installed is
+// not a failure. mateEnsureInstalled reports ActionNone with a Warning
+// (mate.Result.Warning) rather than an error; the step logs the miss and
+// proceeds exactly as the ordinary warm-restart path does — the unit is
+// still registered from the bundle already on disk.
+func TestRun_Mate_ManifestUnreachable_KeepsInstalled(t *testing.T) {
+	rig := newMateRig(t)
+	rig.writeBundleFiles(t)
+	zcpinit.SetMateEnsureInstalled(func(mate.EnsureOptions) (mate.Result, error) {
+		rig.installs++
+		return mate.Result{
+			Action:  mate.ActionNone,
+			From:    pinnedTestVersion,
+			To:      pinnedTestVersion,
+			Warning: "mate release manifest unreachable, keeping installed " + pinnedTestVersion + ": fetch mate release manifest: HTTP 503",
+		}, nil
+	})
+
+	stderr := captureStderr(t, func() {
+		if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
+			t.Fatalf("Run(): %v", err)
+		}
+	})
+
+	if rig.installs != 1 {
+		t.Errorf("expected the ensure-installed seam to run exactly once, got %d", rig.installs)
+	}
+	if len(rig.unitCreateCalls()) != 1 {
+		t.Fatalf("an unreachable manifest with something installed must still register the unit, got %d: %v", len(rig.unitCreateCalls()), rig.commands)
+	}
+	if !strings.Contains(stderr, "manifest unreachable") {
+		t.Errorf("expected the manifest-unreachable warning logged, got:\n%s", stderr)
+	}
+}
+
 // TestRun_Mate_InstallsPinnedBundle_WhenAbsent covers the fresh container: no
 // bundle on disk, so exactly one call to mateEnsureInstalled installs the
 // pinned version before the unit is registered.
@@ -137,7 +178,7 @@ func TestRun_Mate_InstallsPinnedBundle_WhenAbsent(t *testing.T) {
 	zcpinit.SetMateEnsureInstalled(func(mate.EnsureOptions) (mate.Result, error) {
 		rig.installs++
 		rig.writeBundleFiles(t)
-		return mate.Result{Action: mate.ActionInstalled, To: mate.PinnedVersion}, nil
+		return mate.Result{Action: mate.ActionInstalled, To: pinnedTestVersion}, nil
 	})
 
 	if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
@@ -200,9 +241,9 @@ func TestRun_Mate_InstallFailures_Degrade(t *testing.T) {
 		installErr string
 		wantDetail string
 	}{
-		{"release download 404s", "download " + mate.ReleaseURL + ": HTTP 404 Not Found", "HTTP 404 Not Found"},
-		{"download checksum mismatches", "SHA-256 mismatch for " + mate.ReleaseAssetName + ": expected aaa, got bbb", "expected aaa, got bbb"},
-		{"npm dependency install fails", "npm install " + mate.ReleaseAssetName + ": exit status 1", "exit status 1"},
+		{"release download 404s", "download https://github.com/zeropsio/mate/releases/download/v0.9.0/zerops-mate-0.9.0.tgz: HTTP 404 Not Found", "HTTP 404 Not Found"},
+		{"download checksum mismatches", "SHA-256 mismatch for zerops-mate-0.9.0.tgz: expected aaa, got bbb", "expected aaa, got bbb"},
+		{"npm dependency install fails", "npm install zerops-mate-0.9.0.tgz: exit status 1", "exit status 1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -470,7 +511,7 @@ func TestRun_MateDisabled_UnitFilePresent_StopsAndRemoves(t *testing.T) {
 	if err := os.WriteFile(mate.EnvFilePath(), []byte("T3CODE_ZEROPS_PROJECT_ID=x\n"), 0o600); err != nil {
 		t.Fatalf("seed env file: %v", err)
 	}
-	bundleBin := filepath.Join(rig.home, ".zcp", "mate", "versions", mate.PinnedVersion, "node_modules", ".bin", mate.BinName)
+	bundleBin := filepath.Join(rig.home, ".zcp", "mate", "versions", pinnedTestVersion, "node_modules", ".bin", mate.BinName)
 	currentLink := filepath.Join(rig.home, ".zcp", "mate", "current")
 
 	info := containerInfo()
@@ -576,7 +617,7 @@ func TestRun_Mate_UpdatedBundle_RestartsExistingUnit(t *testing.T) {
 		t.Fatalf("seed unit file: %v", err)
 	}
 	zcpinit.SetMateEnsureInstalled(func(mate.EnsureOptions) (mate.Result, error) {
-		return mate.Result{Action: mate.ActionUpdated, From: "0.0.9", To: mate.PinnedVersion}, nil
+		return mate.Result{Action: mate.ActionUpdated, From: "0.0.9", To: pinnedTestVersion}, nil
 	})
 
 	if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
@@ -642,7 +683,7 @@ func TestRun_Mate_FirstBoot_DoesNotRestartFreshUnit(t *testing.T) {
 	rig := newMateRig(t)
 	rig.installBundle(t)
 	zcpinit.SetMateEnsureInstalled(func(mate.EnsureOptions) (mate.Result, error) {
-		return mate.Result{Action: mate.ActionInstalled, To: mate.PinnedVersion}, nil
+		return mate.Result{Action: mate.ActionInstalled, To: pinnedTestVersion}, nil
 	})
 
 	if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {

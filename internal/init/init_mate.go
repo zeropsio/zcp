@@ -174,12 +174,17 @@ func bundleChanged(result mate.Result) bool {
 // container boot's log tells "nothing changed" from "fetched a new release"
 // without having to infer it from the absence of a download line.
 func logMateEnsureResult(result mate.Result) {
-	switch result.Action {
-	case mate.ActionNone:
+	switch {
+	case result.Warning != "":
+		// An unreachable/invalid release manifest with something already
+		// installed (MD-10): the installed version keeps serving, so this
+		// is a logged miss, not a degrade — enableMate proceeds normally.
+		fmt.Fprintf(os.Stderr, "    ! %s\n", result.Warning)
+	case result.Action == mate.ActionNone:
 		fmt.Fprintf(os.Stderr, "    (mate %s already installed, no network reached)\n", result.To)
-	case mate.ActionInstalled:
+	case result.Action == mate.ActionInstalled:
 		fmt.Fprintf(os.Stderr, "    (installed mate %s)\n", result.To)
-	case mate.ActionUpdated:
+	case result.Action == mate.ActionUpdated:
 		fmt.Fprintf(os.Stderr, "    (updated mate %s -> %s)\n", result.From, result.To)
 	}
 }
