@@ -45,28 +45,10 @@ const (
 	// identify the artifact zcp downloads.
 	PackageName = "zerops-mate"
 
-	// BinName is the executable the pinned asset links under node_modules/.bin —
-	// a property of the release, so it moves only together with PackageName and
-	// PinnedVersion.
+	// BinName is the executable a release asset links under
+	// node_modules/.bin — a property of the release (C-1), constant across
+	// versions.
 	BinName = "mate"
-
-	// PinnedVersion names a tag that must exist in zeropsio/mate. It never
-	// changes without PinnedSHA256 changing in the same commit.
-	PinnedVersion = "0.8.1"
-
-	// ReleaseAssetName and ReleaseURL are derived from the two pins above.
-	ReleaseAssetName = PackageName + "-" + PinnedVersion + ".tgz"
-	ReleaseURL       = "https://github.com/zeropsio/mate/releases/download/v" + PinnedVersion + "/" + ReleaseAssetName
-
-	// PinnedSHA256 is the locally computed digest of the matching mate GitHub
-	// release asset. Reproduce it by fetching and hashing that asset, for example:
-	//
-	//	version=0.2.5; curl -fL "https://github.com/zeropsio/mate/releases/download/v${version}/zerops-mate-${version}.tgz" | sha256sum
-	//
-	// The release's SHA256SUMS is also useful for a human cross-check, but this
-	// digest compiled into zcp remains the authority. Empty fails closed before
-	// any request is made.
-	PinnedSHA256 = "094495bb81002f7f50c7c51dc59958f11cb058bdb4ef8eaa96069183d8897d4c"
 )
 
 const (
@@ -320,13 +302,13 @@ func defaultDownloadVerified(ctx context.Context, client *http.Client, releaseUR
 	}
 	if err := tarball.Close(); err != nil {
 		cleanup()
-		return "", nil, fmt.Errorf("close downloaded %s: %w", ReleaseAssetName, err)
+		return "", nil, fmt.Errorf("close downloaded %s: %w", releaseURL, err)
 	}
 
 	actualSHA256 := fmt.Sprintf("%x", hash.Sum(nil))
 	if !strings.EqualFold(actualSHA256, expectedSHA256) {
 		cleanup()
-		return "", nil, fmt.Errorf("SHA-256 mismatch for %s: expected %s, got %s", ReleaseAssetName, expectedSHA256, actualSHA256)
+		return "", nil, fmt.Errorf("SHA-256 mismatch for %s: expected %s, got %s", releaseURL, expectedSHA256, actualSHA256)
 	}
 	return path, cleanup, nil
 }
@@ -346,7 +328,7 @@ func defaultNpmInstallTarball(ctx context.Context, prefix, tarballPath string) e
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("npm install %s: %w", ReleaseAssetName, err)
+		return fmt.Errorf("npm install %s: %w", tarballPath, err)
 	}
 	return nil
 }
@@ -404,10 +386,6 @@ func defaultSmokeTestInstall(ctx context.Context, versionDir string) error {
 // npm-installs it into prefix. The caller owns ctx; the production caller
 // applies installTimeout to both the download and npm.
 func InstallRelease(ctx context.Context, client *http.Client, releaseURL, expectedSHA256, prefix string) error {
-	if expectedSHA256 == "" {
-		return fmt.Errorf("pinned SHA-256 digest is unset for %s", ReleaseAssetName)
-	}
-
 	if err := os.MkdirAll(prefix, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", prefix, err)
 	}
@@ -419,33 +397,6 @@ func InstallRelease(ctx context.Context, client *http.Client, releaseURL, expect
 	defer cleanup()
 
 	return npmInstallTarball(ctx, prefix, tarballPath)
-}
-
-// Release names one installable mate build: the version string it reports at
-// runtime, the tarball URL to fetch it from, and the digest that must match
-// before npm ever sees it.
-type Release struct {
-	Version string
-	URL     string
-	SHA256  string
-}
-
-// DesiredRelease is the version EnsureInstalled converges this container
-// toward. Today it returns exactly the compiled-in pin (PinnedVersion,
-// ReleaseURL, PinnedSHA256) — this function is the seam a future "latest
-// compatible" resolver lands behind, once one exists.
-//
-// zcp stays hard-pinned until then on purpose: PinnedSHA256, compiled into
-// this binary, is the SOLE integrity authority InstallRelease trusts — there
-// is no second signature or registry check behind it. A "latest" resolver
-// would have to give that authority up (fetch a digest for whatever it picked
-// at install time from somewhere else, which itself would need to be
-// trusted) before it could replace a compile-time pin. A release only earns
-// that trust once it DECLARES the compatibility contract it satisfies —
-// nothing in the fork does yet, so PinnedVersion moves only by a zcp commit
-// that changes this constant and PinnedSHA256 together.
-func DesiredRelease() Release {
-	return Release{Version: PinnedVersion, URL: ReleaseURL, SHA256: PinnedSHA256}
 }
 
 // IsDevVersion reports whether v is a semver PRERELEASE — any version
@@ -504,40 +455,80 @@ type Result struct {
 	Action Action
 	From   string
 	To     string
+
+	// Warning is set when EnsureInstalled succeeded without changing
+	// anything, but noticed something worth a log line: today, only an
+	// unreachable release manifest with an installed version already
+	// serving (MD-10) — Action stays ActionNone with From==To, and the
+	// caller logs Warning instead of the ordinary "no network reached"
+	// line, without treating it as a degrade.
+	Warning string
 }
 
-// EnsureOptions steers EnsureInstalled's one behavioural choice: whether a
-// dev build (see IsDevVersion) may be replaced by a pinned release.
+// EnsureOptions steers EnsureInstalled's two behavioural choices.
 type EnsureOptions struct {
 	// Force, when true, lets a dev build be replaced. Default false: a
 	// hand-pushed dev build (eval/scripts/mate-dev-push.sh) is never silently
 	// clobbered by a routine container boot or an unqualified `zcp mate
 	// update` — only an explicit --force does that.
 	Force bool
+
+	// Refresh bypasses the release-manifest cache, forcing a fresh fetch
+	// (see DesiredRelease/ManifestOptions). `zcp mate update` always sets
+	// it; a routine `zcp init` does not, so a warm restart reaches the
+	// manifest at most hourly.
+	Refresh bool
 }
 
-// EnsureInstalled converges the installed mate bundle toward DesiredRelease(),
-// or leaves it alone, in one pass:
+// resolveDesiredRelease fetches the manifest EnsureInstalled converges
+// toward. Package-level so tests can stub the network fetch without a real
+// HTTP round trip; production is defaultResolveDesiredRelease.
+var resolveDesiredRelease = defaultResolveDesiredRelease
+
+func defaultResolveDesiredRelease(opts EnsureOptions) (Manifest, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), manifestFetchTimeout)
+	defer cancel()
+	return DesiredRelease(ctx, http.DefaultClient, ManifestOptions{Refresh: opts.Refresh})
+}
+
+// EnsureInstalled converges the installed mate bundle toward the current
+// release manifest (DesiredRelease), or leaves it alone, in one pass:
 //
-//  1. Read the installed and desired versions. Equal ⇒ ActionNone, having
-//     made no network request at all — this is what keeps a warm restart off
-//     the network.
-//  2. The installed version is a dev build and opts.Force is false ⇒
+//  1. Resolve the desired release. An unreachable/invalid manifest with
+//     something already installed keeps that version serving (ActionNone,
+//     Warning set) rather than degrading — MD-10. With nothing installed
+//     it is a hard failure: there is no registry-package fallback.
+//  2. Read the installed and desired versions. Equal ⇒ ActionNone, having
+//     made no npm/download call at all — this is what keeps a warm restart
+//     off the network beyond the (cached) manifest check.
+//  3. The installed version is a dev build and opts.Force is false ⇒
 //     ActionNone, keeping the dev build.
-//  3. Stage the desired release into its own VersionDir() (clearing any
+//  4. Stage the desired release into its own VersionDir() (clearing any
 //     partial leftover there first).
-//  4. Smoke-test the staged binary.
-//  5. Activate it atomically (repoint CurrentLink()).
-//  6. Prune old version directories, always keeping the one just activated.
+//  5. Smoke-test the staged binary.
+//  6. Activate it atomically (repoint CurrentLink()).
+//  7. Prune old version directories, always keeping the one just activated.
 //
-// Any failure in steps 3-5 returns before CurrentLink() is touched, and
+// Any failure in steps 4-6 returns before CurrentLink() is touched, and
 // cleans up the half-built version directory — CurrentLink() is left exactly
 // where it was, still naming the version that was working. The caller (the
 // mate init step, and `zcp mate update`) turns a returned error into a degraded
 // step or a non-zero exit, never a torn install.
 func EnsureInstalled(opts EnsureOptions) (Result, error) {
-	desired := DesiredRelease()
+	desired, manifestErr := resolveDesiredRelease(opts)
 	installed, instErr := InstalledVersion()
+
+	if manifestErr != nil {
+		if instErr == nil {
+			return Result{
+				Action:  ActionNone,
+				From:    installed,
+				To:      installed,
+				Warning: fmt.Sprintf("mate release manifest unreachable, keeping installed %s: %v", installed, manifestErr),
+			}, nil
+		}
+		return Result{}, fmt.Errorf("resolve desired mate release: %w", manifestErr)
+	}
 
 	if instErr == nil && installed == desired.Version {
 		return Result{Action: ActionNone, From: installed, To: installed}, nil
@@ -563,7 +554,7 @@ func EnsureInstalled(opts EnsureOptions) (Result, error) {
 // stageAndActivate installs desired into its own VersionDir(), smoke-tests
 // it, then activates it. A failure at any point removes the half-built
 // version directory and returns before CurrentLink() is touched.
-func stageAndActivate(desired Release) error {
+func stageAndActivate(desired Manifest) error {
 	versionDir := VersionDir(desired.Version)
 	if err := os.RemoveAll(versionDir); err != nil {
 		return fmt.Errorf("clear partial %s: %w", versionDir, err)

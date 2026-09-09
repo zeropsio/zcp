@@ -30,3 +30,11 @@ func ResetSmokeTestInstall() { smokeTestInstall = defaultSmokeTestInstall }
 // DefaultSmokeTestInstall exposes the real probe so a test can run it against a
 // staged directory instead of only stubbing it away.
 var DefaultSmokeTestInstall = defaultSmokeTestInstall
+
+// SetResolveDesiredRelease/ResetResolveDesiredRelease let EnsureInstalled's
+// tests substitute a fixed desired release instead of reaching the real
+// release-manifest network fetch.
+func SetResolveDesiredRelease(fn func(opts EnsureOptions) (Manifest, error)) {
+	resolveDesiredRelease = fn
+}
+func ResetResolveDesiredRelease() { resolveDesiredRelease = defaultResolveDesiredRelease }

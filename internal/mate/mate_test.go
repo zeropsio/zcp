@@ -16,11 +16,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -95,39 +93,40 @@ func TestServeArgv_CwdIsPositional(t *testing.T) {
 	}
 }
 
-// TestServeArgv_FlagsAdvertisedByPinnedRelease is the contract golden (C-2):
-// every long flag ServeArgv passes — including the capability-probed
-// --base-path — must appear in testdata/serve-help.golden.txt, the verbatim
-// `mate serve --help` of the release PinnedVersion actually pins. The mate
-// CLI treats an unknown flag as a fatal parse error, so a flag ServeArgv
-// grew that the pinned release does not advertise would crash-loop the unit
-// at every container boot; this catches that before a live probe ever would.
-//
-// The golden is reproduced by scripts/mate-pin.sh, never hand-edited or taken
-// from a dev build (see the mate CLAUDE.local.md dev-loop trap: a dev build
-// advertises the pinned version regardless of its actual flag set).
-func TestServeArgv_FlagsAdvertisedByPinnedRelease(t *testing.T) {
+// contract1Flags is C-2's literal flag list (spec-mate.md §2.8): what
+// `mate serve` accepts under contract 1. zcp asserts ServeArgv never emits a
+// flag outside this list; the fork's own CI asserts the mirror — that
+// `mate serve --help` advertises every one of them — so the two repositories
+// can never silently drift apart on the same contract number. Changing this
+// list is a contract bump on both sides, not a version pin move (§2.1c).
+var contract1Flags = map[string]bool{
+	"--mode":                            true,
+	"--host":                            true,
+	"--port":                            true,
+	"--base-path":                       true,
+	"--base-dir":                        true,
+	"--no-browser":                      true,
+	"--auto-bootstrap-project-from-cwd": true,
+}
+
+// TestServeArgv_FlagsAreContract1 replaces the old pinned-release golden
+// (MD-16): every long flag ServeArgv passes, with or without the
+// capability-probed --base-path, must belong to contract1Flags. The mate
+// CLI treats an unknown flag as a fatal parse error, so a flag ServeArgv grew
+// outside the contract would crash-loop the unit at every container boot —
+// this catches that without depending on any particular pinned release.
+func TestServeArgv_FlagsAreContract1(t *testing.T) {
 	t.Setenv("HOME", "/home/zerops")
 
-	golden, err := os.ReadFile(filepath.Join("testdata", "serve-help.golden.txt"))
-	if err != nil {
-		t.Fatalf("read golden: %v", err)
-	}
-	advertised := map[string]bool{}
-	for _, flag := range regexp.MustCompile(`--[a-z][a-z0-9-]*`).FindAllString(string(golden), -1) {
-		advertised[flag] = true
-	}
-	if len(advertised) == 0 {
-		t.Fatalf("golden advertised no flags at all — is it stale or empty?")
-	}
-
-	argv := mate.ServeArgv("/bundle/mate", true)
-	for _, arg := range argv {
-		if !strings.HasPrefix(arg, "--") {
-			continue
-		}
-		if !advertised[arg] {
-			t.Errorf("ServeArgv passes %q, which the pinned release %s does not advertise in `serve --help`", arg, mate.PinnedVersion)
+	for _, withBasePath := range []bool{true, false} {
+		argv := mate.ServeArgv("/bundle/mate", withBasePath)
+		for _, arg := range argv {
+			if !strings.HasPrefix(arg, "--") {
+				continue
+			}
+			if !contract1Flags[arg] {
+				t.Errorf("ServeArgv(withBasePath=%v) passes %q, which is not in contract 1's flag list", withBasePath, arg)
+			}
 		}
 	}
 }
@@ -326,41 +325,26 @@ func TestPaths_DeriveFromHome(t *testing.T) {
 	}
 }
 
-// TestInstallArgs_UsesPinnedReleaseAsset locks both sides of delivery: the
-// remote asset is derived from the fork's package name and pinned version,
-// while npm receives only the already-downloaded local tarball path.
-func TestInstallArgs_UsesPinnedReleaseAsset(t *testing.T) {
+// testAssetName/testVersion stand in for a manifest's asset/version fields
+// across this file's InstallRelease/InstallArgs tests — the delivery
+// mechanism is generic over whatever the release manifest names (there is no
+// pin any more, see manifest.go), so these are arbitrary rather than the
+// value of any particular release.
+const (
+	testVersion   = "0.9.0"
+	testAssetName = "zerops-mate-0.9.0.tgz"
+)
+
+// TestInstallArgs_UsesTheDownloadedTarballPath locks both sides of delivery:
+// npm receives only the already-downloaded LOCAL tarball path — never a
+// remote URL or the manifest's asset name directly — regardless of which
+// release manifest drove the download.
+func TestInstallArgs_UsesTheDownloadedTarballPath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	metadata := []struct {
-		name string
-		got  string
-		want string
-	}{
-		{"published package name", mate.PackageName, "zerops-mate"},
-		{"published executable name", mate.BinName, "mate"},
-		{"published version", mate.PinnedVersion, "0.8.1"},
-		{"published asset name", mate.ReleaseAssetName, "zerops-mate-0.8.1.tgz"},
-		{"published release URL", mate.ReleaseURL, "https://github.com/zeropsio/mate/releases/download/v0.8.1/zerops-mate-0.8.1.tgz"},
-		{"published asset digest", mate.PinnedSHA256, "094495bb81002f7f50c7c51dc59958f11cb058bdb4ef8eaa96069183d8897d4c"},
-	}
-	for _, tt := range metadata {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.got != tt.want {
-				t.Errorf("got %q, want %q", tt.got, tt.want)
-			}
-		})
-	}
-
-	t.Run("pin is canonical lowercase 64-hex", func(t *testing.T) {
-		if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(mate.PinnedSHA256) {
-			t.Errorf("PinnedSHA256 = %q, want 64 lowercase hex characters", mate.PinnedSHA256)
-		}
-	})
-
-	tarballPath := filepath.Join(t.TempDir(), mate.ReleaseAssetName)
-	prefix := mate.VersionDir(mate.PinnedVersion)
+	tarballPath := filepath.Join(t.TempDir(), testAssetName)
+	prefix := mate.VersionDir(testVersion)
 	got := mate.InstallArgs(prefix, tarballPath)
 	want := []string{
 		"npm", "install",
@@ -389,7 +373,7 @@ func TestInstallRelease_ChecksumMismatch_RefusesInstall(t *testing.T) {
 
 	expected := strings.Repeat("0", sha256.Size*2)
 	actual := fmt.Sprintf("%x", sha256.Sum256(body))
-	err := mate.InstallRelease(context.Background(), client, server.URL+"/"+mate.ReleaseAssetName, expected, t.TempDir())
+	err := mate.InstallRelease(context.Background(), client, server.URL+"/"+testAssetName, expected, t.TempDir())
 	if err == nil {
 		t.Fatal("InstallRelease(): expected checksum mismatch")
 	}
@@ -418,7 +402,7 @@ func TestInstallRelease_DownloadFailure_RefusesInstall(t *testing.T) {
 	err := mate.InstallRelease(
 		context.Background(),
 		client,
-		server.URL+"/releases/download/v"+mate.PinnedVersion+"/"+mate.ReleaseAssetName,
+		server.URL+"/releases/download/v"+testVersion+"/"+testAssetName,
 		strings.Repeat("0", sha256.Size*2),
 		t.TempDir(),
 	)
@@ -454,13 +438,13 @@ printf '%s\n' "$@" > "$NPM_ARGS"
 `)
 
 	digest := fmt.Sprintf("%x", sha256.Sum256(body))
-	url := server.URL + "/releases/download/v" + mate.PinnedVersion + "/" + mate.ReleaseAssetName
+	url := server.URL + "/releases/download/v" + testVersion + "/" + testAssetName
 	prefix := t.TempDir()
 	if err := mate.InstallRelease(context.Background(), client, url, digest, prefix); err != nil {
 		t.Fatalf("InstallRelease(): %v", err)
 	}
 
-	wantRequestPath := "/releases/download/v" + mate.PinnedVersion + "/" + mate.ReleaseAssetName
+	wantRequestPath := "/releases/download/v" + testVersion + "/" + testAssetName
 	if got := <-requestedPath; got != wantRequestPath {
 		t.Errorf("download path = %q, want %q", got, wantRequestPath)
 	}
@@ -479,35 +463,6 @@ printf '%s\n' "$@" > "$NPM_ARGS"
 	}
 	if strings.HasPrefix(tarballPath, "http") {
 		t.Errorf("npm must receive a downloaded local tarball, got %q", tarballPath)
-	}
-}
-
-func TestInstallRelease_UnsetPinnedDigest_RefusesInstall(t *testing.T) {
-	var requests atomic.Int32
-	server, client := newPipeHTTPTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		_, _ = w.Write([]byte("future release tarball"))
-	}))
-
-	t.Setenv("HOME", t.TempDir())
-	binDir := t.TempDir()
-	marker := filepath.Join(t.TempDir(), "npm-ran")
-	t.Setenv("NPM_MARKER", marker)
-	t.Setenv("PATH", binDir)
-	writeFakeBin(t, filepath.Join(binDir, "npm"), "#!/bin/sh\n: > \"$NPM_MARKER\"\n")
-
-	err := mate.InstallRelease(context.Background(), client, server.URL+"/"+mate.ReleaseAssetName, "", t.TempDir())
-	if err == nil {
-		t.Fatal("InstallRelease(): an unset integrity pin must fail closed")
-	}
-	if !strings.Contains(err.Error(), "pinned SHA-256 digest is unset") {
-		t.Errorf("InstallRelease(): expected named unset-pin error, got %v", err)
-	}
-	if got := requests.Load(); got != 0 {
-		t.Errorf("HTTP requests = %d, want 0 when the digest pin is unset", got)
-	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Errorf("npm must not run without an integrity authority, marker stat err=%v", err)
 	}
 }
 

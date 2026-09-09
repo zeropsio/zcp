@@ -13,24 +13,33 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/mate"
 )
 
+// desiredVersion is the version resolveDesiredRelease's stub reports —
+// standing in for whatever the real release manifest would name, since
+// these tests never reach the network for it (see newEnsureRig).
+const desiredVersion = "0.9.0"
+
 // ensureRig gives each test a private HOME and counts how many times
-// EnsureInstalled reached the download/npm/smoke seams, so "no network at
-// all" assertions are exact rather than inferred from side effects.
+// EnsureInstalled reached the manifest/download/npm/smoke seams, so "no
+// network at all" assertions are exact rather than inferred from side
+// effects.
 type ensureRig struct {
 	home string
 
+	manifestCalls int
 	downloadCalls int
 	npmCalls      int
 	smokeCalls    int
 
-	npmErr   error
-	smokeErr error
+	manifestErr error
+	npmErr      error
+	smokeErr    error
 }
 
 func newEnsureRig(t *testing.T) *ensureRig {
@@ -38,6 +47,18 @@ func newEnsureRig(t *testing.T) *ensureRig {
 	rig := &ensureRig{home: t.TempDir()}
 	t.Setenv("HOME", rig.home)
 
+	mate.SetResolveDesiredRelease(func(mate.EnsureOptions) (mate.Manifest, error) {
+		rig.manifestCalls++
+		if rig.manifestErr != nil {
+			return mate.Manifest{}, rig.manifestErr
+		}
+		return mate.Manifest{
+			Version:  desiredVersion,
+			URL:      "https://example.invalid/zerops-mate-" + desiredVersion + ".tgz",
+			SHA256:   strings.Repeat("a", 64),
+			Contract: mate.SupportedContract,
+		}, nil
+	})
 	mate.SetDownloadVerified(func(_ context.Context, _ *http.Client, _, _ string) (string, func(), error) {
 		rig.downloadCalls++
 		f, err := os.CreateTemp(t.TempDir(), "fake-release-*.tgz")
@@ -58,7 +79,7 @@ func newEnsureRig(t *testing.T) *ensureRig {
 			_ = os.WriteFile(filepath.Join(prefix, "PARTIAL"), []byte("partial npm install"), 0o644)
 			return rig.npmErr
 		}
-		writeFakePackage(t, prefix, mate.PinnedVersion)
+		writeFakePackage(t, prefix, desiredVersion)
 		return nil
 	})
 	mate.SetSmokeTestInstall(func(_ context.Context, _ string) error {
@@ -67,6 +88,7 @@ func newEnsureRig(t *testing.T) *ensureRig {
 	})
 
 	t.Cleanup(func() {
+		mate.ResetResolveDesiredRelease()
 		mate.ResetDownloadVerified()
 		mate.ResetNpmInstallTarball()
 		mate.ResetSmokeTestInstall()
@@ -133,13 +155,13 @@ func seedVersionDirOnly(t *testing.T, version string) string {
 
 func TestEnsureInstalled_SameVersion_NoNetwork_ResultNone(t *testing.T) {
 	rig := newEnsureRig(t)
-	seedInstalledVersion(t, mate.PinnedVersion)
+	seedInstalledVersion(t, desiredVersion)
 
 	result, err := mate.EnsureInstalled(mate.EnsureOptions{})
 	if err != nil {
 		t.Fatalf("EnsureInstalled(): %v", err)
 	}
-	want := mate.Result{Action: mate.ActionNone, From: mate.PinnedVersion, To: mate.PinnedVersion}
+	want := mate.Result{Action: mate.ActionNone, From: desiredVersion, To: desiredVersion}
 	if result != want {
 		t.Errorf("EnsureInstalled() = %+v, want %+v", result, want)
 	}
@@ -157,7 +179,7 @@ func TestEnsureInstalled_DifferentVersion_InstallsAndRepointsCurrent(t *testing.
 	if err != nil {
 		t.Fatalf("EnsureInstalled(): %v", err)
 	}
-	want := mate.Result{Action: mate.ActionUpdated, From: "0.0.9", To: mate.PinnedVersion}
+	want := mate.Result{Action: mate.ActionUpdated, From: "0.0.9", To: desiredVersion}
 	if result != want {
 		t.Errorf("EnsureInstalled() = %+v, want %+v", result, want)
 	}
@@ -170,8 +192,8 @@ func TestEnsureInstalled_DifferentVersion_InstallsAndRepointsCurrent(t *testing.
 	if err != nil {
 		t.Fatalf("InstalledVersion() after update: %v", err)
 	}
-	if got != mate.PinnedVersion {
-		t.Errorf("current now names %q, want %q", got, mate.PinnedVersion)
+	if got != desiredVersion {
+		t.Errorf("current now names %q, want %q", got, desiredVersion)
 	}
 	if _, err := os.Stat(filepath.Join(mate.VersionDir("0.0.9"), "node_modules", mate.PackageName, "package.json")); err != nil {
 		t.Errorf("the old version must still be on disk: %v", err)
@@ -185,7 +207,7 @@ func TestEnsureInstalled_NothingInstalled_ResultInstalled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureInstalled(): %v", err)
 	}
-	want := mate.Result{Action: mate.ActionInstalled, From: "", To: mate.PinnedVersion}
+	want := mate.Result{Action: mate.ActionInstalled, From: "", To: desiredVersion}
 	if result != want {
 		t.Errorf("EnsureInstalled() = %+v, want %+v", result, want)
 	}
@@ -218,7 +240,7 @@ func TestEnsureInstalled_NpmFailure_LeavesCurrentUnchanged(t *testing.T) {
 	if got != "0.0.9" {
 		t.Errorf("current must still name the working version, got %q", got)
 	}
-	if _, statErr := os.Stat(mate.VersionDir(mate.PinnedVersion)); !os.IsNotExist(statErr) {
+	if _, statErr := os.Stat(mate.VersionDir(desiredVersion)); !os.IsNotExist(statErr) {
 		t.Errorf("the half-built version directory must be cleaned up, stat err=%v", statErr)
 	}
 }
@@ -246,7 +268,7 @@ func TestEnsureInstalled_SmokeFailure_LeavesCurrentUnchanged(t *testing.T) {
 	if got != "0.0.9" {
 		t.Errorf("current must still name the working version, got %q", got)
 	}
-	if _, statErr := os.Stat(mate.VersionDir(mate.PinnedVersion)); !os.IsNotExist(statErr) {
+	if _, statErr := os.Stat(mate.VersionDir(desiredVersion)); !os.IsNotExist(statErr) {
 		t.Errorf("the half-built version directory must be cleaned up, stat err=%v", statErr)
 	}
 	if rig.npmCalls != 1 {
@@ -282,7 +304,7 @@ func TestEnsureInstalled_DevVersionInstalled_ReplacedWithForce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureInstalled(Force): %v", err)
 	}
-	want := mate.Result{Action: mate.ActionUpdated, From: devVersion, To: mate.PinnedVersion}
+	want := mate.Result{Action: mate.ActionUpdated, From: devVersion, To: desiredVersion}
 	if result != want {
 		t.Errorf("EnsureInstalled(Force) = %+v, want %+v", result, want)
 	}
@@ -329,7 +351,7 @@ func TestEnsureInstalled_Pruning_KeepsTwoAndTheLiveVersion(t *testing.T) {
 	for _, e := range entries {
 		kept = append(kept, e.Name())
 	}
-	wantKept := map[string]bool{mate.PinnedVersion: true, "0.0.4": true}
+	wantKept := map[string]bool{desiredVersion: true, "0.0.4": true}
 	if len(kept) != len(wantKept) {
 		t.Fatalf("kept versions = %v, want exactly %v", kept, wantKept)
 	}
@@ -414,14 +436,6 @@ func TestBinPath_ResolvesThroughCurrentLink(t *testing.T) {
 	}
 	if resolved != want {
 		t.Errorf("BinPath() resolves to %q, want %q", resolved, want)
-	}
-}
-
-func TestDesiredRelease_IsTheCompiledPin(t *testing.T) {
-	got := mate.DesiredRelease()
-	want := mate.Release{Version: mate.PinnedVersion, URL: mate.ReleaseURL, SHA256: mate.PinnedSHA256}
-	if got != want {
-		t.Errorf("DesiredRelease() = %+v, want %+v", got, want)
 	}
 }
 
