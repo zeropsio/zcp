@@ -297,7 +297,7 @@ BinPath() = ~/.zcp/mate/current/node_modules/.bin/mate
 
 `InstalledVersion()` reads `current/node_modules/zerops-mate/package.json` — **npm's own record**,
 never a side file zcp would have to keep honest. `DesiredRelease()` answers `{Version, URL,
-SHA256}`; today that is exactly the compiled-in pin, and §2.8 says why it stays one.
+SHA256, Contract}` — read from the release manifest (§2.1c), never compiled in.
 
 One pass, in order:
 
@@ -307,13 +307,17 @@ One pass, in order:
 2. **Keep a dev build.** An installed *semver prerelease* (`0.1.0-dev.<sha>`, what
    `eval/scripts/mate-dev-push.sh` tags) is never replaced by the pinned release unless `Force`. The
    protection is now a stated rule rather than an accident of which files happen to exist.
-3. **Stage** into a fresh `versions/<desired>`: one `GET` to `ReleaseURL`, streamed to a temporary
-   file while its SHA-256 is computed and compared with `PinnedSHA256`. A mismatch reports both
-   digests and **never invokes npm**; an empty pin refuses before the first request. Only a matching
-   tarball reaches `npm install --prefix versions/<desired> …`. npm still resolves the package's
+3. **Stage** into a fresh `versions/<desired>`: one `GET` to the manifest's `url`, streamed to a
+   temporary file while its SHA-256 is computed and compared with the manifest's `sha256`. A
+   mismatch reports both digests and **never invokes npm** — this is an integrity check against a
+   damaged download, not a trust boundary (§2.1c). Only a matching tarball reaches
+   `npm install --prefix versions/<desired> …`. npm still resolves the package's
    dependencies from its registry, so this is not an offline install. Download and npm share one
    3-minute deadline.
-4. **Smoke** the staged binary (`mate --version`, 15 s).
+4. **Smoke** the staged install: `mate --version`, then the native-addon probe run **from the
+   installed package's directory** (`node_modules/zerops-mate`), where the server resolves its own
+   runtime imports — a bundled dependency (node-pty since 0.8.1) lives in the package's own
+   `node_modules` and is invisible from the prefix root.
 5. **Activate atomically** — build the symlink under a temporary name and `os.Rename` it onto
    `current`, so an interrupted activation leaves either the old link or the new one, never a
    half-written one.
@@ -329,8 +333,11 @@ One pass, in order:
    "a restart is also an upgrade" (§2.6) promises. A unit created by this same run is left alone —
    `zsc unit create` starts it.
 
-**`zcp mate update [--force]`** runs the identical pass from the CLI and then restarts `zerops@mate`
-when the unit is registered, so an update needs no container restart.
+**`zcp mate update [--force] [--json]`** runs the identical pass from the CLI and then restarts
+`zerops@mate` when the unit is registered, so an update needs no container restart. It is what the
+web client's "Update" verb ends in (§2.9). **`zcp mate status --json`** answers
+`{installed, latest, contract, updateAvailable}` from the same resolver, using the manifest cache
+(§2.1c) — the one reader of "is there a newer mate" in the whole product.
 
 ### 2.1b Disabling — the reverse direction
 
@@ -340,30 +347,53 @@ when the unit is registered, so an update needs no container restart.
 so re-enabling costs a `zcp init` and no network. With no unit file there is nothing to do and the
 step does not even register.
 
-### 2.1c The pin, and moving it
+### 2.1c The release manifest — no pin
 
-The pin currently rides `v0.3.1` / `zerops-mate-0.3.1.tgz` (19,626,858 B), with locally computed
-SHA-256 `0ce069f39989cf3b3bcc9dccb1554c25a862b8deea6ea2a0db5d652d1d3a8fe9` (matching the release's
-`SHA256SUMS`, the human cross-check) — 0.3.1 adds the container browser's live view (§5.6) on top of
-the boundaries release (§0): no T3 preview browser or MCP
-server, the service map as a client projection signalled by the platform websocket, the server
-spawning `zcp` only for `agent mark-oauth` and reading the repository set from the sshfs mount
-table, the descriptor's `zerops.projectId`, `dev_server` and `browser` cards, and the
-Restart-to-install action. `serve --help` did not change between 0.2.5 and 0.3.1: the golden is
-byte-identical. The release owner fills the digest only after publishing the tag: download the release asset, compute its SHA-256 locally, compare it
-with the release's `SHA256SUMS` as a human cross-check, and paste the locally computed lowercase
-64-hex digest into `PinnedSHA256`. `SHA256SUMS` never becomes the authority because it travels with
-the artifact. `PackageName` (`zerops-mate`) and `PinnedVersion` are the only asset-identity inputs;
-the asset name and URL derive from them. The fork's workspace package deliberately remains named
-`t3`; it does not identify the release artifact zcp downloads.
+zcp does not pin a mate version. It tracks the fork's **stable release** the same way the container
+tracks zcp itself (`install.sh` → `releases/latest`), and refuses only what it cannot drive.
 
-For every later release, update `PinnedVersion` and the locally computed `PinnedSHA256` **in the
-same commit**, together with the contract golden: `scripts/mate-pin.sh <version>` downloads the
-asset, prints its SHA-256, and regenerates `internal/mate/testdata/serve-help.golden.txt` from the
-installed bin's `serve --help`; `TestServeArgv_FlagsAdvertisedByPinnedRelease` then fails whenever
-`ServeArgv` names a flag that release does not advertise (MD-16) — the machine half of §2.8's
-otherwise human-read contract. The release must exist and its pin must be committed and verified
-**before any zcp release containing the delivery path**. The empty-pin guard remains defense in depth.
+**The manifest.** The fork's release workflow publishes, next to the tarball, a release asset
+`stable.json`:
+
+```json
+{ "version": "0.8.1", "asset": "zerops-mate-0.8.1.tgz",
+  "url": "https://github.com/zeropsio/mate/releases/download/v0.8.1/zerops-mate-0.8.1.tgz",
+  "sha256": "<64 hex>", "size": 21690443, "contract": 1, "publishedAt": "2026-09-09T07:23:00Z" }
+```
+
+`DesiredRelease()` reads `https://github.com/zeropsio/mate/releases/latest/download/stable.json`
+(GitHub's own "latest release" redirect; a release marked *pre-release* is never "latest", which is
+the rollback lever: mark the bad release as pre-release, re-mark the previous one as latest). The
+answer is cached on disk with a 1-hour TTL (`~/.zcp/mate/manifest.json`, the same shape as zcp's
+own `internal/update` cache) so a warm restart and `zcp mate status` reach the network at most
+hourly; `zcp mate update` always refreshes. An unreachable manifest with a mate already installed is
+**not** a failure: the installed version keeps serving and the step logs the miss. With nothing
+installed it degrades like any other install failure (MD-1).
+
+**What zcp checks, and what it does not.**
+
+| Check | Rule |
+|---|---|
+| `contract` | must equal `mate.SupportedContract` (today `1` = C-1…C-6 in §2.8). A manifest declaring a contract zcp does not know is refused with a message naming both numbers — the one case where an old zcp deliberately stays on the mate it has. |
+| `version` | must be ≥ `mate.MinimumMateVersion`, the oldest release zcp still drives (moves only when a contract fact changes). A manifest below it is refused. |
+| `sha256` | the downloaded tarball must match it — damage detection, nothing more. |
+
+**There is no trust chain, by decision (2026-09-09).** The container installs zcp from a GitHub
+release over TLS with no signature; a manifest digest compiled into zcp guarded mate alone against
+an attacker who could replace assets in `zeropsio/mate` but not in `zeropsio/zcp`, which is not a
+boundary anyone defends. The boundary is the GitHub organisation: 2FA, protected `v*` tags, who may
+push them. If the product ever needs build provenance it is done for both repositories at once
+(Sigstore keyless with GitHub OIDC), never with a key held in a repository secret — whoever can edit
+the workflow can sign with that key.
+
+**What moved out of zcp.** `PinnedVersion`, `PinnedSHA256`, `ReleaseAssetName`, `ReleaseURL`,
+`scripts/mate-pin.sh` and the `serve --help` golden are gone. The flag contract (C-2) is now tested
+where it changes: the fork's CI asserts that `mate serve --help` advertises every flag of contract 1
+(the list in §2.8), and a flag added on either side goes through a contract bump, not a pin move.
+
+**Release order** is no longer a rule. A mate release is complete when its tag's workflow has
+published the tarball and `stable.json`; every container picks it up at its next `zcp init` or
+`zcp mate update`. A zcp release never waits for mate.
 
 ### 2.2 The supervised process
 
@@ -521,28 +551,23 @@ bundle; `/mate/` is the only supported origin.
 ### 2.8 The zcp↔mate contract
 
 zcp and mate ship from two repositories on two schedules, and the coupling between them is the handful
-of facts below — none of which either side can change alone. **Today nothing in the code enforces
-them: the hard pin does.** `PinnedVersion` moves only by a zcp commit, so a human reads this list
-when they move it, and that is the whole enforcement mechanism.
-
-That is also precisely why `DesiredRelease()` (§2.1a) still answers with a compiled-in version and
-digest rather than resolving "latest". Automatic tracking needs a release to *declare* the contract
-it satisfies, so zcp can refuse one it does not understand; no release does. When that changes, the
-declared number and a `ContractVersion` in `internal/mate` become the check, and `DesiredRelease()` is
-the one function that has to learn about it.
+of facts below — none of which either side can change alone. The facts are numbered as **contract
+1**: a release declares the contract it satisfies in `stable.json` (§2.1c), zcp carries
+`SupportedContract`, and a release declaring a number zcp does not know is refused rather than
+installed. Changing any fact below is a contract bump on both sides; adding a flag that an older
+mate would reject is either a bump or a capability probe (`--base-path` is the precedent).
 
 | # | The fact | Owned by |
 |---|---|---|
-| C-1 | The artifact is `zerops-mate-<version>.tgz`, a GitHub release asset on `zeropsio/mate`, whose npm `bin` entry is `mate` at `node_modules/.bin/mate` (`mate.BinName`, pinned together with the package name) | fork's `cli.ts pack` + release workflow |
+| C-1 | The artifact is `zerops-mate-<version>.tgz`, a GitHub release asset on `zeropsio/mate`, whose npm `bin` entry is `mate` at `node_modules/.bin/mate` (`mate.BinName`), and whose release publishes `stable.json` beside it (§2.1c) | fork's `cli.ts pack` + release workflow |
 | C-2 | `serve` accepts `--mode web --host --port --base-dir --no-browser --auto-bootstrap-project-from-cwd` with the working directory as a trailing **positional**. **An unknown flag is fatal**, so every flag added later reaches production only behind a capability probe — `--base-path` is the precedent and stays one (§2.2) | fork's `cli/config.ts` |
 | C-3 | `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}` keep their meaning, and a non-empty `PROJECT_ID` remains the sole Zerops-environment signal (§2.3, §3.1) | fork's `ZeropsEnvironment` |
 | C-4 | Liveness is `GET {basePath}/.well-known/t3/environment` → `200 application/json` carrying `basePath` (§2.5) | fork's environment descriptor |
 | C-5 | The server binds loopback only and never claims a declared platform port (§2.4) | zcp's `ServeArgv`, fork's `--host` |
 | C-6 | **`/mate` is baked into the released artifact, not chosen by zcp.** The release workflow builds the bundled web client with `VITE_BASE_PATH=/mate`, and `pack` refuses a tarball without `dist/client/index.html`. `mate.BasePath` must equal it; moving the prefix is a coordinated two-repo change | fork's release workflow + `mate.BasePath` |
 
-A later "latest compatible" resolver is well-formed on the release side already: the fork's release
-workflow triggers only on stable `v<major>.<minor>.<patch>` tags, so the published release list *is*
-the candidate set — nightlies never produce one.
+The fork's release workflow triggers only on stable `v<major>.<minor>.<patch>` tags, so GitHub's
+"latest release" *is* the stable channel — nightlies never produce one.
 
 **The web client is not zcp's.** zcp does not build it, configure it, serve it or update it; the
 centralized client reaches the server over `{BasePath}/`. That the release tarball still carries a
@@ -562,14 +587,48 @@ actively refused today (C-1's `pack` assertion), so it would be a fork-side chan
 | MD-7 | A request still carrying the base path past the proxy gets a named `404`, never the SPA shell; client-side helpers preserve a URL's prefix. `server.test.ts` — "names a forwarded base path instead of answering with the shell"; `packages/shared/src/basePath.test.ts`. |
 | MD-8 | mate's process environment merges `~/.zcp/mate.env` over the container's live env store, read once at unit start — so `zcp init` restarts the unit itself whenever it rewrote that file or replaced the bundle (MD-15). `TestLoadLiveEnv`, `TestMergeMateEnv_OrderAndPrecedence`. |
 | MD-9 | `{BasePath}/healthz` carries `Access-Control-Allow-Origin: *` on both branches; `/mate/` and the cookie-gated `location /` carry none. `TestRunNginx_HealthzHasCORSForCrossOriginProbe`. |
-| MD-10 | A fresh install refuses an unset digest before making an HTTP request; otherwise it downloads the pinned fork release asset, verifies it against the SHA-256 compiled into zcp before npm runs, and has no registry-package fallback. Download, integrity, and npm failures register the same degraded init outcome and no unit. `TestInstallArgs_UsesPinnedReleaseAsset`, `TestInstallRelease_ChecksumMismatch_RefusesInstall`, `TestInstallRelease_DownloadFailure_RefusesInstall`, `TestInstallRelease_UnsetPinnedDigest_RefusesInstall`, `TestRun_Mate_InstallFailures_Degrade`. |
+| MD-10 | The desired release comes from `stable.json` and nowhere else: a manifest whose `contract` is not `SupportedContract` or whose `version` is below `MinimumMateVersion` is refused before any download; the tarball must match the manifest's `sha256` before npm runs; there is no registry-package fallback. An unreachable manifest keeps an installed mate serving and degrades only a first install. Download, integrity, and npm failures register the same degraded init outcome and no unit. `TestDesiredRelease_*`, `TestInstallRelease_ChecksumMismatch_RefusesInstall`, `TestInstallRelease_DownloadFailure_RefusesInstall`, `TestRun_Mate_InstallFailures_Degrade`, `TestRun_Mate_ManifestUnreachable_KeepsInstalled`. |
 | MD-11 | **With `ZCP_MATE_ENABLED` unset, a container behaves exactly as one predating mate**: the rendered nginx.conf carries no `/mate`, no `3773`, no `healthz` and no marker path while keeping every non-mate structure; nothing is downloaded or installed; no unit is registered; no readiness marker is written; and `zcp init` prints no extra step line. `TestRunNginx_MateDisabled_RendersNoMateSurface`, `TestRun_MateDisabled_NoUnitFile_NoOp`, `TestDetect_MateDisabled_ByDefault`. |
 | MD-12 | Disabling is a real reverse direction, not an absence of the forward one: a leftover unit is stopped and removed and `~/.zcp/mate.env` deleted, while `mate.Prefix()` is left on disk so re-enabling costs no network. `zcp service start mate` refuses under the off flag, so a unit surviving a failed removal cannot resurrect the server — reading the flag from the **live env store**, never from its own environment, because a systemd unit inherits neither (live-verified: a guard reading `os.Environ` crash-looped the unit on an enabled container). An unreadable store fails OPEN, since the unit exists only because an enabling `zcp init` created it. `TestRun_MateDisabled_UnitFilePresent_StopsAndRemoves`, `TestStart_Mate_GuardReadsLiveEnvStore_NotOnlyProcessEnv`, `TestStart_Mate_GuardRefusesWhenStoreSaysDisabled`, `TestStart_Mate_GuardFailsOpenOnUnreadableStore`, `TestStart_OtherServices_UnaffectedByMateGuard`. |
 | MD-13 | An update is staged into its own version directory, smoke-tested, and only then activated by an atomic symlink rename; **any failure leaves `current` naming the version that was working**. Equal versions reach no network at all, and an installed semver prerelease (a hand-pushed dev build) is never replaced without `Force`. `TestEnsureInstalled_SameVersion_NoNetwork_ResultNone`, `TestEnsureInstalled_DifferentVersion_InstallsAndRepointsCurrent`, `TestEnsureInstalled_NpmFailure_LeavesCurrentUnchanged`, `TestEnsureInstalled_SmokeFailure_LeavesCurrentUnchanged`, `TestEnsureInstalled_DevVersionInstalled_KeptWithoutForce`, `TestEnsureInstalled_DevVersionInstalled_ReplacedWithForce`, `TestEnsureInstalled_Pruning_KeepsTwoAndTheLiveVersion`. |
 | MD-15 | The unit starts at boot on its own (`WantedBy=multi-user.target`), independently of `zcp init` — measured on `z3-eval`: `active` at 16:45:12, the zcp binary replaced by `install.sh` at 16:45:14, `zcp init` later still. So it serves whatever was on disk at boot, and `zcp init` restarts an ALREADY-EXISTING unit whenever it replaced the bundle or rewrote the env contract; a unit it created in the same run is left alone, since `zsc unit create` starts it. `TestRun_Mate_UpdatedBundle_RestartsExistingUnit`, `TestRun_Mate_ChangedEnvContract_RestartsExistingUnit`, `TestRun_Mate_UnchangedBundle_DoesNotRestart`, `TestRun_Mate_FirstBoot_DoesNotRestartFreshUnit`. |
-| MD-16 | Every flag in `ServeArgv` is advertised by the pinned release's `serve --help` golden, and the env contract's key set is exactly `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}`; a malformed `ZCP_MATE_ALLOWED_ORIGINS` is never written and never fails init. `TestServeArgv_FlagsAdvertisedByPinnedRelease`, `TestEnvContract_KeysAreTheSpecList`, `TestValidateAllowedOrigins`, `TestRun_Mate_InvalidAllowedOrigins_NotWritten_InitContinues`; `scripts/mate-pin.sh` reproduces the golden. |
+| MD-16 | Every flag in `ServeArgv` belongs to contract 1's flag list (C-2), asserted on the zcp side against a literal list and on the fork side by CI against `mate serve --help`; the env contract's key set is exactly `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}`; a malformed `ZCP_MATE_ALLOWED_ORIGINS` is never written and never fails init. `TestServeArgv_FlagsAreContract1`, `TestEnvContract_KeysAreTheSpecList`, `TestValidateAllowedOrigins`, `TestRun_Mate_InvalidAllowedOrigins_NotWritten_InitContinues`; fork: `serve-contract.test.ts`. |
+| MD-17 | `zcp mate status --json` and `zcp mate update` share `DesiredRelease()` with `zcp init`; `status` never installs, `update` restarts the unit only after a successful activation, and both answer JSON a caller can act on without parsing prose. `TestMateStatus_*`, `TestMateUpdate_*`. |
 
 ---
+
+### 2.9 Updates in the product — one reader, one verb
+
+The web client knows **nothing about versions** except the floor it needs to sign in
+(`MINIMUM_MATE_SERVER_VERSION`, the identity-exchange "Update required" door, unchanged). Everything
+else about "is there a newer Mate" is answered by zcp and merely displayed:
+
+1. **zcp reads.** `zcp mate status --json` (§2.1a) is the only place that compares an installed
+   mate with the stable manifest.
+2. **The server relays.** The mate server runs it through `ZeropsCli` (the same narrow spawner as
+   `agent mark-oauth`, own timeout, own error types) once at start, then hourly, and on demand after
+   an update; the answer becomes the descriptor field `update: {installed, latest, available}` on
+   `/.well-known/t3/environment` and rides the existing `serverConfig` the client already holds. A
+   missing `zcp` (a standalone server) leaves the field absent, and the client shows nothing.
+3. **The client shows, quietly.** `available: true` renders as one muted line on the Mate card in
+   the projects overview ("0.8.0 · 0.8.1 available") and the same line in the thread header's
+   environment menu — a status, never a banner, never dismissable, never stored. The upstream
+   "Server versions differ" banner, `versionSkew.ts` and its localStorage dismissals are deleted:
+   they encode "client and server ship in one box", which this product does not.
+4. **One verb: Update.** Next to that line. It calls `zerops.mate.update` — a Zerops-zone RPC
+   gated by `exec:operate`, shaped like upstream's server self-update RPC — whose handler runs
+   `zcp mate update --json` through `ZeropsCli`, returns its JSON, and then the client waits for the
+   socket to come back exactly as "Restart to install" does today (`restartAndVerifyMate`), with
+   the descriptor's `serverVersion` as the proof. Running threads stop; the client says so before
+   the click. There is no container restart in this path.
+
+### Invariants
+
+| ID | Invariant |
+|---|---|
+| MU-1 | The client compares versions in exactly one place, the sign-in floor; the update line and verb render only from the descriptor's `update` field. `ZeropsMateCard.test.tsx`, `versionSkew.test.ts` is gone. |
+| MU-2 | `zerops.mate.update` is offered only inside a Zerops project with `zcp` on PATH and requires `exec:operate`; a failing `zcp mate update` is a successful RPC carrying its JSON, never a transport error. `ZeropsMateUpdate.test.ts`. |
+| MU-3 | The descriptor's `update` field is absent, never fabricated, when `zcp` cannot be run; the card then shows the installed version alone. `ServerEnvironment.test.ts`. |
 
 ## Current account contract — Mate 0.7.0
 
