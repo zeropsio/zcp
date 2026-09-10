@@ -296,17 +296,29 @@ func compareTimestamps(a, b string) int {
 	return strings.Compare(a, b)
 }
 
+// noStepLabel is the renderer-only presentation Markdown substitutes for a
+// Cell.Step of "" (a tool call made outside any workflow step) — never
+// written back into CoverageReport.Cells, which keeps "" as the data (S22
+// finding 2): a blank table cell is indistinguishable from a rendering bug.
+const noStepLabel = "(no step)"
+
 // Markdown renders the report as the deterministic table + summary that
 // both `zcp eval farm coverage`'s stdout and coverage.md carry, byte
 // identical (docs/spec-eval-farm.md §5.3): per row scenario/step/decision/
 // count, then a summary of cells total, no-stream runs, and scenarios with
-// no unique cell (pruning candidates, descriptive only — FM-40).
+// no unique cell (pruning candidates, descriptive only — FM-40). An empty
+// Step renders as noStepLabel (renderer-only — the underlying Cell.Step
+// stays "").
 func (r CoverageReport) Markdown() string {
 	var b strings.Builder
 	b.WriteString("| Scenario | Step | Decision | Runs |\n")
 	b.WriteString("|---|---|---|---|\n")
 	for _, cell := range r.Cells {
-		fmt.Fprintf(&b, "| %s | %s | %s | %d |\n", cell.ScenarioID, cell.Step, cell.Decision, cell.Count)
+		step := cell.Step
+		if step == "" {
+			step = noStepLabel
+		}
+		fmt.Fprintf(&b, "| %s | %s | %s | %d |\n", cell.ScenarioID, step, cell.Decision, cell.Count)
 	}
 	fmt.Fprintf(&b, "\nCells: %d\n", len(r.Cells))
 	if len(r.NoStreamRuns) == 0 {

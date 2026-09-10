@@ -144,6 +144,41 @@ func TestCoverage_NotRunBundle_ListedNotFatal(t *testing.T) {
 	}
 }
 
+// TestCoverage_Render_EmptyStepShowsNoStep pins S22 finding 2: Markdown
+// renders an empty Step as the literal "(no step)" — a tool call made
+// outside any workflow step — so a reader can tell "no step" from a
+// rendering bug, never a blank cell. The underlying CoverageReport.Cells
+// data stays "" (renderer-only change): asserted directly on the struct
+// after rendering, not inferred from the output.
+func TestCoverage_Render_EmptyStepShowsNoStep(t *testing.T) {
+	t.Parallel()
+
+	report := CoverageReport{
+		Cells: []Cell{
+			{ScenarioID: "s1", Step: "", Decision: "zerops_deploy", Count: 2},
+			{ScenarioID: "s1", Step: "develop-active", Decision: "zerops_workflow:status", Count: 1},
+		},
+	}
+
+	got := report.Markdown()
+
+	want := "| Scenario | Step | Decision | Runs |\n" +
+		"|---|---|---|---|\n" +
+		"| s1 | (no step) | zerops_deploy | 2 |\n" +
+		"| s1 | develop-active | zerops_workflow:status | 1 |\n" +
+		"\nCells: 2\n" +
+		"No-stream runs: (none)\n" +
+		"Scenarios with no unique cell: (none)\n"
+
+	if got != want {
+		t.Errorf("Markdown() =\n%s\nwant\n%s", got, want)
+	}
+
+	if report.Cells[0].Step != "" {
+		t.Errorf("Cells[0].Step = %q, want \"\" — renderer-only change, CoverageReport data must stay untouched", report.Cells[0].Step)
+	}
+}
+
 // copyDirToTemp makes a writable copy of src under t.TempDir() so a test
 // can mutate it (e.g. delete a run dir) without touching the checked-in
 // fixture.

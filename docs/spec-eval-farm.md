@@ -151,7 +151,13 @@ Shape, as implemented by the controller (S4):
 deleted (the common case for a settled run); `launchTokenId` is the id
 (never the token value, §3.4) of a launch scenario's token, present only
 while it has not yet been revoked — the FM-21 no-bundle exemption records it
-here so `gc` can finish the revoke once the project is finally gone.
+here so `gc` can finish the revoke once the project is finally gone. For a
+`blocked` or `failed` run, `detail` names the blocking/failing check ids:
+sorted ids of every `verification.json` row (spec-testing-architecture.md
+§10.1), sibling to `meta.json` in the same results directory, whose `result`
+equals the run's own result, joined with `", "` and capped at 5 with a
+`"+N more"` suffix; a bundle with no `verification.json` sibling gets the
+literal `"no verification.json in bundle"`.
 
 ---
 

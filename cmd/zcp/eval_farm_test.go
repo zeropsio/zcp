@@ -245,7 +245,11 @@ func TestFarmPull_Batch_ReadsManifestRuns(t *testing.T) {
 // brief: `farm push --scenarios <dir>` also uploads the local gate scenario
 // list to sets/<scenariosDigest>/gate.txt, and `farm push --evaluator
 // <file>` also writes the plain-text pointer evaluators/current whose body
-// is the evaluator's own digest. Both keys are printed.
+// is the evaluator's own digest. Both keys are printed. --gate-set is
+// passed explicitly because the real checkout's eval/farm/gate-set.txt does
+// not sit at S22 finding 3's default location relative to
+// eval/behavioral/scenarios (that default assumes gate-set.txt is a sibling
+// of the scenarios dir itself) — see eval/farm/README.md's push usage.
 func TestFarmPush_UploadsGateSetAndCurrentPointer(t *testing.T) {
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
@@ -259,6 +263,7 @@ func TestFarmPush_UploadsGateSetAndCurrentPointer(t *testing.T) {
 	setFarmEnv(t, server.URL)
 
 	scenariosDir := filepath.Join(repoRoot, "eval", "behavioral", "scenarios")
+	gateSetPath := filepath.Join(repoRoot, "eval", "farm", "gate-set.txt")
 
 	evalDir := t.TempDir()
 	evaluatorPath := filepath.Join(evalDir, "zcp")
@@ -272,7 +277,7 @@ func TestFarmPush_UploadsGateSetAndCurrentPointer(t *testing.T) {
 	var code int
 	stdout, stderr := captureOutput(t, func() {
 		code = runEvalFarm([]string{
-			"push", "--evaluator", evaluatorPath, "--scenarios", scenariosDir,
+			"push", "--evaluator", evaluatorPath, "--scenarios", scenariosDir, "--gate-set", gateSetPath,
 		})
 	})
 	if code != 0 {
@@ -360,4 +365,134 @@ func TestFarmPull_Batch_WritesManifestAndSummary(t *testing.T) {
 	if string(gotSummary) != string(summaryBody) {
 		t.Errorf("pulled summary.json = %q, want %q", gotSummary, summaryBody)
 	}
+}
+
+// TestFarmPush_GateSetResolvedNextToScenarios pins S22 finding 3: `farm
+// push --scenarios <dir>` resolves the local gate-set file relative to
+// --scenarios, never to cwd. cwd is set to an unrelated directory for every
+// subtest, so a cwd-relative read would fail regardless of which case is
+// under test. Default is "<scenariosDir>/../farm/gate-set.txt"; --gate-set
+// overrides it; a resolution failure names the fully resolved path.
+func TestFarmPush_GateSetResolvedNextToScenarios(t *testing.T) {
+	root := t.TempDir()
+	scenariosDir := filepath.Join(root, "scenarios")
+	if err := os.MkdirAll(scenariosDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(scenariosDir, "recipe-a.md"), []byte("# recipe-a\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	elsewhere := t.TempDir()
+	t.Chdir(elsewhere)
+
+	uploadedGateSet := func(t *testing.T, fake *fakeFarmS3) (key string, body []byte) {
+		t.Helper()
+		fake.mu.Lock()
+		defer fake.mu.Unlock()
+		for k := range fake.objects {
+			if strings.HasPrefix(k, "sets/") && strings.HasSuffix(k, "/gate.txt") {
+				key = k
+			}
+		}
+		return key, fake.objects[key]
+	}
+
+	t.Run("default_resolved_next_to_scenarios", func(t *testing.T) {
+		farmDir := filepath.Join(root, "farm")
+		if err := os.MkdirAll(farmDir, 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		gateBody := []byte("recipe-a\n")
+		if err := os.WriteFile(filepath.Join(farmDir, "gate-set.txt"), gateBody, 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		fake := newFakeFarmS3()
+		server := fake.server()
+		defer server.Close()
+		setFarmEnv(t, server.URL)
+
+		var code int
+		stdout, stderr := captureOutput(t, func() {
+			code = runEvalFarm([]string{"push", "--scenarios", scenariosDir})
+		})
+		if code != 0 {
+			t.Fatalf("runEvalFarm(push) = %d, stderr = %q", code, stderr)
+		}
+
+		gateKey, got := uploadedGateSet(t, fake)
+		if gateKey == "" {
+			t.Fatalf("fake bucket has no sets/<digest>/gate.txt object; objects: %v", fake.objects)
+		}
+		if string(got) != string(gateBody) {
+			t.Errorf("uploaded gate set = %q, want %q", got, gateBody)
+		}
+		if !strings.Contains(stdout, gateKey) {
+			t.Errorf("stdout = %q, want it to contain the gate-set key %q", stdout, gateKey)
+		}
+	})
+
+	t.Run("gate_set_flag_overrides_default", func(t *testing.T) {
+		overrideDir := t.TempDir()
+		overridePath := filepath.Join(overrideDir, "custom-gate-set.txt")
+		overrideBody := []byte("recipe-override\n")
+		if err := os.WriteFile(overridePath, overrideBody, 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		fake := newFakeFarmS3()
+		server := fake.server()
+		defer server.Close()
+		setFarmEnv(t, server.URL)
+
+		var code int
+		stdout, stderr := captureOutput(t, func() {
+			code = runEvalFarm([]string{"push", "--scenarios", scenariosDir, "--gate-set", overridePath})
+		})
+		if code != 0 {
+			t.Fatalf("runEvalFarm(push) = %d, stderr = %q", code, stderr)
+		}
+
+		gateKey, got := uploadedGateSet(t, fake)
+		if gateKey == "" {
+			t.Fatalf("fake bucket has no sets/<digest>/gate.txt object; objects: %v", fake.objects)
+		}
+		if string(got) != string(overrideBody) {
+			t.Errorf("uploaded gate set = %q, want override body %q", got, overrideBody)
+		}
+		if !strings.Contains(stdout, gateKey) {
+			t.Errorf("stdout = %q, want it to contain the gate-set key %q", stdout, gateKey)
+		}
+	})
+
+	t.Run("missing_default_names_resolved_path_in_error", func(t *testing.T) {
+		missingRoot := t.TempDir()
+		missingScenariosDir := filepath.Join(missingRoot, "scenarios")
+		if err := os.MkdirAll(missingScenariosDir, 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(missingScenariosDir, "recipe-a.md"), []byte("# recipe-a\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+		// No farm/gate-set.txt sibling created — the default must fail.
+
+		fake := newFakeFarmS3()
+		server := fake.server()
+		defer server.Close()
+		setFarmEnv(t, server.URL)
+
+		wantPath := filepath.Join(missingRoot, "farm", "gate-set.txt")
+
+		var code int
+		_, stderr := captureOutput(t, func() {
+			code = runEvalFarm([]string{"push", "--scenarios", missingScenariosDir})
+		})
+		if code == 0 {
+			t.Fatalf("runEvalFarm(push) = 0, want nonzero for a missing gate-set file")
+		}
+		if !strings.Contains(stderr, wantPath) {
+			t.Errorf("stderr = %q, want it to name the resolved path %q", stderr, wantPath)
+		}
+	})
 }

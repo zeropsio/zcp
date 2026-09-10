@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -514,6 +515,18 @@ type resultMeta struct {
 	} `json:"task"`
 }
 
+// verificationJSON is the subset of verification.json
+// (docs/spec-testing-architecture.md §10.1, format "zcp-eval-verification-2")
+// this package reads: the row id and result of every executable check, used
+// to name the blocking/failing checks behind a blocked/failed task.result
+// (S22 finding 1).
+type verificationJSON struct {
+	Checks []struct {
+		ID     string `json:"id"`
+		Result string `json:"result"`
+	} `json:"checks"`
+}
+
 // waitForDone polls the bucket for runs/<runId>/done.json until it appears
 // or budget elapses (§3.3 FM-21), and — D19 — also polls the run's project
 // for a FAILED creation-phase process on every iteration: a platform-side
@@ -609,11 +622,52 @@ func settleFromDone(ctx context.Context, sink *SinkClient, runID string, body []
 			return ResultBlocked, fmt.Sprintf("%s: digest mismatch (done.json claims %s, bucket has %s)", part, claim.TreeDigest, recomputed), true
 		}
 	}
-	meta, err := readResultMeta(ctx, sink, runID)
+	meta, verificationKey, err := readResultMeta(ctx, sink, runID)
 	if err != nil {
 		return ResultBlocked, "results/meta.json: " + err.Error(), true
 	}
-	return meta.Task.Result, "", true
+	taskResult := meta.Task.Result
+	if taskResult == ResultBlocked || taskResult == ResultFailed {
+		detail, err = blockingCheckDetail(ctx, sink, verificationKey, taskResult)
+		if err != nil {
+			return ResultBlocked, "verification.json: " + err.Error(), true
+		}
+	}
+	return taskResult, detail, true
+}
+
+// blockingCheckDetail names the checks behind a blocked or failed
+// taskResult (S22 finding 1): it reads verification.json at
+// verificationKey — the sibling of meta.json readResultMeta already located
+// — and joins the sorted ids of every row whose result equals taskResult,
+// capped at 5 with a "+N more" suffix beyond that. verificationKey == ""
+// means readResultMeta's listing found no verification.json sibling, which
+// is not itself an error: a bundle can legitimately be missing it, so the
+// detail says so instead.
+func blockingCheckDetail(ctx context.Context, sink *SinkClient, verificationKey, taskResult string) (string, error) {
+	if verificationKey == "" {
+		return "no verification.json in bundle", nil
+	}
+	body, err := sink.Get(ctx, verificationKey)
+	if err != nil {
+		return "", err
+	}
+	var v verificationJSON
+	if err := json.Unmarshal(body, &v); err != nil {
+		return "", err
+	}
+	var ids []string
+	for _, row := range v.Checks {
+		if row.Result == taskResult {
+			ids = append(ids, row.ID)
+		}
+	}
+	sort.Strings(ids)
+	const maxNamed = 5
+	if len(ids) > maxNamed {
+		return fmt.Sprintf("%s +%d more", strings.Join(ids[:maxNamed], ", "), len(ids)-maxNamed), nil
+	}
+	return strings.Join(ids, ", "), nil
 }
 
 // recomputePartDigest downloads every object under runs/<runId>/<part>/ to a
@@ -652,12 +706,15 @@ func recomputePartDigest(ctx context.Context, sink *SinkClient, runID, part stri
 // runs/<runId>/results/ (D15: the evaluator nests it as
 // results/<suite>/<scenario>/meta.json, not at a fixed path) and requiring
 // exactly one key ending in "/meta.json" — zero or more than one is an
-// error naming the count, never a silent pick of the first match.
-func readResultMeta(ctx context.Context, sink *SinkClient, runID string) (resultMeta, error) {
+// error naming the count, never a silent pick of the first match. It also
+// reuses that same listing (never a second List call) to report whether a
+// verification.json sibling — same directory as the chosen meta.json key —
+// exists (S22 finding 1); verificationKey is "" when it does not.
+func readResultMeta(ctx context.Context, sink *SinkClient, runID string) (meta resultMeta, verificationKey string, err error) {
 	prefix := "runs/" + runID + "/results/"
 	keys, err := sink.List(ctx, prefix)
 	if err != nil {
-		return resultMeta{}, err
+		return resultMeta{}, "", err
 	}
 	var metaKeys []string
 	for _, key := range keys {
@@ -666,15 +723,23 @@ func readResultMeta(ctx context.Context, sink *SinkClient, runID string) (result
 		}
 	}
 	if len(metaKeys) != 1 {
-		return resultMeta{}, fmt.Errorf("found %d meta.json under %s, want exactly 1", len(metaKeys), prefix)
+		return resultMeta{}, "", fmt.Errorf("found %d meta.json under %s, want exactly 1", len(metaKeys), prefix)
 	}
 	body, err := sink.Get(ctx, metaKeys[0])
 	if err != nil {
-		return resultMeta{}, err
+		return resultMeta{}, "", err
 	}
 	var m resultMeta
 	if err := json.Unmarshal(body, &m); err != nil {
-		return resultMeta{}, err
+		return resultMeta{}, "", err
 	}
-	return m, nil
+
+	wantVerificationKey := strings.TrimSuffix(metaKeys[0], "meta.json") + "verification.json"
+	for _, key := range keys {
+		if key == wantVerificationKey {
+			verificationKey = key
+			break
+		}
+	}
+	return m, verificationKey, nil
 }

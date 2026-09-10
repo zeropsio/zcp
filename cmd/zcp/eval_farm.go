@@ -49,13 +49,6 @@ const (
 	bundleMissing  = "missing"
 )
 
-// localGateSetPath is the dev-checkout-relative location of the gate scenario
-// list (eval/farm/gate-set.txt). `farm push` runs from a full repo checkout
-// (unlike `farm run`, which runs on the farm host from the binary alone,
-// §3.1 FM-17/FM-18) so this is the one place in this file a disk path is
-// still correct.
-const localGateSetPath = "eval/farm/gate-set.txt"
-
 // No init() registration (CLAUDE.md forbids global mutable state): this is a
 // plain switch. Later slices add their verb file and replace one
 // notImplemented case each — run/status/report/coverage/gc land after S2.
@@ -94,7 +87,7 @@ func runEvalFarm(args []string) int {
 // layout of docs/spec-eval-farm.md §1.1, and prints the digest of each part
 // it uploaded.
 func runFarmPush(args []string) int {
-	var candidate, evaluator, scenarios, wrapper string
+	var candidate, evaluator, scenarios, wrapper, gateSet string
 	for i := 0; i < len(args); i++ {
 		arg := args[i] //nolint:gosec // G602 false positive: i is loop-bounded by i < len(args) each iteration (same shape as eval_behavioral.go parseExecutionBindingFlags)
 		switch arg {
@@ -125,6 +118,13 @@ func runFarmPush(args []string) int {
 				return 1
 			}
 			wrapper = args[i+1]
+			i++
+		case "--gate-set":
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "error: %s requires a value\n", arg)
+				return 1
+			}
+			gateSet = args[i+1]
 			i++
 		}
 	}
@@ -171,7 +171,12 @@ func runFarmPush(args []string) int {
 		}
 		fmt.Fprintf(os.Stdout, "scenarios: %s\n", digest)
 
-		gateKey, err := pushGateSet(ctx, client, digest)
+		gateSetPath, err := resolveGateSetPath(scenarios, gateSet)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: push gate set: %v\n", err)
+			return 1
+		}
+		gateKey, err := pushGateSet(ctx, client, digest, gateSetPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: push gate set: %v\n", err)
 			return 1
@@ -248,16 +253,36 @@ func pushScenarioTree(ctx context.Context, client *farm.SinkClient, dir string) 
 	return digest, nil
 }
 
-// pushGateSet uploads the local gate scenario list (localGateSetPath) to
-// "sets/<scenariosDigest>/gate.txt" — the bucket location `farm run --set
-// gate` reads on the farm host, which has no checkout of this file
-// (docs/spec-eval-farm.md §3.1 FM-17/FM-18). Keyed by the scenario tree
-// digest it was just pushed against, so a set list always names ids that
-// actually exist in that tree.
-func pushGateSet(ctx context.Context, client *farm.SinkClient, scenariosDigest string) (key string, err error) {
-	body, err := os.ReadFile(localGateSetPath)
+// resolveGateSetPath resolves the local gate scenario list `farm push`
+// reads, always relative to the --scenarios argument, never to cwd (S22
+// finding 3: cwd-relative resolution made `farm push` fail from anywhere
+// but the repo root). override, when non-empty, is `--gate-set` and wins
+// outright; otherwise the default is "<scenariosDir>/../farm/gate-set.txt"
+// resolved against scenariosDir. The result is always absolute so a
+// resolution failure's error names the exact path that was tried,
+// regardless of whether the inputs were relative or absolute.
+func resolveGateSetPath(scenariosDir, override string) (string, error) {
+	path := override
+	if path == "" {
+		path = filepath.Join(scenariosDir, "..", "farm", "gate-set.txt")
+	}
+	abs, err := filepath.Abs(path)
 	if err != nil {
-		return "", fmt.Errorf("read %s: %w", localGateSetPath, err)
+		return "", fmt.Errorf("resolve gate-set path %s: %w", path, err)
+	}
+	return abs, nil
+}
+
+// pushGateSet uploads the local gate scenario list at gateSetPath (resolved
+// by resolveGateSetPath) to "sets/<scenariosDigest>/gate.txt" — the bucket
+// location `farm run --set gate` reads on the farm host, which has no
+// checkout of this file (docs/spec-eval-farm.md §3.1 FM-17/FM-18). Keyed by
+// the scenario tree digest it was just pushed against, so a set list always
+// names ids that actually exist in that tree.
+func pushGateSet(ctx context.Context, client *farm.SinkClient, scenariosDigest, gateSetPath string) (key string, err error) {
+	body, err := os.ReadFile(gateSetPath)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", gateSetPath, err)
 	}
 	key = fmt.Sprintf("sets/%s/gate.txt", scenariosDigest)
 	if err := client.Put(ctx, key, body); err != nil {
@@ -419,8 +444,10 @@ func printEvalFarmUsage() {
 	fmt.Fprintln(os.Stderr, `Usage: zcp eval farm <command>
 
 Commands (ZCP_AUTHORING=1 required):
-  push     --candidate <file> | --evaluator <file> | --scenarios <dir> | --wrapper <file>
-                                               Upload one part to the farm bucket, print its digest
+  push     --candidate <file> | --evaluator <file> | --scenarios <dir> [--gate-set <path>] | --wrapper <file>
+                                               Upload one part to the farm bucket, print its digest.
+                                               --gate-set overrides the gate scenario list read alongside
+                                               --scenarios (default: <scenariosDir>/../farm/gate-set.txt)
   pull     <runId>|--batch <batch> --out <dir> Download a run's (or a batch's) bundle
   run      --candidate <sha256> --scenarios <digest> --set gate|all|<ids> [--batch <id>] [--run-budget 45m] [--detach]
                                                Create zcp-farm-<runId> projects, watch the bucket, delete after done.json
