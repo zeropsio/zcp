@@ -46,4 +46,4 @@ notableFriction:
       surfaces in a deploy. Surfaces recipe-content quality.
 ---
 
-Set up a NestJS API on Zerops. I want a dev environment to iterate against and a staging slot for build validation. Postgres is fine as the database.
+Set up a NestJS API on Zerops. I want a dev environment to iterate against and a staging slot for build validation. Postgres is fine as the database. The root endpoint should respond with the text "NestJS Minimal".
