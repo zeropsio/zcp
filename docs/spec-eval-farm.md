@@ -72,8 +72,6 @@ digest (not just its presence):
 }
 ```
 
-<!-- PROVE: exact field names/shape for `runnerDimensions` and `parts` — confirm against S4/S6 implementation once landed -->
-
 **FM-5. Write order is never trusted.** `done.json` is read only after both
 parts have finished uploading (per FM-3), and the controller/report never
 infer completeness from write order or object listing order alone — they

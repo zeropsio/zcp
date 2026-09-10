@@ -1,0 +1,41 @@
+Result:
+  Task:      mode=required result=passed frozenAt=2026-09-08T20:43:06Z (source: eval/20260908-203434/acceptance-node-postgres-record/meta.json)
+  Execution: error=""
+  Task-end:  persisted=true settled=true
+  Capture:   status=complete valid=true complete=true
+  Binding:   candidate=/home/zerops/s5/bin/zcp-candidate project=xMQRNnGESQSRmvcHijOqiA
+  Process identity: observations=1 counted=1 matchesCandidate=1 projectMismatches=0
+
+Checks:
+  expected_service/appstage/status: passed (expected="[ACTIVE]" observed="ACTIVE" source=ListServicesDirect)
+  expected_service/db/status: passed (expected="[ACTIVE]" observed="ACTIVE" source=ListServicesDirect)
+  node_postgres_record/appstage/record_roundtrip: passed (expected="id=3 nonce=8830cad6be95c30bbaaa4fd03456895b value=9b0d10e303b46fc48690227e9a1cb02e" observed="id=3 nonce=8830cad6be95c30bbaaa4fd03456895b value=9b0d10e303b46fc48690227e9a1cb02e" source=HTTP GET https://appstage-2358-3000.prg1.zerops.app/records/3)
+  node_postgres_record/appstage/environment: passed (expected="stage" observed="stage" source=HTTP GET https://appstage-2358-3000.prg1.zerops.app/records/3)
+  node_postgres_record/db/db_row: passed (expected="id=3 value=9b0d10e303b46fc48690227e9a1cb02e" observed="id=3 value=9b0d10e303b46fc48690227e9a1cb02e" source=SELECT records WHERE nonce=$1)
+  unrelated_artifact/other/unchanged: passed (expected="dcJRIq0tQYWmAdmYNflZ8g" observed="dcJRIq0tQYWmAdmYNflZ8g" source=ListServicesDirect)
+
+Invocations:
+  acceptance-node-postgres-record/agent.initial [agent.initial] status=complete exchanges=37 unattributed=false mcpCalls=17
+    usage: input=1175 cacheCreation=53041 cacheRead=2878405 output=9406
+  acceptance-node-postgres-record/user-sim.1 [user-sim.1] status=complete exchanges=2 unattributed=false mcpCalls=0
+    usage: input=1633 cacheCreation=9514 cacheRead=41942 output=207
+  acceptance-node-postgres-record/retrospective [retrospective] status=complete exchanges=1 unattributed=false mcpCalls=0
+    usage: input=2 cacheCreation=3013 cacheRead=94992 output=807
+  totals.agent:    input=1175 cacheCreation=53041 cacheRead=2878405 output=9406
+  totals.overhead: input=1635 cacheCreation=12527 cacheRead=136934 output=1014
+  phase mapping: agent.initial -> agent
+  phase mapping: retrospective -> overhead
+  phase mapping: user-sim.1 -> overhead
+
+MCP:
+  mcp/zcp-2397.jsonl: calls=17 notifications=12 inputBytes=4739 outputBytes=165019
+  mcp/zcp-3070.jsonl: calls=0 notifications=0 inputBytes=426 outputBytes=59933
+  mcp/zcp-3104.jsonl: calls=0 notifications=0 inputBytes=426 outputBytes=59933
+
+Findings:
+  - task result: required passed (meta.json)
+  - process identity: 1 observations (meta.json)
+  - 17 total MCP tool call(s) across 3 stream(s) (mcp/)
+
+Gaps:
+  - later copy and cleanup are operator notes outside the capture and are not assessed

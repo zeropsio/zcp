@@ -11,6 +11,13 @@ import (
 	"github.com/zeropsio/zcp/internal/capture"
 )
 
+// usageBucketAgent / usageBucketOverhead name the two phase buckets that
+// spec-testing-architecture §10.5 splits provider usage into (PhaseMapping values).
+const (
+	usageBucketAgent    = "agent"
+	usageBucketOverhead = "overhead"
+)
+
 // UsageValue is one usage number with an explicit observed flag — a field
 // whose joined exchanges never reported it prints "unknown", never "0"
 // (docs/spec-testing-architecture.md §10.5 item 3).
@@ -218,11 +225,11 @@ func fillResultSection(report *BehavioralReport, result *BehavioralResult, integ
 func invocationPhaseBucket(phase string) string {
 	switch {
 	case len(phase) >= 6 && phase[:6] == "agent.":
-		return "agent"
+		return usageBucketAgent
 	case len(phase) >= 9 && phase[:9] == "user-sim.":
-		return "overhead"
+		return usageBucketOverhead
 	case phase == "retrospective":
-		return "overhead"
+		return usageBucketOverhead
 	default:
 		return "unmapped"
 	}
@@ -294,9 +301,9 @@ func joinInvocationUsage(exchangeIDs []string, byExchange map[string]capture.Mod
 func addUsageToTotal(report *BehavioralReport, bucket string, usage UsageTotals) {
 	var target *UsageTotals
 	switch bucket {
-	case "agent":
+	case usageBucketAgent:
 		target = &report.Totals.Agent
-	case "overhead":
+	case usageBucketOverhead:
 		target = &report.Totals.Overhead
 	default:
 		return

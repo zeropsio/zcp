@@ -3,6 +3,7 @@ package eval
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,6 +62,137 @@ type BehavioralResult struct {
 	// agent invocation ran.
 	Binding         *ExecutionBindingRecord `json:"binding,omitempty"`
 	ProcessIdentity []ProcessIdentity       `json:"processIdentity,omitempty"`
+	// EvaluatorSha256 is the sha256 of the running evaluator binary
+	// (os.Executable(), hashed once per run) and CandidateSha256 is the
+	// value the explicit binding already verified
+	// (execution_binding.go:CandidateSHA256) — the two farm digests a
+	// bundle carries (docs/spec-eval-farm.md §1.2 FM-4, §2.4 FM-16).
+	// Credential is "oauth-token" when CLAUDE_CODE_OAUTH_TOKEN is present
+	// (the farm's only supported agent credential — owner decision, spec
+	// 79ced2cc); AnthropicAPIKeyPresent is true whenever ANTHROPIC_API_KEY
+	// is set (presence only, never a value) — farm/report.go's ReportRun
+	// blocks a bundle carrying it, meta.json still records the fact.
+	// ModelObserved is the model name read back from the capture's provider
+	// records, empty when no capture is available or no model could be
+	// read.
+	EvaluatorSha256        string `json:"evaluatorSha256,omitempty"`
+	CandidateSha256        string `json:"candidateSha256,omitempty"`
+	Credential             string `json:"credential,omitempty"`
+	AnthropicAPIKeyPresent bool   `json:"anthropicApiKeyPresent,omitempty"`
+	ModelObserved          string `json:"modelObserved,omitempty"`
+}
+
+// credentialOAuthToken is the only agent credential a farm run carries
+// (owner decision, spec 79ced2cc, docs/spec-eval-farm.md FM-16: the farm's
+// agent credential is OAuth-only, no api-key mode).
+const credentialOAuthToken = "oauth-token"
+
+// credentialFieldsFromPresence derives meta.json's credential/
+// anthropicApiKeyPresent fields from whether each credential env var is set
+// — presence only, never the value itself (docs/spec-eval-farm.md §2.4).
+// credential is "oauth-token" whenever CLAUDE_CODE_OAUTH_TOKEN is set (the
+// only supported agent credential); anthropicApiKeyPresent is true whenever
+// ANTHROPIC_API_KEY is set, regardless of the OAuth token's presence — a
+// bundle recording both is not refused here, it is graded "blocked" by
+// farm/report.go's ReportRun ("api key present; farm runs are oauth-only").
+func credentialFieldsFromPresence(hasAPIKey, hasOAuthToken bool) (credential string, anthropicAPIKeyPresent bool) {
+	if hasOAuthToken {
+		credential = credentialOAuthToken
+	}
+	return credential, hasAPIKey
+}
+
+// observedModelFromProviderCapture reads sessionDir's provider capture
+// records (capture/provider.jsonl) and returns the "model" field of the
+// first provider request body it can decode, empty when the capture has no
+// readable provider records yet (docs/spec-eval-farm.md §2.4 FM-16:
+// "the model observed on the wire").
+func observedModelFromProviderCapture(sessionDir string) string {
+	if sessionDir == "" {
+		return ""
+	}
+	records, err := capture.ReadRecords(filepath.Join(sessionDir, "provider.jsonl"))
+	if err != nil {
+		return ""
+	}
+	bodies := make(map[string][]byte)
+	var order []string
+	for _, rec := range records {
+		if rec.Kind != capture.RecordProviderRequestBody || rec.BodyBase64 == "" {
+			continue
+		}
+		chunk, decodeErr := base64.StdEncoding.DecodeString(rec.BodyBase64)
+		if decodeErr != nil {
+			continue
+		}
+		if _, seen := bodies[rec.ExchangeID]; !seen {
+			order = append(order, rec.ExchangeID)
+		}
+		bodies[rec.ExchangeID] = append(bodies[rec.ExchangeID], chunk...)
+	}
+	for _, exchangeID := range order {
+		var body struct {
+			Model string `json:"model"`
+		}
+		if err := json.Unmarshal(bodies[exchangeID], &body); err != nil {
+			continue
+		}
+		if body.Model != "" {
+			return body.Model
+		}
+	}
+	return ""
+}
+
+// newBehavioralResult builds the initial BehavioralResult for a scenario run,
+// including the farm bundle fields (docs/spec-eval-farm.md §1.2 FM-4, §2.4
+// FM-16). Split out of RunBehavioralScenario to keep that function's own
+// cyclomatic/maintainability metrics from absorbing every field this result
+// carries.
+func (r *Runner) newBehavioralResult(sc *Scenario, suiteID string, startedAt time.Time) *BehavioralResult {
+	result := &BehavioralResult{
+		ScenarioID: sc.ID,
+		SuiteID:    suiteID,
+		Mode:       "two-shot-resume",
+		StartedAt:  startedAt,
+		Model:      r.config.Model,
+		WorkDir:    r.config.WorkDir,
+		Binding:    bindingRecord(r.config.Binding),
+	}
+	r.applyFarmBundleFields(result)
+	return result
+}
+
+// applyFarmBundleFields sets result's evaluatorSha256/candidateSha256/
+// credentialMode/modelObserved (docs/spec-eval-farm.md §1.2 FM-4, §2.4
+// FM-16). Split out of RunBehavioralScenario to keep that function's own
+// complexity from growing with every bundle field this adds.
+func (r *Runner) applyFarmBundleFields(result *BehavioralResult) {
+	if evaluatorSha, evalErr := evaluatorSelfSHA256(); evalErr == nil {
+		result.EvaluatorSha256 = evaluatorSha
+	} else {
+		fmt.Fprintf(os.Stderr, "warning: hash evaluator binary: %v\n", evalErr)
+	}
+	if r.config.Binding != nil {
+		result.CandidateSha256 = r.config.Binding.CandidateSHA256
+	}
+	result.Credential, result.AnthropicAPIKeyPresent = credentialFieldsFromPresence(
+		os.Getenv("ANTHROPIC_API_KEY") != "",
+		os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "",
+	)
+	if r.config.Capture != nil {
+		result.ModelObserved = observedModelFromProviderCapture(r.config.Capture.SessionDir)
+	}
+}
+
+// evaluatorSelfSHA256 hashes the running evaluator binary
+// (docs/spec-eval-farm.md §1.2 FM-4: "evaluatorSha256").
+func evaluatorSelfSHA256() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("resolve evaluator executable: %w", err)
+	}
+	return sha256File(exe)
 }
 
 // ScenarioBaseline is the node-postgres oracle's baseline reading
@@ -111,15 +243,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 		return nil, fmt.Errorf("scenario %s: %w", sc.ID, err)
 	}
 
-	result = &BehavioralResult{
-		ScenarioID: sc.ID,
-		SuiteID:    suiteID,
-		Mode:       "two-shot-resume",
-		StartedAt:  startedAt,
-		Model:      r.config.Model,
-		WorkDir:    r.config.WorkDir,
-		Binding:    bindingRecord(r.config.Binding),
-	}
+	result = r.newBehavioralResult(sc, suiteID, startedAt)
 
 	outDir := filepath.Join(r.config.ResultsDir, suiteID, sc.ID)
 	if err := os.MkdirAll(outDir, 0o755); err != nil {

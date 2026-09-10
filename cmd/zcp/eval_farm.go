@@ -68,7 +68,9 @@ func runEvalFarm(args []string) int {
 		return runFarmPull(args[1:])
 	case farmVerbCoverage:
 		return runFarmCoverage(args[1:])
-	case farmVerbRun, farmVerbStatus, farmVerbReport, farmVerbGC:
+	case farmVerbReport:
+		return runFarmReport(args[1:])
+	case farmVerbRun, farmVerbStatus, farmVerbGC:
 		fmt.Fprintf(os.Stderr, "zcp eval farm %s: not implemented\n", args[0])
 		return 1
 	default:
@@ -352,7 +354,7 @@ Commands (ZCP_AUTHORING=1 required):
   pull     <runId>|--batch <batch> --out <dir> Download a run's (or a batch's) bundle
   run      (not implemented yet)
   status   (not implemented yet)
-  report   (not implemented yet)
+  report   [--evaluator-sha256 <sha>] <dir>    Report over a pulled batch or run dir (no network)
   coverage <dir> [--since <batch>]           Derive (scenario, step, decision) coverage cells from pulled bundles
   gc       (not implemented yet)`)
 }
