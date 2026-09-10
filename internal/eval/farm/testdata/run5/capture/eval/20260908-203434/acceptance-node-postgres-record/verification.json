@@ -1,0 +1,75 @@
+{
+  "formatVersion": "zcp-eval-verification-2",
+  "mode": "required",
+  "result": "passed",
+  "frozenAt": "2026-09-08T20:43:06.147449621Z",
+  "checks": [
+    {
+      "id": "expected_service/appstage/status",
+      "check": "service_status",
+      "scope": "appstage",
+      "result": "passed",
+      "expected": "[ACTIVE]",
+      "observed": "ACTIVE",
+      "observedAt": "2026-09-08T20:43:06.147449621Z",
+      "source": "ListServicesDirect",
+      "message": "service \"appstage\" status \"ACTIVE\" (want [ACTIVE])"
+    },
+    {
+      "id": "expected_service/db/status",
+      "check": "service_status",
+      "scope": "db",
+      "result": "passed",
+      "expected": "[ACTIVE]",
+      "observed": "ACTIVE",
+      "observedAt": "2026-09-08T20:43:06.147449621Z",
+      "source": "ListServicesDirect",
+      "message": "service \"db\" status \"ACTIVE\" (want [ACTIVE])"
+    },
+    {
+      "id": "node_postgres_record/appstage/record_roundtrip",
+      "check": "node_postgres_record",
+      "scope": "appstage",
+      "result": "passed",
+      "expected": "id=3 nonce=8830cad6be95c30bbaaa4fd03456895b value=9b0d10e303b46fc48690227e9a1cb02e",
+      "observed": "id=3 nonce=8830cad6be95c30bbaaa4fd03456895b value=9b0d10e303b46fc48690227e9a1cb02e",
+      "observedAt": "2026-09-08T20:43:06.147541197Z",
+      "source": "HTTP GET https://appstage-2358-3000.prg1.zerops.app/records/3",
+      "message": "POST/GET roundtrip matched the verifier's own nonce/value/id"
+    },
+    {
+      "id": "node_postgres_record/appstage/environment",
+      "check": "node_postgres_record",
+      "scope": "appstage",
+      "result": "passed",
+      "expected": "stage",
+      "observed": "stage",
+      "observedAt": "2026-09-08T20:43:06.147541197Z",
+      "source": "HTTP GET https://appstage-2358-3000.prg1.zerops.app/records/3",
+      "message": "GET body environment matched"
+    },
+    {
+      "id": "node_postgres_record/db/db_row",
+      "check": "node_postgres_record",
+      "scope": "db",
+      "result": "passed",
+      "expected": "id=3 value=9b0d10e303b46fc48690227e9a1cb02e",
+      "observed": "id=3 value=9b0d10e303b46fc48690227e9a1cb02e",
+      "observedAt": "2026-09-08T20:43:06.147541197Z",
+      "source": "SELECT records WHERE nonce=$1",
+      "message": "database row matches"
+    },
+    {
+      "id": "unrelated_artifact/other/unchanged",
+      "check": "unrelated_artifact",
+      "scope": "other",
+      "result": "passed",
+      "expected": "dcJRIq0tQYWmAdmYNflZ8g",
+      "observed": "dcJRIq0tQYWmAdmYNflZ8g",
+      "observedAt": "2026-09-08T20:43:06.147541197Z",
+      "source": "ListServicesDirect",
+      "message": "unrelated artifact unchanged"
+    }
+  ],
+  "advisory": []
+}

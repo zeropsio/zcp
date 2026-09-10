@@ -155,3 +155,26 @@ func TestBundle_NoKnownSecretValue(t *testing.T) {
 		t.Fatal("poisoned bundle: NoKnownSecretValue returned nil, want an error naming the leaked value")
 	}
 }
+
+// TestFarmReport_Run5Golden_ByteIdentical pins docs/spec-eval-farm.md §5.2
+// FM-37: report over the preserved (redacted/reduced) S5 run-5 bundle
+// reproduces that run's known-good single-run report byte-for-byte. run5 has
+// no done.json (it predates FM-4's digest fields — FM-6), so the bundle's
+// own verdict is "unpinned"; report.golden.txt is the §10.5 report body the
+// grading still produces underneath that label, verified byte-identical to
+// the real run's report.txt by generating it from the same reduced capture
+// window before this test existed (see the S6 report for how).
+func TestFarmReport_Run5Golden_ByteIdentical(t *testing.T) {
+	t.Parallel()
+	outcome := ReportRun(filepath.Join("testdata", "run5"), "")
+	if outcome.Verdict != VerdictUnpinned {
+		t.Fatalf("Verdict = %q, want %q (run5 predates FM-4's digest fields)", outcome.Verdict, VerdictUnpinned)
+	}
+	want, err := os.ReadFile(filepath.Join("testdata", "run5", "report.golden.txt"))
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	if outcome.ReportText != string(want) {
+		t.Fatalf("report text does not match report.golden.txt byte-for-byte\ngot:\n%s\nwant:\n%s", outcome.ReportText, want)
+	}
+}
