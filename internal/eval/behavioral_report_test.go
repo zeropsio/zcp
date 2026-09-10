@@ -319,3 +319,33 @@ func TestBehavioralReport_MCPCallsJoinedByInvocation(t *testing.T) {
 		t.Fatalf("mcpCalls by invocation = %v, want agent.initial=17 retrospective=0", got)
 	}
 }
+
+// TestBehavioralReport_PrintsCostLine pins brief S14: the single-run report
+// prints one "cost:" line with totalCostUsd and the two phase parts when
+// present, and omits the line entirely when the run recorded no usage (so
+// the run5 golden, whose meta.json predates this field, stays byte-identical).
+func TestBehavioralReport_PrintsCostLine(t *testing.T) {
+	t.Parallel()
+	t.Run("cost present", func(t *testing.T) {
+		t.Parallel()
+		report := &BehavioralReport{Sources: map[string]string{}, Cost: &BehavioralUsage{
+			Main:          &UsagePhase{CostUsd: 0.06},
+			Retrospective: &UsagePhase{CostUsd: 0.005},
+			TotalCostUsd:  0.065,
+		}}
+		rendered := RenderBehavioralReportText(report)
+		for _, want := range []string{"cost:", "totalCostUsd=0.0650", "main=0.0600", "retrospective=0.0050"} {
+			if !strings.Contains(rendered, want) {
+				t.Errorf("rendered report missing %q:\n%s", want, rendered)
+			}
+		}
+	})
+	t.Run("cost absent", func(t *testing.T) {
+		t.Parallel()
+		report := &BehavioralReport{Sources: map[string]string{}}
+		rendered := RenderBehavioralReportText(report)
+		if strings.Contains(rendered, "cost:") {
+			t.Errorf("rendered report has a cost: line with no usage recorded:\n%s", rendered)
+		}
+	})
+}

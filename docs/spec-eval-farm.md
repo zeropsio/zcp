@@ -251,6 +251,11 @@ project-scoped `ZCP_API_KEY` the platform injected. The farm changes nothing
 about seed code or seed semantics — it only changes who kicks the runner off
 and where the result goes.
 
+The retrospective `--resume` call is text-only (no MCP config, tools
+disabled) and optional; its failure is recorded in `meta.error` but never
+changes the `Execution:` line the wrapper reads off `child.log` for
+`runnerDimensions.execution`.
+
 ### 2.4 Credential table
 
 | Credential | Source | Scope | Never |
