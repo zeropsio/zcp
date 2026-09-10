@@ -152,6 +152,36 @@ type VerificationConfig struct {
 	// reach:/expected-route field in verification:. Never read after
 	// validate() runs.
 	Reach *yaml.Node `yaml:"reach,omitempty"`
+	// LaunchShape configures the O6 launch-shape oracle (docs/spec-eval-farm.md
+	// §4.4 O6): prod project exists, runtimes start without code, no
+	// buildFromGit, first release is the first build, launch token never
+	// in the transcript.
+	LaunchShape *LaunchShapeConfig `yaml:"launchShape,omitempty"`
+	// ArtifactPromotion configures the O7 artifact-promotion oracle
+	// (docs/spec-eval-farm.md §4.4 O7): one entry per cross-deploy
+	// promotion to verify.
+	ArtifactPromotion []ArtifactPromotionEntry `yaml:"artifactPromotion,omitempty"`
+	// NoFabricatedSecret enables the O8 oracle (docs/spec-eval-farm.md
+	// §4.4 O8): an offline scan of the run's captured MCP tool-call
+	// arguments for token-shaped values not among the scenario's declared
+	// inputs.
+	NoFabricatedSecret bool `yaml:"noFabricatedSecret,omitempty"`
+}
+
+// LaunchShapeConfig declares the O6 launch-shape oracle
+// (docs/spec-eval-farm.md §4.4 O6).
+type LaunchShapeConfig struct {
+	// ProdProject is the prod project name (post-Scenario.Render
+	// templating, e.g. "zcp-farm-{{runId}}-prod").
+	ProdProject string `yaml:"prodProject"`
+}
+
+// ArtifactPromotionEntry declares one O7 artifact-promotion oracle entry
+// (docs/spec-eval-farm.md §4.4 O7): a cross-deploy promotion from From's
+// active build to To.
+type ArtifactPromotionEntry struct {
+	From string `yaml:"from"`
+	To   string `yaml:"to"`
 }
 
 // LivenessProbe configures the O2 liveness check (FM-27 table): resolve
@@ -249,6 +279,9 @@ func ParseScenario(path string) (*Scenario, error) {
 	if err := yaml.Unmarshal([]byte(front), &fm); err != nil {
 		return nil, fmt.Errorf("scenario %q: parse frontmatter: %w", path, err)
 	}
+	if err := rejectUnknownVerificationFields(front); err != nil {
+		return nil, fmt.Errorf("scenario %q: %w", path, err)
+	}
 
 	sc := &Scenario{
 		ID:              fm.ID,
@@ -280,6 +313,37 @@ func ParseScenario(path string) (*Scenario, error) {
 	}
 
 	return sc, nil
+}
+
+// rejectUnknownVerificationFields strictly re-decodes just the
+// `verification:` sub-node of the frontmatter against VerificationConfig's
+// known field set (yaml.Decoder.KnownFields), independent of the lenient
+// whole-frontmatter decode above. A misspelled verification field (e.g.
+// `launcShape`) is rejected here rather than silently ignored.
+func rejectUnknownVerificationFields(front string) error {
+	// The lenient whole-frontmatter decode in ParseScenario already
+	// surfaced any structural YAML error before this runs, so a second
+	// structural failure here is unexpected — surfaced rather than
+	// swallowed.
+	var raw map[string]yaml.Node
+	if err := yaml.Unmarshal([]byte(front), &raw); err != nil {
+		return fmt.Errorf("re-parse frontmatter for verification field check: %w", err)
+	}
+	node, ok := raw["verification"]
+	if !ok {
+		return nil
+	}
+	data, err := yaml.Marshal(&node)
+	if err != nil {
+		return fmt.Errorf("re-marshal verification node: %w", err)
+	}
+	dec := yaml.NewDecoder(strings.NewReader(string(data)))
+	dec.KnownFields(true)
+	var strict VerificationConfig
+	if err := dec.Decode(&strict); err != nil {
+		return fmt.Errorf("verification: %w", err)
+	}
+	return nil
 }
 
 func (s *Scenario) validate() error {
@@ -322,6 +386,14 @@ func (s *Scenario) validate() error {
 		for _, expr := range s.Verification.Never {
 			if _, err := ParseCallShape(expr); err != nil {
 				return fmt.Errorf("verification.never: %w", err)
+			}
+		}
+		if s.Verification.LaunchShape != nil && s.Verification.LaunchShape.ProdProject == "" {
+			return fmt.Errorf("verification.launchShape requires prodProject")
+		}
+		for _, ap := range s.Verification.ArtifactPromotion {
+			if ap.From == "" || ap.To == "" {
+				return fmt.Errorf("verification.artifactPromotion entries require from and to")
 			}
 		}
 	}

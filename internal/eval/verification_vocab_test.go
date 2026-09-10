@@ -408,3 +408,52 @@ func deriveDeclaredErrorCodes(t *testing.T, repoRoot string) map[string]bool {
 	}
 	return codes
 }
+
+// TestVerificationVocab_O6O7O8Fields_Accepted pins that the S8 oracle
+// fields (launchShape, artifactPromotion, noFabricatedSecret) parse
+// cleanly, while a misspelled field name is rejected
+// (rejectUnknownVerificationFields, scenario.go).
+func TestVerificationVocab_O6O7O8Fields_Accepted(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	good := `---
+id: vocab-o6o7o8-good
+seed: empty
+verification:
+  mode: observe
+  launchShape:
+    prodProject: "zcp-farm-{{runId}}-prod"
+  artifactPromotion:
+    - from: appdev
+      to: appstage
+  noFabricatedSecret: true
+---
+Do the thing.
+`
+	goodPath := filepath.Join(dir, "good.md")
+	if err := os.WriteFile(goodPath, []byte(good), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseScenario(goodPath); err != nil {
+		t.Fatalf("expected launchShape/artifactPromotion/noFabricatedSecret to parse cleanly, got: %v", err)
+	}
+
+	bad := `---
+id: vocab-o6o7o8-bad
+seed: empty
+verification:
+  mode: observe
+  launcShape:
+    prodProject: "zcp-farm-r1-prod"
+---
+Do the thing.
+`
+	badPath := filepath.Join(dir, "bad.md")
+	if err := os.WriteFile(badPath, []byte(bad), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseScenario(badPath); err == nil {
+		t.Fatal("expected a misspelled verification field (launcShape) to be rejected")
+	}
+}
