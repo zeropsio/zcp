@@ -315,8 +315,8 @@ func printBehavioralResult(r *eval.BehavioralResult) {
 // Task, and Task-end evidence. Required mode also names retention, since the
 // CLI claims no copy and no cleanup (§10.2).
 func printBehavioralDimensions(r *eval.BehavioralResult) {
-	if r.Error != "" {
-		fmt.Fprintf(os.Stderr, "Execution:    error: %s\n", r.Error)
+	if execution := eval.ExecutionDimension(r); execution != "ok" {
+		fmt.Fprintf(os.Stderr, "Execution:    %s\n", execution)
 	} else {
 		fmt.Fprintln(os.Stderr, "Execution:    ok")
 	}

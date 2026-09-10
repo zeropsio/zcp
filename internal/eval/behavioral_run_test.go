@@ -9,8 +9,64 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/capture"
 	"github.com/zeropsio/zcp/internal/platform"
 )
+
+// TestSpawnClaudeResume_Retrospective_TextOnlyArgs pins the D18 argv
+// contract (docs/spec-eval-farm.md §2.3 FM-13): the retrospective resume is
+// TEXT-ONLY — no --mcp-config attached (unlike every other spawn path) and
+// tools disabled via --tools "" — with the existing --max-turns 3 cap kept.
+// Live gate1 bundles showed the model answering the briefing prompt by
+// acting (Read/Write, Bash/Write) instead of replying in text, burning the
+// turn cap; this argv shape is what stops that.
+func TestSpawnClaudeResume_Retrospective_TextOnlyArgs(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	argvFile := filepath.Join(dir, "argv.txt")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argvFile + "\n" +
+		`printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"sess-x"}'` + "\n"
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+
+	runner := NewRunner(RunnerConfig{MCPConfig: "/should/not/appear.json", WorkDir: dir}, nil, platform.NewMock(), "p1")
+	logFile := filepath.Join(dir, "retro.jsonl")
+	if err := runner.spawnClaudeResume(context.Background(), "sess-x", "what did you do", logFile, captureProcessScope{}); err != nil {
+		t.Fatalf("spawnClaudeResume: %v", err)
+	}
+
+	argvBytes, err := os.ReadFile(argvFile)
+	if err != nil {
+		t.Fatalf("read argv: %v", err)
+	}
+	argv := strings.Split(strings.TrimRight(string(argvBytes), "\n"), "\n")
+
+	if strings.Contains(strings.Join(argv, " "), "--mcp-config") {
+		t.Errorf("argv = %v, must not contain --mcp-config (retrospective is text-only)", argv)
+	}
+	if !hasConsecutiveArgs(argv, "--tools", "") {
+		t.Errorf("argv = %v, want --tools \"\" (tools disabled)", argv)
+	}
+	if !hasConsecutiveArgs(argv, "--max-turns", "3") {
+		t.Errorf("argv = %v, want --max-turns 3 kept", argv)
+	}
+}
+
+// hasConsecutiveArgs reports whether argv contains flag immediately followed
+// by value as adjacent elements.
+func hasConsecutiveArgs(argv []string, flag, value string) bool {
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] == flag && argv[i+1] == value {
+			return true
+		}
+	}
+	return false
+}
 
 // TestLoadRetrospectivePrompt_BriefingFutureAgent_Embedded asserts the default
 // retrospective prompt is embedded and loadable. Drift in embed path (e.g.
@@ -326,5 +382,53 @@ func TestScenarioBaseline_CapturesEveryUnchangedHostname(t *testing.T) {
 	}
 	if _, present := result.Baseline.AppVersions["hostC"]; present {
 		t.Errorf("Baseline.AppVersions must not include hostC (not declared unchanged/unrelated)")
+	}
+}
+
+// TestBehavioralRun_RetrospectiveMaxTurns_RecordedMissingNotExecutionError
+// pins docs/spec-eval-farm.md §2.3 FM-13: a text-only retrospective that
+// still exhausts its turn cap (result line subtype "error_max_turns",
+// non-zero exit) is recorded as retrospectiveFile present / selfReviewFile
+// empty / meta.error prefixed "retrospective: missing:" — the already-frozen
+// task result is untouched, and the farm execution dimension stays "ok"
+// (the retrospective's self-review is optional evidence, not execution).
+func TestBehavioralRun_RetrospectiveMaxTurns_RecordedMissingNotExecutionError(t *testing.T) { // non-parallel: process environment
+	h := newBehavioralHarness(t)
+	script := `#!/bin/sh
+if [ "$1" = "--resume" ]; then
+    printf '%s\n' '{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":3,"session_id":"offline-probe"}'
+    exit 1
+fi
+printf '%s\n' '{"type":"system","subtype":"init","session_id":"offline-probe","model":"fake-offline"}'
+printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]}}'
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"offline-probe","result":"Done."}'
+`
+	h.writeClaudeScript(t, script)
+	scenarioPath := h.writeScenario(t, requiredExpectedAppScenario("required-retro-maxturns"))
+	mock := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
+	cfg := h.config()
+	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
+	cfg.CaptureOwned = true
+	h.requiredBinding(t, &cfg)
+	runner := NewRunner(cfg, nil, &freshThenRealClient{Client: mock}, "offline-project")
+
+	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(result.Error, "retrospective: missing:") {
+		t.Errorf("result.Error = %q, want prefix %q", result.Error, "retrospective: missing:")
+	}
+	if result.SelfReviewFile != "" {
+		t.Errorf("SelfReviewFile = %q, want empty", result.SelfReviewFile)
+	}
+	if result.RetrospectiveFile == "" {
+		t.Error("RetrospectiveFile empty, want the retrospective log path recorded")
+	}
+	if result.Task == nil || result.Task.Result != CheckPassed {
+		t.Fatalf("Task = %+v, want passed (untouched by retrospective failure)", result.Task)
+	}
+	if got := ExecutionDimension(result); got != "ok" {
+		t.Errorf("ExecutionDimension(result) = %q, want ok (retrospective-missing must not become an execution error)", got)
 	}
 }

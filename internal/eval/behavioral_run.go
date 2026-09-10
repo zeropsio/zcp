@@ -380,7 +380,11 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	retroInvocation := r.captureInvocationStart(retroCtx, suiteID, sc.ID, retroInvocationID, "retrospective", sessionID)
 	if err := r.spawnClaudeResume(retroCtx, sessionID, retroPrompt, retroFile, captureProcessScope{evalRunID: suiteID, scenarioRunID: sc.ID, invocationID: retroInvocationID, phase: "retrospective"}); err != nil {
 		retroInvocation.End(retroCtx, capture.CapturePartial, err)
-		result.Error = fmt.Sprintf("retrospective: %v", err)
+		if retrospectiveExhaustedTurns(retroFile) {
+			result.Error = fmt.Sprintf("%s %v", retrospectiveMissingErrorPrefix, err)
+		} else {
+			result.Error = fmt.Sprintf("retrospective: %v", err)
+		}
 		result.RetroWallTime = Duration(time.Since(retroStart))
 		if !sc.IsRequired() {
 			r.observeTaskEnd(context.WithoutCancel(ctx), sc, outDir, result, startedAt, selfReview)
@@ -843,11 +847,18 @@ func (r *Runner) spawnClaudeFresh(ctx context.Context, prompt, logFile string, c
 	return r.execClaude(ctx, args, logFile, false, captureScope)
 }
 
-// spawnClaudeResume runs `claude --resume <sessionID> -p <retroPrompt>` with a
-// short max-turns cap (3). Output is streamed into logFile alongside the
-// scenario transcript so the operator can see the entire two-shot exchange.
-// The retrospective uses its own logFile so we can extract self-review.md
-// independently — separate from the transcript that captured the agent's run.
+// spawnClaudeResume runs `claude --resume <sessionID> -p <retroPrompt>` as a
+// TEXT-ONLY turn: no MCP config is attached (unlike every other spawn path)
+// and tools are disabled via `--tools ""`, with the short max-turns cap (3)
+// kept as a backstop. Live gate1 bundles (2026-09-10) showed the model
+// answering the briefing prompt by ACTING — Read/Write or Bash/Write calls
+// trying to write the self-review file itself — which burns the 3-turn cap
+// and ends `error_max_turns` instead of returning the text summary this call
+// needs (docs/spec-eval-farm.md §2.3 FM-13). Output is streamed into logFile
+// alongside the scenario transcript so the operator can see the entire
+// two-shot exchange. The retrospective uses its own logFile so we can
+// extract self-review.md independently — separate from the transcript that
+// captured the agent's run.
 func (r *Runner) spawnClaudeResume(ctx context.Context, sessionID, retroPrompt, logFile string, captureScope captureProcessScope) error {
 	args := []string{
 		"--resume", sessionID,
@@ -855,10 +866,60 @@ func (r *Runner) spawnClaudeResume(ctx context.Context, sessionID, retroPrompt, 
 		"--output-format", "stream-json",
 		"--verbose",
 		"--dangerously-skip-permissions",
+		"--tools", "",
 		"--max-turns", "3",
 	}
-	args = r.appendMCPConfigArgs(args)
 	return r.execClaude(ctx, args, logFile, false, captureScope)
+}
+
+// retrospectiveMissingErrorPrefix marks a meta.json error string as "the
+// retrospective self-review could not be obtained" rather than "the run's
+// execution failed" — ExecutionDimension reads this prefix to keep the farm
+// `execution` dimension `ok` (docs/spec-eval-farm.md §2.3 FM-13; the task
+// verdict is already frozen by the time the retrospective runs, §10.2).
+const retrospectiveMissingErrorPrefix = "retrospective: missing:"
+
+// retrospectiveExhaustedTurns scans a retrospective stream-json log for a
+// terminal "result" event with subtype "error_max_turns" — the shape a
+// text-only retrospective still hits when the model spends its three turns
+// on multi-part text instead of one answer, even with tools disabled at the
+// argv level. Missing/unreadable log → false (err on treating it as a
+// generic execution failure, not a swallowed one).
+func retrospectiveExhaustedTurns(logFile string) bool {
+	f, err := os.Open(logFile)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1<<20), 1<<22)
+	for scanner.Scan() {
+		var ev struct {
+			Type    string `json:"type"`
+			Subtype string `json:"subtype"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
+			continue
+		}
+		if ev.Type == eventTypeResult && ev.Subtype == "error_max_turns" {
+			return true
+		}
+	}
+	return false
+}
+
+// ExecutionDimension derives the CLI/farm "execution" acceptance dimension
+// (docs/spec-testing-architecture.md §10.1) from a BehavioralResult's error
+// field. A retrospective that ran out of turns is optional evidence — its
+// self-review is missing, but the task verdict was already frozen before the
+// retrospective started, so it must never flip execution to an error
+// (docs/spec-eval-farm.md §2.3 FM-13). Every other recorded error keeps
+// meaning "the run's execution failed".
+func ExecutionDimension(r *BehavioralResult) string {
+	if r.Error == "" || strings.HasPrefix(r.Error, retrospectiveMissingErrorPrefix) {
+		return "ok"
+	}
+	return "error: " + r.Error
 }
 
 // spawnClaudeResumeAppend resumes the agent session with userMsg and APPENDS
