@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/capture"
 )
 
 // Cell is one (scenario, workflow step, tool decision) triple derived from
@@ -84,7 +86,7 @@ func Coverage(dir string, since string) (CoverageReport, error) {
 		}
 
 		for _, streamPath := range matches {
-			calls, err := ReadMCPStream(streamPath)
+			calls, err := capture.ReadMCPStream(streamPath)
 			if err != nil {
 				return CoverageReport{}, fmt.Errorf("farm: coverage: %w", err)
 			}
