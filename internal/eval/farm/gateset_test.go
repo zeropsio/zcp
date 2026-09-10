@@ -36,10 +36,13 @@ func TestGateSet_EveryScenarioCarriesRequiredOracles(t *testing.T) {
 		"existing-standard-appdev-only-reminders": {o2: true, o4: true},
 		"cross-deploy-stage-promote-from-dev":     {o2: true, o7: true},
 		"recover-failed-buildfromgit-missing-dep": {o2: true, o5: true},
-		"launch-production-from-standard-pair":    {o6: true, o8: true},
-		"launch-failure-build-stuck":              {o5: true, o6: true, o8: true},
-		"adopt-existing-standard-pair":            {o3: true, o4: true},
-		"resume-after-compaction":                 {o3: true, o4: true},
+		// launch-production-from-standard-pair and launch-failure-build-stuck
+		// (O6/O8) leave the gate set until the farm provides a source-control
+		// fixture: the launch path is pipeline-first (git remote + PAT) and a
+		// run project has none, so the agent stops at the source-control ask
+		// (live gate2-8: no prod project was ever created). Plan D14 / backlog.
+		"adopt-existing-standard-pair": {o3: true, o4: true},
+		"resume-after-compaction":      {o3: true, o4: true},
 	}
 
 	if len(ids) != len(want) {
