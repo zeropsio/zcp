@@ -41,3 +41,24 @@ Drives the real script against real `curl` and an in-process fake S3
 ```
 zcp eval farm push --wrapper eval/farm/wrapper.sh
 ```
+
+## Kickoff on the farm host
+
+The farm host (`docs/spec-eval-farm.md` §3.1 FM-17/FM-18) needs only the
+`zcp` binary and its service envs — no checkout of this repo. Everything
+`farm run` needs (the `--set gate`/`--set all` scenario list, each
+scenario's front matter, and the evaluator pin absent `--evaluator`) is
+read from the bucket, not from disk:
+
+```
+zcp eval farm run --candidate <sha256> --scenarios <tree-digest> --set gate [--evaluator <sha256>]
+```
+
+That bucket state is produced by `farm push`, run once from a full
+checkout, before a kickoff:
+
+```
+zcp eval farm push --evaluator <path>    # also writes evaluators/current
+zcp eval farm push --scenarios eval/behavioral/scenarios   # also writes sets/<digest>/gate.txt
+zcp eval farm push --candidate <path>
+```

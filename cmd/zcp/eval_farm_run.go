@@ -17,16 +17,6 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// gateSetPath and scenariosDir are the on-disk locations `--set gate`/`--set
-// all` resolve against (eval/farm/gate-set.txt, eval/behavioral/scenarios/).
-// The farm host runs zcp from within a checkout of this repo, so these
-// relative paths resolve the same way `zcp eval behavioral` already assumes
-// for its own scenario tree.
-const (
-	gateSetPath  = "eval/farm/gate-set.txt"
-	scenariosDir = "eval/behavioral/scenarios"
-)
-
 // defaultRunBudget is used when `--run-budget` is not given.
 const defaultRunBudget = 45 * time.Minute
 
@@ -37,7 +27,7 @@ const flagBatch = "--batch"
 // runFarmRun implements `zcp eval farm run` (docs/spec-eval-farm.md §3.3
 // FM-21/FM-22, §3.1 FM-18's --detach).
 func runFarmRun(args []string) int {
-	var candidate, scenariosDigest, set, batch, runBudgetStr string
+	var candidate, scenariosDigest, set, batch, runBudgetStr, evaluatorFlag string
 	detach := false
 	for i := 0; i < len(args); i++ {
 		arg := args[i] //nolint:gosec // G602 false positive: i is loop-bounded by i < len(args) each iteration
@@ -55,6 +45,13 @@ func runFarmRun(args []string) int {
 				return 1
 			}
 			scenariosDigest = args[i+1]
+			i++
+		case "--evaluator":
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "error: %s requires a value\n", arg)
+				return 1
+			}
+			evaluatorFlag = args[i+1]
 			i++
 		case "--set":
 			if i+1 >= len(args) {
@@ -109,26 +106,33 @@ func runFarmRun(args []string) int {
 		return 1
 	}
 
-	scenarios, err := resolveScenarios(set)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: resolve scenario set: %v\n", err)
-		return 1
-	}
-
 	cfg, err := farm.ConfigFromEnv()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	sink := farm.NewSinkClient(cfg)
+	ctx := context.Background()
+
+	scenarios, err := resolveScenarios(ctx, sink, scenariosDigest, set)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: resolve scenario set: %v\n", err)
+		return 1
+	}
 
 	accountToken := os.Getenv("ZCP_FARM_ACCOUNT_TOKEN")
 	clientID := os.Getenv("ZCP_FARM_CLIENT_ID")
-	evaluatorSHA := os.Getenv("ZCP_FARM_EVALUATOR_SHA")
-	if accountToken == "" || clientID == "" || evaluatorSHA == "" {
-		fmt.Fprintln(os.Stderr, "error: ZCP_FARM_ACCOUNT_TOKEN, ZCP_FARM_CLIENT_ID, and ZCP_FARM_EVALUATOR_SHA are required")
+	if accountToken == "" || clientID == "" {
+		fmt.Fprintln(os.Stderr, "error: ZCP_FARM_ACCOUNT_TOKEN and ZCP_FARM_CLIENT_ID are required")
 		return 1
 	}
+
+	evaluatorSHA, err := resolveEvaluatorSHA(ctx, sink, evaluatorFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
 	client, closer, err := farm.NewAccountClient(accountToken, os.Getenv("ZCP_API_HOST"), clientID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -143,7 +147,7 @@ func runFarmRun(args []string) int {
 		Sink:      farm.Sink(cfg), // farm.Config and farm.Sink share the same field names/types/order
 		RunBudget: runBudget,
 	}
-	results, err := farm.RunBatch(context.Background(), client, sink, opts)
+	results, err := farm.RunBatch(ctx, client, sink, opts)
 	if err != nil {
 		if isIntegrationTokenMintForbidden(err) {
 			fmt.Fprintln(os.Stderr, "error: ZCP_FARM_ACCOUNT_TOKEN must be a personal access token: integration tokens cannot mint run tokens")
@@ -207,15 +211,18 @@ func resolveOAuthToken() (string, error) {
 // resolveScenarios expands --set (gate|all|<id,id,...>) to the
 // farm.ScenarioRun list RunBatch needs, marking each scenario Launch when
 // its front matter's area starts with "launch" (the two gate-set launch
-// scenarios use "launch" and "launch-production-recovery").
-func resolveScenarios(set string) ([]farm.ScenarioRun, error) {
+// scenarios use "launch" and "launch-production-recovery"). The farm host
+// runs the binary only, no repo checkout (docs/spec-eval-farm.md §3.1
+// FM-17/FM-18), so every scenario fact is read from the bucket at
+// scenariosDigest, never from disk.
+func resolveScenarios(ctx context.Context, sink *farm.SinkClient, scenariosDigest, set string) ([]farm.ScenarioRun, error) {
 	var ids []string
 	var err error
 	switch set {
 	case "gate":
-		ids, err = readGateSet(gateSetPath)
+		ids, err = readGateSetFromBucket(ctx, sink, scenariosDigest)
 	case categoryAll: // "all" — shared with sync.go's own --category all (goconst)
-		ids, err = listAllScenarioIDs(scenariosDir)
+		ids, err = listAllScenarioIDsFromBucket(ctx, sink, scenariosDigest)
 	default:
 		for id := range strings.SplitSeq(set, ",") {
 			id = strings.TrimSpace(id)
@@ -230,7 +237,7 @@ func resolveScenarios(set string) ([]farm.ScenarioRun, error) {
 
 	scenarios := make([]farm.ScenarioRun, 0, len(ids))
 	for _, id := range ids {
-		launch, err := scenarioIsLaunch(id)
+		launch, err := scenarioIsLaunch(ctx, sink, scenariosDigest, id)
 		if err != nil {
 			return nil, err
 		}
@@ -239,11 +246,13 @@ func resolveScenarios(set string) ([]farm.ScenarioRun, error) {
 	return scenarios, nil
 }
 
-// readGateSet reads one scenario id per line from path (eval/farm/gate-set.txt).
-func readGateSet(path string) ([]string, error) {
-	body, err := os.ReadFile(path)
+// readGateSetFromBucket reads one scenario id per line from
+// sets/<scenariosDigest>/gate.txt (uploaded by `farm push --scenarios`).
+func readGateSetFromBucket(ctx context.Context, sink *farm.SinkClient, scenariosDigest string) ([]string, error) {
+	key := fmt.Sprintf("sets/%s/gate.txt", scenariosDigest)
+	body, err := sink.Get(ctx, key)
 	if err != nil {
-		return nil, fmt.Errorf("read gate set %s: %w", path, err)
+		return nil, fmt.Errorf("read gate set %s: %w", key, err)
 	}
 	var ids []string
 	for line := range strings.SplitSeq(string(body), "\n") {
@@ -255,39 +264,74 @@ func readGateSet(path string) ([]string, error) {
 	return ids, nil
 }
 
-// listAllScenarioIDs returns the id of every scenario markdown file under
-// dir, sorted. Every scenario currently authored under
+// listAllScenarioIDsFromBucket returns the basename (minus ".md") of every
+// top-level scenario markdown file under scenarios/<scenariosDigest>/,
+// sorted. Every scenario currently authored under
 // eval/behavioral/scenarios/ is container-run; a scenario meant only for a
 // local, non-farm lane would need its own marker to be excluded here — none
 // carries one yet.
-func listAllScenarioIDs(dir string) ([]string, error) {
-	entries, err := os.ReadDir(dir)
+func listAllScenarioIDsFromBucket(ctx context.Context, sink *farm.SinkClient, scenariosDigest string) ([]string, error) {
+	prefix := fmt.Sprintf("scenarios/%s/", scenariosDigest)
+	keys, err := sink.List(ctx, prefix)
 	if err != nil {
-		return nil, fmt.Errorf("read scenarios dir %s: %w", dir, err)
+		return nil, fmt.Errorf("list scenarios %s: %w", prefix, err)
 	}
 	var ids []string
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+	for _, key := range keys {
+		rel := strings.TrimPrefix(key, prefix)
+		if strings.Contains(rel, "/") || !strings.HasSuffix(rel, ".md") {
 			continue
 		}
-		sc, err := eval.ParseScenario(filepath.Join(dir, entry.Name()))
-		if err != nil {
-			return nil, fmt.Errorf("parse scenario %s: %w", entry.Name(), err)
-		}
-		ids = append(ids, sc.ID)
+		ids = append(ids, strings.TrimSuffix(rel, ".md"))
 	}
 	sort.Strings(ids)
 	return ids, nil
 }
 
 // scenarioIsLaunch reports whether scenario id's front matter area names a
-// launch scenario (§3.4 FM-23 mints/revokes a token only for these).
-func scenarioIsLaunch(id string) (bool, error) {
-	sc, err := eval.ParseScenario(filepath.Join(scenariosDir, id+".md"))
+// launch scenario (§3.4 FM-23 mints/revokes a token only for these). The
+// scenario body is read from scenarios/<scenariosDigest>/<id>.md in the
+// bucket and parsed via eval.ParseScenario, which reads from a path — so
+// the fetched body is staged to a temp file for that one parse.
+func scenarioIsLaunch(ctx context.Context, sink *farm.SinkClient, scenariosDigest, id string) (bool, error) {
+	key := fmt.Sprintf("scenarios/%s/%s.md", scenariosDigest, id)
+	body, err := sink.Get(ctx, key)
+	if err != nil {
+		return false, fmt.Errorf("resolve scenario %s: %w", id, err)
+	}
+	tmp, err := os.CreateTemp("", "farm-scenario-*.md")
+	if err != nil {
+		return false, fmt.Errorf("resolve scenario %s: %w", id, err)
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(body); err != nil {
+		_ = tmp.Close()
+		return false, fmt.Errorf("resolve scenario %s: %w", id, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return false, fmt.Errorf("resolve scenario %s: %w", id, err)
+	}
+	sc, err := eval.ParseScenario(tmp.Name())
 	if err != nil {
 		return false, fmt.Errorf("resolve scenario %s: %w", id, err)
 	}
 	return strings.HasPrefix(sc.Area, "launch"), nil
+}
+
+// resolveEvaluatorSHA returns the evaluator pin: the --evaluator flag when
+// given, else the bucket's evaluators/current pointer (written by `farm
+// push --evaluator`, plain-text sha256, trimmed on read). ZCP_FARM_EVALUATOR_SHA
+// is no longer read here — the run project still receives the resolved
+// value via project_yaml, unchanged.
+func resolveEvaluatorSHA(ctx context.Context, sink *farm.SinkClient, evaluatorFlag string) (string, error) {
+	if evaluatorFlag != "" {
+		return evaluatorFlag, nil
+	}
+	body, err := sink.Get(ctx, "evaluators/current")
+	if err != nil {
+		return "", fmt.Errorf("--evaluator was not given and evaluators/current: %w", err)
+	}
+	return strings.TrimSpace(string(body)), nil
 }
 
 // detachStarter starts argv detached (new session, stdout/stderr appended
