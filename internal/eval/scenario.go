@@ -227,6 +227,10 @@ func ParseScenario(path string) (*Scenario, error) {
 		ExcludeFromAll:  fm.ExcludeFromAll,
 	}
 
+	if err := applyScenarioTemplate(sc); err != nil {
+		return nil, fmt.Errorf("scenario %q: %w", path, err)
+	}
+
 	if err := sc.validate(); err != nil {
 		return nil, fmt.Errorf("scenario %q: %w", path, err)
 	}
