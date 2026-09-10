@@ -82,6 +82,120 @@ type BehavioralResult struct {
 	Credential             string `json:"credential,omitempty"`
 	AnthropicAPIKeyPresent bool   `json:"anthropicApiKeyPresent,omitempty"`
 	ModelObserved          string `json:"modelObserved,omitempty"`
+	// Usage is the cost/token summary computed from the transcript's and
+	// retrospective's own claude headless "result" events (brief S14). Nil
+	// when neither file yields a result line — "not observed" is never
+	// confused with "zero cost".
+	Usage *BehavioralUsage `json:"usage,omitempty"`
+}
+
+// UsagePhase is one phase's usage/cost figures, summed from every claude
+// headless "result" event found for that phase (brief S14).
+type UsagePhase struct {
+	CostUsd                  float64 `json:"costUsd"`
+	InputTokens              int64   `json:"inputTokens"`
+	OutputTokens             int64   `json:"outputTokens"`
+	CacheCreationInputTokens int64   `json:"cacheCreationInputTokens"`
+	CacheReadInputTokens     int64   `json:"cacheReadInputTokens"`
+	NumTurns                 int64   `json:"numTurns"`
+	DurationMs               int64   `json:"durationMs"`
+}
+
+// BehavioralUsage is meta.json's cost/usage summary (brief S14). Main sums
+// every "result" line in the transcript — the fresh run plus every user-sim
+// resume, which append their own result events to the same file; Retrospective
+// is the retrospective.jsonl's own result line(s). Either sub-object is nil
+// — never a zeroed UsagePhase — when its source file carries no result line,
+// so "not observed" is never confused with "cost $0".
+type BehavioralUsage struct {
+	Main          *UsagePhase `json:"main,omitempty"`
+	Retrospective *UsagePhase `json:"retrospective,omitempty"`
+	TotalCostUsd  float64     `json:"totalCostUsd"`
+}
+
+// resultLineEvent is the subset of a claude headless stream-json "result"
+// event computeBehavioralUsage sums. snake_case field names are the upstream
+// schema, not negotiable here (mirrors the eventType* constants below).
+type resultLineEvent struct {
+	Type         string  `json:"type"`
+	TotalCostUsd float64 `json:"total_cost_usd"` //nolint:tagliatelle // upstream claude headless schema
+	NumTurns     int64   `json:"num_turns"`      //nolint:tagliatelle // upstream claude headless schema
+	DurationMs   int64   `json:"duration_ms"`    //nolint:tagliatelle // upstream claude headless schema
+	Usage        struct {
+		InputTokens              int64 `json:"input_tokens"`                //nolint:tagliatelle // upstream claude headless schema
+		OutputTokens             int64 `json:"output_tokens"`               //nolint:tagliatelle // upstream claude headless schema
+		CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"` //nolint:tagliatelle // upstream claude headless schema
+		CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`     //nolint:tagliatelle // upstream claude headless schema
+	} `json:"usage"`
+}
+
+// parseResultLines scans a stream-json log for every "result" event, in file
+// order. A missing/unreadable file returns nil, no error — usage is
+// best-effort telemetry, never a reason to fail the run.
+func parseResultLines(logFile string) []resultLineEvent {
+	if logFile == "" {
+		return nil
+	}
+	f, err := os.Open(logFile)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1<<20), 1<<22)
+	var events []resultLineEvent
+	for scanner.Scan() {
+		var ev resultLineEvent
+		if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
+			continue
+		}
+		if ev.Type != eventTypeResult {
+			continue
+		}
+		events = append(events, ev)
+	}
+	return events
+}
+
+// sumUsagePhase sums every result event into one UsagePhase, or nil when
+// events is empty (never a zeroed phase for "no result line found").
+func sumUsagePhase(events []resultLineEvent) *UsagePhase {
+	if len(events) == 0 {
+		return nil
+	}
+	var phase UsagePhase
+	for _, ev := range events {
+		phase.CostUsd += ev.TotalCostUsd
+		phase.InputTokens += ev.Usage.InputTokens
+		phase.OutputTokens += ev.Usage.OutputTokens
+		phase.CacheCreationInputTokens += ev.Usage.CacheCreationInputTokens
+		phase.CacheReadInputTokens += ev.Usage.CacheReadInputTokens
+		phase.NumTurns += ev.NumTurns
+		phase.DurationMs += ev.DurationMs
+	}
+	return &phase
+}
+
+// computeBehavioralUsage builds meta.json's usage summary from the run's own
+// artifacts: transcriptFile carries the fresh run's result line plus one per
+// user-sim resume (all appended to the same file); retrospectiveFile carries
+// the retrospective's own result line. Returns nil when neither file yields
+// a result line (brief S14: "absent file / no result line → the sub-object
+// is omitted, never zeros" — extended here to the whole summary).
+func computeBehavioralUsage(transcriptFile, retrospectiveFile string) *BehavioralUsage {
+	main := sumUsagePhase(parseResultLines(transcriptFile))
+	retro := sumUsagePhase(parseResultLines(retrospectiveFile))
+	if main == nil && retro == nil {
+		return nil
+	}
+	usage := &BehavioralUsage{Main: main, Retrospective: retro}
+	if main != nil {
+		usage.TotalCostUsd += main.CostUsd
+	}
+	if retro != nil {
+		usage.TotalCostUsd += retro.CostUsd
+	}
+	return usage
 }
 
 // credentialOAuthToken is the only agent credential a farm run carries
@@ -1172,6 +1286,7 @@ func detectCompaction(logFile string) bool {
 // task-end freeze only log the error: meta.json is the persisted task-end
 // artifact there, and a plain progress write elsewhere.
 func writeBehavioralResult(outDir string, r *BehavioralResult) error {
+	r.Usage = computeBehavioralUsage(r.TranscriptFile, r.RetrospectiveFile)
 	return writeJSONAtomic(outDir, "meta.json", r)
 }
 

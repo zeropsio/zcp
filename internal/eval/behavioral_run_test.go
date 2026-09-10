@@ -432,3 +432,70 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 		t.Errorf("ExecutionDimension(result) = %q, want ok (retrospective-missing must not become an execution error)", got)
 	}
 }
+
+// TestBehavioralResult_UsageFromTranscriptResultLines_Summed pins brief
+// S14's cost fields: main sums every "result" line in the transcript (the
+// fresh run plus every user-sim resume, which append their own result event
+// to the same file); retrospective comes from retrospective.jsonl's own
+// result line; totalCostUsd is the sum of both.
+func TestBehavioralResult_UsageFromTranscriptResultLines_Summed(t *testing.T) {
+	t.Parallel()
+	transcript := `{"type":"assistant","message":{"content":[{"type":"text","text":"working"}]}}
+{"type":"result","subtype":"success","total_cost_usd":0.01,"usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":10,"cache_read_input_tokens":5},"num_turns":3,"duration_ms":1000}
+{"type":"result","subtype":"success","total_cost_usd":0.02,"usage":{"input_tokens":200,"output_tokens":75,"cache_creation_input_tokens":20,"cache_read_input_tokens":15},"num_turns":4,"duration_ms":2000}
+{"type":"result","subtype":"success","total_cost_usd":0.03,"usage":{"input_tokens":300,"output_tokens":25,"cache_creation_input_tokens":30,"cache_read_input_tokens":25},"num_turns":5,"duration_ms":3000}
+`
+	transcriptPath := writeTmp(t, "transcript.jsonl", transcript)
+	retro := `{"type":"result","subtype":"success","total_cost_usd":0.005,"usage":{"input_tokens":40,"output_tokens":10,"cache_creation_input_tokens":1,"cache_read_input_tokens":2},"num_turns":1,"duration_ms":500}
+`
+	retroPath := writeTmp(t, "retrospective.jsonl", retro)
+
+	usage := computeBehavioralUsage(transcriptPath, retroPath)
+	if usage == nil {
+		t.Fatal("computeBehavioralUsage returned nil, want a summary")
+	}
+	if usage.Main == nil {
+		t.Fatal("Main is nil, want the summed transcript usage")
+	}
+	wantMain := UsagePhase{CostUsd: 0.06, InputTokens: 600, OutputTokens: 150, CacheCreationInputTokens: 60, CacheReadInputTokens: 45, NumTurns: 12, DurationMs: 6000}
+	if *usage.Main != wantMain {
+		t.Errorf("Main = %+v, want %+v", *usage.Main, wantMain)
+	}
+	if usage.Retrospective == nil {
+		t.Fatal("Retrospective is nil, want the retrospective.jsonl result line")
+	}
+	wantRetro := UsagePhase{CostUsd: 0.005, InputTokens: 40, OutputTokens: 10, CacheCreationInputTokens: 1, CacheReadInputTokens: 2, NumTurns: 1, DurationMs: 500}
+	if *usage.Retrospective != wantRetro {
+		t.Errorf("Retrospective = %+v, want %+v", *usage.Retrospective, wantRetro)
+	}
+	if want := 0.065; usage.TotalCostUsd < want-1e-9 || usage.TotalCostUsd > want+1e-9 {
+		t.Errorf("TotalCostUsd = %v, want %v", usage.TotalCostUsd, want)
+	}
+}
+
+// TestBehavioralResult_UsageAbsent_Omitted pins brief S14: an absent
+// transcript/retrospective file, or one with no "result" line, produces a
+// nil usage summary — never a zeroed one.
+func TestBehavioralResult_UsageAbsent_Omitted(t *testing.T) {
+	t.Parallel()
+	t.Run("both files missing", func(t *testing.T) {
+		t.Parallel()
+		if got := computeBehavioralUsage(filepath.Join(t.TempDir(), "no-such-transcript.jsonl"), filepath.Join(t.TempDir(), "no-such-retro.jsonl")); got != nil {
+			t.Errorf("computeBehavioralUsage = %+v, want nil", got)
+		}
+	})
+	t.Run("empty paths", func(t *testing.T) {
+		t.Parallel()
+		if got := computeBehavioralUsage("", ""); got != nil {
+			t.Errorf("computeBehavioralUsage(\"\", \"\") = %+v, want nil", got)
+		}
+	})
+	t.Run("files exist but carry no result line", func(t *testing.T) {
+		t.Parallel()
+		transcriptPath := writeTmp(t, "transcript.jsonl", `{"type":"assistant","message":{"content":[{"type":"text","text":"working"}]}}`+"\n")
+		retroPath := writeTmp(t, "retrospective.jsonl", `{"type":"system","subtype":"init","session_id":"x"}`+"\n")
+		if got := computeBehavioralUsage(transcriptPath, retroPath); got != nil {
+			t.Errorf("computeBehavioralUsage = %+v, want nil", got)
+		}
+	})
+}

@@ -117,6 +117,11 @@ type BehavioralReport struct {
 	Findings    []Finding             `json:"findings"`
 	Gaps        []string              `json:"gaps"`
 	Sources     map[string]string     `json:"sources"`
+	// Cost is meta.json's usage/cost summary (brief S14), copied verbatim.
+	// Nil when the run recorded no usage (absent transcript/retrospective
+	// result lines) — the report then prints no cost line rather than a
+	// fabricated "totalCostUsd: 0".
+	Cost *BehavioralUsage `json:"cost,omitempty"`
 }
 
 const behavioralReportCleanupNote = "later copy and cleanup are operator notes outside the capture and are not assessed"
@@ -171,6 +176,7 @@ func BuildBehavioralReport(sessionDir, evalRunID, scenarioRunID string) (*Behavi
 	}
 
 	fillResultSection(report, &result, inspection.Integrity, inspection.Status, verification)
+	report.Cost = result.Usage
 	if verification != nil {
 		report.Checks = verification.Checks
 	}
@@ -394,6 +400,9 @@ func RenderBehavioralReportText(report *BehavioralReport) string {
 	line("Result:")
 	line("  Task:      mode=%s result=%s frozenAt=%s (source: %s)", report.Result.Task.Mode, report.Result.Task.Result, report.Result.Task.FrozenAt.Format(time.RFC3339), report.Sources["result"])
 	line("  Execution: error=%q", report.Result.Execution.Error)
+	if report.Cost != nil {
+		line("  cost: %s", renderCostLine(report.Cost))
+	}
 	line("  Task-end:  persisted=%t settled=%t", report.Result.TaskEnd.Persisted, report.Result.TaskEnd.Settled)
 	line("  Capture:   status=%s valid=%t complete=%t", report.Result.Capture.Status, report.Result.Capture.Valid, report.Result.Capture.Complete)
 	if report.Result.Binding != nil {
@@ -444,6 +453,20 @@ func RenderBehavioralReportText(report *BehavioralReport) string {
 	}
 
 	return string(b)
+}
+
+// renderCostLine formats the report's one cost line: totalCostUsd always,
+// each phase part only when present (brief S14 — never a fabricated 0 for a
+// phase that recorded no result line).
+func renderCostLine(cost *BehavioralUsage) string {
+	s := fmt.Sprintf("totalCostUsd=%.4f", cost.TotalCostUsd)
+	if cost.Main != nil {
+		s += fmt.Sprintf(" main=%.4f", cost.Main.CostUsd)
+	}
+	if cost.Retrospective != nil {
+		s += fmt.Sprintf(" retrospective=%.4f", cost.Retrospective.CostUsd)
+	}
+	return s
 }
 
 func renderUsage(usage UsageTotals) string {
