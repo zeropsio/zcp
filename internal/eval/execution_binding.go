@@ -151,24 +151,28 @@ func sha256File(path string) (string, error) {
 // assertFreshTarget implements the §10.4 freshness check: a direct service
 // read shows only system services plus the protected control service
 // (ProtectedService), and a direct process read shows no live process other
-// than the control service's own lifecycle. The evaluator runs from the
-// control service's initCommands, i.e. while that service's own
-// stack.build/deploy process is still RUNNING (init runs before the start
-// unit; the platform marks the process finished only after start) — a live
-// process whose every ServiceStacks[] entry names the control service is
-// that lifecycle, not a freshness violation. A live process referencing any
-// other service, or with no service refs (project-level actions), still
-// refuses.
+// than those services' own lifecycle. The evaluator runs from the control
+// service's initCommands, i.e. while that service's own stack.build process
+// is still RUNNING (init runs before the start unit; the platform marks the
+// process finished only ~2 min after creation — live D16, gate2–gate4). Once
+// the service read has passed, the only services in the project are the
+// allowed ones, so a live stack-scoped process can only belong to them: it
+// is skipped when every ServiceStacks[] ref resolves (by id or name) to an
+// allowed service, or when it carries no refs but is a `stack.*` action. A
+// live process referencing a service outside that set, or a project-level
+// action with no refs, still refuses.
 func assertFreshTarget(ctx context.Context, client platform.Client, projectID string) error {
 	services, err := client.ListServicesDirect(ctx, projectID)
 	if err != nil {
 		return fmt.Errorf("fresh-target service read: %w", err)
 	}
+	allowed := make(map[string]bool, 2*len(services))
 	for _, svc := range services {
-		if svc.IsSystem() || svc.Name == ProtectedService {
-			continue
+		if !svc.IsSystem() && svc.Name != ProtectedService {
+			return fmt.Errorf("target is not fresh: service %q present", svc.Name)
 		}
-		return fmt.Errorf("target is not fresh: service %q present", svc.Name)
+		allowed[svc.ID] = true
+		allowed[svc.Name] = true
 	}
 	processes, err := client.GetProjectProcessesDirect(ctx, projectID)
 	if err != nil {
@@ -177,7 +181,7 @@ func assertFreshTarget(ctx context.Context, client platform.Client, projectID st
 	for _, proc := range processes {
 		switch proc.Status {
 		case platform.ProcessStatusPending, platform.ProcessStatusRunning, platform.ProcessStatusRollbacking, platform.ProcessStatusCanceling:
-			if isControlServiceOnlyProcess(proc) {
+			if isAllowedServiceProcess(proc, allowed) {
 				continue
 			}
 			return fmt.Errorf("target is not fresh: live process %s (%s)", proc.ID, proc.Status)
@@ -186,16 +190,17 @@ func assertFreshTarget(ctx context.Context, client platform.Client, projectID st
 	return nil
 }
 
-// isControlServiceOnlyProcess reports whether every ServiceStacks[] entry on
-// proc names the protected control service — i.e. the process is the
-// control service's own lifecycle, not a foreign service or a project-level
-// action. A process with no service refs is not control-service-only.
-func isControlServiceOnlyProcess(proc platform.Process) bool {
+// isAllowedServiceProcess reports whether proc is the lifecycle of a service
+// the fresh-target service read already allowed (see assertFreshTarget):
+// every ref resolves by id or name into allowed, or the process has no refs
+// and is a stack-scoped action. A ref-less project-level action is never
+// allowed.
+func isAllowedServiceProcess(proc platform.Process, allowed map[string]bool) bool {
 	if len(proc.ServiceStacks) == 0 {
-		return false
+		return strings.HasPrefix(proc.ActionName, "stack.")
 	}
 	for _, ref := range proc.ServiceStacks {
-		if ref.Name != ProtectedService {
+		if !allowed[ref.ID] && !allowed[ref.Name] {
 			return false
 		}
 	}

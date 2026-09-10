@@ -161,6 +161,43 @@ func TestExecutionBinding_ControlServiceOwnProcess_IsFresh(t *testing.T) {
 	}
 }
 
+// TestExecutionBinding_ControlServiceBuild_IsFresh_RegardlessOfRefShape pins
+// the live D16 finding (gate2–gate4, 16 of 36 runs): the run project's own
+// `stack.build` was still RUNNING at preflight and S13's name-only match did
+// not recognise it. Once the service read has shown that only system
+// services and the control service exist, a live `stack.*` process can only
+// belong to them — whether its refs carry the id only, the name only, or
+// nothing at all.
+func TestExecutionBinding_ControlServiceBuild_IsFresh_RegardlessOfRefShape(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		proc platform.Process
+	}{
+		{"ref by id only", platform.Process{ID: "p1", ActionName: "stack.build", Status: platform.ProcessStatusRunning,
+			ServiceStacks: []platform.ServiceStackRef{{ID: "zcp-1"}}}},
+		{"ref by name only", platform.Process{ID: "p2", ActionName: "stack.build", Status: platform.ProcessStatusRunning,
+			ServiceStacks: []platform.ServiceStackRef{{Name: ProtectedService}}}},
+		{"no refs, stack action", platform.Process{ID: "p3", ActionName: "stack.build", Status: platform.ProcessStatusRunning}},
+		{"system service ref", platform.Process{ID: "p4", ActionName: "stack.deploy", Status: platform.ProcessStatusRunning,
+			ServiceStacks: []platform.ServiceStackRef{{ID: "l7-1", Name: "L7HttpBalancer"}}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			client := platform.NewMock().
+				WithServicesDirect([]platform.ServiceStack{
+					{ID: "zcp-1", Name: ProtectedService, Status: "ACTIVE"},
+					{ID: "l7-1", Name: "L7HttpBalancer", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeCategoryName: "HTTP_L7_BALANCER"}},
+				}).
+				WithProjectProcesses([]platform.Process{tc.proc})
+			if err := assertFreshTarget(context.Background(), client, "offline-project"); err != nil {
+				t.Fatalf("assertFreshTarget() = %v, want nil", err)
+			}
+		})
+	}
+}
+
 // TestExecutionBinding_ForeignServiceProcess_StillRefused pins §10.4: a live
 // process referencing any other service, or with no service refs at all
 // (project-level actions), still refuses with today's literal.
@@ -187,10 +224,11 @@ func TestExecutionBinding_ForeignServiceProcess_StillRefused(t *testing.T) {
 			}},
 		},
 		{
-			name: "no service refs (project-level action)",
+			name: "no service refs, project-level action",
 			procs: []platform.Process{{
-				ID:     "proc-4",
-				Status: platform.ProcessStatusRunning,
+				ID:         "proc-4",
+				ActionName: "project.delete",
+				Status:     platform.ProcessStatusRunning,
 			}},
 		},
 	}
