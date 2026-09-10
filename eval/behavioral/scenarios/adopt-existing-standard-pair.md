@@ -106,4 +106,4 @@ notableFriction:
       služby jako "standalone".
 ---
 
-V Zerops projektu (UUID waAzEFn6SBaysG4YE4rv7A) už mám rozjetý standard pair — `appdev` a `appstage` (nodejs@22), plus `db` (postgresql@18). Všechno bylo postavené ručně přes dashboard, takže ZCP o tom zatím neví. Nastav mi prosím ZCP integration — adopt-route — ať tam mají ty služby ServiceMeta a můžu pak normálně používat develop workflow. Žádné nové služby nevytvářej, žádný redeploy. Až bude hotovo, řekni mi že je adopt dokončený.
+V Zerops projektu (UUID {{projectId}}) už mám rozjetý standard pair — `appdev` a `appstage` (nodejs@22), plus `db` (postgresql@18). Všechno bylo postavené ručně přes dashboard, takže ZCP o tom zatím neví. Nastav mi prosím ZCP integration — adopt-route — ať tam mají ty služby ServiceMeta a můžu pak normálně používat develop workflow. Žádné nové služby nevytvářej, žádný redeploy. Až bude hotovo, řekni mi že je adopt dokončený.

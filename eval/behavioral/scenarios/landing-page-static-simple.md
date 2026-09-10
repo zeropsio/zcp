@@ -81,4 +81,4 @@ notableFriction:
       scaffold quality on the smallest possible stack.
 ---
 
-Potřebuju jednoduchou landing page na Zerops — jen statický HTML s nginx, žádná databáze, jen jeden kontejner co poběží. Pošli mi URL až poběží. Project ID je `waAzEFn6SBaysG4YE4rv7A`.
+Potřebuju jednoduchou landing page na Zerops — jen statický HTML s nginx, žádná databáze, jen jeden kontejner co poběží. Pošli mi URL až poběží. Project ID je `{{projectId}}`.

@@ -90,4 +90,4 @@ notableFriction:
       without git-push-setup atom firing prematurely.
 ---
 
-Vytvoř mi kanban na receptu zerops-laravel-minimal a uděláš jenom dev service. Spusť to do eval-zcp projektu (UUID waAzEFn6SBaysG4YE4rv7A) abych mohl iterovat na kódu. Žádný stage zatím, žádná produkce. Až bude dev běžet, řekni mi URL.
+Vytvoř mi kanban na receptu zerops-laravel-minimal a uděláš jenom dev service. Spusť to do eval-zcp projektu (UUID {{projectId}}) abych mohl iterovat na kódu. Žádný stage zatím, žádná produkce. Až bude dev běžet, řekni mi URL.
