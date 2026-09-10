@@ -110,8 +110,11 @@ func ReportRun(runDir, evaluatorPin string) RunOutcome {
 	}
 
 	outcome := RunOutcome{RunID: done.RunID, ScenarioID: done.ScenarioID, Done: &done}
-	sessionDir := filepath.Join(runDir, "capture")
-	evalRunID, scenarioRunID, scopeErr := discoverEvalScope(sessionDir)
+	sessionDir, scopeErr := resolveCaptureWindowDir(filepath.Join(runDir, "capture"))
+	var evalRunID, scenarioRunID string
+	if scopeErr == nil {
+		evalRunID, scenarioRunID, scopeErr = discoverEvalScope(sessionDir)
+	}
 	if scopeErr == nil && metaRecordsAnthropicAPIKey(sessionDir, evalRunID, scenarioRunID) {
 		return RunOutcome{RunID: done.RunID, ScenarioID: done.ScenarioID, Verdict: VerdictBlocked, Done: &done,
 			Reason: "blocked: api key present; farm runs are oauth-only (docs/spec-eval-farm.md FM-16, owner decision 79ced2cc)"}
@@ -230,6 +233,29 @@ func metaRecordsAnthropicAPIKey(sessionDir, evalRunID, scenarioRunID string) boo
 		return false
 	}
 	return meta.AnthropicAPIKeyPresent
+}
+
+// resolveCaptureWindowDir finds the single capture-<id> subdirectory under
+// captureDir (<runDir>/capture) that zcp capture raw --output-dir <dir>
+// writes its window as (internal/capture/manager.go's newSessionID) — one
+// window per run (docs/spec-eval-farm.md §2.1 FM-10: a run project executes
+// exactly one scenario). Zero or more than one capture-<id> subdirectory is
+// an error naming the count.
+func resolveCaptureWindowDir(captureDir string) (string, error) {
+	entries, err := os.ReadDir(captureDir)
+	if err != nil {
+		return "", fmt.Errorf("capture window under %s: %w", captureDir, err)
+	}
+	var windows []string
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "capture-") {
+			windows = append(windows, entry.Name())
+		}
+	}
+	if len(windows) != 1 {
+		return "", fmt.Errorf("capture window under %s: expected exactly one capture-<id> directory, found %d", captureDir, len(windows))
+	}
+	return filepath.Join(captureDir, windows[0]), nil
 }
 
 // discoverEvalScope finds the single (evalRunID, scenarioRunID) pair a farm
