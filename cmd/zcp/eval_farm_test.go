@@ -41,7 +41,7 @@ func TestEvalFarm_WithoutAuthoringGate_RefusesEveryVerb(t *testing.T) {
 func TestEvalFarm_UnimplementedVerbs_ExitNonzeroNotImplemented(t *testing.T) {
 	t.Setenv("ZCP_AUTHORING", "1")
 
-	verbs := []string{"run", "status", "report", "coverage", "gc"}
+	verbs := []string{"run", "status", "report", "gc"}
 	for _, verb := range verbs {
 		t.Run(verb, func(t *testing.T) {
 			var code int
