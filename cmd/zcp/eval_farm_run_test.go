@@ -106,11 +106,18 @@ func TestEvalFarmRun_IntegrationTokenPreflight_NamesTheFix(t *testing.T) {
 
 	const clientID = "client-preflight-1"
 	restSrv := newMintForbiddenFakeAccountServer(t, clientID)
-	s3Srv := newStatusFakeS3Server(t)
+	s3Srv, s3Fake := newStatusFakeS3ServerWithFake(t)
+
+	scenarioBody, err := os.ReadFile(filepath.Join(repoRoot, "eval", "behavioral", "scenarios", "api-node-postgres-classic-dev.md"))
+	if err != nil {
+		t.Fatalf("read fixture scenario: %v", err)
+	}
+	s3Fake.mu.Lock()
+	s3Fake.objects["scenarios/scen-sha/api-node-postgres-classic-dev.md"] = scenarioBody
+	s3Fake.mu.Unlock()
 
 	t.Setenv("ZCP_FARM_ACCOUNT_TOKEN", "integration-token-value")
 	t.Setenv("ZCP_FARM_CLIENT_ID", clientID)
-	t.Setenv("ZCP_FARM_EVALUATOR_SHA", "eval-sha")
 	t.Setenv("ZCP_API_HOST", restSrv.URL)
 	t.Setenv("ZCP_FARM_S3_URL", s3Srv.URL)
 	t.Setenv("ZCP_FARM_S3_BUCKET", "zcp-farm")
@@ -122,7 +129,7 @@ func TestEvalFarmRun_IntegrationTokenPreflight_NamesTheFix(t *testing.T) {
 	var exitCode int
 	_, stderr := captureOutput(t, func() {
 		exitCode = runFarmRun([]string{
-			"--candidate", "cand-sha", "--scenarios", "scen-sha",
+			"--candidate", "cand-sha", "--scenarios", "scen-sha", "--evaluator", "eval-sha",
 			"--set", "api-node-postgres-classic-dev", "--batch", "batch-preflight-1",
 		})
 	})
@@ -250,6 +257,15 @@ type statusFakeS3 struct {
 
 func newStatusFakeS3Server(t *testing.T) *httptest.Server {
 	t.Helper()
+	srv, _ := newStatusFakeS3ServerWithFake(t)
+	return srv
+}
+
+// newStatusFakeS3ServerWithFake is newStatusFakeS3Server plus access to the
+// underlying fake, for tests that need to seed bucket objects (e.g. an
+// evaluators/current pointer or a scenario body) before calling farm run.
+func newStatusFakeS3ServerWithFake(t *testing.T) (*httptest.Server, *statusFakeS3) {
+	t.Helper()
 	const bucket = "zcp-farm"
 	f := &statusFakeS3{bucket: bucket, objects: map[string][]byte{}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -287,7 +303,7 @@ func newStatusFakeS3Server(t *testing.T) *httptest.Server {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, f
 }
 
 func (f *statusFakeS3) serveList(w http.ResponseWriter, r *http.Request) {
@@ -389,7 +405,6 @@ func TestFarmRun_ZeroRunsCreated_ExitNonzero(t *testing.T) {
 
 	t.Setenv("ZCP_FARM_ACCOUNT_TOKEN", "farm-account-token")
 	t.Setenv("ZCP_FARM_CLIENT_ID", clientID)
-	t.Setenv("ZCP_FARM_EVALUATOR_SHA", "eval-sha")
 	t.Setenv("ZCP_API_HOST", restSrv.URL)
 	t.Setenv("ZCP_FARM_S3_URL", s3Srv.URL)
 	t.Setenv("ZCP_FARM_S3_BUCKET", "zcp-farm")
@@ -402,10 +417,10 @@ func TestFarmRun_ZeroRunsCreated_ExitNonzero(t *testing.T) {
 	_, stderr := captureOutput(t, func() {
 		// A --set of comma-only separators resolves (resolveScenarios'
 		// default branch, trimming and skipping empty entries) to zero
-		// scenario ids without touching any file on disk — RunBatch then
+		// scenario ids without touching the bucket at all — RunBatch then
 		// schedules and creates nothing.
 		exitCode = runFarmRun([]string{
-			"--candidate", "cand-sha", "--scenarios", "scen-sha",
+			"--candidate", "cand-sha", "--scenarios", "scen-sha", "--evaluator", "eval-sha",
 			"--set", " , ,", "--batch", "batch-zero-runs",
 		})
 	})
@@ -614,4 +629,160 @@ func TestFarmStatus_NoSummaryYet_ReportsRunning(t *testing.T) {
 	if !strings.Contains(stdout, "inflight-run") || !strings.Contains(stdout, "recipe-a running project=present") {
 		t.Errorf("stdout = %q, want it to still report the in-flight run as \"running\"", stdout)
 	}
+}
+
+// TestFarmRun_SetGate_ReadsListFromBucket pins outcome 2 of the S15 brief:
+// `--set gate` reads the scenario id list from sets/<scenariosDigest>/gate.txt
+// in the bucket, never from eval/farm/gate-set.txt on disk — nothing is
+// staged to disk for this test.
+func TestFarmRun_SetGate_ReadsListFromBucket(t *testing.T) {
+	s3Srv, s3Fake := newStatusFakeS3ServerWithFake(t)
+	t.Setenv("ZCP_FARM_S3_URL", s3Srv.URL)
+	t.Setenv("ZCP_FARM_S3_BUCKET", "zcp-farm")
+	t.Setenv("ZCP_FARM_S3_KEY", "sink-key")
+	t.Setenv("ZCP_FARM_S3_SECRET", "sink-secret")
+
+	const digest = "scen-gate-1"
+	s3Fake.mu.Lock()
+	s3Fake.objects["sets/"+digest+"/gate.txt"] = []byte("scenario-a\nscenario-b\n\nscenario-c\n")
+	s3Fake.objects["scenarios/"+digest+"/scenario-a.md"] = bucketScenarioFixture(t, "scenario-a", "bootstrap")
+	s3Fake.objects["scenarios/"+digest+"/scenario-b.md"] = bucketScenarioFixture(t, "scenario-b", "bootstrap")
+	s3Fake.objects["scenarios/"+digest+"/scenario-c.md"] = bucketScenarioFixture(t, "scenario-c", "bootstrap")
+	s3Fake.mu.Unlock()
+
+	cfg, err := farm.ConfigFromEnv()
+	if err != nil {
+		t.Fatalf("ConfigFromEnv: %v", err)
+	}
+	sink := farm.NewSinkClient(cfg)
+
+	scenarios, err := resolveScenarios(t.Context(), sink, digest, "gate")
+	if err != nil {
+		t.Fatalf("resolveScenarios: %v", err)
+	}
+	ids := make([]string, 0, len(scenarios))
+	for _, s := range scenarios {
+		ids = append(ids, s.ID)
+	}
+	want := []string{"scenario-a", "scenario-b", "scenario-c"}
+	if len(ids) != len(want) {
+		t.Fatalf("scenario ids = %v, want %v", ids, want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Errorf("scenario ids = %v, want %v", ids, want)
+			break
+		}
+	}
+}
+
+// TestFarmRun_LaunchFlag_FromBucketScenario pins outcome 2 of the S15 brief:
+// scenarioIsLaunch reads scenarios/<digest>/<id>.md from the bucket and
+// marks a scenario Launch when its front matter area starts with "launch"
+// (here area: launch-production-recovery, one of the two gate-set launch
+// scenarios' actual area values).
+func TestFarmRun_LaunchFlag_FromBucketScenario(t *testing.T) {
+	s3Srv, s3Fake := newStatusFakeS3ServerWithFake(t)
+	t.Setenv("ZCP_FARM_S3_URL", s3Srv.URL)
+	t.Setenv("ZCP_FARM_S3_BUCKET", "zcp-farm")
+	t.Setenv("ZCP_FARM_S3_KEY", "sink-key")
+	t.Setenv("ZCP_FARM_S3_SECRET", "sink-secret")
+
+	const digest = "scen-launch-1"
+	s3Fake.mu.Lock()
+	s3Fake.objects["scenarios/"+digest+"/launch-scenario.md"] = bucketScenarioFixture(t, "launch-scenario", "launch-production-recovery")
+	s3Fake.mu.Unlock()
+
+	cfg, err := farm.ConfigFromEnv()
+	if err != nil {
+		t.Fatalf("ConfigFromEnv: %v", err)
+	}
+	sink := farm.NewSinkClient(cfg)
+
+	scenarios, err := resolveScenarios(t.Context(), sink, digest, "launch-scenario")
+	if err != nil {
+		t.Fatalf("resolveScenarios: %v", err)
+	}
+	if len(scenarios) != 1 {
+		t.Fatalf("scenarios = %v, want exactly one", scenarios)
+	}
+	if !scenarios[0].Launch {
+		t.Errorf("scenarios[0].Launch = false, want true for area: launch-production-recovery")
+	}
+}
+
+// TestFarmRun_EvaluatorPin_FlagOrCurrentPointer pins outcome 3 of the S15
+// brief: --evaluator wins when given; otherwise evaluators/current is read;
+// when neither is available, the error names both --evaluator and
+// evaluators/current.
+func TestFarmRun_EvaluatorPin_FlagOrCurrentPointer(t *testing.T) {
+	s3Srv, s3Fake := newStatusFakeS3ServerWithFake(t)
+	t.Setenv("ZCP_FARM_S3_URL", s3Srv.URL)
+	t.Setenv("ZCP_FARM_S3_BUCKET", "zcp-farm")
+	t.Setenv("ZCP_FARM_S3_KEY", "sink-key")
+	t.Setenv("ZCP_FARM_S3_SECRET", "sink-secret")
+
+	cfg, err := farm.ConfigFromEnv()
+	if err != nil {
+		t.Fatalf("ConfigFromEnv: %v", err)
+	}
+	sink := farm.NewSinkClient(cfg)
+	ctx := t.Context()
+
+	t.Run("flag wins over pointer", func(t *testing.T) {
+		s3Fake.mu.Lock()
+		s3Fake.objects["evaluators/current"] = []byte("pointer-sha")
+		s3Fake.mu.Unlock()
+
+		got, err := resolveEvaluatorSHA(ctx, sink, "flag-sha")
+		if err != nil {
+			t.Fatalf("resolveEvaluatorSHA: %v", err)
+		}
+		if got != "flag-sha" {
+			t.Errorf("resolveEvaluatorSHA = %q, want %q", got, "flag-sha")
+		}
+	})
+
+	t.Run("falls back to pointer", func(t *testing.T) {
+		s3Fake.mu.Lock()
+		s3Fake.objects["evaluators/current"] = []byte("pointer-sha\n")
+		s3Fake.mu.Unlock()
+
+		got, err := resolveEvaluatorSHA(ctx, sink, "")
+		if err != nil {
+			t.Fatalf("resolveEvaluatorSHA: %v", err)
+		}
+		if got != "pointer-sha" {
+			t.Errorf("resolveEvaluatorSHA = %q, want %q (trimmed)", got, "pointer-sha")
+		}
+	})
+
+	t.Run("neither given names both in the error", func(t *testing.T) {
+		s3Fake.mu.Lock()
+		delete(s3Fake.objects, "evaluators/current")
+		s3Fake.mu.Unlock()
+
+		_, err := resolveEvaluatorSHA(ctx, sink, "")
+		if err == nil {
+			t.Fatal("resolveEvaluatorSHA: want an error when neither --evaluator nor evaluators/current is available")
+		}
+		if !strings.Contains(err.Error(), "--evaluator") || !strings.Contains(err.Error(), "evaluators/current") {
+			t.Errorf("error = %q, want it to name both --evaluator and evaluators/current", err.Error())
+		}
+	})
+}
+
+// bucketScenarioFixture builds a minimal valid scenario markdown body (id,
+// area, and every field ParseScenario's validate() requires) for tests that
+// seed the fake bucket directly rather than reading a real scenario off
+// disk.
+func bucketScenarioFixture(t *testing.T, id, area string) []byte {
+	t.Helper()
+	return fmt.Appendf(nil, `---
+id: %s
+area: %s
+seed: empty
+---
+Test prompt body.
+`, id, area)
 }

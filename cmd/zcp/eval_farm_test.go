@@ -48,8 +48,8 @@ type fakeFarmS3 struct {
 	objects map[string][]byte
 }
 
-func newFakeFarmS3(bucket string) *fakeFarmS3 {
-	return &fakeFarmS3{bucket: bucket, objects: map[string][]byte{}}
+func newFakeFarmS3() *fakeFarmS3 {
+	return &fakeFarmS3{bucket: "zcp-farm", objects: map[string][]byte{}}
 }
 
 func (f *fakeFarmS3) server() *httptest.Server {
@@ -76,6 +76,14 @@ func (f *fakeFarmS3) server() *httptest.Server {
 				return
 			}
 			_, _ = w.Write(data)
+		case http.MethodHead:
+			data, ok := f.objects[key]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+			w.WriteHeader(http.StatusOK)
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
@@ -117,7 +125,7 @@ func setFarmEnv(t *testing.T, serverURL string) {
 // §1.1: `farm push --candidate <file>` uploads to
 // candidates/<sha256(file)>/zcp and prints that digest.
 func TestFarmPush_Candidate_UploadsUnderSha256Key(t *testing.T) {
-	fake := newFakeFarmS3("zcp-farm")
+	fake := newFakeFarmS3()
 	server := fake.server()
 	defer server.Close()
 	setFarmEnv(t, server.URL)
@@ -158,7 +166,7 @@ func TestFarmPush_Candidate_UploadsUnderSha256Key(t *testing.T) {
 // runs/<runId>/ to <dir>/<runId>/, and prints "bundle: complete" once
 // done.json is among what it fetched.
 func TestFarmPull_Run_DownloadsAllParts(t *testing.T) {
-	fake := newFakeFarmS3("zcp-farm")
+	fake := newFakeFarmS3()
 	server := fake.server()
 	defer server.Close()
 	setFarmEnv(t, server.URL)
@@ -199,7 +207,7 @@ func TestFarmPull_Run_DownloadsAllParts(t *testing.T) {
 // objects carrying runId, not a bare list of strings) and downloads every
 // run the manifest names.
 func TestFarmPull_Batch_ReadsManifestRuns(t *testing.T) {
-	fake := newFakeFarmS3("zcp-farm")
+	fake := newFakeFarmS3()
 	server := fake.server()
 	defer server.Close()
 	setFarmEnv(t, server.URL)
@@ -230,5 +238,125 @@ func TestFarmPull_Batch_ReadsManifestRuns(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(outDir, runID, "done.json")); err != nil {
 			t.Errorf("downloaded bundle for %s: %v", runID, err)
 		}
+	}
+}
+
+// TestFarmPush_UploadsGateSetAndCurrentPointer pins outcome 1 of the S15
+// brief: `farm push --scenarios <dir>` also uploads the local gate scenario
+// list to sets/<scenariosDigest>/gate.txt, and `farm push --evaluator
+// <file>` also writes the plain-text pointer evaluators/current whose body
+// is the evaluator's own digest. Both keys are printed.
+func TestFarmPush_UploadsGateSetAndCurrentPointer(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+	t.Chdir(repoRoot)
+
+	fake := newFakeFarmS3()
+	server := fake.server()
+	defer server.Close()
+	setFarmEnv(t, server.URL)
+
+	scenariosDir := filepath.Join(repoRoot, "eval", "behavioral", "scenarios")
+
+	evalDir := t.TempDir()
+	evaluatorPath := filepath.Join(evalDir, "zcp")
+	evaluatorBody := []byte("pretend evaluator binary")
+	if err := os.WriteFile(evaluatorPath, evaluatorBody, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	evalSum := sha256.Sum256(evaluatorBody)
+	wantEvalDigest := hex.EncodeToString(evalSum[:])
+
+	var code int
+	stdout, stderr := captureOutput(t, func() {
+		code = runEvalFarm([]string{
+			"push", "--evaluator", evaluatorPath, "--scenarios", scenariosDir,
+		})
+	})
+	if code != 0 {
+		t.Fatalf("runEvalFarm(push) = %d, stderr = %q", code, stderr)
+	}
+
+	wantGateSetBody, err := os.ReadFile(filepath.Join(repoRoot, "eval", "farm", "gate-set.txt"))
+	if err != nil {
+		t.Fatalf("read local gate-set.txt: %v", err)
+	}
+
+	fake.mu.Lock()
+	evalPointer, hasEvalPointer := fake.objects["evaluators/current"]
+	fake.mu.Unlock()
+	if !hasEvalPointer {
+		t.Fatalf("fake bucket has no object at evaluators/current; objects: %v", fake.objects)
+	}
+	if string(evalPointer) != wantEvalDigest {
+		t.Errorf("evaluators/current body = %q, want %q", evalPointer, wantEvalDigest)
+	}
+	if !strings.Contains(stdout, "evaluators/current") {
+		t.Errorf("stdout = %q, want it to contain the pointer key %q", stdout, "evaluators/current")
+	}
+
+	var gateKey string
+	fake.mu.Lock()
+	for key := range fake.objects {
+		if strings.HasPrefix(key, "sets/") && strings.HasSuffix(key, "/gate.txt") {
+			gateKey = key
+		}
+	}
+	got, hasGate := fake.objects[gateKey]
+	fake.mu.Unlock()
+	if !hasGate {
+		t.Fatalf("fake bucket has no sets/<digest>/gate.txt object; objects: %v", fake.objects)
+	}
+	if string(got) != string(wantGateSetBody) {
+		t.Errorf("uploaded gate set = %q, want %q", got, wantGateSetBody)
+	}
+	if !strings.Contains(stdout, gateKey) {
+		t.Errorf("stdout = %q, want it to contain the gate-set key %q", stdout, gateKey)
+	}
+}
+
+// TestFarmPull_Batch_WritesManifestAndSummary pins outcome 4 of the S15
+// brief: `farm pull --batch <b>` also writes batches/<b>/manifest.json and
+// batches/<b>/summary.json (when present) to <out>/batches/<b>/.
+func TestFarmPull_Batch_WritesManifestAndSummary(t *testing.T) {
+	fake := newFakeFarmS3()
+	server := fake.server()
+	defer server.Close()
+	setFarmEnv(t, server.URL)
+
+	manifestBody := []byte(`{
+		"batch": "b2", "createdAt": "2026-09-10T00:00:00Z", "startedAt": "2026-09-10T00:00:00Z",
+		"set": "gate", "candidateSha256": "cand", "evaluatorSha256": "eval", "scenariosDigest": "scen",
+		"runs": [{"runId": "b2-recipe-a", "scenario": "recipe-a", "projectName": "zcp-farm-b2-recipe-a"}]
+	}`)
+	summaryBody := []byte(`{"batch": "b2", "finishedAt": "2026-09-10T01:00:00Z", "endedBy": "settled", "runs": []}`)
+	fake.objects["batches/b2/manifest.json"] = manifestBody
+	fake.objects["batches/b2/summary.json"] = summaryBody
+	fake.objects["runs/b2-recipe-a/done.json"] = []byte(`{"runId":"b2-recipe-a","parts":{}}`)
+
+	outDir := t.TempDir()
+	var code int
+	_, stderr := captureOutput(t, func() {
+		code = runEvalFarm([]string{"pull", "--batch", "b2", "--out", outDir})
+	})
+	if code != 0 {
+		t.Fatalf("runEvalFarm(pull --batch b2) = %d, stderr = %q", code, stderr)
+	}
+
+	gotManifest, err := os.ReadFile(filepath.Join(outDir, "batches", "b2", "manifest.json"))
+	if err != nil {
+		t.Fatalf("read pulled manifest.json: %v", err)
+	}
+	if string(gotManifest) != string(manifestBody) {
+		t.Errorf("pulled manifest.json = %q, want %q", gotManifest, manifestBody)
+	}
+	gotSummary, err := os.ReadFile(filepath.Join(outDir, "batches", "b2", "summary.json"))
+	if err != nil {
+		t.Fatalf("read pulled summary.json: %v", err)
+	}
+	if string(gotSummary) != string(summaryBody) {
+		t.Errorf("pulled summary.json = %q, want %q", gotSummary, summaryBody)
 	}
 }

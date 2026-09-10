@@ -23,8 +23,10 @@ One bucket, one key, in the persistent `zcp-farm` project:
 
 ```
 evaluators/<sha256>/zcp            # pinned evaluator binary, uploaded once per farm
+evaluators/current                 # plain-text pointer: body is the evaluator sha256 last pushed
 candidates/<sha256>/zcp            # candidate under test, pushed per batch
 scenarios/<tree-digest>/…          # scenario tree, pushed per batch
+sets/<tree-digest>/gate.txt        # gate scenario id list, keyed to the scenario tree it names
 farm/wrapper.sh                    # the run-project wrapper script
 
 runs/<runId>/started.json
@@ -301,7 +303,13 @@ maintainer-only, the same discipline as `runtime.Info.Authoring` /
 `ZCP_AUTHORING` (`docs/spec-authoring-boundary.md`): the farm host holds an
 account-wide key and deletes projects, so the same reasoning that gates
 authoring applies here — a route reachable without the gate is a defect the
-same way an ungated authoring route is.
+same way an ungated authoring route is. The farm host needs only the
+binary — no repo checkout. `farm run` resolves everything it needs (the
+`--set gate`/`--set all` scenario id list, each scenario's front matter, and
+the evaluator pin absent `--evaluator`) from the bucket (`sets/<digest>/gate.txt`,
+`scenarios/<digest>/…`, `evaluators/current`), never from a relative path on
+disk; only `farm push`, which runs from a full checkout on a dev machine,
+reads `eval/farm/gate-set.txt` off disk, to upload it.
 
 **FM-18.** No daemon and no HTTP surface on the farm host. `farm run` starts
 detached (`systemd-run --user` or `nohup`) so its kickoff SSH session may
