@@ -219,7 +219,7 @@ var serviceImportYAMLTemplate = template.Must(template.New("serviceImportYAML").
               - zcp init
               - sudo -E zcp init nginx
               - |
-                curl -sSf --aws-sigv4 aws:amz:us-east-1:s3 --user "$ZCP_FARM_S3_KEY:$ZCP_FARM_S3_SECRET" -o /tmp/farm-wrapper.sh "$ZCP_FARM_S3_URL/$ZCP_FARM_S3_BUCKET/farm/wrapper.sh"
+                curl -sSf --aws-sigv4 aws:amz:us-east-1:s3 --user "$(printenv ZCP_FARM_S3_KEY):$(printenv ZCP_FARM_S3_SECRET)" -o /tmp/farm-wrapper.sh "$(printenv ZCP_FARM_S3_URL)/$(printenv ZCP_FARM_S3_BUCKET)/farm/wrapper.sh"
                 chmod +x /tmp/farm-wrapper.sh
                 nohup /tmp/farm-wrapper.sh >/tmp/farm-wrapper.log 2>&1 &
             ports: [ { port: 8080, httpSupport: true } ]
