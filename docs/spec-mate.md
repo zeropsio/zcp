@@ -594,7 +594,7 @@ actively refused today (C-1's `pack` assertion), so it would be a fork-side chan
 | MD-13 | An update is staged into its own version directory, smoke-tested, and only then activated by an atomic symlink rename; **any failure leaves `current` naming the version that was working**. Equal versions reach no network at all, and an installed semver prerelease (a hand-pushed dev build) is never replaced without `Force`. `TestEnsureInstalled_SameVersion_NoNetwork_ResultNone`, `TestEnsureInstalled_DifferentVersion_InstallsAndRepointsCurrent`, `TestEnsureInstalled_NpmFailure_LeavesCurrentUnchanged`, `TestEnsureInstalled_SmokeFailure_LeavesCurrentUnchanged`, `TestEnsureInstalled_DevVersionInstalled_KeptWithoutForce`, `TestEnsureInstalled_DevVersionInstalled_ReplacedWithForce`, `TestEnsureInstalled_Pruning_KeepsTwoAndTheLiveVersion`. |
 | MD-15 | The unit starts at boot on its own (`WantedBy=multi-user.target`), independently of `zcp init` — measured on `z3-eval`: `active` at 16:45:12, the zcp binary replaced by `install.sh` at 16:45:14, `zcp init` later still. So it serves whatever was on disk at boot, and `zcp init` restarts an ALREADY-EXISTING unit whenever it replaced the bundle or rewrote the env contract; a unit it created in the same run is left alone, since `zsc unit create` starts it. `TestRun_Mate_UpdatedBundle_RestartsExistingUnit`, `TestRun_Mate_ChangedEnvContract_RestartsExistingUnit`, `TestRun_Mate_UnchangedBundle_DoesNotRestart`, `TestRun_Mate_FirstBoot_DoesNotRestartFreshUnit`. |
 | MD-16 | Every flag in `ServeArgv` belongs to contract 1's flag list (C-2), asserted on the zcp side against a literal list and on the fork side by CI against `mate serve --help`; the env contract's key set is exactly `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}`; a malformed `ZCP_MATE_ALLOWED_ORIGINS` is never written and never fails init. `TestServeArgv_FlagsAreContract1`, `TestEnvContract_KeysAreTheSpecList`, `TestValidateAllowedOrigins`, `TestRun_Mate_InvalidAllowedOrigins_NotWritten_InitContinues`; fork: `serve-contract.test.ts`. |
-| MD-17 | `zcp mate status --json` and `zcp mate update` share `DesiredRelease()` with `zcp init`; `status` never installs, `update` restarts the unit only after a successful activation, and both answer JSON a caller can act on without parsing prose. `TestMateStatus_*`, `TestMateUpdate_*`. |
+| MD-17 | `zcp mate status --json` and `zcp mate update` share `DesiredRelease()` with `zcp init`; `status` never installs, `update` restarts the unit only after a successful activation, and both answer JSON a caller can act on without parsing prose; `status --refresh` bypasses the manifest cache (§2.9 step 5). `TestMateStatus_*`, `TestMateUpdate_*`, `TestRunMateStatus_Refresh_*`. |
 
 ---
 
@@ -622,6 +622,18 @@ else about "is there a newer Mate" is answered by zcp and merely displayed:
    socket to come back exactly as "Restart to install" does today (`restartAndVerifyMate`), with
    the descriptor's `serverVersion` as the proof. Running threads stop; the client says so before
    the click. There is no container restart in this path.
+5. **One check: Check for updates.** The status behind the line is cache-served twice over —
+   zcp keeps the manifest an hour, the server re-reads status hourly — so a release just published
+   is invisible for up to two hours. The Mate menu therefore always offers "Check for updates"
+   wherever `capabilities.mateUpdate` is true; it calls `zerops.mate.checkUpdate` (read scope,
+   never operate), whose handler runs `zcp mate status --json --refresh` — the same reader with
+   the manifest cache bypassed — stores the answer as the descriptor's `update` and returns it, so
+   the line and the verb repaint at once. The client still compares nothing (MU-1).
+6. **Capabilities gate every Zerops RPC.** A surface that needs a server-side feature reads it
+   from the descriptor's `capabilities` and never sends the RPC when the flag is absent — the
+   version-skew rule the thread commands already follow. The data console is `capabilities.dataConsole`;
+   without it the Data surface shows one line ("This Mate doesn't include the data console yet")
+   with the update line and verb from step 3–4 beside it, instead of a defect from an older server.
 
 ### Invariants
 
