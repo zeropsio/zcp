@@ -63,6 +63,12 @@ type fakeAccount struct {
 	nextTok  int
 	tokens   map[string]bool // tokenID -> still valid (minted, not revoked)
 	requests []string        // "METHOD path", in order
+
+	// mintForbiddenCode, when non-empty, makes every integration-token
+	// mint POST answer 403 with this apiCode instead of minting — used to
+	// simulate ZCP_FARM_ACCOUNT_TOKEN being an integration token without
+	// delegation (TestFarmRun_MintForbidden_AbortsBeforeAnyProject).
+	mintForbiddenCode string
 }
 
 type fakeProject struct{ id, name string }
@@ -166,6 +172,14 @@ func (f *fakeAccount) handle(w http.ResponseWriter, r *http.Request) {
 
 	case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/client/"+f.clientID+"/integration-token":
 		f.mu.Lock()
+		forbiddenCode := f.mintForbiddenCode
+		f.mu.Unlock()
+		if forbiddenCode != "" {
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprintf(w, `{"error":{"code":%q,"message":"forbidden"}}`, forbiddenCode)
+			return
+		}
+		f.mu.Lock()
 		f.nextTok++
 		tokID := fmt.Sprintf("tok-%d", f.nextTok)
 		f.tokens[tokID] = true
@@ -179,6 +193,31 @@ func (f *fakeAccount) handle(w http.ResponseWriter, r *http.Request) {
 		delete(f.tokens, tokID)
 		f.mu.Unlock()
 		fmt.Fprint(w, `{"success":true}`)
+		return
+
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/rest/public/project/") && strings.HasSuffix(r.URL.Path, "/service-stack/import"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/rest/public/project/"), "/service-stack/import")
+		f.mu.Lock()
+		p, ok := f.projects[id]
+		f.mu.Unlock()
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var body struct {
+			Yaml string `json:"yaml"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			f.t.Errorf("fakeAccount: decode service import body: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if !strings.Contains(body.Yaml, "hostname: zcp") {
+			f.t.Errorf("fakeAccount: service import yaml has no zcp service:\n%s", body.Yaml)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		fmt.Fprintf(w, `{"projectId":%q,"projectName":%q,"serviceStacks":[{"id":"svc-1","name":"zcp"}]}`, p.id, p.name)
 		return
 
 	case strings.HasPrefix(r.URL.Path, "/api/rest/public/project/"):
@@ -313,6 +352,16 @@ func (p panicClient) CreateAndImportProject(context.Context, string) (*platform.
 	return nil, errUnexpectedPlatformCall
 }
 
+func (p panicClient) ImportServiceStack(context.Context, string, string) (*platform.ImportResult, error) {
+	p.t.Fatal("unexpected ImportServiceStack call")
+	return nil, errUnexpectedPlatformCall
+}
+
+func (p panicClient) MintProjectScopedToken(context.Context, string, string, string) (platform.MintedToken, error) {
+	p.t.Fatal("unexpected MintProjectScopedToken call")
+	return platform.MintedToken{}, errUnexpectedPlatformCall
+}
+
 func (p panicClient) GetProject(context.Context, string) (*platform.Project, error) {
 	p.t.Fatal("unexpected GetProject call")
 	return nil, errUnexpectedPlatformCall
@@ -415,6 +464,125 @@ func TestFarmRun_CreatesPrefixedProjects_AndWritesManifest(t *testing.T) {
 		if strings.Contains(entry, "sk-ant-farm-account") {
 			t.Errorf("request log entry %q suggests an account token leaked into a request", entry)
 		}
+	}
+}
+
+// TestFarmRun_CreatesShellMintsTokenThenImportsService_InOrder pins the
+// brief's two-step run-project creation shape (docs/spec-eval-farm.md §2.1
+// FM-10): for each run, the account POST order is exactly project/import
+// (empty services), then integration-token (mint), then
+// project/{id}/service-stack/import — in that order — and the manifest
+// records the minted run token's id, never its value.
+func TestFarmRun_CreatesShellMintsTokenThenImportsService_InOrder(t *testing.T) {
+	t.Parallel()
+
+	const clientID = "client-order"
+	f := newControllerFixture(t, clientID)
+	account, client, fake, sink := f.account, f.client, f.s3, f.sink
+
+	batch := "batch-order"
+	scenarios := []ScenarioRun{{ID: "recipe-a"}}
+	seedSettledRun(t, fake, batch+"-recipe-a", "recipe-a", ResultPassed)
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", ScenariosDigest: "scen-sha",
+		Scenarios: scenarios, OAuthToken: "oauth-farm-token",
+		Sink:         Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:    time.Second,
+		PollInterval: time.Millisecond,
+	}
+
+	if _, err := RunBatch(context.Background(), client, sink, opts); err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+
+	var requestOrder []string
+	for _, r := range account.requestLog() {
+		switch {
+		case r == "POST /api/rest/public/client/"+clientID+"/project/import":
+			requestOrder = append(requestOrder, "create")
+		case r == "POST /api/rest/public/client/"+clientID+"/integration-token":
+			requestOrder = append(requestOrder, "mint")
+		case strings.HasPrefix(r, "POST /api/rest/public/project/") && strings.HasSuffix(r, "/service-stack/import"):
+			requestOrder = append(requestOrder, "import-service")
+		}
+	}
+	want := []string{"create", "mint", "import-service"}
+	if len(requestOrder) != len(want) {
+		t.Fatalf("request order = %v, want %v", requestOrder, want)
+	}
+	for i, step := range want {
+		if requestOrder[i] != step {
+			t.Errorf("request order[%d] = %q, want %q (full order: %v)", i, requestOrder[i], step, requestOrder)
+		}
+	}
+
+	manifest, err := GetManifest(context.Background(), sink, batch)
+	if err != nil {
+		t.Fatalf("GetManifest: %v", err)
+	}
+	if len(manifest.Runs) != 1 {
+		t.Fatalf("manifest.Runs = %v, want 1 entry", manifest.Runs)
+	}
+	if manifest.Runs[0].RunTokenID == "" {
+		t.Errorf("manifest.Runs[0].RunTokenID empty, want the minted run token's id")
+	}
+	if strings.Contains(manifest.Runs[0].RunTokenID, "launch-secret") {
+		t.Errorf("manifest.Runs[0].RunTokenID = %q looks like a token VALUE, not an id", manifest.Runs[0].RunTokenID)
+	}
+}
+
+// TestFarmRun_MintForbidden_AbortsBeforeAnyProject pins the brief's rollback
+// behavior: when the run-token mint comes back 403 (the minting credential
+// is an integration token, not a personal access token), RunBatch rolls
+// back the shell project it just created for that run, aborts the whole
+// batch (no further scenarios are scheduled), and returns an error whose
+// chain carries platform.ErrDelegationUnavailable so cmd/zcp can print the
+// one-line fix.
+func TestFarmRun_MintForbidden_AbortsBeforeAnyProject(t *testing.T) {
+	t.Parallel()
+
+	const clientID = "client-forbidden"
+	f := newControllerFixture(t, clientID)
+	account, client, fake, sink := f.account, f.client, f.s3, f.sink
+	// Mirrors platform.apiCodeDelegationUnavailableLegacy — the fake can't
+	// import the unexported platform const, so the literal is pinned here
+	// against the same live-verified apiCode the brief names.
+	account.mintForbiddenCode = "notAllowedForIntegrationToken"
+
+	batch := "batch-forbidden"
+	scenarios := []ScenarioRun{{ID: "recipe-a"}, {ID: "recipe-b"}}
+	for _, sc := range scenarios {
+		seedSettledRun(t, fake, batch+"-"+sc.ID, sc.ID, ResultPassed)
+	}
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", ScenariosDigest: "scen-sha",
+		Scenarios: scenarios, OAuthToken: "oauth-farm-token",
+		Sink:         Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:    time.Second,
+		PollInterval: time.Millisecond,
+	}
+
+	_, err := RunBatch(context.Background(), client, sink, opts)
+	if err == nil {
+		t.Fatal("RunBatch: want error on mint-forbidden, got nil")
+	}
+	if !isScopedMintForbidden(err) {
+		t.Errorf("RunBatch error does not carry platform.ErrDelegationUnavailable: %v", err)
+	}
+
+	account.mu.Lock()
+	remaining := len(account.projects)
+	account.mu.Unlock()
+	if remaining != 0 {
+		t.Errorf("account has %d project(s) after mint-forbidden abort, want 0 (shell rolled back)", remaining)
+	}
+
+	if n := account.countMethod("POST", "/api/rest/public/client/"+clientID+"/project/import"); n != 1 {
+		t.Errorf("project/import calls = %d, want 1 (batch must abort after the first run's mint fails, never scheduling recipe-b)", n)
 	}
 }
 

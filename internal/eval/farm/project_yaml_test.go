@@ -23,6 +23,7 @@ func oauthDescriptor() RunDescriptor {
 			Secret: "sink-secret-dddd",
 		},
 		OAuthToken: "oauth-token-value",
+		RunToken:   "run-token-value",
 	}
 }
 
@@ -33,63 +34,107 @@ func launchDescriptor() RunDescriptor {
 	return d
 }
 
-// TestImportYAML_Descriptor_MatchesGolden pins the byte-stable render for
-// each launch variant against a hand-written golden (never dumped from the
-// generator's own first run — spec-eval-farm.md §2.1's verified shape,
-// FM-12's env names).
-func TestImportYAML_Descriptor_MatchesGolden(t *testing.T) {
+// TestImportYAML_SplitProjectAndService_CarriesRunToken pins the byte-stable
+// render of both halves against hand-written goldens (never dumped from the
+// generator's own first run — spec-eval-farm.md §2.1's verified two-step
+// shape, FM-12's env names): ProjectImportYAML carries the project block
+// only with an empty services list, ServiceImportYAML carries the zcp
+// service with ZCP_API_KEY set to the minted RunToken.
+func TestImportYAML_SplitProjectAndService_CarriesRunToken(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name   string
-		desc   RunDescriptor
-		golden string
+		name          string
+		desc          RunDescriptor
+		projectGolden string
+		serviceGolden string
 	}{
-		{"oauth-token", oauthDescriptor(), "testdata/project_yaml/oauth_token.golden.yaml"},
-		{"launch-key", launchDescriptor(), "testdata/project_yaml/launch_key.golden.yaml"},
+		{"oauth-token", oauthDescriptor(), "testdata/project_yaml/oauth_token.project.golden.yaml", "testdata/project_yaml/oauth_token.service.golden.yaml"},
+		{"launch-key", launchDescriptor(), "testdata/project_yaml/launch_key.project.golden.yaml", "testdata/project_yaml/launch_key.service.golden.yaml"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := ImportYAML(tc.desc)
+
+			gotProject, err := ProjectImportYAML(tc.desc)
 			if err != nil {
-				t.Fatalf("ImportYAML: %v", err)
+				t.Fatalf("ProjectImportYAML: %v", err)
 			}
-			want, err := os.ReadFile(tc.golden)
+			wantProject, err := os.ReadFile(tc.projectGolden)
 			if err != nil {
-				t.Fatalf("read golden %s: %v", tc.golden, err)
+				t.Fatalf("read golden %s: %v", tc.projectGolden, err)
 			}
-			if string(got) != string(want) {
-				t.Errorf("ImportYAML(%s) mismatch\n--- got ---\n%s\n--- want ---\n%s", tc.name, got, want)
+			if string(gotProject) != string(wantProject) {
+				t.Errorf("ProjectImportYAML(%s) mismatch\n--- got ---\n%s\n--- want ---\n%s", tc.name, gotProject, wantProject)
+			}
+			if strings.Contains(string(gotProject), "hostname:") {
+				t.Errorf("ProjectImportYAML(%s) must carry no services (services: []):\n%s", tc.name, gotProject)
+			}
+
+			gotService, err := ServiceImportYAML(tc.desc)
+			if err != nil {
+				t.Fatalf("ServiceImportYAML: %v", err)
+			}
+			wantService, err := os.ReadFile(tc.serviceGolden)
+			if err != nil {
+				t.Fatalf("read golden %s: %v", tc.serviceGolden, err)
+			}
+			if string(gotService) != string(wantService) {
+				t.Errorf("ServiceImportYAML(%s) mismatch\n--- got ---\n%s\n--- want ---\n%s", tc.name, gotService, wantService)
+			}
+			if !strings.Contains(string(gotService), `ZCP_API_KEY: "run-token-value"`) {
+				t.Errorf("ServiceImportYAML(%s) must carry the minted RunToken as ZCP_API_KEY:\n%s", tc.name, gotService)
 			}
 		})
 	}
 }
 
-// TestImportYAML_MissingOAuthToken_Rejected pins §2.4/FM-16 (spec commit
-// 79ced2cc): the agent credential is CLAUDE_CODE_OAUTH_TOKEN only — there is
-// no api-key mode and no fallback — so an empty OAuthToken is the one
-// failure mode ImportYAML rejects.
-func TestImportYAML_MissingOAuthToken_Rejected(t *testing.T) {
+// TestProjectImportYAML_MissingRunID_Rejected pins the one field the
+// project-creation half requires: RunID (it derives the project name).
+func TestProjectImportYAML_MissingRunID_Rejected(t *testing.T) {
 	t.Parallel()
 	d := oauthDescriptor()
-	d.OAuthToken = ""
-	_, err := ImportYAML(d)
-	if err == nil {
-		t.Fatal("ImportYAML with empty OAuthToken: want error, got nil")
+	d.RunID = ""
+	if _, err := ProjectImportYAML(d); err == nil {
+		t.Fatal("ProjectImportYAML with empty RunID: want error, got nil")
 	}
 }
 
-// TestImportYAML_NeverCarriesAccountKey_AndHostnameHasNoHyphen pins FM-15
-// (the generator has no field for the account-wide key, so it cannot leak
-// into the output) and the fixed hostname literal "zcp" (hostnames may not
-// contain hyphens, verified live — "zcp-farm-<runId>" cannot be the
-// hostname).
-func TestImportYAML_NeverCarriesAccountKey_AndHostnameHasNoHyphen(t *testing.T) {
+// TestServiceImportYAML_MissingOAuthToken_Rejected pins §2.4/FM-16 (spec
+// commit 79ced2cc): the agent credential is CLAUDE_CODE_OAUTH_TOKEN only —
+// there is no api-key mode and no fallback.
+func TestServiceImportYAML_MissingOAuthToken_Rejected(t *testing.T) {
 	t.Parallel()
 	d := oauthDescriptor()
-	got, err := ImportYAML(d)
+	d.OAuthToken = ""
+	if _, err := ServiceImportYAML(d); err == nil {
+		t.Fatal("ServiceImportYAML with empty OAuthToken: want error, got nil")
+	}
+}
+
+// TestServiceImportYAML_MissingRunToken_Rejected pins that the service half
+// cannot render without the project-scoped token the controller mints after
+// the project shell exists — a run project must never boot without its own
+// scoped ZCP_API_KEY.
+func TestServiceImportYAML_MissingRunToken_Rejected(t *testing.T) {
+	t.Parallel()
+	d := oauthDescriptor()
+	d.RunToken = ""
+	if _, err := ServiceImportYAML(d); err == nil {
+		t.Fatal("ServiceImportYAML with empty RunToken: want error, got nil")
+	}
+}
+
+// TestServiceImportYAML_NeverCarriesAccountKey_AndHostnameHasNoHyphen pins
+// FM-15 (the generator has no field for the account-wide key, so it cannot
+// leak into the output) and the fixed hostname literal "zcp" (hostnames may
+// not contain hyphens, verified live — "zcp-farm-<runId>" cannot be the
+// hostname).
+func TestServiceImportYAML_NeverCarriesAccountKey_AndHostnameHasNoHyphen(t *testing.T) {
+	t.Parallel()
+	d := oauthDescriptor()
+	got, err := ServiceImportYAML(d)
 	if err != nil {
-		t.Fatalf("ImportYAML: %v", err)
+		t.Fatalf("ServiceImportYAML: %v", err)
 	}
 	out := string(got)
 
@@ -120,20 +165,20 @@ func TestImportYAML_NeverCarriesAccountKey_AndHostnameHasNoHyphen(t *testing.T) 
 func TestImportYAML_ScenariosDigest_EmittedAsEnv(t *testing.T) {
 	t.Parallel()
 	d := oauthDescriptor()
-	got, err := ImportYAML(d)
+	got, err := ServiceImportYAML(d)
 	if err != nil {
-		t.Fatalf("ImportYAML: %v", err)
+		t.Fatalf("ServiceImportYAML: %v", err)
 	}
 	out := string(got)
 	const want = `ZCP_FARM_SCENARIOS_DIGEST: "scenarios-sha-ffff"`
 	if !strings.Contains(out, want) {
-		t.Errorf("ImportYAML output missing %q, got:\n%s", want, out)
+		t.Errorf("ServiceImportYAML output missing %q, got:\n%s", want, out)
 	}
 }
 
-// TestImportYAML_ValidatesAgainstImportSchema validates the generated YAML
-// against the embedded import-yml JSON Schema (internal/schema), reachable
-// offline.
+// TestImportYAML_ValidatesAgainstImportSchema validates both generated YAML
+// halves against the embedded import-yml JSON Schema (internal/schema),
+// reachable offline.
 func TestImportYAML_ValidatesAgainstImportSchema(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -145,12 +190,24 @@ func TestImportYAML_ValidatesAgainstImportSchema(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := ImportYAML(tc.desc)
+
+			gotProject, err := ProjectImportYAML(tc.desc)
 			if err != nil {
-				t.Fatalf("ImportYAML: %v", err)
+				t.Fatalf("ProjectImportYAML: %v", err)
 			}
-			if errs := schema.ValidateImportYAML(string(got)); len(errs) > 0 {
-				t.Errorf("ValidateImportYAML found %d error(s):", len(errs))
+			if errs := schema.ValidateImportYAML(string(gotProject)); len(errs) > 0 {
+				t.Errorf("ValidateImportYAML(project) found %d error(s):", len(errs))
+				for _, e := range errs {
+					t.Errorf("  %s", e.Error())
+				}
+			}
+
+			gotService, err := ServiceImportYAML(tc.desc)
+			if err != nil {
+				t.Fatalf("ServiceImportYAML: %v", err)
+			}
+			if errs := schema.ValidateImportYAML(string(gotService)); len(errs) > 0 {
+				t.Errorf("ValidateImportYAML(service) found %d error(s):", len(errs))
 				for _, e := range errs {
 					t.Errorf("  %s", e.Error())
 				}

@@ -3,6 +3,7 @@ package farm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,16 +48,26 @@ const DetailNoBundle = "no bundle"
 type PlatformClient interface {
 	ListProjects(ctx context.Context, clientID string) ([]platform.Project, error)
 	CreateAndImportProject(ctx context.Context, yaml string) (*platform.ImportResult, error)
+	// ImportServiceStack imports the run's zcp@1 service into an
+	// already-created project shell — §2.1 step 3, POST
+	// /project/{id}/service-stack/import.
+	ImportServiceStack(ctx context.Context, projectID, yaml string) (*platform.ImportResult, error)
 	GetProject(ctx context.Context, projectID string) (*platform.Project, error)
 	DeleteProject(ctx context.Context, projectID string) (*platform.Process, error)
 	MintDelegatedLaunchToken(ctx context.Context, name string) (platform.MintedToken, error)
+	// MintProjectScopedToken mints the run's own project-scoped ZCP_API_KEY
+	// (§2.1 step 2, platform.MintProjectScopedToken) — a REST-created
+	// zcp@1 service gets no first-class injected key the way the GUI's
+	// import route does.
+	MintProjectScopedToken(ctx context.Context, clientID, projectID, name string) (platform.MintedToken, error)
 	RevokeIntegrationToken(ctx context.Context, clientID, tokenID string) error
 }
 
 // accountClient adapts platform.ProjectAdminClient (CreateAndImportProject/
 // GetProject/DeleteProject) and *platform.ZeropsClient (ListProjects/
-// MintDelegatedLaunchToken/RevokeIntegrationToken) — both constructed from
-// the same account-wide token — to PlatformClient.
+// ImportServices/MintDelegatedLaunchToken/MintProjectScopedToken/
+// RevokeIntegrationToken) — both constructed from the same account-wide
+// token — to PlatformClient.
 type accountClient struct {
 	admin platform.ProjectAdminClient
 	z     *platform.ZeropsClient
@@ -70,6 +81,10 @@ func (a *accountClient) CreateAndImportProject(ctx context.Context, yaml string)
 	return a.admin.CreateAndImportProject(ctx, yaml)
 }
 
+func (a *accountClient) ImportServiceStack(ctx context.Context, projectID, yaml string) (*platform.ImportResult, error) {
+	return a.z.ImportServices(ctx, projectID, yaml)
+}
+
 func (a *accountClient) GetProject(ctx context.Context, projectID string) (*platform.Project, error) {
 	return a.admin.GetProject(ctx, projectID)
 }
@@ -80,6 +95,10 @@ func (a *accountClient) DeleteProject(ctx context.Context, projectID string) (*p
 
 func (a *accountClient) MintDelegatedLaunchToken(ctx context.Context, name string) (platform.MintedToken, error) {
 	return a.z.MintDelegatedLaunchToken(ctx, name)
+}
+
+func (a *accountClient) MintProjectScopedToken(ctx context.Context, clientID, projectID, name string) (platform.MintedToken, error) {
+	return a.z.MintProjectScopedToken(ctx, clientID, projectID, name)
 }
 
 func (a *accountClient) RevokeIntegrationToken(ctx context.Context, clientID, tokenID string) error {
@@ -220,6 +239,7 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 		LaunchTokenID string
 	}
 	var actives []activeRun
+	runTokenIDs := make(map[string]string, len(scheduled)) // runID -> minted run token id, for the manifest-evidence update below
 	for _, r := range scheduled {
 		var launchTokenID, launchKeyValue string
 		if r.Launch {
@@ -244,15 +264,70 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 			OAuthToken:      opts.OAuthToken,
 			LaunchKey:       launchKeyValue,
 		}
-		yamlBody, err := ImportYAML(desc)
+
+		// §2.1 step 1: create the empty project shell. The REST import
+		// route never injects a first-class ZCP_API_KEY the way the GUI's
+		// route does, so the service is imported in a later step once a
+		// project-scoped token exists to carry.
+		projectYAML, err := ProjectImportYAML(desc)
 		if err != nil {
 			continue
 		}
-		result, err := client.CreateAndImportProject(ctx, string(yamlBody))
+		result, err := client.CreateAndImportProject(ctx, string(projectYAML))
 		if err != nil {
 			continue
 		}
+		runProjectName := ProjectPrefix + r.RunID
+
+		// §2.1 step 2: mint the run's own project-scoped ZCP_API_KEY. A
+		// 403 here means the minting credential (ZCP_FARM_ACCOUNT_TOKEN)
+		// is itself an integration token — every other run would fail the
+		// same way, so this aborts the whole batch (after rolling back the
+		// shell project this run just created) instead of skipping just
+		// this run (brief: "a mint 403 aborts the batch before any project
+		// exists").
+		minted, err := client.MintProjectScopedToken(ctx, opts.ClientID, result.ProjectID, "farm-run-"+r.RunID)
+		if err != nil {
+			_ = Guard(ctx, client, result.ProjectID, runProjectName)
+			if isScopedMintForbidden(err) {
+				return nil, fmt.Errorf("farm run: mint run token for %s: %w", r.RunID, err)
+			}
+			continue
+		}
+		desc.RunToken = minted.Token
+
+		// §2.1 step 3: import the zcp service, now carrying the minted
+		// run token as ZCP_API_KEY.
+		serviceYAML, err := ServiceImportYAML(desc)
+		if err != nil {
+			_ = Guard(ctx, client, result.ProjectID, runProjectName)
+			continue
+		}
+		if _, err := client.ImportServiceStack(ctx, result.ProjectID, string(serviceYAML)); err != nil {
+			_ = Guard(ctx, client, result.ProjectID, runProjectName)
+			continue
+		}
+
+		runTokenIDs[r.RunID] = minted.TokenID
 		actives = append(actives, activeRun{scheduledRun: r, ProjectID: result.ProjectID, LaunchTokenID: launchTokenID})
+	}
+
+	// Record each minted run token's id (never the value, §3.4-style
+	// discipline) against its manifest entry — evidence for `gc`/`status`,
+	// never the registry (§1.4). This is a second write to the same
+	// manifest.json the pre-creation write above already produced; FM-22
+	// pins only that the FIRST write happens before any project exists,
+	// not that the manifest is written exactly once.
+	if len(runTokenIDs) > 0 {
+		for i := range manifestRuns {
+			if id, ok := runTokenIDs[manifestRuns[i].RunID]; ok {
+				manifestRuns[i].RunTokenID = id
+			}
+		}
+		manifest.Runs = manifestRuns
+		if err := PutManifest(ctx, sink, opts.Batch, manifest); err != nil {
+			return nil, fmt.Errorf("farm run: update manifest with run token ids: %w", err)
+		}
 	}
 
 	results := make([]RunResult, 0, len(actives))
@@ -302,6 +377,18 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 		return results, fmt.Errorf("farm run: write summary: %w", err)
 	}
 	return results, nil
+}
+
+// isScopedMintForbidden reports whether err is the typed platform error
+// MintProjectScopedToken returns when the minting credential is an
+// integration token without delegation (platform.ErrDelegationUnavailable —
+// the same code MintDelegatedLaunchToken uses for the identical platform
+// restriction). Brief: "on a 403 with either code the controller ... exits
+// nonzero BEFORE creating any project" — the cmd/zcp layer turns this into
+// the one-line fix message.
+func isScopedMintForbidden(err error) bool {
+	var pe *platform.PlatformError
+	return errors.As(err, &pe) && pe.Code == platform.ErrDelegationUnavailable
 }
 
 // findProjectByName looks up a project by exact name in the account's live

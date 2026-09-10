@@ -1,9 +1,14 @@
 // Package farm generates the disposable run-project import YAML the farm
-// controller feeds to CreateAndImportProject (docs/spec-eval-farm.md §2,
-// FM-10). A run project contains exactly one zcp@1 service named "zcp"
-// carrying the run descriptor and credentials as sensitive service envs,
-// plus an inline zeropsYaml boot sequence that fetches and starts the
-// wrapper. Nothing else exists in the project at creation time.
+// controller feeds to CreateAndImportProject/ImportServiceStack
+// (docs/spec-eval-farm.md §2, FM-10). A run project is created in two
+// steps: ProjectImportYAML creates an empty project shell (no services —
+// the REST import route never injects a first-class ZCP_API_KEY the way
+// the GUI's route does), then, once the controller has minted a
+// project-scoped run token, ServiceImportYAML imports the single zcp@1
+// service named "zcp" carrying the run descriptor and credentials —
+// including that minted token — as sensitive service envs, plus an inline
+// zeropsYaml boot sequence that fetches and starts the wrapper. Nothing
+// else exists in the project at creation time.
 package farm
 
 import (
@@ -22,10 +27,10 @@ type Sink struct {
 	Secret string
 }
 
-// RunDescriptor is the typed input to ImportYAML: everything a run project
-// needs to self-drive (FM-10, FM-12). It has no field for the account-wide
-// API key the controller uses to create/delete projects — that key never
-// enters a run project (FM-15).
+// RunDescriptor is the typed input to ProjectImportYAML/ServiceImportYAML:
+// everything a run project needs to self-drive (FM-10, FM-12). It has no
+// field for the account-wide API key the controller uses to create/delete
+// projects — that key never enters a run project (FM-15).
 type RunDescriptor struct {
 	BatchID         string
 	RunID           string
@@ -45,6 +50,11 @@ type RunDescriptor struct {
 	// LaunchKey, when non-empty, is the per-run ZCP_E2E_LAUNCH_KEY minted by
 	// the controller for launch scenarios only (§2.4).
 	LaunchKey string
+	// RunToken is the project-scoped ZCP_API_KEY the controller mints
+	// (platform.MintProjectScopedToken) after the project shell exists —
+	// required at ServiceImportYAML time only, since the project-creation
+	// step has no project id yet to scope a token to.
+	RunToken string
 }
 
 // ProjectName derives the run project's name from RunID — never passed in
@@ -55,12 +65,27 @@ func (d RunDescriptor) ProjectName() string { return "zcp-farm-" + d.RunID }
 // "zcp-farm-<runId>" cannot be the service hostname (verified live).
 const serviceHostname = "zcp"
 
-func (d RunDescriptor) validate() error {
+// validateCommon checks the fields both YAML halves require.
+func (d RunDescriptor) validateCommon() error {
 	if d.RunID == "" {
 		return fmt.Errorf("run descriptor: RunID required")
 	}
+	return nil
+}
+
+// validateService additionally requires the fields only ServiceImportYAML
+// needs — OAuthToken (§2.4/FM-16) and RunToken, which only exists once the
+// project shell has been created and the controller has minted a
+// project-scoped token for it.
+func (d RunDescriptor) validateService() error {
+	if err := d.validateCommon(); err != nil {
+		return err
+	}
 	if d.OAuthToken == "" {
 		return fmt.Errorf("run descriptor: OAuthToken required (§2.4 — CLAUDE_CODE_OAUTH_TOKEN is the run's sole credential)")
+	}
+	if d.RunToken == "" {
+		return fmt.Errorf("run descriptor: RunToken required (the project-scoped ZCP_API_KEY minted after the project shell exists)")
 	}
 	return nil
 }
@@ -71,12 +96,17 @@ type envKV struct {
 	Value string
 }
 
-// templateData is what importYAMLTemplate renders. EnvSecretsYAML is
-// pre-rendered in Go (not a template loop) so the byte layout is exactly
-// what buildEnvSecretsYAML produces — no template whitespace-trim ambiguity
-// to reason about when authoring the golden files by hand.
-type templateData struct {
-	ProjectName    string
+// projectTemplateData is what projectImportYAMLTemplate renders.
+type projectTemplateData struct {
+	ProjectName string
+}
+
+// serviceTemplateData is what serviceImportYAMLTemplate renders.
+// EnvSecretsYAML is pre-rendered in Go (not a template loop) so the byte
+// layout is exactly what buildEnvSecretsYAML produces — no template
+// whitespace-trim ambiguity to reason about when authoring the golden
+// files by hand.
+type serviceTemplateData struct {
 	Hostname       string
 	EnvSecretsYAML string
 }
@@ -98,16 +128,36 @@ func buildEnvSecretsYAML(entries []envKV) string {
 	return b.String()
 }
 
-// ImportYAML renders the run project's import YAML for d. Output is
-// byte-stable for a given descriptor (golden-file tested) — the same
-// descriptor always renders the same bytes, in the fixed envSecrets order
-// FM-12 lists, with LaunchKey appended only when non-empty.
-func ImportYAML(d RunDescriptor) ([]byte, error) {
-	if err := d.validate(); err != nil {
+// ProjectImportYAML renders the run project's shell-creation import YAML
+// for d — project settings only, no services (CreateAndImportProject,
+// §2.1 step 1). Output is byte-stable for a given descriptor (golden-file
+// tested).
+func ProjectImportYAML(d RunDescriptor) ([]byte, error) {
+	if err := d.validateCommon(); err != nil {
+		return nil, err
+	}
+
+	var buf bytes.Buffer
+	if err := projectImportYAMLTemplate.Execute(&buf, projectTemplateData{ProjectName: d.ProjectName()}); err != nil {
+		return nil, fmt.Errorf("render project import yaml: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+// ServiceImportYAML renders the run project's service-import YAML for d —
+// the single zcp@1 service carrying the run descriptor, credentials
+// (including the minted RunToken as ZCP_API_KEY), and boot sequence
+// (ImportServiceStack, §2.1 step 3). Output is byte-stable for a given
+// descriptor (golden-file tested) — the same descriptor always renders the
+// same bytes, in the fixed envSecrets order FM-12 lists, with LaunchKey
+// appended only when non-empty.
+func ServiceImportYAML(d RunDescriptor) ([]byte, error) {
+	if err := d.validateService(); err != nil {
 		return nil, err
 	}
 
 	envSecrets := []envKV{
+		{"ZCP_API_KEY", d.RunToken},
 		{"ZCP_VSCODE", "true"},
 		{"ZCP_FARM_BATCH", d.BatchID},
 		{"ZCP_FARM_RUN", d.RunID},
@@ -125,15 +175,14 @@ func ImportYAML(d RunDescriptor) ([]byte, error) {
 		envSecrets = append(envSecrets, envKV{"ZCP_E2E_LAUNCH_KEY", d.LaunchKey})
 	}
 
-	data := templateData{
-		ProjectName:    d.ProjectName(),
+	data := serviceTemplateData{
 		Hostname:       serviceHostname,
 		EnvSecretsYAML: buildEnvSecretsYAML(envSecrets),
 	}
 
 	var buf bytes.Buffer
-	if err := importYAMLTemplate.Execute(&buf, data); err != nil {
-		return nil, fmt.Errorf("render import yaml: %w", err)
+	if err := serviceImportYAMLTemplate.Execute(&buf, data); err != nil {
+		return nil, fmt.Errorf("render service import yaml: %w", err)
 	}
 	return buf.Bytes(), nil
 }
@@ -146,11 +195,14 @@ func yamlDQ(s string) string {
 	return `"` + s + `"`
 }
 
-var importYAMLTemplate = template.Must(template.New("importYAML").Parse(`project:
+var projectImportYAMLTemplate = template.Must(template.New("projectImportYAML").Parse(`project:
   name: {{.ProjectName}}
   tags: [zcp-farm, disposable]
   sshIsolation: "vpn project"
-services:
+services: []
+`))
+
+var serviceImportYAMLTemplate = template.Must(template.New("serviceImportYAML").Parse(`services:
   - hostname: {{.Hostname}}
     type: zcp@1
     maxContainers: 1

@@ -29,6 +29,13 @@ type ManifestRun struct {
 	RunID       string `json:"runId"`
 	Scenario    string `json:"scenario"`
 	ProjectName string `json:"projectName"`
+	// RunTokenID is the id (never the value) of the project-scoped
+	// ZCP_API_KEY the controller mints for this run (§2.1 FM-10,
+	// platform.MintProjectScopedToken) — empty until the mint succeeds.
+	// Deleting the run's project deletes the token automatically, so
+	// there is no matching revoke step to track (unlike LaunchTokenID on
+	// SummaryRun).
+	RunTokenID string `json:"runTokenId,omitempty"`
 }
 
 // BatchSummary is batches/<batch>/summary.json, written by `farm run` after

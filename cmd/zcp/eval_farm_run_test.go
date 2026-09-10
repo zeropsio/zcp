@@ -92,6 +92,113 @@ func TestEvalFarmRun_Detach_ReexecsAndPrintsLogPath(t *testing.T) {
 	}
 }
 
+// TestEvalFarmRun_IntegrationTokenPreflight_NamesTheFix pins the brief's
+// preflight message: when the run-token mint comes back 403 (the minting
+// credential — ZCP_FARM_ACCOUNT_TOKEN — is itself an integration token
+// without delegation), `zcp eval farm run` prints one line naming the exact
+// fix and exits nonzero, rather than a generic "farm run: ..." error.
+func TestEvalFarmRun_IntegrationTokenPreflight_NamesTheFix(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+	t.Chdir(repoRoot)
+
+	const clientID = "client-preflight-1"
+	restSrv := newMintForbiddenFakeAccountServer(t, clientID)
+	s3Srv := newStatusFakeS3Server(t, "zcp-farm")
+
+	t.Setenv("ZCP_FARM_ACCOUNT_TOKEN", "integration-token-value")
+	t.Setenv("ZCP_FARM_CLIENT_ID", clientID)
+	t.Setenv("ZCP_FARM_EVALUATOR_SHA", "eval-sha")
+	t.Setenv("ZCP_API_HOST", restSrv.URL)
+	t.Setenv("ZCP_FARM_S3_URL", s3Srv.URL)
+	t.Setenv("ZCP_FARM_S3_BUCKET", "zcp-farm")
+	t.Setenv("ZCP_FARM_S3_KEY", "sink-key")
+	t.Setenv("ZCP_FARM_S3_SECRET", "sink-secret")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-farm-token")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	var exitCode int
+	_, stderr := captureOutput(t, func() {
+		exitCode = runFarmRun([]string{
+			"--candidate", "cand-sha", "--scenarios", "scen-sha",
+			"--set", "api-node-postgres-classic-dev", "--batch", "batch-preflight-1",
+		})
+	})
+
+	if exitCode != 1 {
+		t.Errorf("runFarmRun exit code = %d, want 1 (stderr: %s)", exitCode, stderr)
+	}
+	const want = "ZCP_FARM_ACCOUNT_TOKEN must be a personal access token: integration tokens cannot mint run tokens"
+	if !strings.Contains(stderr, want) {
+		t.Errorf("stderr = %q, want it to contain %q", stderr, want)
+	}
+}
+
+// newMintForbiddenFakeAccountServer serves exactly the account-wide paths a
+// single-run farm run exercises up to (and including) the token mint:
+// user/info, project/import (create succeeds), and integration-token (mint
+// always answers 403 notAllowedForIntegrationToken — simulating
+// ZCP_FARM_ACCOUNT_TOKEN being an integration token). Also serves the
+// per-project GET/DELETE the rollback (farm.Guard) issues after the mint
+// fails.
+func newMintForbiddenFakeAccountServer(t *testing.T, clientID string) *httptest.Server {
+	t.Helper()
+	var mu sync.Mutex
+	projects := map[string]string{} // id -> name
+	nextID := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/rest/public/user/info":
+			fmt.Fprintf(w, `{"id":"user-1","email":"farm@example.com","fullName":"Farm","clientUserList":[{"id":"cu1","clientId":%q,"userId":"user-1"}]}`, clientID)
+
+		case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/client/"+clientID+"/project/import":
+			mu.Lock()
+			nextID++
+			id := fmt.Sprintf("proj-%d", nextID)
+			name := farm.ProjectPrefix + "batch-preflight-1-api-node-postgres-classic-dev"
+			projects[id] = name
+			mu.Unlock()
+			fmt.Fprintf(w, `{"projectId":%q,"projectName":%q,"serviceStacks":[]}`, id, name)
+
+		case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/client/"+clientID+"/integration-token":
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `{"error":{"code":"notAllowedForIntegrationToken","message":"forbidden"}}`)
+
+		case strings.HasPrefix(r.URL.Path, "/api/rest/public/project/"):
+			id := strings.TrimPrefix(r.URL.Path, "/api/rest/public/project/")
+			mu.Lock()
+			name, ok := projects[id]
+			mu.Unlock()
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			switch r.Method {
+			case http.MethodGet:
+				fmt.Fprintf(w, `{"id":%q,"name":%q,"status":"ACTIVE"}`, id, name)
+			case http.MethodDelete:
+				mu.Lock()
+				delete(projects, id)
+				mu.Unlock()
+				fmt.Fprintf(w, `{"id":"proc-%s","status":"FINISHED"}`, id)
+			default:
+				t.Errorf("mintForbiddenFakeAccount: unexpected method %s %s", r.Method, r.URL.Path)
+				w.WriteHeader(http.StatusNotFound)
+			}
+
+		default:
+			t.Errorf("mintForbiddenFakeAccount: unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
 // ---------------------------------------------------------------------------
 // Minimal loopback fakes for TestEvalFarmStatus_RecomputesFromBucketAndProjects
 // — this file is package main (cmd/zcp), so it cannot reach internal/eval/
