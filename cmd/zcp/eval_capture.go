@@ -23,17 +23,24 @@ const evalCaptureModeRaw = "raw"
 // environment, so it never satisfies required mode.
 const evalCaptureOwnerEnv = "ZCP_EVAL_CAPTURE_OWNER"
 
-func parseEvalCaptureArgs(args []string) (clean []string, requested bool, err error) {
+// parseEvalCaptureArgs also recognizes --capture-dir <dir> — the product
+// seam for recovering the capture window's directory without grepping
+// child.log (D5; docs/spec-eval-farm.md's wrapper stop-gap this flag
+// replaces). It is independent of --capture raw's presence: a caller may
+// pass --capture-dir alongside --capture raw, or standalone (the directory
+// then only takes effect once --capture raw is also given, since it is
+// forwarded as capture raw's own --output-dir).
+func parseEvalCaptureArgs(args []string) (clean []string, requested bool, captureDir string, err error) {
 	clean = make([]string, 0, len(args))
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		if arg == "--capture" {
 			if index+1 >= len(args) {
-				return nil, false, errors.New("--capture requires mode raw")
+				return nil, false, "", errors.New("--capture requires mode raw")
 			}
 			mode := args[index+1]
 			if mode != evalCaptureModeRaw {
-				return nil, false, fmt.Errorf("unsupported eval capture mode %q; only raw is available", mode)
+				return nil, false, "", fmt.Errorf("unsupported eval capture mode %q; only raw is available", mode)
 			}
 			requested = true
 			index++
@@ -41,14 +48,26 @@ func parseEvalCaptureArgs(args []string) (clean []string, requested bool, err er
 		}
 		if mode, found := strings.CutPrefix(arg, "--capture="); found {
 			if mode != evalCaptureModeRaw {
-				return nil, false, fmt.Errorf("unsupported eval capture mode %q; only raw is available", mode)
+				return nil, false, "", fmt.Errorf("unsupported eval capture mode %q; only raw is available", mode)
 			}
 			requested = true
 			continue
 		}
+		if arg == "--capture-dir" {
+			if index+1 >= len(args) {
+				return nil, false, "", errors.New("--capture-dir requires a directory")
+			}
+			captureDir = args[index+1]
+			index++
+			continue
+		}
+		if dir, found := strings.CutPrefix(arg, "--capture-dir="); found {
+			captureDir = dir
+			continue
+		}
 		clean = append(clean, arg)
 	}
-	return clean, requested, nil
+	return clean, requested, captureDir, nil
 }
 
 // runEvalWithOptionalScopedCapture intercepts only explicit --capture raw.
@@ -62,7 +81,7 @@ func runEvalWithOptionalScopedCapture(args []string) (handled bool, exitCode int
 	if len(args) >= 2 && args[0] == "behavioral" && args[1] == "report" {
 		return false, 0
 	}
-	clean, requested, err := parseEvalCaptureArgs(args)
+	clean, requested, captureDir, err := parseEvalCaptureArgs(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "eval capture: %v\n", err)
 		return true, 2
@@ -107,8 +126,12 @@ func runEvalWithOptionalScopedCapture(args []string) (handled bool, exitCode int
 	command := make([]string, 0, len(clean)+2)
 	command = append(command, executable, "eval")
 	command = append(command, clean...)
-	wrapperArgs := make([]string, 0, 3+len(command))
-	wrapperArgs = append(wrapperArgs, "--label", label, "--")
+	wrapperArgs := make([]string, 0, 5+len(command))
+	wrapperArgs = append(wrapperArgs, "--label", label)
+	if captureDir != "" {
+		wrapperArgs = append(wrapperArgs, "--output-dir", captureDir)
+	}
+	wrapperArgs = append(wrapperArgs, "--")
 	wrapperArgs = append(wrapperArgs, command...)
 	return true, runEvalScopedCaptureRaw(wrapperArgs)
 }

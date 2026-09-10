@@ -2,6 +2,8 @@ package eval
 
 import (
 	"os"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -197,4 +199,107 @@ func writeScenarioFixture(t *testing.T, content string) string {
 		t.Fatalf("write scenario fixture: %v", err)
 	}
 	return path
+}
+
+// TestScenarioRender_CoversEveryVerificationString is a reflect-based drift
+// guard (docs/spec-eval-farm.md §2.2 FM-12): it walks VerificationConfig,
+// fills every string / []string leaf (skipping the Reach field — FM-32
+// exists only to be rejected at parse, never reaches Render) with
+// "{{runId}}", calls Scenario.Render, and asserts no "{{" token survives
+// anywhere in the rendered VerificationConfig. A field added to
+// VerificationConfig later without matching Render coverage
+// (renderVerificationConfig, scenario_template.go) fails this test instead
+// of silently shipping an unsubstituted placeholder.
+func TestScenarioRender_CoversEveryVerificationString(t *testing.T) {
+	t.Parallel()
+
+	cfg := &VerificationConfig{}
+	fillTemplateTokens(reflect.ValueOf(cfg))
+
+	sc := &Scenario{Prompt: "noop", Verification: cfg}
+	if err := sc.Render(TemplateValues{RunID: "run-drift", ProjectID: "proj-drift"}); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	if leaks := findUnrenderedTokens(reflect.ValueOf(sc.Verification)); len(leaks) > 0 {
+		t.Errorf("unrendered {{...}} tokens survived Render — add coverage in renderVerificationConfig: %v", leaks)
+	}
+}
+
+// fillTemplateTokens recursively walks v (a struct, pointer, or slice) and
+// sets every string field/element to "{{runId}}" and every []string
+// field/element's entries to the same, allocating nil pointers and
+// zero-length slices of one element as needed to reach every leaf. The
+// VerificationConfig.Reach field (*yaml.Node, FM-32: exists only to be
+// rejected at parse) is skipped — Render never touches it.
+func fillTemplateTokens(v reflect.Value) {
+	switch v.Kind() { //nolint:exhaustive // walks a generic reflect.Value; every non-container/string kind falls through as a no-op leaf
+	case reflect.Ptr:
+		if v.IsNil() {
+			if !v.CanSet() {
+				return
+			}
+			v.Set(reflect.New(v.Type().Elem()))
+		}
+		fillTemplateTokens(v.Elem())
+	case reflect.Struct:
+		t := v.Type()
+		for i := 0; i < v.NumField(); i++ {
+			field := v.Field(i)
+			name := t.Field(i).Name
+			if !field.CanSet() || name == "Reach" {
+				continue
+			}
+			switch field.Kind() { //nolint:exhaustive // only string/slice/ptr/struct leaves carry template tokens; every other kind is a no-op
+			case reflect.String:
+				field.SetString("{{runId}}")
+			case reflect.Slice:
+				if field.Type().Elem().Kind() == reflect.String {
+					field.Set(reflect.ValueOf([]string{"{{runId}}"}))
+					continue
+				}
+				if field.Len() == 0 {
+					field.Set(reflect.MakeSlice(field.Type(), 1, 1))
+				}
+				for j := 0; j < field.Len(); j++ {
+					fillTemplateTokens(field.Index(j))
+				}
+			case reflect.Ptr, reflect.Struct:
+				fillTemplateTokens(field)
+			}
+		}
+	}
+}
+
+// findUnrenderedTokens recursively walks v and returns every string leaf
+// that still contains "{{", for the drift test's assertion.
+func findUnrenderedTokens(v reflect.Value) []string {
+	var leaks []string
+	var walk func(reflect.Value)
+	walk = func(v reflect.Value) {
+		switch v.Kind() { //nolint:exhaustive // walks a generic reflect.Value; every non-container/string kind falls through as a no-op leaf
+		case reflect.Ptr:
+			if !v.IsNil() {
+				walk(v.Elem())
+			}
+		case reflect.Struct:
+			t := v.Type()
+			for i := 0; i < v.NumField(); i++ {
+				if t.Field(i).Name == "Reach" {
+					continue
+				}
+				walk(v.Field(i))
+			}
+		case reflect.Slice:
+			for j := 0; j < v.Len(); j++ {
+				walk(v.Index(j))
+			}
+		case reflect.String:
+			if strings.Contains(v.String(), "{{") {
+				leaks = append(leaks, v.String())
+			}
+		}
+	}
+	walk(v)
+	return leaks
 }
