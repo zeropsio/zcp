@@ -92,7 +92,7 @@ checked," not "checked and wrong." §5 pins this into the verdict vocabulary.
 ### 1.3 Redaction before upload
 
 **FM-7.** Every value the wrapper holds that is a credential — the agent
-credential (`ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`), `ZCP_API_KEY`,
+credential (`CLAUDE_CODE_OAUTH_TOKEN`), `ZCP_API_KEY`,
 the sink key, and a minted `ZCP_E2E_LAUNCH_KEY` when the scenario uses one —
 is redacted from `runs/<runId>/results/` and `runs/<runId>/capture/` before
 either is uploaded, not after. The redaction pass runs inside the wrapper, in
@@ -112,7 +112,7 @@ rows) is not secret and is not redacted beyond FM-7's credential values.
 
 **FM-9.** `batches/<batch>/manifest.json`, written at `farm run` start,
 records: batch id, the scenario set (`--set gate|all|<ids>`), the candidate
-digest, the evaluator digest, the credential mode (FM-19), and the run ids the
+digest, the evaluator digest, and the run ids the
 batch created. `batches/<batch>/summary.json`, written at the end, records
 per-run acceptance (`passed`/`failed`/`blocked`/`not-run`) and whether the
 batch's own budget or the operator's Ctrl-C ended it. Neither file is the
@@ -176,8 +176,8 @@ Wrapper steps, in order:
 1. download `evaluators/<sha>/zcp`, `candidates/<sha>/zcp`, and the scenario
    tree from the bucket; verify both binary digests against
    `ZCP_FARM_EVALUATOR_SHA`/`ZCP_FARM_CANDIDATE_SHA` before running either;
-2. write the private Claude home from the one credential it was given
-   (§2.4) — never both credential kinds in one project;
+2. write the private Claude home carrying `CLAUDE_CODE_OAUTH_TOKEN` (§2.4);
+   refuse to start if `ANTHROPIC_API_KEY` is set in the environment;
 3. run the evaluator's existing single-run binding unchanged:
    `<evaluator> eval behavioral run --candidate <candidate> --candidate-sha256 <sha> --project-id $projectId --ack-disposable-project yes --capture raw --id <scenario> …`
    (`spec-testing-architecture.md §10.4`'s binding, unmodified);
@@ -197,7 +197,7 @@ and where the result goes.
 | Credential | Source | Scope | Never |
 |---|---|---|---|
 | `ZCP_API_KEY` | platform-injected into `zcp@1` at import | this run project only: seed, preflight, verify | leaves the project |
-| batch credential — `ANTHROPIC_API_KEY` (farm key, spend-limited; default) **or** `CLAUDE_CODE_OAUTH_TOKEN` (single-interactive-run option) | farm config on the farm host | model requests for this run's agent invocations | both kinds in one project — Claude Code lets an API key shadow an OAuth profile, so carrying both makes the credential mode ambiguous |
+| agent credential — `CLAUDE_CODE_OAUTH_TOKEN` (the farm's long-lived `claude setup-token`; the ONLY supported mode, no API-key fallback — owner decision 2026-09-10) | farm config on the farm host | model requests for this run's agent invocations | any `ANTHROPIC_API_KEY` in a run project: Claude Code lets an API key shadow the OAuth profile, so the wrapper refuses to start when one is present |
 | sink key | farm config on the farm host | the bucket only | the run's task prompt, transcript, or any uploaded object (FM-7) |
 | `ZCP_E2E_LAUNCH_KEY` | minted by the controller per run (NO_ACCESS + `canCreateProjects`), launch scenarios only | creating this run's prod project | reused across runs; revoked after the run's projects are deleted (FM-24) |
 
@@ -208,10 +208,11 @@ a run project. A run project's own `ZCP_API_KEY`
 is scoped by the platform to that project and cannot create or delete
 projects.
 
-**FM-16.** Every bundle records which credential mode (`api-key` |
-`oauth-token`) this run used, the model observed on the wire, and the
-provider-reported cost. `report`/`coverage` never merge runs from different
-credential modes into one population.
+**FM-16.** Every bundle records the model observed on the wire and the
+provider-reported usage. The agent credential is always the farm OAuth token
+(presence recorded as `credential: oauth-token`, never the value); a bundle
+produced with an `ANTHROPIC_API_KEY` present is `blocked` (FM-7 redaction
+still applies to it).
 
 ---
 
