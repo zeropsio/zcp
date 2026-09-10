@@ -79,38 +79,42 @@ func wrapperScriptPath(t *testing.T) string {
 
 // stubEvaluatorScript is the offline double for the pinned evaluator
 // binary the wrapper downloads and execs. It records its own argv (so
-// TestWrapper_PassesWorkDirUnderRunDir can assert on --work-dir; the real
-// binding's exact flags are otherwise covered by the CLI-layer tests in
-// cmd/zcp) and reads the run descriptor from its inherited environment.
+// TestWrapper_PassesWorkDirUnderRunDir can assert on --work-dir and
+// TestWrapper_PassesCaptureDirUnderRunDir can assert on --capture-dir; the
+// real binding's exact flags are otherwise covered by the CLI-layer tests
+// in cmd/zcp) and reads the run descriptor from its inherited environment.
 //
 // Sequence, unconditionally: drop a side-effect marker (so a test can prove
 // this script never ran), record argv, touch a marker under --work-dir if
 // one was passed (D3), write results/<scenario>/{meta.json,
 // verification.json} and capture/manifest.json — each containing a literal
 // secret value, to prove redaction — keep an unredacted copy outside
-// results/capture for the test to diff against, write a fake capture window
-// under $HOME/.local/state/zcp/captures/ and print the "records:"/
-// "manifest:" lines the way the real evaluator's `--capture raw` does
-// (cmd/zcp/capture.go), so the wrapper's D5 recovery step has something to
-// find and copy into $RUNDIR/capture, then print the three dimension lines,
-// then end per STUB_MODE: "ok" (default) exits 0, "fail" prints a failed
-// Task line and exits 1, "hang" spawns a `sleep 300` grandchild IN ITS OWN
-// NEW PROCESS GROUP (mirroring the real sub-evaluator's observed behavior,
-// D6 — via a one-line perl setpgrp(0,0)+exec, falling back to plain
-// backgrounding if perl is unavailable), recording its pid to
-// ./grandchild.pid, then sleeps 30s itself so a test can kill -9 the main
-// stub process and observe the grandchild die too even though a
-// pgid-only signal would miss it.
+// results/capture for the test to diff against, write a fake capture
+// window directly under the directory given by --capture-dir (the way the
+// real evaluator's `--capture raw --capture-dir <dir>` now does — the
+// product seam S5b landed; cmd/zcp/eval_capture.go), then print the three
+// dimension lines, then end per STUB_MODE: "ok" (default) exits 0, "fail"
+// prints a failed Task line and exits 1, "hang" spawns a `sleep 300`
+// grandchild IN ITS OWN NEW PROCESS GROUP (mirroring the real
+// sub-evaluator's observed behavior, D6 — via a one-line perl
+// setpgrp(0,0)+exec, falling back to plain backgrounding if perl is
+// unavailable), recording its pid to ./grandchild.pid, then sleeps 30s
+// itself so a test can kill -9 the main stub process and observe the
+// grandchild die too even though a pgid-only signal would miss it.
 const stubEvaluatorScript = `#!/bin/sh
 set -eu
 : >./ran.marker
 printf '%s\n' "$@" >./argv.log
 
 work_dir=""
+capture_dir=""
 prev=""
 for arg in "$@"; do
 	if [ "$prev" = "--work-dir" ]; then
 		work_dir="$arg"
+	fi
+	if [ "$prev" = "--capture-dir" ]; then
+		capture_dir="$arg"
 	fi
 	prev="$arg"
 done
@@ -132,17 +136,17 @@ EOF
 mkdir -p pristine
 cp "results/$ZCP_FARM_SCENARIO/meta.json" pristine/meta.json
 
-window_dir="$HOME/.local/state/zcp/captures/stub-window-1"
-mkdir -p "$window_dir"
-printf '{"line":"provider record","secretKey":"%s"}\n' "$ZCP_FARM_S3_KEY" >"$window_dir/provider.jsonl"
-provider_size=$(wc -c <"$window_dir/provider.jsonl" | tr -d ' ')
-provider_sha=$(sha256sum "$window_dir/provider.jsonl" | awk '{print $1}')
-cp "$window_dir/provider.jsonl" pristine/provider.jsonl
-cat >"$window_dir/manifest.json" <<EOF
+if [ -n "$capture_dir" ]; then
+	window_dir="$capture_dir"
+	mkdir -p "$window_dir"
+	printf '{"line":"provider record","secretKey":"%s"}\n' "$ZCP_FARM_S3_KEY" >"$window_dir/provider.jsonl"
+	provider_size=$(wc -c <"$window_dir/provider.jsonl" | tr -d ' ')
+	provider_sha=$(sha256sum "$window_dir/provider.jsonl" | awk '{print $1}')
+	cp "$window_dir/provider.jsonl" pristine/provider.jsonl
+	cat >"$window_dir/manifest.json" <<EOF
 {"formatVersion":"zcp-capture-1","sessionId":"stub-window-1","plaintext":true,"status":"complete","files":[{"kind":"provider","path":"provider.jsonl","sizeBytes":$provider_size,"sha256":"$provider_sha"}]}
 EOF
-echo "records: $window_dir/provider.jsonl"
-echo "manifest: $window_dir/manifest.json"
+fi
 
 mode="${STUB_MODE:-ok}"
 case "$mode" in
@@ -753,11 +757,43 @@ func TestWrapper_PassesWorkDirUnderRunDir(t *testing.T) {
 	}
 }
 
+// TestWrapper_PassesCaptureDirUnderRunDir pins D5's replacement seam: the
+// wrapper execs the evaluator with --capture-dir $RUNDIR/capture, forwarded
+// by the evaluator itself as `zcp capture raw --output-dir <dir>`
+// (cmd/zcp/eval_capture.go, S5b) — replacing the old "records:" grep
+// recovery this brief removes from eval/farm/wrapper.sh.
+func TestWrapper_PassesCaptureDirUnderRunDir(t *testing.T) {
+	requireShAndCurl(t)
+
+	h := newWrapperHarness(t)
+	cmd := h.start(t, nil)
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("supervisor exited with error: %v", err)
+	}
+
+	argvBytes, err := os.ReadFile(filepath.Join(h.rundir, "argv.log"))
+	if err != nil {
+		t.Fatalf("read argv.log: %v", err)
+	}
+	argv := strings.Split(strings.TrimRight(string(argvBytes), "\n"), "\n")
+
+	wantCaptureDir := filepath.Join(h.rundir, "capture")
+	gotCaptureDir := ""
+	for i, a := range argv {
+		if a == "--capture-dir" && i+1 < len(argv) {
+			gotCaptureDir = argv[i+1]
+			break
+		}
+	}
+	if gotCaptureDir != wantCaptureDir {
+		t.Errorf("--capture-dir = %q, want %q (argv: %v)", gotCaptureDir, wantCaptureDir, argv)
+	}
+}
+
 // TestWrapper_CapturePart_NonEmptyWhenWindowWritten pins D5: the evaluator's
-// private capture window — never written under $RUNDIR/capture directly —
-// ends up uploaded as a non-empty "capture" part, via the wrapper's
-// recover_capture_window step (child.log's "records: <dir>/provider.jsonl"
-// line, eval/farm/wrapper.sh).
+// capture window, written directly under the --capture-dir the wrapper
+// passes ($RUNDIR/capture), ends up uploaded as a non-empty "capture" part —
+// no separate recovery step needed, eval/farm/wrapper.sh.
 func TestWrapper_CapturePart_NonEmptyWhenWindowWritten(t *testing.T) {
 	requireShAndCurl(t)
 
