@@ -633,3 +633,34 @@ func TestWrapper_TwoCredentials_Refused(t *testing.T) {
 		t.Errorf("started.json was uploaded — the child ran despite two credentials being present")
 	}
 }
+
+// TestWrapper_NoBashisms pins the brief's "#!/bin/sh, no bashisms"
+// requirement: `sh -n` must accept the script as valid POSIX sh syntax, and
+// when shellcheck is on PATH, `shellcheck -s sh` must report zero findings
+// (any finding — including an "info"-level one — fails this test; the
+// script's own trap-reachability/env-naming false positives are silenced
+// in-file via `# shellcheck disable=...` directives, not by loosening this
+// check).
+func TestWrapper_NoBashisms(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH")
+	}
+	path := wrapperScriptPath(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "sh", "-n", path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("sh -n %s: %v\n%s", path, err, out)
+	}
+
+	shellcheckPath, err := exec.LookPath("shellcheck")
+	if err != nil {
+		t.Logf("shellcheck not on PATH; skipping the shellcheck half of this check (sh -n passed)")
+		return
+	}
+	out, err = exec.CommandContext(ctx, shellcheckPath, "-s", "sh", path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("shellcheck -s sh %s: %v\n%s", path, err, out)
+	}
+}
