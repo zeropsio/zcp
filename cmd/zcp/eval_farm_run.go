@@ -418,6 +418,27 @@ func runFarmStatus(args []string) int {
 			fmt.Fprintf(os.Stderr, "error: read manifest for %s: %v\n", batch, err)
 			continue
 		}
+		// The summary is evidence layered on top of the bucket+project
+		// recompute (FM-9), never a replacement for it: a batch with no
+		// summary.json yet keeps today's bare "running" label for a
+		// done.json-less run.
+		hasSummary, err := farm.SummaryExists(ctx, sink, batch)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: check summary for %s: %v\n", batch, err)
+			continue
+		}
+		var summary farm.BatchSummary
+		summaryByRun := map[string]farm.SummaryRun{}
+		if hasSummary {
+			summary, err = farm.GetSummary(ctx, sink, batch)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: read summary for %s: %v\n", batch, err)
+				continue
+			}
+			for _, sr := range summary.Runs {
+				summaryByRun[sr.RunID] = sr
+			}
+		}
 		for _, run := range manifest.Runs {
 			hasDone, _, err := sink.Head(ctx, "runs/"+run.RunID+"/done.json")
 			if err != nil {
@@ -427,6 +448,10 @@ func runFarmStatus(args []string) int {
 			state := "running"
 			if hasDone {
 				state = "done"
+			} else if hasSummary {
+				if sr, ok := summaryByRun[run.RunID]; ok {
+					state = fmt.Sprintf("%s: %s (batch ended by %s)", sr.Result, sr.Detail, summary.EndedBy)
+				}
 			}
 			projState := "deleted"
 			if status, ok := liveStatus[run.ProjectName]; ok {

@@ -499,3 +499,119 @@ func TestFarmStatus_DeletingProject_LabelledDeleting(t *testing.T) {
 		t.Errorf("stdout labelled the DELETING project present, got:\n%s", stdout)
 	}
 }
+
+// TestFarmStatus_BudgetBlockedRun_ReportsSummaryVerdict pins the brief:
+// once a batch has a summary.json, a run with no done.json is reported with
+// the summary's verdict and detail plus how the batch ended, instead of the
+// bare bucket-only "running" label that contradicts a settled batch (FM-9:
+// the summary is evidence layered on top of the bucket+project recompute,
+// not a replacement for it).
+func TestFarmStatus_BudgetBlockedRun_ReportsSummaryVerdict(t *testing.T) {
+	const clientID = "client-budget-1"
+	runID := "budget-run"
+	projectName := farm.ProjectPrefix + runID
+	restSrv := newStatusFakeAccountServer(t, clientID, []string{projectName})
+	s3Srv := newStatusFakeS3Server(t)
+
+	t.Setenv("ZCP_FARM_ACCOUNT_TOKEN", "farm-account-token")
+	t.Setenv("ZCP_FARM_CLIENT_ID", clientID)
+	t.Setenv("ZCP_API_HOST", restSrv.URL)
+	t.Setenv("ZCP_FARM_S3_URL", s3Srv.URL)
+	t.Setenv("ZCP_FARM_S3_BUCKET", "zcp-farm")
+	t.Setenv("ZCP_FARM_S3_KEY", "sink-key")
+	t.Setenv("ZCP_FARM_S3_SECRET", "sink-secret")
+
+	cfg, err := farm.ConfigFromEnv()
+	if err != nil {
+		t.Fatalf("ConfigFromEnv: %v", err)
+	}
+	sink := farm.NewSinkClient(cfg)
+	ctx := t.Context()
+
+	batch := "batch-budget-1"
+	manifest := farm.BatchManifest{
+		Batch: batch, Set: "gate",
+		Runs: []farm.ManifestRun{
+			{RunID: runID, Scenario: "recipe-a", ProjectName: projectName},
+		},
+	}
+	if err := farm.PutManifest(ctx, sink, batch, manifest); err != nil {
+		t.Fatalf("PutManifest: %v", err)
+	}
+	// No done.json for runID: the batch ended by budget before this run
+	// settled.
+	summary := farm.BatchSummary{
+		Batch: batch, FinishedAt: "2026-01-01T00:00:00Z", EndedBy: "budget",
+		Runs: []farm.SummaryRun{
+			{RunID: runID, Scenario: "recipe-a", Result: "blocked", Detail: "no bundle"},
+		},
+	}
+	if err := farm.PutSummary(ctx, sink, batch, summary); err != nil {
+		t.Fatalf("PutSummary: %v", err)
+	}
+
+	var exitCode int
+	stdout, stderr := captureOutput(t, func() {
+		exitCode = runFarmStatus(nil)
+	})
+	if exitCode != 0 {
+		t.Errorf("runFarmStatus exit code = %d, want 0 (stderr: %s)", exitCode, stderr)
+	}
+	const want = "budget-run recipe-a blocked: no bundle (batch ended by budget) project=present"
+	if !strings.Contains(stdout, want) {
+		t.Errorf("stdout = %q, want it to contain %q", stdout, want)
+	}
+	if strings.Contains(stdout, "budget-run running") {
+		t.Errorf("stdout still reported the summary-covered run as bare \"running\", got:\n%s", stdout)
+	}
+}
+
+// TestFarmStatus_NoSummaryYet_ReportsRunning guards today's behaviour: a
+// batch with no summary.json yet (still in flight) keeps reporting a
+// done.json-less run as "running" — only a settled batch's summary
+// overrides that label.
+func TestFarmStatus_NoSummaryYet_ReportsRunning(t *testing.T) {
+	const clientID = "client-inflight-1"
+	runID := "inflight-run"
+	projectName := farm.ProjectPrefix + runID
+	restSrv := newStatusFakeAccountServer(t, clientID, []string{projectName})
+	s3Srv := newStatusFakeS3Server(t)
+
+	t.Setenv("ZCP_FARM_ACCOUNT_TOKEN", "farm-account-token")
+	t.Setenv("ZCP_FARM_CLIENT_ID", clientID)
+	t.Setenv("ZCP_API_HOST", restSrv.URL)
+	t.Setenv("ZCP_FARM_S3_URL", s3Srv.URL)
+	t.Setenv("ZCP_FARM_S3_BUCKET", "zcp-farm")
+	t.Setenv("ZCP_FARM_S3_KEY", "sink-key")
+	t.Setenv("ZCP_FARM_S3_SECRET", "sink-secret")
+
+	cfg, err := farm.ConfigFromEnv()
+	if err != nil {
+		t.Fatalf("ConfigFromEnv: %v", err)
+	}
+	sink := farm.NewSinkClient(cfg)
+	ctx := t.Context()
+
+	batch := "batch-inflight-1"
+	manifest := farm.BatchManifest{
+		Batch: batch, Set: "gate",
+		Runs: []farm.ManifestRun{
+			{RunID: runID, Scenario: "recipe-a", ProjectName: projectName},
+		},
+	}
+	if err := farm.PutManifest(ctx, sink, batch, manifest); err != nil {
+		t.Fatalf("PutManifest: %v", err)
+	}
+	// No summary.json at all: the batch has not ended yet.
+
+	var exitCode int
+	stdout, stderr := captureOutput(t, func() {
+		exitCode = runFarmStatus(nil)
+	})
+	if exitCode != 0 {
+		t.Errorf("runFarmStatus exit code = %d, want 0 (stderr: %s)", exitCode, stderr)
+	}
+	if !strings.Contains(stdout, "inflight-run") || !strings.Contains(stdout, "recipe-a running project=present") {
+		t.Errorf("stdout = %q, want it to still report the in-flight run as \"running\"", stdout)
+	}
+}
