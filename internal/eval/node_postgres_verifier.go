@@ -159,16 +159,20 @@ func unrelatedArtifactRowID(unrelated string) string {
 	return fmt.Sprintf("unrelated_artifact/%s/unchanged", unrelated)
 }
 
-// blockedNodePostgresRows builds the four blocked rows with a shared
-// message and zero data-plane calls — used whenever resolution fails before
-// any HTTP/SQL work is safe to attempt (§10.3 "Independence").
+// blockedNodePostgresRows builds the blocked rows with a shared message and
+// zero data-plane calls — used whenever resolution fails before any
+// HTTP/SQL work is safe to attempt (§10.3 "Independence"). Three rows when
+// in.Unrelated is empty (no unrelated host declared), four otherwise.
 func blockedNodePostgresRows(in NodePostgresInput, now time.Time, message string) []RequiredCheck {
-	return []RequiredCheck{
+	rows := []RequiredCheck{
 		blockedRow(nodePostgresRoundtripRowID(in.Stage), in.Stage, now, message),
 		blockedRow(nodePostgresEnvironmentRowID(in.Stage), in.Stage, now, message),
 		blockedRow(nodePostgresDBRowID(in.Database), in.Database, now, message),
-		{ID: unrelatedArtifactRowID(in.Unrelated), Check: checkUnrelatedArtifact, Scope: in.Unrelated, Result: CheckBlocked, ObservedAt: now, Message: message},
 	}
+	if in.Unrelated != "" {
+		rows = append(rows, RequiredCheck{ID: unrelatedArtifactRowID(in.Unrelated), Check: checkUnrelatedArtifact, Scope: in.Unrelated, Result: CheckBlocked, ObservedAt: now, Message: message})
+	}
+	return rows
 }
 
 // Verify evaluates the four §10.3 rows against a fresh nonce/value pair.
@@ -186,39 +190,44 @@ func (v NodePostgresVerifier) Verify(ctx context.Context, in NodePostgresInput) 
 	}
 	stageSvc := findServiceByHostname(services, in.Stage)
 	dbSvc := findServiceByHostname(services, in.Database)
-	unrelatedSvc := findServiceByHostname(services, in.Unrelated)
+	var unrelatedSvc *platform.ServiceStack
+	if in.Unrelated != "" {
+		unrelatedSvc = findServiceByHostname(services, in.Unrelated)
+	}
 
-	if stageSvc == nil || dbSvc == nil || unrelatedSvc == nil {
+	if stageSvc == nil || dbSvc == nil || (in.Unrelated != "" && unrelatedSvc == nil) {
 		return v.missingServiceRows(in, now, stageSvc, dbSvc, unrelatedSvc)
 	}
 
 	if (in.ExpectStageID != "" && in.ExpectStageID != stageSvc.ID) ||
 		(in.ExpectDatabaseID != "" && in.ExpectDatabaseID != dbSvc.ID) ||
-		(in.ExpectUnrelatedID != "" && in.ExpectUnrelatedID != unrelatedSvc.ID) {
+		(in.ExpectUnrelatedID != "" && unrelatedSvc != nil && in.ExpectUnrelatedID != unrelatedSvc.ID) {
 		return blockedNodePostgresRows(in, now, "binding mismatch")
 	}
 
-	unchangedRow := v.evaluateUnchanged(in, unrelatedSvc, now)
+	var unchangedRow *RequiredCheck
+	if in.Unrelated != "" {
+		row := v.evaluateUnchanged(in, unrelatedSvc, now)
+		unchangedRow = &row
+	}
 
 	stageURL := ops.ResolveSubdomainURL(ctx, v.Client, in.ProjectID, stageSvc)
 	if stageURL == "" {
-		return []RequiredCheck{
+		return appendUnchangedRow([]RequiredCheck{
 			blockedRow(nodePostgresRoundtripRowID(in.Stage), in.Stage, now, "URL unresolvable"),
 			blockedRow(nodePostgresEnvironmentRowID(in.Stage), in.Stage, now, "URL unresolvable"),
 			blockedRow(nodePostgresDBRowID(in.Database), in.Database, now, "URL unresolvable"),
-			unchangedRow,
-		}
+		}, unchangedRow)
 	}
 
 	envVars, err := ops.FetchServiceEnv(ctx, v.Client, dbSvc.ID)
 	if err != nil {
 		msg := "credentials unresolvable"
-		return []RequiredCheck{
+		return appendUnchangedRow([]RequiredCheck{
 			blockedRow(nodePostgresRoundtripRowID(in.Stage), in.Stage, now, msg),
 			blockedRow(nodePostgresEnvironmentRowID(in.Stage), in.Stage, now, msg),
 			blockedRow(nodePostgresDBRowID(in.Database), in.Database, now, msg),
-			unchangedRow,
-		}
+		}, unchangedRow)
 	}
 	conn := buildNodePostgresConn(envVars)
 
@@ -237,13 +246,25 @@ func (v NodePostgresVerifier) Verify(ctx context.Context, in NodePostgresInput) 
 		dbRow = v.evaluateDBRow(ctx, in, conn, nonce, value, gotID, now)
 	}
 
-	return []RequiredCheck{roundtripRow, envRow, dbRow, unchangedRow}
+	return appendUnchangedRow([]RequiredCheck{roundtripRow, envRow, dbRow}, unchangedRow)
+}
+
+// appendUnchangedRow appends the unrelated_artifact row when the caller
+// resolved one (in.Unrelated was non-empty); with no unrelated host
+// declared, rows stays at three (§10.3: "the family simply has three
+// sub-rows instead of four").
+func appendUnchangedRow(rows []RequiredCheck, unchangedRow *RequiredCheck) []RequiredCheck {
+	if unchangedRow == nil {
+		return rows
+	}
+	return append(rows, *unchangedRow)
 }
 
 // missingServiceRows handles the case where at least one declared hostname
 // didn't resolve: the rows tied to a missing host are failed ("not found");
 // rows tied to a resolved host are blocked (a dependency is missing, so no
-// data-plane call is safe).
+// data-plane call is safe). The unrelated row is omitted entirely when
+// in.Unrelated is empty.
 func (v NodePostgresVerifier) missingServiceRows(in NodePostgresInput, now time.Time, stageSvc, dbSvc, unrelatedSvc *platform.ServiceStack) []RequiredCheck {
 	const depMissing = "dependent service missing"
 	row := func(id, check, scope string, found bool) RequiredCheck {
@@ -252,12 +273,15 @@ func (v NodePostgresVerifier) missingServiceRows(in NodePostgresInput, now time.
 		}
 		return RequiredCheck{ID: id, Check: check, Scope: scope, Result: CheckBlocked, ObservedAt: now, Message: depMissing}
 	}
-	return []RequiredCheck{
+	rows := []RequiredCheck{
 		row(nodePostgresRoundtripRowID(in.Stage), checkNodePostgresRecord, in.Stage, stageSvc != nil),
 		row(nodePostgresEnvironmentRowID(in.Stage), checkNodePostgresRecord, in.Stage, stageSvc != nil),
 		row(nodePostgresDBRowID(in.Database), checkNodePostgresRecord, in.Database, dbSvc != nil),
-		row(unrelatedArtifactRowID(in.Unrelated), checkUnrelatedArtifact, in.Unrelated, unrelatedSvc != nil),
 	}
+	if in.Unrelated != "" {
+		rows = append(rows, row(unrelatedArtifactRowID(in.Unrelated), checkUnrelatedArtifact, in.Unrelated, unrelatedSvc != nil))
+	}
+	return rows
 }
 
 // blockedRow builds one blocked node_postgres_record row — the only check

@@ -192,9 +192,14 @@ type LivenessProbe struct {
 	Marker  string `yaml:"marker"`
 }
 
-// NodePostgresRecordConfig declares the three hostnames the node-postgres
+// NodePostgresRecordConfig declares the hostnames the node-postgres
 // application oracle resolves at task-end freeze (docs/spec-testing-architecture.md
-// §10.3). All three are required when the block is present.
+// §10.3). Stage and Database are required when the block is present.
+// Unrelated is optional — a topology with no third, unrelated host (e.g. a
+// two-service api+db pair) omits it, and the verifier then emits three
+// sub-rows (roundtrip, environment, db_row) instead of four; the standalone
+// verification.unchanged field (FM-29) is the replacement "unrelated
+// unchanged" check when it's needed.
 type NodePostgresRecordConfig struct {
 	Stage     string `yaml:"stage"`
 	Database  string `yaml:"database"`
@@ -376,8 +381,8 @@ func (s *Scenario) validate() error {
 			}
 		}
 		if npr := s.Verification.NodePostgresRecord; npr != nil {
-			if npr.Stage == "" || npr.Database == "" || npr.Unrelated == "" {
-				return fmt.Errorf("verification.nodePostgresRecord requires stage, database, and unrelated hostnames")
+			if npr.Stage == "" || npr.Database == "" {
+				return fmt.Errorf("verification.nodePostgresRecord requires stage and database hostnames (unrelated is optional)")
 			}
 		}
 		if s.Verification.Reach != nil {

@@ -323,8 +323,8 @@ verification:
   mode: required
   nodePostgresRecord:
     stage: appstage
-    database: db
-    unrelated: ""
+    database: ""
+    unrelated: other
 ---
 Do the thing.
 `
@@ -336,6 +336,42 @@ Do the thing.
 		t.Fatal("expected parse error for nodePostgresRecord missing a hostname")
 	} else if !strings.Contains(err.Error(), "nodePostgresRecord") {
 		t.Errorf("error should mention nodePostgresRecord, got: %v", err)
+	}
+}
+
+// TestScenarioParse_NodePostgresRecord_UnrelatedOptional_Accepted pins
+// docs/spec-testing-architecture.md §10.3: a two-service topology has no
+// unrelated host to name, so nodePostgresRecord.unrelated is optional —
+// stage and database alone parse and validate cleanly. The standalone
+// verification.unchanged field (FM-29) is now O1's replacement for the
+// "unrelated unchanged" check when a scenario omits unrelated.
+func TestScenarioParse_NodePostgresRecord_UnrelatedOptional_Accepted(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	good := `---
+id: node-postgres-no-unrelated
+seed: empty
+retrospective:
+  promptStyle: briefing-future-agent
+verification:
+  mode: required
+  nodePostgresRecord:
+    stage: api
+    database: db
+---
+Do the thing.
+`
+	path := filepath.Join(dir, "good.md")
+	if err := os.WriteFile(path, []byte(good), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sc, err := ParseScenario(path)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	npr := sc.Verification.NodePostgresRecord
+	if npr == nil || npr.Stage != "api" || npr.Database != "db" || npr.Unrelated != "" {
+		t.Errorf("NodePostgresRecord = %+v, want stage=api database=db unrelated=\"\"", npr)
 	}
 }
 
