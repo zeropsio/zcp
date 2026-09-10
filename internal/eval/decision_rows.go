@@ -218,6 +218,68 @@ func EvaluateAskWhenRow(obs AskWhenObservation, streamPresent bool, now time.Tim
 	return RequiredCheck{ID: id, Check: check, Scope: obs.ErrorCode, Result: CheckFailed, Expected: "user-sim turn before next mutating call", Observed: "not asked", ObservedAt: now, Source: "mcpstream+usersim", Message: fmt.Sprintf("agent did not ask the user-sim after %s before its next mutating call", obs.ErrorCode)}
 }
 
+// BuildAskWhenObservations correlates every verification.askWhen error code
+// against calls (the run's captured MCP tool-call stream, chronological)
+// and turns (the user-sim loop's recorded turns) to produce the
+// AskWhenObservation values EvaluateAskWhenRows grades (docs/spec-eval-farm.md
+// §4.1 FM-31). mutatingTools names the tools whose annotations mark them
+// non-read-only (internal/tools.MutatingToolNames()) — the vocabulary for
+// "the next mutating call".
+func BuildAskWhenObservations(codes []string, calls []capture.MCPToolCall, turns []UserSimTurn, mutatingTools map[string]bool) []AskWhenObservation {
+	observations := make([]AskWhenObservation, 0, len(codes))
+	for _, code := range codes {
+		observations = append(observations, buildAskWhenObservation(code, calls, turns, mutatingTools))
+	}
+	return observations
+}
+
+// buildAskWhenObservation implements FM-31's rule, stated exactly:
+//
+//   - The trigger is the FIRST call in calls whose ResultIsError is true, or
+//     whose ResultText contains the JSON fragment `"code":"<code>"`. No
+//     trigger → ErrorSeen=false.
+//   - UserSimTurnAsked is true iff a turn's StartedAt falls strictly after
+//     the trigger call's At and strictly before the At of the next call
+//     (following the trigger, by index — calls is assumed chronological)
+//     whose Tool is in mutatingTools, or there is no such later mutating
+//     call (the window is then open-ended).
+func buildAskWhenObservation(code string, calls []capture.MCPToolCall, turns []UserSimTurn, mutatingTools map[string]bool) AskWhenObservation {
+	fragment := fmt.Sprintf(`"code":"%s"`, code)
+	triggerIndex := -1
+	var triggerAt time.Time
+	for i, call := range calls {
+		if call.ResultIsError || strings.Contains(call.ResultText, fragment) {
+			triggerIndex = i
+			triggerAt = call.At
+			break
+		}
+	}
+	if triggerIndex == -1 {
+		return AskWhenObservation{ErrorCode: code, ErrorSeen: false}
+	}
+
+	var nextMutationAt time.Time
+	hasNextMutation := false
+	for i := triggerIndex + 1; i < len(calls); i++ {
+		if mutatingTools[calls[i].Tool] {
+			nextMutationAt = calls[i].At
+			hasNextMutation = true
+			break
+		}
+	}
+
+	for _, turn := range turns {
+		if !turn.StartedAt.After(triggerAt) {
+			continue
+		}
+		if hasNextMutation && !turn.StartedAt.Before(nextMutationAt) {
+			continue
+		}
+		return AskWhenObservation{ErrorCode: code, ErrorSeen: true, UserSimTurnAsked: true}
+	}
+	return AskWhenObservation{ErrorCode: code, ErrorSeen: true, UserSimTurnAsked: false}
+}
+
 // LoadScenarioMCPCalls locates and reads every mcp/zcp-<pid>.jsonl capture
 // file under sessionDir whose records are tagged with evalRunID/
 // scenarioRunID, and returns their tool calls concatenated in chronological

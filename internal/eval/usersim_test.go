@@ -1,8 +1,10 @@
 package eval
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestClassifyTranscriptTail covers the seven-rule decision table from
@@ -86,4 +88,46 @@ func containsSubstr(haystack, needle string) bool {
 		}
 	}
 	return false
+}
+
+// TestUserSimTurn_RecordsStartedAt pins that a recorded UserSimTurn carries
+// a non-zero UTC StartedAt set at the turn's build site, before its
+// sim.Reply call — the askWhen decision-row correlation (docs/spec-eval-farm.md
+// §4.1 FM-31) needs this to order a user-sim turn against the MCP tool-call
+// stream.
+func TestUserSimTurn_RecordsStartedAt(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	transcript := filepath.Join(dir, "transcript.jsonl")
+
+	ts := &transcriptScripter{
+		path:   transcript,
+		t:      t,
+		states: []string{loadFixture(t, "done_via_text.jsonl")},
+	}
+	ts.install(loadFixture(t, "waiting_question_mark.jsonl"))
+
+	sim := &stubSimRunner{replies: []string{"go with MariaDB"}}
+	sc := &Scenario{Prompt: "Set up Laravel app", ID: "test"}
+	res := &BehavioralResult{}
+
+	before := time.Now().UTC()
+	if err := runUserSimLoop(context.Background(), sc, "session-startedat", transcript, sim, ts.resume, ClassifyTranscriptTail, res); err != nil {
+		t.Fatalf("runUserSimLoop: %v", err)
+	}
+	after := time.Now().UTC()
+
+	if len(res.UserSim.Turns) != 1 {
+		t.Fatalf("turn count: got %d, want 1", len(res.UserSim.Turns))
+	}
+	got := res.UserSim.Turns[0].StartedAt
+	if got.IsZero() {
+		t.Fatal("StartedAt is zero, want a recorded instant")
+	}
+	if got.Before(before) || got.After(after) {
+		t.Errorf("StartedAt = %s, want within [%s, %s]", got, before, after)
+	}
+	if got.Location() != time.UTC {
+		t.Errorf("StartedAt location = %v, want UTC", got.Location())
+	}
 }

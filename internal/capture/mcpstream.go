@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // MCPToolCall is one tools/call request/response pair reconstructed from a
@@ -36,6 +37,12 @@ type MCPToolCall struct {
 	// Empty when neither carrier is present, or the carrier's body doesn't
 	// parse (a malformed envelope is ignored, per §1.3).
 	EnvelopePhase string
+	// At is the request record's Time (the capture.Record whose stdin
+	// chunk carried this call's tools/call request line) — used by the
+	// askWhen decision-row correlation (docs/spec-eval-farm.md §4.1 FM-31)
+	// to order this call against user-sim turns and other tool calls. Zero
+	// only if the underlying record carried a zero Time.
+	At time.Time
 }
 
 // ReadMCPStream reads one capture/mcp/zcp-<pid>.jsonl file and returns the
@@ -55,36 +62,70 @@ func ReadMCPStream(path string) ([]MCPToolCall, error) {
 		return nil, fmt.Errorf("mcpstream: reconstruct stdout %s: %w", path, err)
 	}
 
-	calls, orderByID := parseToolCallRequests(splitLines(stdin))
-	if err := applyToolCallResponses(calls, orderByID, splitLines(stdout)); err != nil {
+	calls, orderByID := parseToolCallRequests(splitLines(stdin.data), stdin)
+	if err := applyToolCallResponses(calls, orderByID, splitLines(stdout.data)); err != nil {
 		return nil, fmt.Errorf("mcpstream: parse MCP responses %s: %w", path, err)
 	}
 	return calls, nil
 }
 
+// timedStream is a reconstructed stdin/stdout byte stream plus enough of the
+// underlying record boundaries to recover, for any byte offset into data,
+// which capture.Record's Time produced it (docs/spec-eval-farm.md §4.1
+// FM-31: MCPToolCall.At).
+type timedStream struct {
+	data   []byte
+	starts []int
+	times  []time.Time
+}
+
+// timeAt returns the Time of the record whose chunk contains offset — the
+// record whose start is the greatest start <= offset. Zero time if no
+// records were reconstructed.
+func (ts timedStream) timeAt(offset int) time.Time {
+	if len(ts.starts) == 0 {
+		return time.Time{}
+	}
+	idx := max(sort.SearchInts(ts.starts, offset+1)-1, 0)
+	return ts.times[idx]
+}
+
 // reconstructStream concatenates every record of kind (stdin or stdout
-// chunks, in file order) after base64-decoding each body.
-func reconstructStream(records []Record, kind string) ([]byte, error) {
-	var stream []byte
+// chunks, in file order) after base64-decoding each body, tracking each
+// chunk's starting byte offset and originating record's Time.
+func reconstructStream(records []Record, kind string) (timedStream, error) {
+	var ts timedStream
 	for _, record := range records {
 		if record.Kind != kind {
 			continue
 		}
 		chunk, err := base64.StdEncoding.DecodeString(record.BodyBase64)
 		if err != nil {
-			return nil, fmt.Errorf("seq %d: decode body: %w", record.Seq, err)
+			return timedStream{}, fmt.Errorf("seq %d: decode body: %w", record.Seq, err)
 		}
-		stream = append(stream, chunk...)
+		ts.starts = append(ts.starts, len(ts.data))
+		ts.times = append(ts.times, record.Time)
+		ts.data = append(ts.data, chunk...)
 	}
-	return stream, nil
+	return ts, nil
 }
 
-func splitLines(stream []byte) [][]byte {
-	var lines [][]byte
+// mcpStreamLine is one newline-delimited line of a reconstructed stream,
+// carrying the byte offset (into the stream) its content starts at so the
+// caller can recover which record's Time produced it.
+type mcpStreamLine struct {
+	data   []byte
+	offset int
+}
+
+func splitLines(stream []byte) []mcpStreamLine {
+	var lines []mcpStreamLine
+	offset := 0
 	for line := range bytes.SplitSeq(stream, []byte("\n")) {
 		if len(bytes.TrimSpace(line)) > 0 {
-			lines = append(lines, line)
+			lines = append(lines, mcpStreamLine{data: line, offset: offset})
 		}
+		offset += len(line) + 1 // +1 for the newline consumed by Split
 	}
 	return lines
 }
@@ -115,12 +156,12 @@ type mcpStreamCallResult struct {
 // JSON-RPC id (as its raw JSON text) to that call's index, so responses can
 // be matched up regardless of interleaving with other JSON-RPC traffic
 // (initialize, tools/list, notifications).
-func parseToolCallRequests(lines [][]byte) ([]MCPToolCall, map[string]int) {
+func parseToolCallRequests(lines []mcpStreamLine, ts timedStream) ([]MCPToolCall, map[string]int) {
 	var calls []MCPToolCall
 	byID := make(map[string]int)
 	for _, line := range lines {
 		var message mcpStreamRPCMessage
-		if err := json.Unmarshal(line, &message); err != nil || message.Method != "tools/call" {
+		if err := json.Unmarshal(line.data, &message); err != nil || message.Method != "tools/call" {
 			continue
 		}
 		var params mcpStreamCallParams
@@ -132,6 +173,7 @@ func parseToolCallRequests(lines [][]byte) ([]MCPToolCall, map[string]int) {
 			Tool:      params.Name,
 			Action:    action,
 			Arguments: params.Arguments,
+			At:        ts.timeAt(line.offset),
 		})
 		byID[string(message.ID)] = len(calls) - 1
 	}
@@ -140,10 +182,10 @@ func parseToolCallRequests(lines [][]byte) ([]MCPToolCall, map[string]int) {
 
 // applyToolCallResponses scans the stdout lines for tools/call responses and
 // fills in each matched call's result fields.
-func applyToolCallResponses(calls []MCPToolCall, byID map[string]int, lines [][]byte) error {
+func applyToolCallResponses(calls []MCPToolCall, byID map[string]int, lines []mcpStreamLine) error {
 	for _, line := range lines {
 		var message mcpStreamRPCMessage
-		if err := json.Unmarshal(line, &message); err != nil {
+		if err := json.Unmarshal(line.data, &message); err != nil {
 			continue
 		}
 		if len(message.ID) == 0 {
