@@ -40,8 +40,9 @@ func mapProcess(p output.Process) Process {
 	serviceStacks := make([]ServiceStackRef, 0, len(p.ServiceStacks))
 	for _, ss := range p.ServiceStacks {
 		serviceStacks = append(serviceStacks, ServiceStackRef{
-			ID:   ss.Id.TypedString().String(),
-			Name: ss.Name.String(),
+			ID:       ss.Id.TypedString().String(),
+			Name:     ss.Name.String(),
+			Category: ss.ServiceStackTypeInfo.ServiceStackTypeCategory.String(),
 		})
 	}
 

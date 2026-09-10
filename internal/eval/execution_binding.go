@@ -192,20 +192,29 @@ func assertFreshTarget(ctx context.Context, client platform.Client, projectID st
 
 // isAllowedServiceProcess reports whether proc is the lifecycle of a service
 // the fresh-target service read already allowed (see assertFreshTarget):
-// every ref resolves by id or name into allowed, or the process has no refs
-// and is a stack-scoped action. A ref-less project-level action is never
-// allowed.
+// every non-BUILD ref resolves by id or name into allowed, or the process has
+// no refs and is a stack-scoped action. BUILD refs are the transient build
+// container a RUNNING stack.build attaches as a second entry (live gate2 row:
+// zcp + buildzcpv<ts>); it is never listed among the project's services, so
+// it cannot be resolved and is skipped. A ref-less project-level action is
+// never allowed.
 func isAllowedServiceProcess(proc platform.Process, allowed map[string]bool) bool {
 	if len(proc.ServiceStacks) == 0 {
 		return strings.HasPrefix(proc.ActionName, "stack.")
 	}
 	for _, ref := range proc.ServiceStacks {
+		if ref.Category == buildCategory {
+			continue
+		}
 		if !allowed[ref.ID] && !allowed[ref.Name] {
 			return false
 		}
 	}
 	return true
 }
+
+// buildCategory is the serviceStackTypeCategory of a build container ref.
+const buildCategory = "BUILD"
 
 // assertSafeRoots implements the §10.4 root-safety check: work dir and
 // results dir must be absolute, distinct, not nested in each other, not

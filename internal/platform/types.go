@@ -257,9 +257,13 @@ func KnownStatusStrings() map[string]bool {
 }
 
 // ServiceStackRef is a lightweight service reference in a process.
+// Category is the ref's serviceStackTypeInfo.serviceStackTypeCategory
+// ("USER", "BUILD", "CORE", …): a stack.build process gains a second ref for
+// its build container (category BUILD) once the build starts.
 type ServiceStackRef struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Category string `json:"category,omitempty"`
 }
 
 // ProjectEnvType is the server-authoritative enum on project-level

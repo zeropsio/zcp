@@ -181,6 +181,13 @@ func TestExecutionBinding_ControlServiceBuild_IsFresh_RegardlessOfRefShape(t *te
 		{"no refs, stack action", platform.Process{ID: "p3", ActionName: "stack.build", Status: platform.ProcessStatusRunning}},
 		{"system service ref", platform.Process{ID: "p4", ActionName: "stack.deploy", Status: platform.ProcessStatusRunning,
 			ServiceStacks: []platform.ServiceStackRef{{ID: "l7-1", Name: "L7HttpBalancer"}}}},
+		// live gate2 row GRpeKk9EQz…: once the build container attaches, the
+		// RUNNING stack.build carries the zcp service AND buildzcpv<ts> (BUILD)
+		{"control service + its build container", platform.Process{ID: "p5", ActionName: "stack.build", Status: platform.ProcessStatusRunning,
+			ServiceStacks: []platform.ServiceStackRef{
+				{ID: "zcp-1", Name: ProtectedService, Category: "USER"},
+				{ID: "build-1", Name: "buildzcpv1789065137", Category: "BUILD"},
+			}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
