@@ -41,6 +41,8 @@ func runEval(args []string) int {
 		return runEvalResults(args[1:])
 	case "behavioral":
 		return runEvalBehavioral(args[1:])
+	case "farm":
+		return runEvalFarm(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown eval subcommand: %s\n", args[0])
 		printEvalUsage()
@@ -56,7 +58,9 @@ Commands:
   suite          [--tag <tag>]                  Run evaluation for all recipes
   cleanup        [--prefix <prefix>]            Full project cleanup (or prefix-only with --prefix)
   results        [--suite <id>]                 Show latest results summary
-  behavioral     <list|run|all> [args...]       Two-shot resume scenario runs (interactive C4 eval)`)
+  behavioral     <list|run|all> [args...]       Two-shot resume scenario runs (interactive C4 eval)
+  farm           <push|run|status|pull|report|coverage|gc> [args...]
+                                                 Parallel disposable farm runs (ZCP_AUTHORING=1 required)`)
 }
 
 func runEvalRun(args []string) int {
