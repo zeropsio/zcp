@@ -137,6 +137,7 @@ Shape, as implemented by the controller (S4):
   "runs": [{
     "runId": "…", "scenario": "…", "projectId": "…",
     "result": "passed|failed|blocked|not-run", "detail": "…",
+    "error": "…",            // set when the run's project could not be created, minted or imported
     "launchTokenId": "…"
   }]
 }
@@ -487,7 +488,7 @@ what is already frozen in the bundle's own files.
 | `passed` | every row for this dimension is proven true | a run, or a single row |
 | `failed` | at least one row is proven false | a run, or a single row |
 | `blocked` | evidence for at least one row could not be obtained, or the bundle itself is incomplete/unverifiable | a run, or a single row; a bundle with a digest mismatch (FM-5) or a foreign evaluator (FM-35) is `blocked`, never `failed` |
-| `not-run` | no task work happened for this row/run | a row (§10.1); a run whose project was never created is not reported at all |
+| `not-run` | no task work happened for this row/run | a row (§10.1) only — a run whose project was never created is reported `blocked` with its `error` (FM-9), never dropped |
 | `unpinned` | the bundle predates FM-4's digest fields and cannot be checked against the evaluator/candidate pin | a bundle only, never a row; distinct from `blocked` — `unpinned` is "cannot check," `blocked` is "checked and failed" |
 
 **FM-35.** A bundle whose `evaluatorSha256` differs from the farm's current
