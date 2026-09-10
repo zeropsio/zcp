@@ -137,6 +137,84 @@ func TestExecutionBinding_NonFreshTarget_ZeroMutation(t *testing.T) { // non-par
 	}
 }
 
+// TestExecutionBinding_ControlServiceOwnProcess_IsFresh pins §10.4: a live
+// process whose every ServiceStacks[] entry names the protected control
+// service (ProtectedService) is not a freshness violation — the evaluator
+// runs from that service's own initCommands, i.e. while its stack.build/
+// deploy process is still RUNNING.
+func TestExecutionBinding_ControlServiceOwnProcess_IsFresh(t *testing.T) {
+	t.Parallel()
+	client := platform.NewMock().
+		WithServicesDirect([]platform.ServiceStack{
+			{ID: "zcp-1", Name: ProtectedService, Status: "ACTIVE"},
+		}).
+		WithProjectProcesses([]platform.Process{
+			{
+				ID:            "proc-1",
+				Status:        platform.ProcessStatusRunning,
+				ServiceStacks: []platform.ServiceStackRef{{ID: "zcp-1", Name: ProtectedService}},
+			},
+		})
+
+	if err := assertFreshTarget(context.Background(), client, "offline-project"); err != nil {
+		t.Fatalf("assertFreshTarget() = %v, want nil for a live process owned solely by the control service", err)
+	}
+}
+
+// TestExecutionBinding_ForeignServiceProcess_StillRefused pins §10.4: a live
+// process referencing any other service, or with no service refs at all
+// (project-level actions), still refuses with today's literal.
+func TestExecutionBinding_ForeignServiceProcess_StillRefused(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		procs []platform.Process
+	}{
+		{
+			name: "foreign service",
+			procs: []platform.Process{{
+				ID:            "proc-2",
+				Status:        platform.ProcessStatusRunning,
+				ServiceStacks: []platform.ServiceStackRef{{ID: "api-1", Name: "api"}},
+			}},
+		},
+		{
+			name: "mixed control + foreign",
+			procs: []platform.Process{{
+				ID:            "proc-3",
+				Status:        platform.ProcessStatusRunning,
+				ServiceStacks: []platform.ServiceStackRef{{ID: "zcp-1", Name: ProtectedService}, {ID: "api-1", Name: "api"}},
+			}},
+		},
+		{
+			name: "no service refs (project-level action)",
+			procs: []platform.Process{{
+				ID:     "proc-4",
+				Status: platform.ProcessStatusRunning,
+			}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			client := platform.NewMock().
+				WithServicesDirect([]platform.ServiceStack{
+					{ID: "zcp-1", Name: ProtectedService, Status: "ACTIVE"},
+				}).
+				WithProjectProcesses(tc.procs)
+
+			err := assertFreshTarget(context.Background(), client, "offline-project")
+			if err == nil {
+				t.Fatalf("assertFreshTarget() = nil, want a not-fresh error")
+			}
+			wantPrefix := "target is not fresh: live process " + tc.procs[0].ID + " (RUNNING)"
+			if err.Error() != wantPrefix {
+				t.Fatalf("assertFreshTarget() = %q, want %q", err.Error(), wantPrefix)
+			}
+		})
+	}
+}
+
 // TestExecutionBinding_RequiredWithoutBinding_Refused pins §10.4 "A required
 // scenario refuses to start without a complete binding": an owned capture
 // window is not enough on its own — refused before any platform call.

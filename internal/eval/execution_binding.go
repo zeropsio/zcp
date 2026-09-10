@@ -150,7 +150,15 @@ func sha256File(path string) (string, error) {
 
 // assertFreshTarget implements the §10.4 freshness check: a direct service
 // read shows only system services plus the protected control service
-// (ProtectedService), and a direct process read shows no live process.
+// (ProtectedService), and a direct process read shows no live process other
+// than the control service's own lifecycle. The evaluator runs from the
+// control service's initCommands, i.e. while that service's own
+// stack.build/deploy process is still RUNNING (init runs before the start
+// unit; the platform marks the process finished only after start) — a live
+// process whose every ServiceStacks[] entry names the control service is
+// that lifecycle, not a freshness violation. A live process referencing any
+// other service, or with no service refs (project-level actions), still
+// refuses.
 func assertFreshTarget(ctx context.Context, client platform.Client, projectID string) error {
 	services, err := client.ListServicesDirect(ctx, projectID)
 	if err != nil {
@@ -169,10 +177,29 @@ func assertFreshTarget(ctx context.Context, client platform.Client, projectID st
 	for _, proc := range processes {
 		switch proc.Status {
 		case platform.ProcessStatusPending, platform.ProcessStatusRunning, platform.ProcessStatusRollbacking, platform.ProcessStatusCanceling:
+			if isControlServiceOnlyProcess(proc) {
+				continue
+			}
 			return fmt.Errorf("target is not fresh: live process %s (%s)", proc.ID, proc.Status)
 		}
 	}
 	return nil
+}
+
+// isControlServiceOnlyProcess reports whether every ServiceStacks[] entry on
+// proc names the protected control service — i.e. the process is the
+// control service's own lifecycle, not a foreign service or a project-level
+// action. A process with no service refs is not control-service-only.
+func isControlServiceOnlyProcess(proc platform.Process) bool {
+	if len(proc.ServiceStacks) == 0 {
+		return false
+	}
+	for _, ref := range proc.ServiceStacks {
+		if ref.Name != ProtectedService {
+			return false
+		}
+	}
+	return true
 }
 
 // assertSafeRoots implements the §10.4 root-safety check: work dir and
