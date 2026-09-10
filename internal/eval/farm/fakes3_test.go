@@ -16,13 +16,34 @@ import (
 // tokens without a large fixture. Shared by sink_test.go (via SinkClient)
 // and wrapper_test.go (via curl --aws-sigv4, docs/spec-eval-farm.md §2.3).
 type fakeS3 struct {
-	mu      sync.Mutex
-	bucket  string
-	objects map[string][]byte
+	mu       sync.Mutex
+	bucket   string
+	objects  map[string][]byte
+	putOrder []string
 }
 
 func newFakeS3(bucket string) *fakeS3 {
 	return &fakeS3{bucket: bucket, objects: map[string][]byte{}}
+}
+
+// get reads one stored object (wrapper_test.go: inspecting an uploaded
+// bundle without a second signed round trip).
+func (f *fakeS3) get(key string) ([]byte, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	v, ok := f.objects[key]
+	return v, ok
+}
+
+// puts returns every key PUT so far, in PUT order (wrapper_test.go:
+// TestWrapper_Success_UploadsPartsThenDoneLast asserts started.json/results/
+// capture land before done.json, FM-3).
+func (f *fakeS3) puts() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.putOrder))
+	copy(out, f.putOrder)
+	return out
 }
 
 func (f *fakeS3) handler(t *testing.T) http.HandlerFunc {
@@ -51,6 +72,7 @@ func (f *fakeS3) handler(t *testing.T) http.HandlerFunc {
 			body := make([]byte, r.ContentLength)
 			_, _ = io.ReadFull(r.Body, body)
 			f.objects[key] = body
+			f.putOrder = append(f.putOrder, key)
 			w.WriteHeader(http.StatusOK)
 		case http.MethodGet:
 			data, ok := f.objects[key]
