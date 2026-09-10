@@ -1,0 +1,12 @@
+api-node-postgres-classic-dev
+greenfield-node-postgres-dev-stage
+recipe-nestjs-minimal-standard
+classic-static-nginx-simple
+develop-add-managed-dep-to-existing
+existing-standard-appdev-only-reminders
+cross-deploy-stage-promote-from-dev
+recover-failed-buildfromgit-missing-dep
+launch-production-from-standard-pair
+launch-failure-build-stuck
+adopt-existing-standard-pair
+resume-after-compaction
