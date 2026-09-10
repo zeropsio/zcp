@@ -372,7 +372,9 @@ that no currently-running batch references, subject to FM-19/FM-20. A run
 whose project was exempted under FM-21 (no `done.json`) stays exempt from
 `gc` too, until an operator has looked at it — `gc` never deletes a
 no-bundle run's project on a timer alone; `--older-than` only applies to
-projects a batch has already finished with.
+projects a batch has already finished with. `gc` deletes only projects a
+batch manifest names; any other `zcp-farm-*` project is listed as
+`exempt: unknown run` and left for the operator.
 
 ---
 
