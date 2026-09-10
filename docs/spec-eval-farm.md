@@ -26,7 +26,7 @@ evaluators/<sha256>/zcp            # pinned evaluator binary, uploaded once per 
 evaluators/current                 # plain-text pointer: body is the evaluator sha256 last pushed
 candidates/<sha256>/zcp            # candidate under test, pushed per batch
 scenarios/<tree-digest>/…          # scenario tree, pushed per batch
-sets/<tree-digest>/gate.txt        # gate scenario id list, keyed to the scenario tree it names
+sets/<scenariosDigest>/gate.txt    # gate scenario id list, keyed to the scenario tree it names
 farm/wrapper.sh                    # the run-project wrapper script
 
 runs/<runId>/started.json
@@ -151,13 +151,22 @@ Shape, as implemented by the controller (S4):
 deleted (the common case for a settled run); `launchTokenId` is the id
 (never the token value, §3.4) of a launch scenario's token, present only
 while it has not yet been revoked — the FM-21 no-bundle exemption records it
-here so `gc` can finish the revoke once the project is finally gone. For a
-`blocked` or `failed` run, `detail` names the blocking/failing check ids:
-sorted ids of every `verification.json` row (spec-testing-architecture.md
-§10.1), sibling to `meta.json` in the same results directory, whose `result`
-equals the run's own result, joined with `", "` and capped at 5 with a
-`"+N more"` suffix; a bundle with no `verification.json` sibling gets the
-literal `"no verification.json in bundle"`.
+here so `gc` can finish the revoke once the project is finally gone. `error`
+is set only when the run's project itself could not be created, minted or
+imported — the run never reached `waitForDone`. For a settled `blocked` or
+`failed` run, `detail` names the blocking/failing check ids: sorted ids of
+every `verification.json` row (spec-testing-architecture.md §10.1), sibling
+to `meta.json` in the same results directory, whose `result` equals the
+run's own result, joined with `", "` and capped at 5 with a `"+N more"`
+suffix; a bundle with no `verification.json` sibling gets the literal
+`"no verification.json in bundle"`. Two more `detail` shapes come from
+`waitForDone` itself, before any bundle exists: `"no bundle"` when the run's
+budget elapsed with no `done.json` (FM-3, FM-21's exemption — that run's
+project is not deleted), and `"platform: <actionName> FAILED: <reason>"`
+when the controller's D19 poll finds a FAILED creation-phase process
+(`stack.create`/`stack.import`) on the run's project before `done.json` ever
+appears — that project is still deleted. A run whose project was never
+created is reported `blocked` with its `error`, never dropped (§5.1).
 
 ---
 
@@ -310,12 +319,19 @@ maintainer-only, the same discipline as `runtime.Info.Authoring` /
 account-wide key and deletes projects, so the same reasoning that gates
 authoring applies here — a route reachable without the gate is a defect the
 same way an ungated authoring route is. The farm host needs only the
-binary — no repo checkout. `farm run` resolves everything it needs (the
+binary and its service envs — `ZCP_AUTHORING=1` (this gate),
+`ZCP_FARM_S3_URL`/`ZCP_FARM_S3_BUCKET`/`ZCP_FARM_S3_KEY`/`ZCP_FARM_S3_SECRET`
+(the sink), `ZCP_FARM_ACCOUNT_TOKEN`/`ZCP_FARM_CLIENT_ID` (§2.4 FM-15), and
+`CLAUDE_CODE_OAUTH_TOKEN` (§2.4) — no repo checkout. `farm run` resolves everything it needs (the
 `--set gate`/`--set all` scenario id list, each scenario's front matter, and
 the evaluator pin absent `--evaluator`) from the bucket (`sets/<digest>/gate.txt`,
 `scenarios/<digest>/…`, `evaluators/current`), never from a relative path on
 disk; only `farm push`, which runs from a full checkout on a dev machine,
 reads `eval/farm/gate-set.txt` off disk, to upload it.
+
+The gate set is currently 10 scenarios. The two launch scenarios (O6) are
+deferred out of it until a source-control fixture exists for them to build
+from.
 
 **FM-18.** No daemon and no HTTP surface on the farm host. `farm run` starts
 detached (`systemd-run --user` or `nohup`) so its kickoff SSH session may
@@ -556,11 +572,40 @@ turns that run's report `blocked` (FM-5/FM-36), never silently `passed`.
 **FM-39.** `farm coverage [--since <batch>]` derives (scenario, workflow
 step, tool decision) cells only from captured MCP traffic and envelope phase
 markers already recorded in each bundle's capture window — never from a
-hand-maintained list (FM-33). A scenario removed from the corpus drops every
-cell it was the sole source of; a re-run with fewer scenarios visibly shows
-fewer cells, never stale ones held over from a prior batch.
+hand-maintained list (FM-33). A run's scenario is identified from its
+bundle's own `done.json.scenarioId` (FM-4), never from a directory name or a
+manifest lookup. A cell with no workflow-step marker is bucketed under the
+literal `"(no step)"` rather than dropped, so a run that made tool calls
+outside any phase still shows up in the table. A scenario removed from the
+corpus drops every cell it was the sole source of; a re-run with fewer
+scenarios visibly shows fewer cells, never stale ones held over from a prior
+batch.
 
 **FM-40.** Coverage is descriptive, not a gate: it never contributes a row to
 any scenario's aggregated result. Its only effect on §4/§5's verdicts is
 none — a scenario can be `passed` with thin coverage and `failed` with rich
 coverage; the two dimensions are reported side by side, never merged.
+
+---
+
+## 6. Known gaps
+
+These are current limitations of the eval lane, not roadmap items.
+
+**Cross-deploy preflight root.** The execution-binding preflight's root
+safety check (`spec-testing-architecture.md §10.4`) reasons about the
+evaluator's own `--work-dir`. A cross-deploy scenario pushes from a source
+container whose mount base is `/var/www`, a path the preflight does not
+special-case; the check still passes because the work dir it is actually
+given is safe, but the two roots (the evaluator's work dir and the source
+container's own mount base) are conceptually distinct and the preflight only
+reasons about the former.
+
+**Artifact-promotion baseline.** O7's `dev_unchanged` row (§4.4) needs a
+baseline app-version id for the promotion's source host
+(`artifactPromotion.from`), but baseline capture only reads
+`verification.unchanged` and `nodePostgresRecord.unrelated` (§4.1, §4.3) —
+never `artifactPromotion.from` on its own. A scenario that declares
+`artifactPromotion` without also listing its `from` host in `unchanged` gets
+a `blocked` `dev_unchanged` row (`"no baseline for <host>"`), not a proven
+one.
