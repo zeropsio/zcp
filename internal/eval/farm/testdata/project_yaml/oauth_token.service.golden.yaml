@@ -1,16 +1,13 @@
-project:
-  name: zcp-farm-run-launch789
-  tags: [zcp-farm, disposable]
-  sshIsolation: "vpn project"
 services:
   - hostname: zcp
     type: zcp@1
     maxContainers: 1
     verticalAutoscaling: { minRam: 2 }
     envSecrets:
+      ZCP_API_KEY: "run-token-value"
       ZCP_VSCODE: "true"
       ZCP_FARM_BATCH: "batch-2026-09-10"
-      ZCP_FARM_RUN: "run-launch789"
+      ZCP_FARM_RUN: "run-oauth456"
       ZCP_FARM_SCENARIO: "recipe-first-deploy"
       ZCP_FARM_EVALUATOR_SHA: "eval-sha-aaaa"
       ZCP_FARM_CANDIDATE_SHA: "cand-sha-bbbb"
@@ -20,7 +17,6 @@ services:
       ZCP_FARM_S3_KEY: "sink-key-cccc"
       ZCP_FARM_S3_SECRET: "sink-secret-dddd"
       CLAUDE_CODE_OAUTH_TOKEN: "oauth-token-value"
-      ZCP_E2E_LAUNCH_KEY: "launch-key-eeee"
     zeropsYaml:
       zerops:
         - setup: zcp

@@ -156,14 +156,42 @@ here so `gc` can finish the revoke once the project is finally gone.
 
 ### 2.1 Shape
 
-**FM-10.** A run project is created by exactly one `CreateAndImportProject`
-call from a generated import YAML (§2.3). At creation it contains: project
-settings (`sshIsolation: "vpn project"`), one `zcp@1` service named `zcp`
-carrying the run descriptor and credentials as sensitive envs (§2.2), and
-an inline `zeropsYaml` whose `run.initCommands` list is the image's own boot sequence (`install.sh` → `zcp init` → `sudo -E zcp init nginx`) followed by one farm command that fetches `farm/wrapper.sh` and starts it detached (`nohup … &`). Init commands run after `zcp init` and BEFORE the `run.startCommands` units (nginx, code-server), and a detached child does not delay `ALL RUN.INIT COMMANDS FINISHED` or ACTIVE (verified live: import → ACTIVE 40 s with the child still running). The wrapper therefore never assumes code-server or nginx is up.
-Nothing else exists in the project at creation time, so the
-existing fresh-target preflight (`spec-testing-architecture.md §10.4`) passes
-by construction — a run project is never adopted, always fresh.
+**FM-10.** A run project is created in two REST steps, never one — a
+REST-created `zcp@1` service gets no first-class injected `ZCP_API_KEY` the
+way the GUI's own import route does, and the mint below needs a project id
+that only exists after step 1 (live-verified 2026-09-10):
+
+1. `CreateAndImportProject` (`POST /client/{clientId}/project/import`) from
+   a generated project-only import YAML (`ProjectImportYAML`, §2.3): project
+   settings (`sshIsolation: "vpn project"`) and `services: []` — nothing
+   else exists in the project yet.
+2. `MintProjectScopedToken` (`POST /client/{clientId}/integration-token`,
+   SDK `PostClientIntegrationToken`) mints a `NO_ACCESS` account-level token
+   scoped `ADMIN` on exactly the new project id — the run's own
+   `ZCP_API_KEY` (§2.4). Foreign-project calls with this token 403, project
+   creation 403s, service import 200s — verified live. Deleting the project
+   deletes the token automatically (a `GET` by id afterward answers
+   `clientUserConnectionNotFound`), so run tokens carry no separate revoke
+   step (unlike the launch token, §3.4 FM-23).
+3. `ImportServiceStack` (`POST /project/{id}/service-stack/import`) from a
+   generated service-only import YAML (`ServiceImportYAML`, §2.3) imports
+   the one `zcp@1` service named `zcp`, carrying the run descriptor and
+   credentials — including the minted token as `ZCP_API_KEY` — as sensitive
+   envs (§2.2), plus an inline `zeropsYaml` whose `run.initCommands` list is
+   the image's own boot sequence (`install.sh` → `zcp init` → `sudo -E zcp
+   init nginx`) followed by one farm command that fetches `farm/wrapper.sh`
+   and starts it detached (`nohup … &`). Init commands run after `zcp init`
+   and BEFORE the `run.startCommands` units (nginx, code-server), and a
+   detached child does not delay `ALL RUN.INIT COMMANDS FINISHED` or ACTIVE
+   (verified live: import → ACTIVE 40 s with the child still running). The
+   wrapper therefore never assumes code-server or nginx is up.
+
+A mint (step 2) that 403s means the minting credential itself cannot mint
+(§2.4 FM-15) — every other run would fail identically, so the controller
+rolls back the just-created project shell and aborts the whole batch rather
+than skipping one run at a time. Once all three steps land, the existing
+fresh-target preflight (`spec-testing-architecture.md §10.4`) passes by
+construction — a run project is never adopted, always fresh.
 
 **FM-11.** Nobody reaches into a run container on the critical path: no SSH,
 no VPN, no `scp`. The wrapper does everything — download, seed via the
@@ -234,9 +262,20 @@ and where the result goes.
 **FM-15.** The account-wide API key that the controller uses to create and
 delete projects — `ZCP_FARM_ACCOUNT_TOKEN`, with its client (org) id
 `ZCP_FARM_CLIENT_ID`, both sensitive envs on the farm host only — never enters
-a run project. A run project's own `ZCP_API_KEY`
-is scoped by the platform to that project and cannot create or delete
+a run project. A run project's own `ZCP_API_KEY` (minted by the controller,
+§2.1 FM-10 step 2) is scoped to that project and cannot create or delete
 projects.
+
+`ZCP_FARM_ACCOUNT_TOKEN` MUST be a personal access token — minting a
+project-scoped run token (§2.1 step 2) is itself a mint call, and the
+platform 403s any mint attempt made by an integration token without
+delegation, live-verified with both apiCodes:
+`notAllowedForIntegrationTokenWithoutDelegation` and the legacy
+`notAllowedForIntegrationToken`. On either code the controller rolls back
+the run's already-created project shell and aborts the whole batch — every
+other run would fail identically — and `zcp eval farm run` prints one line
+naming the fix ("ZCP_FARM_ACCOUNT_TOKEN must be a personal access token:
+integration tokens cannot mint run tokens") and exits nonzero.
 
 **FM-16.** Every bundle records the model observed on the wire and the
 provider-reported usage. The agent credential is always the farm OAuth token

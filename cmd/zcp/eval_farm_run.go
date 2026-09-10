@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/eval"
 	"github.com/zeropsio/zcp/internal/eval/farm"
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // gateSetPath and scenariosDir are the on-disk locations `--set gate`/`--set
@@ -143,6 +145,10 @@ func runFarmRun(args []string) int {
 	}
 	results, err := farm.RunBatch(context.Background(), client, sink, opts)
 	if err != nil {
+		if isIntegrationTokenMintForbidden(err) {
+			fmt.Fprintln(os.Stderr, "error: ZCP_FARM_ACCOUNT_TOKEN must be a personal access token: integration tokens cannot mint run tokens")
+			return 1
+		}
 		fmt.Fprintf(os.Stderr, "error: farm run: %v\n", err)
 		return 1
 	}
@@ -158,6 +164,19 @@ func runFarmRun(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// isIntegrationTokenMintForbidden reports whether err's chain carries
+// platform.ErrDelegationUnavailable — the typed code
+// platform.MintProjectScopedToken returns when ZCP_FARM_ACCOUNT_TOKEN is
+// itself an integration token without delegation (either the current or
+// the legacy apiCode; docs/spec-eval-farm.md §2.4 FM-15). RunBatch aborts
+// the whole batch on this error (rolling back the one shell project it
+// created), so the preflight message here is the caller's one line naming
+// the fix.
+func isIntegrationTokenMintForbidden(err error) bool {
+	var pe *platform.PlatformError
+	return errors.As(err, &pe) && pe.Code == platform.ErrDelegationUnavailable
 }
 
 // resolveOAuthToken reads the run's sole model-request credential. The
