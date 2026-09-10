@@ -3,6 +3,7 @@ package farm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -74,26 +75,46 @@ func wrapperScriptPath(t *testing.T) string {
 }
 
 // stubEvaluatorScript is the offline double for the pinned evaluator
-// binary the wrapper downloads and execs. It never parses its own argv
-// (the real binding's exact flags are covered by the CLI-layer tests in
-// cmd/zcp; this stub only needs to behave like the runner's process
-// lifecycle and its printed dimension lines, spec-testing-architecture.md
-// §10.1) — it reads the run descriptor straight from its inherited
-// environment instead.
+// binary the wrapper downloads and execs. It records its own argv (so
+// TestWrapper_PassesWorkDirUnderRunDir can assert on --work-dir; the real
+// binding's exact flags are otherwise covered by the CLI-layer tests in
+// cmd/zcp) and reads the run descriptor from its inherited environment.
 //
 // Sequence, unconditionally: drop a side-effect marker (so a test can prove
-// this script never ran), write results/<scenario>/{meta.json,
+// this script never ran), record argv, touch a marker under --work-dir if
+// one was passed (D3), write results/<scenario>/{meta.json,
 // verification.json} and capture/manifest.json — each containing a literal
 // secret value, to prove redaction — keep an unredacted copy outside
-// results/capture for the test to diff against, print the three dimension
-// lines, then end per STUB_MODE: "ok" (default) exits 0, "fail" prints a
-// failed Task line and exits 1, "hang" sleeps 30s so a test can kill -9 it.
+// results/capture for the test to diff against, write a fake capture window
+// under $HOME/.local/state/zcp/captures/ and print the "records:"/
+// "manifest:" lines the way the real evaluator's `--capture raw` does
+// (cmd/zcp/capture.go), so the wrapper's D5 recovery step has something to
+// find and copy into $RUNDIR/capture, then print the three dimension lines,
+// then end per STUB_MODE: "ok" (default) exits 0, "fail" prints a failed
+// Task line and exits 1, "hang" spawns a `sleep 300` grandchild (recording
+// its pid to ./grandchild.pid) and sleeps 30s itself so a test can kill -9
+// the main stub process and observe the grandchild die too.
 const stubEvaluatorScript = `#!/bin/sh
 set -eu
 : >./ran.marker
+printf '%s\n' "$@" >./argv.log
+
+work_dir=""
+prev=""
+for arg in "$@"; do
+	if [ "$prev" = "--work-dir" ]; then
+		work_dir="$arg"
+	fi
+	prev="$arg"
+done
+if [ -n "$work_dir" ]; then
+	mkdir -p "$work_dir"
+	: >"$work_dir/workdir.marker"
+fi
+
 mkdir -p "results/$ZCP_FARM_SCENARIO" capture
 cat >"results/$ZCP_FARM_SCENARIO/meta.json" <<EOF
-{"scenarioId":"$ZCP_FARM_SCENARIO","secret1":"$ANTHROPIC_API_KEY","secret2":"$ZCP_FARM_S3_SECRET"}
+{"scenarioId":"$ZCP_FARM_SCENARIO","secret1":"$CLAUDE_CODE_OAUTH_TOKEN","secret2":"$ZCP_FARM_S3_SECRET"}
 EOF
 cat >"results/$ZCP_FARM_SCENARIO/verification.json" <<'EOF'
 {"formatVersion":"zcp-eval-verification-2","mode":"required","result":"passed"}
@@ -103,6 +124,14 @@ cat >capture/manifest.json <<EOF
 EOF
 mkdir -p pristine
 cp "results/$ZCP_FARM_SCENARIO/meta.json" pristine/meta.json
+
+window_dir="$HOME/.local/state/zcp/captures/stub-window-1"
+mkdir -p "$window_dir"
+printf '{"status":"complete"}' >"$window_dir/manifest.json"
+printf '{"line":"provider record"}\n' >"$window_dir/provider.jsonl"
+echo "records: $window_dir/provider.jsonl"
+echo "manifest: $window_dir/manifest.json"
+
 mode="${STUB_MODE:-ok}"
 case "$mode" in
 fail)
@@ -112,6 +141,8 @@ fail)
 	exit 1
 	;;
 hang)
+	sleep 300 &
+	echo $! >./grandchild.pid
 	echo "Execution:    ok"
 	echo "Task:         required passed"
 	echo "Task-end evidence: persisted, settled"
@@ -222,7 +253,7 @@ func (h *wrapperHarness) env(overrides map[string]string) []string {
 		"ZCP_FARM_S3_BUCKET":        h.fake.bucket,
 		"ZCP_FARM_S3_KEY":           "AKIDEXAMPLE",
 		"ZCP_FARM_S3_SECRET":        "s3-secret-value-xyz",
-		"ANTHROPIC_API_KEY":         "sk-ant-farm-secret-value",
+		"CLAUDE_CODE_OAUTH_TOKEN":   "oauth-tok-default-value",
 		"projectId":                 h.projectID,
 		"ZCP_FARM_RUNDIR":           h.rundir,
 	}
@@ -351,8 +382,8 @@ func TestWrapper_Success_UploadsPartsThenDoneLast(t *testing.T) {
 	if done.EvaluatorSha256 != h.evaluatorSHA || done.CandidateSha256 != h.candidateSHA {
 		t.Errorf("done.json digests = %q/%q, want %q/%q", done.EvaluatorSha256, done.CandidateSha256, h.evaluatorSHA, h.candidateSHA)
 	}
-	if done.CredentialMode != "api-key" {
-		t.Errorf("credentialMode = %q, want %q", done.CredentialMode, "api-key")
+	if done.CredentialMode != "oauth-token" {
+		t.Errorf("credentialMode = %q, want %q", done.CredentialMode, "oauth-token")
 	}
 
 	// Independent oracle: recompute the tree digest locally from what the
@@ -555,16 +586,16 @@ func TestWrapper_Redaction_NoSecretValueInBundle(t *testing.T) {
 
 	h := newWrapperHarness(t)
 	overrides := map[string]string{
-		"ZCP_FARM_S3_KEY":    "AKIDEXAMPLE-redact-me",
-		"ZCP_FARM_S3_SECRET": "s3-secret-redact-me",
-		"ANTHROPIC_API_KEY":  "sk-ant-redact-me",
+		"ZCP_FARM_S3_KEY":         "AKIDEXAMPLE-redact-me",
+		"ZCP_FARM_S3_SECRET":      "s3-secret-redact-me",
+		"CLAUDE_CODE_OAUTH_TOKEN": "oauth-tok-redact-me",
 	}
 	cmd := h.start(t, overrides)
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("supervisor exited with error: %v", err)
 	}
 
-	secrets := []string{overrides["ZCP_FARM_S3_KEY"], overrides["ZCP_FARM_S3_SECRET"], overrides["ANTHROPIC_API_KEY"]}
+	secrets := []string{overrides["ZCP_FARM_S3_KEY"], overrides["ZCP_FARM_S3_SECRET"], overrides["CLAUDE_CODE_OAUTH_TOKEN"]}
 
 	// Pristine copy (outside results/capture, so the wrapper never touches
 	// it) must actually contain at least one secret — proving the stub
@@ -604,16 +635,15 @@ func TestWrapper_Redaction_NoSecretValueInBundle(t *testing.T) {
 	}
 }
 
-// TestWrapper_TwoCredentials_Refused pins the credential-mode gate: two
-// kinds of agent credential present (ANTHROPIC_API_KEY and
-// CLAUDE_CODE_OAUTH_TOKEN) refuses before the child is even forked — an API
-// key can shadow an OAuth profile, so carrying both makes the credential
-// mode ambiguous (docs/spec-eval-farm.md §2.4).
-func TestWrapper_TwoCredentials_Refused(t *testing.T) {
+// TestWrapper_ApiKeyPresent_Refused pins the OAuth-only credential gate
+// (owner decision 2026-09-10, docs/spec-eval-farm.md §2.3 step 2 + §2.4): an
+// ANTHROPIC_API_KEY in the environment refuses before the child is even
+// forked — an API key can shadow the farm's OAuth profile.
+func TestWrapper_ApiKeyPresent_Refused(t *testing.T) {
 	requireShAndCurl(t)
 
 	h := newWrapperHarness(t)
-	cmd := h.start(t, map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": "oauth-tok-value"})
+	cmd := h.start(t, map[string]string{"ANTHROPIC_API_KEY": "sk-ant-should-refuse"})
 	_ = cmd.Wait()
 
 	doneBytes, ok := h.fake.get("runs/" + h.runID + "/done.json")
@@ -624,13 +654,194 @@ func TestWrapper_TwoCredentials_Refused(t *testing.T) {
 	if err := json.Unmarshal(doneBytes, &done); err != nil {
 		t.Fatalf("done.json parse: %v (body: %s)", err, doneBytes)
 	}
-	if done.RunnerDimensions.Execution != "refused: two credentials" {
-		t.Errorf("runnerDimensions.execution = %q, want %q", done.RunnerDimensions.Execution, "refused: two credentials")
+	if !strings.Contains(done.RunnerDimensions.Execution, "refused") {
+		t.Errorf("runnerDimensions.execution = %q, want it to contain %q", done.RunnerDimensions.Execution, "refused")
+	}
+	if !strings.Contains(done.RunnerDimensions.Execution, "ANTHROPIC_API_KEY") {
+		t.Errorf("runnerDimensions.execution = %q, want it to name ANTHROPIC_API_KEY", done.RunnerDimensions.Execution)
 	}
 
 	// The child must never have been forked at all: no started.json PUT.
 	if _, ok := h.fake.get("runs/" + h.runID + "/started.json"); ok {
-		t.Errorf("started.json was uploaded — the child ran despite two credentials being present")
+		t.Errorf("started.json was uploaded — the child ran despite ANTHROPIC_API_KEY being present")
+	}
+}
+
+// TestWrapper_NoOAuthToken_Refused pins the other half of the OAuth-only
+// gate: an empty/absent CLAUDE_CODE_OAUTH_TOKEN refuses too — there is no
+// API-key fallback.
+func TestWrapper_NoOAuthToken_Refused(t *testing.T) {
+	requireShAndCurl(t)
+
+	h := newWrapperHarness(t)
+	cmd := h.start(t, map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": ""})
+	_ = cmd.Wait()
+
+	doneBytes, ok := h.fake.get("runs/" + h.runID + "/done.json")
+	if !ok {
+		t.Fatalf("done.json missing from bucket")
+	}
+	var done wrapperDoneJSON
+	if err := json.Unmarshal(doneBytes, &done); err != nil {
+		t.Fatalf("done.json parse: %v (body: %s)", err, doneBytes)
+	}
+	if !strings.Contains(done.RunnerDimensions.Execution, "refused") {
+		t.Errorf("runnerDimensions.execution = %q, want it to contain %q", done.RunnerDimensions.Execution, "refused")
+	}
+	if !strings.Contains(done.RunnerDimensions.Execution, "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Errorf("runnerDimensions.execution = %q, want it to name CLAUDE_CODE_OAUTH_TOKEN", done.RunnerDimensions.Execution)
+	}
+
+	if _, ok := h.fake.get("runs/" + h.runID + "/started.json"); ok {
+		t.Errorf("started.json was uploaded — the child ran despite no CLAUDE_CODE_OAUTH_TOKEN")
+	}
+}
+
+// TestWrapper_PassesWorkDirUnderRunDir pins D3: the wrapper execs the
+// evaluator with --work-dir $RUNDIR/work, and that directory exists — the
+// evaluator's default (workDir=/var/www, private bin dir
+// filepath.Dir(workDir)/candidate-bin = /var/candidate-bin,
+// cmd/zcp/eval_behavioral.go ~line 202) failed on every live tracer run
+// because uid zerops cannot create /var/candidate-bin.
+func TestWrapper_PassesWorkDirUnderRunDir(t *testing.T) {
+	requireShAndCurl(t)
+
+	h := newWrapperHarness(t)
+	cmd := h.start(t, nil)
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("supervisor exited with error: %v", err)
+	}
+
+	argvBytes, err := os.ReadFile(filepath.Join(h.rundir, "argv.log"))
+	if err != nil {
+		t.Fatalf("read argv.log: %v", err)
+	}
+	argv := strings.Split(strings.TrimRight(string(argvBytes), "\n"), "\n")
+
+	wantWorkDir := filepath.Join(h.rundir, "work")
+	gotWorkDir := ""
+	for i, a := range argv {
+		if a == "--work-dir" && i+1 < len(argv) {
+			gotWorkDir = argv[i+1]
+			break
+		}
+	}
+	if gotWorkDir != wantWorkDir {
+		t.Errorf("--work-dir = %q, want %q (argv: %v)", gotWorkDir, wantWorkDir, argv)
+	}
+	if info, err := os.Stat(wantWorkDir); err != nil || !info.IsDir() {
+		t.Errorf("work dir %q does not exist as a directory: %v", wantWorkDir, err)
+	}
+	if _, err := os.Stat(filepath.Join(wantWorkDir, "workdir.marker")); err != nil {
+		t.Errorf("stub's workdir.marker missing under %q: %v", wantWorkDir, err)
+	}
+}
+
+// TestWrapper_CapturePart_NonEmptyWhenWindowWritten pins D5: the evaluator's
+// private capture window — never written under $RUNDIR/capture directly —
+// ends up uploaded as a non-empty "capture" part, via the wrapper's
+// recover_capture_window step (child.log's "records: <dir>/provider.jsonl"
+// line, eval/farm/wrapper.sh).
+func TestWrapper_CapturePart_NonEmptyWhenWindowWritten(t *testing.T) {
+	requireShAndCurl(t)
+
+	h := newWrapperHarness(t)
+	cmd := h.start(t, nil)
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("supervisor exited with error: %v", err)
+	}
+
+	capturePrefix := "runs/" + h.runID + "/capture/"
+	h.fake.mu.Lock()
+	var captureKeys []string
+	for key := range h.fake.objects {
+		if strings.HasPrefix(key, capturePrefix) {
+			captureKeys = append(captureKeys, key)
+		}
+	}
+	h.fake.mu.Unlock()
+	if len(captureKeys) == 0 {
+		t.Fatalf("no capture/** objects uploaded; want the stub's fake window (manifest.json/provider.jsonl) recovered and uploaded")
+	}
+	foundProviderJSONL := false
+	for _, k := range captureKeys {
+		if strings.HasSuffix(k, "provider.jsonl") {
+			foundProviderJSONL = true
+		}
+	}
+	if !foundProviderJSONL {
+		t.Errorf("capture/** keys = %v, want one ending in provider.jsonl (the recovered window)", captureKeys)
+	}
+}
+
+// TestWrapper_ChildKilled_GrandchildAlsoDead_BeforeDone pins D6: kill -9 of
+// the wrapper child must not leave a grandchild process running — the
+// supervisor's trap signals the child's whole process group before
+// redaction+upload, so a bundle is final only once nothing is still
+// running (docs/spec-eval-farm.md §2.3 FM-13). STUB_MODE=hang spawns a
+// `sleep 300` grandchild and records its pid to ./grandchild.pid before
+// itself sleeping.
+func TestWrapper_ChildKilled_GrandchildAlsoDead_BeforeDone(t *testing.T) {
+	requireShAndCurl(t)
+
+	h := newWrapperHarness(t)
+	cmd := h.start(t, map[string]string{"STUB_MODE": "hang"})
+
+	childPID := readPIDFile(t, filepath.Join(h.rundir, "child.pid"), 10*time.Second)
+	if !waitForFile(filepath.Join(h.rundir, "grandchild.pid"), 10*time.Second) {
+		t.Fatalf("grandchild.pid never appeared")
+	}
+	grandchildPID := readPIDFile(t, filepath.Join(h.rundir, "grandchild.pid"), time.Second)
+
+	if err := syscall.Kill(grandchildPID, syscall.Signal(0)); err != nil {
+		t.Fatalf("grandchild (pid %d) not alive before the test even started killing: %v", grandchildPID, err)
+	}
+
+	if err := syscall.Kill(childPID, syscall.SIGKILL); err != nil {
+		t.Fatalf("kill -9 child (pid %d): %v", childPID, err)
+	}
+	_ = cmd.Wait()
+
+	doneKey := "runs/" + h.runID + "/done.json"
+	if _, ok := waitForS3Key(h.fake, doneKey, 10*time.Second); !ok {
+		t.Fatalf("done.json never appeared after the child was killed")
+	}
+
+	// By the time done.json is uploaded, the supervisor's trap has already
+	// run kill_child_group — the grandchild must be dead, not merely
+	// orphaned-but-still-running.
+	if err := syscall.Kill(grandchildPID, syscall.Signal(0)); err == nil {
+		t.Errorf("grandchild (pid %d) is still alive after done.json was uploaded", grandchildPID)
+	} else if !errors.Is(err, syscall.ESRCH) {
+		t.Errorf("kill -0 grandchild (pid %d): unexpected error %v", grandchildPID, err)
+	}
+}
+
+// TestWrapper_RunDir_FixedRootUnderHome pins the RUNDIR fix: with
+// ZCP_FARM_RUNDIR unset, the wrapper uses the fixed, discoverable root
+// $HOME/.zcp-farm/<runId>/ instead of an untraceable `mktemp -d` path.
+func TestWrapper_RunDir_FixedRootUnderHome(t *testing.T) {
+	requireShAndCurl(t)
+
+	home := t.TempDir()
+	h := newWrapperHarness(t)
+	overrides := map[string]string{
+		"HOME":            home,
+		"ZCP_FARM_RUNDIR": "",
+	}
+	wantRunDir := filepath.Join(home, ".zcp-farm", h.runID)
+	t.Cleanup(func() { _ = os.RemoveAll(wantRunDir) })
+
+	cmd := h.start(t, overrides)
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("supervisor exited with error: %v", err)
+	}
+
+	if info, err := os.Stat(filepath.Join(wantRunDir, "supervisor.pid")); err != nil || info.IsDir() {
+		t.Fatalf("supervisor.pid missing under fixed root %q: %v", wantRunDir, err)
+	}
+	if _, err := os.Stat(filepath.Join(wantRunDir, "done.json")); err != nil {
+		t.Errorf("done.json missing under fixed root %q: %v", wantRunDir, err)
 	}
 }
 

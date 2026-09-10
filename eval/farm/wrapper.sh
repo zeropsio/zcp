@@ -136,10 +136,53 @@ redact_known_secrets() {
 	dir="$1"
 	redact_dir "$dir" "${ZCP_FARM_S3_SECRET:-}"
 	redact_dir "$dir" "${ZCP_FARM_S3_KEY:-}"
-	redact_dir "$dir" "${ANTHROPIC_API_KEY:-}"
 	redact_dir "$dir" "${CLAUDE_CODE_OAUTH_TOKEN:-}"
 	redact_dir "$dir" "${ZCP_E2E_LAUNCH_KEY:-}"
 	redact_dir "$dir" "${ZCP_API_KEY:-}"
+}
+
+# ---- child-tree cleanup (D6) ----------------------------------------------
+
+# kill_child_group signals the child's whole process group — not just the
+# child pid — via the negative-pid form, so a reparented grandchild (its
+# ppid moved to the reaper once the child died, but its pgid never changes)
+# is still reached. TERM first, a grace period, then KILL, so nothing is
+# still running by the time redaction/upload starts (docs/spec-eval-farm.md
+# §2.3 FM-13: "the supervisor must ... kill the whole group ... BEFORE
+# redaction + upload, so a bundle is final only when nothing is still
+# running").
+kill_child_group() {
+	[ -f "$RUNDIR/child.pid" ] || return 0
+	pgid=$(cat "$RUNDIR/child.pid")
+	[ -z "$pgid" ] && return 0
+	kill -TERM -- "-$pgid" 2>/dev/null || true
+	sleep 0.3
+	kill -KILL -- "-$pgid" 2>/dev/null || true
+}
+
+# ---- capture recovery (D5) -------------------------------------------------
+
+# recover_capture_window copies the evaluator's own private capture window
+# into $CAPTURE_DIR. No flag/env forwards the capture root through `zcp eval
+# behavioral run --capture raw` today: the underlying `capture raw` command
+# does accept --output-dir (cmd/zcp/capture.go ~line 308), but
+# runEvalWithOptionalScopedCapture (cmd/zcp/eval_capture.go:107-113) builds
+# that invocation's wrapperArgs itself and never exposes it — so the window
+# always lands under the evaluator's private $HOME/.local/state/zcp/captures/.
+# The wrapper instead locates it from the evaluator's own printed
+# "records: <window-dir>/provider.jsonl" line (cmd/zcp/capture.go:388) in
+# child.log and copies the window's files into $CAPTURE_DIR before upload.
+recover_capture_window() {
+	[ -f "$RUNDIR/child.log" ] || return 0
+	records_line=$(grep '^records: ' "$RUNDIR/child.log" | tail -n1 | sed -e 's/^records:[[:space:]]*//')
+	[ -z "$records_line" ] && return 0
+	window_dir=$(dirname "$records_line")
+	[ -d "$window_dir" ] || return 0
+	find "$window_dir" -type f | while IFS= read -r f; do
+		rel=${f#"$window_dir"/}
+		mkdir -p "$CAPTURE_DIR/$(dirname "$rel")"
+		cp "$f" "$CAPTURE_DIR/$rel"
+	done
 }
 
 # ---- upload ---------------------------------------------------------------
@@ -210,13 +253,28 @@ child_main() {
 	export HOME
 
 	results_dir="$RUNDIR/results"
-	mkdir -p "$results_dir" "$RUNDIR/capture"
+	work_dir="$RUNDIR/work"
+	mkdir -p "$results_dir" "$RUNDIR/capture" "$work_dir"
 
 	cd "$RUNDIR" || exit 1
+
+	# child.pid names whichever process is actually doing the work: written
+	# here (not by the supervisor's $!) because the supervisor may have
+	# handed us to setsid/perl-setsid, which can fork an intermediate
+	# process before landing on this one (D6). $$ is always this process's
+	# own pid, and since supervisor_main puts it in a new session, that pid
+	# is also its process group id — the id finish_and_upload signals as a
+	# whole to reach every descendant, reparented or not (docs/spec-eval-farm.md
+	# §2.3 FM-13).
+	echo $$ >"$RUNDIR/child.pid"
 
 	# Everything from here on becomes the evaluator's own output (dimension
 	# lines included, spec-testing-architecture.md §10.1); exec replaces this
 	# process so $RUNDIR/child.pid keeps naming whichever process is live.
+	# --work-dir pins the evaluator's private bin dir under $RUNDIR/work
+	# instead of its filepath.Dir(workDir)/candidate-bin default
+	# (/var/candidate-bin when workDir defaults to /var/www), which uid
+	# zerops cannot create (cmd/zcp/eval_behavioral.go ~line 202).
 	exec >"$RUNDIR/child.log" 2>&1
 	exec "$evaluator_bin" eval behavioral run \
 		--candidate "$candidate_bin" \
@@ -226,7 +284,8 @@ child_main() {
 		--capture raw \
 		--id "$ZCP_FARM_SCENARIO" \
 		--scenarios-dir "$scen_dir" \
-		--results-dir "$results_dir"
+		--results-dir "$results_dir" \
+		--work-dir "$work_dir"
 }
 
 # ---- supervisor (FM-13 step 4, FM-3/FM-4/FM-5/FM-7) --------------------
@@ -274,6 +333,9 @@ finish_and_upload() {
 		fi
 	fi
 
+	kill_child_group
+	recover_capture_window
+
 	redact_known_secrets "$RESULTS_DIR"
 	redact_known_secrets "$CAPTURE_DIR"
 
@@ -283,12 +345,10 @@ finish_and_upload() {
 	results_digest=$(tree_digest "$RESULTS_DIR")
 	capture_digest=$(tree_digest "$CAPTURE_DIR")
 
-	credential_mode="unknown"
-	if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-		credential_mode="api-key"
-	elif [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-		credential_mode="oauth-token"
-	fi
+	# The wrapper refuses to start on any other credential shape
+	# (supervisor_main's OAuth-only gate), so every bundle that reaches
+	# here ran under the farm's oauth-token profile.
+	credential_mode="oauth-token"
 
 	done_json="$RUNDIR/done.json"
 	printf '{"runId":"%s","scenarioId":"%s","runnerDimensions":{"execution":"%s","task":"%s","taskEnd":"%s"},"parts":{"results":{"treeDigest":"%s"},"capture":{"treeDigest":"%s"}},"evaluatorSha256":"%s","candidateSha256":"%s","credentialMode":"%s"}' \
@@ -306,10 +366,34 @@ finish_and_upload() {
 	s3_put "$done_json" "runs/$ZCP_FARM_RUN/done.json"
 }
 
+# run_detached_child starts child_main in its own session (so its pgid never
+# collides with the supervisor's own — a plain "cmd &" under `set -eu` gets
+# the *same* pgid as the backgrounding shell, which would make
+# kill_child_group's negative-pid signal hit the supervisor too). Prefers the
+# real setsid(1) (present on the run container's Ubuntu image); falls back to
+# a one-line perl setsid()+exec when it is not on PATH (this dev machine has
+# no setsid) so the offline test rig exercises the same process-group
+# behavior; degrades to a same-group background job only if neither is
+# available (D6 protection then has no effect on that host).
+run_detached_child() {
+	if command -v setsid >/dev/null 2>&1; then
+		setsid sh "$0" --child "$RUNDIR" >"$RUNDIR/supervisor-child.log" 2>&1 &
+	elif command -v perl >/dev/null 2>&1; then
+		perl -e 'use POSIX qw(setsid); setsid(); exec { $ARGV[0] } @ARGV' \
+			sh "$0" --child "$RUNDIR" >"$RUNDIR/supervisor-child.log" 2>&1 &
+	else
+		sh "$0" --child "$RUNDIR" >"$RUNDIR/supervisor-child.log" 2>&1 &
+	fi
+}
+
 supervisor_main() {
 	RUNDIR="${ZCP_FARM_RUNDIR:-}"
 	if [ -z "$RUNDIR" ]; then
-		RUNDIR=$(mktemp -d)
+		# Fixed, discoverable root (not a bare `mktemp -d`, which produced
+		# an undiscoverable /tmp/tmp.* that needed a filesystem scan to find
+		# supervisor.pid during the first live tracer runs).
+		umask 077
+		RUNDIR="$HOME/.zcp-farm/$ZCP_FARM_RUN"
 	fi
 	mkdir -p "$RUNDIR"
 	echo $$ >"$RUNDIR/supervisor.pid"
@@ -324,21 +408,21 @@ supervisor_main() {
 	# twice.
 	trap finish_and_upload EXIT INT TERM HUP
 
-	cred_count=0
+	# OAuth-only (owner decision 2026-09-10, docs/spec-eval-farm.md §2.3
+	# step 2 + §2.4): the wrapper writes the private Claude home from
+	# CLAUDE_CODE_OAUTH_TOKEN only, never ANTHROPIC_API_KEY — an API key
+	# would let Claude Code shadow the OAuth profile.
 	if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-		cred_count=$((cred_count + 1))
+		printf '%s' "refused: ANTHROPIC_API_KEY is set; oauth-token only" >"$RUNDIR/execution-override"
+		exit 1
 	fi
-	if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-		cred_count=$((cred_count + 1))
-	fi
-	if [ "$cred_count" -ne 1 ]; then
-		printf '%s' "refused: two credentials" >"$RUNDIR/execution-override"
+	if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+		printf '%s' "refused: CLAUDE_CODE_OAUTH_TOKEN is empty" >"$RUNDIR/execution-override"
 		exit 1
 	fi
 
-	sh "$0" --child "$RUNDIR" >"$RUNDIR/supervisor-child.log" 2>&1 &
+	run_detached_child
 	childpid=$!
-	echo "$childpid" >"$RUNDIR/child.pid"
 
 	set +e
 	wait "$childpid"
