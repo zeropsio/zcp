@@ -23,7 +23,7 @@ verification:
       type: postgresql@*
   noFailedProcesses: true
   liveness: {service: appstage, marker: "team-notes"}
-  nodePostgresRecord: {stage: appstage, database: db, unrelated: appdev}
+  nodePostgresRecord: {stage: appstage, database: db}
   never: ["zerops_import{override=true}"]
 notableFriction:
   # Informational only — does NOT gate anything. Helps the assistant in
