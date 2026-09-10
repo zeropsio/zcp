@@ -338,3 +338,95 @@ Do the thing.
 		t.Errorf("error should mention nodePostgresRecord, got: %v", err)
 	}
 }
+
+func TestScenarioParse_FarmVerificationFields_Accepted(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	good := `---
+id: farm-verification-fields
+seed: empty
+verification:
+  mode: observe
+  spec: spec-workflows.md §4.3
+  allowFailed: [api]
+  liveness:
+    service: appdev
+    marker: team-notes
+  unchanged: [appstage]
+  never:
+    - zerops_import{override=true}
+    - zerops_delete
+  askWhen: [GIT_TOKEN_MISSING]
+---
+Do the thing.
+`
+	path := filepath.Join(dir, "good.md")
+	if err := os.WriteFile(path, []byte(good), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sc, err := ParseScenario(path)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	v := sc.Verification
+	if v == nil {
+		t.Fatal("expected Verification to be set")
+	}
+	if v.Spec != "spec-workflows.md §4.3" {
+		t.Errorf("Spec = %q", v.Spec)
+	}
+	if len(v.AllowFailed) != 1 || v.AllowFailed[0] != "api" {
+		t.Errorf("AllowFailed = %v", v.AllowFailed)
+	}
+	if v.Liveness == nil || v.Liveness.Service != "appdev" || v.Liveness.Marker != "team-notes" {
+		t.Errorf("Liveness = %+v", v.Liveness)
+	}
+	if len(v.Unchanged) != 1 || v.Unchanged[0] != "appstage" {
+		t.Errorf("Unchanged = %v", v.Unchanged)
+	}
+	if len(v.Never) != 2 || v.Never[0] != "zerops_import{override=true}" {
+		t.Errorf("Never = %v", v.Never)
+	}
+	if len(v.AskWhen) != 1 || v.AskWhen[0] != "GIT_TOKEN_MISSING" {
+		t.Errorf("AskWhen = %v", v.AskWhen)
+	}
+
+	reach := `---
+id: farm-verification-reach-rejected
+seed: empty
+verification:
+  mode: observe
+  reach: [discover, complete]
+---
+Do the thing.
+`
+	reachPath := filepath.Join(dir, "reach.md")
+	if err := os.WriteFile(reachPath, []byte(reach), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseScenario(reachPath); err == nil {
+		t.Fatal("expected parse error for reach field")
+	} else if !strings.Contains(err.Error(), "reach") {
+		t.Errorf("error should mention reach, got: %v", err)
+	}
+
+	badExpr := `---
+id: farm-verification-bad-never-expr
+seed: empty
+verification:
+  mode: observe
+  never: ["not a valid ( expr"]
+---
+Do the thing.
+`
+	badExprPath := filepath.Join(dir, "bad-expr.md")
+	if err := os.WriteFile(badExprPath, []byte(badExpr), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseScenario(badExprPath); err == nil {
+		t.Fatal("expected parse error for malformed never expression")
+	} else if !strings.Contains(err.Error(), "never") {
+		t.Errorf("error should mention never, got: %v", err)
+	}
+}

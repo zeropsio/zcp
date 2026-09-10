@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -444,6 +445,139 @@ func TestSubdomainProbe_ResolvedURL_ActualRequest(t *testing.T) {
 		}), client, "p1", time.Now())
 		if got.Result != CheckBlocked {
 			t.Errorf("row = %+v, want blocked (resolver returned \"\")", got)
+		}
+	})
+}
+
+// TestVerification_AllowFailed_IgnoresListedServiceOnly pins FM-28: a
+// FAILED process on a service named in allowFailed is not a violation; a
+// FAILED process on any other service still fails the row.
+func TestVerification_AllowFailed_IgnoresListedServiceOnly(t *testing.T) {
+	t.Parallel()
+	sc := &Scenario{Verification: &VerificationConfig{NoFailedProcesses: true, AllowFailed: []string{"api"}}}
+	failReason := "seeded broken runtime"
+	client := platform.NewMock().WithProjectProcesses([]platform.Process{
+		{ID: "p-allowed", ActionName: "stack.build", Status: "FAILED", FailReason: &failReason,
+			ServiceStacks: []platform.ServiceStackRef{{Name: "api"}}},
+	})
+	rows := generateRequiredChecks(context.Background(), sc, platformObservation{observedAt: time.Now(), processes: mustProjectProcesses(t, client)}, nil, time.Time{}, "p1", client, false, nil)
+	if len(rows) != 1 || rows[0].Result != CheckPassed {
+		t.Fatalf("FAILED process on allowed service must not fail the row, got %+v", rows)
+	}
+
+	failReason2 := "unrelated crash"
+	client2 := platform.NewMock().WithProjectProcesses([]platform.Process{
+		{ID: "p-allowed", ActionName: "stack.build", Status: "FAILED", FailReason: &failReason,
+			ServiceStacks: []platform.ServiceStackRef{{Name: "api"}}},
+		{ID: "p-bad", ActionName: "stack.build", Status: "FAILED", FailReason: &failReason2,
+			ServiceStacks: []platform.ServiceStackRef{{Name: "db"}}},
+	})
+	rows2 := generateRequiredChecks(context.Background(), sc, platformObservation{observedAt: time.Now(), processes: mustProjectProcesses(t, client2)}, nil, time.Time{}, "p1", client2, false, nil)
+	if len(rows2) != 1 || rows2[0].Result != CheckFailed || !strings.Contains(rows2[0].Message, "p-bad") {
+		t.Fatalf("FAILED process on non-allowed service must fail the row, got %+v", rows2)
+	}
+}
+
+// mustProjectProcesses fetches the mock's configured processes directly,
+// mirroring how collectPlatformObservation would populate
+// platformObservation.processes.
+func mustProjectProcesses(t *testing.T, client platform.Client) []platform.Process {
+	t.Helper()
+	processes, err := client.GetProjectProcessesDirect(context.Background(), "p1")
+	if err != nil {
+		t.Fatalf("GetProjectProcessesDirect: %v", err)
+	}
+	return processes
+}
+
+// TestVerification_LivenessMarker_PassesOnlyWhenBodyContainsMarker pins
+// FM-27's O2 liveness check: 2xx with the marker in the body passes, 2xx
+// without it fails, and a resolver failure blocks (never fires HTTP).
+func TestVerification_LivenessMarker_PassesOnlyWhenBodyContainsMarker(t *testing.T) {
+	t.Parallel()
+
+	t.Run("200 with marker — passed", func(t *testing.T) {
+		t.Parallel()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			fmt.Fprint(w, "<html>team-notes are here</html>")
+		}))
+		defer server.Close()
+		svc := &platform.ServiceStack{ID: "appdev-1", Name: "appdev", SubdomainAccess: true, Ports: []platform.Port{{Port: 80, Scheme: "http"}}}
+		client := platform.NewMock().WithProject(&platform.Project{ID: "p1", SubdomainHost: "testproj.example.com"})
+		observation := platformObservation{observedAt: time.Now(), services: []platform.ServiceStack{*svc}}
+		row := evaluateLivenessRow(context.Background(), &LivenessProbe{Service: "appdev", Marker: "team-notes"}, observation, loopbackHTTPClient(server), client, "p1")
+		if row.Result != CheckPassed {
+			t.Errorf("row = %+v, want passed", row)
+		}
+	})
+
+	t.Run("200 without marker — failed", func(t *testing.T) {
+		t.Parallel()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			fmt.Fprint(w, "<html>nothing here</html>")
+		}))
+		defer server.Close()
+		svc := &platform.ServiceStack{ID: "appdev-1", Name: "appdev", SubdomainAccess: true, Ports: []platform.Port{{Port: 80, Scheme: "http"}}}
+		client := platform.NewMock().WithProject(&platform.Project{ID: "p1", SubdomainHost: "testproj.example.com"})
+		observation := platformObservation{observedAt: time.Now(), services: []platform.ServiceStack{*svc}}
+		row := evaluateLivenessRow(context.Background(), &LivenessProbe{Service: "appdev", Marker: "team-notes"}, observation, loopbackHTTPClient(server), client, "p1")
+		if row.Result != CheckFailed {
+			t.Errorf("row = %+v, want failed", row)
+		}
+	})
+
+	t.Run("resolve error — blocked, no HTTP fired", func(t *testing.T) {
+		t.Parallel()
+		svc := &platform.ServiceStack{ID: "appdev-1", Name: "appdev", SubdomainAccess: true, Ports: []platform.Port{{Port: 80, Scheme: "http"}}}
+		client := platform.NewMock().WithProject(&platform.Project{ID: "p1", SubdomainHost: ""})
+		observation := platformObservation{observedAt: time.Now(), services: []platform.ServiceStack{*svc}}
+		row := evaluateLivenessRow(context.Background(), &LivenessProbe{Service: "appdev", Marker: "team-notes"}, observation, httpDoerFunc(func(*http.Request) (*http.Response, error) {
+			t.Fatal("HTTP probe should not fire when the URL is unresolvable")
+			return nil, errProbeShouldNotFire
+		}), client, "p1")
+		if row.Result != CheckBlocked {
+			t.Errorf("row = %+v, want blocked", row)
+		}
+	})
+}
+
+// TestVerification_UnchangedRow_PerHostname pins FM-29: the standalone
+// unchanged: field grades exactly like nodePostgresRecord's unrelated row
+// on the same inputs — same id equals passed, changed id equals failed.
+func TestVerification_UnchangedRow_PerHostname(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+
+	t.Run("same active app-version — passed, matches nodePostgresRecord path", func(t *testing.T) {
+		t.Parallel()
+		svc := &platform.ServiceStack{Name: "appstage", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-1"}}
+		standalone := gradeUnchangedRow(unrelatedArtifactRowID("appstage"), "appstage", "av-1", svc, now)
+		nodePostgres := gradeUnchangedRow(unrelatedArtifactRowID("appstage"), "appstage", "av-1", svc, now)
+		if standalone.Result != CheckPassed || standalone != nodePostgres {
+			t.Errorf("standalone = %+v, nodePostgres = %+v, want equal and passed", standalone, nodePostgres)
+		}
+	})
+
+	t.Run("changed active app-version — failed", func(t *testing.T) {
+		t.Parallel()
+		svc := &platform.ServiceStack{Name: "appstage", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-2"}}
+		row := gradeUnchangedRow(unrelatedArtifactRowID("appstage"), "appstage", "av-1", svc, now)
+		if row.Result != CheckFailed {
+			t.Errorf("row = %+v, want failed", row)
+		}
+	})
+
+	t.Run("via generateRequiredChecks with sc.Verification.Unchanged — one row per hostname", func(t *testing.T) {
+		t.Parallel()
+		sc := &Scenario{Verification: &VerificationConfig{Unchanged: []string{"appstage"}}}
+		client := platform.NewMock().WithServicesDirect([]platform.ServiceStack{
+			{Name: "appstage", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-1"}},
+		})
+		observation := collectPlatformObservation(context.Background(), client, "p1", true, false)
+		baseline := &ScenarioBaseline{UnrelatedAppVersion: "av-1"}
+		rows := generateRequiredChecks(context.Background(), sc, observation, nil, time.Time{}, "p1", client, false, baseline)
+		if len(rows) != 1 || rows[0].ID != "unrelated_artifact/appstage/unchanged" || rows[0].Result != CheckPassed {
+			t.Fatalf("expected single passed unrelated_artifact row, got %+v", rows)
 		}
 	})
 }

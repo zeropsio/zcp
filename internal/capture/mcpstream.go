@@ -1,4 +1,4 @@
-package farm
+package capture
 
 import (
 	"bytes"
@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-
-	"github.com/zeropsio/zcp/internal/capture"
 )
 
 // MCPToolCall is one tools/call request/response pair reconstructed from a
@@ -43,30 +41,30 @@ type MCPToolCall struct {
 // ReadMCPStream reads one capture/mcp/zcp-<pid>.jsonl file and returns the
 // tool calls it observed, in call order.
 func ReadMCPStream(path string) ([]MCPToolCall, error) {
-	records, err := capture.ReadRecords(path)
+	records, err := ReadRecords(path)
 	if err != nil {
-		return nil, fmt.Errorf("farm: read MCP capture %s: %w", path, err)
+		return nil, fmt.Errorf("mcpstream: read MCP capture %s: %w", path, err)
 	}
 
-	stdin, err := reconstructStream(records, capture.RecordMCPStdinChunk)
+	stdin, err := reconstructStream(records, RecordMCPStdinChunk)
 	if err != nil {
-		return nil, fmt.Errorf("farm: reconstruct stdin %s: %w", path, err)
+		return nil, fmt.Errorf("mcpstream: reconstruct stdin %s: %w", path, err)
 	}
-	stdout, err := reconstructStream(records, capture.RecordMCPStdoutChunk)
+	stdout, err := reconstructStream(records, RecordMCPStdoutChunk)
 	if err != nil {
-		return nil, fmt.Errorf("farm: reconstruct stdout %s: %w", path, err)
+		return nil, fmt.Errorf("mcpstream: reconstruct stdout %s: %w", path, err)
 	}
 
 	calls, orderByID := parseToolCallRequests(splitLines(stdin))
 	if err := applyToolCallResponses(calls, orderByID, splitLines(stdout)); err != nil {
-		return nil, fmt.Errorf("farm: parse MCP responses %s: %w", path, err)
+		return nil, fmt.Errorf("mcpstream: parse MCP responses %s: %w", path, err)
 	}
 	return calls, nil
 }
 
 // reconstructStream concatenates every record of kind (stdin or stdout
 // chunks, in file order) after base64-decoding each body.
-func reconstructStream(records []capture.Record, kind string) ([]byte, error) {
+func reconstructStream(records []Record, kind string) ([]byte, error) {
 	var stream []byte
 	for _, record := range records {
 		if record.Kind != kind {
@@ -91,7 +89,7 @@ func splitLines(stream []byte) [][]byte {
 	return lines
 }
 
-type mcpRPCMessage struct {
+type mcpStreamRPCMessage struct {
 	ID     json.RawMessage `json:"id"`
 	Method string          `json:"method"`
 	Params json.RawMessage `json:"params"`
@@ -99,12 +97,12 @@ type mcpRPCMessage struct {
 	Error  json.RawMessage `json:"error"`
 }
 
-type mcpCallParams struct {
+type mcpStreamCallParams struct {
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments"`
 }
 
-type mcpCallResult struct {
+type mcpStreamCallResult struct {
 	Content []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
@@ -121,11 +119,11 @@ func parseToolCallRequests(lines [][]byte) ([]MCPToolCall, map[string]int) {
 	var calls []MCPToolCall
 	byID := make(map[string]int)
 	for _, line := range lines {
-		var message mcpRPCMessage
+		var message mcpStreamRPCMessage
 		if err := json.Unmarshal(line, &message); err != nil || message.Method != "tools/call" {
 			continue
 		}
-		var params mcpCallParams
+		var params mcpStreamCallParams
 		if err := json.Unmarshal(message.Params, &params); err != nil {
 			continue
 		}
@@ -144,7 +142,7 @@ func parseToolCallRequests(lines [][]byte) ([]MCPToolCall, map[string]int) {
 // fills in each matched call's result fields.
 func applyToolCallResponses(calls []MCPToolCall, byID map[string]int, lines [][]byte) error {
 	for _, line := range lines {
-		var message mcpRPCMessage
+		var message mcpStreamRPCMessage
 		if err := json.Unmarshal(line, &message); err != nil {
 			continue
 		}
@@ -166,17 +164,17 @@ func applyToolCallResponses(calls []MCPToolCall, byID map[string]int, lines [][]
 	return nil
 }
 
-func decodeToolCallResult(message mcpRPCMessage) (text string, isError bool, err error) {
+func decodeToolCallResult(message mcpStreamRPCMessage) (text string, isError bool, err error) {
 	if len(message.Error) > 0 && !bytes.Equal(bytes.TrimSpace(message.Error), []byte("null")) {
 		return string(message.Error), true, nil
 	}
-	var result mcpCallResult
+	var result mcpStreamCallResult
 	if err := json.Unmarshal(message.Result, &result); err != nil {
 		return "", false, fmt.Errorf("decode tools/call result: %w", err)
 	}
 	var texts []string
 	for _, part := range result.Content {
-		if part.Type == "text" {
+		if part.Type == mcpContentTypeText {
 			texts = append(texts, part.Text)
 		}
 	}
@@ -192,6 +190,11 @@ type envelopePhaseOnly struct {
 
 const envelopeFenceOpen = "```json zcp-envelope"
 const envelopeFenceClose = "```"
+
+// mcpContentTypeText is the MCP result content part type this reader joins
+// into ResultText (the "text" content-block kind — image/other parts are
+// skipped, matching inspect_mcp.go's own providerToolResultText).
+const mcpContentTypeText = "text"
 
 // extractEnvelopePhase implements the reducer rule of docs/spec-mate.md
 // §1.3: try the JSON carrier (a top-level "envelope" key) first, then the

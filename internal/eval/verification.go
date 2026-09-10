@@ -3,6 +3,7 @@ package eval
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
 	"strings"
@@ -49,7 +50,7 @@ func RunVerification(
 		ctx,
 		client,
 		projectID,
-		len(sc.Verification.ExpectedServices) > 0,
+		len(sc.Verification.ExpectedServices) > 0 || sc.Verification.Liveness != nil || len(sc.Verification.Unchanged) > 0,
 		sc.Verification.NoFailedProcesses,
 	)
 	return runVerificationWithObservation(ctx, sc, observation, httpDoer, retrospectiveText, runStart, projectID, client, true, nil)
@@ -144,13 +145,94 @@ func generateRequiredChecks(
 		rows = append(rows, evaluateExpectedService(ctx, exp, observation, httpDoer, client, projectID)...)
 	}
 	if sc.Verification.NoFailedProcesses {
-		rows = append(rows, evaluateNoFailedProcesses(observation, runStart, projectID))
+		rows = append(rows, evaluateNoFailedProcesses(observation, runStart, projectID, sc.Verification.AllowFailed))
 	}
 	if sc.Verification.NodePostgresRecord != nil {
 		rows = append(rows, evaluateNodePostgresRecordCheck(ctx, sc.Verification.NodePostgresRecord, client, httpDoer, projectID, settled, baseline)...)
 	}
+	if sc.Verification.Liveness != nil {
+		rows = append(rows, evaluateLivenessRow(ctx, sc.Verification.Liveness, observation, httpDoer, client, projectID))
+	}
+	for _, hostname := range sc.Verification.Unchanged {
+		rows = append(rows, evaluateUnchangedFieldRow(hostname, observation, baseline))
+	}
 	return rows
 }
+
+// evaluateUnchangedFieldRow grades one entry of the standalone
+// verification.unchanged list (docs/spec-eval-farm.md §4.1 FM-29): the same
+// grading nodePostgresRecord's unrelated row uses (gradeUnchangedRow,
+// internal/eval/node_postgres_verifier.go). Independent of whether the
+// scenario also declares nodePostgresRecord (FM-29) — phase-1 baseline
+// capture (behavioral_run.go) records exactly one hostname's active
+// app-version at scenario start, so a scenario declaring `unchanged` gets a
+// real comparison only while ScenarioBaseline is populated for it; wiring a
+// baseline capture per-hostname for the standalone field is future
+// integration work outside this slice's write-set (blocks, same as
+// nodePostgresRecord's own "no baseline recorded" case, until then).
+func evaluateUnchangedFieldRow(hostname string, observation platformObservation, baseline *ScenarioBaseline) RequiredCheck {
+	id := unrelatedArtifactRowID(hostname)
+	now := observation.observedAt
+	if observation.servicesErr != nil {
+		return RequiredCheck{ID: id, Check: checkUnrelatedArtifact, Scope: hostname, Result: CheckBlocked, ObservedAt: now, Source: "ListServicesDirect", Message: fmt.Sprintf("ListServicesDirect failed: %v", observation.servicesErr)}
+	}
+	var baselineAppVersion string
+	if baseline != nil {
+		baselineAppVersion = baseline.UnrelatedAppVersion
+	}
+	svc := findServiceByHostname(observation.services, hostname)
+	return gradeUnchangedRow(id, hostname, baselineAppVersion, svc, now)
+}
+
+// livenessRowID builds the stable row id for the O2 liveness check
+// (docs/spec-eval-farm.md §4.1 FM-27 table).
+func livenessRowID(service string) string {
+	return fmt.Sprintf("liveness/%s/marker", service)
+}
+
+// evaluateLivenessRow evaluates the O2 liveness probe: resolve the named
+// service's subdomain URL through ops.ResolveSubdomainURL (never from the
+// agent), expect a 2xx response whose body contains Marker. Reuses the
+// subdomain-probe row's HTTP path rather than a second HTTP client.
+func evaluateLivenessRow(ctx context.Context, probe *LivenessProbe, observation platformObservation, httpDoer ops.HTTPDoer, client platform.Client, projectID string) RequiredCheck {
+	id := livenessRowID(probe.Service)
+	now := observation.observedAt
+	if observation.servicesErr != nil {
+		return RequiredCheck{ID: id, Check: "liveness", Scope: probe.Service, Result: CheckBlocked, ObservedAt: now, Source: "ListServicesDirect", Message: fmt.Sprintf("ListServicesDirect failed: %v", observation.servicesErr)}
+	}
+	svc := findServiceByHostname(observation.services, probe.Service)
+	if svc == nil {
+		return RequiredCheck{ID: id, Check: "liveness", Scope: probe.Service, Result: CheckFailed, Expected: "exists", Observed: "not found", ObservedAt: now, Source: "ListServicesDirect", Message: fmt.Sprintf("service %q not found in project", probe.Service)}
+	}
+	url := ops.ResolveSubdomainURL(ctx, client, projectID, svc)
+	if url == "" {
+		return RequiredCheck{ID: id, Check: "liveness", Scope: probe.Service, Result: CheckBlocked, Expected: "resolvable subdomain URL", ObservedAt: now, Source: "ListServicesDirect", Message: fmt.Sprintf("service %q has no resolvable subdomain URL", probe.Service)}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+	if err != nil {
+		return RequiredCheck{ID: id, Check: "liveness", Scope: probe.Service, Result: CheckBlocked, ObservedAt: now, Source: "HTTP GET " + url, Message: fmt.Sprintf("build request for %s: %v", url, err)}
+	}
+	resp, err := httpDoer.Do(req)
+	if err != nil {
+		return RequiredCheck{ID: id, Check: "liveness", Scope: probe.Service, Result: CheckFailed, ObservedAt: now, Source: "HTTP GET " + url, Message: fmt.Sprintf("GET %s: %v", url, err)}
+	}
+	defer resp.Body.Close()
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxLivenessBodyBytes))
+	if readErr != nil {
+		return RequiredCheck{ID: id, Check: "liveness", Scope: probe.Service, Result: CheckFailed, ObservedAt: now, Source: "HTTP GET " + url, Message: fmt.Sprintf("read body from %s: %v", url, readErr)}
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return RequiredCheck{ID: id, Check: "liveness", Scope: probe.Service, Result: CheckFailed, Expected: "2xx with marker " + probe.Marker, Observed: fmt.Sprintf("%d", resp.StatusCode), ObservedAt: now, Source: "HTTP GET " + url, Message: fmt.Sprintf("GET %s returned %d, expected 2xx", url, resp.StatusCode)}
+	}
+	if !strings.Contains(string(body), probe.Marker) {
+		return RequiredCheck{ID: id, Check: "liveness", Scope: probe.Service, Result: CheckFailed, Expected: "body contains " + probe.Marker, Observed: "marker not found", ObservedAt: now, Source: "HTTP GET " + url, Message: fmt.Sprintf("GET %s returned 2xx but body does not contain marker %q", url, probe.Marker)}
+	}
+	return RequiredCheck{ID: id, Check: "liveness", Scope: probe.Service, Result: CheckPassed, Expected: "2xx with marker " + probe.Marker, Observed: fmt.Sprintf("%d, marker present", resp.StatusCode), ObservedAt: now, Source: "HTTP GET " + url, Message: fmt.Sprintf("GET %s returned %d with marker %q present", url, resp.StatusCode, probe.Marker)}
+}
+
+// maxLivenessBodyBytes caps the liveness probe's body read — a marker
+// substring check never needs an unbounded read.
+const maxLivenessBodyBytes = 1 << 20
 
 // evaluateNodePostgresRecordCheck adapts the exported NodePostgresVerifier
 // into the generateRequiredChecks pipeline. §10.2 ordering: the oracle runs
@@ -311,8 +393,11 @@ func evaluateSubdomainProbeRow(
 
 // evaluateNoFailedProcesses evaluates the no_failed_processes/<projectId>
 // row: any FAILED process created after runStart fails the row; a query
-// error blocks it; otherwise it passes.
-func evaluateNoFailedProcesses(observation platformObservation, runStart time.Time, projectID string) RequiredCheck {
+// error blocks it; otherwise it passes. allowFailed lists services whose
+// FAILED process state is the scenario's seeded starting point, not a
+// violation (docs/spec-eval-farm.md §4.1 FM-28) — a process naming any of
+// those services is ignored regardless of when it was created.
+func evaluateNoFailedProcesses(observation platformObservation, runStart time.Time, projectID string, allowFailed []string) RequiredCheck {
 	id := noFailedProcessesRowID(projectID)
 	now := observation.observedAt
 	if observation.processesErr != nil {
@@ -326,6 +411,9 @@ func evaluateNoFailedProcesses(observation platformObservation, runStart time.Ti
 	var messages []string
 	for _, process := range observation.processes {
 		if process.Status != platform.ProcessStatusFailed || !processCreatedAfter(process.Created, runStart) {
+			continue
+		}
+		if processOnAllowedService(process, allowFailed) {
 			continue
 		}
 		reason := process.ActionName
@@ -352,6 +440,20 @@ func evaluateNoFailedProcesses(observation platformObservation, runStart time.Ti
 		Result: CheckFailed, Expected: expected, Observed: strings.Join(failedIDs, ", "), ObservedAt: now, Source: "GetProjectProcessesDirect",
 		Message: strings.Join(messages, "; "),
 	}
+}
+
+// processOnAllowedService reports whether process names at least one
+// service in allowFailed among its ServiceStacks.
+func processOnAllowedService(process platform.Process, allowFailed []string) bool {
+	if len(allowFailed) == 0 {
+		return false
+	}
+	for _, stack := range process.ServiceStacks {
+		if slices.Contains(allowFailed, stack.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 // findServiceByHostname returns the first service whose Name matches host.
