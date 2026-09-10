@@ -49,6 +49,13 @@ const (
 	bundleMissing  = "missing"
 )
 
+// localGateSetPath is the dev-checkout-relative location of the gate scenario
+// list (eval/farm/gate-set.txt). `farm push` runs from a full repo checkout
+// (unlike `farm run`, which runs on the farm host from the binary alone,
+// §3.1 FM-17/FM-18) so this is the one place in this file a disk path is
+// still correct.
+const localGateSetPath = "eval/farm/gate-set.txt"
+
 // No init() registration (CLAUDE.md forbids global mutable state): this is a
 // plain switch. Later slices add their verb file and replace one
 // notImplemented case each — run/status/report/coverage/gc land after S2.
@@ -149,6 +156,12 @@ func runFarmPush(args []string) int {
 			return 1
 		}
 		fmt.Fprintf(os.Stdout, "evaluator: %s\n", digest)
+
+		if err := client.Put(ctx, "evaluators/current", []byte(digest)); err != nil {
+			fmt.Fprintf(os.Stderr, "error: push evaluator pointer: %v\n", err)
+			return 1
+		}
+		fmt.Fprintln(os.Stdout, "evaluator-pointer: evaluators/current")
 	}
 	if scenarios != "" {
 		digest, err := pushScenarioTree(ctx, client, scenarios)
@@ -157,6 +170,13 @@ func runFarmPush(args []string) int {
 			return 1
 		}
 		fmt.Fprintf(os.Stdout, "scenarios: %s\n", digest)
+
+		gateKey, err := pushGateSet(ctx, client, digest)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: push gate set: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(os.Stdout, "gate-set: %s\n", gateKey)
 	}
 	if wrapper != "" {
 		digest, err := farm.FileDigest(wrapper)
@@ -228,6 +248,24 @@ func pushScenarioTree(ctx context.Context, client *farm.SinkClient, dir string) 
 	return digest, nil
 }
 
+// pushGateSet uploads the local gate scenario list (localGateSetPath) to
+// "sets/<scenariosDigest>/gate.txt" — the bucket location `farm run --set
+// gate` reads on the farm host, which has no checkout of this file
+// (docs/spec-eval-farm.md §3.1 FM-17/FM-18). Keyed by the scenario tree
+// digest it was just pushed against, so a set list always names ids that
+// actually exist in that tree.
+func pushGateSet(ctx context.Context, client *farm.SinkClient, scenariosDigest string) (key string, err error) {
+	body, err := os.ReadFile(localGateSetPath)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", localGateSetPath, err)
+	}
+	key = fmt.Sprintf("sets/%s/gate.txt", scenariosDigest)
+	if err := client.Put(ctx, key, body); err != nil {
+		return "", err
+	}
+	return key, nil
+}
+
 // runFarmPull downloads runs/<runId>/** (or every run a batch's manifest
 // lists) to <out>/<runId>/, and prints each run's bundle completeness
 // (docs/spec-eval-farm.md §5: "bundle: complete|partial|missing").
@@ -289,6 +327,11 @@ func runFarmPull(args []string) int {
 		for _, run := range manifest.Runs {
 			runIDs = append(runIDs, run.RunID)
 		}
+
+		if err := writeBatchManifestAndSummary(ctx, client, batch, manifestBody, out); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
 	}
 
 	for _, id := range runIDs {
@@ -300,6 +343,36 @@ func runFarmPull(args []string) int {
 		fmt.Fprintf(os.Stdout, "%s: bundle: %s\n", id, status)
 	}
 	return 0
+}
+
+// writeBatchManifestAndSummary writes batches/<batch>/manifest.json (already
+// fetched as manifestBody) and, when present, batches/<batch>/summary.json
+// to <out>/batches/<batch>/, so `farm report --batch` finds them there
+// alongside the pulled run bundles (docs/spec-eval-farm.md §1.4 FM-9).
+func writeBatchManifestAndSummary(ctx context.Context, client *farm.SinkClient, batch string, manifestBody []byte, out string) error {
+	batchDir := filepath.Join(out, "batches", batch)
+	if err := os.MkdirAll(batchDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", batchDir, err)
+	}
+	if err := os.WriteFile(filepath.Join(batchDir, "manifest.json"), manifestBody, 0o600); err != nil {
+		return fmt.Errorf("write manifest: %w", err)
+	}
+
+	hasSummary, err := farm.SummaryExists(ctx, client, batch)
+	if err != nil {
+		return fmt.Errorf("check summary for %s: %w", batch, err)
+	}
+	if !hasSummary {
+		return nil
+	}
+	summaryBody, err := client.Get(ctx, fmt.Sprintf("batches/%s/summary.json", batch))
+	if err != nil {
+		return fmt.Errorf("read batch summary: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(batchDir, "summary.json"), summaryBody, 0o600); err != nil {
+		return fmt.Errorf("write summary: %w", err)
+	}
+	return nil
 }
 
 // pullRunBundle downloads every object under runs/<runID>/ to
