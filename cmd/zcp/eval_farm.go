@@ -228,16 +228,6 @@ func pushScenarioTree(ctx context.Context, client *farm.SinkClient, dir string) 
 	return digest, nil
 }
 
-// farmBatchManifest is the subset of batches/<batch>/manifest.json
-// (docs/spec-eval-farm.md §1.4, FM-9) this reads: the run ids the batch
-// created. FM-9 does not pin an exact field name for that list; "runs" is
-// this slice's working assumption — the slice that first writes
-// manifest.json (farm run, excluded from S2's write-set) is the one that
-// fixes this shape for real, and this reader adjusts to match it then.
-type farmBatchManifest struct {
-	Runs []string `json:"runs"`
-}
-
 // runFarmPull downloads runs/<runId>/** (or every run a batch's manifest
 // lists) to <out>/<runId>/, and prints each run's bundle completeness
 // (docs/spec-eval-farm.md §5: "bundle: complete|partial|missing").
@@ -290,12 +280,15 @@ func runFarmPull(args []string) int {
 			fmt.Fprintf(os.Stderr, "error: read batch manifest: %v\n", err)
 			return 1
 		}
-		var manifest farmBatchManifest
+		var manifest farm.BatchManifest
 		if err := json.Unmarshal(manifestBody, &manifest); err != nil {
 			fmt.Fprintf(os.Stderr, "error: parse batch manifest: %v\n", err)
 			return 1
 		}
-		runIDs = manifest.Runs
+		runIDs = make([]string, 0, len(manifest.Runs))
+		for _, run := range manifest.Runs {
+			runIDs = append(runIDs, run.RunID)
+		}
 	}
 
 	for _, id := range runIDs {

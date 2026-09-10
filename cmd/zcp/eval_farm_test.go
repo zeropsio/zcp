@@ -192,3 +192,43 @@ func TestFarmPull_Run_DownloadsAllParts(t *testing.T) {
 		}
 	}
 }
+
+// TestFarmPull_Batch_ReadsManifestRuns pins D14: `farm pull --batch <batch>`
+// decodes batches/<batch>/manifest.json in its real shape
+// (farm.BatchManifest, docs/spec-eval-farm.md §1.4 FM-9 — Runs is a list of
+// objects carrying runId, not a bare list of strings) and downloads every
+// run the manifest names.
+func TestFarmPull_Batch_ReadsManifestRuns(t *testing.T) {
+	fake := newFakeFarmS3("zcp-farm")
+	server := fake.server()
+	defer server.Close()
+	setFarmEnv(t, server.URL)
+
+	fake.objects["batches/b1/manifest.json"] = []byte(`{
+		"batch": "b1", "createdAt": "2026-09-10T00:00:00Z", "startedAt": "2026-09-10T00:00:00Z",
+		"set": "gate", "candidateSha256": "cand", "evaluatorSha256": "eval", "scenariosDigest": "scen",
+		"runs": [
+			{"runId": "b1-recipe-a", "scenario": "recipe-a", "projectName": "zcp-farm-b1-recipe-a"},
+			{"runId": "b1-recipe-b", "scenario": "recipe-b", "projectName": "zcp-farm-b1-recipe-b"}
+		]
+	}`)
+	fake.objects["runs/b1-recipe-a/done.json"] = []byte(`{"runId":"b1-recipe-a","parts":{}}`)
+	fake.objects["runs/b1-recipe-b/done.json"] = []byte(`{"runId":"b1-recipe-b","parts":{}}`)
+
+	outDir := t.TempDir()
+	var code int
+	stdout, stderr := captureOutput(t, func() {
+		code = runEvalFarm([]string{"pull", "--batch", "b1", "--out", outDir})
+	})
+	if code != 0 {
+		t.Fatalf("runEvalFarm(pull --batch b1) = %d, stderr = %q", code, stderr)
+	}
+	for _, runID := range []string{"b1-recipe-a", "b1-recipe-b"} {
+		if !strings.Contains(stdout, runID+": bundle: complete") {
+			t.Errorf("stdout = %q, want it to report %s: bundle: complete", stdout, runID)
+		}
+		if _, err := os.Stat(filepath.Join(outDir, runID, "done.json")); err != nil {
+			t.Errorf("downloaded bundle for %s: %v", runID, err)
+		}
+	}
+}
