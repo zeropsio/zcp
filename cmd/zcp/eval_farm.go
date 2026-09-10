@@ -347,14 +347,15 @@ func runFarmPull(args []string) int {
 
 // writeBatchManifestAndSummary writes batches/<batch>/manifest.json (already
 // fetched as manifestBody) and, when present, batches/<batch>/summary.json
-// to <out>/batches/<batch>/, so `farm report --batch` finds them there
-// alongside the pulled run bundles (docs/spec-eval-farm.md §1.4 FM-9).
+// directly under <out>/ — the batch dir itself — which is where
+// `farm report <out>` reads them for its roll-up (printFarmRollup); every
+// SUBdirectory of <out> is taken as a run bundle, so the files must not
+// live in one (docs/spec-eval-farm.md §1.4 FM-9).
 func writeBatchManifestAndSummary(ctx context.Context, client *farm.SinkClient, batch string, manifestBody []byte, out string) error {
-	batchDir := filepath.Join(out, "batches", batch)
-	if err := os.MkdirAll(batchDir, 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", batchDir, err)
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", out, err)
 	}
-	if err := os.WriteFile(filepath.Join(batchDir, "manifest.json"), manifestBody, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(out, "manifest.json"), manifestBody, 0o600); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 
@@ -369,7 +370,7 @@ func writeBatchManifestAndSummary(ctx context.Context, client *farm.SinkClient, 
 	if err != nil {
 		return fmt.Errorf("read batch summary: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(batchDir, "summary.json"), summaryBody, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(out, "summary.json"), summaryBody, 0o600); err != nil {
 		return fmt.Errorf("write summary: %w", err)
 	}
 	return nil

@@ -319,7 +319,8 @@ func TestFarmPush_UploadsGateSetAndCurrentPointer(t *testing.T) {
 
 // TestFarmPull_Batch_WritesManifestAndSummary pins outcome 4 of the S15
 // brief: `farm pull --batch <b>` also writes batches/<b>/manifest.json and
-// batches/<b>/summary.json (when present) to <out>/batches/<b>/.
+// batches/<b>/summary.json (when present) directly under <out>/, where
+// `farm report <out>` reads them (a subdirectory would be graded as a run).
 func TestFarmPull_Batch_WritesManifestAndSummary(t *testing.T) {
 	fake := newFakeFarmS3()
 	server := fake.server()
@@ -345,14 +346,14 @@ func TestFarmPull_Batch_WritesManifestAndSummary(t *testing.T) {
 		t.Fatalf("runEvalFarm(pull --batch b2) = %d, stderr = %q", code, stderr)
 	}
 
-	gotManifest, err := os.ReadFile(filepath.Join(outDir, "batches", "b2", "manifest.json"))
+	gotManifest, err := os.ReadFile(filepath.Join(outDir, "manifest.json"))
 	if err != nil {
 		t.Fatalf("read pulled manifest.json: %v", err)
 	}
 	if string(gotManifest) != string(manifestBody) {
 		t.Errorf("pulled manifest.json = %q, want %q", gotManifest, manifestBody)
 	}
-	gotSummary, err := os.ReadFile(filepath.Join(outDir, "batches", "b2", "summary.json"))
+	gotSummary, err := os.ReadFile(filepath.Join(outDir, "summary.json"))
 	if err != nil {
 		t.Fatalf("read pulled summary.json: %v", err)
 	}
