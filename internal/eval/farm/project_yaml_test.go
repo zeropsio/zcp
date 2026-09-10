@@ -157,6 +157,43 @@ func TestServiceImportYAML_NeverCarriesAccountKey_AndHostnameHasNoHyphen(t *test
 	}
 }
 
+// TestServiceImportYAML_InitLine_NoDirectEnvExpansion pins live finding L7:
+// the platform pre-expands both ${VAR} and $VAR inside run.initCommands and
+// exposes the expanded text in the container's own `initCommands` env
+// variable — so an init line that reads the sink key/secret as $VAR/${VAR}
+// leaks them in clear via `env`. Only command substitution ($(...)) survives
+// unexpanded, so the init line must read every sink value that way.
+func TestServiceImportYAML_InitLine_NoDirectEnvExpansion(t *testing.T) {
+	t.Parallel()
+	d := oauthDescriptor()
+	got, err := ServiceImportYAML(d)
+	if err != nil {
+		t.Fatalf("ServiceImportYAML: %v", err)
+	}
+	out := string(got)
+
+	for _, forbidden := range []string{
+		"$ZCP_FARM_S3_KEY", "${ZCP_FARM_S3_KEY}",
+		"$ZCP_FARM_S3_SECRET", "${ZCP_FARM_S3_SECRET}",
+		"$ZCP_FARM_S3_URL", "${ZCP_FARM_S3_URL}",
+		"$ZCP_FARM_S3_BUCKET", "${ZCP_FARM_S3_BUCKET}",
+	} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("init line carries a directly-expanded env token %q (platform pre-expands $VAR/${VAR} in initCommands, leaking it via the container's initCommands env var), output:\n%s", forbidden, out)
+		}
+	}
+	for _, want := range []string{
+		"$(printenv ZCP_FARM_S3_KEY)",
+		"$(printenv ZCP_FARM_S3_SECRET)",
+		"$(printenv ZCP_FARM_S3_URL)",
+		"$(printenv ZCP_FARM_S3_BUCKET)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("init line missing command-substitution read %q, output:\n%s", want, out)
+		}
+	}
+}
+
 // TestImportYAML_ScenariosDigest_EmittedAsEnv pins the sixth FM-12 row
 // (docs/spec-eval-farm.md §2.2, ZCP_FARM_SCENARIOS_DIGEST) — the wrapper
 // reads this env to locate scenarios/<digest>/ in the bucket (§1.1).

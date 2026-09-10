@@ -192,6 +192,12 @@ var ErrNoClientResolved = errors.New("project admin: launch-window key resolves 
 // ErrClientClosed is returned by ProjectAdminClient methods after Close().
 var ErrClientClosed = errors.New("project admin: client closed")
 
+// ErrClientNotMember is returned by NewProjectAdminClientForClient when the
+// token authenticates but its clientUserList does not contain the
+// caller-supplied clientID — D11: trusting ClientUserList[0] picks the
+// wrong org for a token that is a member of more than one.
+var ErrClientNotMember = errors.New("project admin: token is not a member of the configured client")
+
 // NewProjectAdminClient constructs a ProjectAdminClient from a launch-window
 // key. The key is held internally by the wrapped ZeropsClient (inside its
 // SDK handler's authenticated transport); this struct never copies it into
@@ -227,6 +233,55 @@ func NewProjectAdminClient(launchKey, apiHost string) (ProjectAdminClient, error
 		zerops:       z,
 		clientID:     info.ID,
 		clientUserID: info.ClientUserID,
+	}, nil
+}
+
+// NewProjectAdminClientForClient is NewProjectAdminClient's caller-targeted
+// sibling (D11): instead of trusting ClientUserList[0] — the wrong org for
+// a token that is OWNER in more than one — it targets the caller-supplied
+// clientID and refuses, before any write, when the token's clientUserList
+// does not contain it. Used by the farm controller, which is configured
+// with the org it must target (ZCP_FARM_CLIENT_ID) rather than discovering
+// one.
+//
+// Caller MUST defer Close() on the returned client. Empty apiHost falls
+// back to platform.defaultAPIHost via the underlying NewZeropsClient.
+func NewProjectAdminClientForClient(launchKey, apiHost, clientID string) (ProjectAdminClient, error) {
+	if launchKey == "" {
+		return nil, ErrEmptyLaunchKey
+	}
+	if clientID == "" {
+		return nil, ErrNoClientResolved
+	}
+	z, err := NewZeropsClient(launchKey, apiHost)
+	if err != nil {
+		return nil, fmt.Errorf("project admin: construct client: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	memberships, err := z.ListClientMemberships(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("project admin: validate key: %w", err)
+	}
+
+	var clientUserID string
+	member := false
+	seen := make([]string, 0, len(memberships))
+	for _, m := range memberships {
+		seen = append(seen, m.ClientID)
+		if m.ClientID == clientID {
+			member = true
+			clientUserID = m.ClientUserID
+		}
+	}
+	if !member {
+		return nil, fmt.Errorf("%w: configured client %s, token is a member of %v", ErrClientNotMember, clientID, seen)
+	}
+
+	return &projectAdminClient{
+		zerops:       z,
+		clientID:     clientID,
+		clientUserID: clientUserID,
 	}, nil
 }
 

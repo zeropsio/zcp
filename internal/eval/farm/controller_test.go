@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -69,6 +70,13 @@ type fakeAccount struct {
 	// simulate ZCP_FARM_ACCOUNT_TOKEN being an integration token without
 	// delegation (TestFarmRun_MintForbidden_AbortsBeforeAnyProject).
 	mintForbiddenCode string
+
+	// failImportProjectName, when non-empty, makes the project/import POST
+	// for exactly this project name answer 500 instead of creating a
+	// project — used to simulate CreateAndImportProject failing for one
+	// scheduled run without aborting the whole batch
+	// (TestFarmRun_CreateFails_PrintsErrorAndSummaryRecordsBlocked, D10).
+	failImportProjectName string
 }
 
 type fakeProject struct{ id, name string }
@@ -162,6 +170,14 @@ func (f *fakeAccount) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		name := m[1]
+		f.mu.Lock()
+		failName := f.failImportProjectName
+		f.mu.Unlock()
+		if failName != "" && name == failName {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"error":{"code":"internalServerError","message":"simulated create failure"}}`)
+			return
+		}
 		f.mu.Lock()
 		f.nextID++
 		id := fmt.Sprintf("proj-%d", f.nextID)
@@ -269,7 +285,7 @@ func newControllerFixture(t *testing.T, clientID string) controllerFixture {
 	timeline := &sharedTimeline{}
 
 	account := newFakeAccount(t, clientID, timeline)
-	client, closer, err := NewAccountClient("farm-account-token", account.URL())
+	client, closer, err := NewAccountClient("farm-account-token", account.URL(), clientID)
 	if err != nil {
 		t.Fatalf("NewAccountClient: %v", err)
 	}
@@ -583,6 +599,125 @@ func TestFarmRun_MintForbidden_AbortsBeforeAnyProject(t *testing.T) {
 
 	if n := account.countMethod("POST", "/api/rest/public/client/"+clientID+"/project/import"); n != 1 {
 		t.Errorf("project/import calls = %d, want 1 (batch must abort after the first run's mint fails, never scheduling recipe-b)", n)
+	}
+}
+
+// captureStderr redirects os.Stderr to a pipe for the duration of fn and
+// returns everything written to it — used to pin RunBatch's D10 stderr
+// line, which is printed directly (a public-seam requirement: the brief
+// pins the exact literal "<runId> <scenario> error: <wrapped error>", not
+// an internal log call).
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("captureStderr: os.Pipe: %v", err)
+	}
+	orig := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = orig }()
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("captureStderr: close writer: %v", err)
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("captureStderr: read: %v", err)
+	}
+	return string(out)
+}
+
+// TestFarmRun_CreateFails_PrintsErrorAndSummaryRecordsBlocked pins D10:
+// a per-run failure during creation (here, CreateAndImportProject) is
+// printed to stderr at the moment it happens, recorded in the batch's
+// results/summary as result "blocked" with the wrapped error message, and
+// never turned into a bare skip. The other, unaffected scenario in the
+// same batch still runs and settles normally — one run's creation failure
+// does not abort the batch (unlike the mint-403 case).
+func TestFarmRun_CreateFails_PrintsErrorAndSummaryRecordsBlocked(t *testing.T) {
+	// Not t.Parallel(): captureStderr swaps the process-wide os.Stderr for
+	// its duration, which would race a concurrent test's own stderr writes.
+	const clientID = "client-create-fail"
+	f := newControllerFixture(t, clientID)
+	account, client, fake, sink := f.account, f.client, f.s3, f.sink
+
+	batch := "batch-create-fail"
+	scenarios := []ScenarioRun{{ID: "recipe-fails"}, {ID: "recipe-ok"}}
+	seedSettledRun(t, fake, batch+"-recipe-ok", "recipe-ok", ResultPassed)
+
+	failRunID := batch + "-recipe-fails"
+	account.mu.Lock()
+	account.failImportProjectName = ProjectPrefix + failRunID
+	account.mu.Unlock()
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", ScenariosDigest: "scen-sha",
+		Scenarios: scenarios, OAuthToken: "oauth-farm-token",
+		Sink:         Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:    time.Second,
+		PollInterval: time.Millisecond,
+	}
+
+	var results []RunResult
+	stderr := captureStderr(t, func() {
+		var runErr error
+		results, runErr = RunBatch(context.Background(), client, sink, opts)
+		if runErr != nil {
+			t.Fatalf("RunBatch: %v", runErr)
+		}
+	})
+
+	wantStderrPrefix := failRunID + " recipe-fails error: "
+	if !strings.Contains(stderr, wantStderrPrefix) {
+		t.Errorf("stderr = %q, want a line starting with %q", stderr, wantStderrPrefix)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("RunBatch results = %+v, want 2 entries", results)
+	}
+	var blockedResult, okResult *RunResult
+	for i := range results {
+		switch results[i].RunID {
+		case failRunID:
+			blockedResult = &results[i]
+		case batch + "-recipe-ok":
+			okResult = &results[i]
+		}
+	}
+	if blockedResult == nil {
+		t.Fatalf("results %+v missing an entry for %s", results, failRunID)
+	}
+	if blockedResult.Result != ResultBlocked {
+		t.Errorf("blocked run Result = %q, want %q", blockedResult.Result, ResultBlocked)
+	}
+	if blockedResult.Error == "" {
+		t.Errorf("blocked run Error is empty, want the wrapped create-project error")
+	}
+	if blockedResult.ProjectID != "" {
+		t.Errorf("blocked run ProjectID = %q, want empty (create never succeeded)", blockedResult.ProjectID)
+	}
+	if okResult == nil || okResult.Result != ResultPassed {
+		t.Errorf("unaffected run recipe-ok = %+v, want Result=%q", okResult, ResultPassed)
+	}
+
+	summary, err := GetSummary(context.Background(), sink, batch)
+	if err != nil {
+		t.Fatalf("GetSummary: %v", err)
+	}
+	var summaryBlocked *SummaryRun
+	for i := range summary.Runs {
+		if summary.Runs[i].RunID == failRunID {
+			summaryBlocked = &summary.Runs[i]
+		}
+	}
+	if summaryBlocked == nil {
+		t.Fatalf("summary.Runs %+v missing an entry for %s (D10: a blocked run must still be recorded)", summary.Runs, failRunID)
+	}
+	if summaryBlocked.Result != ResultBlocked || summaryBlocked.Error == "" {
+		t.Errorf("summary entry for %s = %+v, want Result=%q and a non-empty Error", failRunID, summaryBlocked, ResultBlocked)
 	}
 }
 

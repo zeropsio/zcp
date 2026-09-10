@@ -129,7 +129,7 @@ func runFarmRun(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: ZCP_FARM_ACCOUNT_TOKEN, ZCP_FARM_CLIENT_ID, and ZCP_FARM_EVALUATOR_SHA are required")
 		return 1
 	}
-	client, closer, err := farm.NewAccountClient(accountToken, os.Getenv("ZCP_API_HOST"))
+	client, closer, err := farm.NewAccountClient(accountToken, os.Getenv("ZCP_API_HOST"), clientID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -150,6 +150,13 @@ func runFarmRun(args []string) int {
 			return 1
 		}
 		fmt.Fprintf(os.Stderr, "error: farm run: %v\n", err)
+		return 1
+	}
+
+	if len(results) == 0 {
+		// D10: zero runs scheduled or created is never a quiet success — no
+		// summary.json row for the operator to notice something went wrong.
+		fmt.Fprintln(os.Stderr, "error: no run was created")
 		return 1
 	}
 
@@ -375,7 +382,7 @@ func runFarmStatus(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: ZCP_FARM_ACCOUNT_TOKEN and ZCP_FARM_CLIENT_ID are required")
 		return 1
 	}
-	client, closer, err := farm.NewAccountClient(accountToken, os.Getenv("ZCP_API_HOST"))
+	client, closer, err := farm.NewAccountClient(accountToken, os.Getenv("ZCP_API_HOST"), clientID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -394,9 +401,12 @@ func runFarmStatus(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: list projects: %v\n", err)
 		return 1
 	}
-	live := make(map[string]bool, len(projects))
+	// liveStatus maps a project name to its REST status — a project mid
+	// async-delete is still in this list (`DELETING`, not yet gone), so
+	// "present" must not be read from mere list membership alone.
+	liveStatus := make(map[string]string, len(projects))
 	for _, p := range projects {
-		live[p.Name] = true
+		liveStatus[p.Name] = p.Status
 	}
 
 	for _, batch := range batches {
@@ -419,8 +429,11 @@ func runFarmStatus(args []string) int {
 				state = "done"
 			}
 			projState := "deleted"
-			if live[run.ProjectName] {
+			if status, ok := liveStatus[run.ProjectName]; ok {
 				projState = "present"
+				if status == "DELETING" {
+					projState = "deleting"
+				}
 			}
 			fmt.Fprintf(os.Stdout, "%s %s %s %s project=%s\n", batch, run.RunID, run.Scenario, state, projState)
 		}
@@ -469,7 +482,7 @@ func runFarmGC(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: ZCP_FARM_ACCOUNT_TOKEN and ZCP_FARM_CLIENT_ID are required")
 		return 1
 	}
-	client, closer, err := farm.NewAccountClient(accountToken, os.Getenv("ZCP_API_HOST"))
+	client, closer, err := farm.NewAccountClient(accountToken, os.Getenv("ZCP_API_HOST"), clientID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
