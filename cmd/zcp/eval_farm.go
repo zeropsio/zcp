@@ -66,7 +66,9 @@ func runEvalFarm(args []string) int {
 		return runFarmPush(args[1:])
 	case farmVerbPull:
 		return runFarmPull(args[1:])
-	case farmVerbRun, farmVerbStatus, farmVerbReport, farmVerbCoverage, farmVerbGC:
+	case farmVerbReport:
+		return runFarmReport(args[1:])
+	case farmVerbRun, farmVerbStatus, farmVerbCoverage, farmVerbGC:
 		fmt.Fprintf(os.Stderr, "zcp eval farm %s: not implemented\n", args[0])
 		return 1
 	default:
@@ -350,7 +352,7 @@ Commands (ZCP_AUTHORING=1 required):
   pull     <runId>|--batch <batch> --out <dir> Download a run's (or a batch's) bundle
   run      (not implemented yet)
   status   (not implemented yet)
-  report   (not implemented yet)
+  report   [--evaluator-sha256 <sha>] <dir>    Report over a pulled batch or run dir (no network)
   coverage (not implemented yet)
   gc       (not implemented yet)`)
 }
