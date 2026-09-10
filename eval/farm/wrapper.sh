@@ -234,33 +234,28 @@ kill_child_group() {
 
 # ---- capture manifest sync after redaction (D8) --------------------------
 
-# update_capture_manifest patches capture/manifest.json's per-file
+# update_one_capture_manifest patches a single manifest.json's per-file
 # "sizeBytes"/"sha256" entries for every file redact_dir actually changed
-# under $CAPTURE_DIR (docs/spec-eval-farm.md §1.3 FM-7, internal/capture's
-# SessionManifestDocument.Files shape — WriteSessionManifest/
-# ReadSessionManifest). Without this, the FM-7 rewrite (real, load-bearing:
-# the transcript held a sink key/secret in clear from an expanded
-# initCommands=[...] var) leaves the manifest's recorded size+digest
-# pointing at the PRE-redaction bytes, and `zcp capture` /
-# eval.BuildBehavioralReport's own size check (internal/capture/
-# read_manifest_file.go) then refuses the whole bundle as corrupt. No-op
-# when there is no capture/manifest.json or nothing was redacted under
-# $CAPTURE_DIR. Uses perl -MJSON::PP (core module, no jq/python assumption
-# on the run container) — key order in the rewritten file is irrelevant,
-# the reader parses JSON rather than diffing bytes.
-update_capture_manifest() {
-	manifest="$CAPTURE_DIR/manifest.json"
-	[ -f "$manifest" ] || return 0
-	[ -f "$RUNDIR/redacted.log" ] || return 0
+# UNDER THAT MANIFEST'S OWN DIRECTORY (its "files[].path" entries are
+# relative to where it lives — docs/spec-eval-farm.md §1.3 FM-7,
+# internal/capture's SessionManifestDocument.Files shape —
+# WriteSessionManifest/ReadSessionManifest), then writes it back in place.
+# No-op when nothing under that directory was redacted. Uses perl -MJSON::PP
+# (core module, no jq/python assumption on the run container) — key order in
+# the rewritten file is irrelevant, the reader parses JSON rather than
+# diffing bytes.
+update_one_capture_manifest() {
+	manifest="$1"
+	manifest_dir=$(dirname "$manifest")
 
 	updates="$RUNDIR/redacted-updates.tsv"
 	: >"$updates"
 	sort -u "$RUNDIR/redacted.log" | while IFS= read -r f; do
 		case "$f" in
-		"$CAPTURE_DIR"/*) ;;
+		"$manifest_dir"/*) ;;
 		*) continue ;;
 		esac
-		rel=${f#"$CAPTURE_DIR"/}
+		rel=${f#"$manifest_dir"/}
 		size=$(wc -c <"$f" | tr -d ' ')
 		sha=$(sha256sum "$f" | awk '{print $1}')
 		printf '%s\t%s\t%s\n' "$rel" "$size" "$sha" >>"$updates"
@@ -295,6 +290,31 @@ update_capture_manifest() {
 		print $oh JSON::PP->new->canonical->encode($doc);
 		close $oh;
 	' "$manifest" "$updates"
+}
+
+# update_capture_manifest rewrites every capture manifest.json under
+# $CAPTURE_DIR after an FM-7 redaction pass: the flat legacy layout
+# ($CAPTURE_DIR/manifest.json, kept for safety) and the capture window(s)
+# the evaluator writes at $CAPTURE_DIR/capture-<id>/manifest.json (each
+# window's own manifest, with "files[].path" relative to ITS OWN
+# directory — see update_one_capture_manifest). Without this, the FM-7
+# rewrite (real, load-bearing: the transcript held a sink key/secret in
+# clear from an expanded initCommands=[...] var) leaves a manifest's
+# recorded size+digest pointing at the PRE-redaction bytes, and
+# `zcp capture` / eval.BuildBehavioralReport's own size check
+# (internal/capture/read_manifest_file.go) then refuses the whole bundle
+# as corrupt. No-op when there is no manifest.json anywhere under
+# $CAPTURE_DIR or nothing was redacted.
+update_capture_manifest() {
+	[ -f "$RUNDIR/redacted.log" ] || return 0
+
+	if [ -f "$CAPTURE_DIR/manifest.json" ]; then
+		update_one_capture_manifest "$CAPTURE_DIR/manifest.json"
+	fi
+	for manifest in "$CAPTURE_DIR"/*/manifest.json; do
+		[ -f "$manifest" ] || continue
+		update_one_capture_manifest "$manifest"
+	done
 }
 
 # redacted_json_array renders a JSON array of every path redact_dir logged

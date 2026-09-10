@@ -26,6 +26,16 @@ Credentials are OAuth-only (owner decision 2026-09-10): the wrapper reads
 is empty or if `ANTHROPIC_API_KEY` is present in the environment at all
 (docs/spec-eval-farm.md §2.4).
 
+FM-7 redaction rewrites any credential value it finds in place, including
+inside `capture/`; when that changes a file's bytes, `update_capture_manifest`
+(D8) patches the matching `sizeBytes`/`sha256` entry in every
+`manifest.json` it finds under `$CAPTURE_DIR` — both the evaluator's capture
+window at `capture/capture-<id>/manifest.json` (`files[].path` relative to
+that window's own directory) and the legacy flat `capture/manifest.json`
+layout, kept as a fallback. Without this, a redacted file's recorded size or
+digest goes stale and `zcp capture` / `farm report` refuses the bundle as
+corrupt (docs/spec-eval-farm.md §1.3 FM-7).
+
 POSIX `sh` only (`#!/bin/sh`, `set -eu`) — no bashisms.
 
 ## Offline test
