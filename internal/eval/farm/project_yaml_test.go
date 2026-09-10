@@ -15,6 +15,7 @@ func apiKeyDescriptor() RunDescriptor {
 		ScenarioID:      "recipe-first-deploy",
 		EvaluatorSHA256: "eval-sha-aaaa",
 		CandidateSHA256: "cand-sha-bbbb",
+		ScenariosDigest: "scenarios-sha-ffff",
 		Sink: Sink{
 			URL:    "https://s3.prg1.zerops.app",
 			Bucket: "zcp-farm",
@@ -129,6 +130,25 @@ func TestImportYAML_NeverCarriesAccountKey_AndHostnameHasNoHyphen(t *testing.T) 
 		if strings.Contains(out, forbidden) {
 			t.Errorf("output must never carry an account-wide key env, found %q", forbidden)
 		}
+	}
+}
+
+// TestImportYAML_ScenariosDigest_EmittedAsEnv pins the sixth FM-12 row
+// (docs/spec-eval-farm.md §2.2, ZCP_FARM_SCENARIOS_DIGEST) — the wrapper
+// reads this env to locate scenarios/<digest>/ in the bucket (§1.1).
+// Independent oracle: the env name is copied verbatim from the spec's FM-12
+// table, not derived from this package's own output.
+func TestImportYAML_ScenariosDigest_EmittedAsEnv(t *testing.T) {
+	t.Parallel()
+	d := apiKeyDescriptor()
+	got, err := ImportYAML(d)
+	if err != nil {
+		t.Fatalf("ImportYAML: %v", err)
+	}
+	out := string(got)
+	const want = `ZCP_FARM_SCENARIOS_DIGEST: "scenarios-sha-ffff"`
+	if !strings.Contains(out, want) {
+		t.Errorf("ImportYAML output missing %q, got:\n%s", want, out)
 	}
 }
 

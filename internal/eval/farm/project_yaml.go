@@ -55,6 +55,10 @@ type RunDescriptor struct {
 	ScenarioID      string
 	EvaluatorSHA256 string
 	CandidateSHA256 string
+	// ScenariosDigest is the scenario tree digest the wrapper downloads
+	// (scenarios/<digest>/, §1.1, FM-1), emitted as ZCP_FARM_SCENARIOS_DIGEST
+	// (FM-12's sixth row).
+	ScenariosDigest string
 	Sink            Sink
 	Credentials     []Credential
 	// LaunchKey, when non-empty, is the per-run ZCP_E2E_LAUNCH_KEY minted by
@@ -153,6 +157,7 @@ func ImportYAML(d RunDescriptor) ([]byte, error) {
 		{"ZCP_FARM_SCENARIO", d.ScenarioID},
 		{"ZCP_FARM_EVALUATOR_SHA", d.EvaluatorSHA256},
 		{"ZCP_FARM_CANDIDATE_SHA", d.CandidateSHA256},
+		{"ZCP_FARM_SCENARIOS_DIGEST", d.ScenariosDigest},
 		{"ZCP_FARM_S3_URL", d.Sink.URL},
 		{"ZCP_FARM_S3_BUCKET", d.Sink.Bucket},
 		{"ZCP_FARM_S3_KEY", d.Sink.Key},
