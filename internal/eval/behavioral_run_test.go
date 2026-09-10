@@ -1,6 +1,8 @@
 package eval
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -185,6 +187,76 @@ func TestParseScenario_Behavioral_FieldsPopulated(t *testing.T) {
 	}
 	if sc.Verification == nil || len(sc.Verification.ExpectedServices) != 3 || !sc.Verification.NoFailedProcesses {
 		t.Fatalf("verification = %+v, want three services and no-failed-process check", sc.Verification)
+	}
+}
+
+// TestBehavioralRun_MetaCarriesDigestsAndCredentialMode pins the meta.json
+// digest/credential fields docs/spec-eval-farm.md §1.2 FM-4 and §2.4 FM-16
+// add: evaluatorSha256 (self hash), credentialMode derived from env presence
+// only, and the forbidden-state warning when both credential kinds are set.
+func TestBehavioralRun_MetaCarriesDigestsAndCredentialMode(t *testing.T) {
+	t.Parallel()
+
+	t.Run("evaluator self hash matches an independently computed sha256", func(t *testing.T) {
+		t.Parallel()
+		exe, err := os.Executable()
+		if err != nil {
+			t.Fatalf("os.Executable: %v", err)
+		}
+		raw, err := os.ReadFile(exe)
+		if err != nil {
+			t.Fatalf("read test binary: %v", err)
+		}
+		sum := sha256.Sum256(raw)
+		want := hex.EncodeToString(sum[:])
+
+		got, err := evaluatorSelfSHA256()
+		if err != nil {
+			t.Fatalf("evaluatorSelfSHA256: %v", err)
+		}
+		if got != want {
+			t.Fatalf("evaluatorSelfSHA256 = %s, want %s", got, want)
+		}
+	})
+
+	t.Run("credential mode from presence", func(t *testing.T) {
+		t.Parallel()
+		cases := []struct {
+			name           string
+			hasAPIKey      bool
+			hasOAuth       bool
+			wantMode       string
+			wantWarningSet bool
+		}{
+			{"api key only", true, false, credentialModeAPIKey, false},
+			{"oauth token only", false, true, credentialModeOAuth, false},
+			{"neither", false, false, credentialModeUnknown, false},
+			{"both — forbidden state", true, true, credentialModeUnknown, true},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				mode, warning := credentialModeFromPresence(tc.hasAPIKey, tc.hasOAuth)
+				if mode != tc.wantMode {
+					t.Errorf("mode = %q, want %q", mode, tc.wantMode)
+				}
+				if (warning != "") != tc.wantWarningSet {
+					t.Errorf("warning = %q, want non-empty=%t", warning, tc.wantWarningSet)
+				}
+			})
+		}
+	})
+}
+
+// TestObservedModelFromProviderCapture_NoProviderFile_ReturnsEmpty pins the
+// "else empty" half of FM-16's modelObserved rule: a capture window with no
+// (or unreadable) provider.jsonl never fabricates a model name.
+func TestObservedModelFromProviderCapture_NoProviderFile_ReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	if got := observedModelFromProviderCapture(t.TempDir()); got != "" {
+		t.Fatalf("observedModelFromProviderCapture = %q, want empty", got)
+	}
+	if got := observedModelFromProviderCapture(""); got != "" {
+		t.Fatalf("observedModelFromProviderCapture(\"\") = %q, want empty", got)
 	}
 }
 
