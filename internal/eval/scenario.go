@@ -123,6 +123,43 @@ type VerificationConfig struct {
 	// unrelated service whose deployed artifact must not change. Counts as
 	// an executable check for required mode.
 	NodePostgresRecord *NodePostgresRecordConfig `yaml:"nodePostgresRecord,omitempty"`
+
+	// Spec names the spec section this scenario proves (docs/spec-eval-farm.md
+	// §4.1 FM-27) — a pointer only, never a restatement. The drift lint
+	// (verification_vocab_test.go, FM-33) checks the named section exists.
+	Spec string `yaml:"spec,omitempty"`
+	// AllowFailed lists services whose FAILED process state is the
+	// scenario's seeded starting point, not a violation (FM-28). Only
+	// meaningful together with NoFailedProcesses: true.
+	AllowFailed []string `yaml:"allowFailed,omitempty"`
+	// Liveness configures the O2 liveness probe (FM-27 table): resolve the
+	// named service's subdomain URL and expect a 2xx response whose body
+	// contains Marker.
+	Liveness *LivenessProbe `yaml:"liveness,omitempty"`
+	// Unchanged is the standalone form of the "unrelated artifact unchanged"
+	// row (FM-29): one hostname per entry, each graded independently of
+	// whether NodePostgresRecord is also declared.
+	Unchanged []string `yaml:"unchanged,omitempty"`
+	// Never lists call-shape expressions (FM-30): a matching call anywhere
+	// in the run's captured MCP stream fails the scenario. Grammar:
+	// `<tool>` or `<tool>{k=v,k2=v2}` — see ParseCallShape.
+	Never []string `yaml:"never,omitempty"`
+	// AskWhen lists error codes (FM-31): advisory rows recording whether a
+	// user-simulation turn occurred between the named error code appearing
+	// and the next mutating call. Never gates the aggregated result.
+	AskWhen []string `yaml:"askWhen,omitempty"`
+	// Reach exists ONLY to be rejected at parse (FM-32): there is no
+	// reach:/expected-route field in verification:. Never read after
+	// validate() runs.
+	Reach *yaml.Node `yaml:"reach,omitempty"`
+}
+
+// LivenessProbe configures the O2 liveness check (FM-27 table): resolve
+// Service's subdomain URL and expect a 2xx response whose body contains
+// Marker. Row id: liveness/<service>/marker.
+type LivenessProbe struct {
+	Service string `yaml:"service"`
+	Marker  string `yaml:"marker"`
 }
 
 // NodePostgresRecordConfig declares the three hostnames the node-postgres
@@ -277,6 +314,14 @@ func (s *Scenario) validate() error {
 		if npr := s.Verification.NodePostgresRecord; npr != nil {
 			if npr.Stage == "" || npr.Database == "" || npr.Unrelated == "" {
 				return fmt.Errorf("verification.nodePostgresRecord requires stage, database, and unrelated hostnames")
+			}
+		}
+		if s.Verification.Reach != nil {
+			return fmt.Errorf("verification.reach is not a supported field (FM-32: no reach:/expected-route field — the observed route is coverage data, never an assertion)")
+		}
+		for _, expr := range s.Verification.Never {
+			if _, err := ParseCallShape(expr); err != nil {
+				return fmt.Errorf("verification.never: %w", err)
 			}
 		}
 	}

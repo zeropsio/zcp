@@ -270,18 +270,28 @@ func blockedRow(id, scope string, now time.Time, message string) RequiredCheck {
 // row: passed when the active app-version id at the freeze equals the one
 // recorded at scenario start; blocked when no baseline was recorded.
 func (v NodePostgresVerifier) evaluateUnchanged(in NodePostgresInput, unrelatedSvc *platform.ServiceStack, now time.Time) RequiredCheck {
-	id := unrelatedArtifactRowID(in.Unrelated)
-	if in.BaselineUnrelatedAppVersion == "" {
-		return RequiredCheck{ID: id, Check: checkUnrelatedArtifact, Scope: in.Unrelated, Result: CheckBlocked, ObservedAt: now, Source: "ListServicesDirect", Message: "no baseline recorded"}
+	return gradeUnchangedRow(unrelatedArtifactRowID(in.Unrelated), in.Unrelated, in.BaselineUnrelatedAppVersion, unrelatedSvc, now)
+}
+
+// gradeUnchangedRow grades one "unrelated artifact unchanged" row
+// (docs/spec-testing-architecture.md §10.3): passed when the active
+// app-version id at the freeze equals the one recorded at scenario start,
+// failed when it differs, blocked when no baseline was recorded. Shared by
+// nodePostgresRecord's unrelated row (above) and the standalone
+// verification.unchanged field (docs/spec-eval-farm.md §4.1 FM-29,
+// internal/eval/verification.go) — one grading rule, two callers.
+func gradeUnchangedRow(id, hostname, baselineAppVersion string, svc *platform.ServiceStack, now time.Time) RequiredCheck {
+	if baselineAppVersion == "" {
+		return RequiredCheck{ID: id, Check: checkUnrelatedArtifact, Scope: hostname, Result: CheckBlocked, ObservedAt: now, Source: "ListServicesDirect", Message: "no baseline recorded"}
 	}
 	current := ""
-	if unrelatedSvc.ActiveAppVersion != nil {
-		current = unrelatedSvc.ActiveAppVersion.ID
+	if svc != nil && svc.ActiveAppVersion != nil {
+		current = svc.ActiveAppVersion.ID
 	}
-	if current == in.BaselineUnrelatedAppVersion {
-		return RequiredCheck{ID: id, Check: checkUnrelatedArtifact, Scope: in.Unrelated, Result: CheckPassed, Expected: in.BaselineUnrelatedAppVersion, Observed: current, ObservedAt: now, Source: "ListServicesDirect", Message: "unrelated artifact unchanged"}
+	if current == baselineAppVersion {
+		return RequiredCheck{ID: id, Check: checkUnrelatedArtifact, Scope: hostname, Result: CheckPassed, Expected: baselineAppVersion, Observed: current, ObservedAt: now, Source: "ListServicesDirect", Message: "unrelated artifact unchanged"}
 	}
-	return RequiredCheck{ID: id, Check: checkUnrelatedArtifact, Scope: in.Unrelated, Result: CheckFailed, Expected: in.BaselineUnrelatedAppVersion, Observed: current, ObservedAt: now, Source: "ListServicesDirect", Message: "unrelated active app-version changed"}
+	return RequiredCheck{ID: id, Check: checkUnrelatedArtifact, Scope: hostname, Result: CheckFailed, Expected: baselineAppVersion, Observed: current, ObservedAt: now, Source: "ListServicesDirect", Message: "unrelated active app-version changed"}
 }
 
 // nodePostgresGETBody is the shape the record-roundtrip's GET /records/<id>
