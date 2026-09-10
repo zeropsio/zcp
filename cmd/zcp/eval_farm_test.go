@@ -466,14 +466,14 @@ func TestFarmPush_GateSetResolvedNextToScenarios(t *testing.T) {
 
 	t.Run("missing_default_names_resolved_path_in_error", func(t *testing.T) {
 		missingRoot := t.TempDir()
-		missingScenariosDir := filepath.Join(missingRoot, "scenarios")
+		missingScenariosDir := filepath.Join(missingRoot, "behavioral", "scenarios")
 		if err := os.MkdirAll(missingScenariosDir, 0o755); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 		if err := os.WriteFile(filepath.Join(missingScenariosDir, "recipe-a.md"), []byte("# recipe-a\n"), 0o644); err != nil {
 			t.Fatalf("WriteFile: %v", err)
 		}
-		// No farm/gate-set.txt sibling created — the default must fail.
+		// No ../../farm/gate-set.txt created — the default must fail.
 
 		fake := newFakeFarmS3()
 		server := fake.server()
