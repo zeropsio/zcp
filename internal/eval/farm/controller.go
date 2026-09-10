@@ -487,13 +487,17 @@ type doneJSON struct {
 	CandidateSha256 string `json:"candidateSha256"`
 }
 
-// resultMeta is the subset of runs/<runId>/results/meta.json this package
-// reads: the aggregated task result docs/spec-testing-architecture.md
-// §10.1/§10.2 already computes and persists (`task {mode, result,
-// frozenAt}`) — the controller never re-derives a verdict from raw evidence
-// itself, it reads the one the single-run report contract already owns.
-// Distinct from coverage.go's own runMeta (which reads only scenarioId) —
-// two different narrow readers of the same results/meta.json file.
+// resultMeta is the subset of a run's meta.json this package reads: the
+// aggregated task result docs/spec-testing-architecture.md §10.1/§10.2
+// already computes and persists (`task {mode, result, frozenAt}`) — the
+// controller never re-derives a verdict from raw evidence itself, it reads
+// the one the single-run report contract already owns. The evaluator does
+// not write this at a fixed runs/<runId>/results/meta.json: the wrapper
+// passes --results-dir $RUNDIR/results and the evaluator nests it as
+// results/<suite>/<scenario>/meta.json (D15), so readResultMeta locates it
+// by listing rather than by a fixed path. Distinct from coverage.go's own
+// runMeta (which reads only scenarioId) — two different narrow readers of
+// the same meta.json file.
 type resultMeta struct {
 	Task struct {
 		Result string `json:"result"`
@@ -578,9 +582,27 @@ func recomputePartDigest(ctx context.Context, sink *SinkClient, runID, part stri
 	return TreeDigest(dir)
 }
 
-// readResultMeta reads runs/<runId>/results/meta.json.
+// readResultMeta locates runID's meta.json by listing
+// runs/<runId>/results/ (D15: the evaluator nests it as
+// results/<suite>/<scenario>/meta.json, not at a fixed path) and requiring
+// exactly one key ending in "/meta.json" — zero or more than one is an
+// error naming the count, never a silent pick of the first match.
 func readResultMeta(ctx context.Context, sink *SinkClient, runID string) (resultMeta, error) {
-	body, err := sink.Get(ctx, "runs/"+runID+"/results/meta.json")
+	prefix := "runs/" + runID + "/results/"
+	keys, err := sink.List(ctx, prefix)
+	if err != nil {
+		return resultMeta{}, err
+	}
+	var metaKeys []string
+	for _, key := range keys {
+		if strings.HasSuffix(key, "/meta.json") {
+			metaKeys = append(metaKeys, key)
+		}
+	}
+	if len(metaKeys) != 1 {
+		return resultMeta{}, fmt.Errorf("found %d meta.json under %s, want exactly 1", len(metaKeys), prefix)
+	}
+	body, err := sink.Get(ctx, metaKeys[0])
 	if err != nil {
 		return resultMeta{}, err
 	}

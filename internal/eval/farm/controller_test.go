@@ -336,8 +336,17 @@ func seedPart(t *testing.T, fake *fakeS3, runID, part string, files map[string]s
 // done.json claiming the correct digests for both parts.
 func seedSettledRun(t *testing.T, fake *fakeS3, runID, scenarioID, taskResult string) {
 	t.Helper()
+	seedSettledRunAt(t, fake, runID, scenarioID, taskResult, "meta.json")
+}
+
+// seedSettledRunAt is seedSettledRun with metaRelPath (relative to
+// runs/<runID>/results/) naming where meta.json lands — D15: the evaluator
+// nests it as results/<suite>/<scenario>/meta.json, not at a fixed
+// results/meta.json path.
+func seedSettledRunAt(t *testing.T, fake *fakeS3, runID, scenarioID, taskResult, metaRelPath string) {
+	t.Helper()
 	resultsDigest := seedPart(t, fake, runID, "results", map[string]string{
-		"meta.json": fmt.Sprintf(`{"task":{"result":%q}}`, taskResult),
+		metaRelPath: fmt.Sprintf(`{"task":{"result":%q}}`, taskResult),
 	})
 	captureDigest := seedPart(t, fake, runID, "capture", map[string]string{
 		"transcript.jsonl": `{"type":"assistant"}`,
@@ -1011,4 +1020,124 @@ func TestDeleteGuard_ForeignName_RefusesBeforePlatformCall(t *testing.T) {
 	if err == nil {
 		t.Fatal("Guard: want error for a foreign-prefixed name, got nil")
 	}
+}
+
+// TestFarmRun_ResultMetaUnderSuiteScenario_GradesFromTask pins D15: the
+// evaluator writes results/<suite>/<scenario>/meta.json (the wrapper passes
+// --results-dir $RUNDIR/results, the evaluator nests suite/scenario under
+// it), not a fixed results/meta.json — the controller must still grade the
+// run from task.result once it locates that nested file.
+func TestFarmRun_ResultMetaUnderSuiteScenario_GradesFromTask(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-15a"
+	f := newControllerFixture(t, clientID)
+	client, fake, sink := f.client, f.s3, f.sink
+
+	batch := "batch-15a"
+	sc := ScenarioRun{ID: "classic-static-nginx-simple"}
+	runID := batch + "-" + sc.ID
+	seedSettledRunAt(t, fake, runID, sc.ID, ResultPassed, "gate/classic-static-nginx-simple/meta.json")
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget: time.Second, PollInterval: time.Millisecond,
+	}
+	results, err := RunBatch(context.Background(), client, sink, opts)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if len(results) != 1 || results[0].Result != ResultPassed {
+		t.Fatalf("results = %+v, want one entry with Result=%q", results, ResultPassed)
+	}
+}
+
+// TestFarmRun_ResultMetaMissingOrAmbiguous_Blocked pins D15's failure
+// modes: zero meta.json keys under runs/<runId>/results/, or more than one,
+// both settle the run `blocked` (never a silent pick of the first match)
+// with a detail naming how many keys were found.
+func TestFarmRun_ResultMetaMissingOrAmbiguous_Blocked(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-15b"
+
+	t.Run("missing", func(t *testing.T) {
+		t.Parallel()
+		f := newControllerFixture(t, clientID)
+		client, fake, sink := f.client, f.s3, f.sink
+		batch := "batch-15b-missing"
+		sc := ScenarioRun{ID: "recipe-missing-meta"}
+		runID := batch + "-" + sc.ID
+
+		resultsDigest := seedPart(t, fake, runID, "results", map[string]string{
+			"output.log": "no meta.json here",
+		})
+		captureDigest := seedPart(t, fake, runID, "capture", map[string]string{
+			"transcript.jsonl": `{"type":"assistant"}`,
+		})
+		done := fmt.Sprintf(`{"runId":%q,"scenarioId":%q,"parts":{"results":{"treeDigest":%q},"capture":{"treeDigest":%q}},"evaluatorSha256":"eval-sha","candidateSha256":"cand-sha"}`,
+			runID, sc.ID, resultsDigest, captureDigest)
+		fake.mu.Lock()
+		fake.objects["runs/"+runID+"/done.json"] = []byte(done)
+		fake.mu.Unlock()
+
+		opts := RunOptions{
+			Batch: batch, ClientID: clientID, Set: "gate",
+			CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+			Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+			Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+			RunBudget: time.Second, PollInterval: time.Millisecond,
+		}
+		results, err := RunBatch(context.Background(), client, sink, opts)
+		if err != nil {
+			t.Fatalf("RunBatch: %v", err)
+		}
+		if len(results) != 1 || results[0].Result != ResultBlocked {
+			t.Fatalf("results = %+v, want one entry with Result=%q", results, ResultBlocked)
+		}
+		if !strings.Contains(results[0].Detail, "found 0 meta.json") {
+			t.Errorf("Detail = %q, want it to mention 0 meta.json keys found", results[0].Detail)
+		}
+	})
+
+	t.Run("ambiguous", func(t *testing.T) {
+		t.Parallel()
+		f := newControllerFixture(t, clientID+"-amb")
+		client, fake, sink := f.client, f.s3, f.sink
+		batch := "batch-15b-ambiguous"
+		sc := ScenarioRun{ID: "recipe-ambiguous-meta"}
+		runID := batch + "-" + sc.ID
+
+		resultsDigest := seedPart(t, fake, runID, "results", map[string]string{
+			"gate/scenario-a/meta.json": `{"task":{"result":"passed"}}`,
+			"gate/scenario-b/meta.json": `{"task":{"result":"passed"}}`,
+		})
+		captureDigest := seedPart(t, fake, runID, "capture", map[string]string{
+			"transcript.jsonl": `{"type":"assistant"}`,
+		})
+		done := fmt.Sprintf(`{"runId":%q,"scenarioId":%q,"parts":{"results":{"treeDigest":%q},"capture":{"treeDigest":%q}},"evaluatorSha256":"eval-sha","candidateSha256":"cand-sha"}`,
+			runID, sc.ID, resultsDigest, captureDigest)
+		fake.mu.Lock()
+		fake.objects["runs/"+runID+"/done.json"] = []byte(done)
+		fake.mu.Unlock()
+
+		opts := RunOptions{
+			Batch: batch, ClientID: clientID + "-amb", Set: "gate",
+			CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+			Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+			Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+			RunBudget: time.Second, PollInterval: time.Millisecond,
+		}
+		results, err := RunBatch(context.Background(), client, sink, opts)
+		if err != nil {
+			t.Fatalf("RunBatch: %v", err)
+		}
+		if len(results) != 1 || results[0].Result != ResultBlocked {
+			t.Fatalf("results = %+v, want one entry with Result=%q", results, ResultBlocked)
+		}
+		if !strings.Contains(results[0].Detail, "found 2 meta.json") {
+			t.Errorf("Detail = %q, want it to mention 2 meta.json keys found", results[0].Detail)
+		}
+	})
 }
