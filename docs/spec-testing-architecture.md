@@ -148,6 +148,8 @@ exists to deliver (behavioral, warn-only). `required` mode lets one declared
 scenario carry a deterministic outcome gate. It does NOT relax §3: a required
 scenario proves an outcome on one fixture, not a handler's contract, so no e2e
 is deletable on an "a required eval covers it" basis either.
+Many required runs in parallel disposable projects, one evidence sink and one
+deterministic report over the bundles are the eval farm — `docs/spec-eval-farm.md`.
 
 ---
 
