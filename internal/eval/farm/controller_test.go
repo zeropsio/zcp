@@ -1171,6 +1171,121 @@ func TestFarmRun_ResultMetaMissingOrAmbiguous_Blocked(t *testing.T) {
 	})
 }
 
+// TestFarmRun_BlockedTask_DetailNamesBlockingChecks pins S22 finding 1: when
+// a settled run's task.result is blocked, the summary row's Detail names the
+// blocking check ids read from verification.json (spec-testing-architecture
+// §10.1), sibling to meta.json in the same results directory — sorted,
+// joined with ", ", capped at 5 with "+N more". Independent oracle: each
+// wantDetail literal is hand-assembled from the seeded rows, never read back
+// from the implementation.
+func TestFarmRun_BlockedTask_DetailNamesBlockingChecks(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		checksJSON string
+		wantDetail string
+	}{
+		{
+			name: "few_ids_sorted_joined_and_non_matching_rows_excluded",
+			checksJSON: `[
+				{"id":"expected_service/web/status","check":"service_status","scope":"web","result":"blocked"},
+				{"id":"expected_service/api/status","check":"service_status","scope":"api","result":"blocked"},
+				{"id":"no_failed_processes/proj-1","check":"no_failed_processes","scope":"proj-1","result":"failed"},
+				{"id":"expected_service/api/exists","check":"expected_service","scope":"api","result":"passed"}
+			]`,
+			wantDetail: "expected_service/api/status, expected_service/web/status",
+		},
+		{
+			name: "more_than_five_ids_truncated_with_count",
+			checksJSON: `[
+				{"id":"c7","check":"x","scope":"s","result":"blocked"},
+				{"id":"c2","check":"x","scope":"s","result":"blocked"},
+				{"id":"c5","check":"x","scope":"s","result":"blocked"},
+				{"id":"c1","check":"x","scope":"s","result":"blocked"},
+				{"id":"c4","check":"x","scope":"s","result":"blocked"},
+				{"id":"c6","check":"x","scope":"s","result":"blocked"},
+				{"id":"c3","check":"x","scope":"s","result":"blocked"}
+			]`,
+			wantDetail: "c1, c2, c3, c4, c5 +2 more",
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			clientID := fmt.Sprintf("client-22a-%d", i)
+			f := newControllerFixture(t, clientID)
+			client, fake, sink := f.client, f.s3, f.sink
+
+			batch := fmt.Sprintf("batch-22a-%d", i)
+			sc := ScenarioRun{ID: "recipe-blocked"}
+			runID := batch + "-" + sc.ID
+			verification := fmt.Sprintf(`{"formatVersion":"zcp-eval-verification-2","mode":"required","result":"blocked","checks":%s,"advisory":[]}`, tc.checksJSON)
+
+			resultsDigest := seedPart(t, fake, runID, "results", map[string]string{
+				"gate/recipe-blocked/meta.json":         fmt.Sprintf(`{"task":{"result":%q}}`, ResultBlocked),
+				"gate/recipe-blocked/verification.json": verification,
+			})
+			captureDigest := seedPart(t, fake, runID, "capture", map[string]string{
+				"transcript.jsonl": `{"type":"assistant"}`,
+			})
+			done := fmt.Sprintf(`{"runId":%q,"scenarioId":%q,"parts":{"results":{"treeDigest":%q},"capture":{"treeDigest":%q}},"evaluatorSha256":"eval-sha","candidateSha256":"cand-sha"}`,
+				runID, sc.ID, resultsDigest, captureDigest)
+			fake.mu.Lock()
+			fake.objects["runs/"+runID+"/done.json"] = []byte(done)
+			fake.mu.Unlock()
+
+			opts := RunOptions{
+				Batch: batch, ClientID: clientID, Set: "gate",
+				CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+				Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+				Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+				RunBudget: time.Second, PollInterval: time.Millisecond,
+			}
+			results, err := RunBatch(context.Background(), client, sink, opts)
+			if err != nil {
+				t.Fatalf("RunBatch: %v", err)
+			}
+			if len(results) != 1 || results[0].Result != ResultBlocked || results[0].Detail != tc.wantDetail {
+				t.Fatalf("results = %+v, want one entry Result=%q Detail=%q", results, ResultBlocked, tc.wantDetail)
+			}
+		})
+	}
+}
+
+// TestFarmRun_BlockedTask_NoVerificationJSON_DetailSaysSo pins finding 1's
+// other half: a blocked task whose results directory has no
+// verification.json sibling gets the literal Detail "no verification.json
+// in bundle", never an empty string.
+func TestFarmRun_BlockedTask_NoVerificationJSON_DetailSaysSo(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-22b"
+	f := newControllerFixture(t, clientID)
+	client, fake, sink := f.client, f.s3, f.sink
+
+	batch := "batch-22b"
+	sc := ScenarioRun{ID: "recipe-blocked-no-verification"}
+	runID := batch + "-" + sc.ID
+	seedSettledRun(t, fake, runID, sc.ID, ResultBlocked)
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget: time.Second, PollInterval: time.Millisecond,
+	}
+	results, err := RunBatch(context.Background(), client, sink, opts)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	const wantDetail = "no verification.json in bundle"
+	if len(results) != 1 || results[0].Result != ResultBlocked || results[0].Detail != wantDetail {
+		t.Fatalf("results = %+v, want one entry Result=%q Detail=%q", results, ResultBlocked, wantDetail)
+	}
+}
+
 // TestFarmRun_FailedCreationProcess_SettlesBlockedBeforeBudget pins D19: a
 // FAILED creation-phase process (stack.create/stack.import) on the run's
 // project ends waitForDone immediately, well inside the run budget, instead
