@@ -69,7 +69,7 @@ checkout, before a kickoff:
 
 ```
 zcp eval farm push --evaluator <path>    # also writes evaluators/current
-zcp eval farm push --scenarios eval/behavioral/scenarios --gate-set eval/farm/gate-set.txt
+zcp eval farm push --scenarios eval/behavioral/scenarios
                                           # also writes sets/<digest>/gate.txt
 zcp eval farm push --candidate <path>
 ```
@@ -78,7 +78,6 @@ zcp eval farm push --candidate <path>
 uploads to `sets/<scenariosDigest>/gate.txt`; it is always resolved relative
 to the `--scenarios` argument, never to the shell's cwd, so `farm push` works
 from anywhere a full checkout is available. Omitting it defaults to
-`<scenariosDir>/../farm/gate-set.txt` (a `farm/gate-set.txt` sibling of the
-scenarios directory itself) — pass it explicitly, as above, whenever the gate
-set does not sit there, as is the case for this repo's own
-`eval/behavioral/scenarios` + `eval/farm/gate-set.txt` layout.
+`<scenariosDir>/../../farm/gate-set.txt`, which is this repo's own
+`eval/behavioral/scenarios` + `eval/farm/gate-set.txt` layout; pass it
+explicitly only when the gate set lives elsewhere.

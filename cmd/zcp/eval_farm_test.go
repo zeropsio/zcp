@@ -245,11 +245,9 @@ func TestFarmPull_Batch_ReadsManifestRuns(t *testing.T) {
 // brief: `farm push --scenarios <dir>` also uploads the local gate scenario
 // list to sets/<scenariosDigest>/gate.txt, and `farm push --evaluator
 // <file>` also writes the plain-text pointer evaluators/current whose body
-// is the evaluator's own digest. Both keys are printed. --gate-set is
-// passed explicitly because the real checkout's eval/farm/gate-set.txt does
-// not sit at S22 finding 3's default location relative to
-// eval/behavioral/scenarios (that default assumes gate-set.txt is a sibling
-// of the scenarios dir itself) — see eval/farm/README.md's push usage.
+// is the evaluator's own digest. Both keys are printed. --gate-set is left
+// to its default, which must resolve the real checkout's eval/farm/gate-set.txt
+// from eval/behavioral/scenarios.
 func TestFarmPush_UploadsGateSetAndCurrentPointer(t *testing.T) {
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
@@ -263,7 +261,6 @@ func TestFarmPush_UploadsGateSetAndCurrentPointer(t *testing.T) {
 	setFarmEnv(t, server.URL)
 
 	scenariosDir := filepath.Join(repoRoot, "eval", "behavioral", "scenarios")
-	gateSetPath := filepath.Join(repoRoot, "eval", "farm", "gate-set.txt")
 
 	evalDir := t.TempDir()
 	evaluatorPath := filepath.Join(evalDir, "zcp")
@@ -277,7 +274,7 @@ func TestFarmPush_UploadsGateSetAndCurrentPointer(t *testing.T) {
 	var code int
 	stdout, stderr := captureOutput(t, func() {
 		code = runEvalFarm([]string{
-			"push", "--evaluator", evaluatorPath, "--scenarios", scenariosDir, "--gate-set", gateSetPath,
+			"push", "--evaluator", evaluatorPath, "--scenarios", scenariosDir,
 		})
 	})
 	if code != 0 {
@@ -371,11 +368,12 @@ func TestFarmPull_Batch_WritesManifestAndSummary(t *testing.T) {
 // push --scenarios <dir>` resolves the local gate-set file relative to
 // --scenarios, never to cwd. cwd is set to an unrelated directory for every
 // subtest, so a cwd-relative read would fail regardless of which case is
-// under test. Default is "<scenariosDir>/../farm/gate-set.txt"; --gate-set
+// under test. Default is "<scenariosDir>/../../farm/gate-set.txt" (the repo's
+// eval/behavioral/scenarios + eval/farm layout); --gate-set
 // overrides it; a resolution failure names the fully resolved path.
 func TestFarmPush_GateSetResolvedNextToScenarios(t *testing.T) {
-	root := t.TempDir()
-	scenariosDir := filepath.Join(root, "scenarios")
+	root := filepath.Join(t.TempDir(), "eval")
+	scenariosDir := filepath.Join(root, "behavioral", "scenarios")
 	if err := os.MkdirAll(scenariosDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}

@@ -257,14 +257,15 @@ func pushScenarioTree(ctx context.Context, client *farm.SinkClient, dir string) 
 // reads, always relative to the --scenarios argument, never to cwd (S22
 // finding 3: cwd-relative resolution made `farm push` fail from anywhere
 // but the repo root). override, when non-empty, is `--gate-set` and wins
-// outright; otherwise the default is "<scenariosDir>/../farm/gate-set.txt"
-// resolved against scenariosDir. The result is always absolute so a
+// outright; otherwise the default is "<scenariosDir>/../../farm/gate-set.txt"
+// resolved against scenariosDir — the repo layout is eval/behavioral/scenarios
+// beside eval/farm/gate-set.txt, so the gate set is two levels up. The result is always absolute so a
 // resolution failure's error names the exact path that was tried,
 // regardless of whether the inputs were relative or absolute.
 func resolveGateSetPath(scenariosDir, override string) (string, error) {
 	path := override
 	if path == "" {
-		path = filepath.Join(scenariosDir, "..", "farm", "gate-set.txt")
+		path = filepath.Join(scenariosDir, "..", "..", "farm", "gate-set.txt")
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -447,7 +448,7 @@ Commands (ZCP_AUTHORING=1 required):
   push     --candidate <file> | --evaluator <file> | --scenarios <dir> [--gate-set <path>] | --wrapper <file>
                                                Upload one part to the farm bucket, print its digest.
                                                --gate-set overrides the gate scenario list read alongside
-                                               --scenarios (default: <scenariosDir>/../farm/gate-set.txt)
+                                               --scenarios (default: <scenariosDir>/../../farm/gate-set.txt)
   pull     <runId>|--batch <batch> --out <dir> Download a run's (or a batch's) bundle
   run      --candidate <sha256> --scenarios <digest> --set gate|all|<ids> [--batch <id>] [--run-budget 45m] [--detach]
                                                Create zcp-farm-<runId> projects, watch the bucket, delete after done.json
