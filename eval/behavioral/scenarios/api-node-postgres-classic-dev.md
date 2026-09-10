@@ -38,15 +38,15 @@ verification:
   mode: required
   spec: spec-workflows.md §2
   expectedServices:
-    - hostname: api
+    - hostname: apidev
       status: [ACTIVE]
       type: nodejs@*
     - hostname: db
       status: [ACTIVE]
       type: postgresql@*
   noFailedProcesses: true
-  liveness: {service: api, marker: "api-ready"}
-  nodePostgresRecord: {stage: api, database: db, environment: dev}
+  liveness: {service: apidev, marker: "api-ready"}
+  nodePostgresRecord: {stage: apidev, database: db, environment: dev}
   never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
   Jsi backend dev, chceš si rychle rozjet Node.js REST API s
@@ -73,7 +73,7 @@ userPersona: |
      deploy interně."
 
   Co očekáváš na konci:
-   - api service (nodejs@22 nebo podobné) ACTIVE
+   - apidev service (nodejs@22 nebo podobné) ACTIVE
    - db service (postgresql) ACTIVE
    - Health endpoint (GET / nebo /health) co vrátí 200
    - Subdomain URL pro testing

@@ -38,4 +38,4 @@ notableFriction:
       static runtimes distinctly from dynamic .
 ---
 
-Put up a small static landing page for me using nginx. Just HTML, no backend.
+Put up a small static landing page for me using nginx. Just HTML, no backend. Call the service "web".
