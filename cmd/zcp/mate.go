@@ -44,11 +44,11 @@ func defaultMateRestartUnit(unit string) error {
 	return cmd.Run()
 }
 
-// runMateCmd implements `zcp mate status [--json]` and
+// runMateCmd implements `zcp mate status [--json] [--refresh]` and
 // `zcp mate update [--force] [--json]`. args is everything after "mate".
 func runMateCmd(args []string) int {
 	if len(args) == 0 {
-		log.Print("usage: zcp mate <status|update> [--json] [--force]")
+		log.Print("usage: zcp mate <status|update> [--json] [--force] [--refresh]")
 		return 1
 	}
 	switch args[0] {
@@ -57,7 +57,7 @@ func runMateCmd(args []string) int {
 	case "update":
 		return runMateUpdate(args[1:])
 	default:
-		log.Print("usage: zcp mate <status|update> [--json] [--force]")
+		log.Print("usage: zcp mate <status|update> [--json] [--force] [--refresh]")
 		return 1
 	}
 }
@@ -87,6 +87,7 @@ type mateStatusResult struct {
 // UpdateAvailable is false.
 func runMateStatus(args []string) int {
 	asJSON := slices.Contains(args, "--json")
+	refresh := slices.Contains(args, "--refresh")
 
 	result := mateStatusResult{
 		Contract:  mate.SupportedContract,
@@ -99,7 +100,7 @@ func runMateStatus(args []string) int {
 
 	ctx, cancel := context.WithTimeout(context.Background(), statusManifestTimeout)
 	defer cancel()
-	desired, err := mate.DesiredRelease(ctx, http.DefaultClient, mate.ManifestOptions{})
+	desired, err := mate.DesiredRelease(ctx, http.DefaultClient, mate.ManifestOptions{Refresh: refresh})
 	if err != nil {
 		result.Error = err.Error()
 	} else {
