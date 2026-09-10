@@ -219,28 +219,35 @@ func TestBehavioralRun_MetaCarriesDigestsAndCredentialMode(t *testing.T) {
 		}
 	})
 
-	t.Run("credential mode from presence", func(t *testing.T) {
+	// Owner decision (spec 79ced2cc, FM-16): the farm's agent credential is
+	// OAuth-only. credentialFieldsFromPresence reports presence only, never
+	// a value: "oauth-token" when CLAUDE_CODE_OAUTH_TOKEN is set (regardless
+	// of ANTHROPIC_API_KEY — that combination is exactly the disallowed
+	// state farm/report.go's ReportRun blocks on, not something meta.json
+	// itself refuses to record), and anthropicAPIKeyPresent=true whenever
+	// ANTHROPIC_API_KEY is set.
+	t.Run("credential fields from presence, OAuth-only", func(t *testing.T) {
 		t.Parallel()
 		cases := []struct {
 			name           string
 			hasAPIKey      bool
 			hasOAuth       bool
-			wantMode       string
-			wantWarningSet bool
+			wantCredential string
+			wantAPIKey     bool
 		}{
-			{"api key only", true, false, credentialModeAPIKey, false},
-			{"oauth token only", false, true, credentialModeOAuth, false},
-			{"neither", false, false, credentialModeUnknown, false},
-			{"both — forbidden state", true, true, credentialModeUnknown, true},
+			{"oauth token only", false, true, "oauth-token", false},
+			{"api key only", true, false, "", true},
+			{"neither", false, false, "", false},
+			{"both — api key present alongside oauth", true, true, "oauth-token", true},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				mode, warning := credentialModeFromPresence(tc.hasAPIKey, tc.hasOAuth)
-				if mode != tc.wantMode {
-					t.Errorf("mode = %q, want %q", mode, tc.wantMode)
+				credential, apiKeyPresent := credentialFieldsFromPresence(tc.hasAPIKey, tc.hasOAuth)
+				if credential != tc.wantCredential {
+					t.Errorf("credential = %q, want %q", credential, tc.wantCredential)
 				}
-				if (warning != "") != tc.wantWarningSet {
-					t.Errorf("warning = %q, want non-empty=%t", warning, tc.wantWarningSet)
+				if apiKeyPresent != tc.wantAPIKey {
+					t.Errorf("anthropicAPIKeyPresent = %t, want %t", apiKeyPresent, tc.wantAPIKey)
 				}
 			})
 		}

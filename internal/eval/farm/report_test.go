@@ -178,3 +178,23 @@ func TestFarmReport_Run5Golden_ByteIdentical(t *testing.T) {
 		t.Fatalf("report text does not match report.golden.txt byte-for-byte\ngot:\n%s\nwant:\n%s", outcome.ReportText, want)
 	}
 }
+
+// TestFarmReport_AnthropicAPIKeyPresent_Blocked pins the owner decision
+// (spec 79ced2cc, docs/spec-eval-farm.md FM-16): farm runs are OAuth-only,
+// so a bundle whose meta.json records anthropicApiKeyPresent=true is
+// blocked, regardless of whether it is otherwise pinned/legacy.
+func TestFarmReport_AnthropicAPIKeyPresent_Blocked(t *testing.T) {
+	t.Parallel()
+	runDir := t.TempDir()
+	writeFile(t, runDir, "capture/manifest.json", `{"status":"complete"}`)
+	writeFile(t, runDir, "capture/eval/run1/scenario1/meta.json", `{"scenarioId":"scenario1","anthropicApiKeyPresent":true}`)
+	writeFile(t, runDir, "done.json", `{"runId":"run-apikey","scenarioId":"scenario1"}`)
+
+	outcome := ReportRun(runDir, "")
+	if outcome.Verdict != VerdictBlocked {
+		t.Fatalf("Verdict = %q, want %q", outcome.Verdict, VerdictBlocked)
+	}
+	if !strings.Contains(outcome.Reason, "oauth") {
+		t.Fatalf("Reason = %q, want it to mention farm runs are oauth-only", outcome.Reason)
+	}
+}

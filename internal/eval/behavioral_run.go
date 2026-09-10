@@ -67,42 +67,39 @@ type BehavioralResult struct {
 	// value the explicit binding already verified
 	// (execution_binding.go:CandidateSHA256) — the two farm digests a
 	// bundle carries (docs/spec-eval-farm.md §1.2 FM-4, §2.4 FM-16).
-	// CredentialMode records which agent credential this run used
-	// (presence only, never a value); CredentialWarning is set when both
-	// credential kinds are present in the run's environment, the forbidden
-	// state of §2.4. ModelObserved is the model name read back from the
-	// capture's provider records, empty when no capture is available or no
-	// model could be read.
-	EvaluatorSha256   string `json:"evaluatorSha256,omitempty"`
-	CandidateSha256   string `json:"candidateSha256,omitempty"`
-	CredentialMode    string `json:"credentialMode,omitempty"`
-	CredentialWarning string `json:"credentialWarning,omitempty"`
-	ModelObserved     string `json:"modelObserved,omitempty"`
+	// Credential is "oauth-token" when CLAUDE_CODE_OAUTH_TOKEN is present
+	// (the farm's only supported agent credential — owner decision, spec
+	// 79ced2cc); AnthropicAPIKeyPresent is true whenever ANTHROPIC_API_KEY
+	// is set (presence only, never a value) — farm/report.go's ReportRun
+	// blocks a bundle carrying it, meta.json still records the fact.
+	// ModelObserved is the model name read back from the capture's provider
+	// records, empty when no capture is available or no model could be
+	// read.
+	EvaluatorSha256        string `json:"evaluatorSha256,omitempty"`
+	CandidateSha256        string `json:"candidateSha256,omitempty"`
+	Credential             string `json:"credential,omitempty"`
+	AnthropicAPIKeyPresent bool   `json:"anthropicApiKeyPresent,omitempty"`
+	ModelObserved          string `json:"modelObserved,omitempty"`
 }
 
-// Credential modes a bundle can record (docs/spec-eval-farm.md §2.4, FM-16).
-const (
-	credentialModeAPIKey  = "api-key"
-	credentialModeOAuth   = "oauth-token"
-	credentialModeUnknown = "unknown"
-)
+// credentialOAuthToken is the only agent credential a farm run carries
+// (owner decision, spec 79ced2cc, docs/spec-eval-farm.md FM-16: the farm's
+// agent credential is OAuth-only, no api-key mode).
+const credentialOAuthToken = "oauth-token"
 
-// credentialModeFromPresence derives the run's credential mode from whether
-// each credential env var is set (presence only, never the value itself —
-// docs/spec-eval-farm.md §2.4). Both present is the forbidden state: it
-// returns "unknown" plus a non-empty warning rather than guessing which one
-// wins.
-func credentialModeFromPresence(hasAPIKey, hasOAuthToken bool) (mode, warning string) {
-	switch {
-	case hasAPIKey && hasOAuthToken:
-		return credentialModeUnknown, "both ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN are set; credential mode is ambiguous (docs/spec-eval-farm.md §2.4)"
-	case hasAPIKey:
-		return credentialModeAPIKey, ""
-	case hasOAuthToken:
-		return credentialModeOAuth, ""
-	default:
-		return credentialModeUnknown, ""
+// credentialFieldsFromPresence derives meta.json's credential/
+// anthropicApiKeyPresent fields from whether each credential env var is set
+// — presence only, never the value itself (docs/spec-eval-farm.md §2.4).
+// credential is "oauth-token" whenever CLAUDE_CODE_OAUTH_TOKEN is set (the
+// only supported agent credential); anthropicApiKeyPresent is true whenever
+// ANTHROPIC_API_KEY is set, regardless of the OAuth token's presence — a
+// bundle recording both is not refused here, it is graded "blocked" by
+// farm/report.go's ReportRun ("api key present; farm runs are oauth-only").
+func credentialFieldsFromPresence(hasAPIKey, hasOAuthToken bool) (credential string, anthropicAPIKeyPresent bool) {
+	if hasOAuthToken {
+		credential = credentialOAuthToken
 	}
+	return credential, hasAPIKey
 }
 
 // observedModelFromProviderCapture reads sessionDir's provider capture
@@ -179,7 +176,7 @@ func (r *Runner) applyFarmBundleFields(result *BehavioralResult) {
 	if r.config.Binding != nil {
 		result.CandidateSha256 = r.config.Binding.CandidateSHA256
 	}
-	result.CredentialMode, result.CredentialWarning = credentialModeFromPresence(
+	result.Credential, result.AnthropicAPIKeyPresent = credentialFieldsFromPresence(
 		os.Getenv("ANTHROPIC_API_KEY") != "",
 		os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "",
 	)

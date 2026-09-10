@@ -94,6 +94,10 @@ func ReportRun(runDir, evaluatorPin string) RunOutcome {
 	outcome := RunOutcome{RunID: done.RunID, ScenarioID: done.ScenarioID, Done: &done}
 	sessionDir := filepath.Join(runDir, "capture")
 	evalRunID, scenarioRunID, scopeErr := discoverEvalScope(sessionDir)
+	if scopeErr == nil && metaRecordsAnthropicAPIKey(sessionDir, evalRunID, scenarioRunID) {
+		return RunOutcome{RunID: done.RunID, ScenarioID: done.ScenarioID, Verdict: VerdictBlocked, Done: &done,
+			Reason: "blocked: api key present; farm runs are oauth-only (docs/spec-eval-farm.md FM-16, owner decision 79ced2cc)"}
+	}
 	if scopeErr == nil {
 		if report, _, buildErr := eval.BuildBehavioralReport(sessionDir, evalRunID, scenarioRunID); buildErr == nil {
 			outcome.ReportText = eval.RenderBehavioralReportText(report)
@@ -187,6 +191,27 @@ func BundleNoKnownSecretValue(bundleDir string, secretValues []string) error {
 		}
 		return nil
 	})
+}
+
+// metaRecordsAnthropicAPIKey reports whether the run's meta.json
+// (docs/spec-eval-farm.md §2.4 FM-16) recorded anthropicApiKeyPresent=true
+// — read directly rather than through eval.BuildBehavioralReport/
+// BehavioralReport, which does not project that field. A missing or
+// unreadable meta.json is not this check's concern (the report build below
+// surfaces that); it reports false rather than erroring.
+func metaRecordsAnthropicAPIKey(sessionDir, evalRunID, scenarioRunID string) bool {
+	path := filepath.Join(sessionDir, "eval", evalRunID, scenarioRunID, "meta.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var meta struct {
+		AnthropicAPIKeyPresent bool `json:"anthropicApiKeyPresent"`
+	}
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return false
+	}
+	return meta.AnthropicAPIKeyPresent
 }
 
 // discoverEvalScope finds the single (evalRunID, scenarioRunID) pair a farm
