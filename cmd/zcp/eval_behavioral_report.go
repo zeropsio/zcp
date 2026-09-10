@@ -56,7 +56,7 @@ func parseBehavioralReportArgs(args []string) (behavioralReportOptions, error) {
 	if options.Scenario == "" {
 		return behavioralReportOptions{}, errors.New("--scenario <id> is required")
 	}
-	if options.Format != "text" && options.Format != "json" {
+	if options.Format != "text" && options.Format != captureInspectFormatJSON {
 		return behavioralReportOptions{}, fmt.Errorf("unknown format %q", options.Format)
 	}
 	return options, nil
@@ -78,7 +78,7 @@ func runBehavioralReport(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "eval behavioral report: %v\n", err)
 		return 1
 	}
-	if options.Format == "json" {
+	if options.Format == captureInspectFormatJSON {
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
 		if err := encoder.Encode(report); err != nil {

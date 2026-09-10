@@ -133,8 +133,13 @@ func TestGreenfieldVerificationAcceptsDirectPlatformCompositeTypes(t *testing.T)
 		}).
 		WithProjectProcesses([]platform.Process{})
 	findings := RunVerification(t.Context(), scenario, "project", client, nil, "", time.Now(), RuntimeInputs{})
-	if len(findings) != 0 {
-		t.Fatalf("greenfield direct platform state produced false findings: %+v", findings)
+	// The gate-set scenario also carries liveness / record / unchanged rows
+	// that a URL-less mock without a baseline can only report as warn
+	// (advisory); the composite service types must produce no fail row.
+	for _, f := range findings {
+		if f.Severity == "fail" {
+			t.Fatalf("greenfield direct platform state produced a false fail finding: %+v (all: %+v)", f, findings)
+		}
 	}
 }
 
