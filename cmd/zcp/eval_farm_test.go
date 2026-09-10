@@ -34,14 +34,14 @@ func TestEvalFarm_WithoutAuthoringGate_RefusesEveryVerb(t *testing.T) {
 }
 
 // TestEvalFarm_UnimplementedVerbs_ExitNonzeroNotImplemented pins that
-// run/status/report/coverage/gc are recognized verbs whose slices land
-// later (S2 write-set excludes them): with the gate open they exit nonzero
-// naming "not implemented" on stderr, never silently succeed and never
-// report "unknown subcommand".
+// report is a recognized verb whose slice lands later (S4 implements
+// run/status/gc; report remains for a later slice): with the gate open it
+// exits nonzero naming "not implemented" on stderr, never silently succeeds
+// and never reports "unknown subcommand".
 func TestEvalFarm_UnimplementedVerbs_ExitNonzeroNotImplemented(t *testing.T) {
 	t.Setenv("ZCP_AUTHORING", "1")
 
-	verbs := []string{"run", "status", "report", "gc"}
+	verbs := []string{"report"}
 	for _, verb := range verbs {
 		t.Run(verb, func(t *testing.T) {
 			var code int

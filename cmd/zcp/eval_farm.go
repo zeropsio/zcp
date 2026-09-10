@@ -68,7 +68,13 @@ func runEvalFarm(args []string) int {
 		return runFarmPull(args[1:])
 	case farmVerbCoverage:
 		return runFarmCoverage(args[1:])
-	case farmVerbRun, farmVerbStatus, farmVerbReport, farmVerbGC:
+	case farmVerbRun:
+		return runFarmRun(args[1:])
+	case farmVerbStatus:
+		return runFarmStatus(args[1:])
+	case farmVerbGC:
+		return runFarmGC(args[1:])
+	case farmVerbReport:
 		fmt.Fprintf(os.Stderr, "zcp eval farm %s: not implemented\n", args[0])
 		return 1
 	default:

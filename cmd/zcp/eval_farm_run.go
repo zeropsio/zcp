@@ -1,0 +1,510 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/zeropsio/zcp/internal/eval"
+	"github.com/zeropsio/zcp/internal/eval/farm"
+)
+
+// gateSetPath and scenariosDir are the on-disk locations `--set gate`/`--set
+// all` resolve against (eval/farm/gate-set.txt, eval/behavioral/scenarios/).
+// The farm host runs zcp from within a checkout of this repo, so these
+// relative paths resolve the same way `zcp eval behavioral` already assumes
+// for its own scenario tree.
+const (
+	gateSetPath  = "eval/farm/gate-set.txt"
+	scenariosDir = "eval/behavioral/scenarios"
+)
+
+// defaultRunBudget is used when `--run-budget` is not given.
+const defaultRunBudget = 45 * time.Minute
+
+// flagBatch names the --batch flag, shared between runFarmRun's own parse
+// loop and planDetachRun's re-exec argv rewrite (goconst).
+const flagBatch = "--batch"
+
+// runFarmRun implements `zcp eval farm run` (docs/spec-eval-farm.md §3.3
+// FM-21/FM-22, §3.1 FM-18's --detach).
+func runFarmRun(args []string) int {
+	var candidate, scenariosDigest, set, batch, runBudgetStr, credentialModeFlag string
+	detach := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i] //nolint:gosec // G602 false positive: i is loop-bounded by i < len(args) each iteration
+		switch arg {
+		case flagCandidate:
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "error: %s requires a value\n", arg)
+				return 1
+			}
+			candidate = args[i+1]
+			i++
+		case "--scenarios":
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "error: %s requires a value\n", arg)
+				return 1
+			}
+			scenariosDigest = args[i+1]
+			i++
+		case "--set":
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "error: %s requires a value\n", arg)
+				return 1
+			}
+			set = args[i+1]
+			i++
+		case flagBatch:
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "error: %s requires a value\n", arg)
+				return 1
+			}
+			batch = args[i+1]
+			i++
+		case "--run-budget":
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "error: %s requires a value\n", arg)
+				return 1
+			}
+			runBudgetStr = args[i+1]
+			i++
+		case "--credential-mode":
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "error: %s requires a value\n", arg)
+				return 1
+			}
+			credentialModeFlag = args[i+1]
+			i++
+		case "--detach":
+			detach = true
+		}
+	}
+	if candidate == "" || scenariosDigest == "" || set == "" {
+		fmt.Fprintln(os.Stderr, "error: --candidate, --scenarios, and --set are required")
+		return 1
+	}
+	if batch == "" {
+		batch = fmt.Sprintf("batch-%d", time.Now().Unix())
+	}
+
+	if detach {
+		return runFarmRunDetach(args, batch)
+	}
+
+	runBudget := defaultRunBudget
+	if runBudgetStr != "" {
+		d, err := time.ParseDuration(runBudgetStr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: --run-budget: %v\n", err)
+			return 1
+		}
+		runBudget = d
+	}
+
+	credMode, credValue, err := resolveCredential(credentialModeFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	scenarios, err := resolveScenarios(set)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: resolve scenario set: %v\n", err)
+		return 1
+	}
+
+	cfg, err := farm.ConfigFromEnv()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	sink := farm.NewSinkClient(cfg)
+
+	accountToken := os.Getenv("ZCP_FARM_ACCOUNT_TOKEN")
+	clientID := os.Getenv("ZCP_FARM_CLIENT_ID")
+	evaluatorSHA := os.Getenv("ZCP_FARM_EVALUATOR_SHA")
+	if accountToken == "" || clientID == "" || evaluatorSHA == "" {
+		fmt.Fprintln(os.Stderr, "error: ZCP_FARM_ACCOUNT_TOKEN, ZCP_FARM_CLIENT_ID, and ZCP_FARM_EVALUATOR_SHA are required")
+		return 1
+	}
+	client, closer, err := farm.NewAccountClient(accountToken, os.Getenv("ZCP_API_HOST"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	defer closer()
+
+	opts := farm.RunOptions{
+		Batch: batch, ClientID: clientID, Set: set,
+		CandidateSHA256: candidate, EvaluatorSHA256: evaluatorSHA, ScenariosDigest: scenariosDigest,
+		Scenarios: scenarios, CredentialMode: credMode, Credential: credValue,
+		Sink:      farm.Sink(cfg), // farm.Config and farm.Sink share the same field names/types/order
+		RunBudget: runBudget,
+	}
+	results, err := farm.RunBatch(context.Background(), client, sink, opts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: farm run: %v\n", err)
+		return 1
+	}
+
+	allPassed := true
+	for _, r := range results {
+		fmt.Fprintf(os.Stdout, "%s %s %s\n", r.RunID, r.Scenario, r.Result)
+		if r.Result != farm.ResultPassed {
+			allPassed = false
+		}
+	}
+	if !allPassed {
+		return 1
+	}
+	return 0
+}
+
+// resolveCredential picks the one batch credential §2.4 requires: an
+// explicit --credential-mode names which env is authoritative; otherwise
+// exactly one of ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN must be set.
+func resolveCredential(modeFlag string) (farm.CredentialMode, string, error) {
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	oauth := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN")
+	switch modeFlag {
+	case string(farm.CredentialAPIKey):
+		if apiKey == "" {
+			return "", "", fmt.Errorf("--credential-mode api-key requires ANTHROPIC_API_KEY")
+		}
+		return farm.CredentialAPIKey, apiKey, nil
+	case string(farm.CredentialOAuthToken):
+		if oauth == "" {
+			return "", "", fmt.Errorf("--credential-mode oauth-token requires CLAUDE_CODE_OAUTH_TOKEN")
+		}
+		return farm.CredentialOAuthToken, oauth, nil
+	case "":
+		switch {
+		case apiKey != "" && oauth == "":
+			return farm.CredentialAPIKey, apiKey, nil
+		case oauth != "" && apiKey == "":
+			return farm.CredentialOAuthToken, oauth, nil
+		default:
+			return "", "", fmt.Errorf("exactly one of ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN must be set (or pass --credential-mode)")
+		}
+	default:
+		return "", "", fmt.Errorf("unknown --credential-mode %q", modeFlag)
+	}
+}
+
+// resolveScenarios expands --set (gate|all|<id,id,...>) to the
+// farm.ScenarioRun list RunBatch needs, marking each scenario Launch when
+// its front matter's area starts with "launch" (the two gate-set launch
+// scenarios use "launch" and "launch-production-recovery").
+func resolveScenarios(set string) ([]farm.ScenarioRun, error) {
+	var ids []string
+	var err error
+	switch set {
+	case "gate":
+		ids, err = readGateSet(gateSetPath)
+	case categoryAll: // "all" — shared with sync.go's own --category all (goconst)
+		ids, err = listAllScenarioIDs(scenariosDir)
+	default:
+		for id := range strings.SplitSeq(set, ",") {
+			id = strings.TrimSpace(id)
+			if id != "" {
+				ids = append(ids, id)
+			}
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	scenarios := make([]farm.ScenarioRun, 0, len(ids))
+	for _, id := range ids {
+		launch, err := scenarioIsLaunch(id)
+		if err != nil {
+			return nil, err
+		}
+		scenarios = append(scenarios, farm.ScenarioRun{ID: id, Launch: launch})
+	}
+	return scenarios, nil
+}
+
+// readGateSet reads one scenario id per line from path (eval/farm/gate-set.txt).
+func readGateSet(path string) ([]string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read gate set %s: %w", path, err)
+	}
+	var ids []string
+	for line := range strings.SplitSeq(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			ids = append(ids, line)
+		}
+	}
+	return ids, nil
+}
+
+// listAllScenarioIDs returns the id of every scenario markdown file under
+// dir, sorted. Every scenario currently authored under
+// eval/behavioral/scenarios/ is container-run; a scenario meant only for a
+// local, non-farm lane would need its own marker to be excluded here — none
+// carries one yet.
+func listAllScenarioIDs(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read scenarios dir %s: %w", dir, err)
+	}
+	var ids []string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		sc, err := eval.ParseScenario(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("parse scenario %s: %w", entry.Name(), err)
+		}
+		ids = append(ids, sc.ID)
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+// scenarioIsLaunch reports whether scenario id's front matter area names a
+// launch scenario (§3.4 FM-23 mints/revokes a token only for these).
+func scenarioIsLaunch(id string) (bool, error) {
+	sc, err := eval.ParseScenario(filepath.Join(scenariosDir, id+".md"))
+	if err != nil {
+		return false, fmt.Errorf("resolve scenario %s: %w", id, err)
+	}
+	return strings.HasPrefix(sc.Area, "launch"), nil
+}
+
+// detachStarter starts argv detached (new session, stdout/stderr appended
+// to logPath) and returns immediately without waiting for it to finish —
+// a package var so tests can swap in a recording fake instead of actually
+// forking a process (§3.1 FM-18: "no daemon... kickoff SSH session may
+// drop").
+var detachStarter = func(argv []string, logPath string) error {
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return fmt.Errorf("open log %s: %w", logPath, err)
+	}
+	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec // G204: argv[0] is this same binary's own resolved path (os.Executable), never user input
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		_ = logFile.Close()
+		return fmt.Errorf("start detached: %w", err)
+	}
+	return nil
+}
+
+// planDetachRun computes the re-exec argv (this binary, "eval farm run",
+// the original args with --detach removed and --batch pinned to batch) and
+// the log path (<cwd>/farm-<batch>.log) for `farm run --detach`.
+func planDetachRun(exe string, args []string, cwd, batch string) (argv []string, logPath string) {
+	filtered := make([]string, 0, len(args)+2)
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--detach":
+			continue
+		case flagBatch:
+			i++ // also skip its value
+			continue
+		default:
+			filtered = append(filtered, args[i])
+		}
+	}
+	filtered = append(filtered, flagBatch, batch)
+	// runFarmRun's own args never include the "run" verb itself (the
+	// dispatcher strips it) — the re-exec argv, running the whole binary
+	// from scratch, needs the full "eval farm run" path.
+	argv = append([]string{exe, "eval", "farm", farmVerbRun}, filtered...)
+	logPath = filepath.Join(cwd, fmt.Sprintf("farm-%s.log", batch))
+	return argv, logPath
+}
+
+// runFarmRunDetach implements --detach: re-exec this binary without
+// --detach, redirected to a log file, then return immediately so the
+// kickoff SSH session may drop.
+func runFarmRunDetach(args []string, batch string) int {
+	exe, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: resolve own executable: %v\n", err)
+		return 1
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: getwd: %v\n", err)
+		return 1
+	}
+	argv, logPath := planDetachRun(exe, args, cwd, batch)
+	if err := detachStarter(argv, logPath); err != nil {
+		fmt.Fprintf(os.Stderr, "error: detach: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stdout, "batch %s detached, log %s\n", batch, logPath)
+	return 0
+}
+
+// runFarmStatus implements `zcp eval farm status [<batch>]`
+// (docs/spec-eval-farm.md §3.2/§1.4): recomputes from the bucket listing
+// (batches/, runs/*/done.json) and the live project list — no local state
+// file.
+func runFarmStatus(args []string) int {
+	batchFilter := ""
+	if len(args) > 0 {
+		batchFilter = args[0]
+	}
+
+	cfg, err := farm.ConfigFromEnv()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	sink := farm.NewSinkClient(cfg)
+
+	accountToken := os.Getenv("ZCP_FARM_ACCOUNT_TOKEN")
+	clientID := os.Getenv("ZCP_FARM_CLIENT_ID")
+	if accountToken == "" || clientID == "" {
+		fmt.Fprintln(os.Stderr, "error: ZCP_FARM_ACCOUNT_TOKEN and ZCP_FARM_CLIENT_ID are required")
+		return 1
+	}
+	client, closer, err := farm.NewAccountClient(accountToken, os.Getenv("ZCP_API_HOST"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	defer closer()
+
+	ctx := context.Background()
+	batches, err := farm.ListBatches(ctx, sink)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: list batches: %v\n", err)
+		return 1
+	}
+
+	projects, err := client.ListProjects(ctx, clientID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: list projects: %v\n", err)
+		return 1
+	}
+	live := make(map[string]bool, len(projects))
+	for _, p := range projects {
+		live[p.Name] = true
+	}
+
+	for _, batch := range batches {
+		if batchFilter != "" && batch != batchFilter {
+			continue
+		}
+		manifest, err := farm.GetManifest(ctx, sink, batch)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: read manifest for %s: %v\n", batch, err)
+			continue
+		}
+		for _, run := range manifest.Runs {
+			hasDone, _, err := sink.Head(ctx, "runs/"+run.RunID+"/done.json")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: head done.json for %s: %v\n", run.RunID, err)
+				continue
+			}
+			state := "running"
+			if hasDone {
+				state = "done"
+			}
+			projState := "deleted"
+			if live[run.ProjectName] {
+				projState = "present"
+			}
+			fmt.Fprintf(os.Stdout, "%s %s %s %s project=%s\n", batch, run.RunID, run.Scenario, state, projState)
+		}
+	}
+	return 0
+}
+
+// runFarmGC implements `zcp eval farm gc [--older-than <duration>] [--yes]`
+// (docs/spec-eval-farm.md §3.6 FM-26): prints every zcp-farm- candidate and
+// why it is or isn't eligible, deletes the eligible ones only with --yes,
+// then revokes launch tokens orphaned by an earlier no-bundle exemption
+// whose project is now gone.
+func runFarmGC(args []string) int {
+	var olderThan time.Duration
+	yes := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i] //nolint:gosec // G602 false positive: i is loop-bounded by i < len(args) each iteration
+		switch arg {
+		case "--older-than":
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "error: %s requires a value\n", arg)
+				return 1
+			}
+			d, err := time.ParseDuration(args[i+1])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: --older-than: %v\n", err)
+				return 1
+			}
+			olderThan = d
+			i++
+		case "--yes":
+			yes = true
+		}
+	}
+
+	cfg, err := farm.ConfigFromEnv()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	sink := farm.NewSinkClient(cfg)
+
+	accountToken := os.Getenv("ZCP_FARM_ACCOUNT_TOKEN")
+	clientID := os.Getenv("ZCP_FARM_CLIENT_ID")
+	if accountToken == "" || clientID == "" {
+		fmt.Fprintln(os.Stderr, "error: ZCP_FARM_ACCOUNT_TOKEN and ZCP_FARM_CLIENT_ID are required")
+		return 1
+	}
+	client, closer, err := farm.NewAccountClient(accountToken, os.Getenv("ZCP_API_HOST"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	defer closer()
+
+	ctx := context.Background()
+	candidates, err := farm.GC(ctx, client, sink, farm.GCOptions{ClientID: clientID, OlderThan: olderThan})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	for _, c := range candidates {
+		if c.Exempt != "" {
+			fmt.Fprintf(os.Stdout, "%s exempt: %s\n", c.Name, c.Exempt)
+			continue
+		}
+		fmt.Fprintf(os.Stdout, "%s candidate\n", c.Name)
+	}
+
+	if !yes {
+		return 0
+	}
+
+	if errs := farm.GCApply(ctx, client, candidates); len(errs) > 0 {
+		for _, gcErr := range errs {
+			fmt.Fprintf(os.Stderr, "error: %v\n", gcErr)
+		}
+		return 1
+	}
+	if err := farm.RevokeOrphanedLaunchTokens(ctx, client, sink, clientID); err != nil {
+		fmt.Fprintf(os.Stderr, "error: revoke orphaned launch tokens: %v\n", err)
+		return 1
+	}
+	return 0
+}

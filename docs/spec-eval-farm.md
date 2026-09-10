@@ -120,6 +120,39 @@ registry of truth — `farm status` always recomputes from the bucket listing
 and the live project list (§3), never from a cached manifest — but every
 report cites which manifest it read.
 
+Shape, as implemented by the controller (S4):
+
+```json
+// batches/<batch>/manifest.json
+{
+  "batch": "…", "createdAt": "<RFC3339>", "startedAt": "<RFC3339>",
+  "set": "gate|all|<ids>",
+  "candidateSha256": "…", "evaluatorSha256": "…", "scenariosDigest": "…",
+  "credentialMode": "api-key|oauth-token",
+  "runs": [{"runId": "…", "scenario": "…", "projectName": "zcp-farm-<runId>"}]
+}
+```
+
+```json
+// batches/<batch>/summary.json
+{
+  "batch": "…", "finishedAt": "<RFC3339>", "endedBy": "settled|budget|interrupt",
+  "runs": [{
+    "runId": "…", "scenario": "…", "projectId": "…",
+    "result": "passed|failed|blocked|not-run", "detail": "…",
+    "launchTokenId": "…"
+  }]
+}
+```
+
+`manifest.json.startedAt` is set once, at the same moment as `createdAt` —
+`farm coverage --since` (§5.3) reads it to bound a batch's window.
+`summary.json.runs[].projectId` is empty once that run's project has been
+deleted (the common case for a settled run); `launchTokenId` is the id
+(never the token value, §3.4) of a launch scenario's token, present only
+while it has not yet been revoked — the FM-21 no-bundle exemption records it
+here so `gc` can finish the revoke once the project is finally gone.
+
 ---
 
 ## 2. Run project — one self-driving disposable project per run

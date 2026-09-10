@@ -91,7 +91,7 @@ func GC(ctx context.Context, client PlatformClient, sink *SinkClient, opts GCOpt
 // that run's batch has finished and whether the run itself produced a
 // bundle.
 func buildBatchRunIndex(ctx context.Context, sink *SinkClient) (map[string]batchRunInfo, error) {
-	batches, err := listBatchIDs(ctx, sink)
+	batches, err := ListBatches(ctx, sink)
 	if err != nil {
 		return nil, err
 	}
@@ -122,9 +122,9 @@ func buildBatchRunIndex(ctx context.Context, sink *SinkClient) (map[string]batch
 	return index, nil
 }
 
-// listBatchIDs returns every distinct batch id under batches/ in the
+// ListBatches returns every distinct batch id under batches/ in the
 // bucket.
-func listBatchIDs(ctx context.Context, sink *SinkClient) ([]string, error) {
+func ListBatches(ctx context.Context, sink *SinkClient) ([]string, error) {
 	keys, err := sink.List(ctx, "batches/")
 	if err != nil {
 		return nil, err
@@ -175,7 +175,7 @@ func RevokeOrphanedLaunchTokens(ctx context.Context, client PlatformClient, sink
 		liveNames[p.Name] = true
 	}
 
-	batches, err := listBatchIDs(ctx, sink)
+	batches, err := ListBatches(ctx, sink)
 	if err != nil {
 		return fmt.Errorf("farm gc: list batches: %w", err)
 	}
