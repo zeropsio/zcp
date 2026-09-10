@@ -2,6 +2,8 @@ package eval
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -626,5 +628,91 @@ func TestVerification_UnchangedRow_PerHostnameBaseline_IndependentVerdicts(t *te
 	}
 	if got["hostB"] != CheckPassed {
 		t.Errorf("hostB = %v, want passed", got["hostB"])
+	}
+}
+
+// TestRunVerification_LaunchShapeAndSecret_RowsAppended pins that
+// generateRequiredChecks wires the O6 (launchShape) and O8
+// (noFabricatedSecret) oracles when the scenario declares them, using the
+// caller-supplied RuntimeInputs — and that omitting those fields (zero-value
+// RuntimeInputs, no LaunchShape/NoFabricatedSecret declared) produces none of
+// their rows.
+func TestRunVerification_LaunchShapeAndSecret_RowsAppended(t *testing.T) {
+	t.Parallel()
+
+	sc := &Scenario{Verification: &VerificationConfig{
+		LaunchShape:        &LaunchShapeConfig{ProdProject: "prod1"},
+		NoFabricatedSecret: true,
+	}}
+	client := platform.NewMock().
+		WithUserInfo(&platform.UserInfo{ID: "u1"}).
+		WithProjects([]platform.Project{{ID: "prod1-id", Name: "prod1"}}).
+		WithServicesDirect(nil)
+	observation := collectPlatformObservation(context.Background(), client, "p1", false, false)
+	runtime := RuntimeInputs{MCPStreamPaths: []string{"testdata/mcpstream/declared.jsonl"}}
+
+	rows := generateRequiredChecks(context.Background(), sc, observation, nil, time.Time{}, "p1", client, true, nil, runtime)
+
+	hasLaunchShape, hasSecret := false, false
+	for _, row := range rows {
+		if row.Check == "launch_shape" {
+			hasLaunchShape = true
+		}
+		if row.Check == "no_fabricated_secret" {
+			hasSecret = true
+		}
+	}
+	if !hasLaunchShape {
+		t.Error("expected at least one launch_shape row when Verification.LaunchShape is set")
+	}
+	if !hasSecret {
+		t.Error("expected a no_fabricated_secret row when Verification.NoFabricatedSecret is true")
+	}
+
+	// Without either field declared, generateRequiredChecks must not
+	// produce their rows even with the same RuntimeInputs supplied.
+	sc2 := &Scenario{Verification: &VerificationConfig{}}
+	rows2 := generateRequiredChecks(context.Background(), sc2, observation, nil, time.Time{}, "p1", client, true, nil, runtime)
+	for _, row := range rows2 {
+		if row.Check == "launch_shape" || row.Check == "no_fabricated_secret" {
+			t.Errorf("undeclared oracle produced a row: %+v", row)
+		}
+	}
+}
+
+// TestRunVerification_LaunchTokenHashedNeverStored pins that
+// RuntimeInputs.LaunchTokenSHA256 (a caller-hashed digest) is what the
+// launch_shape token_not_in_transcript row consumes — never a raw token
+// value — and that the row/meta surface never carries anything but the
+// digest the caller already computed.
+func TestRunVerification_LaunchTokenHashedNeverStored(t *testing.T) {
+	t.Parallel()
+	const rawToken = "super-secret-launch-token-value"
+	sum := sha256.Sum256([]byte(rawToken))
+	digest := hex.EncodeToString(sum[:])
+
+	sc := &Scenario{Verification: &VerificationConfig{LaunchShape: &LaunchShapeConfig{ProdProject: "prod1"}}}
+	client := platform.NewMock().
+		WithUserInfo(&platform.UserInfo{ID: "u1"}).
+		WithProjects([]platform.Project{{ID: "prod1-id", Name: "prod1"}}).
+		WithServicesDirect([]platform.ServiceStack{})
+	observation := collectPlatformObservation(context.Background(), client, "p1", false, false)
+	runtime := RuntimeInputs{LaunchTokenSHA256: digest}
+
+	rows := generateRequiredChecks(context.Background(), sc, observation, nil, time.Time{}, "p1", client, true, nil, runtime)
+
+	found := false
+	for _, row := range rows {
+		if row.ID != "launch_shape/token_not_in_transcript" {
+			continue
+		}
+		found = true
+		blob := row.Expected + row.Observed + row.Message
+		if strings.Contains(blob, rawToken) {
+			t.Errorf("row leaks the raw token value: %+v", row)
+		}
+	}
+	if !found {
+		t.Fatal("expected a launch_shape/token_not_in_transcript row")
 	}
 }
