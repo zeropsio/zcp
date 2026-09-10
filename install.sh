@@ -64,7 +64,7 @@ tmp_path="$bin_path.$$.download"
 trap 'rm -f "$tmp_path"' EXIT
 
 attempt=1
-max_attempts=3
+max_attempts=6
 while :; do
   # --connect-timeout bounds a hung connect; --speed-limit/--speed-time abort
   # a wedged transfer (sustained <1 KB/s for 30s) so the retry can take over.
