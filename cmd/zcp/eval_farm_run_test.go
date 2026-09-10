@@ -106,7 +106,7 @@ func TestEvalFarmRun_IntegrationTokenPreflight_NamesTheFix(t *testing.T) {
 
 	const clientID = "client-preflight-1"
 	restSrv := newMintForbiddenFakeAccountServer(t, clientID)
-	s3Srv := newStatusFakeS3Server(t, "zcp-farm")
+	s3Srv := newStatusFakeS3Server(t)
 
 	t.Setenv("ZCP_FARM_ACCOUNT_TOKEN", "integration-token-value")
 	t.Setenv("ZCP_FARM_CLIENT_ID", clientID)
@@ -248,8 +248,9 @@ type statusFakeS3 struct {
 	objects map[string][]byte
 }
 
-func newStatusFakeS3Server(t *testing.T, bucket string) *httptest.Server {
+func newStatusFakeS3Server(t *testing.T) *httptest.Server {
 	t.Helper()
+	const bucket = "zcp-farm"
 	f := &statusFakeS3{bucket: bucket, objects: map[string][]byte{}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		prefix := "/" + f.bucket
@@ -320,7 +321,7 @@ func (f *statusFakeS3) serveList(w http.ResponseWriter, r *http.Request) {
 func TestEvalFarmStatus_RecomputesFromBucketAndProjects(t *testing.T) {
 	const clientID = "client-status-1"
 	restSrv := newStatusFakeAccountServer(t, clientID, []string{farm.ProjectPrefix + "done-run"})
-	s3Srv := newStatusFakeS3Server(t, "zcp-farm")
+	s3Srv := newStatusFakeS3Server(t)
 
 	t.Setenv("ZCP_FARM_ACCOUNT_TOKEN", "farm-account-token")
 	t.Setenv("ZCP_FARM_CLIENT_ID", clientID)
@@ -372,5 +373,129 @@ func TestEvalFarmStatus_RecomputesFromBucketAndProjects(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "gone-run") || !strings.Contains(stdout, "running") || !strings.Contains(stdout, "project=deleted") {
 		t.Errorf("stdout missing the no-bundle+deleted run's line, got:\n%s", stdout)
+	}
+}
+
+// TestFarmRun_ZeroRunsCreated_ExitNonzero pins D10's zero-runs case: a
+// --set that resolves to no scenario ids at all schedules and creates zero
+// runs; RunBatch returns (nil-or-empty results, nil error), and `zcp eval
+// farm run` must not read that as success — it prints "error: no run was
+// created" to stderr and exits nonzero, matching every other
+// not-fully-passed batch.
+func TestFarmRun_ZeroRunsCreated_ExitNonzero(t *testing.T) {
+	const clientID = "client-zero-runs"
+	restSrv := newStatusFakeAccountServer(t, clientID, nil)
+	s3Srv := newStatusFakeS3Server(t)
+
+	t.Setenv("ZCP_FARM_ACCOUNT_TOKEN", "farm-account-token")
+	t.Setenv("ZCP_FARM_CLIENT_ID", clientID)
+	t.Setenv("ZCP_FARM_EVALUATOR_SHA", "eval-sha")
+	t.Setenv("ZCP_API_HOST", restSrv.URL)
+	t.Setenv("ZCP_FARM_S3_URL", s3Srv.URL)
+	t.Setenv("ZCP_FARM_S3_BUCKET", "zcp-farm")
+	t.Setenv("ZCP_FARM_S3_KEY", "sink-key")
+	t.Setenv("ZCP_FARM_S3_SECRET", "sink-secret")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-farm-token")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	var exitCode int
+	_, stderr := captureOutput(t, func() {
+		// A --set of comma-only separators resolves (resolveScenarios'
+		// default branch, trimming and skipping empty entries) to zero
+		// scenario ids without touching any file on disk — RunBatch then
+		// schedules and creates nothing.
+		exitCode = runFarmRun([]string{
+			"--candidate", "cand-sha", "--scenarios", "scen-sha",
+			"--set", " , ,", "--batch", "batch-zero-runs",
+		})
+	})
+
+	if exitCode != 1 {
+		t.Errorf("runFarmRun exit code = %d, want 1 (stderr: %s)", exitCode, stderr)
+	}
+	const want = "error: no run was created"
+	if !strings.Contains(stderr, want) {
+		t.Errorf("stderr = %q, want it to contain %q", stderr, want)
+	}
+}
+
+// newDeletingProjectFakeAccountServer serves user/info + project/search for
+// exactly one project whose live status is DELETING — status must label
+// its run "deleting", never "present" (a project mid async-delete is still
+// in the list; live-verified 2026-09-10).
+func newDeletingProjectFakeAccountServer(t *testing.T, clientID, projectName string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/rest/public/user/info":
+			fmt.Fprintf(w, `{"id":"user-1","email":"farm@example.com","fullName":"Farm","clientUserList":[{"id":"cu1","clientId":%q,"userId":"user-1"}]}`, clientID)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/project/search":
+			fmt.Fprintf(w, `{"limit":100,"offset":0,"totalHits":1,"items":[{"id":"proj-1","clientId":%q,"name":%q,"status":"DELETING"}]}`, clientID, projectName)
+		default:
+			t.Errorf("deletingProjectFakeAccount: unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestFarmStatus_DeletingProject_LabelledDeleting pins the brief's minor
+// fix: a project the platform reports status DELETING is labelled
+// "deleting", not "present" — it is still in the live list (the async
+// delete has not finished), so bare list-membership would misreport it.
+func TestFarmStatus_DeletingProject_LabelledDeleting(t *testing.T) {
+	const clientID = "client-deleting-1"
+	runID := "deleting-run"
+	projectName := farm.ProjectPrefix + runID
+	restSrv := newDeletingProjectFakeAccountServer(t, clientID, projectName)
+	s3Srv := newStatusFakeS3Server(t)
+
+	t.Setenv("ZCP_FARM_ACCOUNT_TOKEN", "farm-account-token")
+	t.Setenv("ZCP_FARM_CLIENT_ID", clientID)
+	t.Setenv("ZCP_API_HOST", restSrv.URL)
+	t.Setenv("ZCP_FARM_S3_URL", s3Srv.URL)
+	t.Setenv("ZCP_FARM_S3_BUCKET", "zcp-farm")
+	t.Setenv("ZCP_FARM_S3_KEY", "sink-key")
+	t.Setenv("ZCP_FARM_S3_SECRET", "sink-secret")
+
+	cfg, err := farm.ConfigFromEnv()
+	if err != nil {
+		t.Fatalf("ConfigFromEnv: %v", err)
+	}
+	sink := farm.NewSinkClient(cfg)
+	ctx := t.Context()
+
+	batch := "batch-deleting-1"
+	manifest := farm.BatchManifest{
+		Batch: batch, Set: "gate",
+		Runs: []farm.ManifestRun{
+			{RunID: runID, Scenario: "recipe-a", ProjectName: projectName},
+		},
+	}
+	if err := farm.PutManifest(ctx, sink, batch, manifest); err != nil {
+		t.Fatalf("PutManifest: %v", err)
+	}
+	if err := sink.Put(ctx, "runs/"+runID+"/done.json", []byte(`{"runId":"`+runID+`"}`)); err != nil {
+		t.Fatalf("Put done.json: %v", err)
+	}
+	summary := farm.BatchSummary{Batch: batch, FinishedAt: "2026-01-01T00:00:00Z", EndedBy: "settled"}
+	if err := farm.PutSummary(ctx, sink, batch, summary); err != nil {
+		t.Fatalf("PutSummary: %v", err)
+	}
+
+	var exitCode int
+	stdout, stderr := captureOutput(t, func() {
+		exitCode = runFarmStatus(nil)
+	})
+	if exitCode != 0 {
+		t.Errorf("runFarmStatus exit code = %d, want 0 (stderr: %s)", exitCode, stderr)
+	}
+	if !strings.Contains(stdout, runID) || !strings.Contains(stdout, "project=deleting") {
+		t.Errorf("stdout missing %q labelled project=deleting, got:\n%s", runID, stdout)
+	}
+	if strings.Contains(stdout, "project=present") {
+		t.Errorf("stdout labelled the DELETING project present, got:\n%s", stdout)
 	}
 }
