@@ -441,15 +441,25 @@ type ProcessEvent struct {
 
 // AppVersionEvent represents a build/deploy event from the search API.
 type AppVersionEvent struct {
-	ID             string     `json:"id"`
-	ProjectID      string     `json:"projectId"`
-	ServiceStackID string     `json:"serviceStackId"`
-	Source         string     `json:"source"`
-	Status         string     `json:"status"`
-	Sequence       int        `json:"sequence"`
-	Build          *BuildInfo `json:"build,omitempty"`
-	Created        string     `json:"created"`
-	LastUpdate     string     `json:"lastUpdate"`
+	ID              string               `json:"id"`
+	ProjectID       string               `json:"projectId"`
+	ServiceStackID  string               `json:"serviceStackId"`
+	Source          string               `json:"source"`
+	Status          string               `json:"status"`
+	Sequence        int                  `json:"sequence"`
+	Build           *BuildInfo           `json:"build,omitempty"`
+	PublicGitSource *AppVersionGitSource `json:"publicGitSource,omitempty"`
+	Created         string               `json:"created"`
+	LastUpdate      string               `json:"lastUpdate"`
+}
+
+// AppVersionGitSource carries the public git repository an AppVersionEvent
+// with Source == "GIT" was built from (docs/spec-eval-farm.md §4.4 O7: a
+// non-nil PublicGitSource on the target's ACTIVE appVersion fails the
+// artifact_promotion/<target>/no_git_source row).
+type AppVersionGitSource struct {
+	GitURL     string `json:"gitUrl"`
+	BranchName string `json:"branchName"`
 }
 
 // BuildInfo contains build pipeline timing and target-container metadata.
