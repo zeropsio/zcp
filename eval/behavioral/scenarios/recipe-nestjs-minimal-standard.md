@@ -12,6 +12,19 @@ tags: [bootstrap, recipe-route, standard-pair, node, nestjs, postgres, recipe-ma
 area: bootstrap
 retrospective:
   promptStyle: briefing-future-agent
+verification:
+  mode: required
+  spec: spec-workflows.md §2
+  expectedServices:
+    - hostname: appdev
+      status: [ACTIVE]
+      type: nodejs@*
+    - hostname: appstage
+      status: [ACTIVE]
+      type: nodejs@*
+  noFailedProcesses: true
+  liveness: {service: appdev, marker: "NestJS Minimal"}
+  never: ["zerops_import{override=true}"]
 userPersona: |
   You are a developer building a small NestJS API and you want a dev
   environment plus a staging slot. Compatible substitutions in the

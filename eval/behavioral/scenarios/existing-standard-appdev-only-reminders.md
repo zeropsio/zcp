@@ -10,6 +10,13 @@ tags: [adopt, develop, standard-pair, scoped-dev-only, node, postgres, no-stage-
 area: adopt-and-develop
 retrospective:
   promptStyle: briefing-future-agent
+verification:
+  mode: required
+  spec: spec-workflows.md §4
+  liveness: {service: appdev, marker: "nodejs"}
+  unchanged: [appstage]
+  noFailedProcesses: true
+  never: ["zerops_import{override=true}", "zerops_delete"]
 notableFriction:
   - id: existing-project-adopt
     description: |

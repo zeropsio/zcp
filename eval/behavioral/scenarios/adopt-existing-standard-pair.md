@@ -35,6 +35,21 @@ tags: [bootstrap, adopt-route, standard-mode, node, postgres, czech-prompt, real
 area: bootstrap
 retrospective:
   promptStyle: briefing-future-agent
+verification:
+  mode: required
+  spec: spec-workflows.md §3
+  expectedServices:
+    - hostname: appdev
+      status: [ACTIVE]
+      type: nodejs@*
+    - hostname: appstage
+      status: [ACTIVE]
+      type: nodejs@*
+    - hostname: db
+      status: [ACTIVE]
+      type: postgresql@*
+  unchanged: [appdev, appstage]
+  never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
   Jsi vývojář a v Zerops dashboardu už máš standard pair postavený
   ručně — `appdev` (nodejs@22, zeropsSetup:dev), `appstage` (nodejs@22,

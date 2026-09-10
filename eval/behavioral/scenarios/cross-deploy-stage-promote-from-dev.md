@@ -14,6 +14,13 @@ tags: [cross-deploy, stage-promote, dev-stage, deploy-mode-asymmetry, deployFile
 area: develop
 retrospective:
   promptStyle: briefing-future-agent
+verification:
+  mode: required
+  spec: spec-workflows.md §8
+  liveness: {service: appstage, marker: "nodejs"}
+  artifactPromotion: [{from: appdev, to: appstage}]
+  noFailedProcesses: true
+  never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
   Your `appdev` Node service is verified healthy and you want the
   exact same build promoted to `appstage` — not rebuilt from source,

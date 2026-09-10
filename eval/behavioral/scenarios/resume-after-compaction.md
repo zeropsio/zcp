@@ -34,6 +34,8 @@ area: develop
 retrospective:
   promptStyle: briefing-future-agent
 verification:
+  mode: required
+  spec: spec-work-session.md §6.2
   expectedServices:
     - hostname: appdev
       status: [ACTIVE]
@@ -44,7 +46,9 @@ verification:
     - hostname: db
       status: [ACTIVE]
       type: postgresql@*
+  unchanged: [appdev, appstage]
   noFailedProcesses: true
+  never: ["zerops_import{override=true}"]
   retrospectiveMustNotMention:
     - had to re-bootstrap
     - "started over"

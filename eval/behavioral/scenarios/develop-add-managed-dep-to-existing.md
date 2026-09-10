@@ -14,6 +14,16 @@ tags: [develop, add-service, managed-dep, valkey, env-wiring, existing-stack]
 area: develop
 retrospective:
   promptStyle: briefing-future-agent
+verification:
+  mode: required
+  spec: spec-workflows.md §4
+  expectedServices:
+    - hostname: appdev
+      status: [ACTIVE]
+      type: nodejs@*
+  unchanged: [appstage]
+  noFailedProcesses: true
+  never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
   Your Node app `appdev` is healthy with Postgres but a particular
   endpoint is slow because it re-runs an expensive query. You want

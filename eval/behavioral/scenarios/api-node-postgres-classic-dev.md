@@ -34,6 +34,19 @@ tags: [bootstrap, classic-route, dev-mode, dynamic, node, postgres, managed-dep,
 area: bootstrap
 retrospective:
   promptStyle: briefing-future-agent
+verification:
+  mode: required
+  spec: spec-workflows.md §2
+  expectedServices:
+    - hostname: api
+      status: [ACTIVE]
+      type: nodejs@*
+    - hostname: db
+      status: [ACTIVE]
+      type: postgresql@*
+  noFailedProcesses: true
+  liveness: {service: api, marker: "api-ready"}
+  never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
   Jsi backend dev, chceš si rychle rozjet Node.js REST API s
   Postgres jako persistent storage. Žádné existující kódy ani repo
@@ -110,3 +123,5 @@ notableFriction:
 ---
 
 Mám rozjet Node.js API s Postgres databází, klasická REST, zatím jen pro vývoj — chci to mít na Zerops abych mohl iterovat na kódu. Žádná stage, žádná produkce, žádné existující repo. Použij project `{{projectId}}`.
+
+Implement `POST /records` (JSON body `{"nonce": "...", "value": "..."}` → `201` with `{id, nonce, value, environment: "dev"}`, persisted to the Postgres `db` service) and `GET /records/:id` returning the same shape, and make `GET /` return `200` with a body containing the literal text `api-ready`.
