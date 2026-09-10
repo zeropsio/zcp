@@ -2,11 +2,14 @@ package farm
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -91,9 +94,13 @@ func wrapperScriptPath(t *testing.T) string {
 // (cmd/zcp/capture.go), so the wrapper's D5 recovery step has something to
 // find and copy into $RUNDIR/capture, then print the three dimension lines,
 // then end per STUB_MODE: "ok" (default) exits 0, "fail" prints a failed
-// Task line and exits 1, "hang" spawns a `sleep 300` grandchild (recording
-// its pid to ./grandchild.pid) and sleeps 30s itself so a test can kill -9
-// the main stub process and observe the grandchild die too.
+// Task line and exits 1, "hang" spawns a `sleep 300` grandchild IN ITS OWN
+// NEW PROCESS GROUP (mirroring the real sub-evaluator's observed behavior,
+// D6 — via a one-line perl setpgrp(0,0)+exec, falling back to plain
+// backgrounding if perl is unavailable), recording its pid to
+// ./grandchild.pid, then sleeps 30s itself so a test can kill -9 the main
+// stub process and observe the grandchild die too even though a
+// pgid-only signal would miss it.
 const stubEvaluatorScript = `#!/bin/sh
 set -eu
 : >./ran.marker
@@ -127,8 +134,13 @@ cp "results/$ZCP_FARM_SCENARIO/meta.json" pristine/meta.json
 
 window_dir="$HOME/.local/state/zcp/captures/stub-window-1"
 mkdir -p "$window_dir"
-printf '{"status":"complete"}' >"$window_dir/manifest.json"
-printf '{"line":"provider record"}\n' >"$window_dir/provider.jsonl"
+printf '{"line":"provider record","secretKey":"%s"}\n' "$ZCP_FARM_S3_KEY" >"$window_dir/provider.jsonl"
+provider_size=$(wc -c <"$window_dir/provider.jsonl" | tr -d ' ')
+provider_sha=$(sha256sum "$window_dir/provider.jsonl" | awk '{print $1}')
+cp "$window_dir/provider.jsonl" pristine/provider.jsonl
+cat >"$window_dir/manifest.json" <<EOF
+{"formatVersion":"zcp-capture-1","sessionId":"stub-window-1","plaintext":true,"status":"complete","files":[{"kind":"provider","path":"provider.jsonl","sizeBytes":$provider_size,"sha256":"$provider_sha"}]}
+EOF
 echo "records: $window_dir/provider.jsonl"
 echo "manifest: $window_dir/manifest.json"
 
@@ -141,7 +153,11 @@ fail)
 	exit 1
 	;;
 hang)
-	sleep 300 &
+	if command -v perl >/dev/null 2>&1; then
+		perl -e 'setpgrp(0, 0); exec { $ARGV[0] } @ARGV' sleep 300 &
+	else
+		sleep 300 &
+	fi
 	echo $! >./grandchild.pid
 	echo "Execution:    ok"
 	echo "Task:         required passed"
@@ -774,14 +790,18 @@ func TestWrapper_CapturePart_NonEmptyWhenWindowWritten(t *testing.T) {
 	}
 }
 
-// TestWrapper_ChildKilled_GrandchildAlsoDead_BeforeDone pins D6: kill -9 of
-// the wrapper child must not leave a grandchild process running — the
-// supervisor's trap signals the child's whole process group before
-// redaction+upload, so a bundle is final only once nothing is still
-// running (docs/spec-eval-farm.md §2.3 FM-13). STUB_MODE=hang spawns a
-// `sleep 300` grandchild and records its pid to ./grandchild.pid before
-// itself sleeping.
-func TestWrapper_ChildKilled_GrandchildAlsoDead_BeforeDone(t *testing.T) {
+// TestWrapper_ChildKilled_NewProcessGroupGrandchildAlsoDead pins D6: kill -9
+// of the wrapper child must not leave a grandchild process running, even
+// when that grandchild put itself in a NEW process group (as the real
+// sub-evaluator was observed to do live: `pid ppid pgid sid` showed the
+// child's own pgid unchanged for itself but a fresh one for the
+// sub-evaluator and further descendants, all sharing the child's session
+// id). The supervisor's trap must therefore signal by SESSION, not process
+// group, before redaction+upload — a bundle is final only once nothing is
+// still running (docs/spec-eval-farm.md §2.3 FM-13). STUB_MODE=hang spawns
+// a `sleep 300` grandchild in its own pgid (via perl setpgrp) and records
+// its pid to ./grandchild.pid before itself sleeping.
+func TestWrapper_ChildKilled_NewProcessGroupGrandchildAlsoDead(t *testing.T) {
 	requireShAndCurl(t)
 
 	h := newWrapperHarness(t)
@@ -843,6 +863,174 @@ func TestWrapper_RunDir_FixedRootUnderHome(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(wantRunDir, "done.json")); err != nil {
 		t.Errorf("done.json missing under fixed root %q: %v", wantRunDir, err)
 	}
+}
+
+// TestWrapper_NoHome_FallsBackToUserHome pins D7: `zcp@1` init commands run
+// with NO $HOME in the environment at all — under `set -u`, the wrapper
+// used to die immediately with "HOME: parameter not set" while computing
+// its fixed RUNDIR, before started.json (or even execution-override) could
+// ever be written. The wrapper must fall back to the current user's real
+// home directory (never a hardcoded "/home/$(id -un)", which only holds on
+// the run container's own image) so it still reaches a real bundle. The
+// independent oracle here is os/user.Current().HomeDir — never anything
+// read back from the script's own behavior.
+func TestWrapper_NoHome_FallsBackToUserHome(t *testing.T) {
+	requireShAndCurl(t)
+
+	me, err := user.Current()
+	if err != nil {
+		t.Skipf("user.Current(): %v", err)
+	}
+	if me.HomeDir == "" {
+		t.Skip("current user has no resolvable home directory")
+	}
+
+	h := newWrapperHarness(t)
+	overrides := map[string]string{
+		"HOME":            "",
+		"ZCP_FARM_RUNDIR": "",
+	}
+	wantRunDir := filepath.Join(me.HomeDir, ".zcp-farm", h.runID)
+	t.Cleanup(func() { _ = os.RemoveAll(wantRunDir) })
+
+	cmd := h.start(t, overrides)
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("supervisor exited with error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(wantRunDir, "done.json")); err != nil {
+		t.Fatalf("done.json missing under the user-home fallback root %q: %v", wantRunDir, err)
+	}
+
+	doneBytes, ok := h.fake.get("runs/" + h.runID + "/done.json")
+	if !ok {
+		t.Fatalf("done.json missing from bucket")
+	}
+	var done wrapperDoneJSON
+	if err := json.Unmarshal(doneBytes, &done); err != nil {
+		t.Fatalf("done.json parse: %v (body: %s)", err, doneBytes)
+	}
+	if done.RunnerDimensions.Execution != "ok" {
+		t.Errorf("runnerDimensions.execution = %q, want %q (the run must actually complete, not merely avoid crashing)", done.RunnerDimensions.Execution, "ok")
+	}
+}
+
+// wrapperDoneJSONWithRedacted extends wrapperDoneJSON with the D8
+// "redacted" field done.json now carries.
+type wrapperDoneJSONWithRedacted struct {
+	wrapperDoneJSON
+	Redacted []string `json:"redacted"`
+}
+
+// captureManifestFile mirrors internal/capture.ManifestFile's JSON shape —
+// this test never imports internal/capture (out of this slice's write-set),
+// it only decodes the same wire shape.
+type captureManifestFile struct {
+	Kind      string `json:"kind"`
+	Path      string `json:"path"`
+	SizeBytes int64  `json:"sizeBytes"`
+	SHA256    string `json:"sha256"`
+}
+
+type captureManifestDoc struct {
+	Files []captureManifestFile `json:"files"`
+}
+
+// TestWrapper_Redaction_UpdatesCaptureManifestAndListsRedacted pins D8: the
+// FM-7 redaction pass rewrites capture/provider.jsonl (it carries the
+// stub's $ZCP_FARM_S3_KEY value), which changes its size and sha256 out
+// from under capture/manifest.json's own recorded entry for that file —
+// exactly the "manifest size mismatch" failure observed live. The wrapper
+// must patch that entry to match the post-redaction bytes and name the
+// changed path in done.json's "redacted" array.
+func TestWrapper_Redaction_UpdatesCaptureManifestAndListsRedacted(t *testing.T) {
+	requireShAndCurl(t)
+
+	h := newWrapperHarness(t)
+	overrides := map[string]string{
+		"ZCP_FARM_S3_KEY": "AKID-redact-manifest-me",
+	}
+	cmd := h.start(t, overrides)
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("supervisor exited with error: %v", err)
+	}
+
+	// Pristine copy (outside results/capture) proves the secret was really
+	// written into provider.jsonl pre-redaction.
+	pristine, err := os.ReadFile(filepath.Join(h.rundir, "pristine", "provider.jsonl"))
+	if err != nil {
+		t.Fatalf("read pristine copy: %v", err)
+	}
+	if !strings.Contains(string(pristine), overrides["ZCP_FARM_S3_KEY"]) {
+		t.Fatalf("pristine copy %q does not contain the secret value — test fixture is broken", pristine)
+	}
+
+	manifestBytes, ok := h.fake.get("runs/" + h.runID + "/capture/manifest.json")
+	if !ok {
+		t.Fatalf("capture/manifest.json missing from bucket")
+	}
+	providerBytes, ok := h.fake.get("runs/" + h.runID + "/capture/provider.jsonl")
+	if !ok {
+		t.Fatalf("capture/provider.jsonl missing from bucket")
+	}
+	if strings.Contains(string(providerBytes), overrides["ZCP_FARM_S3_KEY"]) {
+		t.Fatalf("uploaded provider.jsonl still contains the secret value")
+	}
+
+	// Independent oracle: recompute size/sha256 of the actually-uploaded
+	// (post-redaction) provider.jsonl and compare against what the
+	// manifest claims for it.
+	wantSize := int64(len(providerBytes))
+	sum := sha256.Sum256(providerBytes)
+	wantSHA := hex.EncodeToString(sum[:])
+
+	var manifest captureManifestDoc
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		t.Fatalf("capture/manifest.json parse: %v (body: %s)", err, manifestBytes)
+	}
+	var providerEntry *captureManifestFile
+	for i := range manifest.Files {
+		if manifest.Files[i].Path == "provider.jsonl" {
+			providerEntry = &manifest.Files[i]
+		}
+	}
+	if providerEntry == nil {
+		t.Fatalf("manifest.files has no entry for provider.jsonl: %+v", manifest.Files)
+	}
+	if providerEntry.SizeBytes != wantSize {
+		t.Errorf("manifest provider.jsonl sizeBytes = %d, want %d (the actual uploaded size)", providerEntry.SizeBytes, wantSize)
+	}
+	if providerEntry.SHA256 != wantSHA {
+		t.Errorf("manifest provider.jsonl sha256 = %q, want %q (the actual uploaded digest)", providerEntry.SHA256, wantSHA)
+	}
+
+	doneBytes, ok := h.fake.get("runs/" + h.runID + "/done.json")
+	if !ok {
+		t.Fatalf("done.json missing from bucket")
+	}
+	var done wrapperDoneJSONWithRedacted
+	if err := json.Unmarshal(doneBytes, &done); err != nil {
+		t.Fatalf("done.json parse: %v (body: %s)", err, doneBytes)
+	}
+	foundProvider := false
+	for _, r := range done.Redacted {
+		if r == "capture/provider.jsonl" {
+			foundProvider = true
+		}
+	}
+	if !foundProvider {
+		t.Errorf("done.json redacted = %v, want it to list %q", done.Redacted, "capture/provider.jsonl")
+	}
+
+	// Independent oracle: the part digest done.json claims for "capture"
+	// must equal TreeDigest recomputed from what was actually uploaded
+	// (post-redaction, post-manifest-patch) — proving the manifest fix
+	// does not itself break FM-4/FM-5's own digest promise.
+	var withParts wrapperDoneJSON
+	if err := json.Unmarshal(doneBytes, &withParts); err != nil {
+		t.Fatalf("done.json parse (parts): %v", err)
+	}
+	assertUploadedTreeDigest(t, h.fake, "runs/"+h.runID+"/capture/", withParts.Parts.Capture.TreeDigest)
 }
 
 // TestWrapper_NoBashisms pins the brief's "#!/bin/sh, no bashisms"

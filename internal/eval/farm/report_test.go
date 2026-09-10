@@ -1,6 +1,9 @@
 package farm
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -176,6 +179,181 @@ func TestFarmReport_Run5Golden_ByteIdentical(t *testing.T) {
 	}
 	if outcome.ReportText != string(want) {
 		t.Fatalf("report text does not match report.golden.txt byte-for-byte\ngot:\n%s\nwant:\n%s", outcome.ReportText, want)
+	}
+}
+
+// writeDoneJSONWithExecution writes a done.json carrying a specific
+// runnerDimensions.execution value (D9's signal-kill shape) alongside the
+// usual pinned digests.
+func writeDoneJSONWithExecution(t *testing.T, runDir, runID, execution string, evaluatorSHA, candidateSHA string, resultsDigest, captureDigest string) {
+	t.Helper()
+	doc := `{"runId":"` + runID + `","scenarioId":"acceptance-node-postgres-record",` +
+		`"runnerDimensions":{"execution":"` + execution + `","task":"unknown","taskEnd":"unknown"},` +
+		`"parts":{"results":{"treeDigest":"` + resultsDigest + `"},"capture":{"treeDigest":"` + captureDigest + `"}},` +
+		`"evaluatorSha256":"` + evaluatorSHA + `","candidateSha256":"` + candidateSHA + `"}`
+	writeFile(t, runDir, "done.json", doc)
+}
+
+// TestFarmReport_SignalKilledBundle_FailedNotBlocked pins D9: a bundle
+// killed mid-run (results has whatever meta.json the child managed to
+// write, capture has no capture/eval/<runId>/<scenarioId> directory yet —
+// the evaluator never got that far) is graded "failed" straight from
+// done.json's own runnerDimensions.execution, never "blocked" — the run's
+// outcome is already known (it was killed), it is not evidence in
+// question. Before this fix, ReportRun tried to build the single-run
+// report anyway, failed to find capture/eval/*, and returned "blocked:
+// could not build the single-run report: ...".
+func TestFarmReport_SignalKilledBundle_FailedNotBlocked(t *testing.T) {
+	t.Parallel()
+	runDir := t.TempDir()
+	writeFile(t, runDir, "results/meta.json", `{"scenarioId":"acceptance-node-postgres-record"}`)
+	writeFile(t, runDir, "capture/manifest.json", `{"status":"complete"}`)
+	writeFile(t, runDir, "capture/provider.jsonl", `{"line":"partial"}`)
+	writeFile(t, runDir, "capture/lifecycle.jsonl", `{"line":"partial"}`)
+	writeFile(t, runDir, "capture/mcp/zcp-1.jsonl", `{"line":"partial"}`)
+	// Deliberately no capture/eval/** — the evaluator never reached its
+	// own report-writing step before it was signal-killed.
+
+	resultsDigest, err := TreeDigest(filepath.Join(runDir, "results"))
+	if err != nil {
+		t.Fatalf("TreeDigest(results): %v", err)
+	}
+	captureDigest, err := TreeDigest(filepath.Join(runDir, "capture"))
+	if err != nil {
+		t.Fatalf("TreeDigest(capture): %v", err)
+	}
+	writeDoneJSONWithExecution(t, runDir, "run-killed", "error: killed by signal 9", "eval-sha", "cand-sha", resultsDigest, captureDigest)
+
+	outcome := ReportRun(runDir, "")
+	if outcome.Verdict != VerdictFailed {
+		t.Fatalf("Verdict = %q, want %q (Reason: %s)", outcome.Verdict, VerdictFailed, outcome.Reason)
+	}
+	if !strings.Contains(outcome.Reason, "killed by signal") {
+		t.Errorf("Reason = %q, want it to name the signal-kill execution", outcome.Reason)
+	}
+	if outcome.Done == nil || outcome.Done.RunID != "run-killed" {
+		t.Errorf("Done = %+v, want the parsed done.json carried through", outcome.Done)
+	}
+}
+
+// TestFarmReport_RedactedBundle_ManifestConsistent_Grades pins the D8 fix
+// end-to-end at the report layer: a bundle whose capture/manifest.json was
+// rewritten (by the wrapper's update_capture_manifest, eval/farm/
+// wrapper.sh) to match its post-redaction files, with done.json's part
+// digests computed over that same post-redaction tree, must grade normally
+// — never "blocked: part ... tree digest ... does not match" (FM-5/FM-38)
+// and never a manifest-size-mismatch report-build failure (internal/
+// capture/read_manifest_file.go's size check, the exact live failure D8
+// names).
+func TestFarmReport_RedactedBundle_ManifestConsistent_Grades(t *testing.T) {
+	t.Parallel()
+	runDir := t.TempDir()
+	writeFile(t, runDir, "results/a.txt", "result-a")
+
+	// Base this on the real run5 capture window (a valid, richly-structured
+	// InspectSession-passing tree; a fabricated minimal one is too easy to
+	// get subtly wrong) and apply one genuine, identity-safe redaction to
+	// it: rewrite the session.start line's free-text "label" field only —
+	// never sessionId or any other structural/identity field
+	// InspectSession checks.
+	copyDir(t, filepath.Join("testdata", "run5", "capture"), filepath.Join(runDir, "capture"))
+
+	providerPath := filepath.Join(runDir, "capture", "provider.jsonl")
+	original, err := os.ReadFile(providerPath)
+	if err != nil {
+		t.Fatalf("read provider.jsonl: %v", err)
+	}
+	lines := strings.SplitN(string(original), "\n", 2)
+	if len(lines) != 2 || !strings.Contains(lines[0], `"kind":"session.start"`) {
+		t.Fatalf("provider.jsonl first line = %q, want a session.start record (test fixture assumption broken)", lines[0])
+	}
+	if !strings.Contains(lines[0], "acceptance-node-postgres-record") {
+		t.Fatalf("provider.jsonl first line = %q, want it to contain the scenario id this test redacts", lines[0])
+	}
+	redactedFirstLine := strings.ReplaceAll(lines[0], "acceptance-node-postgres-record", "<redacted>")
+	redacted := redactedFirstLine + "\n" + lines[1]
+	if redacted == string(original) {
+		t.Fatalf("redaction was a no-op — test fixture assumption broken")
+	}
+	if err := os.WriteFile(providerPath, []byte(redacted), 0o600); err != nil {
+		t.Fatalf("write redacted provider.jsonl: %v", err)
+	}
+	sum := sha256.Sum256([]byte(redacted))
+	providerSHA := hex.EncodeToString(sum[:])
+
+	// Patch capture/manifest.json's provider entry to the post-redaction
+	// size/sha256 — exactly what the wrapper's update_capture_manifest
+	// (eval/farm/wrapper.sh, D8) does.
+	manifestPath := filepath.Join(runDir, "capture", "manifest.json")
+	manifestBytes, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read manifest.json: %v", err)
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		t.Fatalf("parse manifest.json: %v", err)
+	}
+	files, _ := manifest["files"].([]any)
+	patched := false
+	for _, f := range files {
+		entry, _ := f.(map[string]any)
+		if entry["path"] == "provider.jsonl" {
+			entry["sizeBytes"] = float64(len(redacted))
+			entry["sha256"] = providerSHA
+			patched = true
+		}
+	}
+	if !patched {
+		t.Fatalf("manifest.json has no files[] entry for provider.jsonl")
+	}
+	rewritten, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal patched manifest.json: %v", err)
+	}
+	if err := os.WriteFile(manifestPath, rewritten, 0o600); err != nil {
+		t.Fatalf("write patched manifest.json: %v", err)
+	}
+
+	resultsDigest, err := TreeDigest(filepath.Join(runDir, "results"))
+	if err != nil {
+		t.Fatalf("TreeDigest(results): %v", err)
+	}
+	captureDigest, err := TreeDigest(filepath.Join(runDir, "capture"))
+	if err != nil {
+		t.Fatalf("TreeDigest(capture): %v", err)
+	}
+	writeDoneJSON(t, runDir, "run5-redacted", "eval-sha", "cand-sha", resultsDigest, captureDigest)
+
+	outcome := ReportRun(runDir, "")
+	if outcome.Verdict == VerdictBlocked {
+		t.Fatalf("Verdict = %q (Reason: %s), want NOT blocked — the manifest was kept consistent with the redacted bytes", outcome.Verdict, outcome.Reason)
+	}
+}
+
+// copyDir recursively copies src to dst (used to base a test fixture on the
+// real run5 testdata tree instead of a hand-fabricated one).
+func copyDir(t *testing.T, src, dst string) {
+	t.Helper()
+	err := filepath.WalkDir(src, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o600)
+	})
+	if err != nil {
+		t.Fatalf("copyDir(%s, %s): %v", src, dst, err)
 	}
 }
 
