@@ -7,10 +7,24 @@ from its own environment (§2.2 FM-12 — see the top-of-file comment in
 `wrapper.sh` for the exact contract, including `ZCP_FARM_SCENARIOS_DIGEST`,
 not yet in that spec's table).
 
-The supervisor forks itself as a child (`"$0" --child`); a trap
-(`EXIT INT TERM HUP`) redacts-then-uploads regardless of how the child
-ended, so `kill -9 <child>` still produces a bundle. `kill -9 <supervisor>`
-is the one case nothing runs after — no `done.json`.
+The supervisor forks itself as a child (`"$0" --child`), in its own session
+(`setsid`, falling back to a one-line perl `setsid()`+`exec` where the
+`setsid` binary is missing) so the child's whole process group can be
+signaled independently of the supervisor's own; a trap
+(`EXIT INT TERM HUP`) kills that group, then redacts-then-uploads,
+regardless of how the child ended — so `kill -9 <child>` still produces a
+bundle, with no orphaned grandchild left running past it. `kill -9
+<supervisor>` is the one case nothing runs after — no `done.json`.
+
+Runs under `$HOME/.zcp-farm/<runId>/` by default (a fixed, discoverable
+root — not a bare `mktemp -d`); `ZCP_FARM_RUNDIR` overrides it and exists
+only as a test seam, not part of the run descriptor.
+
+Credentials are OAuth-only (owner decision 2026-09-10): the wrapper reads
+`CLAUDE_CODE_OAUTH_TOKEN` and refuses to start — `started.json` never PUT,
+`done.json` carries a `"refused: ..."` execution dimension — if that token
+is empty or if `ANTHROPIC_API_KEY` is present in the environment at all
+(docs/spec-eval-farm.md §2.4).
 
 POSIX `sh` only (`#!/bin/sh`, `set -eu`) — no bashisms.
 
