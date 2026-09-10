@@ -319,6 +319,43 @@ func TestNodePostgresVerifier_WrongEnvironment_Failed(t *testing.T) {
 	assertResult(t, got, "node_postgres_record/appstage/environment", CheckFailed)
 }
 
+// TestNodePostgresVerifier_EnvironmentRow_UsesConfiguredLiteral pins §10.3:
+// the environment sub-row compares the GET body's `environment` field
+// against NodePostgresInput.Environment when set, and against the "stage"
+// default when it's left empty — so a dev-only scenario's app answering
+// environment:"dev" is not a failure once configured, while every scenario
+// written before Environment existed keeps its "stage" behaviour.
+func TestNodePostgresVerifier_EnvironmentRow_UsesConfiguredLiteral(t *testing.T) {
+	tests := []struct {
+		name          string
+		appEnv        string
+		inputEnv      string
+		wantEnvResult CheckResult
+	}{
+		{name: "default literal — stage app matches unset Environment", appEnv: "stage", inputEnv: "", wantEnvResult: CheckPassed},
+		{name: "default literal — dev app fails unset Environment", appEnv: "dev", inputEnv: "", wantEnvResult: CheckFailed},
+		{name: "configured literal — dev app matches configured dev", appEnv: "dev", inputEnv: "dev", wantEnvResult: CheckPassed},
+		{name: "configured literal — stage app fails configured dev", appEnv: "stage", inputEnv: "dev", wantEnvResult: CheckFailed},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newNodePostgresAppServer(tc.appEnv)
+			server := httptest.NewServer(app.handler())
+			defer server.Close()
+
+			client := nodePostgresFixtureClient()
+			db := &fakeNodePostgresDB{rowsByNonce: map[string]fakeDBRow{"nonce-1": {id: "rec-1", value: "value-1"}}}
+
+			v := NodePostgresVerifier{Client: client, HTTP: loopbackHTTPClient(server), DB: db, Nonce: fixedNonce()}
+			in := nodePostgresBaseInput()
+			in.Environment = tc.inputEnv
+			rows := v.Verify(context.Background(), in)
+			got := rowsByID(t, rows)
+			assertResult(t, got, "node_postgres_record/appstage/environment", tc.wantEnvResult)
+		})
+	}
+}
+
 // TestNodePostgresVerifier_UnrelatedArtifactChanged_Failed pins §10.3's
 // baseline: a differing active app-version id fails unchanged; a missing
 // baseline blocks it instead.
@@ -366,6 +403,39 @@ func TestNodePostgresVerifier_RequiredDBUnavailable_Blocked(t *testing.T) {
 	assertResult(t, got, "node_postgres_record/appstage/environment", CheckPassed)
 	assertResult(t, got, "node_postgres_record/db/db_row", CheckBlocked)
 	assertResult(t, got, "unrelated_artifact/other/unchanged", CheckPassed)
+}
+
+// TestNodePostgresVerifier_NoUnrelated_EmitsThreeRowsOnly pins §10.3: when
+// NodePostgresInput.Unrelated is empty (a two-service topology has no
+// unrelated host to name), Verify emits exactly the three
+// node_postgres_record/* sub-rows — no unrelated_artifact row, blocked or
+// otherwise — and the three emitted rows grade as usual.
+func TestNodePostgresVerifier_NoUnrelated_EmitsThreeRowsOnly(t *testing.T) {
+	app := newNodePostgresAppServer("stage")
+	server := httptest.NewServer(app.handler())
+	defer server.Close()
+
+	client := mockWithSubdomainFixture(
+		platform.ServiceStack{ID: "db-1", Name: "db", Status: "ACTIVE"},
+	).WithServiceEnv("db-1", []platform.ServiceEnvVar{
+		{Key: "hostname", Content: "db"}, {Key: "port", Content: "5432"},
+		{Key: "user", Content: "u"}, {Key: "password", Content: "p"}, {Key: "dbName", Content: "d"},
+	})
+	db := &fakeNodePostgresDB{rowsByNonce: map[string]fakeDBRow{"nonce-1": {id: "rec-1", value: "value-1"}}}
+
+	v := NodePostgresVerifier{Client: client, HTTP: loopbackHTTPClient(server), DB: db, Nonce: fixedNonce()}
+	rows := v.Verify(context.Background(), NodePostgresInput{ProjectID: "proj-1", Stage: "appstage", Database: "db"})
+
+	if len(rows) != 3 {
+		t.Fatalf("rows = %+v, want 3 (no unrelated_artifact row)", rows)
+	}
+	got := rowsByID(t, rows)
+	if _, ok := got["unrelated_artifact//unchanged"]; ok {
+		t.Errorf("unrelated_artifact row present with Unrelated unset: %+v", got)
+	}
+	assertResult(t, got, "node_postgres_record/appstage/record_roundtrip", CheckPassed)
+	assertResult(t, got, "node_postgres_record/appstage/environment", CheckPassed)
+	assertResult(t, got, "node_postgres_record/db/db_row", CheckPassed)
 }
 
 // TestNodePostgresVerifier_ForeignOrMissingBinding_ZeroDataPlaneCalls pins

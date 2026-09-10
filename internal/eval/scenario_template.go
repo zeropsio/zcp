@@ -187,6 +187,9 @@ func renderVerificationConfig(cfg *VerificationConfig, values TemplateValues) er
 		if n.Unrelated, err = renderVerificationString("nodePostgresRecord.unrelated", n.Unrelated, values); err != nil {
 			return err
 		}
+		if n.Environment, err = renderVerificationString("nodePostgresRecord.environment", n.Environment, values); err != nil {
+			return err
+		}
 	}
 	if cfg.LaunchShape != nil {
 		if cfg.LaunchShape.ProdProject, err = renderVerificationString("launchShape.prodProject", cfg.LaunchShape.ProdProject, values); err != nil {

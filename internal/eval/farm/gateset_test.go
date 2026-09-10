@@ -17,16 +17,6 @@ import (
 // oracle — never derived from what the scenario files happen to contain —
 // so an accidental regression in a scenario file (a dropped field, a
 // mode flip) fails this test even though the scenario still parses.
-//
-// api-node-postgres-classic-dev is a known, reported exception: the brief's
-// table assigns it O1 (nodePostgresRecord), but that scenario is a
-// dev-only, single-runtime topology with no third "unrelated" service —
-// NodePostgresRecordConfig.validate() requires Stage, Database, AND
-// Unrelated non-empty (internal/eval/scenario.go), so O1 cannot be
-// expressed there without inventing a service the scenario's own topology
-// doesn't have. Reported as a stop condition in the S9 slice report;
-// carried here as an explicit, commented table exception rather than
-// silently weakened.
 func TestGateSet_EveryScenarioCarriesRequiredOracles(t *testing.T) {
 	repoRoot := gatesetRepoRoot(t)
 
@@ -37,9 +27,8 @@ func TestGateSet_EveryScenarioCarriesRequiredOracles(t *testing.T) {
 		o1, o2, o3, o4, o5, o6, o7, o8 bool
 	}
 	// The assignment table, id -> required families ("at least" these).
-	// api-node-postgres-classic-dev omits o1 — see the doc comment above.
 	want := map[string]oracles{
-		"api-node-postgres-classic-dev":           {o2: true, o3: true, o5: true},
+		"api-node-postgres-classic-dev":           {o1: true, o2: true, o3: true, o5: true},
 		"greenfield-node-postgres-dev-stage":      {o1: true, o2: true, o3: true, o5: true},
 		"recipe-nestjs-minimal-standard":          {o2: true, o3: true, o5: true},
 		"classic-static-nginx-simple":             {o2: true, o3: true},
