@@ -90,7 +90,7 @@ func wrapperScriptPath(t *testing.T) string {
 // verification.json} and capture/manifest.json — each containing a literal
 // secret value, to prove redaction — keep an unredacted copy outside
 // results/capture for the test to diff against, write a fake capture
-// window directly under the directory given by --capture-dir (the way the
+// window under a capture-<id> subdirectory of --capture-dir (the way the
 // real evaluator's `--capture raw --capture-dir <dir>` now does — the
 // product seam S5b landed; cmd/zcp/eval_capture.go), then print the three
 // dimension lines, then end per STUB_MODE: "ok" (default) exits 0, "fail"
@@ -137,7 +137,7 @@ mkdir -p pristine
 cp "results/$ZCP_FARM_SCENARIO/meta.json" pristine/meta.json
 
 if [ -n "$capture_dir" ]; then
-	window_dir="$capture_dir"
+	window_dir="$capture_dir/capture-1"
 	mkdir -p "$window_dir"
 	printf '{"line":"provider record","secretKey":"%s"}\n' "$ZCP_FARM_S3_KEY" >"$window_dir/provider.jsonl"
 	provider_size=$(wc -c <"$window_dir/provider.jsonl" | tr -d ' ')
@@ -973,12 +973,14 @@ type captureManifestDoc struct {
 }
 
 // TestWrapper_Redaction_UpdatesCaptureManifestAndListsRedacted pins D8: the
-// FM-7 redaction pass rewrites capture/provider.jsonl (it carries the
-// stub's $ZCP_FARM_S3_KEY value), which changes its size and sha256 out
-// from under capture/manifest.json's own recorded entry for that file —
-// exactly the "manifest size mismatch" failure observed live. The wrapper
-// must patch that entry to match the post-redaction bytes and name the
-// changed path in done.json's "redacted" array.
+// FM-7 redaction pass rewrites capture/capture-1/provider.jsonl (it carries
+// the stub's $ZCP_FARM_S3_KEY value, and capture-1/ is the capture WINDOW
+// subdirectory the real evaluator writes under --capture-dir), which
+// changes its size and sha256 out from under that window's own
+// manifest.json (capture/capture-1/manifest.json) recorded entry for that
+// file — exactly the "manifest size mismatch" failure observed live. The
+// wrapper must patch that entry to match the post-redaction bytes and name
+// the changed path in done.json's "redacted" array.
 func TestWrapper_Redaction_UpdatesCaptureManifestAndListsRedacted(t *testing.T) {
 	requireShAndCurl(t)
 
@@ -1001,13 +1003,13 @@ func TestWrapper_Redaction_UpdatesCaptureManifestAndListsRedacted(t *testing.T) 
 		t.Fatalf("pristine copy %q does not contain the secret value — test fixture is broken", pristine)
 	}
 
-	manifestBytes, ok := h.fake.get("runs/" + h.runID + "/capture/manifest.json")
+	manifestBytes, ok := h.fake.get("runs/" + h.runID + "/capture/capture-1/manifest.json")
 	if !ok {
-		t.Fatalf("capture/manifest.json missing from bucket")
+		t.Fatalf("capture/capture-1/manifest.json missing from bucket")
 	}
-	providerBytes, ok := h.fake.get("runs/" + h.runID + "/capture/provider.jsonl")
+	providerBytes, ok := h.fake.get("runs/" + h.runID + "/capture/capture-1/provider.jsonl")
 	if !ok {
-		t.Fatalf("capture/provider.jsonl missing from bucket")
+		t.Fatalf("capture/capture-1/provider.jsonl missing from bucket")
 	}
 	if strings.Contains(string(providerBytes), overrides["ZCP_FARM_S3_KEY"]) {
 		t.Fatalf("uploaded provider.jsonl still contains the secret value")
@@ -1022,7 +1024,7 @@ func TestWrapper_Redaction_UpdatesCaptureManifestAndListsRedacted(t *testing.T) 
 
 	var manifest captureManifestDoc
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
-		t.Fatalf("capture/manifest.json parse: %v (body: %s)", err, manifestBytes)
+		t.Fatalf("capture/capture-1/manifest.json parse: %v (body: %s)", err, manifestBytes)
 	}
 	var providerEntry *captureManifestFile
 	for i := range manifest.Files {
@@ -1050,12 +1052,12 @@ func TestWrapper_Redaction_UpdatesCaptureManifestAndListsRedacted(t *testing.T) 
 	}
 	foundProvider := false
 	for _, r := range done.Redacted {
-		if r == "capture/provider.jsonl" {
+		if r == "capture/capture-1/provider.jsonl" {
 			foundProvider = true
 		}
 	}
 	if !foundProvider {
-		t.Errorf("done.json redacted = %v, want it to list %q", done.Redacted, "capture/provider.jsonl")
+		t.Errorf("done.json redacted = %v, want it to list %q", done.Redacted, "capture/capture-1/provider.jsonl")
 	}
 
 	// Independent oracle: the part digest done.json claims for "capture"
@@ -1067,6 +1069,104 @@ func TestWrapper_Redaction_UpdatesCaptureManifestAndListsRedacted(t *testing.T) 
 		t.Fatalf("done.json parse (parts): %v", err)
 	}
 	assertUploadedTreeDigest(t, h.fake, "runs/"+h.runID+"/capture/", withParts.Parts.Capture.TreeDigest)
+}
+
+// TestWrapper_Redaction_ManifestRewrite_FlatLayoutStillWorks guards the D8
+// fallback kept "for safety" alongside the capture-<id>/ window layout:
+// eval/farm/wrapper.sh's update_capture_manifest must still patch a legacy
+// flat $CAPTURE_DIR/manifest.json (files[].path relative to $CAPTURE_DIR
+// itself, no window subdirectory) after a redaction. Exercises
+// update_capture_manifest directly — every function definition in
+// wrapper.sh up to its trailing `main "$@"` — rather than running the
+// whole supervisor, so this stays a fast unit test.
+func TestWrapper_Redaction_ManifestRewrite_FlatLayoutStillWorks(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH")
+	}
+	if _, err := exec.LookPath("perl"); err != nil {
+		t.Skip("perl not on PATH")
+	}
+
+	src, err := os.ReadFile(wrapperScriptPath(t))
+	if err != nil {
+		t.Fatalf("read wrapper.sh: %v", err)
+	}
+	const trailer = "main \"$@\"\n"
+	body := strings.TrimSuffix(string(src), trailer)
+	if body == string(src) {
+		t.Fatalf("wrapper.sh does not end with %q — test fixture assumption broke", trailer)
+	}
+
+	rundir := t.TempDir()
+	captureDir := filepath.Join(rundir, "capture")
+	if err := os.MkdirAll(captureDir, 0o755); err != nil {
+		t.Fatalf("mkdir capture: %v", err)
+	}
+
+	providerPath := filepath.Join(captureDir, "provider.jsonl")
+	postRedaction := []byte(`{"line":"provider record"}` + "\n")
+	if err := os.WriteFile(providerPath, postRedaction, 0o644); err != nil {
+		t.Fatalf("write provider.jsonl: %v", err)
+	}
+
+	manifestPath := filepath.Join(captureDir, "manifest.json")
+	manifestJSON := `{"formatVersion":"zcp-capture-1","sessionId":"flat-1","plaintext":true,"status":"complete","files":[{"kind":"provider","path":"provider.jsonl","sizeBytes":999,"sha256":"` + strings.Repeat("0", 64) + `"}]}`
+	if err := os.WriteFile(manifestPath, []byte(manifestJSON), 0o644); err != nil {
+		t.Fatalf("write manifest.json: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(rundir, "redacted.log"), []byte(providerPath+"\n"), 0o644); err != nil {
+		t.Fatalf("write redacted.log: %v", err)
+	}
+
+	driver := body + "\n" +
+		"RUNDIR=" + shQuote(rundir) + "\n" +
+		"CAPTURE_DIR=" + shQuote(captureDir) + "\n" +
+		"update_capture_manifest\n"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "sh", "-c", driver).CombinedOutput()
+	if err != nil {
+		t.Fatalf("update_capture_manifest: %v\n%s", err, out)
+	}
+
+	// Independent oracle: recompute size/sha256 of the post-redaction bytes
+	// on disk and compare against what the rewritten manifest claims.
+	wantSize := int64(len(postRedaction))
+	sum := sha256.Sum256(postRedaction)
+	wantSHA := hex.EncodeToString(sum[:])
+
+	rewritten, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read rewritten manifest.json: %v", err)
+	}
+	var manifest captureManifestDoc
+	if err := json.Unmarshal(rewritten, &manifest); err != nil {
+		t.Fatalf("manifest.json parse: %v (body: %s)", err, rewritten)
+	}
+	var providerEntry *captureManifestFile
+	for i := range manifest.Files {
+		if manifest.Files[i].Path == "provider.jsonl" {
+			providerEntry = &manifest.Files[i]
+		}
+	}
+	if providerEntry == nil {
+		t.Fatalf("manifest.files has no entry for provider.jsonl: %+v", manifest.Files)
+	}
+	if providerEntry.SizeBytes != wantSize {
+		t.Errorf("manifest provider.jsonl sizeBytes = %d, want %d (the actual post-redaction size)", providerEntry.SizeBytes, wantSize)
+	}
+	if providerEntry.SHA256 != wantSHA {
+		t.Errorf("manifest provider.jsonl sha256 = %q, want %q (the actual post-redaction digest)", providerEntry.SHA256, wantSHA)
+	}
+}
+
+// shQuote wraps s in single quotes for embedding as a literal sh word,
+// escaping any single quote it contains (POSIX sh has no other portable
+// quoting mechanism for arbitrary bytes).
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // TestWrapper_NoBashisms pins the brief's "#!/bin/sh, no bashisms"
