@@ -119,7 +119,11 @@ tree_digest() {
 # "<redacted>" in every regular file under dir ($1). No-op for an empty
 # value or a missing dir. Escapes the three BRE-special characters an
 # opaque token value could contain: backslash, forward slash (the sed
-# delimiter), and ampersand (special in a sed replacement).
+# delimiter), and ampersand (special in a sed replacement). Every file it
+# actually rewrote (checked with a plain-text grep first, so a file the
+# value never appeared in is never touched or logged) is appended to
+# $RUNDIR/redacted.log — D8 needs that list to patch capture/manifest.json's
+# per-file size/sha256 afterward and to name what changed in done.json.
 redact_dir() {
 	dir="$1"
 	value="$2"
@@ -127,8 +131,10 @@ redact_dir() {
 	[ -d "$dir" ] || return 0
 	escaped=$(printf '%s' "$value" | sed -e 's/[\\/&]/\\&/g')
 	find "$dir" -type f | while IFS= read -r f; do
+		grep -qF -- "$value" "$f" 2>/dev/null || continue
 		sed -i.bak "s/$escaped/<redacted>/g" "$f"
 		rm -f "$f.bak"
+		printf '%s\n' "$f" >>"$RUNDIR/redacted.log"
 	done
 }
 
@@ -143,21 +149,176 @@ redact_known_secrets() {
 
 # ---- child-tree cleanup (D6) ----------------------------------------------
 
-# kill_child_group signals the child's whole process group — not just the
-# child pid — via the negative-pid form, so a reparented grandchild (its
-# ppid moved to the reaper once the child died, but its pgid never changes)
-# is still reached. TERM first, a grace period, then KILL, so nothing is
-# still running by the time redaction/upload starts (docs/spec-eval-farm.md
-# §2.3 FM-13: "the supervisor must ... kill the whole group ... BEFORE
-# redaction + upload, so a bundle is final only when nothing is still
-# running").
+# session_pids prints every pid whose session id equals sid ($1). A
+# reparented grandchild that moved itself into a NEW process group (its
+# ppid also moves to the reaper once its immediate parent dies) keeps the
+# SAME session id for as long as it lives — session, not process group, is
+# the one membership that survives both reparenting and a pgid change — so
+# this is the only reachable-by-construction way to find it (D6). Tries, in
+# order: /proc/*/stat field 6 (the run container's Ubuntu image always has
+# this); `ps -o pid=,sid=` (a Linux host without /proc mounted, still
+# offers the "sid" ps keyword); a python3 os.getsid() fallback (this repo's
+# macOS dev machine has neither of the above — BSD ps has no "sid" keyword
+# at all — so the offline test rig needs a third tier to run at all).
+# Prints nothing (never errors) when no tier is available.
+session_pids() {
+	sid="$1"
+	if [ -d /proc ] && [ -r "/proc/$sid/stat" ]; then
+		for statfile in /proc/[0-9]*/stat; do
+			[ -r "$statfile" ] || continue
+			pid=$(basename "$(dirname "$statfile")")
+			line=$(cat "$statfile" 2>/dev/null) || continue
+			# The comm field ("(name)") may itself contain spaces/parens;
+			# fields after the LAST ")" are state ppid pgrp session ..., so
+			# session is the 4th whitespace-separated field from there.
+			rest=${line##*) }
+			psid=$(printf '%s\n' "$rest" | awk '{print $4}')
+			[ "$psid" = "$sid" ] && printf '%s\n' "$pid"
+		done
+		return 0
+	fi
+	if ps -eo pid=,sid= >/dev/null 2>&1; then
+		ps -eo pid=,sid= | awk -v s="$sid" '$2==s{print $1}'
+		return 0
+	fi
+	if command -v python3 >/dev/null 2>&1; then
+		# Plain "<<", not "<<-": a tab-stripping heredoc would flatten
+		# python's own indentation (every leading tab removed uniformly,
+		# not just up to the shell function's own nesting level), so this
+		# block is deliberately left-flush instead of matching the
+		# surrounding shell indentation.
+		python3 - "$sid" <<'PYEOF'
+import os, subprocess, sys
+sid = int(sys.argv[1])
+try:
+    out = subprocess.check_output(["ps", "-eo", "pid="]).decode()
+except Exception:
+    sys.exit(0)
+for tok in out.split():
+    try:
+        pid = int(tok)
+    except ValueError:
+        continue
+    try:
+        if os.getsid(pid) == sid:
+            print(pid)
+    except OSError:
+        pass
+PYEOF
+	fi
+}
+
+# kill_child_group signals every process in the child's session (D6) —
+# TERM first, a grace period, then KILL, so nothing is still running by the
+# time redaction/upload starts (docs/spec-eval-farm.md §2.3 FM-13: "the
+# supervisor must ... kill the whole group ... BEFORE redaction + upload,
+# so a bundle is final only when nothing is still running"). Both the
+# child-kill path and the normal-exit path reach this: it is the sole
+# cleanup step in finish_and_upload's trap.
 kill_child_group() {
 	[ -f "$RUNDIR/child.pid" ] || return 0
-	pgid=$(cat "$RUNDIR/child.pid")
-	[ -z "$pgid" ] && return 0
-	kill -TERM -- "-$pgid" 2>/dev/null || true
+	sid=$(cat "$RUNDIR/child.pid")
+	[ -z "$sid" ] && return 0
+
+	pids=$(session_pids "$sid")
+	[ -z "$pids" ] && return 0
+	for pid in $pids; do
+		kill -TERM "$pid" 2>/dev/null || true
+	done
 	sleep 0.3
-	kill -KILL -- "-$pgid" 2>/dev/null || true
+	pids=$(session_pids "$sid")
+	for pid in $pids; do
+		kill -KILL "$pid" 2>/dev/null || true
+	done
+}
+
+# ---- capture manifest sync after redaction (D8) --------------------------
+
+# update_capture_manifest patches capture/manifest.json's per-file
+# "sizeBytes"/"sha256" entries for every file redact_dir actually changed
+# under $CAPTURE_DIR (docs/spec-eval-farm.md §1.3 FM-7, internal/capture's
+# SessionManifestDocument.Files shape — WriteSessionManifest/
+# ReadSessionManifest). Without this, the FM-7 rewrite (real, load-bearing:
+# the transcript held a sink key/secret in clear from an expanded
+# initCommands=[...] var) leaves the manifest's recorded size+digest
+# pointing at the PRE-redaction bytes, and `zcp capture` /
+# eval.BuildBehavioralReport's own size check (internal/capture/
+# read_manifest_file.go) then refuses the whole bundle as corrupt. No-op
+# when there is no capture/manifest.json or nothing was redacted under
+# $CAPTURE_DIR. Uses perl -MJSON::PP (core module, no jq/python assumption
+# on the run container) — key order in the rewritten file is irrelevant,
+# the reader parses JSON rather than diffing bytes.
+update_capture_manifest() {
+	manifest="$CAPTURE_DIR/manifest.json"
+	[ -f "$manifest" ] || return 0
+	[ -f "$RUNDIR/redacted.log" ] || return 0
+
+	updates="$RUNDIR/redacted-updates.tsv"
+	: >"$updates"
+	sort -u "$RUNDIR/redacted.log" | while IFS= read -r f; do
+		case "$f" in
+		"$CAPTURE_DIR"/*) ;;
+		*) continue ;;
+		esac
+		rel=${f#"$CAPTURE_DIR"/}
+		size=$(wc -c <"$f" | tr -d ' ')
+		sha=$(sha256sum "$f" | awk '{print $1}')
+		printf '%s\t%s\t%s\n' "$rel" "$size" "$sha" >>"$updates"
+	done
+
+	[ -s "$updates" ] || return 0
+
+	perl -MJSON::PP -e '
+		my ($manifest_path, $updates_path) = @ARGV;
+		open my $mh, "<", $manifest_path or die "open manifest: $!";
+		my $raw = do { local $/; <$mh> };
+		close $mh;
+		my $doc = JSON::PP->new->decode($raw);
+
+		open my $uh, "<", $updates_path or die "open updates: $!";
+		my %by_path;
+		while (my $line = <$uh>) {
+			chomp $line;
+			my ($path, $size, $sha) = split /\t/, $line;
+			$by_path{$path} = { size => $size + 0, sha => $sha };
+		}
+		close $uh;
+
+		for my $file (@{ $doc->{files} || [] }) {
+			my $u = $by_path{$file->{path}};
+			next unless $u;
+			$file->{sizeBytes} = $u->{size};
+			$file->{sha256} = $u->{sha};
+		}
+
+		open my $oh, ">", $manifest_path or die "write manifest: $!";
+		print $oh JSON::PP->new->canonical->encode($doc);
+		close $oh;
+	' "$manifest" "$updates"
+}
+
+# redacted_json_array renders a JSON array of every path redact_dir logged
+# (relative to $RUNDIR, e.g. "results/scenario1/meta.json",
+# "capture/manifest.json") for done.json's "redacted" field. "[]" when
+# nothing was redacted.
+redacted_json_array() {
+	if [ ! -s "$RUNDIR/redacted.log" ]; then
+		printf '[]'
+		return
+	fi
+	printf '['
+	first=1
+	sort -u "$RUNDIR/redacted.log" | while IFS= read -r f; do
+		rel=${f#"$RUNDIR/"}
+		if [ "$first" -eq 1 ]; then
+			printf '"%s"' "$(json_escape "$rel")"
+			first=0
+		else
+			printf ',"%s"' "$(json_escape "$rel")"
+		fi
+	done
+	printf ']'
+	:
 }
 
 # ---- capture recovery (D5) -------------------------------------------------
@@ -338,6 +499,8 @@ finish_and_upload() {
 
 	redact_known_secrets "$RESULTS_DIR"
 	redact_known_secrets "$CAPTURE_DIR"
+	update_capture_manifest
+	redacted_json=$(redacted_json_array)
 
 	upload_dir "$RESULTS_DIR" "results"
 	upload_dir "$CAPTURE_DIR" "capture"
@@ -351,7 +514,7 @@ finish_and_upload() {
 	credential_mode="oauth-token"
 
 	done_json="$RUNDIR/done.json"
-	printf '{"runId":"%s","scenarioId":"%s","runnerDimensions":{"execution":"%s","task":"%s","taskEnd":"%s"},"parts":{"results":{"treeDigest":"%s"},"capture":{"treeDigest":"%s"}},"evaluatorSha256":"%s","candidateSha256":"%s","credentialMode":"%s"}' \
+	printf '{"runId":"%s","scenarioId":"%s","runnerDimensions":{"execution":"%s","task":"%s","taskEnd":"%s"},"parts":{"results":{"treeDigest":"%s"},"capture":{"treeDigest":"%s"}},"evaluatorSha256":"%s","candidateSha256":"%s","credentialMode":"%s","redacted":%s}' \
 		"$(json_escape "$ZCP_FARM_RUN")" \
 		"$(json_escape "$ZCP_FARM_SCENARIO")" \
 		"$(json_escape "$execution")" \
@@ -361,6 +524,7 @@ finish_and_upload() {
 		"$(json_escape "$ZCP_FARM_EVALUATOR_SHA")" \
 		"$(json_escape "$ZCP_FARM_CANDIDATE_SHA")" \
 		"$credential_mode" \
+		"$redacted_json" \
 		>"$done_json"
 
 	s3_put "$done_json" "runs/$ZCP_FARM_RUN/done.json"
@@ -387,6 +551,20 @@ run_detached_child() {
 }
 
 supervisor_main() {
+	# D7: the run project's init commands execute with NO $HOME in the
+	# environment at all — under `set -u`, referencing $HOME below would
+	# die with "HOME: parameter not set" before started.json is ever
+	# written (silent: no bundle, no execution-override, nothing to grade).
+	# Fall back to the current user's actual home directory (never a
+	# hardcoded "/home/$(id -un)": that only holds on the run container's
+	# own image, and would be wrong on a dev machine or CI runner) via
+	# shell tilde expansion, which consults the same NSS lookup getpwnam
+	# would.
+	if [ -z "${HOME:-}" ]; then
+		eval HOME="~$(id -un)"
+		export HOME
+	fi
+
 	RUNDIR="${ZCP_FARM_RUNDIR:-}"
 	if [ -z "$RUNDIR" ]; then
 		# Fixed, discoverable root (not a bare `mktemp -d`, which produced
