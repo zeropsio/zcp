@@ -31,7 +31,7 @@ func TestVerification_ArtifactPromotion_CliTargetDevUnchanged_Passes(t *testing.
 			// Dev service's active appVersion, unchanged from baseline.
 			{ID: "av-dev-1", ServiceStackID: "svc-dev", Status: "ACTIVE", Source: "GIT", Created: "2026-09-09T00:00:00Z", Build: &platform.BuildInfo{}},
 		})
-	baseline := &ScenarioBaseline{UnrelatedAppVersion: "av-dev-1"}
+	baseline := &ScenarioBaseline{AppVersions: map[string]string{"appdev": "av-dev-1"}}
 
 	rows := evaluateArtifactPromotionRows(context.Background(), entry, client, "p1", runStart, baseline)
 	assertRowResults(t, rows, map[string]CheckResult{
@@ -60,7 +60,7 @@ func TestVerification_ArtifactPromotion_GitBuiltTarget_FailsSourceRow(t *testing
 			},
 			{ID: "av-dev-1", ServiceStackID: "svc-dev", Status: "ACTIVE", Source: "GIT", Created: "2026-09-09T00:00:00Z", Build: &platform.BuildInfo{}},
 		})
-	baseline := &ScenarioBaseline{UnrelatedAppVersion: "av-dev-1"}
+	baseline := &ScenarioBaseline{AppVersions: map[string]string{"appdev": "av-dev-1"}}
 
 	rows := evaluateArtifactPromotionRows(context.Background(), entry, client, "p1", runStart, baseline)
 
@@ -88,7 +88,7 @@ func TestVerification_ArtifactPromotion_DevRebuilt_FailsUnchangedRow(t *testing.
 			// Dev's active appVersion no longer matches the baseline id.
 			{ID: "av-dev-2", ServiceStackID: "svc-dev", Status: "ACTIVE", Source: "GIT", Created: "2026-09-10T00:30:00Z", Build: &platform.BuildInfo{}},
 		})
-	baseline := &ScenarioBaseline{UnrelatedAppVersion: "av-dev-1"}
+	baseline := &ScenarioBaseline{AppVersions: map[string]string{"appdev": "av-dev-1"}}
 
 	rows := evaluateArtifactPromotionRows(context.Background(), entry, client, "p1", runStart, baseline)
 	row := findRow(t, rows, "artifact_promotion/appstage/dev_unchanged")
@@ -107,7 +107,7 @@ func TestVerification_ArtifactPromotion_SearchError_AllRowsBlocked(t *testing.T)
 			{ID: "svc-stage", Name: "appstage"},
 		}).
 		WithError("SearchAppVersions", errBoomArtifactPromotionSearch)
-	baseline := &ScenarioBaseline{UnrelatedAppVersion: "av-dev-1"}
+	baseline := &ScenarioBaseline{AppVersions: map[string]string{"appdev": "av-dev-1"}}
 
 	rows := evaluateArtifactPromotionRows(context.Background(), entry, client, "p1", runStart, baseline)
 	assertRowResults(t, rows, map[string]CheckResult{

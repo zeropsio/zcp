@@ -3,7 +3,9 @@ package eval
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -195,11 +197,16 @@ func evaluatorSelfSHA256() (string, error) {
 	return sha256File(exe)
 }
 
-// ScenarioBaseline is the node-postgres oracle's baseline reading
-// (docs/spec-testing-architecture.md §10.3 "Baseline").
+// ScenarioBaseline is the per-hostname baseline reading taken at scenario
+// start (docs/spec-testing-architecture.md §10.3 "Baseline";
+// docs/spec-eval-farm.md §4.1 FM-29): one active app-version id per hostname
+// in the union of verification.unchanged and nodePostgresRecord.unrelated.
+// A hostname absent from AppVersions was never recorded (a read failure, or
+// the service not yet deployed) — every reader treats that as "no baseline
+// for <host>", never a pass.
 type ScenarioBaseline struct {
-	UnrelatedAppVersion string    `json:"unrelatedAppVersion"`
-	ObservedAt          time.Time `json:"observedAt"`
+	AppVersions map[string]string `json:"appVersions"`
+	ObservedAt  time.Time         `json:"observedAt"`
 }
 
 // RunBehavioralScenario executes a behavioral scenario (two-shot resume).
@@ -307,9 +314,11 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	// Baseline (§10.3 "Baseline"): recorded right after seed/init, before the
 	// initial agent invocation, so the unchanged row has something to compare
 	// against at the freeze — a baseline read after the agent has run would
-	// no longer prove the artifact was untouched.
-	if sc.Verification != nil && sc.Verification.NodePostgresRecord != nil {
-		r.recordNodePostgresBaseline(ctx, sc, result)
+	// no longer prove the artifact was untouched. Covers the union of
+	// verification.unchanged and nodePostgresRecord.unrelated (FM-29:
+	// standalone unchanged is independent of nodePostgresRecord).
+	if hostnames := scenarioBaselineHostnames(sc); len(hostnames) > 0 {
+		r.recordScenarioBaseline(ctx, hostnames, result)
 	}
 
 	transcriptFile := filepath.Join(outDir, "transcript.jsonl")
@@ -422,7 +431,7 @@ func (r *Runner) observeTaskEnd(ctx context.Context, sc *Scenario, outDir string
 	readServices := sc.Verification != nil && len(sc.Verification.ExpectedServices) > 0
 	readProcesses := sc.Verification != nil && sc.Verification.NoFailedProcesses
 	observation := collectPlatformObservation(evidenceCtx, r.client, r.projectID, readServices, readProcesses)
-	rows := generateRequiredChecks(evidenceCtx, sc, observation, r.httpDoer, startedAt, r.projectID, r.client, true, result.Baseline)
+	rows := generateRequiredChecks(evidenceCtx, sc, observation, r.httpDoer, startedAt, r.projectID, r.client, true, result.Baseline, r.scenarioRuntimeInputs(sc, result))
 	findings := projectRowsToFindings(rows)
 	findings = append(findings, retrospectivePhraseFindings(sc, selfReview)...)
 	snapshot := buildPlatformSnapshotFromObservation(r.projectID, startedAt, observation, findings)
@@ -457,23 +466,55 @@ func (r *Runner) observeTaskEnd(ctx context.Context, sc *Scenario, outDir string
 	}
 }
 
-// recordNodePostgresBaseline reads the unrelated service's active
-// app-version id via one ListServicesDirect call and records it on result
-// (§10.3 "Baseline"). Best-effort: a read failure or a not-yet-deployed
-// unrelated service leaves result.Baseline nil, which the freeze-time
-// unchanged row reads as "no baseline recorded" → blocked, never a silent
-// pass.
-func (r *Runner) recordNodePostgresBaseline(ctx context.Context, sc *Scenario, result *BehavioralResult) {
+// scenarioBaselineHostnames returns the union of verification.unchanged and
+// nodePostgresRecord.unrelated for sc, deduplicated, in a stable order
+// (unchanged entries first, then the nodePostgresRecord hostname if not
+// already present). Empty when sc declares neither (FM-29: baseline capture
+// is driven by the declared inputs, never by mode).
+func scenarioBaselineHostnames(sc *Scenario) []string {
+	if sc.Verification == nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var hostnames []string
+	for _, h := range sc.Verification.Unchanged {
+		if h == "" || seen[h] {
+			continue
+		}
+		seen[h] = true
+		hostnames = append(hostnames, h)
+	}
+	if sc.Verification.NodePostgresRecord != nil {
+		h := sc.Verification.NodePostgresRecord.Unrelated
+		if h != "" && !seen[h] {
+			hostnames = append(hostnames, h)
+		}
+	}
+	return hostnames
+}
+
+// recordScenarioBaseline reads the active app-version id for every hostname
+// in hostnames via one ListServicesDirect call and records them on result
+// (§10.3 "Baseline"; FM-29). Best-effort per hostname: a read failure blocks
+// every row; a hostname that resolves to no service, or to a service with no
+// active app-version yet, is simply absent from the resulting map — which
+// every reader (evaluateUnchangedFieldRow, the nodePostgresRecord unrelated
+// row) treats as "no baseline for <host>" → blocked, never a silent pass.
+func (r *Runner) recordScenarioBaseline(ctx context.Context, hostnames []string, result *BehavioralResult) {
 	services, err := r.client.ListServicesDirect(ctx, r.projectID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: node-postgres baseline: ListServicesDirect: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: scenario baseline: ListServicesDirect: %v\n", err)
 		return
 	}
-	svc := findServiceByHostname(services, sc.Verification.NodePostgresRecord.Unrelated)
-	if svc == nil || svc.ActiveAppVersion == nil || svc.ActiveAppVersion.ID == "" {
-		return
+	appVersions := make(map[string]string)
+	for _, hostname := range hostnames {
+		svc := findServiceByHostname(services, hostname)
+		if svc == nil || svc.ActiveAppVersion == nil || svc.ActiveAppVersion.ID == "" {
+			continue
+		}
+		appVersions[hostname] = svc.ActiveAppVersion.ID
 	}
-	result.Baseline = &ScenarioBaseline{UnrelatedAppVersion: svc.ActiveAppVersion.ID, ObservedAt: time.Now().UTC()}
+	result.Baseline = &ScenarioBaseline{AppVersions: appVersions, ObservedAt: time.Now().UTC()}
 }
 
 // prepareBehavioralWork runs seed → init → capture MCP config → preseed,
@@ -670,7 +711,7 @@ func (r *Runner) freezeTaskEnd(
 			}
 			break
 		}
-		rows = generateRequiredChecks(ctx, sc, observation, r.httpDoer, startedAt, r.projectID, r.client, settled, result.Baseline)
+		rows = generateRequiredChecks(ctx, sc, observation, r.httpDoer, startedAt, r.projectID, r.client, settled, result.Baseline, r.scenarioRuntimeInputs(sc, result))
 		if !settled {
 			rows = blockRowsForUnsettled(rows, liveProcesses)
 		}
@@ -725,6 +766,29 @@ func (r *Runner) freezeTaskEnd(
 		}
 		logBehavioralResultWrite(outDir, result)
 	}
+}
+
+// scenarioRuntimeInputs assembles the RuntimeInputs the O6/O7/O8 oracles
+// need (docs/spec-eval-farm.md §4.4): the run's transcript path, the
+// captured MCP stream file paths for this scenario run (reusing
+// ScenarioMCPStreamPaths' discovery, decision_rows.go), and the hex sha256
+// of ZCP_E2E_LAUNCH_KEY when that env is present. The launch token value
+// itself is read once here, hashed immediately, and never stored, logged,
+// or passed anywhere else — only the digest crosses into RuntimeInputs.
+func (r *Runner) scenarioRuntimeInputs(sc *Scenario, result *BehavioralResult) RuntimeInputs {
+	runtime := RuntimeInputs{TranscriptPath: result.TranscriptFile}
+	if r.config.Capture != nil {
+		if paths, err := ScenarioMCPStreamPaths(r.config.Capture.SessionDir, result.SuiteID, sc.ID); err == nil {
+			runtime.MCPStreamPaths = paths
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: scenario MCP stream paths: %v\n", err)
+		}
+	}
+	if launchKey := os.Getenv("ZCP_E2E_LAUNCH_KEY"); launchKey != "" {
+		sum := sha256.Sum256([]byte(launchKey))
+		runtime.LaunchTokenSHA256 = hex.EncodeToString(sum[:])
+	}
+	return runtime
 }
 
 // userSimTerminatedBy returns the user-sim loop's termination reason, or ""

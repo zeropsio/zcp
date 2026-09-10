@@ -47,13 +47,13 @@ func printBehavioralUsage() {
 
 Commands:
   list       --scenarios-dir <dir>             List behavioral scenarios in dir
-  run        --scenarios-dir <dir> --id <id> [--capture raw]
+  run        --scenarios-dir <dir> --id <id> [--capture raw] [--capture-dir <dir>]
                                                Run one scenario by id (container mode)
-  run        --file <scenario.md> [--capture raw]
+  run        --file <scenario.md> [--capture raw] [--capture-dir <dir>]
                                                Run one scenario by absolute path
-  all        --scenarios-dir <dir> [--capture raw]
+  all        --scenarios-dir <dir> [--capture raw] [--capture-dir <dir>]
                                                Run every scenario in dir sequentially
-  run-local  --id <id> [--scenarios-dir <dir>] [--cleanup-workdir] [--capture raw]
+  run-local  --id <id> [--scenarios-dir <dir>] [--cleanup-workdir] [--capture raw] [--capture-dir <dir>]
                                                Run one scenario in LOCAL mode on this Mac
                                                (isolated workdir + claude HOME under /tmp).
   report     --capture <dir> --eval <id> --scenario <id> [--format text|json]
@@ -69,7 +69,12 @@ eval/behavioral/runs-local/<suite>/<id>/. Outputs from container-mode runs land
 under $ZCP_EVAL_RESULTS_DIR/<suiteId>/<scenarioId>/.
 
 A scenario with 'verification.mode: required' needs --capture raw on its own
-'run'/'all' invocation — a global or inherited capture window is refused.`)
+'run'/'all' invocation — a global or inherited capture window is refused.
+
+--capture-dir <dir> forwards as 'zcp capture raw --output-dir <dir>' for the
+scoped window this invocation creates (only takes effect together with
+--capture raw) — the product seam for locating the capture window's
+directory directly, instead of recovering it by grepping child.log.`)
 }
 
 func runBehavioralList(args []string) int {

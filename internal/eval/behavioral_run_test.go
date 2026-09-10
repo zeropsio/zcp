@@ -1,12 +1,15 @@
 package eval
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // TestLoadRetrospectivePrompt_BriefingFutureAgent_Embedded asserts the default
@@ -282,4 +285,46 @@ func firstN(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// TestScenarioBaseline_CapturesEveryUnchangedHostname pins FM-29: the
+// baseline recorded at scenario start covers the union of
+// verification.unchanged and nodePostgresRecord.unrelated — exactly those
+// hostnames, deduplicated, each with the active app-version id a
+// ListServicesDirect read reports for it.
+func TestScenarioBaseline_CapturesEveryUnchangedHostname(t *testing.T) {
+	t.Parallel()
+	sc := &Scenario{Verification: &VerificationConfig{
+		Unchanged:          []string{"hostA", "hostB"},
+		NodePostgresRecord: &NodePostgresRecordConfig{Stage: "appstage", Database: "db", Unrelated: "hostB"},
+	}}
+	client := platform.NewMock().WithServicesDirect([]platform.ServiceStack{
+		{Name: "hostA", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-A"}},
+		{Name: "hostB", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-B"}},
+		{Name: "hostC", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-C"}},
+	})
+	runner := NewRunner(RunnerConfig{}, nil, client, "p1")
+
+	hostnames := scenarioBaselineHostnames(sc)
+	if len(hostnames) != 2 {
+		t.Fatalf("scenarioBaselineHostnames = %v, want exactly [hostA hostB] (union, deduped)", hostnames)
+	}
+
+	result := &BehavioralResult{}
+	runner.recordScenarioBaseline(context.Background(), hostnames, result)
+	if result.Baseline == nil {
+		t.Fatal("expected Baseline to be recorded")
+	}
+	want := map[string]string{"hostA": "av-A", "hostB": "av-B"}
+	if len(result.Baseline.AppVersions) != len(want) {
+		t.Fatalf("Baseline.AppVersions = %+v, want exactly %+v", result.Baseline.AppVersions, want)
+	}
+	for host, av := range want {
+		if result.Baseline.AppVersions[host] != av {
+			t.Errorf("Baseline.AppVersions[%q] = %q, want %q", host, result.Baseline.AppVersions[host], av)
+		}
+	}
+	if _, present := result.Baseline.AppVersions["hostC"]; present {
+		t.Errorf("Baseline.AppVersions must not include hostC (not declared unchanged/unrelated)")
+	}
 }

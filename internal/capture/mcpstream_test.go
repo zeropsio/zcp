@@ -58,3 +58,28 @@ func TestMCPStream_ToolCallsWithActionAndPhase_Parsed(t *testing.T) {
 		t.Error("calls[2].ResultIsError = true, want false")
 	}
 }
+
+// TestMCPStream_ToolCall_CarriesRecordTime pins that each parsed call's At
+// field is the Time of the capture.Record whose stdin chunk carried its
+// tools/call request line (docs/spec-eval-farm.md §4.1 FM-31: the askWhen
+// decision-row correlation needs a per-call timestamp). testdata/mcpstream/
+// basic.jsonl has each of its three tools/call requests on its own
+// mcp.stdin.chunk record, at 00:00:02Z, 00:00:04Z, 00:00:06Z respectively.
+func TestMCPStream_ToolCall_CarriesRecordTime(t *testing.T) {
+	t.Parallel()
+
+	calls, err := ReadMCPStream("testdata/mcpstream/basic.jsonl")
+	if err != nil {
+		t.Fatalf("ReadMCPStream: %v", err)
+	}
+	if len(calls) != 3 {
+		t.Fatalf("len(calls) = %d, want 3: %+v", len(calls), calls)
+	}
+	want := []string{"2026-09-10T00:00:02Z", "2026-09-10T00:00:04Z", "2026-09-10T00:00:06Z"}
+	for i, w := range want {
+		got := calls[i].At.UTC().Format("2006-01-02T15:04:05Z")
+		if got != w {
+			t.Errorf("calls[%d].At = %s, want %s", i, got, w)
+		}
+	}
+}

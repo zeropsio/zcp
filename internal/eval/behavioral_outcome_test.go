@@ -931,8 +931,8 @@ Finish the offline fixture application.
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Baseline == nil || result.Baseline.UnrelatedAppVersion != "av-1" {
-		t.Fatalf("Baseline = %+v, want UnrelatedAppVersion=av-1", result.Baseline)
+	if result.Baseline == nil || result.Baseline.AppVersions["other"] != "av-1" {
+		t.Fatalf("Baseline = %+v, want AppVersions[other]=av-1", result.Baseline)
 	}
 	if !client.baselineBeforeAgent {
 		t.Error("baseline ListServicesDirect call happened after (or without observing) the agent-started marker — want before")

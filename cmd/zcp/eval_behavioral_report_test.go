@@ -20,7 +20,7 @@ func TestParseEvalCaptureArgs_ReportCaptureDirNotIntercepted(t *testing.T) {
 func TestParseEvalCaptureArgs_RunCaptureRawStillIntercepted(t *testing.T) {
 	t.Parallel()
 
-	_, requested, err := parseEvalCaptureArgs([]string{"behavioral", "run", "--id", "x", "--capture", "raw"})
+	_, requested, _, err := parseEvalCaptureArgs([]string{"behavioral", "run", "--id", "x", "--capture", "raw"})
 	if err != nil {
 		t.Fatalf("parseEvalCaptureArgs() error = %v", err)
 	}

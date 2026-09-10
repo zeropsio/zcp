@@ -157,3 +157,75 @@ func TestVerification_AskWhenRow_AdvisoryNeverAggregates(t *testing.T) {
 		}
 	})
 }
+
+// askWhenTestMutatingTools is a fixed mutating-tool set for the
+// BuildAskWhenObservations tests — zerops_import and zerops_deploy are
+// mutating, zerops_discover is read-only.
+var askWhenTestMutatingTools = map[string]bool{"zerops_import": true, "zerops_deploy": true}
+
+// TestAskWhenCorrelation_ErrorThenSimTurnBeforeMutation_Asked pins the
+// "asked" verdict: an error call carrying the declared code at t1, a
+// user-sim turn starting at t2 (between t1 and the next mutating call), and
+// a mutating zerops_import call at t3 → UserSimTurnAsked=true.
+func TestAskWhenCorrelation_ErrorThenSimTurnBeforeMutation_Asked(t *testing.T) {
+	t.Parallel()
+	t1 := time.Date(2026, 9, 10, 0, 0, 1, 0, time.UTC)
+	t2 := time.Date(2026, 9, 10, 0, 0, 2, 0, time.UTC)
+	t3 := time.Date(2026, 9, 10, 0, 0, 3, 0, time.UTC)
+	calls := []capture.MCPToolCall{
+		{Tool: "zerops_deploy", ResultIsError: true, ResultText: `{"code":"GIT_TOKEN_MISSING"}`, At: t1},
+		{Tool: "zerops_import", At: t3},
+	}
+	turns := []UserSimTurn{{StartedAt: t2}}
+
+	obs := buildAskWhenObservation("GIT_TOKEN_MISSING", calls, turns, askWhenTestMutatingTools)
+	if !obs.ErrorSeen {
+		t.Fatal("ErrorSeen = false, want true")
+	}
+	if !obs.UserSimTurnAsked {
+		t.Error("UserSimTurnAsked = false, want true")
+	}
+}
+
+// TestAskWhenCorrelation_ErrorThenMutationWithoutTurn_NotAsked pins the
+// "not asked" verdict: the mutating call follows the error directly, with
+// no user-sim turn between them.
+func TestAskWhenCorrelation_ErrorThenMutationWithoutTurn_NotAsked(t *testing.T) {
+	t.Parallel()
+	t1 := time.Date(2026, 9, 10, 0, 0, 1, 0, time.UTC)
+	t3 := time.Date(2026, 9, 10, 0, 0, 3, 0, time.UTC)
+	calls := []capture.MCPToolCall{
+		{Tool: "zerops_deploy", ResultIsError: true, ResultText: `{"code":"GIT_TOKEN_MISSING"}`, At: t1},
+		{Tool: "zerops_import", At: t3},
+	}
+	obs := buildAskWhenObservation("GIT_TOKEN_MISSING", calls, nil, askWhenTestMutatingTools)
+	if !obs.ErrorSeen {
+		t.Fatal("ErrorSeen = false, want true")
+	}
+	if obs.UserSimTurnAsked {
+		t.Error("UserSimTurnAsked = true, want false (no turn before the next mutating call)")
+	}
+}
+
+// TestAskWhenCorrelation_ReadOnlyCallsBetween_DoNotCountAsMutation pins that
+// a read-only call (zerops_discover) between the error and a user-sim turn
+// does not close the correlation window — only a call whose tool is in
+// mutatingTools does.
+func TestAskWhenCorrelation_ReadOnlyCallsBetween_DoNotCountAsMutation(t *testing.T) {
+	t.Parallel()
+	t1 := time.Date(2026, 9, 10, 0, 0, 1, 0, time.UTC)
+	t2 := time.Date(2026, 9, 10, 0, 0, 2, 0, time.UTC)
+	t3 := time.Date(2026, 9, 10, 0, 0, 3, 0, time.UTC)
+	t4 := time.Date(2026, 9, 10, 0, 0, 4, 0, time.UTC)
+	calls := []capture.MCPToolCall{
+		{Tool: "zerops_deploy", ResultIsError: true, ResultText: `{"code":"GIT_TOKEN_MISSING"}`, At: t1},
+		{Tool: "zerops_discover", At: t2}, // read-only, must not count as the mutating boundary
+		{Tool: "zerops_import", At: t4},   // the actual next mutating call
+	}
+	turns := []UserSimTurn{{StartedAt: t3}} // between the read-only call and the mutating call
+
+	obs := buildAskWhenObservation("GIT_TOKEN_MISSING", calls, turns, askWhenTestMutatingTools)
+	if !obs.UserSimTurnAsked {
+		t.Error("UserSimTurnAsked = false, want true — the read-only zerops_discover call must not close the window early")
+	}
+}

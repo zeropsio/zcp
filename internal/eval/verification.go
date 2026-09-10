@@ -2,17 +2,74 @@ package eval
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/capture"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
+
+// RuntimeInputs carries the run-scoped evidence generateRequiredChecks needs
+// for the O6/O7/O8 oracles (docs/spec-eval-farm.md §4.4) that RunVerification
+// itself cannot derive from a platform observation alone:
+// LaunchTokenSHA256 is the hex sha256 of the run's ZCP_E2E_LAUNCH_KEY (hashed
+// once at the read site, never stored/logged/passed anywhere else, empty
+// when the env is absent); MCPStreamPaths are the run's captured
+// capture/mcp/zcp-<pid>.jsonl files (chronological order not required — every
+// consumer treats the set as one merged stream); TranscriptPath is the
+// scenario's transcript.jsonl. A zero-value RuntimeInputs is valid: every
+// consumer treats an empty field as "no evidence available" and blocks
+// rather than silently passing or omitting the row.
+type RuntimeInputs struct {
+	LaunchTokenSHA256 string
+	MCPStreamPaths    []string
+	TranscriptPath    string
+}
+
+// readTranscriptText reads path's full contents for the O6
+// token_not_in_transcript scan. Empty on any read error or empty path — the
+// scan then degrades to scanning only the MCP tool-call texts.
+func readTranscriptText(path string) string {
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// mcpToolCallTexts reads every path in mcpStreamPaths and renders each tool
+// call's arguments as one whitespace-scannable text blob (JSON-marshaled),
+// for the O6 token_not_in_transcript scan and the O8 no_fabricated_secret
+// scan's underlying stream reads (evaluateNoFabricatedSecretRow reads its
+// own path directly; this helper only serves O6's toolCallTexts parameter).
+// A path that fails to read is skipped — best-effort, matching the "empty
+// evidence blocks rather than fails" contract RuntimeInputs documents.
+func mcpToolCallTexts(mcpStreamPaths []string) []string {
+	var texts []string
+	for _, path := range mcpStreamPaths {
+		calls, err := capture.ReadMCPStream(path)
+		if err != nil {
+			continue
+		}
+		for _, call := range calls {
+			if data, marshalErr := json.Marshal(call.Arguments); marshalErr == nil {
+				texts = append(texts, string(data))
+			}
+		}
+	}
+	return texts
+}
 
 // processCreatedAfter reports whether a process's Created timestamp is strictly
 // after runStart. Unparseable timestamps stay in scope: dropping them would turn
@@ -42,6 +99,7 @@ func RunVerification(
 	httpDoer ops.HTTPDoer,
 	retrospectiveText string,
 	runStart time.Time,
+	runtime RuntimeInputs,
 ) []VerificationFinding {
 	if sc == nil || sc.Verification == nil {
 		return nil
@@ -53,7 +111,7 @@ func RunVerification(
 		len(sc.Verification.ExpectedServices) > 0 || sc.Verification.Liveness != nil || len(sc.Verification.Unchanged) > 0,
 		sc.Verification.NoFailedProcesses,
 	)
-	return runVerificationWithObservation(ctx, sc, observation, httpDoer, retrospectiveText, runStart, projectID, client, true, nil)
+	return runVerificationWithObservation(ctx, sc, observation, httpDoer, retrospectiveText, runStart, projectID, client, true, nil, runtime)
 }
 
 // runVerificationWithObservation derives the legacy advisory findings list
@@ -71,11 +129,12 @@ func runVerificationWithObservation(
 	client platform.Client,
 	settled bool,
 	baseline *ScenarioBaseline,
+	runtime RuntimeInputs,
 ) []VerificationFinding {
 	if sc == nil || sc.Verification == nil {
 		return nil
 	}
-	rows := generateRequiredChecks(ctx, sc, observation, httpDoer, runStart, projectID, client, settled, baseline)
+	rows := generateRequiredChecks(ctx, sc, observation, httpDoer, runStart, projectID, client, settled, baseline, runtime)
 	findings := projectRowsToFindings(rows)
 	findings = append(findings, retrospectivePhraseFindings(sc, retrospectiveText)...)
 	return findings
@@ -136,6 +195,7 @@ func generateRequiredChecks(
 	client platform.Client,
 	settled bool,
 	baseline *ScenarioBaseline,
+	runtime RuntimeInputs,
 ) []RequiredCheck {
 	if sc == nil || sc.Verification == nil {
 		return nil
@@ -156,6 +216,24 @@ func generateRequiredChecks(
 	for _, hostname := range sc.Verification.Unchanged {
 		rows = append(rows, evaluateUnchangedFieldRow(hostname, observation, baseline))
 	}
+	if sc.Verification.LaunchShape != nil {
+		rows = append(rows, evaluateLaunchShapeRows(
+			ctx, sc.Verification.LaunchShape, client,
+			readTranscriptText(runtime.TranscriptPath),
+			mcpToolCallTexts(runtime.MCPStreamPaths),
+			runtime.LaunchTokenSHA256,
+		)...)
+	}
+	if sc.Verification.NoFabricatedSecret {
+		var mcpStreamPath string
+		if len(runtime.MCPStreamPaths) > 0 {
+			mcpStreamPath = runtime.MCPStreamPaths[0]
+		}
+		rows = append(rows, evaluateNoFabricatedSecretRow(mcpStreamPath, sc.ID, nil))
+	}
+	for _, entry := range sc.Verification.ArtifactPromotion {
+		rows = append(rows, evaluateArtifactPromotionRows(ctx, entry, client, projectID, runStart, baseline)...)
+	}
 	return rows
 }
 
@@ -163,22 +241,25 @@ func generateRequiredChecks(
 // verification.unchanged list (docs/spec-eval-farm.md §4.1 FM-29): the same
 // grading nodePostgresRecord's unrelated row uses (gradeUnchangedRow,
 // internal/eval/node_postgres_verifier.go). Independent of whether the
-// scenario also declares nodePostgresRecord (FM-29) — phase-1 baseline
-// capture (behavioral_run.go) records exactly one hostname's active
-// app-version at scenario start, so a scenario declaring `unchanged` gets a
-// real comparison only while ScenarioBaseline is populated for it; wiring a
-// baseline capture per-hostname for the standalone field is future
-// integration work outside this slice's write-set (blocks, same as
-// nodePostgresRecord's own "no baseline recorded" case, until then).
+// scenario also declares nodePostgresRecord (FM-29) — the per-hostname
+// baseline (behavioral_run.go's scenarioBaselineHostnames/
+// recordScenarioBaseline) covers the union of both, so every declared
+// hostname is looked up by its own entry in baseline.AppVersions; a
+// hostname absent from that map (never recorded, or recorded with no
+// active app-version) blocks with an explicit "no baseline for <host>"
+// message, never a silent pass.
 func evaluateUnchangedFieldRow(hostname string, observation platformObservation, baseline *ScenarioBaseline) RequiredCheck {
 	id := unrelatedArtifactRowID(hostname)
 	now := observation.observedAt
 	if observation.servicesErr != nil {
 		return RequiredCheck{ID: id, Check: checkUnrelatedArtifact, Scope: hostname, Result: CheckBlocked, ObservedAt: now, Source: "ListServicesDirect", Message: fmt.Sprintf("ListServicesDirect failed: %v", observation.servicesErr)}
 	}
-	var baselineAppVersion string
+	baselineAppVersion, ok := "", false
 	if baseline != nil {
-		baselineAppVersion = baseline.UnrelatedAppVersion
+		baselineAppVersion, ok = baseline.AppVersions[hostname]
+	}
+	if !ok || baselineAppVersion == "" {
+		return RequiredCheck{ID: id, Check: checkUnrelatedArtifact, Scope: hostname, Result: CheckBlocked, ObservedAt: now, Source: "ListServicesDirect", Message: fmt.Sprintf("no baseline for %s", hostname)}
 	}
 	svc := findServiceByHostname(observation.services, hostname)
 	return gradeUnchangedRow(id, hostname, baselineAppVersion, svc, now)
@@ -250,7 +331,7 @@ func evaluateNodePostgresRecordCheck(
 ) []RequiredCheck {
 	in := NodePostgresInput{ProjectID: projectID, Stage: cfg.Stage, Database: cfg.Database, Unrelated: cfg.Unrelated}
 	if baseline != nil {
-		in.BaselineUnrelatedAppVersion = baseline.UnrelatedAppVersion
+		in.BaselineUnrelatedAppVersion = baseline.AppVersions[cfg.Unrelated]
 	}
 	if !settled {
 		return blockedNodePostgresRows(in, time.Now().UTC(), "task-end observation unsettled")
