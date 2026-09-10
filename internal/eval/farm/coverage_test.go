@@ -98,6 +98,52 @@ func TestCoverage_Since_AggregatesLaterBatchesOnly(t *testing.T) {
 	}
 }
 
+// TestCoverage_RealBundleLayout_ScenarioFromDoneJSON proves Coverage reads
+// a run's scenario id from done.json (written by the wrapper for every
+// bundle, docs/spec-eval-farm.md §2.3 FM-13) and locates the MCP stream
+// under the capture window (capture/capture-<id>/mcp/, resolved the same
+// way report.go's resolveCaptureWindowDir does) rather than the flattened
+// results/meta.json + capture/mcp/ layout the evaluator never actually
+// writes.
+func TestCoverage_RealBundleLayout_ScenarioFromDoneJSON(t *testing.T) {
+	t.Parallel()
+
+	report, err := Coverage("testdata/coverage/reallayout", "")
+	if err != nil {
+		t.Fatalf("Coverage: %v", err)
+	}
+	want := []Cell{
+		{ScenarioID: "s1", Step: "deploy-active", Decision: "zerops_deploy", Count: 1},
+		{ScenarioID: "s1", Step: "develop-active", Decision: "zerops_workflow:status", Count: 1},
+	}
+	if !reflect.DeepEqual(report.Cells, want) {
+		t.Fatalf("Cells = %+v, want %+v", report.Cells, want)
+	}
+	if len(report.NoStreamRuns) != 0 {
+		t.Errorf("NoStreamRuns = %v, want none", report.NoStreamRuns)
+	}
+}
+
+// TestCoverage_NotRunBundle_ListedNotFatal proves a bundle that died at the
+// binding preflight (done.json present with runnerDimensions.execution
+// "error: …", no results/**/meta.json, no capture window at all — the
+// live gate2 shape) is listed under NoStreamRuns by its dir name and
+// contributes no cells, never aborting the batch.
+func TestCoverage_NotRunBundle_ListedNotFatal(t *testing.T) {
+	t.Parallel()
+
+	report, err := Coverage("testdata/coverage/notrun", "")
+	if err != nil {
+		t.Fatalf("Coverage: %v", err)
+	}
+	if len(report.Cells) != 0 {
+		t.Errorf("Cells = %+v, want none", report.Cells)
+	}
+	if want := []string{"run-nr"}; !reflect.DeepEqual(report.NoStreamRuns, want) {
+		t.Errorf("NoStreamRuns = %v, want %v", report.NoStreamRuns, want)
+	}
+}
+
 // copyDirToTemp makes a writable copy of src under t.TempDir() so a test
 // can mutate it (e.g. delete a run dir) without touching the checked-in
 // fixture.
