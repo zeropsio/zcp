@@ -81,9 +81,24 @@ type ScenarioBaseline struct {
 // The scenario.Prompt is sent as-is — no follow-up questions or assessment
 // instructions are appended (those would create observer effect; the whole
 // point of two-shot resume is the agent does not know it will be evaluated).
+// parseScenarioForRun loads the scenario at path, then renders its
+// {{runId}}/{{projectId}} placeholders with this run's suiteID and the
+// runner's project id (internal/eval/scenario_template.go), before any
+// seed/mutation for the run happens.
+func (r *Runner) parseScenarioForRun(path, suiteID string) (*Scenario, error) {
+	sc, err := ParseScenario(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := sc.Render(TemplateValues{RunID: suiteID, ProjectID: r.projectID}); err != nil {
+		return nil, fmt.Errorf("scenario %s: %w", sc.ID, err)
+	}
+	return sc, nil
+}
+
 func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteID string) (result *BehavioralResult, returnErr error) {
 	startedAt := time.Now()
-	sc, err := ParseScenario(scenarioPath)
+	sc, err := r.parseScenarioForRun(scenarioPath, suiteID)
 	if err != nil {
 		return nil, err
 	}

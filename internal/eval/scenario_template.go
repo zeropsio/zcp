@@ -2,7 +2,6 @@ package eval
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 )
 
@@ -10,17 +9,37 @@ import (
 // prompt body or userPersona.
 var scenarioTemplateToken = regexp.MustCompile(`\{\{\s*([A-Za-z0-9_]+)\s*\}\}`)
 
-// scenarioTemplateValues are the substitution values recognized inside a
-// scenario's prompt/persona. Any other {{...}} token is a load error.
-type scenarioTemplateValues struct {
+// TemplateValues are the explicit substitution values a caller supplies to
+// Scenario.Render for {{runId}}/{{projectId}} placeholders in a scenario's
+// prompt/userPersona. A zero-value TemplateValues is valid for a scenario
+// with no placeholders; a placeholder present in the scenario whose
+// corresponding value is empty is a Render error.
+type TemplateValues struct {
 	RunID     string
 	ProjectID string
 }
 
+// rejectUnknownTemplateTokens scans s for {{...}} placeholders and errors on
+// the first one that is not {{runId}} or {{projectId}}. Called at parse
+// time (ParseScenario) so a scenario naming a typo'd or unsupported token
+// fails to load immediately, before any run ever reaches Render.
+func rejectUnknownTemplateTokens(s string) error {
+	for _, m := range scenarioTemplateToken.FindAllStringSubmatch(s, -1) {
+		switch m[1] {
+		case "runId", "projectId":
+		default:
+			return fmt.Errorf("unknown template token {{%s}} (want {{runId}} or {{projectId}})", m[1])
+		}
+	}
+	return nil
+}
+
 // substituteScenarioTemplate replaces {{runId}} and {{projectId}} tokens in
 // s with values. A string with no tokens is returned unchanged, byte for
-// byte. Any other {{...}} token is a load error.
-func substituteScenarioTemplate(s string, values scenarioTemplateValues) (string, error) {
+// byte. A recognized token whose value is empty is a load error. s is
+// assumed to already be free of unknown tokens (rejectUnknownTemplateTokens
+// ran at parse time).
+func substituteScenarioTemplate(s string, values TemplateValues) (string, error) {
 	if !scenarioTemplateToken.MatchString(s) {
 		return s, nil
 	}
@@ -32,8 +51,16 @@ func substituteScenarioTemplate(s string, values scenarioTemplateValues) (string
 		name := scenarioTemplateToken.FindStringSubmatch(tok)[1]
 		switch name {
 		case "runId":
+			if values.RunID == "" {
+				firstErr = fmt.Errorf("template token {{runId}} used but no run id was given")
+				return tok
+			}
 			return values.RunID
 		case "projectId":
+			if values.ProjectID == "" {
+				firstErr = fmt.Errorf("template token {{projectId}} used but no project id was given")
+				return tok
+			}
 			return values.ProjectID
 		default:
 			firstErr = fmt.Errorf("unknown template token {{%s}} (want {{runId}} or {{projectId}})", name)
@@ -46,19 +73,13 @@ func substituteScenarioTemplate(s string, values scenarioTemplateValues) (string
 	return result, nil
 }
 
-// applyScenarioTemplate substitutes {{runId}}/{{projectId}} into sc.Prompt
-// and sc.UserPersona in place. Values come from the environment the runner
-// has already populated at this point in the process: ZCP_FARM_RUN carries
-// the farm run id (docs/spec-eval-farm.md §2.2, FM-12); ZCP_EVAL_RUN_ID is
-// the fallback for a non-farm run (the runner's own suite/run identifier);
-// ZCP_EVAL_PROJECT_ID carries the resolved --project-id. Called once, at
-// scenario load time, from ParseScenario — the single place scenarios are
-// loaded.
-func applyScenarioTemplate(sc *Scenario) error {
-	values := scenarioTemplateValues{
-		RunID:     scenarioTemplateRunID(),
-		ProjectID: os.Getenv("ZCP_EVAL_PROJECT_ID"),
-	}
+// Render substitutes {{runId}}/{{projectId}} into sc.Prompt and
+// sc.UserPersona in place, using the explicit values the caller supplies.
+// A scenario with no placeholders renders to itself, byte for byte. A
+// placeholder the scenario uses whose corresponding value is empty is an
+// error — call Render before any seed/mutation for the run, and abort the
+// run on error.
+func (sc *Scenario) Render(values TemplateValues) error {
 	prompt, err := substituteScenarioTemplate(sc.Prompt, values)
 	if err != nil {
 		return fmt.Errorf("prompt: %w", err)
@@ -70,11 +91,4 @@ func applyScenarioTemplate(sc *Scenario) error {
 	sc.Prompt = prompt
 	sc.UserPersona = persona
 	return nil
-}
-
-func scenarioTemplateRunID() string {
-	if v := os.Getenv("ZCP_FARM_RUN"); v != "" {
-		return v
-	}
-	return os.Getenv("ZCP_EVAL_RUN_ID")
 }
