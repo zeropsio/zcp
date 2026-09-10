@@ -258,7 +258,7 @@ func TestFarmReport_RedactedBundle_ManifestConsistent_Grades(t *testing.T) {
 	// InspectSession checks.
 	copyDir(t, filepath.Join("testdata", "run5", "capture"), filepath.Join(runDir, "capture"))
 
-	providerPath := filepath.Join(runDir, "capture", "provider.jsonl")
+	providerPath := filepath.Join(runDir, "capture", "capture-run5", "provider.jsonl")
 	original, err := os.ReadFile(providerPath)
 	if err != nil {
 		t.Fatalf("read provider.jsonl: %v", err)
@@ -284,7 +284,7 @@ func TestFarmReport_RedactedBundle_ManifestConsistent_Grades(t *testing.T) {
 	// Patch capture/manifest.json's provider entry to the post-redaction
 	// size/sha256 — exactly what the wrapper's update_capture_manifest
 	// (eval/farm/wrapper.sh, D8) does.
-	manifestPath := filepath.Join(runDir, "capture", "manifest.json")
+	manifestPath := filepath.Join(runDir, "capture", "capture-run5", "manifest.json")
 	manifestBytes, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatalf("read manifest.json: %v", err)
@@ -364,8 +364,8 @@ func copyDir(t *testing.T, src, dst string) {
 func TestFarmReport_AnthropicAPIKeyPresent_Blocked(t *testing.T) {
 	t.Parallel()
 	runDir := t.TempDir()
-	writeFile(t, runDir, "capture/manifest.json", `{"status":"complete"}`)
-	writeFile(t, runDir, "capture/eval/run1/scenario1/meta.json", `{"scenarioId":"scenario1","anthropicApiKeyPresent":true}`)
+	writeFile(t, runDir, "capture/capture-abc/manifest.json", `{"status":"complete"}`)
+	writeFile(t, runDir, "capture/capture-abc/eval/run1/scenario1/meta.json", `{"scenarioId":"scenario1","anthropicApiKeyPresent":true}`)
 	writeFile(t, runDir, "done.json", `{"runId":"run-apikey","scenarioId":"scenario1"}`)
 
 	outcome := ReportRun(runDir, "")
@@ -375,4 +375,91 @@ func TestFarmReport_AnthropicAPIKeyPresent_Blocked(t *testing.T) {
 	if !strings.Contains(outcome.Reason, "oauth") {
 		t.Fatalf("Reason = %q, want it to mention farm runs are oauth-only", outcome.Reason)
 	}
+}
+
+// TestFarmReport_CaptureWindowSubdir_BuildsReport pins the fix: zcp capture
+// raw writes its window as capture/capture-<id>/... (internal/capture/
+// manager.go's newSessionID), one window per run (docs/spec-eval-farm.md
+// §2.1 FM-10 — a run project executes exactly one scenario). ReportRun must
+// resolve that single capture-<id> subdirectory rather than looking for
+// eval/ directly under capture/.
+func TestFarmReport_CaptureWindowSubdir_BuildsReport(t *testing.T) {
+	t.Parallel()
+	runDir := t.TempDir()
+	writeFile(t, runDir, "results/a.txt", "result-a")
+	copyDir(t, filepath.Join("testdata", "run5", "capture"), filepath.Join(runDir, "capture"))
+
+	resultsDigest, err := TreeDigest(filepath.Join(runDir, "results"))
+	if err != nil {
+		t.Fatalf("TreeDigest(results): %v", err)
+	}
+	captureDigest, err := TreeDigest(filepath.Join(runDir, "capture"))
+	if err != nil {
+		t.Fatalf("TreeDigest(capture): %v", err)
+	}
+	writeDoneJSON(t, runDir, "run-window", "eval-sha", "cand-sha-window", resultsDigest, captureDigest)
+
+	outcome := ReportRun(runDir, "")
+	if outcome.Verdict == VerdictBlocked {
+		t.Fatalf("Verdict = %q (Reason: %s), want NOT blocked — the capture-<id> window must resolve", outcome.Verdict, outcome.Reason)
+	}
+	if outcome.ReportText == "" {
+		t.Fatalf("ReportText is empty, want the single-run report built from the resolved window")
+	}
+}
+
+// TestFarmReport_CaptureWindowMissingOrAmbiguous_Blocked pins the ambiguity
+// guard: zero or more than one capture-<id> subdirectory under capture/ is
+// blocked, with the count named in the reason.
+func TestFarmReport_CaptureWindowMissingOrAmbiguous_Blocked(t *testing.T) {
+	t.Parallel()
+
+	t.Run("zero", func(t *testing.T) {
+		t.Parallel()
+		runDir := t.TempDir()
+		writeFile(t, runDir, "results/a.txt", "result-a")
+		writeFile(t, runDir, "capture/manifest.json", `{"status":"complete"}`)
+		resultsDigest, err := TreeDigest(filepath.Join(runDir, "results"))
+		if err != nil {
+			t.Fatalf("TreeDigest(results): %v", err)
+		}
+		captureDigest, err := TreeDigest(filepath.Join(runDir, "capture"))
+		if err != nil {
+			t.Fatalf("TreeDigest(capture): %v", err)
+		}
+		writeDoneJSON(t, runDir, "run-zero", "eval-sha", "cand-sha", resultsDigest, captureDigest)
+
+		outcome := ReportRun(runDir, "")
+		if outcome.Verdict != VerdictBlocked {
+			t.Fatalf("Verdict = %q, want %q", outcome.Verdict, VerdictBlocked)
+		}
+		if !strings.Contains(outcome.Reason, "0") {
+			t.Fatalf("Reason = %q, want it to name the count (0)", outcome.Reason)
+		}
+	})
+
+	t.Run("ambiguous", func(t *testing.T) {
+		t.Parallel()
+		runDir := t.TempDir()
+		writeFile(t, runDir, "results/a.txt", "result-a")
+		writeFile(t, runDir, "capture/capture-one/manifest.json", `{"status":"complete"}`)
+		writeFile(t, runDir, "capture/capture-two/manifest.json", `{"status":"complete"}`)
+		resultsDigest, err := TreeDigest(filepath.Join(runDir, "results"))
+		if err != nil {
+			t.Fatalf("TreeDigest(results): %v", err)
+		}
+		captureDigest, err := TreeDigest(filepath.Join(runDir, "capture"))
+		if err != nil {
+			t.Fatalf("TreeDigest(capture): %v", err)
+		}
+		writeDoneJSON(t, runDir, "run-two", "eval-sha", "cand-sha", resultsDigest, captureDigest)
+
+		outcome := ReportRun(runDir, "")
+		if outcome.Verdict != VerdictBlocked {
+			t.Fatalf("Verdict = %q, want %q", outcome.Verdict, VerdictBlocked)
+		}
+		if !strings.Contains(outcome.Reason, "2") {
+			t.Fatalf("Reason = %q, want it to name the count (2)", outcome.Reason)
+		}
+	})
 }
