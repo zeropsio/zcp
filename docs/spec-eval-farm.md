@@ -112,8 +112,10 @@ rows) is not secret and is not redacted beyond FM-7's credential values.
 
 **FM-9.** `batches/<batch>/manifest.json`, written at `farm run` start,
 records: batch id, the scenario set (`--set gate|all|<ids>`), the candidate
-digest, the evaluator digest, the credential mode (FM-19), and the run ids the
-batch created. `batches/<batch>/summary.json`, written at the end, records
+digest, the evaluator digest, and the run ids the batch created — no
+credential mode, since the agent credential is `CLAUDE_CODE_OAUTH_TOKEN`
+only (§2.4/FM-16, spec commit 79ced2cc), never a per-batch choice.
+`batches/<batch>/summary.json`, written at the end, records
 per-run acceptance (`passed`/`failed`/`blocked`/`not-run`) and whether the
 batch's own budget or the operator's Ctrl-C ended it. Neither file is the
 registry of truth — `farm status` always recomputes from the bucket listing
@@ -128,7 +130,6 @@ Shape, as implemented by the controller (S4):
   "batch": "…", "createdAt": "<RFC3339>", "startedAt": "<RFC3339>",
   "set": "gate|all|<ids>",
   "candidateSha256": "…", "evaluatorSha256": "…", "scenariosDigest": "…",
-  "credentialMode": "api-key|oauth-token",
   "runs": [{"runId": "…", "scenario": "…", "projectName": "zcp-farm-<runId>"}]
 }
 ```

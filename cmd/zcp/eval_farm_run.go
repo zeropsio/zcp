@@ -35,7 +35,7 @@ const flagBatch = "--batch"
 // runFarmRun implements `zcp eval farm run` (docs/spec-eval-farm.md §3.3
 // FM-21/FM-22, §3.1 FM-18's --detach).
 func runFarmRun(args []string) int {
-	var candidate, scenariosDigest, set, batch, runBudgetStr, credentialModeFlag string
+	var candidate, scenariosDigest, set, batch, runBudgetStr string
 	detach := false
 	for i := 0; i < len(args); i++ {
 		arg := args[i] //nolint:gosec // G602 false positive: i is loop-bounded by i < len(args) each iteration
@@ -75,13 +75,6 @@ func runFarmRun(args []string) int {
 			}
 			runBudgetStr = args[i+1]
 			i++
-		case "--credential-mode":
-			if i+1 >= len(args) {
-				fmt.Fprintf(os.Stderr, "error: %s requires a value\n", arg)
-				return 1
-			}
-			credentialModeFlag = args[i+1]
-			i++
 		case "--detach":
 			detach = true
 		}
@@ -108,7 +101,7 @@ func runFarmRun(args []string) int {
 		runBudget = d
 	}
 
-	credMode, credValue, err := resolveCredential(credentialModeFlag)
+	oauthToken, err := resolveOAuthToken()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -144,7 +137,7 @@ func runFarmRun(args []string) int {
 	opts := farm.RunOptions{
 		Batch: batch, ClientID: clientID, Set: set,
 		CandidateSHA256: candidate, EvaluatorSHA256: evaluatorSHA, ScenariosDigest: scenariosDigest,
-		Scenarios: scenarios, CredentialMode: credMode, Credential: credValue,
+		Scenarios: scenarios, OAuthToken: oauthToken,
 		Sink:      farm.Sink(cfg), // farm.Config and farm.Sink share the same field names/types/order
 		RunBudget: runBudget,
 	}
@@ -167,35 +160,22 @@ func runFarmRun(args []string) int {
 	return 0
 }
 
-// resolveCredential picks the one batch credential §2.4 requires: an
-// explicit --credential-mode names which env is authoritative; otherwise
-// exactly one of ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN must be set.
-func resolveCredential(modeFlag string) (farm.CredentialMode, string, error) {
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	oauth := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN")
-	switch modeFlag {
-	case string(farm.CredentialAPIKey):
-		if apiKey == "" {
-			return "", "", fmt.Errorf("--credential-mode api-key requires ANTHROPIC_API_KEY")
-		}
-		return farm.CredentialAPIKey, apiKey, nil
-	case string(farm.CredentialOAuthToken):
-		if oauth == "" {
-			return "", "", fmt.Errorf("--credential-mode oauth-token requires CLAUDE_CODE_OAUTH_TOKEN")
-		}
-		return farm.CredentialOAuthToken, oauth, nil
-	case "":
-		switch {
-		case apiKey != "" && oauth == "":
-			return farm.CredentialAPIKey, apiKey, nil
-		case oauth != "" && apiKey == "":
-			return farm.CredentialOAuthToken, oauth, nil
-		default:
-			return "", "", fmt.Errorf("exactly one of ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN must be set (or pass --credential-mode)")
-		}
-	default:
-		return "", "", fmt.Errorf("unknown --credential-mode %q", modeFlag)
+// resolveOAuthToken reads the run's sole model-request credential. The
+// agent credential is CLAUDE_CODE_OAUTH_TOKEN only — no api-key mode, no
+// fallback (§2.4/FM-16, spec commit 79ced2cc). ANTHROPIC_API_KEY being set
+// in this process's own environment is refused outright: Claude Code lets
+// an API key shadow an OAuth profile, so its mere presence here would make
+// the run's actual credential ambiguous even though ZCP itself never reads
+// its value.
+func resolveOAuthToken() (string, error) {
+	if os.Getenv("ANTHROPIC_API_KEY") != "" {
+		return "", fmt.Errorf("ANTHROPIC_API_KEY must not be set in the farm host's environment — the agent credential is CLAUDE_CODE_OAUTH_TOKEN only (§2.4/FM-16)")
 	}
+	oauth := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN")
+	if oauth == "" {
+		return "", fmt.Errorf("CLAUDE_CODE_OAUTH_TOKEN is required (the agent credential is OAuth-only, §2.4/FM-16)")
+	}
+	return oauth, nil
 }
 
 // resolveScenarios expands --set (gate|all|<id,id,...>) to the

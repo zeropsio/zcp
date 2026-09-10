@@ -23,7 +23,6 @@ func TestBatchManifest_JSONShape_MatchesFM9(t *testing.T) {
 		CandidateSha256: "cand-sha",
 		EvaluatorSha256: "eval-sha",
 		ScenariosDigest: "scen-digest",
-		CredentialMode:  "api-key",
 		Runs: []ManifestRun{
 			{RunID: "run-1", Scenario: "recipe-first-deploy", ProjectName: "zcp-farm-run-1"},
 		},
@@ -39,12 +38,18 @@ func TestBatchManifest_JSONShape_MatchesFM9(t *testing.T) {
 
 	wantKeys := []string{
 		"batch", "createdAt", "startedAt", "set", "candidateSha256",
-		"evaluatorSha256", "scenariosDigest", "credentialMode", "runs",
+		"evaluatorSha256", "scenariosDigest", "runs",
 	}
 	for _, k := range wantKeys {
 		if _, ok := got[k]; !ok {
 			t.Errorf("manifest JSON missing key %q, got: %s", k, body)
 		}
+	}
+	// §2.4/FM-16 (spec commit 79ced2cc): the agent credential is
+	// CLAUDE_CODE_OAUTH_TOKEN only, decided per run project, never per
+	// batch — manifest.json carries no credentialMode field at all.
+	if _, ok := got["credentialMode"]; ok {
+		t.Errorf("manifest JSON must not carry credentialMode, got: %s", body)
 	}
 	runs, ok := got["runs"].([]any)
 	if !ok || len(runs) != 1 {

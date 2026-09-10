@@ -21,7 +21,6 @@ type BatchManifest struct {
 	CandidateSha256 string        `json:"candidateSha256"`
 	EvaluatorSha256 string        `json:"evaluatorSha256"`
 	ScenariosDigest string        `json:"scenariosDigest"`
-	CredentialMode  string        `json:"credentialMode"` // "api-key" | "oauth-token"
 	Runs            []ManifestRun `json:"runs"`
 }
 

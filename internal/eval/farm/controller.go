@@ -145,10 +145,12 @@ type RunOptions struct {
 	EvaluatorSHA256 string
 	ScenariosDigest string
 	Scenarios       []ScenarioRun
-	CredentialMode  CredentialMode
-	Credential      string
-	Sink            Sink
-	RunBudget       time.Duration
+	// OAuthToken is the run's sole model-request credential
+	// (CLAUDE_CODE_OAUTH_TOKEN) — the agent credential is OAuth-only, no
+	// api-key mode and no fallback (§2.4/FM-16, spec commit 79ced2cc).
+	OAuthToken string
+	Sink       Sink
+	RunBudget  time.Duration
 	// PollInterval is how often RunBatch re-checks the bucket for
 	// done.json while waiting; zero defaults to 2s.
 	PollInterval time.Duration
@@ -206,7 +208,6 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 		CandidateSha256: opts.CandidateSHA256,
 		EvaluatorSha256: opts.EvaluatorSHA256,
 		ScenariosDigest: opts.ScenariosDigest,
-		CredentialMode:  string(opts.CredentialMode),
 		Runs:            manifestRuns,
 	}
 	if err := PutManifest(ctx, sink, opts.Batch, manifest); err != nil {
@@ -240,7 +241,7 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 			CandidateSHA256: opts.CandidateSHA256,
 			ScenariosDigest: opts.ScenariosDigest,
 			Sink:            opts.Sink,
-			Credentials:     []Credential{{Mode: opts.CredentialMode, Value: opts.Credential}},
+			OAuthToken:      opts.OAuthToken,
 			LaunchKey:       launchKeyValue,
 		}
 		yamlBody, err := ImportYAML(desc)

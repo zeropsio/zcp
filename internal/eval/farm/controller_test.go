@@ -356,7 +356,7 @@ func TestFarmRun_CreatesPrefixedProjects_AndWritesManifest(t *testing.T) {
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
 		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", ScenariosDigest: "scen-sha",
-		Scenarios: scenarios, CredentialMode: CredentialAPIKey, Credential: "sk-ant-farm",
+		Scenarios: scenarios, OAuthToken: "oauth-farm-token",
 		Sink:         Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		RunBudget:    time.Second,
 		PollInterval: time.Millisecond,
@@ -383,7 +383,7 @@ func TestFarmRun_CreatesPrefixedProjects_AndWritesManifest(t *testing.T) {
 		t.Fatalf("GetManifest: %v", err)
 	}
 	if manifest.Batch != batch || manifest.Set != "gate" || manifest.CandidateSha256 != "cand-sha" ||
-		manifest.EvaluatorSha256 != "eval-sha" || manifest.ScenariosDigest != "scen-sha" || manifest.CredentialMode != string(CredentialAPIKey) {
+		manifest.EvaluatorSha256 != "eval-sha" || manifest.ScenariosDigest != "scen-sha" {
 		t.Errorf("manifest = %+v, want fields matching RunOptions", manifest)
 	}
 	if len(manifest.Runs) != 2 {
@@ -442,7 +442,7 @@ func TestFarmRun_DoneJSON_PartsVerified_ElseBlocked(t *testing.T) {
 		opts := RunOptions{
 			Batch: batch, ClientID: clientID, Set: "gate",
 			CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
-			Scenarios: []ScenarioRun{sc}, CredentialMode: CredentialAPIKey, Credential: "sk-ant",
+			Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 			Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 			RunBudget: time.Second, PollInterval: time.Millisecond,
 		}
@@ -483,7 +483,7 @@ func TestFarmRun_DoneJSON_PartsVerified_ElseBlocked(t *testing.T) {
 		opts := RunOptions{
 			Batch: batch, ClientID: clientID + "-b", Set: "gate",
 			CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
-			Scenarios: []ScenarioRun{sc}, CredentialMode: CredentialAPIKey, Credential: "sk-ant",
+			Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 			Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 			RunBudget: time.Second, PollInterval: time.Millisecond,
 		}
@@ -535,7 +535,7 @@ func TestFarmRun_NoDoneJSON_BudgetElapsed_ProjectKept(t *testing.T) {
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
 		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
-		Scenarios: []ScenarioRun{sc}, CredentialMode: CredentialAPIKey, Credential: "sk-ant",
+		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		RunBudget: time.Second, PollInterval: 100 * time.Millisecond,
 	}
@@ -580,7 +580,7 @@ func TestFarmRun_LaunchScenario_MintsThenRevokesToken(t *testing.T) {
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
 		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
-		Scenarios: []ScenarioRun{sc}, CredentialMode: CredentialAPIKey, Credential: "sk-ant",
+		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		RunBudget: time.Second, PollInterval: time.Millisecond,
 	}
@@ -681,7 +681,7 @@ func TestFarmRun_NeverRerunsAFailedRun(t *testing.T) {
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
 		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
-		Scenarios: []ScenarioRun{sc}, CredentialMode: CredentialAPIKey, Credential: "sk-ant",
+		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		RunBudget: time.Second, PollInterval: time.Millisecond,
 	}
