@@ -70,9 +70,12 @@ func runEvalFarm(args []string) int {
 		return runFarmCoverage(args[1:])
 	case farmVerbReport:
 		return runFarmReport(args[1:])
-	case farmVerbRun, farmVerbStatus, farmVerbGC:
-		fmt.Fprintf(os.Stderr, "zcp eval farm %s: not implemented\n", args[0])
-		return 1
+	case farmVerbRun:
+		return runFarmRun(args[1:])
+	case farmVerbStatus:
+		return runFarmStatus(args[1:])
+	case farmVerbGC:
+		return runFarmGC(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown farm subcommand: %s\n", args[0])
 		printEvalFarmUsage()
@@ -352,9 +355,10 @@ Commands (ZCP_AUTHORING=1 required):
   push     --candidate <file> | --evaluator <file> | --scenarios <dir> | --wrapper <file>
                                                Upload one part to the farm bucket, print its digest
   pull     <runId>|--batch <batch> --out <dir> Download a run's (or a batch's) bundle
-  run      (not implemented yet)
-  status   (not implemented yet)
+  run      --candidate <sha256> --scenarios <digest> --set gate|all|<ids> [--batch <id>] [--run-budget 45m] [--detach]
+                                               Create zcp-farm-<runId> projects, watch the bucket, delete after done.json
+  status   [<batch>]                           Recompute batch/run state from the bucket and the project list
   report   [--evaluator-sha256 <sha>] <dir>    Report over a pulled batch or run dir (no network)
   coverage <dir> [--since <batch>]           Derive (scenario, step, decision) coverage cells from pulled bundles
-  gc       (not implemented yet)`)
+  gc       [--older-than <duration>] [--yes]   Delete zcp-farm-* projects no running batch references`)
 }

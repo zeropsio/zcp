@@ -34,30 +34,10 @@ func TestEvalFarm_WithoutAuthoringGate_RefusesEveryVerb(t *testing.T) {
 }
 
 // TestEvalFarm_UnimplementedVerbs_ExitNonzeroNotImplemented pins that
-// run/status/report/coverage/gc are recognized verbs whose slices land
-// later (S2 write-set excludes them): with the gate open they exit nonzero
-// naming "not implemented" on stderr, never silently succeed and never
-// report "unknown subcommand".
-func TestEvalFarm_UnimplementedVerbs_ExitNonzeroNotImplemented(t *testing.T) {
-	t.Setenv("ZCP_AUTHORING", "1")
-
-	verbs := []string{"run", "status", "gc"}
-	for _, verb := range verbs {
-		t.Run(verb, func(t *testing.T) {
-			var code int
-			_, stderr := captureOutput(t, func() {
-				code = runEvalFarm([]string{verb})
-			})
-			if code == 0 {
-				t.Fatalf("runEvalFarm([%q]) = 0, want nonzero", verb)
-			}
-			if !strings.Contains(stderr, "not implemented") {
-				t.Errorf("stderr = %q, want it to contain %q", stderr, "not implemented")
-			}
-		})
-	}
-}
-
+// report is a recognized verb whose slice lands later (S4 implements
+// run/status/gc; report remains for a later slice): with the gate open it
+// exits nonzero naming "not implemented" on stderr, never silently succeeds
+// and never reports "unknown subcommand".
 // fakeFarmS3 is a minimal in-memory path-style S3 double for the push/pull
 // tool-layer tests: PUT stores, GET reads, and a list-type=2 GET on the
 // bucket root answers every stored key (no pagination — the push/pull

@@ -102,7 +102,7 @@ func TestSinkClient_PathStyleURL_NeverVirtualHost(t *testing.T) {
 func TestSinkClient_PutGetList_RoundTripAgainstFake(t *testing.T) {
 	t.Parallel()
 
-	fake := newFakeS3("zcp-farm")
+	fake := newFakeS3()
 	server := httptest.NewServer(fake.handler(t))
 	defer server.Close()
 

@@ -13,29 +13,6 @@ import (
 	"text/template"
 )
 
-// CredentialMode names which single model-request credential kind a run
-// descriptor carries (docs/spec-eval-farm.md §2.4, FM-16).
-type CredentialMode string
-
-const (
-	// CredentialAPIKey emits ANTHROPIC_API_KEY (the default, spend-limited
-	// farm key).
-	CredentialAPIKey CredentialMode = "api-key"
-	// CredentialOAuthToken emits CLAUDE_CODE_OAUTH_TOKEN (single-interactive-
-	// run option).
-	CredentialOAuthToken CredentialMode = "oauth-token"
-)
-
-// Credential is one model-request credential the run's Claude Code process
-// authenticates with. A RunDescriptor carries a slice of these so that
-// "both" (len==2) and "neither" (len==0) are both representable and
-// rejected by ImportYAML — Claude Code lets an API key shadow an OAuth
-// profile, so carrying both makes the credential mode ambiguous (§2.4).
-type Credential struct {
-	Mode  CredentialMode
-	Value string
-}
-
 // Sink carries the bucket coordinates the run's wrapper reads to download
 // the evaluator/candidate/scenario tree and upload its bundle (§1.1, §2.2).
 type Sink struct {
@@ -55,8 +32,16 @@ type RunDescriptor struct {
 	ScenarioID      string
 	EvaluatorSHA256 string
 	CandidateSHA256 string
+	// ScenariosDigest is the scenario tree digest the wrapper downloads
+	// (scenarios/<digest>/, §1.1, FM-1), emitted as ZCP_FARM_SCENARIOS_DIGEST
+	// (FM-12's sixth row).
+	ScenariosDigest string
 	Sink            Sink
-	Credentials     []Credential
+	// OAuthToken is the run's sole model-request credential
+	// (CLAUDE_CODE_OAUTH_TOKEN) — the agent credential is OAuth-only, no
+	// api-key mode and no fallback (§2.4/FM-16, spec commit 79ced2cc);
+	// required.
+	OAuthToken string
 	// LaunchKey, when non-empty, is the per-run ZCP_E2E_LAUNCH_KEY minted by
 	// the controller for launch scenarios only (§2.4).
 	LaunchKey string
@@ -70,32 +55,12 @@ func (d RunDescriptor) ProjectName() string { return "zcp-farm-" + d.RunID }
 // "zcp-farm-<runId>" cannot be the service hostname (verified live).
 const serviceHostname = "zcp"
 
-func (d RunDescriptor) credential() (Credential, error) {
-	switch len(d.Credentials) {
-	case 1:
-		c := d.Credentials[0]
-		switch c.Mode {
-		case CredentialAPIKey, CredentialOAuthToken:
-		default:
-			return Credential{}, fmt.Errorf("run descriptor: unknown credential mode %q", c.Mode)
-		}
-		if c.Value == "" {
-			return Credential{}, fmt.Errorf("run descriptor: credential mode %q has empty value", c.Mode)
-		}
-		return c, nil
-	case 0:
-		return Credential{}, fmt.Errorf("run descriptor: no credential given — exactly one of api-key or oauth-token is required")
-	default:
-		return Credential{}, fmt.Errorf("run descriptor: %d credentials given — exactly one of api-key or oauth-token is required, never both in one project (§2.4)", len(d.Credentials))
-	}
-}
-
 func (d RunDescriptor) validate() error {
 	if d.RunID == "" {
 		return fmt.Errorf("run descriptor: RunID required")
 	}
-	if _, err := d.credential(); err != nil {
-		return err
+	if d.OAuthToken == "" {
+		return fmt.Errorf("run descriptor: OAuthToken required (§2.4 — CLAUDE_CODE_OAUTH_TOKEN is the run's sole credential)")
 	}
 	return nil
 }
@@ -141,10 +106,6 @@ func ImportYAML(d RunDescriptor) ([]byte, error) {
 	if err := d.validate(); err != nil {
 		return nil, err
 	}
-	cred, err := d.credential()
-	if err != nil {
-		return nil, err
-	}
 
 	envSecrets := []envKV{
 		{"ZCP_VSCODE", "true"},
@@ -153,16 +114,12 @@ func ImportYAML(d RunDescriptor) ([]byte, error) {
 		{"ZCP_FARM_SCENARIO", d.ScenarioID},
 		{"ZCP_FARM_EVALUATOR_SHA", d.EvaluatorSHA256},
 		{"ZCP_FARM_CANDIDATE_SHA", d.CandidateSHA256},
+		{"ZCP_FARM_SCENARIOS_DIGEST", d.ScenariosDigest},
 		{"ZCP_FARM_S3_URL", d.Sink.URL},
 		{"ZCP_FARM_S3_BUCKET", d.Sink.Bucket},
 		{"ZCP_FARM_S3_KEY", d.Sink.Key},
 		{"ZCP_FARM_S3_SECRET", d.Sink.Secret},
-	}
-	switch cred.Mode {
-	case CredentialAPIKey:
-		envSecrets = append(envSecrets, envKV{"ANTHROPIC_API_KEY", cred.Value})
-	case CredentialOAuthToken:
-		envSecrets = append(envSecrets, envKV{"CLAUDE_CODE_OAUTH_TOKEN", cred.Value})
+		{"CLAUDE_CODE_OAUTH_TOKEN", d.OAuthToken},
 	}
 	if d.LaunchKey != "" {
 		envSecrets = append(envSecrets, envKV{"ZCP_E2E_LAUNCH_KEY", d.LaunchKey})

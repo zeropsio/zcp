@@ -8,41 +8,35 @@ import (
 	"github.com/zeropsio/zcp/internal/schema"
 )
 
-func apiKeyDescriptor() RunDescriptor {
+func oauthDescriptor() RunDescriptor {
 	return RunDescriptor{
 		BatchID:         "batch-2026-09-10",
-		RunID:           "run-abc123",
+		RunID:           "run-oauth456",
 		ScenarioID:      "recipe-first-deploy",
 		EvaluatorSHA256: "eval-sha-aaaa",
 		CandidateSHA256: "cand-sha-bbbb",
+		ScenariosDigest: "scenarios-sha-ffff",
 		Sink: Sink{
 			URL:    "https://s3.prg1.zerops.app",
 			Bucket: "zcp-farm",
 			Key:    "sink-key-cccc",
 			Secret: "sink-secret-dddd",
 		},
-		Credentials: []Credential{{Mode: CredentialAPIKey, Value: "sk-ant-farm-key"}},
+		OAuthToken: "oauth-token-value",
 	}
 }
 
-func oauthDescriptor() RunDescriptor {
-	d := apiKeyDescriptor()
-	d.RunID = "run-oauth456"
-	d.Credentials = []Credential{{Mode: CredentialOAuthToken, Value: "oauth-token-value"}}
-	return d
-}
-
 func launchDescriptor() RunDescriptor {
-	d := apiKeyDescriptor()
+	d := oauthDescriptor()
 	d.RunID = "run-launch789"
 	d.LaunchKey = "launch-key-eeee"
 	return d
 }
 
 // TestImportYAML_Descriptor_MatchesGolden pins the byte-stable render for
-// each credential/launch variant against a hand-written golden (never
-// dumped from the generator's own first run — spec-eval-farm.md §2.1's
-// verified shape, FM-12's env names).
+// each launch variant against a hand-written golden (never dumped from the
+// generator's own first run — spec-eval-farm.md §2.1's verified shape,
+// FM-12's env names).
 func TestImportYAML_Descriptor_MatchesGolden(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -50,7 +44,6 @@ func TestImportYAML_Descriptor_MatchesGolden(t *testing.T) {
 		desc   RunDescriptor
 		golden string
 	}{
-		{"api-key", apiKeyDescriptor(), "testdata/project_yaml/api_key.golden.yaml"},
 		{"oauth-token", oauthDescriptor(), "testdata/project_yaml/oauth_token.golden.yaml"},
 		{"launch-key", launchDescriptor(), "testdata/project_yaml/launch_key.golden.yaml"},
 	}
@@ -72,30 +65,17 @@ func TestImportYAML_Descriptor_MatchesGolden(t *testing.T) {
 	}
 }
 
-// TestImportYAML_BothOrNoCredential_Rejected pins §2.4 "never both in one
-// project": exactly one credential kind is required.
-func TestImportYAML_BothOrNoCredential_Rejected(t *testing.T) {
+// TestImportYAML_MissingOAuthToken_Rejected pins §2.4/FM-16 (spec commit
+// 79ced2cc): the agent credential is CLAUDE_CODE_OAUTH_TOKEN only — there is
+// no api-key mode and no fallback — so an empty OAuthToken is the one
+// failure mode ImportYAML rejects.
+func TestImportYAML_MissingOAuthToken_Rejected(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name        string
-		credentials []Credential
-	}{
-		{"neither", nil},
-		{"both", []Credential{
-			{Mode: CredentialAPIKey, Value: "sk-ant-x"},
-			{Mode: CredentialOAuthToken, Value: "oauth-y"},
-		}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			d := apiKeyDescriptor()
-			d.Credentials = tc.credentials
-			_, err := ImportYAML(d)
-			if err == nil {
-				t.Fatalf("ImportYAML with %s credentials: want error, got nil", tc.name)
-			}
-		})
+	d := oauthDescriptor()
+	d.OAuthToken = ""
+	_, err := ImportYAML(d)
+	if err == nil {
+		t.Fatal("ImportYAML with empty OAuthToken: want error, got nil")
 	}
 }
 
@@ -106,7 +86,7 @@ func TestImportYAML_BothOrNoCredential_Rejected(t *testing.T) {
 // hostname).
 func TestImportYAML_NeverCarriesAccountKey_AndHostnameHasNoHyphen(t *testing.T) {
 	t.Parallel()
-	d := apiKeyDescriptor()
+	d := oauthDescriptor()
 	got, err := ImportYAML(d)
 	if err != nil {
 		t.Fatalf("ImportYAML: %v", err)
@@ -132,6 +112,25 @@ func TestImportYAML_NeverCarriesAccountKey_AndHostnameHasNoHyphen(t *testing.T) 
 	}
 }
 
+// TestImportYAML_ScenariosDigest_EmittedAsEnv pins the sixth FM-12 row
+// (docs/spec-eval-farm.md §2.2, ZCP_FARM_SCENARIOS_DIGEST) — the wrapper
+// reads this env to locate scenarios/<digest>/ in the bucket (§1.1).
+// Independent oracle: the env name is copied verbatim from the spec's FM-12
+// table, not derived from this package's own output.
+func TestImportYAML_ScenariosDigest_EmittedAsEnv(t *testing.T) {
+	t.Parallel()
+	d := oauthDescriptor()
+	got, err := ImportYAML(d)
+	if err != nil {
+		t.Fatalf("ImportYAML: %v", err)
+	}
+	out := string(got)
+	const want = `ZCP_FARM_SCENARIOS_DIGEST: "scenarios-sha-ffff"`
+	if !strings.Contains(out, want) {
+		t.Errorf("ImportYAML output missing %q, got:\n%s", want, out)
+	}
+}
+
 // TestImportYAML_ValidatesAgainstImportSchema validates the generated YAML
 // against the embedded import-yml JSON Schema (internal/schema), reachable
 // offline.
@@ -141,7 +140,6 @@ func TestImportYAML_ValidatesAgainstImportSchema(t *testing.T) {
 		name string
 		desc RunDescriptor
 	}{
-		{"api-key", apiKeyDescriptor()},
 		{"oauth-token", oauthDescriptor()},
 		{"launch-key", launchDescriptor()},
 	} {

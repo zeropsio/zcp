@@ -149,7 +149,7 @@ type wrapperHarness struct {
 func newWrapperHarness(t *testing.T) *wrapperHarness {
 	t.Helper()
 
-	fake := newFakeS3("zcp-farm")
+	fake := newFakeS3()
 	server := httptest.NewServer(fake.handler(t))
 	t.Cleanup(server.Close)
 

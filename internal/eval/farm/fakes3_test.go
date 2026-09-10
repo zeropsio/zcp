@@ -22,8 +22,11 @@ type fakeS3 struct {
 	putOrder []string
 }
 
-func newFakeS3(bucket string) *fakeS3 {
-	return &fakeS3{bucket: bucket, objects: map[string][]byte{}}
+// fakeS3Bucket is the one bucket every farm test talks to.
+const fakeS3Bucket = "zcp-farm"
+
+func newFakeS3() *fakeS3 {
+	return &fakeS3{bucket: fakeS3Bucket, objects: map[string][]byte{}}
 }
 
 // get reads one stored object (wrapper_test.go: inspecting an uploaded

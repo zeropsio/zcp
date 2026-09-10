@@ -14,11 +14,12 @@ services:
       ZCP_FARM_SCENARIO: "recipe-first-deploy"
       ZCP_FARM_EVALUATOR_SHA: "eval-sha-aaaa"
       ZCP_FARM_CANDIDATE_SHA: "cand-sha-bbbb"
+      ZCP_FARM_SCENARIOS_DIGEST: "scenarios-sha-ffff"
       ZCP_FARM_S3_URL: "https://s3.prg1.zerops.app"
       ZCP_FARM_S3_BUCKET: "zcp-farm"
       ZCP_FARM_S3_KEY: "sink-key-cccc"
       ZCP_FARM_S3_SECRET: "sink-secret-dddd"
-      ANTHROPIC_API_KEY: "sk-ant-farm-key"
+      CLAUDE_CODE_OAUTH_TOKEN: "oauth-token-value"
       ZCP_E2E_LAUNCH_KEY: "launch-key-eeee"
     zeropsYaml:
       zerops:
