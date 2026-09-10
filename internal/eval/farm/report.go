@@ -92,17 +92,18 @@ func ReportRun(runDir, evaluatorPin string) RunOutcome {
 		}
 	}
 
-	// D9: a bundle whose done.json already names an abnormal execution (the
-	// child was signal-killed mid-run) is graded from done.json alone,
-	// never by attempting to build the single-run report — a kill-mid-run
-	// bundle has no capture/eval/<runId>/<scenarioId> directory yet
-	// (the evaluator never got to write one), so discoverEvalScope always
-	// fails on it; treating that failure as "blocked" (as the generic path
-	// below does) would misreport an execution that is known to have
-	// failed as merely "evidence in question." §5.1 vocabulary: blocked
-	// stays reserved for missing parts / digest mismatch / foreign
+	// D9/S16: a bundle whose done.json already names an abnormal execution
+	// (a signal-kill mid-run, an execution-binding preflight failure, or
+	// any other "error:"-prefixed execution) is graded from done.json
+	// alone, never by attempting to build the single-run report — a bundle
+	// that died before the evaluator opened a capture window has no
+	// capture/eval/<runId>/<scenarioId> directory yet, so discoverEvalScope
+	// always fails on it; treating that failure as "blocked" (as the
+	// generic path below does) would misreport an execution that is known
+	// to have failed as merely "evidence in question." §5.1 vocabulary:
+	// blocked stays reserved for missing parts / digest mismatch / foreign
 	// evaluator.
-	if execution, ok := done.RunnerDimensions["execution"]; ok && strings.HasPrefix(execution, "error: killed by signal") {
+	if execution, ok := done.RunnerDimensions["execution"]; ok && strings.HasPrefix(execution, "error:") {
 		return RunOutcome{
 			RunID: done.RunID, ScenarioID: done.ScenarioID, Verdict: VerdictFailed, Done: &done,
 			Reason: fmt.Sprintf("failed: execution %q (docs/spec-eval-farm.md §2.3 FM-13)", execution),
