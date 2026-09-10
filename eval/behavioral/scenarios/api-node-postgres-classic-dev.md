@@ -46,7 +46,7 @@ verification:
       type: postgresql@*
   noFailedProcesses: true
   liveness: {service: api, marker: "api-ready"}
-  nodePostgresRecord: {stage: api, database: db}
+  nodePostgresRecord: {stage: api, database: db, environment: dev}
   never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
   Jsi backend dev, chceš si rychle rozjet Node.js REST API s

@@ -135,6 +135,7 @@ type NodePostgresVerifier struct {
 type NodePostgresInput struct {
 	ProjectID                   string
 	Stage, Database, Unrelated  string
+	Environment                 string
 	BaselineUnrelatedAppVersion string
 	ExpectStageID               string
 	ExpectDatabaseID            string
@@ -350,9 +351,20 @@ func (v *jsonScalarString) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// expectedEnvironmentLiteral is the fixed string a well-formed stage
-// deployment persists as `environment` (§10.3 row table).
-const expectedEnvironmentLiteral = "stage"
+// defaultEnvironmentLiteral is the fixed string a well-formed stage
+// deployment persists as `environment` (§10.3 row table) when the scenario
+// doesn't configure NodePostgresRecordConfig.Environment — every scenario
+// written before dev-only topologies needed a different literal.
+const defaultEnvironmentLiteral = "stage"
+
+// resolvedEnvironmentLiteral returns in.Environment, defaulting to
+// defaultEnvironmentLiteral when the scenario left it unset.
+func resolvedEnvironmentLiteral(in NodePostgresInput) string {
+	if in.Environment == "" {
+		return defaultEnvironmentLiteral
+	}
+	return in.Environment
+}
 
 // doHTTP performs POST /records then GET /records/<id> against baseURL,
 // refusing redirects and never following a server-supplied absolute URL
@@ -437,10 +449,11 @@ func (v NodePostgresVerifier) doHTTP(ctx context.Context, baseURL string, in Nod
 		roundtripRow.Message = "POST/GET roundtrip did not match the verifier's own nonce/value/id"
 	}
 
-	envPass := getBody.Environment == expectedEnvironmentLiteral
+	wantEnvironment := resolvedEnvironmentLiteral(in)
+	envPass := getBody.Environment == wantEnvironment
 	envRow = RequiredCheck{
 		ID: envID, Check: checkNodePostgresRecord, Scope: in.Stage,
-		Expected: expectedEnvironmentLiteral, Observed: getBody.Environment,
+		Expected: wantEnvironment, Observed: getBody.Environment,
 		ObservedAt: now, Source: "HTTP GET " + getURL,
 	}
 	if envPass {

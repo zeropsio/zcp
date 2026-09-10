@@ -199,11 +199,16 @@ type LivenessProbe struct {
 // two-service api+db pair) omits it, and the verifier then emits three
 // sub-rows (roundtrip, environment, db_row) instead of four; the standalone
 // verification.unchanged field (FM-29) is the replacement "unrelated
-// unchanged" check when it's needed.
+// unchanged" check when it's needed. Environment is the literal the
+// environment sub-row expects the GET body's `environment` field to equal;
+// it defaults to "stage" when empty (NodePostgresVerifier.Verify), matching
+// every scenario written before dev-only topologies needed a different
+// literal.
 type NodePostgresRecordConfig struct {
-	Stage     string `yaml:"stage"`
-	Database  string `yaml:"database"`
-	Unrelated string `yaml:"unrelated"`
+	Stage       string `yaml:"stage"`
+	Database    string `yaml:"database"`
+	Unrelated   string `yaml:"unrelated"`
+	Environment string `yaml:"environment"`
 }
 
 // VerificationObserve and VerificationRequired are the two

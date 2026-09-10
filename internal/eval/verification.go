@@ -329,7 +329,7 @@ func evaluateNodePostgresRecordCheck(
 	settled bool,
 	baseline *ScenarioBaseline,
 ) []RequiredCheck {
-	in := NodePostgresInput{ProjectID: projectID, Stage: cfg.Stage, Database: cfg.Database, Unrelated: cfg.Unrelated}
+	in := NodePostgresInput{ProjectID: projectID, Stage: cfg.Stage, Database: cfg.Database, Unrelated: cfg.Unrelated, Environment: cfg.Environment}
 	if baseline != nil {
 		in.BaselineUnrelatedAppVersion = baseline.AppVersions[cfg.Unrelated]
 	}
