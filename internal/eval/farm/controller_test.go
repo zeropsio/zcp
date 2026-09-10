@@ -77,6 +77,13 @@ type fakeAccount struct {
 	// scheduled run without aborting the whole batch
 	// (TestFarmRun_CreateFails_PrintsErrorAndSummaryRecordsBlocked, D10).
 	failImportProjectName string
+
+	// failedCreationProcessProjectName, when non-empty, makes
+	// GET /project/{id}/process for exactly this project name answer a
+	// FAILED stack.create process — simulates D19's live 2026-09-10
+	// project.create -> internalServerError incident
+	// (TestFarmRun_FailedCreationProcess_SettlesBlockedBeforeBudget).
+	failedCreationProcessProjectName string
 }
 
 type fakeProject struct{ id, name string }
@@ -234,6 +241,23 @@ func (f *fakeAccount) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		fmt.Fprintf(w, `{"projectId":%q,"projectName":%q,"serviceStacks":[{"id":"svc-1","name":"zcp"}]}`, p.id, p.name)
+		return
+
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/rest/public/project/") && strings.HasSuffix(r.URL.Path, "/process"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/rest/public/project/"), "/process")
+		f.mu.Lock()
+		p, ok := f.projects[id]
+		failName := f.failedCreationProcessProjectName
+		f.mu.Unlock()
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if failName != "" && p.name == failName {
+			fmt.Fprint(w, `{"list":[{"id":"proc-create-fail","actionName":"stack.create","status":"FAILED","publicMeta":{"failReason":"internalServerError"}}],"totalCount":1}`)
+			return
+		}
+		fmt.Fprint(w, `{"list":[],"totalCount":0}`)
 		return
 
 	case strings.HasPrefix(r.URL.Path, "/api/rest/public/project/"):
@@ -405,6 +429,11 @@ func (p panicClient) MintDelegatedLaunchToken(context.Context, string) (platform
 func (p panicClient) RevokeIntegrationToken(context.Context, string, string) error {
 	p.t.Fatal("unexpected RevokeIntegrationToken call")
 	return errUnexpectedPlatformCall
+}
+
+func (p panicClient) GetProjectProcessesDirect(context.Context, string) ([]platform.Process, error) {
+	p.t.Fatal("unexpected GetProjectProcessesDirect call")
+	return nil, errUnexpectedPlatformCall
 }
 
 // TestFarmRun_CreatesPrefixedProjects_AndWritesManifest pins §3.3
@@ -1140,4 +1169,63 @@ func TestFarmRun_ResultMetaMissingOrAmbiguous_Blocked(t *testing.T) {
 			t.Errorf("Detail = %q, want it to mention 2 meta.json keys found", results[0].Detail)
 		}
 	})
+}
+
+// TestFarmRun_FailedCreationProcess_SettlesBlockedBeforeBudget pins D19: a
+// FAILED creation-phase process (stack.create/stack.import) on the run's
+// project ends waitForDone immediately, well inside the run budget, instead
+// of burning the whole budget waiting for a done.json a dead project will
+// never produce — the dead project is still deleted (settled=true, §3.3
+// FM-21) exactly as any other settled run's.
+func TestFarmRun_FailedCreationProcess_SettlesBlockedBeforeBudget(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-19"
+	f := newControllerFixture(t, clientID)
+	account, client, sink := f.account, f.client, f.sink
+
+	batch := "batch-19"
+	sc := ScenarioRun{ID: "recipe-dead-project"}
+	runID := batch + "-" + sc.ID
+	// No seedSettledRun call: this run's project never writes done.json.
+
+	account.mu.Lock()
+	account.failedCreationProcessProjectName = ProjectPrefix + runID
+	account.mu.Unlock()
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+		Sink: Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		// A generous budget that would time this test out if D19 didn't
+		// short-circuit it — waitForDone must settle within a few poll
+		// intervals instead.
+		RunBudget: time.Minute, PollInterval: 20 * time.Millisecond,
+	}
+
+	start := time.Now()
+	results, err := RunBatch(context.Background(), client, sink, opts)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("RunBatch took %s, want it to settle within a few poll intervals (D19), not the full run budget", elapsed)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %+v, want one entry", results)
+	}
+	wantDetail := "platform: stack.create FAILED: internalServerError"
+	if results[0].Result != ResultBlocked || results[0].Detail != wantDetail {
+		t.Fatalf("results[0] = %+v, want Result=%q Detail=%q", results[0], ResultBlocked, wantDetail)
+	}
+	if results[0].ProjectID != "" {
+		t.Errorf("results[0].ProjectID = %q, want empty (dead project still deleted per FM-21)", results[0].ProjectID)
+	}
+	account.mu.Lock()
+	stillExists := findProjectByFakeName(account, ProjectPrefix+runID)
+	account.mu.Unlock()
+	if stillExists {
+		t.Errorf("project %s still present after a FAILED creation-phase settle", ProjectPrefix+runID)
+	}
 }
