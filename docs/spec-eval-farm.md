@@ -331,7 +331,12 @@ bucket for each run's `done.json`. It deletes every `zcp-farm-<runId>*`
 project belonging to a run once that run reads `done` (FM-3) or once the
 run's budget elapses — whichever comes first. A run that never wrote
 `done.json` is the sole exemption: its project is **not** deleted by `farm
-run` and stays for inspection (FM-3, FM-25).
+run` and stays for inspection (FM-3, FM-25). While waiting, the controller
+also polls the run project's processes directly (D19): a FAILED
+creation-phase process (`stack.create`, `stack.import`) settles the run
+`blocked` immediately instead of waiting out the full run budget for a
+`done.json` the dead project will never write, and its project is still
+deleted per this rule.
 
 **FM-22.** `farm run` writes `batches/<batch>/manifest.json` before creating
 any project and `batches/<batch>/summary.json` after the last run in the

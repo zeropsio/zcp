@@ -61,6 +61,12 @@ type PlatformClient interface {
 	// import route does.
 	MintProjectScopedToken(ctx context.Context, clientID, projectID, name string) (platform.MintedToken, error)
 	RevokeIntegrationToken(ctx context.Context, clientID, tokenID string) error
+	// GetProjectProcessesDirect reads all of a project's processes via the
+	// DIRECT (non-ES) read (D19) — waitForDone polls it alongside
+	// done.json so a FAILED creation-phase process (stack.create,
+	// stack.import) settles the run blocked instead of burning the whole
+	// run budget waiting for a done.json a dead project will never write.
+	GetProjectProcessesDirect(ctx context.Context, projectID string) ([]platform.Process, error)
 }
 
 // accountClient adapts platform.ProjectAdminClient (CreateAndImportProject/
@@ -103,6 +109,10 @@ func (a *accountClient) MintProjectScopedToken(ctx context.Context, clientID, pr
 
 func (a *accountClient) RevokeIntegrationToken(ctx context.Context, clientID, tokenID string) error {
 	return a.z.RevokeIntegrationToken(ctx, clientID, tokenID)
+}
+
+func (a *accountClient) GetProjectProcessesDirect(ctx context.Context, projectID string) ([]platform.Process, error) {
+	return a.z.GetProjectProcessesDirect(ctx, projectID)
 }
 
 // NewAccountClient constructs the controller's platform client from the
@@ -393,7 +403,7 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 	results = append(results, blocked...)
 	endedByBudget := false
 	for _, a := range actives {
-		result, detail, settled := waitForDone(ctx, sink, a.RunID, opts.RunBudget, now, pollInterval)
+		result, detail, settled := waitForDone(ctx, client, sink, a.RunID, a.ProjectID, opts.RunBudget, now, pollInterval)
 		rr := RunResult{RunID: a.RunID, Scenario: a.ID, ProjectID: a.ProjectID, Result: result, Detail: detail, LaunchTokenID: a.LaunchTokenID}
 
 		if !settled {
@@ -487,13 +497,17 @@ type doneJSON struct {
 	CandidateSha256 string `json:"candidateSha256"`
 }
 
-// resultMeta is the subset of runs/<runId>/results/meta.json this package
-// reads: the aggregated task result docs/spec-testing-architecture.md
-// §10.1/§10.2 already computes and persists (`task {mode, result,
-// frozenAt}`) — the controller never re-derives a verdict from raw evidence
-// itself, it reads the one the single-run report contract already owns.
-// Distinct from coverage.go's own runMeta (which reads only scenarioId) —
-// two different narrow readers of the same results/meta.json file.
+// resultMeta is the subset of a run's meta.json this package reads: the
+// aggregated task result docs/spec-testing-architecture.md §10.1/§10.2
+// already computes and persists (`task {mode, result, frozenAt}`) — the
+// controller never re-derives a verdict from raw evidence itself, it reads
+// the one the single-run report contract already owns. The evaluator does
+// not write this at a fixed runs/<runId>/results/meta.json: the wrapper
+// passes --results-dir $RUNDIR/results and the evaluator nests it as
+// results/<suite>/<scenario>/meta.json (D15), so readResultMeta locates it
+// by listing rather than by a fixed path. Distinct from coverage.go's own
+// runMeta (which reads only scenarioId) — two different narrow readers of
+// the same meta.json file.
 type resultMeta struct {
 	Task struct {
 		Result string `json:"result"`
@@ -501,21 +515,77 @@ type resultMeta struct {
 }
 
 // waitForDone polls the bucket for runs/<runId>/done.json until it appears
-// or budget elapses (§3.3 FM-21). settled reports whether the run produced
-// a bundle at all — false means the budget-elapsed exemption: the caller
-// must not delete the run's project or revoke its token.
-func waitForDone(ctx context.Context, sink *SinkClient, runID string, budget time.Duration, now func() time.Time, pollInterval time.Duration) (result, detail string, settled bool) {
+// or budget elapses (§3.3 FM-21), and — D19 — also polls the run's project
+// for a FAILED creation-phase process on every iteration: a platform-side
+// project.create incident (live 2026-09-10: stack.create FAILED, stack.build
+// CANCELED, GET /project/{id} -> 500) leaves a dead project that will never
+// write done.json, so waiting out the full budget for one is pure waste.
+// settled reports whether the run produced a verdict at all — false means
+// the budget-elapsed exemption: the caller must not delete the run's
+// project or revoke its token. A FAILED creation-phase process always
+// returns settled=true (§3.3 FM-21: the dead project is still deleted); a
+// transient error reading processes is never itself a verdict — polling
+// continues.
+func waitForDone(ctx context.Context, client PlatformClient, sink *SinkClient, runID, projectID string, budget time.Duration, now func() time.Time, pollInterval time.Duration) (result, detail string, settled bool) {
 	deadline := now().Add(budget)
 	for {
 		body, err := sink.Get(ctx, "runs/"+runID+"/done.json")
 		if err == nil {
 			return settleFromDone(ctx, sink, runID, body)
 		}
+		if actionName, failReason, found := creationPhaseFailure(ctx, client, projectID); found {
+			return ResultBlocked, fmt.Sprintf("platform: %s FAILED: %s", actionName, failReason), true
+		}
 		if now().After(deadline) {
 			return ResultBlocked, DetailNoBundle, false
 		}
 		time.Sleep(pollInterval)
 	}
+}
+
+// creationPhaseActionPrefixes names the platform actionName values whose
+// FAILED status means the run's project itself is unusable (D19) — derived
+// from internal/ops/events.go's actionNameMap, the only place in this
+// codebase these literals are pinned against a live-verified API response
+// ("API returns stack.* format (verified 2026-03-23 against live Zerops
+// API)"). "project.create" itself never appears as a literal anywhere in
+// this codebase; the live 2026-09-10 incident this slice fixes for
+// (POST /client/{id}/project/import -> internalServerError) surfaced as a
+// FAILED stack.create process, which this prefix already covers.
+var creationPhaseActionPrefixes = []string{"stack.create", "stack.import"}
+
+// isCreationPhaseAction reports whether actionName is one of
+// creationPhaseActionPrefixes.
+func isCreationPhaseAction(actionName string) bool {
+	for _, prefix := range creationPhaseActionPrefixes {
+		if strings.HasPrefix(actionName, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// creationPhaseFailure looks for a FAILED creation-phase process on
+// projectID. A transient error reading the project's processes (including
+// the GET /project/{id} 5xx the live incident also produced) is never
+// itself a verdict — it reports found=false, not an error, so waitForDone
+// keeps polling instead of settling on a possibly-recoverable blip.
+func creationPhaseFailure(ctx context.Context, client PlatformClient, projectID string) (actionName, failReason string, found bool) {
+	processes, err := client.GetProjectProcessesDirect(ctx, projectID)
+	if err != nil {
+		return "", "", false
+	}
+	for _, p := range processes {
+		if p.Status != platform.ProcessStatusFailed || !isCreationPhaseAction(p.ActionName) {
+			continue
+		}
+		reason := ""
+		if p.FailReason != nil {
+			reason = *p.FailReason
+		}
+		return p.ActionName, reason, true
+	}
+	return "", "", false
 }
 
 // settleFromDone verifies done.json's part digests against what actually
@@ -578,9 +648,27 @@ func recomputePartDigest(ctx context.Context, sink *SinkClient, runID, part stri
 	return TreeDigest(dir)
 }
 
-// readResultMeta reads runs/<runId>/results/meta.json.
+// readResultMeta locates runID's meta.json by listing
+// runs/<runId>/results/ (D15: the evaluator nests it as
+// results/<suite>/<scenario>/meta.json, not at a fixed path) and requiring
+// exactly one key ending in "/meta.json" — zero or more than one is an
+// error naming the count, never a silent pick of the first match.
 func readResultMeta(ctx context.Context, sink *SinkClient, runID string) (resultMeta, error) {
-	body, err := sink.Get(ctx, "runs/"+runID+"/results/meta.json")
+	prefix := "runs/" + runID + "/results/"
+	keys, err := sink.List(ctx, prefix)
+	if err != nil {
+		return resultMeta{}, err
+	}
+	var metaKeys []string
+	for _, key := range keys {
+		if strings.HasSuffix(key, "/meta.json") {
+			metaKeys = append(metaKeys, key)
+		}
+	}
+	if len(metaKeys) != 1 {
+		return resultMeta{}, fmt.Errorf("found %d meta.json under %s, want exactly 1", len(metaKeys), prefix)
+	}
+	body, err := sink.Get(ctx, metaKeys[0])
 	if err != nil {
 		return resultMeta{}, err
 	}

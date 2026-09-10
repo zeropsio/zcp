@@ -77,6 +77,13 @@ type fakeAccount struct {
 	// scheduled run without aborting the whole batch
 	// (TestFarmRun_CreateFails_PrintsErrorAndSummaryRecordsBlocked, D10).
 	failImportProjectName string
+
+	// failedCreationProcessProjectName, when non-empty, makes
+	// GET /project/{id}/process for exactly this project name answer a
+	// FAILED stack.create process — simulates D19's live 2026-09-10
+	// project.create -> internalServerError incident
+	// (TestFarmRun_FailedCreationProcess_SettlesBlockedBeforeBudget).
+	failedCreationProcessProjectName string
 }
 
 type fakeProject struct{ id, name string }
@@ -236,6 +243,23 @@ func (f *fakeAccount) handle(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"projectId":%q,"projectName":%q,"serviceStacks":[{"id":"svc-1","name":"zcp"}]}`, p.id, p.name)
 		return
 
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/rest/public/project/") && strings.HasSuffix(r.URL.Path, "/process"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/rest/public/project/"), "/process")
+		f.mu.Lock()
+		p, ok := f.projects[id]
+		failName := f.failedCreationProcessProjectName
+		f.mu.Unlock()
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if failName != "" && p.name == failName {
+			fmt.Fprint(w, `{"list":[{"id":"proc-create-fail","actionName":"stack.create","status":"FAILED","publicMeta":{"failReason":"internalServerError"}}],"totalCount":1}`)
+			return
+		}
+		fmt.Fprint(w, `{"list":[],"totalCount":0}`)
+		return
+
 	case strings.HasPrefix(r.URL.Path, "/api/rest/public/project/"):
 		id := strings.TrimPrefix(r.URL.Path, "/api/rest/public/project/")
 		f.mu.Lock()
@@ -336,8 +360,17 @@ func seedPart(t *testing.T, fake *fakeS3, runID, part string, files map[string]s
 // done.json claiming the correct digests for both parts.
 func seedSettledRun(t *testing.T, fake *fakeS3, runID, scenarioID, taskResult string) {
 	t.Helper()
+	seedSettledRunAt(t, fake, runID, scenarioID, taskResult, "meta.json")
+}
+
+// seedSettledRunAt is seedSettledRun with metaRelPath (relative to
+// runs/<runID>/results/) naming where meta.json lands — D15: the evaluator
+// nests it as results/<suite>/<scenario>/meta.json, not at a fixed
+// results/meta.json path.
+func seedSettledRunAt(t *testing.T, fake *fakeS3, runID, scenarioID, taskResult, metaRelPath string) {
+	t.Helper()
 	resultsDigest := seedPart(t, fake, runID, "results", map[string]string{
-		"meta.json": fmt.Sprintf(`{"task":{"result":%q}}`, taskResult),
+		metaRelPath: fmt.Sprintf(`{"task":{"result":%q}}`, taskResult),
 	})
 	captureDigest := seedPart(t, fake, runID, "capture", map[string]string{
 		"transcript.jsonl": `{"type":"assistant"}`,
@@ -396,6 +429,11 @@ func (p panicClient) MintDelegatedLaunchToken(context.Context, string) (platform
 func (p panicClient) RevokeIntegrationToken(context.Context, string, string) error {
 	p.t.Fatal("unexpected RevokeIntegrationToken call")
 	return errUnexpectedPlatformCall
+}
+
+func (p panicClient) GetProjectProcessesDirect(context.Context, string) ([]platform.Process, error) {
+	p.t.Fatal("unexpected GetProjectProcessesDirect call")
+	return nil, errUnexpectedPlatformCall
 }
 
 // TestFarmRun_CreatesPrefixedProjects_AndWritesManifest pins §3.3
@@ -1010,5 +1048,184 @@ func TestDeleteGuard_ForeignName_RefusesBeforePlatformCall(t *testing.T) {
 	err := Guard(context.Background(), client, "project-123", "eval")
 	if err == nil {
 		t.Fatal("Guard: want error for a foreign-prefixed name, got nil")
+	}
+}
+
+// TestFarmRun_ResultMetaUnderSuiteScenario_GradesFromTask pins D15: the
+// evaluator writes results/<suite>/<scenario>/meta.json (the wrapper passes
+// --results-dir $RUNDIR/results, the evaluator nests suite/scenario under
+// it), not a fixed results/meta.json — the controller must still grade the
+// run from task.result once it locates that nested file.
+func TestFarmRun_ResultMetaUnderSuiteScenario_GradesFromTask(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-15a"
+	f := newControllerFixture(t, clientID)
+	client, fake, sink := f.client, f.s3, f.sink
+
+	batch := "batch-15a"
+	sc := ScenarioRun{ID: "classic-static-nginx-simple"}
+	runID := batch + "-" + sc.ID
+	seedSettledRunAt(t, fake, runID, sc.ID, ResultPassed, "gate/classic-static-nginx-simple/meta.json")
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget: time.Second, PollInterval: time.Millisecond,
+	}
+	results, err := RunBatch(context.Background(), client, sink, opts)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if len(results) != 1 || results[0].Result != ResultPassed {
+		t.Fatalf("results = %+v, want one entry with Result=%q", results, ResultPassed)
+	}
+}
+
+// TestFarmRun_ResultMetaMissingOrAmbiguous_Blocked pins D15's failure
+// modes: zero meta.json keys under runs/<runId>/results/, or more than one,
+// both settle the run `blocked` (never a silent pick of the first match)
+// with a detail naming how many keys were found.
+func TestFarmRun_ResultMetaMissingOrAmbiguous_Blocked(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-15b"
+
+	t.Run("missing", func(t *testing.T) {
+		t.Parallel()
+		f := newControllerFixture(t, clientID)
+		client, fake, sink := f.client, f.s3, f.sink
+		batch := "batch-15b-missing"
+		sc := ScenarioRun{ID: "recipe-missing-meta"}
+		runID := batch + "-" + sc.ID
+
+		resultsDigest := seedPart(t, fake, runID, "results", map[string]string{
+			"output.log": "no meta.json here",
+		})
+		captureDigest := seedPart(t, fake, runID, "capture", map[string]string{
+			"transcript.jsonl": `{"type":"assistant"}`,
+		})
+		done := fmt.Sprintf(`{"runId":%q,"scenarioId":%q,"parts":{"results":{"treeDigest":%q},"capture":{"treeDigest":%q}},"evaluatorSha256":"eval-sha","candidateSha256":"cand-sha"}`,
+			runID, sc.ID, resultsDigest, captureDigest)
+		fake.mu.Lock()
+		fake.objects["runs/"+runID+"/done.json"] = []byte(done)
+		fake.mu.Unlock()
+
+		opts := RunOptions{
+			Batch: batch, ClientID: clientID, Set: "gate",
+			CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+			Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+			Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+			RunBudget: time.Second, PollInterval: time.Millisecond,
+		}
+		results, err := RunBatch(context.Background(), client, sink, opts)
+		if err != nil {
+			t.Fatalf("RunBatch: %v", err)
+		}
+		if len(results) != 1 || results[0].Result != ResultBlocked {
+			t.Fatalf("results = %+v, want one entry with Result=%q", results, ResultBlocked)
+		}
+		if !strings.Contains(results[0].Detail, "found 0 meta.json") {
+			t.Errorf("Detail = %q, want it to mention 0 meta.json keys found", results[0].Detail)
+		}
+	})
+
+	t.Run("ambiguous", func(t *testing.T) {
+		t.Parallel()
+		f := newControllerFixture(t, clientID+"-amb")
+		client, fake, sink := f.client, f.s3, f.sink
+		batch := "batch-15b-ambiguous"
+		sc := ScenarioRun{ID: "recipe-ambiguous-meta"}
+		runID := batch + "-" + sc.ID
+
+		resultsDigest := seedPart(t, fake, runID, "results", map[string]string{
+			"gate/scenario-a/meta.json": `{"task":{"result":"passed"}}`,
+			"gate/scenario-b/meta.json": `{"task":{"result":"passed"}}`,
+		})
+		captureDigest := seedPart(t, fake, runID, "capture", map[string]string{
+			"transcript.jsonl": `{"type":"assistant"}`,
+		})
+		done := fmt.Sprintf(`{"runId":%q,"scenarioId":%q,"parts":{"results":{"treeDigest":%q},"capture":{"treeDigest":%q}},"evaluatorSha256":"eval-sha","candidateSha256":"cand-sha"}`,
+			runID, sc.ID, resultsDigest, captureDigest)
+		fake.mu.Lock()
+		fake.objects["runs/"+runID+"/done.json"] = []byte(done)
+		fake.mu.Unlock()
+
+		opts := RunOptions{
+			Batch: batch, ClientID: clientID + "-amb", Set: "gate",
+			CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+			Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+			Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+			RunBudget: time.Second, PollInterval: time.Millisecond,
+		}
+		results, err := RunBatch(context.Background(), client, sink, opts)
+		if err != nil {
+			t.Fatalf("RunBatch: %v", err)
+		}
+		if len(results) != 1 || results[0].Result != ResultBlocked {
+			t.Fatalf("results = %+v, want one entry with Result=%q", results, ResultBlocked)
+		}
+		if !strings.Contains(results[0].Detail, "found 2 meta.json") {
+			t.Errorf("Detail = %q, want it to mention 2 meta.json keys found", results[0].Detail)
+		}
+	})
+}
+
+// TestFarmRun_FailedCreationProcess_SettlesBlockedBeforeBudget pins D19: a
+// FAILED creation-phase process (stack.create/stack.import) on the run's
+// project ends waitForDone immediately, well inside the run budget, instead
+// of burning the whole budget waiting for a done.json a dead project will
+// never produce — the dead project is still deleted (settled=true, §3.3
+// FM-21) exactly as any other settled run's.
+func TestFarmRun_FailedCreationProcess_SettlesBlockedBeforeBudget(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-19"
+	f := newControllerFixture(t, clientID)
+	account, client, sink := f.account, f.client, f.sink
+
+	batch := "batch-19"
+	sc := ScenarioRun{ID: "recipe-dead-project"}
+	runID := batch + "-" + sc.ID
+	// No seedSettledRun call: this run's project never writes done.json.
+
+	account.mu.Lock()
+	account.failedCreationProcessProjectName = ProjectPrefix + runID
+	account.mu.Unlock()
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+		Sink: Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		// A generous budget that would time this test out if D19 didn't
+		// short-circuit it — waitForDone must settle within a few poll
+		// intervals instead.
+		RunBudget: time.Minute, PollInterval: 20 * time.Millisecond,
+	}
+
+	start := time.Now()
+	results, err := RunBatch(context.Background(), client, sink, opts)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("RunBatch took %s, want it to settle within a few poll intervals (D19), not the full run budget", elapsed)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %+v, want one entry", results)
+	}
+	wantDetail := "platform: stack.create FAILED: internalServerError"
+	if results[0].Result != ResultBlocked || results[0].Detail != wantDetail {
+		t.Fatalf("results[0] = %+v, want Result=%q Detail=%q", results[0], ResultBlocked, wantDetail)
+	}
+	if results[0].ProjectID != "" {
+		t.Errorf("results[0].ProjectID = %q, want empty (dead project still deleted per FM-21)", results[0].ProjectID)
+	}
+	account.mu.Lock()
+	stillExists := findProjectByFakeName(account, ProjectPrefix+runID)
+	account.mu.Unlock()
+	if stillExists {
+		t.Errorf("project %s still present after a FAILED creation-phase settle", ProjectPrefix+runID)
 	}
 }
