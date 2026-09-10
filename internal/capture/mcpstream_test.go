@@ -1,10 +1,10 @@
-package farm
+package capture
 
 import "testing"
 
 // TestMCPStream_ToolCallsWithActionAndPhase_Parsed reads
 // testdata/mcpstream/basic.jsonl — a hand-written, redacted fixture in the
-// capture.Record JSONL shape (internal/capture/mcp.go writers; cross-checked
+// Record JSONL shape (internal/capture/mcp.go writers; cross-checked
 // against the golden run5 capture) — and pins that ReadMCPStream recovers,
 // in call order: the tool name, the "action" argument when the tool's
 // arguments carry one, and the envelope phase from whichever carrier the
