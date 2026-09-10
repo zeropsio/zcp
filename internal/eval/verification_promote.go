@@ -32,7 +32,7 @@ func evaluateArtifactPromotionRows(
 	ctx context.Context,
 	entry ArtifactPromotionEntry,
 	client platform.Client,
-	projectID string, //nolint:unparam // real projectID variance arrives when S5b wires this into generateRequiredChecks; this slice's own tests all use one project on purpose.
+	projectID string,
 	runStart time.Time,
 	baseline *ScenarioBaseline,
 ) []RequiredCheck {
@@ -66,7 +66,7 @@ func evaluateArtifactPromotionRows(
 		artifactPromotionCreatedAfterStartRow(entry.To, targetActive, runStart),
 		artifactPromotionSourceCliRow(entry.To, targetActive),
 		artifactPromotionNoGitSourceRow(entry.To, targetActive),
-		artifactPromotionDevUnchangedRow(entry.To, devActive, baseline),
+		artifactPromotionDevUnchangedRow(entry.To, entry.From, devActive, baseline),
 	}
 	return rows
 }
@@ -159,27 +159,32 @@ func artifactPromotionNoGitSourceRow(target string, active *platform.AppVersionE
 	}
 }
 
-func artifactPromotionDevUnchangedRow(target string, devActive *platform.AppVersionEvent, baseline *ScenarioBaseline) RequiredCheck {
+func artifactPromotionDevUnchangedRow(target, devHostname string, devActive *platform.AppVersionEvent, baseline *ScenarioBaseline) RequiredCheck {
 	field := "dev_unchanged"
-	if baseline == nil {
+	var baselineAppVersion string
+	var haveBaseline bool
+	if baseline != nil {
+		baselineAppVersion, haveBaseline = baseline.AppVersions[devHostname]
+	}
+	if !haveBaseline || baselineAppVersion == "" {
 		return RequiredCheck{
 			ID: artifactPromotionRowID(target, field), Check: "artifact_promotion", Scope: target,
-			Result: CheckBlocked, Message: "no scenario baseline available to compare the dev service's ACTIVE appVersion against",
+			Result: CheckBlocked, Message: fmt.Sprintf("no baseline for %s", devHostname),
 		}
 	}
 	if devActive == nil {
 		return notFoundArtifactPromotionRow(target, field, "no ACTIVE appVersion found for dev service")
 	}
-	if devActive.ID != baseline.UnrelatedAppVersion {
+	if devActive.ID != baselineAppVersion {
 		return RequiredCheck{
 			ID: artifactPromotionRowID(target, field), Check: "artifact_promotion", Scope: target,
-			Result: CheckFailed, Expected: baseline.UnrelatedAppVersion, Observed: devActive.ID, Source: "SearchAppVersions",
+			Result: CheckFailed, Expected: baselineAppVersion, Observed: devActive.ID, Source: "SearchAppVersions",
 			Message: "dev service's ACTIVE appVersion id changed from the scenario baseline",
 		}
 	}
 	return RequiredCheck{
 		ID: artifactPromotionRowID(target, field), Check: "artifact_promotion", Scope: target,
-		Result: CheckPassed, Expected: baseline.UnrelatedAppVersion, Observed: devActive.ID, Source: "SearchAppVersions",
+		Result: CheckPassed, Expected: baselineAppVersion, Observed: devActive.ID, Source: "SearchAppVersions",
 		Message: "dev service's ACTIVE appVersion id is unchanged from baseline",
 	}
 }

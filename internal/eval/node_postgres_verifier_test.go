@@ -481,7 +481,7 @@ func TestNodePostgresVerifier_UnsettledFreeze_BlockedWithoutCalls(t *testing.T) 
 	}}
 	client := nodePostgresFixtureClient()
 	guardHTTP := &noHTTPGuard{t: t}
-	rows := generateRequiredChecks(context.Background(), sc, platformObservation{}, guardHTTP, time.Now(), "proj-1", client, false, &ScenarioBaseline{UnrelatedAppVersion: "av-1"})
+	rows := generateRequiredChecks(context.Background(), sc, platformObservation{}, guardHTTP, time.Now(), "proj-1", client, false, &ScenarioBaseline{AppVersions: map[string]string{"other": "av-1"}}, RuntimeInputs{})
 	got := rowsByID(t, rows)
 	for _, id := range []string{
 		"node_postgres_record/appstage/record_roundtrip", "node_postgres_record/appstage/environment",

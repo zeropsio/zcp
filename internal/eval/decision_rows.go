@@ -227,12 +227,38 @@ func EvaluateAskWhenRow(obs AskWhenObservation, streamPresent bool, now time.Tim
 // belongs to this scenario run — the "no captured stream" case the
 // decision rows must block on, never silently pass.
 func LoadScenarioMCPCalls(sessionDir, evalRunID, scenarioRunID string) (calls []capture.MCPToolCall, present bool, err error) {
-	if sessionDir == "" {
+	paths, err := ScenarioMCPStreamPaths(sessionDir, evalRunID, scenarioRunID)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(paths) == 0 {
 		return nil, false, nil
+	}
+	for _, path := range paths {
+		fileCalls, readErr := capture.ReadMCPStream(path)
+		if readErr != nil {
+			return nil, false, fmt.Errorf("read MCP stream %s: %w", path, readErr)
+		}
+		calls = append(calls, fileCalls...)
+	}
+	return calls, true, nil
+}
+
+// ScenarioMCPStreamPaths locates every mcp/zcp-<pid>.jsonl capture file
+// under sessionDir whose records are tagged with evalRunID/scenarioRunID,
+// returned in chronological order (one file per agent invocation — the
+// initial run plus every resume, each spawning its own MCP server process
+// with its own pid). Shared by LoadScenarioMCPCalls (which reads and
+// concatenates the calls) and behavioral_run.go's RuntimeInputs assembly
+// (which needs the raw paths for O6/O8's own reads). An empty sessionDir or
+// no owning file returns a nil, non-error result.
+func ScenarioMCPStreamPaths(sessionDir, evalRunID, scenarioRunID string) ([]string, error) {
+	if sessionDir == "" {
+		return nil, nil
 	}
 	paths, err := filepath.Glob(filepath.Join(sessionDir, "mcp", "zcp-*.jsonl"))
 	if err != nil {
-		return nil, false, fmt.Errorf("glob MCP capture files: %w", err)
+		return nil, fmt.Errorf("glob MCP capture files: %w", err)
 	}
 	type scoped struct {
 		path  string
@@ -242,7 +268,7 @@ func LoadScenarioMCPCalls(sessionDir, evalRunID, scenarioRunID string) (calls []
 	for _, path := range paths {
 		records, readErr := capture.ReadRecords(path)
 		if readErr != nil {
-			return nil, false, fmt.Errorf("read MCP capture %s: %w", path, readErr)
+			return nil, fmt.Errorf("read MCP capture %s: %w", path, readErr)
 		}
 		belongs, start := scenarioOwnsStream(records, evalRunID, scenarioRunID)
 		if belongs {
@@ -250,17 +276,14 @@ func LoadScenarioMCPCalls(sessionDir, evalRunID, scenarioRunID string) (calls []
 		}
 	}
 	if len(owned) == 0 {
-		return nil, false, nil
+		return nil, nil
 	}
 	sort.Slice(owned, func(i, j int) bool { return owned[i].start.Before(owned[j].start) })
-	for _, o := range owned {
-		fileCalls, readErr := capture.ReadMCPStream(o.path)
-		if readErr != nil {
-			return nil, false, fmt.Errorf("read MCP stream %s: %w", o.path, readErr)
-		}
-		calls = append(calls, fileCalls...)
+	out := make([]string, len(owned))
+	for i, o := range owned {
+		out[i] = o.path
 	}
-	return calls, true, nil
+	return out, nil
 }
 
 // scenarioOwnsStream reports whether any record in records is tagged with
