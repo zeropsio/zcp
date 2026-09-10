@@ -236,6 +236,47 @@ func TestFarmReport_SignalKilledBundle_FailedNotBlocked(t *testing.T) {
 	}
 }
 
+// TestFarmReport_ExecutionBindingError_FailedNotBlocked pins S16: a bundle
+// whose done.json names an execution-binding preflight error (not a
+// signal-kill) is graded "failed" straight from done.json's own
+// runnerDimensions.execution, the same as a signal-kill — any "error:"
+// prefix generalises D9's single branch, it is not limited to the
+// signal-kill literal. Before this fix, ReportRun tried to build the
+// single-run report anyway (there is no capture/eval/** — the evaluator
+// never got a window), and returned "blocked: could not build the
+// single-run report: ...".
+func TestFarmReport_ExecutionBindingError_FailedNotBlocked(t *testing.T) {
+	t.Parallel()
+	runDir := t.TempDir()
+	writeFile(t, runDir, "results/meta.json", `{"scenarioId":"acceptance-node-postgres-record"}`)
+	writeFile(t, runDir, "capture/manifest.json", `{"status":"complete"}`)
+	// Deliberately no capture/eval/** — the run died at the execution-
+	// binding preflight before the evaluator opened a capture window.
+
+	resultsDigest, err := TreeDigest(filepath.Join(runDir, "results"))
+	if err != nil {
+		t.Fatalf("TreeDigest(results): %v", err)
+	}
+	captureDigest, err := TreeDigest(filepath.Join(runDir, "capture"))
+	if err != nil {
+		t.Fatalf("TreeDigest(capture): %v", err)
+	}
+	execution := "error: binding: target is not fresh: some reason"
+	writeDoneJSONWithExecution(t, runDir, "run-binding-error", execution, "eval-sha", "cand-sha", resultsDigest, captureDigest)
+
+	outcome := ReportRun(runDir, "")
+	if outcome.Verdict != VerdictFailed {
+		t.Fatalf("Verdict = %q, want %q (Reason: %s)", outcome.Verdict, VerdictFailed, outcome.Reason)
+	}
+	wantReason := `failed: execution "error: binding: target is not fresh: some reason" (docs/spec-eval-farm.md §2.3 FM-13)`
+	if outcome.Reason != wantReason {
+		t.Errorf("Reason = %q, want %q", outcome.Reason, wantReason)
+	}
+	if outcome.Done == nil || outcome.Done.RunID != "run-binding-error" {
+		t.Errorf("Done = %+v, want the parsed done.json carried through", outcome.Done)
+	}
+}
+
 // TestFarmReport_RedactedBundle_ManifestConsistent_Grades pins the D8 fix
 // end-to-end at the report layer: a bundle whose capture/manifest.json was
 // rewritten (by the wrapper's update_capture_manifest, eval/farm/

@@ -514,6 +514,15 @@ this.
 `blocked: no bundle`, distinguishable in `report`'s output from a `blocked`
 row inside an otherwise-complete bundle.
 
+A bundle whose `done.json` already names an `error:`-prefixed
+`runnerDimensions.execution` (FM-13) — a signal-kill mid-run, an
+execution-binding preflight failure, or any other execution error — grades
+`failed` straight from that field, never `blocked`: the run's outcome is
+already known, it is not evidence in question, even though the capture tree
+never reached a window the report builder can open.
+`TestFarmReport_SignalKilledBundle_FailedNotBlocked`,
+`TestFarmReport_ExecutionBindingError_FailedNotBlocked`.
+
 ### 5.2 `farm report`
 
 **FM-37.** `farm report <batch>|<run>` runs entirely over pulled bundles (no
