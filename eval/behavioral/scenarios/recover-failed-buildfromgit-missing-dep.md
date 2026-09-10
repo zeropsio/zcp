@@ -21,6 +21,13 @@ tags: [recovery, failed-state, buildfromgit, missing-dep, simple-mode, python]
 area: recovery
 retrospective:
   promptStyle: briefing-future-agent
+verification:
+  mode: required
+  spec: spec-workflows.md §8
+  liveness: {service: api, marker: "python"}
+  noFailedProcesses: true
+  allowFailed: [api]
+  never: ["zerops_import{override=true}"]
 userPersona: |
   Your Python service `api` is supposed to be running on Zerops
   but it's broken — you can't tell why, only that the deploy

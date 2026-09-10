@@ -10,6 +10,16 @@ tags: [bootstrap, classic-route, simple-mode, static-runtime, nginx, no-managed-
 area: bootstrap
 retrospective:
   promptStyle: briefing-future-agent
+verification:
+  mode: required
+  spec: spec-workflows.md §2
+  expectedServices:
+    - hostname: web
+      status: [ACTIVE]
+      type: nginx@*
+      subdomainProbe: {expectStatus: "2xx"}
+  noFailedProcesses: true
+  never: ["zerops_import{override=true}"]
 notableFriction:
   - id: static-vs-dynamic
     description: |
