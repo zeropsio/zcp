@@ -603,3 +603,33 @@ func TestWrapper_Redaction_NoSecretValueInBundle(t *testing.T) {
 		t.Fatalf("no results/**+capture/** objects were uploaded at all")
 	}
 }
+
+// TestWrapper_TwoCredentials_Refused pins the credential-mode gate: two
+// kinds of agent credential present (ANTHROPIC_API_KEY and
+// CLAUDE_CODE_OAUTH_TOKEN) refuses before the child is even forked — an API
+// key can shadow an OAuth profile, so carrying both makes the credential
+// mode ambiguous (docs/spec-eval-farm.md §2.4).
+func TestWrapper_TwoCredentials_Refused(t *testing.T) {
+	requireShAndCurl(t)
+
+	h := newWrapperHarness(t)
+	cmd := h.start(t, map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": "oauth-tok-value"})
+	_ = cmd.Wait()
+
+	doneBytes, ok := h.fake.get("runs/" + h.runID + "/done.json")
+	if !ok {
+		t.Fatalf("done.json missing from bucket")
+	}
+	var done wrapperDoneJSON
+	if err := json.Unmarshal(doneBytes, &done); err != nil {
+		t.Fatalf("done.json parse: %v (body: %s)", err, doneBytes)
+	}
+	if done.RunnerDimensions.Execution != "refused: two credentials" {
+		t.Errorf("runnerDimensions.execution = %q, want %q", done.RunnerDimensions.Execution, "refused: two credentials")
+	}
+
+	// The child must never have been forked at all: no started.json PUT.
+	if _, ok := h.fake.get("runs/" + h.runID + "/started.json"); ok {
+		t.Errorf("started.json was uploaded — the child ran despite two credentials being present")
+	}
+}
