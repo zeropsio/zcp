@@ -321,31 +321,6 @@ redacted_json_array() {
 	:
 }
 
-# ---- capture recovery (D5) -------------------------------------------------
-
-# recover_capture_window copies the evaluator's own private capture window
-# into $CAPTURE_DIR. No flag/env forwards the capture root through `zcp eval
-# behavioral run --capture raw` today: the underlying `capture raw` command
-# does accept --output-dir (cmd/zcp/capture.go ~line 308), but
-# runEvalWithOptionalScopedCapture (cmd/zcp/eval_capture.go:107-113) builds
-# that invocation's wrapperArgs itself and never exposes it — so the window
-# always lands under the evaluator's private $HOME/.local/state/zcp/captures/.
-# The wrapper instead locates it from the evaluator's own printed
-# "records: <window-dir>/provider.jsonl" line (cmd/zcp/capture.go:388) in
-# child.log and copies the window's files into $CAPTURE_DIR before upload.
-recover_capture_window() {
-	[ -f "$RUNDIR/child.log" ] || return 0
-	records_line=$(grep '^records: ' "$RUNDIR/child.log" | tail -n1 | sed -e 's/^records:[[:space:]]*//')
-	[ -z "$records_line" ] && return 0
-	window_dir=$(dirname "$records_line")
-	[ -d "$window_dir" ] || return 0
-	find "$window_dir" -type f | while IFS= read -r f; do
-		rel=${f#"$window_dir"/}
-		mkdir -p "$CAPTURE_DIR/$(dirname "$rel")"
-		cp "$f" "$CAPTURE_DIR/$rel"
-	done
-}
-
 # ---- upload ---------------------------------------------------------------
 
 # upload_dir PUTs every regular file under dir ($1) to
@@ -443,6 +418,7 @@ child_main() {
 		--project-id "$projectId" \
 		--ack-disposable-project yes \
 		--capture raw \
+		--capture-dir "$RUNDIR/capture" \
 		--id "$ZCP_FARM_SCENARIO" \
 		--scenarios-dir "$scen_dir" \
 		--results-dir "$results_dir" \
@@ -495,7 +471,6 @@ finish_and_upload() {
 	fi
 
 	kill_child_group
-	recover_capture_window
 
 	redact_known_secrets "$RESULTS_DIR"
 	redact_known_secrets "$CAPTURE_DIR"
