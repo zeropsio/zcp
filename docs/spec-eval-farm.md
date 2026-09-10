@@ -153,6 +153,7 @@ run project's `zcp` service, set once at import:
 | `ZCP_FARM_SCENARIO` | the scenario id this run executes |
 | `ZCP_FARM_EVALUATOR_SHA` | the pinned evaluator's SHA-256 (FM-2) |
 | `ZCP_FARM_CANDIDATE_SHA` | the candidate's SHA-256 under test |
+| `ZCP_FARM_SCENARIOS_DIGEST` | the scenario tree digest the wrapper downloads (`scenarios/<digest>/`, FM-1) |
 
 <!-- PROVE: confirm these five names against the S1/S2 implementation; the plan names them without a final source citation -->
 
@@ -201,7 +202,9 @@ and where the result goes.
 | `ZCP_E2E_LAUNCH_KEY` | minted by the controller per run (NO_ACCESS + `canCreateProjects`), launch scenarios only | creating this run's prod project | reused across runs; revoked after the run's projects are deleted (FM-24) |
 
 **FM-15.** The account-wide API key that the controller uses to create and
-delete projects never enters a run project. A run project's own `ZCP_API_KEY`
+delete projects — `ZCP_FARM_ACCOUNT_TOKEN`, with its client (org) id
+`ZCP_FARM_CLIENT_ID`, both sensitive envs on the farm host only — never enters
+a run project. A run project's own `ZCP_API_KEY`
 is scoped by the platform to that project and cannot create or delete
 projects.
 
