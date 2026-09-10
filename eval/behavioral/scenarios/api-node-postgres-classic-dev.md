@@ -109,4 +109,4 @@ notableFriction:
       app boot).
 ---
 
-Mám rozjet Node.js API s Postgres databází, klasická REST, zatím jen pro vývoj — chci to mít na Zerops abych mohl iterovat na kódu. Žádná stage, žádná produkce, žádné existující repo. Použij project `waAzEFn6SBaysG4YE4rv7A`.
+Mám rozjet Node.js API s Postgres databází, klasická REST, zatím jen pro vývoj — chci to mít na Zerops abych mohl iterovat na kódu. Žádná stage, žádná produkce, žádné existující repo. Použij project `{{projectId}}`.

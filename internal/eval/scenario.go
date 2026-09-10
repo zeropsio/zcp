@@ -192,7 +192,11 @@ type scenarioFrontmatter struct {
 
 // ParseScenario reads a scenario markdown file and returns the parsed structure.
 // The file must start with YAML frontmatter (between --- delimiters) followed by
-// a markdown body used verbatim as the agent prompt.
+// a markdown body used verbatim as the agent prompt. A prompt/userPersona may
+// carry {{runId}}/{{projectId}} placeholders — ParseScenario only rejects an
+// unrecognized {{...}} token; it does not substitute. Call Scenario.Render to
+// substitute placeholder values before using Prompt/UserPersona for a run
+// (internal/eval/scenario_template.go).
 func ParseScenario(path string) (*Scenario, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -225,6 +229,13 @@ func ParseScenario(path string) (*Scenario, error) {
 		UserSim:         fm.UserSim,
 		Verification:    fm.Verification,
 		ExcludeFromAll:  fm.ExcludeFromAll,
+	}
+
+	if err := rejectUnknownTemplateTokens(sc.Prompt); err != nil {
+		return nil, fmt.Errorf("scenario %q: prompt: %w", path, err)
+	}
+	if err := rejectUnknownTemplateTokens(sc.UserPersona); err != nil {
+		return nil, fmt.Errorf("scenario %q: userPersona: %w", path, err)
 	}
 
 	if err := sc.validate(); err != nil {

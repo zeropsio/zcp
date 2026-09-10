@@ -103,4 +103,4 @@ notableFriction:
       regardless of substitution.
 ---
 
-Vytvoř mi kanban na receptu zerops-laravel-minimal, chci dev i stage abych mohl testovat prod-style build před release. Spusť to do eval-zcp projektu (UUID waAzEFn6SBaysG4YE4rv7A). Žádná produkce ještě, jen dev + stage pair. Až poběží dev i stage, řekni mi URL aspoň jednoho z nich.
+Vytvoř mi kanban na receptu zerops-laravel-minimal, chci dev i stage abych mohl testovat prod-style build před release. Spusť to do eval-zcp projektu (UUID {{projectId}}). Žádná produkce ještě, jen dev + stage pair. Až poběží dev i stage, řekni mi URL aspoň jednoho z nich.
