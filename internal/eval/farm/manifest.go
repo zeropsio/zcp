@@ -57,6 +57,11 @@ type SummaryRun struct {
 	ProjectID string `json:"projectId,omitempty"`
 	Result    string `json:"result"` // "passed" | "failed" | "blocked" | "not-run"
 	Detail    string `json:"detail,omitempty"`
+	// Error carries the wrapped error message for a run RunBatch blocked
+	// before or during creation (D10) — never populated together with a
+	// settle-time Detail (a run either fails during creation, before any
+	// project exists to poll, or reaches waitForDone and gets a Detail).
+	Error string `json:"error,omitempty"`
 	// LaunchTokenID is the id (never the value, §3.4 FM-23) of the launch
 	// token minted for this run, when it has not yet been revoked — the
 	// no-bundle exemption (FM-21) records it here so `gc` can revoke it

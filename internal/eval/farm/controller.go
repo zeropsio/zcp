@@ -106,15 +106,21 @@ func (a *accountClient) RevokeIntegrationToken(ctx context.Context, clientID, to
 }
 
 // NewAccountClient constructs the controller's platform client from the
-// farm host's account-wide token (ZCP_FARM_ACCOUNT_TOKEN, §2.4 FM-15). The
-// returned closer must be called once the controller is done with it — it
-// zeros the admin client's held reference.
-func NewAccountClient(accountToken, apiHost string) (PlatformClient, func(), error) {
+// farm host's account-wide token (ZCP_FARM_ACCOUNT_TOKEN, §2.4 FM-15),
+// targeting the operator-configured org (clientID, ZCP_FARM_CLIENT_ID).
+// D11: the underlying admin client is built with
+// platform.NewProjectAdminClientForClient, never platform.NewProjectAdminClient
+// — the latter's ClientUserList[0] selection picks the wrong org for a
+// token that is a member of more than one, and this constructor refuses
+// (before any write) when the token is not a member of clientID at all.
+// The returned closer must be called once the controller is done with it —
+// it zeros the admin client's held reference.
+func NewAccountClient(accountToken, apiHost, clientID string) (PlatformClient, func(), error) {
 	z, err := platform.NewZeropsClient(accountToken, apiHost)
 	if err != nil {
 		return nil, nil, fmt.Errorf("farm: construct account client: %w", err)
 	}
-	admin, err := platform.NewProjectAdminClient(accountToken, apiHost)
+	admin, err := platform.NewProjectAdminClientForClient(accountToken, apiHost, clientID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("farm: construct account admin client: %w", err)
 	}
@@ -180,12 +186,132 @@ type RunOptions struct {
 // RunResult is one run's outcome — the CLI prints
 // "<runId> <scenario> passed|failed|blocked|not-run" from these.
 type RunResult struct {
-	RunID         string
-	Scenario      string
-	ProjectID     string // empty once the run's project has been deleted
-	Result        string
-	Detail        string
+	RunID     string
+	Scenario  string
+	ProjectID string // empty once the run's project has been deleted
+	Result    string
+	Detail    string
+	// Error carries the wrapped error message for a run RunBatch blocked
+	// before or during creation (ProjectImportYAML, CreateAndImportProject,
+	// a non-403 mint, ServiceImportYAML, ImportServiceStack — D10). Empty
+	// for every run that reached waitForDone; Detail (not Error) carries
+	// the reason for a run blocked at settle time (no bundle / digest
+	// mismatch / meta.json unreadable).
+	Error         string
 	LaunchTokenID string // empty once revoked
+}
+
+// scheduledRun is one ScenarioRun RunBatch has assigned a runId to, before
+// its project (if any) exists.
+type scheduledRun struct {
+	ScenarioRun
+	RunID string
+}
+
+// activeRun is a scheduledRun whose project + (for a launch scenario)
+// per-run tokens were created successfully — createRun's success output,
+// carried into RunBatch's settle loop.
+type activeRun struct {
+	scheduledRun
+	ProjectID     string
+	LaunchTokenID string
+	RunTokenID    string
+}
+
+// createRun performs one scheduled run's creation steps (§2.1: mint launch
+// token if needed, create the project shell, mint the run's project-scoped
+// token, import the zcp service) and reports exactly one of three outcomes:
+//   - active set, the other two zero — created successfully, ready for
+//     RunBatch's settle loop.
+//   - blockedResult set, the other two zero — a per-run failure (D10):
+//     already printed to stderr and Guard-rolled-back where a project was
+//     created; the caller folds blockedResult into results/summary and
+//     continues the batch.
+//   - abortErr set, the other two zero — the run-token mint came back 403
+//     (the farm's account token is itself an integration token without
+//     delegation): every other run would fail identically, so RunBatch
+//     aborts the batch.
+func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r scheduledRun) (active *activeRun, blockedResult *RunResult, abortErr error) {
+	var launchTokenID, launchKeyValue string
+	if r.Launch {
+		minted, err := client.MintDelegatedLaunchToken(ctx, "farm-"+r.RunID)
+		if err != nil {
+			// No project was created for this run — §5.1: "a run whose
+			// project was never created is not reported at all" (in the
+			// bucket/project sense: no project, no token to revoke) — but
+			// D10 requires the run itself still be reported blocked.
+			rr := recordBlocked(r.RunID, r.ID, fmt.Errorf("mint launch token: %w", err))
+			return nil, &rr, nil
+		}
+		launchTokenID = minted.TokenID
+		launchKeyValue = minted.Token
+	}
+
+	desc := RunDescriptor{
+		BatchID:         opts.Batch,
+		RunID:           r.RunID,
+		ScenarioID:      r.ID,
+		EvaluatorSHA256: opts.EvaluatorSHA256,
+		CandidateSHA256: opts.CandidateSHA256,
+		ScenariosDigest: opts.ScenariosDigest,
+		Sink:            opts.Sink,
+		OAuthToken:      opts.OAuthToken,
+		LaunchKey:       launchKeyValue,
+	}
+
+	// §2.1 step 1: create the empty project shell. The REST import route
+	// never injects a first-class ZCP_API_KEY the way the GUI's route
+	// does, so the service is imported in a later step once a
+	// project-scoped token exists to carry.
+	projectYAML, err := ProjectImportYAML(desc)
+	if err != nil {
+		rr := recordBlocked(r.RunID, r.ID, fmt.Errorf("build project import yaml: %w", err))
+		return nil, &rr, nil
+	}
+	result, err := client.CreateAndImportProject(ctx, string(projectYAML))
+	if err != nil {
+		rr := recordBlocked(r.RunID, r.ID, fmt.Errorf("create project: %w", err))
+		return nil, &rr, nil
+	}
+	runProjectName := ProjectPrefix + r.RunID
+
+	// §2.1 step 2: mint the run's own project-scoped ZCP_API_KEY. A 403
+	// here means the minting credential (ZCP_FARM_ACCOUNT_TOKEN) is
+	// itself an integration token — every other run would fail the same
+	// way, so this aborts the whole batch (after rolling back the shell
+	// project this run just created) instead of skipping just this run
+	// (brief: "a mint 403 aborts the batch before any project exists").
+	minted, err := client.MintProjectScopedToken(ctx, opts.ClientID, result.ProjectID, "farm-run-"+r.RunID)
+	if err != nil {
+		_ = Guard(ctx, client, result.ProjectID, runProjectName)
+		if isScopedMintForbidden(err) {
+			return nil, nil, fmt.Errorf("farm run: mint run token for %s: %w", r.RunID, err)
+		}
+		rr := recordBlocked(r.RunID, r.ID, fmt.Errorf("mint run token: %w", err))
+		return nil, &rr, nil
+	}
+	desc.RunToken = minted.Token
+
+	// §2.1 step 3: import the zcp service, now carrying the minted run
+	// token as ZCP_API_KEY.
+	serviceYAML, err := ServiceImportYAML(desc)
+	if err != nil {
+		_ = Guard(ctx, client, result.ProjectID, runProjectName)
+		rr := recordBlocked(r.RunID, r.ID, fmt.Errorf("build service import yaml: %w", err))
+		return nil, &rr, nil
+	}
+	if _, err := client.ImportServiceStack(ctx, result.ProjectID, string(serviceYAML)); err != nil {
+		_ = Guard(ctx, client, result.ProjectID, runProjectName)
+		rr := recordBlocked(r.RunID, r.ID, fmt.Errorf("import service stack: %w", err))
+		return nil, &rr, nil
+	}
+
+	return &activeRun{
+		scheduledRun:  r,
+		ProjectID:     result.ProjectID,
+		LaunchTokenID: launchTokenID,
+		RunTokenID:    minted.TokenID,
+	}, nil, nil
 }
 
 // RunBatch runs opts.Scenarios as one batch (§3.3 FM-21/FM-22): it writes
@@ -205,10 +331,6 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 	}
 	startedAt := now().UTC().Format(time.RFC3339)
 
-	type scheduledRun struct {
-		ScenarioRun
-		RunID string
-	}
 	scheduled := make([]scheduledRun, 0, len(opts.Scenarios))
 	manifestRuns := make([]ManifestRun, 0, len(opts.Scenarios))
 	for _, sc := range opts.Scenarios {
@@ -233,83 +355,20 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 		return nil, fmt.Errorf("farm run: write manifest: %w", err)
 	}
 
-	type activeRun struct {
-		scheduledRun
-		ProjectID     string
-		LaunchTokenID string
-	}
 	var actives []activeRun
+	var blocked []RunResult                                // D10: every creation-phase failure, printed + recorded, never silently skipped
 	runTokenIDs := make(map[string]string, len(scheduled)) // runID -> minted run token id, for the manifest-evidence update below
 	for _, r := range scheduled {
-		var launchTokenID, launchKeyValue string
-		if r.Launch {
-			minted, err := client.MintDelegatedLaunchToken(ctx, "farm-"+r.RunID)
-			if err != nil {
-				// No project was created for this run — §5.1: "a run whose
-				// project was never created is not reported at all."
-				continue
-			}
-			launchTokenID = minted.TokenID
-			launchKeyValue = minted.Token
+		active, blockedResult, abortErr := createRun(ctx, client, opts, r)
+		if abortErr != nil {
+			return nil, abortErr
 		}
-
-		desc := RunDescriptor{
-			BatchID:         opts.Batch,
-			RunID:           r.RunID,
-			ScenarioID:      r.ID,
-			EvaluatorSHA256: opts.EvaluatorSHA256,
-			CandidateSHA256: opts.CandidateSHA256,
-			ScenariosDigest: opts.ScenariosDigest,
-			Sink:            opts.Sink,
-			OAuthToken:      opts.OAuthToken,
-			LaunchKey:       launchKeyValue,
-		}
-
-		// §2.1 step 1: create the empty project shell. The REST import
-		// route never injects a first-class ZCP_API_KEY the way the GUI's
-		// route does, so the service is imported in a later step once a
-		// project-scoped token exists to carry.
-		projectYAML, err := ProjectImportYAML(desc)
-		if err != nil {
+		if blockedResult != nil {
+			blocked = append(blocked, *blockedResult)
 			continue
 		}
-		result, err := client.CreateAndImportProject(ctx, string(projectYAML))
-		if err != nil {
-			continue
-		}
-		runProjectName := ProjectPrefix + r.RunID
-
-		// §2.1 step 2: mint the run's own project-scoped ZCP_API_KEY. A
-		// 403 here means the minting credential (ZCP_FARM_ACCOUNT_TOKEN)
-		// is itself an integration token — every other run would fail the
-		// same way, so this aborts the whole batch (after rolling back the
-		// shell project this run just created) instead of skipping just
-		// this run (brief: "a mint 403 aborts the batch before any project
-		// exists").
-		minted, err := client.MintProjectScopedToken(ctx, opts.ClientID, result.ProjectID, "farm-run-"+r.RunID)
-		if err != nil {
-			_ = Guard(ctx, client, result.ProjectID, runProjectName)
-			if isScopedMintForbidden(err) {
-				return nil, fmt.Errorf("farm run: mint run token for %s: %w", r.RunID, err)
-			}
-			continue
-		}
-		desc.RunToken = minted.Token
-
-		// §2.1 step 3: import the zcp service, now carrying the minted
-		// run token as ZCP_API_KEY.
-		serviceYAML, err := ServiceImportYAML(desc)
-		if err != nil {
-			_ = Guard(ctx, client, result.ProjectID, runProjectName)
-			continue
-		}
-		if _, err := client.ImportServiceStack(ctx, result.ProjectID, string(serviceYAML)); err != nil {
-			_ = Guard(ctx, client, result.ProjectID, runProjectName)
-			continue
-		}
-
-		runTokenIDs[r.RunID] = minted.TokenID
-		actives = append(actives, activeRun{scheduledRun: r, ProjectID: result.ProjectID, LaunchTokenID: launchTokenID})
+		runTokenIDs[active.RunID] = active.RunTokenID
+		actives = append(actives, *active)
 	}
 
 	// Record each minted run token's id (never the value, §3.4-style
@@ -330,7 +389,8 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 		}
 	}
 
-	results := make([]RunResult, 0, len(actives))
+	results := make([]RunResult, 0, len(actives)+len(blocked))
+	results = append(results, blocked...)
 	endedByBudget := false
 	for _, a := range actives {
 		result, detail, settled := waitForDone(ctx, sink, a.RunID, opts.RunBudget, now, pollInterval)
@@ -377,6 +437,16 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 		return results, fmt.Errorf("farm run: write summary: %w", err)
 	}
 	return results, nil
+}
+
+// recordBlocked is D10's single call site for a creation-phase run
+// failure: prints "<runId> <scenario> error: <wrapped error>" to stderr at
+// the moment the failure happens, and returns the RunResult (result
+// "blocked", Error carrying err's message) for RunBatch to fold into its
+// results/summary — never a bare `continue` that reports nothing.
+func recordBlocked(runID, scenario string, err error) RunResult {
+	fmt.Fprintf(os.Stderr, "%s %s error: %v\n", runID, scenario, err)
+	return RunResult{RunID: runID, Scenario: scenario, Result: ResultBlocked, Error: err.Error()}
 }
 
 // isScopedMintForbidden reports whether err is the typed platform error
