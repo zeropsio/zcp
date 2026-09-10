@@ -101,8 +101,8 @@ EOF
 cat >capture/manifest.json <<EOF
 {"status":"complete","secretKey":"$ZCP_FARM_S3_KEY"}
 EOF
-mkdir -p ../pristine
-cp "results/$ZCP_FARM_SCENARIO/meta.json" ../pristine/meta.json
+mkdir -p pristine
+cp "results/$ZCP_FARM_SCENARIO/meta.json" pristine/meta.json
 mode="${STUB_MODE:-ok}"
 case "$mode" in
 fail)
@@ -540,5 +540,66 @@ func TestWrapper_DigestMismatch_RefusesToRun(t *testing.T) {
 		t.Errorf("stub evaluator's side-effect marker exists — it ran despite the digest mismatch")
 	} else if !os.IsNotExist(err) {
 		t.Errorf("stat ran.marker: %v", err)
+	}
+}
+
+// TestWrapper_Redaction_NoSecretValueInBundle pins FM-7: every credential
+// value the wrapper holds is redacted from results/ and capture/ before
+// upload. The stub evaluator writes every secret value into
+// results/<scenario>/meta.json and capture/manifest.json, and keeps an
+// unredacted copy outside results/capture (RUNDIR/pristine/meta.json) — so the
+// test can prove the values were genuinely present pre-redaction, not just
+// absent because the stub never wrote them.
+func TestWrapper_Redaction_NoSecretValueInBundle(t *testing.T) {
+	requireShAndCurl(t)
+
+	h := newWrapperHarness(t)
+	overrides := map[string]string{
+		"ZCP_FARM_S3_KEY":    "AKIDEXAMPLE-redact-me",
+		"ZCP_FARM_S3_SECRET": "s3-secret-redact-me",
+		"ANTHROPIC_API_KEY":  "sk-ant-redact-me",
+	}
+	cmd := h.start(t, overrides)
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("supervisor exited with error: %v", err)
+	}
+
+	secrets := []string{overrides["ZCP_FARM_S3_KEY"], overrides["ZCP_FARM_S3_SECRET"], overrides["ANTHROPIC_API_KEY"]}
+
+	// Pristine copy (outside results/capture, so the wrapper never touches
+	// it) must actually contain at least one secret — proving the stub
+	// really did write them, so their absence below is redaction, not
+	// simply their never having been written.
+	pristine, err := os.ReadFile(filepath.Join(h.rundir, "pristine", "meta.json"))
+	if err != nil {
+		t.Fatalf("read pristine copy: %v", err)
+	}
+	foundAny := false
+	for _, s := range secrets {
+		if strings.Contains(string(pristine), s) {
+			foundAny = true
+		}
+	}
+	if !foundAny {
+		t.Fatalf("pristine copy %q contains none of the secret values — test fixture is broken", pristine)
+	}
+
+	h.fake.mu.Lock()
+	defer h.fake.mu.Unlock()
+	runPrefix := "runs/" + h.runID + "/"
+	checked := 0
+	for key, body := range h.fake.objects {
+		if !strings.HasPrefix(key, runPrefix+"results/") && !strings.HasPrefix(key, runPrefix+"capture/") {
+			continue
+		}
+		checked++
+		for _, s := range secrets {
+			if strings.Contains(string(body), s) {
+				t.Errorf("uploaded object %q contains a secret value %q", key, s)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatalf("no results/**+capture/** objects were uploaded at all")
 	}
 }
