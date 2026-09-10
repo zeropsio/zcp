@@ -488,3 +488,57 @@ func TestWrapper_SupervisorKilled_NoDone(t *testing.T) {
 		t.Fatalf("done.json was uploaded despite the supervisor being SIGKILLed (body: %s)", body)
 	}
 }
+
+// TestWrapper_DigestMismatch_RefusesToRun pins FM-13 step 3: the child
+// verifies both binary digests against ZCP_FARM_EVALUATOR_SHA/
+// ZCP_FARM_CANDIDATE_SHA before running either — a mismatch refuses without
+// ever exec'ing the evaluator, and done.json still gets written (by the
+// supervisor's ordinary trap path) naming the refusal.
+func TestWrapper_DigestMismatch_RefusesToRun(t *testing.T) {
+	requireShAndCurl(t)
+
+	h := newWrapperHarness(t)
+	wrongSHA := strings.Repeat("0", 64)
+	cmd := h.start(t, map[string]string{"ZCP_FARM_CANDIDATE_SHA": wrongSHA})
+
+	_ = cmd.Wait()
+
+	doneBytes, ok := h.fake.get("runs/" + h.runID + "/done.json")
+	if !ok {
+		t.Fatalf("done.json missing from bucket")
+	}
+	var done wrapperDoneJSON
+	if err := json.Unmarshal(doneBytes, &done); err != nil {
+		t.Fatalf("done.json parse: %v (body: %s)", err, doneBytes)
+	}
+	if done.RunnerDimensions.Execution != "refused: digest mismatch" {
+		t.Errorf("runnerDimensions.execution = %q, want %q", done.RunnerDimensions.Execution, "refused: digest mismatch")
+	}
+	// evaluatorSha256/candidateSha256 record what was PINNED (the env
+	// values), never what the downloaded file actually hashed to.
+	if done.CandidateSha256 != wrongSHA {
+		t.Errorf("done.json candidateSha256 = %q, want the pinned (wrong) value %q", done.CandidateSha256, wrongSHA)
+	}
+
+	// Independent oracle: parts digests must equal TreeDigest of a
+	// genuinely empty directory — nothing was ever written to results/ or
+	// capture/ because the stub never ran.
+	wantEmpty, err := TreeDigest(t.TempDir())
+	if err != nil {
+		t.Fatalf("TreeDigest(empty): %v", err)
+	}
+	if done.Parts.Results.TreeDigest != wantEmpty || done.Parts.Capture.TreeDigest != wantEmpty {
+		t.Errorf("parts digests = %q/%q, want both %q (empty dirs)", done.Parts.Results.TreeDigest, done.Parts.Capture.TreeDigest, wantEmpty)
+	}
+
+	// The stub evaluator's own side-effect marker (written as its very
+	// first action, before anything else) must be absent: the wrapper
+	// refused before ever exec'ing it. Checked directly on the local
+	// RUNDIR — the marker is written outside results/capture, so it would
+	// never reach the bucket even if the stub had run.
+	if _, err := os.Stat(filepath.Join(h.rundir, "ran.marker")); err == nil {
+		t.Errorf("stub evaluator's side-effect marker exists — it ran despite the digest mismatch")
+	} else if !os.IsNotExist(err) {
+		t.Errorf("stat ran.marker: %v", err)
+	}
+}

@@ -180,8 +180,20 @@ child_main() {
 	candidate_bin="$RUNDIR/candidate"
 	scen_dir="$RUNDIR/scenarios"
 
-	s3_get "evaluators/$ZCP_FARM_EVALUATOR_SHA/zcp" "$evaluator_bin"
-	s3_get "candidates/$ZCP_FARM_CANDIDATE_SHA/zcp" "$candidate_bin"
+	# A download failure (including a plain 404 — an unpinned SHA names no
+	# object at all) refuses exactly like a hash mismatch: either way the
+	# binary named by ZCP_FARM_EVALUATOR_SHA/ZCP_FARM_CANDIDATE_SHA could
+	# not be verified, so it is never run (FM-13 step 3). Guarded
+	# individually so a failed GET does not abort the child via `set -e`
+	# before the refusal path can write execution-override.
+	if ! s3_get "evaluators/$ZCP_FARM_EVALUATOR_SHA/zcp" "$evaluator_bin"; then
+		printf '%s' "refused: digest mismatch" >"$RUNDIR/execution-override"
+		exit 1
+	fi
+	if ! s3_get "candidates/$ZCP_FARM_CANDIDATE_SHA/zcp" "$candidate_bin"; then
+		printf '%s' "refused: digest mismatch" >"$RUNDIR/execution-override"
+		exit 1
+	fi
 	chmod +x "$evaluator_bin" "$candidate_bin"
 	download_prefix "scenarios/$ZCP_FARM_SCENARIOS_DIGEST/" "$scen_dir"
 
