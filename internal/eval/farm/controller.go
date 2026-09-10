@@ -33,6 +33,12 @@ const (
 	ResultBlocked = "blocked"
 )
 
+// DetailNoBundle is the RunResult.Detail / GCCandidate.Exempt value for a
+// run whose budget elapsed without ever producing runs/<runId>/done.json
+// (FM-3, FM-21) — shared by RunBatch's waitForDone and gc.go's GC so the
+// two agree on the same literal (goconst).
+const DetailNoBundle = "no bundle"
+
 // PlatformClient is the account-wide platform surface the controller needs.
 // The real implementation (NewAccountClient) wraps platform.NewZeropsClient
 // and platform.NewProjectAdminClient — both existing SDK-based constructors
@@ -348,7 +354,7 @@ func waitForDone(ctx context.Context, sink *SinkClient, runID string, budget tim
 			return settleFromDone(ctx, sink, runID, body)
 		}
 		if now().After(deadline) {
-			return ResultBlocked, "no bundle", false
+			return ResultBlocked, DetailNoBundle, false
 		}
 		time.Sleep(pollInterval)
 	}

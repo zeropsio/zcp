@@ -543,8 +543,8 @@ func TestFarmRun_NoDoneJSON_BudgetElapsed_ProjectKept(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunBatch: %v", err)
 	}
-	if len(results) != 1 || results[0].Result != ResultBlocked || results[0].Detail != "no bundle" {
-		t.Fatalf("results = %+v, want one entry Result=%q Detail=%q", results, ResultBlocked, "no bundle")
+	if len(results) != 1 || results[0].Result != ResultBlocked || results[0].Detail != DetailNoBundle {
+		t.Fatalf("results = %+v, want one entry Result=%q Detail=%q", results, ResultBlocked, DetailNoBundle)
 	}
 	for _, entry := range account.requestLog() {
 		if strings.HasPrefix(entry, "DELETE ") {
