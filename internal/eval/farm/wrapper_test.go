@@ -457,3 +457,34 @@ func TestWrapper_ChildKilled_StillUploadsDone(t *testing.T) {
 		t.Errorf("runnerDimensions.execution = %q, want it to name signal/killed", execution)
 	}
 }
+
+// TestWrapper_SupervisorKilled_NoDone pins the other half of FM-13: a
+// SIGKILL of the supervisor itself is the one case nothing runs after — no
+// trap fires (SIGKILL cannot be trapped), so no upload happens and
+// done.json never appears. The now-orphaned child is still told to hang
+// (STUB_MODE=hang); the test kills it too once both pidfiles are known, so
+// it does not have to wait out the full 30s sleep to reap it.
+func TestWrapper_SupervisorKilled_NoDone(t *testing.T) {
+	requireShAndCurl(t)
+
+	h := newWrapperHarness(t)
+	cmd := h.start(t, map[string]string{"STUB_MODE": "hang"})
+
+	supervisorPID := readPIDFile(t, filepath.Join(h.rundir, "supervisor.pid"), 10*time.Second)
+	childPID := readPIDFile(t, filepath.Join(h.rundir, "child.pid"), 10*time.Second)
+
+	if err := syscall.Kill(supervisorPID, syscall.SIGKILL); err != nil {
+		t.Fatalf("kill -9 supervisor (pid %d): %v", supervisorPID, err)
+	}
+	// Reap the orphaned child quickly rather than waiting out its 30s
+	// sleep; FM-13's guarantee is about the supervisor's trap, not about
+	// how fast an orphaned child eventually dies on its own.
+	if err := syscall.Kill(childPID, syscall.SIGKILL); err != nil {
+		t.Fatalf("kill -9 child (pid %d): %v", childPID, err)
+	}
+	_ = cmd.Wait()
+
+	if body, ok := waitForS3Key(h.fake, "runs/"+h.runID+"/done.json", 3*time.Second); ok {
+		t.Fatalf("done.json was uploaded despite the supervisor being SIGKILLed (body: %s)", body)
+	}
+}
