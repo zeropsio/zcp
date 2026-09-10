@@ -75,8 +75,25 @@ func Coverage(dir string, since string) (CoverageReport, error) {
 		if err != nil {
 			return CoverageReport{}, err
 		}
+		if scenarioID == "" {
+			// No done.json and no results/**/meta.json to fall back to —
+			// nothing to attribute cells to (docs/spec-eval-farm.md §2.3
+			// FM-13 has every real bundle carry done.json, so this is a
+			// belt-and-braces case, not the live shape).
+			noStream = append(noStream, filepath.Base(runDir))
+			continue
+		}
 
-		matches, err := filepath.Glob(filepath.Join(runDir, "capture", "mcp", "zcp-*.jsonl"))
+		sessionDir, err := resolveCaptureWindowDir(filepath.Join(runDir, "capture"))
+		if err != nil {
+			// A run that died before (or during) capture — e.g. the
+			// binding preflight — has no capture window at all. Listed,
+			// never fatal (docs/spec-eval-farm.md §5.3 FM-39).
+			noStream = append(noStream, filepath.Base(runDir))
+			continue
+		}
+
+		matches, err := filepath.Glob(filepath.Join(sessionDir, "mcp", "zcp-*.jsonl"))
 		if err != nil {
 			return CoverageReport{}, fmt.Errorf("farm: glob capture for %s: %w", runDir, err)
 		}
@@ -155,10 +172,33 @@ func Coverage(dir string, since string) (CoverageReport, error) {
 	return CoverageReport{Cells: cells, NoStreamRuns: noStream, PruneCandidates: pruneCandidates}, nil
 }
 
-// readRunScenarioID reads runDir/results/meta.json and returns its
-// scenarioId field.
+// readRunScenarioID resolves runDir's scenario id: done.json's scenarioId
+// field (present in every bundle, written by the wrapper — docs/spec-eval-
+// farm.md §2.3 FM-13) when done.json exists, falling back to the single
+// results/**/meta.json (docs/spec-testing-architecture.md §10.1) only when
+// done.json is absent. Returns "" (not an error) when neither resolves —
+// the caller lists such a run as having no stream rather than aborting.
 func readRunScenarioID(runDir string) (string, error) {
-	body, err := os.ReadFile(filepath.Join(runDir, "results", "meta.json"))
+	doneBody, err := os.ReadFile(filepath.Join(runDir, "done.json"))
+	if err == nil {
+		var done DoneDocument
+		if err := json.Unmarshal(doneBody, &done); err != nil {
+			return "", fmt.Errorf("farm: parse done.json for %s: %w", runDir, err)
+		}
+		return done.ScenarioID, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", fmt.Errorf("farm: read done.json for %s: %w", runDir, err)
+	}
+
+	matches, err := filepath.Glob(filepath.Join(runDir, "results", "*", "*", "meta.json"))
+	if err != nil {
+		return "", fmt.Errorf("farm: glob meta.json for %s: %w", runDir, err)
+	}
+	if len(matches) != 1 {
+		return "", nil
+	}
+	body, err := os.ReadFile(matches[0])
 	if err != nil {
 		return "", fmt.Errorf("farm: read meta.json for %s: %w", runDir, err)
 	}
