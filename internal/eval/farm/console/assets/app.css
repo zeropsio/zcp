@@ -200,7 +200,7 @@ code.chip { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
 }
 .outcome-ok { color: var(--passed); background: var(--passed-bg); }
 .outcome-problem { color: var(--failed); background: var(--failed-bg); }
-.outcome-inconclusive, .outcome-other { color: var(--neutral); background: var(--neutral-bg); }
+.outcome-inconclusive, .outcome-none, .outcome-other { color: var(--neutral); background: var(--neutral-bg); }
 
 /* "the observer judged a check wrong" marker */
 .disputed-marker {
