@@ -314,7 +314,9 @@ func evaluatorSelfSHA256() (string, error) {
 // ScenarioBaseline is the per-hostname baseline reading taken at scenario
 // start (docs/spec-testing-architecture.md §10.3 "Baseline";
 // docs/spec-eval-farm.md §4.1 FM-29): one active app-version id per hostname
-// in the union of verification.unchanged and nodePostgresRecord.unrelated.
+// in the union of verification.unchanged, nodePostgresRecord.unrelated, and
+// every verification.artifactPromotion[].from (finding E2 — the O7
+// dev_unchanged row needs a baseline for the promotion's dev hostname too).
 // A hostname absent from AppVersions was never recorded (a read failure, or
 // the service not yet deployed) — every reader treats that as "no baseline
 // for <host>", never a pass.
@@ -584,29 +586,36 @@ func (r *Runner) observeTaskEnd(ctx context.Context, sc *Scenario, outDir string
 	}
 }
 
-// scenarioBaselineHostnames returns the union of verification.unchanged and
-// nodePostgresRecord.unrelated for sc, deduplicated, in a stable order
-// (unchanged entries first, then the nodePostgresRecord hostname if not
-// already present). Empty when sc declares neither (FM-29: baseline capture
-// is driven by the declared inputs, never by mode).
+// scenarioBaselineHostnames returns the union of verification.unchanged,
+// nodePostgresRecord.unrelated, and every artifactPromotion[].from for sc,
+// deduplicated, in a stable order (unchanged entries first, then the
+// nodePostgresRecord hostname if not already present, then each
+// artifactPromotion dev hostname in declaration order). Empty when sc
+// declares none of the three (FM-29: baseline capture is driven by the
+// declared inputs, never by mode). Finding E2: artifactPromotion[].from was
+// missing here, so the O7 dev_unchanged row had no baseline to compare
+// against and blocked on every cross-deploy run.
 func scenarioBaselineHostnames(sc *Scenario) []string {
 	if sc.Verification == nil {
 		return nil
 	}
 	seen := make(map[string]bool)
 	var hostnames []string
-	for _, h := range sc.Verification.Unchanged {
+	add := func(h string) {
 		if h == "" || seen[h] {
-			continue
+			return
 		}
 		seen[h] = true
 		hostnames = append(hostnames, h)
 	}
+	for _, h := range sc.Verification.Unchanged {
+		add(h)
+	}
 	if sc.Verification.NodePostgresRecord != nil {
-		h := sc.Verification.NodePostgresRecord.Unrelated
-		if h != "" && !seen[h] {
-			hostnames = append(hostnames, h)
-		}
+		add(sc.Verification.NodePostgresRecord.Unrelated)
+	}
+	for _, ap := range sc.Verification.ArtifactPromotion {
+		add(ap.From)
 	}
 	return hostnames
 }
@@ -617,7 +626,8 @@ func scenarioBaselineHostnames(sc *Scenario) []string {
 // every row; a hostname that resolves to no service, or to a service with no
 // active app-version yet, is simply absent from the resulting map — which
 // every reader (evaluateUnchangedFieldRow, the nodePostgresRecord unrelated
-// row) treats as "no baseline for <host>" → blocked, never a silent pass.
+// row, the O7 artifact_promotion dev_unchanged row) treats as "no baseline
+// for <host>" → blocked, never a silent pass.
 func (r *Runner) recordScenarioBaseline(ctx context.Context, hostnames []string, result *BehavioralResult) {
 	services, err := r.client.ListServicesDirect(ctx, r.projectID)
 	if err != nil {

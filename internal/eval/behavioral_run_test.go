@@ -385,6 +385,33 @@ func TestScenarioBaseline_CapturesEveryUnchangedHostname(t *testing.T) {
 	}
 }
 
+// TestScenarioBaseline_IncludesArtifactPromotionFrom pins finding E2: the
+// baseline hostname set also covers every declared
+// verification.artifactPromotion[].from — without it, the O7
+// dev_unchanged row (docs/spec-eval-farm.md §4.4 O7) has no baseline to
+// compare against and blocks on every cross-deploy run.
+func TestScenarioBaseline_IncludesArtifactPromotionFrom(t *testing.T) {
+	t.Parallel()
+	sc := &Scenario{Verification: &VerificationConfig{
+		Unchanged: []string{"hostA"},
+		ArtifactPromotion: []ArtifactPromotionEntry{
+			{From: "appdev", To: "appstage"},
+			{From: "hostA", To: "hostB"}, // dup of Unchanged's hostA: must not duplicate
+		},
+	}}
+
+	hostnames := scenarioBaselineHostnames(sc)
+	want := []string{"hostA", "appdev"}
+	if len(hostnames) != len(want) {
+		t.Fatalf("scenarioBaselineHostnames = %v, want %v (unchanged + deduped artifactPromotion[].from)", hostnames, want)
+	}
+	for i, h := range want {
+		if hostnames[i] != h {
+			t.Errorf("scenarioBaselineHostnames[%d] = %q, want %q (got %v)", i, hostnames[i], h, hostnames)
+		}
+	}
+}
+
 // TestBehavioralRun_RetrospectiveMaxTurns_RecordedMissingNotExecutionError
 // pins docs/spec-eval-farm.md §2.3 FM-13: a text-only retrospective that
 // still exhausts its turn cap (result line subtype "error_max_turns",
