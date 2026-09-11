@@ -18,7 +18,10 @@ type VerdictCount struct {
 }
 
 // Batch kinds (§8.8: "Evaluation batch — at least one run finished. Empty
-// batch — no run finished").
+// batch — no run finished"). "Finished" means did some work, not merely
+// that done.json exists: item 6 (FIX2.md FIX2-DATA) — a run that blocked
+// in 0.1-0.2s at $0 still writes done.json, so loadBatchRows' anyEvaluated
+// requires a cost above 0 or a recorded step, not DoneExists.
 const (
 	batchKindEvaluation = "evaluation"
 	batchKindEmpty      = "empty"
@@ -139,7 +142,12 @@ func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObser
 		counts := make(map[string]int)
 		var totalCost float64
 		observedN, high, costUnknown := 0, 0, 0
-		anyDone := false
+		// anyEvaluated implements item 6 (FIX2.md FIX2-DATA): a batch is
+		// batchKindEvaluation only when at least one run has a cost above 0
+		// or any recorded step — a run whose done.json exists but that
+		// blocked in 0.1-0.2s at $0 (gate1, asm7-9, tracerctl) never did any
+		// work, and must not count as "evaluated" just because DoneExists.
+		anyEvaluated := false
 		disputed, goalYes, goalPartly, goalNo := 0, 0, 0, 0
 		outcomeOK, outcomeProblem, outcomeInconclusive := 0, 0, 0
 		causeCounts := newCauseClassCounts()
@@ -152,8 +160,8 @@ func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObser
 			if !r.CostKnown {
 				costUnknown++
 			}
-			if r.DoneExists {
-				anyDone = true
+			if r.CostUsd > 0 || r.StepCount > 0 {
+				anyEvaluated = true
 			}
 			// Outcome != "" implies a current ok observation (computeOutcome,
 			// view.go) — the same fact ObservedN now uses (the "assessed n/m"
@@ -191,7 +199,7 @@ func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObser
 		}
 
 		kind := batchKindEmpty
-		if anyDone {
+		if anyEvaluated {
 			kind = batchKindEvaluation
 		}
 		var zcpHigh, zcpMedium int

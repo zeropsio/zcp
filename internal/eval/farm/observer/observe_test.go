@@ -396,4 +396,10 @@ func TestObserve_UnparsedAnswer_StoresRawUpTo20000Chars(t *testing.T) {
 	if len(obs.Raw) != 6000 {
 		t.Errorf("len(obs.Raw) = %d, want 6000 (the whole answer, not truncated to render's 2,000-char display cap)", len(obs.Raw))
 	}
+	// item 3 (FIX2.md FIX2-DATA): Observe stores ParseAndValidate's reason
+	// in Observation.Error alongside raw, so a maintainer sees why the
+	// answer went unparsed rather than just the raw text.
+	if want := "no JSON object found in the answer"; obs.Error != want {
+		t.Errorf("obs.Error = %q, want %q", obs.Error, want)
+	}
 }

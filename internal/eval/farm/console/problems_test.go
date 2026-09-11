@@ -36,6 +36,63 @@ func TestNorm(t *testing.T) {
 	}
 }
 
+// --- maskRunSpecific / maskLiteralToken (item 1) ----------------------------
+
+func TestMaskLiteralToken(t *testing.T) {
+	tests := []struct {
+		name          string
+		s, needle, rp string
+		want          string
+	}{
+		{"whole-token literal with internal hyphens replaced", "work/final1-api-node/x", "final1-api-node", "<runpath>", "work/<runpath>/x"},
+		{"not replaced when part of a longer token", "work/xfinal1-api-nodey/x", "final1-api-node", "<runpath>", "work/xfinal1-api-nodey/x"},
+		{"empty needle is a no-op", "unchanged", "", "<runpath>", "unchanged"},
+		{"multiple occurrences all replaced", "a/r1/b/r1/c", "r1", "<x>", "a/<x>/b/<x>/c"},
+		{"needle absent leaves s untouched", "no match here", "r1", "<x>", "no match here"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := maskLiteralToken(tc.s, tc.needle, tc.rp); got != tc.want {
+				t.Errorf("maskLiteralToken(%q, %q, %q) = %q, want %q", tc.s, tc.needle, tc.rp, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMaskRunSpecific(t *testing.T) {
+	tests := []struct {
+		name                      string
+		s, runID, batch, scenario string
+		want                      string
+	}{
+		{
+			"this run's own id masked inside its .zcp-farm path",
+			"source mount /home/zerops/.zcp-farm/final1-api-node-postgres-classic-dev/work/apidev missing",
+			"final1-api-node-postgres-classic-dev", "final1", "api-node-postgres-classic-dev",
+			"source mount /home/zerops/<runpath>/work/apidev missing",
+		},
+		{
+			"a stray OTHER run's .zcp-farm path also collapses",
+			"cross-deploy: source zerops.yaml at /home/zerops/.zcp-farm/gate9-other-run/work/x missing",
+			"gate9-this-run", "gate9", "this-run",
+			"cross-deploy: source zerops.yaml at /home/zerops/<runpath>/work/x missing",
+		},
+		{
+			"no .zcp-farm path, no id occurrence: untouched",
+			"PREFLIGHT_FAILED: zerops.yaml not found",
+			"r1", "b1", "s1",
+			"PREFLIGHT_FAILED: zerops.yaml not found",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := maskRunSpecific(tc.s, tc.runID, tc.batch, tc.scenario); got != tc.want {
+				t.Errorf("maskRunSpecific(%q, ...) = %q, want %q", tc.s, got, tc.want)
+			}
+		})
+	}
+}
+
 // --- problemKey (§8.6 clustering keys) ------------------------------------
 
 func TestProblemKey(t *testing.T) {
@@ -184,6 +241,184 @@ func TestBuildProblems_FilterLeavesStatusUnchanged(t *testing.T) {
 	again := BuildProblems(runs)
 	if again[0].Status != problems[0].Status {
 		t.Errorf("status changed across identical BuildProblems calls: %q vs %q", again[0].Status, problems[0].Status)
+	}
+}
+
+// TestBuildProblems_ClustersRunSpecificAnchors pins item 1 (FIX2.md
+// FIX2-DATA): before norm's existing masking, a finding's own run id, batch
+// id and scenario are masked as whole tokens, and any
+// ".zcp-farm/<anything>/" path segment collapses to "<runpath>/", so the
+// SAME underlying bug reported by independent runs clusters instead of one
+// problem per run.
+//
+// The anchors below are copied verbatim from a real farm bucket's
+// /api/problems.json?status=all&since=30d (batch final1, live-checked
+// 2026-09-12): the SAME zerops_deploy cross-deploy preflight bug,
+// independently observed on six runs. The fix clusters the three runs
+// whose anchor is worded identically apart from the run path into ONE
+// problem (matching the brief's own illustrative example, the
+// api-node-postgres-classic-dev run) — but not all six into one: the
+// model wrote three distinct WORDINGS of the same bug across these six
+// runs (a plain "source mount ... missing"; one adding a trailing
+// "— scaffold zerops.yaml for service ... there"; one adding BOTH that
+// suffix and a leading "zerops.yaml not found or invalid:"). §8.6
+// clustering is deterministic token masking ("no model is called"), so it
+// clusters same-wording anchors together but cannot also bridge a wording
+// difference beyond the run path — that residual gap (six runs → three
+// clusters, not one) is exactly what item 2's prompt.md rule (pick a
+// run-independent anchor going forward) exists to close for future runs.
+func TestBuildProblems_ClustersRunSpecificAnchors(t *testing.T) {
+	day := func(n int) time.Time { return time.Date(2026, 9, n, 0, 0, 0, 0, time.UTC) }
+
+	mk := func(runID, scenario, host, anchor string) ProblemsRun {
+		f := observer.Finding{
+			Severity: "high", Owner: "zcp-tool", Title: "Deploy preflight path disagrees with mount path",
+			Surface: "tool:zerops_deploy", Anchor: anchor, Fix: "fix",
+		}
+		obs := &observer.Observation{
+			Status: "ok", FormatVersion: observer.ObservationFormat2, Outcome: observer.OutcomeProblem,
+			Findings: []observer.Finding{f},
+		}
+		row := RunRow{
+			RunID: runID, Batch: "final1", Scenario: scenario, StartedAt: day(11),
+			Build: BuildInfo{Sha256: "buildfinal1"}, Observation: obs, Outcome: obs.Outcome,
+			ServiceHostnames: []string{host},
+		}
+		return ProblemsRun{Row: row, BatchSet: "gate", BatchCreatedAt: day(11)}
+	}
+
+	plain := []ProblemsRun{
+		mk("final1-recover-failed-buildfromgit-missing-dep", "recover-failed-buildfromgit-missing-dep", "api",
+			`source mount /home/zerops/.zcp-farm/final1-recover-failed-buildfromgit-missing-dep/work/api missing`),
+		mk("final1-api-node-postgres-classic-dev", "api-node-postgres-classic-dev", "apidev",
+			`source mount /home/zerops/.zcp-farm/final1-api-node-postgres-classic-dev/work/apidev missing`),
+		mk("final1-recipe-nestjs-minimal-standard", "recipe-nestjs-minimal-standard", "appdev",
+			`source mount /home/zerops/.zcp-farm/final1-recipe-nestjs-minimal-standard/work/appdev missing`),
+	}
+	suffixed := []ProblemsRun{
+		mk("final1-develop-add-managed-dep-to-existing", "develop-add-managed-dep-to-existing", "appdev",
+			`source mount /home/zerops/.zcp-farm/final1-develop-add-managed-dep-to-existing/work/appdev missing — scaffold zerops.yaml for service "appdev" there`),
+		mk("final1-greenfield-node-postgres-dev-stage", "greenfield-node-postgres-dev-stage", "appdev",
+			`source mount /home/zerops/.zcp-farm/final1-greenfield-node-postgres-dev-stage/work/appdev missing — scaffold zerops.yaml for service "appdev" there`),
+	}
+	prefixedAndSuffixed := []ProblemsRun{
+		mk("final1-existing-standard-appdev-only-reminders", "existing-standard-appdev-only-reminders", "appdev",
+			`zerops.yaml not found or invalid: source mount /home/zerops/.zcp-farm/final1-existing-standard-appdev-only-reminders/work/appdev missing — scaffold zerops.yaml for service "appdev" there`),
+	}
+	// Two unrelated real anchors (a different bug) must never merge in.
+	unrelated := []ProblemsRun{
+		mk("final1-unrelated-events", "unrelated-events", "svc",
+			`The build/deploy failure timeline (failureClass + cause) is in zerops_events, not this stream.`),
+		mk("final1-unrelated-timeout", "unrelated-timeout", "svc",
+			`context deadline exceeded waiting for the process to finish`),
+	}
+
+	groups := [][]ProblemsRun{plain, suffixed, prefixedAndSuffixed, unrelated}
+	total := 0
+	for _, group := range groups {
+		total += len(group)
+	}
+	runs := make([]ProblemsRun, 0, total)
+	for _, group := range groups {
+		runs = append(runs, group...)
+	}
+	problems := BuildProblems(runs)
+
+	memberCountFor := func(runID string) int {
+		for _, p := range problems {
+			for _, m := range p.Members {
+				if m.RunID == runID {
+					return len(p.Members)
+				}
+			}
+		}
+		t.Fatalf("no problem contains run %q", runID)
+		return -1
+	}
+
+	for _, r := range plain {
+		if got := memberCountFor(r.Row.RunID); got != len(plain) {
+			t.Errorf("run %q: problem has %d members, want %d (the three identically-worded anchors)", r.Row.RunID, got, len(plain))
+		}
+	}
+	for _, r := range suffixed {
+		if got := memberCountFor(r.Row.RunID); got != len(suffixed) {
+			t.Errorf("run %q: problem has %d members, want %d (the two suffixed anchors)", r.Row.RunID, got, len(suffixed))
+		}
+	}
+	if got := memberCountFor(prefixedAndSuffixed[0].Row.RunID); got != 1 {
+		t.Errorf("prefixed+suffixed anchor: problem has %d members, want 1 (its own wording is unique)", got)
+	}
+	for _, r := range unrelated {
+		if got := memberCountFor(r.Row.RunID); got != 1 {
+			t.Errorf("unrelated anchor %q: problem has %d members, want 1 (must never merge)", r.Row.RunID, got)
+		}
+	}
+	if len(problems) != 5 { // 3 + 2 + 1 + 2 unrelated
+		t.Errorf("got %d problems, want 5", len(problems))
+	}
+}
+
+// --- item 7: "a" counts distinct runs; batch-local hit/assessed -----------
+
+// TestBuildProblems_HitOnNewestBuildCountsDistinctRuns pins item 7 (FIX2.md
+// FIX2-DATA): "a" (HitOnNewestBuild) is the number of DISTINCT runs hit,
+// not the number of clustered findings/members — a single run whose one
+// observation contributes two findings to the SAME problem must count as
+// one run hit, not two.
+func TestBuildProblems_HitOnNewestBuildCountsDistinctRuns(t *testing.T) {
+	day := func(n int) time.Time { return time.Date(2026, 9, n, 0, 0, 0, 0, time.UTC) }
+	f1 := observer.Finding{Severity: "high", Owner: "zcp-tool", Title: "first", Surface: "tool:x"}
+	f2 := observer.Finding{Severity: "medium", Owner: "zcp-tool", Title: "second", Surface: "tool:x"}
+	runs := []ProblemsRun{
+		pRun("r1", "b1", "s1", "build1", day(1), day(1), f1, f2),
+	}
+	problems := BuildProblems(runs)
+	if len(problems) != 1 {
+		t.Fatalf("got %d problems, want 1 (both findings share the no-anchor tool:x/zcp-tool/s1 key)", len(problems))
+	}
+	if len(problems[0].Members) != 2 {
+		t.Fatalf("got %d members, want 2", len(problems[0].Members))
+	}
+	if problems[0].HitOnNewestBuild != 1 {
+		t.Errorf("HitOnNewestBuild = %d, want 1 (one distinct run, two findings)", problems[0].HitOnNewestBuild)
+	}
+}
+
+// TestBuildProblems_BatchLocalHitAndAssessedCounts pins item 7's addition:
+// RunsHitByBatch/RunsAssessedByBatch let a batch page say "hit N of M runs
+// in this batch" — scoped to one batch, unlike HitOnNewestBuild/
+// RunsAssessedOnNewest, which are scoped to "the newest build" across
+// every batch in the since window.
+func TestBuildProblems_BatchLocalHitAndAssessedCounts(t *testing.T) {
+	day := func(n int) time.Time { return time.Date(2026, 9, n, 0, 0, 0, 0, time.UTC) }
+	finding := func() observer.Finding {
+		return observer.Finding{Severity: "high", Owner: "zcp-tool", Title: "x", Surface: "tool:x", Anchor: "same anchor"}
+	}
+	runs := []ProblemsRun{
+		// batchA: 3 runs of s1 assessed, 2 hit.
+		pRun("a-hit1", "batchA", "s1", "build1", day(1), day(1), finding()),
+		pRun("a-hit2", "batchA", "s1", "build1", day(1), day(1), finding()),
+		pRun("a-clean", "batchA", "s1", "build1", day(1), day(1)),
+		// batchB: 1 run of s1 assessed, hits.
+		pRun("b-hit1", "batchB", "s1", "build2", day(2), day(2), finding()),
+	}
+	problems := BuildProblems(runs)
+	if len(problems) != 1 {
+		t.Fatalf("got %d problems, want 1", len(problems))
+	}
+	p := problems[0]
+	if got := p.RunsHitByBatch["batchA"]; got != 2 {
+		t.Errorf("RunsHitByBatch[batchA] = %d, want 2", got)
+	}
+	if got := p.RunsAssessedByBatch["batchA"]; got != 3 {
+		t.Errorf("RunsAssessedByBatch[batchA] = %d, want 3", got)
+	}
+	if got := p.RunsHitByBatch["batchB"]; got != 1 {
+		t.Errorf("RunsHitByBatch[batchB] = %d, want 1", got)
+	}
+	if got := p.RunsAssessedByBatch["batchB"]; got != 1 {
+		t.Errorf("RunsAssessedByBatch[batchB] = %d, want 1", got)
 	}
 }
 

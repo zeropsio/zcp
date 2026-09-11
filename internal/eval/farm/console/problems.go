@@ -3,6 +3,7 @@
 package console
 
 import (
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -75,6 +76,64 @@ func replaceTokens(s string, f func(string) string) string {
 	return b.String()
 }
 
+// zcpFarmPath matches one ".zcp-farm/<segment>/" path component — a run's
+// own disposable working directory (§2.1) — anywhere in an anchor's text.
+var zcpFarmPath = regexp.MustCompile(`\.zcp-farm/[^/]+/`)
+
+// maskRunSpecific implements FIX2.md's FIX2-DATA item 1: run BEFORE norm's
+// own masking (below), so this finding's own run id, batch id and scenario
+// (whole-token, §8.6's boundary rule) collapse to "<runpath>" wherever they
+// occur in s, and any ".zcp-farm/<anything>/" path segment — a stray
+// reference to some OTHER run's own working directory (a cross-deploy
+// scenario's error can name its source run, not just itself) — collapses
+// the same way. Without this, the SAME bug reported from N independent
+// runs clusters into N problems instead of one: each anchor carries its own
+// run's disposable path, and that path alone made every anchor unique.
+func maskRunSpecific(s, runID, batch, scenario string) string {
+	for _, id := range []string{runID, batch, scenario} {
+		s = maskLiteralToken(s, id, "<runpath>")
+	}
+	return zcpFarmPath.ReplaceAllString(s, "<runpath>/")
+}
+
+// maskLiteralToken replaces every non-overlapping, token-bounded occurrence
+// of needle in s with replacement. Unlike replaceTokens/norm's own token
+// masking, needle need not itself be one maximal [a-z0-9] run — a run id
+// such as "final1-api-node-postgres-classic-dev" has '-' inside it — so
+// this matches the literal needle and checks only that its two edges sit on
+// a token boundary (§8.6: "a token is bounded by a character outside
+// [a-z0-9] or the text's edge"), the same boundary rule generalized to a
+// multi-token literal. A false (non-boundary) match advances one byte and
+// keeps scanning, so a later, boundary-true occurrence starting inside it
+// is still found. needle == "" is a no-op (never masks everything).
+func maskLiteralToken(s, needle, replacement string) string {
+	if needle == "" {
+		return s
+	}
+	var b strings.Builder
+	i := 0
+	for {
+		j := strings.Index(s[i:], needle)
+		if j == -1 {
+			b.WriteString(s[i:])
+			break
+		}
+		start := i + j
+		end := start + len(needle)
+		boundedBefore := start == 0 || !isTokenByte(s[start-1])
+		boundedAfter := end == len(s) || !isTokenByte(s[end])
+		if boundedBefore && boundedAfter {
+			b.WriteString(s[i:start])
+			b.WriteString(replacement)
+			i = end
+			continue
+		}
+		b.WriteString(s[i : start+1])
+		i = start + 1
+	}
+	return b.String()
+}
+
 // norm implements §8.6's anchor normalization: FM-46's decode+collapse+
 // strip-punctuation (observer.NormalizeText), lowercased, then — each as
 // whole tokens only — the run's service hostnames replaced with "<host>",
@@ -124,7 +183,8 @@ func problemKey(f FindingRow, hostnames []string) string {
 	prefix := surfacePrefix(f.Surface)
 	switch {
 	case f.FormatVersion == 2 && f.Anchor != "":
-		return "anchor|" + prefix + "|" + norm(f.Anchor, hostnames)
+		anchor := maskRunSpecific(f.Anchor, f.RunID, f.Batch, f.Scenario)
+		return "anchor|" + prefix + "|" + norm(anchor, hostnames)
 	case f.FormatVersion == 2 && f.Anchor == "" && clusterableNoAnchorPrefix(prefix):
 		return "noanchor|" + prefix + "|" + f.Owner + "|" + f.Scenario
 	default:
@@ -162,12 +222,25 @@ type Problem struct {
 	Fix         string   // most severe member's fix (newest on a tie)
 	Anchor      string   // most severe member's anchor (newest on a tie)
 
-	HitOnNewestBuild     int // a: member runs on the newest build
+	HitOnNewestBuild     int // a: distinct runs among members on the newest build
 	RunsAssessedOnNewest int // b: runs of this problem's scenarios assessed on the newest build
 	RunsTotal            int // n: distinct runs among members
 	BatchesTotal         int // m: distinct batches among members
 	BuildsTotal          int // k: distinct builds among members
 	FirstSeen, LastSeen  time.Time
+
+	// RunsHitByBatch and RunsAssessedByBatch are item 7's batch-local "hit N
+	// of M runs in this batch" counts (FIX2.md FIX2-DATA item 7), keyed by
+	// batch id, for every batch this problem has at least one member in:
+	// RunsHitByBatch is the number of DISTINCT runs of that one batch the
+	// problem hit; RunsAssessedByBatch is the number of that batch's runs,
+	// among this problem's scenarios, that carry a current ok observation
+	// (the denominator). Unlike HitOnNewestBuild/RunsAssessedOnNewest —
+	// scoped to "the newest build" across every batch in the since window —
+	// these are scoped to one batch, so a batch page can say "hit 5 of 12
+	// runs in this batch" instead of the cross-batch newest-build figure.
+	RunsHitByBatch      map[string]int
+	RunsAssessedByBatch map[string]int
 
 	Members []ProblemMember // ordered by severity desc, then newest
 }
@@ -415,10 +488,20 @@ func BuildProblems(runs []ProblemsRun) []Problem {
 	// Runs assessed on the newest build, per scenario — for "b" in "hit
 	// a/b runs on <newest build>".
 	assessedOnNewestByScenario := make(map[string]int)
+	// Runs assessed per (scenario, batch) — item 7's batch-local "b"
+	// (RunsAssessedByBatch's denominator).
+	assessedByScenarioBatch := make(map[string]map[string]int)
 	for _, r := range runs {
-		if r.Row.Outcome != "" && r.Row.Build.Sha256 == newestBuild {
+		if r.Row.Outcome == "" {
+			continue
+		}
+		if r.Row.Build.Sha256 == newestBuild {
 			assessedOnNewestByScenario[r.Row.Scenario]++
 		}
+		if assessedByScenarioBatch[r.Row.Scenario] == nil {
+			assessedByScenarioBatch[r.Row.Scenario] = make(map[string]int)
+		}
+		assessedByScenarioBatch[r.Row.Scenario][r.Row.Batch]++
 	}
 
 	problems := make([]Problem, 0, len(order))
@@ -427,14 +510,35 @@ func BuildProblems(runs []ProblemsRun) []Problem {
 		p.Status = statusFor(p, bi, newestBuild)
 
 		scenarios := make(map[string]bool)
+		runsOnNewest := make(map[string]bool)
+		hitRunsByBatch := make(map[string]map[string]bool)
 		for _, m := range p.Members {
 			if m.Build.Sha256 == newestBuild {
-				p.HitOnNewestBuild++
+				runsOnNewest[m.RunID] = true
 			}
 			scenarios[m.Scenario] = true
+			if hitRunsByBatch[m.Batch] == nil {
+				hitRunsByBatch[m.Batch] = make(map[string]bool)
+			}
+			hitRunsByBatch[m.Batch][m.RunID] = true
 		}
+		// item 7: "a" is the number of DISTINCT runs hit, not the number of
+		// findings/members — a problem whose same run contributed more than
+		// one clustered finding must not count that run twice.
+		p.HitOnNewestBuild = len(runsOnNewest)
 		for s := range scenarios {
 			p.RunsAssessedOnNewest += assessedOnNewestByScenario[s]
+		}
+
+		p.RunsHitByBatch = make(map[string]int, len(hitRunsByBatch))
+		p.RunsAssessedByBatch = make(map[string]int, len(hitRunsByBatch))
+		for batch, runSet := range hitRunsByBatch {
+			p.RunsHitByBatch[batch] = len(runSet)
+			assessed := 0
+			for s := range scenarios {
+				assessed += assessedByScenarioBatch[s][batch]
+			}
+			p.RunsAssessedByBatch[batch] = assessed
 		}
 
 		problems = append(problems, p)

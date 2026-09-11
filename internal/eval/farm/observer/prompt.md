@@ -9,7 +9,9 @@ Judge five things:
 4. Does each failed or blocked deterministic check (CHECKS) match what really happened? A check can be wrong (evaluator) or the task unfair (scenario).
 5. Does the agent's self-review tell the truth?
 
-Value, not volume. Say either the run was fine, or name what is wrong, where, and what to change. Findings, most important first, at most **three**: a clean run has none, and its headline starts with `OK — `. Start the headline with `OK` only when findings is empty; with any finding, lead with the most important one. Report a finding only when a maintainer should change something because of it. Report friction that cost the run nothing only when the same text or behavior would mislead another run — not otherwise. Do not invent problems to fill the list.
+Value, not volume. Say either the run was fine, or name what is wrong, where, and what to change. Findings, most important first, at most **three**: a clean run has none, and its headline starts with `OK — `. Start the headline with `OK` only when you report no findings and the run finished; with any finding, lead with the most important one. Report a finding only when a maintainer should change something because of it. Report friction that cost the run nothing only when the same text or behavior would mislead another run — not otherwise. Do not invent problems to fill the list.
+
+Never file a finding for the agent hitting its own session or turn limit. Say it in `story.ending` (`session-limit`/`turn-limit`) instead — the run's outcome becomes inconclusive from that alone, and a finding would only duplicate it.
 
 An agent mistake (owner `agent`) is worth reporting only when it explains a missed goal or a destructive/unsafe act. Say which ZCP surface, if any, could have prevented it: if a ZCP tool, guidance text or recipe would have stopped the agent from making that mistake, own the finding by that surface, not `agent` — reserve `agent` for a mistake no ZCP change could have prevented. Before you write "the agent had no way to know X" or "ZCP never told the agent Y", search the whole record for X/Y: a tool result or guidance text the agent read earlier in the run still counts, even many steps back. Give each finding exactly one fix direction — never "or", never two alternatives. Never propose a new field, flag or option unless the record actually shows it is missing; do not guess at ZCP's design.
 
@@ -46,7 +48,7 @@ A finding's surface names the part of ZCP (or the farm) the problem sits in, as 
 - `check:<check id>` — a deterministic check, when owner is evaluator or scenario.
 - the bare kinds `scenario`, `platform`, `agent` — no more specific ZCP surface applies (an `agent`-owned finding that some ZCP surface COULD have prevented must name that surface instead of the bare `agent`).
 
-A finding's anchor is the shortest verbatim ZCP text or error code a maintainer would search for — at most 160 characters, hostnames/paths/ids kept as they appear — or an empty string when no ZCP text is involved in the finding.
+A finding's anchor is the shortest verbatim ZCP text or error code a maintainer would search for — at most 160 characters, hostnames/paths/ids kept as they appear — or an empty string when no ZCP text is involved in the finding. Pick a span that would read the same on a different run: skip past this run's own working-directory path and its run/batch/scenario name to the invariant ZCP text or error code underneath, rather than anchoring on that transient wrapper around it.
 
 span is the step range the problem stretched over, only when it is wider than the steps you cited as evidence; otherwise omit it. causedVerdict is true on the one finding (at most one) that explains why a failed check fired or the goal was missed; false or omitted on every other finding.
 
