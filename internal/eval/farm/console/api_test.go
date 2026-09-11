@@ -290,9 +290,11 @@ func TestAPI_SelfReview(t *testing.T) {
 	}
 }
 
-// TestAPI_FindingsGroupedByOwnerThenSeverity pins GET
-// /api/findings.md|.json?since=<window>: grouped by owner then severity.
-func TestAPI_FindingsGroupedByOwnerThenSeverity(t *testing.T) {
+// TestAPI_FindingsDefaultSortIsSeverity pins §8.7's /findings row: the
+// default sort key is `severity` desc (findingListSpec, findings_model.go)
+// — superseding an earlier "grouped by owner" reading of §8.4 that predates
+// the query-engine-driven list surface.
+func TestAPI_FindingsDefaultSortIsSeverity(t *testing.T) {
 	srv, store, _ := testServer(t)
 	h := srv.Handler()
 	now := fixedNow(t)()
@@ -300,8 +302,8 @@ func TestAPI_FindingsGroupedByOwnerThenSeverity(t *testing.T) {
 	seedBatch(t, store, "fb1", "claude-sonnet-5", []runFixture{
 		{runID: "fb1-scena", scenario: "scena", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 1.0, taskResult: "passed", done: true},
 	}, false, nil)
-	// fixtureObservation carries findings owner="zcp-tool" (high) then
-	// owner="agent" (medium). Grouped by owner alphabetically, "agent" < "zcp-tool".
+	// fixtureObservation carries one high/zcp-tool finding then one
+	// medium/agent finding — severity desc puts the high one first.
 	seedObservation(t, store, fixtureObservation("fb1-scena"))
 
 	rr := doGET(t, h, "/api/findings.json?since=24h")
@@ -317,8 +319,61 @@ func TestAPI_FindingsGroupedByOwnerThenSeverity(t *testing.T) {
 	if len(out.Findings) != 2 {
 		t.Fatalf("got %d findings, want 2: %+v", len(out.Findings), out.Findings)
 	}
-	if out.Findings[0].Owner != "agent" || out.Findings[1].Owner != "zcp-tool" {
-		t.Errorf("findings not grouped by owner: %+v", out.Findings)
+	if out.Findings[0].Severity != "high" || out.Findings[1].Severity != "medium" {
+		t.Errorf("findings not severity-desc: %+v", out.Findings)
+	}
+}
+
+// TestAPI_FindingsListFiltersSortAndFields pins §8.4/§8.7 for GET
+// /api/findings.md|.json: batch/scenario/build/started/severity/cause/
+// surface/anchor fields (§8.4: "every finding in scope: batch, scenario,
+// build, run id, started, severity, cause, surface, anchor, title, what,
+// steps, quotes found n/m, where to look, fix"), the same query engine as
+// /findings (§8.7: cause/severity/surface/scenario/batch/build/since,
+// sort=severity default), the leading legend line, and 400 for an unknown
+// parameter or a closed value outside its set.
+func TestAPI_FindingsListFiltersSortAndFields(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "fl1", "claude-sonnet-5", []runFixture{
+		{runID: "fl1-scena", scenario: "scena", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 1.0, taskResult: "passed", done: true},
+	}, false, nil)
+	seedObservation(t, store, fixtureObservation("fl1-scena"))
+
+	rr := doGET(t, h, "/api/findings.json?cause=zcp")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("got %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var out struct {
+		Findings []FindingItem `json:"findings"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.Findings) != 1 {
+		t.Fatalf("cause=zcp: got %d findings, want 1 (only the zcp-tool one): %+v", len(out.Findings), out.Findings)
+	}
+	f := out.Findings[0]
+	if f.Batch != "fl1" || f.Scenario != "scena" || f.RunID != "fl1-scena" || f.Severity != "high" || f.Cause != "ZCP tool" {
+		t.Errorf("finding fields = %+v, want batch/scenario/runId/severity/cause populated", f)
+	}
+	if f.StartedAt.IsZero() {
+		t.Error("finding StartedAt is zero, want the run's own started time")
+	}
+
+	mdBody := doGET(t, h, "/api/findings.md").Body.String()
+	if !strings.HasPrefix(mdBody, "Legend: ") {
+		t.Errorf("findings.md missing its leading legend line:\n%s", mdBody)
+	}
+	if !strings.Contains(mdBody, "fl1-scena") || !strings.Contains(mdBody, "Tool returned stale data") {
+		t.Errorf("findings.md missing expected content:\n%s", mdBody)
+	}
+
+	rrBad := doGET(t, h, "/api/findings.json?cause=bogus")
+	if rrBad.Code != http.StatusBadRequest {
+		t.Fatalf("bad cause value: got %d, want 400", rrBad.Code)
 	}
 }
 

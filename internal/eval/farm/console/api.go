@@ -436,18 +436,30 @@ type StepJSON struct {
 	Text    string `json:"text,omitempty"`
 }
 
-// FindingItem is one element of GET /api/findings.md|.json (FM-52).
+// FindingItem is one element of GET /api/findings.md|.json (§8.4: "every
+// finding in scope: batch, scenario, build, run id, started, severity,
+// cause, surface, anchor, title, what, steps, quotes found n/m, where to
+// look, fix"). Owner is kept alongside Cause (its §8.8 display label) —
+// pages_findings.go (a parallel slice's write-set) still filters/groups on
+// it directly.
 type FindingItem struct {
-	Owner          string `json:"owner"`
-	Severity       string `json:"severity"`
-	Title          string `json:"title"`
-	What           string `json:"what"`
-	RunID          string `json:"runId"`
-	Steps          []int  `json:"steps"`
-	QuotesVerified int    `json:"quotesVerified"`
-	QuotesTotal    int    `json:"quotesTotal"`
-	LookAt         string `json:"lookAt"`
-	Fix            string `json:"fix"`
+	Owner          string    `json:"owner"`
+	Batch          string    `json:"batch"`
+	Scenario       string    `json:"scenario"`
+	Build          string    `json:"build"`
+	RunID          string    `json:"runId"`
+	StartedAt      time.Time `json:"startedAt"`
+	Severity       string    `json:"severity"`
+	Cause          string    `json:"cause"`
+	Surface        string    `json:"surface,omitempty"`
+	Anchor         string    `json:"anchor,omitempty"`
+	Title          string    `json:"title"`
+	What           string    `json:"what"`
+	Steps          []int     `json:"steps"`
+	QuotesVerified int       `json:"quotesVerified"`
+	QuotesTotal    int       `json:"quotesTotal"`
+	LookAt         string    `json:"lookAt"`
+	Fix            string    `json:"fix"`
 }
 
 func isJSONRequest(r *http.Request) bool {
@@ -972,8 +984,35 @@ func validBundleFilePath(filePath string) bool {
 	return len(filePath) > len("results/")
 }
 
-// --- Findings (§8.4 FM-52's GET /api/findings.md|.json?since=<window>) ---
+// --- §8.4/§8.7's GET /api/findings.md|.json ---------------------------------
 
+// findingItemFromRow narrows a FindingRow (findings_model.go's
+// BuildFindingRows) to one GET /api/findings.md|.json row (§8.4).
+func findingItemFromRow(f FindingRow) FindingItem {
+	steps := make([]int, 0, len(f.Evidence))
+	verified, total := 0, 0
+	for _, e := range f.Evidence {
+		total++
+		if e.Verified {
+			verified++
+		}
+		if e.Step > 0 {
+			steps = append(steps, e.Step)
+		}
+	}
+	sort.Ints(steps)
+	return FindingItem{
+		Owner: f.Owner, Batch: f.Batch, Scenario: f.Scenario, Build: f.Build.Label(), RunID: f.RunID, StartedAt: f.StartedAt,
+		Severity: f.Severity, Cause: f.CauseLabel, Surface: f.Surface, Anchor: f.Anchor,
+		Title: f.Title, What: f.What, Steps: steps, QuotesVerified: verified, QuotesTotal: total,
+		LookAt: f.LookAt, Fix: f.Fix,
+	}
+}
+
+// findingItemsFromRows is the pre-query-engine findings resolution, kept
+// for pages_findings.go (a parallel slice's write-set, still calling it
+// directly) — additive alongside findingItemFromRow/handleFindings' own
+// query-engine path (§8.7), never removed out from under that file.
 func findingItemsFromRows(rows []RunRow) []FindingItem {
 	var items []FindingItem
 	for _, row := range rows {
@@ -994,9 +1033,10 @@ func findingItemsFromRows(rows []RunRow) []FindingItem {
 			}
 			sort.Ints(steps)
 			items = append(items, FindingItem{
-				Owner: f.Owner, Severity: f.Severity, Title: f.Title, What: f.What,
-				RunID: row.RunID, Steps: steps, QuotesVerified: verified, QuotesTotal: total,
-				LookAt: f.LookAt, Fix: f.Fix,
+				Owner: f.Owner, Batch: row.Batch, Scenario: row.Scenario, Build: row.Build.Label(),
+				RunID: row.RunID, StartedAt: row.StartedAt, Severity: f.Severity, Cause: CauseLabel(f.Owner),
+				Surface: f.Surface, Anchor: f.Anchor, Title: f.Title, What: f.What, Steps: steps,
+				QuotesVerified: verified, QuotesTotal: total, LookAt: f.LookAt, Fix: f.Fix,
 			})
 		}
 	}
@@ -1024,28 +1064,38 @@ func severityRank(sev string) int {
 
 func renderFindingsMD(items []FindingItem) string {
 	var b strings.Builder
+	b.WriteString(legendLine("Finding", "Severity", "Cause", "Surface", "Anchor", "Quote found"))
 	for _, it := range items {
-		fmt.Fprintf(&b, "- [%s · %s] %s (%s, steps %s) — %s\n",
-			it.Owner, it.Severity, it.Title, it.RunID, formatStepRanges(it.Steps), it.What)
+		fmt.Fprintf(&b, "- [%s · %s] %s — %s (%s, started %s, steps %s) — quotes %d/%d — %s\n",
+			it.Severity, it.Cause, it.Title, it.Batch, it.RunID, it.StartedAt.UTC().Format(time.RFC3339),
+			formatStepRanges(it.Steps), it.QuotesVerified, it.QuotesTotal, it.What)
 	}
 	return b.String()
 }
 
-// handleFindings implements GET /api/findings.md|.json?since=<window>
-// (FM-52): every finding of every run in the window, grouped by owner then
-// severity.
+// handleFindings implements GET /api/findings.md|.json (§8.4/§8.7): the
+// same query surface as /findings (findingListSpec, findings_model.go) —
+// cause/severity/surface/scenario/batch/build/since, sort=severity default
+// — through findingEngine, never hand-parsed.
 func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
-	window, err := ParseWindow(r.URL.Query().Get("since"))
+	q, err := Parse(findingListSpec(), r.URL.Query())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeQueryError(w, r, asQueryError(err))
 		return
 	}
-	rows, err := rowsSinceWindow(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, window, s.now(), s.queueState, s.runCache, s.summaryCache, s.logf)
+	rows, err := s.allRunRows(r.Context())
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	items := findingItemsFromRows(rows)
+	findings := BuildFindingRows(rows)
+	filtered, _ := findingEngine().Apply(findings, q, s.now())
+
+	items := make([]FindingItem, len(filtered))
+	for i, f := range filtered {
+		items[i] = findingItemFromRow(f)
+	}
+
 	if isJSONRequest(r) {
 		writeJSON(w, struct {
 			Findings []FindingItem `json:"findings"`
