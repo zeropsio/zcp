@@ -851,7 +851,11 @@ a bearer-authenticated POST needs no Origin.
 Every response carries `Content-Security-Policy: default-src 'none';
 style-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors
 'none'; base-uri 'none'`, `X-Content-Type-Options: nosniff`,
-`Referrer-Policy: no-referrer`, `Cache-Control: no-store`. Pages use no
+`Referrer-Policy: same-origin`, `Cache-Control: no-store`. `no-referrer`
+would suppress the Origin header too on a navigate-mode form POST in some
+browsers (Origin: null), which the strict Origin rule above then refuses —
+`same-origin` keeps the console's own referrer private from every other
+origin without breaking its own state-changing forms. Pages use no
 script, no inline style and no external asset; they render in light and dark
 (`prefers-color-scheme`) and at 400 px.
 

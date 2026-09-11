@@ -291,6 +291,15 @@ func TestActions_CookiePostWrongOrMissingOrigin403(t *testing.T) {
 		t.Errorf("cookie POST with no Origin: got %d, want 403", rr.Code)
 	}
 
+	// The literal string "null" is what a browser sends for Origin on a
+	// navigate-mode form POST from an opaque origin — still refused, never
+	// treated as "no Origin header at all" (item 1: fixing Referrer-Policy
+	// so browsers stop sending this must not loosen this check).
+	rr = doCookiePOST(t, srv, h, "/r/oa1-a/observe", url.Values{"model": {"claude-sonnet-5"}}, "null")
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("cookie POST with Origin: null: got %d, want 403", rr.Code)
+	}
+
 	wkExpectNoCall(t, obs.calls)
 
 	// A bearer POST with no Origin at all still succeeds.
