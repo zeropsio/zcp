@@ -76,7 +76,10 @@ type BehavioralResult struct {
 	// blocks a bundle carrying it, meta.json still records the fact.
 	// ModelObserved is the model name read back from the capture's provider
 	// records, empty when no capture is available or no model could be
-	// read.
+	// read. Computed at writeBehavioralResult time (finding E7: at
+	// result-construction time the capture's provider.jsonl is still empty
+	// — no request has been sent yet), so it always reflects this run's own
+	// captured traffic.
 	EvaluatorSha256        string `json:"evaluatorSha256,omitempty"`
 	CandidateSha256        string `json:"candidateSha256,omitempty"`
 	Credential             string `json:"credential,omitempty"`
@@ -280,9 +283,13 @@ func (r *Runner) newBehavioralResult(sc *Scenario, suiteID string, startedAt tim
 }
 
 // applyFarmBundleFields sets result's evaluatorSha256/candidateSha256/
-// credentialMode/modelObserved (docs/spec-eval-farm.md §1.2 FM-4, §2.4
-// FM-16). Split out of RunBehavioralScenario to keep that function's own
-// complexity from growing with every bundle field this adds.
+// credentialMode (docs/spec-eval-farm.md §1.2 FM-4, §2.4 FM-16).
+// ModelObserved is NOT set here (finding E7): this runs at
+// newBehavioralResult time, before the agent's first request, so the
+// capture's provider.jsonl is still empty — it is computed instead at
+// writeBehavioralResult time, from this run's own captured traffic. Split
+// out of RunBehavioralScenario to keep that function's own complexity from
+// growing with every bundle field this adds.
 func (r *Runner) applyFarmBundleFields(result *BehavioralResult) {
 	if evaluatorSha, evalErr := evaluatorSelfSHA256(); evalErr == nil {
 		result.EvaluatorSha256 = evaluatorSha
@@ -296,9 +303,6 @@ func (r *Runner) applyFarmBundleFields(result *BehavioralResult) {
 		os.Getenv("ANTHROPIC_API_KEY") != "",
 		os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "",
 	)
-	if r.config.Capture != nil {
-		result.ModelObserved = observedModelFromProviderCapture(r.config.Capture.SessionDir)
-	}
 }
 
 // evaluatorSelfSHA256 hashes the running evaluator binary
@@ -314,7 +318,9 @@ func evaluatorSelfSHA256() (string, error) {
 // ScenarioBaseline is the per-hostname baseline reading taken at scenario
 // start (docs/spec-testing-architecture.md §10.3 "Baseline";
 // docs/spec-eval-farm.md §4.1 FM-29): one active app-version id per hostname
-// in the union of verification.unchanged and nodePostgresRecord.unrelated.
+// in the union of verification.unchanged, nodePostgresRecord.unrelated, and
+// every verification.artifactPromotion[].from (finding E2 — the O7
+// dev_unchanged row needs a baseline for the promotion's dev hostname too).
 // A hostname absent from AppVersions was never recorded (a read failure, or
 // the service not yet deployed) — every reader treats that as "no baseline
 // for <host>", never a pass.
@@ -380,7 +386,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	if sc.IsRequired() && (r.config.Capture == nil || !r.config.CaptureOwned || r.config.Binding == nil) {
 		result.Error = "capture: required mode needs this invocation's own scoped capture window (run with --capture raw) and an explicit binding"
 		result.Duration = Duration(time.Since(startedAt))
-		logBehavioralResultWrite(outDir, result)
+		r.logBehavioralResultWrite(outDir, result)
 		return result, nil
 	}
 
@@ -457,7 +463,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 			r.observeTaskEnd(context.WithoutCancel(ctx), sc, outDir, result, startedAt, "")
 		}
 		result.Duration = Duration(time.Since(startedAt))
-		logBehavioralResultWrite(outDir, result)
+		r.logBehavioralResultWrite(outDir, result)
 		return result, nil
 	}
 
@@ -504,7 +510,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 			r.observeTaskEnd(context.WithoutCancel(ctx), sc, outDir, result, startedAt, selfReview)
 		}
 		result.Duration = Duration(time.Since(startedAt))
-		logBehavioralResultWrite(outDir, result)
+		r.logBehavioralResultWrite(outDir, result)
 		return result, nil
 	}
 	result.RetroWallTime = Duration(time.Since(retroStart))
@@ -531,7 +537,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	}
 
 	result.Duration = Duration(time.Since(startedAt))
-	logBehavioralResultWrite(outDir, result)
+	r.logBehavioralResultWrite(outDir, result)
 
 	return result, nil
 }
@@ -584,29 +590,36 @@ func (r *Runner) observeTaskEnd(ctx context.Context, sc *Scenario, outDir string
 	}
 }
 
-// scenarioBaselineHostnames returns the union of verification.unchanged and
-// nodePostgresRecord.unrelated for sc, deduplicated, in a stable order
-// (unchanged entries first, then the nodePostgresRecord hostname if not
-// already present). Empty when sc declares neither (FM-29: baseline capture
-// is driven by the declared inputs, never by mode).
+// scenarioBaselineHostnames returns the union of verification.unchanged,
+// nodePostgresRecord.unrelated, and every artifactPromotion[].from for sc,
+// deduplicated, in a stable order (unchanged entries first, then the
+// nodePostgresRecord hostname if not already present, then each
+// artifactPromotion dev hostname in declaration order). Empty when sc
+// declares none of the three (FM-29: baseline capture is driven by the
+// declared inputs, never by mode). Finding E2: artifactPromotion[].from was
+// missing here, so the O7 dev_unchanged row had no baseline to compare
+// against and blocked on every cross-deploy run.
 func scenarioBaselineHostnames(sc *Scenario) []string {
 	if sc.Verification == nil {
 		return nil
 	}
 	seen := make(map[string]bool)
 	var hostnames []string
-	for _, h := range sc.Verification.Unchanged {
+	add := func(h string) {
 		if h == "" || seen[h] {
-			continue
+			return
 		}
 		seen[h] = true
 		hostnames = append(hostnames, h)
 	}
+	for _, h := range sc.Verification.Unchanged {
+		add(h)
+	}
 	if sc.Verification.NodePostgresRecord != nil {
-		h := sc.Verification.NodePostgresRecord.Unrelated
-		if h != "" && !seen[h] {
-			hostnames = append(hostnames, h)
-		}
+		add(sc.Verification.NodePostgresRecord.Unrelated)
+	}
+	for _, ap := range sc.Verification.ArtifactPromotion {
+		add(ap.From)
 	}
 	return hostnames
 }
@@ -617,7 +630,8 @@ func scenarioBaselineHostnames(sc *Scenario) []string {
 // every row; a hostname that resolves to no service, or to a service with no
 // active app-version yet, is simply absent from the resulting map — which
 // every reader (evaluateUnchangedFieldRow, the nodePostgresRecord unrelated
-// row) treats as "no baseline for <host>" → blocked, never a silent pass.
+// row, the O7 artifact_promotion dev_unchanged row) treats as "no baseline
+// for <host>" → blocked, never a silent pass.
 func (r *Runner) recordScenarioBaseline(ctx context.Context, hostnames []string, result *BehavioralResult) {
 	services, err := r.client.ListServicesDirect(ctx, r.projectID)
 	if err != nil {
@@ -728,7 +742,7 @@ func (r *Runner) runInitialAgent(ctx, scenarioCtx context.Context, sc *Scenario,
 func (r *Runner) notRunFailure(ctx context.Context, sc *Scenario, outDir string, result *BehavioralResult, startedAt time.Time) *BehavioralResult {
 	r.freezeTaskEnd(context.WithoutCancel(ctx), sc, outDir, result, startedAt, false, nil)
 	result.Duration = Duration(time.Since(startedAt))
-	logBehavioralResultWrite(outDir, result)
+	r.logBehavioralResultWrite(outDir, result)
 	return result
 }
 
@@ -872,7 +886,7 @@ func (r *Runner) freezeTaskEnd(
 	// and re-writes meta.json best-effort with the truthful state.
 	result.TaskEnd.Persisted = len(errs) == 0
 	if result.TaskEnd.Persisted {
-		if err := writeBehavioralResult(outDir, result); err != nil {
+		if err := r.writeBehavioralResult(outDir, result); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -882,7 +896,7 @@ func (r *Runner) freezeTaskEnd(
 		if result.Task.Result == CheckPassed {
 			result.Task.Result = CheckBlocked
 		}
-		logBehavioralResultWrite(outDir, result)
+		r.logBehavioralResultWrite(outDir, result)
 	}
 }
 
@@ -986,11 +1000,21 @@ func (r *Runner) spawnClaudeResume(ctx context.Context, sessionID, retroPrompt, 
 	return r.execClaude(ctx, args, logFile, false, captureScope)
 }
 
-// retrospectiveMissingErrorPrefix marks a meta.json error string as "the
-// retrospective self-review could not be obtained" rather than "the run's
-// execution failed" — ExecutionDimension reads this prefix to keep the farm
-// `execution` dimension `ok` (docs/spec-eval-farm.md §2.3 FM-13; the task
-// verdict is already frozen by the time the retrospective runs, §10.2).
+// retrospectiveErrorPrefix marks a meta.json error string as originating
+// from the retrospective phase — spawn failure or turn exhaustion alike —
+// rather than "the run's execution failed". ExecutionDimension keys off
+// this broader prefix (finding E6: FM-13 says ANY retrospective failure
+// never changes the Execution line, not just the turn-exhaustion case
+// retrospectiveMissingErrorPrefix names) so the task verdict, already
+// frozen by the time the retrospective runs (§10.2), is never overridden by
+// how that optional evidence-gathering step went (docs/spec-eval-farm.md
+// §2.3 FM-13).
+const retrospectiveErrorPrefix = "retrospective:"
+
+// retrospectiveMissingErrorPrefix marks a meta.json error string specifically
+// as "the retrospective self-review could not be obtained because the model
+// exhausted its turn cap" — a retrospectiveErrorPrefix-prefixed string, so
+// ExecutionDimension treats it the same as any other retrospective failure.
 const retrospectiveMissingErrorPrefix = "retrospective: missing:"
 
 // retrospectiveExhaustedTurns scans a retrospective stream-json log for a
@@ -1024,13 +1048,14 @@ func retrospectiveExhaustedTurns(logFile string) bool {
 
 // ExecutionDimension derives the CLI/farm "execution" acceptance dimension
 // (docs/spec-testing-architecture.md §10.1) from a BehavioralResult's error
-// field. A retrospective that ran out of turns is optional evidence — its
-// self-review is missing, but the task verdict was already frozen before the
-// retrospective started, so it must never flip execution to an error
-// (docs/spec-eval-farm.md §2.3 FM-13). Every other recorded error keeps
-// meaning "the run's execution failed".
+// field. The retrospective — turn exhaustion, a spawn error, any failure of
+// that phase — is optional evidence gathered after the task verdict is
+// already frozen, so it must never flip execution to an error (finding E6,
+// docs/spec-eval-farm.md §2.3 FM-13: ANY retrospective failure, not just
+// turn exhaustion). Every other recorded error keeps meaning "the run's
+// execution failed".
 func ExecutionDimension(r *BehavioralResult) string {
-	if r.Error == "" || strings.HasPrefix(r.Error, retrospectiveMissingErrorPrefix) {
+	if r.Error == "" || strings.HasPrefix(r.Error, retrospectiveErrorPrefix) {
 		return "ok"
 	}
 	return "error: " + r.Error
@@ -1284,14 +1309,22 @@ func detectCompaction(logFile string) bool {
 // writeBehavioralResult persists meta.json via temp+fsync+rename
 // (docs/spec-testing-architecture.md §10.2 step 5). Callers outside the
 // task-end freeze only log the error: meta.json is the persisted task-end
-// artifact there, and a plain progress write elsewhere.
-func writeBehavioralResult(outDir string, r *BehavioralResult) error {
-	r.Usage = computeBehavioralUsage(r.TranscriptFile, r.RetrospectiveFile)
-	return writeJSONAtomic(outDir, "meta.json", r)
+// artifact there, and a plain progress write elsewhere. A Runner method (not
+// a free function) so it can read this run's own capture window: finding E7
+// computes ModelObserved here, at finalization, instead of at
+// newBehavioralResult time — every call site is a genuine "this result is
+// being frozen/persisted" point, so recomputing from the capture's
+// provider.jsonl on each call always reflects this run's own traffic so far.
+func (r *Runner) writeBehavioralResult(outDir string, result *BehavioralResult) error {
+	result.Usage = computeBehavioralUsage(result.TranscriptFile, result.RetrospectiveFile)
+	if r.config.Capture != nil {
+		result.ModelObserved = observedModelFromProviderCapture(r.config.Capture.SessionDir)
+	}
+	return writeJSONAtomic(outDir, "meta.json", result)
 }
 
-func logBehavioralResultWrite(outDir string, r *BehavioralResult) {
-	if err := writeBehavioralResult(outDir, r); err != nil {
+func (r *Runner) logBehavioralResultWrite(outDir string, result *BehavioralResult) {
+	if err := r.writeBehavioralResult(outDir, result); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: write meta.json: %v\n", err)
 	}
 }
