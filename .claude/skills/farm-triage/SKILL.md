@@ -118,9 +118,13 @@ through `/flow`.
 
 ## 8. Console down — local fallback (spec §7.7)
 
+Run a zcp built from this repo (the released binary has no farm verbs), from
+the repo root, with `ZCP_AUTHORING=1`, the sink env `ZCP_FARM_S3_*` (spec
+§3.1) for `pull`, and `CLAUDE_CODE_OAUTH_TOKEN` for `observe`:
+
 ```
-zcp eval farm pull --batch <b> --out <dir>
-zcp eval farm observe <dir>/<runId> [--model <m>]
+ZCP_AUTHORING=1 go run ./cmd/zcp eval farm pull --batch <b> --out <dir>
+ZCP_AUTHORING=1 go run ./cmd/zcp eval farm observe <dir>/<runId> [--model <m>]
 ```
 
 Read the pulled bundle files directly and continue from step 3.
