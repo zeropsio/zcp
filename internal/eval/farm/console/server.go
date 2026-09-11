@@ -186,6 +186,10 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		s.requireAuth(s.handleTermsPage)(w, r)
 	case r.Method == http.MethodPost && p == "/logout":
 		s.requireAuth(s.handleLogout)(w, r)
+	case r.Method == http.MethodGet && (p == "/api/batches.md" || p == "/api/batches.json"):
+		s.requireAuth(s.handleBatchesAPI)(w, r)
+	case r.Method == http.MethodGet && (p == "/api/problems.md" || p == "/api/problems.json"):
+		s.requireAuth(s.handleProblemsAPI)(w, r)
 	case r.Method == http.MethodGet && (p == "/api/runs.md" || p == "/api/runs.json"):
 		s.requireAuth(s.handleRunsList)(w, r)
 	case r.Method == http.MethodGet && (p == "/api/findings.md" || p == "/api/findings.json"):

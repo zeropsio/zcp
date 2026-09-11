@@ -2,9 +2,11 @@ package console
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path"
 	"sort"
 	"strconv"
@@ -17,6 +19,345 @@ import (
 
 // observer.NotRecorded matches §7.2's rendering of a missing optional bundle file.
 
+// glossaryDef looks term up in labels.go's §8.8 glossary (glossaryTerms) —
+// "" for a term not defined there.
+func glossaryDef(term string) string {
+	for _, g := range glossaryTerms {
+		if g.Term == term {
+			return g.Definition
+		}
+	}
+	return ""
+}
+
+// legendLine renders §8.4's "every markdown list starts with a one-line
+// legend of the terms it uses" from labels.go's authoritative §8.8
+// glossary, so the API's wording can never drift from the pages' or
+// /terms' own definitions. A term with no glossary entry is skipped rather
+// than rendered blank.
+func legendLine(terms ...string) string {
+	parts := make([]string, 0, len(terms))
+	for _, t := range terms {
+		if def := glossaryDef(t); def != "" {
+			parts = append(parts, t+" = "+def)
+		}
+	}
+	return "Legend: " + strings.Join(parts, " · ") + "\n\n"
+}
+
+// writeQueryError answers a list endpoint's refused parameter (§8.7 FM-55):
+// 400 {error, allowed} on the JSON twin, a one-line text on the markdown
+// one — never the page's own rendered 400 (renderBadQuery, listnav.go).
+func writeQueryError(w http.ResponseWriter, r *http.Request, qerr *QueryError) {
+	if isJSONRequest(r) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		if err := json.NewEncoder(w).Encode(struct {
+			Error   string   `json:"error"`
+			Allowed []string `json:"allowed"`
+		}{qerr.Error(), qerr.Allowed}); err != nil {
+			fmt.Fprintf(os.Stderr, "console: encode query-error response: %v\n", err)
+		}
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusBadRequest)
+	fmt.Fprintln(w, qerr.Error())
+}
+
+// asQueryError narrows err to *QueryError — Parse's only error type
+// (query.go) — so every list handler can share one 400 path without
+// re-checking the assertion at each call site.
+func asQueryError(err error) *QueryError {
+	var qerr *QueryError
+	if errors.As(err, &qerr) {
+		return qerr
+	}
+	return &QueryError{Param: "query"}
+}
+
+// --- §8.4 FM-52's GET /api/batches.md|.json (the Overview's batches table) ---
+
+// VerdictCountItem is a JSON-tagged copy of batches.go's VerdictCount
+// (which carries no tags — it is rendered through HTML templates, never
+// marshaled): every API type needing this shape narrows to this one
+// instead of embedding VerdictCount directly, so an untagged shared field
+// never trips musttag on every caller that unmarshals through it.
+type VerdictCountItem struct {
+	Verdict string `json:"verdict"`
+	Count   int    `json:"count"`
+}
+
+func verdictCountItems(vs []VerdictCount) []VerdictCountItem {
+	out := make([]VerdictCountItem, len(vs))
+	for i, v := range vs {
+		out[i] = VerdictCountItem(v)
+	}
+	return out
+}
+
+// BatchListItem is one GET /api/batches.md|.json row (§8.4): BatchRow
+// (batches.go), narrowed to what the API exposes.
+type BatchListItem struct {
+	BatchID       string             `json:"batchId"`
+	CreatedAt     time.Time          `json:"createdAt"`
+	Build         string             `json:"build"`
+	Set           string             `json:"set"`
+	Kind          string             `json:"kind"`
+	VerdictCounts []VerdictCountItem `json:"verdictCounts"`
+	CostUsd       float64            `json:"costUsd"`
+	CostUnknownN  int                `json:"costUnknownN"`
+	ObservedN     int                `json:"observedN"`
+	ObservedM     int                `json:"observedM"`
+	ZCPHigh       int                `json:"zcpHigh"`
+	ZCPMedium     int                `json:"zcpMedium"`
+	DisputedCount int                `json:"disputedCount"`
+}
+
+func batchListItemFromRow(b BatchRow) BatchListItem {
+	return BatchListItem{
+		BatchID: b.BatchID, CreatedAt: b.CreatedAt, Build: b.Build.Label(), Set: b.Set, Kind: b.Kind,
+		VerdictCounts: verdictCountItems(b.VerdictCounts), CostUsd: b.TotalCostUsd, CostUnknownN: b.CostUnknownN,
+		ObservedN: b.ObservedN, ObservedM: b.ObservedM, ZCPHigh: b.ZCPHigh, ZCPMedium: b.ZCPMedium,
+		DisputedCount: b.DisputedCount,
+	}
+}
+
+func renderBatchesMD(items []BatchListItem) string {
+	var b strings.Builder
+	b.WriteString(legendLine("Batch", "ZCP build", "Verdict", "Agent cost"))
+	for _, it := range items {
+		verdicts := make([]string, 0, len(it.VerdictCounts))
+		for _, vc := range it.VerdictCounts {
+			verdicts = append(verdicts, fmt.Sprintf("%s:%d", vc.Verdict, vc.Count))
+		}
+		cost := fmt.Sprintf("$%.2f", it.CostUsd)
+		if it.CostUnknownN > 0 {
+			cost += fmt.Sprintf(" (+%d unknown)", it.CostUnknownN)
+		}
+		fmt.Fprintf(&b, "- %s — %s — %s — %s — %s — cost %s — observed %d/%d\n",
+			it.BatchID, it.CreatedAt.UTC().Format(time.RFC3339), it.Build, it.Set,
+			strings.Join(verdicts, " "), cost, it.ObservedN, it.ObservedM)
+	}
+	return b.String()
+}
+
+// handleBatchesAPI implements GET /api/batches.md|.json (§8.4): the
+// Overview's batches table, through the same query engine (batchEngine,
+// batches.go) and query surface (batchListSpec) as the "/" page (§8.7).
+func (s *Server) handleBatchesAPI(w http.ResponseWriter, r *http.Request) {
+	q, err := Parse(batchListSpec(), r.URL.Query())
+	if err != nil {
+		writeQueryError(w, r, asQueryError(err))
+		return
+	}
+	rows, err := loadBatchRows(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, s.queueState, s.runCache, s.summaryCache, s.logf)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	filtered, _ := batchEngine().Apply(rows, q, s.now())
+
+	items := make([]BatchListItem, len(filtered))
+	for i, row := range filtered {
+		items[i] = batchListItemFromRow(row)
+	}
+
+	if isJSONRequest(r) {
+		writeJSON(w, struct {
+			Batches []BatchListItem `json:"batches"`
+		}{items})
+		return
+	}
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	fmt.Fprint(w, renderBatchesMD(items))
+}
+
+// --- §8.4/§8.6's GET /api/problems.md|.json ---------------------------------
+
+// ProblemMemberItem is one ProblemItem.Members row (§8.6): a thin view over
+// FindingRow plus the run link and step link its most-cited evidence needs.
+type ProblemMemberItem struct {
+	RunID     string    `json:"runId"`
+	Batch     string    `json:"batch"`
+	Build     string    `json:"build"`
+	StartedAt time.Time `json:"startedAt"`
+	Severity  string    `json:"severity"`
+	Cause     string    `json:"cause"`
+	Title     string    `json:"title"`
+	LookAt    string    `json:"lookAt"`
+	Fix       string    `json:"fix"`
+	RunLink   string    `json:"runLink"`
+	Quote     string    `json:"quote,omitempty"`
+	StepLink  string    `json:"stepLink,omitempty"`
+}
+
+func problemMemberItem(m ProblemMember) ProblemMemberItem {
+	item := ProblemMemberItem{
+		RunID: m.RunID, Batch: m.Batch, Build: m.Build.Label(), StartedAt: m.StartedAt,
+		Severity: m.Severity, Cause: m.CauseLabel, Title: m.Title, LookAt: m.LookAt, Fix: m.Fix,
+		RunLink: fmt.Sprintf("/r/%s#f%d", m.RunID, m.Index+1),
+	}
+	if len(m.Evidence) > 0 {
+		item.Quote = m.Evidence[0].Quote
+		if m.Evidence[0].Step > 0 {
+			item.StepLink = fmt.Sprintf("/r/%s#s%d", m.RunID, m.Evidence[0].Step)
+		}
+	}
+	return item
+}
+
+// ProblemItem is one GET /api/problems.md|.json row (§8.6): a Problem
+// (problems.go) with its display fields plus its members, resolved.
+type ProblemItem struct {
+	Key                  string              `json:"key"`
+	Status               string              `json:"status"`
+	Severity             string              `json:"severity"`
+	CauseLabels          []string            `json:"causeLabels"`
+	Surface              string              `json:"surface"`
+	Title                string              `json:"title"`
+	Fix                  string              `json:"fix"`
+	Anchor               string              `json:"anchor"`
+	HitOnNewestBuild     int                 `json:"hitOnNewestBuild"`
+	RunsAssessedOnNewest int                 `json:"runsAssessedOnNewest"`
+	RunsTotal            int                 `json:"runsTotal"`
+	BatchesTotal         int                 `json:"batchesTotal"`
+	BuildsTotal          int                 `json:"buildsTotal"`
+	FirstSeen            time.Time           `json:"firstSeen"`
+	LastSeen             time.Time           `json:"lastSeen"`
+	Members              []ProblemMemberItem `json:"members"`
+}
+
+func problemItemFromProblem(p Problem) ProblemItem {
+	members := make([]ProblemMemberItem, len(p.Members))
+	for i, m := range p.Members {
+		members[i] = problemMemberItem(m)
+	}
+	return ProblemItem{
+		Key: p.Key, Status: p.Status, Severity: p.Severity, CauseLabels: p.CauseLabels,
+		Surface: p.Surface, Title: p.Title, Fix: p.Fix, Anchor: p.Anchor,
+		HitOnNewestBuild: p.HitOnNewestBuild, RunsAssessedOnNewest: p.RunsAssessedOnNewest,
+		RunsTotal: p.RunsTotal, BatchesTotal: p.BatchesTotal, BuildsTotal: p.BuildsTotal,
+		FirstSeen: p.FirstSeen, LastSeen: p.LastSeen, Members: members,
+	}
+}
+
+func renderProblemsMD(items []ProblemItem) string {
+	var b strings.Builder
+	b.WriteString(legendLine("Problem", "Severity", "Cause", "Surface", "Anchor"))
+	for _, p := range items {
+		fmt.Fprintf(&b, "- [%s · %s] %s — %s — hit %d/%d runs on newest build — %d runs · %d batches · %d builds — status %s\n",
+			p.Severity, strings.Join(p.CauseLabels, ","), p.Title, p.Surface,
+			p.HitOnNewestBuild, p.RunsAssessedOnNewest, p.RunsTotal, p.BatchesTotal, p.BuildsTotal, p.Status)
+		if p.Anchor != "" {
+			fmt.Fprintf(&b, "  anchor: %q\n", p.Anchor)
+		}
+		if p.Fix != "" {
+			fmt.Fprintf(&b, "  fix: %s\n", p.Fix)
+		}
+		for _, m := range p.Members {
+			fmt.Fprintf(&b, "  · %s (%s, %s) %s\n", m.RunID, m.Batch, m.Build, m.RunLink)
+		}
+	}
+	return b.String()
+}
+
+// forEachBatchRows calls fn with every batch's already-resolved run rows
+// and manifest — the "scan every batch, tolerate one that fails to load"
+// shape view.go's rowsSinceWindow implements for its own list surfaces,
+// written once here for every api.go scan that needs the same tolerance
+// (a batch that fails to load is skipped and logged, item 5) but not
+// view.go's own StartedAt pre-filtering (each caller applies its own
+// window, or none at all, after seeing the rows).
+func (s *Server) forEachBatchRows(ctx context.Context, fn func(batchID string, manifest farm.BatchManifest, rows []RunRow)) error {
+	batches, err := listBatchIDs(ctx, s.cfg.Store)
+	if err != nil {
+		return fmt.Errorf("console: scan batches: %w", err)
+	}
+	for _, b := range batches {
+		manifest, err := loadManifest(ctx, s.cfg.Store, b)
+		if err != nil {
+			s.logf("skip batch %s: load manifest: %v", b, err)
+			continue
+		}
+		rows, err := batchWindowRowsWithManifest(ctx, s.cfg.Store, s.cfg.ObserverDisabled, b, manifest, s.queueState, s.runCache, s.summaryCache, s.logf)
+		if err != nil {
+			s.logf("skip batch %s: %v", b, err)
+			continue
+		}
+		fn(b, manifest, rows)
+	}
+	return nil
+}
+
+// allRunRows resolves every run row across every batch, with no time
+// bounding at all: GET /api/runs.md's own `since`/`batch` filtering (like
+// the Overview batches list's, batches.go) happens afterward through the
+// query engine (apiRunsEngine.Apply) — the same "load everything, filter
+// later" pattern a NoSinceDefault list needs (query.go's ListSpec doc:
+// "an absent since leaves the window unbounded").
+func (s *Server) allRunRows(ctx context.Context) ([]RunRow, error) {
+	var out []RunRow
+	err := s.forEachBatchRows(ctx, func(_ string, _ farm.BatchManifest, rows []RunRow) {
+		out = append(out, rows...)
+	})
+	return out, err
+}
+
+// problemsRunsSinceWindow resolves every run row across every batch whose
+// StartedAt falls in [now-window, now] (view.go's rowsSinceWindow own
+// membership rule), paired with each run's batch Set/CreatedAt
+// (problems.go's ProblemsRun) — the extra batch-level facts §8.6's builds/
+// status computation needs beyond RunRow itself.
+func (s *Server) problemsRunsSinceWindow(ctx context.Context, window time.Duration, now time.Time) ([]ProblemsRun, error) {
+	since := now.Add(-window)
+	var out []ProblemsRun
+	err := s.forEachBatchRows(ctx, func(_ string, manifest farm.BatchManifest, rows []RunRow) {
+		bc := newBatchContext(manifest)
+		for _, row := range rows {
+			if row.StartedAt.Before(since) || row.StartedAt.After(now) {
+				continue
+			}
+			out = append(out, ProblemsRun{Row: row, BatchSet: manifest.Set, BatchCreatedAt: bc.CreatedAt})
+		}
+	})
+	return out, err
+}
+
+// handleProblemsAPI implements GET /api/problems.md|.json (§8.4/§8.6): the
+// same query surface as /problems (§8.7) — since resolved BEFORE
+// BuildProblems (status is pinned over that window), every other filter
+// applied after through problemEngine, exactly like the page.
+func (s *Server) handleProblemsAPI(w http.ResponseWriter, r *http.Request) {
+	q, err := Parse(problemListSpec(), r.URL.Query())
+	if err != nil {
+		writeQueryError(w, r, asQueryError(err))
+		return
+	}
+	now := s.now()
+	runs, err := s.problemsRunsSinceWindow(r.Context(), q.Since, now)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	problems := BuildProblems(runs)
+	filtered, _ := problemEngine().Apply(problems, q, now)
+
+	items := make([]ProblemItem, len(filtered))
+	for i, p := range filtered {
+		items[i] = problemItemFromProblem(p)
+	}
+
+	if isJSONRequest(r) {
+		writeJSON(w, struct {
+			Problems []ProblemItem `json:"problems"`
+		}{items})
+		return
+	}
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	fmt.Fprint(w, renderProblemsMD(items))
+}
+
 // --- §8.4 FM-52 JSON shapes ---
 
 // RunsListObservation is one runs-list row's "observation" field.
@@ -28,17 +369,42 @@ type RunsListObservation struct {
 	UnverifiedQuotes int      `json:"unverifiedQuotes"`
 }
 
-// RunsListItem is one GET /api/runs.md|.json row (FM-52).
+// CauseCountItem is a JSON-tagged copy of findings_model.go's
+// CauseClassCount (untagged — it is rendered through HTML templates,
+// never marshaled): kept separate for the same reason as
+// VerdictCountItem above (batches.go).
+type CauseCountItem struct {
+	Class  string `json:"class"`
+	High   int    `json:"high"`
+	Medium int    `json:"medium"`
+	Low    int    `json:"low"`
+}
+
+func causeCountItems(cs []CauseClassCount) []CauseCountItem {
+	out := make([]CauseCountItem, len(cs))
+	for i, c := range cs {
+		out[i] = CauseCountItem(c)
+	}
+	return out
+}
+
+// RunsListItem is one GET /api/runs.md|.json row (§8.4: "run id, scenario,
+// verdict (+ reason), outcome, findings high/medium per cause class, failed
+// check ids, headline").
 type RunsListItem struct {
-	RunID         string               `json:"runId"`
-	Batch         string               `json:"batch"`
-	Scenario      string               `json:"scenario"`
-	Verdict       string               `json:"verdict"`
-	StartedAt     time.Time            `json:"startedAt"`
-	DurationSec   float64              `json:"durationSec"`
-	CostUsd       float64              `json:"costUsd"`
-	ObserverState string               `json:"observerState"`
-	Observation   *RunsListObservation `json:"observation,omitempty"`
+	RunID          string               `json:"runId"`
+	Batch          string               `json:"batch"`
+	Scenario       string               `json:"scenario"`
+	Verdict        string               `json:"verdict"`
+	VerdictReason  string               `json:"verdictReason,omitempty"`
+	StartedAt      time.Time            `json:"startedAt"`
+	DurationSec    float64              `json:"durationSec"`
+	CostUsd        float64              `json:"costUsd"`
+	Outcome        string               `json:"outcome"`
+	CauseCounts    []CauseCountItem     `json:"causeCounts"`
+	FailedCheckIDs []string             `json:"failedCheckIds,omitempty"`
+	ObserverState  string               `json:"observerState"`
+	Observation    *RunsListObservation `json:"observation,omitempty"`
 }
 
 // RunDetail is GET /api/runs/<runId>.md|.json (FM-52).
@@ -92,9 +458,15 @@ func isJSONRequest(r *http.Request) bool {
 func runsListItemFromRow(row RunRow) RunsListItem {
 	item := RunsListItem{
 		RunID: row.RunID, Batch: row.Batch, Scenario: row.Scenario, Verdict: row.Verdict,
-		StartedAt: row.StartedAt, DurationSec: row.DurationSec, CostUsd: row.CostUsd,
+		VerdictReason: row.VerdictReason,
+		StartedAt:     row.StartedAt, DurationSec: row.DurationSec, CostUsd: row.CostUsd,
+		Outcome: row.Outcome, CauseCounts: causeCountItems(row.CauseCounts),
 		ObserverState: row.ObserverState,
 	}
+	for _, c := range row.FailedChecks {
+		item.FailedCheckIDs = append(item.FailedCheckIDs, c.ID)
+	}
+	sort.Strings(item.FailedCheckIDs)
 	if row.Observation != nil {
 		item.Observation = &RunsListObservation{
 			ObsID: row.Observation.ObsID, Status: row.Observation.Status, Headline: row.Observation.Headline,
@@ -124,54 +496,100 @@ func unverifiedQuotes(obs *observer.Observation) int {
 	return n
 }
 
+// renderRunItemLine renders one runs-list row's own line: run id, scenario,
+// verdict (+ reason), outcome, findings high/medium per cause class, failed
+// check ids, headline (§8.4).
+func renderRunItemLine(b *strings.Builder, it RunsListItem) {
+	headline := "(" + it.ObserverState + ")"
+	if it.Observation != nil {
+		headline = it.Observation.Headline
+	}
+	verdict := it.Verdict
+	if it.VerdictReason != "" {
+		verdict += " (" + it.VerdictReason + ")"
+	}
+	outcome := it.Outcome
+	if outcome == "" {
+		outcome = outcomeNone
+	}
+	var findings []string
+	for _, c := range it.CauseCounts {
+		if c.High > 0 || c.Medium > 0 {
+			findings = append(findings, fmt.Sprintf("%s:%d/%d", c.Class, c.High, c.Medium))
+		}
+	}
+	fmt.Fprintf(b, "- %s — %s — %s — outcome %s — findings %s — failed checks %s — %s\n",
+		it.RunID, it.Scenario, verdict, outcome, strings.Join(findings, " "),
+		strings.Join(it.FailedCheckIDs, ","), headline)
+}
+
+// groupRunItemsByBatch groups items by Batch, preserving each group's own
+// relative order, and returns the group order — batches sorted by their
+// own newest row's StartedAt descending, so "grouped under batch headers"
+// (§8.4) still reads newest-first overall.
+func groupRunItemsByBatch(items []RunsListItem) (order []string, groups map[string][]RunsListItem) {
+	groups = make(map[string][]RunsListItem)
+	newest := make(map[string]time.Time)
+	for _, it := range items {
+		if _, ok := groups[it.Batch]; !ok {
+			order = append(order, it.Batch)
+		}
+		groups[it.Batch] = append(groups[it.Batch], it)
+		if it.StartedAt.After(newest[it.Batch]) {
+			newest[it.Batch] = it.StartedAt
+		}
+	}
+	sort.SliceStable(order, func(i, j int) bool { return newest[order[i]].After(newest[order[j]]) })
+	return order, groups
+}
+
+// renderRunsListMD renders GET /api/runs.md (§8.4): newest first, grouped
+// under "## <batch>" headers.
 func renderRunsListMD(items []RunsListItem) string {
 	var b strings.Builder
-	for _, it := range items {
-		headline, titles := "("+it.ObserverState+")", ""
-		if it.Observation != nil {
-			headline = it.Observation.Headline
-			titles = strings.Join(it.Observation.FindingTitles, "; ")
+	b.WriteString(legendLine("Run", "Verdict", "Disputed", "Agent cost"))
+	order, groups := groupRunItemsByBatch(items)
+	for _, batch := range order {
+		fmt.Fprintf(&b, "## %s\n", batch)
+		for _, it := range groups[batch] {
+			renderRunItemLine(&b, it)
 		}
-		fmt.Fprintf(&b, "- %s — %s — %s — $%.4f — %s — findings: %s\n",
-			it.RunID, it.Scenario, it.Verdict, it.CostUsd, headline, titles)
 	}
 	return b.String()
 }
 
 // handleRunsList implements GET /api/runs.md|.json?since=<window> and
-// ?batch=<id> (FM-52). batch wins when both are given.
+// ?batch=<id> (§8.4/§8.7): the same query surface (apiRunsListSpec,
+// view.go) as the batch-runs list — verdict/outcome/cause filters,
+// sort=newest — through apiRunsEngine, never hand-parsed. batch wins when
+// both are given (its own window, not `since`, scopes the result).
 func (s *Server) handleRunsList(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	q := r.URL.Query()
+	q, err := Parse(apiRunsListSpec(), r.URL.Query())
+	if err != nil {
+		writeQueryError(w, r, asQueryError(err))
+		return
+	}
 
+	ctx := r.Context()
 	var rows []RunRow
-	if batch := q.Get("batch"); batch != "" {
+	if batch, ok := q.Open[paramBatch]; ok && batch != "" {
 		if !farm.ValidBatchID(batch) {
 			http.NotFound(w, r)
 			return
 		}
-		br, err := batchWindowRows(ctx, s.cfg.Store, s.cfg.ObserverDisabled, batch, s.queueState, s.runCache, s.summaryCache, s.logf)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		rows = br
+		rows, err = batchWindowRows(ctx, s.cfg.Store, s.cfg.ObserverDisabled, batch, s.queueState, s.runCache, s.summaryCache, s.logf)
+		q.Since = 0 // batch wins: its own runs are the whole scope, not a time window
 	} else {
-		window, err := ParseWindow(q.Get("since"))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		rows, err = rowsSinceWindow(ctx, s.cfg.Store, s.cfg.ObserverDisabled, window, s.now(), s.queueState, s.runCache, s.summaryCache, s.logf)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
+		rows, err = s.allRunRows(ctx)
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
 	}
 
-	sort.Slice(rows, func(i, j int) bool { return rows[i].RunID < rows[j].RunID })
-	items := make([]RunsListItem, len(rows))
-	for i, row := range rows {
+	filtered, _ := apiRunsEngine().Apply(rows, q, s.now())
+	items := make([]RunsListItem, len(filtered))
+	for i, row := range filtered {
 		items[i] = runsListItemFromRow(row)
 	}
 

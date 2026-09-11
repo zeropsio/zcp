@@ -109,6 +109,62 @@ func TestAPI_RunsSinceWindow(t *testing.T) {
 	}
 }
 
+// TestAPI_RunsListFiltersSortAndGrouping pins §8.4/§8.7 for GET
+// /api/runs.md|.json: the same verdict/outcome/cause/batch filters and
+// sort=newest as the run lists' query engine (never hand-parsed), rows
+// grouped under "## <batch>" markdown headers, a leading legend line, the
+// enriched per-row fields (verdictReason/outcome/causeCounts/
+// failedCheckIds), and 400 {error, allowed} for an unknown parameter.
+func TestAPI_RunsListFiltersSortAndGrouping(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "rl1", "off", []runFixture{
+		{runID: "rl1-a", scenario: "a", startedAt: now.Add(-3 * time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, false, nil)
+	seedBatch(t, store, "rl2", "off", []runFixture{
+		{
+			runID: "rl2-b", scenario: "b", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.2,
+			taskResult: "failed", done: true,
+			checks: [][5]string{{"chk/1", "failed", "1", "2", "results/verification.json"}},
+		},
+	}, true, map[string]string{"rl2-b": "failed"})
+
+	// verdict=failed narrows to rl2-b only.
+	rr := doGET(t, h, "/api/runs.json?verdict=failed")
+	var out struct {
+		Runs []RunsListItem `json:"runs"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.Runs) != 1 || out.Runs[0].RunID != "rl2-b" {
+		t.Fatalf("verdict=failed: got %+v, want exactly rl2-b", out.Runs)
+	}
+	if len(out.Runs[0].FailedCheckIDs) != 1 || out.Runs[0].FailedCheckIDs[0] != "chk/1" {
+		t.Errorf("failedCheckIds = %+v, want [chk/1]", out.Runs[0].FailedCheckIDs)
+	}
+
+	// No filter: newest first (rl2-b, 1h ago) before rl1-a (3h ago), grouped
+	// under batch headers in markdown.
+	mdBody := doGET(t, h, "/api/runs.md").Body.String()
+	if !strings.HasPrefix(mdBody, "Legend: ") {
+		t.Errorf("runs.md missing its leading legend line:\n%s", mdBody)
+	}
+	if !strings.Contains(mdBody, "## rl2") || !strings.Contains(mdBody, "## rl1") {
+		t.Errorf("runs.md missing per-batch headers:\n%s", mdBody)
+	}
+	if strings.Index(mdBody, "rl2-b") > strings.Index(mdBody, "rl1-a") {
+		t.Errorf("runs.md not newest-first:\n%s", mdBody)
+	}
+
+	rrBad := doGET(t, h, "/api/runs.json?verdict=bogus")
+	if rrBad.Code != http.StatusBadRequest {
+		t.Fatalf("bad verdict value: got %d, want 400", rrBad.Code)
+	}
+}
+
 // TestAPI_RunsByBatch pins GET /api/runs.md?batch=<id>: every run of the
 // batch, regardless of window.
 func TestAPI_RunsByBatch(t *testing.T) {
@@ -362,6 +418,127 @@ func TestAPI_InvalidRunOrBatchIDRejected(t *testing.T) {
 	t.Run("/api/runs/x%2Fresults.md", func(t *testing.T) {
 		assertRejected(t, "/api/runs/x%2Fresults.md")
 	})
+}
+
+// TestAPI_BatchesList pins GET /api/batches.md|.json (§8.4): the Overview's
+// batches table, filtered/sorted through the same query engine as the page
+// (§8.7's Overview-batches row), carrying a one-line legend (§8.8 FM-56) and
+// answering an unknown parameter with 400 {error, allowed} (JSON) or a
+// one-line text (markdown).
+func TestAPI_BatchesList(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "ab1", "off", []runFixture{
+		{runID: "ab1-a", scenario: "a", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 1.0, taskResult: "passed", done: true},
+	}, false, nil)
+	seedBatch(t, store, "ab2-empty", "off", []runFixture{
+		{runID: "ab2-empty-a", scenario: "a", startedAt: now.Add(-time.Hour), done: false},
+	}, false, nil)
+
+	rr := doGET(t, h, "/api/batches.md")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("got %d, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.HasPrefix(body, "Legend: ") {
+		t.Errorf("batches.md missing its leading legend line:\n%s", body)
+	}
+	if !strings.Contains(body, "ab1") {
+		t.Errorf("batches.md missing evaluation batch ab1:\n%s", body)
+	}
+	if strings.Contains(body, "ab2-empty") {
+		t.Errorf("batches.md default kind=evaluation must exclude the empty batch:\n%s", body)
+	}
+
+	rrAll := doGET(t, h, "/api/batches.json?kind=all")
+	var out struct {
+		Batches []BatchListItem `json:"batches"`
+	}
+	if err := json.Unmarshal(rrAll.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.Batches) != 2 {
+		t.Fatalf("kind=all: got %d batches, want 2: %+v", len(out.Batches), out.Batches)
+	}
+
+	rrBad := doGET(t, h, "/api/batches.json?bogus=1")
+	if rrBad.Code != http.StatusBadRequest {
+		t.Fatalf("bad param: got %d, want 400", rrBad.Code)
+	}
+	var qerr struct {
+		Error   string   `json:"error"`
+		Allowed []string `json:"allowed"`
+	}
+	if err := json.Unmarshal(rrBad.Body.Bytes(), &qerr); err != nil {
+		t.Fatalf("unmarshal query error: %v", err)
+	}
+	if qerr.Error == "" || len(qerr.Allowed) == 0 {
+		t.Errorf("query error = %+v, want a non-empty error and allowed list", qerr)
+	}
+
+	rrBadMD := doGET(t, h, "/api/batches.md?bogus=1")
+	if rrBadMD.Code != http.StatusBadRequest {
+		t.Fatalf("bad param (md): got %d, want 400", rrBadMD.Code)
+	}
+	if lines := strings.Split(strings.TrimRight(rrBadMD.Body.String(), "\n"), "\n"); len(lines) != 1 {
+		t.Errorf("bad param (md) body should be one line: %q", rrBadMD.Body.String())
+	}
+}
+
+// TestAPI_ProblemsList pins GET /api/problems.md|.json (§8.4/§8.6): the
+// clustered problems, with their members, through the same query engine and
+// surface as /problems (§8.7), with the same legend/400 contract as the
+// other list endpoints.
+func TestAPI_ProblemsList(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "pb1", "claude-sonnet-5", []runFixture{
+		{runID: "pb1-scena", scenario: "scena", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 1.0, taskResult: "passed", done: true},
+	}, true, map[string]string{"pb1-scena": "passed"})
+	seedObservation(t, store, fixtureObservation("pb1-scena"))
+
+	rr := doGET(t, h, "/api/problems.md")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("got %d, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.HasPrefix(body, "Legend: ") {
+		t.Errorf("problems.md missing its leading legend line:\n%s", body)
+	}
+	for _, want := range []string{"Tool returned stale data", "pb1-scena"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("problems.md missing %q:\n%s", want, body)
+		}
+	}
+
+	rrJSON := doGET(t, h, "/api/problems.json")
+	var out struct {
+		Problems []ProblemItem `json:"problems"`
+	}
+	if err := json.Unmarshal(rrJSON.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.Problems) != 2 {
+		t.Fatalf("got %d problems, want 2 (one per finding, no anchor => solo): %+v", len(out.Problems), out.Problems)
+	}
+	found := false
+	for _, p := range out.Problems {
+		if len(p.Members) == 1 && p.Members[0].RunID == "pb1-scena" && p.Members[0].Title == "Tool returned stale data" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no problem carries the expected member: %+v", out.Problems)
+	}
+
+	rrBad := doGET(t, h, "/api/problems.json?bogus=1")
+	if rrBad.Code != http.StatusBadRequest {
+		t.Fatalf("bad param: got %d, want 400", rrBad.Code)
+	}
 }
 
 // countingStore is an ObjectStore that always reports "not found" and
