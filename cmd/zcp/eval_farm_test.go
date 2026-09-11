@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -255,6 +256,62 @@ func TestFarmPull_Run_DownloadsAllParts(t *testing.T) {
 		}
 		if string(got) != string(want) {
 			t.Errorf("downloaded %s = %q, want %q", rel, got, want)
+		}
+	}
+}
+
+// TestFarmPull_RejectsPathEscape pins R4a (LAND review): a bucket key is
+// an opaque string, not a filesystem path — a compromised run's own
+// write-capable bucket key (FM-8) can plant an object at
+// "runs/<id>/../../.ssh/authorized_keys". `farm pull` must never join that
+// key's relative part onto --out unchecked (which would write outside it
+// on the operator's machine): it refuses the escaping key, names it on
+// stderr, still downloads every other object in the run, and exits
+// nonzero rather than silently reporting a clean bundle.
+func TestFarmPull_RejectsPathEscape(t *testing.T) {
+	fake := newFakeFarmS3()
+	server := fake.server()
+	defer server.Close()
+	setFarmEnv(t, server.URL)
+
+	fake.objects["runs/r1/started.json"] = []byte(`{"runId":"r1"}`)
+	fake.objects["runs/r1/results/summary.json"] = []byte(`{"ok":true}`)
+	fake.objects["runs/r1/../../.ssh/authorized_keys"] = []byte("ssh-ed25519 AAAA... attacker\n")
+	fake.objects["runs/r1/done.json"] = []byte(`{"runId":"r1","parts":{}}`)
+
+	outDir := t.TempDir()
+	var code int
+	_, stderr := captureOutput(t, func() {
+		code = runEvalFarm([]string{"pull", "r1", "--out", outDir})
+	})
+	if code == 0 {
+		t.Fatalf("runEvalFarm(pull r1) = 0, want nonzero when a key escapes --out")
+	}
+	if !strings.Contains(stderr, "runs/r1/../../.ssh/authorized_keys") {
+		t.Errorf("stderr = %q, want it to name the escaping key", stderr)
+	}
+
+	// The escaping key must never have been written anywhere under or
+	// above outDir.
+	escapeTarget := filepath.Join(filepath.Dir(filepath.Dir(outDir)), ".ssh", "authorized_keys")
+	if _, err := os.Stat(escapeTarget); err == nil {
+		t.Fatalf("path escape succeeded: %s was written", escapeTarget)
+	}
+	found := false
+	_ = filepath.WalkDir(outDir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr == nil && !d.IsDir() && d.Name() == "authorized_keys" {
+			found = true
+		}
+		return nil
+	})
+	if found {
+		t.Fatalf("an authorized_keys file was written somewhere under %s", outDir)
+	}
+
+	// Every safe object in the same run must still have been downloaded.
+	for _, rel := range []string{"started.json", "results/summary.json", "done.json"} {
+		if _, err := os.Stat(filepath.Join(outDir, "r1", rel)); err != nil {
+			t.Errorf("safe object %s was not downloaded despite the sibling escaping key: %v", rel, err)
 		}
 	}
 }
