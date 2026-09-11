@@ -139,11 +139,10 @@ func listBatchIDs(ctx context.Context, store observer.ObjectStore) ([]string, er
 	return ids, nil
 }
 
-// §8.4 FM-52's observerState vocabulary, minus "observing" — that value
-// requires S5's in-memory worker queue, which this slice does not build,
-// so resolveObserverState never produces it.
+// §8.4 FM-52's observerState vocabulary.
 const (
 	observerStateObserved    = "observed"
+	observerStateObserving   = "observing"
 	observerStateNotObserved = "not observed"
 	observerStateOff         = "observer off"
 	observerStateDisabled    = "observer disabled"
@@ -155,8 +154,16 @@ const (
 )
 
 // resolveObserverState implements §8.4's observerState vocabulary from
-// statically-known bucket state.
-func resolveObserverState(consoleDisabled bool, manifestObserver string, doneExists, hasObservation bool) string {
+// statically-known bucket state plus queued, the run's live Queue.State
+// (§8.5: JobQueued or JobRunning). queued outranks every other input: an
+// operator action "works regardless of the manifest field and the kill
+// switch" (§8.5 FM-53), so a run actually in flight reads "observing" even
+// while the kill switch would otherwise read it as "observer disabled", or
+// while it has no done.json yet.
+func resolveObserverState(consoleDisabled bool, manifestObserver string, doneExists, hasObservation, queued bool) string {
+	if queued {
+		return observerStateObserving
+	}
 	if !doneExists {
 		return observerStateNotObserved
 	}
@@ -172,11 +179,31 @@ func resolveObserverState(consoleDisabled bool, manifestObserver string, doneExi
 	return observerStateNotObserved
 }
 
+// queueState reads runID's live queue state (§8.5) via the Server's Queue —
+// "" when the run is neither queued nor running, or when no Queue is wired
+// (a test server that doesn't exercise actions/the worker).
+func (s *Server) queueState(runID string) string {
+	if s.cfg.Queue == nil {
+		return ""
+	}
+	return s.cfg.Queue.State(runID)
+}
+
+// runQueued reports whether queueState (nil-safe) marks runID as queued or
+// running.
+func runQueued(queueState func(runID string) string, runID string) bool {
+	if queueState == nil {
+		return false
+	}
+	st := queueState(runID)
+	return st == JobQueued || st == JobRunning
+}
+
 // buildRunRow resolves one run's full read model (RunRow) from the bucket:
 // done.json existence, meta.json/verification.json (via the observer
 // package's Bundle readers, §7.2), the batch summary's row (§7.5's verdict
 // rule), and the current + older observations (§7.5, §7.6).
-func buildRunRow(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, batchID string, run farm.ManifestRun, manifestCreatedAt time.Time, manifestObserver string, summary farm.BatchSummary, summaryFound bool) (RunRow, error) {
+func buildRunRow(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, batchID string, run farm.ManifestRun, manifestCreatedAt time.Time, manifestObserver string, summary farm.BatchSummary, summaryFound bool, queueState func(runID string) string) (RunRow, error) {
 	row := RunRow{RunID: run.RunID, Batch: batchID, Scenario: run.Scenario, StartedAt: manifestCreatedAt}
 
 	doneExists, _, err := store.Head(ctx, doneKey(run.RunID))
@@ -184,9 +211,10 @@ func buildRunRow(ctx context.Context, store observer.ObjectStore, consoleObserve
 		return RunRow{}, fmt.Errorf("console: head done.json: %w", err)
 	}
 	row.DoneExists = doneExists
+	queued := runQueued(queueState, run.RunID)
 	if !doneExists {
 		row.Verdict = verdictRunning
-		row.ObserverState = observerStateNotObserved
+		row.ObserverState = resolveObserverState(consoleObserverDisabled, manifestObserver, doneExists, false, queued)
 		return row, nil
 	}
 
@@ -250,7 +278,7 @@ func buildRunRow(ctx context.Context, store observer.ObjectStore, consoleObserve
 		row.Observation = &cur
 	}
 
-	row.ObserverState = resolveObserverState(consoleObserverDisabled, manifestObserver, doneExists, row.Observation != nil)
+	row.ObserverState = resolveObserverState(consoleObserverDisabled, manifestObserver, doneExists, row.Observation != nil, queued)
 	return row, nil
 }
 
@@ -282,7 +310,7 @@ func findRunBatch(ctx context.Context, store observer.ObjectStore, runID string)
 
 // loadRunRow resolves runID's full RunRow by first locating its batch
 // (findRunBatch) and then building the row (buildRunRow).
-func loadRunRow(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, runID string) (RunRow, error) {
+func loadRunRow(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, runID string, queueState func(runID string) string) (RunRow, error) {
 	batchID, run, manifest, err := findRunBatch(ctx, store, runID)
 	if err != nil {
 		return RunRow{}, err
@@ -292,7 +320,7 @@ func loadRunRow(ctx context.Context, store observer.ObjectStore, consoleObserver
 	if err != nil {
 		return RunRow{}, err
 	}
-	return buildRunRow(ctx, store, consoleObserverDisabled, batchID, run, createdAt, manifest.Observer, summary, summaryFound)
+	return buildRunRow(ctx, store, consoleObserverDisabled, batchID, run, createdAt, manifest.Observer, summary, summaryFound, queueState)
 }
 
 // evidenceSteps returns the sorted, deduplicated step numbers cited by
@@ -320,7 +348,7 @@ func evidenceSteps(obs *observer.Observation) []int {
 
 // batchWindowRows resolves every run row of one batch — used both by
 // GET /api/runs.md?batch=<id> and by the since-window scan across batches.
-func batchWindowRows(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, batchID string) ([]RunRow, error) {
+func batchWindowRows(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, batchID string, queueState func(runID string) string) ([]RunRow, error) {
 	manifest, err := loadManifest(ctx, store, batchID)
 	if err != nil {
 		return nil, err
@@ -332,7 +360,7 @@ func batchWindowRows(ctx context.Context, store observer.ObjectStore, consoleObs
 	}
 	rows := make([]RunRow, 0, len(manifest.Runs))
 	for _, run := range manifest.Runs {
-		row, err := buildRunRow(ctx, store, consoleObserverDisabled, batchID, run, createdAt, manifest.Observer, summary, summaryFound)
+		row, err := buildRunRow(ctx, store, consoleObserverDisabled, batchID, run, createdAt, manifest.Observer, summary, summaryFound, queueState)
 		if err != nil {
 			return nil, err
 		}
@@ -343,7 +371,7 @@ func batchWindowRows(ctx context.Context, store observer.ObjectStore, consoleObs
 
 // rowsSinceWindow collects every run row across every batch whose resolved
 // StartedAt falls within [now-window, now] (§8.4).
-func rowsSinceWindow(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, window time.Duration, now time.Time) ([]RunRow, error) {
+func rowsSinceWindow(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, window time.Duration, now time.Time, queueState func(runID string) string) ([]RunRow, error) {
 	batches, err := listBatchIDs(ctx, store)
 	if err != nil {
 		return nil, err
@@ -351,7 +379,7 @@ func rowsSinceWindow(ctx context.Context, store observer.ObjectStore, consoleObs
 	since := now.Add(-window)
 	var out []RunRow
 	for _, b := range batches {
-		rows, err := batchWindowRows(ctx, store, consoleObserverDisabled, b)
+		rows, err := batchWindowRows(ctx, store, consoleObserverDisabled, b, queueState)
 		if err != nil {
 			return nil, err
 		}
