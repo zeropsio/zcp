@@ -1,16 +1,19 @@
-// Package console: HTML pages (docs/spec-eval-farm.md §8.3 FM-51). Every
-// page is rendered through html/template (auto-escaping) from the read
-// models in view.go, api.go and batches.go — this file adds no store
-// writes and no new bucket keys.
+// Package console: HTML pages (docs/spec-eval-farm.md §8.3 FM-51). This
+// file holds what every page shares — the embedded template set, the
+// template func map, formatting helpers and renderPage; each page's own
+// handler and page-data type live in pages_home.go, pages_batch.go,
+// pages_run.go and pages_findings.go. Every page is rendered through
+// html/template (auto-escaping) from the read models in view.go, api.go and
+// batches.go — this file adds no store writes and no new bucket keys.
 package console
 
 import (
-	"context"
 	"embed"
 	"fmt"
 	"html/template"
 	"net/http"
-	"sort"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,7 +21,7 @@ import (
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
 
-//go:embed assets/layout.html assets/batches.html assets/batch.html assets/run.html assets/findings.html
+//go:embed assets/layout.html assets/terms.html assets/batches.html assets/batch.html assets/run.html assets/findings.html
 var pagesHTMLSrc embed.FS
 
 // pageFuncs are the plain-string-returning helpers pages.html templates use.
@@ -71,6 +74,20 @@ var pageFuncs = template.FuncMap{
 		// excludes the step-0 CHECKS citation — steps[0] is never 0 here.
 		return fmt.Sprintf("/r/%s#s%d", runID, steps[0])
 	},
+	// verdictLabel/verdictTooltip/severityLabel/severityTooltip/causeLabel/
+	// causeClass/assessmentOutcomeLabel/assessmentStateText are labels.go's
+	// vocabulary helpers (§8.8 FM-56), registered here so /terms and every
+	// later page template can call them.
+	"verdictLabel":           verdictLabel,
+	"verdictTooltip":         verdictTooltip,
+	"severityLabel":          severityLabel,
+	"severityTooltip":        severityTooltip,
+	"causeLabel":             causeLabel,
+	"causeClass":             causeClass,
+	"assessmentOutcomeLabel": assessmentOutcomeLabel,
+	"assessmentOutcomeClass": assessmentOutcomeClass,
+	"assessmentStateLabel":   assessmentStateLabel,
+	"assessmentStateTooltip": assessmentStateTooltip,
 }
 
 // fmtTime renders a timestamp for people: day, month, time, UTC.
@@ -173,17 +190,7 @@ func joinInts(ns []int) string {
 	return strings.Join(parts, ", ")
 }
 
-// findingOwners is §7.5's owner vocabulary, in the order the findings page
-// offers it as a filter.
-var findingOwners = []string{"zcp-guidance", "zcp-tool", "platform", "agent", "scenario", "evaluator"}
-
-// findingWindows are the findings page's window shortcuts (§8.3 FM-51).
-var findingWindows = []string{"24h", "7d", "30d"}
-
 var pagesTemplate = template.Must(template.New("pages").Funcs(pageFuncs).ParseFS(pagesHTMLSrc, "assets/*.html"))
-
-// observer.Models is §8.5 FM-53's re-observe model allowlist — S4
-// renders the picker, S5b's POST handlers enforce it server-side.
 
 func renderPage(w http.ResponseWriter, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -192,291 +199,114 @@ func renderPage(w http.ResponseWriter, name string, data any) {
 	}
 }
 
-// batchesPageData is GET / (§8.3 FM-51).
-type batchesPageData struct {
-	Batches []BatchRow
+// Navigation items for the top nav (§8.3 FM-51) — pageMeta.Nav's values.
+// Each is matched against the current page so exactly one link carries
+// aria-current="page"; a detail page (/b/<batch>, /r/<runId>) is under
+// none of them, so its Nav is "".
+const (
+	navOverview = "overview"
+	navProblems = "problems"
+	navFindings = "findings"
+	navTerms    = "terms"
+)
+
+// pageMeta carries every page's shared layout inputs (§8.3 FM-51): the
+// title, which top-nav item is current, the observer status line, an
+// optional notice callout from a ?notice= action-result code (§8.5
+// FM-53), and whether the page should auto-refresh while one of its own
+// jobs is in flight (§8.5: "the page carries <meta http-equiv=refresh
+// content=20>"). Every page handler builds one via Server.pageMeta and
+// renders it through layout.html's "head" template as its own Meta field.
+type pageMeta struct {
+	Title    string
+	Nav      string
+	Observer observerStatus
+	Notice   *noticeView
+	Refresh  bool
 }
 
-func (s *Server) handleBatchesPage(w http.ResponseWriter, r *http.Request) {
-	rows, err := loadBatchRows(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, s.queueState, s.runCache, s.summaryCache, s.logf)
-	if err != nil {
-		http.Error(w, "list batches: "+err.Error(), http.StatusInternalServerError)
-		return
+// observerStatus is pageMeta.Observer: the rendered §8.3 status line text,
+// and whether the console's Assess forms should stay hidden — true only
+// for the "unavailable" case (§8.3: "in which last case every Assess form
+// is hidden"). Wiring Hidden into an Assess form is left to the slice that
+// restructures batch.html/run.html (item 5's closing note) — it is exposed
+// here so that slice has it ready.
+type observerStatus struct {
+	Text   string
+	Hidden bool
+}
+
+// pageMeta builds one page's layout inputs: the observer status line from
+// the server's static config and the queue's live counts, and the notice
+// callout from the request's ?notice= (and, for "queued", ?n=) query
+// parameters. refresh is the caller's own §8.5 "a job of this page is in
+// flight" verdict — each page handler knows its own scope (one run, one
+// batch, or the whole console) better than this shared helper does.
+func (s *Server) pageMeta(r *http.Request, title, nav string, refresh bool) pageMeta {
+	return pageMeta{
+		Title:    title,
+		Nav:      nav,
+		Observer: s.observerStatusLine(),
+		Notice:   noticeFromQuery(r.URL.Query()),
+		Refresh:  refresh,
 	}
-	renderPage(w, "batches", batchesPageData{rows})
 }
 
-// batchRunView narrows a RunRow to what §8.3 FM-51's /b/<batch> row needs:
-// the current observation's headline when there is one, else
-// RunRow.ObserverState verbatim (the read model owns that vocabulary — S5b
-// makes it emit "observing"), plus just the failed/blocked check ids.
-type batchRunView struct {
-	RunRow
-	Headline        string // the current observation's headline, "" without one
-	State           string // RunRow.ObserverState, shown when there is no headline
-	High            int
-	Medium          int
-	Low             int
-	FailedCheckIDs  []string // at most maxFailedCheckChips
-	FailedCheckMore int      // how many more failed checks the row does not list
-}
-
-// maxFailedCheckChips caps the failed-check ids a batch row lists.
-const maxFailedCheckChips = 3
-
-// observationFailed reports whether obs's status is one the console shows
-// as a failure notice rather than a real assessment (item 3: "error" or
-// "unparsed", §7.5).
-func observationFailed(obs *observer.Observation) bool {
-	return obs != nil && (obs.Status == "error" || obs.Status == "unparsed")
-}
-
-// observerFailedState is the batch row's State when the current
-// observation failed (item 3) — shown in place of a headline.
-const observerFailedState = "observer failed"
-
-func newBatchRunView(row RunRow) batchRunView {
-	v := batchRunView{RunRow: row, State: row.ObserverState}
-	if row.Observation != nil && observationFailed(row.Observation) {
-		v.State = observerFailedState
-	} else if row.Observation != nil {
-		v.Headline = row.Observation.Headline
-		for _, f := range row.Observation.Findings {
-			switch f.Severity {
-			case observer.SeverityHigh:
-				v.High++
-			case observer.SeverityMedium:
-				v.Medium++
-			case observer.SeverityLow:
-				v.Low++
-			}
+// observerStatusLine resolves §8.3 FM-51's observer status line, in the
+// same precedence actions.go's observerUnavailable uses for the 503 cases
+// (credential/claude-path checked before the kill switch — a missing
+// credential or an unresolved claude path makes actions unavailable
+// whatever the kill switch says): a missing credential or an unresolved
+// --claude path reads "unavailable — <reason>" (Assess forms hidden);
+// otherwise the kill switch (ZCP_FARM_OBSERVER=off) reads "off … Assess
+// buttons still work"; otherwise "on" with the queue's live counts
+// (worker.go's Queue.Stats).
+func (s *Server) observerStatusLine() observerStatus {
+	const prefix = "Automatic assessment: "
+	switch {
+	case s.cfg.ObserverCredentialMissing:
+		return observerStatus{Text: prefix + "unavailable — credential missing", Hidden: true}
+	case s.cfg.ObserverClaudePathUnresolved:
+		return observerStatus{Text: prefix + "unavailable — claude not found", Hidden: true}
+	case s.cfg.ObserverDisabled:
+		return observerStatus{Text: prefix + "off on this console (ZCP_FARM_OBSERVER=off) — Assess buttons still work"}
+	default:
+		n := 0
+		if s.cfg.Queue != nil {
+			queued, running := s.cfg.Queue.Stats()
+			n = queued + running
 		}
+		return observerStatus{Text: fmt.Sprintf("%son · %s · %d queued/running", prefix, observer.DefaultModel, n)}
 	}
-	for i, c := range row.FailedChecks {
-		if i == maxFailedCheckChips {
-			v.FailedCheckMore = len(row.FailedChecks) - maxFailedCheckChips
-			break
+}
+
+// noticeView is pageMeta.Notice: the rendered text for one ?notice=<code>
+// action-result code (§8.5 FM-53's queued/busy/not-finished/bad-model/
+// unavailable). noticeFromQuery returns nil for no code or an unrecognized
+// one (§8.3: "an unknown code renders nothing").
+type noticeView struct{ Text string }
+
+func noticeFromQuery(q url.Values) *noticeView {
+	switch q.Get("notice") {
+	case "queued":
+		n, _ := strconv.Atoi(q.Get("n"))
+		if n < 1 {
+			n = 1
 		}
-		v.FailedCheckIDs = append(v.FailedCheckIDs, c.ID)
-	}
-	return v
-}
-
-// batchPageData is GET /b/<batch> (§8.3 FM-51).
-type batchPageData struct {
-	BatchID        string
-	CreatedAt      time.Time
-	Set            string
-	CandidateSha12 string
-	VerdictCounts  []VerdictCount
-	TotalCostUsd   float64
-	ObservedN      int
-	Unassessed     int // finished runs with no observation and none in flight
-	Runs           []batchRunView
-	ModelOptions   []string
-}
-
-func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
-	batch := strings.TrimPrefix(r.URL.Path, "/b/")
-	if !farm.ValidBatchID(batch) {
-		http.NotFound(w, r)
-		return
-	}
-	rows, err := batchWindowRows(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, batch, s.queueState, s.runCache, s.summaryCache, s.logf)
-	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		if ri, rj := verdictRank(rows[i].Verdict), verdictRank(rows[j].Verdict); ri != rj {
-			return ri < rj
+		plural := "s"
+		if n == 1 {
+			plural = ""
 		}
-		return rows[i].RunID < rows[j].RunID
-	})
-	data := batchPageData{BatchID: batch, ModelOptions: observer.Models}
-	if manifest, err := loadManifest(r.Context(), s.cfg.Store, batch); err == nil {
-		data.CreatedAt, _ = time.Parse(time.RFC3339, manifest.CreatedAt)
-		data.Set = manifest.Set
-		data.CandidateSha12 = candidateSha12(manifest.CandidateSha256)
+		return &noticeView{Text: fmt.Sprintf("Queued %d run%s for assessment.", n, plural)}
+	case "busy":
+		return &noticeView{Text: "Already queued or running — try again once it settles."}
+	case "not-finished":
+		return &noticeView{Text: "That run hasn't finished yet — nothing to assess."}
+	case "bad-model":
+		return &noticeView{Text: "That model isn't one of the ones this console supports."}
+	case "unavailable":
+		return &noticeView{Text: "The observer isn't available right now."}
+	default:
+		return nil
 	}
-	counts := make(map[string]int)
-	for _, row := range rows {
-		data.Runs = append(data.Runs, newBatchRunView(row))
-		counts[row.Verdict]++
-		data.TotalCostUsd += row.CostUsd
-		switch {
-		case row.Observation != nil && !observationFailed(row.Observation):
-			data.ObservedN++
-		case row.DoneExists && row.ObserverState != observerStateObserving:
-			data.Unassessed++
-		}
-	}
-	data.VerdictCounts = orderedVerdictCounts(counts)
-	renderPage(w, "batch", data)
-}
-
-// runPageData is GET /r/<runId> (§8.3 FM-51).
-type runPageData struct {
-	Row               RunRow
-	Steps             []observer.Step
-	TaskPrompt        string
-	SelfReview        string
-	OlderObservations []observer.Observation
-	EvidenceSteps     []int
-	UnverifiedQuotes  int
-	TotalQuotes       int
-	ModelOptions      []string
-}
-
-func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
-	runID := strings.TrimPrefix(r.URL.Path, "/r/")
-	if !farm.ValidRunID(runID) {
-		http.NotFound(w, r)
-		return
-	}
-	ctx := r.Context()
-	row, err := loadRunRow(ctx, s.cfg.Store, s.cfg.ObserverDisabled, runID, s.queueState, s.runCache, s.summaryCache)
-	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-
-	data := runPageData{Row: row, EvidenceSteps: evidenceSteps(row.Observation), ModelOptions: observer.Models}
-	if row.Observation != nil {
-		data.UnverifiedQuotes = unverifiedQuotes(row.Observation)
-		for _, f := range row.Observation.Findings {
-			data.TotalQuotes += len(f.Evidence)
-		}
-	}
-
-	if row.DoneExists {
-		steps, err := loadSteps(ctx, s.cfg.Store, runID)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		data.Steps = steps
-
-		taskPrompt, selfReview, err := loadRunTexts(ctx, s.cfg.Store, runID)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		data.TaskPrompt = taskPrompt
-		data.SelfReview = selfReview
-	}
-
-	older, err := loadOlderObservations(ctx, s.cfg.Store, runID, row.OlderObsIDs)
-	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	data.OlderObservations = older
-
-	renderPage(w, "run", data)
-}
-
-// loadRunTexts reads runId's task prompt and self-review straight from its
-// bundle — the same two bundle files api.go's handleSelfReview/loadSteps
-// read, via the same observer.Bundle helpers (§7.2).
-func loadRunTexts(ctx context.Context, store observer.ObjectStore, runID string) (taskPrompt, selfReview string, err error) {
-	bundle, err := observer.NewSinkBundle(ctx, store, runID)
-	if err != nil {
-		return "", "", fmt.Errorf("console: load run texts: new bundle: %w", err)
-	}
-	resultsDir, err := observer.ResultsDir(bundle)
-	if err != nil {
-		return "", "", fmt.Errorf("console: load run texts: results dir: %w", err)
-	}
-	taskPrompt, err = observer.LoadTaskPrompt(bundle, resultsDir)
-	if err != nil {
-		return "", "", fmt.Errorf("console: load run texts: task prompt: %w", err)
-	}
-	selfReview, err = observer.LoadSelfReview(bundle, resultsDir)
-	if err != nil {
-		return "", "", fmt.Errorf("console: load run texts: self-review: %w", err)
-	}
-	if selfReview == "" {
-		selfReview = observer.NotRecorded
-	}
-	return taskPrompt, selfReview, nil
-}
-
-// loadOlderObservations resolves every older obsId (view.go's
-// RunRow.OlderObsIDs, newest-last) to its full document, for the run page's
-// "older observation versions" section (§8.3 FM-51).
-func loadOlderObservations(ctx context.Context, store observer.ObjectStore, runID string, ids []string) ([]observer.Observation, error) {
-	obsStore := observer.NewStore(store)
-	out := make([]observer.Observation, 0, len(ids))
-	for _, id := range ids {
-		obs, err := obsStore.GetObservation(ctx, runID, id)
-		if err != nil {
-			return nil, fmt.Errorf("console: get older observation %s: %w", id, err)
-		}
-		out = append(out, obs)
-	}
-	return out, nil
-}
-
-// findingsPageData is GET /findings (§8.3 FM-51). The findings themselves
-// reach the template only as Groups (owner-then-severity, §8.4) — there is
-// no ungrouped Findings field, since findings.html never reads one.
-type findingsPageData struct {
-	Since   string
-	Owner   string
-	Windows []string
-	Owners  []string
-	Groups  []findingGroup
-}
-
-// findingGroup is one owner's findings, in the read model's order.
-type findingGroup struct {
-	Owner string
-	Items []FindingItem
-}
-
-func groupFindingsByOwner(items []FindingItem) []findingGroup {
-	var groups []findingGroup
-	for _, it := range items {
-		if len(groups) == 0 || groups[len(groups)-1].Owner != it.Owner {
-			groups = append(groups, findingGroup{Owner: it.Owner})
-		}
-		groups[len(groups)-1].Items = append(groups[len(groups)-1].Items, it)
-	}
-	return groups
-}
-
-func (s *Server) handleFindingsPage(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	window, err := ParseWindow(q.Get("since"))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	rows, err := rowsSinceWindow(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, window, s.now(), s.queueState, s.runCache, s.summaryCache, s.logf)
-	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	items := findingItemsFromRows(rows)
-
-	owner := q.Get("owner")
-	if owner != "" {
-		filtered := make([]FindingItem, 0, len(items))
-		for _, it := range items {
-			if it.Owner == owner {
-				filtered = append(filtered, it)
-			}
-		}
-		items = filtered
-	}
-
-	since := q.Get("since")
-	if since == "" {
-		since = "24h"
-	}
-	renderPage(w, "findings", findingsPageData{
-		Since: since, Owner: owner, Windows: findingWindows, Owners: findingOwners,
-		Groups: groupFindingsByOwner(items),
-	})
 }

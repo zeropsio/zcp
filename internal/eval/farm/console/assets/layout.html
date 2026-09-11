@@ -3,14 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{.}} · Farm console</title>
+{{if .Refresh}}<meta http-equiv="refresh" content="20">
+{{end}}<title>{{.Title}} · Farm console</title>
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 <header class="topbar"><div class="wrap topbar-inner">
 <a class="brand" href="/">Farm console</a>
-<nav class="topnav"><a href="/">Batches</a><a href="/findings?since=7d">Findings</a></nav>
+<nav class="topnav">
+<a href="/"{{if eq .Nav "overview"}} aria-current="page"{{end}}>Overview</a>
+<a href="/problems"{{if eq .Nav "problems"}} aria-current="page"{{end}}>Problems</a>
+<a href="/findings?since=7d"{{if eq .Nav "findings"}} aria-current="page"{{end}}>Findings</a>
+<a href="/terms"{{if eq .Nav "terms"}} aria-current="page"{{end}}>Terms</a>
+</nav>
+<form class="signout" method="post" action="/logout"><button type="submit">Sign out</button></form>
 </div></header>
+<div class="wrap"><p class="observer-status muted small">{{.Observer.Text}}</p></div>
+{{with .Notice}}<div class="wrap"><p class="callout notice">{{.Text}}</p></div>{{end}}
 <main class="wrap">
 {{end}}
 {{define "foot"}}</main>

@@ -1,0 +1,42 @@
+{{define "terms"}}{{template "head" .Meta}}
+<div class="page-head">
+<h1>Terms</h1>
+<p class="muted">One word per concept, the same on every page (§8.8).</p>
+</div>
+
+<h2>Glossary</h2>
+<dl class="kv terms-glossary">
+{{range .Glossary}}<dt>{{.Term}}</dt><dd>{{.Definition}}</dd>
+{{end}}
+</dl>
+
+<h2>Verdict</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Verdict</th><th>Meaning</th></tr></thead>
+<tbody>{{range .Verdicts}}<tr><td><span class="{{verdictClass .Value}}" title="{{.Tooltip}}">{{verdictIcon .Value}} {{.Label}}</span></td><td>{{.Tooltip}}</td></tr>{{end}}</tbody>
+</table></div>
+
+<h2>Severity</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Severity</th><th>Meaning</th></tr></thead>
+<tbody>{{range .Severities}}<tr><td><span class="{{severityClass .Value}}" title="{{.Tooltip}}">{{.Label}}</span></td><td>{{.Tooltip}}</td></tr>{{end}}</tbody>
+</table></div>
+
+<h2>Cause</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Cause</th><th>Owner value</th></tr></thead>
+<tbody>{{range .Causes}}<tr><td><span class="chip cause-chip" title="{{.Tooltip}}">{{.Label}}</span></td><td><code>{{.Value}}</code></td></tr>{{end}}</tbody>
+</table></div>
+
+<h2>Assessment outcome</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Outcome</th><th>Meaning</th></tr></thead>
+<tbody>{{range .Outcomes}}<tr><td><span class="{{assessmentOutcomeClass .Value}}" title="{{.Tooltip}}">{{.Label}}</span></td><td>{{.Tooltip}}</td></tr>{{end}}</tbody>
+</table></div>
+
+<h2>Assessment state</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>State</th><th>Meaning</th></tr></thead>
+<tbody>{{range .States}}<tr><td><span title="{{.Tooltip}}">{{.Label}}</span></td><td>{{.Tooltip}}</td></tr>{{end}}</tbody>
+</table></div>
+{{template "foot"}}{{end}}
