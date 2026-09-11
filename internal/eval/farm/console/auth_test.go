@@ -35,7 +35,7 @@ func TestConsole_NoAuth_APIIs401AndHTMLRedirectsToLogin(t *testing.T) {
 }
 
 // TestConsole_OpenRoutesNeedNoAuth pins FM-50's open-route list: GET
-// /login, POST /login, GET /healthz, GET /static/*.
+// /login, POST /login, GET /healthz, GET /static/app.css.
 func TestConsole_OpenRoutesNeedNoAuth(t *testing.T) {
 	srv, _, _ := testServer(t)
 	h := srv.Handler()

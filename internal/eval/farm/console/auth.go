@@ -124,7 +124,7 @@ func (s *Server) authenticate(r *http.Request) authResult {
 }
 
 // requireAuth is the middleware every route but the open ones (FM-50: GET
-// /login, POST /login, GET /healthz, GET /static/*) runs through. An
+// /login, POST /login, GET /healthz, GET /static/app.css) runs through. An
 // unauthenticated HTML request gets a 303 to /login; an unauthenticated
 // /api/* request gets 401. A wrong bearer is delayed (no fast path — FM-50)
 // before answering 401 either way.

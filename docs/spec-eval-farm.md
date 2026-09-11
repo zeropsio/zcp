@@ -841,7 +841,7 @@ is ever printed.
 ### 8.2 Authentication and headers
 
 **FM-50.** Every route except `GET /login`, `POST /login`, `GET /healthz` and
-`GET /static/*` requires `Authorization: Bearer <console token>` or a session
+`GET /static/app.css` (the one stylesheet) requires `Authorization: Bearer <console token>` or a session
 cookie. `POST /login` compares in constant time and sets the cookie
 `farm_session` = `<expiry>.<hex HMAC-SHA256(token, expiry)>`: HttpOnly, Secure,
 SameSite=Strict, Path=/, 30 days — rotating the token ends every session.
