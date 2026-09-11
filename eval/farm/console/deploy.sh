@@ -285,6 +285,18 @@ CLIDIR=""
 
 api_request PUT "/api/rest/public/service-stack/$sid/enable-subdomain-access" >/dev/null
 
+# ---- (5b) pin the console's scaling on every deploy, so an existing
+# service converges too: exactly one container (the observation queue,
+# worker and caches live in one process, §8.5) and a 2 GB RAM floor with
+# 1 GB kept free, so three concurrent observer processes never outrun
+# vertical autoscaling (at the platform's 0.125 GB default floor an
+# observer's claude was OOM-killed) --------------------------------------
+
+scalefile=$(mktemp "$SECRETDIR/autoscaling-body.XXXXXX")
+printf '%s' '{"customAutoscaling":{"verticalAutoscaling":{"minResource":{"memoryGBytes":2},"minFreeResource":{"memoryGBytes":1}},"horizontalAutoscaling":{"minContainerCount":1,"maxContainerCount":1}}}' >"$scalefile"
+api_request PUT "/api/rest/public/service-stack/$sid/autoscaling" "$scalefile" >/dev/null
+rm -f "$scalefile"
+
 # ---- (6) record + print the URL --------------------------------------------
 
 detail_body=$(api_request GET "/api/rest/public/service-stack/$sid")
