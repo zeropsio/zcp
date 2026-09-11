@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -94,7 +95,7 @@ func Observe(ctx context.Context, bundle Bundle, cfg ObserveConfig) Observation 
 	}
 	scenarioMD := loadScenarioMD(bundle, resultsDir)
 
-	steps, err := BuildSteps(taskPrompt, transcript, resumeReplies(meta))
+	steps, err := BuildSteps(taskPrompt, transcript, ResumeReplies(meta))
 	if err != nil {
 		return fail(fmt.Errorf("transcript.jsonl: %w", err))
 	}
@@ -153,7 +154,7 @@ func Observe(ctx context.Context, bundle Bundle, cfg ObserveConfig) Observation 
 }
 
 // loadScenarioMD resolves the optional capture scenario.md (§7.2); any
-// failure to locate or read it renders as notRecorded rather than failing
+// failure to locate or read it renders as NotRecorded rather than failing
 // the whole observation — it is explicitly optional.
 func loadScenarioMD(bundle Bundle, resultsDir string) string {
 	suiteScenario := strings.TrimPrefix(resultsDir, "results/")
@@ -168,9 +169,9 @@ func loadScenarioMD(bundle Bundle, resultsDir string) string {
 	return string(data)
 }
 
-// resumeReplies extracts meta.json's userSim.turns[].reply, in order, for
+// ResumeReplies extracts meta.json's userSim.turns[].reply, in order, for
 // BuildSteps' resumed-segment numbering (§7.2).
-func resumeReplies(meta eval.BehavioralResult) []string {
+func ResumeReplies(meta eval.BehavioralResult) []string {
 	if meta.UserSim == nil {
 		return nil
 	}
@@ -198,3 +199,13 @@ func resolveVerdict(summaryJSON []byte, runID string, meta eval.BehavioralResult
 	}
 	return ResolveVerdict(result, found, metaResult)
 }
+
+// Models are the observer models the farm accepts (§3.3, §8.5 FM-53), in the
+// order pickers offer them; DefaultModel is the first.
+var Models = []string{"claude-sonnet-5", "claude-opus-5", "claude-fable-5-1"}
+
+// DefaultModel observes every run unless a batch or an action names another.
+const DefaultModel = "claude-sonnet-5"
+
+// ValidModel reports whether model is one of Models.
+func ValidModel(model string) bool { return slices.Contains(Models, model) }

@@ -15,6 +15,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/eval"
 	"github.com/zeropsio/zcp/internal/eval/farm"
+	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -232,24 +233,18 @@ func resolveOAuthToken() (string, error) {
 	return oauth, nil
 }
 
-// observerAllowedModels are the models --observer accepts, besides "off"
-// (docs/spec-eval-farm.md §3.3/§7.7).
-var observerAllowedModels = map[string]bool{
-	"claude-sonnet-5": true, "claude-opus-5": true, "claude-fable-5-1": true,
-}
-
 // resolveObserver validates --observer's value against §3.3/§7.7's
-// allow-list ("off", or one of observerAllowedModels), defaulting to
-// defaultObserverModel (claude-sonnet-5) when flag is empty. Any other
+// allow-list ("off", or one of observer.Models), defaulting to
+// observer.DefaultModel when flag is empty. Any other
 // value is a flag error — the caller exits 2.
 func resolveObserver(flag string) (string, error) {
 	if flag == "" {
-		return defaultObserverModel, nil
+		return observer.DefaultModel, nil
 	}
-	if flag == "off" || observerAllowedModels[flag] {
+	if flag == "off" || observer.ValidModel(flag) {
 		return flag, nil
 	}
-	return "", fmt.Errorf("%q is not \"off\" or one of claude-sonnet-5, claude-opus-5, claude-fable-5-1", flag)
+	return "", fmt.Errorf("%q is not \"off\" or one of %s", flag, strings.Join(observer.Models, ", "))
 }
 
 // resolveScenarios expands --set (gate|all|<id,id,...>) to the

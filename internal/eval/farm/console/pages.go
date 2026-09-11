@@ -182,9 +182,8 @@ var findingWindows = []string{"24h", "7d", "30d"}
 
 var pagesTemplate = template.Must(template.New("pages").Funcs(pageFuncs).ParseFS(pagesHTMLSrc, "assets/*.html"))
 
-// observeModelOptions is §8.5 FM-53's re-observe model allowlist — S4
+// observer.Models is §8.5 FM-53's re-observe model allowlist — S4
 // renders the picker, S5b's POST handlers enforce it server-side.
-var observeModelOptions = []string{"claude-sonnet-5", "claude-opus-5", "claude-fable-5-1"}
 
 func renderPage(w http.ResponseWriter, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -294,7 +293,7 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 		}
 		return rows[i].RunID < rows[j].RunID
 	})
-	data := batchPageData{BatchID: batch, ModelOptions: observeModelOptions}
+	data := batchPageData{BatchID: batch, ModelOptions: observer.Models}
 	if manifest, err := loadManifest(r.Context(), s.cfg.Store, batch); err == nil {
 		data.CreatedAt, _ = time.Parse(time.RFC3339, manifest.CreatedAt)
 		data.Set = manifest.Set
@@ -342,7 +341,7 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := runPageData{Row: row, EvidenceSteps: evidenceSteps(row.Observation), ModelOptions: observeModelOptions}
+	data := runPageData{Row: row, EvidenceSteps: evidenceSteps(row.Observation), ModelOptions: observer.Models}
 	if row.Observation != nil {
 		data.UnverifiedQuotes = unverifiedQuotes(row.Observation)
 		for _, f := range row.Observation.Findings {
@@ -398,7 +397,7 @@ func loadRunTexts(ctx context.Context, store observer.ObjectStore, runID string)
 		return "", "", fmt.Errorf("console: load run texts: self-review: %w", err)
 	}
 	if selfReview == "" {
-		selfReview = notRecorded
+		selfReview = observer.NotRecorded
 	}
 	return taskPrompt, selfReview, nil
 }

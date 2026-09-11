@@ -240,17 +240,6 @@ func TestActions_RunObserveAddsVersion(t *testing.T) {
 	}
 }
 
-// TestActions_AllowlistNamesDeterministic pins item 9: allowlistNames'
-// rendering doesn't drift with Go's unspecified map iteration order.
-func TestActions_AllowlistNamesDeterministic(t *testing.T) {
-	first := allowlistNames()
-	for range 20 {
-		if got := allowlistNames(); got != first {
-			t.Fatalf("allowlistNames() = %q, want stable %q across repeated calls", got, first)
-		}
-	}
-}
-
 // --- TestActions_ModelOutsideAllowlist400 -------------------------------
 
 // TestActions_ModelOutsideAllowlist400 pins §8.5 FM-53: a model outside the
@@ -268,6 +257,9 @@ func TestActions_ModelOutsideAllowlist400(t *testing.T) {
 	rr := doBearerPOST(t, h, "/r/ma1-a/observe", url.Values{"model": {"gpt-5"}})
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("POST /r/ma1-a/observe model=gpt-5: got %d, want 400", rr.Code)
+	}
+	if want := "claude-sonnet-5, claude-opus-5, claude-fable-5-1"; !strings.Contains(rr.Body.String(), want) {
+		t.Errorf("400 body = %q, want it to list the models in order %q", rr.Body.String(), want)
 	}
 
 	rr = doBearerPOST(t, h, "/b/ma1/observe", url.Values{"model": {"gpt-5"}})

@@ -10,23 +10,11 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
-
-// observeModelAllowlist is §8.5 FM-53's re-observe model allowlist.
-var observeModelAllowlist = map[string]bool{
-	"claude-sonnet-5":  true,
-	"claude-opus-5":    true,
-	"claude-fable-5-1": true,
-}
-
-func validObserveModel(model string) bool {
-	return observeModelAllowlist[model]
-}
 
 // sourceAction is Job.Source for a run an operator action queued, as
 // opposed to the worker's own schedule (worker.go's wkSourceWorker, §8.5).
@@ -146,8 +134,8 @@ func (s *Server) handleRunObserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	model := r.FormValue("model")
-	if !validObserveModel(model) {
-		http.Error(w, "model must be one of "+allowlistNames(), http.StatusBadRequest)
+	if !observer.ValidModel(model) {
+		http.Error(w, "model must be one of "+strings.Join(observer.Models, ", "), http.StatusBadRequest)
 		return
 	}
 	if unavailable, message := s.observerUnavailable(); unavailable {
@@ -201,8 +189,8 @@ func (s *Server) handleBatchObserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	model := r.FormValue("model")
-	if !validObserveModel(model) {
-		http.Error(w, "model must be one of "+allowlistNames(), http.StatusBadRequest)
+	if !observer.ValidModel(model) {
+		http.Error(w, "model must be one of "+strings.Join(observer.Models, ", "), http.StatusBadRequest)
 		return
 	}
 	if unavailable, message := s.observerUnavailable(); unavailable {
@@ -235,7 +223,7 @@ func (s *Server) handleBatchObserve(w http.ResponseWriter, r *http.Request) {
 			obsIDs, obsErr := obsStore.ListObservations(r.Context(), run.RunID)
 			if obsErr != nil {
 				// A list error skips the run rather than risking a
-				// duplicate enqueue on doubt (item 6).
+				// duplicate enqueue on doubt.
 				continue
 			}
 			if len(obsIDs) > 0 {
@@ -246,16 +234,4 @@ func (s *Server) handleBatchObserve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.respondAction(w, r, "/b/"+batch)
-}
-
-// allowlistNames renders observeModelAllowlist's keys for a 400 error body,
-// sorted so the same 400 body is byte-identical on every call rather than
-// drifting with Go's unspecified map iteration order.
-func allowlistNames() string {
-	names := make([]string, 0, len(observeModelAllowlist))
-	for name := range observeModelAllowlist {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return strings.Join(names, ", ")
 }

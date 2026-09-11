@@ -10,9 +10,11 @@ import (
 	"github.com/zeropsio/zcp/internal/eval"
 )
 
-// notRecorded is what an absent optional input file renders as, wherever it
+// NotRecorded is what an absent optional input file renders as, wherever it
 // would otherwise appear (§7.2).
-const notRecorded = "(not recorded)"
+// NotRecorded is what every surface prints for an optional bundle file
+// the run did not produce (§7.2).
+const NotRecorded = "(not recorded)"
 
 // firstN returns the first n runes of s (or all of s when shorter).
 // Operates on runes, not bytes, so it never splits a multi-byte UTF-8
@@ -70,7 +72,7 @@ const digestBudget = 400000
 
 // DigestInput is everything BuildDigest needs to assemble one run's digest
 // (§7.3). Zero-valued ScenarioMD/FinalState/SelfReview render as
-// notRecorded — the caller is responsible for resolving each optional
+// NotRecorded — the caller is responsible for resolving each optional
 // input file to either its content or that zero value (§7.2).
 type DigestInput struct {
 	RunID      string
@@ -81,14 +83,14 @@ type DigestInput struct {
 	Model      string
 
 	TaskPrompt string
-	ScenarioMD string // "" -> notRecorded
+	ScenarioMD string // "" -> NotRecorded
 
 	Checks []eval.RequiredCheck
 
 	Steps []Step
 
-	FinalState *eval.PlatformSnapshot // nil -> notRecorded
-	SelfReview string                 // "" -> notRecorded
+	FinalState *eval.PlatformSnapshot // nil -> NotRecorded
+	SelfReview string                 // "" -> NotRecorded
 }
 
 // BuildDigest assembles the observer's plain-text digest (§7.3): fixed
@@ -125,7 +127,7 @@ func taskSection(in DigestInput) string {
 func scenarioSection(in DigestInput) string {
 	body := in.ScenarioMD
 	if body == "" {
-		body = notRecorded
+		body = NotRecorded
 	}
 	return "=== SCENARIO (the agent never saw this file) ===\n" + body
 }
@@ -136,14 +138,14 @@ func checksSection(in DigestInput) string {
 
 // ChecksBody renders the CHECKS section's body — every verification.json
 // row: id, result, expected, observed, source — without the section
-// header. Absent (nil/empty) checks render notRecorded, never a fatal
+// header. Absent (nil/empty) checks render NotRecorded, never a fatal
 // observation: a run that died before the verdict freeze has no
 // verification.json, and those are exactly the runs worth observing.
 // Exported so the quote check (§7.5 FM-46) can verify a step-0 citation
 // against exactly the text the model saw under CHECKS.
 func ChecksBody(checks []eval.RequiredCheck) string {
 	if len(checks) == 0 {
-		return notRecorded
+		return NotRecorded
 	}
 	var b strings.Builder
 	for i, c := range checks {
@@ -157,7 +159,7 @@ func ChecksBody(checks []eval.RequiredCheck) string {
 
 func finalStateSection(in DigestInput) string {
 	if in.FinalState == nil || len(in.FinalState.Services) == 0 {
-		return "=== FINAL STATE ===\n" + notRecorded
+		return "=== FINAL STATE ===\n" + NotRecorded
 	}
 	var b strings.Builder
 	b.WriteString("=== FINAL STATE ===\n")
@@ -173,7 +175,7 @@ func finalStateSection(in DigestInput) string {
 func selfReviewSection(in DigestInput) string {
 	body := in.SelfReview
 	if body == "" {
-		body = notRecorded
+		body = NotRecorded
 	}
 	return "=== SELF-REVIEW (written by the agent after the run, from its own memory) ===\n" + body
 }

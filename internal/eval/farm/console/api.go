@@ -11,13 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zeropsio/zcp/internal/eval"
 	"github.com/zeropsio/zcp/internal/eval/farm"
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
 
-// notRecorded matches §7.2's rendering of a missing optional bundle file.
-const notRecorded = "(not recorded)"
+// observer.NotRecorded matches §7.2's rendering of a missing optional bundle file.
 
 // --- §8.4 FM-52 JSON shapes ---
 
@@ -246,7 +244,7 @@ func renderRunDetailMD(d RunDetail) string {
 	if d.Observation != nil {
 		b.WriteString(observer.Render(*d.Observation))
 	} else {
-		b.WriteString("Observer: " + notRecorded + "\n")
+		b.WriteString("Observer: " + observer.NotRecorded + "\n")
 	}
 
 	b.WriteString("\nFailed/blocked checks:\n")
@@ -364,24 +362,7 @@ func loadSteps(ctx context.Context, store observer.ObjectStore, runID string) ([
 	if err != nil {
 		return nil, fmt.Errorf("console: load steps: meta: %w", err)
 	}
-	return observer.BuildSteps(taskPrompt, transcript, resumeReplies(meta))
-}
-
-// resumeReplies extracts meta.json's userSim.turns[].reply, in order,
-// for BuildSteps' resumed-segment numbering (§7.2) — mirrors
-// cmd/zcp/eval_farm_observe.go's helper of the same name (a different
-// package: DirBundle's own local pipeline vs. the console's SinkBundle
-// one, so the small helper is duplicated rather than shared across the
-// cmd/internal boundary).
-func resumeReplies(meta eval.BehavioralResult) []string {
-	if meta.UserSim == nil {
-		return nil
-	}
-	replies := make([]string, len(meta.UserSim.Turns))
-	for i, turn := range meta.UserSim.Turns {
-		replies[i] = turn.Reply
-	}
-	return replies
+	return observer.BuildSteps(taskPrompt, transcript, observer.ResumeReplies(meta))
 }
 
 func stepJSON(s observer.Step) StepJSON {
@@ -499,7 +480,7 @@ func (s *Server) handleSelfReview(w http.ResponseWriter, r *http.Request, runID 
 		return
 	}
 	if text == "" {
-		text = notRecorded
+		text = observer.NotRecorded
 	}
 	if isJSONRequest(r) {
 		writeJSON(w, struct {

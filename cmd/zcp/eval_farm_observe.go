@@ -15,9 +15,8 @@ import (
 
 // Defaults for `zcp eval farm observe` (docs/spec-eval-farm.md §7.7).
 const (
-	defaultObserverModel = "claude-sonnet-5"
-	defaultClaudeBinary  = "claude"
-	observerTimeout      = 5 * time.Minute
+	defaultClaudeBinary = "claude"
+	observerTimeout     = 5 * time.Minute
 )
 
 // runFarmObserve implements the local verb `zcp eval farm observe <run-dir>
@@ -48,7 +47,7 @@ func runFarmObserve(args []string) int {
 }
 
 func parseObserveArgs(args []string) (runDir, model, claudePath string, err error) {
-	model = defaultObserverModel
+	model = observer.DefaultModel
 	claudePath = defaultClaudeBinary
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
