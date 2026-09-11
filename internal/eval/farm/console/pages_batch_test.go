@@ -413,6 +413,66 @@ func TestPages_BatchProblemsSection(t *testing.T) {
 	})
 }
 
+// TestPages_BatchProblemsStatusUsesFullFarmHistoryNotJustPrevBatch pins
+// item 1 (FIX3): the batch page's own "Problems in this batch" status must
+// be computed over the FULL farm history, not just [this batch, the
+// previous same-set batch] — a problem hit on a build several batches back
+// (older than the immediate previous one) must still read "recurring",
+// never "first seen".
+func TestPages_BatchProblemsStatusUsesFullFarmHistoryNotJustPrevBatch(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	// bh-a: the oldest build, hits the anchor.
+	seedBatch(t, store, "bh-a", "claude-sonnet-5", []runFixture{
+		{runID: "bh-a-x", scenario: "scn", startedAt: now.Add(-100 * 24 * time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"bh-a-x": "passed"})
+	store.putJSON(t, "batches/bh-a/manifest.json", farm.BatchManifest{
+		Batch: "bh-a", CreatedAt: "2026-06-01T00:00:00Z", StartedAt: "2026-06-01T00:00:00Z",
+		Set: "gate", CandidateSha256: "a-sha", EvaluatorSha256: "eval-sha", ScenariosDigest: "scn-sha",
+		Observer: "claude-sonnet-5", Runs: []farm.ManifestRun{{RunID: "bh-a-x", Scenario: "scn", ProjectName: "zcp-farm-bh-a-x"}},
+	})
+	seedFormat2Finding(t, store, "bh-a-x", now, observer.SeverityHigh,
+		"tool:zerops_deploy/deploy", "BATCH_STALE_TOKEN", "Deploy leaks a stale token", "rotate it", 3, "stale token here")
+
+	// bh-b: the immediate previous same-set batch, sits between bh-a and
+	// bh-c and is never assessed at all — so the old [this, prev]-only
+	// feed can never learn about bh-a's older hit through it.
+	seedBatch(t, store, "bh-b", "claude-sonnet-5", []runFixture{
+		{runID: "bh-b-x", scenario: "scn", startedAt: now.Add(-40 * 24 * time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"bh-b-x": "passed"})
+	store.putJSON(t, "batches/bh-b/manifest.json", farm.BatchManifest{
+		Batch: "bh-b", CreatedAt: "2026-08-01T00:00:00Z", StartedAt: "2026-08-01T00:00:00Z",
+		Set: "gate", CandidateSha256: "b-sha", EvaluatorSha256: "eval-sha", ScenariosDigest: "scn-sha",
+		Observer: "claude-sonnet-5", Runs: []farm.ManifestRun{{RunID: "bh-b-x", Scenario: "scn", ProjectName: "zcp-farm-bh-b-x"}},
+	})
+	// bh-b-x is intentionally never observed (not assessed).
+
+	// bh-c: the newest build (this page), hits the same anchor again.
+	seedBatch(t, store, "bh-c", "claude-sonnet-5", []runFixture{
+		{runID: "bh-c-x", scenario: "scn", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"bh-c-x": "passed"})
+	store.putJSON(t, "batches/bh-c/manifest.json", farm.BatchManifest{
+		Batch: "bh-c", CreatedAt: "2026-09-11T12:00:00Z", StartedAt: "2026-09-11T12:00:00Z",
+		Set: "gate", CandidateSha256: "c-sha", EvaluatorSha256: "eval-sha", ScenariosDigest: "scn-sha",
+		Observer: "claude-sonnet-5", Runs: []farm.ManifestRun{{RunID: "bh-c-x", Scenario: "scn", ProjectName: "zcp-farm-bh-c-x"}},
+	})
+	seedFormat2Finding(t, store, "bh-c-x", now, observer.SeverityHigh,
+		"tool:zerops_deploy/deploy", "BATCH_STALE_TOKEN", "Deploy leaks a stale token", "rotate it", 3, "stale token here")
+
+	body := doGET(t, h, "/b/bh-c").Body.String()
+	if !strings.Contains(body, "Deploy leaks a stale token") {
+		t.Fatalf("body missing the problem's title:\n%s", body)
+	}
+	if !strings.Contains(body, `title="hit on the newest build and on an older one">recurring<`) {
+		t.Errorf("status must be recurring (hit on bh-a's older build too):\n%s", body)
+	}
+	if strings.Contains(body, `>first seen<`) {
+		t.Errorf("status computed over [this, prev] only, not the full farm history:\n%s", body)
+	}
+}
+
 // TestPages_BatchProblemsShowsGoneFixAndBatchLocalHitCount pins item 7
 // (FIX2): the fixed problem from the previous batch of the same set shows
 // up here too, marked "gone" (the best news: a bug that hit the previous

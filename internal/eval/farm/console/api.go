@@ -250,22 +250,31 @@ func problemMemberItem(m ProblemMember) ProblemMemberItem {
 // ProblemItem is one GET /api/problems.md|.json row (§8.6): a Problem
 // (problems.go) with its display fields plus its members, resolved.
 type ProblemItem struct {
-	Key                  string              `json:"key"`
-	Status               string              `json:"status"`
-	Severity             string              `json:"severity"`
-	CauseLabels          []string            `json:"causeLabels"`
-	Surface              string              `json:"surface"`
-	Title                string              `json:"title"`
-	Fix                  string              `json:"fix"`
-	Anchor               string              `json:"anchor"`
-	HitOnNewestBuild     int                 `json:"hitOnNewestBuild"`
-	RunsAssessedOnNewest int                 `json:"runsAssessedOnNewest"`
-	RunsTotal            int                 `json:"runsTotal"`
-	BatchesTotal         int                 `json:"batchesTotal"`
-	BuildsTotal          int                 `json:"buildsTotal"`
-	FirstSeen            time.Time           `json:"firstSeen"`
-	LastSeen             time.Time           `json:"lastSeen"`
-	Members              []ProblemMemberItem `json:"members"`
+	Key                  string   `json:"key"`
+	Status               string   `json:"status"`
+	Severity             string   `json:"severity"`
+	CauseLabels          []string `json:"causeLabels"`
+	Surface              string   `json:"surface"`
+	Title                string   `json:"title"`
+	Fix                  string   `json:"fix"`
+	Anchor               string   `json:"anchor"`
+	HitOnNewestBuild     int      `json:"hitOnNewestBuild"`
+	RunsAssessedOnNewest int      `json:"runsAssessedOnNewest"`
+	// InScopeHit/InScopeAssessed are item 3's (FIX3) own scope-derived
+	// figures (Problem.InScopeHit/InScopeAssessed): the "hit a/b in scope"
+	// phrase's actual numbers, distinct from HitOnNewestBuild/
+	// RunsAssessedOnNewest above (which are computed over the newest
+	// build regardless of a caller's own scope, and can differ from these
+	// whenever the caller's scope isn't exactly "the newest build's own
+	// runs").
+	InScopeHit      int                 `json:"inScopeHit"`
+	InScopeAssessed int                 `json:"inScopeAssessed"`
+	RunsTotal       int                 `json:"runsTotal"`
+	BatchesTotal    int                 `json:"batchesTotal"`
+	BuildsTotal     int                 `json:"buildsTotal"`
+	FirstSeen       time.Time           `json:"firstSeen"`
+	LastSeen        time.Time           `json:"lastSeen"`
+	Members         []ProblemMemberItem `json:"members"`
 }
 
 func problemItemFromProblem(p Problem) ProblemItem {
@@ -277,6 +286,7 @@ func problemItemFromProblem(p Problem) ProblemItem {
 		Key: p.Key, Status: p.Status, Severity: p.Severity, CauseLabels: p.CauseLabels,
 		Surface: p.Surface, Title: p.Title, Fix: p.Fix, Anchor: p.Anchor,
 		HitOnNewestBuild: p.HitOnNewestBuild, RunsAssessedOnNewest: p.RunsAssessedOnNewest,
+		InScopeHit: p.InScopeHit, InScopeAssessed: p.InScopeAssessed,
 		RunsTotal: p.RunsTotal, BatchesTotal: p.BatchesTotal, BuildsTotal: p.BuildsTotal,
 		FirstSeen: p.FirstSeen, LastSeen: p.LastSeen, Members: members,
 	}
@@ -288,7 +298,7 @@ func renderProblemsMD(items []ProblemItem) string {
 	for _, p := range items {
 		fmt.Fprintf(&b, "- [%s · %s] %s — %s — hit %d/%d in scope — seen %d runs / %d batches / %d builds — status %s\n",
 			p.Severity, strings.Join(p.CauseLabels, ","), p.Title, p.Surface,
-			p.HitOnNewestBuild, p.RunsAssessedOnNewest, p.RunsTotal, p.BatchesTotal, p.BuildsTotal, p.Status)
+			p.InScopeHit, p.InScopeAssessed, p.RunsTotal, p.BatchesTotal, p.BuildsTotal, p.Status)
 		if p.Anchor != "" {
 			fmt.Fprintf(&b, "  anchor: %q\n", p.Anchor)
 		}
@@ -344,30 +354,74 @@ func (s *Server) allRunRows(ctx context.Context) ([]RunRow, error) {
 	return out, err
 }
 
-// problemsRunsSinceWindow resolves every run row across every batch whose
-// StartedAt falls in [now-window, now] (view.go's rowsSinceWindow own
-// membership rule), paired with each run's batch Set/CreatedAt
-// (problems.go's ProblemsRun) — the extra batch-level facts §8.6's builds/
-// status computation needs beyond RunRow itself.
-func (s *Server) problemsRunsSinceWindow(ctx context.Context, window time.Duration, now time.Time) ([]ProblemsRun, error) {
-	since := now.Add(-window)
+// allProblemsRuns resolves every run row across every batch, with no time
+// bounding at all — allRunRows' own "load everything" shape, paired with
+// each run's batch Set/CreatedAt (problems.go's ProblemsRun). Item 1 (FIX3):
+// every §8.6 problem caller feeds this as BuildProblemsScoped's allRuns, so
+// status and every other total are computed over the FULL farm history
+// regardless of the caller's own scope — a since window, or one batch —
+// which only decides inScopeRunIDs (which problems are LISTED), never
+// status.
+func (s *Server) allProblemsRuns(ctx context.Context) ([]ProblemsRun, error) {
 	var out []ProblemsRun
 	err := s.forEachBatchRows(ctx, func(_ string, manifest farm.BatchManifest, rows []RunRow) {
 		bc := newBatchContext(manifest)
 		for _, row := range rows {
-			if row.StartedAt.Before(since) || row.StartedAt.After(now) {
-				continue
-			}
 			out = append(out, ProblemsRun{Row: row, BatchSet: manifest.Set, BatchCreatedAt: bc.CreatedAt})
 		}
 	})
 	return out, err
 }
 
+// problemsRunsInWindow filters allRuns (allProblemsRuns' full-history
+// result) to those whose StartedAt falls in [now-window, now] — the same
+// membership rule the removed problemsRunsSinceWindow used to apply via a
+// second store scan (view.go's rowsSinceWindow uses the identical rule for
+// plain RunRow lists). Item 1 (FIX3): every caller now fetches the full
+// history once and derives its own scope from it in memory, rather than
+// scanning the bucket twice for the same window.
+func problemsRunsInWindow(allRuns []ProblemsRun, window time.Duration, now time.Time) []ProblemsRun {
+	since := now.Add(-window)
+	var out []ProblemsRun
+	for _, r := range allRuns {
+		if r.Row.StartedAt.Before(since) || r.Row.StartedAt.After(now) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// problemsRunIDSet is the inScopeRunIDs BuildProblemsScoped wants, built
+// from a []ProblemsRun scope (problemsRunsInWindow's result, or a whole
+// batch's rows already wrapped as ProblemsRun).
+func problemsRunIDSet(runs []ProblemsRun) map[string]bool {
+	set := make(map[string]bool, len(runs))
+	for _, r := range runs {
+		set[r.Row.RunID] = true
+	}
+	return set
+}
+
+// runRowIDSet is problemsRunIDSet for one or more plain []RunRow scopes
+// (pages_batch.go's own batch + previous-batch scope, where BatchSet/
+// BatchCreatedAt aren't needed since only the run id itself feeds
+// inScopeRunIDs) — every rows slice's ids are unioned into one set.
+func runRowIDSet(rowSets ...[]RunRow) map[string]bool {
+	set := make(map[string]bool)
+	for _, rows := range rowSets {
+		for _, r := range rows {
+			set[r.RunID] = true
+		}
+	}
+	return set
+}
+
 // handleProblemsAPI implements GET /api/problems.md|.json (§8.4/§8.6): the
-// same query surface as /problems (§8.7) — since resolved BEFORE
-// BuildProblems (status is pinned over that window), every other filter
-// applied after through problemEngine, exactly like the page.
+// same query surface as /problems (§8.7). Item 1 (FIX3): status and every
+// other total are computed over the full farm history
+// (BuildProblemsScoped's allRuns), never just since's own window — since
+// only decides inScopeRunIDs, i.e. which problems are listed at all.
 func (s *Server) handleProblemsAPI(w http.ResponseWriter, r *http.Request) {
 	q, err := Parse(problemListSpec(), r.URL.Query())
 	if err != nil {
@@ -375,12 +429,14 @@ func (s *Server) handleProblemsAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := s.now()
-	runs, err := s.problemsRunsSinceWindow(r.Context(), q.Since, now)
+	ctx := r.Context()
+	allRuns, err := s.allProblemsRuns(ctx)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	problems := BuildProblems(runs)
+	inScope := problemsRunIDSet(problemsRunsInWindow(allRuns, q.Since, now))
+	problems := BuildProblemsScoped(allRuns, inScope, s.stepTextFinder(ctx))
 	filtered, _ := problemEngine().Apply(problems, q, now)
 
 	items := make([]ProblemItem, len(filtered))
@@ -453,7 +509,7 @@ func renderProblemDigestLine(p ProblemItem) string {
 	}
 	return fmt.Sprintf("- [%s · %s] %s — %s — anchor %q — hit %d/%d in scope — seen %d runs / %d batches / %d builds — status %s — %s — fix: %s\n",
 		p.Severity, strings.Join(p.CauseLabels, ","), p.Title, p.Surface, p.Anchor,
-		p.HitOnNewestBuild, p.RunsAssessedOnNewest, p.RunsTotal, p.BatchesTotal, p.BuildsTotal, p.Status, link, p.Fix)
+		p.InScopeHit, p.InScopeAssessed, p.RunsTotal, p.BatchesTotal, p.BuildsTotal, p.Status, link, p.Fix)
 }
 
 // renderFailedRunDigestLine is one digest.md failed/blocked run line (§8.4:
@@ -515,7 +571,6 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var rows []RunRow
-	var problemsRuns []ProblemsRun
 	var scopeBatches []string
 	var windowLabel string
 
@@ -524,8 +579,7 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		manifest, mErr := loadManifest(ctx, s.cfg.Store, batch)
-		if mErr != nil {
+		if _, mErr := loadManifest(ctx, s.cfg.Store, batch); mErr != nil {
 			writeStoreError(w, mErr)
 			return
 		}
@@ -533,10 +587,6 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeStoreError(w, err)
 			return
-		}
-		bc := newBatchContext(manifest)
-		for _, row := range rows {
-			problemsRuns = append(problemsRuns, ProblemsRun{Row: row, BatchSet: manifest.Set, BatchCreatedAt: bc.CreatedAt})
 		}
 		scopeBatches = []string{batch}
 		windowLabel = "batch " + batch
@@ -557,11 +607,6 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 			writeStoreError(w, err)
 			return
 		}
-		problemsRuns, err = s.problemsRunsSinceWindow(ctx, window, now)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
 		seen := make(map[string]bool)
 		for _, row := range rows {
 			if !seen[row.Batch] {
@@ -571,6 +616,19 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 		}
 		sort.Strings(scopeBatches)
 	}
+
+	// Item 1 (FIX3): status and every other total are computed over the
+	// FULL farm history (allRuns) regardless of digest's own scope (a
+	// batch, or a since window) — rows/scopeBatches above stay this call's
+	// own scope for everything else the digest reports (verdict counts,
+	// cost, failed/blocked runs, unassessed count); only inScope (which
+	// problems are LISTED) is scope-derived.
+	allRuns, err := s.allProblemsRuns(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	inScope := runRowIDSet(rows)
 
 	builds := make(map[string]bool)
 	verdictCounts := make(map[string]int)
@@ -606,7 +664,7 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(buildList)
 
-	problems := BuildProblems(problemsRuns)
+	problems := BuildProblemsScoped(allRuns, inScope, s.stepTextFinder(ctx))
 	problemItems := make([]ProblemItem, len(problems))
 	for i, p := range problems {
 		problemItems[i] = problemItemFromProblem(p)

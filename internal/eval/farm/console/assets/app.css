@@ -344,6 +344,24 @@ th[aria-sort] { cursor: pointer; }
 th[aria-sort] a { color: inherit; }
 .sort-marker { margin-left: 4px; color: var(--fg-dim); }
 th[aria-sort="ascending"] .sort-marker, th[aria-sort="descending"] .sort-marker { color: var(--fg); }
+/* item 10: a sort chip's own marker sits on .filter.on's accent fill, not
+   an ordinary <th> — inherit that chip's (readable) on-accent text colour
+   instead of the low-contrast --fg-dim above. */
+.filter.on .sort-marker { color: inherit; }
+
+/* item 10: a /problems row's dates and the "hit .../... runs · N runs ·
+   M batches · K builds" line never wrap at this width — table-wrap's own
+   overflow-x:auto (above) takes any excess width instead of inflating row
+   height with a mid-value line break. Scoped to ≥641px only: table.stack's
+   own ≤640px reset (below) still wraps these normally in the stacked
+   mobile card, where forcing nowrap would push the card itself sideways. */
+@media (min-width: 641px) {
+  table.stack td[data-label="Last seen"],
+  table.stack td[data-label="First seen"],
+  table.stack td[data-label="Runs hit"] {
+    white-space: nowrap;
+  }
+}
 
 /* a sticky group heading inside a long list */
 .group-heading {
@@ -420,6 +438,14 @@ select:focus-visible, input:focus-visible {
    ordinary (clickable) .filter chip. */
 .filter.count-zero { color: var(--fg-dim); opacity: 0.65; border-style: dashed; cursor: default; pointer-events: none; }
 .clear-all { font-size: var(--fs-sm); color: var(--fg-dim); }
+
+/* item 10: the sort-chip row (lists.html's "sortchips") exists only
+   because a stacked table.stack hides its thead on phones (≤640px) — the
+   sortable <th> headers already cover every wider screen, so the chip row
+   would just duplicate them there. */
+@media (min-width: 641px) {
+  .sort-row { display: none; }
+}
 
 /* narrow screens */
 @media (max-width: 640px) {

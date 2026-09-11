@@ -501,6 +501,150 @@ func TestAPI_DigestDefaultsWindowTo30dAndPrintsIt(t *testing.T) {
 	}
 }
 
+// seedFullHistoryProblemFixture seeds two batches, prefix+"-old" (a much
+// older build, well outside every list's default since window) and
+// prefix+"-new" (the newest gate batch, always in scope), both hitting the
+// SAME clustering key (surface tool:zerops_deploy/deploy, anchor
+// "STALE_TOKEN") — FIX3 item 1's own regression fixture: the problem is
+// truly StatusRecurring ("hit on the newest build and on an older one",
+// §8.6) only when a caller's status computation sees the full farm
+// history, never just its own scope (a since window, or one batch).
+func seedFullHistoryProblemFixture(t *testing.T, store *fakeStore, prefix string, now time.Time) (newBatch string) {
+	t.Helper()
+	oldBatch, newBatch := prefix+"-old", prefix+"-new"
+	oldRun, newRun := oldBatch+"-a", newBatch+"-a"
+
+	seedBatch(t, store, oldBatch, "claude-sonnet-5", []runFixture{
+		{runID: oldRun, scenario: "scen-" + prefix, startedAt: now.Add(-100 * 24 * time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{oldRun: "passed"})
+	store.putJSON(t, "batches/"+oldBatch+"/manifest.json", farm.BatchManifest{
+		Batch: oldBatch, CreatedAt: "2026-06-01T00:00:00Z", StartedAt: "2026-06-01T00:00:00Z",
+		Set: "gate", CandidateSha256: "old-sha-" + prefix, EvaluatorSha256: "eval-sha", ScenariosDigest: "scn-sha",
+		Observer: "claude-sonnet-5", Runs: []farm.ManifestRun{{RunID: oldRun, Scenario: "scen-" + prefix, ProjectName: "zcp-farm-" + oldRun}},
+	})
+	seedFormat2Finding(t, store, oldRun, now, observer.SeverityHigh,
+		"tool:zerops_deploy/deploy", "STALE_TOKEN", "Deploy leaks a stale token", "rotate it", 3, "stale token here")
+
+	seedBatch(t, store, newBatch, "claude-sonnet-5", []runFixture{
+		{runID: newRun, scenario: "scen-" + prefix, startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{newRun: "passed"})
+	store.putJSON(t, "batches/"+newBatch+"/manifest.json", farm.BatchManifest{
+		Batch: newBatch, CreatedAt: "2026-09-10T00:00:00Z", StartedAt: "2026-09-10T00:00:00Z",
+		Set: "gate", CandidateSha256: "new-sha-" + prefix, EvaluatorSha256: "eval-sha", ScenariosDigest: "scn-sha",
+		Observer: "claude-sonnet-5", Runs: []farm.ManifestRun{{RunID: newRun, Scenario: "scen-" + prefix, ProjectName: "zcp-farm-" + newRun}},
+	})
+	seedFormat2Finding(t, store, newRun, now, observer.SeverityHigh,
+		"tool:zerops_deploy/deploy", "STALE_TOKEN", "Deploy leaks a stale token", "rotate it", 3, "stale token here")
+
+	return newBatch
+}
+
+// TestAPI_ProblemStatusUsesFullHistoryNotCallerScope pins item 1 (FIX3):
+// "a batch digest calls a problem 'first seen' that is 'recurring' over 30
+// days (status must not depend on the request's scope)". Both /api/
+// problems.md's own 30d-scoped run set and /api/digest.md's batch/since
+// scopes must resolve BuildProblemsScoped's status over the FULL run
+// history, not just the runs each endpoint's own scope happens to include.
+func TestAPI_ProblemStatusUsesFullHistoryNotCallerScope(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+	newBatch := seedFullHistoryProblemFixture(t, store, "fh1", now)
+
+	for _, path := range []string{
+		"/api/problems.md",
+		"/api/digest.md",
+		"/api/digest.md?batch=" + newBatch,
+	} {
+		body := doGET(t, h, path).Body.String()
+		if !strings.Contains(body, "status recurring") {
+			t.Errorf("%s: status must be recurring (hit on an older build too), got:\n%s", path, body)
+		}
+		if strings.Contains(body, "status first-seen") || strings.Contains(body, "status first seen") {
+			t.Errorf("%s: status read first-seen — computed over its own scope, not the full farm history:\n%s", path, body)
+		}
+	}
+}
+
+// seedInScopeVsNewestBuildFixture seeds two batches sharing one clustering
+// key (surface tool:zerops_deploy/deploy, anchor "IS_TOKEN") whose
+// HitOnNewestBuild/RunsAssessedOnNewest and InScopeHit/InScopeAssessed
+// figures deliberately differ — FIX3 item 3's own fixture: oldBatch (an
+// older build, within the default 30d scope) hits the anchor as a real
+// finding, while newBatch (the newest build, same scenario, also within
+// scope) is assessed clean. So HitOnNewestBuild/RunsAssessedOnNewest (both
+// computed against the newest build only) read 0/1 — no MEMBER on the
+// newest build, one scenario run assessed there — while InScopeHit/
+// InScopeAssessed (both runs are in scope) read 1/2.
+func seedInScopeVsNewestBuildFixture(t *testing.T, store *fakeStore, now time.Time) {
+	t.Helper()
+	seedBatch(t, store, "is-old", "claude-sonnet-5", []runFixture{
+		{runID: "is-old-x", scenario: "is-scn", startedAt: now.Add(-6 * 24 * time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"is-old-x": "passed"})
+	store.putJSON(t, "batches/is-old/manifest.json", farm.BatchManifest{
+		Batch: "is-old", CreatedAt: "2026-09-05T00:00:00Z", StartedAt: "2026-09-05T00:00:00Z",
+		Set: "gate", CandidateSha256: "is-old-sha", EvaluatorSha256: "eval-sha", ScenariosDigest: "scn-sha",
+		Observer: "claude-sonnet-5", Runs: []farm.ManifestRun{{RunID: "is-old-x", Scenario: "is-scn", ProjectName: "zcp-farm-is-old-x"}},
+	})
+	seedFormat2Finding(t, store, "is-old-x", now, observer.SeverityHigh,
+		"tool:zerops_deploy/deploy", "IS_TOKEN", "Deploy leaks IS_TOKEN", "rotate it", 3, "quote")
+
+	seedBatch(t, store, "is-new", "claude-sonnet-5", []runFixture{
+		{runID: "is-new-x", scenario: "is-scn", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"is-new-x": "passed"})
+	store.putJSON(t, "batches/is-new/manifest.json", farm.BatchManifest{
+		Batch: "is-new", CreatedAt: "2026-09-11T12:00:00Z", StartedAt: "2026-09-11T12:00:00Z",
+		Set: "gate", CandidateSha256: "is-new-sha", EvaluatorSha256: "eval-sha", ScenariosDigest: "scn-sha",
+		Observer: "claude-sonnet-5", Runs: []farm.ManifestRun{{RunID: "is-new-x", Scenario: "is-scn", ProjectName: "zcp-farm-is-new-x"}},
+	})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "is-new-x", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeOK, Headline: "clean",
+	})
+}
+
+// TestAPI_ProblemLineHitInScopeUsesInScopeHitNotNewestBuildHit pins item 3
+// (FIX3): a problem line's "hit a/b in scope" phrase must read
+// Problem.InScopeHit/InScopeAssessed, not HitOnNewestBuild/
+// RunsAssessedOnNewest (a pre-existing wording bug: the text already said
+// "in scope" but was wired to the newest-build figures, which happen to
+// equal the in-scope ones only when a caller's own scope and the newest
+// build's own runs coincide).
+func TestAPI_ProblemLineHitInScopeUsesInScopeHitNotNewestBuildHit(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+	seedInScopeVsNewestBuildFixture(t, store, now)
+
+	// status=all: is-old-x's problem is StatusGone here (not hit on the
+	// newest build, but the scenario was assessed there, and hit on an
+	// older build) — not "live", the default /api/problems.md filter.
+	body := doGET(t, h, "/api/problems.md?status=all").Body.String()
+	if !strings.Contains(body, "hit 1/2 in scope") {
+		t.Errorf("problem line must read \"hit 1/2 in scope\" (InScopeHit/InScopeAssessed), got:\n%s", body)
+	}
+	if strings.Contains(body, "hit 0/1 in scope") {
+		t.Errorf("problem line still reads the newest-build hit (0/1) under the \"in scope\" label:\n%s", body)
+	}
+
+	var jsonBody struct {
+		Problems []ProblemItem `json:"problems"`
+	}
+	if err := json.Unmarshal(doGET(t, h, "/api/problems.json?status=all").Body.Bytes(), &jsonBody); err != nil {
+		t.Fatalf("unmarshal problems.json: %v", err)
+	}
+	if len(jsonBody.Problems) != 1 {
+		t.Fatalf("problems.json: got %d problems, want 1", len(jsonBody.Problems))
+	}
+	p := jsonBody.Problems[0]
+	if p.InScopeHit != 1 || p.InScopeAssessed != 2 {
+		t.Errorf("problems.json InScopeHit/InScopeAssessed = %d/%d, want 1/2", p.InScopeHit, p.InScopeAssessed)
+	}
+	if p.HitOnNewestBuild != 0 || p.RunsAssessedOnNewest != 1 {
+		t.Errorf("problems.json HitOnNewestBuild/RunsAssessedOnNewest = %d/%d, want 0/1", p.HitOnNewestBuild, p.RunsAssessedOnNewest)
+	}
+}
+
 // TestAPI_ProblemLinesSayHitInScopeAndSeenTotals pins the rest of item 2:
 // a problem line reads "hit a/b in scope — seen N runs / M batches / K
 // builds — status X", in both problems.md and digest.md, so the same
