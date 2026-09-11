@@ -113,7 +113,7 @@ known secret value appears in an uploaded bundle; a live grep over an S1 run's
 uploaded objects is the acceptance-side check (A2/A5 in the plan's Verify
 Trace — not restated here).
 
-**FM-8.** The bucket key is a per-service object-storage user with full read/write on exactly its own bucket and nothing narrower (verified live: `ListAllMyBuckets` returns one bucket, cross-bucket PUT and CreateBucket → 403; `objectStoragePolicy` governs anonymous access only). Access is path-style (`<apiUrl>/<bucketName>/<key>`); the virtual-host form does not resolve.
+**FM-8.** The bucket key is a per-service object-storage user with full read/write on exactly its own bucket and nothing narrower (verified live: `ListAllMyBuckets` returns one bucket, cross-bucket PUT and CreateBucket → 403; `objectStoragePolicy` governs anonymous access only). Access is path-style (`<apiUrl>/<bucketName>/<key>`); the virtual-host form does not resolve. Every request the sink client makes is idempotent — a GET, a HEAD, a LIST, or a PUT of one fixed key and body — so a request whose connection failed, or that the store answered 429 or 5xx, is signed and sent again, at most three attempts with a short backoff; a 4xx answer is final. One dropped keep-alive connection must not lose a run's `done.json` or a batch's `summary.json` (seen live as "transport connection broken" while writing a summary).
 Because of FM-8, "private by ACL" is never assumed: a run container can read
 another run's evidence, so FM-7 is the only thing standing between the sink
 and a leaked credential. Evidence itself (transcripts, tool calls, verifier

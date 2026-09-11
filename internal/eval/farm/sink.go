@@ -149,9 +149,52 @@ func (c *SinkClient) signAndDo(ctx context.Context, method, key, rawQuery string
 	return resp, nil
 }
 
+// sinkAttempts and sinkRetryBackoff bound signAndDoRetrying below: the
+// farm's own writes are a batch's evidence, and one dropped keep-alive
+// connection must not lose a run's done.json or a batch's summary (seen
+// live as "transport connection broken" while writing summary.json).
+const (
+	sinkAttempts     = 3
+	sinkRetryBackoff = 200 * time.Millisecond
+)
+
+// signAndDoRetrying is signAndDo plus one reliability rule: a request whose
+// connection failed, or that the store answered with 429 or 5xx, is signed
+// and sent again (at most sinkAttempts times, with a short backoff). Every
+// request this client makes is idempotent — a GET, a HEAD, a LIST, or a PUT
+// of one fixed key and body — so a retry can only repeat the same effect. A
+// 4xx answer is final. The context ends the wait.
+func (c *SinkClient) signAndDoRetrying(ctx context.Context, method, key, rawQuery string, body []byte) (*http.Response, error) {
+	var lastErr error
+	for attempt := range sinkAttempts {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(sinkRetryBackoff * time.Duration(attempt)):
+			}
+		}
+		resp, err := c.signAndDo(ctx, method, key, rawQuery, body)
+		if err != nil {
+			lastErr = err
+			if ctx.Err() != nil {
+				return nil, err
+			}
+			continue
+		}
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode/100 == 5 {
+			lastErr = fmt.Errorf("farm: %s %s: %s", method, key, statusError(resp))
+			_ = resp.Body.Close()
+			continue
+		}
+		return resp, nil
+	}
+	return nil, lastErr
+}
+
 // Put uploads body to key, replacing any existing object there.
 func (c *SinkClient) Put(ctx context.Context, key string, body []byte) error {
-	resp, err := c.signAndDo(ctx, http.MethodPut, key, "", body)
+	resp, err := c.signAndDoRetrying(ctx, http.MethodPut, key, "", body)
 	if err != nil {
 		return err
 	}
@@ -165,7 +208,7 @@ func (c *SinkClient) Put(ctx context.Context, key string, body []byte) error {
 // Get downloads key's content. It returns ErrObjectNotFound (wrapped) when
 // the bucket has no object at key.
 func (c *SinkClient) Get(ctx context.Context, key string) ([]byte, error) {
-	resp, err := c.signAndDo(ctx, http.MethodGet, key, "", nil)
+	resp, err := c.signAndDoRetrying(ctx, http.MethodGet, key, "", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +229,7 @@ func (c *SinkClient) Get(ctx context.Context, key string) ([]byte, error) {
 // Head reports whether key exists and, if so, its size. exists is false
 // with a nil error when the bucket has no object at key.
 func (c *SinkClient) Head(ctx context.Context, key string) (exists bool, size int64, err error) {
-	resp, err := c.signAndDo(ctx, http.MethodHead, key, "", nil)
+	resp, err := c.signAndDoRetrying(ctx, http.MethodHead, key, "", nil)
 	if err != nil {
 		return false, 0, err
 	}
@@ -223,7 +266,7 @@ func (c *SinkClient) List(ctx context.Context, prefix string) ([]string, error) 
 		if continuationToken != "" {
 			params["continuation-token"] = continuationToken
 		}
-		resp, err := c.signAndDo(ctx, http.MethodGet, "", buildQuery(params), nil)
+		resp, err := c.signAndDoRetrying(ctx, http.MethodGet, "", buildQuery(params), nil)
 		if err != nil {
 			return nil, err
 		}

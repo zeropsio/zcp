@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -213,5 +214,69 @@ func TestErrObjectNotFound_SatisfiesFsErrNotExist(t *testing.T) {
 	}
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("Get error = %v, want errors.Is(err, fs.ErrNotExist) to hold (ErrObjectNotFound must satisfy fs.ErrNotExist)", err)
+	}
+}
+
+// TestSinkClient_RetriesTransportFailureAndServerError pins the sink's one
+// reliability rule: a request whose connection breaks (a keep-alive the
+// server closed as the request went out — seen live as "transport
+// connection broken" while writing a batch summary) or that answers 5xx is
+// tried again, so one dropped connection never fails a whole batch. A
+// 4xx answer is final.
+func TestSinkClient_RetriesTransportFailureAndServerError(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		firstFails  func(w http.ResponseWriter, r *http.Request)
+		wantCalls   int
+		wantSuccess bool
+	}{
+		{"broken connection", func(w http.ResponseWriter, _ *http.Request) {
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				return
+			}
+			conn, _, err := hj.Hijack()
+			if err == nil {
+				_ = conn.Close()
+			}
+		}, 2, true},
+		{"server error", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}, 2, true},
+		{"client error is final", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+		}, 1, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var mu sync.Mutex
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				calls++
+				n := calls
+				mu.Unlock()
+				if n == 1 {
+					tc.firstFails(w, r)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer srv.Close()
+
+			c := NewSinkClient(Config{URL: srv.URL, Bucket: "zcp-farm", Key: "k", Secret: "s"})
+			err := c.Put(context.Background(), "runs/r1/done.json", []byte("{}"))
+			mu.Lock()
+			got := calls
+			mu.Unlock()
+			if (err == nil) != tc.wantSuccess {
+				t.Errorf("Put error = %v, want success: %v", err, tc.wantSuccess)
+			}
+			if got != tc.wantCalls {
+				t.Errorf("server saw %d requests, want %d", got, tc.wantCalls)
+			}
+		})
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -15,6 +16,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -181,6 +183,21 @@ esac
 const candidateStubScript = "#!/bin/sh\necho candidate stub, never executed by the wrapper\n"
 
 // wrapperHarness wires one fakeS3 + one seeded evaluator/candidate pair for
+
+// wrapperRunID names one harness's run. It carries the test's own name (so
+// a failure points at its test) and a per-process unique suffix: one test
+// writes under the real user's home (TestWrapper_NoHome_FallsBackToUserHome
+// — the fallback it pins is to that home), so two test binaries running at
+// once on one machine would otherwise share ~/.zcp-farm/<runId> and delete
+// each other's done.json.
+func wrapperRunID(t *testing.T) string {
+	t.Helper()
+	return fmt.Sprintf("run-%s-%d-%d", strings.ReplaceAll(t.Name(), "/", "-"), os.Getpid(), wrapperRunSeq.Add(1))
+}
+
+// wrapperRunSeq keeps two harnesses in one process apart.
+var wrapperRunSeq atomic.Int64
+
 // wrapper.sh to run against.
 type wrapperHarness struct {
 	server     *httptest.Server
@@ -237,7 +254,7 @@ func newWrapperHarness(t *testing.T) *wrapperHarness {
 		server:          server,
 		fake:            fake,
 		scriptPath:      wrapperScriptPath(t),
-		runID:           "run-" + strings.ReplaceAll(t.Name(), "/", "-"),
+		runID:           wrapperRunID(t),
 		scenarioID:      "scenario1",
 		batchID:         "batch1",
 		scenariosDigest: "scendigest1",
