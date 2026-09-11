@@ -149,6 +149,9 @@ func buildListNav(path string, spec ListSpec, q Query, values url.Values, counts
 		for _, v := range cf.Allowed {
 			o := FilterOptionView{Value: v, Label: lab.Value(cf.Name, v), Title: lab.Title(cf.Name, v), Counts: true,
 				Count: counts[cf.Name][v], Active: slices.Contains(active, v)}
+			if cf.Min && v != cf.Allowed[0] {
+				o.Label += "+" // a minimum: this value or above
+			}
 			switch {
 			case cf.Min && o.Active:
 				o.URL = listURL(path, values, map[string]string{cf.Name: ""})

@@ -286,3 +286,25 @@ func namesOf(items []widget) []string {
 	}
 	return out
 }
+
+// TestEngine_SeverityMinimumHasCounts pins §8.7's filter-bar counts for the
+// one minimum filter: each severity option counts the items at that
+// severity or above under the other active filters, so the bar can link it.
+// (Live: /findings showed "High 0 · Medium 0 · Low 0" as dead options while
+// high findings were listed.)
+func TestEngine_SeverityMinimumHasCounts(t *testing.T) {
+	items := []widget{
+		{name: "a", severity: "low", color: "red"},
+		{name: "b", severity: "medium", color: "red"},
+		{name: "c", severity: "high", color: "red"},
+		{name: "d", severity: "high", color: "blue"},
+	}
+	q := Query{Closed: map[string][]string{"color": {"red"}}, Open: map[string]string{}, SeverityMin: "high"}
+	_, counts := widgetEngine().Apply(items, q, time.Now())
+	want := OptionCounts{"high": 1, "medium": 2, "low": 3}
+	for v, n := range want {
+		if counts["severity"][v] != n {
+			t.Errorf("counts[severity][%s] = %d, want %d (at or above, under color=red)", v, counts["severity"][v], n)
+		}
+	}
+}

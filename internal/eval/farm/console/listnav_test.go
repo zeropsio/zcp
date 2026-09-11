@@ -71,8 +71,11 @@ func TestBuildListNav_FilterBarAndSorts(t *testing.T) {
 	if o := byValue["cause=agent"]; o.URL != "" || o.Count != 0 {
 		t.Errorf("count-0 option = %+v, want no link", o)
 	}
-	if o := byValue["severity=medium"]; !strings.Contains(o.URL, "severity=medium") {
-		t.Errorf("severity option URL = %q, want it to set the minimum", o.URL)
+	if o := byValue["severity=medium"]; !strings.Contains(o.URL, "severity=medium") || o.Label != "medium+" {
+		t.Errorf("severity option = %+v, want a link setting the minimum, labelled medium+", o)
+	}
+	if o := byValue["severity=high"]; o.Label != "high" {
+		t.Errorf("top severity option label = %q, want no + (nothing is above it)", o.Label)
 	}
 	if len(nav.Filters.Active) != 2 || nav.Filters.ClearURL == "" {
 		t.Errorf("active chips = %+v, clear = %q; want cause and scenario chips and a clear-all link", nav.Filters.Active, nav.Filters.ClearURL)

@@ -389,14 +389,17 @@ func cloneClosedWithout(m map[string][]string, except string) map[string][]strin
 func (e Engine[T]) Apply(items []T, q Query, now time.Time) (result []T, counts map[string]OptionCounts) {
 	counts = make(map[string]OptionCounts)
 	for _, cf := range e.Spec.Closed {
-		if cf.Min {
-			continue
-		}
 		oc := make(OptionCounts, len(cf.Allowed))
 		for _, v := range cf.Allowed {
 			qv := q
 			qv.Closed = cloneClosedWithout(q.Closed, cf.Name)
-			qv.Closed[cf.Name] = []string{v}
+			if cf.Min {
+				// the one minimum filter (severity): an option counts the
+				// items at that value or above, under the other filters
+				qv.SeverityMin = v
+			} else {
+				qv.Closed[cf.Name] = []string{v}
+			}
 			n := 0
 			for _, it := range items {
 				if e.matches(it, qv, now) {
