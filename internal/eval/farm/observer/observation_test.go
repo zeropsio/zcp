@@ -106,7 +106,7 @@ func findingJSON(s findingSpec) string {
 // default to a clean, structurally-valid shell.
 func answerJSON(findings string) string {
 	return `{
-		"headline": "OK — clean run",
+		"headline": "deploy preflight looked for zerops.yaml in the wrong place",
 		"story": {"task": "t", "expected": "e", "did": "d", "stuck": null, "ending": "finished"},
 		"goal": {"reached": "yes", "why": "service is healthy"},
 		"checks": {"judged": []},
@@ -616,5 +616,76 @@ func TestObservation_ObsIDHasMillisecondsAndModel(t *testing.T) {
 	want := "20260102T030405006Z-claude-sonnet-5"
 	if got != want {
 		t.Errorf("ObsID = %q, want %q", got, want)
+	}
+}
+
+// answerWithStuckJSON builds a clean format-2 answer whose story.stuck is the
+// given raw JSON value (an object, a string, or null).
+func answerWithStuckJSON(stuck string) string {
+	return `{
+		"headline": "OK — clean run",
+		"story": {"task": "t", "expected": "e", "did": "d", "stuck": ` + stuck + `, "ending": "finished"},
+		"goal": {"reached": "yes", "why": "y"},
+		"checks": {"judged": []},
+		"findings": [],
+		"selfReview": {"accurate": "yes", "note": ""}
+	}`
+}
+
+// TestParseAndValidate_StuckAsText pins §7.5's repair of story.stuck: a
+// model that writes stuck as a sentence instead of {from, to, what} must
+// not lose the whole observation — the text is kept as what, a leading
+// "Steps a-b" becomes the range when it lies inside the run, and a warning
+// says so. (Live: a nestjs run's otherwise sound answer went unparsed on
+// "stuck": "Steps 18-36: agent tried twice…".)
+func TestParseAndValidate_StuckAsText(t *testing.T) {
+	cases := []struct {
+		name             string
+		stuck            string
+		wantFrom, wantTo int
+		wantWhat         string
+		wantWarn         bool
+	}{
+		{"object as specified", `{"from": 1, "to": 2, "what": "w"}`, 1, 2, "w", false},
+		{"text with a step range inside the run", `"Steps 2-3: agent retried the deploy"`, 2, 3, "agent retried the deploy", true},
+		{"text with a range outside the run keeps only what", `"Steps 18-36: agent tried twice"`, 0, 0, "agent tried twice", true},
+		{"text without a range", `"agent looped on the preflight"`, 0, 0, "agent looped on the preflight", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ans, warnings, ok := ParseAndValidate(answerWithStuckJSON(tc.stuck), sampleFacts())
+			if !ok {
+				t.Fatalf("ParseAndValidate: got unparsed, want success")
+			}
+			if ans.Story == nil || ans.Story.Stuck == nil {
+				t.Fatalf("story.stuck = nil, want it kept")
+			}
+			st := ans.Story.Stuck
+			if st.From != tc.wantFrom || st.To != tc.wantTo || st.What != tc.wantWhat {
+				t.Errorf("stuck = %+v, want from=%d to=%d what=%q", *st, tc.wantFrom, tc.wantTo, tc.wantWhat)
+			}
+			if got := anyContains(warnings, "stuck"); got != tc.wantWarn {
+				t.Errorf("warnings = %v, want a stuck warning: %v", warnings, tc.wantWarn)
+			}
+		})
+	}
+}
+
+// TestParseAndValidate_WarnsOKHeadlineWithFindings pins §7.5: "OK —" is the
+// headline of a run with no findings; an answer that says OK yet reports a
+// finding is kept and warned about, so the page can show the contradiction.
+func TestParseAndValidate_WarnsOKHeadlineWithFindings(t *testing.T) {
+	withFinding := strings.Replace(answerJSON(findingJSON(findingSpec{EvidenceStep: 2, Quote: "PREFLIGHT_FAILED"})),
+		`"headline": "deploy preflight looked for zerops.yaml in the wrong place"`, `"headline": "OK — reached the goal; one note"`, 1)
+	_, warnings, ok := ParseAndValidate(withFinding, sampleFacts())
+	if !ok {
+		t.Fatalf("ParseAndValidate: got unparsed, want success")
+	}
+	if !anyContains(warnings, "starts with OK") {
+		t.Errorf("warnings = %v, want one saying the headline starts with OK although there are findings", warnings)
+	}
+	_, clean, ok := ParseAndValidate(answerWithStuckJSON("null"), sampleFacts())
+	if !ok || anyContains(clean, "starts with OK") {
+		t.Errorf("clean OK answer: ok=%v warnings=%v, want parsed with no OK warning", ok, clean)
 	}
 }

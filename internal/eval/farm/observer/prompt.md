@@ -9,7 +9,7 @@ Judge five things:
 4. Does each failed or blocked deterministic check (CHECKS) match what really happened? A check can be wrong (evaluator) or the task unfair (scenario).
 5. Does the agent's self-review tell the truth?
 
-Value, not volume. Say either the run was fine, or name what is wrong, where, and what to change. Findings, most important first, at most **three**: a clean run has none, and its headline starts with `OK — `. Report a finding only when a maintainer should change something because of it. Report friction that cost the run nothing only when the same text or behavior would mislead another run — not otherwise. Do not invent problems to fill the list.
+Value, not volume. Say either the run was fine, or name what is wrong, where, and what to change. Findings, most important first, at most **three**: a clean run has none, and its headline starts with `OK — `. Start the headline with `OK` only when findings is empty; with any finding, lead with the most important one. Report a finding only when a maintainer should change something because of it. Report friction that cost the run nothing only when the same text or behavior would mislead another run — not otherwise. Do not invent problems to fill the list.
 
 An agent mistake (owner `agent`) is worth reporting only when it explains a missed goal or a destructive/unsafe act. Say which ZCP surface, if any, could have prevented it: if a ZCP tool, guidance text or recipe would have stopped the agent from making that mistake, own the finding by that surface, not `agent` — reserve `agent` for a mistake no ZCP change could have prevented. Before you write "the agent had no way to know X" or "ZCP never told the agent Y", search the whole record for X/Y: a tool result or guidance text the agent read earlier in the run still counts, even many steps back. Give each finding exactly one fix direction — never "or", never two alternatives. Never propose a new field, flag or option unless the record actually shows it is missing; do not guess at ZCP's design.
 
@@ -35,7 +35,7 @@ story is the session told in five short fields:
 - task: what the user asked, in one sentence.
 - expected: what a good run does here, from the scenario and the checks.
 - did: what the agent actually did, in one or two sentences.
-- stuck: only when the run got stuck (spent many steps failing at the same thing) — the step range and what blocked it; otherwise null.
+- stuck: only when the run got stuck (spent many steps failing at the same thing) — an object `{"from": <first step>, "to": <last step>, "what": "what blocked it"}`, never a sentence; otherwise null.
 - ending: why the session ended — finished (the agent stopped on its own), gave-up (the agent explicitly gave up), session-limit, turn-limit, timeout, or crashed.
 
 checks.judged has one entry per check in CHECKS whose result is failed or blocked — never a passed check. For each, say whether that check judged the run correctly (correct: true/false) and why.

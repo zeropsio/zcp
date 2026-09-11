@@ -854,7 +854,10 @@ shown): findings beyond three are dropped; a `surface` not of the form
 above, naming a `tool:` the run never called, or a `check:` id not in the
 run's checks, is cleared; an `anchor` that does not occur (FM-46
 normalization) in any step the finding cites is cleared; a `span` outside
-the run or with `from > to` is dropped; a `judged` id that is not a failed
+the run or with `from > to` is dropped; a `story.stuck` written as a sentence
+keeps its text as `what`, a leading `Steps a-b` becoming the range, and a
+stuck range outside the run is dropped; a headline starting `OK` while
+there are findings is kept and warned about; a `judged` id that is not a failed
 or blocked check of the run is dropped; a headline over 30 words is kept
 and warned about; a failed run where no finding has `causedVerdict` and
 every `judged` entry is `correct: true` is warned about.

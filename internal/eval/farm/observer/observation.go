@@ -3,6 +3,7 @@ package observer
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -108,10 +109,42 @@ type Story struct {
 }
 
 // Stuck is where the run got stuck: a step range and what blocked it.
+// From and To are 0 when no range is known.
 type Stuck struct {
 	From int    `json:"from"`
 	To   int    `json:"to"`
 	What string `json:"what"`
+
+	// fromText marks a stuck the model wrote as a sentence instead of an
+	// object; repairAnswer warns about it. Never serialized.
+	fromText bool
+}
+
+// stuckRangePrefix matches a sentence's leading step range: "Steps 18-36:",
+// "step #4 to #9 —", "Steps 12–54.".
+var stuckRangePrefix = regexp.MustCompile(`(?i)^\s*steps?\s*#?(\d+)\s*(?:-|–|—|to)\s*#?(\d+)\s*[:.,;—–-]?\s*`)
+
+// UnmarshalJSON reads the specified {from, to, what} object, and also a
+// plain sentence (§7.5 repair): a leading "Steps a-b" becomes the range and
+// the rest is what, so one mistyped field never costs the whole observation.
+func (s *Stuck) UnmarshalJSON(b []byte) error {
+	var text string
+	if err := json.Unmarshal(b, &text); err == nil {
+		*s = Stuck{What: strings.TrimSpace(text), fromText: true}
+		if m := stuckRangePrefix.FindStringSubmatch(text); m != nil {
+			s.From, _ = strconv.Atoi(m[1])
+			s.To, _ = strconv.Atoi(m[2])
+			s.What = strings.TrimSpace(text[len(m[0]):])
+		}
+		return nil
+	}
+	type plain Stuck
+	var obj plain
+	if err := json.Unmarshal(b, &obj); err != nil {
+		return fmt.Errorf("story.stuck: %w", err)
+	}
+	*s = Stuck(obj)
+	return nil
 }
 
 // Span is the step range a finding stretched over.
@@ -342,8 +375,25 @@ func repairAnswer(ans ModelAnswer, facts RunFacts) (ModelAnswer, []string) {
 		ans.Checks.Judged = kept
 	}
 
+	if ans.Story != nil && ans.Story.Stuck != nil {
+		st := ans.Story.Stuck
+		if (st.From != 0 || st.To != 0) && !validSpan(Span{From: st.From, To: st.To}, facts) {
+			warnings = append(warnings, fmt.Sprintf(
+				"dropped story.stuck's step range %d–%d: outside the run", st.From, st.To))
+			st.From, st.To = 0, 0
+		}
+		if st.fromText {
+			warnings = append(warnings, "story.stuck was a sentence, not {from, to, what}; kept its text")
+		}
+	}
+
 	if len(strings.Fields(ans.Headline)) > 30 {
 		warnings = append(warnings, "headline is over 30 words")
+	}
+
+	if len(ans.Findings) > 0 && strings.HasPrefix(strings.TrimSpace(ans.Headline), "OK") {
+		warnings = append(warnings, fmt.Sprintf(
+			"headline starts with OK although the observation has %d finding(s)", len(ans.Findings)))
 	}
 
 	if warning, warn := warnUnexplainedFailure(facts.Verdict, ans.Findings, ans.Checks.Judged); warn {
