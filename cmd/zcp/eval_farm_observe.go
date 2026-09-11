@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zeropsio/zcp/internal/eval"
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
 
@@ -19,7 +18,6 @@ const (
 	defaultObserverModel = "claude-sonnet-5"
 	defaultClaudeBinary  = "claude"
 	observerTimeout      = 5 * time.Minute
-	unparsedRawCap       = 20000
 )
 
 // runFarmObserve implements the local verb `zcp eval farm observe <run-dir>
@@ -83,156 +81,33 @@ func parseObserveArgs(args []string) (runDir, model, claudePath string, err erro
 	return runDir, model, claudePath, nil
 }
 
-// buildObservation runs the whole local pipeline (§7.2-§7.5) over runDir,
-// always returning a complete Observation — status "error" (with Error set)
-// at whichever step first fails, never a bare error return, so the caller
-// always has something to write and render.
+// buildObservation is the local verb's thin wrapper over observer.Observe
+// (§7.2-§7.5): reads <run-dir>/../summary.json when present (a `farm pull
+// --batch` layout, §7.5), then delegates the whole pipeline to Observe.
 func buildObservation(ctx context.Context, runDir, model, claudePath string) observer.Observation {
 	runID := filepath.Base(runDir)
-	createdAt := time.Now().UTC()
-	obs := observer.Observation{
-		FormatVersion: observer.ObservationFormat1,
-		RunID:         runID,
-		ObsID:         observer.ObsID(createdAt, model),
-		Model:         model,
-		CreatedAt:     createdAt,
-		PromptSha256:  observer.PromptSha256(),
-	}
-
-	fail := func(err error) observer.Observation {
-		obs.Status = "error"
-		obs.Error = err.Error()
-		return obs
-	}
-
 	bundle := observer.NewDirBundle(runDir)
-	resultsDir, err := observer.ResultsDir(bundle)
-	if err != nil {
-		return fail(err)
-	}
-	taskPrompt, err := observer.LoadTaskPrompt(bundle, resultsDir)
-	if err != nil {
-		return fail(fmt.Errorf("task-prompt.txt: %w", err))
-	}
-	transcript, err := observer.LoadTranscript(bundle, resultsDir)
-	if err != nil {
-		return fail(fmt.Errorf("transcript.jsonl: %w", err))
-	}
-	meta, err := observer.LoadMeta(bundle, resultsDir)
-	if err != nil {
-		return fail(fmt.Errorf("meta.json: %w", err))
-	}
-	verification, err := observer.LoadVerification(bundle, resultsDir)
-	if err != nil {
-		return fail(fmt.Errorf("verification.json: %w", err))
-	}
-	selfReview, err := observer.LoadSelfReview(bundle, resultsDir)
-	if err != nil {
-		return fail(fmt.Errorf("self-review.md: %w", err))
-	}
-	platformSnapshot, err := observer.LoadPlatformSnapshot(bundle, resultsDir)
-	if err != nil {
-		return fail(fmt.Errorf("platform-snapshot.json: %w", err))
-	}
-	scenarioMD := loadScenarioMD(bundle, resultsDir)
-
-	steps, err := observer.BuildSteps(taskPrompt, transcript, resumeReplies(meta))
-	if err != nil {
-		return fail(fmt.Errorf("transcript.jsonl: %w", err))
-	}
-
-	verdict := resolveRunVerdict(runDir, runID, meta)
-
-	costUsd := 0.0
-	if meta.Usage != nil {
-		costUsd = meta.Usage.TotalCostUsd
-	}
-	digestText, digestSha256 := observer.BuildDigest(observer.DigestInput{
-		RunID: runID, ScenarioID: meta.ScenarioID, Verdict: verdict,
-		Duration: time.Duration(meta.Duration), CostUsd: costUsd, Model: model,
-		TaskPrompt: taskPrompt, ScenarioMD: scenarioMD,
-		Checks: verification.Checks, Steps: steps,
-		FinalState: platformSnapshot, SelfReview: selfReview,
+	return observer.Observe(ctx, bundle, observer.ObserveConfig{
+		RunID:       runID,
+		Model:       model,
+		ClaudePath:  claudePath,
+		OAuthToken:  os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"),
+		Timeout:     observerTimeout,
+		Environ:     os.Environ,
+		SummaryJSON: readSummaryJSON(runDir),
 	})
-	obs.DigestSha256 = digestSha256
-
-	runResult, err := observer.RunObserver(ctx, observer.RunConfig{
-		ClaudePath: claudePath,
-		Model:      model,
-		OAuthToken: os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"),
-		Timeout:    observerTimeout,
-		Environ:    os.Environ,
-	}, observer.PromptText, digestText)
-	if err != nil {
-		return fail(err)
-	}
-	obs.DurationMs = runResult.DurationMs
-	obs.CostUsd = runResult.TotalCostUsd
-
-	ans, ok := observer.ParseAndValidate(runResult.ResultText)
-	if !ok {
-		obs.Status = "unparsed"
-		obs.Raw = capRunes(runResult.ResultText, unparsedRawCap)
-		return obs
-	}
-
-	obs.Status = "ok"
-	obs.Headline = ans.Headline
-	obs.Goal = ans.Goal
-	obs.Checks = ans.Checks
-	obs.Checks.Verdict = verdict // never the model's own opinion (§7.5)
-	obs.Findings = observer.VerifyEvidence(steps, observer.ChecksBody(verification.Checks), ans.Findings)
-	obs.SelfReview = ans.SelfReview
-	return obs
 }
 
-// loadScenarioMD resolves the optional capture scenario.md (§7.2); any
-// failure to locate or read it renders as notRecorded rather than failing
-// the whole observation — it is explicitly optional.
-func loadScenarioMD(bundle observer.Bundle, resultsDir string) string {
-	suiteScenario := strings.TrimPrefix(resultsDir, "results/")
-	path, err := observer.CaptureScenarioMD(bundle, suiteScenario)
-	if err != nil || path == "" {
-		return ""
-	}
-	data, err := bundle.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return string(data)
-}
-
-// resumeReplies extracts meta.json's userSim.turns[].reply, in order, for
-// BuildSteps' resumed-segment numbering (§7.2).
-func resumeReplies(meta eval.BehavioralResult) []string {
-	if meta.UserSim == nil {
-		return nil
-	}
-	replies := make([]string, len(meta.UserSim.Turns))
-	for i, turn := range meta.UserSim.Turns {
-		replies[i] = turn.Reply
-	}
-	return replies
-}
-
-// resolveRunVerdict implements §7.5's checks.verdict rule: the run's row in
-// <run-dir>/../summary.json (a `farm pull --batch` layout) when present,
-// else meta.json.task.result. Never the model's own opinion.
-func resolveRunVerdict(runDir, runID string, meta eval.BehavioralResult) string {
-	metaResult := ""
-	if meta.Task != nil {
-		metaResult = string(meta.Task.Result)
-	}
+// readSummaryJSON reads <run-dir>/../summary.json (a `farm pull --batch`
+// layout, §7.5), returning nil when it is absent — the caller then falls
+// back to meta.json.task.result.
+func readSummaryJSON(runDir string) []byte {
 	summaryPath := filepath.Join(filepath.Dir(runDir), "summary.json")
 	data, err := os.ReadFile(summaryPath)
 	if err != nil {
-		return observer.ResolveVerdict("", false, metaResult)
+		return nil
 	}
-	result, found, err := observer.FindSummaryResult(data, runID)
-	if err != nil {
-		return observer.ResolveVerdict("", false, metaResult)
-	}
-	return observer.ResolveVerdict(result, found, metaResult)
+	return data
 }
 
 func writeObservation(runDir string, obs observer.Observation) error {
@@ -255,13 +130,4 @@ func writeObservation(runDir string, obs observer.Observation) error {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
-}
-
-// capRunes returns the first n runes of s.
-func capRunes(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n])
 }
