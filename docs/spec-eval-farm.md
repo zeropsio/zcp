@@ -445,6 +445,17 @@ the registry (§1.4).
 the manifest (§1.4, §7.7); it never reaches a run project. `--batch` must
 match the batch-id grammar of FM-47; any other value is a flag error.
 
+The manifest also records what a person needs to read the batch later:
+`note` (`farm run --note <text>`, at most 200 chars: why the batch ran),
+`runBudgetSec` (the run budget in seconds, so a reader can tell a stalled run
+from a running one, §8.8), and `candidateInfo` — `{revision, modified, time,
+goVersion}` read from the candidate binary's embedded Go build info
+(`debug/buildinfo`) by `farm push --candidate`, which stores it next to the
+binary as `candidates/<sha256>.info.json`; `farm run` copies it into the
+manifest when present. A candidate built without VCS stamping has no
+`candidateInfo`; readers then show the sha. None of these fields reaches a
+run project.
+
 ### 3.4 Launch-token lifecycle
 
 **FM-23.** For a launch scenario, the controller mints one
@@ -740,43 +751,117 @@ directory is the empty temp dir. The prompt is an embedded file; its sha256 is r
 **FM-45.** `runs/<runId>/observer/<obsId>.json`, `obsId` =
 `<UTC YYYYMMDDTHHMMSSmmmZ>-<model>` (milliseconds); the newest `obsId` is the
 run's current observation, older ones stay listed. The store never
-overwrites an existing observation key.
+overwrites an existing observation key. The observer writes format
+`zcp-farm-observation-2`; every reader also reads format 1 (below).
 
 ```json
 {
-  "formatVersion": "zcp-farm-observation-1",
+  "formatVersion": "zcp-farm-observation-2",
   "runId": "…", "obsId": "…", "model": "claude-sonnet-5",
+  "source": "worker|action|local",
   "createdAt": "<RFC3339>", "durationMs": 0, "costUsd": 0.0,
   "promptSha256": "…", "digestSha256": "…",
-  "status": "ok|unparsed|error", "error": "…", "raw": "…",
+  "status": "ok|unparsed|error",
+  "errorKind": "credential|timeout|killed|bundle|model|other",
+  "error": "…", "raw": "…",
+  "warnings": ["…"],
+  "outcome": "ok|problem|inconclusive",
   "headline": "…",
+  "story": {
+    "task": "…", "expected": "…", "did": "…",
+    "stuck": {"from": 12, "to": 54, "what": "…"},
+    "ending": "finished|gave-up|session-limit|turn-limit|timeout|crashed"
+  },
   "goal": {"reached": "yes|partly|no", "why": "…"},
-  "checks": {"verdict": "passed|failed|blocked", "agree": true, "why": "…"},
+  "checks": {
+    "verdict": "passed|failed|blocked", "agree": true,
+    "judged": [{"id": "<check id>", "correct": false, "why": "…"}]
+  },
   "findings": [{
     "severity": "high|medium|low",
     "owner": "zcp-guidance|zcp-tool|platform|agent|scenario|evaluator",
+    "surface": "tool:zerops_deploy",
+    "anchor": "…",
     "title": "…", "what": "…",
     "evidence": [{"step": 18, "quote": "…", "verified": true}],
+    "span": {"from": 12, "to": 54},
+    "causedVerdict": true,
     "lookAt": "…", "fix": "…"
   }],
   "selfReview": {"accurate": "yes|partly|no", "note": "…"}
 }
 ```
 
-The model's answer is the first top-level JSON object in its final text.
-`status` is `ok` when it parses and validates (enums as above, at most 5
-findings, each with at least one evidence entry), `unparsed` when it does not
-(`raw` keeps the answer, capped at 20,000 chars), `error` when the call failed
-(`error` says why). `checks.agree` is forced to `false` when any finding has owner
-`evaluator` (an observation cannot both flag a check as wrong or missing and
-agree with the checks); an empty `checks.why` then names that finding.
-`checks.verdict` is the run's verdict as the farm
-reports it, never the model's: the `result` of the run's row in
-`batches/<batch>/summary.json` when that summary exists, else
-`meta.json.task.result` (spec-testing-architecture §10.1). The local verb
-reads `<run-dir>/../summary.json` when present (a `farm pull --batch` layout),
-else `meta.json`. The console and the observer use this one rule. A run
-without `done.json` has no verdict and is never observed.
+**Value, not volume.** An observation either says the run was fine or names
+what is wrong, where, and what to change. A finding exists only when a
+maintainer should change something because of it: at most **three**
+findings, most important first, one fix direction each. A clean run has no
+findings and a headline starting `OK —`. Friction that cost the run nothing
+is reported only when the same text or behavior would mislead another run.
+
+Model-authored fields:
+- `headline` — one sentence, at most 25 words, leading with the problem and
+  the ZCP surface it sits in (`OK — …` for a clean run).
+- `story` — the session in five short fields: `task` (what the user asked),
+  `expected` (what a good run does, from the scenario and checks), `did`
+  (what the agent actually did), `stuck` (only when the run got stuck: the
+  step range and what blocked it; `null` otherwise), `ending` (why the
+  session ended).
+- `goal`, `selfReview` — as in format 1.
+- `checks.judged` — one entry per failed or blocked check of the run, saying
+  whether that check judged the run correctly.
+- A finding's `surface` names the part of ZCP (or of the farm) the problem
+  sits in, as `<kind>:<name>`: `tool:<zerops tool>` or
+  `tool:<zerops tool>/<action or step>`, `recipe:<slug>`, `check:<check id>`,
+  or the bare kinds `scenario`, `platform`, `agent` (a mistake no ZCP change
+  would have prevented). An `agent`-owned finding that ZCP could have
+  prevented names that ZCP surface, not `agent`.
+- A finding's `anchor` is the shortest verbatim ZCP text or error code a
+  maintainer would search for (at most 160 chars; hostnames, paths and ids
+  kept as they appear), or empty when no ZCP text is involved.
+- `span` — the steps the problem stretched over, when more than the cited
+  ones; `causedVerdict` — true on the finding that explains a failed check
+  or a missed goal.
+
+**Derived, never model-authored:**
+- `outcome` — `inconclusive` when `story.ending` is `session-limit`,
+  `turn-limit`, `timeout` or `crashed` (the run could not show whether ZCP
+  works); else `problem` when there is at least one finding; else `ok`.
+- `checks.verdict` — the run's verdict as the farm reports it: the `result`
+  of the run's row in `batches/<batch>/summary.json` when that summary
+  exists, else `meta.json.task.result` (spec-testing-architecture §10.1).
+  The local verb reads `<run-dir>/../summary.json` when present (a
+  `farm pull --batch` layout), else `meta.json`. A run without `done.json`
+  has no verdict and is never observed.
+- `checks.agree` — false when any `judged` entry has `correct: false` or any
+  finding is owned by `evaluator`; true otherwise.
+- `source` — `worker` (§8.5 automatic), `action` (a console action) or
+  `local` (`zcp eval farm observe`).
+- `errorKind` — set with `status: "error"`: `credential` (OAuth token
+  missing/rejected, or `ANTHROPIC_API_KEY` present), `timeout`, `killed`
+  (the process died on a signal), `bundle` (a required bundle file is
+  missing or unreadable), `model` (the call returned no usable answer),
+  `other`.
+
+**Parse, validate, repair.** The model's answer is the first top-level JSON
+object in its final text. `status` is `unparsed` (`raw` keeps the answer,
+capped at 20,000 chars) when it does not parse or breaks the structure:
+unknown enum values, a finding without title or evidence, `goal.reached`
+missing. Everything else is repaired deterministically and each repair
+appends one plain sentence to `warnings` (shown wherever the observation is
+shown): findings beyond three are dropped; a `surface` not of the form
+above, naming a `tool:` the run never called, or a `check:` id not in the
+run's checks, is cleared; an `anchor` that does not occur (FM-46
+normalization) in any step the finding cites is cleared; a `span` outside
+the run or with `from > to` is dropped; a `judged` id that is not a failed
+or blocked check of the run is dropped; a headline over 30 words is kept
+and warned about; a failed run where no finding has `causedVerdict` and
+every `judged` entry is `correct: true` is warned about.
+
+**Format 1** (`zcp-farm-observation-1`) documents stay valid and are read as
+they are: no `story`, `surface`, `anchor`, `span`, `causedVerdict`,
+`judged`; `outcome` derived by the same rule with `ending` unknown (so `ok`
+or `problem`); `checks.agree` and `checks.why` as stored.
 
 **FM-46. Quote check.** An evidence entry is `verified` iff its `quote` is a
 substring of the cited step's full, untruncated text (a `tool` step's text is
@@ -878,82 +963,151 @@ script, no inline style and no external asset; they render in light and dark
 
 ### 8.3 Pages
 
-**FM-51.**
-- `/` — batches, newest first: id, created, candidate sha (12 chars), set,
-  count per verdict, total cost, observed runs n/m.
-- `/b/<batch>` — one row per run, problem runs first (failed, blocked,
-  running, not-run, passed): scenario, verdict, duration, cost, the current
-  observation's headline (or its observer state) with finding counts per
-  severity, and up to three failed/blocked check ids. A run whose current
-  observation's status is `error` or `unparsed` shows `observer failed`
-  instead of a headline, is not counted in "assessed", and is counted in
-  the re-assess callout.
-- `/r/<runId>` — header (scenario, verdict, times, cost, candidate and
-  evaluator sha); the current observation (headline, goal, agreement with the
-  checks, findings with severity, owner, title, what, evidence linking to
-  `#s<n>` with a verified mark, lookAt, fix; unverified-quote count) — or,
-  when its status is `error` or `unparsed`, a failure notice ("Observer
-  failed: <error>" or "Observer answer could not be parsed" plus the first
-  2,000 chars of raw in a collapsed block) with no goal/checks/self-review
-  pills and no "No findings" line; older
-  observation versions; a re-observe form with a model picker, shown only
-  once the run has `done.json`; failed and
-  blocked checks with expected, observed, source; the self-review; the task
-  prompt; every step with anchor `s<n>`, collapsible, full input and result;
-  and the local forensic command `zcp eval farm pull <runId> --out <dir>` then
-  `zcp capture ui <dir>/<runId>/capture`. Empty thinking blocks (Claude Code
-  records none of their text) are left out of the step list; the numbering
-  stays the record's (§7.2).
-- `/findings?since=<window>&owner=<owner>` — findings of every run whose
-  `meta.json.startedAt` falls in the window (default 24h, same rule as §8.4), grouped by owner then
-  severity, each linking to its run and step.
+**FM-51.** The console answers three questions, in this order: *what is
+broken in ZCP right now*, *what did this batch find*, *what happened in this
+run*. Every page shows the value first and the record last, speaks the
+vocabulary of §8.8, and never shows a raw enum, a Go error chain or an empty
+placeholder.
+
+Every page carries the top navigation (Overview · Problems · Findings ·
+Terms, the current page marked with `aria-current`), a sign-out control, and
+the **observer status line**: `Automatic assessment: on · <model> · <n>
+queued/running` / `off on this console (ZCP_FARM_OBSERVER=off) — Assess
+buttons still work` / `unavailable — <reason>` (credential missing,
+`ANTHROPIC_API_KEY` set, `claude` not found), in which last case every
+Assess form is hidden. A `?notice=<code>` from an action (§8.5) renders as
+one callout above the content.
+
+- `/` — **Overview**, top to bottom:
+  1. **Latest evaluation**: the newest batch whose set is `gate` or `all`
+     with at least one finished run (else the newest batch with a finished
+     run): id, time, ZCP build (§8.8), verdict counts with disputed verdicts
+     counted (`2 failed (1 disputed)`), and **vs <previous batch of the same
+     set>**: newly failing, fixed, still failing — by scenario name. Below,
+     one line per failed or blocked run: scenario, headline, and
+     `observer disputes: <why>` when the checks were judged wrong.
+  2. **Top problems now**: the first five live problems (§8.6), each one
+     line (severity, cause, surface, title, how often), linking to
+     `/problems`.
+  3. **Batches**: a sortable, filterable table (§8.7): batch, started, ZCP
+     build, set, one dot per run ordered as on the batch page (tooltip
+     `scenario — verdict`), verdict counts, ZCP findings high/medium, agent
+     cost (`—` when unknown, `$2.19 + 7 unknown`), assessed n/m. Batches
+     where no run finished are listed only under the `smoke` filter.
+- `/problems` — §8.6, as a table (§8.7). A row expands (`<details>`) to its
+  member findings: run, batch, build, severity, cause, title, first found
+  quote with its step link.
+- `/findings` — every finding in scope, one card each, as a list (§8.7).
+- `/b/<batch>`, top to bottom:
+  1. Header: id, time, set, ZCP build, note, and the **vs <previous batch of
+     the same set>** line.
+  2. Summary: verdict counts, disputed verdicts, goal reached yes/partly/no,
+     assessment outcome ok/problem/inconclusive, findings high/medium per
+     cause class, agent cost (with the count of runs whose cost is
+     unknown), assessed n/m.
+  3. **Problems in this batch**: §8.6 over this batch's runs only, with
+     `new` / `recurring` against the previous batch of the same set. Without
+     any assessment it falls back to "checks that failed in two or more
+     runs".
+  4. Runs, as a table (§8.7), grouped: **Failed and blocked** (one line of
+     why: the first failed check in plain words `id: expected …, got …`, or
+     the blocked reason, then the headline), **Problems in passed runs**,
+     **Clean** (collapsed to one line of names), **Not assessed**.
+  5. An Assess callout only while some finished run needs an assessment
+     (§8.5); "Re-assess all" only once at least one run is assessed; neither
+     when no run finished.
+- `/r/<runId>`, top to bottom:
+  1. Scenario, verdict (with its reason when blocked, not started, running
+     or stalled), times, agent cost, step count.
+  2. **Why this verdict**: `Failed because: <check id> — expected …, got …`
+     per failed or blocked check (each linking to the checks table), or
+     `All checks passed.`
+  3. **Assessment** card: outcome, headline; when the checks were judged
+     wrong, a full-width line `The observer thinks a check is wrong — this
+     verdict may not be fair: <why>` linking to the explaining finding; the
+     story (task, expected, did, stuck with step links, ending); goal
+     reached; verdict right (per judged check); a line of findings by
+     severity and cause linking to `#f<n>`; model, time, quote count and
+     `warnings`; the live status line of §8.5 while one is queued or running;
+     the assess form (model preselected to the current observation's
+     model); earlier assessments, each with its outcome, headline or
+     failure and a link to `?obs=<obsId>`, which renders that version in
+     the card. Without an observation the card says why (§8.8) and shows
+     **How the run ended**: the last agent message (first 300 chars) and
+     the tool errors with step links.
+  4. Findings F1…Fn (`id="f<n>"`): severity, cause, surface, title, what,
+     evidence (step link, `quote found`/`quote not found`), span, where to
+     look (`anchor` in monospace first), fix.
+  5. Failed and blocked checks: id, expected, observed, source, and the
+     observer's judgement of that check.
+  6. Steps, filterable (`steps=all|cited|errors`, default `all`): every step
+     a finding cites renders open, with `Cited by F<n> — <title>: "<quote>"
+     ↩ F<n>` at the top of its body; tool results with JSON escapes decoded;
+     empty thinking blocks left out (numbering stays the record's, §7.2).
+  7. Record, collapsed: self-review with the observer's note on it, task
+     prompt, run metadata (run id, candidate and evaluator sha, forensic
+     command `zcp eval farm pull <runId> --out <dir>` then
+     `zcp capture ui <dir>/<runId>/capture`). A run without `done.json`
+     shows no Record.
+- `/terms` — the glossary of §8.8.
+- `/login?next=<path>` — the login form (it says the token is in
+  `farm-console.env`, written by `deploy.sh`); after login the browser goes
+  to `next` when it is a path starting with `/` and not `//`, else `/`. An
+  unauthenticated HTML request is sent to `/login?next=<its path>`.
+  `POST /logout` clears the session cookie.
 
 ### 8.4 Agent API
 
-**FM-52.** Same authentication. Markdown endpoints for agents, each with a
-JSON twin at the same path ending `.json`:
-- `GET /api/runs.md?since=<window>` or `?batch=<id>` — one line per run:
-  run id, scenario, verdict, cost, headline, finding titles.
-- `GET /api/runs/<runId>.md` — run header, current observation in full,
-  failed/blocked checks, the step ranges its evidence cites.
-- `GET /api/runs/<runId>/steps.md?from=<n>&to=<m>` — those steps, untruncated.
+**FM-52.** Same authentication. Markdown endpoints, each with a JSON twin at
+the same path ending `.json` carrying the same content as fields. Every list
+endpoint takes exactly the filter and sort parameters of its page (§8.7).
+
+- `GET /api/digest.md?batch=<id>` or `?since=<window>` — one call, at most
+  8 KB, for "what did the farm find": the scope header (batches, builds,
+  verdict counts, cost), the problems of §8.6 ranked (severity, cause,
+  surface, title, anchor, runs hit, status, where to look, fix, one run link
+  per problem with its finding anchor), failed and blocked runs with their
+  failed checks and headline, and the count of finished runs not yet
+  assessed. Truncation is said, never silent.
+- `GET /api/problems.md` — §8.6 with its members.
+- `GET /api/batches.md` — the Overview's batches table.
+- `GET /api/runs.md?since=<window>` or `?batch=<id>` — newest first, grouped
+  under batch headers: run id, scenario, verdict (+ reason), outcome,
+  findings high/medium per cause class, failed check ids, headline.
+- `GET /api/runs/<runId>.md` — header (with step count), the current
+  observation in full (story, findings with surface/anchor/span, judged
+  checks, warnings), failed and blocked checks, the steps its evidence cites,
+  links to the task prompt and self-review.
+- `GET /api/runs/<runId>/steps.md?from=<n>&to=<m>` or `?n=<step>` — those
+  steps; a tool result over 2,000 chars is cut (said) unless `full=1`; empty
+  thinking blocks are left out.
 - `GET /api/runs/<runId>/self-review.md`
-- `GET /api/findings.md?since=<window>` — every finding in the window,
-  grouped by owner then severity, with run id and step numbers.
+- `GET /api/findings.md` — every finding in scope: batch, scenario, build,
+  run id, started, severity, cause, surface, anchor, title, what, steps,
+  quotes found n/m, where to look, fix.
 - `GET /api/runs/<runId>/files/<path>` — one bundle file under `results/`,
   served as `text/plain; charset=utf-8`; any other path is 404.
+- `GET /api/runs/<runId>/observations/<obsId>.md` — one stored observation.
 
-A window is a Go duration or `<n>d`, measured back from now against the run's
-`meta.json.startedAt` (a run without `meta.json` uses its batch manifest's
-`createdAt`). A run that is still running shows as `running` and has no
-verdict. JSON twins carry exactly the markdown's content as fields:
-`runs` → `[{runId, batch, scenario, verdict, startedAt, durationSec, costUsd,
-observerState, observation: {obsId, status, headline, findingTitles,
-unverifiedQuotes}}]`; a run → `{runId, batch, scenario, verdict, startedAt,
-durationSec, costUsd, candidateSha256, evaluatorSha256, observerState,
-observation (the §7.5 document), olderObsIds, failedChecks: [{id, result,
-expected, observed, source}], evidenceSteps}`; steps → `[{n, kind, tool,
-input, result, isError, text}]`; findings → `[{owner, severity, title, what,
-runId, steps, quotesVerified, quotesTotal, lookAt, fix}]`. `observerState` is
-one of `observed`, `observing`, `not observed`, `observer off`, `observer
-disabled`, decided in that precedence: a queued or running observation reads
-`observing`; a run without `done.json` reads `not observed`; a run with an
-observation reads `observed` whatever its manifest or the kill switch say;
-only a finished run without one reads `observer disabled` or `observer off`.
+A window is a Go duration or `<n>d`, measured back from now against the
+run's `meta.json.startedAt` (a run without `meta.json` uses its batch
+manifest's `createdAt`). Step lists are sorted and de-duplicated. Hashes
+appear once per run, never per line. Every markdown list starts with a one-
+line legend of the terms it uses.
+
+`observerState` (JSON) stays one of `observed`, `observing`, `not observed`,
+`observer off`, `observer disabled` in the precedence of format 1, plus
+`assessment failed` for a run whose current observation's status is `error`
+or `unparsed`; `observerStateText` carries the §8.8 wording.
+
 A batch or run whose manifest/observation/meta cannot be read is skipped
-(logged to stderr) rather than failing the whole listing — `/`, `/b/<batch>`,
-`/r/<runId>` and the markdown/JSON endpoints above all render every other
-batch or run normally; only a genuine store error on the batches/ listing
-itself fails the call.
-
-A finished run's row is cached in memory once resolved: everything but the
-current observation is cached indefinitely once `done.json` exists (those
-files never change again, §7.6 FM-47); the observation itself is re-read at
-most every 2 minutes, or immediately once the console's own queue finishes
-a job for that run. A run without `done.json`, and a batch's `summary.json`
-while it is still absent, are each re-checked at most every 15 seconds. A
-cold fill (first load, or a cache entry past its TTL) resolves rows in
-parallel, at most 8 at a time, in the same order a sequential fill would.
+(logged to stderr) rather than failing the whole listing; only a genuine
+store error on the batches/ listing itself fails the call. The caching rules
+of format 1 stand: a finished run's row is cached once resolved (the current
+observation re-read at most every 2 minutes, or at once when the console's
+own queue finishes a job for that run); a run without `done.json` and a
+missing `summary.json` are re-checked at most every 15 seconds; a cold fill
+resolves at most 8 rows at a time in sequential order.
 
 ### 8.5 Worker and actions
 
@@ -961,30 +1115,154 @@ parallel, at most 8 at a time, in the same order a sequential fill would.
 worker and the actions. Every 60 s the worker lists batches whose manifest
 `createdAt` is within 14 days plus a 2-hour slack and whose `observer` names
 a model, and queues each of their runs that has `done.json` and no
-observation, with the
-manifest's model. With `ZCP_FARM_OBSERVER=off` it queues nothing and pages
-and the API say `observer disabled`. Actions: `POST /r/<runId>/observe`
-(model from the allowlist `claude-sonnet-5`, `claude-opus-5`,
-`claude-fable-5-1`, else 400) queues a new version; `POST /b/<batch>/observe`
-queues that batch's runs that have no observation, or all of them with
-`all=1`. Actions work regardless of the manifest field and the kill switch.
-A run without `done.json` is never enqueued: `POST /r/<runId>/observe`
-answers 409 `run not finished`, and `POST /b/<batch>/observe` silently
-skips such a run of the batch, with or without `all=1`. A run already
-queued or running answers 409, and so does `all=1` while any
-run of that batch is queued or running. An accepted action answers 303 back
-to the page (cookie) or 202 (bearer). Without `CLAUDE_CODE_OAUTH_TOKEN` the
-console still serves every page, the worker stays idle, and actions answer
-503 `observer credential missing`; `ANTHROPIC_API_KEY` set in the console's
-env is treated exactly the same way, logged once to stderr at startup — the
-observer must run under the OAuth token only, never a raw API key. An
-unresolvable `claude` path is treated the
-same way (503 `observer unavailable`). Without `all=1`, runs of the batch that
-are already queued or running are skipped, not answered with 409. A job runs for the console's lifetime, not the
-enqueuing request's (bounded by a 10-minute job timeout), and a job that fails
-before an observation can be stored is logged to stderr. Worker and queue
-state live in memory and are re-derived from the bucket after a restart.
-Both the worker and `POST /b/<batch>/observe` check a run's live queue
-state before listing its stored observations, and skip the run (never
-enqueue) when that list call itself fails, rather than risking a duplicate
-observation on doubt.
+observation, with the manifest's model (`source: worker`). With
+`ZCP_FARM_OBSERVER=off` it queues nothing.
+
+A run **needs an assessment** when it has `done.json`, is not queued or
+running, and either has no observation or its current one failed (`error`
+or `unparsed`). The batch callout counts exactly those runs, and
+`POST /b/<batch>/observe` without `all=1` queues exactly those.
+
+Actions (`source: action`): `POST /r/<runId>/observe` queues a new version
+with `model` from the allowlist `claude-sonnet-5`, `claude-opus-5`,
+`claude-fable-5-1` — absent `model`, the current observation's model, else
+the manifest's, else `claude-sonnet-5`; a value off the allowlist is 400.
+`POST /b/<batch>/observe` queues the runs that need an assessment, or every
+finished run with `all=1`. Actions work regardless of the manifest field and
+the kill switch. A run without `done.json` is never queued (`/r/` answers
+409 `run not finished`; the batch action skips it). A run already queued or
+running answers 409 on `/r/`, and `all=1` answers 409 while any run of the
+batch is queued or running; without `all=1` such runs are skipped.
+
+Answers: a bearer request gets 202 with a JSON body `{queued: [runIds],
+skipped: [{runId, reason}]}` (409/400/503 as above, with a one-line text
+body); a cookie request is always sent back to the page it came from with
+`?notice=<code>` — `queued` (with `n`), `busy`, `not-finished`,
+`bad-model`, `unavailable` — rendered per §8.3.
+
+The queue exposes each job's model, source, enqueued and started time, and
+keeps the last failure that happened before anything was stored, per run
+(error and time), until the next job for that run starts. The run card and
+the batch row show a queued or running job as `Assessing with <model> —
+started <time>, usually 1–2 min; the result replaces the one below` (the
+form hidden meanwhile), and a pre-store failure as `The attempt at <time>
+failed before anything was stored: <error>. Re-assess to retry.` While any
+job of the page is in flight, the page carries `<meta http-equiv="refresh"
+content="20">`.
+
+Without `CLAUDE_CODE_OAUTH_TOKEN`, with `ANTHROPIC_API_KEY` set, or with an
+unresolvable `claude` path, the console serves every page, the worker stays
+idle, actions answer 503, and the status line (§8.3) says why. A job runs for
+the console's lifetime, not the enqueuing request's (bounded by a 10-minute
+job timeout). Worker and queue state live in memory and are re-derived from
+the bucket after a restart. Both the worker and `POST /b/<batch>/observe`
+check a run's live queue state before listing its stored observations, and
+skip the run (never enqueue) when that list call itself fails.
+
+### 8.6 Problems — findings clustered across runs
+
+**FM-54.** A **problem** is every finding, over the current observations
+(status `ok`) of the runs in scope, that shares one key:
+- a format-2 finding with an `anchor`: `surface` + `norm(anchor)`;
+- a format-2 finding without one: `surface` + owner + scenario;
+- a format-1 finding: `v1` + owner + scenario.
+
+`norm` applies the FM-46 normalization (escapes decoded, backticks and
+asterisks dropped, whitespace collapsed), lowercases, replaces every
+hostname of the run's services (its `platform-snapshot.json`) with `<host>`,
+and every run of digits, every 22-character base62 token and every hex run
+of 8 or more characters with `#`. Clustering is deterministic and runs in
+the read path; no model is called.
+
+A problem's **builds** are the ZCP builds (§8.8) of its member runs. The
+newest build is that of the newest batch in scope with a finished run.
+Status: `new` — hit on the newest build and never before; `recurring` — hit
+on the newest build and on an older one; `gone` — not hit on the newest
+build although a scenario of the problem finished there, and hit on an
+older one; `unconfirmed` — not hit on the newest build and none of its
+scenarios finished there. `live` = `new` or `recurring`.
+
+Rank: live before the rest; then highest member severity; then runs hit on
+the newest build; then runs hit in total; then last seen. A row shows:
+highest severity, the cause labels of its members, surface, the title and
+fix of its most severe, newest member, the anchor, `hit <a>/<b> runs on
+<newest build>` (`b` = finished runs of its scenarios on that build),
+`<n> runs · <m> batches · <k> builds`, status, first and last seen.
+
+### 8.7 Lists — sorting and filtering
+
+**FM-55.** Every list (Overview batches, `/problems`, `/findings`, a batch's
+runs, a run's steps) and its API twin take a closed set of query
+parameters. The state lives in the URL; every link on the page keeps the
+other parameters.
+- A filter with a closed value set (cause, severity, verdict, outcome,
+  status, kind, steps) takes one or more comma-separated values (OR within,
+  AND across filters). A filter over open values (batch, scenario, build,
+  surface) is matched exactly; `surface=tool:*` style prefixes match a kind.
+- Each filter option shows its count under the other active filters; an
+  option with count 0 is shown but not a link. Active filters show as chips,
+  each removable, plus "clear all".
+- Sorting: `sort=<key>` from the list's set, `dir=asc|desc` (each key has a
+  documented default direction); ties break by a documented stable key.
+- A parameter the list does not take, or a closed-set value outside its
+  set, is refused: the page renders a 400 that names the parameter and its
+  allowed values with a link that drops it; the API answers 400
+  `{error, allowed}`. Nothing is ignored silently.
+
+| list | filters | sort keys (default first) |
+|---|---|---|
+| Overview batches | `kind=evaluation\|smoke\|all` (default `evaluation`: at least one run finished), `since` | `newest`, `zcp` (ZCP high, then medium), `failed`, `cost` |
+| `/problems` | `cause=zcp\|test\|agent\|platform`, `severity=high\|medium\|low` (minimum), `status=live\|new\|recurring\|gone\|unconfirmed\|all` (default `live`), `surface`, `scenario`, `batch`, `build`, `since` (default `30d`) | `rank`, `severity`, `runs`, `last`, `first` |
+| `/findings` | `cause`, `severity`, `surface`, `scenario`, `batch`, `build`, `since` (default `7d`) | `severity`, `newest`, `cause` |
+| batch runs | `verdict`, `outcome=ok\|problem\|inconclusive\|none`, `cause` | `problem` (verdict rank, disputed, highest severity, finding count), `scenario`, `duration`, `cost` |
+| run steps | `steps=all\|cited\|errors` | record order |
+
+`TestLists_*` pins, for every list and parameter, that each value narrows the
+result exactly as defined, that each sort key orders as defined, that counts
+match, and that an unknown parameter or value is refused.
+
+### 8.8 Vocabulary
+
+**FM-56.** One word per concept, the same on every page, in every markdown
+endpoint's legend, on `/terms`, and in the farm-triage skill; each badge
+carries its definition as a `title`.
+
+- **Batch** — one farm run: a set of scenarios against one ZCP build.
+  **Run** — one scenario done once by an agent in a fresh project.
+  **Scenario** — a scripted user task plus the automatic checks that grade it.
+- **ZCP build** — the candidate binary: its git commit (12 chars, `+
+  modified` when built from a dirty tree) when the manifest records it
+  (§3.3), else `build <sha256[:12]>`.
+- **Verdict** — the automatic checks' result, never the observer's:
+  passed (every check held) · failed (a check proved the run wrong) ·
+  blocked (could not be graded — reason shown) · not started · running ·
+  stalled (no result after the batch's deadline, §3.3 `runBudgetSec`, plus
+  30 minutes).
+- **Check** — one automatic test: expected, observed, where the observed
+  value came from.
+- **Observer** — an AI model that reads a finished run and writes an
+  **assessment**; it never changes the verdict. Assessment outcome: OK ·
+  Problem · Inconclusive. Assessment state: assessed · assessing… · not
+  assessed — run not finished / batch ran without observer / automatic
+  assessment is off on this console / older than 14 days (assess by hand) ·
+  assessment failed — <reason>.
+- **Goal reached** — did the user get what they asked for, whatever the
+  checks say. **Verdict right** — did the checks judge correctly.
+  **Disputed** — the observer judged a check wrong.
+  **Self-review honest** — does the agent's after-run summary match the
+  record.
+- **Finding** — one problem in one run, with quotes, where to look and a fix.
+  **Problem** — the same finding across runs (§8.6).
+- **Severity** — high: the goal was missed, something was destroyed, or (for
+  a test cause) the verdict is wrong · medium: it cost many steps or much
+  time · low: ZCP text or behavior that is wrong but cost this run nothing.
+- **Cause** (the finding's owner): ZCP guidance · ZCP tool · Zerops
+  platform · Agent mistake · Test scenario · Test check. **Cause class**:
+  ZCP (guidance, tool) · Test (scenario, check) · Agent · Platform. Lists
+  order causes ZCP first.
+- **Surface** — the part of ZCP (or the farm) a finding sits in (§7.5).
+  **Anchor** — the exact ZCP text or error code to search for.
+- **Quote found** — the quoted words occur in the cited step; it does not
+  prove the finding right.
+- **Agent cost** — the run's model spend, without the observer; `—` when
+  not recorded.
