@@ -199,58 +199,85 @@ var (
 		"zcp-guidance": true, "zcp-tool": true, "platform": true,
 		"agent": true, "scenario": true, "evaluator": true,
 	}
+	validEnding = map[string]bool{
+		EndingFinished: true, EndingGaveUp: true, EndingSessionLimit: true,
+		EndingTurnLimit: true, EndingTimeout: true, EndingCrashed: true,
+	}
 )
 
-const maxFindings = 5
+// maxFindings is §7.5's finding cap: "at most three findings, most
+// important first" — findings beyond this are dropped by repairAnswer and
+// warned about, never a reason to mark the whole answer unparsed.
+const maxFindings = 3
 
-// ParseAndValidate extracts the first top-level JSON object from raw and
-// validates it against §7.5's schema (enums, at most 5 findings, each
-// finding carrying at least one evidence entry). ok is false when raw
-// carries no JSON object, the object doesn't unmarshal, or it fails
-// validation — the caller stores status "unparsed" with raw capped at
-// 20,000 chars in that case.
-func ParseAndValidate(raw string) (ModelAnswer, bool) {
+// ownerEvaluator is the finding owner that says a deterministic check is
+// wrong or missing (§7.5); DeriveAgree treats it specially.
+const ownerEvaluator = "evaluator"
+
+// verdictFailed is one of checks.verdict's three values (§7.5) —
+// warnUnexplainedFailure's own scope check.
+const verdictFailed = "failed"
+
+// RunFacts carries the run's own record-derived facts a finding's
+// surface/anchor/span and a judged check's id are validated and repaired
+// against (§7.5 "Parse, validate, repair") — read once from the run's own
+// steps, checks and resolved verdict, never invented.
+type RunFacts struct {
+	// Steps and ChecksBody are the run's own numbered record and rendered
+	// CHECKS section (§7.3), for the anchor check (FM-46 normalization,
+	// step 0 citing CHECKS).
+	Steps      []Step
+	ChecksBody string
+	// ToolNames is every tool the run actually called, display-name form
+	// (mcp__ prefix stripped, §7.5).
+	ToolNames map[string]bool
+	// CheckIDs is every check id of the run (verification.json rows).
+	CheckIDs map[string]bool
+	// FailedOrBlockedCheckIDs is the subset of CheckIDs a judged entry may
+	// legitimately reference (§7.5: "checks.judged — one entry per failed
+	// or blocked check of the run").
+	FailedOrBlockedCheckIDs map[string]bool
+	// Verdict is the run's own resolved verdict (§7.5 checks.verdict) —
+	// never the model's opinion — needed by warnUnexplainedFailure.
+	Verdict string
+}
+
+// ParseAndValidate extracts the first top-level JSON object from raw,
+// validates it against §7.5's structural rules, and — once valid — repairs
+// it deterministically against facts (§7.5 "Parse, validate, repair"),
+// returning one warning sentence per repair applied. ok is false when raw
+// carries no JSON object, the object doesn't unmarshal, or it breaks the
+// structure (unknown enum, a finding without title or evidence, a missing
+// story or story.ending) — the caller stores status "unparsed" with raw
+// capped at 20,000 chars in that case, and warnings is always nil.
+func ParseAndValidate(raw string, facts RunFacts) (ModelAnswer, []string, bool) {
 	obj, found := firstJSONObject(raw)
 	if !found {
-		return ModelAnswer{}, false
+		return ModelAnswer{}, nil, false
 	}
 	var ans ModelAnswer
 	if err := json.Unmarshal([]byte(obj), &ans); err != nil {
-		return ModelAnswer{}, false
+		return ModelAnswer{}, nil, false
 	}
 	if !validateAnswer(ans) {
-		return ModelAnswer{}, false
+		return ModelAnswer{}, nil, false
 	}
-	return reconcileChecks(ans), true
+	repaired, warnings := repairAnswer(ans, facts)
+	return repaired, warnings, true
 }
 
-// ownerEvaluator is the finding owner that says a deterministic check is
-// wrong or missing (§7.5).
-const ownerEvaluator = "evaluator"
-
-// reconcileChecks keeps checks.agree consistent with the findings (§7.5): an
-// observation whose own finding says a check is wrong or missing cannot also
-// say the checks match the run. The model's why is kept; an empty one names
-// the first evaluator finding.
-func reconcileChecks(a ModelAnswer) ModelAnswer {
-	for _, f := range a.Findings {
-		if f.Owner != ownerEvaluator {
-			continue
-		}
-		a.Checks.Agree = false
-		if strings.TrimSpace(a.Checks.Why) == "" {
-			a.Checks.Why = "A deterministic check is wrong or missing: " + f.Title
-		}
-		return a
-	}
-	return a
-}
-
+// validateAnswer checks the structural rules whose violation makes the
+// whole answer unparsed (§7.5) — never repaired: enum fields, a story
+// (and a valid story.ending), and every finding carrying a title and at
+// least one evidence entry.
 func validateAnswer(a ModelAnswer) bool {
 	if !validReached[a.Goal.Reached] {
 		return false
 	}
-	if len(a.Findings) > maxFindings {
+	if !validReached[a.SelfReview.Accurate] {
+		return false
+	}
+	if a.Story == nil || !validEnding[a.Story.Ending] {
 		return false
 	}
 	for _, f := range a.Findings {
@@ -260,11 +287,214 @@ func validateAnswer(a ModelAnswer) bool {
 		if !validOwner[f.Owner] {
 			return false
 		}
+		if strings.TrimSpace(f.Title) == "" {
+			return false
+		}
 		if len(f.Evidence) == 0 {
 			return false
 		}
 	}
-	return validReached[a.SelfReview.Accurate]
+	return true
+}
+
+// repairAnswer applies §7.5's deterministic repairs, in the order the spec
+// lists them, to ans (already structurally validated) against facts —
+// never rejecting, only clearing/dropping the offending piece and
+// appending one plain warning sentence per repair.
+func repairAnswer(ans ModelAnswer, facts RunFacts) (ModelAnswer, []string) {
+	var warnings []string
+
+	if len(ans.Findings) > maxFindings {
+		warnings = append(warnings, fmt.Sprintf(
+			"dropped %d finding(s) beyond the three-finding cap", len(ans.Findings)-maxFindings))
+		ans.Findings = ans.Findings[:maxFindings]
+	}
+
+	for i := range ans.Findings {
+		f := &ans.Findings[i]
+		if f.Surface != "" && !validSurface(f.Surface, facts) {
+			warnings = append(warnings, fmt.Sprintf(
+				"cleared finding %q's surface %q: not a valid ZCP surface for this run", f.Title, f.Surface))
+			f.Surface = ""
+		}
+		if f.Anchor != "" && !anchorVerified(f, facts) {
+			warnings = append(warnings, fmt.Sprintf(
+				"cleared finding %q's anchor: not found in its cited step(s)", f.Title))
+			f.Anchor = ""
+		}
+		if f.Span != nil && !validSpan(*f.Span, facts) {
+			warnings = append(warnings, fmt.Sprintf(
+				"dropped finding %q's span: outside the run", f.Title))
+			f.Span = nil
+		}
+	}
+
+	if len(ans.Checks.Judged) > 0 {
+		kept := make([]JudgedCheck, 0, len(ans.Checks.Judged))
+		for _, j := range ans.Checks.Judged {
+			if !facts.FailedOrBlockedCheckIDs[j.ID] {
+				warnings = append(warnings, fmt.Sprintf(
+					"dropped judged check %q: not a failed or blocked check of this run", j.ID))
+				continue
+			}
+			kept = append(kept, j)
+		}
+		ans.Checks.Judged = kept
+	}
+
+	if len(strings.Fields(ans.Headline)) > 30 {
+		warnings = append(warnings, "headline is over 30 words")
+	}
+
+	if warning, warn := warnUnexplainedFailure(facts.Verdict, ans.Findings, ans.Checks.Judged); warn {
+		warnings = append(warnings, warning)
+	}
+
+	return ans, warnings
+}
+
+// bareSurfaceKinds are the surface kinds with no ":<name>" suffix (§7.5).
+var bareSurfaceKinds = map[string]bool{"scenario": true, "platform": true, "agent": true}
+
+// validSurface implements §7.5's surface grammar: "<kind>:<name>" for
+// tool/recipe/check, or a bare kind (scenario, platform, agent). A tool
+// surface must name a tool the run actually called, display-name form
+// (mcp__ prefix stripped — §7.5: "a tool: name is exactly as called in the
+// run … without any mcp__…__ prefix"), an optional "/<action or step>"
+// suffix ignored for the purpose of this check; a check surface must name
+// one of the run's own check ids. A recipe slug can't be checked against
+// the run's own facts, so any non-empty one is accepted.
+func validSurface(s string, facts RunFacts) bool {
+	if bareSurfaceKinds[s] {
+		return true
+	}
+	kind, name, ok := strings.Cut(s, ":")
+	if !ok || name == "" {
+		return false
+	}
+	switch kind {
+	case "tool":
+		toolName := name
+		if before, _, found := strings.Cut(name, "/"); found {
+			toolName = before
+		}
+		return facts.ToolNames[toolName]
+	case "recipe":
+		return true
+	case "check":
+		return facts.CheckIDs[name]
+	default:
+		return false
+	}
+}
+
+// anchorVerified reports whether f.Anchor occurs, under FM-46's
+// normalization, in the full text of at least one step f's evidence cites
+// (§7.5: "an anchor that does not occur … in any step the finding cites is
+// cleared") — step 0 citing the rendered CHECKS section, like a quote.
+func anchorVerified(f *Finding, facts RunFacts) bool {
+	for _, ev := range f.Evidence {
+		if verifyQuote(facts.Steps, facts.ChecksBody, ev.Step, f.Anchor) {
+			return true
+		}
+	}
+	return false
+}
+
+// validSpan reports whether sp falls within the run's own step numbering
+// (1..len(Steps)) and is not inverted (§7.5: "a span outside the run or
+// with from > to is dropped").
+func validSpan(sp Span, facts RunFacts) bool {
+	if sp.From > sp.To {
+		return false
+	}
+	return sp.From >= 1 && sp.To <= len(facts.Steps)
+}
+
+// warnUnexplainedFailure implements §7.5's last repair: a failed run whose
+// own findings and judged checks make no visible attempt to explain the
+// failure is worth flagging to a maintainer, even though nothing here is
+// invalid enough to repair away. Scoped to a "failed" verdict only, per the
+// spec's literal wording.
+func warnUnexplainedFailure(verdict string, findings []Finding, judged []JudgedCheck) (warning string, warn bool) {
+	if verdict != verdictFailed {
+		return "", false
+	}
+	for _, f := range findings {
+		if f.CausedVerdict {
+			return "", false
+		}
+	}
+	for _, j := range judged {
+		if !j.Correct {
+			return "", false
+		}
+	}
+	return "no finding explains the failed verdict, and every judged check is marked correct", true
+}
+
+// displayToolName strips Claude Code's "mcp__<server>__" prefix from an MCP
+// tool's raw transcript name, matching what the observer prompt tells the
+// model to write in a finding's surface (§7.5: "a tool: name is exactly as
+// called in the run, without any mcp__…__ prefix").
+func displayToolName(raw string) string {
+	rest, ok := strings.CutPrefix(raw, "mcp__")
+	if !ok {
+		return raw
+	}
+	if _, after, found := strings.Cut(rest, "__"); found {
+		return after
+	}
+	return raw
+}
+
+// DeriveOutcome implements §7.5's outcome derivation for a parsed answer:
+// inconclusive when the session couldn't show whether ZCP works, else
+// problem when there is at least one finding, else ok.
+func DeriveOutcome(ending string, findingsCount int) string {
+	switch ending {
+	case EndingSessionLimit, EndingTurnLimit, EndingTimeout, EndingCrashed:
+		return OutcomeInconclusive
+	}
+	if findingsCount > 0 {
+		return OutcomeProblem
+	}
+	return OutcomeOK
+}
+
+// DeriveAgree implements §7.5's checks.agree derivation (format 2, never
+// model-authored): false when any judged entry is marked incorrect or any
+// finding is owned by evaluator, true otherwise.
+func DeriveAgree(judged []JudgedCheck, findings []Finding) bool {
+	for _, j := range judged {
+		if !j.Correct {
+			return false
+		}
+	}
+	for _, f := range findings {
+		if f.Owner == ownerEvaluator {
+			return false
+		}
+	}
+	return true
+}
+
+// EffectiveOutcome returns o.Outcome when already derived and stored
+// (format 2, set at observe time), or derives it on read for a format-1
+// document that predates the field (§7.5: "outcome derived by the same
+// rule with ending unknown" — so only ok or problem, never inconclusive).
+// A non-"ok" status carries no outcome at all.
+func (o *Observation) EffectiveOutcome() string {
+	if o.Outcome != "" {
+		return o.Outcome
+	}
+	if o.Status != "ok" {
+		return ""
+	}
+	if len(o.Findings) > 0 {
+		return OutcomeProblem
+	}
+	return OutcomeOK
 }
 
 // firstJSONObject returns the first top-level (brace-balanced, string-aware)

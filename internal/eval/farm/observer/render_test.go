@@ -131,3 +131,107 @@ func TestRender_Golden(t *testing.T) {
 		})
 	}
 }
+
+// TestRender_Format2Golden pins render.go's format-2 rendering (§7.5 item
+// 4): outcome first, headline, story, findings with surface/anchor/span/
+// causedVerdict, judged checks, warnings — distinguished from format 1
+// purely by Story being non-nil (format 1 never sets it).
+func TestRender_Format2Golden(t *testing.T) {
+	cases := []struct {
+		name string
+		obs  Observation
+		want string
+	}{
+		{
+			name: "format 2: problem with a stuck story, a judged check and a warning",
+			obs: Observation{
+				Model: "claude-sonnet-5", CreatedAt: goldenCreatedAt, Status: "ok",
+				Outcome:  OutcomeProblem,
+				Headline: "Agent called the forbidden override on zerops_import.",
+				Story: &Story{
+					Task: "diagnose and fix the failing api service", Expected: "investigate without a forbidden override",
+					Did: "called zerops_import with override=true", Stuck: &Stuck{From: 12, To: 54, What: "kept retrying the same forbidden call"},
+					Ending: EndingFinished,
+				},
+				Goal: Goal{Reached: "no", Why: "the service never became healthy"},
+				Checks: Checks{
+					Verdict: "failed", Agree: true,
+					Judged: []JudgedCheck{{ID: "liveness/api/marker", Correct: true, Why: "the probe genuinely never found the marker"}},
+				},
+				Findings: []Finding{
+					{
+						Severity: "high", Owner: "agent", Surface: "tool:zerops_import", Anchor: "forbidden call zerops_import{override=true}",
+						Title: "called forbidden override despite scenario rule",
+						What:  "The agent called zerops_import with override=true, which the scenario forbids.",
+						Evidence: []Evidence{
+							{Step: 5, Quote: "forbidden call zerops_import{override=true}", Verified: true},
+						},
+						Span: &Span{From: 12, To: 54}, CausedVerdict: true,
+						LookAt: "zerops_import override handling",
+						Fix:    "check the never-list before issuing a destructive call",
+					},
+				},
+				SelfReview: SelfReview{Accurate: "yes"},
+				Warnings:   []string{"dropped judged check \"no_such_check\": not a failed or blocked check of this run"},
+			},
+			want: "Observer · claude-sonnet-5 · 2026-09-11T10:56Z · 0 of 1 quotes unverified\n" +
+				"Outcome: problem\n" +
+				"Agent called the forbidden override on zerops_import.\n" +
+				"Task: diagnose and fix the failing api service\n" +
+				"Expected: investigate without a forbidden override\n" +
+				"Did: called zerops_import with override=true\n" +
+				"Stuck: steps #12–#54 — kept retrying the same forbidden call\n" +
+				"Ending: finished\n" +
+				"Goal: no — the service never became healthy\n" +
+				"Checks: agree with verdict failed\n" +
+				"Judged checks:\n" +
+				"  liveness/api/marker: correct — the probe genuinely never found the marker\n" +
+				"Findings:\n" +
+				"1. [high · agent · tool:zerops_import] called forbidden override despite scenario rule\n" +
+				"   The agent called zerops_import with override=true, which the scenario forbids.\n" +
+				"   Anchor: \"forbidden call zerops_import{override=true}\"\n" +
+				"   Evidence: #5 \"forbidden call zerops_import{override=true}\" ✓\n" +
+				"   Span: steps #12–#54\n" +
+				"   Caused verdict: yes\n" +
+				"   Look at: zerops_import override handling\n" +
+				"   Fix: check the never-list before issuing a destructive call\n" +
+				"Self-review: yes\n" +
+				"Warnings:\n" +
+				" - dropped judged check \"no_such_check\": not a failed or blocked check of this run\n",
+		},
+		{
+			name: "format 2: clean run, no findings, no stuck, no warnings",
+			obs: Observation{
+				Model: "claude-sonnet-5", CreatedAt: goldenCreatedAt, Status: "ok",
+				Outcome:  OutcomeOK,
+				Headline: "OK — agent reached the goal with no friction.",
+				Story: &Story{
+					Task: "diagnose the service", Expected: "investigate without changing anything",
+					Did: "looked at it, changed nothing", Stuck: nil, Ending: EndingFinished,
+				},
+				Goal:       Goal{Reached: "yes", Why: "service healthy"},
+				Checks:     Checks{Verdict: "passed", Agree: true},
+				SelfReview: SelfReview{Accurate: "yes"},
+			},
+			want: "Observer · claude-sonnet-5 · 2026-09-11T10:56Z · 0 of 0 quotes unverified\n" +
+				"Outcome: ok\n" +
+				"OK — agent reached the goal with no friction.\n" +
+				"Task: diagnose the service\n" +
+				"Expected: investigate without changing anything\n" +
+				"Did: looked at it, changed nothing\n" +
+				"Ending: finished\n" +
+				"Goal: yes — service healthy\n" +
+				"Checks: agree with verdict passed\n" +
+				"Findings: none\n" +
+				"Self-review: yes\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Render(tc.obs)
+			if got != tc.want {
+				t.Errorf("Render() =\n%q\nwant\n%q", got, tc.want)
+			}
+		})
+	}
+}

@@ -10,11 +10,27 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
 // defaultTimeout is the observer's invocation timeout (§7.4).
 const defaultTimeout = 5 * time.Minute
+
+// Sentinel errors RunObserver wraps its own failures in, so a caller (Observe)
+// can classify them into §7.5's errorKind without parsing error text.
+var (
+	// ErrObserverCredential marks a missing or refused credential: the
+	// preflight refusals below (empty OAuth token, ANTHROPIC_API_KEY
+	// present) — §7.5 errorKind "credential".
+	ErrObserverCredential = errors.New("observer: credential missing or refused")
+	// ErrObserverTimeout marks a call that outlived cfg.Timeout — §7.5
+	// errorKind "timeout".
+	ErrObserverTimeout = errors.New("observer: timed out")
+	// ErrObserverKilled marks a claude process that died on a signal —
+	// §7.5 errorKind "killed".
+	ErrObserverKilled = errors.New("observer: process killed by signal")
+)
 
 // waitDelay bounds cmd.Wait() after a kill (see the comment at its use
 // site below).
@@ -66,13 +82,13 @@ type claudeJSONOutput struct {
 // (defaultTimeout when zero).
 func RunObserver(ctx context.Context, cfg RunConfig, promptText, digest string) (RunResult, error) {
 	if cfg.OAuthToken == "" {
-		return RunResult{}, errors.New("CLAUDE_CODE_OAUTH_TOKEN is empty (docs/spec-eval-farm.md §7.4)")
+		return RunResult{}, fmt.Errorf("%w: CLAUDE_CODE_OAUTH_TOKEN is empty (docs/spec-eval-farm.md §7.4)", ErrObserverCredential)
 	}
 
 	var pathVal string
 	for _, kv := range cfg.Environ() {
 		if strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") {
-			return RunResult{}, errors.New("ANTHROPIC_API_KEY is set in the observer's own environment (docs/spec-eval-farm.md §7.4)")
+			return RunResult{}, fmt.Errorf("%w: ANTHROPIC_API_KEY is set in the observer's own environment (docs/spec-eval-farm.md §7.4)", ErrObserverCredential)
 		}
 		if rest, ok := strings.CutPrefix(kv, "PATH="); ok {
 			pathVal = rest
@@ -134,7 +150,7 @@ func RunObserver(ctx context.Context, cfg RunConfig, promptText, digest string) 
 	duration := time.Since(start)
 
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-		return RunResult{}, fmt.Errorf("observer timed out after %s", timeout)
+		return RunResult{}, fmt.Errorf("%w: observer timed out after %s", ErrObserverTimeout, timeout)
 	}
 
 	// Parse stdout regardless of exit status: claude's --output-format json
@@ -145,6 +161,9 @@ func RunObserver(ctx context.Context, cfg RunConfig, promptText, digest string) 
 	parseErr := json.Unmarshal(stdout.Bytes(), &out)
 
 	if runErr != nil {
+		if killedErr := signalKilledError(runErr); killedErr != nil {
+			return RunResult{}, killedErr
+		}
 		if parseErr == nil && out.Result != "" {
 			return RunResult{}, fmt.Errorf("claude exited with an error: %s", out.Result)
 		}
@@ -159,4 +178,19 @@ func RunObserver(ctx context.Context, cfg RunConfig, promptText, digest string) 
 		IsError:      out.IsError,
 		DurationMs:   duration.Milliseconds(),
 	}, nil
+}
+
+// signalKilledError returns an error wrapping ErrObserverKilled when err is
+// an *exec.ExitError reporting the process died on a signal (§7.5 errorKind
+// "killed"), nil otherwise.
+func signalKilledError(err error) error {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return nil
+	}
+	status, ok := exitErr.Sys().(syscall.WaitStatus)
+	if !ok || !status.Signaled() {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrObserverKilled, status.Signal())
 }

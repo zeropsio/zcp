@@ -42,16 +42,26 @@ func copyDir(t *testing.T, src, dst string) {
 // testdata/sample-run's fixture transcript, with a quote that is literally
 // in that step's result text.
 const canonicalModelAnswer = `{
-	"headline": "Agent violated the never-override rule while diagnosing a failed build.",
+	"headline": "Agent called the forbidden override on zerops_import despite the scenario's rule.",
+	"story": {
+		"task": "diagnose and fix the failing api service",
+		"expected": "the agent investigates without using a forbidden override",
+		"did": "the agent called zerops_import with override=true, which the scenario forbids",
+		"stuck": null,
+		"ending": "finished"
+	},
 	"goal": {"reached": "no", "why": "the service never became healthy"},
-	"checks": {"agree": true, "why": ""},
+	"checks": {"judged": [{"id": "liveness/api/marker", "correct": true, "why": "the liveness probe genuinely never found the marker"}]},
 	"findings": [
 		{
 			"severity": "high",
 			"owner": "agent",
+			"surface": "tool:zerops_import",
+			"anchor": "forbidden call zerops_import{override=true}",
 			"title": "called forbidden override despite scenario rule",
 			"what": "The agent called zerops_import with override=true, which the scenario forbids.",
 			"evidence": [{"step": 5, "quote": "forbidden call zerops_import{override=true}"}],
+			"causedVerdict": true,
 			"lookAt": "zerops_import override handling",
 			"fix": "check the never-list before issuing a destructive call"
 		}
@@ -144,7 +154,7 @@ func TestFarmObserve_WritesObservationAndPrintsRendering(t *testing.T) {
 	if exitCode != 0 {
 		t.Errorf("exit code = %d, want 0 (status ok)", exitCode)
 	}
-	if !strings.Contains(stdout, "Agent violated the never-override rule") {
+	if !strings.Contains(stdout, "Agent called the forbidden override on zerops_import") {
 		t.Errorf("stdout = %q, want the rendered headline", stdout)
 	}
 	if !strings.Contains(stdout, "0 of 1 quotes unverified") {
@@ -165,6 +175,9 @@ func TestFarmObserve_WritesObservationAndPrintsRendering(t *testing.T) {
 	}
 	if obs.RunID != filepath.Base(runDir) {
 		t.Errorf("obs.RunID = %q, want %q", obs.RunID, filepath.Base(runDir))
+	}
+	if obs.Source != observer.SourceLocal {
+		t.Errorf("obs.Source = %q, want %q (§7.5: the local verb's own source)", obs.Source, observer.SourceLocal)
 	}
 	if obs.Checks.Verdict != "failed" {
 		t.Errorf("obs.Checks.Verdict = %q, want %q (from meta.json.task.result, never the model)", obs.Checks.Verdict, "failed")
