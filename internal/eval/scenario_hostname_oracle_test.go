@@ -83,6 +83,26 @@ func TestScenario_ApiNodePostgresClassicDev_ExpectsDevSuffixedHostname(t *testin
 // simple-mode default ("app") rather than the oracle's "web". The fix pins
 // the hostname in the PROMPT (product unchanged) by appending the sentence
 // `Call the service "web".`.
+// TestScenario_ApiNodePostgresClassicDev_PromptPinsHostname pins the live
+// gate9 finding: with only the oracle pinned, the agent named the dev
+// service `appdev` in one of four runs (`apidev` in the others), so the
+// prompt must name it for the oracle to be deterministic.
+func TestScenario_ApiNodePostgresClassicDev_PromptPinsHostname(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := findRepoRootForHostnameTest(t)
+	path := filepath.Join(repoRoot, "eval", "behavioral", "scenarios", "api-node-postgres-classic-dev.md")
+	sc, err := ParseScenario(path)
+	if err != nil {
+		t.Fatalf("ParseScenario(%q): %v", path, err)
+	}
+
+	const want = "Službu s API pojmenuj `apidev`."
+	if !strings.Contains(sc.Prompt, want) {
+		t.Errorf("prompt does not contain %q; got: %q", want, sc.Prompt)
+	}
+}
+
 func TestScenario_ClassicStaticNginxSimple_PromptPinsHostname(t *testing.T) {
 	t.Parallel()
 

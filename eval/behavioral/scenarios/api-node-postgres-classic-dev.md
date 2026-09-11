@@ -123,6 +123,6 @@ notableFriction:
       app boot).
 ---
 
-Mám rozjet Node.js API s Postgres databází, klasická REST, zatím jen pro vývoj — chci to mít na Zerops abych mohl iterovat na kódu. Žádná stage, žádná produkce, žádné existující repo. Použij project `{{projectId}}`.
+Mám rozjet Node.js API s Postgres databází, klasická REST, zatím jen pro vývoj — chci to mít na Zerops abych mohl iterovat na kódu. Žádná stage, žádná produkce, žádné existující repo. Použij project `{{projectId}}`. Službu s API pojmenuj `apidev`.
 
 Implement `POST /records` (JSON body `{"nonce": "...", "value": "..."}` → `201` with `{id, nonce, value, environment: "dev"}`, persisted to the Postgres `db` service) and `GET /records/:id` returning the same shape, and make `GET /` return `200` with a body containing the literal text `api-ready`.
