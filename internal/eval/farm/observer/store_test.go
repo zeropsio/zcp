@@ -2,10 +2,13 @@ package observer
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/eval/farm"
 )
 
 // fakeObjectStore is a minimal in-memory ObjectStore double — the observer
@@ -63,16 +66,15 @@ func (f *fakeObjectStore) List(_ context.Context, prefix string) ([]string, erro
 	return keys, nil
 }
 
-// farmErrObjectNotFound mirrors farm.ErrObjectNotFound's message shape
-// without importing the farm package's HTTP-specific error into the fake —
-// no test in this file asserts on the error's identity, only its presence.
+// farmErrObjectNotFound wraps the real farm.ErrObjectNotFound the way
+// SinkClient.Get does (internal/eval/farm/sink.go), so a fakeObjectStore
+// miss is indistinguishable — including under errors.Is — from a real
+// bucket 404. TestSinkBundle_MissingOptionalFileIsNotRecorded relies on
+// that identity: it is what SinkClient.Get actually returns, satisfying
+// errors.Is(err, fs.ErrNotExist).
 func farmErrObjectNotFound(key string) error {
-	return &notFoundError{key: key}
+	return fmt.Errorf("farm: GET %s: %w", key, farm.ErrObjectNotFound)
 }
-
-type notFoundError struct{ key string }
-
-func (e *notFoundError) Error() string { return "fakeObjectStore: object not found: " + e.key }
 
 // TestStore_RefusesKeyOutsideObserverPrefix pins §7.6 FM-47: observer code
 // writes only keys under runs/<runId>/observer/, for a runId matching the

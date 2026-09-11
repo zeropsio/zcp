@@ -7,9 +7,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"sort"
@@ -26,8 +26,13 @@ const (
 )
 
 // ErrObjectNotFound is returned by SinkClient.Get and reported via
-// SinkClient.Head when the bucket has no object at the given key.
-var ErrObjectNotFound = errors.New("farm: object not found")
+// SinkClient.Head when the bucket has no object at the given key. It
+// satisfies errors.Is(err, fs.ErrNotExist) so a bucket-backed Bundle
+// (observer/sinkbundle.go) reads exactly like a local-directory one to the
+// observer's optional-file loaders (observer/bundle.go), which check
+// errors.Is(err, os.ErrNotExist) to render a missing optional file as
+// "(not recorded)" rather than failing the whole observation.
+var ErrObjectNotFound = fmt.Errorf("farm: object not found: %w", fs.ErrNotExist)
 
 // Config is the farm bucket configuration, read from env only
 // (docs/spec-eval-farm.md §2.4): ZCP_FARM_S3_URL, ZCP_FARM_S3_BUCKET,
