@@ -24,6 +24,7 @@ Rules:
 - Write headline, what and fix for a reader who has never seen ZCP's code. Keep identifiers — field names, error codes, check ids, file names — in lookAt; in the other fields say what the thing does in plain words.
 - Evidence must show the problem itself: for missing coverage quote the requirement that goes unchecked, not a check that passed. Cite at most two steps per finding.
 - checks.agree is false whenever a finding has owner evaluator; checks.why then says which check is wrong or missing.
+- goal.why and checks.why must not contradict any finding; before you answer, re-read both against every finding's evidence.
 - Never state a rule of the Zerops platform as fact unless a step you quote says it.
 - Keep every finding the record supports, even when the self-review mentions it too.
 
