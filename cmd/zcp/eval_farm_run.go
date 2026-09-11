@@ -41,6 +41,15 @@ func runFarmRun(args []string) int {
 	if batch == "" {
 		batch = fmt.Sprintf("batch-%d", time.Now().Unix())
 	}
+	if !farm.ValidBatchID(batch) {
+		fmt.Fprintf(os.Stderr, "error: --batch: %q does not match the batch-id grammar (docs/spec-eval-farm.md §7.6 FM-47: ^[a-z0-9][a-z0-9-]{0,62}$)\n", batch)
+		return 2
+	}
+	observer, err := resolveObserver(flags.observer)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: --observer: %v\n", err)
+		return 2
+	}
 
 	if flags.detach {
 		return runFarmRunDetach(args, batch, startDetached)
@@ -109,7 +118,7 @@ func runFarmRun(args []string) int {
 	opts := farm.RunOptions{
 		Batch: batch, ClientID: clientID, Set: flags.set,
 		CandidateSHA256: flags.candidate, EvaluatorSHA256: evaluatorSHA, WrapperSHA256: wrapperSHA, ScenariosDigest: flags.scenariosDigest,
-		Scenarios: scenarios, OAuthToken: oauthToken,
+		Scenarios: scenarios, OAuthToken: oauthToken, Observer: observer,
 		Sink:      farm.Sink(cfg), // farm.Config and farm.Sink share the same field names/types/order
 		RunBudget: runBudget,
 	}
@@ -156,8 +165,8 @@ func runFarmRun(args []string) int {
 
 // farmRunFlags is `zcp eval farm run`'s parsed command line.
 type farmRunFlags struct {
-	candidate, scenariosDigest, set, batch, runBudget, evaluator, wrapper string
-	detach                                                                bool
+	candidate, scenariosDigest, set, batch, runBudget, evaluator, wrapper, observer string
+	detach                                                                          bool
 }
 
 // parseFarmRunFlags parses `farm run`'s flags; unknown arguments are
@@ -168,6 +177,7 @@ func parseFarmRunFlags(args []string) (farmRunFlags, error) {
 	valued := map[string]*string{
 		flagCandidate: &f.candidate, "--scenarios": &f.scenariosDigest, "--evaluator": &f.evaluator,
 		"--wrapper": &f.wrapper, "--set": &f.set, flagBatch: &f.batch, "--run-budget": &f.runBudget,
+		"--observer": &f.observer,
 	}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -220,6 +230,26 @@ func resolveOAuthToken() (string, error) {
 		return "", fmt.Errorf("CLAUDE_CODE_OAUTH_TOKEN is required (the agent credential is OAuth-only, §2.4/FM-16)")
 	}
 	return oauth, nil
+}
+
+// observerAllowedModels are the models --observer accepts, besides "off"
+// (docs/spec-eval-farm.md §3.3/§7.7).
+var observerAllowedModels = map[string]bool{
+	"claude-sonnet-5": true, "claude-opus-5": true, "claude-fable-5-1": true,
+}
+
+// resolveObserver validates --observer's value against §3.3/§7.7's
+// allow-list ("off", or one of observerAllowedModels), defaulting to
+// defaultObserverModel (claude-sonnet-5) when flag is empty. Any other
+// value is a flag error — the caller exits 2.
+func resolveObserver(flag string) (string, error) {
+	if flag == "" {
+		return defaultObserverModel, nil
+	}
+	if flag == "off" || observerAllowedModels[flag] {
+		return flag, nil
+	}
+	return "", fmt.Errorf("%q is not \"off\" or one of claude-sonnet-5, claude-opus-5, claude-fable-5-1", flag)
 }
 
 // resolveScenarios expands --set (gate|all|<id,id,...>) to the

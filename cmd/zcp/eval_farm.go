@@ -504,7 +504,8 @@ Commands (ZCP_AUTHORING=1 required):
                                                --scenarios (default: <scenariosDir>/../../farm/gate-set.txt)
   pull     <runId>|--batch <batch> --out <dir> Download a run's (or a batch's) bundle
   run      --candidate <sha256> --scenarios <digest> --set gate|all|<ids> [--evaluator <sha256>] [--wrapper <sha256>]
-           [--batch <id>] [--run-budget 45m] [--detach]   (pins default to evaluators/current, farm/wrapper/current)
+           [--batch <id>] [--run-budget 45m] [--detach] [--observer <model>|off]
+                                               (pins default to evaluators/current, farm/wrapper/current)
                                                Create zcp-farm-<runId> projects, watch the bucket, delete after done.json
   status   [<batch>]                           Recompute batch/run state from the bucket and the project list
   report   [--evaluator-sha256 <sha>] <dir>    Report over a pulled batch or run dir (no network)

@@ -1781,3 +1781,40 @@ func TestFarmRun_RollbackFailure_KeepsProjectIDAndError(t *testing.T) {
 		t.Errorf("project %s not present in fakeAccount, want it still there (rollback DELETE failed)", runProjectName)
 	}
 }
+
+// TestRunBatch_ManifestRecordsObserver pins §1.4/§3.3: `farm run`'s
+// --observer choice is recorded verbatim in batches/<batch>/manifest.json's
+// "observer" field. Independent oracle: the expected value is the literal
+// string this test passes in via RunOptions.Observer, never anything
+// RunBatch/PutManifest derives on its own.
+func TestRunBatch_ManifestRecordsObserver(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-observer-1"
+	f := newControllerFixture(t, clientID)
+	client, sink := f.client, f.sink
+
+	batch := "batch-observer-1"
+	sc := ScenarioRun{ID: "recipe-observer"}
+	seedSettledRun(t, f.s3, batch+"-"+sc.ID, sc.ID, ResultPassed)
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
+		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget: time.Second, PollInterval: time.Millisecond,
+		Observer: "claude-opus-5",
+	}
+
+	if _, err := RunBatch(context.Background(), client, sink, opts); err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+
+	manifest, err := GetManifest(context.Background(), sink, batch)
+	if err != nil {
+		t.Fatalf("GetManifest: %v", err)
+	}
+	if manifest.Observer != "claude-opus-5" {
+		t.Errorf("manifest.Observer = %q, want %q", manifest.Observer, "claude-opus-5")
+	}
+}

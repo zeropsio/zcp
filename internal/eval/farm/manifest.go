@@ -16,12 +16,16 @@ type BatchManifest struct {
 	CreatedAt string `json:"createdAt"` // RFC3339
 	// StartedAt is set once, at the same moment as CreatedAt, for this
 	// slice — S7's `coverage --since` reads it to bound a batch's window.
-	StartedAt       string        `json:"startedAt"` // RFC3339
-	Set             string        `json:"set"`       // "gate" | "all" | "<id,id,...>"
-	CandidateSha256 string        `json:"candidateSha256"`
-	EvaluatorSha256 string        `json:"evaluatorSha256"`
-	ScenariosDigest string        `json:"scenariosDigest"`
-	Runs            []ManifestRun `json:"runs"`
+	StartedAt       string `json:"startedAt"` // RFC3339
+	Set             string `json:"set"`       // "gate" | "all" | "<id,id,...>"
+	CandidateSha256 string `json:"candidateSha256"`
+	EvaluatorSha256 string `json:"evaluatorSha256"`
+	ScenariosDigest string `json:"scenariosDigest"`
+	// Observer is `farm run`'s --observer choice ("<model>" or "off",
+	// §3.3/§7.7) — a missing field (batches older than §7) means "never
+	// observed automatically" (§1.4).
+	Observer string        `json:"observer,omitempty"`
+	Runs     []ManifestRun `json:"runs"`
 }
 
 // ManifestRun is one batches/<batch>/manifest.json run entry.

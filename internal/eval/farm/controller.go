@@ -195,8 +195,12 @@ type RunOptions struct {
 	// (CLAUDE_CODE_OAUTH_TOKEN) — the agent credential is OAuth-only, no
 	// api-key mode and no fallback (§2.4/FM-16, spec commit 79ced2cc).
 	OAuthToken string
-	Sink       Sink
-	RunBudget  time.Duration
+	// Observer is `farm run`'s --observer choice ("<model>" or "off"),
+	// recorded verbatim in the manifest (§1.4, §3.3, §7.7); RunBatch never
+	// reads it beyond that — it never reaches a run project.
+	Observer  string
+	Sink      Sink
+	RunBudget time.Duration
 	// PollInterval is how often RunBatch re-checks the bucket for
 	// done.json while waiting; zero defaults to 2s.
 	PollInterval time.Duration
@@ -421,6 +425,7 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 		CandidateSha256: opts.CandidateSHA256,
 		EvaluatorSha256: opts.EvaluatorSHA256,
 		ScenariosDigest: opts.ScenariosDigest,
+		Observer:        opts.Observer,
 		Runs:            manifestRuns,
 	}
 	if err := PutManifest(ctx, sink, opts.Batch, manifest); err != nil {

@@ -904,3 +904,107 @@ func TestEvalFarmRun_SIGTERM_EndsBatchByInterrupt(t *testing.T) {
 		t.Errorf("stderr = %q, want it to mention \"interrupted\" and name %q", stderr, wantStderr)
 	}
 }
+
+// TestFarmRun_ObserverFlag pins §3.3/§7.7: `farm run --observer <model>|off`
+// defaults to claude-sonnet-5, accepts "off" and the two other allow-listed
+// models verbatim, and refuses any other value. Independent oracle: the
+// allow-list and default are copied verbatim from the spec/brief text, never
+// read back from resolveObserver's own map.
+func TestFarmRun_ObserverFlag(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		flag    string
+		want    string
+		wantErr bool
+	}{
+		{"absent defaults to claude-sonnet-5", "", "claude-sonnet-5", false},
+		{"off", "off", "off", false},
+		{"claude-opus-5", "claude-opus-5", "claude-opus-5", false},
+		{"claude-fable-5-1", "claude-fable-5-1", "claude-fable-5-1", false},
+		{"unknown model is a flag error", "gpt-4", "", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := resolveObserver(tc.flag)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("resolveObserver(%q) = %q, nil, want an error", tc.flag, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveObserver(%q): %v", tc.flag, err)
+			}
+			if got != tc.want {
+				t.Errorf("resolveObserver(%q) = %q, want %q", tc.flag, got, tc.want)
+			}
+		})
+	}
+
+	// The invalid value must also make `farm run` itself exit 2 (a flag
+	// error), before any env var or network dependency is reached.
+	t.Run("runFarmRun exits 2 on an invalid --observer value", func(t *testing.T) {
+		t.Parallel()
+		var exitCode int
+		_, stderr := captureOutput(t, func() {
+			exitCode = runFarmRun([]string{
+				"--candidate", "cand-sha", "--scenarios", "scen-sha", "--set", "gate",
+				"--batch", "batch-bad-observer", "--observer", "gpt-4",
+			})
+		})
+		if exitCode != 2 {
+			t.Errorf("runFarmRun exit code = %d, want 2 (stderr: %s)", exitCode, stderr)
+		}
+		if !strings.Contains(stderr, "--observer") {
+			t.Errorf("stderr = %q, want it to name --observer", stderr)
+		}
+	})
+}
+
+// TestFarmRun_BatchIDGrammar pins §3.3/§7.6 FM-47: a --batch value outside
+// the batch-id grammar is a flag error, exit 2 — checked before any env var
+// or network dependency is reached.
+func TestFarmRun_BatchIDGrammar(t *testing.T) {
+	// Not t.Parallel(): the second subtest below calls t.Setenv, which
+	// panics under a parallel test or a parallel ancestor.
+
+	t.Run("a/b is not a valid batch id", func(t *testing.T) {
+		var exitCode int
+		_, stderr := captureOutput(t, func() {
+			exitCode = runFarmRun([]string{
+				"--candidate", "cand-sha", "--scenarios", "scen-sha", "--set", "gate",
+				"--batch", "a/b",
+			})
+		})
+		if exitCode != 2 {
+			t.Errorf("runFarmRun exit code = %d, want 2 (stderr: %s)", exitCode, stderr)
+		}
+		if !strings.Contains(stderr, "--batch") {
+			t.Errorf("stderr = %q, want it to name --batch", stderr)
+		}
+	})
+
+	// A valid --batch must pass this check through to the next dependency
+	// (CLAUDE_CODE_OAUTH_TOKEN, unset here) rather than being caught here —
+	// proves the grammar check isn't accidentally rejecting good input.
+	t.Run("a valid batch id passes the grammar check", func(t *testing.T) {
+		t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+		t.Setenv("ANTHROPIC_API_KEY", "")
+		var exitCode int
+		_, stderr := captureOutput(t, func() {
+			exitCode = runFarmRun([]string{
+				"--candidate", "cand-sha", "--scenarios", "scen-sha", "--set", "gate",
+				"--batch", "batch-1",
+			})
+		})
+		if exitCode != 1 {
+			t.Errorf("runFarmRun exit code = %d, want 1 (missing CLAUDE_CODE_OAUTH_TOKEN, not a --batch rejection) (stderr: %s)", exitCode, stderr)
+		}
+		if strings.Contains(stderr, "--batch") {
+			t.Errorf("stderr = %q, want no --batch complaint for a grammar-valid id", stderr)
+		}
+	})
+}
