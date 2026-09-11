@@ -10,10 +10,22 @@ import (
 	"github.com/zeropsio/zerops-go/dto/output"
 	"github.com/zeropsio/zerops-go/types"
 	"github.com/zeropsio/zerops-go/types/enum"
+	"github.com/zeropsio/zerops-go/types/uuid"
 )
 
 // rfc3339MapperRe matches RFC3339/RFC3339Nano timestamps.
 var rfc3339MapperRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}`)
+
+// mustAppVersionID builds a uuid.AppVersionId from a plain string for test
+// fixtures, failing the test on parse error.
+func mustAppVersionID(t *testing.T, id string) uuid.AppVersionId {
+	t.Helper()
+	v, err := uuid.NewAppVersionIdFromString(id)
+	if err != nil {
+		t.Fatalf("NewAppVersionIdFromString(%q) failed: %v", id, err)
+	}
+	return v
+}
 
 func TestMapEsServiceStack_PortMapping(t *testing.T) {
 	t.Parallel()
@@ -284,5 +296,78 @@ func TestMapFullServiceStack_TimestampsRFC3339(t *testing.T) {
 	}
 	if !rfc3339MapperRe.MatchString(result.LastUpdate) {
 		t.Errorf("LastUpdate not RFC3339: %q", result.LastUpdate)
+	}
+}
+
+// TestMapActiveAppVersion_CreatedSourcePublicGitSource pins the digest
+// fields the O7 artifact-promotion oracle reads directly off
+// ListServicesDirect's ActiveAppVersion (docs/spec-eval-farm.md §4.4 O7,
+// finding E2) — Created, Source and PublicGitSource, populated straight
+// from the SDK's full GetAppVersion DTO, never through the ES-backed
+// SearchAppVersions index.
+func TestMapActiveAppVersion_CreatedSourcePublicGitSource(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 10, 1, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name       string
+		av         output.GetAppVersion
+		wantSource string
+		wantGitURL string
+		wantHasGit bool
+	}{
+		{
+			name: "cli_source_no_git_source",
+			av: output.GetAppVersion{
+				Id:      mustAppVersionID(t, "av-cli"),
+				Created: types.NewDateTime(now),
+				Source:  enum.AppVersionSourceEnumCli,
+			},
+			wantSource: "CLI",
+			wantHasGit: false,
+		},
+		{
+			name: "git_source_carries_public_git_source",
+			av: output.GetAppVersion{
+				Id:      mustAppVersionID(t, "av-git"),
+				Created: types.NewDateTime(now),
+				Source:  enum.AppVersionSourceEnumGit,
+				PublicGitSource: &output.AppVersionPublicGitSource{
+					GitUrl:     types.NewString("https://github.com/example/repo"),
+					BranchName: types.NewString("main"),
+				},
+			},
+			wantSource: "GIT",
+			wantGitURL: "https://github.com/example/repo",
+			wantHasGit: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := mapActiveAppVersion(&tt.av)
+			if result == nil {
+				t.Fatal("mapActiveAppVersion returned nil")
+			}
+			if !rfc3339MapperRe.MatchString(result.Created) {
+				t.Errorf("Created not RFC3339: %q", result.Created)
+			}
+			if result.Source != tt.wantSource {
+				t.Errorf("Source = %q, want %q", result.Source, tt.wantSource)
+			}
+			if tt.wantHasGit {
+				if result.PublicGitSource == nil {
+					t.Fatal("PublicGitSource is nil, want set")
+				}
+				if result.PublicGitSource.GitURL != tt.wantGitURL {
+					t.Errorf("PublicGitSource.GitURL = %q, want %q", result.PublicGitSource.GitURL, tt.wantGitURL)
+				}
+			} else if result.PublicGitSource != nil {
+				t.Errorf("PublicGitSource = %+v, want nil", result.PublicGitSource)
+			}
+		})
 	}
 }

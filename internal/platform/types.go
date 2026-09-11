@@ -76,11 +76,26 @@ type ServiceStack struct {
 // integration). Empty fields mean the service has no active app version
 // OR the version wasn't deployed via integration.
 //
+// Created, Source and PublicGitSource are populated only through the
+// full-DTO mapping path (mapActiveAppVersion, behind ListServicesDirect /
+// GetService) for the eval farm's O7 artifact-promotion oracle
+// (docs/spec-eval-farm.md §4.4 O7, finding E2): a direct, lag-free read of
+// the target's ACTIVE appVersion, replacing a lookup through the
+// ES-backed SearchAppVersions index that could report "not yet indexed"
+// on a target that was genuinely active. Never serialized into any
+// agent/user-facing tool response, state file or envelope — internal/tools,
+// internal/ops and internal/workflow project ServiceStack onto narrower
+// output types (ServiceInfo, ServiceSnapshot, launchState, …), none of
+// which carry ActiveAppVersion at all.
+//
 // Plan: plans/setup-name-local-canonical-2026-05-27.md §SDK surface.
 type ActiveAppVersionDigest struct {
-	ID                         string `json:"id,omitempty"`
-	GithubIntegrationSetup     string `json:"githubIntegrationSetup,omitempty"`
-	PublicGitSourceExplicitSet *bool  `json:"publicGitSourceExplicitSetup,omitempty"`
+	ID                         string               `json:"id,omitempty"`
+	GithubIntegrationSetup     string               `json:"githubIntegrationSetup,omitempty"`
+	PublicGitSourceExplicitSet *bool                `json:"publicGitSourceExplicitSetup,omitempty"`
+	Created                    string               `json:"created,omitempty"`
+	Source                     string               `json:"source,omitempty"`
+	PublicGitSource            *AppVersionGitSource `json:"publicGitSource,omitempty"`
 }
 
 // ServiceTypeInfo contains service type details.
