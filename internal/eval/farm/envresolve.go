@@ -163,10 +163,10 @@ func (r *EnvResolver) ensureOSFetched() error {
 // fetchServiceEnv looks hostname up in r.projectID and reads its full env
 // as a key->content map (docs/spec-eval-farm.md §3.1 FM-17). The lookup is
 // the project-level direct read, never ops.LookupService: that one runs the
-// service-stack search, which scopes by the clientId /user/info reports —
-// for the account-wide ZCP_FARM_ACCOUNT_TOKEN the user, not the
-// organization owning the farm project — so the search sees none of the
-// project's services. Its error never carries a value — ops's own "not
+// service-stack search, scoped to the one clientId GetUserInfo derives —
+// the first org in the token's clientUserList (D11). The account-wide
+// ZCP_FARM_ACCOUNT_TOKEN belongs to more than one org and the farm
+// project's is not the first, so the search sees none of its services. Its error never carries a value — ops's own "not
 // found" / platform errors name services and keys only.
 func (r *EnvResolver) fetchServiceEnv(hostname string) (map[string]string, error) {
 	if r.client == nil {

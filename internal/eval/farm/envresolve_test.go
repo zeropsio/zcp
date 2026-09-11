@@ -164,10 +164,10 @@ func TestResolveFarmEnv_ErrorsNeverCarryValues(t *testing.T) {
 // TestResolveFarmEnv_SearchBlindToken_ResolvesFromDirectRead pins
 // docs/spec-eval-farm.md §3.1 FM-17: the farm and os services are found by
 // the project-level direct read, never the service-stack search. The search
-// scopes by the token's clientId as /user/info reports it, which for the
-// account-wide ZCP_FARM_ACCOUNT_TOKEN is the user, not the organization
-// owning the farm project — live, the search saw none of the project's
-// services and every farm verb failed "Service 'farm' not found".
+// is scoped to the first org in the token's clientUserList (GetUserInfo,
+// D11); the account-wide ZCP_FARM_ACCOUNT_TOKEN belongs to two orgs and the
+// farm project's is the second — live, the search saw none of the
+// project's services and every farm verb failed "Service 'farm' not found".
 func TestResolveFarmEnv_SearchBlindToken_ResolvesFromDirectRead(t *testing.T) {
 	mock := newEnvResolveMock(t).
 		WithServices(nil).

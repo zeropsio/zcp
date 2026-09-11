@@ -17,9 +17,10 @@ import (
 // (docs/spec-eval-farm.md §3.1 FM-17): GET user/info, POST project/search
 // (ListProjects), GET project/{id}/service-stack (the direct project read,
 // once per hostname), GET service-stack/{id}/env (ops.FetchServiceEnv).
-// POST service-stack/search answers the way it does live for the
-// account-wide token — refused — so a resolver that reached for the search
-// fails here the way it failed against the real API. The S3 side reuses newStatusFakeS3Server from
+// The token belongs to two orgs and the farm project's is the second, as it
+// is live: POST service-stack/search, scoped to the first org's clientId
+// (GetUserInfo, D11), answers empty — so a resolver that reached for the
+// search fails here exactly as it failed against the real API. The S3 side reuses newStatusFakeS3Server from
 // eval_farm_run_test.go — same package, same shape.
 // ---------------------------------------------------------------------------
 
@@ -71,7 +72,7 @@ func (f *envResolveFakeAccount) handle(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/api/rest/public/user/info":
-		fmt.Fprintf(w, `{"id":"user-1","email":"farm@example.com","fullName":"Farm","clientUserList":[{"id":"cu1","clientId":%q,"userId":"user-1"}]}`, envResolveClientID)
+		fmt.Fprintf(w, `{"id":"user-1","email":"farm@example.com","fullName":"Farm","clientUserList":[{"id":"cu0","clientId":"client-other-org","userId":"user-1"},{"id":"cu1","clientId":%q,"userId":"user-1"}]}`, envResolveClientID)
 
 	case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/project/search":
 		fmt.Fprint(w, `{"limit":100,"offset":0,"totalHits":0,"items":[]}`)
@@ -84,8 +85,7 @@ func (f *envResolveFakeAccount) handle(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"list":[%s],"totalCount":%d}`, strings.Join(items, ","), len(items))
 
 	case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/service-stack/search":
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, `{"error":{"code":"invalidUserInputWithText","message":"Invalid user input: search is not allowed, insufficient privileges"}}`)
+		fmt.Fprint(w, `{"limit":1000,"offset":0,"totalHits":0,"items":[]}`)
 
 	case r.Method == http.MethodGet && r.URL.Path == "/api/rest/public/service-stack/"+envResolveFarmSvcID+"/env":
 		fmt.Fprintf(w, `{"items":[%s]}`, strings.Join([]string{
@@ -158,7 +158,7 @@ func TestFarmVerbs_UseTheResolvedLookup(t *testing.T) {
 		t.Errorf("project service-stack reads = %d, want 2 (one per hostname: farm, os)", n)
 	}
 	if n := f.requestCount(http.MethodPost + " /api/rest/public/service-stack/search"); n != 0 {
-		t.Errorf("service-stack/search requests = %d, want 0 — the search is refused for the account-wide token", n)
+		t.Errorf("service-stack/search requests = %d, want 0 — the search is scoped to the token's first org, not the farm's", n)
 	}
 	if n := f.requestCount(http.MethodGet + " /api/rest/public/service-stack/" + envResolveFarmSvcID + "/env"); n != 1 {
 		t.Errorf("farm service env requests = %d, want 1", n)
