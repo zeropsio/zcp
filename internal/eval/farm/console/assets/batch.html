@@ -2,38 +2,88 @@
 <nav class="crumbs"><a href="/">Batches</a><span class="sep">/</span>{{.BatchID}}</nav>
 <div class="page-head">
 <h1>{{.BatchID}}</h1>
-<p class="muted">{{fmtTime .CreatedAt}}{{if .Set}} · set {{.Set}}{{end}}{{if .CandidateSha12}} · candidate <code>{{.CandidateSha12}}</code>{{end}}</p>
+<p class="muted">{{fmtTime .CreatedAt}}{{if .Set}} · set {{.Set}}{{end}} · {{.Build.Label}}{{if .Note}} · {{.Note}}{{end}}</p>
+{{with .VsPrevious}}<p class="muted small">vs <a href="/b/{{.PreviousBatchID}}">{{.PreviousBatchID}}</a>:
+{{if .Diff.NewlyFailing}} newly failing: {{range $i, $s := .Diff.NewlyFailing}}{{if $i}}, {{end}}{{$s}}{{end}};{{end}}
+{{if .Diff.Fixed}} fixed: {{range $i, $s := .Diff.Fixed}}{{if $i}}, {{end}}{{$s}}{{end}};{{end}}
+{{if .Diff.StillFailing}} still failing: {{range $i, $s := .Diff.StillFailing}}{{if $i}}, {{end}}{{$s}}{{end}};{{end}}
+{{if not (or .Diff.NewlyFailing .Diff.Fixed .Diff.StillFailing)}} no change.{{end}}</p>{{end}}
 </div>
 
 <div class="summary card">
-<div class="stats">{{range .VerdictCounts}}<span class="{{verdictClass .Verdict}} big">{{verdictIcon .Verdict}} {{.Count}} {{.Verdict}}</span>{{end}}</div>
-<div class="summary-nums"><span><strong>{{fmtCost .TotalCostUsd}}</strong> total</span><span><strong>{{.ObservedN}}/{{len .Runs}}</strong> assessed</span></div>
+<div class="stats">{{range .VerdictCounts}}<span class="{{verdictClass .Verdict}} big">{{verdictIcon .Verdict}} {{.Count}} {{verdictLabel .Verdict}}</span>{{end}}</div>
+<div class="summary-nums">
+<span><strong>{{fmtCost .TotalCostUsd}}</strong>{{if .CostUnknownN}} + {{.CostUnknownN}} unknown{{end}}</span>
+<span><strong>{{.ObservedN}}/{{.ObservedM}}</strong> assessed</span>
+<span>{{.DisputedCount}} disputed</span>
+</div>
+<div class="chips">
+<span class="pill pill-yes">{{.GoalYes}} goal yes</span><span class="pill pill-partly">{{.GoalPartly}} partly</span><span class="pill pill-no">{{.GoalNo}} no</span>
+<span class="outcome outcome-ok">{{.OutcomeOK}} ok</span><span class="outcome outcome-problem">{{.OutcomeProblem}} problem</span><span class="outcome outcome-inconclusive">{{.OutcomeInconclusive}} inconclusive</span>
+{{range .CauseCounts}}{{if or .High .Medium}}<span class="chip cause-chip">{{.Label}}: {{.High}}h/{{.Medium}}m</span>{{end}}{{end}}
+</div>
 </div>
 
+<section class="section">
+<h2>Problems in this batch</h2>
+{{if .ProblemsFallback}}
+<p class="muted small">No assessment yet in this batch — showing checks that failed in two or more runs.</p>
+{{if .FallbackChecks}}<ul class="plain">
+{{range .FallbackChecks}}<li class="card"><code class="chip"{{if .Title}} title="{{.Title}}"{{end}}>{{.Display}}</code> failed in {{len .RunIDs}} runs: {{range $i, $rid := .RunIDs}}{{if $i}}, {{end}}<a href="/r/{{$rid}}">{{$rid}}</a>{{end}}</li>
+{{end}}</ul>{{else}}<p class="empty">No check failed in two or more runs.</p>{{end}}
+{{else if .Problems}}<ul class="plain">
+{{range .Problems}}<li class="card">
+<span class="{{severityClass .Severity}}">{{severityLabel .Severity}}</span>
+{{range .CauseLabels}}<span class="chip cause-chip">{{.}}</span>{{end}}
+<span class="chip">{{.Surface}}</span>
+<span class="pill" title="{{problemStatusTooltip .Status}}">{{problemStatusLabel .Status}}</span>
+<div><strong>{{.Title}}</strong></div>
+{{if .Anchor}}<div><code class="chip">{{.Anchor}}</code></div>{{end}}
+<div class="muted small">hit {{.HitOnNewestBuild}}/{{.RunsAssessedOnNewest}} runs on the newest build · {{.RunsTotal}} runs · {{.BatchesTotal}} batches · {{.BuildsTotal}} builds</div>
+{{if .HasPrevCompare}}<div class="muted small">{{if .AlsoInPrev}}also in{{else}}not in{{end}} previous batch <a href="/b/{{$.VsPrevious.PreviousBatchID}}">{{$.VsPrevious.PreviousBatchID}}</a></div>{{end}}
+</li>
+{{end}}</ul>{{else}}<p class="empty">No problems found in this batch.</p>{{end}}
+</section>
+
+<section class="section">
+<h2>Runs</h2>
+{{template "filterbar" .Nav.Filters}}
+<div class="table-wrap"><table class="stack">
+<thead><tr>{{range .Nav.Sorts}}{{template "sortth" .}}{{end}}</tr></thead>
+<tbody>
+{{range .Groups}}<tr><td colspan="4" class="group-heading">{{.Title}} ({{len .Runs}})</td></tr>
+{{if .Collapsed}}<tr><td colspan="4">{{range $i, $r := .Runs}}{{if $i}}, {{end}}<a href="/r/{{$r.RunID}}"{{if $r.Headline}} title="{{$r.Headline}}"{{else if $r.State}} title="{{$r.State}}"{{end}}>{{$r.Scenario}}</a>{{end}}</td></tr>
+{{else}}{{range .Runs}}<tr>
+<td data-label="Priority"><span class="{{verdictClass .Verdict}}">{{verdictIcon .Verdict}} {{verdictLabel .Verdict}}</span>{{if .Disputed}}<span class="disputed-marker">disputed</span>{{end}}</td>
+<td data-label="Scenario"><a href="/r/{{.RunID}}">{{.Scenario}}</a></td>
+<td data-label="Why / headline">
+{{if .FirstFailedText}}<div{{if .FirstFailedTitle}} title="{{.FirstFailedTitle}}"{{end}}>{{.FirstFailedText}}</div>{{end}}
+{{if .Reason}}<div class="muted">{{.Reason}}</div>{{end}}
+{{if .Headline}}<div>{{.Headline}}</div>{{else}}<div class="muted">{{.State}}</div>{{end}}
+{{if or .High .Medium .Low .FailedCheckIDs}}<span class="chips">{{if .High}}<span class="severity severity-high">{{.High}} high</span>{{end}}{{if .Medium}}<span class="severity severity-medium">{{.Medium}} medium</span>{{end}}{{if .Low}}<span class="severity severity-low">{{.Low}} low</span>{{end}}{{range .FailedCheckIDs}}<code class="chip">{{.}}</code>{{end}}{{if .FailedCheckMore}}<span class="muted small">+{{.FailedCheckMore}} more</span>{{end}}</span>{{end}}
+{{if .JobStatusText}}<div class="callout callout-info small">{{.JobStatusText}}</div>{{end}}
+{{if .PreStoreFailureText}}<div class="callout callout-error small">{{.PreStoreFailureText}}</div>{{end}}
+</td>
+<td data-label="Duration">{{fmtDuration .DurationSec}}</td>
+<td data-label="Cost">{{if .CostKnown}}{{fmtCost .CostUsd}}{{else}}—{{end}}</td>
+</tr>{{end}}{{end}}
+{{else}}<tr><td colspan="4" class="empty">No runs in this batch.</td></tr>
+{{end}}
+</tbody>
+</table></div>
+</section>
+
+{{if not .Meta.Observer.Hidden}}
 {{if .Unassessed}}<form class="callout" method="post" action="/b/{{.BatchID}}/observe">
-<span>{{.Unassessed}} finished run{{if ne .Unassessed 1}}s have{{else}} has{{end}} no observer assessment yet.</span>
+<span>{{.Unassessed}} finished run{{if ne .Unassessed 1}}s{{end}} need an assessment.</span>
 <span class="callout-actions"><select name="model" aria-label="model">{{range .ModelOptions}}<option value="{{.}}">{{.}}</option>{{end}}</select><button type="submit" class="primary">Assess</button></span>
 </form>{{end}}
-
-<div class="run-list">
-{{range .Runs}}<a class="card run-row" href="/r/{{.RunID}}">
-<span class="run-verdict"><span class="{{verdictClass .Verdict}}">{{verdictIcon .Verdict}} {{.Verdict}}</span></span>
-<span class="run-main">
-<span class="run-title">{{.Scenario}}</span>
-{{if .Headline}}<span class="run-headline">{{.Headline}}</span>{{else}}<span class="run-headline muted">{{.State}}</span>{{end}}
-{{if or .High .Medium .Low .FailedCheckIDs}}<span class="chips">{{if .High}}<span class="severity severity-high">{{.High}} high</span>{{end}}{{if .Medium}}<span class="severity severity-medium">{{.Medium}} medium</span>{{end}}{{if .Low}}<span class="severity severity-low">{{.Low}} low</span>{{end}}{{range .FailedCheckIDs}}<code class="chip">{{.}}</code>{{end}}{{if .FailedCheckMore}}<span class="muted small">+{{.FailedCheckMore}} more</span>{{end}}</span>{{end}}
-</span>
-<span class="run-nums"><span>{{fmtDuration .DurationSec}}</span><span class="muted">{{fmtCost .CostUsd}}</span></span>
-</a>
-{{else}}<p class="empty">No runs in this batch.</p>
-{{end}}
-</div>
-
-<details class="more"><summary>Re-assess every run of this batch</summary>
+{{if .AnyAssessed}}<details class="more"><summary>Re-assess every run of this batch</summary>
 <form class="inline-form" method="post" action="/b/{{.BatchID}}/observe">
 <input type="hidden" name="all" value="1">
 <select name="model" aria-label="model">{{range .ModelOptions}}<option value="{{.}}">{{.}}</option>{{end}}</select>
-<button type="submit">Re-assess all {{len .Runs}} runs</button>
+<button type="submit">Re-assess all {{.ObservedM}} runs</button>
 </form>
-</details>
+</details>{{end}}
+{{end}}
 {{template "foot"}}{{end}}
