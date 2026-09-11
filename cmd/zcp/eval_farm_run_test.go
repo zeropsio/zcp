@@ -18,21 +18,20 @@ import (
 // TestEvalFarmRun_Detach_ReexecsAndPrintsLogPath pins §3.1 FM-18: `farm run
 // --detach` re-execs this same binary (minus --detach, --batch pinned) with
 // stdout/stderr redirected to <cwd>/farm-<batch>.log, and prints the batch
-// id + log path — without actually daemonising: detachStarter is swapped
-// for a recording fake, so no process is really forked.
+// id + log path — without actually daemonising: it calls runFarmRunDetach
+// directly with a recording fake starter (R10a — an injected dependency,
+// not a package-level mutable var), so no process is really forked.
 func TestEvalFarmRun_Detach_ReexecsAndPrintsLogPath(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
 	var gotArgv []string
 	var gotLogPath string
-	origStarter := detachStarter
-	detachStarter = func(argv []string, logPath string) error {
+	fakeStarter := func(argv []string, logPath string) error { //nolint:unparam // matches the runFarmRunDetach starter signature; this test only exercises the success path
 		gotArgv = argv
 		gotLogPath = logPath
 		return nil
 	}
-	t.Cleanup(func() { detachStarter = origStarter })
 
 	exe, err := os.Executable()
 	if err != nil {
@@ -40,12 +39,12 @@ func TestEvalFarmRun_Detach_ReexecsAndPrintsLogPath(t *testing.T) {
 	}
 
 	stdout, _ := captureOutput(t, func() {
-		exitCode := runFarmRun([]string{
+		exitCode := runFarmRunDetach([]string{
 			"--candidate", "cand-sha", "--scenarios", "scen-sha", "--set", "gate",
 			"--batch", "batch-detach-1", "--detach",
-		})
+		}, "batch-detach-1", fakeStarter)
 		if exitCode != 0 {
-			t.Errorf("runFarmRun --detach exit code = %d, want 0", exitCode)
+			t.Errorf("runFarmRunDetach exit code = %d, want 0", exitCode)
 		}
 	})
 
