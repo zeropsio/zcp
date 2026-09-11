@@ -2,6 +2,7 @@ package console
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
@@ -86,7 +87,7 @@ func orderedVerdictCounts(counts map[string]int) []VerdictCount {
 func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, queueState func(runID string) string) ([]BatchRow, error) {
 	ids, err := listBatchIDs(ctx, store)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("console: load batch rows: %w", err)
 	}
 
 	rows := make([]BatchRow, 0, len(ids))

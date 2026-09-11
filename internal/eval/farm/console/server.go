@@ -285,7 +285,7 @@ func (c *manifestCachingStore) Get(ctx context.Context, key string) ([]byte, err
 	}
 	body, err := c.ObjectStore.Get(ctx, key)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("console: manifest cache: get %s: %w", key, err)
 	}
 	if isManifestKey(key) {
 		c.mu.Lock()

@@ -67,9 +67,8 @@ var pageFuncs = template.FuncMap{
 		if len(steps) == 0 {
 			return "/r/" + runID
 		}
-		if steps[0] == 0 {
-			return "/r/" + runID + "#failed-checks"
-		}
+		// steps is always FindingItem.Steps (api.go), which already
+		// excludes the step-0 CHECKS citation — steps[0] is never 0 here.
 		return fmt.Sprintf("/r/%s#s%d", runID, steps[0])
 	},
 }
@@ -384,19 +383,19 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 func loadRunTexts(ctx context.Context, store observer.ObjectStore, runID string) (taskPrompt, selfReview string, err error) {
 	bundle, err := observer.NewSinkBundle(ctx, store, runID)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("console: load run texts: new bundle: %w", err)
 	}
 	resultsDir, err := observer.ResultsDir(bundle)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("console: load run texts: results dir: %w", err)
 	}
 	taskPrompt, err = observer.LoadTaskPrompt(bundle, resultsDir)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("console: load run texts: task prompt: %w", err)
 	}
 	selfReview, err = observer.LoadSelfReview(bundle, resultsDir)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("console: load run texts: self-review: %w", err)
 	}
 	if selfReview == "" {
 		selfReview = notRecorded
@@ -420,14 +419,15 @@ func loadOlderObservations(ctx context.Context, store observer.ObjectStore, runI
 	return out, nil
 }
 
-// findingsPageData is GET /findings (§8.3 FM-51).
+// findingsPageData is GET /findings (§8.3 FM-51). The findings themselves
+// reach the template only as Groups (owner-then-severity, §8.4) — there is
+// no ungrouped Findings field, since findings.html never reads one.
 type findingsPageData struct {
-	Since    string
-	Owner    string
-	Windows  []string
-	Owners   []string
-	Findings []FindingItem
-	Groups   []findingGroup
+	Since   string
+	Owner   string
+	Windows []string
+	Owners  []string
+	Groups  []findingGroup
 }
 
 // findingGroup is one owner's findings, in the read model's order.
@@ -478,6 +478,6 @@ func (s *Server) handleFindingsPage(w http.ResponseWriter, r *http.Request) {
 	}
 	renderPage(w, "findings", findingsPageData{
 		Since: since, Owner: owner, Windows: findingWindows, Owners: findingOwners,
-		Findings: items, Groups: groupFindingsByOwner(items),
+		Groups: groupFindingsByOwner(items),
 	})
 }

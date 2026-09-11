@@ -239,7 +239,7 @@ func buildRunRow(ctx context.Context, store observer.ObjectStore, consoleObserve
 
 	bundle, err := observer.NewSinkBundle(ctx, store, run.RunID)
 	if err != nil {
-		return RunRow{}, err
+		return RunRow{}, fmt.Errorf("console: build run row: new bundle: %w", err)
 	}
 	resultsDir, rdErr := observer.ResultsDir(bundle)
 
@@ -329,7 +329,7 @@ func findRunBatch(ctx context.Context, store observer.ObjectStore, runID string)
 	}
 	batches, err := listBatchIDs(ctx, store)
 	if err != nil {
-		return "", farm.ManifestRun{}, farm.BatchManifest{}, err
+		return "", farm.ManifestRun{}, farm.BatchManifest{}, fmt.Errorf("console: find run batch: %w", err)
 	}
 	for _, b := range batches {
 		if !strings.HasPrefix(runID, b+"-") {
@@ -353,12 +353,12 @@ func findRunBatch(ctx context.Context, store observer.ObjectStore, runID string)
 func loadRunRow(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, runID string, queueState func(runID string) string) (RunRow, error) {
 	batchID, run, manifest, err := findRunBatch(ctx, store, runID)
 	if err != nil {
-		return RunRow{}, err
+		return RunRow{}, fmt.Errorf("console: load run row: %w", err)
 	}
 	createdAt, _ := time.Parse(time.RFC3339, manifest.CreatedAt)
 	summary, summaryFound, err := loadSummary(ctx, store, batchID)
 	if err != nil {
-		return RunRow{}, err
+		return RunRow{}, fmt.Errorf("console: load run row: %w", err)
 	}
 	return buildRunRow(ctx, store, consoleObserverDisabled, batchID, run, createdAt, manifest.Observer, summary, summaryFound, queueState)
 }
@@ -391,7 +391,7 @@ func evidenceSteps(obs *observer.Observation) []int {
 func batchWindowRows(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, batchID string, queueState func(runID string) string) ([]RunRow, error) {
 	manifest, err := loadManifest(ctx, store, batchID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("console: batch window rows: %w", err)
 	}
 	return batchWindowRowsWithManifest(ctx, store, consoleObserverDisabled, batchID, manifest, queueState)
 }
@@ -407,7 +407,7 @@ func batchWindowRowsWithManifest(ctx context.Context, store observer.ObjectStore
 	createdAt, _ := time.Parse(time.RFC3339, manifest.CreatedAt)
 	summary, summaryFound, err := loadSummary(ctx, store, batchID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("console: batch window rows: %w", err)
 	}
 	rows := make([]RunRow, 0, len(manifest.Runs))
 	for _, run := range manifest.Runs {
@@ -433,7 +433,7 @@ func batchWindowRowsWithManifest(ctx context.Context, store observer.ObjectStore
 func rowsSinceWindow(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, window time.Duration, now time.Time, queueState func(runID string) string) ([]RunRow, error) {
 	batches, err := listBatchIDs(ctx, store)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("console: rows since window: %w", err)
 	}
 	since := now.Add(-window)
 	var out []RunRow

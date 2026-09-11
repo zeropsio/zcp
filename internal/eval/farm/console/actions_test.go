@@ -240,6 +240,17 @@ func TestActions_RunObserveAddsVersion(t *testing.T) {
 	}
 }
 
+// TestActions_AllowlistNamesDeterministic pins item 9: allowlistNames'
+// rendering doesn't drift with Go's unspecified map iteration order.
+func TestActions_AllowlistNamesDeterministic(t *testing.T) {
+	first := allowlistNames()
+	for range 20 {
+		if got := allowlistNames(); got != first {
+			t.Fatalf("allowlistNames() = %q, want stable %q across repeated calls", got, first)
+		}
+	}
+}
+
 // --- TestActions_ModelOutsideAllowlist400 -------------------------------
 
 // TestActions_ModelOutsideAllowlist400 pins §8.5 FM-53: a model outside the

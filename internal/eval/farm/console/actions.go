@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -247,13 +248,14 @@ func (s *Server) handleBatchObserve(w http.ResponseWriter, r *http.Request) {
 	s.respondAction(w, r, "/b/"+batch)
 }
 
-// allowlistNames renders observeModelAllowlist's keys for a 400 error body
-// — map order is unspecified, but this is never asserted against for exact
-// order, only for containing "must be one of".
+// allowlistNames renders observeModelAllowlist's keys for a 400 error body,
+// sorted so the same 400 body is byte-identical on every call rather than
+// drifting with Go's unspecified map iteration order.
 func allowlistNames() string {
 	names := make([]string, 0, len(observeModelAllowlist))
 	for name := range observeModelAllowlist {
 		names = append(names, name)
 	}
+	sort.Strings(names)
 	return strings.Join(names, ", ")
 }
