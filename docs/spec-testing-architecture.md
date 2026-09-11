@@ -551,11 +551,11 @@ SHA-256 equals `--candidate-sha256`; `--project-id` equals the project the
 credentials resolve to; the acknowledgement is exactly `yes`; the target is
 fresh (a direct service read shows only system services plus the protected
 control service `zcp`; a direct process read shows no live process — except
-one whose service refs, by id or name, all resolve to an allowed service, a
-BUILD-category ref (the transient build container a running `stack.build`
-attaches, never itself listed among the project's services), or a ref-less
-`stack.*` action, all of which are the control service's own lifecycle and
-are ignored); work dir
+one that carries at least one non-BUILD service ref and whose every non-BUILD
+ref resolves, by id or name, to an allowed service, which is the control
+service's own lifecycle; BUILD-category refs (the transient build container a
+running `stack.build` attaches, never itself listed among the project's
+services) are skipped, and a live process with no refs always refuses); work dir
 and results dir are absolute, distinct, not nested in each other, not `/`,
 not a home directory root; the binding writes the sentinel into the work dir
 and exports `ZCP_EVAL_SENTINEL_FILE` for the run. A failing check returns

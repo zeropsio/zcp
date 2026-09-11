@@ -607,20 +607,11 @@ coverage; the two dimensions are reported side by side, never merged.
 
 These are current limitations of the eval lane, not roadmap items.
 
-**Cross-deploy preflight root.** The execution-binding preflight's root
-safety check (`spec-testing-architecture.md §10.4`) reasons about the
-evaluator's own `--work-dir`. A cross-deploy scenario pushes from a source
-container whose mount base is `/var/www`, a path the preflight does not
-special-case; the check still passes because the work dir it is actually
-given is safe, but the two roots (the evaluator's work dir and the source
-container's own mount base) are conceptually distinct and the preflight only
-reasons about the former.
-
-**Artifact-promotion baseline.** O7's `dev_unchanged` row (§4.4) needs a
-baseline app-version id for the promotion's source host
-(`artifactPromotion.from`), but baseline capture only reads
-`verification.unchanged` and `nodePostgresRecord.unrelated` (§4.1, §4.3) —
-never `artifactPromotion.from` on its own. A scenario that declares
-`artifactPromotion` without also listing its `from` host in `unchanged` gets
-a `blocked` `dev_unchanged` row (`"no baseline for <host>"`), not a proven
-one.
+**Cross-deploy under the evaluator's work dir.** The agent's `zcp` MCP
+server runs with the evaluator's `--work-dir` as its working directory, so
+the deploy tool's cross-deploy preflight looks for the source service's
+`zerops.yaml` under `<work-dir>/<sourceHostname>`, while `zerops_mount`
+always mounts a service at `/var/www/<hostname>`. Outside the evaluator both
+roots are `/var/www`; in a farm run they differ, so `zerops_deploy
+sourceService=…` fails with `PREFLIGHT_FAILED … source mount
+<work-dir>/<host> missing` and a cross-deploy scenario cannot promote.
