@@ -71,6 +71,10 @@ type Config struct {
 	// empty at startup (§8.5): the run/batch observe actions answer 503
 	// "observer credential missing" instead of enqueueing.
 	ObserverCredentialMissing bool
+	// ObserverAPIKeySet is true when ANTHROPIC_API_KEY was set at startup
+	// (§8.5): treated exactly like a missing credential — the observer runs
+	// only under the OAuth token — but named separately on the pages.
+	ObserverAPIKeySet bool
 	// ObserverClaudePathUnresolved is true when --claude could not be
 	// resolved (exec.LookPath + filepath.Abs) at startup (§8.5): the
 	// actions answer 503 "observer unavailable" instead of enqueueing.

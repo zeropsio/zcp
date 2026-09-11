@@ -609,7 +609,9 @@ func TestPages_ObserverStatusLineByConfig(t *testing.T) {
 		{"off (kill switch)", func(cfg *Config) { cfg.ObserverDisabled = true },
 			"Automatic assessment: off on this console (ZCP_FARM_OBSERVER=off) — Assess buttons still work", false},
 		{"credential missing", func(cfg *Config) { cfg.ObserverCredentialMissing = true },
-			"Automatic assessment: unavailable — credential missing", true},
+			"Automatic assessment: unavailable — CLAUDE_CODE_OAUTH_TOKEN is not set on the console service", true},
+		{"api key set", func(cfg *Config) { cfg.ObserverAPIKeySet = true },
+			"Automatic assessment: unavailable — ANTHROPIC_API_KEY is set on the console service; the observer runs only under the OAuth token", true},
 		{"claude unresolved", func(cfg *Config) { cfg.ObserverClaudePathUnresolved = true },
 			"Automatic assessment: unavailable — claude not found", true},
 	}

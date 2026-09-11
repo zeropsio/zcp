@@ -267,8 +267,10 @@ func (s *Server) pageMeta(r *http.Request, title, nav string, refresh bool) page
 func (s *Server) observerStatusLine() observerStatus {
 	const prefix = "Automatic assessment: "
 	switch {
+	case s.cfg.ObserverAPIKeySet:
+		return observerStatus{Text: prefix + "unavailable — ANTHROPIC_API_KEY is set on the console service; the observer runs only under the OAuth token", Hidden: true}
 	case s.cfg.ObserverCredentialMissing:
-		return observerStatus{Text: prefix + "unavailable — credential missing", Hidden: true}
+		return observerStatus{Text: prefix + "unavailable — CLAUDE_CODE_OAUTH_TOKEN is not set on the console service", Hidden: true}
 	case s.cfg.ObserverClaudePathUnresolved:
 		return observerStatus{Text: prefix + "unavailable — claude not found", Hidden: true}
 	case s.cfg.ObserverDisabled:

@@ -49,7 +49,7 @@ func (s *Server) StartWorker(ctx context.Context) {
 // claude path.
 func (s *Server) observerUnavailable() (unavailable bool, message string) {
 	switch {
-	case s.cfg.ObserverCredentialMissing:
+	case s.cfg.ObserverCredentialMissing, s.cfg.ObserverAPIKeySet:
 		return true, "observer credential missing"
 	case s.cfg.ObserverClaudePathUnresolved:
 		return true, "observer unavailable"

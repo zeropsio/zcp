@@ -91,7 +91,7 @@ func runFarmConsole(args []string) int {
 	if apiKeySet {
 		fmt.Fprintln(os.Stderr, "warning: ANTHROPIC_API_KEY is set; the observer worker stays idle (docs/spec-eval-farm.md §8.5 FM-53)")
 	}
-	credentialMissing := oauthToken == "" || apiKeySet
+	credentialMissing := oauthToken == ""
 	claudePath := resolveClaudePath(claudeFlag)
 	claudeUnresolved := claudePath == ""
 	if claudeUnresolved {
@@ -108,7 +108,7 @@ func runFarmConsole(args []string) int {
 	worker := console.NewWorker(console.WorkerConfig{
 		Bucket:   store,
 		Queue:    queue,
-		Disabled: killSwitch || credentialMissing || claudeUnresolved,
+		Disabled: killSwitch || credentialMissing || apiKeySet || claudeUnresolved,
 	})
 
 	srv := console.NewServer(console.Config{
@@ -118,6 +118,7 @@ func runFarmConsole(args []string) int {
 		Queue:                        queue,
 		Worker:                       worker,
 		ObserverCredentialMissing:    credentialMissing,
+		ObserverAPIKeySet:            apiKeySet,
 		ObserverClaudePathUnresolved: claudeUnresolved,
 	})
 
