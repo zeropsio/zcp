@@ -7,6 +7,11 @@
 
 {{define "sortth"}}<th aria-sort="{{.AriaSort}}"><a href="{{.URL}}">{{.Label}}{{if .Active}}<span class="sort-marker" aria-hidden="true">{{if eq .Dir "asc"}} ▲{{else}} ▼{{end}}</span>{{end}}</a></th>{{end}}
 
+{{/* sortchips renders a list's sort options as a chip row above its table
+   (item 15: stacked tables hide thead on phones, so the sortable column
+   headers become unreachable there) — takes a []SortHeaderView (.Nav.Sorts). */}}
+{{define "sortchips"}}<div class="filter-row"><span class="k">Sort</span>{{range .}}<a class="filter{{if .Active}} on{{end}}" href="{{.URL}}">{{.Label}}{{if .Active}}<span class="sort-marker" aria-hidden="true">{{if eq .Dir "asc"}} ▲{{else}} ▼{{end}}</span>{{end}}</a>{{end}}</div>{{end}}
+
 {{define "badquery"}}{{template "head" .Meta}}
 <div class="page-head"><h1>Unknown filter</h1></div>
 <div class="callout callout-error">

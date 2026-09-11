@@ -202,3 +202,46 @@ func TestPages_ProblemsSummaryLineCountsLiveAndHigh(t *testing.T) {
 		t.Errorf("summary missing \"1 high\":\n%s", body)
 	}
 }
+
+// TestPages_ProblemsOmitsSurfaceChipWhenEmpty pins item 11 (round-1
+// follow-up): a problem with no surface (a format-2 finding whose surface
+// is "agent"/"platform"/empty, or a format-1 finding) renders no empty
+// surface chip on /problems.
+func TestPages_ProblemsOmitsSurfaceChipWhenEmpty(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "ns3", "claude-sonnet-5", []runFixture{
+		{runID: "ns3-a", scenario: "a", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"ns3-a": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat1, RunID: "ns3-a", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeProblem, Headline: "x",
+		Findings: []observer.Finding{{Severity: "high", Owner: "agent", Title: "format-1 finding, no surface"}},
+	})
+
+	body := doGET(t, h, "/problems").Body.String()
+	if !strings.Contains(body, "format-1 finding, no surface") {
+		t.Fatalf("body missing the problem's title:\n%s", body)
+	}
+	if strings.Contains(body, `<code class="chip"></code>`) {
+		t.Errorf("body renders an empty surface chip:\n%s", body)
+	}
+}
+
+// TestPages_ProblemsSortChipsAboveStackedTable pins item 15 (round-1
+// follow-up): /problems renders its sort options as a chip row above the
+// table, like /findings already does.
+func TestPages_ProblemsSortChipsAboveStackedTable(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	seedBatch(t, store, "psc1", "off", []runFixture{
+		{runID: "psc1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"psc1-a": "passed"})
+
+	body := doGET(t, h, "/problems").Body.String()
+	if !strings.Contains(body, `<span class="k">Sort</span>`) {
+		t.Errorf("body missing a sort chip row above the problems table:\n%s", body)
+	}
+}

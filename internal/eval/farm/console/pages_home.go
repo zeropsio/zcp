@@ -80,8 +80,12 @@ type latestEvaluationView struct {
 }
 
 // topProblemView is one line of the Overview's "Top problems now" panel
-// (§8.3 item 2): the first five live problems (§8.6).
+// (§8.3 item 2): the first five live problems (§8.6). ID is a stable HTML
+// fragment id derived from the problem's own key (pages_problems.go's
+// problemAnchorID) — item 12: "link only the title, to that problem on
+// /problems", so a viewer lands on the same row problemRowView gave that id.
 type topProblemView struct {
+	ID          string
 	Severity    string
 	CauseLabels []string
 	Surface     string
@@ -98,12 +102,31 @@ type dotView struct {
 }
 
 // homeBatchRow is one row of the Overview batches table: a BatchRow
-// (batches.go) plus this page's own additive facts — the ordered dots and
-// the formatted cost string (§8.3: "— when unknown, $2.19 + 7 unknown").
+// (batches.go) plus this page's own additive facts — the ordered dots, the
+// formatted cost string (§8.3: "— when unknown, $2.19 + 7 unknown") and the
+// short "11 Sep 18:31" date (item 6: "fewer, non-wrapping columns" —
+// fmtTime's own long "2 Jan 2006, 15:04 UTC" form is for a single-batch
+// page's header, not a 100-odd-row table).
 type homeBatchRow struct {
 	BatchRow
-	Dots []dotView
-	Cost string
+	Dots         []dotView
+	Cost         string
+	StartedShort string
+}
+
+// unknownDash is this file's own "unknown/none" marker (§8.8's own "—"
+// convention) — named once so goconst's repeated-literal check sees one
+// declaration instead of two raw copies (fmtTimeShort/formatBatchCost).
+const unknownDash = "—"
+
+// fmtTimeShort renders a timestamp as "11 Sep 18:31" (item 6) — the
+// Overview batches table's own compact date, distinct from fmtTime's long
+// form used everywhere a page names one batch/run's own time.
+func fmtTimeShort(t time.Time) string {
+	if t.IsZero() {
+		return unknownDash
+	}
+	return t.UTC().Format("2 Jan 15:04")
 }
 
 func (s *Server) handleHomePage(w http.ResponseWriter, r *http.Request) {
@@ -180,7 +203,7 @@ func (s *Server) buildHomeBatchRows(ctx context.Context, batches []BatchRow) ([]
 		if err != nil {
 			return nil, fmt.Errorf("console: home batch row %s: %w", b.BatchID, err)
 		}
-		out[i] = homeBatchRow{BatchRow: b, Dots: buildDots(runRows, s.now()), Cost: formatBatchCost(b)}
+		out[i] = homeBatchRow{BatchRow: b, Dots: buildDots(runRows, s.now()), Cost: formatBatchCost(b), StartedShort: fmtTimeShort(b.CreatedAt)}
 	}
 	return out, nil
 }
@@ -191,7 +214,7 @@ func (s *Server) buildHomeBatchRows(ctx context.Context, batches []BatchRow) ([]
 func formatBatchCost(b BatchRow) string {
 	knownN := b.ObservedM - b.CostUnknownN
 	if knownN <= 0 {
-		return "—"
+		return unknownDash
 	}
 	cost := fmt.Sprintf("$%.2f", b.TotalCostUsd)
 	if b.CostUnknownN > 0 {
@@ -414,6 +437,7 @@ func (s *Server) buildTopProblems(ctx context.Context, now time.Time) ([]topProb
 			continue
 		}
 		out = append(out, topProblemView{
+			ID:       problemAnchorID(p.Key),
 			Severity: p.Severity, CauseLabels: p.CauseLabels, Surface: p.Surface, Title: p.Title,
 			HowOften: problemHowOften(p, runs, newestBuild),
 		})

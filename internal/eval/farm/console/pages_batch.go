@@ -232,9 +232,10 @@ func firstFailedCheckPlain(checks []FailedCheck) (display, title string) {
 	}
 	c := checks[0]
 	disp := displayCheckID(c.ID)
-	display = fmt.Sprintf("%s: expected %s, got %s", disp, c.Expected, c.Observed)
+	expected, observed := formatCheckValue(c.Expected), formatCheckValue(c.Observed)
+	display = fmt.Sprintf("%s: expected %s, got %s", disp, expected, observed)
 	if disp != c.ID {
-		title = fmt.Sprintf("%s: expected %s, got %s", c.ID, c.Expected, c.Observed)
+		title = fmt.Sprintf("%s: expected %s, got %s", c.ID, expected, observed)
 	}
 	return display, title
 }
@@ -416,6 +417,60 @@ type causeCountView struct {
 	High, Medium int
 }
 
+// batchSummaryPart formats one non-zero count with its label, "" when n==0
+// (item 9: "zero counts skipped").
+func batchSummaryPart(n int, label string) string {
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d %s", n, label)
+}
+
+// batchSummaryGroup joins label's non-zero parts with " · ", "" when every
+// part is zero — the whole labelled group (e.g. "Goal: ") is then dropped
+// rather than left dangling with nothing after the colon (item 9).
+func batchSummaryGroup(label string, parts ...string) string {
+	var kept []string
+	for _, p := range parts {
+		if p != "" {
+			kept = append(kept, p)
+		}
+	}
+	if len(kept) == 0 {
+		return ""
+	}
+	return label + ": " + strings.Join(kept, " · ")
+}
+
+// buildBatchSummaryLine implements item 9: one labelled line — "Goal: 8 yes
+// · 1 no — Assessment: 3 OK · 6 problem — ZCP findings: 4 medium" —
+// replacing the old row of identical chips and the cryptic "ZCP: 0h/4m".
+// causeCounts is data.CauseCounts, already narrowed to the classes that
+// have any high/medium finding; only the ZCP class' own entry feeds the
+// third group (§8.8's own cause-class label, "ZCP").
+func buildBatchSummaryLine(goalYes, goalPartly, goalNo, outOK, outProblem, outInconclusive int, causeCounts []causeCountView) string {
+	groups := []string{
+		batchSummaryGroup("Goal",
+			batchSummaryPart(goalYes, "yes"), batchSummaryPart(goalPartly, "partly"), batchSummaryPart(goalNo, "no")),
+		batchSummaryGroup("Assessment",
+			batchSummaryPart(outOK, "OK"), batchSummaryPart(outProblem, "problem"), batchSummaryPart(outInconclusive, "inconclusive")),
+	}
+	for _, c := range causeCounts {
+		if c.Label != causeClassDisplay[CauseClassZCP] {
+			continue
+		}
+		groups = append(groups, batchSummaryGroup("ZCP findings",
+			batchSummaryPart(c.High, "high"), batchSummaryPart(c.Medium, "medium")))
+	}
+	var kept []string
+	for _, g := range groups {
+		if g != "" {
+			kept = append(kept, g)
+		}
+	}
+	return strings.Join(kept, " — ")
+}
+
 // --- Page data --------------------------------------------------------------
 
 // batchPageData is GET /b/<batch> (§8.3 FM-51), rewritten to the five
@@ -439,13 +494,27 @@ type batchPageData struct {
 	TotalCostUsd                                   float64
 	CostUnknownN                                   int
 	ObservedN, ObservedM                           int
+	// SummaryLine is item 9's one labelled line ("Goal: 8 yes · 1 no —
+	// Assessment: 3 OK · 6 problem — ZCP findings: 4 medium"), every zero
+	// count (and a wholly-zero group) skipped — replaces the old row of
+	// identical chips and the cryptic "ZCP: 0h/4m".
+	SummaryLine string
 
 	ProblemsFallback bool
+	// Problems holds every non-low problem (item 3's compact list);
+	// ProblemsLowCount is how many more, low-severity, were folded into
+	// one "n low" line instead.
 	Problems         []batchProblemView
+	ProblemsLowCount int
 	FallbackChecks   []checkFailureRow
 
 	Nav    listNav
 	Groups []batchRunGroupView
+	// SortByKey lets the runs table template place each sort header next
+	// to the column it actually sorts, with a plain "Why / headline"
+	// header (item 2) that sorts nothing in between — mirrors
+	// pages_home.go's own SortByKey/sortHeadersByKey.
+	SortByKey map[string]SortHeaderView
 
 	Unassessed   int
 	AnyAssessed  bool
@@ -573,15 +642,24 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 		data.CauseCounts = append(data.CauseCounts, causeCountView{Label: causeClassDisplay[c.Class], High: c.High, Medium: c.Medium})
 	}
 	data.AnyAssessed = data.ObservedN > 0
+	data.SummaryLine = buildBatchSummaryLine(data.GoalYes, data.GoalPartly, data.GoalNo, data.OutcomeOK, data.OutcomeProblem, data.OutcomeInconclusive, data.CauseCounts)
 
 	// Problems in this batch (item 3), or the deterministic-checks
-	// fallback when nothing here has ever been assessed.
+	// fallback when nothing here has ever been assessed. Low-severity
+	// problems are folded into one "n low" line (data.ProblemsLowCount)
+	// instead of their own compact row.
 	if batchHasAnyAssessment(rows) {
 		var prevPtr *BatchRow
 		if hasPrev {
 			prevPtr = &prevBatch
 		}
-		data.Problems = buildBatchProblems(rows, batch, manifest.Set, bc.CreatedAt, prevPtr, prevRows)
+		for _, p := range buildBatchProblems(rows, batch, manifest.Set, bc.CreatedAt, prevPtr, prevRows) {
+			if p.Severity == observer.SeverityLow {
+				data.ProblemsLowCount++
+				continue
+			}
+			data.Problems = append(data.Problems, p)
+		}
 	} else {
 		data.ProblemsFallback = true
 		data.FallbackChecks = buildCheckFailureFallback(rows)
@@ -621,6 +699,7 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 
 	sortLabels := map[string]string{"problem": "Priority", paramScenario: "Scenario", "duration": "Duration", "cost": "Cost"}
 	data.Nav = buildListNav("/b/"+batch, spec, q, r.URL.Query(), counts, sortLabels, batchRunsLabeler())
+	data.SortByKey = sortHeadersByKey(data.Nav.Sorts)
 
 	renderPage(w, "batch", data)
 }

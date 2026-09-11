@@ -93,6 +93,41 @@ type checkRowView struct {
 	// once so every href="#..." pointing at this row and the row's own
 	// id="..." always agree.
 	Anchor string
+	// Expected/Observed shadow FailedCheck's own fields of the same name
+	// (Go embedding: an outer field wins over a promoted one) with item
+	// 19's monotonic-clock text normalized — every template site that
+	// reads .Expected/.Observed off a checkRowView (the checks table and
+	// the Why-this-verdict strip, both built from the same CheckRows
+	// slice) gets the normalized text for free, with nothing left to drift.
+	Expected, Observed string
+	// IDWrapped is FailedCheck.ID with a soft line-break opportunity
+	// (softWrapID) after every "/ . - _" — item 5: the checks table wraps
+	// a long id only at those characters, never mid-word. The
+	// Why-this-verdict strip still prints the plain .ID (a shorter
+	// context, and already inside a link).
+	IDWrapped string
+}
+
+// zeroWidthSpace (U+200B) is a soft line-break opportunity with no visible
+// mark — softWrapID's own building block.
+const zeroWidthSpace = '​'
+
+// softWrapID inserts a zero-width space (U+200B) after every "/", ".", "-"
+// and "_" in id — a soft line-break opportunity a browser can wrap at
+// without ever showing anything, so a long check id (item 5's failed-checks
+// table) wraps only at those characters instead of mid-word. Plain text,
+// not markup: the result still goes through html/template's normal
+// auto-escaping like any other field.
+func softWrapID(id string) string {
+	var b strings.Builder
+	for _, r := range id {
+		b.WriteRune(r)
+		switch r {
+		case '/', '.', '-', '_':
+			b.WriteRune(zeroWidthSpace)
+		}
+	}
+	return b.String()
 }
 
 // checkAnchor turns a check id into a safe HTML fragment identifier. A
@@ -406,7 +441,11 @@ func buildCheckRows(failed []FailedCheck, judged []observer.JudgedCheck) []check
 	}
 	out := make([]checkRowView, len(failed))
 	for i, c := range failed {
-		out[i] = checkRowView{FailedCheck: c, Judged: byID[c.ID], Anchor: checkAnchor(c.ID)}
+		out[i] = checkRowView{
+			FailedCheck: c, Judged: byID[c.ID], Anchor: checkAnchor(c.ID),
+			Expected: formatCheckValue(c.Expected), Observed: formatCheckValue(c.Observed),
+			IDWrapped: softWrapID(c.ID),
+		}
 	}
 	return out
 }

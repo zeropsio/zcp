@@ -34,9 +34,9 @@
 {{end}}
 
 <div class="assess-grid">
-<div><span class="k">Goal reached</span><span class="pill pill-{{.DisplayedObs.Goal.Reached}}">{{.DisplayedObs.Goal.Reached}}</span><p>{{.DisplayedObs.Goal.Why}}</p></div>
-<div><span class="k">Verdict right</span>{{if .DisplayedObs.Checks.Judged}}{{range .DisplayedObs.Checks.Judged}}<span class="pill {{if .Correct}}pill-yes{{else}}pill-no{{end}}" title="{{.Why}}"><code>{{.ID}}</code></span> {{end}}{{else}}<span class="pill {{if .DisplayedObs.Checks.Agree}}pill-yes{{else}}pill-no{{end}}">{{if .DisplayedObs.Checks.Agree}}yes{{else}}no{{end}}</span>{{if .DisplayedObs.Checks.Why}}<p>{{.DisplayedObs.Checks.Why}}</p>{{end}}{{end}}</div>
-<div><span class="k">Self-review honest</span><span class="pill pill-{{.DisplayedObs.SelfReview.Accurate}}">{{.DisplayedObs.SelfReview.Accurate}}</span><p>{{.DisplayedObs.SelfReview.Note}}</p></div>
+<div><span class="k">Goal reached</span><span class="pill pill-{{.DisplayedObs.Goal.Reached}}">{{.DisplayedObs.Goal.Reached}}</span>{{with .DisplayedObs.Goal.Why}}<p>{{.}}</p>{{end}}</div>
+<div><span class="k">Verdict right</span>{{if .DisplayedObs.Checks.Judged}}{{range .DisplayedObs.Checks.Judged}}<span class="pill {{if .Correct}}pill-yes{{else}}pill-no{{end}}" title="{{.Why}}"><code>{{.ID}}</code></span> {{end}}{{else}}<span class="pill {{if .DisplayedObs.Checks.Agree}}pill-yes{{else}}pill-no{{end}}">{{if .DisplayedObs.Checks.Agree}}yes{{else}}no{{end}}</span>{{with .DisplayedObs.Checks.Why}}<p>{{.}}</p>{{end}}{{end}}</div>
+<div><span class="k">Self-review honest</span><span class="pill pill-{{.DisplayedObs.SelfReview.Accurate}}">{{.DisplayedObs.SelfReview.Accurate}}</span>{{with .DisplayedObs.SelfReview.Note}}<p>{{.}}</p>{{end}}</div>
 </div>
 
 {{if .Findings}}<p class="muted small">Findings:{{range .Findings}} <a class="f-badge" href="#f{{.N}}" title="{{.Title}}">F{{.N}}</a> <span class="{{severityClass .Severity}}">{{severityLabel .Severity}}</span> <span class="chip cause-chip">{{causeLabel .Owner}}</span>{{end}}</p>
@@ -83,26 +83,27 @@
 {{end}}
 
 {{if .Row.FailedChecks}}<h2 id="failed-checks">Failed and blocked checks <span class="count">{{len .Row.FailedChecks}}</span></h2>
-<div class="table-wrap"><table>
+<div class="table-wrap"><table class="stack">
 <thead><tr><th>Check</th><th>Expected</th><th>Observed</th><th>Source</th><th>Observer's judgement</th></tr></thead>
 <tbody>{{range .CheckRows}}<tr id="{{.Anchor}}">
-<td><span class="{{verdictClass .Result}}">{{verdictLabel .Result}}</span> <code>{{.ID}}</code></td>
-<td>{{.Expected}}</td>
-<td>{{.Observed}}</td>
-<td class="muted small">{{.Source}}</td>
-<td>{{if .Judged}}<span class="pill {{if .Judged.Correct}}pill-yes{{else}}pill-no{{end}}" title="{{.Judged.Why}}">{{if .Judged.Correct}}correct{{else}}incorrect{{end}}</span>{{else}}<span class="muted small">not judged</span>{{end}}</td>
+<td data-label="Check"><span class="{{verdictClass .Result}}">{{verdictLabel .Result}}</span> <code>{{.IDWrapped}}</code></td>
+<td data-label="Expected">{{.Expected}}</td>
+<td data-label="Observed">{{.Observed}}</td>
+<td data-label="Source" class="muted small">{{.Source}}</td>
+<td data-label="Observer's judgement">{{if .Judged}}<span class="pill {{if .Judged.Correct}}pill-yes{{else}}pill-no{{end}}" title="{{.Judged.Why}}">{{if .Judged.Correct}}correct{{else}}incorrect{{end}}</span>{{else}}<span class="muted small">not judged</span>{{end}}</td>
 </tr>{{end}}</tbody>
 </table></div>
 {{end}}
 
 {{if .Row.DoneExists}}
 <h2 id="record">Record</h2>
-{{if .RecordError}}<p class="muted small">{{.RecordError}}</p>{{end}}
+{{if .RecordError}}<p class="muted small">{{.RecordError}}</p>{{else}}
 <details class="section" id="self-review"><summary>Agent's self-review</summary>
 <div class="prose">{{.SelfReview}}</div>
 {{if and .HasCard .DisplayedObs.SelfReview.Note}}<p class="muted small">Observer: <span class="pill pill-{{.DisplayedObs.SelfReview.Accurate}}">{{.DisplayedObs.SelfReview.Accurate}}</span> — {{.DisplayedObs.SelfReview.Note}}</p>{{end}}
 </details>
 <details class="section" id="task-prompt"><summary>Task prompt</summary><div class="prose">{{if .TaskPrompt}}{{.TaskPrompt}}{{else}}(not recorded){{end}}</div></details>
+{{end}}
 <details class="section" id="run-meta"><summary>Run metadata &amp; forensic view</summary>
 <dl class="kv">
 <dt>Run</dt><dd><code>{{.Row.RunID}}</code></dd>

@@ -2,6 +2,7 @@ package console
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -178,8 +179,10 @@ func TestHome_TopProblemsFirstFiveLive(t *testing.T) {
 	if strings.Contains(body, "Low problem excluded") {
 		t.Errorf("body shows a sixth, lower-ranked problem:\n%s", body)
 	}
-	if n := strings.Count(body, `href="/problems"`); n < 5 {
-		t.Errorf("body has %d links to /problems, want at least 5:\n%s", n, body)
+	// Item 12 (round-1 follow-up): each row links to its own stable
+	// /problems#<id> fragment, not the bare /problems page.
+	if n := strings.Count(body, `href="/problems#`); n < 5 {
+		t.Errorf("body has %d links to /problems#<id>, want at least 5:\n%s", n, body)
 	}
 	if !strings.Contains(body, "hit 1/1 runs on") {
 		t.Errorf("body missing the \"how often\" phrase:\n%s", body)
@@ -339,6 +342,126 @@ func TestHome_DotsOrderedByPrecedenceWithTooltip(t *testing.T) {
 	for i := 1; i < len(positions); i++ {
 		if positions[i-1] < 0 || positions[i] < 0 || positions[i-1] > positions[i] {
 			t.Errorf("dots not in batch-page precedence order %v, positions=%v\n%s", order, positions, body)
+		}
+	}
+}
+
+// TestPages_HomeBatchesTableShortDatesAndSetChip pins item 6 (round-1
+// follow-up): the Overview batches table shows a short date ("11 Sep
+// 18:31") and the set as a chip, not the long "1 Sep 2026, 00:00 UTC" form.
+func TestPages_HomeBatchesTableShortDatesAndSetChip(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	seedBatch(t, store, "sd1", "off", []runFixture{
+		{runID: "sd1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"sd1-a": "passed"})
+
+	body := doGET(t, h, "/").Body.String()
+	if !strings.Contains(body, "1 Sep 18:31") && !strings.Contains(body, "1 Sep 00:00") {
+		t.Errorf("body missing a short date for the batch's Started column:\n%s", body)
+	}
+	if strings.Contains(body, `data-label="Started">1 Sep 2026,`) {
+		t.Errorf("the batches table's Started cell still shows the long date form:\n%s", body)
+	}
+	if !strings.Contains(body, `data-label="Set"><span class="chip">gate</span>`) {
+		t.Errorf("body does not render the Set column as a chip:\n%s", body)
+	}
+}
+
+// TestPages_HomeTopProblemsLinksOnlyTitleWithStableID pins item 12
+// (round-1 follow-up): "Top problems now" links only the problem's title,
+// to /problems#<a stable id derived from the problem's key> — the rest of
+// the line is muted, not part of the link.
+func TestPages_HomeTopProblemsLinksOnlyTitleWithStableID(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "tp1", "claude-sonnet-5", []runFixture{
+		{runID: "tp1-a", scenario: "a", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"tp1-a": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "tp1-a", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeProblem, Headline: "x",
+		Findings: []observer.Finding{{Severity: "high", Owner: "zcp-tool", Surface: "tool:zerops_deploy/deploy", Title: "always fails this way"}},
+	})
+
+	body := doGET(t, h, "/").Body.String()
+	linkRE := regexp.MustCompile(`<a href="(/problems#[^"]+)"><strong>always fails this way</strong></a>`)
+	m := linkRE.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("body missing a title-only link to /problems#<id>:\n%s", body)
+	}
+
+	problemsBody := doGET(t, h, "/problems").Body.String()
+	frag := strings.TrimPrefix(m[1], "/problems")
+	if !strings.Contains(problemsBody, `id="`+strings.TrimPrefix(frag, "#")+`"`) {
+		t.Errorf("the linked id %q has no matching element on /problems:\n%s", frag, problemsBody)
+	}
+}
+
+// TestPages_HomeTopProblemsOmitsSurfaceChipWhenEmpty pins item 11 (round-1
+// follow-up): a live problem with no surface renders no surface chip.
+func TestPages_HomeTopProblemsOmitsSurfaceChipWhenEmpty(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "ns2", "claude-sonnet-5", []runFixture{
+		{runID: "ns2-a", scenario: "a", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"ns2-a": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat1, RunID: "ns2-a", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeProblem, Headline: "x",
+		Findings: []observer.Finding{{Severity: "high", Owner: "agent", Title: "agent messed up"}},
+	})
+
+	body := doGET(t, h, "/").Body.String()
+	if !strings.Contains(body, "agent messed up") {
+		t.Fatalf("body missing the problem's title:\n%s", body)
+	}
+	if strings.Contains(body, `<code class="chip"></code>`) {
+		t.Errorf("body renders an empty surface chip:\n%s", body)
+	}
+}
+
+// TestPages_HomeBatchesTableSortChipsAboveStackedTable pins item 15
+// (round-1 follow-up): the Overview batches list renders its sort options
+// as a chip row above the table (stacked tables hide thead on phones), like
+// /findings already does.
+func TestPages_HomeBatchesTableSortChipsAboveStackedTable(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	seedBatch(t, store, "sc1", "off", []runFixture{
+		{runID: "sc1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"sc1-a": "passed"})
+
+	body := doGET(t, h, "/").Body.String()
+	if !strings.Contains(body, `<span class="k">Sort</span>`) {
+		t.Errorf("body missing a sort chip row above the batches table:\n%s", body)
+	}
+}
+
+// TestPages_ListPagesUseWideContainer pins item 6's closing note: a list
+// page (Overview, Problems, Findings) may use a wider container
+// (main.wrap.wide, max 1280px) than a single batch/run's prose.
+func TestPages_ListPagesUseWideContainer(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	seedBatch(t, store, "wc1", "off", []runFixture{
+		{runID: "wc1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"wc1-a": "passed"})
+
+	for _, route := range []string{"/", "/problems", "/findings"} {
+		body := doGET(t, h, route).Body.String()
+		if !strings.Contains(body, `<main class="wrap wide">`) {
+			t.Errorf("GET %s: main is not the wide container:\n%s", route, body)
+		}
+	}
+	for _, route := range []string{"/b/wc1", "/r/wc1-a"} {
+		body := doGET(t, h, route).Body.String()
+		if strings.Contains(body, `<main class="wrap wide">`) {
+			t.Errorf("GET %s: a detail page must not use the wide container:\n%s", route, body)
 		}
 	}
 }

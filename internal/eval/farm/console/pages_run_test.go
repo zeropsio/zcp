@@ -772,3 +772,124 @@ func TestPages_RunAssessFormHiddenWhenObserverUnavailable(t *testing.T) {
 		t.Errorf("Assess form rendered while the observer is unavailable:\n%s", body)
 	}
 }
+
+// TestSoftWrapID_InsertsZeroWidthSpaceAfterSeparators pins item 5's own id-
+// wrapping helper: a soft line-break opportunity (U+200B) is inserted after
+// every "/", ".", "-" and "_" so a long check id wraps only at those
+// characters (never mid-word) — a browser treats U+200B as invisible.
+func TestSoftWrapID_InsertsZeroWidthSpaceAfterSeparators(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"svc/a.b_c-d", "svc/\u200ba.\u200bb_\u200bc-\u200bd"},
+		{"plain", "plain"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := softWrapID(c.in); got != c.want {
+			t.Errorf("softWrapID(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestPages_RunFailedChecksTableStacksAndWrapsLongIDs pins item 5 (round-1
+// follow-up): the failed/blocked checks table opts into table.stack with
+// data-label cells so it stacks on phones, and a long check id wraps only
+// at "/ . - _" (a zero-width space after each, never a bare mid-word
+// break).
+func TestPages_RunFailedChecksTableStacksAndWrapsLongIDs(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+
+	seedBatch(t, store, "wr1", "off", []runFixture{
+		{runID: "wr1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", taskResult: "failed", done: true,
+			checks: [][5]string{{"svc/a.b_c-d", "failed", "5", "3", "mcp"}}},
+	}, true, map[string]string{"wr1-a": "failed"})
+
+	body := doGET(t, h, "/r/wr1-a").Body.String()
+	if !strings.Contains(body, `<table class="stack">`) {
+		t.Errorf("failed-checks table is not opted into table.stack:\n%s", body)
+	}
+	if !strings.Contains(body, `data-label="Check"`) || !strings.Contains(body, `data-label="Expected"`) ||
+		!strings.Contains(body, `data-label="Observed"`) || !strings.Contains(body, `data-label="Source"`) {
+		t.Errorf("failed-checks table cells are missing data-label attributes:\n%s", body)
+	}
+	if !strings.Contains(body, "svc/\u200ba.\u200bb_\u200bc-\u200bd") {
+		t.Errorf("check id is not wrapped with zero-width spaces after / . - _:\n%s", body)
+	}
+}
+
+// TestPages_RunAssessGridOmitsEmptyNoteBox pins item 10 (round-1 follow-up):
+// an assessment pill without a note (empty Why/Checks.Why/SelfReview.Note)
+// renders without its empty <p></p>.
+func TestPages_RunAssessGridOmitsEmptyNoteBox(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+
+	seedBatch(t, store, "eg1", "claude-sonnet-5", []runFixture{
+		{runID: "eg1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", taskResult: "passed", done: true},
+	}, true, map[string]string{"eg1-a": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat1, RunID: "eg1-a", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: fixedNow(t)(), Status: "ok", Headline: "fine",
+		Goal: observer.Goal{Reached: "yes", Why: ""}, Checks: observer.Checks{Verdict: "passed", Agree: true},
+		SelfReview: observer.SelfReview{Accurate: "yes", Note: ""},
+	})
+
+	body := doGET(t, h, "/r/eg1-a").Body.String()
+	if strings.Contains(body, "<p></p>") {
+		t.Errorf("body renders an empty <p></p> box in the assess grid:\n%s", body)
+	}
+}
+
+// TestPages_RunRecordErrorHidesEmptyDisclosures pins item 18 (round-1
+// follow-up, live bug /r/gate5-resume-after-compaction): a run whose
+// record could not be read shows the reason once and renders no empty
+// self-review/task-prompt disclosure — run metadata (which needs neither
+// text) still renders.
+func TestPages_RunRecordErrorHidesEmptyDisclosures(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+
+	seedBatch(t, store, "re1", "off", []runFixture{
+		{runID: "re1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", taskResult: "passed", done: true},
+	}, true, map[string]string{"re1-a": "passed"})
+	resultsDir := "runs/re1-a/results/" + testResultsTS + "/a"
+	store.mu.Lock()
+	delete(store.objects, resultsDir+"/task-prompt.txt")
+	store.mu.Unlock()
+
+	body := doGET(t, h, "/r/re1-a").Body.String()
+	if n := strings.Count(body, "record unavailable"); n != 1 {
+		t.Errorf(`"record unavailable" appears %d times, want exactly 1:\n%s`, n, body)
+	}
+	if strings.Contains(body, `id="self-review"`) {
+		t.Errorf("body still renders the empty self-review disclosure:\n%s", body)
+	}
+	if strings.Contains(body, `id="task-prompt"`) {
+		t.Errorf("body still renders the empty task-prompt disclosure:\n%s", body)
+	}
+	if !strings.Contains(body, `id="run-meta"`) {
+		t.Errorf("body dropped run metadata, which needs neither text:\n%s", body)
+	}
+}
+
+// TestPages_RunFailedChecksTableRewritesMonotonicClockText pins item 19: a
+// check's expected/observed text carrying Go's monotonic-clock suffix
+// renders as RFC3339 in the failed-checks table and the Why-this-verdict
+// strip, via the same checkRowView every part of the page shares.
+func TestPages_RunFailedChecksTableRewritesMonotonicClockText(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+
+	seedBatch(t, store, "mc1", "off", []runFixture{
+		{runID: "mc1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", taskResult: "failed", done: true,
+			checks: [][5]string{{"c1", "failed", "2026-09-11 18:33:47.123456789 +0000 UTC m=+0.112197840", "still running", "mcp"}}},
+	}, true, map[string]string{"mc1-a": "failed"})
+
+	body := doGET(t, h, "/r/mc1-a").Body.String()
+	if !strings.Contains(body, "2026-09-11T18:33:47Z") {
+		t.Errorf("body missing the RFC3339-normalized expected text:\n%s", body)
+	}
+	if strings.Contains(body, "m=+0.112197840") {
+		t.Errorf("body still shows the raw monotonic-clock suffix:\n%s", body)
+	}
+}
