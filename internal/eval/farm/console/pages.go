@@ -21,7 +21,7 @@ import (
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
 
-//go:embed assets/layout.html assets/lists.html assets/terms.html assets/batches.html assets/batch.html assets/run.html assets/findings.html
+//go:embed assets/layout.html assets/lists.html assets/terms.html assets/batches.html assets/batch.html assets/run.html assets/findings.html assets/problems.html
 var pagesHTMLSrc embed.FS
 
 // pageFuncs are the plain-string-returning helpers pages.html templates use.

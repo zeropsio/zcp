@@ -180,6 +180,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		s.requireAuth(s.handleBatchPage)(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(p, "/r/"):
 		s.requireAuth(s.handleRunPage)(w, r)
+	case r.Method == http.MethodGet && p == "/problems":
+		s.requireAuth(s.handleProblemsPage)(w, r)
 	case r.Method == http.MethodGet && p == "/findings":
 		s.requireAuth(s.handleFindingsPage)(w, r)
 	case r.Method == http.MethodGet && p == "/terms":
