@@ -6,9 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
 
 // --- test helpers -----------------------------------------------------
@@ -201,6 +204,54 @@ func TestView_ObserverStateObservingAndDisabled(t *testing.T) {
 			t.Errorf("runs.md missing (%s):\n%s", observerStateDisabled, mdBody)
 		}
 	})
+}
+
+// --- TestNewBucketObserveFunc_ForwardsJobSourceToObservation ------------
+
+// TestNewBucketObserveFunc_ForwardsJobSourceToObservation pins the wiring
+// this slice closes: NewBucketObserveFunc's returned ObserveFunc must pass
+// job.Source through to observer.ObserveConfig.Source, so the stored
+// observation records whether a worker tick or a console action produced
+// it (§7.5: "source is worker/action/local — supplied by the caller,
+// never guessed"). No run bundle is seeded (mirrors
+// TestBucketObserve_StoresErrorStatusAndDoesNotRetry, worker_test.go):
+// Observe fails at ResultsDir before any claude call, but obs.Source is
+// set unconditionally before that failure branch (observer.Observe).
+func TestNewBucketObserveFunc_ForwardsJobSourceToObservation(t *testing.T) {
+	bucket := wkNewFakeBucket()
+	fixedNow := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+
+	fn := NewBucketObserveFunc(bucket, BucketObserveConfig{
+		ClaudePath: "claude", // never reached
+		OAuthToken: "test-token",
+		Timeout:    time.Minute,
+		Environ:    os.Environ,
+		Now:        wkFixedNow(fixedNow),
+	})
+
+	for _, job := range []Job{
+		{RunID: "src-worker-run", Batch: "batch1", Model: "claude-sonnet-5", Source: wkSourceWorker},
+		{RunID: "src-action-run", Batch: "batch1", Model: "claude-sonnet-5", Source: sourceAction},
+	} {
+		if err := fn(context.Background(), job); err != nil {
+			t.Fatalf("observe %s: %v", job.RunID, err)
+		}
+		keys, err := bucket.List(context.Background(), "runs/"+job.RunID+"/observer/")
+		if err != nil || len(keys) != 1 {
+			t.Fatalf("list observer keys for %s: %v (keys=%v)", job.RunID, err, keys)
+		}
+		data, err := bucket.Get(context.Background(), keys[0])
+		if err != nil {
+			t.Fatalf("get %s: %v", keys[0], err)
+		}
+		var obs observer.Observation
+		if err := json.Unmarshal(data, &obs); err != nil {
+			t.Fatalf("parse stored observation: %v", err)
+		}
+		if obs.Source != job.Source {
+			t.Errorf("stored obs.Source for %s = %q, want %q (job.Source)", job.RunID, obs.Source, job.Source)
+		}
+	}
 }
 
 // --- TestActions_RunObserveAddsVersion ----------------------------------

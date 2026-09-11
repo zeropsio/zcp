@@ -305,6 +305,7 @@ func NewBucketObserveFunc(bucket BucketReader, cfg BucketObserveConfig) ObserveF
 			Environ:     cfg.Environ,
 			Now:         cfg.Now,
 			SummaryJSON: summaryJSON,
+			Source:      job.Source,
 		})
 
 		store := observer.NewStore(bucket)
