@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
@@ -61,15 +62,26 @@ func newestBuildLabel(runs []ProblemsRun) string {
 }
 
 // problemMemberView adds §8.3's "first found quote with its step link" to
-// one problem's member finding.
+// one problem's member finding, plus (filter-tester finding, round 1) links
+// that narrow /problems to this member's own scenario/batch/build — the
+// open filters worked when typed into the URL but nothing on the page
+// linked to them.
 type problemMemberView struct {
 	FindingRow
-	Quote     string
-	QuoteStep int
+	Quote        string
+	QuoteStep    int
+	ScenarioLink string
+	BatchLink    string
+	BuildLink    string
 }
 
-func newProblemMemberView(f FindingRow) problemMemberView {
-	v := problemMemberView{FindingRow: f}
+func newProblemMemberView(f FindingRow, path string, values url.Values) problemMemberView {
+	v := problemMemberView{
+		FindingRow:   f,
+		ScenarioLink: listURL(path, values, map[string]string{paramScenario: f.Scenario}),
+		BatchLink:    listURL(path, values, map[string]string{paramBatch: f.Batch}),
+		BuildLink:    listURL(path, values, map[string]string{paramBuild: f.Build.Sha12()}),
+	}
 	if len(f.Evidence) > 0 {
 		v.Quote = f.Evidence[0].Quote
 		v.QuoteStep = f.Evidence[0].Step
@@ -78,18 +90,24 @@ func newProblemMemberView(f FindingRow) problemMemberView {
 }
 
 // problemRowView is one /problems table row: Problem plus its members
-// resolved into problemMemberView, and AnchorID (item 12) — the stable id
-// the Overview's Top problems now links into.
+// resolved into problemMemberView, AnchorID (item 12) — the stable id the
+// Overview's Top problems now links into — and SurfaceLink (filter-tester
+// finding, round 1): the row's own surface chip narrows to that surface,
+// "" when the problem carries no surface (item 11's own guard).
 type problemRowView struct {
 	Problem
-	AnchorID string
-	Members  []problemMemberView
+	AnchorID    string
+	SurfaceLink string
+	Members     []problemMemberView
 }
 
-func newProblemRowView(p Problem) problemRowView {
+func newProblemRowView(p Problem, path string, values url.Values) problemRowView {
 	row := problemRowView{Problem: p, AnchorID: problemAnchorID(p.Key)}
+	if p.Surface != "" {
+		row.SurfaceLink = listURL(path, values, map[string]string{paramSurface: p.Surface})
+	}
 	for _, m := range p.Members {
-		row.Members = append(row.Members, newProblemMemberView(m))
+		row.Members = append(row.Members, newProblemMemberView(m, path, values))
 	}
 	return row
 }
@@ -190,12 +208,12 @@ func (s *Server) handleProblemsPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filtered, counts := problemEngine().Apply(all, q, s.now())
+	values := r.URL.Query()
 	rows := make([]problemRowView, len(filtered))
 	for i, p := range filtered {
-		rows[i] = newProblemRowView(p)
+		rows[i] = newProblemRowView(p, "/problems", values)
 	}
 
-	values := r.URL.Query()
 	renderPage(w, "problems", problemsPageData{
 		Meta:        s.pageMeta(r, "Problems", navProblems, false),
 		Nav:         buildListNav("/problems", spec, q, values, counts, problemSortLabels, problemLabeler),

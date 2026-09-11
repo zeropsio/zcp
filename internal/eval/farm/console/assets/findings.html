@@ -12,6 +12,7 @@
 <span>{{.Title}}</span>
 <a class="run-link" href="/r/{{.RunID}}">{{.RunID}}</a>
 </summary>
+<p class="muted small"><a href="{{.ScenarioLink}}">{{.Scenario}}</a> · <a href="{{.BatchLink}}">{{.Batch}}</a> · <a href="{{.BuildLink}}">{{.Build.Label}}</a>{{if .Surface}} · <a href="{{.SurfaceLink}}"><code>{{.Surface}}</code></a>{{end}}</p>
 <p>{{.What}}</p>
 {{range .Evidence}}<div class="quote">
 <p class="quote-ref"><span class="{{if .Verified}}evidence-verified{{else}}evidence-unverified{{end}}">{{verifiedMark .Verified}}</span>{{if .StepLink}} <a href="{{.StepLink}}">step</a>{{end}}</p>
