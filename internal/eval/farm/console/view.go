@@ -1,0 +1,362 @@
+package console
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/zeropsio/zcp/internal/eval"
+	"github.com/zeropsio/zcp/internal/eval/farm"
+	"github.com/zeropsio/zcp/internal/eval/farm/observer"
+)
+
+// ErrBatchNotFound and ErrRunNotFound are returned by the read model when
+// an otherwise grammar-valid id names nothing in the bucket.
+var (
+	ErrBatchNotFound = errors.New("console: batch not found")
+	ErrRunNotFound   = errors.New("console: run not found")
+)
+
+func manifestKey(batch string) string { return "batches/" + batch + "/manifest.json" }
+func summaryKey(batch string) string  { return "batches/" + batch + "/summary.json" }
+func doneKey(runID string) string     { return "runs/" + runID + "/done.json" }
+
+// FailedCheck is one failed/blocked verification.json row (§8.4 FM-52's
+// run-detail failedChecks field).
+type FailedCheck struct {
+	ID       string `json:"id"`
+	Result   string `json:"result"`
+	Expected string `json:"expected"`
+	Observed string `json:"observed"`
+	Source   string `json:"source"`
+}
+
+// RunRow is the console's fully-resolved read model for one run — the
+// superset GET /api/runs.md (light) and GET /api/runs/<runId>.md (full)
+// both narrow down from (§8.4 FM-52). Verdict is "running" for a run with
+// no done.json (§7.5, §8.4: "no verdict"); ObserverState is one of
+// observed|observing|not observed|observer off|observer disabled (§8.4) —
+// S3 never produces "observing" (that needs S5's in-memory worker queue).
+type RunRow struct {
+	RunID           string
+	Batch           string
+	Scenario        string
+	Verdict         string
+	StartedAt       time.Time
+	DurationSec     float64
+	CostUsd         float64
+	CandidateSha256 string
+	EvaluatorSha256 string
+	DoneExists      bool
+	ObserverState   string
+	Observation     *observer.Observation
+	OlderObsIDs     []string
+	FailedChecks    []FailedCheck
+
+	metaTaskResult string
+}
+
+// loadManifest reads and parses batches/<batch>/manifest.json, after
+// checking batch against the FM-47 grammar (no key is built, no store call
+// happens for an invalid id).
+func loadManifest(ctx context.Context, store observer.ObjectStore, batch string) (farm.BatchManifest, error) {
+	if !farm.ValidBatchID(batch) {
+		return farm.BatchManifest{}, fmt.Errorf("%w: %q", ErrBatchNotFound, batch)
+	}
+	exists, _, err := store.Head(ctx, manifestKey(batch))
+	if err != nil {
+		return farm.BatchManifest{}, fmt.Errorf("console: head manifest: %w", err)
+	}
+	if !exists {
+		return farm.BatchManifest{}, fmt.Errorf("%w: %s", ErrBatchNotFound, batch)
+	}
+	body, err := store.Get(ctx, manifestKey(batch))
+	if err != nil {
+		return farm.BatchManifest{}, fmt.Errorf("console: get manifest: %w", err)
+	}
+	var m farm.BatchManifest
+	if err := json.Unmarshal(body, &m); err != nil {
+		return farm.BatchManifest{}, fmt.Errorf("console: parse manifest: %w", err)
+	}
+	return m, nil
+}
+
+// loadSummary reads batches/<batch>/summary.json when it exists; found is
+// false (with a nil error) when the batch has not settled yet (§1.4: "a
+// batch is running exactly when its manifest exists and its summary does
+// not").
+func loadSummary(ctx context.Context, store observer.ObjectStore, batch string) (summary farm.BatchSummary, found bool, err error) {
+	exists, _, err := store.Head(ctx, summaryKey(batch))
+	if err != nil {
+		return farm.BatchSummary{}, false, fmt.Errorf("console: head summary: %w", err)
+	}
+	if !exists {
+		return farm.BatchSummary{}, false, nil
+	}
+	body, err := store.Get(ctx, summaryKey(batch))
+	if err != nil {
+		return farm.BatchSummary{}, false, fmt.Errorf("console: get summary: %w", err)
+	}
+	var s farm.BatchSummary
+	if err := json.Unmarshal(body, &s); err != nil {
+		return farm.BatchSummary{}, false, fmt.Errorf("console: parse summary: %w", err)
+	}
+	return s, true, nil
+}
+
+// listBatchIDs enumerates every batch with a manifest.json, for the
+// placeholder "/" batch-link list (§8.3 FM-51, S4) and for scanning a
+// since-window across every batch (§8.4).
+func listBatchIDs(ctx context.Context, store observer.ObjectStore) ([]string, error) {
+	keys, err := store.List(ctx, "batches/")
+	if err != nil {
+		return nil, fmt.Errorf("console: list batches: %w", err)
+	}
+	seen := make(map[string]bool)
+	var ids []string
+	const suffix = "/manifest.json"
+	for _, k := range keys {
+		rest, ok := strings.CutSuffix(k, suffix)
+		if !ok {
+			continue
+		}
+		id := strings.TrimPrefix(rest, "batches/")
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+// §8.4 FM-52's observerState vocabulary, minus "observing" — that value
+// requires S5's in-memory worker queue, which this slice does not build,
+// so resolveObserverState never produces it.
+const (
+	observerStateObserved    = "observed"
+	observerStateNotObserved = "not observed"
+	observerStateOff         = "observer off"
+	observerStateDisabled    = "observer disabled"
+
+	// ObserverOff is the shared "off" sentinel: farm.BatchManifest.Observer's
+	// per-batch value (§1.4, §7.7) and ZCP_FARM_OBSERVER's console-wide kill
+	// switch (§8.1, §8.5) both use this exact string.
+	ObserverOff = "off"
+)
+
+// resolveObserverState implements §8.4's observerState vocabulary from
+// statically-known bucket state.
+func resolveObserverState(consoleDisabled bool, manifestObserver string, doneExists, hasObservation bool) string {
+	if !doneExists {
+		return observerStateNotObserved
+	}
+	if consoleDisabled {
+		return observerStateDisabled
+	}
+	if manifestObserver == "" || manifestObserver == ObserverOff {
+		return observerStateOff
+	}
+	if hasObservation {
+		return observerStateObserved
+	}
+	return observerStateNotObserved
+}
+
+// buildRunRow resolves one run's full read model (RunRow) from the bucket:
+// done.json existence, meta.json/verification.json (via the observer
+// package's Bundle readers, §7.2), the batch summary's row (§7.5's verdict
+// rule), and the current + older observations (§7.5, §7.6).
+func buildRunRow(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, batchID string, run farm.ManifestRun, manifestCreatedAt time.Time, manifestObserver string, summary farm.BatchSummary, summaryFound bool) (RunRow, error) {
+	row := RunRow{RunID: run.RunID, Batch: batchID, Scenario: run.Scenario, StartedAt: manifestCreatedAt}
+
+	doneExists, _, err := store.Head(ctx, doneKey(run.RunID))
+	if err != nil {
+		return RunRow{}, fmt.Errorf("console: head done.json: %w", err)
+	}
+	row.DoneExists = doneExists
+	if !doneExists {
+		row.Verdict = "running"
+		row.ObserverState = observerStateNotObserved
+		return row, nil
+	}
+
+	bundle, err := observer.NewSinkBundle(ctx, store, run.RunID)
+	if err != nil {
+		return RunRow{}, err
+	}
+	resultsDir, rdErr := observer.ResultsDir(bundle)
+
+	var verification eval.VerificationDocument
+	if rdErr == nil {
+		if m, mErr := observer.LoadMeta(bundle, resultsDir); mErr == nil {
+			if !m.StartedAt.IsZero() {
+				row.StartedAt = m.StartedAt
+			}
+			row.DurationSec = time.Duration(m.Duration).Seconds()
+			if m.Usage != nil {
+				row.CostUsd = m.Usage.TotalCostUsd
+			}
+			if m.Task != nil {
+				row.metaTaskResult = string(m.Task.Result)
+			}
+			row.CandidateSha256 = m.CandidateSha256
+			row.EvaluatorSha256 = m.EvaluatorSha256
+		}
+		if v, vErr := observer.LoadVerification(bundle, resultsDir); vErr == nil {
+			verification = v
+		}
+	}
+
+	summaryResult, found := "", false
+	if summaryFound {
+		for _, r := range summary.Runs {
+			if r.RunID == run.RunID {
+				summaryResult, found = r.Result, true
+				break
+			}
+		}
+	}
+	row.Verdict = observer.ResolveVerdict(summaryResult, found, row.metaTaskResult)
+
+	for _, c := range verification.Checks {
+		if c.Result == eval.CheckFailed || c.Result == eval.CheckBlocked {
+			row.FailedChecks = append(row.FailedChecks, FailedCheck{
+				ID: c.ID, Result: string(c.Result), Expected: c.Expected, Observed: c.Observed, Source: c.Source,
+			})
+		}
+	}
+
+	obsStore := observer.NewStore(store)
+	obsIDs, err := obsStore.ListObservations(ctx, run.RunID)
+	if err != nil {
+		return RunRow{}, fmt.Errorf("console: list observations: %w", err)
+	}
+	if len(obsIDs) > 0 {
+		row.OlderObsIDs = obsIDs[:len(obsIDs)-1]
+		cur, err := obsStore.GetObservation(ctx, run.RunID, obsIDs[len(obsIDs)-1])
+		if err != nil {
+			return RunRow{}, fmt.Errorf("console: get current observation: %w", err)
+		}
+		row.Observation = &cur
+	}
+
+	row.ObserverState = resolveObserverState(consoleObserverDisabled, manifestObserver, doneExists, row.Observation != nil)
+	return row, nil
+}
+
+// findRunBatch locates the batch owning runID by scanning every batch's
+// manifest for a matching run entry (the bucket layout carries no reverse
+// index, §1.1) — runID is checked against the FM-47 grammar before any
+// store call.
+func findRunBatch(ctx context.Context, store observer.ObjectStore, runID string) (batchID string, run farm.ManifestRun, manifest farm.BatchManifest, err error) {
+	if !farm.ValidRunID(runID) {
+		return "", farm.ManifestRun{}, farm.BatchManifest{}, fmt.Errorf("%w: %q", ErrRunNotFound, runID)
+	}
+	batches, err := listBatchIDs(ctx, store)
+	if err != nil {
+		return "", farm.ManifestRun{}, farm.BatchManifest{}, err
+	}
+	for _, b := range batches {
+		m, err := loadManifest(ctx, store, b)
+		if err != nil {
+			continue
+		}
+		for _, r := range m.Runs {
+			if r.RunID == runID {
+				return b, r, m, nil
+			}
+		}
+	}
+	return "", farm.ManifestRun{}, farm.BatchManifest{}, fmt.Errorf("%w: %q", ErrRunNotFound, runID)
+}
+
+// loadRunRow resolves runID's full RunRow by first locating its batch
+// (findRunBatch) and then building the row (buildRunRow).
+func loadRunRow(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, runID string) (RunRow, error) {
+	batchID, run, manifest, err := findRunBatch(ctx, store, runID)
+	if err != nil {
+		return RunRow{}, err
+	}
+	createdAt, _ := time.Parse(time.RFC3339, manifest.CreatedAt)
+	summary, summaryFound, err := loadSummary(ctx, store, batchID)
+	if err != nil {
+		return RunRow{}, err
+	}
+	return buildRunRow(ctx, store, consoleObserverDisabled, batchID, run, createdAt, manifest.Observer, summary, summaryFound)
+}
+
+// evidenceSteps returns the sorted, deduplicated step numbers cited by
+// obs's findings' evidence (excluding the step-0 CHECKS citation) — §8.4's
+// run-detail "the step ranges its evidence cites".
+func evidenceSteps(obs *observer.Observation) []int {
+	if obs == nil {
+		return nil
+	}
+	set := make(map[int]bool)
+	for _, f := range obs.Findings {
+		for _, e := range f.Evidence {
+			if e.Step > 0 {
+				set[e.Step] = true
+			}
+		}
+	}
+	out := make([]int, 0, len(set))
+	for n := range set {
+		out = append(out, n)
+	}
+	sort.Ints(out)
+	return out
+}
+
+// batchWindowRows resolves every run row of one batch — used both by
+// GET /api/runs.md?batch=<id> and by the since-window scan across batches.
+func batchWindowRows(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, batchID string) ([]RunRow, error) {
+	manifest, err := loadManifest(ctx, store, batchID)
+	if err != nil {
+		return nil, err
+	}
+	createdAt, _ := time.Parse(time.RFC3339, manifest.CreatedAt)
+	summary, summaryFound, err := loadSummary(ctx, store, batchID)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]RunRow, 0, len(manifest.Runs))
+	for _, run := range manifest.Runs {
+		row, err := buildRunRow(ctx, store, consoleObserverDisabled, batchID, run, createdAt, manifest.Observer, summary, summaryFound)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+// rowsSinceWindow collects every run row across every batch whose resolved
+// StartedAt falls within [now-window, now] (§8.4).
+func rowsSinceWindow(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, window time.Duration, now time.Time) ([]RunRow, error) {
+	batches, err := listBatchIDs(ctx, store)
+	if err != nil {
+		return nil, err
+	}
+	since := now.Add(-window)
+	var out []RunRow
+	for _, b := range batches {
+		rows, err := batchWindowRows(ctx, store, consoleObserverDisabled, b)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			if row.StartedAt.Before(since) || row.StartedAt.After(now) {
+				continue
+			}
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}

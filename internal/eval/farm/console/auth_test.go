@@ -1,0 +1,297 @@
+package console
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+)
+
+const testToken = "farm-console-token-0123456789abcdef"
+
+// TestConsole_NoAuth_APIIs401AndHTMLRedirectsToLogin pins FM-50: "A request
+// without auth gets a 303 to /login (HTML routes) or 401 (/api/*)."
+// Independent oracle: the exact statuses are the spec's own words.
+func TestConsole_NoAuth_APIIs401AndHTMLRedirectsToLogin(t *testing.T) {
+	srv, _, _ := testServer(t)
+	h := srv.Handler()
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/runs.md", nil))
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("GET /api/runs.md unauthenticated: got %d, want 401", rr.Code)
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rr.Code != http.StatusSeeOther {
+		t.Errorf("GET / unauthenticated: got %d, want 303", rr.Code)
+	}
+	if loc := rr.Header().Get("Location"); loc != "/login" {
+		t.Errorf("GET / unauthenticated Location: got %q, want /login", loc)
+	}
+}
+
+// TestConsole_OpenRoutesNeedNoAuth pins FM-50's open-route list: GET
+// /login, POST /login, GET /healthz, GET /static/*.
+func TestConsole_OpenRoutesNeedNoAuth(t *testing.T) {
+	srv, _, _ := testServer(t)
+	h := srv.Handler()
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/login", nil))
+	if rr.Code != http.StatusOK {
+		t.Errorf("GET /login: got %d, want 200", rr.Code)
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rr.Code != http.StatusOK {
+		t.Errorf("GET /healthz: got %d, want 200", rr.Code)
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/static/style.css", nil))
+	if rr.Code != http.StatusOK {
+		t.Errorf("GET /static/style.css: got %d, want 200", rr.Code)
+	}
+
+	// A POST /login with a wrong token is still an open route (it must not
+	// require prior auth to reach the handler at all) — it redirects back
+	// to /login rather than 401/303-to-login-loop.
+	rr = httptest.NewRecorder()
+	form := url.Values{"token": {"wrong"}}
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusSeeOther {
+		t.Errorf("POST /login (open route, wrong token): got %d, want 303", rr.Code)
+	}
+}
+
+// TestConsole_BearerTokenAuthorizes pins FM-50's bearer path for both an
+// API route and an HTML route.
+func TestConsole_BearerTokenAuthorizes(t *testing.T) {
+	srv, _, _ := testServer(t)
+	h := srv.Handler()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/runs.md", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("GET /api/runs.md with bearer: got %d, want 200, body=%s", rr.Code, rr.Body.String())
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("GET / with bearer: got %d, want 200", rr.Code)
+	}
+}
+
+// TestConsole_LoginSetsSecureStrictHttpOnlyCookie pins FM-50's exact cookie
+// attributes. Independent oracle: literal attribute values quoted straight
+// from the spec, not derived from auth.go's own constants.
+func TestConsole_LoginSetsSecureStrictHttpOnlyCookie(t *testing.T) {
+	srv, _, _ := testServer(t)
+	h := srv.Handler()
+
+	rr := httptest.NewRecorder()
+	form := url.Values{"token": {testToken}}
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("POST /login correct token: got %d, want 303, body=%s", rr.Code, rr.Body.String())
+	}
+	resp := rr.Result()
+	var cookie *http.Cookie
+	for _, c := range resp.Cookies() {
+		if c.Name == cookieName {
+			cookie = c
+		}
+	}
+	if cookie == nil {
+		t.Fatal("no farm_session cookie set")
+	}
+	if !cookie.HttpOnly {
+		t.Error("cookie not HttpOnly")
+	}
+	if !cookie.Secure {
+		t.Error("cookie not Secure")
+	}
+	if cookie.SameSite != http.SameSiteStrictMode {
+		t.Errorf("cookie SameSite = %v, want Strict", cookie.SameSite)
+	}
+	if cookie.Path != "/" {
+		t.Errorf("cookie Path = %q, want /", cookie.Path)
+	}
+	wantMaxAge := int((30 * 24 * time.Hour).Seconds())
+	if cookie.MaxAge != wantMaxAge {
+		t.Errorf("cookie MaxAge = %d, want %d (30 days)", cookie.MaxAge, wantMaxAge)
+	}
+}
+
+// TestConsole_WrongTokenLoginRejectedAndDelayed pins FM-50: every failed
+// login is delayed (no sooner than the configured floor — 1s in
+// production), and there is no global lockout: "a correct login right
+// after 20 failures succeeds."
+func TestConsole_WrongTokenLoginRejectedAndDelayed(t *testing.T) {
+	srv, _, sleeps := testServer(t)
+	h := srv.Handler()
+
+	for i := range 20 {
+		rr := httptest.NewRecorder()
+		form := url.Values{"token": {"wrong-token"}}
+		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("failure %d: got %d, want 303", i, rr.Code)
+		}
+		if len(rr.Result().Cookies()) != 0 {
+			t.Fatalf("failure %d: a cookie was set on a wrong-token login", i)
+		}
+	}
+	if len(*sleeps) != 20 {
+		t.Fatalf("got %d delayed failures, want 20 (no lockout short-circuit)", len(*sleeps))
+	}
+	for i, d := range *sleeps {
+		if d < time.Millisecond {
+			t.Errorf("failure %d: delay %v below the configured floor", i, d)
+		}
+	}
+
+	// The 21st attempt, with the correct token, still succeeds.
+	rr := httptest.NewRecorder()
+	form := url.Values{"token": {testToken}}
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != "/" {
+		t.Fatalf("correct login after 20 failures: got %d Location=%q, want 303 to /", rr.Code, rr.Header().Get("Location"))
+	}
+	if len(rr.Result().Cookies()) == 0 {
+		t.Error("correct login after 20 failures set no cookie")
+	}
+}
+
+// TestConsole_BearerMismatchDelayedNoFastPath pins FM-50's "both compared
+// in constant time" for the bearer header too: a wrong bearer of any
+// length still incurs the delay — no short-circuit for an
+// obviously-wrong-length header.
+func TestConsole_BearerMismatchDelayedNoFastPath(t *testing.T) {
+	srv, _, sleeps := testServer(t)
+	h := srv.Handler()
+
+	wrongTokens := []string{"", "x", "way-too-short", strings.Repeat("z", 500)}
+	for _, tok := range wrongTokens {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/runs.md", nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Errorf("bearer %q: got %d, want 401", tok, rr.Code)
+		}
+	}
+	if len(*sleeps) != len(wrongTokens) {
+		t.Fatalf("got %d delayed bearer failures, want %d (one per attempt, regardless of length)", len(*sleeps), len(wrongTokens))
+	}
+}
+
+// TestConsole_TokenRotationInvalidatesCookie pins FM-50: "rotating the
+// token ends every session" — the cookie's HMAC is keyed on the console
+// token, so a session made under the old token fails verification under
+// the new one.
+func TestConsole_TokenRotationInvalidatesCookie(t *testing.T) {
+	store := newFakeStore()
+	now := fixedNow(t)
+
+	oldSrv := NewServer(Config{Store: store, Token: "old-token-0123456789abcdef", Now: now})
+	rr := httptest.NewRecorder()
+	form := url.Values{"token": {"old-token-0123456789abcdef"}}
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	oldSrv.Handler().ServeHTTP(rr, req)
+	var cookie *http.Cookie
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == cookieName {
+			cookie = c
+		}
+	}
+	if cookie == nil {
+		t.Fatal("no session cookie from the old-token login")
+	}
+
+	newSrv := NewServer(Config{Store: store, Token: "new-token-fedcba9876543210", Now: now})
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(cookie)
+	newSrv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != "/login" {
+		t.Errorf("stale cookie after rotation: got %d Location=%q, want 303 to /login", rr.Code, rr.Header().Get("Location"))
+	}
+}
+
+// TestConsole_ExpiredCookieRejected pins FM-50's 30-day cookie expiry.
+func TestConsole_ExpiredCookieRejected(t *testing.T) {
+	now := fixedNow(t)
+	srv := NewServer(Config{Store: newFakeStore(), Token: testToken, Now: now})
+
+	expired := sessionCookieValue(testToken, now().Add(-time.Minute))
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: cookieName, Value: expired})
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != "/login" {
+		t.Errorf("expired cookie: got %d Location=%q, want 303 to /login", rr.Code, rr.Header().Get("Location"))
+	}
+}
+
+// TestConsole_SecurityHeadersOnEveryResponse pins FM-50's exact header set
+// on every response, including a 401 and a 404. Independent oracle: the
+// header values are copied verbatim from the spec text.
+func TestConsole_SecurityHeadersOnEveryResponse(t *testing.T) {
+	srv, _, _ := testServer(t)
+	h := srv.Handler()
+
+	routes := []struct {
+		name   string
+		method string
+		path   string
+		bearer string
+	}{
+		{"open login page", http.MethodGet, "/login", ""},
+		{"unauthenticated api (401)", http.MethodGet, "/api/runs.md", ""},
+		{"unknown route (404)", http.MethodGet, "/nope", ""},
+		{"authenticated root", http.MethodGet, "/", testToken},
+	}
+	for _, rt := range routes {
+		t.Run(rt.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(rt.method, rt.path, nil)
+			if rt.bearer != "" {
+				req.Header.Set("Authorization", "Bearer "+rt.bearer)
+			}
+			h.ServeHTTP(rr, req)
+
+			want := map[string]string{
+				"Content-Security-Policy": "default-src 'none'; style-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+				"X-Content-Type-Options":  "nosniff",
+				"Referrer-Policy":         "no-referrer",
+				"Cache-Control":           "no-store",
+			}
+			for k, v := range want {
+				if got := rr.Header().Get(k); got != v {
+					t.Errorf("%s: header %s = %q, want %q", rt.name, k, got, v)
+				}
+			}
+		})
+	}
+}
