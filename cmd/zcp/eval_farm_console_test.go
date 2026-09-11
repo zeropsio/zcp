@@ -1,9 +1,11 @@
 package main
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestFarmConsole_RefusesWithoutConsoleToken pins docs/spec-eval-farm.md
@@ -54,6 +56,23 @@ func TestConsole_AnthropicAPIKeyEnvDisablesWorker(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	if anthropicAPIKeySet() {
 		t.Error("anthropicAPIKeySet() = true with ANTHROPIC_API_KEY unset, want false")
+	}
+}
+
+// TestNewConsoleHTTPServer_HasTimeouts pins item 8: the console's
+// http.Server bounds ReadTimeout and IdleTimeout next to its existing
+// ReadHeaderTimeout — an unbounded read/idle timeout lets a slow or idle
+// client tie up a connection indefinitely.
+func TestNewConsoleHTTPServer_HasTimeouts(t *testing.T) {
+	srv := newConsoleHTTPServer(http.NotFoundHandler())
+	if srv.ReadHeaderTimeout != 10*time.Second {
+		t.Errorf("ReadHeaderTimeout = %v, want 10s", srv.ReadHeaderTimeout)
+	}
+	if srv.ReadTimeout != 30*time.Second {
+		t.Errorf("ReadTimeout = %v, want 30s", srv.ReadTimeout)
+	}
+	if srv.IdleTimeout != 120*time.Second {
+		t.Errorf("IdleTimeout = %v, want 120s", srv.IdleTimeout)
 	}
 }
 
