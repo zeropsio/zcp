@@ -360,3 +360,42 @@ func TestPages_HostileTextEscaped(t *testing.T) {
 		t.Errorf("body missing the escaped form of the hostile literal:\n%s", body)
 	}
 }
+
+// TestPages_StylesheetLinksResolve pins §8.2/§8.3: every page's stylesheet
+// link resolves to a served text/css file — found live when every page but
+// /login linked a stylesheet the static route never embedded (404, unstyled
+// pages) and no test fetched it.
+func TestPages_StylesheetLinksResolve(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	seedBatch(t, store, "ss1", "claude-sonnet-5", []runFixture{
+		{runID: "ss1-scn", scenario: "scn", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"ss1-scn": "passed"})
+
+	linkRE := regexp.MustCompile(`<link rel="stylesheet" href="([^"]+)"`)
+	for _, route := range []string{"/login", "/", "/b/ss1", "/r/ss1-scn", "/findings"} {
+		t.Run(route, func(t *testing.T) {
+			page := doGET(t, h, route)
+			if page.Code != http.StatusOK {
+				t.Fatalf("GET %s: got %d, want 200", route, page.Code)
+			}
+			links := linkRE.FindAllStringSubmatch(page.Body.String(), -1)
+			if len(links) == 0 {
+				t.Fatalf("GET %s: no stylesheet link", route)
+			}
+			for _, l := range links {
+				css := httptest.NewRecorder()
+				h.ServeHTTP(css, httptest.NewRequest(http.MethodGet, l[1], nil))
+				if css.Code != http.StatusOK {
+					t.Errorf("%s links %s: got %d, want 200", route, l[1], css.Code)
+				}
+				if ct := css.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/css") {
+					t.Errorf("%s links %s: Content-Type %q, want text/css", route, l[1], ct)
+				}
+				if !strings.Contains(css.Body.String(), "prefers-color-scheme: dark") {
+					t.Errorf("%s links %s: stylesheet has no dark palette", route, l[1])
+				}
+			}
+		})
+	}
+}

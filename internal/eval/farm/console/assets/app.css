@@ -15,6 +15,7 @@
   --fg-failed: #a3231f;
   --fg-blocked: #8a6a10;
   --fg-running: #2547a8;
+  --error: #b00020;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -34,6 +35,7 @@
     --fg-failed: #ff9b96;
     --fg-blocked: #f0c85f;
     --fg-running: #a9c2ff;
+    --error: #ff6b6b;
   }
 }
 
@@ -216,4 +218,23 @@ button { cursor: pointer; }
 @media (max-width: 400px) {
   body { padding: 12px; }
   th, td { padding: 4px 6px; }
+}
+
+/* login page */
+main.login { max-width: 360px; margin: 10vh auto; }
+main.login h1 { font-size: 1.25rem; }
+main.login form { display: flex; flex-direction: column; gap: 8px; }
+main.login label { font-size: 0.875rem; }
+main.login input {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  width: 100%;
+}
+main.login .error { color: var(--error); }
+
+@media (max-width: 400px) {
+  main.login { margin: 4vh auto; }
 }

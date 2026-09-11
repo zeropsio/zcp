@@ -1,11 +1,10 @@
 package console
 
 import (
-	"embed"
+	_ "embed" // assets/login.html, assets/app.css
 	"encoding/json"
 	"fmt"
 	"html/template"
-	"io/fs"
 	"net/http"
 	"os"
 	"strings"
@@ -20,8 +19,11 @@ var loginHTMLSrc string
 
 var loginTemplate = template.Must(template.New("login").Parse(loginHTMLSrc))
 
-//go:embed assets/style.css
-var assetsFS embed.FS
+// appCSS is the console's one stylesheet, shared by the login page and
+// every page (§8.2: served from the console itself, no external asset).
+//
+//go:embed assets/app.css
+var appCSS []byte
 
 // Config configures a Server.
 type Config struct {
@@ -76,21 +78,15 @@ type Config struct {
 
 // Server is the farm console's HTTP server (docs/spec-eval-farm.md §8).
 type Server struct {
-	cfg    Config
-	files  *fileCache
-	static http.Handler
+	cfg   Config
+	files *fileCache
 }
 
 // NewServer builds a Server from cfg.
 func NewServer(cfg Config) *Server {
-	staticFS, err := fs.Sub(assetsFS, "assets")
-	if err != nil {
-		panic(fmt.Sprintf("console: bad embedded assets: %v", err)) // unreachable: assets/ is compiled in
-	}
 	return &Server{
-		cfg:    cfg,
-		files:  newFileCache(),
-		static: http.StripPrefix("/static/", http.FileServerFS(staticFS)),
+		cfg:   cfg,
+		files: newFileCache(),
 	}
 }
 
@@ -124,8 +120,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		s.handleLoginPOST(w, r)
 	case r.Method == http.MethodGet && p == "/healthz":
 		handleHealthz(w, r)
-	case r.Method == http.MethodGet && strings.HasPrefix(p, "/static/"):
-		s.static.ServeHTTP(w, r)
+	case r.Method == http.MethodGet && p == "/static/app.css":
+		serveAppCSS(w)
 	case r.Method == http.MethodGet && p == "/":
 		s.requireAuth(s.handleRoot)(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(p, "/b/"):
@@ -161,6 +157,12 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("Cache-Control", "no-store")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// serveAppCSS answers GET /static/app.css, the one open static route (§8.2).
+func serveAppCSS(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	_, _ = w.Write(appCSS)
 }
 
 func handleHealthz(w http.ResponseWriter, _ *http.Request) {

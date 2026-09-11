@@ -53,9 +53,9 @@ func TestConsole_OpenRoutesNeedNoAuth(t *testing.T) {
 	}
 
 	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/static/style.css", nil))
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/static/app.css", nil))
 	if rr.Code != http.StatusOK {
-		t.Errorf("GET /static/style.css: got %d, want 200", rr.Code)
+		t.Errorf("GET /static/app.css: got %d, want 200", rr.Code)
 	}
 
 	// A POST /login with a wrong token is still an open route (it must not
