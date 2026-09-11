@@ -1,0 +1,128 @@
+{{define "run"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Farm console — {{.Row.RunID}}</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main>
+<nav class="crumbs"><a href="/">Batches</a> / <a href="/b/{{.Row.Batch}}">{{.Row.Batch}}</a> / {{.Row.RunID}}</nav>
+<h1>{{.Row.RunID}}</h1>
+
+<section id="header">
+<ul class="meta-list">
+<li>scenario: {{.Row.Scenario}}</li>
+<li>verdict: <span class="{{verdictClass .Row.Verdict}}">{{.Row.Verdict}}</span></li>
+<li>started: {{fmtTime .Row.StartedAt}}</li>
+<li>duration: <span class="duration">{{fmtDuration .Row.DurationSec}}</span></li>
+<li>cost: <span class="cost">{{fmtCost .Row.CostUsd}}</span></li>
+<li>candidate: <code>{{.Row.CandidateSha256}}</code></li>
+<li>evaluator: <code>{{.Row.EvaluatorSha256}}</code></li>
+</ul>
+</section>
+
+<section id="observation">
+<h2>Observer</h2>
+{{if .Row.Observation}}
+<p class="headline">{{.Row.Observation.Headline}}</p>
+<ul class="meta-list">
+<li>obs: {{.Row.Observation.ObsID}} ({{.Row.Observation.Model}}, {{fmtTime .Row.Observation.CreatedAt}})</li>
+<li>goal reached: {{.Row.Observation.Goal.Reached}} — {{.Row.Observation.Goal.Why}}</li>
+<li>checks: <span class="checks-verdict">{{.Row.Observation.Checks.Verdict}}</span>, agree={{.Row.Observation.Checks.Agree}} — {{.Row.Observation.Checks.Why}}</li>
+<li>self-review judged: {{.Row.Observation.SelfReview.Accurate}} — {{.Row.Observation.SelfReview.Note}}</li>
+<li>unverified quotes: {{.UnverifiedQuotes}}</li>
+</ul>
+<h3>Findings</h3>
+{{range .Row.Observation.Findings}}<div class="finding">
+<p><span class="{{severityClass .Severity}}">{{.Severity}}</span> · {{.Owner}} · <strong>{{.Title}}</strong></p>
+<p>{{.What}}</p>
+<ul class="meta-list">
+{{range .Evidence}}<li>evidence: <a href="#{{stepAnchor .Step}}">#{{.Step}}</a> <span class="evidence-mark {{if .Verified}}evidence-verified{{else}}evidence-unverified{{end}}">{{verifiedMark .Verified}}</span> — “{{.Quote}}”</li>
+{{end}}
+</ul>
+<p>look at: {{.LookAt}}</p>
+<p>fix: {{.Fix}}</p>
+</div>
+{{else}}<p>(no findings)</p>
+{{end}}
+{{else}}
+<p>{{.Row.ObserverState}}</p>
+{{end}}
+
+<form class="observe-form" method="post" action="/r/{{.Row.RunID}}/observe">
+<label for="run-model">Re-observe</label>
+<select id="run-model" name="model">
+{{range .ModelOptions}}<option value="{{.}}">{{.}}</option>{{end}}
+</select>
+<button type="submit">Observe</button>
+</form>
+
+<h3>Older observation versions</h3>
+{{if .OlderObservations}}<ul class="meta-list">
+{{range .OlderObservations}}<li>{{.ObsID}} ({{.Model}}, {{fmtTime .CreatedAt}}) — {{.Status}} — {{.Headline}}</li>
+{{end}}
+</ul>
+{{else}}<p>(none)</p>
+{{end}}
+</section>
+
+<section id="failed-checks">
+<h2>Failed / blocked checks</h2>
+{{if .Row.FailedChecks}}<table>
+<thead><tr><th>id</th><th>result</th><th>expected</th><th>observed</th><th>source</th></tr></thead>
+<tbody>
+{{range .Row.FailedChecks}}<tr>
+<td><code>{{.ID}}</code></td>
+<td>{{.Result}}</td>
+<td>{{.Expected}}</td>
+<td>{{.Observed}}</td>
+<td>{{.Source}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}<p>(none)</p>
+{{end}}
+</section>
+
+<section id="self-review">
+<h2>Self-review</h2>
+<pre>{{.SelfReview}}</pre>
+</section>
+
+<section id="task-prompt">
+<h2>Task prompt</h2>
+<pre>{{.TaskPrompt}}</pre>
+</section>
+
+<section id="steps">
+<h2>Steps</h2>
+{{range .Steps}}<details id="{{stepAnchor .N}}">
+<summary>#{{.N}} {{.Kind}}{{if eq .Kind "tool"}} {{.ToolName}}{{end}}</summary>
+<div class="step-body">
+{{if eq .Kind "tool"}}
+<p>input:</p>
+<pre>{{.ToolInputJSON}}</pre>
+<p>result{{if .ToolIsError}} (error){{end}}:</p>
+<pre>{{.ToolResultText}}</pre>
+{{else}}
+<pre>{{.Text}}</pre>
+{{end}}
+</div>
+</details>
+{{else}}<p>(no steps recorded)</p>
+{{end}}
+</section>
+
+<section id="forensic">
+<h2>Local forensic command</h2>
+<pre class="forensic-command">zcp eval farm pull {{.Row.RunID}} --out &lt;dir&gt;
+zcp capture ui &lt;dir&gt;/{{.Row.RunID}}/capture</pre>
+</section>
+
+</main>
+</body>
+</html>
+{{end}}

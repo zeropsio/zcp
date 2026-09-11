@@ -1,0 +1,43 @@
+{{define "batch"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Farm console — {{.BatchID}}</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main>
+<nav class="crumbs"><a href="/">Batches</a> / {{.BatchID}}</nav>
+<h1>{{.BatchID}}</h1>
+
+<form class="observe-form" method="post" action="/b/{{.BatchID}}/observe">
+<label for="batch-model">Observe</label>
+<select id="batch-model" name="model">
+{{range .ModelOptions}}<option value="{{.}}">{{.}}</option>{{end}}
+</select>
+<label><input type="checkbox" name="all" value="1"> all runs</label>
+<button type="submit">Observe</button>
+</form>
+
+<table>
+<thead>
+<tr><th>Scenario</th><th>Verdict</th><th class="duration">Duration</th><th class="cost">Cost</th><th>Observation</th><th>Failed checks</th></tr>
+</thead>
+<tbody>
+{{range .Runs}}<tr>
+<td><a href="/r/{{.RunID}}">{{.Scenario}}</a></td>
+<td><span class="{{verdictClass .Verdict}}">{{.Verdict}}</span></td>
+<td class="duration">{{fmtDuration .DurationSec}}</td>
+<td class="cost">{{fmtCost .CostUsd}}</td>
+<td>{{.HeadlineOrState}}</td>
+<td>{{range .FailedCheckIDs}}<code>{{.}}</code> {{else}}(none){{end}}</td>
+</tr>
+{{else}}<tr><td colspan="6">No runs in this batch.</td></tr>
+{{end}}
+</tbody>
+</table>
+</main>
+</body>
+</html>
+{{end}}

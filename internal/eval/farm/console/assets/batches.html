@@ -1,0 +1,33 @@
+{{define "batches"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Farm console — batches</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main>
+<h1>Batches</h1>
+<table>
+<thead>
+<tr><th>Batch</th><th>Created</th><th>Candidate</th><th>Set</th><th>Verdicts</th><th class="cost">Cost</th><th>Observed</th></tr>
+</thead>
+<tbody>
+{{range .Batches}}<tr>
+<td><a href="/b/{{.BatchID}}">{{.BatchID}}</a></td>
+<td>{{fmtTime .CreatedAt}}</td>
+<td><code>{{.CandidateSha12}}</code></td>
+<td>{{.Set}}</td>
+<td>{{range .VerdictCounts}}<span class="{{verdictClass .Verdict}}">{{.Verdict}} {{.Count}}</span> {{end}}</td>
+<td class="cost">{{fmtCost .TotalCostUsd}}</td>
+<td>{{.ObservedN}}/{{.ObservedM}}</td>
+</tr>
+{{else}}<tr><td colspan="7">No batches yet.</td></tr>
+{{end}}
+</tbody>
+</table>
+</main>
+</body>
+</html>
+{{end}}
