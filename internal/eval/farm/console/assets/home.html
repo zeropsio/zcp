@@ -1,0 +1,66 @@
+{{/* GET / — the Overview (docs/spec-eval-farm.md §8.3 FM-51): three blocks
+   top to bottom — Latest evaluation, Top problems now, Batches. */}}
+{{define "home"}}{{template "head" .Meta}}
+<div class="page-head">
+<h1>Overview</h1>
+</div>
+
+<section>
+<h2>Latest evaluation</h2>
+{{with .Latest}}
+<div class="card">
+<div class="batch-top">
+<a class="batch-id" href="/b/{{.BatchID}}">{{.BatchID}}</a>
+<span class="muted small">{{fmtTime .CreatedAt}} · {{.Build.Label}}{{if .Set}} · set {{.Set}}{{end}}</span>
+</div>
+<div class="stats">{{range .Verdicts}}<span class="{{verdictClass .Verdict}}">{{verdictIcon .Verdict}} {{.Count}} {{verdictLabel .Verdict}}{{if .Disputed}} ({{.Disputed}} disputed){{end}}</span>{{end}}</div>
+{{if .HasPrev}}<p class="small muted">vs <a href="/b/{{.PrevBatchID}}">{{.PrevBatchID}}</a>:{{if .Diff.NewlyFailing}} newly failing: {{range $i, $s := .Diff.NewlyFailing}}{{if $i}}, {{end}}{{$s}}{{end}};{{end}}{{if .Diff.Fixed}} fixed: {{range $i, $s := .Diff.Fixed}}{{if $i}}, {{end}}{{$s}}{{end}};{{end}}{{if .Diff.StillFailing}} still failing: {{range $i, $s := .Diff.StillFailing}}{{if $i}}, {{end}}{{$s}}{{end}};{{end}}{{if and (not .Diff.NewlyFailing) (not .Diff.Fixed) (not .Diff.StillFailing)}} no change.{{end}}</p>
+{{end}}
+{{if .FailedOrBlocked}}<ul class="plain">
+{{range .FailedOrBlocked}}<li><span class="{{verdictClass .Verdict}}">{{verdictIcon .Verdict}} {{verdictLabel .Verdict}}</span> <strong>{{.Scenario}}</strong> — {{.Headline}}{{if .DisputeWhy}}<br><span class="disputed-marker">observer disputes</span> {{.DisputeWhy}}{{end}}</li>
+{{end}}</ul>
+{{else}}<p class="muted small">No failed or blocked runs.</p>{{end}}
+</div>
+{{else}}<p class="empty">No evaluation batch has finished yet.</p>{{end}}
+</section>
+
+{{if .TopProblems}}<section>
+<h2>Top problems now</h2>
+<ul class="plain">
+{{range .TopProblems}}<li class="card"><a href="/problems"><span class="{{severityClass .Severity}}">{{severityLabel .Severity}}</span> {{range .CauseLabels}}<span class="chip cause-chip">{{.}}</span> {{end}}<code class="chip">{{.Surface}}</code> <strong>{{.Title}}</strong> — {{.HowOften}}</a></li>
+{{end}}</ul>
+</section>{{end}}
+
+<section>
+<h2>Batches</h2>
+{{template "filterbar" .Nav.Filters}}
+<div class="table-wrap"><table class="stack">
+<thead><tr>
+<th>Batch</th>
+{{with index .SortByKey "newest"}}{{template "sortth" .}}{{else}}<th>Started</th>{{end}}
+<th>Build</th>
+<th>Set</th>
+<th>Runs</th>
+{{with index .SortByKey "failed"}}{{template "sortth" .}}{{else}}<th>Verdicts</th>{{end}}
+{{with index .SortByKey "zcp"}}{{template "sortth" .}}{{else}}<th>ZCP findings</th>{{end}}
+{{with index .SortByKey "cost"}}{{template "sortth" .}}{{else}}<th>Cost</th>{{end}}
+<th>Assessed</th>
+</tr></thead>
+<tbody>
+{{range .Batches}}<tr>
+<td data-label="Batch"><a href="/b/{{.BatchID}}">{{.BatchID}}</a></td>
+<td data-label="Started">{{fmtTime .CreatedAt}}</td>
+<td data-label="Build">{{.Build.Label}}</td>
+<td data-label="Set">{{if .Set}}{{.Set}}{{else}}—{{end}}</td>
+<td data-label="Runs"><div class="dots">{{range .Dots}}<span class="dot dot-{{verdictKey .Verdict}}" title="{{.Tooltip}}"></span>{{end}}</div></td>
+<td data-label="Verdicts"><div class="stats">{{range .VerdictCounts}}<span class="{{verdictClass .Verdict}}">{{verdictIcon .Verdict}} {{.Count}} {{verdictLabel .Verdict}}</span>{{end}}{{if .DisputedCount}}<span class="disputed-marker">{{.DisputedCount}} disputed</span>{{end}}</div></td>
+<td data-label="ZCP findings">{{if or .ZCPHigh .ZCPMedium}}{{if .ZCPHigh}}<span class="severity severity-high">{{.ZCPHigh}} high</span>{{end}}{{if .ZCPMedium}} <span class="severity severity-medium">{{.ZCPMedium}} medium</span>{{end}}{{else}}<span class="muted small">none</span>{{end}}</td>
+<td data-label="Cost">{{.Cost}}</td>
+<td data-label="Assessed">{{.ObservedN}}/{{.ObservedM}}</td>
+</tr>
+{{else}}<tr><td colspan="9"><p class="empty">No batches match this filter.</p></td></tr>
+{{end}}
+</tbody>
+</table></div>
+</section>
+{{template "foot"}}{{end}}
