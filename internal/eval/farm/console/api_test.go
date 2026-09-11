@@ -225,6 +225,45 @@ func TestAPI_RunMarkdownHasObservationFailedChecksAndStepRanges(t *testing.T) {
 	}
 }
 
+// TestAPI_RunDetailHasStepCountAndLinks pins §8.4's run-detail header:
+// "(with step count) ... links to the task prompt and self-review."
+func TestAPI_RunDetailHasStepCountAndLinks(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "rd1", "off", []runFixture{
+		{runID: "rd1-scena", scenario: "scena", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 1.0, taskResult: "passed", done: true, selfReview: "all good"},
+	}, false, nil)
+
+	rr := doGET(t, h, "/api/runs/rd1-scena.md")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("got %d, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	// fixtureTranscript's steps: #1 user, #2 agent, #3 tool.
+	if !strings.Contains(body, "steps: 3") {
+		t.Errorf("run detail missing step count:\n%s", body)
+	}
+	if !strings.Contains(body, "/api/runs/rd1-scena/steps.md?n=1") {
+		t.Errorf("run detail missing a task-prompt link:\n%s", body)
+	}
+	if !strings.Contains(body, "/api/runs/rd1-scena/self-review.md") {
+		t.Errorf("run detail missing a self-review link:\n%s", body)
+	}
+
+	var detail RunDetail
+	if err := json.Unmarshal(doGET(t, h, "/api/runs/rd1-scena.json").Body.Bytes(), &detail); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if detail.StepCount != 3 {
+		t.Errorf("StepCount = %d, want 3", detail.StepCount)
+	}
+	if detail.TaskPromptURL != "/api/runs/rd1-scena/steps.md?n=1" || detail.SelfReviewURL != "/api/runs/rd1-scena/self-review.md" {
+		t.Errorf("detail URLs = %+v", detail)
+	}
+}
+
 // TestAPI_StepsFromToUntruncated pins GET
 // /api/runs/<runId>/steps.md?from=<n>&to=<m>: the run's steps, verbatim —
 // no digest-style truncation.
@@ -307,6 +346,42 @@ func TestAPI_StepsSingleNTruncationAndEmptyThinking(t *testing.T) {
 	rrFull := doGET(t, h, "/api/runs/sn1-scena/steps.md?from=1&to=10&full=1")
 	if !strings.Contains(rrFull.Body.String(), longResult) {
 		t.Errorf("full=1 should return the untruncated result:\n%s", rrFull.Body.String())
+	}
+}
+
+// TestAPI_ObservationByID pins GET
+// /api/runs/<runId>/observations/<obsId>.md (§8.4): one stored observation,
+// with its JSON twin, and 404 for a missing/foreign obsId.
+func TestAPI_ObservationByID(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "ob1", "claude-sonnet-5", []runFixture{
+		{runID: "ob1-scena", scenario: "scena", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 1.0, taskResult: "passed", done: true},
+	}, false, nil)
+	obs := fixtureObservation("ob1-scena")
+	seedObservation(t, store, obs)
+
+	rr := doGET(t, h, "/api/runs/ob1-scena/observations/"+obs.ObsID+".md")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("got %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), obs.Headline) {
+		t.Errorf("observation markdown missing headline:\n%s", rr.Body.String())
+	}
+
+	var gotObs observer.Observation
+	if err := json.Unmarshal(doGET(t, h, "/api/runs/ob1-scena/observations/"+obs.ObsID+".json").Body.Bytes(), &gotObs); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if gotObs.ObsID != obs.ObsID || gotObs.Headline != obs.Headline {
+		t.Errorf("observation json = %+v", gotObs)
+	}
+
+	rrMissing := doGET(t, h, "/api/runs/ob1-scena/observations/nonexistent-obs-id.md")
+	if rrMissing.Code != http.StatusNotFound {
+		t.Fatalf("missing obsId: got %d, want 404", rrMissing.Code)
 	}
 }
 
@@ -483,6 +558,7 @@ func TestAPI_InvalidRunOrBatchIDRejected(t *testing.T) {
 		"/api/runs/%s/steps.md",
 		"/api/runs/%s/self-review.md",
 		"/api/runs/%s/files/results/a/b/meta.json",
+		"/api/runs/%s/observations/some-obs-id.md",
 	}
 	batchRouteTemplates := []string{
 		"/api/runs.md?batch=%s",

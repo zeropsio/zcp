@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -418,11 +419,18 @@ type RunDetail struct {
 	CostUsd         float64               `json:"costUsd"`
 	CandidateSha256 string                `json:"candidateSha256"`
 	EvaluatorSha256 string                `json:"evaluatorSha256"`
+	StepCount       int                   `json:"stepCount"`
 	ObserverState   string                `json:"observerState"`
 	Observation     *observer.Observation `json:"observation,omitempty"`
 	OlderObsIDs     []string              `json:"olderObsIds"`
 	FailedChecks    []FailedCheck         `json:"failedChecks"`
 	EvidenceSteps   []int                 `json:"evidenceSteps"`
+	// TaskPromptURL and SelfReviewURL are §8.4's "links to the task prompt
+	// and self-review": step 1 is always the synthesized task-prompt step
+	// (observer.BuildSteps), so the task prompt is exactly steps.md's
+	// single-step view of it.
+	TaskPromptURL string `json:"taskPromptUrl"`
+	SelfReviewURL string `json:"selfReviewUrl"`
 }
 
 // StepJSON is one element of GET /api/runs/<runId>/steps.md|.json (FM-52).
@@ -632,9 +640,11 @@ func runDetailFromRow(row RunRow) RunDetail {
 	return RunDetail{
 		RunID: row.RunID, Batch: row.Batch, Scenario: row.Scenario, Verdict: row.Verdict,
 		StartedAt: row.StartedAt, DurationSec: row.DurationSec, CostUsd: row.CostUsd,
-		CandidateSha256: row.CandidateSha256, EvaluatorSha256: row.EvaluatorSha256,
+		CandidateSha256: row.CandidateSha256, EvaluatorSha256: row.EvaluatorSha256, StepCount: row.StepCount,
 		ObserverState: row.ObserverState, Observation: row.Observation,
 		OlderObsIDs: older, FailedChecks: failed, EvidenceSteps: steps,
+		TaskPromptURL: fmt.Sprintf("/api/runs/%s/steps.md?n=1", row.RunID),
+		SelfReviewURL: fmt.Sprintf("/api/runs/%s/self-review.md", row.RunID),
 	}
 }
 
@@ -668,9 +678,10 @@ func formatStepRanges(steps []int) string {
 
 func renderRunDetailMD(d RunDetail) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# %s\n\nscenario: %s\nbatch: %s\nverdict: %s\nstarted: %s\nduration: %.1fs\ncost: $%.4f\ncandidate: %s\nevaluator: %s\nobserverState: %s\n\n",
+	fmt.Fprintf(&b, "# %s\n\nscenario: %s\nbatch: %s\nverdict: %s\nstarted: %s\nduration: %.1fs\ncost: $%.4f\ncandidate: %s\nevaluator: %s\nsteps: %d\nobserverState: %s\ntask prompt: %s\nself-review: %s\n\n",
 		d.RunID, d.Scenario, d.Batch, d.Verdict, d.StartedAt.UTC().Format(time.RFC3339),
-		d.DurationSec, d.CostUsd, d.CandidateSha256, d.EvaluatorSha256, d.ObserverState)
+		d.DurationSec, d.CostUsd, d.CandidateSha256, d.EvaluatorSha256, d.StepCount, d.ObserverState,
+		d.TaskPromptURL, d.SelfReviewURL)
 
 	if d.Observation != nil {
 		b.WriteString(observer.Render(*d.Observation))
@@ -736,9 +747,48 @@ func (s *Server) handleRunsSubroute(w http.ResponseWriter, r *http.Request) {
 		s.handleSelfReview(w, r, runID)
 	case strings.HasPrefix(tail, "files/"):
 		s.handleFile(w, r, runID, strings.TrimPrefix(tail, "files/"))
+	case strings.HasPrefix(tail, "observations/"):
+		s.handleObservation(w, r, runID, strings.TrimPrefix(tail, "observations/"))
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// handleObservation implements GET
+// /api/runs/<runId>/observations/<obsId>.md|.json (§8.4): one stored
+// observation, verbatim. A missing or foreign obsId is 404.
+func (s *Server) handleObservation(w http.ResponseWriter, r *http.Request, runID, obsIDWithExt string) {
+	if !farm.ValidRunID(runID) {
+		http.NotFound(w, r)
+		return
+	}
+	obsID, ok := trimMDOrJSON(obsIDWithExt)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	ctx := r.Context()
+	store := observer.NewStore(s.cfg.Store)
+	ids, err := store.ListObservations(ctx, runID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if !slices.Contains(ids, obsID) {
+		http.NotFound(w, r)
+		return
+	}
+	obs, err := store.GetObservation(ctx, runID, obsID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if isJSONRequest(r) {
+		writeJSON(w, obs)
+		return
+	}
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	fmt.Fprint(w, observer.Render(obs))
 }
 
 func trimMDOrJSON(s string) (string, bool) {
