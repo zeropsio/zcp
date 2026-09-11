@@ -55,7 +55,9 @@ finishes in time.
 Group findings across runs by root cause, not by run: the same quoted ZCP
 text, the same tool + error code, the same check id. Rank clusters by
 severity (`high` > `medium` > `low`), then by number of runs affected within a
-severity. `owner` on a finding is the observer's guess (`zcp-guidance`,
+severity. The observer grades each run on its own, so one root cause can carry
+different severities across runs: the cluster takes the highest one seen, and
+breadth (runs affected, steps lost) breaks ties — say both in the report. `owner` on a finding is the observer's guess (`zcp-guidance`,
 `zcp-tool`, `platform`, `agent`, `scenario`, `evaluator`) — confirm or correct
 it once you've read the evidence; state your own owner label in the report.
 
