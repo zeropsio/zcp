@@ -715,10 +715,7 @@ func TestAPI_BatchesList(t *testing.T) {
 	if rrBad.Code != http.StatusBadRequest {
 		t.Fatalf("bad param: got %d, want 400", rrBad.Code)
 	}
-	var qerr struct {
-		Error   string   `json:"error"`
-		Allowed []string `json:"allowed"`
-	}
+	var qerr queryErrorJSON
 	if err := json.Unmarshal(rrBad.Body.Bytes(), &qerr); err != nil {
 		t.Fatalf("unmarshal query error: %v", err)
 	}
@@ -886,6 +883,50 @@ func TestAPI_JSONTwinsMatchMarkdownContent(t *testing.T) {
 	}
 	if selfReviewMD != selfReviewJSON.SelfReview {
 		t.Errorf("self-review twins differ: md=%q json=%q", selfReviewMD, selfReviewJSON.SelfReview)
+	}
+}
+
+// TestAPI_ObserverStateAssessmentFailed pins §8.4's JSON observerState:
+// "stays one of observed, observing, not observed, observer off, observer
+// disabled ... plus assessment failed for a run whose current observation's
+// status is error or unparsed", with observerStateText carrying the §8.8
+// wording alongside it.
+func TestAPI_ObserverStateAssessmentFailed(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "of1", "claude-sonnet-5", []runFixture{
+		{runID: "of1-scena", scenario: "scena", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 1.0, taskResult: "passed", done: true},
+	}, false, nil)
+	obs := fixtureObservation("of1-scena")
+	obs.Status = observationStatusError
+	obs.Error = "model call timed out"
+	seedObservation(t, store, obs)
+
+	rr := doGET(t, h, "/api/runs.json?batch=of1")
+	var out struct {
+		Runs []RunsListItem `json:"runs"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.Runs) != 1 {
+		t.Fatalf("got %d runs, want 1", len(out.Runs))
+	}
+	if out.Runs[0].ObserverState != observerStateAssessmentFailed {
+		t.Errorf("observerState = %q, want %q", out.Runs[0].ObserverState, observerStateAssessmentFailed)
+	}
+	if !strings.Contains(out.Runs[0].ObserverStateText, "model call timed out") {
+		t.Errorf("observerStateText = %q, want it to carry the failure reason", out.Runs[0].ObserverStateText)
+	}
+
+	var detail RunDetail
+	if err := json.Unmarshal(doGET(t, h, "/api/runs/of1-scena.json").Body.Bytes(), &detail); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if detail.ObserverState != observerStateAssessmentFailed {
+		t.Errorf("run detail observerState = %q, want %q", detail.ObserverState, observerStateAssessmentFailed)
 	}
 }
 

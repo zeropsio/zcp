@@ -46,6 +46,14 @@ func legendLine(terms ...string) string {
 	return "Legend: " + strings.Join(parts, " · ") + "\n\n"
 }
 
+// queryErrorJSON is writeQueryError's JSON body shape (§8.7 FM-55: "the API
+// answers 400 {error, allowed}") — a named type so a test asserting on it
+// shares this declaration instead of redeclaring the same tag pair.
+type queryErrorJSON struct {
+	Error   string   `json:"error"`
+	Allowed []string `json:"allowed"`
+}
+
 // writeQueryError answers a list endpoint's refused parameter (§8.7 FM-55):
 // 400 {error, allowed} on the JSON twin, a one-line text on the markdown
 // one — never the page's own rendered 400 (renderBadQuery, listnav.go).
@@ -53,10 +61,7 @@ func writeQueryError(w http.ResponseWriter, r *http.Request, qerr *QueryError) {
 	if isJSONRequest(r) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusBadRequest)
-		if err := json.NewEncoder(w).Encode(struct {
-			Error   string   `json:"error"`
-			Allowed []string `json:"allowed"`
-		}{qerr.Error(), qerr.Allowed}); err != nil {
+		if err := json.NewEncoder(w).Encode(queryErrorJSON{qerr.Error(), qerr.Allowed}); err != nil {
 			fmt.Fprintf(os.Stderr, "console: encode query-error response: %v\n", err)
 		}
 		return
@@ -612,42 +617,62 @@ func causeCountItems(cs []CauseClassCount) []CauseCountItem {
 	return out
 }
 
+// observerStateAssessmentFailed is §8.4's 6th JSON observerState value.
+const observerStateAssessmentFailed = "assessment failed"
+
+// apiObserverState implements §8.4's JSON observerState: RunRow.ObserverState
+// (view.go's resolveObserverState, its own 5-value precedence) refined with
+// a 6th value, observerStateAssessmentFailed, for a run whose current
+// observation's status is error/unparsed — a distinction
+// resolveObserverState's own enum cannot make without breaking its locked
+// signature (the same reasoning view.go's ObserverStateText already applies
+// at the text-wording layer, which this sits alongside rather than
+// duplicates).
+func apiObserverState(row RunRow) string {
+	if row.Observation != nil && (row.Observation.Status == observationStatusError || row.Observation.Status == observationStatusUnparsed) {
+		return observerStateAssessmentFailed
+	}
+	return row.ObserverState
+}
+
 // RunsListItem is one GET /api/runs.md|.json row (§8.4: "run id, scenario,
 // verdict (+ reason), outcome, findings high/medium per cause class, failed
 // check ids, headline").
 type RunsListItem struct {
-	RunID          string               `json:"runId"`
-	Batch          string               `json:"batch"`
-	Scenario       string               `json:"scenario"`
-	Verdict        string               `json:"verdict"`
-	VerdictReason  string               `json:"verdictReason,omitempty"`
-	StartedAt      time.Time            `json:"startedAt"`
-	DurationSec    float64              `json:"durationSec"`
-	CostUsd        float64              `json:"costUsd"`
-	Outcome        string               `json:"outcome"`
-	CauseCounts    []CauseCountItem     `json:"causeCounts"`
-	FailedCheckIDs []string             `json:"failedCheckIds,omitempty"`
-	ObserverState  string               `json:"observerState"`
-	Observation    *RunsListObservation `json:"observation,omitempty"`
+	RunID             string               `json:"runId"`
+	Batch             string               `json:"batch"`
+	Scenario          string               `json:"scenario"`
+	Verdict           string               `json:"verdict"`
+	VerdictReason     string               `json:"verdictReason,omitempty"`
+	StartedAt         time.Time            `json:"startedAt"`
+	DurationSec       float64              `json:"durationSec"`
+	CostUsd           float64              `json:"costUsd"`
+	Outcome           string               `json:"outcome"`
+	CauseCounts       []CauseCountItem     `json:"causeCounts"`
+	FailedCheckIDs    []string             `json:"failedCheckIds,omitempty"`
+	ObserverState     string               `json:"observerState"`
+	ObserverStateText string               `json:"observerStateText"`
+	Observation       *RunsListObservation `json:"observation,omitempty"`
 }
 
 // RunDetail is GET /api/runs/<runId>.md|.json (FM-52).
 type RunDetail struct {
-	RunID           string                `json:"runId"`
-	Batch           string                `json:"batch"`
-	Scenario        string                `json:"scenario"`
-	Verdict         string                `json:"verdict"`
-	StartedAt       time.Time             `json:"startedAt"`
-	DurationSec     float64               `json:"durationSec"`
-	CostUsd         float64               `json:"costUsd"`
-	CandidateSha256 string                `json:"candidateSha256"`
-	EvaluatorSha256 string                `json:"evaluatorSha256"`
-	StepCount       int                   `json:"stepCount"`
-	ObserverState   string                `json:"observerState"`
-	Observation     *observer.Observation `json:"observation,omitempty"`
-	OlderObsIDs     []string              `json:"olderObsIds"`
-	FailedChecks    []FailedCheck         `json:"failedChecks"`
-	EvidenceSteps   []int                 `json:"evidenceSteps"`
+	RunID             string                `json:"runId"`
+	Batch             string                `json:"batch"`
+	Scenario          string                `json:"scenario"`
+	Verdict           string                `json:"verdict"`
+	StartedAt         time.Time             `json:"startedAt"`
+	DurationSec       float64               `json:"durationSec"`
+	CostUsd           float64               `json:"costUsd"`
+	CandidateSha256   string                `json:"candidateSha256"`
+	EvaluatorSha256   string                `json:"evaluatorSha256"`
+	StepCount         int                   `json:"stepCount"`
+	ObserverState     string                `json:"observerState"`
+	ObserverStateText string                `json:"observerStateText"`
+	Observation       *observer.Observation `json:"observation,omitempty"`
+	OlderObsIDs       []string              `json:"olderObsIds"`
+	FailedChecks      []FailedCheck         `json:"failedChecks"`
+	EvidenceSteps     []int                 `json:"evidenceSteps"`
 	// TaskPromptURL and SelfReviewURL are §8.4's "links to the task prompt
 	// and self-review": step 1 is always the synthesized task-prompt step
 	// (observer.BuildSteps), so the task prompt is exactly steps.md's
@@ -705,7 +730,7 @@ func runsListItemFromRow(row RunRow) RunsListItem {
 		VerdictReason: row.VerdictReason,
 		StartedAt:     row.StartedAt, DurationSec: row.DurationSec, CostUsd: row.CostUsd,
 		Outcome: row.Outcome, CauseCounts: causeCountItems(row.CauseCounts),
-		ObserverState: row.ObserverState,
+		ObserverState: apiObserverState(row), ObserverStateText: row.ObserverStateText,
 	}
 	for _, c := range row.FailedChecks {
 		item.FailedCheckIDs = append(item.FailedCheckIDs, c.ID)
@@ -864,7 +889,7 @@ func runDetailFromRow(row RunRow) RunDetail {
 		RunID: row.RunID, Batch: row.Batch, Scenario: row.Scenario, Verdict: row.Verdict,
 		StartedAt: row.StartedAt, DurationSec: row.DurationSec, CostUsd: row.CostUsd,
 		CandidateSha256: row.CandidateSha256, EvaluatorSha256: row.EvaluatorSha256, StepCount: row.StepCount,
-		ObserverState: row.ObserverState, Observation: row.Observation,
+		ObserverState: apiObserverState(row), ObserverStateText: row.ObserverStateText, Observation: row.Observation,
 		OlderObsIDs: older, FailedChecks: failed, EvidenceSteps: steps,
 		TaskPromptURL: fmt.Sprintf("/api/runs/%s/steps.md?n=1", row.RunID),
 		SelfReviewURL: fmt.Sprintf("/api/runs/%s/self-review.md", row.RunID),
