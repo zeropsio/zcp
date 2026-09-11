@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -129,6 +130,27 @@ func runGroupFor(row RunRow) string {
 	default: // "ok"
 		return batchGroupClean
 	}
+}
+
+// orderedAsBatchPage returns rows in the batch page's default order: the
+// runs list's default sort, bucketed into the precedence groups — the one
+// ordering the Overview's dots also use, so they read left to right as the
+// batch page does (§8.3).
+func orderedAsBatchPage(rows []RunRow, now time.Time) []RunRow {
+	q, err := Parse(batchRunsListSpec(), url.Values{})
+	if err != nil {
+		return rows
+	}
+	sorted, _ := batchRunsEngine().Apply(rows, q, now)
+	out := make([]RunRow, 0, len(sorted))
+	for _, g := range batchRunGroupOrder {
+		for _, r := range sorted {
+			if runGroupFor(r) == g {
+				out = append(out, r)
+			}
+		}
+	}
+	return out
 }
 
 // notFinishedReason is the Not-finished group's "with the reason" text

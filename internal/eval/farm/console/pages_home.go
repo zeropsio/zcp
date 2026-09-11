@@ -180,7 +180,7 @@ func (s *Server) buildHomeBatchRows(ctx context.Context, batches []BatchRow) ([]
 		if err != nil {
 			return nil, fmt.Errorf("console: home batch row %s: %w", b.BatchID, err)
 		}
-		out[i] = homeBatchRow{BatchRow: b, Dots: buildDots(runRows, s.queueState), Cost: formatBatchCost(b)}
+		out[i] = homeBatchRow{BatchRow: b, Dots: buildDots(runRows, s.now()), Cost: formatBatchCost(b)}
 	}
 	return out, nil
 }
@@ -200,27 +200,6 @@ func formatBatchCost(b BatchRow) string {
 	return cost
 }
 
-// homeDotGroup implements the §8.3 item 4 batch-page precedence — Failed
-// and blocked · Not finished · Not assessed · Problems in passed runs ·
-// Clean — over one RunRow, for the Overview table's dots (item 3: "ordered
-// as on the batch page"). This table has no /b/<batch> row data of its own
-// to read the order from, so the group is derived directly from the same
-// RunRow facts that precedence is defined over.
-func homeDotGroup(row RunRow, needsAssessment bool) int {
-	switch {
-	case row.Verdict == farm.VerdictFailed || row.Verdict == farm.VerdictBlocked:
-		return 0
-	case !row.DoneExists || row.Verdict == verdictRunning || row.Verdict == farm.VerdictNotRun:
-		return 1
-	case needsAssessment:
-		return 2
-	case row.Outcome == observer.OutcomeProblem || row.Outcome == observer.OutcomeInconclusive:
-		return 3
-	default:
-		return 4
-	}
-}
-
 // homeDotLabel is one dot's tooltip verdict word: "stalled" for a running
 // row past its budget (Stalled), else the plain verdict label.
 func homeDotLabel(row RunRow) string {
@@ -230,20 +209,10 @@ func homeDotLabel(row RunRow) string {
 	return verdictLabel(row.Verdict)
 }
 
-// buildDots orders rows by homeDotGroup (ties broken by scenario name, the
-// same tie-break batchRunsEngine's "problem" sort key uses) and renders one
-// dotView per run, tooltip "scenario — verdict" (§8.3 item 3).
-func buildDots(rows []RunRow, queueState func(runID string) string) []dotView {
-	ordered := make([]RunRow, len(rows))
-	copy(ordered, rows)
-	sort.SliceStable(ordered, func(i, j int) bool {
-		gi := homeDotGroup(ordered[i], NeedsAssessment(ordered[i], runQueued(queueState, ordered[i].RunID)))
-		gj := homeDotGroup(ordered[j], NeedsAssessment(ordered[j], runQueued(queueState, ordered[j].RunID)))
-		if gi != gj {
-			return gi < gj
-		}
-		return ordered[i].Scenario < ordered[j].Scenario
-	})
+// buildDots renders one dotView per run in the batch page's own order
+// (orderedAsBatchPage), tooltip "scenario — verdict" (§8.3 item 3).
+func buildDots(rows []RunRow, now time.Time) []dotView {
+	ordered := orderedAsBatchPage(rows, now)
 	out := make([]dotView, len(ordered))
 	for i, r := range ordered {
 		out[i] = dotView{Verdict: r.Verdict, Tooltip: r.Scenario + " — " + homeDotLabel(r)}
