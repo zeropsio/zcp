@@ -25,6 +25,10 @@ const defaultRunBudget = 45 * time.Minute
 // loop and planDetachRun's re-exec argv rewrite (goconst).
 const flagBatch = "--batch"
 
+// flagDetach is `farm run`'s background-mode flag, stripped again by
+// planDetachRun before the detached re-exec.
+const flagDetach = "--detach"
+
 // runFarmRun implements `zcp eval farm run` (docs/spec-eval-farm.md §3.3
 // FM-21/FM-22, §3.1 FM-18's --detach).
 func runFarmRun(args []string) int {
@@ -167,7 +171,7 @@ func parseFarmRunFlags(args []string) (farmRunFlags, error) {
 	}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		if arg == "--detach" {
+		if arg == flagDetach {
 			f.detach = true
 			continue
 		}
@@ -373,7 +377,7 @@ func planDetachRun(exe string, args []string, cwd, batch string) (argv []string,
 	filtered := make([]string, 0, len(args)+2)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--detach":
+		case flagDetach:
 			continue
 		case flagBatch:
 			i++ // also skip its value
