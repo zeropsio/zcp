@@ -138,6 +138,107 @@ func TestPages_RunWithoutDoneNoAssessForm(t *testing.T) {
 	}
 }
 
+// TestPages_RunShowsObserverFailureNotice pins item 3: an observation with
+// status "error" renders as a failure notice — "Observer failed: <error>"
+// — with no goal/checks/self-review pills and no "No findings" line.
+func TestPages_RunShowsObserverFailureNotice(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+
+	seedBatch(t, store, "ef1", "claude-sonnet-5", []runFixture{
+		{runID: "ef1-scn", scenario: "scn", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"ef1-scn": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat1, RunID: "ef1-scn", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: fixedNow(t)(), Status: "error", Error: "claude exited 1: boom",
+	})
+
+	rr := doGET(t, h, "/r/ef1-scn")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /r/ef1-scn: got %d, want 200, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	if !strings.Contains(body, "Observer failed: claude exited 1: boom") {
+		t.Errorf("body missing the failure notice:\n%s", body)
+	}
+	if strings.Contains(body, "pill-yes") || strings.Contains(body, "pill-no") || strings.Contains(body, "Goal reached") {
+		t.Errorf("body still shows goal/checks/self-review pills for a failed observation:\n%s", body)
+	}
+	if strings.Contains(body, "No findings") {
+		t.Errorf("body shows \"No findings\" for a failed observation:\n%s", body)
+	}
+}
+
+// TestPages_RunShowsUnparsedRawPreview pins item 3: an observation with
+// status "unparsed" renders "Observer answer could not be parsed" plus the
+// first 2,000 chars of raw in a collapsed block.
+func TestPages_RunShowsUnparsedRawPreview(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+
+	rawAnswer := strings.Repeat("x", 2500)
+	seedBatch(t, store, "up1", "claude-sonnet-5", []runFixture{
+		{runID: "up1-scn", scenario: "scn", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"up1-scn": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat1, RunID: "up1-scn", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: fixedNow(t)(), Status: "unparsed", Raw: rawAnswer,
+	})
+
+	rr := doGET(t, h, "/r/up1-scn")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /r/up1-scn: got %d, want 200, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	if !strings.Contains(body, "Observer answer could not be parsed") {
+		t.Errorf("body missing the unparsed notice:\n%s", body)
+	}
+	if !strings.Contains(body, strings.Repeat("x", 2000)) {
+		t.Errorf("body missing the first 2000 chars of raw:\n%s", body)
+	}
+	if strings.Contains(body, strings.Repeat("x", 2001)) {
+		t.Errorf("body shows more than 2000 chars of raw:\n%s", body)
+	}
+	if !strings.Contains(body, "<details") {
+		t.Errorf("raw preview is not inside a collapsed <details> block:\n%s", body)
+	}
+}
+
+// TestPages_BatchRowShowsObserverFailedNotAssessed pins item 3: on the
+// batch page, a run whose current observation failed shows "observer
+// failed" instead of a headline, is not counted in "assessed", and is
+// counted in the Assess callout.
+func TestPages_BatchRowShowsObserverFailedNotAssessed(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+
+	seedBatch(t, store, "ef2", "claude-sonnet-5", []runFixture{
+		{runID: "ef2-scn", scenario: "scn", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"ef2-scn": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat1, RunID: "ef2-scn", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: fixedNow(t)(), Status: "error", Error: "boom",
+	})
+
+	rr := doGET(t, h, "/b/ef2")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /b/ef2: got %d, want 200, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	if !strings.Contains(body, "observer failed") {
+		t.Errorf("body missing \"observer failed\":\n%s", body)
+	}
+	if !strings.Contains(body, "0/1</strong> assessed") {
+		t.Errorf("body counts the failed observation as assessed, want 0/1 assessed:\n%s", body)
+	}
+	if !strings.Contains(body, "1 finished run") {
+		t.Errorf("body missing the Assess callout counting the failed run as unassessed:\n%s", body)
+	}
+}
+
 // TestPages_RunListsOlderObservationVersions pins §8.3 FM-51's "older
 // observation versions" section: every obsId older than the current one
 // (§7.5 FM-45: newest obsId is current, older ones stay listed) is shown,

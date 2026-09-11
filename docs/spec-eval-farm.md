@@ -867,11 +867,18 @@ script, no inline style and no external asset; they render in light and dark
 - `/b/<batch>` — one row per run, problem runs first (failed, blocked,
   running, not-run, passed): scenario, verdict, duration, cost, the current
   observation's headline (or its observer state) with finding counts per
-  severity, and up to three failed/blocked check ids.
+  severity, and up to three failed/blocked check ids. A run whose current
+  observation's status is `error` or `unparsed` shows `observer failed`
+  instead of a headline, is not counted in "assessed", and is counted in
+  the re-assess callout.
 - `/r/<runId>` — header (scenario, verdict, times, cost, candidate and
   evaluator sha); the current observation (headline, goal, agreement with the
   checks, findings with severity, owner, title, what, evidence linking to
-  `#s<n>` with a verified mark, lookAt, fix; unverified-quote count); older
+  `#s<n>` with a verified mark, lookAt, fix; unverified-quote count) — or,
+  when its status is `error` or `unparsed`, a failure notice ("Observer
+  failed: <error>" or "Observer answer could not be parsed" plus the first
+  2,000 chars of raw in a collapsed block) with no goal/checks/self-review
+  pills and no "No findings" line; older
   observation versions; a re-observe form with a model picker, shown only
   once the run has `done.json`; failed and
   blocked checks with expected, observed, source; the self-review; the task

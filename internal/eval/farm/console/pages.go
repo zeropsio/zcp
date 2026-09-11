@@ -36,6 +36,7 @@ var pageFuncs = template.FuncMap{
 		return strings.TrimPrefix(strings.TrimPrefix(name, "mcp__zerops__"), "mcp__")
 	},
 	"preview":    preview,
+	"capRaw":     capRaw,
 	"joinInts":   joinInts,
 	"stepAnchor": func(n int) string { return fmt.Sprintf("s%d", n) },
 	"verifiedMark": func(v bool) string {
@@ -151,6 +152,20 @@ func preview(s string, n int) string {
 	return string(r[:n]) + "…"
 }
 
+// observerRawCap is how much of a failed observation's raw answer the run
+// page shows (item 3, matching §7.5's own "the first 2,000 chars of raw").
+const observerRawCap = 2000
+
+// capRaw caps s at observerRawCap runes, for the run page's collapsed raw-
+// answer preview on an "unparsed" observation.
+func capRaw(s string) string {
+	r := []rune(s)
+	if len(r) <= observerRawCap {
+		return s
+	}
+	return string(r[:observerRawCap])
+}
+
 func joinInts(ns []int) string {
 	parts := make([]string, len(ns))
 	for i, n := range ns {
@@ -211,9 +226,22 @@ type batchRunView struct {
 // maxFailedCheckChips caps the failed-check ids a batch row lists.
 const maxFailedCheckChips = 3
 
+// observationFailed reports whether obs's status is one the console shows
+// as a failure notice rather than a real assessment (item 3: "error" or
+// "unparsed", §7.5).
+func observationFailed(obs *observer.Observation) bool {
+	return obs != nil && (obs.Status == "error" || obs.Status == "unparsed")
+}
+
+// observerFailedState is the batch row's State when the current
+// observation failed (item 3) — shown in place of a headline.
+const observerFailedState = "observer failed"
+
 func newBatchRunView(row RunRow) batchRunView {
 	v := batchRunView{RunRow: row, State: row.ObserverState}
-	if row.Observation != nil {
+	if row.Observation != nil && observationFailed(row.Observation) {
+		v.State = observerFailedState
+	} else if row.Observation != nil {
 		v.Headline = row.Observation.Headline
 		for _, f := range row.Observation.Findings {
 			switch f.Severity {
@@ -279,7 +307,7 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 		counts[row.Verdict]++
 		data.TotalCostUsd += row.CostUsd
 		switch {
-		case row.Observation != nil:
+		case row.Observation != nil && !observationFailed(row.Observation):
 			data.ObservedN++
 		case row.DoneExists && row.ObserverState != observerStateObserving:
 			data.Unassessed++
