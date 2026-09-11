@@ -456,6 +456,56 @@ func TestSubdomainProbe_ResolvedURL_ActualRequest(t *testing.T) {
 	})
 }
 
+// TestLiveness_TransportError_Blocked pins E10: an httpDoer.Do transport
+// error (network unreachable, connection refused, etc.) blocks the liveness
+// row rather than failing it — docs/spec-testing-architecture.md §10.1
+// classes "HTTP unreachable" as blocked, since a transport error proves
+// nothing about the assertion, only that it couldn't be evaluated.
+func TestLiveness_TransportError_Blocked(t *testing.T) {
+	t.Parallel()
+	probe := &LivenessProbe{Service: "appdev", Marker: "team-notes"}
+	observation := platformObservation{
+		observedAt: time.Now(),
+		services: []platform.ServiceStack{
+			{ID: "appdev-1", Name: "appdev", SubdomainAccess: true, Ports: []platform.Port{{Port: 80, Scheme: "http"}}},
+		},
+	}
+	client := platform.NewMock().WithProject(&platform.Project{ID: "p1", SubdomainHost: "testproj.example.com"})
+	transportErr := errors.New("dial tcp: connection refused")
+	got := evaluateLivenessRow(context.Background(), probe, observation, httpDoerFunc(func(*http.Request) (*http.Response, error) {
+		return nil, transportErr
+	}), client, "p1")
+	if got.Result != CheckBlocked {
+		t.Errorf("row = %+v, want blocked", got)
+	}
+	if !strings.Contains(got.Message, transportErr.Error()) {
+		t.Errorf("message should surface the transport error, got %q", got.Message)
+	}
+}
+
+// TestSubdomainProbe_TransportError_Blocked pins E10 for the subdomain
+// probe row: an httpDoer.Do transport error blocks the row rather than
+// failing it, same as the liveness row (§10.1).
+func TestSubdomainProbe_TransportError_Blocked(t *testing.T) {
+	t.Parallel()
+	exp := ExpectedService{Hostname: "appdev", SubdomainProbe: &SubdomainProbe{Path: "/", ExpectStatus: "2xx"}}
+	svc := &platform.ServiceStack{
+		ID: "appdev-1", Name: "appdev", SubdomainAccess: true,
+		Ports: []platform.Port{{Port: 80, Scheme: "http"}},
+	}
+	client := platform.NewMock().WithProject(&platform.Project{ID: "p1", SubdomainHost: "testproj.example.com"})
+	transportErr := errors.New("dial tcp: connection refused")
+	got := evaluateSubdomainProbeRow(context.Background(), exp, svc, httpDoerFunc(func(*http.Request) (*http.Response, error) {
+		return nil, transportErr
+	}), client, "p1", time.Now())
+	if got.Result != CheckBlocked {
+		t.Errorf("row = %+v, want blocked", got)
+	}
+	if !strings.Contains(got.Message, transportErr.Error()) {
+		t.Errorf("message should surface the transport error, got %q", got.Message)
+	}
+}
+
 // TestVerification_AllowFailed_IgnoresListedServiceOnly pins FM-28: a
 // FAILED process on a service named in allowFailed is not a violation; a
 // FAILED process on any other service still fails the row.
@@ -719,5 +769,124 @@ func TestRunVerification_LaunchTokenHashedNeverStored(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected a launch_shape/token_not_in_transcript row")
+	}
+}
+
+// TestVerification_NeverRow_ForbiddenCallFailsTask pins E1: generateRequiredChecks
+// wires verification.never into its returned rows using runtime.MCPStreamPaths
+// — one matching call anywhere in the stream fails the decision/<expr> row
+// AND the aggregated task result (docs/spec-eval-farm.md §4.1 FM-30). Before
+// this fix, EvaluateNeverRows had no production caller and a scenario's
+// `never:` declaration was silently ignored.
+func TestVerification_NeverRow_ForbiddenCallFailsTask(t *testing.T) {
+	t.Parallel()
+	sc := &Scenario{Verification: &VerificationConfig{Never: []string{"zerops_delete"}}}
+	client := platform.NewMock()
+	observation := collectPlatformObservation(context.Background(), client, "p1", false, false)
+	runtime := RuntimeInputs{MCPStreamPaths: []string{"testdata/mcpstream/never-zerops-delete.jsonl"}}
+
+	rows := generateRequiredChecks(context.Background(), sc, observation, nil, time.Time{}, "p1", client, true, nil, runtime)
+
+	found := false
+	for _, row := range rows {
+		if row.ID == "decision/zerops_delete" {
+			found = true
+			if row.Result != CheckFailed {
+				t.Errorf("row = %+v, want failed", row)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected a decision/zerops_delete row")
+	}
+	if got := aggregateTaskResult(rows); got != CheckFailed {
+		t.Errorf("aggregateTaskResult(rows) = %s, want failed", got)
+	}
+}
+
+// TestVerification_NeverRow_NoCallPasses pins the passing half of E1: the
+// same scenario against a stream that never calls the forbidden tool passes
+// the row and the task result.
+func TestVerification_NeverRow_NoCallPasses(t *testing.T) {
+	t.Parallel()
+	sc := &Scenario{Verification: &VerificationConfig{Never: []string{"zerops_delete"}}}
+	client := platform.NewMock()
+	observation := collectPlatformObservation(context.Background(), client, "p1", false, false)
+	runtime := RuntimeInputs{MCPStreamPaths: []string{"testdata/mcpstream/never-clean.jsonl"}}
+
+	rows := generateRequiredChecks(context.Background(), sc, observation, nil, time.Time{}, "p1", client, true, nil, runtime)
+
+	found := false
+	for _, row := range rows {
+		if row.ID == "decision/zerops_delete" {
+			found = true
+			if row.Result != CheckPassed {
+				t.Errorf("row = %+v, want passed", row)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected a decision/zerops_delete row")
+	}
+	if got := aggregateTaskResult(rows); got != CheckPassed {
+		t.Errorf("aggregateTaskResult(rows) = %s, want passed", got)
+	}
+}
+
+// TestVerification_NeverRow_NoStream_Blocked pins case (c): with no captured
+// MCP stream at all, the never row is whatever EvaluateNeverRows defines for
+// streamPresent=false (blocked), and the task result follows §10.1's
+// aggregation (blocked, never a silent pass over unverifiable evidence).
+func TestVerification_NeverRow_NoStream_Blocked(t *testing.T) {
+	t.Parallel()
+	sc := &Scenario{Verification: &VerificationConfig{Never: []string{"zerops_delete"}}}
+	client := platform.NewMock()
+	observation := collectPlatformObservation(context.Background(), client, "p1", false, false)
+
+	rows := generateRequiredChecks(context.Background(), sc, observation, nil, time.Time{}, "p1", client, true, nil, RuntimeInputs{})
+
+	found := false
+	for _, row := range rows {
+		if row.ID == "decision/zerops_delete" {
+			found = true
+			if row.Result != CheckBlocked {
+				t.Errorf("row = %+v, want blocked", row)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected a decision/zerops_delete row")
+	}
+	if got := aggregateTaskResult(rows); got != CheckBlocked {
+		t.Errorf("aggregateTaskResult(rows) = %s, want blocked", got)
+	}
+}
+
+// TestVerification_AskWhen_AdvisoryNeverGates pins case (d): an askWhen
+// entry that WOULD fail if it gated (error seen, no user-sim turn before the
+// next mutating call) never leaks into generateRequiredChecks's returned
+// rows or the aggregated task result — it surfaces only through
+// generateAskWhenAdvisoryFindings, kept structurally separate for exactly
+// this reason (EvaluateAskWhenRows's doc comment).
+func TestVerification_AskWhen_AdvisoryNeverGates(t *testing.T) {
+	t.Parallel()
+	sc := &Scenario{Verification: &VerificationConfig{AskWhen: []string{"GIT_TOKEN_MISSING"}}}
+	client := platform.NewMock()
+	observation := collectPlatformObservation(context.Background(), client, "p1", false, false)
+	runtime := RuntimeInputs{MCPStreamPaths: []string{"testdata/mcpstream/askwhen-not-asked.jsonl"}}
+
+	rows := generateRequiredChecks(context.Background(), sc, observation, nil, time.Time{}, "p1", client, true, nil, runtime)
+	for _, row := range rows {
+		if strings.HasPrefix(row.ID, "decision/askWhen/") {
+			t.Errorf("askWhen row leaked into generateRequiredChecks's gating rows: %+v", row)
+		}
+	}
+	if got := aggregateTaskResult(rows); got != CheckNotRun {
+		t.Errorf("aggregateTaskResult(rows) = %s, want not-run (askWhen alone declares no gating check)", got)
+	}
+
+	findings := generateAskWhenAdvisoryFindings(sc, runtime, observation.observedAt)
+	if len(findings) != 1 || findings[0].Severity != "fail" {
+		t.Fatalf("expected one fail advisory finding for the un-asked error, got %+v", findings)
 	}
 }

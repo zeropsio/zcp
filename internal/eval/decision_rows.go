@@ -235,9 +235,12 @@ func BuildAskWhenObservations(codes []string, calls []capture.MCPToolCall, turns
 
 // buildAskWhenObservation implements FM-31's rule, stated exactly:
 //
-//   - The trigger is the FIRST call in calls whose ResultIsError is true, or
-//     whose ResultText contains the JSON fragment `"code":"<code>"`. No
-//     trigger → ErrorSeen=false.
+//   - The trigger is the FIRST call in calls whose ResultText contains the
+//     JSON fragment `"code":"<code>"` for THIS entry's code. No trigger →
+//     ErrorSeen=false. A call's ResultIsError alone never anchors the
+//     window — only the coded fragment identifies that a call is this
+//     entry's trigger, so an earlier, unrelated error never wrongly
+//     anchors it.
 //   - UserSimTurnAsked is true iff a turn's StartedAt falls strictly after
 //     the trigger call's At and strictly before the At of the next call
 //     (following the trigger, by index — calls is assumed chronological)
@@ -248,7 +251,7 @@ func buildAskWhenObservation(code string, calls []capture.MCPToolCall, turns []U
 	triggerIndex := -1
 	var triggerAt time.Time
 	for i, call := range calls {
-		if call.ResultIsError || strings.Contains(call.ResultText, fragment) {
+		if strings.Contains(call.ResultText, fragment) {
 			triggerIndex = i
 			triggerAt = call.At
 			break

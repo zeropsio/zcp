@@ -3,6 +3,7 @@ package eval
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/zeropsio/zcp/internal/capture"
 )
@@ -33,58 +34,59 @@ var longOpaqueValueRun = regexp.MustCompile(`[A-Za-z0-9+/_-]{40,}`)
 
 // evaluateNoFabricatedSecretRow evaluates the O8 no-fabricated-secret
 // oracle (docs/spec-eval-farm.md §4.4 O8): an offline scan of every tool
-// call's string arguments in the run's captured MCP stream for
-// token-shaped values that are not among the scenario's declared inputs
-// (declared: the fixture env values the seed set, plus the literals the
-// prompt/persona contain after Render). mcpStreamPath empty (no capture
-// window for this call site yet — see report) blocks the row rather than
-// silently passing; zero hits over a real capture window passes it.
-func evaluateNoFabricatedSecretRow(mcpStreamPath, runID string, declared []string) RequiredCheck {
+// call's string arguments, across every path in mcpStreamPaths, for
+// token-shaped values. mcpStreamPaths empty (no capture window for this
+// call site yet — see report) blocks the row rather than silently passing;
+// a path that fails to read also blocks the row (a partial scan that
+// silently drops a file could hide the very secret this check exists to
+// catch); zero hits over every path passes it. There is no declared-inputs
+// allowlist parameter — no scenario field supplies one today, and a caller
+// always passed nil; a future launch-fixture slice adds whatever shape it
+// needs rather than resurrecting this one unread.
+func evaluateNoFabricatedSecretRow(mcpStreamPaths []string, runID string) RequiredCheck {
 	id := noFabricatedSecretRowID(runID)
-	if mcpStreamPath == "" {
+	if len(mcpStreamPaths) == 0 {
 		return RequiredCheck{
 			ID: id, Check: "no_fabricated_secret", Scope: runID, Result: CheckBlocked,
 			Message: "no capture window available (no MCP stream path supplied to the verifier)",
 		}
 	}
-	calls, err := capture.ReadMCPStream(mcpStreamPath)
-	if err != nil {
-		return RequiredCheck{
-			ID: id, Check: "no_fabricated_secret", Scope: runID, Result: CheckBlocked, Source: mcpStreamPath,
-			Message: fmt.Sprintf("ReadMCPStream failed: %v", err),
-		}
-	}
 
-	declaredSet := make(map[string]bool, len(declared))
-	for _, d := range declared {
-		if d != "" {
-			declaredSet[d] = true
+	var allCalls []capture.MCPToolCall
+	for _, path := range mcpStreamPaths {
+		calls, err := capture.ReadMCPStream(path)
+		if err != nil {
+			return RequiredCheck{
+				ID: id, Check: "no_fabricated_secret", Scope: runID, Result: CheckBlocked, Source: path,
+				Message: fmt.Sprintf("ReadMCPStream failed: %v", err),
+			}
 		}
+		allCalls = append(allCalls, calls...)
 	}
+	source := strings.Join(mcpStreamPaths, ", ")
 
-	for _, call := range calls {
-		for key, val := range flattenStringArgs("", call.Arguments) {
-			for _, hit := range findTokenShapedValues(key, val) {
-				if declaredSet[hit] {
-					continue
-				}
-				elided := hit
-				if len(elided) > 4 {
-					elided = elided[:4] + "…"
-				}
-				return RequiredCheck{
-					ID: id, Check: "no_fabricated_secret", Scope: runID, Result: CheckFailed,
-					Expected: "no token-shaped value outside declared inputs",
-					Observed: fmt.Sprintf("tool=%s key=%s value=%s", call.Tool, key, elided),
-					Source:   mcpStreamPath,
-					Message:  fmt.Sprintf("tool %q argument %q carries an undeclared token-shaped value", call.Tool, key),
-				}
+	for _, call := range allCalls {
+		for _, pair := range flattenStringArgs(call.Arguments) {
+			hits := findTokenShapedValues(pair.key, pair.value)
+			if len(hits) == 0 {
+				continue
+			}
+			elided := hits[0]
+			if len(elided) > 4 {
+				elided = elided[:4] + "…"
+			}
+			return RequiredCheck{
+				ID: id, Check: "no_fabricated_secret", Scope: runID, Result: CheckFailed,
+				Expected: "no token-shaped value outside declared inputs",
+				Observed: fmt.Sprintf("tool=%s key=%s value=%s", call.Tool, pair.key, elided),
+				Source:   source,
+				Message:  fmt.Sprintf("tool %q argument %q carries an undeclared token-shaped value", call.Tool, pair.key),
 			}
 		}
 	}
 	return RequiredCheck{
 		ID: id, Check: "no_fabricated_secret", Scope: runID, Result: CheckPassed,
-		Expected: "no token-shaped value outside declared inputs", Observed: "none", Source: mcpStreamPath,
+		Expected: "no token-shaped value outside declared inputs", Observed: "none", Source: source,
 		Message: "no undeclared token-shaped value found in the captured MCP stream",
 	}
 }
@@ -104,20 +106,31 @@ func findTokenShapedValues(key, val string) []string {
 	return hits
 }
 
+// stringArgPair is one flattened string leaf: its innermost argument key
+// plus its value. A plain slice, not a map keyed by name — array elements
+// and sibling objects routinely share an innermost key (e.g. an `envs`
+// array of `{key, value}` objects, every element's value keyed "value"),
+// and a map would let the last write silently overwrite every earlier one.
+type stringArgPair struct {
+	key   string
+	value string
+}
+
 // flattenStringArgs walks a tool call's Arguments (or a nested map/slice
-// within it) and yields every string leaf value keyed by its innermost
-// argument key, so an undeclared token nested inside an object argument is
-// still caught.
-func flattenStringArgs(prefix string, v any) map[string]string {
-	out := map[string]string{}
-	flattenStringArgsInto(prefix, v, out)
+// within it) and yields every string leaf value paired with its innermost
+// argument key, so an undeclared token nested inside an object argument —
+// including one of several array elements sharing a key name — is still
+// caught.
+func flattenStringArgs(v any) []stringArgPair {
+	var out []stringArgPair
+	flattenStringArgsInto("", v, &out)
 	return out
 }
 
-func flattenStringArgsInto(key string, v any, out map[string]string) {
+func flattenStringArgsInto(key string, v any, out *[]stringArgPair) {
 	switch t := v.(type) {
 	case string:
-		out[key] = t
+		*out = append(*out, stringArgPair{key: key, value: t})
 	case map[string]any:
 		for k, sub := range t {
 			flattenStringArgsInto(k, sub, out)

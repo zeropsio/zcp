@@ -229,3 +229,32 @@ func TestAskWhenCorrelation_ReadOnlyCallsBetween_DoNotCountAsMutation(t *testing
 		t.Error("UserSimTurnAsked = false, want true — the read-only zerops_discover call must not close the window early")
 	}
 }
+
+// TestAskWhen_WindowAnchorsOnCodedErrorOnly pins E9: the trigger is the
+// first call whose ResultText contains THIS entry's own "code":"<code>"
+// fragment — an earlier, unrelated ResultIsError=true call must never
+// anchor the window (docs/spec-eval-farm.md §4.1 FM-31). Before the fix, any
+// ResultIsError=true call triggered regardless of which code it carried, so
+// a user-sim turn that answered an unrelated earlier error was wrongly
+// counted as having answered THIS entry's error.
+func TestAskWhen_WindowAnchorsOnCodedErrorOnly(t *testing.T) {
+	t.Parallel()
+	t1 := time.Date(2026, 9, 10, 0, 0, 1, 0, time.UTC)
+	t1h := time.Date(2026, 9, 10, 0, 0, 1, 500000000, time.UTC) // between the unrelated error and the coded one
+	t2 := time.Date(2026, 9, 10, 0, 0, 2, 0, time.UTC)
+	t3 := time.Date(2026, 9, 10, 0, 0, 3, 0, time.UTC)
+	calls := []capture.MCPToolCall{
+		{Tool: "zerops_deploy", ResultIsError: true, ResultText: `{"code":"SOME_OTHER_ERROR"}`, At: t1},
+		{Tool: "zerops_discover", ResultText: `{"code":"GIT_TOKEN_MISSING"}`, At: t2}, // the actual coded error, read-only tool
+		{Tool: "zerops_import", At: t3}, // the next mutating call
+	}
+	turns := []UserSimTurn{{StartedAt: t1h}} // before the coded error, only after the unrelated one
+
+	obs := buildAskWhenObservation("GIT_TOKEN_MISSING", calls, turns, askWhenTestMutatingTools)
+	if !obs.ErrorSeen {
+		t.Fatal("ErrorSeen = false, want true")
+	}
+	if obs.UserSimTurnAsked {
+		t.Error("UserSimTurnAsked = true, want false — the turn happened before the coded error, wrongly anchored by the earlier unrelated error under the pre-fix trigger")
+	}
+}
