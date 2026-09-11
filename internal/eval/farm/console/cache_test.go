@@ -57,12 +57,12 @@ func TestCache_SecondBatchesLoadReadsNothingForFinishedRuns(t *testing.T) {
 	cache := newRunCache(now)
 	sc := newSummaryCache(now)
 
-	if _, err := loadBatchRows(context.Background(), store, false, nil, cache, sc); err != nil {
+	if _, err := loadBatchRows(context.Background(), store, false, nil, cache, sc, nil); err != nil {
 		t.Fatalf("first loadBatchRows: %v", err)
 	}
 	store.resetCallLog()
 
-	if _, err := loadBatchRows(context.Background(), store, false, nil, cache, sc); err != nil {
+	if _, err := loadBatchRows(context.Background(), store, false, nil, cache, sc, nil); err != nil {
 		t.Fatalf("second loadBatchRows: %v", err)
 	}
 
@@ -99,7 +99,7 @@ func TestCache_ObservationReReadAfterQueueJobCompletes(t *testing.T) {
 	seedObservation(t, store, fixtureObservation("cq1-x"))
 	seedObservation(t, store, fixtureObservation("cq1-y"))
 
-	if _, err := loadBatchRows(context.Background(), store, false, srv.queueState, srv.runCache, srv.summaryCache); err != nil {
+	if _, err := loadBatchRows(context.Background(), store, false, srv.queueState, srv.runCache, srv.summaryCache, srv.logf); err != nil {
 		t.Fatalf("warm-up loadBatchRows: %v", err)
 	}
 
@@ -113,7 +113,7 @@ func TestCache_ObservationReReadAfterQueueJobCompletes(t *testing.T) {
 	}
 
 	store.resetCallLog()
-	if _, err := loadBatchRows(context.Background(), store, false, srv.queueState, srv.runCache, srv.summaryCache); err != nil {
+	if _, err := loadBatchRows(context.Background(), store, false, srv.queueState, srv.runCache, srv.summaryCache, srv.logf); err != nil {
 		t.Fatalf("loadBatchRows after completion: %v", err)
 	}
 
@@ -143,13 +143,13 @@ func TestCache_ObservationReReadAfterTwoMinutes(t *testing.T) {
 	cache := newRunCache(clock.now)
 	sc := newSummaryCache(clock.now)
 
-	if _, err := loadBatchRows(context.Background(), store, false, nil, cache, sc); err != nil {
+	if _, err := loadBatchRows(context.Background(), store, false, nil, cache, sc, nil); err != nil {
 		t.Fatalf("warm-up: %v", err)
 	}
 
 	store.resetCallLog()
 	clock.advance(90 * time.Second)
-	if _, err := loadBatchRows(context.Background(), store, false, nil, cache, sc); err != nil {
+	if _, err := loadBatchRows(context.Background(), store, false, nil, cache, sc, nil); err != nil {
 		t.Fatalf("at +90s: %v", err)
 	}
 	if store.calledList("runs/ct1-a/observer/") {
@@ -161,7 +161,7 @@ func TestCache_ObservationReReadAfterTwoMinutes(t *testing.T) {
 
 	store.resetCallLog()
 	clock.advance(31 * time.Second) // total +121s, past the 2-minute TTL
-	if _, err := loadBatchRows(context.Background(), store, false, nil, cache, sc); err != nil {
+	if _, err := loadBatchRows(context.Background(), store, false, nil, cache, sc, nil); err != nil {
 		t.Fatalf("at +121s: %v", err)
 	}
 	if !store.calledList("runs/ct1-a/observer/") {
@@ -386,7 +386,7 @@ func TestCache_ColdFillAtMostEightConcurrent(t *testing.T) {
 
 	done := make(chan []RunRow, 1)
 	go func() {
-		rows, buildErr := batchWindowRowsWithManifest(context.Background(), bs, false, "cf1", manifest, nil, cache, sc)
+		rows, buildErr := batchWindowRowsWithManifest(context.Background(), bs, false, "cf1", manifest, nil, cache, sc, nil)
 		if buildErr != nil {
 			t.Errorf("batchWindowRowsWithManifest: %v", buildErr)
 		}
