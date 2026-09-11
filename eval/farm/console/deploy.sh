@@ -58,19 +58,32 @@ fi
 
 # ---- cleanup ------------------------------------------------------------
 
-# STAGE (the build output the push reads) and CLIDIR (zcli's own private
-# login-data dir) are both removed on every exit path, success or failure
-# — nothing that could carry a secret (the built zerops.yml/zcp pair holds
-# none, but CLIDIR's cli.data may) survives this script.
+# STAGE (the build output the push reads), CLIDIR (zcli's own private
+# login-data dir) and SECRETDIR (every temp file that itself carries a
+# secret value) are all removed on every exit path — success, a failed
+# request (set -e exits before a manual `rm -f` runs), or an interrupt
+# mid-curl. Nothing that could carry a secret survives this script.
 STAGE=""
 CLIDIR=""
+SECRETDIR=""
 cleanup() {
 	rc=$?
 	[ -n "$STAGE" ] && rm -rf "$STAGE"
 	[ -n "$CLIDIR" ] && rm -rf "$CLIDIR"
+	[ -n "$SECRETDIR" ] && rm -rf "$SECRETDIR"
 	exit "$rc"
 }
 trap cleanup EXIT
+
+# SECRETDIR (mode 0700) holds every temp file that carries a secret value
+# (api_request's curl -K bearer-token config, the import request body) —
+# created once, up front, and registered with the trap above before the
+# first secret-holding file is ever written into it. An explicit template
+# (rather than a bare `mktemp -d`) is deliberate: unlike GNU mktemp, BSD/
+# macOS mktemp ignores $TMPDIR for a template-less call, so this is what
+# makes both the fix and its test honor an overridden $TMPDIR.
+SECRETDIR=$(mktemp -d "${TMPDIR:-/tmp}/zcp-console-deploy-secrets.XXXXXX")
+chmod 700 "$SECRETDIR"
 
 # ---- REST helpers ---------------------------------------------------------
 
@@ -84,7 +97,7 @@ api_request() {
 	path="$2"
 	datafile="${3:-}"
 
-	cfg=$(mktemp)
+	cfg=$(mktemp "$SECRETDIR/curl-cfg.XXXXXX")
 	chmod 600 "$cfg"
 	printf 'header = "Authorization: Bearer %s"\n' "$ZCP_FARM_ACCOUNT_TOKEN" >"$cfg"
 
@@ -192,7 +205,7 @@ if [ -z "$found" ]; then
 	console_token=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
 	write_env_var "$ZCP_FARM_CONSOLE_ENV_FILE" ZCP_FARM_CONSOLE_TOKEN "$console_token"
 
-	yamlfile=$(mktemp)
+	yamlfile=$(mktemp "$SECRETDIR/import-body.XXXXXX")
 	chmod 600 "$yamlfile"
 	# shellcheck disable=SC2016
 	# ^ deliberate: the program below is single-quoted so the SHELL never
