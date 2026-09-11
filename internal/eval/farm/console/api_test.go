@@ -1050,3 +1050,159 @@ func TestAPI_FilterTestFindings(t *testing.T) {
 		t.Errorf("findings.json must carry causeClass beside the cause label:\n%s", body)
 	}
 }
+
+// TestAPI_RunDetailJSON_VerdictReasonAndCostKnown pins FIX2-API item 1: a
+// run's verdictReason and costKnown — missing from GET
+// /api/runs/<runId>.json today — through the same facts the runs list
+// already carries: verdictReason from the blocked-check-ids fallback
+// (view_test.go's TestBuildRunRow_VerdictReasonBlockedFromChecks), costKnown
+// false for a bundle whose meta.json never recorded usage.
+func TestAPI_RunDetailJSON_VerdictReasonAndCostKnown(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "vc1", "off", []runFixture{
+		{
+			runID: "vc1-a", scenario: "a", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.1,
+			taskResult: "blocked", done: true,
+			checks: [][5]string{{"z1", "blocked", "x", "y", "verify"}, {"a1", "blocked", "x", "y", "verify"}},
+		},
+	}, false, nil) // no summary: done.json landed before the batch settled
+	// seedRun always writes a "usage" object (even a zero one); overwrite
+	// meta.json without it to simulate a bundle that never recorded usage
+	// (view.go: RunRow.CostKnown is true only when meta.json carries one).
+	store.putJSON(t, "runs/vc1-a/results/"+testResultsTS+"/a/meta.json", map[string]any{
+		"scenarioId": "a", "suiteId": "gate", "mode": "two-shot-resume",
+		"startedAt": now.Add(-time.Hour).UTC().Format(time.RFC3339Nano), "duration": "5s",
+		"evaluatorSha256": "eval-sha", "candidateSha256": "cand-sha",
+		"task": map[string]any{"mode": "required", "result": "blocked", "frozenAt": now.Add(-time.Hour).UTC().Format(time.RFC3339Nano)},
+	})
+
+	var detail RunDetail
+	if err := json.Unmarshal(doGET(t, h, "/api/runs/vc1-a.json").Body.Bytes(), &detail); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if detail.VerdictReason != "a1, z1" {
+		t.Errorf("VerdictReason = %q, want %q", detail.VerdictReason, "a1, z1")
+	}
+	if detail.CostKnown {
+		t.Error("CostKnown = true, want false (meta.json carried no usage)")
+	}
+
+	var out struct {
+		Runs []RunsListItem `json:"runs"`
+	}
+	if err := json.Unmarshal(doGET(t, h, "/api/runs.json?batch=vc1").Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal runs list: %v", err)
+	}
+	if len(out.Runs) != 1 {
+		t.Fatalf("got %d runs, want 1", len(out.Runs))
+	}
+	if out.Runs[0].CostKnown {
+		t.Error("runs list CostKnown = true, want false")
+	}
+}
+
+// TestAPI_RunDetailMD_Wording pins FIX2-API item 2's §8.8 wording for GET
+// /api/runs/<runId>.md: "agent cost:" (with "— (not recorded)" when
+// unknown, never a misleading "$0.00"), "ZCP build:", "evaluator build:",
+// "assessment: <state text>" (never a raw "observerState: <enum>"), and
+// "assessment: none" (never "Observer: (not recorded)") for a run that
+// carries no observation at all.
+func TestAPI_RunDetailMD_Wording(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "wd1", "off", []runFixture{
+		{runID: "wd1-a", scenario: "a", startedAt: now.Add(-time.Hour), durationS: "5s", taskResult: "passed", done: true},
+	}, false, nil)
+	// seedRun always writes a "usage" object (even a zero one); overwrite
+	// meta.json without it so this run's cost is genuinely unrecorded.
+	store.putJSON(t, "runs/wd1-a/results/"+testResultsTS+"/a/meta.json", map[string]any{
+		"scenarioId": "a", "suiteId": "gate", "mode": "two-shot-resume",
+		"startedAt": now.Add(-time.Hour).UTC().Format(time.RFC3339Nano), "duration": "5s",
+		"evaluatorSha256": "eval-sha", "candidateSha256": "cand-sha",
+		"task": map[string]any{"mode": "required", "result": "passed", "frozenAt": now.Add(-time.Hour).UTC().Format(time.RFC3339Nano)},
+	})
+
+	body := doGET(t, h, "/api/runs/wd1-a.md").Body.String()
+	for _, want := range []string{
+		"agent cost: — (not recorded)",
+		"ZCP build: cand-sha",
+		"evaluator build: eval-sha",
+		"assessment: not assessed — batch ran without observer",
+		"assessment: none",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("run detail md missing %q:\n%s", want, body)
+		}
+	}
+	for _, bad := range []string{"\ncost: $", "\ncandidate: ", "\nevaluator: eval-sha", "observerState:", "Observer: (not recorded)", "$0.00"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("run detail md still contains old wording %q:\n%s", bad, body)
+		}
+	}
+
+	seedBatch(t, store, "wd2", "off", []runFixture{
+		{runID: "wd2-a", scenario: "a", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 2.5, taskResult: "passed", done: true},
+	}, false, nil)
+	body2 := doGET(t, h, "/api/runs/wd2-a.md").Body.String()
+	if !strings.Contains(body2, "agent cost: $2.5000") {
+		t.Errorf("run detail md missing known agent cost:\n%s", body2)
+	}
+}
+
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return line
+}
+
+// TestAPI_LegendsInlineVerdictAndDropUnprintedTerms pins FIX2-API item 3:
+// no legend says "see the table below" (no markdown endpoint prints that
+// table — it's a /terms-only page fixture); runs.md's legend drops
+// "Disputed"/"Agent cost" (its line never prints either) and defines
+// "Outcome"/"Findings" (which it does); problems.md defines "Hit" and
+// "Status" (both printed on every problem line); findings.md drops
+// "Surface"/"Anchor" (its line never prints either, unlike the JSON twin).
+func TestAPI_LegendsInlineVerdictAndDropUnprintedTerms(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "lg1", "claude-sonnet-5", []runFixture{
+		{runID: "lg1-a", scenario: "a", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 1.0, taskResult: "passed", done: true},
+	}, true, map[string]string{"lg1-a": "passed"})
+	seedObservation(t, store, fixtureObservation("lg1-a"))
+
+	for _, path := range []string{"/api/runs.md", "/api/problems.md", "/api/batches.md", "/api/digest.md?batch=lg1", "/api/findings.md"} {
+		body := doGET(t, h, path).Body.String()
+		if strings.Contains(body, "table below") {
+			t.Errorf("%s legend still says \"see the table below\":\n%s", path, firstLine(body))
+		}
+	}
+
+	verdictLegend := firstLine(doGET(t, h, "/api/batches.md").Body.String())
+	if !strings.Contains(verdictLegend, "every check held") || !strings.Contains(verdictLegend, "a check proved the run wrong") {
+		t.Errorf("batches.md legend does not inline the verdict meanings:\n%s", verdictLegend)
+	}
+
+	runsLegend := firstLine(doGET(t, h, "/api/runs.md").Body.String())
+	if strings.Contains(runsLegend, "Disputed = ") {
+		t.Errorf("runs.md legend still defines \"Disputed\", which its line never prints:\n%s", runsLegend)
+	}
+	if !strings.Contains(runsLegend, "Outcome = ") || !strings.Contains(runsLegend, "Findings = ") {
+		t.Errorf("runs.md legend must define Outcome and Findings, which its line prints:\n%s", runsLegend)
+	}
+
+	problemsLegend := firstLine(doGET(t, h, "/api/problems.md").Body.String())
+	if !strings.Contains(problemsLegend, "Hit = ") || !strings.Contains(problemsLegend, "Status = ") {
+		t.Errorf("problems.md legend must define Hit and Status, which its line prints:\n%s", problemsLegend)
+	}
+
+	findingsLegend := firstLine(doGET(t, h, "/api/findings.md").Body.String())
+	if strings.Contains(findingsLegend, "Surface = ") || strings.Contains(findingsLegend, "Anchor = ") {
+		t.Errorf("findings.md legend still defines Surface/Anchor, which its line never prints:\n%s", findingsLegend)
+	}
+}

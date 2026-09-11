@@ -20,9 +20,33 @@ import (
 
 // observer.NotRecorded matches §7.2's rendering of a missing optional bundle file.
 
-// glossaryDef looks term up in labels.go's §8.8 glossary (glossaryTerms) —
-// "" for a term not defined there.
+// apiLegendOverrides supplies markdown-legend-only wording for terms whose
+// canonical labels.go glossary text defers to a page the markdown API never
+// renders ("— see the table below" / "— see the problem status table
+// below": /terms is the only surface with such a table beneath the
+// glossary), plus terms glossaryTerms does not define at all but an API
+// list line prints. Each string transcribes docs/spec-eval-farm.md §8.8's
+// own inline prose for that concept — the same source glossaryTerms itself
+// transcribes — so this can't drift from the spec even though it can't
+// share labels.go's vocab tables (a different slice's write-set this
+// round).
+var apiLegendOverrides = map[string]string{
+	"Verdict":  "passed (every check held) · failed (a check proved the run wrong) · blocked (could not be graded — reason shown) · not started · running · stalled (no result after the batch's deadline, plus 30 minutes)",
+	"Severity": "high: the goal was missed, something was destroyed, or (for a test cause) the verdict is wrong · medium: it cost many steps or much time · low: ZCP text or behavior that is wrong but cost this run nothing",
+	"Cause":    "ZCP guidance · ZCP tool · Zerops platform · Agent mistake · Test scenario · Test check",
+	"Problem":  "The same finding across runs.",
+	"Status":   "the problem's status: new (a regression) · first seen · recurring · gone (fixed, or not reproduced) · unconfirmed (not assessed on the newest build)",
+	"Outcome":  "the assessment's verdict on the run: OK · Problem · Inconclusive · none (no current ok observation)",
+	"Findings": "high/medium finding counts per cause class, e.g. \"ZCP:1/0\"",
+	"Hit":      "an assessed run on that build where the problem appeared",
+}
+
+// glossaryDef looks term up first in apiLegendOverrides, then in labels.go's
+// §8.8 glossary (glossaryTerms) — "" for a term neither defines.
 func glossaryDef(term string) string {
+	if def, ok := apiLegendOverrides[term]; ok {
+		return def
+	}
 	for _, g := range glossaryTerms {
 		if g.Term == term {
 			return g.Definition
@@ -252,7 +276,7 @@ func problemItemFromProblem(p Problem) ProblemItem {
 
 func renderProblemsMD(items []ProblemItem) string {
 	var b strings.Builder
-	b.WriteString(legendLine("Problem", "Severity", "Cause", "Surface", "Anchor"))
+	b.WriteString(legendLine("Problem", "Severity", "Cause", "Surface", "Anchor", "Hit", "Status"))
 	for _, p := range items {
 		fmt.Fprintf(&b, "- [%s · %s] %s — %s — hit %d/%d runs on newest build — %d runs · %d batches · %d builds — status %s\n",
 			p.Severity, strings.Join(p.CauseLabels, ","), p.Title, p.Surface,
@@ -396,7 +420,7 @@ type DigestResponse struct {
 // counts, cost.
 func renderDigestHeader(batches, builds []string, vcs []VerdictCountItem, cost float64, costUnknownN int) string {
 	var b strings.Builder
-	b.WriteString(legendLine("Batch", "ZCP build", "Verdict", "Problem", "Severity", "Agent cost"))
+	b.WriteString(legendLine("Batch", "ZCP build", "Verdict", "Problem", "Severity", "Cause", "Surface", "Anchor", "Hit", "Status", "Outcome", "Findings", "Agent cost"))
 	fmt.Fprintf(&b, "# Digest\n\nbatches: %s\nbuilds: %s\n", strings.Join(batches, ", "), strings.Join(builds, ", "))
 	verdicts := make([]string, len(vcs))
 	for i, vc := range vcs {
@@ -668,6 +692,7 @@ type RunsListItem struct {
 	StartedAt         time.Time            `json:"startedAt"`
 	DurationSec       float64              `json:"durationSec"`
 	CostUsd           float64              `json:"costUsd"`
+	CostKnown         bool                 `json:"costKnown"`
 	Outcome           string               `json:"outcome"`
 	CauseCounts       []CauseCountItem     `json:"causeCounts"`
 	FailedCheckIDs    []string             `json:"failedCheckIds,omitempty"`
@@ -682,9 +707,11 @@ type RunDetail struct {
 	Batch             string                `json:"batch"`
 	Scenario          string                `json:"scenario"`
 	Verdict           string                `json:"verdict"`
+	VerdictReason     string                `json:"verdictReason,omitempty"`
 	StartedAt         time.Time             `json:"startedAt"`
 	DurationSec       float64               `json:"durationSec"`
 	CostUsd           float64               `json:"costUsd"`
+	CostKnown         bool                  `json:"costKnown"`
 	CandidateSha256   string                `json:"candidateSha256"`
 	EvaluatorSha256   string                `json:"evaluatorSha256"`
 	StepCount         int                   `json:"stepCount"`
@@ -750,7 +777,7 @@ func runsListItemFromRow(row RunRow) RunsListItem {
 	item := RunsListItem{
 		RunID: row.RunID, Batch: row.Batch, Scenario: row.Scenario, Verdict: row.Verdict,
 		VerdictReason: row.VerdictReason,
-		StartedAt:     row.StartedAt, DurationSec: row.DurationSec, CostUsd: row.CostUsd,
+		StartedAt:     row.StartedAt, DurationSec: row.DurationSec, CostUsd: row.CostUsd, CostKnown: row.CostKnown,
 		Outcome: outcomeOrNone(row.Outcome), CauseCounts: causeCountItems(row.CauseCounts),
 		ObserverState: apiObserverState(row), ObserverStateText: row.ObserverStateText,
 	}
@@ -838,7 +865,7 @@ func groupRunItemsByBatch(items []RunsListItem) (order []string, groups map[stri
 // under "## <batch>" headers.
 func renderRunsListMD(items []RunsListItem) string {
 	var b strings.Builder
-	b.WriteString(legendLine("Run", "Verdict", "Disputed", "Agent cost"))
+	b.WriteString(legendLine("Run", "Verdict", "Outcome", "Findings"))
 	order, groups := groupRunItemsByBatch(items)
 	for _, batch := range order {
 		fmt.Fprintf(&b, "## %s\n", batch)
@@ -909,7 +936,8 @@ func runDetailFromRow(row RunRow) RunDetail {
 	}
 	return RunDetail{
 		RunID: row.RunID, Batch: row.Batch, Scenario: row.Scenario, Verdict: row.Verdict,
-		StartedAt: row.StartedAt, DurationSec: row.DurationSec, CostUsd: row.CostUsd,
+		VerdictReason: row.VerdictReason,
+		StartedAt:     row.StartedAt, DurationSec: row.DurationSec, CostUsd: row.CostUsd, CostKnown: row.CostKnown,
 		CandidateSha256: row.CandidateSha256, EvaluatorSha256: row.EvaluatorSha256, StepCount: row.StepCount,
 		ObserverState: apiObserverState(row), ObserverStateText: row.ObserverStateText, Observation: row.Observation,
 		OlderObsIDs: older, FailedChecks: failed, EvidenceSteps: steps,
@@ -948,15 +976,23 @@ func formatStepRanges(steps []int) string {
 
 func renderRunDetailMD(d RunDetail) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# %s\n\nscenario: %s\nbatch: %s\nverdict: %s\nstarted: %s\nduration: %.1fs\ncost: $%.4f\ncandidate: %s\nevaluator: %s\nsteps: %d\nobserverState: %s\ntask prompt: %s\nself-review: %s\n\n",
-		d.RunID, d.Scenario, d.Batch, d.Verdict, d.StartedAt.UTC().Format(time.RFC3339),
-		d.DurationSec, d.CostUsd, d.CandidateSha256, d.EvaluatorSha256, d.StepCount, d.ObserverState,
+	verdict := d.Verdict
+	if d.VerdictReason != "" {
+		verdict += " (" + d.VerdictReason + ")"
+	}
+	cost := "— (not recorded)"
+	if d.CostKnown {
+		cost = fmt.Sprintf("$%.4f", d.CostUsd)
+	}
+	fmt.Fprintf(&b, "# %s\n\nscenario: %s\nbatch: %s\nverdict: %s\nstarted: %s\nduration: %.1fs\nagent cost: %s\nZCP build: %s\nevaluator build: %s\nsteps: %d\nassessment: %s\ntask prompt: %s\nself-review: %s\n\n",
+		d.RunID, d.Scenario, d.Batch, verdict, d.StartedAt.UTC().Format(time.RFC3339),
+		d.DurationSec, cost, d.CandidateSha256, d.EvaluatorSha256, d.StepCount, d.ObserverStateText,
 		d.TaskPromptURL, d.SelfReviewURL)
 
 	if d.Observation != nil {
 		b.WriteString(observer.Render(*d.Observation))
 	} else {
-		b.WriteString("Observer: " + observer.NotRecorded + "\n")
+		b.WriteString("assessment: none\n")
 	}
 
 	b.WriteString("\nFailed/blocked checks:\n")
@@ -1379,7 +1415,7 @@ func findingItemFromRow(f FindingRow) FindingItem {
 
 func renderFindingsMD(items []FindingItem) string {
 	var b strings.Builder
-	b.WriteString(legendLine("Finding", "Severity", "Cause", "Surface", "Anchor", "Quote found"))
+	b.WriteString(legendLine("Finding", "Severity", "Cause", "Quote found"))
 	for _, it := range items {
 		fmt.Fprintf(&b, "- [%s · %s] %s — %s (%s, started %s, steps %s) — quotes %d/%d — %s\n",
 			it.Severity, it.Cause, it.Title, it.Batch, it.RunID, it.StartedAt.UTC().Format(time.RFC3339),
