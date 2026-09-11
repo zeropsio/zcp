@@ -36,7 +36,7 @@
 <td data-label="Cause">{{range .CauseLabels}}<span class="chip cause-chip">{{.}}</span> {{end}}</td>
 <td data-label="Where">{{if .Surface}}<a class="chip" href="{{.SurfaceLink}}"><code>{{.Surface}}</code></a>{{end}}{{if .Anchor}}<br><code>{{.Anchor}}</code>{{end}}</td>
 <td data-label="Severity"><span class="{{severityClass .Severity}}" title="{{severityTooltip .Severity}}">{{severityLabel .Severity}}</span></td>
-<td data-label="Runs hit">hit {{.HitOnNewestBuild}}/{{.RunsAssessedOnNewest}} runs{{if $.NewestBuild}} on {{$.NewestBuild}}{{end}} · {{.RunsTotal}} run{{if ne .RunsTotal 1}}s{{end}} · {{.BatchesTotal}} batch{{if ne .BatchesTotal 1}}es{{end}} · {{.BuildsTotal}} build{{if ne .BuildsTotal 1}}s{{end}}</td>
+<td data-label="Runs hit">hit {{.HitOnNewestBuild}}/{{.RunsAssessedOnNewest}} runs{{if $.NewestBuild}} on {{$.NewestBuild}}{{end}} · {{.InScopeHit}}/{{.InScopeAssessed}} in scope · {{.RunsTotal}} run{{if ne .RunsTotal 1}}s{{end}} · {{.BatchesTotal}} batch{{if ne .BatchesTotal 1}}es{{end}} · {{.BuildsTotal}} build{{if ne .BuildsTotal 1}}s{{end}}</td>
 <td data-label="Status"><span class="chip" title="{{problemStatusTooltip .Status}}">{{problemStatusLabel .Status}}{{if problemStatusLive .Status}} (live){{end}}</span></td>
 <td data-label="Last seen">{{.LastSeenShort}}</td>
 <td data-label="First seen">{{.FirstSeenShort}}</td>

@@ -7,6 +7,7 @@
 package console
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -310,35 +311,30 @@ func hitInBatch(p Problem, batchID string) int {
 	return len(seen)
 }
 
-// buildBatchProblems implements item 3: §8.6 clustering over this batch's
-// own runs plus (when one exists) the previous same-set batch's runs — just
-// enough cross-batch data for BuildProblems' status computation and for
-// deciding, per problem, whether it also hit that previous batch — narrowed
-// to the problems that hit THIS batch, or (FIX2 item 7) that hit only the
-// previous one (status gone: fixed since, or not reproduced) — the best
-// news a batch page can carry. A problem clustering to a run outside both
-// given batches never happens, since only these two batches' runs are fed
-// in.
+// buildBatchProblems implements item 3: §8.6 clustering scoped to this
+// batch's own runs plus (when one exists) the previous same-set batch's
+// runs — that pair decides which problems are LISTED here at all, and
+// whether a problem also hit that previous batch — but status (item 1,
+// FIX3: "status must not depend on the request's scope") is computed by
+// BuildProblemsScoped over allRuns, the full farm history, never just this
+// pair; a problem hit on a build several batches back must still read
+// "recurring", not "first seen". A problem clustering to a run outside
+// [this batch, previous batch] can now appear among Members (allRuns
+// carries the whole farm), but is only ever LISTED here when it also hits
+// this batch, or (FIX2 item 7) only the previous one (status gone).
 //
 // Ambiguity (flagged per _common.md): §8.6/§8.3 do not spell out the run
-// set BuildProblems should see for a single batch's page, or whether
+// set a single batch's page should show ITS OWN problems from, or whether
 // "also/not in <previous batch>" replaces or augments the normal five-way
-// Status. This resolves it as: feed exactly [this batch, previous same-set
-// batch] (bounded, and enough for a meaningful newest-build comparison
-// without re-scanning the whole bucket); keep rendering the ordinary
-// Status label (labels.go's problemStatusLabel) and ADD the also/not-in
-// annotation alongside it, rather than replacing it.
-func buildBatchProblems(rows []RunRow, batchID, batchSet string, batchCreatedAt time.Time, prev *BatchRow, prevRows []RunRow) []batchProblemView {
-	all := make([]ProblemsRun, 0, len(rows)+len(prevRows))
-	for _, r := range rows {
-		all = append(all, ProblemsRun{Row: r, BatchSet: batchSet, BatchCreatedAt: batchCreatedAt})
-	}
-	if prev != nil {
-		for _, r := range prevRows {
-			all = append(all, ProblemsRun{Row: r, BatchSet: prev.Set, BatchCreatedAt: prev.CreatedAt})
-		}
-	}
-	problems := BuildProblems(all)
+// Status. This resolves it as: list exactly the problems with a member in
+// [this batch, previous same-set batch] (bounded, and enough for a
+// meaningful "also/not in" comparison); keep rendering the ordinary Status
+// label (labels.go's problemStatusLabel, now computed over full history per
+// item 1) and ADD the also/not-in annotation alongside it, rather than
+// replacing it.
+func buildBatchProblems(allRuns []ProblemsRun, rows []RunRow, batchID string, prev *BatchRow, prevRows []RunRow, findStepText StepTextFinder) []batchProblemView {
+	inScope := runRowIDSet(rows, prevRows)
+	problems := BuildProblemsScoped(allRuns, inScope, findStepText)
 
 	var out []batchProblemView
 	for _, p := range problems {
@@ -365,6 +361,36 @@ func buildBatchProblems(rows []RunRow, batchID, batchSet string, batchCreatedAt 
 		out = append(out, view)
 	}
 	return out
+}
+
+// resolveBatchProblems implements item 3's "Problems in this batch" block:
+// either §8.6 clustering (split into live/low severity) over the full farm
+// history (allRuns), scoped to [this batch, previous same-set batch]
+// (buildBatchProblems' own inScope) — status must not depend on that scope
+// (item 1, FIX3) — or, when nothing here has ever been assessed, the
+// deterministic-checks fallback. Split out of handleBatchPage so that
+// function's own branching doesn't grow with this block's (maintidx).
+func (s *Server) resolveBatchProblems(ctx context.Context, rows []RunRow, batchID string, hasPrev bool, prevBatch BatchRow, prevRows []RunRow) (problems, problemsLow []batchProblemView, fallback bool, fallbackChecks []checkFailureRow, err error) {
+	if !batchHasAnyAssessment(rows) {
+		return nil, nil, true, buildCheckFailureFallback(rows), nil
+	}
+
+	var prevPtr *BatchRow
+	if hasPrev {
+		prevPtr = &prevBatch
+	}
+	allRuns, err := s.allProblemsRuns(ctx)
+	if err != nil {
+		return nil, nil, false, nil, err
+	}
+	for _, p := range buildBatchProblems(allRuns, rows, batchID, prevPtr, prevRows, s.stepTextFinder(ctx)) {
+		if p.Severity == observer.SeverityLow {
+			problemsLow = append(problemsLow, p)
+			continue
+		}
+		problems = append(problems, p)
+	}
+	return problems, problemsLow, false, nil, nil
 }
 
 // batchHasAnyAssessment reports whether any run of rows has a current ok
@@ -740,25 +766,16 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 	data.SummaryLine = buildBatchSummaryLine(data.GoalYes, data.GoalPartly, data.GoalNo, data.OutcomeOK, data.OutcomeProblem, data.OutcomeInconclusive, data.CauseCounts)
 
 	// Problems in this batch (item 3), or the deterministic-checks
-	// fallback when nothing here has ever been assessed. Low-severity
-	// problems are folded behind their own "N low" <details> (data.
-	// ProblemsLow) instead of a compact row of their own.
-	if batchHasAnyAssessment(rows) {
-		var prevPtr *BatchRow
-		if hasPrev {
-			prevPtr = &prevBatch
-		}
-		for _, p := range buildBatchProblems(rows, batch, manifest.Set, bc.CreatedAt, prevPtr, prevRows) {
-			if p.Severity == observer.SeverityLow {
-				data.ProblemsLow = append(data.ProblemsLow, p)
-				continue
-			}
-			data.Problems = append(data.Problems, p)
-		}
-	} else {
-		data.ProblemsFallback = true
-		data.FallbackChecks = buildCheckFailureFallback(rows)
+	// fallback when nothing here has ever been assessed — resolveBatchProblems
+	// (below) owns the branching so handleBatchPage's own complexity doesn't
+	// grow with it (maintidx).
+	problems, problemsLow, fallback, fallbackChecks, err := s.resolveBatchProblems(r.Context(), rows, batch, hasPrev, prevBatch, prevRows)
+	if err != nil {
+		writeStoreError(w, err)
+		return
 	}
+	data.Problems, data.ProblemsLow = problems, problemsLow
+	data.ProblemsFallback, data.FallbackChecks = fallback, fallbackChecks
 
 	// Runs table (item 4): filter+sort through the shared engine so
 	// counts/links/400 behave exactly like every other list (§8.7), then

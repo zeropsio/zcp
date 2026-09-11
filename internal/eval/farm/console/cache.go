@@ -14,6 +14,7 @@ package console
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -67,17 +68,30 @@ type cachedObservation struct {
 	fetchedAt   time.Time
 }
 
+// stepTextCacheValue is one run's cached raw step-search text (item 1/4,
+// FIX3): a run is immutable once done.json exists (§7.6 FM-47), so unlike
+// the observation part this has no TTL — computed at most once for the
+// console's lifetime. ok is cached too (false for a run whose bundle can
+// never be loaded), so a doomed read is never retried either.
+type stepTextCacheValue struct {
+	text string
+	ok   bool
+}
+
 // runCacheEntry is one run's cache slot. immutable is nil until done.json
 // is observed to exist, then permanent; obs is re-read per rule 2's
 // TTL/invalidation; notDoneCheckedAt bounds how often a not-yet-done run's
 // done.json is re-Head'd (rule 3) and is never consulted again once
-// immutable != nil.
+// immutable != nil; stepText is filled lazily, only when something actually
+// asks for it (StepTextFinder's still-emitted search touches only the
+// newest build's own candidate runs, never every run in the cache).
 type runCacheEntry struct {
 	mu sync.Mutex
 
 	notDoneCheckedAt time.Time
 	immutable        *cachedImmutable
 	obs              *cachedObservation
+	stepText         *stepTextCacheValue
 }
 
 // runCache is the Server-owned run-row cache, keyed by run id.
@@ -120,6 +134,69 @@ func (c *runCache) invalidateObservation(runID string) {
 	e.mu.Lock()
 	e.obs = nil
 	e.mu.Unlock()
+}
+
+// rawStepSearchText assembles runID's full, searchable step text —
+// problems.go's StepTextFinder contract: "the task prompt plus every
+// step's agent/thinking text and every tool call's input JSON and result,
+// undecoded exactly as §7.3's digest quotes it". BuildSteps (observer/
+// steps.go) always numbers the task prompt as step 1's own StepUser text,
+// so that is the only "user" step included — a resumed segment's later
+// synthesized user-sim step carries no ZCP output worth searching and is
+// skipped, unlike the digest's own STEPS section (§7.3), which is a
+// display transcript rather than a search corpus and so keeps every step.
+// Tool input/result are used verbatim (Step.ToolInputJSON is already the
+// raw compacted JSON, never decoded and re-encoded, §7.3) and, unlike the
+// digest, never truncated — a search corpus must not lose the very text a
+// still-emitted anchor could be hiding in.
+func rawStepSearchText(steps []observer.Step) string {
+	var b strings.Builder
+	for _, s := range steps {
+		switch s.Kind {
+		case observer.StepUser:
+			if s.N == 1 {
+				b.WriteString(s.Text)
+				b.WriteByte('\n')
+			}
+		case observer.StepAgent, observer.StepThinking:
+			b.WriteString(s.Text)
+			b.WriteByte('\n')
+		case observer.StepTool:
+			b.WriteString(s.ToolInputJSON)
+			b.WriteByte('\n')
+			b.WriteString(s.ToolResultText)
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
+}
+
+// stepText resolves runID's raw step-search text through the cache (item
+// 1/4, FIX3): computed at most once per run for the console's lifetime — a
+// run is immutable once done.json exists (§7.6 FM-47), so there is nothing
+// to invalidate the way rule 2 invalidates an observation. A run whose
+// bundle can't be loaded (never seeded, or a corrupt/missing input file)
+// caches ok=false too, so a repeat still-emitted search never retries a
+// doomed read.
+func (c *runCache) stepText(ctx context.Context, store observer.ObjectStore, runID string) (string, bool) {
+	e := c.entry(runID)
+
+	e.mu.Lock()
+	cached := e.stepText
+	e.mu.Unlock()
+	if cached != nil {
+		return cached.text, cached.ok
+	}
+
+	var v stepTextCacheValue
+	if steps, err := loadSteps(ctx, store, runID); err == nil {
+		v = stepTextCacheValue{text: rawStepSearchText(steps), ok: true}
+	}
+
+	e.mu.Lock()
+	e.stepText = &v
+	e.mu.Unlock()
+	return v.text, v.ok
 }
 
 // row resolves run's RunRow through the cache (rules 1-3). No mutex is
@@ -325,6 +402,17 @@ func runRowCached(ctx context.Context, store observer.ObjectStore, cache *runCac
 		return buildRunRow(ctx, store, consoleObserverDisabled, batchID, run, bc, summary, summaryFound, queueState, time.Now())
 	}
 	return cache.row(ctx, store, consoleObserverDisabled, batchID, run, bc, summary, summaryFound, queueState)
+}
+
+// stepTextFinder builds the problems.go StepTextFinder every §8.6 problem
+// caller wires into BuildProblemsScoped (item 1/4, FIX3), backed by s's own
+// run cache so the still-emitted search's bucket reads are paid at most
+// once per run for the console's lifetime, not once per request — the
+// bound that keeps the search itself out of a page's warm-load budget.
+func (s *Server) stepTextFinder(ctx context.Context) StepTextFinder {
+	return func(runID string) (string, bool) {
+		return s.runCache.stepText(ctx, s.cfg.Store, runID)
+	}
 }
 
 // summaryCacheEntry is one batch's summary.json cache slot (rule 4).

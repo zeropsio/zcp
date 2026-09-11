@@ -230,12 +230,18 @@ func (s *Server) handleProblemsPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runs, err := s.problemsRunsSinceWindow(r.Context(), q.Since, s.now())
+	ctx := r.Context()
+	now := s.now()
+	// Item 1 (FIX3): status is computed over the full farm history
+	// (allRuns), never just this page's own since window — that window
+	// only decides scopeRuns, i.e. which problems are shown at all.
+	allRuns, err := s.allProblemsRuns(ctx)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	all := BuildProblems(runs)
+	scopeRuns := problemsRunsInWindow(allRuns, q.Since, now)
+	all := BuildProblemsScoped(allRuns, problemsRunIDSet(scopeRuns), s.stepTextFinder(ctx))
 
 	liveN, highN := 0, 0
 	for _, p := range all {
@@ -248,20 +254,20 @@ func (s *Server) handleProblemsPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	filtered, counts := problemEngine().Apply(all, q, s.now())
+	filtered, counts := problemEngine().Apply(all, q, now)
 	values := r.URL.Query()
 	rows := make([]problemRowView, len(filtered))
 	for i, p := range filtered {
 		rows[i] = newProblemRowView(p, "/problems", values)
 	}
 
-	failedPrefix, failedRuns := buildFailedAssessmentBanner(runs)
+	failedPrefix, failedRuns := buildFailedAssessmentBanner(scopeRuns)
 
 	renderPage(w, "problems", problemsPageData{
 		Meta:                   s.pageMeta(r, "Problems", navProblems, false),
 		Nav:                    buildListNav("/problems", spec, q, values, counts, problemSortLabels, problemLabeler),
 		Summary:                fmt.Sprintf("%d live problem%s · %d high", liveN, pluralS(liveN), highN),
-		NewestBuild:            newestBuildLabel(runs),
+		NewestBuild:            newestBuildLabel(allRuns),
 		Rows:                   rows,
 		FailedAssessmentPrefix: failedPrefix,
 		FailedAssessmentRuns:   failedRuns,

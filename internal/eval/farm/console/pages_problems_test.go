@@ -78,6 +78,122 @@ func TestPages_ProblemsPageRendersClusteredRow(t *testing.T) {
 	}
 }
 
+// TestPages_ProblemsPageStatusUsesFullHistoryNotSinceWindow pins item 1
+// (FIX3): /problems computes status over the FULL farm history, not just
+// its own since window (default 30d) — a problem hit on a build far older
+// than 30 days must still read status=recurring, never first-seen.
+func TestPages_ProblemsPageStatusUsesFullHistoryNotSinceWindow(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+	seedFullHistoryProblemFixture(t, store, "fh3", now)
+
+	body := doGET(t, h, "/problems").Body.String()
+	// The status filter bar always lists every status option (including
+	// "first seen", count 0) regardless of any row's own status, so the
+	// row-level assertion below checks the row's own rendered chip text
+	// ("<status> (live)", problems.html's own "{{if problemStatusLive
+	// .Status}} (live){{end}}"), not a bare substring match anywhere on
+	// the page.
+	if !strings.Contains(body, "recurring (live)") {
+		t.Errorf("row's own status chip must read recurring:\n%s", body)
+	}
+	if strings.Contains(body, "first seen (live)") {
+		t.Errorf("status computed over the since window only, not the full farm history:\n%s", body)
+	}
+}
+
+// TestPages_ProblemsPageStillEmittedWhenAnchorStillInNewestBuildSteps pins
+// item 2 (FIX3): before settling on "gone"/"unconfirmed", a problem's own
+// anchor is searched in the newest build's own candidate runs' raw step
+// text (StepTextFinder, wired end to end here through the real run cache) —
+// found there flips the status to "still-emitted" even though no CURRENT
+// observation happens to flag it on that build.
+func TestPages_ProblemsPageStillEmittedWhenAnchorStillInNewestBuildSteps(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	// se-old: an older build whose run hits the anchor as a real finding.
+	seedBatch(t, store, "se-old", "claude-sonnet-5", []runFixture{
+		{runID: "se-old-x", scenario: "se-scn", startedAt: now.Add(-100 * 24 * time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"se-old-x": "passed"})
+	store.putJSON(t, "batches/se-old/manifest.json", farm.BatchManifest{
+		Batch: "se-old", CreatedAt: "2026-06-01T00:00:00Z", StartedAt: "2026-06-01T00:00:00Z",
+		Set: "gate", CandidateSha256: "se-old-sha", EvaluatorSha256: "eval-sha", ScenariosDigest: "scn-sha",
+		Observer: "claude-sonnet-5", Runs: []farm.ManifestRun{{RunID: "se-old-x", Scenario: "se-scn", ProjectName: "zcp-farm-se-old-x"}},
+	})
+	seedFormat2Finding(t, store, "se-old-x", now, observer.SeverityHigh,
+		"tool:zerops_deploy/deploy", "STILL_HERE_TOKEN", "Deploy still prints a stale token", "rotate it", 3, "quote")
+
+	// se-new: the newest build. Its own run is assessed clean (no current
+	// finding for this anchor) — but its transcript still emits the exact
+	// text, unlike a genuinely fixed bug.
+	seedBatch(t, store, "se-new", "claude-sonnet-5", []runFixture{
+		{runID: "se-new-x", scenario: "se-scn", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"se-new-x": "passed"})
+	store.putJSON(t, "batches/se-new/manifest.json", farm.BatchManifest{
+		Batch: "se-new", CreatedAt: "2026-09-11T12:00:00Z", StartedAt: "2026-09-11T12:00:00Z",
+		Set: "gate", CandidateSha256: "se-new-sha", EvaluatorSha256: "eval-sha", ScenariosDigest: "scn-sha",
+		Observer: "claude-sonnet-5", Runs: []farm.ManifestRun{{RunID: "se-new-x", Scenario: "se-scn", ProjectName: "zcp-farm-se-new-x"}},
+	})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "se-new-x", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeOK, Headline: "clean",
+	})
+	// Overwrite se-new-x's transcript (seedRun's own fixtureTranscript
+	// carries no anchor text) with one whose tool result still emits the
+	// exact anchor text a real ZCP run would print.
+	resultsDir := "runs/se-new-x/results/" + testResultsTS + "/se-scn"
+	customTranscript := strings.Join([]string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"deploying"},{"type":"tool_use","id":"tu9","name":"zerops_deploy","input":{"project":"p1"}}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu9","content":[{"type":"text","text":"error: STILL_HERE_TOKEN appears in the output"}]}]}}`,
+	}, "\n") + "\n"
+	store.putText(t, resultsDir+"/transcript.jsonl", customTranscript)
+
+	// since must be wide enough to keep se-old-x's own finding in scope
+	// (BuildProblemsScoped only lists a problem with >=1 in-scope member;
+	// se-new-x itself is never a member, since it hits no current finding).
+	body := doGET(t, h, "/problems?status=all&since=200d").Body.String()
+	if !strings.Contains(body, "Deploy still prints a stale token") {
+		t.Fatalf("body missing the problem's title:\n%s", body)
+	}
+	if !strings.Contains(body, "still-emitted (live)") {
+		t.Errorf("status must be still-emitted, not gone/unconfirmed, since the anchor is still in the newest build's own steps:\n%s", body)
+	}
+}
+
+// TestPages_ProblemsRunsHitCellShowsInScopeBesideNewestBuildHit pins item 3
+// (FIX3): the Runs-hit cell keeps §8.6's own "hit a/b runs on <newest
+// build>" figure (spec-mandated) and, beside it, the caller-scope figure
+// (InScopeHit/InScopeAssessed) — the two differ whenever the newest
+// build's own runs aren't exactly the caller's scope, as in
+// seedInScopeVsNewestBuildFixture's own 0/1 vs 1/2 split.
+func TestPages_ProblemsRunsHitCellShowsInScopeBesideNewestBuildHit(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+	seedInScopeVsNewestBuildFixture(t, store, now)
+
+	body := doGET(t, h, "/problems?status=all").Body.String()
+	i := strings.Index(body, `data-label="Runs hit"`)
+	if i < 0 {
+		t.Fatalf("body missing the Runs-hit cell:\n%s", body)
+	}
+	end := strings.Index(body[i:], "</td>")
+	if end < 0 {
+		t.Fatalf("Runs-hit cell never closes:\n%s", body)
+	}
+	cell := body[i : i+end]
+	if !strings.Contains(cell, "hit 0/1 runs") {
+		t.Errorf("Runs-hit cell missing §8.6's own newest-build hit figure:\n%s", cell)
+	}
+	if !strings.Contains(cell, "1/2 in scope") {
+		t.Errorf("Runs-hit cell missing the in-scope hit figure beside it:\n%s", cell)
+	}
+}
+
 // TestPages_ProblemsRowIsCompact pins item 8 (FIX2): a row's Last/First
 // seen dates use the Overview's own short, non-wrapping form (not the long
 // "2 Jan 2006, 15:04 UTC" one, which wraps and inflates row height on a

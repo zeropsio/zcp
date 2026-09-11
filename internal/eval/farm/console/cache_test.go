@@ -128,6 +128,60 @@ func TestCache_ObservationReReadAfterQueueJobCompletes(t *testing.T) {
 	}
 }
 
+// TestCache_StepTextComputedOnceThenCached pins item 1/4 (FIX3): a run's
+// raw step-search text — problems.go's StepTextFinder hook for the
+// still-emitted search — is read from the bucket at most once for the
+// console's lifetime. Unlike the observation part (cache.go rule 2, a 2m
+// TTL) a run's steps never change once done.json exists (§7.6 FM-47), so
+// there is no TTL to respect at all: a second call must read nothing from
+// the bucket.
+func TestCache_StepTextComputedOnceThenCached(t *testing.T) {
+	store := newFakeStore()
+	now := fixedNow(t)
+	seedBatch(t, store, "st1", "off", []runFixture{
+		{runID: "st1-a", scenario: "a", startedAt: now(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, false, nil)
+
+	cache := newRunCache(now)
+	text1, ok1 := cache.stepText(context.Background(), store, "st1-a")
+	if !ok1 {
+		t.Fatalf("stepText: ok = false, want true")
+	}
+	if !strings.Contains(text1, "discovered ok") {
+		t.Errorf("stepText = %q, want it to contain fixtureTranscript's own tool result", text1)
+	}
+	store.resetCallLog()
+
+	text2, ok2 := cache.stepText(context.Background(), store, "st1-a")
+	if !ok2 || text2 != text1 {
+		t.Errorf("second stepText = %q,%v want the same cached value", text2, ok2)
+	}
+	if len(store.gets) != 0 || len(store.lists) != 0 {
+		t.Errorf("second stepText call touched the bucket: gets=%v lists=%v", store.gets, store.lists)
+	}
+}
+
+// TestCache_StepTextMissingBundleCachedAsNotOK pins the same rule for a run
+// whose bundle can never be loaded (StepTextFinder's own doc comment: "ok is
+// false when the run's bundle isn't available ... never an error") — a
+// repeat call must not retry the doomed read either.
+func TestCache_StepTextMissingBundleCachedAsNotOK(t *testing.T) {
+	store := newFakeStore()
+	now := fixedNow(t)
+	cache := newRunCache(now)
+
+	if _, ok := cache.stepText(context.Background(), store, "st-missing"); ok {
+		t.Fatalf("stepText for a run with no bundle: ok = true, want false")
+	}
+	store.resetCallLog()
+	if _, ok := cache.stepText(context.Background(), store, "st-missing"); ok {
+		t.Fatalf("second stepText: ok = true, want false")
+	}
+	if len(store.gets) != 0 || len(store.lists) != 0 {
+		t.Errorf("second stepText call for a missing bundle retried the bucket: gets=%v lists=%v", store.gets, store.lists)
+	}
+}
+
 // TestCache_ObservationReReadAfterTwoMinutes pins rule 2b: past the
 // observation's 2-minute TTL it is re-read; the immutable part is never
 // re-Head'd regardless.

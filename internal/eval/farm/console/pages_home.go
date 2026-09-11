@@ -298,7 +298,7 @@ func pickLatestEvaluationBatch(rows []BatchRow) (BatchRow, bool) {
 		if !haveFallback {
 			fallback, haveFallback = b, true
 		}
-		if b.Set == "gate" || b.Set == "all" {
+		if b.Set == "gate" || b.Set == filterAll { // filterAll ("all"): farm.BatchManifest's own Set enum value, not a query filter — reused only for its text (goconst)
 			return b, true
 		}
 	}
@@ -437,12 +437,15 @@ func (s *Server) buildTopProblems(ctx context.Context, now time.Time) ([]topProb
 	if err != nil {
 		return nil, fmt.Errorf("console: top problems: %w", err)
 	}
-	runs, err := s.problemsRunsSinceWindow(ctx, window, now)
+	// Item 1 (FIX3): status is computed over the full farm history
+	// (allRuns), never just this page's own 30d window — that window only
+	// decides inScope (which problems are shown at all).
+	allRuns, err := s.allProblemsRuns(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	problems := BuildProblems(runs)
+	inScope := problemsRunIDSet(problemsRunsInWindow(allRuns, window, now))
+	problems := BuildProblemsScoped(allRuns, inScope, s.stepTextFinder(ctx))
 
 	var out []topProblemView
 	for _, p := range problems {

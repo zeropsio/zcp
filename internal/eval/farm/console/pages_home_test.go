@@ -258,6 +258,26 @@ func TestHome_TopProblemsHowOftenNamesStatusAndTotals(t *testing.T) {
 	}
 }
 
+// TestHome_TopProblemsStatusUsesFullHistoryNotSinceWindow pins item 1
+// (FIX3): the Overview's top-problems panel computes status over the FULL
+// farm history, not just the 30d window it defaults to — a problem hit on
+// a build far older than 30 days must still read "recurring", never
+// "first seen" (which would mean no older build ever saw it).
+func TestHome_TopProblemsStatusUsesFullHistoryNotSinceWindow(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+	seedFullHistoryProblemFixture(t, store, "fh2", now)
+
+	body := doGET(t, h, "/").Body.String()
+	if !strings.Contains(body, "recurring · 2 runs in 2 batches since") {
+		t.Errorf("top problems must show the recurring \"how often\" phrase:\n%s", body)
+	}
+	if strings.Contains(body, "first seen · 1 run") {
+		t.Errorf("top problems status computed over the 30d window only, not the full farm history:\n%s", body)
+	}
+}
+
 // TestHome_BatchesTable pins §8.7's Overview-batches list end to end: an
 // empty batch (no run finished) is hidden under the default kind and shown
 // under kind=empty/all, per-filter-option counts, a sort link reordering
