@@ -81,19 +81,50 @@ type Config struct {
 type Server struct {
 	cfg   Config
 	files *fileCache
+
+	// runCache/summaryCache are the run-row cache (fix brief
+	// "farm-console-speed-2026-09-11", cache.go): every read-model call
+	// below api.go/pages.go threads them through, nil-safe, so a warm
+	// load answers from memory instead of the bucket.
+	runCache     *runCache
+	summaryCache *summaryCache
 }
 
 // NewServer builds a Server from cfg. cfg.Store is wrapped in a manifest-
 // caching decorator (item 7a) — a batch manifest is written once and never
 // mutated (§1.1), so caching it in memory for the Server's lifetime is
-// always safe and cuts a page load's repeat bucket calls.
+// always safe and cuts a page load's repeat bucket calls. When cfg.Queue is
+// set, its OnComplete hook is wired to the run cache's observation
+// invalidation (cache.go rule 2a): a finished job's run is re-read next
+// time, not merely once its TTL lapses.
 func NewServer(cfg Config) *Server {
 	if cfg.Store != nil {
 		cfg.Store = newManifestCachingStore(cfg.Store)
 	}
-	return &Server{
+	s := &Server{
 		cfg:   cfg,
 		files: newFileCache(),
+	}
+	s.runCache = newRunCache(s.now)
+	s.summaryCache = newSummaryCache(s.now)
+	if cfg.Queue != nil {
+		cfg.Queue.OnComplete = s.runCache.invalidateObservation
+	}
+	return s
+}
+
+// WarmCache pre-fills the run-row cache for every batch the "/" page shows
+// (fix brief item 6): called once in the background at server start
+// (cmd/zcp/eval_farm_console.go). A request arriving during warm-up runs
+// its own fill concurrently rather than waiting on this one — duplicate
+// work is the accepted cost; a fill is a pure, idempotent function of the
+// bucket's immutable state, so it never produces a partial or failed row.
+func (s *Server) WarmCache(ctx context.Context) {
+	if s.cfg.Store == nil {
+		return
+	}
+	if _, err := loadBatchRows(ctx, s.cfg.Store, s.cfg.ObserverDisabled, s.queueState, s.runCache, s.summaryCache); err != nil {
+		viewLogf("warm cache: %v", err)
 	}
 }
 

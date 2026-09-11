@@ -150,7 +150,7 @@ func (s *Server) handleRunsList(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		br, err := batchWindowRows(ctx, s.cfg.Store, s.cfg.ObserverDisabled, batch, s.queueState)
+		br, err := batchWindowRows(ctx, s.cfg.Store, s.cfg.ObserverDisabled, batch, s.queueState, s.runCache, s.summaryCache)
 		if err != nil {
 			writeStoreError(w, err)
 			return
@@ -162,7 +162,7 @@ func (s *Server) handleRunsList(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		rows, err = rowsSinceWindow(ctx, s.cfg.Store, s.cfg.ObserverDisabled, window, s.now(), s.queueState)
+		rows, err = rowsSinceWindow(ctx, s.cfg.Store, s.cfg.ObserverDisabled, window, s.now(), s.queueState, s.runCache, s.summaryCache)
 		if err != nil {
 			writeStoreError(w, err)
 			return
@@ -325,7 +325,7 @@ func (s *Server) handleRunDetail(w http.ResponseWriter, r *http.Request, runID s
 		http.NotFound(w, r)
 		return
 	}
-	row, err := loadRunRow(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, runID, s.queueState)
+	row, err := loadRunRow(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, runID, s.queueState, s.runCache, s.summaryCache)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -622,7 +622,7 @@ func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	rows, err := rowsSinceWindow(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, window, s.now(), s.queueState)
+	rows, err := rowsSinceWindow(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, window, s.now(), s.queueState, s.runCache, s.summaryCache)
 	if err != nil {
 		writeStoreError(w, err)
 		return

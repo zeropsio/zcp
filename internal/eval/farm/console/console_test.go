@@ -103,6 +103,21 @@ func (f *fakeStore) calledGet(key string) bool {
 	return slices.Contains(f.gets, key)
 }
 
+// calledHead/calledList mirror calledGet for the other two call logs — the
+// cache RED tests (cache_test.go) prove a re-check window by their absence
+// or presence.
+func (f *fakeStore) calledHead(key string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Contains(f.heads, key)
+}
+
+func (f *fakeStore) calledList(prefix string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Contains(f.lists, prefix)
+}
+
 // resetCallLog clears the call log without touching stored objects or the
 // injected List error — used to isolate a second load's calls from a
 // warm-up load's.

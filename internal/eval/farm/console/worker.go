@@ -74,6 +74,14 @@ type Queue struct {
 	sem     chan struct{}
 	observe ObserveFunc
 	logf    func(format string, args ...any)
+
+	// OnComplete, when set, is called with a job's run id after that job
+	// finishes (successfully or not) — the run-row cache's completion
+	// hook (cache.go rule 2a, wired by NewServer): it invalidates the
+	// run's cached observation so the next read re-fetches it, rather
+	// than waiting on its TTL. Nil is a no-op (e.g. a test Queue built
+	// without a Server).
+	OnComplete func(runID string)
 }
 
 // NewQueue returns a Queue that executes every accepted job through
@@ -136,6 +144,10 @@ func (q *Queue) wkRun(ctx context.Context, job Job) {
 	q.mu.Lock()
 	delete(q.jobs, job.RunID)
 	q.mu.Unlock()
+
+	if q.OnComplete != nil {
+		q.OnComplete(job.RunID)
+	}
 }
 
 // Queue states reported by Queue.State.
