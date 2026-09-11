@@ -1453,3 +1453,82 @@ func TestFarmRun_FailedImportAfterStarted_DoesNotDeleteProject(t *testing.T) {
 		t.Errorf("project %s was deleted, want it kept", ProjectPrefix+runID)
 	}
 }
+
+// tickClock is a fake clock that advances by step on every call to Now —
+// used by TestFarmRun_PerRunDeadline_FromCreation to make R7's per-run
+// deadline observable in simulated time without slowing the test down with
+// real sleeps.
+type tickClock struct {
+	mu   sync.Mutex
+	cur  time.Time
+	step time.Duration
+}
+
+func (c *tickClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t := c.cur
+	c.cur = c.cur.Add(c.step)
+	return t
+}
+
+// TestFarmRun_PerRunDeadline_FromCreation pins R7: each active run's budget
+// deadline is anchored at its OWN creation time, not recomputed when its
+// turn in the sequential settle loop begins. Two runs, neither ever
+// produces done.json, both settle budget-blocked — under the pre-fix
+// behavior (deadline recomputed fresh inside waitForDone at call time), the
+// second run's own wait would only begin once the first run's full budget
+// had already elapsed, so it would need ANOTHER full budget's worth of
+// simulated time on top — total simulated elapsed time would approach 2x
+// budget. Anchoring both deadlines at creation keeps the whole batch within
+// roughly one budget's worth of simulated time instead.
+func TestFarmRun_PerRunDeadline_FromCreation(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-24-r7"
+	f := newControllerFixture(t, clientID)
+	client, sink := f.client, f.sink
+
+	batch := "batch-24-r7"
+	scenarios := []ScenarioRun{{ID: "recipe-hung-1"}, {ID: "recipe-hung-2"}}
+	// Neither run ever writes done.json — both settle budget-blocked.
+
+	const step = time.Minute
+	const budget = 100 * time.Minute
+	clock := &tickClock{cur: time.Unix(0, 0), step: step}
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		Scenarios: scenarios, OAuthToken: "oauth-token",
+		Sink:         Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:    budget,
+		PollInterval: time.Nanosecond,
+		Now:          clock.Now,
+	}
+
+	start := time.Now()
+	results, err := RunBatch(context.Background(), client, sink, opts)
+	elapsedWall := time.Since(start)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if elapsedWall > 5*time.Second {
+		t.Fatalf("RunBatch took %s of real wall time, want it bounded by a handful of near-zero-PollInterval iterations", elapsedWall)
+	}
+	if len(results) != 2 {
+		t.Fatalf("results = %+v, want 2 entries", results)
+	}
+	for _, r := range results {
+		if r.Result != ResultBlocked || r.Detail != DetailNoBundle {
+			t.Errorf("result %+v, want Result=%q Detail=%q", r, ResultBlocked, DetailNoBundle)
+		}
+		if r.ProjectID == "" {
+			t.Errorf("result %+v: ProjectID empty, want the FM-21 no-bundle exemption to keep it", r)
+		}
+	}
+
+	totalElapsed := clock.cur.Sub(time.Unix(0, 0))
+	if totalElapsed >= 2*budget {
+		t.Errorf("total simulated elapsed time = %s, want well under 2x budget (%s) — run2's deadline must be anchored at its own creation time, not reset when its wait begins", totalElapsed, 2*budget)
+	}
+}

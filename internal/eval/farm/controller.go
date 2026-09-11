@@ -227,6 +227,12 @@ type activeRun struct {
 	ProjectID     string
 	LaunchTokenID string
 	RunTokenID    string
+	// Deadline is this run's own budget deadline, set once at creation —
+	// createdAt + RunBudget (R7). Runs are still waited on in order, but
+	// each against its own deadline: a hung run earlier in the batch must
+	// never extend a later run's budget by however long it took to give up
+	// on the earlier one.
+	Deadline time.Time
 }
 
 // createRun performs one scheduled run's creation steps (§2.1: mint launch
@@ -378,6 +384,12 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 			blocked = append(blocked, *blockedResult)
 			continue
 		}
+		// R7: the deadline is anchored at THIS run's own creation moment,
+		// never recomputed when its wait turn comes up in the settle loop
+		// below — otherwise a hung earlier run's wait time would silently
+		// extend every later run's budget by however long it took to give
+		// up on the earlier one.
+		active.Deadline = now().Add(opts.RunBudget)
 		runTokenIDs[active.RunID] = active.RunTokenID
 		actives = append(actives, *active)
 	}
@@ -404,7 +416,7 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 	results = append(results, blocked...)
 	endedByBudget := false
 	for _, a := range actives {
-		result, detail, settled := waitForDone(ctx, client, sink, a.RunID, a.ProjectID, opts.RunBudget, now, pollInterval)
+		result, detail, settled := waitForDone(ctx, client, sink, a.RunID, a.ProjectID, a.Deadline, now, pollInterval)
 		rr := RunResult{RunID: a.RunID, Scenario: a.ID, ProjectID: a.ProjectID, Result: result, Detail: detail, LaunchTokenID: a.LaunchTokenID}
 
 		if !settled {
@@ -528,9 +540,10 @@ type verificationJSON struct {
 }
 
 // waitForDone polls the bucket for runs/<runId>/done.json until it appears
-// or budget elapses (§3.3 FM-21), and — D19 — also polls the run's project
-// for a FAILED creation-phase process on every iteration where the run has
-// not yet written runs/<runId>/started.json: a platform-side project.create
+// or deadline (the run's own creation-time budget deadline, R7) elapses
+// (§3.3 FM-21), and — D19 — also polls the run's project for a FAILED
+// creation-phase process on every iteration where the run has not yet
+// written runs/<runId>/started.json: a platform-side project.create
 // incident (live 2026-09-10: stack.create FAILED, stack.build CANCELED,
 // GET /project/{id} -> 500) leaves a dead project that will never write
 // done.json, so waiting out the full budget for one is pure waste. R1: once
@@ -546,8 +559,7 @@ type verificationJSON struct {
 // process always returns settled=true (§3.3 FM-21: the dead project is
 // still deleted); a transient error reading processes is never itself a
 // verdict — polling continues.
-func waitForDone(ctx context.Context, client PlatformClient, sink *SinkClient, runID, projectID string, budget time.Duration, now func() time.Time, pollInterval time.Duration) (result, detail string, settled bool) {
-	deadline := now().Add(budget)
+func waitForDone(ctx context.Context, client PlatformClient, sink *SinkClient, runID, projectID string, deadline time.Time, now func() time.Time, pollInterval time.Duration) (result, detail string, settled bool) {
 	for {
 		body, err := sink.Get(ctx, "runs/"+runID+"/done.json")
 		if err == nil {
