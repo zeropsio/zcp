@@ -119,6 +119,39 @@ func TestVerification_LaunchShape_TokenInTranscript_Fails(t *testing.T) {
 	// only the row's boolean Result is asserted above.
 }
 
+// TestLaunchToken_LeakInsideJSONString_Detected pins finding E3: the
+// transcript is JSONL, so a leaked token typically appears as
+// `"ZCP_LAUNCH_TOKEN=abc…"` (a quoted JSON string value, immediately after
+// `=`) or `"abc…",` — a whitespace-only split never isolates the token from
+// its surrounding quotes/`=`/`,`, so its sha256 never matched and the leak
+// silently passed.
+func TestLaunchToken_LeakInsideJSONString_Detected(t *testing.T) {
+	t.Parallel()
+	const token = "abc123XYZsecret"
+	tokenSHA := sha256Hex(token)
+
+	t.Run("token embedded in a JSON string value", func(t *testing.T) {
+		t.Parallel()
+		transcript := `{"type":"tool_result","content":"value is \"` + token + `\""}`
+		row := evaluateTokenNotInTranscriptRow(transcript, nil, tokenSHA)
+		if row.Result != CheckFailed {
+			t.Fatalf("expected failed when the token is embedded inside a JSON string, got %+v", row)
+		}
+	})
+
+	t.Run("token immediately after an equals sign", func(t *testing.T) {
+		t.Parallel()
+		transcript := `{"type":"tool_use","input":{"env":"ZCP_LAUNCH_TOKEN=` + token + `"}}`
+		row := evaluateTokenNotInTranscriptRow(transcript, nil, tokenSHA)
+		if row.Result != CheckFailed {
+			t.Fatalf("expected failed when the token follows '=' with no surrounding whitespace, got %+v", row)
+		}
+	})
+
+	// The assertion never places the token value in a test name or log —
+	// only the row's boolean Result is asserted above.
+}
+
 // TestVerification_LaunchShape_ListNotPermitted_Blocked pins the case
 // where the run-project-scoped key can't list account projects: a 403 from
 // ListProjects blocks project_exists, and the three runtime-shape rows

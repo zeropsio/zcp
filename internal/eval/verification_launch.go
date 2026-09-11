@@ -260,10 +260,14 @@ func launchShapeRuntimeRow(field, scope string, fails []string, expected string)
 }
 
 // evaluateTokenNotInTranscriptRow evaluates the token_not_in_transcript row
-// (docs/spec-workflows.md §10.2b): every whitespace-delimited token of
-// transcriptText plus every string in toolCallTexts is sha256-hashed and
-// compared against launchTokenSHA256 — the value itself is never handled
-// here, only its digest.
+// (docs/spec-workflows.md §10.2b): every candidate token of transcriptText
+// plus every string in toolCallTexts is sha256-hashed and compared against
+// launchTokenSHA256 — the value itself is never handled here, only its
+// digest. Finding E3: the transcript is JSONL, so a leaked token typically
+// appears as `"ZCP_LAUNCH_TOKEN=abc…"` or `"abc…",` — splitting only on
+// whitespace never isolates the token from its surrounding quotes/`=`/`,`,
+// so the digest never matched and a leak silently passed. launchTokenTokens
+// splits on every character outside [A-Za-z0-9_-] instead.
 func evaluateTokenNotInTranscriptRow(transcriptText string, toolCallTexts []string, launchTokenSHA256 string) RequiredCheck {
 	id := launchShapeRowID("token_not_in_transcript")
 	if launchTokenSHA256 == "" {
@@ -279,12 +283,12 @@ func evaluateTokenNotInTranscriptRow(transcriptText string, toolCallTexts []stri
 	texts = append(texts, toolCallTexts...)
 
 	for _, text := range texts {
-		for tok := range strings.FieldsSeq(text) {
+		for _, tok := range launchTokenTokens(text) {
 			if sha256Hex(tok) == launchTokenSHA256 {
 				return RequiredCheck{
 					ID: id, Check: "launch_shape", Scope: "launch_token", Result: CheckFailed,
 					Expected: "token never appears verbatim", Observed: "matching token found",
-					Message: "a whitespace-delimited token in the transcript/tool-call text hashes to the launch token's sha256",
+					Message: "a token in the transcript/tool-call text hashes to the launch token's sha256",
 				}
 			}
 		}
@@ -294,6 +298,21 @@ func evaluateTokenNotInTranscriptRow(transcriptText string, toolCallTexts []stri
 		Expected: "token never appears verbatim", Observed: "not found",
 		Message: "no transcript/tool-call token matched the launch token's sha256",
 	}
+}
+
+// launchTokenTokens splits text into candidate token substrings on every
+// character outside [A-Za-z0-9_-] (finding E3) — a leaked launch token
+// embedded in JSONL (a quoted string value, or following `=` with no
+// surrounding whitespace) is isolated the same way a whitespace-only split
+// would isolate a token in plain text.
+func launchTokenTokens(text string) []string {
+	return strings.FieldsFunc(text, func(r rune) bool {
+		return !isLaunchTokenRune(r)
+	})
+}
+
+func isLaunchTokenRune(r rune) bool {
+	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-'
 }
 
 func sha256Hex(s string) string {
