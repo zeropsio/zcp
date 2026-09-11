@@ -381,8 +381,17 @@ func (s *Scenario) validate() error {
 			return fmt.Errorf("invalid verification.mode %q (want observe|required)", s.Verification.Mode)
 		}
 		if s.Verification.Mode == VerificationRequired {
-			if len(s.Verification.ExpectedServices) == 0 && !s.Verification.NoFailedProcesses && s.Verification.NodePostgresRecord == nil {
-				return fmt.Errorf("verification.mode required needs at least one executable check (expectedServices, noFailedProcesses, or nodePostgresRecord; retrospectiveMustNotMention is advisory and does not count)")
+			hasExecutableCheck := len(s.Verification.ExpectedServices) > 0 ||
+				s.Verification.NoFailedProcesses ||
+				s.Verification.NodePostgresRecord != nil ||
+				s.Verification.Liveness != nil ||
+				len(s.Verification.Unchanged) > 0 ||
+				len(s.Verification.Never) > 0 ||
+				len(s.Verification.ArtifactPromotion) > 0 ||
+				s.Verification.LaunchShape != nil ||
+				s.Verification.NoFabricatedSecret
+			if !hasExecutableCheck {
+				return fmt.Errorf("verification.mode required needs at least one executable check (expectedServices, noFailedProcesses, nodePostgresRecord, liveness, unchanged, never, artifactPromotion, launchShape, or noFabricatedSecret; retrospectiveMustNotMention and askWhen are advisory and do not count)")
 			}
 		}
 		if npr := s.Verification.NodePostgresRecord; npr != nil {

@@ -291,11 +291,14 @@ It is not an application oracle, an isolation driver, a report, or a comparison
 
 **Mode.** `verification.mode` is `observe` or `required`. Omitted means
 `observe`. Any other value is a scenario parse error. `required` with no
-executable check — no `expectedServices` entry and `noFailedProcesses` unset —
-is a parse error: `retrospectiveMustNotMention` is advisory and never counts as
-executable. Parse errors surface from `ParseScenario`, which runs before seed,
-init, and before the runner registers any cleanup, so a rejected scenario makes
-**zero** platform calls.
+executable check is a parse error. The executable set is every gating family
+the verifier emits rows for: `expectedServices`, `noFailedProcesses`,
+`nodePostgresRecord`, `liveness`, `unchanged`, `never`, `artifactPromotion`,
+`launchShape`, `noFabricatedSecret` — one declared entry from any of these
+suffices. `retrospectiveMustNotMention` and `askWhen` are advisory and never
+count as executable. Parse errors surface from `ParseScenario`, which runs
+before seed, init, and before the runner registers any cleanup, so a rejected
+scenario makes **zero** platform calls.
 
 **Rows.** Every executable check yields exactly one **result row**, in both
 modes:
@@ -468,9 +471,13 @@ Credentials stay in memory and never enter rows, messages, meta, or the
 capture bundle; driver errors are sanitised before they become a `message`.
 
 **Baseline.** Right after seed and init, before the initial agent invocation,
-the runner records the `unrelated` service's active app-version id in
-`meta.json` as `baseline: {unrelatedAppVersion, observedAt}`. The
-`unchanged` row compares against it at the freeze.
+the runner records one active app-version id per hostname in the union of
+`verification.unchanged` and `nodePostgresRecord.unrelated`, in `meta.json`
+as `baseline: {appVersions: {<hostname>: <appVersionId>, …}, observedAt}`.
+The `unchanged` row for each hostname compares against its own entry in
+`appVersions` at the freeze; a hostname absent from the map (never recorded,
+or recorded with no active app-version) blocks with "no baseline for
+<hostname>", never a silent pass.
 
 **Ordering and settle.** The verifier runs inside the task-end freeze
 (§10.2) after the platform rows and only when the observation is settled;

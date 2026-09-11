@@ -278,6 +278,40 @@ Do the thing.
 	}
 }
 
+// TestScenarioParse_RequiredWithOnlyLiveness_Accepted pins E11: the
+// required-mode executable-check set is every gating family
+// generateRequiredChecks emits rows for, not just expectedServices/
+// noFailedProcesses/nodePostgresRecord — a required scenario declaring only
+// liveness (or unchanged, never, artifactPromotion, launchShape,
+// noFabricatedSecret) must parse, not reject as "no executable check".
+func TestScenarioParse_RequiredWithOnlyLiveness_Accepted(t *testing.T) { // non-parallel: process environment
+	dir := t.TempDir()
+	content := `---
+id: required-liveness-only
+seed: empty
+retrospective:
+  promptStyle: briefing-future-agent
+verification:
+  mode: required
+  liveness:
+    service: appdev
+    marker: team-notes
+---
+Do the thing.
+`
+	path := filepath.Join(dir, "liveness-only.md")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sc, err := ParseScenario(path)
+	if err != nil {
+		t.Fatalf("unexpected parse error for required mode with only liveness declared: %v", err)
+	}
+	if sc.Verification == nil || sc.Verification.Liveness == nil || sc.Verification.Liveness.Service != "appdev" {
+		t.Fatalf("expected Liveness to be parsed, got %+v", sc.Verification)
+	}
+}
+
 // TestScenario_NodePostgresRecord_ParsedAndCountsAsExecutable pins
 // docs/spec-testing-architecture.md §10.3: the nodePostgresRecord block
 // parses into VerificationConfig, counts as an executable check for
