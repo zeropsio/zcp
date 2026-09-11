@@ -362,7 +362,12 @@ the evaluator pin absent `--evaluator`, the wrapper pin absent `--wrapper`)
 from the bucket (`sets/<digest>/gate.txt`, `scenarios/<digest>/…`,
 `evaluators/current`, `farm/wrapper/current`), never from a relative path on
 disk; only `farm push`, which runs from a full checkout on a dev machine,
-reads `eval/farm/gate-set.txt` off disk, to upload it.
+reads `eval/farm/gate-set.txt` off disk, to upload it. The eval subsystem's
+isolation (only `cmd/zcp/eval*.go` may import `internal/eval/**`, which in
+turn never reaches `internal/tools`/`internal/server`/`internal/authoring`)
+is pinned by the `.golangci.yaml` depguard rules `core-not-eval` and
+`eval-no-upper-layers`, and enforced independently of depguard by
+`internal/eval/architecture_test.go`.
 
 The gate set is currently 10 scenarios. The two launch scenarios (O6) are
 deferred out of it until a source-control fixture exists for them to build
