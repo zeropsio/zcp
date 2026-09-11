@@ -39,6 +39,24 @@ func TestConsole_KillSwitchEnvDisablesWorker(t *testing.T) {
 	}
 }
 
+// TestConsole_AnthropicAPIKeyEnvDisablesWorker pins §8.5 FM-53 (item 4):
+// ANTHROPIC_API_KEY set in the console's env is treated exactly like a
+// missing CLAUDE_CODE_OAUTH_TOKEN — the observer must run under the OAuth
+// token only, never a raw API key.
+//
+// non-parallel: t.Setenv
+func TestConsole_AnthropicAPIKeyEnvDisablesWorker(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
+	if !anthropicAPIKeySet() {
+		t.Error("anthropicAPIKeySet() = false with ANTHROPIC_API_KEY set, want true")
+	}
+
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	if anthropicAPIKeySet() {
+		t.Error("anthropicAPIKeySet() = true with ANTHROPIC_API_KEY unset, want false")
+	}
+}
+
 // TestConsole_RelativeClaudeFlagResolvedAtStartup pins §7.4 FM-44: the
 // --claude path is made absolute (exec.LookPath, then filepath.Abs) before
 // the child starts, because the child's working directory is a fresh empty

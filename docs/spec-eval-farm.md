@@ -943,7 +943,10 @@ queued or running answers 409, and so does `all=1` while any
 run of that batch is queued or running. An accepted action answers 303 back
 to the page (cookie) or 202 (bearer). Without `CLAUDE_CODE_OAUTH_TOKEN` the
 console still serves every page, the worker stays idle, and actions answer
-503 `observer credential missing`; an unresolvable `claude` path is treated the
+503 `observer credential missing`; `ANTHROPIC_API_KEY` set in the console's
+env is treated exactly the same way, logged once to stderr at startup — the
+observer must run under the OAuth token only, never a raw API key. An
+unresolvable `claude` path is treated the
 same way (503 `observer unavailable`). Without `all=1`, runs of the batch that
 are already queued or running are skipped, not answered with 409. A job runs for the console's lifetime, not the
 enqueuing request's (bounded by a 10-minute job timeout), and a job that fails
