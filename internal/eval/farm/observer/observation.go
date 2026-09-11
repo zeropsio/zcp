@@ -524,3 +524,17 @@ func ObsID(t time.Time, model string) string {
 	ts = strings.Replace(ts, ".", "", 1)
 	return ts + "Z-" + model
 }
+
+// NormalizeText applies FM-46's full normalization to s: JSON escape
+// sequences decoded, backticks and asterisks dropped, whitespace runs
+// collapsed. The console clusters anchors across runs with it (§8.6), so a
+// quote and the step it came from compare the way the quote check does.
+func NormalizeText(s string) string {
+	return collapseWhitespace(stripMarkdownPunctuation(decodeJSONEscapes(s)))
+}
+
+// DecodeJSONEscapes is decodeJSONEscapes for readers outside the package:
+// the console shows tool results with their escapes decoded (§8.3).
+func DecodeJSONEscapes(s string) string {
+	return decodeJSONEscapes(s)
+}
