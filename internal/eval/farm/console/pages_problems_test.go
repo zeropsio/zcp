@@ -7,11 +7,14 @@
 package console
 
 import (
+	"html"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/eval/farm"
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
 
@@ -243,5 +246,119 @@ func TestPages_ProblemsSortChipsAboveStackedTable(t *testing.T) {
 	body := doGET(t, h, "/problems").Body.String()
 	if !strings.Contains(body, `<span class="k">Sort</span>`) {
 		t.Errorf("body missing a sort chip row above the problems table:\n%s", body)
+	}
+}
+
+// TestPages_ProblemsSurfaceLinkNarrowsList pins the filter-tester's finding:
+// a problem row's surface chip is a link (listURL, keeping the other
+// parameters) that narrows /problems to that surface.
+func TestPages_ProblemsSurfaceLinkNarrowsList(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "sl2", "claude-sonnet-5", []runFixture{
+		{runID: "sl2-a", scenario: "a", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+		{runID: "sl2-b", scenario: "b", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"sl2-a": "passed", "sl2-b": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "sl2-a", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeProblem, Headline: "x",
+		Findings: []observer.Finding{{Severity: "high", Owner: "zcp-tool", Surface: "tool:zerops_deploy/deploy", Title: "deploy surface problem"}},
+	})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "sl2-b", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeProblem, Headline: "y",
+		Findings: []observer.Finding{{Severity: "high", Owner: "zcp-tool", Surface: "tool:zerops_scale/scale", Title: "scale surface problem"}},
+	})
+
+	body := doGET(t, h, "/problems").Body.String()
+	// Problem.Surface is already the clustering key's own truncated prefix
+	// (up to the first "/") — the finding's raw "tool:zerops_deploy/deploy"
+	// surface becomes the row's "tool:zerops_deploy".
+	linkRE := regexp.MustCompile(`href="(/problems\?[^"]*surface=tool%3Azerops_deploy[^"]*)"`)
+	m := linkRE.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("body missing a surface filter link for tool:zerops_deploy:\n%s", body)
+	}
+
+	narrowed := doGET(t, h, html.UnescapeString(m[1])).Body.String()
+	if !strings.Contains(narrowed, "deploy surface problem") {
+		t.Errorf("surface link did not keep the matching problem:\n%s", narrowed)
+	}
+	if strings.Contains(narrowed, "scale surface problem") {
+		t.Errorf("surface link did not narrow out the other problem:\n%s", narrowed)
+	}
+}
+
+// TestPages_ProblemsMemberLinksNarrowList pins the filter-tester's finding:
+// a problem member's scenario/batch/build values are links (each via
+// listURL, keeping the other parameters) that narrow /problems.
+func TestPages_ProblemsMemberLinksNarrowList(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	// Both members share scenario "scen-a" (seeded below).
+	shared := func(runID string) observer.Observation {
+		return observer.Observation{
+			FormatVersion: observer.ObservationFormat2, RunID: runID,
+			ObsID: "20260911T120000000Z-claude-sonnet-5", Model: "claude-sonnet-5", CreatedAt: now,
+			Status: "ok", Outcome: observer.OutcomeProblem, Headline: "same tool problem",
+			Findings: []observer.Finding{{Severity: "high", Owner: "zcp-tool", Surface: "tool:zerops_deploy/deploy", Title: "always fails this way"}},
+		}
+	}
+
+	seedBatch(t, store, "ml1", "claude-sonnet-5", []runFixture{
+		{runID: "ml1-a", scenario: "scen-a", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"ml1-a": "passed"})
+	seedObservation(t, store, shared("ml1-a"))
+
+	seedBatch(t, store, "ml2", "claude-sonnet-5", []runFixture{
+		{runID: "ml2-a", scenario: "scen-a", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"ml2-a": "passed"})
+	seedObservation(t, store, shared("ml2-a"))
+
+	// A second, unrelated problem in a batch with a different scenario,
+	// batch id AND build (overwritten below — seedBatch always writes
+	// "cand-sha"), so batch/scenario/build filters each have something
+	// real to narrow out.
+	seedBatch(t, store, "ml3", "claude-sonnet-5", []runFixture{
+		{runID: "ml3-x", scenario: "scen-x", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"ml3-x": "passed"})
+	// Older than ml1/ml2's shared CreatedAt (seedBatch's own fixed
+	// timestamp) so it never becomes "the newest build" (§8.6) itself —
+	// that would reclassify the ml1/ml2 problem as unconfirmed (not hit
+	// on the newest build) and drop it out of status=live, the default
+	// this test's own /problems fetch relies on.
+	store.putJSON(t, "batches/ml3/manifest.json", farm.BatchManifest{
+		Batch: "ml3", CreatedAt: "2026-08-01T00:00:00Z", StartedAt: "2026-08-01T00:00:00Z",
+		Set: "gate", CandidateSha256: "other-sha", EvaluatorSha256: "eval-sha", ScenariosDigest: "scn-sha",
+		Observer: "claude-sonnet-5", Runs: []farm.ManifestRun{{RunID: "ml3-x", Scenario: "scen-x", ProjectName: "zcp-farm-ml3-x"}},
+	})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "ml3-x", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeProblem, Headline: "z",
+		Findings: []observer.Finding{{Severity: "high", Owner: "agent", Title: "unrelated problem"}},
+	})
+
+	body := doGET(t, h, "/problems").Body.String()
+
+	scenarioLinkRE := regexp.MustCompile(`href="(/problems\?[^"]*scenario=scen-a[^"]*)"`)
+	batchLinkRE := regexp.MustCompile(`href="(/problems\?[^"]*batch=ml1[^"]*)"`)
+	buildLinkRE := regexp.MustCompile(`href="(/problems\?[^"]*build=cand-sha[^"]*)"`)
+
+	for name, re := range map[string]*regexp.Regexp{"scenario": scenarioLinkRE, "batch": batchLinkRE, "build": buildLinkRE} {
+		m := re.FindStringSubmatch(body)
+		if m == nil {
+			t.Fatalf("body missing a %s filter link on a problem member:\n%s", name, body)
+		}
+		narrowed := doGET(t, h, html.UnescapeString(m[1])).Body.String()
+		if !strings.Contains(narrowed, "always fails this way") {
+			t.Errorf("%s link did not keep the matching problem:\n%s", name, narrowed)
+		}
+		if strings.Contains(narrowed, "unrelated problem") {
+			t.Errorf("%s link did not narrow out the unrelated problem:\n%s", name, narrowed)
+		}
 	}
 }

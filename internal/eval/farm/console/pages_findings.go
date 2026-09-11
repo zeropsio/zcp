@@ -33,14 +33,29 @@ type evidenceView struct {
 }
 
 // findingItemView is one /findings row (§8.3 item 4's fields, reused here):
-// FindingRow plus its evidence resolved into evidenceView.
+// FindingRow plus its evidence resolved into evidenceView and (filter-
+// tester finding, round 1) links that narrow /findings to this row's own
+// scenario/batch/build/surface — the open filters worked when typed into
+// the URL but nothing on the page linked to them.
 type findingItemView struct {
 	FindingRow
-	Evidence []evidenceView
+	Evidence     []evidenceView
+	ScenarioLink string
+	BatchLink    string
+	BuildLink    string
+	SurfaceLink  string // "" when the finding carries no surface (item 11's own guard)
 }
 
-func newFindingItemView(f FindingRow) findingItemView {
-	v := findingItemView{FindingRow: f}
+func newFindingItemView(f FindingRow, path string, values url.Values) findingItemView {
+	v := findingItemView{
+		FindingRow:   f,
+		ScenarioLink: listURL(path, values, map[string]string{paramScenario: f.Scenario}),
+		BatchLink:    listURL(path, values, map[string]string{paramBatch: f.Batch}),
+		BuildLink:    listURL(path, values, map[string]string{paramBuild: f.Build.Sha12()}),
+	}
+	if f.Surface != "" {
+		v.SurfaceLink = listURL(path, values, map[string]string{paramSurface: f.Surface})
+	}
 	for _, e := range f.Evidence {
 		link := ""
 		if e.Step > 0 {
@@ -138,12 +153,12 @@ func (s *Server) handleFindingsPage(w http.ResponseWriter, r *http.Request) {
 	all := BuildFindingRows(rows)
 	filtered, counts := findingEngine().Apply(all, q, s.now())
 
+	values := r.URL.Query()
 	items := make([]findingItemView, len(filtered))
 	for i, f := range filtered {
-		items[i] = newFindingItemView(f)
+		items[i] = newFindingItemView(f, "/findings", values)
 	}
 
-	values := r.URL.Query()
 	renderPage(w, "findings", findingsPageData{
 		Meta:    s.pageMeta(r, "Findings", navFindings, false),
 		Nav:     buildListNav("/findings", spec, q, values, counts, findingSortLabels, findingLabeler),

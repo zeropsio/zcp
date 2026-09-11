@@ -13,10 +13,15 @@
 package console
 
 import (
+	"html"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/eval/farm"
+	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
 
 // TestPages_FindingsPageListsFindingsWithCauseAndSeverity pins §8.3's
@@ -117,5 +122,61 @@ func TestPages_FindingsSummaryLine(t *testing.T) {
 	body := doGET(t, h, "/findings?since=7d").Body.String()
 	if !strings.Contains(body, "2 findings in 7 days") {
 		t.Errorf("summary missing \"2 findings in 7 days\":\n%s", body)
+	}
+}
+
+// TestPages_FindingsRowLinksNarrowList pins the filter-tester's finding: a
+// finding card's scenario/batch/build/surface values are links (each via
+// listURL, keeping the other parameters) that narrow /findings.
+func TestPages_FindingsRowLinksNarrowList(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "fl1", "claude-sonnet-5", []runFixture{
+		{runID: "fl1-scen-a", scenario: "scen-a", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"fl1-scen-a": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "fl1-scen-a", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeProblem, Headline: "x",
+		Findings: []observer.Finding{{Severity: "high", Owner: "zcp-tool", Surface: "tool:zerops_deploy/deploy", Title: "matching finding"}},
+	})
+
+	seedBatch(t, store, "fl2", "claude-sonnet-5", []runFixture{
+		{runID: "fl2-scen-x", scenario: "scen-x", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"fl2-scen-x": "passed"})
+	// A distinct build (seedBatch always writes "cand-sha") so the build
+	// filter has something real to narrow out.
+	store.putJSON(t, "batches/fl2/manifest.json", farm.BatchManifest{
+		Batch: "fl2", CreatedAt: "2026-09-01T00:00:00Z", StartedAt: "2026-09-01T00:00:00Z",
+		Set: "gate", CandidateSha256: "other-sha", EvaluatorSha256: "eval-sha", ScenariosDigest: "scn-sha",
+		Observer: "claude-sonnet-5", Runs: []farm.ManifestRun{{RunID: "fl2-scen-x", Scenario: "scen-x", ProjectName: "zcp-farm-fl2-scen-x"}},
+	})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "fl2-scen-x", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeProblem, Headline: "y",
+		Findings: []observer.Finding{{Severity: "high", Owner: "agent", Title: "unrelated finding"}},
+	})
+
+	body := doGET(t, h, "/findings?since=24h").Body.String()
+
+	cases := map[string]*regexp.Regexp{
+		"scenario": regexp.MustCompile(`href="(/findings\?[^"]*scenario=scen-a[^"]*)"`),
+		"batch":    regexp.MustCompile(`href="(/findings\?[^"]*batch=fl1[^"]*)"`),
+		"build":    regexp.MustCompile(`href="(/findings\?[^"]*build=cand-sha[^"]*)"`),
+		"surface":  regexp.MustCompile(`href="(/findings\?[^"]*surface=tool%3Azerops_deploy%2Fdeploy[^"]*)"`),
+	}
+	for name, re := range cases {
+		m := re.FindStringSubmatch(body)
+		if m == nil {
+			t.Fatalf("body missing a %s filter link:\n%s", name, body)
+		}
+		narrowed := doGET(t, h, html.UnescapeString(m[1])).Body.String()
+		if !strings.Contains(narrowed, "matching finding") {
+			t.Errorf("%s link did not keep the matching finding:\n%s", name, narrowed)
+		}
+		if strings.Contains(narrowed, "unrelated finding") {
+			t.Errorf("%s link did not narrow out the unrelated finding:\n%s", name, narrowed)
+		}
 	}
 }
