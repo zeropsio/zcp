@@ -33,7 +33,7 @@ var verdictVocab = []vocabEntry{
 	{farm.VerdictPassed, "passed", "every check held"},
 	{farm.VerdictFailed, "failed", "a check proved the run wrong"},
 	{farm.VerdictBlocked, "blocked", "could not be graded — reason shown"},
-	{farm.VerdictNotRun, "not started", "the run has not started yet"},
+	{farm.VerdictNotRun, "not started", "the batch ended before this run did any work"},
 	{verdictRunning, "running", "the run is in progress"},
 	{verdictStalled, "stalled", "no result after the batch's deadline, plus 30 minutes"},
 }
@@ -44,15 +44,53 @@ var verdictVocab = []vocabEntry{
 func verdictLabel(v string) string   { return vocabLabel(verdictVocab, v) }
 func verdictTooltip(v string) string { return vocabTooltip(verdictVocab, v) }
 
+// verdictFilterLabel and verdictFilterTooltip map the batch-runs `verdict`
+// filter's own token set (§8.7: "not-started", distinct from RunRow.
+// Verdict's stored "not-run") onto verdictVocab — every other token
+// (passed/failed/blocked/running/stalled) already matches a vocab value
+// verbatim, so only "not-started" needs translating (item 11, FIX2: the
+// filter chip showed the raw, hyphenated token as its own label until
+// this fix).
+func verdictFilterLabel(v string) string {
+	if v == verdictFilterNotStarted {
+		return verdictLabel(farm.VerdictNotRun)
+	}
+	return verdictLabel(v)
+}
+
+func verdictFilterTooltip(v string) string {
+	if v == verdictFilterNotStarted {
+		return verdictTooltip(farm.VerdictNotRun)
+	}
+	return verdictTooltip(v)
+}
+
 // severityVocab is §8.8's severity vocabulary.
 var severityVocab = []vocabEntry{
 	{observer.SeverityHigh, "High", "the goal was missed, something was destroyed, or (for a test cause) the verdict is wrong"},
 	{observer.SeverityMedium, "Medium", "it cost many steps or much time"},
-	{observer.SeverityLow, "Low", "ZCP text or behavior that is wrong but cost this run nothing"},
+	{observer.SeverityLow, "Low", "wrong, but cost this run nothing"},
 }
 
 func severityLabel(v string) string   { return vocabLabel(severityVocab, v) }
 func severityTooltip(v string) string { return vocabTooltip(severityVocab, v) }
+
+// severityMinTooltip is the severity filter's own per-option tooltip (item
+// 11, FIX2): severity is "one minimum everywhere" (§8.7), so selecting
+// Medium narrows to "medium or higher" and selecting Low — the loosest
+// threshold — narrows to "any severity"; this is what the OPTION itself
+// does, distinct from severityTooltip's definition of the severity LEVEL
+// (High keeps that definition: "high only" needs no further explaining).
+func severityMinTooltip(v string) string {
+	switch v {
+	case observer.SeverityMedium:
+		return "medium or higher"
+	case observer.SeverityLow:
+		return "any severity"
+	default:
+		return severityTooltip(v)
+	}
+}
 
 func vocabLabel(vocab []vocabEntry, v string) string {
 	for _, e := range vocab {
@@ -114,7 +152,10 @@ const outcomeNone = "none"
 // model-authored, plus the RunRow-level "none".
 var assessmentOutcomeVocab = []vocabEntry{
 	{observer.OutcomeOK, "OK", "the checks and the observer agree the run is fine"},
-	{observer.OutcomeProblem, "Problem", "the observer found something worth a maintainer's attention"},
+	// "Needs attention" (item 11, FIX2) — the word "Problem" stays reserved
+	// for §8.6's cross-run cluster concept, so a run's own outcome badge
+	// never says the same word two different things mean.
+	{observer.OutcomeProblem, "Needs attention", "the observer found something worth a maintainer's attention"},
 	{observer.OutcomeInconclusive, "Inconclusive", "the observer could not tell either way"},
 	{outcomeNone, "none", "no current ok observation to summarize"},
 }
@@ -133,14 +174,29 @@ func assessmentOutcomeClass(v string) string {
 	}
 }
 
+// assessmentStateSentinelFailed/OlderThan14Days are display-only rows
+// (item 11, FIX2): resolveObserverState's own 5-value enum can't carry
+// them (view_test.go's TestView_ObservedOutranksOffAndDisabled pins its
+// signature), but observerStateText's actual prose does distinguish them,
+// so /terms documents both under their own keys — never looked up by
+// these values elsewhere.
+const (
+	assessmentStateSentinelFailed          = "assessment failed"
+	assessmentStateSentinelOlderThan14Days = "older than 14 days"
+)
+
 // assessmentStateVocab is §8.8's assessment-state vocabulary, over view.go's
-// five observerState values (resolveObserverState's return set).
+// five observerState values (resolveObserverState's return set) plus two
+// display-only rows for wording observerStateText produces that the bare
+// enum can't name (item 11).
 var assessmentStateVocab = []vocabEntry{
 	{observerStateObserved, "assessed", "an observer has read this run and written an assessment"},
 	{observerStateObserving, "assessing…", "an observation is queued or running right now"},
 	{observerStateNotObserved, "not assessed yet", "run not finished, or waiting for the worker's next pass"},
 	{observerStateOff, "not assessed — batch ran without observer", "the batch's manifest names no observer model"},
 	{observerStateDisabled, "not assessed — automatic assessment is off on this console", "ZCP_FARM_OBSERVER=off"},
+	{assessmentStateSentinelFailed, "assessment failed — <reason>", "the current observation's status is error or unparsed"},
+	{assessmentStateSentinelOlderThan14Days, "not assessed — older than 14 days", "the worker only re-checks the last 14 days; assess it by hand"},
 }
 
 func assessmentStateLabel(v string) string   { return vocabLabel(assessmentStateVocab, v) }
@@ -150,7 +206,7 @@ func assessmentStateTooltip(v string) string { return vocabTooltip(assessmentSta
 // problems.go's status values (which are also the §8.7 `status=` filter's
 // spelling), in the filter's order.
 var problemStatusVocab = []vocabEntry{
-	{StatusNew, "new", "hit on the newest build only, and one of its scenarios was assessed on an older build without hitting it (a regression)"},
+	{StatusNew, "regressed", "hit on the newest build only, and one of its scenarios was assessed on an older build without hitting it (a regression)"},
 	{StatusFirstSeen, "first seen", "hit on the newest build only, and none of its scenarios was assessed on an older build"},
 	{StatusRecurring, "recurring", "hit on the newest build and on an older one"},
 	{StatusGone, "gone", "not hit on the newest build although one of its scenarios was assessed there, and hit on an older build"},
@@ -190,6 +246,7 @@ var glossaryTerms = []glossaryTerm{
 	{"Empty batch", "A batch where no run finished (setup failures, aborted, stalled)."},
 	{"Run", "One scenario done once by an agent in a fresh project."},
 	{"Scenario", "A scripted user task plus the automatic checks that grade it."},
+	{"Set", "Which scenarios the batch ran."},
 	{"ZCP build", "The candidate binary, identified by its sha256; shown as its git commit (12 chars, + modified when built from a dirty tree) when the manifest records it, else build <sha256[:12]>. The label is display only; two binaries are two builds even at one commit."},
 	{"Verdict", "The automatic checks' result, never the observer's — see the table below."},
 	{"Check", "One automatic test: expected, observed, where the observed value came from."},

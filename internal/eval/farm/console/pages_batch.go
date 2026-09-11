@@ -259,7 +259,7 @@ func batchRunsLabeler() listLabeler {
 		Value: func(p, v string) string {
 			switch p {
 			case paramVerdict:
-				return verdictLabel(v)
+				return verdictFilterLabel(v)
 			case paramOutcome:
 				return assessmentOutcomeLabel(v)
 			case paramCause:
@@ -270,7 +270,7 @@ func batchRunsLabeler() listLabeler {
 		},
 		Title: func(p, v string) string {
 			if p == paramVerdict {
-				return verdictTooltip(v)
+				return verdictFilterTooltip(v)
 			}
 			return ""
 		},
@@ -283,20 +283,42 @@ func batchRunsLabeler() listLabeler {
 // Problem plus whether it also hit the previous batch of the same set.
 // HasPrevCompare is false when there is no previous batch to compare
 // against (the also/not-in line simply does not render); AlsoInPrev is
-// only meaningful when HasPrevCompare is true.
+// only meaningful when HasPrevCompare is true. HitInBatch is FIX2 item 7's
+// own batch-local count — distinct runs of THIS batch (never the previous
+// one) carrying one of the problem's members — for "hit N of M runs in
+// this batch" (M is the caller's own run count, batchPageData.ObservedM).
 type batchProblemView struct {
 	Problem
 	HasPrevCompare bool
 	AlsoInPrev     bool
+	HitInBatch     int
+}
+
+// hitInBatch counts the distinct runs of batchID among p's members — FIX2
+// item 7's own batch-local hit count. A field FIX2-DATA's own slice may
+// later add straight to Problem (§8.6's `a`/`b` are global-build counts,
+// not batch-local, so the review finding asked for this local one
+// separately); this reads it from the members already resolved here rather
+// than wait on that, per the coordinator's note that either is fine.
+func hitInBatch(p Problem, batchID string) int {
+	seen := map[string]bool{}
+	for _, m := range p.Members {
+		if m.Batch == batchID {
+			seen[m.RunID] = true
+		}
+	}
+	return len(seen)
 }
 
 // buildBatchProblems implements item 3: §8.6 clustering over this batch's
 // own runs plus (when one exists) the previous same-set batch's runs — just
 // enough cross-batch data for BuildProblems' status computation and for
 // deciding, per problem, whether it also hit that previous batch — narrowed
-// to the problems that hit THIS batch (a problem clustering to a run
-// outside both given batches never happens, since only these two batches'
-// runs are fed in).
+// to the problems that hit THIS batch, or (FIX2 item 7) that hit only the
+// previous one (status gone: fixed since, or not reproduced) — the best
+// news a batch page can carry. A problem clustering to a run outside both
+// given batches never happens, since only these two batches' runs are fed
+// in.
 //
 // Ambiguity (flagged per _common.md): §8.6/§8.3 do not spell out the run
 // set BuildProblems should see for a single batch's page, or whether
@@ -329,10 +351,13 @@ func buildBatchProblems(rows []RunRow, batchID, batchSet string, batchCreatedAt 
 				hitPrev = true
 			}
 		}
-		if !hitThis {
+		// Item 7 (FIX2): a problem gone from this batch but present in the
+		// previous one is exactly the good news a fixed bug represents —
+		// show it too, not only the ones still hitting this batch.
+		if !hitThis && (!hitPrev || p.Status != StatusGone) {
 			continue
 		}
-		view := batchProblemView{Problem: p}
+		view := batchProblemView{Problem: p, HitInBatch: hitInBatch(p, batchID)}
 		if prev != nil {
 			view.HasPrevCompare = true
 			view.AlsoInPrev = hitPrev
@@ -407,6 +432,34 @@ func buildCheckFailureFallback(rows []RunRow) []checkFailureRow {
 type batchDiffView struct {
 	PreviousBatchID string
 	Diff            BatchDiff
+	// Line is formatBatchDiffLine's rendered text — precomputed here so
+	// neither this page nor the Overview's own vs-previous line (pages_home.
+	// go's latestEvaluationView) needs template-side string assembly.
+	Line string
+}
+
+// formatBatchDiffLine renders a batch-vs-previous-batch diff as one line
+// (FIX2 item 11's vocabulary fix): "newly failing: a, b; now passing: c;
+// still failing: d" — "fixed:" renamed "now passing:", groups joined with
+// "; " so a dangling trailing punctuation mark after the last populated
+// group is never printed, and "no change." when every list is empty.
+// Shared by this page and the Overview's own "Latest evaluation" panel
+// (pages_home.go), which renders the same BatchDiff.
+func formatBatchDiffLine(d BatchDiff) string {
+	var parts []string
+	if len(d.NewlyFailing) > 0 {
+		parts = append(parts, "newly failing: "+strings.Join(d.NewlyFailing, ", "))
+	}
+	if len(d.Fixed) > 0 {
+		parts = append(parts, "now passing: "+strings.Join(d.Fixed, ", "))
+	}
+	if len(d.StillFailing) > 0 {
+		parts = append(parts, "still failing: "+strings.Join(d.StillFailing, ", "))
+	}
+	if len(parts) == 0 {
+		return "no change."
+	}
+	return strings.Join(parts, "; ")
 }
 
 // causeCountView is one row of the summary block's per-cause-class
@@ -471,6 +524,18 @@ func buildBatchSummaryLine(goalYes, goalPartly, goalNo, outOK, outProblem, outIn
 	return strings.Join(kept, " — ")
 }
 
+// buildInconclusiveBanner implements FIX2 item 7's own top-of-page warning:
+// "" unless at least half of totalRuns ended inconclusive (the agent's
+// session/turn limit firing is by far the common cause, §7.5's own
+// prompt rule), in which case the whole batch is not worth reading past
+// this line without a rerun. totalRuns==0 never banners (nothing ran yet).
+func buildInconclusiveBanner(inconclusiveN, totalRuns int) string {
+	if totalRuns == 0 || inconclusiveN*2 < totalRuns {
+		return ""
+	}
+	return fmt.Sprintf("Inconclusive batch — %d of %d runs ended on the agent's session limit; rerun before reading anything below.", inconclusiveN, totalRuns)
+}
+
 // --- Page data --------------------------------------------------------------
 
 // batchPageData is GET /b/<batch> (§8.3 FM-51), rewritten to the five
@@ -502,11 +567,16 @@ type batchPageData struct {
 
 	ProblemsFallback bool
 	// Problems holds every non-low problem (item 3's compact list);
-	// ProblemsLowCount is how many more, low-severity, were folded into
-	// one "n low" line instead.
-	Problems         []batchProblemView
-	ProblemsLowCount int
-	FallbackChecks   []checkFailureRow
+	// ProblemsLow holds the low-severity ones, folded behind a "N low"
+	// <details> of their own (FIX2 item 7) — the same one-line rows,
+	// collapsed by default rather than dropped.
+	Problems       []batchProblemView
+	ProblemsLow    []batchProblemView
+	FallbackChecks []checkFailureRow
+
+	// InconclusiveBanner is FIX2 item 7's own top-of-page warning, "" unless
+	// at least half this batch's runs ended inconclusive (buildInconclusiveBanner).
+	InconclusiveBanner string
 
 	Nav    listNav
 	Groups []batchRunGroupView
@@ -596,7 +666,7 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 	}
 	if hasPrev {
 		diff := CompareBatches(prevRows, rows)
-		data.VsPrevious = &batchDiffView{PreviousBatchID: prevBatch.BatchID, Diff: diff}
+		data.VsPrevious = &batchDiffView{PreviousBatchID: prevBatch.BatchID, Diff: diff, Line: formatBatchDiffLine(diff)}
 	}
 
 	verdictTally := map[string]int{}
@@ -638,6 +708,7 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 	}
 	data.VerdictCounts = orderedVerdictCounts(verdictTally)
 	data.ObservedM = len(rows)
+	data.InconclusiveBanner = buildInconclusiveBanner(data.OutcomeInconclusive, data.ObservedM)
 	for _, c := range causeCounts {
 		data.CauseCounts = append(data.CauseCounts, causeCountView{Label: causeClassDisplay[c.Class], High: c.High, Medium: c.Medium})
 	}
@@ -646,8 +717,8 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 
 	// Problems in this batch (item 3), or the deterministic-checks
 	// fallback when nothing here has ever been assessed. Low-severity
-	// problems are folded into one "n low" line (data.ProblemsLowCount)
-	// instead of their own compact row.
+	// problems are folded behind their own "N low" <details> (data.
+	// ProblemsLow) instead of a compact row of their own.
 	if batchHasAnyAssessment(rows) {
 		var prevPtr *BatchRow
 		if hasPrev {
@@ -655,7 +726,7 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, p := range buildBatchProblems(rows, batch, manifest.Set, bc.CreatedAt, prevPtr, prevRows) {
 			if p.Severity == observer.SeverityLow {
-				data.ProblemsLowCount++
+				data.ProblemsLow = append(data.ProblemsLow, p)
 				continue
 			}
 			data.Problems = append(data.Problems, p)

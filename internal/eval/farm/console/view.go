@@ -58,6 +58,13 @@ type FailedCheck struct {
 // done.json yet — run state comes from the bucket alone (§8.1).
 const verdictRunning = "running"
 
+// verdictFilterNotStarted is the batch-runs `verdict` filter's own URL
+// token for farm.VerdictNotRun (§8.7: "not-started", distinct from the
+// stored RunRow.Verdict spelling "not-run") — named once so goconst sees
+// one declaration instead of several repeated literals across this file
+// and labels.go's verdictFilterLabel/verdictFilterTooltip.
+const verdictFilterNotStarted = "not-started"
+
 // runBudgetDefaultSec exists only as documentation of a rejected reading:
 // the MODEL brief's item 1 says Stalled defaults an absent runBudgetSec to
 // 45 minutes, but §8.1 says the opposite in so many words — "a manifest
@@ -167,11 +174,25 @@ func assessmentFailureReason(obs *observer.Observation) string {
 // <reason>") from a genuinely unassessed one — a distinction
 // resolveObserverState's own 5-value enum cannot make without breaking
 // TestView_ObservedOutranksOffAndDisabled's locked signature.
-func observerStateText(now, manifestCreatedAt time.Time, consoleObserverDisabled bool, manifestObserver string, doneExists bool, obs *observer.Observation, queued bool) string {
+//
+// settled/settledReason are FIX2 item 3's own addition: a run with no
+// done.json is either still running ("not assessed — run not finished",
+// unchanged) or already settled by its batch's summary (blocked, not-run,
+// or any other terminal result reached without a bundle ever landing) — in
+// which case there is nothing to assess, ever, not merely "not yet"
+// (settledReason, when set, is the same summary detail/error
+// verdictReason already surfaces, so the two never disagree).
+func observerStateText(now, manifestCreatedAt time.Time, consoleObserverDisabled bool, manifestObserver string, doneExists bool, obs *observer.Observation, queued bool, settled bool, settledReason string) string {
 	if queued {
 		return "assessing…"
 	}
 	if !doneExists {
+		if settled {
+			if settledReason != "" {
+				return "nothing to assess — the run left no record: " + settledReason
+			}
+			return "nothing to assess — the run left no record"
+		}
 		return "not assessed — run not finished"
 	}
 	if obs != nil {
@@ -556,7 +577,7 @@ func buildRunRow(ctx context.Context, store observer.ObjectStore, consoleObserve
 		row.Stalled = row.Verdict == verdictRunning && isStalled(now, bc.CreatedAt, bc.RunBudgetSec)
 		row.VerdictReason = verdictReason(row.Verdict, doneExists, nil, summaryRun, summaryRunFound)
 		row.ObserverState = resolveObserverState(consoleObserverDisabled, bc.Observer, doneExists, false, queued)
-		row.ObserverStateText = observerStateText(now, bc.CreatedAt, consoleObserverDisabled, bc.Observer, doneExists, nil, queued)
+		row.ObserverStateText = observerStateText(now, bc.CreatedAt, consoleObserverDisabled, bc.Observer, doneExists, nil, queued, row.Verdict != verdictRunning, row.VerdictReason)
 		row.CauseCounts = newCauseClassCounts()
 		return row, nil
 	}
@@ -634,7 +655,7 @@ func buildRunRow(ctx context.Context, store observer.ObjectStore, consoleObserve
 	}
 
 	row.ObserverState = resolveObserverState(consoleObserverDisabled, bc.Observer, doneExists, row.Observation != nil, queued)
-	row.ObserverStateText = observerStateText(now, bc.CreatedAt, consoleObserverDisabled, bc.Observer, doneExists, row.Observation, queued)
+	row.ObserverStateText = observerStateText(now, bc.CreatedAt, consoleObserverDisabled, bc.Observer, doneExists, row.Observation, queued, false, "")
 	row.Outcome = computeOutcome(row.Observation)
 	row.Disputed = computeDisputed(row.Observation)
 	row.CauseCounts = causeSeverityCounts(row.Observation)
@@ -833,7 +854,7 @@ func runVerdictVocab(row RunRow) string {
 	case farm.VerdictPassed, farm.VerdictFailed, farm.VerdictBlocked:
 		return row.Verdict
 	case farm.VerdictNotRun:
-		return "not-started"
+		return verdictFilterNotStarted
 	case verdictRunning:
 		if row.Stalled {
 			return "stalled"
@@ -870,7 +891,7 @@ func runHasCause(row RunRow, class string) bool {
 // ListSpecs (§8.7 table: both take verdict/outcome/cause).
 func runListClosedFilters() []ClosedFilter {
 	return []ClosedFilter{
-		{Name: paramVerdict, Allowed: []string{farm.VerdictPassed, farm.VerdictFailed, farm.VerdictBlocked, "not-started", verdictRunning, "stalled"}},
+		{Name: paramVerdict, Allowed: []string{farm.VerdictPassed, farm.VerdictFailed, farm.VerdictBlocked, verdictFilterNotStarted, verdictRunning, "stalled"}},
 		{Name: paramOutcome, Allowed: []string{observer.OutcomeOK, observer.OutcomeProblem, observer.OutcomeInconclusive, "none"}},
 		{Name: paramCause, Allowed: []string{CauseClassZCP, CauseClassTest, CauseClassAgent, CauseClassPlatform}},
 	}

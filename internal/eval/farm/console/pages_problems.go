@@ -99,10 +99,19 @@ type problemRowView struct {
 	AnchorID    string
 	SurfaceLink string
 	Members     []problemMemberView
+	// LastSeenShort/FirstSeenShort are item 8's own compact dates
+	// (pages_home.go's fmtTimeShort — "11 Sep 18:31" — reused rather than
+	// fmtTime's long, wrapping "11 Sep 2026, 18:31 UTC") — a stacked-table
+	// row is already tall with this row's other cells, so a wrapping date
+	// column is the difference between a compact row and a ~180px one.
+	LastSeenShort, FirstSeenShort string
 }
 
 func newProblemRowView(p Problem, path string, values url.Values) problemRowView {
-	row := problemRowView{Problem: p, AnchorID: problemAnchorID(p.Key)}
+	row := problemRowView{
+		Problem: p, AnchorID: problemAnchorID(p.Key),
+		LastSeenShort: fmtTimeShort(p.LastSeen), FirstSeenShort: fmtTimeShort(p.FirstSeen),
+	}
 	if p.Surface != "" {
 		row.SurfaceLink = listURL(path, values, map[string]string{paramSurface: p.Surface})
 	}
@@ -154,7 +163,7 @@ var problemLabeler = listLabeler{
 	Title: func(param, value string) string {
 		switch param {
 		case paramSeverity:
-			return severityTooltip(value)
+			return severityMinTooltip(value)
 		case paramStatus:
 			switch value {
 			case statusLiveValue:

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -39,6 +40,13 @@ type runPageData struct {
 	ViewingOlder bool
 	OutcomeText  string
 
+	// FailedNewestText is item 1 (FIX2)'s own banner: non-empty exactly
+	// when the run's current (newest) observation failed and an older ok
+	// one is shown in the card's place — "" (including every ?obs= view,
+	// which asked for one exact version and gets exactly that) leaves the
+	// card's usual ViewingOlder banner as the only one that can render.
+	FailedNewestText string
+
 	Disputed     bool
 	DisputedWhy  string
 	DisputedHref string
@@ -46,6 +54,9 @@ type runPageData struct {
 	Findings         []findingView
 	UnverifiedQuotes int
 	TotalQuotes      int
+	// QuotesFoundText is item 11 (FIX2)'s own footer wording, "quotes
+	// found <found>/<total>" — replacing "<n> of <m> quotes unverified".
+	QuotesFoundText string
 
 	// WhyNoCard/RawAnswer/LastAgentMessage/ToolErrors render in HasCard's
 	// place: the §8.8 reason DisplayedObs has no usable assessment, the
@@ -57,6 +68,9 @@ type runPageData struct {
 	ToolErrors       []toolErrorView
 
 	CheckRows []checkRowView
+	// JudgedChecks is part 3's "Verdict right" list (FIX2 item 5): one
+	// line per judged check, its id soft-wrapped.
+	JudgedChecks []judgedCheckView
 
 	LiveStatusText      string
 	PreStoreFailureText string
@@ -66,13 +80,23 @@ type runPageData struct {
 
 	OlderObservations []olderObsView
 
-	Steps        []stepView
-	StepsError   string
-	StepsFilters FilterBarView
+	Steps      []stepView
+	StepsError string
+	// StepsSuppressed is item 2 (FIX2)'s own dedup: true when Steps failed
+	// to load for the exact same reason RecordError already said once —
+	// the section then renders neither a filter bar nor a second copy of
+	// the same sentence.
+	StepsSuppressed bool
+	StepsFilters    FilterBarView
 
 	TaskPrompt  string
 	SelfReview  string
 	RecordError string
+	// RecordErrorDetail is item 2's own forensic-block detail: the raw
+	// error chain behind RecordError, rendered once more (as <dt>Error</dt>)
+	// inside the "Run metadata & forensic view" disclosure — "" unless
+	// RecordError is set.
+	RecordErrorDetail string
 }
 
 // findingView is one Findings-section entry (§8.3 part 4): N is its
@@ -106,6 +130,29 @@ type checkRowView struct {
 	// Why-this-verdict strip still prints the plain .ID (a shorter
 	// context, and already inside a link).
 	IDWrapped string
+	// WhyPrefix/WhyText are the Why-this-verdict line's own two halves
+	// (FIX2 item 4): WhyPrefix names the check's own result ("Failed
+	// because" / "Blocked" — never "Failed because" for a check that was
+	// merely blocked), and WhyText is "expected X, got Y", or — when a
+	// blocked check carries neither (it could not even attempt to grade)
+	// — "could not run (source <source>)" instead of two empty values.
+	WhyPrefix, WhyText string
+}
+
+// judgedCheckView is one "Verdict right" line (§8.3 part 3, FIX2 item 5):
+// the observer's own judgement plus its id soft-wrapped (softWrapID) so a
+// long one gets a wrap opportunity instead of clipping.
+type judgedCheckView struct {
+	observer.JudgedCheck
+	IDWrapped string
+}
+
+func buildJudgedCheckViews(judged []observer.JudgedCheck) []judgedCheckView {
+	out := make([]judgedCheckView, len(judged))
+	for i, j := range judged {
+		out[i] = judgedCheckView{JudgedCheck: j, IDWrapped: softWrapID(j.ID)}
+	}
+	return out
 }
 
 // zeroWidthSpace (U+200B) is a soft line-break opportunity with no visible
@@ -253,20 +300,10 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// §8.3/§8.7: ?obs=<obsId> renders that stored version of the run's own
-	// observations (current + older); a missing or foreign obsId is a 404
-	// — never a bare store fetch, so an id from a different run is
-	// rejected exactly like one that never existed.
-	displayedObs := row.Observation
-	viewingOlder := false
-	if q.Obs != "" {
-		obs, found := findObservation(row, older, q.Obs)
-		if !found {
-			http.NotFound(w, r)
-			return
-		}
-		displayedObs = obs
-		viewingOlder = row.Observation == nil || obs.ObsID != row.Observation.ObsID
+	displayedObs, viewingOlder, failedNewestText, ok := resolveDisplayedObs(row, older, q)
+	if !ok {
+		http.NotFound(w, r)
+		return
 	}
 
 	busy := runQueued(s.queueState, runID)
@@ -282,6 +319,7 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 		VerdictReasonText:   runVerdictReasonText(row),
 		DisplayedObs:        displayedObs,
 		ViewingOlder:        viewingOlder,
+		FailedNewestText:    failedNewestText,
 		OlderObservations:   buildOlderObsViews(runID, older),
 		ModelOptions:        buildModelOptions(preselectModel),
 		ReassessButtonLabel: "Re-assess with " + modelLabel(preselectModel),
@@ -289,7 +327,58 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 	data.ShowAssessForm = row.DoneExists && !data.Meta.Observer.Hidden && !busy
 	data.LiveStatusText, data.PreStoreFailureText = s.runLiveStatus(runID)
 
-	var judged []observer.JudgedCheck
+	judged := populateAssessmentCard(&data, row, displayedObs, viewingOlder)
+	data.CheckRows = buildCheckRows(row.FailedChecks, judged)
+	data.JudgedChecks = buildJudgedCheckViews(judged)
+
+	// Item 4 (FIX2): drop the page-head reason line when it would only
+	// repeat the bare check ids the Why-this-verdict/checks-table lines
+	// below already itemize in full (each with its own expected/observed) —
+	// blockedCheckIDsReason is verdictReason's own id-list fallback, so an
+	// exact match means that fallback fired rather than a real summary
+	// detail/error worth keeping.
+	if len(row.FailedChecks) > 0 && data.VerdictReasonText == blockedCheckIDsReason(row.Verdict, row.FailedChecks) {
+		data.VerdictReasonText = ""
+	}
+
+	if row.DoneExists {
+		s.populateRecordAndSteps(ctx, &data, runID, q, r.URL.Query(), displayedObs)
+	}
+
+	renderPage(w, "run", data)
+}
+
+// resolveDisplayedObs implements §8.3/§8.7's ?obs=<obsId> resolution (a
+// missing or foreign obsId is rejected — ok is false, the caller answers
+// 404) plus item 1 (FIX2)'s own fallback: absent ?obs=, a failed current
+// observation is replaced by the newest ok one, with failedNewestText
+// naming the failed attempt for the banner above the substituted card.
+func resolveDisplayedObs(row RunRow, older []observer.Observation, q Query) (obs *observer.Observation, viewingOlder bool, failedNewestText string, ok bool) {
+	if q.Obs != "" {
+		found, foundOK := findObservation(row, older, q.Obs)
+		if !foundOK {
+			return nil, false, "", false
+		}
+		viewingOlder = row.Observation == nil || found.ObsID != row.Observation.ObsID
+		return found, viewingOlder, "", true
+	}
+
+	obs = row.Observation
+	if obs != nil && observationFailed(obs) {
+		if okObs, found := findNewestOK(older); found {
+			failedNewestText = fmt.Sprintf("The newest assessment (%s, %s) failed: %s; showing %s, %s.",
+				fmtTime(obs.CreatedAt), obs.Model, assessmentFailureReason(obs),
+				fmtTime(okObs.CreatedAt), okObs.Model)
+			obs = okObs
+		}
+	}
+	return obs, false, failedNewestText, true
+}
+
+// populateAssessmentCard implements §8.3 part 3 (the Assessment card) and
+// its "no card" fallback, filling data in place and returning the judged
+// checks the checks table/Verdict-right list both need.
+func populateAssessmentCard(data *runPageData, row RunRow, displayedObs *observer.Observation, viewingOlder bool) []observer.JudgedCheck {
 	switch {
 	case displayedObs != nil && displayedObs.Status == observationStatusOK:
 		data.HasCard = true
@@ -299,6 +388,7 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 		for _, f := range displayedObs.Findings {
 			data.TotalQuotes += len(f.Evidence)
 		}
+		data.QuotesFoundText = fmt.Sprintf("quotes found %d/%d", data.TotalQuotes-data.UnverifiedQuotes, data.TotalQuotes)
 		if computeDisputed(displayedObs) {
 			data.Disputed = true
 			data.DisputedWhy, data.DisputedHref = disputedInfo(displayedObs, findings)
@@ -308,7 +398,7 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 			outcome = outcomeNone
 		}
 		data.OutcomeText = outcome
-		judged = displayedObs.Checks.Judged
+		return displayedObs.Checks.Judged
 	case viewingOlder && displayedObs != nil:
 		// A specific non-ok observation was asked for by id: say why that
 		// one has no card, not why the run's current state does.
@@ -324,41 +414,60 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 			data.RawAnswer = capRaw(displayedObs.Raw)
 		}
 	}
-	data.CheckRows = buildCheckRows(row.FailedChecks, judged)
+	return nil
+}
 
-	if row.DoneExists {
-		rawSteps, stepsErr := loadSteps(ctx, s.cfg.Store, runID)
-		if stepsErr != nil {
-			// §8.3: "a run with no done.json or no task prompt renders the
-			// header and its reason — never a 502" (live bug:
-			// /r/gate5-resume-after-compaction). A corrupt/partial bundle
-			// degrades this section instead of failing the whole page.
-			data.StepsError = "steps unavailable — " + stepsErr.Error()
-		} else {
-			cited := map[int]bool{}
-			for _, n := range evidenceSteps(displayedObs) {
-				cited[n] = true
-			}
-			mode := stepsFilterMode(q)
-			filtered := FilterSteps(rawSteps, mode, cited)
-			data.Steps = buildStepViews(filtered, buildStepCitations(data.Findings))
-			nav := buildListNav("/r/"+runID, runStepsListSpec(), q, r.URL.Query(), stepsFilterCounts(rawSteps, cited), nil, stepsFilterLabeler)
-			data.StepsFilters = nav.Filters
-			if !data.HasCard {
-				data.LastAgentMessage = lastAgentMessageText(rawSteps)
-				data.ToolErrors = toolErrorViews(rawSteps)
-			}
-		}
+// populateRecordAndSteps fills data's Record (§8.3 part 7) and Steps
+// (part 6) sections for a run with done.json — split out of
+// handleRunPage so that function's own branching stays within budget.
+// Item 2 (FIX2): a missing bundle file (live bugs /r/gate5-…, /r/gate1-…)
+// maps to one plain sentence instead of a raw Go error chain — the chain
+// itself still reaches the page, once, in the "Run metadata & forensic
+// view" block (RecordErrorDetail); Steps says nothing more when its own
+// failure shares that exact root cause (StepsSuppressed).
+func (s *Server) populateRecordAndSteps(ctx context.Context, data *runPageData, runID string, q Query, rawQuery url.Values, displayedObs *observer.Observation) {
+	rawSteps, stepsErr := loadSteps(ctx, s.cfg.Store, runID)
 
-		taskPrompt, selfReview, textsErr := loadRunTexts(ctx, s.cfg.Store, runID)
-		if textsErr != nil {
-			data.RecordError = "record unavailable — " + textsErr.Error()
-		} else {
-			data.TaskPrompt, data.SelfReview = taskPrompt, selfReview
-		}
+	taskPrompt, selfReview, textsErr := loadRunTexts(ctx, s.cfg.Store, runID)
+	switch {
+	case textsErr != nil && isBundleNotFound(textsErr):
+		data.RecordError = bundleNotFoundSentence
+		data.RecordErrorDetail = textsErr.Error()
+	case textsErr != nil:
+		data.RecordError = "record unavailable — " + textsErr.Error()
+		data.RecordErrorDetail = textsErr.Error()
+	default:
+		data.TaskPrompt, data.SelfReview = taskPrompt, selfReview
 	}
 
-	renderPage(w, "run", data)
+	switch {
+	case stepsErr == nil:
+		cited := map[int]bool{}
+		for _, n := range evidenceSteps(displayedObs) {
+			cited[n] = true
+		}
+		mode := stepsFilterMode(q)
+		filtered := FilterSteps(rawSteps, mode, cited)
+		data.Steps = buildStepViews(filtered, buildStepCitations(data.Findings))
+		nav := buildListNav("/r/"+runID, runStepsListSpec(), q, rawQuery, stepsFilterCounts(rawSteps, cited), nil, stepsFilterLabeler)
+		data.StepsFilters = nav.Filters
+		if !data.HasCard {
+			data.LastAgentMessage = lastAgentMessageText(rawSteps)
+			data.ToolErrors = toolErrorViews(rawSteps)
+		}
+	case isBundleNotFound(stepsErr) && data.RecordError == bundleNotFoundSentence:
+		// Same root cause, already said once under Record — nothing more
+		// to say here.
+		data.StepsSuppressed = true
+	case isBundleNotFound(stepsErr):
+		data.StepsError = bundleNotFoundSentence
+	default:
+		// §8.3: "a run with no done.json or no task prompt renders the
+		// header and its reason — never a 502" (live bug:
+		// /r/gate5-resume-after-compaction). A corrupt/partial bundle
+		// degrades this section instead of failing the whole page.
+		data.StepsError = "steps unavailable — " + stepsErr.Error()
+	}
 }
 
 // runVerdictDisplay substitutes labels.go's reserved "stalled" sentinel for
@@ -390,6 +499,25 @@ func runVerdictReasonText(row RunRow) string {
 	}
 }
 
+// bundleNotFoundSentence is item 2 (FIX2)'s one plain sentence for a run
+// whose bundle carries no results/ directory, or is missing its task
+// prompt or transcript — the shape behind the live bugs at
+// /r/gate5-resume-after-compaction and /r/gate1-… (a raw Go error chain
+// reaching the page). Any other read failure (a genuine store error) is
+// left as its own message: only "there is nothing here" is safe to soften
+// into one sentence — the raw chain still reaches the page via
+// RecordErrorDetail, in the "Run metadata & forensic view" block.
+const bundleNotFoundSentence = "This run left no task prompt or transcript in its bundle."
+
+// isBundleNotFound reports whether err is the "nothing here" shape
+// bundleNotFoundSentence describes: observer.ResultsDir's own sentinel
+// (no results/ dir at all) or a plain missing-file error from reading one
+// of its files (task-prompt.txt, transcript.jsonl) — both wrapped with
+// %w by loadRunTexts/loadSteps, so errors.Is still sees through the chain.
+func isBundleNotFound(err error) bool {
+	return errors.Is(err, observer.ErrResultsNotFound) || errors.Is(err, os.ErrNotExist)
+}
+
 // findObservation resolves ?obs=<obsId> against runID's own observations —
 // the current one plus every older version, already loaded for the
 // "earlier assessments" list — never a bare store fetch, so an id
@@ -401,6 +529,19 @@ func findObservation(row RunRow, older []observer.Observation, obsID string) (*o
 	}
 	for i := range older {
 		if older[i].ObsID == obsID {
+			return &older[i], true
+		}
+	}
+	return nil, false
+}
+
+// findNewestOK returns the newest observation with status ok among older
+// (view.go's RunRow.OlderObsIDs is newest-last, and loadOlderObservations
+// resolves them in that same order) — item 1's fallback target when the
+// run's current observation failed.
+func findNewestOK(older []observer.Observation) (*observer.Observation, bool) {
+	for i := len(older) - 1; i >= 0; i-- {
+		if older[i].Status == observationStatusOK {
 			return &older[i], true
 		}
 	}
@@ -434,6 +575,28 @@ func disputedInfo(obs *observer.Observation, findings []findingView) (why, href 
 	return obs.Checks.Why, ""
 }
 
+// checkWhyPrefix is the Why-this-verdict line's own result word (FIX2 item
+// 4): "Blocked" for a check that could not be graded, "Failed because" for
+// one that ran and proved the run wrong — never "Failed because" for both,
+// which mislabeled a blocked check as failed.
+func checkWhyPrefix(result string) string {
+	if result == farm.VerdictBlocked {
+		return "Blocked"
+	}
+	return "Failed because"
+}
+
+// checkWhyText is the Why-this-verdict line's own body (FIX2 item 4):
+// "expected X, got Y" normally, or — when a blocked check carries neither
+// (it could not even attempt to grade) — "could not run (source <source>)"
+// instead of two empty values.
+func checkWhyText(source, expected, observed string) string {
+	if expected == "" && observed == "" {
+		return fmt.Sprintf("could not run (source %s)", source)
+	}
+	return fmt.Sprintf("expected %s, got %s", expected, observed)
+}
+
 func buildCheckRows(failed []FailedCheck, judged []observer.JudgedCheck) []checkRowView {
 	byID := make(map[string]*observer.JudgedCheck, len(judged))
 	for i := range judged {
@@ -441,10 +604,12 @@ func buildCheckRows(failed []FailedCheck, judged []observer.JudgedCheck) []check
 	}
 	out := make([]checkRowView, len(failed))
 	for i, c := range failed {
+		expected, observed := formatCheckValue(c.Expected), formatCheckValue(c.Observed)
 		out[i] = checkRowView{
 			FailedCheck: c, Judged: byID[c.ID], Anchor: checkAnchor(c.ID),
-			Expected: formatCheckValue(c.Expected), Observed: formatCheckValue(c.Observed),
+			Expected: expected, Observed: observed,
 			IDWrapped: softWrapID(c.ID),
+			WhyPrefix: checkWhyPrefix(c.Result), WhyText: checkWhyText(c.Source, expected, observed),
 		}
 	}
 	return out

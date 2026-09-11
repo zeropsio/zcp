@@ -53,8 +53,10 @@ func TestPages_RunShowsQuoteFoundMarksAndUnverifiedCount(t *testing.T) {
 	if !strings.Contains(body, "quote not found") {
 		t.Errorf("body missing a 'quote not found' mark:\n%s", body)
 	}
-	if !strings.Contains(body, "1 of 2 quotes unverified") {
-		t.Errorf("body missing the unverified-quote count (FM-46):\n%s", body)
+	// Item 11 (FIX2): the footer reads "quotes found 1/2", not "1 of 2
+	// quotes unverified".
+	if !strings.Contains(body, "quotes found 1/2") {
+		t.Errorf("body missing the \"quotes found 1/2\" footer (FM-46):\n%s", body)
 	}
 	if !strings.Contains(body, "Tool returned stale data") || !strings.Contains(body, "Agent skipped a sanity check") {
 		t.Errorf("body missing finding titles:\n%s", body)
@@ -156,6 +158,45 @@ func TestPages_RunUnparsedObservationShowsRawPreview(t *testing.T) {
 	}
 	if !strings.Contains(body, "<details") {
 		t.Errorf("raw preview is not inside a collapsed <details> block:\n%s", body)
+	}
+}
+
+// TestPages_RunFailedNewestFallsBackToOlderOK pins item 1 (FIX2): when the
+// current (newest) observation failed (status error/unparsed), the run page
+// does not hide a good older assessment behind it — it renders the newest
+// ok one instead, with a banner naming the failed attempt above it. The
+// re-assess form (which always targets a NEW observation) still renders.
+func TestPages_RunFailedNewestFallsBackToOlderOK(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+
+	seedBatch(t, store, "fn1", "claude-sonnet-5", []runFixture{
+		{runID: "fn1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"fn1-a": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat1, RunID: "fn1-a", ObsID: "20260910T090000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: time.Date(2026, 9, 10, 9, 0, 0, 0, time.UTC), Status: "ok", Headline: "good assessment from yesterday",
+	})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat1, RunID: "fn1-a", ObsID: "20260911T120000000Z-claude-opus-5",
+		Model: "claude-opus-5", CreatedAt: fixedNow(t)(), Status: "error", Error: "claude exited 1: boom",
+	})
+
+	rr := doGET(t, h, "/r/fn1-a")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /r/fn1-a: got %d, want 200, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	if !strings.Contains(body, "good assessment from yesterday") {
+		t.Errorf("body does not fall back to the older ok observation's headline:\n%s", body)
+	}
+	if !strings.Contains(body, "The newest assessment") || !strings.Contains(body, "claude-opus-5") ||
+		!strings.Contains(body, "claude exited 1: boom") {
+		t.Errorf("body missing the banner naming the newest (failed) attempt:\n%s", body)
+	}
+	if !strings.Contains(body, `action="/r/fn1-a/observe"`) {
+		t.Errorf("body dropped the re-assess form:\n%s", body)
 	}
 }
 
@@ -398,6 +439,43 @@ func TestPages_RunWhyThisVerdictListsFailedChecksWithLinks(t *testing.T) {
 	}
 }
 
+// TestPages_RunWhyThisVerdictPrefixesBlockedAndOmitsEmptyExpectedObserved
+// pins item 4 (FIX2): a blocked check's line reads "Blocked:", never
+// "Failed because:", and — when it carries neither expected nor observed
+// (it could not even attempt to grade) — "could not run (source <source>)"
+// instead of "expected , got .". It also pins the reason-line dedup: the
+// page-head reason line is dropped when it would only repeat the ids the
+// per-check lines below already itemize.
+func TestPages_RunWhyThisVerdictPrefixesBlockedAndOmitsEmptyExpectedObserved(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+
+	seedBatch(t, store, "bq1", "off", []runFixture{
+		{runID: "bq1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", taskResult: "blocked", done: true,
+			checks: [][5]string{{"chk1", "blocked", "", "", "src1"}}},
+	}, true, map[string]string{"bq1-a": "blocked"})
+
+	body := doGET(t, h, "/r/bq1-a").Body.String()
+	if !strings.Contains(body, "Blocked:") {
+		t.Errorf("body missing the \"Blocked:\" prefix for a blocked check:\n%s", body)
+	}
+	if strings.Contains(body, "Failed because:") {
+		t.Errorf("body mislabels a blocked check as \"Failed because:\":\n%s", body)
+	}
+	if !strings.Contains(body, "could not run (source src1)") {
+		t.Errorf("body missing \"could not run (source src1)\" for empty expected/observed:\n%s", body)
+	}
+	if strings.Contains(body, "expected , got .") {
+		t.Errorf("body still shows empty expected/observed values:\n%s", body)
+	}
+	// The page-head reason line, which would otherwise bare-repeat "chk1"
+	// (already itemized in full in the Why-this-verdict line and the
+	// checks table below), is dropped entirely.
+	if strings.Contains(body, `<p class="muted">chk1</p>`) {
+		t.Errorf("body still shows the redundant bare id-list reason line:\n%s", body)
+	}
+}
+
 // buildFormat2Observation builds a format-2 observation with the given
 // findings/judged checks, for the disputed-line tests below.
 func buildFormat2Observation(runID string, findings []observer.Finding, judged []observer.JudgedCheck, agree bool) observer.Observation {
@@ -463,6 +541,38 @@ func TestPages_RunDisputedLineLinksToJudgedCheckRow(t *testing.T) {
 	}
 	if !strings.Contains(body, `href="#check-c1"`) {
 		t.Errorf("body missing the disputed line's link to the check row:\n%s", body)
+	}
+}
+
+// TestPages_RunVerdictRightOneLinePerCheckWithTextMark pins item 5 (FIX2):
+// "Verdict right" renders one line per judged check with a text mark ("✓
+// correct <id>" / "✗ incorrect <id>"), not a colour-only pill — a screen
+// reader or a printout without colour must still be able to tell them
+// apart, and a long id gets a soft-wrap opportunity (softWrapID) rather
+// than clipping.
+func TestPages_RunVerdictRightOneLinePerCheckWithTextMark(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+
+	seedBatch(t, store, "vr1", "claude-sonnet-5", []runFixture{
+		{runID: "vr1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", taskResult: "failed", done: true,
+			checks: [][5]string{{"svc/a.b_c-d", "failed", "5", "3", "mcp"}, {"c2", "failed", "5", "3", "mcp"}}},
+	}, true, map[string]string{"vr1-a": "failed"})
+	obs := buildFormat2Observation("vr1-a", nil, []observer.JudgedCheck{
+		{ID: "svc/a.b_c-d", Correct: false, Why: "the check's expected value is stale"},
+		{ID: "c2", Correct: true, Why: "the check is fine"},
+	}, false)
+	seedObservation(t, store, obs)
+
+	body := doGET(t, h, "/r/vr1-a").Body.String()
+	if !strings.Contains(body, "✗ incorrect") {
+		t.Errorf("body missing the text mark for an incorrect check:\n%s", body)
+	}
+	if !strings.Contains(body, "✓ correct") {
+		t.Errorf("body missing the text mark for a correct check:\n%s", body)
+	}
+	if !strings.Contains(body, softWrapID("svc/a.b_c-d")) {
+		t.Errorf("body does not soft-wrap the long judged-check id:\n%s", body)
 	}
 }
 
@@ -749,11 +859,14 @@ func TestPages_RunDegradesWithoutTaskPromptNever502(t *testing.T) {
 	if !strings.Contains(body, "<h1>a</h1>") {
 		t.Errorf("body missing the header for a degraded run:\n%s", body)
 	}
-	if !strings.Contains(body, "steps unavailable") {
-		t.Errorf("body missing the steps-unavailable reason:\n%s", body)
+	// Item 2 (FIX2): a missing bundle file maps to one plain sentence,
+	// shown once (under Record) — Steps says nothing more about the same
+	// root cause, and the raw error chain lives only in the forensic block.
+	if n := strings.Count(body, bundleNotFoundSentence); n != 1 {
+		t.Errorf(`%q appears %d times, want exactly 1:%s`, bundleNotFoundSentence, n, body)
 	}
-	if !strings.Contains(body, "record unavailable") {
-		t.Errorf("body missing the record-unavailable reason:\n%s", body)
+	if strings.Contains(body, "steps unavailable") || strings.Contains(body, "record unavailable") {
+		t.Errorf("body still shows a raw Go error chain instead of the plain sentence:\n%s", body)
 	}
 }
 
@@ -858,8 +971,11 @@ func TestPages_RunRecordErrorHidesEmptyDisclosures(t *testing.T) {
 	store.mu.Unlock()
 
 	body := doGET(t, h, "/r/re1-a").Body.String()
-	if n := strings.Count(body, "record unavailable"); n != 1 {
-		t.Errorf(`"record unavailable" appears %d times, want exactly 1:\n%s`, n, body)
+	if n := strings.Count(body, bundleNotFoundSentence); n != 1 {
+		t.Errorf(`%q appears %d times, want exactly 1:%s`, bundleNotFoundSentence, n, body)
+	}
+	if strings.Contains(body, "record unavailable") {
+		t.Errorf("body still shows the raw \"record unavailable\" error chain instead of the plain sentence:\n%s", body)
 	}
 	if strings.Contains(body, `id="self-review"`) {
 		t.Errorf("body still renders the empty self-review disclosure:\n%s", body)
@@ -869,6 +985,9 @@ func TestPages_RunRecordErrorHidesEmptyDisclosures(t *testing.T) {
 	}
 	if !strings.Contains(body, `id="run-meta"`) {
 		t.Errorf("body dropped run metadata, which needs neither text:\n%s", body)
+	}
+	if !strings.Contains(body, "<dt>Error</dt>") {
+		t.Errorf("body dropped the raw error chain from the forensic block:\n%s", body)
 	}
 }
 

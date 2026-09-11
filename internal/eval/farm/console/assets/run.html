@@ -9,7 +9,7 @@
 
 {{if .Row.DoneExists}}
 <h2>Why this verdict</h2>
-{{if .CheckRows}}{{range .CheckRows}}<p>Failed because: <a href="#{{.Anchor}}"><code>{{.ID}}</code></a> — expected {{.Expected}}, got {{.Observed}}.</p>{{end}}
+{{if .CheckRows}}{{range .CheckRows}}<p>{{.WhyPrefix}}: <a href="#{{.Anchor}}"><code>{{.ID}}</code></a> — {{.WhyText}}.</p>{{end}}
 {{else if .Row.VerdictReason}}<p>{{.Row.VerdictReason}}</p>
 {{else}}<p>All checks passed.</p>
 {{end}}
@@ -21,6 +21,7 @@
 <span class="{{assessmentOutcomeClass .OutcomeText}}">{{assessmentOutcomeLabel .OutcomeText}}</span>
 <p class="headline">{{.DisplayedObs.Headline}}</p>
 {{if .ViewingOlder}}<p class="muted small">Showing an earlier assessment. <a href="/r/{{.Row.RunID}}">View the current one</a>.</p>{{end}}
+{{if .FailedNewestText}}<p class="callout callout-warn">{{.FailedNewestText}}</p>{{end}}
 {{if .Disputed}}<p class="callout callout-warn"><span class="disputed-marker">disputed</span> The observer thinks a check is wrong — this verdict may not be fair: {{.DisputedWhy}}{{if .DisputedHref}} <a href="{{.DisputedHref}}">details</a>{{end}}</p>{{end}}
 
 {{with .DisplayedObs.Story}}
@@ -35,7 +36,7 @@
 
 <div class="assess-grid">
 <div><span class="k">Goal reached</span><span class="pill pill-{{.DisplayedObs.Goal.Reached}}">{{.DisplayedObs.Goal.Reached}}</span>{{with .DisplayedObs.Goal.Why}}<p>{{.}}</p>{{end}}</div>
-<div><span class="k">Verdict right</span>{{if .DisplayedObs.Checks.Judged}}{{range .DisplayedObs.Checks.Judged}}<span class="pill {{if .Correct}}pill-yes{{else}}pill-no{{end}}" title="{{.Why}}"><code>{{.ID}}</code></span> {{end}}{{else}}<span class="pill {{if .DisplayedObs.Checks.Agree}}pill-yes{{else}}pill-no{{end}}">{{if .DisplayedObs.Checks.Agree}}yes{{else}}no{{end}}</span>{{with .DisplayedObs.Checks.Why}}<p>{{.}}</p>{{end}}{{end}}</div>
+<div><span class="k">Verdict right</span>{{if .JudgedChecks}}<ul class="plain small">{{range .JudgedChecks}}<li title="{{.Why}}">{{if .Correct}}✓ correct{{else}}✗ incorrect{{end}} <code>{{.IDWrapped}}</code></li>{{end}}</ul>{{else}}<span class="pill {{if .DisplayedObs.Checks.Agree}}pill-yes{{else}}pill-no{{end}}">{{if .DisplayedObs.Checks.Agree}}yes{{else}}no{{end}}</span>{{with .DisplayedObs.Checks.Why}}<p>{{.}}</p>{{end}}{{end}}</div>
 <div><span class="k">Self-review honest</span><span class="pill pill-{{.DisplayedObs.SelfReview.Accurate}}">{{.DisplayedObs.SelfReview.Accurate}}</span>{{with .DisplayedObs.SelfReview.Note}}<p>{{.}}</p>{{end}}</div>
 </div>
 
@@ -43,7 +44,7 @@
 {{else}}<p class="muted small">No findings.</p>
 {{end}}
 
-<p class="muted small"><span title="observation {{.DisplayedObs.ObsID}}">{{.DisplayedObs.Model}}</span> · {{fmtTime .DisplayedObs.CreatedAt}} · {{if .UnverifiedQuotes}}{{.UnverifiedQuotes}} of {{.TotalQuotes}} quotes unverified{{else}}all {{.TotalQuotes}} quotes verified{{end}}</p>
+<p class="muted small"><span title="observation {{.DisplayedObs.ObsID}}">{{.DisplayedObs.Model}}</span> · {{fmtTime .DisplayedObs.CreatedAt}} · {{.QuotesFoundText}}</p>
 {{if .DisplayedObs.Warnings}}<ul class="plain small">{{range .DisplayedObs.Warnings}}<li class="muted small">⚠ {{.}}</li>{{end}}</ul>{{end}}
 
 {{else}}
@@ -107,8 +108,9 @@
 <details class="section" id="run-meta"><summary>Run metadata &amp; forensic view</summary>
 <dl class="kv">
 <dt>Run</dt><dd><code>{{.Row.RunID}}</code></dd>
-<dt>Candidate</dt><dd><code>{{.Row.CandidateSha256}}</code></dd>
-<dt>Evaluator</dt><dd><code>{{.Row.EvaluatorSha256}}</code></dd>
+{{if .RecordErrorDetail}}<dt>Error</dt><dd><code>{{.RecordErrorDetail}}</code></dd>{{end}}
+<dt>ZCP build</dt><dd><code>{{.Row.CandidateSha256}}</code></dd>
+<dt>evaluator build</dt><dd><code>{{.Row.EvaluatorSha256}}</code></dd>
 <dt>Forensic view</dt><dd><pre class="forensic-command">zcp eval farm pull {{.Row.RunID}} --out &lt;dir&gt;
 zcp capture ui &lt;dir&gt;/{{.Row.RunID}}/capture</pre></dd>
 </dl>
@@ -116,6 +118,7 @@ zcp capture ui &lt;dir&gt;/{{.Row.RunID}}/capture</pre></dd>
 
 <h2 id="steps">Steps <span class="count">{{len .Steps}}</span></h2>
 {{if .StepsError}}<p class="muted small">{{.StepsError}}</p>
+{{else if .StepsSuppressed}}{{/* explained above, under Record */}}
 {{else}}
 {{template "filterbar" .StepsFilters}}
 {{if .Steps}}<ol class="steps">

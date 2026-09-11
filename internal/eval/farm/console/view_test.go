@@ -72,29 +72,37 @@ func TestObserverStateText(t *testing.T) {
 	unparsedObs := &observer.Observation{Status: "unparsed"}
 
 	tests := []struct {
-		name       string
-		now        time.Time
-		disabled   bool
-		manifestOb string
-		doneExists bool
-		obs        *observer.Observation
-		queued     bool
-		want       string
+		name          string
+		now           time.Time
+		disabled      bool
+		manifestOb    string
+		doneExists    bool
+		obs           *observer.Observation
+		queued        bool
+		settled       bool
+		settledReason string
+		want          string
 	}{
-		{"queued outranks everything", created, false, "claude-sonnet-5", true, errObs, true, "assessing…"},
-		{"not finished", created, false, "claude-sonnet-5", false, nil, false, "not assessed — run not finished"},
-		{"assessed", created.Add(time.Hour), false, "claude-sonnet-5", true, okObs, false, "assessed"},
-		{"assessment failed with error message", created.Add(time.Hour), false, "claude-sonnet-5", true, errObs, false, "assessment failed — boom"},
-		{"assessment failed unparsed", created.Add(time.Hour), false, "claude-sonnet-5", true, unparsedObs, false, "assessment failed — the model's answer did not parse"},
-		{"batch ran without observer", created.Add(time.Hour), false, "", true, nil, false, "not assessed — batch ran without observer"},
-		{"batch observer off", created.Add(time.Hour), false, ObserverOff, true, nil, false, "not assessed — batch ran without observer"},
-		{"console disabled", created.Add(time.Hour), true, "claude-sonnet-5", true, nil, false, "not assessed — automatic assessment is off on this console"},
-		{"older than 14 days", created.Add(15 * 24 * time.Hour), false, "claude-sonnet-5", true, nil, false, "not assessed — older than 14 days (assess by hand)"},
-		{"fresh, named observer, will be picked up soon", created.Add(time.Hour), false, "claude-sonnet-5", true, nil, false, "not assessed"},
+		{"queued outranks everything", created, false, "claude-sonnet-5", true, errObs, true, false, "", "assessing…"},
+		{"not finished, still running", created, false, "claude-sonnet-5", false, nil, false, false, "", "not assessed — run not finished"},
+		{"assessed", created.Add(time.Hour), false, "claude-sonnet-5", true, okObs, false, false, "", "assessed"},
+		{"assessment failed with error message", created.Add(time.Hour), false, "claude-sonnet-5", true, errObs, false, false, "", "assessment failed — boom"},
+		{"assessment failed unparsed", created.Add(time.Hour), false, "claude-sonnet-5", true, unparsedObs, false, false, "", "assessment failed — the model's answer did not parse"},
+		{"batch ran without observer", created.Add(time.Hour), false, "", true, nil, false, false, "", "not assessed — batch ran without observer"},
+		{"batch observer off", created.Add(time.Hour), false, ObserverOff, true, nil, false, false, "", "not assessed — batch ran without observer"},
+		{"console disabled", created.Add(time.Hour), true, "claude-sonnet-5", true, nil, false, false, "", "not assessed — automatic assessment is off on this console"},
+		{"older than 14 days", created.Add(15 * 24 * time.Hour), false, "claude-sonnet-5", true, nil, false, false, "", "not assessed — older than 14 days (assess by hand)"},
+		{"fresh, named observer, will be picked up soon", created.Add(time.Hour), false, "claude-sonnet-5", true, nil, false, false, "", "not assessed"},
+		// Item 3 (FIX2): a settled run (its batch summary already resolved
+		// it blocked/not-run/etc.) that never got a bundle at all needs no
+		// "waiting for the worker" wording — there is nothing to assess,
+		// ever, for this run.
+		{"settled, no bundle, no reason", created, false, "claude-sonnet-5", false, nil, false, true, "", "nothing to assess — the run left no record"},
+		{"settled, no bundle, with the summary's own reason", created, false, "claude-sonnet-5", false, nil, false, true, "aborted: setup failed", "nothing to assess — the run left no record: aborted: setup failed"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := observerStateText(tc.now, created, tc.disabled, tc.manifestOb, tc.doneExists, tc.obs, tc.queued)
+			got := observerStateText(tc.now, created, tc.disabled, tc.manifestOb, tc.doneExists, tc.obs, tc.queued, tc.settled, tc.settledReason)
 			if got != tc.want {
 				t.Errorf("observerStateText = %q, want %q", got, tc.want)
 			}

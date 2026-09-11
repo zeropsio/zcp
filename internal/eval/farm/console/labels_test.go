@@ -110,8 +110,11 @@ func TestLabels_EveryEnumValueHasALabel(t *testing.T) {
 	// new, first seen or recurring (previously new/recurring/gone/
 	// unconfirmed, live = new or recurring).
 	t.Run("problem status", func(t *testing.T) {
+		// Item 11 (FIX2): status "new" displays as "regressed" — the word
+		// "Problem" (not "new") stays reserved for the cross-run cluster
+		// concept itself.
 		wantLabel := map[string]string{
-			"new": "new", "first-seen": "first seen", "recurring": "recurring",
+			"new": "regressed", "first-seen": "first seen", "recurring": "recurring",
 			"gone": "gone", "unconfirmed": "unconfirmed",
 		}
 		for value, label := range wantLabel {
@@ -168,8 +171,8 @@ func TestPages_TermsListsEveryTerm(t *testing.T) {
 		"not started", "stalled", // verdict
 		"High", "Medium", "Low", // severity
 		"ZCP guidance", "ZCP tool", "Zerops platform", "Agent mistake", "Test scenario", "Test check", // cause
-		"OK", "Problem", "Inconclusive", "none", // outcome
-		"first seen", "recurring", "gone", "unconfirmed", // problem status
+		"OK", "Needs attention", "Inconclusive", "none", // outcome
+		"regressed", "first seen", "recurring", "gone", "unconfirmed", // problem status
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/terms missing vocabulary label %q:\n%s", want, body)
