@@ -103,3 +103,43 @@ func TestRenderBadQuery_Names400AndDropLink(t *testing.T) {
 		t.Errorf("400 page must name the parameter and link to the list without it:\n%s", body)
 	}
 }
+
+// TestBuildListNav_SingleFilterReplaces pins §8.7's switch filters (kind,
+// status): an option link replaces the value instead of adding it to the
+// default, so the count on the option is the number of rows the click
+// shows. (Live: "Empty 8" linked to kind=evaluation,empty and showed 27.)
+func TestBuildListNav_SingleFilterReplaces(t *testing.T) {
+	t.Parallel()
+	spec := ListSpec{Closed: []ClosedFilter{{Name: "kind", Allowed: []string{"evaluation", "empty", "all"}, Single: true}},
+		Defaults: map[string]string{"kind": "evaluation"}}
+	q := Query{Closed: map[string][]string{"kind": {"evaluation"}}}
+	nav := buildListNav("/", spec, q, url.Values{}, map[string]OptionCounts{"kind": {"evaluation": 19, "empty": 8, "all": 27}}, nil, testLabeler())
+	for _, o := range nav.Filters.Groups[0].Options {
+		switch o.Value {
+		case "empty":
+			if o.URL != "/?kind=empty" {
+				t.Errorf("empty option URL = %q, want /?kind=empty (replace, not add)", o.URL)
+			}
+		case "evaluation":
+			if !o.Active {
+				t.Errorf("default option not marked active")
+			}
+		}
+	}
+	if len(nav.Filters.Active) != 0 {
+		t.Errorf("a defaulted switch shows %d removable chips, want none", len(nav.Filters.Active))
+	}
+}
+
+// TestParse_SingleFilterTakesOneValue pins that a switch filter refuses a
+// comma list instead of OR-ing it.
+func TestParse_SingleFilterTakesOneValue(t *testing.T) {
+	t.Parallel()
+	spec := ListSpec{Closed: []ClosedFilter{{Name: "kind", Allowed: []string{"evaluation", "empty", "all"}, Single: true}}}
+	if _, err := Parse(spec, url.Values{"kind": {"evaluation,empty"}}); err == nil {
+		t.Error("Parse accepted two values for a single-value filter")
+	}
+	if _, err := Parse(spec, url.Values{"kind": {"empty"}}); err != nil {
+		t.Errorf("Parse refused one value: %v", err)
+	}
+}

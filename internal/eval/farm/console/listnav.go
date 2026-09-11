@@ -153,9 +153,9 @@ func buildListNav(path string, spec ListSpec, q Query, values url.Values, counts
 				o.Label += "+" // a minimum: this value or above
 			}
 			switch {
-			case cf.Min && o.Active:
+			case (cf.Min || cf.Single) && o.Active:
 				o.URL = listURL(path, values, map[string]string{cf.Name: ""})
-			case cf.Min:
+			case cf.Min || cf.Single:
 				o.URL = listURL(path, values, map[string]string{cf.Name: v})
 			default:
 				o.URL = listURL(path, values, map[string]string{cf.Name: toggled(cf.Allowed, active, v)})
@@ -233,7 +233,7 @@ func buildListNav(path string, spec ListSpec, q Query, values url.Values, counts
 // removeValueURL drops v from an explicitly set closed filter: a minimum
 // filter is removed; an OR-set keeps its other values.
 func removeValueURL(path string, values url.Values, cf ClosedFilter, active []string, v string) string {
-	if cf.Min {
+	if cf.Min || cf.Single {
 		return listURL(path, values, map[string]string{cf.Name: ""})
 	}
 	return listURL(path, values, map[string]string{cf.Name: toggled(cf.Allowed, active, v)})

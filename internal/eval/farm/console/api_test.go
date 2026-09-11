@@ -1018,3 +1018,35 @@ func TestAPI_SettledRunWithoutDoneUsesSummaryResult(t *testing.T) {
 		t.Errorf("verdict = %q, want blocked (the batch summary settled the run)", out.Runs[0].Verdict)
 	}
 }
+
+// TestAPI_FilterTestFindings pins three API defects a functional filter
+// test found (§8.4/§8.7): the JSON twin of runs.md says outcome "none" as
+// the markdown does; digest.md refuses a parameter it does not take; a
+// problem member names its scenario and a finding its cause class (the
+// value the cause= filter takes) beside its label.
+func TestAPI_FilterTestFindings(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+	seedBatch(t, store, "ft1", "claude-sonnet-5", []runFixture{
+		{runID: "ft1-a", scenario: "a", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.5, taskResult: "passed", done: true},
+		{runID: "ft1-b", scenario: "b", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.5, taskResult: "failed", done: true},
+	}, true, map[string]string{"ft1-a": "passed", "ft1-b": "failed"})
+	seedObservation(t, store, fixtureObservation("ft1-b"))
+
+	rr := doGET(t, h, "/api/runs.json?batch=ft1")
+	if !strings.Contains(rr.Body.String(), `"outcome":"none"`) {
+		t.Errorf("runs.json: an unassessed run's outcome must read \"none\" like runs.md:\n%s", rr.Body.String())
+	}
+	if rr := doGET(t, h, "/api/digest.md?batch=ft1&bogus=1"); rr.Code != http.StatusBadRequest {
+		t.Errorf("digest.md?bogus=1: got %d, want 400", rr.Code)
+	}
+	body := doGET(t, h, "/api/problems.json?status=all").Body.String()
+	if !strings.Contains(body, `"scenario":"b"`) {
+		t.Errorf("problems.json members must carry their scenario:\n%s", body)
+	}
+	body = doGET(t, h, "/api/findings.json?since=30d").Body.String()
+	if !strings.Contains(body, `"causeClass":"`) {
+		t.Errorf("findings.json must carry causeClass beside the cause label:\n%s", body)
+	}
+}

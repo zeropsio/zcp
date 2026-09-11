@@ -455,7 +455,7 @@ func problemListSpec() ListSpec {
 		Closed: []ClosedFilter{
 			{Name: paramCause, Allowed: []string{CauseClassZCP, CauseClassTest, CauseClassAgent, CauseClassPlatform}},
 			{Name: paramSeverity, Allowed: []string{observer.SeverityHigh, observer.SeverityMedium, observer.SeverityLow}, Min: true},
-			{Name: paramStatus, Allowed: problemStatusAllowed},
+			{Name: paramStatus, Allowed: problemStatusAllowed, Single: true},
 		},
 		Open:        []string{paramSurface, paramScenario, paramBatch, paramBuild},
 		Sorts:       []SortKey{{Name: "rank", DefaultDir: "asc"}, {Name: "severity", DefaultDir: "desc"}, {Name: "runs", DefaultDir: "desc"}, {Name: "last", DefaultDir: "desc"}, {Name: "first", DefaultDir: "desc"}},

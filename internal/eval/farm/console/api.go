@@ -184,24 +184,26 @@ func (s *Server) handleBatchesAPI(w http.ResponseWriter, r *http.Request) {
 // ProblemMemberItem is one ProblemItem.Members row (§8.6): a thin view over
 // FindingRow plus the run link and step link its most-cited evidence needs.
 type ProblemMemberItem struct {
-	RunID     string    `json:"runId"`
-	Batch     string    `json:"batch"`
-	Build     string    `json:"build"`
-	StartedAt time.Time `json:"startedAt"`
-	Severity  string    `json:"severity"`
-	Cause     string    `json:"cause"`
-	Title     string    `json:"title"`
-	LookAt    string    `json:"lookAt"`
-	Fix       string    `json:"fix"`
-	RunLink   string    `json:"runLink"`
-	Quote     string    `json:"quote,omitempty"`
-	StepLink  string    `json:"stepLink,omitempty"`
+	RunID      string    `json:"runId"`
+	Batch      string    `json:"batch"`
+	Scenario   string    `json:"scenario"`
+	Build      string    `json:"build"`
+	StartedAt  time.Time `json:"startedAt"`
+	Severity   string    `json:"severity"`
+	Cause      string    `json:"cause"`
+	CauseClass string    `json:"causeClass"`
+	Title      string    `json:"title"`
+	LookAt     string    `json:"lookAt"`
+	Fix        string    `json:"fix"`
+	RunLink    string    `json:"runLink"`
+	Quote      string    `json:"quote,omitempty"`
+	StepLink   string    `json:"stepLink,omitempty"`
 }
 
 func problemMemberItem(m ProblemMember) ProblemMemberItem {
 	item := ProblemMemberItem{
-		RunID: m.RunID, Batch: m.Batch, Build: m.Build.Label(), StartedAt: m.StartedAt,
-		Severity: m.Severity, Cause: m.CauseLabel, Title: m.Title, LookAt: m.LookAt, Fix: m.Fix,
+		RunID: m.RunID, Batch: m.Batch, Scenario: m.Scenario, Build: m.Build.Label(), StartedAt: m.StartedAt,
+		Severity: m.Severity, Cause: m.CauseLabel, CauseClass: m.CauseClass, Title: m.Title, LookAt: m.LookAt, Fix: m.Fix,
 		RunLink: fmt.Sprintf("/r/%s#f%d", m.RunID, m.Index+1),
 	}
 	if len(m.Evidence) > 0 {
@@ -449,10 +451,29 @@ func fitLinesInBudget(budget int, lines []string) (kept, used, omitted int) {
 // header, ranked problems (§8.6), failed/blocked runs, and the count of
 // finished runs not yet assessed. batch wins when both are given, like
 // /api/runs.md.
+// outcomeOrNone is a run's assessment outcome as the API prints it: "none"
+// when there is no current ok observation, as runs.md already says (§8.8).
+func outcomeOrNone(o string) string {
+	if o == "" {
+		return outcomeNone
+	}
+	return o
+}
+
+// digestListSpec is digest.md's parameter surface: a batch or a window
+// (§8.4) — anything else is refused like every other list (§8.7).
+func digestListSpec() ListSpec {
+	return ListSpec{Open: []string{paramBatch}, HasSince: true}
+}
+
 func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	now := s.now()
 	q := r.URL.Query()
+	if _, err := Parse(digestListSpec(), q); err != nil {
+		writeQueryError(w, r, asQueryError(err))
+		return
+	}
 
 	var rows []RunRow
 	var problemsRuns []ProblemsRun
@@ -708,6 +729,7 @@ type FindingItem struct {
 	StartedAt      time.Time `json:"startedAt"`
 	Severity       string    `json:"severity"`
 	Cause          string    `json:"cause"`
+	CauseClass     string    `json:"causeClass"`
 	Surface        string    `json:"surface,omitempty"`
 	Anchor         string    `json:"anchor,omitempty"`
 	Title          string    `json:"title"`
@@ -729,7 +751,7 @@ func runsListItemFromRow(row RunRow) RunsListItem {
 		RunID: row.RunID, Batch: row.Batch, Scenario: row.Scenario, Verdict: row.Verdict,
 		VerdictReason: row.VerdictReason,
 		StartedAt:     row.StartedAt, DurationSec: row.DurationSec, CostUsd: row.CostUsd,
-		Outcome: row.Outcome, CauseCounts: causeCountItems(row.CauseCounts),
+		Outcome: outcomeOrNone(row.Outcome), CauseCounts: causeCountItems(row.CauseCounts),
 		ObserverState: apiObserverState(row), ObserverStateText: row.ObserverStateText,
 	}
 	for _, c := range row.FailedChecks {
@@ -1349,7 +1371,7 @@ func findingItemFromRow(f FindingRow) FindingItem {
 	sort.Ints(steps)
 	return FindingItem{
 		Owner: f.Owner, Batch: f.Batch, Scenario: f.Scenario, Build: f.Build.Label(), RunID: f.RunID, StartedAt: f.StartedAt,
-		Severity: f.Severity, Cause: f.CauseLabel, Surface: f.Surface, Anchor: f.Anchor,
+		Severity: f.Severity, Cause: f.CauseLabel, CauseClass: f.CauseClass, Surface: f.Surface, Anchor: f.Anchor,
 		Title: f.Title, What: f.What, Steps: steps, QuotesVerified: verified, QuotesTotal: total,
 		LookAt: f.LookAt, Fix: f.Fix,
 	}

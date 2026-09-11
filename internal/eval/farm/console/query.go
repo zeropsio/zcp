@@ -69,6 +69,10 @@ type ClosedFilter struct {
 	Name    string
 	Allowed []string
 	Min     bool
+	// Single marks a switch: one value at a time, an option link replacing
+	// it — the filters whose values already include a catch-all (kind=all,
+	// status=live/all), where OR-ing values reads as nonsense (§8.7).
+	Single bool
 }
 
 // SortKey is one list's sort key (§8.7 table): Name is the `sort=` value,
@@ -236,6 +240,9 @@ func Parse(spec ListSpec, values url.Values) (Query, error) {
 				continue
 			}
 			parts := strings.Split(val, ",")
+			if cf.Single && len(parts) > 1 {
+				return Query{}, &QueryError{Param: key, Allowed: cf.Allowed}
+			}
 			for _, p := range parts {
 				if !containsStr(cf.Allowed, p) {
 					return Query{}, &QueryError{Param: key, Allowed: cf.Allowed}

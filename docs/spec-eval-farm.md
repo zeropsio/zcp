@@ -1085,7 +1085,7 @@ endpoint takes exactly the filter and sort parameters of its page (§8.7).
   per problem with its finding anchor), failed and blocked runs with their
   failed checks and headline, and the count of finished runs not yet
   assessed. Truncation is said, never silent.
-- `GET /api/problems.md` — §8.6 with its members.
+- `GET /api/problems.md` — §8.6 with its members (each with its scenario).
 - `GET /api/batches.md` — the Overview's batches table.
 - `GET /api/runs.md?since=<window>` or `?batch=<id>` — newest first, grouped
   under batch headers: run id, scenario, verdict (+ reason), outcome,
@@ -1104,6 +1104,11 @@ endpoint takes exactly the filter and sort parameters of its page (§8.7).
 - `GET /api/runs/<runId>/files/<path>` — one bundle file under `results/`,
   served as `text/plain; charset=utf-8`; any other path is 404.
 - `GET /api/runs/<runId>/observations/<obsId>.md` — one stored observation.
+
+`digest.md` takes only `batch` or `since` and refuses anything else like a
+list (§8.7). Findings and problem members carry `causeClass` — the value
+`cause=` takes — beside the cause label, and a run's `outcome` reads `none`
+when it has no current `ok` observation, in JSON as in markdown.
 
 A window is a Go duration or `<n>d`, measured back from now against the
 run's `meta.json.startedAt` (a run without `meta.json` uses its batch
@@ -1230,7 +1235,9 @@ parameters. The state lives in the URL; every link on the page keeps the
 other parameters.
 - A filter with a closed value set takes one or more comma-separated values
   (OR within, AND across filters) — except `severity`, which is one minimum
-  everywhere. `cause` takes `zcp|test|agent|platform` everywhere and matches
+  everywhere, and `kind` and `status`, which are switches taking one value
+  (their `all`/`live` options already combine the others), so an option's
+  count is the number of rows its link shows. `cause` takes `zcp|test|agent|platform` everywhere and matches
   an item when any of its findings is in that class. `verdict` takes
   `passed|failed|blocked|not-started|running|stalled`. A filter over open
   values (batch, scenario, build, surface) is matched exactly;
