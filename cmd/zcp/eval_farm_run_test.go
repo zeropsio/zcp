@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,17 @@ import (
 
 	"github.com/zeropsio/zcp/internal/eval/farm"
 )
+
+// envrForTest builds the plain, environment-only ZCP_FARM_* overlay these
+// tests exercise runFarmRun/runFarmStatus/runFarmGC through — every one of
+// them seeds the full ZCP_FARM_* set via t.Setenv and never sets
+// ZCP_FARM_PROJECT_ID, so the resolver never touches a platform client
+// (docs/spec-eval-farm.md §3.1 FM-17: "with neither, today's error
+// messages stay") and behaves exactly like the pre-resolution os.Getenv
+// reads these tests were written against.
+func envrForTest() *farm.EnvResolver {
+	return farm.NewEnvResolver(context.Background(), nil, "", os.Getenv)
+}
 
 // TestEvalFarmRun_Detach_ReexecsAndPrintsLogPath pins §3.1 FM-18: `farm run
 // --detach` re-execs this same binary (minus --detach, --batch pinned) with
@@ -132,7 +144,7 @@ func TestEvalFarmRun_IntegrationTokenPreflight_NamesTheFix(t *testing.T) {
 		exitCode = runFarmRun([]string{
 			"--candidate", "cand-sha", "--scenarios", "scen-sha", "--evaluator", "eval-sha", "--wrapper", "wrap-sha",
 			"--set", "api-node-postgres-classic-dev", "--batch", "batch-preflight-1",
-		})
+		}, envrForTest())
 	})
 
 	if exitCode != 1 {
@@ -379,7 +391,7 @@ func TestEvalFarmStatus_RecomputesFromBucketAndProjects(t *testing.T) {
 
 	var exitCode int
 	stdout, stderr := captureOutput(t, func() {
-		exitCode = runFarmStatus(nil)
+		exitCode = runFarmStatus(nil, envrForTest())
 	})
 	if exitCode != 0 {
 		t.Errorf("runFarmStatus exit code = %d, want 0 (stderr: %s)", exitCode, stderr)
@@ -423,7 +435,7 @@ func TestFarmRun_ZeroRunsCreated_ExitNonzero(t *testing.T) {
 		exitCode = runFarmRun([]string{
 			"--candidate", "cand-sha", "--scenarios", "scen-sha", "--evaluator", "eval-sha", "--wrapper", "wrap-sha",
 			"--set", " , ,", "--batch", "batch-zero-runs",
-		})
+		}, envrForTest())
 	})
 
 	if exitCode != 1 {
@@ -503,7 +515,7 @@ func TestFarmStatus_DeletingProject_LabelledDeleting(t *testing.T) {
 
 	var exitCode int
 	stdout, stderr := captureOutput(t, func() {
-		exitCode = runFarmStatus(nil)
+		exitCode = runFarmStatus(nil, envrForTest())
 	})
 	if exitCode != 0 {
 		t.Errorf("runFarmStatus exit code = %d, want 0 (stderr: %s)", exitCode, stderr)
@@ -568,7 +580,7 @@ func TestFarmStatus_BudgetBlockedRun_ReportsSummaryVerdict(t *testing.T) {
 
 	var exitCode int
 	stdout, stderr := captureOutput(t, func() {
-		exitCode = runFarmStatus(nil)
+		exitCode = runFarmStatus(nil, envrForTest())
 	})
 	if exitCode != 0 {
 		t.Errorf("runFarmStatus exit code = %d, want 0 (stderr: %s)", exitCode, stderr)
@@ -622,7 +634,7 @@ func TestFarmStatus_NoSummaryYet_ReportsRunning(t *testing.T) {
 
 	var exitCode int
 	stdout, stderr := captureOutput(t, func() {
-		exitCode = runFarmStatus(nil)
+		exitCode = runFarmStatus(nil, envrForTest())
 	})
 	if exitCode != 0 {
 		t.Errorf("runFarmStatus exit code = %d, want 0 (stderr: %s)", exitCode, stderr)
@@ -889,7 +901,7 @@ func TestEvalFarmRun_SIGTERM_EndsBatchByInterrupt(t *testing.T) {
 			"--candidate", "cand-sha", "--scenarios", digest, "--evaluator", "eval-sha", "--wrapper", "wrap-sha",
 			"--set", scenarioID, "--batch", batch,
 			"--run-budget", "1h",
-		})
+		}, envrForTest())
 	})
 	elapsed := time.Since(start)
 
@@ -955,7 +967,7 @@ func TestFarmRun_InvalidObserverExits2(t *testing.T) {
 		exitCode = runFarmRun([]string{
 			"--candidate", "cand-sha", "--scenarios", "scen-sha", "--set", "gate",
 			"--batch", "batch-bad-observer", "--observer", "gpt-4",
-		})
+		}, envrForTest())
 	})
 	if exitCode != 2 {
 		t.Errorf("runFarmRun exit code = %d, want 2 (stderr: %s)", exitCode, stderr)
@@ -978,7 +990,7 @@ func TestFarmRun_BatchIDGrammar(t *testing.T) {
 			exitCode = runFarmRun([]string{
 				"--candidate", "cand-sha", "--scenarios", "scen-sha", "--set", "gate",
 				"--batch", "a/b",
-			})
+			}, envrForTest())
 		})
 		if exitCode != 2 {
 			t.Errorf("runFarmRun exit code = %d, want 2 (stderr: %s)", exitCode, stderr)
@@ -999,7 +1011,7 @@ func TestFarmRun_BatchIDGrammar(t *testing.T) {
 			exitCode = runFarmRun([]string{
 				"--candidate", "cand-sha", "--scenarios", "scen-sha", "--set", "gate",
 				"--batch", "batch-1",
-			})
+			}, envrForTest())
 		})
 		if exitCode != 1 {
 			t.Errorf("runFarmRun exit code = %d, want 1 (missing CLAUDE_CODE_OAUTH_TOKEN, not a --batch rejection) (stderr: %s)", exitCode, stderr)

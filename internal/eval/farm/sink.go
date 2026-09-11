@@ -44,15 +44,26 @@ type Config struct {
 	Secret string
 }
 
-// ConfigFromEnv reads the farm bucket config from ZCP_FARM_S3_*. It refuses
-// with a single error naming every missing variable rather than failing on
-// the first one, since a caller with none set needs the whole list at once.
+// ConfigFromEnv reads the farm bucket config from ZCP_FARM_S3_* via
+// os.Getenv. A thin wrapper over ConfigFromLookup for callers with no
+// farm-service resolution to overlay (docs/spec-eval-farm.md §3.1 FM-17;
+// cmd/zcp/eval_farm_console.go is the one remaining direct caller).
 func ConfigFromEnv() (Config, error) {
+	return ConfigFromLookup(os.Getenv)
+}
+
+// ConfigFromLookup reads the farm bucket config from ZCP_FARM_S3_* through
+// lookup — os.Getenv for ConfigFromEnv, or the environment-first/
+// farm-service-resolved overlay `zcp eval farm` builds once per invocation
+// (docs/spec-eval-farm.md §3.1 FM-17). It refuses with a single error
+// naming every missing variable rather than failing on the first one,
+// since a caller with none set needs the whole list at once.
+func ConfigFromLookup(lookup func(string) string) (Config, error) {
 	cfg := Config{
-		URL:    os.Getenv("ZCP_FARM_S3_URL"),
-		Bucket: os.Getenv("ZCP_FARM_S3_BUCKET"),
-		Key:    os.Getenv("ZCP_FARM_S3_KEY"),
-		Secret: os.Getenv("ZCP_FARM_S3_SECRET"),
+		URL:    lookup("ZCP_FARM_S3_URL"),
+		Bucket: lookup("ZCP_FARM_S3_BUCKET"),
+		Key:    lookup("ZCP_FARM_S3_KEY"),
+		Secret: lookup("ZCP_FARM_S3_SECRET"),
 	}
 	var missing []string
 	if cfg.URL == "" {
