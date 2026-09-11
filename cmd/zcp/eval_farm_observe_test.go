@@ -84,6 +84,28 @@ func shellQuoteObserve(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// writeCannedClaudeCapturingStdin is writeCannedClaude plus dumping its
+// stdin (the digest RunObserver sent it) to stdinFile, so a test can assert
+// on the digest's actual rendered content, not just the observation's
+// final status.
+func writeCannedClaudeCapturingStdin(t *testing.T, dir, resultText, stdinFile string) string {
+	t.Helper()
+	out, err := json.Marshal(map[string]any{
+		"result":         resultText,
+		"total_cost_usd": 0.0456,
+		"is_error":       false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "claude")
+	script := "#!/bin/sh\ncat > " + stdinFile + "\nprintf '%s' " + shellQuoteObserve(string(out)) + "\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 var obsIDPattern = regexp.MustCompile(`^\d{8}T\d{9}Z-claude-sonnet-5\.json$`)
 
 // findObserverFile returns the single file written under <runDir>/observer/.
@@ -186,5 +208,56 @@ func TestFarmObserve_MissingTranscriptIsErrorStatusExit1(t *testing.T) {
 	}
 	if !strings.Contains(obs.Error, "transcript") {
 		t.Errorf("obs.Error = %q, want it to name transcript.jsonl", obs.Error)
+	}
+}
+
+// TestFarmObserve_MissingVerificationStillObserves pins the follow-up
+// correction: a run that died before the verdict freeze (execution error,
+// signal kill) has no verification.json — exactly the runs worth
+// observing — so its absence must NOT make the observation status
+// "error". The digest's CHECKS section instead reads "(not recorded)",
+// the same placeholder the optional files use, and the pipeline keeps
+// going: status ok, verdict still resolved via §7.5 (summary row, else
+// meta.json.task.result).
+func TestFarmObserve_MissingVerificationStillObserves(t *testing.T) {
+	tmp := t.TempDir()
+	runDir := filepath.Join(tmp, "missing-verification")
+	copyDir(t, filepath.Join("..", "..", "internal", "eval", "farm", "observer", "testdata", "missing-verification"), runDir)
+
+	stdinFile := filepath.Join(tmp, "claude-stdin.txt")
+	claudePath := writeCannedClaudeCapturingStdin(t, tmp, canonicalModelAnswer, stdinFile)
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "test-token")
+
+	var exitCode int
+	captureOutput(t, func() {
+		exitCode = runFarmObserve([]string{runDir, "--model", "claude-sonnet-5", "--claude", claudePath})
+	})
+
+	if exitCode != 0 {
+		t.Errorf("exit code = %d, want 0 (status ok — a missing verification.json is not fatal)", exitCode)
+	}
+
+	digestSent, err := os.ReadFile(stdinFile)
+	if err != nil {
+		t.Fatalf("read captured stdin (the digest sent to claude): %v", err)
+	}
+	if !strings.Contains(string(digestSent), "=== CHECKS ===\n(not recorded)") {
+		t.Errorf("digest sent to claude = %q, want the CHECKS section to read \"(not recorded)\"", digestSent)
+	}
+
+	obsPath := findObserverFile(t, runDir)
+	data, err := os.ReadFile(obsPath)
+	if err != nil {
+		t.Fatalf("read observation file: %v", err)
+	}
+	var obs observer.Observation
+	if err := json.Unmarshal(data, &obs); err != nil {
+		t.Fatalf("parse observation file: %v", err)
+	}
+	if obs.Status != "ok" {
+		t.Errorf("obs.Status = %q, want ok", obs.Status)
+	}
+	if obs.Checks.Verdict != "failed" {
+		t.Errorf("obs.Checks.Verdict = %q, want %q (from meta.json.task.result, §7.5)", obs.Checks.Verdict, "failed")
 	}
 }

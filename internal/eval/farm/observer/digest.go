@@ -132,7 +132,7 @@ func scenarioSection(in DigestInput) string {
 
 func checksSection(in DigestInput) string {
 	if len(in.Checks) == 0 {
-		return "=== CHECKS ===\n(none)"
+		return "=== CHECKS ===\n" + notRecorded
 	}
 	var b strings.Builder
 	b.WriteString("=== CHECKS ===\n")

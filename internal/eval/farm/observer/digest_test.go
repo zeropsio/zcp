@@ -118,13 +118,16 @@ func TestDigest_OverBudgetDropsMiddleSteps(t *testing.T) {
 }
 
 // TestDigest_MissingOptionalFileSaysNotRecorded pins §7.2/§7.3: an absent
-// optional file (self-review.md, platform-snapshot.json, scenario.md)
-// renders as "(not recorded)" rather than an empty or missing section.
+// optional file (self-review.md, platform-snapshot.json, scenario.md) —
+// and, per the follow-up correction, a missing verification.json too, since
+// a run that died before the verdict freeze has no verification.json and
+// is exactly the kind of run worth observing — renders as "(not recorded)"
+// rather than an empty or missing section, never a fatal observation.
 func TestDigest_MissingOptionalFileSaysNotRecorded(t *testing.T) {
 	in := minimalDigestInput([]Step{{N: 1, Kind: StepUser, Text: "task"}})
-	// ScenarioMD, FinalState, SelfReview all left zero-valued (absent).
+	// ScenarioMD, FinalState, SelfReview, Checks all left zero-valued (absent).
 	text, _ := BuildDigest(in)
-	if strings.Count(text, "(not recorded)") != 3 {
-		t.Errorf("want 3 occurrences of '(not recorded)' (scenario, final state, self-review), got %d:\n%s", strings.Count(text, "(not recorded)"), text)
+	if strings.Count(text, "(not recorded)") != 4 {
+		t.Errorf("want 4 occurrences of '(not recorded)' (scenario, checks, final state, self-review), got %d:\n%s", strings.Count(text, "(not recorded)"), text)
 	}
 }
