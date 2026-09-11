@@ -8,8 +8,11 @@ package console
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +22,18 @@ import (
 // sourceAction is Job.Source for a run an operator action queued, as
 // opposed to the worker's own schedule (worker.go's wkSourceWorker, §8.5).
 const sourceAction = "action"
+
+// Notice codes for a cookie-authenticated action's redirect (§8.5 FM-53,
+// §8.3: rendered by pages.go's noticeFromQuery). Kept here, next to the
+// code that produces them, rather than exported from pages.go — the two
+// sides agree only on these literal strings.
+const (
+	noticeQueued      = "queued"
+	noticeBusy        = "busy"
+	noticeNotFinished = "not-finished"
+	noticeBadModel    = "bad-model"
+	noticeUnavailable = "unavailable"
+)
 
 // defaultWorkerTickInterval is the production worker tick period (§8.5
 // FM-53: "every 60 s"). Config.WorkerInterval overrides it in tests.
@@ -60,16 +75,12 @@ func (s *Server) observerUnavailable() (unavailable bool, message string) {
 	}
 }
 
-// actionOriginOK implements §8.2 FM-50's Origin rule for a cookie-
-// authenticated state-changing POST: Origin must equal
-// "<scheme>://<host>", host = X-Forwarded-Host when present else Host,
-// scheme = X-Forwarded-Proto when present else "https" under TLS, "http"
-// without.
-func actionOriginOK(r *http.Request) bool {
-	origin := r.Header.Get("Origin")
-	if origin == "" {
-		return false
-	}
+// expectedOrigin computes this request's own origin per §8.2 FM-50: host =
+// X-Forwarded-Host when present else Host; scheme = X-Forwarded-Proto when
+// present else "https" under TLS, "http" without. actionOriginOK and
+// refererPathOrDefault both compare against it — "this request's own
+// origin" is one function, not two.
+func expectedOrigin(r *http.Request) string {
 	host := r.Header.Get("X-Forwarded-Host")
 	if host == "" {
 		host = r.Host
@@ -82,7 +93,37 @@ func actionOriginOK(r *http.Request) bool {
 			scheme = "http"
 		}
 	}
-	return origin == scheme+"://"+host
+	return scheme + "://" + host
+}
+
+// actionOriginOK implements §8.2 FM-50's Origin rule for a cookie-
+// authenticated state-changing POST: Origin must equal expectedOrigin(r).
+func actionOriginOK(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return false
+	}
+	return origin == expectedOrigin(r)
+}
+
+// refererPathOrDefault implements §8.5 FM-53's cookie-redirect target: the
+// request's own Referer path when Referer is same-origin with this
+// request (expectedOrigin), else page. Only the path travels — the
+// Referer's own query string is dropped; the caller appends its own
+// ?notice=<code>.
+func refererPathOrDefault(r *http.Request, page string) string {
+	referer := r.Header.Get("Referer")
+	if referer == "" {
+		return page
+	}
+	u, err := url.Parse(referer)
+	if err != nil || u.Scheme == "" || u.Host == "" || u.Path == "" {
+		return page
+	}
+	if u.Scheme+"://"+u.Host != expectedOrigin(r) {
+		return page
+	}
+	return u.Path
 }
 
 // checkActionOrigin enforces the Origin rule for a cookie-authenticated
@@ -99,15 +140,83 @@ func (s *Server) checkActionOrigin(w http.ResponseWriter, r *http.Request) bool 
 	return true
 }
 
-// respondAction answers an accepted action: 202 for a bearer-authenticated
-// request, a 303 redirect back to redirectPath for a cookie-authenticated
-// one (§8.5 FM-53).
+// respondAction answers a plain accepted action with no §8.5 notice
+// vocabulary of its own: 202 for a bearer-authenticated request, a 303
+// redirect back to redirectPath for a cookie-authenticated one. Used by
+// auth.go's handleLogout (outside this slice) — the observe actions use
+// the notice-carrying respondActionAccepted/respondActionRefused below
+// instead.
 func (s *Server) respondAction(w http.ResponseWriter, r *http.Request, redirectPath string) {
 	if _, isBearer := bearerToken(r); isBearer {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 	http.Redirect(w, r, redirectPath, http.StatusSeeOther)
+}
+
+// actionSkip is one entry of a bearer action response's "skipped" list
+// (§8.5 FM-53): a run the action did not queue, with why.
+type actionSkip struct {
+	RunID  string `json:"runId"`
+	Reason string `json:"reason"`
+}
+
+// actionResponseBody is the bearer-authenticated 202 body (§8.5 FM-53):
+// {queued: [runIds], skipped: [{runId, reason}]}.
+type actionResponseBody struct {
+	Queued  []string     `json:"queued"`
+	Skipped []actionSkip `json:"skipped"`
+}
+
+// respondActionAccepted answers a successfully processed action — which
+// may have queued zero runs (e.g. a batch observe where nothing needed
+// assessment): a bearer request gets 202 with §8.5 FM-53's JSON body; a
+// cookie request is redirected to refererPathOrDefault(r, page) with
+// ?notice=queued&n=<len(queued)> (pages.go's noticeFromQuery renders it).
+func (s *Server) respondActionAccepted(w http.ResponseWriter, r *http.Request, page string, queued []string, skipped []actionSkip) {
+	if _, isBearer := bearerToken(r); isBearer {
+		if queued == nil {
+			queued = []string{}
+		}
+		if skipped == nil {
+			skipped = []actionSkip{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		if err := json.NewEncoder(w).Encode(actionResponseBody{Queued: queued, Skipped: skipped}); err != nil {
+			s.logf("console: encode action response: %v", err)
+		}
+		return
+	}
+	s.redirectWithNotice(w, r, page, noticeQueued, len(queued))
+}
+
+// respondActionRefused answers an action refused before anything was
+// queued: a bearer request keeps the status/one-line text body callers
+// already expect (§8.5 FM-53: "409/400/503 as above, with a one-line text
+// body"); a cookie request is redirected to refererPathOrDefault(r, page)
+// with ?notice=<code> — never the raw status.
+func (s *Server) respondActionRefused(w http.ResponseWriter, r *http.Request, page string, status int, text, notice string) {
+	if _, isBearer := bearerToken(r); isBearer {
+		http.Error(w, text, status)
+		return
+	}
+	s.redirectWithNotice(w, r, page, notice, 0)
+}
+
+// redirectWithNotice sends a cookie-authenticated action's caller back to
+// refererPathOrDefault(r, page) with ?notice=<code> (+ &n=<n> for
+// "queued", §8.5 FM-53). notice is always one of this file's own
+// constants (never user input), so a hand-built query string is safe and
+// keeps the documented "notice, then n" order — url.Values.Encode would
+// alphabetize "n" before "notice".
+func (s *Server) redirectWithNotice(w http.ResponseWriter, r *http.Request, page, notice string, n int) {
+	dest := refererPathOrDefault(r, page)
+	query := "notice=" + notice
+	if notice == noticeQueued {
+		query += "&n=" + strconv.Itoa(n)
+	}
+	http.Redirect(w, r, dest+"?"+query, http.StatusSeeOther)
 }
 
 // trimObservePath strips prefix and the trailing "/observe" from p, e.g.
@@ -131,6 +240,7 @@ func (s *Server) handleRunObserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runID := trimObservePath(r.URL.Path, "/r/")
+	page := "/r/" + runID
 
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -138,11 +248,11 @@ func (s *Server) handleRunObserve(w http.ResponseWriter, r *http.Request) {
 	}
 	model := r.FormValue("model")
 	if model != "" && !observer.ValidModel(model) {
-		http.Error(w, "model must be one of "+strings.Join(observer.Models, ", "), http.StatusBadRequest)
+		s.respondActionRefused(w, r, page, http.StatusBadRequest, "model must be one of "+strings.Join(observer.Models, ", "), noticeBadModel)
 		return
 	}
 	if unavailable, message := s.observerUnavailable(); unavailable {
-		http.Error(w, message, http.StatusServiceUnavailable)
+		s.respondActionRefused(w, r, page, http.StatusServiceUnavailable, message, noticeUnavailable)
 		return
 	}
 
@@ -158,7 +268,7 @@ func (s *Server) handleRunObserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !doneExists {
-		http.Error(w, "run not finished", http.StatusConflict)
+		s.respondActionRefused(w, r, page, http.StatusConflict, "run not finished", noticeNotFinished)
 		return
 	}
 
@@ -168,14 +278,14 @@ func (s *Server) handleRunObserve(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.cfg.Queue.Enqueue(r.Context(), Job{RunID: runID, Batch: batchID, Model: model, Source: sourceAction}); err != nil {
 		if errors.Is(err, ErrAlreadyQueued) {
-			http.Error(w, "already queued or running", http.StatusConflict)
+			s.respondActionRefused(w, r, page, http.StatusConflict, "already queued or running", noticeBusy)
 			return
 		}
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 
-	s.respondAction(w, r, "/r/"+runID)
+	s.respondActionAccepted(w, r, page, []string{runID}, nil)
 }
 
 // resolveActionModel implements §8.5 FM-53's model default chain for
@@ -213,6 +323,7 @@ func (s *Server) handleBatchObserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	batch := trimObservePath(r.URL.Path, "/b/")
+	page := "/b/" + batch
 
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -220,11 +331,11 @@ func (s *Server) handleBatchObserve(w http.ResponseWriter, r *http.Request) {
 	}
 	model := r.FormValue("model")
 	if !observer.ValidModel(model) {
-		http.Error(w, "model must be one of "+strings.Join(observer.Models, ", "), http.StatusBadRequest)
+		s.respondActionRefused(w, r, page, http.StatusBadRequest, "model must be one of "+strings.Join(observer.Models, ", "), noticeBadModel)
 		return
 	}
 	if unavailable, message := s.observerUnavailable(); unavailable {
-		http.Error(w, message, http.StatusServiceUnavailable)
+		s.respondActionRefused(w, r, page, http.StatusServiceUnavailable, message, noticeUnavailable)
 		return
 	}
 	all := r.FormValue("all") == "1"
@@ -236,23 +347,39 @@ func (s *Server) handleBatchObserve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if all && s.cfg.Queue.BatchBusy(batch) {
-		http.Error(w, "already queued or running", http.StatusConflict)
+		s.respondActionRefused(w, r, page, http.StatusConflict, "already queued or running", noticeBusy)
 		return
+	}
+
+	ctx := r.Context()
+	var queued []string
+	var skipped []actionSkip
+	enqueue := func(ctx context.Context, runID string) {
+		err := s.cfg.Queue.Enqueue(ctx, Job{RunID: runID, Batch: batch, Model: model, Source: sourceAction})
+		switch {
+		case err == nil:
+			queued = append(queued, runID)
+		case errors.Is(err, ErrAlreadyQueued):
+			skipped = append(skipped, actionSkip{RunID: runID, Reason: "already queued or running"})
+		default:
+			skipped = append(skipped, actionSkip{RunID: runID, Reason: err.Error()})
+		}
 	}
 
 	if all {
 		for _, run := range manifest.Runs {
-			doneExists, _, err := s.cfg.Store.Head(r.Context(), doneKey(run.RunID))
+			doneExists, _, err := s.cfg.Store.Head(ctx, doneKey(run.RunID))
 			if err != nil || !doneExists {
+				skipped = append(skipped, actionSkip{RunID: run.RunID, Reason: "run not finished"})
 				continue
 			}
-			_ = s.cfg.Queue.Enqueue(r.Context(), Job{RunID: run.RunID, Batch: batch, Model: model, Source: sourceAction})
+			enqueue(ctx, run.RunID)
 		}
-		s.respondAction(w, r, "/b/"+batch)
+		s.respondActionAccepted(w, r, page, queued, skipped)
 		return
 	}
 
-	rows, err := batchWindowRowsWithManifest(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, batch, manifest, s.queueState, s.runCache, s.summaryCache, s.logf)
+	rows, err := batchWindowRowsWithManifest(ctx, s.cfg.Store, s.cfg.ObserverDisabled, batch, manifest, s.queueState, s.runCache, s.summaryCache, s.logf)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -261,8 +388,8 @@ func (s *Server) handleBatchObserve(w http.ResponseWriter, r *http.Request) {
 		if !NeedsAssessment(row, runQueued(s.queueState, row.RunID)) {
 			continue
 		}
-		_ = s.cfg.Queue.Enqueue(r.Context(), Job{RunID: row.RunID, Batch: batch, Model: model, Source: sourceAction})
+		enqueue(ctx, row.RunID)
 	}
 
-	s.respondAction(w, r, "/b/"+batch)
+	s.respondActionAccepted(w, r, page, queued, skipped)
 }
