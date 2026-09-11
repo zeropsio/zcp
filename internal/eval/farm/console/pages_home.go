@@ -77,6 +77,10 @@ type latestEvaluationView struct {
 	HasPrev     bool
 	PrevBatchID string
 	Diff        BatchDiff
+	// DiffLine is formatBatchDiffLine's rendered text (FIX2 item 11) —
+	// pages_batch.go's own helper, shared so the Overview's vs-previous
+	// line and the batch page's own never say the diff two different ways.
+	DiffLine string
 }
 
 // topProblemView is one line of the Overview's "Top problems now" panel
@@ -386,33 +390,43 @@ func (s *Server) buildLatestEvaluation(ctx context.Context, allBatches []BatchRo
 		}
 		view.HasPrev, view.PrevBatchID = true, prevRow.BatchID
 		view.Diff = CompareBatches(prevRunRows, runRows)
+		view.DiffLine = formatBatchDiffLine(view.Diff)
 	}
 	return view, nil
 }
 
-// buildLabelForSha returns the newest build's display label (BuildInfo.Label,
-// with its git revision when one of runs' rows recorded it) — "" when sha is
-// "" (no assessed run in scope at all, §8.6's newestBuildSha).
-func buildLabelForSha(runs []ProblemsRun, sha string) string {
-	if sha == "" {
-		return ""
+// fmtDateShort renders a timestamp as "10 Sep" (item 6) — problemHowOften's
+// own bare date, distinct from fmtTimeShort's "11 Sep 18:31" (which still
+// carries a time, useful for a single batch row but not for "since <day>").
+func fmtDateShort(t time.Time) string {
+	if t.IsZero() {
+		return unknownDash
 	}
-	for _, r := range runs {
-		if r.Row.Build.Sha256 == sha {
-			return r.Row.Build.Label()
-		}
-	}
-	return ""
+	return t.UTC().Format("2 Jan")
 }
 
-// problemHowOften renders §8.6's own "hit <a>/<b> runs on <newest build>"
-// phrase for the Overview's "how often" column (item 2).
-func problemHowOften(p Problem, runs []ProblemsRun, newestBuild string) string {
-	build := buildLabelForSha(runs, newestBuild)
-	if build == "" {
-		return fmt.Sprintf("hit %d/%d runs", p.HitOnNewestBuild, p.RunsAssessedOnNewest)
+// problemHowOften renders the Overview's "how often" column (item 6,
+// FIX2): the status and the totals a Problem already carries — "recurring
+// · 4 runs in 4 batches since 10 Sep", "regressed on this build · 1 run" —
+// replacing the old, silent "hit a/b runs on <newest build>" phrase.
+// StatusNew/StatusFirstSeen are, by §8.6's own rule, hit on the newest
+// build only, so a batch/since clause would add nothing; every other
+// status names how far back it has been seen.
+func problemHowOften(p Problem) string {
+	runs := fmt.Sprintf("%d run%s", p.RunsTotal, pluralS(p.RunsTotal))
+	switch p.Status {
+	case StatusNew:
+		return fmt.Sprintf("%s on this build · %s", problemStatusLabel(p.Status), runs)
+	case StatusFirstSeen:
+		return fmt.Sprintf("%s · %s", problemStatusLabel(p.Status), runs)
+	default:
+		batchesWord := "batches"
+		if p.BatchesTotal == 1 {
+			batchesWord = "batch"
+		}
+		return fmt.Sprintf("%s · %s in %d %s since %s",
+			problemStatusLabel(p.Status), runs, p.BatchesTotal, batchesWord, fmtDateShort(p.FirstSeen))
 	}
-	return fmt.Sprintf("hit %d/%d runs on %s", p.HitOnNewestBuild, p.RunsAssessedOnNewest, build)
 }
 
 // buildTopProblems implements §8.3 item 2: the first five live problems
@@ -429,7 +443,6 @@ func (s *Server) buildTopProblems(ctx context.Context, now time.Time) ([]topProb
 	}
 
 	problems := BuildProblems(runs)
-	newestBuild := newestBuildSha(runs)
 
 	var out []topProblemView
 	for _, p := range problems {
@@ -439,7 +452,7 @@ func (s *Server) buildTopProblems(ctx context.Context, now time.Time) ([]topProb
 		out = append(out, topProblemView{
 			ID:       problemAnchorID(p.Key),
 			Severity: p.Severity, CauseLabels: p.CauseLabels, Surface: p.Surface, Title: p.Title,
-			HowOften: problemHowOften(p, runs, newestBuild),
+			HowOften: problemHowOften(p),
 		})
 		if len(out) == 5 {
 			break

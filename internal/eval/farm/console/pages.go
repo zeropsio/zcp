@@ -226,6 +226,11 @@ type pageMeta struct {
 	Observer observerStatus
 	Notice   *noticeView
 	Refresh  bool
+	// RefreshURL is FIX3 item 4's own addition: Refresh's own reload
+	// target with a one-shot ?notice=/?n= stripped (view.go's
+	// cleanRefreshURL) — "" when neither was present, so a page with no
+	// notice keeps rendering the plain, pre-existing refresh tag.
+	RefreshURL string
 }
 
 // observerStatus is pageMeta.Observer: the rendered §8.3 status line text,
@@ -247,11 +252,12 @@ type observerStatus struct {
 // batch, or the whole console) better than this shared helper does.
 func (s *Server) pageMeta(r *http.Request, title, nav string, refresh bool) pageMeta {
 	return pageMeta{
-		Title:    title,
-		Nav:      nav,
-		Observer: s.observerStatusLine(),
-		Notice:   noticeFromQuery(r.URL.Query()),
-		Refresh:  refresh,
+		Title:      title,
+		Nav:        nav,
+		Observer:   s.observerStatusLine(),
+		Notice:     noticeFromQuery(r.URL.Query()),
+		Refresh:    refresh,
+		RefreshURL: cleanRefreshURL(r),
 	}
 }
 

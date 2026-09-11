@@ -111,8 +111,9 @@ func TestHome_LatestEvaluationPanel(t *testing.T) {
 	if !strings.Contains(body, "newly failing: alpha") {
 		t.Errorf("body missing \"newly failing: alpha\":\n%s", body)
 	}
-	if !strings.Contains(body, "fixed: beta") {
-		t.Errorf("body missing \"fixed: beta\":\n%s", body)
+	// Item 11 (FIX2): "fixed:" reads "now passing:".
+	if !strings.Contains(body, "now passing: beta") {
+		t.Errorf("body missing \"now passing: beta\":\n%s", body)
 	}
 	if !strings.Contains(body, "still failing: gamma") {
 		t.Errorf("body missing \"still failing: gamma\":\n%s", body)
@@ -184,8 +185,76 @@ func TestHome_TopProblemsFirstFiveLive(t *testing.T) {
 	if n := strings.Count(body, `href="/problems#`); n < 5 {
 		t.Errorf("body has %d links to /problems#<id>, want at least 5:\n%s", n, body)
 	}
-	if !strings.Contains(body, "hit 1/1 runs on") {
-		t.Errorf("body missing the \"how often\" phrase:\n%s", body)
+	// Item 6 (FIX2): "how often" names the status and the totals instead of
+	// the old, silent "hit 1/1 runs on <build>" — every problem here was
+	// hit exactly once, on the only build there is, so it reads "first
+	// seen" (never "regressed", which needs an older assessed build to
+	// regress against).
+	if !strings.Contains(body, "first seen · 1 run") {
+		t.Errorf("body missing the \"how often\" phrase \"first seen · 1 run\":\n%s", body)
+	}
+}
+
+// TestHome_TopProblemsHowOftenNamesStatusAndTotals pins item 6 (FIX2): the
+// Overview's "how often" column names the status and the totals a Problem
+// already carries, instead of the old, silent "hit a/b runs on <build>" —
+// "recurring · 2 runs in 2 batches since 9 Sep" for a problem hit on both
+// an older and the newest build, and "regressed on this build · 1 run" for
+// one hit only on the newest build whose scenario was clean on the older
+// one (a genuine regression, §8.6's status=new).
+func TestHome_TopProblemsHowOftenNamesStatusAndTotals(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+	older := now.Add(-48 * time.Hour)
+
+	recurFinding := func(runID string) observer.Observation {
+		return observer.Observation{
+			FormatVersion: observer.ObservationFormat2, RunID: runID, ObsID: "20260911T110000000Z-claude-sonnet-5",
+			Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeProblem, Headline: "recurring tool problem",
+			Findings: []observer.Finding{{Severity: "high", Owner: "zcp-tool", Surface: "tool:zerops_deploy/deploy", Title: "recurring tool problem"}},
+		}
+	}
+
+	seedBatchAt(t, store, "tp2older", "claude-sonnet-5", older, []runFixture{
+		{runID: "tp2older-recur", scenario: "recur-scn", startedAt: older, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+		{runID: "tp2older-reg", scenario: "reg-scn", startedAt: older, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"tp2older-recur": "passed", "tp2older-reg": "passed"})
+	// seedBatchAt always writes CandidateSha256 "cand-sha" — overwrite this
+	// batch's manifest with a distinct, OLDER build so §8.6's newest-build
+	// rule (recurring/new vs first-seen) has an actual older build to
+	// compare against, exactly like pages_problems_test.go's own pattern.
+	store.putJSON(t, "batches/tp2older/manifest.json", farm.BatchManifest{
+		Batch: "tp2older", CreatedAt: older.UTC().Format(time.RFC3339), StartedAt: older.UTC().Format(time.RFC3339),
+		Set: "gate", CandidateSha256: "older-sha", EvaluatorSha256: "eval-sha", ScenariosDigest: "scn-sha",
+		Observer: "claude-sonnet-5", Runs: []farm.ManifestRun{
+			{RunID: "tp2older-recur", Scenario: "recur-scn", ProjectName: "zcp-farm-tp2older-recur"},
+			{RunID: "tp2older-reg", Scenario: "reg-scn", ProjectName: "zcp-farm-tp2older-reg"},
+		},
+	})
+	seedObservation(t, store, recurFinding("tp2older-recur"))
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "tp2older-reg", ObsID: "20260909T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: older, Status: "ok", Outcome: observer.OutcomeOK, Headline: "clean",
+	})
+
+	seedBatchAt(t, store, "tp2newer", "claude-sonnet-5", now, []runFixture{
+		{runID: "tp2newer-recur", scenario: "recur-scn", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+		{runID: "tp2newer-reg", scenario: "reg-scn", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"tp2newer-recur": "passed", "tp2newer-reg": "passed"})
+	seedObservation(t, store, recurFinding("tp2newer-recur"))
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "tp2newer-reg", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeProblem, Headline: "newly broken",
+		Findings: []observer.Finding{{Severity: "high", Owner: "zcp-tool", Surface: "tool:zerops_scale/scale", Title: "newly broken scale problem"}},
+	})
+
+	body := doGET(t, h, "/").Body.String()
+	if !strings.Contains(body, "recurring · 2 runs in 2 batches since 9 Sep") {
+		t.Errorf("body missing the recurring problem's \"how often\" phrase:\n%s", body)
+	}
+	if !strings.Contains(body, "regressed on this build · 1 run") {
+		t.Errorf("body missing the regressed problem's \"how often\" phrase:\n%s", body)
 	}
 }
 
@@ -462,6 +531,37 @@ func TestPages_ListPagesUseWideContainer(t *testing.T) {
 		body := doGET(t, h, route).Body.String()
 		if strings.Contains(body, `<main class="wrap wide">`) {
 			t.Errorf("GET %s: a detail page must not use the wide container:\n%s", route, body)
+		}
+	}
+}
+
+// TestPages_ChromeMatchesMainWidth pins item 9 (FIX2): the top bar and the
+// observer-status line track main's own width — wide on the same list
+// pages that carry main.wrap.wide, plain elsewhere — instead of staying
+// stuck at the old, narrower width while the content below them grows.
+func TestPages_ChromeMatchesMainWidth(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	seedBatch(t, store, "cw1", "off", []runFixture{
+		{runID: "cw1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"cw1-a": "passed"})
+
+	for _, route := range []string{"/", "/problems", "/findings"} {
+		body := doGET(t, h, route).Body.String()
+		if !strings.Contains(body, `<div class="wrap wide topbar-inner">`) {
+			t.Errorf("GET %s: top bar does not track main's wide width:\n%s", route, body)
+		}
+		if !strings.Contains(body, `<div class="wrap wide"><p class="observer-status`) {
+			t.Errorf("GET %s: observer-status line does not track main's wide width:\n%s", route, body)
+		}
+	}
+	for _, route := range []string{"/b/cw1", "/r/cw1-a"} {
+		body := doGET(t, h, route).Body.String()
+		if strings.Contains(body, `<div class="wrap wide topbar-inner">`) {
+			t.Errorf("GET %s: a detail page's top bar must not go wide:\n%s", route, body)
+		}
+		if strings.Contains(body, `<div class="wrap wide"><p class="observer-status`) {
+			t.Errorf("GET %s: a detail page's observer-status line must not go wide:\n%s", route, body)
 		}
 	}
 }

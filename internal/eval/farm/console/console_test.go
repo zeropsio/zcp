@@ -3,8 +3,8 @@ package console
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -37,7 +37,13 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{objects: map[string][]byte{}}
 }
 
-var errFakeStoreNotFound = errors.New("fakeStore: object not found")
+// errFakeStoreNotFound satisfies errors.Is(err, os.ErrNotExist), matching
+// the real store's farm.ErrObjectNotFound (which wraps fs.ErrNotExist,
+// the same value) — so a test that deletes an object from the fake and
+// checks a handler's not-found handling (FIX2 item 2's
+// bundleNotFoundSentence) exercises the same error shape production code
+// actually sees.
+var errFakeStoreNotFound = fmt.Errorf("fakeStore: object not found: %w", os.ErrNotExist)
 
 func (f *fakeStore) Get(_ context.Context, key string) ([]byte, error) {
 	f.mu.Lock()

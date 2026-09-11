@@ -3,6 +3,7 @@
 <h1>Problems</h1>
 <p class="muted">{{.Summary}}</p>
 </div>
+{{if .FailedAssessmentRuns}}<div class="callout callout-warn">{{.FailedAssessmentPrefix}}{{range $i, $r := .FailedAssessmentRuns}}{{if $i}}, {{end}}<a href="/r/{{$r.RunID}}">{{$r.RunID}}</a>{{end}}</div>{{end}}
 {{template "filterbar" .Nav.Filters}}
 {{template "sortchips" .Nav.Sorts}}
 <div class="table-wrap"><table class="stack">
@@ -18,16 +19,8 @@
 </tr></thead>
 <tbody>
 {{range .Rows}}<tr id="{{.AnchorID}}">
-<td data-label="Problem"><strong>{{.Title}}</strong>{{if .Fix}}<br><span class="muted small">{{.Fix}}</span>{{end}}</td>
-<td data-label="Cause">{{range .CauseLabels}}<span class="chip cause-chip">{{.}}</span> {{end}}</td>
-<td data-label="Where">{{if .Surface}}<a class="chip" href="{{.SurfaceLink}}"><code>{{.Surface}}</code></a>{{end}}{{if .Anchor}}<br><code>{{.Anchor}}</code>{{end}}</td>
-<td data-label="Severity"><span class="{{severityClass .Severity}}" title="{{severityTooltip .Severity}}">{{severityLabel .Severity}}</span></td>
-<td data-label="Runs hit">hit {{.HitOnNewestBuild}}/{{.RunsAssessedOnNewest}} runs{{if $.NewestBuild}} on {{$.NewestBuild}}{{end}}<br><span class="muted small">{{.RunsTotal}} run{{if ne .RunsTotal 1}}s{{end}} · {{.BatchesTotal}} batch{{if ne .BatchesTotal 1}}es{{end}} · {{.BuildsTotal}} build{{if ne .BuildsTotal 1}}s{{end}}</span></td>
-<td data-label="Status"><span class="chip" title="{{problemStatusTooltip .Status}}">{{problemStatusLabel .Status}}{{if problemStatusLive .Status}} (live){{end}}</span></td>
-<td data-label="Last seen">{{fmtTime .LastSeen}}</td>
-<td data-label="First seen">{{fmtTime .FirstSeen}}</td>
-</tr>
-<tr class="problem-members"><td colspan="8"><details><summary>Members ({{len .Members}})</summary>
+<td data-label="Problem"><strong>{{.Title}}</strong>{{if .Fix}}<br><span class="muted small">{{.Fix}}</span>{{end}}
+<details><summary>Members ({{len .Members}})</summary>
 <ul class="plain">
 {{range .Members}}<li>
 <a href="/r/{{.RunID}}">{{.RunID}}</a> <span class="muted small"><a href="{{.ScenarioLink}}">{{.Scenario}}</a> · <a href="{{.BatchLink}}">{{.Batch}}</a> · <a href="{{.BuildLink}}">{{.Build.Label}}</a></span>
@@ -38,7 +31,16 @@
 </li>
 {{end}}
 </ul>
-</details></td></tr>
+</details>
+</td>
+<td data-label="Cause">{{range .CauseLabels}}<span class="chip cause-chip">{{.}}</span> {{end}}</td>
+<td data-label="Where">{{if .Surface}}<a class="chip" href="{{.SurfaceLink}}"><code>{{.Surface}}</code></a>{{end}}{{if .Anchor}}<br><code>{{.Anchor}}</code>{{end}}</td>
+<td data-label="Severity"><span class="{{severityClass .Severity}}" title="{{severityTooltip .Severity}}">{{severityLabel .Severity}}</span></td>
+<td data-label="Runs hit">hit {{.HitOnNewestBuild}}/{{.RunsAssessedOnNewest}} runs{{if $.NewestBuild}} on {{$.NewestBuild}}{{end}} · {{.RunsTotal}} run{{if ne .RunsTotal 1}}s{{end}} · {{.BatchesTotal}} batch{{if ne .BatchesTotal 1}}es{{end}} · {{.BuildsTotal}} build{{if ne .BuildsTotal 1}}s{{end}}</td>
+<td data-label="Status"><span class="chip" title="{{problemStatusTooltip .Status}}">{{problemStatusLabel .Status}}{{if problemStatusLive .Status}} (live){{end}}</span></td>
+<td data-label="Last seen">{{.LastSeenShort}}</td>
+<td data-label="First seen">{{.FirstSeenShort}}</td>
+</tr>
 {{else}}<tr><td colspan="8" class="empty">No problems in this window.</td></tr>
 {{end}}
 </tbody>

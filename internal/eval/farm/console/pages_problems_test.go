@@ -78,6 +78,80 @@ func TestPages_ProblemsPageRendersClusteredRow(t *testing.T) {
 	}
 }
 
+// TestPages_ProblemsRowIsCompact pins item 8 (FIX2): a row's Last/First
+// seen dates use the Overview's own short, non-wrapping form (not the long
+// "2 Jan 2006, 15:04 UTC" one, which wraps and inflates row height on a
+// stacked table), the Runs-hit cell's totals render on one line (no <br>),
+// and a problem's members render inside its own row rather than a second
+// <tr> (which doubles the stacked-card count per problem on a phone).
+func TestPages_ProblemsRowIsCompact(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "cpt1", "claude-sonnet-5", []runFixture{
+		{runID: "cpt1-a", scenario: "a", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"cpt1-a": "passed"})
+	seedFormat2Finding(t, store, "cpt1-a", now, observer.SeverityHigh,
+		"tool:zerops_deploy/deploy", "COMPACT_ANCHOR", "Compact row problem", "fix it",
+		1, "quote here")
+
+	body := doGET(t, h, "/problems").Body.String()
+	if !strings.Contains(body, fmtTimeShort(now)) {
+		t.Errorf("body missing the short-form date %q:\n%s", fmtTimeShort(now), body)
+	}
+	if strings.Contains(body, fmtTime(now)) {
+		t.Errorf("body still shows the long-form date %q:\n%s", fmtTime(now), body)
+	}
+	if i := strings.Index(body, `data-label="Runs hit"`); i >= 0 {
+		end := strings.Index(body[i:], "</td>")
+		if end < 0 {
+			t.Fatalf("Runs-hit cell never closes:\n%s", body)
+		}
+		if strings.Contains(body[i:i+end], "<br>") {
+			t.Errorf("Runs-hit cell still splits its totals onto a second line:\n%s", body[i:i+end])
+		}
+	} else {
+		t.Fatalf("body missing the Runs-hit cell:\n%s", body)
+	}
+	if strings.Contains(body, `class="problem-members"`) {
+		t.Errorf("members still render as a separate table row:\n%s", body)
+	}
+	if !strings.Contains(body, "Members (1)") || !strings.Contains(body, `href="/r/cpt1-a"`) {
+		t.Errorf("body dropped the members list itself:\n%s", body)
+	}
+}
+
+// TestPages_ProblemsBannersFailedAssessmentRuns pins item 9 (FIX3): a run
+// whose current observation failed to parse/errored is silently absent
+// from every /problems aggregate (BuildProblems only sees status "ok"
+// observations) — a banner names it, so a reader knows the list is
+// incomplete rather than trusting an empty or short one.
+func TestPages_ProblemsBannersFailedAssessmentRuns(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "fa1", "claude-sonnet-5", []runFixture{
+		{runID: "fa1-a", scenario: "a", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"fa1-a": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat1, RunID: "fa1-a", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "unparsed", Raw: "not json",
+	})
+
+	body := doGET(t, h, "/problems").Body.String()
+	if !strings.Contains(body, "1 run") || !strings.Contains(body, "could not be parsed") {
+		t.Errorf("body missing the failed-assessment banner:\n%s", body)
+	}
+	if !strings.Contains(body, "missing from this list") {
+		t.Errorf("body missing the \"missing from this list\" warning:\n%s", body)
+	}
+	if !strings.Contains(body, `href="/r/fa1-a"`) {
+		t.Errorf("body missing the link to the affected run:\n%s", body)
+	}
+}
+
 // seedTwoDistinctProblems seeds one batch with two runs, each producing its
 // own single-member problem (distinct anchors so they cluster separately):
 // "High problem" (high, started 2h before now) and "Medium problem"
@@ -93,6 +167,25 @@ func seedTwoDistinctProblems(t *testing.T, store *fakeStore, now time.Time) {
 		"tool:zerops_deploy/deploy", "ANCHOR_A", "High problem", "fix a", 1, "quote a")
 	seedFormat2Finding(t, store, "pr2-b", now.Add(-1*time.Hour), observer.SeverityMedium,
 		"tool:zerops_import/import", "ANCHOR_B", "Medium problem", "fix b", 1, "quote b")
+}
+
+// TestPages_ProblemsSeverityFilterTooltipNamesThreshold pins item 11
+// (FIX2): the severity filter's own options carry a tooltip that says what
+// selecting them narrows the list to ("medium or higher", "any severity")
+// rather than the plain severity-level definition, which describes the
+// severity itself, not the minimum-filter's effect.
+func TestPages_ProblemsSeverityFilterTooltipNamesThreshold(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	seedTwoDistinctProblems(t, store, fixedNow(t)())
+
+	body := doGET(t, h, "/problems").Body.String()
+	if !strings.Contains(body, `title="medium or higher"`) {
+		t.Errorf("body missing the Medium option's \"medium or higher\" tooltip:\n%s", body)
+	}
+	if !strings.Contains(body, `title="any severity"`) {
+		t.Errorf("body missing the Low option's \"any severity\" tooltip:\n%s", body)
+	}
 }
 
 // TestPages_ProblemsFilterNarrowsRowsAndShowsCounts pins §8.7: a filter

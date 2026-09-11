@@ -94,7 +94,7 @@ var findingLabeler = listLabeler{
 	},
 	Title: func(param, value string) string {
 		if param == paramSeverity {
-			return severityTooltip(value)
+			return severityMinTooltip(value)
 		}
 		return ""
 	},

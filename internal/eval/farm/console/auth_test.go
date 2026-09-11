@@ -34,6 +34,38 @@ func TestConsole_NoAuth_APIIs401AndHTMLRedirectsToLogin(t *testing.T) {
 	}
 }
 
+// TestConsole_UnauthenticatedActionNextStripsStateChangingSuffix pins item
+// 7 (FIX3): an unauthenticated (e.g. expired-cookie) POST to an action
+// route (…/observe) must not send the post-login browser back to that
+// same POST-only path via a GET — the 303 after POST /login turns into a
+// GET, and a GET to an action route is a 404, not the run/batch page the
+// user meant to act on. next names the page underneath the action instead.
+func TestConsole_UnauthenticatedActionNextStripsStateChangingSuffix(t *testing.T) {
+	srv, _, _ := testServer(t)
+	h := srv.Handler()
+
+	cases := []struct {
+		path, wantNext string
+	}{
+		{"/r/gate1-a/observe", "/r/gate1-a"},
+		{"/b/gate11/observe", "/b/gate11"},
+		{"/logout", "/"},
+	}
+	for _, c := range cases {
+		t.Run(c.path, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, c.path, nil))
+			if rr.Code != http.StatusSeeOther {
+				t.Fatalf("POST %s unauthenticated: got %d, want 303", c.path, rr.Code)
+			}
+			want := "/login?next=" + url.QueryEscape(c.wantNext)
+			if loc := rr.Header().Get("Location"); loc != want {
+				t.Errorf("POST %s unauthenticated Location: got %q, want %q", c.path, loc, want)
+			}
+		})
+	}
+}
+
 // TestConsole_OpenRoutesNeedNoAuth pins FM-50's open-route list: GET
 // /login, POST /login, GET /healthz, GET /static/app.css.
 func TestConsole_OpenRoutesNeedNoAuth(t *testing.T) {

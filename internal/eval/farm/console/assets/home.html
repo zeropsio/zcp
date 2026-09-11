@@ -14,7 +14,7 @@
 <span class="muted small">{{fmtTime .CreatedAt}} · {{.Build.Label}}{{if .Set}} · set {{.Set}}{{end}}</span>
 </div>
 <div class="stats">{{range .Verdicts}}<span class="{{verdictClass .Verdict}}">{{verdictIcon .Verdict}} {{.Count}} {{verdictLabel .Verdict}}{{if .Disputed}} ({{.Disputed}} disputed){{end}}</span>{{end}}</div>
-{{if .HasPrev}}<p class="small muted">vs <a href="/b/{{.PrevBatchID}}">{{.PrevBatchID}}</a>:{{if .Diff.NewlyFailing}} newly failing: {{range $i, $s := .Diff.NewlyFailing}}{{if $i}}, {{end}}{{$s}}{{end}};{{end}}{{if .Diff.Fixed}} fixed: {{range $i, $s := .Diff.Fixed}}{{if $i}}, {{end}}{{$s}}{{end}};{{end}}{{if .Diff.StillFailing}} still failing: {{range $i, $s := .Diff.StillFailing}}{{if $i}}, {{end}}{{$s}}{{end}};{{end}}{{if and (not .Diff.NewlyFailing) (not .Diff.Fixed) (not .Diff.StillFailing)}} no change.{{end}}</p>
+{{if .HasPrev}}<p class="small muted">vs <a href="/b/{{.PrevBatchID}}">{{.PrevBatchID}}</a>: {{.DiffLine}}</p>
 {{end}}
 {{if .FailedOrBlocked}}<ul class="plain">
 {{range .FailedOrBlocked}}<li><span class="{{verdictClass .Verdict}}">{{verdictIcon .Verdict}} {{verdictLabel .Verdict}}</span> <strong>{{.Scenario}}</strong> — {{.Headline}}{{if .DisputeWhy}}<br><span class="disputed-marker">observer disputes</span> {{.DisputeWhy}}{{end}}</li>

@@ -1,13 +1,10 @@
 {{define "batch"}}{{template "head" .Meta}}
 <nav class="crumbs"><a href="/">Overview</a><span class="sep">/</span>{{.BatchID}}</nav>
+{{if .InconclusiveBanner}}<div class="callout callout-warn">{{.InconclusiveBanner}}</div>{{end}}
 <div class="page-head">
 <h1>{{.BatchID}}</h1>
 <p class="muted">{{fmtTime .CreatedAt}}{{if .Set}} · set {{.Set}}{{end}} · {{.Build.Label}}{{if .Note}} · {{.Note}}{{end}}</p>
-{{with .VsPrevious}}<p class="muted small">vs <a href="/b/{{.PreviousBatchID}}">{{.PreviousBatchID}}</a>:
-{{if .Diff.NewlyFailing}} newly failing: {{range $i, $s := .Diff.NewlyFailing}}{{if $i}}, {{end}}{{$s}}{{end}};{{end}}
-{{if .Diff.Fixed}} fixed: {{range $i, $s := .Diff.Fixed}}{{if $i}}, {{end}}{{$s}}{{end}};{{end}}
-{{if .Diff.StillFailing}} still failing: {{range $i, $s := .Diff.StillFailing}}{{if $i}}, {{end}}{{$s}}{{end}};{{end}}
-{{if not (or .Diff.NewlyFailing .Diff.Fixed .Diff.StillFailing)}} no change.{{end}}</p>{{end}}
+{{with .VsPrevious}}<p class="muted small">vs <a href="/b/{{.PreviousBatchID}}">{{.PreviousBatchID}}</a>: {{.Line}}</p>{{end}}
 </div>
 
 <div class="summary card">
@@ -18,6 +15,7 @@
 <span>{{.DisputedCount}} disputed</span>
 </div>
 {{if .SummaryLine}}<p class="summary-line">{{.SummaryLine}}</p>{{end}}
+{{if .Unassessed}}<p class="summary-line"><a href="#assess">{{.Unassessed}} run{{if ne .Unassessed 1}}s{{end}} {{if eq .Unassessed 1}}needs{{else}}need{{end}} an assessment →</a> — {{.UnassessedNeverN}} never assessed, {{.UnassessedFailedN}} failed last time</p>{{end}}
 </div>
 
 <section class="section">
@@ -27,14 +25,14 @@
 {{if .FallbackChecks}}<ul class="plain">
 {{range .FallbackChecks}}<li class="card"><code class="chip"{{if .Title}} title="{{.Title}}"{{end}}>{{.Display}}</code> failed in {{len .RunIDs}} runs: {{range $i, $rid := .RunIDs}}{{if $i}}, {{end}}<a href="/r/{{$rid}}">{{$rid}}</a>{{end}}</li>
 {{end}}</ul>{{else}}<p class="empty">No check failed in two or more runs.</p>{{end}}
-{{else if or .Problems .ProblemsLowCount}}
+{{else if or .Problems .ProblemsLow}}
 <div class="problem-list">
 {{range .Problems}}<details class="problem-line">
 <summary>
 <span class="{{severityClass .Severity}}">{{severityLabel .Severity}}</span>
 {{range .CauseLabels}}<span class="chip cause-chip">{{.}}</span>{{end}}
 <strong>{{.Title}}</strong>
-<span class="muted small">hit {{.HitOnNewestBuild}}/{{.RunsAssessedOnNewest}} runs</span>
+<span class="muted small">hit {{.HitInBatch}} of {{$.ObservedM}} runs in this batch</span>
 </summary>
 <div>
 <span class="chip" title="{{problemStatusTooltip .Status}}">{{problemStatusLabel .Status}}</span>
@@ -42,10 +40,21 @@
 {{if .Anchor}}<code class="chip">{{.Anchor}}</code>{{end}}
 <div class="muted small">{{.RunsTotal}} runs · {{.BatchesTotal}} batches · {{.BuildsTotal}} builds</div>
 {{if .HasPrevCompare}}<div class="muted small">{{if .AlsoInPrev}}also in{{else}}not in{{end}} previous batch <a href="/b/{{$.VsPrevious.PreviousBatchID}}">{{$.VsPrevious.PreviousBatchID}}</a></div>{{end}}
+{{if .Fix}}<div>{{.Fix}}</div>{{end}}
 </div>
 </details>
 {{end}}
-{{if .ProblemsLowCount}}<p class="muted small">{{.ProblemsLowCount}} low</p>{{end}}
+{{if .ProblemsLow}}<details class="problem-line">
+<summary>{{len .ProblemsLow}} low</summary>
+{{range .ProblemsLow}}<div class="problem-line">
+<span class="{{severityClass .Severity}}">{{severityLabel .Severity}}</span>
+{{range .CauseLabels}}<span class="chip cause-chip">{{.}}</span>{{end}}
+<strong>{{.Title}}</strong>
+<span class="muted small">hit {{.HitInBatch}} of {{$.ObservedM}} runs in this batch</span>
+<span class="chip" title="{{problemStatusTooltip .Status}}">{{problemStatusLabel .Status}}</span>
+{{if .Fix}}<div>{{.Fix}}</div>{{end}}
+</div>
+{{end}}</details>{{end}}
 </div>
 {{else}}<p class="empty">No problems found in this batch.</p>{{end}}
 </section>
@@ -86,15 +95,14 @@
 </section>
 
 {{if not .Meta.Observer.Hidden}}
-{{if .Unassessed}}<form class="callout" method="post" action="/b/{{.BatchID}}/observe">
-<span>{{.Unassessed}} finished run{{if ne .Unassessed 1}}s{{end}} need an assessment.</span>
-<span class="callout-actions"><select name="model" aria-label="model">{{range .ModelOptions}}<option value="{{.}}">{{.}}</option>{{end}}</select><button type="submit" class="primary">Assess</button></span>
+{{if .Unassessed}}<form class="callout" method="post" action="/b/{{.BatchID}}/observe" id="assess">
+<span>{{.Unassessed}} finished run{{if ne .Unassessed 1}}s{{end}} {{if eq .Unassessed 1}}needs{{else}}need{{end}} an assessment.</span>
+<span class="callout-actions">{{range .ModelOptions}}<button type="submit" name="model" value="{{.Value}}">{{.Label}}</button>{{end}}</span>
 </form>{{end}}
 {{if .AnyAssessed}}<details class="more"><summary>Re-assess every run of this batch</summary>
 <form class="inline-form" method="post" action="/b/{{.BatchID}}/observe">
 <input type="hidden" name="all" value="1">
-<select name="model" aria-label="model">{{range .ModelOptions}}<option value="{{.}}">{{.}}</option>{{end}}</select>
-<button type="submit">Re-assess all {{.ObservedM}} runs</button>
+{{range .ModelOptions}}<button type="submit" name="model" value="{{.Value}}">Re-assess all {{$.ObservedM}} runs with {{.Label}}</button>{{end}}
 </form>
 </details>{{end}}
 {{end}}

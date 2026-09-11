@@ -12,7 +12,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/zeropsio/zcp/internal/eval/farm"
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
 
@@ -133,6 +135,10 @@ func TestPages_BatchAssessCalloutUsesNeedsAssessmentPredicate(t *testing.T) {
 		if strings.Contains(body, "2 finished run") {
 			t.Errorf("in-flight run must not be counted:\n%s", body)
 		}
+		// Item 11 (FIX2): singular subject takes "needs", not "need".
+		if !strings.Contains(body, "1 finished run needs an assessment.") {
+			t.Errorf("body missing the singular \"needs\" wording:\n%s", body)
+		}
 		if strings.Contains(body, "Re-assess every run of this batch") {
 			t.Errorf("re-assess-all must not render before any run is assessed:\n%s", body)
 		}
@@ -165,6 +171,124 @@ func TestPages_BatchAssessCalloutUsesNeedsAssessmentPredicate(t *testing.T) {
 		}
 		if !strings.Contains(body, "Re-assess every run of this batch") {
 			t.Errorf("at least one run assessed, want re-assess-all:\n%s", body)
+		}
+	})
+}
+
+// TestPages_RefreshMetaDropsNoticeOnReload pins item 4 (FIX3): the meta-
+// refresh tag reloads a CLEAN url (?notice=/?n= stripped) while a job is
+// in flight, not the current one (the browser's own reload-current-url
+// default) — otherwise a one-shot action notice replays every 20s for as
+// long as the job runs, long after the notice's own event happened. A
+// refreshing page with no notice at all keeps the exact old tag
+// (TestPages_RefreshMetaWhileJobInFlight, pages_test.go).
+func TestPages_RefreshMetaDropsNoticeOnReload(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	q := NewQueue(func(ctx context.Context, job Job) error {
+		<-release
+		return nil
+	})
+	store := newFakeStore()
+	srv := NewServer(Config{Store: store, Token: testToken, Now: fixedNow(t), Queue: q})
+	h := srv.Handler()
+	seedBatch(t, store, "rn1", "off", []runFixture{
+		{runID: "rn1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"rn1-a": "passed"})
+
+	if err := q.Enqueue(context.Background(), Job{RunID: "rn1-a", Batch: "rn1"}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if !wkEventually(t, func() bool { return q.State("rn1-a") != "" }) {
+		t.Fatal("job never showed as queued/running")
+	}
+
+	body := doGET(t, h, "/b/rn1?notice=queued&n=1").Body.String()
+	if !strings.Contains(body, `content="20;url=/b/rn1">`) {
+		t.Errorf("body missing the notice-stripped refresh target:\n%s", body)
+	}
+	if strings.Contains(body, `content="20">`) {
+		t.Errorf("body still refreshes to the current (notice-carrying) url:\n%s", body)
+	}
+
+	runBody := doGET(t, h, "/r/rn1-a?notice=queued&n=1").Body.String()
+	if !strings.Contains(runBody, `content="20;url=/r/rn1-a">`) {
+		t.Errorf("run page missing the notice-stripped refresh target:\n%s", runBody)
+	}
+}
+
+// TestPages_BatchSummaryLinksToAssessFormWithSplitCounts pins item 2
+// (FIX3): the Assess form stays at the bottom of the page, but the
+// summary card carries a "<n> runs need an assessment →" prompt linking
+// down to it (#assess), with the count split into never-assessed vs
+// failed-last-time.
+func TestPages_BatchSummaryLinksToAssessFormWithSplitCounts(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "sf1", "claude-sonnet-5", []runFixture{
+		{runID: "sf1-never", scenario: "never", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+		{runID: "sf1-failed", scenario: "failed", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"sf1-never": "passed", "sf1-failed": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat1, RunID: "sf1-failed", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "error", Error: "boom",
+	})
+
+	body := doGET(t, h, "/b/sf1").Body.String()
+	if !strings.Contains(body, `href="#assess"`) {
+		t.Errorf("summary card is missing the link down to the Assess form:\n%s", body)
+	}
+	if !strings.Contains(body, "2 runs need an assessment") {
+		t.Errorf("summary card missing the \"2 runs need an assessment\" prompt:\n%s", body)
+	}
+	if !strings.Contains(body, "1 never assessed, 1 failed last time") {
+		t.Errorf("summary card missing the split count:\n%s", body)
+	}
+	if !strings.Contains(body, `<form class="callout" method="post" action="/b/sf1/observe" id="assess">`) {
+		t.Errorf("Assess form is missing its #assess anchor:\n%s", body)
+	}
+}
+
+// TestPages_BatchModelPickersUseLabeledButtons pins item 1 (FIX3): both
+// batch model pickers (the Assess callout and Re-assess-all) render one
+// labeled submit button per model instead of a <select> of raw model ids.
+func TestPages_BatchModelPickersUseLabeledButtons(t *testing.T) {
+	t.Run("Assess callout", func(t *testing.T) {
+		srv, store, _ := testServer(t)
+		now := fixedNow(t)()
+		seedBatch(t, store, "mb1", "claude-sonnet-5", []runFixture{
+			{runID: "mb1-a", scenario: "a", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+		}, true, map[string]string{"mb1-a": "passed"})
+
+		body := doGET(t, srv.Handler(), "/b/mb1").Body.String()
+		if !strings.Contains(body, `<button type="submit" name="model" value="claude-opus-5">Opus 5 (stronger)</button>`) {
+			t.Errorf("Assess callout is missing a labeled model button:\n%s", body)
+		}
+		if strings.Contains(body, `<option value="claude-sonnet-5">claude-sonnet-5</option>`) {
+			t.Errorf("body still shows a raw model id in a <select>:\n%s", body)
+		}
+	})
+
+	// A fresh server/store per case: the run cache's observation TTL is
+	// keyed off the server's own (fixed-in-tests) clock, so seeding an
+	// observation between two requests to the SAME server never becomes
+	// visible — a distinct pitfall from the real, wall-clock TTL.
+	t.Run("Re-assess-all", func(t *testing.T) {
+		srv, store, _ := testServer(t)
+		now := fixedNow(t)()
+		seedBatch(t, store, "mb2", "claude-sonnet-5", []runFixture{
+			{runID: "mb2-a", scenario: "a", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+		}, true, map[string]string{"mb2-a": "passed"})
+		seedObservation(t, store, observer.Observation{
+			FormatVersion: observer.ObservationFormat1, RunID: "mb2-a", ObsID: "20260911T120000000Z-claude-sonnet-5",
+			Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Headline: "fine",
+		})
+
+		body := doGET(t, srv.Handler(), "/b/mb2").Body.String()
+		if !strings.Contains(body, `<button type="submit" name="model" value="claude-fable-5-1">Re-assess all 1 runs with Fable 5.1 (strongest)</button>`) {
+			t.Errorf("Re-assess-all is missing a labeled model button:\n%s", body)
 		}
 	})
 }
@@ -203,8 +327,9 @@ func TestPages_BatchVsPreviousBatchLine(t *testing.T) {
 	if !strings.Contains(body, `href="/b/vp1"`) {
 		t.Errorf("body missing a link to the previous batch vp1:\n%s", body)
 	}
-	if !strings.Contains(body, "fixed: s1") {
-		t.Errorf("body missing 'fixed: s1':\n%s", body)
+	// Item 11 (FIX2): "fixed:" reads "now passing:".
+	if !strings.Contains(body, "now passing: s1") {
+		t.Errorf("body missing 'now passing: s1':\n%s", body)
 	}
 	if !strings.Contains(body, "newly failing: s2") {
 		t.Errorf("body missing 'newly failing: s2':\n%s", body)
@@ -288,6 +413,75 @@ func TestPages_BatchProblemsSection(t *testing.T) {
 	})
 }
 
+// TestPages_BatchProblemsShowsGoneFixAndBatchLocalHitCount pins item 7
+// (FIX2): the fixed problem from the previous batch of the same set shows
+// up here too, marked "gone" (the best news: a bug that hit the previous
+// batch is absent from this one); a live problem's Fix sentence renders;
+// and "hit N of M runs" counts this batch's own runs, not a global a/b
+// figure from a different scope.
+func TestPages_BatchProblemsShowsGoneFixAndBatchLocalHitCount(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+	older := now.Add(-24 * time.Hour)
+
+	seedBatchAt(t, store, "gn1", "claude-sonnet-5", older, []runFixture{
+		{runID: "gn1-deploy", scenario: "deploy-scn", startedAt: older, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"gn1-deploy": "passed"})
+	// seedBatchAt always writes CandidateSha256 "cand-sha" — overwrite this
+	// batch's manifest with a distinct, OLDER build so §8.6's newest-build
+	// rule has an actual older build to compare against (mirrors
+	// pages_home_test.go's TestHome_TopProblemsHowOftenNamesStatusAndTotals).
+	store.putJSON(t, "batches/gn1/manifest.json", farm.BatchManifest{
+		Batch: "gn1", CreatedAt: older.UTC().Format(time.RFC3339), StartedAt: older.UTC().Format(time.RFC3339),
+		Set: "gate", CandidateSha256: "older-sha", EvaluatorSha256: "eval-sha", ScenariosDigest: "scn-sha",
+		Observer: "claude-sonnet-5", Runs: []farm.ManifestRun{{RunID: "gn1-deploy", Scenario: "deploy-scn", ProjectName: "zcp-farm-gn1-deploy"}},
+	})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "gn1-deploy", ObsID: "20260910T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: older, Status: "ok", Outcome: observer.OutcomeProblem, Headline: "preflight broken",
+		Findings: []observer.Finding{{Severity: "high", Owner: "zcp-tool", Surface: "tool:zerops_deploy/deploy",
+			Title: "preflight bug", Fix: "upgrade the deploy client"}},
+	})
+
+	seedBatchAt(t, store, "gn2", "claude-sonnet-5", now, []runFixture{
+		{runID: "gn2-deploy", scenario: "deploy-scn", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+		{runID: "gn2-a", scenario: "scn-a", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+		{runID: "gn2-c", scenario: "scn-c", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"gn2-deploy": "passed", "gn2-a": "passed", "gn2-c": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "gn2-deploy", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeOK, Headline: "clean now",
+	})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "gn2-a", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeProblem, Headline: "scale glitch",
+		Findings: []observer.Finding{{Severity: "medium", Owner: "zcp-tool", Surface: "tool:zerops_scale/scale",
+			Title: "scale glitch", Fix: "retry the call"}},
+	})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "gn2-c", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeOK, Headline: "clean",
+	})
+
+	body := doGET(t, h, "/b/gn2").Body.String()
+	if !strings.Contains(body, "preflight bug") {
+		t.Fatalf("body missing the gone problem's title:\n%s", body)
+	}
+	if !strings.Contains(body, ">gone<") {
+		t.Errorf("body does not mark the fixed problem \"gone\":\n%s", body)
+	}
+	if !strings.Contains(body, "upgrade the deploy client") {
+		t.Errorf("body missing the gone problem's Fix sentence:\n%s", body)
+	}
+	if !strings.Contains(body, "scale glitch") || !strings.Contains(body, "retry the call") {
+		t.Errorf("body missing the live problem's title/Fix:\n%s", body)
+	}
+	if !strings.Contains(body, "hit 1 of 3 runs in this batch") {
+		t.Errorf("body missing the batch-local \"hit 1 of 3 runs in this batch\" phrase:\n%s", body)
+	}
+}
+
 // TestPages_BatchRunsListRendersFilterSortCountAnd400 pins §8.7 for the
 // batch-runs list AT THE PAGE (not the bare Engine, already view_test.go's
 // TestLists_BatchRuns): a filter link narrows the rendered rows, a sort
@@ -344,6 +538,28 @@ func TestPages_BatchRunsListRendersFilterSortCountAnd400(t *testing.T) {
 	})
 }
 
+// TestPages_BatchRunsVerdictFilterNotStartedLabelIsSpaced pins item 11
+// (FIX2): the batch-runs verdict filter's "not-started" option (§8.7's own
+// URL token) reads "not started" wherever it is shown as a label — never
+// the raw, hyphenated URL token, which the filter chip showed verbatim
+// before this fix.
+func TestPages_BatchRunsVerdictFilterNotStartedLabelIsSpaced(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+
+	seedBatch(t, store, "ns1", "off", []runFixture{
+		{runID: "ns1-a", scenario: "a", startedAt: fixedNow(t)(), done: false},
+	}, true, map[string]string{"ns1-a": farm.VerdictNotRun})
+
+	body := doGET(t, h, "/b/ns1?verdict=not-started").Body.String()
+	if !strings.Contains(body, `>not started`) {
+		t.Errorf("body missing the spaced \"not started\" filter chip label:\n%s", body)
+	}
+	if strings.Contains(body, ">not-started<") || strings.Contains(body, ">not-started ") {
+		t.Errorf("body still shows the raw \"not-started\" URL token as a label:\n%s", body)
+	}
+}
+
 // TestPages_BatchRunsTableHeaderMatchesDataColumns pins item 2 (round-1
 // follow-up): the runs table has one header per data column — the missing
 // "Why / headline" header — and every group heading / collapsed / empty
@@ -369,9 +585,12 @@ func TestPages_BatchRunsTableHeaderMatchesDataColumns(t *testing.T) {
 }
 
 // TestPages_BatchProblemsCompactWithLowFolded pins item 3 (round-1
-// follow-up): "Problems in this batch" renders one compact <details> line
-// per non-low problem (severity, cause, title, runs hit), with low-severity
-// problems folded into one "n low" line — never the old multi-line card.
+// follow-up, refined by FIX2 item 7): "Problems in this batch" renders one
+// compact <details> line per non-low problem (severity, cause, title, runs
+// hit), with low-severity problems folded behind a "1 low" <details> of
+// their own — collapsed by default, but holding the same one-line rows
+// (never dropping the low problem's own title, only hiding it behind a
+// second click).
 func TestPages_BatchProblemsCompactWithLowFolded(t *testing.T) {
 	srv, store, _ := testServer(t)
 	h := srv.Handler()
@@ -396,14 +615,55 @@ func TestPages_BatchProblemsCompactWithLowFolded(t *testing.T) {
 	if !strings.Contains(body, "always fails this way") {
 		t.Fatalf("body missing the high-severity problem's title:\n%s", body)
 	}
-	if strings.Contains(body, "minor wording issue") {
-		t.Errorf("body shows the low-severity problem's own title instead of folding it:\n%s", body)
+	if !strings.Contains(body, `<summary>1 low</summary>`) {
+		t.Errorf("body missing the \"1 low\" <details> summary:\n%s", body)
 	}
-	if !strings.Contains(body, "1 low") {
-		t.Errorf("body missing the folded \"1 low\" line:\n%s", body)
+	// Item 7 (FIX2): the low problem's own row (title included) is inside
+	// that <details> — folded behind a click, never dropped outright.
+	if !strings.Contains(body, "minor wording issue") {
+		t.Errorf("body dropped the low-severity problem's title instead of folding it into <details>:\n%s", body)
 	}
 	if !strings.Contains(body, "<details") || !strings.Contains(body, "<summary>") {
 		t.Errorf("problems block is not rendered as compact <details>/<summary>:\n%s", body)
+	}
+}
+
+// TestPages_BatchInconclusiveBanner pins item 7 (FIX2): when at least half
+// the batch's runs end inconclusive (e.g. the agent's session limit fired),
+// a banner at the top says so and tells the reader to rerun before trusting
+// anything below — this batch has 2 of 3 runs inconclusive.
+func TestPages_BatchInconclusiveBanner(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "ic1", "claude-sonnet-5", []runFixture{
+		{runID: "ic1-a", scenario: "a", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+		{runID: "ic1-b", scenario: "b", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+		{runID: "ic1-c", scenario: "c", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"ic1-a": "passed", "ic1-b": "passed", "ic1-c": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "ic1-a", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeInconclusive, Headline: "session limit fired",
+	})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "ic1-b", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeInconclusive, Headline: "session limit fired",
+	})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "ic1-c", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeOK, Headline: "fine",
+	})
+
+	body := doGET(t, h, "/b/ic1").Body.String()
+	if !strings.Contains(body, "Inconclusive batch") {
+		t.Errorf("body missing the inconclusive-batch banner:\n%s", body)
+	}
+	if !strings.Contains(body, "2 of 3 runs") {
+		t.Errorf("body missing the banner's own N of M count:\n%s", body)
+	}
+	if !strings.Contains(body, "rerun") {
+		t.Errorf("body missing the banner's \"rerun before reading anything below\" advice:\n%s", body)
 	}
 }
 

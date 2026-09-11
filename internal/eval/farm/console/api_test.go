@@ -1166,7 +1166,7 @@ func TestView_ObservedOutranksOffAndDisabled(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := resolveObserverState(tc.disabled, tc.manifest, true, tc.hasObservation, false)
+			got := resolveObserverState(tc.disabled, tc.manifest, true, tc.hasObservation, false, false)
 			if got != tc.want {
 				t.Errorf("resolveObserverState = %q, want %q", got, tc.want)
 			}

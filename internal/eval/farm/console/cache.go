@@ -197,8 +197,8 @@ func notDoneRow(batchID string, run farm.ManifestRun, bc batchContext, summary f
 	row.Stalled = row.Verdict == verdictRunning && isStalled(now, bc.CreatedAt, bc.RunBudgetSec)
 	summaryRun, summaryRunFound := findSummaryRun(summary, summaryFound, run.RunID)
 	row.VerdictReason = verdictReason(row.Verdict, false, nil, summaryRun, summaryRunFound)
-	row.ObserverState = resolveObserverState(consoleObserverDisabled, bc.Observer, false, false, queued)
-	row.ObserverStateText = observerStateText(now, bc.CreatedAt, consoleObserverDisabled, bc.Observer, false, nil, queued)
+	row.ObserverState = resolveObserverState(consoleObserverDisabled, bc.Observer, false, false, queued, row.Verdict != verdictRunning)
+	row.ObserverStateText = observerStateText(now, bc.CreatedAt, consoleObserverDisabled, bc.Observer, false, nil, queued, row.Verdict != verdictRunning, row.VerdictReason)
 	row.CauseCounts = newCauseClassCounts()
 	return row
 }
@@ -233,8 +233,8 @@ func combineRow(batchID string, run farm.ManifestRun, imm *cachedImmutable, obsP
 		row.OlderObsIDs = obsPart.olderObsIDs
 		row.Observation = obsPart.obs
 	}
-	row.ObserverState = resolveObserverState(consoleObserverDisabled, bc.Observer, true, row.Observation != nil, queued)
-	row.ObserverStateText = observerStateText(now, bc.CreatedAt, consoleObserverDisabled, bc.Observer, true, row.Observation, queued)
+	row.ObserverState = resolveObserverState(consoleObserverDisabled, bc.Observer, true, row.Observation != nil, queued, false)
+	row.ObserverStateText = observerStateText(now, bc.CreatedAt, consoleObserverDisabled, bc.Observer, true, row.Observation, queued, false, "")
 	row.Outcome = computeOutcome(row.Observation)
 	row.Disputed = computeDisputed(row.Observation)
 	row.CauseCounts = causeSeverityCounts(row.Observation)

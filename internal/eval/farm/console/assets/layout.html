@@ -3,12 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-{{if .Refresh}}<meta http-equiv="refresh" content="20">
-{{end}}<title>{{.Title}} · Farm console</title>
+{{if .Refresh}}{{if .RefreshURL}}<meta http-equiv="refresh" content="20;url={{.RefreshURL}}">
+{{else}}<meta http-equiv="refresh" content="20">
+{{end}}{{end}}<title>{{.Title}} · Farm console</title>
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<header class="topbar"><div class="wrap topbar-inner">
+{{$wide := ""}}{{if or (eq .Nav "overview") (eq .Nav "problems") (eq .Nav "findings")}}{{$wide = " wide"}}{{end}}
+<header class="topbar"><div class="wrap{{$wide}} topbar-inner">
 <a class="brand" href="/">Farm console</a>
 <nav class="topnav">
 <a href="/"{{if eq .Nav "overview"}} aria-current="page"{{end}}>Overview</a>
@@ -18,9 +20,9 @@
 </nav>
 <form class="signout" method="post" action="/logout"><button type="submit">Sign out</button></form>
 </div></header>
-<div class="wrap"><p class="observer-status muted small">{{.Observer.Text}}</p></div>
-{{with .Notice}}<div class="wrap"><p class="callout notice">{{.Text}}</p></div>{{end}}
-<main class="wrap{{if or (eq .Nav "overview") (eq .Nav "problems") (eq .Nav "findings")}} wide{{end}}">
+<div class="wrap{{$wide}}"><p class="observer-status muted small">{{.Observer.Text}}</p></div>
+{{with .Notice}}<div class="wrap{{$wide}}"><p class="callout notice">{{.Text}}</p></div>{{end}}
+<main class="wrap{{$wide}}">
 {{end}}
 {{define "foot"}}</main>
 </body>
