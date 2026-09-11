@@ -25,56 +25,104 @@ If the file is missing: say so and point the owner at
 `eval/farm/console/deploy.sh` (spec §8.1) — that script mints the token. Stop;
 do not guess a token or a URL.
 
-## 1. Pick a mode
+## 1. Resolve scope, then one `digest.md` call
 
-- "today" / "this week" / a batch id → **overview mode**.
-- "farm run `<runId>`" → **single-run mode**, skip to step 4 for that one run.
+`/api/digest.md` is the one call for "what did the farm find" (§8.4) — it
+carries the scope header, the ranked problems, the failed/blocked runs and the
+finished-not-yet-assessed count, all in one ≤8 KB read. Make it your first
+substantive read, scoped by what the owner asked for:
 
-## 2. Overview: pull runs and findings
+- A batch id named → `digest.md?batch=<id>`.
+- **"today"** → **not** `since=24h`: a rolling 24h window drifts across UTC
+  midnight and can silently miss or include the wrong batches. Instead, GET
+  `/api/batches.md` first, keep the rows whose `createdAt` (UTC) falls on
+  today's UTC date, then call `digest.md?batch=<id>` once per one of those
+  batches.
+- A genuine rolling window ("last 3 days", "this week") → `digest.md?since=<n>d`.
+- **"farm run `<runId>`"** → single-run mode: skip straight to step 4 for that
+  run alone; no `digest.md` call.
 
-```
-curl -sf -H "Authorization: Bearer $ZCP_FARM_CONSOLE_TOKEN" \
-  "$ZCP_FARM_CONSOLE_URL/api/runs.md?since=24h"        # or ?batch=<id>
-curl -sf -H "Authorization: Bearer $ZCP_FARM_CONSOLE_TOKEN" \
-  "$ZCP_FARM_CONSOLE_URL/api/findings.md?since=24h"
-```
+Every markdown list, `digest.md` included, opens with a one-line legend of the
+terms it uses (§8.8) — read it once per session rather than re-deriving what a
+term means from context.
 
-A run listed with no observation (`observerState` not `observed`): request one
-and move on — do not block the triage waiting for it:
+`digest.md` is capped at 8 KB and says so when it cuts something ("… N more
+problems/runs not shown, see …") — it never drops content silently. When it
+truncates, follow the note to the named endpoint (`/api/problems.md`,
+`/api/runs.md`), scoped the same way, for the rest.
+
+## 2. Work the ranked problems, not raw findings
+
+The console already clusters findings across runs into problems (§8.6) —
+same key, same run, same root cause — server-side and deterministically; do
+not re-cluster by hand. `digest.md`'s problems (and `/api/problems.md`, the
+same list with its full member set) are pre-ranked: live status
+(`new`/`first-seen`/`recurring`) before `gone`/`unconfirmed`, then highest
+severity, then runs hit on the newest build. Work the list top to bottom.
+
+Each problem row already carries severity, cause, **surface**, **anchor**,
+status, `hit <a>/<b> runs on <newest build>`, and one run link with its
+finding's anchor (`/r/<runId>#f<n>`) — read these before fetching anything
+else.
+
+Also read `digest.md`'s failed/blocked runs section (run id, failed checks,
+headline) and its finished-not-yet-assessed count.
+
+## 3. Assess unassessed runs — gated, never open-ended
+
+A run **needs an assessment** when it has `done.json`, is not queued or
+running, and carries no current `ok` observation (§8.5). Request one only
+when all of these hold:
+
+- the run is inside the batch(es) step 1 resolved for this triage (never a
+  run from an unrelated batch),
+- the run has `done.json` (never a run still in flight),
+- the run's batch is not empty (an evaluation batch, not one with zero
+  finished runs),
+- the running total for this triage is **five or fewer**.
+
+At five, stop and ask the owner before requesting more — name the count and
+its rough cost (**count × about $0.25**).
 
 ```
 curl -sf -X POST -H "Authorization: Bearer $ZCP_FARM_CONSOLE_TOKEN" \
   -d model=claude-sonnet-5 "$ZCP_FARM_CONSOLE_URL/r/<runId>/observe"
 ```
 
-Re-read `/api/runs.md` later, or triage that run from checks alone if it never
-finishes in time.
+Re-read `/api/runs.md?batch=<id>` (or `digest.md` again) once queued jobs
+settle — a queued/running job shows in the `observerState`. Triage a run that
+never finishes in time from its checks alone (the `verdict`/failed-checks
+fields `digest.md`/`runs.md` already carry).
 
-## 3. Cluster
+## 4. Drill into steps — top three problems only
 
-Group findings across runs by root cause, not by run: the same quoted ZCP
-text, the same tool + error code, the same check id. Rank clusters by
-severity (`high` > `medium` > `low`), then by number of runs affected within a
-severity. The observer grades each run on its own, so one root cause can carry
-different severities across runs: the cluster takes the highest one seen, and
-breadth (runs affected, steps lost) breaks ties — say both in the report. `owner` on a finding is the observer's guess (`zcp-guidance`,
-`zcp-tool`, `platform`, `agent`, `scenario`, `evaluator`) — confirm or correct
-it once you've read the evidence; state your own owner label in the report.
-
-## 4. Per cluster (and per run in single-run mode)
+For the **three** highest-ranked problems from step 2, and only those, pull
+the full picture:
 
 ```
 curl -sf -H "Authorization: Bearer $ZCP_FARM_CONSOLE_TOKEN" \
   "$ZCP_FARM_CONSOLE_URL/api/runs/<runId>.md"
 curl -sf -H "Authorization: Bearer $ZCP_FARM_CONSOLE_TOKEN" \
-  "$ZCP_FARM_CONSOLE_URL/api/runs/<runId>/steps.md?from=<n-3>&to=<n+3>"   # per cited step
+  "$ZCP_FARM_CONSOLE_URL/api/runs/<runId>/steps.md?n=<step>"   # per cited step
 curl -sf -H "Authorization: Bearer $ZCP_FARM_CONSOLE_TOKEN" \
   "$ZCP_FARM_CONSOLE_URL/api/runs/<runId>/self-review.md"
 ```
 
+The full run detail carries fields `digest.md`/`problems.md` don't: the
+**story** (task/expected/did/stuck/ending), the **judged checks** (§7.5 — did
+the observer agree with each failed/blocked check, and why, not just whether
+the run passed), and each finding's full **surface**/**anchor**/**span**, not
+just its title. Read all of it before writing the problem up — a title and a
+severity are not a diagnosis.
+
 An evidence quote the observer did not mark `verified` (FM-46) is a lead, not
 a fact — re-check it against the step text you just pulled before citing it.
-For a finding that needs a stronger read, ask for a second opinion:
+
+For every **other** problem in scope, report straight from `digest.md`'s/
+`problems.md`'s own fields (title, severity, cause, surface, anchor, status,
+fix) — do **not** fetch its run detail or steps.
+
+For a top-three finding that needs a stronger read, ask for a second opinion:
 
 ```
 curl -sf -X POST -H "Authorization: Bearer $ZCP_FARM_CONSOLE_TOKEN" \
@@ -82,7 +130,7 @@ curl -sf -X POST -H "Authorization: Bearer $ZCP_FARM_CONSOLE_TOKEN" \
 ```
 
 (allowlist: `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5-1`; anything
-else 400s).
+else 400s.) This counts against step 3's five-run/$0.25-each gate too.
 
 ## 5. Map to code
 
@@ -104,14 +152,15 @@ confirmed by reading it).
 
 ## 6. Write the report
 
-`plans/farm-triage-<YYYY-MM-DD>.md` (UTC date). Per problem: title, owner,
-severity, runs affected (link each as `<$ZCP_FARM_CONSOLE_URL>/r/<runId>#s<n>`),
-what happened (≤3 sentences), evidence (step number + quote), code
-location(s) `file:line`, root cause (`VERIFIED`/`HYPOTHESIS`), fix proposal
-(direction, rough size, the test that would pin it). Then a "not a ZCP
-problem" section for findings owned `evaluator`/`scenario`/`platform`. Then a
-ranked recommendation list, highest-impact first. Plain, short sentences — no
-essay.
+`plans/farm-triage-<YYYY-MM-DD>.md` (UTC date). Per problem: title, cause,
+severity, status (new/first-seen/recurring/gone/unconfirmed), surface +
+anchor, runs affected (link each as
+`<$ZCP_FARM_CONSOLE_URL>/r/<runId>#f<n>`), what happened (≤3 sentences),
+evidence (step number + quote), code location(s) `file:line`, root cause
+(`VERIFIED`/`HYPOTHESIS`), fix proposal (direction, rough size, the test that
+would pin it). Then a "not a ZCP problem" section for findings whose cause is
+Agent mistake / Test scenario / Test check. Then a ranked recommendation list,
+highest-impact first. Plain, short sentences — no essay.
 
 ## 7. Stop
 
@@ -129,4 +178,5 @@ ZCP_AUTHORING=1 go run ./cmd/zcp eval farm pull --batch <b> --out <dir>
 ZCP_AUTHORING=1 go run ./cmd/zcp eval farm observe <dir>/<runId> [--model <m>]
 ```
 
-Read the pulled bundle files directly and continue from step 3.
+Read the pulled bundle files directly and continue from step 2 (there is no
+`digest.md` locally — read each run's own findings and cluster by hand).
