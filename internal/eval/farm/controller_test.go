@@ -1608,3 +1608,62 @@ func TestFarmRun_Interrupt_WritesSummaryKeepsProjects(t *testing.T) {
 		t.Errorf("summary.Runs = %+v, want one entry Result=%q Detail=%q", summary.Runs, ResultBlocked, DetailInterrupted)
 	}
 }
+
+// TestFarmRun_LaunchTokenRevokedWhenCreateFails pins R2 (FM-23): a launch
+// scenario's already-minted launch token must not leak when the run's
+// creation fails AFTER the mint (here, CreateAndImportProject) — the
+// controller revokes it immediately, and the revoke DELETE is actually
+// issued regardless of whether the fake happens to accept it.
+func TestFarmRun_LaunchTokenRevokedWhenCreateFails(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-24-r2"
+	f := newControllerFixture(t, clientID)
+	account, client, sink := f.account, f.client, f.sink
+
+	batch := "batch-24-r2"
+	sc := ScenarioRun{ID: "recipe-launch-create-fail", Launch: true}
+	runID := batch + "-" + sc.ID
+
+	account.mu.Lock()
+	account.failImportProjectName = ProjectPrefix + runID
+	account.mu.Unlock()
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget: time.Second, PollInterval: time.Millisecond,
+	}
+
+	results, err := RunBatch(context.Background(), client, sink, opts)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if len(results) != 1 || results[0].Result != ResultBlocked {
+		t.Fatalf("results = %+v, want one blocked entry", results)
+	}
+
+	revoked := false
+	for _, entry := range account.requestLog() {
+		if strings.HasPrefix(entry, "DELETE /api/rest/public/client/"+clientID+"/integration-token/") {
+			revoked = true
+		}
+	}
+	if !revoked {
+		t.Fatalf("no integration-token revoke DELETE recorded; request log: %v", account.requestLog())
+	}
+
+	// Independent oracle: either the revoke actually succeeded (the token
+	// no longer validates AND the result clears it to "") or, had it
+	// failed, the id would still be on the result — never silently dropped
+	// with the token left dangling and untracked.
+	if results[0].LaunchTokenID != "" {
+		account.mu.Lock()
+		_, stillValid := account.tokens[results[0].LaunchTokenID]
+		account.mu.Unlock()
+		if !stillValid {
+			t.Errorf("results[0].LaunchTokenID = %q is recorded but the fake already revoked it — recording only belongs on a failed revoke", results[0].LaunchTokenID)
+		}
+	}
+}

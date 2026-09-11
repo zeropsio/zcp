@@ -289,12 +289,12 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 	// project-scoped token exists to carry.
 	projectYAML, err := ProjectImportYAML(desc)
 	if err != nil {
-		rr := recordBlocked(r.RunID, r.ID, fmt.Errorf("build project import yaml: %w", err))
+		rr := recordBlockedRevokingLaunchToken(ctx, client, opts, r, launchTokenID, fmt.Errorf("build project import yaml: %w", err))
 		return nil, &rr, nil
 	}
 	result, err := client.CreateAndImportProject(ctx, string(projectYAML))
 	if err != nil {
-		rr := recordBlocked(r.RunID, r.ID, fmt.Errorf("create project: %w", err))
+		rr := recordBlockedRevokingLaunchToken(ctx, client, opts, r, launchTokenID, fmt.Errorf("create project: %w", err))
 		return nil, &rr, nil
 	}
 	runProjectName := ProjectPrefix + r.RunID
@@ -309,9 +309,12 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 	if err != nil {
 		_ = Guard(ctx, client, result.ProjectID, runProjectName)
 		if isScopedMintForbidden(err) {
+			if launchTokenID != "" {
+				_ = client.RevokeIntegrationToken(ctx, opts.ClientID, launchTokenID)
+			}
 			return nil, nil, fmt.Errorf("farm run: mint run token for %s: %w", r.RunID, err)
 		}
-		rr := recordBlocked(r.RunID, r.ID, fmt.Errorf("mint run token: %w", err))
+		rr := recordBlockedRevokingLaunchToken(ctx, client, opts, r, launchTokenID, fmt.Errorf("mint run token: %w", err))
 		return nil, &rr, nil
 	}
 	desc.RunToken = minted.Token
@@ -321,12 +324,12 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 	serviceYAML, err := ServiceImportYAML(desc)
 	if err != nil {
 		_ = Guard(ctx, client, result.ProjectID, runProjectName)
-		rr := recordBlocked(r.RunID, r.ID, fmt.Errorf("build service import yaml: %w", err))
+		rr := recordBlockedRevokingLaunchToken(ctx, client, opts, r, launchTokenID, fmt.Errorf("build service import yaml: %w", err))
 		return nil, &rr, nil
 	}
 	if _, err := client.ImportServiceStack(ctx, result.ProjectID, string(serviceYAML)); err != nil {
 		_ = Guard(ctx, client, result.ProjectID, runProjectName)
-		rr := recordBlocked(r.RunID, r.ID, fmt.Errorf("import service stack: %w", err))
+		rr := recordBlockedRevokingLaunchToken(ctx, client, opts, r, launchTokenID, fmt.Errorf("import service stack: %w", err))
 		return nil, &rr, nil
 	}
 
@@ -336,6 +339,21 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 		LaunchTokenID: launchTokenID,
 		RunTokenID:    minted.TokenID,
 	}, nil, nil
+}
+
+// recordBlockedRevokingLaunchToken is recordBlocked plus R2 (FM-23): a
+// per-run creation failure still leaves a launch scenario's already-minted
+// token dangling unless it is revoked right now; if the revoke itself
+// fails, the id is kept on the result so RunBatch's end-of-batch
+// manifest/summary pass and `gc` can finish the job later.
+func recordBlockedRevokingLaunchToken(ctx context.Context, client PlatformClient, opts RunOptions, r scheduledRun, launchTokenID string, err error) RunResult {
+	rr := recordBlocked(r.RunID, r.ID, err)
+	if launchTokenID != "" {
+		if revokeErr := client.RevokeIntegrationToken(ctx, opts.ClientID, launchTokenID); revokeErr != nil {
+			rr.LaunchTokenID = launchTokenID
+		}
+	}
+	return rr
 }
 
 // RunBatch runs opts.Scenarios as one batch (§3.3 FM-21/FM-22): it writes
