@@ -902,7 +902,10 @@ expected, observed, source}], evidenceSteps}`; steps → `[{n, kind, tool,
 input, result, isError, text}]`; findings → `[{owner, severity, title, what,
 runId, steps, quotesVerified, quotesTotal, lookAt, fix}]`. `observerState` is
 one of `observed`, `observing`, `not observed`, `observer off`, `observer
-disabled`.
+disabled`, decided in that precedence: a queued or running observation reads
+`observing`; a run without `done.json` reads `not observed`; a run with an
+observation reads `observed` whatever its manifest or the kill switch say;
+only a finished run without one reads `observer disabled` or `observer off`.
 
 ### 8.5 Worker and actions
 
@@ -922,5 +925,7 @@ to the page (cookie) or 202 (bearer). Without `CLAUDE_CODE_OAUTH_TOKEN` the
 console still serves every page, the worker stays idle, and actions answer
 503 `observer credential missing`; an unresolvable `claude` path is treated the
 same way (503 `observer unavailable`). Without `all=1`, runs of the batch that
-are already queued or running are skipped, not answered with 409. Worker and queue state live in memory and
-are re-derived from the bucket after a restart.
+are already queued or running are skipped, not answered with 409. A job runs for the console's lifetime, not the
+enqueuing request's (bounded by a 10-minute job timeout), and a job that fails
+before an observation can be stored is logged to stderr. Worker and queue
+state live in memory and are re-derived from the bucket after a restart.
