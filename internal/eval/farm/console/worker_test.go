@@ -565,3 +565,59 @@ func TestBucketObserve_ChildNeverSeesSinkKeyOrConsoleToken(t *testing.T) {
 		t.Error("child env is missing HOME")
 	}
 }
+
+// TestQueue_JobOutlivesEnqueueContext pins §8.5: a job runs for the
+// console's lifetime, not the enqueuer's — an action enqueues with the HTTP
+// request's context, which is canceled as soon as the 202/303 is written.
+func TestQueue_JobOutlivesEnqueueContext(t *testing.T) {
+	t.Parallel()
+	ctxErr := make(chan error, 1)
+	q := NewQueue(func(ctx context.Context, _ Job) error {
+		time.Sleep(20 * time.Millisecond)
+		ctxErr <- ctx.Err()
+		return nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := q.Enqueue(ctx, Job{RunID: "batch-run1", Batch: "batch"}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	cancel()
+	select {
+	case err := <-ctxErr:
+		if err != nil {
+			t.Fatalf("job context error = %v after the enqueuer's context was canceled, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("observe never ran")
+	}
+}
+
+// TestQueue_ObserveErrorIsLogged pins §8.5: a job that fails before an
+// observation can be stored is never silent — the queue logs the run id and
+// the error.
+func TestQueue_ObserveErrorIsLogged(t *testing.T) {
+	t.Parallel()
+	var mu sync.Mutex
+	var lines []string
+	q := NewQueue(func(context.Context, Job) error { return fmt.Errorf("bucket unreachable") })
+	q.logf = func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, fmt.Sprintf(format, args...))
+	}
+	if err := q.Enqueue(context.Background(), Job{RunID: "batch-run1", Batch: "batch"}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if !wkEventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, l := range lines {
+			if strings.Contains(l, "batch-run1") && strings.Contains(l, "bucket unreachable") {
+				return true
+			}
+		}
+		return false
+	}) {
+		t.Fatalf("no log line naming the run and the error; got %q", lines)
+	}
+}

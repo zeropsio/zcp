@@ -155,11 +155,13 @@ const (
 
 // resolveObserverState implements §8.4's observerState vocabulary from
 // statically-known bucket state plus queued, the run's live Queue.State
-// (§8.5: JobQueued or JobRunning). queued outranks every other input: an
-// operator action "works regardless of the manifest field and the kill
-// switch" (§8.5 FM-53), so a run actually in flight reads "observing" even
-// while the kill switch would otherwise read it as "observer disabled", or
-// while it has no done.json yet.
+// (§8.5: JobQueued or JobRunning). Precedence: a run in flight reads
+// "observing" (operator actions work regardless of the manifest field and
+// the kill switch, §8.5 FM-53); a run with no done.json reads "not
+// observed"; a run that has an observation reads "observed" whatever its
+// manifest or the kill switch say — the label describes the run's data
+// first; only then do the kill switch ("observer disabled") and the
+// manifest ("observer off") explain why a finished run has none.
 func resolveObserverState(consoleDisabled bool, manifestObserver string, doneExists, hasObservation, queued bool) string {
 	if queued {
 		return observerStateObserving
@@ -167,14 +169,14 @@ func resolveObserverState(consoleDisabled bool, manifestObserver string, doneExi
 	if !doneExists {
 		return observerStateNotObserved
 	}
+	if hasObservation {
+		return observerStateObserved
+	}
 	if consoleDisabled {
 		return observerStateDisabled
 	}
 	if manifestObserver == "" || manifestObserver == ObserverOff {
 		return observerStateOff
-	}
-	if hasObservation {
-		return observerStateObserved
 	}
 	return observerStateNotObserved
 }

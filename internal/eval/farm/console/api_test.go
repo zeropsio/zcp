@@ -492,3 +492,34 @@ func TestAPI_RunningRunWithoutDoneShowsRunning(t *testing.T) {
 		t.Errorf("observerState = %q, want %q", out.Runs[0].ObserverState, "not observed")
 	}
 }
+
+// TestView_ObservedOutranksOffAndDisabled pins §8.4: observerState describes
+// the run's data first — a run that has an observation reads "observed" even
+// in a batch whose manifest predates the observer field (or says off) and
+// even under the kill switch, because operator actions work regardless of
+// both (§8.5 FM-53).
+func TestView_ObservedOutranksOffAndDisabled(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name           string
+		disabled       bool
+		manifest       string
+		hasObservation bool
+		want           string
+	}{
+		{"old batch with an observation", false, "", true, observerStateObserved},
+		{"manifest off with an observation", false, ObserverOff, true, observerStateObserved},
+		{"kill switch with an observation", true, "claude-sonnet-5", true, observerStateObserved},
+		{"old batch without an observation", false, "", false, observerStateOff},
+		{"kill switch without an observation", true, "claude-sonnet-5", false, observerStateDisabled},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := resolveObserverState(tc.disabled, tc.manifest, true, tc.hasObservation, false)
+			if got != tc.want {
+				t.Errorf("resolveObserverState = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

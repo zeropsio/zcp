@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -25,6 +26,10 @@ import (
 // wkMaxConcurrent bounds how many jobs Queue runs at once (§8.5 FM-53: "one
 // queue, at most three observations at a time").
 const wkMaxConcurrent = 3
+
+// wkJobTimeout bounds one job: the observer's own model call is capped at
+// 5 minutes (§7.4); the rest is bucket reads and the final write.
+const wkJobTimeout = 10 * time.Minute
 
 // wkObserverWindow bounds how far back Worker.Tick looks for batches to
 // observe (§8.5 FM-53: "createdAt is within 14 days").
@@ -68,6 +73,7 @@ type Queue struct {
 	jobs    map[string]*wkJobState
 	sem     chan struct{}
 	observe ObserveFunc
+	logf    func(format string, args ...any)
 }
 
 // NewQueue returns a Queue that executes every accepted job through
@@ -77,13 +83,23 @@ func NewQueue(observe ObserveFunc) *Queue {
 		jobs:    make(map[string]*wkJobState),
 		sem:     make(chan struct{}, wkMaxConcurrent),
 		observe: observe,
+		logf:    wkStderrLogf,
 	}
+}
+
+// wkStderrLogf is the queue's default log: a job that fails before an
+// observation is stored (§7.7) is reported on stderr, never dropped.
+func wkStderrLogf(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "console: "+format+"\n", args...)
 }
 
 // Enqueue adds job to the queue and starts it running, once a concurrency
 // slot frees up, in a new goroutine. Returns ErrAlreadyQueued when
 // job.RunID is already queued or running — this is Queue's whole
-// duplicate-run guard; the queue is otherwise unbounded in length.
+// duplicate-run guard; the queue is otherwise unbounded in length. The job
+// keeps ctx's values but not its cancellation: an action enqueues with the
+// HTTP request's context, which ends as soon as the response is written,
+// while the job must run to completion (bounded by wkJobTimeout).
 func (q *Queue) Enqueue(ctx context.Context, job Job) error {
 	q.mu.Lock()
 	if _, exists := q.jobs[job.RunID]; exists {
@@ -93,7 +109,7 @@ func (q *Queue) Enqueue(ctx context.Context, job Job) error {
 	q.jobs[job.RunID] = &wkJobState{batch: job.Batch}
 	q.mu.Unlock()
 
-	go q.wkRun(ctx, job)
+	go q.wkRun(context.WithoutCancel(ctx), job)
 	return nil
 }
 
@@ -111,7 +127,11 @@ func (q *Queue) wkRun(ctx context.Context, job Job) {
 	}
 	q.mu.Unlock()
 
-	_ = q.observe(ctx, job)
+	jobCtx, cancel := context.WithTimeout(ctx, wkJobTimeout)
+	if err := q.observe(jobCtx, job); err != nil {
+		q.logf("observe %s (model %s, source %s): %v", job.RunID, job.Model, job.Source, err)
+	}
+	cancel()
 
 	q.mu.Lock()
 	delete(q.jobs, job.RunID)
