@@ -943,25 +943,26 @@ func TestFarmRun_ObserverFlag(t *testing.T) {
 			}
 		})
 	}
+}
 
-	// The invalid value must also make `farm run` itself exit 2 (a flag
-	// error), before any env var or network dependency is reached.
-	t.Run("runFarmRun exits 2 on an invalid --observer value", func(t *testing.T) {
-		t.Parallel()
-		var exitCode int
-		_, stderr := captureOutput(t, func() {
-			exitCode = runFarmRun([]string{
-				"--candidate", "cand-sha", "--scenarios", "scen-sha", "--set", "gate",
-				"--batch", "batch-bad-observer", "--observer", "gpt-4",
-			})
+// TestFarmRun_InvalidObserverExits2 pins that an invalid --observer value
+// makes `farm run` itself exit 2 (a flag error) before any env var or
+// network dependency is reached.
+// non-parallel: captureOutput swaps the process-wide os.Stdout/os.Stderr.
+func TestFarmRun_InvalidObserverExits2(t *testing.T) {
+	var exitCode int
+	_, stderr := captureOutput(t, func() {
+		exitCode = runFarmRun([]string{
+			"--candidate", "cand-sha", "--scenarios", "scen-sha", "--set", "gate",
+			"--batch", "batch-bad-observer", "--observer", "gpt-4",
 		})
-		if exitCode != 2 {
-			t.Errorf("runFarmRun exit code = %d, want 2 (stderr: %s)", exitCode, stderr)
-		}
-		if !strings.Contains(stderr, "--observer") {
-			t.Errorf("stderr = %q, want it to name --observer", stderr)
-		}
 	})
+	if exitCode != 2 {
+		t.Errorf("runFarmRun exit code = %d, want 2 (stderr: %s)", exitCode, stderr)
+	}
+	if !strings.Contains(stderr, "--observer") {
+		t.Errorf("stderr = %q, want it to name --observer", stderr)
+	}
 }
 
 // TestFarmRun_BatchIDGrammar pins §3.3/§7.6 FM-47: a --batch value outside
