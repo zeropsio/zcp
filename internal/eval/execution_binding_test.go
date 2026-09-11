@@ -167,7 +167,9 @@ func TestExecutionBinding_ControlServiceOwnProcess_IsFresh(t *testing.T) {
 // not recognise it. Once the service read has shown that only system
 // services and the control service exist, a live `stack.*` process can only
 // belong to them — whether its refs carry the id only, the name only, or
-// nothing at all.
+// (finding E8) a mix of the control service and its transient BUILD
+// container. A ref-less process, or one whose refs are ALL BUILD, is NOT
+// "regardless of ref shape" — see TestExecutionBinding_RefLessOrBuildOnly_Refused.
 func TestExecutionBinding_ControlServiceBuild_IsFresh_RegardlessOfRefShape(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -178,7 +180,6 @@ func TestExecutionBinding_ControlServiceBuild_IsFresh_RegardlessOfRefShape(t *te
 			ServiceStacks: []platform.ServiceStackRef{{ID: "zcp-1"}}}},
 		{"ref by name only", platform.Process{ID: "p2", ActionName: "stack.build", Status: platform.ProcessStatusRunning,
 			ServiceStacks: []platform.ServiceStackRef{{Name: ProtectedService}}}},
-		{"no refs, stack action", platform.Process{ID: "p3", ActionName: "stack.build", Status: platform.ProcessStatusRunning}},
 		{"system service ref", platform.Process{ID: "p4", ActionName: "stack.deploy", Status: platform.ProcessStatusRunning,
 			ServiceStacks: []platform.ServiceStackRef{{ID: "l7-1", Name: "L7HttpBalancer"}}}},
 		// live gate2 row GRpeKk9EQz…: once the build container attaches, the
@@ -200,6 +201,43 @@ func TestExecutionBinding_ControlServiceBuild_IsFresh_RegardlessOfRefShape(t *te
 				WithProjectProcesses([]platform.Process{tc.proc})
 			if err := assertFreshTarget(context.Background(), client, "offline-project"); err != nil {
 				t.Fatalf("assertFreshTarget() = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// TestExecutionBinding_RefLessOrBuildOnly_Refused pins finding E8: a live
+// process with no ServiceStacks[] refs at all, or whose refs are ALL BUILD
+// category, is never resolvable to an allowed service and must refuse —
+// previously isAllowedServiceProcess accepted a ref-less `stack.*` action
+// outright and never rejected an all-BUILD ref set (the loop skipped every
+// BUILD ref and found nothing left to reject), letting a foreign PENDING
+// `stack.create` or another build's container pass the freshness preflight.
+func TestExecutionBinding_RefLessOrBuildOnly_Refused(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		proc platform.Process
+	}{
+		{"no refs, stack action", platform.Process{ID: "p3", ActionName: "stack.create", Status: platform.ProcessStatusRunning}},
+		{"all refs BUILD", platform.Process{ID: "p6", ActionName: "stack.build", Status: platform.ProcessStatusRunning,
+			ServiceStacks: []platform.ServiceStackRef{{ID: "build-1", Name: "buildzcpv1789065137", Category: "BUILD"}}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			client := platform.NewMock().
+				WithServicesDirect([]platform.ServiceStack{
+					{ID: "zcp-1", Name: ProtectedService, Status: "ACTIVE"},
+				}).
+				WithProjectProcesses([]platform.Process{tc.proc})
+			err := assertFreshTarget(context.Background(), client, "offline-project")
+			if err == nil {
+				t.Fatalf("assertFreshTarget() = nil, want a not-fresh error")
+			}
+			wantPrefix := "target is not fresh: live process " + tc.proc.ID + " (RUNNING)"
+			if err.Error() != wantPrefix {
+				t.Fatalf("assertFreshTarget() = %q, want %q", err.Error(), wantPrefix)
 			}
 		})
 	}

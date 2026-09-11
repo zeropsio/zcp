@@ -192,16 +192,19 @@ func assertFreshTarget(ctx context.Context, client platform.Client, projectID st
 
 // isAllowedServiceProcess reports whether proc is the lifecycle of a service
 // the fresh-target service read already allowed (see assertFreshTarget):
-// every non-BUILD ref resolves by id or name into allowed, or the process has
-// no refs and is a stack-scoped action. BUILD refs are the transient build
-// container a RUNNING stack.build attaches as a second entry (live gate2 row:
-// zcp + buildzcpv<ts>); it is never listed among the project's services, so
-// it cannot be resolved and is skipped. A ref-less project-level action is
-// never allowed.
+// every non-BUILD ref resolves by id or name into allowed, AND at least one
+// non-BUILD ref is present. BUILD refs are the transient build container a
+// RUNNING stack.build attaches as a second entry (live gate2 row: zcp +
+// buildzcpv<ts>); it is never listed among the project's services, so it is
+// skipped when resolving, but it can never carry the process on its own.
+// Finding E8: a ref-less process (previously accepted whenever ActionName
+// started with "stack.") and a process whose refs are ALL BUILD (previously
+// accepted because the loop never found a non-BUILD ref to reject) both let
+// a foreign process through the freshness preflight — a ref-less action is
+// always project-scoped, and a BUILD-only ref set names no allowed service
+// at all. Both now refuse.
 func isAllowedServiceProcess(proc platform.Process, allowed map[string]bool) bool {
-	if len(proc.ServiceStacks) == 0 {
-		return strings.HasPrefix(proc.ActionName, "stack.")
-	}
+	matchedNonBuildRef := false
 	for _, ref := range proc.ServiceStacks {
 		if ref.Category == buildCategory {
 			continue
@@ -209,8 +212,9 @@ func isAllowedServiceProcess(proc platform.Process, allowed map[string]bool) boo
 		if !allowed[ref.ID] && !allowed[ref.Name] {
 			return false
 		}
+		matchedNonBuildRef = true
 	}
-	return true
+	return matchedNonBuildRef
 }
 
 // buildCategory is the serviceStackTypeCategory of a build container ref.
