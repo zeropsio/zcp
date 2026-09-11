@@ -150,10 +150,11 @@ func Observe(ctx context.Context, bundle Bundle, cfg ObserveConfig) Observation 
 	}
 
 	facts := buildRunFacts(steps, verification.Checks, verdict)
-	ans, warnings, ok := ParseAndValidate(runResult.ResultText, facts)
+	ans, warnings, reason, ok := ParseAndValidate(runResult.ResultText, facts)
 	if !ok {
 		obs.Status = statusUnparsed
 		obs.Raw = firstN(runResult.ResultText, unparsedRawStoreCap)
+		obs.Error = reason
 		return obs
 	}
 

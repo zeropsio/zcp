@@ -282,22 +282,26 @@ type RunFacts struct {
 // carries no JSON object, the object doesn't unmarshal, or it breaks the
 // structure (unknown enum, a finding without title or evidence, a missing
 // story or story.ending) — the caller stores status "unparsed" with raw
-// capped at 20,000 chars in that case, and warnings is always nil.
-func ParseAndValidate(raw string, facts RunFacts) (ModelAnswer, []string, bool) {
+// capped at 20,000 chars in that case, and warnings is always nil. reason
+// says which rule refused the answer ("goal.reached missing", `unknown
+// severity "critical"`, …) when ok is false; empty when ok is true — the
+// caller stores it in Observation.Error alongside raw (item 3,
+// plans/farm-console-clarity-2026-09-11-briefs/FIX2.md) so a maintainer
+// sees why an answer went unparsed instead of just the raw text.
+func ParseAndValidate(raw string, facts RunFacts) (ans ModelAnswer, warnings []string, reason string, ok bool) {
 	obj, found := firstJSONObject(raw)
 	if !found {
-		return ModelAnswer{}, nil, false
+		return ModelAnswer{}, nil, "no JSON object found in the answer", false
 	}
-	var ans ModelAnswer
 	if err := json.Unmarshal([]byte(obj), &ans); err != nil {
-		return ModelAnswer{}, nil, false
+		return ModelAnswer{}, nil, fmt.Sprintf("the answer's JSON object did not parse: %v", err), false
 	}
 	ans, ownerWarnings := repairOwners(ans)
-	if !validateAnswer(ans) {
-		return ModelAnswer{}, nil, false
+	if r := validateAnswerReason(ans); r != "" {
+		return ModelAnswer{}, nil, r, false
 	}
-	repaired, warnings := repairAnswer(ans, facts)
-	return repaired, append(ownerWarnings, warnings...), true
+	repaired, repairWarnings := repairAnswer(ans, facts)
+	return repaired, append(ownerWarnings, repairWarnings...), "", true
 }
 
 // ownerBySurfaceKind maps a surface kind a model wrote as a finding's owner
@@ -329,35 +333,39 @@ func repairOwners(ans ModelAnswer) (ModelAnswer, []string) {
 	return ans, warnings
 }
 
-// validateAnswer checks the structural rules whose violation makes the
-// whole answer unparsed (§7.5) — never repaired: enum fields, a story
+// validateAnswerReason checks the structural rules whose violation makes
+// the whole answer unparsed (§7.5) — never repaired: enum fields, a story
 // (and a valid story.ending), and every finding carrying a title and at
-// least one evidence entry.
-func validateAnswer(a ModelAnswer) bool {
+// least one evidence entry. Returns "" when a is valid, else which rule
+// broke — ParseAndValidate's reason (item 3).
+func validateAnswerReason(a ModelAnswer) string {
 	if !validReached[a.Goal.Reached] {
-		return false
+		return "goal.reached missing"
 	}
 	if !validReached[a.SelfReview.Accurate] {
-		return false
+		return "selfReview.accurate missing"
 	}
-	if a.Story == nil || !validEnding[a.Story.Ending] {
-		return false
+	if a.Story == nil {
+		return "story missing"
+	}
+	if !validEnding[a.Story.Ending] {
+		return "story.ending missing"
 	}
 	for _, f := range a.Findings {
 		if !validSeverity[f.Severity] {
-			return false
+			return fmt.Sprintf("unknown severity %q", f.Severity)
 		}
 		if !validOwner[f.Owner] {
-			return false
+			return fmt.Sprintf("unknown owner %q", f.Owner)
 		}
 		if strings.TrimSpace(f.Title) == "" {
-			return false
+			return "a finding has no title"
 		}
 		if len(f.Evidence) == 0 {
-			return false
+			return "a finding has no evidence"
 		}
 	}
-	return true
+	return ""
 }
 
 // repairAnswer applies §7.5's deterministic repairs, in the order the spec
@@ -424,6 +432,25 @@ func repairAnswer(ans ModelAnswer, facts RunFacts) (ModelAnswer, []string) {
 	if len(ans.Findings) > 0 && strings.HasPrefix(strings.TrimSpace(ans.Headline), "OK") {
 		warnings = append(warnings, fmt.Sprintf(
 			"headline starts with OK although the observation has %d finding(s)", len(ans.Findings)))
+	}
+
+	// item 4 (FIX2.md): an "OK — "/"OK: " headline is wrong not just with
+	// findings but on any non-ok outcome (an inconclusive run — a session
+	// limit, a timeout — never showed whether ZCP worked either). The
+	// warning above stays as it was (kept, not stripped) for its own
+	// narrower trigger; this repair additionally strips the prefix so nothing
+	// downstream renders a false "OK" — it fires whenever DeriveOutcome
+	// disagrees with the headline, which subsumes the findings>0 case too.
+	if outcome := DeriveOutcome(ans.Story.Ending, len(ans.Findings)); outcome != OutcomeOK {
+		trimmed := strings.TrimSpace(ans.Headline)
+		for _, prefix := range []string{"OK — ", "OK: "} {
+			if rest, cut := strings.CutPrefix(trimmed, prefix); cut {
+				ans.Headline = strings.TrimSpace(rest)
+				warnings = append(warnings, fmt.Sprintf(
+					"stripped the headline's leading %q: the observation's outcome is %q, not ok", prefix, outcome))
+				break
+			}
+		}
 	}
 
 	if warning, warn := warnUnexplainedFailure(facts.Verdict, ans.Findings, ans.Checks.Judged); warn {

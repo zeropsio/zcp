@@ -121,6 +121,51 @@ func TestPages_BatchesNewestFirstWithCounts(t *testing.T) {
 	}
 }
 
+// TestLoadBatchRows_KindRequiresCostOrSteps pins item 6 (FIX2.md
+// FIX2-DATA): a batch whose every run blocked instantly at $0 — done.json
+// exists, but no results/ was ever written (gate1, asm7-9, tracerctl) — is
+// batchKindEmpty, not batchKindEvaluation; a batch with a run that did real
+// work (StepCount > 0, even at $0 cost) is batchKindEvaluation.
+func TestLoadBatchRows_KindRequiresCostOrSteps(t *testing.T) {
+	store := newFakeStore()
+
+	blockedManifest := farm.BatchManifest{
+		Batch: "blocked-batch", CreatedAt: "2026-09-01T00:00:00Z", StartedAt: "2026-09-01T00:00:00Z",
+		Set: "gate", CandidateSha256: "cand-sha", EvaluatorSha256: "eval-sha", ScenariosDigest: "scn-sha",
+		Runs: []farm.ManifestRun{{RunID: "blocked-scn", Scenario: "scn", ProjectName: "p"}},
+	}
+	store.putJSON(t, "batches/blocked-batch/manifest.json", blockedManifest)
+	// started.json + done.json only — no results/, so meta.json is never
+	// read: StepCount stays 0, CostUsd stays 0 (unknown), DoneExists true.
+	store.putJSON(t, "runs/blocked-scn/started.json", map[string]any{
+		"runId": "blocked-scn", "scenarioId": "scn", "startedAt": "2026-09-01T00:01:00Z",
+	})
+	store.putJSON(t, "runs/blocked-scn/done.json", map[string]any{
+		"runId": "blocked-scn", "scenarioId": "scn",
+		"runnerDimensions": map[string]any{"execution": "blocked"},
+	})
+
+	seedBatch(t, store, "worked-batch", "", []runFixture{
+		{runID: "worked-scn", scenario: "scn", startedAt: time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC),
+			durationS: "1s", costUsd: 0, taskResult: "passed", done: true},
+	}, false, nil)
+
+	rows, err := loadBatchRows(context.Background(), store, false, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("loadBatchRows: %v", err)
+	}
+	byID := make(map[string]BatchRow, len(rows))
+	for _, r := range rows {
+		byID[r.BatchID] = r
+	}
+	if got := byID["blocked-batch"].Kind; got != batchKindEmpty {
+		t.Errorf("blocked-batch.Kind = %q, want %q (done.json exists but no cost/steps)", got, batchKindEmpty)
+	}
+	if got := byID["worked-batch"].Kind; got != batchKindEvaluation {
+		t.Errorf("worked-batch.Kind = %q, want %q (StepCount > 0 even at $0)", got, batchKindEvaluation)
+	}
+}
+
 // --- PreviousSameSet (item 2) ---------------------------------------------
 
 func TestPreviousSameSet(t *testing.T) {

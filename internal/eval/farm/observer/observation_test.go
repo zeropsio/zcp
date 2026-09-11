@@ -122,34 +122,53 @@ func TestParseAndValidate_UnparsedTriggers(t *testing.T) {
 	oneFinding := findingJSON(findingSpec{EvidenceStep: 1})
 
 	cases := []struct {
-		name string
-		raw  string
+		name       string
+		raw        string
+		wantReason string // item 3: ParseAndValidate's reason, e.g. "goal.reached missing"
 	}{
-		{"no JSON at all", "the agent did fine, nothing to report"},
-		{"bad goal.reached enum", strings.Replace(answerJSON(""), `"reached": "yes"`, `"reached": "maybe"`, 1)},
-		{"bad selfReview.accurate enum", strings.Replace(answerJSON(""), `"accurate": "yes"`, `"accurate": "maybe"`, 1)},
-		{"missing story", strings.Replace(answerJSON(""), `"story": {"task": "t", "expected": "e", "did": "d", "stuck": null, "ending": "finished"},`, "", 1)},
-		{"missing story.ending", strings.Replace(answerJSON(""), `"ending": "finished"`, `"ending": ""`, 1)},
-		{"invalid story.ending enum", strings.Replace(answerJSON(""), `"ending": "finished"`, `"ending": "confused"`, 1)},
-		{"finding without title", answerJSON(strings.Replace(oneFinding, `"title":"t"`, `"title":""`, 1))},
-		{"finding without evidence", answerJSON(`{"severity":"high","owner":"agent","title":"t","what":"w","evidence":[],"span":null,"causedVerdict":false,"lookAt":"l","fix":""}`)},
+		{"no JSON at all", "the agent did fine, nothing to report", "no JSON object found in the answer"},
+		{"bad goal.reached enum", strings.Replace(answerJSON(""), `"reached": "yes"`, `"reached": "maybe"`, 1), "goal.reached missing"},
+		{"bad selfReview.accurate enum", strings.Replace(answerJSON(""), `"accurate": "yes"`, `"accurate": "maybe"`, 1), "selfReview.accurate missing"},
+		{"missing story", strings.Replace(answerJSON(""), `"story": {"task": "t", "expected": "e", "did": "d", "stuck": null, "ending": "finished"},`, "", 1), "story missing"},
+		{"missing story.ending", strings.Replace(answerJSON(""), `"ending": "finished"`, `"ending": ""`, 1), "story.ending missing"},
+		{"invalid story.ending enum", strings.Replace(answerJSON(""), `"ending": "finished"`, `"ending": "confused"`, 1), "story.ending missing"},
+		{"finding without title", answerJSON(strings.Replace(oneFinding, `"title":"t"`, `"title":""`, 1)), "a finding has no title"},
+		{"finding without evidence", answerJSON(`{"severity":"high","owner":"agent","title":"t","what":"w","evidence":[],"span":null,"causedVerdict":false,"lookAt":"l","fix":""}`), "a finding has no evidence"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, ok := ParseAndValidate(tc.raw, sampleFacts())
+			_, _, reason, ok := ParseAndValidate(tc.raw, sampleFacts())
 			if ok {
 				t.Errorf("ParseAndValidate(%q) succeeded, want unparsed", tc.raw)
+			}
+			if reason != tc.wantReason {
+				t.Errorf("ParseAndValidate(%q) reason = %q, want %q", tc.raw, reason, tc.wantReason)
 			}
 		})
 	}
 
 	// Sanity: the valid counterparts succeed, proving the failures above are
-	// due to the specific defect, not a validator that rejects everything.
-	if _, _, ok := ParseAndValidate(answerJSON(""), sampleFacts()); !ok {
-		t.Fatalf("ParseAndValidate(valid answer, no findings) failed, want success")
+	// due to the specific defect, not a validator that rejects everything —
+	// and reason is empty on success.
+	if _, _, reason, ok := ParseAndValidate(answerJSON(""), sampleFacts()); !ok || reason != "" {
+		t.Fatalf("ParseAndValidate(valid answer, no findings): ok=%v reason=%q, want ok=true reason=\"\"", ok, reason)
 	}
-	if _, _, ok := ParseAndValidate(answerJSON(oneFinding), sampleFacts()); !ok {
-		t.Fatalf("ParseAndValidate(valid answer, one finding) failed, want success")
+	if _, _, reason, ok := ParseAndValidate(answerJSON(oneFinding), sampleFacts()); !ok || reason != "" {
+		t.Fatalf("ParseAndValidate(valid answer, one finding): ok=%v reason=%q, want ok=true reason=\"\"", ok, reason)
+	}
+}
+
+// TestParseAndValidate_ReasonNamesTheOffendingValue pins §7.5's own
+// illustration of item 3's reason (FIX2.md: `unknown severity "critical"`)
+// — the reason names the actual bad value, not just the field.
+func TestParseAndValidate_ReasonNamesTheOffendingValue(t *testing.T) {
+	f := findingJSON(findingSpec{Severity: "critical", EvidenceStep: 1})
+	_, _, reason, ok := ParseAndValidate(answerJSON(f), sampleFacts())
+	if ok {
+		t.Fatalf("ParseAndValidate: succeeded, want unparsed (severity %q is not one of high|medium|low)", "critical")
+	}
+	if want := `unknown severity "critical"`; reason != want {
+		t.Errorf("reason = %q, want %q", reason, want)
 	}
 }
 
@@ -161,7 +180,7 @@ func TestParseAndValidate_DropsFindingsBeyondThreeCap(t *testing.T) {
 	for i := 1; i <= 5; i++ {
 		findings = append(findings, findingJSON(findingSpec{Title: fmt.Sprintf("finding %d", i), EvidenceStep: 1}))
 	}
-	ans, warnings, ok := ParseAndValidate(answerJSON(strings.Join(findings, ",")), sampleFacts())
+	ans, warnings, _, ok := ParseAndValidate(answerJSON(strings.Join(findings, ",")), sampleFacts())
 	if !ok {
 		t.Fatalf("ParseAndValidate: got unparsed, want success (repaired)")
 	}
@@ -201,7 +220,7 @@ func TestParseAndValidate_ClearsInvalidSurface(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := findingJSON(findingSpec{Surface: tc.surface, EvidenceStep: 2})
-			ans, warnings, ok := ParseAndValidate(answerJSON(f), sampleFacts())
+			ans, warnings, _, ok := ParseAndValidate(answerJSON(f), sampleFacts())
 			if !ok {
 				t.Fatalf("ParseAndValidate: got unparsed, want success")
 			}
@@ -242,7 +261,7 @@ func TestParseAndValidate_ClearsUnverifiedAnchor(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := findingJSON(findingSpec{Anchor: tc.anchor, EvidenceStep: tc.evStep})
-			ans, warnings, ok := ParseAndValidate(answerJSON(f), sampleFacts())
+			ans, warnings, _, ok := ParseAndValidate(answerJSON(f), sampleFacts())
 			if !ok {
 				t.Fatalf("ParseAndValidate: got unparsed, want success")
 			}
@@ -277,7 +296,7 @@ func TestParseAndValidate_DropsInvalidSpan(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := findingJSON(findingSpec{EvidenceStep: 1, Span: tc.span})
-			ans, warnings, ok := ParseAndValidate(answerJSON(f), sampleFacts())
+			ans, warnings, _, ok := ParseAndValidate(answerJSON(f), sampleFacts())
 			if !ok {
 				t.Fatalf("ParseAndValidate: got unparsed, want success")
 			}
@@ -318,7 +337,7 @@ func TestParseAndValidate_DropsJudgedNotFailedOrBlocked(t *testing.T) {
 		]},
 		"findings": [], "selfReview": {"accurate": "yes", "note": ""}
 	}`
-	ans, warnings, ok := ParseAndValidate(raw, sampleFacts())
+	ans, warnings, _, ok := ParseAndValidate(raw, sampleFacts())
 	if !ok {
 		t.Fatalf("ParseAndValidate: got unparsed, want success")
 	}
@@ -360,7 +379,7 @@ func TestParseAndValidate_WarnsHeadlineOver30Words(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ans, warnings, ok := ParseAndValidate(answerWithHeadlineJSON(tc.headline), sampleFacts())
+			ans, warnings, _, ok := ParseAndValidate(answerWithHeadlineJSON(tc.headline), sampleFacts())
 			if !ok {
 				t.Fatalf("ParseAndValidate: got unparsed, want success")
 			}
@@ -404,7 +423,7 @@ func TestParseAndValidate_WarnsUnexplainedFailure(t *testing.T) {
 			}`
 			facts := sampleFacts()
 			facts.Verdict = tc.verdict
-			_, warnings, ok := ParseAndValidate(raw, facts)
+			_, warnings, _, ok := ParseAndValidate(raw, facts)
 			if !ok {
 				t.Fatalf("ParseAndValidate: got unparsed, want success")
 			}
@@ -653,7 +672,7 @@ func TestParseAndValidate_StuckAsText(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ans, warnings, ok := ParseAndValidate(answerWithStuckJSON(tc.stuck), sampleFacts())
+			ans, warnings, _, ok := ParseAndValidate(answerWithStuckJSON(tc.stuck), sampleFacts())
 			if !ok {
 				t.Fatalf("ParseAndValidate: got unparsed, want success")
 			}
@@ -677,17 +696,78 @@ func TestParseAndValidate_StuckAsText(t *testing.T) {
 func TestParseAndValidate_WarnsOKHeadlineWithFindings(t *testing.T) {
 	withFinding := strings.Replace(answerJSON(findingJSON(findingSpec{EvidenceStep: 2, Quote: "PREFLIGHT_FAILED"})),
 		`"headline": "deploy preflight looked for zerops.yaml in the wrong place"`, `"headline": "OK — reached the goal; one note"`, 1)
-	_, warnings, ok := ParseAndValidate(withFinding, sampleFacts())
+	_, warnings, _, ok := ParseAndValidate(withFinding, sampleFacts())
 	if !ok {
 		t.Fatalf("ParseAndValidate: got unparsed, want success")
 	}
 	if !anyContains(warnings, "starts with OK") {
 		t.Errorf("warnings = %v, want one saying the headline starts with OK although there are findings", warnings)
 	}
-	_, clean, ok := ParseAndValidate(answerWithStuckJSON("null"), sampleFacts())
+	_, clean, _, ok := ParseAndValidate(answerWithStuckJSON("null"), sampleFacts())
 	if !ok || anyContains(clean, "starts with OK") {
 		t.Errorf("clean OK answer: ok=%v warnings=%v, want parsed with no OK warning", ok, clean)
 	}
+}
+
+// TestParseAndValidate_StripsOKHeadlineWhenOutcomeNotOK pins item 4
+// (plans/farm-console-clarity-2026-09-11-briefs/FIX2.md FIX2-DATA): a
+// headline starting "OK — " on a run whose derived outcome isn't ok (a
+// finding, or an inconclusive ending such as session-limit/timeout) is
+// wrong regardless of whether findings is empty — repairAnswer strips the
+// prefix (and still warns), not just warns as before.
+func TestParseAndValidate_StripsOKHeadlineWhenOutcomeNotOK(t *testing.T) {
+	withOKHeadline := func(raw string) string {
+		return strings.Replace(raw, `"headline": "deploy preflight looked for zerops.yaml in the wrong place"`,
+			`"headline": "OK — reached the goal; one note"`, 1)
+	}
+
+	t.Run("outcome problem (a finding present)", func(t *testing.T) {
+		raw := withOKHeadline(answerJSON(findingJSON(findingSpec{EvidenceStep: 2, Quote: "PREFLIGHT_FAILED"})))
+		ans, warnings, _, ok := ParseAndValidate(raw, sampleFacts())
+		if !ok {
+			t.Fatalf("ParseAndValidate: got unparsed, want success")
+		}
+		if ans.Headline != "reached the goal; one note" {
+			t.Errorf("Headline = %q, want the OK prefix stripped", ans.Headline)
+		}
+		if !anyContains(warnings, "starts with OK") {
+			t.Errorf("warnings = %v, want the existing 'starts with OK' warning kept", warnings)
+		}
+		if !anyContains(warnings, "stripped") {
+			t.Errorf("warnings = %v, want a warning about the strip", warnings)
+		}
+	})
+
+	t.Run("outcome inconclusive (session-limit, no findings)", func(t *testing.T) {
+		raw := withOKHeadline(strings.Replace(answerJSON(""), `"ending": "finished"`, `"ending": "session-limit"`, 1))
+		ans, warnings, _, ok := ParseAndValidate(raw, sampleFacts())
+		if !ok {
+			t.Fatalf("ParseAndValidate: got unparsed, want success")
+		}
+		if ans.Headline != "reached the goal; one note" {
+			t.Errorf("Headline = %q, want the OK prefix stripped", ans.Headline)
+		}
+		if anyContains(warnings, "starts with OK") {
+			t.Errorf("warnings = %v, want no 'starts with OK' warning (that one is findings-only)", warnings)
+		}
+		if !anyContains(warnings, "stripped") {
+			t.Errorf("warnings = %v, want a warning about the strip", warnings)
+		}
+	})
+
+	t.Run("outcome ok: headline untouched", func(t *testing.T) {
+		raw := withOKHeadline(answerJSON(""))
+		ans, warnings, _, ok := ParseAndValidate(raw, sampleFacts())
+		if !ok {
+			t.Fatalf("ParseAndValidate: got unparsed, want success")
+		}
+		if ans.Headline != "OK — reached the goal; one note" {
+			t.Errorf("Headline = %q, want unchanged (outcome is ok)", ans.Headline)
+		}
+		if anyContains(warnings, "stripped") {
+			t.Errorf("warnings = %v, want no strip warning on a clean ok run", warnings)
+		}
+	})
 }
 
 // TestParseAndValidate_RepairsOwnerConfusedWithSurfaceKind pins §7.5: a
@@ -708,7 +788,7 @@ func TestParseAndValidate_RepairsOwnerConfusedWithSurfaceKind(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.owner, func(t *testing.T) {
-			ans, warnings, ok := ParseAndValidate(answerJSON(findingJSON(findingSpec{Owner: tc.owner, EvidenceStep: 2, Quote: "PREFLIGHT_FAILED"})), sampleFacts())
+			ans, warnings, _, ok := ParseAndValidate(answerJSON(findingJSON(findingSpec{Owner: tc.owner, EvidenceStep: 2, Quote: "PREFLIGHT_FAILED"})), sampleFacts())
 			if !ok {
 				t.Fatalf("ParseAndValidate: got unparsed, want the finding repaired or dropped")
 			}

@@ -10,6 +10,12 @@ var goldenCreatedAt = time.Date(2026, 9, 11, 10, 56, 30, 0, time.UTC)
 // TestRender_Golden pins render.go's plain-text rendering (§7.5's shape,
 // stable and golden-tested) for each of the observation's four rendered
 // shapes: ok with findings, ok with no findings, unparsed, and error.
+//
+// Golden deliberately updated (FIX2.md round 2, "two wording items the API
+// slice could not reach"): the header line's quote count now reads
+// "quotes found N/M" (N verified, M total) instead of "N of M quotes
+// unverified" — this changes every case's header, format 1 and format 2
+// alike, since Render's header is common to both.
 func TestRender_Golden(t *testing.T) {
 	cases := []struct {
 		name string
@@ -37,7 +43,7 @@ func TestRender_Golden(t *testing.T) {
 				},
 				SelfReview: SelfReview{Accurate: "partly", Note: "claims success but liveness check failed"},
 			},
-			want: "Observer · claude-sonnet-5 · 2026-09-11T10:56Z · 1 of 2 quotes unverified\n" +
+			want: "Observer · claude-sonnet-5 · 2026-09-11T10:56Z · quotes found 1/2\n" +
 				"Agent fixed the build but skipped the liveness check.\n" +
 				"Goal: partly — service builds but never answers HTTP\n" +
 				"Checks: agree with verdict failed\n" +
@@ -74,7 +80,7 @@ func TestRender_Golden(t *testing.T) {
 				},
 				SelfReview: SelfReview{Accurate: "no"},
 			},
-			want: "Observer · claude-sonnet-5 · 2026-09-11T10:56Z · 0 of 1 quotes unverified\n" +
+			want: "Observer · claude-sonnet-5 · 2026-09-11T10:56Z · quotes found 1/1\n" +
 				"Agent misread multi-line platform state.\n" +
 				"Goal: no — agent never noticed the failed service\n" +
 				"Checks: agree with verdict failed\n" +
@@ -95,7 +101,7 @@ func TestRender_Golden(t *testing.T) {
 				Findings:   nil,
 				SelfReview: SelfReview{Accurate: "yes"},
 			},
-			want: "Observer · claude-sonnet-5 · 2026-09-11T10:56Z · 0 of 0 quotes unverified\n" +
+			want: "Observer · claude-sonnet-5 · 2026-09-11T10:56Z · quotes found 0/0\n" +
 				"Clean run: agent reached the goal with no friction.\n" +
 				"Goal: yes — service healthy\n" +
 				"Checks: agree with verdict passed\n" +
@@ -108,7 +114,7 @@ func TestRender_Golden(t *testing.T) {
 				Model: "claude-sonnet-5", CreatedAt: goldenCreatedAt, Status: statusUnparsed,
 				Raw: "the agent did fine overall, nothing structured to report",
 			},
-			want: "Observer · claude-sonnet-5 · 2026-09-11T10:56Z · 0 of 0 quotes unverified\n" +
+			want: "Observer · claude-sonnet-5 · 2026-09-11T10:56Z · quotes found 0/0\n" +
 				"Observer answer could not be parsed\n" +
 				"the agent did fine overall, nothing structured to report\n",
 		},
@@ -118,7 +124,7 @@ func TestRender_Golden(t *testing.T) {
 				Model: "claude-sonnet-5", CreatedAt: goldenCreatedAt, Status: statusError,
 				Error: "observer timed out after 5m0s",
 			},
-			want: "Observer · claude-sonnet-5 · 2026-09-11T10:56Z · 0 of 0 quotes unverified\n" +
+			want: "Observer · claude-sonnet-5 · 2026-09-11T10:56Z · quotes found 0/0\n" +
 				"Observer failed: observer timed out after 5m0s\n",
 		},
 	}
@@ -174,7 +180,7 @@ func TestRender_Format2Golden(t *testing.T) {
 				SelfReview: SelfReview{Accurate: "yes"},
 				Warnings:   []string{"dropped judged check \"no_such_check\": not a failed or blocked check of this run"},
 			},
-			want: "Observer · claude-sonnet-5 · 2026-09-11T10:56Z · 0 of 1 quotes unverified\n" +
+			want: "Observer · claude-sonnet-5 · 2026-09-11T10:56Z · quotes found 1/1\n" +
 				"Outcome: problem\n" +
 				"Agent called the forbidden override on zerops_import.\n" +
 				"Task: diagnose and fix the failing api service\n" +
@@ -184,8 +190,8 @@ func TestRender_Format2Golden(t *testing.T) {
 				"Ending: finished\n" +
 				"Goal: no — the service never became healthy\n" +
 				"Checks: agree with verdict failed\n" +
-				"Judged checks:\n" +
-				"  liveness/api/marker: correct — the probe genuinely never found the marker\n" +
+				"Verdict right:\n" +
+				"  ✓ correct liveness/api/marker — the probe genuinely never found the marker\n" +
 				"Findings:\n" +
 				"1. [high · agent · tool:zerops_import] called forbidden override despite scenario rule\n" +
 				"   The agent called zerops_import with override=true, which the scenario forbids.\n" +
@@ -213,7 +219,7 @@ func TestRender_Format2Golden(t *testing.T) {
 				Checks:     Checks{Verdict: "passed", Agree: true},
 				SelfReview: SelfReview{Accurate: "yes"},
 			},
-			want: "Observer · claude-sonnet-5 · 2026-09-11T10:56Z · 0 of 0 quotes unverified\n" +
+			want: "Observer · claude-sonnet-5 · 2026-09-11T10:56Z · quotes found 0/0\n" +
 				"Outcome: ok\n" +
 				"OK — agent reached the goal with no friction.\n" +
 				"Task: diagnose the service\n" +
