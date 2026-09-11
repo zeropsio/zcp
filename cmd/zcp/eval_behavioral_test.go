@@ -171,6 +171,68 @@ func TestExecutionBinding_ParseFlags_AllOrNothing(t *testing.T) {
 	})
 }
 
+// TestBehavioralAccepted_RetrospectiveErrors_ExecutionOk pins finding E6:
+// behavioralAccepted derives acceptance from eval.ExecutionDimension (the
+// same computation printBehavioralDimensions prints as "Execution: "), never
+// from raw r.Error — a retrospective failure (turn exhaustion or any other
+// retrospective-phase error, FM-13) must read Execution: ok, and exit
+// acceptance follows the task verdict rather than being independently
+// rejected on the raw error string.
+func TestBehavioralAccepted_RetrospectiveErrors_ExecutionOk(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		result     *eval.BehavioralResult
+		wantOK     bool
+		wantReason string
+	}{
+		{
+			name:   "observe mode, retrospective turn exhaustion",
+			result: &eval.BehavioralResult{Error: "retrospective: missing: claude exit: exit status 1"},
+			wantOK: true,
+		},
+		{
+			name:   "observe mode, retrospective other failure",
+			result: &eval.BehavioralResult{Error: "retrospective: claude exit: exit status 1"},
+			wantOK: true,
+		},
+		{
+			name: "required mode, retrospective failure but task passed",
+			result: &eval.BehavioralResult{
+				Error:   "retrospective: missing: claude exit: exit status 1",
+				Task:    &eval.TaskOutcome{Mode: eval.VerificationRequired, Result: eval.CheckPassed},
+				TaskEnd: &eval.TaskEndEvidence{Persisted: true},
+			},
+			wantOK: true,
+		},
+		{
+			name: "required mode, retrospective failure and task failed",
+			result: &eval.BehavioralResult{
+				Error:   "retrospective: missing: claude exit: exit status 1",
+				Task:    &eval.TaskOutcome{Mode: eval.VerificationRequired, Result: eval.CheckFailed},
+				TaskEnd: &eval.TaskEndEvidence{Persisted: true},
+			},
+			wantOK:     false,
+			wantReason: "task: required result failed",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if execution := eval.ExecutionDimension(tc.result); execution != "ok" {
+				t.Fatalf("ExecutionDimension = %q, want ok", execution)
+			}
+			ok, reason := behavioralAccepted(tc.result)
+			if ok != tc.wantOK {
+				t.Errorf("behavioralAccepted ok = %v, want %v (reason %q)", ok, tc.wantOK, reason)
+			}
+			if tc.wantReason != "" && reason != tc.wantReason {
+				t.Errorf("reason = %q, want %q", reason, tc.wantReason)
+			}
+		})
+	}
+}
+
 // TestExecutionBinding_AllRefusesDirAndRunIDFlags pins that `behavioral all`
 // refuses --work-dir/--results-dir/--run-id as it refuses the binding flags,
 // instead of accepting and silently ignoring them.

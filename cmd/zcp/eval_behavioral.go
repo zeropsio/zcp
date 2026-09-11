@@ -354,9 +354,16 @@ func printBehavioralDimensions(r *eval.BehavioralResult) {
 // §10.1 "CLI acceptance"): observe mode accepts on execution success alone;
 // required mode also needs a passed task result with persisted task-end
 // evidence. reason names the failing dimension for the caller to print.
+//
+// Finding E6: acceptance is derived from eval.ExecutionDimension(r) — the
+// same computation printBehavioralDimensions prints as "Execution: " — never
+// from the raw r.Error. A retrospective failure (FM-13) leaves r.Error
+// non-empty but ExecutionDimension "ok"; deciding straight off r.Error made
+// the exit code disagree with the printed Execution line on exactly that
+// case.
 func behavioralAccepted(r *eval.BehavioralResult) (ok bool, reason string) {
-	if r.Error != "" {
-		return false, fmt.Sprintf("execution: %s", r.Error)
+	if execution := eval.ExecutionDimension(r); execution != "ok" {
+		return false, execution
 	}
 	if r.Task == nil || r.Task.Mode != eval.VerificationRequired {
 		return true, ""

@@ -996,11 +996,21 @@ func (r *Runner) spawnClaudeResume(ctx context.Context, sessionID, retroPrompt, 
 	return r.execClaude(ctx, args, logFile, false, captureScope)
 }
 
-// retrospectiveMissingErrorPrefix marks a meta.json error string as "the
-// retrospective self-review could not be obtained" rather than "the run's
-// execution failed" — ExecutionDimension reads this prefix to keep the farm
-// `execution` dimension `ok` (docs/spec-eval-farm.md §2.3 FM-13; the task
-// verdict is already frozen by the time the retrospective runs, §10.2).
+// retrospectiveErrorPrefix marks a meta.json error string as originating
+// from the retrospective phase — spawn failure or turn exhaustion alike —
+// rather than "the run's execution failed". ExecutionDimension keys off
+// this broader prefix (finding E6: FM-13 says ANY retrospective failure
+// never changes the Execution line, not just the turn-exhaustion case
+// retrospectiveMissingErrorPrefix names) so the task verdict, already
+// frozen by the time the retrospective runs (§10.2), is never overridden by
+// how that optional evidence-gathering step went (docs/spec-eval-farm.md
+// §2.3 FM-13).
+const retrospectiveErrorPrefix = "retrospective:"
+
+// retrospectiveMissingErrorPrefix marks a meta.json error string specifically
+// as "the retrospective self-review could not be obtained because the model
+// exhausted its turn cap" — a retrospectiveErrorPrefix-prefixed string, so
+// ExecutionDimension treats it the same as any other retrospective failure.
 const retrospectiveMissingErrorPrefix = "retrospective: missing:"
 
 // retrospectiveExhaustedTurns scans a retrospective stream-json log for a
@@ -1034,13 +1044,14 @@ func retrospectiveExhaustedTurns(logFile string) bool {
 
 // ExecutionDimension derives the CLI/farm "execution" acceptance dimension
 // (docs/spec-testing-architecture.md §10.1) from a BehavioralResult's error
-// field. A retrospective that ran out of turns is optional evidence — its
-// self-review is missing, but the task verdict was already frozen before the
-// retrospective started, so it must never flip execution to an error
-// (docs/spec-eval-farm.md §2.3 FM-13). Every other recorded error keeps
-// meaning "the run's execution failed".
+// field. The retrospective — turn exhaustion, a spawn error, any failure of
+// that phase — is optional evidence gathered after the task verdict is
+// already frozen, so it must never flip execution to an error (finding E6,
+// docs/spec-eval-farm.md §2.3 FM-13: ANY retrospective failure, not just
+// turn exhaustion). Every other recorded error keeps meaning "the run's
+// execution failed".
 func ExecutionDimension(r *BehavioralResult) string {
-	if r.Error == "" || strings.HasPrefix(r.Error, retrospectiveMissingErrorPrefix) {
+	if r.Error == "" || strings.HasPrefix(r.Error, retrospectiveErrorPrefix) {
 		return "ok"
 	}
 	return "error: " + r.Error
