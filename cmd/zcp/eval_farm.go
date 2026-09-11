@@ -34,6 +34,7 @@ const (
 	farmVerbReport   = "report"
 	farmVerbCoverage = "coverage"
 	farmVerbGC       = "gc"
+	farmVerbObserve  = "observe"
 
 	// flagCandidate names the file under test — shared with
 	// eval_behavioral.go's own --candidate execution-binding flag (a
@@ -76,6 +77,8 @@ func runEvalFarm(args []string) int {
 		return runFarmStatus(args[1:])
 	case farmVerbGC:
 		return runFarmGC(args[1:])
+	case farmVerbObserve:
+		return runFarmObserve(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown farm subcommand: %s\n", args[0])
 		printEvalFarmUsage()
@@ -506,5 +509,7 @@ Commands (ZCP_AUTHORING=1 required):
   status   [<batch>]                           Recompute batch/run state from the bucket and the project list
   report   [--evaluator-sha256 <sha>] <dir>    Report over a pulled batch or run dir (no network)
   coverage <dir> [--since <batch>]           Derive (scenario, step, decision) coverage cells from pulled bundles
-  gc       [--older-than <duration>] [--yes]   Delete zcp-farm-* projects no running batch references`)
+  gc       [--older-than <duration>] [--yes]   Delete zcp-farm-* projects no running batch references
+  observe  <run-dir> [--model <m>] [--claude <path>]   Advisory evaluation of a pulled run; writes
+                                               <run-dir>/observer/<obsId>.json, prints the rendering, never touches the bucket`)
 }
