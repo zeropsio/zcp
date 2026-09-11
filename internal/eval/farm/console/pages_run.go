@@ -5,26 +5,187 @@ package console
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/eval/farm"
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
 
-// runPageData is GET /r/<runId> (§8.3 FM-51).
+// runPageData is GET /r/<runId> (§8.3 FM-51's seven-part page).
 type runPageData struct {
-	Meta              pageMeta
-	Row               RunRow
-	Steps             []observer.Step
-	TaskPrompt        string
-	SelfReview        string
-	OlderObservations []observer.Observation
-	EvidenceSteps     []int
-	UnverifiedQuotes  int
-	TotalQuotes       int
-	ModelOptions      []string
+	Meta pageMeta
+	Row  RunRow
+
+	// VerdictDisplay/VerdictReasonText are part 1's verdict badge and its
+	// reason (runVerdictDisplay/runVerdictReasonText): the "stalled"
+	// sentinel substituted for a running row past its budget, plus a
+	// reason line for blocked/not-started/running/stalled.
+	VerdictDisplay    string
+	VerdictReasonText string
+
+	// HasCard is true iff DisplayedObs is non-nil with status "ok" — the
+	// only case with an outcome/headline/story/findings to show (§7.5:
+	// "none when unobserved or failed"). DisplayedObs is row.Observation
+	// unless ?obs= names a different one of the run's own observations
+	// (§8.3: "renders that stored version in the card"); ViewingOlder
+	// marks that case for the "showing an earlier assessment" note.
+	HasCard      bool
+	DisplayedObs *observer.Observation
+	ViewingOlder bool
+	OutcomeText  string
+
+	Disputed     bool
+	DisputedWhy  string
+	DisputedHref string
+
+	Findings         []findingView
+	UnverifiedQuotes int
+	TotalQuotes      int
+
+	// WhyNoCard/RawAnswer/LastAgentMessage/ToolErrors render in HasCard's
+	// place: the §8.8 reason DisplayedObs has no usable assessment, the
+	// unparsed answer's capped preview, and "How the run ended" (last
+	// agent message, tool errors with step links).
+	WhyNoCard        string
+	RawAnswer        string
+	LastAgentMessage string
+	ToolErrors       []toolErrorView
+
+	CheckRows []checkRowView
+
+	LiveStatusText      string
+	PreStoreFailureText string
+	ShowAssessForm      bool
+	ModelOptions        []modelOptionView
+	ReassessButtonLabel string
+
+	OlderObservations []olderObsView
+
+	Steps        []stepView
+	StepsError   string
+	StepsFilters FilterBarView
+
+	TaskPrompt  string
+	SelfReview  string
+	RecordError string
+}
+
+// findingView is one Findings-section entry (§8.3 part 4): N is its
+// 1-based display index ("F<n>", id="f<n>") — computed once here so the
+// template never needs template-side arithmetic.
+type findingView struct {
+	N int
+	observer.Finding
+}
+
+// checkRowView is one Failed-and-blocked-checks row (§8.3 part 5): the
+// check itself plus the observer's judgement of it, when the current
+// observation judged it (§7.5 checks.judged).
+type checkRowView struct {
+	FailedCheck
+	Judged *observer.JudgedCheck
+	// Anchor is this row's HTML fragment id (checkAnchor) — precomputed
+	// once so every href="#..." pointing at this row and the row's own
+	// id="..." always agree.
+	Anchor string
+}
+
+// checkAnchor turns a check id into a safe HTML fragment identifier. A
+// check id can embed a "/" (e.g. "decision/x") — html/template's
+// contextual autoescaping percent-encodes that inside an href="#..." URL
+// context but leaves it untouched in a plain id="..." attribute, so the
+// same raw id used in both places would mismatch (TestPages_
+// RunInPageLinksResolve). Every character outside [A-Za-z0-9_-] maps to
+// "-", so an anchor built with this and used on both sides always agrees.
+func checkAnchor(id string) string {
+	var b strings.Builder
+	b.WriteString("check-")
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	return b.String()
+}
+
+// olderObsView is one "earlier assessments" row: its own outcome/headline
+// or failure text (never empty, §8.8) and the ?obs= link that renders it.
+type olderObsView struct {
+	ObsID     string
+	Model     string
+	CreatedAt time.Time
+	Outcome   string
+	Text      string
+	Href      string
+}
+
+// toolErrorView is one "How the run ended" tool-error line.
+type toolErrorView struct {
+	Step   int
+	Tool   string
+	Result string
+}
+
+// stepCitation is one finding's evidence entry rendered inside the step it
+// cites (§8.3 part 6's "Cited by F<n>" callout).
+type stepCitation struct {
+	FindingN int
+	Title    string
+	Quote    string
+}
+
+// stepView is one Steps-section row: the record step plus its tool
+// result's JSON escapes decoded (§8.3: "tool results decoded") and the
+// findings citing it.
+type stepView struct {
+	observer.Step
+	DecodedResult string
+	Citations     []stepCitation
+}
+
+// modelOptionView is one entry of the Assess form's model picker.
+type modelOptionView struct {
+	Value    string
+	Label    string
+	Selected bool
+}
+
+// modelDisplayLabels names the allowlisted models the way the Assess form
+// shows them (review finding: "Sonnet 5 (default)", "Opus 5 (stronger)",
+// "Fable 5.1 (strongest)") — display text only; observer.Models/DefaultModel
+// stay the identity the server actually validates against.
+var modelDisplayLabels = map[string]string{
+	observer.DefaultModel: "Sonnet 5 (default)",
+	"claude-opus-5":       "Opus 5 (stronger)",
+	"claude-fable-5-1":    "Fable 5.1 (strongest)",
+}
+
+func modelLabel(v string) string {
+	if l, ok := modelDisplayLabels[v]; ok {
+		return l
+	}
+	return v
+}
+
+// buildModelOptions renders the picker preselected to preselect (empty
+// defaults to observer.DefaultModel).
+func buildModelOptions(preselect string) []modelOptionView {
+	if preselect == "" {
+		preselect = observer.DefaultModel
+	}
+	out := make([]modelOptionView, 0, len(observer.Models))
+	for _, m := range observer.Models {
+		out = append(out, modelOptionView{Value: m, Label: modelLabel(m), Selected: m == preselect})
+	}
+	return out
 }
 
 func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
@@ -33,6 +194,17 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+
+	q, err := Parse(runStepsListSpec(), r.URL.Query())
+	if err != nil {
+		var qerr *QueryError
+		if !errors.As(err, &qerr) {
+			qerr = &QueryError{}
+		}
+		s.renderBadQuery(w, r, "", qerr)
+		return
+	}
+
 	ctx := r.Context()
 	row, err := loadRunRow(ctx, s.cfg.Store, s.cfg.ObserverDisabled, runID, s.queueState, s.runCache, s.summaryCache)
 	if err != nil {
@@ -40,43 +212,368 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	busy := runQueued(s.queueState, runID)
-	data := runPageData{
-		Meta: s.pageMeta(r, row.Scenario, "", busy),
-		Row:  row, EvidenceSteps: evidenceSteps(row.Observation), ModelOptions: observer.Models,
-	}
-	if row.Observation != nil {
-		data.UnverifiedQuotes = unverifiedQuotes(row.Observation)
-		for _, f := range row.Observation.Findings {
-			data.TotalQuotes += len(f.Evidence)
-		}
-	}
-
-	if row.DoneExists {
-		steps, err := loadSteps(ctx, s.cfg.Store, runID)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		data.Steps = steps
-
-		taskPrompt, selfReview, err := loadRunTexts(ctx, s.cfg.Store, runID)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		data.TaskPrompt = taskPrompt
-		data.SelfReview = selfReview
-	}
-
 	older, err := loadOlderObservations(ctx, s.cfg.Store, runID, row.OlderObsIDs)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	data.OlderObservations = older
+
+	// §8.3/§8.7: ?obs=<obsId> renders that stored version of the run's own
+	// observations (current + older); a missing or foreign obsId is a 404
+	// — never a bare store fetch, so an id from a different run is
+	// rejected exactly like one that never existed.
+	displayedObs := row.Observation
+	viewingOlder := false
+	if q.Obs != "" {
+		obs, found := findObservation(row, older, q.Obs)
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		displayedObs = obs
+		viewingOlder = row.Observation == nil || obs.ObsID != row.Observation.ObsID
+	}
+
+	busy := runQueued(s.queueState, runID)
+	preselectModel := observer.DefaultModel
+	if row.Observation != nil {
+		preselectModel = row.Observation.Model
+	}
+
+	data := runPageData{
+		Meta:                s.pageMeta(r, row.Scenario, "", busy),
+		Row:                 row,
+		VerdictDisplay:      runVerdictDisplay(row),
+		VerdictReasonText:   runVerdictReasonText(row),
+		DisplayedObs:        displayedObs,
+		ViewingOlder:        viewingOlder,
+		OlderObservations:   buildOlderObsViews(runID, older),
+		ModelOptions:        buildModelOptions(preselectModel),
+		ReassessButtonLabel: "Re-assess with " + modelLabel(preselectModel),
+	}
+	data.ShowAssessForm = row.DoneExists && !data.Meta.Observer.Hidden && !busy
+	data.LiveStatusText, data.PreStoreFailureText = s.runLiveStatus(runID)
+
+	var judged []observer.JudgedCheck
+	switch {
+	case displayedObs != nil && displayedObs.Status == observationStatusOK:
+		data.HasCard = true
+		findings := buildFindingViews(displayedObs.Findings)
+		data.Findings = findings
+		data.UnverifiedQuotes = unverifiedQuotes(displayedObs)
+		for _, f := range displayedObs.Findings {
+			data.TotalQuotes += len(f.Evidence)
+		}
+		if computeDisputed(displayedObs) {
+			data.Disputed = true
+			data.DisputedWhy, data.DisputedHref = disputedInfo(displayedObs, findings)
+		}
+		outcome := displayedObs.EffectiveOutcome()
+		if outcome == "" {
+			outcome = outcomeNone
+		}
+		data.OutcomeText = outcome
+		judged = displayedObs.Checks.Judged
+	case viewingOlder && displayedObs != nil:
+		// A specific non-ok observation was asked for by id: say why that
+		// one has no card, not why the run's current state does.
+		data.WhyNoCard = "assessment failed — " + assessmentFailureReason(displayedObs)
+		if displayedObs.Status == observationStatusUnparsed {
+			data.RawAnswer = capRaw(displayedObs.Raw)
+		}
+	default:
+		// row.Observation (nil or failed) — its own §8.8 wording already
+		// distinguishes every case, including "assessment failed — <reason>".
+		data.WhyNoCard = row.ObserverStateText
+		if displayedObs != nil && displayedObs.Status == observationStatusUnparsed {
+			data.RawAnswer = capRaw(displayedObs.Raw)
+		}
+	}
+	data.CheckRows = buildCheckRows(row.FailedChecks, judged)
+
+	if row.DoneExists {
+		rawSteps, stepsErr := loadSteps(ctx, s.cfg.Store, runID)
+		if stepsErr != nil {
+			// §8.3: "a run with no done.json or no task prompt renders the
+			// header and its reason — never a 502" (live bug:
+			// /r/gate5-resume-after-compaction). A corrupt/partial bundle
+			// degrades this section instead of failing the whole page.
+			data.StepsError = "steps unavailable — " + stepsErr.Error()
+		} else {
+			cited := map[int]bool{}
+			for _, n := range evidenceSteps(displayedObs) {
+				cited[n] = true
+			}
+			mode := stepsFilterMode(q)
+			filtered := FilterSteps(rawSteps, mode, cited)
+			data.Steps = buildStepViews(filtered, buildStepCitations(data.Findings))
+			nav := buildListNav("/r/"+runID, runStepsListSpec(), q, r.URL.Query(), stepsFilterCounts(rawSteps, cited), nil, stepsFilterLabeler)
+			data.StepsFilters = nav.Filters
+			if !data.HasCard {
+				data.LastAgentMessage = lastAgentMessageText(rawSteps)
+				data.ToolErrors = toolErrorViews(rawSteps)
+			}
+		}
+
+		taskPrompt, selfReview, textsErr := loadRunTexts(ctx, s.cfg.Store, runID)
+		if textsErr != nil {
+			data.RecordError = "record unavailable — " + textsErr.Error()
+		} else {
+			data.TaskPrompt, data.SelfReview = taskPrompt, selfReview
+		}
+	}
 
 	renderPage(w, "run", data)
+}
+
+// runVerdictDisplay substitutes labels.go's reserved "stalled" sentinel for
+// a running row past its budget grace period (RunRow.Stalled) — the raw
+// Verdict field itself stays verdictRunning (view.go's isStalled doc
+// comment), so every display site (badge class/icon/label/tooltip) must
+// apply this substitution rather than reading Row.Verdict directly.
+func runVerdictDisplay(row RunRow) string {
+	if row.Verdict == verdictRunning && row.Stalled {
+		return verdictStalled
+	}
+	return row.Verdict
+}
+
+// runVerdictReasonText is part 1's "with its reason" fact: the resolved
+// per-run detail (verdictReason, for blocked/not-started) when there is
+// one, else the vocabulary's own definition for a state with no per-run
+// detail to show (running, stalled) — never a reason for passed (nothing
+// to explain) or failed (its reason is "Why this verdict", part 2).
+func runVerdictReasonText(row RunRow) string {
+	if row.VerdictReason != "" {
+		return row.VerdictReason
+	}
+	switch runVerdictDisplay(row) {
+	case verdictRunning, verdictStalled:
+		return vocabTooltip(verdictVocab, runVerdictDisplay(row))
+	default:
+		return ""
+	}
+}
+
+// findObservation resolves ?obs=<obsId> against runID's own observations —
+// the current one plus every older version, already loaded for the
+// "earlier assessments" list — never a bare store fetch, so an id
+// belonging to a different run is rejected exactly like one that never
+// existed (§8.3: "a missing or foreign obsId → 404").
+func findObservation(row RunRow, older []observer.Observation, obsID string) (*observer.Observation, bool) {
+	if row.Observation != nil && row.Observation.ObsID == obsID {
+		return row.Observation, true
+	}
+	for i := range older {
+		if older[i].ObsID == obsID {
+			return &older[i], true
+		}
+	}
+	return nil, false
+}
+
+func buildFindingViews(findings []observer.Finding) []findingView {
+	out := make([]findingView, len(findings))
+	for i, f := range findings {
+		out[i] = findingView{N: i + 1, Finding: f}
+	}
+	return out
+}
+
+// disputedInfo implements the review finding "the disputed line linking to
+// the explaining finding or the judged check's row": the first
+// evaluator-owned finding when there is one (§7.5: the finding that says a
+// check is wrong or missing), else the first incorrect judged check, else —
+// format 1, which carries neither — the stored checks.why with no link.
+func disputedInfo(obs *observer.Observation, findings []findingView) (why, href string) {
+	for _, f := range findings {
+		if f.Owner == "evaluator" {
+			return f.What, fmt.Sprintf("#f%d", f.N)
+		}
+	}
+	for _, j := range obs.Checks.Judged {
+		if !j.Correct {
+			return j.Why, "#" + checkAnchor(j.ID)
+		}
+	}
+	return obs.Checks.Why, ""
+}
+
+func buildCheckRows(failed []FailedCheck, judged []observer.JudgedCheck) []checkRowView {
+	byID := make(map[string]*observer.JudgedCheck, len(judged))
+	for i := range judged {
+		byID[judged[i].ID] = &judged[i]
+	}
+	out := make([]checkRowView, len(failed))
+	for i, c := range failed {
+		out[i] = checkRowView{FailedCheck: c, Judged: byID[c.ID], Anchor: checkAnchor(c.ID)}
+	}
+	return out
+}
+
+// buildOlderObsViews renders row.OlderObsIDs' full documents (already
+// loaded) as the "earlier assessments" list: outcome and headline, or —
+// review finding — the failure text in its place, never an empty line.
+func buildOlderObsViews(runID string, older []observer.Observation) []olderObsView {
+	out := make([]olderObsView, len(older))
+	for i := range older {
+		o := &older[i]
+		text := o.Headline
+		if o.Status != observationStatusOK {
+			text = assessmentFailureReason(o)
+		}
+		outcome := o.EffectiveOutcome()
+		if outcome == "" {
+			outcome = outcomeNone
+		}
+		out[i] = olderObsView{
+			ObsID: o.ObsID, Model: o.Model, CreatedAt: o.CreatedAt,
+			Outcome: outcome, Text: text,
+			Href: "/r/" + runID + "?obs=" + url.QueryEscape(o.ObsID),
+		}
+	}
+	return out
+}
+
+// runLiveStatus implements §8.5's run-card live text: a queued/running job
+// ("Assessing with <model> — started <time>, usually 1–2 min; the result
+// replaces the one below"), else the last pre-store failure ("The attempt
+// at <time> failed before anything was stored: <error>. Re-assess to
+// retry."), else neither. A queued job has no StartedAt yet, so it shows
+// its EnqueuedAt instead.
+func (s *Server) runLiveStatus(runID string) (live, failure string) {
+	if s.cfg.Queue == nil {
+		return "", ""
+	}
+	if info, ok := s.cfg.Queue.Job(runID); ok {
+		t := info.StartedAt
+		if t.IsZero() {
+			t = info.EnqueuedAt
+		}
+		return fmt.Sprintf("Assessing with %s — started %s, usually 1–2 min; the result replaces the one below.", info.Model, fmtTime(t)), ""
+	}
+	if f, ok := s.cfg.Queue.LastFailure(runID); ok {
+		return "", fmt.Sprintf("The attempt at %s failed before anything was stored: %s. Re-assess to retry.", fmtTime(f.At), f.Err)
+	}
+	return "", ""
+}
+
+const lastAgentMessageCap = 300
+
+// lastAgentMessageText is "How the run ended"'s own text: the last
+// kind=agent step, capped at 300 chars (§8.3).
+func lastAgentMessageText(steps []observer.Step) string {
+	for i := len(steps) - 1; i >= 0; i-- {
+		if steps[i].Kind == observer.StepAgent {
+			return capRunes(steps[i].Text, lastAgentMessageCap)
+		}
+	}
+	return ""
+}
+
+func capRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
+}
+
+// toolErrorViews is "How the run ended"'s tool-error list: every kind=tool
+// step whose result was an error, result decoded like every other tool
+// result on this page (§8.3).
+func toolErrorViews(steps []observer.Step) []toolErrorView {
+	var out []toolErrorView
+	for _, st := range steps {
+		if st.Kind == observer.StepTool && st.ToolIsError {
+			out = append(out, toolErrorView{Step: st.N, Tool: st.ToolName, Result: observer.DecodeJSONEscapes(st.ToolResultText)})
+		}
+	}
+	return out
+}
+
+// buildStepCitations maps a step number to every finding whose evidence
+// cites it (§8.3 part 6's "Cited by F<n>" callout) — step 0 (the CHECKS
+// citation) is never a real step, so it is excluded here.
+func buildStepCitations(findings []findingView) map[int][]stepCitation {
+	m := map[int][]stepCitation{}
+	for _, f := range findings {
+		for _, e := range f.Evidence {
+			if e.Step <= 0 {
+				continue
+			}
+			m[e.Step] = append(m[e.Step], stepCitation{FindingN: f.N, Title: f.Title, Quote: e.Quote})
+		}
+	}
+	return m
+}
+
+func buildStepViews(steps []observer.Step, citations map[int][]stepCitation) []stepView {
+	out := make([]stepView, len(steps))
+	for i, st := range steps {
+		out[i] = stepView{Step: st, DecodedResult: observer.DecodeJSONEscapes(st.ToolResultText), Citations: citations[st.N]}
+	}
+	return out
+}
+
+// stepsFilterMode reads the run-steps list's one closed filter (§8.7:
+// "steps=all|cited|errors") — Parse's Defaults already guarantee a value.
+func stepsFilterMode(q Query) string {
+	if v := q.Closed["steps"]; len(v) > 0 {
+		return v[0]
+	}
+	return filterAll
+}
+
+// stepsAllowedValues returns the steps= filter's own allowed values
+// (view.go's runStepsListSpec, in its own declared order: all, cited,
+// errors) — read from that spec rather than repeated here as literals, so
+// "cited"/"errors" each stay at their one declaration site (goconst).
+func stepsAllowedValues() []string {
+	cf, _ := runStepsListSpec().closedFilter("steps")
+	return cf.Allowed
+}
+
+// stepsFilterDisplay pairs stepsAllowedValues()'s values with this page's
+// display text, by position — index 0 is "all", 1 "cited", 2 "errors" per
+// that spec's own order, never compared against a repeated literal here.
+var stepsFilterDisplay = []struct{ Label, Title string }{
+	{"All", ""},
+	{"Cited", "steps some finding's evidence cites"},
+	{"Errors", "tool steps whose result was an error"},
+}
+
+func stepsFilterLabelFor(v string) (label, title string) {
+	for i, a := range stepsAllowedValues() {
+		if a != v {
+			continue
+		}
+		if i < len(stepsFilterDisplay) {
+			return stepsFilterDisplay[i].Label, stepsFilterDisplay[i].Title
+		}
+		return v, ""
+	}
+	return v, ""
+}
+
+// stepsFilterCounts computes the steps= filter bar's per-option counts
+// (§8.7: "each filter option shows its count") over the run's own, full
+// step list — never the already-filtered one.
+func stepsFilterCounts(steps []observer.Step, cited map[int]bool) map[string]OptionCounts {
+	oc := make(OptionCounts, len(stepsAllowedValues()))
+	for _, v := range stepsAllowedValues() {
+		oc[v] = len(FilterSteps(steps, v, cited))
+	}
+	return map[string]OptionCounts{"steps": oc}
+}
+
+// stepsFilterLabeler names the steps= filter's own group and options for
+// buildListNav (listnav.go) — the run page's only list (§8.7 table's "run
+// steps" row).
+var stepsFilterLabeler = listLabeler{
+	Param: func(string) string { return "Steps" },
+	Value: func(_, v string) string { label, _ := stepsFilterLabelFor(v); return label },
+	Title: func(_, v string) string { _, title := stepsFilterLabelFor(v); return title },
 }
 
 // loadRunTexts reads runId's task prompt and self-review straight from its

@@ -1,66 +1,108 @@
 {{define "run"}}{{template "head" .Meta}}
-<nav class="crumbs"><a href="/">Batches</a><span class="sep">/</span><a href="/b/{{.Row.Batch}}">{{.Row.Batch}}</a><span class="sep">/</span>{{.Row.Scenario}}</nav>
+<nav class="crumbs"><a href="/">Overview</a><span class="sep">/</span><a href="/b/{{.Row.Batch}}">{{.Row.Batch}}</a><span class="sep">/</span>{{.Row.Scenario}}</nav>
 <div class="page-head run-head">
 <h1>{{.Row.Scenario}}</h1>
-<span class="{{verdictClass .Row.Verdict}} big">{{verdictIcon .Row.Verdict}} {{.Row.Verdict}}</span>
+<span class="{{verdictClass .VerdictDisplay}} big" title="{{verdictTooltip .VerdictDisplay}}">{{verdictIcon .VerdictDisplay}} {{verdictLabel .VerdictDisplay}}</span>
 </div>
-<p class="muted">{{fmtTime .Row.StartedAt}} · {{fmtDuration .Row.DurationSec}} · {{fmtCost .Row.CostUsd}}{{if .Steps}} · {{len .Steps}} steps{{end}}</p>
+{{if .VerdictReasonText}}<p class="muted">{{.VerdictReasonText}}</p>{{end}}
+<p class="muted">{{fmtTime .Row.StartedAt}} · {{fmtDuration .Row.DurationSec}} · {{if .Row.CostKnown}}{{fmtCost .Row.CostUsd}}{{else}}—{{end}}{{if .Row.StepCount}} · {{.Row.StepCount}} steps{{end}}</p>
+
+{{if .Row.DoneExists}}
+<h2>Why this verdict</h2>
+{{if .CheckRows}}{{range .CheckRows}}<p>Failed because: <a href="#{{.Anchor}}"><code>{{.ID}}</code></a> — expected {{.Expected}}, got {{.Observed}}.</p>{{end}}
+{{else if .Row.VerdictReason}}<p>{{.Row.VerdictReason}}</p>
+{{else}}<p>All checks passed.</p>
+{{end}}
+{{end}}
 
 <section class="card observer" id="observation">
-<div class="card-label">Observer</div>
-{{with .Row.Observation}}
-{{if or (eq .Status "error") (eq .Status "unparsed")}}
-<p class="headline failure">{{if eq .Status "error"}}Observer failed: {{.Error}}{{else}}Observer answer could not be parsed{{end}}</p>
-{{if .Raw}}<details class="more"><summary>Raw answer</summary><pre>{{capRaw .Raw}}</pre></details>{{end}}
-{{else}}
-<p class="headline">{{.Headline}}</p>
+<div class="card-label">Assessment</div>
+{{if .HasCard}}
+<span class="{{assessmentOutcomeClass .OutcomeText}}">{{assessmentOutcomeLabel .OutcomeText}}</span>
+<p class="headline">{{.DisplayedObs.Headline}}</p>
+{{if .ViewingOlder}}<p class="muted small">Showing an earlier assessment. <a href="/r/{{.Row.RunID}}">View the current one</a>.</p>{{end}}
+{{if .Disputed}}<p class="callout callout-warn"><span class="disputed-marker">disputed</span> The observer thinks a check is wrong — this verdict may not be fair: {{.DisputedWhy}}{{if .DisputedHref}} <a href="{{.DisputedHref}}">details</a>{{end}}</p>{{end}}
+
+{{with .DisplayedObs.Story}}
+<dl class="story">
+<dt>Task</dt><dd>{{.Task}}</dd>
+<dt>Expected</dt><dd>{{.Expected}}</dd>
+<dt>Did</dt><dd>{{.Did}}</dd>
+{{if .Stuck}}<dt>Stuck</dt><dd>{{if and (gt .Stuck.From 0) (le .Stuck.To $.Row.StepCount)}}Steps <a href="#s{{.Stuck.From}}">#{{.Stuck.From}}</a>–<a href="#s{{.Stuck.To}}">#{{.Stuck.To}}</a>: {{end}}{{.Stuck.What}}</dd>{{end}}
+<dt>Ending</dt><dd>{{.Ending}}</dd>
+</dl>
+{{end}}
+
 <div class="assess-grid">
-<div><span class="k">Goal reached</span><span class="pill pill-{{.Goal.Reached}}">{{.Goal.Reached}}</span><p>{{.Goal.Why}}</p></div>
-<div><span class="k">Deterministic checks</span><span class="pill {{if .Checks.Agree}}pill-yes{{else}}pill-no{{end}}">{{if .Checks.Agree}}agree{{else}}disagree{{end}}</span><p>{{.Checks.Why}}</p></div>
-<div><span class="k">Agent's self-review</span><span class="pill pill-{{.SelfReview.Accurate}}">{{.SelfReview.Accurate}}</span><p>{{.SelfReview.Note}}</p></div>
+<div><span class="k">Goal reached</span><span class="pill pill-{{.DisplayedObs.Goal.Reached}}">{{.DisplayedObs.Goal.Reached}}</span><p>{{.DisplayedObs.Goal.Why}}</p></div>
+<div><span class="k">Verdict right</span>{{if .DisplayedObs.Checks.Judged}}{{range .DisplayedObs.Checks.Judged}}<span class="pill {{if .Correct}}pill-yes{{else}}pill-no{{end}}" title="{{.Why}}"><code>{{.ID}}</code></span> {{end}}{{else}}<span class="pill {{if .DisplayedObs.Checks.Agree}}pill-yes{{else}}pill-no{{end}}">{{if .DisplayedObs.Checks.Agree}}yes{{else}}no{{end}}</span>{{if .DisplayedObs.Checks.Why}}<p>{{.DisplayedObs.Checks.Why}}</p>{{end}}{{end}}</div>
+<div><span class="k">Self-review honest</span><span class="pill pill-{{.DisplayedObs.SelfReview.Accurate}}">{{.DisplayedObs.SelfReview.Accurate}}</span><p>{{.DisplayedObs.SelfReview.Note}}</p></div>
 </div>
-<p class="muted small"><span title="observation {{.ObsID}}">{{.Model}}</span> · {{fmtTime .CreatedAt}} · {{if $.UnverifiedQuotes}}{{$.UnverifiedQuotes}} of {{$.TotalQuotes}} quotes unverified{{else}}all {{$.TotalQuotes}} quotes verified{{end}}</p>
+
+{{if .Findings}}<p class="muted small">Findings:{{range .Findings}} <a class="f-badge" href="#f{{.N}}" title="{{.Title}}">F{{.N}}</a> <span class="{{severityClass .Severity}}">{{severityLabel .Severity}}</span> <span class="chip cause-chip">{{causeLabel .Owner}}</span>{{end}}</p>
+{{else}}<p class="muted small">No findings.</p>
 {{end}}
+
+<p class="muted small"><span title="observation {{.DisplayedObs.ObsID}}">{{.DisplayedObs.Model}}</span> · {{fmtTime .DisplayedObs.CreatedAt}} · {{if .UnverifiedQuotes}}{{.UnverifiedQuotes}} of {{.TotalQuotes}} quotes unverified{{else}}all {{.TotalQuotes}} quotes verified{{end}}</p>
+{{if .DisplayedObs.Warnings}}<ul class="plain small">{{range .DisplayedObs.Warnings}}<li class="muted small">⚠ {{.}}</li>{{end}}</ul>{{end}}
+
 {{else}}
-<p class="headline muted">{{if eq .Row.ObserverState "observing"}}Assessment in progress…{{else}}No assessment yet — {{.Row.ObserverState}}.{{end}}</p>
+<p class="headline muted">{{.WhyNoCard}}</p>
+{{if .RawAnswer}}<details class="more"><summary>Raw answer</summary><pre>{{.RawAnswer}}</pre></details>{{end}}
+{{if or .LastAgentMessage .ToolErrors}}<div class="story">
+<div class="k">How the run ended</div>
+{{if .LastAgentMessage}}<p>{{.LastAgentMessage}}</p>{{end}}
+{{if .ToolErrors}}<ul class="plain small">{{range .ToolErrors}}<li><a href="#s{{.Step}}">step {{.Step}}</a> <span class="step-error">{{shortTool .Tool}} failed</span>: {{preview .Result 200}}</li>{{end}}</ul>{{end}}
+</div>{{end}}
 {{end}}
-{{if .Row.DoneExists}}<form class="inline-form" method="post" action="/r/{{.Row.RunID}}/observe">
-<select name="model" aria-label="model">{{range .ModelOptions}}<option value="{{.}}">{{.}}</option>{{end}}</select>
-<button type="submit">{{if .Row.Observation}}Re-assess{{else}}Assess{{end}}</button>
+
+{{if .LiveStatusText}}<p class="callout callout-info">{{.LiveStatusText}}</p>{{end}}
+{{if .PreStoreFailureText}}<p class="callout callout-warn">{{.PreStoreFailureText}}</p>{{end}}
+{{if .ShowAssessForm}}<form class="inline-form" method="post" action="/r/{{.Row.RunID}}/observe">
+<select name="model" aria-label="model">{{range .ModelOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+<button type="submit">{{.ReassessButtonLabel}}</button>
 </form>{{end}}
+
 {{if .OlderObservations}}<details class="more"><summary>Earlier assessments ({{len .OlderObservations}})</summary>
-<ul class="plain">{{range .OlderObservations}}<li><span class="muted small">{{.ObsID}} · {{.Model}} · {{fmtTime .CreatedAt}} · {{.Status}}</span><br>{{.Headline}}</li>{{end}}</ul>
+<ul class="plain">{{range .OlderObservations}}<li><span class="muted small">{{fmtTime .CreatedAt}} · {{.Model}} · <a href="{{.Href}}">view</a></span><br><span class="{{assessmentOutcomeClass .Outcome}}">{{assessmentOutcomeLabel .Outcome}}</span> {{.Text}}</li>{{end}}</ul>
 </details>{{end}}
 </section>
 
-{{with .Row.Observation}}{{if not (or (eq .Status "error") (eq .Status "unparsed"))}}{{if .Findings}}
+{{if .Findings}}
 <h2>Findings <span class="count">{{len .Findings}}</span></h2>
-{{range .Findings}}<article class="finding sev-{{.Severity}}">
-<header class="finding-head"><span class="{{severityClass .Severity}}">{{.Severity}}</span><span class="owner">{{.Owner}}</span></header>
+{{range .Findings}}<article class="finding sev-{{.Severity}}" id="f{{.N}}">
+<header class="finding-head"><span class="f-badge">F{{.N}}</span><span class="{{severityClass .Severity}}">{{severityLabel .Severity}}</span><span class="chip cause-chip">{{causeLabel .Owner}}</span>{{if .Surface}}<code class="chip">{{.Surface}}</code>{{end}}</header>
 <h3>{{.Title}}</h3>
 <p>{{.What}}</p>
-{{range .Evidence}}<blockquote class="quote"><span class="quote-ref">{{if and (eq .Step 0) $.Row.FailedChecks}}<a href="#failed-checks">checks</a>{{else if and (gt .Step 0) (le .Step (len $.Steps))}}<a href="#{{stepAnchor .Step}}">step {{.Step}}</a>{{else}}step {{.Step}}{{end}}<span class="evidence-mark {{if .Verified}}evidence-verified{{else}}evidence-unverified{{end}}">{{verifiedMark .Verified}}</span></span>{{.Quote}}</blockquote>
+{{range .Evidence}}<blockquote class="quote"><span class="quote-ref">{{if eq .Step 0}}{{if $.Row.FailedChecks}}<a href="#failed-checks">checks</a>{{else}}checks{{end}}{{else if and (gt .Step 0) (le .Step $.Row.StepCount)}}<a href="#s{{.Step}}">step {{.Step}}</a>{{else}}step {{.Step}}{{end}}<span class="evidence-mark {{if .Verified}}evidence-verified{{else}}evidence-unverified{{end}}">{{if .Verified}}quote found{{else}}quote not found{{end}}</span></span>{{.Quote}}</blockquote>
 {{end}}
-<dl class="kv"><dt>Where to look</dt><dd>{{.LookAt}}</dd>{{if .Fix}}<dt>Suggested fix</dt><dd>{{.Fix}}</dd>{{end}}</dl>
+{{if .Span}}<p class="muted small">Steps {{.Span.From}}–{{.Span.To}}</p>{{end}}
+<dl class="kv"><dt>Where to look</dt><dd>{{if .Anchor}}<code>{{.Anchor}}</code> — {{end}}{{.LookAt}}</dd>{{if .Fix}}<dt>Fix</dt><dd>{{.Fix}}</dd>{{end}}</dl>
 </article>
 {{end}}
-{{else}}<p class="empty">No findings — the observer saw nothing worth fixing.</p>
-{{end}}{{end}}{{end}}
+{{end}}
 
-{{if .Row.FailedChecks}}<h2 id="failed-checks">Failed checks <span class="count">{{len .Row.FailedChecks}}</span></h2>
+{{if .Row.FailedChecks}}<h2 id="failed-checks">Failed and blocked checks <span class="count">{{len .Row.FailedChecks}}</span></h2>
 <div class="table-wrap"><table>
-<thead><tr><th>Check</th><th>Expected</th><th>Observed</th></tr></thead>
-<tbody>{{range .Row.FailedChecks}}<tr>
-<td><span class="{{verdictClass .Result}}">{{.Result}}</span> <code>{{.ID}}</code><div class="muted small">{{.Source}}</div></td>
+<thead><tr><th>Check</th><th>Expected</th><th>Observed</th><th>Source</th><th>Observer's judgement</th></tr></thead>
+<tbody>{{range .CheckRows}}<tr id="{{.Anchor}}">
+<td><span class="{{verdictClass .Result}}">{{verdictLabel .Result}}</span> <code>{{.ID}}</code></td>
 <td>{{.Expected}}</td>
 <td>{{.Observed}}</td>
+<td class="muted small">{{.Source}}</td>
+<td>{{if .Judged}}<span class="pill {{if .Judged.Correct}}pill-yes{{else}}pill-no{{end}}" title="{{.Judged.Why}}">{{if .Judged.Correct}}correct{{else}}incorrect{{end}}</span>{{else}}<span class="muted small">not judged</span>{{end}}</td>
 </tr>{{end}}</tbody>
 </table></div>
 {{end}}
 
-<h2>Record</h2>
-<details class="section" id="self-review"><summary>Agent's self-review</summary><div class="prose">{{.SelfReview}}</div></details>
-<details class="section" id="task-prompt"><summary>Task prompt</summary><div class="prose">{{.TaskPrompt}}</div></details>
+{{if .Row.DoneExists}}
+<h2 id="record">Record</h2>
+{{if .RecordError}}<p class="muted small">{{.RecordError}}</p>{{end}}
+<details class="section" id="self-review"><summary>Agent's self-review</summary>
+<div class="prose">{{.SelfReview}}</div>
+{{if and .HasCard .DisplayedObs.SelfReview.Note}}<p class="muted small">Observer: <span class="pill pill-{{.DisplayedObs.SelfReview.Accurate}}">{{.DisplayedObs.SelfReview.Accurate}}</span> — {{.DisplayedObs.SelfReview.Note}}</p>{{end}}
+</details>
+<details class="section" id="task-prompt"><summary>Task prompt</summary><div class="prose">{{if .TaskPrompt}}{{.TaskPrompt}}{{else}}(not recorded){{end}}</div></details>
 <details class="section" id="run-meta"><summary>Run metadata &amp; forensic view</summary>
 <dl class="kv">
 <dt>Run</dt><dd><code>{{.Row.RunID}}</code></dd>
@@ -72,14 +114,18 @@ zcp capture ui &lt;dir&gt;/{{.Row.RunID}}/capture</pre></dd>
 </details>
 
 <h2 id="steps">Steps <span class="count">{{len .Steps}}</span></h2>
-{{if .Steps}}<p class="muted small">Empty thinking blocks are hidden; step numbers follow the record.</p>
-<ol class="steps">
-{{range .Steps}}{{if not (and (eq .Kind "thinking") (eq .Text ""))}}<li><details id="{{stepAnchor .N}}" class="step step-{{.Kind}}">
-<summary><span class="step-n">{{.N}}</span><span class="step-kind">{{if eq .Kind "tool"}}{{shortTool .ToolName}}{{else}}{{.Kind}}{{end}}</span>{{if .ToolIsError}}<span class="severity severity-high">error</span>{{end}}<span class="step-preview">{{if eq .Kind "tool"}}{{preview .ToolResultText 160}}{{else}}{{preview .Text 160}}{{end}}</span></summary>
-<div class="step-body">{{if eq .Kind "tool"}}<div class="k">Input</div><pre>{{.ToolInputJSON}}</pre><div class="k">Result{{if .ToolIsError}} (error){{end}}</div><pre>{{.ToolResultText}}</pre>{{else}}<div class="prose">{{.Text}}</div>{{end}}</div>
+{{if .StepsError}}<p class="muted small">{{.StepsError}}</p>
+{{else}}
+{{template "filterbar" .StepsFilters}}
+{{if .Steps}}<ol class="steps">
+{{range .Steps}}{{if not (and (eq .Kind "thinking") (eq .Text ""))}}<li><details id="s{{.N}}" class="step step-{{.Kind}}"{{if .Citations}} open{{end}}>
+<summary><span class="step-n">{{.N}}</span><span class="step-kind">{{if eq .Kind "tool"}}{{shortTool .ToolName}}{{else}}{{.Kind}}{{end}}</span>{{if .ToolIsError}}<span class="step-error">error</span>{{end}}<span class="step-preview">{{if eq .Kind "tool"}}{{preview .DecodedResult 160}}{{else}}{{preview .Text 160}}{{end}}</span></summary>
+<div class="step-body">{{range .Citations}}<p class="cited-by">Cited by <a class="f-badge" href="#f{{.FindingN}}">F{{.FindingN}}</a> — {{.Title}}: "{{.Quote}}" <a href="#f{{.FindingN}}">↩ F{{.FindingN}}</a></p>{{end}}{{if eq .Kind "tool"}}<div class="k">Input</div><pre>{{.ToolInputJSON}}</pre><div class="k">Result{{if .ToolIsError}} (error){{end}}</div><pre>{{.DecodedResult}}</pre>{{else}}<div class="prose">{{.Text}}</div>{{end}}</div>
 </details></li>{{end}}
 {{end}}
 </ol>
-{{else}}<p class="empty">No steps recorded.</p>
+{{else}}<p class="empty">No steps to show.</p>
+{{end}}
+{{end}}
 {{end}}
 {{template "foot"}}{{end}}
