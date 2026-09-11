@@ -1,6 +1,7 @@
 // Package console: RED tests for the code-review fix brief's error-
-// isolation and scan-cost items (5 and 7) — grouped here rather than split
-// across api_test.go/pages_test.go/batches_test.go because they exercise
+// isolation, worker/action race, and scan-cost items (5, 6, and 7) —
+// grouped here rather than split across api_test.go/pages_test.go/
+// batches_test.go/worker_test.go/actions_test.go because they exercise
 // view.go/batches.go's internal read-model functions directly, at the
 // call-counting-fake level the other test files don't otherwise need.
 package console
@@ -9,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -85,6 +87,78 @@ func TestView_StoreListErrorFailsTheWholeListing(t *testing.T) {
 	}
 	if _, err := rowsSinceWindow(context.Background(), store, false, time.Hour, fixedNow(t)(), nil); err == nil {
 		t.Error("rowsSinceWindow with a failing batches/ List returned nil error, want the store error propagated")
+	}
+}
+
+// --- item 6: worker/action races -----------------------------------------
+
+// TestActions_BatchObserveListErrorSkipsRun pins item 6: a List error while
+// checking a run's existing observations skips that run — it is never
+// enqueued on doubt.
+func TestActions_BatchObserveListErrorSkipsRun(t *testing.T) {
+	obs := wkNewRecordingObserve()
+	defer close(obs.release)
+	q := NewQueue(obs.fn)
+	srv, store := newActionServer(t, actionServerOpts{queue: q})
+	h := srv.Handler()
+
+	seedObserveBatch(t, store, "le1", "claude-sonnet-5", "le1-a")
+	store.failListOn("runs/le1-a/observer/", errors.New("bucket unreachable"))
+
+	rr := doBearerPOST(t, h, "/b/le1/observe", url.Values{"model": {"claude-sonnet-5"}})
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("POST /b/le1/observe: got %d, want 202, body=%s", rr.Code, rr.Body.String())
+	}
+	wkExpectNoCall(t, obs.calls)
+}
+
+// TestWorker_ListErrorSkipsRun pins item 6: a List error while checking a
+// run's existing observations skips it — the worker never enqueues on
+// doubt.
+func TestWorker_ListErrorSkipsRun(t *testing.T) {
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	bucket := wkNewFakeBucket()
+	bucket.put("batches/b1/manifest.json", wkManifestJSON(t, now.Add(-time.Hour).Format(time.RFC3339), "claude-sonnet-5", "b1-scenario"))
+	bucket.put("runs/b1-scenario/done.json", []byte(`{}`))
+	bucket.failListOn("runs/b1-scenario/observer/", errors.New("bucket unreachable"))
+
+	obs := wkNewRecordingObserve()
+	defer close(obs.release)
+	q := NewQueue(obs.fn)
+	w := NewWorker(WorkerConfig{Bucket: bucket, Queue: q, Now: wkFixedNow(now)})
+
+	if err := w.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	wkExpectNoCall(t, obs.calls)
+}
+
+// TestWorker_QueueStateCheckedBeforeListingObservations pins item 6: a run
+// already queued/running is skipped without ever listing its observations
+// (Queue.State is checked first) — proven by the fake bucket's call log,
+// not merely by the absence of a second enqueue.
+func TestWorker_QueueStateCheckedBeforeListingObservations(t *testing.T) {
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	bucket := wkNewFakeBucket()
+	bucket.put("batches/b1/manifest.json", wkManifestJSON(t, now.Add(-time.Hour).Format(time.RFC3339), "claude-sonnet-5", "b1-scenario"))
+	bucket.put("runs/b1-scenario/done.json", []byte(`{}`))
+
+	obs := wkNewRecordingObserve()
+	defer close(obs.release)
+	q := NewQueue(obs.fn)
+	// Occupy the queue for this run directly, with no bucket call involved.
+	if err := q.Enqueue(context.Background(), Job{RunID: "b1-scenario", Batch: "b1", Model: "claude-sonnet-5"}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	wkExpectCall(t, obs.calls) // drain the direct enqueue's call; obs.fn now blocks on release
+
+	w := NewWorker(WorkerConfig{Bucket: bucket, Queue: q, Now: wkFixedNow(now)})
+	if err := w.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	wkExpectNoCall(t, obs.calls)
+	if bucket.calledList("runs/b1-scenario/observer/") {
+		t.Error("Tick listed observations for a run already queued/running — Queue.State must be checked first")
 	}
 }
 

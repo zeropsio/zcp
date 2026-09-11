@@ -318,21 +318,25 @@ func (w *Worker) wkTickBatch(ctx context.Context, batch string, now time.Time) {
 	}
 }
 
-// wkTickRun handles one valid run id: enqueues it iff done.json exists, it
-// carries no observation yet, and the queue has no state for it already.
+// wkTickRun handles one valid run id: enqueues it iff done.json exists,
+// the queue has no state for it already, and it carries no observation
+// yet. Queue.State is checked before ListObservations (item 6) — cheaper,
+// and a run already queued or running never needs its observations
+// listed at all; a list error skips the run rather than risking a
+// duplicate enqueue on doubt.
 func (w *Worker) wkTickRun(ctx context.Context, batch, runID, model string) {
 	doneExists, _, err := w.cfg.Bucket.Head(ctx, "runs/"+runID+"/done.json")
 	if err != nil || !doneExists {
 		return
 	}
 
-	store := observer.NewStore(w.cfg.Bucket)
-	obsIDs, err := store.ListObservations(ctx, runID)
-	if err != nil || len(obsIDs) > 0 {
+	if w.cfg.Queue.State(runID) != "" {
 		return
 	}
 
-	if w.cfg.Queue.State(runID) != "" {
+	store := observer.NewStore(w.cfg.Bucket)
+	obsIDs, err := store.ListObservations(ctx, runID)
+	if err != nil || len(obsIDs) > 0 {
 		return
 	}
 

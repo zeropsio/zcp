@@ -232,7 +232,12 @@ func (s *Server) handleBatchObserve(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			obsIDs, obsErr := obsStore.ListObservations(r.Context(), run.RunID)
-			if obsErr == nil && len(obsIDs) > 0 {
+			if obsErr != nil {
+				// A list error skips the run rather than risking a
+				// duplicate enqueue on doubt (item 6).
+				continue
+			}
+			if len(obsIDs) > 0 {
 				continue
 			}
 		}
