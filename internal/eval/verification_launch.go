@@ -172,10 +172,13 @@ func evaluateLaunchProdRuntimeRows(ctx context.Context, client platform.Client, 
 		history := byService[svc.ID]
 		sort.SliceStable(history, func(i, j int) bool { return history[i].Created < history[j].Created })
 
-		hasBuild := false
+		hasGitBuild := false
 		for i, av := range history {
-			if av.Build != nil {
-				hasBuild = true
+			if av.Source == "GIT" || av.PublicGitSource != nil {
+				// O7 notes a CLI push also populates Build (finding E4), so
+				// a build carrying neither is the only shape that proves an
+				// independent buildFromGit build happened on a prod runtime.
+				hasGitBuild = true
 			}
 			if i == 0 && av.Build == nil && av.Source != launchShapeAppVersionSourceNone {
 				// A first appVersion carrying neither a build nor the
@@ -189,7 +192,7 @@ func evaluateLaunchProdRuntimeRows(ctx context.Context, client platform.Client, 
 		} else if history[0].Build != nil {
 			noCodeFails = append(noCodeFails, fmt.Sprintf("%s: first appVersion already carries a build", svc.Name))
 		}
-		if hasBuild {
+		if hasGitBuild {
 			buildFails = append(buildFails, svc.Name)
 		}
 	}

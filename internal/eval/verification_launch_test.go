@@ -50,8 +50,11 @@ func TestVerification_LaunchShape_AllRowsFromSnapshot(t *testing.T) {
 			WithServicesDirect([]platform.ServiceStack{
 				{ID: "svc-app1", ProjectID: "prod-1", Name: "app1", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
 			}).
+			// Source "GIT" (finding E4: the platform's real value, uppercase —
+			// a CLI push's Build alone must NOT fail this row; only an
+			// independent GIT-sourced build does).
 			WithAppVersionEvents([]platform.AppVersionEvent{
-				{ID: "av1", ProjectID: "prod-1", ServiceStackID: "svc-app1", Source: "git", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z", Build: &platform.BuildInfo{}},
+				{ID: "av1", ProjectID: "prod-1", ServiceStackID: "svc-app1", Source: "GIT", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z", Build: &platform.BuildInfo{}},
 			})
 
 		rows := evaluateLaunchShapeRows(context.Background(), cfg, client, "", nil, "")
@@ -63,6 +66,30 @@ func TestVerification_LaunchShape_AllRowsFromSnapshot(t *testing.T) {
 			t.Errorf("expected Observed to name the offending hostname app1, got %q", row.Observed)
 		}
 	})
+}
+
+// TestLaunchShape_CliBuild_NoBuildFromGitPasses pins finding E4: O7 notes a
+// CLI push also populates Build, so a CLI-sourced appVersion carrying a
+// Build must not fail no_build_from_git — only Source=="GIT" or a non-nil
+// PublicGitSource does.
+func TestLaunchShape_CliBuild_NoBuildFromGitPasses(t *testing.T) {
+	t.Parallel()
+	cfg := &LaunchShapeConfig{ProdProject: "zcp-farm-r1-prod"}
+	client := platform.NewMock().
+		WithUserInfo(&platform.UserInfo{ID: "client-1"}).
+		WithProjects([]platform.Project{{ID: "prod-1", Name: "zcp-farm-r1-prod"}}).
+		WithServicesDirect([]platform.ServiceStack{
+			{ID: "svc-app1", ProjectID: "prod-1", Name: "app1", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av1", ProjectID: "prod-1", ServiceStackID: "svc-app1", Source: "CLI", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z", Build: &platform.BuildInfo{}},
+		})
+
+	rows := evaluateLaunchShapeRows(context.Background(), cfg, client, "", nil, "")
+	row := findRow(t, rows, "launch_shape/no_build_from_git")
+	if row.Result != CheckPassed {
+		t.Fatalf("expected no_build_from_git to pass for a CLI-sourced appVersion carrying a Build, got %+v", row)
+	}
 }
 
 // TestVerification_LaunchShape_TokenInTranscript_Fails pins the
