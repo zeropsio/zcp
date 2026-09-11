@@ -819,7 +819,9 @@ zerops.app subdomain. Envs: `ZCP_AUTHORING=1`, `ZCP_FARM_S3_URL`/`BUCKET`/`KEY`/
 as `${os_*}` references, sensitive `CLAUDE_CODE_OAUTH_TOKEN` and
 `ZCP_FARM_CONSOLE_TOKEN`, optional `ZCP_FARM_OBSERVER=off`. It never holds
 `ZCP_FARM_ACCOUNT_TOKEN`/`ZCP_FARM_CLIENT_ID`; run state comes from the bucket
-alone (`started.json` without `done.json` = running). `deploy.sh` is
+alone: a run without `done.json` is `running` until its batch's `summary.json`
+settles it, and from then on shows that summary result (e.g. `blocked` for a
+run that never produced a bundle). `deploy.sh` is
 idempotent: it imports the service when missing (generating the console token
 and writing the operator copy, §2.4) — when the service exists but the
 operator copy has no token it exits 1 naming that file, never writing a

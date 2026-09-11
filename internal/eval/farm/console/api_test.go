@@ -523,3 +523,32 @@ func TestView_ObservedOutranksOffAndDisabled(t *testing.T) {
 		})
 	}
 }
+
+// TestAPI_SettledRunWithoutDoneUsesSummaryResult pins §8.1/§8.4: a run with
+// no done.json is "running" only while its batch has not settled it; once
+// batches/<batch>/summary.json carries the run (blocked: no bundle,
+// interrupted, a creation error), that result is the run's verdict — a run
+// the controller gave up on weeks ago must not read as still running.
+func TestAPI_SettledRunWithoutDoneUsesSummaryResult(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "sr1", "claude-sonnet-5", []runFixture{
+		{runID: "sr1-scena", scenario: "scena", startedAt: now.Add(-time.Hour), done: false},
+	}, true, map[string]string{"sr1-scena": "blocked"})
+
+	rr := doGET(t, h, "/api/runs.json?batch=sr1")
+	var out struct {
+		Runs []RunsListItem `json:"runs"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.Runs) != 1 {
+		t.Fatalf("got %d runs, want 1", len(out.Runs))
+	}
+	if out.Runs[0].Verdict != "blocked" {
+		t.Errorf("verdict = %q, want blocked (the batch summary settled the run)", out.Runs[0].Verdict)
+	}
+}

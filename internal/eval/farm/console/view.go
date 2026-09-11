@@ -215,7 +215,7 @@ func buildRunRow(ctx context.Context, store observer.ObjectStore, consoleObserve
 	row.DoneExists = doneExists
 	queued := runQueued(queueState, run.RunID)
 	if !doneExists {
-		row.Verdict = verdictRunning
+		row.Verdict = settledOrRunning(summary, summaryFound, run.RunID)
 		row.ObserverState = resolveObserverState(consoleObserverDisabled, manifestObserver, doneExists, false, queued)
 		return row, nil
 	}
@@ -282,6 +282,21 @@ func buildRunRow(ctx context.Context, store observer.ObjectStore, consoleObserve
 
 	row.ObserverState = resolveObserverState(consoleObserverDisabled, manifestObserver, doneExists, row.Observation != nil, queued)
 	return row, nil
+}
+
+// settledOrRunning is the verdict of a run with no done.json: the result
+// its batch summary already settled it with (blocked: no bundle,
+// interrupted, a creation error — §1.4 FM-9), else verdictRunning while the
+// batch is still waiting on it (§8.1).
+func settledOrRunning(summary farm.BatchSummary, summaryFound bool, runID string) string {
+	if summaryFound {
+		for _, r := range summary.Runs {
+			if r.RunID == runID && r.Result != "" {
+				return r.Result
+			}
+		}
+	}
+	return verdictRunning
 }
 
 // findRunBatch locates the batch owning runID by scanning every batch's
