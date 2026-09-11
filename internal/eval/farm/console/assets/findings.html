@@ -1,0 +1,39 @@
+{{define "findings"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Farm console — findings</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main>
+<nav class="crumbs"><a href="/">Batches</a> / findings</nav>
+<h1>Findings</h1>
+
+<form class="observe-form" method="get" action="/findings">
+<label for="since">since</label>
+<input id="since" name="since" type="text" value="{{.Since}}" placeholder="24h">
+<label for="owner">owner</label>
+<input id="owner" name="owner" type="text" value="{{.Owner}}" placeholder="any">
+<button type="submit">Filter</button>
+</form>
+
+{{$owner := ""}}
+{{range .Findings}}
+{{if ne .Owner $owner}}{{if $owner}}</div>{{end}}<div class="owner-group"><h2>{{.Owner}}</h2>{{$owner = .Owner}}{{end}}
+<div class="finding">
+<p><span class="severity severity-{{.Severity}}">{{.Severity}}</span> · <strong>{{.Title}}</strong> · <a href="{{runLink .RunID .Steps}}">{{.RunID}}</a></p>
+<p>{{.What}}</p>
+<p>quotes verified: {{.QuotesVerified}}/{{.QuotesTotal}}</p>
+<p>look at: {{.LookAt}}</p>
+<p>fix: {{.Fix}}</p>
+</div>
+{{end}}
+{{if $owner}}</div>{{end}}
+{{if not .Findings}}<p>No findings in this window.</p>{{end}}
+
+</main>
+</body>
+</html>
+{{end}}

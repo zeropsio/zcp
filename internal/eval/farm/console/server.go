@@ -128,6 +128,12 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		s.static.ServeHTTP(w, r)
 	case r.Method == http.MethodGet && p == "/":
 		s.requireAuth(s.handleRoot)(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(p, "/b/"):
+		s.requireAuth(s.handleBatchPage)(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(p, "/r/"):
+		s.requireAuth(s.handleRunPage)(w, r)
+	case r.Method == http.MethodGet && p == "/findings":
+		s.requireAuth(s.handleFindingsPage)(w, r)
 	case r.Method == http.MethodGet && (p == "/api/runs.md" || p == "/api/runs.json"):
 		s.requireAuth(s.handleRunsList)(w, r)
 	case r.Method == http.MethodGet && (p == "/api/findings.md" || p == "/api/findings.json"):
@@ -163,22 +169,11 @@ func handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte("ok\n"))
 }
 
-// handleRoot is the S3 placeholder for §8.3 FM-51's "/" page (the full
-// page — id/created/candidate sha/set/counts/cost/observed n/m — is S4):
-// a plain list of links to every batch, newest-id-first.
+// handleRoot is §8.3 FM-51's "/" page: every batch, newest first, with its
+// id, created time, candidate sha (12 chars), set, per-verdict counts,
+// total cost and observed-runs n/m (batches.go's read model).
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
-	ids, err := listBatchIDs(r.Context(), s.cfg.Store)
-	if err != nil {
-		http.Error(w, "list batches: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, "<!doctype html><html><head><meta charset=\"utf-8\"><title>Farm console</title>"+
-		"<link rel=\"stylesheet\" href=\"/static/style.css\"></head><body><h1>Batches</h1><ul class=\"batches\">")
-	for i := len(ids) - 1; i >= 0; i-- {
-		fmt.Fprintf(w, "<li><a href=\"/api/runs.md?batch=%s\">%s</a></li>", template.HTMLEscapeString(ids[i]), template.HTMLEscapeString(ids[i]))
-	}
-	fmt.Fprint(w, "</ul></body></html>")
+	s.handleBatchesPage(w, r)
 }
 
 func renderLoginPage(w http.ResponseWriter, failed bool) {
