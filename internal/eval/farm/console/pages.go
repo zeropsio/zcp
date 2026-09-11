@@ -36,6 +36,7 @@ var pageFuncs = template.FuncMap{
 		return strings.TrimPrefix(strings.TrimPrefix(name, "mcp__zerops__"), "mcp__")
 	},
 	"preview":    preview,
+	"capRaw":     capRaw,
 	"joinInts":   joinInts,
 	"stepAnchor": func(n int) string { return fmt.Sprintf("s%d", n) },
 	"verifiedMark": func(v bool) string {
@@ -66,9 +67,8 @@ var pageFuncs = template.FuncMap{
 		if len(steps) == 0 {
 			return "/r/" + runID
 		}
-		if steps[0] == 0 {
-			return "/r/" + runID + "#failed-checks"
-		}
+		// steps is always FindingItem.Steps (api.go), which already
+		// excludes the step-0 CHECKS citation — steps[0] is never 0 here.
 		return fmt.Sprintf("/r/%s#s%d", runID, steps[0])
 	},
 }
@@ -151,6 +151,20 @@ func preview(s string, n int) string {
 	return string(r[:n]) + "…"
 }
 
+// observerRawCap is how much of a failed observation's raw answer the run
+// page shows (item 3, matching §7.5's own "the first 2,000 chars of raw").
+const observerRawCap = 2000
+
+// capRaw caps s at observerRawCap runes, for the run page's collapsed raw-
+// answer preview on an "unparsed" observation.
+func capRaw(s string) string {
+	r := []rune(s)
+	if len(r) <= observerRawCap {
+		return s
+	}
+	return string(r[:observerRawCap])
+}
+
 func joinInts(ns []int) string {
 	parts := make([]string, len(ns))
 	for i, n := range ns {
@@ -211,9 +225,22 @@ type batchRunView struct {
 // maxFailedCheckChips caps the failed-check ids a batch row lists.
 const maxFailedCheckChips = 3
 
+// observationFailed reports whether obs's status is one the console shows
+// as a failure notice rather than a real assessment (item 3: "error" or
+// "unparsed", §7.5).
+func observationFailed(obs *observer.Observation) bool {
+	return obs != nil && (obs.Status == "error" || obs.Status == "unparsed")
+}
+
+// observerFailedState is the batch row's State when the current
+// observation failed (item 3) — shown in place of a headline.
+const observerFailedState = "observer failed"
+
 func newBatchRunView(row RunRow) batchRunView {
 	v := batchRunView{RunRow: row, State: row.ObserverState}
-	if row.Observation != nil {
+	if row.Observation != nil && observationFailed(row.Observation) {
+		v.State = observerFailedState
+	} else if row.Observation != nil {
 		v.Headline = row.Observation.Headline
 		for _, f := range row.Observation.Findings {
 			switch f.Severity {
@@ -279,7 +306,7 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 		counts[row.Verdict]++
 		data.TotalCostUsd += row.CostUsd
 		switch {
-		case row.Observation != nil:
+		case row.Observation != nil && !observationFailed(row.Observation):
 			data.ObservedN++
 		case row.DoneExists && row.ObserverState != observerStateObserving:
 			data.Unassessed++
@@ -356,19 +383,19 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 func loadRunTexts(ctx context.Context, store observer.ObjectStore, runID string) (taskPrompt, selfReview string, err error) {
 	bundle, err := observer.NewSinkBundle(ctx, store, runID)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("console: load run texts: new bundle: %w", err)
 	}
 	resultsDir, err := observer.ResultsDir(bundle)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("console: load run texts: results dir: %w", err)
 	}
 	taskPrompt, err = observer.LoadTaskPrompt(bundle, resultsDir)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("console: load run texts: task prompt: %w", err)
 	}
 	selfReview, err = observer.LoadSelfReview(bundle, resultsDir)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("console: load run texts: self-review: %w", err)
 	}
 	if selfReview == "" {
 		selfReview = notRecorded
@@ -392,14 +419,15 @@ func loadOlderObservations(ctx context.Context, store observer.ObjectStore, runI
 	return out, nil
 }
 
-// findingsPageData is GET /findings (§8.3 FM-51).
+// findingsPageData is GET /findings (§8.3 FM-51). The findings themselves
+// reach the template only as Groups (owner-then-severity, §8.4) — there is
+// no ungrouped Findings field, since findings.html never reads one.
 type findingsPageData struct {
-	Since    string
-	Owner    string
-	Windows  []string
-	Owners   []string
-	Findings []FindingItem
-	Groups   []findingGroup
+	Since   string
+	Owner   string
+	Windows []string
+	Owners  []string
+	Groups  []findingGroup
 }
 
 // findingGroup is one owner's findings, in the read model's order.
@@ -450,6 +478,6 @@ func (s *Server) handleFindingsPage(w http.ResponseWriter, r *http.Request) {
 	}
 	renderPage(w, "findings", findingsPageData{
 		Since: since, Owner: owner, Windows: findingWindows, Owners: findingOwners,
-		Findings: items, Groups: groupFindingsByOwner(items),
+		Groups: groupFindingsByOwner(items),
 	})
 }

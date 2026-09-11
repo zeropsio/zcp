@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -13,6 +14,22 @@ import (
 	"github.com/zeropsio/zcp/internal/eval/farm"
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
+
+// viewLogf logs a batch or run skipped during a listing scan because its
+// manifest/observation/meta could not be read (item 5) — a package var so
+// tests can capture it without threading a logger through every read-model
+// call (mirrors worker.go's Queue.logf).
+var viewLogf = func(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "console: "+format+"\n", args...)
+}
+
+// windowSlack is the safety margin item 7d adds on top of a window (the
+// worker's fixed 14-day window, or rowsSinceWindow's ?since= duration)
+// before a batch is cheaply skipped by its manifest createdAt alone: a
+// batch whose runs took a while can have its own createdAt slightly before
+// the window's bare cutoff while still holding a run whose own StartedAt
+// falls inside it.
+const windowSlack = 2 * time.Hour
 
 // ErrBatchNotFound and ErrRunNotFound are returned by the read model when
 // an otherwise grammar-valid id names nothing in the bucket.
@@ -43,8 +60,8 @@ const verdictRunning = "running"
 // superset GET /api/runs.md (light) and GET /api/runs/<runId>.md (full)
 // both narrow down from (§8.4 FM-52). Verdict is verdictRunning for a run
 // with no done.json (§7.5, §8.4: "no verdict"); ObserverState is one of
-// observed|observing|not observed|observer off|observer disabled (§8.4) —
-// S3 never produces "observing" (that needs S5's in-memory worker queue).
+// observed|observing|not observed|observer off|observer disabled (§8.4),
+// resolved by resolveObserverState.
 type RunRow struct {
 	RunID           string
 	Batch           string
@@ -222,7 +239,7 @@ func buildRunRow(ctx context.Context, store observer.ObjectStore, consoleObserve
 
 	bundle, err := observer.NewSinkBundle(ctx, store, run.RunID)
 	if err != nil {
-		return RunRow{}, err
+		return RunRow{}, fmt.Errorf("console: build run row: new bundle: %w", err)
 	}
 	resultsDir, rdErr := observer.ResultsDir(bundle)
 
@@ -302,16 +319,22 @@ func settledOrRunning(summary farm.BatchSummary, summaryFound bool, runID string
 // findRunBatch locates the batch owning runID by scanning every batch's
 // manifest for a matching run entry (the bucket layout carries no reverse
 // index, §1.1) — runID is checked against the FM-47 grammar before any
-// store call.
+// store call. A run id is always "<batchId>-<scenario>" (§1.1), so only a
+// batch whose id is runID's own "<batch>-" prefix is ever worth a manifest
+// load (item 7b) — every other batch is skipped before any store call for
+// it.
 func findRunBatch(ctx context.Context, store observer.ObjectStore, runID string) (batchID string, run farm.ManifestRun, manifest farm.BatchManifest, err error) {
 	if !farm.ValidRunID(runID) {
 		return "", farm.ManifestRun{}, farm.BatchManifest{}, fmt.Errorf("%w: %q", ErrRunNotFound, runID)
 	}
 	batches, err := listBatchIDs(ctx, store)
 	if err != nil {
-		return "", farm.ManifestRun{}, farm.BatchManifest{}, err
+		return "", farm.ManifestRun{}, farm.BatchManifest{}, fmt.Errorf("console: find run batch: %w", err)
 	}
 	for _, b := range batches {
+		if !strings.HasPrefix(runID, b+"-") {
+			continue
+		}
 		m, err := loadManifest(ctx, store, b)
 		if err != nil {
 			continue
@@ -330,12 +353,12 @@ func findRunBatch(ctx context.Context, store observer.ObjectStore, runID string)
 func loadRunRow(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, runID string, queueState func(runID string) string) (RunRow, error) {
 	batchID, run, manifest, err := findRunBatch(ctx, store, runID)
 	if err != nil {
-		return RunRow{}, err
+		return RunRow{}, fmt.Errorf("console: load run row: %w", err)
 	}
 	createdAt, _ := time.Parse(time.RFC3339, manifest.CreatedAt)
 	summary, summaryFound, err := loadSummary(ctx, store, batchID)
 	if err != nil {
-		return RunRow{}, err
+		return RunRow{}, fmt.Errorf("console: load run row: %w", err)
 	}
 	return buildRunRow(ctx, store, consoleObserverDisabled, batchID, run, createdAt, manifest.Observer, summary, summaryFound, queueState)
 }
@@ -368,18 +391,30 @@ func evidenceSteps(obs *observer.Observation) []int {
 func batchWindowRows(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, batchID string, queueState func(runID string) string) ([]RunRow, error) {
 	manifest, err := loadManifest(ctx, store, batchID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("console: batch window rows: %w", err)
 	}
+	return batchWindowRowsWithManifest(ctx, store, consoleObserverDisabled, batchID, manifest, queueState)
+}
+
+// batchWindowRowsWithManifest is batchWindowRows over an already-loaded
+// manifest — loadBatchRows (batches.go, item 7c) needs the manifest's own
+// fields too, so it loads it once and reuses it here instead of paying for
+// a second load. A run whose row can't be built (a corrupt observation or
+// meta.json, item 5) is skipped and logged, never failing the rest of the
+// batch; a manifest/summary read failure still fails the whole batch (the
+// caller decides whether that aborts everything or just this batch).
+func batchWindowRowsWithManifest(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, batchID string, manifest farm.BatchManifest, queueState func(runID string) string) ([]RunRow, error) {
 	createdAt, _ := time.Parse(time.RFC3339, manifest.CreatedAt)
 	summary, summaryFound, err := loadSummary(ctx, store, batchID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("console: batch window rows: %w", err)
 	}
 	rows := make([]RunRow, 0, len(manifest.Runs))
 	for _, run := range manifest.Runs {
 		row, err := buildRunRow(ctx, store, consoleObserverDisabled, batchID, run, createdAt, manifest.Observer, summary, summaryFound, queueState)
 		if err != nil {
-			return nil, err
+			viewLogf("skip run %s: %v", run.RunID, err)
+			continue
 		}
 		rows = append(rows, row)
 	}
@@ -387,18 +422,31 @@ func batchWindowRows(ctx context.Context, store observer.ObjectStore, consoleObs
 }
 
 // rowsSinceWindow collects every run row across every batch whose resolved
-// StartedAt falls within [now-window, now] (§8.4).
+// StartedAt falls within [now-window, now] (§8.4: a run's own
+// meta.json.startedAt decides window membership, which can differ from its
+// batch's manifest createdAt within the same batch — so, unlike the
+// worker's fixed 14-day scan (item 7d), this scan does not pre-skip a
+// batch by manifest createdAt alone). A batch that fails to load (a
+// corrupt manifest, item 5) is skipped and logged rather than failing the
+// whole scan — only the top-level batches/ listing itself can fail the
+// call outright.
 func rowsSinceWindow(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, window time.Duration, now time.Time, queueState func(runID string) string) ([]RunRow, error) {
 	batches, err := listBatchIDs(ctx, store)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("console: rows since window: %w", err)
 	}
 	since := now.Add(-window)
 	var out []RunRow
 	for _, b := range batches {
-		rows, err := batchWindowRows(ctx, store, consoleObserverDisabled, b, queueState)
+		manifest, err := loadManifest(ctx, store, b)
 		if err != nil {
-			return nil, err
+			viewLogf("skip batch %s: load manifest: %v", b, err)
+			continue
+		}
+		rows, err := batchWindowRowsWithManifest(ctx, store, consoleObserverDisabled, b, manifest, queueState)
+		if err != nil {
+			viewLogf("skip batch %s: %v", b, err)
+			continue
 		}
 		for _, row := range rows {
 			if row.StartedAt.Before(since) || row.StartedAt.After(now) {

@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -132,6 +133,8 @@ func trimObservePath(p, prefix string) string {
 // then the model allowlist, then observer availability, and only then
 // resolves runId's batch (the first store call) — an invalid runId is
 // rejected by findRunBatch's own FM-47 grammar check before any store call.
+// A run without done.json is never enqueued: it answers 409 "run not
+// finished" (item 2) — there is nothing yet to observe.
 func (s *Server) handleRunObserve(w http.ResponseWriter, r *http.Request) {
 	if !s.checkActionOrigin(w, r) {
 		return
@@ -158,6 +161,16 @@ func (s *Server) handleRunObserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	doneExists, _, err := s.cfg.Store.Head(r.Context(), doneKey(runID))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if !doneExists {
+		http.Error(w, "run not finished", http.StatusConflict)
+		return
+	}
+
 	if err := s.cfg.Queue.Enqueue(r.Context(), Job{RunID: runID, Batch: batchID, Model: model, Source: sourceAction}); err != nil {
 		if errors.Is(err, ErrAlreadyQueued) {
 			http.Error(w, "already queued or running", http.StatusConflict)
@@ -174,7 +187,9 @@ func (s *Server) handleRunObserve(w http.ResponseWriter, r *http.Request) {
 // without all=1, queues the batch's runs that have no observation and are
 // not already queued/running (silently skipping busy ones — no 409);
 // with all=1, queues every run, but answers 409 first when any run of the
-// batch is already queued or running.
+// batch is already queued or running. A run without done.json is never
+// enqueued either way, with or without all=1 (item 2) — there is nothing
+// yet to observe.
 func (s *Server) handleBatchObserve(w http.ResponseWriter, r *http.Request) {
 	if !s.checkActionOrigin(w, r) {
 		return
@@ -209,12 +224,21 @@ func (s *Server) handleBatchObserve(w http.ResponseWriter, r *http.Request) {
 
 	obsStore := observer.NewStore(s.cfg.Store)
 	for _, run := range manifest.Runs {
+		doneExists, _, err := s.cfg.Store.Head(r.Context(), doneKey(run.RunID))
+		if err != nil || !doneExists {
+			continue
+		}
 		if !all {
 			if s.cfg.Queue.State(run.RunID) != "" {
 				continue
 			}
 			obsIDs, obsErr := obsStore.ListObservations(r.Context(), run.RunID)
-			if obsErr == nil && len(obsIDs) > 0 {
+			if obsErr != nil {
+				// A list error skips the run rather than risking a
+				// duplicate enqueue on doubt (item 6).
+				continue
+			}
+			if len(obsIDs) > 0 {
 				continue
 			}
 		}
@@ -224,13 +248,14 @@ func (s *Server) handleBatchObserve(w http.ResponseWriter, r *http.Request) {
 	s.respondAction(w, r, "/b/"+batch)
 }
 
-// allowlistNames renders observeModelAllowlist's keys for a 400 error body
-// — map order is unspecified, but this is never asserted against for exact
-// order, only for containing "must be one of".
+// allowlistNames renders observeModelAllowlist's keys for a 400 error body,
+// sorted so the same 400 body is byte-identical on every call rather than
+// drifting with Go's unspecified map iteration order.
 func allowlistNames() string {
 	names := make([]string, 0, len(observeModelAllowlist))
 	for name := range observeModelAllowlist {
 		names = append(names, name)
 	}
+	sort.Strings(names)
 	return strings.Join(names, ", ")
 }

@@ -346,23 +346,23 @@ func (s *Server) handleRunDetail(w http.ResponseWriter, r *http.Request, runID s
 func loadSteps(ctx context.Context, store observer.ObjectStore, runID string) ([]observer.Step, error) {
 	bundle, err := observer.NewSinkBundle(ctx, store, runID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("console: load steps: new bundle: %w", err)
 	}
 	resultsDir, err := observer.ResultsDir(bundle)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("console: load steps: results dir: %w", err)
 	}
 	taskPrompt, err := observer.LoadTaskPrompt(bundle, resultsDir)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("console: load steps: task prompt: %w", err)
 	}
 	transcript, err := observer.LoadTranscript(bundle, resultsDir)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("console: load steps: transcript: %w", err)
 	}
 	meta, err := observer.LoadMeta(bundle, resultsDir)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("console: load steps: meta: %w", err)
 	}
 	return observer.BuildSteps(taskPrompt, transcript, resumeReplies(meta))
 }
@@ -464,11 +464,11 @@ func parseFromTo(q map[string][]string) (from, to int, err error) {
 	}
 	from, err = get("from")
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, fmt.Errorf("console: parse from/to: %w", err)
 	}
 	to, err = get("to")
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, fmt.Errorf("console: parse from/to: %w", err)
 	}
 	if from > to {
 		return 0, 0, fmt.Errorf("from (%d) must be <= to (%d)", from, to)

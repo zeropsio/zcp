@@ -31,6 +31,11 @@ type wkFakeBucket struct {
 	gets    []string
 	heads   []string
 	lists   []string
+
+	// listErrOn/listErr injects a List error for one exact prefix (item
+	// 6's "a list error skips the run" fixes) — "" means never.
+	listErrOn string
+	listErr   error
 }
 
 func wkNewFakeBucket() *wkFakeBucket {
@@ -76,6 +81,9 @@ func (b *wkFakeBucket) List(_ context.Context, prefix string) ([]string, error) 
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.lists = append(b.lists, prefix)
+	if b.listErrOn != "" && prefix == b.listErrOn {
+		return nil, b.listErr
+	}
 	var keys []string
 	for k := range b.objects {
 		if strings.HasPrefix(k, prefix) {
@@ -84,6 +92,15 @@ func (b *wkFakeBucket) List(_ context.Context, prefix string) ([]string, error) 
 	}
 	sort.Strings(keys)
 	return keys, nil
+}
+
+// failListOn makes a later List(prefix) call return err instead of
+// scanning objects — item 6's "a list error skips the run" fixes.
+func (b *wkFakeBucket) failListOn(prefix string, err error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.listErrOn = prefix
+	b.listErr = err
 }
 
 func (b *wkFakeBucket) calledGet(key string) bool {
@@ -96,6 +113,12 @@ func (b *wkFakeBucket) calledHead(key string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return slices.Contains(b.heads, key)
+}
+
+func (b *wkFakeBucket) calledList(prefix string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Contains(b.lists, prefix)
 }
 
 // wkManifestJSON builds a minimal batches/<batch>/manifest.json body.

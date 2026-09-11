@@ -27,6 +27,16 @@ func observerKillSwitchEnabled() bool {
 	return os.Getenv("ZCP_FARM_OBSERVER") == console.ObserverOff
 }
 
+// anthropicAPIKeySet reports ANTHROPIC_API_KEY being set in the console's
+// env (§8.5 FM-53): the observer must run under CLAUDE_CODE_OAUTH_TOKEN
+// only, so an operator-set API key is treated exactly like a missing OAuth
+// token — the worker stays idle and actions answer 503 "observer
+// credential missing" — rather than letting `claude` silently switch to
+// API-key billing.
+func anthropicAPIKeySet() bool {
+	return os.Getenv("ANTHROPIC_API_KEY") != ""
+}
+
 // resolveClaudePath resolves claudeFlag (the --claude value, default
 // "claude") to an absolute path via exec.LookPath + filepath.Abs (§7.4
 // FM-44: "made absolute ... before the child starts, because the child's
@@ -77,7 +87,11 @@ func runFarmConsole(args []string) int {
 
 	killSwitch := observerKillSwitchEnabled()
 	oauthToken := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN")
-	credentialMissing := oauthToken == ""
+	apiKeySet := anthropicAPIKeySet()
+	if apiKeySet {
+		fmt.Fprintln(os.Stderr, "warning: ANTHROPIC_API_KEY is set; the observer worker stays idle (docs/spec-eval-farm.md §8.5 FM-53)")
+	}
+	credentialMissing := oauthToken == "" || apiKeySet
 	claudePath := resolveClaudePath(claudeFlag)
 	claudeUnresolved := claudePath == ""
 	if claudeUnresolved {
@@ -118,7 +132,7 @@ func runFarmConsole(args []string) int {
 		return 1
 	}
 
-	httpSrv := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	httpSrv := newConsoleHTTPServer(srv.Handler())
 	go func() {
 		<-ctx.Done()
 		// context.WithoutCancel keeps ctx's values (none here) without its
@@ -137,6 +151,27 @@ func runFarmConsole(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// consoleReadHeaderTimeout/consoleReadTimeout/consoleIdleTimeout bound the
+// console's HTTP server (item 8): an unbounded read or idle timeout lets a
+// slow or idle client tie up a connection indefinitely.
+const (
+	consoleReadHeaderTimeout = 10 * time.Second
+	consoleReadTimeout       = 30 * time.Second
+	consoleIdleTimeout       = 120 * time.Second
+)
+
+// newConsoleHTTPServer builds the console's http.Server with its fixed
+// timeouts — a small constructor so the timeout values are testable
+// without starting a real listener.
+func newConsoleHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: consoleReadHeaderTimeout,
+		ReadTimeout:       consoleReadTimeout,
+		IdleTimeout:       consoleIdleTimeout,
+	}
 }
 
 func parseConsoleArgs(args []string) (listen, claude string, err error) {

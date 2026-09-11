@@ -857,7 +857,11 @@ a bearer-authenticated POST needs no Origin.
 Every response carries `Content-Security-Policy: default-src 'none';
 style-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors
 'none'; base-uri 'none'`, `X-Content-Type-Options: nosniff`,
-`Referrer-Policy: no-referrer`, `Cache-Control: no-store`. Pages use no
+`Referrer-Policy: same-origin`, `Cache-Control: no-store`. `no-referrer`
+would suppress the Origin header too on a navigate-mode form POST in some
+browsers (Origin: null), which the strict Origin rule above then refuses —
+`same-origin` keeps the console's own referrer private from every other
+origin without breaking its own state-changing forms. Pages use no
 script, no inline style and no external asset; they render in light and dark
 (`prefers-color-scheme`) and at 400 px.
 
@@ -869,12 +873,20 @@ script, no inline style and no external asset; they render in light and dark
 - `/b/<batch>` — one row per run, problem runs first (failed, blocked,
   running, not-run, passed): scenario, verdict, duration, cost, the current
   observation's headline (or its observer state) with finding counts per
-  severity, and up to three failed/blocked check ids.
+  severity, and up to three failed/blocked check ids. A run whose current
+  observation's status is `error` or `unparsed` shows `observer failed`
+  instead of a headline, is not counted in "assessed", and is counted in
+  the re-assess callout.
 - `/r/<runId>` — header (scenario, verdict, times, cost, candidate and
   evaluator sha); the current observation (headline, goal, agreement with the
   checks, findings with severity, owner, title, what, evidence linking to
-  `#s<n>` with a verified mark, lookAt, fix; unverified-quote count); older
-  observation versions; a re-observe form with a model picker; failed and
+  `#s<n>` with a verified mark, lookAt, fix; unverified-quote count) — or,
+  when its status is `error` or `unparsed`, a failure notice ("Observer
+  failed: <error>" or "Observer answer could not be parsed" plus the first
+  2,000 chars of raw in a collapsed block) with no goal/checks/self-review
+  pills and no "No findings" line; older
+  observation versions; a re-observe form with a model picker, shown only
+  once the run has `done.json`; failed and
   blocked checks with expected, observed, source; the self-review; the task
   prompt; every step with anchor `s<n>`, collapsible, full input and result;
   and the local forensic command `zcp eval farm pull <runId> --out <dir>` then
@@ -917,26 +929,42 @@ disabled`, decided in that precedence: a queued or running observation reads
 `observing`; a run without `done.json` reads `not observed`; a run with an
 observation reads `observed` whatever its manifest or the kill switch say;
 only a finished run without one reads `observer disabled` or `observer off`.
+A batch or run whose manifest/observation/meta cannot be read is skipped
+(logged to stderr) rather than failing the whole listing — `/`, `/b/<batch>`,
+`/r/<runId>` and the markdown/JSON endpoints above all render every other
+batch or run normally; only a genuine store error on the batches/ listing
+itself fails the call.
 
 ### 8.5 Worker and actions
 
 **FM-53.** One queue, at most three observations at a time, feeds both the
 worker and the actions. Every 60 s the worker lists batches whose manifest
-`createdAt` is within 14 days and whose `observer` names a model, and queues
-each of their runs that has `done.json` and no observation, with the
+`createdAt` is within 14 days plus a 2-hour slack and whose `observer` names
+a model, and queues each of their runs that has `done.json` and no
+observation, with the
 manifest's model. With `ZCP_FARM_OBSERVER=off` it queues nothing and pages
 and the API say `observer disabled`. Actions: `POST /r/<runId>/observe`
 (model from the allowlist `claude-sonnet-5`, `claude-opus-5`,
 `claude-fable-5-1`, else 400) queues a new version; `POST /b/<batch>/observe`
 queues that batch's runs that have no observation, or all of them with
 `all=1`. Actions work regardless of the manifest field and the kill switch.
-A run already queued or running answers 409, and so does `all=1` while any
+A run without `done.json` is never enqueued: `POST /r/<runId>/observe`
+answers 409 `run not finished`, and `POST /b/<batch>/observe` silently
+skips such a run of the batch, with or without `all=1`. A run already
+queued or running answers 409, and so does `all=1` while any
 run of that batch is queued or running. An accepted action answers 303 back
 to the page (cookie) or 202 (bearer). Without `CLAUDE_CODE_OAUTH_TOKEN` the
 console still serves every page, the worker stays idle, and actions answer
-503 `observer credential missing`; an unresolvable `claude` path is treated the
+503 `observer credential missing`; `ANTHROPIC_API_KEY` set in the console's
+env is treated exactly the same way, logged once to stderr at startup — the
+observer must run under the OAuth token only, never a raw API key. An
+unresolvable `claude` path is treated the
 same way (503 `observer unavailable`). Without `all=1`, runs of the batch that
 are already queued or running are skipped, not answered with 409. A job runs for the console's lifetime, not the
 enqueuing request's (bounded by a 10-minute job timeout), and a job that fails
 before an observation can be stored is logged to stderr. Worker and queue
 state live in memory and are re-derived from the bucket after a restart.
+Both the worker and `POST /b/<batch>/observe` check a run's live queue
+state before listing its stored observations, and skip the run (never
+enqueue) when that list call itself fails, rather than risking a duplicate
+observation on doubt.

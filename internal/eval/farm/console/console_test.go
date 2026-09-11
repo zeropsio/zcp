@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -21,6 +22,15 @@ import (
 type fakeStore struct {
 	mu      sync.Mutex
 	objects map[string][]byte
+
+	// Call log, for tests that prove which keys/prefixes were (or were
+	// not) touched — items 5-7's scan-cost and error-isolation fixes.
+	gets, heads, lists []string
+
+	// listErrOn/listErr injects a List error for one exact prefix (item
+	// 6's "a list error skips the run" fixes) — "" means never.
+	listErrOn string
+	listErr   error
 }
 
 func newFakeStore() *fakeStore {
@@ -32,6 +42,7 @@ var errFakeStoreNotFound = errors.New("fakeStore: object not found")
 func (f *fakeStore) Get(_ context.Context, key string) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.gets = append(f.gets, key)
 	body, ok := f.objects[key]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", errFakeStoreNotFound, key)
@@ -53,6 +64,7 @@ func (f *fakeStore) Put(_ context.Context, key string, body []byte) error {
 func (f *fakeStore) Head(_ context.Context, key string) (bool, int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.heads = append(f.heads, key)
 	body, ok := f.objects[key]
 	if !ok {
 		return false, 0, nil
@@ -63,6 +75,10 @@ func (f *fakeStore) Head(_ context.Context, key string) (bool, int64, error) {
 func (f *fakeStore) List(_ context.Context, prefix string) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.lists = append(f.lists, prefix)
+	if f.listErrOn != "" && prefix == f.listErrOn {
+		return nil, f.listErr
+	}
 	var keys []string
 	for key := range f.objects {
 		if strings.HasPrefix(key, prefix) {
@@ -70,6 +86,30 @@ func (f *fakeStore) List(_ context.Context, prefix string) ([]string, error) {
 		}
 	}
 	return keys, nil
+}
+
+// failListOn makes a later List(prefix) call return err instead of
+// scanning objects — item 6's "a list error skips the run" fixes.
+func (f *fakeStore) failListOn(prefix string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listErrOn = prefix
+	f.listErr = err
+}
+
+func (f *fakeStore) calledGet(key string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Contains(f.gets, key)
+}
+
+// resetCallLog clears the call log without touching stored objects or the
+// injected List error — used to isolate a second load's calls from a
+// warm-up load's.
+func (f *fakeStore) resetCallLog() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.gets, f.heads, f.lists = nil, nil, nil
 }
 
 func (f *fakeStore) putJSON(t *testing.T, key string, v any) {

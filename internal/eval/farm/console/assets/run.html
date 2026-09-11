@@ -9,6 +9,10 @@
 <section class="card observer" id="observation">
 <div class="card-label">Observer</div>
 {{with .Row.Observation}}
+{{if or (eq .Status "error") (eq .Status "unparsed")}}
+<p class="headline failure">{{if eq .Status "error"}}Observer failed: {{.Error}}{{else}}Observer answer could not be parsed{{end}}</p>
+{{if .Raw}}<details class="more"><summary>Raw answer</summary><pre>{{capRaw .Raw}}</pre></details>{{end}}
+{{else}}
 <p class="headline">{{.Headline}}</p>
 <div class="assess-grid">
 <div><span class="k">Goal reached</span><span class="pill pill-{{.Goal.Reached}}">{{.Goal.Reached}}</span><p>{{.Goal.Why}}</p></div>
@@ -16,19 +20,20 @@
 <div><span class="k">Agent's self-review</span><span class="pill pill-{{.SelfReview.Accurate}}">{{.SelfReview.Accurate}}</span><p>{{.SelfReview.Note}}</p></div>
 </div>
 <p class="muted small"><span title="observation {{.ObsID}}">{{.Model}}</span> · {{fmtTime .CreatedAt}} · {{if $.UnverifiedQuotes}}{{$.UnverifiedQuotes}} of {{$.TotalQuotes}} quotes unverified{{else}}all {{$.TotalQuotes}} quotes verified{{end}}</p>
+{{end}}
 {{else}}
 <p class="headline muted">{{if eq .Row.ObserverState "observing"}}Assessment in progress…{{else}}No assessment yet — {{.Row.ObserverState}}.{{end}}</p>
 {{end}}
-<form class="inline-form" method="post" action="/r/{{.Row.RunID}}/observe">
+{{if .Row.DoneExists}}<form class="inline-form" method="post" action="/r/{{.Row.RunID}}/observe">
 <select name="model" aria-label="model">{{range .ModelOptions}}<option value="{{.}}">{{.}}</option>{{end}}</select>
 <button type="submit">{{if .Row.Observation}}Re-assess{{else}}Assess{{end}}</button>
-</form>
+</form>{{end}}
 {{if .OlderObservations}}<details class="more"><summary>Earlier assessments ({{len .OlderObservations}})</summary>
 <ul class="plain">{{range .OlderObservations}}<li><span class="muted small">{{.ObsID}} · {{.Model}} · {{fmtTime .CreatedAt}} · {{.Status}}</span><br>{{.Headline}}</li>{{end}}</ul>
 </details>{{end}}
 </section>
 
-{{with .Row.Observation}}{{if .Findings}}
+{{with .Row.Observation}}{{if not (or (eq .Status "error") (eq .Status "unparsed"))}}{{if .Findings}}
 <h2>Findings <span class="count">{{len .Findings}}</span></h2>
 {{range .Findings}}<article class="finding sev-{{.Severity}}">
 <header class="finding-head"><span class="{{severityClass .Severity}}">{{.Severity}}</span><span class="owner">{{.Owner}}</span></header>
@@ -40,7 +45,7 @@
 </article>
 {{end}}
 {{else}}<p class="empty">No findings — the observer saw nothing worth fixing.</p>
-{{end}}{{end}}
+{{end}}{{end}}{{end}}
 
 {{if .Row.FailedChecks}}<h2 id="failed-checks">Failed checks <span class="count">{{len .Row.FailedChecks}}</span></h2>
 <div class="table-wrap"><table>

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestFarmConsole_RefusesWithoutConsoleToken pins docs/spec-eval-farm.md
@@ -36,6 +38,41 @@ func TestConsole_KillSwitchEnvDisablesWorker(t *testing.T) {
 	t.Setenv("ZCP_FARM_OBSERVER", "")
 	if observerKillSwitchEnabled() {
 		t.Error("observerKillSwitchEnabled() = true with ZCP_FARM_OBSERVER unset, want false")
+	}
+}
+
+// TestConsole_AnthropicAPIKeyEnvDisablesWorker pins §8.5 FM-53 (item 4):
+// ANTHROPIC_API_KEY set in the console's env is treated exactly like a
+// missing CLAUDE_CODE_OAUTH_TOKEN — the observer must run under the OAuth
+// token only, never a raw API key.
+//
+// non-parallel: t.Setenv
+func TestConsole_AnthropicAPIKeyEnvDisablesWorker(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
+	if !anthropicAPIKeySet() {
+		t.Error("anthropicAPIKeySet() = false with ANTHROPIC_API_KEY set, want true")
+	}
+
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	if anthropicAPIKeySet() {
+		t.Error("anthropicAPIKeySet() = true with ANTHROPIC_API_KEY unset, want false")
+	}
+}
+
+// TestNewConsoleHTTPServer_HasTimeouts pins item 8: the console's
+// http.Server bounds ReadTimeout and IdleTimeout next to its existing
+// ReadHeaderTimeout — an unbounded read/idle timeout lets a slow or idle
+// client tie up a connection indefinitely.
+func TestNewConsoleHTTPServer_HasTimeouts(t *testing.T) {
+	srv := newConsoleHTTPServer(http.NotFoundHandler())
+	if srv.ReadHeaderTimeout != 10*time.Second {
+		t.Errorf("ReadHeaderTimeout = %v, want 10s", srv.ReadHeaderTimeout)
+	}
+	if srv.ReadTimeout != 30*time.Second {
+		t.Errorf("ReadTimeout = %v, want 30s", srv.ReadTimeout)
+	}
+	if srv.IdleTimeout != 120*time.Second {
+		t.Errorf("IdleTimeout = %v, want 120s", srv.IdleTimeout)
 	}
 }
 
