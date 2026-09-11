@@ -90,7 +90,7 @@ var pageFuncs = template.FuncMap{
 	"assessmentStateTooltip": assessmentStateTooltip,
 	"problemStatusLabel":     problemStatusLabel,
 	"problemStatusTooltip":   problemStatusTooltip,
-	"problemStatusLive":      problemStatusLive,
+	"problemStatusLive":      isLiveStatus,
 }
 
 // fmtTime renders a timestamp for people: day, month, time, UTC.

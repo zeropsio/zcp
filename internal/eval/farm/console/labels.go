@@ -71,34 +71,26 @@ func vocabTooltip(vocab []vocabEntry, v string) string {
 	return ""
 }
 
-// causeEntry is one owner value's cause label and cause class (§8.8).
-type causeEntry struct{ label, class string }
-
-// causeVocab is §8.8's cause (finding-owner) vocabulary.
-var causeVocab = map[string]causeEntry{
-	"zcp-guidance": {"ZCP guidance", "ZCP"},
-	"zcp-tool":     {"ZCP tool", "ZCP"},
-	"platform":     {"Zerops platform", "Platform"},
-	"agent":        {"Agent mistake", "Agent"},
-	"scenario":     {"Test scenario", "Test"},
-	"evaluator":    {"Test check", "Test"},
+// causeClassDisplay is the §8.8 display label of each cause class; the
+// owner → label and owner → class tables live with the data
+// (findings_model.go CauseLabel / CauseClass), so pages, the API and the
+// problem clustering can never disagree on them.
+var causeClassDisplay = map[string]string{
+	CauseClassZCP: "ZCP", CauseClassTest: "Test", CauseClassAgent: "Agent", CauseClassPlatform: "Platform",
 }
 
-// causeLabel and causeClass look owner (observer.Finding.Owner) up in
-// causeVocab, falling back to owner/"" for a value this table does not
-// know about.
+// causeLabel and causeClass are the display forms of a finding's owner
+// (observer.Finding.Owner): its cause label, and its cause class's label;
+// an owner outside the vocabulary shows as itself / "".
 func causeLabel(owner string) string {
-	if e, ok := causeVocab[owner]; ok {
-		return e.label
+	if l := CauseLabel(owner); l != "" {
+		return l
 	}
 	return owner
 }
 
 func causeClass(owner string) string {
-	if e, ok := causeVocab[owner]; ok {
-		return e.class
-	}
-	return ""
+	return causeClassDisplay[CauseClass(owner)]
 }
 
 // causeOrder is the ZCP-first display order for the six cause/owner values
@@ -153,28 +145,19 @@ var assessmentStateVocab = []vocabEntry{
 func assessmentStateLabel(v string) string   { return vocabLabel(assessmentStateVocab, v) }
 func assessmentStateTooltip(v string) string { return vocabTooltip(assessmentStateVocab, v) }
 
-// problemStatusVocab is §8.6/§8.8's problem-status vocabulary (2026-09
-// update): new/first-seen/recurring/gone/unconfirmed, in the §8.7 filter's
-// own order. The values match the §8.7 `status=` filter's wire spelling
-// ("first-seen", hyphenated); MODEL's problems.go (not yet landed) is the
-// eventual source of these as Go constants — this table is a plain string
-// mirror of the spec text until it does.
+// problemStatusVocab is §8.6/§8.8's problem-status vocabulary, keyed by
+// problems.go's status values (which are also the §8.7 `status=` filter's
+// spelling), in the filter's order.
 var problemStatusVocab = []vocabEntry{
-	{"new", "new", "hit on the newest build only, and one of its scenarios was assessed on an older build without hitting it (a regression)"},
-	{"first-seen", "first seen", "hit on the newest build only, and none of its scenarios was assessed on an older build"},
-	{"recurring", "recurring", "hit on the newest build and on an older one"},
-	{"gone", "gone", "not hit on the newest build although one of its scenarios was assessed there, and hit on an older build"},
-	{"unconfirmed", "unconfirmed", "not hit on the newest build and none of its scenarios was assessed there"},
+	{StatusNew, "new", "hit on the newest build only, and one of its scenarios was assessed on an older build without hitting it (a regression)"},
+	{StatusFirstSeen, "first seen", "hit on the newest build only, and none of its scenarios was assessed on an older build"},
+	{StatusRecurring, "recurring", "hit on the newest build and on an older one"},
+	{StatusGone, "gone", "not hit on the newest build although one of its scenarios was assessed there, and hit on an older build"},
+	{StatusUnconfirmed, "unconfirmed", "not hit on the newest build and none of its scenarios was assessed there"},
 }
 
 func problemStatusLabel(v string) string   { return vocabLabel(problemStatusVocab, v) }
 func problemStatusTooltip(v string) string { return vocabTooltip(problemStatusVocab, v) }
-
-// problemStatusLive reports whether v is one of the "live" statuses (§8.6:
-// "live = recurring, new or first seen").
-func problemStatusLive(v string) bool {
-	return v == "new" || v == "first-seen" || v == "recurring"
-}
 
 // glossaryTerm is one row of §8.8 FM-56's full glossary, for GET /terms.
 type glossaryTerm struct{ Term, Definition string }

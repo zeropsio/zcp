@@ -134,7 +134,7 @@ func TestBuildProblems_StatusAcrossThreeBuilds(t *testing.T) {
 	}{
 		{"recurring", "recurring"},
 		{"new", "new"},
-		{"first seen", "first seen"},
+		{"first seen", StatusFirstSeen},
 		{"gone", "gone"},
 		{"unconfirmed", "unconfirmed"},
 	}

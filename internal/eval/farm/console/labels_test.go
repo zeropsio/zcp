@@ -126,13 +126,13 @@ func TestLabels_EveryEnumValueHasALabel(t *testing.T) {
 			t.Fatalf("problemStatusVocab has %d entries, want %d", len(problemStatusVocab), len(wantLabel))
 		}
 		for _, v := range []string{"new", "first-seen", "recurring"} {
-			if !problemStatusLive(v) {
-				t.Errorf("problemStatusLive(%q) = false, want true", v)
+			if !isLiveStatus(v) {
+				t.Errorf("isLiveStatus(%q) = false, want true", v)
 			}
 		}
 		for _, v := range []string{"gone", "unconfirmed"} {
-			if problemStatusLive(v) {
-				t.Errorf("problemStatusLive(%q) = true, want false", v)
+			if isLiveStatus(v) {
+				t.Errorf("isLiveStatus(%q) = true, want false", v)
 			}
 		}
 	})

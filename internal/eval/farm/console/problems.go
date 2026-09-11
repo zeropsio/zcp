@@ -15,7 +15,7 @@ import (
 const (
 	StatusRecurring   = "recurring"
 	StatusNew         = "new"
-	StatusFirstSeen   = "first seen"
+	StatusFirstSeen   = "first-seen"
 	StatusGone        = "gone"
 	StatusUnconfirmed = "unconfirmed"
 )
@@ -447,7 +447,7 @@ func BuildProblems(runs []ProblemsRun) []Problem {
 // --- /problems list (§8.7 item 5) ------------------------------------------
 
 // problemStatusAllowed is §8.7's `status` closed set for /problems.
-var problemStatusAllowed = []string{"live", StatusRecurring, StatusNew, "first-seen", StatusGone, StatusUnconfirmed, "all"}
+var problemStatusAllowed = []string{"live", StatusRecurring, StatusNew, StatusFirstSeen, StatusGone, StatusUnconfirmed, "all"}
 
 // problemListSpec is the /problems list's query surface.
 func problemListSpec() ListSpec {
@@ -498,7 +498,7 @@ func problemMatch(p Problem, name, value string) bool {
 			return true
 		case "live":
 			return isLiveStatus(p.Status)
-		case "first-seen":
+		case StatusFirstSeen:
 			return p.Status == StatusFirstSeen
 		default:
 			return p.Status == value
