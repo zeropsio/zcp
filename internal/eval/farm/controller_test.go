@@ -607,6 +607,54 @@ func TestFarmRun_CreatesPrefixedProjects_AndWritesManifest(t *testing.T) {
 	}
 }
 
+// TestFarmRun_WritesNoteRunBudgetSecAndCandidateInfo pins §3.3's "the
+// manifest also records..." paragraph: RunOptions.Note,
+// RunOptions.RunBudgetSec, and RunOptions.CandidateInfo land verbatim on
+// the manifest RunBatch writes — evidence for a human reading a batch
+// later, never read back by RunBatch itself.
+func TestFarmRun_WritesNoteRunBudgetSecAndCandidateInfo(t *testing.T) {
+	t.Parallel()
+
+	const clientID = "client-note"
+	f := newControllerFixture(t, clientID)
+	client, fake, sink := f.client, f.s3, f.sink
+
+	batch := "batch-note"
+	scenarios := []ScenarioRun{{ID: "recipe-a"}}
+	seedSettledRun(t, fake, batch+"-recipe-a", "recipe-a", ResultPassed)
+
+	wantCandidateInfo := &CandidateInfo{Revision: "10365ad9eafa", Modified: true, Time: "2026-02-01T19:55:50Z", GoVersion: "go1.25.0"}
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
+		Scenarios: scenarios, OAuthToken: "oauth-farm-token",
+		Sink:          Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:     time.Second,
+		PollInterval:  time.Millisecond,
+		Note:          "smoke test before the release",
+		RunBudgetSec:  2700,
+		CandidateInfo: wantCandidateInfo,
+	}
+
+	if _, err := RunBatch(context.Background(), client, sink, opts); err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+
+	manifest, err := GetManifest(context.Background(), sink, batch)
+	if err != nil {
+		t.Fatalf("GetManifest: %v", err)
+	}
+	if manifest.Note != opts.Note {
+		t.Errorf("manifest.Note = %q, want %q", manifest.Note, opts.Note)
+	}
+	if manifest.RunBudgetSec != opts.RunBudgetSec {
+		t.Errorf("manifest.RunBudgetSec = %d, want %d", manifest.RunBudgetSec, opts.RunBudgetSec)
+	}
+	if manifest.CandidateInfo == nil || *manifest.CandidateInfo != *wantCandidateInfo {
+		t.Errorf("manifest.CandidateInfo = %+v, want %+v", manifest.CandidateInfo, wantCandidateInfo)
+	}
+}
+
 // TestFarmRun_CreatesShellMintsTokenThenImportsService_InOrder pins the
 // brief's two-step run-project creation shape (docs/spec-eval-farm.md §2.1
 // FM-10): for each run, the account POST order is exactly project/import

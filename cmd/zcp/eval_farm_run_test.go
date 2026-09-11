@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -1018,6 +1019,111 @@ func TestFarmRun_BatchIDGrammar(t *testing.T) {
 		}
 		if strings.Contains(stderr, "--batch") {
 			t.Errorf("stderr = %q, want no --batch complaint for a grammar-valid id", stderr)
+		}
+	})
+}
+
+// TestFarmRun_NoteLimit pins docs/spec-eval-farm.md §3.3: `--note` longer
+// than 200 characters is a flag error naming the limit, exit 2, checked
+// before any env var or network dependency; a note at exactly the limit
+// passes through untouched.
+func TestFarmRun_NoteLimit(t *testing.T) {
+	// Not t.Parallel(): the second subtest below calls t.Setenv, which
+	// panics under a parallel test or a parallel ancestor.
+
+	t.Run("201 chars is a flag error", func(t *testing.T) {
+		var exitCode int
+		_, stderr := captureOutput(t, func() {
+			exitCode = runFarmRun([]string{
+				"--candidate", "cand-sha", "--scenarios", "scen-sha", "--set", "gate",
+				"--batch", "batch-note-too-long", "--note", strings.Repeat("n", 201),
+			}, envrForTest())
+		})
+		if exitCode != 2 {
+			t.Errorf("runFarmRun exit code = %d, want 2 (stderr: %s)", exitCode, stderr)
+		}
+		if !strings.Contains(stderr, "--note") || !strings.Contains(stderr, "200") {
+			t.Errorf("stderr = %q, want it to name --note and the 200 char limit", stderr)
+		}
+	})
+
+	// A note at exactly the limit must pass this check through to the next
+	// dependency (CLAUDE_CODE_OAUTH_TOKEN, unset here) rather than being
+	// caught here — proves the boundary isn't off by one.
+	t.Run("200 chars passes the limit check", func(t *testing.T) {
+		t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+		t.Setenv("ANTHROPIC_API_KEY", "")
+		var exitCode int
+		_, stderr := captureOutput(t, func() {
+			exitCode = runFarmRun([]string{
+				"--candidate", "cand-sha", "--scenarios", "scen-sha", "--set", "gate",
+				"--batch", "batch-note-ok", "--note", strings.Repeat("n", 200),
+			}, envrForTest())
+		})
+		if exitCode != 1 {
+			t.Errorf("runFarmRun exit code = %d, want 1 (missing CLAUDE_CODE_OAUTH_TOKEN, not a --note rejection) (stderr: %s)", exitCode, stderr)
+		}
+		if strings.Contains(stderr, "--note") {
+			t.Errorf("stderr = %q, want no --note complaint at exactly the limit", stderr)
+		}
+	})
+}
+
+// TestResolveCandidateInfo_MissingPresentUnreadable pins
+// docs/spec-eval-farm.md §3.3: resolveCandidateInfo returns (nil, nil) when
+// the candidate has no info object recorded (never pushed with VCS info, or
+// pushed before this field existed) — never an error, since a missing
+// object must never fail a run — the parsed CandidateInfo when the object
+// is present and valid, and a non-nil error (info always nil alongside it)
+// when the object exists but is not valid JSON, so the caller can warn
+// without ever failing the run on it.
+func TestResolveCandidateInfo_MissingPresentUnreadable(t *testing.T) {
+	fake := newFakeFarmS3()
+	server := fake.server()
+	defer server.Close()
+	sink := farm.NewSinkClient(farm.Config{URL: server.URL, Bucket: "zcp-farm", Key: "AKIDEXAMPLE", Secret: "secret"})
+	ctx := context.Background()
+
+	t.Run("missing", func(t *testing.T) {
+		info, err := resolveCandidateInfo(ctx, sink, "sha-missing")
+		if err != nil {
+			t.Fatalf("resolveCandidateInfo err = %v, want nil", err)
+		}
+		if info != nil {
+			t.Fatalf("resolveCandidateInfo info = %+v, want nil", info)
+		}
+	})
+
+	t.Run("present", func(t *testing.T) {
+		want := farm.CandidateInfo{Revision: "abc123def456", Modified: true, Time: "2026-09-11T00:00:00Z", GoVersion: "go1.25.0"}
+		body, err := json.Marshal(want)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		fake.mu.Lock()
+		fake.objects["candidates/sha-present.info.json"] = body
+		fake.mu.Unlock()
+
+		info, err := resolveCandidateInfo(ctx, sink, "sha-present")
+		if err != nil {
+			t.Fatalf("resolveCandidateInfo err = %v, want nil", err)
+		}
+		if info == nil || *info != want {
+			t.Fatalf("resolveCandidateInfo info = %+v, want %+v", info, want)
+		}
+	})
+
+	t.Run("unreadable", func(t *testing.T) {
+		fake.mu.Lock()
+		fake.objects["candidates/sha-bad.info.json"] = []byte("not json")
+		fake.mu.Unlock()
+
+		info, err := resolveCandidateInfo(ctx, sink, "sha-bad")
+		if err == nil {
+			t.Fatalf("resolveCandidateInfo err = nil, want a parse error")
+		}
+		if info != nil {
+			t.Fatalf("resolveCandidateInfo info = %+v, want nil alongside the error", info)
 		}
 	})
 }
