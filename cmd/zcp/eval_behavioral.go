@@ -177,8 +177,13 @@ func applyEvalDirOverrides(flags executionBindingFlags) {
 // buildExecutionBinding builds an eval.ExecutionBinding from parsed CLI
 // flags, or nil when no binding flags were given. defaultRunID is the suite
 // id (§10.4 "--run-id defaults to the suite id"). PrivateBin/ClaudeHome are
-// derived siblings of the (possibly overridden) work dir so the candidate's
-// own PATH/HOME never collide with the evaluator's.
+// derived siblings of the (possibly overridden) RESULTS dir, never the work
+// dir: the work dir is the agent's own cwd (D21, docs/spec-eval-farm.md
+// §2.3 FM-13) — a real container and a farm run both want it to be
+// /var/www, whose parent ("/") uid zerops cannot create a sibling under.
+// The results dir is always an evaluator-owned scratch path (the farm's
+// $RUNDIR/results), so its parent is a safe, always-creatable anchor for
+// the candidate's own PATH/HOME.
 func buildExecutionBinding(flags executionBindingFlags, defaultRunID string) *eval.ExecutionBinding {
 	if !flags.any {
 		return nil
@@ -195,7 +200,7 @@ func buildExecutionBinding(flags executionBindingFlags, defaultRunID string) *ev
 	if flags.resultsDir != "" {
 		resultsDir = flags.resultsDir
 	}
-	base := filepath.Dir(workDir)
+	base := filepath.Dir(resultsDir)
 	return &eval.ExecutionBinding{
 		Candidate:       flags.candidate,
 		CandidateSHA256: flags.sha256,
