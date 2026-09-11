@@ -46,6 +46,11 @@ type RunnerConfig struct {
 	// IdentityPollInterval overrides the default 500ms process-identity
 	// poll cadence (§10.4 "Observed process identity"). Test-tunable only.
 	IdentityPollInterval time.Duration
+	// MutatingTools names the tools whose annotations mark them
+	// non-read-only — the askWhen "next mutating call" vocabulary
+	// (docs/spec-eval-farm.md §4.1 FM-31). The L4 caller supplies it from
+	// internal/tools.MutatingToolNames(); eval does not import tools.
+	MutatingTools map[string]bool
 }
 
 // Runner executes single recipe evaluations.

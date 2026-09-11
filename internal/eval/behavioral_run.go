@@ -901,14 +901,19 @@ func (r *Runner) freezeTaskEnd(
 }
 
 // scenarioRuntimeInputs assembles the RuntimeInputs the O6/O7/O8 oracles
-// need (docs/spec-eval-farm.md §4.4): the run's transcript path, the
+// and the askWhen rows need (docs/spec-eval-farm.md §4.1, §4.4): the
+// run's transcript path, the user-sim loop's recorded turns, the mutating
+// tool vocabulary from RunnerConfig, the
 // captured MCP stream file paths for this scenario run (reusing
 // ScenarioMCPStreamPaths' discovery, decision_rows.go), and the hex sha256
 // of ZCP_E2E_LAUNCH_KEY when that env is present. The launch token value
 // itself is read once here, hashed immediately, and never stored, logged,
 // or passed anywhere else — only the digest crosses into RuntimeInputs.
 func (r *Runner) scenarioRuntimeInputs(sc *Scenario, result *BehavioralResult) RuntimeInputs {
-	runtime := RuntimeInputs{TranscriptPath: result.TranscriptFile}
+	runtime := RuntimeInputs{TranscriptPath: result.TranscriptFile, MutatingTools: r.config.MutatingTools}
+	if result.UserSim != nil {
+		runtime.UserSimTurns = result.UserSim.Turns
+	}
 	if r.config.Capture != nil {
 		if paths, err := ScenarioMCPStreamPaths(r.config.Capture.SessionDir, result.SuiteID, sc.ID); err == nil {
 			runtime.MCPStreamPaths = paths

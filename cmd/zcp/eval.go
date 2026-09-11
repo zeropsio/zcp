@@ -16,6 +16,7 @@ import (
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/tools"
 )
 
 const (
@@ -379,6 +380,9 @@ func initEvalRunnerFor(binding *eval.ExecutionBinding) (runner *eval.Runner, sto
 		Capture:      captureConnection,
 		CaptureOwned: captureConnection != nil && os.Getenv(evalCaptureOwnerEnv) == captureConnection.CaptureID,
 		Binding:      binding,
+		// askWhen's "next mutating call" vocabulary (FM-31), derived from
+		// the tool registry's annotations.
+		MutatingTools: tools.MutatingToolNames(),
 	}
 	if captureConnection != nil {
 		fmt.Fprintf(os.Stderr, "capture: attached %s (%s)\n", captureConnection.CaptureID, captureConnection.SessionDir)

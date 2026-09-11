@@ -570,3 +570,28 @@ func TestBehavioralResult_UsageAbsent_Omitted(t *testing.T) {
 		}
 	})
 }
+
+// TestScenarioRuntimeInputs_CarriesUserSimTurnsAndMutatingTools pins the
+// askWhen wiring (docs/spec-eval-farm.md §4.1 FM-31): the runtime inputs the
+// verifier grades against carry the user-sim loop's recorded turns and the
+// mutating-tool vocabulary the caller configured — without either, every
+// askWhen row would read "not asked" regardless of what happened.
+func TestScenarioRuntimeInputs_CarriesUserSimTurnsAndMutatingTools(t *testing.T) {
+	t.Parallel()
+	mutating := map[string]bool{"zerops_deploy": true}
+	r := &Runner{config: RunnerConfig{MutatingTools: mutating}}
+	turns := []UserSimTurn{{Iteration: 1}}
+	result := &BehavioralResult{TranscriptFile: "/tmp/transcript.jsonl", UserSim: &UserSimResult{Turns: turns}}
+
+	got := r.scenarioRuntimeInputs(&Scenario{ID: "s"}, result)
+
+	if !got.MutatingTools["zerops_deploy"] {
+		t.Errorf("MutatingTools = %v, want the configured set", got.MutatingTools)
+	}
+	if len(got.UserSimTurns) != 1 {
+		t.Errorf("UserSimTurns = %v, want the user-sim loop's turns", got.UserSimTurns)
+	}
+	if got.TranscriptPath != "/tmp/transcript.jsonl" {
+		t.Errorf("TranscriptPath = %q", got.TranscriptPath)
+	}
+}
