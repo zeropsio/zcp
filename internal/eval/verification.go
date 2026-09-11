@@ -543,7 +543,7 @@ func evaluateNoFailedProcesses(observation platformObservation, runStart time.Ti
 			Message: fmt.Sprintf("GetProjectProcessesDirect failed: %v", observation.processesErr),
 		}
 	}
-	var failedIDs []string
+	var observed []string // one "<action> on <service>: <reason> (<id>)" per failed process
 	var messages []string
 	for _, process := range observation.processes {
 		if process.Status != platform.ProcessStatusFailed || !processCreatedAfter(process.Created, runStart) {
@@ -560,11 +560,11 @@ func evaluateNoFailedProcesses(observation platformObservation, runStart time.Ti
 		if len(process.ServiceStacks) > 0 {
 			serviceLabel = " on " + process.ServiceStacks[0].Name
 		}
-		failedIDs = append(failedIDs, process.ID)
+		observed = append(observed, fmt.Sprintf("%s%s: %s (%s)", process.ActionName, serviceLabel, reason, process.ID))
 		messages = append(messages, fmt.Sprintf("FAILED process %s: %s%s", process.ID, reason, serviceLabel))
 	}
-	expected := fmt.Sprintf("no FAILED process after %s", runStart)
-	if len(failedIDs) == 0 {
+	expected := "no FAILED process after " + runStart.UTC().Format(time.RFC3339)
+	if len(observed) == 0 {
 		return RequiredCheck{
 			ID: id, Check: "no_failed_processes", Scope: projectID,
 			Result: CheckPassed, Expected: expected, Observed: "none", ObservedAt: now, Source: "GetProjectProcessesDirect",
@@ -573,7 +573,7 @@ func evaluateNoFailedProcesses(observation platformObservation, runStart time.Ti
 	}
 	return RequiredCheck{
 		ID: id, Check: "no_failed_processes", Scope: projectID,
-		Result: CheckFailed, Expected: expected, Observed: strings.Join(failedIDs, ", "), ObservedAt: now, Source: "GetProjectProcessesDirect",
+		Result: CheckFailed, Expected: expected, Observed: strings.Join(observed, "; "), ObservedAt: now, Source: "GetProjectProcessesDirect",
 		Message: strings.Join(messages, "; "),
 	}
 }
