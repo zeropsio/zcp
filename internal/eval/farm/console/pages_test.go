@@ -3,6 +3,7 @@ package console
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -227,5 +228,135 @@ func TestPages_RunShowsForensicCommand(t *testing.T) {
 	}
 	if !strings.Contains(body, "zcp capture ui") || !strings.Contains(body, "fc1-scn/capture") {
 		t.Errorf("body missing the capture-ui command:\n%s", body)
+	}
+}
+
+// TestPages_FindingsGroupedAndLinked pins §8.3 FM-51's /findings page:
+// every finding of every run in the window, grouped by owner then
+// severity, each linking to its run and step. Independent oracle:
+// fixtureObservation's own two findings (api_test.go) — owner zcp-tool
+// (high, step 3) and owner agent (medium, step 99) — plus api.go's own
+// findingItemsFromRows ordering (owner asc, then severity rank), used
+// read-only.
+func TestPages_FindingsGroupedAndLinked(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "fd1", "claude-sonnet-5", []runFixture{
+		{runID: "fd1-scn", scenario: "scn", startedAt: now.Add(-1 * time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"fd1-scn": "passed"})
+	seedObservation(t, store, fixtureObservation("fd1-scn"))
+
+	rr := doGET(t, h, "/findings?since=24h")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /findings: got %d, want 200, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	if !strings.Contains(body, "agent") || !strings.Contains(body, "zcp-tool") {
+		t.Errorf("body missing both owners:\n%s", body)
+	}
+	if !strings.Contains(body, "Tool returned stale data") || !strings.Contains(body, "Agent skipped a sanity check") {
+		t.Errorf("body missing both finding titles:\n%s", body)
+	}
+	if !strings.Contains(body, `href="/r/fd1-scn#s3"`) {
+		t.Errorf("body missing the zcp-tool finding's run+step link (#s3):\n%s", body)
+	}
+	// owner asc: "agent" sorts before "zcp-tool".
+	if i, j := strings.Index(body, "Agent skipped a sanity check"), strings.Index(body, "Tool returned stale data"); i < 0 || j < 0 || i > j {
+		t.Errorf("findings not grouped owner-ascending (agent before zcp-tool): agent@%d, zcp-tool@%d\n%s", i, j, body)
+	}
+
+	rrFiltered := doGET(t, h, "/findings?since=24h&owner=agent")
+	bodyFiltered := rrFiltered.Body.String()
+	if !strings.Contains(bodyFiltered, "Agent skipped a sanity check") {
+		t.Errorf("owner=agent body missing the agent finding:\n%s", bodyFiltered)
+	}
+	if strings.Contains(bodyFiltered, "Tool returned stale data") {
+		t.Errorf("owner=agent body still shows the zcp-tool finding:\n%s", bodyFiltered)
+	}
+}
+
+// onAttrPattern matches an on*= event-handler attribute (TestPages_
+// NoScriptNoInlineStyleNoHandlers) — a leading space keeps it from matching
+// inside ordinary prose text or attribute values that merely contain the
+// substring "on=".
+var onAttrPattern = regexp.MustCompile(` on[a-z]+=`)
+
+// TestPages_NoScriptNoInlineStyleNoHandlers pins §8.2 FM-50: pages use no
+// script, no inline style and no external asset (CSP forbids both) — every
+// page's HTML has no "<script", no " style=" and no " on[a-z]+=" attribute.
+// Independent oracle: FM-50's own words, checked with a plain regex/substring
+// scan over the rendered bytes, never by asking the template package
+// whether it thinks its own output is safe.
+func TestPages_NoScriptNoInlineStyleNoHandlers(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+
+	seedBatch(t, store, "ns1", "claude-sonnet-5", []runFixture{
+		{runID: "ns1-scn", scenario: "scn", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"ns1-scn": "passed"})
+	seedObservation(t, store, fixtureObservation("ns1-scn"))
+
+	routes := []string{"/", "/b/ns1", "/r/ns1-scn", "/findings"}
+	for _, route := range routes {
+		t.Run(route, func(t *testing.T) {
+			rr := doGET(t, h, route)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("GET %s: got %d, want 200, body=%s", route, rr.Code, rr.Body.String())
+			}
+			body := rr.Body.String()
+			if strings.Contains(body, "<script") {
+				t.Errorf("%s contains <script:\n%s", route, body)
+			}
+			if strings.Contains(body, " style=") {
+				t.Errorf("%s contains inline style=:\n%s", route, body)
+			}
+			if onAttrPattern.MatchString(body) {
+				t.Errorf("%s contains an on*= handler attribute:\n%s", route, body)
+			}
+		})
+	}
+}
+
+// TestPages_HostileTextEscaped pins that html/template's auto-escaping is
+// actually in effect on the run page: a step whose tool result carries a
+// literal "<script>alert(1)</script>" (bucket content is not trusted —
+// e.g. an agent tool result that happens to include markup) renders
+// escaped, never as live markup. Independent oracle: the exact escaped
+// form html/template produces for that literal ("&lt;script&gt;…"), not a
+// looser "doesn't look risky" check.
+func TestPages_HostileTextEscaped(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+
+	const hostile = `<script>alert(1)</script>`
+
+	seedBatch(t, store, "hx1", "off", []runFixture{
+		{runID: "hx1-scn", scenario: "scn", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"hx1-scn": "passed"})
+
+	// Overwrite the seeded transcript with one whose tool result carries
+	// the hostile literal, keeping every other fixture file untouched.
+	resultsDir := "runs/hx1-scn/results/" + testResultsTS + "/scn"
+	hostileTranscript := strings.Join([]string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu1","name":"zerops_discover","input":{}}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu1","content":[{"type":"text","text":"` + hostile + `"}]}]}}`,
+	}, "\n") + "\n"
+	store.putText(t, resultsDir+"/transcript.jsonl", hostileTranscript)
+
+	rr := doGET(t, h, "/r/hx1-scn")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /r/hx1-scn: got %d, want 200, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	if strings.Contains(body, hostile) {
+		t.Errorf("body contains the hostile literal unescaped:\n%s", body)
+	}
+	if !strings.Contains(body, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Errorf("body missing the escaped form of the hostile literal:\n%s", body)
 	}
 }
