@@ -117,6 +117,7 @@ func TestLabels_EveryEnumValueHasALabel(t *testing.T) {
 		wantLabel := map[string]string{
 			"new": "regressed", "first-seen": "first seen", "recurring": "recurring",
 			"gone": "gone", "unconfirmed": "unconfirmed",
+			"still-emitted": "still emitted (no longer reported)",
 		}
 		for value, label := range wantLabel {
 			if got := problemStatusLabel(value); got != label {
@@ -129,7 +130,7 @@ func TestLabels_EveryEnumValueHasALabel(t *testing.T) {
 		if len(problemStatusVocab) != len(wantLabel) {
 			t.Fatalf("problemStatusVocab has %d entries, want %d", len(problemStatusVocab), len(wantLabel))
 		}
-		for _, v := range []string{"new", "first-seen", "recurring"} {
+		for _, v := range []string{"new", "first-seen", "recurring", "still-emitted"} {
 			if !isLiveStatus(v) {
 				t.Errorf("isLiveStatus(%q) = false, want true", v)
 			}

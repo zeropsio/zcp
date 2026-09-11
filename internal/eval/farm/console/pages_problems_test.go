@@ -159,7 +159,7 @@ func TestPages_ProblemsPageStillEmittedWhenAnchorStillInNewestBuildSteps(t *test
 	if !strings.Contains(body, "Deploy still prints a stale token") {
 		t.Fatalf("body missing the problem's title:\n%s", body)
 	}
-	if !strings.Contains(body, "still-emitted (live)") {
+	if !strings.Contains(body, "still emitted (no longer reported)") {
 		t.Errorf("status must be still-emitted, not gone/unconfirmed, since the anchor is still in the newest build's own steps:\n%s", body)
 	}
 }

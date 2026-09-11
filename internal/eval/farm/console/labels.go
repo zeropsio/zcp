@@ -219,7 +219,8 @@ var problemStatusVocab = []vocabEntry{
 	{StatusNew, "regressed", "hit on the newest build only, and one of its scenarios was assessed on an older build without hitting it (a regression)"},
 	{StatusFirstSeen, "first seen", "hit on the newest build only, and none of its scenarios was assessed on an older build"},
 	{StatusRecurring, "recurring", "hit on the newest build and on an older one"},
-	{StatusGone, "gone", "not hit on the newest build although one of its scenarios was assessed there, and hit on an older build"},
+	{StatusStillEmitted, "still emitted (no longer reported)", "ZCP still prints that text on the newest build, although no assessment there mentioned it"},
+	{StatusGone, "gone", "the text is no longer emitted on the newest build, and it was hit on an older one"},
 	{StatusUnconfirmed, "unconfirmed", "not hit on the newest build and none of its scenarios was assessed there"},
 }
 
