@@ -675,3 +675,58 @@ func TestQueue_ObserveErrorIsLogged(t *testing.T) {
 		t.Fatalf("no log line naming the run and the error; got %q", lines)
 	}
 }
+
+// TestQueue_JobInfoAndLastFailure pins §8.5's live status: the queue
+// exposes a job's model, source, state and times while it is queued or
+// running, and keeps the last failure that happened before anything was
+// stored, per run, until the next job for that run starts.
+func TestQueue_JobInfoAndLastFailure(t *testing.T) {
+	var mu sync.Mutex
+	fail := true
+	release := make(chan struct{})
+	q := NewQueue(func(ctx context.Context, job Job) error {
+		<-release
+		mu.Lock()
+		defer mu.Unlock()
+		if fail {
+			return fmt.Errorf("claude: signal: killed")
+		}
+		return nil
+	})
+	at := time.Date(2026, 9, 11, 18, 52, 0, 0, time.UTC)
+	q.now = wkFixedNow(at)
+	ctx := context.Background()
+
+	if _, ok := q.Job("batch-run1"); ok {
+		t.Fatal("Job reported a job before any was enqueued")
+	}
+	if err := q.Enqueue(ctx, Job{RunID: "batch-run1", Batch: "batch", Model: "claude-opus-5", Source: "action"}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if !wkEventually(t, func() bool { info, ok := q.Job("batch-run1"); return ok && info.State == JobRunning }) {
+		t.Fatal("job never reported running")
+	}
+	info, _ := q.Job("batch-run1")
+	if info.Model != "claude-opus-5" || info.Source != "action" || !info.EnqueuedAt.Equal(at) || !info.StartedAt.Equal(at) {
+		t.Errorf("Job = %+v, want model/source/enqueued/started set", info)
+	}
+
+	close(release)
+	if !wkEventually(t, func() bool { _, ok := q.Job("batch-run1"); return !ok }) {
+		t.Fatal("job still reported after it settled")
+	}
+	f, ok := q.LastFailure("batch-run1")
+	if !ok || f.Err != "claude: signal: killed" || !f.At.Equal(at) {
+		t.Errorf("LastFailure = %+v, %v; want the pre-store error and its time", f, ok)
+	}
+
+	mu.Lock()
+	fail = false
+	mu.Unlock()
+	if err := q.Enqueue(ctx, Job{RunID: "batch-run1", Batch: "batch", Model: "claude-sonnet-5", Source: "action"}); err != nil {
+		t.Fatalf("second Enqueue: %v", err)
+	}
+	if !wkEventually(t, func() bool { _, ok := q.LastFailure("batch-run1"); return !ok }) {
+		t.Error("LastFailure survived the start of the next job for the run")
+	}
+}

@@ -58,22 +58,44 @@ var ErrAlreadyQueued = errors.New("console: run already queued or running")
 // FM-48).
 type ObserveFunc func(ctx context.Context, job Job) error
 
-// wkJobState is Queue's per-run bookkeeping: which batch the run belongs to
-// (for BatchBusy) and whether it has started running (for State).
+// wkJobState is Queue's per-run bookkeeping: the job itself (batch for
+// BatchBusy, model and source for the live status), whether it has started
+// running (for State), and when it was enqueued and started (§8.5).
 type wkJobState struct {
-	batch   string
-	running bool
+	job        Job
+	running    bool
+	enqueuedAt time.Time
+	startedAt  time.Time
+}
+
+// JobInfo is a queued or running job as the pages show it (§8.5 live
+// status): model, source, state, and its times (StartedAt zero while queued).
+type JobInfo struct {
+	Model      string
+	Source     string
+	State      string // JobQueued | JobRunning
+	EnqueuedAt time.Time
+	StartedAt  time.Time
+}
+
+// JobFailure is the last failure that happened before an observation could
+// be stored, for one run (§8.5): kept until the next job for that run starts.
+type JobFailure struct {
+	Err string
+	At  time.Time
 }
 
 // Queue is the console's single observation queue: at most wkMaxConcurrent
 // jobs run at once, and a run id is queued or running at most once at a
 // time (§8.5 FM-53).
 type Queue struct {
-	mu      sync.Mutex
-	jobs    map[string]*wkJobState
-	sem     chan struct{}
-	observe ObserveFunc
-	logf    func(format string, args ...any)
+	mu       sync.Mutex
+	jobs     map[string]*wkJobState
+	failures map[string]JobFailure
+	now      func() time.Time
+	sem      chan struct{}
+	observe  ObserveFunc
+	logf     func(format string, args ...any)
 
 	// OnComplete, when set, is called with a job's run id after that job
 	// finishes (successfully or not) — the run-row cache's completion
@@ -88,10 +110,12 @@ type Queue struct {
 // observe.
 func NewQueue(observe ObserveFunc) *Queue {
 	return &Queue{
-		jobs:    make(map[string]*wkJobState),
-		sem:     make(chan struct{}, wkMaxConcurrent),
-		observe: observe,
-		logf:    wkStderrLogf,
+		jobs:     make(map[string]*wkJobState),
+		failures: make(map[string]JobFailure),
+		now:      time.Now,
+		sem:      make(chan struct{}, wkMaxConcurrent),
+		observe:  observe,
+		logf:     wkStderrLogf,
 	}
 }
 
@@ -114,7 +138,7 @@ func (q *Queue) Enqueue(ctx context.Context, job Job) error {
 		q.mu.Unlock()
 		return ErrAlreadyQueued
 	}
-	q.jobs[job.RunID] = &wkJobState{batch: job.Batch}
+	q.jobs[job.RunID] = &wkJobState{job: job, enqueuedAt: q.now()}
 	q.mu.Unlock()
 
 	go q.wkRun(context.WithoutCancel(ctx), job)
@@ -132,12 +156,17 @@ func (q *Queue) wkRun(ctx context.Context, job Job) {
 	q.mu.Lock()
 	if st, ok := q.jobs[job.RunID]; ok {
 		st.running = true
+		st.startedAt = q.now()
 	}
+	delete(q.failures, job.RunID)
 	q.mu.Unlock()
 
 	jobCtx, cancel := context.WithTimeout(ctx, wkJobTimeout)
 	if err := q.observe(jobCtx, job); err != nil {
 		q.logf("observe %s (model %s, source %s): %v", job.RunID, job.Model, job.Source, err)
+		q.mu.Lock()
+		q.failures[job.RunID] = JobFailure{Err: err.Error(), At: q.now()}
+		q.mu.Unlock()
 	}
 	cancel()
 
@@ -171,6 +200,29 @@ func (q *Queue) State(runID string) string {
 	return JobQueued
 }
 
+// Job reports runID's queued or running job, or false when there is none.
+func (q *Queue) Job(runID string) (JobInfo, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	st, ok := q.jobs[runID]
+	if !ok {
+		return JobInfo{}, false
+	}
+	info := JobInfo{Model: st.job.Model, Source: st.job.Source, State: JobQueued, EnqueuedAt: st.enqueuedAt, StartedAt: st.startedAt}
+	if st.running {
+		info.State = JobRunning
+	}
+	return info, true
+}
+
+// LastFailure reports runID's last pre-store failure (§8.5), or false.
+func (q *Queue) LastFailure(runID string) (JobFailure, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	f, ok := q.failures[runID]
+	return f, ok
+}
+
 // Stats reports the queue's current job counts: queued (accepted but not
 // yet running) and running (holding one of the wkMaxConcurrent slots) —
 // the observer status line's "<n> queued/running" (§8.3 FM-51).
@@ -193,7 +245,7 @@ func (q *Queue) BatchBusy(batch string) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for _, st := range q.jobs {
-		if st.batch == batch {
+		if st.job.Batch == batch {
 			return true
 		}
 	}
