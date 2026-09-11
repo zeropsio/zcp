@@ -27,7 +27,8 @@ evaluators/current                 # plain-text pointer: body is the evaluator s
 candidates/<sha256>/zcp            # candidate under test, pushed per batch
 scenarios/<tree-digest>/…          # scenario tree, pushed per batch
 sets/<tree-digest>/gate.txt        # gate scenario id list, keyed to the scenario tree it names
-farm/wrapper.sh                    # the run-project wrapper script
+farm/wrapper/<sha256>.sh           # the run-project wrapper script, content-addressed (R5)
+farm/wrapper/current               # plain-text pointer: body is the wrapper sha256 last pushed
 
 runs/<runId>/started.json
 runs/<runId>/results/…             # the runner's own results dir (spec-testing-architecture §10.1)
@@ -88,6 +89,8 @@ intact).
 distinct from one that carries a value: `report` prints `unpinned` for it,
 never `blocked` and never a fabricated match. `unpinned` means "cannot be
 checked," not "checked and wrong." §5 pins this into the verdict vocabulary.
+
+The run-project wrapper itself is content-addressed and verified the same way: the init line fetches `farm/wrapper/<sha256>.sh` and `sha256sum`-checks it before ever executing it (§1.1, R5).
 
 ### 1.3 Redaction before upload
 

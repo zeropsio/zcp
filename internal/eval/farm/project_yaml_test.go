@@ -16,6 +16,7 @@ func oauthDescriptor() RunDescriptor {
 		EvaluatorSHA256: "eval-sha-aaaa",
 		CandidateSHA256: "cand-sha-bbbb",
 		ScenariosDigest: "scenarios-sha-ffff",
+		WrapperSHA256:   "wrapper-sha-9999",
 		Sink: Sink{
 			URL:    "https://s3.prg1.zerops.app",
 			Bucket: "zcp-farm",
@@ -111,6 +112,19 @@ func TestServiceImportYAML_MissingOAuthToken_Rejected(t *testing.T) {
 	}
 }
 
+// TestServiceImportYAML_MissingWrapperSHA_Rejected pins R5 (LAND review):
+// the init line cannot verify a wrapper it has no pinned digest for, so
+// ServiceImportYAML refuses to render without one — the same discipline as
+// OAuthToken/RunToken above.
+func TestServiceImportYAML_MissingWrapperSHA_Rejected(t *testing.T) {
+	t.Parallel()
+	d := oauthDescriptor()
+	d.WrapperSHA256 = ""
+	if _, err := ServiceImportYAML(d); err == nil {
+		t.Fatal("ServiceImportYAML with empty WrapperSHA256: want error, got nil")
+	}
+}
+
 // TestServiceImportYAML_MissingRunToken_Rejected pins that the service half
 // cannot render without the project-scoped token the controller mints after
 // the project shell exists — a run project must never boot without its own
@@ -177,6 +191,7 @@ func TestServiceImportYAML_InitLine_NoDirectEnvExpansion(t *testing.T) {
 		"$ZCP_FARM_S3_SECRET", "${ZCP_FARM_S3_SECRET}",
 		"$ZCP_FARM_S3_URL", "${ZCP_FARM_S3_URL}",
 		"$ZCP_FARM_S3_BUCKET", "${ZCP_FARM_S3_BUCKET}",
+		"$ZCP_FARM_WRAPPER_SHA", "${ZCP_FARM_WRAPPER_SHA}",
 	} {
 		if strings.Contains(out, forbidden) {
 			t.Errorf("init line carries a directly-expanded env token %q (platform pre-expands $VAR/${VAR} in initCommands, leaking it via the container's initCommands env var), output:\n%s", forbidden, out)
@@ -187,6 +202,7 @@ func TestServiceImportYAML_InitLine_NoDirectEnvExpansion(t *testing.T) {
 		"$(printenv ZCP_FARM_S3_SECRET)",
 		"$(printenv ZCP_FARM_S3_URL)",
 		"$(printenv ZCP_FARM_S3_BUCKET)",
+		"$(printenv ZCP_FARM_WRAPPER_SHA)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("init line missing command-substitution read %q, output:\n%s", want, out)
@@ -210,6 +226,40 @@ func TestImportYAML_ScenariosDigest_EmittedAsEnv(t *testing.T) {
 	const want = `ZCP_FARM_SCENARIOS_DIGEST: "scenarios-sha-ffff"`
 	if !strings.Contains(out, want) {
 		t.Errorf("ServiceImportYAML output missing %q, got:\n%s", want, out)
+	}
+}
+
+// TestProjectYAML_WrapperSHA_RequiredAndVerifiedInInit pins R5 (LAND
+// review): every run container holds a write-capable bucket key, so an
+// init line that fetches farm/wrapper.sh unpinned and execs it hands code
+// execution as `zerops` to whoever overwrote that key first. The fix pins
+// WrapperSHA256 into ZCP_FARM_WRAPPER_SHA and the init line fetches the
+// content-addressed key and sha256sum-verifies it before chmod+exec —
+// literal assertions on the rendered init line, since that is the actual
+// security boundary, not just the env var's presence.
+func TestProjectYAML_WrapperSHA_RequiredAndVerifiedInInit(t *testing.T) {
+	t.Parallel()
+	d := oauthDescriptor()
+	got, err := ServiceImportYAML(d)
+	if err != nil {
+		t.Fatalf("ServiceImportYAML: %v", err)
+	}
+	out := string(got)
+
+	if !strings.Contains(out, `ZCP_FARM_WRAPPER_SHA: "wrapper-sha-9999"`) {
+		t.Errorf("ServiceImportYAML output missing ZCP_FARM_WRAPPER_SHA env, got:\n%s", out)
+	}
+	for _, want := range []string{
+		"farm/wrapper/$(printenv ZCP_FARM_WRAPPER_SHA).sh",
+		"$(printenv ZCP_FARM_WRAPPER_SHA)  /tmp/farm-wrapper.sh",
+		"sha256sum -c",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("init line missing %q, output:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "farm/wrapper.sh") {
+		t.Errorf("init line must fetch the content-addressed key, not the unpinned farm/wrapper.sh, output:\n%s", out)
 	}
 }
 

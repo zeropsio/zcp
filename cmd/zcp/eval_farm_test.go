@@ -161,6 +161,64 @@ func TestFarmPush_Candidate_UploadsUnderSha256Key(t *testing.T) {
 	}
 }
 
+// TestFarmPush_WrapperContentAddressed pins R5 (LAND review):
+// `farm push --wrapper <file>` uploads content-addressed to
+// farm/wrapper/<sha256>.sh (never the old unpinned farm/wrapper.sh key),
+// writes the plain-text pointer farm/wrapper/current (the same pattern as
+// evaluators/current), and prints both.
+func TestFarmPush_WrapperContentAddressed(t *testing.T) {
+	fake := newFakeFarmS3()
+	server := fake.server()
+	defer server.Close()
+	setFarmEnv(t, server.URL)
+
+	dir := t.TempDir()
+	wrapperPath := filepath.Join(dir, "wrapper.sh")
+	body := []byte("#!/bin/sh\necho pretend wrapper\n")
+	if err := os.WriteFile(wrapperPath, body, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	sum := sha256.Sum256(body)
+	wantDigest := hex.EncodeToString(sum[:])
+
+	var code int
+	stdout, stderr := captureOutput(t, func() {
+		code = runEvalFarm([]string{"push", "--wrapper", wrapperPath})
+	})
+	if code != 0 {
+		t.Fatalf("runEvalFarm(push --wrapper) = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stdout, wantDigest) {
+		t.Errorf("stdout = %q, want it to contain the digest %q", stdout, wantDigest)
+	}
+	if !strings.Contains(stdout, "farm/wrapper/current") {
+		t.Errorf("stdout = %q, want it to contain the pointer key %q", stdout, "farm/wrapper/current")
+	}
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+
+	gotBody, ok := fake.objects["farm/wrapper/"+wantDigest+".sh"]
+	if !ok {
+		t.Fatalf("fake bucket has no object at farm/wrapper/%s.sh; objects: %v", wantDigest, fake.objects)
+	}
+	if string(gotBody) != string(body) {
+		t.Errorf("uploaded object = %q, want %q", gotBody, body)
+	}
+
+	pointer, ok := fake.objects["farm/wrapper/current"]
+	if !ok {
+		t.Fatalf("fake bucket has no object at farm/wrapper/current; objects: %v", fake.objects)
+	}
+	if string(pointer) != wantDigest {
+		t.Errorf("farm/wrapper/current body = %q, want %q", pointer, wantDigest)
+	}
+
+	if _, ok := fake.objects["farm/wrapper.sh"]; ok {
+		t.Errorf("fake bucket has an unpinned farm/wrapper.sh object — push must never write it")
+	}
+}
+
 // TestFarmPull_Run_DownloadsAllParts pins docs/spec-eval-farm.md §1.1/§5:
 // `farm pull <runId> --out <dir>` downloads every object under
 // runs/<runId>/ to <dir>/<runId>/, and prints "bundle: complete" once

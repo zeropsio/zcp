@@ -51,6 +51,13 @@ Drives the real script against real `curl` and an in-process fake S3
 ```
 zcp eval farm push --wrapper eval/farm/wrapper.sh
 ```
+Uploads content-addressed to `farm/wrapper/<sha256>.sh` and writes the
+plain-text pointer `farm/wrapper/current` (R5, same pattern as
+`evaluators/current`) — there is no unpinned `farm/wrapper.sh` key. Every
+run project's init line fetches the content-addressed key and
+`sha256sum`-verifies it against the pinned digest in its own run descriptor
+before it is ever `chmod +x`'d and executed, so a run's write-capable
+bucket key can never make a later run boot an attacker-modified wrapper.
 
 ## Kickoff on the farm host
 
@@ -72,6 +79,8 @@ zcp eval farm push --evaluator <path>    # also writes evaluators/current
 zcp eval farm push --scenarios eval/behavioral/scenarios
                                           # also writes sets/<digest>/gate.txt
 zcp eval farm push --candidate <path>
+zcp eval farm push --wrapper eval/farm/wrapper.sh
+                                          # also writes farm/wrapper/current
 ```
 
 `--gate-set <path>` names the local gate scenario list `--scenarios` also

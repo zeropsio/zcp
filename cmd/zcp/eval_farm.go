@@ -194,11 +194,25 @@ func runFarmPush(args []string) int {
 			fmt.Fprintf(os.Stderr, "error: push wrapper: read %s: %v\n", wrapper, err)
 			return 1
 		}
-		if err := client.Put(ctx, "farm/wrapper.sh", body); err != nil {
+		// Content-addressed (R5, LAND review): every run container holds a
+		// write-capable bucket key, so an unpinned "farm/wrapper.sh" key
+		// let one run's agent overwrite the wrapper for every later run —
+		// code execution as `zerops`. The run project's init line now
+		// fetches farm/wrapper/<sha256>.sh and verifies it against the
+		// descriptor's ZCP_FARM_WRAPPER_SHA before exec (project_yaml.go);
+		// there is no unpinned "farm/wrapper.sh" key to write anymore.
+		key := fmt.Sprintf("farm/wrapper/%s.sh", digest)
+		if err := client.Put(ctx, key, body); err != nil {
 			fmt.Fprintf(os.Stderr, "error: push wrapper: %v\n", err)
 			return 1
 		}
 		fmt.Fprintf(os.Stdout, "wrapper: %s\n", digest)
+
+		if err := client.Put(ctx, "farm/wrapper/current", []byte(digest)); err != nil {
+			fmt.Fprintf(os.Stderr, "error: push wrapper pointer: %v\n", err)
+			return 1
+		}
+		fmt.Fprintln(os.Stdout, "wrapper-pointer: farm/wrapper/current")
 	}
 	return 0
 }
