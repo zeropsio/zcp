@@ -45,14 +45,17 @@ const (
 // cached separately (summaryCache) and can still be absent when this part
 // is first filled.
 type cachedImmutable struct {
-	Scenario        string
-	StartedAt       time.Time
-	DurationSec     float64
-	CostUsd         float64
-	CandidateSha256 string
-	EvaluatorSha256 string
-	FailedChecks    []FailedCheck
-	metaTaskResult  string
+	Scenario         string
+	StartedAt        time.Time
+	DurationSec      float64
+	CostUsd          float64
+	CostKnown        bool
+	CandidateSha256  string
+	EvaluatorSha256  string
+	FailedChecks     []FailedCheck
+	StepCount        int
+	ServiceHostnames []string
+	metaTaskResult   string
 }
 
 // cachedObservation is a run's observation-part cache (rule 2): the
@@ -123,7 +126,7 @@ func (c *runCache) invalidateObservation(runID string) {
 // held across a store call (CLAUDE.md: copy under lock, release, then I/O):
 // each branch below snapshots what it needs, unlocks, does its bucket
 // reads, then locks again only to write the result back.
-func (c *runCache) row(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, batchID string, run farm.ManifestRun, manifestCreatedAt time.Time, manifestObserver string, summary farm.BatchSummary, summaryFound bool, queueState func(runID string) string) (RunRow, error) {
+func (c *runCache) row(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, batchID string, run farm.ManifestRun, bc batchContext, summary farm.BatchSummary, summaryFound bool, queueState func(runID string) string) (RunRow, error) {
 	e := c.entry(run.RunID)
 	now := c.now()
 	queued := runQueued(queueState, run.RunID)
@@ -135,7 +138,7 @@ func (c *runCache) row(ctx context.Context, store observer.ObjectStore, consoleO
 
 	if imm == nil {
 		if !notDoneCheckedAt.IsZero() && now.Sub(notDoneCheckedAt) < notDoneRecheck {
-			return notDoneRow(batchID, run, manifestCreatedAt, manifestObserver, summary, summaryFound, consoleObserverDisabled, queued), nil
+			return notDoneRow(batchID, run, bc, summary, summaryFound, consoleObserverDisabled, queued, now), nil
 		}
 
 		doneExists, _, err := store.Head(ctx, doneKey(run.RunID))
@@ -146,10 +149,10 @@ func (c *runCache) row(ctx context.Context, store observer.ObjectStore, consoleO
 			e.mu.Lock()
 			e.notDoneCheckedAt = now
 			e.mu.Unlock()
-			return notDoneRow(batchID, run, manifestCreatedAt, manifestObserver, summary, summaryFound, consoleObserverDisabled, queued), nil
+			return notDoneRow(batchID, run, bc, summary, summaryFound, consoleObserverDisabled, queued, now), nil
 		}
 
-		built, err := fetchImmutablePart(ctx, store, run, manifestCreatedAt)
+		built, err := fetchImmutablePart(ctx, store, run, bc.CreatedAt)
 		if err != nil {
 			return RunRow{}, err
 		}
@@ -162,7 +165,7 @@ func (c *runCache) row(ctx context.Context, store observer.ObjectStore, consoleO
 		e.immutable = &built
 		e.obs = &obsPart
 		e.mu.Unlock()
-		return combineRow(batchID, run, &built, &obsPart, manifestObserver, summary, summaryFound, consoleObserverDisabled, queued), nil
+		return combineRow(batchID, run, &built, &obsPart, bc, summary, summaryFound, consoleObserverDisabled, queued, now), nil
 	}
 
 	e.mu.Lock()
@@ -181,29 +184,36 @@ func (c *runCache) row(ctx context.Context, store observer.ObjectStore, consoleO
 		obsCache = &refreshed
 	}
 
-	return combineRow(batchID, run, imm, obsCache, manifestObserver, summary, summaryFound, consoleObserverDisabled, queued), nil
+	return combineRow(batchID, run, imm, obsCache, bc, summary, summaryFound, consoleObserverDisabled, queued, now), nil
 }
 
 // notDoneRow is a run's row while it has no done.json (settledOrRunning's
-// verdict, resolveObserverState's "not observed"/"observing") — mirrors
-// buildRunRow's (view.go) early return exactly.
-func notDoneRow(batchID string, run farm.ManifestRun, manifestCreatedAt time.Time, manifestObserver string, summary farm.BatchSummary, summaryFound bool, consoleObserverDisabled bool, queued bool) RunRow {
-	row := RunRow{RunID: run.RunID, Batch: batchID, Scenario: run.Scenario, StartedAt: manifestCreatedAt}
+// verdict, resolveObserverState's "not observed"/"observing", plus slice
+// MODEL's Stalled/VerdictReason/ObserverStateText) — mirrors buildRunRow's
+// (view.go) early return exactly.
+func notDoneRow(batchID string, run farm.ManifestRun, bc batchContext, summary farm.BatchSummary, summaryFound bool, consoleObserverDisabled bool, queued bool, now time.Time) RunRow {
+	row := RunRow{RunID: run.RunID, Batch: batchID, Scenario: run.Scenario, StartedAt: bc.CreatedAt, Build: bc.build()}
 	row.Verdict = settledOrRunning(summary, summaryFound, run.RunID)
-	row.ObserverState = resolveObserverState(consoleObserverDisabled, manifestObserver, false, false, queued)
+	row.Stalled = row.Verdict == verdictRunning && isStalled(now, bc.CreatedAt, bc.RunBudgetSec)
+	summaryRun, summaryRunFound := findSummaryRun(summary, summaryFound, run.RunID)
+	row.VerdictReason = verdictReason(row.Verdict, false, nil, summaryRun, summaryRunFound)
+	row.ObserverState = resolveObserverState(consoleObserverDisabled, bc.Observer, false, false, queued)
+	row.ObserverStateText = observerStateText(now, bc.CreatedAt, consoleObserverDisabled, bc.Observer, false, nil, queued)
+	row.CauseCounts = newCauseClassCounts()
 	return row
 }
 
 // combineRow builds the final RunRow for a done run from its cached
 // immutable and observation parts plus the live inputs (queued state, the
-// batch summary's row for this run) — mirrors buildRunRow's (view.go)
-// second half exactly.
-func combineRow(batchID string, run farm.ManifestRun, imm *cachedImmutable, obsPart *cachedObservation, manifestObserver string, summary farm.BatchSummary, summaryFound bool, consoleObserverDisabled bool, queued bool) RunRow {
+// batch summary's row for this run, and slice MODEL's now-dependent
+// facts) — mirrors buildRunRow's (view.go) second half exactly.
+func combineRow(batchID string, run farm.ManifestRun, imm *cachedImmutable, obsPart *cachedObservation, bc batchContext, summary farm.BatchSummary, summaryFound bool, consoleObserverDisabled bool, queued bool, now time.Time) RunRow {
 	row := RunRow{
 		RunID: run.RunID, Batch: batchID, Scenario: imm.Scenario, StartedAt: imm.StartedAt,
-		DurationSec: imm.DurationSec, CostUsd: imm.CostUsd,
+		DurationSec: imm.DurationSec, CostUsd: imm.CostUsd, CostKnown: imm.CostKnown,
 		CandidateSha256: imm.CandidateSha256, EvaluatorSha256: imm.EvaluatorSha256,
 		DoneExists: true, FailedChecks: imm.FailedChecks, metaTaskResult: imm.metaTaskResult,
+		Build: bc.build(), StepCount: imm.StepCount, ServiceHostnames: imm.ServiceHostnames,
 	}
 
 	summaryResult, found := "", false
@@ -216,18 +226,24 @@ func combineRow(batchID string, run farm.ManifestRun, imm *cachedImmutable, obsP
 		}
 	}
 	row.Verdict = observer.ResolveVerdict(summaryResult, found, imm.metaTaskResult)
+	summaryRun, summaryRunFound := findSummaryRun(summary, summaryFound, run.RunID)
+	row.VerdictReason = verdictReason(row.Verdict, true, row.FailedChecks, summaryRun, summaryRunFound)
 
 	if obsPart != nil {
 		row.OlderObsIDs = obsPart.olderObsIDs
 		row.Observation = obsPart.obs
 	}
-	row.ObserverState = resolveObserverState(consoleObserverDisabled, manifestObserver, true, row.Observation != nil, queued)
+	row.ObserverState = resolveObserverState(consoleObserverDisabled, bc.Observer, true, row.Observation != nil, queued)
+	row.ObserverStateText = observerStateText(now, bc.CreatedAt, consoleObserverDisabled, bc.Observer, true, row.Observation, queued)
+	row.Outcome = computeOutcome(row.Observation)
+	row.Disputed = computeDisputed(row.Observation)
+	row.CauseCounts = causeSeverityCounts(row.Observation)
 	return row
 }
 
 // fetchImmutablePart reads run's immutable row data straight from the
-// bucket — mirrors buildRunRow's (view.go) meta/verification reads
-// exactly, including its tolerance of a missing results dir or an
+// bucket — mirrors buildRunRow's (view.go) meta/verification/step-count
+// reads exactly, including its tolerance of a missing results dir or an
 // unparsable meta/verification file (silently skipped, never an error:
 // only a bundle-construction failure propagates).
 func fetchImmutablePart(ctx context.Context, store observer.ObjectStore, run farm.ManifestRun, manifestCreatedAt time.Time) (cachedImmutable, error) {
@@ -238,14 +254,19 @@ func fetchImmutablePart(ctx context.Context, store observer.ObjectStore, run far
 		return cachedImmutable{}, fmt.Errorf("console: cache: new bundle: %w", err)
 	}
 	resultsDir, rdErr := observer.ResultsDir(bundle)
+	var verification eval.VerificationDocument
+	var snapshot *eval.PlatformSnapshot
 	if rdErr == nil {
+		var meta eval.BehavioralResult
 		if m, mErr := observer.LoadMeta(bundle, resultsDir); mErr == nil {
+			meta = m
 			if !m.StartedAt.IsZero() {
 				imm.StartedAt = m.StartedAt
 			}
 			imm.DurationSec = time.Duration(m.Duration).Seconds()
 			if m.Usage != nil {
 				imm.CostUsd = m.Usage.TotalCostUsd
+				imm.CostKnown = true
 			}
 			if m.Task != nil {
 				imm.metaTaskResult = string(m.Task.Result)
@@ -254,6 +275,7 @@ func fetchImmutablePart(ctx context.Context, store observer.ObjectStore, run far
 			imm.EvaluatorSha256 = m.EvaluatorSha256
 		}
 		if v, vErr := observer.LoadVerification(bundle, resultsDir); vErr == nil {
+			verification = v
 			for _, c := range v.Checks {
 				if c.Result == eval.CheckFailed || c.Result == eval.CheckBlocked {
 					imm.FailedChecks = append(imm.FailedChecks, FailedCheck{
@@ -262,7 +284,14 @@ func fetchImmutablePart(ctx context.Context, store observer.ObjectStore, run far
 				}
 			}
 		}
+		if snap, sErr := observer.LoadPlatformSnapshot(bundle, resultsDir); sErr == nil {
+			snapshot = snap
+		}
+		if n, sErr := loadStepCount(bundle, resultsDir, meta); sErr == nil {
+			imm.StepCount = n
+		}
 	}
+	imm.ServiceHostnames = serviceHostnames(snapshot, verification)
 	return imm, nil
 }
 
@@ -291,11 +320,11 @@ func fetchObservationPart(ctx context.Context, store observer.ObjectStore, runID
 // 1-3); a nil cache always reads fresh, matching the pre-cache behavior
 // exactly — used by callers/tests that exercise the read model without a
 // Server.
-func runRowCached(ctx context.Context, store observer.ObjectStore, cache *runCache, consoleObserverDisabled bool, batchID string, run farm.ManifestRun, manifestCreatedAt time.Time, manifestObserver string, summary farm.BatchSummary, summaryFound bool, queueState func(runID string) string) (RunRow, error) {
+func runRowCached(ctx context.Context, store observer.ObjectStore, cache *runCache, consoleObserverDisabled bool, batchID string, run farm.ManifestRun, bc batchContext, summary farm.BatchSummary, summaryFound bool, queueState func(runID string) string) (RunRow, error) {
 	if cache == nil {
-		return buildRunRow(ctx, store, consoleObserverDisabled, batchID, run, manifestCreatedAt, manifestObserver, summary, summaryFound, queueState)
+		return buildRunRow(ctx, store, consoleObserverDisabled, batchID, run, bc, summary, summaryFound, queueState, time.Now())
 	}
-	return cache.row(ctx, store, consoleObserverDisabled, batchID, run, manifestCreatedAt, manifestObserver, summary, summaryFound, queueState)
+	return cache.row(ctx, store, consoleObserverDisabled, batchID, run, bc, summary, summaryFound, queueState)
 }
 
 // summaryCacheEntry is one batch's summary.json cache slot (rule 4).
