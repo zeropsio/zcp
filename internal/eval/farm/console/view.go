@@ -1004,8 +1004,8 @@ func apiRunsEngine() Engine[RunRow] {
 // /r/ also takes `obs` (§8.3).
 func runStepsListSpec() ListSpec {
 	return ListSpec{
-		Closed:   []ClosedFilter{{Name: "steps", Allowed: []string{"all", "cited", "errors"}}},
-		Defaults: map[string]string{"steps": "all"},
+		Closed:   []ClosedFilter{{Name: "steps", Allowed: []string{filterAll, "cited", "errors"}}},
+		Defaults: map[string]string{"steps": filterAll},
 		AllowObs: true,
 	}
 }
@@ -1016,7 +1016,7 @@ func runStepsListSpec() ListSpec {
 // citedSteps, evidenceSteps' result as a set); "errors" keeps only tool
 // steps whose result was an error.
 func FilterSteps(steps []observer.Step, mode string, citedSteps map[int]bool) []observer.Step {
-	if mode == "" || mode == "all" {
+	if mode == "" || mode == filterAll {
 		return steps
 	}
 	out := make([]observer.Step, 0, len(steps))

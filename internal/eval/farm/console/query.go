@@ -36,6 +36,10 @@ const (
 	paramOutcome  = "outcome"
 )
 
+// filterAll is the closed-filter value that turns a filter off (kind=all,
+// status=all, steps=all — §8.7).
+const filterAll = "all"
+
 // QueryError names a bad parameter and its allowed values (§8.7): the
 // page renders 400 naming the parameter and its allowed values with a
 // link that drops it; the API answers 400 {error, allowed}.

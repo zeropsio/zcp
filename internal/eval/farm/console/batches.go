@@ -336,7 +336,7 @@ func CompareBatches(prevRuns, curRuns []RunRow) BatchDiff {
 func batchListSpec() ListSpec {
 	return ListSpec{
 		Closed: []ClosedFilter{
-			{Name: paramKind, Allowed: []string{batchKindEvaluation, batchKindEmpty, "all"}},
+			{Name: paramKind, Allowed: []string{batchKindEvaluation, batchKindEmpty, filterAll}},
 		},
 		Sorts: []SortKey{
 			{Name: "newest", DefaultDir: "desc"},
@@ -371,7 +371,7 @@ func batchEngine() Engine[BatchRow] {
 		Spec: batchListSpec(),
 		Match: func(b BatchRow, name, value string) bool {
 			if name == paramKind {
-				return value == "all" || b.Kind == value
+				return value == filterAll || b.Kind == value
 			}
 			return false
 		},

@@ -447,7 +447,7 @@ func BuildProblems(runs []ProblemsRun) []Problem {
 // --- /problems list (§8.7 item 5) ------------------------------------------
 
 // problemStatusAllowed is §8.7's `status` closed set for /problems.
-var problemStatusAllowed = []string{"live", StatusRecurring, StatusNew, StatusFirstSeen, StatusGone, StatusUnconfirmed, "all"}
+var problemStatusAllowed = []string{"live", StatusRecurring, StatusNew, StatusFirstSeen, StatusGone, StatusUnconfirmed, filterAll}
 
 // problemListSpec is the /problems list's query surface.
 func problemListSpec() ListSpec {
@@ -494,7 +494,7 @@ func problemMatch(p Problem, name, value string) bool {
 		return false
 	case paramStatus:
 		switch value {
-		case "all":
+		case filterAll:
 			return true
 		case "live":
 			return isLiveStatus(p.Status)
