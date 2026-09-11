@@ -2,6 +2,7 @@ package console
 
 import (
 	"context"
+	"net/url"
 	"testing"
 	"time"
 
@@ -117,5 +118,154 @@ func TestPages_BatchesNewestFirstWithCounts(t *testing.T) {
 	}
 	if older.ObservedN != 0 || older.ObservedM != 1 {
 		t.Errorf("older observed = %d/%d, want 0/1", older.ObservedN, older.ObservedM)
+	}
+}
+
+// --- PreviousSameSet (item 2) ---------------------------------------------
+
+func TestPreviousSameSet(t *testing.T) {
+	mk := func(id, set, kind string, created time.Time) BatchRow {
+		return BatchRow{BatchID: id, Set: set, Kind: kind, CreatedAt: created}
+	}
+	day := func(n int) time.Time { return time.Date(2026, 9, n, 0, 0, 0, 0, time.UTC) }
+
+	rows := []BatchRow{
+		mk("g5", "gate", batchKindEvaluation, day(5)),
+		mk("g3", "gate", batchKindEvaluation, day(3)),
+		mk("g1-empty", "gate", batchKindEmpty, day(1)), // empty: never a candidate
+		mk("all4", "all", batchKindEvaluation, day(4)), // wrong set
+	}
+
+	got, found := PreviousSameSet(rows, mk("g5", "gate", batchKindEvaluation, day(5)))
+	if !found {
+		t.Fatal("PreviousSameSet: found = false, want true")
+	}
+	if got.BatchID != "g3" {
+		t.Errorf("PreviousSameSet = %q, want g3 (newest older evaluation batch of the same set)", got.BatchID)
+	}
+
+	if _, found := PreviousSameSet(rows, mk("g1-empty", "gate", batchKindEmpty, day(1))); found {
+		t.Error("PreviousSameSet found a batch older than the oldest gate batch, want none")
+	}
+}
+
+// --- CompareBatches (item 2) ----------------------------------------------
+
+func TestCompareBatches(t *testing.T) {
+	prev := []RunRow{
+		{Scenario: "still-fails", Verdict: farm.VerdictFailed},
+		{Scenario: "gets-fixed", Verdict: farm.VerdictBlocked},
+		{Scenario: "stays-passing", Verdict: farm.VerdictPassed},
+		{Scenario: "regresses", Verdict: farm.VerdictPassed},
+	}
+	cur := []RunRow{
+		{Scenario: "still-fails", Verdict: farm.VerdictFailed},
+		{Scenario: "gets-fixed", Verdict: farm.VerdictPassed},
+		{Scenario: "stays-passing", Verdict: farm.VerdictPassed},
+		{Scenario: "regresses", Verdict: farm.VerdictBlocked},
+		{Scenario: "brand-new-failure", Verdict: farm.VerdictNotRun},
+	}
+
+	diff := CompareBatches(prev, cur)
+
+	wantNewlyFailing := []string{"brand-new-failure", "regresses"}
+	wantFixed := []string{"gets-fixed"}
+	wantStillFailing := []string{"still-fails"}
+
+	assertStrSlice(t, "NewlyFailing", diff.NewlyFailing, wantNewlyFailing)
+	assertStrSlice(t, "Fixed", diff.Fixed, wantFixed)
+	assertStrSlice(t, "StillFailing", diff.StillFailing, wantStillFailing)
+}
+
+// --- TestLists_OverviewBatches (item 5, §8.7) -----------------------------
+
+func TestLists_OverviewBatches(t *testing.T) {
+	day := func(n int) time.Time { return time.Date(2026, 9, n, 0, 0, 0, 0, time.UTC) }
+	rows := []BatchRow{
+		{BatchID: "b1", Kind: batchKindEvaluation, CreatedAt: day(1), TotalCostUsd: 1, ZCPHigh: 2},
+		{BatchID: "b2", Kind: batchKindEvaluation, CreatedAt: day(3), TotalCostUsd: 5, ZCPHigh: 1},
+		{BatchID: "b3", Kind: batchKindEmpty, CreatedAt: day(2), TotalCostUsd: 0, ZCPHigh: 0},
+	}
+	eng := batchEngine()
+
+	t.Run("kind default excludes empty", func(t *testing.T) {
+		q, err := Parse(batchListSpec(), url.Values{})
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		got, _ := eng.Apply(rows, q, day(10))
+		if len(got) != 2 {
+			t.Fatalf("got %d rows, want 2 (kind=evaluation default): %+v", len(got), got)
+		}
+	})
+
+	t.Run("kind=all includes empty", func(t *testing.T) {
+		q, err := Parse(batchListSpec(), url.Values{"kind": {"all"}})
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		got, _ := eng.Apply(rows, q, day(10))
+		if len(got) != 3 {
+			t.Fatalf("got %d rows, want 3", len(got))
+		}
+	})
+
+	t.Run("sort=newest desc default, tie-break batch id", func(t *testing.T) {
+		q, err := Parse(batchListSpec(), url.Values{"kind": {"all"}})
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		got, _ := eng.Apply(rows, q, day(10))
+		want := []string{"b2", "b3", "b1"}
+		for i, id := range want {
+			if got[i].BatchID != id {
+				t.Errorf("got[%d] = %s, want %s", i, got[i].BatchID, id)
+			}
+		}
+	})
+
+	t.Run("sort=cost", func(t *testing.T) {
+		q, err := Parse(batchListSpec(), url.Values{"kind": {"all"}, "sort": {"cost"}})
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		got, _ := eng.Apply(rows, q, day(10))
+		if got[0].BatchID != "b2" {
+			t.Errorf("got[0] = %s, want b2 (highest cost)", got[0].BatchID)
+		}
+	})
+
+	t.Run("unknown parameter refused", func(t *testing.T) {
+		if _, err := Parse(batchListSpec(), url.Values{"bogus": {"x"}}); err == nil {
+			t.Error("want an error for an unknown parameter")
+		}
+	})
+
+	t.Run("unknown kind value refused", func(t *testing.T) {
+		if _, err := Parse(batchListSpec(), url.Values{"kind": {"bogus"}}); err == nil {
+			t.Error("want an error for an unknown kind value")
+		}
+	})
+
+	t.Run("notice and n accepted", func(t *testing.T) {
+		q, err := Parse(batchListSpec(), url.Values{"notice": {"queued"}, "n": {"2"}})
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		if q.Notice != "queued" || q.N != "2" {
+			t.Errorf("Notice/N = %s/%s, want queued/2", q.Notice, q.N)
+		}
+	})
+}
+
+func assertStrSlice(t *testing.T, label string, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s = %v, want %v", label, got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("%s[%d] = %q, want %q", label, i, got[i], want[i])
+		}
 	}
 }
