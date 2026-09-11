@@ -818,8 +818,10 @@ Model-authored fields:
   would have prevented). An `agent`-owned finding that ZCP could have
   prevented names that ZCP surface, not `agent`.
 - A finding's `anchor` is the shortest verbatim ZCP text or error code a
-  maintainer would search for (at most 160 chars; hostnames, paths and ids
-  kept as they appear), or empty when no ZCP text is involved.
+  maintainer would search for (at most 160 chars), or empty when no ZCP text
+  is involved. It is the part that would read the same on the next run: a
+  run-specific path, hostname or id belongs outside it, and the console
+  masks what slips through (§8.6).
 - `span` — the steps the problem stretched over, when more than the cited
   ones; `causedVerdict` — true on the finding that explains a failed check
   or a missed goal.
@@ -859,8 +861,8 @@ run's checks, is cleared; an `anchor` that does not occur (FM-46
 normalization) in any step the finding cites is cleared; a `span` outside
 the run or with `from > to` is dropped; a `story.stuck` written as a sentence
 keeps its text as `what`, a leading `Steps a-b` becoming the range, and a
-stuck range outside the run is dropped; a headline starting `OK` while
-there are findings is kept and warned about; a `judged` id that is not a failed
+stuck range outside the run is dropped; a headline starting `OK` on any
+outcome that is not `ok` has that prefix stripped (warn); a `judged` id that is not a failed
 or blocked check of the run is dropped; a headline over 30 words is kept
 and warned about; a failed run where no finding has `causedVerdict` and
 every `judged` entry is `correct: true` is warned about.
