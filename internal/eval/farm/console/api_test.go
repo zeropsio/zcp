@@ -3,6 +3,7 @@ package console
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -305,33 +306,62 @@ func TestAPI_FilesOnlyUnderResults(t *testing.T) {
 	}
 }
 
-// TestAPI_InvalidRunOrBatchIDRejected pins FM-47: an id failing the
-// grammar is 404, before any store call.
+// TestAPI_InvalidRunOrBatchIDRejected pins FM-47: an id failing the run-id
+// or batch-id grammar is rejected with NO store call, at every run-scoped
+// and batch-scoped route — not just one representative route. A route that
+// falls through to a deeper check (e.g. observer.NewSinkBundle's own
+// ValidRunID) can still answer 404 while having already made a Head/List
+// call; call-count is the load-bearing assertion here, status is
+// secondary. Every route answers 404 for an invalid id (including the
+// batch-scoped ones — handleRunsList checks farm.ValidBatchID itself and
+// never falls through to ParseWindow's 400 path for a bad id).
 func TestAPI_InvalidRunOrBatchIDRejected(t *testing.T) {
-	srv, _, _ := testServer(t)
-	h := srv.Handler()
+	invalidIDs := []string{"A_B", "-x", "x..y"}
 
-	counting := &countingStore{}
-	srv2 := NewServer(Config{Store: counting, Token: testToken, Now: fixedNow(t)})
-
-	paths := []string{"/api/runs/x%2Fresults.md", "/api/runs/A_B.md"}
-	for _, p := range paths {
-		t.Run(p, func(t *testing.T) {
-			rr := doGET(t, h, p)
-			if rr.Code != http.StatusNotFound {
-				t.Errorf("got %d, want 404, body=%s", rr.Code, rr.Body.String())
-			}
-		})
-		t.Run(p+" no store call", func(t *testing.T) {
-			rr := doGET(t, srv2.Handler(), p)
-			if rr.Code != http.StatusNotFound {
-				t.Errorf("got %d, want 404", rr.Code)
-			}
-			if counting.calls != 0 {
-				t.Errorf("%d store calls made for an invalid id, want 0", counting.calls)
-			}
-		})
+	runRouteTemplates := []string{
+		"/api/runs/%s.md",
+		"/api/runs/%s.json",
+		"/api/runs/%s/steps.md",
+		"/api/runs/%s/self-review.md",
+		"/api/runs/%s/files/results/a/b/meta.json",
 	}
+	batchRouteTemplates := []string{
+		"/api/runs.md?batch=%s",
+		"/api/runs.json?batch=%s",
+	}
+
+	assertRejected := func(t *testing.T, path string) {
+		t.Helper()
+		counting := &countingStore{}
+		srv := NewServer(Config{Store: counting, Token: testToken, Now: fixedNow(t)})
+		rr := doGET(t, srv.Handler(), path)
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("%s: got %d, want 404, body=%s", path, rr.Code, rr.Body.String())
+		}
+		if counting.calls != 0 {
+			t.Errorf("%s: %d store calls made for an invalid id, want 0", path, counting.calls)
+		}
+	}
+
+	for _, id := range invalidIDs {
+		for _, tmpl := range runRouteTemplates {
+			path := fmt.Sprintf(tmpl, id)
+			t.Run(path, func(t *testing.T) { assertRejected(t, path) })
+		}
+		for _, tmpl := range batchRouteTemplates {
+			path := fmt.Sprintf(tmpl, id)
+			t.Run(path, func(t *testing.T) { assertRejected(t, path) })
+		}
+	}
+
+	// A percent-encoded slash inside the run-id path segment: net/http
+	// decodes %2F to '/' in r.URL.Path before this package's own routing
+	// ever runs, so "x%2Fresults.md" arrives as the two-segment path
+	// "x/results.md" — routed as run "x", tail "results.md", which matches
+	// no known sub-resource and 404s without ever reaching farm.ValidRunID.
+	t.Run("/api/runs/x%2Fresults.md", func(t *testing.T) {
+		assertRejected(t, "/api/runs/x%2Fresults.md")
+	})
 }
 
 // countingStore is an ObjectStore that always reports "not found" and
