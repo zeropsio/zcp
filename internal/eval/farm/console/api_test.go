@@ -1,0 +1,494 @@
+package console
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/zeropsio/zcp/internal/eval/farm"
+	"github.com/zeropsio/zcp/internal/eval/farm/observer"
+)
+
+func doGET(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	h.ServeHTTP(rr, req)
+	return rr
+}
+
+// fixtureObservation builds a stored observation whose one high/zcp-tool
+// finding cites step 3 (fixtureTranscript's tool step) with a verified
+// quote and step-0 CHECKS citation, plus a medium/agent finding — enough
+// to exercise ordering, evidenceSteps, and the unverified-quote count.
+func fixtureObservation(runID string) observer.Observation {
+	return observer.Observation{
+		FormatVersion: observer.ObservationFormat1,
+		RunID:         runID,
+		ObsID:         "20260911T120000000Z-claude-sonnet-5",
+		Model:         "claude-sonnet-5",
+		CreatedAt:     time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC),
+		Status:        "ok",
+		Headline:      "Agent completed the task cleanly",
+		Goal:          observer.Goal{Reached: "yes", Why: "it worked"},
+		Checks:        observer.Checks{Verdict: "passed", Agree: true},
+		Findings: []observer.Finding{
+			{
+				Severity: "high", Owner: "zcp-tool", Title: "Tool returned stale data",
+				What: "the discover call raced the import",
+				Evidence: []observer.Evidence{
+					{Step: 3, Quote: "discovered ok", Verified: true},
+				},
+				LookAt: "internal/ops/discover.go", Fix: "poll before returning",
+			},
+			{
+				Severity: "medium", Owner: "agent", Title: "Agent skipped a sanity check",
+				What: "should have re-verified",
+				Evidence: []observer.Evidence{
+					{Step: 99, Quote: "not really there", Verified: false},
+				},
+				LookAt: "step 99", Fix: "n/a",
+			},
+		},
+		SelfReview: observer.SelfReview{Accurate: "yes"},
+	}
+}
+
+// TestAPI_RunsSinceWindow pins §8.4 FM-52's window filtering: 24h, 7d, and
+// a bad window string (400). Independent oracle: fixed "now" +
+// hand-chosen offsets, checked against the spec's own window semantics.
+func TestAPI_RunsSinceWindow(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "wb1", "off", []runFixture{
+		{runID: "wb1-recent", scenario: "recent", startedAt: now.Add(-2 * time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+		{runID: "wb1-midweek", scenario: "midweek", startedAt: now.Add(-72 * time.Hour), durationS: "5s", costUsd: 0.2, taskResult: "passed", done: true},
+		{runID: "wb1-old", scenario: "old", startedAt: now.Add(-240 * time.Hour), durationS: "5s", costUsd: 0.3, taskResult: "passed", done: true},
+	}, false, nil)
+
+	cases := []struct {
+		name   string
+		window string
+		status int
+		want   []string
+		absent []string
+	}{
+		{"24h", "24h", http.StatusOK, []string{"wb1-recent"}, []string{"wb1-midweek", "wb1-old"}},
+		{"7d", "7d", http.StatusOK, []string{"wb1-recent", "wb1-midweek"}, []string{"wb1-old"}},
+		{"bad window", "not-a-window", http.StatusBadRequest, nil, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := doGET(t, h, "/api/runs.md?since="+tc.window)
+			if rr.Code != tc.status {
+				t.Fatalf("got %d, want %d, body=%s", rr.Code, tc.status, rr.Body.String())
+			}
+			if tc.status != http.StatusOK {
+				return
+			}
+			body := rr.Body.String()
+			for _, w := range tc.want {
+				if !strings.Contains(body, w) {
+					t.Errorf("body missing %q:\n%s", w, body)
+				}
+			}
+			for _, a := range tc.absent {
+				if strings.Contains(body, a) {
+					t.Errorf("body unexpectedly contains %q:\n%s", a, body)
+				}
+			}
+		})
+	}
+}
+
+// TestAPI_RunsByBatch pins GET /api/runs.md?batch=<id>: every run of the
+// batch, regardless of window.
+func TestAPI_RunsByBatch(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "bb1", "off", []runFixture{
+		{runID: "bb1-a", scenario: "a", startedAt: now.Add(-500 * time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+		{runID: "bb1-b", scenario: "b", startedAt: now.Add(-500 * time.Hour), durationS: "5s", costUsd: 0.2, taskResult: "failed", done: true},
+	}, false, nil)
+
+	rr := doGET(t, h, "/api/runs.json?batch=bb1")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("got %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var out struct {
+		Runs []RunsListItem `json:"runs"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.Runs) != 2 {
+		t.Fatalf("got %d runs, want 2: %+v", len(out.Runs), out.Runs)
+	}
+}
+
+// TestAPI_RunMarkdownHasObservationFailedChecksAndStepRanges pins the
+// run-detail markdown: current observation rendering (S1's render.go),
+// failed/blocked checks, and the evidence step ranges.
+func TestAPI_RunMarkdownHasObservationFailedChecksAndStepRanges(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "rb1", "claude-sonnet-5", []runFixture{
+		{
+			runID: "rb1-scena", scenario: "scena", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 1.5,
+			taskResult: "failed", done: true,
+			checks: [][5]string{{"liveness/api/marker", "failed", "200", "500", "results/verification.json"}},
+		},
+	}, true, map[string]string{"rb1-scena": "failed"})
+	seedObservation(t, store, fixtureObservation("rb1-scena"))
+
+	rr := doGET(t, h, "/api/runs/rb1-scena.md")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("got %d, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		"Agent completed the task cleanly", // observation headline
+		"liveness/api/marker",              // failed check id
+		"3",                                // evidence step range
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("run detail markdown missing %q:\n%s", want, body)
+		}
+	}
+}
+
+// TestAPI_StepsFromToUntruncated pins GET
+// /api/runs/<runId>/steps.md?from=<n>&to=<m>: the run's steps, verbatim —
+// no digest-style truncation.
+func TestAPI_StepsFromToUntruncated(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "sb1", "off", []runFixture{
+		{runID: "sb1-scena", scenario: "scena", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 1.0, taskResult: "passed", done: true},
+	}, false, nil)
+
+	rr := doGET(t, h, "/api/runs/sb1-scena/steps.md?from=1&to=3")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("got %d, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		"#1 user", "do the thing for scena",
+		"#2 agent", "looking into it",
+		"#3 tool zerops_discover", `{"project":"p1"}`, "discovered ok",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("steps.md missing %q:\n%s", want, body)
+		}
+	}
+
+	rrJSON := doGET(t, h, "/api/runs/sb1-scena/steps.json?from=3&to=3")
+	var steps []StepJSON
+	if err := json.Unmarshal(rrJSON.Body.Bytes(), &steps); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(steps) != 1 || steps[0].Tool != "zerops_discover" || steps[0].Input != `{"project":"p1"}` || steps[0].Result != "discovered ok" {
+		t.Errorf("steps.json[0] = %+v, want the full untruncated tool step", steps)
+	}
+}
+
+// TestAPI_SelfReview pins GET /api/runs/<runId>/self-review.md|.json.
+func TestAPI_SelfReview(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "rv1", "off", []runFixture{
+		{runID: "rv1-scena", scenario: "scena", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 1.0, taskResult: "passed", done: true, selfReview: "I did great, no issues."},
+	}, false, nil)
+
+	rrMD := doGET(t, h, "/api/runs/rv1-scena/self-review.md")
+	if rrMD.Code != http.StatusOK || rrMD.Body.String() != "I did great, no issues." {
+		t.Fatalf("self-review.md: got %d %q", rrMD.Code, rrMD.Body.String())
+	}
+
+	rrJSON := doGET(t, h, "/api/runs/rv1-scena/self-review.json")
+	var out struct {
+		RunID      string `json:"runId"`
+		SelfReview string `json:"selfReview"`
+	}
+	if err := json.Unmarshal(rrJSON.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.SelfReview != "I did great, no issues." || out.RunID != "rv1-scena" {
+		t.Errorf("self-review.json = %+v", out)
+	}
+}
+
+// TestAPI_FindingsGroupedByOwnerThenSeverity pins GET
+// /api/findings.md|.json?since=<window>: grouped by owner then severity.
+func TestAPI_FindingsGroupedByOwnerThenSeverity(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "fb1", "claude-sonnet-5", []runFixture{
+		{runID: "fb1-scena", scenario: "scena", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 1.0, taskResult: "passed", done: true},
+	}, false, nil)
+	// fixtureObservation carries findings owner="zcp-tool" (high) then
+	// owner="agent" (medium). Grouped by owner alphabetically, "agent" < "zcp-tool".
+	seedObservation(t, store, fixtureObservation("fb1-scena"))
+
+	rr := doGET(t, h, "/api/findings.json?since=24h")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("got %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var out struct {
+		Findings []FindingItem `json:"findings"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.Findings) != 2 {
+		t.Fatalf("got %d findings, want 2: %+v", len(out.Findings), out.Findings)
+	}
+	if out.Findings[0].Owner != "agent" || out.Findings[1].Owner != "zcp-tool" {
+		t.Errorf("findings not grouped by owner: %+v", out.Findings)
+	}
+}
+
+// TestAPI_FilesOnlyUnderResults pins GET
+// /api/runs/<runId>/files/<path>: only results/ files, as text/plain.
+func TestAPI_FilesOnlyUnderResults(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "flb1", "off", []runFixture{
+		{runID: "flb1-scena", scenario: "scena", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 1.0, taskResult: "passed", done: true},
+	}, false, nil)
+	store.putText(t, "runs/flb1-scena/results/a/b/meta.json", `{"ok":true}`)
+
+	cases := []struct {
+		path   string
+		status int
+	}{
+		{"results/a/b/meta.json", http.StatusOK},
+		{"done.json", http.StatusNotFound},
+		{"capture/x", http.StatusNotFound},
+		{"results/../done.json", http.StatusNotFound},
+		{"results%2F..%2Fdone.json", http.StatusNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			rr := doGET(t, h, "/api/runs/flb1-scena/files/"+tc.path)
+			if rr.Code != tc.status {
+				t.Fatalf("got %d, want %d, body=%s", rr.Code, tc.status, rr.Body.String())
+			}
+			if tc.status == http.StatusOK {
+				if ct := rr.Header().Get("Content-Type"); ct != "text/plain; charset=utf-8" {
+					t.Errorf("Content-Type = %q, want text/plain; charset=utf-8", ct)
+				}
+				if rr.Body.String() != `{"ok":true}` {
+					t.Errorf("body = %q", rr.Body.String())
+				}
+			}
+		})
+	}
+}
+
+// TestAPI_InvalidRunOrBatchIDRejected pins FM-47: an id failing the run-id
+// or batch-id grammar is rejected with NO store call, at every run-scoped
+// and batch-scoped route — not just one representative route. A route that
+// falls through to a deeper check (e.g. observer.NewSinkBundle's own
+// ValidRunID) can still answer 404 while having already made a Head/List
+// call; call-count is the load-bearing assertion here, status is
+// secondary. Every route answers 404 for an invalid id (including the
+// batch-scoped ones — handleRunsList checks farm.ValidBatchID itself and
+// never falls through to ParseWindow's 400 path for a bad id).
+func TestAPI_InvalidRunOrBatchIDRejected(t *testing.T) {
+	invalidIDs := []string{"A_B", "-x", "x..y"}
+
+	runRouteTemplates := []string{
+		"/api/runs/%s.md",
+		"/api/runs/%s.json",
+		"/api/runs/%s/steps.md",
+		"/api/runs/%s/self-review.md",
+		"/api/runs/%s/files/results/a/b/meta.json",
+	}
+	batchRouteTemplates := []string{
+		"/api/runs.md?batch=%s",
+		"/api/runs.json?batch=%s",
+	}
+
+	assertRejected := func(t *testing.T, path string) {
+		t.Helper()
+		counting := &countingStore{}
+		srv := NewServer(Config{Store: counting, Token: testToken, Now: fixedNow(t)})
+		rr := doGET(t, srv.Handler(), path)
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("%s: got %d, want 404, body=%s", path, rr.Code, rr.Body.String())
+		}
+		if counting.calls != 0 {
+			t.Errorf("%s: %d store calls made for an invalid id, want 0", path, counting.calls)
+		}
+	}
+
+	for _, id := range invalidIDs {
+		for _, tmpl := range runRouteTemplates {
+			path := fmt.Sprintf(tmpl, id)
+			t.Run(path, func(t *testing.T) { assertRejected(t, path) })
+		}
+		for _, tmpl := range batchRouteTemplates {
+			path := fmt.Sprintf(tmpl, id)
+			t.Run(path, func(t *testing.T) { assertRejected(t, path) })
+		}
+	}
+
+	// A percent-encoded slash inside the run-id path segment: net/http
+	// decodes %2F to '/' in r.URL.Path before this package's own routing
+	// ever runs, so "x%2Fresults.md" arrives as the two-segment path
+	// "x/results.md" — routed as run "x", tail "results.md", which matches
+	// no known sub-resource and 404s without ever reaching farm.ValidRunID.
+	t.Run("/api/runs/x%2Fresults.md", func(t *testing.T) {
+		assertRejected(t, "/api/runs/x%2Fresults.md")
+	})
+}
+
+// countingStore is an ObjectStore that always reports "not found" and
+// counts every call, so a test can prove a handler validated an id before
+// ever touching the store.
+type countingStore struct{ calls int }
+
+func (c *countingStore) Get(context.Context, string) ([]byte, error) {
+	c.calls++
+	return nil, errFakeStoreNotFound
+}
+func (c *countingStore) Put(context.Context, string, []byte) error { c.calls++; return nil }
+func (c *countingStore) Head(context.Context, string) (bool, int64, error) {
+	c.calls++
+	return false, 0, nil
+}
+func (c *countingStore) List(context.Context, string) ([]string, error) { c.calls++; return nil, nil }
+
+// TestAPI_WindowUsesMetaStartedAt pins FM-52: the window is measured
+// against meta.json.startedAt, falling back to the batch manifest's
+// createdAt only when meta.json is absent (a run not yet done).
+func TestAPI_WindowUsesMetaStartedAt(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	// Batch mw1: manifest.createdAt is OLD (outside the 24h window), but
+	// the done run's meta.json.startedAt is recent — it must be found via
+	// meta.json, proving meta wins over a stale manifest date.
+	oldCreatedAt := now.Add(-500 * time.Hour).UTC().Format(time.RFC3339)
+	manifestOld := farm.BatchManifest{
+		Batch: "mw1", CreatedAt: oldCreatedAt, StartedAt: oldCreatedAt,
+		Set: "gate", CandidateSha256: "c", EvaluatorSha256: "e", ScenariosDigest: "s", Observer: "off",
+		Runs: []farm.ManifestRun{{RunID: "mw1-done", Scenario: "done", ProjectName: "p"}},
+	}
+	store.putJSON(t, "batches/mw1/manifest.json", manifestOld)
+	seedRun(t, store, runFixture{runID: "mw1-done", scenario: "done", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 1, taskResult: "passed", done: true})
+
+	// Batch mw2: manifest.createdAt is RECENT (inside the window); its run
+	// has no meta.json (not done yet) — it must be found via the
+	// manifest's own createdAt fallback.
+	recentCreatedAt := now.Add(-time.Hour).UTC().Format(time.RFC3339)
+	manifestRecent := farm.BatchManifest{
+		Batch: "mw2", CreatedAt: recentCreatedAt, StartedAt: recentCreatedAt,
+		Set: "gate", CandidateSha256: "c", EvaluatorSha256: "e", ScenariosDigest: "s", Observer: "off",
+		Runs: []farm.ManifestRun{{RunID: "mw2-running", Scenario: "running", ProjectName: "p"}},
+	}
+	store.putJSON(t, "batches/mw2/manifest.json", manifestRecent)
+	seedRun(t, store, runFixture{runID: "mw2-running", scenario: "running", startedAt: now.Add(-time.Hour), done: false})
+
+	rr := doGET(t, h, "/api/runs.md?since=24h")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("got %d, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "mw1-done") {
+		t.Errorf("done run (recent meta.startedAt) missing despite old manifest.createdAt:\n%s", body)
+	}
+	if !strings.Contains(body, "mw2-running") {
+		t.Errorf("running run (no meta.json, recent manifest.createdAt fallback) missing:\n%s", body)
+	}
+}
+
+// TestAPI_JSONTwinsMatchMarkdownContent pins FM-52: "JSON twins carry
+// exactly the markdown's content as fields."
+func TestAPI_JSONTwinsMatchMarkdownContent(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "jt1", "claude-sonnet-5", []runFixture{
+		{runID: "jt1-scena", scenario: "scena", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 2.5, taskResult: "passed", done: true, selfReview: "all good"},
+	}, true, map[string]string{"jt1-scena": "passed"})
+	seedObservation(t, store, fixtureObservation("jt1-scena"))
+
+	mdBody := doGET(t, h, "/api/runs/jt1-scena.md").Body.String()
+	var detail RunDetail
+	if err := json.Unmarshal(doGET(t, h, "/api/runs/jt1-scena.json").Body.Bytes(), &detail); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if detail.Observation == nil {
+		t.Fatal("json twin carries no observation")
+	}
+	if !strings.Contains(mdBody, detail.Observation.Headline) {
+		t.Errorf("markdown missing JSON's headline %q:\n%s", detail.Observation.Headline, mdBody)
+	}
+	if !strings.Contains(mdBody, detail.Verdict) {
+		t.Errorf("markdown missing JSON's verdict %q:\n%s", detail.Verdict, mdBody)
+	}
+
+	selfReviewMD := doGET(t, h, "/api/runs/jt1-scena/self-review.md").Body.String()
+	var selfReviewJSON struct {
+		SelfReview string `json:"selfReview"`
+	}
+	if err := json.Unmarshal(doGET(t, h, "/api/runs/jt1-scena/self-review.json").Body.Bytes(), &selfReviewJSON); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if selfReviewMD != selfReviewJSON.SelfReview {
+		t.Errorf("self-review twins differ: md=%q json=%q", selfReviewMD, selfReviewJSON.SelfReview)
+	}
+}
+
+// TestAPI_RunningRunWithoutDoneShowsRunning pins §7.5/§8.4: a run with no
+// done.json shows verdict "running" and observerState "not observed".
+func TestAPI_RunningRunWithoutDoneShowsRunning(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "rr1", "claude-sonnet-5", []runFixture{
+		{runID: "rr1-scena", scenario: "scena", startedAt: now.Add(-time.Minute), done: false},
+	}, false, nil)
+
+	rr := doGET(t, h, "/api/runs.json?batch=rr1")
+	var out struct {
+		Runs []RunsListItem `json:"runs"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.Runs) != 1 {
+		t.Fatalf("got %d runs, want 1", len(out.Runs))
+	}
+	if out.Runs[0].Verdict != "running" {
+		t.Errorf("verdict = %q, want running", out.Runs[0].Verdict)
+	}
+	if out.Runs[0].ObserverState != "not observed" {
+		t.Errorf("observerState = %q, want %q", out.Runs[0].ObserverState, "not observed")
+	}
+}

@@ -35,6 +35,7 @@ const (
 	farmVerbCoverage = "coverage"
 	farmVerbGC       = "gc"
 	farmVerbObserve  = "observe"
+	farmVerbConsole  = "console"
 
 	// flagCandidate names the file under test — shared with
 	// eval_behavioral.go's own --candidate execution-binding flag (a
@@ -79,6 +80,8 @@ func runEvalFarm(args []string) int {
 		return runFarmGC(args[1:])
 	case farmVerbObserve:
 		return runFarmObserve(args[1:])
+	case farmVerbConsole:
+		return runFarmConsole(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown farm subcommand: %s\n", args[0])
 		printEvalFarmUsage()
@@ -512,5 +515,7 @@ Commands (ZCP_AUTHORING=1 required):
   coverage <dir> [--since <batch>]           Derive (scenario, step, decision) coverage cells from pulled bundles
   gc       [--older-than <duration>] [--yes]   Delete zcp-farm-* projects no running batch references
   observe  <run-dir> [--model <m>] [--claude <path>]   Advisory evaluation of a pulled run; writes
-                                               <run-dir>/observer/<obsId>.json, prints the rendering, never touches the bucket`)
+                                               <run-dir>/observer/<obsId>.json, prints the rendering, never touches the bucket
+  console  --listen :8080                       Serve the hosted console (§8): auth, read model, agent API over the farm bucket
+                                               (env ZCP_FARM_CONSOLE_TOKEN required, ZCP_FARM_S3_*, optional ZCP_FARM_OBSERVER=off)`)
 }
