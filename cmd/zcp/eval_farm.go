@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"debug/buildinfo"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -206,6 +207,13 @@ func runFarmPush(args []string, envr *farm.EnvResolver) int {
 			return 1
 		}
 		fmt.Fprintf(os.Stdout, "candidate: %s\n", digest)
+
+		info, err := pushCandidateInfo(ctx, client, candidate, digest)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: push candidate info: %v\n", err)
+			return 1
+		}
+		fmt.Fprintln(os.Stdout, candidateInfoLine(info))
 	}
 	if evaluator != "" {
 		digest, err := pushSinglePart(ctx, client, "evaluators", evaluator)
@@ -292,6 +300,50 @@ func pushSinglePart(ctx context.Context, client *farm.SinkClient, prefix, path s
 		return "", err
 	}
 	return digest, nil
+}
+
+// pushCandidateInfo reads path's embedded Go build info and, when it
+// carries a VCS revision, uploads it as digest's candidate-info object
+// (docs/spec-eval-farm.md §3.3) and returns the mapped
+// farm.CandidateInfo. A binary with no VCS stamping, or one
+// debug/buildinfo.ReadFile cannot read at all (never a Go binary), returns
+// a nil CandidateInfo and a nil error: the candidate binary itself already
+// pushed successfully, so a missing build-info blob is never fatal.
+func pushCandidateInfo(ctx context.Context, client *farm.SinkClient, path, digest string) (*farm.CandidateInfo, error) {
+	bi, err := buildinfo.ReadFile(path)
+	if err != nil {
+		return nil, nil //nolint:nilerr,nilnil // path is not a Go binary debug/buildinfo can parse — "without VCS info it uploads nothing" (§3.3), never a push failure
+	}
+	info := farm.CandidateInfoFromBuildInfo(bi)
+	if info == nil {
+		return nil, nil //nolint:nilnil // no vcs.revision setting — the same "uploads nothing" case, just reached via a binary buildinfo.ReadFile could parse
+	}
+	body, err := json.Marshal(info)
+	if err != nil {
+		return nil, fmt.Errorf("marshal candidate info: %w", err)
+	}
+	if err := client.Put(ctx, farm.CandidateInfoKey(digest), body); err != nil {
+		return nil, err
+	}
+	return info, nil
+}
+
+// candidateInfoLine formats pushCandidateInfo's result for stdout (§3.3):
+// "candidate-info: <revision[:12]>[ modified]", or "candidate-info: none
+// (built without VCS stamping)" when info is nil.
+func candidateInfoLine(info *farm.CandidateInfo) string {
+	if info == nil {
+		return "candidate-info: none (built without VCS stamping)"
+	}
+	rev := info.Revision
+	if len(rev) > 12 {
+		rev = rev[:12]
+	}
+	line := "candidate-info: " + rev
+	if info.Modified {
+		line += " modified"
+	}
+	return line
 }
 
 // pushScenarioTree uploads every regular file under dir to
