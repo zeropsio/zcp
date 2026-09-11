@@ -3,11 +3,14 @@ package eval
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/capture"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -323,6 +326,47 @@ func TestObservedModelFromProviderCapture_NoProviderFile_ReturnsEmpty(t *testing
 	}
 	if got := observedModelFromProviderCapture(""); got != "" {
 		t.Fatalf("observedModelFromProviderCapture(\"\") = %q, want empty", got)
+	}
+}
+
+// TestBehavioralResult_ModelObservedAtFreeze pins finding E7: ModelObserved
+// is computed when the result is finalized (writeBehavioralResult), not at
+// newBehavioralResult time — at construction the capture's provider.jsonl is
+// still empty (no agent request has been sent yet), so reading it there
+// always misses the model. The provider log here is written AFTER the
+// result is constructed, mirroring the real timeline.
+func TestBehavioralResult_ModelObservedAtFreeze(t *testing.T) {
+	t.Parallel()
+	sessionDir := t.TempDir()
+	client := platform.NewMock()
+	cfg := RunnerConfig{Capture: &capture.Connection{CaptureID: "cap1", ProxyURL: "http://127.0.0.1:1", SessionDir: sessionDir}}
+	runner := NewRunner(cfg, nil, client, "p1")
+
+	sc := &Scenario{ID: "sc1"}
+	result := runner.newBehavioralResult(sc, "suite1", time.Now())
+	if result.ModelObserved != "" {
+		t.Fatalf("ModelObserved = %q at construction, want empty (no capture traffic yet)", result.ModelObserved)
+	}
+
+	body := []byte(`{"model":"claude-fake-model"}`)
+	rec := capture.Record{
+		Seq: 1, Time: time.Now(), SessionID: "cap1", Kind: capture.RecordProviderRequestBody,
+		ExchangeID: "ex1", BodyBase64: base64.StdEncoding.EncodeToString(body),
+	}
+	line, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatalf("marshal record: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "provider.jsonl"), append(line, '\n'), 0o600); err != nil {
+		t.Fatalf("write provider.jsonl: %v", err)
+	}
+
+	outDir := t.TempDir()
+	if err := runner.writeBehavioralResult(outDir, result); err != nil {
+		t.Fatalf("writeBehavioralResult: %v", err)
+	}
+	if result.ModelObserved != "claude-fake-model" {
+		t.Fatalf("ModelObserved = %q, want claude-fake-model", result.ModelObserved)
 	}
 }
 

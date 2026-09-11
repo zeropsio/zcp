@@ -307,7 +307,7 @@ func (r *Runner) bindingRefusalResult(sc *Scenario, outDir string, result *Behav
 	result.Task = &TaskOutcome{Mode: mode, Result: CheckNotRun, FrozenAt: now}
 	result.TaskEnd = &TaskEndEvidence{ObservedAt: now, Settled: true, Persisted: true}
 	result.Duration = Duration(time.Since(startedAt))
-	if err := writeBehavioralResult(outDir, result); err != nil {
+	if err := r.writeBehavioralResult(outDir, result); err != nil {
 		result.TaskEnd.Persisted = false
 		result.TaskEnd.PersistError = err.Error()
 		fmt.Fprintf(os.Stderr, "warning: write meta.json: %v\n", err)

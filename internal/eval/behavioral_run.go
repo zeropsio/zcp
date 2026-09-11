@@ -76,7 +76,10 @@ type BehavioralResult struct {
 	// blocks a bundle carrying it, meta.json still records the fact.
 	// ModelObserved is the model name read back from the capture's provider
 	// records, empty when no capture is available or no model could be
-	// read.
+	// read. Computed at writeBehavioralResult time (finding E7: at
+	// result-construction time the capture's provider.jsonl is still empty
+	// — no request has been sent yet), so it always reflects this run's own
+	// captured traffic.
 	EvaluatorSha256        string `json:"evaluatorSha256,omitempty"`
 	CandidateSha256        string `json:"candidateSha256,omitempty"`
 	Credential             string `json:"credential,omitempty"`
@@ -280,9 +283,13 @@ func (r *Runner) newBehavioralResult(sc *Scenario, suiteID string, startedAt tim
 }
 
 // applyFarmBundleFields sets result's evaluatorSha256/candidateSha256/
-// credentialMode/modelObserved (docs/spec-eval-farm.md §1.2 FM-4, §2.4
-// FM-16). Split out of RunBehavioralScenario to keep that function's own
-// complexity from growing with every bundle field this adds.
+// credentialMode (docs/spec-eval-farm.md §1.2 FM-4, §2.4 FM-16).
+// ModelObserved is NOT set here (finding E7): this runs at
+// newBehavioralResult time, before the agent's first request, so the
+// capture's provider.jsonl is still empty — it is computed instead at
+// writeBehavioralResult time, from this run's own captured traffic. Split
+// out of RunBehavioralScenario to keep that function's own complexity from
+// growing with every bundle field this adds.
 func (r *Runner) applyFarmBundleFields(result *BehavioralResult) {
 	if evaluatorSha, evalErr := evaluatorSelfSHA256(); evalErr == nil {
 		result.EvaluatorSha256 = evaluatorSha
@@ -296,9 +303,6 @@ func (r *Runner) applyFarmBundleFields(result *BehavioralResult) {
 		os.Getenv("ANTHROPIC_API_KEY") != "",
 		os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "",
 	)
-	if r.config.Capture != nil {
-		result.ModelObserved = observedModelFromProviderCapture(r.config.Capture.SessionDir)
-	}
 }
 
 // evaluatorSelfSHA256 hashes the running evaluator binary
@@ -382,7 +386,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	if sc.IsRequired() && (r.config.Capture == nil || !r.config.CaptureOwned || r.config.Binding == nil) {
 		result.Error = "capture: required mode needs this invocation's own scoped capture window (run with --capture raw) and an explicit binding"
 		result.Duration = Duration(time.Since(startedAt))
-		logBehavioralResultWrite(outDir, result)
+		r.logBehavioralResultWrite(outDir, result)
 		return result, nil
 	}
 
@@ -459,7 +463,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 			r.observeTaskEnd(context.WithoutCancel(ctx), sc, outDir, result, startedAt, "")
 		}
 		result.Duration = Duration(time.Since(startedAt))
-		logBehavioralResultWrite(outDir, result)
+		r.logBehavioralResultWrite(outDir, result)
 		return result, nil
 	}
 
@@ -506,7 +510,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 			r.observeTaskEnd(context.WithoutCancel(ctx), sc, outDir, result, startedAt, selfReview)
 		}
 		result.Duration = Duration(time.Since(startedAt))
-		logBehavioralResultWrite(outDir, result)
+		r.logBehavioralResultWrite(outDir, result)
 		return result, nil
 	}
 	result.RetroWallTime = Duration(time.Since(retroStart))
@@ -533,7 +537,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	}
 
 	result.Duration = Duration(time.Since(startedAt))
-	logBehavioralResultWrite(outDir, result)
+	r.logBehavioralResultWrite(outDir, result)
 
 	return result, nil
 }
@@ -738,7 +742,7 @@ func (r *Runner) runInitialAgent(ctx, scenarioCtx context.Context, sc *Scenario,
 func (r *Runner) notRunFailure(ctx context.Context, sc *Scenario, outDir string, result *BehavioralResult, startedAt time.Time) *BehavioralResult {
 	r.freezeTaskEnd(context.WithoutCancel(ctx), sc, outDir, result, startedAt, false, nil)
 	result.Duration = Duration(time.Since(startedAt))
-	logBehavioralResultWrite(outDir, result)
+	r.logBehavioralResultWrite(outDir, result)
 	return result
 }
 
@@ -882,7 +886,7 @@ func (r *Runner) freezeTaskEnd(
 	// and re-writes meta.json best-effort with the truthful state.
 	result.TaskEnd.Persisted = len(errs) == 0
 	if result.TaskEnd.Persisted {
-		if err := writeBehavioralResult(outDir, result); err != nil {
+		if err := r.writeBehavioralResult(outDir, result); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -892,7 +896,7 @@ func (r *Runner) freezeTaskEnd(
 		if result.Task.Result == CheckPassed {
 			result.Task.Result = CheckBlocked
 		}
-		logBehavioralResultWrite(outDir, result)
+		r.logBehavioralResultWrite(outDir, result)
 	}
 }
 
@@ -1305,14 +1309,22 @@ func detectCompaction(logFile string) bool {
 // writeBehavioralResult persists meta.json via temp+fsync+rename
 // (docs/spec-testing-architecture.md §10.2 step 5). Callers outside the
 // task-end freeze only log the error: meta.json is the persisted task-end
-// artifact there, and a plain progress write elsewhere.
-func writeBehavioralResult(outDir string, r *BehavioralResult) error {
-	r.Usage = computeBehavioralUsage(r.TranscriptFile, r.RetrospectiveFile)
-	return writeJSONAtomic(outDir, "meta.json", r)
+// artifact there, and a plain progress write elsewhere. A Runner method (not
+// a free function) so it can read this run's own capture window: finding E7
+// computes ModelObserved here, at finalization, instead of at
+// newBehavioralResult time — every call site is a genuine "this result is
+// being frozen/persisted" point, so recomputing from the capture's
+// provider.jsonl on each call always reflects this run's own traffic so far.
+func (r *Runner) writeBehavioralResult(outDir string, result *BehavioralResult) error {
+	result.Usage = computeBehavioralUsage(result.TranscriptFile, result.RetrospectiveFile)
+	if r.config.Capture != nil {
+		result.ModelObserved = observedModelFromProviderCapture(r.config.Capture.SessionDir)
+	}
+	return writeJSONAtomic(outDir, "meta.json", result)
 }
 
-func logBehavioralResultWrite(outDir string, r *BehavioralResult) {
-	if err := writeBehavioralResult(outDir, r); err != nil {
+func (r *Runner) logBehavioralResultWrite(outDir string, result *BehavioralResult) {
+	if err := r.writeBehavioralResult(outDir, result); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: write meta.json: %v\n", err)
 	}
 }
