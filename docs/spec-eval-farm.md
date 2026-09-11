@@ -872,7 +872,8 @@ script, no inline style and no external asset; they render in light and dark
   evaluator sha); the current observation (headline, goal, agreement with the
   checks, findings with severity, owner, title, what, evidence linking to
   `#s<n>` with a verified mark, lookAt, fix; unverified-quote count); older
-  observation versions; a re-observe form with a model picker; failed and
+  observation versions; a re-observe form with a model picker, shown only
+  once the run has `done.json`; failed and
   blocked checks with expected, observed, source; the self-review; the task
   prompt; every step with anchor `s<n>`, collapsible, full input and result;
   and the local forensic command `zcp eval farm pull <runId> --out <dir>` then
@@ -928,7 +929,10 @@ and the API say `observer disabled`. Actions: `POST /r/<runId>/observe`
 `claude-fable-5-1`, else 400) queues a new version; `POST /b/<batch>/observe`
 queues that batch's runs that have no observation, or all of them with
 `all=1`. Actions work regardless of the manifest field and the kill switch.
-A run already queued or running answers 409, and so does `all=1` while any
+A run without `done.json` is never enqueued: `POST /r/<runId>/observe`
+answers 409 `run not finished`, and `POST /b/<batch>/observe` silently
+skips such a run of the batch, with or without `all=1`. A run already
+queued or running answers 409, and so does `all=1` while any
 run of that batch is queued or running. An accepted action answers 303 back
 to the page (cookie) or 202 (bearer). Without `CLAUDE_CODE_OAUTH_TOKEN` the
 console still serves every page, the worker stays idle, and actions answer

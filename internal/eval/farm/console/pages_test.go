@@ -118,6 +118,26 @@ func TestPages_RunShowsObservationEvidenceLinksAndMarks(t *testing.T) {
 	}
 }
 
+// TestPages_RunWithoutDoneNoAssessForm pins item 2: the run page never
+// renders the Assess form for a run without done.json — there is nothing
+// yet to observe.
+func TestPages_RunWithoutDoneNoAssessForm(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+
+	seedBatch(t, store, "nd4", "claude-sonnet-5", []runFixture{
+		{runID: "nd4-a", scenario: "a", startedAt: fixedNow(t)().Add(-time.Minute), done: false},
+	}, false, nil)
+
+	rr := doGET(t, h, "/r/nd4-a")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /r/nd4-a: got %d, want 200, body=%s", rr.Code, rr.Body.String())
+	}
+	if body := rr.Body.String(); strings.Contains(body, `action="/r/nd4-a/observe"`) {
+		t.Errorf("run page rendered the Assess form for a run without done.json:\n%s", body)
+	}
+}
+
 // TestPages_RunListsOlderObservationVersions pins §8.3 FM-51's "older
 // observation versions" section: every obsId older than the current one
 // (§7.5 FM-45: newest obsId is current, older ones stay listed) is shown,

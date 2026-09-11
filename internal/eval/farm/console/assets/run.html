@@ -19,10 +19,10 @@
 {{else}}
 <p class="headline muted">{{if eq .Row.ObserverState "observing"}}Assessment in progress…{{else}}No assessment yet — {{.Row.ObserverState}}.{{end}}</p>
 {{end}}
-<form class="inline-form" method="post" action="/r/{{.Row.RunID}}/observe">
+{{if .Row.DoneExists}}<form class="inline-form" method="post" action="/r/{{.Row.RunID}}/observe">
 <select name="model" aria-label="model">{{range .ModelOptions}}<option value="{{.}}">{{.}}</option>{{end}}</select>
 <button type="submit">{{if .Row.Observation}}Re-assess{{else}}Assess{{end}}</button>
-</form>
+</form>{{end}}
 {{if .OlderObservations}}<details class="more"><summary>Earlier assessments ({{len .OlderObservations}})</summary>
 <ul class="plain">{{range .OlderObservations}}<li><span class="muted small">{{.ObsID}} · {{.Model}} · {{fmtTime .CreatedAt}} · {{.Status}}</span><br>{{.Headline}}</li>{{end}}</ul>
 </details>{{end}}

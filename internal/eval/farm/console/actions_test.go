@@ -310,6 +310,85 @@ func TestActions_CookiePostWrongOrMissingOrigin403(t *testing.T) {
 	wkExpectCall(t, obs.calls)
 }
 
+// --- TestActions_RunObserveWithoutDone409 -------------------------------
+
+// TestActions_RunObserveWithoutDone409 pins item 2: a run without
+// done.json is never enqueued — POST /r/<runId>/observe answers 409 "run
+// not finished" instead.
+func TestActions_RunObserveWithoutDone409(t *testing.T) {
+	obs := wkNewRecordingObserve()
+	defer close(obs.release)
+	q := NewQueue(obs.fn)
+	srv, store := newActionServer(t, actionServerOpts{queue: q})
+	h := srv.Handler()
+
+	seedBatch(t, store, "nd1", "claude-sonnet-5", []runFixture{
+		{runID: "nd1-a", scenario: "a", startedAt: fixedNow(t)().Add(-time.Minute), done: false},
+	}, false, nil)
+
+	rr := doBearerPOST(t, h, "/r/nd1-a/observe", url.Values{"model": {"claude-sonnet-5"}})
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("POST /r/nd1-a/observe without done.json: got %d, want 409, body=%s", rr.Code, rr.Body.String())
+	}
+	if body := rr.Body.String(); !strings.Contains(body, "run not finished") {
+		t.Errorf("409 body = %q, want it to contain %q", body, "run not finished")
+	}
+	wkExpectNoCall(t, obs.calls)
+}
+
+// --- TestActions_BatchObserveSkipsRunsWithoutDone -----------------------
+
+// TestActions_BatchObserveSkipsRunsWithoutDone pins item 2: POST
+// /b/<batch>/observe never enqueues a run without done.json, with or
+// without all=1.
+func TestActions_BatchObserveSkipsRunsWithoutDone(t *testing.T) {
+	t.Run("without all=1", func(t *testing.T) {
+		obs := wkNewRecordingObserve()
+		defer close(obs.release)
+		q := NewQueue(obs.fn)
+		srv, store := newActionServer(t, actionServerOpts{queue: q})
+		h := srv.Handler()
+
+		seedBatch(t, store, "nd2", "claude-sonnet-5", []runFixture{
+			{runID: "nd2-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+			{runID: "nd2-b", scenario: "b", startedAt: fixedNow(t)().Add(-time.Minute), done: false},
+		}, false, nil)
+
+		rr := doBearerPOST(t, h, "/b/nd2/observe", url.Values{"model": {"claude-sonnet-5"}})
+		if rr.Code != http.StatusAccepted {
+			t.Fatalf("POST /b/nd2/observe: got %d, want 202, body=%s", rr.Code, rr.Body.String())
+		}
+		job := wkExpectCall(t, obs.calls)
+		if job.RunID != "nd2-a" {
+			t.Errorf("enqueued job.RunID = %q, want nd2-a (the only done run)", job.RunID)
+		}
+		wkExpectNoCall(t, obs.calls)
+	})
+
+	t.Run("with all=1", func(t *testing.T) {
+		obs := wkNewRecordingObserve()
+		defer close(obs.release)
+		q := NewQueue(obs.fn)
+		srv, store := newActionServer(t, actionServerOpts{queue: q})
+		h := srv.Handler()
+
+		seedBatch(t, store, "nd3", "claude-sonnet-5", []runFixture{
+			{runID: "nd3-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+			{runID: "nd3-b", scenario: "b", startedAt: fixedNow(t)().Add(-time.Minute), done: false},
+		}, false, nil)
+
+		rr := doBearerPOST(t, h, "/b/nd3/observe", url.Values{"model": {"claude-sonnet-5"}, "all": {"1"}})
+		if rr.Code != http.StatusAccepted {
+			t.Fatalf("POST /b/nd3/observe all=1: got %d, want 202, body=%s", rr.Code, rr.Body.String())
+		}
+		job := wkExpectCall(t, obs.calls)
+		if job.RunID != "nd3-a" {
+			t.Errorf("enqueued job.RunID = %q, want nd3-a even with all=1 (nd3-b has no done.json)", job.RunID)
+		}
+		wkExpectNoCall(t, obs.calls)
+	})
+}
+
 // --- TestActions_BatchObserveOnlyUnobservedUnlessAll --------------------
 
 // TestActions_BatchObserveOnlyUnobservedUnlessAll pins §8.5 FM-53: without
