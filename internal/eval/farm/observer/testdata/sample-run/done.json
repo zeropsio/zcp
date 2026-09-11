@@ -1,0 +1,1 @@
+{"runId":"sample-run","scenarioId":"sample-scenario","runnerDimensions":{"execution":"ok","task":"required failed","taskEnd":"persisted, settled"},"parts":{"results":{"treeDigest":"aaaa"},"capture":{"treeDigest":"bbbb"}},"evaluatorSha256":"aaaa","candidateSha256":"aaaa","credentialMode":"oauth-token","redacted":[]}

@@ -1,0 +1,12 @@
+{
+  "formatVersion": "zcp-eval-platform-snapshot-1",
+  "projectId": "proj-1",
+  "scenarioStartedAt": "2026-09-11T10:48:38.622532575Z",
+  "observedAt": "2026-09-11T10:56:08.364056886Z",
+  "services": [
+    {"id": "s1", "hostname": "api", "type": "ubuntu/python@3.12", "status": "ACTIVE", "system": false, "subdomainEnabled": true}
+  ],
+  "processes": [],
+  "diagnostics": [],
+  "verificationFindings": []
+}
