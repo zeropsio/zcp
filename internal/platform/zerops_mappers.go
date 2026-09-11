@@ -185,7 +185,9 @@ func mapActiveAppVersion(av *output.GetAppVersion) *ActiveAppVersionDigest {
 		return nil
 	}
 	out := &ActiveAppVersionDigest{
-		ID: av.Id.TypedString().String(),
+		ID:      av.Id.TypedString().String(),
+		Created: av.Created.Format(time.RFC3339Nano),
+		Source:  av.Source.String(),
 	}
 	if av.GithubIntegration != nil {
 		if setup, ok := av.GithubIntegration.ZeropsYamlSetup.Get(); ok {
@@ -193,12 +195,16 @@ func mapActiveAppVersion(av *output.GetAppVersion) *ActiveAppVersionDigest {
 		}
 	}
 	if av.PublicGitSource != nil {
+		out.PublicGitSource = &AppVersionGitSource{
+			GitURL:     av.PublicGitSource.GitUrl.String(),
+			BranchName: av.PublicGitSource.BranchName.String(),
+		}
 		if explicit, ok := av.PublicGitSource.ExplicitSetup.Get(); ok {
 			b := explicit.Native()
 			out.PublicGitSourceExplicitSet = &b
 		}
 	}
-	if out.ID == "" && out.GithubIntegrationSetup == "" && out.PublicGitSourceExplicitSet == nil {
+	if out.ID == "" && out.GithubIntegrationSetup == "" && out.PublicGitSourceExplicitSet == nil && out.PublicGitSource == nil {
 		return nil
 	}
 	return out

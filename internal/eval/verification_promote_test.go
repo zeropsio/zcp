@@ -2,7 +2,7 @@ package eval
 
 import (
 	"context"
-	"strings"
+	"errors"
 	"testing"
 	"time"
 
@@ -14,26 +14,25 @@ import (
 // appVersion must be created after run start, source "CLI", carry no
 // publicGitSource, and the dev (From) service's ACTIVE appVersion id must
 // be unchanged from the scenario baseline.
+//
+// Finding T4: every field is read straight off ListServicesDirect's
+// ActiveAppVersion digest — never through the ES-backed SearchAppVersions
+// index (which can lag long enough after a finished deploy to report a
+// genuinely active target's appVersion as "not yet indexed").
 
 func TestVerification_ArtifactPromotion_CliTargetDevUnchanged_Passes(t *testing.T) {
 	t.Parallel()
 	runStart := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
 	entry := ArtifactPromotionEntry{From: "appdev", To: "appstage"}
 	client := platform.NewMock().
-		// ActiveAppVersion is the direct-read id evaluateArtifactPromotionRows
-		// now resolves against SearchAppVersions (finding E2) — it must match
-		// the ACTIVE entry each fixture's SearchAppVersions response carries.
 		WithServicesDirect([]platform.ServiceStack{
-			{ID: "svc-dev", Name: "appdev", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-dev-1"}},
-			{ID: "svc-stage", Name: "appstage", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-stage-2"}},
-		}).
-		WithAppVersionEvents([]platform.AppVersionEvent{
-			// Target's earlier startWithoutCode stamp, now backed up.
-			{ID: "av-stage-1", ServiceStackID: "svc-stage", Status: "BACKUP", Source: "NONE", Created: "2026-09-09T00:00:00Z", Build: nil},
-			// Target's cross-deployed appVersion: CLI source, no git source, created after run start.
-			{ID: "av-stage-2", ServiceStackID: "svc-stage", Status: "ACTIVE", Source: "CLI", Created: "2026-09-10T01:00:00Z", Build: &platform.BuildInfo{}},
-			// Dev service's active appVersion, unchanged from baseline.
-			{ID: "av-dev-1", ServiceStackID: "svc-dev", Status: "ACTIVE", Source: "GIT", Created: "2026-09-09T00:00:00Z", Build: &platform.BuildInfo{}},
+			{ID: "svc-dev", Name: "appdev", ActiveAppVersion: &platform.ActiveAppVersionDigest{
+				ID: "av-dev-1", Source: "GIT", Created: "2026-09-09T00:00:00Z",
+			}},
+			{ID: "svc-stage", Name: "appstage", ActiveAppVersion: &platform.ActiveAppVersionDigest{
+				// Target's cross-deployed appVersion: CLI source, no git source, created after run start.
+				ID: "av-stage-2", Source: "CLI", Created: "2026-09-10T01:00:00Z",
+			}},
 		})
 	baseline := &ScenarioBaseline{AppVersions: map[string]string{"appdev": "av-dev-1"}}
 
@@ -51,20 +50,15 @@ func TestVerification_ArtifactPromotion_GitBuiltTarget_FailsSourceRow(t *testing
 	runStart := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
 	entry := ArtifactPromotionEntry{From: "appdev", To: "appstage"}
 	client := platform.NewMock().
-		// ActiveAppVersion is the direct-read id evaluateArtifactPromotionRows
-		// now resolves against SearchAppVersions (finding E2).
 		WithServicesDirect([]platform.ServiceStack{
-			{ID: "svc-dev", Name: "appdev", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-dev-1"}},
-			{ID: "svc-stage", Name: "appstage", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-stage-2"}},
-		}).
-		WithAppVersionEvents([]platform.AppVersionEvent{
-			// Target's ACTIVE appVersion is an independent GIT build, not a promotion.
-			{
-				ID: "av-stage-2", ServiceStackID: "svc-stage", Status: "ACTIVE", Source: "GIT",
-				Created: "2026-09-10T01:00:00Z", Build: &platform.BuildInfo{},
+			{ID: "svc-dev", Name: "appdev", ActiveAppVersion: &platform.ActiveAppVersionDigest{
+				ID: "av-dev-1", Source: "GIT", Created: "2026-09-09T00:00:00Z",
+			}},
+			{ID: "svc-stage", Name: "appstage", ActiveAppVersion: &platform.ActiveAppVersionDigest{
+				// Target's ACTIVE appVersion is an independent GIT build, not a promotion.
+				ID: "av-stage-2", Source: "GIT", Created: "2026-09-10T01:00:00Z",
 				PublicGitSource: &platform.AppVersionGitSource{GitURL: "https://github.com/example/repo", BranchName: "main"},
-			},
-			{ID: "av-dev-1", ServiceStackID: "svc-dev", Status: "ACTIVE", Source: "GIT", Created: "2026-09-09T00:00:00Z", Build: &platform.BuildInfo{}},
+			}},
 		})
 	baseline := &ScenarioBaseline{AppVersions: map[string]string{"appdev": "av-dev-1"}}
 
@@ -85,17 +79,14 @@ func TestVerification_ArtifactPromotion_DevRebuilt_FailsUnchangedRow(t *testing.
 	runStart := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
 	entry := ArtifactPromotionEntry{From: "appdev", To: "appstage"}
 	client := platform.NewMock().
-		// ActiveAppVersion is the direct-read id evaluateArtifactPromotionRows
-		// now resolves against SearchAppVersions (finding E2); svc-dev's
-		// deliberately does NOT match the baseline id below.
 		WithServicesDirect([]platform.ServiceStack{
-			{ID: "svc-dev", Name: "appdev", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-dev-2"}},
-			{ID: "svc-stage", Name: "appstage", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-stage-2"}},
-		}).
-		WithAppVersionEvents([]platform.AppVersionEvent{
-			{ID: "av-stage-2", ServiceStackID: "svc-stage", Status: "ACTIVE", Source: "CLI", Created: "2026-09-10T01:00:00Z", Build: &platform.BuildInfo{}},
-			// Dev's active appVersion no longer matches the baseline id.
-			{ID: "av-dev-2", ServiceStackID: "svc-dev", Status: "ACTIVE", Source: "GIT", Created: "2026-09-10T00:30:00Z", Build: &platform.BuildInfo{}},
+			// Dev's active appVersion no longer matches the baseline id below.
+			{ID: "svc-dev", Name: "appdev", ActiveAppVersion: &platform.ActiveAppVersionDigest{
+				ID: "av-dev-2", Source: "GIT", Created: "2026-09-10T00:30:00Z",
+			}},
+			{ID: "svc-stage", Name: "appstage", ActiveAppVersion: &platform.ActiveAppVersionDigest{
+				ID: "av-stage-2", Source: "CLI", Created: "2026-09-10T01:00:00Z",
+			}},
 		})
 	baseline := &ScenarioBaseline{AppVersions: map[string]string{"appdev": "av-dev-1"}}
 
@@ -106,118 +97,169 @@ func TestVerification_ArtifactPromotion_DevRebuilt_FailsUnchangedRow(t *testing.
 	}
 }
 
-// TestVerification_ArtifactPromotion_SearchError_TargetFieldsBlocked pins
-// finding E2's dev_unchanged/SearchAppVersions split: dev_unchanged is graded
-// straight from the direct-read service list and the scenario baseline, so a
-// SearchAppVersions failure blocks only the three target-scoped fields —
-// dev_unchanged still evaluates (and here, since the direct-read id matches
-// the baseline, passes). Renamed from …_AllRowsBlocked: under the old
-// contract dev_unchanged also depended on SearchAppVersions succeeding.
-func TestVerification_ArtifactPromotion_SearchError_TargetFieldsBlocked(t *testing.T) {
+// TestVerification_ArtifactPromotion_NoActiveAppVersion_TargetFieldsFail pins
+// the "target service has no ACTIVE appVersion at all" branch (distinct from
+// a target whose ACTIVE appVersion just isn't a CLI cross-deploy): the three
+// target-scoped fields fail with "no ACTIVE appVersion found", and
+// dev_unchanged still evaluates independently against the baseline.
+func TestVerification_ArtifactPromotion_NoActiveAppVersion_TargetFieldsFail(t *testing.T) {
 	t.Parallel()
 	runStart := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
 	entry := ArtifactPromotionEntry{From: "appdev", To: "appstage"}
 	client := platform.NewMock().
 		WithServicesDirect([]platform.ServiceStack{
 			{ID: "svc-dev", Name: "appdev", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-dev-1"}},
-			{ID: "svc-stage", Name: "appstage", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-stage-2"}},
-		}).
-		WithError("SearchAppVersions", errBoomArtifactPromotionSearch)
+			{ID: "svc-stage", Name: "appstage", ActiveAppVersion: nil},
+		})
 	baseline := &ScenarioBaseline{AppVersions: map[string]string{"appdev": "av-dev-1"}}
 
 	rows := evaluateArtifactPromotionRows(context.Background(), entry, client, "p1", runStart, baseline)
 	assertRowResults(t, rows, map[string]CheckResult{
-		"artifact_promotion/appstage/created_after_start": CheckBlocked,
-		"artifact_promotion/appstage/source_cli":          CheckBlocked,
-		"artifact_promotion/appstage/no_git_source":       CheckBlocked,
+		"artifact_promotion/appstage/created_after_start": CheckFailed,
+		"artifact_promotion/appstage/source_cli":          CheckFailed,
+		"artifact_promotion/appstage/no_git_source":       CheckFailed,
 		"artifact_promotion/appstage/dev_unchanged":       CheckPassed,
 	})
 }
 
-var errBoomArtifactPromotionSearch = artifactPromotionSearchError{}
-
-type artifactPromotionSearchError struct{}
-
-func (artifactPromotionSearchError) Error() string { return "boom" }
-
-// TestArtifactPromotion_ActiveIDNotIndexed_Blocked pins finding E2 (live
-// gate8): when the target's direct-read active appVersion id has not yet
-// appeared in the ES-backed SearchAppVersions index, the three
-// target-scoped rows block (after retrying) — never "no ACTIVE appVersion
-// found", which would misreport a target that IS genuinely active as if it
-// had none at all.
-func TestArtifactPromotion_ActiveIDNotIndexed_Blocked(t *testing.T) {
-	defer OverrideArtifactPromotionIndexRetryForTest([]time.Duration{time.Millisecond, time.Millisecond})()
-	runStart := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
-	entry := ArtifactPromotionEntry{From: "appdev", To: "appstage"}
-	mock := platform.NewMock().
-		WithServicesDirect([]platform.ServiceStack{
-			{ID: "svc-dev", Name: "appdev", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-dev-1"}},
-			{ID: "svc-stage", Name: "appstage", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-stage-not-indexed-yet"}},
-		}).
-		WithAppVersionEvents([]platform.AppVersionEvent{
-			// Present in the index, but never the id the direct read reports
-			// as active — the ES index simply hasn't caught up yet.
-			{ID: "av-stage-old", ServiceStackID: "svc-stage", Status: "ACTIVE", Source: "NONE", Created: "2026-09-09T00:00:00Z"},
-		})
-	client := &searchAppVersionsCountingClient{Mock: mock}
-	baseline := &ScenarioBaseline{AppVersions: map[string]string{"appdev": "av-dev-1"}}
-
-	rows := evaluateArtifactPromotionRows(context.Background(), entry, client, "p1", runStart, baseline)
-	assertRowResults(t, rows, map[string]CheckResult{
-		"artifact_promotion/appstage/created_after_start": CheckBlocked,
-		"artifact_promotion/appstage/source_cli":          CheckBlocked,
-		"artifact_promotion/appstage/no_git_source":       CheckBlocked,
-	})
-	row := findRow(t, rows, "artifact_promotion/appstage/created_after_start")
-	if !strings.Contains(row.Message, "av-stage-not-indexed-yet") || !strings.Contains(row.Message, "not yet indexed") {
-		t.Errorf("Message = %q, want it to name the id and say not yet indexed", row.Message)
-	}
-	if got := client.calls; got < 2 {
-		t.Errorf("SearchAppVersions calls = %d, want at least 2 (initial + at least one retry)", got)
-	}
-}
-
-// searchAppVersionsCountingClient wraps platform.Mock to count
-// SearchAppVersions calls directly — platform.Mock.SearchAppVersions does
-// not call trackCall, so Mock.CallCounts can't observe the retry loop.
-type searchAppVersionsCountingClient struct {
-	*platform.Mock
-	calls int
-}
-
-func (c *searchAppVersionsCountingClient) SearchAppVersions(ctx context.Context, projectID string, limit int) ([]platform.AppVersionEvent, error) {
-	c.calls++
-	return c.Mock.SearchAppVersions(ctx, projectID, limit)
-}
-
-// TestArtifactPromotion_SeedOnlyTarget_FailedCreatedBeforeStart pins finding
-// E2's other half: once the target's direct-read active id IS found inside
-// SearchAppVersions (a seed-only target that was never promoted has had
-// time to index), a created timestamp before run start is real evidence —
-// created_after_start fails with that timestamp in Observed, never "no
-// ACTIVE appVersion found" (the lookup matches by id alone, regardless of
-// the search entry's own Status field).
-func TestArtifactPromotion_SeedOnlyTarget_FailedCreatedBeforeStart(t *testing.T) {
+// TestArtifactPromotion_DirectReadOnly_NoSearchCall pins finding T4: the O7
+// artifact-promotion oracle never calls SearchAppVersions — every field
+// comes from the direct-read ListServicesDirect digest. A platform mock
+// whose SearchAppVersions call fails the test proves no ES-backed lookup
+// happens on either a passing or a target-inactive path.
+func TestArtifactPromotion_DirectReadOnly_NoSearchCall(t *testing.T) {
 	t.Parallel()
 	runStart := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
 	entry := ArtifactPromotionEntry{From: "appdev", To: "appstage"}
-	client := platform.NewMock().
-		WithServicesDirect([]platform.ServiceStack{
-			{ID: "svc-dev", Name: "appdev", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-dev-1"}},
-			{ID: "svc-stage", Name: "appstage", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-stage-seed"}},
-		}).
-		WithAppVersionEvents([]platform.AppVersionEvent{
-			{ID: "av-stage-seed", ServiceStackID: "svc-stage", Status: "BACKUP", Source: "NONE", Created: "2026-09-09T00:00:00Z"},
-		})
 	baseline := &ScenarioBaseline{AppVersions: map[string]string{"appdev": "av-dev-1"}}
 
-	rows := evaluateArtifactPromotionRows(context.Background(), entry, client, "p1", runStart, baseline)
-	row := findRow(t, rows, "artifact_promotion/appstage/created_after_start")
-	if row.Result != CheckFailed {
-		t.Fatalf("created_after_start = %+v, want failed (true evidence), not blocked/no-active-found", row)
+	tests := []struct {
+		name     string
+		services []platform.ServiceStack
+	}{
+		{
+			name: "target_active_cli",
+			services: []platform.ServiceStack{
+				{ID: "svc-dev", Name: "appdev", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-dev-1", Source: "GIT", Created: "2026-09-09T00:00:00Z"}},
+				{ID: "svc-stage", Name: "appstage", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-stage-2", Source: "CLI", Created: "2026-09-10T01:00:00Z"}},
+			},
+		},
+		{
+			name: "target_never_deployed",
+			services: []platform.ServiceStack{
+				{ID: "svc-dev", Name: "appdev", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-dev-1", Source: "GIT", Created: "2026-09-09T00:00:00Z"}},
+				{ID: "svc-stage", Name: "appstage", ActiveAppVersion: nil},
+			},
+		},
 	}
-	if row.Observed != "2026-09-09T00:00:00Z" {
-		t.Errorf("Observed = %q, want the seed's created timestamp", row.Observed)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := &searchAppVersionsFailingClient{Mock: platform.NewMock().WithServicesDirect(tt.services), t: t}
+			rows := evaluateArtifactPromotionRows(context.Background(), entry, client, "p1", runStart, baseline)
+			if len(rows) != len(artifactPromotionFields) {
+				t.Fatalf("got %d rows, want %d", len(rows), len(artifactPromotionFields))
+			}
+			for _, row := range rows {
+				if row.Result != CheckPassed && row.Result != CheckFailed {
+					t.Errorf("row %s = %+v, want resolved passed/failed (never blocked)", row.ID, row)
+				}
+			}
+		})
+	}
+}
+
+// searchAppVersionsFailingClient wraps platform.Mock and fails the test if
+// SearchAppVersions is ever called — the O7 artifact-promotion oracle must
+// resolve entirely from the direct-read digest.
+type searchAppVersionsFailingClient struct {
+	*platform.Mock
+	t *testing.T
+}
+
+func (c *searchAppVersionsFailingClient) SearchAppVersions(ctx context.Context, projectID string, limit int) ([]platform.AppVersionEvent, error) {
+	c.t.Fatal("SearchAppVersions must not be called by the O7 artifact-promotion oracle (finding T4)")
+	return nil, errors.New("unreachable")
+}
+
+// TestArtifactPromotion_CreatedAfterStart_Table covers created_after_start
+// true/false against runStart, resolved straight from the digest's Created
+// field (no SearchAppVersions involved).
+func TestArtifactPromotion_CreatedAfterStart_Table(t *testing.T) {
+	t.Parallel()
+	runStart := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name    string
+		created string
+		want    CheckResult
+	}{
+		{name: "created_after_run_start", created: "2026-09-10T01:00:00Z", want: CheckPassed},
+		{name: "created_before_run_start", created: "2026-09-09T00:00:00Z", want: CheckFailed},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			row := artifactPromotionCreatedAfterStartRow("appstage", platform.ActiveAppVersionDigest{
+				ID: "av-stage-2", Source: "CLI", Created: tt.created,
+			}, runStart)
+			if row.Result != tt.want {
+				t.Errorf("Result = %v, want %v (row: %+v)", row.Result, tt.want, row)
+			}
+		})
+	}
+}
+
+// TestArtifactPromotion_SourceCli_Table covers source CLI vs GIT.
+func TestArtifactPromotion_SourceCli_Table(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		source string
+		want   CheckResult
+	}{
+		{name: "source_cli_passes", source: "CLI", want: CheckPassed},
+		{name: "source_git_fails", source: "GIT", want: CheckFailed},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			row := artifactPromotionSourceCliRow("appstage", platform.ActiveAppVersionDigest{
+				ID: "av-stage-2", Source: tt.source,
+			})
+			if row.Result != tt.want {
+				t.Errorf("Result = %v, want %v (row: %+v)", row.Result, tt.want, row)
+			}
+		})
+	}
+}
+
+// TestArtifactPromotion_NoGitSource_Table covers public git source present/absent.
+func TestArtifactPromotion_NoGitSource_Table(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		publicGitSource *platform.AppVersionGitSource
+		want            CheckResult
+	}{
+		{name: "no_git_source_absent_passes", publicGitSource: nil, want: CheckPassed},
+		{name: "git_source_present_fails", publicGitSource: &platform.AppVersionGitSource{GitURL: "https://github.com/example/repo", BranchName: "main"}, want: CheckFailed},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			row := artifactPromotionNoGitSourceRow("appstage", platform.ActiveAppVersionDigest{
+				ID: "av-stage-2", PublicGitSource: tt.publicGitSource,
+			})
+			if row.Result != tt.want {
+				t.Errorf("Result = %v, want %v (row: %+v)", row.Result, tt.want, row)
+			}
+		})
 	}
 }
