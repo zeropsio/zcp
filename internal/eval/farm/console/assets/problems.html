@@ -1,0 +1,45 @@
+{{define "problems"}}{{template "head" .Meta}}
+<div class="page-head">
+<h1>Problems</h1>
+<p class="muted">{{.Summary}}</p>
+</div>
+{{template "filterbar" .Nav.Filters}}
+<div class="table-wrap"><table class="stack">
+<thead><tr>
+{{with index .Nav.Sorts 0}}{{template "sortth" .}}{{end}}
+<th>Cause</th>
+<th>Where</th>
+{{with index .Nav.Sorts 1}}{{template "sortth" .}}{{end}}
+{{with index .Nav.Sorts 2}}{{template "sortth" .}}{{end}}
+<th>Status</th>
+{{with index .Nav.Sorts 3}}{{template "sortth" .}}{{end}}
+{{with index .Nav.Sorts 4}}{{template "sortth" .}}{{end}}
+</tr></thead>
+<tbody>
+{{range .Rows}}<tr>
+<td data-label="Problem"><strong>{{.Title}}</strong>{{if .Fix}}<br><span class="muted small">{{.Fix}}</span>{{end}}</td>
+<td data-label="Cause">{{range .CauseLabels}}<span class="chip cause-chip">{{.}}</span> {{end}}</td>
+<td data-label="Where"><code class="chip">{{.Surface}}</code>{{if .Anchor}}<br><code>{{.Anchor}}</code>{{end}}</td>
+<td data-label="Severity"><span class="{{severityClass .Severity}}" title="{{severityTooltip .Severity}}">{{severityLabel .Severity}}</span></td>
+<td data-label="Runs hit">hit {{.HitOnNewestBuild}}/{{.RunsAssessedOnNewest}} runs{{if $.NewestBuild}} on {{$.NewestBuild}}{{end}}<br><span class="muted small">{{.RunsTotal}} run{{if ne .RunsTotal 1}}s{{end}} · {{.BatchesTotal}} batch{{if ne .BatchesTotal 1}}es{{end}} · {{.BuildsTotal}} build{{if ne .BuildsTotal 1}}s{{end}}</span></td>
+<td data-label="Status"><span class="chip" title="{{problemStatusTooltip .Status}}">{{problemStatusLabel .Status}}{{if problemStatusLive .Status}} (live){{end}}</span></td>
+<td data-label="Last seen">{{fmtTime .LastSeen}}</td>
+<td data-label="First seen">{{fmtTime .FirstSeen}}</td>
+</tr>
+<tr class="problem-members"><td colspan="8"><details><summary>Members ({{len .Members}})</summary>
+<ul class="plain">
+{{range .Members}}<li>
+<a href="/r/{{.RunID}}">{{.RunID}}</a> <span class="muted small">{{.Batch}} · {{.Build.Label}}</span>
+<span class="{{severityClass .Severity}}">{{severityLabel .Severity}}</span>
+<span class="chip cause-chip">{{.CauseLabel}}</span>
+<strong>{{.Title}}</strong>
+{{if .Quote}}<div class="quote"><a href="/r/{{.RunID}}#{{stepAnchor .QuoteStep}}">&#34;{{.Quote}}&#34;</a></div>{{end}}
+</li>
+{{end}}
+</ul>
+</details></td></tr>
+{{else}}<tr><td colspan="8" class="empty">No problems in this window.</td></tr>
+{{end}}
+</tbody>
+</table></div>
+{{template "foot"}}{{end}}

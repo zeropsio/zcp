@@ -60,7 +60,7 @@ const maxFailedCheckChips = 3
 // as a failure notice rather than a real assessment (item 3: "error" or
 // "unparsed", §7.5).
 func observationFailed(obs *observer.Observation) bool {
-	return obs != nil && (obs.Status == "error" || obs.Status == "unparsed")
+	return obs != nil && (obs.Status == observationStatusError || obs.Status == observationStatusUnparsed)
 }
 
 // observerFailedState is the batch row's State when the current
@@ -254,18 +254,7 @@ type batchRunGroupView struct {
 // with.
 func batchRunsLabeler() listLabeler {
 	return listLabeler{
-		Param: func(p string) string {
-			switch p {
-			case paramVerdict:
-				return "Verdict"
-			case paramOutcome:
-				return "Outcome"
-			case paramCause:
-				return "Cause"
-			default:
-				return p
-			}
-		},
+		Param: listParamLabel,
 		Value: func(p, v string) string {
 			switch p {
 			case paramVerdict:

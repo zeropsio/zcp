@@ -68,6 +68,22 @@ type listNav struct {
 	Sorts   []SortHeaderView
 }
 
+// listParamLabels are the display names of every §8.7 list parameter, the
+// same on every page's filter bar and active-filter chips.
+var listParamLabels = map[string]string{
+	paramCause: "Cause", paramSeverity: "Severity", paramStatus: "Status", paramSurface: "Surface",
+	paramScenario: "Scenario", paramBatch: "Batch", paramBuild: "Build", paramVerdict: "Verdict",
+	paramOutcome: "Outcome", paramKind: "Kind", "steps": "Steps", "since": "Window",
+}
+
+// listParamLabel names one list parameter for display.
+func listParamLabel(param string) string {
+	if l, ok := listParamLabels[param]; ok {
+		return l
+	}
+	return param
+}
+
 // listLabeler names a filter parameter and one of its values for display.
 type listLabeler struct {
 	Param func(param string) string

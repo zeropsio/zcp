@@ -233,16 +233,7 @@ var homeBatchSortLabels = map[string]string{
 // and its values, plus the shared `since` param, for buildListNav.
 func homeBatchLabeler() listLabeler {
 	return listLabeler{
-		Param: func(param string) string {
-			switch param {
-			case paramKind:
-				return "Kind"
-			case "since":
-				return "Since"
-			default:
-				return param
-			}
-		},
+		Param: listParamLabel,
 		Value: func(param, value string) string {
 			if param != paramKind {
 				return value

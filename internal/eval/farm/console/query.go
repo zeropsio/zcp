@@ -36,6 +36,12 @@ const (
 	paramOutcome  = "outcome"
 )
 
+// Sort directions (§8.7 `dir=`).
+const (
+	dirAsc  = "asc"
+	dirDesc = "desc"
+)
+
 // filterAll is the closed-filter value that turns a filter off (kind=all,
 // status=all, steps=all — §8.7).
 const filterAll = "all"
@@ -205,8 +211,8 @@ func Parse(spec ListSpec, values url.Values) (Query, error) {
 			if len(spec.Sorts) == 0 {
 				return Query{}, &QueryError{Param: "dir", Allowed: spec.allowedParamNames()}
 			}
-			if val != "asc" && val != "desc" {
-				return Query{}, &QueryError{Param: "dir", Allowed: []string{"asc", "desc"}}
+			if val != dirAsc && val != dirDesc {
+				return Query{}, &QueryError{Param: "dir", Allowed: []string{dirAsc, dirDesc}}
 			}
 			q.Dir = val
 			continue
