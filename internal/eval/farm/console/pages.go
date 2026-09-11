@@ -88,6 +88,9 @@ var pageFuncs = template.FuncMap{
 	"assessmentOutcomeClass": assessmentOutcomeClass,
 	"assessmentStateLabel":   assessmentStateLabel,
 	"assessmentStateTooltip": assessmentStateTooltip,
+	"problemStatusLabel":     problemStatusLabel,
+	"problemStatusTooltip":   problemStatusTooltip,
+	"problemStatusLive":      problemStatusLive,
 }
 
 // fmtTime renders a timestamp for people: day, month, time, UTC.

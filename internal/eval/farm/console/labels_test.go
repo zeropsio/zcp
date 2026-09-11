@@ -85,9 +85,14 @@ func TestLabels_EveryEnumValueHasALabel(t *testing.T) {
 	})
 
 	t.Run("assessment outcome", func(t *testing.T) {
-		for _, v := range []string{observer.OutcomeOK, observer.OutcomeProblem, observer.OutcomeInconclusive} {
+		// §8.8 (2026-09 update): outcome gains "none" — no current ok
+		// observation to summarize.
+		for _, v := range []string{observer.OutcomeOK, observer.OutcomeProblem, observer.OutcomeInconclusive, outcomeNone} {
 			if got := assessmentOutcomeLabel(v); got == "" {
 				t.Errorf("assessmentOutcomeLabel(%q) is empty", v)
+			}
+			if got := assessmentOutcomeClass(v); got != "outcome outcome-"+v {
+				t.Errorf("assessmentOutcomeClass(%q) = %q, want %q", v, got, "outcome outcome-"+v)
 			}
 		}
 	})
@@ -96,6 +101,38 @@ func TestLabels_EveryEnumValueHasALabel(t *testing.T) {
 		for _, v := range []string{observerStateObserved, observerStateObserving, observerStateNotObserved, observerStateOff, observerStateDisabled} {
 			if got := assessmentStateLabel(v); got == "" {
 				t.Errorf("assessmentStateLabel(%q) is empty", v)
+			}
+		}
+	})
+
+	// §8.6/§8.8 (2026-09 update): problem status gains "first seen" — the
+	// set is now new/first-seen/recurring/gone/unconfirmed, and "live" =
+	// new, first seen or recurring (previously new/recurring/gone/
+	// unconfirmed, live = new or recurring).
+	t.Run("problem status", func(t *testing.T) {
+		wantLabel := map[string]string{
+			"new": "new", "first-seen": "first seen", "recurring": "recurring",
+			"gone": "gone", "unconfirmed": "unconfirmed",
+		}
+		for value, label := range wantLabel {
+			if got := problemStatusLabel(value); got != label {
+				t.Errorf("problemStatusLabel(%q) = %q, want %q", value, got, label)
+			}
+			if got := problemStatusTooltip(value); got == "" {
+				t.Errorf("problemStatusTooltip(%q) is empty", value)
+			}
+		}
+		if len(problemStatusVocab) != len(wantLabel) {
+			t.Fatalf("problemStatusVocab has %d entries, want %d", len(problemStatusVocab), len(wantLabel))
+		}
+		for _, v := range []string{"new", "first-seen", "recurring"} {
+			if !problemStatusLive(v) {
+				t.Errorf("problemStatusLive(%q) = false, want true", v)
+			}
+		}
+		for _, v := range []string{"gone", "unconfirmed"} {
+			if problemStatusLive(v) {
+				t.Errorf("problemStatusLive(%q) = true, want false", v)
 			}
 		}
 	})
@@ -131,7 +168,8 @@ func TestPages_TermsListsEveryTerm(t *testing.T) {
 		"not started", "stalled", // verdict
 		"High", "Medium", "Low", // severity
 		"ZCP guidance", "ZCP tool", "Zerops platform", "Agent mistake", "Test scenario", "Test check", // cause
-		"OK", "Problem", "Inconclusive", // outcome
+		"OK", "Problem", "Inconclusive", "none", // outcome
+		"first seen", "recurring", "gone", "unconfirmed", // problem status
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/terms missing vocabulary label %q:\n%s", want, body)
@@ -142,6 +180,32 @@ func TestPages_TermsListsEveryTerm(t *testing.T) {
 	// a title="..." attribute somewhere in the page.
 	if !strings.Contains(body, `title="every check held"`) {
 		t.Errorf("/terms missing the passed verdict's title attribute:\n%s", body)
+	}
+}
+
+// TestPages_TermsReflectsSeptember2026VocabularyUpdate pins the §8.8
+// update landed on feat/zcp-farm: the "Evaluation batch"/"Empty batch"
+// terms, the sha256-identified ZCP build wording, and the new "Disputed"
+// definition (checks.agree: false, counted under the disputed verdict,
+// passed included) — the generic glossary loop above already proves every
+// glossaryTerms row renders; this test proves the row TEXT itself changed,
+// not merely that some old text still renders.
+func TestPages_TermsReflectsSeptember2026VocabularyUpdate(t *testing.T) {
+	srv, _, _ := testServer(t)
+	h := srv.Handler()
+
+	body := html.UnescapeString(doGET(t, h, "/terms").Body.String())
+
+	for _, want := range []string{
+		"Evaluation batch", "at least one run finished",
+		"Empty batch", "no run finished",
+		"identified by its sha256",
+		"checks.agree: false",
+		"counted under the verdict it disputes, passed included",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/terms missing updated vocabulary text %q:\n%s", want, body)
+		}
 	}
 }
 

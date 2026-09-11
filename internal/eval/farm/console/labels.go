@@ -108,12 +108,22 @@ func causeClass(owner string) string {
 // legend) can never drift apart.
 var causeOrder = findingOwners
 
+// outcomeNone is a RunRow-level assessment outcome (§8.8, 2026-09 update):
+// unlike observer.OutcomeOK/Problem/Inconclusive — which describe one
+// stored observation — "none" describes a run with no *current* ok
+// observation to summarize (unobserved, or its current observation
+// failed). No observer.Observation ever carries this value; a later
+// slice's RunRow.Outcome field does.
+const outcomeNone = "none"
+
 // assessmentOutcomeVocab is §8.8's assessment-outcome vocabulary —
-// observer.Observation.Outcome, derived, never model-authored.
+// observer.Observation.Outcome (ok/problem/inconclusive), derived, never
+// model-authored, plus the RunRow-level "none".
 var assessmentOutcomeVocab = []vocabEntry{
 	{observer.OutcomeOK, "OK", "the checks and the observer agree the run is fine"},
 	{observer.OutcomeProblem, "Problem", "the observer found something worth a maintainer's attention"},
 	{observer.OutcomeInconclusive, "Inconclusive", "the observer could not tell either way"},
+	{outcomeNone, "none", "no current ok observation to summarize"},
 }
 
 func assessmentOutcomeLabel(v string) string { return vocabLabel(assessmentOutcomeVocab, v) }
@@ -123,7 +133,7 @@ func assessmentOutcomeLabel(v string) string { return vocabLabel(assessmentOutco
 // the neutral "other" look for a value this table does not know about.
 func assessmentOutcomeClass(v string) string {
 	switch v {
-	case observer.OutcomeOK, observer.OutcomeProblem, observer.OutcomeInconclusive:
+	case observer.OutcomeOK, observer.OutcomeProblem, observer.OutcomeInconclusive, outcomeNone:
 		return "outcome outcome-" + v
 	default:
 		return "outcome outcome-other"
@@ -143,6 +153,29 @@ var assessmentStateVocab = []vocabEntry{
 func assessmentStateLabel(v string) string   { return vocabLabel(assessmentStateVocab, v) }
 func assessmentStateTooltip(v string) string { return vocabTooltip(assessmentStateVocab, v) }
 
+// problemStatusVocab is §8.6/§8.8's problem-status vocabulary (2026-09
+// update): new/first-seen/recurring/gone/unconfirmed, in the §8.7 filter's
+// own order. The values match the §8.7 `status=` filter's wire spelling
+// ("first-seen", hyphenated); MODEL's problems.go (not yet landed) is the
+// eventual source of these as Go constants — this table is a plain string
+// mirror of the spec text until it does.
+var problemStatusVocab = []vocabEntry{
+	{"new", "new", "hit on the newest build only, and one of its scenarios was assessed on an older build without hitting it (a regression)"},
+	{"first-seen", "first seen", "hit on the newest build only, and none of its scenarios was assessed on an older build"},
+	{"recurring", "recurring", "hit on the newest build and on an older one"},
+	{"gone", "gone", "not hit on the newest build although one of its scenarios was assessed there, and hit on an older build"},
+	{"unconfirmed", "unconfirmed", "not hit on the newest build and none of its scenarios was assessed there"},
+}
+
+func problemStatusLabel(v string) string   { return vocabLabel(problemStatusVocab, v) }
+func problemStatusTooltip(v string) string { return vocabTooltip(problemStatusVocab, v) }
+
+// problemStatusLive reports whether v is one of the "live" statuses (§8.6:
+// "live = recurring, new or first seen").
+func problemStatusLive(v string) bool {
+	return v == "new" || v == "first-seen" || v == "recurring"
+}
+
 // glossaryTerm is one row of §8.8 FM-56's full glossary, for GET /terms.
 type glossaryTerm struct{ Term, Definition string }
 
@@ -150,19 +183,21 @@ type glossaryTerm struct{ Term, Definition string }
 // the spec's own order.
 var glossaryTerms = []glossaryTerm{
 	{"Batch", "One farm run: a set of scenarios against one ZCP build."},
+	{"Evaluation batch", "A batch where at least one run finished."},
+	{"Empty batch", "A batch where no run finished (setup failures, aborted, stalled)."},
 	{"Run", "One scenario done once by an agent in a fresh project."},
 	{"Scenario", "A scripted user task plus the automatic checks that grade it."},
-	{"ZCP build", "The candidate binary: its git commit (12 chars, + modified when built from a dirty tree) when the manifest records it, else build <sha256[:12]>."},
+	{"ZCP build", "The candidate binary, identified by its sha256; shown as its git commit (12 chars, + modified when built from a dirty tree) when the manifest records it, else build <sha256[:12]>. The label is display only; two binaries are two builds even at one commit."},
 	{"Verdict", "The automatic checks' result, never the observer's — see the table below."},
 	{"Check", "One automatic test: expected, observed, where the observed value came from."},
 	{"Observer", "An AI model that reads a finished run and writes an assessment; it never changes the verdict."},
 	{"Assessment", "What the observer writes about a run: an outcome and, when there is a problem, findings."},
 	{"Goal reached", "Did the user get what they asked for, whatever the checks say."},
 	{"Verdict right", "Did the checks judge correctly."},
-	{"Disputed", "The observer judged a check wrong."},
+	{"Disputed", "The current observation has checks.agree: false: a check judged wrong, or a check the observer says is missing; counted under the verdict it disputes, passed included."},
 	{"Self-review honest", "Does the agent's after-run summary match the record."},
 	{"Finding", "One problem in one run, with quotes, where to look and a fix."},
-	{"Problem", "The same finding across runs."},
+	{"Problem", "The same finding across runs — see the problem status table below."},
 	{"Severity", "High, medium or low — see the table below."},
 	{"Cause", "The finding's owner — see the table below."},
 	{"Cause class", "ZCP (guidance, tool) · Test (scenario, check) · Agent · Platform. Lists order causes ZCP first."},
@@ -179,13 +214,14 @@ type vocabRow struct{ Value, Label, Tooltip string }
 
 // termsPageData is GET /terms (§8.3 FM-51's glossary page).
 type termsPageData struct {
-	Meta       pageMeta
-	Glossary   []glossaryTerm
-	Verdicts   []vocabRow
-	Severities []vocabRow
-	Causes     []vocabRow
-	Outcomes   []vocabRow
-	States     []vocabRow
+	Meta            pageMeta
+	Glossary        []glossaryTerm
+	Verdicts        []vocabRow
+	Severities      []vocabRow
+	Causes          []vocabRow
+	Outcomes        []vocabRow
+	States          []vocabRow
+	ProblemStatuses []vocabRow
 }
 
 func vocabRows(vocab []vocabEntry) []vocabRow {
@@ -201,12 +237,13 @@ func vocabRows(vocab []vocabEntry) []vocabRow {
 // pins that the set below is exhaustive).
 func (s *Server) handleTermsPage(w http.ResponseWriter, r *http.Request) {
 	data := termsPageData{
-		Meta:       s.pageMeta(r, "Terms", navTerms, false),
-		Glossary:   glossaryTerms,
-		Verdicts:   vocabRows(verdictVocab),
-		Severities: vocabRows(severityVocab),
-		Outcomes:   vocabRows(assessmentOutcomeVocab),
-		States:     vocabRows(assessmentStateVocab),
+		Meta:            s.pageMeta(r, "Terms", navTerms, false),
+		Glossary:        glossaryTerms,
+		Verdicts:        vocabRows(verdictVocab),
+		Severities:      vocabRows(severityVocab),
+		Outcomes:        vocabRows(assessmentOutcomeVocab),
+		States:          vocabRows(assessmentStateVocab),
+		ProblemStatuses: vocabRows(problemStatusVocab),
 	}
 	for _, owner := range causeOrder {
 		data.Causes = append(data.Causes, vocabRow{Value: owner, Label: causeLabel(owner), Tooltip: causeClass(owner) + " cause"})

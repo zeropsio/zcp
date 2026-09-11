@@ -39,4 +39,11 @@
 <thead><tr><th>State</th><th>Meaning</th></tr></thead>
 <tbody>{{range .States}}<tr><td><span title="{{.Tooltip}}">{{.Label}}</span></td><td>{{.Tooltip}}</td></tr>{{end}}</tbody>
 </table></div>
+
+<h2>Problem status</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+<tbody>{{range .ProblemStatuses}}<tr><td><span class="chip" title="{{.Tooltip}}">{{.Label}}{{if problemStatusLive .Value}} (live){{end}}</span></td><td>{{.Tooltip}}</td></tr>{{end}}</tbody>
+</table></div>
+<p class="muted small">live = new, first seen or recurring.</p>
 {{template "foot"}}{{end}}
