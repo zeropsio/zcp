@@ -2,7 +2,9 @@ package farm
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -181,5 +183,35 @@ func TestSinkList_NonOKStatus_NamesBody(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), wantBody) {
 		t.Errorf("List error = %q, want it to contain the response body %q", err.Error(), wantBody)
+	}
+}
+
+// TestErrObjectNotFound_SatisfiesFsErrNotExist pins the fix for the
+// observer's optional-file loaders (internal/eval/farm/observer/bundle.go):
+// they check errors.Is(err, os.ErrNotExist) to treat an absent optional file
+// (self-review.md, platform-snapshot.json, verification.json) as "not
+// recorded" rather than a hard failure. SinkClient.Get wraps
+// ErrObjectNotFound on a 404, so ErrObjectNotFound itself must satisfy
+// errors.Is(err, fs.ErrNotExist) or every bucket-backed (as opposed to
+// local-directory) optional-file read fails the whole observation instead
+// of rendering "(not recorded)".
+func TestErrObjectNotFound_SatisfiesFsErrNotExist(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := NewSinkClient(Config{URL: srv.URL, Bucket: "zcp-farm", Key: "AKIDEXAMPLE", Secret: "secret"})
+	_, err := client.Get(context.Background(), "runs/r1/missing.json")
+	if err == nil {
+		t.Fatal("Get: want an error for a 404 response, got nil")
+	}
+	if !errors.Is(err, ErrObjectNotFound) {
+		t.Errorf("Get error = %v, want it to wrap ErrObjectNotFound", err)
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Get error = %v, want errors.Is(err, fs.ErrNotExist) to hold (ErrObjectNotFound must satisfy fs.ErrNotExist)", err)
 	}
 }

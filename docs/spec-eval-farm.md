@@ -777,11 +777,17 @@ its input JSON plus its result, §7.3) once both are normalized: JSON string
 escape sequences (`\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`, `\uXXXX`) are
 decoded — ZCP's tool results are JSON text, so the agent saw `\"x\"` and
 `\u003c` where the model quotes `"x"` and `<` — and every whitespace run is
-collapsed to one space; the plain collapsed comparison counts as well. Step 0
-names the digest's `CHECKS` section: the prompt tells the model to cite a
-deterministic check as step 0, and a step-0 quote is verified against the
-rendered `CHECKS` text. Any other step number outside the run is unverified.
-Every surface that shows an observation shows its unverified-quote count.
+collapsed to one space; the plain collapsed comparison counts as well. As a
+third normalization, tried after both of the above, every backtick and
+asterisk is dropped from both sides: a step can carry Markdown source (a
+guidance sentence quoting `` Do **NOT** `override` ``) while the model
+quotes its rendered plain reading (`Do NOT override`). An empty or
+whitespace-only quote is never verified — it is trivially a substring of
+any text. Step 0 names the digest's `CHECKS` section: the prompt tells the
+model to cite a deterministic check as step 0, and a step-0 quote is
+verified against the rendered `CHECKS` text. Any other step number outside
+the run is unverified. Every surface that shows an observation shows its
+unverified-quote count.
 
 ### 7.6 Writers and immutability
 

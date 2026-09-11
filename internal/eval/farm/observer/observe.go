@@ -2,12 +2,20 @@ package observer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/eval"
 )
+
+// unparsedRawStoreCap is how much of an unparsed answer's raw text is kept
+// in the stored observation document (§7.5: "raw keeps the answer, capped
+// at 20,000 chars"). render.go's unparsedRawDisplayCap is a separate,
+// smaller cap on how much of that stored text a rendering shows — never
+// the other way around.
+const unparsedRawStoreCap = 20000
 
 // ObserveConfig carries every input Observe needs beyond the bundle itself
 // (§7.2-§7.5). Environ and Now default to os.Environ and time.Now
@@ -51,7 +59,7 @@ func Observe(ctx context.Context, bundle Bundle, cfg ObserveConfig) Observation 
 	}
 
 	fail := func(err error) Observation {
-		obs.Status = "error"
+		obs.Status = statusError
 		obs.Error = err.Error()
 		return obs
 	}
@@ -119,10 +127,18 @@ func Observe(ctx context.Context, bundle Bundle, cfg ObserveConfig) Observation 
 	obs.DurationMs = runResult.DurationMs
 	obs.CostUsd = runResult.TotalCostUsd
 
+	// claude can exit 0 while its own JSON output reports is_error — an
+	// expired credential is exactly this shape. That is a call failure, not
+	// an answer that merely failed to parse: never let it fall through to
+	// ParseAndValidate and render as "unparsed".
+	if runResult.IsError {
+		return fail(errors.New(runResult.ResultText))
+	}
+
 	ans, ok := ParseAndValidate(runResult.ResultText)
 	if !ok {
-		obs.Status = "unparsed"
-		obs.Raw = firstN(runResult.ResultText, unparsedRawCap)
+		obs.Status = statusUnparsed
+		obs.Raw = firstN(runResult.ResultText, unparsedRawStoreCap)
 		return obs
 	}
 

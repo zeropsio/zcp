@@ -19,6 +19,10 @@ Rules:
 - owner is who must act: zcp-guidance (ZCP's text told the agent too little or the wrong thing), zcp-tool (a ZCP tool behaved wrongly), platform (Zerops itself failed), agent (the agent ignored or misread good guidance), scenario (the task or its setup is unfair or broken), evaluator (a deterministic check judged wrongly).
 - severity: high = the goal was missed, or the agent did something destructive or unsafe; medium = it cost many steps or much time; low = friction.
 - The SCENARIO section is the test author's file; the agent never saw it. The SELF-REVIEW was written by the agent after the run, from memory.
+- Before you write a finding, re-read every quote it cites. If a quote contradicts the finding's what or fix, drop or rewrite the finding.
+- Never state how a tool works internally unless a quoted tool output says so. Describe the observable mismatch instead, for example: the error names path A; the mount is path B.
+- Write headline, what and fix for a reader who has never seen ZCP's code. Keep identifiers — field names, error codes, check ids, file names — in lookAt; in the other fields say what the thing does in plain words.
+- Evidence must show the problem itself: for missing coverage quote the requirement that goes unchecked, not a check that passed. Cite at most two steps per finding.
 
 Answer with one JSON object and nothing else:
 {
@@ -31,7 +35,7 @@ Answer with one JSON object and nothing else:
       "owner": "zcp-guidance|zcp-tool|platform|agent|scenario|evaluator",
       "title": "at most 12 words",
       "what": "at most 3 sentences: what happened and why it matters",
-      "evidence": [{"step": 18, "quote": "exact words from step 18"}],
+      "evidence": [{"step": 18, "quote": "exact words from step 18"}, {"step": 22, "quote": "exact words from step 22"}],
       "lookAt": "where a maintainer should look: the ZCP tool and action, and the exact text or error code to search for",
       "fix": "one sentence with the direction of a fix, or an empty string"
     }
