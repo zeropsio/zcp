@@ -344,7 +344,10 @@ func evaluateLivenessRow(ctx context.Context, probe *LivenessProbe, observation 
 	}
 	resp, err := httpDoer.Do(req)
 	if err != nil {
-		return RequiredCheck{ID: id, Check: "liveness", Scope: probe.Service, Result: CheckFailed, ObservedAt: now, Source: "HTTP GET " + url, Message: fmt.Sprintf("GET %s: %v", url, err)}
+		// A transport error means the assertion couldn't be evaluated, not
+		// that it's proven false — §10.1 classes "HTTP unreachable" as
+		// blocked, never failed.
+		return RequiredCheck{ID: id, Check: "liveness", Scope: probe.Service, Result: CheckBlocked, ObservedAt: now, Source: "HTTP GET " + url, Message: fmt.Sprintf("GET %s: %v", url, err)}
 	}
 	defer resp.Body.Close()
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxLivenessBodyBytes))
@@ -503,9 +506,12 @@ func evaluateSubdomainProbeRow(
 	}
 	resp, err := httpDoer.Do(req)
 	if err != nil {
+		// A transport error means the assertion couldn't be evaluated, not
+		// that it's proven false — §10.1 classes "HTTP unreachable" as
+		// blocked, never failed.
 		return RequiredCheck{
 			ID: id, Check: "subdomain_probe", Scope: exp.Hostname,
-			Result: CheckFailed, ObservedAt: now, Source: "HTTP GET " + url,
+			Result: CheckBlocked, ObservedAt: now, Source: "HTTP GET " + url,
 			Message: fmt.Sprintf("GET %s: %v", url, err),
 		}
 	}

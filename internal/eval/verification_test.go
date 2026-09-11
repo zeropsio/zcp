@@ -456,6 +456,56 @@ func TestSubdomainProbe_ResolvedURL_ActualRequest(t *testing.T) {
 	})
 }
 
+// TestLiveness_TransportError_Blocked pins E10: an httpDoer.Do transport
+// error (network unreachable, connection refused, etc.) blocks the liveness
+// row rather than failing it — docs/spec-testing-architecture.md §10.1
+// classes "HTTP unreachable" as blocked, since a transport error proves
+// nothing about the assertion, only that it couldn't be evaluated.
+func TestLiveness_TransportError_Blocked(t *testing.T) {
+	t.Parallel()
+	probe := &LivenessProbe{Service: "appdev", Marker: "team-notes"}
+	observation := platformObservation{
+		observedAt: time.Now(),
+		services: []platform.ServiceStack{
+			{ID: "appdev-1", Name: "appdev", SubdomainAccess: true, Ports: []platform.Port{{Port: 80, Scheme: "http"}}},
+		},
+	}
+	client := platform.NewMock().WithProject(&platform.Project{ID: "p1", SubdomainHost: "testproj.example.com"})
+	transportErr := errors.New("dial tcp: connection refused")
+	got := evaluateLivenessRow(context.Background(), probe, observation, httpDoerFunc(func(*http.Request) (*http.Response, error) {
+		return nil, transportErr
+	}), client, "p1")
+	if got.Result != CheckBlocked {
+		t.Errorf("row = %+v, want blocked", got)
+	}
+	if !strings.Contains(got.Message, transportErr.Error()) {
+		t.Errorf("message should surface the transport error, got %q", got.Message)
+	}
+}
+
+// TestSubdomainProbe_TransportError_Blocked pins E10 for the subdomain
+// probe row: an httpDoer.Do transport error blocks the row rather than
+// failing it, same as the liveness row (§10.1).
+func TestSubdomainProbe_TransportError_Blocked(t *testing.T) {
+	t.Parallel()
+	exp := ExpectedService{Hostname: "appdev", SubdomainProbe: &SubdomainProbe{Path: "/", ExpectStatus: "2xx"}}
+	svc := &platform.ServiceStack{
+		ID: "appdev-1", Name: "appdev", SubdomainAccess: true,
+		Ports: []platform.Port{{Port: 80, Scheme: "http"}},
+	}
+	client := platform.NewMock().WithProject(&platform.Project{ID: "p1", SubdomainHost: "testproj.example.com"})
+	transportErr := errors.New("dial tcp: connection refused")
+	got := evaluateSubdomainProbeRow(context.Background(), exp, svc, httpDoerFunc(func(*http.Request) (*http.Response, error) {
+		return nil, transportErr
+	}), client, "p1", time.Now())
+	if got.Result != CheckBlocked {
+		t.Errorf("row = %+v, want blocked", got)
+	}
+	if !strings.Contains(got.Message, transportErr.Error()) {
+		t.Errorf("message should surface the transport error, got %q", got.Message)
+	}
+}
+
 // TestVerification_AllowFailed_IgnoresListedServiceOnly pins FM-28: a
 // FAILED process on a service named in allowFailed is not a violation; a
 // FAILED process on any other service still fails the row.
