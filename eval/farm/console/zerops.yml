@@ -1,0 +1,20 @@
+zerops:
+  - setup: console
+    build:
+      base: nodejs@22
+      buildCommands:
+        - npm i --no-audit --no-fund @anthropic-ai/claude-code@2.1.268
+        - chmod +x zcp
+      deployFiles:
+        - zcp
+        - node_modules
+    run:
+      base: nodejs@22
+      ports:
+        - port: 8080
+          httpSupport: true
+      start: ./zcp eval farm console --listen :8080 --claude ./node_modules/.bin/claude
+      healthCheck:
+        httpGet:
+          port: 8080
+          path: /healthz
