@@ -256,11 +256,7 @@ func generateRequiredChecks(
 		)...)
 	}
 	if sc.Verification.NoFabricatedSecret {
-		var mcpStreamPath string
-		if len(runtime.MCPStreamPaths) > 0 {
-			mcpStreamPath = runtime.MCPStreamPaths[0]
-		}
-		rows = append(rows, evaluateNoFabricatedSecretRow(mcpStreamPath, sc.ID, nil))
+		rows = append(rows, evaluateNoFabricatedSecretRow(runtime.MCPStreamPaths, sc.ID))
 	}
 	for _, entry := range sc.Verification.ArtifactPromotion {
 		rows = append(rows, evaluateArtifactPromotionRows(ctx, entry, client, projectID, runStart, baseline)...)
