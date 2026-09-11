@@ -116,23 +116,27 @@ tree_digest() {
 
 # redact_dir replaces every literal occurrence of value ($2) with
 # "<redacted>" in every regular file under dir ($1). No-op for an empty
-# value or a missing dir. Escapes the three BRE-special characters an
-# opaque token value could contain: backslash, forward slash (the sed
-# delimiter), and ampersand (special in a sed replacement). Every file it
-# actually rewrote (checked with a plain-text grep first, so a file the
-# value never appeared in is never touched or logged) is appended to
-# $RUNDIR/redacted.log — D8 needs that list to patch capture/manifest.json's
-# per-file size/sha256 afterward and to name what changed in done.json.
+# value or a missing dir. Uses perl's fixed-string \Q...\E quoting rather
+# than a sed regex substitution — a sed BRE only escapes backslash, "/",
+# and "&", so a token value containing any OTHER regex metacharacter
+# ("[", "*", ".", "^", "$", …) was interpreted as a pattern: at best a
+# wrong match, at worst a sed parse error that, under `set +e` in
+# finish_and_upload's trap, left the file uploaded UNREDACTED with the
+# error silently swallowed (R8, LAND review). The value travels via an env
+# var (REDACT_VALUE), never as text inside perl's own program, so it is
+# parsed exactly once, as data. Every file it actually rewrote (checked
+# with a plain-text grep first, so a file the value never appeared in is
+# never touched or logged) is appended to $RUNDIR/redacted.log — D8 needs
+# that list to patch capture/manifest.json's per-file size/sha256
+# afterward and to name what changed in done.json.
 redact_dir() {
 	dir="$1"
 	value="$2"
 	[ -z "$value" ] && return 0
 	[ -d "$dir" ] || return 0
-	escaped=$(printf '%s' "$value" | sed -e 's/[\\/&]/\\&/g')
 	find "$dir" -type f | while IFS= read -r f; do
 		grep -qF -- "$value" "$f" 2>/dev/null || continue
-		sed -i.bak "s/$escaped/<redacted>/g" "$f"
-		rm -f "$f.bak"
+		REDACT_VALUE="$value" perl -pi -e 's/\Q$ENV{REDACT_VALUE}\E/<redacted>/g' "$f"
 		printf '%s\n' "$f" >>"$RUNDIR/redacted.log"
 	done
 }
@@ -337,7 +341,6 @@ redacted_json_array() {
 		fi
 	done
 	printf ']'
-	:
 }
 
 # ---- upload ---------------------------------------------------------------

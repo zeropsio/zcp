@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -161,6 +162,64 @@ func TestFarmPush_Candidate_UploadsUnderSha256Key(t *testing.T) {
 	}
 }
 
+// TestFarmPush_WrapperContentAddressed pins R5 (LAND review):
+// `farm push --wrapper <file>` uploads content-addressed to
+// farm/wrapper/<sha256>.sh (never the old unpinned farm/wrapper.sh key),
+// writes the plain-text pointer farm/wrapper/current (the same pattern as
+// evaluators/current), and prints both.
+func TestFarmPush_WrapperContentAddressed(t *testing.T) {
+	fake := newFakeFarmS3()
+	server := fake.server()
+	defer server.Close()
+	setFarmEnv(t, server.URL)
+
+	dir := t.TempDir()
+	wrapperPath := filepath.Join(dir, "wrapper.sh")
+	body := []byte("#!/bin/sh\necho pretend wrapper\n")
+	if err := os.WriteFile(wrapperPath, body, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	sum := sha256.Sum256(body)
+	wantDigest := hex.EncodeToString(sum[:])
+
+	var code int
+	stdout, stderr := captureOutput(t, func() {
+		code = runEvalFarm([]string{"push", "--wrapper", wrapperPath})
+	})
+	if code != 0 {
+		t.Fatalf("runEvalFarm(push --wrapper) = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stdout, wantDigest) {
+		t.Errorf("stdout = %q, want it to contain the digest %q", stdout, wantDigest)
+	}
+	if !strings.Contains(stdout, "farm/wrapper/current") {
+		t.Errorf("stdout = %q, want it to contain the pointer key %q", stdout, "farm/wrapper/current")
+	}
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+
+	gotBody, ok := fake.objects["farm/wrapper/"+wantDigest+".sh"]
+	if !ok {
+		t.Fatalf("fake bucket has no object at farm/wrapper/%s.sh; objects: %v", wantDigest, fake.objects)
+	}
+	if string(gotBody) != string(body) {
+		t.Errorf("uploaded object = %q, want %q", gotBody, body)
+	}
+
+	pointer, ok := fake.objects["farm/wrapper/current"]
+	if !ok {
+		t.Fatalf("fake bucket has no object at farm/wrapper/current; objects: %v", fake.objects)
+	}
+	if string(pointer) != wantDigest {
+		t.Errorf("farm/wrapper/current body = %q, want %q", pointer, wantDigest)
+	}
+
+	if _, ok := fake.objects["farm/wrapper.sh"]; ok {
+		t.Errorf("fake bucket has an unpinned farm/wrapper.sh object — push must never write it")
+	}
+}
+
 // TestFarmPull_Run_DownloadsAllParts pins docs/spec-eval-farm.md §1.1/§5:
 // `farm pull <runId> --out <dir>` downloads every object under
 // runs/<runId>/ to <dir>/<runId>/, and prints "bundle: complete" once
@@ -197,6 +256,62 @@ func TestFarmPull_Run_DownloadsAllParts(t *testing.T) {
 		}
 		if string(got) != string(want) {
 			t.Errorf("downloaded %s = %q, want %q", rel, got, want)
+		}
+	}
+}
+
+// TestFarmPull_RejectsPathEscape pins R4a (LAND review): a bucket key is
+// an opaque string, not a filesystem path — a compromised run's own
+// write-capable bucket key (FM-8) can plant an object at
+// "runs/<id>/../../.ssh/authorized_keys". `farm pull` must never join that
+// key's relative part onto --out unchecked (which would write outside it
+// on the operator's machine): it refuses the escaping key, names it on
+// stderr, still downloads every other object in the run, and exits
+// nonzero rather than silently reporting a clean bundle.
+func TestFarmPull_RejectsPathEscape(t *testing.T) {
+	fake := newFakeFarmS3()
+	server := fake.server()
+	defer server.Close()
+	setFarmEnv(t, server.URL)
+
+	fake.objects["runs/r1/started.json"] = []byte(`{"runId":"r1"}`)
+	fake.objects["runs/r1/results/summary.json"] = []byte(`{"ok":true}`)
+	fake.objects["runs/r1/../../.ssh/authorized_keys"] = []byte("ssh-ed25519 AAAA... attacker\n")
+	fake.objects["runs/r1/done.json"] = []byte(`{"runId":"r1","parts":{}}`)
+
+	outDir := t.TempDir()
+	var code int
+	_, stderr := captureOutput(t, func() {
+		code = runEvalFarm([]string{"pull", "r1", "--out", outDir})
+	})
+	if code == 0 {
+		t.Fatalf("runEvalFarm(pull r1) = 0, want nonzero when a key escapes --out")
+	}
+	if !strings.Contains(stderr, "runs/r1/../../.ssh/authorized_keys") {
+		t.Errorf("stderr = %q, want it to name the escaping key", stderr)
+	}
+
+	// The escaping key must never have been written anywhere under or
+	// above outDir.
+	escapeTarget := filepath.Join(filepath.Dir(filepath.Dir(outDir)), ".ssh", "authorized_keys")
+	if _, err := os.Stat(escapeTarget); err == nil {
+		t.Fatalf("path escape succeeded: %s was written", escapeTarget)
+	}
+	found := false
+	_ = filepath.WalkDir(outDir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr == nil && !d.IsDir() && d.Name() == "authorized_keys" {
+			found = true
+		}
+		return nil
+	})
+	if found {
+		t.Fatalf("an authorized_keys file was written somewhere under %s", outDir)
+	}
+
+	// Every safe object in the same run must still have been downloaded.
+	for _, rel := range []string{"started.json", "results/summary.json", "done.json"} {
+		if _, err := os.Stat(filepath.Join(outDir, "r1", rel)); err != nil {
+			t.Errorf("safe object %s was not downloaded despite the sibling escaping key: %v", rel, err)
 		}
 	}
 }

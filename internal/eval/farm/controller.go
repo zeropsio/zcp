@@ -186,6 +186,9 @@ type RunOptions struct {
 	Set             string
 	CandidateSHA256 string
 	EvaluatorSHA256 string
+	// WrapperSHA256 pins the content-addressed farm/wrapper/<sha>.sh every
+	// run project fetches and sha256-verifies before exec (project_yaml.go).
+	WrapperSHA256   string
 	ScenariosDigest string
 	Scenarios       []ScenarioRun
 	// OAuthToken is the run's sole model-request credential
@@ -276,6 +279,7 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 		RunID:           r.RunID,
 		ScenarioID:      r.ID,
 		EvaluatorSHA256: opts.EvaluatorSHA256,
+		WrapperSHA256:   opts.WrapperSHA256,
 		CandidateSHA256: opts.CandidateSHA256,
 		ScenariosDigest: opts.ScenariosDigest,
 		Sink:            opts.Sink,

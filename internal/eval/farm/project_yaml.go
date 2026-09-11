@@ -41,7 +41,16 @@ type RunDescriptor struct {
 	// (scenarios/<digest>/, §1.1, FM-1), emitted as ZCP_FARM_SCENARIOS_DIGEST
 	// (FM-12's sixth row).
 	ScenariosDigest string
-	Sink            Sink
+	// WrapperSHA256 is the pinned wrapper script's SHA-256 (R5, LAND
+	// review): the run project's init line fetches
+	// farm/wrapper/<sha>.sh (§1.1) and sha256sum-verifies it against this
+	// value before chmod+exec — the same content-addressed-and-verified
+	// discipline as the evaluator/candidate binaries, closing the
+	// unpinned-wrapper code-execution hole every run's write-capable
+	// bucket key otherwise leaves open. Emitted as ZCP_FARM_WRAPPER_SHA
+	// (FM-12); required.
+	WrapperSHA256 string
+	Sink          Sink
 	// OAuthToken is the run's sole model-request credential
 	// (CLAUDE_CODE_OAUTH_TOKEN) — the agent credential is OAuth-only, no
 	// api-key mode and no fallback (§2.4/FM-16, spec commit 79ced2cc);
@@ -86,6 +95,9 @@ func (d RunDescriptor) validateService() error {
 	}
 	if d.RunToken == "" {
 		return fmt.Errorf("run descriptor: RunToken required (the project-scoped ZCP_API_KEY minted after the project shell exists)")
+	}
+	if d.WrapperSHA256 == "" {
+		return fmt.Errorf("run descriptor: WrapperSHA256 required (R5 — the init line verifies the wrapper against this digest before executing it)")
 	}
 	return nil
 }
@@ -165,6 +177,7 @@ func ServiceImportYAML(d RunDescriptor) ([]byte, error) {
 		{"ZCP_FARM_EVALUATOR_SHA", d.EvaluatorSHA256},
 		{"ZCP_FARM_CANDIDATE_SHA", d.CandidateSHA256},
 		{"ZCP_FARM_SCENARIOS_DIGEST", d.ScenariosDigest},
+		{"ZCP_FARM_WRAPPER_SHA", d.WrapperSHA256},
 		{"ZCP_FARM_S3_URL", d.Sink.URL},
 		{"ZCP_FARM_S3_BUCKET", d.Sink.Bucket},
 		{"ZCP_FARM_S3_KEY", d.Sink.Key},
@@ -219,7 +232,9 @@ var serviceImportYAMLTemplate = template.Must(template.New("serviceImportYAML").
               - zcp init
               - sudo -E zcp init nginx
               - |
-                curl -sSf --aws-sigv4 aws:amz:us-east-1:s3 --user "$(printenv ZCP_FARM_S3_KEY):$(printenv ZCP_FARM_S3_SECRET)" -o /tmp/farm-wrapper.sh "$(printenv ZCP_FARM_S3_URL)/$(printenv ZCP_FARM_S3_BUCKET)/farm/wrapper.sh"
+                set -e
+                curl -sSf --aws-sigv4 aws:amz:us-east-1:s3 --user "$(printenv ZCP_FARM_S3_KEY):$(printenv ZCP_FARM_S3_SECRET)" -o /tmp/farm-wrapper.sh "$(printenv ZCP_FARM_S3_URL)/$(printenv ZCP_FARM_S3_BUCKET)/farm/wrapper/$(printenv ZCP_FARM_WRAPPER_SHA).sh"
+                echo "$(printenv ZCP_FARM_WRAPPER_SHA)  /tmp/farm-wrapper.sh" | sha256sum -c -
                 chmod +x /tmp/farm-wrapper.sh
                 nohup /tmp/farm-wrapper.sh >/tmp/farm-wrapper.log 2>&1 &
             ports: [ { port: 8080, httpSupport: true } ]

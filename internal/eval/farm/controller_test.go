@@ -544,7 +544,7 @@ func TestFarmRun_CreatesPrefixedProjects_AndWritesManifest(t *testing.T) {
 
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
-		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", ScenariosDigest: "scen-sha",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
 		Scenarios: scenarios, OAuthToken: "oauth-farm-token",
 		Sink:         Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		RunBudget:    time.Second,
@@ -626,7 +626,7 @@ func TestFarmRun_CreatesShellMintsTokenThenImportsService_InOrder(t *testing.T) 
 
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
-		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", ScenariosDigest: "scen-sha",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
 		Scenarios: scenarios, OAuthToken: "oauth-farm-token",
 		Sink:         Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		RunBudget:    time.Second,
@@ -699,7 +699,7 @@ func TestFarmRun_MintForbidden_AbortsBeforeAnyProject(t *testing.T) {
 
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
-		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", ScenariosDigest: "scen-sha",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
 		Scenarios: scenarios, OAuthToken: "oauth-farm-token",
 		Sink:         Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		RunBudget:    time.Second,
@@ -778,7 +778,7 @@ func TestFarmRun_CreateFails_PrintsErrorAndSummaryRecordsBlocked(t *testing.T) {
 
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
-		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", ScenariosDigest: "scen-sha",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
 		Scenarios: scenarios, OAuthToken: "oauth-farm-token",
 		Sink:         Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		RunBudget:    time.Second,
@@ -868,7 +868,7 @@ func TestFarmRun_DoneJSON_PartsVerified_ElseBlocked(t *testing.T) {
 
 		opts := RunOptions{
 			Batch: batch, ClientID: clientID, Set: "gate",
-			CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+			CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 			Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 			Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 			RunBudget: time.Second, PollInterval: time.Millisecond,
@@ -909,7 +909,7 @@ func TestFarmRun_DoneJSON_PartsVerified_ElseBlocked(t *testing.T) {
 
 		opts := RunOptions{
 			Batch: batch, ClientID: clientID + "-b", Set: "gate",
-			CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+			CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 			Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 			Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 			RunBudget: time.Second, PollInterval: time.Millisecond,
@@ -961,7 +961,7 @@ func TestFarmRun_NoDoneJSON_BudgetElapsed_ProjectKept(t *testing.T) {
 
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
-		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		RunBudget: time.Second, PollInterval: 100 * time.Millisecond,
@@ -1006,7 +1006,7 @@ func TestFarmRun_LaunchScenario_MintsThenRevokesToken(t *testing.T) {
 
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
-		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		RunBudget: time.Second, PollInterval: time.Millisecond,
@@ -1107,7 +1107,7 @@ func TestFarmRun_NeverRerunsAFailedRun(t *testing.T) {
 
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
-		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		RunBudget: time.Second, PollInterval: time.Millisecond,
@@ -1155,7 +1155,7 @@ func TestFarmRun_ResultMetaUnderSuiteScenario_GradesFromTask(t *testing.T) {
 
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
-		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		RunBudget: time.Second, PollInterval: time.Millisecond,
@@ -1199,7 +1199,7 @@ func TestFarmRun_ResultMetaMissingOrAmbiguous_Blocked(t *testing.T) {
 
 		opts := RunOptions{
 			Batch: batch, ClientID: clientID, Set: "gate",
-			CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+			CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 			Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 			Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 			RunBudget: time.Second, PollInterval: time.Millisecond,
@@ -1239,7 +1239,7 @@ func TestFarmRun_ResultMetaMissingOrAmbiguous_Blocked(t *testing.T) {
 
 		opts := RunOptions{
 			Batch: batch, ClientID: clientID + "-amb", Set: "gate",
-			CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+			CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 			Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 			Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 			RunBudget: time.Second, PollInterval: time.Millisecond,
@@ -1324,7 +1324,7 @@ func TestFarmRun_BlockedTask_DetailNamesBlockingChecks(t *testing.T) {
 
 			opts := RunOptions{
 				Batch: batch, ClientID: clientID, Set: "gate",
-				CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+				CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 				Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 				Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 				RunBudget: time.Second, PollInterval: time.Millisecond,
@@ -1357,7 +1357,7 @@ func TestFarmRun_BlockedTask_NoVerificationJSON_DetailSaysSo(t *testing.T) {
 
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
-		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		RunBudget: time.Second, PollInterval: time.Millisecond,
@@ -1395,7 +1395,7 @@ func TestFarmRun_FailedCreationProcess_SettlesBlockedBeforeBudget(t *testing.T) 
 
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
-		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 		Sink: Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		// A generous budget that would time this test out if D19 didn't
@@ -1485,7 +1485,7 @@ func TestFarmRun_FailedImportAfterStarted_DoesNotDeleteProject(t *testing.T) {
 
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
-		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		RunBudget: 200 * time.Millisecond, PollInterval: 20 * time.Millisecond,
@@ -1561,7 +1561,7 @@ func TestFarmRun_PerRunDeadline_FromCreation(t *testing.T) {
 
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
-		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 		Scenarios: scenarios, OAuthToken: "oauth-token",
 		Sink:         Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		RunBudget:    budget,
@@ -1621,7 +1621,7 @@ func TestFarmRun_Interrupt_WritesSummaryKeepsProjects(t *testing.T) {
 
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
-		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 		Sink: Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		// A generous budget the interrupt must pre-empt long before it
@@ -1693,7 +1693,7 @@ func TestFarmRun_LaunchTokenRevokedWhenCreateFails(t *testing.T) {
 
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
-		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		RunBudget: time.Second, PollInterval: time.Millisecond,
@@ -1755,7 +1755,7 @@ func TestFarmRun_RollbackFailure_KeepsProjectIDAndError(t *testing.T) {
 
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
-		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		RunBudget: time.Second, PollInterval: time.Millisecond,

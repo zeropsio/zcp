@@ -12,6 +12,7 @@ services:
       ZCP_FARM_EVALUATOR_SHA: "eval-sha-aaaa"
       ZCP_FARM_CANDIDATE_SHA: "cand-sha-bbbb"
       ZCP_FARM_SCENARIOS_DIGEST: "scenarios-sha-ffff"
+      ZCP_FARM_WRAPPER_SHA: "wrapper-sha-9999"
       ZCP_FARM_S3_URL: "https://s3.prg1.zerops.app"
       ZCP_FARM_S3_BUCKET: "zcp-farm"
       ZCP_FARM_S3_KEY: "sink-key-cccc"
@@ -27,7 +28,9 @@ services:
               - zcp init
               - sudo -E zcp init nginx
               - |
-                curl -sSf --aws-sigv4 aws:amz:us-east-1:s3 --user "$(printenv ZCP_FARM_S3_KEY):$(printenv ZCP_FARM_S3_SECRET)" -o /tmp/farm-wrapper.sh "$(printenv ZCP_FARM_S3_URL)/$(printenv ZCP_FARM_S3_BUCKET)/farm/wrapper.sh"
+                set -e
+                curl -sSf --aws-sigv4 aws:amz:us-east-1:s3 --user "$(printenv ZCP_FARM_S3_KEY):$(printenv ZCP_FARM_S3_SECRET)" -o /tmp/farm-wrapper.sh "$(printenv ZCP_FARM_S3_URL)/$(printenv ZCP_FARM_S3_BUCKET)/farm/wrapper/$(printenv ZCP_FARM_WRAPPER_SHA).sh"
+                echo "$(printenv ZCP_FARM_WRAPPER_SHA)  /tmp/farm-wrapper.sh" | sha256sum -c -
                 chmod +x /tmp/farm-wrapper.sh
                 nohup /tmp/farm-wrapper.sh >/tmp/farm-wrapper.log 2>&1 &
             ports: [ { port: 8080, httpSupport: true } ]

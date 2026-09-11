@@ -125,7 +125,7 @@ fi
 
 mkdir -p "results/$ZCP_FARM_SCENARIO" capture
 cat >"results/$ZCP_FARM_SCENARIO/meta.json" <<EOF
-{"scenarioId":"$ZCP_FARM_SCENARIO","secret1":"$CLAUDE_CODE_OAUTH_TOKEN","secret2":"$ZCP_FARM_S3_SECRET"}
+{"scenarioId":"$ZCP_FARM_SCENARIO","secret1":"$CLAUDE_CODE_OAUTH_TOKEN","secret2":"$ZCP_FARM_S3_SECRET","secret3":"${ZCP_API_KEY:-}","secret4":"${ZCP_E2E_LAUNCH_KEY:-}"}
 EOF
 cat >"results/$ZCP_FARM_SCENARIO/verification.json" <<'EOF'
 {"formatVersion":"zcp-eval-verification-2","mode":"required","result":"passed"}
@@ -595,12 +595,14 @@ func TestWrapper_DigestMismatch_RefusesToRun(t *testing.T) {
 }
 
 // TestWrapper_Redaction_NoSecretValueInBundle pins FM-7: every credential
-// value the wrapper holds is redacted from results/ and capture/ before
-// upload. The stub evaluator writes every secret value into
-// results/<scenario>/meta.json and capture/manifest.json, and keeps an
-// unredacted copy outside results/capture (RUNDIR/pristine/meta.json) — so the
-// test can prove the values were genuinely present pre-redaction, not just
-// absent because the stub never wrote them.
+// value the wrapper holds — ZCP_FARM_S3_KEY/SECRET, CLAUDE_CODE_OAUTH_TOKEN,
+// ZCP_API_KEY, and ZCP_E2E_LAUNCH_KEY (redact_known_secrets' full set) — is
+// redacted from results/ and capture/ before upload. The stub evaluator
+// writes every secret value into results/<scenario>/meta.json and
+// capture/manifest.json, and keeps an unredacted copy outside
+// results/capture (RUNDIR/pristine/meta.json) — so the test can prove the
+// values were genuinely present pre-redaction, not just absent because the
+// stub never wrote them.
 func TestWrapper_Redaction_NoSecretValueInBundle(t *testing.T) {
 	requireShAndCurl(t)
 
@@ -609,13 +611,18 @@ func TestWrapper_Redaction_NoSecretValueInBundle(t *testing.T) {
 		"ZCP_FARM_S3_KEY":         "AKIDEXAMPLE-redact-me",
 		"ZCP_FARM_S3_SECRET":      "s3-secret-redact-me",
 		"CLAUDE_CODE_OAUTH_TOKEN": "oauth-tok-redact-me",
+		"ZCP_API_KEY":             "zcp-api-key-redact-me",
+		"ZCP_E2E_LAUNCH_KEY":      "launch-key-redact-me",
 	}
 	cmd := h.start(t, overrides)
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("supervisor exited with error: %v", err)
 	}
 
-	secrets := []string{overrides["ZCP_FARM_S3_KEY"], overrides["ZCP_FARM_S3_SECRET"], overrides["CLAUDE_CODE_OAUTH_TOKEN"]}
+	secrets := []string{
+		overrides["ZCP_FARM_S3_KEY"], overrides["ZCP_FARM_S3_SECRET"], overrides["CLAUDE_CODE_OAUTH_TOKEN"],
+		overrides["ZCP_API_KEY"], overrides["ZCP_E2E_LAUNCH_KEY"],
+	}
 
 	// Pristine copy (outside results/capture, so the wrapper never touches
 	// it) must actually contain at least one secret — proving the stub
@@ -652,6 +659,61 @@ func TestWrapper_Redaction_NoSecretValueInBundle(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatalf("no results/**+capture/** objects were uploaded at all")
+	}
+}
+
+// TestWrapper_Redaction_MetacharValue_Redacted pins R8 (LAND review):
+// redact_dir must treat the secret value as a literal string, never a
+// sed/regex pattern. A sed BRE substitution only escapes backslash, "/",
+// and "&" — a value containing any OTHER metacharacter ("[", "*", ".",
+// "^", "$") was interpreted as a pattern, at best matching the wrong text
+// and at worst making sed error out; under `set +e` in the
+// finish_and_upload trap that error was swallowed and the file uploaded
+// UNREDACTED. The fix (perl's \Q...\E fixed-string quoting) must fully
+// redact a value carrying every one of those characters at once.
+func TestWrapper_Redaction_MetacharValue_Redacted(t *testing.T) {
+	requireShAndCurl(t)
+
+	h := newWrapperHarness(t)
+	const metaVal = "tok-a[b*c.d$^-end"
+	overrides := map[string]string{
+		"CLAUDE_CODE_OAUTH_TOKEN": metaVal,
+	}
+	cmd := h.start(t, overrides)
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("supervisor exited with error: %v", err)
+	}
+
+	pristine, err := os.ReadFile(filepath.Join(h.rundir, "pristine", "meta.json"))
+	if err != nil {
+		t.Fatalf("read pristine copy: %v", err)
+	}
+	if !strings.Contains(string(pristine), metaVal) {
+		t.Fatalf("pristine copy %q does not contain the metachar secret value — test fixture is broken", pristine)
+	}
+
+	h.fake.mu.Lock()
+	defer h.fake.mu.Unlock()
+	runPrefix := "runs/" + h.runID + "/"
+	sawRedactedMarker := false
+	checked := 0
+	for key, body := range h.fake.objects {
+		if !strings.HasPrefix(key, runPrefix+"results/") && !strings.HasPrefix(key, runPrefix+"capture/") {
+			continue
+		}
+		checked++
+		if strings.Contains(string(body), metaVal) {
+			t.Errorf("uploaded object %q still contains the metachar secret value %q (0 hits required)", key, metaVal)
+		}
+		if strings.Contains(string(body), "<redacted>") {
+			sawRedactedMarker = true
+		}
+	}
+	if checked == 0 {
+		t.Fatalf("no results/**+capture/** objects were uploaded at all")
+	}
+	if !sawRedactedMarker {
+		t.Errorf("no uploaded object under results/**+capture/** carries the \"<redacted>\" marker")
 	}
 }
 

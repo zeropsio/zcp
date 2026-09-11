@@ -130,7 +130,7 @@ func TestEvalFarmRun_IntegrationTokenPreflight_NamesTheFix(t *testing.T) {
 	var exitCode int
 	_, stderr := captureOutput(t, func() {
 		exitCode = runFarmRun([]string{
-			"--candidate", "cand-sha", "--scenarios", "scen-sha", "--evaluator", "eval-sha",
+			"--candidate", "cand-sha", "--scenarios", "scen-sha", "--evaluator", "eval-sha", "--wrapper", "wrap-sha",
 			"--set", "api-node-postgres-classic-dev", "--batch", "batch-preflight-1",
 		})
 	})
@@ -421,7 +421,7 @@ func TestFarmRun_ZeroRunsCreated_ExitNonzero(t *testing.T) {
 		// scenario ids without touching the bucket at all — RunBatch then
 		// schedules and creates nothing.
 		exitCode = runFarmRun([]string{
-			"--candidate", "cand-sha", "--scenarios", "scen-sha", "--evaluator", "eval-sha",
+			"--candidate", "cand-sha", "--scenarios", "scen-sha", "--evaluator", "eval-sha", "--wrapper", "wrap-sha",
 			"--set", " , ,", "--batch", "batch-zero-runs",
 		})
 	})
@@ -712,11 +712,11 @@ func TestFarmRun_LaunchFlag_FromBucketScenario(t *testing.T) {
 	}
 }
 
-// TestFarmRun_EvaluatorPin_FlagOrCurrentPointer pins outcome 3 of the S15
-// brief: --evaluator wins when given; otherwise evaluators/current is read;
-// when neither is available, the error names both --evaluator and
-// evaluators/current.
-func TestFarmRun_EvaluatorPin_FlagOrCurrentPointer(t *testing.T) {
+// TestFarmRun_Pins_FlagOrCurrentPointer: for both digest pins farm run
+// needs — the evaluator and the content-addressed wrapper — the flag wins
+// when given; otherwise the bucket pointer is read and trimmed; when neither
+// is available, the error names both the flag and the pointer key.
+func TestFarmRun_Pins_FlagOrCurrentPointer(t *testing.T) {
 	s3Srv, s3Fake := newStatusFakeS3ServerWithFake(t)
 	t.Setenv("ZCP_FARM_S3_URL", s3Srv.URL)
 	t.Setenv("ZCP_FARM_S3_BUCKET", "zcp-farm")
@@ -730,47 +730,52 @@ func TestFarmRun_EvaluatorPin_FlagOrCurrentPointer(t *testing.T) {
 	sink := farm.NewSinkClient(cfg)
 	ctx := t.Context()
 
-	t.Run("flag wins over pointer", func(t *testing.T) {
-		s3Fake.mu.Lock()
-		s3Fake.objects["evaluators/current"] = []byte("pointer-sha")
-		s3Fake.mu.Unlock()
+	for _, pin := range []struct{ flagName, pointerKey string }{
+		{"--evaluator", "evaluators/current"},
+		{"--wrapper", "farm/wrapper/current"},
+	} {
+		t.Run(pin.flagName+" flag wins over pointer", func(t *testing.T) {
+			s3Fake.mu.Lock()
+			s3Fake.objects[pin.pointerKey] = []byte("pointer-sha")
+			s3Fake.mu.Unlock()
 
-		got, err := resolveEvaluatorSHA(ctx, sink, "flag-sha")
-		if err != nil {
-			t.Fatalf("resolveEvaluatorSHA: %v", err)
-		}
-		if got != "flag-sha" {
-			t.Errorf("resolveEvaluatorSHA = %q, want %q", got, "flag-sha")
-		}
-	})
+			got, err := resolvePin(ctx, sink, "flag-sha", pin.flagName, pin.pointerKey)
+			if err != nil {
+				t.Fatalf("resolvePin: %v", err)
+			}
+			if got != "flag-sha" {
+				t.Errorf("resolvePin = %q, want %q", got, "flag-sha")
+			}
+		})
 
-	t.Run("falls back to pointer", func(t *testing.T) {
-		s3Fake.mu.Lock()
-		s3Fake.objects["evaluators/current"] = []byte("pointer-sha\n")
-		s3Fake.mu.Unlock()
+		t.Run(pin.flagName+" falls back to pointer", func(t *testing.T) {
+			s3Fake.mu.Lock()
+			s3Fake.objects[pin.pointerKey] = []byte("pointer-sha\n")
+			s3Fake.mu.Unlock()
 
-		got, err := resolveEvaluatorSHA(ctx, sink, "")
-		if err != nil {
-			t.Fatalf("resolveEvaluatorSHA: %v", err)
-		}
-		if got != "pointer-sha" {
-			t.Errorf("resolveEvaluatorSHA = %q, want %q (trimmed)", got, "pointer-sha")
-		}
-	})
+			got, err := resolvePin(ctx, sink, "", pin.flagName, pin.pointerKey)
+			if err != nil {
+				t.Fatalf("resolvePin: %v", err)
+			}
+			if got != "pointer-sha" {
+				t.Errorf("resolvePin = %q, want %q (trimmed)", got, "pointer-sha")
+			}
+		})
 
-	t.Run("neither given names both in the error", func(t *testing.T) {
-		s3Fake.mu.Lock()
-		delete(s3Fake.objects, "evaluators/current")
-		s3Fake.mu.Unlock()
+		t.Run(pin.flagName+" neither given names both in the error", func(t *testing.T) {
+			s3Fake.mu.Lock()
+			delete(s3Fake.objects, pin.pointerKey)
+			s3Fake.mu.Unlock()
 
-		_, err := resolveEvaluatorSHA(ctx, sink, "")
-		if err == nil {
-			t.Fatal("resolveEvaluatorSHA: want an error when neither --evaluator nor evaluators/current is available")
-		}
-		if !strings.Contains(err.Error(), "--evaluator") || !strings.Contains(err.Error(), "evaluators/current") {
-			t.Errorf("error = %q, want it to name both --evaluator and evaluators/current", err.Error())
-		}
-	})
+			_, err := resolvePin(ctx, sink, "", pin.flagName, pin.pointerKey)
+			if err == nil {
+				t.Fatalf("resolvePin: want an error when neither %s nor %s is available", pin.flagName, pin.pointerKey)
+			}
+			if !strings.Contains(err.Error(), pin.flagName) || !strings.Contains(err.Error(), pin.pointerKey) {
+				t.Errorf("error = %q, want it to name both %s and %s", err.Error(), pin.flagName, pin.pointerKey)
+			}
+		})
+	}
 }
 
 // bucketScenarioFixture builds a minimal valid scenario markdown body (id,
@@ -881,7 +886,7 @@ func TestEvalFarmRun_SIGTERM_EndsBatchByInterrupt(t *testing.T) {
 	start := time.Now()
 	_, stderr := captureOutput(t, func() {
 		exitCode = runFarmRun([]string{
-			"--candidate", "cand-sha", "--scenarios", digest, "--evaluator", "eval-sha",
+			"--candidate", "cand-sha", "--scenarios", digest, "--evaluator", "eval-sha", "--wrapper", "wrap-sha",
 			"--set", scenarioID, "--batch", batch,
 			"--run-budget", "1h",
 		})

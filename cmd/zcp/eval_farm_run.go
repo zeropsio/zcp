@@ -28,72 +28,23 @@ const flagBatch = "--batch"
 // runFarmRun implements `zcp eval farm run` (docs/spec-eval-farm.md §3.3
 // FM-21/FM-22, §3.1 FM-18's --detach).
 func runFarmRun(args []string) int {
-	var candidate, scenariosDigest, set, batch, runBudgetStr, evaluatorFlag string
-	detach := false
-	for i := 0; i < len(args); i++ {
-		arg := args[i] //nolint:gosec // G602 false positive: i is loop-bounded by i < len(args) each iteration
-		switch arg {
-		case flagCandidate:
-			if i+1 >= len(args) {
-				fmt.Fprintf(os.Stderr, "error: %s requires a value\n", arg)
-				return 1
-			}
-			candidate = args[i+1]
-			i++
-		case "--scenarios":
-			if i+1 >= len(args) {
-				fmt.Fprintf(os.Stderr, "error: %s requires a value\n", arg)
-				return 1
-			}
-			scenariosDigest = args[i+1]
-			i++
-		case "--evaluator":
-			if i+1 >= len(args) {
-				fmt.Fprintf(os.Stderr, "error: %s requires a value\n", arg)
-				return 1
-			}
-			evaluatorFlag = args[i+1]
-			i++
-		case "--set":
-			if i+1 >= len(args) {
-				fmt.Fprintf(os.Stderr, "error: %s requires a value\n", arg)
-				return 1
-			}
-			set = args[i+1]
-			i++
-		case flagBatch:
-			if i+1 >= len(args) {
-				fmt.Fprintf(os.Stderr, "error: %s requires a value\n", arg)
-				return 1
-			}
-			batch = args[i+1]
-			i++
-		case "--run-budget":
-			if i+1 >= len(args) {
-				fmt.Fprintf(os.Stderr, "error: %s requires a value\n", arg)
-				return 1
-			}
-			runBudgetStr = args[i+1]
-			i++
-		case "--detach":
-			detach = true
-		}
-	}
-	if candidate == "" || scenariosDigest == "" || set == "" {
-		fmt.Fprintln(os.Stderr, "error: --candidate, --scenarios, and --set are required")
+	flags, err := parseFarmRunFlags(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	batch := flags.batch
 	if batch == "" {
 		batch = fmt.Sprintf("batch-%d", time.Now().Unix())
 	}
 
-	if detach {
+	if flags.detach {
 		return runFarmRunDetach(args, batch, startDetached)
 	}
 
 	runBudget := defaultRunBudget
-	if runBudgetStr != "" {
-		d, err := time.ParseDuration(runBudgetStr)
+	if flags.runBudget != "" {
+		d, err := time.ParseDuration(flags.runBudget)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: --run-budget: %v\n", err)
 			return 1
@@ -120,7 +71,7 @@ func runFarmRun(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	scenarios, err := resolveScenarios(ctx, sink, scenariosDigest, set)
+	scenarios, err := resolveScenarios(ctx, sink, flags.scenariosDigest, flags.set)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: resolve scenario set: %v\n", err)
 		return 1
@@ -133,7 +84,12 @@ func runFarmRun(args []string) int {
 		return 1
 	}
 
-	evaluatorSHA, err := resolveEvaluatorSHA(ctx, sink, evaluatorFlag)
+	evaluatorSHA, err := resolvePin(ctx, sink, flags.evaluator, "--evaluator", "evaluators/current")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	wrapperSHA, err := resolvePin(ctx, sink, flags.wrapper, "--wrapper", "farm/wrapper/current")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -147,8 +103,8 @@ func runFarmRun(args []string) int {
 	defer closer()
 
 	opts := farm.RunOptions{
-		Batch: batch, ClientID: clientID, Set: set,
-		CandidateSHA256: candidate, EvaluatorSHA256: evaluatorSHA, ScenariosDigest: scenariosDigest,
+		Batch: batch, ClientID: clientID, Set: flags.set,
+		CandidateSHA256: flags.candidate, EvaluatorSHA256: evaluatorSHA, WrapperSHA256: wrapperSHA, ScenariosDigest: flags.scenariosDigest,
 		Scenarios: scenarios, OAuthToken: oauthToken,
 		Sink:      farm.Sink(cfg), // farm.Config and farm.Sink share the same field names/types/order
 		RunBudget: runBudget,
@@ -192,6 +148,43 @@ func runFarmRun(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// farmRunFlags is `zcp eval farm run`'s parsed command line.
+type farmRunFlags struct {
+	candidate, scenariosDigest, set, batch, runBudget, evaluator, wrapper string
+	detach                                                                bool
+}
+
+// parseFarmRunFlags parses `farm run`'s flags; unknown arguments are
+// ignored, a valued flag without its value and a missing required flag
+// (--candidate, --scenarios, --set) are errors.
+func parseFarmRunFlags(args []string) (farmRunFlags, error) {
+	var f farmRunFlags
+	valued := map[string]*string{
+		flagCandidate: &f.candidate, "--scenarios": &f.scenariosDigest, "--evaluator": &f.evaluator,
+		"--wrapper": &f.wrapper, "--set": &f.set, flagBatch: &f.batch, "--run-budget": &f.runBudget,
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--detach" {
+			f.detach = true
+			continue
+		}
+		dst, ok := valued[arg]
+		if !ok {
+			continue
+		}
+		if i+1 >= len(args) {
+			return f, fmt.Errorf("%s requires a value", arg)
+		}
+		*dst = args[i+1]
+		i++
+	}
+	if f.candidate == "" || f.scenariosDigest == "" || f.set == "" {
+		return f, fmt.Errorf("--candidate, --scenarios, and --set are required")
+	}
+	return f, nil
 }
 
 // isIntegrationTokenMintForbidden reports whether err's chain carries
@@ -335,18 +328,18 @@ func scenarioIsLaunch(ctx context.Context, sink *farm.SinkClient, scenariosDiges
 	return strings.HasPrefix(sc.Area, "launch"), nil
 }
 
-// resolveEvaluatorSHA returns the evaluator pin: the --evaluator flag when
-// given, else the bucket's evaluators/current pointer (written by `farm
-// push --evaluator`, plain-text sha256, trimmed on read). ZCP_FARM_EVALUATOR_SHA
-// is no longer read here — the run project still receives the resolved
-// value via project_yaml, unchanged.
-func resolveEvaluatorSHA(ctx context.Context, sink *farm.SinkClient, evaluatorFlag string) (string, error) {
-	if evaluatorFlag != "" {
-		return evaluatorFlag, nil
+// resolvePin returns a digest pin: flag when given, else the trimmed body of
+// the bucket's plain-text pointer object (`evaluators/current` or
+// `farm/wrapper/current`, both written by `farm push`). The error names both
+// the flag and the pointer key. ZCP_FARM_EVALUATOR_SHA is not read here — the
+// run project still receives the resolved value via project_yaml.
+func resolvePin(ctx context.Context, sink *farm.SinkClient, flag, flagName, pointerKey string) (string, error) {
+	if flag != "" {
+		return flag, nil
 	}
-	body, err := sink.Get(ctx, "evaluators/current")
+	body, err := sink.Get(ctx, pointerKey)
 	if err != nil {
-		return "", fmt.Errorf("--evaluator was not given and evaluators/current: %w", err)
+		return "", fmt.Errorf("%s was not given and %s: %w", flagName, pointerKey, err)
 	}
 	return strings.TrimSpace(string(body)), nil
 }

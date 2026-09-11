@@ -27,7 +27,8 @@ evaluators/current                 # plain-text pointer: body is the evaluator s
 candidates/<sha256>/zcp            # candidate under test, pushed per batch
 scenarios/<tree-digest>/…          # scenario tree, pushed per batch
 sets/<scenariosDigest>/gate.txt    # gate scenario id list, keyed to the scenario tree it names
-farm/wrapper.sh                    # the run-project wrapper script
+farm/wrapper/<sha256>.sh           # the run-project wrapper script, content-addressed
+farm/wrapper/current               # plain-text pointer: body is the wrapper sha256 last pushed
 
 runs/<runId>/started.json
 runs/<runId>/results/…             # the runner's own results dir (spec-testing-architecture §10.1)
@@ -95,6 +96,8 @@ intact).
 distinct from one that carries a value: `report` prints `unpinned` for it,
 never `blocked` and never a fabricated match. `unpinned` means "cannot be
 checked," not "checked and wrong." §5 pins this into the verdict vocabulary.
+
+The run-project wrapper itself is content-addressed and verified the same way: the init line fetches `farm/wrapper/<sha256>.sh` and `sha256sum`-checks it before ever executing it (§1.1, R5).
 
 ### 1.3 Redaction before upload
 
@@ -246,6 +249,7 @@ run project's `zcp` service, set once at import:
 | `ZCP_FARM_EVALUATOR_SHA` | the pinned evaluator's SHA-256 (FM-2) |
 | `ZCP_FARM_CANDIDATE_SHA` | the candidate's SHA-256 under test |
 | `ZCP_FARM_SCENARIOS_DIGEST` | the scenario tree digest the wrapper downloads (`scenarios/<digest>/`, FM-1) |
+| `ZCP_FARM_WRAPPER_SHA` | the wrapper's sha256; the init line fetches `farm/wrapper/<sha>.sh` and `sha256sum -c`s it before exec (§1.1) |
 
 Plus, not part of the descriptor but delivered the same way: the run's own
 `ZCP_API_KEY` — the project-scoped token the controller mints at import
@@ -346,8 +350,9 @@ binary and its service envs — `ZCP_AUTHORING=1` (this gate),
 (the sink), `ZCP_FARM_ACCOUNT_TOKEN`/`ZCP_FARM_CLIENT_ID` (§2.4 FM-15), and
 `CLAUDE_CODE_OAUTH_TOKEN` (§2.4) — no repo checkout. `farm run` resolves everything it needs (the
 `--set gate`/`--set all` scenario id list, each scenario's front matter, and
-the evaluator pin absent `--evaluator`) from the bucket (`sets/<digest>/gate.txt`,
-`scenarios/<digest>/…`, `evaluators/current`), never from a relative path on
+the evaluator pin absent `--evaluator`, the wrapper pin absent `--wrapper`)
+from the bucket (`sets/<digest>/gate.txt`, `scenarios/<digest>/…`,
+`evaluators/current`, `farm/wrapper/current`), never from a relative path on
 disk; only `farm push`, which runs from a full checkout on a dev machine,
 reads `eval/farm/gate-set.txt` off disk, to upload it.
 

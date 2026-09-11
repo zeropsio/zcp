@@ -194,11 +194,25 @@ func runFarmPush(args []string) int {
 			fmt.Fprintf(os.Stderr, "error: push wrapper: read %s: %v\n", wrapper, err)
 			return 1
 		}
-		if err := client.Put(ctx, "farm/wrapper.sh", body); err != nil {
+		// Content-addressed (R5, LAND review): every run container holds a
+		// write-capable bucket key, so an unpinned "farm/wrapper.sh" key
+		// let one run's agent overwrite the wrapper for every later run —
+		// code execution as `zerops`. The run project's init line now
+		// fetches farm/wrapper/<sha256>.sh and verifies it against the
+		// descriptor's ZCP_FARM_WRAPPER_SHA before exec (project_yaml.go);
+		// there is no unpinned "farm/wrapper.sh" key to write anymore.
+		key := fmt.Sprintf("farm/wrapper/%s.sh", digest)
+		if err := client.Put(ctx, key, body); err != nil {
 			fmt.Fprintf(os.Stderr, "error: push wrapper: %v\n", err)
 			return 1
 		}
 		fmt.Fprintf(os.Stdout, "wrapper: %s\n", digest)
+
+		if err := client.Put(ctx, "farm/wrapper/current", []byte(digest)); err != nil {
+			fmt.Fprintf(os.Stderr, "error: push wrapper pointer: %v\n", err)
+			return 1
+		}
+		fmt.Fprintln(os.Stdout, "wrapper-pointer: farm/wrapper/current")
 	}
 	return 0
 }
@@ -407,6 +421,16 @@ func writeBatchManifestAndSummary(ctx context.Context, client *farm.SinkClient, 
 // returns the run's bundle completeness: "missing" when the run has no
 // objects at all, "complete" once a done.json was among what it fetched
 // (FM-3), "partial" otherwise.
+//
+// A bucket key is an opaque string, not a filesystem path — FM-8 means a
+// compromised run's own write-capable bucket key can plant an object key
+// like "runs/<id>/../../.ssh/authorized_keys", and naively joining its
+// relative part onto <out> would write there on the operator's machine
+// (R4a, LAND review). Every key's relative part is checked with
+// safeRelPath before it is ever joined onto out; an escaping key is
+// skipped (never written) and named on stderr, and the run's bundle is
+// still reported as an error so `farm pull` exits nonzero rather than
+// silently reporting a bundle that is missing exactly the poisoned object.
 func pullRunBundle(ctx context.Context, client *farm.SinkClient, runID, out string) (status string, err error) {
 	prefix := "runs/" + runID + "/"
 	keys, err := client.List(ctx, prefix)
@@ -418,13 +442,21 @@ func pullRunBundle(ctx context.Context, client *farm.SinkClient, runID, out stri
 	}
 
 	hasDone := false
+	escaped := 0
 	for _, key := range keys {
+		rel := strings.TrimPrefix(key, prefix)
+		relPath, ok := safeRelPath(rel)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "pull %s: refusing key %s: relative path escapes --out\n", runID, key)
+			escaped++
+			continue
+		}
+
 		body, err := client.Get(ctx, key)
 		if err != nil {
 			return "", fmt.Errorf("get %s: %w", key, err)
 		}
-		rel := strings.TrimPrefix(key, prefix)
-		dest := filepath.Join(out, runID, filepath.FromSlash(rel))
+		dest := filepath.Join(out, runID, relPath)
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return "", fmt.Errorf("mkdir for %s: %w", dest, err)
 		}
@@ -435,10 +467,28 @@ func pullRunBundle(ctx context.Context, client *farm.SinkClient, runID, out stri
 			hasDone = true
 		}
 	}
+	if escaped > 0 {
+		return "", fmt.Errorf("%d object key(s) under %s escaped --out and were refused", escaped, prefix)
+	}
 	if hasDone {
 		return bundleComplete, nil
 	}
 	return bundlePartial, nil
+}
+
+// safeRelPath cleans a bucket key's relative part (rel, already stripped
+// of its "runs/<runId>/" prefix) and rejects it — ok=false — when the
+// cleaned path is absolute or starts with a ".." segment, i.e. it would
+// resolve outside whatever directory it gets joined onto.
+func safeRelPath(rel string) (cleaned string, ok bool) {
+	cleaned = filepath.Clean(filepath.FromSlash(rel))
+	if filepath.IsAbs(cleaned) {
+		return "", false
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return cleaned, true
 }
 
 func printEvalFarmUsage() {
@@ -450,7 +500,8 @@ Commands (ZCP_AUTHORING=1 required):
                                                --gate-set overrides the gate scenario list read alongside
                                                --scenarios (default: <scenariosDir>/../../farm/gate-set.txt)
   pull     <runId>|--batch <batch> --out <dir> Download a run's (or a batch's) bundle
-  run      --candidate <sha256> --scenarios <digest> --set gate|all|<ids> [--batch <id>] [--run-budget 45m] [--detach]
+  run      --candidate <sha256> --scenarios <digest> --set gate|all|<ids> [--evaluator <sha256>] [--wrapper <sha256>]
+           [--batch <id>] [--run-budget 45m] [--detach]   (pins default to evaluators/current, farm/wrapper/current)
                                                Create zcp-farm-<runId> projects, watch the bucket, delete after done.json
   status   [<batch>]                           Recompute batch/run state from the bucket and the project list
   report   [--evaluator-sha256 <sha>] <dir>    Report over a pulled batch or run dir (no network)
