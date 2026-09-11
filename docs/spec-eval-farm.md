@@ -938,6 +938,15 @@ A batch or run whose manifest/observation/meta cannot be read is skipped
 batch or run normally; only a genuine store error on the batches/ listing
 itself fails the call.
 
+A finished run's row is cached in memory once resolved: everything but the
+current observation is cached indefinitely once `done.json` exists (those
+files never change again, §7.6 FM-47); the observation itself is re-read at
+most every 2 minutes, or immediately once the console's own queue finishes
+a job for that run. A run without `done.json`, and a batch's `summary.json`
+while it is still absent, are each re-checked at most every 15 seconds. A
+cold fill (first load, or a cache entry past its TTL) resolves rows in
+parallel, at most 8 at a time, in the same order a sequential fill would.
+
 ### 8.5 Worker and actions
 
 **FM-53.** One queue, at most three observations at a time, feeds both the

@@ -82,10 +82,10 @@ func TestView_StoreListErrorFailsTheWholeListing(t *testing.T) {
 	store := newFakeStore()
 	store.failListOn("batches/", errors.New("bucket unreachable"))
 
-	if _, err := loadBatchRows(context.Background(), store, false, nil); err == nil {
+	if _, err := loadBatchRows(context.Background(), store, false, nil, nil, nil); err == nil {
 		t.Error("loadBatchRows with a failing batches/ List returned nil error, want the store error propagated")
 	}
-	if _, err := rowsSinceWindow(context.Background(), store, false, time.Hour, fixedNow(t)(), nil); err == nil {
+	if _, err := rowsSinceWindow(context.Background(), store, false, time.Hour, fixedNow(t)(), nil, nil, nil); err == nil {
 		t.Error("rowsSinceWindow with a failing batches/ List returned nil error, want the store error propagated")
 	}
 }
@@ -202,7 +202,7 @@ func TestView_LoadBatchRowsLoadsEachManifestOnce(t *testing.T) {
 		{runID: "lo1-b", scenario: "b", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
 	}, true, map[string]string{"lo1-a": "passed", "lo1-b": "passed"})
 
-	if _, err := loadBatchRows(context.Background(), store, false, nil); err != nil {
+	if _, err := loadBatchRows(context.Background(), store, false, nil, nil, nil); err != nil {
 		t.Fatalf("loadBatchRows: %v", err)
 	}
 

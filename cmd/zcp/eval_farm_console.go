@@ -125,6 +125,7 @@ func runFarmConsole(args []string) int {
 	defer stop()
 
 	srv.StartWorker(ctx)
+	go srv.WarmCache(ctx)
 
 	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", listen)
 	if err != nil {

@@ -66,7 +66,7 @@ func TestPages_BatchesNewestFirstWithCounts(t *testing.T) {
 		Model: "claude-sonnet-5", CreatedAt: time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC), Status: "ok", Headline: "ok",
 	})
 
-	rows, err := loadBatchRows(context.Background(), store, false, nil)
+	rows, err := loadBatchRows(context.Background(), store, false, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("loadBatchRows: %v", err)
 	}
