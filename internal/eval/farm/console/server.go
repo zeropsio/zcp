@@ -227,11 +227,9 @@ func handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte("ok\n"))
 }
 
-// handleRoot is §8.3 FM-51's "/" page: every batch, newest first, with its
-// id, created time, candidate sha (12 chars), set, per-verdict counts,
-// total cost and observed-runs n/m (batches.go's read model).
+// handleRoot is §8.3 FM-51's "/" page: the Overview (pages_home.go).
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
-	s.handleBatchesPage(w, r)
+	s.handleHomePage(w, r)
 }
 
 func renderLoginPage(w http.ResponseWriter, failed bool, next string) {
