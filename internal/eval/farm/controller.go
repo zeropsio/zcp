@@ -41,6 +41,13 @@ const (
 // two agree on the same literal (goconst).
 const DetailNoBundle = "no bundle"
 
+// DetailInterrupted is the RunResult.Detail value for a run RunBatch was
+// still waiting on when its context was cancelled (Ctrl-C / SIGTERM, R3,
+// FM-9's "interrupt" endedBy value). Its project is kept and any minted
+// launch token id is recorded rather than revoked — the same FM-21-style
+// exemption as DetailNoBundle, so `gc` can finish the job later.
+const DetailInterrupted = "interrupted"
+
 // PlatformClient is the account-wide platform surface the controller needs.
 // The real implementation (NewAccountClient) wraps platform.NewZeropsClient
 // and platform.NewProjectAdminClient — both existing SDK-based constructors
@@ -407,7 +414,10 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 			}
 		}
 		manifest.Runs = manifestRuns
-		if err := PutManifest(ctx, sink, opts.Batch, manifest); err != nil {
+		// R3: this write must land even if ctx is cancelled mid-batch — an
+		// interrupted operator still wants the minted run token ids on
+		// record.
+		if err := PutManifest(context.WithoutCancel(ctx), sink, opts.Batch, manifest); err != nil {
 			return nil, fmt.Errorf("farm run: update manifest with run token ids: %w", err)
 		}
 	}
@@ -415,15 +425,21 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 	results := make([]RunResult, 0, len(actives)+len(blocked))
 	results = append(results, blocked...)
 	endedByBudget := false
+	endedByInterrupt := false
 	for _, a := range actives {
 		result, detail, settled := waitForDone(ctx, client, sink, a.RunID, a.ProjectID, a.Deadline, now, pollInterval)
 		rr := RunResult{RunID: a.RunID, Scenario: a.ID, ProjectID: a.ProjectID, Result: result, Detail: detail, LaunchTokenID: a.LaunchTokenID}
 
 		if !settled {
-			// FM-21's sole exemption: budget elapsed without done.json —
-			// the project is kept for inspection, the token (if any) stays
-			// unrevoked and is recorded so `gc` can finish the job later.
-			endedByBudget = true
+			// FM-21's sole exemption (budget elapsed) and R3's interrupt
+			// exemption share the same shape: the project is kept for
+			// inspection, the token (if any) stays unrevoked and is
+			// recorded so `gc` can finish the job later.
+			if detail == DetailInterrupted {
+				endedByInterrupt = true
+			} else {
+				endedByBudget = true
+			}
 			results = append(results, rr)
 			continue
 		}
@@ -446,7 +462,10 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 	}
 
 	endedBy := "settled"
-	if endedByBudget {
+	switch {
+	case endedByInterrupt:
+		endedBy = "interrupt"
+	case endedByBudget:
 		endedBy = "budget"
 	}
 	summary := BatchSummary{Batch: opts.Batch, FinishedAt: now().UTC().Format(time.RFC3339), EndedBy: endedBy}
@@ -456,7 +475,10 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 		// field-by-field literal.
 		summary.Runs = append(summary.Runs, SummaryRun(rr))
 	}
-	if err := PutSummary(ctx, sink, opts.Batch, summary); err != nil {
+	// R3: write the summary through a cancellation-immune context — the
+	// whole point of the interrupt exemption is that the operator's own
+	// Ctrl-C/SIGTERM must not also block the write that records it.
+	if err := PutSummary(context.WithoutCancel(ctx), sink, opts.Batch, summary); err != nil {
 		return results, fmt.Errorf("farm run: write summary: %w", err)
 	}
 	return results, nil
@@ -554,13 +576,20 @@ type verificationJSON struct {
 // failing; creationPhaseFailure additionally only counts a process whose
 // ServiceStacks[] names the control service or carries no ref at all, for
 // the same reason. settled reports whether the run produced a verdict at
-// all — false means the budget-elapsed exemption: the caller must not
-// delete the run's project or revoke its token. A FAILED creation-phase
-// process always returns settled=true (§3.3 FM-21: the dead project is
-// still deleted); a transient error reading processes is never itself a
-// verdict — polling continues.
+// all — false means either the budget-elapsed exemption or R3's interrupt
+// exemption (ctx cancelled — detail is DetailInterrupted): either way the
+// caller must not delete the run's project or revoke its token. A FAILED
+// creation-phase process always returns settled=true (§3.3 FM-21: the dead
+// project is still deleted); a transient error reading processes is never
+// itself a verdict — polling continues.
 func waitForDone(ctx context.Context, client PlatformClient, sink *SinkClient, runID, projectID string, deadline time.Time, now func() time.Time, pollInterval time.Duration) (result, detail string, settled bool) {
 	for {
+		select {
+		case <-ctx.Done():
+			return ResultBlocked, DetailInterrupted, false
+		default:
+		}
+
 		body, err := sink.Get(ctx, "runs/"+runID+"/done.json")
 		if err == nil {
 			return settleFromDone(ctx, sink, runID, body)
@@ -576,7 +605,12 @@ func waitForDone(ctx context.Context, client PlatformClient, sink *SinkClient, r
 		if now().After(deadline) {
 			return ResultBlocked, DetailNoBundle, false
 		}
-		time.Sleep(pollInterval)
+
+		select {
+		case <-ctx.Done():
+			return ResultBlocked, DetailInterrupted, false
+		case <-time.After(pollInterval):
+		}
 	}
 }
 

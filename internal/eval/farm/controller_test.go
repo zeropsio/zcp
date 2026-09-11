@@ -1532,3 +1532,79 @@ func TestFarmRun_PerRunDeadline_FromCreation(t *testing.T) {
 		t.Errorf("total simulated elapsed time = %s, want well under 2x budget (%s) — run2's deadline must be anchored at its own creation time, not reset when its wait begins", totalElapsed, 2*budget)
 	}
 }
+
+// TestFarmRun_Interrupt_WritesSummaryKeepsProjects pins R3: cancelling
+// RunBatch's context while a run is still being waited on stops the wait,
+// writes batches/<batch>/summary.json with endedBy "interrupt", records the
+// unsettled run blocked/"interrupted", and — like FM-21's no-bundle
+// exemption — never deletes its project.
+func TestFarmRun_Interrupt_WritesSummaryKeepsProjects(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-24-r3"
+	f := newControllerFixture(t, clientID)
+	account, client, sink := f.account, f.client, f.sink
+
+	batch := "batch-24-r3"
+	sc := ScenarioRun{ID: "recipe-interrupted"}
+	runID := batch + "-" + sc.ID
+	// No seedSettledRun: the run's project never writes done.json before
+	// the ctx is cancelled.
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+		Sink: Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		// A generous budget the interrupt must pre-empt long before it
+		// would elapse on its own.
+		RunBudget: time.Hour, PollInterval: 20 * time.Millisecond,
+	}
+
+	start := time.Now()
+	results, err := RunBatch(ctx, client, sink, opts)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("RunBatch took %s, want it to stop promptly once ctx is cancelled, not run out the hour-long budget", elapsed)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %+v, want 1 entry", results)
+	}
+	if results[0].Result != ResultBlocked || results[0].Detail != DetailInterrupted {
+		t.Fatalf("results[0] = %+v, want Result=%q Detail=%q", results[0], ResultBlocked, DetailInterrupted)
+	}
+	if results[0].ProjectID == "" {
+		t.Errorf("results[0].ProjectID empty, want the interrupted run's project kept")
+	}
+
+	for _, entry := range account.requestLog() {
+		if strings.HasPrefix(entry, "DELETE ") {
+			t.Errorf("unexpected DELETE request recorded: %s", entry)
+		}
+	}
+	account.mu.Lock()
+	stillExists := findProjectByFakeName(account, ProjectPrefix+runID)
+	account.mu.Unlock()
+	if !stillExists {
+		t.Errorf("project %s was deleted, want it kept (interrupted)", ProjectPrefix+runID)
+	}
+
+	summary, err := GetSummary(context.Background(), sink, batch)
+	if err != nil {
+		t.Fatalf("GetSummary: %v", err)
+	}
+	if summary.EndedBy != "interrupt" {
+		t.Errorf("summary.EndedBy = %q, want %q", summary.EndedBy, "interrupt")
+	}
+	if len(summary.Runs) != 1 || summary.Runs[0].Result != ResultBlocked || summary.Runs[0].Detail != DetailInterrupted {
+		t.Errorf("summary.Runs = %+v, want one entry Result=%q Detail=%q", summary.Runs, ResultBlocked, DetailInterrupted)
+	}
+}

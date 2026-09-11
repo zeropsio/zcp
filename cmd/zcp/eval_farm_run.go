@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -112,7 +113,12 @@ func runFarmRun(args []string) int {
 		return 1
 	}
 	sink := farm.NewSinkClient(cfg)
-	ctx := context.Background()
+	// R3: Ctrl-C / SIGTERM cancels ctx instead of leaving the process with
+	// no way to end the batch cleanly — RunBatch reacts to cancellation by
+	// stopping its wait, recording every unsettled run "interrupted", and
+	// keeping their projects (docs/spec-eval-farm.md §1.4 FM-9).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	scenarios, err := resolveScenarios(ctx, sink, scenariosDigest, set)
 	if err != nil {
@@ -165,11 +171,22 @@ func runFarmRun(args []string) int {
 	}
 
 	allPassed := true
+	interrupted := false
 	for _, r := range results {
 		fmt.Fprintf(os.Stdout, "%s %s %s\n", r.RunID, r.Scenario, r.Result)
 		if r.Result != farm.ResultPassed {
 			allPassed = false
 		}
+		if r.Detail == farm.DetailInterrupted {
+			interrupted = true
+		}
+	}
+	if interrupted {
+		// R3: Ctrl-C/SIGTERM already stopped the batch (ctx cancelled) by
+		// the time this line runs — name where the recorded state landed,
+		// since the operator's own signal may have cut off whatever else
+		// they were watching.
+		fmt.Fprintf(os.Stderr, "farm run interrupted: batch state recorded in batches/%s/summary.json\n", batch)
 	}
 	if !allPassed {
 		return 1

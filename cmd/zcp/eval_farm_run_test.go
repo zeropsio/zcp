@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/eval/farm"
 )
@@ -785,4 +787,116 @@ seed: empty
 ---
 Test prompt body.
 `, id, area)
+}
+
+// newHangingRunFakeAccountServer serves exactly the account-wide paths one
+// non-launch run's full creation needs (user/info, project/import,
+// integration-token mint, project/{id}/service-stack/import,
+// project/{id}/process) — the process list stays empty forever, so the run
+// never produces a FAILED creation-phase process and never gets a
+// done.json: it hangs in waitForDone until something ends the batch (the
+// RED test's SIGTERM, via runFarmRun's signal.NotifyContext wiring, R3).
+func newHangingRunFakeAccountServer(t *testing.T, clientID, runProjectName string) *httptest.Server {
+	t.Helper()
+	var mu sync.Mutex
+	projects := map[string]string{} // id -> name
+	nextID := 0
+	nextTok := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/rest/public/user/info":
+			fmt.Fprintf(w, `{"id":"user-1","email":"farm@example.com","fullName":"Farm","clientUserList":[{"id":"cu1","clientId":%q,"userId":"user-1"}]}`, clientID)
+
+		case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/client/"+clientID+"/project/import":
+			mu.Lock()
+			nextID++
+			id := fmt.Sprintf("proj-%d", nextID)
+			projects[id] = runProjectName
+			mu.Unlock()
+			fmt.Fprintf(w, `{"projectId":%q,"projectName":%q,"serviceStacks":[]}`, id, runProjectName)
+
+		case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/client/"+clientID+"/integration-token":
+			mu.Lock()
+			nextTok++
+			tokID := fmt.Sprintf("tok-%d", nextTok)
+			mu.Unlock()
+			fmt.Fprintf(w, `{"id":%q,"token":"run-secret-%s"}`, tokID, tokID)
+
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/rest/public/project/") && strings.HasSuffix(r.URL.Path, "/service-stack/import"):
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/rest/public/project/"), "/service-stack/import")
+			mu.Lock()
+			name := projects[id]
+			mu.Unlock()
+			fmt.Fprintf(w, `{"projectId":%q,"projectName":%q,"serviceStacks":[{"id":"svc-1","name":"zcp"}]}`, id, name)
+
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/rest/public/project/") && strings.HasSuffix(r.URL.Path, "/process"):
+			fmt.Fprint(w, `{"list":[],"totalCount":0}`)
+
+		default:
+			t.Errorf("hangingRunFakeAccount: unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestEvalFarmRun_SIGTERM_EndsBatchByInterrupt pins R3's end-to-end wiring:
+// runFarmRun installs signal.NotifyContext for SIGTERM/os.Interrupt, so a
+// real SIGTERM delivered to this process while a run is hung waiting for
+// done.json stops the batch promptly (well inside the run's hour-long
+// budget) instead of running it out, exits nonzero, and names the batch's
+// summary key on stderr.
+func TestEvalFarmRun_SIGTERM_EndsBatchByInterrupt(t *testing.T) {
+	const clientID = "client-sigterm-1"
+	const batch = "batch-sigterm-1"
+	const scenarioID = "recipe-hang"
+	runProjectName := farm.ProjectPrefix + batch + "-" + scenarioID
+
+	restSrv := newHangingRunFakeAccountServer(t, clientID, runProjectName)
+	s3Srv, s3Fake := newStatusFakeS3ServerWithFake(t)
+
+	const digest = "scen-sigterm-1"
+	s3Fake.mu.Lock()
+	s3Fake.objects["scenarios/"+digest+"/"+scenarioID+".md"] = bucketScenarioFixture(t, scenarioID, "bootstrap")
+	s3Fake.mu.Unlock()
+
+	t.Setenv("ZCP_FARM_ACCOUNT_TOKEN", "farm-account-token")
+	t.Setenv("ZCP_FARM_CLIENT_ID", clientID)
+	t.Setenv("ZCP_API_HOST", restSrv.URL)
+	t.Setenv("ZCP_FARM_S3_URL", s3Srv.URL)
+	t.Setenv("ZCP_FARM_S3_BUCKET", "zcp-farm")
+	t.Setenv("ZCP_FARM_S3_KEY", "sink-key")
+	t.Setenv("ZCP_FARM_S3_SECRET", "sink-secret")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-farm-token")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		_ = syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
+	}()
+
+	var exitCode int
+	start := time.Now()
+	_, stderr := captureOutput(t, func() {
+		exitCode = runFarmRun([]string{
+			"--candidate", "cand-sha", "--scenarios", digest, "--evaluator", "eval-sha",
+			"--set", scenarioID, "--batch", batch,
+			"--run-budget", "1h",
+		})
+	})
+	elapsed := time.Since(start)
+
+	if elapsed > 5*time.Second {
+		t.Fatalf("runFarmRun took %s, want it to stop promptly on SIGTERM, not run out the hour-long budget", elapsed)
+	}
+	if exitCode != 1 {
+		t.Errorf("runFarmRun exit code = %d, want 1 (an interrupted run is never all-passed)", exitCode)
+	}
+	wantStderr := "batches/" + batch + "/summary.json"
+	if !strings.Contains(stderr, "interrupted") || !strings.Contains(stderr, wantStderr) {
+		t.Errorf("stderr = %q, want it to mention \"interrupted\" and name %q", stderr, wantStderr)
+	}
 }
