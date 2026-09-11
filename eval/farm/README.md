@@ -37,7 +37,9 @@ export ZCP_AUTHORING=1 ZCP_FARM_PROJECT_ID=swY2yczpQlqVLlcz0fCyFA
 #    --evaluator wants the same shape (build it once per farm, not per batch).
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/zcp-linux ./cmd/zcp
 
-# 2. Push each part; every push prints its digest.
+# 2. Push each part; every push prints its digest. Pushing is always safe:
+#    parts are content-addressed, and `run` resolves the evaluator/wrapper
+#    pins once at kickoff, so a batch already running keeps the ones it started with.
 go run ./cmd/zcp eval farm push --evaluator /tmp/zcp-linux   # once per farm; writes evaluators/current
 go run ./cmd/zcp eval farm push --candidate /tmp/zcp-linux   # per batch
 go run ./cmd/zcp eval farm push --scenarios eval/behavioral/scenarios   # writes sets/<digest>/gate.txt
@@ -64,7 +66,13 @@ go run ./cmd/zcp eval farm observe /tmp/farm-out/<runId>
 `run` also takes `[--evaluator <sha256>] [--wrapper <sha256>]` (default to
 the `evaluators/current` / `farm/wrapper/current` pointers `push` wrote),
 `[--run-budget 45m]`, `[--detach]` (re-execs in the background, logs to
-`farm-<batch>.log`), and `[--observer <model>|off]`.
+`farm-<batch>.log` in the current directory — gitignored), and
+`[--observer <model>|off]`.
+
+Every command above assumes the checkout root as the current directory.
+From anywhere else, `go -C <checkout> run ./cmd/zcp eval farm …` does the
+same (Go's `-C` flag): the command then runs in the checkout, so relative
+paths and the `--detach` log resolve there too.
 
 ## Console
 
