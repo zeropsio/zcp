@@ -84,6 +84,19 @@ type fakeAccount struct {
 	// project.create -> internalServerError incident
 	// (TestFarmRun_FailedCreationProcess_SettlesBlockedBeforeBudget).
 	failedCreationProcessProjectName string
+
+	// failedCreationProcessServiceName, when set together with
+	// failedCreationProcessProjectName, gives the simulated FAILED process
+	// a ServiceStacks[] ref naming this service instead of no ref at all —
+	// R1: a FAILED stack.import naming a service other than the control
+	// service ("zcp") must never count as a creation-phase failure
+	// (TestFarmRun_FailedImportAfterStarted_DoesNotDeleteProject).
+	failedCreationProcessServiceName string
+	// failedCreationProcessAction, when set together with
+	// failedCreationProcessProjectName, names the simulated process's
+	// actionName instead of the "stack.create" default (R1's own-import
+	// test uses "stack.import").
+	failedCreationProcessAction string
 }
 
 type fakeProject struct{ id, name string }
@@ -248,13 +261,23 @@ func (f *fakeAccount) handle(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		p, ok := f.projects[id]
 		failName := f.failedCreationProcessProjectName
+		failService := f.failedCreationProcessServiceName
+		failAction := f.failedCreationProcessAction
 		f.mu.Unlock()
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 		if failName != "" && p.name == failName {
-			fmt.Fprint(w, `{"list":[{"id":"proc-create-fail","actionName":"stack.create","status":"FAILED","publicMeta":{"failReason":"internalServerError"}}],"totalCount":1}`)
+			action := failAction
+			if action == "" {
+				action = "stack.create"
+			}
+			serviceStacks := "[]"
+			if failService != "" {
+				serviceStacks = fmt.Sprintf(`[{"name":%q}]`, failService)
+			}
+			fmt.Fprintf(w, `{"list":[{"id":"proc-create-fail","actionName":%q,"status":"FAILED","serviceStacks":%s,"publicMeta":{"failReason":"internalServerError"}}],"totalCount":1}`, action, serviceStacks)
 			return
 		}
 		fmt.Fprint(w, `{"list":[],"totalCount":0}`)
@@ -1366,5 +1389,67 @@ func TestRecomputePartDigest_RejectsPathEscape(t *testing.T) {
 	_, err := recomputePartDigest(context.Background(), sink, runID, "results")
 	if err == nil {
 		t.Fatal("recomputePartDigest: want an error for a path-escaping key, got nil")
+	}
+}
+
+// TestFarmRun_FailedImportAfterStarted_DoesNotDeleteProject pins R1: once
+// runs/<runId>/started.json exists (the run's own agent is underway), a
+// FAILED stack.import naming a service OTHER than the control service
+// ("api", the agent's own mid-run zerops_import) must never be mistaken for
+// the platform failing to create the run's own project — waitForDone keeps
+// waiting out the run's budget instead of settling immediately, and the
+// live project is never deleted out from under the running agent.
+func TestFarmRun_FailedImportAfterStarted_DoesNotDeleteProject(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-24-r1"
+	f := newControllerFixture(t, clientID)
+	account, client, sink := f.account, f.client, f.sink
+
+	batch := "batch-24-r1"
+	sc := ScenarioRun{ID: "recipe-mid-run-import"}
+	runID := batch + "-" + sc.ID
+	// No seedSettledRun: this run's project never writes done.json.
+
+	if err := sink.Put(context.Background(), "runs/"+runID+"/started.json", []byte(`{"runId":"`+runID+`"}`)); err != nil {
+		t.Fatalf("seed started.json: %v", err)
+	}
+
+	account.mu.Lock()
+	account.failedCreationProcessProjectName = ProjectPrefix + runID
+	account.failedCreationProcessServiceName = "api"
+	account.failedCreationProcessAction = "stack.import"
+	account.mu.Unlock()
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget: 200 * time.Millisecond, PollInterval: 20 * time.Millisecond,
+	}
+
+	results, err := RunBatch(context.Background(), client, sink, opts)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %+v, want 1 entry", results)
+	}
+	if results[0].Result != ResultBlocked || results[0].Detail != DetailNoBundle {
+		t.Fatalf("results[0] = %+v, want Result=%q Detail=%q (a FAILED stack.import on a non-control service, after started.json, must be ignored)", results[0], ResultBlocked, DetailNoBundle)
+	}
+	if results[0].ProjectID == "" {
+		t.Errorf("results[0].ProjectID empty, want the run's project kept (no bundle exemption)")
+	}
+	for _, entry := range account.requestLog() {
+		if strings.HasPrefix(entry, "DELETE ") {
+			t.Errorf("unexpected DELETE request recorded: %s", entry)
+		}
+	}
+	account.mu.Lock()
+	stillExists := findProjectByFakeName(account, ProjectPrefix+runID)
+	account.mu.Unlock()
+	if !stillExists {
+		t.Errorf("project %s was deleted, want it kept", ProjectPrefix+runID)
 	}
 }

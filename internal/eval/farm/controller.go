@@ -529,16 +529,23 @@ type verificationJSON struct {
 
 // waitForDone polls the bucket for runs/<runId>/done.json until it appears
 // or budget elapses (§3.3 FM-21), and — D19 — also polls the run's project
-// for a FAILED creation-phase process on every iteration: a platform-side
-// project.create incident (live 2026-09-10: stack.create FAILED, stack.build
-// CANCELED, GET /project/{id} -> 500) leaves a dead project that will never
-// write done.json, so waiting out the full budget for one is pure waste.
-// settled reports whether the run produced a verdict at all — false means
-// the budget-elapsed exemption: the caller must not delete the run's
-// project or revoke its token. A FAILED creation-phase process always
-// returns settled=true (§3.3 FM-21: the dead project is still deleted); a
-// transient error reading processes is never itself a verdict — polling
-// continues.
+// for a FAILED creation-phase process on every iteration where the run has
+// not yet written runs/<runId>/started.json: a platform-side project.create
+// incident (live 2026-09-10: stack.create FAILED, stack.build CANCELED,
+// GET /project/{id} -> 500) leaves a dead project that will never write
+// done.json, so waiting out the full budget for one is pure waste. R1: once
+// started.json exists — the run's own wrapper/agent is underway — this
+// process poll stops entirely, so a platform-side failure of the agent's
+// OWN later zerops_import (a stack.import for one of ITS services, not the
+// controller's) can never be mistaken for the project's own creation
+// failing; creationPhaseFailure additionally only counts a process whose
+// ServiceStacks[] names the control service or carries no ref at all, for
+// the same reason. settled reports whether the run produced a verdict at
+// all — false means the budget-elapsed exemption: the caller must not
+// delete the run's project or revoke its token. A FAILED creation-phase
+// process always returns settled=true (§3.3 FM-21: the dead project is
+// still deleted); a transient error reading processes is never itself a
+// verdict — polling continues.
 func waitForDone(ctx context.Context, client PlatformClient, sink *SinkClient, runID, projectID string, budget time.Duration, now func() time.Time, pollInterval time.Duration) (result, detail string, settled bool) {
 	deadline := now().Add(budget)
 	for {
@@ -546,9 +553,14 @@ func waitForDone(ctx context.Context, client PlatformClient, sink *SinkClient, r
 		if err == nil {
 			return settleFromDone(ctx, sink, runID, body)
 		}
-		if actionName, failReason, found := creationPhaseFailure(ctx, client, projectID); found {
-			return ResultBlocked, fmt.Sprintf("platform: %s FAILED: %s", actionName, failReason), true
+
+		started, _, headErr := sink.Head(ctx, "runs/"+runID+"/started.json")
+		if headErr == nil && !started {
+			if actionName, failReason, found := creationPhaseFailure(ctx, client, projectID); found {
+				return ResultBlocked, fmt.Sprintf("platform: %s FAILED: %s", actionName, failReason), true
+			}
 		}
+
 		if now().After(deadline) {
 			return ResultBlocked, DetailNoBundle, false
 		}
@@ -579,17 +591,19 @@ func isCreationPhaseAction(actionName string) bool {
 }
 
 // creationPhaseFailure looks for a FAILED creation-phase process on
-// projectID. A transient error reading the project's processes (including
-// the GET /project/{id} 5xx the live incident also produced) is never
-// itself a verdict — it reports found=false, not an error, so waitForDone
-// keeps polling instead of settling on a possibly-recoverable blip.
+// projectID whose ServiceStacks[] names the control service or carries no
+// service ref at all (R1 — referencesControlServiceOrProject). A transient
+// error reading the project's processes (including the GET /project/{id}
+// 5xx the live incident also produced) is never itself a verdict — it
+// reports found=false, not an error, so waitForDone keeps polling instead
+// of settling on a possibly-recoverable blip.
 func creationPhaseFailure(ctx context.Context, client PlatformClient, projectID string) (actionName, failReason string, found bool) {
 	processes, err := client.GetProjectProcessesDirect(ctx, projectID)
 	if err != nil {
 		return "", "", false
 	}
 	for _, p := range processes {
-		if p.Status != platform.ProcessStatusFailed || !isCreationPhaseAction(p.ActionName) {
+		if p.Status != platform.ProcessStatusFailed || !isCreationPhaseAction(p.ActionName) || !referencesControlServiceOrProject(p.ServiceStacks) {
 			continue
 		}
 		reason := ""
@@ -599,6 +613,24 @@ func creationPhaseFailure(ctx context.Context, client PlatformClient, projectID 
 		return p.ActionName, reason, true
 	}
 	return "", "", false
+}
+
+// referencesControlServiceOrProject reports whether refs is empty (a
+// project-level process with no specific service — e.g. the project shell's
+// own stack.create) or names the control service (serviceHostname, "zcp") —
+// R1: a stack.import the run's own agent triggers for one of ITS imported
+// services, mid-run, has a ref naming THAT service, never "zcp", so it never
+// counts as the platform failing to create the run's own project.
+func referencesControlServiceOrProject(refs []platform.ServiceStackRef) bool {
+	if len(refs) == 0 {
+		return true
+	}
+	for _, ref := range refs {
+		if ref.Name == serviceHostname {
+			return true
+		}
+	}
+	return false
 }
 
 // settleFromDone verifies done.json's part digests against what actually

@@ -355,7 +355,12 @@ also polls the run project's processes directly (D19): a FAILED
 creation-phase process (`stack.create`, `stack.import`) settles the run
 `blocked` immediately instead of waiting out the full run budget for a
 `done.json` the dead project will never write, and its project is still
-deleted per this rule.
+deleted per this rule. This process poll runs only until
+`runs/<runId>/started.json` appears in the bucket (the run's own wrapper is
+underway) and only counts a process whose `serviceStacks[]` names the
+control service `zcp` or carries no service ref at all, so a FAILED
+`stack.import` the run's own agent triggers mid-run for one of ITS services
+is never mistaken for the platform failing to create the run's own project.
 
 **FM-22.** `farm run` writes `batches/<batch>/manifest.json` before creating
 any project and `batches/<batch>/summary.json` after the last run in the
