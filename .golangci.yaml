@@ -279,6 +279,52 @@ linters:
             - $gostd
             - github.com/zeropsio/zcp/internal/captureinspector
             - github.com/zeropsio/zcp/internal/capture
+        core-not-eval:
+          # Eval boundary, direction 1: the eval subsystem (behavioral
+          # verdicts, the farm controller, observer, console — ~32k lines,
+          # docs/spec-eval-farm.md §3.1 FM-17: "the same discipline as
+          # ZCP_AUTHORING") is composed at exactly one site, cmd/zcp/eval*.go.
+          # No other core / MCP / server / integration / e2e package may
+          # import it. Modeled on core-not-capture-inspector's file globs.
+          # Test files are exempt ($test → **/*_test.go): a test elsewhere
+          # legitimately reading eval types is not the composition-boundary
+          # concern a production import is.
+          list-mode: lax
+          files:
+            - "**/internal/**/*.go"
+            - "!**/internal/eval/*.go"
+            - "!**/internal/eval/**/*.go"
+            - "**/cmd/**/*.go"
+            - "!**/cmd/zcp/eval*.go"
+            - "**/integration/*.go"
+            - "**/integration/**/*.go"
+            - "**/e2e/*.go"
+            - "**/e2e/**/*.go"
+            - "!$test"
+          deny:
+            - pkg: github.com/zeropsio/zcp/internal/eval
+              desc: "eval is a maintainer-only subsystem composed at exactly one site (docs/spec-eval-farm.md §3.1 FM-17); only cmd/zcp/eval*.go may import it"
+        eval-no-upper-layers:
+          # Eval boundary, direction 2: internal/eval/** legitimately uses
+          # many internal and external packages, so this is deliberately a
+          # deny list of the upper layers rather than a strict allow-list
+          # (docs/spec-eval-farm.md §3.1 FM-17). Test files are exempt
+          # ($test): internal/eval/verification_vocab_test.go imports
+          # internal/server to derive the tool vocabulary.
+          list-mode: lax
+          files:
+            - "**/internal/eval/*.go"
+            - "**/internal/eval/**/*.go"
+            - "!$test"
+          deny:
+            - pkg: github.com/zeropsio/zcp/internal/tools
+              desc: "eval/ is composed by cmd/zcp/eval*.go only; it must not reach up into internal/tools (docs/spec-eval-farm.md §3.1 FM-17)"
+            - pkg: github.com/zeropsio/zcp/internal/server
+              desc: "eval/ is composed by cmd/zcp/eval*.go only; it must not reach up into internal/server (docs/spec-eval-farm.md §3.1 FM-17)"
+            - pkg: github.com/zeropsio/zcp/internal/authoring
+              desc: "eval/ is composed by cmd/zcp/eval*.go only; it must not reach up into internal/authoring (docs/spec-eval-farm.md §3.1 FM-17)"
+            - pkg: github.com/zeropsio/zcp/internal/captureinspector
+              desc: "eval/ is composed by cmd/zcp/eval*.go only; it must not reach up into internal/captureinspector (docs/spec-eval-farm.md §3.1 FM-17)"
         dataconsole-core-isolated:
           # Data Console boundary, direction 1: the extractable engine
           # (internal/dataconsole/console/**) imports ZERO zcp core — only
