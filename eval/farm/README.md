@@ -45,9 +45,10 @@ go run ./cmd/zcp eval farm push --candidate /tmp/zcp-linux   # per batch
 go run ./cmd/zcp eval farm push --scenarios eval/behavioral/scenarios   # writes sets/<digest>/gate.txt
 go run ./cmd/zcp eval farm push --wrapper eval/farm/wrapper.sh          # writes farm/wrapper/current
 
-# 3. Kick off a batch — --set gate|all|<id,id,...> (§3.3).
+# 3. Kick off a batch — --set gate|all|<id,id,...> (§3.3). --note (max 200
+#    chars) records why the batch ran, for `farm status`/console readers.
 go run ./cmd/zcp eval farm run --candidate <candidate-sha> --scenarios <scenarios-digest> \
-  --set gate --batch <batch-id>
+  --set gate --batch <batch-id> --note "gate run before v0.2 release"
 
 # 4. Watch it.
 go run ./cmd/zcp eval farm status [<batch-id>]

@@ -452,8 +452,9 @@ from a running one, §8.8), and `candidateInfo` — `{revision, modified, time,
 goVersion}` read from the candidate binary's embedded Go build info
 (`debug/buildinfo`) by `farm push --candidate`, which stores it next to the
 binary as `candidates/<sha256>.info.json`; `farm run` copies it into the
-manifest when present. A candidate built without VCS stamping has no
-`candidateInfo`; readers then show the sha. None of these fields reaches a
+manifest when present. `farm push` writes the info file only when the
+binary carries `vcs.revision`; without it the batch has no `candidateInfo`
+and readers show the sha. None of these fields reaches a
 run project.
 
 ### 3.4 Launch-token lifecycle
@@ -847,7 +848,7 @@ Model-authored fields:
 object in its final text. `status` is `unparsed` (`raw` keeps the answer,
 capped at 20,000 chars) when it does not parse or breaks the structure:
 unknown enum values, a finding without title or evidence, `goal.reached`
-missing. Everything else is repaired deterministically and each repair
+missing, `story` or `story.ending` missing. Everything else is repaired deterministically and each repair
 appends one plain sentence to `warnings` (shown wherever the observation is
 shown): findings beyond three are dropped; a `surface` not of the form
 above, naming a `tool:` the run never called, or a `check:` id not in the
@@ -919,7 +920,9 @@ as `${os_*}` references, sensitive `CLAUDE_CODE_OAUTH_TOKEN` and
 `ZCP_FARM_ACCOUNT_TOKEN`/`ZCP_FARM_CLIENT_ID`; run state comes from the bucket
 alone: a run without `done.json` is `running` until its batch's `summary.json`
 settles it, and from then on shows that summary result (e.g. `blocked` for a
-run that never produced a bundle). `deploy.sh` is
+run that never produced a bundle); an unsettled run reads `stalled` once
+`manifest.createdAt + runBudgetSec + 30 min` has passed (a manifest without
+`runBudgetSec` never shows `stalled`). `deploy.sh` is
 idempotent: it imports the service when missing (generating the console token
 and writing the operator copy, §2.4) — when the service exists but the
 operator copy has no token it exits 1 naming that file, never writing a
@@ -993,7 +996,7 @@ one callout above the content.
      build, set, one dot per run ordered as on the batch page (tooltip
      `scenario — verdict`), verdict counts, ZCP findings high/medium, agent
      cost (`—` when unknown, `$2.19 + 7 unknown`), assessed n/m. Batches
-     where no run finished are listed only under the `smoke` filter.
+     where no run finished (empty batches) are listed only under `kind=empty` or `kind=all`.
 - `/problems` — §8.6, as a table (§8.7). A row expands (`<details>`) to its
   member findings: run, batch, build, severity, cause, title, first found
   quote with its step link.
@@ -1005,14 +1008,19 @@ one callout above the content.
      assessment outcome ok/problem/inconclusive, findings high/medium per
      cause class, agent cost (with the count of runs whose cost is
      unknown), assessed n/m.
-  3. **Problems in this batch**: §8.6 over this batch's runs only, with
-     `new` / `recurring` against the previous batch of the same set. Without
+  3. **Problems in this batch**: §8.6 over this batch's runs only, each
+     marked `also in <previous batch>` / `not in <previous batch>` (the
+     previous batch of the same set; the status words stay §8.6's). Without
      any assessment it falls back to "checks that failed in two or more
      runs".
-  4. Runs, as a table (§8.7), grouped: **Failed and blocked** (one line of
-     why: the first failed check in plain words `id: expected …, got …`, or
-     the blocked reason, then the headline), **Problems in passed runs**,
-     **Clean** (collapsed to one line of names), **Not assessed**.
+  4. Runs, as a table (§8.7), in groups by precedence — a run sits in the
+     first group it fits: **Failed and blocked** (one line of why: the first
+     failed check in plain words `id: expected …, got …`, or the blocked
+     reason, then the headline) · **Not finished** (running, stalled, not
+     started — with the reason) · **Not assessed** (no current `ok`
+     observation) · **Problems in passed runs** (outcome `problem` or
+     `inconclusive`) · **Clean** (collapsed to one line of names). `sort`
+     orders runs within each group.
   5. An Assess callout only while some finished run needs an assessment
      (§8.5); "Re-assess all" only once at least one run is assessed; neither
      when no run finished.
@@ -1024,7 +1032,9 @@ one callout above the content.
      `All checks passed.`
   3. **Assessment** card: outcome, headline; when the checks were judged
      wrong, a full-width line `The observer thinks a check is wrong — this
-     verdict may not be fair: <why>` linking to the explaining finding; the
+     verdict may not be fair: <why>` linking to the explaining finding (the
+     first `evaluator` finding), or to the judged check's row when there is
+     none; the
      story (task, expected, did, stuck with step links, ending); goal
      reached; verdict right (per judged check); a line of findings by
      severity and cause linking to `#f<n>`; model, time, quote count and
@@ -1162,32 +1172,49 @@ skip the run (never enqueue) when that list call itself fails.
 ### 8.6 Problems — findings clustered across runs
 
 **FM-54.** A **problem** is every finding, over the current observations
-(status `ok`) of the runs in scope, that shares one key:
-- a format-2 finding with an `anchor`: `surface` + `norm(anchor)`;
-- a format-2 finding without one: `surface` + owner + scenario;
-- a format-1 finding: `v1` + owner + scenario.
+(status `ok`) of the runs in the `since` window, that shares one key:
+- a format-2 finding with an `anchor`: its surface up to the first `/`
+  (`tool:zerops_deploy/deploy` → `tool:zerops_deploy`) + `norm(anchor)`;
+- a format-2 finding without an anchor whose surface is `tool:…`,
+  `recipe:…`, `check:…` or `scenario`: its surface up to the first `/` +
+  owner + scenario;
+- a format-2 finding whose surface is `agent`, `platform` or empty, and
+  every format-1 finding: a problem of its own.
 
-`norm` applies the FM-46 normalization (escapes decoded, backticks and
-asterisks dropped, whitespace collapsed), lowercases, replaces every
-hostname of the run's services (its `platform-snapshot.json`) with `<host>`,
-and every run of digits, every 22-character base62 token and every hex run
-of 8 or more characters with `#`. Clustering is deterministic and runs in
-the read path; no model is called.
+`norm` applies the FM-46 normalization (`observer.NormalizeText`),
+lowercases, then replaces, in this order and each as whole tokens only (a
+token is bounded by a character outside `[a-z0-9]` or the text's edge):
+the run's service hostnames — from its `platform-snapshot.json` when
+present plus every hostname its `verification.json` rows name as scope —
+with `<host>`; 22-character base62 tokens and hex tokens of 8 or more
+characters with `#`; then every run of digits with `#`. Clustering is
+deterministic and runs in the read path; no model is called.
 
-A problem's **builds** are the ZCP builds (§8.8) of its member runs. The
-newest build is that of the newest batch in scope with a finished run.
-Status: `new` — hit on the newest build and never before; `recurring` — hit
-on the newest build and on an older one; `gone` — not hit on the newest
-build although a scenario of the problem finished there, and hit on an
-older one; `unconfirmed` — not hit on the newest build and none of its
-scenarios finished there. `live` = `new` or `recurring`.
+**Builds and status.** A build is a candidate sha256 (§8.8). A scenario is
+*assessed on a build* when one of its runs on that build has a current `ok`
+observation. Status is computed once over the `since` window across all
+batches; every other filter narrows rows and never changes a status. The
+**newest build** is that of the newest `gate`/`all` batch with an assessed
+run, else of the newest batch with one. For a problem:
+- `recurring` — hit on the newest build and on an older one;
+- `new` — hit on the newest build only, and one of its scenarios was
+  assessed on an older build without hitting it (a regression);
+- `first seen` — hit on the newest build only, and none of its scenarios was
+  assessed on an older build;
+- `gone` — not hit on the newest build although one of its scenarios was
+  assessed there in the same observation format as the problem's members,
+  and hit on an older build (fixed, or not reproduced);
+- `unconfirmed` — not hit on the newest build and none of its scenarios was
+  assessed there in that format.
+`live` = `recurring`, `new` or `first seen`.
 
-Rank: live before the rest; then highest member severity; then runs hit on
-the newest build; then runs hit in total; then last seen. A row shows:
-highest severity, the cause labels of its members, surface, the title and
-fix of its most severe, newest member, the anchor, `hit <a>/<b> runs on
-<newest build>` (`b` = finished runs of its scenarios on that build),
-`<n> runs · <m> batches · <k> builds`, status, first and last seen.
+**Rank:** live before the rest; then highest member severity; then runs hit
+on the newest build; then runs hit in total; then last seen, newest first;
+then the key. A row shows: highest severity, the cause labels of its
+members, surface, the title and fix of its most severe member (newest on a
+tie), the anchor, `hit <a>/<b> runs on <newest build>` (`b` = runs of its
+scenarios assessed on that build), `<n> runs · <m> batches · <k> builds`,
+status, first and last seen. Members are ordered by severity, then newest.
 
 ### 8.7 Lists — sorting and filtering
 
@@ -1195,31 +1222,42 @@ fix of its most severe, newest member, the anchor, `hit <a>/<b> runs on
 runs, a run's steps) and its API twin take a closed set of query
 parameters. The state lives in the URL; every link on the page keeps the
 other parameters.
-- A filter with a closed value set (cause, severity, verdict, outcome,
-  status, kind, steps) takes one or more comma-separated values (OR within,
-  AND across filters). A filter over open values (batch, scenario, build,
-  surface) is matched exactly; `surface=tool:*` style prefixes match a kind.
+- A filter with a closed value set takes one or more comma-separated values
+  (OR within, AND across filters) — except `severity`, which is one minimum
+  everywhere. `cause` takes `zcp|test|agent|platform` everywhere and matches
+  an item when any of its findings is in that class. `verdict` takes
+  `passed|failed|blocked|not-started|running|stalled`. A filter over open
+  values (batch, scenario, build, surface) is matched exactly;
+  `surface=tool:*` style prefixes match a kind; an open value matching
+  nothing yields an empty list, not an error.
 - Each filter option shows its count under the other active filters; an
   option with count 0 is shown but not a link. Active filters show as chips,
   each removable, plus "clear all".
-- Sorting: `sort=<key>` from the list's set, `dir=asc|desc` (each key has a
-  documented default direction); ties break by a documented stable key.
+- Sorting: `sort=<key>` from the list's set and `dir=asc|desc`; each key's
+  default direction and tie-break are in the table; an unknown value (cost
+  not recorded, duration of a run without `done.json`) sorts last in both
+  directions.
 - A parameter the list does not take, or a closed-set value outside its
   set, is refused: the page renders a 400 that names the parameter and its
   allowed values with a link that drops it; the API answers 400
-  `{error, allowed}`. Nothing is ignored silently.
+  `{error, allowed}`. Nothing is ignored silently. `notice` and `n` (§8.5)
+  are accepted on every page and never carried into links; `/r/` also takes
+  `obs` (§8.3).
 
-| list | filters | sort keys (default first) |
+| list | filters | sort keys — default direction; tie-break |
 |---|---|---|
-| Overview batches | `kind=evaluation\|smoke\|all` (default `evaluation`: at least one run finished), `since` | `newest`, `zcp` (ZCP high, then medium), `failed`, `cost` |
-| `/problems` | `cause=zcp\|test\|agent\|platform`, `severity=high\|medium\|low` (minimum), `status=live\|new\|recurring\|gone\|unconfirmed\|all` (default `live`), `surface`, `scenario`, `batch`, `build`, `since` (default `30d`) | `rank`, `severity`, `runs`, `last`, `first` |
-| `/findings` | `cause`, `severity`, `surface`, `scenario`, `batch`, `build`, `since` (default `7d`) | `severity`, `newest`, `cause` |
-| batch runs | `verdict`, `outcome=ok\|problem\|inconclusive\|none`, `cause` | `problem` (verdict rank, disputed, highest severity, finding count), `scenario`, `duration`, `cost` |
-| run steps | `steps=all\|cited\|errors` | record order |
+| Overview batches | `kind=evaluation\|empty\|all` (default `evaluation`), `since` | **`newest`** desc; batch id · `zcp` (ZCP high, then ZCP medium) desc; newest · `failed` (failed + blocked runs) desc; newest · `cost` desc; newest |
+| `/problems` | `cause`, `severity`, `status=live\|recurring\|new\|first-seen\|gone\|unconfirmed\|all` (default `live`), `surface`, `scenario`, `batch`, `build`, `since` (default `30d`) | **`rank`** (§8.6); key · `severity` desc; rank · `runs` (runs hit in total) desc; rank · `last` desc; rank · `first` desc; rank |
+| `/findings` | `cause`, `severity`, `surface`, `scenario`, `batch`, `build`, `since` (default `7d`) | **`severity`** desc; newest, then run id, then finding index · `newest` desc; severity · `cause` (ZCP-first order) asc; severity |
+| batch runs | `verdict`, `outcome=ok\|problem\|inconclusive\|none`, `cause` | **`problem`** (verdict rank, disputed, highest severity, finding count) desc; scenario · `scenario` asc; — · `duration` desc; scenario · `cost` desc; scenario |
+| `/api/runs.md` | `batch`, `since`, `verdict`, `outcome`, `cause` | **`newest`** desc; run id |
+| run steps | `steps=all\|cited\|errors` (default `all`) | record order |
 
 `TestLists_*` pins, for every list and parameter, that each value narrows the
-result exactly as defined, that each sort key orders as defined, that counts
-match, and that an unknown parameter or value is refused.
+result exactly as defined, that each sort key orders as defined (including
+direction, tie-break and unknown values last), that counts match, and that an
+unknown parameter or value is refused while `notice`/`n` (and `obs` on
+`/r/`) are accepted.
 
 ### 8.8 Vocabulary
 
@@ -1228,11 +1266,15 @@ endpoint's legend, on `/terms`, and in the farm-triage skill; each badge
 carries its definition as a `title`.
 
 - **Batch** — one farm run: a set of scenarios against one ZCP build.
+  **Evaluation batch** — at least one run finished. **Empty batch** — no run
+  finished (setup failures, aborted, stalled).
   **Run** — one scenario done once by an agent in a fresh project.
   **Scenario** — a scripted user task plus the automatic checks that grade it.
-- **ZCP build** — the candidate binary: its git commit (12 chars, `+
-  modified` when built from a dirty tree) when the manifest records it
-  (§3.3), else `build <sha256[:12]>`.
+- **ZCP build** — the candidate binary, identified by its sha256; shown as
+  its git commit (12 chars, `+ modified` when built from a dirty tree) when
+  the manifest records it (§3.3), else `build <sha256[:12]>`. The label is
+  display only; two binaries are two builds even at one commit, and the
+  `build` filter takes `sha256[:12]`.
 - **Verdict** — the automatic checks' result, never the observer's:
   passed (every check held) · failed (a check proved the run wrong) ·
   blocked (could not be graded — reason shown) · not started · running ·
@@ -1242,17 +1284,21 @@ carries its definition as a `title`.
   value came from.
 - **Observer** — an AI model that reads a finished run and writes an
   **assessment**; it never changes the verdict. Assessment outcome: OK ·
-  Problem · Inconclusive. Assessment state: assessed · assessing… · not
+  Problem · Inconclusive · none (no current `ok` observation). Assessment state: assessed · assessing… · not
   assessed — run not finished / batch ran without observer / automatic
   assessment is off on this console / older than 14 days (assess by hand) ·
   assessment failed — <reason>.
 - **Goal reached** — did the user get what they asked for, whatever the
   checks say. **Verdict right** — did the checks judge correctly.
-  **Disputed** — the observer judged a check wrong.
+  **Disputed** — the current observation has `checks.agree: false`: a check
+  judged wrong, or a check the observer says is missing; counted under the
+  verdict it disputes, passed included.
   **Self-review honest** — does the agent's after-run summary match the
   record.
 - **Finding** — one problem in one run, with quotes, where to look and a fix.
-  **Problem** — the same finding across runs (§8.6).
+  **Problem** — the same finding across runs (§8.6). **Problem status**:
+  new · first seen · recurring · gone · unconfirmed; **live** = new, first
+  seen or recurring.
 - **Severity** — high: the goal was missed, something was destroyed, or (for
   a test cause) the verdict is wrong · medium: it cost many steps or much
   time · low: ZCP text or behavior that is wrong but cost this run nothing.

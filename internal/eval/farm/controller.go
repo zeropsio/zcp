@@ -201,6 +201,17 @@ type RunOptions struct {
 	Observer  string
 	Sink      Sink
 	RunBudget time.Duration
+	// Note is `farm run --note`: why the batch ran, recorded verbatim in
+	// the manifest (§3.3). RunBatch never reads it beyond that.
+	Note string
+	// RunBudgetSec is RunBudget in seconds, recorded in the manifest so a
+	// reader can tell a stalled run from a running one (§3.3, §8.8).
+	RunBudgetSec int
+	// CandidateInfo is the candidate binary's embedded Go build info, when
+	// `farm push --candidate` recorded it (§3.3) — nil when the candidate
+	// was built without VCS stamping, or was pushed before this field
+	// existed.
+	CandidateInfo *CandidateInfo
 	// PollInterval is how often RunBatch re-checks the bucket for
 	// done.json while waiting; zero defaults to 2s.
 	PollInterval time.Duration
@@ -426,6 +437,9 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 		EvaluatorSha256: opts.EvaluatorSHA256,
 		ScenariosDigest: opts.ScenariosDigest,
 		Observer:        opts.Observer,
+		Note:            opts.Note,
+		RunBudgetSec:    opts.RunBudgetSec,
+		CandidateInfo:   opts.CandidateInfo,
 		Runs:            manifestRuns,
 	}
 	if err := PutManifest(ctx, sink, opts.Batch, manifest); err != nil {
