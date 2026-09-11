@@ -349,6 +349,190 @@ func TestAPI_StepsSingleNTruncationAndEmptyThinking(t *testing.T) {
 	}
 }
 
+// TestAPI_StepsCentersOnCitedQuoteWhenTruncated pins the verification
+// round's item 3: a step's tool result cut at 2,000 chars must still
+// surface the exact quote an evidence citation points at, even when that
+// quote sits past the cut — recover run step 16's own bug, where the agent
+// fetched the step to check an anchor quote and never saw it.
+func TestAPI_StepsCentersOnCitedQuoteWhenTruncated(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "sq1", "claude-sonnet-5", []runFixture{
+		{runID: "sq1-scena", scenario: "scena", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 1.0, taskResult: "passed", done: true},
+	}, false, nil)
+	// fixtureObservation cites step 3 with the quote "discovered ok" —
+	// overwrite that step's tool result so the quote sits well past the
+	// 2,000-char cut, like the real recover-run bug.
+	longResult := strings.Repeat("x", 2500) + "discovered ok"
+	store.putText(t, "runs/sq1-scena/results/"+testResultsTS+"/scena/transcript.jsonl", strings.Join([]string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"looking into it"},{"type":"tool_use","id":"tu1","name":"zerops_discover","input":{"project":"p1"}}]}}`,
+		fmt.Sprintf(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu1","content":[{"type":"text","text":%q}]}]}}`, longResult),
+	}, "\n")+"\n")
+	seedObservation(t, store, fixtureObservation("sq1-scena"))
+
+	rr := doGET(t, h, "/api/runs/sq1-scena/steps.md?n=3")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("got %d, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "discovered ok") {
+		t.Errorf("steps.md?n=3 cut the cited quote out entirely:\n%s", body)
+	}
+	if !strings.Contains(body, "truncated") {
+		t.Errorf("truncation should still be said:\n%s", body)
+	}
+
+	var out []StepJSON
+	if err := json.Unmarshal(doGET(t, h, "/api/runs/sq1-scena/steps.json?n=3").Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out) != 1 || !out[0].Truncated {
+		t.Fatalf("steps.json?n=3 = %+v, want one truncated step", out)
+	}
+	if !strings.Contains(out[0].Result, "discovered ok") && out[0].CutNote == "" {
+		t.Errorf("steps.json?n=3 step lost the cited quote with no cutNote either: %+v", out[0])
+	}
+}
+
+// TestAPI_RunsListFindingsFormatIsSpelledOut pins the verification round's
+// item 4: a runs-list line's per-cause-class finding counts read "zcp 1
+// high 1 med", not the old "ZCP:1/1" shorthand a reader has to already
+// know the meaning of.
+func TestAPI_RunsListFindingsFormatIsSpelledOut(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "ff1", "claude-sonnet-5", []runFixture{
+		{runID: "ff1-a", scenario: "a", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, false, nil)
+	seedObservation(t, store, fixtureObservation("ff1-a")) // 1 zcp-tool high, 1 agent medium
+
+	body := doGET(t, h, "/api/runs.md?batch=ff1").Body.String()
+	if !strings.Contains(body, "zcp 1 high 0 med") {
+		t.Errorf("runs.md findings should spell out the count, not \"ZCP:1/0\":\n%s", body)
+	}
+	if strings.Contains(body, "ZCP:1") || strings.Contains(body, "Agent:0") {
+		t.Errorf("runs.md still uses the old class:high/med shorthand:\n%s", body)
+	}
+}
+
+// TestAPI_BatchesMDSaysItDefaultedKind pins the verification round's item
+// 5: batches.md silently applies kind=evaluation — an omitted kind must say
+// so in one line, and an explicit kind (even kind=evaluation itself) must
+// not.
+func TestAPI_BatchesMDSaysItDefaultedKind(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "bd1", "off", []runFixture{
+		{runID: "bd1-a", scenario: "a", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 1.0, taskResult: "passed", done: true},
+	}, false, nil)
+
+	defaulted := doGET(t, h, "/api/batches.md").Body.String()
+	if !strings.Contains(defaulted, "kind=evaluation") || !strings.Contains(defaulted, "default") {
+		t.Errorf("batches.md must say it defaulted to kind=evaluation:\n%s", defaulted)
+	}
+
+	explicit := doGET(t, h, "/api/batches.md?kind=evaluation").Body.String()
+	if strings.Contains(explicit, "default") {
+		t.Errorf("batches.md must not claim a default when kind was given explicitly:\n%s", explicit)
+	}
+
+	all := doGET(t, h, "/api/batches.md?kind=all").Body.String()
+	if strings.Contains(all, "default") {
+		t.Errorf("batches.md must not claim a default when kind=all was given:\n%s", all)
+	}
+}
+
+// TestAPI_RunDetailMDUsesBuildLabelsForCandidateAndEvaluator pins the
+// verification round's item 5: run-detail markdown must show the §8.8
+// build label for both candidate and evaluator, not two indistinguishable
+// raw 64-hex shas.
+func TestAPI_RunDetailMDUsesBuildLabelsForCandidateAndEvaluator(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "bl1", "off", []runFixture{
+		{runID: "bl1-a", scenario: "a", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 1.0, taskResult: "passed", done: true},
+	}, false, nil)
+
+	body := doGET(t, h, "/api/runs/bl1-a.md").Body.String()
+	if strings.Contains(body, "ZCP build: cand-sha") {
+		t.Errorf("run detail md should show the build label, not the bare raw candidate sha:\n%s", body)
+	}
+	if !strings.Contains(body, "ZCP build: build cand-sha") {
+		t.Errorf("run detail md missing the candidate's §8.8 build label:\n%s", body)
+	}
+	if !strings.Contains(body, "evaluator build: build eval-sha") {
+		t.Errorf("run detail md missing the evaluator's §8.8 build label:\n%s", body)
+	}
+}
+
+// TestAPI_DigestDefaultsWindowTo30dAndPrintsIt pins part of the
+// verification round's item 2: digest.md with neither batch= nor since=
+// must use a 30d window (matching /problems' own default), not
+// ParseWindow's bare 24h fallback, and must print the window it used.
+func TestAPI_DigestDefaultsWindowTo30dAndPrintsIt(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "dw1", "off", []runFixture{
+		{runID: "dw1-old", scenario: "a", startedAt: now.Add(-25 * 24 * time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"dw1-old": "passed"})
+
+	body := doGET(t, h, "/api/digest.md").Body.String()
+	if !strings.Contains(body, "window: 30d") {
+		t.Errorf("digest.md must print the window it used:\n%s", body)
+	}
+	if !strings.Contains(body, "dw1") {
+		t.Errorf("digest.md's default window must be 30d (a 25-day-old batch must be in scope):\n%s", body)
+	}
+
+	batchScoped := doGET(t, h, "/api/digest.md?batch=dw1").Body.String()
+	if !strings.Contains(batchScoped, "window: batch dw1") {
+		t.Errorf("digest.md?batch= must print its scope as the window:\n%s", batchScoped)
+	}
+}
+
+// TestAPI_ProblemLinesSayHitInScopeAndSeenTotals pins the rest of item 2:
+// a problem line reads "hit a/b in scope — seen N runs / M batches / K
+// builds — status X", in both problems.md and digest.md, so the same
+// figures a batch-scoped digest.md call already carries (naturally 1/1,
+// "first seen") are never confused with the problem's own across-history
+// totals.
+func TestAPI_ProblemLinesSayHitInScopeAndSeenTotals(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "ps1", "claude-sonnet-5", []runFixture{
+		{runID: "ps1-a", scenario: "a", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 1.0, taskResult: "passed", done: true},
+	}, true, map[string]string{"ps1-a": "passed"})
+	seedObservation(t, store, fixtureObservation("ps1-a"))
+
+	for _, body := range []string{
+		doGET(t, h, "/api/problems.md").Body.String(),
+		doGET(t, h, "/api/digest.md?batch=ps1").Body.String(),
+	} {
+		if !strings.Contains(body, "hit 1/1 in scope") {
+			t.Errorf("problem line missing \"hit a/b in scope\":\n%s", body)
+		}
+		if !strings.Contains(body, "seen 1 runs / 1 batches / 1 builds") {
+			t.Errorf("problem line missing the seen-totals phrase:\n%s", body)
+		}
+		if strings.Contains(body, "runs on newest build") {
+			t.Errorf("problem line still uses the old \"on newest build\" wording:\n%s", body)
+		}
+	}
+}
+
 // TestAPI_ObservationByID pins GET
 // /api/runs/<runId>/observations/<obsId>.md (§8.4): one stored observation,
 // with its JSON twin, and 404 for a missing/foreign obsId.
@@ -1130,8 +1314,8 @@ func TestAPI_RunDetailMD_Wording(t *testing.T) {
 	body := doGET(t, h, "/api/runs/wd1-a.md").Body.String()
 	for _, want := range []string{
 		"agent cost: — (not recorded)",
-		"ZCP build: cand-sha",
-		"evaluator build: eval-sha",
+		"ZCP build: build cand-sha",
+		"evaluator build: build eval-sha",
 		"assessment: not assessed — batch ran without observer",
 		"assessment: none",
 	} {
@@ -1204,5 +1388,43 @@ func TestAPI_LegendsInlineVerdictAndDropUnprintedTerms(t *testing.T) {
 	findingsLegend := firstLine(doGET(t, h, "/api/findings.md").Body.String())
 	if strings.Contains(findingsLegend, "Surface = ") || strings.Contains(findingsLegend, "Anchor = ") {
 		t.Errorf("findings.md legend still defines Surface/Anchor, which its line never prints:\n%s", findingsLegend)
+	}
+}
+
+// TestAPI_DigestCountsFailedAssessmentAsUnassessed pins the verification
+// round's item 1: a run whose current observation failed to parse
+// (status unparsed, so Headline is "") is NOT "assessed" — the digest's
+// unassessed count must include it (via NeedsAssessment, not a bare
+// Observation == nil check) and say how many of those failed to parse; the
+// runs-list line for that run must fall back to "(<observerState>)"
+// instead of a blank headline.
+func TestAPI_DigestCountsFailedAssessmentAsUnassessed(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "ua1", "claude-sonnet-5", []runFixture{
+		{runID: "ua1-unparsed", scenario: "a", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "failed", done: true},
+		{runID: "ua1-never", scenario: "b", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"ua1-unparsed": "failed", "ua1-never": "passed"})
+	obs := fixtureObservation("ua1-unparsed")
+	obs.Status = observationStatusUnparsed
+	obs.Headline = ""
+	obs.Raw = "the model did not answer in the expected shape"
+	seedObservation(t, store, obs)
+
+	body := doGET(t, h, "/api/digest.md?batch=ua1").Body.String()
+	if !strings.Contains(body, "Unassessed: 2 finished run(s) not yet assessed (1 assessment failed)") {
+		t.Errorf("digest.md unassessed line wrong:\n%s", body)
+	}
+
+	rr := doGET(t, h, "/api/runs.md?batch=ua1")
+	runsBody := rr.Body.String()
+	for line := range strings.SplitSeq(runsBody, "\n") {
+		if strings.HasPrefix(line, "- ua1-unparsed") {
+			if !strings.Contains(line, "(assessment failed)") {
+				t.Errorf("runs.md line for the unparsed run must fall back to its observer state, not a blank headline:\n%s", line)
+			}
+		}
 	}
 }

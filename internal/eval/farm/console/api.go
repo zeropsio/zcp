@@ -37,8 +37,8 @@ var apiLegendOverrides = map[string]string{
 	"Problem":  "The same finding across runs.",
 	"Status":   "the problem's status: new (a regression) · first seen · recurring · gone (fixed, or not reproduced) · unconfirmed (not assessed on the newest build)",
 	"Outcome":  "the assessment's verdict on the run: OK · Problem · Inconclusive · none (no current ok observation)",
-	"Findings": "high/medium finding counts per cause class, e.g. \"ZCP:1/0\"",
-	"Hit":      "an assessed run on that build where the problem appeared",
+	"Findings": "high/medium finding counts per cause class, e.g. \"zcp 1 high 0 med\"",
+	"Hit":      "an assessed run in this call's own scope (its batch, or its since window) where the problem appeared",
 }
 
 // glossaryDef looks term up first in apiLegendOverrides, then in labels.go's
@@ -153,9 +153,17 @@ func batchListItemFromRow(b BatchRow) BatchListItem {
 	}
 }
 
-func renderBatchesMD(items []BatchListItem) string {
+// renderBatchesMD renders GET /api/batches.md. defaultedKind is true when
+// the request carried no kind= parameter at all — §8.7's default
+// (kind=evaluation) then applied silently; item 5 (verification round 2)
+// wants that said, never assumed. An explicit kind, even kind=evaluation
+// itself, prints no such note.
+func renderBatchesMD(items []BatchListItem, defaultedKind bool) string {
 	var b strings.Builder
 	b.WriteString(legendLine("Batch", "ZCP build", "Verdict", "Agent cost"))
+	if defaultedKind {
+		b.WriteString("(no kind= given: defaulted to kind=evaluation — add kind=all to see every batch)\n\n")
+	}
 	for _, it := range items {
 		verdicts := make([]string, 0, len(it.VerdictCounts))
 		for _, vc := range it.VerdictCounts {
@@ -200,7 +208,7 @@ func (s *Server) handleBatchesAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	fmt.Fprint(w, renderBatchesMD(items))
+	fmt.Fprint(w, renderBatchesMD(items, r.URL.Query().Get(paramKind) == ""))
 }
 
 // --- §8.4/§8.6's GET /api/problems.md|.json ---------------------------------
@@ -278,7 +286,7 @@ func renderProblemsMD(items []ProblemItem) string {
 	var b strings.Builder
 	b.WriteString(legendLine("Problem", "Severity", "Cause", "Surface", "Anchor", "Hit", "Status"))
 	for _, p := range items {
-		fmt.Fprintf(&b, "- [%s · %s] %s — %s — hit %d/%d runs on newest build — %d runs · %d batches · %d builds — status %s\n",
+		fmt.Fprintf(&b, "- [%s · %s] %s — %s — hit %d/%d in scope — seen %d runs / %d batches / %d builds — status %s\n",
 			p.Severity, strings.Join(p.CauseLabels, ","), p.Title, p.Surface,
 			p.HitOnNewestBuild, p.RunsAssessedOnNewest, p.RunsTotal, p.BatchesTotal, p.BuildsTotal, p.Status)
 		if p.Anchor != "" {
@@ -418,10 +426,10 @@ type DigestResponse struct {
 
 // renderDigestHeader renders §8.4's scope header: batches, builds, verdict
 // counts, cost.
-func renderDigestHeader(batches, builds []string, vcs []VerdictCountItem, cost float64, costUnknownN int) string {
+func renderDigestHeader(windowLabel string, batches, builds []string, vcs []VerdictCountItem, cost float64, costUnknownN int) string {
 	var b strings.Builder
 	b.WriteString(legendLine("Batch", "ZCP build", "Verdict", "Problem", "Severity", "Cause", "Surface", "Anchor", "Hit", "Status", "Outcome", "Findings", "Agent cost"))
-	fmt.Fprintf(&b, "# Digest\n\nbatches: %s\nbuilds: %s\n", strings.Join(batches, ", "), strings.Join(builds, ", "))
+	fmt.Fprintf(&b, "# Digest\n\nwindow: %s\nbatches: %s\nbuilds: %s\n", windowLabel, strings.Join(batches, ", "), strings.Join(builds, ", "))
 	verdicts := make([]string, len(vcs))
 	for i, vc := range vcs {
 		verdicts[i] = fmt.Sprintf("%s:%d", vc.Verdict, vc.Count)
@@ -443,9 +451,9 @@ func renderProblemDigestLine(p ProblemItem) string {
 	if len(p.Members) > 0 {
 		link = p.Members[0].RunLink
 	}
-	return fmt.Sprintf("- [%s · %s] %s — %s — anchor %q — hit %d/%d runs on newest build — status %s — %s — fix: %s\n",
+	return fmt.Sprintf("- [%s · %s] %s — %s — anchor %q — hit %d/%d in scope — seen %d runs / %d batches / %d builds — status %s — %s — fix: %s\n",
 		p.Severity, strings.Join(p.CauseLabels, ","), p.Title, p.Surface, p.Anchor,
-		p.HitOnNewestBuild, p.RunsAssessedOnNewest, p.Status, link, p.Fix)
+		p.HitOnNewestBuild, p.RunsAssessedOnNewest, p.RunsTotal, p.BatchesTotal, p.BuildsTotal, p.Status, link, p.Fix)
 }
 
 // renderFailedRunDigestLine is one digest.md failed/blocked run line (§8.4:
@@ -484,17 +492,24 @@ func outcomeOrNone(o string) string {
 	return o
 }
 
+// digestWindowDefault is item 2's default digest window (verification
+// round 2: "default the digest's window to 30d") — digest.md previously
+// fell through to ParseWindow's own bare 24h fallback, out of step with
+// /problems' own 30d default (problemListSpec) over the same kind of data.
+const digestWindowDefault = "30d"
+
 // digestListSpec is digest.md's parameter surface: a batch or a window
 // (§8.4) — anything else is refused like every other list (§8.7).
 func digestListSpec() ListSpec {
-	return ListSpec{Open: []string{paramBatch}, HasSince: true}
+	return ListSpec{Open: []string{paramBatch}, HasSince: true, DefaultSince: digestWindowDefault}
 }
 
 func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	now := s.now()
 	q := r.URL.Query()
-	if _, err := Parse(digestListSpec(), q); err != nil {
+	pq, err := Parse(digestListSpec(), q)
+	if err != nil {
 		writeQueryError(w, r, asQueryError(err))
 		return
 	}
@@ -502,7 +517,7 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 	var rows []RunRow
 	var problemsRuns []ProblemsRun
 	var scopeBatches []string
-	var err error
+	var windowLabel string
 
 	if batch := q.Get("batch"); batch != "" {
 		if !farm.ValidBatchID(batch) {
@@ -524,12 +539,19 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 			problemsRuns = append(problemsRuns, ProblemsRun{Row: row, BatchSet: manifest.Set, BatchCreatedAt: bc.CreatedAt})
 		}
 		scopeBatches = []string{batch}
+		windowLabel = "batch " + batch
 	} else {
-		window, wErr := ParseWindow(q.Get("since"))
-		if wErr != nil {
-			http.Error(w, wErr.Error(), http.StatusBadRequest)
-			return
+		// pq.Since is already resolved to digestWindowDefault (§8.7's
+		// DefaultSince mechanism, the same one problems.md/findings.md
+		// use) when the caller gave no since= — windowLabel mirrors that
+		// same resolution for display rather than re-deriving it from the
+		// duration.
+		sinceParam := q.Get("since")
+		if sinceParam == "" {
+			sinceParam = digestWindowDefault
 		}
+		windowLabel = sinceParam
+		window := pq.Since
 		rows, err = rowsSinceWindow(ctx, s.cfg.Store, s.cfg.ObserverDisabled, window, now, s.queueState, s.runCache, s.summaryCache, s.logf)
 		if err != nil {
 			writeStoreError(w, err)
@@ -553,7 +575,7 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 	builds := make(map[string]bool)
 	verdictCounts := make(map[string]int)
 	var totalCost float64
-	costUnknownN, unassessed := 0, 0
+	costUnknownN, unassessed, assessmentFailed := 0, 0, 0
 	var failedBlocked []RunsListItem
 	for _, row := range rows {
 		builds[row.Build.Label()] = true
@@ -562,8 +584,16 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 		if !row.CostKnown {
 			costUnknownN++
 		}
-		if row.DoneExists && row.Observation == nil {
+		// item 1 (verification round 2): a run whose current observation
+		// failed to parse (status error/unparsed) still NEEDS an assessment
+		// — a bare Observation == nil check missed it, undercounting
+		// "Unassessed" and leaving it out of the "needs an assessment"
+		// picture the digest exists to give.
+		if NeedsAssessment(row, runQueued(s.queueState, row.RunID)) {
 			unassessed++
+			if row.Observation != nil && (row.Observation.Status == observationStatusError || row.Observation.Status == observationStatusUnparsed) {
+				assessmentFailed++
+			}
 		}
 		if row.Verdict == farm.VerdictFailed || row.Verdict == farm.VerdictBlocked {
 			failedBlocked = append(failedBlocked, runsListItemFromRow(row))
@@ -582,7 +612,7 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 		problemItems[i] = problemItemFromProblem(p)
 	}
 
-	header := renderDigestHeader(scopeBatches, buildList, verdictCountItems(orderedVerdictCounts(verdictCounts)), totalCost, costUnknownN)
+	header := renderDigestHeader(windowLabel, scopeBatches, buildList, verdictCountItems(orderedVerdictCounts(verdictCounts)), totalCost, costUnknownN)
 	budget := digestByteBudget - len(header) - digestReserve
 	budget = max(budget, 0)
 
@@ -614,7 +644,11 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 	if omittedRuns > 0 {
 		fmt.Fprintf(&b, "… %d more failed/blocked run(s) not shown (truncated at %d bytes — see /api/runs.md)\n", omittedRuns, digestByteBudget)
 	}
-	fmt.Fprintf(&b, "\nUnassessed: %d finished run(s) not yet assessed\n", unassessed)
+	fmt.Fprintf(&b, "\nUnassessed: %d finished run(s) not yet assessed", unassessed)
+	if assessmentFailed > 0 {
+		fmt.Fprintf(&b, " (%d assessment failed)", assessmentFailed)
+	}
+	b.WriteString("\n")
 
 	truncated := omittedProblems > 0 || omittedRuns > 0
 
@@ -703,15 +737,20 @@ type RunsListItem struct {
 
 // RunDetail is GET /api/runs/<runId>.md|.json (FM-52).
 type RunDetail struct {
-	RunID             string                `json:"runId"`
-	Batch             string                `json:"batch"`
-	Scenario          string                `json:"scenario"`
-	Verdict           string                `json:"verdict"`
-	VerdictReason     string                `json:"verdictReason,omitempty"`
-	StartedAt         time.Time             `json:"startedAt"`
-	DurationSec       float64               `json:"durationSec"`
-	CostUsd           float64               `json:"costUsd"`
-	CostKnown         bool                  `json:"costKnown"`
+	RunID         string    `json:"runId"`
+	Batch         string    `json:"batch"`
+	Scenario      string    `json:"scenario"`
+	Verdict       string    `json:"verdict"`
+	VerdictReason string    `json:"verdictReason,omitempty"`
+	StartedAt     time.Time `json:"startedAt"`
+	DurationSec   float64   `json:"durationSec"`
+	CostUsd       float64   `json:"costUsd"`
+	CostKnown     bool      `json:"costKnown"`
+	// Build is the candidate's §8.8 display label (BatchListItem/
+	// ProblemMemberItem/FindingItem already expose "build" this same way,
+	// never as a raw sha) — CandidateSha256/EvaluatorSha256 stay alongside
+	// it as the exact identity a caller may still need.
+	Build             string                `json:"build"`
 	CandidateSha256   string                `json:"candidateSha256"`
 	EvaluatorSha256   string                `json:"evaluatorSha256"`
 	StepCount         int                   `json:"stepCount"`
@@ -737,8 +776,13 @@ type StepJSON struct {
 	Input     string `json:"input,omitempty"`
 	Result    string `json:"result,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
-	IsError   bool   `json:"isError,omitempty"`
-	Text      string `json:"text,omitempty"`
+	// CutNote says what a truncated Result dropped (item 3, verification
+	// round 2) — in particular whether an evidence citation's quote fell
+	// past the cut, and where to find it, mirroring the markdown note
+	// cutToolResult already builds.
+	CutNote string `json:"cutNote,omitempty"`
+	IsError bool   `json:"isError,omitempty"`
+	Text    string `json:"text,omitempty"`
 }
 
 // FindingItem is one element of GET /api/findings.md|.json (§8.4: "every
@@ -819,7 +863,7 @@ func unverifiedQuotes(obs *observer.Observation) int {
 // check ids, headline (§8.4).
 func renderRunItemLine(b *strings.Builder, it RunsListItem) {
 	headline := "(" + it.ObserverState + ")"
-	if it.Observation != nil {
+	if it.Observation != nil && it.Observation.Headline != "" {
 		headline = it.Observation.Headline
 	}
 	verdict := it.Verdict
@@ -833,7 +877,7 @@ func renderRunItemLine(b *strings.Builder, it RunsListItem) {
 	var findings []string
 	for _, c := range it.CauseCounts {
 		if c.High > 0 || c.Medium > 0 {
-			findings = append(findings, fmt.Sprintf("%s:%d/%d", c.Class, c.High, c.Medium))
+			findings = append(findings, fmt.Sprintf("%s %d high %d med", c.Class, c.High, c.Medium))
 		}
 	}
 	fmt.Fprintf(b, "- %s — %s — %s — outcome %s — findings %s — failed checks %s — %s\n",
@@ -938,6 +982,7 @@ func runDetailFromRow(row RunRow) RunDetail {
 		RunID: row.RunID, Batch: row.Batch, Scenario: row.Scenario, Verdict: row.Verdict,
 		VerdictReason: row.VerdictReason,
 		StartedAt:     row.StartedAt, DurationSec: row.DurationSec, CostUsd: row.CostUsd, CostKnown: row.CostKnown,
+		Build:           row.Build.Label(),
 		CandidateSha256: row.CandidateSha256, EvaluatorSha256: row.EvaluatorSha256, StepCount: row.StepCount,
 		ObserverState: apiObserverState(row), ObserverStateText: row.ObserverStateText, Observation: row.Observation,
 		OlderObsIDs: older, FailedChecks: failed, EvidenceSteps: steps,
@@ -984,9 +1029,14 @@ func renderRunDetailMD(d RunDetail) string {
 	if d.CostKnown {
 		cost = fmt.Sprintf("$%.4f", d.CostUsd)
 	}
+	// Item 5 (verification round 2): candidate and evaluator otherwise show
+	// as two indistinguishable raw 64-hex shas — use the §8.8 build label
+	// for both (the evaluator has no recorded git revision, so it always
+	// falls back to BuildInfo's "build <sha12>" form).
+	evaluatorBuild := BuildInfo{Sha256: d.EvaluatorSha256}.Label()
 	fmt.Fprintf(&b, "# %s\n\nscenario: %s\nbatch: %s\nverdict: %s\nstarted: %s\nduration: %.1fs\nagent cost: %s\nZCP build: %s\nevaluator build: %s\nsteps: %d\nassessment: %s\ntask prompt: %s\nself-review: %s\n\n",
 		d.RunID, d.Scenario, d.Batch, verdict, d.StartedAt.UTC().Format(time.RFC3339),
-		d.DurationSec, cost, d.CandidateSha256, d.EvaluatorSha256, d.StepCount, d.ObserverStateText,
+		d.DurationSec, cost, d.Build, evaluatorBuild, d.StepCount, d.ObserverStateText,
 		d.TaskPromptURL, d.SelfReviewURL)
 
 	if d.Observation != nil {
@@ -1152,45 +1202,92 @@ func loadSteps(ctx context.Context, store observer.ObjectStore, runID string) ([
 	return observer.BuildSteps(taskPrompt, transcript, observer.ResumeReplies(meta))
 }
 
-// stepsTruncationNote is §8.4's "said, never silent" truncation marker on
-// a cut tool result.
-const stepsTruncationNote = " …[truncated at 2000 chars; add full=1 for the rest]"
-
 // cutToolResult implements §8.4's "a tool result over 2,000 chars is cut
 // (said) unless full=1" — reusing pages.go's observerRawCap, the same
 // 2,000-char figure §7.5 already uses for a failed observation's raw
-// answer.
-func cutToolResult(text string, full bool) (string, bool) {
+// answer. When quote (an evidence citation's exact text, item 3 of the
+// verification round) does not survive the from-start cut, the note
+// appends the full line that contains it — recover run step 16's own bug,
+// where an agent fetching a step to check an anchor quote never saw text
+// the cut had already dropped. Returns the (possibly cut) result, whether
+// it was cut, and a note describing what — always non-empty when cut is
+// true, always empty otherwise.
+func cutToolResult(text, quote string, full bool) (result string, cut bool, note string) {
 	if full {
-		return text, false
+		return text, false, ""
 	}
 	r := []rune(text)
 	if len(r) <= observerRawCap {
-		return text, false
+		return text, false, ""
 	}
-	return string(r[:observerRawCap]), true
+	kept := string(r[:observerRawCap])
+	note = fmt.Sprintf(" …[truncated at %d chars; add full=1 for the rest]", observerRawCap)
+	if quote != "" && !strings.Contains(kept, quote) && strings.Contains(text, quote) {
+		note += "\n  cited quote (past the cut): " + quoteLine(text, quote)
+	}
+	return kept, true, note
 }
 
-func stepJSON(s observer.Step, full bool) StepJSON {
+// quoteLineContext is how much text quoteLine keeps on each side of a
+// found quote.
+const quoteLineContext = 200
+
+// quoteLine returns a short window of text centered on quote's occurrence
+// — cutToolResult's "always append the matching line" fallback (item 3) —
+// bounded by quoteLineContext characters of context on each side, or the
+// nearest newline if closer, so one very long line can't push the quote
+// itself back out of the returned snippet (a bug an earlier version of
+// this function had: capping a long single-line result from its start
+// dropped a quote that sat near the end, the exact failure item 3
+// describes). Returns quote itself if text does not actually contain it
+// (defensive; every call site already checked strings.Contains first).
+func quoteLine(text, quote string) string {
+	idx := strings.Index(text, quote)
+	if idx < 0 {
+		return quote
+	}
+	end := idx + len(quote)
+	start := max(0, idx-quoteLineContext)
+	if nl := strings.LastIndexByte(text[start:idx], '\n'); nl >= 0 {
+		start += nl + 1
+	}
+	stop := min(len(text), end+quoteLineContext)
+	if nl := strings.IndexByte(text[end:stop], '\n'); nl >= 0 {
+		stop = end + nl
+	}
+	prefix, suffix := "", ""
+	if start > 0 {
+		prefix = ellipsisMark
+	}
+	if stop < len(text) {
+		suffix = ellipsisMark
+	}
+	return prefix + text[start:stop] + suffix
+}
+
+// ellipsisMark is quoteLine's cut marker on each side of its window.
+const ellipsisMark = "…"
+
+func stepJSON(s observer.Step, quote string, full bool) StepJSON {
 	out := StepJSON{N: s.N, Kind: string(s.Kind)}
 	if s.Kind == observer.StepTool {
 		out.Tool, out.Input, out.IsError = s.ToolName, s.ToolInputJSON, s.ToolIsError
-		out.Result, out.Truncated = cutToolResult(s.ToolResultText, full)
+		out.Result, out.Truncated, out.CutNote = cutToolResult(s.ToolResultText, quote, full)
 		return out
 	}
 	out.Text = s.Text
 	return out
 }
 
-func renderStepsMD(steps []observer.Step, full bool) string {
+func renderStepsMD(steps []observer.Step, quotes map[int]string, full bool) string {
 	var b strings.Builder
 	for _, s := range steps {
 		switch s.Kind {
 		case observer.StepTool:
 			fmt.Fprintf(&b, "#%d tool %s %s\n", s.N, s.ToolName, s.ToolInputJSON)
-			result, cut := cutToolResult(s.ToolResultText, full)
+			result, cut, note := cutToolResult(s.ToolResultText, quotes[s.N], full)
 			if cut {
-				result += stepsTruncationNote
+				result += note
 			}
 			if s.ToolIsError {
 				fmt.Fprintf(&b, "  → ERROR %s\n", result)
@@ -1202,6 +1299,30 @@ func renderStepsMD(steps []observer.Step, full bool) string {
 		}
 	}
 	return b.String()
+}
+
+// citedQuotesByStep maps a step number to the first finding-evidence quote
+// that cites it, from runID's current observation — item 3's input for
+// keeping a truncated tool result's cited text visible. Best-effort: a run
+// with no current observation (loadRunRow error, or Observation nil) yields
+// an empty map rather than failing the request — steps.md must still work
+// without one.
+func citedQuotesByStep(ctx context.Context, s *Server, runID string) map[int]string {
+	quotes := make(map[int]string)
+	row, err := loadRunRow(ctx, s.cfg.Store, s.cfg.ObserverDisabled, runID, s.queueState, s.runCache, s.summaryCache)
+	if err != nil || row.Observation == nil {
+		return quotes
+	}
+	for _, f := range row.Observation.Findings {
+		for _, e := range f.Evidence {
+			if e.Step > 0 {
+				if _, exists := quotes[e.Step]; !exists {
+					quotes[e.Step] = e.Quote
+				}
+			}
+		}
+	}
+	return quotes
 }
 
 // handleSteps implements GET
@@ -1224,6 +1345,7 @@ func (s *Server) handleSteps(w http.ResponseWriter, r *http.Request, runID strin
 		writeStoreError(w, err)
 		return
 	}
+	quotes := citedQuotesByStep(r.Context(), s, runID)
 	var sel []observer.Step
 	for _, st := range all {
 		if st.N < from || st.N > to {
@@ -1237,13 +1359,13 @@ func (s *Server) handleSteps(w http.ResponseWriter, r *http.Request, runID strin
 	if isJSONRequest(r) {
 		out := make([]StepJSON, len(sel))
 		for i, st := range sel {
-			out[i] = stepJSON(st, full)
+			out[i] = stepJSON(st, quotes[st.N], full)
 		}
 		writeJSON(w, out)
 		return
 	}
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	fmt.Fprint(w, renderStepsMD(sel, full))
+	fmt.Fprint(w, renderStepsMD(sel, quotes, full))
 }
 
 func parseFromTo(q map[string][]string) (from, to int, err error) {
