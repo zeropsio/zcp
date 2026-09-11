@@ -6,9 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
 
 // --- test helpers -----------------------------------------------------
@@ -203,6 +206,54 @@ func TestView_ObserverStateObservingAndDisabled(t *testing.T) {
 	})
 }
 
+// --- TestNewBucketObserveFunc_ForwardsJobSourceToObservation ------------
+
+// TestNewBucketObserveFunc_ForwardsJobSourceToObservation pins the wiring
+// this slice closes: NewBucketObserveFunc's returned ObserveFunc must pass
+// job.Source through to observer.ObserveConfig.Source, so the stored
+// observation records whether a worker tick or a console action produced
+// it (§7.5: "source is worker/action/local — supplied by the caller,
+// never guessed"). No run bundle is seeded (mirrors
+// TestBucketObserve_StoresErrorStatusAndDoesNotRetry, worker_test.go):
+// Observe fails at ResultsDir before any claude call, but obs.Source is
+// set unconditionally before that failure branch (observer.Observe).
+func TestNewBucketObserveFunc_ForwardsJobSourceToObservation(t *testing.T) {
+	bucket := wkNewFakeBucket()
+	fixedNow := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+
+	fn := NewBucketObserveFunc(bucket, BucketObserveConfig{
+		ClaudePath: "claude", // never reached
+		OAuthToken: "test-token",
+		Timeout:    time.Minute,
+		Environ:    os.Environ,
+		Now:        wkFixedNow(fixedNow),
+	})
+
+	for _, job := range []Job{
+		{RunID: "src-worker-run", Batch: "batch1", Model: "claude-sonnet-5", Source: wkSourceWorker},
+		{RunID: "src-action-run", Batch: "batch1", Model: "claude-sonnet-5", Source: sourceAction},
+	} {
+		if err := fn(context.Background(), job); err != nil {
+			t.Fatalf("observe %s: %v", job.RunID, err)
+		}
+		keys, err := bucket.List(context.Background(), "runs/"+job.RunID+"/observer/")
+		if err != nil || len(keys) != 1 {
+			t.Fatalf("list observer keys for %s: %v (keys=%v)", job.RunID, err, keys)
+		}
+		data, err := bucket.Get(context.Background(), keys[0])
+		if err != nil {
+			t.Fatalf("get %s: %v", keys[0], err)
+		}
+		var obs observer.Observation
+		if err := json.Unmarshal(data, &obs); err != nil {
+			t.Fatalf("parse stored observation: %v", err)
+		}
+		if obs.Source != job.Source {
+			t.Errorf("stored obs.Source for %s = %q, want %q (job.Source)", job.RunID, obs.Source, job.Source)
+		}
+	}
+}
+
 // --- TestActions_RunObserveAddsVersion ----------------------------------
 
 // TestActions_RunObserveAddsVersion pins §8.5 FM-53's happy path for
@@ -222,8 +273,8 @@ func TestActions_RunObserveAddsVersion(t *testing.T) {
 	if cookieRR.Code != http.StatusSeeOther {
 		t.Fatalf("cookie POST /r/ra1-cookie/observe: got %d, want 303, body=%s", cookieRR.Code, cookieRR.Body.String())
 	}
-	if loc := cookieRR.Header().Get("Location"); loc != "/r/ra1-cookie" {
-		t.Errorf("cookie POST Location: got %q, want /r/ra1-cookie", loc)
+	if loc := cookieRR.Header().Get("Location"); loc != "/r/ra1-cookie?notice=queued&n=1" {
+		t.Errorf("cookie POST Location: got %q, want /r/ra1-cookie?notice=queued&n=1", loc)
 	}
 	job := wkExpectCall(t, obs.calls)
 	if job.RunID != "ra1-cookie" || job.Batch != "ra1" || job.Model != "claude-sonnet-5" {
@@ -238,6 +289,72 @@ func TestActions_RunObserveAddsVersion(t *testing.T) {
 	if job.RunID != "ra1-bearer" {
 		t.Errorf("enqueued job.RunID = %q, want ra1-bearer", job.RunID)
 	}
+}
+
+// --- TestActions_RunObserveModelDefaultChain ----------------------------
+
+// TestActions_RunObserveModelDefaultChain pins §8.5 FM-53's model default
+// chain for POST /r/<runId>/observe when the form carries no model at
+// all: the run's current observation's model, else the batch manifest's,
+// else observer.DefaultModel.
+func TestActions_RunObserveModelDefaultChain(t *testing.T) {
+	t.Run("no observation: falls back to the manifest's model", func(t *testing.T) {
+		obs := wkNewRecordingObserve()
+		defer close(obs.release)
+		q := NewQueue(obs.fn)
+		srv, store := newActionServer(t, actionServerOpts{queue: q})
+		h := srv.Handler()
+
+		seedObserveBatch(t, store, "mc1", "claude-opus-5", "mc1-a")
+
+		rr := doBearerPOST(t, h, "/r/mc1-a/observe", url.Values{})
+		if rr.Code != http.StatusAccepted {
+			t.Fatalf("POST /r/mc1-a/observe with no model: got %d, want 202, body=%s", rr.Code, rr.Body.String())
+		}
+		job := wkExpectCall(t, obs.calls)
+		if job.Model != "claude-opus-5" {
+			t.Errorf("enqueued job.Model = %q, want the manifest's claude-opus-5", job.Model)
+		}
+	})
+
+	t.Run("current observation exists: its model wins over the manifest's", func(t *testing.T) {
+		obs := wkNewRecordingObserve()
+		defer close(obs.release)
+		q := NewQueue(obs.fn)
+		srv, store := newActionServer(t, actionServerOpts{queue: q})
+		h := srv.Handler()
+
+		seedObserveBatch(t, store, "mc2", "claude-opus-5", "mc2-a")
+		seedObservation(t, store, fixtureObservation("mc2-a")) // Model: claude-sonnet-5
+
+		rr := doBearerPOST(t, h, "/r/mc2-a/observe", url.Values{})
+		if rr.Code != http.StatusAccepted {
+			t.Fatalf("POST /r/mc2-a/observe with no model: got %d, want 202, body=%s", rr.Code, rr.Body.String())
+		}
+		job := wkExpectCall(t, obs.calls)
+		if job.Model != "claude-sonnet-5" {
+			t.Errorf("enqueued job.Model = %q, want the current observation's claude-sonnet-5", job.Model)
+		}
+	})
+
+	t.Run("neither exists: falls back to observer.DefaultModel", func(t *testing.T) {
+		obs := wkNewRecordingObserve()
+		defer close(obs.release)
+		q := NewQueue(obs.fn)
+		srv, store := newActionServer(t, actionServerOpts{queue: q})
+		h := srv.Handler()
+
+		seedObserveBatch(t, store, "mc3", ObserverOff, "mc3-a")
+
+		rr := doBearerPOST(t, h, "/r/mc3-a/observe", url.Values{})
+		if rr.Code != http.StatusAccepted {
+			t.Fatalf("POST /r/mc3-a/observe with no model, manifest off: got %d, want 202, body=%s", rr.Code, rr.Body.String())
+		}
+		job := wkExpectCall(t, obs.calls)
+		if job.Model != observer.DefaultModel {
+			t.Errorf("enqueued job.Model = %q, want observer.DefaultModel %q", job.Model, observer.DefaultModel)
+		}
+	})
 }
 
 // --- TestActions_ModelOutsideAllowlist400 -------------------------------
@@ -442,6 +559,53 @@ func TestActions_BatchObserveOnlyUnobservedUnlessAll(t *testing.T) {
 	})
 }
 
+// --- TestActions_BatchObserveWithoutAllRetriesFailedObservation ---------
+
+// TestActions_BatchObserveWithoutAllRetriesFailedObservation pins §8.5
+// FM-53's needs-an-assessment predicate (view.go's NeedsAssessment): a run
+// with done.json whose CURRENT observation failed (status error/unparsed)
+// still needs an assessment. POST /b/<batch>/observe without all=1 must
+// queue it, exactly the set the batch page's Assess callout counts — this
+// closes the live dead-end where the callout counted a failed assessment
+// but the action, which used to skip a run on any observation at all
+// regardless of status, never queued it.
+func TestActions_BatchObserveWithoutAllRetriesFailedObservation(t *testing.T) {
+	obs := wkNewRecordingObserve()
+	defer close(obs.release)
+	q := NewQueue(obs.fn)
+	srv, store := newActionServer(t, actionServerOpts{queue: q})
+	h := srv.Handler()
+
+	seedObserveBatch(t, store, "rf1", "claude-sonnet-5", "rf1-ok", "rf1-failed", "rf1-unassessed")
+
+	okObs := fixtureObservation("rf1-ok")
+	seedObservation(t, store, okObs)
+
+	failedObs := okObs
+	failedObs.RunID = "rf1-failed"
+	failedObs.ObsID = "20260911T130000000Z-claude-sonnet-5"
+	failedObs.Status = "error"
+	failedObs.Error = "boom"
+	failedObs.Findings = nil
+	seedObservation(t, store, failedObs)
+
+	rr := doBearerPOST(t, h, "/b/rf1/observe", url.Values{"model": {"claude-sonnet-5"}})
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("POST /b/rf1/observe: got %d, want 202, body=%s", rr.Code, rr.Body.String())
+	}
+
+	got := map[string]bool{}
+	got[wkExpectCall(t, obs.calls).RunID] = true
+	got[wkExpectCall(t, obs.calls).RunID] = true
+	if !got["rf1-failed"] || !got["rf1-unassessed"] {
+		t.Errorf("enqueued runs = %v, want rf1-failed (retry a failed observation) and rf1-unassessed (never assessed)", got)
+	}
+	if got["rf1-ok"] {
+		t.Errorf("enqueued runs = %v, want rf1-ok NOT re-queued (its current observation is ok)", got)
+	}
+	wkExpectNoCall(t, obs.calls)
+}
+
 // --- TestActions_DuplicateOrAllWhileInFlight409 -------------------------
 
 // TestActions_DuplicateOrAllWhileInFlight409 pins §8.5 FM-53: a run already
@@ -474,6 +638,96 @@ func TestActions_DuplicateOrAllWhileInFlight409(t *testing.T) {
 	wkExpectNoCall(t, obs.calls)
 }
 
+// --- TestActions_BearerObserveJSONBody ----------------------------------
+
+// TestActions_BearerObserveJSONBody pins §8.5 FM-53's bearer response
+// shape for both routes: a bearer request gets 202 with a JSON body
+// {queued: [runIds], skipped: [{runId, reason}]} — never an empty body.
+func TestActions_BearerObserveJSONBody(t *testing.T) {
+	t.Run("/r/<runId>/observe: queued carries the one run id", func(t *testing.T) {
+		obs := wkNewRecordingObserve()
+		defer close(obs.release)
+		q := NewQueue(obs.fn)
+		srv, store := newActionServer(t, actionServerOpts{queue: q})
+		h := srv.Handler()
+
+		seedObserveBatch(t, store, "jb1", "claude-sonnet-5", "jb1-a")
+
+		rr := doBearerPOST(t, h, "/r/jb1-a/observe", url.Values{"model": {"claude-sonnet-5"}})
+		if rr.Code != http.StatusAccepted {
+			t.Fatalf("POST /r/jb1-a/observe: got %d, want 202, body=%s", rr.Code, rr.Body.String())
+		}
+		wkExpectCall(t, obs.calls)
+
+		var body actionResponseBody
+		if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+			t.Fatalf("unmarshal 202 body: %v (body=%s)", err, rr.Body.String())
+		}
+		if len(body.Queued) != 1 || body.Queued[0] != "jb1-a" || len(body.Skipped) != 0 {
+			t.Errorf("202 body = %+v, want queued=[jb1-a] skipped=[]", body)
+		}
+	})
+
+	t.Run("/b/<batch>/observe: queued carries every run it enqueued", func(t *testing.T) {
+		obs := wkNewRecordingObserve()
+		defer close(obs.release)
+		q := NewQueue(obs.fn)
+		srv, store := newActionServer(t, actionServerOpts{queue: q})
+		h := srv.Handler()
+
+		seedObserveBatch(t, store, "jb2", "claude-sonnet-5", "jb2-a", "jb2-b")
+
+		rr := doBearerPOST(t, h, "/b/jb2/observe", url.Values{"model": {"claude-sonnet-5"}})
+		if rr.Code != http.StatusAccepted {
+			t.Fatalf("POST /b/jb2/observe: got %d, want 202, body=%s", rr.Code, rr.Body.String())
+		}
+		wkExpectCall(t, obs.calls)
+		wkExpectCall(t, obs.calls)
+
+		var body actionResponseBody
+		if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+			t.Fatalf("unmarshal 202 body: %v (body=%s)", err, rr.Body.String())
+		}
+		got := map[string]bool{}
+		for _, id := range body.Queued {
+			got[id] = true
+		}
+		if len(body.Queued) != 2 || !got["jb2-a"] || !got["jb2-b"] || len(body.Skipped) != 0 {
+			t.Errorf("202 body = %+v, want queued=[jb2-a jb2-b] skipped=[]", body)
+		}
+	})
+
+	t.Run("/b/<batch>/observe all=1: a run without done.json is reported skipped", func(t *testing.T) {
+		obs := wkNewRecordingObserve()
+		defer close(obs.release)
+		q := NewQueue(obs.fn)
+		srv, store := newActionServer(t, actionServerOpts{queue: q})
+		h := srv.Handler()
+
+		seedBatch(t, store, "jb3", "claude-sonnet-5", []runFixture{
+			{runID: "jb3-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+			{runID: "jb3-b", scenario: "b", startedAt: fixedNow(t)().Add(-time.Minute), done: false},
+		}, false, nil)
+
+		rr := doBearerPOST(t, h, "/b/jb3/observe", url.Values{"model": {"claude-sonnet-5"}, "all": {"1"}})
+		if rr.Code != http.StatusAccepted {
+			t.Fatalf("POST /b/jb3/observe all=1: got %d, want 202, body=%s", rr.Code, rr.Body.String())
+		}
+		wkExpectCall(t, obs.calls)
+
+		var body actionResponseBody
+		if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+			t.Fatalf("unmarshal 202 body: %v (body=%s)", err, rr.Body.String())
+		}
+		if len(body.Queued) != 1 || body.Queued[0] != "jb3-a" {
+			t.Errorf("202 body.Queued = %v, want [jb3-a]", body.Queued)
+		}
+		if len(body.Skipped) != 1 || body.Skipped[0].RunID != "jb3-b" || body.Skipped[0].Reason == "" {
+			t.Errorf("202 body.Skipped = %+v, want one entry for jb3-b with a non-empty reason", body.Skipped)
+		}
+	})
+}
+
 // --- TestActions_OriginFallsBackToHostWithoutForwardedHeaders -----------
 
 // TestActions_OriginFallsBackToHostWithoutForwardedHeaders pins §8.2 FM-50:
@@ -500,6 +754,162 @@ func TestActions_OriginFallsBackToHostWithoutForwardedHeaders(t *testing.T) {
 		t.Errorf("Origin https://example.com over plain http: got %d, want 403", wrongScheme.Code)
 	}
 	wkExpectNoCall(t, obs.calls)
+}
+
+// --- TestActions_CookieObserveRedirectsWithNotice -----------------------
+
+// TestActions_CookieObserveRedirectsWithNotice pins §8.5 FM-53: a cookie
+// request is always sent back to the page it came from (its own
+// same-origin Referer path, else the run/batch page) with ?notice=<code>
+// — queued (with n), busy, not-finished, bad-model, unavailable — never
+// the raw status code.
+func TestActions_CookieObserveRedirectsWithNotice(t *testing.T) {
+	t.Run("success: notice=queued&n=1, no Referer falls back to the run page", func(t *testing.T) {
+		obs := wkNewRecordingObserve()
+		defer close(obs.release)
+		q := NewQueue(obs.fn)
+		srv, store := newActionServer(t, actionServerOpts{queue: q})
+		h := srv.Handler()
+		seedObserveBatch(t, store, "cn1", "claude-sonnet-5", "cn1-a")
+
+		rr := doCookiePOST(t, srv, h, "/r/cn1-a/observe", url.Values{"model": {"claude-sonnet-5"}}, defaultTestOrigin)
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("got %d, want 303, body=%s", rr.Code, rr.Body.String())
+		}
+		if loc := rr.Header().Get("Location"); loc != "/r/cn1-a?notice=queued&n=1" {
+			t.Errorf("Location = %q, want /r/cn1-a?notice=queued&n=1", loc)
+		}
+		wkExpectCall(t, obs.calls)
+	})
+
+	t.Run("bad model: notice=bad-model", func(t *testing.T) {
+		obs := wkNewRecordingObserve()
+		defer close(obs.release)
+		q := NewQueue(obs.fn)
+		srv, store := newActionServer(t, actionServerOpts{queue: q})
+		h := srv.Handler()
+		seedObserveBatch(t, store, "cn2", "claude-sonnet-5", "cn2-a")
+
+		rr := doCookiePOST(t, srv, h, "/r/cn2-a/observe", url.Values{"model": {"gpt-5"}}, defaultTestOrigin)
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("got %d, want 303, body=%s", rr.Code, rr.Body.String())
+		}
+		if loc := rr.Header().Get("Location"); loc != "/r/cn2-a?notice=bad-model" {
+			t.Errorf("Location = %q, want /r/cn2-a?notice=bad-model", loc)
+		}
+		wkExpectNoCall(t, obs.calls)
+	})
+
+	t.Run("not finished: notice=not-finished", func(t *testing.T) {
+		obs := wkNewRecordingObserve()
+		defer close(obs.release)
+		q := NewQueue(obs.fn)
+		srv, store := newActionServer(t, actionServerOpts{queue: q})
+		h := srv.Handler()
+		seedBatch(t, store, "cn3", "claude-sonnet-5", []runFixture{
+			{runID: "cn3-a", scenario: "a", startedAt: fixedNow(t)().Add(-time.Minute), done: false},
+		}, false, nil)
+
+		rr := doCookiePOST(t, srv, h, "/r/cn3-a/observe", url.Values{"model": {"claude-sonnet-5"}}, defaultTestOrigin)
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("got %d, want 303, body=%s", rr.Code, rr.Body.String())
+		}
+		if loc := rr.Header().Get("Location"); loc != "/r/cn3-a?notice=not-finished" {
+			t.Errorf("Location = %q, want /r/cn3-a?notice=not-finished", loc)
+		}
+		wkExpectNoCall(t, obs.calls)
+	})
+
+	t.Run("busy: notice=busy", func(t *testing.T) {
+		obs := wkNewRecordingObserve()
+		defer close(obs.release)
+		q := NewQueue(obs.fn)
+		srv, store := newActionServer(t, actionServerOpts{queue: q})
+		h := srv.Handler()
+		seedObserveBatch(t, store, "cn4", "claude-sonnet-5", "cn4-a")
+
+		first := doBearerPOST(t, h, "/r/cn4-a/observe", url.Values{"model": {"claude-sonnet-5"}})
+		if first.Code != http.StatusAccepted {
+			t.Fatalf("first POST: got %d, want 202", first.Code)
+		}
+		wkExpectCall(t, obs.calls)
+
+		rr := doCookiePOST(t, srv, h, "/r/cn4-a/observe", url.Values{"model": {"claude-sonnet-5"}}, defaultTestOrigin)
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("got %d, want 303, body=%s", rr.Code, rr.Body.String())
+		}
+		if loc := rr.Header().Get("Location"); loc != "/r/cn4-a?notice=busy" {
+			t.Errorf("Location = %q, want /r/cn4-a?notice=busy", loc)
+		}
+	})
+
+	t.Run("unavailable: notice=unavailable", func(t *testing.T) {
+		obs := wkNewRecordingObserve()
+		defer close(obs.release)
+		q := NewQueue(obs.fn)
+		srv, store := newActionServer(t, actionServerOpts{queue: q, observerCredentialMissing: true})
+		h := srv.Handler()
+		seedObserveBatch(t, store, "cn5", "claude-sonnet-5", "cn5-a")
+
+		rr := doCookiePOST(t, srv, h, "/r/cn5-a/observe", url.Values{"model": {"claude-sonnet-5"}}, defaultTestOrigin)
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("got %d, want 303, body=%s", rr.Code, rr.Body.String())
+		}
+		if loc := rr.Header().Get("Location"); loc != "/r/cn5-a?notice=unavailable" {
+			t.Errorf("Location = %q, want /r/cn5-a?notice=unavailable", loc)
+		}
+		wkExpectNoCall(t, obs.calls)
+	})
+
+	t.Run("same-origin Referer: redirects to its path (dropping its own query), not the default page", func(t *testing.T) {
+		obs := wkNewRecordingObserve()
+		defer close(obs.release)
+		q := NewQueue(obs.fn)
+		srv, store := newActionServer(t, actionServerOpts{queue: q})
+		h := srv.Handler()
+		seedObserveBatch(t, store, "cn6", "claude-sonnet-5", "cn6-a")
+
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/r/cn6-a/observe", strings.NewReader(url.Values{"model": {"claude-sonnet-5"}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(newSessionCookie(testToken, srv.now()))
+		req.Header.Set("Origin", defaultTestOrigin)
+		req.Header.Set("Referer", "http://example.com/b/cn6?sort=cost")
+		h.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("got %d, want 303, body=%s", rr.Code, rr.Body.String())
+		}
+		if loc := rr.Header().Get("Location"); loc != "/b/cn6?notice=queued&n=1" {
+			t.Errorf("Location = %q, want /b/cn6?notice=queued&n=1 (the Referer's path, dropping its own query)", loc)
+		}
+		wkExpectCall(t, obs.calls)
+	})
+
+	t.Run("cross-origin Referer: falls back to the default page", func(t *testing.T) {
+		obs := wkNewRecordingObserve()
+		defer close(obs.release)
+		q := NewQueue(obs.fn)
+		srv, store := newActionServer(t, actionServerOpts{queue: q})
+		h := srv.Handler()
+		seedObserveBatch(t, store, "cn7", "claude-sonnet-5", "cn7-a")
+
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/r/cn7-a/observe", strings.NewReader(url.Values{"model": {"claude-sonnet-5"}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(newSessionCookie(testToken, srv.now()))
+		req.Header.Set("Origin", defaultTestOrigin)
+		req.Header.Set("Referer", "http://evil.example/somewhere")
+		h.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("got %d, want 303, body=%s", rr.Code, rr.Body.String())
+		}
+		if loc := rr.Header().Get("Location"); loc != "/r/cn7-a?notice=queued&n=1" {
+			t.Errorf("Location = %q, want /r/cn7-a?notice=queued&n=1 (cross-origin Referer ignored)", loc)
+		}
+		wkExpectCall(t, obs.calls)
+	})
 }
 
 // --- TestActions_WorkDespiteKillSwitchAndOffManifest --------------------
