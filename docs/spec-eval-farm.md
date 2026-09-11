@@ -842,8 +842,12 @@ tokenless copy — pushes with `ZEROPS_TOKEN` and a private
 `ZEROPS_CLI_DATA_FILE_PATH` in its own temp dir outside the pushed directory
 (never the operator's own zcli login, never uploaded), enables
 subdomain access explicitly after the deploy (the import flag alone does not
-route a service imported without code), and prints the URL. No secret value
-is ever printed.
+route a service imported without code), pins the service's scaling on
+every deploy — exactly one container, since the observation queue, worker
+and caches live in one process (§8.5), and a 2 GB RAM floor with 1 GB kept
+free, since three concurrent observer processes outrun vertical autoscaling
+from the platform's 0.125 GB default floor (live: an observer's `claude` was
+OOM-killed) — and prints the URL. No secret value is ever printed.
 
 ### 8.2 Authentication and headers
 

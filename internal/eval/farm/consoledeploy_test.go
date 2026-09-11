@@ -699,3 +699,83 @@ func TestConsoleDeploy_FailedImportLeavesNoSecretFile(t *testing.T) {
 		t.Fatalf("walk %s: %v", tmpDir, walkErr)
 	}
 }
+
+// TestConsoleDeploy_PinsScalingOnEveryDeploy — FM-49: every deploy, a fresh
+// import or an existing service, pins the console's scaling after the push:
+// exactly one container (the queue, worker and caches are per process) and a
+// 2 GB RAM floor with 1 GB kept free, so three concurrent observer processes
+// never outrun vertical autoscaling. Live 2026-09-11, at the platform default
+// 0.125 GB floor, an observer's claude was OOM-killed mid-batch.
+func TestConsoleDeploy_PinsScalingOnEveryDeploy(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		list     string
+		existing bool
+	}{
+		{"fresh import", "list-empty.json", false},
+		{"existing service", "list-with-console.json", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newConsoleDeployHarness(t)
+			h.copyFixture(tc.list, "list-response.json")
+			h.copyFixture("import-response.json", "import-response.json")
+			h.copyFixture("single-ready.json", "single-response.json")
+			if tc.existing {
+				envDir := filepath.Join(h.home, ".zerops-dev", "agent-creds")
+				if err := os.MkdirAll(envDir, 0o700); err != nil {
+					t.Fatalf("mkdir env dir: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(envDir, "farm-console.env"), []byte("ZCP_FARM_CONSOLE_TOKEN=existing-token\n"), 0o600); err != nil {
+					t.Fatalf("write env file: %v", err)
+				}
+			}
+
+			res := h.run(nil)
+			if res.err != nil {
+				t.Fatalf("deploy.sh failed: %v\nstdout=%s\nstderr=%s", res.err, res.stdout, res.stderr)
+			}
+
+			calls := h.callsLog()
+			pushIdx, scaleIdx := -1, -1
+			for i, l := range calls {
+				if pushIdx < 0 && strings.HasPrefix(l, "ZCLI ") {
+					pushIdx = i
+				}
+				if scaleIdx < 0 && strings.HasPrefix(l, "CURL PUT ") && strings.HasSuffix(l, "/autoscaling") {
+					scaleIdx = i
+				}
+			}
+			if scaleIdx < 0 || pushIdx < 0 || scaleIdx < pushIdx || scaleIdx == len(calls)-1 {
+				t.Fatalf("want the autoscaling PUT after the push and before the final GET (push=%d scale=%d of %d): %v", pushIdx, scaleIdx, len(calls), calls)
+			}
+
+			raw, err := os.ReadFile(filepath.Join(h.stubDir, "autoscaling-body-capture.json"))
+			if err != nil {
+				t.Fatalf("autoscaling body not captured: %v", err)
+			}
+			var body struct {
+				CustomAutoscaling struct {
+					VerticalAutoscaling struct {
+						MinResource struct {
+							MemoryGBytes float64 `json:"memoryGBytes"`
+						} `json:"minResource"`
+						MinFreeResource struct {
+							MemoryGBytes float64 `json:"memoryGBytes"`
+						} `json:"minFreeResource"`
+					} `json:"verticalAutoscaling"`
+					HorizontalAutoscaling struct {
+						MinContainerCount int `json:"minContainerCount"`
+						MaxContainerCount int `json:"maxContainerCount"`
+					} `json:"horizontalAutoscaling"`
+				} `json:"customAutoscaling"`
+			}
+			if err := json.Unmarshal(raw, &body); err != nil {
+				t.Fatalf("autoscaling body is not JSON: %v (%s)", err, raw)
+			}
+			v, hz := body.CustomAutoscaling.VerticalAutoscaling, body.CustomAutoscaling.HorizontalAutoscaling
+			if v.MinResource.MemoryGBytes != 2 || v.MinFreeResource.MemoryGBytes != 1 || hz.MinContainerCount != 1 || hz.MaxContainerCount != 1 {
+				t.Fatalf("autoscaling body = %s, want minResource 2 GB, minFreeResource 1 GB, containers 1..1", raw)
+			}
+		})
+	}
+}

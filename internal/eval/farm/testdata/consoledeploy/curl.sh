@@ -7,7 +7,8 @@
 #
 # Routing is by URL suffix, most specific first (a single GET
 # ".../service-stack/<sid>" must not shadow the more specific
-# ".../import" / ".../enable-subdomain-access" suffixes).
+# ".../import" / ".../enable-subdomain-access" / ".../autoscaling"
+# suffixes).
 set -eu
 
 method="GET"
@@ -40,6 +41,12 @@ case "$url" in
 	;;
 */enable-subdomain-access)
 	printf '{}'
+	;;
+*/autoscaling)
+	if [ -n "$datafile" ]; then
+		cp "$datafile" "$STUB_DIR/autoscaling-body-capture.json"
+	fi
+	printf '{"process":{"status":"PENDING","actionName":"stack.updateAutoscaling"}}'
 	;;
 */service-stack)
 	cat "$STUB_DIR/list-response.json"
