@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/eval/farm"
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // runEvalFarm dispatches `zcp eval farm <verb>`. It lives in the same binary
@@ -63,21 +64,29 @@ func runEvalFarm(args []string) int {
 		printEvalFarmUsage()
 		return 1
 	}
+	// envr is the ZCP_FARM_* overlay every verb below reads its
+	// configuration through (docs/spec-eval-farm.md §3.1 FM-17): the
+	// environment first, then — only once ZCP_FARM_PROJECT_ID is set —
+	// resolved from the farm/os services' env in that project. Built once
+	// per invocation, not per verb, so the (at most two) service-env
+	// fetches it may trigger happen at most once even though several
+	// verbs below read config through it.
+	envr := resolvedFarmEnv()
 	switch args[0] {
 	case farmVerbPush:
-		return runFarmPush(args[1:])
+		return runFarmPush(args[1:], envr)
 	case farmVerbPull:
-		return runFarmPull(args[1:])
+		return runFarmPull(args[1:], envr)
 	case farmVerbCoverage:
 		return runFarmCoverage(args[1:])
 	case farmVerbReport:
 		return runFarmReport(args[1:])
 	case farmVerbRun:
-		return runFarmRun(args[1:])
+		return runFarmRun(args[1:], envr)
 	case farmVerbStatus:
-		return runFarmStatus(args[1:])
+		return runFarmStatus(args[1:], envr)
 	case farmVerbGC:
-		return runFarmGC(args[1:])
+		return runFarmGC(args[1:], envr)
 	case farmVerbObserve:
 		return runFarmObserve(args[1:])
 	case farmVerbConsole:
@@ -89,10 +98,53 @@ func runEvalFarm(args []string) int {
 	}
 }
 
+// resolvedFarmEnv builds the ZCP_FARM_* overlay lookup (docs/spec-eval-farm.md
+// §3.1 FM-17): os.Getenv first, then — only when ZCP_FARM_PROJECT_ID is
+// set — resolved once from the farm/os services' env in that project via
+// an account client built from ZCP_FARM_ACCOUNT_TOKEN + ZCP_API_HOST (the
+// same construction eval_farm_run.go's runFarmRun uses for its own account
+// client, minus the admin/org scoping run/gc additionally need). No
+// network call happens here — platform.NewZeropsClient only builds the
+// client; the farm/os service-env fetches are lazy, inside
+// farm.EnvResolver.Lookup, and run at most once each.
+func resolvedFarmEnv() *farm.EnvResolver {
+	projectID := os.Getenv("ZCP_FARM_PROJECT_ID")
+	var client platform.Client
+	if projectID != "" {
+		// platform.NewZeropsClient never fails on its current
+		// implementation (host/token normalization only, no network
+		// call) — a construction error leaves client nil, and
+		// EnvResolver.Lookup then answers "" with an explicit
+		// "no account client available" Err() instead of touching a
+		// nil client.
+		if c, err := platform.NewZeropsClient(os.Getenv("ZCP_FARM_ACCOUNT_TOKEN"), os.Getenv("ZCP_API_HOST")); err == nil {
+			client = c
+		}
+	}
+	return farm.NewEnvResolver(context.Background(), client, projectID, os.Getenv)
+}
+
+// farmConfigFromResolver builds the sink config by reading through envr —
+// the ZCP_FARM_* overlay resolvedFarmEnv built once at dispatch. It
+// prefers envr.Err() (a specific resolution failure: an unsupported
+// reference, or a farm/os service that couldn't be read) over
+// ConfigFromLookup's generic "missing env var(s)" message when both are
+// non-nil, since the specific failure is the more useful one to report.
+func farmConfigFromResolver(envr *farm.EnvResolver) (farm.Config, error) {
+	cfg, err := farm.ConfigFromLookup(envr.Lookup)
+	if err != nil {
+		if rErr := envr.Err(); rErr != nil {
+			return farm.Config{}, rErr
+		}
+		return farm.Config{}, err
+	}
+	return cfg, nil
+}
+
 // runFarmPush uploads one or more parts to the farm bucket, under the
 // layout of docs/spec-eval-farm.md §1.1, and prints the digest of each part
 // it uploaded.
-func runFarmPush(args []string) int {
+func runFarmPush(args []string, envr *farm.EnvResolver) int {
 	var candidate, evaluator, scenarios, wrapper, gateSet string
 	for i := 0; i < len(args); i++ {
 		arg := args[i] //nolint:gosec // G602 false positive: i is loop-bounded by i < len(args) each iteration (same shape as eval_behavioral.go parseExecutionBindingFlags)
@@ -139,7 +191,7 @@ func runFarmPush(args []string) int {
 		return 1
 	}
 
-	cfg, err := farm.ConfigFromEnv()
+	cfg, err := farmConfigFromResolver(envr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -315,7 +367,7 @@ func pushGateSet(ctx context.Context, client *farm.SinkClient, scenariosDigest, 
 // runFarmPull downloads runs/<runId>/** (or every run a batch's manifest
 // lists) to <out>/<runId>/, and prints each run's bundle completeness
 // (docs/spec-eval-farm.md §5: "bundle: complete|partial|missing").
-func runFarmPull(args []string) int {
+func runFarmPull(args []string, envr *farm.EnvResolver) int {
 	var runID, batch, out string
 	for i := 0; i < len(args); i++ {
 		arg := args[i] //nolint:gosec // G602 false positive: i is loop-bounded by i < len(args) each iteration (same shape as eval_behavioral.go parseExecutionBindingFlags)
@@ -349,7 +401,7 @@ func runFarmPull(args []string) int {
 		return 1
 	}
 
-	cfg, err := farm.ConfigFromEnv()
+	cfg, err := farmConfigFromResolver(envr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1

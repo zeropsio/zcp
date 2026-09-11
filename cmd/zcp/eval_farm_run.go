@@ -32,7 +32,7 @@ const flagDetach = "--detach"
 
 // runFarmRun implements `zcp eval farm run` (docs/spec-eval-farm.md §3.3
 // FM-21/FM-22, §3.1 FM-18's --detach).
-func runFarmRun(args []string) int {
+func runFarmRun(args []string, envr *farm.EnvResolver) int {
 	flags, err := parseFarmRunFlags(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -72,7 +72,7 @@ func runFarmRun(args []string) int {
 		return 1
 	}
 
-	cfg, err := farm.ConfigFromEnv()
+	cfg, err := farmConfigFromResolver(envr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -91,8 +91,8 @@ func runFarmRun(args []string) int {
 		return 1
 	}
 
-	accountToken := os.Getenv("ZCP_FARM_ACCOUNT_TOKEN")
-	clientID := os.Getenv("ZCP_FARM_CLIENT_ID")
+	accountToken := envr.Lookup("ZCP_FARM_ACCOUNT_TOKEN")
+	clientID := envr.Lookup("ZCP_FARM_CLIENT_ID")
 	if accountToken == "" || clientID == "" {
 		fmt.Fprintln(os.Stderr, "error: ZCP_FARM_ACCOUNT_TOKEN and ZCP_FARM_CLIENT_ID are required")
 		return 1
@@ -449,21 +449,21 @@ func runFarmRunDetach(args []string, batch string, starter func(argv []string, l
 // (docs/spec-eval-farm.md §3.2/§1.4): recomputes from the bucket listing
 // (batches/, runs/*/done.json) and the live project list — no local state
 // file.
-func runFarmStatus(args []string) int {
+func runFarmStatus(args []string, envr *farm.EnvResolver) int {
 	batchFilter := ""
 	if len(args) > 0 {
 		batchFilter = args[0]
 	}
 
-	cfg, err := farm.ConfigFromEnv()
+	cfg, err := farmConfigFromResolver(envr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	sink := farm.NewSinkClient(cfg)
 
-	accountToken := os.Getenv("ZCP_FARM_ACCOUNT_TOKEN")
-	clientID := os.Getenv("ZCP_FARM_CLIENT_ID")
+	accountToken := envr.Lookup("ZCP_FARM_ACCOUNT_TOKEN")
+	clientID := envr.Lookup("ZCP_FARM_CLIENT_ID")
 	if accountToken == "" || clientID == "" {
 		fmt.Fprintln(os.Stderr, "error: ZCP_FARM_ACCOUNT_TOKEN and ZCP_FARM_CLIENT_ID are required")
 		return 1
@@ -557,7 +557,7 @@ func runFarmStatus(args []string) int {
 // why it is or isn't eligible, deletes the eligible ones only with --yes,
 // then revokes launch tokens orphaned by an earlier no-bundle exemption
 // whose project is now gone.
-func runFarmGC(args []string) int {
+func runFarmGC(args []string, envr *farm.EnvResolver) int {
 	var olderThan time.Duration
 	yes := false
 	for i := 0; i < len(args); i++ {
@@ -580,15 +580,15 @@ func runFarmGC(args []string) int {
 		}
 	}
 
-	cfg, err := farm.ConfigFromEnv()
+	cfg, err := farmConfigFromResolver(envr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	sink := farm.NewSinkClient(cfg)
 
-	accountToken := os.Getenv("ZCP_FARM_ACCOUNT_TOKEN")
-	clientID := os.Getenv("ZCP_FARM_CLIENT_ID")
+	accountToken := envr.Lookup("ZCP_FARM_ACCOUNT_TOKEN")
+	clientID := envr.Lookup("ZCP_FARM_CLIENT_ID")
 	if accountToken == "" || clientID == "" {
 		fmt.Fprintln(os.Stderr, "error: ZCP_FARM_ACCOUNT_TOKEN and ZCP_FARM_CLIENT_ID are required")
 		return 1
