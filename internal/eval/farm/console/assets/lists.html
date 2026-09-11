@@ -1,0 +1,16 @@
+{{/* List navigation partials (docs/spec-eval-farm.md §8.7): the filter bar,
+   one sortable column header, and the 400 page for a refused parameter. */}}
+{{define "filterbar"}}<div class="filters">
+{{range .Groups}}<div class="filter-row"><span class="k">{{.Label}}</span>{{range .Options}}{{if .URL}}<a class="filter{{if .Active}} on{{end}}" href="{{.URL}}"{{if .Title}} title="{{.Title}}"{{end}}{{if .Active}} aria-current="true"{{end}}>{{.Label}}{{if .Counts}} <span class="filter-count">{{.Count}}</span>{{end}}</a>{{else}}<span class="filter count-zero"{{if .Title}} title="{{.Title}}"{{end}}>{{.Label}}{{if .Counts}} <span class="filter-count">0</span>{{end}}</span>{{end}}{{end}}</div>
+{{end}}{{if .Active}}<div class="filter-row"><span class="k">Active</span>{{range .Active}}<a class="filter on" href="{{.RemoveURL}}" title="Remove this filter">{{.Label}} ×</a>{{end}}<a class="clear-all" href="{{.ClearURL}}">clear all</a></div>{{end}}
+</div>{{end}}
+
+{{define "sortth"}}<th aria-sort="{{.AriaSort}}"><a href="{{.URL}}">{{.Label}}{{if .Active}}<span class="sort-marker" aria-hidden="true">{{if eq .Dir "asc"}} ▲{{else}} ▼{{end}}</span>{{end}}</a></th>{{end}}
+
+{{define "badquery"}}{{template "head" .Meta}}
+<div class="page-head"><h1>Unknown filter</h1></div>
+<div class="callout callout-error">
+<p>This list does not take <code>{{.Param}}</code>{{if .Allowed}} with that value. Allowed: {{range $i, $a := .Allowed}}{{if $i}}, {{end}}<code>{{$a}}</code>{{end}}{{end}}.</p>
+<p><a href="{{.DropURL}}">Show the list without <code>{{.Param}}</code></a></p>
+</div>
+{{template "foot"}}{{end}}

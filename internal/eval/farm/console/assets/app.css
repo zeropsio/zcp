@@ -399,8 +399,8 @@ select:focus-visible, input:focus-visible {
   /* a table opted into stacking (class="stack", cells carrying
      data-label) renders as one card per row — no caller yet; a later
      slice adds both attributes to a list table. */
-  table.stack, table.stack thead { display: none; }
-  table.stack tbody { display: block; }
+  table.stack thead { display: none; }
+  table.stack, table.stack tbody { display: block; }
   table.stack tr {
     display: block; border: 1px solid var(--border); border-radius: 8px;
     margin-bottom: 8px; padding: 6px 10px;
