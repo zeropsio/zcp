@@ -16,7 +16,7 @@ import (
 )
 
 // This file drives the real eval/farm/console/deploy.sh (POSIX sh) against
-// stubbed curl, zcli and go binaries placed first on PATH — never the real
+// stubbed curl, zcli, go and mktemp binaries placed first on PATH — never the real
 // platform, never a real build (docs/spec-eval-farm.md §8.1 FM-49, brief
 // plans/zcp-farm-observer-2026-09-11-briefs/S6-console-deploy.md). It never
 // asserts on the script's internals — only on stdout/stderr, the exit
@@ -89,15 +89,16 @@ type consoleDeployHarness struct {
 	envFile      string // ZCP_FARM_CONSOLE_ENV_FILE override; empty = let deploy.sh default from HOME
 }
 
-// newConsoleDeployHarness builds the harness and copies the three stub
-// tools (curl.sh/zcli.sh/go.sh) into a bin dir as curl/zcli/go.
+// newConsoleDeployHarness builds the harness and copies the four stub
+// tools (curl.sh/zcli.sh/go.sh/mktemp.sh) into a bin dir as
+// curl/zcli/go/mktemp.
 func newConsoleDeployHarness(t *testing.T) *consoleDeployHarness {
 	t.Helper()
 	requireShAndPython3(t)
 
 	stubBin := t.TempDir()
 	testdata := consoleDeployTestdataDir(t)
-	for _, name := range []string{"curl", "zcli", "go"} {
+	for _, name := range []string{"curl", "zcli", "go", "mktemp"} {
 		src := filepath.Join(testdata, name+".sh")
 		body, err := os.ReadFile(src)
 		if err != nil {
@@ -635,5 +636,66 @@ func TestConsoleDeploy_NoSecretInOutputOrLeftovers(t *testing.T) {
 	stageDir := filepath.Dir(stagePath)
 	if _, err := os.Stat(stageDir); !os.IsNotExist(err) {
 		t.Fatalf("stage dir %q still exists after deploy.sh exited (err=%v)", stageDir, err)
+	}
+}
+
+// TestConsoleDeploy_FailedImportLeavesNoSecretFile — FM-49: when the
+// import POST answers HTTP 500 (the stub curl exits nonzero, as real
+// curl -f does), deploy.sh's own `set -e` exits the script before its
+// manual `rm -f "$yamlfile"` line ever runs. The import body temp file
+// carries both the OAuth token and the freshly minted console token, so
+// every temp file under TMPDIR must be free of both values once the
+// script has exited non-zero — the EXIT trap, not the manual rm, is what
+// has to catch this path.
+func TestConsoleDeploy_FailedImportLeavesNoSecretFile(t *testing.T) {
+	h := newConsoleDeployHarness(t)
+	h.copyFixture("list-empty.json", "list-response.json")
+	h.copyFixture("import-response.json", "import-response.json")
+	h.copyFixture("single-ready.json", "single-response.json")
+
+	tmpDir := t.TempDir()
+
+	res := h.run(map[string]string{
+		"TMPDIR":                          tmpDir,
+		"CONSOLE_DEPLOY_TEST_FAIL_IMPORT": "1",
+	})
+
+	if res.err == nil {
+		t.Fatalf("expected deploy.sh to fail on the import 500, got success; stdout=%q stderr=%q", res.stdout, res.stderr)
+	}
+	if res.exitCode != 1 {
+		t.Fatalf("exit code: got %d want 1 (stdout=%q stderr=%q)", res.exitCode, res.stdout, res.stderr)
+	}
+
+	// The console token was minted and recorded before the failed import
+	// call, so it is readable from the env file even though the run as a
+	// whole failed.
+	envBody, err := os.ReadFile(h.defaultEnvFilePath())
+	if err != nil {
+		t.Fatalf("read env file: %v", err)
+	}
+	consoleToken := envValue(t, string(envBody), "ZCP_FARM_CONSOLE_TOKEN")
+
+	walkErr := filepath.WalkDir(tmpDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read leftover file %s: %v", path, err)
+		}
+		if strings.Contains(string(body), h.oauthToken) {
+			t.Errorf("leftover file %s under TMPDIR still contains the OAuth token", path)
+		}
+		if strings.Contains(string(body), consoleToken) {
+			t.Errorf("leftover file %s under TMPDIR still contains the console token", path)
+		}
+		return nil
+	})
+	if walkErr != nil {
+		t.Fatalf("walk %s: %v", tmpDir, walkErr)
 	}
 }

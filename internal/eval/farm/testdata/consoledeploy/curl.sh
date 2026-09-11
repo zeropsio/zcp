@@ -29,6 +29,10 @@ printf 'CURL %s %s\n' "$method" "$url" >>"$STUB_DIR/calls.log"
 
 case "$url" in
 */service-stack/import)
+	if [ -n "${CONSOLE_DEPLOY_TEST_FAIL_IMPORT:-}" ]; then
+		# Answers as real curl -f does for an HTTP 500: no body, exit 22.
+		exit 22
+	fi
 	if [ -n "$datafile" ]; then
 		cp "$datafile" "$STUB_DIR/import-body-capture.json"
 	fi
