@@ -1,22 +1,29 @@
 {{define "findings"}}{{template "head" .Meta}}
-<nav class="crumbs"><a href="/">Batches</a><span class="sep">/</span>Findings</nav>
 <div class="page-head">
 <h1>Findings</h1>
-<p class="muted">What the observer found across runs, grouped by who has to act.</p>
+<p class="muted">{{.Summary}}</p>
 </div>
-<div class="filters">
-<div class="filter-row"><span class="k">Window</span>{{range .Windows}}<a class="filter{{if eq . $.Since}} on{{end}}" href="/findings?since={{.}}{{if $.Owner}}&amp;owner={{$.Owner}}{{end}}">{{.}}</a>{{end}}</div>
-<div class="filter-row"><span class="k">Owner</span><a class="filter{{if not $.Owner}} on{{end}}" href="/findings?since={{$.Since}}">all</a>{{range .Owners}}<a class="filter{{if eq . $.Owner}} on{{end}}" href="/findings?since={{$.Since}}&amp;owner={{.}}">{{.}}</a>{{end}}</div>
-</div>
-{{range .Groups}}<h2>{{.Owner}} <span class="count">{{len .Items}}</span></h2>
-{{range .Items}}<article class="finding sev-{{.Severity}}">
-<header class="finding-head"><span class="severity severity-{{.Severity}}">{{.Severity}}</span><a class="run-link" href="{{runLink .RunID .Steps}}">{{.RunID}}</a></header>
-<h3>{{.Title}}</h3>
+{{template "filterbar" .Nav.Filters}}
+<div class="filter-row"><span class="k">Sort</span>{{range .Nav.Sorts}}<a class="filter{{if .Active}} on{{end}}" href="{{.URL}}">{{.Label}}{{if .Active}}<span class="sort-marker" aria-hidden="true">{{if eq .Dir "asc"}} ▲{{else}} ▼{{end}}</span>{{end}}</a>{{end}}</div>
+{{range .Items}}<details class="finding sev-{{.Severity}}">
+<summary class="finding-head">
+<span class="{{severityClass .Severity}}" title="{{severityTooltip .Severity}}">{{severityLabel .Severity}}</span>
+<span class="chip cause-chip">{{.CauseLabel}}</span>
+<span>{{.Title}}</span>
+<a class="run-link" href="/r/{{.RunID}}">{{.RunID}}</a>
+</summary>
 <p>{{.What}}</p>
-<p class="muted small">{{if .Steps}}steps {{joinInts .Steps}} · {{end}}quotes verified {{.QuotesVerified}}/{{.QuotesTotal}}</p>
-<dl class="kv"><dt>Where to look</dt><dd>{{.LookAt}}</dd>{{if .Fix}}<dt>Suggested fix</dt><dd>{{.Fix}}</dd>{{end}}</dl>
-</article>
+{{range .Evidence}}<div class="quote">
+<p class="quote-ref"><span class="{{if .Verified}}evidence-verified{{else}}evidence-unverified{{end}}">{{verifiedMark .Verified}}</span>{{if .StepLink}} <a href="{{.StepLink}}">step</a>{{end}}</p>
+&#34;{{.Quote}}&#34;
+</div>
 {{end}}
+<dl class="kv">
+{{if .Anchor}}<dt>Anchor</dt><dd><code>{{.Anchor}}</code></dd>{{end}}
+<dt>Where to look</dt><dd>{{.LookAt}}</dd>
+{{if .Fix}}<dt>Fix</dt><dd>{{.Fix}}</dd>{{end}}
+</dl>
+</details>
 {{else}}<p class="empty">No findings in this window.</p>
 {{end}}
 {{template "foot"}}{{end}}

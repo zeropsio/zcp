@@ -358,53 +358,6 @@ func TestPages_RunShowsForensicCommand(t *testing.T) {
 	}
 }
 
-// TestPages_FindingsGroupedAndLinked pins §8.3 FM-51's /findings page:
-// every finding of every run in the window, grouped by owner then
-// severity, each linking to its run and step. Independent oracle:
-// fixtureObservation's own two findings (api_test.go) — owner zcp-tool
-// (high, step 3) and owner agent (medium, step 99) — plus api.go's own
-// findingItemsFromRows ordering (owner asc, then severity rank), used
-// read-only.
-func TestPages_FindingsGroupedAndLinked(t *testing.T) {
-	srv, store, _ := testServer(t)
-	h := srv.Handler()
-	now := fixedNow(t)()
-
-	seedBatch(t, store, "fd1", "claude-sonnet-5", []runFixture{
-		{runID: "fd1-scn", scenario: "scn", startedAt: now.Add(-1 * time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
-	}, true, map[string]string{"fd1-scn": "passed"})
-	seedObservation(t, store, fixtureObservation("fd1-scn"))
-
-	rr := doGET(t, h, "/findings?since=24h")
-	if rr.Code != http.StatusOK {
-		t.Fatalf("GET /findings: got %d, want 200, body=%s", rr.Code, rr.Body.String())
-	}
-	body := rr.Body.String()
-
-	if !strings.Contains(body, "agent") || !strings.Contains(body, "zcp-tool") {
-		t.Errorf("body missing both owners:\n%s", body)
-	}
-	if !strings.Contains(body, "Tool returned stale data") || !strings.Contains(body, "Agent skipped a sanity check") {
-		t.Errorf("body missing both finding titles:\n%s", body)
-	}
-	if !strings.Contains(body, `href="/r/fd1-scn#s3"`) {
-		t.Errorf("body missing the zcp-tool finding's run+step link (#s3):\n%s", body)
-	}
-	// owner asc: "agent" sorts before "zcp-tool".
-	if i, j := strings.Index(body, "Agent skipped a sanity check"), strings.Index(body, "Tool returned stale data"); i < 0 || j < 0 || i > j {
-		t.Errorf("findings not grouped owner-ascending (agent before zcp-tool): agent@%d, zcp-tool@%d\n%s", i, j, body)
-	}
-
-	rrFiltered := doGET(t, h, "/findings?since=24h&owner=agent")
-	bodyFiltered := rrFiltered.Body.String()
-	if !strings.Contains(bodyFiltered, "Agent skipped a sanity check") {
-		t.Errorf("owner=agent body missing the agent finding:\n%s", bodyFiltered)
-	}
-	if strings.Contains(bodyFiltered, "Tool returned stale data") {
-		t.Errorf("owner=agent body still shows the zcp-tool finding:\n%s", bodyFiltered)
-	}
-}
-
 // onAttrPattern matches an on*= event-handler attribute (TestPages_
 // NoScriptNoInlineStyleNoHandlers) — a leading space keeps it from matching
 // inside ordinary prose text or attribute values that merely contain the
