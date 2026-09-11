@@ -280,13 +280,19 @@ Wrapper steps, in order:
 2. write the private Claude home carrying `CLAUDE_CODE_OAUTH_TOKEN` (§2.4);
    refuse to start if `ANTHROPIC_API_KEY` is set in the environment;
 3. run the evaluator's existing single-run binding unchanged:
-   `<evaluator> eval behavioral run --candidate <candidate> --candidate-sha256 <sha> --project-id $projectId --ack-disposable-project yes --capture raw --id <scenario> … --capture-dir <local capture dir>`
+   `<evaluator> eval behavioral run --candidate <candidate> --candidate-sha256 <sha> --project-id $projectId --ack-disposable-project yes --capture raw --id <scenario> … --capture-dir <local capture dir> --work-dir /var/www`
    (`spec-testing-architecture.md §10.4`'s binding, unmodified) — the local
    capture dir is the one uploaded as `runs/<runId>/capture/`, and the
    evaluator opens its own capture window under it, named `capture-<id>/`
    (its own session id, distinct from `runId`); a run project executes
    exactly one scenario, so exactly one such window exists (§5.2 relies on
-   this);
+   this). `--work-dir /var/www` (D21) puts the agent's `claude` — and the
+   MCP `zcp serve` child it spawns — at the same cwd a real container uses
+   (`internal/ops/mount.go` `mountBase`), so `zerops_mount`'s mount root and
+   the deploy preflight's expected source root agree; the evaluator's own
+   scratch paths (results dir, private candidate bin, private Claude home)
+   stay under `$RUNDIR`, siblings of the results dir rather than the work
+   dir (`cmd/zcp/eval_behavioral.go` `buildExecutionBinding`);
 4. at exit — success, failure, max-turns, or signal, via a trap that fires
    regardless of exit path — redact (§1.3) and upload
    `runs/<runId>/results/` then `runs/<runId>/capture/` (the `capture-<id>/`
@@ -633,21 +639,6 @@ batch.
 any scenario's aggregated result. Its only effect on §4/§5's verdicts is
 none — a scenario can be `passed` with thin coverage and `failed` with rich
 coverage; the two dimensions are reported side by side, never merged.
-
----
-
-## 6. Known gaps
-
-These are current limitations of the eval lane, not roadmap items.
-
-**Cross-deploy under the evaluator's work dir.** The agent's `zcp` MCP
-server runs with the evaluator's `--work-dir` as its working directory, so
-the deploy tool's cross-deploy preflight looks for the source service's
-`zerops.yaml` under `<work-dir>/<sourceHostname>`, while `zerops_mount`
-always mounts a service at `/var/www/<hostname>`. Outside the evaluator both
-roots are `/var/www`; in a farm run they differ, so `zerops_deploy
-sourceService=…` fails with `PREFLIGHT_FAILED … source mount
-<work-dir>/<host> missing` and a cross-deploy scenario cannot promote.
 
 ---
 
