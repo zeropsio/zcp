@@ -26,7 +26,7 @@ evaluators/<sha256>/zcp            # pinned evaluator binary, uploaded once per 
 evaluators/current                 # plain-text pointer: body is the evaluator sha256 last pushed
 candidates/<sha256>/zcp            # candidate under test, pushed per batch
 scenarios/<tree-digest>/…          # scenario tree, pushed per batch
-sets/<tree-digest>/gate.txt        # gate scenario id list, keyed to the scenario tree it names
+sets/<scenariosDigest>/gate.txt    # gate scenario id list, keyed to the scenario tree it names
 farm/wrapper.sh                    # the run-project wrapper script
 
 runs/<runId>/started.json
@@ -70,9 +70,16 @@ digest (not just its presence):
     "results": {"treeDigest": "<sha256>"},
     "capture": {"treeDigest": "<sha256>"}
   },
-  "evaluatorSha256": "<sha256>", "candidateSha256": "<sha256>"
+  "evaluatorSha256": "<sha256>", "candidateSha256": "<sha256>",
+  "credentialMode": "oauth-token", "redacted": ["<path>", "…"]
 }
 ```
+
+`credentialMode` is always `"oauth-token"` (FM-16) — the field exists so a
+future second mode has somewhere to be recorded, not because the wrapper
+chooses between modes today. `redacted` lists every path (relative to the
+run's own root) FM-7's redaction pass rewrote in place; `[]` when nothing
+was redacted.
 
 **FM-5. Write order is never trusted.** `done.json` is read only after both
 parts have finished uploading (per FM-3), and the controller/report never
@@ -114,8 +121,10 @@ rows) is not secret and is not redacted beyond FM-7's credential values.
 records: batch id, the scenario set (`--set gate|all|<ids>`), the candidate
 digest, the evaluator digest, and the run ids the
 batch created. `batches/<batch>/summary.json`, written at the end, records
-per-run acceptance (`passed`/`failed`/`blocked`/`not-run`) and whether the
-batch's own budget or the operator's Ctrl-C ended it. Neither file is the
+per-run acceptance (`passed`/`failed`/`blocked`/`not-run`) and `endedBy`:
+`settled` when every run reached a verdict on its own, `budget` when the
+batch's own budget ended it, or `interrupt` when the operator's Ctrl-C did.
+Neither file is the
 registry of truth — `farm status` always recomputes from the bucket listing
 and the live project list (§3), never from a cached manifest — but every
 report cites which manifest it read.
@@ -151,13 +160,22 @@ Shape, as implemented by the controller (S4):
 deleted (the common case for a settled run); `launchTokenId` is the id
 (never the token value, §3.4) of a launch scenario's token, present only
 while it has not yet been revoked — the FM-21 no-bundle exemption records it
-here so `gc` can finish the revoke once the project is finally gone. For a
-`blocked` or `failed` run, `detail` names the blocking/failing check ids:
-sorted ids of every `verification.json` row (spec-testing-architecture.md
-§10.1), sibling to `meta.json` in the same results directory, whose `result`
-equals the run's own result, joined with `", "` and capped at 5 with a
-`"+N more"` suffix; a bundle with no `verification.json` sibling gets the
-literal `"no verification.json in bundle"`.
+here so `gc` can finish the revoke once the project is finally gone. `error`
+is set only when the run's project itself could not be created, minted or
+imported — the run never reached `waitForDone`. For a settled `blocked` or
+`failed` run, `detail` names the blocking/failing check ids: sorted ids of
+every `verification.json` row (spec-testing-architecture.md §10.1), sibling
+to `meta.json` in the same results directory, whose `result` equals the
+run's own result, joined with `", "` and capped at 5 with a `"+N more"`
+suffix; a bundle with no `verification.json` sibling gets the literal
+`"no verification.json in bundle"`. Two more `detail` shapes come from
+`waitForDone` itself, before any bundle exists: `"no bundle"` when the run's
+budget elapsed with no `done.json` (FM-3, FM-21's exemption — that run's
+project is not deleted), and `"platform: <actionName> FAILED: <reason>"`
+when the controller's D19 poll finds a FAILED creation-phase process
+(`stack.create`/`stack.import`) on the run's project before `done.json` ever
+appears — that project is still deleted. A run whose project was never
+created is reported `blocked` with its `error`, never dropped (§5.1).
 
 ---
 
@@ -222,13 +240,13 @@ run project's `zcp` service, set once at import:
 | `ZCP_FARM_CANDIDATE_SHA` | the candidate's SHA-256 under test |
 | `ZCP_FARM_SCENARIOS_DIGEST` | the scenario tree digest the wrapper downloads (`scenarios/<digest>/`, FM-1) |
 
-<!-- PROVE: confirm these five names against the S1/S2 implementation; the plan names them without a final source citation -->
-
-Plus, not part of the descriptor but delivered the same way: the platform-
-injected `ZCP_API_KEY` (this project only), the batch credential (§2.4), the
-sink key, and — launch scenarios only — a per-run `ZCP_E2E_LAUNCH_KEY`
-(§2.4). The wrapper reads all of these from its own environment; it never
-receives them any other way (no file drop, no second RPC).
+Plus, not part of the descriptor but delivered the same way: the run's own
+`ZCP_API_KEY` — the project-scoped token the controller mints at import
+(§2.1 FM-10 step 2), not a platform-injected one — the batch credential
+(§2.4), the sink key, and — launch scenarios only — a per-run
+`ZCP_E2E_LAUNCH_KEY` (§2.4). The wrapper reads all of these from its own
+environment; it never receives them any other way (no file drop, no second
+RPC).
 
 ### 2.3 The wrapper — supervisor + child
 
@@ -246,18 +264,24 @@ Wrapper steps, in order:
 2. write the private Claude home carrying `CLAUDE_CODE_OAUTH_TOKEN` (§2.4);
    refuse to start if `ANTHROPIC_API_KEY` is set in the environment;
 3. run the evaluator's existing single-run binding unchanged:
-   `<evaluator> eval behavioral run --candidate <candidate> --candidate-sha256 <sha> --project-id $projectId --ack-disposable-project yes --capture raw --id <scenario> …`
-   (`spec-testing-architecture.md §10.4`'s binding, unmodified);
+   `<evaluator> eval behavioral run --candidate <candidate> --candidate-sha256 <sha> --project-id $projectId --ack-disposable-project yes --capture raw --id <scenario> … --capture-dir <local capture dir>`
+   (`spec-testing-architecture.md §10.4`'s binding, unmodified) — the local
+   capture dir is the one uploaded as `runs/<runId>/capture/`, and the
+   evaluator opens its own capture window under it, named `capture-<id>/`
+   (its own session id, distinct from `runId`); a run project executes
+   exactly one scenario, so exactly one such window exists (§5.2 relies on
+   this);
 4. at exit — success, failure, max-turns, or signal, via a trap that fires
    regardless of exit path — redact (§1.3) and upload
-   `runs/<runId>/results/` then `runs/<runId>/capture/`, then write
-   `done.json` last (FM-3, FM-4).
+   `runs/<runId>/results/` then `runs/<runId>/capture/` (the `capture-<id>/`
+   window inside it), then write `done.json` last (FM-3, FM-4).
 
 **FM-14.** Seeding is the runner's, unchanged: `SeedEmpty/Imported/Deployed/
 Settled/Building` run exactly as in a single supervised run, using the
-project-scoped `ZCP_API_KEY` the platform injected. The farm changes nothing
-about seed code or seed semantics — it only changes who kicks the runner off
-and where the result goes.
+run project's own `ZCP_API_KEY` — the token the controller minted at import
+(§2.1 FM-10 step 2). The farm changes nothing about seed code or seed
+semantics — it only changes who kicks the runner off and where the result
+goes.
 
 The retrospective `--resume` call is text-only (no MCP config, tools
 disabled) and optional; its failure is recorded in `meta.error` but never
@@ -268,7 +292,7 @@ changes the `Execution:` line the wrapper reads off `child.log` for
 
 | Credential | Source | Scope | Never |
 |---|---|---|---|
-| `ZCP_API_KEY` | platform-injected into `zcp@1` at import | this run project only: seed, preflight, verify | leaves the project |
+| `ZCP_API_KEY` | minted by the controller (§2.1 FM-10 step 2), delivered as a sensitive env on `zcp@1` at import | this run project only: seed, preflight, verify | leaves the project |
 | agent credential — `CLAUDE_CODE_OAUTH_TOKEN` (the farm's long-lived `claude setup-token`; the ONLY supported mode, no API-key fallback — owner decision 2026-09-10) | farm config on the farm host | model requests for this run's agent invocations | any `ANTHROPIC_API_KEY` in a run project: Claude Code lets an API key shadow the OAuth profile, so the wrapper refuses to start when one is present |
 | sink key | farm config on the farm host | the bucket only | the run's task prompt, transcript, or any uploaded object (FM-7) |
 | `ZCP_E2E_LAUNCH_KEY` | minted by the controller per run (NO_ACCESS + `canCreateProjects`), launch scenarios only | creating this run's prod project | reused across runs; revoked after the run's projects are deleted (FM-24) |
@@ -293,9 +317,9 @@ integration tokens cannot mint run tokens") and exits nonzero.
 
 **FM-16.** Every bundle records the model observed on the wire and the
 provider-reported usage. The agent credential is always the farm OAuth token
-(presence recorded as `credential: oauth-token`, never the value); a bundle
-produced with an `ANTHROPIC_API_KEY` present is `blocked` (FM-7 redaction
-still applies to it).
+(presence recorded as `done.json.credentialMode: "oauth-token"`, FM-4, never
+the value); a bundle produced with an `ANTHROPIC_API_KEY` present is
+`blocked` (FM-7 redaction still applies to it).
 
 ---
 
@@ -310,12 +334,19 @@ maintainer-only, the same discipline as `runtime.Info.Authoring` /
 account-wide key and deletes projects, so the same reasoning that gates
 authoring applies here — a route reachable without the gate is a defect the
 same way an ungated authoring route is. The farm host needs only the
-binary — no repo checkout. `farm run` resolves everything it needs (the
+binary and its service envs — `ZCP_AUTHORING=1` (this gate),
+`ZCP_FARM_S3_URL`/`ZCP_FARM_S3_BUCKET`/`ZCP_FARM_S3_KEY`/`ZCP_FARM_S3_SECRET`
+(the sink), `ZCP_FARM_ACCOUNT_TOKEN`/`ZCP_FARM_CLIENT_ID` (§2.4 FM-15), and
+`CLAUDE_CODE_OAUTH_TOKEN` (§2.4) — no repo checkout. `farm run` resolves everything it needs (the
 `--set gate`/`--set all` scenario id list, each scenario's front matter, and
 the evaluator pin absent `--evaluator`) from the bucket (`sets/<digest>/gate.txt`,
 `scenarios/<digest>/…`, `evaluators/current`), never from a relative path on
 disk; only `farm push`, which runs from a full checkout on a dev machine,
 reads `eval/farm/gate-set.txt` off disk, to upload it.
+
+The gate set is currently 10 scenarios. The two launch scenarios (O6) are
+deferred out of it until a source-control fixture exists for them to build
+from.
 
 **FM-18.** No daemon and no HTTP surface on the farm host. `farm run` starts
 detached (`systemd-run --user` or `nohup`) so its kickoff SSH session may
@@ -556,11 +587,40 @@ turns that run's report `blocked` (FM-5/FM-36), never silently `passed`.
 **FM-39.** `farm coverage [--since <batch>]` derives (scenario, workflow
 step, tool decision) cells only from captured MCP traffic and envelope phase
 markers already recorded in each bundle's capture window — never from a
-hand-maintained list (FM-33). A scenario removed from the corpus drops every
-cell it was the sole source of; a re-run with fewer scenarios visibly shows
-fewer cells, never stale ones held over from a prior batch.
+hand-maintained list (FM-33). A run's scenario is identified from its
+bundle's own `done.json.scenarioId` (FM-4), never from a directory name or a
+manifest lookup. A cell with no workflow-step marker is bucketed under the
+literal `"(no step)"` rather than dropped, so a run that made tool calls
+outside any phase still shows up in the table. A scenario removed from the
+corpus drops every cell it was the sole source of; a re-run with fewer
+scenarios visibly shows fewer cells, never stale ones held over from a prior
+batch.
 
 **FM-40.** Coverage is descriptive, not a gate: it never contributes a row to
 any scenario's aggregated result. Its only effect on §4/§5's verdicts is
 none — a scenario can be `passed` with thin coverage and `failed` with rich
 coverage; the two dimensions are reported side by side, never merged.
+
+---
+
+## 6. Known gaps
+
+These are current limitations of the eval lane, not roadmap items.
+
+**Cross-deploy preflight root.** The execution-binding preflight's root
+safety check (`spec-testing-architecture.md §10.4`) reasons about the
+evaluator's own `--work-dir`. A cross-deploy scenario pushes from a source
+container whose mount base is `/var/www`, a path the preflight does not
+special-case; the check still passes because the work dir it is actually
+given is safe, but the two roots (the evaluator's work dir and the source
+container's own mount base) are conceptually distinct and the preflight only
+reasons about the former.
+
+**Artifact-promotion baseline.** O7's `dev_unchanged` row (§4.4) needs a
+baseline app-version id for the promotion's source host
+(`artifactPromotion.from`), but baseline capture only reads
+`verification.unchanged` and `nodePostgresRecord.unrelated` (§4.1, §4.3) —
+never `artifactPromotion.from` on its own. A scenario that declares
+`artifactPromotion` without also listing its `from` host in `unchanged` gets
+a `blocked` `dev_unchanged` row (`"no baseline for <host>"`), not a proven
+one.
