@@ -47,6 +47,31 @@ type Config struct {
 	// Sleep overrides time.Sleep for the login/bearer failure delay (tests
 	// record the call instead of actually blocking). Nil uses time.Sleep.
 	Sleep func(time.Duration)
+	// Queue is the console's observation queue (§8.5): the run/batch observe
+	// actions (actions.go) enqueue into it and read busy/queued state from
+	// it via Queue.State/Queue.BatchBusy, and view.go's read model reads
+	// Queue.State to resolve the "observing" observerState. Nil only in a
+	// test server that doesn't exercise the worker or actions.
+	Queue *Queue
+	// Worker discovers finished, unobserved runs on a schedule (§8.5);
+	// Server.StartWorker (actions.go) runs it until its context is done.
+	// Nil skips the background loop entirely — distinct from a Worker built
+	// Disabled (e.g. a missing CLAUDE_CODE_OAUTH_TOKEN or an unresolvable
+	// --claude path, both of which still build a Worker so Tick stays a
+	// well-defined no-op rather than leaving this nil).
+	Worker *Worker
+	// WorkerInterval overrides the production 60s worker tick interval
+	// (§8.5 FM-53) — tests set a small value. Zero uses the production
+	// default.
+	WorkerInterval time.Duration
+	// ObserverCredentialMissing is true when CLAUDE_CODE_OAUTH_TOKEN was
+	// empty at startup (§8.5): the run/batch observe actions answer 503
+	// "observer credential missing" instead of enqueueing.
+	ObserverCredentialMissing bool
+	// ObserverClaudePathUnresolved is true when --claude could not be
+	// resolved (exec.LookPath + filepath.Abs) at startup (§8.5): the
+	// actions answer 503 "observer unavailable" instead of enqueueing.
+	ObserverClaudePathUnresolved bool
 }
 
 // Server is the farm console's HTTP server (docs/spec-eval-farm.md §8).
@@ -109,6 +134,10 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		s.requireAuth(s.handleFindings)(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(p, "/api/runs/"):
 		s.requireAuth(s.handleRunsSubroute)(w, r)
+	case r.Method == http.MethodPost && strings.HasPrefix(p, "/r/") && strings.HasSuffix(p, "/observe"):
+		s.requireAuth(s.handleRunObserve)(w, r)
+	case r.Method == http.MethodPost && strings.HasPrefix(p, "/b/") && strings.HasSuffix(p, "/observe"):
+		s.requireAuth(s.handleBatchObserve)(w, r)
 	default:
 		http.NotFound(w, r)
 	}

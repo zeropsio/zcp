@@ -129,7 +129,7 @@ func unverifiedQuotes(obs *observer.Observation) int {
 func renderRunsListMD(items []RunsListItem) string {
 	var b strings.Builder
 	for _, it := range items {
-		headline, titles := "(not observed)", ""
+		headline, titles := "("+it.ObserverState+")", ""
 		if it.Observation != nil {
 			headline = it.Observation.Headline
 			titles = strings.Join(it.Observation.FindingTitles, "; ")
@@ -152,7 +152,7 @@ func (s *Server) handleRunsList(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		br, err := batchWindowRows(ctx, s.cfg.Store, s.cfg.ObserverDisabled, batch)
+		br, err := batchWindowRows(ctx, s.cfg.Store, s.cfg.ObserverDisabled, batch, s.queueState)
 		if err != nil {
 			writeStoreError(w, err)
 			return
@@ -164,7 +164,7 @@ func (s *Server) handleRunsList(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		rows, err = rowsSinceWindow(ctx, s.cfg.Store, s.cfg.ObserverDisabled, window, s.now())
+		rows, err = rowsSinceWindow(ctx, s.cfg.Store, s.cfg.ObserverDisabled, window, s.now(), s.queueState)
 		if err != nil {
 			writeStoreError(w, err)
 			return
@@ -327,7 +327,7 @@ func (s *Server) handleRunDetail(w http.ResponseWriter, r *http.Request, runID s
 		http.NotFound(w, r)
 		return
 	}
-	row, err := loadRunRow(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, runID)
+	row, err := loadRunRow(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, runID, s.queueState)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -641,7 +641,7 @@ func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	rows, err := rowsSinceWindow(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, window, s.now())
+	rows, err := rowsSinceWindow(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, window, s.now(), s.queueState)
 	if err != nil {
 		writeStoreError(w, err)
 		return

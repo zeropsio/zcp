@@ -7,7 +7,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -15,16 +17,46 @@ import (
 	"github.com/zeropsio/zcp/internal/eval/farm/console"
 )
 
-// runFarmConsole implements `zcp eval farm console --listen <addr>`
-// (docs/spec-eval-farm.md §8.1 FM-49): a long-lived HTTP server over the
-// farm bucket. It never holds an account-wide Zerops key (run state comes
-// from the bucket alone) — only the farm bucket credentials
-// (farm.ConfigFromEnv, ZCP_FARM_S3_*) and the console's own bearer/login
-// token (ZCP_FARM_CONSOLE_TOKEN, required — refuses to start without it,
-// never printed or logged). --claude (the observer worker's binary path)
-// arrives with S5.
+// observeTimeout is the observer's per-call budget (docs/spec-eval-farm.md
+// §7.4 FM-44: "Timeout: 5 minutes").
+const observeTimeout = 5 * time.Minute
+
+// observerKillSwitchEnabled reports ZCP_FARM_OBSERVER=off (§8.1, §8.5): the
+// console-wide kill switch, read once at startup.
+func observerKillSwitchEnabled() bool {
+	return os.Getenv("ZCP_FARM_OBSERVER") == console.ObserverOff
+}
+
+// resolveClaudePath resolves claudeFlag (the --claude value, default
+// "claude") to an absolute path via exec.LookPath + filepath.Abs (§7.4
+// FM-44: "made absolute ... before the child starts, because the child's
+// working directory is the empty temp dir"). Returns "" when it cannot be
+// resolved — the caller leaves the worker idle and the run/batch observe
+// actions answer 503 "observer unavailable" rather than failing every
+// observation (§8.5).
+func resolveClaudePath(claudeFlag string) string {
+	found, err := exec.LookPath(claudeFlag)
+	if err != nil {
+		return ""
+	}
+	abs, err := filepath.Abs(found)
+	if err != nil {
+		return ""
+	}
+	return abs
+}
+
+// runFarmConsole implements `zcp eval farm console --listen <addr> --claude
+// <path>` (docs/spec-eval-farm.md §8.1 FM-49): a long-lived HTTP server
+// over the farm bucket. It never holds an account-wide Zerops key (run
+// state comes from the bucket alone) — only the farm bucket credentials
+// (farm.ConfigFromEnv, ZCP_FARM_S3_*), the console's own bearer/login token
+// (ZCP_FARM_CONSOLE_TOKEN, required — refuses to start without it, never
+// printed or logged), and the observer's own CLAUDE_CODE_OAUTH_TOKEN
+// (§7.4), passed to the runner explicitly rather than inherited by the
+// child process.
 func runFarmConsole(args []string) int {
-	listen, err := parseConsoleArgs(args)
+	listen, claudeFlag, err := parseConsoleArgs(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 2
@@ -43,16 +75,42 @@ func runFarmConsole(args []string) int {
 	}
 	store := farm.NewSinkClient(sinkCfg)
 
-	observerDisabled := os.Getenv("ZCP_FARM_OBSERVER") == console.ObserverOff
+	killSwitch := observerKillSwitchEnabled()
+	oauthToken := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN")
+	credentialMissing := oauthToken == ""
+	claudePath := resolveClaudePath(claudeFlag)
+	claudeUnresolved := claudePath == ""
+	if claudeUnresolved {
+		fmt.Fprintf(os.Stderr, "warning: --claude %q could not be resolved; the observer worker stays idle (docs/spec-eval-farm.md §8.5 FM-53)\n", claudeFlag)
+	}
+
+	queue := console.NewQueue(console.NewBucketObserveFunc(store, console.BucketObserveConfig{
+		ClaudePath: claudePath,
+		OAuthToken: oauthToken,
+		Timeout:    observeTimeout,
+		Environ:    os.Environ,
+		Now:        time.Now,
+	}))
+	worker := console.NewWorker(console.WorkerConfig{
+		Bucket:   store,
+		Queue:    queue,
+		Disabled: killSwitch || credentialMissing || claudeUnresolved,
+	})
 
 	srv := console.NewServer(console.Config{
-		Store:            store,
-		Token:            token,
-		ObserverDisabled: observerDisabled,
+		Store:                        store,
+		Token:                        token,
+		ObserverDisabled:             killSwitch,
+		Queue:                        queue,
+		Worker:                       worker,
+		ObserverCredentialMissing:    credentialMissing,
+		ObserverClaudePathUnresolved: claudeUnresolved,
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	srv.StartWorker(ctx)
 
 	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", listen)
 	if err != nil {
@@ -81,20 +139,27 @@ func runFarmConsole(args []string) int {
 	return 0
 }
 
-func parseConsoleArgs(args []string) (listen string, err error) {
+func parseConsoleArgs(args []string) (listen, claude string, err error) {
 	listen = ":8080"
+	claude = "claude"
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch arg {
 		case "--listen":
 			if i+1 >= len(args) {
-				return "", fmt.Errorf("%s requires a value", arg)
+				return "", "", fmt.Errorf("%s requires a value", arg)
 			}
 			listen = args[i+1]
 			i++
+		case "--claude":
+			if i+1 >= len(args) {
+				return "", "", fmt.Errorf("%s requires a value", arg)
+			}
+			claude = args[i+1]
+			i++
 		default:
-			return "", fmt.Errorf("unknown flag %s", arg)
+			return "", "", fmt.Errorf("unknown flag %s", arg)
 		}
 	}
-	return listen, nil
+	return listen, claude, nil
 }
