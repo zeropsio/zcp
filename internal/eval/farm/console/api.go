@@ -359,6 +359,229 @@ func (s *Server) handleProblemsAPI(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, renderProblemsMD(items))
 }
 
+// --- §8.4's GET /api/digest.md ----------------------------------------------
+
+// digestByteBudget is §8.4's "one call, at most 8 KB" cap.
+const digestByteBudget = 8 * 1024
+
+// digestReserve is left unallocated to the problems/failed-runs sections so
+// the scope header, the unassessed-count line and a truncation note always
+// fit inside digestByteBudget once appended after the budgeted sections.
+const digestReserve = 300
+
+// DigestResponse is GET /api/digest.md's JSON twin (§8.4): the same,
+// possibly-truncated content the markdown carries.
+type DigestResponse struct {
+	Batches           []string           `json:"batches"`
+	Builds            []string           `json:"builds"`
+	VerdictCounts     []VerdictCountItem `json:"verdictCounts"`
+	CostUsd           float64            `json:"costUsd"`
+	CostUnknownN      int                `json:"costUnknownN"`
+	Problems          []ProblemItem      `json:"problems"`
+	OmittedProblems   int                `json:"omittedProblems,omitempty"`
+	FailedBlockedRuns []RunsListItem     `json:"failedBlockedRuns"`
+	OmittedFailedRuns int                `json:"omittedFailedRuns,omitempty"`
+	UnassessedCount   int                `json:"unassessedCount"`
+	Truncated         bool               `json:"truncated"`
+}
+
+// renderDigestHeader renders §8.4's scope header: batches, builds, verdict
+// counts, cost.
+func renderDigestHeader(batches, builds []string, vcs []VerdictCountItem, cost float64, costUnknownN int) string {
+	var b strings.Builder
+	b.WriteString(legendLine("Batch", "ZCP build", "Verdict", "Problem", "Severity", "Agent cost"))
+	fmt.Fprintf(&b, "# Digest\n\nbatches: %s\nbuilds: %s\n", strings.Join(batches, ", "), strings.Join(builds, ", "))
+	verdicts := make([]string, len(vcs))
+	for i, vc := range vcs {
+		verdicts[i] = fmt.Sprintf("%s:%d", vc.Verdict, vc.Count)
+	}
+	fmt.Fprintf(&b, "verdicts: %s\n", strings.Join(verdicts, " "))
+	cost1 := fmt.Sprintf("$%.2f", cost)
+	if costUnknownN > 0 {
+		cost1 += fmt.Sprintf(" (+%d unknown)", costUnknownN)
+	}
+	fmt.Fprintf(&b, "cost: %s\n", cost1)
+	return b.String()
+}
+
+// renderProblemDigestLine is one digest.md problem line (§8.4: "severity,
+// cause, surface, title, anchor, runs hit, status, where to look, fix, one
+// run link per problem with its finding anchor").
+func renderProblemDigestLine(p ProblemItem) string {
+	link := ""
+	if len(p.Members) > 0 {
+		link = p.Members[0].RunLink
+	}
+	return fmt.Sprintf("- [%s · %s] %s — %s — anchor %q — hit %d/%d runs on newest build — status %s — %s — fix: %s\n",
+		p.Severity, strings.Join(p.CauseLabels, ","), p.Title, p.Surface, p.Anchor,
+		p.HitOnNewestBuild, p.RunsAssessedOnNewest, p.Status, link, p.Fix)
+}
+
+// renderFailedRunDigestLine is one digest.md failed/blocked run line (§8.4:
+// "failed and blocked runs with their failed checks and headline").
+func renderFailedRunDigestLine(it RunsListItem) string {
+	var b strings.Builder
+	renderRunItemLine(&b, it)
+	return b.String()
+}
+
+// fitLinesInBudget keeps as many leading lines as fit within budget bytes,
+// returning the kept count and the number left over — §8.4's "truncation
+// is said, never silent" needs the omitted count, not just a hard cut.
+func fitLinesInBudget(budget int, lines []string) (kept, used, omitted int) {
+	for _, l := range lines {
+		if used+len(l) > budget {
+			return kept, used, len(lines) - kept
+		}
+		used += len(l)
+		kept++
+	}
+	return kept, used, 0
+}
+
+// handleDigest implements GET /api/digest.md?batch=<id> or ?since=<window>
+// (§8.4): one call, at most 8 KB, for "what did the farm find" — the scope
+// header, ranked problems (§8.6), failed/blocked runs, and the count of
+// finished runs not yet assessed. batch wins when both are given, like
+// /api/runs.md.
+func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	now := s.now()
+	q := r.URL.Query()
+
+	var rows []RunRow
+	var problemsRuns []ProblemsRun
+	var scopeBatches []string
+	var err error
+
+	if batch := q.Get("batch"); batch != "" {
+		if !farm.ValidBatchID(batch) {
+			http.NotFound(w, r)
+			return
+		}
+		manifest, mErr := loadManifest(ctx, s.cfg.Store, batch)
+		if mErr != nil {
+			writeStoreError(w, mErr)
+			return
+		}
+		rows, err = batchWindowRows(ctx, s.cfg.Store, s.cfg.ObserverDisabled, batch, s.queueState, s.runCache, s.summaryCache, s.logf)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		bc := newBatchContext(manifest)
+		for _, row := range rows {
+			problemsRuns = append(problemsRuns, ProblemsRun{Row: row, BatchSet: manifest.Set, BatchCreatedAt: bc.CreatedAt})
+		}
+		scopeBatches = []string{batch}
+	} else {
+		window, wErr := ParseWindow(q.Get("since"))
+		if wErr != nil {
+			http.Error(w, wErr.Error(), http.StatusBadRequest)
+			return
+		}
+		rows, err = rowsSinceWindow(ctx, s.cfg.Store, s.cfg.ObserverDisabled, window, now, s.queueState, s.runCache, s.summaryCache, s.logf)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		problemsRuns, err = s.problemsRunsSinceWindow(ctx, window, now)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		seen := make(map[string]bool)
+		for _, row := range rows {
+			if !seen[row.Batch] {
+				seen[row.Batch] = true
+				scopeBatches = append(scopeBatches, row.Batch)
+			}
+		}
+		sort.Strings(scopeBatches)
+	}
+
+	builds := make(map[string]bool)
+	verdictCounts := make(map[string]int)
+	var totalCost float64
+	costUnknownN, unassessed := 0, 0
+	var failedBlocked []RunsListItem
+	for _, row := range rows {
+		builds[row.Build.Label()] = true
+		verdictCounts[row.Verdict]++
+		totalCost += row.CostUsd
+		if !row.CostKnown {
+			costUnknownN++
+		}
+		if row.DoneExists && row.Observation == nil {
+			unassessed++
+		}
+		if row.Verdict == farm.VerdictFailed || row.Verdict == farm.VerdictBlocked {
+			failedBlocked = append(failedBlocked, runsListItemFromRow(row))
+		}
+	}
+	sort.SliceStable(failedBlocked, func(i, j int) bool { return failedBlocked[i].StartedAt.After(failedBlocked[j].StartedAt) })
+	buildList := make([]string, 0, len(builds))
+	for b := range builds {
+		buildList = append(buildList, b)
+	}
+	sort.Strings(buildList)
+
+	problems := BuildProblems(problemsRuns)
+	problemItems := make([]ProblemItem, len(problems))
+	for i, p := range problems {
+		problemItems[i] = problemItemFromProblem(p)
+	}
+
+	header := renderDigestHeader(scopeBatches, buildList, verdictCountItems(orderedVerdictCounts(verdictCounts)), totalCost, costUnknownN)
+	budget := digestByteBudget - len(header) - digestReserve
+	budget = max(budget, 0)
+
+	problemLines := make([]string, len(problemItems))
+	for i, p := range problemItems {
+		problemLines[i] = renderProblemDigestLine(p)
+	}
+	keptProblems, used, omittedProblems := fitLinesInBudget(budget, problemLines)
+
+	runLines := make([]string, len(failedBlocked))
+	for i, it := range failedBlocked {
+		runLines[i] = renderFailedRunDigestLine(it)
+	}
+	keptRuns, _, omittedRuns := fitLinesInBudget(budget-used, runLines)
+
+	var b strings.Builder
+	b.WriteString(header)
+	b.WriteString("\nProblems:\n")
+	for _, l := range problemLines[:keptProblems] {
+		b.WriteString(l)
+	}
+	if omittedProblems > 0 {
+		fmt.Fprintf(&b, "… %d more problem(s) not shown (truncated at %d bytes — see /api/problems.md)\n", omittedProblems, digestByteBudget)
+	}
+	b.WriteString("\nFailed/blocked runs:\n")
+	for _, l := range runLines[:keptRuns] {
+		b.WriteString(l)
+	}
+	if omittedRuns > 0 {
+		fmt.Fprintf(&b, "… %d more failed/blocked run(s) not shown (truncated at %d bytes — see /api/runs.md)\n", omittedRuns, digestByteBudget)
+	}
+	fmt.Fprintf(&b, "\nUnassessed: %d finished run(s) not yet assessed\n", unassessed)
+
+	truncated := omittedProblems > 0 || omittedRuns > 0
+
+	if isJSONRequest(r) {
+		writeJSON(w, DigestResponse{
+			Batches: scopeBatches, Builds: buildList, VerdictCounts: verdictCountItems(orderedVerdictCounts(verdictCounts)),
+			CostUsd: totalCost, CostUnknownN: costUnknownN,
+			Problems: problemItems[:keptProblems], OmittedProblems: omittedProblems,
+			FailedBlockedRuns: failedBlocked[:keptRuns], OmittedFailedRuns: omittedRuns,
+			UnassessedCount: unassessed, Truncated: truncated,
+		})
+		return
+	}
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	fmt.Fprint(w, b.String())
+}
+
 // --- §8.4 FM-52 JSON shapes ---
 
 // RunsListObservation is one runs-list row's "observation" field.

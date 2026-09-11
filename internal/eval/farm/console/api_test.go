@@ -599,6 +599,75 @@ func TestAPI_InvalidRunOrBatchIDRejected(t *testing.T) {
 	})
 }
 
+// TestAPI_Digest pins GET /api/digest.md?batch=<id> (§8.4): the scope
+// header (batches, builds, verdict counts, cost), ranked problems (§8.6),
+// failed/blocked runs with their failed checks and headline, the finished-
+// not-yet-assessed count, a leading legend line, and the 8 KB cap with
+// truncation said (never silent) once the content overflows it.
+func TestAPI_Digest(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "dg1", "claude-sonnet-5", []runFixture{
+		{
+			runID: "dg1-failing", scenario: "failing", startedAt: now.Add(-2 * time.Hour), durationS: "5s", costUsd: 1.0,
+			taskResult: "failed", done: true,
+			checks: [][5]string{{"chk/1", "failed", "1", "2", "results/verification.json"}},
+		},
+		{runID: "dg1-unassessed", scenario: "unassessed", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.5, taskResult: "passed", done: true},
+	}, true, map[string]string{"dg1-failing": "failed", "dg1-unassessed": "passed"})
+	seedObservation(t, store, fixtureObservation("dg1-failing"))
+
+	rr := doGET(t, h, "/api/digest.md?batch=dg1")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("got %d, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.HasPrefix(body, "Legend: ") {
+		t.Errorf("digest.md missing its leading legend line:\n%s", body)
+	}
+	if rr.Body.Len() > 8192 {
+		t.Errorf("digest.md exceeds 8 KB: %d bytes", rr.Body.Len())
+	}
+	for _, want := range []string{"dg1", "dg1-failing", "Tool returned stale data", "Agent completed the task cleanly", "Unassessed: 1"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("digest.md missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "truncated") {
+		t.Errorf("small digest should not report truncation:\n%s", body)
+	}
+
+	// Truncation: many runs, each with its own (format-1, so "solo") high
+	// finding, overflow the 8 KB cap — truncation must be said, and the
+	// body must still fit the cap.
+	runs := make([]runFixture, 0, 60)
+	summaryResults := map[string]string{}
+	for i := range 60 {
+		runID := fmt.Sprintf("dg2-r%02d", i)
+		runs = append(runs, runFixture{runID: runID, scenario: fmt.Sprintf("s%02d", i), startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true})
+		summaryResults[runID] = "passed"
+	}
+	seedBatch(t, store, "dg2", "claude-sonnet-5", runs, true, summaryResults)
+	for _, rf := range runs {
+		obs := fixtureObservation(rf.runID)
+		obs.ObsID = "20260911T120000000Z-" + rf.runID
+		seedObservation(t, store, obs)
+	}
+
+	rrTrunc := doGET(t, h, "/api/digest.md?batch=dg2")
+	if rrTrunc.Code != http.StatusOK {
+		t.Fatalf("got %d, body=%s", rrTrunc.Code, rrTrunc.Body.String())
+	}
+	if rrTrunc.Body.Len() > 8192 {
+		t.Errorf("truncated digest.md still exceeds 8 KB: %d bytes", rrTrunc.Body.Len())
+	}
+	if !strings.Contains(rrTrunc.Body.String(), "truncated") {
+		t.Errorf("overflowing digest.md must say it was truncated:\n%s", rrTrunc.Body.String())
+	}
+}
+
 // TestAPI_BatchesList pins GET /api/batches.md|.json (§8.4): the Overview's
 // batches table, filtered/sorted through the same query engine as the page
 // (§8.7's Overview-batches row), carrying a one-line legend (§8.8 FM-56) and
