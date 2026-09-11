@@ -59,7 +59,7 @@ type RunDescriptor struct {
 
 // ProjectName derives the run project's name from RunID — never passed in
 // separately (§2.1 "project zcp-farm-<runId>").
-func (d RunDescriptor) ProjectName() string { return "zcp-farm-" + d.RunID }
+func (d RunDescriptor) ProjectName() string { return ProjectPrefix + d.RunID }
 
 // serviceHostname is fixed: hostnames may not contain hyphens, so
 // "zcp-farm-<runId>" cannot be the service hostname (verified live).
