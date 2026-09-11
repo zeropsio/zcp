@@ -17,21 +17,51 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// RuntimeInputs carries the run-scoped evidence generateRequiredChecks needs
-// for the O6/O7/O8 oracles (docs/spec-eval-farm.md §4.4) that RunVerification
-// itself cannot derive from a platform observation alone:
+// RuntimeInputs carries the run-scoped evidence generateRequiredChecks and
+// generateAskWhenAdvisoryFindings need for the O6/O7/O8 oracles and the
+// askWhen decision row (docs/spec-eval-farm.md §4.4, §4.1 FM-31) that
+// RunVerification itself cannot derive from a platform observation alone:
 // LaunchTokenSHA256 is the hex sha256 of the run's ZCP_E2E_LAUNCH_KEY (hashed
 // once at the read site, never stored/logged/passed anywhere else, empty
 // when the env is absent); MCPStreamPaths are the run's captured
 // capture/mcp/zcp-<pid>.jsonl files (chronological order not required — every
 // consumer treats the set as one merged stream); TranscriptPath is the
-// scenario's transcript.jsonl. A zero-value RuntimeInputs is valid: every
-// consumer treats an empty field as "no evidence available" and blocks
-// rather than silently passing or omitting the row.
+// scenario's transcript.jsonl; UserSimTurns is the run's recorded user-sim
+// turns (BehavioralResult.UserSim.Turns), empty meaning none were recorded;
+// MutatingTools names the tools whose annotations mark them non-read-only —
+// eval/ may not import internal/tools directly (docs/spec-architecture.md's
+// package table: eval is a peer to tools), so the caller supplies this
+// precomputed set; empty means every call is treated as non-mutating. A
+// zero-value RuntimeInputs is valid: every consumer treats an empty field as
+// "no evidence available" and blocks rather than silently passing or
+// omitting the row.
 type RuntimeInputs struct {
 	LaunchTokenSHA256 string
 	MCPStreamPaths    []string
 	TranscriptPath    string
+	UserSimTurns      []UserSimTurn
+	MutatingTools     map[string]bool
+}
+
+// readRuntimeMCPCalls reads every path in mcpStreamPaths via capture.ReadMCPStream
+// — the same reader mcpToolCallTexts and evaluateNoFabricatedSecretRow use —
+// concatenating the resulting tool calls in path order. present is true once
+// at least one path is read without error; a path that fails to read is
+// skipped (best-effort, matching RuntimeInputs's "empty evidence blocks
+// rather than fails" contract). present stays false only when every path
+// failed or mcpStreamPaths is empty — the "no captured MCP stream" case
+// EvaluateNeverRows and EvaluateAskWhenRows block on rather than silently
+// pass.
+func readRuntimeMCPCalls(mcpStreamPaths []string) (calls []capture.MCPToolCall, present bool) {
+	for _, path := range mcpStreamPaths {
+		fileCalls, err := capture.ReadMCPStream(path)
+		if err != nil {
+			continue
+		}
+		present = true
+		calls = append(calls, fileCalls...)
+	}
+	return calls, present
 }
 
 // readTranscriptText reads path's full contents for the O6
@@ -136,6 +166,7 @@ func runVerificationWithObservation(
 	}
 	rows := generateRequiredChecks(ctx, sc, observation, httpDoer, runStart, projectID, client, settled, baseline, runtime)
 	findings := projectRowsToFindings(rows)
+	findings = append(findings, generateAskWhenAdvisoryFindings(sc, runtime, observation.observedAt)...)
 	findings = append(findings, retrospectivePhraseFindings(sc, retrospectiveText)...)
 	return findings
 }
@@ -234,7 +265,29 @@ func generateRequiredChecks(
 	for _, entry := range sc.Verification.ArtifactPromotion {
 		rows = append(rows, evaluateArtifactPromotionRows(ctx, entry, client, projectID, runStart, baseline)...)
 	}
+	if len(sc.Verification.Never) > 0 {
+		calls, present := readRuntimeMCPCalls(runtime.MCPStreamPaths)
+		rows = append(rows, EvaluateNeverRows(sc.Verification.Never, calls, present, observation.observedAt)...)
+	}
 	return rows
+}
+
+// generateAskWhenAdvisoryFindings evaluates every verification.askWhen entry
+// (FM-31) and projects the resulting rows into the legacy advisory finding
+// shape (projectRowsToFindings) — advisory-only, kept deliberately OUT of
+// generateRequiredChecks's return value: that slice is what callers pass
+// straight into aggregateTaskResult (behavioral_run.go), and an askWhen row
+// mixed into it would gate the task result the moment any Result is
+// CheckFailed, contradicting FM-31 ("never contributes to the scenario's
+// aggregated result"). Returns nil when the scenario declares no askWhen
+// entries.
+func generateAskWhenAdvisoryFindings(sc *Scenario, runtime RuntimeInputs, now time.Time) []VerificationFinding {
+	if sc == nil || sc.Verification == nil || len(sc.Verification.AskWhen) == 0 {
+		return nil
+	}
+	calls, present := readRuntimeMCPCalls(runtime.MCPStreamPaths)
+	observations := BuildAskWhenObservations(sc.Verification.AskWhen, calls, runtime.UserSimTurns, runtime.MutatingTools)
+	return projectRowsToFindings(EvaluateAskWhenRows(observations, present, now))
 }
 
 // evaluateUnchangedFieldRow grades one entry of the standalone
