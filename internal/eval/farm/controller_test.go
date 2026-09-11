@@ -97,6 +97,24 @@ type fakeAccount struct {
 	// actionName instead of the "stack.create" default (R1's own-import
 	// test uses "stack.import").
 	failedCreationProcessAction string
+
+	// failScopedMint, when true, makes exactly the project-scoped run-token
+	// mint (a POST /integration-token body carrying a non-empty
+	// "projects" array — MintProjectScopedToken's own shape, distinct from
+	// MintDelegatedLaunchToken's) answer 500 instead of minting — used to
+	// simulate a non-403 mint failure that still leaves a rollback to
+	// attempt (TestFarmRun_RollbackFailure_KeepsProjectIDAndError). Never
+	// interferes with mintForbiddenCode's own 403 simulation, which is
+	// keyed on the same endpoint but a different (launch-token) request
+	// shape.
+	failScopedMint bool
+
+	// failDeleteProjectName, when non-empty, makes DELETE
+	// /project/{id} for exactly this project name answer 500 instead of
+	// deleting — used to simulate Guard's rollback DeleteProject call
+	// itself failing (TestFarmRun_RollbackFailure_KeepsProjectIDAndError,
+	// R6).
+	failDeleteProjectName string
 }
 
 type fakeProject struct{ id, name string }
@@ -207,20 +225,7 @@ func (f *fakeAccount) handle(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/client/"+f.clientID+"/integration-token":
-		f.mu.Lock()
-		forbiddenCode := f.mintForbiddenCode
-		f.mu.Unlock()
-		if forbiddenCode != "" {
-			w.WriteHeader(http.StatusForbidden)
-			fmt.Fprintf(w, `{"error":{"code":%q,"message":"forbidden"}}`, forbiddenCode)
-			return
-		}
-		f.mu.Lock()
-		f.nextTok++
-		tokID := fmt.Sprintf("tok-%d", f.nextTok)
-		f.tokens[tokID] = true
-		f.mu.Unlock()
-		fmt.Fprintf(w, `{"id":%q,"token":"launch-secret-%s"}`, tokID, tokID)
+		f.handleIntegrationTokenMint(w, r)
 		return
 
 	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/rest/public/client/"+f.clientID+"/integration-token/"):
@@ -258,55 +263,113 @@ func (f *fakeAccount) handle(w http.ResponseWriter, r *http.Request) {
 
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/rest/public/project/") && strings.HasSuffix(r.URL.Path, "/process"):
 		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/rest/public/project/"), "/process")
-		f.mu.Lock()
-		p, ok := f.projects[id]
-		failName := f.failedCreationProcessProjectName
-		failService := f.failedCreationProcessServiceName
-		failAction := f.failedCreationProcessAction
-		f.mu.Unlock()
-		if !ok {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		if failName != "" && p.name == failName {
-			action := failAction
-			if action == "" {
-				action = "stack.create"
-			}
-			serviceStacks := "[]"
-			if failService != "" {
-				serviceStacks = fmt.Sprintf(`[{"name":%q}]`, failService)
-			}
-			fmt.Fprintf(w, `{"list":[{"id":"proc-create-fail","actionName":%q,"status":"FAILED","serviceStacks":%s,"publicMeta":{"failReason":"internalServerError"}}],"totalCount":1}`, action, serviceStacks)
-			return
-		}
-		fmt.Fprint(w, `{"list":[],"totalCount":0}`)
+		f.handleProjectProcessList(w, id)
 		return
 
 	case strings.HasPrefix(r.URL.Path, "/api/rest/public/project/"):
 		id := strings.TrimPrefix(r.URL.Path, "/api/rest/public/project/")
-		f.mu.Lock()
-		p, ok := f.projects[id]
-		f.mu.Unlock()
-		if !ok {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		switch r.Method {
-		case http.MethodGet:
-			fmt.Fprintf(w, `{"id":%q,"name":%q,"status":"ACTIVE"}`, p.id, p.name)
-			return
-		case http.MethodDelete:
-			f.mu.Lock()
-			delete(f.projects, id)
-			f.mu.Unlock()
-			fmt.Fprintf(w, `{"id":"proc-%s","status":"FINISHED"}`, id)
-			return
-		}
+		f.handleProjectByID(w, r, id)
+		return
 	}
 
 	f.t.Errorf("fakeAccount: unexpected request %s %s", r.Method, r.URL.Path)
 	w.WriteHeader(http.StatusNotFound)
+}
+
+// handleIntegrationTokenMint serves POST .../integration-token for both
+// MintDelegatedLaunchToken (an empty "projects" array) and
+// MintProjectScopedToken (a non-empty one) — split out of handle to keep
+// its cyclomatic complexity (maintidx) within budget.
+func (f *fakeAccount) handleIntegrationTokenMint(w http.ResponseWriter, r *http.Request) {
+	var mintBody struct {
+		Projects []struct {
+			ProjectID string `json:"projectId"`
+		} `json:"projects"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&mintBody); err != nil {
+		f.t.Errorf("fakeAccount: decode integration-token body: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	isScopedMint := len(mintBody.Projects) > 0
+
+	f.mu.Lock()
+	forbiddenCode := f.mintForbiddenCode
+	failScoped := f.failScopedMint
+	f.mu.Unlock()
+	if isScopedMint && failScoped {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error":{"code":"internalServerError","message":"simulated scoped mint failure"}}`)
+		return
+	}
+	if forbiddenCode != "" {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprintf(w, `{"error":{"code":%q,"message":"forbidden"}}`, forbiddenCode)
+		return
+	}
+	f.mu.Lock()
+	f.nextTok++
+	tokID := fmt.Sprintf("tok-%d", f.nextTok)
+	f.tokens[tokID] = true
+	f.mu.Unlock()
+	fmt.Fprintf(w, `{"id":%q,"token":"launch-secret-%s"}`, tokID, tokID)
+}
+
+// handleProjectProcessList serves GET /project/{id}/process — split out of
+// handle to keep its cyclomatic complexity (maintidx) within budget.
+func (f *fakeAccount) handleProjectProcessList(w http.ResponseWriter, id string) {
+	f.mu.Lock()
+	p, ok := f.projects[id]
+	failName := f.failedCreationProcessProjectName
+	failService := f.failedCreationProcessServiceName
+	failAction := f.failedCreationProcessAction
+	f.mu.Unlock()
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	if failName != "" && p.name == failName {
+		action := failAction
+		if action == "" {
+			action = "stack.create"
+		}
+		serviceStacks := "[]"
+		if failService != "" {
+			serviceStacks = fmt.Sprintf(`[{"name":%q}]`, failService)
+		}
+		fmt.Fprintf(w, `{"list":[{"id":"proc-create-fail","actionName":%q,"status":"FAILED","serviceStacks":%s,"publicMeta":{"failReason":"internalServerError"}}],"totalCount":1}`, action, serviceStacks)
+		return
+	}
+	fmt.Fprint(w, `{"list":[],"totalCount":0}`)
+}
+
+// handleProjectByID serves GET/DELETE /project/{id} — split out of handle
+// to keep its cyclomatic complexity (maintidx) within budget.
+func (f *fakeAccount) handleProjectByID(w http.ResponseWriter, r *http.Request, id string) {
+	f.mu.Lock()
+	p, ok := f.projects[id]
+	f.mu.Unlock()
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		fmt.Fprintf(w, `{"id":%q,"name":%q,"status":"ACTIVE"}`, p.id, p.name)
+	case http.MethodDelete:
+		f.mu.Lock()
+		failDeleteName := f.failDeleteProjectName
+		f.mu.Unlock()
+		if failDeleteName != "" && p.name == failDeleteName {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"error":{"code":"internalServerError","message":"simulated delete failure"}}`)
+			return
+		}
+		f.mu.Lock()
+		delete(f.projects, id)
+		f.mu.Unlock()
+		fmt.Fprintf(w, `{"id":"proc-%s","status":"FINISHED"}`, id)
+	}
 }
 
 // controllerFixture bundles one test's fakes — a struct, not a positional
@@ -1665,5 +1728,56 @@ func TestFarmRun_LaunchTokenRevokedWhenCreateFails(t *testing.T) {
 		if !stillValid {
 			t.Errorf("results[0].LaunchTokenID = %q is recorded but the fake already revoked it — recording only belongs on a failed revoke", results[0].LaunchTokenID)
 		}
+	}
+}
+
+// TestFarmRun_RollbackFailure_KeepsProjectIDAndError pins R6: when a
+// per-run failure after project creation triggers a Guard rollback and that
+// rollback's DeleteProject itself fails, the blocked result keeps the
+// leaked project's id (never "") and names the rollback failure in Error —
+// so the leak is visible instead of looking like the project was already
+// cleaned up.
+func TestFarmRun_RollbackFailure_KeepsProjectIDAndError(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-24-r6"
+	f := newControllerFixture(t, clientID)
+	account, client, sink := f.account, f.client, f.sink
+
+	batch := "batch-24-r6"
+	sc := ScenarioRun{ID: "recipe-rollback-fail"}
+	runID := batch + "-" + sc.ID
+	runProjectName := ProjectPrefix + runID
+
+	account.mu.Lock()
+	account.failScopedMint = true
+	account.failDeleteProjectName = runProjectName
+	account.mu.Unlock()
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget: time.Second, PollInterval: time.Millisecond,
+	}
+
+	results, err := RunBatch(context.Background(), client, sink, opts)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if len(results) != 1 || results[0].Result != ResultBlocked {
+		t.Fatalf("results = %+v, want one blocked entry", results)
+	}
+	if results[0].ProjectID == "" {
+		t.Errorf("results[0].ProjectID empty, want the leaked project's id kept (rollback failed)")
+	}
+	if !strings.Contains(results[0].Error, "rollback failed") {
+		t.Errorf("results[0].Error = %q, want it to mention the rollback failure", results[0].Error)
+	}
+	account.mu.Lock()
+	stillExists := findProjectByFakeName(account, runProjectName)
+	account.mu.Unlock()
+	if !stillExists {
+		t.Errorf("project %s not present in fakeAccount, want it still there (rollback DELETE failed)", runProjectName)
 	}
 }

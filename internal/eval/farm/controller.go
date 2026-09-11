@@ -307,14 +307,14 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 	// (brief: "a mint 403 aborts the batch before any project exists").
 	minted, err := client.MintProjectScopedToken(ctx, opts.ClientID, result.ProjectID, "farm-run-"+r.RunID)
 	if err != nil {
-		_ = Guard(ctx, client, result.ProjectID, runProjectName)
 		if isScopedMintForbidden(err) {
+			_ = Guard(ctx, client, result.ProjectID, runProjectName)
 			if launchTokenID != "" {
 				_ = client.RevokeIntegrationToken(ctx, opts.ClientID, launchTokenID)
 			}
 			return nil, nil, fmt.Errorf("farm run: mint run token for %s: %w", r.RunID, err)
 		}
-		rr := recordBlockedRevokingLaunchToken(ctx, client, opts, r, launchTokenID, fmt.Errorf("mint run token: %w", err))
+		rr := recordBlockedAfterRollback(ctx, client, opts, r, result.ProjectID, runProjectName, launchTokenID, fmt.Errorf("mint run token: %w", err))
 		return nil, &rr, nil
 	}
 	desc.RunToken = minted.Token
@@ -323,13 +323,11 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 	// token as ZCP_API_KEY.
 	serviceYAML, err := ServiceImportYAML(desc)
 	if err != nil {
-		_ = Guard(ctx, client, result.ProjectID, runProjectName)
-		rr := recordBlockedRevokingLaunchToken(ctx, client, opts, r, launchTokenID, fmt.Errorf("build service import yaml: %w", err))
+		rr := recordBlockedAfterRollback(ctx, client, opts, r, result.ProjectID, runProjectName, launchTokenID, fmt.Errorf("build service import yaml: %w", err))
 		return nil, &rr, nil
 	}
 	if _, err := client.ImportServiceStack(ctx, result.ProjectID, string(serviceYAML)); err != nil {
-		_ = Guard(ctx, client, result.ProjectID, runProjectName)
-		rr := recordBlockedRevokingLaunchToken(ctx, client, opts, r, launchTokenID, fmt.Errorf("import service stack: %w", err))
+		rr := recordBlockedAfterRollback(ctx, client, opts, r, result.ProjectID, runProjectName, launchTokenID, fmt.Errorf("import service stack: %w", err))
 		return nil, &rr, nil
 	}
 
@@ -342,18 +340,46 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 }
 
 // recordBlockedRevokingLaunchToken is recordBlocked plus R2 (FM-23): a
-// per-run creation failure still leaves a launch scenario's already-minted
-// token dangling unless it is revoked right now; if the revoke itself
-// fails, the id is kept on the result so RunBatch's end-of-batch
-// manifest/summary pass and `gc` can finish the job later.
+// per-run failure BEFORE any project was created still leaves a launch
+// scenario's already-minted token dangling unless it is revoked right now;
+// if the revoke itself fails, the id is kept on the result so RunBatch's
+// end-of-batch manifest/summary pass and `gc` can finish the job later.
 func recordBlockedRevokingLaunchToken(ctx context.Context, client PlatformClient, opts RunOptions, r scheduledRun, launchTokenID string, err error) RunResult {
 	rr := recordBlocked(r.RunID, r.ID, err)
-	if launchTokenID != "" {
-		if revokeErr := client.RevokeIntegrationToken(ctx, opts.ClientID, launchTokenID); revokeErr != nil {
-			rr.LaunchTokenID = launchTokenID
-		}
-	}
+	revokeLaunchTokenOnto(ctx, client, opts, launchTokenID, &rr)
 	return rr
+}
+
+// recordBlockedAfterRollback is recordBlocked plus R6 and R2: it rolls the
+// just-created project shell back through Guard first — on a rollback
+// failure it keeps rr.ProjectID (the leaked project, instead of the "" that
+// makes the summary look like it was already cleaned up) and appends the
+// guard's own error to rr.Error, so the leak is visible instead of silently
+// discarded — then revokes the run's launch token, if any, recording its id
+// back onto rr when that revoke itself fails (FM-23).
+func recordBlockedAfterRollback(ctx context.Context, client PlatformClient, opts RunOptions, r scheduledRun, projectID, projectName, launchTokenID string, err error) RunResult {
+	rollbackErr := Guard(ctx, client, projectID, projectName)
+	rr := recordBlocked(r.RunID, r.ID, err)
+	if rollbackErr != nil {
+		rr.ProjectID = projectID
+		rr.Error = fmt.Sprintf("%s; rollback failed: %v", rr.Error, rollbackErr)
+	}
+	revokeLaunchTokenOnto(ctx, client, opts, launchTokenID, &rr)
+	return rr
+}
+
+// revokeLaunchTokenOnto revokes launchTokenID immediately (a no-op when
+// empty — not a launch scenario, or the token was never minted); on failure
+// it records the id on rr instead of dropping it, so RunBatch's
+// end-of-batch manifest/summary pass and `gc` can finish the revoke once
+// the project is gone (R2, FM-23).
+func revokeLaunchTokenOnto(ctx context.Context, client PlatformClient, opts RunOptions, launchTokenID string, rr *RunResult) {
+	if launchTokenID == "" {
+		return
+	}
+	if err := client.RevokeIntegrationToken(ctx, opts.ClientID, launchTokenID); err != nil {
+		rr.LaunchTokenID = launchTokenID
+	}
 }
 
 // RunBatch runs opts.Scenarios as one batch (§3.3 FM-21/FM-22): it writes
