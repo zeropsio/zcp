@@ -1344,3 +1344,27 @@ func TestFarmRun_FailedCreationProcess_SettlesBlockedBeforeBudget(t *testing.T) 
 		t.Errorf("project %s still present after a FAILED creation-phase settle", ProjectPrefix+runID)
 	}
 }
+
+// TestRecomputePartDigest_RejectsPathEscape pins R4b: a bucket key whose
+// relative path (against its runs/<runId>/<part>/ prefix) escapes upward —
+// e.g. runs/<runId>/results/../../x, indistinguishable at the S3 layer from
+// any other key string — is rejected before either downloading it or
+// joining it into the verification temp dir, instead of being written
+// outside that dir.
+func TestRecomputePartDigest_RejectsPathEscape(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-24-r4b"
+	f := newControllerFixture(t, clientID)
+	fake, sink := f.s3, f.sink
+
+	runID := "run-r4b"
+	escapeKey := "runs/" + runID + "/results/../../x"
+	fake.mu.Lock()
+	fake.objects[escapeKey] = []byte("evil")
+	fake.mu.Unlock()
+
+	_, err := recomputePartDigest(context.Background(), sink, runID, "results")
+	if err == nil {
+		t.Fatal("recomputePartDigest: want an error for a path-escaping key, got nil")
+	}
+}

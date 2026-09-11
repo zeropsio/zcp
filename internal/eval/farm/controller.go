@@ -673,7 +673,11 @@ func blockingCheckDetail(ctx context.Context, sink *SinkClient, verificationKey,
 // recomputePartDigest downloads every object under runs/<runId>/<part>/ to a
 // temp dir and returns farm.TreeDigest over it — the independent recompute
 // FM-5 requires, never inferred from done.json's own claim or from listing
-// order.
+// order. R4b: a bucket key's relative path is untrusted input (the bucket is
+// shared read/write across every run in this account, FM-8) — a key like
+// runs/<runId>/results/../../x would otherwise join outside dir, so any key
+// whose cleaned relative path is absolute or escapes upward is rejected
+// before either the download or the write.
 func recomputePartDigest(ctx context.Context, sink *SinkClient, runID, part string) (string, error) {
 	prefix := "runs/" + runID + "/" + part + "/"
 	keys, err := sink.List(ctx, prefix)
@@ -686,12 +690,16 @@ func recomputePartDigest(ctx context.Context, sink *SinkClient, runID, part stri
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	for _, key := range keys {
+		rel := strings.TrimPrefix(key, prefix)
+		cleaned := filepath.Clean(filepath.FromSlash(rel))
+		if filepath.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("recompute digest: key %q resolves outside %s", key, prefix)
+		}
 		objBody, err := sink.Get(ctx, key)
 		if err != nil {
 			return "", err
 		}
-		rel := strings.TrimPrefix(key, prefix)
-		dest := filepath.Join(dir, filepath.FromSlash(rel))
+		dest := filepath.Join(dir, cleaned)
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return "", err
 		}
