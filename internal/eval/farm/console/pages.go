@@ -294,9 +294,12 @@ type noticeView struct{ Text string }
 func noticeFromQuery(q url.Values) *noticeView {
 	switch q.Get("notice") {
 	case "queued":
-		n, _ := strconv.Atoi(q.Get("n"))
-		if n < 1 {
+		n, err := strconv.Atoi(q.Get("n"))
+		if err != nil || n < 0 {
 			n = 1
+		}
+		if n == 0 {
+			return &noticeView{Text: "Nothing needed an assessment — every finished run already has one."}
 		}
 		plural := "s"
 		if n == 1 {

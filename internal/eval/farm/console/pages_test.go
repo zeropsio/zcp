@@ -716,6 +716,7 @@ func TestPages_NoticeCodesRendered(t *testing.T) {
 	}{
 		{"?notice=queued&n=3", "Queued 3 runs for assessment.", ""},
 		{"?notice=queued&n=1", "Queued 1 run for assessment.", ""},
+		{"?notice=queued&n=0", "Nothing needed an assessment — every finished run already has one.", ""},
 		{"?notice=busy", "Already queued or running", ""},
 		{"?notice=not-finished", "hasn't finished yet", ""},
 		{"?notice=bad-model", "isn't one of the ones this console supports", ""},
