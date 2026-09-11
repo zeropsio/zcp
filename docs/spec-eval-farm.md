@@ -771,10 +771,16 @@ reads `<run-dir>/../summary.json` when present (a `farm pull --batch` layout),
 else `meta.json`. The console and the observer use this one rule. A run
 without `done.json` has no verdict and is never observed.
 
-**FM-46. Quote check.** An evidence entry is `verified` iff its `quote`, with
-every whitespace run collapsed to one space, is a substring of the cited
-step's full, untruncated text (a `tool` step's text is its input JSON plus its
-result, §7.3) collapsed the same way. A step number outside the run is unverified.
+**FM-46. Quote check.** An evidence entry is `verified` iff its `quote` is a
+substring of the cited step's full, untruncated text (a `tool` step's text is
+its input JSON plus its result, §7.3) once both are normalized: JSON string
+escape sequences (`\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`, `\uXXXX`) are
+decoded — ZCP's tool results are JSON text, so the agent saw `\"x\"` and
+`\u003c` where the model quotes `"x"` and `<` — and every whitespace run is
+collapsed to one space; the plain collapsed comparison counts as well. Step 0
+names the digest's `CHECKS` section: the prompt tells the model to cite a
+deterministic check as step 0, and a step-0 quote is verified against the
+rendered `CHECKS` text. Any other step number outside the run is unverified.
 Every surface that shows an observation shows its unverified-quote count.
 
 ### 7.6 Writers and immutability
