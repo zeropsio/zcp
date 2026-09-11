@@ -181,7 +181,7 @@ func buildObservation(ctx context.Context, runDir, model, claudePath string) obs
 	obs.Goal = ans.Goal
 	obs.Checks = ans.Checks
 	obs.Checks.Verdict = verdict // never the model's own opinion (§7.5)
-	obs.Findings = observer.VerifyEvidence(steps, ans.Findings)
+	obs.Findings = observer.VerifyEvidence(steps, observer.ChecksBody(verification.Checks), ans.Findings)
 	obs.SelfReview = ans.SelfReview
 	return obs
 }

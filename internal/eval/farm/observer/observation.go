@@ -3,8 +3,11 @@ package observer
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf16"
 )
 
 // ObservationFormat1 is the formatVersion of the stored observation
@@ -195,8 +198,17 @@ func balancedObjectEnd(s string) (int, bool) {
 
 // verifyQuote implements §7.5 FM-46: quote (whitespace-collapsed) must be a
 // substring of the cited step's full, untruncated text (collapsed the same
-// way). A step number outside the run [1,len(steps)] is always unverified.
-func verifyQuote(steps []Step, stepNum int, quote string) bool {
+// way) — either as-is, or with both sides' JSON string escapes decoded
+// first (a tool step's text is raw, undecoded JSON, so a quoted value's
+// `"`/`<`/newline can appear in it as `\"`/`<`/`\n`; the model quotes
+// the decoded characters — live-verified against real final1 bundles).
+// Step 0 cites the rendered CHECKS section instead of a step (the model's
+// only way to point at a deterministic check row). A step number outside
+// 0..len(steps) is always unverified.
+func verifyQuote(steps []Step, checksBody string, stepNum int, quote string) bool {
+	if stepNum == 0 {
+		return quoteMatches(checksBody, quote)
+	}
 	idx := stepNum - 1
 	if idx < 0 || idx >= len(steps) {
 		return false
@@ -206,17 +218,118 @@ func verifyQuote(steps []Step, stepNum int, quote string) bool {
 	if step.Kind == StepTool {
 		full = step.ToolInputJSON + step.ToolResultText
 	}
-	return strings.Contains(collapseWhitespace(full), collapseWhitespace(quote))
+	return quoteMatches(full, quote)
+}
+
+// quoteMatches is the substring check verifyQuote applies to one (full,
+// quote) pair: whitespace-collapsed as-is, or — failing that —
+// whitespace-collapsed after JSON-string-escape-decoding both sides.
+func quoteMatches(full, quote string) bool {
+	if strings.Contains(collapseWhitespace(full), collapseWhitespace(quote)) {
+		return true
+	}
+	return strings.Contains(collapseWhitespace(decodeJSONEscapes(full)), collapseWhitespace(decodeJSONEscapes(quote)))
+}
+
+// decodeJSONEscapes decodes JSON string escape sequences (`\"` `\\` `\/`
+// `\b` `\f` `\n` `\r` `\t` `\uXXXX`, including surrogate pairs) found
+// anywhere in s. Unlike json.Unmarshal, s need not be (and generally isn't)
+// a complete, quoted JSON string — it is a step's raw JSON text, decoded
+// best-effort in place: an unrecognized or truncated escape is copied
+// through unchanged rather than erroring.
+func decodeJSONEscapes(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	n := len(s)
+	for i := 0; i < n; {
+		c := s[i]
+		if c != '\\' || i+1 >= n {
+			b.WriteByte(c)
+			i++
+			continue
+		}
+		switch s[i+1] {
+		case '"':
+			b.WriteByte('"')
+			i += 2
+		case '\\':
+			b.WriteByte('\\')
+			i += 2
+		case '/':
+			b.WriteByte('/')
+			i += 2
+		case 'b':
+			b.WriteByte('\b')
+			i += 2
+		case 'f':
+			b.WriteByte('\f')
+			i += 2
+		case 'n':
+			b.WriteByte('\n')
+			i += 2
+		case 'r':
+			b.WriteByte('\r')
+			i += 2
+		case 't':
+			b.WriteByte('\t')
+			i += 2
+		case 'u':
+			r, width, ok := decodeUnicodeEscape(s[i:])
+			if !ok {
+				b.WriteByte(c)
+				i++
+				continue
+			}
+			b.WriteRune(r)
+			i += width
+		default:
+			b.WriteByte(c)
+			i++
+		}
+	}
+	return b.String()
+}
+
+// decodeUnicodeEscape decodes one `\uXXXX` escape at the start of s (and,
+// when it is a UTF-16 high surrogate immediately followed by a matching
+// `\uXXXX` low surrogate, both together), returning the decoded rune, the
+// byte width consumed from s, and whether decoding succeeded.
+func decodeUnicodeEscape(s string) (rune, int, bool) {
+	if len(s) < 6 {
+		return 0, 0, false
+	}
+	r1, ok := parseHex4(s[2:6])
+	if !ok {
+		return 0, 0, false
+	}
+	if utf16.IsSurrogate(r1) && len(s) >= 12 && s[6] == '\\' && s[7] == 'u' {
+		if r2, ok := parseHex4(s[8:12]); ok {
+			if combined := utf16.DecodeRune(r1, r2); combined != unicode.ReplacementChar {
+				return combined, 12, true
+			}
+		}
+	}
+	return r1, 6, true
+}
+
+// parseHex4 parses a 4-hex-digit `\u` escape body into its rune value.
+func parseHex4(s string) (rune, bool) {
+	v, err := strconv.ParseUint(s, 16, 32)
+	if err != nil {
+		return 0, false
+	}
+	return rune(v), true
 }
 
 // VerifyEvidence sets Verified on every finding's evidence entries, against
-// steps (the run's own, untruncated record — §7.5 FM-46). Mutates and
-// returns findings for convenient chaining.
-func VerifyEvidence(steps []Step, findings []Finding) []Finding {
+// steps (the run's own, untruncated record) and checksBody (the rendered
+// CHECKS section, for a step-0 citation) — §7.5 FM-46. Mutates and returns
+// findings for convenient chaining.
+func VerifyEvidence(steps []Step, checksBody string, findings []Finding) []Finding {
 	for fi := range findings {
 		for ei := range findings[fi].Evidence {
 			ev := &findings[fi].Evidence[ei]
-			ev.Verified = verifyQuote(steps, ev.Step, ev.Quote)
+			ev.Verified = verifyQuote(steps, checksBody, ev.Step, ev.Quote)
 		}
 	}
 	return findings

@@ -85,13 +85,22 @@ func TestObservation_InvalidAnswerIsUnparsedWithRaw(t *testing.T) {
 // TestObservation_QuoteCheck pins §7.5 FM-46: an evidence entry is verified
 // iff its quote, whitespace-collapsed, is a substring of the cited step's
 // full untruncated text (a tool step's text is its input JSON plus its
-// result), collapsed the same way. A step number outside the run is
+// result), collapsed the same way — trying both the plain text and its
+// JSON-string-escapes-decoded form (a tool step's text is raw JSON, so a
+// quoted value's `"`/`<`/newline can appear as `\"`/`<`/`\n` in the
+// step; the model quotes the decoded characters — live-verified against
+// real final1 bundles, e.g. cross-deploy step 12 `service \"appdev\" there`,
+// recover step 65 `/var/www/<hostname>/`). Step 0 cites the
+// rendered CHECKS section instead of a step. A step number outside 0..N is
 // unverified.
 func TestObservation_QuoteCheck(t *testing.T) {
 	steps := []Step{
 		{N: 1, Kind: StepUser, Text: "fix the  api\nservice"},
 		{N: 2, Kind: StepTool, ToolName: "zerops_import", ToolInputJSON: `{"override":true,"tag":"<b>&x</b>"}`, ToolHasResult: true, ToolResultText: "DIAGNOSIS_REQUIRED"},
+		{N: 3, Kind: StepTool, ToolName: "zerops_discover", ToolHasResult: true, ToolResultText: `{"note":"service \"appdev\" there","path":"/var/www/\u003chostname\u003e/","log":"line1\nline2"}`},
 	}
+	checksBody := `liveness/api/marker failed expected="body contains python" observed="marker not found" source=HTTP`
+
 	cases := []struct {
 		name  string
 		step  int
@@ -101,16 +110,20 @@ func TestObservation_QuoteCheck(t *testing.T) {
 		{"verbatim", 1, "fix the  api\nservice", true},
 		{"differs only in whitespace", 1, "fix the api service", true},
 		{"not in step", 1, "delete the project", false},
-		{"step 0", 0, "fix", false},
 		{"step past end", 99, "fix", false},
 		{"quote spans a tool's input JSON", 2, `"override":true,"tag"`, true},
 		{"input containing < > & matches unescaped", 2, `<b>&x</b>`, true},
+		{"decoded escaped quote matches the real quote mark", 3, `"appdev"`, true},
+		{"decoded \\u unicode escape matches the real angle brackets", 3, "<hostname>", true},
+		{"decoded \\n in the step matches a plain space in the quote", 3, "line1 line2", true},
+		{"step 0 quote present in CHECKS is verified", 0, `expected="body contains python"`, true},
+		{"step 0 quote absent from CHECKS is unverified", 0, "totally unrelated text", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := verifyQuote(steps, tc.step, tc.quote)
+			got := verifyQuote(steps, checksBody, tc.step, tc.quote)
 			if got != tc.want {
-				t.Errorf("verifyQuote(steps, %d, %q) = %v, want %v", tc.step, tc.quote, got, tc.want)
+				t.Errorf("verifyQuote(steps, checksBody, %d, %q) = %v, want %v", tc.step, tc.quote, got, tc.want)
 			}
 		})
 	}

@@ -50,6 +50,42 @@ func TestRender_Golden(t *testing.T) {
 				"Self-review: partly — claims success but liveness check failed\n",
 		},
 		{
+			// A quote copied verbatim from a step can carry a real newline
+			// (a multi-line tool result); rendered as-is it breaks the
+			// Evidence line's layout (observed live: `#39 "Phase: idle
+			// Services: …"` spanning two lines). Collapsed to a space for
+			// display only — the stored Evidence.Quote is untouched.
+			name: "evidence quote with a newline is collapsed for display",
+			obs: Observation{
+				Model: "claude-sonnet-5", CreatedAt: goldenCreatedAt, Status: "ok",
+				Headline: "Agent misread multi-line platform state.",
+				Goal:     Goal{Reached: "no", Why: "agent never noticed the failed service"},
+				Checks:   Checks{Verdict: "failed", Agree: true},
+				Findings: []Finding{
+					{
+						Severity: "medium", Owner: "agent", Title: "missed the failed service in the snapshot",
+						What: "The snapshot text spans lines; the agent read only the first.",
+						Evidence: []Evidence{
+							{Step: 39, Quote: "Phase: idle\nServices: api=FAILED", Verified: true},
+						},
+						LookAt: "zerops_discover output formatting",
+						Fix:    "",
+					},
+				},
+				SelfReview: SelfReview{Accurate: "no"},
+			},
+			want: "Observer · claude-sonnet-5 · 2026-09-11T10:56Z · 0 of 1 quotes unverified\n" +
+				"Agent misread multi-line platform state.\n" +
+				"Goal: no — agent never noticed the failed service\n" +
+				"Checks: agree with verdict failed\n" +
+				"Findings:\n" +
+				"1. [medium · agent] missed the failed service in the snapshot\n" +
+				"   The snapshot text spans lines; the agent read only the first.\n" +
+				"   Evidence: #39 \"Phase: idle Services: api=FAILED\" ✓\n" +
+				"   Look at: zerops_discover output formatting\n" +
+				"Self-review: no\n",
+		},
+		{
 			name: "ok with no findings",
 			obs: Observation{
 				Model: "claude-sonnet-5", CreatedAt: goldenCreatedAt, Status: "ok",

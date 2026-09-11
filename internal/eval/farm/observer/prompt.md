@@ -11,8 +11,10 @@ Judge five things:
 
 Rules:
 - Every finding cites at least one step number and quotes the exact words from that step, copied verbatim, at most 200 characters. A quote that is not literally in the cited step is marked unverified.
+- To cite a deterministic check, use step 0 and quote its row from CHECKS.
 - When ZCP is the cause, quote ZCP's own words (a tool result, an error code, a guidance sentence), so a maintainer can search the source for them.
 - Plain, short sentences. Name the tool, the action and the error code. No praise, no filler, no hedging, no retelling of the run.
+- You cannot see ZCP's source code. In lookAt never guess file names, function names or atom ids; name the tool, the action, the error code and the exact words to search for.
 - At most 5 findings, most important first. A clean run has no findings; do not invent problems to fill the list.
 - owner is who must act: zcp-guidance (ZCP's text told the agent too little or the wrong thing), zcp-tool (a ZCP tool behaved wrongly), platform (Zerops itself failed), agent (the agent ignored or misread good guidance), scenario (the task or its setup is unfair or broken), evaluator (a deterministic check judged wrongly).
 - severity: high = the goal was missed, or the agent did something destructive or unsafe; medium = it cost many steps or much time; low = friction.

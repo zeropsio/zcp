@@ -131,12 +131,22 @@ func scenarioSection(in DigestInput) string {
 }
 
 func checksSection(in DigestInput) string {
-	if len(in.Checks) == 0 {
-		return "=== CHECKS ===\n" + notRecorded
+	return "=== CHECKS ===\n" + ChecksBody(in.Checks)
+}
+
+// ChecksBody renders the CHECKS section's body — every verification.json
+// row: id, result, expected, observed, source — without the section
+// header. Absent (nil/empty) checks render notRecorded, never a fatal
+// observation: a run that died before the verdict freeze has no
+// verification.json, and those are exactly the runs worth observing.
+// Exported so the quote check (§7.5 FM-46) can verify a step-0 citation
+// against exactly the text the model saw under CHECKS.
+func ChecksBody(checks []eval.RequiredCheck) string {
+	if len(checks) == 0 {
+		return notRecorded
 	}
 	var b strings.Builder
-	b.WriteString("=== CHECKS ===\n")
-	for i, c := range in.Checks {
+	for i, c := range checks {
 		if i > 0 {
 			b.WriteString("\n")
 		}

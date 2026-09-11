@@ -78,7 +78,10 @@ func renderEvidence(evidence []Evidence) string {
 		if !e.Verified {
 			mark, suffix = "✗", " unverified"
 		}
-		parts[i] = fmt.Sprintf("#%d \"%s\" %s%s", e.Step, e.Quote, mark, suffix)
+		// Display only: a quote copied verbatim from a multi-line step can
+		// carry a real newline, which would otherwise break this line's
+		// layout. The stored Evidence.Quote is untouched.
+		parts[i] = fmt.Sprintf("#%d \"%s\" %s%s", e.Step, collapseWhitespace(e.Quote), mark, suffix)
 	}
 	return strings.Join(parts, " · ")
 }
