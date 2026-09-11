@@ -367,39 +367,6 @@ func (s *Server) buildLatestEvaluation(ctx context.Context, allBatches []BatchRo
 	return view, nil
 }
 
-// problemsRunsSinceWindow resolves every ProblemsRun (problems.go) in
-// [now-window, now] across every batch — the same scan rowsSinceWindow
-// (view.go) runs, plus each row's own batch Set/CreatedAt (BuildProblems'
-// build/status computation needs both, and RunRow alone carries neither).
-func (s *Server) problemsRunsSinceWindow(ctx context.Context, window time.Duration, now time.Time) ([]ProblemsRun, error) {
-	batches, err := listBatchIDs(ctx, s.cfg.Store)
-	if err != nil {
-		return nil, fmt.Errorf("console: top problems: %w", err)
-	}
-	since := now.Add(-window)
-	var out []ProblemsRun
-	for _, b := range batches {
-		manifest, err := loadManifest(ctx, s.cfg.Store, b)
-		if err != nil {
-			s.logf("skip batch %s: load manifest: %v", b, err)
-			continue
-		}
-		bc := newBatchContext(manifest)
-		rows, err := batchWindowRowsWithManifest(ctx, s.cfg.Store, s.cfg.ObserverDisabled, b, manifest, s.queueState, s.runCache, s.summaryCache, s.logf)
-		if err != nil {
-			s.logf("skip batch %s: %v", b, err)
-			continue
-		}
-		for _, row := range rows {
-			if row.StartedAt.Before(since) || row.StartedAt.After(now) {
-				continue
-			}
-			out = append(out, ProblemsRun{Row: row, BatchSet: manifest.Set, BatchCreatedAt: bc.CreatedAt})
-		}
-	}
-	return out, nil
-}
-
 // buildLabelForSha returns the newest build's display label (BuildInfo.Label,
 // with its git revision when one of runs' rows recorded it) — "" when sha is
 // "" (no assessed run in scope at all, §8.6's newestBuildSha).

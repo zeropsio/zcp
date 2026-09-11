@@ -7,11 +7,9 @@
 package console
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
@@ -23,47 +21,6 @@ func pluralS(n int) string {
 		return ""
 	}
 	return "s"
-}
-
-// problemsRunsSinceWindow gathers every run row across every batch within
-// [now-window, now] (by the run's own StartedAt — the same rule
-// view.go's rowsSinceWindow uses), paired with the batch-level facts
-// (Set, CreatedAt) BuildProblems' status computation needs and RunRow
-// itself does not carry (view.go's ProblemsRun). Mirrors rowsSinceWindow's
-// scan (manifest loaded once per batch, a batch that fails to load is
-// skipped and logged, cache/sc nil-safe) rather than reusing it directly,
-// since its return type ([]RunRow) has already dropped the manifest by
-// the time it returns.
-func problemsRunsSinceWindow(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, window time.Duration, now time.Time, queueState func(runID string) string, cache *runCache, sc *summaryCache, logf func(format string, args ...any)) ([]ProblemsRun, error) {
-	if logf == nil {
-		logf = defaultLogf
-	}
-	batches, err := listBatchIDs(ctx, store)
-	if err != nil {
-		return nil, fmt.Errorf("console: problems runs since window: %w", err)
-	}
-	since := now.Add(-window)
-	var out []ProblemsRun
-	for _, b := range batches {
-		manifest, err := loadManifest(ctx, store, b)
-		if err != nil {
-			logf("skip batch %s: load manifest: %v", b, err)
-			continue
-		}
-		rows, err := batchWindowRowsWithManifest(ctx, store, consoleObserverDisabled, b, manifest, queueState, cache, sc, logf)
-		if err != nil {
-			logf("skip batch %s: %v", b, err)
-			continue
-		}
-		createdAt, _ := time.Parse(time.RFC3339, manifest.CreatedAt)
-		for _, row := range rows {
-			if row.StartedAt.Before(since) || row.StartedAt.After(now) {
-				continue
-			}
-			out = append(out, ProblemsRun{Row: row, BatchSet: manifest.Set, BatchCreatedAt: createdAt})
-		}
-	}
-	return out, nil
 }
 
 // newestBuildLabel names §8.6's "newest build" for display ("hit a/b runs
@@ -191,7 +148,7 @@ func (s *Server) handleProblemsPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runs, err := problemsRunsSinceWindow(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, q.Since, s.now(), s.queueState, s.runCache, s.summaryCache, s.logf)
+	runs, err := s.problemsRunsSinceWindow(r.Context(), q.Since, s.now())
 	if err != nil {
 		writeStoreError(w, err)
 		return
