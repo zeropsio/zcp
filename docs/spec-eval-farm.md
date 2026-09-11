@@ -860,9 +860,10 @@ script, no inline style and no external asset; they render in light and dark
 **FM-51.**
 - `/` — batches, newest first: id, created, candidate sha (12 chars), set,
   count per verdict, total cost, observed runs n/m.
-- `/b/<batch>` — one row per run: scenario, verdict, duration, cost, the
-  current observation's headline (or `observing…`, `not observed`,
-  `observer off`), failed/blocked check ids.
+- `/b/<batch>` — one row per run, problem runs first (failed, blocked,
+  running, not-run, passed): scenario, verdict, duration, cost, the current
+  observation's headline (or its observer state) with finding counts per
+  severity, and up to three failed/blocked check ids.
 - `/r/<runId>` — header (scenario, verdict, times, cost, candidate and
   evaluator sha); the current observation (headline, goal, agreement with the
   checks, findings with severity, owner, title, what, evidence linking to
@@ -871,7 +872,9 @@ script, no inline style and no external asset; they render in light and dark
   blocked checks with expected, observed, source; the self-review; the task
   prompt; every step with anchor `s<n>`, collapsible, full input and result;
   and the local forensic command `zcp eval farm pull <runId> --out <dir>` then
-  `zcp capture ui <dir>/<runId>/capture`.
+  `zcp capture ui <dir>/<runId>/capture`. Empty thinking blocks (Claude Code
+  records none of their text) are left out of the step list; the numbering
+  stays the record's (§7.2).
 - `/findings?since=<window>&owner=<owner>` — findings of every run whose
   `meta.json.startedAt` falls in the window (default 24h, same rule as §8.4), grouped by owner then
   severity, each linking to its run and step.
