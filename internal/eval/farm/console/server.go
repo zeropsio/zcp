@@ -1,6 +1,7 @@
 package console
 
 import (
+	"context"
 	_ "embed" // assets/login.html, assets/app.css
 	"encoding/json"
 	"fmt"
@@ -82,8 +83,14 @@ type Server struct {
 	files *fileCache
 }
 
-// NewServer builds a Server from cfg.
+// NewServer builds a Server from cfg. cfg.Store is wrapped in a manifest-
+// caching decorator (item 7a) — a batch manifest is written once and never
+// mutated (§1.1), so caching it in memory for the Server's lifetime is
+// always safe and cuts a page load's repeat bucket calls.
 func NewServer(cfg Config) *Server {
+	if cfg.Store != nil {
+		cfg.Store = newManifestCachingStore(cfg.Store)
+	}
 	return &Server{
 		cfg:   cfg,
 		files: newFileCache(),
@@ -229,6 +236,63 @@ func (c *fileCache) get(key string) ([]byte, bool) {
 	defer c.mu.Unlock()
 	v, ok := c.entries[key]
 	return v, ok
+}
+
+// manifestCachingStore wraps an observer.ObjectStore, caching a
+// batches/<batch>/manifest.json body in memory once a Get for it
+// succeeds (item 7a) — a manifest is written once and never mutated
+// (§1.1), so a repeat read within the Server's lifetime is always safe to
+// serve from memory. Head reports cached-as-existing without a store call
+// too; a manifest key that has never been successfully read (including a
+// batch that doesn't exist yet) always falls through to the real store, so
+// a not-yet-created batch is never cached as missing.
+type manifestCachingStore struct {
+	observer.ObjectStore
+	mu    sync.Mutex
+	cache map[string][]byte
+}
+
+func newManifestCachingStore(inner observer.ObjectStore) *manifestCachingStore {
+	return &manifestCachingStore{ObjectStore: inner, cache: make(map[string][]byte)}
+}
+
+// isManifestKey reports whether key is a batches/<batch>/manifest.json
+// object key (manifestKey, view.go) — the only key this decorator caches.
+func isManifestKey(key string) bool {
+	return strings.HasPrefix(key, "batches/") && strings.HasSuffix(key, "/manifest.json")
+}
+
+func (c *manifestCachingStore) Head(ctx context.Context, key string) (bool, int64, error) {
+	if isManifestKey(key) {
+		c.mu.Lock()
+		body, ok := c.cache[key]
+		c.mu.Unlock()
+		if ok {
+			return true, int64(len(body)), nil
+		}
+	}
+	return c.ObjectStore.Head(ctx, key)
+}
+
+func (c *manifestCachingStore) Get(ctx context.Context, key string) ([]byte, error) {
+	if isManifestKey(key) {
+		c.mu.Lock()
+		body, ok := c.cache[key]
+		c.mu.Unlock()
+		if ok {
+			return body, nil
+		}
+	}
+	body, err := c.ObjectStore.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if isManifestKey(key) {
+		c.mu.Lock()
+		c.cache[key] = body
+		c.mu.Unlock()
+	}
+	return body, nil
 }
 
 func (c *fileCache) set(key string, data []byte) {

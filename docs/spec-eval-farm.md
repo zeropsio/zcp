@@ -923,13 +923,19 @@ disabled`, decided in that precedence: a queued or running observation reads
 `observing`; a run without `done.json` reads `not observed`; a run with an
 observation reads `observed` whatever its manifest or the kill switch say;
 only a finished run without one reads `observer disabled` or `observer off`.
+A batch or run whose manifest/observation/meta cannot be read is skipped
+(logged to stderr) rather than failing the whole listing — `/`, `/b/<batch>`,
+`/r/<runId>` and the markdown/JSON endpoints above all render every other
+batch or run normally; only a genuine store error on the batches/ listing
+itself fails the call.
 
 ### 8.5 Worker and actions
 
 **FM-53.** One queue, at most three observations at a time, feeds both the
 worker and the actions. Every 60 s the worker lists batches whose manifest
-`createdAt` is within 14 days and whose `observer` names a model, and queues
-each of their runs that has `done.json` and no observation, with the
+`createdAt` is within 14 days plus a 2-hour slack and whose `observer` names
+a model, and queues each of their runs that has `done.json` and no
+observation, with the
 manifest's model. With `ZCP_FARM_OBSERVER=off` it queues nothing and pages
 and the API say `observer disabled`. Actions: `POST /r/<runId>/observe`
 (model from the allowlist `claude-sonnet-5`, `claude-opus-5`,
@@ -952,3 +958,7 @@ are already queued or running are skipped, not answered with 409. A job runs for
 enqueuing request's (bounded by a 10-minute job timeout), and a job that fails
 before an observation can be stored is logged to stderr. Worker and queue
 state live in memory and are re-derived from the bucket after a restart.
+Both the worker and `POST /b/<batch>/observe` check a run's live queue
+state before listing its stored observations, and skip the run (never
+enqueue) when that list call itself fails, rather than risking a duplicate
+observation on doubt.

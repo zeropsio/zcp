@@ -78,7 +78,11 @@ func orderedVerdictCounts(counts map[string]int) []VerdictCount {
 // order is deterministic). It reads view.go's RunRow per run (read-only:
 // this file adds no new resolution logic beyond aggregating those rows) for
 // per-verdict counts, total cost and the observed-n count; m is the batch's
-// run count.
+// run count. Each batch's manifest is loaded exactly once (item 7c) and
+// reused for both its own fields and the per-run scan; a batch that fails
+// to load (a corrupt manifest, item 5) is skipped and logged rather than
+// failing the whole page — only the top-level batches/ listing itself can
+// fail the call outright.
 func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, queueState func(runID string) string) ([]BatchRow, error) {
 	ids, err := listBatchIDs(ctx, store)
 	if err != nil {
@@ -89,11 +93,13 @@ func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObser
 	for _, id := range ids {
 		manifest, err := loadManifest(ctx, store, id)
 		if err != nil {
-			return nil, err
+			viewLogf("skip batch %s: load manifest: %v", id, err)
+			continue
 		}
-		runRows, err := batchWindowRows(ctx, store, consoleObserverDisabled, id, queueState)
+		runRows, err := batchWindowRowsWithManifest(ctx, store, consoleObserverDisabled, id, manifest, queueState)
 		if err != nil {
-			return nil, err
+			viewLogf("skip batch %s: %v", id, err)
+			continue
 		}
 		createdAt, _ := time.Parse(time.RFC3339, manifest.CreatedAt)
 

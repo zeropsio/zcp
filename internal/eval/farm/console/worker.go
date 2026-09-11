@@ -306,7 +306,7 @@ func (w *Worker) wkTickBatch(ctx context.Context, batch string, now time.Time) {
 	if err != nil {
 		return
 	}
-	if now.Sub(createdAt) > wkObserverWindow {
+	if now.Sub(createdAt) > wkObserverWindow+windowSlack {
 		return
 	}
 
