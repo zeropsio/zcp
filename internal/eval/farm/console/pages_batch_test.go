@@ -343,3 +343,212 @@ func TestPages_BatchRunsListRendersFilterSortCountAnd400(t *testing.T) {
 		}
 	})
 }
+
+// TestPages_BatchRunsTableHeaderMatchesDataColumns pins item 2 (round-1
+// follow-up): the runs table has one header per data column — the missing
+// "Why / headline" header — and every group heading / collapsed / empty
+// row spans all five.
+func TestPages_BatchRunsTableHeaderMatchesDataColumns(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+
+	seedBatch(t, store, "hc1", "off", []runFixture{
+		{runID: "hc1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"hc1-a": "passed"})
+
+	body := doGET(t, h, "/b/hc1").Body.String()
+	if !strings.Contains(body, "Why / headline") {
+		t.Errorf("runs table is missing the Why/headline header:\n%s", body)
+	}
+	if strings.Contains(body, `colspan="4"`) {
+		t.Errorf("a group/collapsed/empty row still spans only 4 columns:\n%s", body)
+	}
+	if !strings.Contains(body, `colspan="5"`) {
+		t.Errorf("no row spans all 5 columns:\n%s", body)
+	}
+}
+
+// TestPages_BatchProblemsCompactWithLowFolded pins item 3 (round-1
+// follow-up): "Problems in this batch" renders one compact <details> line
+// per non-low problem (severity, cause, title, runs hit), with low-severity
+// problems folded into one "n low" line — never the old multi-line card.
+func TestPages_BatchProblemsCompactWithLowFolded(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "cp1", "claude-sonnet-5", []runFixture{
+		{runID: "cp1-hi", scenario: "hi", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+		{runID: "cp1-lo", scenario: "lo", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"cp1-hi": "passed", "cp1-lo": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "cp1-hi", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeProblem, Headline: "high sev",
+		Findings: []observer.Finding{{Severity: "high", Owner: "zcp-tool", Surface: "tool:zerops_deploy/deploy", Title: "always fails this way"}},
+	})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "cp1-lo", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeProblem, Headline: "low sev",
+		Findings: []observer.Finding{{Severity: "low", Owner: "zcp-tool", Surface: "tool:zerops_scale/scale", Title: "minor wording issue"}},
+	})
+
+	body := doGET(t, h, "/b/cp1").Body.String()
+	if !strings.Contains(body, "always fails this way") {
+		t.Fatalf("body missing the high-severity problem's title:\n%s", body)
+	}
+	if strings.Contains(body, "minor wording issue") {
+		t.Errorf("body shows the low-severity problem's own title instead of folding it:\n%s", body)
+	}
+	if !strings.Contains(body, "1 low") {
+		t.Errorf("body missing the folded \"1 low\" line:\n%s", body)
+	}
+	if !strings.Contains(body, "<details") || !strings.Contains(body, "<summary>") {
+		t.Errorf("problems block is not rendered as compact <details>/<summary>:\n%s", body)
+	}
+}
+
+// TestPages_BatchSummaryLabelledLine pins item 9 (round-1 follow-up): the
+// batch summary renders one labelled line ("Goal: ... — Assessment: ... —
+// ZCP findings: ..."), every zero count skipped, replacing the old row of
+// identical chips.
+func TestPages_BatchSummaryLabelledLine(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "sl1", "claude-sonnet-5", []runFixture{
+		{runID: "sl1-a", scenario: "a", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+		{runID: "sl1-b", scenario: "b", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"sl1-a": "passed", "sl1-b": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "sl1-a", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeOK,
+		Goal: observer.Goal{Reached: "yes"}, Headline: "fine",
+	})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "sl1-b", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeProblem,
+		Goal: observer.Goal{Reached: "no"}, Headline: "broken",
+		Findings: []observer.Finding{{Severity: "medium", Owner: "zcp-tool", Title: "x"}},
+	})
+
+	body := doGET(t, h, "/b/sl1").Body.String()
+	if !strings.Contains(body, "Goal: 1 yes · 1 no") {
+		t.Errorf("body missing the Goal summary line:\n%s", body)
+	}
+	if !strings.Contains(body, "Assessment: 1 OK · 1 problem") {
+		t.Errorf("body missing the Assessment summary line:\n%s", body)
+	}
+	if !strings.Contains(body, "ZCP findings: 1 medium") {
+		t.Errorf("body missing the ZCP findings summary line:\n%s", body)
+	}
+	if strings.Contains(body, "0 partly") || strings.Contains(body, "0 inconclusive") {
+		t.Errorf("body shows a zero count instead of skipping it:\n%s", body)
+	}
+}
+
+// TestPages_BatchProblemStatusUsesChipNotPill pins item 16 (round-1
+// follow-up): the batch page's problem status badge uses .chip, not a bare
+// .pill (which is reserved for yes/no/partly).
+func TestPages_BatchProblemStatusUsesChipNotPill(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "ps1", "claude-sonnet-5", []runFixture{
+		{runID: "ps1-a", scenario: "a", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"ps1-a": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "ps1-a", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeProblem, Headline: "x",
+		Findings: []observer.Finding{{Severity: "high", Owner: "zcp-tool", Surface: "tool:x/y", Title: "z"}},
+	})
+
+	body := doGET(t, h, "/b/ps1").Body.String()
+	if !strings.Contains(body, `<span class="chip" title="`) {
+		t.Errorf("problem status is not rendered with .chip:\n%s", body)
+	}
+	if strings.Contains(body, `<span class="pill" title="`) {
+		t.Errorf("problem status still uses a bare .pill:\n%s", body)
+	}
+}
+
+// TestPages_BatchBreadcrumbRootReadsOverview pins item 17 (round-1
+// follow-up): the batch page's breadcrumb root reads "Overview", matching
+// the run page's own crumb, instead of the old "Batches".
+func TestPages_BatchBreadcrumbRootReadsOverview(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	seedBatch(t, store, "cr1", "off", []runFixture{
+		{runID: "cr1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"cr1-a": "passed"})
+
+	body := doGET(t, h, "/b/cr1").Body.String()
+	if !strings.Contains(body, `<a href="/">Overview</a>`) {
+		t.Errorf("breadcrumb root does not read Overview:\n%s", body)
+	}
+	if strings.Contains(body, `<a href="/">Batches</a>`) {
+		t.Errorf("breadcrumb root still reads Batches:\n%s", body)
+	}
+}
+
+// TestPages_BatchFirstFailedLineRewritesMonotonicClockText pins item 19 for
+// the batch page's own failed-checks line (firstFailedCheckPlain).
+func TestPages_BatchFirstFailedLineRewritesMonotonicClockText(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+
+	seedBatch(t, store, "bmc1", "off", []runFixture{
+		{runID: "bmc1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "failed", done: true,
+			checks: [][5]string{{"c1", "failed", "2026-09-11 18:33:47 +0000 UTC m=+0.5", "still running", "mcp"}}},
+	}, true, map[string]string{"bmc1-a": "failed"})
+
+	body := doGET(t, h, "/b/bmc1").Body.String()
+	if !strings.Contains(body, "2026-09-11T18:33:47Z") {
+		t.Errorf("body missing the RFC3339-normalized expected text:\n%s", body)
+	}
+	if strings.Contains(body, "m=+0.5") {
+		t.Errorf("body still shows the raw monotonic-clock suffix:\n%s", body)
+	}
+}
+
+// TestPages_BatchProblemsOmitsSurfaceChipWhenEmpty pins item 11 (round-1
+// follow-up) on the batch page's own compact problems block.
+func TestPages_BatchProblemsOmitsSurfaceChipWhenEmpty(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "bns1", "claude-sonnet-5", []runFixture{
+		{runID: "bns1-a", scenario: "a", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"bns1-a": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat1, RunID: "bns1-a", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeProblem, Headline: "x",
+		Findings: []observer.Finding{{Severity: "high", Owner: "agent", Title: "format-1 finding, no surface"}},
+	})
+
+	body := doGET(t, h, "/b/bns1").Body.String()
+	if !strings.Contains(body, "format-1 finding, no surface") {
+		t.Fatalf("body missing the problem's title:\n%s", body)
+	}
+	if strings.Contains(body, `<code class="chip"></code>`) {
+		t.Errorf("body renders an empty surface chip:\n%s", body)
+	}
+}
+
+// TestPages_BatchRunsSortChipsAboveStackedTable pins item 15 (round-1
+// follow-up): the batch page's runs list renders its sort options as a
+// chip row above the table.
+func TestPages_BatchRunsSortChipsAboveStackedTable(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	seedBatch(t, store, "bsc1", "off", []runFixture{
+		{runID: "bsc1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"bsc1-a": "passed"})
+
+	body := doGET(t, h, "/b/bsc1").Body.String()
+	if !strings.Contains(body, `<span class="k">Sort</span>`) {
+		t.Errorf("body missing a sort chip row above the runs table:\n%s", body)
+	}
+}

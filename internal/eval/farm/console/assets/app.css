@@ -56,6 +56,11 @@
   --info: #2a4fb3;     --info-bg: #e5ecfb;
   --warn: #8a6200;      --warn-bg: #fdf1d3;
   --radius: 10px;
+  /* text on an accent-coloured background (.filter.on, button.primary) —
+     item 8: a token of its own so dark mode can swap in a dark-on-light
+     pairing instead of inheriting light mode's white-on-blue, which fails
+     contrast against dark mode's pale --accent. */
+  --on-accent: #ffffff;
 
   /* five font-size tokens (item 5) */
   --fs-xs: 0.75rem;
@@ -85,6 +90,9 @@
     --error: #ff6b6b;
     --info: #a9c1ff;     --info-bg: #1d2742;
     --warn: #f0c75e;     --warn-bg: #3a2f12;
+    /* --accent is pale in dark mode — dark text on it reads ≥ 4.5:1, white
+       text would not (item 8). */
+    --on-accent: #0f1115;
   }
 }
 
@@ -106,10 +114,16 @@ a:hover { text-decoration: underline; }
 
 .wrap { max-width: 1040px; margin: 0 auto; padding-inline: 20px; }
 main.wrap { padding-block: 20px 64px; }
+/* item 6: a list page (Overview, Problems, Findings — wide tables with
+   several columns) may use more width than a single batch/run's prose. */
+.wrap.wide { max-width: 1280px; }
 
 /* top bar */
 .topbar { background: var(--surface); border-bottom: 1px solid var(--border); }
-.topbar-inner { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 52px; }
+/* item 1: wraps instead of forcing the page wider than the viewport (was
+   scrollWidth 461-464 at 400px, mostly from this row never wrapping); auto
+   height so a wrapped second row grows the bar instead of clipping it. */
+.topbar-inner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; min-height: 52px; padding-block: 8px; }
 .brand { color: var(--fg); font-weight: 650; letter-spacing: -0.01em; }
 .brand:hover { text-decoration: none; }
 .topnav { display: flex; gap: 18px; }
@@ -133,7 +147,7 @@ p { margin: 6px 0; }
   border-radius: 999px; padding: 0 8px;
 }
 
-code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.82rem; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--fs-sm); }
 code { overflow-wrap: anywhere; }
 pre {
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
@@ -193,14 +207,23 @@ a.card:hover { border-color: var(--accent); text-decoration: none; }
 code.chip { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .cause-chip { font-weight: 600; }
 
-/* assessment outcome: its own badge, distinct from verdict/severity */
+/* assessment outcome: item 4 — a square, neutral-background badge with a
+   glyph and a coloured left border, so it never reads as a verdict at a
+   glance (.verdict/.pill stay the only filled round shapes). Each
+   .outcome-<x>::before glyph is the badge's own colour indicator (never
+   colour alone), matching the .dot-<verdict>::before pattern above. */
 .outcome {
-  display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs);
-  font-weight: 700; line-height: 1; padding: 5px 9px; border-radius: 999px;
+  display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-xs);
+  font-weight: 700; line-height: 1; padding: 5px 9px; border-radius: 4px;
+  background: var(--surface-2); border: 1px solid var(--border); border-left: 3px solid var(--border);
+  color: var(--fg);
 }
-.outcome-ok { color: var(--passed); background: var(--passed-bg); }
-.outcome-problem { color: var(--failed); background: var(--failed-bg); }
-.outcome-inconclusive, .outcome-none, .outcome-other { color: var(--neutral); background: var(--neutral-bg); }
+.outcome-ok { border-left-color: var(--passed); }
+.outcome-ok::before { content: "✓"; color: var(--passed); }
+.outcome-problem { border-left-color: var(--failed); }
+.outcome-problem::before { content: "◆"; color: var(--failed); }
+.outcome-inconclusive, .outcome-none, .outcome-other { border-left-color: var(--neutral); }
+.outcome-inconclusive::before, .outcome-none::before, .outcome-other::before { content: "?"; color: var(--neutral); }
 
 /* "the observer judged a check wrong" marker */
 .disputed-marker {
@@ -217,11 +240,14 @@ code.chip { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
 .batch-list { display: grid; gap: 10px; }
 .batch-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .batch-id { font-weight: 650; font-size: var(--fs-lg); }
-.dots { display: flex; flex-wrap: wrap; gap: 4px; margin: 10px 0; }
+/* item 6: dots on one line — a batch with many runs scrolls its own dots
+   row horizontally rather than wrapping to several lines and inflating the
+   Overview batches table's row height. */
+.dots { display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 4px; margin: 10px 0; }
 .dot {
   width: 14px; height: 14px; border-radius: 4px; background: var(--neutral-bg); border: 1px solid var(--border);
   display: inline-flex; align-items: center; justify-content: center;
-  font-size: 9px; line-height: 1; font-weight: 700; color: var(--surface);
+  font-size: var(--fs-xs); line-height: 1; font-weight: 700; color: var(--surface);
 }
 .dot-passed { background: var(--passed); border-color: var(--passed); }
 .dot-passed::before { content: "✓"; }
@@ -238,6 +264,10 @@ code.chip { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
 .summary { display: flex; justify-content: space-between; align-items: center; gap: 12px 24px; flex-wrap: wrap; margin-bottom: 12px; }
 .summary-nums { display: flex; gap: 20px; color: var(--fg-dim); }
 .summary-nums strong { color: var(--fg); font-variant-numeric: tabular-nums; }
+/* item 9: the batch summary's one labelled line ("Goal: 8 yes · 1 no —
+   Assessment: 3 OK · 6 problem — ZCP findings: 4 medium"), replacing the
+   old row of identical chips. */
+.summary-line { flex-basis: 100%; color: var(--fg-dim); margin: 0; }
 
 /* callouts: info (default) / warn / error, plus the observer-status line
    and the ?notice= callout, which both use the info look */
@@ -253,13 +283,13 @@ code.chip { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
 .run-list { display: grid; gap: 8px; }
 .run-row { display: grid; grid-template-columns: 112px minmax(0, 1fr) auto; gap: 14px; align-items: start; }
 .run-title { display: block; font-weight: 600; overflow-wrap: anywhere; }
-.run-headline { display: block; margin-top: 2px; font-size: 0.9rem; }
+.run-headline { display: block; margin-top: 2px; font-size: var(--fs-sm); }
 .run-nums { display: flex; flex-direction: column; align-items: flex-end; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* run page: observer card */
 .observer { margin: 16px 0 8px; }
-.observer .headline { font-size: 1.12rem; font-weight: 600; line-height: 1.4; margin: 2px 0 12px; }
-.assess-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 10px; }
+.observer .headline { font-size: var(--fs-base); font-weight: 600; line-height: 1.4; margin: 2px 0 12px; }
+.assess-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 10px; align-items: start; }
 .assess-grid > div { background: var(--surface-2); border-radius: 8px; padding: 10px 12px; }
 .assess-grid p { font-size: var(--fs-sm); color: var(--fg-dim); margin: 6px 0 0; }
 .k { display: block; font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--fg-dim); margin-bottom: 6px; }
@@ -284,13 +314,13 @@ code.chip { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
 .finding.sev-high { border-left-color: var(--high); }
 .finding.sev-medium { border-left-color: var(--medium); }
 .finding-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.owner { font-size: 0.8rem; font-weight: 600; color: var(--fg-dim); }
-.run-link { font-size: 0.85rem; overflow-wrap: anywhere; }
+.owner { font-size: var(--fs-xs); font-weight: 600; color: var(--fg-dim); }
+.run-link { font-size: var(--fs-sm); overflow-wrap: anywhere; }
 .quote {
   margin: 8px 0; padding: 8px 12px; background: var(--surface-2); border-radius: 8px;
-  border-left: 3px solid var(--border); font-size: 0.9rem; overflow-wrap: anywhere;
+  border-left: 3px solid var(--border); font-size: var(--fs-sm); overflow-wrap: anywhere;
 }
-.quote-ref { display: flex; align-items: center; gap: 8px; font-size: 0.78rem; font-weight: 600; margin-bottom: 2px; }
+.quote-ref { display: flex; align-items: center; gap: 8px; font-size: var(--fs-xs); font-weight: 600; margin-bottom: 2px; }
 .evidence-verified { color: var(--passed); font-weight: 600; }
 .evidence-unverified { color: var(--failed); font-weight: 600; }
 /* a step this finding cites, shown at the top of that step's own body */
@@ -298,7 +328,7 @@ code.chip { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
   background: var(--info-bg); border-radius: 6px; padding: 6px 10px; margin-bottom: 8px;
   font-size: var(--fs-sm);
 }
-.kv { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 4px 12px; margin: 10px 0 2px; font-size: 0.9rem; }
+.kv { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 4px 12px; margin: 10px 0 2px; font-size: var(--fs-sm); }
 .kv dt { color: var(--fg-dim); font-weight: 600; }
 .kv dd { margin: 0; overflow-wrap: anywhere; }
 
@@ -347,6 +377,9 @@ ol.steps > li:last-child { border-bottom: 0; }
 .step-user .step-kind { color: var(--running); }
 .step-preview { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-dim); }
 .step-body { padding: 4px 12px 10px 46px; }
+/* item 13: a huge tool result/input no longer pushes the rest of the page
+   away — it scrolls inside its own box past 24rem. */
+.step-body pre { max-height: 24rem; overflow: auto; }
 /* a tool error inside a step: plain red text, no severity pill (item 5) */
 .step-error { color: var(--failed); font-weight: 600; }
 
@@ -357,7 +390,7 @@ select, button, input[type="text"], input[type="password"] {
   border-radius: 8px; background: var(--surface); color: var(--fg);
 }
 button { cursor: pointer; font-weight: 600; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 
 /* focus ring: solid, 2px, on every interactive element (item 5 — replaces
    the previous low-alpha ring, ~1.6:1 contrast) */
@@ -376,19 +409,29 @@ select:focus-visible, input:focus-visible {
 .filter-row .k { margin: 0 6px 0 0; min-width: 64px; }
 .filter {
   display: inline-flex; align-items: center; gap: 4px;
-  font-size: 0.85rem; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px;
+  font-size: var(--fs-sm); padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px;
   color: var(--fg-dim); background: var(--surface);
 }
 .filter:hover { text-decoration: none; border-color: var(--accent); }
-.filter.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.filter.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .filter-count { font-size: var(--fs-xs); color: inherit; opacity: 0.75; }
-.filter.count-zero { color: var(--border); cursor: default; pointer-events: none; }
-.clear-all { font-size: 0.85rem; color: var(--fg-dim); }
+/* item 14: dimmed but readable in both themes (the old --border text
+   colour was near-invisible), dashed border so it never looks like an
+   ordinary (clickable) .filter chip. */
+.filter.count-zero { color: var(--fg-dim); opacity: 0.65; border-style: dashed; cursor: default; pointer-events: none; }
+.clear-all { font-size: var(--fs-sm); color: var(--fg-dim); }
 
 /* narrow screens */
 @media (max-width: 640px) {
   .wrap { padding-inline: 16px; }
-  h1 { font-size: 1.3rem; }
+  h1 { font-size: var(--fs-lg); }
+  /* item 1: the nav wraps onto its own full-width row below brand+sign-out
+     (order puts it last regardless of its DOM position between them). */
+  .topnav { order: 3; flex-basis: 100%; gap: 14px; }
+  /* item 1/6: a stacked table.stack card must never force horizontal
+     overflow — any nowrap left over from a desktop-width rule is reset
+     here (table.stack td already goes display:block below). */
+  table.stack td { white-space: normal; }
   .run-row { grid-template-columns: minmax(0, 1fr) auto; }
   .run-verdict { grid-column: 1 / -1; }
   .assess-grid { grid-template-columns: minmax(0, 1fr); }
@@ -411,7 +454,7 @@ select:focus-visible, input:focus-visible {
 
 /* login page */
 main.login { max-width: 360px; margin: 10vh auto; padding-inline: 16px; }
-main.login h1 { font-size: 1.25rem; }
+main.login h1 { font-size: var(--fs-lg); }
 main.login form { display: flex; flex-direction: column; gap: 8px; }
 main.login label { font-size: var(--fs-sm); }
 main.login input {

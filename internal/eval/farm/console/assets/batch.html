@@ -1,5 +1,5 @@
 {{define "batch"}}{{template "head" .Meta}}
-<nav class="crumbs"><a href="/">Batches</a><span class="sep">/</span>{{.BatchID}}</nav>
+<nav class="crumbs"><a href="/">Overview</a><span class="sep">/</span>{{.BatchID}}</nav>
 <div class="page-head">
 <h1>{{.BatchID}}</h1>
 <p class="muted">{{fmtTime .CreatedAt}}{{if .Set}} · set {{.Set}}{{end}} · {{.Build.Label}}{{if .Note}} · {{.Note}}{{end}}</p>
@@ -17,11 +17,7 @@
 <span><strong>{{.ObservedN}}/{{.ObservedM}}</strong> assessed</span>
 <span>{{.DisputedCount}} disputed</span>
 </div>
-<div class="chips">
-<span class="pill pill-yes">{{.GoalYes}} goal yes</span><span class="pill pill-partly">{{.GoalPartly}} partly</span><span class="pill pill-no">{{.GoalNo}} no</span>
-<span class="outcome outcome-ok">{{.OutcomeOK}} ok</span><span class="outcome outcome-problem">{{.OutcomeProblem}} problem</span><span class="outcome outcome-inconclusive">{{.OutcomeInconclusive}} inconclusive</span>
-{{range .CauseCounts}}{{if or .High .Medium}}<span class="chip cause-chip">{{.Label}}: {{.High}}h/{{.Medium}}m</span>{{end}}{{end}}
-</div>
+{{if .SummaryLine}}<p class="summary-line">{{.SummaryLine}}</p>{{end}}
 </div>
 
 <section class="section">
@@ -31,28 +27,44 @@
 {{if .FallbackChecks}}<ul class="plain">
 {{range .FallbackChecks}}<li class="card"><code class="chip"{{if .Title}} title="{{.Title}}"{{end}}>{{.Display}}</code> failed in {{len .RunIDs}} runs: {{range $i, $rid := .RunIDs}}{{if $i}}, {{end}}<a href="/r/{{$rid}}">{{$rid}}</a>{{end}}</li>
 {{end}}</ul>{{else}}<p class="empty">No check failed in two or more runs.</p>{{end}}
-{{else if .Problems}}<ul class="plain">
-{{range .Problems}}<li class="card">
+{{else if or .Problems .ProblemsLowCount}}
+<div class="problem-list">
+{{range .Problems}}<details class="problem-line">
+<summary>
 <span class="{{severityClass .Severity}}">{{severityLabel .Severity}}</span>
 {{range .CauseLabels}}<span class="chip cause-chip">{{.}}</span>{{end}}
-<span class="chip">{{.Surface}}</span>
-<span class="pill" title="{{problemStatusTooltip .Status}}">{{problemStatusLabel .Status}}</span>
-<div><strong>{{.Title}}</strong></div>
-{{if .Anchor}}<div><code class="chip">{{.Anchor}}</code></div>{{end}}
-<div class="muted small">hit {{.HitOnNewestBuild}}/{{.RunsAssessedOnNewest}} runs on the newest build · {{.RunsTotal}} runs · {{.BatchesTotal}} batches · {{.BuildsTotal}} builds</div>
+<strong>{{.Title}}</strong>
+<span class="muted small">hit {{.HitOnNewestBuild}}/{{.RunsAssessedOnNewest}} runs</span>
+</summary>
+<div>
+<span class="chip" title="{{problemStatusTooltip .Status}}">{{problemStatusLabel .Status}}</span>
+{{with .Surface}}<code class="chip">{{.}}</code>{{end}}
+{{if .Anchor}}<code class="chip">{{.Anchor}}</code>{{end}}
+<div class="muted small">{{.RunsTotal}} runs · {{.BatchesTotal}} batches · {{.BuildsTotal}} builds</div>
 {{if .HasPrevCompare}}<div class="muted small">{{if .AlsoInPrev}}also in{{else}}not in{{end}} previous batch <a href="/b/{{$.VsPrevious.PreviousBatchID}}">{{$.VsPrevious.PreviousBatchID}}</a></div>{{end}}
-</li>
-{{end}}</ul>{{else}}<p class="empty">No problems found in this batch.</p>{{end}}
+</div>
+</details>
+{{end}}
+{{if .ProblemsLowCount}}<p class="muted small">{{.ProblemsLowCount}} low</p>{{end}}
+</div>
+{{else}}<p class="empty">No problems found in this batch.</p>{{end}}
 </section>
 
 <section class="section">
 <h2>Runs</h2>
 {{template "filterbar" .Nav.Filters}}
+{{template "sortchips" .Nav.Sorts}}
 <div class="table-wrap"><table class="stack">
-<thead><tr>{{range .Nav.Sorts}}{{template "sortth" .}}{{end}}</tr></thead>
+<thead><tr>
+{{with index .SortByKey "problem"}}{{template "sortth" .}}{{end}}
+{{with index .SortByKey "scenario"}}{{template "sortth" .}}{{end}}
+<th>Why / headline</th>
+{{with index .SortByKey "duration"}}{{template "sortth" .}}{{end}}
+{{with index .SortByKey "cost"}}{{template "sortth" .}}{{end}}
+</tr></thead>
 <tbody>
-{{range .Groups}}<tr><td colspan="4" class="group-heading">{{.Title}} ({{len .Runs}})</td></tr>
-{{if .Collapsed}}<tr><td colspan="4">{{range $i, $r := .Runs}}{{if $i}}, {{end}}<a href="/r/{{$r.RunID}}"{{if $r.Headline}} title="{{$r.Headline}}"{{else if $r.State}} title="{{$r.State}}"{{end}}>{{$r.Scenario}}</a>{{end}}</td></tr>
+{{range .Groups}}<tr><td colspan="5" class="group-heading">{{.Title}} ({{len .Runs}})</td></tr>
+{{if .Collapsed}}<tr><td colspan="5">{{range $i, $r := .Runs}}{{if $i}}, {{end}}<a href="/r/{{$r.RunID}}"{{if $r.Headline}} title="{{$r.Headline}}"{{else if $r.State}} title="{{$r.State}}"{{end}}>{{$r.Scenario}}</a>{{end}}</td></tr>
 {{else}}{{range .Runs}}<tr>
 <td data-label="Priority"><span class="{{verdictClass .Verdict}}">{{verdictIcon .Verdict}} {{verdictLabel .Verdict}}</span>{{if .Disputed}}<span class="disputed-marker">disputed</span>{{end}}</td>
 <td data-label="Scenario"><a href="/r/{{.RunID}}">{{.Scenario}}</a></td>
@@ -67,7 +79,7 @@
 <td data-label="Duration">{{fmtDuration .DurationSec}}</td>
 <td data-label="Cost">{{if .CostKnown}}{{fmtCost .CostUsd}}{{else}}—{{end}}</td>
 </tr>{{end}}{{end}}
-{{else}}<tr><td colspan="4" class="empty">No runs in this batch.</td></tr>
+{{else}}<tr><td colspan="5" class="empty">No runs in this batch.</td></tr>
 {{end}}
 </tbody>
 </table></div>

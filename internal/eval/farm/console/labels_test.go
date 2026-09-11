@@ -221,3 +221,42 @@ func TestPages_TermsRequiresAuth(t *testing.T) {
 		t.Errorf("GET /terms unauthenticated: got %d, want 303", rr.Code)
 	}
 }
+
+// TestFormatCheckValue_RewritesMonotonicClockStamp pins item 19 (round-1
+// follow-up): a check's expected/observed text from an older bundle can
+// carry Go's monotonic-clock suffix ("... +0000 UTC m=+0.112197840") — one
+// display helper rewrites that to RFC3339 wherever a page prints
+// expected/observed (Why-this-verdict strip, checks tables, batch
+// first-failed line). Independent oracle: the exact literal example quoted
+// in the brief, plus a plain string with no such stamp (left untouched) and
+// a stamp with a negative monotonic offset (m=-0...).
+func TestFormatCheckValue_RewritesMonotonicClockStamp(t *testing.T) {
+	cases := []struct {
+		name, in, want string
+	}{
+		{
+			"brief's own example",
+			"2026-09-11 18:33:47.123456789 +0000 UTC m=+0.112197840",
+			"2026-09-11T18:33:47Z",
+		},
+		{
+			"negative monotonic offset",
+			"2026-09-11 18:33:47 +0000 UTC m=-0.000000001",
+			"2026-09-11T18:33:47Z",
+		},
+		{
+			"embedded in a larger sentence",
+			"service web is degraded since 2026-09-11 18:33:47.5 +0000 UTC m=+12.5",
+			"service web is degraded since 2026-09-11T18:33:47Z",
+		},
+		{"plain text, no stamp", "expected running, got degraded", "expected running, got degraded"},
+		{"empty string", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := formatCheckValue(c.in); got != c.want {
+				t.Errorf("formatCheckValue(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}

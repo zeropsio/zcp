@@ -27,13 +27,20 @@
 {{if .TopProblems}}<section>
 <h2>Top problems now</h2>
 <ul class="plain">
-{{range .TopProblems}}<li class="card"><a href="/problems"><span class="{{severityClass .Severity}}">{{severityLabel .Severity}}</span> {{range .CauseLabels}}<span class="chip cause-chip">{{.}}</span> {{end}}<code class="chip">{{.Surface}}</code> <strong>{{.Title}}</strong> — {{.HowOften}}</a></li>
+{{range .TopProblems}}<li class="card">
+<span class="{{severityClass .Severity}}">{{severityLabel .Severity}}</span>
+{{range .CauseLabels}}<span class="chip cause-chip">{{.}}</span> {{end}}
+{{with .Surface}}<code class="chip">{{.}}</code> {{end}}
+<a href="/problems#{{.ID}}"><strong>{{.Title}}</strong></a>
+<span class="muted"> — {{.HowOften}}</span>
+</li>
 {{end}}</ul>
 </section>{{end}}
 
 <section>
 <h2>Batches</h2>
 {{template "filterbar" .Nav.Filters}}
+{{template "sortchips" .Nav.Sorts}}
 <div class="table-wrap"><table class="stack">
 <thead><tr>
 <th>Batch</th>
@@ -49,9 +56,9 @@
 <tbody>
 {{range .Batches}}<tr>
 <td data-label="Batch"><a href="/b/{{.BatchID}}">{{.BatchID}}</a></td>
-<td data-label="Started">{{fmtTime .CreatedAt}}</td>
+<td data-label="Started">{{.StartedShort}}</td>
 <td data-label="Build">{{.Build.Label}}</td>
-<td data-label="Set">{{if .Set}}{{.Set}}{{else}}—{{end}}</td>
+<td data-label="Set">{{if .Set}}<span class="chip">{{.Set}}</span>{{else}}—{{end}}</td>
 <td data-label="Runs"><div class="dots">{{range .Dots}}<span class="dot dot-{{verdictKey .Verdict}}" title="{{.Tooltip}}"></span>{{end}}</div></td>
 <td data-label="Verdicts"><div class="stats">{{range .VerdictCounts}}<span class="{{verdictClass .Verdict}}">{{verdictIcon .Verdict}} {{.Count}} {{verdictLabel .Verdict}}</span>{{end}}{{if .DisputedCount}}<span class="disputed-marker">{{.DisputedCount}} disputed</span>{{end}}</div></td>
 <td data-label="ZCP findings">{{if or .ZCPHigh .ZCPMedium}}{{if .ZCPHigh}}<span class="severity severity-high">{{.ZCPHigh}} high</span>{{end}}{{if .ZCPMedium}} <span class="severity severity-medium">{{.ZCPMedium}} medium</span>{{end}}{{else}}<span class="muted small">none</span>{{end}}</td>

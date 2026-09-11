@@ -11,6 +11,7 @@ package console
 
 import (
 	"net/http"
+	"regexp"
 
 	"github.com/zeropsio/zcp/internal/eval/farm"
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
@@ -158,6 +159,25 @@ var problemStatusVocab = []vocabEntry{
 
 func problemStatusLabel(v string) string   { return vocabLabel(problemStatusVocab, v) }
 func problemStatusTooltip(v string) string { return vocabTooltip(problemStatusVocab, v) }
+
+// monotonicClockStampRE matches Go's time.Time.String() form for a value
+// that still carries its monotonic-clock reading (fmt.Stringer's own
+// "m=±<seconds>" suffix) — a check's expected/observed text from an older
+// bundle can carry this verbatim (round-1 follow-up, item 19: "… +0000 UTC
+// m=+0.112197840"). The fractional seconds before "+0000 UTC" are optional
+// (time.Time.String omits them for a zero-nanosecond value).
+var monotonicClockStampRE = regexp.MustCompile(`(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})(?:\.\d+)? \+0000 UTC m=[+-]\d+(?:\.\d+)?`)
+
+// formatCheckValue is the one display helper item 19 asks for: it rewrites
+// every monotonicClockStampRE match in s to RFC3339
+// ("2026-09-11T18:33:47Z"), leaving the rest of s untouched. Every page that
+// prints a check's expected/observed text routes through this — the
+// Why-this-verdict strip and the failed/blocked checks table (both via
+// pages_run.go's checkRowView), and the batch page's first-failed-check
+// line (pages_batch.go's firstFailedCheckPlain).
+func formatCheckValue(s string) string {
+	return monotonicClockStampRE.ReplaceAllString(s, "${1}T${2}Z")
+}
 
 // glossaryTerm is one row of §8.8 FM-56's full glossary, for GET /terms.
 type glossaryTerm struct{ Term, Definition string }
