@@ -9,8 +9,10 @@
 // (render.go).
 //
 // The observer is advisory only: it never produces or changes a verdict
-// (§7.1) and it writes only under runs/<runId>/observer/ (§7.6). This
-// package itself never touches the bucket — the local verb
-// (cmd/zcp/eval_farm_observe.go) works entirely over a pulled bundle
-// directory and never reaches the sink (§7.7).
+// (§7.1) and it writes only under runs/<runId>/observer/ (§7.6). A Bundle is
+// either a pulled directory (DirBundle — the local verb,
+// cmd/zcp/eval_farm_observe.go, which never reaches the sink, §7.7) or the
+// farm bucket itself (SinkBundle, sinkbundle.go); Store (store.go) is the
+// only writer, and it refuses any key outside a valid run's observer/ prefix
+// and never overwrites an observation.
 package observer
