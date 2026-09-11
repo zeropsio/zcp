@@ -18,10 +18,9 @@
 # process image so the pidfile below always names whichever process is
 # actually doing the work.
 #
-# Env contract: docs/spec-eval-farm.md §2.2 (FM-12) plus one addition not
-# yet in that table — ZCP_FARM_SCENARIOS_DIGEST, the scenario tree digest
-# under which `scenarios/<digest>/**` is fetched (flagged in the S1a build
-# report; FM-12's table needs this row). ZCP_FARM_RUNDIR is a wrapper-local
+# Env contract: docs/spec-eval-farm.md §2.2 (FM-12), including
+# ZCP_FARM_SCENARIOS_DIGEST — the scenario tree digest under which
+# `scenarios/<digest>/**` is fetched. ZCP_FARM_RUNDIR is a wrapper-local
 # test seam, not part of the run descriptor: production leaves it unset (a
 # fresh `mktemp -d` is used each run); the offline test sets it so it can
 # find the pid files and local state without scraping stdout.
