@@ -91,9 +91,16 @@ type ModelAnswer struct {
 	SelfReview SelfReview `json:"selfReview"`
 }
 
+// Finding severities (§7.5).
+const (
+	SeverityHigh   = "high"
+	SeverityMedium = "medium"
+	SeverityLow    = "low"
+)
+
 var (
 	validReached  = map[string]bool{"yes": true, "partly": true, "no": true}
-	validSeverity = map[string]bool{"high": true, "medium": true, "low": true}
+	validSeverity = map[string]bool{SeverityHigh: true, SeverityMedium: true, SeverityLow: true}
 	validOwner    = map[string]bool{
 		"zcp-guidance": true, "zcp-tool": true, "platform": true,
 		"agent": true, "scenario": true, "evaluator": true,

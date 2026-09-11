@@ -1,0 +1,19 @@
+{{define "head"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.}} · Farm console</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar"><div class="wrap topbar-inner">
+<a class="brand" href="/">Farm console</a>
+<nav class="topnav"><a href="/">Batches</a><a href="/findings?since=7d">Findings</a></nav>
+</div></header>
+<main class="wrap">
+{{end}}
+{{define "foot"}}</main>
+</body>
+</html>
+{{end}}

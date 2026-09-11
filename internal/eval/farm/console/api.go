@@ -612,11 +612,11 @@ func findingItemsFromRows(rows []RunRow) []FindingItem {
 
 func severityRank(sev string) int {
 	switch sev {
-	case "high":
+	case observer.SeverityHigh:
 		return 0
-	case "medium":
+	case observer.SeverityMedium:
 		return 1
-	case "low":
+	case observer.SeverityLow:
 		return 2
 	default:
 		return 3

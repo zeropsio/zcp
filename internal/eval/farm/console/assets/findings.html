@@ -1,39 +1,22 @@
-{{define "findings"}}<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Farm console — findings</title>
-<link rel="stylesheet" href="/static/app.css">
-</head>
-<body>
-<main>
-<nav class="crumbs"><a href="/">Batches</a> / findings</nav>
+{{define "findings"}}{{template "head" "Findings"}}
+<nav class="crumbs"><a href="/">Batches</a><span class="sep">/</span>Findings</nav>
+<div class="page-head">
 <h1>Findings</h1>
-
-<form class="observe-form" method="get" action="/findings">
-<label for="since">since</label>
-<input id="since" name="since" type="text" value="{{.Since}}" placeholder="24h">
-<label for="owner">owner</label>
-<input id="owner" name="owner" type="text" value="{{.Owner}}" placeholder="any">
-<button type="submit">Filter</button>
-</form>
-
-{{$owner := ""}}
-{{range .Findings}}
-{{if ne .Owner $owner}}{{if $owner}}</div>{{end}}<div class="owner-group"><h2>{{.Owner}}</h2>{{$owner = .Owner}}{{end}}
-<div class="finding">
-<p><span class="severity severity-{{.Severity}}">{{.Severity}}</span> · <strong>{{.Title}}</strong> · <a href="{{runLink .RunID .Steps}}">{{.RunID}}</a></p>
-<p>{{.What}}</p>
-<p>quotes verified: {{.QuotesVerified}}/{{.QuotesTotal}}</p>
-<p>look at: {{.LookAt}}</p>
-<p>fix: {{.Fix}}</p>
+<p class="muted">What the observer found across runs, grouped by who has to act.</p>
 </div>
+<div class="filters">
+<div class="filter-row"><span class="k">Window</span>{{range .Windows}}<a class="filter{{if eq . $.Since}} on{{end}}" href="/findings?since={{.}}{{if $.Owner}}&amp;owner={{$.Owner}}{{end}}">{{.}}</a>{{end}}</div>
+<div class="filter-row"><span class="k">Owner</span><a class="filter{{if not $.Owner}} on{{end}}" href="/findings?since={{$.Since}}">all</a>{{range .Owners}}<a class="filter{{if eq . $.Owner}} on{{end}}" href="/findings?since={{$.Since}}&amp;owner={{.}}">{{.}}</a>{{end}}</div>
+</div>
+{{range .Groups}}<h2>{{.Owner}} <span class="count">{{len .Items}}</span></h2>
+{{range .Items}}<article class="finding sev-{{.Severity}}">
+<header class="finding-head"><span class="severity severity-{{.Severity}}">{{.Severity}}</span><a class="run-link" href="{{runLink .RunID .Steps}}">{{.RunID}}</a></header>
+<h3>{{.Title}}</h3>
+<p>{{.What}}</p>
+<p class="muted small">{{if .Steps}}steps {{joinInts .Steps}} · {{end}}quotes verified {{.QuotesVerified}}/{{.QuotesTotal}}</p>
+<dl class="kv"><dt>Where to look</dt><dd>{{.LookAt}}</dd>{{if .Fix}}<dt>Suggested fix</dt><dd>{{.Fix}}</dd>{{end}}</dl>
+</article>
 {{end}}
-{{if $owner}}</div>{{end}}
-{{if not .Findings}}<p>No findings in this window.</p>{{end}}
-
-</main>
-</body>
-</html>
+{{else}}<p class="empty">No findings in this window.</p>
 {{end}}
+{{template "foot"}}{{end}}

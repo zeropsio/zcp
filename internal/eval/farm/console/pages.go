@@ -18,7 +18,7 @@ import (
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
 
-//go:embed assets/batches.html assets/batch.html assets/run.html assets/findings.html
+//go:embed assets/layout.html assets/batches.html assets/batch.html assets/run.html assets/findings.html
 var pagesHTMLSrc embed.FS
 
 // pageFuncs are the plain-string-returning helpers pages.html templates use.
@@ -27,10 +27,17 @@ var pagesHTMLSrc embed.FS
 // bucket (a step result, a model-authored quote) is never trusted as markup
 // (TestPages_HostileTextEscaped).
 var pageFuncs = template.FuncMap{
-	"fmtTime":     func(t time.Time) string { return t.UTC().Format("2006-01-02 15:04:05 UTC") },
-	"fmtCost":     func(v float64) string { return fmt.Sprintf("$%.4f", v) },
-	"fmtDuration": func(sec float64) string { return fmt.Sprintf("%.1fs", sec) },
-	"stepAnchor":  func(n int) string { return fmt.Sprintf("s%d", n) },
+	"fmtTime":     fmtTime,
+	"fmtCost":     func(v float64) string { return fmt.Sprintf("$%.2f", v) },
+	"fmtDuration": fmtDuration,
+	"verdictIcon": verdictIcon,
+	"verdictKey":  verdictKey,
+	"shortTool": func(name string) string {
+		return strings.TrimPrefix(strings.TrimPrefix(name, "mcp__zerops__"), "mcp__")
+	},
+	"preview":    preview,
+	"joinInts":   joinInts,
+	"stepAnchor": func(n int) string { return fmt.Sprintf("s%d", n) },
 	"verifiedMark": func(v bool) string {
 		if v {
 			return "verified"
@@ -39,9 +46,9 @@ var pageFuncs = template.FuncMap{
 	},
 	"verdictClass": func(v string) string {
 		switch v {
-		case "passed", "failed", "blocked", verdictRunning:
+		case farm.VerdictPassed, farm.VerdictFailed, farm.VerdictBlocked, verdictRunning:
 			return "verdict verdict-" + v
-		case "not-run":
+		case farm.VerdictNotRun:
 			return "verdict verdict-not-run"
 		default:
 			return "verdict verdict-other"
@@ -49,7 +56,7 @@ var pageFuncs = template.FuncMap{
 	},
 	"severityClass": func(v string) string {
 		switch v {
-		case "high", "medium", "low":
+		case observer.SeverityHigh, observer.SeverityMedium, observer.SeverityLow:
 			return "severity severity-" + v
 		default:
 			return "severity severity-other"
@@ -65,6 +72,99 @@ var pageFuncs = template.FuncMap{
 		return fmt.Sprintf("/r/%s#s%d", runID, steps[0])
 	},
 }
+
+// fmtTime renders a timestamp for people: day, month, time, UTC.
+func fmtTime(t time.Time) string {
+	if t.IsZero() {
+		return "—"
+	}
+	return t.UTC().Format("2 Jan 2006, 15:04 UTC")
+}
+
+// fmtDuration renders seconds as "45s", "8m 04s" or "1h 02m".
+func fmtDuration(sec float64) string {
+	d := time.Duration(sec * float64(time.Second)).Round(time.Second)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm %02ds", int(d.Minutes()), int(d.Seconds())%60)
+	default:
+		return fmt.Sprintf("%dh %02dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+}
+
+// verdictIcon is the text mark shown next to every verdict label, so a
+// verdict never depends on colour alone.
+func verdictIcon(v string) string {
+	switch v {
+	case farm.VerdictPassed:
+		return "✓"
+	case farm.VerdictFailed:
+		return "✗"
+	case farm.VerdictBlocked:
+		return "!"
+	case verdictRunning:
+		return "…"
+	default:
+		return "–"
+	}
+}
+
+// verdictRank orders a batch page's runs problems first: failed, blocked,
+// running, not-run, passed, anything else.
+func verdictRank(v string) int {
+	switch v {
+	case farm.VerdictFailed:
+		return 0
+	case farm.VerdictBlocked:
+		return 1
+	case verdictRunning:
+		return 2
+	case farm.VerdictNotRun:
+		return 3
+	case farm.VerdictPassed:
+		return 4
+	default:
+		return 5
+	}
+}
+
+// verdictKey maps a verdict onto the stylesheet's known verdict classes.
+func verdictKey(v string) string {
+	switch v {
+	case farm.VerdictPassed, farm.VerdictFailed, farm.VerdictBlocked, verdictRunning, farm.VerdictNotRun:
+		return v
+	default:
+		return "other"
+	}
+}
+
+// preview is the one-line summary of a step: whitespace collapsed, cut at
+// n runes with an ellipsis.
+func preview(s string, n int) string {
+	flat := strings.Join(strings.Fields(s), " ")
+	r := []rune(flat)
+	if len(r) <= n {
+		return flat
+	}
+	return string(r[:n]) + "…"
+}
+
+func joinInts(ns []int) string {
+	parts := make([]string, len(ns))
+	for i, n := range ns {
+		parts[i] = fmt.Sprint(n)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// findingOwners is §7.5's owner vocabulary, in the order the findings page
+// offers it as a filter.
+var findingOwners = []string{"zcp-guidance", "zcp-tool", "platform", "agent", "scenario", "evaluator"}
+
+// findingWindows are the findings page's window shortcuts (§8.3 FM-51).
+var findingWindows = []string{"24h", "7d", "30d"}
 
 var pagesTemplate = template.Must(template.New("pages").Funcs(pageFuncs).ParseFS(pagesHTMLSrc, "assets/*.html"))
 
@@ -99,27 +199,55 @@ func (s *Server) handleBatchesPage(w http.ResponseWriter, r *http.Request) {
 // makes it emit "observing"), plus just the failed/blocked check ids.
 type batchRunView struct {
 	RunRow
-	HeadlineOrState string
-	FailedCheckIDs  []string
+	Headline        string // the current observation's headline, "" without one
+	State           string // RunRow.ObserverState, shown when there is no headline
+	High            int
+	Medium          int
+	Low             int
+	FailedCheckIDs  []string // at most maxFailedCheckChips
+	FailedCheckMore int      // how many more failed checks the row does not list
 }
 
+// maxFailedCheckChips caps the failed-check ids a batch row lists.
+const maxFailedCheckChips = 3
+
 func newBatchRunView(row RunRow) batchRunView {
-	headline := row.ObserverState
+	v := batchRunView{RunRow: row, State: row.ObserverState}
 	if row.Observation != nil {
-		headline = row.Observation.Headline
+		v.Headline = row.Observation.Headline
+		for _, f := range row.Observation.Findings {
+			switch f.Severity {
+			case observer.SeverityHigh:
+				v.High++
+			case observer.SeverityMedium:
+				v.Medium++
+			case observer.SeverityLow:
+				v.Low++
+			}
+		}
 	}
-	ids := make([]string, len(row.FailedChecks))
 	for i, c := range row.FailedChecks {
-		ids[i] = c.ID
+		if i == maxFailedCheckChips {
+			v.FailedCheckMore = len(row.FailedChecks) - maxFailedCheckChips
+			break
+		}
+		v.FailedCheckIDs = append(v.FailedCheckIDs, c.ID)
 	}
-	return batchRunView{RunRow: row, HeadlineOrState: headline, FailedCheckIDs: ids}
+	return v
 }
 
 // batchPageData is GET /b/<batch> (§8.3 FM-51).
 type batchPageData struct {
-	BatchID      string
-	Runs         []batchRunView
-	ModelOptions []string
+	BatchID        string
+	CreatedAt      time.Time
+	Set            string
+	CandidateSha12 string
+	VerdictCounts  []VerdictCount
+	TotalCostUsd   float64
+	ObservedN      int
+	Unassessed     int // finished runs with no observation and none in flight
+	Runs           []batchRunView
+	ModelOptions   []string
 }
 
 func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
@@ -133,12 +261,32 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].RunID < rows[j].RunID })
-	views := make([]batchRunView, len(rows))
-	for i, row := range rows {
-		views[i] = newBatchRunView(row)
+	sort.Slice(rows, func(i, j int) bool {
+		if ri, rj := verdictRank(rows[i].Verdict), verdictRank(rows[j].Verdict); ri != rj {
+			return ri < rj
+		}
+		return rows[i].RunID < rows[j].RunID
+	})
+	data := batchPageData{BatchID: batch, ModelOptions: observeModelOptions}
+	if manifest, err := loadManifest(r.Context(), s.cfg.Store, batch); err == nil {
+		data.CreatedAt, _ = time.Parse(time.RFC3339, manifest.CreatedAt)
+		data.Set = manifest.Set
+		data.CandidateSha12 = candidateSha12(manifest.CandidateSha256)
 	}
-	renderPage(w, "batch", batchPageData{BatchID: batch, Runs: views, ModelOptions: observeModelOptions})
+	counts := make(map[string]int)
+	for _, row := range rows {
+		data.Runs = append(data.Runs, newBatchRunView(row))
+		counts[row.Verdict]++
+		data.TotalCostUsd += row.CostUsd
+		switch {
+		case row.Observation != nil:
+			data.ObservedN++
+		case row.DoneExists && row.ObserverState != observerStateObserving:
+			data.Unassessed++
+		}
+	}
+	data.VerdictCounts = orderedVerdictCounts(counts)
+	renderPage(w, "batch", data)
 }
 
 // runPageData is GET /r/<runId> (§8.3 FM-51).
@@ -150,6 +298,7 @@ type runPageData struct {
 	OlderObservations []observer.Observation
 	EvidenceSteps     []int
 	UnverifiedQuotes  int
+	TotalQuotes       int
 	ModelOptions      []string
 }
 
@@ -169,6 +318,9 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 	data := runPageData{Row: row, EvidenceSteps: evidenceSteps(row.Observation), ModelOptions: observeModelOptions}
 	if row.Observation != nil {
 		data.UnverifiedQuotes = unverifiedQuotes(row.Observation)
+		for _, f := range row.Observation.Findings {
+			data.TotalQuotes += len(f.Evidence)
+		}
 	}
 
 	if row.DoneExists {
@@ -244,7 +396,27 @@ func loadOlderObservations(ctx context.Context, store observer.ObjectStore, runI
 type findingsPageData struct {
 	Since    string
 	Owner    string
+	Windows  []string
+	Owners   []string
 	Findings []FindingItem
+	Groups   []findingGroup
+}
+
+// findingGroup is one owner's findings, in the read model's order.
+type findingGroup struct {
+	Owner string
+	Items []FindingItem
+}
+
+func groupFindingsByOwner(items []FindingItem) []findingGroup {
+	var groups []findingGroup
+	for _, it := range items {
+		if len(groups) == 0 || groups[len(groups)-1].Owner != it.Owner {
+			groups = append(groups, findingGroup{Owner: it.Owner})
+		}
+		groups[len(groups)-1].Items = append(groups[len(groups)-1].Items, it)
+	}
+	return groups
 }
 
 func (s *Server) handleFindingsPage(w http.ResponseWriter, r *http.Request) {
@@ -272,5 +444,12 @@ func (s *Server) handleFindingsPage(w http.ResponseWriter, r *http.Request) {
 		items = filtered
 	}
 
-	renderPage(w, "findings", findingsPageData{Since: q.Get("since"), Owner: owner, Findings: items})
+	since := q.Get("since")
+	if since == "" {
+		since = "24h"
+	}
+	renderPage(w, "findings", findingsPageData{
+		Since: since, Owner: owner, Windows: findingWindows, Owners: findingOwners,
+		Findings: items, Groups: groupFindingsByOwner(items),
+	})
 }

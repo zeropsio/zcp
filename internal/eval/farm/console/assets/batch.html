@@ -1,43 +1,39 @@
-{{define "batch"}}<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Farm console — {{.BatchID}}</title>
-<link rel="stylesheet" href="/static/app.css">
-</head>
-<body>
-<main>
-<nav class="crumbs"><a href="/">Batches</a> / {{.BatchID}}</nav>
+{{define "batch"}}{{template "head" .BatchID}}
+<nav class="crumbs"><a href="/">Batches</a><span class="sep">/</span>{{.BatchID}}</nav>
+<div class="page-head">
 <h1>{{.BatchID}}</h1>
+<p class="muted">{{fmtTime .CreatedAt}}{{if .Set}} · set {{.Set}}{{end}}{{if .CandidateSha12}} · candidate <code>{{.CandidateSha12}}</code>{{end}}</p>
+</div>
 
-<form class="observe-form" method="post" action="/b/{{.BatchID}}/observe">
-<label for="batch-model">Observe</label>
-<select id="batch-model" name="model">
-{{range .ModelOptions}}<option value="{{.}}">{{.}}</option>{{end}}
-</select>
-<label><input type="checkbox" name="all" value="1"> all runs</label>
-<button type="submit">Observe</button>
+<div class="summary card">
+<div class="stats">{{range .VerdictCounts}}<span class="{{verdictClass .Verdict}} big">{{verdictIcon .Verdict}} {{.Count}} {{.Verdict}}</span>{{end}}</div>
+<div class="summary-nums"><span><strong>{{fmtCost .TotalCostUsd}}</strong> total</span><span><strong>{{.ObservedN}}/{{len .Runs}}</strong> assessed</span></div>
+</div>
+
+{{if .Unassessed}}<form class="callout" method="post" action="/b/{{.BatchID}}/observe">
+<span>{{.Unassessed}} finished run{{if ne .Unassessed 1}}s have{{else}} has{{end}} no observer assessment yet.</span>
+<span class="callout-actions"><select name="model" aria-label="model">{{range .ModelOptions}}<option value="{{.}}">{{.}}</option>{{end}}</select><button type="submit" class="primary">Assess</button></span>
+</form>{{end}}
+
+<div class="run-list">
+{{range .Runs}}<a class="card run-row" href="/r/{{.RunID}}">
+<span class="run-verdict"><span class="{{verdictClass .Verdict}}">{{verdictIcon .Verdict}} {{.Verdict}}</span></span>
+<span class="run-main">
+<span class="run-title">{{.Scenario}}</span>
+{{if .Headline}}<span class="run-headline">{{.Headline}}</span>{{else}}<span class="run-headline muted">{{.State}}</span>{{end}}
+{{if or .High .Medium .Low .FailedCheckIDs}}<span class="chips">{{if .High}}<span class="severity severity-high">{{.High}} high</span>{{end}}{{if .Medium}}<span class="severity severity-medium">{{.Medium}} medium</span>{{end}}{{if .Low}}<span class="severity severity-low">{{.Low}} low</span>{{end}}{{range .FailedCheckIDs}}<code class="chip">{{.}}</code>{{end}}{{if .FailedCheckMore}}<span class="muted small">+{{.FailedCheckMore}} more</span>{{end}}</span>{{end}}
+</span>
+<span class="run-nums"><span>{{fmtDuration .DurationSec}}</span><span class="muted">{{fmtCost .CostUsd}}</span></span>
+</a>
+{{else}}<p class="empty">No runs in this batch.</p>
+{{end}}
+</div>
+
+<details class="more"><summary>Re-assess every run of this batch</summary>
+<form class="inline-form" method="post" action="/b/{{.BatchID}}/observe">
+<input type="hidden" name="all" value="1">
+<select name="model" aria-label="model">{{range .ModelOptions}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+<button type="submit">Re-assess all {{len .Runs}} runs</button>
 </form>
-
-<table>
-<thead>
-<tr><th>Scenario</th><th>Verdict</th><th class="duration">Duration</th><th class="cost">Cost</th><th>Observation</th><th>Failed checks</th></tr>
-</thead>
-<tbody>
-{{range .Runs}}<tr>
-<td><a href="/r/{{.RunID}}">{{.Scenario}}</a></td>
-<td><span class="{{verdictClass .Verdict}}">{{.Verdict}}</span></td>
-<td class="duration">{{fmtDuration .DurationSec}}</td>
-<td class="cost">{{fmtCost .CostUsd}}</td>
-<td>{{.HeadlineOrState}}</td>
-<td>{{range .FailedCheckIDs}}<code>{{.}}</code> {{else}}(none){{end}}</td>
-</tr>
-{{else}}<tr><td colspan="6">No runs in this batch.</td></tr>
-{{end}}
-</tbody>
-</table>
-</main>
-</body>
-</html>
-{{end}}
+</details>
+{{template "foot"}}{{end}}

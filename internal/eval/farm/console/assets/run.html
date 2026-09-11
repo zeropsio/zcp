@@ -1,128 +1,80 @@
-{{define "run"}}<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Farm console — {{.Row.RunID}}</title>
-<link rel="stylesheet" href="/static/app.css">
-</head>
-<body>
-<main>
-<nav class="crumbs"><a href="/">Batches</a> / <a href="/b/{{.Row.Batch}}">{{.Row.Batch}}</a> / {{.Row.RunID}}</nav>
-<h1>{{.Row.RunID}}</h1>
-
-<section id="header">
-<ul class="meta-list">
-<li>scenario: {{.Row.Scenario}}</li>
-<li>verdict: <span class="{{verdictClass .Row.Verdict}}">{{.Row.Verdict}}</span></li>
-<li>started: {{fmtTime .Row.StartedAt}}</li>
-<li>duration: <span class="duration">{{fmtDuration .Row.DurationSec}}</span></li>
-<li>cost: <span class="cost">{{fmtCost .Row.CostUsd}}</span></li>
-<li>candidate: <code>{{.Row.CandidateSha256}}</code></li>
-<li>evaluator: <code>{{.Row.EvaluatorSha256}}</code></li>
-</ul>
-</section>
-
-<section id="observation">
-<h2>Observer</h2>
-{{if .Row.Observation}}
-<p class="headline">{{.Row.Observation.Headline}}</p>
-<ul class="meta-list">
-<li>obs: {{.Row.Observation.ObsID}} ({{.Row.Observation.Model}}, {{fmtTime .Row.Observation.CreatedAt}})</li>
-<li>goal reached: {{.Row.Observation.Goal.Reached}} — {{.Row.Observation.Goal.Why}}</li>
-<li>checks: <span class="checks-verdict">{{.Row.Observation.Checks.Verdict}}</span>, agree={{.Row.Observation.Checks.Agree}} — {{.Row.Observation.Checks.Why}}</li>
-<li>self-review judged: {{.Row.Observation.SelfReview.Accurate}} — {{.Row.Observation.SelfReview.Note}}</li>
-<li>unverified quotes: {{.UnverifiedQuotes}}</li>
-</ul>
-<h3>Findings</h3>
-{{range .Row.Observation.Findings}}<div class="finding">
-<p><span class="{{severityClass .Severity}}">{{.Severity}}</span> · {{.Owner}} · <strong>{{.Title}}</strong></p>
-<p>{{.What}}</p>
-<ul class="meta-list">
-{{range .Evidence}}<li>evidence: {{if eq .Step 0}}<a href="#failed-checks">#0</a>{{else if and (gt .Step 0) (le .Step (len $.Steps))}}<a href="#{{stepAnchor .Step}}">#{{.Step}}</a>{{else}}#{{.Step}}{{end}} <span class="evidence-mark {{if .Verified}}evidence-verified{{else}}evidence-unverified{{end}}">{{verifiedMark .Verified}}</span> — “{{.Quote}}”</li>
-{{end}}
-</ul>
-<p>look at: {{.LookAt}}</p>
-<p>fix: {{.Fix}}</p>
+{{define "run"}}{{template "head" .Row.Scenario}}
+<nav class="crumbs"><a href="/">Batches</a><span class="sep">/</span><a href="/b/{{.Row.Batch}}">{{.Row.Batch}}</a><span class="sep">/</span>{{.Row.Scenario}}</nav>
+<div class="page-head run-head">
+<h1>{{.Row.Scenario}}</h1>
+<span class="{{verdictClass .Row.Verdict}} big">{{verdictIcon .Row.Verdict}} {{.Row.Verdict}}</span>
 </div>
-{{else}}<p>(no findings)</p>
-{{end}}
+<p class="muted">{{fmtTime .Row.StartedAt}} · {{fmtDuration .Row.DurationSec}} · {{fmtCost .Row.CostUsd}}{{if .Steps}} · {{len .Steps}} steps{{end}}</p>
+
+<section class="card observer" id="observation">
+<div class="card-label">Observer</div>
+{{with .Row.Observation}}
+<p class="headline">{{.Headline}}</p>
+<div class="assess-grid">
+<div><span class="k">Goal reached</span><span class="pill pill-{{.Goal.Reached}}">{{.Goal.Reached}}</span><p>{{.Goal.Why}}</p></div>
+<div><span class="k">Deterministic checks</span><span class="pill {{if .Checks.Agree}}pill-yes{{else}}pill-no{{end}}">{{if .Checks.Agree}}agree{{else}}disagree{{end}}</span><p>{{.Checks.Why}}</p></div>
+<div><span class="k">Agent's self-review</span><span class="pill pill-{{.SelfReview.Accurate}}">{{.SelfReview.Accurate}}</span><p>{{.SelfReview.Note}}</p></div>
+</div>
+<p class="muted small"><span title="observation {{.ObsID}}">{{.Model}}</span> · {{fmtTime .CreatedAt}} · {{if $.UnverifiedQuotes}}{{$.UnverifiedQuotes}} of {{$.TotalQuotes}} quotes unverified{{else}}all {{$.TotalQuotes}} quotes verified{{end}}</p>
 {{else}}
-<p>{{.Row.ObserverState}}</p>
+<p class="headline muted">{{if eq .Row.ObserverState "observing"}}Assessment in progress…{{else}}No assessment yet — {{.Row.ObserverState}}.{{end}}</p>
 {{end}}
-
-<form class="observe-form" method="post" action="/r/{{.Row.RunID}}/observe">
-<label for="run-model">Re-observe</label>
-<select id="run-model" name="model">
-{{range .ModelOptions}}<option value="{{.}}">{{.}}</option>{{end}}
-</select>
-<button type="submit">Observe</button>
+<form class="inline-form" method="post" action="/r/{{.Row.RunID}}/observe">
+<select name="model" aria-label="model">{{range .ModelOptions}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+<button type="submit">{{if .Row.Observation}}Re-assess{{else}}Assess{{end}}</button>
 </form>
-
-<h3>Older observation versions</h3>
-{{if .OlderObservations}}<ul class="meta-list">
-{{range .OlderObservations}}<li>{{.ObsID}} ({{.Model}}, {{fmtTime .CreatedAt}}) — {{.Status}} — {{.Headline}}</li>
-{{end}}
-</ul>
-{{else}}<p>(none)</p>
-{{end}}
+{{if .OlderObservations}}<details class="more"><summary>Earlier assessments ({{len .OlderObservations}})</summary>
+<ul class="plain">{{range .OlderObservations}}<li><span class="muted small">{{.ObsID}} · {{.Model}} · {{fmtTime .CreatedAt}} · {{.Status}}</span><br>{{.Headline}}</li>{{end}}</ul>
+</details>{{end}}
 </section>
 
-<section id="failed-checks">
-<h2>Failed / blocked checks</h2>
-{{if .Row.FailedChecks}}<table>
-<thead><tr><th>id</th><th>result</th><th>expected</th><th>observed</th><th>source</th></tr></thead>
-<tbody>
-{{range .Row.FailedChecks}}<tr>
-<td><code>{{.ID}}</code></td>
-<td>{{.Result}}</td>
+{{with .Row.Observation}}{{if .Findings}}
+<h2>Findings <span class="count">{{len .Findings}}</span></h2>
+{{range .Findings}}<article class="finding sev-{{.Severity}}">
+<header class="finding-head"><span class="{{severityClass .Severity}}">{{.Severity}}</span><span class="owner">{{.Owner}}</span></header>
+<h3>{{.Title}}</h3>
+<p>{{.What}}</p>
+{{range .Evidence}}<blockquote class="quote"><span class="quote-ref">{{if and (eq .Step 0) $.Row.FailedChecks}}<a href="#failed-checks">checks</a>{{else if and (gt .Step 0) (le .Step (len $.Steps))}}<a href="#{{stepAnchor .Step}}">step {{.Step}}</a>{{else}}step {{.Step}}{{end}}<span class="evidence-mark {{if .Verified}}evidence-verified{{else}}evidence-unverified{{end}}">{{verifiedMark .Verified}}</span></span>{{.Quote}}</blockquote>
+{{end}}
+<dl class="kv"><dt>Where to look</dt><dd>{{.LookAt}}</dd>{{if .Fix}}<dt>Suggested fix</dt><dd>{{.Fix}}</dd>{{end}}</dl>
+</article>
+{{end}}
+{{else}}<p class="empty">No findings — the observer saw nothing worth fixing.</p>
+{{end}}{{end}}
+
+{{if .Row.FailedChecks}}<h2 id="failed-checks">Failed checks <span class="count">{{len .Row.FailedChecks}}</span></h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Check</th><th>Expected</th><th>Observed</th></tr></thead>
+<tbody>{{range .Row.FailedChecks}}<tr>
+<td><span class="{{verdictClass .Result}}">{{.Result}}</span> <code>{{.ID}}</code><div class="muted small">{{.Source}}</div></td>
 <td>{{.Expected}}</td>
 <td>{{.Observed}}</td>
-<td>{{.Source}}</td>
-</tr>
+</tr>{{end}}</tbody>
+</table></div>
 {{end}}
-</tbody>
-</table>
-{{else}}<p>(none)</p>
-{{end}}
-</section>
 
-<section id="self-review">
-<h2>Self-review</h2>
-<pre>{{.SelfReview}}</pre>
-</section>
-
-<section id="task-prompt">
-<h2>Task prompt</h2>
-<pre>{{.TaskPrompt}}</pre>
-</section>
-
-<section id="steps">
-<h2>Steps</h2>
-{{range .Steps}}<details id="{{stepAnchor .N}}">
-<summary>#{{.N}} {{.Kind}}{{if eq .Kind "tool"}} {{.ToolName}}{{end}}</summary>
-<div class="step-body">
-{{if eq .Kind "tool"}}
-<p>input:</p>
-<pre>{{.ToolInputJSON}}</pre>
-<p>result{{if .ToolIsError}} (error){{end}}:</p>
-<pre>{{.ToolResultText}}</pre>
-{{else}}
-<pre>{{.Text}}</pre>
-{{end}}
-</div>
+<h2>Record</h2>
+<details class="section" id="self-review"><summary>Agent's self-review</summary><div class="prose">{{.SelfReview}}</div></details>
+<details class="section" id="task-prompt"><summary>Task prompt</summary><div class="prose">{{.TaskPrompt}}</div></details>
+<details class="section" id="run-meta"><summary>Run metadata &amp; forensic view</summary>
+<dl class="kv">
+<dt>Run</dt><dd><code>{{.Row.RunID}}</code></dd>
+<dt>Candidate</dt><dd><code>{{.Row.CandidateSha256}}</code></dd>
+<dt>Evaluator</dt><dd><code>{{.Row.EvaluatorSha256}}</code></dd>
+<dt>Forensic view</dt><dd><pre class="forensic-command">zcp eval farm pull {{.Row.RunID}} --out &lt;dir&gt;
+zcp capture ui &lt;dir&gt;/{{.Row.RunID}}/capture</pre></dd>
+</dl>
 </details>
-{{else}}<p>(no steps recorded)</p>
-{{end}}
-</section>
 
-<section id="forensic">
-<h2>Local forensic command</h2>
-<pre class="forensic-command">zcp eval farm pull {{.Row.RunID}} --out &lt;dir&gt;
-zcp capture ui &lt;dir&gt;/{{.Row.RunID}}/capture</pre>
-</section>
-
-</main>
-</body>
-</html>
+<h2 id="steps">Steps <span class="count">{{len .Steps}}</span></h2>
+{{if .Steps}}<p class="muted small">Empty thinking blocks are hidden; step numbers follow the record.</p>
+<ol class="steps">
+{{range .Steps}}{{if not (and (eq .Kind "thinking") (eq .Text ""))}}<li><details id="{{stepAnchor .N}}" class="step step-{{.Kind}}">
+<summary><span class="step-n">{{.N}}</span><span class="step-kind">{{if eq .Kind "tool"}}{{shortTool .ToolName}}{{else}}{{.Kind}}{{end}}</span>{{if .ToolIsError}}<span class="severity severity-high">error</span>{{end}}<span class="step-preview">{{if eq .Kind "tool"}}{{preview .ToolResultText 160}}{{else}}{{preview .Text 160}}{{end}}</span></summary>
+<div class="step-body">{{if eq .Kind "tool"}}<div class="k">Input</div><pre>{{.ToolInputJSON}}</pre><div class="k">Result{{if .ToolIsError}} (error){{end}}</div><pre>{{.ToolResultText}}</pre>{{else}}<div class="prose">{{.Text}}</div>{{end}}</div>
+</details></li>{{end}}
 {{end}}
+</ol>
+{{else}}<p class="empty">No steps recorded.</p>
+{{end}}
+{{template "foot"}}{{end}}

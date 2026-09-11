@@ -110,7 +110,7 @@ func TestPages_RunShowsObservationEvidenceLinksAndMarks(t *testing.T) {
 	if !strings.Contains(body, "unverified") {
 		t.Errorf("body missing an 'unverified' mark:\n%s", body)
 	}
-	if !strings.Contains(body, "unverified quotes: 1") {
+	if !strings.Contains(body, "1 of 2 quotes unverified") {
 		t.Errorf("body missing the unverified-quote count (FM-46):\n%s", body)
 	}
 	if !strings.Contains(body, "Tool returned stale data") || !strings.Contains(body, "Agent skipped a sanity check") {

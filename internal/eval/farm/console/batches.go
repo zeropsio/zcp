@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/eval/farm"
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
 
@@ -27,13 +28,15 @@ type BatchRow struct {
 	TotalCostUsd   float64
 	ObservedN      int
 	ObservedM      int
+	RunVerdicts    []string // one per run, in run-id order — the batch card's dots
+	High           int      // high-severity findings across the batch's current observations
 }
 
 // verdictDisplayOrder fixes the order a batch row's per-verdict counts
 // render in: verdictRunning plus §5.1's row/run vocabulary first, any other
 // value (a verdict this slice does not know about yet) appended
 // alphabetically so it is shown, never dropped.
-var verdictDisplayOrder = []string{verdictRunning, "passed", "failed", "blocked", "not-run"}
+var verdictDisplayOrder = []string{verdictRunning, farm.VerdictPassed, farm.VerdictFailed, farm.VerdictBlocked, farm.VerdictNotRun}
 
 // candidateSha12 takes the first 12 characters of a candidate sha256
 // (§8.3 FM-51: "candidate sha (12 chars)"); a shorter value (a test fixture)
@@ -96,12 +99,22 @@ func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObser
 
 		counts := make(map[string]int)
 		var totalCost float64
-		observedN := 0
+		observedN, high := 0, 0
+		sort.Slice(runRows, func(i, j int) bool { return runRows[i].RunID < runRows[j].RunID })
+		verdicts := make([]string, 0, len(runRows))
 		for _, r := range runRows {
 			counts[r.Verdict]++
 			totalCost += r.CostUsd
+			verdicts = append(verdicts, r.Verdict)
 			if r.ObserverState == observerStateObserved {
 				observedN++
+			}
+			if r.Observation != nil {
+				for _, f := range r.Observation.Findings {
+					if f.Severity == observer.SeverityHigh {
+						high++
+					}
+				}
 			}
 		}
 
@@ -114,6 +127,8 @@ func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObser
 			TotalCostUsd:   totalCost,
 			ObservedN:      observedN,
 			ObservedM:      len(runRows),
+			RunVerdicts:    verdicts,
+			High:           high,
 		})
 	}
 
