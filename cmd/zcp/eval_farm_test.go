@@ -3,16 +3,20 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/eval/farm"
 )
 
 // TestEvalFarm_WithoutAuthoringGate_RefusesEveryVerb pins FM-17
@@ -159,6 +163,112 @@ func TestFarmPush_Candidate_UploadsUnderSha256Key(t *testing.T) {
 	}
 	if string(got) != string(body) {
 		t.Errorf("uploaded object = %q, want %q", got, body)
+	}
+}
+
+// buildVCSFixtureBinary builds internal/eval/farm/testdata/vcsbuildfixture
+// into t.TempDir() and returns its path. It runs the real go toolchain
+// from inside this repo's git working tree so the resulting binary
+// carries genuine vcs.revision/vcs.time/vcs.modified debug/buildinfo
+// settings — a fabricated file body cannot exercise the real
+// debug/buildinfo.ReadFile path at all. Skipped under -short: it shells
+// out to `go build`.
+func buildVCSFixtureBinary(t *testing.T) string {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("builds a real Go binary via the go toolchain; skipped under -short")
+	}
+	out := filepath.Join(t.TempDir(), "candidate-with-vcs")
+	cmd := exec.CommandContext(t.Context(), "go", "build", "-o", out, "github.com/zeropsio/zcp/internal/eval/farm/testdata/vcsbuildfixture")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go build fixture: %v\n%s", err, output)
+	}
+	return out
+}
+
+// TestFarmPush_CandidateInfo_UploadsWhenVCSPresent pins docs/spec-eval-farm.md
+// §3.3: a candidate binary whose embedded Go build info carries a
+// vcs.revision uploads candidates/<sha256>.info.json (sibling to
+// candidates/<sha256>/zcp) and prints "candidate-info: <revision[:12]>".
+func TestFarmPush_CandidateInfo_UploadsWhenVCSPresent(t *testing.T) {
+	candidatePath := buildVCSFixtureBinary(t)
+
+	fake := newFakeFarmS3()
+	server := fake.server()
+	defer server.Close()
+	setFarmEnv(t, server.URL)
+
+	body, err := os.ReadFile(candidatePath)
+	if err != nil {
+		t.Fatalf("ReadFile fixture: %v", err)
+	}
+	sum := sha256.Sum256(body)
+	wantDigest := hex.EncodeToString(sum[:])
+
+	var code int
+	stdout, stderr := captureOutput(t, func() {
+		code = runEvalFarm([]string{"push", "--candidate", candidatePath})
+	})
+	if code != 0 {
+		t.Fatalf("runEvalFarm(push --candidate) = %d, stderr = %q", code, stderr)
+	}
+
+	fake.mu.Lock()
+	infoBody, ok := fake.objects["candidates/"+wantDigest+".info.json"]
+	fake.mu.Unlock()
+	if !ok {
+		t.Fatalf("fake bucket has no object at candidates/%s.info.json; objects: %v", wantDigest, fake.objects)
+	}
+	var info farm.CandidateInfo
+	if err := json.Unmarshal(infoBody, &info); err != nil {
+		t.Fatalf("unmarshal candidate info: %v\nbody: %s", err, infoBody)
+	}
+	if info.Revision == "" || info.GoVersion == "" {
+		t.Fatalf("candidate info = %+v, want a non-empty Revision and GoVersion", info)
+	}
+
+	wantLine := "candidate-info: " + info.Revision[:12]
+	if !strings.Contains(stdout, wantLine) {
+		t.Errorf("stdout = %q, want it to contain %q", stdout, wantLine)
+	}
+}
+
+// TestFarmPush_CandidateInfo_NoneWithoutVCSStamping pins docs/spec-eval-farm.md
+// §3.3: a candidate file debug/buildinfo.ReadFile finds no VCS revision in
+// (here, one that is not even a Go binary) uploads no info object and
+// prints "candidate-info: none (built without VCS stamping)" — the push of
+// the candidate binary itself still succeeds.
+func TestFarmPush_CandidateInfo_NoneWithoutVCSStamping(t *testing.T) {
+	fake := newFakeFarmS3()
+	server := fake.server()
+	defer server.Close()
+	setFarmEnv(t, server.URL)
+
+	dir := t.TempDir()
+	candidatePath := filepath.Join(dir, "zcp")
+	body := []byte("pretend candidate binary, not a real Go binary")
+	if err := os.WriteFile(candidatePath, body, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	sum := sha256.Sum256(body)
+	wantDigest := hex.EncodeToString(sum[:])
+
+	var code int
+	stdout, stderr := captureOutput(t, func() {
+		code = runEvalFarm([]string{"push", "--candidate", candidatePath})
+	})
+	if code != 0 {
+		t.Fatalf("runEvalFarm(push --candidate) = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "candidate-info: none (built without VCS stamping)") {
+		t.Errorf("stdout = %q, want it to contain the none-VCS line", stdout)
+	}
+
+	fake.mu.Lock()
+	_, ok := fake.objects["candidates/"+wantDigest+".info.json"]
+	fake.mu.Unlock()
+	if ok {
+		t.Errorf("fake bucket has candidates/%s.info.json, want none uploaded without VCS info", wantDigest)
 	}
 }
 

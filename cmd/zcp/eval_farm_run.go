@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,12 +13,16 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/zeropsio/zcp/internal/eval"
 	"github.com/zeropsio/zcp/internal/eval/farm"
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 	"github.com/zeropsio/zcp/internal/platform"
 )
+
+// maxNoteChars is `farm run --note`'s length limit (§3.3).
+const maxNoteChars = 200
 
 // defaultRunBudget is used when `--run-budget` is not given.
 const defaultRunBudget = 45 * time.Minute
@@ -49,6 +54,10 @@ func runFarmRun(args []string, envr *farm.EnvResolver) int {
 	observer, err := resolveObserver(flags.observer)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: --observer: %v\n", err)
+		return 2
+	}
+	if n := utf8.RuneCountInString(flags.note); n > maxNoteChars {
+		fmt.Fprintf(os.Stderr, "error: --note: %d characters, want at most %d\n", n, maxNoteChars)
 		return 2
 	}
 
@@ -116,12 +125,18 @@ func runFarmRun(args []string, envr *farm.EnvResolver) int {
 	}
 	defer closer()
 
+	candidateInfo, err := resolveCandidateInfo(ctx, sink, flags.candidate)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: read candidate info: %v\n", err)
+	}
+
 	opts := farm.RunOptions{
 		Batch: batch, ClientID: clientID, Set: flags.set,
 		CandidateSHA256: flags.candidate, EvaluatorSHA256: evaluatorSHA, WrapperSHA256: wrapperSHA, ScenariosDigest: flags.scenariosDigest,
 		Scenarios: scenarios, OAuthToken: oauthToken, Observer: observer,
 		Sink:      farm.Sink(cfg), // farm.Config and farm.Sink share the same field names/types/order
 		RunBudget: runBudget,
+		Note:      flags.note, RunBudgetSec: int(runBudget.Seconds()), CandidateInfo: candidateInfo,
 	}
 	results, err := farm.RunBatch(ctx, client, sink, opts)
 	if err != nil {
@@ -166,8 +181,8 @@ func runFarmRun(args []string, envr *farm.EnvResolver) int {
 
 // farmRunFlags is `zcp eval farm run`'s parsed command line.
 type farmRunFlags struct {
-	candidate, scenariosDigest, set, batch, runBudget, evaluator, wrapper, observer string
-	detach                                                                          bool
+	candidate, scenariosDigest, set, batch, runBudget, evaluator, wrapper, observer, note string
+	detach                                                                                bool
 }
 
 // parseFarmRunFlags parses `farm run`'s flags; unknown arguments are
@@ -178,7 +193,7 @@ func parseFarmRunFlags(args []string) (farmRunFlags, error) {
 	valued := map[string]*string{
 		flagCandidate: &f.candidate, "--scenarios": &f.scenariosDigest, "--evaluator": &f.evaluator,
 		"--wrapper": &f.wrapper, "--set": &f.set, flagBatch: &f.batch, "--run-budget": &f.runBudget,
-		"--observer": &f.observer,
+		"--observer": &f.observer, "--note": &f.note,
 	}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -371,6 +386,30 @@ func resolvePin(ctx context.Context, sink *farm.SinkClient, flag, flagName, poin
 		return "", fmt.Errorf("%s was not given and %s: %w", flagName, pointerKey, err)
 	}
 	return strings.TrimSpace(string(body)), nil
+}
+
+// resolveCandidateInfo reads the candidate binary's build info uploaded by
+// `farm push --candidate` (candidates/<sha256>.info.json, §3.3). A missing
+// object — the candidate was built without VCS stamping, or was pushed
+// before this field existed — is not an error: it returns (nil, nil), and
+// the manifest simply carries no candidateInfo (§3.3: "a candidate built
+// without VCS stamping has no candidateInfo"). Any other read or parse
+// failure is returned so the caller can warn without ever failing the run
+// on it — none of these fields reaches a run project either way.
+func resolveCandidateInfo(ctx context.Context, sink *farm.SinkClient, candidateSHA256 string) (*farm.CandidateInfo, error) {
+	key := farm.CandidateInfoKey(candidateSHA256)
+	body, err := sink.Get(ctx, key)
+	if err != nil {
+		if errors.Is(err, farm.ErrObjectNotFound) {
+			return nil, nil //nolint:nilnil // absence is a legitimate third state, distinct from an error (§3.3)
+		}
+		return nil, fmt.Errorf("get %s: %w", key, err)
+	}
+	var info farm.CandidateInfo
+	if err := json.Unmarshal(body, &info); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", key, err)
+	}
+	return &info, nil
 }
 
 // startDetached starts argv detached (new session, stdout/stderr appended
