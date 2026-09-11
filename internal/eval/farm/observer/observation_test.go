@@ -98,6 +98,7 @@ func TestObservation_QuoteCheck(t *testing.T) {
 		{N: 1, Kind: StepUser, Text: "fix the  api\nservice"},
 		{N: 2, Kind: StepTool, ToolName: "zerops_import", ToolInputJSON: `{"override":true,"tag":"<b>&x</b>"}`, ToolHasResult: true, ToolResultText: "DIAGNOSIS_REQUIRED"},
 		{N: 3, Kind: StepTool, ToolName: "zerops_discover", ToolHasResult: true, ToolResultText: `{"note":"service \"appdev\" there","path":"/var/www/\u003chostname\u003e/","log":"line1\nline2"}`},
+		{N: 4, Kind: StepAgent, Text: "Do **NOT** `override` a failed build without checking the diagnosis first."},
 	}
 	checksBody := `liveness/api/marker failed expected="body contains python" observed="marker not found" source=HTTP`
 
@@ -120,6 +121,7 @@ func TestObservation_QuoteCheck(t *testing.T) {
 		{"step 0 quote absent from CHECKS is unverified", 0, "totally unrelated text", false},
 		{"empty quote is never verified", 1, "", false},
 		{"whitespace-only quote is never verified", 1, "   \n\t", false},
+		{"plain-text quote matches step's Markdown emphasis and inline-code source", 4, "Do NOT override", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

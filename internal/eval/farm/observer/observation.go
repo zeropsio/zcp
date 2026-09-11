@@ -239,11 +239,15 @@ func verifyQuote(steps []Step, checksBody string, stepNum int, quote string) boo
 }
 
 // quoteMatches is the substring check verifyQuote applies to one (full,
-// quote) pair: whitespace-collapsed as-is, or — failing that —
-// whitespace-collapsed after JSON-string-escape-decoding both sides. An
-// empty or whitespace-only quote is never verified: it is trivially a
-// substring of any text, so without this check a model could satisfy the
-// quote check by citing nothing at all.
+// quote) pair, tried in order: whitespace-collapsed as-is; failing that,
+// whitespace-collapsed after JSON-string-escape-decoding both sides;
+// failing that, the same JSON-decoded-and-collapsed text with Markdown's
+// backtick and asterisk delimiters dropped from both sides — a source step
+// can carry Markdown source (e.g. a guidance sentence quoting
+// "Do **NOT** `override`") while the model quotes its rendered plain
+// reading ("Do NOT override"). An empty or whitespace-only quote is never
+// verified: it is trivially a substring of any text, so without this check
+// a model could satisfy the quote check by citing nothing at all.
 func quoteMatches(full, quote string) bool {
 	if collapseWhitespace(quote) == "" {
 		return false
@@ -251,7 +255,23 @@ func quoteMatches(full, quote string) bool {
 	if strings.Contains(collapseWhitespace(full), collapseWhitespace(quote)) {
 		return true
 	}
-	return strings.Contains(collapseWhitespace(decodeJSONEscapes(full)), collapseWhitespace(decodeJSONEscapes(quote)))
+	decodedFull, decodedQuote := collapseWhitespace(decodeJSONEscapes(full)), collapseWhitespace(decodeJSONEscapes(quote))
+	if strings.Contains(decodedFull, decodedQuote) {
+		return true
+	}
+	return strings.Contains(stripMarkdownPunctuation(decodedFull), stripMarkdownPunctuation(decodedQuote))
+}
+
+// stripMarkdownPunctuation drops every backtick and asterisk — Markdown's
+// inline-code and emphasis delimiters (§7.5 FM-46's third quote-check
+// normalization).
+func stripMarkdownPunctuation(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '`' || r == '*' {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // decodeJSONEscapes decodes JSON string escape sequences (`\"` `\\` `\/`
