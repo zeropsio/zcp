@@ -29,8 +29,8 @@ func TestConsole_NoAuth_APIIs401AndHTMLRedirectsToLogin(t *testing.T) {
 	if rr.Code != http.StatusSeeOther {
 		t.Errorf("GET / unauthenticated: got %d, want 303", rr.Code)
 	}
-	if loc := rr.Header().Get("Location"); loc != "/login" {
-		t.Errorf("GET / unauthenticated Location: got %q, want /login", loc)
+	if loc := rr.Header().Get("Location"); loc != "/login?next=%2F" {
+		t.Errorf("GET / unauthenticated Location: got %q, want /login?next=%%2F", loc)
 	}
 }
 
@@ -234,8 +234,8 @@ func TestConsole_TokenRotationInvalidatesCookie(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(cookie)
 	newSrv.Handler().ServeHTTP(rr, req)
-	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != "/login" {
-		t.Errorf("stale cookie after rotation: got %d Location=%q, want 303 to /login", rr.Code, rr.Header().Get("Location"))
+	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != "/login?next=%2F" {
+		t.Errorf("stale cookie after rotation: got %d Location=%q, want 303 to /login?next=%%2F", rr.Code, rr.Header().Get("Location"))
 	}
 }
 
@@ -249,8 +249,128 @@ func TestConsole_ExpiredCookieRejected(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(&http.Cookie{Name: cookieName, Value: expired})
 	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != "/login?next=%2F" {
+		t.Errorf("expired cookie: got %d Location=%q, want 303 to /login?next=%%2F", rr.Code, rr.Header().Get("Location"))
+	}
+}
+
+// TestConsole_LoginNextValidation pins §8.3 FM-51's /login?next= rule: a
+// correct login goes to next only when it starts with "/" and not "//",
+// else "/". Independent oracle: the spec's own four example shapes —
+// "//evil" (protocol-relative, rejected), "https://x" (absolute, rejected),
+// "relative" (no leading slash, rejected), "/r/x#s1" (a real deep link,
+// accepted verbatim including its fragment).
+func TestConsole_LoginNextValidation(t *testing.T) {
+	cases := []struct {
+		next string
+		want string
+	}{
+		{"//evil", "/"},
+		{"https://x", "/"},
+		{"relative", "/"},
+		{"/r/x#s1", "/r/x#s1"},
+		{"", "/"},
+		{"/b/pb1", "/b/pb1"},
+	}
+	for _, c := range cases {
+		t.Run(c.next, func(t *testing.T) {
+			srv, _, _ := testServer(t)
+			h := srv.Handler()
+
+			rr := httptest.NewRecorder()
+			form := url.Values{"token": {testToken}, "next": {c.next}}
+			req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			h.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusSeeOther {
+				t.Fatalf("POST /login next=%q: got %d, want 303", c.next, rr.Code)
+			}
+			if loc := rr.Header().Get("Location"); loc != c.want {
+				t.Errorf("POST /login next=%q: Location = %q, want %q", c.next, loc, c.want)
+			}
+		})
+	}
+}
+
+// TestConsole_LoginGETCarriesNextIntoHiddenField pins that the login page
+// itself (GET /login?next=<path>) carries a validated next through as a
+// hidden field, so the value survives the round trip through the form.
+func TestConsole_LoginGETCarriesNextIntoHiddenField(t *testing.T) {
+	srv, _, _ := testServer(t)
+	h := srv.Handler()
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/login?next=%2Fr%2Fx", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /login?next=/r/x: got %d, want 200", rr.Code)
+	}
+	if body := rr.Body.String(); !strings.Contains(body, `name="next" value="/r/x"`) {
+		t.Errorf("login page missing the hidden next field:\n%s", body)
+	}
+
+	// An unsafe next is sanitized to "/" before it ever reaches the page.
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/login?next=https://evil", nil))
+	if body := rr.Body.String(); !strings.Contains(body, `name="next" value="/"`) {
+		t.Errorf("login page did not sanitize an unsafe next:\n%s", body)
+	}
+}
+
+// TestConsole_LogoutClearsSessionCookie pins §8.3 FM-51's POST /logout: it
+// clears farm_session and sends the browser to /login.
+func TestConsole_LogoutClearsSessionCookie(t *testing.T) {
+	srv, _, _ := testServer(t)
+	h := srv.Handler()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
+	req.AddCookie(&http.Cookie{Name: cookieName, Value: sessionCookieValue(testToken, fixedNow(t)().Add(time.Hour))})
+	req.Header.Set("Origin", "http://example.com")
+	req.Host = "example.com"
+	h.ServeHTTP(rr, req)
+
 	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != "/login" {
-		t.Errorf("expired cookie: got %d Location=%q, want 303 to /login", rr.Code, rr.Header().Get("Location"))
+		t.Fatalf("POST /logout: got %d Location=%q, want 303 to /login", rr.Code, rr.Header().Get("Location"))
+	}
+	var cleared *http.Cookie
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == cookieName {
+			cleared = c
+		}
+	}
+	if cleared == nil {
+		t.Fatal("POST /logout set no farm_session cookie")
+	}
+	if cleared.MaxAge >= 0 {
+		t.Errorf("logout cookie MaxAge = %d, want negative (cleared)", cleared.MaxAge)
+	}
+
+	// The cleared cookie no longer authenticates a later request.
+	rr2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	req2.AddCookie(&http.Cookie{Name: cookieName, Value: cleared.Value})
+	h.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusSeeOther {
+		t.Errorf("GET / with the cleared cookie: got %d, want 303 to login", rr2.Code)
+	}
+}
+
+// TestConsole_LogoutRequiresOriginForCookieAuth pins §8.2 FM-50: logout is
+// a state-changing POST, so a cookie-authenticated request without a
+// matching Origin is refused (403) — the same rule actions.go's
+// checkActionOrigin already enforces for /observe.
+func TestConsole_LogoutRequiresOriginForCookieAuth(t *testing.T) {
+	srv, _, _ := testServer(t)
+	h := srv.Handler()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
+	req.AddCookie(&http.Cookie{Name: cookieName, Value: sessionCookieValue(testToken, fixedNow(t)().Add(time.Hour))})
+	// No Origin header at all.
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("POST /logout without Origin: got %d, want 403", rr.Code)
 	}
 }
 

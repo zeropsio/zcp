@@ -10,11 +10,13 @@
 <main class="login">
 <h1>Farm console</h1>
 <form method="post" action="/login">
+<input type="hidden" name="next" value="{{.Next}}">
 <label for="token">Console token</label>
 <input id="token" name="token" type="password" autocomplete="off" required>
 <button type="submit">Sign in</button>
 </form>
 {{if .Failed}}<p class="error">Wrong token.</p>{{end}}
+<p class="muted small">The token is in <code>farm-console.env</code>, written by <code>deploy.sh</code>.</p>
 </main>
 </body>
 </html>

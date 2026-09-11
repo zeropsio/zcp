@@ -178,6 +178,10 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		s.requireAuth(s.handleRunPage)(w, r)
 	case r.Method == http.MethodGet && p == "/findings":
 		s.requireAuth(s.handleFindingsPage)(w, r)
+	case r.Method == http.MethodGet && p == "/terms":
+		s.requireAuth(s.handleTermsPage)(w, r)
+	case r.Method == http.MethodPost && p == "/logout":
+		s.requireAuth(s.handleLogout)(w, r)
 	case r.Method == http.MethodGet && (p == "/api/runs.md" || p == "/api/runs.json"):
 		s.requireAuth(s.handleRunsList)(w, r)
 	case r.Method == http.MethodGet && (p == "/api/findings.md" || p == "/api/findings.json"):
@@ -226,9 +230,12 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	s.handleBatchesPage(w, r)
 }
 
-func renderLoginPage(w http.ResponseWriter, failed bool) {
+func renderLoginPage(w http.ResponseWriter, failed bool, next string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := loginTemplate.Execute(w, struct{ Failed bool }{failed}); err != nil {
+	if err := loginTemplate.Execute(w, struct {
+		Failed bool
+		Next   string
+	}{failed, next}); err != nil {
 		http.Error(w, "template: "+err.Error(), http.StatusInternalServerError)
 	}
 }

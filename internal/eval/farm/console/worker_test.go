@@ -251,6 +251,37 @@ func TestQueue_BatchBusy(t *testing.T) {
 	}
 }
 
+// TestQueue_StatsCountsQueuedAndRunning pins the observer status line's
+// read-only accessor (§8.3 FM-51): Stats reports how many jobs are running
+// (up to wkMaxConcurrent) and how many are still waiting for a slot.
+func TestQueue_StatsCountsQueuedAndRunning(t *testing.T) {
+	obs := wkNewRecordingObserve()
+	defer close(obs.release)
+	q := NewQueue(obs.fn)
+	ctx := context.Background()
+
+	if queued, running := q.Stats(); queued != 0 || running != 0 {
+		t.Fatalf("Stats before any job = (%d, %d), want (0, 0)", queued, running)
+	}
+
+	for i := range 5 {
+		if err := q.Enqueue(ctx, Job{RunID: fmt.Sprintf("batch-run%d", i), Batch: "batch"}); err != nil {
+			t.Fatalf("Enqueue(%d): %v", i, err)
+		}
+	}
+	for range wkMaxConcurrent {
+		wkExpectCall(t, obs.calls)
+	}
+
+	if !wkEventually(t, func() bool {
+		queued, running := q.Stats()
+		return queued == 2 && running == wkMaxConcurrent
+	}) {
+		queued, running := q.Stats()
+		t.Errorf("Stats with 5 enqueued (3 running) = (%d, %d), want (2, %d)", queued, running, wkMaxConcurrent)
+	}
+}
+
 // wkEventually polls cond until it's true or wkCallTimeout elapses.
 func wkEventually(t *testing.T, cond func() bool) bool {
 	t.Helper()

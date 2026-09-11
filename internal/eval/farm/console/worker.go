@@ -171,6 +171,22 @@ func (q *Queue) State(runID string) string {
 	return JobQueued
 }
 
+// Stats reports the queue's current job counts: queued (accepted but not
+// yet running) and running (holding one of the wkMaxConcurrent slots) —
+// the observer status line's "<n> queued/running" (§8.3 FM-51).
+func (q *Queue) Stats() (queued, running int) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, st := range q.jobs {
+		if st.running {
+			running++
+		} else {
+			queued++
+		}
+	}
+	return queued, running
+}
+
 // BatchBusy reports whether any run of batch is queued or running (§8.5:
 // "so does all=1 while any run of that batch is queued or running").
 func (q *Queue) BatchBusy(batch string) bool {

@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -125,9 +126,11 @@ func (s *Server) authenticate(r *http.Request) authResult {
 
 // requireAuth is the middleware every route but the open ones (FM-50: GET
 // /login, POST /login, GET /healthz, GET /static/app.css) runs through. An
-// unauthenticated HTML request gets a 303 to /login; an unauthenticated
-// /api/* request gets 401. A wrong bearer is delayed (no fast path — FM-50)
-// before answering 401 either way.
+// unauthenticated HTML request gets a 303 to /login?next=<its path and
+// query> (§8.3 FM-51: "an unauthenticated HTML request is sent to
+// /login?next=<its path>"); an unauthenticated /api/* request gets 401. A
+// wrong bearer is delayed (no fast path — FM-50) before answering 401
+// either way.
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch s.authenticate(r) {
@@ -141,9 +144,42 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			http.Redirect(w, r, loginPath, http.StatusSeeOther)
+			http.Redirect(w, r, loginPath+"?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusSeeOther)
 		}
 	}
+}
+
+// validNextPath reports whether next is safe to redirect to after login
+// (§8.3 FM-51): it must start with "/" and not "//" — "//" is browser-
+// parsed as a protocol-relative URL to another host, and anything not
+// starting with "/" (an absolute URL like "https://x", a bare relative
+// path like "relative") could send the browser off the console entirely.
+func validNextPath(next string) bool {
+	return strings.HasPrefix(next, "/") && !strings.HasPrefix(next, "//")
+}
+
+// safeNext returns next when validNextPath allows it, else "/" (§8.3
+// FM-51: "else /").
+func safeNext(next string) string {
+	if validNextPath(next) {
+		return next
+	}
+	return "/"
+}
+
+// handleLogout implements POST /logout (§8.3 FM-51): clears the session
+// cookie and sends the browser back to /login. Like every other state-
+// changing route, a cookie-authenticated request must carry a matching
+// Origin (§8.2 FM-50) — a bearer-authenticated one needs none.
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if !s.checkActionOrigin(w, r) {
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: cookieName, Value: "", Path: "/", MaxAge: -1,
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode,
+	})
+	s.respondAction(w, r, loginPath)
 }
 
 func isAPIPath(p string) bool {
@@ -166,27 +202,32 @@ func (s *Server) sleep(d time.Duration) {
 }
 
 // handleLoginGET serves the static login page (assets/login.html) — no
-// auth required (FM-50).
+// auth required (FM-50). ?next=<path> (set by requireAuth's redirect, or a
+// bookmarked deep link) is sanitized and carried through as the form's
+// hidden field (§8.3 FM-51).
 func (s *Server) handleLoginGET(w http.ResponseWriter, r *http.Request) {
 	failed := r.URL.Query().Get("error") == "1"
-	renderLoginPage(w, failed)
+	renderLoginPage(w, failed, safeNext(r.URL.Query().Get("next")))
 }
 
 // handleLoginPOST implements FM-50's login: constant-time compare against
 // the console token; a wrong token is delayed (no global lockout — "a
-// correct login right after 20 failures succeeds") before a 401; a correct
-// token sets the session cookie and redirects to "/".
+// correct login right after 20 failures succeeds") before a redirect back
+// to the login page (carrying next along, so a failed attempt does not
+// lose the original deep link); a correct token sets the session cookie
+// and redirects to next when it is a safe path (§8.3 FM-51), else "/".
 func (s *Server) handleLoginPOST(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
 	submitted := r.PostFormValue("token")
+	next := safeNext(r.PostFormValue("next"))
 	if !constantTimeEqual(submitted, s.cfg.Token) {
 		s.sleep(s.failDelay())
-		http.Redirect(w, r, loginPath+"?error=1", http.StatusSeeOther)
+		http.Redirect(w, r, loginPath+"?error=1&next="+url.QueryEscape(next), http.StatusSeeOther)
 		return
 	}
 	http.SetCookie(w, newSessionCookie(s.cfg.Token, s.now()))
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, next, http.StatusSeeOther)
 }

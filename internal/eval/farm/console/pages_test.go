@@ -1,8 +1,11 @@
 package console
 
 import (
+	"context"
+	"html"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"strings"
 	"testing"
@@ -13,7 +16,9 @@ import (
 
 // TestPages_RequireAuth pins that every §8.3 FM-51 page route requires auth
 // like every other HTML route (FM-50): unauthenticated GET redirects 303 to
-// /login. Independent oracle: the exact status/header FM-50 specifies.
+// /login?next=<its path> (§8.3: "an unauthenticated HTML request is sent
+// to /login?next=<its path>"). Independent oracle: the exact status/header
+// FM-50 specifies, plus the literal next= rule quoted from §8.3.
 func TestPages_RequireAuth(t *testing.T) {
 	srv, store, _ := testServer(t)
 	h := srv.Handler()
@@ -29,8 +34,9 @@ func TestPages_RequireAuth(t *testing.T) {
 			if rr.Code != http.StatusSeeOther {
 				t.Errorf("GET %s unauthenticated: got %d, want 303", route, rr.Code)
 			}
-			if loc := rr.Header().Get("Location"); loc != "/login" {
-				t.Errorf("GET %s unauthenticated Location: got %q, want /login", route, loc)
+			want := "/login?next=" + url.QueryEscape(route)
+			if loc := rr.Header().Get("Location"); loc != want {
+				t.Errorf("GET %s unauthenticated Location: got %q, want %q", route, loc, want)
 			}
 		})
 	}
@@ -548,5 +554,182 @@ func TestPages_RunInPageLinksResolve(t *testing.T) {
 		if !strings.Contains(body, `id="`+m[1]+`"`) {
 			t.Errorf("in-page link #%s has no element with that id", m[1])
 		}
+	}
+}
+
+// TestPages_TopNavCurrentItemMarked pins §8.3 FM-51's top nav: Overview ·
+// Problems · Findings · Terms, with aria-current="page" on exactly the
+// current one — a batch/run detail page is under none of them.
+func TestPages_TopNavCurrentItemMarked(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	seedBatch(t, store, "nv1", "off", []runFixture{
+		{runID: "nv1-scn", scenario: "scn", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"nv1-scn": "passed"})
+
+	cases := []struct {
+		route   string
+		current string // the nav link text that must carry aria-current, "" for none
+	}{
+		{"/", "Overview"},
+		{"/findings", "Findings"},
+		{"/terms", "Terms"},
+		{"/b/nv1", ""},
+		{"/r/nv1-scn", ""},
+	}
+	navLinks := []string{"Overview", "Problems", "Findings", "Terms"}
+	for _, c := range cases {
+		t.Run(c.route, func(t *testing.T) {
+			body := doGET(t, h, c.route).Body.String()
+			for _, link := range navLinks {
+				marked := strings.Contains(body, `aria-current="page">`+link+`</a>`)
+				want := link == c.current
+				if marked != want {
+					t.Errorf("GET %s: nav item %q aria-current = %v, want %v\n%s", c.route, link, marked, want, body)
+				}
+			}
+		})
+	}
+}
+
+// TestPages_ObserverStatusLineByConfig pins §8.3 FM-51's observer status
+// line for each of its documented states — on (with the queue's live
+// counts), off (kill switch), and unavailable (credential missing, claude
+// unresolved) — the last two hiding every Assess form's availability
+// (pageMeta.Observer.Hidden).
+func TestPages_ObserverStatusLineByConfig(t *testing.T) {
+	cases := []struct {
+		name       string
+		cfg        func(cfg *Config)
+		wantSubstr string
+		wantHidden bool
+	}{
+		{"on, idle queue", func(cfg *Config) { cfg.Queue = NewQueue(func(context.Context, Job) error { return nil }) },
+			"Automatic assessment: on · claude-sonnet-5 · 0 queued/running", false},
+		{"off (kill switch)", func(cfg *Config) { cfg.ObserverDisabled = true },
+			"Automatic assessment: off on this console (ZCP_FARM_OBSERVER=off) — Assess buttons still work", false},
+		{"credential missing", func(cfg *Config) { cfg.ObserverCredentialMissing = true },
+			"Automatic assessment: unavailable — credential missing", true},
+		{"claude unresolved", func(cfg *Config) { cfg.ObserverClaudePathUnresolved = true },
+			"Automatic assessment: unavailable — claude not found", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			store := newFakeStore()
+			cfg := Config{Store: store, Token: testToken, Now: fixedNow(t)}
+			c.cfg(&cfg)
+			srv := NewServer(cfg)
+
+			body := doGET(t, srv.Handler(), "/").Body.String()
+			if !strings.Contains(body, c.wantSubstr) {
+				t.Errorf("status line missing %q:\n%s", c.wantSubstr, body)
+			}
+			if got := srv.observerStatusLine().Hidden; got != c.wantHidden {
+				t.Errorf("observerStatusLine().Hidden = %v, want %v", got, c.wantHidden)
+			}
+		})
+	}
+}
+
+// TestPages_ObserverStatusLineCountsQueueActivity pins that the "on" status
+// line's queued/running count reflects the queue's live Stats, not a
+// static zero.
+func TestPages_ObserverStatusLineCountsQueueActivity(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	q := NewQueue(func(ctx context.Context, job Job) error {
+		<-release
+		return nil
+	})
+	store := newFakeStore()
+	srv := NewServer(Config{Store: store, Token: testToken, Now: fixedNow(t), Queue: q})
+
+	if err := q.Enqueue(context.Background(), Job{RunID: "r1", Batch: "b1"}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if !wkEventually(t, func() bool {
+		_, running := q.Stats()
+		return running == 1
+	}) {
+		t.Fatal("job never started running")
+	}
+
+	body := doGET(t, srv.Handler(), "/").Body.String()
+	if !strings.Contains(body, "Automatic assessment: on · claude-sonnet-5 · 1 queued/running") {
+		t.Errorf("status line does not reflect the in-flight job:\n%s", body)
+	}
+}
+
+// TestPages_RefreshMetaWhileJobInFlight pins §8.5 FM-53: "while any job of
+// the page is in flight, the page carries <meta http-equiv=refresh
+// content=20>" — for a batch page, any run of that batch; for a run page,
+// that run itself; neither once the queue is idle.
+func TestPages_RefreshMetaWhileJobInFlight(t *testing.T) {
+	const refreshTag = `<meta http-equiv="refresh" content="20">`
+
+	release := make(chan struct{})
+	q := NewQueue(func(ctx context.Context, job Job) error {
+		<-release
+		return nil
+	})
+	store := newFakeStore()
+	srv := NewServer(Config{Store: store, Token: testToken, Now: fixedNow(t), Queue: q})
+	seedBatch(t, store, "rf1", "off", []runFixture{
+		{runID: "rf1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"rf1-a": "passed"})
+
+	if strings.Contains(doGET(t, srv.Handler(), "/b/rf1").Body.String(), refreshTag) {
+		t.Error("batch page carries the refresh tag with an idle queue")
+	}
+	if strings.Contains(doGET(t, srv.Handler(), "/r/rf1-a").Body.String(), refreshTag) {
+		t.Error("run page carries the refresh tag with an idle queue")
+	}
+
+	if err := q.Enqueue(context.Background(), Job{RunID: "rf1-a", Batch: "rf1"}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if !wkEventually(t, func() bool { return q.State("rf1-a") != "" }) {
+		t.Fatal("job never showed as queued/running")
+	}
+
+	if !strings.Contains(doGET(t, srv.Handler(), "/b/rf1").Body.String(), refreshTag) {
+		t.Error("batch page missing the refresh tag while its run is in flight")
+	}
+	if !strings.Contains(doGET(t, srv.Handler(), "/r/rf1-a").Body.String(), refreshTag) {
+		t.Error("run page missing the refresh tag while it is in flight")
+	}
+
+	close(release)
+}
+
+// TestPages_NoticeCodesRendered pins §8.3/§8.5's ?notice=<code> callout:
+// each documented code renders its own text, "queued" honors ?n=, and an
+// unrecognized code renders nothing (§8.3: "an unknown code renders
+// nothing").
+func TestPages_NoticeCodesRendered(t *testing.T) {
+	cases := []struct {
+		query   string
+		want    string // "" means: no callout at all
+		notWant string
+	}{
+		{"?notice=queued&n=3", "Queued 3 runs for assessment.", ""},
+		{"?notice=queued&n=1", "Queued 1 run for assessment.", ""},
+		{"?notice=busy", "Already queued or running", ""},
+		{"?notice=not-finished", "hasn't finished yet", ""},
+		{"?notice=bad-model", "isn't one of the ones this console supports", ""},
+		{"?notice=unavailable", "isn't available right now", ""},
+		{"?notice=made-up-code", "", `class="callout notice"`},
+	}
+	for _, c := range cases {
+		t.Run(c.query, func(t *testing.T) {
+			srv, _, _ := testServer(t)
+			body := html.UnescapeString(doGET(t, srv.Handler(), "/"+c.query).Body.String())
+			if c.want != "" && !strings.Contains(body, c.want) {
+				t.Errorf("body missing notice text %q:\n%s", c.want, body)
+			}
+			if c.notWant != "" && strings.Contains(body, c.notWant) {
+				t.Errorf("body renders a callout for an unknown notice code:\n%s", body)
+			}
+		})
 	}
 }
