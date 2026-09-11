@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -87,7 +88,7 @@ func runFarmRun(args []string) int {
 	}
 
 	if detach {
-		return runFarmRunDetach(args, batch)
+		return runFarmRunDetach(args, batch, startDetached)
 	}
 
 	runBudget := defaultRunBudget
@@ -112,7 +113,12 @@ func runFarmRun(args []string) int {
 		return 1
 	}
 	sink := farm.NewSinkClient(cfg)
-	ctx := context.Background()
+	// R3: Ctrl-C / SIGTERM cancels ctx instead of leaving the process with
+	// no way to end the batch cleanly — RunBatch reacts to cancellation by
+	// stopping its wait, recording every unsettled run "interrupted", and
+	// keeping their projects (docs/spec-eval-farm.md §1.4 FM-9).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	scenarios, err := resolveScenarios(ctx, sink, scenariosDigest, set)
 	if err != nil {
@@ -165,11 +171,22 @@ func runFarmRun(args []string) int {
 	}
 
 	allPassed := true
+	interrupted := false
 	for _, r := range results {
 		fmt.Fprintf(os.Stdout, "%s %s %s\n", r.RunID, r.Scenario, r.Result)
 		if r.Result != farm.ResultPassed {
 			allPassed = false
 		}
+		if r.Detail == farm.DetailInterrupted {
+			interrupted = true
+		}
+	}
+	if interrupted {
+		// R3: Ctrl-C/SIGTERM already stopped the batch (ctx cancelled) by
+		// the time this line runs — name where the recorded state landed,
+		// since the operator's own signal may have cut off whatever else
+		// they were watching.
+		fmt.Fprintf(os.Stderr, "farm run interrupted: batch state recorded in batches/%s/summary.json\n", batch)
 	}
 	if !allPassed {
 		return 1
@@ -334,17 +351,18 @@ func resolveEvaluatorSHA(ctx context.Context, sink *farm.SinkClient, evaluatorFl
 	return strings.TrimSpace(string(body)), nil
 }
 
-// detachStarter starts argv detached (new session, stdout/stderr appended
-// to logPath) and returns immediately without waiting for it to finish —
-// a package var so tests can swap in a recording fake instead of actually
-// forking a process (§3.1 FM-18: "no daemon... kickoff SSH session may
-// drop").
-var detachStarter = func(argv []string, logPath string) error {
+// startDetached starts argv detached (new session, stdout/stderr appended
+// to logPath) and returns immediately without waiting for it to finish
+// (§3.1 FM-18: "no daemon... kickoff SSH session may drop"). It is the
+// production implementation of runFarmRunDetach's starter parameter —
+// R10a: an injected dependency, not a package-level mutable var, so tests
+// pass in a recording fake instead of reaching into shared state.
+func startDetached(argv []string, logPath string) error {
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("open log %s: %w", logPath, err)
 	}
-	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec // G204: argv[0] is this same binary's own resolved path (os.Executable), never user input
+	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec,noctx // G204: argv[0] is this same binary's own resolved path (os.Executable), never user input; noctx: the detached child must outlive this process's own context by design (§3.1 FM-18), so it is never bound to one
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -382,8 +400,10 @@ func planDetachRun(exe string, args []string, cwd, batch string) (argv []string,
 
 // runFarmRunDetach implements --detach: re-exec this binary without
 // --detach, redirected to a log file, then return immediately so the
-// kickoff SSH session may drop.
-func runFarmRunDetach(args []string, batch string) int {
+// kickoff SSH session may drop. starter is the injected detach-and-start
+// dependency (R10a) — production callers pass startDetached; tests pass a
+// recording fake.
+func runFarmRunDetach(args []string, batch string, starter func(argv []string, logPath string) error) int {
 	exe, err := os.Executable()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: resolve own executable: %v\n", err)
@@ -395,7 +415,7 @@ func runFarmRunDetach(args []string, batch string) int {
 		return 1
 	}
 	argv, logPath := planDetachRun(exe, args, cwd, batch)
-	if err := detachStarter(argv, logPath); err != nil {
+	if err := starter(argv, logPath); err != nil {
 		fmt.Fprintf(os.Stderr, "error: detach: %v\n", err)
 		return 1
 	}

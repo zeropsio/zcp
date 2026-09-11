@@ -211,11 +211,16 @@ func (c *SinkClient) List(ctx context.Context, prefix string) ([]string, error) 
 		if err != nil {
 			return nil, err
 		}
+		if resp.StatusCode/100 != 2 {
+			// R10d: read the error body BEFORE any other read touches
+			// resp.Body — statusError's own read would otherwise find the
+			// body already drained and report an empty message.
+			errMsg := statusError(resp)
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("farm: LIST prefix=%s: %s", prefix, errMsg)
+		}
 		body, readErr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		if resp.StatusCode/100 != 2 {
-			return nil, fmt.Errorf("farm: LIST prefix=%s: %s", prefix, statusError(resp))
-		}
 		if readErr != nil {
 			return nil, fmt.Errorf("farm: LIST prefix=%s: read body: %w", prefix, readErr)
 		}

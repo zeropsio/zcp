@@ -160,22 +160,29 @@ Shape, as implemented by the controller (S4):
 deleted (the common case for a settled run); `launchTokenId` is the id
 (never the token value, §3.4) of a launch scenario's token, present only
 while it has not yet been revoked — the FM-21 no-bundle exemption records it
-here so `gc` can finish the revoke once the project is finally gone. `error`
-is set only when the run's project itself could not be created, minted or
-imported — the run never reached `waitForDone`. For a settled `blocked` or
-`failed` run, `detail` names the blocking/failing check ids: sorted ids of
-every `verification.json` row (spec-testing-architecture.md §10.1), sibling
-to `meta.json` in the same results directory, whose `result` equals the
-run's own result, joined with `", "` and capped at 5 with a `"+N more"`
-suffix; a bundle with no `verification.json` sibling gets the literal
+here so `gc` can finish the revoke once the project is finally gone. An
+interrupted batch (`endedBy: interrupt` — Ctrl-C/SIGTERM) exempts every run
+RunBatch was still waiting on the same way: its row reads `blocked` with
+`detail: "interrupted"`, and `projectId` and `launchTokenId` are both kept,
+exactly as FM-21's own no-bundle exemption keeps them. `error` is set only
+when the run's project itself could not be created, minted or imported — the
+run never reached `waitForDone`. For a settled `blocked` or `failed` run,
+`detail` names the blocking/failing check ids: sorted ids of every
+`verification.json` row (spec-testing-architecture.md §10.1), sibling to
+`meta.json` in the same results directory, whose `result` equals the run's
+own result, joined with `", "` and capped at 5 with a `"+N more"` suffix; a
+bundle with no `verification.json` sibling gets the literal
 `"no verification.json in bundle"`. Two more `detail` shapes come from
 `waitForDone` itself, before any bundle exists: `"no bundle"` when the run's
 budget elapsed with no `done.json` (FM-3, FM-21's exemption — that run's
 project is not deleted), and `"platform: <actionName> FAILED: <reason>"`
-when the controller's D19 poll finds a FAILED creation-phase process
-(`stack.create`/`stack.import`) on the run's project before `done.json` ever
-appears — that project is still deleted. A run whose project was never
-created is reported `blocked` with its `error`, never dropped (§5.1).
+when the controller finds a FAILED creation-phase process
+(`stack.create`/`stack.import` whose refs name the control service `zcp`, or
+a ref-less project-level action) on the run's project before the run's
+`started.json` exists — that project is still deleted; once `started.json`
+exists the controller stops polling processes, so a failure of the agent's
+own import never ends the run (§3.3). A run whose project was never created
+is reported `blocked` with its `error`, never dropped (§5.1).
 
 ---
 
@@ -386,7 +393,12 @@ also polls the run project's processes directly (D19): a FAILED
 creation-phase process (`stack.create`, `stack.import`) settles the run
 `blocked` immediately instead of waiting out the full run budget for a
 `done.json` the dead project will never write, and its project is still
-deleted per this rule.
+deleted per this rule. This process poll runs only until
+`runs/<runId>/started.json` appears in the bucket (the run's own wrapper is
+underway) and only counts a process whose `serviceStacks[]` names the
+control service `zcp` or carries no service ref at all, so a FAILED
+`stack.import` the run's own agent triggers mid-run for one of ITS services
+is never mistaken for the platform failing to create the run's own project.
 
 **FM-22.** `farm run` writes `batches/<batch>/manifest.json` before creating
 any project and `batches/<batch>/summary.json` after the last run in the

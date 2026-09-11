@@ -2,9 +2,11 @@ package farm
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -154,5 +156,30 @@ func TestSinkClient_PutGetList_RoundTripAgainstFake(t *testing.T) {
 		if keys[i] != want[i] {
 			t.Errorf("List()[%d] = %q, want %q", i, keys[i], want[i])
 		}
+	}
+}
+
+// TestSinkList_NonOKStatus_NamesBody pins R10d: before the fix, List read
+// the response body (for the success-path XML parse) before ever checking
+// the status code, so by the time statusError ran its own read on a non-2xx
+// response the body was already drained — the error always reported an
+// empty message. The fix checks status first and names the body.
+func TestSinkList_NonOKStatus_NamesBody(t *testing.T) {
+	t.Parallel()
+
+	const wantBody = "simulated bucket failure"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, wantBody)
+	}))
+	defer srv.Close()
+
+	client := NewSinkClient(Config{URL: srv.URL, Bucket: "zcp-farm", Key: "AKIDEXAMPLE", Secret: "secret"})
+	_, err := client.List(context.Background(), "runs/")
+	if err == nil {
+		t.Fatal("List: want an error for a non-2xx response, got nil")
+	}
+	if !strings.Contains(err.Error(), wantBody) {
+		t.Errorf("List error = %q, want it to contain the response body %q", err.Error(), wantBody)
 	}
 }

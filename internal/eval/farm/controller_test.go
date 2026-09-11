@@ -84,6 +84,37 @@ type fakeAccount struct {
 	// project.create -> internalServerError incident
 	// (TestFarmRun_FailedCreationProcess_SettlesBlockedBeforeBudget).
 	failedCreationProcessProjectName string
+
+	// failedCreationProcessServiceName, when set together with
+	// failedCreationProcessProjectName, gives the simulated FAILED process
+	// a ServiceStacks[] ref naming this service instead of no ref at all —
+	// R1: a FAILED stack.import naming a service other than the control
+	// service ("zcp") must never count as a creation-phase failure
+	// (TestFarmRun_FailedImportAfterStarted_DoesNotDeleteProject).
+	failedCreationProcessServiceName string
+	// failedCreationProcessAction, when set together with
+	// failedCreationProcessProjectName, names the simulated process's
+	// actionName instead of the "stack.create" default (R1's own-import
+	// test uses "stack.import").
+	failedCreationProcessAction string
+
+	// failScopedMint, when true, makes exactly the project-scoped run-token
+	// mint (a POST /integration-token body carrying a non-empty
+	// "projects" array — MintProjectScopedToken's own shape, distinct from
+	// MintDelegatedLaunchToken's) answer 500 instead of minting — used to
+	// simulate a non-403 mint failure that still leaves a rollback to
+	// attempt (TestFarmRun_RollbackFailure_KeepsProjectIDAndError). Never
+	// interferes with mintForbiddenCode's own 403 simulation, which is
+	// keyed on the same endpoint but a different (launch-token) request
+	// shape.
+	failScopedMint bool
+
+	// failDeleteProjectName, when non-empty, makes DELETE
+	// /project/{id} for exactly this project name answer 500 instead of
+	// deleting — used to simulate Guard's rollback DeleteProject call
+	// itself failing (TestFarmRun_RollbackFailure_KeepsProjectIDAndError,
+	// R6).
+	failDeleteProjectName string
 }
 
 type fakeProject struct{ id, name string }
@@ -194,20 +225,7 @@ func (f *fakeAccount) handle(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/client/"+f.clientID+"/integration-token":
-		f.mu.Lock()
-		forbiddenCode := f.mintForbiddenCode
-		f.mu.Unlock()
-		if forbiddenCode != "" {
-			w.WriteHeader(http.StatusForbidden)
-			fmt.Fprintf(w, `{"error":{"code":%q,"message":"forbidden"}}`, forbiddenCode)
-			return
-		}
-		f.mu.Lock()
-		f.nextTok++
-		tokID := fmt.Sprintf("tok-%d", f.nextTok)
-		f.tokens[tokID] = true
-		f.mu.Unlock()
-		fmt.Fprintf(w, `{"id":%q,"token":"launch-secret-%s"}`, tokID, tokID)
+		f.handleIntegrationTokenMint(w, r)
 		return
 
 	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/rest/public/client/"+f.clientID+"/integration-token/"):
@@ -245,45 +263,113 @@ func (f *fakeAccount) handle(w http.ResponseWriter, r *http.Request) {
 
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/rest/public/project/") && strings.HasSuffix(r.URL.Path, "/process"):
 		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/rest/public/project/"), "/process")
-		f.mu.Lock()
-		p, ok := f.projects[id]
-		failName := f.failedCreationProcessProjectName
-		f.mu.Unlock()
-		if !ok {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		if failName != "" && p.name == failName {
-			fmt.Fprint(w, `{"list":[{"id":"proc-create-fail","actionName":"stack.create","status":"FAILED","publicMeta":{"failReason":"internalServerError"}}],"totalCount":1}`)
-			return
-		}
-		fmt.Fprint(w, `{"list":[],"totalCount":0}`)
+		f.handleProjectProcessList(w, id)
 		return
 
 	case strings.HasPrefix(r.URL.Path, "/api/rest/public/project/"):
 		id := strings.TrimPrefix(r.URL.Path, "/api/rest/public/project/")
-		f.mu.Lock()
-		p, ok := f.projects[id]
-		f.mu.Unlock()
-		if !ok {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		switch r.Method {
-		case http.MethodGet:
-			fmt.Fprintf(w, `{"id":%q,"name":%q,"status":"ACTIVE"}`, p.id, p.name)
-			return
-		case http.MethodDelete:
-			f.mu.Lock()
-			delete(f.projects, id)
-			f.mu.Unlock()
-			fmt.Fprintf(w, `{"id":"proc-%s","status":"FINISHED"}`, id)
-			return
-		}
+		f.handleProjectByID(w, r, id)
+		return
 	}
 
 	f.t.Errorf("fakeAccount: unexpected request %s %s", r.Method, r.URL.Path)
 	w.WriteHeader(http.StatusNotFound)
+}
+
+// handleIntegrationTokenMint serves POST .../integration-token for both
+// MintDelegatedLaunchToken (an empty "projects" array) and
+// MintProjectScopedToken (a non-empty one) — split out of handle to keep
+// its cyclomatic complexity (maintidx) within budget.
+func (f *fakeAccount) handleIntegrationTokenMint(w http.ResponseWriter, r *http.Request) {
+	var mintBody struct {
+		Projects []struct {
+			ProjectID string `json:"projectId"`
+		} `json:"projects"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&mintBody); err != nil {
+		f.t.Errorf("fakeAccount: decode integration-token body: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	isScopedMint := len(mintBody.Projects) > 0
+
+	f.mu.Lock()
+	forbiddenCode := f.mintForbiddenCode
+	failScoped := f.failScopedMint
+	f.mu.Unlock()
+	if isScopedMint && failScoped {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error":{"code":"internalServerError","message":"simulated scoped mint failure"}}`)
+		return
+	}
+	if forbiddenCode != "" {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprintf(w, `{"error":{"code":%q,"message":"forbidden"}}`, forbiddenCode)
+		return
+	}
+	f.mu.Lock()
+	f.nextTok++
+	tokID := fmt.Sprintf("tok-%d", f.nextTok)
+	f.tokens[tokID] = true
+	f.mu.Unlock()
+	fmt.Fprintf(w, `{"id":%q,"token":"launch-secret-%s"}`, tokID, tokID)
+}
+
+// handleProjectProcessList serves GET /project/{id}/process — split out of
+// handle to keep its cyclomatic complexity (maintidx) within budget.
+func (f *fakeAccount) handleProjectProcessList(w http.ResponseWriter, id string) {
+	f.mu.Lock()
+	p, ok := f.projects[id]
+	failName := f.failedCreationProcessProjectName
+	failService := f.failedCreationProcessServiceName
+	failAction := f.failedCreationProcessAction
+	f.mu.Unlock()
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	if failName != "" && p.name == failName {
+		action := failAction
+		if action == "" {
+			action = "stack.create"
+		}
+		serviceStacks := "[]"
+		if failService != "" {
+			serviceStacks = fmt.Sprintf(`[{"name":%q}]`, failService)
+		}
+		fmt.Fprintf(w, `{"list":[{"id":"proc-create-fail","actionName":%q,"status":"FAILED","serviceStacks":%s,"publicMeta":{"failReason":"internalServerError"}}],"totalCount":1}`, action, serviceStacks)
+		return
+	}
+	fmt.Fprint(w, `{"list":[],"totalCount":0}`)
+}
+
+// handleProjectByID serves GET/DELETE /project/{id} — split out of handle
+// to keep its cyclomatic complexity (maintidx) within budget.
+func (f *fakeAccount) handleProjectByID(w http.ResponseWriter, r *http.Request, id string) {
+	f.mu.Lock()
+	p, ok := f.projects[id]
+	f.mu.Unlock()
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		fmt.Fprintf(w, `{"id":%q,"name":%q,"status":"ACTIVE"}`, p.id, p.name)
+	case http.MethodDelete:
+		f.mu.Lock()
+		failDeleteName := f.failDeleteProjectName
+		f.mu.Unlock()
+		if failDeleteName != "" && p.name == failDeleteName {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"error":{"code":"internalServerError","message":"simulated delete failure"}}`)
+			return
+		}
+		f.mu.Lock()
+		delete(f.projects, id)
+		f.mu.Unlock()
+		fmt.Fprintf(w, `{"id":"proc-%s","status":"FINISHED"}`, id)
+	}
 }
 
 // controllerFixture bundles one test's fakes — a struct, not a positional
@@ -1342,5 +1428,356 @@ func TestFarmRun_FailedCreationProcess_SettlesBlockedBeforeBudget(t *testing.T) 
 	account.mu.Unlock()
 	if stillExists {
 		t.Errorf("project %s still present after a FAILED creation-phase settle", ProjectPrefix+runID)
+	}
+}
+
+// TestRecomputePartDigest_RejectsPathEscape pins R4b: a bucket key whose
+// relative path (against its runs/<runId>/<part>/ prefix) escapes upward —
+// e.g. runs/<runId>/results/../../x, indistinguishable at the S3 layer from
+// any other key string — is rejected before either downloading it or
+// joining it into the verification temp dir, instead of being written
+// outside that dir.
+func TestRecomputePartDigest_RejectsPathEscape(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-24-r4b"
+	f := newControllerFixture(t, clientID)
+	fake, sink := f.s3, f.sink
+
+	runID := "run-r4b"
+	escapeKey := "runs/" + runID + "/results/../../x"
+	fake.mu.Lock()
+	fake.objects[escapeKey] = []byte("evil")
+	fake.mu.Unlock()
+
+	_, err := recomputePartDigest(context.Background(), sink, runID, "results")
+	if err == nil {
+		t.Fatal("recomputePartDigest: want an error for a path-escaping key, got nil")
+	}
+}
+
+// TestFarmRun_FailedImportAfterStarted_DoesNotDeleteProject pins R1: once
+// runs/<runId>/started.json exists (the run's own agent is underway), a
+// FAILED stack.import naming a service OTHER than the control service
+// ("api", the agent's own mid-run zerops_import) must never be mistaken for
+// the platform failing to create the run's own project — waitForDone keeps
+// waiting out the run's budget instead of settling immediately, and the
+// live project is never deleted out from under the running agent.
+func TestFarmRun_FailedImportAfterStarted_DoesNotDeleteProject(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-24-r1"
+	f := newControllerFixture(t, clientID)
+	account, client, sink := f.account, f.client, f.sink
+
+	batch := "batch-24-r1"
+	sc := ScenarioRun{ID: "recipe-mid-run-import"}
+	runID := batch + "-" + sc.ID
+	// No seedSettledRun: this run's project never writes done.json.
+
+	if err := sink.Put(context.Background(), "runs/"+runID+"/started.json", []byte(`{"runId":"`+runID+`"}`)); err != nil {
+		t.Fatalf("seed started.json: %v", err)
+	}
+
+	account.mu.Lock()
+	account.failedCreationProcessProjectName = ProjectPrefix + runID
+	account.failedCreationProcessServiceName = "api"
+	account.failedCreationProcessAction = "stack.import"
+	account.mu.Unlock()
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget: 200 * time.Millisecond, PollInterval: 20 * time.Millisecond,
+	}
+
+	results, err := RunBatch(context.Background(), client, sink, opts)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %+v, want 1 entry", results)
+	}
+	if results[0].Result != ResultBlocked || results[0].Detail != DetailNoBundle {
+		t.Fatalf("results[0] = %+v, want Result=%q Detail=%q (a FAILED stack.import on a non-control service, after started.json, must be ignored)", results[0], ResultBlocked, DetailNoBundle)
+	}
+	if results[0].ProjectID == "" {
+		t.Errorf("results[0].ProjectID empty, want the run's project kept (no bundle exemption)")
+	}
+	for _, entry := range account.requestLog() {
+		if strings.HasPrefix(entry, "DELETE ") {
+			t.Errorf("unexpected DELETE request recorded: %s", entry)
+		}
+	}
+	account.mu.Lock()
+	stillExists := findProjectByFakeName(account, ProjectPrefix+runID)
+	account.mu.Unlock()
+	if !stillExists {
+		t.Errorf("project %s was deleted, want it kept", ProjectPrefix+runID)
+	}
+}
+
+// tickClock is a fake clock that advances by step on every call to Now —
+// used by TestFarmRun_PerRunDeadline_FromCreation to make R7's per-run
+// deadline observable in simulated time without slowing the test down with
+// real sleeps.
+type tickClock struct {
+	mu   sync.Mutex
+	cur  time.Time
+	step time.Duration
+}
+
+func (c *tickClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t := c.cur
+	c.cur = c.cur.Add(c.step)
+	return t
+}
+
+// TestFarmRun_PerRunDeadline_FromCreation pins R7: each active run's budget
+// deadline is anchored at its OWN creation time, not recomputed when its
+// turn in the sequential settle loop begins. Two runs, neither ever
+// produces done.json, both settle budget-blocked — under the pre-fix
+// behavior (deadline recomputed fresh inside waitForDone at call time), the
+// second run's own wait would only begin once the first run's full budget
+// had already elapsed, so it would need ANOTHER full budget's worth of
+// simulated time on top — total simulated elapsed time would approach 2x
+// budget. Anchoring both deadlines at creation keeps the whole batch within
+// roughly one budget's worth of simulated time instead.
+func TestFarmRun_PerRunDeadline_FromCreation(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-24-r7"
+	f := newControllerFixture(t, clientID)
+	client, sink := f.client, f.sink
+
+	batch := "batch-24-r7"
+	scenarios := []ScenarioRun{{ID: "recipe-hung-1"}, {ID: "recipe-hung-2"}}
+	// Neither run ever writes done.json — both settle budget-blocked.
+
+	const step = time.Minute
+	const budget = 100 * time.Minute
+	clock := &tickClock{cur: time.Unix(0, 0), step: step}
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		Scenarios: scenarios, OAuthToken: "oauth-token",
+		Sink:         Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:    budget,
+		PollInterval: time.Nanosecond,
+		Now:          clock.Now,
+	}
+
+	start := time.Now()
+	results, err := RunBatch(context.Background(), client, sink, opts)
+	elapsedWall := time.Since(start)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if elapsedWall > 5*time.Second {
+		t.Fatalf("RunBatch took %s of real wall time, want it bounded by a handful of near-zero-PollInterval iterations", elapsedWall)
+	}
+	if len(results) != 2 {
+		t.Fatalf("results = %+v, want 2 entries", results)
+	}
+	for _, r := range results {
+		if r.Result != ResultBlocked || r.Detail != DetailNoBundle {
+			t.Errorf("result %+v, want Result=%q Detail=%q", r, ResultBlocked, DetailNoBundle)
+		}
+		if r.ProjectID == "" {
+			t.Errorf("result %+v: ProjectID empty, want the FM-21 no-bundle exemption to keep it", r)
+		}
+	}
+
+	totalElapsed := clock.cur.Sub(time.Unix(0, 0))
+	if totalElapsed >= 2*budget {
+		t.Errorf("total simulated elapsed time = %s, want well under 2x budget (%s) — run2's deadline must be anchored at its own creation time, not reset when its wait begins", totalElapsed, 2*budget)
+	}
+}
+
+// TestFarmRun_Interrupt_WritesSummaryKeepsProjects pins R3: cancelling
+// RunBatch's context while a run is still being waited on stops the wait,
+// writes batches/<batch>/summary.json with endedBy "interrupt", records the
+// unsettled run blocked/"interrupted", and — like FM-21's no-bundle
+// exemption — never deletes its project.
+func TestFarmRun_Interrupt_WritesSummaryKeepsProjects(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-24-r3"
+	f := newControllerFixture(t, clientID)
+	account, client, sink := f.account, f.client, f.sink
+
+	batch := "batch-24-r3"
+	sc := ScenarioRun{ID: "recipe-interrupted"}
+	runID := batch + "-" + sc.ID
+	// No seedSettledRun: the run's project never writes done.json before
+	// the ctx is cancelled.
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+		Sink: Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		// A generous budget the interrupt must pre-empt long before it
+		// would elapse on its own.
+		RunBudget: time.Hour, PollInterval: 20 * time.Millisecond,
+	}
+
+	start := time.Now()
+	results, err := RunBatch(ctx, client, sink, opts)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("RunBatch took %s, want it to stop promptly once ctx is cancelled, not run out the hour-long budget", elapsed)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %+v, want 1 entry", results)
+	}
+	if results[0].Result != ResultBlocked || results[0].Detail != DetailInterrupted {
+		t.Fatalf("results[0] = %+v, want Result=%q Detail=%q", results[0], ResultBlocked, DetailInterrupted)
+	}
+	if results[0].ProjectID == "" {
+		t.Errorf("results[0].ProjectID empty, want the interrupted run's project kept")
+	}
+
+	for _, entry := range account.requestLog() {
+		if strings.HasPrefix(entry, "DELETE ") {
+			t.Errorf("unexpected DELETE request recorded: %s", entry)
+		}
+	}
+	account.mu.Lock()
+	stillExists := findProjectByFakeName(account, ProjectPrefix+runID)
+	account.mu.Unlock()
+	if !stillExists {
+		t.Errorf("project %s was deleted, want it kept (interrupted)", ProjectPrefix+runID)
+	}
+
+	summary, err := GetSummary(context.Background(), sink, batch)
+	if err != nil {
+		t.Fatalf("GetSummary: %v", err)
+	}
+	if summary.EndedBy != "interrupt" {
+		t.Errorf("summary.EndedBy = %q, want %q", summary.EndedBy, "interrupt")
+	}
+	if len(summary.Runs) != 1 || summary.Runs[0].Result != ResultBlocked || summary.Runs[0].Detail != DetailInterrupted {
+		t.Errorf("summary.Runs = %+v, want one entry Result=%q Detail=%q", summary.Runs, ResultBlocked, DetailInterrupted)
+	}
+}
+
+// TestFarmRun_LaunchTokenRevokedWhenCreateFails pins R2 (FM-23): a launch
+// scenario's already-minted launch token must not leak when the run's
+// creation fails AFTER the mint (here, CreateAndImportProject) — the
+// controller revokes it immediately, and the revoke DELETE is actually
+// issued regardless of whether the fake happens to accept it.
+func TestFarmRun_LaunchTokenRevokedWhenCreateFails(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-24-r2"
+	f := newControllerFixture(t, clientID)
+	account, client, sink := f.account, f.client, f.sink
+
+	batch := "batch-24-r2"
+	sc := ScenarioRun{ID: "recipe-launch-create-fail", Launch: true}
+	runID := batch + "-" + sc.ID
+
+	account.mu.Lock()
+	account.failImportProjectName = ProjectPrefix + runID
+	account.mu.Unlock()
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget: time.Second, PollInterval: time.Millisecond,
+	}
+
+	results, err := RunBatch(context.Background(), client, sink, opts)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if len(results) != 1 || results[0].Result != ResultBlocked {
+		t.Fatalf("results = %+v, want one blocked entry", results)
+	}
+
+	revoked := false
+	for _, entry := range account.requestLog() {
+		if strings.HasPrefix(entry, "DELETE /api/rest/public/client/"+clientID+"/integration-token/") {
+			revoked = true
+		}
+	}
+	if !revoked {
+		t.Fatalf("no integration-token revoke DELETE recorded; request log: %v", account.requestLog())
+	}
+
+	// Independent oracle: either the revoke actually succeeded (the token
+	// no longer validates AND the result clears it to "") or, had it
+	// failed, the id would still be on the result — never silently dropped
+	// with the token left dangling and untracked.
+	if results[0].LaunchTokenID != "" {
+		account.mu.Lock()
+		_, stillValid := account.tokens[results[0].LaunchTokenID]
+		account.mu.Unlock()
+		if !stillValid {
+			t.Errorf("results[0].LaunchTokenID = %q is recorded but the fake already revoked it — recording only belongs on a failed revoke", results[0].LaunchTokenID)
+		}
+	}
+}
+
+// TestFarmRun_RollbackFailure_KeepsProjectIDAndError pins R6: when a
+// per-run failure after project creation triggers a Guard rollback and that
+// rollback's DeleteProject itself fails, the blocked result keeps the
+// leaked project's id (never "") and names the rollback failure in Error —
+// so the leak is visible instead of looking like the project was already
+// cleaned up.
+func TestFarmRun_RollbackFailure_KeepsProjectIDAndError(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-24-r6"
+	f := newControllerFixture(t, clientID)
+	account, client, sink := f.account, f.client, f.sink
+
+	batch := "batch-24-r6"
+	sc := ScenarioRun{ID: "recipe-rollback-fail"}
+	runID := batch + "-" + sc.ID
+	runProjectName := ProjectPrefix + runID
+
+	account.mu.Lock()
+	account.failScopedMint = true
+	account.failDeleteProjectName = runProjectName
+	account.mu.Unlock()
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", ScenariosDigest: "scen",
+		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget: time.Second, PollInterval: time.Millisecond,
+	}
+
+	results, err := RunBatch(context.Background(), client, sink, opts)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if len(results) != 1 || results[0].Result != ResultBlocked {
+		t.Fatalf("results = %+v, want one blocked entry", results)
+	}
+	if results[0].ProjectID == "" {
+		t.Errorf("results[0].ProjectID empty, want the leaked project's id kept (rollback failed)")
+	}
+	if !strings.Contains(results[0].Error, "rollback failed") {
+		t.Errorf("results[0].Error = %q, want it to mention the rollback failure", results[0].Error)
+	}
+	account.mu.Lock()
+	stillExists := findProjectByFakeName(account, runProjectName)
+	account.mu.Unlock()
+	if !stillExists {
+		t.Errorf("project %s not present in fakeAccount, want it still there (rollback DELETE failed)", runProjectName)
 	}
 }

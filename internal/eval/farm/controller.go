@@ -41,6 +41,13 @@ const (
 // two agree on the same literal (goconst).
 const DetailNoBundle = "no bundle"
 
+// DetailInterrupted is the RunResult.Detail value for a run RunBatch was
+// still waiting on when its context was cancelled (Ctrl-C / SIGTERM, R3,
+// FM-9's "interrupt" endedBy value). Its project is kept and any minted
+// launch token id is recorded rather than revoked — the same FM-21-style
+// exemption as DetailNoBundle, so `gc` can finish the job later.
+const DetailInterrupted = "interrupted"
+
 // PlatformClient is the account-wide platform surface the controller needs.
 // The real implementation (NewAccountClient) wraps platform.NewZeropsClient
 // and platform.NewProjectAdminClient — both existing SDK-based constructors
@@ -227,6 +234,12 @@ type activeRun struct {
 	ProjectID     string
 	LaunchTokenID string
 	RunTokenID    string
+	// Deadline is this run's own budget deadline, set once at creation —
+	// createdAt + RunBudget (R7). Runs are still waited on in order, but
+	// each against its own deadline: a hung run earlier in the batch must
+	// never extend a later run's budget by however long it took to give up
+	// on the earlier one.
+	Deadline time.Time
 }
 
 // createRun performs one scheduled run's creation steps (§2.1: mint launch
@@ -276,12 +289,12 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 	// project-scoped token exists to carry.
 	projectYAML, err := ProjectImportYAML(desc)
 	if err != nil {
-		rr := recordBlocked(r.RunID, r.ID, fmt.Errorf("build project import yaml: %w", err))
+		rr := recordBlockedRevokingLaunchToken(ctx, client, opts, r, launchTokenID, fmt.Errorf("build project import yaml: %w", err))
 		return nil, &rr, nil
 	}
 	result, err := client.CreateAndImportProject(ctx, string(projectYAML))
 	if err != nil {
-		rr := recordBlocked(r.RunID, r.ID, fmt.Errorf("create project: %w", err))
+		rr := recordBlockedRevokingLaunchToken(ctx, client, opts, r, launchTokenID, fmt.Errorf("create project: %w", err))
 		return nil, &rr, nil
 	}
 	runProjectName := ProjectPrefix + r.RunID
@@ -294,11 +307,14 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 	// (brief: "a mint 403 aborts the batch before any project exists").
 	minted, err := client.MintProjectScopedToken(ctx, opts.ClientID, result.ProjectID, "farm-run-"+r.RunID)
 	if err != nil {
-		_ = Guard(ctx, client, result.ProjectID, runProjectName)
 		if isScopedMintForbidden(err) {
+			_ = Guard(ctx, client, result.ProjectID, runProjectName)
+			if launchTokenID != "" {
+				_ = client.RevokeIntegrationToken(ctx, opts.ClientID, launchTokenID)
+			}
 			return nil, nil, fmt.Errorf("farm run: mint run token for %s: %w", r.RunID, err)
 		}
-		rr := recordBlocked(r.RunID, r.ID, fmt.Errorf("mint run token: %w", err))
+		rr := recordBlockedAfterRollback(ctx, client, opts, r, result.ProjectID, runProjectName, launchTokenID, fmt.Errorf("mint run token: %w", err))
 		return nil, &rr, nil
 	}
 	desc.RunToken = minted.Token
@@ -307,13 +323,11 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 	// token as ZCP_API_KEY.
 	serviceYAML, err := ServiceImportYAML(desc)
 	if err != nil {
-		_ = Guard(ctx, client, result.ProjectID, runProjectName)
-		rr := recordBlocked(r.RunID, r.ID, fmt.Errorf("build service import yaml: %w", err))
+		rr := recordBlockedAfterRollback(ctx, client, opts, r, result.ProjectID, runProjectName, launchTokenID, fmt.Errorf("build service import yaml: %w", err))
 		return nil, &rr, nil
 	}
 	if _, err := client.ImportServiceStack(ctx, result.ProjectID, string(serviceYAML)); err != nil {
-		_ = Guard(ctx, client, result.ProjectID, runProjectName)
-		rr := recordBlocked(r.RunID, r.ID, fmt.Errorf("import service stack: %w", err))
+		rr := recordBlockedAfterRollback(ctx, client, opts, r, result.ProjectID, runProjectName, launchTokenID, fmt.Errorf("import service stack: %w", err))
 		return nil, &rr, nil
 	}
 
@@ -323,6 +337,49 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 		LaunchTokenID: launchTokenID,
 		RunTokenID:    minted.TokenID,
 	}, nil, nil
+}
+
+// recordBlockedRevokingLaunchToken is recordBlocked plus R2 (FM-23): a
+// per-run failure BEFORE any project was created still leaves a launch
+// scenario's already-minted token dangling unless it is revoked right now;
+// if the revoke itself fails, the id is kept on the result so RunBatch's
+// end-of-batch manifest/summary pass and `gc` can finish the job later.
+func recordBlockedRevokingLaunchToken(ctx context.Context, client PlatformClient, opts RunOptions, r scheduledRun, launchTokenID string, err error) RunResult {
+	rr := recordBlocked(r.RunID, r.ID, err)
+	revokeLaunchTokenOnto(ctx, client, opts, launchTokenID, &rr)
+	return rr
+}
+
+// recordBlockedAfterRollback is recordBlocked plus R6 and R2: it rolls the
+// just-created project shell back through Guard first — on a rollback
+// failure it keeps rr.ProjectID (the leaked project, instead of the "" that
+// makes the summary look like it was already cleaned up) and appends the
+// guard's own error to rr.Error, so the leak is visible instead of silently
+// discarded — then revokes the run's launch token, if any, recording its id
+// back onto rr when that revoke itself fails (FM-23).
+func recordBlockedAfterRollback(ctx context.Context, client PlatformClient, opts RunOptions, r scheduledRun, projectID, projectName, launchTokenID string, err error) RunResult {
+	rollbackErr := Guard(ctx, client, projectID, projectName)
+	rr := recordBlocked(r.RunID, r.ID, err)
+	if rollbackErr != nil {
+		rr.ProjectID = projectID
+		rr.Error = fmt.Sprintf("%s; rollback failed: %v", rr.Error, rollbackErr)
+	}
+	revokeLaunchTokenOnto(ctx, client, opts, launchTokenID, &rr)
+	return rr
+}
+
+// revokeLaunchTokenOnto revokes launchTokenID immediately (a no-op when
+// empty — not a launch scenario, or the token was never minted); on failure
+// it records the id on rr instead of dropping it, so RunBatch's
+// end-of-batch manifest/summary pass and `gc` can finish the revoke once
+// the project is gone (R2, FM-23).
+func revokeLaunchTokenOnto(ctx context.Context, client PlatformClient, opts RunOptions, launchTokenID string, rr *RunResult) {
+	if launchTokenID == "" {
+		return
+	}
+	if err := client.RevokeIntegrationToken(ctx, opts.ClientID, launchTokenID); err != nil {
+		rr.LaunchTokenID = launchTokenID
+	}
 }
 
 // RunBatch runs opts.Scenarios as one batch (§3.3 FM-21/FM-22): it writes
@@ -378,6 +435,12 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 			blocked = append(blocked, *blockedResult)
 			continue
 		}
+		// R7: the deadline is anchored at THIS run's own creation moment,
+		// never recomputed when its wait turn comes up in the settle loop
+		// below — otherwise a hung earlier run's wait time would silently
+		// extend every later run's budget by however long it took to give
+		// up on the earlier one.
+		active.Deadline = now().Add(opts.RunBudget)
 		runTokenIDs[active.RunID] = active.RunTokenID
 		actives = append(actives, *active)
 	}
@@ -395,7 +458,10 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 			}
 		}
 		manifest.Runs = manifestRuns
-		if err := PutManifest(ctx, sink, opts.Batch, manifest); err != nil {
+		// R3: this write must land even if ctx is cancelled mid-batch — an
+		// interrupted operator still wants the minted run token ids on
+		// record.
+		if err := PutManifest(context.WithoutCancel(ctx), sink, opts.Batch, manifest); err != nil {
 			return nil, fmt.Errorf("farm run: update manifest with run token ids: %w", err)
 		}
 	}
@@ -403,15 +469,21 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 	results := make([]RunResult, 0, len(actives)+len(blocked))
 	results = append(results, blocked...)
 	endedByBudget := false
+	endedByInterrupt := false
 	for _, a := range actives {
-		result, detail, settled := waitForDone(ctx, client, sink, a.RunID, a.ProjectID, opts.RunBudget, now, pollInterval)
+		result, detail, settled := waitForDone(ctx, client, sink, a.RunID, a.ProjectID, a.Deadline, now, pollInterval)
 		rr := RunResult{RunID: a.RunID, Scenario: a.ID, ProjectID: a.ProjectID, Result: result, Detail: detail, LaunchTokenID: a.LaunchTokenID}
 
 		if !settled {
-			// FM-21's sole exemption: budget elapsed without done.json —
-			// the project is kept for inspection, the token (if any) stays
-			// unrevoked and is recorded so `gc` can finish the job later.
-			endedByBudget = true
+			// FM-21's sole exemption (budget elapsed) and R3's interrupt
+			// exemption share the same shape: the project is kept for
+			// inspection, the token (if any) stays unrevoked and is
+			// recorded so `gc` can finish the job later.
+			if detail == DetailInterrupted {
+				endedByInterrupt = true
+			} else {
+				endedByBudget = true
+			}
 			results = append(results, rr)
 			continue
 		}
@@ -434,7 +506,10 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 	}
 
 	endedBy := "settled"
-	if endedByBudget {
+	switch {
+	case endedByInterrupt:
+		endedBy = "interrupt"
+	case endedByBudget:
 		endedBy = "budget"
 	}
 	summary := BatchSummary{Batch: opts.Batch, FinishedAt: now().UTC().Format(time.RFC3339), EndedBy: endedBy}
@@ -444,7 +519,10 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 		// field-by-field literal.
 		summary.Runs = append(summary.Runs, SummaryRun(rr))
 	}
-	if err := PutSummary(ctx, sink, opts.Batch, summary); err != nil {
+	// R3: write the summary through a cancellation-immune context — the
+	// whole point of the interrupt exemption is that the operator's own
+	// Ctrl-C/SIGTERM must not also block the write that records it.
+	if err := PutSummary(context.WithoutCancel(ctx), sink, opts.Batch, summary); err != nil {
 		return results, fmt.Errorf("farm run: write summary: %w", err)
 	}
 	return results, nil
@@ -528,31 +606,55 @@ type verificationJSON struct {
 }
 
 // waitForDone polls the bucket for runs/<runId>/done.json until it appears
-// or budget elapses (§3.3 FM-21), and — D19 — also polls the run's project
-// for a FAILED creation-phase process on every iteration: a platform-side
-// project.create incident (live 2026-09-10: stack.create FAILED, stack.build
-// CANCELED, GET /project/{id} -> 500) leaves a dead project that will never
-// write done.json, so waiting out the full budget for one is pure waste.
-// settled reports whether the run produced a verdict at all — false means
-// the budget-elapsed exemption: the caller must not delete the run's
-// project or revoke its token. A FAILED creation-phase process always
-// returns settled=true (§3.3 FM-21: the dead project is still deleted); a
-// transient error reading processes is never itself a verdict — polling
-// continues.
-func waitForDone(ctx context.Context, client PlatformClient, sink *SinkClient, runID, projectID string, budget time.Duration, now func() time.Time, pollInterval time.Duration) (result, detail string, settled bool) {
-	deadline := now().Add(budget)
+// or deadline (the run's own creation-time budget deadline, R7) elapses
+// (§3.3 FM-21), and — D19 — also polls the run's project for a FAILED
+// creation-phase process on every iteration where the run has not yet
+// written runs/<runId>/started.json: a platform-side project.create
+// incident (live 2026-09-10: stack.create FAILED, stack.build CANCELED,
+// GET /project/{id} -> 500) leaves a dead project that will never write
+// done.json, so waiting out the full budget for one is pure waste. R1: once
+// started.json exists — the run's own wrapper/agent is underway — this
+// process poll stops entirely, so a platform-side failure of the agent's
+// OWN later zerops_import (a stack.import for one of ITS services, not the
+// controller's) can never be mistaken for the project's own creation
+// failing; creationPhaseFailure additionally only counts a process whose
+// ServiceStacks[] names the control service or carries no ref at all, for
+// the same reason. settled reports whether the run produced a verdict at
+// all — false means either the budget-elapsed exemption or R3's interrupt
+// exemption (ctx cancelled — detail is DetailInterrupted): either way the
+// caller must not delete the run's project or revoke its token. A FAILED
+// creation-phase process always returns settled=true (§3.3 FM-21: the dead
+// project is still deleted); a transient error reading processes is never
+// itself a verdict — polling continues.
+func waitForDone(ctx context.Context, client PlatformClient, sink *SinkClient, runID, projectID string, deadline time.Time, now func() time.Time, pollInterval time.Duration) (result, detail string, settled bool) {
 	for {
+		select {
+		case <-ctx.Done():
+			return ResultBlocked, DetailInterrupted, false
+		default:
+		}
+
 		body, err := sink.Get(ctx, "runs/"+runID+"/done.json")
 		if err == nil {
 			return settleFromDone(ctx, sink, runID, body)
 		}
-		if actionName, failReason, found := creationPhaseFailure(ctx, client, projectID); found {
-			return ResultBlocked, fmt.Sprintf("platform: %s FAILED: %s", actionName, failReason), true
+
+		started, _, headErr := sink.Head(ctx, "runs/"+runID+"/started.json")
+		if headErr == nil && !started {
+			if actionName, failReason, found := creationPhaseFailure(ctx, client, projectID); found {
+				return ResultBlocked, fmt.Sprintf("platform: %s FAILED: %s", actionName, failReason), true
+			}
 		}
+
 		if now().After(deadline) {
 			return ResultBlocked, DetailNoBundle, false
 		}
-		time.Sleep(pollInterval)
+
+		select {
+		case <-ctx.Done():
+			return ResultBlocked, DetailInterrupted, false
+		case <-time.After(pollInterval):
+		}
 	}
 }
 
@@ -579,17 +681,19 @@ func isCreationPhaseAction(actionName string) bool {
 }
 
 // creationPhaseFailure looks for a FAILED creation-phase process on
-// projectID. A transient error reading the project's processes (including
-// the GET /project/{id} 5xx the live incident also produced) is never
-// itself a verdict — it reports found=false, not an error, so waitForDone
-// keeps polling instead of settling on a possibly-recoverable blip.
+// projectID whose ServiceStacks[] names the control service or carries no
+// service ref at all (R1 — referencesControlServiceOrProject). A transient
+// error reading the project's processes (including the GET /project/{id}
+// 5xx the live incident also produced) is never itself a verdict — it
+// reports found=false, not an error, so waitForDone keeps polling instead
+// of settling on a possibly-recoverable blip.
 func creationPhaseFailure(ctx context.Context, client PlatformClient, projectID string) (actionName, failReason string, found bool) {
 	processes, err := client.GetProjectProcessesDirect(ctx, projectID)
 	if err != nil {
 		return "", "", false
 	}
 	for _, p := range processes {
-		if p.Status != platform.ProcessStatusFailed || !isCreationPhaseAction(p.ActionName) {
+		if p.Status != platform.ProcessStatusFailed || !isCreationPhaseAction(p.ActionName) || !referencesControlServiceOrProject(p.ServiceStacks) {
 			continue
 		}
 		reason := ""
@@ -599,6 +703,24 @@ func creationPhaseFailure(ctx context.Context, client PlatformClient, projectID 
 		return p.ActionName, reason, true
 	}
 	return "", "", false
+}
+
+// referencesControlServiceOrProject reports whether refs is empty (a
+// project-level process with no specific service — e.g. the project shell's
+// own stack.create) or names the control service (serviceHostname, "zcp") —
+// R1: a stack.import the run's own agent triggers for one of ITS imported
+// services, mid-run, has a ref naming THAT service, never "zcp", so it never
+// counts as the platform failing to create the run's own project.
+func referencesControlServiceOrProject(refs []platform.ServiceStackRef) bool {
+	if len(refs) == 0 {
+		return true
+	}
+	for _, ref := range refs {
+		if ref.Name == serviceHostname {
+			return true
+		}
+	}
+	return false
 }
 
 // settleFromDone verifies done.json's part digests against what actually
@@ -673,7 +795,11 @@ func blockingCheckDetail(ctx context.Context, sink *SinkClient, verificationKey,
 // recomputePartDigest downloads every object under runs/<runId>/<part>/ to a
 // temp dir and returns farm.TreeDigest over it — the independent recompute
 // FM-5 requires, never inferred from done.json's own claim or from listing
-// order.
+// order. R4b: a bucket key's relative path is untrusted input (the bucket is
+// shared read/write across every run in this account, FM-8) — a key like
+// runs/<runId>/results/../../x would otherwise join outside dir, so any key
+// whose cleaned relative path is absolute or escapes upward is rejected
+// before either the download or the write.
 func recomputePartDigest(ctx context.Context, sink *SinkClient, runID, part string) (string, error) {
 	prefix := "runs/" + runID + "/" + part + "/"
 	keys, err := sink.List(ctx, prefix)
@@ -686,12 +812,16 @@ func recomputePartDigest(ctx context.Context, sink *SinkClient, runID, part stri
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	for _, key := range keys {
+		rel := strings.TrimPrefix(key, prefix)
+		cleaned := filepath.Clean(filepath.FromSlash(rel))
+		if filepath.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("recompute digest: key %q resolves outside %s", key, prefix)
+		}
 		objBody, err := sink.Get(ctx, key)
 		if err != nil {
 			return "", err
 		}
-		rel := strings.TrimPrefix(key, prefix)
-		dest := filepath.Join(dir, filepath.FromSlash(rel))
+		dest := filepath.Join(dir, cleaned)
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return "", err
 		}
