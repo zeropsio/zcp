@@ -847,10 +847,13 @@ Model-authored fields:
 **Parse, validate, repair.** The model's answer is the first top-level JSON
 object in its final text. `status` is `unparsed` (`raw` keeps the answer,
 capped at 20,000 chars) when it does not parse or breaks the structure:
-unknown enum values, a finding without title or evidence, `goal.reached`
-missing, `story` or `story.ending` missing. Everything else is repaired deterministically and each repair
+unknown enum values (except a finding's `owner`, repaired below), a finding
+without title or evidence, `goal.reached` missing, `story` or
+`story.ending` missing. Everything else is repaired deterministically and each repair
 appends one plain sentence to `warnings` (shown wherever the observation is
-shown): findings beyond three are dropped; a `surface` not of the form
+shown): a finding whose `owner` is a surface kind takes the owner that kind
+implies (`recipe` → `zcp-guidance`, `tool` → `zcp-tool`, `check` →
+`evaluator`) and a finding with any other unknown owner is dropped; findings beyond three are dropped; a `surface` not of the form
 above, naming a `tool:` the run never called, or a `check:` id not in the
 run's checks, is cleared; an `anchor` that does not occur (FM-46
 normalization) in any step the finding cites is cleared; a `span` outside

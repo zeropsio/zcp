@@ -292,11 +292,41 @@ func ParseAndValidate(raw string, facts RunFacts) (ModelAnswer, []string, bool) 
 	if err := json.Unmarshal([]byte(obj), &ans); err != nil {
 		return ModelAnswer{}, nil, false
 	}
+	ans, ownerWarnings := repairOwners(ans)
 	if !validateAnswer(ans) {
 		return ModelAnswer{}, nil, false
 	}
 	repaired, warnings := repairAnswer(ans, facts)
-	return repaired, warnings, true
+	return repaired, append(ownerWarnings, warnings...), true
+}
+
+// ownerBySurfaceKind maps a surface kind a model wrote as a finding's owner
+// to the owner that kind implies: ZCP's recipes are its guidance, its tools
+// are its tools, a check is the evaluator's (§7.5 repair).
+var ownerBySurfaceKind = map[string]string{"recipe": "zcp-guidance", "tool": "zcp-tool", "check": ownerEvaluator}
+
+// repairOwners fixes findings whose owner is not one of the six (§7.5): an
+// owner that is a surface kind becomes the owner that kind implies; any
+// other unknown owner drops its finding. One unknown value never costs the
+// whole observation.
+func repairOwners(ans ModelAnswer) (ModelAnswer, []string) {
+	var warnings []string
+	kept := ans.Findings[:0:0]
+	for _, f := range ans.Findings {
+		if validOwner[f.Owner] {
+			kept = append(kept, f)
+			continue
+		}
+		if owner, ok := ownerBySurfaceKind[f.Owner]; ok {
+			warnings = append(warnings, fmt.Sprintf("finding %q had owner %q (a surface kind); read as %q", f.Title, f.Owner, owner))
+			f.Owner = owner
+			kept = append(kept, f)
+			continue
+		}
+		warnings = append(warnings, fmt.Sprintf("dropped finding %q: unknown owner %q", f.Title, f.Owner))
+	}
+	ans.Findings = kept
+	return ans, warnings
 }
 
 // validateAnswer checks the structural rules whose violation makes the

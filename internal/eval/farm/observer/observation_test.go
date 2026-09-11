@@ -689,3 +689,39 @@ func TestParseAndValidate_WarnsOKHeadlineWithFindings(t *testing.T) {
 		t.Errorf("clean OK answer: ok=%v warnings=%v, want parsed with no OK warning", ok, clean)
 	}
 }
+
+// TestParseAndValidate_RepairsOwnerConfusedWithSurfaceKind pins §7.5: a
+// finding whose owner is a surface kind (the model conflated the two
+// fields) is kept under the owner that kind implies, and a finding with
+// any other unknown owner is dropped — each with a warning — instead of
+// the whole observation going unparsed. (Live: a nestjs run's sound answer
+// was lost to one finding's "owner": "recipe".)
+func TestParseAndValidate_RepairsOwnerConfusedWithSurfaceKind(t *testing.T) {
+	cases := []struct {
+		owner     string
+		wantOwner string // "" = the finding is dropped
+	}{
+		{"recipe", "zcp-guidance"},
+		{"tool", "zcp-tool"},
+		{"check", "evaluator"},
+		{"bogus", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.owner, func(t *testing.T) {
+			ans, warnings, ok := ParseAndValidate(answerJSON(findingJSON(findingSpec{Owner: tc.owner, EvidenceStep: 2, Quote: "PREFLIGHT_FAILED"})), sampleFacts())
+			if !ok {
+				t.Fatalf("ParseAndValidate: got unparsed, want the finding repaired or dropped")
+			}
+			if tc.wantOwner == "" {
+				if len(ans.Findings) != 0 {
+					t.Errorf("findings = %+v, want the unknown-owner finding dropped", ans.Findings)
+				}
+			} else if len(ans.Findings) != 1 || ans.Findings[0].Owner != tc.wantOwner {
+				t.Errorf("findings = %+v, want one finding with owner %q", ans.Findings, tc.wantOwner)
+			}
+			if !anyContains(warnings, "owner") {
+				t.Errorf("warnings = %v, want one about the owner", warnings)
+			}
+		})
+	}
+}
