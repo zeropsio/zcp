@@ -24,8 +24,25 @@ type BatchManifest struct {
 	// Observer is `farm run`'s --observer choice ("<model>" or "off",
 	// §3.3/§7.7) — a missing field (batches older than §7) means "never
 	// observed automatically" (§1.4).
-	Observer string        `json:"observer,omitempty"`
-	Runs     []ManifestRun `json:"runs"`
+	Observer string `json:"observer,omitempty"`
+	// Note is `farm run --note`: why the batch ran (§3.3), at most 200 chars.
+	Note string `json:"note,omitempty"`
+	// RunBudgetSec is the run budget, so a reader can tell a stalled run
+	// from a running one (§3.3, §8.8).
+	RunBudgetSec int `json:"runBudgetSec,omitempty"`
+	// CandidateInfo is the candidate binary's embedded Go build info, when
+	// `farm push --candidate` recorded it (§3.3).
+	CandidateInfo *CandidateInfo `json:"candidateInfo,omitempty"`
+	Runs          []ManifestRun  `json:"runs"`
+}
+
+// CandidateInfo is read from the candidate binary's debug/buildinfo by
+// `farm push --candidate` and stored as candidates/<sha256>.info.json (§3.3).
+type CandidateInfo struct {
+	Revision  string `json:"revision,omitempty"`
+	Modified  bool   `json:"modified,omitempty"`
+	Time      string `json:"time,omitempty"`
+	GoVersion string `json:"goVersion,omitempty"`
 }
 
 // ManifestRun is one batches/<batch>/manifest.json run entry.

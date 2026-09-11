@@ -10,9 +10,47 @@ import (
 	"unicode/utf16"
 )
 
-// ObservationFormat1 is the formatVersion of the stored observation
-// document (§7.5).
-const ObservationFormat1 = "zcp-farm-observation-1"
+// ObservationFormat1 and ObservationFormat2 are the formatVersions of the
+// stored observation document (§7.5): the observer writes format 2, every
+// reader reads both.
+const (
+	ObservationFormat1 = "zcp-farm-observation-1"
+	ObservationFormat2 = "zcp-farm-observation-2"
+)
+
+// Assessment outcomes (§7.5) — derived, never model-authored.
+const (
+	OutcomeOK           = "ok"
+	OutcomeProblem      = "problem"
+	OutcomeInconclusive = "inconclusive"
+)
+
+// Session endings (§7.5 story.ending).
+const (
+	EndingFinished     = "finished"
+	EndingGaveUp       = "gave-up"
+	EndingSessionLimit = "session-limit"
+	EndingTurnLimit    = "turn-limit"
+	EndingTimeout      = "timeout"
+	EndingCrashed      = "crashed"
+)
+
+// Observation sources (§7.5 source).
+const (
+	SourceWorker = "worker"
+	SourceAction = "action"
+	SourceLocal  = "local"
+)
+
+// Error kinds (§7.5 errorKind), set with status "error".
+const (
+	ErrorKindCredential = "credential"
+	ErrorKindTimeout    = "timeout"
+	ErrorKindKilled     = "killed"
+	ErrorKindBundle     = "bundle"
+	ErrorKindModel      = "model"
+	ErrorKindOther      = "other"
+)
 
 // statusError and statusUnparsed are two of Observation.Status's three
 // values (§7.5; the third, "ok", is exempt from this by being two
@@ -37,16 +75,56 @@ type Observation struct {
 	PromptSha256  string    `json:"promptSha256"`
 	DigestSha256  string    `json:"digestSha256"`
 
-	// Status is "ok", "unparsed", or "error" (§7.5).
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
-	Raw    string `json:"raw,omitempty"`
+	// Source is "worker", "action" or "local" (§7.5); empty on format 1.
+	Source string `json:"source,omitempty"`
 
+	// Status is "ok", "unparsed", or "error" (§7.5).
+	Status    string `json:"status"`
+	ErrorKind string `json:"errorKind,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Raw       string `json:"raw,omitempty"`
+
+	// Warnings lists every deterministic repair applied to the model's
+	// answer, one plain sentence each (§7.5).
+	Warnings []string `json:"warnings,omitempty"`
+
+	// Outcome is derived (§7.5): "ok", "problem" or "inconclusive".
+	Outcome    string     `json:"outcome,omitempty"`
 	Headline   string     `json:"headline,omitempty"`
+	Story      *Story     `json:"story,omitempty"`
 	Goal       Goal       `json:"goal"`
 	Checks     Checks     `json:"checks"`
 	Findings   []Finding  `json:"findings,omitempty"`
 	SelfReview SelfReview `json:"selfReview"`
+}
+
+// Story is the session in five short fields (§7.5); nil on format 1.
+type Story struct {
+	Task     string `json:"task"`
+	Expected string `json:"expected"`
+	Did      string `json:"did"`
+	Stuck    *Stuck `json:"stuck"`
+	Ending   string `json:"ending"`
+}
+
+// Stuck is where the run got stuck: a step range and what blocked it.
+type Stuck struct {
+	From int    `json:"from"`
+	To   int    `json:"to"`
+	What string `json:"what"`
+}
+
+// Span is the step range a finding stretched over.
+type Span struct {
+	From int `json:"from"`
+	To   int `json:"to"`
+}
+
+// JudgedCheck is the observer's judgement of one failed or blocked check.
+type JudgedCheck struct {
+	ID      string `json:"id"`
+	Correct bool   `json:"correct"`
+	Why     string `json:"why"`
 }
 
 // Goal is the model's answer to "did the agent reach the user's goal"
@@ -60,9 +138,10 @@ type Goal struct {
 // checks and, once resolved by the caller (never the model — §7.5), the
 // run's own verdict.
 type Checks struct {
-	Verdict string `json:"verdict,omitempty"` // passed|failed|blocked — never model-authored
-	Agree   bool   `json:"agree"`
-	Why     string `json:"why,omitempty"`
+	Verdict string        `json:"verdict,omitempty"` // passed|failed|blocked — never model-authored
+	Agree   bool          `json:"agree"`             // derived on format 2 (§7.5)
+	Why     string        `json:"why,omitempty"`     // format 1
+	Judged  []JudgedCheck `json:"judged,omitempty"`  // format 2
 }
 
 // Evidence is one finding's cited step + quote, with the quote-check
@@ -75,13 +154,17 @@ type Evidence struct {
 
 // Finding is one observed issue (§7.5).
 type Finding struct {
-	Severity string     `json:"severity"` // high|medium|low
-	Owner    string     `json:"owner"`
-	Title    string     `json:"title"`
-	What     string     `json:"what"`
-	Evidence []Evidence `json:"evidence"`
-	LookAt   string     `json:"lookAt"`
-	Fix      string     `json:"fix"`
+	Severity      string     `json:"severity"` // high|medium|low
+	Owner         string     `json:"owner"`
+	Surface       string     `json:"surface,omitempty"` // format 2: <kind>:<name> (§7.5)
+	Anchor        string     `json:"anchor,omitempty"`  // format 2: verbatim ZCP text or error code
+	Title         string     `json:"title"`
+	What          string     `json:"what"`
+	Evidence      []Evidence `json:"evidence"`
+	Span          *Span      `json:"span,omitempty"`
+	CausedVerdict bool       `json:"causedVerdict,omitempty"`
+	LookAt        string     `json:"lookAt"`
+	Fix           string     `json:"fix"`
 }
 
 // SelfReview is the model's judgment of the agent's own self-review (§7.5).
@@ -95,6 +178,7 @@ type SelfReview struct {
 // the store/caller (never the model) supplies.
 type ModelAnswer struct {
 	Headline   string     `json:"headline"`
+	Story      *Story     `json:"story"`
 	Goal       Goal       `json:"goal"`
 	Checks     Checks     `json:"checks"`
 	Findings   []Finding  `json:"findings"`

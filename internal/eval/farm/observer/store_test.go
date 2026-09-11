@@ -3,6 +3,7 @@ package observer
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -244,7 +245,7 @@ func TestStore_PutThenGetRoundTrips(t *testing.T) {
 	if got.Goal != want.Goal {
 		t.Errorf("GetObservation.Goal = %+v, want %+v", got.Goal, want.Goal)
 	}
-	if got.Checks != want.Checks {
+	if !reflect.DeepEqual(got.Checks, want.Checks) {
 		t.Errorf("GetObservation.Checks = %+v, want %+v", got.Checks, want.Checks)
 	}
 	if got.SelfReview != want.SelfReview {
