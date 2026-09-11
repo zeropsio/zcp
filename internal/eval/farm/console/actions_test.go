@@ -291,6 +291,72 @@ func TestActions_RunObserveAddsVersion(t *testing.T) {
 	}
 }
 
+// --- TestActions_RunObserveModelDefaultChain ----------------------------
+
+// TestActions_RunObserveModelDefaultChain pins §8.5 FM-53's model default
+// chain for POST /r/<runId>/observe when the form carries no model at
+// all: the run's current observation's model, else the batch manifest's,
+// else observer.DefaultModel.
+func TestActions_RunObserveModelDefaultChain(t *testing.T) {
+	t.Run("no observation: falls back to the manifest's model", func(t *testing.T) {
+		obs := wkNewRecordingObserve()
+		defer close(obs.release)
+		q := NewQueue(obs.fn)
+		srv, store := newActionServer(t, actionServerOpts{queue: q})
+		h := srv.Handler()
+
+		seedObserveBatch(t, store, "mc1", "claude-opus-5", "mc1-a")
+
+		rr := doBearerPOST(t, h, "/r/mc1-a/observe", url.Values{})
+		if rr.Code != http.StatusAccepted {
+			t.Fatalf("POST /r/mc1-a/observe with no model: got %d, want 202, body=%s", rr.Code, rr.Body.String())
+		}
+		job := wkExpectCall(t, obs.calls)
+		if job.Model != "claude-opus-5" {
+			t.Errorf("enqueued job.Model = %q, want the manifest's claude-opus-5", job.Model)
+		}
+	})
+
+	t.Run("current observation exists: its model wins over the manifest's", func(t *testing.T) {
+		obs := wkNewRecordingObserve()
+		defer close(obs.release)
+		q := NewQueue(obs.fn)
+		srv, store := newActionServer(t, actionServerOpts{queue: q})
+		h := srv.Handler()
+
+		seedObserveBatch(t, store, "mc2", "claude-opus-5", "mc2-a")
+		seedObservation(t, store, fixtureObservation("mc2-a")) // Model: claude-sonnet-5
+
+		rr := doBearerPOST(t, h, "/r/mc2-a/observe", url.Values{})
+		if rr.Code != http.StatusAccepted {
+			t.Fatalf("POST /r/mc2-a/observe with no model: got %d, want 202, body=%s", rr.Code, rr.Body.String())
+		}
+		job := wkExpectCall(t, obs.calls)
+		if job.Model != "claude-sonnet-5" {
+			t.Errorf("enqueued job.Model = %q, want the current observation's claude-sonnet-5", job.Model)
+		}
+	})
+
+	t.Run("neither exists: falls back to observer.DefaultModel", func(t *testing.T) {
+		obs := wkNewRecordingObserve()
+		defer close(obs.release)
+		q := NewQueue(obs.fn)
+		srv, store := newActionServer(t, actionServerOpts{queue: q})
+		h := srv.Handler()
+
+		seedObserveBatch(t, store, "mc3", ObserverOff, "mc3-a")
+
+		rr := doBearerPOST(t, h, "/r/mc3-a/observe", url.Values{})
+		if rr.Code != http.StatusAccepted {
+			t.Fatalf("POST /r/mc3-a/observe with no model, manifest off: got %d, want 202, body=%s", rr.Code, rr.Body.String())
+		}
+		job := wkExpectCall(t, obs.calls)
+		if job.Model != observer.DefaultModel {
+			t.Errorf("enqueued job.Model = %q, want observer.DefaultModel %q", job.Model, observer.DefaultModel)
+		}
+	})
+}
+
 // --- TestActions_ModelOutsideAllowlist400 -------------------------------
 
 // TestActions_ModelOutsideAllowlist400 pins §8.5 FM-53: a model outside the
@@ -491,6 +557,53 @@ func TestActions_BatchObserveOnlyUnobservedUnlessAll(t *testing.T) {
 			t.Errorf("enqueued runs = %v, want both bo2-a and bo2-b", got)
 		}
 	})
+}
+
+// --- TestActions_BatchObserveWithoutAllRetriesFailedObservation ---------
+
+// TestActions_BatchObserveWithoutAllRetriesFailedObservation pins §8.5
+// FM-53's needs-an-assessment predicate (view.go's NeedsAssessment): a run
+// with done.json whose CURRENT observation failed (status error/unparsed)
+// still needs an assessment. POST /b/<batch>/observe without all=1 must
+// queue it, exactly the set the batch page's Assess callout counts — this
+// closes the live dead-end where the callout counted a failed assessment
+// but the action, which used to skip a run on any observation at all
+// regardless of status, never queued it.
+func TestActions_BatchObserveWithoutAllRetriesFailedObservation(t *testing.T) {
+	obs := wkNewRecordingObserve()
+	defer close(obs.release)
+	q := NewQueue(obs.fn)
+	srv, store := newActionServer(t, actionServerOpts{queue: q})
+	h := srv.Handler()
+
+	seedObserveBatch(t, store, "rf1", "claude-sonnet-5", "rf1-ok", "rf1-failed", "rf1-unassessed")
+
+	okObs := fixtureObservation("rf1-ok")
+	seedObservation(t, store, okObs)
+
+	failedObs := okObs
+	failedObs.RunID = "rf1-failed"
+	failedObs.ObsID = "20260911T130000000Z-claude-sonnet-5"
+	failedObs.Status = "error"
+	failedObs.Error = "boom"
+	failedObs.Findings = nil
+	seedObservation(t, store, failedObs)
+
+	rr := doBearerPOST(t, h, "/b/rf1/observe", url.Values{"model": {"claude-sonnet-5"}})
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("POST /b/rf1/observe: got %d, want 202, body=%s", rr.Code, rr.Body.String())
+	}
+
+	got := map[string]bool{}
+	got[wkExpectCall(t, obs.calls).RunID] = true
+	got[wkExpectCall(t, obs.calls).RunID] = true
+	if !got["rf1-failed"] || !got["rf1-unassessed"] {
+		t.Errorf("enqueued runs = %v, want rf1-failed (retry a failed observation) and rf1-unassessed (never assessed)", got)
+	}
+	if got["rf1-ok"] {
+		t.Errorf("enqueued runs = %v, want rf1-ok NOT re-queued (its current observation is ok)", got)
+	}
+	wkExpectNoCall(t, obs.calls)
 }
 
 // --- TestActions_DuplicateOrAllWhileInFlight409 -------------------------

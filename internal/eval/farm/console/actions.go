@@ -118,11 +118,14 @@ func trimObservePath(p, prefix string) string {
 
 // handleRunObserve implements POST /r/<runId>/observe (§8.5 FM-53): starts
 // a new observation version for runId. Checks run cheapest-first: Origin,
-// then the model allowlist, then observer availability, and only then
-// resolves runId's batch (the first store call) — an invalid runId is
-// rejected by findRunBatch's own FM-47 grammar check before any store call.
-// A run without done.json is never enqueued: it answers 409 "run not
-// finished" (item 2) — there is nothing yet to observe.
+// then an explicitly given model against the allowlist, then observer
+// availability, and only then resolves runId's batch (the first store
+// call) — an invalid runId is rejected by findRunBatch's own FM-47 grammar
+// check before any store call. A run without done.json is never enqueued:
+// it answers 409 "run not finished" (item 2) — there is nothing yet to
+// observe. An absent model is resolved only once done.json is confirmed,
+// via resolveActionModel's default chain — it always yields an allowlisted
+// model, so no allowlist check follows it.
 func (s *Server) handleRunObserve(w http.ResponseWriter, r *http.Request) {
 	if !s.checkActionOrigin(w, r) {
 		return
@@ -134,7 +137,7 @@ func (s *Server) handleRunObserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	model := r.FormValue("model")
-	if !observer.ValidModel(model) {
+	if model != "" && !observer.ValidModel(model) {
 		http.Error(w, "model must be one of "+strings.Join(observer.Models, ", "), http.StatusBadRequest)
 		return
 	}
@@ -143,7 +146,7 @@ func (s *Server) handleRunObserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	batchID, _, _, err := findRunBatch(r.Context(), s.cfg.Store, runID)
+	batchID, _, manifest, err := findRunBatch(r.Context(), s.cfg.Store, runID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -159,6 +162,10 @@ func (s *Server) handleRunObserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if model == "" {
+		model = s.resolveActionModel(r.Context(), runID, manifest.Observer)
+	}
+
 	if err := s.cfg.Queue.Enqueue(r.Context(), Job{RunID: runID, Batch: batchID, Model: model, Source: sourceAction}); err != nil {
 		if errors.Is(err, ErrAlreadyQueued) {
 			http.Error(w, "already queued or running", http.StatusConflict)
@@ -171,13 +178,36 @@ func (s *Server) handleRunObserve(w http.ResponseWriter, r *http.Request) {
 	s.respondAction(w, r, "/r/"+runID)
 }
 
+// resolveActionModel implements §8.5 FM-53's model default chain for
+// POST /r/<runId>/observe when the form carries no model: runID's current
+// observation's model, else manifestObserver (the batch manifest's own
+// model, "" or ObserverOff when the batch ran without one), else
+// observer.DefaultModel. Always returns an allowlisted model.
+func (s *Server) resolveActionModel(ctx context.Context, runID, manifestObserver string) string {
+	obsStore := observer.NewStore(s.cfg.Store)
+	if obsIDs, err := obsStore.ListObservations(ctx, runID); err == nil && len(obsIDs) > 0 {
+		if cur, err := obsStore.GetObservation(ctx, runID, obsIDs[len(obsIDs)-1]); err == nil && observer.ValidModel(cur.Model) {
+			return cur.Model
+		}
+	}
+	if observer.ValidModel(manifestObserver) {
+		return manifestObserver
+	}
+	return observer.DefaultModel
+}
+
 // handleBatchObserve implements POST /b/<batch>/observe (§8.5 FM-53):
-// without all=1, queues the batch's runs that have no observation and are
-// not already queued/running (silently skipping busy ones — no 409);
-// with all=1, queues every run, but answers 409 first when any run of the
-// batch is already queued or running. A run without done.json is never
-// enqueued either way, with or without all=1 (item 2) — there is nothing
-// yet to observe.
+// without all=1, queues exactly the runs that need an assessment
+// (NeedsAssessment, view.go — done.json exists, not already queued or
+// running, and either no observation or the current one failed) — the
+// same predicate the batch page's Assess callout counts, so the two never
+// disagree; with all=1, queues every run, but answers 409 first when any
+// run of the batch is already queued or running. A run without done.json
+// is never enqueued either way (item 2) — there is nothing yet to
+// observe. A run whose row can't be built (a corrupt observation, item 5)
+// is skipped rather than risking a duplicate enqueue on doubt
+// (batchWindowRowsWithManifest/fillRowsConcurrently already implement
+// this for the non-all path).
 func (s *Server) handleBatchObserve(w http.ResponseWriter, r *http.Request) {
 	if !s.checkActionOrigin(w, r) {
 		return
@@ -210,27 +240,28 @@ func (s *Server) handleBatchObserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	obsStore := observer.NewStore(s.cfg.Store)
-	for _, run := range manifest.Runs {
-		doneExists, _, err := s.cfg.Store.Head(r.Context(), doneKey(run.RunID))
-		if err != nil || !doneExists {
+	if all {
+		for _, run := range manifest.Runs {
+			doneExists, _, err := s.cfg.Store.Head(r.Context(), doneKey(run.RunID))
+			if err != nil || !doneExists {
+				continue
+			}
+			_ = s.cfg.Queue.Enqueue(r.Context(), Job{RunID: run.RunID, Batch: batch, Model: model, Source: sourceAction})
+		}
+		s.respondAction(w, r, "/b/"+batch)
+		return
+	}
+
+	rows, err := batchWindowRowsWithManifest(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, batch, manifest, s.queueState, s.runCache, s.summaryCache, s.logf)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	for _, row := range rows {
+		if !NeedsAssessment(row, runQueued(s.queueState, row.RunID)) {
 			continue
 		}
-		if !all {
-			if s.cfg.Queue.State(run.RunID) != "" {
-				continue
-			}
-			obsIDs, obsErr := obsStore.ListObservations(r.Context(), run.RunID)
-			if obsErr != nil {
-				// A list error skips the run rather than risking a
-				// duplicate enqueue on doubt.
-				continue
-			}
-			if len(obsIDs) > 0 {
-				continue
-			}
-		}
-		_ = s.cfg.Queue.Enqueue(r.Context(), Job{RunID: run.RunID, Batch: batch, Model: model, Source: sourceAction})
+		_ = s.cfg.Queue.Enqueue(r.Context(), Job{RunID: row.RunID, Batch: batch, Model: model, Source: sourceAction})
 	}
 
 	s.respondAction(w, r, "/b/"+batch)
