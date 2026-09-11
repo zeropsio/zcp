@@ -86,8 +86,9 @@ func TestLabels_EveryEnumValueHasALabel(t *testing.T) {
 
 	t.Run("assessment outcome", func(t *testing.T) {
 		// §8.8 (2026-09 update): outcome gains "none" — no current ok
-		// observation to summarize.
-		for _, v := range []string{observer.OutcomeOK, observer.OutcomeProblem, observer.OutcomeInconclusive, outcomeNone} {
+		// observation to summarize — and (FIX3 item 6) "failed" — one
+		// specific observation's own assessment attempt errored.
+		for _, v := range []string{observer.OutcomeOK, observer.OutcomeProblem, observer.OutcomeInconclusive, outcomeNone, outcomeFailed} {
 			if got := assessmentOutcomeLabel(v); got == "" {
 				t.Errorf("assessmentOutcomeLabel(%q) is empty", v)
 			}

@@ -15,6 +15,7 @@
 <span>{{.DisputedCount}} disputed</span>
 </div>
 {{if .SummaryLine}}<p class="summary-line">{{.SummaryLine}}</p>{{end}}
+{{if .Unassessed}}<p class="summary-line"><a href="#assess">{{.Unassessed}} run{{if ne .Unassessed 1}}s{{end}} {{if eq .Unassessed 1}}needs{{else}}need{{end}} an assessment →</a> — {{.UnassessedNeverN}} never assessed, {{.UnassessedFailedN}} failed last time</p>{{end}}
 </div>
 
 <section class="section">
@@ -94,15 +95,14 @@
 </section>
 
 {{if not .Meta.Observer.Hidden}}
-{{if .Unassessed}}<form class="callout" method="post" action="/b/{{.BatchID}}/observe">
+{{if .Unassessed}}<form class="callout" method="post" action="/b/{{.BatchID}}/observe" id="assess">
 <span>{{.Unassessed}} finished run{{if ne .Unassessed 1}}s{{end}} {{if eq .Unassessed 1}}needs{{else}}need{{end}} an assessment.</span>
-<span class="callout-actions"><select name="model" aria-label="model">{{range .ModelOptions}}<option value="{{.}}">{{.}}</option>{{end}}</select><button type="submit" class="primary">Assess</button></span>
+<span class="callout-actions">{{range .ModelOptions}}<button type="submit" name="model" value="{{.Value}}">{{.Label}}</button>{{end}}</span>
 </form>{{end}}
 {{if .AnyAssessed}}<details class="more"><summary>Re-assess every run of this batch</summary>
 <form class="inline-form" method="post" action="/b/{{.BatchID}}/observe">
 <input type="hidden" name="all" value="1">
-<select name="model" aria-label="model">{{range .ModelOptions}}<option value="{{.}}">{{.}}</option>{{end}}</select>
-<button type="submit">Re-assess all {{.ObservedM}} runs</button>
+{{range .ModelOptions}}<button type="submit" name="model" value="{{.Value}}">Re-assess all {{$.ObservedM}} runs with {{.Label}}</button>{{end}}
 </form>
 </details>{{end}}
 {{end}}

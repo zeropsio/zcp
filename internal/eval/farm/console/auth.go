@@ -144,9 +144,32 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			http.Redirect(w, r, loginPath+"?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusSeeOther)
+			http.Redirect(w, r, loginPath+"?next="+url.QueryEscape(actionNextPath(r)), http.StatusSeeOther)
 		}
 	}
+}
+
+// actionStateChangingSuffix is every POST action route's own suffix,
+// appended to an otherwise GET-able page path (§8.3 FM-51's action
+// routes: POST /r/<id>/observe, POST /b/<batch>/observe) — stripping it
+// recovers the GET page underneath.
+const actionStateChangingSuffix = "/observe"
+
+// actionNextPath builds requireAuth's own ?next= value (item 7, FIX3): a
+// GET request's own path and query replay safely as-is; a POST has no GET
+// twin at its own exact path (the post-login 303 becomes a browser GET,
+// and a GET to a POST-only action route is a 404 — the live bug an
+// expired cookie turns a Re-assess click into) — an action route's own
+// path names the page underneath instead (stripping "/observe"), and any
+// other POST (only /logout) has no page underneath at all, so next is "/".
+func actionNextPath(r *http.Request) string {
+	if r.Method != http.MethodPost {
+		return r.URL.RequestURI()
+	}
+	if page, ok := strings.CutSuffix(r.URL.Path, actionStateChangingSuffix); ok {
+		return page
+	}
+	return "/"
 }
 
 // validNextPath reports whether next is safe to redirect to after login

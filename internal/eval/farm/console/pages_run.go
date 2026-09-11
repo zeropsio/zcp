@@ -62,7 +62,13 @@ type runPageData struct {
 	// place: the §8.8 reason DisplayedObs has no usable assessment, the
 	// unparsed answer's capped preview, and "How the run ended" (last
 	// agent message, tool errors with step links).
-	WhyNoCard        string
+	WhyNoCard string
+	// WhyNoCardFailed is FIX3 item 6's own flag: true exactly when
+	// WhyNoCard describes an observation whose assessment ATTEMPT itself
+	// failed (status error/unparsed) — current or a viewed-older one —
+	// so the page can show the "failed" outcome chip and the "nothing is
+	// retried automatically" note instead of a bare, unlabeled sentence.
+	WhyNoCardFailed  bool
 	RawAnswer        string
 	LastAgentMessage string
 	ToolErrors       []toolErrorView
@@ -76,7 +82,6 @@ type runPageData struct {
 	PreStoreFailureText string
 	ShowAssessForm      bool
 	ModelOptions        []modelOptionView
-	ReassessButtonLabel string
 
 	OlderObservations []olderObsView
 
@@ -313,16 +318,15 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := runPageData{
-		Meta:                s.pageMeta(r, row.Scenario, "", busy),
-		Row:                 row,
-		VerdictDisplay:      runVerdictDisplay(row),
-		VerdictReasonText:   runVerdictReasonText(row),
-		DisplayedObs:        displayedObs,
-		ViewingOlder:        viewingOlder,
-		FailedNewestText:    failedNewestText,
-		OlderObservations:   buildOlderObsViews(runID, older),
-		ModelOptions:        buildModelOptions(preselectModel),
-		ReassessButtonLabel: "Re-assess with " + modelLabel(preselectModel),
+		Meta:              s.pageMeta(r, row.Scenario, "", busy),
+		Row:               row,
+		VerdictDisplay:    runVerdictDisplay(row),
+		VerdictReasonText: runVerdictReasonText(row),
+		DisplayedObs:      displayedObs,
+		ViewingOlder:      viewingOlder,
+		FailedNewestText:  failedNewestText,
+		OlderObservations: buildOlderObsViews(runID, older),
+		ModelOptions:      buildModelOptions(preselectModel),
 	}
 	data.ShowAssessForm = row.DoneExists && !data.Meta.Observer.Hidden && !busy
 	data.LiveStatusText, data.PreStoreFailureText = s.runLiveStatus(runID)
@@ -401,8 +405,10 @@ func populateAssessmentCard(data *runPageData, row RunRow, displayedObs *observe
 		return displayedObs.Checks.Judged
 	case viewingOlder && displayedObs != nil:
 		// A specific non-ok observation was asked for by id: say why that
-		// one has no card, not why the run's current state does.
+		// one has no card, not why the run's current state does. It is
+		// always a failed attempt (the ok case is HasCard, above).
 		data.WhyNoCard = "assessment failed — " + assessmentFailureReason(displayedObs)
+		data.WhyNoCardFailed = true
 		if displayedObs.Status == observationStatusUnparsed {
 			data.RawAnswer = capRaw(displayedObs.Raw)
 		}
@@ -410,6 +416,7 @@ func populateAssessmentCard(data *runPageData, row RunRow, displayedObs *observe
 		// row.Observation (nil or failed) — its own §8.8 wording already
 		// distinguishes every case, including "assessment failed — <reason>".
 		data.WhyNoCard = row.ObserverStateText
+		data.WhyNoCardFailed = row.Observation != nil && observationFailed(row.Observation)
 		if displayedObs != nil && displayedObs.Status == observationStatusUnparsed {
 			data.RawAnswer = capRaw(displayedObs.Raw)
 		}
@@ -623,11 +630,14 @@ func buildOlderObsViews(runID string, older []observer.Observation) []olderObsVi
 	for i := range older {
 		o := &older[i]
 		text := o.Headline
-		if o.Status != observationStatusOK {
-			text = assessmentFailureReason(o)
-		}
 		outcome := o.EffectiveOutcome()
-		if outcome == "" {
+		switch {
+		case o.Status != observationStatusOK:
+			// FIX3 item 6: this version's own attempt failed — "failed",
+			// never the misleading "none" ("no current ok observation").
+			text = assessmentFailureReason(o)
+			outcome = outcomeFailed
+		case outcome == "":
 			outcome = outcomeNone
 		}
 		out[i] = olderObsView{
@@ -650,11 +660,7 @@ func (s *Server) runLiveStatus(runID string) (live, failure string) {
 		return "", ""
 	}
 	if info, ok := s.cfg.Queue.Job(runID); ok {
-		t := info.StartedAt
-		if t.IsZero() {
-			t = info.EnqueuedAt
-		}
-		return fmt.Sprintf("Assessing with %s — started %s, usually 1–2 min; the result replaces the one below.", info.Model, fmtTime(t)), ""
+		return formatQueuedJobText(info), ""
 	}
 	if f, ok := s.cfg.Queue.LastFailure(runID); ok {
 		return "", fmt.Sprintf("The attempt at %s failed before anything was stored: %s. Re-assess to retry.", fmtTime(f.At), f.Err)

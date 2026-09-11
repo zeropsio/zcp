@@ -186,6 +186,38 @@ type problemsPageData struct {
 	Summary     string
 	NewestBuild string
 	Rows        []problemRowView
+	// FailedAssessmentPrefix/FailedAssessmentRuns are item 9 (FIX3)'s own
+	// warning: BuildProblems only clusters current observations with
+	// status ok, so a run whose assessment errored or failed to parse
+	// silently drops out of every aggregate below it — this names which
+	// runs, rather than leaving the reader to trust a list that quietly
+	// excluded them. Split so the template links each run id itself
+	// (never a pre-built HTML string in Go — every page value here still
+	// goes through {{...}}'s normal auto-escaping, per pages.go's own
+	// invariant); FailedAssessmentRuns is nil (no banner) when none failed.
+	FailedAssessmentPrefix string
+	FailedAssessmentRuns   []RunRow
+}
+
+// buildFailedAssessmentBanner finds every run in scope whose current
+// observation failed (status error/unparsed) — BuildProblems (§8.6) never
+// sees these, since it clusters status-ok observations only — and renders
+// the banner's own prefix text (item 9, FIX3): "" (no runs) means no
+// banner at all.
+func buildFailedAssessmentBanner(runs []ProblemsRun) (prefix string, affected []RunRow) {
+	for _, r := range runs {
+		if observationFailed(r.Row.Observation) {
+			affected = append(affected, r.Row)
+		}
+	}
+	switch len(affected) {
+	case 0:
+		return "", nil
+	case 1:
+		return "1 run's assessment could not be parsed — its findings are missing from this list: ", affected
+	default:
+		return fmt.Sprintf("%d runs' assessments could not be parsed — their findings are missing from this list: ", len(affected)), affected
+	}
 }
 
 func (s *Server) handleProblemsPage(w http.ResponseWriter, r *http.Request) {
@@ -223,11 +255,15 @@ func (s *Server) handleProblemsPage(w http.ResponseWriter, r *http.Request) {
 		rows[i] = newProblemRowView(p, "/problems", values)
 	}
 
+	failedPrefix, failedRuns := buildFailedAssessmentBanner(runs)
+
 	renderPage(w, "problems", problemsPageData{
-		Meta:        s.pageMeta(r, "Problems", navProblems, false),
-		Nav:         buildListNav("/problems", spec, q, values, counts, problemSortLabels, problemLabeler),
-		Summary:     fmt.Sprintf("%d live problem%s · %d high", liveN, pluralS(liveN), highN),
-		NewestBuild: newestBuildLabel(runs),
-		Rows:        rows,
+		Meta:                   s.pageMeta(r, "Problems", navProblems, false),
+		Nav:                    buildListNav("/problems", spec, q, values, counts, problemSortLabels, problemLabeler),
+		Summary:                fmt.Sprintf("%d live problem%s · %d high", liveN, pluralS(liveN), highN),
+		NewestBuild:            newestBuildLabel(runs),
+		Rows:                   rows,
+		FailedAssessmentPrefix: failedPrefix,
+		FailedAssessmentRuns:   failedRuns,
 	})
 }

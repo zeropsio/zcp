@@ -586,9 +586,32 @@ type batchPageData struct {
 	// pages_home.go's own SortByKey/sortHeadersByKey.
 	SortByKey map[string]SortHeaderView
 
-	Unassessed   int
-	AnyAssessed  bool
-	ModelOptions []string
+	Unassessed int
+	// UnassessedNeverN/UnassessedFailedN split Unassessed (FIX3 item 2):
+	// never had an observation at all, vs. one whose current observation
+	// failed (error/unparsed) — they always sum to Unassessed.
+	UnassessedNeverN  int
+	UnassessedFailedN int
+	AnyAssessed       bool
+	// ModelOptions is shared with pages_run.go's own model picker (FIX3
+	// item 1): one button per allowlisted model, properly labeled instead
+	// of a <select> of raw ids — batch forms never preselect one (there is
+	// no single "current model" across many runs), so every option's
+	// Selected is always false here.
+	ModelOptions []modelOptionView
+}
+
+// batchModelOptions is the batch forms' own model list (FIX3 item 1): the
+// same labeled options the run page's picker uses, but never preselecting
+// one — unlike a single run, a batch has no one "current model" shared by
+// every one of its runs, so highlighting any single option would be
+// arbitrary.
+func batchModelOptions() []modelOptionView {
+	out := make([]modelOptionView, 0, len(observer.Models))
+	for _, m := range observer.Models {
+		out = append(out, modelOptionView{Value: m, Label: modelLabel(m)})
+	}
+	return out
 }
 
 // jobStatusText resolves runID's live §8.5 status text for one batch row —
@@ -598,11 +621,7 @@ func (s *Server) jobStatusText(runID string) (jobText, failureText string) {
 		return "", ""
 	}
 	if job, ok := s.cfg.Queue.Job(runID); ok {
-		start := job.StartedAt
-		if start.IsZero() {
-			start = job.EnqueuedAt
-		}
-		jobText = fmt.Sprintf("Assessing with %s — started %s, usually 1–2 min; the result replaces the one below", job.Model, fmtTime(start))
+		jobText = formatQueuedJobText(job)
 	}
 	if f, ok := s.cfg.Queue.LastFailure(runID); ok {
 		failureText = fmt.Sprintf("The attempt at %s failed before anything was stored: %s. Re-assess to retry.", fmtTime(f.At), f.Err)
@@ -662,7 +681,7 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 		Set:          manifest.Set,
 		Note:         manifest.Note,
 		Build:        bc.build(),
-		ModelOptions: observer.Models,
+		ModelOptions: batchModelOptions(),
 	}
 	if hasPrev {
 		diff := CompareBatches(prevRows, rows)
@@ -704,6 +723,11 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 		}
 		if NeedsAssessment(row, runQueued(s.queueState, row.RunID)) {
 			data.Unassessed++
+			if row.Observation == nil {
+				data.UnassessedNeverN++
+			} else {
+				data.UnassessedFailedN++
+			}
 		}
 	}
 	data.VerdictCounts = orderedVerdictCounts(verdictTally)

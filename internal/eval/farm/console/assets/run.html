@@ -17,10 +17,10 @@
 
 <section class="card observer" id="observation">
 <div class="card-label">Assessment</div>
+{{if .ViewingOlder}}<p class="muted small">Showing an earlier assessment. <a href="/r/{{.Row.RunID}}">View the current one</a>.</p>{{end}}
 {{if .HasCard}}
 <span class="{{assessmentOutcomeClass .OutcomeText}}">{{assessmentOutcomeLabel .OutcomeText}}</span>
 <p class="headline">{{.DisplayedObs.Headline}}</p>
-{{if .ViewingOlder}}<p class="muted small">Showing an earlier assessment. <a href="/r/{{.Row.RunID}}">View the current one</a>.</p>{{end}}
 {{if .FailedNewestText}}<p class="callout callout-warn">{{.FailedNewestText}}</p>{{end}}
 {{if .Disputed}}<p class="callout callout-warn"><span class="disputed-marker">disputed</span> The observer thinks a check is wrong — this verdict may not be fair: {{.DisputedWhy}}{{if .DisputedHref}} <a href="{{.DisputedHref}}">details</a>{{end}}</p>{{end}}
 
@@ -48,7 +48,9 @@
 {{if .DisplayedObs.Warnings}}<ul class="plain small">{{range .DisplayedObs.Warnings}}<li class="muted small">⚠ {{.}}</li>{{end}}</ul>{{end}}
 
 {{else}}
+{{if .WhyNoCardFailed}}<span class="{{assessmentOutcomeClass "failed"}}">failed</span>{{end}}
 <p class="headline muted">{{.WhyNoCard}}</p>
+{{if .WhyNoCardFailed}}<p class="muted small">Nothing is retried automatically; re-assess below.</p>{{end}}
 {{if .RawAnswer}}<details class="more"><summary>Raw answer</summary><pre>{{.RawAnswer}}</pre></details>{{end}}
 {{if or .LastAgentMessage .ToolErrors}}<div class="story">
 <div class="k">How the run ended</div>
@@ -60,8 +62,7 @@
 {{if .LiveStatusText}}<p class="callout callout-info">{{.LiveStatusText}}</p>{{end}}
 {{if .PreStoreFailureText}}<p class="callout callout-warn">{{.PreStoreFailureText}}</p>{{end}}
 {{if .ShowAssessForm}}<form class="inline-form" method="post" action="/r/{{.Row.RunID}}/observe">
-<select name="model" aria-label="model">{{range .ModelOptions}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
-<button type="submit">{{.ReassessButtonLabel}}</button>
+{{range .ModelOptions}}<button type="submit" name="model" value="{{.Value}}"{{if .Selected}} class="primary"{{end}}>Re-assess with {{.Label}}</button>{{end}}
 </form>{{end}}
 
 {{if .OlderObservations}}<details class="more"><summary>Earlier assessments ({{len .OlderObservations}})</summary>

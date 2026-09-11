@@ -122,6 +122,36 @@ func TestPages_ProblemsRowIsCompact(t *testing.T) {
 	}
 }
 
+// TestPages_ProblemsBannersFailedAssessmentRuns pins item 9 (FIX3): a run
+// whose current observation failed to parse/errored is silently absent
+// from every /problems aggregate (BuildProblems only sees status "ok"
+// observations) — a banner names it, so a reader knows the list is
+// incomplete rather than trusting an empty or short one.
+func TestPages_ProblemsBannersFailedAssessmentRuns(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "fa1", "claude-sonnet-5", []runFixture{
+		{runID: "fa1-a", scenario: "a", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"fa1-a": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat1, RunID: "fa1-a", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: now, Status: "unparsed", Raw: "not json",
+	})
+
+	body := doGET(t, h, "/problems").Body.String()
+	if !strings.Contains(body, "1 run") || !strings.Contains(body, "could not be parsed") {
+		t.Errorf("body missing the failed-assessment banner:\n%s", body)
+	}
+	if !strings.Contains(body, "missing from this list") {
+		t.Errorf("body missing the \"missing from this list\" warning:\n%s", body)
+	}
+	if !strings.Contains(body, `href="/r/fa1-a"`) {
+		t.Errorf("body missing the link to the affected run:\n%s", body)
+	}
+}
+
 // seedTwoDistinctProblems seeds one batch with two runs, each producing its
 // own single-member problem (distinct anchors so they cluster separately):
 // "High problem" (high, started 2h before now) and "Medium problem"

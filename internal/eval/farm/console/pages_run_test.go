@@ -8,6 +8,7 @@ package console
 import (
 	"context"
 	"errors"
+	"fmt"
 	"html"
 	"net/http"
 	"regexp"
@@ -632,6 +633,9 @@ func TestPages_RunFindingsHaveFBadgeIdsAndCitedByCallout(t *testing.T) {
 // TestPages_RunModelPickerLabelsAndPreselection pins the review finding:
 // the model picker's labels and its preselection to the current
 // observation's model, and the button's "Re-assess with <label>" text.
+// Rewritten for FIX3 item 1: one submit button per model (the label IS
+// the action) instead of a select whose value can silently diverge from
+// the button's own fixed label.
 func TestPages_RunModelPickerLabelsAndPreselection(t *testing.T) {
 	srv, store, _ := testServer(t)
 	h := srv.Handler()
@@ -646,16 +650,16 @@ func TestPages_RunModelPickerLabelsAndPreselection(t *testing.T) {
 	})
 
 	body := doGET(t, h, "/r/mp1-a").Body.String()
-	for _, want := range []string{"Sonnet 5 (default)", "Opus 5 (stronger)", "Fable 5.1 (strongest)"} {
+	for _, want := range []string{
+		`<button type="submit" name="model" value="claude-sonnet-5">Re-assess with Sonnet 5 (default)</button>`,
+		`<button type="submit" name="model" value="claude-fable-5-1">Re-assess with Fable 5.1 (strongest)</button>`,
+	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("body missing model label %q:\n%s", want, body)
+			t.Errorf("body missing model button %q:\n%s", want, body)
 		}
 	}
-	if !strings.Contains(body, `<option value="claude-opus-5" selected>Opus 5 (stronger)</option>`) {
-		t.Errorf("body does not preselect the current observation's model:\n%s", body)
-	}
-	if !strings.Contains(body, "Re-assess with Opus 5 (stronger)") {
-		t.Errorf("body missing the button's \"Re-assess with <label>\" text:\n%s", body)
+	if !strings.Contains(body, `<button type="submit" name="model" value="claude-opus-5" class="primary">Re-assess with Opus 5 (stronger)</button>`) {
+		t.Errorf("body does not mark the current observation's model as the primary button:\n%s", body)
 	}
 }
 
@@ -687,6 +691,49 @@ func TestPages_RunLiveStatusWhileAssessing(t *testing.T) {
 	}
 	if strings.Contains(body, `action="/r/ls1-a/observe"`) {
 		t.Errorf("body still shows the Assess form while a job is in flight:\n%s", body)
+	}
+}
+
+// TestPages_RunLiveStatusDistinguishesQueuedFromRunning pins item 3 (FIX3):
+// a job still waiting for a free slot must not claim to be running —
+// JobInfo.State (JobQueued vs JobRunning), previously ignored, now picks
+// the text. Fills every concurrent slot with filler jobs first so the
+// run under test is provably still queued, not merely fast enough that
+// wkEventually never observed the queued state.
+func TestPages_RunLiveStatusDistinguishesQueuedFromRunning(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	q := NewQueue(func(ctx context.Context, job Job) error {
+		<-release
+		return nil
+	})
+	store := newFakeStore()
+	srv := NewServer(Config{Store: store, Token: testToken, Now: fixedNow(t), Queue: q})
+	seedBatch(t, store, "lq1", "off", []runFixture{
+		{runID: "lq1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", taskResult: "passed", done: true},
+	}, true, map[string]string{"lq1-a": "passed"})
+
+	for i := range wkMaxConcurrent {
+		if err := q.Enqueue(context.Background(), Job{RunID: fmt.Sprintf("lq1-filler%d", i), Batch: "lq1"}); err != nil {
+			t.Fatalf("Enqueue filler %d: %v", i, err)
+		}
+	}
+	if !wkEventually(t, func() bool { return q.State(fmt.Sprintf("lq1-filler%d", wkMaxConcurrent-1)) == JobRunning }) {
+		t.Fatal("filler jobs never all started running")
+	}
+	if err := q.Enqueue(context.Background(), Job{RunID: "lq1-a", Batch: "lq1", Model: "claude-sonnet-5"}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if !wkEventually(t, func() bool { return q.State("lq1-a") == JobQueued }) {
+		t.Fatal("run's job never showed as queued (still waiting for a slot)")
+	}
+
+	body := doGET(t, srv.Handler(), "/r/lq1-a").Body.String()
+	if !strings.Contains(body, "Queued") || !strings.Contains(body, "waiting for a slot") {
+		t.Errorf("body does not say the job is queued, waiting for a slot:\n%s", body)
+	}
+	if strings.Contains(body, "Assessing") {
+		t.Errorf("body claims a merely-queued job is already assessing:\n%s", body)
 	}
 }
 
@@ -755,6 +802,48 @@ func TestPages_RunObsParamRendersOlderVersion(t *testing.T) {
 	}
 	if !strings.Contains(body, `href="/r/ob1-a"`) {
 		t.Errorf("body missing a way back to the current observation:\n%s", body)
+	}
+}
+
+// TestPages_RunObsParamOnFailedOlderShowsBannerAndFailedOutcome pins items
+// 5 and 6 (FIX3): viewing a failed older observation via ?obs= still shows
+// the "showing an earlier assessment" banner (previously that line sat
+// only in the has-card branch, so a failed one showed nothing), and its
+// own entry in "Earlier assessments" reads outcome "failed" — not the
+// misleading "none" — with the "nothing is retried automatically"
+// warning shown for the failed view itself.
+func TestPages_RunObsParamOnFailedOlderShowsBannerAndFailedOutcome(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+
+	seedBatch(t, store, "of1", "claude-sonnet-5", []runFixture{
+		{runID: "of1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", taskResult: "passed", done: true},
+	}, true, map[string]string{"of1-a": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat1, RunID: "of1-a", ObsID: "20260910T090000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: time.Date(2026, 9, 10, 9, 0, 0, 0, time.UTC), Status: "error", Error: "claude exited 1: boom",
+	})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat1, RunID: "of1-a", ObsID: "20260911T120000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: fixedNow(t)(), Status: "ok", Headline: "current headline",
+		Goal: observer.Goal{Reached: "yes"}, Checks: observer.Checks{Verdict: "passed", Agree: true}, SelfReview: observer.SelfReview{Accurate: "yes"},
+	})
+
+	body := doGET(t, h, "/r/of1-a?obs=20260910T090000000Z-claude-sonnet-5").Body.String()
+	if !strings.Contains(body, "assessment failed — claude exited 1: boom") {
+		t.Errorf("body missing the canonical failure wording for the viewed obs:\n%s", body)
+	}
+	if !strings.Contains(body, "Showing an earlier assessment") {
+		t.Errorf("body missing the \"showing an earlier assessment\" note for a failed older view:\n%s", body)
+	}
+	if !strings.Contains(body, "Nothing is retried automatically") {
+		t.Errorf("body missing the \"nothing is retried automatically\" note:\n%s", body)
+	}
+	if !strings.Contains(body, `class="outcome outcome-failed"`) {
+		t.Errorf("body's older-assessments entry does not use the failed outcome chip:\n%s", body)
+	}
+	if strings.Contains(body, `class="outcome outcome-none"`) {
+		t.Errorf("body still shows the misleading \"none\" outcome for a failed assessment:\n%s", body)
 	}
 }
 

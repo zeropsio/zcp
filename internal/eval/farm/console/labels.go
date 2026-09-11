@@ -147,9 +147,18 @@ var causeOrder = findingOwners
 // slice's RunRow.Outcome field does.
 const outcomeNone = "none"
 
+// outcomeFailed is one specific observation's own outcome (FIX3 item 6):
+// its assessment ATTEMPT itself failed (status error/unparsed) — distinct
+// from outcomeNone, which means "no current ok observation" without
+// implying any particular one errored. Used only in the "Earlier
+// assessments" list and the no-card WhyNoCard block (pages_run.go), never
+// on observer.Observation itself.
+const outcomeFailed = "failed"
+
 // assessmentOutcomeVocab is §8.8's assessment-outcome vocabulary —
 // observer.Observation.Outcome (ok/problem/inconclusive), derived, never
-// model-authored, plus the RunRow-level "none".
+// model-authored, plus the RunRow-level "none" and the per-observation
+// "failed" (FIX3 item 6).
 var assessmentOutcomeVocab = []vocabEntry{
 	{observer.OutcomeOK, "OK", "the checks and the observer agree the run is fine"},
 	// "Needs attention" (item 11, FIX2) — the word "Problem" stays reserved
@@ -158,6 +167,7 @@ var assessmentOutcomeVocab = []vocabEntry{
 	{observer.OutcomeProblem, "Needs attention", "the observer found something worth a maintainer's attention"},
 	{observer.OutcomeInconclusive, "Inconclusive", "the observer could not tell either way"},
 	{outcomeNone, "none", "no current ok observation to summarize"},
+	{outcomeFailed, "failed", "the observer's own attempt failed — nothing is retried automatically; re-assess to try again"},
 }
 
 func assessmentOutcomeLabel(v string) string { return vocabLabel(assessmentOutcomeVocab, v) }
@@ -167,7 +177,7 @@ func assessmentOutcomeLabel(v string) string { return vocabLabel(assessmentOutco
 // the neutral "other" look for a value this table does not know about.
 func assessmentOutcomeClass(v string) string {
 	switch v {
-	case observer.OutcomeOK, observer.OutcomeProblem, observer.OutcomeInconclusive, outcomeNone:
+	case observer.OutcomeOK, observer.OutcomeProblem, observer.OutcomeInconclusive, outcomeNone, outcomeFailed:
 		return "outcome outcome-" + v
 	default:
 		return "outcome outcome-other"
@@ -257,12 +267,14 @@ var glossaryTerms = []glossaryTerm{
 	{"Disputed", "The current observation has checks.agree: false: a check judged wrong, or a check the observer says is missing; counted under the verdict it disputes, passed included."},
 	{"Self-review honest", "Does the agent's after-run summary match the record."},
 	{"Finding", "One problem in one run, with quotes, where to look and a fix."},
+	{"Caused verdict", "The finding that explains a failed check or a missed goal."},
 	{"Problem", "The same finding across runs — see the problem status table below."},
 	{"Severity", "High, medium or low — see the table below."},
 	{"Cause", "The finding's owner — see the table below."},
 	{"Cause class", "ZCP (guidance, tool) · Test (scenario, check) · Agent · Platform. Lists order causes ZCP first."},
 	{"Surface", "The part of ZCP (or the farm) a finding sits in."},
 	{"Anchor", "The exact ZCP text or error code to search for."},
+	{"Span", "The steps a finding stretched over."},
 	{"Quote found", "The quoted words occur in the cited step; it does not prove the finding right."},
 	{"Agent cost", "The run's model spend, without the observer; — when not recorded."},
 }

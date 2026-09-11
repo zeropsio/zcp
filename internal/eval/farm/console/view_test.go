@@ -110,6 +110,35 @@ func TestObserverStateText(t *testing.T) {
 	}
 }
 
+// TestResolveObserverState_NoRecordDistinctFromNotObserved pins item 8
+// (FIX3): a settled run with no bundle (its batch already resolved it
+// blocked/not-run/etc. without done.json ever landing) reads "no record",
+// distinct from "not observed" — which (before this) also covered a run
+// still genuinely running and waiting its turn. The API and the
+// farm-triage skill read RunRow.ObserverState directly, so this is a
+// state distinction, not merely a text one (§8.3's own text fix is
+// TestObserverStateText's "settled, no bundle" cases, above).
+func TestResolveObserverState_NoRecordDistinctFromNotObserved(t *testing.T) {
+	tests := []struct {
+		name       string
+		doneExists bool
+		settled    bool
+		want       string
+	}{
+		{"still running: not observed", false, false, observerStateNotObserved},
+		{"settled, no bundle: no record", false, true, observerStateNoRecord},
+		{"done: settled is irrelevant", true, true, observerStateNotObserved},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveObserverState(false, "claude-sonnet-5", tc.doneExists, false, false, tc.settled)
+			if got != tc.want {
+				t.Errorf("resolveObserverState = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // --- NeedsAssessment (§8.5) ----------------------------------------------
 
 func TestNeedsAssessment(t *testing.T) {

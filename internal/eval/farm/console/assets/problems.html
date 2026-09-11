@@ -3,6 +3,7 @@
 <h1>Problems</h1>
 <p class="muted">{{.Summary}}</p>
 </div>
+{{if .FailedAssessmentRuns}}<div class="callout callout-warn">{{.FailedAssessmentPrefix}}{{range $i, $r := .FailedAssessmentRuns}}{{if $i}}, {{end}}<a href="/r/{{$r.RunID}}">{{$r.RunID}}</a>{{end}}</div>{{end}}
 {{template "filterbar" .Nav.Filters}}
 {{template "sortchips" .Nav.Sorts}}
 <div class="table-wrap"><table class="stack">

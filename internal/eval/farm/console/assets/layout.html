@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-{{if .Refresh}}<meta http-equiv="refresh" content="20">
-{{end}}<title>{{.Title}} · Farm console</title>
+{{if .Refresh}}{{if .RefreshURL}}<meta http-equiv="refresh" content="20;url={{.RefreshURL}}">
+{{else}}<meta http-equiv="refresh" content="20">
+{{end}}{{end}}<title>{{.Title}} · Farm console</title>
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -39,6 +40,42 @@ var (
 	ErrBatchNotFound = errors.New("console: batch not found")
 	ErrRunNotFound   = errors.New("console: run not found")
 )
+
+// cleanRefreshURL implements FIX3 item 4: the meta-refresh tag's own
+// reload target with the one-shot ?notice=/?n= action-result params
+// (§8.5) stripped — "" when neither is present, so a refreshing page with
+// no notice keeps the exact old tag (no url= at all, the browser's own
+// "reload current url" default). Without this, a notice set by an action
+// (e.g. "Queued 1 run for assessment.") replays on every 20s reload for as
+// long as the job it named keeps the page refreshing, long after that
+// one-shot event happened.
+func cleanRefreshURL(r *http.Request) string {
+	v := r.URL.Query()
+	if v.Get("notice") == "" && v.Get("n") == "" {
+		return ""
+	}
+	v.Del("notice")
+	v.Del("n")
+	if enc := v.Encode(); enc != "" {
+		return r.URL.Path + "?" + enc
+	}
+	return r.URL.Path
+}
+
+// formatQueuedJobText renders one queue job's own live-status line (§8.5),
+// distinguishing JobQueued from JobRunning (item 3, FIX3) — before this
+// fix every job in the queue was described as already "Assessing", even
+// one still waiting for a free slot (JobInfo.State went unread).
+func formatQueuedJobText(info JobInfo) string {
+	if info.State == JobQueued {
+		return fmt.Sprintf("Queued with %s since %s — waiting for a slot; the result replaces the one below.", info.Model, fmtTime(info.EnqueuedAt))
+	}
+	t := info.StartedAt
+	if t.IsZero() {
+		t = info.EnqueuedAt
+	}
+	return fmt.Sprintf("Assessing with %s — started %s, usually 1–2 min; the result replaces the one below.", info.Model, fmtTime(t))
+}
 
 func manifestKey(batch string) string { return "batches/" + batch + "/manifest.json" }
 func summaryKey(batch string) string  { return "batches/" + batch + "/summary.json" }
@@ -501,6 +538,14 @@ const (
 	observerStateNotObserved = "not observed"
 	observerStateOff         = "observer off"
 	observerStateDisabled    = "observer disabled"
+	// observerStateNoRecord is FIX3 item 8's own addition: a run whose
+	// batch already settled it (blocked, not-run, or any other terminal
+	// result) without a bundle ever landing — distinct from
+	// observerStateNotObserved, which (before this) also covered a run
+	// still genuinely running and waiting for its turn. The API (api.go's
+	// apiObserverState) and the farm-triage skill read this straight off
+	// RunRow.ObserverState, same as every other value here.
+	observerStateNoRecord = "no record"
 
 	// ObserverOff is the shared "off" sentinel: farm.BatchManifest.Observer's
 	// per-batch value (§1.4, §7.7) and ZCP_FARM_OBSERVER's console-wide kill
@@ -513,15 +558,21 @@ const (
 // (§8.5: JobQueued or JobRunning). Precedence: a run in flight reads
 // "observing" (operator actions work regardless of the manifest field and
 // the kill switch, §8.5 FM-53); a run with no done.json reads "not
-// observed"; a run that has an observation reads "observed" whatever its
-// manifest or the kill switch say — the label describes the run's data
-// first; only then do the kill switch ("observer disabled") and the
-// manifest ("observer off") explain why a finished run has none.
-func resolveObserverState(consoleDisabled bool, manifestObserver string, doneExists, hasObservation, queued bool) string {
+// observed" when it is still genuinely running, or "no record" (item 8,
+// FIX3) when its batch already settled it without a bundle ever landing —
+// there is nothing to wait for, ever; a run that has an observation reads
+// "observed" whatever its manifest or the kill switch say — the label
+// describes the run's data first; only then do the kill switch ("observer
+// disabled") and the manifest ("observer off") explain why a finished run
+// has none.
+func resolveObserverState(consoleDisabled bool, manifestObserver string, doneExists, hasObservation, queued bool, settled bool) string {
 	if queued {
 		return observerStateObserving
 	}
 	if !doneExists {
+		if settled {
+			return observerStateNoRecord
+		}
 		return observerStateNotObserved
 	}
 	if hasObservation {
@@ -576,7 +627,7 @@ func buildRunRow(ctx context.Context, store observer.ObjectStore, consoleObserve
 		row.Verdict = settledOrRunning(summary, summaryFound, run.RunID)
 		row.Stalled = row.Verdict == verdictRunning && isStalled(now, bc.CreatedAt, bc.RunBudgetSec)
 		row.VerdictReason = verdictReason(row.Verdict, doneExists, nil, summaryRun, summaryRunFound)
-		row.ObserverState = resolveObserverState(consoleObserverDisabled, bc.Observer, doneExists, false, queued)
+		row.ObserverState = resolveObserverState(consoleObserverDisabled, bc.Observer, doneExists, false, queued, row.Verdict != verdictRunning)
 		row.ObserverStateText = observerStateText(now, bc.CreatedAt, consoleObserverDisabled, bc.Observer, doneExists, nil, queued, row.Verdict != verdictRunning, row.VerdictReason)
 		row.CauseCounts = newCauseClassCounts()
 		return row, nil
@@ -654,7 +705,7 @@ func buildRunRow(ctx context.Context, store observer.ObjectStore, consoleObserve
 		row.Observation = &cur
 	}
 
-	row.ObserverState = resolveObserverState(consoleObserverDisabled, bc.Observer, doneExists, row.Observation != nil, queued)
+	row.ObserverState = resolveObserverState(consoleObserverDisabled, bc.Observer, doneExists, row.Observation != nil, queued, false)
 	row.ObserverStateText = observerStateText(now, bc.CreatedAt, consoleObserverDisabled, bc.Observer, doneExists, row.Observation, queued, false, "")
 	row.Outcome = computeOutcome(row.Observation)
 	row.Disputed = computeDisputed(row.Observation)
