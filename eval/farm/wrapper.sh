@@ -411,7 +411,15 @@ child_main() {
 	export HOME
 
 	results_dir="$RUNDIR/results"
-	work_dir="$RUNDIR/work"
+	# work_dir is the agent's own cwd, not evaluator scratch (D21,
+	# docs/spec-eval-farm.md §2.3): it defaults to /var/www, matching a real
+	# container's mount root (internal/ops/mount.go mountBase) and the
+	# evaluator's own default outside a binding (internal/eval/runner.go), so
+	# the agent's `claude` and the MCP `zcp serve` child it spawns share the
+	# same root zerops_mount uses and the deploy preflight expects.
+	# ZCP_FARM_WORK_DIR overrides it for the offline test rig only (mirrors
+	# ZCP_FARM_RUNDIR below) — never set in a real farm run.
+	work_dir="${ZCP_FARM_WORK_DIR:-/var/www}"
 	mkdir -p "$results_dir" "$RUNDIR/capture" "$work_dir"
 
 	cd "$RUNDIR" || exit 1
@@ -429,10 +437,10 @@ child_main() {
 	# Everything from here on becomes the evaluator's own output (dimension
 	# lines included, spec-testing-architecture.md §10.1); exec replaces this
 	# process so $RUNDIR/child.pid keeps naming whichever process is live.
-	# --work-dir pins the evaluator's private bin dir under $RUNDIR/work
-	# instead of its filepath.Dir(workDir)/candidate-bin default
-	# (/var/candidate-bin when workDir defaults to /var/www), which uid
-	# zerops cannot create (cmd/zcp/eval_behavioral.go ~line 202).
+	# --work-dir is /var/www (see work_dir above); the evaluator's own
+	# private bin/Claude-home dirs are siblings of --results-dir instead of
+	# --work-dir's parent (cmd/zcp/eval_behavioral.go buildExecutionBinding),
+	# so /var/www's parent is never touched.
 	exec >"$RUNDIR/child.log" 2>&1
 	exec "$evaluator_bin" eval behavioral run \
 		--candidate "$candidate_bin" \

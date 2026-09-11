@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -258,7 +259,10 @@ func newWrapperHarness(t *testing.T) *wrapperHarness {
 // env builds the wrapper's process environment: the real run-descriptor
 // contract (docs/spec-eval-farm.md §2.2 FM-12, plus ZCP_FARM_SCENARIOS_DIGEST)
 // plus overrides ("STUB_MODE", extra credentials, etc.) and the harness's
-// own ZCP_FARM_RUNDIR test seam.
+// own ZCP_FARM_RUNDIR/ZCP_FARM_WORK_DIR test seams. ZCP_FARM_WORK_DIR keeps
+// this offline rig from ever touching the real /var/www a farm run's
+// wrapper defaults to (D21) — every test that wants that production
+// default deletes the override instead (empty-string convention below).
 func (h *wrapperHarness) env(overrides map[string]string) []string {
 	base := map[string]string{
 		"PATH":                      os.Getenv("PATH"),
@@ -276,6 +280,7 @@ func (h *wrapperHarness) env(overrides map[string]string) []string {
 		"CLAUDE_CODE_OAUTH_TOKEN":   "oauth-tok-default-value",
 		"projectId":                 h.projectID,
 		"ZCP_FARM_RUNDIR":           h.rundir,
+		"ZCP_FARM_WORK_DIR":         filepath.Join(h.rundir, "work"),
 	}
 	for k, v := range overrides {
 		if v == "" {
@@ -779,12 +784,19 @@ func TestWrapper_NoOAuthToken_Refused(t *testing.T) {
 	}
 }
 
-// TestWrapper_PassesWorkDirUnderRunDir pins D3: the wrapper execs the
-// evaluator with --work-dir $RUNDIR/work, and that directory exists — the
-// evaluator's default (workDir=/var/www, private bin dir
-// filepath.Dir(workDir)/candidate-bin = /var/candidate-bin,
-// cmd/zcp/eval_behavioral.go ~line 202) failed on every live tracer run
-// because uid zerops cannot create /var/candidate-bin.
+// TestWrapper_PassesWorkDirUnderRunDir exercises the wrapper's
+// ZCP_FARM_WORK_DIR test seam (mirroring ZCP_FARM_RUNDIR): this harness
+// always sets it to $RUNDIR/work so the offline rig never touches a real
+// /var/www, and asserts the wrapper forwards that value verbatim as
+// --work-dir and that the directory exists. In production the env var is
+// unset and the wrapper defaults to /var/www (D21,
+// TestWrapper_WorkDirDefaultsToVarWww_WhenEnvUnset) — the agent's cwd in a
+// real container. Before D21 the default itself was hardcoded to
+// $RUNDIR/work because the evaluator's old private-bin derivation
+// (filepath.Dir(workDir)/candidate-bin = /var/candidate-bin when
+// workDir=/var/www) failed on every live tracer run: uid zerops cannot
+// create /var/candidate-bin (D3). cmd/zcp/eval_behavioral.go now derives
+// that path from the results dir instead, so /var/www is safe to use.
 func TestWrapper_PassesWorkDirUnderRunDir(t *testing.T) {
 	requireShAndCurl(t)
 
@@ -816,6 +828,43 @@ func TestWrapper_PassesWorkDirUnderRunDir(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(wantWorkDir, "workdir.marker")); err != nil {
 		t.Errorf("stub's workdir.marker missing under %q: %v", wantWorkDir, err)
+	}
+}
+
+// TestWrapper_WorkDirDefaultsToVarWww_WhenEnvUnset pins D21
+// (docs/spec-eval-farm.md §6's removed gap): with ZCP_FARM_WORK_DIR unset —
+// the real farm run's condition — the wrapper's work_dir default is
+// literally "/var/www", matching internal/ops/mount.go's mountBase and
+// internal/eval/runner.go's own WorkDir default, so the agent's `claude`
+// and the MCP `zcp serve` child it spawns share the same cwd a real
+// container uses. It extracts the actual assignment line out of the real
+// script — rather than restating it — so an edit to the default breaks
+// this test, not just the intent, and evaluates only that one line (never
+// the mkdir/exec that follows it in the real script) so this never touches
+// a real /var/www on the machine running go test.
+func TestWrapper_WorkDirDefaultsToVarWww_WhenEnvUnset(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH")
+	}
+
+	src, err := os.ReadFile(wrapperScriptPath(t))
+	if err != nil {
+		t.Fatalf("read wrapper.sh: %v", err)
+	}
+	re := regexp.MustCompile(`(?m)^\s*work_dir="\$\{ZCP_FARM_WORK_DIR:-[^}]*\}"\s*$`)
+	line := re.FindString(string(src))
+	if line == "" {
+		t.Fatalf(`wrapper.sh: no work_dir="${ZCP_FARM_WORK_DIR:-...}" default-assignment line found`)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "sh", "-c", "unset ZCP_FARM_WORK_DIR; "+line+"; printf '%s' \"$work_dir\"").Output() //nolint:gosec // line is extracted from this repo's own eval/farm/wrapper.sh via the regexp above, never external/user input
+	if err != nil {
+		t.Fatalf("evaluate extracted line %q: %v", line, err)
+	}
+	if string(out) != "/var/www" {
+		t.Errorf("default work_dir = %q, want %q", out, "/var/www")
 	}
 }
 

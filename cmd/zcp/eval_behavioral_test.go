@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/eval"
@@ -246,5 +247,56 @@ func TestExecutionBinding_AllRefusesDirAndRunIDFlags(t *testing.T) {
 		if err := rejectBindingFlagsForAll(args); err == nil {
 			t.Errorf("rejectBindingFlagsForAll(%v) = nil, want an error", args)
 		}
+	}
+}
+
+// TestBuildExecutionBinding_FarmWorkDirIsVarWww_PrivateSurfaceStaysUnderResultsDir
+// pins D21 (docs/spec-eval-farm.md §6 gap, now removed): a farm run passes
+// --work-dir /var/www so the agent's `claude` (and the MCP `zcp serve`
+// child it spawns) gets the same cwd a real container uses
+// (internal/ops/mount.go mountBase, internal/eval/runner.go's own
+// WorkDir=/var/www default) — matching where zerops_mount mounts source
+// and where the deploy preflight looks for it. Before D21,
+// PrivateBin/ClaudeHome derived from filepath.Dir(workDir): with
+// workDir="/var/www" that base is "/", which uid zerops cannot create
+// under (the exact reason D3 originally pinned the farm's work dir under
+// $RUNDIR/work instead). D21 derives them from filepath.Dir(resultsDir)
+// instead — an evaluator-owned scratch path never shared with the agent —
+// so WorkDir is free to be /var/www without weakening the binding
+// preflight's safe-roots check (assertSafeRoots still sees two distinct,
+// non-nested, absolute, non-home, non-"/" roots).
+func TestBuildExecutionBinding_FarmWorkDirIsVarWww_PrivateSurfaceStaysUnderResultsDir(t *testing.T) {
+	t.Parallel()
+
+	flags := executionBindingFlags{
+		any:        true,
+		candidate:  "/rundir/candidate",
+		sha256:     "deadbeef",
+		projectID:  "proj-1",
+		ack:        "yes",
+		workDir:    "/var/www",
+		resultsDir: "/rundir/results",
+	}
+
+	binding := buildExecutionBinding(flags, "suite-1")
+	if binding == nil {
+		t.Fatal("buildExecutionBinding = nil, want a binding")
+	}
+	if binding.WorkDir != "/var/www" {
+		t.Errorf("WorkDir = %q, want %q (the agent's cwd, unchanged from the flag)", binding.WorkDir, "/var/www")
+	}
+	if binding.ResultsDir != "/rundir/results" {
+		t.Errorf("ResultsDir = %q, want %q", binding.ResultsDir, "/rundir/results")
+	}
+	wantPrivateBin := filepath.Join("/rundir", "candidate-bin")
+	if binding.PrivateBin != wantPrivateBin {
+		t.Errorf("PrivateBin = %q, want %q (a sibling of results dir, not workDir's parent %q)", binding.PrivateBin, wantPrivateBin, filepath.Dir(binding.WorkDir))
+	}
+	wantClaudeHome := filepath.Join("/rundir", "candidate-claude-home")
+	if binding.ClaudeHome != wantClaudeHome {
+		t.Errorf("ClaudeHome = %q, want %q", binding.ClaudeHome, wantClaudeHome)
+	}
+	if filepath.Dir(binding.WorkDir) == filepath.Dir(binding.PrivateBin) {
+		t.Fatalf("test fixture assumption broke: workDir's parent must differ from results dir's parent (got %q for both)", filepath.Dir(binding.WorkDir))
 	}
 }
