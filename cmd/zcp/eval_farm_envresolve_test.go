@@ -15,9 +15,11 @@ import (
 // ZCP_FARM_S3_* and ZCP_FARM_CLIENT_ID are missing from the environment and
 // must be resolved from the farm/os services' env in ZCP_FARM_PROJECT_ID
 // (docs/spec-eval-farm.md §3.1 FM-17): GET user/info, POST project/search
-// (ListProjects), POST service-stack/search (ops.LookupService's
-// ListServices, called once per hostname), GET service-stack/{id}/env
-// (ops.FetchServiceEnv). The S3 side reuses newStatusFakeS3Server from
+// (ListProjects), GET project/{id}/service-stack (the direct project read,
+// once per hostname), GET service-stack/{id}/env (ops.FetchServiceEnv).
+// POST service-stack/search answers the way it does live for the
+// account-wide token — refused — so a resolver that reached for the search
+// fails here the way it failed against the real API. The S3 side reuses newStatusFakeS3Server from
 // eval_farm_run_test.go — same package, same shape.
 // ---------------------------------------------------------------------------
 
@@ -74,12 +76,16 @@ func (f *envResolveFakeAccount) handle(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/project/search":
 		fmt.Fprint(w, `{"limit":100,"offset":0,"totalHits":0,"items":[]}`)
 
-	case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/service-stack/search":
+	case r.Method == http.MethodGet && r.URL.Path == "/api/rest/public/project/"+envResolveProjectID+"/service-stack":
 		items := []string{
 			f.serviceStackJSON(envResolveFarmSvcID, "farm"),
 			f.serviceStackJSON(envResolveOSSvcID, "os"),
 		}
-		fmt.Fprintf(w, `{"limit":1000,"offset":0,"totalHits":%d,"items":[%s]}`, len(items), strings.Join(items, ","))
+		fmt.Fprintf(w, `{"list":[%s],"totalCount":%d}`, strings.Join(items, ","), len(items))
+
+	case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/service-stack/search":
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `{"error":{"code":"invalidUserInputWithText","message":"Invalid user input: search is not allowed, insufficient privileges"}}`)
 
 	case r.Method == http.MethodGet && r.URL.Path == "/api/rest/public/service-stack/"+envResolveFarmSvcID+"/env":
 		fmt.Fprintf(w, `{"items":[%s]}`, strings.Join([]string{
@@ -145,11 +151,14 @@ func TestFarmVerbs_UseTheResolvedLookup(t *testing.T) {
 	// the S3 fake) succeeded against the resolved ZCP_FARM_S3_* — an empty
 	// or wrong URL/bucket would have failed the request and exited
 	// nonzero. These counts additionally prove the resolution path itself
-	// ran: both services were looked up by hostname (one
-	// service-stack/search per LookupService call) and both envs fetched
-	// (one GET .../env per service).
-	if n := f.requestCount(http.MethodPost + " /api/rest/public/service-stack/search"); n < 2 {
-		t.Errorf("service-stack/search requests = %d, want >= 2 (one per hostname: farm, os)", n)
+	// ran: both services were found by the direct project read (one per
+	// hostname), never the search, and both envs fetched (one GET .../env
+	// per service).
+	if n := f.requestCount(http.MethodGet + " /api/rest/public/project/" + envResolveProjectID + "/service-stack"); n != 2 {
+		t.Errorf("project service-stack reads = %d, want 2 (one per hostname: farm, os)", n)
+	}
+	if n := f.requestCount(http.MethodPost + " /api/rest/public/service-stack/search"); n != 0 {
+		t.Errorf("service-stack/search requests = %d, want 0 — the search is refused for the account-wide token", n)
 	}
 	if n := f.requestCount(http.MethodGet + " /api/rest/public/service-stack/" + envResolveFarmSvcID + "/env"); n != 1 {
 		t.Errorf("farm service env requests = %d, want 1", n)

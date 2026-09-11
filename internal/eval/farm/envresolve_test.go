@@ -81,8 +81,10 @@ func TestResolveFarmEnv_EnvironmentWins(t *testing.T) {
 	if err := r.Err(); err != nil {
 		t.Fatalf("Err() = %v, want nil", err)
 	}
-	if n := mock.CallCounts["ListServices"]; n != 0 {
-		t.Errorf("ListServices called %d times, want 0 — the environment already answered the key", n)
+	for _, call := range []string{"ListServices", "ListServicesDirect", "GetServiceEnv"} {
+		if n := mock.CallCounts[call]; n != 0 {
+			t.Errorf("%s called %d times, want 0 — the environment already answered the key", call, n)
+		}
 	}
 }
 
@@ -156,5 +158,33 @@ func TestResolveFarmEnv_ErrorsNeverCarryValues(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), secretLookingValue) {
 		t.Errorf("error %q carries the raw value", err.Error())
+	}
+}
+
+// TestResolveFarmEnv_SearchBlindToken_ResolvesFromDirectRead pins
+// docs/spec-eval-farm.md §3.1 FM-17: the farm and os services are found by
+// the project-level direct read, never the service-stack search. The search
+// scopes by the token's clientId as /user/info reports it, which for the
+// account-wide ZCP_FARM_ACCOUNT_TOKEN is the user, not the organization
+// owning the farm project — live, the search saw none of the project's
+// services and every farm verb failed "Service 'farm' not found".
+func TestResolveFarmEnv_SearchBlindToken_ResolvesFromDirectRead(t *testing.T) {
+	mock := newEnvResolveMock(t).
+		WithServices(nil).
+		WithServicesDirect([]platform.ServiceStack{
+			{ID: "svc-farm", Name: "farm", ProjectID: "proj-1"},
+			{ID: "svc-os", Name: "os", ProjectID: "proj-1"},
+		})
+	base := func(string) string { return "" }
+	r := NewEnvResolver(context.Background(), mock, "proj-1", base)
+
+	if got := r.Lookup("ZCP_FARM_S3_SECRET"); got != "secret-fake-value" {
+		t.Errorf("Lookup(ZCP_FARM_S3_SECRET) = %q, want the os service's value", got)
+	}
+	if err := r.Err(); err != nil {
+		t.Fatalf("Err() = %v, want nil", err)
+	}
+	if n := mock.CallCounts["ListServices"]; n != 0 {
+		t.Errorf("ListServices (the search) called %d times, want 0", n)
 	}
 }

@@ -362,7 +362,15 @@ same way an ungated authoring route is. The farm host needs only the
 binary and its service envs — `ZCP_AUTHORING=1` (this gate),
 `ZCP_FARM_S3_URL`/`ZCP_FARM_S3_BUCKET`/`ZCP_FARM_S3_KEY`/`ZCP_FARM_S3_SECRET`
 (the sink), `ZCP_FARM_ACCOUNT_TOKEN`/`ZCP_FARM_CLIENT_ID` (§2.4 FM-15), and
-`CLAUDE_CODE_OAUTH_TOKEN` (§2.4) — no repo checkout. `farm run` resolves everything it needs (the
+`CLAUDE_CODE_OAUTH_TOKEN` (§2.4) — no repo checkout. Off the farm host, a session that also sets
+`ZCP_FARM_PROJECT_ID` (the farm project) needs only `ZCP_FARM_ACCOUNT_TOKEN`
+and `CLAUDE_CODE_OAUTH_TOKEN`: every other `ZCP_FARM_*` key it lacks resolves
+once from the `farm` service's env in that project, a `${os_<key>}` value
+following to the `os` service; the environment always wins and no value is
+ever printed. Both services are found by the project-level direct read — the
+service-stack search scopes by the clientId `/user/info` reports, which for
+the account-wide token is the user rather than the organization, and sees
+none of them. `farm run` resolves everything it needs (the
 `--set gate`/`--set all` scenario id list, each scenario's front matter, and
 the evaluator pin absent `--evaluator`, the wrapper pin absent `--wrapper`)
 from the bucket (`sets/<digest>/gate.txt`, `scenarios/<digest>/…`,

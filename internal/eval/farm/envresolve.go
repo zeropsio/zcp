@@ -161,14 +161,22 @@ func (r *EnvResolver) ensureOSFetched() error {
 }
 
 // fetchServiceEnv looks hostname up in r.projectID and reads its full env
-// as a key->content map (ops.LookupService / ops.FetchServiceEnv, per
-// docs/spec-eval-farm.md §3.1 FM-17). Its error never carries a value —
-// ops's own "not found" / platform errors name services and keys only.
+// as a key->content map (docs/spec-eval-farm.md §3.1 FM-17). The lookup is
+// the project-level direct read, never ops.LookupService: that one runs the
+// service-stack search, which scopes by the clientId /user/info reports —
+// for the account-wide ZCP_FARM_ACCOUNT_TOKEN the user, not the
+// organization owning the farm project — so the search sees none of the
+// project's services. Its error never carries a value — ops's own "not
+// found" / platform errors name services and keys only.
 func (r *EnvResolver) fetchServiceEnv(hostname string) (map[string]string, error) {
 	if r.client == nil {
 		return nil, fmt.Errorf("farm: resolve env: no account client available (construct one from ZCP_FARM_ACCOUNT_TOKEN)")
 	}
-	svc, err := ops.LookupService(r.ctx, r.client, r.projectID, hostname)
+	services, err := r.client.ListServicesDirect(r.ctx, r.projectID)
+	if err != nil {
+		return nil, fmt.Errorf("farm: resolve env: %w", err)
+	}
+	svc, err := ops.FindService(services, hostname)
 	if err != nil {
 		return nil, fmt.Errorf("farm: resolve env: %w", err)
 	}
