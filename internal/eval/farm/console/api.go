@@ -427,13 +427,14 @@ type RunDetail struct {
 
 // StepJSON is one element of GET /api/runs/<runId>/steps.md|.json (FM-52).
 type StepJSON struct {
-	N       int    `json:"n"`
-	Kind    string `json:"kind"`
-	Tool    string `json:"tool,omitempty"`
-	Input   string `json:"input,omitempty"`
-	Result  string `json:"result,omitempty"`
-	IsError bool   `json:"isError,omitempty"`
-	Text    string `json:"text,omitempty"`
+	N         int    `json:"n"`
+	Kind      string `json:"kind"`
+	Tool      string `json:"tool,omitempty"`
+	Input     string `json:"input,omitempty"`
+	Result    string `json:"result,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
+	IsError   bool   `json:"isError,omitempty"`
+	Text      string `json:"text,omitempty"`
 }
 
 // FindingItem is one element of GET /api/findings.md|.json (§8.4: "every
@@ -795,26 +796,50 @@ func loadSteps(ctx context.Context, store observer.ObjectStore, runID string) ([
 	return observer.BuildSteps(taskPrompt, transcript, observer.ResumeReplies(meta))
 }
 
-func stepJSON(s observer.Step) StepJSON {
+// stepsTruncationNote is §8.4's "said, never silent" truncation marker on
+// a cut tool result.
+const stepsTruncationNote = " …[truncated at 2000 chars; add full=1 for the rest]"
+
+// cutToolResult implements §8.4's "a tool result over 2,000 chars is cut
+// (said) unless full=1" — reusing pages.go's observerRawCap, the same
+// 2,000-char figure §7.5 already uses for a failed observation's raw
+// answer.
+func cutToolResult(text string, full bool) (string, bool) {
+	if full {
+		return text, false
+	}
+	r := []rune(text)
+	if len(r) <= observerRawCap {
+		return text, false
+	}
+	return string(r[:observerRawCap]), true
+}
+
+func stepJSON(s observer.Step, full bool) StepJSON {
 	out := StepJSON{N: s.N, Kind: string(s.Kind)}
 	if s.Kind == observer.StepTool {
-		out.Tool, out.Input, out.Result, out.IsError = s.ToolName, s.ToolInputJSON, s.ToolResultText, s.ToolIsError
+		out.Tool, out.Input, out.IsError = s.ToolName, s.ToolInputJSON, s.ToolIsError
+		out.Result, out.Truncated = cutToolResult(s.ToolResultText, full)
 		return out
 	}
 	out.Text = s.Text
 	return out
 }
 
-func renderStepsMD(steps []observer.Step) string {
+func renderStepsMD(steps []observer.Step, full bool) string {
 	var b strings.Builder
 	for _, s := range steps {
 		switch s.Kind {
 		case observer.StepTool:
 			fmt.Fprintf(&b, "#%d tool %s %s\n", s.N, s.ToolName, s.ToolInputJSON)
+			result, cut := cutToolResult(s.ToolResultText, full)
+			if cut {
+				result += stepsTruncationNote
+			}
 			if s.ToolIsError {
-				fmt.Fprintf(&b, "  → ERROR %s\n", s.ToolResultText)
+				fmt.Fprintf(&b, "  → ERROR %s\n", result)
 			} else {
-				fmt.Fprintf(&b, "  → %s\n", s.ToolResultText)
+				fmt.Fprintf(&b, "  → %s\n", result)
 			}
 		case observer.StepUser, observer.StepThinking, observer.StepAgent:
 			fmt.Fprintf(&b, "#%d %s %s\n", s.N, s.Kind, s.Text)
@@ -823,18 +848,21 @@ func renderStepsMD(steps []observer.Step) string {
 	return b.String()
 }
 
-// handleSteps implements GET /api/runs/<runId>/steps.md|.json?from=<n>&to=<m>
-// (FM-52): those steps, untruncated.
+// handleSteps implements GET
+// /api/runs/<runId>/steps.md|.json?from=<n>&to=<m>, or ?n=<step> (§8.4): a
+// tool result over 2,000 chars is cut (said) unless full=1; an empty
+// thinking block is left out.
 func (s *Server) handleSteps(w http.ResponseWriter, r *http.Request, runID string) {
 	if !farm.ValidRunID(runID) {
 		http.NotFound(w, r)
 		return
 	}
-	from, to, err := parseFromTo(r.URL.Query())
+	from, to, err := parseFromToOrN(r.URL.Query())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	full := r.URL.Query().Get("full") == "1"
 	all, err := loadSteps(r.Context(), s.cfg.Store, runID)
 	if err != nil {
 		writeStoreError(w, err)
@@ -842,20 +870,24 @@ func (s *Server) handleSteps(w http.ResponseWriter, r *http.Request, runID strin
 	}
 	var sel []observer.Step
 	for _, st := range all {
-		if st.N >= from && st.N <= to {
-			sel = append(sel, st)
+		if st.N < from || st.N > to {
+			continue
 		}
+		if st.Kind == observer.StepThinking && strings.TrimSpace(st.Text) == "" {
+			continue // §8.4: "empty thinking blocks are left out"
+		}
+		sel = append(sel, st)
 	}
 	if isJSONRequest(r) {
 		out := make([]StepJSON, len(sel))
 		for i, st := range sel {
-			out[i] = stepJSON(st)
+			out[i] = stepJSON(st, full)
 		}
 		writeJSON(w, out)
 		return
 	}
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	fmt.Fprint(w, renderStepsMD(sel))
+	fmt.Fprint(w, renderStepsMD(sel, full))
 }
 
 func parseFromTo(q map[string][]string) (from, to int, err error) {
@@ -885,6 +917,22 @@ func parseFromTo(q map[string][]string) (from, to int, err error) {
 		return 0, 0, fmt.Errorf("from (%d) must be <= to (%d)", from, to)
 	}
 	return from, to, nil
+}
+
+// parseFromToOrN adds §8.4's "?n=<step>" single-step shorthand on top of
+// parseFromTo's from/to pair: n wins when from is absent, so a caller that
+// wants exactly one step never has to spell out from=n&to=n.
+func parseFromToOrN(q map[string][]string) (from, to int, err error) {
+	if fromVals, ok := q["from"]; !ok || len(fromVals) == 0 {
+		if nVals, ok := q["n"]; ok && len(nVals) > 0 && nVals[0] != "" {
+			n, err := strconv.Atoi(nVals[0])
+			if err != nil {
+				return 0, 0, fmt.Errorf("console: parse n: invalid n: %q", nVals[0])
+			}
+			return n, n, nil
+		}
+	}
+	return parseFromTo(q)
 }
 
 // handleSelfReview implements GET /api/runs/<runId>/self-review.md|.json

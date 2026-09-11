@@ -262,6 +262,54 @@ func TestAPI_StepsFromToUntruncated(t *testing.T) {
 	}
 }
 
+// TestAPI_StepsSingleNTruncationAndEmptyThinking pins §8.4's remaining
+// steps.md rules: `?n=<step>` as shorthand for `from=n&to=n`, a tool
+// result over 2,000 chars cut (said) unless `full=1`, and an empty
+// thinking block left out.
+func TestAPI_StepsSingleNTruncationAndEmptyThinking(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "sn1", "off", []runFixture{
+		{runID: "sn1-scena", scenario: "scena", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 1.0, taskResult: "passed", done: true},
+	}, false, nil)
+
+	// ?n=3 is shorthand for from=3&to=3 — the tool step alone.
+	rr := doGET(t, h, "/api/runs/sn1-scena/steps.md?n=3")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("got %d, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "zerops_discover") || strings.Contains(body, "#1 user") {
+		t.Errorf("?n=3 should return only step 3:\n%s", body)
+	}
+
+	longResult := strings.Repeat("x", 2500)
+	store.putText(t, "runs/sn1-scena/results/"+testResultsTS+"/scena/transcript.jsonl", strings.Join([]string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"   "},{"type":"tool_use","id":"tu1","name":"zerops_discover","input":{}}]}}`,
+		fmt.Sprintf(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu1","content":[{"type":"text","text":%q}]}]}}`, longResult),
+	}, "\n")+"\n")
+
+	rrCut := doGET(t, h, "/api/runs/sn1-scena/steps.md?from=1&to=10")
+	cutBody := rrCut.Body.String()
+	if strings.Contains(cutBody, "#2 thinking") {
+		t.Errorf("empty thinking block should be left out:\n%s", cutBody)
+	}
+	if strings.Contains(cutBody, longResult) {
+		t.Errorf("2000-char result should be cut without full=1:\n%s", cutBody)
+	}
+	if !strings.Contains(cutBody, "truncated") {
+		t.Errorf("truncation should be said:\n%s", cutBody)
+	}
+
+	rrFull := doGET(t, h, "/api/runs/sn1-scena/steps.md?from=1&to=10&full=1")
+	if !strings.Contains(rrFull.Body.String(), longResult) {
+		t.Errorf("full=1 should return the untruncated result:\n%s", rrFull.Body.String())
+	}
+}
+
 // TestAPI_SelfReview pins GET /api/runs/<runId>/self-review.md|.json.
 func TestAPI_SelfReview(t *testing.T) {
 	srv, store, _ := testServer(t)
