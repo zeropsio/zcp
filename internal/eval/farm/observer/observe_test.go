@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -120,5 +121,69 @@ func TestObserve_SummaryJSONOverridesMetaVerdict(t *testing.T) {
 	}
 	if obs.Checks.Verdict != "passed" {
 		t.Errorf("obs.Checks.Verdict = %q, want %q (summary.json row overrides meta.json.task.result)", obs.Checks.Verdict, "passed")
+	}
+}
+
+// obsWriteClaudeIsError writes a fake claude that prints
+// {"is_error":true,"result":resultText,...} and exits with exitCode — used
+// to pin §7.4/§7.5: a claude call reporting is_error must always yield
+// observation status "error" with resultText as the cause, whether or not
+// the process itself exited non-zero, and never status "unparsed".
+func obsWriteClaudeIsError(t *testing.T, dir, resultText string, exitCode int) string {
+	t.Helper()
+	out, err := json.Marshal(map[string]any{
+		"result":         resultText,
+		"total_cost_usd": 0.0,
+		"is_error":       true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "claude")
+	script := "#!/bin/sh\ncat > /dev/null\nprintf '%s' " + obsShellQuote(string(out)) + "\nexit " + strconv.Itoa(exitCode) + "\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestObserve_ClaudeIsError_StatusErrorNeverUnparsed pins §7.4/§7.5: when
+// claude's own JSON output reports is_error true, the observation is
+// status "error" with the JSON result text as the cause — regardless of
+// the process exit code, and never status "unparsed" (before the fix, an
+// is_error-true-but-exit-0 answer fell through to ParseAndValidate, which
+// rejected the plain error text as an invalid schema and rendered
+// "unparsed" instead of surfacing the real cause).
+func TestObserve_ClaudeIsError_StatusErrorNeverUnparsed(t *testing.T) {
+	const wantText = "Invalid API key · Please run /login"
+	cases := []struct {
+		name     string
+		exitCode int
+	}{
+		{"exit 1", 1},
+		{"exit 0", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			claudePath := obsWriteClaudeIsError(t, tmp, wantText, tc.exitCode)
+
+			bundle := NewDirBundle("testdata/sample-run")
+			obs := Observe(context.Background(), bundle, ObserveConfig{
+				RunID:      "sample-run",
+				Model:      "claude-sonnet-5",
+				ClaudePath: claudePath,
+				OAuthToken: "test-token",
+				Timeout:    time.Minute,
+				Environ:    os.Environ,
+			})
+
+			if obs.Status != "error" {
+				t.Fatalf("obs.Status = %q, want %q (obs.Error = %q, obs.Raw = %q)", obs.Status, "error", obs.Error, obs.Raw)
+			}
+			if !strings.Contains(obs.Error, "Invalid API key") {
+				t.Errorf("obs.Error = %q, want it to contain %q", obs.Error, "Invalid API key")
+			}
+		})
 	}
 }

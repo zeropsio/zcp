@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -217,5 +218,45 @@ func TestRunObserver_RelativeClaudePathResolved(t *testing.T) {
 	}
 	if result.ResultText != "observer answer text" {
 		t.Errorf("ResultText = %q, want the canned result text (the relative claude actually ran)", result.ResultText)
+	}
+}
+
+// writeFakeClaudeExit writes an executable "claude" script that ignores its
+// input, prints resultJSON on stdout, and exits with exitCode — used to pin
+// §7.4's "still parse stdout's JSON object on a non-zero exit" fix.
+func writeFakeClaudeExit(t *testing.T, dir, resultJSON string, exitCode int) string {
+	t.Helper()
+	path := filepath.Join(dir, "claude")
+	script := "#!/bin/sh\n" +
+		"cat > /dev/null\n" +
+		"printf '%s' " + shellQuote(resultJSON) + "\n" +
+		"exit " + strconv.Itoa(exitCode) + "\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestRunObserver_NonZeroExit_ErrorNamesJSONResult pins §7.4: a claude call
+// that exits non-zero still had its --output-format json object on stdout
+// (e.g. an expired credential), and that object's "result" text is the
+// real failure cause — far more useful than the bare exit status. Before
+// the fix, RunObserver returned as soon as cmd.Run() reported a non-zero
+// exit, discarding stdout entirely.
+func TestRunObserver_NonZeroExit_ErrorNamesJSONResult(t *testing.T) {
+	dir := t.TempDir()
+	resultJSON := `{"result":"Invalid API key · Please run /login","total_cost_usd":0,"is_error":true}`
+	claudePath := writeFakeClaudeExit(t, dir, resultJSON, 1)
+
+	cfg := RunConfig{
+		ClaudePath: claudePath, Model: "claude-sonnet-5",
+		OAuthToken: "tok", Timeout: 10 * time.Second, Environ: staticEnviron("PATH=" + testPATH(dir)),
+	}
+	_, err := RunObserver(context.Background(), cfg, "prompt", "digest")
+	if err == nil {
+		t.Fatal("RunObserver: got no error, want an error naming the JSON result text")
+	}
+	if !strings.Contains(err.Error(), "Invalid API key") {
+		t.Errorf("RunObserver error = %q, want it to contain the JSON result's failure text %q", err.Error(), "Invalid API key")
 	}
 }

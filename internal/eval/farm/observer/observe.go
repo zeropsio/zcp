@@ -2,6 +2,7 @@ package observer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -118,6 +119,14 @@ func Observe(ctx context.Context, bundle Bundle, cfg ObserveConfig) Observation 
 	}
 	obs.DurationMs = runResult.DurationMs
 	obs.CostUsd = runResult.TotalCostUsd
+
+	// claude can exit 0 while its own JSON output reports is_error — an
+	// expired credential is exactly this shape. That is a call failure, not
+	// an answer that merely failed to parse: never let it fall through to
+	// ParseAndValidate and render as "unparsed".
+	if runResult.IsError {
+		return fail(errors.New(runResult.ResultText))
+	}
 
 	ans, ok := ParseAndValidate(runResult.ResultText)
 	if !ok {

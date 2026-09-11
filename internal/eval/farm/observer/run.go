@@ -32,8 +32,12 @@ type RunConfig struct {
 	Environ    func() []string
 }
 
-// RunResult is one successful `claude -p --output-format json` call's
-// parsed output.
+// RunResult is one `claude -p --output-format json` call's parsed output.
+// IsError mirrors the JSON output's own is_error field: claude can exit 0
+// while still reporting a failure (e.g. an expired credential) inside its
+// result JSON, so RunObserver returns a nil error in that case and the
+// caller (Observe) must check IsError itself rather than treat a nil error
+// as success.
 type RunResult struct {
 	ResultText   string
 	TotalCostUsd float64
@@ -132,13 +136,22 @@ func RunObserver(ctx context.Context, cfg RunConfig, promptText, digest string) 
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 		return RunResult{}, fmt.Errorf("observer timed out after %s", timeout)
 	}
+
+	// Parse stdout regardless of exit status: claude's --output-format json
+	// still writes its result object on a non-zero exit (e.g. an expired
+	// credential), and that object's "result" text is the actual failure
+	// cause — far more useful than the bare exit status.
+	var out claudeJSONOutput
+	parseErr := json.Unmarshal(stdout.Bytes(), &out)
+
 	if runErr != nil {
+		if parseErr == nil && out.Result != "" {
+			return RunResult{}, fmt.Errorf("claude exited with an error: %s", out.Result)
+		}
 		return RunResult{}, fmt.Errorf("claude: %w (stderr: %s)", runErr, strings.TrimSpace(stderr.String()))
 	}
-
-	var out claudeJSONOutput
-	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
-		return RunResult{}, fmt.Errorf("parse claude output: %w", err)
+	if parseErr != nil {
+		return RunResult{}, fmt.Errorf("parse claude output: %w", parseErr)
 	}
 	return RunResult{
 		ResultText:   out.Result,
