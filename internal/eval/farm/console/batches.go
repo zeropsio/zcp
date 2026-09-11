@@ -84,7 +84,10 @@ func orderedVerdictCounts(counts map[string]int) []VerdictCount {
 // to load (a corrupt manifest, item 5) is skipped and logged rather than
 // failing the whole page — only the top-level batches/ listing itself can
 // fail the call outright. cache and sc are nil-safe (cache.go).
-func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, queueState func(runID string) string, cache *runCache, sc *summaryCache) ([]BatchRow, error) {
+func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, queueState func(runID string) string, cache *runCache, sc *summaryCache, logf func(format string, args ...any)) ([]BatchRow, error) {
+	if logf == nil {
+		logf = defaultLogf
+	}
 	ids, err := listBatchIDs(ctx, store)
 	if err != nil {
 		return nil, fmt.Errorf("console: load batch rows: %w", err)
@@ -94,12 +97,12 @@ func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObser
 	for _, id := range ids {
 		manifest, err := loadManifest(ctx, store, id)
 		if err != nil {
-			viewLogf("skip batch %s: load manifest: %v", id, err)
+			logf("skip batch %s: load manifest: %v", id, err)
 			continue
 		}
-		runRows, err := batchWindowRowsWithManifest(ctx, store, consoleObserverDisabled, id, manifest, queueState, cache, sc)
+		runRows, err := batchWindowRowsWithManifest(ctx, store, consoleObserverDisabled, id, manifest, queueState, cache, sc, logf)
 		if err != nil {
-			viewLogf("skip batch %s: %v", id, err)
+			logf("skip batch %s: %v", id, err)
 			continue
 		}
 		createdAt, _ := time.Parse(time.RFC3339, manifest.CreatedAt)

@@ -88,6 +88,15 @@ type Server struct {
 	// load answers from memory instead of the bucket.
 	runCache     *runCache
 	summaryCache *summaryCache
+
+	// logf logs a batch or run skipped during a listing scan because its
+	// manifest/observation/meta could not be read (view.go item 5) —
+	// wired at construction (NewServer) rather than a package var, so
+	// tests can set it directly on their own Server instance instead of
+	// mutating shared global state. Threaded down into the free
+	// read-model functions (view.go/cache.go/batches.go) that do the
+	// actual logging, nil-safe there too.
+	logf func(format string, args ...any)
 }
 
 // NewServer builds a Server from cfg. cfg.Store is wrapped in a manifest-
@@ -104,6 +113,7 @@ func NewServer(cfg Config) *Server {
 	s := &Server{
 		cfg:   cfg,
 		files: newFileCache(),
+		logf:  defaultLogf,
 	}
 	s.runCache = newRunCache(s.now)
 	s.summaryCache = newSummaryCache(s.now)
@@ -123,8 +133,8 @@ func (s *Server) WarmCache(ctx context.Context) {
 	if s.cfg.Store == nil {
 		return
 	}
-	if _, err := loadBatchRows(ctx, s.cfg.Store, s.cfg.ObserverDisabled, s.queueState, s.runCache, s.summaryCache); err != nil {
-		viewLogf("warm cache: %v", err)
+	if _, err := loadBatchRows(ctx, s.cfg.Store, s.cfg.ObserverDisabled, s.queueState, s.runCache, s.summaryCache, s.logf); err != nil {
+		s.logf("warm cache: %v", err)
 	}
 }
 

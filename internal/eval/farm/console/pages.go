@@ -198,7 +198,7 @@ type batchesPageData struct {
 }
 
 func (s *Server) handleBatchesPage(w http.ResponseWriter, r *http.Request) {
-	rows, err := loadBatchRows(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, s.queueState, s.runCache, s.summaryCache)
+	rows, err := loadBatchRows(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, s.queueState, s.runCache, s.summaryCache, s.logf)
 	if err != nil {
 		http.Error(w, "list batches: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -282,7 +282,7 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	rows, err := batchWindowRows(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, batch, s.queueState, s.runCache, s.summaryCache)
+	rows, err := batchWindowRows(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, batch, s.queueState, s.runCache, s.summaryCache, s.logf)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -453,7 +453,7 @@ func (s *Server) handleFindingsPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	rows, err := rowsSinceWindow(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, window, s.now(), s.queueState, s.runCache, s.summaryCache)
+	rows, err := rowsSinceWindow(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, window, s.now(), s.queueState, s.runCache, s.summaryCache, s.logf)
 	if err != nil {
 		writeStoreError(w, err)
 		return

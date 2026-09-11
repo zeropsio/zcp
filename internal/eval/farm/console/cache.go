@@ -381,7 +381,10 @@ func resolveSummary(ctx context.Context, store observer.ObjectStore, sc *summary
 // sequential loop gave for free. A run whose row fails to build is logged
 // and dropped, exactly like the old sequential loop (§8.4: "skipped ...
 // rather than failing the whole listing").
-func fillRowsConcurrently(runs []farm.ManifestRun, build func(run farm.ManifestRun) (RunRow, error)) []RunRow {
+func fillRowsConcurrently(runs []farm.ManifestRun, build func(run farm.ManifestRun) (RunRow, error), logf func(format string, args ...any)) []RunRow {
+	if logf == nil {
+		logf = defaultLogf
+	}
 	type slot struct {
 		row RunRow
 		ok  bool
@@ -397,7 +400,7 @@ func fillRowsConcurrently(runs []farm.ManifestRun, build func(run farm.ManifestR
 			defer func() { <-sem }()
 			row, err := build(run)
 			if err != nil {
-				viewLogf("skip run %s: %v", run.RunID, err)
+				logf("skip run %s: %v", run.RunID, err)
 				return
 			}
 			slots[i] = slot{row: row, ok: true}

@@ -15,11 +15,13 @@ import (
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
 
-// viewLogf logs a batch or run skipped during a listing scan because its
-// manifest/observation/meta could not be read (item 5) — a package var so
-// tests can capture it without threading a logger through every read-model
-// call (mirrors worker.go's Queue.logf).
-var viewLogf = func(format string, args ...any) {
+// defaultLogf is the production logf (Server.logf, wired in NewServer):
+// logs a batch or run skipped during a listing scan because its
+// manifest/observation/meta could not be read (item 5). Every free
+// function below that logs takes a logf parameter instead of reading a
+// package var, nil-safe here so a direct (non-Server) caller — like a
+// test — gets the same stderr behavior for free.
+func defaultLogf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "console: "+format+"\n", args...)
 }
 
@@ -391,12 +393,12 @@ func evidenceSteps(obs *observer.Observation) []int {
 // batchWindowRows resolves every run row of one batch — used both by
 // GET /api/runs.md?batch=<id> and by the since-window scan across batches.
 // cache and sc are nil-safe (cache.go).
-func batchWindowRows(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, batchID string, queueState func(runID string) string, cache *runCache, sc *summaryCache) ([]RunRow, error) {
+func batchWindowRows(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, batchID string, queueState func(runID string) string, cache *runCache, sc *summaryCache, logf func(format string, args ...any)) ([]RunRow, error) {
 	manifest, err := loadManifest(ctx, store, batchID)
 	if err != nil {
 		return nil, fmt.Errorf("console: batch window rows: %w", err)
 	}
-	return batchWindowRowsWithManifest(ctx, store, consoleObserverDisabled, batchID, manifest, queueState, cache, sc)
+	return batchWindowRowsWithManifest(ctx, store, consoleObserverDisabled, batchID, manifest, queueState, cache, sc, logf)
 }
 
 // batchWindowRowsWithManifest is batchWindowRows over an already-loaded
@@ -409,7 +411,7 @@ func batchWindowRows(ctx context.Context, store observer.ObjectStore, consoleObs
 // never failing the rest of the batch; a manifest/summary read failure
 // still fails the whole batch (the caller decides whether that aborts
 // everything or just this batch). cache and sc are nil-safe (cache.go).
-func batchWindowRowsWithManifest(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, batchID string, manifest farm.BatchManifest, queueState func(runID string) string, cache *runCache, sc *summaryCache) ([]RunRow, error) {
+func batchWindowRowsWithManifest(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, batchID string, manifest farm.BatchManifest, queueState func(runID string) string, cache *runCache, sc *summaryCache, logf func(format string, args ...any)) ([]RunRow, error) {
 	createdAt, _ := time.Parse(time.RFC3339, manifest.CreatedAt)
 	summary, summaryFound, err := resolveSummary(ctx, store, sc, batchID)
 	if err != nil {
@@ -417,7 +419,7 @@ func batchWindowRowsWithManifest(ctx context.Context, store observer.ObjectStore
 	}
 	rows := fillRowsConcurrently(manifest.Runs, func(run farm.ManifestRun) (RunRow, error) {
 		return runRowCached(ctx, store, cache, consoleObserverDisabled, batchID, run, createdAt, manifest.Observer, summary, summaryFound, queueState)
-	})
+	}, logf)
 	return rows, nil
 }
 
@@ -430,7 +432,10 @@ func batchWindowRowsWithManifest(ctx context.Context, store observer.ObjectStore
 // corrupt manifest, item 5) is skipped and logged rather than failing the
 // whole scan — only the top-level batches/ listing itself can fail the
 // call outright. cache and sc are nil-safe (cache.go).
-func rowsSinceWindow(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, window time.Duration, now time.Time, queueState func(runID string) string, cache *runCache, sc *summaryCache) ([]RunRow, error) {
+func rowsSinceWindow(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, window time.Duration, now time.Time, queueState func(runID string) string, cache *runCache, sc *summaryCache, logf func(format string, args ...any)) ([]RunRow, error) {
+	if logf == nil {
+		logf = defaultLogf
+	}
 	batches, err := listBatchIDs(ctx, store)
 	if err != nil {
 		return nil, fmt.Errorf("console: rows since window: %w", err)
@@ -440,12 +445,12 @@ func rowsSinceWindow(ctx context.Context, store observer.ObjectStore, consoleObs
 	for _, b := range batches {
 		manifest, err := loadManifest(ctx, store, b)
 		if err != nil {
-			viewLogf("skip batch %s: load manifest: %v", b, err)
+			logf("skip batch %s: load manifest: %v", b, err)
 			continue
 		}
-		rows, err := batchWindowRowsWithManifest(ctx, store, consoleObserverDisabled, b, manifest, queueState, cache, sc)
+		rows, err := batchWindowRowsWithManifest(ctx, store, consoleObserverDisabled, b, manifest, queueState, cache, sc, logf)
 		if err != nil {
-			viewLogf("skip batch %s: %v", b, err)
+			logf("skip batch %s: %v", b, err)
 			continue
 		}
 		for _, row := range rows {
