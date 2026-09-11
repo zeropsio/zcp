@@ -17,16 +17,26 @@ import (
 // (cmd/zcp/eval_farm_observe_test.go's canonicalModelAnswer), so both
 // surfaces are proven against the one independent oracle.
 const obsCanonicalModelAnswer = `{
-	"headline": "Agent violated the never-override rule while diagnosing a failed build.",
+	"headline": "Agent called the forbidden override on zerops_import despite the scenario's rule.",
+	"story": {
+		"task": "diagnose and fix the failing api service",
+		"expected": "the agent investigates without using a forbidden override",
+		"did": "the agent called zerops_import with override=true, which the scenario forbids",
+		"stuck": null,
+		"ending": "finished"
+	},
 	"goal": {"reached": "no", "why": "the service never became healthy"},
-	"checks": {"agree": true, "why": ""},
+	"checks": {"judged": [{"id": "liveness/api/marker", "correct": true, "why": "the liveness probe genuinely never found the marker"}]},
 	"findings": [
 		{
 			"severity": "high",
 			"owner": "agent",
+			"surface": "tool:zerops_import",
+			"anchor": "forbidden call zerops_import{override=true}",
 			"title": "called forbidden override despite scenario rule",
 			"what": "The agent called zerops_import with override=true, which the scenario forbids.",
 			"evidence": [{"step": 5, "quote": "forbidden call zerops_import{override=true}"}],
+			"causedVerdict": true,
 			"lookAt": "zerops_import override handling",
 			"fix": "check the never-list before issuing a destructive call"
 		}
@@ -83,7 +93,7 @@ func TestObserve_MatchesLocalVerbOutput(t *testing.T) {
 	if obs.Status != "ok" {
 		t.Fatalf("obs.Status = %q, want ok (obs.Error = %q)", obs.Status, obs.Error)
 	}
-	if obs.Headline != "Agent violated the never-override rule while diagnosing a failed build." {
+	if obs.Headline != "Agent called the forbidden override on zerops_import despite the scenario's rule." {
 		t.Errorf("obs.Headline = %q, want the canned headline", obs.Headline)
 	}
 	if obs.Checks.Verdict != "failed" {
@@ -184,7 +194,180 @@ func TestObserve_ClaudeIsError_StatusErrorNeverUnparsed(t *testing.T) {
 			if !strings.Contains(obs.Error, "Invalid API key") {
 				t.Errorf("obs.Error = %q, want it to contain %q", obs.Error, "Invalid API key")
 			}
+			if obs.ErrorKind != ErrorKindCredential {
+				t.Errorf("obs.ErrorKind = %q, want %q (an invalid/expired API key names a credential problem, §7.5)", obs.ErrorKind, ErrorKindCredential)
+			}
 		})
+	}
+}
+
+// TestObserve_ErrorKind_OtherFromUnrelatedIsError pins §7.5: an is_error
+// result whose text names no credential problem classifies as errorKind
+// "other" — the catch-all, never "credential" by default.
+func TestObserve_ErrorKind_OtherFromUnrelatedIsError(t *testing.T) {
+	tmp := t.TempDir()
+	claudePath := obsWriteClaudeIsError(t, tmp, "internal error: request failed", 1)
+
+	bundle := NewDirBundle("testdata/sample-run")
+	obs := Observe(context.Background(), bundle, ObserveConfig{
+		RunID: "sample-run", Model: "claude-sonnet-5", ClaudePath: claudePath,
+		OAuthToken: "test-token", Timeout: time.Minute, Environ: os.Environ,
+	})
+	if obs.Status != statusError {
+		t.Fatalf("obs.Status = %q, want %q", obs.Status, statusError)
+	}
+	if obs.ErrorKind != ErrorKindOther {
+		t.Errorf("obs.ErrorKind = %q, want %q", obs.ErrorKind, ErrorKindOther)
+	}
+}
+
+// TestObserve_ErrorKind_Bundle pins §7.5: a missing required bundle file
+// (transcript.jsonl) makes the observation status "error" with errorKind
+// "bundle".
+func TestObserve_ErrorKind_Bundle(t *testing.T) {
+	bundle := NewDirBundle("testdata/missing-transcript")
+	obs := Observe(context.Background(), bundle, ObserveConfig{
+		RunID: "missing-transcript", Model: "claude-sonnet-5", ClaudePath: "claude",
+		OAuthToken: "test-token", Timeout: time.Minute, Environ: os.Environ,
+	})
+	if obs.Status != statusError {
+		t.Fatalf("obs.Status = %q, want %q (obs.Error = %q)", obs.Status, statusError, obs.Error)
+	}
+	if obs.ErrorKind != ErrorKindBundle {
+		t.Errorf("obs.ErrorKind = %q, want %q", obs.ErrorKind, ErrorKindBundle)
+	}
+}
+
+// TestObserve_ErrorKind_Credential_EmptyToken pins §7.5: an empty OAuth
+// token refuses before any child starts, classified errorKind "credential".
+func TestObserve_ErrorKind_Credential_EmptyToken(t *testing.T) {
+	bundle := NewDirBundle("testdata/sample-run")
+	obs := Observe(context.Background(), bundle, ObserveConfig{
+		RunID: "sample-run", Model: "claude-sonnet-5", ClaudePath: "claude",
+		OAuthToken: "", Timeout: time.Minute, Environ: os.Environ,
+	})
+	if obs.Status != statusError {
+		t.Fatalf("obs.Status = %q, want %q (obs.Error = %q)", obs.Status, statusError, obs.Error)
+	}
+	if obs.ErrorKind != ErrorKindCredential {
+		t.Errorf("obs.ErrorKind = %q, want %q", obs.ErrorKind, ErrorKindCredential)
+	}
+}
+
+// TestObserve_ErrorKind_Timeout pins §7.5: a claude call that outlives
+// cfg.Timeout is classified errorKind "timeout".
+func TestObserve_ErrorKind_Timeout(t *testing.T) {
+	tmp := t.TempDir()
+	claudePath := filepath.Join(tmp, "claude")
+	if err := os.WriteFile(claudePath, []byte("#!/bin/sh\nsleep 30\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	bundle := NewDirBundle("testdata/sample-run")
+	obs := Observe(context.Background(), bundle, ObserveConfig{
+		RunID: "sample-run", Model: "claude-sonnet-5", ClaudePath: claudePath,
+		OAuthToken: "test-token", Timeout: 200 * time.Millisecond, Environ: os.Environ,
+	})
+	if obs.Status != statusError {
+		t.Fatalf("obs.Status = %q, want %q (obs.Error = %q)", obs.Status, statusError, obs.Error)
+	}
+	if obs.ErrorKind != ErrorKindTimeout {
+		t.Errorf("obs.ErrorKind = %q, want %q", obs.ErrorKind, ErrorKindTimeout)
+	}
+}
+
+// TestObserve_ErrorKind_Killed pins §7.5: a claude process that dies on a
+// signal is classified errorKind "killed".
+func TestObserve_ErrorKind_Killed(t *testing.T) {
+	tmp := t.TempDir()
+	claudePath := filepath.Join(tmp, "claude")
+	if err := os.WriteFile(claudePath, []byte("#!/bin/sh\nkill -TERM $$\nsleep 5\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	bundle := NewDirBundle("testdata/sample-run")
+	obs := Observe(context.Background(), bundle, ObserveConfig{
+		RunID: "sample-run", Model: "claude-sonnet-5", ClaudePath: claudePath,
+		OAuthToken: "test-token", Timeout: time.Minute, Environ: os.Environ,
+	})
+	if obs.Status != statusError {
+		t.Fatalf("obs.Status = %q, want %q (obs.Error = %q)", obs.Status, statusError, obs.Error)
+	}
+	if obs.ErrorKind != ErrorKindKilled {
+		t.Errorf("obs.ErrorKind = %q, want %q", obs.ErrorKind, ErrorKindKilled)
+	}
+}
+
+// TestObserve_ErrorKind_Model_EmptyReply pins §7.5: claude exiting cleanly
+// (is_error false) with an empty result text is "no usable answer" —
+// errorKind "model", never "unparsed".
+func TestObserve_ErrorKind_Model_EmptyReply(t *testing.T) {
+	tmp := t.TempDir()
+	claudePath := obsWriteCannedClaude(t, tmp, "")
+
+	bundle := NewDirBundle("testdata/sample-run")
+	obs := Observe(context.Background(), bundle, ObserveConfig{
+		RunID: "sample-run", Model: "claude-sonnet-5", ClaudePath: claudePath,
+		OAuthToken: "test-token", Timeout: time.Minute, Environ: os.Environ,
+	})
+	if obs.Status != statusError {
+		t.Fatalf("obs.Status = %q, want %q (obs.Error = %q)", obs.Status, statusError, obs.Error)
+	}
+	if obs.ErrorKind != ErrorKindModel {
+		t.Errorf("obs.ErrorKind = %q, want %q", obs.ErrorKind, ErrorKindModel)
+	}
+}
+
+// TestObserve_FormatVersion2AndSourceFromConfig pins §7.5: the observer
+// always writes formatVersion zcp-farm-observation-2, and source comes from
+// the caller's config (never guessed).
+func TestObserve_FormatVersion2AndSourceFromConfig(t *testing.T) {
+	tmp := t.TempDir()
+	claudePath := obsWriteCannedClaude(t, tmp, obsCanonicalModelAnswer)
+
+	bundle := NewDirBundle("testdata/sample-run")
+	obs := Observe(context.Background(), bundle, ObserveConfig{
+		RunID: "sample-run", Model: "claude-sonnet-5", ClaudePath: claudePath,
+		OAuthToken: "test-token", Timeout: time.Minute, Environ: os.Environ,
+		Source: SourceWorker,
+	})
+	if obs.FormatVersion != ObservationFormat2 {
+		t.Errorf("obs.FormatVersion = %q, want %q", obs.FormatVersion, ObservationFormat2)
+	}
+	if obs.Source != SourceWorker {
+		t.Errorf("obs.Source = %q, want %q", obs.Source, SourceWorker)
+	}
+}
+
+// TestObserve_StatusOk_SetsStoryOutcomeAndDerivedChecks pins §7.5: a
+// successfully parsed answer's story, outcome and checks.agree are stored
+// as the pipeline derives/carries them — never left over from format 1.
+func TestObserve_StatusOk_SetsStoryOutcomeAndDerivedChecks(t *testing.T) {
+	tmp := t.TempDir()
+	claudePath := obsWriteCannedClaude(t, tmp, obsCanonicalModelAnswer)
+
+	bundle := NewDirBundle("testdata/sample-run")
+	obs := Observe(context.Background(), bundle, ObserveConfig{
+		RunID: "sample-run", Model: "claude-sonnet-5", ClaudePath: claudePath,
+		OAuthToken: "test-token", Timeout: time.Minute, Environ: os.Environ,
+	})
+	if obs.Status != "ok" {
+		t.Fatalf("obs.Status = %q, want ok (obs.Error = %q)", obs.Status, obs.Error)
+	}
+	if obs.Story == nil || obs.Story.Ending != EndingFinished {
+		t.Errorf("obs.Story = %+v, want the parsed story with ending %q", obs.Story, EndingFinished)
+	}
+	if obs.Outcome != OutcomeProblem {
+		t.Errorf("obs.Outcome = %q, want %q (one finding)", obs.Outcome, OutcomeProblem)
+	}
+	if !obs.Checks.Agree {
+		t.Errorf("obs.Checks.Agree = %v, want true (judged check correct, no evaluator finding)", obs.Checks.Agree)
+	}
+	if len(obs.Checks.Judged) != 1 || obs.Checks.Judged[0].ID != "liveness/api/marker" {
+		t.Errorf("obs.Checks.Judged = %+v, want the one judged check kept", obs.Checks.Judged)
+	}
+	if len(obs.Findings) != 1 || obs.Findings[0].Surface != "tool:zerops_import" || obs.Findings[0].Anchor == "" {
+		t.Errorf("obs.Findings = %+v, want the surface/anchor kept (both verified against the run)", obs.Findings)
 	}
 }
 

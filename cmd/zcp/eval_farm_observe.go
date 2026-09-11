@@ -94,6 +94,7 @@ func buildObservation(ctx context.Context, runDir, model, claudePath string) obs
 		Timeout:     observerTimeout,
 		Environ:     os.Environ,
 		SummaryJSON: readSummaryJSON(runDir),
+		Source:      observer.SourceLocal,
 	})
 }
 

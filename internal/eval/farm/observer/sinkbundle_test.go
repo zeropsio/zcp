@@ -130,9 +130,10 @@ const (
 	// sinkbundleCleanModelAnswer has no findings — a clean run's answer is
 	// valid per the prompt's own rule ("A clean run has no findings").
 	sinkbundleCleanModelAnswer = `{
-		"headline": "Agent inspected the service and made no changes.",
+		"headline": "OK — agent inspected the service and made no changes.",
+		"story": {"task": "diagnose the service", "expected": "investigate without changing anything", "did": "looked at it, changed nothing", "stuck": null, "ending": "finished"},
 		"goal": {"reached": "no", "why": "the service never became healthy"},
-		"checks": {"agree": true, "why": ""},
+		"checks": {"judged": []},
 		"findings": [],
 		"selfReview": {"accurate": "yes", "note": ""}
 	}`
