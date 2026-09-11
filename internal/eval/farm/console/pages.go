@@ -59,6 +59,9 @@ var pageFuncs = template.FuncMap{
 		if len(steps) == 0 {
 			return "/r/" + runID
 		}
+		if steps[0] == 0 {
+			return "/r/" + runID + "#failed-checks"
+		}
 		return fmt.Sprintf("/r/%s#s%d", runID, steps[0])
 	},
 }

@@ -165,6 +165,8 @@ pre, code {
   font-size: 0.8125rem;
 }
 
+code { overflow-wrap: anywhere; }
+
 pre {
   background: var(--bg-raised);
   border: 1px solid var(--border);
@@ -191,7 +193,7 @@ form.observe-form {
   margin: 8px 0;
 }
 
-select, button, input[type="checkbox"] {
+select, button, input[type="checkbox"], input[type="text"] {
   padding: 4px 6px;
   border: 1px solid var(--border);
   border-radius: 4px;

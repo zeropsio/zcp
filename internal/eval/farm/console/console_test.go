@@ -246,3 +246,26 @@ func testServer(t *testing.T) (*Server, *fakeStore, *[]time.Duration) {
 	}
 	return NewServer(cfg), store, &sleeps
 }
+
+// TestFileCache_EvictsOldestPastByteBudget pins the files/ passthrough
+// cache's bound: a long-lived console must not grow without limit, so past
+// the byte budget the oldest entries go first.
+func TestFileCache_EvictsOldestPastByteBudget(t *testing.T) {
+	t.Parallel()
+	c := newFileCacheWithBudget(10)
+	c.set("a", []byte("1234"))
+	c.set("b", []byte("5678"))
+	c.set("c", []byte("90ab")) // 12 bytes > 10: "a" must go
+	if _, ok := c.get("a"); ok {
+		t.Error(`"a" still cached past the byte budget, want evicted first`)
+	}
+	for _, k := range []string{"b", "c"} {
+		if _, ok := c.get(k); !ok {
+			t.Errorf("%q evicted, want kept", k)
+		}
+	}
+	c.set("big", make([]byte, 11)) // larger than the whole budget: never cached
+	if _, ok := c.get("big"); ok {
+		t.Error("an entry larger than the whole budget was cached")
+	}
+}

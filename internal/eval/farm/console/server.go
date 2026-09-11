@@ -205,13 +205,23 @@ func writeJSON(w http.ResponseWriter, v any) {
 // populated for a run whose done.json exists — nothing under
 // runs/<runId>/{started.json, done.json, results/, capture/} is written
 // after done.json (§7.6 FM-47), so a cached entry never goes stale.
+// The cache holds at most budget bytes; past it the oldest entries go first,
+// so a long-lived console never grows without limit.
 type fileCache struct {
 	mu      sync.Mutex
 	entries map[string][]byte
+	order   []string
+	size    int
+	budget  int
 }
 
-func newFileCache() *fileCache {
-	return &fileCache{entries: make(map[string][]byte)}
+// fileCacheBudget bounds the files/ passthrough cache.
+const fileCacheBudget = 64 << 20
+
+func newFileCache() *fileCache { return newFileCacheWithBudget(fileCacheBudget) }
+
+func newFileCacheWithBudget(budget int) *fileCache {
+	return &fileCache{entries: make(map[string][]byte), budget: budget}
 }
 
 func (c *fileCache) get(key string) ([]byte, bool) {
@@ -222,7 +232,22 @@ func (c *fileCache) get(key string) ([]byte, bool) {
 }
 
 func (c *fileCache) set(key string, data []byte) {
+	if len(data) > c.budget {
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if old, ok := c.entries[key]; ok {
+		c.size -= len(old)
+	} else {
+		c.order = append(c.order, key)
+	}
 	c.entries[key] = data
+	c.size += len(data)
+	for c.size > c.budget && len(c.order) > 0 {
+		oldest := c.order[0]
+		c.order = c.order[1:]
+		c.size -= len(c.entries[oldest])
+		delete(c.entries, oldest)
+	}
 }

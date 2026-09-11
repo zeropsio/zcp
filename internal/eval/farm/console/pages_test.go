@@ -399,3 +399,33 @@ func TestPages_StylesheetLinksResolve(t *testing.T) {
 		})
 	}
 }
+
+// TestPages_RunInPageLinksResolve pins §8.3 + FM-46: every in-page link on
+// the run page lands on an element — evidence cites step 0 for a
+// deterministic check row, so the failed-checks section must answer #s0.
+func TestPages_RunInPageLinksResolve(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	seedBatch(t, store, "il1", "claude-sonnet-5", []runFixture{
+		{runID: "il1-scn", scenario: "scn", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "failed", done: true,
+			checks: [][5]string{{"decision/x", "failed", "never called", "called", "mcpstream"}}},
+	}, true, map[string]string{"il1-scn": "failed"})
+	obs := fixtureObservation("il1-scn")
+	obs.Findings[0].Evidence = append(obs.Findings[0].Evidence, observer.Evidence{Step: 0, Quote: "decision/x failed", Verified: true})
+	store.putJSON(t, "runs/il1-scn/observer/"+obs.ObsID+".json", obs)
+
+	page := doGET(t, h, "/r/il1-scn")
+	if page.Code != http.StatusOK {
+		t.Fatalf("GET /r/il1-scn: got %d, want 200", page.Code)
+	}
+	body := page.Body.String()
+	hrefs := regexp.MustCompile(`href="#([^"]+)"`).FindAllStringSubmatch(body, -1)
+	if len(hrefs) == 0 {
+		t.Fatal("run page has no in-page links")
+	}
+	for _, m := range hrefs {
+		if !strings.Contains(body, `id="`+m[1]+`"`) {
+			t.Errorf("in-page link #%s has no element with that id", m[1])
+		}
+	}
+}

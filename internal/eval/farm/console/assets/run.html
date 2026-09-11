@@ -39,7 +39,7 @@
 <p><span class="{{severityClass .Severity}}">{{.Severity}}</span> · {{.Owner}} · <strong>{{.Title}}</strong></p>
 <p>{{.What}}</p>
 <ul class="meta-list">
-{{range .Evidence}}<li>evidence: <a href="#{{stepAnchor .Step}}">#{{.Step}}</a> <span class="evidence-mark {{if .Verified}}evidence-verified{{else}}evidence-unverified{{end}}">{{verifiedMark .Verified}}</span> — “{{.Quote}}”</li>
+{{range .Evidence}}<li>evidence: {{if eq .Step 0}}<a href="#failed-checks">#0</a>{{else if and (gt .Step 0) (le .Step (len $.Steps))}}<a href="#{{stepAnchor .Step}}">#{{.Step}}</a>{{else}}#{{.Step}}{{end}} <span class="evidence-mark {{if .Verified}}evidence-verified{{else}}evidence-unverified{{end}}">{{verifiedMark .Verified}}</span> — “{{.Quote}}”</li>
 {{end}}
 </ul>
 <p>look at: {{.LookAt}}</p>
