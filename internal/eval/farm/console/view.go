@@ -35,10 +35,14 @@ type FailedCheck struct {
 	Source   string `json:"source"`
 }
 
+// verdictRunning is a run's Verdict while it has started.json but no
+// done.json yet — run state comes from the bucket alone (§8.1).
+const verdictRunning = "running"
+
 // RunRow is the console's fully-resolved read model for one run — the
 // superset GET /api/runs.md (light) and GET /api/runs/<runId>.md (full)
-// both narrow down from (§8.4 FM-52). Verdict is "running" for a run with
-// no done.json (§7.5, §8.4: "no verdict"); ObserverState is one of
+// both narrow down from (§8.4 FM-52). Verdict is verdictRunning for a run
+// with no done.json (§7.5, §8.4: "no verdict"); ObserverState is one of
 // observed|observing|not observed|observer off|observer disabled (§8.4) —
 // S3 never produces "observing" (that needs S5's in-memory worker queue).
 type RunRow struct {
@@ -181,7 +185,7 @@ func buildRunRow(ctx context.Context, store observer.ObjectStore, consoleObserve
 	}
 	row.DoneExists = doneExists
 	if !doneExists {
-		row.Verdict = "running"
+		row.Verdict = verdictRunning
 		row.ObserverState = observerStateNotObserved
 		return row, nil
 	}

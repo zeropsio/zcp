@@ -118,8 +118,14 @@ func (q *Queue) wkRun(ctx context.Context, job Job) {
 	q.mu.Unlock()
 }
 
-// State reports runID's queue state: "queued", "running", or "" when it is
-// neither.
+// Queue states reported by Queue.State.
+const (
+	JobQueued  = "queued"
+	JobRunning = "running"
+)
+
+// State reports runID's queue state: JobQueued, JobRunning, or "" when it
+// is neither.
 func (q *Queue) State(runID string) string {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -128,9 +134,9 @@ func (q *Queue) State(runID string) string {
 		return ""
 	}
 	if st.running {
-		return "running"
+		return JobRunning
 	}
-	return "queued"
+	return JobQueued
 }
 
 // BatchBusy reports whether any run of batch is queued or running (§8.5:
