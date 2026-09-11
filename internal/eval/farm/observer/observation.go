@@ -137,7 +137,29 @@ func ParseAndValidate(raw string) (ModelAnswer, bool) {
 	if !validateAnswer(ans) {
 		return ModelAnswer{}, false
 	}
-	return ans, true
+	return reconcileChecks(ans), true
+}
+
+// ownerEvaluator is the finding owner that says a deterministic check is
+// wrong or missing (§7.5).
+const ownerEvaluator = "evaluator"
+
+// reconcileChecks keeps checks.agree consistent with the findings (§7.5): an
+// observation whose own finding says a check is wrong or missing cannot also
+// say the checks match the run. The model's why is kept; an empty one names
+// the first evaluator finding.
+func reconcileChecks(a ModelAnswer) ModelAnswer {
+	for _, f := range a.Findings {
+		if f.Owner != ownerEvaluator {
+			continue
+		}
+		a.Checks.Agree = false
+		if strings.TrimSpace(a.Checks.Why) == "" {
+			a.Checks.Why = "A deterministic check is wrong or missing: " + f.Title
+		}
+		return a
+	}
+	return a
 }
 
 func validateAnswer(a ModelAnswer) bool {

@@ -1,6 +1,8 @@
 package observer
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -180,5 +182,43 @@ func TestObservation_ObsIDHasMillisecondsAndModel(t *testing.T) {
 	want := "20260102T030405006Z-claude-sonnet-5"
 	if got != want {
 		t.Errorf("ObsID = %q, want %q", got, want)
+	}
+}
+
+// TestObservation_EvaluatorFindingForcesChecksDisagree pins §7.5: an
+// observation cannot say the deterministic checks match the run while one of
+// its own findings says a check is wrong or missing (owner evaluator) — the
+// judge caught exactly that contradiction in a live observation.
+func TestObservation_EvaluatorFindingForcesChecksDisagree(t *testing.T) {
+	t.Parallel()
+	answer := func(agree bool, why string, owners ...string) string {
+		fs := make([]string, 0, len(owners))
+		for i, o := range owners {
+			fs = append(fs, fmt.Sprintf(`{"severity":"medium","owner":%q,"title":"finding %d","what":"w","evidence":[{"step":1,"quote":"q"}],"lookAt":"l","fix":""}`, o, i))
+		}
+		return fmt.Sprintf(`{"headline":"h","goal":{"reached":"yes","why":"y"},"checks":{"agree":%t,"why":%q},"findings":[%s],"selfReview":{"accurate":"yes","note":""}}`,
+			agree, why, strings.Join(fs, ","))
+	}
+	tests := []struct {
+		name      string
+		raw       string
+		wantAgree bool
+		wantWhy   string
+	}{
+		{"evaluator finding flips agree", answer(true, "", "agent", "evaluator"), false, "A deterministic check is wrong or missing: finding 1"},
+		{"model's own why is kept", answer(true, "adopt stamps are never checked", "evaluator"), false, "adopt stamps are never checked"},
+		{"no evaluator finding keeps agree", answer(true, "", "zcp-tool"), true, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ans, ok := ParseAndValidate(tc.raw)
+			if !ok {
+				t.Fatalf("ParseAndValidate rejected a valid answer: %s", tc.raw)
+			}
+			if ans.Checks.Agree != tc.wantAgree || ans.Checks.Why != tc.wantWhy {
+				t.Errorf("checks = {agree:%t why:%q}, want {agree:%t why:%q}", ans.Checks.Agree, ans.Checks.Why, tc.wantAgree, tc.wantWhy)
+			}
+		})
 	}
 }

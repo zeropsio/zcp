@@ -763,7 +763,10 @@ The model's answer is the first top-level JSON object in its final text.
 `status` is `ok` when it parses and validates (enums as above, at most 5
 findings, each with at least one evidence entry), `unparsed` when it does not
 (`raw` keeps the answer, capped at 20,000 chars), `error` when the call failed
-(`error` says why). `checks.verdict` is the run's verdict as the farm
+(`error` says why). `checks.agree` is forced to `false` when any finding has owner
+`evaluator` (an observation cannot both flag a check as wrong or missing and
+agree with the checks); an empty `checks.why` then names that finding.
+`checks.verdict` is the run's verdict as the farm
 reports it, never the model's: the `result` of the run's row in
 `batches/<batch>/summary.json` when that summary exists, else
 `meta.json.task.result` (spec-testing-architecture §10.1). The local verb
