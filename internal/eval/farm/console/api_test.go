@@ -1348,8 +1348,11 @@ func firstLine(s string) string {
 // table — it's a /terms-only page fixture); runs.md's legend drops
 // "Disputed"/"Agent cost" (its line never prints either) and defines
 // "Outcome"/"Findings" (which it does); problems.md defines "Hit" and
-// "Status" (both printed on every problem line); findings.md drops
-// "Surface"/"Anchor" (its line never prints either, unlike the JSON twin).
+// "Status" (both printed on every problem line). findings.md's own
+// Surface/Anchor legend coverage is pinned separately, by
+// TestAPI_FindingsMDRowsCarryEverySpecField, once its row grew to print
+// them (a follow-up to this test's original round-1 premise that it
+// didn't).
 func TestAPI_LegendsInlineVerdictAndDropUnprintedTerms(t *testing.T) {
 	srv, store, _ := testServer(t)
 	h := srv.Handler()
@@ -1383,11 +1386,6 @@ func TestAPI_LegendsInlineVerdictAndDropUnprintedTerms(t *testing.T) {
 	problemsLegend := firstLine(doGET(t, h, "/api/problems.md").Body.String())
 	if !strings.Contains(problemsLegend, "Hit = ") || !strings.Contains(problemsLegend, "Status = ") {
 		t.Errorf("problems.md legend must define Hit and Status, which its line prints:\n%s", problemsLegend)
-	}
-
-	findingsLegend := firstLine(doGET(t, h, "/api/findings.md").Body.String())
-	if strings.Contains(findingsLegend, "Surface = ") || strings.Contains(findingsLegend, "Anchor = ") {
-		t.Errorf("findings.md legend still defines Surface/Anchor, which its line never prints:\n%s", findingsLegend)
 	}
 }
 
@@ -1426,5 +1424,64 @@ func TestAPI_DigestCountsFailedAssessmentAsUnassessed(t *testing.T) {
 				t.Errorf("runs.md line for the unparsed run must fall back to its observer state, not a blank headline:\n%s", line)
 			}
 		}
+	}
+}
+
+// TestAPI_FindingsMDRowsCarryEverySpecField pins the follow-up to round 1's
+// legend trim: §8.4 lists "batch, scenario, build, run id, started,
+// severity, cause, surface, anchor, title, what, steps, quotes found n/m,
+// where to look, fix" for GET /api/findings.md, but the row printed only
+// severity/cause/title/batch/runId/started/steps/quotes/what — scenario,
+// build, surface, anchor, look-at and fix never reached the page even
+// though FindingItem already carried them. Compact: one line plus
+// indented "look at:"/"fix:" lines. The legend gets Surface/Anchor back
+// now that the row prints them.
+func TestAPI_FindingsMDRowsCarryEverySpecField(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "fs1", "claude-sonnet-5", []runFixture{
+		{runID: "fs1-scena", scenario: "scena", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, false, nil)
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2,
+		RunID:         "fs1-scena",
+		ObsID:         "20260911T120000000Z-claude-sonnet-5",
+		Model:         "claude-sonnet-5",
+		CreatedAt:     now,
+		Status:        "ok",
+		Outcome:       "problem",
+		Headline:      "found something",
+		Story:         &observer.Story{Task: "t", Expected: "e", Did: "d", Ending: "finished"},
+		Goal:          observer.Goal{Reached: "yes", Why: "why"},
+		Checks:        observer.Checks{Verdict: "passed", Agree: true},
+		Findings: []observer.Finding{{
+			Severity: "high", Owner: "zcp-tool", Surface: "tool:zerops_deploy/deploy",
+			Anchor: "source mount missing", Title: "Deploy preflight missing mount",
+			What:     "the preflight check never ran",
+			Evidence: []observer.Evidence{{Step: 3, Quote: "discovered ok", Verified: true}},
+			LookAt:   "internal/ops/deploy.go", Fix: "run the preflight before the upload step",
+		}},
+		SelfReview: observer.SelfReview{Accurate: "yes"},
+	})
+
+	body := doGET(t, h, "/api/findings.md").Body.String()
+	for _, want := range []string{
+		"scena",                                         // scenario
+		"build cand-sha",                                // build label
+		"surface tool:zerops_deploy/deploy",             // surface
+		`anchor "source mount missing"`,                 // anchor
+		"look at: internal/ops/deploy.go",               // where to look, own indented line
+		"fix: run the preflight before the upload step", // fix, own indented line
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("findings.md missing %q:\n%s", want, body)
+		}
+	}
+
+	legend := firstLine(body)
+	if !strings.Contains(legend, "Surface = ") || !strings.Contains(legend, "Anchor = ") {
+		t.Errorf("findings.md legend must define Surface and Anchor again, now that the row prints them:\n%s", legend)
 	}
 }

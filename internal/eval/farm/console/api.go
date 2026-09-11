@@ -1535,13 +1535,29 @@ func findingItemFromRow(f FindingRow) FindingItem {
 	}
 }
 
+// renderFindingsMD renders GET /api/findings.md — §8.4's full field list
+// ("batch, scenario, build, run id, started, severity, cause, surface,
+// anchor, title, what, steps, quotes found n/m, where to look, fix"),
+// compact: one line (surface/anchor appended only when the finding carries
+// one) plus indented "look at:"/"fix:" lines.
 func renderFindingsMD(items []FindingItem) string {
 	var b strings.Builder
-	b.WriteString(legendLine("Finding", "Severity", "Cause", "Quote found"))
+	b.WriteString(legendLine("Finding", "Severity", "Cause", "Surface", "Anchor", "Quote found"))
 	for _, it := range items {
-		fmt.Fprintf(&b, "- [%s · %s] %s — %s (%s, started %s, steps %s) — quotes %d/%d — %s\n",
-			it.Severity, it.Cause, it.Title, it.Batch, it.RunID, it.StartedAt.UTC().Format(time.RFC3339),
+		fmt.Fprintf(&b, "- [%s · %s] %s", it.Severity, it.Cause, it.Title)
+		if it.Surface != "" {
+			fmt.Fprintf(&b, " — surface %s", it.Surface)
+		}
+		if it.Anchor != "" {
+			fmt.Fprintf(&b, " — anchor %q", it.Anchor)
+		}
+		fmt.Fprintf(&b, " — %s (%s, %s, %s, started %s, steps %s) — quotes %d/%d — %s\n",
+			it.Batch, it.Scenario, it.RunID, it.Build, it.StartedAt.UTC().Format(time.RFC3339),
 			formatStepRanges(it.Steps), it.QuotesVerified, it.QuotesTotal, it.What)
+		fmt.Fprintf(&b, "  look at: %s\n", it.LookAt)
+		if it.Fix != "" {
+			fmt.Fprintf(&b, "  fix: %s\n", it.Fix)
+		}
 	}
 	return b.String()
 }
