@@ -52,7 +52,7 @@ func Observe(ctx context.Context, bundle Bundle, cfg ObserveConfig) Observation 
 	}
 
 	fail := func(err error) Observation {
-		obs.Status = "error"
+		obs.Status = statusError
 		obs.Error = err.Error()
 		return obs
 	}

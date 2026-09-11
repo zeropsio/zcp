@@ -14,6 +14,11 @@ import (
 // document (§7.5).
 const ObservationFormat1 = "zcp-farm-observation-1"
 
+// statusError is Observation.Status's "error" value (§7.5) — a named
+// constant, rather than a repeated literal, since it now appears at enough
+// call sites (production and test) to trip goconst.
+const statusError = "error"
+
 // Observation is the stored observation document (§7.5):
 // runs/<runId>/observer/<obsId>.json.
 type Observation struct {
@@ -230,8 +235,14 @@ func verifyQuote(steps []Step, checksBody string, stepNum int, quote string) boo
 
 // quoteMatches is the substring check verifyQuote applies to one (full,
 // quote) pair: whitespace-collapsed as-is, or — failing that —
-// whitespace-collapsed after JSON-string-escape-decoding both sides.
+// whitespace-collapsed after JSON-string-escape-decoding both sides. An
+// empty or whitespace-only quote is never verified: it is trivially a
+// substring of any text, so without this check a model could satisfy the
+// quote check by citing nothing at all.
 func quoteMatches(full, quote string) bool {
+	if collapseWhitespace(quote) == "" {
+		return false
+	}
 	if strings.Contains(collapseWhitespace(full), collapseWhitespace(quote)) {
 		return true
 	}

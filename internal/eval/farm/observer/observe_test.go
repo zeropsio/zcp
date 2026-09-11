@@ -178,8 +178,8 @@ func TestObserve_ClaudeIsError_StatusErrorNeverUnparsed(t *testing.T) {
 				Environ:    os.Environ,
 			})
 
-			if obs.Status != "error" {
-				t.Fatalf("obs.Status = %q, want %q (obs.Error = %q, obs.Raw = %q)", obs.Status, "error", obs.Error, obs.Raw)
+			if obs.Status != statusError {
+				t.Fatalf("obs.Status = %q, want %q (obs.Error = %q, obs.Raw = %q)", obs.Status, statusError, obs.Error, obs.Raw)
 			}
 			if !strings.Contains(obs.Error, "Invalid API key") {
 				t.Errorf("obs.Error = %q, want it to contain %q", obs.Error, "Invalid API key")

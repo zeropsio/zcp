@@ -115,7 +115,7 @@ func TestRender_Golden(t *testing.T) {
 		{
 			name: "error",
 			obs: Observation{
-				Model: "claude-sonnet-5", CreatedAt: goldenCreatedAt, Status: "error",
+				Model: "claude-sonnet-5", CreatedAt: goldenCreatedAt, Status: statusError,
 				Error: "observer timed out after 5m0s",
 			},
 			want: "Observer · claude-sonnet-5 · 2026-09-11T10:56Z · 0 of 0 quotes unverified\n" +

@@ -118,6 +118,8 @@ func TestObservation_QuoteCheck(t *testing.T) {
 		{"decoded \\n in the step matches a plain space in the quote", 3, "line1 line2", true},
 		{"step 0 quote present in CHECKS is verified", 0, `expected="body contains python"`, true},
 		{"step 0 quote absent from CHECKS is unverified", 0, "totally unrelated text", false},
+		{"empty quote is never verified", 1, "", false},
+		{"whitespace-only quote is never verified", 1, "   \n\t", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

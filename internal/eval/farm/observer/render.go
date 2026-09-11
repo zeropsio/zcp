@@ -25,7 +25,7 @@ func Render(obs Observation) string {
 		b.WriteString(firstN(obs.Raw, unparsedRawCap))
 		b.WriteString("\n")
 		return b.String()
-	case "error":
+	case statusError:
 		fmt.Fprintf(&b, "Observer failed: %s\n", obs.Error)
 		return b.String()
 	}
