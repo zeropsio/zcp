@@ -326,6 +326,52 @@ func TestPages_ProblemsOmitsSurfaceChipWhenEmpty(t *testing.T) {
 	}
 }
 
+// TestPages_SortChipsCarryOwnClassForNarrowOnlyCSS pins item 10 (FIX3): the
+// sort-chip row (added because a stacked table.stack hides its thead on
+// phones) carries its own class distinct from an ordinary filter-row, so
+// app.css can hide it above 640px — where the real, sortable <th> headers
+// already do the same job — without touching any other filter-row.
+func TestPages_SortChipsCarryOwnClassForNarrowOnlyCSS(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	seedTwoDistinctProblems(t, store, fixedNow(t)())
+
+	body := doGET(t, h, "/problems").Body.String()
+	if !strings.Contains(body, `<div class="filter-row sort-row">`) {
+		t.Errorf("sort chip row is missing its own sort-row class:\n%s", body)
+	}
+}
+
+// TestAppCSS_SortRowHiddenAboveNarrowMarkerReadableProblemsNoWrap pins item
+// 10 (FIX3)'s three CSS-only fixes, read straight off the served
+// stylesheet (there is no browser here to render a media query against):
+// the sort-chip row is hidden above 640px (the sortable column headers
+// already cover that width), a sort marker inside an active (accent-filled)
+// filter chip is readable (color: inherit, not the low-contrast --fg-dim
+// it would otherwise inherit), and a /problems row's dates/totals line
+// never wraps at that same width.
+func TestAppCSS_SortRowHiddenAboveNarrowMarkerReadableProblemsNoWrap(t *testing.T) {
+	srv, _, _ := testServer(t)
+	h := srv.Handler()
+
+	body := doGET(t, h, "/static/app.css").Body.String()
+	if !strings.Contains(body, "@media (min-width: 641px)") {
+		t.Fatalf("app.css missing a min-width:641px rule:\n%s", body)
+	}
+	if !strings.Contains(body, ".sort-row { display: none; }") {
+		t.Errorf("app.css does not hide .sort-row above 640px:\n%s", body)
+	}
+	if !strings.Contains(body, ".filter.on .sort-marker { color: inherit; }") {
+		t.Errorf("app.css does not make an active chip's sort-marker readable:\n%s", body)
+	}
+	for _, label := range []string{"Last seen", "First seen", "Runs hit"} {
+		want := `table.stack td[data-label="` + label + `"]`
+		if !strings.Contains(body, want) {
+			t.Errorf("app.css missing a no-wrap rule for %q:\n%s", want, body)
+		}
+	}
+}
+
 // TestPages_ProblemsSortChipsAboveStackedTable pins item 15 (round-1
 // follow-up): /problems renders its sort options as a chip row above the
 // table, like /findings already does.
