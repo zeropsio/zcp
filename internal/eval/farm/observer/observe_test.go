@@ -187,3 +187,30 @@ func TestObserve_ClaudeIsError_StatusErrorNeverUnparsed(t *testing.T) {
 		})
 	}
 }
+
+// TestObserve_UnparsedAnswer_StoresRawUpTo20000Chars pins §7.5: raw keeps
+// the unparsed answer's text capped at 20,000 chars, not render.go's
+// separate 2,000-char display cap — a 6,000-char unparsed answer must be
+// stored whole.
+func TestObserve_UnparsedAnswer_StoresRawUpTo20000Chars(t *testing.T) {
+	tmp := t.TempDir()
+	unparsedText := strings.Repeat("x", 6000) // not JSON: never parses as a ModelAnswer
+	claudePath := obsWriteCannedClaude(t, tmp, unparsedText)
+
+	bundle := NewDirBundle("testdata/sample-run")
+	obs := Observe(context.Background(), bundle, ObserveConfig{
+		RunID:      "sample-run",
+		Model:      "claude-sonnet-5",
+		ClaudePath: claudePath,
+		OAuthToken: "test-token",
+		Timeout:    time.Minute,
+		Environ:    os.Environ,
+	})
+
+	if obs.Status != statusUnparsed {
+		t.Fatalf("obs.Status = %q, want %q (obs.Error = %q)", obs.Status, statusUnparsed, obs.Error)
+	}
+	if len(obs.Raw) != 6000 {
+		t.Errorf("len(obs.Raw) = %d, want 6000 (the whole answer, not truncated to render's 2,000-char display cap)", len(obs.Raw))
+	}
+}

@@ -10,6 +10,13 @@ import (
 	"github.com/zeropsio/zcp/internal/eval"
 )
 
+// unparsedRawStoreCap is how much of an unparsed answer's raw text is kept
+// in the stored observation document (§7.5: "raw keeps the answer, capped
+// at 20,000 chars"). render.go's unparsedRawDisplayCap is a separate,
+// smaller cap on how much of that stored text a rendering shows — never
+// the other way around.
+const unparsedRawStoreCap = 20000
+
 // ObserveConfig carries every input Observe needs beyond the bundle itself
 // (§7.2-§7.5). Environ and Now default to os.Environ and time.Now
 // respectively when nil is not acceptable to the caller — Observe itself
@@ -130,8 +137,8 @@ func Observe(ctx context.Context, bundle Bundle, cfg ObserveConfig) Observation 
 
 	ans, ok := ParseAndValidate(runResult.ResultText)
 	if !ok {
-		obs.Status = "unparsed"
-		obs.Raw = firstN(runResult.ResultText, unparsedRawCap)
+		obs.Status = statusUnparsed
+		obs.Raw = firstN(runResult.ResultText, unparsedRawStoreCap)
 		return obs
 	}
 

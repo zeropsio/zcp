@@ -105,7 +105,7 @@ func TestRender_Golden(t *testing.T) {
 		{
 			name: "unparsed",
 			obs: Observation{
-				Model: "claude-sonnet-5", CreatedAt: goldenCreatedAt, Status: "unparsed",
+				Model: "claude-sonnet-5", CreatedAt: goldenCreatedAt, Status: statusUnparsed,
 				Raw: "the agent did fine overall, nothing structured to report",
 			},
 			want: "Observer · claude-sonnet-5 · 2026-09-11T10:56Z · 0 of 0 quotes unverified\n" +

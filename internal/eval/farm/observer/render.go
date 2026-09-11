@@ -5,9 +5,12 @@ import (
 	"strings"
 )
 
-// unparsedRawCap is how much of an unparsed answer's raw text render shows
-// (§7.5: "the first 2,000 chars of raw").
-const unparsedRawCap = 2000
+// unparsedRawDisplayCap is how much of an unparsed answer's raw text a
+// rendering shows — Render's own display cap, distinct from (and much
+// smaller than) observe.go's unparsedRawStoreCap, which governs how much
+// of that text the stored observation document keeps in the first place
+// (§7.5).
+const unparsedRawDisplayCap = 2000
 
 // Render renders an observation as stable plain text (§7.5), reused by the
 // console's markdown API. Every surface that shows an observation shows its
@@ -20,9 +23,9 @@ func Render(obs Observation) string {
 		obs.Model, obs.CreatedAt.UTC().Format("2006-01-02T15:04Z"), unverified, total)
 
 	switch obs.Status {
-	case "unparsed":
+	case statusUnparsed:
 		b.WriteString("Observer answer could not be parsed\n")
-		b.WriteString(firstN(obs.Raw, unparsedRawCap))
+		b.WriteString(firstN(obs.Raw, unparsedRawDisplayCap))
 		b.WriteString("\n")
 		return b.String()
 	case statusError:

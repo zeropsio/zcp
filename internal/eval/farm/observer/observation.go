@@ -14,10 +14,15 @@ import (
 // document (§7.5).
 const ObservationFormat1 = "zcp-farm-observation-1"
 
-// statusError is Observation.Status's "error" value (§7.5) — a named
-// constant, rather than a repeated literal, since it now appears at enough
-// call sites (production and test) to trip goconst.
-const statusError = "error"
+// statusError and statusUnparsed are two of Observation.Status's three
+// values (§7.5; the third, "ok", is exempt from this by being two
+// characters long) — named constants, rather than repeated literals, since
+// each now appears at enough call sites (production and test) to trip
+// goconst.
+const (
+	statusError    = "error"
+	statusUnparsed = "unparsed"
+)
 
 // Observation is the stored observation document (§7.5):
 // runs/<runId>/observer/<obsId>.json.
