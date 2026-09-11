@@ -157,7 +157,9 @@ func TestFarmObserve_WritesObservationAndPrintsRendering(t *testing.T) {
 	if !strings.Contains(stdout, "Agent called the forbidden override on zerops_import") {
 		t.Errorf("stdout = %q, want the rendered headline", stdout)
 	}
-	if !strings.Contains(stdout, "0 of 1 quotes unverified") {
+	// render.go's header wording (FIX2.md round 2): "quotes found N/M" (N
+	// verified), not "N of M quotes unverified".
+	if !strings.Contains(stdout, "quotes found 1/1") {
 		t.Errorf("stdout = %q, want the evidence quote counted as verified", stdout)
 	}
 

@@ -32,6 +32,8 @@ Rules:
 - Write headline, what, story and fix for a reader who has never seen ZCP's code. Keep identifiers — field names, error codes, check ids, file names — in lookAt/anchor; in the other fields say what the thing does in plain words.
 - goal.why must not contradict any finding; before you answer, re-read it against every finding's evidence.
 - Keep every finding the record supports, even when the self-review mentions it too.
+- Never say a ZCP field or option is missing from ZCP's design — you cannot verify that from one run's record, and a field can exist even when this run's own plan or output happens to leave it empty or omit it (e.g. `stageType`: absent from one run's plan is not the same as absent from the schema). Describe only what the record actually shows: the field/value this run's output does or doesn't carry, never a claim about what ZCP does or doesn't support.
+- Never put owner's enum value in prose. A headline, what, or fix must never read like "zcp-guidance: …" or "zcp-tool: …" — owner is its own field; say what happened in plain words instead.
 
 story is the session told in five short fields:
 - task: what the user asked, in one sentence.

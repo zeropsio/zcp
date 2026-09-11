@@ -14,13 +14,17 @@ const unparsedRawDisplayCap = 2000
 
 // Render renders an observation as stable plain text (§7.5), reused by the
 // console's markdown API. Every surface that shows an observation shows its
-// unverified-quote count (§7.5 FM-46), which is why the header line always
-// carries it, regardless of status.
+// quote-found count (§7.5 FM-46; §8.8: "quote found — the quoted words
+// occur in the cited step; it does not prove the finding right"), which is
+// why the header line always carries it, regardless of status — worded as
+// "quotes found N/M" (N verified, M total), never "N unverified", matching
+// the run page and the agent API.
 func Render(obs Observation) string {
 	unverified, total := countQuotes(obs.Findings)
+	found := total - unverified
 	var b strings.Builder
-	fmt.Fprintf(&b, "Observer · %s · %s · %d of %d quotes unverified\n",
-		obs.Model, obs.CreatedAt.UTC().Format("2006-01-02T15:04Z"), unverified, total)
+	fmt.Fprintf(&b, "Observer · %s · %s · quotes found %d/%d\n",
+		obs.Model, obs.CreatedAt.UTC().Format("2006-01-02T15:04Z"), found, total)
 
 	switch obs.Status {
 	case statusUnparsed:
@@ -85,21 +89,25 @@ func renderStory(b *strings.Builder, s *Story) {
 	fmt.Fprintf(b, "Ending: %s\n", s.Ending)
 }
 
+// renderJudgedChecks matches the run page's "Verdict right" wording: one
+// line per judged check, "✓ correct <id>" / "✗ incorrect <id>", its why
+// appended when non-empty (the run page's own §8.3 item 5 rendering, not
+// in this package's write-set, uses the identical mark/verdict/id shape).
 func renderJudgedChecks(b *strings.Builder, judged []JudgedCheck) {
 	if len(judged) == 0 {
 		return
 	}
-	b.WriteString("Judged checks:\n")
+	b.WriteString("Verdict right:\n")
 	for _, j := range judged {
-		verdict := "correct"
+		mark, verdict := "✓", "correct"
 		if !j.Correct {
-			verdict = "incorrect"
+			mark, verdict = "✗", "incorrect"
 		}
 		if j.Why != "" {
-			fmt.Fprintf(b, "  %s: %s — %s\n", j.ID, verdict, j.Why)
+			fmt.Fprintf(b, "  %s %s %s — %s\n", mark, verdict, j.ID, j.Why)
 			continue
 		}
-		fmt.Fprintf(b, "  %s: %s\n", j.ID, verdict)
+		fmt.Fprintf(b, "  %s %s %s\n", mark, verdict, j.ID)
 	}
 }
 
