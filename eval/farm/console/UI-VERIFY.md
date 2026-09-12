@@ -57,14 +57,14 @@ Do not turn a fixture result into a deployed-console claim.
 
 | Pass | Width/theme/zoom | Required observations | Result |
 |---|---|---|---|
-| Route families | 1440 px, light, 100% | Login, Overview, Problems, Findings, Batch, Run, Terms and HTML error variants; one H1; value before record; no unexplained blanks | NOT RUN |
-| Narrow | 400 px, light, 100% | Navigation, filter controls, cards, tables, queue details, error actions and long identifiers remain usable without document-wide overflow | NOT RUN |
-| Dense | 768 px, light, 100% | `/problems?status=all&since=90d`, `/b/ui-states`, and the long run keep readable hierarchy and aligned numeric data | NOT RUN |
-| Dark | 1440 px and 400 px, dark | Representative Overview, Problems, Batch, Run, Login and error pages retain contrast, focus and written status meaning | NOT RUN |
-| Zoom | 1440 px at 200% | No clipped controls or hidden content; wide table/code regions scroll locally and remain keyboard focusable | NOT RUN |
-| Keyboard | 1440 px, light | Skip link, sidebar, filters, native disclosures, table/code scroll regions, action controls and sign-out have visible focus and logical order | NOT RUN |
-| Long/disclosure | 400 px and 1440 px | `ui-current-deploy` long steps wrap; empty thinking stays absent; Findings/Problems/Record disclosures work without JavaScript | NOT RUN |
-| Deep link | 1440 px, light | Problem → representative finding → cited step → finding return; filtered cited-step link clears only the blocking step filter; historical assessment returns to current | NOT RUN |
+| Route families | 1440 px, light, 100% | Login, Overview, Problems, Findings, Batch, Run, Terms and HTML error variants; one H1; value before record; no unexplained blanks | PASS (independent 21-route fixture pass plus root critical-route pass, 2026-09-12) |
+| Narrow | 400 px, light, 100% | Navigation, filter controls, cards, tables, queue details, error actions and long identifiers remain usable without document-wide overflow | PASS; body and main `scrollWidth == clientWidth == 400` |
+| Dense | 768 px, light, 100% | `/problems?status=all&since=90d`, `/b/ui-states`, and the long run keep readable hierarchy and aligned numeric data | PASS; batch metrics render as balanced 2+3 rows |
+| Dark | 1440 px and 400 px, dark | Representative Overview, Problems, Batch, Run, Login and error pages retain contrast, focus and written status meaning | PASS; lowest measured normal-text contrast 5.52:1 |
+| Zoom | 1440 px at 200% | No clipped controls or hidden content; wide table/code regions scroll locally and remain keyboard focusable | PASS; overflow confined to labelled table/code regions |
+| Keyboard | 1440 px, light | Skip link, sidebar, filters, native disclosures, table/code scroll regions, action controls and sign-out have visible focus and logical order | PASS; mobile focus order follows rendered navigation order |
+| Long/disclosure | 400 px and 1440 px | `ui-current-deploy` long steps wrap; empty thinking stays absent; Findings/Problems/Record disclosures work without JavaScript | PASS; literal disclosure indicators and native keyboard behavior verified |
+| Deep link | 1440 px, light | Problem → representative finding → cited step → finding return; filtered cited-step link clears only the blocking step filter; historical assessment returns to current | PASS |
 
 For the rejected-login view, open the manifest's `login-rejected` URL. Also
 submit any wrong value once and confirm the redirect reaches the same state,
@@ -84,7 +84,7 @@ At 200% zoom, verify the effective content width as well as text size.
 | Console package | `go test ./internal/eval/farm/console -count=1` | PASS (2026-09-12) |
 | Race | `go test -race ./internal/eval/farm/console -run '^TestUIFixtureServer$' -short -count=1` | PASS (2026-09-12) |
 | Full lint | `/tmp/zcp-tools/golangci-lint run ./...` | PASS, 0 issues (2026-09-12) |
-| Browser fixture matrix | Matrix above, using the emitted dynamic URLs | NOT RUN |
+| Browser fixture matrix | Matrix above, using the emitted dynamic URLs | PASS (independent full matrix and root critical-route pass, 2026-09-12) |
 | Deployed revision | Repeat critical auth/routes/warm reads against the named internal console | NOT RUN |
 
 S15 static and handler verification (2026-09-12):
@@ -94,7 +94,7 @@ S15 static and handler verification (2026-09-12):
 | HTML-only refresh preference | `TestPages_AutoRefreshPauseIsHTMLOnlyAndPreserved`; `TestActions_RefererPreservesAcceptedRefreshPreference` | PASS |
 | Stacked table semantics and disclosures | `TestPages_StackedTablesRetainAccessibleHeaders`; `TestPages_DisclosureSummariesContainNoNestedInteractiveControls` | PASS |
 | Sort names and mobile DOM order | `TestPages_SortControlsExposeCurrentAndNextDirection`; `TestAppCSS_MobileNavigationOrderMatchesDOM` | PASS |
-| Measured light tokens and vendor-resistant selectors | `TestAppCSS_LightInteractiveTextContrast` | PASS (static); computed-style recheck at 400/768/1440 pending root browser pass |
+| Measured light tokens and vendor-resistant selectors | `TestAppCSS_LightInteractiveTextContrast` | PASS (static and computed styles at 400/768/1440) |
 | Safe error boundary | `TestPages_HTMLStoreFailure_LogsCauseOnceAndShowsSafeContext` | PASS |
 | Visible assessment identity | `TestPages_RunObservationIDsAreVisibleAndUnambiguous` | PASS |
 
