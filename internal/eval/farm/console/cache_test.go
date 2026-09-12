@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -30,59 +31,116 @@ type mutableClock struct {
 }
 
 func TestFillRowsConcurrently_RowReadFailure_PreservesManifestRun(t *testing.T) {
-	ctx := context.Background()
-	store := newFakeStore()
-	now := fixedNow(t)()
-	seedBatch(t, store, "s2b", "claude-sonnet-5", []runFixture{
-		{runID: "s2b-good", scenario: "good", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
-		{runID: "s2b-bad", scenario: "bad", startedAt: now.Add(-time.Hour), durationS: "7s", costUsd: 0.2, taskResult: "failed", done: true},
-	}, true, map[string]string{"s2b-good": "passed", "s2b-bad": "failed"})
-	seedObservation(t, store, fixtureObservation("s2b-good"))
-	seedObservation(t, store, fixtureObservation("s2b-bad"))
-	manifest, err := loadManifest(ctx, store, "s2b")
-	if err != nil {
-		t.Fatalf("load manifest: %v", err)
+	t.Run("observer list failure", testS2bObserverFailure)
+	t.Run("results list failure", testS2bResultsFailure)
+	for _, filename := range []string{"task-prompt.txt", "transcript.jsonl"} {
+		t.Run("missing "+filename, func(t *testing.T) { testS2bMissingRequired(t, filename) })
 	}
+	t.Run("meta disappears after results discovery", testS2bMetaDisappears)
+	for _, tc := range []struct{ name, body string }{
+		{name: "malformed json", body: "{malformed"},
+		{name: "invalid duration", body: `{"duration":"not-a-duration","startedAt":"2026-09-11T12:00:00Z"}`},
+		{name: "invalid startedAt", body: `{"duration":"1s","startedAt":"not-a-timestamp"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) { testS2bMalformed(t, tc.body, tc.name == "malformed json") })
+	}
+}
 
+func testS2bObserverFailure(t *testing.T) {
+	ctx, store, manifest := seedS2bPair(t, "s2b")
 	rowsStore := &transientListStore{fakeStore: store, failPrefix: "runs/s2b-bad/observer/", failures: 1}
 	cache := newRunCache(fixedNow(t))
 	rows, err := batchWindowRowsWithManifest(ctx, rowsStore, false, "s2b", manifest, nil, cache, newSummaryCache(fixedNow(t)), nil)
-	if err != nil || len(rows) != 2 {
-		t.Fatalf("production row fill: rows=%d err=%v", len(rows), err)
+	if err != nil || len(rows) != 2 || rows[0].RunID != "s2b-good" || rows[1].RunID != "s2b-bad" {
+		t.Fatalf("rows=%+v err=%v", rows, err)
 	}
-	if rows[0].RunID != "s2b-good" || rows[1].RunID != "s2b-bad" {
-		t.Fatalf("rows = %+v, want manifest order", rows)
+	if rows[1].Verdict != farm.VerdictFailed || !assessmentWorkUnavailable(rows[1]) || rows[1].DoneExists || rows[1].Observation != nil {
+		t.Fatalf("fallback=%+v", rows[1])
 	}
-	bad := rows[1]
-	if bad.Verdict != farm.VerdictFailed || !assessmentWorkUnavailable(bad) || bad.DoneExists || bad.DurationSec != 0 || bad.CostKnown || bad.StepCount != 0 || bad.Observation != nil {
-		t.Fatalf("unavailable production fallback = %+v, want matching summary verdict and conservative fields", bad)
-	}
-
-	// The batch action uses the same production row builder. A transient
-	// observer read must be reported as unavailable, even with all=1.
 	actionStore := &transientListStore{fakeStore: store, failPrefix: "runs/s2b-bad/observer/", failures: 1}
-	q := NewQueue(func(context.Context, Job) error { return nil })
-	srv := NewServer(Config{Store: actionStore, Token: testToken, Now: fixedNow(t), Queue: q})
+	srv := NewServer(Config{Store: actionStore, Token: testToken, Now: fixedNow(t), Queue: NewQueue(func(context.Context, Job) error { return nil })})
 	rr := doBearerPOST(t, srv.Handler(), "/b/s2b/observe", url.Values{"model": {"claude-sonnet-5"}, "all": {"1"}})
 	if rr.Code != http.StatusAccepted || !strings.Contains(rr.Body.String(), `"reason":"assessment evidence unavailable"`) {
-		t.Fatalf("batch all=1 response: status=%d body=%s, want unavailable skip", rr.Code, rr.Body.String())
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-
-	// The failed read is not cached as a permanent failure: the same cache
-	// recovers the complete row once the transient store error is gone.
 	recovered, err := batchWindowRowsWithManifest(ctx, rowsStore, false, "s2b", manifest, nil, cache, newSummaryCache(fixedNow(t)), nil)
-	if err != nil || len(recovered) != 2 {
-		t.Fatalf("recovery row fill: rows=%d err=%v", len(recovered), err)
+	if err != nil || assessmentWorkUnavailable(recovered[1]) || recovered[1].Observation == nil {
+		t.Fatalf("recovered=%+v err=%v", recovered, err)
 	}
-	if assessmentWorkUnavailable(recovered[1]) || !recovered[1].DoneExists || recovered[1].Observation == nil || recovered[1].StepCount == 0 {
-		t.Fatalf("recovered row = %+v, want complete evidence", recovered[1])
+}
+
+func seedS2bPair(t *testing.T, batch string) (context.Context, *fakeStore, farm.BatchManifest) {
+	t.Helper()
+	store := newFakeStore()
+	now := fixedNow(t)()
+	seedBatch(t, store, batch, "claude-sonnet-5", []runFixture{{runID: batch + "-good", scenario: "good", startedAt: now.Add(-time.Hour), durationS: "5s", taskResult: "passed", done: true}, {runID: batch + "-bad", scenario: "bad", startedAt: now.Add(-time.Hour), durationS: "7s", taskResult: "failed", done: true}}, true, map[string]string{batch + "-good": "passed", batch + "-bad": "failed"})
+	seedObservation(t, store, fixtureObservation(batch+"-good"))
+	seedObservation(t, store, fixtureObservation(batch+"-bad"))
+	manifest, err := loadManifest(context.Background(), store, batch)
+	if err != nil {
+		t.Fatalf("manifest: %v", err)
 	}
-	entry := cache.entry("s2b-bad")
-	entry.mu.Lock()
-	obsCached := entry.obs != nil
-	entry.mu.Unlock()
-	if !obsCached {
-		t.Fatal("recovered observation was not retained in cache")
+	return context.Background(), store, manifest
+}
+
+func testS2bResultsFailure(t *testing.T) {
+	ctx, store, manifest := seedS2bPair(t, "s2b-results")
+	wrapped := &transientListStore{fakeStore: store, failPrefix: "runs/s2b-results-bad/results/", failures: 1}
+	detail, err := loadRunRow(ctx, wrapped, false, "s2b-results-bad", nil, newRunCache(fixedNow(t)), newSummaryCache(fixedNow(t)))
+	if err != nil || !assessmentWorkUnavailable(detail) || detail.DoneExists {
+		t.Fatalf("detail=%+v err=%v", detail, err)
+	}
+	wrapped = &transientListStore{fakeStore: store, failPrefix: "runs/s2b-results-bad/results/", failures: 1}
+	rows, err := batchWindowRowsWithManifest(ctx, wrapped, false, "s2b-results", manifest, nil, newRunCache(fixedNow(t)), newSummaryCache(fixedNow(t)), nil)
+	if err != nil || len(rows) != 2 || !assessmentWorkUnavailable(rows[1]) || rows[1].DoneExists {
+		t.Fatalf("rows=%+v err=%v", rows, err)
+	}
+}
+
+func testS2bMalformed(t *testing.T, body string, corruptVerification bool) {
+	t.Helper()
+	ctx, store, manifest := seedS2bPair(t, "s2b-malformed")
+	key := "runs/s2b-malformed-bad/results/" + testResultsTS + "/bad/"
+	if corruptVerification {
+		key += "verification.json"
+	} else {
+		key += "meta.json"
+	}
+	store.putText(t, key, body)
+	rows, err := batchWindowRowsWithManifest(ctx, store, false, "s2b-malformed", manifest, nil, newRunCache(fixedNow(t)), newSummaryCache(fixedNow(t)), nil)
+	if err != nil || len(rows) != 2 || !assessmentWorkUnavailable(rows[1]) || rows[1].DoneExists {
+		t.Fatalf("batch rows=%+v err=%v", rows, err)
+	}
+	detail, err := loadRunRow(ctx, store, false, "s2b-malformed-bad", nil, newRunCache(fixedNow(t)), newSummaryCache(fixedNow(t)))
+	if err != nil || !assessmentWorkUnavailable(detail) || detail.DoneExists || detail.Verdict != rows[1].Verdict {
+		t.Fatalf("detail=%+v batch=%+v err=%v", detail, rows[1], err)
+	}
+}
+
+func testS2bMissingRequired(t *testing.T, filename string) {
+	t.Helper()
+	ctx, store, manifest := seedS2bPair(t, "s2b-missing")
+	key := "runs/s2b-missing-bad/results/" + testResultsTS + "/bad/" + filename
+	store.mu.Lock()
+	delete(store.objects, key)
+	store.mu.Unlock()
+	rows, err := batchWindowRowsWithManifest(ctx, store, false, "s2b-missing", manifest, nil, nil, nil, nil)
+	if err != nil || len(rows) != 2 || !assessmentWorkUnavailable(rows[1]) || rows[1].DoneExists {
+		t.Fatalf("batch rows=%+v err=%v", rows, err)
+	}
+	detail, err := loadRunRow(ctx, store, false, "s2b-missing-bad", nil, newRunCache(fixedNow(t)), newSummaryCache(fixedNow(t)))
+	if err != nil || !assessmentWorkUnavailable(detail) || detail.DoneExists {
+		t.Fatalf("detail=%+v err=%v", detail, err)
+	}
+}
+
+func testS2bMetaDisappears(t *testing.T) {
+	ctx, store, manifest := seedS2bPair(t, "s2b-meta-disappears")
+	metaKey := "runs/s2b-meta-disappears-bad/results/" + testResultsTS + "/bad/meta.json"
+	wrapped := &missingGetStore{fakeStore: store, missingKey: metaKey}
+	rows, err := batchWindowRowsWithManifest(ctx, wrapped, false, "s2b-meta-disappears", manifest, nil, nil, nil, nil)
+	if err != nil || len(rows) != 2 || !assessmentWorkUnavailable(rows[1]) || rows[1].DoneExists {
+		t.Fatalf("meta disappearance rows=%+v err=%v, want unavailable fallback", rows, err)
 	}
 }
 
@@ -90,6 +148,18 @@ type transientListStore struct {
 	*fakeStore
 	failPrefix string
 	failures   int
+}
+
+type missingGetStore struct {
+	*fakeStore
+	missingKey string
+}
+
+func (s *missingGetStore) Get(ctx context.Context, key string) ([]byte, error) {
+	if key == s.missingKey {
+		return nil, fmt.Errorf("temporary metadata disappearance: %w", os.ErrNotExist)
+	}
+	return s.fakeStore.Get(ctx, key)
 }
 
 func (s *transientListStore) List(ctx context.Context, prefix string) ([]string, error) {

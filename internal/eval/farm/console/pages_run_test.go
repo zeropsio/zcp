@@ -971,14 +971,8 @@ func TestPages_RunDegradesWithoutTaskPromptNever502(t *testing.T) {
 	if !strings.Contains(body, "<h1>a</h1>") {
 		t.Errorf("body missing the header for a degraded run:\n%s", body)
 	}
-	// Item 2 (FIX2): a missing bundle file maps to one plain sentence,
-	// shown once (under Record) — Steps says nothing more about the same
-	// root cause, and the raw error chain lives only in the forensic block.
-	if n := strings.Count(body, bundleNotFoundSentence); n != 1 {
-		t.Errorf(`%q appears %d times, want exactly 1:%s`, bundleNotFoundSentence, n, body)
-	}
-	if strings.Contains(body, "steps unavailable") || strings.Contains(body, "record unavailable") {
-		t.Errorf("body still shows a raw Go error chain instead of the plain sentence:\n%s", body)
+	if !strings.Contains(body, "assessment unavailable — run evidence could not be read") {
+		t.Errorf("body missing the conservative unavailable assessment state:\n%s", body)
 	}
 }
 
@@ -1083,11 +1077,8 @@ func TestPages_RunRecordErrorHidesEmptyDisclosures(t *testing.T) {
 	store.mu.Unlock()
 
 	body := doGET(t, h, "/r/re1-a").Body.String()
-	if n := strings.Count(body, bundleNotFoundSentence); n != 1 {
-		t.Errorf(`%q appears %d times, want exactly 1:%s`, bundleNotFoundSentence, n, body)
-	}
-	if strings.Contains(body, "record unavailable") {
-		t.Errorf("body still shows the raw \"record unavailable\" error chain instead of the plain sentence:\n%s", body)
+	if !strings.Contains(body, "assessment unavailable — run evidence could not be read") {
+		t.Errorf("body missing the conservative unavailable assessment state:\n%s", body)
 	}
 	if strings.Contains(body, `id="self-review"`) {
 		t.Errorf("body still renders the empty self-review disclosure:\n%s", body)
@@ -1095,11 +1086,8 @@ func TestPages_RunRecordErrorHidesEmptyDisclosures(t *testing.T) {
 	if strings.Contains(body, `id="task-prompt"`) {
 		t.Errorf("body still renders the empty task-prompt disclosure:\n%s", body)
 	}
-	if !strings.Contains(body, `id="run-meta"`) {
-		t.Errorf("body dropped run metadata, which needs neither text:\n%s", body)
-	}
-	if !strings.Contains(body, "<dt>Error</dt>") {
-		t.Errorf("body dropped the raw error chain from the forensic block:\n%s", body)
+	if strings.Contains(body, `id="run-meta"`) || strings.Contains(body, "<dt>Error</dt>") {
+		t.Errorf("body rendered evidence sections for an unavailable row:\n%s", body)
 	}
 }
 

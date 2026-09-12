@@ -708,110 +708,28 @@ func runQueued(queueState func(runID string) string, runID string) bool {
 // additive facts (§8.3 item 1) — now is the clock those facts (Stalled,
 // ObserverStateText) are evaluated against.
 func buildRunRow(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, batchID string, run farm.ManifestRun, bc batchContext, summary farm.BatchSummary, summaryFound bool, queueState func(runID string) string, now time.Time) (RunRow, error) {
-	row := RunRow{RunID: run.RunID, Batch: batchID, Scenario: run.Scenario, StartedAt: bc.CreatedAt, Build: bc.build()}
-
 	doneExists, _, err := store.Head(ctx, doneKey(run.RunID))
 	if err != nil {
 		return RunRow{}, fmt.Errorf("console: head done.json: %w", err)
 	}
-	row.DoneExists = doneExists
 	queued := runQueued(queueState, run.RunID)
-	summaryRun, summaryRunFound := findSummaryRun(summary, summaryFound, run.RunID)
 	if !doneExists {
-		row.Verdict = settledOrRunning(summary, summaryFound, run.RunID)
-		row.Stalled = row.Verdict == verdictRunning && isStalled(now, bc.CreatedAt, bc.RunBudgetSec)
-		row.VerdictReason = verdictReason(row.Verdict, doneExists, nil, summaryRun, summaryRunFound)
-		row.ObserverState = resolveObserverState(consoleObserverDisabled, bc.Observer, doneExists, false, queued, row.Verdict != verdictRunning)
-		row.ObserverStateText = observerStateText(now, bc.CreatedAt, consoleObserverDisabled, bc.Observer, doneExists, nil, queued, row.Verdict != verdictRunning, row.VerdictReason)
-		row.CauseCounts = newCauseClassCounts()
-		return row, nil
+		return notDoneRow(batchID, run, bc, summary, summaryFound, consoleObserverDisabled, queued, now), nil
 	}
-
-	bundle, err := observer.NewSinkBundle(ctx, store, run.RunID)
+	imm, err := fetchImmutablePart(ctx, store, run, bc.CreatedAt)
 	if err != nil {
-		return RunRow{}, fmt.Errorf("console: build run row: new bundle: %w", err)
+		return RunRow{}, err
 	}
-	resultsDir, rdErr := observer.ResultsDir(bundle)
-
-	var verification eval.VerificationDocument
-	var snapshot *eval.PlatformSnapshot
-	if rdErr == nil {
-		var meta eval.BehavioralResult
-		if m, mErr := observer.LoadMeta(bundle, resultsDir); mErr == nil {
-			meta = m
-			if !m.StartedAt.IsZero() {
-				row.StartedAt = m.StartedAt
-			}
-			row.DurationSec = time.Duration(m.Duration).Seconds()
-			if m.Usage != nil {
-				row.CostUsd = m.Usage.TotalCostUsd
-				row.CostKnown = true
-			}
-			if m.Task != nil {
-				row.metaTaskResult = string(m.Task.Result)
-			}
-			row.CandidateSha256 = m.CandidateSha256
-			row.EvaluatorSha256 = m.EvaluatorSha256
-		}
-		if v, vErr := observer.LoadVerification(bundle, resultsDir); vErr == nil {
-			verification = v
-		}
-		if snap, sErr := observer.LoadPlatformSnapshot(bundle, resultsDir); sErr == nil {
-			snapshot = snap
-		}
-		if n, sErr := loadStepCount(bundle, resultsDir, meta); sErr == nil {
-			row.StepCount = n
-		}
-	}
-	row.ServiceHostnames = serviceHostnames(snapshot, verification)
-
-	summaryResult, found := "", false
-	if summaryFound {
-		for _, r := range summary.Runs {
-			if r.RunID == run.RunID {
-				summaryResult, found = r.Result, true
-				break
-			}
-		}
-	}
-	row.Verdict = observer.ResolveVerdict(summaryResult, found, row.metaTaskResult)
-
-	for _, c := range verification.Checks {
-		if c.Result == eval.CheckFailed || c.Result == eval.CheckBlocked {
-			row.FailedChecks = append(row.FailedChecks, FailedCheck{
-				ID: c.ID, Result: string(c.Result), Expected: c.Expected, Observed: c.Observed, Source: c.Source,
-			})
-		}
-	}
-	row.VerdictReason = verdictReason(row.Verdict, doneExists, row.FailedChecks, summaryRun, summaryRunFound)
-
-	obsStore := observer.NewStore(store)
-	obsIDs, err := obsStore.ListObservations(ctx, run.RunID)
+	obsPart, err := fetchObservationPart(ctx, store, run.RunID)
 	if err != nil {
-		return RunRow{}, fmt.Errorf("console: list observations: %w", err)
+		return RunRow{}, err
 	}
-	if len(obsIDs) > 0 {
-		row.OlderObsIDs = obsIDs[:len(obsIDs)-1]
-		cur, err := obsStore.GetObservation(ctx, run.RunID, obsIDs[len(obsIDs)-1])
-		if err != nil {
-			return RunRow{}, fmt.Errorf("console: get current observation: %w", err)
-		}
-		row.Observation = &cur
-	}
-
-	row.ObserverState = resolveObserverState(consoleObserverDisabled, bc.Observer, doneExists, row.Observation != nil, queued, false)
-	row.ObserverStateText = observerStateText(now, bc.CreatedAt, consoleObserverDisabled, bc.Observer, doneExists, row.Observation, queued, false, "")
-	row.Outcome = computeOutcome(row.Observation)
-	row.Disputed = computeDisputed(row.Observation)
-	row.CauseCounts = causeSeverityCounts(row.Observation)
-	return row, nil
+	return combineRow(batchID, run, &imm, &obsPart, bc, summary, summaryFound, consoleObserverDisabled, queued, now), nil
 }
 
 // loadStepCount reads task-prompt.txt/transcript.jsonl and numbers them
-// (observer.BuildSteps, §7.2) for RunRow.StepCount. Tolerant like the rest
-// of buildRunRow's optional reads: an unreadable/unparsable transcript
-// yields 0, never an error (only a bundle-construction failure — checked
-// by the caller via resultsDir/rdErr — skips this call entirely).
+// (observer.BuildSteps, §7.2) for RunRow.StepCount. The caller decides
+// whether an absence is the canonical zero-work case or unavailable evidence.
 func loadStepCount(bundle observer.Bundle, resultsDir string, meta eval.BehavioralResult) (int, error) {
 	taskPrompt, err := observer.LoadTaskPrompt(bundle, resultsDir)
 	if err != nil {
@@ -891,9 +809,23 @@ func loadRunRow(ctx context.Context, store observer.ObjectStore, consoleObserver
 	}
 	row, err := runRowCached(ctx, store, cache, consoleObserverDisabled, batchID, run, bc, summary, summaryFound, queueState)
 	if err != nil {
-		return RunRow{}, err
+		return unavailableRunRow(batchID, run, bc, summary, summaryFound, consoleObserverDisabled, queueState, err), nil
 	}
 	return resolveAssessmentWork(ctx, store, row), nil
+}
+
+// unavailableRunRow keeps manifest and matching summary context visible when
+// a single run's evidence read fails. Evidence-derived fields stay empty.
+func unavailableRunRow(batchID string, run farm.ManifestRun, bc batchContext, summary farm.BatchSummary, summaryFound, consoleObserverDisabled bool, queueState func(runID string) string, evidenceErr error) RunRow {
+	queued := queueState != nil && queueState(run.RunID) != ""
+	summaryRun, found := findSummaryRun(summary, summaryFound, run.RunID)
+	verdict := settledOrRunning(summary, summaryFound, run.RunID)
+	return RunRow{RunID: run.RunID, Batch: batchID, Scenario: run.Scenario,
+		StartedAt: bc.CreatedAt, Build: bc.build(), Verdict: verdict,
+		VerdictReason:       verdictReason(verdict, false, nil, summaryRun, found),
+		ObserverState:       resolveObserverState(consoleObserverDisabled, bc.Observer, false, false, queued, verdict != verdictRunning),
+		ObserverStateText:   "assessment unavailable — run evidence could not be read",
+		assessmentWorkError: evidenceErr.Error(), CauseCounts: newCauseClassCounts()}
 }
 
 // evidenceSteps returns the sorted, deduplicated step numbers cited by
@@ -953,17 +885,7 @@ func batchWindowRowsWithManifest(ctx context.Context, store observer.ObjectStore
 		}
 		return resolveAssessmentWork(ctx, store, row), nil
 	}, func(run farm.ManifestRun, err error) RunRow {
-		queued := queueState != nil && queueState(run.RunID) != ""
-		summaryRun, found := findSummaryRun(summary, summaryFound, run.RunID)
-		verdict := settledOrRunning(summary, summaryFound, run.RunID)
-		return RunRow{RunID: run.RunID, Batch: batchID, Scenario: run.Scenario,
-			StartedAt: bc.CreatedAt, Build: bc.build(), Verdict: verdict,
-			VerdictReason:       verdictReason(verdict, false, nil, summaryRun, found),
-			ObserverState:       resolveObserverState(consoleObserverDisabled, bc.Observer, false, false, queued, verdict != verdictRunning),
-			ObserverStateText:   "assessment unavailable — run evidence could not be read",
-			assessmentWorkError: err.Error(),
-			CauseCounts:         newCauseClassCounts(),
-		}
+		return unavailableRunRow(batchID, run, bc, summary, summaryFound, consoleObserverDisabled, queueState, err)
 	}, logf)
 	return rows, nil
 }

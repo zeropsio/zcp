@@ -343,9 +343,9 @@ func combineRow(batchID string, run farm.ManifestRun, imm *cachedImmutable, obsP
 
 // fetchImmutablePart reads run's immutable row data straight from the
 // bucket — mirrors buildRunRow's (view.go) meta/verification/step-count
-// reads exactly, including its tolerance of a missing results dir or an
-// unparsable meta/verification file (silently skipped, never an error:
-// only a bundle-construction failure propagates).
+// reads exactly, including its tolerance of a genuinely absent results dir
+// and optional verification/platform snapshot files. Required evidence and
+// all malformed or transport errors propagate to the unavailable fallback.
 func fetchImmutablePart(ctx context.Context, store observer.ObjectStore, run farm.ManifestRun, manifestCreatedAt time.Time) (cachedImmutable, error) {
 	imm := cachedImmutable{Scenario: run.Scenario, StartedAt: manifestCreatedAt}
 
@@ -356,53 +356,76 @@ func fetchImmutablePart(ctx context.Context, store observer.ObjectStore, run far
 	resultsDir, rdErr := observer.ResultsDir(bundle)
 	if rdErr != nil {
 		// A completed no-work run can legitimately have no results directory;
-		// preserve the row and let callers render unavailable evidence.
-		return imm, nil //nolint:nilerr // optional results are unavailable, not a row-load failure
+		// other errors (including a transient bucket/list failure) must reach
+		// the caller so it can render conservative unavailable evidence.
+		if errors.Is(rdErr, observer.ErrResultsNotFound) {
+			return imm, nil
+		}
+		return cachedImmutable{}, fmt.Errorf("console: cache: find results directory: %w", rdErr)
 	}
 	var verification eval.VerificationDocument
 	var snapshot *eval.PlatformSnapshot
 	var meta eval.BehavioralResult
-	metaOK := false
-	verificationOK := false
 	stepCountOK := false
-	if m, mErr := observer.LoadMeta(bundle, resultsDir); mErr == nil {
-		metaOK = true
-		meta = m
-		if !m.StartedAt.IsZero() {
-			imm.StartedAt = m.StartedAt
-		}
-		imm.DurationSec = time.Duration(m.Duration).Seconds()
-		if m.Usage != nil {
-			imm.CostUsd = m.Usage.TotalCostUsd
-			imm.CostKnown = true
-		}
-		if m.Task != nil {
-			imm.metaTaskResult = string(m.Task.Result)
-		}
-		imm.CandidateSha256 = m.CandidateSha256
-		imm.EvaluatorSha256 = m.EvaluatorSha256
+	m, mErr := observer.LoadMeta(bundle, resultsDir)
+	if mErr != nil {
+		return cachedImmutable{}, fmt.Errorf("console: cache: load meta: %w", mErr)
 	}
-	if v, vErr := observer.LoadVerification(bundle, resultsDir); vErr == nil {
-		verificationOK = true
-		verification = v
-		for _, c := range v.Checks {
-			if c.Result == eval.CheckFailed || c.Result == eval.CheckBlocked {
-				imm.FailedChecks = append(imm.FailedChecks, FailedCheck{
-					ID: c.ID, Result: string(c.Result), Expected: c.Expected, Observed: c.Observed, Source: c.Source,
-				})
-			}
+	meta = m
+	if !m.StartedAt.IsZero() {
+		imm.StartedAt = m.StartedAt
+	}
+	imm.DurationSec = time.Duration(m.Duration).Seconds()
+	if m.Usage != nil {
+		imm.CostUsd = m.Usage.TotalCostUsd
+		imm.CostKnown = true
+	}
+	if m.Task != nil {
+		imm.metaTaskResult = string(m.Task.Result)
+	}
+	imm.CandidateSha256 = m.CandidateSha256
+	imm.EvaluatorSha256 = m.EvaluatorSha256
+	var v eval.VerificationDocument
+	v, vErr := observer.LoadVerification(bundle, resultsDir)
+	if vErr != nil {
+		return cachedImmutable{}, fmt.Errorf("console: cache: load verification: %w", vErr)
+	}
+	verification = v
+	for _, c := range v.Checks {
+		if c.Result == eval.CheckFailed || c.Result == eval.CheckBlocked {
+			imm.FailedChecks = append(imm.FailedChecks, FailedCheck{
+				ID: c.ID, Result: string(c.Result), Expected: c.Expected, Observed: c.Observed, Source: c.Source,
+			})
 		}
 	}
-	if snap, sErr := observer.LoadPlatformSnapshot(bundle, resultsDir); sErr == nil {
-		snapshot = snap
+	snapshot, sErr := observer.LoadPlatformSnapshot(bundle, resultsDir)
+	if sErr != nil {
+		return cachedImmutable{}, fmt.Errorf("console: cache: load platform snapshot: %w", sErr)
 	}
-	if n, sErr := loadStepCount(bundle, resultsDir, meta); sErr == nil {
+	n, sErr := loadStepCount(bundle, resultsDir, meta)
+	if sErr != nil {
+		if !(imm.CostKnown && imm.CostUsd == 0 && errors.Is(sErr, os.ErrNotExist) && stepFilesAbsent(bundle, resultsDir)) {
+			return cachedImmutable{}, fmt.Errorf("console: cache: load steps: %w", sErr)
+		}
+	} else {
 		stepCountOK = true
 		imm.StepCount = n
 	}
 	imm.ServiceHostnames = serviceHostnames(snapshot, verification)
-	imm.cacheable = metaOK && verificationOK && stepCountOK
+	imm.cacheable = stepCountOK
 	return imm, nil
+}
+
+func stepFilesAbsent(bundle observer.Bundle, resultsDir string) bool {
+	for _, read := range []func() error{
+		func() error { _, err := observer.LoadTaskPrompt(bundle, resultsDir); return err },
+		func() error { _, err := observer.LoadTranscript(bundle, resultsDir); return err },
+	} {
+		if err := read(); err == nil || !errors.Is(err, os.ErrNotExist) {
+			return false
+		}
+	}
+	return true
 }
 
 // fetchObservationPart reads runID's current observation and older ids
