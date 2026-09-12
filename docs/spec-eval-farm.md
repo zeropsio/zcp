@@ -25,8 +25,8 @@ One bucket, one key, in the persistent `zcp-farm` project:
 evaluators/<sha256>/zcp            # pinned evaluator binary, uploaded once per farm
 evaluators/current                 # plain-text pointer: body is the evaluator sha256 last pushed
 candidates/<sha256>/zcp            # candidate under test, pushed per batch
-scenarios/<tree-digest>/…          # scenario tree, pushed per batch
-sets/<scenariosDigest>/gate.txt    # gate scenario id list, keyed to the scenario tree it names
+scenarios/<tree-digest>/…          # scenario tree plus .farm-gate-set.txt, hashed together
+sets/<scenariosDigest>/gate.txt    # compatibility copy; never trusted for run selection
 farm/wrapper/<sha256>.sh           # the run-project wrapper script, content-addressed
 farm/wrapper/current               # plain-text pointer: body is the wrapper sha256 last pushed
 
@@ -43,6 +43,17 @@ batches/<batch>/summary.json       # written at farm-run end
 **FM-1.** Every object under `runs/<runId>/` and every project the controller
 creates for that run is named from the same `runId`; nothing under `runs/` is
 addressed by any other key.
+
+The scenario digest covers every scenario file and the reserved
+`.farm-gate-set.txt` entry in the same tree. Before reserving a batch, `farm
+run` downloads that tree to an isolated directory, rejects absolute,
+non-canonical and traversal keys, recomputes the digest, and reads the gate
+list and scenario front matter only from that verified snapshot. The wrapper
+independently repeats the path and digest checks after downloading the tree in
+the run project. A legacy tree without the reserved entry remains usable with
+`--set all` or explicit scenario IDs when its digest verifies; `--set gate`
+fails closed and asks the operator to repush because the separate legacy
+`sets/<digest>/gate.txt` object has no cryptographic binding.
 
 **FM-2. Evaluator ≠ candidate.** The evaluator is a farm-wide pin: one digest
 in the farm config, uploaded once, unrelated to the object under test. The
@@ -283,7 +294,9 @@ Wrapper steps, in order:
    a losing concurrent invocation never changes the winner's files. This
    does not resume an evaluator or introduce an upload-recovery command;
 2. download `evaluators/<sha>/zcp`, `candidates/<sha>/zcp`, and the scenario
-   tree from the bucket; verify both binary digests against
+   tree from the bucket; reject an absolute, non-canonical or traversal
+   scenario key, recompute the whole tree digest against
+   `ZCP_FARM_SCENARIOS_DIGEST`, and verify both binary digests against
    `ZCP_FARM_EVALUATOR_SHA`/`ZCP_FARM_CANDIDATE_SHA` before running either;
 3. write the private Claude home carrying `CLAUDE_CODE_OAUTH_TOKEN` (§2.4);
    refuse to start if `ANTHROPIC_API_KEY` is set in the environment;
@@ -388,7 +401,8 @@ service-stack search is scoped to the first org in the token's
 the farm project's not being the first. `farm run` resolves everything it needs (the
 `--set gate`/`--set all` scenario id list, each scenario's front matter, and
 the evaluator pin absent `--evaluator`, the wrapper pin absent `--wrapper`)
-from the bucket (`sets/<digest>/gate.txt`, `scenarios/<digest>/…`,
+from the verified bucket tree (`scenarios/<digest>/.farm-gate-set.txt`,
+`scenarios/<digest>/…`,
 `evaluators/current`, `farm/wrapper/current`), never from a relative path on
 disk; only `farm push`, which runs from a full checkout on a dev machine,
 reads `eval/farm/gate-set.txt` off disk, to upload it. The eval subsystem's

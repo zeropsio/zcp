@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -286,12 +287,10 @@ func resolveObserver(flag string) (string, error) {
 // scenariosDigest, never from disk.
 func resolveScenarios(ctx context.Context, sink *farm.SinkClient, batch, scenariosDigest, set string) ([]farm.ScenarioRun, error) {
 	var ids []string
-	var err error
+	gateSet := set == "gate"
+	allSet := set == categoryAll
 	switch set {
-	case "gate":
-		ids, err = readGateSetFromBucket(ctx, sink, scenariosDigest)
-	case categoryAll: // "all" — shared with sync.go's own --category all (goconst)
-		ids, err = listAllScenarioIDsFromBucket(ctx, sink, scenariosDigest)
+	case "gate", categoryAll: // "all" — shared with sync.go's own --category all (goconst)
 	default:
 		for id := range strings.SplitSeq(set, ",") {
 			id = strings.TrimSpace(id)
@@ -300,13 +299,30 @@ func resolveScenarios(ctx context.Context, sink *farm.SinkClient, batch, scenari
 			}
 		}
 	}
+	if !gateSet && !allSet && len(ids) == 0 {
+		return []farm.ScenarioRun{}, nil
+	}
+
+	scenariosDir, err := downloadVerifiedScenarioTree(ctx, sink, scenariosDigest)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = os.RemoveAll(scenariosDir) }()
+	if gateSet {
+		ids, err = readGateSetFromDir(scenariosDir)
+	} else if allSet {
+		ids, err = listAllScenarioIDsFromDir(scenariosDir)
+	}
 	if err != nil {
 		return nil, err
 	}
 
 	scenarios := make([]farm.ScenarioRun, 0, len(ids))
 	for _, id := range ids {
-		launch, production, err := resolveScenarioOwnership(ctx, sink, scenariosDigest, id, batch)
+		if !farm.ValidScenarioID(id) {
+			return nil, fmt.Errorf("invalid scenario %q in set %q", id, set)
+		}
+		launch, production, err := resolveScenarioOwnership(scenariosDir, id, batch)
 		if err != nil {
 			return nil, err
 		}
@@ -315,13 +331,68 @@ func resolveScenarios(ctx context.Context, sink *farm.SinkClient, batch, scenari
 	return scenarios, nil
 }
 
-// readGateSetFromBucket reads one scenario id per line from
-// sets/<scenariosDigest>/gate.txt (uploaded by `farm push --scenarios`).
-func readGateSetFromBucket(ctx context.Context, sink *farm.SinkClient, scenariosDigest string) ([]string, error) {
-	key := fmt.Sprintf("sets/%s/gate.txt", scenariosDigest)
-	body, err := sink.Get(ctx, key)
+// downloadVerifiedScenarioTree snapshots scenarios/<digest>/, rejects every
+// object key that cannot stay beneath that root, and verifies the complete
+// downloaded tree before a gate list or scenario front matter is trusted.
+func downloadVerifiedScenarioTree(ctx context.Context, sink *farm.SinkClient, scenariosDigest string) (dir string, err error) {
+	prefix := "scenarios/" + scenariosDigest + "/"
+	keys, err := sink.List(ctx, prefix)
 	if err != nil {
-		return nil, fmt.Errorf("read gate set %s: %w", key, err)
+		return "", fmt.Errorf("list scenario tree %s: %w", scenariosDigest, err)
+	}
+	dir, err = os.MkdirTemp("", "farm-scenarios-verify-")
+	if err != nil {
+		return "", fmt.Errorf("create scenario verification directory: %w", err)
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			_ = os.RemoveAll(dir)
+		}
+	}()
+	for _, key := range keys {
+		rel, ok := strings.CutPrefix(key, prefix)
+		if !ok || !validScenarioObjectPath(rel) {
+			return "", fmt.Errorf("invalid scenario object key %q", key)
+		}
+		body, err := sink.Get(ctx, key)
+		if err != nil {
+			return "", fmt.Errorf("read scenario object %s: %w", key, err)
+		}
+		dest := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return "", fmt.Errorf("create scenario directory for %s: %w", key, err)
+		}
+		if err := os.WriteFile(dest, body, 0o600); err != nil {
+			return "", fmt.Errorf("write scenario object %s: %w", key, err)
+		}
+	}
+	got, err := farm.TreeDigest(dir)
+	if err != nil {
+		return "", fmt.Errorf("digest downloaded scenario tree: %w", err)
+	}
+	if got != scenariosDigest {
+		return "", fmt.Errorf("scenario tree digest mismatch: expected %s, got %s", scenariosDigest, got)
+	}
+	keep = true
+	return dir, nil
+}
+
+func validScenarioObjectPath(rel string) bool {
+	if rel == "" || path.IsAbs(rel) || strings.Contains(rel, "\\") {
+		return false
+	}
+	cleaned := path.Clean(rel)
+	return cleaned == rel && cleaned != "." && cleaned != ".." && !strings.HasPrefix(cleaned, "../")
+}
+
+func readGateSetFromDir(scenariosDir string) ([]string, error) {
+	body, err := os.ReadFile(filepath.Join(scenariosDir, boundGateSetFile))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("scenario tree has no digest-bound gate set; repush it with this zcp version")
+		}
+		return nil, fmt.Errorf("read digest-bound gate set: %w", err)
 	}
 	var ids []string
 	for line := range strings.SplitSeq(string(body), "\n") {
@@ -333,53 +404,35 @@ func readGateSetFromBucket(ctx context.Context, sink *farm.SinkClient, scenarios
 	return ids, nil
 }
 
-// listAllScenarioIDsFromBucket returns the basename (minus ".md") of every
-// top-level scenario markdown file under scenarios/<scenariosDigest>/,
+// listAllScenarioIDsFromDir returns the basename (minus ".md") of every
+// top-level scenario markdown file in the verified snapshot,
 // sorted. Every scenario currently authored under
 // eval/behavioral/scenarios/ is container-run; a scenario meant only for a
 // local, non-farm lane would need its own marker to be excluded here — none
 // carries one yet.
-func listAllScenarioIDsFromBucket(ctx context.Context, sink *farm.SinkClient, scenariosDigest string) ([]string, error) {
-	prefix := fmt.Sprintf("scenarios/%s/", scenariosDigest)
-	keys, err := sink.List(ctx, prefix)
+func listAllScenarioIDsFromDir(scenariosDir string) ([]string, error) {
+	entries, err := os.ReadDir(scenariosDir)
 	if err != nil {
-		return nil, fmt.Errorf("list scenarios %s: %w", prefix, err)
+		return nil, fmt.Errorf("list verified scenarios: %w", err)
 	}
 	var ids []string
-	for _, key := range keys {
-		rel := strings.TrimPrefix(key, prefix)
-		if strings.Contains(rel, "/") || !strings.HasSuffix(rel, ".md") {
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 			continue
 		}
-		ids = append(ids, strings.TrimSuffix(rel, ".md"))
+		ids = append(ids, strings.TrimSuffix(entry.Name(), ".md"))
 	}
 	sort.Strings(ids)
 	return ids, nil
 }
 
-// resolveScenarioOwnership reads and parses one bucket scenario exactly once.
+// resolveScenarioOwnership reads and parses one scenario from the verified
+// local snapshot exactly once.
 // Its area controls launch-token handling. Only a structured launchShape
 // target matching the canonical run-specific farm name grants the controller
 // ownership for automatic deletion.
-func resolveScenarioOwnership(ctx context.Context, sink *farm.SinkClient, scenariosDigest, id, batch string) (bool, string, error) {
-	key := fmt.Sprintf("scenarios/%s/%s.md", scenariosDigest, id)
-	body, err := sink.Get(ctx, key)
-	if err != nil {
-		return false, "", fmt.Errorf("resolve scenario %s: %w", id, err)
-	}
-	tmp, err := os.CreateTemp("", "farm-scenario-*.md")
-	if err != nil {
-		return false, "", fmt.Errorf("resolve scenario %s: %w", id, err)
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(body); err != nil {
-		_ = tmp.Close()
-		return false, "", fmt.Errorf("resolve scenario %s: %w", id, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return false, "", fmt.Errorf("resolve scenario %s: %w", id, err)
-	}
-	sc, err := eval.ParseScenario(tmp.Name())
+func resolveScenarioOwnership(scenariosDir, id, batch string) (bool, string, error) {
+	sc, err := eval.ParseScenario(filepath.Join(scenariosDir, id+".md"))
 	if err != nil {
 		return false, "", fmt.Errorf("resolve scenario %s: %w", id, err)
 	}

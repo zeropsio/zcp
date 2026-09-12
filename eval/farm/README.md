@@ -42,7 +42,7 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/zcp-linux ./cmd/zcp
 #    pins once at kickoff, so a batch already running keeps the ones it started with.
 go run ./cmd/zcp eval farm push --evaluator /tmp/zcp-linux   # once per farm; writes evaluators/current
 go run ./cmd/zcp eval farm push --candidate /tmp/zcp-linux   # per batch
-go run ./cmd/zcp eval farm push --scenarios eval/behavioral/scenarios   # writes sets/<digest>/gate.txt
+go run ./cmd/zcp eval farm push --scenarios eval/behavioral/scenarios   # hashes .farm-gate-set.txt into the scenario tree; also writes a legacy sets/<digest>/gate.txt copy
 go run ./cmd/zcp eval farm push --wrapper eval/farm/wrapper.sh          # writes farm/wrapper/current
 
 # 3. Kick off a batch — --set gate|all|<id,id,...> (§3.3). --note (max 200

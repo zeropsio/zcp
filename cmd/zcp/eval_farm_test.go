@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -70,8 +71,11 @@ func (f *fakeFarmS3) server() *httptest.Server {
 		defer f.mu.Unlock()
 		switch r.Method {
 		case http.MethodPut:
-			body := make([]byte, r.ContentLength)
-			_, _ = r.Body.Read(body)
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			f.objects[key] = body
 			w.WriteHeader(http.StatusOK)
 		case http.MethodGet:
