@@ -211,25 +211,10 @@ func softWrapID(id string) string {
 	return b.String()
 }
 
-// checkAnchor turns a check id into a safe HTML fragment identifier. A
-// check id can embed a "/" (e.g. "decision/x") — html/template's
-// contextual autoescaping percent-encodes that inside an href="#..." URL
-// context but leaves it untouched in a plain id="..." attribute, so the
-// same raw id used in both places would mismatch (TestPages_
-// RunInPageLinksResolve). Every character outside [A-Za-z0-9_-] maps to
-// "-", so an anchor built with this and used on both sides always agrees.
+// checkAnchor turns a check id into the stable browser-safe fragment used by
+// both links to a check and the check row's target id.
 func checkAnchor(id string) string {
-	var b strings.Builder
-	b.WriteString("check-")
-	for _, r := range id {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('-')
-		}
-	}
-	return b.String()
+	return safeFragment("check-", id)
 }
 
 // olderObsView is one "earlier assessments" row: its own outcome/headline
