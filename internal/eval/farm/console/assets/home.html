@@ -38,10 +38,10 @@
 </tr></thead>
 <tbody>
 {{range .Batches}}<tr>
-<td data-label="Batch"><a class="table-primary" href="/b/{{.BatchID}}">{{.BatchID}}</a><span class="table-secondary">{{.StartedShort}}</span></td>
+<td data-label="Batch"><a class="table-primary" href="/b/{{.BatchID}}">{{.BatchID}}</a><span class="table-secondary">{{.StartedShort}} · {{if .Finished}}<span class="badge chip batch-state batch-state-finished">finished</span>{{else}}<span class="badge chip batch-state batch-state-unfinished">unfinished</span>{{end}}</span></td>
 <td data-label="ZCP build" title="{{.Build.Sha256}}">{{.Build.Label}}</td>
 <td data-label="Set">{{if .Set}}<span class="badge chip">{{.Set}}</span>{{else}}—{{end}}</td>
-<td data-label="Runs"><div class="dots" aria-label="Run verdicts">{{range .Dots}}<span class="dot dot-{{verdictKey .Verdict}}" title="{{.Tooltip}}"><span class="visually-hidden">{{.Tooltip}}</span></span>{{end}}</div></td>
+<td data-label="Runs"><div class="dots" aria-label="Run statuses">{{range .Dots}}<span class="dot dot-{{verdictKey .State}}" title="{{.Tooltip}}"><span class="visually-hidden">{{.Tooltip}}</span></span>{{end}}</div></td>
 <td data-label="Verdicts"><div class="stats">{{range .VerdictCounts}}<span class="{{verdictClass .Verdict}} badge">{{verdictIcon .Verdict}} {{.Count}} {{verdictLabel .Verdict}}</span>{{end}}{{if .UnavailableN}}<span class="badge chip" title="Run evidence could not be read">{{.UnavailableN}} unavailable</span>{{end}}{{if .DisputedCount}}<span class="disputed-marker">{{.DisputedCount}} disputed</span>{{end}}</div></td>
 <td data-label="ZCP findings">{{if or .ZCPHigh .ZCPMedium}}{{if .ZCPHigh}}<span class="severity severity-high">{{.ZCPHigh}} high</span>{{end}}{{if .ZCPMedium}} <span class="severity severity-medium">{{.ZCPMedium}} medium</span>{{end}}{{else}}<span class="muted small">none</span>{{end}}</td>
 <td data-label="Cost" class="numeric">{{.Cost}}</td><td data-label="Assessed" class="numeric"><strong>{{.ObservedN}}/{{.ObservedM}}</strong></td>
