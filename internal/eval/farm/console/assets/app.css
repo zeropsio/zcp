@@ -233,6 +233,7 @@ code.chip { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
 .callout-info { background: var(--info-bg); }
 .callout-warn { background: var(--warn-bg); }
 .callout-error { background: var(--failed-bg); color: var(--failed); }
+.callout-copy { min-width: 0; overflow-wrap: anywhere; }
 .callout-actions { display: flex; gap: 8px; }
 .run-list { display: grid; gap: 8px; }
 .run-row { display: grid; grid-template-columns: 112px minmax(0, 1fr) auto; gap: 14px; align-items: start; }
@@ -267,7 +268,11 @@ code.chip { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
 }
 .finding.sev-high { border-left-color: var(--high); }
 .finding.sev-medium { border-left-color: var(--medium); }
+.finding > summary { cursor: pointer; list-style: none; }
+.finding > summary::-webkit-details-marker { display: none; }
 .finding-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.finding-disclosure-indicator { margin-left: auto; color: var(--accent); font-size: 1.2em; font-weight: 700; line-height: 1; transition: transform .15s ease; }
+.finding[open] > summary .finding-disclosure-indicator { transform: rotate(90deg); }
 .owner { font-size: var(--fs-xs); font-weight: 600; color: var(--fg-dim); }
 .run-link { font-size: var(--fs-sm); overflow-wrap: anywhere; }
 .quote {
@@ -846,9 +851,10 @@ main.login .btn { width: 100%; justify-content: center; margin-top: 4px; }
 .error-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
 
 @media (max-width: 1100px) {
-  .metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .metric-cell:nth-child(2) { border-right: 0; }
-  .metric-cell:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
+  .metric-strip { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .metric-cell { grid-column: span 2; border-right: 1px solid var(--border); }
+  .metric-cell:nth-child(-n+2) { grid-column: span 3; border-bottom: 1px solid var(--border); }
+  .metric-cell:nth-child(2), .metric-cell:last-child { border-right: 0; }
 }
 
 @media (max-width: 640px) {
@@ -868,7 +874,7 @@ main.login .btn { width: 100%; justify-content: center; margin-top: 4px; }
   .history-table td > .mobile-cell-label, .runs-table td > .mobile-cell-label { grid-column: 1; }
   .history-table .dots { max-width: 100%; }
   .metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .metric-cell { min-height: 0; border-right: 0; border-bottom: 1px solid var(--border); }
+  .metric-cell { grid-column: auto; min-height: 0; border-right: 0; border-bottom: 1px solid var(--border); }
   .metric-cell:nth-child(odd) { border-right: 1px solid var(--border); }
   .metric-cell:last-child { grid-column: 1 / -1; border-right: 0; border-bottom: 0; }
   .assessment-prompt { align-items: flex-start; flex-direction: column; }

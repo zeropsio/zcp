@@ -263,6 +263,9 @@ func TestPages_ProblemsBannersFailedAssessmentRuns(t *testing.T) {
 	if !strings.Contains(body, `href="/r/fa1-a"`) {
 		t.Errorf("body missing the link to the affected run:\n%s", body)
 	}
+	if !strings.Contains(body, `<span class="callout-copy">`) {
+		t.Errorf("failed-assessment warning does not keep its prose and links in one flow:\n%s", body)
+	}
 }
 
 // seedTwoDistinctProblems seeds one batch with two runs, each producing its

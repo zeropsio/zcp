@@ -123,10 +123,16 @@ func TestPages_FindingsFilteredCount_MatchesCards(t *testing.T) {
 	if !strings.Contains(filtered, "1 matching finding in 7 days") || strings.Count(filtered, `<details class="finding `) != 1 {
 		t.Errorf("filtered summary and rendered-card count diverge:\n%s", filtered)
 	}
+	if !strings.Contains(filtered, "Window coverage:") || !strings.Contains(filtered, "2 findings before filters") {
+		t.Errorf("unfiltered coverage is not distinguished from the matching count:\n%s", filtered)
+	}
 	summaryStart := strings.Index(filtered, `<summary class="finding-head">`)
 	summaryEnd := strings.Index(filtered[summaryStart:], `</summary>`)
 	if summaryStart < 0 || summaryEnd < 0 || strings.Contains(filtered[summaryStart:summaryStart+summaryEnd], "<a ") {
 		t.Errorf("finding disclosure summary contains a nested interactive link:\n%s", filtered)
+	}
+	if !strings.Contains(filtered, `<span class="finding-disclosure-indicator" aria-hidden="true">›</span>`) {
+		t.Errorf("finding disclosure has no visible non-interactive affordance:\n%s", filtered)
 	}
 
 	noMatch := doGET(t, h, "/findings?since=7d&cause=platform").Body.String()
