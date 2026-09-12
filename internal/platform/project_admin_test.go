@@ -3,6 +3,9 @@ package platform_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -173,4 +176,70 @@ func TestEnvKey_NoValueField(t *testing.T) {
 	}
 	// Note: writing `k.Value = "..."` here would be a compile error,
 	// which is the actual safety property.
+}
+
+// newUserInfoServer serves /api/rest/public/user/info with a
+// clientUserList carrying one entry per (clientUserID, clientID) pair, in
+// the order given — the shape D11's tests need to prove the configured
+// client is targeted regardless of its position in the list.
+func newUserInfoServer(t *testing.T, memberships [][2]string) *httptest.Server {
+	t.Helper()
+	entries := make([]string, 0, len(memberships))
+	for _, m := range memberships {
+		entries = append(entries, fmt.Sprintf(`{"id":%q,"clientId":%q,"userId":"user-1"}`, m[0], m[1]))
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/rest/public/user/info" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"id":"user-1","email":"a@b.com","fullName":"ZCP","clientUserList":[%s]}`, strings.Join(entries, ","))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestAccountClient_UsesConfiguredClientID_NotFirstMembership pins D11:
+// NewProjectAdminClientForClient targets the caller-supplied clientID even
+// when it is not ClientUserList[0] — the bug that made
+// platform.NewProjectAdminClient (via ClientUserList[0]) post to the wrong
+// org for a token that is OWNER in two.
+func TestAccountClient_UsesConfiguredClientID_NotFirstMembership(t *testing.T) {
+	t.Parallel()
+	const wrongOrg, configuredOrg = "org-first-wrong", "org-second-configured"
+	srv := newUserInfoServer(t, [][2]string{
+		{"cu-wrong", wrongOrg},
+		{"cu-configured", configuredOrg},
+	})
+
+	client, err := platform.NewProjectAdminClientForClient("token", srv.URL, configuredOrg)
+	if err != nil {
+		t.Fatalf("NewProjectAdminClientForClient: %v", err)
+	}
+	t.Cleanup(client.Close)
+
+	if got := client.ClientUserID(); got != "cu-configured" {
+		t.Errorf("ClientUserID() = %q, want %q (the configured org's clientUserId, not ClientUserList[0]'s)", got, "cu-configured")
+	}
+}
+
+// TestAccountClient_TokenNotMemberOfConfiguredOrg_RefusesBeforeWrite pins
+// D11's refusal: a token that authenticates but is not a member of the
+// configured clientID must be refused (ErrClientNotMember) before the
+// caller can make any write with it — no ProjectAdminClient is returned.
+func TestAccountClient_TokenNotMemberOfConfiguredOrg_RefusesBeforeWrite(t *testing.T) {
+	t.Parallel()
+	srv := newUserInfoServer(t, [][2]string{
+		{"cu-a", "org-a"},
+		{"cu-b", "org-b"},
+	})
+
+	_, err := platform.NewProjectAdminClientForClient("token", srv.URL, "org-not-a-member")
+	if !errors.Is(err, platform.ErrClientNotMember) {
+		t.Fatalf("NewProjectAdminClientForClient error = %v, want ErrClientNotMember", err)
+	}
+	if !strings.Contains(err.Error(), "org-not-a-member") || !strings.Contains(err.Error(), "org-a") || !strings.Contains(err.Error(), "org-b") {
+		t.Errorf("error %q should name the configured org and the orgs the token can see", err.Error())
+	}
 }

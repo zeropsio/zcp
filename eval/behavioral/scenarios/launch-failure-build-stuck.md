@@ -52,7 +52,11 @@ requiredEnvVars:
 retrospective:
   promptStyle: briefing-future-agent
 verification:
+  mode: required
+  spec: spec-workflows.md §10
   noFailedProcesses: true
+  launchShape: {prodProject: "zcp-farm-prod__{{runId}}"}
+  noFabricatedSecret: true
   retrospectiveMustNotMention:
     - YJQTh.
     - github_pat_
@@ -77,8 +81,7 @@ userPersona: |
      po tag push s CD wired; chci jen diagnostiku rozbitého yaml."
 
   Tvoje preference:
-   - Production project name: "eval-failure-test" nebo cokoli
-     short-lived.
+   - Production project name: `zcp-farm-prod__{{runId}}`.
    - Akceptuj defaults pro env-classification.
    - Pokud agent navrhne launch i přes rozbitý yaml, fajn — chceš
      uvidět celý flow + cleanup. Pokud agent odmítne launch protože

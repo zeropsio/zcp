@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Farm console — sign in</title>
+<link rel="stylesheet" href="/static/vendor/tabler-1.5.1.min.css">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="farm-login">
+<main class="login card" aria-labelledby="login-title">
+<div class="card-body">
+<p class="eyebrow">Internal evaluation tool</p>
+<h1 id="login-title">Farm console</h1>
+<p class="muted">Sign in with the console token from <code>farm-console.env</code>.</p>
+<form method="post" action="/login">
+<input type="hidden" name="next" value="{{.Next}}">
+<label class="form-label" for="token">Console token</label>
+<input class="form-control{{if .Failed}} is-invalid{{end}}" id="token" name="token" type="password" autocomplete="off" required{{if .Failed}} aria-invalid="true" aria-describedby="token-error"{{end}}>
+{{if .Failed}}<p class="invalid-feedback d-block" id="token-error" role="alert">Wrong token.</p>{{end}}
+<button class="btn btn-primary" type="submit">Sign in</button>
+</form>
+<p class="muted small login-help">The token is written by <code>deploy.sh</code>.</p>
+</div>
+</main>
+</body>
+</html>

@@ -18,6 +18,13 @@ tags: [launch-production, prod-transition, one-shot-key, separate-project, trust
 area: launch
 retrospective:
   promptStyle: briefing-future-agent
+verification:
+  mode: required
+  spec: spec-workflows.md §10
+  noFailedProcesses: true
+  launchShape: {prodProject: "zcp-farm-prod__{{runId}}"}
+  noFabricatedSecret: true
+  never: ["zerops_import{override=true}"]
 userPersona: |
   Dev/stage works fine on Zerops. Now you want production live on a
   SEPARATE Zerops project (per Zerops's own recommendation in
@@ -62,4 +69,4 @@ notableFriction:
       retries with corrected inputs.
 ---
 
-Dev and stage are working — I want to launch production now. Create a separate Zerops project called `myapp-prod` in the eu-central region. If you can mint the launch token yourself, confirm with me first; otherwise I'll generate one manually and delete it right after. Don't try to keep any standing access to the prod project — I'll manage prod through the Zerops dashboard and a separate ZCP session once it's up.
+Dev and stage are working — I want to launch production now. Create a separate Zerops project called `zcp-farm-prod__{{runId}}` in the eu-central region. If you can mint the launch token yourself, confirm with me first; otherwise I'll generate one manually and delete it right after. Don't try to keep any standing access to the prod project — I'll manage prod through the Zerops dashboard and a separate ZCP session once it's up.

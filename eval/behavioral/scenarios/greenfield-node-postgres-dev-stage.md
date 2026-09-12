@@ -9,6 +9,8 @@ area: bootstrap-and-develop
 retrospective:
   promptStyle: briefing-future-agent
 verification:
+  mode: required
+  spec: spec-workflows.md §4
   expectedServices:
     - hostname: appdev
       status: [ACTIVE]
@@ -20,6 +22,9 @@ verification:
       status: [ACTIVE]
       type: postgresql@*
   noFailedProcesses: true
+  liveness: {service: appstage, marker: "team-notes"}
+  nodePostgresRecord: {stage: appstage, database: db}
+  never: ["zerops_import{override=true}"]
 notableFriction:
   # Informational only — does NOT gate anything. Helps the assistant in
   # the local Claude Code session know what to look for in the retrospective.
@@ -41,3 +46,5 @@ notableFriction:
 
 Build me a small team-notes dashboard with a Node backend and Postgres.
 I want both a dev and a stage service.
+
+Implement `POST /records` (JSON body `{"nonce": "...", "value": "..."}` → `201` with `{id, nonce, value, environment: "stage"}`, persisted to the Postgres `db` service) and `GET /records/:id` returning the same shape on `appstage`, and make sure the dashboard page served at `/` mentions "team-notes" in its body.

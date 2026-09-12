@@ -28,6 +28,29 @@ type RunnerConfig struct {
 	MaxTurns   int                 // Max turns per eval (default: 100)
 	Timeout    time.Duration       // Timeout per recipe (default: 15 min)
 	Capture    *capture.Connection // Active raw-capture window; nil when capture is off.
+	// CaptureOwned reports whether Capture is the private scoped window that
+	// THIS invocation's own `--capture raw` created (as opposed to an
+	// inherited or global window). Required-mode scenarios refuse to start
+	// unless Capture != nil && CaptureOwned (docs/spec-capture-inspector.md
+	// §6). Meaningless when Capture is nil.
+	CaptureOwned bool
+	// TaskEndSettle bounds how long the task-end freeze waits for a live
+	// process (created after scenario start) to reach a terminal status
+	// before declaring the observation unsettled. Default 60s.
+	// (docs/spec-testing-architecture.md §10.2 step 3.)
+	TaskEndSettle time.Duration
+	// Binding is an explicit execution binding (docs/spec-testing-
+	// architecture.md §10.4). nil means the runner uses its own executable
+	// as the agent's tool, as before this section.
+	Binding *ExecutionBinding
+	// IdentityPollInterval overrides the default 500ms process-identity
+	// poll cadence (§10.4 "Observed process identity"). Test-tunable only.
+	IdentityPollInterval time.Duration
+	// MutatingTools names the tools whose annotations mark them
+	// non-read-only — the askWhen "next mutating call" vocabulary
+	// (docs/spec-eval-farm.md §4.1 FM-31). The L4 caller supplies it from
+	// internal/tools.MutatingToolNames(); eval does not import tools.
+	MutatingTools map[string]bool
 }
 
 // Runner executes single recipe evaluations.
@@ -60,6 +83,12 @@ func NewRunner(config RunnerConfig, store *knowledge.Store, client platform.Clie
 	}
 	if config.WorkDir == "" {
 		config.WorkDir = "/var/www"
+	}
+	if config.TaskEndSettle == 0 {
+		config.TaskEndSettle = 60 * time.Second
+	}
+	if config.IdentityPollInterval == 0 {
+		config.IdentityPollInterval = 500 * time.Millisecond
 	}
 	return &Runner{
 		config:    config,

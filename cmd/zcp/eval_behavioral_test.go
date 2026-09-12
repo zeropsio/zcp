@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/eval"
@@ -79,5 +80,223 @@ func TestSelectForAll_RealScenarios_ExcludesLaunchDelegated(t *testing.T) {
 		if sc.ID == "launch-production-delegated" {
 			t.Fatal("launch-production-delegated must be excluded from selectForAll, but it was selected")
 		}
+	}
+}
+
+// TestExecutionBinding_ParseFlags_AllOrNothing pins
+// docs/spec-testing-architecture.md §10.4 "Binding": the four core binding
+// flags are all-or-nothing, `behavioral all` refuses any binding flag, and
+// --work-dir/--results-dir are extracted regardless of whether a binding is
+// present.
+func TestExecutionBinding_ParseFlags_AllOrNothing(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no binding flags at all", func(t *testing.T) {
+		t.Parallel()
+		clean, flags, err := parseExecutionBindingFlags([]string{"--file", "scenario.md"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if flags.any {
+			t.Fatalf("flags.any = true, want false")
+		}
+		if len(clean) != 2 || clean[0] != "--file" || clean[1] != "scenario.md" {
+			t.Fatalf("clean = %v, want passthrough of non-binding args", clean)
+		}
+	})
+
+	t.Run("partial binding is a usage error", func(t *testing.T) {
+		t.Parallel()
+		_, _, err := parseExecutionBindingFlags([]string{"--candidate", "/bin/zcp"})
+		if err == nil {
+			t.Fatal("expected an error for a partial binding, got nil")
+		}
+	})
+
+	t.Run("complete binding parses clean", func(t *testing.T) {
+		t.Parallel()
+		clean, flags, err := parseExecutionBindingFlags([]string{
+			"--file", "scenario.md",
+			"--candidate", "/bin/zcp",
+			"--candidate-sha256", "deadbeef",
+			"--project-id", "proj-1",
+			"--ack-disposable-project", "yes",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !flags.any {
+			t.Fatal("flags.any = false, want true")
+		}
+		if flags.candidate != "/bin/zcp" || flags.sha256 != "deadbeef" || flags.projectID != "proj-1" || flags.ack != "yes" {
+			t.Fatalf("flags = %+v, want the four core binding values", flags)
+		}
+		if len(clean) != 2 || clean[0] != "--file" || clean[1] != "scenario.md" {
+			t.Fatalf("clean = %v, want binding flags stripped", clean)
+		}
+	})
+
+	t.Run("work and results dir override the env value", func(t *testing.T) {
+		t.Parallel()
+		_, flags, err := parseExecutionBindingFlags([]string{"--work-dir", "/tmp/w", "--results-dir", "/tmp/r"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if flags.workDir != "/tmp/w" || flags.resultsDir != "/tmp/r" {
+			t.Fatalf("flags = %+v, want workDir=/tmp/w resultsDir=/tmp/r", flags)
+		}
+	})
+
+	t.Run("all rejects any binding flag", func(t *testing.T) {
+		t.Parallel()
+		_, _, err := parseExecutionBindingFlags([]string{
+			"--candidate", "/bin/zcp",
+			"--candidate-sha256", "deadbeef",
+			"--project-id", "proj-1",
+			"--ack-disposable-project", "yes",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error building flags: %v", err)
+		}
+		if err := rejectBindingFlagsForAll([]string{
+			"--candidate", "/bin/zcp",
+			"--candidate-sha256", "deadbeef",
+			"--project-id", "proj-1",
+			"--ack-disposable-project", "yes",
+		}); err == nil {
+			t.Fatal("rejectBindingFlagsForAll: expected an error, got nil")
+		}
+		if err := rejectBindingFlagsForAll([]string{"--scenarios-dir", "dir"}); err != nil {
+			t.Fatalf("rejectBindingFlagsForAll: unexpected error for a non-binding arg set: %v", err)
+		}
+	})
+}
+
+// TestBehavioralAccepted_RetrospectiveErrors_ExecutionOk pins finding E6:
+// behavioralAccepted derives acceptance from eval.ExecutionDimension (the
+// same computation printBehavioralDimensions prints as "Execution: "), never
+// from raw r.Error — a retrospective failure (turn exhaustion or any other
+// retrospective-phase error, FM-13) must read Execution: ok, and exit
+// acceptance follows the task verdict rather than being independently
+// rejected on the raw error string.
+func TestBehavioralAccepted_RetrospectiveErrors_ExecutionOk(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		result     *eval.BehavioralResult
+		wantOK     bool
+		wantReason string
+	}{
+		{
+			name:   "observe mode, retrospective turn exhaustion",
+			result: &eval.BehavioralResult{Error: "retrospective: missing: claude exit: exit status 1"},
+			wantOK: true,
+		},
+		{
+			name:   "observe mode, retrospective other failure",
+			result: &eval.BehavioralResult{Error: "retrospective: claude exit: exit status 1"},
+			wantOK: true,
+		},
+		{
+			name: "required mode, retrospective failure but task passed",
+			result: &eval.BehavioralResult{
+				Error:   "retrospective: missing: claude exit: exit status 1",
+				Task:    &eval.TaskOutcome{Mode: eval.VerificationRequired, Result: eval.CheckPassed},
+				TaskEnd: &eval.TaskEndEvidence{Persisted: true},
+			},
+			wantOK: true,
+		},
+		{
+			name: "required mode, retrospective failure and task failed",
+			result: &eval.BehavioralResult{
+				Error:   "retrospective: missing: claude exit: exit status 1",
+				Task:    &eval.TaskOutcome{Mode: eval.VerificationRequired, Result: eval.CheckFailed},
+				TaskEnd: &eval.TaskEndEvidence{Persisted: true},
+			},
+			wantOK:     false,
+			wantReason: "task: required result failed",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if execution := eval.ExecutionDimension(tc.result); execution != "ok" {
+				t.Fatalf("ExecutionDimension = %q, want ok", execution)
+			}
+			ok, reason := behavioralAccepted(tc.result)
+			if ok != tc.wantOK {
+				t.Errorf("behavioralAccepted ok = %v, want %v (reason %q)", ok, tc.wantOK, reason)
+			}
+			if tc.wantReason != "" && reason != tc.wantReason {
+				t.Errorf("reason = %q, want %q", reason, tc.wantReason)
+			}
+		})
+	}
+}
+
+// TestExecutionBinding_AllRefusesDirAndRunIDFlags pins that `behavioral all`
+// refuses --work-dir/--results-dir/--run-id as it refuses the binding flags,
+// instead of accepting and silently ignoring them.
+func TestExecutionBinding_AllRefusesDirAndRunIDFlags(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{
+		{"--scenarios-dir", "x", "--work-dir", "/tmp/w"},
+		{"--scenarios-dir", "x", "--results-dir", "/tmp/r"},
+		{"--scenarios-dir", "x", "--run-id", "r1"},
+	} {
+		if err := rejectBindingFlagsForAll(args); err == nil {
+			t.Errorf("rejectBindingFlagsForAll(%v) = nil, want an error", args)
+		}
+	}
+}
+
+// TestBuildExecutionBinding_FarmWorkDirIsVarWww_PrivateSurfaceStaysUnderResultsDir
+// pins D21 (docs/spec-eval-farm.md §6 gap, now removed): a farm run passes
+// --work-dir /var/www so the agent's `claude` (and the MCP `zcp serve`
+// child it spawns) gets the same cwd a real container uses
+// (internal/ops/mount.go mountBase, internal/eval/runner.go's own
+// WorkDir=/var/www default) — matching where zerops_mount mounts source
+// and where the deploy preflight looks for it. Before D21,
+// PrivateBin/ClaudeHome derived from filepath.Dir(workDir): with
+// workDir="/var/www" that base is "/", which uid zerops cannot create
+// under (the exact reason D3 originally pinned the farm's work dir under
+// $RUNDIR/work instead). D21 derives them from filepath.Dir(resultsDir)
+// instead — an evaluator-owned scratch path never shared with the agent —
+// so WorkDir is free to be /var/www without weakening the binding
+// preflight's safe-roots check (assertSafeRoots still sees two distinct,
+// non-nested, absolute, non-home, non-"/" roots).
+func TestBuildExecutionBinding_FarmWorkDirIsVarWww_PrivateSurfaceStaysUnderResultsDir(t *testing.T) {
+	t.Parallel()
+
+	flags := executionBindingFlags{
+		any:        true,
+		candidate:  "/rundir/candidate",
+		sha256:     "deadbeef",
+		projectID:  "proj-1",
+		ack:        "yes",
+		workDir:    "/var/www",
+		resultsDir: "/rundir/results",
+	}
+
+	binding := buildExecutionBinding(flags, "suite-1")
+	if binding == nil {
+		t.Fatal("buildExecutionBinding = nil, want a binding")
+	}
+	if binding.WorkDir != "/var/www" {
+		t.Errorf("WorkDir = %q, want %q (the agent's cwd, unchanged from the flag)", binding.WorkDir, "/var/www")
+	}
+	if binding.ResultsDir != "/rundir/results" {
+		t.Errorf("ResultsDir = %q, want %q", binding.ResultsDir, "/rundir/results")
+	}
+	wantPrivateBin := filepath.Join("/rundir", "candidate-bin")
+	if binding.PrivateBin != wantPrivateBin {
+		t.Errorf("PrivateBin = %q, want %q (a sibling of results dir, not workDir's parent %q)", binding.PrivateBin, wantPrivateBin, filepath.Dir(binding.WorkDir))
+	}
+	wantClaudeHome := filepath.Join("/rundir", "candidate-claude-home")
+	if binding.ClaudeHome != wantClaudeHome {
+		t.Errorf("ClaudeHome = %q, want %q", binding.ClaudeHome, wantClaudeHome)
+	}
+	if filepath.Dir(binding.WorkDir) == filepath.Dir(binding.PrivateBin) {
+		t.Fatalf("test fixture assumption broke: workDir's parent must differ from results dir's parent (got %q for both)", filepath.Dir(binding.WorkDir))
 	}
 }

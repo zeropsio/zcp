@@ -91,3 +91,6 @@ internal/dataconsole/uitest/findings/
 e2e/AGENTS.md
 e2e/CLAUDE.md
 e2e/.zcp/
+
+# zcp eval farm run --detach log (eval/farm/README.md)
+/farm-*.log

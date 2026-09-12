@@ -66,13 +66,12 @@ type Scenario struct {
 	UserPersona string
 	UserSim     *UserSimConfig
 
-	// Verification (optional, behavioral mode only) asserts platform-side
-	// outcomes BEFORE cleanup wipes services. Captures the gap exposed by
-	// Tier-1 kanban retros: agent self-reports "Kanban is live" but the
-	// cleanup hook deletes services before manual verify can confirm. With
-	// Verification set, the runner queries the live platform between
-	// retrospective + cleanup and writes findings to verification.json
-	// alongside self-review.md. See VerificationConfig for the schema.
+	// Verification (optional, behavioral mode only) declares platform-side
+	// assertions the runner decides from a direct platform read and writes
+	// as result rows to verification.json. In observe mode (the default)
+	// the rows are advisory and decided after the retrospective, before
+	// cleanup; in required mode they are frozen at task end and gate the CLI
+	// exit (docs/spec-testing-architecture.md §10). See VerificationConfig.
 	Verification *VerificationConfig
 }
 
@@ -97,15 +96,15 @@ type RetrospectiveConfig struct {
 	PromptStyle string `yaml:"promptStyle"`
 }
 
-// VerificationConfig declares post-run platform-side assertions the runner
-// evaluates between retrospective + cleanup. Each block is optional; an
-// empty VerificationConfig produces no findings (no-op).
-//
-// Captured findings land in verification.json alongside self-review.md.
-// Sprint 3 wires this to behavioral runs; failures are warn-only at this
-// stage (the suite verdict still propagates from the retrospective). A
-// later sprint may promote findings to gate the exit code.
+// VerificationConfig declares the platform-side assertions of a behavioral
+// scenario. Each block is optional. Mode decides what the rows mean:
+// observe (default) writes them as advisory rows next to self-review.md and
+// never gates; required freezes them at task end and carries the result to
+// the CLI exit (docs/spec-testing-architecture.md §10.1).
 type VerificationConfig struct {
+	// Mode selects observe (default, warn-only) or required (deterministic
+	// task result gate). See docs/spec-testing-architecture.md §10.1.
+	Mode string `yaml:"mode,omitempty"`
 	// ExpectedServices lists per-service assertions: hostname must exist,
 	// status must match one of the allowed values, optional subdomain HTTP
 	// probe, optional type-glob.
@@ -118,7 +117,106 @@ type VerificationConfig struct {
 	// red-flag phrases the agent shouldn't admit to in success retros
 	// (e.g. "smuggled", "hand-edited", "had to overwrite").
 	RetrospectiveMustNotMention []string `yaml:"retrospectiveMustNotMention,omitempty"`
+	// NodePostgresRecord declares the one application-oracle check
+	// (docs/spec-testing-architecture.md §10.3): a Node runtime serving
+	// POST/GET /records backed by a managed PostgreSQL database, plus an
+	// unrelated service whose deployed artifact must not change. Counts as
+	// an executable check for required mode.
+	NodePostgresRecord *NodePostgresRecordConfig `yaml:"nodePostgresRecord,omitempty"`
+
+	// Spec names the spec section this scenario proves (docs/spec-eval-farm.md
+	// §4.1 FM-27) — a pointer only, never a restatement. The drift lint
+	// (verification_vocab_test.go, FM-33) checks the named section exists.
+	Spec string `yaml:"spec,omitempty"`
+	// AllowFailed lists services whose FAILED process state is the
+	// scenario's seeded starting point, not a violation (FM-28). Only
+	// meaningful together with NoFailedProcesses: true.
+	AllowFailed []string `yaml:"allowFailed,omitempty"`
+	// Liveness configures the O2 liveness probe (FM-27 table): resolve the
+	// named service's subdomain URL and expect a 2xx response whose body
+	// contains Marker.
+	Liveness *LivenessProbe `yaml:"liveness,omitempty"`
+	// Unchanged is the standalone form of the "unrelated artifact unchanged"
+	// row (FM-29): one hostname per entry, each graded independently of
+	// whether NodePostgresRecord is also declared.
+	Unchanged []string `yaml:"unchanged,omitempty"`
+	// Never lists call-shape expressions (FM-30): a matching call anywhere
+	// in the run's captured MCP stream fails the scenario. Grammar:
+	// `<tool>` or `<tool>{k=v,k2=v2}` — see ParseCallShape.
+	Never []string `yaml:"never,omitempty"`
+	// AskWhen lists error codes (FM-31): advisory rows recording whether a
+	// user-simulation turn occurred between the named error code appearing
+	// and the next mutating call. Never gates the aggregated result.
+	AskWhen []string `yaml:"askWhen,omitempty"`
+	// Reach exists ONLY to be rejected at parse (FM-32): there is no
+	// reach:/expected-route field in verification:. Never read after
+	// validate() runs.
+	Reach *yaml.Node `yaml:"reach,omitempty"`
+	// LaunchShape configures the O6 launch-shape oracle (docs/spec-eval-farm.md
+	// §4.4 O6): prod project exists, runtimes start without code, no
+	// buildFromGit, first release is the first build, launch token never
+	// in the transcript.
+	LaunchShape *LaunchShapeConfig `yaml:"launchShape,omitempty"`
+	// ArtifactPromotion configures the O7 artifact-promotion oracle
+	// (docs/spec-eval-farm.md §4.4 O7): one entry per cross-deploy
+	// promotion to verify.
+	ArtifactPromotion []ArtifactPromotionEntry `yaml:"artifactPromotion,omitempty"`
+	// NoFabricatedSecret enables the O8 oracle (docs/spec-eval-farm.md
+	// §4.4 O8): an offline scan of the run's captured MCP tool-call
+	// arguments for token-shaped values not among the scenario's declared
+	// inputs.
+	NoFabricatedSecret bool `yaml:"noFabricatedSecret,omitempty"`
 }
+
+// LaunchShapeConfig declares the O6 launch-shape oracle
+// (docs/spec-eval-farm.md §4.4 O6).
+type LaunchShapeConfig struct {
+	// ProdProject is the prod project name (post-Scenario.Render
+	// templating, e.g. "zcp-farm-{{runId}}-prod").
+	ProdProject string `yaml:"prodProject"`
+}
+
+// ArtifactPromotionEntry declares one O7 artifact-promotion oracle entry
+// (docs/spec-eval-farm.md §4.4 O7): a cross-deploy promotion from From's
+// active build to To.
+type ArtifactPromotionEntry struct {
+	From string `yaml:"from"`
+	To   string `yaml:"to"`
+}
+
+// LivenessProbe configures the O2 liveness check (FM-27 table): resolve
+// Service's subdomain URL and expect a 2xx response whose body contains
+// Marker. Row id: liveness/<service>/marker.
+type LivenessProbe struct {
+	Service string `yaml:"service"`
+	Marker  string `yaml:"marker"`
+}
+
+// NodePostgresRecordConfig declares the hostnames the node-postgres
+// application oracle resolves at task-end freeze (docs/spec-testing-architecture.md
+// §10.3). Stage and Database are required when the block is present.
+// Unrelated is optional — a topology with no third, unrelated host (e.g. a
+// two-service api+db pair) omits it, and the verifier then emits three
+// sub-rows (roundtrip, environment, db_row) instead of four; the standalone
+// verification.unchanged field (FM-29) is the replacement "unrelated
+// unchanged" check when it's needed. Environment is the literal the
+// environment sub-row expects the GET body's `environment` field to equal;
+// it defaults to "stage" when empty (NodePostgresVerifier.Verify), matching
+// every scenario written before dev-only topologies needed a different
+// literal.
+type NodePostgresRecordConfig struct {
+	Stage       string `yaml:"stage"`
+	Database    string `yaml:"database"`
+	Unrelated   string `yaml:"unrelated"`
+	Environment string `yaml:"environment"`
+}
+
+// VerificationObserve and VerificationRequired are the two
+// VerificationConfig.Mode values. "" (unset) means observe.
+const (
+	VerificationObserve  = "observe"
+	VerificationRequired = "required"
+)
 
 // ExpectedService is one per-service assertion in a VerificationConfig.
 type ExpectedService struct {
@@ -171,7 +269,11 @@ type scenarioFrontmatter struct {
 
 // ParseScenario reads a scenario markdown file and returns the parsed structure.
 // The file must start with YAML frontmatter (between --- delimiters) followed by
-// a markdown body used verbatim as the agent prompt.
+// a markdown body used verbatim as the agent prompt. A prompt/userPersona may
+// carry {{runId}}/{{projectId}} placeholders — ParseScenario only rejects an
+// unrecognized {{...}} token; it does not substitute. Call Scenario.Render to
+// substitute placeholder values before using Prompt/UserPersona for a run
+// (internal/eval/scenario_template.go).
 func ParseScenario(path string) (*Scenario, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -186,6 +288,9 @@ func ParseScenario(path string) (*Scenario, error) {
 	var fm scenarioFrontmatter
 	if err := yaml.Unmarshal([]byte(front), &fm); err != nil {
 		return nil, fmt.Errorf("scenario %q: parse frontmatter: %w", path, err)
+	}
+	if err := rejectUnknownVerificationFields(front); err != nil {
+		return nil, fmt.Errorf("scenario %q: %w", path, err)
 	}
 
 	sc := &Scenario{
@@ -206,11 +311,49 @@ func ParseScenario(path string) (*Scenario, error) {
 		ExcludeFromAll:  fm.ExcludeFromAll,
 	}
 
+	if err := rejectUnknownTemplateTokens(sc.Prompt); err != nil {
+		return nil, fmt.Errorf("scenario %q: prompt: %w", path, err)
+	}
+	if err := rejectUnknownTemplateTokens(sc.UserPersona); err != nil {
+		return nil, fmt.Errorf("scenario %q: userPersona: %w", path, err)
+	}
+
 	if err := sc.validate(); err != nil {
 		return nil, fmt.Errorf("scenario %q: %w", path, err)
 	}
 
 	return sc, nil
+}
+
+// rejectUnknownVerificationFields strictly re-decodes just the
+// `verification:` sub-node of the frontmatter against VerificationConfig's
+// known field set (yaml.Decoder.KnownFields), independent of the lenient
+// whole-frontmatter decode above. A misspelled verification field (e.g.
+// `launcShape`) is rejected here rather than silently ignored.
+func rejectUnknownVerificationFields(front string) error {
+	// The lenient whole-frontmatter decode in ParseScenario already
+	// surfaced any structural YAML error before this runs, so a second
+	// structural failure here is unexpected — surfaced rather than
+	// swallowed.
+	var raw map[string]yaml.Node
+	if err := yaml.Unmarshal([]byte(front), &raw); err != nil {
+		return fmt.Errorf("re-parse frontmatter for verification field check: %w", err)
+	}
+	node, ok := raw["verification"]
+	if !ok {
+		return nil
+	}
+	data, err := yaml.Marshal(&node)
+	if err != nil {
+		return fmt.Errorf("re-marshal verification node: %w", err)
+	}
+	dec := yaml.NewDecoder(strings.NewReader(string(data)))
+	dec.KnownFields(true)
+	var strict VerificationConfig
+	if err := dec.Decode(&strict); err != nil {
+		return fmt.Errorf("verification: %w", err)
+	}
+	return nil
 }
 
 func (s *Scenario) validate() error {
@@ -231,6 +374,48 @@ func (s *Scenario) validate() error {
 	if s.Retrospective != nil && s.Retrospective.PromptStyle == "" {
 		return fmt.Errorf("retrospective.promptStyle required when retrospective is set")
 	}
+	if s.Verification != nil {
+		switch s.Verification.Mode {
+		case "", VerificationObserve, VerificationRequired:
+		default:
+			return fmt.Errorf("invalid verification.mode %q (want observe|required)", s.Verification.Mode)
+		}
+		if s.Verification.Mode == VerificationRequired {
+			hasExecutableCheck := len(s.Verification.ExpectedServices) > 0 ||
+				s.Verification.NoFailedProcesses ||
+				s.Verification.NodePostgresRecord != nil ||
+				s.Verification.Liveness != nil ||
+				len(s.Verification.Unchanged) > 0 ||
+				len(s.Verification.Never) > 0 ||
+				len(s.Verification.ArtifactPromotion) > 0 ||
+				s.Verification.LaunchShape != nil ||
+				s.Verification.NoFabricatedSecret
+			if !hasExecutableCheck {
+				return fmt.Errorf("verification.mode required needs at least one executable check (expectedServices, noFailedProcesses, nodePostgresRecord, liveness, unchanged, never, artifactPromotion, launchShape, or noFabricatedSecret; retrospectiveMustNotMention and askWhen are advisory and do not count)")
+			}
+		}
+		if npr := s.Verification.NodePostgresRecord; npr != nil {
+			if npr.Stage == "" || npr.Database == "" {
+				return fmt.Errorf("verification.nodePostgresRecord requires stage and database hostnames (unrelated is optional)")
+			}
+		}
+		if s.Verification.Reach != nil {
+			return fmt.Errorf("verification.reach is not a supported field (FM-32: no reach:/expected-route field — the observed route is coverage data, never an assertion)")
+		}
+		for _, expr := range s.Verification.Never {
+			if _, err := ParseCallShape(expr); err != nil {
+				return fmt.Errorf("verification.never: %w", err)
+			}
+		}
+		if s.Verification.LaunchShape != nil && s.Verification.LaunchShape.ProdProject == "" {
+			return fmt.Errorf("verification.launchShape requires prodProject")
+		}
+		for _, ap := range s.Verification.ArtifactPromotion {
+			if ap.From == "" || ap.To == "" {
+				return fmt.Errorf("verification.artifactPromotion entries require from and to")
+			}
+		}
+	}
 	if s.UserSim != nil {
 		if s.UserSim.MaxTurns < 0 {
 			return fmt.Errorf("userSim.maxTurns must be >= 0 (got %d)", s.UserSim.MaxTurns)
@@ -246,6 +431,12 @@ func (s *Scenario) validate() error {
 // (two-shot resume) execution. Detected by presence of retrospective config.
 func (s *Scenario) IsBehavioral() bool {
 	return s.Retrospective != nil
+}
+
+// IsRequired reports whether the scenario's verification.mode is "required"
+// (a deterministic task-result gate) rather than the default "observe".
+func (s *Scenario) IsRequired() bool {
+	return s.Verification != nil && s.Verification.Mode == VerificationRequired
 }
 
 // splitFrontmatter returns the YAML block between the first two --- lines and

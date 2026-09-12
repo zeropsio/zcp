@@ -3,6 +3,7 @@ package content
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -208,6 +209,122 @@ func TestNoRetiredMechanicsVocabInEvalScenarios(t *testing.T) {
 	}
 	var msg strings.Builder
 	msg.WriteString("flow-eval scenario(s) reference a RETIRED mechanic — rewrite to the shipped behavior (single-token resume reads the staged ZCP_LAUNCH_TOKEN STAGE-FIRST; delivery is DERIVED from GitPushState; git-push auth is via the container credential helper, not .netrc; the CI repo secret is ZEROPS_TOKEN_PROD):\n")
+	for _, v := range violations {
+		msg.WriteString("  " + v.file + ":" + itoa(v.line) + " — " + v.label + "\n      " + v.snippet + "\n")
+	}
+	t.Error(msg.String())
+}
+
+// zeropsIDCandidate matches any maximal run of id-shaped characters so a
+// hard-coded Zerops object id (always exactly 22 characters, base62-ish)
+// can be told apart from a longer identifier that merely happens to
+// contain a 22-char substring — the whole run's length must be exactly 22,
+// not just some 22-char window inside it.
+var zeropsIDCandidate = regexp.MustCompile(`[A-Za-z0-9_-]+`)
+
+var hasLetter = regexp.MustCompile(`[A-Za-z]`)
+var hasDigit = regexp.MustCompile(`[0-9]`)
+
+// looksLikeZeropsID reports whether tok is shaped like a live Zerops object
+// id: exactly 22 characters, containing at least one letter and one digit
+// (refined against false positives — a plain 22-char word or a 22-char
+// hex/digit run alone does not qualify).
+func looksLikeZeropsID(tok string) bool {
+	return len(tok) == 22 && hasLetter.MatchString(tok) && hasDigit.MatchString(tok)
+}
+
+// TestNoLiteralProjectIDInEvalScenarios rejects a behavioral scenario whose
+// prompt or persona hard-codes a live Zerops object id (a 22-character
+// base62-ish token) or a "zcp-farm-" run-project name not immediately
+// followed by the {{runId}} template placeholder (internal/eval/
+// scenario_template.go). A scenario that names a real id or a frozen farm
+// project name can never run against a fresh farm run — the object it
+// names won't exist — and a scenario meant to reuse the farm's own run id
+// must do so through the {{runId}} placeholder, never a literal.
+func TestNoLiteralProjectIDInEvalScenarios(t *testing.T) {
+	repoRoot := findRepoRoot(t)
+	dirs := []string{
+		filepath.Join(repoRoot, "eval", "behavioral", "scenarios"),
+		filepath.Join(repoRoot, "eval", "behavioral", "scenarios-local"),
+	}
+
+	type violation struct {
+		file    string
+		line    int
+		label   string
+		snippet string
+	}
+	scan := func(dirs []string) []violation {
+		var violations []violation
+		for _, dir := range dirs {
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				// scenarios-local may not exist on every checkout — not a failure.
+				continue
+			}
+			for _, e := range entries {
+				if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+					continue
+				}
+				full := filepath.Join(dir, e.Name())
+				body, readErr := os.ReadFile(full)
+				if readErr != nil {
+					continue
+				}
+				scanner := bufio.NewScanner(bytes.NewReader(body))
+				scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+				lineNo := 0
+				for scanner.Scan() {
+					lineNo++
+					line := scanner.Text()
+
+					rel := full
+					if r, relErr := filepath.Rel(repoRoot, full); relErr == nil {
+						rel = r
+					}
+					snippet := strings.TrimSpace(line)
+					if len(snippet) > 140 {
+						snippet = snippet[:140] + "…"
+					}
+
+					for _, tok := range zeropsIDCandidate.FindAllString(line, -1) {
+						if looksLikeZeropsID(tok) {
+							violations = append(violations, violation{
+								file: rel, line: lineNo,
+								label:   fmt.Sprintf("literal Zerops object id %q (22 chars, letters+digits) — a scenario cannot hard-code an id that a fresh farm run never creates", tok),
+								snippet: snippet,
+							})
+						}
+					}
+
+					for idx := 0; ; {
+						at := strings.Index(line[idx:], "zcp-farm-")
+						if at < 0 {
+							break
+						}
+						at += idx
+						rest := line[at+len("zcp-farm-"):]
+						if !strings.HasPrefix(rest, "{{runId}}") && !strings.HasPrefix(rest, "prod__{{runId}}") {
+							violations = append(violations, violation{
+								file: rel, line: lineNo,
+								label:   "\"zcp-farm-\" run-project name not immediately followed by {{runId}} — the farm project name is templated, never a literal id",
+								snippet: snippet,
+							})
+						}
+						idx = at + len("zcp-farm-")
+					}
+				}
+			}
+		}
+		return violations
+	}
+
+	violations := scan(dirs)
+	if len(violations) == 0 {
+		return
+	}
+	var msg strings.Builder
+	msg.WriteString("flow-eval scenario(s) hard-code a live Zerops id or an untemplated zcp-farm- project name — a fresh farm run never creates the literal object, so the scenario cannot run against it; use {{runId}}/{{projectId}} (internal/eval/scenario_template.go) instead:\n")
 	for _, v := range violations {
 		msg.WriteString("  " + v.file + ":" + itoa(v.line) + " — " + v.label + "\n      " + v.snippet + "\n")
 	}

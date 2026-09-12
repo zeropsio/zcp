@@ -26,7 +26,16 @@ func (r *Runner) prepareCaptureMCPConfig(outputDir string) error {
 	if r.config.Capture == nil {
 		return nil
 	}
-	executable, err := os.Executable()
+	// §10.4 "Candidate owns the agent surface": with a binding the capture
+	// MCP config names the candidate by absolute path, never the runner's
+	// own executable.
+	var executable string
+	var err error
+	if r.config.Binding != nil {
+		executable = r.config.Binding.Candidate
+	} else {
+		executable, err = os.Executable()
+	}
 	if err != nil {
 		return fmt.Errorf("resolve current zcp executable for capture MCP: %w", err)
 	}

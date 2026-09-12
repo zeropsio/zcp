@@ -141,6 +141,28 @@ when resumes share one Claude session ID. The bundle includes provider/MCP raw,
 lifecycle markers, and copies of the scenario artifacts. See
 `docs/spec-capture-inspector.md`.
 
+### Explicit candidate binding (required mode only)
+
+A `required`-mode run must name the exact binary under test and the one
+project it may touch — see `docs/spec-testing-architecture.md` §10.4. The
+runner refuses to start (zero platform mutation) on a candidate mismatch, a
+non-fresh target, or a missing binding.
+
+```
+zcp eval behavioral run --scenarios-dir <dir> --id <id> --capture raw \
+  --candidate /path/to/candidate-zcp \
+  --candidate-sha256 "$(sha256sum /path/to/candidate-zcp | cut -d' ' -f1)" \
+  --project-id <disposable-project-id> \
+  --ack-disposable-project yes
+```
+
+The candidate becomes the agent's `zcp`: `<candidate> init` (not the
+evaluator's own init) writes the work dir's agent-facing files, and every
+`claude` child's `PATH` is shadowed by a private symlink to the candidate.
+`--work-dir`/`--results-dir` override `ZCP_EVAL_WORK_DIR`/`ZCP_EVAL_RESULTS_DIR`;
+`--run-id` defaults to the suite id. `behavioral all` refuses any of these
+flags — bind and run one scenario at a time.
+
 ## Operational contract
 
 Every `flow-eval.sh <id>` invocation runs unconditionally, in this order,
@@ -182,10 +204,14 @@ retrospective-prompt.txt     The retrospective question (call 2)
 transcript.jsonl             Stream-json from call 1 (full scenario run)
 retrospective.jsonl          Stream-json from call 2 (resume)
 self-review.md               Extracted assistant text from call 2 — what you read first
-verification.json            Scenario assertions derived from the pre-cleanup direct platform read
-platform-snapshot.json       Allowlisted services/processes observed directly before cleanup
+verification.json            Result rows (passed/failed/blocked/not-run) from a direct platform
+                              read + advisory findings; one object, formatVersion
+                              zcp-eval-verification-2 (spec-testing-architecture.md §10.1)
+platform-snapshot.json       Allowlisted services/processes from that same read
 meta.json                    Run metadata: scenarioId, sessionId, model, wall times,
-                              compaction flag, paths
+                              compaction flag, paths, plus the task / taskEnd dimensions
+                              (required mode: frozen before the retrospective, project
+                              retained — no cleanup; spec §10.2)
 ```
 
 ## Interactive playbook (after `self-review.md` lands)
@@ -249,6 +275,19 @@ discuss; the assistant is the grader, with full project context.
 - SSH access to `zcp` host (per `CLAUDE.local.md`).
 - `zcli` authenticated on `zcp`, scope visible to `eval-zcp` project
   (per `CLAUDE.local.md` — login uses token from `.mcp.json`).
+
+## Deterministic single-run report
+
+`zcp eval behavioral report --capture <session-dir> --eval <id> --scenario <id>
+[--format text|json]` prints a read-only projection of one finalized capture
+window's frozen evidence — task result, checks, per-invocation usage/MCP
+call counts, findings, and gaps — with zero network, provider, platform, or
+model calls (docs/spec-capture-inspector.md §8.5,
+docs/spec-testing-architecture.md §10.5). It has no verdict authority: every
+value is copied from a file the run already wrote. Exit 0 means the window
+was valid and complete (a failed task is still a successful report); exit 1
+means the window is invalid, the scope doesn't resolve, or the window is
+valid but incomplete (the report still prints, with the gap listed).
 
 ## Status
 

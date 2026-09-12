@@ -625,6 +625,11 @@ type UserSimTurn struct {
 	AgentTextExcerpt string   `json:"agentTextExcerpt"`
 	Reply            string   `json:"reply"`
 	WallTime         Duration `json:"wallTime"`
+	// StartedAt is the turn's start instant (UTC, set where the turn is
+	// built, before the sim.Reply call) — used by the askWhen decision-row
+	// correlation (docs/spec-eval-farm.md §4.1 FM-31) to order a user-sim
+	// turn against the MCP tool-call stream.
+	StartedAt time.Time `json:"startedAt"`
 }
 
 // runUserSimLoop drives the classify→user-sim→agent-resume cycle until one of
@@ -718,6 +723,7 @@ func runUserSimLoop(
 				AgentTextExcerpt: trunc(verdict.LastAssistantText, userSimAgentExcerptCap),
 				Reply:            reply,
 				WallTime:         Duration(time.Since(turnStart)),
+				StartedAt:        turnStart.UTC(),
 			}
 			result.UserSim.Turns = append(result.UserSim.Turns, turn)
 

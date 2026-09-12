@@ -1,0 +1,30 @@
+{{define "findings"}}{{template "head" .Meta}}
+<div class="page-head">
+<h1>Findings</h1>
+<p class="muted">{{.Summary}}</p>
+</div>
+{{template "filterbar" .Nav.Filters}}
+<div class="filter-row"><span class="k">Sort</span>{{range .Nav.Sorts}}<a class="filter{{if .Active}} on{{end}}" href="{{.URL}}">{{.Label}}{{if .Active}}<span class="sort-marker" aria-hidden="true">{{if eq .Dir "asc"}} ▲{{else}} ▼{{end}}</span>{{end}}</a>{{end}}</div>
+{{range .Items}}<details class="finding sev-{{.Severity}}">
+<summary class="finding-head">
+<span class="{{severityClass .Severity}}" title="{{severityTooltip .Severity}}">{{severityLabel .Severity}}</span>
+<span class="chip cause-chip">{{.CauseLabel}}</span>
+<span>{{.Title}}</span>
+</summary>
+<p class="muted small"><a class="run-link" href="/r/{{.RunID}}">Run {{.RunID}}</a> · <a href="{{.ScenarioLink}}">{{.Scenario}}</a> · <a href="{{.BatchLink}}">{{.Batch}}</a> · <a href="{{.BuildLink}}">{{.Build.Label}}</a>{{if .Surface}} · <a href="{{.SurfaceLink}}"><code>{{.Surface}}</code></a>{{end}}</p>
+<p>{{.What}}</p>
+{{range .Evidence}}<div class="quote">
+<p class="quote-ref"><span class="{{if .Verified}}evidence-verified{{else}}evidence-unverified{{end}}">{{verifiedMark .Verified}}</span>{{if .StepLink}} <a href="{{.StepLink}}">step</a>{{end}}</p>
+&#34;{{.Quote}}&#34;
+</div>
+{{end}}
+<dl class="kv">
+{{if .Anchor}}<dt>Anchor</dt><dd><code>{{.Anchor}}</code></dd>{{end}}
+<dt>Where to look</dt><dd>{{if .LookAt}}{{.LookAt}}{{else}}<span class="muted">Not provided</span>{{end}}</dd>
+{{if .Fix}}<dt>Fix</dt><dd>{{.Fix}}</dd>{{end}}
+</dl>
+</details>
+{{else}}{{if eq .Total 0}}<p class="empty">No findings in this window.</p>
+{{else}}<p class="empty">No findings match these filters. <a href="/findings">Reset filters</a></p>{{end}}
+{{end}}
+{{template "foot"}}{{end}}

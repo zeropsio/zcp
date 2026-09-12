@@ -694,6 +694,19 @@ func TestDurationJSON(t *testing.T) {
 	}
 }
 
+// TestDefaultModel_IsSonnet5 pins the eval runner's fallback model
+// (RunnerConfig.Model empty -> defaultModel, runner.go NewRunner) to
+// claude-sonnet-5 (S2 build). This is the runner's own default when a
+// caller doesn't set one; a run's candidate model stays whatever the
+// candidate reports on the wire, never assumed from this constant.
+func TestDefaultModel_IsSonnet5(t *testing.T) {
+	t.Parallel()
+
+	if defaultModel != "claude-sonnet-5" {
+		t.Errorf("defaultModel = %q, want %q", defaultModel, "claude-sonnet-5")
+	}
+}
+
 // --- Test helpers ---
 
 func mustWrite(t *testing.T, path, content string) {

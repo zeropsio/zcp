@@ -1,11 +1,75 @@
 package eval
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/zeropsio/zcp/internal/capture"
+	"github.com/zeropsio/zcp/internal/platform"
 )
+
+// TestSpawnClaudeResume_Retrospective_TextOnlyArgs pins the D18 argv
+// contract (docs/spec-eval-farm.md §2.3 FM-13): the retrospective resume is
+// TEXT-ONLY — no --mcp-config attached (unlike every other spawn path) and
+// tools disabled via --tools "" — with the existing --max-turns 3 cap kept.
+// Live gate1 bundles showed the model answering the briefing prompt by
+// acting (Read/Write, Bash/Write) instead of replying in text, burning the
+// turn cap; this argv shape is what stops that.
+func TestSpawnClaudeResume_Retrospective_TextOnlyArgs(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	argvFile := filepath.Join(dir, "argv.txt")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argvFile + "\n" +
+		`printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"sess-x"}'` + "\n"
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+
+	runner := NewRunner(RunnerConfig{MCPConfig: "/should/not/appear.json", WorkDir: dir}, nil, platform.NewMock(), "p1")
+	logFile := filepath.Join(dir, "retro.jsonl")
+	if err := runner.spawnClaudeResume(context.Background(), "sess-x", "what did you do", logFile, captureProcessScope{}); err != nil {
+		t.Fatalf("spawnClaudeResume: %v", err)
+	}
+
+	argvBytes, err := os.ReadFile(argvFile)
+	if err != nil {
+		t.Fatalf("read argv: %v", err)
+	}
+	argv := strings.Split(strings.TrimRight(string(argvBytes), "\n"), "\n")
+
+	if strings.Contains(strings.Join(argv, " "), "--mcp-config") {
+		t.Errorf("argv = %v, must not contain --mcp-config (retrospective is text-only)", argv)
+	}
+	if !hasConsecutiveArgs(argv, "--tools", "") {
+		t.Errorf("argv = %v, want --tools \"\" (tools disabled)", argv)
+	}
+	if !hasConsecutiveArgs(argv, "--max-turns", "3") {
+		t.Errorf("argv = %v, want --max-turns 3 kept", argv)
+	}
+}
+
+// hasConsecutiveArgs reports whether argv contains flag immediately followed
+// by value as adjacent elements.
+func hasConsecutiveArgs(argv []string, flag, value string) bool {
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] == flag && argv[i+1] == value {
+			return true
+		}
+	}
+	return false
+}
 
 // TestLoadRetrospectivePrompt_BriefingFutureAgent_Embedded asserts the default
 // retrospective prompt is embedded and loadable. Drift in embed path (e.g.
@@ -188,6 +252,124 @@ func TestParseScenario_Behavioral_FieldsPopulated(t *testing.T) {
 	}
 }
 
+// TestBehavioralRun_MetaCarriesDigestsAndCredentialMode pins the meta.json
+// digest/credential fields docs/spec-eval-farm.md §1.2 FM-4 and §2.4 FM-16
+// add: evaluatorSha256 (self hash), credentialMode derived from env presence
+// only, and the forbidden-state warning when both credential kinds are set.
+func TestBehavioralRun_MetaCarriesDigestsAndCredentialMode(t *testing.T) {
+	t.Parallel()
+
+	t.Run("evaluator self hash matches an independently computed sha256", func(t *testing.T) {
+		t.Parallel()
+		exe, err := os.Executable()
+		if err != nil {
+			t.Fatalf("os.Executable: %v", err)
+		}
+		raw, err := os.ReadFile(exe)
+		if err != nil {
+			t.Fatalf("read test binary: %v", err)
+		}
+		sum := sha256.Sum256(raw)
+		want := hex.EncodeToString(sum[:])
+
+		got, err := evaluatorSelfSHA256()
+		if err != nil {
+			t.Fatalf("evaluatorSelfSHA256: %v", err)
+		}
+		if got != want {
+			t.Fatalf("evaluatorSelfSHA256 = %s, want %s", got, want)
+		}
+	})
+
+	// Owner decision (spec 79ced2cc, FM-16): the farm's agent credential is
+	// OAuth-only. credentialFieldsFromPresence reports presence only, never
+	// a value: "oauth-token" when CLAUDE_CODE_OAUTH_TOKEN is set (regardless
+	// of ANTHROPIC_API_KEY — that combination is exactly the disallowed
+	// state farm/report.go's ReportRun blocks on, not something meta.json
+	// itself refuses to record), and anthropicAPIKeyPresent=true whenever
+	// ANTHROPIC_API_KEY is set.
+	t.Run("credential fields from presence, OAuth-only", func(t *testing.T) {
+		t.Parallel()
+		cases := []struct {
+			name           string
+			hasAPIKey      bool
+			hasOAuth       bool
+			wantCredential string
+			wantAPIKey     bool
+		}{
+			{"oauth token only", false, true, "oauth-token", false},
+			{"api key only", true, false, "", true},
+			{"neither", false, false, "", false},
+			{"both — api key present alongside oauth", true, true, "oauth-token", true},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				credential, apiKeyPresent := credentialFieldsFromPresence(tc.hasAPIKey, tc.hasOAuth)
+				if credential != tc.wantCredential {
+					t.Errorf("credential = %q, want %q", credential, tc.wantCredential)
+				}
+				if apiKeyPresent != tc.wantAPIKey {
+					t.Errorf("anthropicAPIKeyPresent = %t, want %t", apiKeyPresent, tc.wantAPIKey)
+				}
+			})
+		}
+	})
+}
+
+// TestObservedModelFromProviderCapture_NoProviderFile_ReturnsEmpty pins the
+// "else empty" half of FM-16's modelObserved rule: a capture window with no
+// (or unreadable) provider.jsonl never fabricates a model name.
+func TestObservedModelFromProviderCapture_NoProviderFile_ReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	if got := observedModelFromProviderCapture(t.TempDir()); got != "" {
+		t.Fatalf("observedModelFromProviderCapture = %q, want empty", got)
+	}
+	if got := observedModelFromProviderCapture(""); got != "" {
+		t.Fatalf("observedModelFromProviderCapture(\"\") = %q, want empty", got)
+	}
+}
+
+// TestBehavioralResult_ModelObservedAtFreeze pins finding E7: ModelObserved
+// is computed when the result is finalized (writeBehavioralResult), not at
+// newBehavioralResult time — at construction the capture's provider.jsonl is
+// still empty (no agent request has been sent yet), so reading it there
+// always misses the model. The provider log here is written AFTER the
+// result is constructed, mirroring the real timeline.
+func TestBehavioralResult_ModelObservedAtFreeze(t *testing.T) {
+	t.Parallel()
+	sessionDir := t.TempDir()
+	client := platform.NewMock()
+	cfg := RunnerConfig{Capture: &capture.Connection{CaptureID: "cap1", ProxyURL: "http://127.0.0.1:1", SessionDir: sessionDir}}
+	runner := NewRunner(cfg, nil, client, "p1")
+
+	sc := &Scenario{ID: "sc1"}
+	result := runner.newBehavioralResult(sc, "suite1", time.Now())
+	if result.ModelObserved != "" {
+		t.Fatalf("ModelObserved = %q at construction, want empty (no capture traffic yet)", result.ModelObserved)
+	}
+
+	body := []byte(`{"model":"claude-fake-model"}`)
+	rec := capture.Record{
+		Seq: 1, Time: time.Now(), SessionID: "cap1", Kind: capture.RecordProviderRequestBody,
+		ExchangeID: "ex1", BodyBase64: base64.StdEncoding.EncodeToString(body),
+	}
+	line, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatalf("marshal record: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "provider.jsonl"), append(line, '\n'), 0o600); err != nil {
+		t.Fatalf("write provider.jsonl: %v", err)
+	}
+
+	outDir := t.TempDir()
+	if err := runner.writeBehavioralResult(outDir, result); err != nil {
+		t.Fatalf("writeBehavioralResult: %v", err)
+	}
+	if result.ModelObserved != "claude-fake-model" {
+		t.Fatalf("ModelObserved = %q, want claude-fake-model", result.ModelObserved)
+	}
+}
+
 func writeTmp(t *testing.T, name, content string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -203,4 +385,213 @@ func firstN(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// TestScenarioBaseline_CapturesEveryUnchangedHostname pins FM-29: the
+// baseline recorded at scenario start covers the union of
+// verification.unchanged and nodePostgresRecord.unrelated — exactly those
+// hostnames, deduplicated, each with the active app-version id a
+// ListServicesDirect read reports for it.
+func TestScenarioBaseline_CapturesEveryUnchangedHostname(t *testing.T) {
+	t.Parallel()
+	sc := &Scenario{Verification: &VerificationConfig{
+		Unchanged:          []string{"hostA", "hostB"},
+		NodePostgresRecord: &NodePostgresRecordConfig{Stage: "appstage", Database: "db", Unrelated: "hostB"},
+	}}
+	client := platform.NewMock().WithServicesDirect([]platform.ServiceStack{
+		{Name: "hostA", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-A"}},
+		{Name: "hostB", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-B"}},
+		{Name: "hostC", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-C"}},
+	})
+	runner := NewRunner(RunnerConfig{}, nil, client, "p1")
+
+	hostnames := scenarioBaselineHostnames(sc)
+	if len(hostnames) != 2 {
+		t.Fatalf("scenarioBaselineHostnames = %v, want exactly [hostA hostB] (union, deduped)", hostnames)
+	}
+
+	result := &BehavioralResult{}
+	runner.recordScenarioBaseline(context.Background(), hostnames, result)
+	if result.Baseline == nil {
+		t.Fatal("expected Baseline to be recorded")
+	}
+	want := map[string]string{"hostA": "av-A", "hostB": "av-B"}
+	if len(result.Baseline.AppVersions) != len(want) {
+		t.Fatalf("Baseline.AppVersions = %+v, want exactly %+v", result.Baseline.AppVersions, want)
+	}
+	for host, av := range want {
+		if result.Baseline.AppVersions[host] != av {
+			t.Errorf("Baseline.AppVersions[%q] = %q, want %q", host, result.Baseline.AppVersions[host], av)
+		}
+	}
+	if _, present := result.Baseline.AppVersions["hostC"]; present {
+		t.Errorf("Baseline.AppVersions must not include hostC (not declared unchanged/unrelated)")
+	}
+}
+
+// TestScenarioBaseline_IncludesArtifactPromotionFrom pins finding E2: the
+// baseline hostname set also covers every declared
+// verification.artifactPromotion[].from — without it, the O7
+// dev_unchanged row (docs/spec-eval-farm.md §4.4 O7) has no baseline to
+// compare against and blocks on every cross-deploy run.
+func TestScenarioBaseline_IncludesArtifactPromotionFrom(t *testing.T) {
+	t.Parallel()
+	sc := &Scenario{Verification: &VerificationConfig{
+		Unchanged: []string{"hostA"},
+		ArtifactPromotion: []ArtifactPromotionEntry{
+			{From: "appdev", To: "appstage"},
+			{From: "hostA", To: "hostB"}, // dup of Unchanged's hostA: must not duplicate
+		},
+	}}
+
+	hostnames := scenarioBaselineHostnames(sc)
+	want := []string{"hostA", "appdev"}
+	if len(hostnames) != len(want) {
+		t.Fatalf("scenarioBaselineHostnames = %v, want %v (unchanged + deduped artifactPromotion[].from)", hostnames, want)
+	}
+	for i, h := range want {
+		if hostnames[i] != h {
+			t.Errorf("scenarioBaselineHostnames[%d] = %q, want %q (got %v)", i, hostnames[i], h, hostnames)
+		}
+	}
+}
+
+// TestBehavioralRun_RetrospectiveMaxTurns_RecordedMissingNotExecutionError
+// pins docs/spec-eval-farm.md §2.3 FM-13: a text-only retrospective that
+// still exhausts its turn cap (result line subtype "error_max_turns",
+// non-zero exit) is recorded as retrospectiveFile present / selfReviewFile
+// empty / meta.error prefixed "retrospective: missing:" — the already-frozen
+// task result is untouched, and the farm execution dimension stays "ok"
+// (the retrospective's self-review is optional evidence, not execution).
+func TestBehavioralRun_RetrospectiveMaxTurns_RecordedMissingNotExecutionError(t *testing.T) { // non-parallel: process environment
+	h := newBehavioralHarness(t)
+	script := `#!/bin/sh
+if [ "$1" = "--resume" ]; then
+    printf '%s\n' '{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":3,"session_id":"offline-probe"}'
+    exit 1
+fi
+printf '%s\n' '{"type":"system","subtype":"init","session_id":"offline-probe","model":"fake-offline"}'
+printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]}}'
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"offline-probe","result":"Done."}'
+`
+	h.writeClaudeScript(t, script)
+	scenarioPath := h.writeScenario(t, requiredExpectedAppScenario("required-retro-maxturns"))
+	mock := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
+	cfg := h.config()
+	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
+	cfg.CaptureOwned = true
+	h.requiredBinding(t, &cfg)
+	runner := NewRunner(cfg, nil, &freshThenRealClient{Client: mock}, "offline-project")
+
+	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(result.Error, "retrospective: missing:") {
+		t.Errorf("result.Error = %q, want prefix %q", result.Error, "retrospective: missing:")
+	}
+	if result.SelfReviewFile != "" {
+		t.Errorf("SelfReviewFile = %q, want empty", result.SelfReviewFile)
+	}
+	if result.RetrospectiveFile == "" {
+		t.Error("RetrospectiveFile empty, want the retrospective log path recorded")
+	}
+	if result.Task == nil || result.Task.Result != CheckPassed {
+		t.Fatalf("Task = %+v, want passed (untouched by retrospective failure)", result.Task)
+	}
+	if got := ExecutionDimension(result); got != "ok" {
+		t.Errorf("ExecutionDimension(result) = %q, want ok (retrospective-missing must not become an execution error)", got)
+	}
+}
+
+// TestBehavioralResult_UsageFromTranscriptResultLines_Summed pins brief
+// S14's cost fields: main sums every "result" line in the transcript (the
+// fresh run plus every user-sim resume, which append their own result event
+// to the same file); retrospective comes from retrospective.jsonl's own
+// result line; totalCostUsd is the sum of both.
+func TestBehavioralResult_UsageFromTranscriptResultLines_Summed(t *testing.T) {
+	t.Parallel()
+	transcript := `{"type":"assistant","message":{"content":[{"type":"text","text":"working"}]}}
+{"type":"result","subtype":"success","total_cost_usd":0.01,"usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":10,"cache_read_input_tokens":5},"num_turns":3,"duration_ms":1000}
+{"type":"result","subtype":"success","total_cost_usd":0.02,"usage":{"input_tokens":200,"output_tokens":75,"cache_creation_input_tokens":20,"cache_read_input_tokens":15},"num_turns":4,"duration_ms":2000}
+{"type":"result","subtype":"success","total_cost_usd":0.03,"usage":{"input_tokens":300,"output_tokens":25,"cache_creation_input_tokens":30,"cache_read_input_tokens":25},"num_turns":5,"duration_ms":3000}
+`
+	transcriptPath := writeTmp(t, "transcript.jsonl", transcript)
+	retro := `{"type":"result","subtype":"success","total_cost_usd":0.005,"usage":{"input_tokens":40,"output_tokens":10,"cache_creation_input_tokens":1,"cache_read_input_tokens":2},"num_turns":1,"duration_ms":500}
+`
+	retroPath := writeTmp(t, "retrospective.jsonl", retro)
+
+	usage := computeBehavioralUsage(transcriptPath, retroPath)
+	if usage == nil {
+		t.Fatal("computeBehavioralUsage returned nil, want a summary")
+	}
+	if usage.Main == nil {
+		t.Fatal("Main is nil, want the summed transcript usage")
+	}
+	wantMain := UsagePhase{CostUsd: 0.06, InputTokens: 600, OutputTokens: 150, CacheCreationInputTokens: 60, CacheReadInputTokens: 45, NumTurns: 12, DurationMs: 6000}
+	if *usage.Main != wantMain {
+		t.Errorf("Main = %+v, want %+v", *usage.Main, wantMain)
+	}
+	if usage.Retrospective == nil {
+		t.Fatal("Retrospective is nil, want the retrospective.jsonl result line")
+	}
+	wantRetro := UsagePhase{CostUsd: 0.005, InputTokens: 40, OutputTokens: 10, CacheCreationInputTokens: 1, CacheReadInputTokens: 2, NumTurns: 1, DurationMs: 500}
+	if *usage.Retrospective != wantRetro {
+		t.Errorf("Retrospective = %+v, want %+v", *usage.Retrospective, wantRetro)
+	}
+	if want := 0.065; usage.TotalCostUsd < want-1e-9 || usage.TotalCostUsd > want+1e-9 {
+		t.Errorf("TotalCostUsd = %v, want %v", usage.TotalCostUsd, want)
+	}
+}
+
+// TestBehavioralResult_UsageAbsent_Omitted pins brief S14: an absent
+// transcript/retrospective file, or one with no "result" line, produces a
+// nil usage summary — never a zeroed one.
+func TestBehavioralResult_UsageAbsent_Omitted(t *testing.T) {
+	t.Parallel()
+	t.Run("both files missing", func(t *testing.T) {
+		t.Parallel()
+		if got := computeBehavioralUsage(filepath.Join(t.TempDir(), "no-such-transcript.jsonl"), filepath.Join(t.TempDir(), "no-such-retro.jsonl")); got != nil {
+			t.Errorf("computeBehavioralUsage = %+v, want nil", got)
+		}
+	})
+	t.Run("empty paths", func(t *testing.T) {
+		t.Parallel()
+		if got := computeBehavioralUsage("", ""); got != nil {
+			t.Errorf("computeBehavioralUsage(\"\", \"\") = %+v, want nil", got)
+		}
+	})
+	t.Run("files exist but carry no result line", func(t *testing.T) {
+		t.Parallel()
+		transcriptPath := writeTmp(t, "transcript.jsonl", `{"type":"assistant","message":{"content":[{"type":"text","text":"working"}]}}`+"\n")
+		retroPath := writeTmp(t, "retrospective.jsonl", `{"type":"system","subtype":"init","session_id":"x"}`+"\n")
+		if got := computeBehavioralUsage(transcriptPath, retroPath); got != nil {
+			t.Errorf("computeBehavioralUsage = %+v, want nil", got)
+		}
+	})
+}
+
+// TestScenarioRuntimeInputs_CarriesUserSimTurnsAndMutatingTools pins the
+// askWhen wiring (docs/spec-eval-farm.md §4.1 FM-31): the runtime inputs the
+// verifier grades against carry the user-sim loop's recorded turns and the
+// mutating-tool vocabulary the caller configured — without either, every
+// askWhen row would read "not asked" regardless of what happened.
+func TestScenarioRuntimeInputs_CarriesUserSimTurnsAndMutatingTools(t *testing.T) {
+	t.Parallel()
+	mutating := map[string]bool{"zerops_deploy": true}
+	r := &Runner{config: RunnerConfig{MutatingTools: mutating}}
+	turns := []UserSimTurn{{Iteration: 1}}
+	result := &BehavioralResult{TranscriptFile: "/tmp/transcript.jsonl", UserSim: &UserSimResult{Turns: turns}}
+
+	got := r.scenarioRuntimeInputs(&Scenario{ID: "s"}, result)
+
+	if !got.MutatingTools["zerops_deploy"] {
+		t.Errorf("MutatingTools = %v, want the configured set", got.MutatingTools)
+	}
+	if len(got.UserSimTurns) != 1 {
+		t.Errorf("UserSimTurns = %v, want the user-sim loop's turns", got.UserSimTurns)
+	}
+	if got.TranscriptPath != "/tmp/transcript.jsonl" {
+		t.Errorf("TranscriptPath = %q", got.TranscriptPath)
+	}
 }

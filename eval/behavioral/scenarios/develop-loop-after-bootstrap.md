@@ -106,4 +106,4 @@ notableFriction:
 
 ---
 
-Vytvoř mi Express API s Postgres databází na Zerops, jenom dev mode. Spusť to do eval-zcp projektu (UUID waAzEFn6SBaysG4YE4rv7A). Žádný stage, žádný CI. Až poběží, řekni mi URL — potom ti dám další prompt pro úpravu kódu.
+Vytvoř mi Express API s Postgres databází na Zerops, jenom dev mode. Spusť to do eval-zcp projektu (UUID {{projectId}}). Žádný stage, žádný CI. Až poběží, řekni mi URL — potom ti dám další prompt pro úpravu kódu.

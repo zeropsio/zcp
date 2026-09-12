@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/capture"
@@ -12,17 +13,34 @@ import (
 
 const evalCaptureModeRaw = "raw"
 
-func parseEvalCaptureArgs(args []string) (clean []string, requested bool, err error) {
+// evalCaptureOwnerEnv carries the capture session ID of a scoped window this
+// invocation's own `--capture raw` created, from the wrapper to its child
+// `zcp eval` process. initEvalRunner compares it against the attached
+// connection's CaptureID to decide RunnerConfig.CaptureOwned — the only
+// signal that satisfies verification.mode: required
+// (docs/spec-capture-inspector.md §6 "Owned window for required results").
+// A global or inherited window never sets this variable in the child's
+// environment, so it never satisfies required mode.
+const evalCaptureOwnerEnv = "ZCP_EVAL_CAPTURE_OWNER"
+
+// parseEvalCaptureArgs also recognizes --capture-dir <dir> — the product
+// seam for recovering the capture window's directory without grepping
+// child.log (D5; docs/spec-eval-farm.md's wrapper stop-gap this flag
+// replaces). It is independent of --capture raw's presence: a caller may
+// pass --capture-dir alongside --capture raw, or standalone (the directory
+// then only takes effect once --capture raw is also given, since it is
+// forwarded as capture raw's own --output-dir).
+func parseEvalCaptureArgs(args []string) (clean []string, requested bool, captureDir string, err error) {
 	clean = make([]string, 0, len(args))
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		if arg == "--capture" {
 			if index+1 >= len(args) {
-				return nil, false, errors.New("--capture requires mode raw")
+				return nil, false, "", errors.New("--capture requires mode raw")
 			}
 			mode := args[index+1]
 			if mode != evalCaptureModeRaw {
-				return nil, false, fmt.Errorf("unsupported eval capture mode %q; only raw is available", mode)
+				return nil, false, "", fmt.Errorf("unsupported eval capture mode %q; only raw is available", mode)
 			}
 			requested = true
 			index++
@@ -30,20 +48,40 @@ func parseEvalCaptureArgs(args []string) (clean []string, requested bool, err er
 		}
 		if mode, found := strings.CutPrefix(arg, "--capture="); found {
 			if mode != evalCaptureModeRaw {
-				return nil, false, fmt.Errorf("unsupported eval capture mode %q; only raw is available", mode)
+				return nil, false, "", fmt.Errorf("unsupported eval capture mode %q; only raw is available", mode)
 			}
 			requested = true
 			continue
 		}
+		if arg == "--capture-dir" {
+			if index+1 >= len(args) {
+				return nil, false, "", errors.New("--capture-dir requires a directory")
+			}
+			captureDir = args[index+1]
+			index++
+			continue
+		}
+		if dir, found := strings.CutPrefix(arg, "--capture-dir="); found {
+			captureDir = dir
+			continue
+		}
 		clean = append(clean, arg)
 	}
-	return clean, requested, nil
+	return clean, requested, captureDir, nil
 }
 
 // runEvalWithOptionalScopedCapture intercepts only explicit --capture raw.
 // Global capture remains automatic inside initEvalRunner even without the flag.
 func runEvalWithOptionalScopedCapture(args []string) (handled bool, exitCode int) {
-	clean, requested, err := parseEvalCaptureArgs(args)
+	// `eval behavioral report --capture <dir>` is a read-only projection of an
+	// already-finalized window, not a run — its --capture takes a session
+	// directory, never the literal "raw" scoped-capture-creation flag this
+	// wrapper otherwise intercepts (docs/spec-capture-inspector.md §8.5).
+	// Leave it alone so it falls through to plain runEval/runEvalBehavioral.
+	if len(args) >= 2 && args[0] == "behavioral" && args[1] == "report" {
+		return false, 0
+	}
+	clean, requested, captureDir, err := parseEvalCaptureArgs(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "eval capture: %v\n", err)
 		return true, 2
@@ -88,8 +126,62 @@ func runEvalWithOptionalScopedCapture(args []string) (handled bool, exitCode int
 	command := make([]string, 0, len(clean)+2)
 	command = append(command, executable, "eval")
 	command = append(command, clean...)
-	wrapperArgs := make([]string, 0, 3+len(command))
-	wrapperArgs = append(wrapperArgs, "--label", label, "--")
+	wrapperArgs := make([]string, 0, 5+len(command))
+	wrapperArgs = append(wrapperArgs, "--label", label)
+	if captureDir != "" {
+		wrapperArgs = append(wrapperArgs, "--output-dir", captureDir)
+	}
+	wrapperArgs = append(wrapperArgs, "--")
 	wrapperArgs = append(wrapperArgs, command...)
-	return true, runCaptureRaw(wrapperArgs)
+	return true, runEvalScopedCaptureRaw(wrapperArgs)
+}
+
+// runEvalScopedCaptureRaw creates the private scoped capture window this
+// eval invocation owns, hands its identity to the child via
+// evalCaptureOwnerEnv, and decides the final exit from the typed result
+// (docs/spec-capture-inspector.md §6): the child's own exit is provisional
+// until the window closed complete and its manifest validates.
+func runEvalScopedCaptureRaw(wrapperArgs []string) int {
+	flags, exitCode, done := parseCaptureRawFlags(wrapperArgs)
+	if done {
+		return exitCode
+	}
+	result, err := runCaptureRawWork(flags, func(sessionID string) []string {
+		return []string{evalCaptureOwnerEnv + "=" + sessionID}
+	})
+	if err != nil {
+		return 1
+	}
+	windowID := filepath.Base(result.SessionDir)
+	if result.ChildErr != nil {
+		fmt.Fprintf(os.Stderr, "capture: child process: %v\n", result.ChildErr)
+		if result.CloseErr != nil || result.Status != capture.CaptureComplete {
+			fmt.Fprintln(os.Stderr, captureCloseDiagnostic(windowID, result.Status, result.CloseErr))
+		}
+		return 1
+	}
+	if result.CloseErr != nil || result.Status != capture.CaptureComplete {
+		fmt.Fprintln(os.Stderr, captureCloseDiagnostic(windowID, result.Status, result.CloseErr))
+		return 1
+	}
+	report, err := capture.InspectSession(result.SessionDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "capture: window %s inspection failed: %v\n", windowID, err)
+		return 1
+	}
+	if !report.Integrity.Valid || !report.Integrity.Complete {
+		fmt.Fprintf(os.Stderr, "capture: window %s manifest invalid or incomplete\n", windowID)
+		return 1
+	}
+	fmt.Fprintln(os.Stderr, "capture: complete")
+	return result.ChildExit
+}
+
+// captureCloseDiagnostic names the window's terminal status and, only when
+// there is one, the close error.
+func captureCloseDiagnostic(windowID, status string, closeErr error) string {
+	if closeErr != nil {
+		return fmt.Sprintf("capture: window %s closed %s: %v", windowID, status, closeErr)
+	}
+	return fmt.Sprintf("capture: window %s closed %s", windowID, status)
 }

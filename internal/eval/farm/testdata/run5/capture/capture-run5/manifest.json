@@ -1,0 +1,87 @@
+{
+  "captureBuild": {
+    "built": "unknown",
+    "commit": "unknown",
+    "version": "dev"
+  },
+  "childExitCode": 0,
+  "command": [
+    "/home/zerops/s5/bin/zcp-evaluator",
+    "eval",
+    "behavioral",
+    "run",
+    "--scenarios-dir",
+    "/home/zerops/s5/scenarios",
+    "--id",
+    "acceptance-node-postgres-record",
+    "--candidate",
+    "/home/zerops/s5/bin/zcp-candidate",
+    "--candidate-sha256",
+    "49f6ce9c02b274eb0e44c94a2c3188190fc076f72fe2dc8b9297391b22474492",
+    "--project-id",
+    "xMQRNnGESQSRmvcHijOqiA",
+    "--ack-disposable-project",
+    "yes",
+    "--work-dir",
+    "/home/zerops/s5/work-run5",
+    "--results-dir",
+    "/home/zerops/s5/results",
+    "--run-id",
+    "s5-run5-20260908193344"
+  ],
+  "endedAt": "2026-09-08T20:43:36.951597765Z",
+  "files": [
+    {
+      "kind": "eval",
+      "path": "eval/20260908-203434/acceptance-node-postgres-record/verification.json",
+      "sha256": "7373fb42c82693c3e4d1fb1d1e847904837292ab996d510afde3b0f19602fe0f",
+      "sizeBytes": 2686
+    },
+    {
+      "kind": "provider",
+      "path": "provider.jsonl",
+      "sha256": "d189efa92815cc66db9903207b3241231033fe8c39fc033fc48b82efe8532403",
+      "sizeBytes": 408389
+    },
+    {
+      "kind": "lifecycle",
+      "path": "lifecycle.jsonl",
+      "sha256": "02415343e05344144b993921b2b4502bbaf9b5df65ae89d8ebf950df3f4e854a",
+      "sizeBytes": 6915
+    },
+    {
+      "kind": "mcp",
+      "path": "mcp/zcp-2397.jsonl",
+      "sha256": "fd8096859607722ca67c7922af622e2f2b1ab98a1169f5328c8864e7fb8216cd",
+      "sizeBytes": 250695
+    },
+    {
+      "kind": "mcp",
+      "path": "mcp/zcp-3070.jsonl",
+      "sha256": "7a1708d097bba4ba4ac1f4ef4a5e90ab925edf5bfb973ed1c678018b779496ad",
+      "sizeBytes": 83120
+    },
+    {
+      "kind": "mcp",
+      "path": "mcp/zcp-3104.jsonl",
+      "sha256": "609e22c9630baac718dd734d25329995e187653b403ad045dbb6ac67b5c19bbf",
+      "sizeBytes": 83154
+    },
+    {
+      "kind": "eval",
+      "path": "eval/20260908-203434/acceptance-node-postgres-record/meta.json",
+      "sha256": "8742e5377c93eb7bde1a9b91c24ce2079e4ad5b0ddc9235bbf156fc01bfa2f9e",
+      "sizeBytes": 2499
+    }
+  ],
+  "formatVersion": "zcp-capture-1",
+  "label": "eval-acceptance-node-postgres-record",
+  "plaintext": true,
+  "provider": {
+    "origin": "https://api.anthropic.com",
+    "proxyUrl": "http://127.0.0.1:40073"
+  },
+  "sessionId": "capture-20260908T203434Z-17d45d35e53f",
+  "startedAt": "2026-09-08T20:34:34.900411048Z",
+  "status": "complete"
+}

@@ -22,8 +22,12 @@ func (r *Runner) runBehavioralUserSim(ctx context.Context, sc *Scenario, suiteID
 		phase := fmt.Sprintf("agent.resume.%d", resumeIteration)
 		invocationID := sc.ID + "/" + phase
 		invocation := r.captureInvocationStart(resumeCtx, suiteID, sc.ID, invocationID, phase, resumeSessionID)
-		resumeErr := r.spawnClaudeResumeAppend(resumeCtx, resumeSessionID, userMessage, file, captureProcessScope{
-			evalRunID: suiteID, scenarioRunID: sc.ID, invocationID: invocationID, phase: phase,
+		// §10.4: identity is observed for the duration of every agent
+		// invocation, resumes included.
+		resumeErr := r.pollProcessIdentityDuring(resumeCtx, result, func() error {
+			return r.spawnClaudeResumeAppend(resumeCtx, resumeSessionID, userMessage, file, captureProcessScope{
+				evalRunID: suiteID, scenarioRunID: sc.ID, invocationID: invocationID, phase: phase,
+			})
 		})
 		status := capture.CaptureComplete
 		if resumeErr != nil {

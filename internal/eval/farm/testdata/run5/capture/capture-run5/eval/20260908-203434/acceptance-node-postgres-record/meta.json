@@ -1,0 +1,66 @@
+{
+  "scenarioId": "acceptance-node-postgres-record",
+  "suiteId": "20260908-203434",
+  "mode": "two-shot-resume",
+  "startedAt": "2026-09-08T20:34:37.054786734Z",
+  "duration": "8m59.708842489s",
+  "scenarioWallTime": "6m34.896263602s",
+  "retroWallTime": "30.409245525s",
+  "sessionId": "3f98cf4c-ada9-43ef-b73a-9d544459e012",
+  "compactedDuringResume": false,
+  "model": "claude-opus-4-6[1m]",
+  "workDir": "/home/zerops/s5/work-run5",
+  "outputDir": "/home/zerops/s5/results/20260908-203434/acceptance-node-postgres-record",
+  "transcriptFile": "/home/zerops/s5/results/20260908-203434/acceptance-node-postgres-record/transcript.jsonl",
+  "retrospectiveFile": "/home/zerops/s5/results/20260908-203434/acceptance-node-postgres-record/retrospective.jsonl",
+  "selfReviewFile": "/home/zerops/s5/results/20260908-203434/acceptance-node-postgres-record/self-review.md",
+  "userSim": {
+    "personaUsed": "default",
+    "model": "claude-haiku-4-5-20251001",
+    "turns": [
+      {
+        "iteration": 1,
+        "agentTextExcerpt": "Done. Here's what was deployed to `appstage`:\n\n- **`POST /records`** — accepts `{\"nonce\": \"...\", \"value\": \"...\"}`, persists with `environment: \"stage\"`, returns `201` with `{id, nonce, value, envir…",
+        "reply": "Thanks, looks good. That's exactly what I needed.",
+        "wallTime": "4.765954675s"
+      }
+    ],
+    "terminatedBy": "user_sim_satisfied",
+    "totalWallTime": "4.788475009s"
+  },
+  "task": {
+    "mode": "required",
+    "result": "passed",
+    "frozenAt": "2026-09-08T20:43:06.147449621Z"
+  },
+  "taskEnd": {
+    "observedAt": "2026-09-08T20:43:06.147449621Z",
+    "settled": true,
+    "simulator": {
+      "terminatedBy": "user_sim_satisfied"
+    },
+    "persisted": true
+  },
+  "baseline": {
+    "unrelatedAppVersion": "dcJRIq0tQYWmAdmYNflZ8g",
+    "observedAt": "2026-09-08T20:36:26.295275938Z"
+  },
+  "binding": {
+    "candidate": "/home/zerops/s5/bin/zcp-candidate",
+    "candidateSha256": "49f6ce9c02b274eb0e44c94a2c3188190fc076f72fe2dc8b9297391b22474492",
+    "projectId": "xMQRNnGESQSRmvcHijOqiA",
+    "runId": "s5-run5-20260908193344"
+  },
+  "processIdentity": [
+    {
+      "pid": 2397,
+      "digest": "49f6ce9c02b274eb0e44c94a2c3188190fc076f72fe2dc8b9297391b22474492",
+      "matchesCandidate": true,
+      "projectId": "xMQRNnGESQSRmvcHijOqiA",
+      "serviceId": "LVrXbwa1TEuZtoHRQLcBYg",
+      "autoUpdate": "0",
+      "classification": "counted",
+      "observedAt": "2026-09-08T20:36:29.332712806Z"
+    }
+  ]
+}

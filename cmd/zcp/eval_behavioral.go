@@ -33,6 +33,8 @@ func runEvalBehavioral(args []string) int {
 		return runBehavioralRunLocal(args[1:])
 	case "all":
 		return runBehavioralAll(args[1:])
+	case "report":
+		return runBehavioralReport(args[1:], os.Stdout, os.Stderr)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown behavioral subcommand: %s\n", args[0])
 		printBehavioralUsage()
@@ -45,22 +47,34 @@ func printBehavioralUsage() {
 
 Commands:
   list       --scenarios-dir <dir>             List behavioral scenarios in dir
-  run        --scenarios-dir <dir> --id <id> [--capture raw]
+  run        --scenarios-dir <dir> --id <id> [--capture raw] [--capture-dir <dir>]
                                                Run one scenario by id (container mode)
-  run        --file <scenario.md> [--capture raw]
+  run        --file <scenario.md> [--capture raw] [--capture-dir <dir>]
                                                Run one scenario by absolute path
-  all        --scenarios-dir <dir> [--capture raw]
+  all        --scenarios-dir <dir> [--capture raw] [--capture-dir <dir>]
                                                Run every scenario in dir sequentially
-  run-local  --id <id> [--scenarios-dir <dir>] [--cleanup-workdir] [--capture raw]
+  run-local  --id <id> [--scenarios-dir <dir>] [--cleanup-workdir] [--capture raw] [--capture-dir <dir>]
                                                Run one scenario in LOCAL mode on this Mac
                                                (isolated workdir + claude HOME under /tmp).
+  report     --capture <dir> --eval <id> --scenario <id> [--format text|json]
+                                               Read-only deterministic single-run report
+                                               from a finalized capture window (no network/
+                                               provider/platform/model call).
 
 The 'run' family runs the agent inside a Zerops container (existing flow-eval).
 'run-local' runs the agent directly on this machine: requires ZCP_API_KEY env
 and 'zcp' on PATH (via 'make install'); workdir/results live under
 /tmp/zcp-flow-eval-local/<suite>/<id>/ with results mirrored back to
 eval/behavioral/runs-local/<suite>/<id>/. Outputs from container-mode runs land
-under $ZCP_EVAL_RESULTS_DIR/<suiteId>/<scenarioId>/.`)
+under $ZCP_EVAL_RESULTS_DIR/<suiteId>/<scenarioId>/.
+
+A scenario with 'verification.mode: required' needs --capture raw on its own
+'run'/'all' invocation — a global or inherited capture window is refused.
+
+--capture-dir <dir> forwards as 'zcp capture raw --output-dir <dir>' for the
+scoped window this invocation creates (only takes effect together with
+--capture raw) — the product seam for locating the capture window's
+directory directly, instead of recovering it by grepping child.log.`)
 }
 
 func runBehavioralList(args []string) int {
@@ -84,7 +98,13 @@ func runBehavioralList(args []string) int {
 	return 0
 }
 
-func runBehavioralRun(args []string) int {
+func runBehavioralRun(rawArgs []string) int {
+	args, bindingFlags, err := parseExecutionBindingFlags(rawArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
+
 	file := flagValue(args, "--file")
 	dir := flagValue(args, "--scenarios-dir")
 	id := flagValue(args, "--id")
@@ -108,11 +128,14 @@ func runBehavioralRun(args []string) int {
 		return 1
 	}
 
-	runner, _, ctx, ok := initEvalRunner()
+	suiteID := time.Now().UTC().Format("20060102-150405")
+	applyEvalDirOverrides(bindingFlags)
+	binding := buildExecutionBinding(bindingFlags, suiteID)
+
+	runner, _, ctx, ok := initEvalRunnerFor(binding)
 	if !ok {
 		return 1
 	}
-	suiteID := time.Now().UTC().Format("20060102-150405")
 
 	fmt.Fprintf(os.Stderr, "Running behavioral scenario: %s (suite=%s)\n", path, suiteID)
 	runner.BeginCaptureEvalRun(ctx, suiteID)
@@ -122,19 +145,80 @@ func runBehavioralRun(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	accepted, reason := behavioralAccepted(result)
+	// The window's status is an evidence fact, not the task verdict: a failed
+	// task inside a complete capture is a normal bundle
+	// (docs/spec-capture-inspector.md §8). Only an execution error degrades it.
 	status := capture.CaptureComplete
 	if result.Error != "" {
 		status = capture.CapturePartial
 	}
 	runner.EndCaptureEvalRun(ctx, suiteID, status, errorFromString(result.Error))
 	printBehavioralResult(result)
-	if result.Error != "" {
+	if !accepted {
+		fmt.Fprintf(os.Stderr, "rejected: %s\n", reason)
 		return 1
 	}
 	return 0
 }
 
+// applyEvalDirOverrides implements §10.4 "--work-dir/--results-dir override
+// ZCP_EVAL_WORK_DIR/ZCP_EVAL_RESULTS_DIR before initEvalRunner resolves
+// them" by setting the environment the resolver functions read.
+func applyEvalDirOverrides(flags executionBindingFlags) {
+	if flags.workDir != "" {
+		_ = os.Setenv("ZCP_EVAL_WORK_DIR", flags.workDir)
+	}
+	if flags.resultsDir != "" {
+		_ = os.Setenv("ZCP_EVAL_RESULTS_DIR", flags.resultsDir)
+	}
+}
+
+// buildExecutionBinding builds an eval.ExecutionBinding from parsed CLI
+// flags, or nil when no binding flags were given. defaultRunID is the suite
+// id (§10.4 "--run-id defaults to the suite id"). PrivateBin/ClaudeHome are
+// derived siblings of the (possibly overridden) RESULTS dir, never the work
+// dir: the work dir is the agent's own cwd (D21, docs/spec-eval-farm.md
+// §2.3 FM-13) — a real container and a farm run both want it to be
+// /var/www, whose parent ("/") uid zerops cannot create a sibling under.
+// The results dir is always an evaluator-owned scratch path (the farm's
+// $RUNDIR/results), so its parent is a safe, always-creatable anchor for
+// the candidate's own PATH/HOME.
+func buildExecutionBinding(flags executionBindingFlags, defaultRunID string) *eval.ExecutionBinding {
+	if !flags.any {
+		return nil
+	}
+	runID := flags.runID
+	if runID == "" {
+		runID = defaultRunID
+	}
+	workDir, _ := evalWorkDir()
+	if flags.workDir != "" {
+		workDir = flags.workDir
+	}
+	resultsDir := evalResultsDir()
+	if flags.resultsDir != "" {
+		resultsDir = flags.resultsDir
+	}
+	base := filepath.Dir(resultsDir)
+	return &eval.ExecutionBinding{
+		Candidate:       flags.candidate,
+		CandidateSHA256: flags.sha256,
+		ProjectID:       flags.projectID,
+		AckDisposable:   flags.ack,
+		WorkDir:         workDir,
+		ResultsDir:      resultsDir,
+		RunID:           runID,
+		PrivateBin:      filepath.Join(base, "candidate-bin"),
+		ClaudeHome:      filepath.Join(base, "candidate-claude-home"),
+	}
+}
+
 func runBehavioralAll(args []string) int {
+	if err := rejectBindingFlagsForAll(args); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
 	dir := flagValue(args, "--scenarios-dir")
 	if dir == "" {
 		fmt.Fprintln(os.Stderr, "error: --scenarios-dir <dir> required")
@@ -178,7 +262,9 @@ func runBehavioralAll(args []string) int {
 			continue
 		}
 		printBehavioralResult(result)
-		if result.Error != "" {
+		accepted, reason := behavioralAccepted(result)
+		if !accepted {
+			fmt.Fprintf(os.Stderr, "rejected: %s\n", reason)
 			failures++
 		}
 		// Honor cancellation between scenarios.
@@ -226,6 +312,79 @@ func printBehavioralResult(r *eval.BehavioralResult) {
 	if r.Error != "" {
 		fmt.Fprintf(os.Stderr, "Error:        %s\n", r.Error)
 	}
+	printBehavioralDimensions(r)
+}
+
+// printBehavioralDimensions prints the three CLI acceptance dimensions
+// (docs/spec-testing-architecture.md §10.1 "CLI acceptance"): Execution,
+// Task, and Task-end evidence. Required mode also names retention, since the
+// CLI claims no copy and no cleanup (§10.2).
+func printBehavioralDimensions(r *eval.BehavioralResult) {
+	if execution := eval.ExecutionDimension(r); execution != "ok" {
+		fmt.Fprintf(os.Stderr, "Execution:    %s\n", execution)
+	} else {
+		fmt.Fprintln(os.Stderr, "Execution:    ok")
+	}
+	if r.Task != nil {
+		if r.Task.Mode == eval.VerificationObserve {
+			fmt.Fprintf(os.Stderr, "Task:         observe %s (advisory)\n", r.Task.Result)
+		} else {
+			fmt.Fprintf(os.Stderr, "Task:         %s %s\n", r.Task.Mode, r.Task.Result)
+		}
+	}
+	if r.TaskEnd != nil {
+		persisted := "persisted"
+		if !r.TaskEnd.Persisted {
+			persisted = fmt.Sprintf("not persisted: %s", r.TaskEnd.PersistError)
+		}
+		settled := "settled"
+		if !r.TaskEnd.Settled {
+			settled = fmt.Sprintf("unsettled (%s)", strings.Join(r.TaskEnd.LiveProcesses, ", "))
+		}
+		fmt.Fprintf(os.Stderr, "Task-end evidence: %s, %s\n", persisted, settled)
+	}
+	if r.Task != nil && r.Task.Mode == eval.VerificationRequired {
+		fmt.Fprintln(os.Stderr, "Retained:     project and results left in place for operator copy/cleanup")
+	}
+	if r.Binding != nil {
+		if ok, reason := eval.ProcessIdentityAccepted(r); ok {
+			fmt.Fprintf(os.Stderr, "Process identity: ok (pid %d)\n", eval.MatchingProcessIdentityPID(r))
+		} else {
+			fmt.Fprintf(os.Stderr, "Process identity: blocked: %s\n", strings.TrimPrefix(reason, "process identity: "))
+		}
+	}
+}
+
+// behavioralAccepted decides the CLI exit rule (docs/spec-testing-architecture.md
+// §10.1 "CLI acceptance"): observe mode accepts on execution success alone;
+// required mode also needs a passed task result with persisted task-end
+// evidence. reason names the failing dimension for the caller to print.
+//
+// Finding E6: acceptance is derived from eval.ExecutionDimension(r) — the
+// same computation printBehavioralDimensions prints as "Execution: " — never
+// from the raw r.Error. A retrospective failure (FM-13) leaves r.Error
+// non-empty but ExecutionDimension "ok"; deciding straight off r.Error made
+// the exit code disagree with the printed Execution line on exactly that
+// case.
+func behavioralAccepted(r *eval.BehavioralResult) (ok bool, reason string) {
+	if execution := eval.ExecutionDimension(r); execution != "ok" {
+		return false, execution
+	}
+	if r.Task == nil || r.Task.Mode != eval.VerificationRequired {
+		return true, ""
+	}
+	if r.Task.Result != eval.CheckPassed {
+		return false, fmt.Sprintf("task: required result %s", r.Task.Result)
+	}
+	if r.TaskEnd == nil || !r.TaskEnd.Persisted {
+		return false, "task-end evidence: not persisted"
+	}
+	if r.Binding != nil {
+		if ok, reason := eval.ProcessIdentityAccepted(r); !ok {
+			return false, reason
+		}
+	}
+	return true, ""
 }
 
 func printScenarioListEntry(sc *eval.Scenario) {
@@ -282,6 +441,112 @@ func loadBehavioralScenarios(dir string) ([]*eval.Scenario, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
+}
+
+// executionBindingFlags is the parsed §10.4 explicit-candidate-binding flag
+// set. any reports whether at least one of the four core binding flags
+// (candidate/sha256/project-id/ack) was present.
+type executionBindingFlags struct {
+	candidate, sha256, projectID, ack string
+	workDir, resultsDir, runID        string
+	any                               bool
+}
+
+// bindingFlagNames are the four core binding flags: all-or-nothing
+// (docs/spec-testing-architecture.md §10.4 "Binding").
+var bindingFlagNames = []string{"--candidate", "--candidate-sha256", "--project-id", "--ack-disposable-project"}
+
+// parseExecutionBindingFlags extracts the §10.4 binding flags from args,
+// returning the remaining args untouched (order preserved) plus the parsed
+// flags. --work-dir/--results-dir/--run-id are extracted unconditionally;
+// the four core binding flags are all-or-nothing.
+func parseExecutionBindingFlags(args []string) (clean []string, flags executionBindingFlags, err error) {
+	clean = make([]string, 0, len(args))
+	present := map[string]bool{}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch a {
+		case "--candidate":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.candidate = args[i+1]
+			present[a] = true
+			i++
+		case "--candidate-sha256":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.sha256 = args[i+1]
+			present[a] = true
+			i++
+		case "--project-id":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.projectID = args[i+1]
+			present[a] = true
+			i++
+		case "--ack-disposable-project":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.ack = args[i+1]
+			present[a] = true
+			i++
+		case "--work-dir":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.workDir = args[i+1]
+			i++
+		case "--results-dir":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.resultsDir = args[i+1]
+			i++
+		case "--run-id":
+			if i+1 >= len(args) {
+				return nil, flags, fmt.Errorf("%s requires a value", a)
+			}
+			flags.runID = args[i+1]
+			i++
+		default:
+			clean = append(clean, a)
+		}
+	}
+	for _, name := range bindingFlagNames {
+		if present[name] {
+			flags.any = true
+			break
+		}
+	}
+	if flags.any {
+		var missing []string
+		for _, name := range bindingFlagNames {
+			if !present[name] {
+				missing = append(missing, name)
+			}
+		}
+		if len(missing) > 0 {
+			return nil, flags, fmt.Errorf("--candidate/--candidate-sha256/--project-id/--ack-disposable-project must all be given together; missing %s", strings.Join(missing, ", "))
+		}
+	}
+	return clean, flags, nil
+}
+
+// rejectBindingFlagsForAll implements §10.4 "behavioral all with a binding
+// is refused": `behavioral all` never accepts an explicit binding.
+func rejectBindingFlagsForAll(args []string) error {
+	_, flags, err := parseExecutionBindingFlags(args)
+	if err != nil {
+		return err
+	}
+	if flags.any || flags.workDir != "" || flags.resultsDir != "" || flags.runID != "" {
+		return fmt.Errorf("'behavioral all' does not accept an explicit binding — required-mode retention makes a second scenario on the same target fail freshness by design; run the scenario directly with 'behavioral run'")
+	}
+	return nil
 }
 
 func flagValue(args []string, name string) string {

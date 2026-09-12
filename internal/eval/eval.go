@@ -11,16 +11,19 @@ import (
 	"time"
 )
 
-// defaultModel is the default Claude model for eval runs.
+// defaultModel is the runner's fallback Claude model when a caller doesn't
+// set RunnerConfig.Model (NewRunner, runner.go). It is the eval package's
+// own default for the agent invocations it drives — never a stand-in for
+// what a run's own candidate model was: that is always read off the wire
+// and recorded, never assumed from this constant (docs/spec-eval-farm.md
+// §2.4 FM-16 keeps the two distinct for farm runs).
 //
-// Recipe creation specifically requires Opus with the 1M-token context window:
-// the workflow pulls ~80 KB of guidance topics, ~30 KB of schemas, plus the
-// agent's own code-writing context. v13 shipped on Sonnet/200k by accident and
-// doubled the wall-clock time (40.7 → 79.8 min) plus regressed the close-step
-// severity from 5 WRONG → 2 CRITICAL + 1 WRONG. Do not lower this default —
-// override per-call when a weaker model is genuinely acceptable (e.g. simple
-// instruction evals, not recipe creation).
-const defaultModel = "claude-opus-4-6[1m]"
+// claude-opus-4-6[1m]'s 1M-context window was pinned here for recipe
+// creation specifically (v13 regressed badly on Sonnet/200k — see git log
+// for the measurement) — that tradeoff no longer applies now that
+// claude-sonnet-5 is current; override per-call where a specific eval still
+// needs the wider window.
+const defaultModel = "claude-sonnet-5"
 
 // RecipeMetadata holds parsed recipe data used for prompt generation.
 type RecipeMetadata struct {

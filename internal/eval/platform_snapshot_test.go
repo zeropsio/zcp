@@ -105,7 +105,10 @@ func TestCollectBehavioralPlatformEvidence_QueryFailuresAreDiagnosticsNotEmptyTr
 	if len(findings) != 2 {
 		t.Fatalf("findings = %+v, want two explicit query failures", findings)
 	}
-	if findings[0].Check != "platform_query" || findings[1].Check != "no_failed_processes" {
+	// findings[0]: ListServicesDirect error is now a blocked row (§10.1),
+	// projected to an "expected_service" warn advisory — a query failure
+	// can't prove the assertion false, only unevaluated.
+	if findings[0].Check != "expected_service" || findings[1].Check != "no_failed_processes" {
 		t.Fatalf("findings = %+v", findings)
 	}
 }
@@ -144,5 +147,32 @@ func TestWritePlatformSnapshot_RoundTripPrivately(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("snapshot mode = %#o, want 0600", info.Mode().Perm())
+	}
+}
+
+// TestNoFailedProcesses_ReadableExpectedAndObserved pins that the check's
+// texts read as plain facts on the console (§8.3 "Why this verdict"): the
+// run start as RFC3339 UTC — never Go's time.Time.String() with its
+// monotonic-clock suffix — and each failed process named by action,
+// service and reason, not by id alone.
+func TestNoFailedProcesses_ReadableExpectedAndObserved(t *testing.T) {
+	t.Parallel()
+	runStart := time.Date(2026, 7, 15, 10, 0, 0, 123, time.UTC)
+	failedReason := "missing dependency db"
+	observation := platformObservation{processes: []platform.Process{{
+		ID: "p-9", ActionName: "stack.build", Status: platform.ProcessStatusFailed,
+		Created: "2026-07-15T10:01:00Z", FailReason: &failedReason,
+		ServiceStacks: []platform.ServiceStackRef{{ID: "app-1", Name: "appdev"}},
+	}}}
+
+	row := evaluateNoFailedProcesses(observation, runStart, "project-1", nil)
+
+	if want := "no FAILED process after 2026-07-15T10:00:00Z"; row.Expected != want {
+		t.Errorf("Expected = %q, want %q", row.Expected, want)
+	}
+	for _, part := range []string{"stack.build", "appdev", "missing dependency db"} {
+		if !strings.Contains(row.Observed, part) {
+			t.Errorf("Observed = %q, want it to name %q", row.Observed, part)
+		}
 	}
 }

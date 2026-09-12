@@ -1,0 +1,39 @@
+services:
+  - hostname: zcp
+    type: zcp@1
+    maxContainers: 1
+    verticalAutoscaling: { minRam: 2 }
+    envSecrets:
+      ZCP_API_KEY: "run-token-value"
+      ZCP_VSCODE: "true"
+      ZCP_FARM_BATCH: "batch-2026-09-10"
+      ZCP_FARM_RUN: "run-oauth456"
+      ZCP_FARM_SCENARIO: "recipe-first-deploy"
+      ZCP_FARM_EVALUATOR_SHA: "eval-sha-aaaa"
+      ZCP_FARM_CANDIDATE_SHA: "cand-sha-bbbb"
+      ZCP_FARM_SCENARIOS_DIGEST: "scenarios-sha-ffff"
+      ZCP_FARM_WRAPPER_SHA: "wrapper-sha-9999"
+      ZCP_FARM_S3_URL: "https://s3.prg1.zerops.app"
+      ZCP_FARM_S3_BUCKET: "zcp-farm"
+      ZCP_FARM_S3_KEY: "sink-key-cccc"
+      ZCP_FARM_S3_SECRET: "sink-secret-dddd"
+      CLAUDE_CODE_OAUTH_TOKEN: "oauth-token-value"
+    zeropsYaml:
+      zerops:
+        - setup: zcp
+          run:
+            base: zcp@1
+            initCommands:
+              - curl -sSfL https://zerops.io/zcp/install.sh | sudo sh
+              - zcp init
+              - sudo -E zcp init nginx
+              - |
+                set -e
+                curl -sSf --aws-sigv4 aws:amz:us-east-1:s3 --user "$(printenv ZCP_FARM_S3_KEY):$(printenv ZCP_FARM_S3_SECRET)" -o /tmp/farm-wrapper.sh "$(printenv ZCP_FARM_S3_URL)/$(printenv ZCP_FARM_S3_BUCKET)/farm/wrapper/$(printenv ZCP_FARM_WRAPPER_SHA).sh"
+                echo "$(printenv ZCP_FARM_WRAPPER_SHA)  /tmp/farm-wrapper.sh" | sha256sum -c -
+                chmod +x /tmp/farm-wrapper.sh
+                nohup /tmp/farm-wrapper.sh >/tmp/farm-wrapper.log 2>&1 &
+            ports: [ { port: 8080, httpSupport: true } ]
+            startCommands:
+              - { command: zcp service start nginx, name: nginx }
+              - { command: zcp service start vscode, name: vscode }

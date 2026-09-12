@@ -162,6 +162,39 @@ func (z *ZeropsClient) GetUserInfo(ctx context.Context) (*UserInfo, error) {
 	}, nil
 }
 
+// ClientMembership is one entry of GetUserInfo's clientUserList: an org
+// (client) id plus the clientUserId link for that org. GetUserInfo's own
+// UserInfo.ID collapses this list down to ClientUserList[0] — the wrong
+// org for a token that is a member of more than one (D11). Callers that
+// must target a specific, caller-supplied org use ListClientMemberships
+// instead and check membership themselves.
+type ClientMembership struct {
+	ClientID     string
+	ClientUserID string
+}
+
+// ListClientMemberships returns every org (client) the token is a member
+// of, in the platform's own clientUserList order — never collapsed to a
+// single "the" client id the way GetUserInfo's UserInfo.ID is.
+func (z *ZeropsClient) ListClientMemberships(ctx context.Context) ([]ClientMembership, error) {
+	resp, err := z.handler.GetUserInfo(ctx)
+	if err != nil {
+		return nil, mapSDKError(err, "auth")
+	}
+	out, err := resp.Output()
+	if err != nil {
+		return nil, mapSDKError(err, "auth")
+	}
+	memberships := make([]ClientMembership, 0, len(out.ClientUserList))
+	for _, cu := range out.ClientUserList {
+		memberships = append(memberships, ClientMembership{
+			ClientID:     cu.ClientId.TypedString().String(),
+			ClientUserID: cu.Id.TypedString().String(),
+		})
+	}
+	return memberships, nil
+}
+
 // ---------------------------------------------------------------------------
 // Project discovery
 // ---------------------------------------------------------------------------

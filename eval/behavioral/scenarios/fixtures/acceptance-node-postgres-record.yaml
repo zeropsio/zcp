@@ -1,0 +1,47 @@
+# Fixture for acceptance-node-postgres-record.md
+# (docs/spec-testing-architecture.md §10.3).
+#
+# appdev/appstage: Node.js dev/stage pair, buildFromGit'd from the same
+# hello-world starting point the agent will replace with the POST/GET
+# /records implementation. appstage is the "stage" hostname the oracle
+# probes over HTTP.
+#
+# db: the managed PostgreSQL the oracle reads back from directly
+# (independent of anything the agent's app does).
+#
+# other: an UNRELATED Node.js service the agent must never touch. The
+# oracle records its active app-version id as the baseline right after
+# this fixture imports, before the agent runs, and fails the scenario if
+# that id changes.
+
+services:
+  - hostname: appdev
+    type: nodejs@22
+    zeropsSetup: dev
+    buildFromGit: https://github.com/zerops-recipe-apps/nodejs-hello-world-app
+    enableSubdomainAccess: true
+    verticalAutoscaling:
+      minRam: 0.5
+
+  - hostname: appstage
+    type: nodejs@22
+    zeropsSetup: prod
+    buildFromGit: https://github.com/zerops-recipe-apps/nodejs-hello-world-app
+    enableSubdomainAccess: true
+    verticalAutoscaling:
+      minRam: 0.5
+
+  - hostname: db
+    type: postgresql@18
+    mode: NON_HA
+    priority: 10
+    verticalAutoscaling:
+      minRam: 0.25
+
+  - hostname: other
+    type: nodejs@22
+    zeropsSetup: prod
+    buildFromGit: https://github.com/zerops-recipe-apps/nodejs-hello-world-app
+    enableSubdomainAccess: false
+    verticalAutoscaling:
+      minRam: 0.5

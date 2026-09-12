@@ -188,11 +188,30 @@ and register lifecycle scopes.
 A suite has one eval-run identity, each scenario has one scenario-run identity,
 and every Claude process invocation is marked independently.
 
+**Owned window for required results.** A scenario in `verification.mode:
+required` (testing spec §10.1) accepts only the private scoped window that its
+own `zcp eval behavioral run --capture raw` invocation created: the wrapper
+hands the child its window identity, and the runner compares it with the
+window it discovered. A global window, an inherited window from an outer
+`zcp capture raw -- …`, or no window at all is refused before init, seed, or
+cleanup registration — the runner does not stop another window and does not
+start a competing proxy. `observe` scenarios keep the attach-or-create
+convenience above.
+
+The wrapper's exit is a small typed result — session directory, terminal
+status, close error, child exit — and the required acceptance is decided from
+it: the child's own exit is provisional until the window closed `complete` and
+its manifest validates. A close or manifest failure is nonzero even when the
+child exited 0.
+
 The capture bundle copies and hashes the scenario source, task prompt,
-transcript, retrospective, self-review, metadata, and available verification
-artifacts under an eval-owned directory. The top-level manifest inventories raw
-and eval files. Logical eval views reference canonical raw sequence ranges; they
-do not rewrite or delete unrelated evidence.
+transcript, retrospective, self-review, metadata, platform snapshot, and
+verification artifacts under an eval-owned directory. The top-level manifest
+inventories raw and eval files. Logical eval views reference canonical raw
+sequence ranges; they do not rewrite or delete unrelated evidence. The bundle
+is taken after the task-end freeze (testing spec §10.2), so the frozen
+`verification.json` and `meta.json` are the bytes that get hashed; the runner
+never rewrites them after the manifest is finalized.
 
 ## 7. Canonical bundle
 
@@ -211,6 +230,8 @@ do not rewrite or delete unrelated evidence.
             ├── transcript.jsonl
             ├── retrospective.jsonl
             ├── self-review.md
+            ├── verification.json
+            ├── platform-snapshot.json
             └── meta.json
 ```
 
@@ -248,6 +269,14 @@ pending. A request or response still open at the stream terminal keeps hash
 validity separate but forces completeness false. Records after an exchange
 terminal, response-before-request-end, duplicate boundaries, and foreign stream
 kinds are invalid.
+
+**Task result and capture status are different facts.** A capture that is
+valid and complete says the evidence is whole; it says nothing about whether
+the task succeeded — that is `verification.json`'s `result` (testing spec
+§10.1). A failed task with a complete capture is a normal, fully readable
+bundle; a passed task inside a partial window is not acceptable evidence.
+Inspection never derives a task verdict from integrity or completeness, and
+never upgrades either from the other.
 
 Unsupported encoding or framing is an explicit inspection error. A finalized
 bundle that fails hash, sequence, framing, or protocol validation opens only as
@@ -465,6 +494,25 @@ harness over a synthetic finalized capture. It verifies Cards/Flow/Split,
 keyboard edge selection, reveal gating, escaped hostile markup, strict CSP,
 single-detail ownership, and responsive 1024/2560 px layouts. Playwright and its
 browser remain outside the Go/runtime dependency graph and embedded binary.
+
+### 8.5 Read-only eval report consumer
+
+A finalized capture window can be read by one eval-side consumer:
+`zcp eval behavioral report --capture <dir> --eval <id> --scenario <id>
+[--format text|json]` (testing spec §10.5). It opens the window through
+`InspectSession` and `FilterInspection`, then reads the selected scenario's
+eval artifacts through a capture-owned reader that resolves the path the
+same way inspection does (inside the window, no symlink component, regular
+file, listed in the manifest) and re-verifies size and SHA-256 against the
+manifest immediately before returning the bytes — the same rule §8 states
+for detail files; it shares the inspection path resolver and hash helper
+rather than re-implementing them. A path outside the inventory, a file that
+no longer matches the manifest, a manifest-less legacy window, or a foreign
+or ambiguous `--eval`/`--scenario` yields a diagnostic, never bytes. The
+consumer performs no network, provider, platform or model call, never joins
+a session, and never writes into the window; running the report leaves
+every canonical file byte-identical. It reads finalized windows only; a
+running window is the inspector's provisional view (§8.3).
 
 ## 9. Compatibility and non-goals
 

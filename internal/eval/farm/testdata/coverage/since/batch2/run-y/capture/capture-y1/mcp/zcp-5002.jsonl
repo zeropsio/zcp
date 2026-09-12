@@ -1,0 +1,4 @@
+{"seq":1,"time":"2026-09-10T00:00:00Z","kind":"mcp.stream.start"}
+{"seq":2,"time":"2026-09-10T00:00:00Z","kind":"mcp.stdin.chunk","direction":"client_to_zcp","bodyBase64":"eyJpZCI6MSwianNvbnJwYyI6IjIuMCIsIm1ldGhvZCI6InRvb2xzL2NhbGwiLCJwYXJhbXMiOnsiYXJndW1lbnRzIjp7ImFjdGlvbiI6InN0YXR1cyJ9LCJuYW1lIjoiemVyb3BzX3dvcmtmbG93In19Cg=="}
+{"seq":3,"time":"2026-09-10T00:00:00Z","kind":"mcp.stdout.chunk","direction":"zcp_to_client","bodyBase64":"eyJpZCI6MSwianNvbnJwYyI6IjIuMCIsInJlc3VsdCI6eyJjb250ZW50IjpbeyJ0ZXh0IjoiYGBganNvbiB6Y3AtZW52ZWxvcGVcbntcInBoYXNlXCI6XCJwaGFzZS15XCJ9XG5gYGAiLCJ0eXBlIjoidGV4dCJ9XSwiaXNFcnJvciI6ZmFsc2V9fQo="}
+{"seq":4,"time":"2026-09-10T00:00:00Z","kind":"mcp.stream.end"}

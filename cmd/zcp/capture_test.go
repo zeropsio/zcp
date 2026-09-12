@@ -97,7 +97,7 @@ func TestParseCaptureInspectArgs_AcceptsFlagsAfterSessionPath(t *testing.T) {
 func TestParseEvalCaptureArgs_StripsRawModeWithoutChangingOtherArguments(t *testing.T) {
 	t.Parallel()
 
-	clean, requested, err := parseEvalCaptureArgs([]string{"behavioral", "run", "--id", "weather", "--capture", "raw", "--cleanup-workdir"})
+	clean, requested, _, err := parseEvalCaptureArgs([]string{"behavioral", "run", "--id", "weather", "--capture", "raw", "--cleanup-workdir"})
 	if err != nil {
 		t.Fatalf("parseEvalCaptureArgs() error = %v", err)
 	}
@@ -114,7 +114,7 @@ func TestParseEvalCaptureArgs_RejectsUnsupportedOrMissingMode(t *testing.T) {
 	t.Parallel()
 
 	for _, args := range [][]string{{"behavioral", "run", "--capture"}, {"behavioral", "run", "--capture", "semantic"}, {"behavioral", "run", "--capture=semantic"}} {
-		if _, _, err := parseEvalCaptureArgs(args); err == nil {
+		if _, _, _, err := parseEvalCaptureArgs(args); err == nil {
 			t.Errorf("parseEvalCaptureArgs(%v) error = nil", args)
 		}
 	}
@@ -195,5 +195,43 @@ func TestRunCaptureRaw_ChildExitPreservedAndSessionClosed(t *testing.T) {
 	}
 	if !strings.Contains(inspectOut.String(), "Integrity: OK") || !strings.Contains(inspectOut.String(), "Status: complete") {
 		t.Fatalf("inspection output = %s", inspectOut.String())
+	}
+}
+
+// TestParseEvalCaptureArgs_CaptureDirParsedAndStripped pins the --capture-dir
+// product seam (D5): it is parsed out of the args, stripped from clean the
+// same way --capture raw is, and returned as its own value.
+func TestParseEvalCaptureArgs_CaptureDirParsedAndStripped(t *testing.T) {
+	t.Parallel()
+
+	clean, requested, captureDir, err := parseEvalCaptureArgs([]string{
+		"behavioral", "run", "--id", "weather", "--capture", "raw", "--capture-dir", "/tmp/mycap",
+	})
+	if err != nil {
+		t.Fatalf("parseEvalCaptureArgs() error = %v", err)
+	}
+	if !requested {
+		t.Fatal("parseEvalCaptureArgs() requested = false, want true")
+	}
+	if captureDir != "/tmp/mycap" {
+		t.Fatalf("captureDir = %q, want /tmp/mycap", captureDir)
+	}
+	want := []string{"behavioral", "run", "--id", "weather"}
+	if !slices.Equal(clean, want) {
+		t.Fatalf("parseEvalCaptureArgs() args = %v, want %v", clean, want)
+	}
+}
+
+// TestParseEvalCaptureArgs_CaptureDirEqualsForm pins the --capture-dir=<dir>
+// form.
+func TestParseEvalCaptureArgs_CaptureDirEqualsForm(t *testing.T) {
+	t.Parallel()
+
+	_, _, captureDir, err := parseEvalCaptureArgs([]string{"behavioral", "run", "--capture-dir=/tmp/other"})
+	if err != nil {
+		t.Fatalf("parseEvalCaptureArgs() error = %v", err)
+	}
+	if captureDir != "/tmp/other" {
+		t.Fatalf("captureDir = %q, want /tmp/other", captureDir)
 	}
 }

@@ -1,0 +1,201 @@
+{{define "run"}}{{template "head" .Meta}}
+<nav class="crumbs" aria-label="Breadcrumb">
+<a href="/">Overview</a>
+<span class="sep">/</span>
+<a href="/b/{{.Row.Batch}}">{{.Row.Batch}}</a>
+<span class="sep">/</span>{{.Row.Scenario}}</nav>
+<header class="page-head run-page-head">
+<div class="run-title-line">
+<h1>{{.Row.Scenario}}</h1>
+<span class="{{verdictClass .VerdictDisplay}} big" title="{{verdictTooltip .VerdictDisplay}}">{{verdictIcon .VerdictDisplay}} {{verdictLabel .VerdictDisplay}}</span>
+</div>
+{{if .VerdictReasonText}}<p class="run-reason">{{.VerdictReasonText}}</p>{{end}}
+<div class="run-meta">
+<span>{{fmtTime .Row.StartedAt}}</span>
+<span>Duration <strong>{{fmtDuration .Row.DurationSec}}</strong>
+</span>
+<span>Agent cost <strong>{{if .Row.CostKnown}}{{fmtCost .Row.CostUsd}}{{else}}<span title="Not recorded">—</span>{{end}}</strong>
+</span>{{if .Row.StepCount}}<span>{{.Row.StepCount}} recorded steps</span>{{end}}</div>
+</header>
+<nav class="nav nav-tabs run-nav" aria-label="Run sections">{{range .SectionLinks}}<a class="nav-link" href="{{.Href}}">{{.Label}}{{if .Count}} <span class="nav-counter">{{.Count}}</span>{{end}}</a>{{end}}</nav>
+
+{{if .Row.DoneExists}}<section class="card automatic-checks" id="automatic-checks" aria-labelledby="automatic-checks-title">
+<div class="card-header">
+<h2 class="card-title" id="automatic-checks-title">Automatic checks</h2>
+<span class="{{verdictClass .VerdictDisplay}}">{{verdictLabel .VerdictDisplay}}</span>
+</div>
+<div class="card-body">{{if .CheckRows}}{{range .CheckRows}}<p>
+<strong>{{.WhyPrefix}}:</strong> <a href="#{{.Anchor}}">
+<code>{{.ID}}</code>
+</a> — {{.WhyText}}.</p>{{end}}{{else if .Row.VerdictReason}}<p>{{.Row.VerdictReason}}</p>{{else}}<p>All checks passed.</p>{{end}}</div>
+</section>{{end}}
+
+<section class="card observer assessment-card" id="observation" aria-labelledby="assessment-title">
+<div class="card-header">
+<h2 class="card-title" id="assessment-title">AI assessment</h2>{{if .HasCard}}<span class="{{assessmentOutcomeClass .OutcomeText}}">{{assessmentOutcomeLabel .OutcomeText}}</span>{{end}}</div>
+<div class="card-body">
+<div class="assessment-provenance">{{if .ViewingOlder}}<p class="alert alert-info">Showing an earlier assessment. <a href="/r/{{.Row.RunID}}">View the current assessment</a>.</p>{{end}}{{if .FailedNewestText}}<p class="alert alert-warning">{{.FailedNewestText}} <a href="{{.FailedNewestHref}}">Inspect failed attempt</a>.</p>{{end}}{{if .LiveStatusText}}<p class="alert alert-info">{{.LiveStatusText}}</p>{{end}}{{if .PreStoreFailureText}}<p class="alert alert-warning">{{.PreStoreFailureText}}</p>{{end}}</div>
+{{if .HasCard}}<p class="assessment-headline">{{.DisplayedObs.Headline}}</p>
+{{if .Disputed}}<p class="alert alert-warning">
+<span class="disputed-marker">Disputed</span> — The observer thinks a check is wrong, so this verdict may not be fair: {{.DisputedWhy}}{{if .DisputedHref}} <a href="{{.DisputedHref}}">Inspect evidence</a>{{end}}</p>{{end}}
+{{if .DisplayedObs.Warnings}}<div class="alert alert-warning">
+<strong>Assessment warnings</strong>
+<ul class="plain small">{{range .DisplayedObs.Warnings}}<li>{{.}}</li>{{end}}</ul>
+</div>{{end}}
+<div class="assessment-facts">
+<div>
+<span class="k">Goal reached</span>
+<span class="pill pill-{{.DisplayedObs.Goal.Reached}}">{{.DisplayedObs.Goal.Reached}}</span>{{with .DisplayedObs.Goal.Why}}<p>{{.}}</p>{{end}}</div>
+<div>
+<span class="k">Verdict right</span>{{if .JudgedChecks}}<ul class="plain small">{{range .JudgedChecks}}<li>
+<span>{{if .Correct}}✓ correct{{else}}✗ incorrect{{end}} <code>{{.IDWrapped}}</code>
+</span>{{with .Why}}<p class="judgment-reason">{{.}}</p>{{end}}</li>{{end}}</ul>{{else}}<span class="pill {{if .DisplayedObs.Checks.Agree}}pill-yes{{else}}pill-no{{end}}">{{if .DisplayedObs.Checks.Agree}}yes{{else}}no{{end}}</span>{{with .DisplayedObs.Checks.Why}}<p>{{.}}</p>{{end}}{{end}}</div>
+<div>
+<span class="k">Self-review honest</span>
+{{if .DisplayedObs.SelfReview.Accurate}}<span class="pill pill-{{.DisplayedObs.SelfReview.Accurate}}">{{.DisplayedObs.SelfReview.Accurate}}</span>{{else}}<span class="muted small">Not assessed</span>{{end}}{{with .DisplayedObs.SelfReview.Note}}<p>{{.}}</p>{{end}}</div>
+</div>
+{{if .Findings}}<p class="assessment-findings">
+<strong>Findings</strong>{{range .Findings}} <a class="f-badge" href="#f{{.N}}">F{{.N}}</a> <span class="{{severityClass .Severity}}">{{severityLabel .Severity}}</span> <span class="chip cause-chip">{{causeLabel .Owner}}</span>{{end}}</p>{{else}}<p class="muted small">No findings reported.</p>{{end}}<p class="assessment-meta">
+<span title="observation {{.DisplayedObs.ObsID}}">{{.DisplayedObs.Model}}</span> · {{fmtTime .DisplayedObs.CreatedAt}} · {{.QuotesFoundText}}</p>
+{{else}}{{if .WhyNoCardFailed}}<span class="{{assessmentOutcomeClass "failed"}}">failed</span>{{end}}<p class="assessment-headline muted">{{.WhyNoCard}}</p>{{if .WhyNoCardFailed}}<p class="muted small">Nothing is retried automatically; re-assess below.</p>{{end}}{{if .RawAnswer}}<details class="more">
+<summary>Raw answer</summary>
+<pre>{{.RawAnswer}}</pre>
+</details>{{end}}{{if or .LastAgentMessage .ToolErrors}}<div class="run-ending">
+<strong>How the run ended</strong>{{if .LastAgentMessage}}<p>{{.LastAgentMessage}}</p>{{end}}{{if .ToolErrors}}<ul class="plain small">{{range .ToolErrors}}<li>{{if .Target.Available}}<a href="{{.Target.Href}}">step {{.Step}}</a>{{else}}step {{.Step}} unavailable{{end}} <span class="step-error">{{shortTool .Tool}} failed</span>: {{preview .Result 200}}</li>{{end}}</ul>{{end}}</div>{{end}}{{end}}
+<div class="assessment-controls">{{if .ShowAssessForm}}<form class="inline-form" method="post" action="/r/{{.Row.RunID}}/observe">
+<span class="form-label">New assessment from existing evidence</span>
+<div class="assessment-buttons">{{range .ModelOptions}}<button class="btn{{if .Selected}} btn-primary{{end}}" type="submit" name="model" value="{{.Value}}">Re-assess with {{.Label}}</button>{{end}}</div>
+</form>{{end}}{{if .OlderObservations}}<details class="more" id="assessment-history">
+<summary>Earlier assessments ({{len .OlderObservations}})</summary>
+<ul class="plain assessment-history">{{range .OlderObservations}}<li{{if .Selected}} aria-current="true"{{end}}>
+<span class="muted small">{{fmtTime .CreatedAt}} · {{.Model}} · <a href="{{.Href}}">{{if .Selected}}selected{{else}}view{{end}}</a>
+</span>
+<br>
+<span class="{{assessmentOutcomeClass .Outcome}}">{{assessmentOutcomeLabel .Outcome}}</span> {{.Text}}</li>{{end}}</ul>
+</details>{{end}}</div>
+{{with .Story}}<details class="section assessment-story">
+<summary>What happened <span class="muted small">Task, expected result, actions and ending</span>
+</summary>
+<dl class="story">
+<dt>Task</dt>
+<dd>{{.Task}}</dd>
+<dt>Expected</dt>
+<dd>{{.Expected}}</dd>
+<dt>Did</dt>
+<dd>{{.Did}}</dd>{{if .Stuck}}<dt>Stuck</dt>
+<dd>Steps {{if .Stuck.From.Available}}<a href="{{.Stuck.From.Href}}">#{{.Stuck.From.N}}</a>{{else}}#{{.Stuck.From.N}} unavailable{{end}}–{{if .Stuck.To.Available}}<a href="{{.Stuck.To.Href}}">#{{.Stuck.To.N}}</a>{{else}}#{{.Stuck.To.N}} unavailable{{end}}: {{.Stuck.What}}</dd>{{end}}<dt>Ending</dt>
+<dd>{{.Ending}}</dd>
+</dl>
+</details>{{end}}</div>
+</section>
+
+{{if .Findings}}<section class="run-section" id="findings">
+<div class="section-heading">
+<h2>Findings <span class="count">{{len .Findings}}</span>
+</h2>
+<span class="muted small">AI findings grounded in this run</span>
+</div>
+<div class="card finding-list">{{range .Findings}}<article class="finding finding-unit sev-{{.Severity}}" id="f{{.N}}">
+<header class="finding-head">
+<a class="f-badge" href="#f{{.N}}">F{{.N}}</a>
+<h3>{{.Title}}</h3>
+</header>
+<div class="finding-labels">
+<span class="{{severityClass .Severity}}">{{severityLabel .Severity}}</span>
+<span>{{causeLabel .Owner}}</span>{{if .Surface}}<code>{{.Surface}}</code>{{end}}</div>
+<p>{{.What}}</p>{{range .EvidenceViews}}<blockquote class="quote">
+<span class="quote-ref">{{if eq .Step 0}}{{if $.Row.FailedChecks}}<a href="#failed-checks">checks</a>{{else}}checks unavailable{{end}}{{else if .Target.Available}}<a href="{{.Target.Href}}">step {{.Step}}</a>{{else}}step {{.Step}} unavailable{{end}}<span class="evidence-mark {{if .Verified}}evidence-verified{{else}}evidence-unverified{{end}}">{{if .Verified}}quote found{{else}}quote not found{{end}}</span>
+</span>{{.Quote}}</blockquote>{{end}}{{if .Span}}<p class="muted small">Recorded span: steps {{.Span.From}}–{{.Span.To}}</p>{{end}}<dl class="kv">
+<dt>Where to look</dt>
+<dd>{{if and .Anchor .LookAt}}<code>{{.Anchor}}</code> — {{.LookAt}}{{else if .Anchor}}<code>{{.Anchor}}</code>{{else if .LookAt}}{{.LookAt}}{{else}}<span class="muted">Not provided</span>{{end}}</dd>{{if .Fix}}<dt>Suggested fix</dt>
+<dd>{{.Fix}}</dd>{{end}}</dl>
+</article>{{end}}</div>
+</section>{{end}}
+
+{{if .Row.FailedChecks}}<section class="run-section" id="failed-checks">
+<div class="section-heading">
+<h2>Failed and blocked checks <span class="count">{{len .Row.FailedChecks}}</span>
+</h2>
+<span class="muted small">Deterministic evidence and assessment judgment</span>
+</div>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Failed and blocked checks">
+<table class="table table-vcenter stack">
+<thead>
+<tr>
+<th>Check</th>
+<th>Expected</th>
+<th>Observed</th>
+<th>Source</th>
+<th>Observer's judgment</th>
+</tr>
+</thead>
+<tbody>{{range .CheckRows}}<tr id="{{.Anchor}}">
+<td data-label="Check">
+<span class="{{verdictClass .Result}}">{{verdictLabel .Result}}</span> <code>{{.IDWrapped}}</code>
+</td>
+<td data-label="Expected">{{.Expected}}</td>
+<td data-label="Observed">{{.Observed}}</td>
+<td data-label="Source" class="muted small">{{.Source}}</td>
+<td data-label="Observer's judgment">{{if .Judged}}<span class="pill {{if .Judged.Correct}}pill-yes{{else}}pill-no{{end}}">{{if .Judged.Correct}}correct{{else}}incorrect{{end}}</span>{{with .Judged.Why}}<p class="judgment-reason">{{.}}</p>{{end}}{{else}}<span class="muted small">not judged</span>{{end}}</td>
+</tr>{{end}}</tbody>
+</table>
+</div>
+</section>{{end}}
+
+{{if .Row.DoneExists}}{{if .EvidenceWarning}}<p class="alert alert-warning evidence-warning">{{.EvidenceWarning}}</p>{{end}}<section class="run-section" id="steps">
+<div class="section-heading">
+<h2>Steps <span class="count">{{if .StepsFiltered}}{{.VisibleStepCount}} matching steps{{else}}{{.VisibleStepCount}} visible{{end}}</span>
+</h2>
+<span class="muted small">{{.Row.StepCount}} recorded · original numbering preserved</span>
+</div>{{if .StepsError}}<p class="empty">Transcript unavailable. Valid step targets are marked unavailable.</p>{{else if .StepsSuppressed}}<p class="empty">Transcript unavailable. Valid step targets are marked unavailable.</p>{{else}}{{template "filterbar" .StepsFilters}}{{if .Steps}}<ol class="steps card">{{range .Steps}}<li>
+<details id="s{{.N}}" class="step step-{{.Kind}}"{{if .Citations}} open{{end}}>
+<summary>
+<a class="step-n" href="#s{{.N}}" aria-label="Step {{.N}}">{{.N}}</a>
+<span class="step-kind">{{if eq .Kind "tool"}}{{shortTool .ToolName}}{{else}}{{.Kind}}{{end}}</span>{{if .ToolIsError}}<span class="step-error">error</span>{{end}}<span class="step-preview">{{if eq .Kind "tool"}}{{preview .Preview 160}}{{else}}{{preview .Text 160}}{{end}}</span>
+</summary>
+<div class="step-body">{{range .Citations}}<p class="cited-by">Cited by <a class="f-badge" href="#f{{.FindingN}}">F{{.FindingN}}</a> — {{.Title}}: “{{.Quote}}” <a href="#f{{.FindingN}}">↩ F{{.FindingN}}</a>
+</p>{{end}}{{if eq .Kind "tool"}}<div class="k">Input</div>
+<pre tabindex="0" aria-label="Step {{.N}} tool input">{{.DisplayInput}}</pre>
+<div class="k">Result{{if .ToolIsError}} (error){{end}}</div>
+<pre tabindex="0" aria-label="Step {{.N}} tool result">{{.DisplayResult}}</pre>{{else}}<div class="prose">{{.Text}}</div>{{end}}</div>
+</details>
+</li>{{end}}</ol>{{else if .StepsFiltered}}<p class="empty">0 matching steps. <a href="{{.StepsAllURL}}">Show all steps</a>.</p>{{else}}<p class="empty">No transcript steps were recorded.</p>{{end}}{{end}}</section>
+
+<section class="run-section" id="record">
+<div class="section-heading">
+<h2>Record</h2>
+<span class="muted small">Original source artifacts and forensic context</span>
+</div>
+<div class="card run-record">{{if not .RecordError}}<details class="section" id="self-review">
+<summary>Agent's self-review</summary>
+<div class="prose">{{.SelfReview}}</div>{{if and .HasCard .DisplayedObs.SelfReview.Note}}<p class="muted small">Observer: <span class="pill pill-{{.DisplayedObs.SelfReview.Accurate}}">{{.DisplayedObs.SelfReview.Accurate}}</span> — {{.DisplayedObs.SelfReview.Note}}</p>{{end}}</details>
+<details class="section" id="task-prompt">
+<summary>Task prompt</summary>
+<div class="prose">{{if .TaskPrompt}}{{.TaskPrompt}}{{else}}(not recorded){{end}}</div>
+</details>{{end}}<details class="section" id="run-meta">
+<summary>Run metadata &amp; forensic view</summary>
+<dl class="kv">
+<dt>Run</dt>
+<dd>
+<code>{{.Row.RunID}}</code>
+</dd>{{if .RecordErrorDetail}}<dt>Error</dt>
+<dd>
+<code>{{.RecordErrorDetail}}</code>
+</dd>{{end}}<dt>ZCP build</dt>
+<dd>
+<code>{{.Row.CandidateSha256}}</code>
+</dd>
+<dt>Evaluator build</dt>
+<dd>
+<code>{{.Row.EvaluatorSha256}}</code>
+</dd>
+<dt>Forensic view</dt>
+<dd>
+<pre class="forensic-command">zcp eval farm pull {{.Row.RunID}} --out &lt;dir&gt;
+zcp capture ui &lt;dir&gt;/{{.Row.RunID}}/capture</pre>
+</dd>
+</dl>
+</details>
+</div>
+</section>{{end}}
+{{template "foot"}}{{end}}

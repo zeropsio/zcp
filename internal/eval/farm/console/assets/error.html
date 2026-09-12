@@ -1,0 +1,8 @@
+{{define "error"}}{{template "head" .Meta}}
+<section class="card empty-state error-state" aria-labelledby="error-title">
+<p class="eyebrow">Farm console</p>
+<h1 id="error-title">{{.Title}}</h1>
+<p>{{.Message}}</p>
+<div class="error-actions">{{if .RetryHref}}<a class="btn btn-primary" href="{{.RetryHref}}">Try again</a>{{end}}{{if .ParentHref}}<a class="btn" href="{{.ParentHref}}">{{.ParentLabel}}</a>{{end}}</div>
+</section>
+{{template "foot"}}{{end}}
