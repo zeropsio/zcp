@@ -662,7 +662,10 @@ func finalizeActiveRun(ctx context.Context, client PlatformClient, sink *SinkCli
 	}
 	if a.Launch {
 		if a.ProductionProjectName != "" {
-			if prodID, ok := findProjectByName(ctx, client, opts.ClientID, a.ProductionProjectName); ok {
+			prodID, ok, err := findProjectByName(ctx, client, opts.ClientID, a.ProductionProjectName)
+			if err != nil {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("farm run: list production project %s: %w", a.RunID, err))
+			} else if ok {
 				if err := Guard(ctx, client, prodID, a.ProductionProjectName); err != nil {
 					cleanupErrs = append(cleanupErrs, fmt.Errorf("farm run: cleanup production project %s: %w", a.RunID, err))
 				}
@@ -705,17 +708,17 @@ func isScopedMintForbidden(err error) bool {
 
 // findProjectByName looks up a project by exact name in the account's live
 // project list (§3.3, launch scenario's -prod target).
-func findProjectByName(ctx context.Context, client PlatformClient, clientID, name string) (id string, ok bool) {
+func findProjectByName(ctx context.Context, client PlatformClient, clientID, name string) (id string, ok bool, err error) {
 	projects, err := client.ListProjects(ctx, clientID)
 	if err != nil {
-		return "", false
+		return "", false, err
 	}
 	for _, p := range projects {
 		if p.Name == name {
-			return p.ID, true
+			return p.ID, true, nil
 		}
 	}
-	return "", false
+	return "", false, nil
 }
 
 // doneJSON is the wrapper's runs/<runId>/done.json (§1.2 FM-4).

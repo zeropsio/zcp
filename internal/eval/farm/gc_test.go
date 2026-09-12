@@ -2,6 +2,7 @@ package farm
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -218,6 +219,28 @@ func TestRevokeOrphanedLaunchTokens_RequiresMatchingBatchIdentity(t *testing.T) 
 				t.Fatalf("token revoke calls=%d, want %d", got, tc.wantRevokes)
 			}
 		})
+	}
+}
+
+func TestRevokeOrphanedLaunchTokens_ReportsRevocationFailure(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-gc-token-revoke-failure"
+	f := newControllerFixture(t, clientID)
+	batch, runID := "batch-gc-token-revoke-failure", "revoke-failure-run"
+	production := productionProjectName(runID)
+	if err := PutManifest(context.Background(), f.sink, batch, BatchManifest{Batch: batch, Runs: []ManifestRun{{
+		RunID: runID, ProjectName: ProjectPrefix + runID, ProductionProjectName: production,
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := PutSummary(context.Background(), f.sink, batch, BatchSummary{Batch: batch, FinishedAt: time.Now().UTC().Format(time.RFC3339), Runs: []SummaryRun{{
+		RunID: runID, ProductionProjectName: production, LaunchTokenID: "tok-revoke-failure",
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	err := RevokeOrphanedLaunchTokens(context.Background(), failLaunchRevokeClient{PlatformClient: f.client}, f.sink, clientID)
+	if err == nil || !strings.Contains(err.Error(), "tok-revoke-failure") || !strings.Contains(err.Error(), "simulated revoke failure") {
+		t.Fatalf("RevokeOrphanedLaunchTokens error = %v, want contextual revocation failure", err)
 	}
 }
 
