@@ -9,8 +9,10 @@ package console
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +27,77 @@ import (
 type mutableClock struct {
 	mu  sync.Mutex
 	cur time.Time
+}
+
+func TestFillRowsConcurrently_RowReadFailure_PreservesManifestRun(t *testing.T) {
+	ctx := context.Background()
+	store := newFakeStore()
+	now := fixedNow(t)()
+	seedBatch(t, store, "s2b", "claude-sonnet-5", []runFixture{
+		{runID: "s2b-good", scenario: "good", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+		{runID: "s2b-bad", scenario: "bad", startedAt: now.Add(-time.Hour), durationS: "7s", costUsd: 0.2, taskResult: "failed", done: true},
+	}, true, map[string]string{"s2b-good": "passed", "s2b-bad": "failed"})
+	seedObservation(t, store, fixtureObservation("s2b-good"))
+	seedObservation(t, store, fixtureObservation("s2b-bad"))
+	manifest, err := loadManifest(ctx, store, "s2b")
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+
+	rowsStore := &transientListStore{fakeStore: store, failPrefix: "runs/s2b-bad/observer/", failures: 1}
+	cache := newRunCache(fixedNow(t))
+	rows, err := batchWindowRowsWithManifest(ctx, rowsStore, false, "s2b", manifest, nil, cache, newSummaryCache(fixedNow(t)), nil)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("production row fill: rows=%d err=%v", len(rows), err)
+	}
+	if rows[0].RunID != "s2b-good" || rows[1].RunID != "s2b-bad" {
+		t.Fatalf("rows = %+v, want manifest order", rows)
+	}
+	bad := rows[1]
+	if bad.Verdict != farm.VerdictFailed || !assessmentWorkUnavailable(bad) || bad.DoneExists || bad.DurationSec != 0 || bad.CostKnown || bad.StepCount != 0 || bad.Observation != nil {
+		t.Fatalf("unavailable production fallback = %+v, want matching summary verdict and conservative fields", bad)
+	}
+
+	// The batch action uses the same production row builder. A transient
+	// observer read must be reported as unavailable, even with all=1.
+	actionStore := &transientListStore{fakeStore: store, failPrefix: "runs/s2b-bad/observer/", failures: 1}
+	q := NewQueue(func(context.Context, Job) error { return nil })
+	srv := NewServer(Config{Store: actionStore, Token: testToken, Now: fixedNow(t), Queue: q})
+	rr := doBearerPOST(t, srv.Handler(), "/b/s2b/observe", url.Values{"model": {"claude-sonnet-5"}, "all": {"1"}})
+	if rr.Code != http.StatusAccepted || !strings.Contains(rr.Body.String(), `"reason":"assessment evidence unavailable"`) {
+		t.Fatalf("batch all=1 response: status=%d body=%s, want unavailable skip", rr.Code, rr.Body.String())
+	}
+
+	// The failed read is not cached as a permanent failure: the same cache
+	// recovers the complete row once the transient store error is gone.
+	recovered, err := batchWindowRowsWithManifest(ctx, rowsStore, false, "s2b", manifest, nil, cache, newSummaryCache(fixedNow(t)), nil)
+	if err != nil || len(recovered) != 2 {
+		t.Fatalf("recovery row fill: rows=%d err=%v", len(recovered), err)
+	}
+	if assessmentWorkUnavailable(recovered[1]) || !recovered[1].DoneExists || recovered[1].Observation == nil || recovered[1].StepCount == 0 {
+		t.Fatalf("recovered row = %+v, want complete evidence", recovered[1])
+	}
+	entry := cache.entry("s2b-bad")
+	entry.mu.Lock()
+	obsCached := entry.obs != nil
+	entry.mu.Unlock()
+	if !obsCached {
+		t.Fatal("recovered observation was not retained in cache")
+	}
+}
+
+type transientListStore struct {
+	*fakeStore
+	failPrefix string
+	failures   int
+}
+
+func (s *transientListStore) List(ctx context.Context, prefix string) ([]string, error) {
+	if prefix == s.failPrefix && s.failures > 0 {
+		s.failures--
+		return nil, errors.New("temporary observer read failure")
+	}
+	return s.fakeStore.List(ctx, prefix)
 }
 
 func newMutableClock(start time.Time) *mutableClock {

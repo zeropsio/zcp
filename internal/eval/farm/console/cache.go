@@ -529,9 +529,9 @@ func resolveSummary(ctx context.Context, store observer.ObjectStore, sc *summary
 // coldFillMaxInFlight running at once (rule 5). Results land in runs' own
 // order regardless of completion order — the same determinism the old
 // sequential loop gave for free. A run whose row fails to build is logged
-// and dropped, exactly like the old sequential loop (§8.4: "skipped ...
-// rather than failing the whole listing").
-func fillRowsConcurrently(runs []farm.ManifestRun, build func(run farm.ManifestRun) (RunRow, error), logf func(format string, args ...any)) []RunRow {
+// and preserved as an unavailable manifest-backed row when fallback is
+// supplied (§8.4: "skipped ... rather than failing the whole listing").
+func fillRowsConcurrently(runs []farm.ManifestRun, build func(run farm.ManifestRun) (RunRow, error), fallback func(run farm.ManifestRun, err error) RunRow, logf func(format string, args ...any)) []RunRow {
 	if logf == nil {
 		logf = defaultLogf
 	}
@@ -550,7 +550,10 @@ func fillRowsConcurrently(runs []farm.ManifestRun, build func(run farm.ManifestR
 			defer func() { <-sem }()
 			row, err := build(run)
 			if err != nil {
-				logf("skip run %s: %v", run.RunID, err)
+				logf("unavailable run %s: %v", run.RunID, err)
+				if fallback != nil {
+					slots[i] = slot{row: fallback(run, err), ok: true}
+				}
 				return
 			}
 			slots[i] = slot{row: row, ok: true}

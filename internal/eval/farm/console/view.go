@@ -952,6 +952,18 @@ func batchWindowRowsWithManifest(ctx context.Context, store observer.ObjectStore
 			return RunRow{}, rowErr
 		}
 		return resolveAssessmentWork(ctx, store, row), nil
+	}, func(run farm.ManifestRun, err error) RunRow {
+		queued := queueState != nil && queueState(run.RunID) != ""
+		summaryRun, found := findSummaryRun(summary, summaryFound, run.RunID)
+		verdict := settledOrRunning(summary, summaryFound, run.RunID)
+		return RunRow{RunID: run.RunID, Batch: batchID, Scenario: run.Scenario,
+			StartedAt: bc.CreatedAt, Build: bc.build(), Verdict: verdict,
+			VerdictReason:       verdictReason(verdict, false, nil, summaryRun, found),
+			ObserverState:       resolveObserverState(consoleObserverDisabled, bc.Observer, false, false, queued, verdict != verdictRunning),
+			ObserverStateText:   "assessment unavailable — run evidence could not be read",
+			assessmentWorkError: err.Error(),
+			CauseCounts:         newCauseClassCounts(),
+		}
 	}, logf)
 	return rows, nil
 }
