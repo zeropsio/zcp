@@ -122,6 +122,11 @@ func buildBatchRunIndex(ctx context.Context, sink *SinkClient) (map[string]batch
 		if err != nil {
 			return nil, fmt.Errorf("read batch %s manifest: %w", batch, err)
 		}
+		// A decodable but unidentified manifest (including null or {})
+		// cannot establish that every owner of a project was indexed.
+		if manifest.Batch != batch {
+			return nil, fmt.Errorf("batch %s manifest: batch identity %q does not match", batch, manifest.Batch)
+		}
 		finished, err := SummaryExists(ctx, sink, batch)
 		if err != nil {
 			return nil, fmt.Errorf("inspect batch %s summary: %w", batch, err)

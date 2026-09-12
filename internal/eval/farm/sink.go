@@ -299,7 +299,8 @@ type listBucketResult struct {
 // List returns every object key under prefix, following continuation
 // tokens until the listing is no longer truncated
 // (docs/spec-eval-farm.md §1: "?list-type=2&prefix=, follow continuation
-// tokens").
+// tokens"). A truncated page without a continuation token is an error,
+// never a successful partial listing.
 func (c *SinkClient) List(ctx context.Context, prefix string) ([]string, error) {
 	var keys []string
 	continuationToken := ""
@@ -332,8 +333,11 @@ func (c *SinkClient) List(ctx context.Context, prefix string) ([]string, error) 
 		for _, entry := range result.Contents {
 			keys = append(keys, entry.Key)
 		}
-		if !result.IsTruncated || result.NextContinuationToken == "" {
+		if !result.IsTruncated {
 			break
+		}
+		if result.NextContinuationToken == "" {
+			return nil, fmt.Errorf("farm: LIST prefix=%s: truncated response has no continuation token", prefix)
 		}
 		continuationToken = result.NextContinuationToken
 	}
