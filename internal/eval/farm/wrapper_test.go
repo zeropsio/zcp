@@ -156,6 +156,23 @@ fi
 
 mode="${STUB_MODE:-ok}"
 case "$mode" in
+escape-session)
+	setsid sh -c '
+		trap "" TERM
+		echo $$ >./escaped-session.pid
+		while :; do
+			printf x >>./escaped-session-writes
+			sleep 0.02
+		done
+	' &
+	while [ ! -s ./escaped-session.pid ] || [ ! -s ./escaped-session-writes ]; do
+		sleep 0.01
+	done
+	echo "Execution:    ok"
+	echo "Task:         required passed"
+	echo "Task-end evidence: persisted, settled"
+	exit 0
+	;;
 fail)
 	echo "Execution:    ok"
 	echo "Task:         required failed"
@@ -1070,6 +1087,56 @@ func TestWrapper_ChildKilled_NewProcessGroupGrandchildAlsoDead(t *testing.T) {
 		t.Errorf("grandchild (pid %d) is still alive after done.json was uploaded", grandchildPID)
 	} else if !errors.Is(err, syscall.ESRCH) {
 		t.Errorf("kill -0 grandchild (pid %d): unexpected error %v", grandchildPID, err)
+	}
+}
+
+// TestWrapper_NormalExit_NewSessionDescendantCannotWriteAfterDone pins the
+// stronger FM-13 finality boundary: a descendant that calls setsid(2) leaves
+// both the evaluator's process group and its session. Publishing done.json is
+// therefore allowed only after the wrapper has terminated that descendant and
+// proved it can no longer mutate the evidence tree.
+func TestWrapper_NormalExit_NewSessionDescendantCannotWriteAfterDone(t *testing.T) {
+	requireShAndCurl(t)
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux-only: production cleanup proof uses Linux subreaper semantics")
+	}
+	if _, err := exec.LookPath("setsid"); err != nil {
+		t.Skip("setsid not on PATH")
+	}
+
+	h := newWrapperHarness(t)
+	cmd := h.start(t, map[string]string{"STUB_MODE": "escape-session"})
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("supervisor exited with error: %v", err)
+	}
+
+	if _, ok := waitForS3Key(h.fake, "runs/"+h.runID+"/done.json", 10*time.Second); !ok {
+		t.Fatal("done.json never appeared")
+	}
+	escapedPID := readPIDFile(t, filepath.Join(h.rundir, "escaped-session.pid"), time.Second)
+	writesPath := filepath.Join(h.rundir, "escaped-session-writes")
+	before, err := os.Stat(writesPath)
+	if err != nil {
+		t.Fatalf("stat escaped-session-writes before stability check: %v", err)
+	}
+	t.Cleanup(func() {
+		// The RED implementation leaves a real session leader behind. Kill its
+		// exact process group so a failing regression test never leaks it.
+		_ = syscall.Kill(-escapedPID, syscall.SIGKILL)
+	})
+	time.Sleep(200 * time.Millisecond)
+	after, err := os.Stat(writesPath)
+	if err != nil {
+		t.Fatalf("stat escaped-session-writes after stability check: %v", err)
+	}
+
+	if err := syscall.Kill(escapedPID, syscall.Signal(0)); err == nil {
+		t.Errorf("setsid descendant (pid %d) is still alive after done.json was uploaded", escapedPID)
+	} else if !errors.Is(err, syscall.ESRCH) {
+		t.Errorf("kill -0 setsid descendant (pid %d): unexpected error %v", escapedPID, err)
+	}
+	if after.Size() != before.Size() {
+		t.Errorf("setsid descendant mutated evidence after done.json: size grew from %d to %d", before.Size(), after.Size())
 	}
 }
 
