@@ -353,9 +353,10 @@ func candidateInfoLine(info *farm.CandidateInfo) string {
 
 const boundGateSetFile = ".farm-gate-set.txt"
 
-// pushScenarioTree snapshots every file under dir together with gateSet as
-// one content-addressed tree. Staging first makes the bytes hashed exactly the
-// bytes uploaded even if the checkout changes during the push.
+// pushScenarioTree snapshots every regular file under dir together with gateSet
+// as one content-addressed tree. Symlinks and special files are skipped without
+// being opened. Staging first makes the bytes hashed exactly the bytes uploaded
+// even if the checkout changes during the push.
 func pushScenarioTree(ctx context.Context, client *farm.SinkClient, dir string, gateSet []byte) (digest string, err error) {
 	staged, err := os.MkdirTemp("", "farm-scenarios-")
 	if err != nil {
@@ -368,6 +369,13 @@ func pushScenarioTree(ctx context.Context, client *farm.SinkClient, dir string, 
 			return walkErr
 		}
 		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("inspect %s: %w", source, err)
+		}
+		if !info.Mode().IsRegular() {
 			return nil
 		}
 		rel, err := filepath.Rel(dir, source)
@@ -405,6 +413,13 @@ func pushScenarioTree(ctx context.Context, client *farm.SinkClient, dir string, 
 			return walkErr
 		}
 		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("inspect %s: %w", path, err)
+		}
+		if !info.Mode().IsRegular() {
 			return nil
 		}
 		rel, err := filepath.Rel(staged, path)

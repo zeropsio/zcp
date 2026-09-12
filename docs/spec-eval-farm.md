@@ -44,11 +44,12 @@ batches/<batch>/summary.json       # written at farm-run end
 creates for that run is named from the same `runId`; nothing under `runs/` is
 addressed by any other key.
 
-The scenario digest covers every scenario file and the reserved
+The scenario digest covers every regular scenario file and the reserved
 `.farm-gate-set.txt` entry in the same tree. Before reserving a batch, `farm
 run` downloads that tree to an isolated directory, rejects absolute,
 non-canonical and traversal keys, recomputes the digest, and reads the gate
-list and scenario front matter only from that verified snapshot. The wrapper
+list and scenario front matter only from that verified snapshot. Symlinks and
+special files in the source tree are skipped without being followed. The wrapper
 independently repeats the path and digest checks after downloading the tree in
 the run project. A legacy tree without the reserved entry remains usable with
 `--set all` or explicit scenario IDs when its digest verifies; `--set gate`
