@@ -173,12 +173,16 @@ func actionNextPath(r *http.Request) string {
 }
 
 // validNextPath reports whether next is safe to redirect to after login
-// (§8.3 FM-51): it must start with "/" and not "//" — "//" is browser-
-// parsed as a protocol-relative URL to another host, and anything not
-// starting with "/" (an absolute URL like "https://x", a bare relative
-// path like "relative") could send the browser off the console entirely.
+// (§8.3 FM-51): its decoded path must start with one "/". Browsers treat
+// leading slash/backslash combinations as protocol-relative URLs, including
+// percent-encoded variants, so validate the parsed path rather than only the
+// raw prefix. Absolute and bare relative URLs are rejected as well.
 func validNextPath(next string) bool {
-	return strings.HasPrefix(next, "/") && !strings.HasPrefix(next, "//")
+	u, err := url.Parse(next)
+	if err != nil || u.IsAbs() || u.Host != "" || u.User != nil || u.Opaque != "" {
+		return false
+	}
+	return validHTMLRefererPath(u.Path)
 }
 
 // safeNext returns next when validNextPath allows it, else "/" (§8.3
