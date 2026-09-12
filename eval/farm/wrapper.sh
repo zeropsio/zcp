@@ -219,31 +219,170 @@ redact_known_secrets() {
 
 # ---- child-tree cleanup (D6) ----------------------------------------------
 
-# session_pids prints every pid whose session id equals sid ($1). A
-# reparented grandchild that moved itself into a NEW process group (its
-# ppid also moves to the reaper once its immediate parent dies) keeps the
-# SAME session id for as long as it lives — session, not process group, is
-# the one membership that survives both reparenting and a pgid change — so
-# this is the only reachable-by-construction way to find it (D6). Tries, in
-# order: /proc/*/stat field 6 (the run container's Ubuntu image always has
-# this); `ps -o pid=,sid=` (a Linux host without /proc mounted, still
-# offers the "sid" ps keyword); a python3 os.getsid() fallback (this repo's
-# macOS dev machine has neither of the above — BSD ps has no "sid" keyword
-# at all — so the offline test rig needs a third tier to run at all).
-# Prints nothing (never errors) when no tier is available.
+# Linux's PR_SET_CHILD_SUBREAPER makes every orphaned descendant reparent to
+# this supervisor instead of PID 1. That kernel-owned membership survives a
+# descendant calling setsid(2), unlike both a process group and a session.
+# perl is already a hard wrapper dependency for fixed-string redaction; the
+# raw syscall numbers are stable Linux ABI values for the two architectures
+# used by the run image. Unsupported Linux architectures fail closed before
+# an evaluator starts.
+linux_prctl_syscall() {
+	case "$(uname -m)" in
+	x86_64 | amd64) printf '%s' 157 ;;
+	aarch64 | arm64) printf '%s' 167 ;;
+	*) return 1 ;;
+	esac
+}
+
+is_child_subreaper() {
+	# PR_SET_CHILD_SUBREAPER is preserved across exec but deliberately not
+	# inherited across fork. The helper stamps its own PID only after the
+	# syscall succeeds; exec preserves that PID, while every child sees a
+	# different $$ and therefore cannot masquerade as this supervisor.
+	[ "${ZCP_FARM_INTERNAL_SUBREAPER_PID:-}" = "$$" ]
+}
+
+exec_as_child_subreaper() {
+	prctl_nr=$(linux_prctl_syscall) || return 1
+	command -v perl >/dev/null 2>&1 || return 1
+	exec perl -e '
+		my $nr = shift;
+		syscall($nr, 36, 1, 0, 0, 0) == 0 or exit 125;
+		$ENV{ZCP_FARM_INTERNAL_SUBREAPER_PID} = $$;
+		exec @ARGV;
+		exit 126;
+	' "$prctl_nr" sh "$0" "$@"
+}
+
+# read_proc_stat_fields reads one complete /proc/<pid>/stat snapshot and sets
+# proc_state (field 3), proc_ppid (4), proc_sid (6), and proc_num_threads (20).
+# comm (field 2) may contain spaces, parentheses, and newlines, so a line-based
+# read is invalid; the kernel fields begin only after the LAST ") ". Return 2
+# when the file cannot be read (normally a process-exit race), and 1 when bytes
+# were read but do not contain a complete, usable snapshot.
+read_proc_stat_fields() {
+	proc_stat_path="$1"
+	proc_stat=$(cat "$proc_stat_path" 2>/dev/null) || return 2
+	case "$proc_stat" in
+	*") "*) ;;
+	*) return 1 ;;
+	esac
+	proc_stat_rest=${proc_stat##*) }
+	# The only newline in a valid snapshot can be inside comm and was removed
+	# with the prefix above. A remaining newline means the snapshot is invalid.
+	case "$proc_stat_rest" in
+	*'
+'*) return 1 ;;
+	esac
+	proc_stat_fields=$(printf '%s\n' "$proc_stat_rest" | awk '
+		NF < 18 ||
+		$1 !~ /^[[:alpha:]]$/ ||
+		$2 !~ /^[0-9]+$/ ||
+		$3 !~ /^[0-9]+$/ ||
+		$4 !~ /^[0-9]+$/ ||
+		$18 !~ /^[0-9]+$/ ||
+		$18 == 0 { exit 1 }
+		{ print $1, $2, $4, $18 }
+	') || return 1
+	[ -n "$proc_stat_fields" ] || return 1
+
+	proc_state=${proc_stat_fields%% *}
+	proc_stat_fields=${proc_stat_fields#* }
+	proc_ppid=${proc_stat_fields%% *}
+	proc_stat_fields=${proc_stat_fields#* }
+	proc_sid=${proc_stat_fields%% *}
+	proc_num_threads=${proc_stat_fields#* }
+}
+
+# A fully parsed, single-thread zombie has no executable threads left and is
+# waiting only to be reaped. A zombie reporting multiple threads is treated as
+# active/uncertain and remains in cleanup until the kernel snapshot changes.
+proc_stat_is_safely_inactive() {
+	[ "$proc_state" = "Z" ] && [ "$proc_num_threads" = "1" ]
+}
+
+# read_adopted_children_snapshot reads the kernel's single, possibly
+# unterminated children record without forking another process. It sets
+# children_snapshot.
+read_adopted_children_snapshot() {
+	children_path="$1"
+	[ -r "$children_path" ] || return 1
+	children_snapshot=""
+	exec 3<"$children_path" || return 1
+	children_read_rc=0
+	IFS= read -r children_snapshot <&3 || children_read_rc=$?
+	exec 3<&-
+	# EOF (1) is normal because proc does not promise a trailing newline.
+	[ "$children_read_rc" -le 1 ]
+}
+
+# collect_adopted_children sets cleanup_pids to the supervisor's currently
+# live direct children. After the original evaluator has been waited for, a
+# subreaper owns every surviving descendant root, including a setsid escape.
+# Arguments are an optional proc root and supervisor PID for deterministic
+# tests; production uses /proc and $$. Return 2 when a listed PID vanished:
+# its children may only become adopted after that snapshot, so the caller must
+# rescan before it can prove the tree empty. Other uncertainty returns 1.
+collect_adopted_children() {
+	proc_root="${1:-/proc}"
+	supervisor_pid="${2:-$$}"
+	children_file="$proc_root/$supervisor_pid/task/$supervisor_pid/children"
+	# Use the shell builtin: spawning cat here would itself become a direct
+	# child of this subreaper and perturb the snapshot being classified.
+	read_adopted_children_snapshot "$children_file" || return 1
+	children="$children_snapshot"
+	cleanup_pids=""
+	cleanup_scan_unstable=0
+	for pid in $children; do
+		case "$pid" in
+		'' | *[!0-9]*) return 1 ;;
+		esac
+		stat_file="$proc_root/$pid/stat"
+		if read_proc_stat_fields "$stat_file"; then
+			:
+		else
+			stat_rc=$?
+			# A child can exit between the children snapshot and opening stat.
+			# Any other read error, or readable but malformed bytes, leaves
+			# liveness uncertain and must block publication.
+			if [ "$stat_rc" -eq 2 ] && [ ! -e "$stat_file" ]; then
+				cleanup_scan_unstable=1
+				continue
+			fi
+			return 1
+		fi
+		[ "$proc_ppid" = "$supervisor_pid" ] || continue
+		proc_stat_is_safely_inactive && continue
+		cleanup_pids="$cleanup_pids $pid"
+	done
+	[ "$cleanup_scan_unstable" -eq 0 ] || return 2
+	# A child can exit and reparent descendants after the first snapshot but
+	# before its stat is observed as a safe zombie. Only an unchanged second
+	# builtin snapshot proves that no newly adopted root was missed.
+	read_adopted_children_snapshot "$children_file" || return 1
+	[ "$children_snapshot" = "$children" ] || return 2
+}
+
+# session_pids is the non-Linux offline-rig fallback. It prints every pid
+# whose session id equals sid ($1), covering reparenting and process-group
+# changes but not setsid(2); production Linux uses subreaper membership above.
+# Tries /proc, a ps implementation with the sid keyword, then python3's
+# os.getsid() for this repo's macOS test machine. Prints nothing when no tier
+# is available.
 session_pids() {
 	sid="$1"
 	if [ -d /proc ] && [ -r "/proc/$sid/stat" ]; then
 		for statfile in /proc/[0-9]*/stat; do
 			[ -r "$statfile" ] || continue
 			pid=$(basename "$(dirname "$statfile")")
-			line=$(cat "$statfile" 2>/dev/null) || continue
-			# The comm field ("(name)") may itself contain spaces/parens;
-			# fields after the LAST ")" are state ppid pgrp session ..., so
-			# session is the 4th whitespace-separated field from there.
-			rest=${line##*) }
-			psid=$(printf '%s\n' "$rest" | awk '{print $4}')
-			[ "$psid" = "$sid" ] && printf '%s\n' "$pid"
+			if read_proc_stat_fields "$statfile"; then
+				:
+			else
+				stat_rc=$?
+				[ "$stat_rc" -eq 2 ] && [ ! -e "$statfile" ] && continue
+				return 1
+			fi
+			[ "$proc_sid" = "$sid" ] && printf '%s\n' "$pid"
 		done
 		return 0
 	fi
@@ -278,25 +417,55 @@ PYEOF
 	fi
 }
 
-# kill_child_group signals every process in the child's session (D6) —
-# TERM first, a grace period, then KILL, so nothing is still running by the
-# time redaction/upload starts (docs/spec-eval-farm.md §2.3 FM-13: "the
-# supervisor must ... kill the whole group ... BEFORE redaction + upload,
-# so a bundle is final only when nothing is still running"). Both the
-# child-kill path and the normal-exit path reach this: it is the sole
-# cleanup step in finish_and_upload's trap.
+# kill_child_group terminates the evaluator's complete descendant tree before
+# redaction/upload. On Linux the supervisor is a verified child subreaper, so
+# every surviving root is an exact direct child even after setsid(2). KILL is
+# iterated because killing one adopted root can expose another generation.
+# Other hosts retain the session cleanup for the offline rig; farm production
+# is Linux and refuses to start unless subreaper setup succeeds.
 kill_child_group() {
+	if [ "$(uname -s)" = "Linux" ]; then
+		is_child_subreaper || return 1
+		collect_rc=0
+		collect_adopted_children || collect_rc=$?
+		[ "$collect_rc" -le 2 ] || return 1
+		[ "$collect_rc" -ne 1 ] || return 1
+		for pid in $cleanup_pids; do
+			kill -TERM "$pid" 2>/dev/null || true
+		done
+		sleep 0.3
+
+		cleanup_round=0
+		while [ "$cleanup_round" -lt 100 ]; do
+			collect_rc=0
+			collect_adopted_children || collect_rc=$?
+			[ "$collect_rc" -le 2 ] || return 1
+			[ "$collect_rc" -ne 1 ] || return 1
+			[ "$collect_rc" -eq 0 ] && [ -z "$cleanup_pids" ] && return 0
+			for pid in $cleanup_pids; do
+				kill -KILL "$pid" 2>/dev/null || true
+			done
+			cleanup_round=$((cleanup_round + 1))
+			sleep 0.02
+		done
+		collect_adopted_children || return 1
+		[ -z "$cleanup_pids" ]
+		return $?
+	fi
+
 	[ -f "$RUNDIR/child.pid" ] || return 0
 	sid=$(cat "$RUNDIR/child.pid")
-	[ -z "$sid" ] && return 0
+	case "$sid" in
+	'' | *[!0-9]*) return 1 ;;
+	esac
 
-	pids=$(session_pids "$sid")
+	pids=$(session_pids "$sid") || return 1
 	[ -z "$pids" ] && return 0
 	for pid in $pids; do
 		kill -TERM "$pid" 2>/dev/null || true
 	done
 	sleep 0.3
-	pids=$(session_pids "$sid")
+	pids=$(session_pids "$sid") || return 1
 	for pid in $pids; do
 		kill -KILL "$pid" 2>/dev/null || true
 	done
@@ -646,21 +815,30 @@ finish_and_upload() {
 		fi
 	fi
 
-	kill_child_group
+	cleanup_ok=1
+	if ! kill_child_group; then
+		cleanup_ok=0
+		execution="error: descendant cleanup could not be proven"
+		task="unknown"
+		task_end="unknown"
+	fi
 
-	sanitization_ok=1
-	if ! redact_known_secrets "$RESULTS_DIR"; then
-		sanitization_ok=0
-	fi
-	if ! redact_known_secrets "$CAPTURE_DIR"; then
-		sanitization_ok=0
-	fi
-	if ! update_capture_manifest; then
-		sanitization_ok=0
-	fi
-	if ! redacted_json=$(redacted_json_array); then
-		sanitization_ok=0
-		redacted_json='[]'
+	sanitization_ok="$cleanup_ok"
+	redacted_json='[]'
+	if [ "$cleanup_ok" -eq 1 ]; then
+		if ! redact_known_secrets "$RESULTS_DIR"; then
+			sanitization_ok=0
+		fi
+		if ! redact_known_secrets "$CAPTURE_DIR"; then
+			sanitization_ok=0
+		fi
+		if ! update_capture_manifest; then
+			sanitization_ok=0
+		fi
+		if ! redacted_json=$(redacted_json_array); then
+			sanitization_ok=0
+			redacted_json='[]'
+		fi
 	fi
 
 	parts_ok="$sanitization_ok"
@@ -813,6 +991,12 @@ main() {
 	if [ "${1:-}" = "--child" ]; then
 		child_main "$2"
 		exit $?
+	fi
+	if [ "$(uname -s)" = "Linux" ] && ! is_child_subreaper; then
+		if ! exec_as_child_subreaper "$@"; then
+			printf '%s\n' "refused: Linux child-subreaper setup unavailable" >&2
+			return 1
+		fi
 	fi
 	supervisor_main
 }

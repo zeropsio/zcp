@@ -156,6 +156,23 @@ fi
 
 mode="${STUB_MODE:-ok}"
 case "$mode" in
+escape-session)
+	setsid sh -c '
+		trap "" TERM
+		echo $$ >./escaped-session.pid
+		while :; do
+			printf x >>./escaped-session-writes
+			sleep 0.02
+		done
+	' &
+	while [ ! -s ./escaped-session.pid ] || [ ! -s ./escaped-session-writes ]; do
+		sleep 0.01
+	done
+	echo "Execution:    ok"
+	echo "Task:         required passed"
+	echo "Task-end evidence: persisted, settled"
+	exit 0
+	;;
 fail)
 	echo "Execution:    ok"
 	echo "Task:         required failed"
@@ -1137,6 +1154,56 @@ func TestWrapper_ChildKilled_NewProcessGroupGrandchildAlsoDead(t *testing.T) {
 	}
 }
 
+// TestWrapper_NormalExit_NewSessionDescendantCannotWriteAfterDone pins the
+// stronger FM-13 finality boundary: a descendant that calls setsid(2) leaves
+// both the evaluator's process group and its session. Publishing done.json is
+// therefore allowed only after the wrapper has terminated that descendant and
+// proved it can no longer mutate the evidence tree.
+func TestWrapper_NormalExit_NewSessionDescendantCannotWriteAfterDone(t *testing.T) {
+	requireShAndCurl(t)
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux-only: production cleanup proof uses Linux subreaper semantics")
+	}
+	if _, err := exec.LookPath("setsid"); err != nil {
+		t.Skip("setsid not on PATH")
+	}
+
+	h := newWrapperHarness(t)
+	cmd := h.start(t, map[string]string{"STUB_MODE": "escape-session"})
+	escapedPID := readPIDFile(t, filepath.Join(h.rundir, "escaped-session.pid"), 10*time.Second)
+	t.Cleanup(func() {
+		// The RED implementation leaves a real session leader behind. Kill its
+		// exact process group so a failing regression test never leaks it.
+		_ = syscall.Kill(-escapedPID, syscall.SIGKILL)
+	})
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("supervisor exited with error: %v", err)
+	}
+
+	if _, ok := waitForS3Key(h.fake, "runs/"+h.runID+"/done.json", 10*time.Second); !ok {
+		t.Fatal("done.json never appeared")
+	}
+	writesPath := filepath.Join(h.rundir, "escaped-session-writes")
+	before, err := os.Stat(writesPath)
+	if err != nil {
+		t.Fatalf("stat escaped-session-writes before stability check: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	after, err := os.Stat(writesPath)
+	if err != nil {
+		t.Fatalf("stat escaped-session-writes after stability check: %v", err)
+	}
+
+	if err := syscall.Kill(escapedPID, syscall.Signal(0)); err == nil {
+		t.Errorf("setsid descendant (pid %d) is still alive after done.json was uploaded", escapedPID)
+	} else if !errors.Is(err, syscall.ESRCH) {
+		t.Errorf("kill -0 setsid descendant (pid %d): unexpected error %v", escapedPID, err)
+	}
+	if after.Size() != before.Size() {
+		t.Errorf("setsid descendant mutated evidence after done.json: size grew from %d to %d", before.Size(), after.Size())
+	}
+}
+
 // TestWrapper_RunDir_FixedRootUnderHome pins the RUNDIR fix: with
 // ZCP_FARM_RUNDIR unset, the wrapper uses the fixed, discoverable root
 // $HOME/.zcp-farm/<runId>/ instead of an untraceable `mktemp -d` path.
@@ -1424,6 +1491,154 @@ func TestWrapper_Redaction_ManifestRewrite_FlatLayoutStillWorks(t *testing.T) {
 	if providerEntry.SHA256 != wantSHA {
 		t.Errorf("manifest provider.jsonl sha256 = %q, want %q (the actual post-redaction digest)", providerEntry.SHA256, wantSHA)
 	}
+}
+
+func TestWrapper_ProcStatParser_ReadsMultilineCommAndUsesLastDelimiter(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH")
+	}
+
+	statPath := filepath.Join(t.TempDir(), "stat")
+	// Linux permits newlines and ") " inside comm. Only the final ") " starts
+	// fields 3+, so this fixture would be truncated by a single shell read and
+	// misparsed by a first-delimiter split.
+	stat := "4242 (worker) decoy\nsecond line) Z 99 88 77 0 0 0 0 0 0 0 0 0 0 0 20 0 1 0 123 456\n"
+	if err := os.WriteFile(statPath, []byte(stat), 0o644); err != nil {
+		t.Fatalf("write synthetic proc stat: %v", err)
+	}
+
+	out, err := runWrapperFunctionDriver(t,
+		"read_proc_stat_fields "+shQuote(statPath)+"\n"+
+			"printf '%s|%s|%s|%s\\n' \"$proc_state\" \"$proc_ppid\" \"$proc_sid\" \"$proc_num_threads\"\n",
+	)
+	if err != nil {
+		t.Fatalf("read_proc_stat_fields: %v\n%s", err, out)
+	}
+	if got, want := string(out), "Z|99|77|1\n"; got != want {
+		t.Fatalf("parsed fields = %q, want %q", got, want)
+	}
+}
+
+func TestWrapper_ProcStatParser_RejectsIncompleteOrInvalidInput(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH")
+	}
+
+	tests := map[string]string{
+		"missing delimiter": "4242 (unfinished S 99 88 77 0 0 0\n",
+		"truncated fields":  "4242 (worker) S 99 88 77 0 0 0 0 0 0 0 0 0 0 0 20 0\n",
+		"invalid threads":   "4242 (worker) Z 99 88 77 0 0 0 0 0 0 0 0 0 0 0 20 0 many 0 123\n",
+	}
+	for name, stat := range tests {
+		t.Run(name, func(t *testing.T) {
+			statPath := filepath.Join(t.TempDir(), "stat")
+			if err := os.WriteFile(statPath, []byte(stat), 0o644); err != nil {
+				t.Fatalf("write synthetic proc stat: %v", err)
+			}
+
+			out, err := runWrapperFunctionDriver(t,
+				"if read_proc_stat_fields "+shQuote(statPath)+"; then printf accepted; else printf rejected; fi\n",
+			)
+			if err != nil {
+				t.Fatalf("parser driver: %v\n%s", err, out)
+			}
+			if got, want := string(out), "rejected"; got != want {
+				t.Fatalf("parser result = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestWrapper_ProcStatZombieIsInactiveOnlyWithOneThread(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH")
+	}
+
+	tests := []struct {
+		name       string
+		state      string
+		threads    string
+		wantResult string
+	}{
+		{name: "single-thread zombie", state: "Z", threads: "1", wantResult: "inactive"},
+		{name: "multi-thread zombie", state: "Z", threads: "2", wantResult: "cleanup"},
+		{name: "running process", state: "R", threads: "1", wantResult: "cleanup"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			driver := "proc_state=" + shQuote(tt.state) + "\n" +
+				"proc_num_threads=" + shQuote(tt.threads) + "\n" +
+				"if proc_stat_is_safely_inactive; then printf inactive; else printf cleanup; fi\n"
+			out, err := runWrapperFunctionDriver(t, driver)
+			if err != nil {
+				t.Fatalf("zombie classification driver: %v\n%s", err, out)
+			}
+			if got := string(out); got != tt.wantResult {
+				t.Fatalf("classification = %q, want %q", got, tt.wantResult)
+			}
+		})
+	}
+}
+
+func TestWrapper_AdoptedChildren_VanishedPIDRequiresStableRescan(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH")
+	}
+
+	procRoot := t.TempDir()
+	const supervisorPID = "900"
+	childrenPath := filepath.Join(procRoot, supervisorPID, "task", supervisorPID, "children")
+	if err := os.MkdirAll(filepath.Dir(childrenPath), 0o755); err != nil {
+		t.Fatalf("mkdir synthetic proc children: %v", err)
+	}
+	// PID 101 deliberately has no stat file: it vanished after this snapshot.
+	if err := os.WriteFile(childrenPath, []byte("101"), 0o644); err != nil {
+		t.Fatalf("write first children snapshot: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(procRoot, "202"), 0o755); err != nil {
+		t.Fatalf("mkdir newly adopted child: %v", err)
+	}
+	stat := "202 (newly adopted) R 900 202 202 0 0 0 0 0 0 0 0 0 0 0 20 0 1 0 123 456\n"
+	if err := os.WriteFile(filepath.Join(procRoot, "202", "stat"), []byte(stat), 0o644); err != nil {
+		t.Fatalf("write newly adopted child stat: %v", err)
+	}
+
+	driver := "children_path=" + shQuote(childrenPath) + "\n" +
+		"cleanup_pids=\n" +
+		"if collect_adopted_children " + shQuote(procRoot) + " " + supervisorPID + "; then first_rc=0; else first_rc=$?; fi\n" +
+		"printf 'first:%s:%s\\n' \"$first_rc\" \"$cleanup_pids\"\n" +
+		"printf %s 202 >\"$children_path\"\n" +
+		"if collect_adopted_children " + shQuote(procRoot) + " " + supervisorPID + "; then second_rc=0; else second_rc=$?; fi\n" +
+		"printf 'second:%s:%s\\n' \"$second_rc\" \"$cleanup_pids\"\n" +
+		": >\"$children_path\"\n" +
+		"if collect_adopted_children " + shQuote(procRoot) + " " + supervisorPID + "; then third_rc=0; else third_rc=$?; fi\n" +
+		"printf 'third:%s:%s\\n' \"$third_rc\" \"$cleanup_pids\"\n"
+	out, err := runWrapperFunctionDriver(t, driver)
+	if err != nil {
+		t.Fatalf("adopted-child scan driver: %v\n%s", err, out)
+	}
+	want := "first:2:\nsecond:0: 202\nthird:0:\n"
+	if got := string(out); got != want {
+		t.Fatalf("scan transitions = %q, want %q", got, want)
+	}
+}
+
+// runWrapperFunctionDriver loads the production function definitions without
+// invoking main, then executes driver under POSIX sh.
+func runWrapperFunctionDriver(t *testing.T, driver string) ([]byte, error) {
+	t.Helper()
+	src, err := os.ReadFile(wrapperScriptPath(t))
+	if err != nil {
+		t.Fatalf("read wrapper.sh: %v", err)
+	}
+	const trailer = "main \"$@\"\n"
+	body := strings.TrimSuffix(string(src), trailer)
+	if body == string(src) {
+		t.Fatalf("wrapper.sh does not end with %q — test fixture assumption broke", trailer)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, "sh", "-c", body+"\n"+driver).CombinedOutput() //nolint:gosec // body is the repository's wrapper and driver is built only from test-owned quoted paths/constants
 }
 
 // shQuote wraps s in single quotes for embedding as a literal sh word,
