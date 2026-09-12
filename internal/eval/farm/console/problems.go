@@ -594,17 +594,37 @@ func normalizedStepText(runID string, findStepText StepTextFinder, runByID map[s
 // A no-anchor/solo problem (splitAnchorKey fails) or an empty anchor keeps
 // today's behavior untouched, per the item's own scope.
 func stillEmitted(key string, scenarios map[string]bool, newestBuild string, runsByBuildScenario map[string]map[string][]string, findStepText StepTextFinder, runByID map[string]ProblemsRun, cache map[string]stepTextCacheEntry) bool {
+	return stillEmittedAnchors([]string{anchorFromProblemKey(key)}, scenarios, newestBuild, runsByBuildScenario, findStepText, runByID, cache)
+}
+
+func anchorFromProblemKey(key string) string {
+	_, anchor, ok := splitAnchorKey(key)
+	if !ok {
+		return ""
+	}
+	return anchor
+}
+
+// stillEmittedAnchors is the merged-cluster form of stillEmitted. Each
+// member's anchor is normalized with that member run's metadata before it is
+// compared to candidate text normalized with the candidate's metadata.
+func stillEmittedAnchors(anchors []string, scenarios map[string]bool, newestBuild string, runsByBuildScenario map[string]map[string][]string, findStepText StepTextFinder, runByID map[string]ProblemsRun, cache map[string]stepTextCacheEntry) bool {
 	if findStepText == nil || newestBuild == "" {
 		return false
 	}
-	_, anchor, ok := splitAnchorKey(key)
-	if !ok || anchor == "" {
+	if len(anchors) == 0 {
 		return false
 	}
 	for s := range scenarios {
 		for _, runID := range runsByBuildScenario[newestBuild][s] {
-			if text, ok := normalizedStepText(runID, findStepText, runByID, cache); ok && strings.Contains(text, anchor) {
-				return true
+			text, ok := normalizedStepText(runID, findStepText, runByID, cache)
+			if !ok {
+				continue
+			}
+			for _, anchor := range anchors {
+				if anchor != "" && strings.Contains(text, anchor) {
+					return true
+				}
 			}
 		}
 	}
@@ -654,7 +674,14 @@ func statusFor(p Problem, bi *buildIndex, newestBuild string, runsByBuildScenari
 			break
 		}
 	}
-	if stillEmitted(p.Key, scenarios, newestBuild, runsByBuildScenario, findStepText, runByID, stepCache) {
+	anchors := make([]string, 0, len(p.Members))
+	for _, m := range p.Members {
+		if m.Anchor == "" {
+			continue
+		}
+		anchors = append(anchors, norm(maskRunSpecific(m.Anchor, m.RunID, m.Batch, m.Scenario), runByID[m.RunID].Row.ServiceHostnames))
+	}
+	if stillEmittedAnchors(anchors, scenarios, newestBuild, runsByBuildScenario, findStepText, runByID, stepCache) {
 		return StatusStillEmitted
 	}
 	return candidate

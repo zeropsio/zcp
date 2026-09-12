@@ -161,14 +161,15 @@ func TestCache_StepTextComputedOnceThenCached(t *testing.T) {
 	}
 }
 
-// TestCache_StepTextMissingBundleCachedAsNotOK pins the same rule for a run
-// whose bundle can never be loaded (StepTextFinder's own doc comment: "ok is
-// false when the run's bundle isn't available ... never an error") — a
-// repeat call must not retry the doomed read either.
+// TestCache_StepTextMissingBundleCachedAsNotOK pins the same rule for a
+// completed no-work run whose bundle can never be loaded (StepTextFinder's
+// own doc comment: "ok is false when the run's bundle isn't available ...
+// never an error") — a repeat call must not retry the doomed read either.
 func TestCache_StepTextMissingBundleCachedAsNotOK(t *testing.T) {
 	store := newFakeStore()
 	now := fixedNow(t)
 	cache := newRunCache(now)
+	store.putJSON(t, doneKey("st-missing"), map[string]any{"runId": "st-missing", "scenarioId": "missing"})
 
 	if _, ok := cache.stepText(context.Background(), store, "st-missing"); ok {
 		t.Fatalf("stepText for a run with no bundle: ok = true, want false")
@@ -179,6 +180,99 @@ func TestCache_StepTextMissingBundleCachedAsNotOK(t *testing.T) {
 	}
 	if len(store.gets) != 0 || len(store.lists) != 0 {
 		t.Errorf("second stepText call for a missing bundle retried the bucket: gets=%v lists=%v", store.gets, store.lists)
+	}
+}
+
+// TestCache_TransientStepRead_Recovers pins the cache contract that an
+// unavailable or unfinished bundle read is not immutable evidence. Once the
+// bundle becomes readable, a later search must retry and return its text.
+func TestCache_TransientStepRead_Recovers(t *testing.T) {
+	store := newFakeStore()
+	now := fixedNow(t)
+	cache := newRunCache(now)
+
+	if _, ok := cache.stepText(context.Background(), store, "st-recover"); ok {
+		t.Fatal("initial stepText: ok = true, want false for an unavailable bundle")
+	}
+
+	seedRun(t, store, runFixture{
+		runID: "st-recover", scenario: "recover", startedAt: now(),
+		durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true,
+	})
+	text, ok := cache.stepText(context.Background(), store, "st-recover")
+	if !ok {
+		t.Fatal("stepText after bundle became readable: ok = false, want true")
+	}
+	if !strings.Contains(text, "discovered ok") {
+		t.Errorf("stepText after recovery = %q, want fixture transcript", text)
+	}
+}
+
+// TestCache_UnfinishedBundle_RecoversAfterCompletion ensures a done marker
+// observed before the result bundle is complete cannot freeze a partial row.
+func TestCache_UnfinishedBundle_RecoversAfterCompletion(t *testing.T) {
+	store := newFakeStore()
+	now := fixedNow(t)
+	seedBatch(t, store, "ub", "off", []runFixture{{
+		runID: "ub-recover", scenario: "recover", startedAt: now(), done: false,
+	}}, false, nil)
+	store.putJSON(t, "runs/ub-recover/done.json", map[string]any{"runId": "ub-recover", "scenarioId": "recover"})
+
+	cache := newRunCache(now)
+	summaryCache := newSummaryCache(now)
+	partial, err := loadRunRow(context.Background(), store, false, "ub-recover", nil, cache, summaryCache)
+	if err != nil {
+		t.Fatalf("partial loadRunRow: %v", err)
+	}
+	if !partial.DoneExists || partial.CostKnown || partial.StepCount != 0 {
+		t.Fatalf("partial row = done=%v costKnown=%v steps=%d, want done with incomplete optional data", partial.DoneExists, partial.CostKnown, partial.StepCount)
+	}
+
+	seedRun(t, store, runFixture{
+		runID: "ub-recover", scenario: "recover", startedAt: now(), durationS: "5s",
+		costUsd: 0.25, taskResult: "passed", done: true,
+	})
+	complete, err := loadRunRow(context.Background(), store, false, "ub-recover", nil, cache, summaryCache)
+	if err != nil {
+		t.Fatalf("completed loadRunRow: %v", err)
+	}
+	if !complete.CostKnown || complete.CostUsd != 0.25 || complete.StepCount == 0 {
+		t.Fatalf("completed row = costKnown=%v cost=%v steps=%d, want completed bundle data", complete.CostKnown, complete.CostUsd, complete.StepCount)
+	}
+}
+
+// TestCache_PartReadFailure_DoesNotFreezePartialRow ensures a malformed
+// immutable file is retried after the source is repaired instead of leaving
+// the cache with a permanently incomplete row.
+func TestCache_PartReadFailure_DoesNotFreezePartialRow(t *testing.T) {
+	store := newFakeStore()
+	now := fixedNow(t)
+	seedBatch(t, store, "pr", "off", []runFixture{{
+		runID: "pr-recover", scenario: "recover", startedAt: now(),
+		durationS: "5s", costUsd: 0.4, taskResult: "passed", done: true,
+	}}, false, nil)
+	store.putText(t, "runs/pr-recover/results/20260911-104803/recover/meta.json", "{malformed")
+
+	cache := newRunCache(now)
+	summaryCache := newSummaryCache(now)
+	partial, err := loadRunRow(context.Background(), store, false, "pr-recover", nil, cache, summaryCache)
+	if err != nil {
+		t.Fatalf("partial loadRunRow: %v", err)
+	}
+	if partial.CostKnown {
+		t.Fatal("partial row unexpectedly reported a cost from malformed meta.json")
+	}
+
+	seedRun(t, store, runFixture{
+		runID: "pr-recover", scenario: "recover", startedAt: now(), durationS: "5s",
+		costUsd: 0.4, taskResult: "passed", done: true,
+	})
+	complete, err := loadRunRow(context.Background(), store, false, "pr-recover", nil, cache, summaryCache)
+	if err != nil {
+		t.Fatalf("repaired loadRunRow: %v", err)
+	}
+	if !complete.CostKnown || complete.CostUsd != 0.4 {
+		t.Fatalf("repaired row = costKnown=%v cost=%v, want 0.4", complete.CostKnown, complete.CostUsd)
 	}
 }
 
