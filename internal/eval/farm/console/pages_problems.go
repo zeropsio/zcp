@@ -12,29 +12,14 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
-	"strings"
 
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
 
-// problemAnchorID turns a Problem's Key into a stable HTML fragment id
-// (item 12: "give each problem row a stable id from its key") — every
-// character outside [A-Za-z0-9_-] maps to "-", mirroring pages_run.go's
-// checkAnchor, so the same key always resolves to the same id both on
-// /problems (problemRowView.AnchorID) and linked from the Overview's Top
-// problems now (pages_home.go's topProblemView.ID).
+// problemAnchorID turns a Problem's Key into the stable HTML fragment used
+// both on /problems and by the Overview's Top problems links.
 func problemAnchorID(key string) string {
-	var b strings.Builder
-	b.WriteString("p-")
-	for _, r := range key {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('-')
-		}
-	}
-	return b.String()
+	return safeFragment("p-", key)
 }
 
 // pluralS returns "" for n==1, else "s" — shared by this file and

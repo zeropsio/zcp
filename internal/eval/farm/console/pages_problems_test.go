@@ -78,6 +78,37 @@ func TestPages_ProblemsPageRendersClusteredRow(t *testing.T) {
 	}
 }
 
+func TestPages_ProblemsCollidingKeysHaveDistinctResolvableAnchors(t *testing.T) {
+	srv, store, _ := testServer(t)
+	now := fixedNow(t)()
+	seedBatch(t, store, "pc1", "claude-sonnet-5", []runFixture{
+		{runID: "pc1-slash", scenario: "slash", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+		{runID: "pc1-dot", scenario: "dot", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"pc1-slash": "passed", "pc1-dot": "passed"})
+	seedFormat2Finding(t, store, "pc1-slash", now, observer.SeverityHigh,
+		"tool:zerops_deploy/deploy", "a/b", "Slash problem", "fix slash", 3, "quote slash")
+	seedFormat2Finding(t, store, "pc1-dot", now, observer.SeverityMedium,
+		"tool:zerops_deploy/deploy", "a.b", "Dot problem", "fix dot", 3, "quote dot")
+
+	const (
+		slashAnchor = "p-anchor-tool-zerops_deploy-a-b~YW5jaG9yfHRvb2w6emVyb3BzX2RlcGxveXxhL2I"
+		dotAnchor   = "p-anchor-tool-zerops_deploy-a-b~YW5jaG9yfHRvb2w6emVyb3BzX2RlcGxveXxhLmI"
+	)
+	problemsBody := doGET(t, srv.Handler(), "/problems").Body.String()
+	for _, anchor := range []string{slashAnchor, dotAnchor} {
+		if strings.Count(problemsBody, `id="`+anchor+`"`) != 1 {
+			t.Errorf("/problems does not contain exactly one target %q:\n%s", anchor, problemsBody)
+		}
+	}
+
+	homeBody := doGET(t, srv.Handler(), "/").Body.String()
+	for _, anchor := range []string{slashAnchor, dotAnchor} {
+		if !strings.Contains(homeBody, `href="/problems#`+anchor+`"`) {
+			t.Errorf("overview does not link to target %q:\n%s", anchor, homeBody)
+		}
+	}
+}
+
 // TestPages_ProblemsPageStatusUsesFullHistoryNotSinceWindow pins item 1
 // (FIX3): /problems computes status over the FULL farm history, not just
 // its own since window (default 30d) — a problem hit on a build far older

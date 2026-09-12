@@ -464,6 +464,27 @@ func TestPages_RunWhyThisVerdictListsFailedChecksWithLinks(t *testing.T) {
 	}
 }
 
+func TestPages_RunCollidingCheckIDsHaveDistinctResolvableAnchors(t *testing.T) {
+	srv, store, _ := testServer(t)
+	seedBatch(t, store, "ca1", "off", []runFixture{
+		{runID: "ca1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", taskResult: "failed", done: true,
+			checks: [][5]string{
+				{"a/b", "failed", "5", "3", "mcp"},
+				{"a.b", "blocked", "", "", "mcp"},
+			}},
+	}, true, map[string]string{"ca1-a": "failed"})
+
+	body := doGET(t, srv.Handler(), "/r/ca1-a").Body.String()
+	for _, anchor := range []string{"check-a-b~YS9i", "check-a-b~YS5i"} {
+		if strings.Count(body, `id="`+anchor+`"`) != 1 {
+			t.Errorf("run does not contain exactly one target %q:\n%s", anchor, body)
+		}
+		if !strings.Contains(body, `href="#`+anchor+`"`) {
+			t.Errorf("run does not link to target %q:\n%s", anchor, body)
+		}
+	}
+}
+
 // TestPages_RunWhyThisVerdictPrefixesBlockedAndOmitsEmptyExpectedObserved
 // pins item 4 (FIX2): a blocked check's line reads "Blocked:", never
 // "Failed because:", and — when it carries neither expected nor observed
