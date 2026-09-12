@@ -1251,9 +1251,13 @@ line legend of the terms it uses.
 `assessment failed` for a run whose current observation's status is `error`
 or `unparsed`; `observerStateText` carries the §8.8 wording.
 
-A batch or run whose manifest/observation/meta cannot be read is skipped
-(logged to stderr) rather than failing the whole listing; only a genuine
-store error on the batches/ listing itself fails the call. A partial page
+A batch whose manifest cannot be read is skipped (and logged to stderr)
+rather than failing the whole listing; only a genuine store error on the
+`batches/` listing itself fails the call. Once a batch manifest is readable,
+every manifest run remains present in that batch's rows and denominators. If
+its observation, `done.json`, or result evidence cannot be read, the row uses
+the manifest identity and any readable batch-summary verdict and labels its
+evidence unavailable; it is logged but never silently removed. A partial page
 labels unavailable evidence where it can still render useful data; absence
 does not stand in for a failed read. Cached and uncached readers share this
 resolution contract: genuine optional absence, unfinished data,
@@ -1262,6 +1266,18 @@ successfully resolved immutable rows/steps are retained as immutable cache
 entries. A failed results listing or part read cannot freeze a partial row;
 an error or pre-completion step read cannot permanently cache "no steps".
 Later requests recover when the store recovers or the bundle completes.
+
+The preserved unavailable row takes `runId`, scenario, batch/build context,
+queue state, and (only when a matching summary row exists) automatic verdict
+from readable manifest and summary inputs. Its internal evidence-unavailable
+flag is set and its explanatory text says that run evidence could not be
+read; the public `observerState` vocabulary does not gain a new value. The
+row does not claim `done.json`, cost, duration, steps, observation, checks,
+findings, outcome, successful completion, clean status, or zero work. Its
+manifest creation time is display context, not a recovered run start time.
+Assessment eligibility remains unknown/unavailable, so worker and actions do
+not enqueue it. The failed read is not cached as an immutable success and a
+later request can replace the fallback with fully resolved evidence.
 
 Successful immutable reads still avoid repeated I/O. The current
 observation is re-read at most every 2 minutes, or at once when the
