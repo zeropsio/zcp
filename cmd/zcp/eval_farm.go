@@ -439,16 +439,30 @@ func pushScenarioTree(ctx context.Context, client *farm.SinkClient, dir string, 
 	return digest, nil
 }
 
-// readScenarioSnapshotFile is isolated so the inventory/read boundary can be
-// exercised deterministically by the scenario staging tests.
+// readScenarioSnapshotFile opens the path without following a final symlink,
+// then proves that the opened descriptor is the same regular file WalkDir
+// inspected. The descriptor check closes the inventory/read race without
+// trusting a second pathname lookup; the platform opener also avoids blocking
+// if the entry was replaced by a FIFO between those operations.
 func readScenarioSnapshotFile(source string, expected fs.FileInfo) ([]byte, error) {
-	_ = expected
 	f, err := openScenarioSnapshotFile(source)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	return io.ReadAll(f)
+
+	actual, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat opened file: %w", err)
+	}
+	if !actual.Mode().IsRegular() || !os.SameFile(expected, actual) {
+		return nil, fmt.Errorf("scenario entry changed after inventory")
+	}
+	body, err := io.ReadAll(f)
+	if err != nil {
+		return nil, fmt.Errorf("read opened file: %w", err)
+	}
+	return body, nil
 }
 
 // resolveGateSetPath resolves the local gate scenario list `farm push`
