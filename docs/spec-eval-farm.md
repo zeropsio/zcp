@@ -274,12 +274,18 @@ itself is the one case with no bundle at all — that case is the explicit
 
 Wrapper steps, in order:
 
-1. download `evaluators/<sha>/zcp`, `candidates/<sha>/zcp`, and the scenario
+1. atomically claim a new run directory before writing a PID, overrides,
+   credentials or evidence, or installing an upload trap. Exactly one
+   invocation can own it. An existing completed, interrupted or legacy
+   attempt is refused with a diagnostic and its artifacts left intact;
+   a losing concurrent invocation never changes the winner's files. This
+   does not resume an evaluator or introduce an upload-recovery command;
+2. download `evaluators/<sha>/zcp`, `candidates/<sha>/zcp`, and the scenario
    tree from the bucket; verify both binary digests against
    `ZCP_FARM_EVALUATOR_SHA`/`ZCP_FARM_CANDIDATE_SHA` before running either;
-2. write the private Claude home carrying `CLAUDE_CODE_OAUTH_TOKEN` (§2.4);
+3. write the private Claude home carrying `CLAUDE_CODE_OAUTH_TOKEN` (§2.4);
    refuse to start if `ANTHROPIC_API_KEY` is set in the environment;
-3. run the evaluator's existing single-run binding unchanged:
+4. run the evaluator's existing single-run binding unchanged:
    `<evaluator> eval behavioral run --candidate <candidate> --candidate-sha256 <sha> --project-id $projectId --ack-disposable-project yes --capture raw --id <scenario> … --capture-dir <local capture dir> --work-dir /var/www`
    (`spec-testing-architecture.md §10.4`'s binding, unmodified) — the local
    capture dir is the one uploaded as `runs/<runId>/capture/`, and the
@@ -293,10 +299,17 @@ Wrapper steps, in order:
    scratch paths (results dir, private candidate bin, private Claude home)
    stay under `$RUNDIR`, siblings of the results dir rather than the work
    dir (`cmd/zcp/eval_behavioral.go` `buildExecutionBinding`);
-4. at exit — success, failure, max-turns, or signal, via a trap that fires
+5. at exit — success, failure, max-turns, or signal, via a trap that fires
    regardless of exit path — redact (§1.3) and upload
    `runs/<runId>/results/` then `runs/<runId>/capture/` (the `capture-<id>/`
    window inside it), then write `done.json` last (FM-3, FM-4).
+
+The trap's reentrancy guard is local to its supervisor process. A durable
+successful-upload marker is written only after the uploads and final
+`done.json` write succeed; an upload failure retains the attempt's evidence
+without marking it uploaded. The completion envelope takes its run,
+scenario, candidate and evaluator identities from the claimed descriptor;
+the controller binds all four before accepting it (§3.3).
 
 **FM-14.** Seeding is the runner's, unchanged: `SeedEmpty/Imported/Deployed/
 Settled/Building` run exactly as in a single supervised run, using the
@@ -387,6 +400,10 @@ The gate set is currently 10 scenarios. The two launch scenarios (O6) are
 deferred out of it until a source-control fixture exists for them to build
 from.
 
+Input safety also lives at the controller boundary, independently of CLI
+parsing: selected scenario IDs must be unique, and the batch identity must
+be exclusively reserved before any project or token is created (§3.3).
+
 **FM-18.** No daemon and no HTTP surface on the farm host. `farm run` starts
 detached (`systemd-run --user` or `nohup`) so its kickoff SSH session may
 drop; `farm status`/`pull`/`report`/`coverage` recompute from the bucket
@@ -418,12 +435,20 @@ otherwise reach (mint, revoke, import).
 ### 3.3 `farm run`
 
 **FM-21.** `farm run --candidate <sha> --scenarios <digest> --set gate|all|<ids>`
-creates one project per selected run (§2.1) over REST, then watches the
-bucket for each run's `done.json`. It deletes every `zcp-farm-<runId>*`
-project belonging to a run once that run reads `done` (FM-3) or once the
-run's budget elapses — whichever comes first. A run that never wrote
-`done.json` is the sole exemption: its project is **not** deleted by `farm
-run` and stays for inspection (FM-3, FM-25). While waiting, the controller
+reserves its batch identity, creates one project per selected run (§2.1)
+over REST, then watches the bucket for each run's `done.json`. Before a
+completion can settle a run or authorize deletion, its `runId`,
+`scenarioId`, `candidateSha256` and `evaluatorSha256` must match that run's
+reserved descriptor, in addition to FM-5's part-digest checks. Foreign or
+missing identities are rejected even when the part digests agree; the
+existing object is preserved, never adopted as the new run's evidence.
+This live-controller requirement does not change FM-6's reporting of old
+unpinned bundles.
+
+It deletes every `zcp-farm-<runId>*` project belonging to a run once its
+bound completion settles it. A run whose budget elapses without an
+acceptable bundle is **not** deleted by `farm run` and stays for inspection
+(FM-3). While waiting, the controller
 also polls the run project's processes directly (D19): a FAILED
 creation-phase process (`stack.create`, `stack.import`) settles the run
 `blocked` immediately instead of waiting out the full run budget for a
@@ -435,15 +460,26 @@ control service `zcp` or carries no service ref at all, so a FAILED
 `stack.import` the run's own agent triggers mid-run for one of ITS services
 is never mistaken for the platform failing to create the run's own project.
 
-**FM-22.** `farm run` writes `batches/<batch>/manifest.json` before creating
-any project and `batches/<batch>/summary.json` after the last run in the
-batch settles (done, budget-expired, or exempted). Both are evidence, never
-the registry (§1.4).
+**FM-22.** `farm run` creates `batches/<batch>/manifest.json` with a signed
+`If-None-Match: *` conditional PUT before any platform mutation. An existing
+manifest is a conflict, including a finished batch: IDs are never reused.
+HEAD followed by ordinary PUT is not a reservation. There is no fallback
+to unconditional creation. An ambiguous or lost response fails closed;
+reading matching bytes back does not establish ownership. Only the
+successful claimant may perform subsequent manifest updates. A rejected
+claim or duplicate scenario leaves all existing batch/run evidence intact.
+
+The controller writes `batches/<batch>/summary.json` after the last run
+settles (done, budget-expired, or exempted), including the error paths of
+§3.5. The manifest and summary remain evidence, not a separate registry
+(§1.4).
 
 `farm run --observer <model>|off` (default `claude-sonnet-5`; models
 `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5-1`) records the choice in
 the manifest (§1.4, §7.7); it never reaches a run project. `--batch` must
-match the batch-id grammar of FM-47; any other value is a flag error.
+match the batch-id grammar of FM-47; any other value is a flag error. An
+omitted ID is generated with a collision-resistant suffix, not seconds
+alone; conditional creation remains authoritative even for generated IDs.
 
 The manifest also records what a person needs to read the batch later:
 `note` (`farm run --note <text>`, at most 200 chars: why the batch ran),
@@ -479,6 +515,18 @@ initiative to try for a better result. A scenario's flake rate is itself a
 finding (per-scenario pass rate across the baseline's three repeats), not
 something the controller papers over.
 
+Every failure after reservation goes through finalization: already-created
+runs still reach the ordinary settlement/retention rules, and the
+controller attempts the final manifest and summary writes. A failed
+post-create manifest write or a later run's mint failure cannot abandon
+earlier active runs or delete unfinished work as an error shortcut.
+The original failure remains visible alongside final-write, rollback,
+deletion or revoke failures. Retained project IDs and launch-token IDs are
+returned for recovery and persisted when possible; token values never are.
+If storage stays unwritable, the command reports that evidence could not
+be persisted and prints the safe recovery IDs rather than claiming a
+durable final state.
+
 **FM-25.** There is no expected-route field and the controller never compares
 an observed workflow-step sequence against a golden trajectory. `never` and
 `askWhen` (§4.2) are the only decision-shaped gates; everything else about
@@ -494,6 +542,13 @@ no-bundle run's project on a timer alone; `--older-than` only applies to
 projects a batch has already finished with. `gc` deletes only projects a
 batch manifest names; any other `zcp-farm-*` project is listed as
 `exempt: unknown run` and left for the operator.
+
+Summary existence is the finished-batch boundary. With a positive
+`--older-than`, a missing, unreadable, malformed, zero or future finish
+timestamp does not establish sufficient age: the candidate is exempt with
+the reason, not treated as ancient. A valid finish time must satisfy the
+requested age. With `--older-than=0`, no age proof is required; all other
+running-batch, no-bundle and prefix exemptions still apply.
 
 ---
 
@@ -947,9 +1002,11 @@ OOM-killed) — and prints the URL. No secret value is ever printed.
 
 ### 8.2 Authentication and headers
 
-**FM-50.** Every route except `GET /login`, `POST /login`, `GET /healthz` and
-`GET /static/app.css` (the one stylesheet) requires `Authorization: Bearer <console token>` or a session
-cookie. `POST /login` compares in constant time and sets the cookie
+**FM-50.** Every route except `GET /login`, `POST /login`, `GET /healthz`,
+`GET /static/app.css` and `GET /static/vendor/tabler-1.5.1.min.css` requires
+`Authorization: Bearer <console token>` or a session cookie. Static access
+does not expose a filesystem or directory listing. `POST /login` compares
+in constant time and sets the cookie
 `farm_session` = `<expiry>.<hex HMAC-SHA256(token, expiry)>`: HttpOnly, Secure,
 SameSite=Strict, Path=/, 30 days — rotating the token ends every session.
 Both the login form and the bearer header are compared in constant time, and
@@ -972,55 +1029,94 @@ origin without breaking its own state-changing forms. Pages use no
 script, no inline style and no external asset; they render in light and dark
 (`prefers-color-scheme`) and at 400 px.
 
+The visual foundation is the real Tabler CSS kit, vendored at an exact
+version and served with the console, plus a separate application
+stylesheet. The vendored assets retain their license and record upstream
+provenance/version; upgrades are explicit. No CDN, external font/import,
+runtime JavaScript or JavaScript-dependent kit interaction is introduced.
+Go templates, native links, forms and `<details>` remain the interaction
+model under the same CSP. Use a system font stack and self-hosted or inline
+decorative SVG only where it clarifies a control; text carries the meaning.
+
 ### 8.3 Pages
 
 **FM-51.** The console answers three questions, in this order: *what is
 broken in ZCP right now*, *what did this batch find*, *what happened in this
 run*. Every page shows the value first and the record last, speaks the
-vocabulary of §8.8, and never shows a raw enum, a Go error chain or an empty
-placeholder.
+vocabulary of §8.8, and never substitutes a raw enum, Go error chain or
+unexplained blank for an operator-facing state.
 
-Every page carries the top navigation (Overview · Problems · Findings ·
-Terms, the current page marked with `aria-current`), a sign-out control, and
-the **observer status line**: `Automatic assessment: on · <model> · <n>
+The shared application shell has desktop sidebar navigation (Overview ·
+Problems · Findings · Terms), a compact contextual header, sign-out and a
+skip-to-content link. At narrow widths the same navigation remains usable
+without a script. Only the current primary route is marked
+`aria-current="page"`; batch/run pages use breadcrumbs and section links
+for their context. Each page has one H1 followed by ordered section
+headings. Titles and explanatory text lead; comparable measures use
+aligned columns and tabular numbers, secondary identifiers use quieter
+type, and color reinforces a written status rather than replacing it.
+Primary action, scope, matching count and filters form one compact toolbar.
+Long titles, hashes and evidence wrap without squeezing prose into narrow
+columns or causing document-wide overflow. Necessary wide tables/code
+use labelled, keyboard-focusable scroll regions. Native disclosures expand
+across the content width. Focus, contrast and hierarchy remain clear in
+both color schemes, at 400 px and at 200% zoom.
+
+Authenticated pages also carry the **observer status line**:
+`Automatic assessment: on · <model> · <n>
 queued/running` / `off on this console (ZCP_FARM_OBSERVER=off) — Assess
 buttons still work` / `unavailable — <reason>` (credential missing,
 `ANTHROPIC_API_KEY` set, `claude` not found), in which last case every
 Assess form is hidden. A `?notice=<code>` from an action (§8.5) renders as
-one callout above the content.
+one callout above the content. Queue/failure details remain available on
+mobile. A page that auto-refreshes says that it does and why; warnings and
+action results are not hidden inside a collapsed narrative.
 
 - `/` — **Overview**, top to bottom:
   1. **Latest evaluation**: the newest batch whose set is `gate` or `all`
-     with at least one finished run (else the newest batch with a finished
-     run): id, time, ZCP build (§8.8), verdict counts with disputed verdicts
+     of kind `evaluation` (§8.8; else the newest evaluation batch): id, time,
+     ZCP build (§8.8), verdict counts with disputed verdicts
      counted (`2 failed (1 disputed)`), and **vs <previous batch of the same
-     set>**: newly failing, fixed, still failing — by scenario name. Below,
+     set>**: newly not passing, now passing, still not passing (§8.8), each
+     with scenario, current verdict and a direct run link. Below,
      one line per failed or blocked run: scenario, headline, and
-     `observer disputes: <why>` when the checks were judged wrong.
+     `observer disputes: <why>` when the checks were judged wrong; the
+     scenario links directly to that run. Missing latest/previous
+     evaluation is an explained state, not a zero-valued comparison.
   2. **Top problems now**: the first five live problems (§8.6), each one
      line (severity, cause, surface, title, how often), linking to
      `/problems`.
   3. **Batches**: a sortable, filterable table (§8.7): batch, started, ZCP
      build, set, one dot per run ordered as on the batch page (tooltip
      `scenario — verdict`), verdict counts, ZCP findings high/medium, agent
-     cost (`—` when unknown, `$2.19 + 7 unknown`), assessed n/m. Batches
-     where no run finished (empty batches) are listed only under `kind=empty` or `kind=all`.
-- `/problems` — §8.6, as a table (§8.7). A row expands (`<details>`) to its
+     cost (`—` when unknown, `$2.19 + 7 unknown`), assessed n/m. Empty
+     batches (§8.8) appear only under `kind=empty` or `kind=all`.
+- `/problems` — §8.6 as compact title-first rows with aligned severity,
+  status and occurrence facts (§8.7), not a column for every prose field.
+  Each row exposes its scope and expands (`<details>`) to full-width
   member findings: run, batch, build, severity, cause, title, first found
-  quote with its step link.
-- `/findings` — every finding in scope, one card each, as a list (§8.7).
+  quote with its step link. The title links to the representative finding.
+- `/findings` — every finding in scope, one compact evidence entry each
+  (§8.7): title, severity/cause, scenario/build/run context, what happened,
+  quote validity, where to look and fix, with direct run/finding/step links.
+  These are individual run findings, not another set of problem clusters.
 - `/b/<batch>`, top to bottom:
   1. Header: id, time, set, ZCP build, note, and the **vs <previous batch of
      the same set>** line.
   2. Summary: verdict counts, disputed verdicts, goal reached yes/partly/no,
      assessment outcome ok/problem/inconclusive, findings high/medium per
      cause class, agent cost (with the count of runs whose cost is
-     unknown), assessed n/m.
-  3. **Problems in this batch**: §8.6 over this batch's runs only, each
-     marked `also in <previous batch>` / `not in <previous batch>` (the
-     previous batch of the same set; the status words stay §8.6's). Without
-     any assessment it falls back to "checks that failed in two or more
-     runs".
+     unknown), assessed n/m. This summary and batch assessment actions
+     always concern the whole batch; run filters narrow only the run list.
+  3. **Problems in this batch**: §8.6 scoped to this batch, with status
+     still computed over full history; each marked `also in <previous
+     batch>` / `not in <previous batch>` (the
+     previous batch of the same set; the status words stay §8.6's).
+     Previously reported problems absent here are labelled as historical
+     comparison, not presented as current findings. Without any assessment
+     it falls back to "checks that failed in two or more runs". A lack of
+     reported problems is shown with assessment coverage, not as proof
+     that an unassessed or partially assessed batch is clean.
   4. Runs, as a table (§8.7), in groups by precedence — a run sits in the
      first group it fits: **Failed and blocked** (one line of why: the first
      failed check in plain words `id: expected …, got …`, or the blocked
@@ -1030,8 +1126,8 @@ one callout above the content.
      `inconclusive`) · **Clean** (collapsed to one line of names). `sort`
      orders runs within each group.
   5. An Assess callout only while some finished run needs an assessment
-     (§8.5); "Re-assess all" only once at least one run is assessed; neither
-     when no run finished.
+     (§8.5); "Re-assess all" only once at least one run is assessed and an
+     eligible run exists. No form offers work excluded by §8.5.
 - `/r/<runId>`, top to bottom:
   1. Scenario, verdict (with its reason when blocked, not started, running
      or stalled), times, agent cost, step count.
@@ -1043,36 +1139,68 @@ one callout above the content.
      verdict may not be fair: <why>` linking to the explaining finding (the
      first `evaluator` finding), or to the judged check's row when there is
      none; the
-     story (task, expected, did, stuck with step links, ending); goal
+     story (task, expected, did, stuck with step links, ending), which may
+     be disclosed below the conclusion; goal
      reached; verdict right (per judged check); a line of findings by
      severity and cause linking to `#f<n>`; model, time, quote count and
      `warnings`; the live status line of §8.5 while one is queued or running;
      the assess form (model preselected to the current observation's
      model); earlier assessments, each with its outcome, headline or
      failure and a link to `?obs=<obsId>`, which renders that version in
-     the card. Without an observation the card says why (§8.8) and shows
+     the card. If the newest attempt failed and no `obs` was requested,
+     the newest older successful assessment may be displayed, but a
+     prominent banner before its outcome/headline names the failed attempt
+     and the displayed assessment's model/time. It does not make the
+     current assessment successful in counts, filters or the API. An
+     explicit `obs` shows that exact version, labels historical context and
+     provides a link back to current; a missing/foreign ID is 404. Failure,
+     unparsed output, incomplete evidence and material warning/dispute
+     states remain visible outside story disclosures. Without an
+     observation the card says why (§8.8) and shows
      **How the run ended**: the last agent message (first 300 chars) and
      the tool errors with step links.
   4. Findings F1…Fn (`id="f<n>"`): severity, cause, surface, title, what,
      evidence (step link, `quote found`/`quote not found`), span, where to
      look (`anchor` in monospace first), fix.
   5. Failed and blocked checks: id, expected, observed, source, and the
-     observer's judgement of that check.
+     observer's judgement of that check. Judgement reasons are readable
+     inline or with keyboard-operated disclosure, never only in a tooltip.
   6. Steps, filterable (`steps=all|cited|errors`, default `all`): every step
      a finding cites renders open, with `Cited by F<n> — <title>: "<quote>"
-     ↩ F<n>` at the top of its body; tool results with JSON escapes decoded;
-     empty thinking blocks left out (numbering stays the record's, §7.2).
+     ↩ F<n>` at the top of its body. Valid JSON tool results are indented
+     for console display before existing JSON-escape display decoding;
+     duplicate keys and number lexemes survive. Raw steps, digests,
+     observer inputs and quote matching are unchanged, and output stays
+     HTML-escaped. Empty thinking blocks are left out (numbering stays the
+     record's, §7.2); the visible count matches displayed steps and any
+     recorded total is labelled separately.
   7. Record, collapsed: self-review with the observer's note on it, task
      prompt, run metadata (run id, candidate and evaluator sha, forensic
      command `zcp eval farm pull <runId> --out <dir>` then
      `zcp capture ui <dir>/<runId>/capture`). A run without `done.json`
      shows no Record.
-- `/terms` — the glossary of §8.8.
+- `/terms` — the glossary of §8.8, grouped by concept with stable section
+  links and plain-language definitions.
 - `/login?next=<path>` — the login form (it says the token is in
   `farm-console.env`, written by `deploy.sh`); after login the browser goes
   to `next` when it is a path starting with `/` and not `//`, else `/`. An
   unauthenticated HTML request is sent to `/login?next=<its path>`.
   `POST /logout` clears the session cookie.
+
+Run section links reference only rendered sections. Existing `#f<n>`,
+`#s<n>` and check IDs keep their identity across views. When a valid cited
+step is excluded by the selected steps filter, its link goes to the same
+run/assessment with only the blocking filter cleared; genuinely absent or
+invalid evidence is labelled unavailable rather than linked to nowhere.
+
+Every list distinguishes no source data, no assessments, no filter matches
+and unavailable/partial evidence. No-match states name the active scope
+and offer a reset (§8.7). Login fields have persistent labels; a rejected
+token gets an associated inline error without echoing the value. HTML
+errors use the shared visual system, an actionable explanation and
+retry/parent links, preserving HTTP status: invalid query 400, missing
+route/batch/run/assessment 404, Overview store failure 500, other existing
+page store failures 502. API wire shapes and statuses are unchanged.
 
 ### 8.4 Agent API
 
@@ -1125,12 +1253,22 @@ or `unparsed`; `observerStateText` carries the §8.8 wording.
 
 A batch or run whose manifest/observation/meta cannot be read is skipped
 (logged to stderr) rather than failing the whole listing; only a genuine
-store error on the batches/ listing itself fails the call. The caching rules
-of format 1 stand: a finished run's row is cached once resolved (the current
-observation re-read at most every 2 minutes, or at once when the console's
-own queue finishes a job for that run); a run without `done.json` and a
-missing `summary.json` are re-checked at most every 15 seconds; a cold fill
-resolves at most 8 rows at a time in sequential order.
+store error on the batches/ listing itself fails the call. A partial page
+labels unavailable evidence where it can still render useful data; absence
+does not stand in for a failed read. Cached and uncached readers share this
+resolution contract: genuine optional absence, unfinished data,
+transport/cancellation errors and malformed content are distinct. Only
+successfully resolved immutable rows/steps are retained as immutable cache
+entries. A failed results listing or part read cannot freeze a partial row;
+an error or pre-completion step read cannot permanently cache "no steps".
+Later requests recover when the store recovers or the bundle completes.
+
+Successful immutable reads still avoid repeated I/O. The current
+observation is re-read at most every 2 minutes, or at once when the
+console's own queue finishes a job for that run; a run without `done.json`
+and a missing `summary.json` are re-checked at most every 15 seconds. A cold
+fill resolves at most 8 rows at a time in sequential order. Unavailable
+evidence cannot establish a problem as gone (§8.6).
 
 ### 8.5 Worker and actions
 
@@ -1138,7 +1276,8 @@ resolves at most 8 rows at a time in sequential order.
 worker and the actions. Every 60 s the worker lists batches whose manifest
 `createdAt` is within 14 days plus a 2-hour slack and whose `observer` names
 a model, and queues each of their runs that has `done.json`, a
-`results/` bundle to read, and no observation, with the manifest's model
+readable bundle proving it did work, no stored observation and no
+pre-store failure remembered by this queue, with the manifest's model
 (`source: worker`). With
 `ZCP_FARM_OBSERVER=off` it queues nothing.
 
@@ -1149,7 +1288,11 @@ queued or running, and either has no observation or its current one failed
 
 A run **did work** when its recorded cost is above 0 or it has at least one
 step — the same rule that tells an evaluation batch from an empty one
-(§8.3). A run the batch ended before it started still writes `done.json`
+(§8.8). This predicate plus `done.json` is shared by the worker, single-run
+and batch actions, needs-assessment counts and forms; a results directory
+or `meta.json` listing alone is insufficient. A read failure is unavailable
+evidence, not proof of zero work, and cannot queue an assessment from
+invented eligibility. A run the batch ended before it started still writes `done.json`
 but leaves no `results/` at all: there is nothing to assess, an observation
 of it can only fail on a missing task prompt, and a stored "assessment
 failed" for a run that never ran is noise. Such a run is never queued (the
@@ -1158,6 +1301,9 @@ worker skips it, both batch actions report it skipped with the reason
 assessment, and reported apart from the unassessed ones
 (`/api/digest`: `Never started: N run(s) — nothing to assess`,
 `neverStartedCount` in JSON).
+
+The single-run action also refuses finished zero-work runs with a 409 and
+the same reason, and its page explains why no Assess form is offered.
 
 Actions (`source: action`): `POST /r/<runId>/observe` queues a new version
 with `model` from the allowlist `claude-sonnet-5`, `claude-opus-5`,
@@ -1178,7 +1324,12 @@ body); a cookie request is always sent back to the page it came from with
 
 The queue exposes each job's model, source, enqueued and started time, and
 keeps the last failure that happened before anything was stored, per run
-(error and time), until the next job for that run starts. The run card and
+(error and time), until an explicit retry starts the next job for that run.
+Automatic ticks skip these remembered failures as well as stored failed
+observations: a storage failure must not repeat paid model calls every
+minute. A manual retry remains available and clears the remembered failure
+when it starts. This suppression is process-local, not an exactly-once
+promise across restarts. The run card and
 the batch row show a queued or running job as `Assessing with <model> —
 started <time>, usually 1–2 min; the result replaces the one below` (the
 form hidden meanwhile), and a pre-store failure as `The attempt at <time>
@@ -1197,8 +1348,8 @@ skip the run (never enqueue) when that list call itself fails.
 
 ### 8.6 Problems — findings clustered across runs
 
-**FM-54.** A **problem** is every finding, over the current observations
-(status `ok`) of the runs in the `since` window, that shares one key:
+**FM-54.** A **problem** groups findings from the current observations
+(status `ok`) over the full farm history that share one key:
 - a format-2 finding with an `anchor`: its surface up to the first `/`
   (`tool:zerops_deploy/deploy` → `tool:zerops_deploy`) + `norm(anchor)`;
 - a format-2 finding without an anchor whose surface is `tool:…`,
@@ -1216,10 +1367,22 @@ with `<host>`; 22-character base62 tokens and hex tokens of 8 or more
 characters with `#`; then every run of digits with `#`. Clustering is
 deterministic and runs in the read path; no model is called.
 
+Anchor-key clusters with the same surface prefix also merge when one
+normalized anchor contains the other and the shorter is at least 12
+characters. This merge is transitive; its stable key retains the longest
+anchor, breaking ties by key. The representative title/fix/anchor still
+comes from severity and recency below. Keep every distinct member anchor
+variant available for emission checks; the surviving key is not the only
+wording of the problem.
+
 **Builds and status.** A build is a candidate sha256 (§8.8). A scenario is
 *assessed on a build* when one of its runs on that build has a current `ok`
-observation. Status is computed once over the `since` window across all
-batches; every other filter narrows rows and never changes a status. The
+observation. Status is computed over the full farm history across all
+batches, including runs outside the request's window or batch. Scope
+selects problems with at least one member in scope and provides separately
+labelled in-scope counts; it never changes status, newest build, historical
+first/last seen or historical totals. Other filters narrow rows under
+§8.7 without recomputing those facts. The
 **newest build** is that of the newest `gate`/`all` batch with an assessed
 run, else of the newest batch with one. For a problem:
 - `recurring` — hit on the newest build and on an older one;
@@ -1231,16 +1394,24 @@ run, else of the newest batch with one. For a problem:
   anchor is still present in the step texts of that build's own runs: ZCP
   keeps printing the text and only the assessment stopped naming it, which
   is not the same thing as fixed;
-- `gone` — not hit on the newest build, its anchor not emitted there either,
+- `gone` — not hit on the newest build, with sufficient readable completed
+  evidence to establish any anchor is not emitted there either,
   although one of its scenarios was assessed there in the same observation
   format as the problem's members, and hit on an older build (fixed, or not
   reproduced);
 - `unconfirmed` — not hit on the newest build and none of its scenarios was
-  assessed there in that format.
+  assessed there in that format, or missing/unavailable evidence prevents
+  establishing that its anchor is absent.
 `live` = `recurring`, `new`, `first seen` or `still emitted` — every status
 except `gone` and `unconfirmed`. Proving `still emitted` reads the step
 texts of the newest build's own runs (each run at most once per request,
 cached) and searches them for the problem's normalized anchor.
+For a merged cluster, search every distinct member anchor after canonical
+normalization with that member run's metadata; normalize candidate step
+text with the candidate run's own metadata. A match of any variant proves
+`still emitted`, even if the longest wording is absent. A failed or
+unfinished read is not a negative match and cannot by itself prove `gone`;
+it remains recoverable under §8.4.
 
 **Rank:** live before the rest; then highest member severity; then runs hit
 on the newest build; then runs hit in total; then last seen, newest first;
@@ -1248,7 +1419,11 @@ then the key. A row shows: highest severity, the cause labels of its
 members, surface, the title and fix of its most severe member (newest on a
 tie), the anchor, `hit <a>/<b> runs on <newest build>` (`b` = runs of its
 scenarios assessed on that build), `<n> runs · <m> batches · <k> builds`,
-status, first and last seen. Members are ordered by severity, then newest.
+status, first and last seen. Newest-build ratios, in-scope ratios and
+historical totals are labelled separately, each using distinct runs rather
+than finding counts. The ratio's denominator qualification is visible or
+available in a keyboard/touch-operated disclosure, never only a tooltip.
+Members are ordered by severity, then newest.
 
 ### 8.7 Lists — sorting and filtering
 
@@ -1268,11 +1443,22 @@ other parameters.
   nothing yields an empty list, not an error.
 - Each filter option shows its count under the other active filters; an
   option with count 0 is shown but not a link. Active filters show as chips,
-  each removable, plus "clear all".
+  each removable, plus "reset filters". Selecting an already-active
+  single-value or minimum-severity option preserves its selection or is
+  inert; it never silently removes itself and changes the displayed count.
+  Removal belongs to the chip. Reset returns to the list's documented
+  defaults (for example Problems `status=live`), not to an implied `all`.
+- The list heading and summary count matching rows under all active
+  filters; broader totals may appear only with their scope explicitly
+  named. A no-match result does not claim that the window has no data.
+  Batch run-list matching counts do not redefine whole-batch summaries or
+  actions (§8.3).
 - Sorting: `sort=<key>` from the list's set and `dir=asc|desc`; each key's
   default direction and tie-break are in the table; an unknown value (cost
   not recorded, duration of a run without `done.json`) sorts last in both
-  directions.
+  directions. A known zero cost is a value, not unknown. A partially known
+  batch cost sorts by its displayed known subtotal and retains the count of
+  unknown runs; a wholly unknown batch cost sorts last in either direction.
 - A parameter the list does not take, or a closed-set value outside its
   set, is refused: the page renders a 400 that names the parameter and its
   allowed values with a link that drops it; the API answers 400
@@ -1302,8 +1488,9 @@ endpoint's legend, on `/terms`, and in the farm-triage skill; each badge
 carries its definition as a `title`.
 
 - **Batch** — one farm run: a set of scenarios against one ZCP build.
-  **Evaluation batch** — at least one run finished. **Empty batch** — no run
-  finished (setup failures, aborted, stalled).
+  **Evaluation batch** — at least one run did work (§8.5). **Empty batch** —
+  no run has evidence of work (for example setup failures or an abort
+  before execution); `done.json` alone does not make it an evaluation.
   **Run** — one scenario done once by an agent in a fresh project.
   **Scenario** — a scripted user task plus the automatic checks that grade it.
 - **ZCP build** — the candidate binary, identified by its sha256; shown as
@@ -1316,11 +1503,19 @@ carries its definition as a `title`.
   blocked (could not be graded — reason shown) · not started · running ·
   stalled (no result after the batch's deadline, §3.3 `runBudgetSec`, plus
   30 minutes).
+- **Batch comparison** — compares scenarios with the previous evaluation
+  batch of the same set. **Newly not passing** means currently not passed
+  and previously passed or absent; **Now passing** means currently passed
+  and previously not passed; **Still not passing** means not passed in both.
+  Here not passing includes failed, blocked, not started, running and
+  stalled. Each comparison entry names its actual current verdict; these
+  categories are not a claim that every included run failed a check.
 - **Check** — one automatic test: expected, observed, where the observed
   value came from.
 - **Observer** — an AI model that reads a finished run and writes an
   **assessment**; it never changes the verdict. Assessment outcome: OK ·
-  Problem · Inconclusive · none (no current `ok` observation). Assessment state: assessed · assessing… · not
+  Needs attention (`problem` on the wire) · Inconclusive · none (no current
+  `ok` observation). Assessment state: assessed · assessing… · not
   assessed — run not finished / batch ran without observer / automatic
   assessment is off on this console / older than 14 days (assess by hand) ·
   assessment failed — <reason>.
@@ -1349,3 +1544,38 @@ carries its definition as a `title`.
   prove the finding right.
 - **Agent cost** — the run's model spend, without the observer; `—` when
   not recorded.
+
+### 8.9 UI verification
+
+**FM-57.** UI fixtures render the real Go handlers/templates against a fake
+object store, fixed clock and controllable fake queue jobs. They are test
+code only: no production fixture route, live credentials, paid observer
+process or external service is needed. A repeatable local server entry
+point and route/state manifest make every screen reviewable. Synthetic
+prototype pages alone do not prove production behavior. Browser access
+uses supported local authentication without bypassing TLS warnings; Go
+tests independently verify the Secure cookie and Origin contracts.
+
+The fixture manifest covers these observable states, with representative
+combinations chosen to exercise the actual page behavior:
+
+| Surface | Required states |
+|---|---|
+| Shell and actions | observer available/off/unavailable; queued/running/pre-store failure; action notices; refresh explanation |
+| Login and HTML errors | initial/rejected login, safe return path and expiry; invalid filter 400; missing route/batch/run/assessment 404; route-specific store failures; partial evidence |
+| Overview | latest/previous evaluation present and absent; Evaluation/Empty/All history; disputed checks; unknown/partial cost; no problems with assessment coverage; no matches |
+| Problems | every status in §8.6; filters, counts and sorts; full-history versus request scope; expanded members; unassessed/no-source/no-match/unavailable evidence |
+| Findings | individual findings and quotes found/not found; all filter/sort dimensions; evidence/fix links; no-source/no-match states |
+| Batch | all five run groups in precedence order; comparison and historical absence; no/partial/all assessments; whole-batch actions with filtered runs; zero/unknown cost; no eligible assessment |
+| Run | all six verdicts; absent/successful/queued/running/error/unparsed assessment; failed-current/older-success and explicit history; disputed checks/goal states; missing/partial record; long/error/cited/filtered steps; canonical evidence and return links |
+| Terms | definitions, section navigation and links from status/help controls |
+
+Automated checks assert matching counts, URL semantics, status/provenance,
+assessment eligibility, HTTP status/security boundaries and link targets
+on the real handler output. Browser verification covers every route family
+at 1440 px and 400 px, dense layouts at 768 px, representative dark states,
+200% zoom, keyboard focus, native disclosures, long content and the
+problem → finding → cited step → finding path, including filtered and
+historical views. Report observed pass/fail/blocked/not-run separately.
+Retest against the deployed revision follows the same critical paths;
+fixture success alone does not establish deployed behavior.
