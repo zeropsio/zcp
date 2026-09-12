@@ -3,6 +3,7 @@ package console
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -104,5 +105,25 @@ func TestPages_HTMLStoreFailure_RecoveryAndStatus(t *testing.T) {
 	rr := doGET(t, apiSrv.Handler(), "/api/findings.json")
 	if rr.Code != http.StatusBadGateway || strings.Contains(rr.Body.String(), "error-state") || !strings.HasPrefix(rr.Header().Get("Content-Type"), "text/plain") {
 		t.Fatalf("API error shape changed with HTML recovery work: status=%d content-type=%q body=%s", rr.Code, rr.Header().Get("Content-Type"), rr.Body.String())
+	}
+}
+
+func TestPages_HTMLStoreFailure_LogsCauseOnceAndShowsSafeContext(t *testing.T) {
+	srv, store, _ := testServer(t)
+	store.failListOn("batches/", errors.New("hostile <secret> & raw cause"))
+	var logs []string
+	srv.logf = func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) }
+	rr := doGET(t, srv.Handler(), "/?sort=newest")
+	body := rr.Body.String()
+	if len(logs) != 1 || !strings.Contains(logs[0], `method=GET path="/" status=500 operation="load overview"`) || !strings.Contains(logs[0], "hostile <secret> & raw cause") {
+		t.Fatalf("logs = %#v", logs)
+	}
+	for _, want := range []string{"Technical details", "Status 500", "Route", "<code>/</code>", "Operation load overview", "Inspect the console service logs"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("safe error context lacks %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "hostile") || strings.Contains(body, "secret") || strings.Contains(body, "raw cause") {
+		t.Errorf("raw store cause leaked into HTML: %s", body)
 	}
 }

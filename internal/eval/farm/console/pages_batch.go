@@ -762,7 +762,7 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	spec := batchRunsListSpec()
-	q, qerr := Parse(spec, r.URL.Query())
+	q, qerr := parseHTMLQuery(spec, r.URL.Query())
 	if qerr != nil {
 		var qe *QueryError
 		errors.As(qerr, &qe)

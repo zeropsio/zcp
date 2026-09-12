@@ -1,8 +1,8 @@
 {{define "run"}}{{template "head" .Meta}}
 <nav class="crumbs" aria-label="Breadcrumb">
-<a href="/">Overview</a>
+<a href="{{pageURL "/" .Meta}}">Overview</a>
 <span class="sep">/</span>
-<a href="/b/{{.Row.Batch}}">{{.Row.Batch}}</a>
+<a href="{{pageURL (printf "/b/%s" .Row.Batch) .Meta}}">{{.Row.Batch}}</a>
 <span class="sep">/</span>{{.Row.Scenario}}</nav>
 <header class="page-head run-page-head">
 <div class="run-title-line">
@@ -11,13 +11,13 @@
 </div>
 {{if .VerdictReasonText}}<p class="run-reason">{{.VerdictReasonText}}</p>{{end}}
 <div class="run-meta">
-<span>{{fmtTime .Row.StartedAt}}</span>
-<span>Duration <strong>{{fmtDuration .Row.DurationSec}}</strong>
+<span>Started <strong>{{if .Row.StartedKnown}}{{fmtTime .Row.StartedAt}}{{else}}<span title="Not recorded">—</span>{{end}}</strong></span>
+<span>Duration <strong>{{if .Row.DurationKnown}}{{fmtDuration .Row.DurationSec}}{{else}}<span title="Not recorded">—</span>{{end}}</strong>
 </span>
 <span>Agent cost <strong>{{if .Row.CostKnown}}{{fmtCost .Row.CostUsd}}{{else}}<span title="Not recorded">—</span>{{end}}</strong>
 </span>{{if .Row.StepCount}}<span>{{.Row.StepCount}} recorded steps</span>{{end}}</div>
 </header>
-<nav class="nav nav-tabs run-nav" aria-label="Run sections">{{range .SectionLinks}}<a class="nav-link" href="{{.Href}}">{{.Label}}{{if .Count}} <span class="nav-counter">{{.Count}}</span>{{end}}</a>{{end}}</nav>
+<nav class="nav nav-tabs run-nav" aria-label="Run sections">{{range .SectionLinks}}<a class="nav-link" href="{{pageURL .Href $.Meta}}">{{.Label}}{{if .Count}} <span class="nav-counter">{{.Count}}</span>{{end}}</a>{{end}}</nav>
 
 {{if .Row.DoneExists}}<section class="card automatic-checks" id="automatic-checks" aria-labelledby="automatic-checks-title">
 <div class="card-header">
@@ -27,17 +27,18 @@
 <div class="card-body">{{if .CheckRows}}{{range .CheckRows}}<p>
 <strong>{{.WhyPrefix}}:</strong> <a href="#{{.Anchor}}">
 <code>{{.ID}}</code>
-</a> — {{.WhyText}}.</p>{{end}}{{else if .Row.VerdictReason}}<p>{{.Row.VerdictReason}}</p>{{else}}<p>All checks passed.</p>{{end}}</div>
+</a> — {{.WhyText}}.</p>{{end}}{{else if not .Row.VerificationKnown}}<p>Check details are unavailable. Retry this page.</p>{{else if .Row.VerdictReason}}<p>{{.Row.VerdictReason}}</p>{{else}}<p>All checks passed.</p>{{end}}</div>
 </section>{{end}}
 
 <section class="card observer assessment-card" id="observation" aria-labelledby="assessment-title">
 <div class="card-header">
 <h2 class="card-title" id="assessment-title">AI assessment</h2>{{if .HasCard}}<span class="{{assessmentOutcomeClass .OutcomeText}}">{{assessmentOutcomeLabel .OutcomeText}}</span>{{end}}</div>
 <div class="card-body">
-<div class="assessment-provenance">{{if .ViewingOlder}}<p class="alert alert-info">Showing an earlier assessment. <a href="/r/{{.Row.RunID}}">View the current assessment</a>.</p>{{end}}{{if .FailedNewestText}}<p class="alert alert-warning">{{.FailedNewestText}} <a href="{{.FailedNewestHref}}">Inspect failed attempt</a>.</p>{{end}}{{if .LiveStatusText}}<p class="alert alert-info">{{.LiveStatusText}}</p>{{end}}{{if .PreStoreFailureText}}<p class="alert alert-warning">{{.PreStoreFailureText}}</p>{{end}}</div>
+<div class="assessment-provenance">{{if .ViewingOlder}}<p class="alert alert-info">Showing an earlier assessment. <a href="{{pageURL (printf "/r/%s" .Row.RunID) $.Meta}}">View the current assessment</a>.</p>{{end}}{{if .FailedNewestText}}<p class="alert alert-warning">{{.FailedNewestText}} <a href="{{pageURL .FailedNewestHref $.Meta}}">Inspect failed attempt</a>.</p>{{end}}{{if .LiveStatusText}}<p class="alert alert-info">{{.LiveStatusText}}</p>{{end}}{{if .PreStoreFailureText}}<p class="alert alert-warning">{{.PreStoreFailureText}}</p>{{end}}</div>
+{{if or .DisplayedObs .CurrentObsID}}<dl class="observation-identities">{{with .DisplayedObs}}<div><dt>Displayed assessment ID</dt><dd><code class="observation-id">{{.ObsID}}</code></dd></div>{{end}}{{if .CurrentObsID}}<div><dt>Current assessment ID</dt><dd><code class="observation-id">{{.CurrentObsID}}</code></dd></div>{{end}}</dl>{{end}}
 {{if .HasCard}}<p class="assessment-headline">{{.DisplayedObs.Headline}}</p>
 {{if .Disputed}}<p class="alert alert-warning">
-<span class="disputed-marker">Disputed</span> — The observer thinks a check is wrong, so this verdict may not be fair: {{.DisputedWhy}}{{if .DisputedHref}} <a href="{{.DisputedHref}}">Inspect evidence</a>{{end}}</p>{{end}}
+<span class="disputed-marker">Disputed</span> — The observer thinks a check is wrong, so this verdict may not be fair: {{.DisputedWhy}}{{if .DisputedHref}} <a href="{{pageURL .DisputedHref $.Meta}}">Inspect evidence</a>{{end}}</p>{{end}}
 {{if .DisplayedObs.Warnings}}<div class="alert alert-warning">
 <strong>Assessment warnings</strong>
 <ul class="plain small">{{range .DisplayedObs.Warnings}}<li>{{.}}</li>{{end}}</ul>
@@ -61,14 +62,15 @@
 <summary>Raw answer</summary>
 <pre>{{.RawAnswer}}</pre>
 </details>{{end}}{{if or .LastAgentMessage .ToolErrors}}<div class="run-ending">
-<strong>How the run ended</strong>{{if .LastAgentMessage}}<p>{{.LastAgentMessage}}</p>{{end}}{{if .ToolErrors}}<ul class="plain small">{{range .ToolErrors}}<li>{{if .Target.Available}}<a href="{{.Target.Href}}">step {{.Step}}</a>{{else}}step {{.Step}} unavailable{{end}} <span class="step-error">{{shortTool .Tool}} failed</span>: {{preview .Result 200}}</li>{{end}}</ul>{{end}}</div>{{end}}{{end}}
+<strong>How the run ended</strong>{{if .LastAgentMessage}}<p>{{.LastAgentMessage}}</p>{{end}}{{if .ToolErrors}}<ul class="plain small">{{range .ToolErrors}}<li>{{if .Target.Available}}<a href="{{pageURL .Target.Href $.Meta}}">step {{.Step}}</a>{{else}}step {{.Step}} unavailable{{end}} <span class="step-error">{{shortTool .Tool}} failed</span>: {{preview .Result 200}}</li>{{end}}</ul>{{end}}</div>{{end}}{{end}}
 <div class="assessment-controls">{{if .ShowAssessForm}}<form class="inline-form" method="post" action="/r/{{.Row.RunID}}/observe">
 <span class="form-label">New assessment from existing evidence</span>
 <div class="assessment-buttons">{{range .ModelOptions}}<button class="btn{{if .Selected}} btn-primary{{end}}" type="submit" name="model" value="{{.Value}}">Re-assess with {{.Label}}</button>{{end}}</div>
 </form>{{end}}{{if .OlderObservations}}<details class="more" id="assessment-history">
 <summary>Earlier assessments ({{len .OlderObservations}})</summary>
 <ul class="plain assessment-history">{{range .OlderObservations}}<li{{if .Selected}} aria-current="true"{{end}}>
-<span class="muted small">{{fmtTime .CreatedAt}} · {{.Model}} · <a href="{{.Href}}">{{if .Selected}}selected{{else}}view{{end}}</a>
+<code class="observation-id">{{.ObsID}}</code><br>
+<span class="muted small">{{fmtTime .CreatedAt}} · {{.Model}} · <a href="{{pageURL .Href $.Meta}}">{{if .Selected}}selected{{else}}view{{end}}</a>
 </span>
 <br>
 <span class="{{assessmentOutcomeClass .Outcome}}">{{assessmentOutcomeLabel .Outcome}}</span> {{.Text}}</li>{{end}}</ul>
@@ -83,7 +85,7 @@
 <dd>{{.Expected}}</dd>
 <dt>Did</dt>
 <dd>{{.Did}}</dd>{{if .Stuck}}<dt>Stuck</dt>
-<dd>Steps {{if .Stuck.From.Available}}<a href="{{.Stuck.From.Href}}">#{{.Stuck.From.N}}</a>{{else}}#{{.Stuck.From.N}} unavailable{{end}}–{{if .Stuck.To.Available}}<a href="{{.Stuck.To.Href}}">#{{.Stuck.To.N}}</a>{{else}}#{{.Stuck.To.N}} unavailable{{end}}: {{.Stuck.What}}</dd>{{end}}<dt>Ending</dt>
+<dd>Steps {{if .Stuck.From.Available}}<a href="{{pageURL .Stuck.From.Href $.Meta}}">#{{.Stuck.From.N}}</a>{{else}}#{{.Stuck.From.N}} unavailable{{end}}–{{if .Stuck.To.Available}}<a href="{{pageURL .Stuck.To.Href $.Meta}}">#{{.Stuck.To.N}}</a>{{else}}#{{.Stuck.To.N}} unavailable{{end}}: {{.Stuck.What}}</dd>{{end}}<dt>Ending</dt>
 <dd>{{.Ending}}</dd>
 </dl>
 </details>{{end}}</div>
@@ -104,7 +106,7 @@
 <span class="{{severityClass .Severity}}">{{severityLabel .Severity}}</span>
 <span>{{causeLabel .Owner}}</span>{{if .Surface}}<code>{{.Surface}}</code>{{end}}</div>
 <p>{{.What}}</p>{{range .EvidenceViews}}<blockquote class="quote">
-<span class="quote-ref">{{if eq .Step 0}}{{if $.Row.FailedChecks}}<a href="#failed-checks">checks</a>{{else}}checks unavailable{{end}}{{else if .Target.Available}}<a href="{{.Target.Href}}">step {{.Step}}</a>{{else}}step {{.Step}} unavailable{{end}}<span class="evidence-mark {{if .Verified}}evidence-verified{{else}}evidence-unverified{{end}}">{{if .Verified}}quote found{{else}}quote not found{{end}}</span>
+<span class="quote-ref">{{if eq .Step 0}}{{if $.Row.FailedChecks}}<a href="#failed-checks">checks</a>{{else}}checks unavailable{{end}}{{else if .Target.Available}}<a href="{{pageURL .Target.Href $.Meta}}">step {{.Step}}</a>{{else}}step {{.Step}} unavailable{{end}}<span class="evidence-mark {{if .Verified}}evidence-verified{{else}}evidence-unverified{{end}}">{{if .Verified}}quote found{{else}}quote not found{{end}}</span>
 </span>{{.Quote}}</blockquote>{{end}}{{if .Span}}<p class="muted small">Recorded span: steps {{.Span.From}}–{{.Span.To}}</p>{{end}}<dl class="kv">
 <dt>Where to look</dt>
 <dd>{{if and .Anchor .LookAt}}<code>{{.Anchor}}</code> — {{.LookAt}}{{else if .Anchor}}<code>{{.Anchor}}</code>{{else if .LookAt}}{{.LookAt}}{{else}}<span class="muted">Not provided</span>{{end}}</dd>{{if .Fix}}<dt>Suggested fix</dt>
@@ -122,21 +124,21 @@
 <table class="table table-vcenter stack">
 <thead>
 <tr>
-<th>Check</th>
-<th>Expected</th>
-<th>Observed</th>
-<th>Source</th>
-<th>Observer's judgment</th>
+<th id="run-check-id" scope="col">Check</th>
+<th id="run-check-expected" scope="col">Expected</th>
+<th id="run-check-observed" scope="col">Observed</th>
+<th id="run-check-source" scope="col">Source</th>
+<th id="run-check-judgment" scope="col">Observer's judgment</th>
 </tr>
 </thead>
 <tbody>{{range .CheckRows}}<tr id="{{.Anchor}}">
-<td data-label="Check">
+<td headers="run-check-id"><span class="mobile-cell-label" aria-hidden="true">Check</span>
 <span class="{{verdictClass .Result}}">{{verdictLabel .Result}}</span> <code>{{.IDWrapped}}</code>
 </td>
-<td data-label="Expected">{{.Expected}}</td>
-<td data-label="Observed">{{.Observed}}</td>
-<td data-label="Source" class="muted small">{{.Source}}</td>
-<td data-label="Observer's judgment">{{if .Judged}}<span class="pill {{if .Judged.Correct}}pill-yes{{else}}pill-no{{end}}">{{if .Judged.Correct}}correct{{else}}incorrect{{end}}</span>{{with .Judged.Why}}<p class="judgment-reason">{{.}}</p>{{end}}{{else}}<span class="muted small">not judged</span>{{end}}</td>
+<td headers="run-check-expected"><span class="mobile-cell-label" aria-hidden="true">Expected</span>{{.Expected}}</td>
+<td headers="run-check-observed"><span class="mobile-cell-label" aria-hidden="true">Observed</span>{{.Observed}}</td>
+<td headers="run-check-source" class="muted small"><span class="mobile-cell-label" aria-hidden="true">Source</span>{{.Source}}</td>
+<td headers="run-check-judgment"><span class="mobile-cell-label" aria-hidden="true">Observer's judgment</span>{{if .Judged}}<span class="pill {{if .Judged.Correct}}pill-yes{{else}}pill-no{{end}}">{{if .Judged.Correct}}correct{{else}}incorrect{{end}}</span>{{with .Judged.Why}}<p class="judgment-reason">{{.}}</p>{{end}}{{else}}<span class="muted small">not judged</span>{{end}}</td>
 </tr>{{end}}</tbody>
 </table>
 </div>
@@ -150,7 +152,7 @@
 </div>{{if .StepsError}}<p class="empty">Transcript unavailable. Valid step targets are marked unavailable.</p>{{else if .StepsSuppressed}}<p class="empty">Transcript unavailable. Valid step targets are marked unavailable.</p>{{else}}{{template "filterbar" .StepsFilters}}{{if .Steps}}<ol class="steps card">{{range .Steps}}<li>
 <details id="s{{.N}}" class="step step-{{.Kind}}"{{if .Citations}} open{{end}}>
 <summary>
-<a class="step-n" href="#s{{.N}}" aria-label="Step {{.N}}">{{.N}}</a>
+<span class="step-n">{{.N}}</span><span class="step-disclosure-indicator" aria-hidden="true">›</span>
 <span class="step-kind">{{if eq .Kind "tool"}}{{shortTool .ToolName}}{{else}}{{.Kind}}{{end}}</span>{{if .ToolIsError}}<span class="step-error">error</span>{{end}}<span class="step-preview">{{if eq .Kind "tool"}}{{preview .Preview 160}}{{else}}{{preview .Text 160}}{{end}}</span>
 </summary>
 <div class="step-body">{{range .Citations}}<p class="cited-by">Cited by <a class="f-badge" href="#f{{.FindingN}}">F{{.FindingN}}</a> — {{.Title}}: “{{.Quote}}” <a href="#f{{.FindingN}}">↩ F{{.FindingN}}</a>
@@ -159,20 +161,20 @@
 <div class="k">Result{{if .ToolIsError}} (error){{end}}</div>
 <pre tabindex="0" aria-label="Step {{.N}} tool result">{{.DisplayResult}}</pre>{{else}}<div class="prose">{{.Text}}</div>{{end}}</div>
 </details>
-</li>{{end}}</ol>{{else if .StepsFiltered}}<p class="empty">0 matching steps. <a href="{{.StepsAllURL}}">Show all steps</a>.</p>{{else}}<p class="empty">No transcript steps were recorded.</p>{{end}}{{end}}</section>
+</li>{{end}}</ol>{{else if .StepsFiltered}}<p class="empty">0 matching steps. <a href="{{pageURL .StepsAllURL $.Meta}}">Show all steps</a>.</p>{{else}}<p class="empty">No transcript steps were recorded.</p>{{end}}{{end}}</section>
 
 <section class="run-section" id="record">
 <div class="section-heading">
 <h2>Record</h2>
 <span class="muted small">Original source artifacts and forensic context</span>
 </div>
-<div class="card run-record">{{if not .RecordError}}<details class="section" id="self-review">
+<div class="card run-record">{{if not .RecordError}}{{if .SelfReviewOK}}<details class="section" id="self-review">
 <summary>Agent's self-review</summary>
-<div class="prose">{{.SelfReview}}</div>{{if and .HasCard .DisplayedObs.SelfReview.Note}}<p class="muted small">Observer: <span class="pill pill-{{.DisplayedObs.SelfReview.Accurate}}">{{.DisplayedObs.SelfReview.Accurate}}</span> — {{.DisplayedObs.SelfReview.Note}}</p>{{end}}</details>
-<details class="section" id="task-prompt">
+<div class="prose">{{.SelfReview}}</div>{{if and .HasCard .DisplayedObs.SelfReview.Note}}<p class="muted small">Observer: <span class="pill pill-{{.DisplayedObs.SelfReview.Accurate}}">{{.DisplayedObs.SelfReview.Accurate}}</span> — {{.DisplayedObs.SelfReview.Note}}</p>{{end}}</details>{{end}}
+{{if .TaskPromptOK}}<details class="section" id="task-prompt">
 <summary>Task prompt</summary>
 <div class="prose">{{if .TaskPrompt}}{{.TaskPrompt}}{{else}}(not recorded){{end}}</div>
-</details>{{end}}<details class="section" id="run-meta">
+</details>{{end}}{{end}}<details class="section" id="run-meta">
 <summary>Run metadata &amp; forensic view</summary>
 <dl class="kv">
 <dt>Run</dt>

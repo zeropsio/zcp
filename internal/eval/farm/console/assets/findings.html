@@ -2,19 +2,20 @@
 <div class="page-head">
 <h1>Findings</h1>
 <p class="muted">{{.Summary}}</p>
+<p class="result-summary"><strong>{{.SourceRuns}} source run{{if ne .SourceRuns 1}}s{{end}}</strong> · <strong>{{.AssessedRuns}} successfully assessed</strong> · <strong>{{.Total}} finding{{if ne .Total 1}}s{{end}}</strong> · <strong>{{.UnavailableRuns}} run{{if ne .UnavailableRuns 1}}s{{end}} with unavailable evidence</strong></p>
 </div>
 {{template "filterbar" .Nav.Filters}}
-<div class="filter-row"><span class="k">Sort</span>{{range .Nav.Sorts}}<a class="filter{{if .Active}} on{{end}}" href="{{.URL}}">{{.Label}}{{if .Active}}<span class="sort-marker" aria-hidden="true">{{if eq .Dir "asc"}} ▲{{else}} ▼{{end}}</span>{{end}}</a>{{end}}</div>
+<div class="filter-row"><span class="k">Sort</span>{{range .Nav.Sorts}}<a class="filter{{if .Active}} on{{end}}" href="{{.URL}}" aria-label="{{.AccessibleName}}">{{.Label}}{{if .Active}}<span class="sort-marker" aria-hidden="true">{{if eq .Dir "asc"}} ▲{{else}} ▼{{end}}</span>{{end}}</a>{{end}}</div>
 {{range .Items}}<details class="finding sev-{{.Severity}}">
 <summary class="finding-head">
 <span class="{{severityClass .Severity}}" title="{{severityTooltip .Severity}}">{{severityLabel .Severity}}</span>
 <span class="chip cause-chip">{{.CauseLabel}}</span>
 <span>{{.Title}}</span>
 </summary>
-<p class="muted small"><a class="run-link" href="/r/{{.RunID}}">Run {{.RunID}}</a> · <a href="{{.ScenarioLink}}">{{.Scenario}}</a> · <a href="{{.BatchLink}}">{{.Batch}}</a> · <a href="{{.BuildLink}}">{{.Build.Label}}</a>{{if .Surface}} · <a href="{{.SurfaceLink}}"><code>{{.Surface}}</code></a>{{end}}</p>
+<p class="muted small"><a class="run-link" href="{{pageURL .FindingLink $.Meta}}">Run {{.RunID}}</a> · <a href="{{pageURL .ScenarioLink $.Meta}}">{{.Scenario}}</a> · <a href="{{pageURL .BatchLink $.Meta}}">{{.Batch}}</a> · <a href="{{pageURL .BuildLink $.Meta}}">{{.Build.Label}}</a>{{if .Surface}} · <a href="{{pageURL .SurfaceLink $.Meta}}"><code>{{.Surface}}</code></a>{{end}}</p>
 <p>{{.What}}</p>
 {{range .Evidence}}<div class="quote">
-<p class="quote-ref"><span class="{{if .Verified}}evidence-verified{{else}}evidence-unverified{{end}}">{{verifiedMark .Verified}}</span>{{if .StepLink}} <a href="{{.StepLink}}">step</a>{{end}}</p>
+<p class="quote-ref"><span class="{{if .Verified}}evidence-verified{{else}}evidence-unverified{{end}}">{{if .Verified}}quote found{{else}}quote not found{{end}}</span>{{if .StepLink}} · <a href="{{pageURL .StepLink $.Meta}}">step {{.Step}}</a>{{else if gt .Step 0}} · step {{.Step}} unavailable{{end}}</p>
 &#34;{{.Quote}}&#34;
 </div>
 {{end}}
@@ -24,7 +25,7 @@
 {{if .Fix}}<dt>Fix</dt><dd>{{.Fix}}</dd>{{end}}
 </dl>
 </details>
-{{else}}{{if eq .Total 0}}<p class="empty">No findings in this window.</p>
-{{else}}<p class="empty">No findings match these filters. <a href="/findings">Reset filters</a></p>{{end}}
+{{else}}{{if eq .Total 0}}<div class="empty-state"><h2>{{.EmptyTitle}}</h2><p>{{.EmptyDetail}}</p></div>
+{{else}}<div class="empty-state"><h2>No findings match these filters</h2><p>The selected filters exclude every finding in this window.</p><a class="btn" href="{{pageURL "/findings" .Meta}}">Reset filters</a></div>{{end}}
 {{end}}
 {{template "foot"}}{{end}}

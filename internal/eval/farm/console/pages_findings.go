@@ -29,7 +29,8 @@ var findingOwners = []string{"zcp-guidance", "zcp-tool", "platform", "agent", "s
 type evidenceView struct {
 	Quote    string
 	Verified bool
-	StepLink string // "" when the evidence cites no step (Step <= 0)
+	Step     int
+	StepLink string // "" unless Step is an exact visible target on the run page
 }
 
 // findingItemView is one /findings row (§8.3 item 4's fields, reused here):
@@ -40,15 +41,17 @@ type evidenceView struct {
 type findingItemView struct {
 	FindingRow
 	Evidence     []evidenceView
+	FindingLink  string
 	ScenarioLink string
 	BatchLink    string
 	BuildLink    string
 	SurfaceLink  string // "" when the finding carries no surface (item 11's own guard)
 }
 
-func newFindingItemView(f FindingRow, path string, values url.Values) findingItemView {
+func newFindingItemView(f FindingRow, path string, values url.Values, availableSteps map[int]bool) findingItemView {
 	v := findingItemView{
 		FindingRow:   f,
+		FindingLink:  fmt.Sprintf("/r/%s#f%d", f.RunID, f.Index+1),
 		ScenarioLink: listURL(path, values, map[string]string{paramScenario: f.Scenario}),
 		BatchLink:    listURL(path, values, map[string]string{paramBatch: f.Batch}),
 		BuildLink:    listURL(path, values, map[string]string{paramBuild: f.Build.Sha12()}),
@@ -58,10 +61,10 @@ func newFindingItemView(f FindingRow, path string, values url.Values) findingIte
 	}
 	for _, e := range f.Evidence {
 		link := ""
-		if e.Step > 0 {
+		if e.Step > 0 && availableSteps[e.Step] {
 			link = fmt.Sprintf("/r/%s#s%d", f.RunID, e.Step)
 		}
-		v.Evidence = append(v.Evidence, evidenceView{Quote: e.Quote, Verified: e.Verified, StepLink: link})
+		v.Evidence = append(v.Evidence, evidenceView{Quote: e.Quote, Verified: e.Verified, Step: e.Step, StepLink: link})
 	}
 	return v
 }
@@ -129,16 +132,21 @@ func sinceRawOrDefault(values url.Values, spec ListSpec) string {
 
 // findingsPageData is GET /findings (§8.3 FM-51).
 type findingsPageData struct {
-	Meta    pageMeta
-	Nav     listNav
-	Summary string
-	Total   int
-	Items   []findingItemView
+	Meta            pageMeta
+	Nav             listNav
+	Summary         string
+	SourceRuns      int
+	AssessedRuns    int
+	UnavailableRuns int
+	Total           int
+	Items           []findingItemView
+	EmptyTitle      string
+	EmptyDetail     string
 }
 
 func (s *Server) handleFindingsPage(w http.ResponseWriter, r *http.Request) {
 	spec := findingListSpec()
-	q, err := Parse(spec, r.URL.Query())
+	q, err := parseHTMLQuery(spec, r.URL.Query())
 	if err != nil {
 		var qerr *QueryError
 		errors.As(err, &qerr)
@@ -148,23 +156,77 @@ func (s *Server) handleFindingsPage(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := rowsSinceWindow(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, q.Since, s.now(), s.queueState, s.runCache, s.summaryCache, s.logf)
 	if err != nil {
-		s.renderStoreError(w, r, http.StatusBadGateway, "Findings unavailable", "The finding evidence could not be read.")
+		s.renderStoreError(w, r, http.StatusBadGateway, "Findings unavailable", "The finding evidence could not be read.", "load findings", err)
 		return
 	}
 	all := BuildFindingRows(rows)
 	filtered, counts := findingEngine().Apply(all, q, s.now())
-
-	values := r.URL.Query()
-	items := make([]findingItemView, len(filtered))
-	for i, f := range filtered {
-		items[i] = newFindingItemView(f, "/findings", values)
+	assessedRuns, unavailableRuns := 0, 0
+	for _, row := range rows {
+		if assessmentWorkUnavailable(row) {
+			unavailableRuns++
+		}
+		if row.Observation != nil && row.Observation.Status == observationStatusOK {
+			assessedRuns++
+		}
+	}
+	var emptyTitle, emptyDetail string
+	switch {
+	case len(rows) == 0:
+		emptyTitle = "No source runs in this window"
+		emptyDetail = "No run records are available in this time window."
+	case unavailableRuns > 0:
+		emptyTitle = "Evidence is incomplete"
+		if unavailableRuns == 1 {
+			emptyDetail = "One source run has unavailable evidence, so the findings view may be incomplete."
+		} else {
+			emptyDetail = fmt.Sprintf("%d source runs have unavailable evidence, so the findings view may be incomplete.", unavailableRuns)
+		}
+	case assessedRuns == 0:
+		emptyTitle = "No successfully assessed runs"
+		if len(rows) == 1 {
+			emptyDetail = "The source run has no successful assessment to report findings from."
+		} else {
+			emptyDetail = fmt.Sprintf("The %d source runs have no successful assessments to report findings from.", len(rows))
+		}
+	default:
+		emptyTitle = "No findings reported"
+		if assessedRuns == 1 {
+			emptyDetail = "The successfully assessed run reported no findings."
+		} else {
+			emptyDetail = fmt.Sprintf("The %d successfully assessed runs reported no findings.", assessedRuns)
+		}
 	}
 
-	renderPage(w, "findings", findingsPageData{
-		Meta:    s.pageMeta(r, "Findings", navFindings, false),
-		Nav:     buildListNav("/findings", spec, q, values, counts, findingSortLabels, findingLabeler),
-		Summary: fmt.Sprintf("%d matching finding%s in %s", len(filtered), pluralS(len(filtered)), sinceLabelText(sinceRawOrDefault(values, spec))),
-		Total:   len(all),
-		Items:   items,
-	})
+	values := r.URL.Query()
+	availableSteps := make(map[string]map[int]bool, len(rows))
+	for _, row := range rows {
+		if row.VisibleStepNumbers == nil {
+			continue
+		}
+		steps := make(map[int]bool, len(row.VisibleStepNumbers))
+		for _, step := range row.VisibleStepNumbers {
+			steps[step] = true
+		}
+		availableSteps[row.RunID] = steps
+	}
+	items := make([]findingItemView, len(filtered))
+	for i, f := range filtered {
+		items[i] = newFindingItemView(f, pathFindings, values, availableSteps[f.RunID])
+	}
+
+	meta := s.pageMeta(r, "Findings", navFindings, false)
+	data := findingsPageData{
+		Meta:            meta,
+		Nav:             buildListNav(pathFindings, spec, q, values, counts, findingSortLabels, findingLabeler),
+		Summary:         fmt.Sprintf("%d matching finding%s in %s", len(filtered), pluralS(len(filtered)), sinceLabelText(sinceRawOrDefault(values, spec))),
+		SourceRuns:      len(rows),
+		AssessedRuns:    assessedRuns,
+		UnavailableRuns: unavailableRuns,
+		Total:           len(all),
+		Items:           items,
+		EmptyTitle:      emptyTitle,
+		EmptyDetail:     emptyDetail,
+	}
+	renderPage(w, "findings", data)
 }

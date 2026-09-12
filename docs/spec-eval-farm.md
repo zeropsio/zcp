@@ -1076,6 +1076,28 @@ one callout above the content. Queue/failure details remain available on
 mobile. A page that auto-refreshes says that it does and why; warnings and
 action results are not hidden inside a collapsed narrative.
 
+Automatic refresh is an HTML-only presentation preference. While relevant
+work is active, `refresh=off` suppresses the meta refresh and exposes separate
+**Refresh now** and **Resume automatic updates** links. Pause, refresh-now and
+resume targets remove the one-shot `notice`/`n` parameters; resume removes only
+`refresh`. The accepted preference survives every internal HTML navigation,
+filter, sort, reset, deep link and native GET-filter submission, including
+query-plus-fragment links. API routes reject `refresh`, and static, API,
+external, fragment-only and action URLs are never rewritten. Invalid or
+duplicate `refresh` values produce the same 400 response as other refused HTML
+query parameters. A successful POST redirect preserves only a same-origin,
+known HTML route with a route-valid query; unsafe or malformed Referers fall
+back to the action's canonical page.
+
+Data tables retain programmatic column headers when rows stack: column headers
+have stable IDs, cells use `headers`, and each stacked value has a literal
+visible mobile label. Disclosure summaries contain no nested links or buttons.
+Every sort control names both the current direction (when active) and the
+direction activation will apply. Assessment IDs are visible text, distinguish
+the displayed assessment from the current assessment, wrap, and remain
+selectable. HTML store failures log their raw cause once and render only safe
+status, route and operation context.
+
 - `/` — **Overview**, top to bottom:
   1. **Latest evaluation**: the newest batch whose set is `gate` or `all`
      of kind `evaluation` (§8.8; else the newest evaluation batch): id, time,

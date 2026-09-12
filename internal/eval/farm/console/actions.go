@@ -16,12 +16,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/eval/farm"
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
 
 // sourceAction is Job.Source for a run an operator action queued, as
 // opposed to the worker's own schedule (worker.go's wkSourceWorker, §8.5).
-const sourceAction = "action"
+const (
+	sourceAction = "action"
+	pathFindings = "/findings"
+)
 
 // Notice codes for a cookie-authenticated action's redirect (§8.5 FM-53,
 // §8.3: rendered by pages.go's noticeFromQuery). Kept here, next to the
@@ -109,9 +113,8 @@ func actionOriginOK(r *http.Request) bool {
 
 // refererPathOrDefault implements §8.5 FM-53's cookie-redirect target: the
 // request's own Referer path when Referer is same-origin with this
-// request (expectedOrigin), else page. Only the path travels — the
-// Referer's own query string is dropped; the caller appends its own
-// ?notice=<code>.
+// request (expectedOrigin), else page. Its accepted page state travels too;
+// one-shot notice/n values are removed before the caller adds the new result.
 func refererPathOrDefault(r *http.Request, page string) string {
 	referer := r.Header.Get("Referer")
 	if referer == "" {
@@ -124,7 +127,55 @@ func refererPathOrDefault(r *http.Request, page string) string {
 	if u.Scheme+"://"+u.Host != expectedOrigin(r) {
 		return page
 	}
+	if !validHTMLRefererPath(u.Path) {
+		return page
+	}
+	q := u.Query()
+	q.Del(paramNotice)
+	q.Del(paramN)
+	spec, ok := htmlListSpecForPath(u.Path)
+	if !ok {
+		return page
+	}
+	if _, err := parseHTMLQuery(spec, q); err != nil {
+		return page
+	}
+	if encoded := q.Encode(); encoded != "" {
+		return u.Path + "?" + encoded
+	}
 	return u.Path
+}
+
+func validHTMLRefererPath(path string) bool {
+	if path == "" || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || strings.Contains(path, "\\") {
+		return false
+	}
+	for _, r := range path {
+		if r < ' ' || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+func htmlListSpecForPath(path string) (ListSpec, bool) {
+	switch path {
+	case "/":
+		return batchListSpec(), true
+	case "/problems":
+		return problemListSpec(), true
+	case pathFindings:
+		return findingListSpec(), true
+	case "/terms":
+		return ListSpec{}, true
+	}
+	if id := strings.TrimPrefix(path, "/b/"); id != path && farm.ValidBatchID(id) {
+		return batchRunsListSpec(), true
+	}
+	if id := strings.TrimPrefix(path, "/r/"); id != path && farm.ValidRunID(id) {
+		return runStepsListSpec(), true
+	}
+	return ListSpec{}, false
 }
 
 // checkActionOrigin enforces the Origin rule for a cookie-authenticated
@@ -217,7 +268,11 @@ func (s *Server) redirectWithNotice(w http.ResponseWriter, r *http.Request, page
 	if notice == noticeQueued {
 		query += "&n=" + strconv.Itoa(n)
 	}
-	http.Redirect(w, r, dest+"?"+query, http.StatusSeeOther)
+	separator := "?"
+	if strings.Contains(dest, "?") {
+		separator = "&"
+	}
+	http.Redirect(w, r, dest+separator+query, http.StatusSeeOther)
 }
 
 // trimObservePath strips prefix and the trailing "/observe" from p, e.g.

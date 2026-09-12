@@ -260,8 +260,12 @@ func TestPages_RunListsOlderObservationVersions(t *testing.T) {
 	if !strings.Contains(body, "first pass, stale") {
 		t.Errorf("body missing the older observation's own headline:\n%s", body)
 	}
-	if n := strings.Count(body, "20260911T120000000Z-claude-sonnet-5"); n != 1 {
-		t.Errorf("current obsId appears %d times, want exactly 1 (not also under older versions):\n%s", n, body)
+	currentID := "20260911T120000000Z-claude-sonnet-5"
+	if n := strings.Count(body, currentID); n < 2 {
+		t.Errorf("current obsId is not visibly identified as displayed and current: count=%d\n%s", n, body)
+	}
+	if historyAt := strings.Index(body, `class="plain assessment-history"`); historyAt >= 0 && strings.Contains(body[historyAt:], currentID) {
+		t.Errorf("current obsId was incorrectly included under older versions:\n%s", body)
 	}
 }
 
@@ -461,6 +465,27 @@ func TestPages_RunWhyThisVerdictListsFailedChecksWithLinks(t *testing.T) {
 	}
 	if !strings.Contains(body, `href="#check-c1"`) {
 		t.Errorf("body missing the link to the checks-table row:\n%s", body)
+	}
+}
+
+func TestPages_RunCollidingCheckIDsHaveDistinctResolvableAnchors(t *testing.T) {
+	srv, store, _ := testServer(t)
+	seedBatch(t, store, "ca1", "off", []runFixture{
+		{runID: "ca1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", taskResult: "failed", done: true,
+			checks: [][5]string{
+				{"a/b", "failed", "5", "3", "mcp"},
+				{"a.b", "blocked", "", "", "mcp"},
+			}},
+	}, true, map[string]string{"ca1-a": "failed"})
+
+	body := doGET(t, srv.Handler(), "/r/ca1-a").Body.String()
+	for _, anchor := range []string{"check-a-b~YS9i", "check-a-b~YS5i"} {
+		if strings.Count(body, `id="`+anchor+`"`) != 1 {
+			t.Errorf("run does not contain exactly one target %q:\n%s", anchor, body)
+		}
+		if !strings.Contains(body, `href="#`+anchor+`"`) {
+			t.Errorf("run does not link to target %q:\n%s", anchor, body)
+		}
 	}
 }
 
@@ -705,8 +730,8 @@ func TestPages_RunLiveStatusWhileAssessing(t *testing.T) {
 	if err := q.Enqueue(context.Background(), Job{RunID: "ls1-a", Batch: "ls1", Model: "claude-sonnet-5"}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	if !wkEventually(t, func() bool { return q.State("ls1-a") != "" }) {
-		t.Fatal("job never showed as queued/running")
+	if !wkEventually(t, func() bool { return q.State("ls1-a") == JobRunning }) {
+		t.Fatal("job never reached running")
 	}
 
 	body := doGET(t, srv.Handler(), "/r/ls1-a").Body.String()
@@ -977,6 +1002,232 @@ func TestPages_RunDegradesWithoutTaskPromptNever502(t *testing.T) {
 	}
 }
 
+func TestPages_RunUnknownTiming_RendersDashes(t *testing.T) {
+	srv, store, _ := testServer(t)
+	seedBatch(t, store, "unknown-time", "off", []runFixture{{
+		runID: "unknown-time-a", scenario: "waiting", startedAt: fixedNow(t)(), done: false,
+	}}, false, nil)
+
+	body := doGET(t, srv.Handler(), "/r/unknown-time-a").Body.String()
+	if !strings.Contains(body, `<span>Started <strong><span title="Not recorded">—</span></strong></span>`) {
+		t.Errorf("run header does not render an unknown start explicitly:\n%s", body)
+	}
+	if !strings.Contains(body, `<span>Duration <strong><span title="Not recorded">—</span></strong>`) {
+		t.Errorf("run header does not render an unknown duration explicitly:\n%s", body)
+	}
+	if strings.Contains(body, "1 Sep 2026, 00:00 UTC") || strings.Contains(body, "Duration <strong>0s") {
+		t.Errorf("run header invented timing from batch creation/zero values:\n%s", body)
+	}
+}
+
+func TestPages_OlderObservationFailureDegradesHistoryOnly(t *testing.T) {
+	base := newFakeStore()
+	now := fixedNow(t)
+	seedBatch(t, base, "history-partial", "claude-sonnet-5", []runFixture{{
+		runID: "history-partial-a", scenario: "a", startedAt: now().Add(-time.Minute),
+		durationS: "5s", costUsd: 0.2, taskResult: farm.VerdictPassed, done: true,
+	}}, true, map[string]string{"history-partial-a": farm.VerdictPassed})
+	older := fixtureObservation("history-partial-a")
+	older.ObsID = "20260911T100000000Z-claude-sonnet-5"
+	older.Headline = "older headline"
+	seedObservation(t, base, older)
+	current := fixtureObservation("history-partial-a")
+	current.ObsID = "20260911T110000000Z-claude-sonnet-5"
+	current.Headline = "current readable headline"
+	seedObservation(t, base, current)
+
+	const privateDetail = "private bucket address must stay forensic"
+	store := &cacheFailGetStore{
+		ObjectStore: base,
+		key:         "runs/history-partial-a/observer/" + older.ObsID + ".json",
+		err:         errors.New(privateDetail),
+	}
+	srv := NewServer(Config{Store: store, Token: testToken, Now: now})
+	rr := doGET(t, srv.Handler(), "/r/history-partial-a")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "current readable headline") {
+		t.Errorf("current observation was lost with older history failure:\n%s", body)
+	}
+	const warning = "Earlier assessment history is temporarily unavailable. Retry this page."
+	if !strings.Contains(body, warning) {
+		t.Errorf("body missing plain history warning:\n%s", body)
+	}
+	warningAt := strings.Index(body, warning)
+	warningEnd := strings.Index(body[warningAt:], "</p>")
+	if warningEnd < 0 || strings.Contains(body[warningAt:warningAt+warningEnd], privateDetail) {
+		t.Errorf("primary warning leaked raw storage detail:\n%s", body)
+	}
+	if !strings.Contains(body, privateDetail) || !strings.Contains(body, "Run metadata &amp; forensic view") {
+		t.Errorf("forensic disclosure does not retain raw history error:\n%s", body)
+	}
+}
+
+func TestPages_SelectedUnreadableOlderObservationKeepsCurrentContext(t *testing.T) {
+	base := newFakeStore()
+	now := fixedNow(t)
+	seedBatch(t, base, "selected-history", "claude-sonnet-5", []runFixture{{
+		runID: "selected-history-a", scenario: "a", startedAt: now(), durationS: "4s",
+		costUsd: 0.2, taskResult: farm.VerdictPassed, done: true,
+	}}, true, map[string]string{"selected-history-a": farm.VerdictPassed})
+	older := fixtureObservation("selected-history-a")
+	older.ObsID = "20260911T100000000Z-claude-sonnet-5"
+	seedObservation(t, base, older)
+	current := fixtureObservation("selected-history-a")
+	current.ObsID = "20260911T110000000Z-claude-sonnet-5"
+	current.Headline = "current assessment remains available"
+	seedObservation(t, base, current)
+	store := &cacheFailGetStore{
+		ObjectStore: base,
+		key:         "runs/selected-history-a/observer/" + older.ObsID + ".json",
+		err:         errors.New("older read failed"),
+	}
+	srv := NewServer(Config{Store: store, Token: testToken, Now: now})
+	rr := doGET(t, srv.Handler(), "/r/selected-history-a?obs="+url.QueryEscape(older.ObsID))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("known unreadable history status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "current assessment remains available") || !strings.Contains(body, "The selected earlier assessment is temporarily unavailable. Showing the current assessment. Retry this page.") {
+		t.Errorf("known unreadable selection lost truthful current context:\n%s", body)
+	}
+
+	missing := doGET(t, srv.Handler(), "/r/selected-history-a?obs=not-a-real-observation")
+	if missing.Code != http.StatusNotFound {
+		t.Errorf("unknown observation status = %d, want 404", missing.Code)
+	}
+}
+
+func TestPages_SelectedUnreadableCurrentObservationIsUnavailableNotMissing(t *testing.T) {
+	base := newFakeStore()
+	now := fixedNow(t)
+	seedBatch(t, base, "selected-current", "claude-sonnet-5", []runFixture{{
+		runID: "selected-current-a", scenario: "a", startedAt: now().Add(-time.Hour), durationS: "5s", taskResult: "passed", done: true,
+	}}, true, map[string]string{"selected-current-a": "passed"})
+	current := fixtureObservation("selected-current-a")
+	seedObservation(t, base, current)
+	store := &cacheFailGetStore{
+		ObjectStore: base,
+		key:         "runs/selected-current-a/observer/" + current.ObsID + ".json",
+		err:         errors.New("current read failed"),
+	}
+	srv := NewServer(Config{Store: store, Token: testToken, Now: now})
+	rr := doGET(t, srv.Handler(), "/r/selected-current-a?obs="+url.QueryEscape(current.ObsID))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("known unreadable current status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if body := rr.Body.String(); !strings.Contains(body, "The current assessment is temporarily unavailable") {
+		t.Errorf("known unreadable current missing unavailable warning:\n%s", body)
+	}
+}
+
+func TestPages_PartialEvidenceKeepsReadableSectionsAndRawErrorForensic(t *testing.T) {
+	base := newFakeStore()
+	now := fixedNow(t)
+	seedBatch(t, base, "partial-view", "claude-sonnet-5", []runFixture{{
+		runID: "partial-view-a", scenario: "a", startedAt: now().Add(-time.Minute),
+		durationS: "7s", costUsd: 0.2, taskResult: farm.VerdictFailed, done: true,
+		checks: [][5]string{{"check-a", "failed", "ready", "failed", "service"}},
+	}}, true, map[string]string{"partial-view-a": farm.VerdictFailed})
+	obs := fixtureObservation("partial-view-a")
+	obs.Headline = "readable assessment remains visible"
+	seedObservation(t, base, obs)
+
+	const privateDetail = "private verification backend detail"
+	store := &cacheFailGetStore{
+		ObjectStore: base,
+		key:         "runs/partial-view-a/results/" + testResultsTS + "/a/verification.json",
+		err:         errors.New(privateDetail),
+	}
+	srv := NewServer(Config{Store: store, Token: testToken, Now: now})
+	rr := doGET(t, srv.Handler(), "/r/partial-view-a")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "readable assessment remains visible") || !strings.Contains(body, "Duration <strong>7s") {
+		t.Errorf("readable assessment or metadata disappeared:\n%s", body)
+	}
+	if strings.Contains(body, `id="failed-checks"`) {
+		t.Errorf("failed-check section was invented from unreadable verification:\n%s", body)
+	}
+	if strings.Contains(body, "All checks passed.") {
+		t.Errorf("unreadable verification was presented as a passing check set:\n%s", body)
+	}
+	const warning = "Automatic check details are temporarily unavailable."
+	warningAt := strings.Index(body, warning)
+	if warningAt < 0 {
+		t.Fatalf("body missing plain section warning:\n%s", body)
+	}
+	warningEnd := strings.Index(body[warningAt:], "</p>")
+	if warningEnd < 0 || strings.Contains(body[warningAt:warningAt+warningEnd], privateDetail) {
+		t.Errorf("primary warning leaked raw storage detail:\n%s", body)
+	}
+	if !strings.Contains(body, privateDetail) {
+		t.Errorf("forensic disclosure lost raw storage detail:\n%s", body)
+	}
+}
+
+func TestPages_TranscriptFailureUsesPlainWarningAndKeepsOtherEvidence(t *testing.T) {
+	base := newFakeStore()
+	now := fixedNow(t)
+	seedBatch(t, base, "transcript-view", "claude-sonnet-5", []runFixture{{
+		runID: "transcript-view-a", scenario: "a", startedAt: now().Add(-time.Minute),
+		durationS: "9s", costUsd: 0.3, taskResult: farm.VerdictPassed, done: true,
+	}}, true, map[string]string{"transcript-view-a": farm.VerdictPassed})
+	obs := fixtureObservation("transcript-view-a")
+	obs.Headline = "assessment survives transcript failure"
+	seedObservation(t, base, obs)
+
+	const privateDetail = "private transcript backend detail"
+	store := &cacheFailGetStore{
+		ObjectStore: base,
+		key:         "runs/transcript-view-a/results/" + testResultsTS + "/a/transcript.jsonl",
+		err:         errors.New(privateDetail),
+	}
+	srv := NewServer(Config{Store: store, Token: testToken, Now: now})
+	body := doGET(t, srv.Handler(), "/r/transcript-view-a").Body.String()
+	if !strings.Contains(body, "assessment survives transcript failure") || !strings.Contains(body, "Duration <strong>9s") {
+		t.Errorf("other readable sections disappeared:\n%s", body)
+	}
+	const warning = "Transcript steps are temporarily unavailable. Retry this page."
+	warningAt := strings.Index(body, warning)
+	if warningAt < 0 {
+		t.Fatalf("body missing plain transcript warning:\n%s", body)
+	}
+	warningEnd := strings.Index(body[warningAt:], "</p>")
+	if warningEnd < 0 || strings.Contains(body[warningAt:warningAt+warningEnd], privateDetail) {
+		t.Errorf("primary transcript warning leaked raw detail:\n%s", body)
+	}
+	if !strings.Contains(body, privateDetail) {
+		t.Errorf("forensic disclosure lost raw transcript detail:\n%s", body)
+	}
+}
+
+func TestPages_SelfReviewFailureKeepsReadableTaskPrompt(t *testing.T) {
+	base := newFakeStore()
+	now := fixedNow(t)
+	seedBatch(t, base, "text-parts", "off", []runFixture{{
+		runID: "text-parts-a", scenario: "a", startedAt: now(), durationS: "2s",
+		costUsd: 0.1, taskResult: farm.VerdictPassed, done: true, selfReview: "readable review",
+	}}, true, map[string]string{"text-parts-a": farm.VerdictPassed})
+	store := &cacheFailGetStore{
+		ObjectStore: base,
+		key:         "runs/text-parts-a/results/" + testResultsTS + "/a/self-review.md",
+		err:         errors.New("private self-review backend detail"),
+	}
+	srv := NewServer(Config{Store: store, Token: testToken, Now: now})
+	body := doGET(t, srv.Handler(), "/r/text-parts-a").Body.String()
+	if !strings.Contains(body, "do the thing for a") {
+		t.Errorf("readable task prompt disappeared with self-review failure:\n%s", body)
+	}
+	if !strings.Contains(body, "Self-review is temporarily unavailable. Retry this page.") {
+		t.Errorf("body missing self-review warning:\n%s", body)
+	}
+}
+
 // TestPages_RunAssessFormHiddenWhenObserverUnavailable pins §8.3: when the
 // observer is unavailable (credential missing), every Assess form is
 // hidden — even for a finished run.
@@ -1012,7 +1263,7 @@ func TestSoftWrapID_InsertsZeroWidthSpaceAfterSeparators(t *testing.T) {
 
 // TestPages_RunFailedChecksTableStacksAndWrapsLongIDs pins item 5 (round-1
 // follow-up): the failed/blocked checks table opts into table.stack with
-// data-label cells so it stacks on phones, and a long check id wraps only
+// explicit header associations and literal mobile labels so it stacks on phones, and a long check id wraps only
 // at "/ . - _" (a zero-width space after each, never a bare mid-word
 // break).
 func TestPages_RunFailedChecksTableStacksAndWrapsLongIDs(t *testing.T) {
@@ -1028,9 +1279,10 @@ func TestPages_RunFailedChecksTableStacksAndWrapsLongIDs(t *testing.T) {
 	if !strings.Contains(body, `<table class="table table-vcenter stack">`) {
 		t.Errorf("failed-checks table is not opted into table.stack:\n%s", body)
 	}
-	if !strings.Contains(body, `data-label="Check"`) || !strings.Contains(body, `data-label="Expected"`) ||
-		!strings.Contains(body, `data-label="Observed"`) || !strings.Contains(body, `data-label="Source"`) {
-		t.Errorf("failed-checks table cells are missing data-label attributes:\n%s", body)
+	if !strings.Contains(body, `headers="run-check-id"`) || !strings.Contains(body, `headers="run-check-expected"`) ||
+		!strings.Contains(body, `headers="run-check-observed"`) || !strings.Contains(body, `headers="run-check-source"`) ||
+		!strings.Contains(body, `class="mobile-cell-label" aria-hidden="true"`) {
+		t.Errorf("failed-checks table cells are missing explicit header associations/mobile labels:\n%s", body)
 	}
 	if !strings.Contains(body, "svc/\u200ba.\u200bb_\u200bc-\u200bd") {
 		t.Errorf("check id is not wrapped with zero-width spaces after / . - _:\n%s", body)
@@ -1060,12 +1312,10 @@ func TestPages_RunAssessGridOmitsEmptyNoteBox(t *testing.T) {
 	}
 }
 
-// TestPages_RunRecordErrorHidesEmptyDisclosures pins item 18 (round-1
-// follow-up, live bug /r/gate5-resume-after-compaction): a run whose
-// record could not be read shows the reason once and renders no empty
-// self-review/task-prompt disclosure — run metadata (which needs neither
-// text) still renders.
-func TestPages_RunRecordErrorHidesEmptyDisclosures(t *testing.T) {
+// TestPages_RunPartialRecordPreservesReadableDisclosures pins that one
+// missing text part does not erase the independently readable self-review
+// state or the forensic metadata disclosure.
+func TestPages_RunPartialRecordPreservesReadableDisclosures(t *testing.T) {
 	srv, store, _ := testServer(t)
 	h := srv.Handler()
 
@@ -1081,14 +1331,14 @@ func TestPages_RunRecordErrorHidesEmptyDisclosures(t *testing.T) {
 	if !strings.Contains(body, "assessment unavailable — run evidence could not be read") {
 		t.Errorf("body missing the conservative unavailable assessment state:\n%s", body)
 	}
-	if strings.Contains(body, `id="self-review"`) {
-		t.Errorf("body still renders the empty self-review disclosure:\n%s", body)
+	if !strings.Contains(body, `id="self-review"`) || !strings.Contains(body, observer.NotRecorded) {
+		t.Errorf("body lost the independently readable self-review state:\n%s", body)
 	}
 	if strings.Contains(body, `id="task-prompt"`) {
 		t.Errorf("body still renders the empty task-prompt disclosure:\n%s", body)
 	}
-	if strings.Contains(body, `id="run-meta"`) || strings.Contains(body, "<dt>Error</dt>") {
-		t.Errorf("body rendered evidence sections for an unavailable row:\n%s", body)
+	if !strings.Contains(body, `id="run-meta"`) || !strings.Contains(body, "<dt>Error</dt>") {
+		t.Errorf("body lost forensic metadata for a partial row:\n%s", body)
 	}
 }
 
@@ -1253,5 +1503,27 @@ func TestPages_RunJudgmentReason_KeyboardReadable(t *testing.T) {
 		if strings.Contains(body, `title="`+reason+`"`) {
 			t.Errorf("judgment reason remains tooltip-only: %q\n%s", reason, body)
 		}
+	}
+}
+
+func TestPages_RunObservationIDsAreVisibleAndUnambiguous(t *testing.T) {
+	srv, store, _ := testServer(t)
+	seedBatch(t, store, "obs-visible", "claude-sonnet-5", []runFixture{{runID: "obs-visible-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", done: true, taskResult: "passed"}}, true, map[string]string{"obs-visible-a": "passed"})
+	older := fixtureObservation("obs-visible-a")
+	older.ObsID = "20260910T090000000Z-claude-sonnet-5"
+	older.CreatedAt = fixedNow(t)().Add(-time.Hour)
+	seedObservation(t, store, older)
+	current := fixtureObservation("obs-visible-a")
+	current.ObsID = "20260911T120000000Z-claude-opus-5"
+	current.Model = "claude-opus-5"
+	seedObservation(t, store, current)
+	body := doGET(t, srv.Handler(), "/r/obs-visible-a?obs="+url.QueryEscape(older.ObsID)).Body.String()
+	for _, want := range []string{"Displayed assessment ID", older.ObsID, "Current assessment ID", current.ObsID} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page lacks %q: %s", want, body)
+		}
+	}
+	if strings.Count(body, older.ObsID) < 2 {
+		t.Errorf("older history ID is not visible and copyable: %s", body)
 	}
 }

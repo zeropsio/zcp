@@ -34,6 +34,8 @@ const (
 	paramKind     = "kind"
 	paramVerdict  = "verdict"
 	paramOutcome  = "outcome"
+	paramRefresh  = "refresh"
+	refreshOff    = "off"
 )
 
 // Sort directions (§8.7 `dir=`).
@@ -296,6 +298,23 @@ func Parse(spec ListSpec, values url.Values) (Query, error) {
 		}
 	}
 	return q, nil
+}
+
+// parseHTMLQuery adds the one presentation-only preference accepted by HTML
+// pages without widening the shared list/API query contract.
+func parseHTMLQuery(spec ListSpec, values url.Values) (Query, error) {
+	if raw, ok := values[paramRefresh]; ok {
+		if len(raw) != 1 || raw[0] != refreshOff {
+			return Query{}, &QueryError{Param: paramRefresh, Allowed: []string{refreshOff}}
+		}
+	}
+	clean := url.Values{}
+	for key, vals := range values {
+		if key != paramRefresh {
+			clean[key] = append([]string(nil), vals...)
+		}
+	}
+	return Parse(spec, clean)
 }
 
 // OpenMatch is the exact/prefix rule open filters use (§8.7): a value

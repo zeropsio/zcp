@@ -1,6 +1,7 @@
 package console
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
@@ -72,6 +73,8 @@ type SortHeaderView struct {
 	Dir    string // "asc" | "desc" when Active
 	// AriaSort is the header's aria-sort value: ascending/descending/none.
 	AriaSort string
+	// AccessibleName states both the current state and the next activation.
+	AccessibleName string
 }
 
 // listNav bundles what a list page's template needs for its navigation.
@@ -270,9 +273,22 @@ func buildListNav(path string, spec ListSpec, q Query, values url.Values, counts
 			dir = map[string]string{"asc": "desc", "desc": "asc"}[h.Dir]
 		}
 		h.URL = listURL(path, values, map[string]string{"sort": k.Name, "dir": dir})
+		nextDirection := sortDirectionLabel(dir)
+		if h.Active {
+			h.AccessibleName = fmt.Sprintf("%s, sorted %s; activate to sort %s", h.Label, sortDirectionLabel(h.Dir), nextDirection)
+		} else {
+			h.AccessibleName = fmt.Sprintf("%s, activate to sort %s", h.Label, nextDirection)
+		}
 		sorts = append(sorts, h)
 	}
 	return listNav{Filters: bar, Sorts: sorts}
+}
+
+func sortDirectionLabel(dir string) string {
+	if dir == dirAsc {
+		return "ascending"
+	}
+	return "descending"
 }
 
 // removeValueURL drops v from an explicitly set closed filter: a minimum
@@ -298,12 +314,14 @@ type badQueryPage struct {
 func (s *Server) renderBadQuery(w http.ResponseWriter, r *http.Request, nav string, qerr *QueryError) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusBadRequest)
-	renderPage(w, "badquery", badQueryPage{
-		Meta:    s.pageMeta(r, "Unknown filter", nav, false),
+	meta := s.pageMeta(r, "Unknown filter", nav, false)
+	data := badQueryPage{
+		Meta:    meta,
 		Param:   qerr.Param,
 		Allowed: qerr.Allowed,
 		DropURL: listURL(r.URL.Path, r.URL.Query(), map[string]string{qerr.Param: ""}),
-	})
+	}
+	renderPage(w, "badquery", data)
 }
 
 func sortedValueKeys(values url.Values) []string {

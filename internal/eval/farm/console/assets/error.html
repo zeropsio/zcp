@@ -3,6 +3,7 @@
 <p class="eyebrow">Farm console</p>
 <h1 id="error-title">{{.Title}}</h1>
 <p>{{.Message}}</p>
-<div class="error-actions">{{if .RetryHref}}<a class="btn btn-primary" href="{{.RetryHref}}">Try again</a>{{end}}{{if .ParentHref}}<a class="btn" href="{{.ParentHref}}">{{.ParentLabel}}</a>{{end}}</div>
+<div class="error-actions">{{if .RetryHref}}<a class="btn btn-primary" href="{{pageURL .RetryHref .Meta}}">Try again</a>{{end}}{{if .ParentHref}}<a class="btn" href="{{pageURL .ParentHref .Meta}}">{{.ParentLabel}}</a>{{end}}</div>
+{{with .Technical}}<details class="more technical-details"><summary>Technical details</summary><dl class="kv"><dt>Status</dt><dd>Status {{.Status}}</dd><dt>Route</dt><dd>Route <code>{{.Route}}</code></dd><dt>Operation</dt><dd>Operation {{.Operation}}</dd></dl><p class="muted small">Inspect the console service logs for more detail.</p></details>{{end}}
 </section>
 {{template "foot"}}{{end}}

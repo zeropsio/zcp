@@ -39,9 +39,9 @@ paths behind it.
 | Problems | all statuses `/problems?status=all&since=90d`; one route for each of `new`, `first-seen`, `recurring`, `still-emitted`, `gone`, and `unconfirmed`; unavailable newest-build coverage; 24-hour scope with recurring status derived from older full history; expanded members; combined filter/sort; no match; unassessed-only in `unassessed-source`; failed/unparsed evidence warning; no source in `empty-source` |
 | Findings | verified and unverified quotes, their literal quote text, and run/finding/step/fix links `/findings?since=90d`; one combined cause/severity/surface/scenario/batch/build/window/sort route; no match; no source in `empty-source` |
 | Batch | all five precedence group headings asserted together on `/b/ui-states`; no previous `/b/ui-previous`; filtered runs; no, partial (`2/9`, including absent and failed attempts) and full assessment coverage; zero and unknown cost; held whole-batch action; no eligible assessment `/b/ui-empty` |
-| Run verdict | passed `ui-states-clean`; failed `ui-states-failed`; blocked `ui-states-blocked`; not started `ui-states-not-started`; running `ui-live-running-a`; stalled `ui-states-stalled` |
+| Run verdict | passed `ui-states-clean`; failed `ui-states-failed`; blocked `ui-states-blocked`; not started `ui-states-not-started`; truly unfinished, no-`done.json` running run `ui-live-running-a` with unknown start/duration; stalled `ui-states-stalled` |
 | Run assessment | absent, successful clean with explicit agreeing checks and no Disputed marker, an independent disputed state, inconclusive with goal not reached, error, unparsed raw output, queued, running and pre-store failure; failed-current with older-success fallback; explicit historical assessment |
-| Run evidence | partial record `ui-partial-record`; long transcript and preserved JSON lexemes `ui-current-deploy`; cited and error step filters; zero and unknown cost; disputed check; missing record on the never-started run |
+| Run evidence | done partial record `ui-partial-record` keeps its passed verdict, 18-second metadata and task prompt while the missing transcript degrades only steps; long transcript and preserved JSON lexemes `ui-current-deploy`; cited and error step filters; zero and unknown cost; disputed check; missing record on the never-started run |
 | Terms | definitions and stable section navigation `/terms`; follow links from status help and return with browser history |
 | HTML errors | invalid filter 400; missing route/batch/run/assessment 404; Overview store failure 500; Problems, Findings, Batch and Run store failures 502, each on the `store-error` listener |
 
@@ -86,6 +86,17 @@ At 200% zoom, verify the effective content width as well as text size.
 | Full lint | `/tmp/zcp-tools/golangci-lint run ./...` | PASS, 0 issues (2026-09-12) |
 | Browser fixture matrix | Matrix above, using the emitted dynamic URLs | NOT RUN |
 | Deployed revision | Repeat critical auth/routes/warm reads against the named internal console | NOT RUN |
+
+S15 static and handler verification (2026-09-12):
+
+| Contract | Evidence | Result |
+|---|---|---|
+| HTML-only refresh preference | `TestPages_AutoRefreshPauseIsHTMLOnlyAndPreserved`; `TestActions_RefererPreservesAcceptedRefreshPreference` | PASS |
+| Stacked table semantics and disclosures | `TestPages_StackedTablesRetainAccessibleHeaders`; `TestPages_DisclosureSummariesContainNoNestedInteractiveControls` | PASS |
+| Sort names and mobile DOM order | `TestPages_SortControlsExposeCurrentAndNextDirection`; `TestAppCSS_MobileNavigationOrderMatchesDOM` | PASS |
+| Measured light tokens and vendor-resistant selectors | `TestAppCSS_LightInteractiveTextContrast` | PASS (static); computed-style recheck at 400/768/1440 pending root browser pass |
+| Safe error boundary | `TestPages_HTMLStoreFailure_LogsCauseOnceAndShowsSafeContext` | PASS |
+| Visible assessment identity | `TestPages_RunObservationIDsAreVisibleAndUnambiguous` | PASS |
 
 Keep failures and blockers as their own rows. A later successful rerun may add
 a new dated row; it must not erase the earlier evidence.

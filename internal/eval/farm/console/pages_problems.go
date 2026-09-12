@@ -12,29 +12,14 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
-	"strings"
 
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
 
-// problemAnchorID turns a Problem's Key into a stable HTML fragment id
-// (item 12: "give each problem row a stable id from its key") — every
-// character outside [A-Za-z0-9_-] maps to "-", mirroring pages_run.go's
-// checkAnchor, so the same key always resolves to the same id both on
-// /problems (problemRowView.AnchorID) and linked from the Overview's Top
-// problems now (pages_home.go's topProblemView.ID).
+// problemAnchorID turns a Problem's Key into the stable HTML fragment used
+// both on /problems and by the Overview's Top problems links.
 func problemAnchorID(key string) string {
-	var b strings.Builder
-	b.WriteString("p-")
-	for _, r := range key {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('-')
-		}
-	}
-	return b.String()
+	return safeFragment("p-", key)
 }
 
 // pluralS returns "" for n==1, else "s" — shared by this file and
@@ -110,9 +95,16 @@ type problemRowView struct {
 }
 
 func newProblemRowView(p Problem, path string, values url.Values) problemRowView {
+	lastSeen, firstSeen := unknownDash, unknownDash
+	if p.LastSeenKnown {
+		lastSeen = fmtTimeShort(p.LastSeen)
+	}
+	if p.FirstSeenKnown {
+		firstSeen = fmtTimeShort(p.FirstSeen)
+	}
 	row := problemRowView{
 		Problem: p, AnchorID: problemAnchorID(p.Key),
-		LastSeenShort: fmtTimeShort(p.LastSeen), FirstSeenShort: fmtTimeShort(p.FirstSeen),
+		LastSeenShort: lastSeen, FirstSeenShort: firstSeen,
 	}
 	if p.Surface != "" {
 		row.SurfaceLink = listURL(path, values, map[string]string{paramSurface: p.Surface})
@@ -229,7 +221,7 @@ func buildFailedAssessmentBanner(runs []ProblemsRun) (prefix string, affected []
 
 func (s *Server) handleProblemsPage(w http.ResponseWriter, r *http.Request) {
 	spec := problemListSpec()
-	q, err := Parse(spec, r.URL.Query())
+	q, err := parseHTMLQuery(spec, r.URL.Query())
 	if err != nil {
 		var qerr *QueryError
 		errors.As(err, &qerr)
@@ -244,7 +236,7 @@ func (s *Server) handleProblemsPage(w http.ResponseWriter, r *http.Request) {
 	// only decides scopeRuns, i.e. which problems are shown at all.
 	allRuns, err := s.allProblemsRuns(ctx)
 	if err != nil {
-		s.renderStoreError(w, r, http.StatusBadGateway, "Problems unavailable", "The problem history could not be read.")
+		s.renderStoreError(w, r, http.StatusBadGateway, "Problems unavailable", "The problem history could not be read.", "load problems", err)
 		return
 	}
 	scopeRuns := problemsRunsInWindow(allRuns, q.Since, now)
@@ -292,8 +284,9 @@ func (s *Server) handleProblemsPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	renderPage(w, "problems", problemsPageData{
-		Meta:                   s.pageMeta(r, "Problems", navProblems, false),
+	meta := s.pageMeta(r, "Problems", navProblems, false)
+	data := problemsPageData{
+		Meta:                   meta,
 		Nav:                    nav,
 		Summary:                fmt.Sprintf("%d matching problem%s · %d live · %d high", len(filtered), pluralS(len(filtered)), liveN, highN),
 		NewestBuild:            newestBuildLabel(allRuns),
@@ -302,5 +295,6 @@ func (s *Server) handleProblemsPage(w http.ResponseWriter, r *http.Request) {
 		EmptyDetail:            emptyDetail,
 		FailedAssessmentPrefix: failedPrefix,
 		FailedAssessmentRuns:   failedRuns,
-	})
+	}
+	renderPage(w, "problems", data)
 }

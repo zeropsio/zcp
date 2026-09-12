@@ -100,11 +100,12 @@ type topProblemView struct {
 	HowOften    string
 }
 
-// dotView is one run's dot in the Overview batches table (§8.3 item 3):
-// "one dot per run ordered as on the batch page (tooltip `scenario —
-// verdict`)".
+// dotView is one run's status dot in the Overview batches table (§8.3 item
+// 3). State is "unavailable" when evidence cannot be read, so verdictKey
+// gives the dot a neutral style; the automatic verdict remains independently
+// visible in VerdictCounts.
 type dotView struct {
-	Verdict string
+	State   string
 	Tooltip string
 }
 
@@ -138,19 +139,18 @@ func fmtTimeShort(t time.Time) string {
 
 func (s *Server) handleHomePage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
-	allBatches, err := loadBatchRows(ctx, s.cfg.Store, s.cfg.ObserverDisabled, s.queueState, s.runCache, s.summaryCache, s.logf)
-	if err != nil {
-		s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The evaluation overview could not be read.")
-		return
-	}
-
 	spec := batchListSpec()
-	q, err := Parse(spec, r.URL.Query())
+	q, err := parseHTMLQuery(spec, r.URL.Query())
 	if err != nil {
 		var qerr *QueryError
 		errors.As(err, &qerr)
 		s.renderBadQuery(w, r, navOverview, qerr)
+		return
+	}
+
+	allBatches, err := loadBatchRows(ctx, s.cfg.Store, s.cfg.ObserverDisabled, s.queueState, s.runCache, s.summaryCache, s.logf)
+	if err != nil {
+		s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The evaluation overview could not be read.", "load overview", err)
 		return
 	}
 
@@ -160,7 +160,7 @@ func (s *Server) handleHomePage(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.buildHomeBatchRows(ctx, filtered)
 	if err != nil {
-		s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The evaluation overview could not be read.")
+		s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The evaluation overview could not be read.", "load overview", err)
 		return
 	}
 
@@ -168,19 +168,20 @@ func (s *Server) handleHomePage(w http.ResponseWriter, r *http.Request) {
 	if latestRow, ok := pickLatestEvaluationBatch(allBatches); ok {
 		latest, err = s.buildLatestEvaluation(ctx, allBatches, latestRow)
 		if err != nil {
-			s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The latest evaluation could not be read.")
+			s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The latest evaluation could not be read.", "load latest evaluation", err)
 			return
 		}
 	}
 
 	top, err := s.buildTopProblems(ctx, now)
 	if err != nil {
-		s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The current problem summary could not be read.")
+		s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The current problem summary could not be read.", "load current problems", err)
 		return
 	}
 
-	renderPage(w, "home", homePageData{
-		Meta:        s.pageMeta(r, "Overview", navOverview, s.anyObservationInFlight()),
+	meta := s.pageMeta(r, "Overview", navOverview, s.anyObservationInFlight())
+	data := homePageData{
+		Meta:        meta,
 		Latest:      latest,
 		TopProblems: top,
 		Nav:         nav,
@@ -188,7 +189,8 @@ func (s *Server) handleHomePage(w http.ResponseWriter, r *http.Request) {
 		Batches:     rows,
 		MatchingN:   len(filtered),
 		TotalN:      len(allBatches),
-	})
+	}
+	renderPage(w, "home", data)
 }
 
 // anyObservationInFlight reports whether any observation is queued or
@@ -232,10 +234,15 @@ func formatBatchCost(b BatchRow) string {
 	return cost
 }
 
-// homeDotLabel is one dot's tooltip verdict word: "stalled" for a running
-// row past its budget (Stalled), else the plain verdict label.
+// homeDotLabel is one dot's tooltip status. Evidence availability outranks
+// the automatic verdict because a passed/failed colour would otherwise imply
+// that the underlying record can be inspected. When summary.json still
+// supplies a verdict, the tooltip keeps it as a separate fact.
 func homeDotLabel(row RunRow) string {
-	if row.Verdict == "" && assessmentWorkUnavailable(row) {
+	if assessmentWorkUnavailable(row) {
+		if row.Verdict != "" {
+			return "unavailable; automatic verdict " + verdictLabel(row.Verdict)
+		}
 		return "automatic verdict unavailable"
 	}
 	if row.Verdict == verdictRunning && row.Stalled {
@@ -250,7 +257,11 @@ func buildDots(rows []RunRow, now time.Time) []dotView {
 	ordered := orderedAsBatchPage(rows, now)
 	out := make([]dotView, len(ordered))
 	for i, r := range ordered {
-		out[i] = dotView{Verdict: r.Verdict, Tooltip: r.Scenario + " — " + homeDotLabel(r)}
+		dotState := r.Verdict
+		if assessmentWorkUnavailable(r) {
+			dotState = "unavailable"
+		}
+		out[i] = dotView{State: dotState, Tooltip: r.Scenario + " — " + homeDotLabel(r)}
 	}
 	return out
 }
@@ -301,13 +312,15 @@ func homeBatchLabeler() listLabeler {
 }
 
 // pickLatestEvaluationBatch implements §8.3 item 1's batch choice: the
-// newest batch (rows is already newest-first, loadBatchRows) whose set is
-// gate or all with a finished run, else the newest batch with one.
+// newest finished batch (rows is already newest-first, loadBatchRows) whose
+// set is gate or all and whose runs prove work, else the newest finished
+// batch whose runs prove work. Finished is the summary.json boundary; a
+// completed run bundle alone does not settle its batch.
 func pickLatestEvaluationBatch(rows []BatchRow) (BatchRow, bool) {
 	var fallback BatchRow
 	haveFallback := false
 	for _, b := range rows {
-		if b.Kind != batchKindEvaluation {
+		if b.Kind != batchKindEvaluation || !b.Finished {
 			continue
 		}
 		if !haveFallback {

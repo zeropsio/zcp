@@ -221,26 +221,28 @@ func (s *Server) handleBatchesAPI(w http.ResponseWriter, r *http.Request) {
 // ProblemMemberItem is one ProblemItem.Members row (§8.6): a thin view over
 // FindingRow plus the run link and step link its most-cited evidence needs.
 type ProblemMemberItem struct {
-	RunID      string    `json:"runId"`
-	Batch      string    `json:"batch"`
-	Scenario   string    `json:"scenario"`
-	Build      string    `json:"build"`
-	StartedAt  time.Time `json:"startedAt"`
-	Severity   string    `json:"severity"`
-	Cause      string    `json:"cause"`
-	CauseClass string    `json:"causeClass"`
-	Title      string    `json:"title"`
-	LookAt     string    `json:"lookAt"`
-	Fix        string    `json:"fix"`
-	RunLink    string    `json:"runLink"`
-	Quote      string    `json:"quote,omitempty"`
-	StepLink   string    `json:"stepLink,omitempty"`
+	RunID        string    `json:"runId"`
+	Batch        string    `json:"batch"`
+	Scenario     string    `json:"scenario"`
+	Build        string    `json:"build"`
+	StartedAt    time.Time `json:"startedAt"`
+	StartedKnown bool      `json:"startedKnown"`
+	Severity     string    `json:"severity"`
+	Cause        string    `json:"cause"`
+	CauseClass   string    `json:"causeClass"`
+	Title        string    `json:"title"`
+	LookAt       string    `json:"lookAt"`
+	Fix          string    `json:"fix"`
+	RunLink      string    `json:"runLink"`
+	Quote        string    `json:"quote,omitempty"`
+	StepLink     string    `json:"stepLink,omitempty"`
 }
 
 func problemMemberItem(m ProblemMember) ProblemMemberItem {
 	item := ProblemMemberItem{
 		RunID: m.RunID, Batch: m.Batch, Scenario: m.Scenario, Build: m.Build.Label(), StartedAt: m.StartedAt,
-		Severity: m.Severity, Cause: m.CauseLabel, CauseClass: m.CauseClass, Title: m.Title, LookAt: m.LookAt, Fix: m.Fix,
+		StartedKnown: m.StartedKnown,
+		Severity:     m.Severity, Cause: m.CauseLabel, CauseClass: m.CauseClass, Title: m.Title, LookAt: m.LookAt, Fix: m.Fix,
 		RunLink: fmt.Sprintf("/r/%s#f%d", m.RunID, m.Index+1),
 	}
 	if len(m.Evidence) > 0 {
@@ -279,6 +281,8 @@ type ProblemItem struct {
 	BuildsTotal     int                 `json:"buildsTotal"`
 	FirstSeen       time.Time           `json:"firstSeen"`
 	LastSeen        time.Time           `json:"lastSeen"`
+	FirstSeenKnown  bool                `json:"firstSeenKnown"`
+	LastSeenKnown   bool                `json:"lastSeenKnown"`
 	Members         []ProblemMemberItem `json:"members"`
 }
 
@@ -293,7 +297,7 @@ func problemItemFromProblem(p Problem) ProblemItem {
 		HitOnNewestBuild: p.HitOnNewestBuild, RunsAssessedOnNewest: p.RunsAssessedOnNewest,
 		InScopeHit: p.InScopeHit, InScopeAssessed: p.InScopeAssessed,
 		RunsTotal: p.RunsTotal, BatchesTotal: p.BatchesTotal, BuildsTotal: p.BuildsTotal,
-		FirstSeen: p.FirstSeen, LastSeen: p.LastSeen, Members: members,
+		FirstSeen: p.FirstSeen, LastSeen: p.LastSeen, FirstSeenKnown: p.FirstSeenKnown, LastSeenKnown: p.LastSeenKnown, Members: members,
 	}
 }
 
@@ -379,7 +383,7 @@ func (s *Server) allProblemsRuns(ctx context.Context) ([]ProblemsRun, error) {
 }
 
 // problemsRunsInWindow filters allRuns (allProblemsRuns' full-history
-// result) to those whose StartedAt falls in [now-window, now] — the same
+// result) to those whose private scope timestamp falls in [now-window, now] — the same
 // membership rule the removed problemsRunsSinceWindow used to apply via a
 // second store scan (view.go's rowsSinceWindow uses the identical rule for
 // plain RunRow lists). Item 1 (FIX3): every caller now fetches the full
@@ -389,7 +393,8 @@ func problemsRunsInWindow(allRuns []ProblemsRun, window time.Duration, now time.
 	since := now.Add(-window)
 	var out []ProblemsRun
 	for _, r := range allRuns {
-		if r.Row.StartedAt.Before(since) || r.Row.StartedAt.After(now) {
+		scopeAt := r.Row.scopeTimestamp()
+		if scopeAt.IsZero() || scopeAt.Before(since) || scopeAt.After(now) {
 			continue
 		}
 		out = append(out, r)
@@ -809,7 +814,9 @@ type RunsListItem struct {
 	Verdict           string               `json:"verdict"`
 	VerdictReason     string               `json:"verdictReason,omitempty"`
 	StartedAt         time.Time            `json:"startedAt"`
+	StartedKnown      bool                 `json:"startedKnown"`
 	DurationSec       float64              `json:"durationSec"`
+	DurationKnown     bool                 `json:"durationKnown"`
 	CostUsd           float64              `json:"costUsd"`
 	CostKnown         bool                 `json:"costKnown"`
 	Outcome           string               `json:"outcome"`
@@ -828,7 +835,9 @@ type RunDetail struct {
 	Verdict       string    `json:"verdict"`
 	VerdictReason string    `json:"verdictReason,omitempty"`
 	StartedAt     time.Time `json:"startedAt"`
+	StartedKnown  bool      `json:"startedKnown"`
 	DurationSec   float64   `json:"durationSec"`
+	DurationKnown bool      `json:"durationKnown"`
 	CostUsd       float64   `json:"costUsd"`
 	CostKnown     bool      `json:"costKnown"`
 	// Build is the candidate's §8.8 display label (BatchListItem/
@@ -883,6 +892,7 @@ type FindingItem struct {
 	Build          string    `json:"build"`
 	RunID          string    `json:"runId"`
 	StartedAt      time.Time `json:"startedAt"`
+	StartedKnown   bool      `json:"startedKnown"`
 	Severity       string    `json:"severity"`
 	Cause          string    `json:"cause"`
 	CauseClass     string    `json:"causeClass"`
@@ -906,7 +916,8 @@ func runsListItemFromRow(row RunRow) RunsListItem {
 	item := RunsListItem{
 		RunID: row.RunID, Batch: row.Batch, Scenario: row.Scenario, Verdict: row.Verdict,
 		VerdictReason: row.VerdictReason,
-		StartedAt:     row.StartedAt, DurationSec: row.DurationSec, CostUsd: row.CostUsd, CostKnown: row.CostKnown,
+		StartedAt:     row.StartedAt, StartedKnown: row.StartedKnown,
+		DurationSec: row.DurationSec, DurationKnown: row.DurationKnown, CostUsd: row.CostUsd, CostKnown: row.CostKnown,
 		Outcome: outcomeOrNone(row.Outcome), CauseCounts: causeCountItems(row.CauseCounts),
 		ObserverState: apiObserverState(row), ObserverStateText: row.ObserverStateText,
 	}
@@ -1066,7 +1077,8 @@ func runDetailFromRow(row RunRow) RunDetail {
 	return RunDetail{
 		RunID: row.RunID, Batch: row.Batch, Scenario: row.Scenario, Verdict: row.Verdict,
 		VerdictReason: row.VerdictReason,
-		StartedAt:     row.StartedAt, DurationSec: row.DurationSec, CostUsd: row.CostUsd, CostKnown: row.CostKnown,
+		StartedAt:     row.StartedAt, StartedKnown: row.StartedKnown,
+		DurationSec: row.DurationSec, DurationKnown: row.DurationKnown, CostUsd: row.CostUsd, CostKnown: row.CostKnown,
 		Build:           row.Build.Label(),
 		CandidateSha256: row.CandidateSha256, EvaluatorSha256: row.EvaluatorSha256, StepCount: row.StepCount,
 		ObserverState: apiObserverState(row), ObserverStateText: row.ObserverStateText, Observation: row.Observation,
@@ -1114,14 +1126,22 @@ func renderRunDetailMD(d RunDetail) string {
 	if d.CostKnown {
 		cost = fmt.Sprintf("$%.4f", d.CostUsd)
 	}
+	started := "— (unavailable)"
+	if d.StartedKnown {
+		started = d.StartedAt.UTC().Format(time.RFC3339)
+	}
+	duration := "— (unavailable)"
+	if d.DurationKnown {
+		duration = fmt.Sprintf("%.1fs", d.DurationSec)
+	}
 	// Item 5 (verification round 2): candidate and evaluator otherwise show
 	// as two indistinguishable raw 64-hex shas — use the §8.8 build label
 	// for both (the evaluator has no recorded git revision, so it always
 	// falls back to BuildInfo's "build <sha12>" form).
 	evaluatorBuild := BuildInfo{Sha256: d.EvaluatorSha256}.Label()
-	fmt.Fprintf(&b, "# %s\n\nscenario: %s\nbatch: %s\nverdict: %s\nstarted: %s\nduration: %.1fs\nagent cost: %s\nZCP build: %s\nevaluator build: %s\nsteps: %d\nassessment: %s\ntask prompt: %s\nself-review: %s\n\n",
-		d.RunID, d.Scenario, d.Batch, verdict, d.StartedAt.UTC().Format(time.RFC3339),
-		d.DurationSec, cost, d.Build, evaluatorBuild, d.StepCount, d.ObserverStateText,
+	fmt.Fprintf(&b, "# %s\n\nscenario: %s\nbatch: %s\nverdict: %s\nstarted: %s\nduration: %s\nagent cost: %s\nZCP build: %s\nevaluator build: %s\nsteps: %d\nassessment: %s\ntask prompt: %s\nself-review: %s\n\n",
+		d.RunID, d.Scenario, d.Batch, verdict, started,
+		duration, cost, d.Build, evaluatorBuild, d.StepCount, d.ObserverStateText,
 		d.TaskPromptURL, d.SelfReviewURL)
 
 	if d.Observation != nil {
@@ -1614,7 +1634,8 @@ func findingItemFromRow(f FindingRow) FindingItem {
 	sort.Ints(steps)
 	return FindingItem{
 		Owner: f.Owner, Batch: f.Batch, Scenario: f.Scenario, Build: f.Build.Label(), RunID: f.RunID, StartedAt: f.StartedAt,
-		Severity: f.Severity, Cause: f.CauseLabel, CauseClass: f.CauseClass, Surface: f.Surface, Anchor: f.Anchor,
+		StartedKnown: f.StartedKnown,
+		Severity:     f.Severity, Cause: f.CauseLabel, CauseClass: f.CauseClass, Surface: f.Surface, Anchor: f.Anchor,
 		Title: f.Title, What: f.What, Steps: steps, QuotesVerified: verified, QuotesTotal: total,
 		LookAt: f.LookAt, Fix: f.Fix,
 	}
@@ -1629,6 +1650,10 @@ func renderFindingsMD(items []FindingItem) string {
 	var b strings.Builder
 	b.WriteString(legendLine("Finding", "Severity", "Cause", "Surface", "Anchor", "Quote found"))
 	for _, it := range items {
+		started := unknownDash
+		if it.StartedKnown {
+			started = it.StartedAt.UTC().Format(time.RFC3339)
+		}
 		fmt.Fprintf(&b, "- [%s · %s] %s", it.Severity, it.Cause, it.Title)
 		if it.Surface != "" {
 			fmt.Fprintf(&b, " — surface %s", it.Surface)
@@ -1637,7 +1662,7 @@ func renderFindingsMD(items []FindingItem) string {
 			fmt.Fprintf(&b, " — anchor %q", it.Anchor)
 		}
 		fmt.Fprintf(&b, " — %s (%s, %s, %s, started %s, steps %s) — quotes %d/%d — %s\n",
-			it.Batch, it.Scenario, it.RunID, it.Build, it.StartedAt.UTC().Format(time.RFC3339),
+			it.Batch, it.Scenario, it.RunID, it.Build, started,
 			formatStepRanges(it.Steps), it.QuotesVerified, it.QuotesTotal, it.What)
 		fmt.Fprintf(&b, "  look at: %s\n", it.LookAt)
 		if it.Fix != "" {

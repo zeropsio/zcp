@@ -265,7 +265,9 @@ func runDidWork(row RunRow) bool {
 	return meaningfulAssessmentWork(row.CostUsd, row.StepCount)
 }
 
-func assessmentWorkUnavailable(row RunRow) bool { return row.assessmentWorkError != "" }
+func assessmentWorkUnavailable(row RunRow) bool {
+	return row.assessmentWorkError != "" || len(row.evidenceReadErrors) > 0
+}
 
 // meaningfulAssessmentWork is §8.5's single eligibility fact: a run did
 // work when its recorded cost is positive or its record contains at least
@@ -501,12 +503,17 @@ func findSummaryRun(summary farm.BatchSummary, summaryFound bool, runID string) 
 // clarity-2026-09-11-briefs/MODEL.md item 1) — every other field predates
 // this slice and keeps its exact prior meaning.
 type RunRow struct {
-	RunID           string
-	Batch           string
-	Scenario        string
-	Verdict         string
-	StartedAt       time.Time
+	RunID     string
+	Batch     string
+	Scenario  string
+	Verdict   string
+	StartedAt time.Time
+	// StartedKnown and DurationKnown keep zero values distinct from missing
+	// timing evidence. A batch manifest timestamp is batch context and is
+	// never promoted to a run start.
+	StartedKnown    bool
 	DurationSec     float64
+	DurationKnown   bool
 	CostUsd         float64
 	CandidateSha256 string
 	EvaluatorSha256 string
@@ -515,6 +522,10 @@ type RunRow struct {
 	Observation     *observer.Observation
 	OlderObsIDs     []string
 	FailedChecks    []FailedCheck
+	// VerificationKnown distinguishes a readable empty check document from
+	// a failed read, so the UI never turns missing check evidence into "all
+	// checks passed".
+	VerificationKnown bool
 
 	metaTaskResult string
 
@@ -539,6 +550,10 @@ type RunRow struct {
 	// StepCount is the run's total step count (observer.BuildSteps), 0
 	// when the transcript/task-prompt could not be read.
 	StepCount int
+	// VisibleStepNumbers is the exact set of stable step anchors available
+	// to link from findings. Nil means the transcript could not be read;
+	// a non-nil empty slice means it was read and contained no visible steps.
+	VisibleStepNumbers []int
 	// ServiceHostnames is serviceHostnames' result — this run's own
 	// service hostnames, for §8.6's norm() host replacement.
 	ServiceHostnames []string
@@ -553,6 +568,32 @@ type RunRow struct {
 	assessmentWorkKnown bool
 	assessmentDidWork   bool
 	assessmentWorkError string
+	// evidenceReadErrors records section-scoped failures without discarding
+	// the other sections that were readable. Detail is forensic-only; Summary
+	// is safe for the primary page warning.
+	evidenceReadErrors []evidenceReadError
+	// currentObsID retains the identity proven by ListObservations even when
+	// the current document itself is temporarily unreadable.
+	currentObsID string
+	// scopeTime is used only for window membership and newest sorting. It is
+	// meta.startedAt when known, otherwise manifest.createdAt. UI/API timing
+	// fields must keep using StartedAt + StartedKnown.
+	scopeTime time.Time
+}
+
+// scopeTimestamp returns the private time used for list membership and
+// ordering. Manually assembled rows predating timing provenance still fall
+// back to StartedAt; stored rows set scopeTime explicitly during resolution.
+func (r RunRow) scopeTimestamp() time.Time {
+	if !r.scopeTime.IsZero() {
+		return r.scopeTime
+	}
+	return r.StartedAt
+}
+
+type evidenceReadError struct {
+	Summary string
+	Detail  string
 }
 
 // loadManifest reads and parses batches/<batch>/manifest.json, after
@@ -721,14 +762,11 @@ func buildRunRow(ctx context.Context, store observer.ObjectStore, consoleObserve
 	if !doneExists {
 		return notDoneRow(batchID, run, bc, summary, summaryFound, consoleObserverDisabled, queued, now), nil
 	}
-	imm, err := fetchImmutablePart(ctx, store, run, bc.CreatedAt)
+	imm, err := fetchImmutablePart(ctx, store, run)
 	if err != nil {
 		return RunRow{}, err
 	}
-	obsPart, err := fetchObservationPart(ctx, store, run.RunID)
-	if err != nil {
-		return RunRow{}, err
-	}
+	obsPart := fetchObservationPart(ctx, store, run.RunID)
 	return combineRow(batchID, run, &imm, &obsPart, bc, summary, summaryFound, consoleObserverDisabled, queued, now), nil
 }
 
@@ -736,19 +774,32 @@ func buildRunRow(ctx context.Context, store observer.ObjectStore, consoleObserve
 // (observer.BuildSteps, §7.2) for RunRow.StepCount. The caller decides
 // whether an absence is the canonical zero-work case or unavailable evidence.
 func loadStepCount(bundle observer.Bundle, resultsDir string, meta eval.BehavioralResult) (int, error) {
+	count, _, err := loadStepEvidence(bundle, resultsDir, meta)
+	return count, err
+}
+
+// loadStepEvidence derives the displayed count and exact stable anchors in
+// one transcript parse. Cache users retain both together, so callers that
+// validate a citation never have to reread the immutable transcript.
+func loadStepEvidence(bundle observer.Bundle, resultsDir string, meta eval.BehavioralResult) (int, []int, error) {
 	taskPrompt, err := observer.LoadTaskPrompt(bundle, resultsDir)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	transcript, err := observer.LoadTranscript(bundle, resultsDir)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	steps, err := observer.BuildSteps(taskPrompt, transcript, observer.ResumeReplies(meta))
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
-	return len(steps), nil
+	visible := visibleEvidenceSteps(steps)
+	numbers := make([]int, len(visible))
+	for i, step := range visible {
+		numbers[i] = step.N
+	}
+	return len(steps), numbers, nil
 }
 
 // settledOrRunning is the verdict of a run with no done.json: the result
@@ -839,11 +890,11 @@ func unavailableRunRow(batchID string, run farm.ManifestRun, bc batchContext, su
 	}
 	settled := found && verdict != "" && verdict != verdictRunning
 	return RunRow{RunID: run.RunID, Batch: batchID, Scenario: run.Scenario,
-		StartedAt: bc.CreatedAt, Build: bc.build(), Verdict: verdict,
+		Build: bc.build(), Verdict: verdict,
 		VerdictReason:       verdictReason(verdict, false, nil, summaryRun, found),
 		ObserverState:       resolveObserverState(consoleObserverDisabled, bc.Observer, false, false, queued, settled),
 		ObserverStateText:   "assessment unavailable — run evidence could not be read",
-		assessmentWorkError: evidenceErr.Error(), CauseCounts: newCauseClassCounts()}
+		assessmentWorkError: evidenceErr.Error(), CauseCounts: newCauseClassCounts(), scopeTime: bc.CreatedAt}
 }
 
 // evidenceSteps returns the sorted, deduplicated step numbers cited by
@@ -909,11 +960,10 @@ func batchWindowRowsWithManifest(ctx context.Context, store observer.ObjectStore
 }
 
 // rowsSinceWindow collects every run row across every batch whose resolved
-// StartedAt falls within [now-window, now] (§8.4: a run's own
-// meta.json.startedAt decides window membership, which can differ from its
-// batch's manifest createdAt within the same batch — so, unlike the
-// worker's fixed 14-day scan (item 7d), this scan does not pre-skip a
-// batch by manifest createdAt alone). A batch that fails to load (a
+// meta.json.startedAt falls within [now-window, now]. When run timing is
+// unknown, manifest.createdAt may keep the row in the scan as batch context,
+// but it never populates RunRow.StartedAt or claims to be the run start. A
+// batch that fails to load (a
 // corrupt manifest, item 5) is skipped and logged rather than failing the
 // whole scan — only the top-level batches/ listing itself can fail the
 // call outright. cache and sc are nil-safe (cache.go).
@@ -939,7 +989,8 @@ func rowsSinceWindow(ctx context.Context, store observer.ObjectStore, consoleObs
 			continue
 		}
 		for _, row := range rows {
-			if row.StartedAt.Before(since) || row.StartedAt.After(now) {
+			windowAt := row.scopeTimestamp()
+			if windowAt.IsZero() || windowAt.Before(since) || windowAt.After(now) {
 				continue
 			}
 			out = append(out, row)
@@ -1083,7 +1134,7 @@ func batchRunsEngine() Engine[RunRow] {
 			"duration": {
 				Primary:  func(a, b RunRow) int { return cmpFloat(a.DurationSec, b.DurationSec) },
 				Tiebreak: func(a, b RunRow) int { return cmpString(a.Scenario, b.Scenario) },
-				Unknown:  func(r RunRow) bool { return !r.DoneExists },
+				Unknown:  func(r RunRow) bool { return !r.DurationKnown },
 			},
 			"cost": {
 				Primary:  func(a, b RunRow) int { return cmpFloat(a.CostUsd, b.CostUsd) },
@@ -1114,10 +1165,10 @@ func apiRunsEngine() Engine[RunRow] {
 	return Engine[RunRow]{
 		Spec:  apiRunsListSpec(),
 		Match: runListMatch,
-		Time:  func(r RunRow) time.Time { return r.StartedAt },
+		Time:  func(r RunRow) time.Time { return r.scopeTimestamp() },
 		Sorts: map[string]SortSpec[RunRow]{
 			"newest": {
-				Primary:  func(a, b RunRow) int { return cmpTime(a.StartedAt, b.StartedAt) },
+				Primary:  func(a, b RunRow) int { return cmpTime(a.scopeTimestamp(), b.scopeTimestamp()) },
 				Tiebreak: func(a, b RunRow) int { return cmpString(a.RunID, b.RunID) },
 			},
 		},
