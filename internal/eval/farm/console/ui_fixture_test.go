@@ -266,7 +266,7 @@ func newUIFixtureSuite(t *testing.T) *uiFixtureSuite {
 		{Name: "empty-source", Server: NewServer(Config{Store: newFakeStore(), Token: testToken, Now: now, Queue: NewQueue(func(context.Context, Job) error { return nil }), LoginFailDelay: time.Millisecond, Sleep: sleeper.Sleep}), Routes: []uiFixtureRoute{
 			{State: "overview-empty-history", Path: "/", Status: http.StatusOK, Want: "No evaluation batch has finished yet"},
 			{State: "problems-no-source", Path: "/problems", Status: http.StatusOK, Want: "No runs in this window"},
-			{State: "findings-no-source", Path: "/findings", Status: http.StatusOK, Want: "No findings in this window"},
+			{State: "findings-no-source", Path: "/findings", Status: http.StatusOK, Want: "No source runs in this window"},
 		}},
 		{Name: "clean-source", Server: cleanServer, Routes: []uiFixtureRoute{{State: "overview-no-problems-covered", Path: "/", Status: http.StatusOK, WantAll: []string{"No current problems found.", "Assessment coverage is 1 of 1 runs"}}}},
 		{Name: "unassessed-source", Server: unassessedServer, Routes: []uiFixtureRoute{{State: "problems-unassessed-only", Path: "/problems", Status: http.StatusOK, WantAll: []string{"No assessed runs in this window", "Runs without one do not establish that the build is clean"}}}},
@@ -336,7 +336,7 @@ func availableUIFixtureRoutes() []uiFixtureRoute {
 		{State: "problems-expanded-members", Path: "/problems?status=all&since=90d", Status: http.StatusOK, Want: "Members ("},
 		{State: "problems-filter-sort", Path: "/problems?cause=zcp&severity=medium&status=all&since=90d&sort=last&dir=asc", Status: http.StatusOK, Want: "Reset filters"},
 		{State: "problems-no-match", Path: "/problems?scenario=missing", Status: http.StatusOK, Want: "No problems match these filters"},
-		{State: "findings-quotes", Path: "/findings?since=90d", Status: http.StatusOK, WantAll: []string{">verified</span>", ">unverified</span>", "discovered ok", "a quote that is absent from the cited step"}},
+		{State: "findings-quotes", Path: "/findings?since=90d", Status: http.StatusOK, WantAll: []string{">quote found</span>", ">quote not found</span>", "discovered ok", "a quote that is absent from the cited step"}},
 		{State: "findings-filter-sort", Path: "/findings?cause=zcp&severity=medium&surface=tool%3Azerops_import&scenario=import&batch=ui-current&build=bc0000000000&since=90d&sort=newest&dir=asc", Status: http.StatusOK, WantAll: []string{"Cause: ZCP", "Severity: Medium", "Surface: tool:zerops_import", "Scenario: import", "Batch: ui-current", "Build: bc0000000000", "Window: 90d", "Newest", "> ▲</span>", "A service-name conflict leaves the agent without a recovery path", "Reset filters"}},
 		{State: "findings-no-match", Path: "/findings?scenario=missing", Status: http.StatusOK, Want: "No findings match these filters"},
 		{State: "batch-five-groups", Path: "/b/ui-states", Status: http.StatusOK, WantAll: []string{"Failed and blocked", "Not finished", "Not assessed", "Problems in passed runs", "Clean"}},

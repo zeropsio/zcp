@@ -49,7 +49,7 @@ func TestPages_FindingsPageListsFindingsWithCauseAndSeverity(t *testing.T) {
 	for _, want := range []string{
 		"Tool returned stale data", "Agent skipped a sanity check",
 		"ZCP tool", "Agent mistake", // cause labels, not raw owner strings
-		`href="/r/fd1-scn"`,
+		`href="/r/fd1-scn#f1"`,
 		`href="/r/fd1-scn#s3"`,  // the zcp-tool finding's verified evidence
 		"poll before returning", // fix
 		"<details",
@@ -139,8 +139,209 @@ func TestPages_FindingsFilteredCount_MatchesCards(t *testing.T) {
 	emptySrv, _, _ := testServer(t)
 	noData := doGET(t, emptySrv.Handler(), "/findings?since=7d").Body.String()
 	if !strings.Contains(noData, "0 matching findings in 7 days") ||
-		!strings.Contains(noData, "No findings in this window") || strings.Contains(noData, "No findings match these filters") {
+		!strings.Contains(noData, "No source runs in this window") || strings.Contains(noData, "No findings match these filters") {
 		t.Errorf("source-empty state is not distinct from a filter miss:\n%s", noData)
+	}
+}
+
+// TestPages_FindingsEmpty_NoSourceExplainsProvenance pins the first empty
+// state: an empty store means there are no source runs in the selected
+// window. It must not imply that assessments ran cleanly.
+func TestPages_FindingsEmpty_NoSourceExplainsProvenance(t *testing.T) {
+	srv, _, _ := testServer(t)
+	body := doGET(t, srv.Handler(), "/findings?since=7d").Body.String()
+
+	for _, want := range []string{
+		"0 source runs",
+		"0 successfully assessed",
+		"0 findings",
+		"0 runs with unavailable evidence",
+		"No source runs in this window",
+		"No run records are available in this time window.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "reported no findings") {
+		t.Errorf("source-empty page implies that assessments were clean:\n%s", body)
+	}
+}
+
+// TestPages_FindingsEmpty_NoSuccessfulAssessmentExplainsProvenance pins a
+// run-backed empty state where source evidence exists but no assessment
+// completed successfully.
+func TestPages_FindingsEmpty_NoSuccessfulAssessmentExplainsProvenance(t *testing.T) {
+	srv, store, _ := testServer(t)
+	now := fixedNow(t)()
+	seedBatch(t, store, "empty-unassessed", "claude-sonnet-5", []runFixture{{
+		runID: "empty-unassessed-a", scenario: "a", startedAt: now.Add(-time.Hour),
+		durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true,
+	}}, true, map[string]string{"empty-unassessed-a": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "empty-unassessed-a",
+		ObsID: "20260911T120000000Z-claude-sonnet-5", Model: "claude-sonnet-5",
+		CreatedAt: now, Status: observationStatusError, Error: "model call failed",
+	})
+
+	body := doGET(t, srv.Handler(), "/findings?since=7d").Body.String()
+	for _, want := range []string{
+		"1 source run", "0 successfully assessed", "0 findings", "0 runs with unavailable evidence",
+		"No successfully assessed runs", "The source run has no successful assessment to report findings from.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "reported no findings") {
+		t.Errorf("unassessed page implies that an assessment was clean:\n%s", body)
+	}
+}
+
+// TestPages_FindingsEmpty_AssessedCleanExplainsProvenance pins the only
+// empty state that can make a positive claim: available, successful
+// assessment evidence exists and it reported no findings.
+func TestPages_FindingsEmpty_AssessedCleanExplainsProvenance(t *testing.T) {
+	srv, store, _ := testServer(t)
+	now := fixedNow(t)()
+	seedBatch(t, store, "empty-clean", "claude-sonnet-5", []runFixture{{
+		runID: "empty-clean-a", scenario: "a", startedAt: now.Add(-time.Hour),
+		durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true,
+	}}, true, map[string]string{"empty-clean-a": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "empty-clean-a",
+		ObsID: "20260911T120000000Z-claude-sonnet-5", Model: "claude-sonnet-5",
+		CreatedAt: now, Status: observationStatusOK, Outcome: observer.OutcomeOK,
+	})
+
+	body := doGET(t, srv.Handler(), "/findings?since=7d").Body.String()
+	for _, want := range []string{
+		"1 source run", "1 successfully assessed", "0 findings", "0 runs with unavailable evidence",
+		"No findings reported", "The successfully assessed run reported no findings.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q:\n%s", want, body)
+		}
+	}
+}
+
+// TestPages_FindingsEmpty_UnavailableEvidenceDoesNotClaimClean pins the
+// conservative mixed state: a clean assessment beside an unreadable run
+// is partial evidence, not an all-clear.
+func TestPages_FindingsEmpty_UnavailableEvidenceDoesNotClaimClean(t *testing.T) {
+	srv, store, _ := testServer(t)
+	now := fixedNow(t)()
+	seedBatch(t, store, "empty-partial", "claude-sonnet-5", []runFixture{
+		{runID: "empty-partial-clean", scenario: "clean", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+		{runID: "empty-partial-broken", scenario: "broken", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"empty-partial-clean": "passed", "empty-partial-broken": "passed"})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "empty-partial-clean",
+		ObsID: "20260911T120000000Z-claude-sonnet-5", Model: "claude-sonnet-5",
+		CreatedAt: now, Status: observationStatusOK, Outcome: observer.OutcomeOK,
+	})
+	store.putText(t, "runs/empty-partial-broken/results/"+testResultsTS+"/broken/meta.json", "{malformed")
+
+	body := doGET(t, srv.Handler(), "/findings?since=30d").Body.String()
+	for _, want := range []string{
+		"2 source runs", "1 successfully assessed", "0 findings", "1 run with unavailable evidence",
+		"Evidence is incomplete", "One source run has unavailable evidence, so the findings view may be incomplete.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "The successfully assessed run reported no findings.") {
+		t.Errorf("partial-evidence page claims the assessed-clean state:\n%s", body)
+	}
+}
+
+// TestPages_FindingsEvidenceUsesCanonicalQuoteVocabulary keeps the
+// Findings page aligned with the glossary and the run page.
+func TestPages_FindingsEvidenceUsesCanonicalQuoteVocabulary(t *testing.T) {
+	srv, store, _ := testServer(t)
+	now := fixedNow(t)()
+	seedBatch(t, store, "quote-vocab", "claude-sonnet-5", []runFixture{{
+		runID: "quote-vocab-a", scenario: "a", startedAt: now.Add(-time.Hour),
+		durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true,
+	}}, true, map[string]string{"quote-vocab-a": "passed"})
+	seedObservation(t, store, fixtureObservation("quote-vocab-a"))
+
+	body := doGET(t, srv.Handler(), "/findings?since=7d").Body.String()
+	for _, want := range []string{"quote found", "quote not found"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing canonical wording %q:\n%s", want, body)
+		}
+	}
+	for _, stale := range []string{">verified<", ">unverified<"} {
+		if strings.Contains(body, stale) {
+			t.Errorf("body contains stale evidence wording %q:\n%s", stale, body)
+		}
+	}
+}
+
+// TestPages_FindingsRunLinksTargetTheirFinding pins the return path from
+// the aggregate list to the exact finding on the run page.
+func TestPages_FindingsRunLinksTargetTheirFinding(t *testing.T) {
+	srv, store, _ := testServer(t)
+	now := fixedNow(t)()
+	seedBatch(t, store, "finding-target", "claude-sonnet-5", []runFixture{{
+		runID: "finding-target-a", scenario: "a", startedAt: now.Add(-time.Hour),
+		durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true,
+	}}, true, map[string]string{"finding-target-a": "passed"})
+	seedObservation(t, store, fixtureObservation("finding-target-a"))
+
+	body := doGET(t, srv.Handler(), "/findings?since=7d").Body.String()
+	for _, want := range []string{
+		`class="run-link" href="/r/finding-target-a#f1"`,
+		`class="run-link" href="/r/finding-target-a#f2"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing exact finding target %q:\n%s", want, body)
+		}
+	}
+}
+
+// TestPages_FindingsStepLinksRequireExactVisibleTarget pins conservative
+// navigation. A positive in-range number is still unavailable when that
+// recorded step is intentionally not rendered; only an exact visible step
+// gets a link.
+func TestPages_FindingsStepLinksRequireExactVisibleTarget(t *testing.T) {
+	srv, store, _ := testServer(t)
+	now := fixedNow(t)()
+	seedBatch(t, store, "step-target", "claude-sonnet-5", []runFixture{{
+		runID: "step-target-a", scenario: "a", startedAt: now.Add(-time.Hour),
+		durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true,
+	}}, true, map[string]string{"step-target-a": "passed"})
+	store.putText(t, "runs/step-target-a/results/"+testResultsTS+"/a/transcript.jsonl", strings.Join([]string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"assistant","message":{"content":[{"type":"thinking","thinking":""},{"type":"tool_use","id":"tu1","name":"zerops_discover","input":{}}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu1","content":[{"type":"text","text":"discovered ok"}]}]}}`,
+	}, "\n")+"\n")
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "step-target-a",
+		ObsID: "20260911T120000000Z-claude-sonnet-5", Model: "claude-sonnet-5",
+		CreatedAt: now, Status: observationStatusOK, Outcome: observer.OutcomeProblem,
+		Findings: []observer.Finding{{Severity: "high", Owner: "zcp-tool", Title: "step targets", Evidence: []observer.Evidence{
+			{Step: 2, Quote: "blank thinking", Verified: false},
+			{Step: 3, Quote: "discovered ok", Verified: true},
+			{Step: 99, Quote: "outside the record", Verified: false},
+		}}},
+	})
+
+	body := doGET(t, srv.Handler(), "/findings?since=7d").Body.String()
+	if !strings.Contains(body, `href="/r/step-target-a#s3">step 3</a>`) {
+		t.Errorf("body missing exact valid step link:\n%s", body)
+	}
+	for _, unavailable := range []string{"step 2 unavailable", "step 99 unavailable"} {
+		if !strings.Contains(body, unavailable) {
+			t.Errorf("body missing %q:\n%s", unavailable, body)
+		}
+	}
+	for _, invalidLink := range []string{`href="/r/step-target-a#s2"`, `href="/r/step-target-a#s99"`} {
+		if strings.Contains(body, invalidLink) {
+			t.Errorf("body links an unavailable target %q:\n%s", invalidLink, body)
+		}
 	}
 }
 
