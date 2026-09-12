@@ -89,16 +89,11 @@ func TestPages_ProblemsPageStatusUsesFullHistoryNotSinceWindow(t *testing.T) {
 	seedFullHistoryProblemFixture(t, store, "fh3", now)
 
 	body := doGET(t, h, "/problems").Body.String()
-	// The status filter bar always lists every status option (including
-	// "first seen", count 0) regardless of any row's own status, so the
-	// row-level assertion below checks the row's own rendered chip text
-	// ("<status> (live)", problems.html's own "{{if problemStatusLive
-	// .Status}} (live){{end}}"), not a bare substring match anywhere on
-	// the page.
-	if !strings.Contains(body, "recurring (live)") {
+	// Inspect the row badge, not the filter menu which lists every status.
+	if !strings.Contains(body, `class="state-badge state-recurring"`) {
 		t.Errorf("row's own status chip must read recurring:\n%s", body)
 	}
-	if strings.Contains(body, "first seen (live)") {
+	if strings.Contains(body, `class="state-badge state-first-seen"`) {
 		t.Errorf("status computed over the since window only, not the full farm history:\n%s", body)
 	}
 }
@@ -177,64 +172,35 @@ func TestPages_ProblemsRunsHitCellShowsInScopeBesideNewestBuildHit(t *testing.T)
 	seedInScopeVsNewestBuildFixture(t, store, now)
 
 	body := doGET(t, h, "/problems?status=all").Body.String()
-	i := strings.Index(body, `data-label="Runs hit"`)
-	if i < 0 {
-		t.Fatalf("body missing the Runs-hit cell:\n%s", body)
-	}
-	end := strings.Index(body[i:], "</td>")
-	if end < 0 {
-		t.Fatalf("Runs-hit cell never closes:\n%s", body)
-	}
-	cell := body[i : i+end]
-	if !strings.Contains(cell, "hit 0/1 runs") {
-		t.Errorf("Runs-hit cell missing §8.6's own newest-build hit figure:\n%s", cell)
-	}
-	if !strings.Contains(cell, "1/2 in scope") {
-		t.Errorf("Runs-hit cell missing the in-scope hit figure beside it:\n%s", cell)
+	// The exact two incidence measures remain distinct in expanded evidence.
+	for _, want := range []string{"hit 0/1 runs", "1/2 in scope", "Newest build coverage", "Current time window"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("problem evidence missing %q", want)
+		}
 	}
 }
 
-// TestPages_ProblemsRowIsCompact pins item 8 (FIX2): a row's Last/First
-// seen dates use the Overview's own short, non-wrapping form (not the long
-// "2 Jan 2006, 15:04 UTC" one, which wraps and inflates row height on a
-// stacked table), the Runs-hit cell's totals render on one line (no <br>),
-// and a problem's members render inside its own row rather than a second
-// <tr> (which doubles the stacked-card count per problem on a phone).
+// TestPages_ProblemsRowIsCompact verifies the title-first summary and sibling
+// evidence structure; actual row density is verified in the browser.
 func TestPages_ProblemsRowIsCompact(t *testing.T) {
 	srv, store, _ := testServer(t)
-	h := srv.Handler()
 	now := fixedNow(t)()
-
 	seedBatch(t, store, "cpt1", "claude-sonnet-5", []runFixture{
 		{runID: "cpt1-a", scenario: "a", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
 	}, true, map[string]string{"cpt1-a": "passed"})
 	seedFormat2Finding(t, store, "cpt1-a", now, observer.SeverityHigh,
-		"tool:zerops_deploy/deploy", "COMPACT_ANCHOR", "Compact row problem", "fix it",
-		1, "quote here")
-
-	body := doGET(t, h, "/problems").Body.String()
+		"tool:zerops_deploy/deploy", "COMPACT_ANCHOR", "Compact row problem", "fix it", 1, "quote here")
+	body := doGET(t, srv.Handler(), "/problems").Body.String()
 	if !strings.Contains(body, fmtTimeShort(now)) {
-		t.Errorf("body missing the short-form date %q:\n%s", fmtTimeShort(now), body)
+		t.Errorf("missing short-form date %q", fmtTimeShort(now))
 	}
-	if strings.Contains(body, fmtTime(now)) {
-		t.Errorf("body still shows the long-form date %q:\n%s", fmtTime(now), body)
+	if !regexp.MustCompile(`(?s)<details class="problem-row"[^>]*>\s*<summary[^>]*>.*?Compact row problem.*?</summary>\s*<section class="member-content"`).MatchString(body) {
+		t.Error("problem evidence is not a full-width sibling of its title-first summary")
 	}
-	if i := strings.Index(body, `data-label="Runs hit"`); i >= 0 {
-		end := strings.Index(body[i:], "</td>")
-		if end < 0 {
-			t.Fatalf("Runs-hit cell never closes:\n%s", body)
+	for _, want := range []string{"Members (1)", `href="/r/cpt1-a"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("problem dropped %q", want)
 		}
-		if strings.Contains(body[i:i+end], "<br>") {
-			t.Errorf("Runs-hit cell still splits its totals onto a second line:\n%s", body[i:i+end])
-		}
-	} else {
-		t.Fatalf("body missing the Runs-hit cell:\n%s", body)
-	}
-	if strings.Contains(body, `class="problem-members"`) {
-		t.Errorf("members still render as a separate table row:\n%s", body)
-	}
-	if !strings.Contains(body, "Members (1)") || !strings.Contains(body, `href="/r/cpt1-a"`) {
-		t.Errorf("body dropped the members list itself:\n%s", body)
 	}
 }
 
@@ -407,8 +373,8 @@ func TestPages_ProblemsSummaryLineCountsLiveAndHigh(t *testing.T) {
 	seedTwoDistinctProblems(t, store, now)
 
 	body := doGET(t, h, "/problems").Body.String()
-	if !strings.Contains(body, "2 live problems") {
-		t.Errorf("summary missing \"2 live problems\":\n%s", body)
+	if !strings.Contains(body, "2 matching problems · 2 live") {
+		t.Errorf("summary missing matching/live counts:\n%s", body)
 	}
 	if !strings.Contains(body, "1 high") {
 		t.Errorf("summary missing \"1 high\":\n%s", body)
@@ -442,19 +408,18 @@ func TestPages_ProblemsOmitsSurfaceChipWhenEmpty(t *testing.T) {
 	}
 }
 
-// TestPages_SortChipsCarryOwnClassForNarrowOnlyCSS pins item 10 (FIX3): the
-// sort-chip row (added because a stacked table.stack hides its thead on
-// phones) carries its own class distinct from an ordinary filter-row, so
-// app.css can hide it above 640px — where the real, sortable <th> headers
-// already do the same job — without touching any other filter-row.
-func TestPages_SortChipsCarryOwnClassForNarrowOnlyCSS(t *testing.T) {
+// TestPages_ProblemsSortDisclosureKeepsEveryKey verifies the native sorting
+// control remains available at every width after replacing the table header.
+func TestPages_ProblemsSortDisclosureKeepsEveryKey(t *testing.T) {
 	srv, store, _ := testServer(t)
 	h := srv.Handler()
 	seedTwoDistinctProblems(t, store, fixedNow(t)())
 
 	body := doGET(t, h, "/problems").Body.String()
-	if !strings.Contains(body, `<div class="filter-row sort-row">`) {
-		t.Errorf("sort chip row is missing its own sort-row class:\n%s", body)
+	for _, key := range []string{"rank", "severity", "runs", "last", "first"} {
+		if !strings.Contains(body, "sort="+key) {
+			t.Errorf("sort control omits %s", key)
+		}
 	}
 }
 
@@ -488,10 +453,9 @@ func TestAppCSS_SortRowHiddenAboveNarrowMarkerReadableProblemsNoWrap(t *testing.
 	}
 }
 
-// TestPages_ProblemsSortChipsAboveStackedTable pins item 15 (round-1
-// follow-up): /problems renders its sort options as a chip row above the
-// table, like /findings already does.
-func TestPages_ProblemsSortChipsAboveStackedTable(t *testing.T) {
+// TestPages_ProblemsSortBeforeRegister keeps sorting available even when no
+// matching rows exist; it does not depend on a desktop-only table header.
+func TestPages_ProblemsSortBeforeRegister(t *testing.T) {
 	srv, store, _ := testServer(t)
 	h := srv.Handler()
 	seedBatch(t, store, "psc1", "off", []runFixture{
@@ -499,8 +463,9 @@ func TestPages_ProblemsSortChipsAboveStackedTable(t *testing.T) {
 	}, true, map[string]string{"psc1-a": "passed"})
 
 	body := doGET(t, h, "/problems").Body.String()
-	if !strings.Contains(body, `<span class="k">Sort</span>`) {
-		t.Errorf("body missing a sort chip row above the problems table:\n%s", body)
+	sortAt, registerAt := strings.Index(body, `class="list-sort"`), strings.Index(body, `class="card problem-table"`)
+	if sortAt < 0 || registerAt < 0 || sortAt >= registerAt {
+		t.Error("sort control is not before the problem register")
 	}
 }
 
@@ -615,5 +580,118 @@ func TestPages_ProblemsMemberLinksNarrowList(t *testing.T) {
 		if strings.Contains(narrowed, "unrelated problem") {
 			t.Errorf("%s link did not narrow out the unrelated problem:\n%s", name, narrowed)
 		}
+	}
+}
+
+// FM-55: the list summary describes only rows matching every active filter.
+func TestPages_ProblemsFilteredCount_MatchesVisibleRows(t *testing.T) {
+	t.Parallel()
+	srv, store, _ := testServer(t)
+	now := fixedNow(t)()
+	seedBatch(t, store, "filtered", "claude-sonnet-5", []runFixture{
+		{runID: "filtered-a", scenario: "alpha", startedAt: now, costUsd: 0.1, taskResult: "passed", done: true},
+		{runID: "filtered-b", scenario: "beta", startedAt: now, costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"filtered-a": "passed", "filtered-b": "passed"})
+	seedFormat2Finding(t, store, "filtered-a", now, observer.SeverityHigh, "tool:zerops_deploy", "ALPHA", "Alpha problem", "Fix alpha", 2, "alpha")
+	seedFormat2Finding(t, store, "filtered-b", now, observer.SeverityLow, "tool:zerops_import", "BETA", "Beta problem", "Fix beta", 2, "beta")
+	for _, tc := range []struct{ path, summary string }{
+		{"/problems", "2 matching problems · 2 live · 1 high"},
+		{"/problems?scenario=alpha", "1 matching problem · 1 live · 1 high"},
+		{"/problems?scenario=beta", "1 matching problem · 1 live · 0 high"},
+		{"/problems?cause=platform", "0 matching problems · 0 live · 0 high"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			t.Parallel()
+			rr := doGET(t, srv.Handler(), tc.path)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rr.Code)
+			}
+			if !strings.Contains(rr.Body.String(), tc.summary) {
+				t.Errorf("missing filtered summary %q", tc.summary)
+			}
+		})
+	}
+}
+
+// FM-51/FM-55: an empty match set offers recovery without claiming no source data.
+func TestPages_ProblemsNoMatches_ResetRecovery(t *testing.T) {
+	t.Parallel()
+	srv, store, _ := testServer(t)
+	now := fixedNow(t)()
+	seedBatch(t, store, "recover", "claude-sonnet-5", []runFixture{{runID: "recover-a", scenario: "alpha", startedAt: now, costUsd: 0.1, done: true, taskResult: "passed"}}, true, map[string]string{"recover-a": "passed"})
+	seedFormat2Finding(t, store, "recover-a", now, observer.SeverityHigh, "tool:zerops_deploy", "ALPHA", "Recoverable problem", "Fix alpha", 2, "alpha")
+	body := doGET(t, srv.Handler(), "/problems?scenario=missing&sort=last&dir=asc").Body.String()
+	for _, want := range []string{"No problems match these filters", "Reset filters", `href="/problems?dir=asc&amp;sort=last"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("no-match result missing %q", want)
+		}
+	}
+	if strings.Contains(body, "No problems in this window") {
+		t.Error("no-match result falsely claims the window has no problems")
+	}
+	reset := doGET(t, srv.Handler(), "/problems?dir=asc&sort=last").Body.String()
+	if !strings.Contains(reset, "Recoverable problem") {
+		t.Error("reset did not restore the problem")
+	}
+}
+
+// FM-51: the problem title opens its canonical finding, not just a run header.
+func TestPages_ProblemTitle_OpensRepresentativeFinding(t *testing.T) {
+	t.Parallel()
+	srv, store, _ := testServer(t)
+	now := fixedNow(t)()
+	seedBatch(t, store, "finding-link", "claude-sonnet-5", []runFixture{{runID: "finding-link-a", scenario: "alpha", startedAt: now, costUsd: 0.1, done: true, taskResult: "passed"}}, true, map[string]string{"finding-link-a": "passed"})
+	seedFormat2Finding(t, store, "finding-link-a", now, observer.SeverityHigh, "tool:zerops_deploy", "ALPHA", "Trace this problem", "Fix alpha", 2, "alpha")
+	body := doGET(t, srv.Handler(), "/problems").Body.String()
+	if !regexp.MustCompile(`<a[^>]*href="/r/finding-link-a#f1"[^>]*>Trace this problem</a>`).MatchString(body) {
+		t.Error("problem title does not link to its representative finding #f1")
+	}
+	if !strings.Contains(doGET(t, srv.Handler(), "/r/finding-link-a").Body.String(), `id="f1"`) {
+		t.Error("representative finding target #f1 is absent")
+	}
+}
+
+// FM-51: a problem member quotes the first found step quote. Unverified
+// citations and the step-zero CHECKS citation must not become a false #s0 link.
+func TestPages_ProblemMembers_ShowFirstFoundStepQuote(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name         string
+		evidence     []observer.Evidence
+		want, absent string
+	}{
+		{"first found", []observer.Evidence{{Step: 2, Quote: "unmatched quotation", Verified: false}, {Step: 3, Quote: "discovered ok", Verified: true}}, `href="/r/quote-a#s3"`, "unmatched quotation"},
+		{"checks only", []observer.Evidence{{Step: 0, Quote: "check verdict", Verified: true}}, "No verified step quote recorded", "#s0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv, store, _ := testServer(t)
+			now := fixedNow(t)()
+			seedBatch(t, store, "quote", "claude-sonnet-5", []runFixture{{runID: "quote-a", scenario: "alpha", startedAt: now, costUsd: 0.1, done: true, taskResult: "passed"}}, true, map[string]string{"quote-a": "passed"})
+			seedObservation(t, store, observer.Observation{FormatVersion: observer.ObservationFormat2, RunID: "quote-a", ObsID: "20260911T120000000Z-claude-sonnet-5", Model: "claude-sonnet-5", CreatedAt: now, Status: "ok", Outcome: observer.OutcomeProblem, Findings: []observer.Finding{{Severity: "high", Owner: "agent", Title: "Quote finding", Evidence: tc.evidence}}})
+			body := doGET(t, srv.Handler(), "/problems").Body.String()
+			if !strings.Contains(body, tc.want) {
+				t.Errorf("member missing %q", tc.want)
+			}
+			if strings.Contains(body, tc.absent) {
+				t.Errorf("member incorrectly shows %q", tc.absent)
+			}
+		})
+	}
+}
+
+// FM-55: severity is counted across matching rows, including gone problems.
+func TestPages_ProblemsHighSummary_CountsNonLiveMatches(t *testing.T) {
+	t.Parallel()
+	srv, store, _ := testServer(t)
+	seedInScopeVsNewestBuildFixture(t, store, fixedNow(t)())
+	for _, path := range []string{"/problems?status=gone", "/problems?status=all"} {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			body := doGET(t, srv.Handler(), path).Body.String()
+			if !strings.Contains(body, "1 matching problem · 0 live · 1 high") {
+				t.Error("summary omits the matching gone problem's high severity")
+			}
+		})
 	}
 }

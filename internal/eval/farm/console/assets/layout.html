@@ -6,25 +6,30 @@
 {{if .Refresh}}{{if .RefreshURL}}<meta http-equiv="refresh" content="20;url={{.RefreshURL}}">
 {{else}}<meta http-equiv="refresh" content="20">
 {{end}}{{end}}<title>{{.Title}} · Farm console</title>
+<link rel="stylesheet" href="/static/vendor/tabler-1.5.1.min.css">
 <link rel="stylesheet" href="/static/app.css">
 </head>
-<body>
-{{$wide := ""}}{{if or (eq .Nav "overview") (eq .Nav "problems") (eq .Nav "findings")}}{{$wide = " wide"}}{{end}}
-<header class="topbar"><div class="wrap{{$wide}} topbar-inner">
-<a class="brand" href="/">Farm console</a>
-<nav class="topnav">
-<a href="/"{{if eq .Nav "overview"}} aria-current="page"{{end}}>Overview</a>
-<a href="/problems"{{if eq .Nav "problems"}} aria-current="page"{{end}}>Problems</a>
-<a href="/findings?since=7d"{{if eq .Nav "findings"}} aria-current="page"{{end}}>Findings</a>
-<a href="/terms"{{if eq .Nav "terms"}} aria-current="page"{{end}}>Terms</a>
+<body class="farm-console">
+<a class="skip-link" href="#main-content">Skip to content</a>
+<aside class="navbar farm-sidebar">
+<a class="farm-brand" href="/"><svg class="brand-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z" fill="currentColor"/></svg>Farm console</a>
+<div class="farm-nav-label">Evaluation workspace</div>
+<nav class="navbar-nav" aria-label="Primary navigation">
+<a class="nav-link{{if eq .Nav "overview"}} active{{end}}" href="/"{{if eq .Nav "overview"}} aria-current="page"{{end}}><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/></svg>Overview</a>
+<a class="nav-link{{if eq .Nav "problems"}} active{{end}}" href="/problems"{{if eq .Nav "problems"}} aria-current="page"{{end}}><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 10 18H2L12 3ZM12 9v5m0 3h.01"/></svg>Problems</a>
+<a class="nav-link{{if eq .Nav "findings"}} active{{end}}" href="/findings?since=7d"{{if eq .Nav "findings"}} aria-current="page"{{end}}><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6M7 10h6"/></svg>Findings</a>
+<a class="nav-link{{if eq .Nav "terms"}} active{{end}}" href="/terms"{{if eq .Nav "terms"}} aria-current="page"{{end}}><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6l2 2 2-2h6v15h-6l-2 2-2-2H4V4ZM12 6v15"/></svg>Terms</a>
 </nav>
-<form class="signout" method="post" action="/logout"><button type="submit">Sign out</button></form>
-</div></header>
-<div class="wrap{{$wide}}"><p class="observer-status muted small">{{.Observer.Text}}</p></div>
-{{with .Notice}}<div class="wrap{{$wide}}"><p class="callout notice">{{.Text}}</p></div>{{end}}
-<main class="wrap{{$wide}}">
+<div class="sidebar-footer"><span>Internal evaluation tool</span><form class="signout" method="post" action="/logout"><button class="btn" type="submit">Sign out</button></form></div>
+</aside>
+<div class="farm-main">
+<header class="farm-context"><span class="context-title">{{.Title}}</span><p class="observer-status">{{.Observer.Text}}</p></header>
+{{with .Notice}}<div class="farm-notice"><p class="callout notice" role="status">{{.Text}}</p></div>{{end}}
+<main class="farm-content" id="main-content" tabindex="-1">
+{{if .Refresh}}<p class="refresh-note">Updates every 20 seconds while assessment work is queued or running.</p>{{end}}
 {{end}}
 {{define "foot"}}</main>
+</div>
 </body>
 </html>
 {{end}}

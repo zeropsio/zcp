@@ -252,7 +252,11 @@ func Parse(spec ListSpec, values url.Values) (Query, error) {
 			continue
 		}
 		if spec.hasOpen(key) {
-			q.Open[key] = val
+			// A native GET form submits cleared inputs as empty values.
+			// Only recognized open filters interpret that as no scope.
+			if val != "" {
+				q.Open[key] = val
+			}
 			continue
 		}
 		return Query{}, &QueryError{Param: key, Allowed: spec.allowedParamNames()}

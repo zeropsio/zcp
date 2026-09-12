@@ -1,8 +1,15 @@
 {{/* List navigation partials (docs/spec-eval-farm.md §8.7): the filter bar,
    one sortable column header, and the 400 page for a refused parameter. */}}
 {{define "filterbar"}}<div class="filters">
-{{range .Groups}}<div class="filter-row"><span class="k">{{.Label}}</span>{{range .Options}}{{if .URL}}<a class="filter{{if .Active}} on{{end}}" href="{{.URL}}"{{if .Title}} title="{{.Title}}"{{end}}{{if .Active}} aria-current="true"{{end}}>{{.Label}}{{if .Counts}} <span class="filter-count">{{.Count}}</span>{{end}}</a>{{else}}<span class="filter count-zero"{{if .Title}} title="{{.Title}}"{{end}}>{{.Label}}{{if .Counts}} <span class="filter-count">0</span>{{end}}</span>{{end}}{{end}}</div>
-{{end}}{{if .Active}}<div class="filter-row"><span class="k">Active</span>{{range .Active}}<a class="filter on" href="{{.RemoveURL}}" title="Remove this filter">{{.Label}} ×</a>{{end}}<a class="clear-all" href="{{.ClearURL}}">clear all</a></div>{{end}}
+<div class="filter-controls">{{range .Groups}}<details class="farm-filter"><summary class="btn"><span>{{.Label}}</span><strong>{{.Selection}}</strong></summary><div class="filter-menu" aria-label="{{.Label}} options">
+{{range .Options}}{{if .URL}}<a class="filter{{if .Active}} on{{end}}" href="{{.URL}}"{{if .Title}} title="{{.Title}}"{{end}}{{if .Active}} aria-current="true"{{end}}>{{.Label}}{{if .Counts}} <span class="filter-count">{{.Count}}</span>{{end}}</a>{{else}}<span class="filter count-zero"{{if .Title}} title="{{.Title}}"{{end}}>{{.Label}}{{if .Counts}} <span class="filter-count">0</span>{{end}}</span>{{end}}{{end}}
+</div></details>{{end}}
+{{if .Open}}<details class="farm-filter more-filters"><summary class="btn">More filters</summary><form class="filter-menu open-filter-form" method="get" action="{{.Path}}">
+{{range .Hidden}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+{{range .Open}}<div><label class="form-label" for="filter-{{.Name}}">{{.Label}}</label><input class="form-control" id="filter-{{.Name}}" name="{{.Name}}" value="{{.Value}}" aria-describedby="filter-{{.Name}}-help"><p class="form-hint" id="filter-{{.Name}}-help">{{.Help}}</p></div>{{end}}
+<p class="form-hint">Leave a field blank to clear its filter.</p><button class="btn btn-primary" type="submit">Apply filters</button>
+</form></details>{{end}}</div>
+{{if .Active}}<div class="filter-row active-filters"><span class="k">Active</span>{{range .Active}}<a class="filter active-chip" href="{{.RemoveURL}}" title="Remove this filter">{{.Label}} ×</a>{{end}}<a class="clear-all" href="{{.ClearURL}}">Reset filters</a></div>{{end}}
 </div>{{end}}
 
 {{define "sortth"}}<th aria-sort="{{.AriaSort}}"><a href="{{.URL}}">{{.Label}}{{if .Active}}<span class="sort-marker" aria-hidden="true">{{if eq .Dir "asc"}} ▲{{else}} ▼{{end}}</span>{{end}}</a></th>{{end}}

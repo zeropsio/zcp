@@ -223,6 +223,7 @@ func TestPages_StylesheetLinksResolve(t *testing.T) {
 			if len(links) == 0 {
 				t.Fatalf("GET %s: no stylesheet link", route)
 			}
+			var styles strings.Builder
 			for _, l := range links {
 				css := httptest.NewRecorder()
 				h.ServeHTTP(css, httptest.NewRequest(http.MethodGet, l[1], nil))
@@ -232,9 +233,10 @@ func TestPages_StylesheetLinksResolve(t *testing.T) {
 				if ct := css.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/css") {
 					t.Errorf("%s links %s: Content-Type %q, want text/css", route, l[1], ct)
 				}
-				if !strings.Contains(css.Body.String(), "prefers-color-scheme: dark") {
-					t.Errorf("%s links %s: stylesheet has no dark palette", route, l[1])
-				}
+				styles.WriteString(css.Body.String())
+			}
+			if !strings.Contains(styles.String(), "prefers-color-scheme: dark") {
+				t.Errorf("%s linked styles have no system-dark palette", route)
 			}
 		})
 	}
@@ -265,7 +267,12 @@ func TestPages_TopNavCurrentItemMarked(t *testing.T) {
 		t.Run(c.route, func(t *testing.T) {
 			body := doGET(t, h, c.route).Body.String()
 			for _, link := range navLinks {
-				marked := strings.Contains(body, `aria-current="page">`+link+`</a>`)
+				marked := false
+				for _, m := range regexp.MustCompile(`(?s)<a[^>]*aria-current="page"[^>]*>(.*?)</a>`).FindAllStringSubmatch(body, -1) {
+					if regexp.MustCompile(`<[^>]*>`).ReplaceAllString(m[1], "") == link {
+						marked = true
+					}
+				}
 				want := link == c.current
 				if marked != want {
 					t.Errorf("GET %s: nav item %q aria-current = %v, want %v\n%s", c.route, link, marked, want, body)
@@ -415,6 +422,40 @@ func TestPages_NoticeCodesRendered(t *testing.T) {
 			}
 			if c.notWant != "" && strings.Contains(body, c.notWant) {
 				t.Errorf("body renders a callout for an unknown notice code:\n%s", body)
+			}
+		})
+	}
+}
+
+// FM-51: a single labelled primary navigation and skip target remain usable
+// on every page, including detail routes which are not primary navigation.
+func TestPages_SharedShell_AccessibleNavigation(t *testing.T) {
+	t.Parallel()
+	srv, store, _ := testServer(t)
+	seedBatch(t, store, "shell", "off", []runFixture{{runID: "shell-run", scenario: "shell", startedAt: fixedNow(t)(), costUsd: 0.1, done: true, taskResult: "passed"}}, true, map[string]string{"shell-run": "passed"})
+	for _, tc := range []struct {
+		path         string
+		primaryCount int
+	}{
+		{"/", 1}, {"/problems", 1}, {"/findings", 1}, {"/terms", 1}, {"/b/shell", 0}, {"/r/shell-run", 0},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			t.Parallel()
+			rr := doGET(t, srv.Handler(), tc.path)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rr.Code)
+			}
+			body := rr.Body.String()
+			for _, want := range []string{`href="#main-content"`, `id="main-content"`, `aria-label="Primary navigation"`, `href="/static/vendor/tabler-1.5.1.min.css"`} {
+				if !strings.Contains(body, want) {
+					t.Errorf("shell missing %q", want)
+				}
+			}
+			if got := strings.Count(body, `aria-current="page"`); got != tc.primaryCount {
+				t.Errorf("current primary pages = %d, want %d", got, tc.primaryCount)
+			}
+			if got := len(regexp.MustCompile(`<h1(?:>|\s)`).FindAllString(body, -1)); got != 1 {
+				t.Errorf("H1 count = %d, want 1", got)
 			}
 		})
 	}

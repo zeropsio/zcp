@@ -1,9 +1,11 @@
 package console
 
 import (
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -141,5 +143,113 @@ func TestParse_SingleFilterTakesOneValue(t *testing.T) {
 	}
 	if _, err := Parse(spec, url.Values{"kind": {"empty"}}); err != nil {
 		t.Errorf("Parse refused one value: %v", err)
+	}
+}
+
+// FM-55: a selected switch/minimum selects itself; only its chip removes it.
+func TestBuildListNav_ActiveSwitch_PreservesSelection(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ path, param, value, label string }{
+		{"/?kind=empty", "kind", "empty", "Empty"},
+		{"/problems?status=gone&since=90d", "status", "gone", "gone"},
+		{"/problems?severity=medium&since=90d", "severity", "medium", "Medium+"},
+	} {
+		t.Run(tc.param, func(t *testing.T) {
+			t.Parallel()
+			srv, _, _ := testServer(t)
+			body := doGET(t, srv.Handler(), tc.path).Body.String()
+			found := false
+			for _, tag := range regexp.MustCompile(`<a\b[^>]*aria-current="true"[^>]*>[^<]*`).FindAllString(body, -1) {
+				if !strings.HasSuffix(strings.TrimSpace(html.UnescapeString(tag)), tc.label) {
+					continue
+				}
+				match := regexp.MustCompile(`href="([^"]+)"`).FindStringSubmatch(tag)
+				if len(match) < 2 {
+					continue
+				}
+				u, err := url.Parse(html.UnescapeString(match[1]))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if u.Query().Get(tc.param) == tc.value {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("selected %s=%s has no idempotent active option link; active tags=%v", tc.param, tc.value, regexp.MustCompile(`<a\b[^>]*aria-current="true"[^>]*>[^<]*`).FindAllString(body, -1))
+			}
+		})
+	}
+}
+
+// FM-55: operators can enter exact open scopes without constructing a URL.
+// The real GET form preserves other filters and allows clearing an open scope.
+func TestPages_OpenFilterForm_PreservesQueryAndClearsScope(t *testing.T) {
+	t.Parallel()
+	srv, store, _ := testServer(t)
+	now := fixedNow(t)()
+	seedBatch(t, store, "more", "claude-sonnet-5", []runFixture{
+		{runID: "more-a", scenario: "alpha", startedAt: now, costUsd: .1, done: true, taskResult: "passed"},
+		{runID: "more-b", scenario: "beta", startedAt: now, costUsd: .1, done: true, taskResult: "passed"},
+	}, true, map[string]string{"more-a": "passed", "more-b": "passed"})
+	seedFormat2Finding(t, store, "more-a", now, "high", "tool:zerops_deploy", "ALPHA", "Alpha problem", "Fix alpha", 3, "discovered ok")
+	seedFormat2Finding(t, store, "more-b", now, "medium", "tool:zerops_import", "BETA", "Beta problem", "Fix beta", 3, "discovered ok")
+	body := doGET(t, srv.Handler(), "/problems?scenario=alpha&status=all&severity=medium&cause=zcp&since=90d&sort=last&dir=asc&notice=queued&n=3").Body.String()
+	form := regexp.MustCompile(`(?s)<form[^>]*method="get"[^>]*>(.*?)</form>`).FindStringSubmatch(body)
+	if form == nil {
+		t.Fatal("no native GET form for Scenario/Batch/Build/Surface filters")
+	}
+	values := url.Values{}
+	for _, field := range regexp.MustCompile(`<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"`).FindAllStringSubmatch(form[1], -1) {
+		values.Add(field[1], html.UnescapeString(field[2]))
+	}
+	for key, want := range map[string]string{"scenario": "alpha", "batch": "", "build": "", "surface": "", "status": "all", "severity": "medium", "cause": "zcp", "since": "90d", "sort": "last", "dir": "asc"} {
+		if !values.Has(key) || values.Get(key) != want {
+			t.Errorf("form field %s = %q, want %q", key, values.Get(key), want)
+		}
+	}
+	if values.Has("notice") || values.Has("n") {
+		t.Error("one-shot notice carried into the filter form")
+	}
+	values.Set("scenario", "")
+	rr := doGET(t, srv.Handler(), "/problems?"+values.Encode())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("clear-scope submission status = %d, want 200", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "2 matching problems") {
+		t.Error("blank scenario did not clear the exact scope")
+	}
+}
+
+// FM-55: the form and selected chips use the effective last query value,
+// matching Parse; submitting an unchanged form must not change the scope.
+func TestPages_OpenFilterForm_RepeatedScopePreservesEffectiveValue(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ query, effective, chip string }{
+		{"scenario=alpha&scenario=beta", "beta", "Scenario: beta"},
+		{"scenario=alpha&scenario=", "", ""},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			t.Parallel()
+			srv, _, _ := testServer(t)
+			body := doGET(t, srv.Handler(), "/problems?"+tc.query).Body.String()
+			form := regexp.MustCompile(`(?s)<form[^>]*method="get"[^>]*>(.*?)</form>`).FindStringSubmatch(body)
+			if form == nil {
+				t.Fatal("native scope form missing")
+			}
+			values := url.Values{}
+			for _, field := range regexp.MustCompile(`<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"`).FindAllStringSubmatch(form[1], -1) {
+				values.Add(field[1], html.UnescapeString(field[2]))
+			}
+			if got := values.Get("scenario"); got != tc.effective {
+				t.Errorf("form scenario = %q, want effective last value %q", got, tc.effective)
+			}
+			if strings.Contains(body, "Scenario: alpha") {
+				t.Error("selected chip shows ineffective first value alpha")
+			}
+			if tc.chip != "" && !strings.Contains(body, tc.chip) {
+				t.Errorf("selected chip missing %q", tc.chip)
+			}
+		})
 	}
 }
