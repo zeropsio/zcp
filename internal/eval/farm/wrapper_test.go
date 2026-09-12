@@ -1516,6 +1516,49 @@ func TestWrapper_ProcStatZombieIsInactiveOnlyWithOneThread(t *testing.T) {
 	}
 }
 
+func TestWrapper_AdoptedChildren_VanishedPIDRequiresStableRescan(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH")
+	}
+
+	procRoot := t.TempDir()
+	const supervisorPID = "900"
+	childrenPath := filepath.Join(procRoot, supervisorPID, "task", supervisorPID, "children")
+	if err := os.MkdirAll(filepath.Dir(childrenPath), 0o755); err != nil {
+		t.Fatalf("mkdir synthetic proc children: %v", err)
+	}
+	// PID 101 deliberately has no stat file: it vanished after this snapshot.
+	if err := os.WriteFile(childrenPath, []byte("101"), 0o644); err != nil {
+		t.Fatalf("write first children snapshot: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(procRoot, "202"), 0o755); err != nil {
+		t.Fatalf("mkdir newly adopted child: %v", err)
+	}
+	stat := "202 (newly adopted) R 900 202 202 0 0 0 0 0 0 0 0 0 0 0 20 0 1 0 123 456\n"
+	if err := os.WriteFile(filepath.Join(procRoot, "202", "stat"), []byte(stat), 0o644); err != nil {
+		t.Fatalf("write newly adopted child stat: %v", err)
+	}
+
+	driver := "children_path=" + shQuote(childrenPath) + "\n" +
+		"cleanup_pids=\n" +
+		"if collect_adopted_children " + shQuote(procRoot) + " " + supervisorPID + "; then first_rc=0; else first_rc=$?; fi\n" +
+		"printf 'first:%s:%s\\n' \"$first_rc\" \"$cleanup_pids\"\n" +
+		"printf %s 202 >\"$children_path\"\n" +
+		"if collect_adopted_children " + shQuote(procRoot) + " " + supervisorPID + "; then second_rc=0; else second_rc=$?; fi\n" +
+		"printf 'second:%s:%s\\n' \"$second_rc\" \"$cleanup_pids\"\n" +
+		": >\"$children_path\"\n" +
+		"if collect_adopted_children " + shQuote(procRoot) + " " + supervisorPID + "; then third_rc=0; else third_rc=$?; fi\n" +
+		"printf 'third:%s:%s\\n' \"$third_rc\" \"$cleanup_pids\"\n"
+	out, err := runWrapperFunctionDriver(t, driver)
+	if err != nil {
+		t.Fatalf("adopted-child scan driver: %v\n%s", err, out)
+	}
+	want := "first:2:\nsecond:0: 202\nthird:0:\n"
+	if got := string(out); got != want {
+		t.Fatalf("scan transitions = %q, want %q", got, want)
+	}
+}
+
 // runWrapperFunctionDriver loads the production function definitions without
 // invoking main, then executes driver under POSIX sh.
 func runWrapperFunctionDriver(t *testing.T, driver string) ([]byte, error) {

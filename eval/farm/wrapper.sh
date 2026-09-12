@@ -283,18 +283,43 @@ proc_stat_is_safely_inactive() {
 	[ "$proc_state" = "Z" ] && [ "$proc_num_threads" = "1" ]
 }
 
+# read_adopted_children_snapshot reads the kernel's single, possibly
+# unterminated children record without forking another process. It sets
+# children_snapshot.
+read_adopted_children_snapshot() {
+	children_path="$1"
+	[ -r "$children_path" ] || return 1
+	children_snapshot=""
+	exec 3<"$children_path" || return 1
+	children_read_rc=0
+	IFS= read -r children_snapshot <&3 || children_read_rc=$?
+	exec 3<&-
+	# EOF (1) is normal because proc does not promise a trailing newline.
+	[ "$children_read_rc" -le 1 ]
+}
+
 # collect_adopted_children sets cleanup_pids to the supervisor's currently
 # live direct children. After the original evaluator has been waited for, a
 # subreaper owns every surviving descendant root, including a setsid escape.
-# A helper used to read the kernel file can appear in that same snapshot;
-# the PPID/state recheck below drops it after the command has been reaped.
+# Arguments are an optional proc root and supervisor PID for deterministic
+# tests; production uses /proc and $$. Return 2 when a listed PID vanished:
+# its children may only become adopted after that snapshot, so the caller must
+# rescan before it can prove the tree empty. Other uncertainty returns 1.
 collect_adopted_children() {
-	children_file="/proc/$$/task/$$/children"
-	[ -r "$children_file" ] || return 1
-	children=$(cat "$children_file") || return 1
+	proc_root="${1:-/proc}"
+	supervisor_pid="${2:-$$}"
+	children_file="$proc_root/$supervisor_pid/task/$supervisor_pid/children"
+	# Use the shell builtin: spawning cat here would itself become a direct
+	# child of this subreaper and perturb the snapshot being classified.
+	read_adopted_children_snapshot "$children_file" || return 1
+	children="$children_snapshot"
 	cleanup_pids=""
+	cleanup_scan_unstable=0
 	for pid in $children; do
-		stat_file="/proc/$pid/stat"
+		case "$pid" in
+		'' | *[!0-9]*) return 1 ;;
+		esac
+		stat_file="$proc_root/$pid/stat"
 		if read_proc_stat_fields "$stat_file"; then
 			:
 		else
@@ -302,13 +327,22 @@ collect_adopted_children() {
 			# A child can exit between the children snapshot and opening stat.
 			# Any other read error, or readable but malformed bytes, leaves
 			# liveness uncertain and must block publication.
-			[ "$stat_rc" -eq 2 ] && [ ! -e "$stat_file" ] && continue
+			if [ "$stat_rc" -eq 2 ] && [ ! -e "$stat_file" ]; then
+				cleanup_scan_unstable=1
+				continue
+			fi
 			return 1
 		fi
-		[ "$proc_ppid" = "$$" ] || continue
+		[ "$proc_ppid" = "$supervisor_pid" ] || continue
 		proc_stat_is_safely_inactive && continue
 		cleanup_pids="$cleanup_pids $pid"
 	done
+	[ "$cleanup_scan_unstable" -eq 0 ] || return 2
+	# A child can exit and reparent descendants after the first snapshot but
+	# before its stat is observed as a safe zombie. Only an unchanged second
+	# builtin snapshot proves that no newly adopted root was missed.
+	read_adopted_children_snapshot "$children_file" || return 1
+	[ "$children_snapshot" = "$children" ] || return 2
 }
 
 # session_pids is the non-Linux offline-rig fallback. It prints every pid
@@ -374,7 +408,10 @@ PYEOF
 kill_child_group() {
 	if [ "$(uname -s)" = "Linux" ]; then
 		is_child_subreaper || return 1
-		collect_adopted_children || return 1
+		collect_rc=0
+		collect_adopted_children || collect_rc=$?
+		[ "$collect_rc" -le 2 ] || return 1
+		[ "$collect_rc" -ne 1 ] || return 1
 		for pid in $cleanup_pids; do
 			kill -TERM "$pid" 2>/dev/null || true
 		done
@@ -382,8 +419,11 @@ kill_child_group() {
 
 		cleanup_round=0
 		while [ "$cleanup_round" -lt 100 ]; do
-			collect_adopted_children || return 1
-			[ -z "$cleanup_pids" ] && return 0
+			collect_rc=0
+			collect_adopted_children || collect_rc=$?
+			[ "$collect_rc" -le 2 ] || return 1
+			[ "$collect_rc" -ne 1 ] || return 1
+			[ "$collect_rc" -eq 0 ] && [ -z "$cleanup_pids" ] && return 0
 			for pid in $cleanup_pids; do
 				kill -KILL "$pid" 2>/dev/null || true
 			done
