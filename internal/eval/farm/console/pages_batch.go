@@ -735,7 +735,7 @@ func (s *Server) populateBatchSummary(data *batchPageData, rows []RunRow) {
 				data.UnassessedFailedN++
 			}
 		}
-		if row.Outcome != "" && runDidWork(row) && !assessmentWorkUnavailable(row) {
+		if row.DoneExists && runDidWork(row) && !assessmentWorkUnavailable(row) {
 			data.ReassessEligibleN++
 		}
 	}
@@ -750,7 +750,7 @@ func (s *Server) populateBatchSummary(data *batchPageData, rows []RunRow) {
 			data.ZCPHigh, data.ZCPMedium = c.High, c.Medium
 		}
 	}
-	data.AnyAssessed = data.ReassessEligibleN > 0
+	data.AnyAssessed = data.ObservedN > 0 && data.ReassessEligibleN > 0
 	data.SummaryLine = buildBatchSummaryLine(data.GoalYes, data.GoalPartly, data.GoalNo, data.OutcomeOK, data.OutcomeProblem, data.OutcomeInconclusive, data.CauseCounts)
 }
 
