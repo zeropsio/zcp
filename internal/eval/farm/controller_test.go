@@ -2023,6 +2023,39 @@ func TestRunBatch_RollbackFailure_RetainsRecoveryIDs(t *testing.T) {
 	}
 }
 
+func TestRunBatch_FinalizationFailure_PreservesCleanupError(t *testing.T) {
+	t.Parallel()
+	f := newControllerFixture(t, "client-s4-final-errors")
+	batch := "batch-s4-final-errors"
+	runID := batch + "-settled"
+	seedSettledRun(t, f.s3, runID, "settled", ResultPassed)
+	f.account.mu.Lock()
+	f.account.failDeleteProjectName = ProjectPrefix + runID
+	f.account.mu.Unlock()
+	fake := f.s3
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/batches/"+batch+"/manifest.json") {
+			// Initial reservation succeeds; the post-creation token update fails.
+			if _, ok := fake.get("batches/" + batch + "/manifest.json"); ok {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+		}
+		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/batches/"+batch+"/summary.json") {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		fake.handler(t)(w, r)
+	}))
+	t.Cleanup(server.Close)
+	sink := NewSinkClient(Config{URL: server.URL, Bucket: fakeS3Bucket, Key: "key", Secret: "secret"})
+	opts := RunOptions{Batch: batch, ClientID: "client-s4-final-errors", Set: "gate", CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap", ScenariosDigest: "scen", Scenarios: []ScenarioRun{{ID: "settled"}}, OAuthToken: "oauth", Sink: Sink{URL: server.URL, Bucket: fakeS3Bucket, Key: "key", Secret: "secret"}, RunBudget: time.Second, PollInterval: time.Millisecond}
+	results, err := RunBatch(context.Background(), f.client, sink, opts)
+	if err == nil || !strings.Contains(err.Error(), "final summary unavailable") || !strings.Contains(err.Error(), "cleanup project") {
+		t.Fatalf("results=%+v err=%v, want summary and cleanup failures", results, err)
+	}
+}
+
 // TestRunBatch_ManifestRecordsObserver pins §1.4/§3.3: `farm run`'s
 // --observer choice is recorded verbatim in batches/<batch>/manifest.json's
 // "observer" field. Independent oracle: the expected value is the literal

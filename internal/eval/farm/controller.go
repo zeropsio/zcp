@@ -30,9 +30,10 @@ const prodSuffix = "-prod"
 // status this slice never assigns at the whole-run level — §5.1: "a run
 // whose project was never created is not reported at all").
 const (
-	ResultPassed  = "passed"
-	ResultFailed  = "failed"
-	ResultBlocked = "blocked"
+	ResultPassed          = "passed"
+	ResultFailed          = "failed"
+	ResultBlocked         = "blocked"
+	batchEndedByInterrupt = "interrupt"
 )
 
 // DetailNoBundle is the RunResult.Detail / GCCandidate.Exempt value for a
@@ -550,7 +551,7 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 	endedBy := "settled"
 	switch {
 	case endedByInterrupt:
-		endedBy = "interrupt"
+		endedBy = batchEndedByInterrupt
 	case endedByBudget:
 		endedBy = "budget"
 	}
@@ -603,7 +604,7 @@ func finalizeAfterFailure(ctx context.Context, client PlatformClient, sink *Sink
 	}
 	endedBy := "settled"
 	if endedByInterrupt {
-		endedBy = "interrupt"
+		endedBy = batchEndedByInterrupt
 	} else if endedByBudget {
 		endedBy = "budget"
 	}
@@ -612,7 +613,7 @@ func finalizeAfterFailure(ctx context.Context, client PlatformClient, sink *Sink
 		summary.Runs = append(summary.Runs, SummaryRun(rr))
 	}
 	if err := PutSummary(context.WithoutCancel(ctx), sink, opts.Batch, summary); err != nil {
-		return results, errors.Join(cause, fmt.Errorf("farm run: final summary unavailable: %w", err))
+		return results, errors.Join(cause, fmt.Errorf("farm run: final summary unavailable: %w", err), errors.Join(cleanupErrs...))
 	}
 	return results, errors.Join(cause, errors.Join(cleanupErrs...))
 }
