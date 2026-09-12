@@ -92,6 +92,29 @@ func TestPages_RunWithoutDoneNoAssessForm(t *testing.T) {
 	}
 }
 
+// TestPages_RunNeverStarted_NoAssessForm pins §8.5's zero-work state on
+// the run page: done.json alone does not make a run assessable. The page
+// explains the terminal no-work state and offers no action that the server
+// would refuse.
+func TestPages_RunNeverStarted_NoAssessForm(t *testing.T) {
+	srv, store, _ := testServer(t)
+	seedBatch(t, store, "nw1", "claude-sonnet-5", []runFixture{
+		{runID: "nw1-a", scenario: "a", startedAt: fixedNow(t)().Add(-time.Minute), done: true, neverStarted: true},
+	}, true, map[string]string{"nw1-a": "not-run"})
+
+	rr := doGET(t, srv.Handler(), "/r/nw1-a")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /r/nw1-a: got %d, want 200, body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, `action="/r/nw1-a/observe"`) {
+		t.Errorf("never-started run rendered an Assess form:\n%s", body)
+	}
+	if !strings.Contains(body, "never started — nothing to assess") {
+		t.Errorf("never-started run omitted the canonical explanation:\n%s", body)
+	}
+}
+
 // TestPages_RunObserverFailureShowsCanonicalReason pins the review fix: a
 // failed current observation reads the §8.8 vocabulary's own wording
 // ("assessment failed — <reason>", RunRow.ObserverStateText), not an

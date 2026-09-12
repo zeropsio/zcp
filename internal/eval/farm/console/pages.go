@@ -316,6 +316,8 @@ func noticeFromQuery(q url.Values) *noticeView {
 		return &noticeView{Text: "Already queued or running — try again once it settles."}
 	case "not-finished":
 		return &noticeView{Text: "That run hasn't finished yet — nothing to assess."}
+	case "nothing-to-assess":
+		return &noticeView{Text: "That run never started — nothing to assess."}
 	case "bad-model":
 		return &noticeView{Text: "That model isn't one of the ones this console supports."}
 	case "unavailable":

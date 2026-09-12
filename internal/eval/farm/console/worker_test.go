@@ -301,12 +301,11 @@ func wkFixedNow(t time.Time) func() time.Time {
 	return func() time.Time { return t }
 }
 
-// wkSeedBundle writes the one file that proves a run actually produced a
-// bundle — results/<ts>/<scenario>/meta.json, what observer.ResultsDir
-// looks for. A run whose batch ended before it started writes done.json
-// and nothing else, and must not be queued for an assessment.
+// wkSeedBundle writes a positive-cost meta, proving meaningful work under
+// §8.5 without needing transcript fixtures. A run whose batch ended before
+// it started writes done.json and nothing else and is never eligible.
 func wkSeedBundle(b *wkFakeBucket, runID string) {
-	b.put("runs/"+runID+"/results/20260911T110000000Z/s/meta.json", []byte(`{"scenarioId":"s"}`))
+	b.put("runs/"+runID+"/results/20260911T110000000Z/s/meta.json", []byte(`{"scenarioId":"s","usage":{"totalCostUsd":0.1}}`))
 }
 
 // TestWorker_ObservesDoneRunWithoutObservation pins §8.5 FM-53: a run whose
@@ -332,6 +331,39 @@ func TestWorker_ObservesDoneRunWithoutObservation(t *testing.T) {
 	if job.RunID != "b1-scenario" || job.Batch != "b1" || job.Model != "claude-sonnet-5" || job.Source != "worker" {
 		t.Errorf("enqueued job = %+v, want RunID=b1-scenario Batch=b1 Model=claude-sonnet-5 Source=worker", job)
 	}
+}
+
+// TestWorker_PreStoreFailure_DoesNotAutoRetry pins §8.5's process-local
+// suppression: once an observation attempt fails before storing a result,
+// later automatic ticks leave that run alone until an operator retries it.
+func TestWorker_PreStoreFailure_DoesNotAutoRetry(t *testing.T) {
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	bucket := wkNewFakeBucket()
+	bucket.put("batches/b1/manifest.json", wkManifestJSON(t, now.Add(-time.Hour).Format(time.RFC3339), "claude-sonnet-5", "b1-failed"))
+	bucket.put("runs/b1-failed/done.json", []byte(`{}`))
+	wkSeedBundle(bucket, "b1-failed")
+
+	calls := make(chan Job, 2)
+	q := NewQueue(func(_ context.Context, job Job) error {
+		calls <- job
+		return fmt.Errorf("store unavailable")
+	})
+	if err := q.Enqueue(context.Background(), Job{RunID: "b1-failed", Batch: "b1", Model: "claude-sonnet-5", Source: sourceAction}); err != nil {
+		t.Fatalf("seed failed attempt: %v", err)
+	}
+	wkExpectCall(t, calls)
+	if !wkEventually(t, func() bool {
+		_, failed := q.LastFailure("b1-failed")
+		return q.State("b1-failed") == "" && failed
+	}) {
+		t.Fatal("seed attempt did not settle as a remembered pre-store failure")
+	}
+
+	w := NewWorker(WorkerConfig{Bucket: bucket, Queue: q, Now: wkFixedNow(now)})
+	if err := w.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	wkExpectNoCall(t, calls)
 }
 
 // TestWorker_SkipsRunWithoutDoneOrWithObservation pins §7.7/§8.5: a run

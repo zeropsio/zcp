@@ -28,11 +28,12 @@ const sourceAction = "action"
 // code that produces them, rather than exported from pages.go — the two
 // sides agree only on these literal strings.
 const (
-	noticeQueued      = "queued"
-	noticeBusy        = "busy"
-	noticeNotFinished = "not-finished"
-	noticeBadModel    = "bad-model"
-	noticeUnavailable = "unavailable"
+	noticeQueued          = "queued"
+	noticeBusy            = "busy"
+	noticeNotFinished     = "not-finished"
+	noticeNothingToAssess = "nothing-to-assess"
+	noticeBadModel        = "bad-model"
+	noticeUnavailable     = "unavailable"
 )
 
 // defaultWorkerTickInterval is the production worker tick period (§8.5
@@ -271,6 +272,15 @@ func (s *Server) handleRunObserve(w http.ResponseWriter, r *http.Request) {
 		s.respondActionRefused(w, r, page, http.StatusConflict, "run not finished", noticeNotFinished)
 		return
 	}
+	didWork, err := loadAssessmentWork(r.Context(), s.cfg.Store, runID)
+	if err != nil {
+		http.Error(w, "assessment evidence unavailable", http.StatusBadGateway)
+		return
+	}
+	if !didWork {
+		s.respondActionRefused(w, r, page, http.StatusConflict, "never started — nothing to assess", noticeNothingToAssess)
+		return
+	}
 
 	if model == "" {
 		model = s.resolveActionModel(r.Context(), runID, manifest.Observer)
@@ -380,6 +390,8 @@ func (s *Server) handleBatchObserve(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case !row.DoneExists:
 			skipped = append(skipped, actionSkip{RunID: row.RunID, Reason: "run not finished"})
+		case assessmentWorkUnavailable(row):
+			skipped = append(skipped, actionSkip{RunID: row.RunID, Reason: "assessment evidence unavailable"})
 		case !runDidWork(row):
 			skipped = append(skipped, actionSkip{RunID: row.RunID, Reason: "never started — nothing to assess"})
 		case all || NeedsAssessment(row, runQueued(s.queueState, row.RunID)):
