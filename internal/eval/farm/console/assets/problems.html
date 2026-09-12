@@ -3,7 +3,7 @@
 <div><h1>Problems</h1><p class="muted result-summary">{{.Summary}}</p>{{if .NewestBuild}}<p class="problem-build-context">Newest assessed build <code>{{.NewestBuild}}</code></p>{{end}}</div>
 <a class="btn" href="{{pageURL "/terms" .Meta}}">How statuses work</a>
 </div>
-{{if .FailedAssessmentRuns}}<div class="callout callout-warn">{{.FailedAssessmentPrefix}}{{range $i, $r := .FailedAssessmentRuns}}{{if $i}}, {{end}}<a href="{{pageURL (printf "/r/%s" $r.RunID) $.Meta}}">{{$r.RunID}}</a>{{end}}</div>{{end}}
+{{if .FailedAssessmentRuns}}<div class="callout callout-warn"><span class="callout-copy">{{.FailedAssessmentPrefix}}{{range $i, $r := .FailedAssessmentRuns}}{{if $i}}, {{end}}<a href="{{pageURL (printf "/r/%s" $r.RunID) $.Meta}}">{{$r.RunID}}</a>{{end}}</span></div>{{end}}
 <div class="problem-toolbar">{{template "filterbar" .Nav.Filters}}
 <details class="list-sort"><summary class="btn">Sort: {{range .Nav.Sorts}}{{if .Active}}{{.Label}} {{if eq .Dir "asc"}}↑{{else}}↓{{end}}{{end}}{{end}}</summary><div class="filter-menu">{{range .Nav.Sorts}}<a href="{{.URL}}" aria-label="{{.AccessibleName}}"{{if .Active}} aria-current="true"{{end}}>{{.Label}}{{if .Active}} <span aria-hidden="true">{{if eq .Dir "asc"}}↑{{else}}↓{{end}}</span>{{end}}</a>{{end}}</div></details></div>
 <div class="card problem-table">

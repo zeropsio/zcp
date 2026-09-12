@@ -220,6 +220,9 @@ func TestPages_RunFailedNewestFallsBackToOlderOK(t *testing.T) {
 		!strings.Contains(body, "claude exited 1: boom") {
 		t.Errorf("body missing the banner naming the newest (failed) attempt:\n%s", body)
 	}
+	if !strings.Contains(body, `<p class="alert alert-warning"><span class="callout-copy">`) {
+		t.Errorf("failed-assessment warning does not keep its prose and link in one flow:\n%s", body)
+	}
 	if !strings.Contains(body, `action="/r/fn1-a/observe"`) {
 		t.Errorf("body dropped the re-assess form:\n%s", body)
 	}
