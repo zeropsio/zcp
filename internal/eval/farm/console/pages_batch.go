@@ -486,6 +486,9 @@ type batchComparisonView struct {
 func buildBatchComparison(d BatchDiff, current []RunRow) batchComparisonView {
 	byScenario := make(map[string]RunRow, len(current))
 	for _, row := range current {
+		if assessmentWorkUnavailable(row) {
+			continue
+		}
 		chosen, exists := byScenario[row.Scenario]
 		if !exists || (chosen.Verdict == farm.VerdictPassed && row.Verdict != farm.VerdictPassed) {
 			byScenario[row.Scenario] = row
@@ -608,6 +611,7 @@ type batchPageData struct {
 	Cost                                           string
 	CostUnknownN                                   int
 	ObservedN, ObservedM                           int
+	UnavailableN                                   int
 	// SummaryLine is item 9's one labelled line ("Goal: 8 yes · 1 no —
 	// Assessment: 3 OK · 6 problem — ZCP findings: 4 medium"), every zero
 	// count (and a wholly-zero group) skipped — replaces the old row of
@@ -688,7 +692,12 @@ func (s *Server) populateBatchSummary(data *batchPageData, rows []RunRow) {
 	verdictTally := map[string]int{}
 	causeCounts := newCauseClassCounts()
 	for _, row := range rows {
-		verdictTally[row.Verdict]++
+		if row.Verdict != "" {
+			verdictTally[row.Verdict]++
+		}
+		if assessmentWorkUnavailable(row) {
+			data.UnavailableN++
+		}
 		data.TotalCostUsd += row.CostUsd
 		if !row.CostKnown {
 			data.CostUnknownN++

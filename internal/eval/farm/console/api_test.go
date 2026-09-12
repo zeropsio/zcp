@@ -421,8 +421,8 @@ func TestAPI_RunsListFindingsFormatIsSpelledOut(t *testing.T) {
 }
 
 // TestAPI_BatchesMDSaysItDefaultedKind pins the verification round's item
-// 5: batches.md silently applies kind=evaluation — an omitted kind must say
-// so in one line, and an explicit kind (even kind=evaluation itself) must
+// 5: batches.md silently applies the evaluation+unavailable default — an
+// omitted kind must say so in one line, and an explicit singular kind must
 // not.
 func TestAPI_BatchesMDSaysItDefaultedKind(t *testing.T) {
 	srv, store, _ := testServer(t)
@@ -434,8 +434,8 @@ func TestAPI_BatchesMDSaysItDefaultedKind(t *testing.T) {
 	}, false, nil)
 
 	defaulted := doGET(t, h, "/api/batches.md").Body.String()
-	if !strings.Contains(defaulted, "kind=evaluation") || !strings.Contains(defaulted, "default") {
-		t.Errorf("batches.md must say it defaulted to kind=evaluation:\n%s", defaulted)
+	if !strings.Contains(defaulted, "kind=evaluation,unavailable") || !strings.Contains(defaulted, "default") {
+		t.Errorf("batches.md must say it defaulted to kind=evaluation,unavailable:\n%s", defaulted)
 	}
 
 	explicit := doGET(t, h, "/api/batches.md?kind=evaluation").Body.String()
@@ -1010,7 +1010,7 @@ func TestAPI_BatchesList(t *testing.T) {
 		{runID: "ab1-a", scenario: "a", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 1.0, taskResult: "passed", done: true},
 	}, false, nil)
 	seedBatch(t, store, "ab2-empty", "off", []runFixture{
-		{runID: "ab2-empty-a", scenario: "a", startedAt: now.Add(-time.Hour), done: false},
+		{runID: "ab2-empty-a", scenario: "a", startedAt: now.Add(-time.Hour), done: true, neverStarted: true},
 	}, false, nil)
 
 	rr := doGET(t, h, "/api/batches.md")
@@ -1025,7 +1025,7 @@ func TestAPI_BatchesList(t *testing.T) {
 		t.Errorf("batches.md missing evaluation batch ab1:\n%s", body)
 	}
 	if strings.Contains(body, "ab2-empty") {
-		t.Errorf("batches.md default kind=evaluation must exclude the empty batch:\n%s", body)
+		t.Errorf("batches.md default evaluation+unavailable scope must exclude the empty batch:\n%s", body)
 	}
 
 	rrAll := doGET(t, h, "/api/batches.json?kind=all")
@@ -1057,6 +1057,36 @@ func TestAPI_BatchesList(t *testing.T) {
 	}
 	if lines := strings.Split(strings.TrimRight(rrBadMD.Body.String(), "\n"), "\n"); len(lines) != 1 {
 		t.Errorf("bad param (md) body should be one line: %q", rrBadMD.Body.String())
+	}
+}
+
+// TestAPI_BatchesDefaultIncludesUnavailable pins the API twin of the
+// Overview default: unavailable batches remain visible and their evidence
+// gap is explicit in both markdown and JSON.
+func TestAPI_BatchesDefaultIncludesUnavailable(t *testing.T) {
+	srv, store, _ := testServer(t)
+	seedBatch(t, store, "api-unavailable", "off", []runFixture{{
+		runID: "api-unavailable-a", scenario: "a", startedAt: fixedNow(t)(),
+		durationS: "1s", costUsd: 0.1, taskResult: "passed", done: true,
+	}}, false, nil)
+	store.failListOn("runs/api-unavailable-a/results/", fmt.Errorf("temporary results failure"))
+
+	md := doGET(t, srv.Handler(), "/api/batches.md").Body.String()
+	for _, want := range []string{"kind=evaluation,unavailable", "api-unavailable", "unavailable:1"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("batches.md missing %q:\n%s", want, md)
+		}
+	}
+
+	rr := doGET(t, srv.Handler(), "/api/batches.json")
+	var out struct {
+		Batches []BatchListItem `json:"batches"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.Batches) != 1 || out.Batches[0].Kind != batchKindUnavailable || out.Batches[0].UnavailableN != 1 {
+		t.Fatalf("batches.json = %+v, want one unavailable batch with unavailableN=1", out.Batches)
 	}
 }
 
@@ -1661,5 +1691,94 @@ func TestAPI_DigestExcludesNeverStartedRuns(t *testing.T) {
 	}
 	if got.UnassessedCount != 1 || got.NeverStartedCount != 1 {
 		t.Errorf("digest.json counts = unassessed %d / never started %d, want 1 / 1", got.UnassessedCount, got.NeverStartedCount)
+	}
+}
+
+// TestUnavailableEvidence_AggregatesSeparatelyFromVerdicts pins the
+// cross-surface contract for a partially readable batch. A readable passed
+// run contributes to verdict totals; a second run whose evidence cannot be
+// read contributes only to the explicit unavailable total. In particular,
+// the unknown verdict must never become an unlabeled verdict aggregate.
+func TestUnavailableEvidence_AggregatesSeparatelyFromVerdicts(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "av1", "claude-sonnet-5", []runFixture{
+		{runID: "av1-passed", scenario: "passed", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.1, taskResult: farm.VerdictPassed, done: true},
+		{runID: "av1-unavailable", scenario: "unavailable", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.1, taskResult: farm.VerdictPassed, done: true},
+	}, true, map[string]string{"av1-passed": farm.VerdictPassed})
+	store.failListOn("runs/av1-unavailable/results/", fmt.Errorf("temporary results failure"))
+
+	for _, path := range []string{"/", "/b/av1"} {
+		body := doGET(t, h, path).Body.String()
+		if !strings.Contains(body, "✓ 1 passed") {
+			t.Errorf("GET %s missing the readable passed verdict aggregate:\n%s", path, body)
+		}
+		if !strings.Contains(body, "1 unavailable") {
+			t.Errorf("GET %s missing the separate unavailable evidence count:\n%s", path, body)
+		}
+		if strings.Contains(body, `verdict-other badge">– 1 </span>`) {
+			t.Errorf("GET %s rendered the unknown verdict as an unlabeled aggregate:\n%s", path, body)
+		}
+	}
+
+	md := doGET(t, h, "/api/digest.md?batch=av1").Body.String()
+	if !strings.Contains(md, "verdicts: passed:1\n") || strings.Contains(md, "verdicts: :1") {
+		t.Errorf("digest.md verdict aggregate includes the unavailable row as a blank verdict:\n%s", md)
+	}
+	if !strings.Contains(md, "evidence unavailable: 1\n") {
+		t.Errorf("digest.md missing the separate unavailable evidence count:\n%s", md)
+	}
+
+	var digest DigestResponse
+	if err := json.Unmarshal(doGET(t, h, "/api/digest.json?batch=av1").Body.Bytes(), &digest); err != nil {
+		t.Fatalf("digest.json: %v", err)
+	}
+	if len(digest.VerdictCounts) != 1 || digest.VerdictCounts[0].Verdict != farm.VerdictPassed || digest.VerdictCounts[0].Count != 1 {
+		t.Errorf("digest.json verdictCounts = %+v, want passed:1 only", digest.VerdictCounts)
+	}
+	if digest.UnavailableCount != 1 {
+		t.Errorf("digest.json unavailableCount = %d, want 1", digest.UnavailableCount)
+	}
+}
+
+// TestAPI_UnavailableRunWithoutSummary_RemainsNotObserved pins that a read
+// failure is not evidence that a run settled without a record. With no
+// matching summary row, the automatic verdict stays unknown and the API's
+// observer state stays "not observed" while its explanatory text reports
+// the evidence failure.
+func TestAPI_UnavailableRunWithoutSummary_RemainsNotObserved(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "us1", "claude-sonnet-5", []runFixture{{
+		runID: "us1-unavailable", scenario: "unavailable", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.1, taskResult: farm.VerdictPassed, done: true,
+	}}, false, nil)
+	store.failListOn("runs/us1-unavailable/results/", fmt.Errorf("temporary results failure"))
+
+	var got struct {
+		Runs []RunsListItem `json:"runs"`
+	}
+	rr := doGET(t, h, "/api/runs.json?batch=us1")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("runs.json status = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("runs.json: %v", err)
+	}
+	if len(got.Runs) != 1 {
+		t.Fatalf("runs.json rows = %+v, want one", got.Runs)
+	}
+	run := got.Runs[0]
+	if run.Verdict != "" {
+		t.Errorf("verdict = %q, want unknown", run.Verdict)
+	}
+	if run.ObserverState != observerStateNotObserved {
+		t.Errorf("observerState = %q, want %q", run.ObserverState, observerStateNotObserved)
+	}
+	if run.ObserverStateText != "assessment unavailable — run evidence could not be read" {
+		t.Errorf("observerStateText = %q, want evidence-unavailable explanation", run.ObserverStateText)
 	}
 }

@@ -1,6 +1,7 @@
 package console
 
 import (
+	"errors"
 	"net/http"
 	"regexp"
 	"strings"
@@ -294,8 +295,8 @@ func TestHome_TopProblemsStatusUsesFullHistoryNotSinceWindow(t *testing.T) {
 }
 
 // TestHome_BatchesTable pins §8.7's Overview-batches list end to end: an
-// empty batch (no run finished) is hidden under the default kind and shown
-// under kind=empty/all, per-filter-option counts, a sort link reordering
+// proven empty batch is hidden under the default kind and shown under
+// kind=empty/all, per-filter-option counts, a sort link reordering
 // the table, links keeping the other parameters, and the 400 page for an
 // unknown parameter.
 func TestHome_BatchesTable(t *testing.T) {
@@ -310,7 +311,7 @@ func TestHome_BatchesTable(t *testing.T) {
 		{runID: "bt2-a", scenario: "a", startedAt: now.Add(-1 * time.Hour), durationS: "5s", costUsd: 1.00, taskResult: "passed", done: true},
 	}, true, map[string]string{"bt2-a": "passed"})
 	seedBatchAt(t, store, "bt3-empty", "off", now.Add(-30*time.Minute), []runFixture{
-		{runID: "bt3-empty-a", scenario: "a", startedAt: now.Add(-30 * time.Minute), done: false},
+		{runID: "bt3-empty-a", scenario: "a", startedAt: now.Add(-30 * time.Minute), done: true, neverStarted: true},
 	}, false, nil)
 
 	t.Run("default hides the empty batch", func(t *testing.T) {
@@ -390,6 +391,29 @@ func TestHome_BatchesTable(t *testing.T) {
 			t.Errorf("400 body does not name an allowed kind value:\n%s", body)
 		}
 	})
+}
+
+// TestPages_HomeUnavailableBatch_ShowsUnavailableEvidence pins the end-to-end
+// default Overview behavior for a batch whose only run cannot be read. It is
+// visible, is not presented as running, and gives the operator an explicit
+// unavailable count.
+func TestPages_HomeUnavailableBatch_ShowsUnavailableEvidence(t *testing.T) {
+	srv, store, _ := testServer(t)
+	seedBatch(t, store, "home-unavailable", "off", []runFixture{{
+		runID: "home-unavailable-a", scenario: "a", startedAt: fixedNow(t)(),
+		durationS: "1s", costUsd: 0.1, taskResult: "passed", done: true,
+	}}, false, nil)
+	store.failListOn("runs/home-unavailable-a/results/", errors.New("temporary results failure"))
+
+	body := batchesTableSection(t, doGET(t, srv.Handler(), "/").Body.String())
+	for _, want := range []string{"home-unavailable", "1 unavailable", "automatic verdict unavailable"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("default Overview missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "a — running") {
+		t.Errorf("unavailable run is presented as running:\n%s", body)
+	}
 }
 
 // batchesTableSection isolates the "Batches" section's own markup from the

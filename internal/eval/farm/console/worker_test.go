@@ -301,11 +301,15 @@ func wkFixedNow(t time.Time) func() time.Time {
 	return func() time.Time { return t }
 }
 
-// wkSeedBundle writes a positive-cost meta, proving meaningful work under
-// §8.5 without needing transcript fixtures. A run whose batch ended before
-// it started writes done.json and nothing else and is never eligible.
+// wkSeedBundle writes the complete required assessment record plus a
+// positive-cost meta, proving meaningful work under §8.5. A run whose batch
+// ended before it started writes done.json and nothing else and is never
+// eligible.
 func wkSeedBundle(b *wkFakeBucket, runID string) {
-	b.put("runs/"+runID+"/results/20260911T110000000Z/s/meta.json", []byte(`{"scenarioId":"s","usage":{"totalCostUsd":0.1}}`))
+	const prefix = "/results/20260911T110000000Z/s/"
+	b.put("runs/"+runID+prefix+"meta.json", []byte(`{"scenarioId":"s","usage":{"totalCostUsd":0.1}}`))
+	b.put("runs/"+runID+prefix+"task-prompt.txt", []byte("do the thing"))
+	b.put("runs/"+runID+prefix+"transcript.jsonl", []byte(fixtureTranscript()))
 }
 
 // TestWorker_ObservesDoneRunWithoutObservation pins §8.5 FM-53: a run whose

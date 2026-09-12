@@ -553,6 +553,19 @@ type stepTextCacheEntry struct {
 	ok   bool
 }
 
+// emissionSearchState keeps the still-emitted lookup's four materially
+// different outcomes separate. In particular, an unreadable candidate is
+// not the same evidence as a readable candidate that does not contain the
+// anchor: only the latter can contribute to proving a problem gone.
+type emissionSearchState uint8
+
+const (
+	emissionSearchNotApplicable emissionSearchState = iota
+	emissionSearchAbsent
+	emissionSearchUnavailable
+	emissionSearchFound
+)
+
 // normalizedStepText fetches and caches runID's step text via findStepText,
 // normalized through the SAME pipeline problemKey's anchor branch uses —
 // maskRunSpecific (this run's own id/batch/scenario, plus any stray
@@ -594,7 +607,7 @@ func normalizedStepText(runID string, findStepText StepTextFinder, runByID map[s
 // A no-anchor/solo problem (splitAnchorKey fails) or an empty anchor keeps
 // today's behavior untouched, per the item's own scope.
 func stillEmitted(key string, scenarios map[string]bool, newestBuild string, runsByBuildScenario map[string]map[string][]string, findStepText StepTextFinder, runByID map[string]ProblemsRun, cache map[string]stepTextCacheEntry) bool {
-	return stillEmittedAnchors([]string{anchorFromProblemKey(key)}, scenarios, newestBuild, runsByBuildScenario, findStepText, runByID, cache)
+	return searchAnchorEmission([]string{anchorFromProblemKey(key)}, scenarios, newestBuild, runsByBuildScenario, findStepText, runByID, cache) == emissionSearchFound
 }
 
 func anchorFromProblemKey(key string) string {
@@ -605,30 +618,45 @@ func anchorFromProblemKey(key string) string {
 	return anchor
 }
 
-// stillEmittedAnchors is the merged-cluster form of stillEmitted. Each
+// searchAnchorEmission is the merged-cluster form of stillEmitted. Each
 // member's anchor is normalized with that member run's metadata before it is
-// compared to candidate text normalized with the candidate's metadata.
-func stillEmittedAnchors(anchors []string, scenarios map[string]bool, newestBuild string, runsByBuildScenario map[string]map[string][]string, findStepText StepTextFinder, runByID map[string]ProblemsRun, cache map[string]stepTextCacheEntry) bool {
+// compared to candidate text normalized with the candidate's metadata. A
+// positive match is conclusive even when another candidate is unavailable;
+// without a match, every relevant candidate must be readable before absence
+// is conclusive.
+func searchAnchorEmission(anchors []string, scenarios map[string]bool, newestBuild string, runsByBuildScenario map[string]map[string][]string, findStepText StepTextFinder, runByID map[string]ProblemsRun, cache map[string]stepTextCacheEntry) emissionSearchState {
 	if findStepText == nil || newestBuild == "" {
-		return false
+		return emissionSearchNotApplicable
 	}
 	if len(anchors) == 0 {
-		return false
+		return emissionSearchNotApplicable
 	}
+	sawCandidate := false
+	sawReadable := false
+	sawUnavailable := false
 	for s := range scenarios {
 		for _, runID := range runsByBuildScenario[newestBuild][s] {
+			sawCandidate = true
 			text, ok := normalizedStepText(runID, findStepText, runByID, cache)
 			if !ok {
+				sawUnavailable = true
 				continue
 			}
+			sawReadable = true
 			for _, anchor := range anchors {
 				if anchor != "" && strings.Contains(text, anchor) {
-					return true
+					return emissionSearchFound
 				}
 			}
 		}
 	}
-	return false
+	if sawUnavailable {
+		return emissionSearchUnavailable
+	}
+	if sawCandidate && sawReadable {
+		return emissionSearchAbsent
+	}
+	return emissionSearchNotApplicable
 }
 
 // statusFor implements §8.6's status for one problem, given the build
@@ -681,10 +709,15 @@ func statusFor(p Problem, bi *buildIndex, newestBuild string, runsByBuildScenari
 		}
 		anchors = append(anchors, norm(maskRunSpecific(m.Anchor, m.RunID, m.Batch, m.Scenario), runByID[m.RunID].Row.ServiceHostnames))
 	}
-	if stillEmittedAnchors(anchors, scenarios, newestBuild, runsByBuildScenario, findStepText, runByID, stepCache) {
+	switch searchAnchorEmission(anchors, scenarios, newestBuild, runsByBuildScenario, findStepText, runByID, stepCache) {
+	case emissionSearchFound:
 		return StatusStillEmitted
+	case emissionSearchUnavailable:
+		return StatusUnconfirmed
+	case emissionSearchAbsent, emissionSearchNotApplicable:
+		return candidate
 	}
-	return candidate
+	panic("unreachable emission search state")
 }
 
 // rankLess implements §8.6's rank order: live before the rest; then

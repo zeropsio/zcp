@@ -202,8 +202,9 @@ func TestPages_TermsReflectsSeptember2026VocabularyUpdate(t *testing.T) {
 	body := html.UnescapeString(doGET(t, h, "/terms").Body.String())
 
 	for _, want := range []string{
-		"Evaluation batch", "at least one run finished",
-		"Empty batch", "no run finished",
+		"Evaluation batch", "at least one run has readable evidence of work",
+		"Unavailable batch", "no run proves work and at least one run's evidence is not available",
+		"Empty batch", "every run has readable evidence of zero work",
 		"identified by its sha256",
 		"checks.agree: false",
 		"counted under the verdict it disputes, passed included",

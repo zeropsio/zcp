@@ -307,22 +307,66 @@ func TestCache_StepTextComputedOnceThenCached(t *testing.T) {
 // TestCache_StepTextMissingBundleCachedAsNotOK pins the same rule for a
 // completed no-work run whose bundle can never be loaded (StepTextFinder's
 // own doc comment: "ok is false when the run's bundle isn't available ...
-// never an error") — a repeat call must not retry the doomed read either.
-func TestCache_StepTextMissingBundleCachedAsNotOK(t *testing.T) {
+// no-results run is a complete empty corpus, and a repeat call must not retry
+// the terminal read.
+func TestCache_ZeroWorkStepTextIsCompleteEmpty(t *testing.T) {
 	store := newFakeStore()
 	now := fixedNow(t)
 	cache := newRunCache(now)
 	store.putJSON(t, doneKey("st-missing"), map[string]any{"runId": "st-missing", "scenarioId": "missing"})
 
-	if _, ok := cache.stepText(context.Background(), store, "st-missing"); ok {
-		t.Fatalf("stepText for a run with no bundle: ok = true, want false")
+	if text, ok := cache.stepText(context.Background(), store, "st-missing"); !ok || text != "" {
+		t.Fatalf("stepText for a zero-work run = %q, %v; want complete empty corpus", text, ok)
 	}
 	store.resetCallLog()
-	if _, ok := cache.stepText(context.Background(), store, "st-missing"); ok {
-		t.Fatalf("second stepText: ok = true, want false")
+	if text, ok := cache.stepText(context.Background(), store, "st-missing"); !ok || text != "" {
+		t.Fatalf("second stepText = %q, %v; want cached complete empty corpus", text, ok)
 	}
 	if len(store.gets) != 0 || len(store.lists) != 0 {
 		t.Errorf("second stepText call for a missing bundle retried the bucket: gets=%v lists=%v", store.gets, store.lists)
+	}
+}
+
+func TestCache_KnownZeroMissingStepInputsIsCompleteEmpty(t *testing.T) {
+	store := newFakeStore()
+	now := fixedNow(t)
+	seedRun(t, store, runFixture{
+		runID: "st-known-zero", scenario: "zero", startedAt: now(),
+		durationS: "0s", costUsd: 0, done: true,
+	})
+	prefix := "runs/st-known-zero/results/" + testResultsTS + "/zero/"
+	store.mu.Lock()
+	delete(store.objects, prefix+"task-prompt.txt")
+	delete(store.objects, prefix+"transcript.jsonl")
+	store.mu.Unlock()
+
+	text, ok := newRunCache(now).stepText(context.Background(), store, "st-known-zero")
+	if !ok || text != "" {
+		t.Fatalf("stepText = %q, %v; want complete empty corpus", text, ok)
+	}
+}
+
+func TestCache_PreCompletionStepTextIsIncompleteAndNotCached(t *testing.T) {
+	store := newFakeStore()
+	now := fixedNow(t)
+	seedRun(t, store, runFixture{
+		runID: "st-uploading", scenario: "uploading", startedAt: now(),
+		durationS: "1s", costUsd: 0.1, taskResult: "passed", done: true,
+	})
+	store.mu.Lock()
+	doneBody := append([]byte(nil), store.objects[doneKey("st-uploading")]...)
+	delete(store.objects, doneKey("st-uploading"))
+	store.mu.Unlock()
+
+	cache := newRunCache(now)
+	if _, ok := cache.stepText(context.Background(), store, "st-uploading"); ok {
+		t.Fatal("pre-completion stepText: ok = true, want incomplete")
+	}
+	if err := store.Put(context.Background(), doneKey("st-uploading"), doneBody); err != nil {
+		t.Fatalf("restore done: %v", err)
+	}
+	if _, ok := cache.stepText(context.Background(), store, "st-uploading"); !ok {
+		t.Fatal("completed stepText: ok = false, want complete retry")
 	}
 }
 
@@ -345,6 +389,37 @@ func TestCache_TransientStepRead_Recovers(t *testing.T) {
 	text, ok := cache.stepText(context.Background(), store, "st-recover")
 	if !ok {
 		t.Fatal("stepText after bundle became readable: ok = false, want true")
+	}
+	if !strings.Contains(text, "discovered ok") {
+		t.Errorf("stepText after recovery = %q, want fixture transcript", text)
+	}
+}
+
+// TestCache_PartialStepBundle_RecoversAfterCompletion ensures a completed
+// marker does not turn a missing required step input into a permanent
+// negative. Upload completion can lag done.json, so the next request must be
+// able to observe the restored transcript.
+func TestCache_PartialStepBundle_RecoversAfterCompletion(t *testing.T) {
+	store := newFakeStore()
+	now := fixedNow(t)
+	seedRun(t, store, runFixture{
+		runID: "st-partial", scenario: "partial", startedAt: now(),
+		durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true,
+	})
+	transcriptKey := "runs/st-partial/results/" + testResultsTS + "/partial/transcript.jsonl"
+	store.mu.Lock()
+	delete(store.objects, transcriptKey)
+	store.mu.Unlock()
+
+	cache := newRunCache(now)
+	if _, ok := cache.stepText(context.Background(), store, "st-partial"); ok {
+		t.Fatal("partial bundle stepText: ok = true, want false")
+	}
+	store.putText(t, transcriptKey, fixtureTranscript())
+
+	text, ok := cache.stepText(context.Background(), store, "st-partial")
+	if !ok {
+		t.Fatal("stepText after transcript recovery: ok = false, want true")
 	}
 	if !strings.Contains(text, "discovered ok") {
 		t.Errorf("stepText after recovery = %q, want fixture transcript", text)
