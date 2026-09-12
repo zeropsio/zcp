@@ -1983,11 +1983,43 @@ func TestRunBatch_LaterMintFailure_FinalizesEarlierRuns(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "mint run token") {
 		t.Fatalf("RunBatch error = %v, want later mint failure", err)
 	}
-	if len(results) != 1 || results[0].RunID != batch+"-first" || results[0].ProjectID == "" {
-		t.Fatalf("results = %+v, want earlier run retained for recovery", results)
+	if len(results) != 2 || results[1].RunID != batch+"-first" || results[1].ProjectID == "" {
+		t.Fatalf("results = %+v, want abort row plus earlier run retained for recovery", results)
 	}
 	if _, err := GetSummary(context.Background(), f.sink, batch); err != nil {
 		t.Fatalf("GetSummary: %v, want final summary", err)
+	}
+}
+
+type failLaunchRevokeClient struct{ PlatformClient }
+
+func (c failLaunchRevokeClient) MintProjectScopedToken(context.Context, string, string, string) (platform.MintedToken, error) {
+	return platform.MintedToken{}, &platform.PlatformError{Code: platform.ErrDelegationUnavailable, Message: "simulated forbidden mint"}
+}
+
+func (c failLaunchRevokeClient) RevokeIntegrationToken(context.Context, string, string) error {
+	return errors.New("simulated revoke failure")
+}
+
+func TestRunBatch_RollbackFailure_RetainsRecoveryIDs(t *testing.T) {
+	t.Parallel()
+	f := newControllerFixture(t, "client-s4-recovery-ids")
+	batch := "batch-s4-recovery-ids"
+	runID := batch + "-launch"
+	f.account.mu.Lock()
+	f.account.failScopedMint = true
+	f.account.failDeleteProjectName = ProjectPrefix + runID
+	f.account.mu.Unlock()
+	opts := RunOptions{Batch: batch, ClientID: "client-s4-recovery-ids", Set: "gate", CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen", Scenarios: []ScenarioRun{{ID: "launch", Launch: true}}, OAuthToken: "oauth", Sink: Sink{URL: f.sink.cfg.URL, Bucket: fakeS3Bucket, Key: "key", Secret: "secret"}, RunBudget: time.Second, PollInterval: time.Millisecond}
+	results, err := RunBatch(context.Background(), failLaunchRevokeClient{PlatformClient: f.client}, f.sink, opts)
+	if err == nil || len(results) != 1 {
+		t.Fatalf("RunBatch results=%+v err=%v, want one failed run with recovery data", results, err)
+	}
+	if results[0].ProjectID == "" || results[0].LaunchTokenID == "" {
+		t.Fatalf("result = %+v, want retained project and launch token ids", results[0])
+	}
+	if !strings.Contains(results[0].Error, "rollback failed") || !strings.Contains(results[0].Error, "revoke failed") {
+		t.Fatalf("result.Error = %q, want both cleanup failures", results[0].Error)
 	}
 }
 
