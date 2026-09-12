@@ -120,6 +120,65 @@ func TestHome_LatestEvaluationPanel(t *testing.T) {
 	}
 }
 
+// TestHome_FinishedBatchSelection_RequiresSummaryBoundary pins the batch
+// lifecycle boundary used by both Latest evaluation and its comparison.
+// Readable run work does not finish a batch: only summary.json does.
+func TestHome_FinishedBatchSelection_RequiresSummaryBoundary(t *testing.T) {
+	srv, store, _ := testServer(t)
+	now := fixedNow(t)()
+	seed := func(batch string, age time.Duration, withSummary bool) {
+		seedBatchAt(t, store, batch, ObserverOff, now.Add(-age), []runFixture{{
+			runID: batch + "-run", scenario: "deploy", startedAt: now.Add(-age),
+			durationS: "5s", costUsd: 0.1, taskResult: farm.VerdictPassed, done: true,
+		}}, withSummary, map[string]string{batch + "-run": farm.VerdictPassed})
+	}
+
+	seed("finished-previous", 4*time.Hour, true)
+	seed("unfinished-between", 2*time.Hour, false)
+	seed("finished-latest", time.Hour, true)
+	seed("unfinished-newest", 30*time.Minute, false)
+
+	rows, err := loadBatchRows(t.Context(), store, false, srv.queueState, srv.runCache, srv.summaryCache, srv.logf)
+	if err != nil {
+		t.Fatalf("loadBatchRows: %v", err)
+	}
+	latest, found := pickLatestEvaluationBatch(rows)
+	if !found {
+		t.Fatal("pickLatestEvaluationBatch: found = false, want finished-latest")
+	}
+	if latest.BatchID != "finished-latest" {
+		t.Fatalf("latest = %q, want finished-latest; unfinished work must not finish a batch", latest.BatchID)
+	}
+	previous, found := PreviousSameSet(rows, latest)
+	if !found {
+		t.Fatal("PreviousSameSet: found = false, want finished-previous")
+	}
+	if previous.BatchID != "finished-previous" {
+		t.Errorf("previous = %q, want finished-previous; unfinished work must not be a comparison boundary", previous.BatchID)
+	}
+
+	body := batchesTableSection(t, doGET(t, srv.Handler(), "/").Body.String())
+	batchRow := func(batch string) string {
+		marker := `href="/b/` + batch + `"`
+		at := strings.Index(body, marker)
+		if at < 0 {
+			t.Fatalf("batch table missing %s:\n%s", batch, body)
+		}
+		start := strings.LastIndex(body[:at], "<tr>")
+		end := strings.Index(body[at:], "</tr>")
+		if start < 0 || end < 0 {
+			t.Fatalf("cannot isolate row for %s:\n%s", batch, body)
+		}
+		return body[start : at+end]
+	}
+	if row := batchRow("unfinished-newest"); !strings.Contains(row, `batch-state-unfinished">unfinished</span>`) {
+		t.Errorf("unfinished batch row lacks unfinished lifecycle label:\n%s", row)
+	}
+	if row := batchRow("finished-latest"); !strings.Contains(row, `batch-state-finished">finished</span>`) {
+		t.Errorf("finished batch row lacks finished lifecycle label:\n%s", row)
+	}
+}
+
 // TestPages_HomeFailedScenario_DirectRunLink pins §8.3's investigation
 // path: every failed/blocked scenario in Latest evaluation links directly
 // to that concrete run, rather than requiring a second lookup in Batch.
@@ -413,6 +472,31 @@ func TestPages_HomeUnavailableBatch_ShowsUnavailableEvidence(t *testing.T) {
 	}
 	if strings.Contains(body, "a — running") {
 		t.Errorf("unavailable run is presented as running:\n%s", body)
+	}
+}
+
+// TestPages_HomeUnavailableDot_DoesNotImplySummaryVerdict pins the two
+// independent facts in a batch row: summary.json may retain an automatic
+// verdict while the underlying run evidence is unavailable. The status dot
+// must describe evidence availability; the verdict remains in its own cell.
+func TestPages_HomeUnavailableDot_DoesNotImplySummaryVerdict(t *testing.T) {
+	srv, store, _ := testServer(t)
+	now := fixedNow(t)()
+	seedBatchAt(t, store, "unavailable-summary", ObserverOff, now.Add(-time.Hour), []runFixture{{
+		runID: "unavailable-summary-run", scenario: "deploy", startedAt: now.Add(-time.Hour),
+		durationS: "5s", costUsd: 0.1, taskResult: farm.VerdictPassed, done: true,
+	}}, true, map[string]string{"unavailable-summary-run": farm.VerdictPassed})
+	store.failListOn("runs/unavailable-summary-run/results/", errors.New("temporary results failure"))
+
+	body := batchesTableSection(t, doGET(t, srv.Handler(), "/").Body.String())
+	if !strings.Contains(body, `class="dot dot-other" title="deploy — unavailable; automatic verdict passed"`) {
+		t.Errorf("unavailable evidence lacks a neutral unavailable dot and label:\n%s", body)
+	}
+	if strings.Contains(body, `class="dot dot-passed" title="deploy —`) {
+		t.Errorf("unavailable evidence is presented as a passed status dot:\n%s", body)
+	}
+	if !strings.Contains(body, `1 passed`) {
+		t.Errorf("summary verdict was lost instead of remaining in the verdict cell:\n%s", body)
 	}
 }
 

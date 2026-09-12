@@ -4,12 +4,28 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/eval/farm"
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
+
+type summaryHeadHookStore struct {
+	observer.ObjectStore
+	key       string
+	afterHead func()
+	once      sync.Once
+}
+
+func (s *summaryHeadHookStore) Head(ctx context.Context, key string) (bool, int64, error) {
+	exists, size, err := s.ObjectStore.Head(ctx, key)
+	if key == s.key {
+		s.once.Do(s.afterHead)
+	}
+	return exists, size, err
+}
 
 // TestPages_BatchesNewestFirstWithCounts pins §8.3 FM-51's "/" row shape —
 // id, created, candidate sha (12 chars), set, count per verdict, total
@@ -208,11 +224,95 @@ func TestLoadBatchRows_UnfinishedIsNotProvenEmpty(t *testing.T) {
 	}
 }
 
+// TestLoadBatchRows_SummaryBoundaryUsesOneSnapshot ensures Finished and the
+// per-run verdicts are derived from one summary.json read even when the
+// caller does not provide the server's long-lived summary cache.
+func TestLoadBatchRows_SummaryBoundaryUsesOneSnapshot(t *testing.T) {
+	store := newFakeStore()
+	seedBatch(t, store, "single-summary", ObserverOff, []runFixture{{
+		runID: "single-summary-run", scenario: "deploy", startedAt: fixedNow(t)(),
+		durationS: "1s", costUsd: 0.1, taskResult: farm.VerdictPassed, done: true,
+	}}, true, map[string]string{"single-summary-run": farm.VerdictPassed})
+	store.resetCallLog()
+
+	rows, err := loadBatchRows(context.Background(), store, false, nil, nil, nil, nil)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("loadBatchRows: rows=%+v err=%v", rows, err)
+	}
+	if !rows[0].Finished {
+		t.Fatal("Finished = false, want true from summary.json")
+	}
+
+	key := summaryKey("single-summary")
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	heads, gets := 0, 0
+	for _, got := range store.heads {
+		if got == key {
+			heads++
+		}
+	}
+	for _, got := range store.gets {
+		if got == key {
+			gets++
+		}
+	}
+	if heads != 1 || gets != 1 {
+		t.Errorf("summary reads = %d HEAD, %d GET; want one consistent snapshot", heads, gets)
+	}
+}
+
+// TestLoadBatchRows_SummarySnapshot_ResistsConcurrentSharedCacheFill pins a
+// single internally consistent view when another request fills the shared
+// cache just after this request observes an absent summary. Finished=false
+// must stay paired with the unresolved running verdict from that same first
+// snapshot.
+func TestLoadBatchRows_SummarySnapshot_ResistsConcurrentSharedCacheFill(t *testing.T) {
+	store := newFakeStore()
+	const batch = "concurrent-summary"
+	seedBatch(t, store, batch, ObserverOff, []runFixture{{
+		runID: batch + "-run", scenario: "deploy", startedAt: fixedNow(t)(), done: false,
+	}}, false, nil)
+
+	shared := newSummaryCache(fixedNow(t))
+	summary := farm.BatchSummary{
+		Batch: batch, FinishedAt: fixedNow(t)().Format(time.RFC3339), EndedBy: "settled",
+		Runs: []farm.SummaryRun{{RunID: batch + "-run", Scenario: "deploy", Result: farm.VerdictBlocked}},
+	}
+	hooked := &summaryHeadHookStore{
+		ObjectStore: store,
+		key:         summaryKey(batch),
+		afterHead: func() {
+			entry := shared.entry(batch)
+			entry.mu.Lock()
+			entry.found = true
+			entry.summary = summary
+			entry.mu.Unlock()
+		},
+	}
+
+	rows, err := loadBatchRows(context.Background(), hooked, false, nil, nil, shared, nil)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("loadBatchRows: rows=%+v err=%v", rows, err)
+	}
+	row := rows[0]
+	if row.Finished {
+		t.Fatal("Finished = true, want false from this request's first absent-summary snapshot")
+	}
+	counts := make(map[string]int, len(row.VerdictCounts))
+	for _, count := range row.VerdictCounts {
+		counts[count.Verdict] = count.Count
+	}
+	if counts[verdictRunning] != 1 || counts[farm.VerdictBlocked] != 0 {
+		t.Errorf("VerdictCounts = %+v, want running=1 and no final verdict from the later shared-cache fill", counts)
+	}
+}
+
 // --- PreviousSameSet (item 2) ---------------------------------------------
 
 func TestPreviousSameSet(t *testing.T) {
 	mk := func(id, set, kind string, created time.Time) BatchRow {
-		return BatchRow{BatchID: id, Set: set, Kind: kind, CreatedAt: created}
+		return BatchRow{BatchID: id, Set: set, Kind: kind, Finished: true, CreatedAt: created}
 	}
 	day := func(n int) time.Time { return time.Date(2026, 9, n, 0, 0, 0, 0, time.UTC) }
 

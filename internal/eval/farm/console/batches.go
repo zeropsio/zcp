@@ -52,6 +52,7 @@ type BatchRow struct {
 	Build               BuildInfo
 	Note                string
 	Kind                string // batchKindEvaluation | batchKindEmpty | batchKindUnavailable
+	Finished            bool   // summary.json exists; the batch lifecycle boundary (§1.4)
 	CostUnknownN        int    // count of runs whose cost is unknown (§8.3: "$2.19 + 7 unknown")
 	UnavailableN        int    // count of manifest runs whose evidence could not be read
 	ZCPHigh             int
@@ -106,6 +107,24 @@ func orderedVerdictCounts(counts map[string]int) []VerdictCount {
 	return out
 }
 
+// pinSummarySnapshot gives batchWindowRowsWithManifest the exact summary
+// result loadBatchRows already observed. It prevents another request from
+// filling the shared cache between Finished resolution and RunRow
+// construction, which would mix an unfinished lifecycle state with final
+// summary verdicts. The non-zero checkedAt also pins an absent snapshot
+// without issuing a second store read.
+func pinSummarySnapshot(batch string, summary farm.BatchSummary, found bool) *summaryCache {
+	checkedAt := time.Now()
+	pinned := newSummaryCache(func() time.Time { return checkedAt })
+	entry := pinned.entry(batch)
+	entry.mu.Lock()
+	entry.found = found
+	entry.summary = summary
+	entry.checkedAt = checkedAt
+	entry.mu.Unlock()
+	return pinned
+}
+
 // loadBatchRows resolves every batch's "/" row (§8.3 FM-51), newest
 // manifest.createdAt first (ties broken by batch id, descending, so the
 // order is deterministic). It reads view.go's RunRow per run (read-only:
@@ -132,7 +151,13 @@ func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObser
 			logf("skip batch %s: load manifest: %v", id, err)
 			continue
 		}
-		runRows, err := batchWindowRowsWithManifest(ctx, store, consoleObserverDisabled, id, manifest, queueState, cache, sc, logf)
+		summary, finished, err := resolveSummary(ctx, store, sc, id)
+		if err != nil {
+			logf("skip batch %s: load summary boundary: %v", id, err)
+			continue
+		}
+		pinnedSummary := pinSummarySnapshot(id, summary, finished)
+		runRows, err := batchWindowRowsWithManifest(ctx, store, consoleObserverDisabled, id, manifest, queueState, cache, pinnedSummary, logf)
 		if err != nil {
 			logf("skip batch %s: %v", id, err)
 			continue
@@ -234,7 +259,7 @@ func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObser
 			RunVerdicts:    verdicts,
 			High:           high,
 
-			Build: bc.build(), Note: manifest.Note, Kind: kind, CostUnknownN: costUnknown, UnavailableN: unavailableN,
+			Build: bc.build(), Note: manifest.Note, Kind: kind, Finished: finished, CostUnknownN: costUnknown, UnavailableN: unavailableN,
 			ZCPHigh: zcpHigh, ZCPMedium: zcpMedium, DisputedCount: disputed,
 			GoalYes: goalYes, GoalPartly: goalPartly, GoalNo: goalNo,
 			OutcomeOK: outcomeOK, OutcomeProblem: outcomeProblem, OutcomeInconclusive: outcomeInconclusive,
@@ -261,14 +286,15 @@ func batchIsOlder(a, b BatchRow) bool {
 }
 
 // PreviousSameSet returns the newest batch in rows that is older than
-// batch, shares its Set, and has a finished run (Kind == batchKindEvaluation)
+// batch, shares its Set, proves work (Kind == batchKindEvaluation), and has
+// crossed the batch's summary.json lifecycle boundary (Finished)
 // — §8.3's "vs <previous batch of the same set>" (Overview, /b/<batch>,
 // /problems' member status). found is false when no such batch exists.
 func PreviousSameSet(rows []BatchRow, batch BatchRow) (BatchRow, bool) {
 	var best BatchRow
 	found := false
 	for _, r := range rows {
-		if r.BatchID == batch.BatchID || r.Set != batch.Set || r.Kind != batchKindEvaluation {
+		if r.BatchID == batch.BatchID || r.Set != batch.Set || r.Kind != batchKindEvaluation || !r.Finished {
 			continue
 		}
 		if !batchIsOlder(r, batch) {
