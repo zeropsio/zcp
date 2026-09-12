@@ -13,7 +13,9 @@ package console
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +59,11 @@ type cachedImmutable struct {
 	StepCount        int
 	ServiceHostnames []string
 	metaTaskResult   string
+	// cacheable is true only when the immutable result files were read as a
+	// complete bundle. A done marker can race the final uploads; retaining
+	// that partial view would permanently hide data that appears moments
+	// later.
+	cacheable bool
 }
 
 // cachedObservation is a run's observation-part cache (rule 2): the
@@ -189,13 +196,27 @@ func (c *runCache) stepText(ctx context.Context, store observer.ObjectStore, run
 	}
 
 	var v stepTextCacheValue
+	cacheNegative := false
 	if steps, err := loadSteps(ctx, store, runID); err == nil {
 		v = stepTextCacheValue{text: rawStepSearchText(steps), ok: true}
+	} else if errors.Is(err, os.ErrNotExist) || errors.Is(err, observer.ErrResultsNotFound) {
+		// A completed run with no result bundle is a terminal no-work run;
+		// avoid paying the same doomed lookup repeatedly. Before done.json,
+		// the bundle is still being uploaded and the failed read is transient.
+		done, _, headErr := store.Head(ctx, doneKey(runID))
+		if headErr == nil && done {
+			cacheNegative = true
+			v = stepTextCacheValue{}
+		}
 	}
 
-	e.mu.Lock()
-	e.stepText = &v
-	e.mu.Unlock()
+	// A failed read is transient evidence, not a terminal absence. Keep the
+	// cache empty so an unfinished bundle can be discovered on a later pass.
+	if v.ok || cacheNegative {
+		e.mu.Lock()
+		e.stepText = &v
+		e.mu.Unlock()
+	}
 	return v.text, v.ok
 }
 
@@ -239,7 +260,9 @@ func (c *runCache) row(ctx context.Context, store observer.ObjectStore, consoleO
 		}
 		obsPart.fetchedAt = now
 		e.mu.Lock()
-		e.immutable = &built
+		if built.cacheable {
+			e.immutable = &built
+		}
 		e.obs = &obsPart
 		e.mu.Unlock()
 		return combineRow(batchID, run, &built, &obsPart, bc, summary, summaryFound, consoleObserverDisabled, queued, now), nil
@@ -331,44 +354,54 @@ func fetchImmutablePart(ctx context.Context, store observer.ObjectStore, run far
 		return cachedImmutable{}, fmt.Errorf("console: cache: new bundle: %w", err)
 	}
 	resultsDir, rdErr := observer.ResultsDir(bundle)
+	if rdErr != nil {
+		// A completed no-work run can legitimately have no results directory;
+		// preserve the row and let callers render unavailable evidence.
+		return imm, nil //nolint:nilerr // optional results are unavailable, not a row-load failure
+	}
 	var verification eval.VerificationDocument
 	var snapshot *eval.PlatformSnapshot
-	if rdErr == nil {
-		var meta eval.BehavioralResult
-		if m, mErr := observer.LoadMeta(bundle, resultsDir); mErr == nil {
-			meta = m
-			if !m.StartedAt.IsZero() {
-				imm.StartedAt = m.StartedAt
-			}
-			imm.DurationSec = time.Duration(m.Duration).Seconds()
-			if m.Usage != nil {
-				imm.CostUsd = m.Usage.TotalCostUsd
-				imm.CostKnown = true
-			}
-			if m.Task != nil {
-				imm.metaTaskResult = string(m.Task.Result)
-			}
-			imm.CandidateSha256 = m.CandidateSha256
-			imm.EvaluatorSha256 = m.EvaluatorSha256
+	var meta eval.BehavioralResult
+	metaOK := false
+	verificationOK := false
+	stepCountOK := false
+	if m, mErr := observer.LoadMeta(bundle, resultsDir); mErr == nil {
+		metaOK = true
+		meta = m
+		if !m.StartedAt.IsZero() {
+			imm.StartedAt = m.StartedAt
 		}
-		if v, vErr := observer.LoadVerification(bundle, resultsDir); vErr == nil {
-			verification = v
-			for _, c := range v.Checks {
-				if c.Result == eval.CheckFailed || c.Result == eval.CheckBlocked {
-					imm.FailedChecks = append(imm.FailedChecks, FailedCheck{
-						ID: c.ID, Result: string(c.Result), Expected: c.Expected, Observed: c.Observed, Source: c.Source,
-					})
-				}
+		imm.DurationSec = time.Duration(m.Duration).Seconds()
+		if m.Usage != nil {
+			imm.CostUsd = m.Usage.TotalCostUsd
+			imm.CostKnown = true
+		}
+		if m.Task != nil {
+			imm.metaTaskResult = string(m.Task.Result)
+		}
+		imm.CandidateSha256 = m.CandidateSha256
+		imm.EvaluatorSha256 = m.EvaluatorSha256
+	}
+	if v, vErr := observer.LoadVerification(bundle, resultsDir); vErr == nil {
+		verificationOK = true
+		verification = v
+		for _, c := range v.Checks {
+			if c.Result == eval.CheckFailed || c.Result == eval.CheckBlocked {
+				imm.FailedChecks = append(imm.FailedChecks, FailedCheck{
+					ID: c.ID, Result: string(c.Result), Expected: c.Expected, Observed: c.Observed, Source: c.Source,
+				})
 			}
-		}
-		if snap, sErr := observer.LoadPlatformSnapshot(bundle, resultsDir); sErr == nil {
-			snapshot = snap
-		}
-		if n, sErr := loadStepCount(bundle, resultsDir, meta); sErr == nil {
-			imm.StepCount = n
 		}
 	}
+	if snap, sErr := observer.LoadPlatformSnapshot(bundle, resultsDir); sErr == nil {
+		snapshot = snap
+	}
+	if n, sErr := loadStepCount(bundle, resultsDir, meta); sErr == nil {
+		stepCountOK = true
+		imm.StepCount = n
+	}
 	imm.ServiceHostnames = serviceHostnames(snapshot, verification)
+	imm.cacheable = metaOK && verificationOK && stepCountOK
 	return imm, nil
 }
 

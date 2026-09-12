@@ -502,6 +502,35 @@ func TestMergeContainedAnchorClusters(t *testing.T) {
 	})
 }
 
+// TestProblems_MergedAnchorVariant_StillEmitted pins §8.6's rule that a
+// merged problem searches every member wording. The longest representative
+// anchor may disappear while a shorter accepted wording remains in steps.
+func TestProblems_MergedAnchorVariant_StillEmitted(t *testing.T) {
+	day := func(n int) time.Time { return time.Date(2026, 9, n, 0, 0, 0, 0, time.UTC) }
+	finding := func(anchor string) observer.Finding {
+		return observer.Finding{Severity: "high", Owner: "zcp-tool", Title: "same", Surface: "tool:x", Anchor: anchor}
+	}
+	short := "source mount missing in deployment"
+	long := "platform reports source mount missing in deployment after retry"
+	oldShort := pRun("mv-short", "mv-old", "s1", "build-old", day(1), day(1), finding(short))
+	oldLong := pRun("mv-long", "mv-old", "s1", "build-old", day(1), day(2), finding(long))
+	newClean := pRun("mv-new", "mv-new", "s1", "build-new", day(2), day(3))
+	all := []ProblemsRun{oldShort, oldLong, newClean}
+
+	problems := BuildProblemsScoped(all, map[string]bool{"mv-short": true}, func(runID string) (string, bool) {
+		if runID == "mv-new" {
+			return short, true
+		}
+		return "", false
+	})
+	if len(problems) != 1 {
+		t.Fatalf("got %d problems, want one merged problem", len(problems))
+	}
+	if got := problems[0].Status; got != StatusStillEmitted {
+		t.Fatalf("merged problem status = %q, want still-emitted from the shorter member variant", got)
+	}
+}
+
 // --- item 7: "a" counts distinct runs; batch-local hit/assessed -----------
 
 // TestBuildProblems_HitOnNewestBuildCountsDistinctRuns pins item 7 (FIX2.md
