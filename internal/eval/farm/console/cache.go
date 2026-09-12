@@ -106,6 +106,7 @@ type runCacheEntry struct {
 	notDoneCheckedAt time.Time
 	immutable        *cachedImmutable
 	obs              *cachedObservation
+	obsGeneration    uint64
 	stepText         *stepTextCacheValue
 }
 
@@ -148,7 +149,56 @@ func (c *runCache) invalidateObservation(runID string) {
 	}
 	e.mu.Lock()
 	e.obs = nil
+	e.obsGeneration++
 	e.mu.Unlock()
+}
+
+// refreshObservation reads and conditionally installs one observation cache
+// value. Queue completion increments obsGeneration before dropping the old
+// value; a refresh that began before that boundary must therefore never
+// overwrite a value loaded after completion. When invalidation wins while no
+// newer value is present yet, retry against the store so this request does not
+// reintroduce the pre-completion view.
+func (c *runCache) refreshObservation(ctx context.Context, store observer.ObjectStore, runID string, e *runCacheEntry, now time.Time) *cachedObservation {
+	for {
+		e.mu.Lock()
+		previous := e.obs
+		generation := e.obsGeneration
+		e.mu.Unlock()
+
+		refreshed := fetchObservationPart(ctx, store, runID)
+		refreshed.fetchedAt = now
+
+		e.mu.Lock()
+		if generation != e.obsGeneration {
+			current := e.obs
+			e.mu.Unlock()
+			if current != nil {
+				return current
+			}
+			if ctx.Err() != nil {
+				return &refreshed
+			}
+			continue
+		}
+		if refreshed.cacheable {
+			e.obs = &refreshed
+			e.mu.Unlock()
+			return &refreshed
+		}
+		e.mu.Unlock()
+
+		if previous != nil && refreshed.currentObsID != "" && refreshed.currentObsID == previous.currentObsID {
+			// Observation documents are immutable. When listing still names the
+			// cached id as current, a transient Get failure cannot make that
+			// already-read document stale. Keep it visible, attach the refresh
+			// warning, and leave its old fetchedAt so the next request retries.
+			preserved := *previous
+			preserved.readErrors = refreshed.readErrors
+			return &preserved
+		}
+		return &refreshed
+	}
 }
 
 // rawStepSearchText assembles runID's full, searchable step text —
@@ -264,17 +314,13 @@ func (c *runCache) row(ctx context.Context, store observer.ObjectStore, consoleO
 		if err != nil {
 			return RunRow{}, err
 		}
-		obsPart := fetchObservationPart(ctx, store, run.RunID)
-		obsPart.fetchedAt = now
+		obsPart := c.refreshObservation(ctx, store, run.RunID, e, now)
 		e.mu.Lock()
 		if built.cacheable {
 			e.immutable = &built
 		}
-		if obsPart.cacheable {
-			e.obs = &obsPart
-		}
 		e.mu.Unlock()
-		return combineRow(batchID, run, &built, &obsPart, bc, summary, summaryFound, consoleObserverDisabled, queued, now), nil
+		return combineRow(batchID, run, &built, obsPart, bc, summary, summaryFound, consoleObserverDisabled, queued, now), nil
 	}
 
 	e.mu.Lock()
@@ -282,25 +328,7 @@ func (c *runCache) row(ctx context.Context, store observer.ObjectStore, consoleO
 	e.mu.Unlock()
 
 	if obsCache == nil || now.Sub(obsCache.fetchedAt) >= obsCacheTTL {
-		refreshed := fetchObservationPart(ctx, store, run.RunID)
-		refreshed.fetchedAt = now
-		switch {
-		case refreshed.cacheable:
-			e.mu.Lock()
-			e.obs = &refreshed
-			e.mu.Unlock()
-			obsCache = &refreshed
-		case obsCache != nil && refreshed.currentObsID != "" && refreshed.currentObsID == obsCache.currentObsID:
-			// Observation documents are immutable. When listing still names the
-			// cached id as current, a transient Get failure cannot make that
-			// already-read document stale. Keep it visible, attach the refresh
-			// warning, and leave its old fetchedAt so the next request retries.
-			preserved := *obsCache
-			preserved.readErrors = refreshed.readErrors
-			obsCache = &preserved
-		default:
-			obsCache = &refreshed
-		}
+		obsCache = c.refreshObservation(ctx, store, run.RunID, e, now)
 	}
 
 	return combineRow(batchID, run, imm, obsCache, bc, summary, summaryFound, consoleObserverDisabled, queued, now), nil

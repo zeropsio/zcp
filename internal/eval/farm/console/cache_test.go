@@ -30,6 +30,29 @@ type cacheFailGetStore struct {
 	err error
 }
 
+// staleObservationListStore snapshots one observation listing, then holds it
+// until the test releases it. It models a refresh that started before queue
+// completion but returns after completion invalidated and repopulated cache.
+type staleObservationListStore struct {
+	observer.ObjectStore
+	prefix  string
+	listed  chan struct{}
+	release chan struct{}
+}
+
+func (s *staleObservationListStore) List(ctx context.Context, prefix string) ([]string, error) {
+	keys, err := s.ObjectStore.List(ctx, prefix)
+	if prefix == s.prefix {
+		close(s.listed)
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return keys, err
+}
+
 func (s *cacheFailGetStore) Get(ctx context.Context, key string) ([]byte, error) {
 	if key == s.key && s.err != nil {
 		return nil, s.err
@@ -726,6 +749,53 @@ func TestCache_ObservationRefreshDoesNotRelabelStaleObservationAsCurrent(t *test
 	recovered, err := loadRunRow(context.Background(), store, false, "obs-refresh-a", nil, cache, sc)
 	if err != nil || recovered.Observation == nil || recovered.Observation.ObsID != newest.ObsID {
 		t.Fatalf("recovered current = %+v, err=%v", recovered.Observation, err)
+	}
+}
+
+func TestCache_CompletionInvalidationWinsOverOlderInFlightRefresh(t *testing.T) {
+	base := newFakeStore()
+	clock := newMutableClock(fixedNow(t)())
+	const runID = "obs-generation-a"
+	seedBatch(t, base, "obs-generation", "claude-sonnet-5", []runFixture{{
+		runID: runID, scenario: "a", startedAt: clock.now().Add(-time.Hour), durationS: "5s", taskResult: "passed", done: true,
+	}}, true, map[string]string{runID: "passed"})
+	old := fixtureObservation(runID)
+	old.ObsID = "20260911T100000000Z-claude-sonnet-5"
+	old.Headline = "old assessment"
+	seedObservation(t, base, old)
+
+	cache := newRunCache(clock.now)
+	sc := newSummaryCache(clock.now)
+	if row, err := loadRunRow(context.Background(), base, false, runID, nil, cache, sc); err != nil || row.Observation == nil || row.Observation.ObsID != old.ObsID {
+		t.Fatalf("warm row observation=%+v err=%v", row.Observation, err)
+	}
+	clock.advance(obsCacheTTL + time.Second)
+	stale := &staleObservationListStore{
+		ObjectStore: base, prefix: "runs/" + runID + "/observer/", listed: make(chan struct{}), release: make(chan struct{}),
+	}
+	refreshDone := make(chan error, 1)
+	go func() {
+		_, err := loadRunRow(context.Background(), stale, false, runID, nil, cache, sc)
+		refreshDone <- err
+	}()
+	<-stale.listed
+
+	newest := fixtureObservation(runID)
+	newest.ObsID = "20260911T110000000Z-claude-sonnet-5"
+	newest.Headline = "new assessment"
+	seedObservation(t, base, newest)
+	cache.invalidateObservation(runID)
+	if row, err := loadRunRow(context.Background(), base, false, runID, nil, cache, sc); err != nil || row.Observation == nil || row.Observation.ObsID != newest.ObsID {
+		t.Fatalf("post-completion row observation=%+v err=%v", row.Observation, err)
+	}
+	close(stale.release)
+	if err := <-refreshDone; err != nil {
+		t.Fatalf("older refresh: %v", err)
+	}
+
+	row, err := loadRunRow(context.Background(), base, false, runID, nil, cache, sc)
+	if err != nil || row.Observation == nil || row.Observation.ObsID != newest.ObsID {
+		t.Fatalf("older refresh overwrote completion result: observation=%+v err=%v", row.Observation, err)
 	}
 }
 
