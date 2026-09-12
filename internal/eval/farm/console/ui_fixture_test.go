@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,7 +47,8 @@ func TestUIFixture_Serve(t *testing.T) {
 	for _, route := range []string{
 		"/problems", "/problems?status=all", "/problems?cause=platform", "/problems?scenario=missing", "/problems?bogus=1",
 		"/", "/?kind=all&sort=cost&dir=asc", "/b/ui-current", "/b/ui-states", "/b/ui-states?verdict=blocked",
-		"/r/ui-current-deploy", "/findings", "/terms", "/login", "/missing",
+		"/r/ui-current-deploy", "/r/ui-current-deploy?steps=cited", "/r/ui-current-deploy?steps=errors",
+		"/findings", "/terms", "/login", "/missing",
 	} {
 		t.Logf("route: http://localhost:8768%s", route)
 	}
@@ -107,6 +109,35 @@ func seedUIFixture(t *testing.T, store *fakeStore) {
 		}
 		store.putJSON(t, fmt.Sprintf("batches/%s/manifest.json", batch.id), manifest)
 	}
+
+	// Give the principal run-detail fixture enough real evidence to exercise
+	// long transcripts, filtered canonical links, JSON formatting and history.
+	deployDir := "runs/ui-current-deploy/results/" + testResultsTS + "/deploy"
+	transcript := make([]string, 0, 23)
+	transcript = append(transcript,
+		`{"type":"user","message":{"content":[{"type":"text","text":"Deploy the application and verify the first release."}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"I will inspect the project and service state before deploying."}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"fixture-discover","name":"zerops_discover","input":{"project":"p1","duplicate":1,"duplicate":2,"large":9007199254740993}}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"fixture-discover","content":[{"type":"text","text":"discovered ok"}]}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"thinking","thinking":""}]}}`,
+	)
+	for i := range 18 {
+		transcript = append(transcript, fmt.Sprintf(`{"type":"assistant","message":{"content":[{"type":"text","text":"Evidence note %02d: verified the next deployment prerequisite and retained the original sequence number."}]}}`, i+1))
+	}
+	store.putText(t, deployDir+"/transcript.jsonl", strings.Join(transcript, "\n")+"\n")
+	deployAt := now.Add(-2 * time.Hour)
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "ui-current-deploy",
+		ObsID: deployAt.Add(-10*time.Minute).Format("20060102T150405000Z") + "-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: deployAt.Add(-10 * time.Minute), Status: "error",
+		ErrorKind: observer.ErrorKindModel, Error: "fixture provider response ended before an assessment was stored",
+	})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "ui-current-deploy",
+		ObsID: deployAt.Add(20*time.Minute).Format("20060102T150405000Z") + "-claude-opus-5",
+		Model: "claude-opus-5", CreatedAt: deployAt.Add(20 * time.Minute), Status: "error",
+		ErrorKind: observer.ErrorKindModel, Error: "fixture model process exited before returning a complete assessment",
+	})
 
 	statesAt := now.Add(-time.Hour)
 	stateRuns := []runFixture{
