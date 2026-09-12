@@ -1,12 +1,15 @@
 package farm
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -1325,5 +1328,125 @@ func TestWrapper_NoBashisms(t *testing.T) {
 	out, err = exec.CommandContext(ctx, shellcheckPath, "-s", "sh", path).CombinedOutput()
 	if err != nil {
 		t.Fatalf("shellcheck -s sh %s: %v\n%s", path, err, out)
+	}
+}
+
+// TestWrapper_RepeatedStart_DoesNotLaunchEvaluator proves the run-directory
+// claim is durable: a second invocation refuses before it can touch the
+// winner's evidence or start a second paid evaluator.
+func TestWrapper_RepeatedStart_DoesNotLaunchEvaluator(t *testing.T) {
+	requireShAndCurl(t)
+	h := newWrapperHarness(t)
+	first := h.start(t, nil)
+	if err := first.Wait(); err != nil {
+		t.Fatalf("first wrapper: %v", err)
+	}
+	putsBefore := len(h.fake.puts())
+	second := h.start(t, nil)
+	if err := second.Wait(); err == nil {
+		t.Fatal("repeated wrapper start succeeded; want refusal")
+	}
+	if got := len(h.fake.puts()); got != putsBefore {
+		t.Errorf("repeated start added %d sink PUTs; winner had %d before and %d after", got-putsBefore, putsBefore, got)
+	}
+}
+
+// TestWrapper_ConcurrentStart_OneChild exercises mkdir's atomic claim with
+// two supervisors racing on one empty run directory.
+func TestWrapper_ConcurrentStart_OneChild(t *testing.T) {
+	requireShAndCurl(t)
+	h := newWrapperHarness(t)
+	first := h.start(t, nil)
+	second := h.start(t, nil)
+	err1 := first.Wait()
+	err2 := second.Wait()
+	if (err1 == nil) == (err2 == nil) {
+		t.Fatalf("concurrent starts had errors (%v, %v); want exactly one winner", err1, err2)
+	}
+	puts := h.fake.puts()
+	started := 0
+	for _, key := range puts {
+		if key == "runs/"+h.runID+"/started.json" {
+			started++
+		}
+	}
+	if started != 1 {
+		t.Errorf("started.json PUT count = %d, want exactly one", started)
+	}
+}
+
+// TestWrapper_ExistingInterruptedAttempt_PreservesEvidence ensures a stale
+// claim is a refusal, including when the prior attempt left only a pid and
+// partial evidence behind.
+func TestWrapper_ExistingInterruptedAttempt_PreservesEvidence(t *testing.T) {
+	requireShAndCurl(t)
+	h := newWrapperHarness(t)
+	prior := []byte("prior evidence")
+	if err := os.WriteFile(filepath.Join(h.rundir, "supervisor.pid"), []byte("99999\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.rundir, "partial.log"), prior, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := h.start(t, nil)
+	if err := cmd.Wait(); err == nil {
+		t.Fatal("existing interrupted attempt was launched")
+	}
+	got, err := os.ReadFile(filepath.Join(h.rundir, "partial.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(prior) {
+		t.Errorf("prior evidence changed to %q", got)
+	}
+	if _, ok := h.fake.get("runs/" + h.runID + "/started.json"); ok {
+		t.Fatal("refused attempt uploaded started.json")
+	}
+}
+
+// TestWrapper_UploadFailure_DoesNotMarkUploaded makes the final done upload
+// fail and checks that the local success marker is absent. A later invocation
+// must still refuse on the durable attempt claim, preserving retry/debug
+// evidence for the operator rather than pretending the bundle was uploaded.
+func TestWrapper_UploadFailure_DoesNotMarkUploaded(t *testing.T) {
+	requireShAndCurl(t)
+	h := newWrapperHarness(t)
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/runs/"+h.runID+"/done.json") {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		proxy, err := http.NewRequestWithContext(r.Context(), r.Method, h.server.URL+r.URL.RequestURI(), bytes.NewReader(body))
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		proxy.Header = r.Header.Clone()
+		resp, err := http.DefaultClient.Do(proxy)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		for key, values := range resp.Header {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}))
+	t.Cleanup(failing.Close)
+	cmd := h.start(t, map[string]string{"ZCP_FARM_S3_URL": failing.URL})
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("wrapper should finish its local trap after upload failure: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(h.rundir, ".uploaded")); err == nil {
+		t.Fatal(".uploaded exists although done.json upload failed")
 	}
 }

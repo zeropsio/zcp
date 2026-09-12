@@ -465,10 +465,14 @@ child_main() {
 finish_and_upload() {
 	set +e
 
-	if [ -e "$RUNDIR/.uploaded" ]; then
+	# The marker is written only after done.json has been accepted by the
+	# sink.  A shell trap can be entered more than once for signals, so keep
+	# the reentrancy guard in process memory; a marker created before upload
+	# would falsely claim a failed bundle was complete.
+	if [ "${finish_running:-0}" -eq 1 ] || [ -e "$RUNDIR/.uploaded" ]; then
 		return 0
 	fi
-	: >"$RUNDIR/.uploaded"
+	finish_running=1
 
 	execution=""
 	task=""
@@ -532,7 +536,9 @@ finish_and_upload() {
 		"$redacted_json" \
 		>"$done_json"
 
-	s3_put "$done_json" "runs/$ZCP_FARM_RUN/done.json"
+	if s3_put "$done_json" "runs/$ZCP_FARM_RUN/done.json"; then
+		: >"$RUNDIR/.uploaded"
+	fi
 }
 
 # run_detached_child starts child_main in its own session (so its pgid never
@@ -578,7 +584,36 @@ supervisor_main() {
 		umask 077
 		RUNDIR="$HOME/.zcp-farm/$ZCP_FARM_RUN"
 	fi
-	mkdir -p "$RUNDIR"
+
+	# Claim the run directory before creating any supervisor/evidence files or
+	# installing the upload trap. mkdir is the atomic cross-process claim. The
+	# harness supplies an empty temporary directory, while production supplies
+	# a path below the fixed farm root; only the parent may be created here.
+	# Any existing entry means this run was completed, interrupted, or was
+	# created by an older wrapper. In all cases preserve it and refuse to
+	# launch another paid evaluator attempt.
+	parent_dir=$(dirname "$RUNDIR")
+	mkdir -p "$parent_dir"
+	if [ ! -e "$RUNDIR" ]; then
+		# In production the run directory itself is the atomic claim. The
+		# marker below is still kept as durable evidence of that claim.
+		if ! mkdir "$RUNDIR" 2>/dev/null; then
+			printf '%s\n' "refused: run directory is already claimed by another attempt" >&2
+			return 1
+		fi
+	fi
+	if [ -e "$RUNDIR/.attempt" ] || [ -e "$RUNDIR/done.json" ] || [ -e "$RUNDIR/supervisor.pid" ] || [ -e "$RUNDIR/started.json" ] || [ -e "$RUNDIR/execution-override" ]; then
+		printf '%s\n' "refused: run directory already has a completed or interrupted attempt" >&2
+		return 1
+	fi
+	if [ -n "$(find "$RUNDIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+		printf '%s\n' "refused: run directory contains a legacy attempt" >&2
+		return 1
+	fi
+	if ! mkdir "$RUNDIR/.attempt" 2>/dev/null; then
+		printf '%s\n' "refused: run directory is already claimed by another attempt" >&2
+		return 1
+	fi
 	echo $$ >"$RUNDIR/supervisor.pid"
 
 	RESULTS_DIR="$RUNDIR/results"
