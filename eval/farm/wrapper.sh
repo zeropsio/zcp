@@ -236,6 +236,53 @@ exec_as_child_subreaper() {
 	' "$prctl_nr" sh "$0" "$@"
 }
 
+# read_proc_stat_fields reads one complete /proc/<pid>/stat snapshot and sets
+# proc_state (field 3), proc_ppid (4), proc_sid (6), and proc_num_threads (20).
+# comm (field 2) may contain spaces, parentheses, and newlines, so a line-based
+# read is invalid; the kernel fields begin only after the LAST ") ". Return 2
+# when the file cannot be read (normally a process-exit race), and 1 when bytes
+# were read but do not contain a complete, usable snapshot.
+read_proc_stat_fields() {
+	proc_stat_path="$1"
+	proc_stat=$(cat "$proc_stat_path" 2>/dev/null) || return 2
+	case "$proc_stat" in
+	*") "*) ;;
+	*) return 1 ;;
+	esac
+	proc_stat_rest=${proc_stat##*) }
+	# The only newline in a valid snapshot can be inside comm and was removed
+	# with the prefix above. A remaining newline means the snapshot is invalid.
+	case "$proc_stat_rest" in
+	*'
+'*) return 1 ;;
+	esac
+	proc_stat_fields=$(printf '%s\n' "$proc_stat_rest" | awk '
+		NF < 18 ||
+		$1 !~ /^[[:alpha:]]$/ ||
+		$2 !~ /^[0-9]+$/ ||
+		$3 !~ /^[0-9]+$/ ||
+		$4 !~ /^[0-9]+$/ ||
+		$18 !~ /^[0-9]+$/ ||
+		$18 == 0 { exit 1 }
+		{ print $1, $2, $4, $18 }
+	') || return 1
+	[ -n "$proc_stat_fields" ] || return 1
+
+	proc_state=${proc_stat_fields%% *}
+	proc_stat_fields=${proc_stat_fields#* }
+	proc_ppid=${proc_stat_fields%% *}
+	proc_stat_fields=${proc_stat_fields#* }
+	proc_sid=${proc_stat_fields%% *}
+	proc_num_threads=${proc_stat_fields#* }
+}
+
+# A fully parsed, single-thread zombie has no executable threads left and is
+# waiting only to be reaped. A zombie reporting multiple threads is treated as
+# active/uncertain and remains in cleanup until the kernel snapshot changes.
+proc_stat_is_safely_inactive() {
+	[ "$proc_state" = "Z" ] && [ "$proc_num_threads" = "1" ]
+}
+
 # collect_adopted_children sets cleanup_pids to the supervisor's currently
 # live direct children. After the original evaluator has been waited for, a
 # subreaper owns every surviving descendant root, including a setsid escape.
@@ -247,14 +294,19 @@ collect_adopted_children() {
 	children=$(cat "$children_file") || return 1
 	cleanup_pids=""
 	for pid in $children; do
-		stat_line=""
-		IFS= read -r stat_line <"/proc/$pid/stat" || continue
-		stat_rest=${stat_line##*) }
-		state=${stat_rest%% *}
-		stat_rest=${stat_rest#* }
-		ppid=${stat_rest%% *}
-		[ "$ppid" = "$$" ] || continue
-		[ "$state" = "Z" ] && continue
+		stat_file="/proc/$pid/stat"
+		if read_proc_stat_fields "$stat_file"; then
+			:
+		else
+			stat_rc=$?
+			# A child can exit between the children snapshot and opening stat.
+			# Any other read error, or readable but malformed bytes, leaves
+			# liveness uncertain and must block publication.
+			[ "$stat_rc" -eq 2 ] && [ ! -e "$stat_file" ] && continue
+			return 1
+		fi
+		[ "$proc_ppid" = "$$" ] || continue
+		proc_stat_is_safely_inactive && continue
 		cleanup_pids="$cleanup_pids $pid"
 	done
 }
@@ -271,13 +323,14 @@ session_pids() {
 		for statfile in /proc/[0-9]*/stat; do
 			[ -r "$statfile" ] || continue
 			pid=$(basename "$(dirname "$statfile")")
-			line=$(cat "$statfile" 2>/dev/null) || continue
-			# The comm field ("(name)") may itself contain spaces/parens;
-			# fields after the LAST ")" are state ppid pgrp session ..., so
-			# session is the 4th whitespace-separated field from there.
-			rest=${line##*) }
-			psid=$(printf '%s\n' "$rest" | awk '{print $4}')
-			[ "$psid" = "$sid" ] && printf '%s\n' "$pid"
+			if read_proc_stat_fields "$statfile"; then
+				:
+			else
+				stat_rc=$?
+				[ "$stat_rc" -eq 2 ] && [ ! -e "$statfile" ] && continue
+				return 1
+			fi
+			[ "$proc_sid" = "$sid" ] && printf '%s\n' "$pid"
 		done
 		return 0
 	fi
@@ -348,13 +401,13 @@ kill_child_group() {
 	'' | *[!0-9]*) return 1 ;;
 	esac
 
-	pids=$(session_pids "$sid")
+	pids=$(session_pids "$sid") || return 1
 	[ -z "$pids" ] && return 0
 	for pid in $pids; do
 		kill -TERM "$pid" 2>/dev/null || true
 	done
 	sleep 0.3
-	pids=$(session_pids "$sid")
+	pids=$(session_pids "$sid") || return 1
 	for pid in $pids; do
 		kill -KILL "$pid" 2>/dev/null || true
 	done
