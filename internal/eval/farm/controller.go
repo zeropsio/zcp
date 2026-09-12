@@ -408,6 +408,13 @@ func revokeLaunchTokenOnto(ctx context.Context, client PlatformClient, opts RunO
 // settled run's project(s) and — for launch scenarios — revokes the launch
 // token, then writes batches/<batch>/summary.json.
 func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts RunOptions) ([]RunResult, error) {
+	seenScenarios := make(map[string]struct{}, len(opts.Scenarios))
+	for _, sc := range opts.Scenarios {
+		if _, exists := seenScenarios[sc.ID]; exists {
+			return nil, fmt.Errorf("farm run: duplicate scenario %q", sc.ID)
+		}
+		seenScenarios[sc.ID] = struct{}{}
+	}
 	now := opts.Now
 	if now == nil {
 		now = time.Now
@@ -442,7 +449,7 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 		CandidateInfo:   opts.CandidateInfo,
 		Runs:            manifestRuns,
 	}
-	if err := PutManifest(ctx, sink, opts.Batch, manifest); err != nil {
+	if err := CreateManifest(ctx, sink, opts.Batch, manifest); err != nil {
 		return nil, fmt.Errorf("farm run: write manifest: %w", err)
 	}
 
@@ -494,7 +501,7 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 	endedByBudget := false
 	endedByInterrupt := false
 	for _, a := range actives {
-		result, detail, settled := waitForDone(ctx, client, sink, a.RunID, a.ProjectID, a.Deadline, now, pollInterval)
+		result, detail, settled := waitForDone(ctx, client, sink, a.RunID, a.ID, opts.CandidateSHA256, opts.EvaluatorSHA256, a.ProjectID, a.Deadline, now, pollInterval)
 		rr := RunResult{RunID: a.RunID, Scenario: a.ID, ProjectID: a.ProjectID, Result: result, Detail: detail, LaunchTokenID: a.LaunchTokenID}
 
 		if !settled {
@@ -649,7 +656,7 @@ type verificationJSON struct {
 // creation-phase process always returns settled=true (§3.3 FM-21: the dead
 // project is still deleted); a transient error reading processes is never
 // itself a verdict — polling continues.
-func waitForDone(ctx context.Context, client PlatformClient, sink *SinkClient, runID, projectID string, deadline time.Time, now func() time.Time, pollInterval time.Duration) (result, detail string, settled bool) {
+func waitForDone(ctx context.Context, client PlatformClient, sink *SinkClient, runID, scenarioID, candidateSHA256, evaluatorSHA256, projectID string, deadline time.Time, now func() time.Time, pollInterval time.Duration) (result, detail string, settled bool) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -659,7 +666,7 @@ func waitForDone(ctx context.Context, client PlatformClient, sink *SinkClient, r
 
 		body, err := sink.Get(ctx, "runs/"+runID+"/done.json")
 		if err == nil {
-			return settleFromDone(ctx, sink, runID, body)
+			return settleFromDoneForIdentity(ctx, sink, runID, scenarioID, candidateSHA256, evaluatorSHA256, body)
 		}
 
 		started, _, headErr := sink.Head(ctx, "runs/"+runID+"/started.json")
@@ -746,17 +753,13 @@ func referencesControlServiceOrProject(refs []platform.ServiceStackRef) bool {
 	return false
 }
 
-// settleFromDone verifies done.json's part digests against what actually
-// landed in the bucket (FM-5: write order, and object listing order, are
-// never trusted) and, only if every part matches, reads the run's own
-// aggregated task result. A run that completed — done.json exists — always
-// reports settled=true, even when a part's digest mismatches: FM-5 makes
-// that verdict `blocked`, not `failed`, but the run itself DID complete, so
-// its project is still deleted by the caller.
-func settleFromDone(ctx context.Context, sink *SinkClient, runID string, body []byte) (result, detail string, settled bool) {
+func settleFromDoneForIdentity(ctx context.Context, sink *SinkClient, runID, scenarioID, candidateSHA256, evaluatorSHA256 string, body []byte) (result, detail string, settled bool) {
 	var done doneJSON
 	if err := json.Unmarshal(body, &done); err != nil {
 		return ResultBlocked, "done.json: parse: " + err.Error(), true
+	}
+	if done.RunID != runID || (scenarioID != "" && done.ScenarioID != scenarioID) || (candidateSHA256 != "" && done.CandidateSha256 != candidateSHA256) || (evaluatorSHA256 != "" && done.EvaluatorSha256 != evaluatorSHA256) {
+		return ResultBlocked, fmt.Sprintf("done.json: identity mismatch (run=%q scenario=%q candidate=%q evaluator=%q)", done.RunID, done.ScenarioID, done.CandidateSha256, done.EvaluatorSha256), true
 	}
 	for part, claim := range done.Parts {
 		recomputed, err := recomputePartDigest(ctx, sink, runID, part)

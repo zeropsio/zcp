@@ -45,7 +45,10 @@ func runFarmRun(args []string, envr *farm.EnvResolver) int {
 	}
 	batch := flags.batch
 	if batch == "" {
-		batch = fmt.Sprintf("batch-%d", time.Now().Unix())
+		// Nanosecond precision keeps concurrently launched commands from
+		// selecting the same human-facing id; the conditional manifest claim
+		// remains the authoritative collision guard.
+		batch = fmt.Sprintf("batch-%d", time.Now().UnixNano())
 	}
 	if !farm.ValidBatchID(batch) {
 		fmt.Fprintf(os.Stderr, "error: --batch: %q does not match the batch-id grammar (docs/spec-eval-farm.md §7.6 FM-47: ^[a-z0-9][a-z0-9-]{0,62}$)\n", batch)

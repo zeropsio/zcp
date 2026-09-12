@@ -14,6 +14,28 @@ import (
 	"time"
 )
 
+func TestSink_ConditionalCreate_ConflictPreservesBytes(t *testing.T) {
+	t.Parallel()
+	fake := newFakeS3()
+	server := httptest.NewServer(fake.handler(t))
+	defer server.Close()
+	client := NewSinkClient(Config{URL: server.URL, Bucket: fakeS3Bucket, Key: "key", Secret: "secret"})
+	ctx := context.Background()
+	if err := client.PutIfAbsent(ctx, "batches/b1/manifest.json", []byte("first")); err != nil {
+		t.Fatalf("first conditional create: %v", err)
+	}
+	if err := client.PutIfAbsent(ctx, "batches/b1/manifest.json", []byte("second")); err == nil {
+		t.Fatal("second conditional create: want conflict")
+	}
+	got, err := client.Get(ctx, "batches/b1/manifest.json")
+	if err != nil {
+		t.Fatalf("read preserved manifest: %v", err)
+	}
+	if string(got) != "first" {
+		t.Fatalf("manifest bytes = %q, want %q", got, "first")
+	}
+}
+
 // TestSinkClient_SigV4_MatchesKnownVector checks SignV4 — the package's
 // public signing seam — against AWS's own published Signature Version 4
 // test suite ("get-vanilla" case: a plain GET / with only Host and
