@@ -328,7 +328,7 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 		OlderObservations: buildOlderObsViews(runID, older),
 		ModelOptions:      buildModelOptions(preselectModel),
 	}
-	data.ShowAssessForm = row.DoneExists && !data.Meta.Observer.Hidden && !busy
+	data.ShowAssessForm = row.DoneExists && !assessmentWorkUnavailable(row) && runDidWork(row) && !data.Meta.Observer.Hidden && !busy
 	data.LiveStatusText, data.PreStoreFailureText = s.runLiveStatus(runID)
 
 	judged := populateAssessmentCard(&data, row, displayedObs, viewingOlder)

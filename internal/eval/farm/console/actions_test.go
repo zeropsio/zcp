@@ -3,11 +3,13 @@ package console
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -605,6 +607,188 @@ func TestActions_BatchObserveWithoutAllRetriesFailedObservation(t *testing.T) {
 		t.Errorf("enqueued runs = %v, want rf1-ok NOT re-queued (its current observation is ok)", got)
 	}
 	wkExpectNoCall(t, obs.calls)
+}
+
+// TestActions_ExplicitRetry_ClearsFailure pins §8.5's source distinction:
+// only an operator retry clears a remembered pre-store failure. A worker-
+// sourced job cannot erase that state, even if one is injected directly in
+// this test past Worker's normal suppression gate.
+func TestActions_ExplicitRetry_ClearsFailure(t *testing.T) {
+	calls := make(chan Job, 3)
+	workerRelease := make(chan struct{})
+	actionRelease := make(chan struct{})
+	var mu sync.Mutex
+	firstAction := true
+	q := NewQueue(func(_ context.Context, job Job) error {
+		calls <- job
+		if job.Source == wkSourceWorker {
+			<-workerRelease
+			return nil
+		}
+		mu.Lock()
+		first := firstAction
+		firstAction = false
+		mu.Unlock()
+		if first {
+			return fmt.Errorf("store unavailable")
+		}
+		<-actionRelease
+		return nil
+	})
+	completes := make(chan string, 2)
+	q.OnComplete = func(runID string) { completes <- runID }
+
+	if err := q.Enqueue(context.Background(), Job{RunID: "retry-a", Batch: "retry", Model: "claude-sonnet-5", Source: sourceAction}); err != nil {
+		t.Fatalf("seed failed attempt: %v", err)
+	}
+	wkExpectCall(t, calls)
+	select {
+	case <-completes:
+	case <-time.After(wkCallTimeout):
+		t.Fatal("seed attempt did not complete")
+	}
+	if _, failed := q.LastFailure("retry-a"); !failed {
+		t.Fatal("seed attempt did not settle as a remembered failure")
+	}
+
+	if err := q.Enqueue(context.Background(), Job{RunID: "retry-a", Batch: "retry", Model: "claude-sonnet-5", Source: wkSourceWorker}); err != nil {
+		t.Fatalf("inject worker job: %v", err)
+	}
+	wkExpectCall(t, calls)
+	if _, failed := q.LastFailure("retry-a"); !failed {
+		t.Fatal("worker-sourced job cleared the remembered failure; only an explicit retry may clear it")
+	}
+	close(workerRelease)
+	select {
+	case <-completes:
+	case <-time.After(wkCallTimeout):
+		t.Fatal("injected worker job did not complete")
+	}
+
+	srv, store := newActionServer(t, actionServerOpts{queue: q})
+	seedObserveBatch(t, store, "retry", "claude-sonnet-5", "retry-a")
+	rr := doBearerPOST(t, srv.Handler(), "/r/retry-a/observe", url.Values{"model": {"claude-sonnet-5"}})
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("explicit retry: got %d, want 202, body=%s", rr.Code, rr.Body.String())
+	}
+	job := wkExpectCall(t, calls)
+	if job.Source != sourceAction {
+		t.Fatalf("retry source = %q, want %q", job.Source, sourceAction)
+	}
+	if _, failed := q.LastFailure("retry-a"); failed {
+		t.Error("remembered failure survived the start of an explicit retry")
+	}
+	close(actionRelease)
+}
+
+// TestAssessment_ZeroWork_AllEntryPointsExclude pins §8.5's shared
+// meaningful-work rule. A completed run with a readable zero-cost meta but
+// no recorded steps is excluded by the worker, both action shapes and the
+// same NeedsAssessment predicate used by batch counts.
+func TestAssessment_ZeroWork_AllEntryPointsExclude(t *testing.T) {
+	t.Run("worker", func(t *testing.T) {
+		now := fixedNow(t)()
+		bucket := wkNewFakeBucket()
+		bucket.put("batches/zero/manifest.json", wkManifestJSON(t, now.Add(-time.Hour).Format(time.RFC3339), "claude-sonnet-5", "zero-a"))
+		bucket.put("runs/zero-a/done.json", []byte(`{}`))
+		bucket.put("runs/zero-a/results/20260911T110000000Z/s/meta.json", []byte(`{"scenarioId":"s","usage":{"totalCostUsd":0}}`))
+
+		obs := wkNewRecordingObserve()
+		defer close(obs.release)
+		q := NewQueue(obs.fn)
+		w := NewWorker(WorkerConfig{Bucket: bucket, Queue: q, Now: wkFixedNow(now)})
+		if err := w.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+		wkExpectNoCall(t, obs.calls)
+	})
+
+	newZeroWorkServer := func(t *testing.T) (*Server, *fakeStore, *wkRecordingObserve) {
+		t.Helper()
+		obs := wkNewRecordingObserve()
+		q := NewQueue(obs.fn)
+		srv, store := newActionServer(t, actionServerOpts{queue: q})
+		seedBatch(t, store, "zero", "claude-sonnet-5", []runFixture{
+			{runID: "zero-a", scenario: "a", startedAt: fixedNow(t)().Add(-time.Hour), done: true, neverStarted: true},
+		}, true, map[string]string{"zero-a": "not-run"})
+		store.putText(t, "runs/zero-a/results/20260911T110000000Z/a/meta.json", `{"scenarioId":"a","usage":{"totalCostUsd":0}}`)
+		return srv, store, obs
+	}
+
+	t.Run("single action", func(t *testing.T) {
+		srv, _, obs := newZeroWorkServer(t)
+		defer close(obs.release)
+		rr := doBearerPOST(t, srv.Handler(), "/r/zero-a/observe", url.Values{"model": {"claude-sonnet-5"}})
+		if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), "never started — nothing to assess") {
+			t.Errorf("POST zero-work run = %d %q, want 409 with the canonical reason", rr.Code, rr.Body.String())
+		}
+		wkExpectNoCall(t, obs.calls)
+	})
+
+	t.Run("batch actions and count predicate", func(t *testing.T) {
+		srv, store, obs := newZeroWorkServer(t)
+		defer close(obs.release)
+		for _, all := range []bool{false, true} {
+			vals := url.Values{"model": {"claude-sonnet-5"}}
+			if all {
+				vals.Set("all", "1")
+			}
+			rr := doBearerPOST(t, srv.Handler(), "/b/zero/observe", vals)
+			if rr.Code != http.StatusAccepted {
+				t.Fatalf("POST batch all=%v: got %d, want 202, body=%s", all, rr.Code, rr.Body.String())
+			}
+			var body actionResponseBody
+			if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode batch response: %v", err)
+			}
+			if len(body.Queued) != 0 || len(body.Skipped) != 1 || body.Skipped[0] != (actionSkip{RunID: "zero-a", Reason: "never started — nothing to assess"}) {
+				t.Errorf("batch all=%v response = %+v, want one canonical zero-work skip", all, body)
+			}
+		}
+		wkExpectNoCall(t, obs.calls)
+
+		row, err := loadRunRow(context.Background(), store, false, "zero-a", srv.queueState, nil, nil)
+		if err != nil {
+			t.Fatalf("load zero-work row: %v", err)
+		}
+		if NeedsAssessment(row, false) {
+			t.Error("zero-work row counted as needing assessment")
+		}
+	})
+
+	t.Run("unavailable evidence is not zero work", func(t *testing.T) {
+		obs := wkNewRecordingObserve()
+		defer close(obs.release)
+		q := NewQueue(obs.fn)
+		srv, store := newActionServer(t, actionServerOpts{queue: q})
+		seedObserveBatch(t, store, "unavail", "claude-sonnet-5", "unavail-a")
+		store.failListOn("runs/unavail-a/results/", fmt.Errorf("temporary bucket failure"))
+		rows, err := batchWindowRows(context.Background(), store, false, "unavail", srv.queueState, nil, nil, nil)
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("load unavailable row: rows=%d err=%v", len(rows), err)
+		}
+		if !assessmentWorkUnavailable(rows[0]) || NeedsAssessment(rows[0], false) {
+			t.Errorf("unavailable row state = unavailable:%v needs:%v, want true/false", assessmentWorkUnavailable(rows[0]), NeedsAssessment(rows[0], false))
+		}
+
+		rr := doBearerPOST(t, srv.Handler(), "/b/unavail/observe", url.Values{"model": {"claude-sonnet-5"}, "all": {"1"}})
+		if rr.Code != http.StatusAccepted {
+			t.Fatalf("POST unavailable batch: got %d, want 202, body=%s", rr.Code, rr.Body.String())
+		}
+		var body actionResponseBody
+		if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode unavailable response: %v", err)
+		}
+		if len(body.Queued) != 0 || len(body.Skipped) != 1 || body.Skipped[0] != (actionSkip{RunID: "unavail-a", Reason: "assessment evidence unavailable"}) {
+			t.Errorf("unavailable response = %+v, want an unavailable-evidence skip", body)
+		}
+		wkExpectNoCall(t, obs.calls)
+
+		page := doGET(t, srv.Handler(), "/r/unavail-a")
+		if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "assessment unavailable — run evidence could not be read") {
+			t.Errorf("run page did not keep unavailable evidence distinct: status=%d body=%s", page.Code, page.Body.String())
+		}
+	})
 }
 
 // --- TestActions_DuplicateOrAllWhileInFlight409 -------------------------

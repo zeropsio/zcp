@@ -158,7 +158,12 @@ func (q *Queue) wkRun(ctx context.Context, job Job) {
 		st.running = true
 		st.startedAt = q.now()
 	}
-	delete(q.failures, job.RunID)
+	// A remembered pre-store failure is process-local suppression for the
+	// automatic worker. Only an operator action is an explicit retry and may
+	// clear it when that new attempt actually starts (§8.5).
+	if job.Source == sourceAction {
+		delete(q.failures, job.RunID)
+	}
 	q.mu.Unlock()
 
 	jobCtx, cancel := context.WithTimeout(ctx, wkJobTimeout)
@@ -420,6 +425,9 @@ func (w *Worker) wkTickRun(ctx context.Context, batch, runID, model string) {
 	if w.cfg.Queue.State(runID) != "" {
 		return
 	}
+	if _, failed := w.cfg.Queue.LastFailure(runID); failed {
+		return
+	}
 
 	store := observer.NewStore(w.cfg.Bucket)
 	obsIDs, err := store.ListObservations(ctx, runID)
@@ -427,11 +435,8 @@ func (w *Worker) wkTickRun(ctx context.Context, batch, runID, model string) {
 		return
 	}
 
-	bundle, err := observer.NewSinkBundle(ctx, w.cfg.Bucket, runID)
-	if err != nil {
-		return
-	}
-	if _, err := observer.ResultsDir(bundle); err != nil {
+	didWork, err := loadAssessmentWork(ctx, w.cfg.Bucket, runID)
+	if err != nil || !didWork {
 		return
 	}
 

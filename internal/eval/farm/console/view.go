@@ -258,7 +258,85 @@ func observerStateText(now, manifestCreatedAt time.Time, consoleObserverDisabled
 // a run the batch ended before it started still writes done.json (live:
 // 28 runs across gate2-gate5, 0.4s, "no verification.json in bundle"), so
 // DoneExists alone says nothing about whether there is anything to read.
-func runDidWork(row RunRow) bool { return row.CostUsd > 0 || row.StepCount > 0 }
+func runDidWork(row RunRow) bool {
+	if row.assessmentWorkKnown {
+		return row.assessmentDidWork
+	}
+	return meaningfulAssessmentWork(row.CostUsd, row.StepCount)
+}
+
+func assessmentWorkUnavailable(row RunRow) bool { return row.assessmentWorkError != "" }
+
+// meaningfulAssessmentWork is §8.5's single eligibility fact: a run did
+// work when its recorded cost is positive or its record contains at least
+// one step. Keeping the literal predicate here prevents workers, actions,
+// counts and forms from drifting into results-directory heuristics.
+func meaningfulAssessmentWork(costUsd float64, stepCount int) bool {
+	return costUsd > 0 || stepCount > 0
+}
+
+// loadAssessmentWork reads only the evidence needed to apply
+// meaningfulAssessmentWork. A run with no results directory, or with a
+// readable zero-cost meta and no step files, did no work. Transport,
+// parsing and other read failures stay errors so callers can report
+// unavailable evidence instead of inventing a zero-work verdict.
+func loadAssessmentWork(ctx context.Context, store observer.ObjectStore, runID string) (bool, error) {
+	bundle, err := observer.NewSinkBundle(ctx, store, runID)
+	if err != nil {
+		return false, fmt.Errorf("console: assessment eligibility: new bundle: %w", err)
+	}
+	resultsDir, err := observer.ResultsDir(bundle)
+	if errors.Is(err, observer.ErrResultsNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("console: assessment eligibility: list results: %w", err)
+	}
+
+	meta, metaErr := observer.LoadMeta(bundle, resultsDir)
+	if metaErr == nil && meta.Usage != nil && meaningfulAssessmentWork(meta.Usage.TotalCostUsd, 0) {
+		return true, nil
+	}
+	stepCount, stepsErr := loadStepCount(bundle, resultsDir, meta)
+	if stepsErr == nil && meaningfulAssessmentWork(0, stepCount) {
+		return true, nil
+	}
+	if metaErr != nil {
+		return false, fmt.Errorf("console: assessment eligibility: load meta: %w", metaErr)
+	}
+	if stepsErr != nil && !errors.Is(stepsErr, os.ErrNotExist) {
+		return false, fmt.Errorf("console: assessment eligibility: load steps: %w", stepsErr)
+	}
+	return false, nil
+}
+
+// resolveAssessmentWork enriches a resolved row with §8.5's three-state
+// eligibility. Already-loaded positive cost or steps prove work without an
+// extra store read. A zero-looking completed row is re-checked through the
+// shared loader so cache/read failures remain unavailable rather than being
+// collapsed into "never started".
+func resolveAssessmentWork(ctx context.Context, store observer.ObjectStore, row RunRow) RunRow {
+	if !row.DoneExists {
+		return row
+	}
+	if meaningfulAssessmentWork(row.CostUsd, row.StepCount) {
+		row.assessmentWorkKnown = true
+		row.assessmentDidWork = true
+		return row
+	}
+	didWork, err := loadAssessmentWork(ctx, store, row.RunID)
+	if err != nil {
+		row.assessmentWorkError = err.Error()
+		row.ObserverStateText = "assessment unavailable — run evidence could not be read"
+		return row
+	}
+	row.assessmentWorkKnown = true
+	row.assessmentDidWork = didWork
+	if !didWork {
+		row.ObserverStateText = "never started — nothing to assess"
+	}
+	return row
+}
 
 // NeedsAssessment implements §8.5's predicate: a run needs an assessment
 // when it has done.json, did some work (runDidWork — an empty bundle has
@@ -463,6 +541,13 @@ type RunRow struct {
 	// assessment-state wording (a superset of ObserverState: it also
 	// distinguishes "assessment failed").
 	ObserverStateText string
+
+	// These three internal fields preserve assessment eligibility's
+	// work/no-work/unavailable states across the page and action consumers.
+	// They are intentionally absent from the public API wire model.
+	assessmentWorkKnown bool
+	assessmentDidWork   bool
+	assessmentWorkError string
 }
 
 // loadManifest reads and parses batches/<batch>/manifest.json, after
@@ -804,7 +889,11 @@ func loadRunRow(ctx context.Context, store observer.ObjectStore, consoleObserver
 	if err != nil {
 		return RunRow{}, fmt.Errorf("console: load run row: %w", err)
 	}
-	return runRowCached(ctx, store, cache, consoleObserverDisabled, batchID, run, bc, summary, summaryFound, queueState)
+	row, err := runRowCached(ctx, store, cache, consoleObserverDisabled, batchID, run, bc, summary, summaryFound, queueState)
+	if err != nil {
+		return RunRow{}, err
+	}
+	return resolveAssessmentWork(ctx, store, row), nil
 }
 
 // evidenceSteps returns the sorted, deduplicated step numbers cited by
@@ -858,7 +947,11 @@ func batchWindowRowsWithManifest(ctx context.Context, store observer.ObjectStore
 		return nil, fmt.Errorf("console: batch window rows: %w", err)
 	}
 	rows := fillRowsConcurrently(manifest.Runs, func(run farm.ManifestRun) (RunRow, error) {
-		return runRowCached(ctx, store, cache, consoleObserverDisabled, batchID, run, bc, summary, summaryFound, queueState)
+		row, rowErr := runRowCached(ctx, store, cache, consoleObserverDisabled, batchID, run, bc, summary, summaryFound, queueState)
+		if rowErr != nil {
+			return RunRow{}, rowErr
+		}
+		return resolveAssessmentWork(ctx, store, row), nil
 	}, logf)
 	return rows, nil
 }
