@@ -405,6 +405,7 @@ func batchEngine() Engine[BatchRow] {
 			"cost": {
 				Primary:  func(a, b BatchRow) int { return cmpFloat(a.TotalCostUsd, b.TotalCostUsd) },
 				Tiebreak: func(a, b BatchRow) int { return cmpTime(a.CreatedAt, b.CreatedAt) },
+				Unknown:  func(b BatchRow) bool { return b.ObservedM-b.CostUnknownN <= 0 },
 			},
 		},
 	}

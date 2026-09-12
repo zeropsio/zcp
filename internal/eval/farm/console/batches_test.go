@@ -227,8 +227,8 @@ func TestCompareBatches(t *testing.T) {
 func TestLists_OverviewBatches(t *testing.T) {
 	day := func(n int) time.Time { return time.Date(2026, 9, n, 0, 0, 0, 0, time.UTC) }
 	rows := []BatchRow{
-		{BatchID: "b1", Kind: batchKindEvaluation, CreatedAt: day(1), TotalCostUsd: 1, ZCPHigh: 2},
-		{BatchID: "b2", Kind: batchKindEvaluation, CreatedAt: day(3), TotalCostUsd: 5, ZCPHigh: 1},
+		{BatchID: "b1", Kind: batchKindEvaluation, CreatedAt: day(1), TotalCostUsd: 1, ObservedM: 1, ZCPHigh: 2},
+		{BatchID: "b2", Kind: batchKindEvaluation, CreatedAt: day(3), TotalCostUsd: 5, ObservedM: 1, ZCPHigh: 1},
 		{BatchID: "b3", Kind: batchKindEmpty, CreatedAt: day(2), TotalCostUsd: 0, ZCPHigh: 0},
 	}
 	eng := batchEngine()
@@ -301,6 +301,33 @@ func TestLists_OverviewBatches(t *testing.T) {
 			t.Errorf("Notice/N = %s/%s, want queued/2", q.Notice, q.N)
 		}
 	})
+}
+
+func TestBatchSort_UnknownCost_LastBothDirections(t *testing.T) {
+	rows := []BatchRow{
+		{BatchID: "known-zero", Kind: batchKindEvaluation, ObservedM: 1, TotalCostUsd: 0},
+		{BatchID: "partial", Kind: batchKindEvaluation, ObservedM: 2, CostUnknownN: 1, TotalCostUsd: 2},
+		{BatchID: "known-high", Kind: batchKindEvaluation, ObservedM: 1, TotalCostUsd: 5},
+		{BatchID: "unknown", Kind: batchKindEvaluation, ObservedM: 2, CostUnknownN: 2},
+	}
+	want := map[string][]string{
+		"asc":  {"known-zero", "partial", "known-high", "unknown"},
+		"desc": {"known-high", "partial", "known-zero", "unknown"},
+	}
+	for _, dir := range []string{"asc", "desc"} {
+		t.Run(dir, func(t *testing.T) {
+			q, err := Parse(batchListSpec(), url.Values{"sort": {"cost"}, "dir": {dir}})
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			got, _ := batchEngine().Apply(rows, q, time.Time{})
+			for i, id := range want[dir] {
+				if got[i].BatchID != id {
+					t.Fatalf("cost %s order[%d] = %q, want %q; full=%+v", dir, i, got[i].BatchID, id, got)
+				}
+			}
+		})
+	}
 }
 
 func assertStrSlice(t *testing.T, label string, got, want []string) {

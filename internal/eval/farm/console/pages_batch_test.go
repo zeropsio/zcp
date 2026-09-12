@@ -218,10 +218,8 @@ func TestPages_RefreshMetaDropsNoticeOnReload(t *testing.T) {
 }
 
 // TestPages_BatchSummaryLinksToAssessFormWithSplitCounts pins item 2
-// (FIX3): the Assess form stays at the bottom of the page, but the
-// summary card carries a "<n> runs need an assessment →" prompt linking
-// down to it (#assess), with the count split into never-assessed vs
-// failed-last-time.
+// (FIX3/S7): the Assess form sits with the whole-batch summary, before run
+// filters, with the count split into never-assessed vs failed-last-time.
 func TestPages_BatchSummaryLinksToAssessFormWithSplitCounts(t *testing.T) {
 	srv, store, _ := testServer(t)
 	h := srv.Handler()
@@ -237,17 +235,17 @@ func TestPages_BatchSummaryLinksToAssessFormWithSplitCounts(t *testing.T) {
 	})
 
 	body := doGET(t, h, "/b/sf1").Body.String()
-	if !strings.Contains(body, `href="#assess"`) {
-		t.Errorf("summary card is missing the link down to the Assess form:\n%s", body)
-	}
-	if !strings.Contains(body, "2 runs need an assessment") {
-		t.Errorf("summary card missing the \"2 runs need an assessment\" prompt:\n%s", body)
+	if !strings.Contains(body, "2 finished runs need an assessment") {
+		t.Errorf("summary card missing the whole-batch assessment prompt:\n%s", body)
 	}
 	if !strings.Contains(body, "1 never assessed, 1 failed last time") {
 		t.Errorf("summary card missing the split count:\n%s", body)
 	}
 	if !strings.Contains(body, `<form class="callout" method="post" action="/b/sf1/observe" id="assess">`) {
-		t.Errorf("Assess form is missing its #assess anchor:\n%s", body)
+		t.Errorf("summary is missing its Assess form:\n%s", body)
+	}
+	if form, runs := strings.Index(body, `id="assess"`), strings.Index(body, `aria-label="Scrollable runs in this batch"`); form < 0 || runs < 0 || form > runs {
+		t.Errorf("Assess form must precede run filters and table:\n%s", body)
 	}
 }
 
@@ -263,7 +261,7 @@ func TestPages_BatchModelPickersUseLabeledButtons(t *testing.T) {
 		}, true, map[string]string{"mb1-a": "passed"})
 
 		body := doGET(t, srv.Handler(), "/b/mb1").Body.String()
-		if !strings.Contains(body, `<button type="submit" name="model" value="claude-opus-5">Opus 5 (stronger)</button>`) {
+		if !strings.Contains(body, `value="claude-opus-5"`) || !strings.Contains(body, `>Opus 5 (stronger)</button>`) || !strings.Contains(body, `<summary class="btn">Other models</summary>`) {
 			t.Errorf("Assess callout is missing a labeled model button:\n%s", body)
 		}
 		if strings.Contains(body, `<option value="claude-sonnet-5">claude-sonnet-5</option>`) {
@@ -287,7 +285,7 @@ func TestPages_BatchModelPickersUseLabeledButtons(t *testing.T) {
 		})
 
 		body := doGET(t, srv.Handler(), "/b/mb2").Body.String()
-		if !strings.Contains(body, `<button type="submit" name="model" value="claude-fable-5-1">Re-assess all 1 runs with Fable 5.1 (strongest)</button>`) {
+		if !strings.Contains(body, `value="claude-fable-5-1"`) || !strings.Contains(body, `>Re-assess all 1 runs with Fable 5.1 (strongest)</button>`) {
 			t.Errorf("Re-assess-all is missing a labeled model button:\n%s", body)
 		}
 	})
@@ -327,15 +325,14 @@ func TestPages_BatchVsPreviousBatchLine(t *testing.T) {
 	if !strings.Contains(body, `href="/b/vp1"`) {
 		t.Errorf("body missing a link to the previous batch vp1:\n%s", body)
 	}
-	// Item 11 (FIX2): "fixed:" reads "now passing:".
-	if !strings.Contains(body, "now passing: s1") {
-		t.Errorf("body missing 'now passing: s1':\n%s", body)
+	if !strings.Contains(body, "Now passing") || !strings.Contains(body, `href="/r/vp2-s1"`) {
+		t.Errorf("body missing linked Now passing scenario s1:\n%s", body)
 	}
-	if !strings.Contains(body, "newly failing: s2") {
-		t.Errorf("body missing 'newly failing: s2':\n%s", body)
+	if !strings.Contains(body, "Newly not passing") || !strings.Contains(body, `href="/r/vp2-s2"`) {
+		t.Errorf("body missing linked Newly not passing scenario s2:\n%s", body)
 	}
-	if !strings.Contains(body, "still failing: s3") {
-		t.Errorf("body missing 'still failing: s3':\n%s", body)
+	if !strings.Contains(body, "Still not passing") || !strings.Contains(body, `href="/r/vp2-s3"`) {
+		t.Errorf("body missing linked Still not passing scenario s3:\n%s", body)
 	}
 
 	// The oldest batch has no older same-set batch to compare against —
@@ -343,6 +340,27 @@ func TestPages_BatchVsPreviousBatchLine(t *testing.T) {
 	bodyOldest := doGET(t, h, "/b/vp1").Body.String()
 	if strings.Contains(bodyOldest, "vs <a") || strings.Contains(bodyOldest, "href=\"/b/vp2\"") {
 		t.Errorf("oldest batch must not render a vs-previous line:\n%s", bodyOldest)
+	}
+}
+
+func TestPages_BatchComparison_ShowsNotPassingAndVerdict(t *testing.T) {
+	srv, store, _ := testServer(t)
+	now := fixedNow(t)()
+	seedBatch(t, store, "cmp1", "claude-sonnet-5", []runFixture{
+		{runID: "cmp1-a", scenario: "deploy", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"cmp1-a": "passed"})
+	seedBatch(t, store, "cmp2", "claude-sonnet-5", []runFixture{
+		{runID: "cmp2-a", scenario: "deploy", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "blocked", done: true},
+	}, true, map[string]string{"cmp2-a": "blocked"})
+
+	body := doGET(t, srv.Handler(), "/b/cmp2").Body.String()
+	for _, want := range []string{"Newly not passing", `href="/r/cmp2-a"`, "blocked"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "newly failing") {
+		t.Errorf("comparison uses the misleading legacy transition label:\n%s", body)
 	}
 }
 
@@ -598,6 +616,23 @@ func TestPages_BatchRunsListRendersFilterSortCountAnd400(t *testing.T) {
 	})
 }
 
+func TestPages_BatchFilteredEmpty_ShowsMatchingScope(t *testing.T) {
+	srv, store, _ := testServer(t)
+	seedBatch(t, store, "empty-filter", "claude-sonnet-5", []runFixture{
+		{runID: "empty-filter-a", scenario: "only-passing", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+	}, true, map[string]string{"empty-filter-a": "passed"})
+
+	body := doGET(t, srv.Handler(), "/b/empty-filter?verdict=blocked").Body.String()
+	for _, want := range []string{"0 matching", "of 1 run in this batch", "No runs match these filters.", `href="/b/empty-filter"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "No runs in this batch.") {
+		t.Errorf("filtered empty result is mislabeled as an empty batch:\n%s", body)
+	}
+}
+
 // TestPages_BatchRunsVerdictFilterNotStartedLabelIsSpaced pins item 11
 // (FIX2): the batch-runs verdict filter's "not-started" option (§8.7's own
 // URL token) reads "not started" wherever it is shown as a label — never
@@ -675,7 +710,7 @@ func TestPages_BatchProblemsCompactWithLowFolded(t *testing.T) {
 	if !strings.Contains(body, "always fails this way") {
 		t.Fatalf("body missing the high-severity problem's title:\n%s", body)
 	}
-	if !strings.Contains(body, `<summary>1 low</summary>`) {
+	if !strings.Contains(body, ">1 low</span>") || !strings.Contains(body, "Low-severity problems") {
 		t.Errorf("body missing the \"1 low\" <details> summary:\n%s", body)
 	}
 	// Item 7 (FIX2): the low problem's own row (title included) is inside
@@ -727,10 +762,8 @@ func TestPages_BatchInconclusiveBanner(t *testing.T) {
 	}
 }
 
-// TestPages_BatchSummaryLabelledLine pins item 9 (round-1 follow-up): the
-// batch summary renders one labelled line ("Goal: ... — Assessment: ... —
-// ZCP findings: ..."), every zero count skipped, replacing the old row of
-// identical chips.
+// TestPages_BatchSummaryLabelledLine pins the separately labelled summary
+// facts. Zero-valued outcome/goal chips remain omitted.
 func TestPages_BatchSummaryLabelledLine(t *testing.T) {
 	srv, store, _ := testServer(t)
 	h := srv.Handler()
@@ -753,14 +786,14 @@ func TestPages_BatchSummaryLabelledLine(t *testing.T) {
 	})
 
 	body := doGET(t, h, "/b/sl1").Body.String()
-	if !strings.Contains(body, "Goal: 1 yes · 1 no") {
-		t.Errorf("body missing the Goal summary line:\n%s", body)
+	if !strings.Contains(body, "Goal reached") || !strings.Contains(body, ">1 yes</span>") || !strings.Contains(body, ">1 no</span>") {
+		t.Errorf("body missing the Goal summary facts:\n%s", body)
 	}
-	if !strings.Contains(body, "Assessment: 1 OK · 1 problem") {
-		t.Errorf("body missing the Assessment summary line:\n%s", body)
+	if !strings.Contains(body, "AI assessment") || !strings.Contains(body, ">1 OK</span>") || !strings.Contains(body, ">1 needs attention</span>") {
+		t.Errorf("body missing the Assessment summary facts:\n%s", body)
 	}
-	if !strings.Contains(body, "ZCP findings: 1 medium") {
-		t.Errorf("body missing the ZCP findings summary line:\n%s", body)
+	if !strings.Contains(body, "ZCP findings") || !strings.Contains(body, ">1 medium</span>") {
+		t.Errorf("body missing the ZCP findings summary facts:\n%s", body)
 	}
 	if strings.Contains(body, "0 partly") || strings.Contains(body, "0 inconclusive") {
 		t.Errorf("body shows a zero count instead of skipping it:\n%s", body)
@@ -768,8 +801,8 @@ func TestPages_BatchSummaryLabelledLine(t *testing.T) {
 }
 
 // TestPages_BatchProblemStatusUsesChipNotPill pins item 16 (round-1
-// follow-up): the batch page's problem status badge uses .chip, not a bare
-// .pill (which is reserved for yes/no/partly).
+// follow-up): the batch page's problem status uses the Tabler badge-based
+// lifecycle style, not a bare .pill (reserved for yes/no/partly).
 func TestPages_BatchProblemStatusUsesChipNotPill(t *testing.T) {
 	srv, store, _ := testServer(t)
 	h := srv.Handler()
@@ -785,8 +818,8 @@ func TestPages_BatchProblemStatusUsesChipNotPill(t *testing.T) {
 	})
 
 	body := doGET(t, h, "/b/ps1").Body.String()
-	if !strings.Contains(body, `<span class="chip" title="`) {
-		t.Errorf("problem status is not rendered with .chip:\n%s", body)
+	if !strings.Contains(body, `class="badge state-badge`) {
+		t.Errorf("problem status is not rendered with the lifecycle badge:\n%s", body)
 	}
 	if strings.Contains(body, `<span class="pill" title="`) {
 		t.Errorf("problem status still uses a bare .pill:\n%s", body)

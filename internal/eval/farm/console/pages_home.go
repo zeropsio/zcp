@@ -30,6 +30,8 @@ type homePageData struct {
 	// ListSpec.Sorts' declaration order.
 	SortByKey map[string]SortHeaderView
 	Batches   []homeBatchRow
+	MatchingN int
+	TotalN    int
 }
 
 // sortHeadersByKey indexes a list's sort headers by key, for a template
@@ -55,6 +57,7 @@ type verdictDisputeView struct {
 // failedRunLine is one line of the Latest evaluation panel's "one line per
 // failed or blocked run" list.
 type failedRunLine struct {
+	RunID      string
 	Scenario   string
 	Verdict    string
 	Headline   string
@@ -77,10 +80,9 @@ type latestEvaluationView struct {
 	HasPrev     bool
 	PrevBatchID string
 	Diff        BatchDiff
-	// DiffLine is formatBatchDiffLine's rendered text (FIX2 item 11) —
-	// pages_batch.go's own helper, shared so the Overview's vs-previous
-	// line and the batch page's own never say the diff two different ways.
-	DiffLine string
+	Comparison  batchComparisonView
+	ObservedN   int
+	ObservedM   int
 }
 
 // topProblemView is one line of the Overview's "Top problems now" panel
@@ -183,6 +185,8 @@ func (s *Server) handleHomePage(w http.ResponseWriter, r *http.Request) {
 		Nav:         nav,
 		SortByKey:   sortHeadersByKey(nav.Sorts),
 		Batches:     rows,
+		MatchingN:   len(filtered),
+		TotalN:      len(allBatches),
 	})
 }
 
@@ -355,7 +359,7 @@ func failedOrBlockedLines(rows []RunRow) []failedRunLine {
 		if r.Verdict != farm.VerdictFailed && r.Verdict != farm.VerdictBlocked {
 			continue
 		}
-		line := failedRunLine{Scenario: r.Scenario, Verdict: r.Verdict, Headline: r.ObserverStateText}
+		line := failedRunLine{RunID: r.RunID, Scenario: r.Scenario, Verdict: r.Verdict, Headline: r.ObserverStateText}
 		if r.Observation != nil && r.Observation.Status == observationStatusOK && r.Observation.Headline != "" {
 			line.Headline = r.Observation.Headline
 		}
@@ -381,6 +385,8 @@ func (s *Server) buildLatestEvaluation(ctx context.Context, allBatches []BatchRo
 		BatchID: latestRow.BatchID, CreatedAt: latestRow.CreatedAt, Build: latestRow.Build, Set: latestRow.Set,
 		Verdicts:        verdictDisputeCounts(runRows),
 		FailedOrBlocked: failedOrBlockedLines(runRows),
+		ObservedN:       latestRow.ObservedN,
+		ObservedM:       latestRow.ObservedM,
 	}
 
 	if prevRow, found := PreviousSameSet(allBatches, latestRow); found {
@@ -390,7 +396,7 @@ func (s *Server) buildLatestEvaluation(ctx context.Context, allBatches []BatchRo
 		}
 		view.HasPrev, view.PrevBatchID = true, prevRow.BatchID
 		view.Diff = CompareBatches(prevRunRows, runRows)
-		view.DiffLine = formatBatchDiffLine(view.Diff)
+		view.Comparison = buildBatchComparison(view.Diff, runRows)
 	}
 	return view, nil
 }
