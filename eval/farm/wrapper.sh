@@ -351,12 +351,20 @@ upload_dir() {
 	dir="$1"
 	part="$2"
 	[ -d "$dir" ] || return 0
+	list_file="$RUNDIR/.upload-list-$part"
 	(
 		cd "$dir" || exit 1
 		find . -type f | sed 's#^\./##'
-	) | while IFS= read -r rel; do
-		s3_put "$dir/$rel" "runs/$ZCP_FARM_RUN/$part/$rel"
-	done
+	) >"$list_file" || { rm -f "$list_file"; return 1; }
+	upload_failed=0
+	while IFS= read -r rel; do
+		[ -n "$rel" ] || continue
+		if ! s3_put "$dir/$rel" "runs/$ZCP_FARM_RUN/$part/$rel"; then
+			upload_failed=1
+		fi
+	done <"$list_file"
+	rm -f "$list_file"
+	return "$upload_failed"
 }
 
 # ---- JSON -------------------------------------------------------------
@@ -511,8 +519,13 @@ finish_and_upload() {
 	update_capture_manifest
 	redacted_json=$(redacted_json_array)
 
-	upload_dir "$RESULTS_DIR" "results"
-	upload_dir "$CAPTURE_DIR" "capture"
+	parts_ok=1
+	if ! upload_dir "$RESULTS_DIR" "results"; then
+		parts_ok=0
+	fi
+	if ! upload_dir "$CAPTURE_DIR" "capture"; then
+		parts_ok=0
+	fi
 
 	results_digest=$(tree_digest "$RESULTS_DIR")
 	capture_digest=$(tree_digest "$CAPTURE_DIR")
@@ -536,7 +549,7 @@ finish_and_upload() {
 		"$redacted_json" \
 		>"$done_json"
 
-	if s3_put "$done_json" "runs/$ZCP_FARM_RUN/done.json"; then
+	if [ "$parts_ok" -eq 1 ] && s3_put "$done_json" "runs/$ZCP_FARM_RUN/done.json"; then
 		: >"$RUNDIR/.uploaded"
 	fi
 }

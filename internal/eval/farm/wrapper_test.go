@@ -1450,3 +1450,60 @@ func TestWrapper_UploadFailure_DoesNotMarkUploaded(t *testing.T) {
 		t.Fatal(".uploaded exists although done.json upload failed")
 	}
 }
+
+// TestWrapper_PartUploadFailure_DoesNotPublishDoneOrMarkUploaded ensures a
+// partial results upload cannot be advertised as a complete bundle. The
+// proxy fails one results object and forwards all later requests normally.
+func TestWrapper_PartUploadFailure_DoesNotPublishDoneOrMarkUploaded(t *testing.T) {
+	requireShAndCurl(t)
+	h := newWrapperHarness(t)
+	failedPart := false
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && !failedPart && strings.Contains(r.URL.Path, "/runs/"+h.runID+"/results/") {
+			failedPart = true
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		proxy, err := http.NewRequestWithContext(r.Context(), r.Method, h.server.URL+r.URL.RequestURI(), bytes.NewReader(body))
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		proxy.Header = r.Header.Clone()
+		resp, err := http.DefaultClient.Do(proxy)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		for key, values := range resp.Header {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}))
+	t.Cleanup(failing.Close)
+	cmd := h.start(t, map[string]string{"ZCP_FARM_S3_URL": failing.URL})
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("wrapper should finish local cleanup after part upload failure: %v", err)
+	}
+	if !failedPart {
+		t.Fatal("proxy did not observe a results PUT to fail")
+	}
+	if _, err := os.Stat(filepath.Join(h.rundir, "done.json")); err != nil {
+		t.Fatalf("local done.json was not retained: %v", err)
+	}
+	if _, ok := h.fake.get("runs/" + h.runID + "/done.json"); ok {
+		t.Fatal("remote done.json was published after a failed part upload")
+	}
+	if _, err := os.Stat(filepath.Join(h.rundir, ".uploaded")); err == nil {
+		t.Fatal(".uploaded exists after a failed part upload")
+	}
+}
