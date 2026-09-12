@@ -244,7 +244,7 @@ func (s *Server) handleProblemsPage(w http.ResponseWriter, r *http.Request) {
 	// only decides scopeRuns, i.e. which problems are shown at all.
 	allRuns, err := s.allProblemsRuns(ctx)
 	if err != nil {
-		writeStoreError(w, err)
+		s.renderStoreError(w, r, http.StatusBadGateway, "Problems unavailable", "The problem history could not be read.")
 		return
 	}
 	scopeRuns := problemsRunsInWindow(allRuns, q.Since, now)

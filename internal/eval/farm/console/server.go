@@ -212,8 +212,16 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && strings.HasPrefix(p, "/b/") && strings.HasSuffix(p, "/observe"):
 		s.requireAuth(s.handleBatchObserve)(w, r)
 	default:
-		http.NotFound(w, r)
+		s.requireAuth(s.handleNotFound)(w, r)
 	}
+}
+
+func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
+	if isAPIPath(r.URL.Path) {
+		http.NotFound(w, r)
+		return
+	}
+	s.renderNotFound(w, r, "Page not found", "This console page does not exist.", "Back to overview", "/")
 }
 
 // securityHeaders wraps next so every response — including a 401/404 the

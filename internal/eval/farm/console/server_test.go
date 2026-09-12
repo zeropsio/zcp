@@ -28,7 +28,11 @@ func TestServer_TabularKitAsset_LocalAndRestricted(t *testing.T) {
 		t.Run(tc.method+tc.path, func(t *testing.T) {
 			t.Parallel()
 			rr := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rr, httptest.NewRequest(tc.method, tc.path, nil))
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			if tc.status != http.StatusOK {
+				req.Header.Set("Authorization", "Bearer "+testToken)
+			}
+			srv.Handler().ServeHTTP(rr, req)
 			if rr.Code != tc.status {
 				t.Fatalf("status = %d, want %d", rr.Code, tc.status)
 			}

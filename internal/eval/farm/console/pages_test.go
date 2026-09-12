@@ -13,6 +13,22 @@ import (
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
 
+func TestPages_TermsAnchors_Resolve(t *testing.T) {
+	srv, _, _ := testServer(t)
+	body := doGET(t, srv.Handler(), "/terms").Body.String()
+	for _, id := range []string{"glossary", "verdict", "severity", "cause", "assessment-outcome", "assessment-state", "problem-status"} {
+		if strings.Count(body, `href="#`+id+`"`) != 1 || strings.Count(body, `id="`+id+`"`) != 1 {
+			t.Errorf("terms anchor %q does not resolve", id)
+		}
+	}
+	for _, label := range []string{"Verdict terms", "Severity terms", "Cause terms", "Assessment outcome terms", "Assessment state terms", "Problem status terms"} {
+		want := `<div class="table-wrap" role="region" tabindex="0" aria-label="` + label + `">`
+		if !strings.Contains(body, want) {
+			t.Errorf("terms table is not a labelled keyboard-scrollable region: %q", label)
+		}
+	}
+}
+
 // TestPages_RequireAuth pins that every §8.3 FM-51 page route requires auth
 // like every other HTML route (FM-50): unauthenticated GET redirects 303 to
 // /login?next=<its path> (§8.3: "an unauthenticated HTML request is sent

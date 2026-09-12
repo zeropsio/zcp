@@ -433,18 +433,20 @@ select:focus-visible, input:focus-visible {
 }
 
 /* login page */
-main.login { max-width: 360px; margin: 10vh auto; padding-inline: 16px; }
-main.login h1 { font-size: var(--fs-lg); }
-main.login form { display: flex; flex-direction: column; gap: 8px; }
+.farm-login { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+main.login { width: min(100%, 400px); margin: 0; padding: 0; overflow: hidden; }
+main.login .card-body { padding: 28px; }
+main.login h1 { margin-bottom: 6px; font-size: var(--fs-xl); }
+main.login form { display: grid; gap: 8px; margin-top: 22px; }
 main.login label { font-size: var(--fs-sm); }
-main.login input {
-  padding: 8px; border: 1px solid var(--border); border-radius: 8px;
-  background: var(--surface); color: var(--fg); width: 100%;
-}
-main.login .error { color: var(--error); }
+main.login input { width: 100%; background: var(--surface); color: var(--fg); }
+main.login .invalid-feedback { margin: -2px 0 2px; color: var(--error); }
+main.login .btn { width: 100%; justify-content: center; margin-top: 4px; }
+.login-help { margin: 18px 0 0; }
 
 @media (max-width: 400px) {
-  main.login { margin: 4vh auto; }
+  .farm-login { place-items: start center; padding: 16px; }
+  main.login .card-body { padding: 20px; }
 }
 
 /* Tabler adapter: use the system theme without a data-bs-theme attribute. */
@@ -810,6 +812,15 @@ main.login .error { color: var(--error); }
   outline-offset: 2px;
 }
 
+.local-nav { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 24px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
+.local-nav .nav-link { padding: 5px 9px; color: var(--fg-dim); font-size: var(--fs-sm); border-radius: 6px; }
+.local-nav .nav-link:hover { color: var(--fg); background: var(--surface); text-decoration: none; }
+.local-nav ~ h2[id] { scroll-margin-top: 72px; }
+.error-state { max-width: 640px; margin: 8vh auto; padding: 32px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); }
+.error-state h1 { margin-top: 4px; }
+.error-state p { max-width: 60ch; }
+.error-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+
 @media (max-width: 1100px) {
   .metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .metric-cell:nth-child(2) { border-right: 0; }
@@ -861,6 +872,11 @@ main.login .error { color: var(--error); }
   .step > summary { display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: start; }
   .step-preview { white-space: normal; overflow-wrap: anywhere; }
   .step-body pre { max-width: 100%; white-space: pre; overflow-wrap: normal; }
+  .local-nav { flex-wrap: nowrap; overflow-x: auto; }
+  .local-nav .nav-link { flex: 0 0 auto; }
+  .error-state { margin: 0; padding: 22px; }
+  .error-actions { display: grid; }
+  .error-actions .btn { width: 100%; justify-content: center; }
 }
 
 @media (max-width: 360px) {

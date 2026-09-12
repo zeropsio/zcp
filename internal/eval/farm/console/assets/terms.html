@@ -4,44 +4,45 @@
 <p class="muted">One word per concept, the same on every page (§8.8).</p>
 </div>
 
-<h2>Glossary</h2>
+<nav class="nav nav-pills local-nav" aria-label="Terms sections"><a class="nav-link" href="#glossary">Glossary</a><a class="nav-link" href="#verdict">Verdict</a><a class="nav-link" href="#severity">Severity</a><a class="nav-link" href="#cause">Cause</a><a class="nav-link" href="#assessment-outcome">Assessment outcome</a><a class="nav-link" href="#assessment-state">Assessment state</a><a class="nav-link" href="#problem-status">Problem status</a></nav>
+<h2 id="glossary">Glossary</h2>
 <dl class="kv terms-glossary">
 {{range .Glossary}}<dt>{{.Term}}</dt><dd>{{.Definition}}</dd>
 {{end}}
 </dl>
 
-<h2>Verdict</h2>
-<div class="table-wrap"><table>
+<h2 id="verdict">Verdict</h2>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Verdict terms"><table class="table table-vcenter">
 <thead><tr><th>Verdict</th><th>Meaning</th></tr></thead>
 <tbody>{{range .Verdicts}}<tr><td><span class="{{verdictClass .Value}}" title="{{.Tooltip}}">{{verdictIcon .Value}} {{.Label}}</span></td><td>{{.Tooltip}}</td></tr>{{end}}</tbody>
 </table></div>
 
-<h2>Severity</h2>
-<div class="table-wrap"><table>
+<h2 id="severity">Severity</h2>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Severity terms"><table class="table table-vcenter">
 <thead><tr><th>Severity</th><th>Meaning</th></tr></thead>
 <tbody>{{range .Severities}}<tr><td><span class="{{severityClass .Value}}" title="{{.Tooltip}}">{{.Label}}</span></td><td>{{.Tooltip}}</td></tr>{{end}}</tbody>
 </table></div>
 
-<h2>Cause</h2>
-<div class="table-wrap"><table>
+<h2 id="cause">Cause</h2>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Cause terms"><table class="table table-vcenter">
 <thead><tr><th>Cause</th><th>Owner value</th></tr></thead>
 <tbody>{{range .Causes}}<tr><td><span class="chip cause-chip" title="{{.Tooltip}}">{{.Label}}</span></td><td><code>{{.Value}}</code></td></tr>{{end}}</tbody>
 </table></div>
 
-<h2>Assessment outcome</h2>
-<div class="table-wrap"><table>
+<h2 id="assessment-outcome">Assessment outcome</h2>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Assessment outcome terms"><table class="table table-vcenter">
 <thead><tr><th>Outcome</th><th>Meaning</th></tr></thead>
 <tbody>{{range .Outcomes}}<tr><td><span class="{{assessmentOutcomeClass .Value}}" title="{{.Tooltip}}">{{.Label}}</span></td><td>{{.Tooltip}}</td></tr>{{end}}</tbody>
 </table></div>
 
-<h2>Assessment state</h2>
-<div class="table-wrap"><table>
+<h2 id="assessment-state">Assessment state</h2>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Assessment state terms"><table class="table table-vcenter">
 <thead><tr><th>State</th><th>Meaning</th></tr></thead>
 <tbody>{{range .States}}<tr><td><span title="{{.Tooltip}}">{{.Label}}</span></td><td>{{.Tooltip}}</td></tr>{{end}}</tbody>
 </table></div>
 
-<h2>Problem status</h2>
-<div class="table-wrap"><table>
+<h2 id="problem-status">Problem status</h2>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Problem status terms"><table class="table table-vcenter">
 <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
 <tbody>{{range .ProblemStatuses}}<tr><td><span class="chip" title="{{.Tooltip}}">{{.Label}}{{if problemStatusLive .Value}} (live){{end}}</span></td><td>{{.Tooltip}}</td></tr>{{end}}</tbody>
 </table></div>
