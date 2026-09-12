@@ -352,7 +352,7 @@ func availableUIFixtureRoutes() []uiFixtureRoute {
 		{State: "run-failed", Path: "/r/ui-states-failed", Status: http.StatusOK, Want: "failed"},
 		{State: "run-blocked", Path: "/r/ui-states-blocked", Status: http.StatusOK, Want: "blocked"},
 		{State: "run-not-started", Path: "/r/ui-states-not-started", Status: http.StatusOK, Want: "not started"},
-		{State: "run-running", Path: "/r/ui-live-running-a", Status: http.StatusOK, Want: "running"},
+		{State: "run-running", Path: "/r/ui-live-running-a", Status: http.StatusOK, WantAll: []string{`verdict-running big`, `Started <strong><span title="Not recorded">—</span>`, `Duration <strong><span title="Not recorded">—</span>`}},
 		{State: "run-stalled", Path: "/r/ui-states-stalled", Status: http.StatusOK, Want: "stalled"},
 		{State: "run-not-assessed", Path: "/r/ui-states-not-assessed", Status: http.StatusOK, Want: "not assessed"},
 		{State: "run-assessment-error", Path: "/r/ui-states-assessment-error", Status: http.StatusOK, Want: "assessment failed"},
@@ -361,7 +361,7 @@ func availableUIFixtureRoutes() []uiFixtureRoute {
 		{State: "run-historical-assessment", Path: "/r/ui-current-deploy?obs=20260911T100000000Z-claude-sonnet-5", Status: http.StatusOK, Want: "earlier assessment"},
 		{State: "run-queued", Path: "/r/ui-live-queued", Status: http.StatusOK, Want: "Queued"},
 		{State: "run-pre-store-failure", Path: "/r/ui-live-prestore", Status: http.StatusOK, Want: "failed before anything was stored"},
-		{State: "run-partial-record", Path: "/r/ui-partial-record", Status: http.StatusOK, Want: "evidence could not be read"},
+		{State: "run-partial-record", Path: "/r/ui-partial-record", Status: http.StatusOK, WantAll: []string{`verdict-passed big`, `Duration <strong>18s`, "This run did not record a transcript, so steps are unavailable.", "Task prompt", "do the thing for partial-record"}},
 		{State: "run-zero-cost", Path: "/r/ui-states-not-assessed", Status: http.StatusOK, Want: "$0.00"},
 		{State: "run-unknown-cost", Path: "/r/ui-unknown-cost-a", Status: http.StatusOK, Want: "Not recorded"},
 		{State: "run-disputed-check", Path: "/r/ui-current-checks", Status: http.StatusOK, Want: "Disputed"},
@@ -614,17 +614,13 @@ func seedUIFixture(t *testing.T, store *fakeStore) {
 
 	liveAt := now.Add(-5 * time.Minute)
 	liveRuns := []runFixture{
-		{runID: "ui-live-running-a", scenario: "live-running-a", startedAt: liveAt, durationS: "12s", costUsd: 0.03, done: true, taskResult: farm.VerdictPassed},
+		{runID: "ui-live-running-a", scenario: "live-running-a", startedAt: liveAt, done: false},
 		{runID: "ui-live-running-b", scenario: "live-running-b", startedAt: liveAt, durationS: "13s", costUsd: 0.03, done: true, taskResult: farm.VerdictPassed},
 		{runID: "ui-live-running-c", scenario: "live-running-c", startedAt: liveAt, durationS: "14s", costUsd: 0.03, done: true, taskResult: farm.VerdictPassed},
 		{runID: "ui-live-queued", scenario: "live-queued", startedAt: liveAt, durationS: "15s", costUsd: 0.03, done: true, taskResult: farm.VerdictPassed},
 		{runID: "ui-live-prestore", scenario: "pre-store-failure", startedAt: liveAt, durationS: "16s", costUsd: 0.03, done: true, taskResult: farm.VerdictPassed},
 	}
-	liveResults := map[string]string{}
-	for _, rf := range liveRuns {
-		liveResults[rf.runID] = farm.VerdictPassed
-	}
-	seedBatchAt(t, store, "ui-live", "claude-sonnet-5", liveAt, liveRuns, true, liveResults)
+	seedBatchAt(t, store, "ui-live", "claude-sonnet-5", liveAt, liveRuns, false, nil)
 	liveManifest := farm.BatchManifest{Batch: "ui-live", CreatedAt: liveAt.Format(time.RFC3339), StartedAt: liveAt.Format(time.RFC3339), Set: "adhoc", CandidateSha256: currentSHA, EvaluatorSha256: "fixture-evaluator", Observer: "claude-sonnet-5"}
 	for _, rf := range liveRuns {
 		liveManifest.Runs = append(liveManifest.Runs, farm.ManifestRun{RunID: rf.runID, Scenario: rf.scenario, ProjectName: "zcp-farm-" + rf.runID})

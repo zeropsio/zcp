@@ -244,6 +244,31 @@ func TestUnavailableRunRow_NoSummary_DoesNotClaimRunning(t *testing.T) {
 	}
 }
 
+// TestRunTiming_UnknownDoesNotBorrowManifestCreatedAt pins the provenance
+// boundary between a batch and one of its runs. The manifest timestamp says
+// when the batch was created; without readable run metadata it cannot prove
+// either the run's start or its duration.
+func TestRunTiming_UnknownDoesNotBorrowManifestCreatedAt(t *testing.T) {
+	created := time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)
+	manifest := farm.BatchManifest{
+		Batch: "timing", CreatedAt: created.Format(time.RFC3339),
+		Runs: []farm.ManifestRun{{RunID: "timing-a", Scenario: "a"}},
+	}
+	bc := newBatchContext(manifest)
+	rows := []RunRow{
+		notDoneRow(manifest.Batch, manifest.Runs[0], bc, farm.BatchSummary{}, false, false, false, created.Add(time.Minute)),
+		unavailableRunRow(manifest.Batch, manifest.Runs[0], bc, farm.BatchSummary{}, false, false, nil, fmt.Errorf("temporary evidence read failure")),
+	}
+	for i, row := range rows {
+		if row.StartedKnown || !row.StartedAt.IsZero() {
+			t.Errorf("row %d start = (%v, %v), want unknown zero", i, row.StartedKnown, row.StartedAt)
+		}
+		if row.DurationKnown || row.DurationSec != 0 {
+			t.Errorf("row %d duration = (%v, %v), want unknown zero", i, row.DurationKnown, row.DurationSec)
+		}
+	}
+}
+
 // --- serviceHostnames (§8.6: platform-snapshot.json services + every
 // verification.json row's scope) ------------------------------------------
 

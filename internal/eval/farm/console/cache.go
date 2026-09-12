@@ -48,17 +48,22 @@ const (
 // cached separately (summaryCache) and can still be absent when this part
 // is first filled.
 type cachedImmutable struct {
-	Scenario         string
-	StartedAt        time.Time
-	DurationSec      float64
-	CostUsd          float64
-	CostKnown        bool
-	CandidateSha256  string
-	EvaluatorSha256  string
-	FailedChecks     []FailedCheck
-	StepCount        int
-	ServiceHostnames []string
-	metaTaskResult   string
+	Scenario           string
+	StartedAt          time.Time
+	StartedKnown       bool
+	DurationSec        float64
+	DurationKnown      bool
+	CostUsd            float64
+	CostKnown          bool
+	CandidateSha256    string
+	EvaluatorSha256    string
+	FailedChecks       []FailedCheck
+	VerificationKnown  bool
+	StepCount          int
+	VisibleStepNumbers []int
+	ServiceHostnames   []string
+	metaTaskResult     string
+	readErrors         []evidenceReadError
 	// cacheable is true only when the immutable result files were read as a
 	// complete bundle. A done marker can race the final uploads; retaining
 	// that partial view would permanently hide data that appears moments
@@ -70,9 +75,12 @@ type cachedImmutable struct {
 // current observation plus older ids, and when it was last read from the
 // bucket.
 type cachedObservation struct {
-	obs         *observer.Observation
-	olderObsIDs []string
-	fetchedAt   time.Time
+	obs          *observer.Observation
+	currentObsID string
+	olderObsIDs  []string
+	fetchedAt    time.Time
+	readErrors   []evidenceReadError
+	cacheable    bool
 }
 
 // stepTextCacheValue is one run's cached raw step-search text (item 1/4,
@@ -252,20 +260,19 @@ func (c *runCache) row(ctx context.Context, store observer.ObjectStore, consoleO
 			return notDoneRow(batchID, run, bc, summary, summaryFound, consoleObserverDisabled, queued, now), nil
 		}
 
-		built, err := fetchImmutablePart(ctx, store, run, bc.CreatedAt)
+		built, err := fetchImmutablePart(ctx, store, run)
 		if err != nil {
 			return RunRow{}, err
 		}
-		obsPart, err := fetchObservationPart(ctx, store, run.RunID)
-		if err != nil {
-			return RunRow{}, err
-		}
+		obsPart := fetchObservationPart(ctx, store, run.RunID)
 		obsPart.fetchedAt = now
 		e.mu.Lock()
 		if built.cacheable {
 			e.immutable = &built
 		}
-		e.obs = &obsPart
+		if obsPart.cacheable {
+			e.obs = &obsPart
+		}
 		e.mu.Unlock()
 		return combineRow(batchID, run, &built, &obsPart, bc, summary, summaryFound, consoleObserverDisabled, queued, now), nil
 	}
@@ -275,15 +282,25 @@ func (c *runCache) row(ctx context.Context, store observer.ObjectStore, consoleO
 	e.mu.Unlock()
 
 	if obsCache == nil || now.Sub(obsCache.fetchedAt) >= obsCacheTTL {
-		refreshed, err := fetchObservationPart(ctx, store, run.RunID)
-		if err != nil {
-			return RunRow{}, err
-		}
+		refreshed := fetchObservationPart(ctx, store, run.RunID)
 		refreshed.fetchedAt = now
-		e.mu.Lock()
-		e.obs = &refreshed
-		e.mu.Unlock()
-		obsCache = &refreshed
+		switch {
+		case refreshed.cacheable:
+			e.mu.Lock()
+			e.obs = &refreshed
+			e.mu.Unlock()
+			obsCache = &refreshed
+		case obsCache != nil && refreshed.currentObsID != "" && refreshed.currentObsID == obsCache.currentObsID:
+			// Observation documents are immutable. When listing still names the
+			// cached id as current, a transient Get failure cannot make that
+			// already-read document stale. Keep it visible, attach the refresh
+			// warning, and leave its old fetchedAt so the next request retries.
+			preserved := *obsCache
+			preserved.readErrors = refreshed.readErrors
+			obsCache = &preserved
+		default:
+			obsCache = &refreshed
+		}
 	}
 
 	return combineRow(batchID, run, imm, obsCache, bc, summary, summaryFound, consoleObserverDisabled, queued, now), nil
@@ -294,7 +311,7 @@ func (c *runCache) row(ctx context.Context, store observer.ObjectStore, consoleO
 // MODEL's Stalled/VerdictReason/ObserverStateText) — mirrors buildRunRow's
 // (view.go) early return exactly.
 func notDoneRow(batchID string, run farm.ManifestRun, bc batchContext, summary farm.BatchSummary, summaryFound bool, consoleObserverDisabled bool, queued bool, now time.Time) RunRow {
-	row := RunRow{RunID: run.RunID, Batch: batchID, Scenario: run.Scenario, StartedAt: bc.CreatedAt, Build: bc.build()}
+	row := RunRow{RunID: run.RunID, Batch: batchID, Scenario: run.Scenario, Build: bc.build(), scopeTime: bc.CreatedAt}
 	row.Verdict = settledOrRunning(summary, summaryFound, run.RunID)
 	row.Stalled = row.Verdict == verdictRunning && isStalled(now, bc.CreatedAt, bc.RunBudgetSec)
 	summaryRun, summaryRunFound := findSummaryRun(summary, summaryFound, run.RunID)
@@ -312,10 +329,18 @@ func notDoneRow(batchID string, run farm.ManifestRun, bc batchContext, summary f
 func combineRow(batchID string, run farm.ManifestRun, imm *cachedImmutable, obsPart *cachedObservation, bc batchContext, summary farm.BatchSummary, summaryFound bool, consoleObserverDisabled bool, queued bool, now time.Time) RunRow {
 	row := RunRow{
 		RunID: run.RunID, Batch: batchID, Scenario: imm.Scenario, StartedAt: imm.StartedAt,
-		DurationSec: imm.DurationSec, CostUsd: imm.CostUsd, CostKnown: imm.CostKnown,
+		StartedKnown: imm.StartedKnown, DurationSec: imm.DurationSec, DurationKnown: imm.DurationKnown,
+		CostUsd: imm.CostUsd, CostKnown: imm.CostKnown,
 		CandidateSha256: imm.CandidateSha256, EvaluatorSha256: imm.EvaluatorSha256,
 		DoneExists: true, FailedChecks: imm.FailedChecks, metaTaskResult: imm.metaTaskResult,
-		Build: bc.build(), StepCount: imm.StepCount, ServiceHostnames: imm.ServiceHostnames,
+		VerificationKnown: imm.VerificationKnown,
+		Build:             bc.build(), StepCount: imm.StepCount, VisibleStepNumbers: append([]int(nil), imm.VisibleStepNumbers...), ServiceHostnames: imm.ServiceHostnames,
+		evidenceReadErrors: append([]evidenceReadError(nil), imm.readErrors...),
+	}
+	if imm.StartedKnown {
+		row.scopeTime = imm.StartedAt
+	} else {
+		row.scopeTime = bc.CreatedAt
 	}
 
 	summaryResult, found := "", false
@@ -333,7 +358,9 @@ func combineRow(batchID string, run farm.ManifestRun, imm *cachedImmutable, obsP
 
 	if obsPart != nil {
 		row.OlderObsIDs = obsPart.olderObsIDs
+		row.currentObsID = obsPart.currentObsID
 		row.Observation = obsPart.obs
+		row.evidenceReadErrors = append(row.evidenceReadErrors, obsPart.readErrors...)
 	}
 	row.ObserverState = resolveObserverState(consoleObserverDisabled, bc.Observer, true, row.Observation != nil, queued, false)
 	row.ObserverStateText = observerStateText(now, bc.CreatedAt, consoleObserverDisabled, bc.Observer, true, row.Observation, queued, false, "")
@@ -343,13 +370,12 @@ func combineRow(batchID string, run farm.ManifestRun, imm *cachedImmutable, obsP
 	return row
 }
 
-// fetchImmutablePart reads run's immutable row data straight from the
-// bucket — mirrors buildRunRow's (view.go) meta/verification/step-count
-// reads exactly, including its tolerance of a genuinely absent results dir
-// and optional verification/platform snapshot files. Required evidence and
-// all malformed or transport errors propagate to the unavailable fallback.
-func fetchImmutablePart(ctx context.Context, store observer.ObjectStore, run farm.ManifestRun, manifestCreatedAt time.Time) (cachedImmutable, error) {
-	imm := cachedImmutable{Scenario: run.Scenario, StartedAt: manifestCreatedAt}
+// fetchImmutablePart reads each immutable evidence section independently.
+// A section failure is retained as a retryable read error while every other
+// readable fact survives in the returned value. Only a complete value is
+// cacheable as immutable success.
+func fetchImmutablePart(ctx context.Context, store observer.ObjectStore, run farm.ManifestRun) (cachedImmutable, error) {
+	imm := cachedImmutable{Scenario: run.Scenario}
 
 	bundle, err := observer.NewSinkBundle(ctx, store, run.RunID)
 	if err != nil {
@@ -361,9 +387,14 @@ func fetchImmutablePart(ctx context.Context, store observer.ObjectStore, run far
 		// other errors (including a transient bucket/list failure) must reach
 		// the caller so it can render conservative unavailable evidence.
 		if errors.Is(rdErr, observer.ErrResultsNotFound) {
+			imm.VerificationKnown = true
 			return imm, nil
 		}
-		return cachedImmutable{}, fmt.Errorf("console: cache: find results directory: %w", rdErr)
+		imm.readErrors = append(imm.readErrors, evidenceReadError{
+			Summary: "Run evidence could not be located; retry after the bucket recovers.",
+			Detail:  fmt.Errorf("console: cache: find results directory: %w", rdErr).Error(),
+		})
+		return imm, nil
 	}
 	var verification eval.VerificationDocument
 	var snapshot *eval.PlatformSnapshot
@@ -371,50 +402,70 @@ func fetchImmutablePart(ctx context.Context, store observer.ObjectStore, run far
 	stepCountOK := false
 	m, mErr := observer.LoadMeta(bundle, resultsDir)
 	if mErr != nil {
-		return cachedImmutable{}, fmt.Errorf("console: cache: load meta: %w", mErr)
+		imm.readErrors = append(imm.readErrors, evidenceReadError{
+			Summary: "Run timing, cost, and build metadata are temporarily unavailable.",
+			Detail:  fmt.Errorf("console: cache: load meta: %w", mErr).Error(),
+		})
+	} else {
+		meta = m
+		if !m.StartedAt.IsZero() {
+			imm.StartedAt = m.StartedAt
+			imm.StartedKnown = true
+		}
+		imm.DurationSec = time.Duration(m.Duration).Seconds()
+		imm.DurationKnown = true
+		if m.Usage != nil {
+			imm.CostUsd = m.Usage.TotalCostUsd
+			imm.CostKnown = true
+		}
+		if m.Task != nil {
+			imm.metaTaskResult = string(m.Task.Result)
+		}
+		imm.CandidateSha256 = m.CandidateSha256
+		imm.EvaluatorSha256 = m.EvaluatorSha256
 	}
-	meta = m
-	if !m.StartedAt.IsZero() {
-		imm.StartedAt = m.StartedAt
-	}
-	imm.DurationSec = time.Duration(m.Duration).Seconds()
-	if m.Usage != nil {
-		imm.CostUsd = m.Usage.TotalCostUsd
-		imm.CostKnown = true
-	}
-	if m.Task != nil {
-		imm.metaTaskResult = string(m.Task.Result)
-	}
-	imm.CandidateSha256 = m.CandidateSha256
-	imm.EvaluatorSha256 = m.EvaluatorSha256
 	var v eval.VerificationDocument
 	v, vErr := observer.LoadVerification(bundle, resultsDir)
 	if vErr != nil {
-		return cachedImmutable{}, fmt.Errorf("console: cache: load verification: %w", vErr)
-	}
-	verification = v
-	for _, c := range v.Checks {
-		if c.Result == eval.CheckFailed || c.Result == eval.CheckBlocked {
-			imm.FailedChecks = append(imm.FailedChecks, FailedCheck{
-				ID: c.ID, Result: string(c.Result), Expected: c.Expected, Observed: c.Observed, Source: c.Source,
-			})
+		imm.readErrors = append(imm.readErrors, evidenceReadError{
+			Summary: "Automatic check details are temporarily unavailable.",
+			Detail:  fmt.Errorf("console: cache: load verification: %w", vErr).Error(),
+		})
+	} else {
+		verification = v
+		imm.VerificationKnown = true
+		for _, c := range v.Checks {
+			if c.Result == eval.CheckFailed || c.Result == eval.CheckBlocked {
+				imm.FailedChecks = append(imm.FailedChecks, FailedCheck{
+					ID: c.ID, Result: string(c.Result), Expected: c.Expected, Observed: c.Observed, Source: c.Source,
+				})
+			}
 		}
 	}
 	snapshot, sErr := observer.LoadPlatformSnapshot(bundle, resultsDir)
 	if sErr != nil {
-		return cachedImmutable{}, fmt.Errorf("console: cache: load platform snapshot: %w", sErr)
+		imm.readErrors = append(imm.readErrors, evidenceReadError{
+			Summary: "Platform snapshot details are temporarily unavailable.",
+			Detail:  fmt.Errorf("console: cache: load platform snapshot: %w", sErr).Error(),
+		})
 	}
-	n, sErr := loadStepCount(bundle, resultsDir, meta)
-	if sErr != nil {
-		if !(imm.CostKnown && imm.CostUsd == 0 && errors.Is(sErr, os.ErrNotExist) && stepFilesAbsent(bundle, resultsDir)) {
-			return cachedImmutable{}, fmt.Errorf("console: cache: load steps: %w", sErr)
+	if mErr == nil {
+		n, visibleStepNumbers, sErr := loadStepEvidence(bundle, resultsDir, meta)
+		if sErr != nil {
+			if !(imm.CostKnown && imm.CostUsd == 0 && errors.Is(sErr, os.ErrNotExist) && stepFilesAbsent(bundle, resultsDir)) {
+				imm.readErrors = append(imm.readErrors, evidenceReadError{
+					Summary: "Transcript step count is temporarily unavailable.",
+					Detail:  fmt.Errorf("console: cache: load steps: %w", sErr).Error(),
+				})
+			}
+		} else {
+			stepCountOK = true
+			imm.StepCount = n
+			imm.VisibleStepNumbers = visibleStepNumbers
 		}
-	} else {
-		stepCountOK = true
-		imm.StepCount = n
 	}
 	imm.ServiceHostnames = serviceHostnames(snapshot, verification)
-	imm.cacheable = stepCountOK
+	imm.cacheable = stepCountOK && len(imm.readErrors) == 0
 	return imm, nil
 }
 
@@ -433,22 +484,31 @@ func stepFilesAbsent(bundle observer.Bundle, resultsDir string) bool {
 // fetchObservationPart reads runID's current observation and older ids
 // straight from the bucket — mirrors buildRunRow's (view.go) observation
 // read exactly.
-func fetchObservationPart(ctx context.Context, store observer.ObjectStore, runID string) (cachedObservation, error) {
+func fetchObservationPart(ctx context.Context, store observer.ObjectStore, runID string) cachedObservation {
 	obsStore := observer.NewStore(store)
 	obsIDs, err := obsStore.ListObservations(ctx, runID)
 	if err != nil {
-		return cachedObservation{}, fmt.Errorf("console: cache: list observations: %w", err)
+		return cachedObservation{readErrors: []evidenceReadError{{
+			Summary: "Assessment evidence is temporarily unavailable.",
+			Detail:  fmt.Errorf("console: cache: list observations: %w", err).Error(),
+		}}}
 	}
-	var part cachedObservation
+	part := cachedObservation{cacheable: true}
 	if len(obsIDs) > 0 {
 		part.olderObsIDs = obsIDs[:len(obsIDs)-1]
-		cur, err := obsStore.GetObservation(ctx, runID, obsIDs[len(obsIDs)-1])
+		part.currentObsID = obsIDs[len(obsIDs)-1]
+		cur, err := obsStore.GetObservation(ctx, runID, part.currentObsID)
 		if err != nil {
-			return cachedObservation{}, fmt.Errorf("console: cache: get current observation: %w", err)
+			part.cacheable = false
+			part.readErrors = append(part.readErrors, evidenceReadError{
+				Summary: "The current assessment is temporarily unavailable.",
+				Detail:  fmt.Errorf("console: cache: get current observation: %w", err).Error(),
+			})
+			return part
 		}
 		part.obs = &cur
 	}
-	return part, nil
+	return part
 }
 
 // runRowCached is buildRunRow (view.go) through cache when non-nil (rules

@@ -11,8 +11,8 @@
 </div>
 {{if .VerdictReasonText}}<p class="run-reason">{{.VerdictReasonText}}</p>{{end}}
 <div class="run-meta">
-<span>{{fmtTime .Row.StartedAt}}</span>
-<span>Duration <strong>{{fmtDuration .Row.DurationSec}}</strong>
+<span>Started <strong>{{if .Row.StartedKnown}}{{fmtTime .Row.StartedAt}}{{else}}<span title="Not recorded">—</span>{{end}}</strong></span>
+<span>Duration <strong>{{if .Row.DurationKnown}}{{fmtDuration .Row.DurationSec}}{{else}}<span title="Not recorded">—</span>{{end}}</strong>
 </span>
 <span>Agent cost <strong>{{if .Row.CostKnown}}{{fmtCost .Row.CostUsd}}{{else}}<span title="Not recorded">—</span>{{end}}</strong>
 </span>{{if .Row.StepCount}}<span>{{.Row.StepCount}} recorded steps</span>{{end}}</div>
@@ -27,7 +27,7 @@
 <div class="card-body">{{if .CheckRows}}{{range .CheckRows}}<p>
 <strong>{{.WhyPrefix}}:</strong> <a href="#{{.Anchor}}">
 <code>{{.ID}}</code>
-</a> — {{.WhyText}}.</p>{{end}}{{else if .Row.VerdictReason}}<p>{{.Row.VerdictReason}}</p>{{else}}<p>All checks passed.</p>{{end}}</div>
+</a> — {{.WhyText}}.</p>{{end}}{{else if not .Row.VerificationKnown}}<p>Check details are unavailable. Retry this page.</p>{{else if .Row.VerdictReason}}<p>{{.Row.VerdictReason}}</p>{{else}}<p>All checks passed.</p>{{end}}</div>
 </section>{{end}}
 
 <section class="card observer assessment-card" id="observation" aria-labelledby="assessment-title">
@@ -166,13 +166,13 @@
 <h2>Record</h2>
 <span class="muted small">Original source artifacts and forensic context</span>
 </div>
-<div class="card run-record">{{if not .RecordError}}<details class="section" id="self-review">
+<div class="card run-record">{{if not .RecordError}}{{if .SelfReviewOK}}<details class="section" id="self-review">
 <summary>Agent's self-review</summary>
-<div class="prose">{{.SelfReview}}</div>{{if and .HasCard .DisplayedObs.SelfReview.Note}}<p class="muted small">Observer: <span class="pill pill-{{.DisplayedObs.SelfReview.Accurate}}">{{.DisplayedObs.SelfReview.Accurate}}</span> — {{.DisplayedObs.SelfReview.Note}}</p>{{end}}</details>
-<details class="section" id="task-prompt">
+<div class="prose">{{.SelfReview}}</div>{{if and .HasCard .DisplayedObs.SelfReview.Note}}<p class="muted small">Observer: <span class="pill pill-{{.DisplayedObs.SelfReview.Accurate}}">{{.DisplayedObs.SelfReview.Accurate}}</span> — {{.DisplayedObs.SelfReview.Note}}</p>{{end}}</details>{{end}}
+{{if .TaskPromptOK}}<details class="section" id="task-prompt">
 <summary>Task prompt</summary>
 <div class="prose">{{if .TaskPrompt}}{{.TaskPrompt}}{{else}}(not recorded){{end}}</div>
-</details>{{end}}<details class="section" id="run-meta">
+</details>{{end}}{{end}}<details class="section" id="run-meta">
 <summary>Run metadata &amp; forensic view</summary>
 <dl class="kv">
 <dt>Run</dt>

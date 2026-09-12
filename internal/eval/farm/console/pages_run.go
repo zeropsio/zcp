@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -100,13 +101,14 @@ type runPageData struct {
 	StepsSuppressed bool
 	StepsFilters    FilterBarView
 
-	TaskPrompt  string
-	SelfReview  string
-	RecordError string
-	// RecordErrorDetail is item 2's own forensic-block detail: the raw
-	// error chain behind RecordError, rendered once more (as <dt>Error</dt>)
-	// inside the "Run metadata & forensic view" disclosure — "" unless
-	// RecordError is set.
+	TaskPrompt   string
+	SelfReview   string
+	TaskPromptOK bool
+	SelfReviewOK bool
+	RecordError  string
+	// RecordErrorDetail is item 2's own forensic-block detail: raw read error
+	// chains rendered only inside the "Run metadata & forensic view"
+	// disclosure. Section warnings can populate it without RecordError.
 	RecordErrorDetail string
 	EvidenceWarning   string
 }
@@ -331,13 +333,18 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	older, err := loadOlderObservations(ctx, s.cfg.Store, runID, row.OlderObsIDs)
-	if err != nil {
-		s.renderRunError(w, r, err)
-		return
-	}
+	older, historyReadErrors := loadOlderObservations(ctx, s.cfg.Store, runID, row.OlderObsIDs)
 
-	displayedObs, viewingOlder, failedNewestText, failedNewestHref, ok := resolveDisplayedObs(row, older, q)
+	displayQuery := q
+	if q.Obs != "" && (q.Obs == row.currentObsID || slices.Contains(row.OlderObsIDs, q.Obs)) {
+		if _, readable := findObservation(row, older, q.Obs); !readable {
+			displayQuery.Obs = ""
+			for i := range historyReadErrors {
+				historyReadErrors[i].Summary = "The selected earlier assessment is temporarily unavailable. Showing the current assessment. Retry this page."
+			}
+		}
+	}
+	displayedObs, viewingOlder, failedNewestText, failedNewestHref, ok := resolveDisplayedObs(row, older, displayQuery)
 	if !ok {
 		s.renderNotFound(w, r, "Assessment not found", "This stored assessment does not belong to the run or is no longer available.", "Back to current run", "/r/"+runID)
 		return
@@ -381,12 +388,41 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 	if row.DoneExists {
 		s.populateRecordAndSteps(ctx, &data, runID, q, r.URL.Query(), displayedObs)
 	}
+	appendEvidenceReadErrors(&data, row.evidenceReadErrors)
+	appendEvidenceReadErrors(&data, historyReadErrors)
 	if data.FailedNewestHref != "" && row.Observation != nil {
 		data.FailedNewestHref = listURL("/r/"+runID, r.URL.Query(), map[string]string{"obs": row.Observation.ObsID})
 	}
 	data.SectionLinks = buildRunSectionLinks(data)
 
 	renderPage(w, "run", data)
+}
+
+func appendEvidenceReadErrors(data *runPageData, issues []evidenceReadError) {
+	seenSummary := make(map[string]bool)
+	seenDetail := make(map[string]bool)
+	if data.EvidenceWarning != "" {
+		seenSummary[data.EvidenceWarning] = true
+	}
+	if data.RecordErrorDetail != "" {
+		seenDetail[data.RecordErrorDetail] = true
+	}
+	for _, issue := range issues {
+		if issue.Summary != "" && !seenSummary[issue.Summary] {
+			if data.EvidenceWarning != "" {
+				data.EvidenceWarning += " "
+			}
+			data.EvidenceWarning += issue.Summary
+			seenSummary[issue.Summary] = true
+		}
+		if issue.Detail != "" && !seenDetail[issue.Detail] {
+			if data.RecordErrorDetail != "" {
+				data.RecordErrorDetail += "\n"
+			}
+			data.RecordErrorDetail += issue.Detail
+			seenDetail[issue.Detail] = true
+		}
+	}
 }
 
 // resolveDisplayedObs implements §8.3/§8.7's ?obs=<obsId> resolution (a
@@ -474,18 +510,20 @@ func (s *Server) populateRecordAndSteps(ctx context.Context, data *runPageData, 
 	rawSteps, stepsErr := loadSteps(ctx, s.cfg.Store, runID)
 	targets := newStepTargetIndex(runID, rawQuery, nil, nil)
 
-	taskPrompt, selfReview, textsErr := loadRunTexts(ctx, s.cfg.Store, runID)
+	texts, textsErr := loadRunTexts(ctx, s.cfg.Store, runID)
 	switch {
 	case textsErr != nil && isBundleNotFound(textsErr):
 		data.RecordError = bundleNotFoundSentence
 		data.EvidenceWarning = bundleNotFoundSentence
 		data.RecordErrorDetail = textsErr.Error()
 	case textsErr != nil:
-		data.RecordError = "record unavailable — " + textsErr.Error()
+		data.RecordError = "Run prompt and self-review are temporarily unavailable. Retry this page."
 		data.EvidenceWarning = data.RecordError
 		data.RecordErrorDetail = textsErr.Error()
 	default:
-		data.TaskPrompt, data.SelfReview = taskPrompt, selfReview
+		data.TaskPrompt, data.SelfReview = texts.taskPrompt, texts.selfReview
+		data.TaskPromptOK, data.SelfReviewOK = texts.taskPromptOK, texts.selfReviewOK
+		appendEvidenceReadErrors(data, texts.readErrors)
 	}
 
 	switch {
@@ -523,15 +561,22 @@ func (s *Server) populateRecordAndSteps(ctx context.Context, data *runPageData, 
 		if data.EvidenceWarning == "" {
 			data.EvidenceWarning = bundleNotFoundSentence
 		}
+	case errors.Is(stepsErr, os.ErrNotExist):
+		data.StepsError = missingTranscriptSentence
+		if data.EvidenceWarning == "" {
+			data.EvidenceWarning = missingTranscriptSentence
+		}
+		appendEvidenceReadErrors(data, []evidenceReadError{{Detail: stepsErr.Error()}})
 	default:
 		// §8.3: "a run with no done.json or no task prompt renders the
 		// header and its reason — never a 502" (live bug:
 		// /r/gate5-resume-after-compaction). A corrupt/partial bundle
 		// degrades this section instead of failing the whole page.
-		data.StepsError = "steps unavailable — " + stepsErr.Error()
+		data.StepsError = "Transcript steps are temporarily unavailable. Retry this page."
 		if data.EvidenceWarning == "" {
 			data.EvidenceWarning = data.StepsError
 		}
+		appendEvidenceReadErrors(data, []evidenceReadError{{Detail: stepsErr.Error()}})
 	}
 	populateEvidenceTargets(data, displayedObs, targets)
 	for i := range data.ToolErrors {
@@ -608,8 +653,7 @@ func runVerdictReasonText(row RunRow) string {
 }
 
 // bundleNotFoundSentence is item 2 (FIX2)'s one plain sentence for a run
-// whose bundle carries no results/ directory, or is missing its task
-// prompt or transcript — the shape behind the live bugs at
+// whose bundle carries no results/ directory — the shape behind the live bugs at
 // /r/gate5-resume-after-compaction and /r/gate1-… (a raw Go error chain
 // reaching the page). Any other read failure (a genuine store error) is
 // left as its own message: only "there is nothing here" is safe to soften
@@ -617,13 +661,15 @@ func runVerdictReasonText(row RunRow) string {
 // RecordErrorDetail, in the "Run metadata & forensic view" block.
 const bundleNotFoundSentence = "This run left no task prompt or transcript in its bundle."
 
+const missingTranscriptSentence = "This run did not record a transcript, so steps are unavailable."
+
 // isBundleNotFound reports whether err is the "nothing here" shape
 // bundleNotFoundSentence describes: observer.ResultsDir's own sentinel
-// (no results/ dir at all) or a plain missing-file error from reading one
-// of its files (task-prompt.txt, transcript.jsonl) — both wrapped with
-// %w by loadRunTexts/loadSteps, so errors.Is still sees through the chain.
+// (no results/ dir at all), wrapped with %w by loadRunTexts/loadSteps so
+// errors.Is still sees through the chain. A missing file inside an otherwise
+// readable bundle gets a section-specific message instead.
 func isBundleNotFound(err error) bool {
-	return errors.Is(err, observer.ErrResultsNotFound) || errors.Is(err, os.ErrNotExist)
+	return errors.Is(err, observer.ErrResultsNotFound)
 }
 
 // findObservation resolves ?obs=<obsId> against runID's own observations —
@@ -895,41 +941,63 @@ var stepsFilterLabeler = listLabeler{
 // loadRunTexts reads runId's task prompt and self-review straight from its
 // bundle — the same two bundle files api.go's handleSelfReview/loadSteps
 // read, via the same observer.Bundle helpers (§7.2).
-func loadRunTexts(ctx context.Context, store observer.ObjectStore, runID string) (taskPrompt, selfReview string, err error) {
+type runTexts struct {
+	taskPrompt, selfReview     string
+	taskPromptOK, selfReviewOK bool
+	readErrors                 []evidenceReadError
+}
+
+func loadRunTexts(ctx context.Context, store observer.ObjectStore, runID string) (runTexts, error) {
 	bundle, err := observer.NewSinkBundle(ctx, store, runID)
 	if err != nil {
-		return "", "", fmt.Errorf("console: load run texts: new bundle: %w", err)
+		return runTexts{}, fmt.Errorf("console: load run texts: new bundle: %w", err)
 	}
 	resultsDir, err := observer.ResultsDir(bundle)
 	if err != nil {
-		return "", "", fmt.Errorf("console: load run texts: results dir: %w", err)
+		return runTexts{}, fmt.Errorf("console: load run texts: results dir: %w", err)
 	}
-	taskPrompt, err = observer.LoadTaskPrompt(bundle, resultsDir)
-	if err != nil {
-		return "", "", fmt.Errorf("console: load run texts: task prompt: %w", err)
+	var out runTexts
+	taskPrompt, taskErr := observer.LoadTaskPrompt(bundle, resultsDir)
+	if taskErr != nil {
+		out.readErrors = append(out.readErrors, evidenceReadError{
+			Summary: "Task prompt is temporarily unavailable. Retry this page.",
+			Detail:  fmt.Errorf("console: load run texts: task prompt: %w", taskErr).Error(),
+		})
+	} else {
+		out.taskPrompt, out.taskPromptOK = taskPrompt, true
 	}
-	selfReview, err = observer.LoadSelfReview(bundle, resultsDir)
-	if err != nil {
-		return "", "", fmt.Errorf("console: load run texts: self-review: %w", err)
+	selfReview, selfReviewErr := observer.LoadSelfReview(bundle, resultsDir)
+	if selfReviewErr != nil {
+		out.readErrors = append(out.readErrors, evidenceReadError{
+			Summary: "Self-review is temporarily unavailable. Retry this page.",
+			Detail:  fmt.Errorf("console: load run texts: self-review: %w", selfReviewErr).Error(),
+		})
+	} else {
+		if selfReview == "" {
+			selfReview = observer.NotRecorded
+		}
+		out.selfReview, out.selfReviewOK = selfReview, true
 	}
-	if selfReview == "" {
-		selfReview = observer.NotRecorded
-	}
-	return taskPrompt, selfReview, nil
+	return out, nil
 }
 
 // loadOlderObservations resolves every older obsId (view.go's
 // RunRow.OlderObsIDs, newest-last) to its full document, for the run page's
 // "older observation versions" section (§8.3 FM-51).
-func loadOlderObservations(ctx context.Context, store observer.ObjectStore, runID string, ids []string) ([]observer.Observation, error) {
+func loadOlderObservations(ctx context.Context, store observer.ObjectStore, runID string, ids []string) ([]observer.Observation, []evidenceReadError) {
 	obsStore := observer.NewStore(store)
 	out := make([]observer.Observation, 0, len(ids))
+	var readErrors []evidenceReadError
 	for _, id := range ids {
 		obs, err := obsStore.GetObservation(ctx, runID, id)
 		if err != nil {
-			return nil, fmt.Errorf("console: get older observation %s: %w", id, err)
+			readErrors = append(readErrors, evidenceReadError{
+				Summary: "Earlier assessment history is temporarily unavailable. Retry this page.",
+				Detail:  fmt.Errorf("console: get older observation %s: %w", id, err).Error(),
+			})
+			continue
 		}
 		out = append(out, obs)
 	}
-	return out, nil
+	return out, readErrors
 }

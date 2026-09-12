@@ -159,6 +159,7 @@ type FindingRow struct {
 	Batch         string
 	Scenario      string
 	StartedAt     time.Time
+	StartedKnown  bool
 	Build         BuildInfo
 	Severity      string
 	Owner         string
@@ -175,6 +176,18 @@ type FindingRow struct {
 	Fix           string
 	Index         int
 	FormatVersion int
+
+	// scopeTime is the run's private membership/order timestamp. It may use
+	// batch creation when meta timing is unreadable, but is never rendered as
+	// the run start.
+	scopeTime time.Time
+}
+
+func (f FindingRow) scopeTimestamp() time.Time {
+	if !f.scopeTime.IsZero() {
+		return f.scopeTime
+	}
+	return f.StartedAt
 }
 
 // BuildFindingRows resolves every FindingRow in scope from rows: one per
@@ -196,6 +209,7 @@ func BuildFindingRows(rows []RunRow) []FindingRow {
 		for i, f := range obs.Findings {
 			out = append(out, FindingRow{
 				RunID: row.RunID, Batch: row.Batch, Scenario: row.Scenario, StartedAt: row.StartedAt,
+				StartedKnown: row.StartedKnown, scopeTime: row.scopeTimestamp(),
 				Build: row.Build, Severity: f.Severity, Owner: f.Owner,
 				CauseLabel: CauseLabel(f.Owner), CauseClass: CauseClass(f.Owner),
 				Surface: f.Surface, Anchor: f.Anchor, Title: f.Title, What: f.What,
@@ -237,7 +251,7 @@ func causeClassRankIndex(class string) int {
 // findingNewestThenIDsTiebreak is `severity`'s tie-break (§8.7): newest,
 // then run id, then finding index.
 func findingNewestThenIDsTiebreak(a, b FindingRow) int {
-	if c := cmpTime(b.StartedAt, a.StartedAt); c != 0 { // newest first
+	if c := cmpTime(b.scopeTimestamp(), a.scopeTimestamp()); c != 0 { // newest first
 		return c
 	}
 	if c := cmpString(a.RunID, b.RunID); c != 0 {
@@ -266,7 +280,7 @@ func findingEngine() Engine[FindingRow] {
 			return false
 		},
 		Severity: func(f FindingRow) string { return f.Severity },
-		Time:     func(f FindingRow) time.Time { return f.StartedAt },
+		Time:     func(f FindingRow) time.Time { return f.scopeTimestamp() },
 		Sorts: map[string]SortSpec[FindingRow]{
 			"severity": {
 				Primary: func(a, b FindingRow) int {
@@ -275,7 +289,7 @@ func findingEngine() Engine[FindingRow] {
 				Tiebreak: findingNewestThenIDsTiebreak,
 			},
 			"newest": {
-				Primary: func(a, b FindingRow) int { return cmpTime(a.StartedAt, b.StartedAt) },
+				Primary: func(a, b FindingRow) int { return cmpTime(a.scopeTimestamp(), b.scopeTimestamp()) },
 				Tiebreak: func(a, b FindingRow) int {
 					return cmpInt(problemSeverityRank(a.Severity), problemSeverityRank(b.Severity))
 				},
