@@ -542,6 +542,45 @@ func TestFarmPush_UploadsGateSetAndCurrentPointer(t *testing.T) {
 	if !strings.Contains(stdout, gateKey) {
 		t.Errorf("stdout = %q, want it to contain the gate-set key %q", stdout, gateKey)
 	}
+
+	digest := strings.TrimSuffix(strings.TrimPrefix(gateKey, "sets/"), "/gate.txt")
+	boundGateKey := "scenarios/" + digest + "/.farm-gate-set.txt"
+	fake.mu.Lock()
+	boundGate, hasBoundGate := fake.objects[boundGateKey]
+	fake.mu.Unlock()
+	if !hasBoundGate {
+		t.Fatalf("fake bucket has no digest-bound gate object %s", boundGateKey)
+	}
+	if string(boundGate) != string(wantGateSetBody) {
+		t.Errorf("digest-bound gate set = %q, want %q", boundGate, wantGateSetBody)
+	}
+
+	downloaded := t.TempDir()
+	fake.mu.Lock()
+	for key, body := range fake.objects {
+		prefix := "scenarios/" + digest + "/"
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		rel := strings.TrimPrefix(key, prefix)
+		path := filepath.Join(downloaded, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			fake.mu.Unlock()
+			t.Fatalf("MkdirAll downloaded scenario tree: %v", err)
+		}
+		if err := os.WriteFile(path, body, 0o600); err != nil {
+			fake.mu.Unlock()
+			t.Fatalf("write downloaded scenario tree: %v", err)
+		}
+	}
+	fake.mu.Unlock()
+	gotDigest, err := farm.TreeDigest(downloaded)
+	if err != nil {
+		t.Fatalf("TreeDigest(downloaded scenario tree): %v", err)
+	}
+	if gotDigest != digest {
+		t.Errorf("uploaded scenario tree digest = %s, printed/keyed digest = %s", gotDigest, digest)
+	}
 }
 
 // TestFarmPull_Batch_WritesManifestAndSummary pins outcome 4 of the S15

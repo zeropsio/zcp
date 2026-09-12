@@ -253,6 +253,16 @@ func newWrapperHarness(t *testing.T) *wrapperHarness {
 		t.Fatalf("read candidate stub: %v", err)
 	}
 
+	scenarioBody := []byte("# stub scenario\n")
+	scenarioTree := t.TempDir()
+	if err := os.WriteFile(filepath.Join(scenarioTree, "scenario1.md"), scenarioBody, 0o600); err != nil {
+		t.Fatalf("write scenario fixture: %v", err)
+	}
+	scenariosDigest, err := TreeDigest(scenarioTree)
+	if err != nil {
+		t.Fatalf("digest scenario fixture: %v", err)
+	}
+
 	h := &wrapperHarness{
 		server:          server,
 		fake:            fake,
@@ -260,7 +270,7 @@ func newWrapperHarness(t *testing.T) *wrapperHarness {
 		runID:           wrapperRunID(t),
 		scenarioID:      "scenario1",
 		batchID:         "batch1",
-		scenariosDigest: "scendigest1",
+		scenariosDigest: scenariosDigest,
 		projectID:       "projABCDEF",
 		evaluatorSHA:    evaluatorSHA,
 		candidateSHA:    candidateSHA,
@@ -270,7 +280,7 @@ func newWrapperHarness(t *testing.T) *wrapperHarness {
 	fake.mu.Lock()
 	fake.objects["evaluators/"+evaluatorSHA+"/zcp"] = evaluatorBytes
 	fake.objects["candidates/"+candidateSHA+"/zcp"] = candidateBytes
-	fake.objects["scenarios/"+h.scenariosDigest+"/"+h.scenarioID+".md"] = []byte("# stub scenario\n")
+	fake.objects["scenarios/"+h.scenariosDigest+"/"+h.scenarioID+".md"] = scenarioBody
 	fake.mu.Unlock()
 
 	return h
@@ -616,6 +626,60 @@ func TestWrapper_DigestMismatch_RefusesToRun(t *testing.T) {
 		t.Errorf("stub evaluator's side-effect marker exists — it ran despite the digest mismatch")
 	} else if !os.IsNotExist(err) {
 		t.Errorf("stat ran.marker: %v", err)
+	}
+}
+
+func TestWrapper_ScenarioTreeDigestMismatch_RefusesToRun(t *testing.T) {
+	requireShAndCurl(t)
+
+	h := newWrapperHarness(t)
+	h.fake.mu.Lock()
+	h.fake.objects["scenarios/"+h.scenariosDigest+"/"+h.scenarioID+".md"] = []byte("# replaced after push\n")
+	h.fake.mu.Unlock()
+
+	cmd := h.start(t, nil)
+	_ = cmd.Wait()
+
+	doneBytes, ok := h.fake.get("runs/" + h.runID + "/done.json")
+	if !ok {
+		t.Fatal("done.json missing from bucket")
+	}
+	var done wrapperDoneJSON
+	if err := json.Unmarshal(doneBytes, &done); err != nil {
+		t.Fatalf("done.json parse: %v (body: %s)", err, doneBytes)
+	}
+	if done.RunnerDimensions.Execution != "refused: scenario digest mismatch" {
+		t.Errorf("runnerDimensions.execution = %q, want scenario digest refusal", done.RunnerDimensions.Execution)
+	}
+	if _, err := os.Stat(filepath.Join(h.rundir, "ran.marker")); !os.IsNotExist(err) {
+		t.Errorf("stub evaluator ran after scenario replacement; stat error = %v", err)
+	}
+}
+
+func TestWrapper_ScenarioTraversalKey_RefusesBeforeWrite(t *testing.T) {
+	requireShAndCurl(t)
+
+	h := newWrapperHarness(t)
+	h.fake.mu.Lock()
+	h.fake.objects["scenarios/"+h.scenariosDigest+"/../traversal.marker"] = []byte("bucket-controlled\n")
+	h.fake.mu.Unlock()
+
+	cmd := h.start(t, nil)
+	_ = cmd.Wait()
+
+	if _, err := os.Stat(filepath.Join(h.rundir, "traversal.marker")); !os.IsNotExist(err) {
+		t.Errorf("scenario traversal key wrote outside scenario directory; stat error = %v", err)
+	}
+	doneBytes, ok := h.fake.get("runs/" + h.runID + "/done.json")
+	if !ok {
+		t.Fatal("done.json missing from bucket")
+	}
+	var done wrapperDoneJSON
+	if err := json.Unmarshal(doneBytes, &done); err != nil {
+		t.Fatalf("done.json parse: %v (body: %s)", err, doneBytes)
+	}
+	if done.RunnerDimensions.Execution != "refused: invalid scenario object key" {
+		t.Errorf("runnerDimensions.execution = %q, want invalid-key refusal", done.RunnerDimensions.Execution)
 	}
 }
 
