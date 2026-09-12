@@ -11,6 +11,68 @@ import (
 
 const testToken = "farm-console-token-0123456789abcdef"
 
+func TestConsole_LoginUI_PreservesSafeNextAndAuth(t *testing.T) {
+	srv, _, _ := testServer(t)
+	h := srv.Handler()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/login?next=%2Ffindings", nil))
+	body := rr.Body.String()
+	if rr.Code != http.StatusOK || !strings.Contains(body, `/static/vendor/tabler-1.5.1.min.css`) ||
+		!strings.Contains(body, `<label class="form-label" for="token">`) ||
+		!strings.Contains(body, `id="token"`) || !strings.Contains(body, `name="next" value="/findings"`) {
+		t.Fatalf("login UI: status=%d body=%s", rr.Code, body)
+	}
+
+	const rejectedToken = "wrong-token-must-never-be-echoed"
+	wantNext := "/findings?since=30d"
+	form := url.Values{"token": {rejectedToken}, "next": {wantNext}}
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	wantRejectedLocation := "/login?error=1&next=" + url.QueryEscape(wantNext)
+	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != wantRejectedLocation || len(rr.Result().Cookies()) != 0 {
+		t.Fatalf("rejected login lost safe next or authenticated: status=%d location=%q", rr.Code, rr.Header().Get("Location"))
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, wantRejectedLocation, nil))
+	body = rr.Body.String()
+	for _, want := range []string{
+		`name="next" value="/findings?since=30d"`,
+		`aria-invalid="true"`,
+		`aria-describedby="token-error"`,
+		`id="token-error"`,
+		`role="alert"`,
+		"Wrong token.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("rejected login UI missing associated state %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, rejectedToken) {
+		t.Errorf("rejected login echoed submitted token:\n%s", body)
+	}
+
+	form = url.Values{"token": {testToken}, "next": {wantNext}}
+	req = httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != wantNext || len(rr.Result().Cookies()) != 1 {
+		t.Fatalf("successful login did not return to safe next: status=%d location=%q", rr.Code, rr.Header().Get("Location"))
+	}
+
+	form = url.Values{"token": {testToken}, "next": {"https://evil.example"}}
+	req = httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != "/" {
+		t.Fatalf("unsafe next redirect: status=%d location=%q", rr.Code, rr.Header().Get("Location"))
+	}
+}
+
 // TestConsole_NoAuth_APIIs401AndHTMLRedirectsToLogin pins FM-50: "A request
 // without auth gets a 303 to /login (HTML routes) or 401 (/api/*)."
 // Independent oracle: the exact statuses are the spec's own words.
@@ -31,6 +93,26 @@ func TestConsole_NoAuth_APIIs401AndHTMLRedirectsToLogin(t *testing.T) {
 	}
 	if loc := rr.Header().Get("Location"); loc != "/login?next=%2F" {
 		t.Errorf("GET / unauthenticated Location: got %q, want /login?next=%%2F", loc)
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/missing-page?from=test", nil))
+	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != "/login?next=%2Fmissing-page%3Ffrom%3Dtest" {
+		t.Errorf("unknown HTML route bypassed auth: status=%d location=%q", rr.Code, rr.Header().Get("Location"))
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/not-a-route", nil))
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("unknown API route bypassed auth: got %d, want 401", rr.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/missing-page", nil)
+	req.Header.Set("Authorization", "Bearer definitely-wrong")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("unknown route with wrong bearer bypassed auth: got %d, want 401", rr.Code)
 	}
 }
 
@@ -421,7 +503,7 @@ func TestConsole_SecurityHeadersOnEveryResponse(t *testing.T) {
 	}{
 		{"open login page", http.MethodGet, "/login", ""},
 		{"unauthenticated api (401)", http.MethodGet, "/api/runs.md", ""},
-		{"unknown route (404)", http.MethodGet, "/nope", ""},
+		{"unknown route auth redirect", http.MethodGet, "/nope", ""},
 		{"authenticated root", http.MethodGet, "/", testToken},
 	}
 	for _, rt := range routes {

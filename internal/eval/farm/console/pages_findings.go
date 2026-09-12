@@ -132,6 +132,7 @@ type findingsPageData struct {
 	Meta    pageMeta
 	Nav     listNav
 	Summary string
+	Total   int
 	Items   []findingItemView
 }
 
@@ -147,7 +148,7 @@ func (s *Server) handleFindingsPage(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := rowsSinceWindow(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, q.Since, s.now(), s.queueState, s.runCache, s.summaryCache, s.logf)
 	if err != nil {
-		writeStoreError(w, err)
+		s.renderStoreError(w, r, http.StatusBadGateway, "Findings unavailable", "The finding evidence could not be read.")
 		return
 	}
 	all := BuildFindingRows(rows)
@@ -162,7 +163,8 @@ func (s *Server) handleFindingsPage(w http.ResponseWriter, r *http.Request) {
 	renderPage(w, "findings", findingsPageData{
 		Meta:    s.pageMeta(r, "Findings", navFindings, false),
 		Nav:     buildListNav("/findings", spec, q, values, counts, findingSortLabels, findingLabeler),
-		Summary: fmt.Sprintf("%d finding%s in %s", len(all), pluralS(len(all)), sinceLabelText(sinceRawOrDefault(values, spec))),
+		Summary: fmt.Sprintf("%d matching finding%s in %s", len(filtered), pluralS(len(filtered)), sinceLabelText(sinceRawOrDefault(values, spec))),
+		Total:   len(all),
 		Items:   items,
 	})
 }

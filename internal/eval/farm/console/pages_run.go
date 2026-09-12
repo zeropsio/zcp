@@ -310,7 +310,7 @@ func buildModelOptions(preselect string) []modelOptionView {
 func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 	runID := strings.TrimPrefix(r.URL.Path, "/r/")
 	if !farm.ValidRunID(runID) {
-		http.NotFound(w, r)
+		s.renderNotFound(w, r, "Run not found", "This run is no longer available.", "Back to overview", "/")
 		return
 	}
 
@@ -327,19 +327,19 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	row, err := loadRunRow(ctx, s.cfg.Store, s.cfg.ObserverDisabled, runID, s.queueState, s.runCache, s.summaryCache)
 	if err != nil {
-		writeStoreError(w, err)
+		s.renderRunError(w, r, err)
 		return
 	}
 
 	older, err := loadOlderObservations(ctx, s.cfg.Store, runID, row.OlderObsIDs)
 	if err != nil {
-		writeStoreError(w, err)
+		s.renderRunError(w, r, err)
 		return
 	}
 
 	displayedObs, viewingOlder, failedNewestText, failedNewestHref, ok := resolveDisplayedObs(row, older, q)
 	if !ok {
-		http.NotFound(w, r)
+		s.renderNotFound(w, r, "Assessment not found", "This stored assessment does not belong to the run or is no longer available.", "Back to current run", "/r/"+runID)
 		return
 	}
 

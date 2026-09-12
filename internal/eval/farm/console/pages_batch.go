@@ -757,7 +757,7 @@ func (s *Server) populateBatchSummary(data *batchPageData, rows []RunRow) {
 func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 	batch := strings.TrimPrefix(r.URL.Path, "/b/")
 	if !farm.ValidBatchID(batch) {
-		http.NotFound(w, r)
+		s.renderNotFound(w, r, "Batch not found", "This batch is no longer available.", "Back to overview", "/")
 		return
 	}
 
@@ -772,19 +772,19 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := batchWindowRows(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, batch, s.queueState, s.runCache, s.summaryCache, s.logf)
 	if err != nil {
-		writeStoreError(w, err)
+		s.renderBatchError(w, r, err)
 		return
 	}
 	manifest, err := loadManifest(r.Context(), s.cfg.Store, batch)
 	if err != nil {
-		writeStoreError(w, err)
+		s.renderBatchError(w, r, err)
 		return
 	}
 	bc := newBatchContext(manifest)
 
 	allBatches, err := loadBatchRows(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, s.queueState, s.runCache, s.summaryCache, s.logf)
 	if err != nil {
-		writeStoreError(w, err)
+		s.renderBatchError(w, r, err)
 		return
 	}
 	prevBatch, hasPrev := PreviousSameSet(allBatches, BatchRow{BatchID: batch, Set: manifest.Set, CreatedAt: bc.CreatedAt})
@@ -793,7 +793,7 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 	if hasPrev {
 		prevRows, err = batchWindowRows(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, prevBatch.BatchID, s.queueState, s.runCache, s.summaryCache, s.logf)
 		if err != nil {
-			writeStoreError(w, err)
+			s.renderBatchError(w, r, err)
 			return
 		}
 	}
@@ -825,7 +825,7 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 	// grow with it (maintidx).
 	problems, problemsLow, fallback, fallbackChecks, err := s.resolveBatchProblems(r.Context(), rows, batch, hasPrev, prevBatch, prevRows)
 	if err != nil {
-		writeStoreError(w, err)
+		s.renderBatchError(w, r, err)
 		return
 	}
 	for _, problem := range append(problems, problemsLow...) {

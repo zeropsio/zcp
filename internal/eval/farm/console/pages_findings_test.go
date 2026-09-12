@@ -109,7 +109,7 @@ func TestPages_FindingsUnknownParameterRendersBadQueryPage(t *testing.T) {
 
 // TestPages_FindingsSummaryLine pins the page's one-line summary: total
 // finding count and the window in words.
-func TestPages_FindingsSummaryLine(t *testing.T) {
+func TestPages_FindingsFilteredCount_MatchesCards(t *testing.T) {
 	srv, store, _ := testServer(t)
 	h := srv.Handler()
 	now := fixedNow(t)()
@@ -119,9 +119,28 @@ func TestPages_FindingsSummaryLine(t *testing.T) {
 	}, true, map[string]string{"fd3-scn": "passed"})
 	seedObservation(t, store, fixtureObservation("fd3-scn"))
 
-	body := doGET(t, h, "/findings?since=7d").Body.String()
-	if !strings.Contains(body, "2 findings in 7 days") {
-		t.Errorf("summary missing \"2 findings in 7 days\":\n%s", body)
+	filtered := doGET(t, h, "/findings?since=7d&severity=high").Body.String()
+	if !strings.Contains(filtered, "1 matching finding in 7 days") || strings.Count(filtered, `<details class="finding `) != 1 {
+		t.Errorf("filtered summary and rendered-card count diverge:\n%s", filtered)
+	}
+	summaryStart := strings.Index(filtered, `<summary class="finding-head">`)
+	summaryEnd := strings.Index(filtered[summaryStart:], `</summary>`)
+	if summaryStart < 0 || summaryEnd < 0 || strings.Contains(filtered[summaryStart:summaryStart+summaryEnd], "<a ") {
+		t.Errorf("finding disclosure summary contains a nested interactive link:\n%s", filtered)
+	}
+
+	noMatch := doGET(t, h, "/findings?since=7d&cause=platform").Body.String()
+	if !strings.Contains(noMatch, "0 matching findings in 7 days") ||
+		!strings.Contains(noMatch, "No findings match these filters") ||
+		!strings.Contains(noMatch, `href="/findings"`) || strings.Contains(noMatch, "No findings in this window") {
+		t.Errorf("filter no-match state is not distinct and resettable:\n%s", noMatch)
+	}
+
+	emptySrv, _, _ := testServer(t)
+	noData := doGET(t, emptySrv.Handler(), "/findings?since=7d").Body.String()
+	if !strings.Contains(noData, "0 matching findings in 7 days") ||
+		!strings.Contains(noData, "No findings in this window") || strings.Contains(noData, "No findings match these filters") {
+		t.Errorf("source-empty state is not distinct from a filter miss:\n%s", noData)
 	}
 }
 

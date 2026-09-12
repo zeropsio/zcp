@@ -141,7 +141,7 @@ func (s *Server) handleHomePage(w http.ResponseWriter, r *http.Request) {
 
 	allBatches, err := loadBatchRows(ctx, s.cfg.Store, s.cfg.ObserverDisabled, s.queueState, s.runCache, s.summaryCache, s.logf)
 	if err != nil {
-		http.Error(w, "list batches: "+err.Error(), http.StatusInternalServerError)
+		s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The evaluation overview could not be read.")
 		return
 	}
 
@@ -160,7 +160,7 @@ func (s *Server) handleHomePage(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.buildHomeBatchRows(ctx, filtered)
 	if err != nil {
-		http.Error(w, "batch rows: "+err.Error(), http.StatusInternalServerError)
+		s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The evaluation overview could not be read.")
 		return
 	}
 
@@ -168,14 +168,14 @@ func (s *Server) handleHomePage(w http.ResponseWriter, r *http.Request) {
 	if latestRow, ok := pickLatestEvaluationBatch(allBatches); ok {
 		latest, err = s.buildLatestEvaluation(ctx, allBatches, latestRow)
 		if err != nil {
-			http.Error(w, "latest evaluation: "+err.Error(), http.StatusInternalServerError)
+			s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The latest evaluation could not be read.")
 			return
 		}
 	}
 
 	top, err := s.buildTopProblems(ctx, now)
 	if err != nil {
-		http.Error(w, "top problems: "+err.Error(), http.StatusInternalServerError)
+		s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The current problem summary could not be read.")
 		return
 	}
 
