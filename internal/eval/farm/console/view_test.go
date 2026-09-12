@@ -7,6 +7,7 @@ package console
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"testing"
 	"time"
@@ -168,6 +169,78 @@ func TestNeedsAssessment(t *testing.T) {
 				t.Errorf("NeedsAssessment = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestLoadAssessmentWork_RequiredEvidenceMatrix pins §8.5's distinction
+// between a readable zero-work result and unavailable assessment evidence.
+// Meta, task prompt and transcript are required as one coherent record;
+// only known-zero usage with both step inputs absent is canonical no-work.
+func TestLoadAssessmentWork_RequiredEvidenceMatrix(t *testing.T) {
+	tests := []struct {
+		name     string
+		cost     float64
+		delete   []string
+		meta     string
+		wantWork bool
+		wantErr  bool
+	}{
+		{name: "positive cost missing task prompt", cost: 0.25, delete: []string{"task-prompt.txt"}, wantErr: true},
+		{name: "positive cost missing transcript", cost: 0.25, delete: []string{"transcript.jsonl"}, wantErr: true},
+		{name: "zero cost missing task prompt only", delete: []string{"task-prompt.txt"}, wantErr: true},
+		{name: "zero cost missing transcript only", delete: []string{"transcript.jsonl"}, wantErr: true},
+		{name: "malformed meta with valid steps", meta: "{malformed", wantErr: true},
+		{name: "unknown usage without steps", meta: `{"scenarioId":"required"}`, delete: []string{"task-prompt.txt", "transcript.jsonl"}, wantErr: true},
+		{name: "known zero with both step inputs absent", delete: []string{"task-prompt.txt", "transcript.jsonl"}},
+		{name: "positive cost with complete record", cost: 0.25, wantWork: true},
+	}
+	for i, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newFakeStore()
+			runID := fmt.Sprintf("required-%d", i)
+			seedRun(t, store, runFixture{
+				runID: runID, scenario: "required", startedAt: fixedNow(t)(),
+				durationS: "1s", costUsd: tc.cost, taskResult: "passed", done: true,
+			})
+			resultsDir := "runs/" + runID + "/results/" + testResultsTS + "/required/"
+			if tc.meta != "" {
+				store.putText(t, resultsDir+"meta.json", tc.meta)
+			}
+			store.mu.Lock()
+			for _, name := range tc.delete {
+				delete(store.objects, resultsDir+name)
+			}
+			store.mu.Unlock()
+
+			got, err := loadAssessmentWork(context.Background(), store, runID)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("loadAssessmentWork error = %v, wantErr %v", err, tc.wantErr)
+			}
+			if got != tc.wantWork {
+				t.Errorf("loadAssessmentWork = %v, want %v", got, tc.wantWork)
+			}
+		})
+	}
+}
+
+// TestUnavailableRunRow_NoSummary_DoesNotClaimRunning pins that an evidence
+// failure is not proof that done.json is absent. Without a matching summary
+// result the automatic verdict is unknown, while the evidence-unavailable
+// state remains explicit.
+func TestUnavailableRunRow_NoSummary_DoesNotClaimRunning(t *testing.T) {
+	manifest := farm.BatchManifest{
+		Batch: "unavailable", CreatedAt: "2026-09-12T10:00:00Z",
+		CandidateSha256: "candidate", Runs: []farm.ManifestRun{{RunID: "unavailable-a", Scenario: "a"}},
+	}
+	row := unavailableRunRow(
+		manifest.Batch, manifest.Runs[0], newBatchContext(manifest), farm.BatchSummary{}, false,
+		false, nil, fmt.Errorf("temporary evidence read failure"),
+	)
+	if row.Verdict != "" {
+		t.Errorf("Verdict = %q, want empty unknown verdict", row.Verdict)
+	}
+	if !assessmentWorkUnavailable(row) || row.DoneExists {
+		t.Errorf("row = unavailable:%v done:%v, want true/false", assessmentWorkUnavailable(row), row.DoneExists)
 	}
 }
 

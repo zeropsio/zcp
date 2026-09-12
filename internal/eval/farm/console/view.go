@@ -293,21 +293,26 @@ func loadAssessmentWork(ctx context.Context, store observer.ObjectStore, runID s
 		return false, fmt.Errorf("console: assessment eligibility: list results: %w", err)
 	}
 
-	meta, metaErr := observer.LoadMeta(bundle, resultsDir)
-	if metaErr == nil && meta.Usage != nil && meaningfulAssessmentWork(meta.Usage.TotalCostUsd, 0) {
-		return true, nil
+	meta, err := observer.LoadMeta(bundle, resultsDir)
+	if err != nil {
+		return false, fmt.Errorf("console: assessment eligibility: load meta: %w", err)
 	}
-	stepCount, stepsErr := loadStepCount(bundle, resultsDir, meta)
-	if stepsErr == nil && meaningfulAssessmentWork(0, stepCount) {
-		return true, nil
+	stepCount, err := loadStepCount(bundle, resultsDir, meta)
+	if err != nil {
+		// A run deliberately ended before execution has a readable, known-zero
+		// meta record but neither required step input. That exact shape is the
+		// only missing-file case that proves zero work. Partial absence, unknown
+		// usage and every malformed/transport failure remain unavailable.
+		if meta.Usage != nil && meta.Usage.TotalCostUsd == 0 && errors.Is(err, os.ErrNotExist) && stepFilesAbsent(bundle, resultsDir) {
+			return false, nil
+		}
+		return false, fmt.Errorf("console: assessment eligibility: load steps: %w", err)
 	}
-	if metaErr != nil {
-		return false, fmt.Errorf("console: assessment eligibility: load meta: %w", metaErr)
+	costUsd := float64(0)
+	if meta.Usage != nil {
+		costUsd = meta.Usage.TotalCostUsd
 	}
-	if stepsErr != nil && !errors.Is(stepsErr, os.ErrNotExist) {
-		return false, fmt.Errorf("console: assessment eligibility: load steps: %w", stepsErr)
-	}
-	return false, nil
+	return meaningfulAssessmentWork(costUsd, stepCount), nil
 }
 
 // resolveAssessmentWork enriches a resolved row with §8.5's three-state
@@ -819,11 +824,15 @@ func loadRunRow(ctx context.Context, store observer.ObjectStore, consoleObserver
 func unavailableRunRow(batchID string, run farm.ManifestRun, bc batchContext, summary farm.BatchSummary, summaryFound, consoleObserverDisabled bool, queueState func(runID string) string, evidenceErr error) RunRow {
 	queued := queueState != nil && queueState(run.RunID) != ""
 	summaryRun, found := findSummaryRun(summary, summaryFound, run.RunID)
-	verdict := settledOrRunning(summary, summaryFound, run.RunID)
+	verdict := ""
+	if found && summaryRun.Result != "" {
+		verdict = summaryRun.Result
+	}
+	settled := found && verdict != "" && verdict != verdictRunning
 	return RunRow{RunID: run.RunID, Batch: batchID, Scenario: run.Scenario,
 		StartedAt: bc.CreatedAt, Build: bc.build(), Verdict: verdict,
 		VerdictReason:       verdictReason(verdict, false, nil, summaryRun, found),
-		ObserverState:       resolveObserverState(consoleObserverDisabled, bc.Observer, false, false, queued, verdict != verdictRunning),
+		ObserverState:       resolveObserverState(consoleObserverDisabled, bc.Observer, false, false, queued, settled),
 		ObserverStateText:   "assessment unavailable — run evidence could not be read",
 		assessmentWorkError: evidenceErr.Error(), CauseCounts: newCauseClassCounts()}
 }

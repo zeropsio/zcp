@@ -1200,7 +1200,8 @@ token gets an associated inline error without echoing the value. HTML
 errors use the shared visual system, an actionable explanation and
 retry/parent links, preserving HTTP status: invalid query 400, missing
 route/batch/run/assessment 404, Overview store failure 500, other existing
-page store failures 502. API wire shapes and statuses are unchanged.
+page store failures 502. Existing API fields and statuses remain compatible;
+the batches API adds `unavailableN` so partial evidence is never hidden.
 
 ### 8.4 Agent API
 
@@ -1304,10 +1305,15 @@ queued or running, and either has no observation or its current one failed
 
 A run **did work** when its recorded cost is above 0 or it has at least one
 step — the same rule that tells an evaluation batch from an empty one
-(§8.8). This predicate plus `done.json` is shared by the worker, single-run
-and batch actions, needs-assessment counts and forms; a results directory
-or `meta.json` listing alone is insufficient. A read failure is unavailable
-evidence, not proof of zero work, and cannot queue an assessment from
+(§8.8). Applying that predicate requires a readable `meta.json`, task prompt
+and transcript as one coherent assessment record; positive cost does not
+make a partial record assessable. Only no results directory, or readable
+known-zero usage with both required step files absent, proves zero work.
+One missing required file, malformed content, a transport failure, or unknown
+usage without readable steps is unavailable evidence. This predicate plus
+`done.json` is shared by the worker, single-run and batch actions,
+needs-assessment counts and forms; a results directory or `meta.json` listing
+alone is insufficient. A read failure cannot queue an assessment from
 invented eligibility. A run the batch ended before it started still writes `done.json`
 but leaves no `results/` at all: there is nothing to assess, an observation
 of it can only fail on a missing task prompt, and a stored "assessment
@@ -1486,7 +1492,7 @@ other parameters.
 
 | list | filters | sort keys — default direction; tie-break |
 |---|---|---|
-| Overview batches | `kind=evaluation\|empty\|all` (default `evaluation`), `since` | **`newest`** desc; batch id · `zcp` (ZCP high, then ZCP medium) desc; newest · `failed` (failed + blocked runs) desc; newest · `cost` desc; newest |
+| Overview batches | `kind=evaluation\|unavailable\|empty\|all` (default `evaluation,unavailable`; explicit values are singular), `since` | **`newest`** desc; batch id · `zcp` (ZCP high, then ZCP medium) desc; newest · `failed` (failed + blocked runs) desc; newest · `cost` desc; newest |
 | `/problems` | `cause`, `severity`, `status=live\|recurring\|new\|first-seen\|still-emitted\|gone\|unconfirmed\|all` (default `live`), `surface`, `scenario`, `batch`, `build`, `since` (default `30d`) | **`rank`** (§8.6); key · `severity` desc; rank · `runs` (runs hit in total) desc; rank · `last` desc; rank · `first` desc; rank |
 | `/findings` | `cause`, `severity`, `surface`, `scenario`, `batch`, `build`, `since` (default `7d`) | **`severity`** desc; newest, then run id, then finding index · `newest` desc; severity · `cause` (ZCP-first order) asc; severity |
 | batch runs | `verdict`, `outcome=ok\|problem\|inconclusive\|none`, `cause` | **`problem`** (verdict rank, disputed, highest severity, finding count) desc; scenario · `scenario` asc; — · `duration` desc; scenario · `cost` desc; scenario |
@@ -1506,9 +1512,11 @@ endpoint's legend, on `/terms`, and in the farm-triage skill; each badge
 carries its definition as a `title`.
 
 - **Batch** — one farm run: a set of scenarios against one ZCP build.
-  **Evaluation batch** — at least one run did work (§8.5). **Empty batch** —
-  no run has evidence of work (for example setup failures or an abort
-  before execution); `done.json` alone does not make it an evaluation.
+  **Evaluation batch** — at least one run has readable evidence of work
+  (§8.5). **Unavailable batch** — no run proves work and at least one run's
+  evidence is not available yet or could not be read. **Empty batch** — every
+  run has readable evidence of zero work (for example setup failures or an
+  abort before execution); `done.json` alone does not make it an evaluation.
   **Run** — one scenario done once by an agent in a fresh project.
   **Scenario** — a scripted user task plus the automatic checks that grade it.
 - **ZCP build** — the candidate binary, identified by its sha256; shown as
@@ -1527,7 +1535,9 @@ carries its definition as a `title`.
   and previously not passed; **Still not passing** means not passed in both.
   Here not passing includes failed, blocked, not started, running and
   stalled. Each comparison entry names its actual current verdict; these
-  categories are not a claim that every included run failed a check.
+  categories are not a claim that every included run failed a check. A run
+  whose evidence is unavailable is excluded from both sides, even when a
+  readable summary supplied its automatic verdict.
 - **Check** — one automatic test: expected, observed, where the observed
   value came from.
 - **Observer** — an AI model that reads a finished run and writes an

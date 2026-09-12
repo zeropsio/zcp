@@ -717,6 +717,38 @@ func TestBuildProblemsScoped_StillEmitted(t *testing.T) {
 	})
 }
 
+// TestBuildProblemsScoped_StepReadFailure_PreventsGone pins the conservative
+// side of the still-emitted search: a readable negative is not enough to
+// establish that an anchor disappeared when another relevant newest-build
+// run cannot be read. The problem remains unconfirmed until every candidate
+// is readable (or one positively matches).
+func TestBuildProblemsScoped_StepReadFailure_PreventsGone(t *testing.T) {
+	day := func(n int) time.Time { return time.Date(2026, 9, n, 0, 0, 0, 0, time.UTC) }
+	const anchorText = "deployment output still lacks the required readiness marker"
+	older := pRun("old-hit", "b-old", "s1", "build-old", day(1), day(1),
+		observer.Finding{Severity: "medium", Owner: "zcp-guidance", Title: "x", Surface: "tool:zerops_deploy", Anchor: anchorText})
+	newerClean := pRun("new-clean", "b-new", "s1", "build-new", day(2), day(2))
+	newerUnavailable := pRun("new-unavailable", "b-new", "s1", "build-new", day(2), day(2))
+	allRuns := []ProblemsRun{older, newerClean, newerUnavailable}
+
+	problems := BuildProblemsScoped(allRuns, map[string]bool{"old-hit": true}, func(runID string) (string, bool) {
+		switch runID {
+		case "new-clean":
+			return "readable text without the historical anchor", true
+		case "new-unavailable":
+			return "", false
+		default:
+			return "", false
+		}
+	})
+	if len(problems) != 1 {
+		t.Fatalf("got %d problems, want 1", len(problems))
+	}
+	if got := problems[0].Status; got != StatusUnconfirmed {
+		t.Fatalf("Status = %q, want %q while a relevant candidate is unreadable", got, StatusUnconfirmed)
+	}
+}
+
 // TestStillEmitted_EmptyAnchorNeverSearches pins item 2's own scope limit:
 // a no-anchor or solo problem (empty anchor) keeps today's behavior — the
 // search never runs for it, regardless of findStepText.

@@ -137,6 +137,7 @@ type BatchListItem struct {
 	VerdictCounts []VerdictCountItem `json:"verdictCounts"`
 	CostUsd       float64            `json:"costUsd"`
 	CostUnknownN  int                `json:"costUnknownN"`
+	UnavailableN  int                `json:"unavailableN"`
 	ObservedN     int                `json:"observedN"`
 	ObservedM     int                `json:"observedM"`
 	ZCPHigh       int                `json:"zcpHigh"`
@@ -148,26 +149,30 @@ func batchListItemFromRow(b BatchRow) BatchListItem {
 	return BatchListItem{
 		BatchID: b.BatchID, CreatedAt: b.CreatedAt, Build: b.Build.Label(), Set: b.Set, Kind: b.Kind,
 		VerdictCounts: verdictCountItems(b.VerdictCounts), CostUsd: b.TotalCostUsd, CostUnknownN: b.CostUnknownN,
-		ObservedN: b.ObservedN, ObservedM: b.ObservedM, ZCPHigh: b.ZCPHigh, ZCPMedium: b.ZCPMedium,
+		UnavailableN: b.UnavailableN,
+		ObservedN:    b.ObservedN, ObservedM: b.ObservedM, ZCPHigh: b.ZCPHigh, ZCPMedium: b.ZCPMedium,
 		DisputedCount: b.DisputedCount,
 	}
 }
 
 // renderBatchesMD renders GET /api/batches.md. defaultedKind is true when
 // the request carried no kind= parameter at all — §8.7's default
-// (kind=evaluation) then applied silently; item 5 (verification round 2)
-// wants that said, never assumed. An explicit kind, even kind=evaluation
-// itself, prints no such note.
+// (kind=evaluation,unavailable) then applied silently; item 5 (verification
+// round 2) wants that said, never assumed. An explicit kind prints no such
+// note.
 func renderBatchesMD(items []BatchListItem, defaultedKind bool) string {
 	var b strings.Builder
 	b.WriteString(legendLine("Batch", "ZCP build", "Verdict", "Agent cost"))
 	if defaultedKind {
-		b.WriteString("(no kind= given: defaulted to kind=evaluation — add kind=all to see every batch)\n\n")
+		b.WriteString("(no kind= given: defaulted to kind=evaluation,unavailable — add kind=all to see every batch)\n\n")
 	}
 	for _, it := range items {
 		verdicts := make([]string, 0, len(it.VerdictCounts))
 		for _, vc := range it.VerdictCounts {
 			verdicts = append(verdicts, fmt.Sprintf("%s:%d", vc.Verdict, vc.Count))
+		}
+		if it.UnavailableN > 0 {
+			verdicts = append(verdicts, fmt.Sprintf("unavailable:%d", it.UnavailableN))
 		}
 		cost := fmt.Sprintf("$%.2f", it.CostUsd)
 		if it.CostUnknownN > 0 {
@@ -481,12 +486,13 @@ type DigestResponse struct {
 	// (empty bundle): counted apart from UnassessedCount, which only
 	// holds runs an assessment can actually be made of.
 	NeverStartedCount int  `json:"neverStartedCount"`
+	UnavailableCount  int  `json:"unavailableCount"`
 	Truncated         bool `json:"truncated"`
 }
 
 // renderDigestHeader renders §8.4's scope header: batches, builds, verdict
 // counts, cost.
-func renderDigestHeader(windowLabel string, batches, builds []string, vcs []VerdictCountItem, cost float64, costUnknownN int) string {
+func renderDigestHeader(windowLabel string, batches, builds []string, vcs []VerdictCountItem, unavailableN int, cost float64, costUnknownN int) string {
 	var b strings.Builder
 	b.WriteString(legendLine("Batch", "ZCP build", "Verdict", "Problem", "Severity", "Cause", "Surface", "Anchor", "Hit", "Status", "Outcome", "Findings", "Agent cost"))
 	fmt.Fprintf(&b, "# Digest\n\nwindow: %s\nbatches: %s\nbuilds: %s\n", windowLabel, strings.Join(batches, ", "), strings.Join(builds, ", "))
@@ -495,6 +501,9 @@ func renderDigestHeader(windowLabel string, batches, builds []string, vcs []Verd
 		verdicts[i] = fmt.Sprintf("%s:%d", vc.Verdict, vc.Count)
 	}
 	fmt.Fprintf(&b, "verdicts: %s\n", strings.Join(verdicts, " "))
+	if unavailableN > 0 {
+		fmt.Fprintf(&b, "evidence unavailable: %d\n", unavailableN)
+	}
 	cost1 := fmt.Sprintf("$%.2f", cost)
 	if costUnknownN > 0 {
 		cost1 += fmt.Sprintf(" (+%d unknown)", costUnknownN)
@@ -637,11 +646,16 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 	builds := make(map[string]bool)
 	verdictCounts := make(map[string]int)
 	var totalCost float64
-	costUnknownN, unassessed, assessmentFailed, neverStarted := 0, 0, 0, 0
+	costUnknownN, unassessed, assessmentFailed, neverStarted, unavailable := 0, 0, 0, 0, 0
 	var failedBlocked []RunsListItem
 	for _, row := range rows {
 		builds[row.Build.Label()] = true
-		verdictCounts[row.Verdict]++
+		if row.Verdict != "" {
+			verdictCounts[row.Verdict]++
+		}
+		if assessmentWorkUnavailable(row) {
+			unavailable++
+		}
 		totalCost += row.CostUsd
 		if !row.CostKnown {
 			costUnknownN++
@@ -680,7 +694,7 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 		problemItems[i] = problemItemFromProblem(p)
 	}
 
-	header := renderDigestHeader(windowLabel, scopeBatches, buildList, verdictCountItems(orderedVerdictCounts(verdictCounts)), totalCost, costUnknownN)
+	header := renderDigestHeader(windowLabel, scopeBatches, buildList, verdictCountItems(orderedVerdictCounts(verdictCounts)), unavailable, totalCost, costUnknownN)
 	budget := digestByteBudget - len(header) - digestReserve
 	budget = max(budget, 0)
 
@@ -729,7 +743,7 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 			CostUsd: totalCost, CostUnknownN: costUnknownN,
 			Problems: problemItems[:keptProblems], OmittedProblems: omittedProblems,
 			FailedBlockedRuns: failedBlocked[:keptRuns], OmittedFailedRuns: omittedRuns,
-			UnassessedCount: unassessed, NeverStartedCount: neverStarted, Truncated: truncated,
+			UnassessedCount: unassessed, NeverStartedCount: neverStarted, UnavailableCount: unavailable, Truncated: truncated,
 		})
 		return
 	}

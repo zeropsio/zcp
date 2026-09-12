@@ -2,6 +2,7 @@ package console
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"testing"
 	"time"
@@ -166,6 +167,47 @@ func TestLoadBatchRows_KindRequiresCostOrSteps(t *testing.T) {
 	}
 }
 
+// TestLoadBatchRows_AllUnavailable_KindUnavailable pins the third batch
+// state: unreadable evidence cannot establish either meaningful work or a
+// proven empty batch.
+func TestLoadBatchRows_AllUnavailable_KindUnavailable(t *testing.T) {
+	store := newFakeStore()
+	seedBatch(t, store, "unavailable-batch", "off", []runFixture{{
+		runID: "unavailable-batch-a", scenario: "a", startedAt: fixedNow(t)(),
+		durationS: "1s", costUsd: 0.1, taskResult: "passed", done: true,
+	}}, false, nil)
+	store.failListOn("runs/unavailable-batch-a/results/", fmt.Errorf("temporary results failure"))
+
+	rows, err := loadBatchRows(context.Background(), store, false, nil, nil, nil, nil)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("loadBatchRows: rows=%+v err=%v", rows, err)
+	}
+	if got := rows[0].Kind; got != batchKindUnavailable {
+		t.Errorf("Kind = %q, want %q", got, batchKindUnavailable)
+	}
+	if rows[0].UnavailableN != 1 {
+		t.Errorf("UnavailableN = %d, want 1", rows[0].UnavailableN)
+	}
+}
+
+// TestLoadBatchRows_UnfinishedIsNotProvenEmpty pins the same conservative
+// classification for an in-progress run. Its evidence is not available yet,
+// so it cannot satisfy the stronger "every run proved zero work" condition.
+func TestLoadBatchRows_UnfinishedIsNotProvenEmpty(t *testing.T) {
+	store := newFakeStore()
+	seedBatch(t, store, "unfinished-batch", "off", []runFixture{{
+		runID: "unfinished-batch-a", scenario: "a", startedAt: fixedNow(t)(), done: false,
+	}}, false, nil)
+
+	rows, err := loadBatchRows(context.Background(), store, false, nil, nil, nil, nil)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("loadBatchRows: rows=%+v err=%v", rows, err)
+	}
+	if got := rows[0].Kind; got != batchKindUnavailable {
+		t.Errorf("Kind = %q, want %q until zero work is proven", got, batchKindUnavailable)
+	}
+}
+
 // --- PreviousSameSet (item 2) ---------------------------------------------
 
 func TestPreviousSameSet(t *testing.T) {
@@ -222,6 +264,51 @@ func TestCompareBatches(t *testing.T) {
 	assertStrSlice(t, "StillFailing", diff.StillFailing, wantStillFailing)
 }
 
+func TestCompareBatches_UnavailableRowsExcluded(t *testing.T) {
+	prev := []RunRow{
+		{Scenario: "becomes-unavailable", Verdict: farm.VerdictPassed},
+		{Scenario: "new-failure", assessmentWorkError: "old evidence unavailable"},
+	}
+	cur := []RunRow{
+		{Scenario: "becomes-unavailable", assessmentWorkError: "new evidence unavailable"},
+		{Scenario: "new-failure", Verdict: farm.VerdictFailed},
+	}
+
+	diff := CompareBatches(prev, cur)
+	assertStrSlice(t, "NewlyFailing", diff.NewlyFailing, []string{"new-failure"})
+	assertStrSlice(t, "Fixed", diff.Fixed, nil)
+	assertStrSlice(t, "StillFailing", diff.StillFailing, nil)
+}
+
+// TestBuildBatchComparison_DuplicateScenarioUsesAvailableRepresentative pins
+// the link target shown after CompareBatches has collapsed duplicate scenario
+// rows. An unavailable duplicate cannot replace the readable row, and a
+// scenario represented only by unavailable evidence stays out of the diff.
+func TestBuildBatchComparison_DuplicateScenarioUsesAvailableRepresentative(t *testing.T) {
+	prev := []RunRow{
+		{RunID: "prev-duplicate", Scenario: "duplicate", Verdict: farm.VerdictPassed},
+		{RunID: "prev-unavailable-only", Scenario: "unavailable-only", Verdict: farm.VerdictPassed},
+	}
+	current := []RunRow{
+		{RunID: "cur-duplicate-readable", Scenario: "duplicate", Verdict: farm.VerdictFailed},
+		{RunID: "cur-duplicate-unavailable", Scenario: "duplicate", assessmentWorkError: "temporary evidence failure"},
+		{RunID: "cur-unavailable-only", Scenario: "unavailable-only", assessmentWorkError: "temporary evidence failure"},
+	}
+
+	diff := CompareBatches(prev, current)
+	view := buildBatchComparison(diff, current)
+	if len(view.NewlyNotPassing) != 1 {
+		t.Fatalf("NewlyNotPassing = %+v, want one readable duplicate scenario", view.NewlyNotPassing)
+	}
+	got := view.NewlyNotPassing[0]
+	if got.Scenario != "duplicate" || got.RunID != "cur-duplicate-readable" || got.Verdict != farm.VerdictFailed {
+		t.Errorf("NewlyNotPassing[0] = %+v, want readable failed representative", got)
+	}
+	if len(view.NowPassing) != 0 || len(view.StillNotPassing) != 0 {
+		t.Errorf("comparison includes unavailable-only rows: %+v", view)
+	}
+}
+
 // --- TestLists_OverviewBatches (item 5, §8.7) -----------------------------
 
 func TestLists_OverviewBatches(t *testing.T) {
@@ -240,7 +327,7 @@ func TestLists_OverviewBatches(t *testing.T) {
 		}
 		got, _ := eng.Apply(rows, q, day(10))
 		if len(got) != 2 {
-			t.Fatalf("got %d rows, want 2 (kind=evaluation default): %+v", len(got), got)
+			t.Fatalf("got %d rows, want 2 evaluation rows under the default scope: %+v", len(got), got)
 		}
 	})
 
@@ -301,6 +388,44 @@ func TestLists_OverviewBatches(t *testing.T) {
 			t.Errorf("Notice/N = %s/%s, want queued/2", q.Notice, q.N)
 		}
 	})
+}
+
+// TestLists_OverviewBatches_DefaultIncludesUnavailableExcludesEmpty pins the
+// conservative default scope. Explicit kind filters remain singular and exact.
+func TestLists_OverviewBatches_DefaultIncludesUnavailableExcludesEmpty(t *testing.T) {
+	rows := []BatchRow{
+		{BatchID: "evaluation", Kind: batchKindEvaluation},
+		{BatchID: "unavailable", Kind: batchKindUnavailable},
+		{BatchID: "empty", Kind: batchKindEmpty},
+	}
+	spec := batchListSpec()
+	eng := batchEngine()
+	q, err := Parse(spec, url.Values{})
+	if err != nil {
+		t.Fatalf("Parse(default): %v", err)
+	}
+	got, _ := eng.Apply(rows, q, fixedNow(t)())
+	defaultKinds := map[string]bool{}
+	for _, row := range got {
+		defaultKinds[row.Kind] = true
+	}
+	if len(got) != 2 || !defaultKinds[batchKindEvaluation] || !defaultKinds[batchKindUnavailable] || defaultKinds[batchKindEmpty] {
+		t.Fatalf("default rows = %+v, want evaluation and unavailable only", got)
+	}
+
+	for _, kind := range []string{batchKindEvaluation, batchKindUnavailable, batchKindEmpty} {
+		q, err := Parse(spec, url.Values{paramKind: {kind}})
+		if err != nil {
+			t.Fatalf("Parse(kind=%s): %v", kind, err)
+		}
+		got, _ := eng.Apply(rows, q, fixedNow(t)())
+		if len(got) != 1 || got[0].Kind != kind {
+			t.Errorf("kind=%s rows = %+v, want exactly that kind", kind, got)
+		}
+	}
+	if _, err := Parse(spec, url.Values{paramKind: {batchKindEvaluation + "," + batchKindUnavailable}}); err == nil {
+		t.Error("explicit comma-separated kind was accepted, want singular switch")
+	}
 }
 
 func TestBatchSort_UnknownCost_LastBothDirections(t *testing.T) {

@@ -253,8 +253,9 @@ type glossaryTerm struct{ Term, Definition string }
 // the spec's own order.
 var glossaryTerms = []glossaryTerm{
 	{"Batch", "One farm run: a set of scenarios against one ZCP build."},
-	{"Evaluation batch", "A batch where at least one run finished."},
-	{"Empty batch", "A batch where no run finished (setup failures, aborted, stalled)."},
+	{"Evaluation batch", "A batch where at least one run has readable evidence of work."},
+	{"Unavailable batch", "A batch where no run proves work and at least one run's evidence is not available yet or could not be read."},
+	{"Empty batch", "A batch where every run has readable evidence of zero work."},
 	{"Run", "One scenario done once by an agent in a fresh project."},
 	{"Scenario", "A scripted user task plus the automatic checks that grade it."},
 	{"Set", "Which scenarios the batch ran."},

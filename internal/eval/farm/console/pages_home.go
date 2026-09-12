@@ -77,12 +77,13 @@ type latestEvaluationView struct {
 	Verdicts        []verdictDisputeView
 	FailedOrBlocked []failedRunLine
 
-	HasPrev     bool
-	PrevBatchID string
-	Diff        BatchDiff
-	Comparison  batchComparisonView
-	ObservedN   int
-	ObservedM   int
+	HasPrev      bool
+	PrevBatchID  string
+	Diff         BatchDiff
+	Comparison   batchComparisonView
+	ObservedN    int
+	ObservedM    int
+	UnavailableN int
 }
 
 // topProblemView is one line of the Overview's "Top problems now" panel
@@ -234,6 +235,9 @@ func formatBatchCost(b BatchRow) string {
 // homeDotLabel is one dot's tooltip verdict word: "stalled" for a running
 // row past its budget (Stalled), else the plain verdict label.
 func homeDotLabel(row RunRow) string {
+	if row.Verdict == "" && assessmentWorkUnavailable(row) {
+		return "automatic verdict unavailable"
+	}
 	if row.Verdict == verdictRunning && row.Stalled {
 		return verdictLabel(verdictStalled)
 	}
@@ -274,6 +278,8 @@ func homeBatchLabeler() listLabeler {
 				return "Evaluation"
 			case batchKindEmpty:
 				return "Empty"
+			case batchKindUnavailable:
+				return "Unavailable"
 			case filterAll:
 				return "All"
 			default:
@@ -281,8 +287,13 @@ func homeBatchLabeler() listLabeler {
 			}
 		},
 		Title: func(param, value string) string {
-			if param == paramKind && value == batchKindEmpty {
-				return "No run finished"
+			if param == paramKind {
+				switch value {
+				case batchKindEmpty:
+					return "Every run has readable evidence of zero work"
+				case batchKindUnavailable:
+					return "No run proves work and at least one run's evidence is not available yet or could not be read"
+				}
 			}
 			return ""
 		},
@@ -316,6 +327,9 @@ func verdictDisputeCounts(rows []RunRow) []verdictDisputeView {
 	counts := make(map[string]int, len(rows))
 	disputed := make(map[string]int, len(rows))
 	for _, r := range rows {
+		if r.Verdict == "" {
+			continue
+		}
 		counts[r.Verdict]++
 		if r.Disputed {
 			disputed[r.Verdict]++
@@ -387,6 +401,11 @@ func (s *Server) buildLatestEvaluation(ctx context.Context, allBatches []BatchRo
 		FailedOrBlocked: failedOrBlockedLines(runRows),
 		ObservedN:       latestRow.ObservedN,
 		ObservedM:       latestRow.ObservedM,
+	}
+	for _, row := range runRows {
+		if assessmentWorkUnavailable(row) {
+			view.UnavailableN++
+		}
 	}
 
 	if prevRow, found := PreviousSameSet(allBatches, latestRow); found {

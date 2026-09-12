@@ -76,10 +76,10 @@ type cachedObservation struct {
 }
 
 // stepTextCacheValue is one run's cached raw step-search text (item 1/4,
-// FIX3): a run is immutable once done.json exists (§7.6 FM-47), so unlike
-// the observation part this has no TTL — computed at most once for the
-// console's lifetime. ok is cached too (false for a run whose bundle can
-// never be loaded), so a doomed read is never retried either.
+// FIX3): a run's complete bundle is immutable (§7.6 FM-47), so unlike the
+// observation part this has no TTL. ok means the corpus is conclusive; a
+// terminal zero-work run therefore caches text="", ok=true, while missing
+// required inputs stay uncached and retryable.
 type stepTextCacheValue struct {
 	text string
 	ok   bool
@@ -179,12 +179,11 @@ func rawStepSearchText(steps []observer.Step) string {
 }
 
 // stepText resolves runID's raw step-search text through the cache (item
-// 1/4, FIX3): computed at most once per run for the console's lifetime — a
-// run is immutable once done.json exists (§7.6 FM-47), so there is nothing
-// to invalidate the way rule 2 invalidates an observation. A run whose
-// bundle can't be loaded (never seeded, or a corrupt/missing input file)
-// caches ok=false too, so a repeat still-emitted search never retries a
-// doomed read.
+// 1/4, FIX3): computed at most once per run after a successful read. A
+// completed run with no results directory is terminal zero-work and may
+// cache a conclusive empty corpus (ok=true). Every other failed read remains
+// retryable because a required upload can still arrive or a transient store
+// failure can recover.
 func (c *runCache) stepText(ctx context.Context, store observer.ObjectStore, runID string) (string, bool) {
 	e := c.entry(runID)
 
@@ -194,25 +193,28 @@ func (c *runCache) stepText(ctx context.Context, store observer.ObjectStore, run
 	if cached != nil {
 		return cached.text, cached.ok
 	}
+	done, _, headErr := store.Head(ctx, doneKey(runID))
+	if headErr != nil || !done {
+		return "", false
+	}
 
 	var v stepTextCacheValue
-	cacheNegative := false
 	if steps, err := loadSteps(ctx, store, runID); err == nil {
 		v = stepTextCacheValue{text: rawStepSearchText(steps), ok: true}
-	} else if errors.Is(err, os.ErrNotExist) || errors.Is(err, observer.ErrResultsNotFound) {
-		// A completed run with no result bundle is a terminal no-work run;
-		// avoid paying the same doomed lookup repeatedly. Before done.json,
-		// the bundle is still being uploaded and the failed read is transient.
-		done, _, headErr := store.Head(ctx, doneKey(runID))
-		if headErr == nil && done {
-			cacheNegative = true
-			v = stepTextCacheValue{}
+	} else {
+		// Only a completed run whose full eligibility check proves zero work has
+		// a conclusive empty corpus. Partial or unreadable required evidence
+		// stays retryable.
+		didWork, workErr := loadAssessmentWork(ctx, store, runID)
+		if workErr == nil && !didWork {
+			// ok means the negative is conclusive, not that text is non-empty.
+			v = stepTextCacheValue{ok: true}
 		}
 	}
 
 	// A failed read is transient evidence, not a terminal absence. Keep the
 	// cache empty so an unfinished bundle can be discovered on a later pass.
-	if v.ok || cacheNegative {
+	if v.ok {
 		e.mu.Lock()
 		e.stepText = &v
 		e.mu.Unlock()

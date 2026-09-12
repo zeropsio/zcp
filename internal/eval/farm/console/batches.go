@@ -17,14 +17,14 @@ type VerdictCount struct {
 	Count   int
 }
 
-// Batch kinds (§8.8: "Evaluation batch — at least one run finished. Empty
-// batch — no run finished"). "Finished" means did some work, not merely
-// that done.json exists: item 6 (FIX2.md FIX2-DATA) — a run that blocked
-// in 0.1-0.2s at $0 still writes done.json, so loadBatchRows' anyEvaluated
-// requires a cost above 0 or a recorded step, not DoneExists.
+// Batch kinds (§8.8): evaluation means at least one run proves work; empty
+// means every run proves zero work; unavailable covers the remaining state,
+// where evidence is not available yet or cannot be read. done.json alone
+// proves neither work nor zero work.
 const (
-	batchKindEvaluation = "evaluation"
-	batchKindEmpty      = "empty"
+	batchKindEvaluation  = "evaluation"
+	batchKindEmpty       = "empty"
+	batchKindUnavailable = "unavailable"
 )
 
 // BatchRow is one row of the "/" batches page (§8.3 FM-51): id, created,
@@ -51,8 +51,9 @@ type BatchRow struct {
 
 	Build               BuildInfo
 	Note                string
-	Kind                string // batchKindEvaluation | batchKindEmpty
+	Kind                string // batchKindEvaluation | batchKindEmpty | batchKindUnavailable
 	CostUnknownN        int    // count of runs whose cost is unknown (§8.3: "$2.19 + 7 unknown")
+	UnavailableN        int    // count of manifest runs whose evidence could not be read
 	ZCPHigh             int
 	ZCPMedium           int
 	DisputedCount       int
@@ -141,27 +142,36 @@ func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObser
 
 		counts := make(map[string]int)
 		var totalCost float64
-		observedN, high, costUnknown := 0, 0, 0
+		observedN, high, costUnknown, unavailableN := 0, 0, 0, 0
 		// anyEvaluated implements item 6 (FIX2.md FIX2-DATA): a batch is
 		// batchKindEvaluation only when at least one run did work
 		// (runDidWork, view.go) — a run whose done.json exists but that
 		// blocked in 0.1-0.2s at $0 (gate1, asm7-9, tracerctl) never did any
 		// work, and must not count as "evaluated" just because DoneExists.
 		anyEvaluated := false
+		allZeroWorkKnown := true
 		disputed, goalYes, goalPartly, goalNo := 0, 0, 0, 0
 		outcomeOK, outcomeProblem, outcomeInconclusive := 0, 0, 0
 		causeCounts := newCauseClassCounts()
 		sort.Slice(runRows, func(i, j int) bool { return runRows[i].RunID < runRows[j].RunID })
 		verdicts := make([]string, 0, len(runRows))
 		for _, r := range runRows {
-			counts[r.Verdict]++
+			if r.Verdict != "" {
+				counts[r.Verdict]++
+			}
 			totalCost += r.CostUsd
 			verdicts = append(verdicts, r.Verdict)
+			if assessmentWorkUnavailable(r) {
+				unavailableN++
+			}
 			if !r.CostKnown {
 				costUnknown++
 			}
 			if runDidWork(r) {
 				anyEvaluated = true
+			}
+			if !r.assessmentWorkKnown {
+				allZeroWorkKnown = false
 			}
 			// Outcome != "" implies a current ok observation (computeOutcome,
 			// view.go) — the same fact ObservedN now uses (the "assessed n/m"
@@ -199,8 +209,11 @@ func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObser
 		}
 
 		kind := batchKindEmpty
-		if anyEvaluated {
+		switch {
+		case anyEvaluated:
 			kind = batchKindEvaluation
+		case !allZeroWorkKnown:
+			kind = batchKindUnavailable
 		}
 		var zcpHigh, zcpMedium int
 		for _, c := range causeCounts {
@@ -221,7 +234,7 @@ func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObser
 			RunVerdicts:    verdicts,
 			High:           high,
 
-			Build: bc.build(), Note: manifest.Note, Kind: kind, CostUnknownN: costUnknown,
+			Build: bc.build(), Note: manifest.Note, Kind: kind, CostUnknownN: costUnknown, UnavailableN: unavailableN,
 			ZCPHigh: zcpHigh, ZCPMedium: zcpMedium, DisputedCount: disputed,
 			GoalYes: goalYes, GoalPartly: goalPartly, GoalNo: goalNo,
 			OutcomeOK: outcomeOK, OutcomeProblem: outcomeProblem, OutcomeInconclusive: outcomeInconclusive,
@@ -289,6 +302,9 @@ func scenarioPassing(rows []RunRow) map[string]bool {
 	passing := make(map[string]bool)
 	seen := make(map[string]bool)
 	for _, r := range rows {
+		if assessmentWorkUnavailable(r) {
+			continue
+		}
 		p := r.Verdict == farm.VerdictPassed
 		if !seen[r.Scenario] {
 			passing[r.Scenario], seen[r.Scenario] = p, true
@@ -336,7 +352,7 @@ func CompareBatches(prevRuns, curRuns []RunRow) BatchDiff {
 // --- Overview batches list (§8.7 item 5) -----------------------------------
 
 // batchListSpec is the Overview batches list's query surface: kind=
-// evaluation|empty|all (default evaluation), since — the table names no
+// evaluation|empty|unavailable|all (default evaluation+unavailable), since — the table names no
 // default for this list's `since` (§8.7 states a default only for
 // /problems and /findings), and batches are rare enough events that a
 // silent 24h default would hide most of them; NoSinceDefault leaves the
@@ -344,7 +360,7 @@ func CompareBatches(prevRuns, curRuns []RunRow) BatchDiff {
 func batchListSpec() ListSpec {
 	return ListSpec{
 		Closed: []ClosedFilter{
-			{Name: paramKind, Allowed: []string{batchKindEvaluation, batchKindEmpty, filterAll}, Single: true},
+			{Name: paramKind, Allowed: []string{batchKindEvaluation, batchKindUnavailable, batchKindEmpty, filterAll}, Single: true},
 		},
 		Sorts: []SortKey{
 			{Name: "newest", DefaultDir: "desc"},
@@ -353,7 +369,7 @@ func batchListSpec() ListSpec {
 			{Name: "cost", DefaultDir: "desc"},
 		},
 		DefaultSort: "newest",
-		Defaults:    map[string]string{paramKind: batchKindEvaluation},
+		Defaults:    map[string]string{paramKind: batchKindEvaluation + "," + batchKindUnavailable},
 		HasSince:    true, NoSinceDefault: true,
 	}
 }
