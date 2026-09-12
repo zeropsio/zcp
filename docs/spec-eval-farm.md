@@ -1440,7 +1440,9 @@ other parameters.
   `passed|failed|blocked|not-started|running|stalled`. A filter over open
   values (batch, scenario, build, surface) is matched exactly;
   `surface=tool:*` style prefixes match a kind; an open value matching
-  nothing yields an empty list, not an error.
+  nothing yields an empty list, not an error. An empty value for a recognized
+  open filter clears that scope, so native GET forms and API requests agree;
+  unknown parameters and invalid closed values remain errors.
 - Each filter option shows its count under the other active filters; an
   option with count 0 is shown but not a link. Active filters show as chips,
   each removable, plus "reset filters". Selecting an already-active
