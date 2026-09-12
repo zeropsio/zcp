@@ -17,6 +17,11 @@ import (
 	"time"
 )
 
+// ErrObjectExists reports that a conditional create lost its race. Callers
+// must preserve the existing object and may not retry with an unconditional
+// PUT.
+var ErrObjectExists = fmt.Errorf("farm: object already exists")
+
 // awsRegion and awsService are fixed: the farm bucket lives in one region,
 // on S3 (docs/spec-eval-farm.md §1: "AWS SigV4, region us-east-1, service
 // s3").
@@ -113,6 +118,10 @@ func (c *SinkClient) objectURL(key string) string {
 // signAndDo builds, signs, and sends one S3 request. rawQuery must already
 // be AWS-canonical (sorted, percent-encoded) — buildQuery produces it.
 func (c *SinkClient) signAndDo(ctx context.Context, method, key, rawQuery string, body []byte) (*http.Response, error) {
+	return c.signAndDoWithHeaders(ctx, method, key, rawQuery, body, nil)
+}
+
+func (c *SinkClient) signAndDoWithHeaders(ctx context.Context, method, key, rawQuery string, body []byte, extra http.Header) (*http.Response, error) {
 	rawURL := c.objectURL(key)
 	if rawQuery != "" {
 		rawURL += "?" + rawQuery
@@ -127,17 +136,26 @@ func (c *SinkClient) signAndDo(ctx context.Context, method, key, rawQuery string
 	amzDate := now.UTC().Format("20060102T150405Z")
 	req.Header.Set("X-Amz-Date", amzDate)
 	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
+	for name, values := range extra {
+		for _, value := range values {
+			req.Header.Add(name, value)
+		}
+	}
 	req.ContentLength = int64(len(body))
+	signedHeaders := map[string]string{
+		"host":                 req.URL.Host,
+		"x-amz-content-sha256": payloadHash,
+		"x-amz-date":           amzDate,
+	}
+	if value := req.Header.Get("If-None-Match"); value != "" {
+		signedHeaders["if-none-match"] = value
+	}
 
 	sigReq := SigV4Request{
-		Method: method,
-		Path:   req.URL.EscapedPath(),
-		Query:  rawQuery,
-		Headers: map[string]string{
-			"host":                 req.URL.Host,
-			"x-amz-content-sha256": payloadHash,
-			"x-amz-date":           amzDate,
-		},
+		Method:        method,
+		Path:          req.URL.EscapedPath(),
+		Query:         rawQuery,
+		Headers:       signedHeaders,
 		PayloadSHA256: payloadHash,
 	}
 	req.Header.Set("Authorization", SignV4(sigReq, c.cfg.Key, c.cfg.Secret, awsRegion, awsService, now))
@@ -201,6 +219,25 @@ func (c *SinkClient) Put(ctx context.Context, key string, body []byte) error {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
 		return fmt.Errorf("farm: PUT %s: %s", key, statusError(resp))
+	}
+	return nil
+}
+
+// PutIfAbsent creates key exactly once using S3's conditional-write
+// precondition. It deliberately does not retry a transport error: after a
+// lost response the store may have accepted the write, so ownership is
+// ambiguous and the caller must fail closed.
+func (c *SinkClient) PutIfAbsent(ctx context.Context, key string, body []byte) error {
+	resp, err := c.signAndDoWithHeaders(ctx, http.MethodPut, key, "", body, http.Header{"If-None-Match": {"*"}})
+	if err != nil {
+		return fmt.Errorf("farm: conditional PUT %s: ambiguous create: %w", key, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusPreconditionFailed {
+		return fmt.Errorf("farm: conditional PUT %s: %w", key, ErrObjectExists)
+	}
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("farm: conditional PUT %s: %s", key, statusError(resp))
 	}
 	return nil
 }

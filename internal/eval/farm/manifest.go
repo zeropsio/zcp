@@ -107,6 +107,20 @@ func PutManifest(ctx context.Context, client *SinkClient, batch string, m BatchM
 	return nil
 }
 
+// CreateManifest reserves a batch identity. The conditional write is the
+// ownership boundary: a conflict or ambiguous response is returned to the
+// controller and no caller may adopt the existing bytes.
+func CreateManifest(ctx context.Context, client *SinkClient, batch string, m BatchManifest) error {
+	body, err := json.Marshal(m)
+	if err != nil {
+		return fmt.Errorf("farm: marshal manifest: %w", err)
+	}
+	if err := client.PutIfAbsent(ctx, manifestKey(batch), body); err != nil {
+		return fmt.Errorf("farm: create manifest: %w", err)
+	}
+	return nil
+}
+
 // GetManifest reads batch's manifest.json.
 func GetManifest(ctx context.Context, client *SinkClient, batch string) (BatchManifest, error) {
 	body, err := client.Get(ctx, manifestKey(batch))

@@ -607,6 +607,87 @@ func TestFarmRun_CreatesPrefixedProjects_AndWritesManifest(t *testing.T) {
 	}
 }
 
+func TestRunBatch_ExistingManifest_RejectsWithoutMutation(t *testing.T) {
+	t.Parallel()
+	f := newControllerFixture(t, "client-existing")
+	original := []byte(`{"batch":"batch-existing","runs":[]}`)
+	f.s3.mu.Lock()
+	f.s3.objects[manifestKey("batch-existing")] = append([]byte(nil), original...)
+	f.s3.mu.Unlock()
+	opts := RunOptions{Batch: "batch-existing", ClientID: "client-existing", Set: "gate", CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen", Scenarios: []ScenarioRun{{ID: "scenario-a"}}, OAuthToken: "oauth", RunBudget: time.Second}
+	if _, err := RunBatch(context.Background(), f.client, f.sink, opts); !errors.Is(err, ErrObjectExists) {
+		t.Fatalf("RunBatch error = %v, want ErrObjectExists", err)
+	}
+	got, err := f.sink.Get(context.Background(), manifestKey("batch-existing"))
+	if err != nil {
+		t.Fatalf("read original manifest: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("manifest changed to %q, want original %q", got, original)
+	}
+	for _, event := range f.timeline.events {
+		if strings.HasPrefix(event, "account:") && (strings.Contains(event, " POST ") || strings.Contains(event, " DELETE ")) {
+			t.Fatalf("platform mutated before rejecting existing manifest: %v", f.timeline.events)
+		}
+	}
+}
+
+func TestRunBatch_DuplicateScenario_RejectsBeforeWrite(t *testing.T) {
+	t.Parallel()
+	f := newControllerFixture(t, "client-duplicate")
+	opts := RunOptions{Batch: "batch-duplicate", ClientID: "client-duplicate", Set: "gate", CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen", Scenarios: []ScenarioRun{{ID: "same"}, {ID: "same"}}, OAuthToken: "oauth", RunBudget: time.Second}
+	if _, err := RunBatch(context.Background(), f.client, f.sink, opts); err == nil {
+		t.Fatal("RunBatch: want duplicate scenario error")
+	}
+	exists, _, err := f.sink.Head(context.Background(), manifestKey(opts.Batch))
+	if err != nil {
+		t.Fatalf("Head manifest: %v", err)
+	}
+	if exists {
+		t.Fatal("duplicate scenario wrote a manifest")
+	}
+}
+
+func TestRunBatch_ConcurrentBatchClaim_OneWinner(t *testing.T) {
+	t.Parallel()
+	fake := newFakeS3()
+	server := httptest.NewServer(fake.handler(t))
+	defer server.Close()
+	newClient := func() *SinkClient {
+		return NewSinkClient(Config{URL: server.URL, Bucket: fakeS3Bucket, Key: "key", Secret: "secret"})
+	}
+	results := make(chan error, 2)
+	for _, body := range []string{"owner-a", "owner-b"} {
+		go func(body string) {
+			results <- CreateManifest(context.Background(), newClient(), "batch-race", BatchManifest{Batch: body})
+		}(body)
+	}
+	var winners int
+	for range 2 {
+		if err := <-results; err == nil {
+			winners++
+		} else if !errors.Is(err, ErrObjectExists) {
+			t.Errorf("claim error = %v, want ErrObjectExists for loser", err)
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("conditional claim winners = %d, want exactly one", winners)
+	}
+}
+
+func TestSettleFromDone_IdentityMismatch_Rejects(t *testing.T) {
+	t.Parallel()
+	fake := newFakeS3()
+	server := httptest.NewServer(fake.handler(t))
+	defer server.Close()
+	sink := NewSinkClient(Config{URL: server.URL, Bucket: fakeS3Bucket, Key: "key", Secret: "secret"})
+	body := []byte(`{"runId":"foreign-run","scenarioId":"scenario-a","candidateSha256":"candidate","evaluatorSha256":"evaluator","parts":{}}`)
+	result, detail, settled := settleFromDoneForIdentity(context.Background(), sink, "reserved-run", "scenario-a", "candidate", "evaluator", body)
+	if result != ResultBlocked || !settled || !strings.Contains(detail, "identity mismatch") {
+		t.Fatalf("settle result=(%q,%q,%v), want blocked identity mismatch", result, detail, settled)
+	}
+}
+
 // TestFarmRun_WritesNoteRunBudgetSecAndCandidateInfo pins §3.3's "the
 // manifest also records..." paragraph: RunOptions.Note,
 // RunOptions.RunBudgetSec, and RunOptions.CandidateInfo land verbatim on
@@ -916,7 +997,7 @@ func TestFarmRun_DoneJSON_PartsVerified_ElseBlocked(t *testing.T) {
 
 		opts := RunOptions{
 			Batch: batch, ClientID: clientID, Set: "gate",
-			CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
+			CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 			Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 			Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 			RunBudget: time.Second, PollInterval: time.Millisecond,
@@ -1155,7 +1236,7 @@ func TestFarmRun_NeverRerunsAFailedRun(t *testing.T) {
 
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
-		CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		RunBudget: time.Second, PollInterval: time.Millisecond,
@@ -1203,7 +1284,7 @@ func TestFarmRun_ResultMetaUnderSuiteScenario_GradesFromTask(t *testing.T) {
 
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
-		CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		RunBudget: time.Second, PollInterval: time.Millisecond,
@@ -1247,7 +1328,7 @@ func TestFarmRun_ResultMetaMissingOrAmbiguous_Blocked(t *testing.T) {
 
 		opts := RunOptions{
 			Batch: batch, ClientID: clientID, Set: "gate",
-			CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
+			CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 			Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 			Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 			RunBudget: time.Second, PollInterval: time.Millisecond,
@@ -1287,7 +1368,7 @@ func TestFarmRun_ResultMetaMissingOrAmbiguous_Blocked(t *testing.T) {
 
 		opts := RunOptions{
 			Batch: batch, ClientID: clientID + "-amb", Set: "gate",
-			CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
+			CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 			Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 			Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 			RunBudget: time.Second, PollInterval: time.Millisecond,
@@ -1372,7 +1453,7 @@ func TestFarmRun_BlockedTask_DetailNamesBlockingChecks(t *testing.T) {
 
 			opts := RunOptions{
 				Batch: batch, ClientID: clientID, Set: "gate",
-				CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
+				CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 				Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 				Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 				RunBudget: time.Second, PollInterval: time.Millisecond,
@@ -1405,7 +1486,7 @@ func TestFarmRun_BlockedTask_NoVerificationJSON_DetailSaysSo(t *testing.T) {
 
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
-		CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap", ScenariosDigest: "scen",
 		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
 		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
 		RunBudget: time.Second, PollInterval: time.Millisecond,

@@ -72,6 +72,12 @@ func (f *fakeS3) handler(t *testing.T) http.HandlerFunc {
 		defer f.mu.Unlock()
 		switch r.Method {
 		case http.MethodPut:
+			if r.Header.Get("If-None-Match") == "*" {
+				if _, exists := f.objects[key]; exists {
+					w.WriteHeader(http.StatusPreconditionFailed)
+					return
+				}
+			}
 			body := make([]byte, r.ContentLength)
 			_, _ = io.ReadFull(r.Body, body)
 			f.objects[key] = body
