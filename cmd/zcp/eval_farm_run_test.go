@@ -28,6 +28,21 @@ func envrForTest() *farm.EnvResolver {
 	return farm.NewEnvResolver(context.Background(), nil, "", os.Getenv)
 }
 
+func TestFarmRun_FinalizationFailure_PrintsRecoveryIDs(t *testing.T) {
+	stdout, stderr := captureOutput(t, func() {
+		printFarmRecoveryIDs([]farm.RunResult{{RunID: "batch-r1", ProjectID: "proj-123", LaunchTokenID: "tok-456"}})
+	})
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+	if !strings.Contains(stderr, "projectId=proj-123") || !strings.Contains(stderr, "launchTokenId=tok-456") {
+		t.Fatalf("stderr = %q, want safe recovery ids", stderr)
+	}
+	if strings.Contains(stderr, "token-value") {
+		t.Fatalf("stderr contains token value: %q", stderr)
+	}
+}
+
 // TestEvalFarmRun_Detach_ReexecsAndPrintsLogPath pins §3.1 FM-18: `farm run
 // --detach` re-execs this same binary (minus --detach, --batch pinned) with
 // stdout/stderr redirected to <cwd>/farm-<batch>.log, and prints the batch

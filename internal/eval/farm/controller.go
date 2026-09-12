@@ -260,6 +260,14 @@ type activeRun struct {
 	Deadline time.Time
 }
 
+type batchAbortError struct {
+	cause  error
+	result RunResult
+}
+
+func (e *batchAbortError) Error() string { return e.cause.Error() }
+func (e *batchAbortError) Unwrap() error { return e.cause }
+
 // createRun performs one scheduled run's creation steps (§2.1: mint launch
 // token if needed, create the project shell, mint the run's project-scoped
 // token, import the zcp service) and reports exactly one of three outcomes:
@@ -327,11 +335,21 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 	minted, err := client.MintProjectScopedToken(ctx, opts.ClientID, result.ProjectID, "farm-run-"+r.RunID)
 	if err != nil {
 		if isScopedMintForbidden(err) {
-			_ = Guard(ctx, client, result.ProjectID, runProjectName)
+			rollbackErr := Guard(ctx, client, result.ProjectID, runProjectName)
+			var revokeErr error
 			if launchTokenID != "" {
-				_ = client.RevokeIntegrationToken(ctx, opts.ClientID, launchTokenID)
+				revokeErr = client.RevokeIntegrationToken(ctx, opts.ClientID, launchTokenID)
 			}
-			return nil, nil, fmt.Errorf("farm run: mint run token for %s: %w", r.RunID, err)
+			rr := recordBlocked(r.RunID, r.ID, fmt.Errorf("mint run token: %w", err))
+			if rollbackErr != nil {
+				rr.ProjectID = result.ProjectID
+				rr.Error = fmt.Sprintf("%s; rollback failed: %v", rr.Error, rollbackErr)
+			}
+			if revokeErr != nil {
+				rr.LaunchTokenID = launchTokenID
+				rr.Error = fmt.Sprintf("%s; launch token revoke failed: %v", rr.Error, revokeErr)
+			}
+			return nil, nil, &batchAbortError{cause: fmt.Errorf("farm run: mint run token for %s: %w", r.RunID, err), result: rr}
 		}
 		rr := recordBlockedAfterRollback(ctx, client, opts, r, result.ProjectID, runProjectName, launchTokenID, fmt.Errorf("mint run token: %w", err))
 		return nil, &rr, nil
@@ -460,6 +478,15 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 	for _, r := range scheduled {
 		active, blockedResult, abortErr := createRun(ctx, client, opts, r)
 		if abortErr != nil {
+			var abort *batchAbortError
+			if errors.As(abortErr, &abort) && abort.result.RunID != "" {
+				blocked = append(blocked, abort.result)
+			}
+			if len(runTokenIDs) > 0 {
+				if err := persistRunTokenIDs(ctx, sink, opts.Batch, &manifest, manifestRuns, runTokenIDs); err != nil {
+					abortErr = errors.Join(abortErr, fmt.Errorf("farm run: update manifest with run token ids: %w", err))
+				}
+			}
 			results, finalizeErr := finalizeAfterFailure(ctx, client, sink, opts, actives, blocked, abortErr, now, pollInterval)
 			return results, finalizeErr
 		}
@@ -484,16 +511,10 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 	// pins only that the FIRST write happens before any project exists,
 	// not that the manifest is written exactly once.
 	if len(runTokenIDs) > 0 {
-		for i := range manifestRuns {
-			if id, ok := runTokenIDs[manifestRuns[i].RunID]; ok {
-				manifestRuns[i].RunTokenID = id
-			}
-		}
-		manifest.Runs = manifestRuns
 		// R3: this write must land even if ctx is cancelled mid-batch — an
 		// interrupted operator still wants the minted run token ids on
 		// record.
-		if err := PutManifest(context.WithoutCancel(ctx), sink, opts.Batch, manifest); err != nil {
+		if err := persistRunTokenIDs(ctx, sink, opts.Batch, &manifest, manifestRuns, runTokenIDs); err != nil {
 			cause := fmt.Errorf("farm run: update manifest with run token ids: %w", err)
 			results, finalizeErr := finalizeAfterFailure(ctx, client, sink, opts, actives, blocked, cause, now, pollInterval)
 			return results, finalizeErr
@@ -503,16 +524,18 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 	results = append(results, blocked...)
 	endedByBudget := false
 	endedByInterrupt := false
+	var cleanupErrs []error
 	for _, a := range actives {
-		result, detail, settled := waitForDone(ctx, client, sink, a.RunID, a.ID, opts.CandidateSHA256, opts.EvaluatorSHA256, a.ProjectID, a.Deadline, now, pollInterval)
-		rr := RunResult{RunID: a.RunID, Scenario: a.ID, ProjectID: a.ProjectID, Result: result, Detail: detail, LaunchTokenID: a.LaunchTokenID}
-
-		if !settled {
+		rr, budget, interrupted, cleanupErr := finalizeActiveRun(ctx, client, sink, a, opts, now, pollInterval)
+		if cleanupErr != nil {
+			cleanupErrs = append(cleanupErrs, cleanupErr)
+		}
+		if budget || interrupted {
 			// FM-21's sole exemption (budget elapsed) and R3's interrupt
 			// exemption share the same shape: the project is kept for
 			// inspection, the token (if any) stays unrevoked and is
 			// recorded so `gc` can finish the job later.
-			if detail == DetailInterrupted {
+			if interrupted {
 				endedByInterrupt = true
 			} else {
 				endedByBudget = true
@@ -521,20 +544,6 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 			continue
 		}
 
-		runProjectName := ProjectPrefix + a.RunID
-		if err := Guard(ctx, client, a.ProjectID, runProjectName); err == nil {
-			rr.ProjectID = ""
-		}
-		if a.Launch {
-			if prodID, ok := findProjectByName(ctx, client, opts.ClientID, runProjectName+prodSuffix); ok {
-				_ = Guard(ctx, client, prodID, runProjectName+prodSuffix)
-			}
-			if a.LaunchTokenID != "" {
-				if err := client.RevokeIntegrationToken(ctx, opts.ClientID, a.LaunchTokenID); err == nil {
-					rr.LaunchTokenID = ""
-				}
-			}
-		}
 		results = append(results, rr)
 	}
 
@@ -556,9 +565,22 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 	// whole point of the interrupt exemption is that the operator's own
 	// Ctrl-C/SIGTERM must not also block the write that records it.
 	if err := PutSummary(context.WithoutCancel(ctx), sink, opts.Batch, summary); err != nil {
-		return results, fmt.Errorf("farm run: write summary: %w", err)
+		return results, errors.Join(fmt.Errorf("farm run: write summary: %w", err), errors.Join(cleanupErrs...))
+	}
+	if err := errors.Join(cleanupErrs...); err != nil {
+		return results, fmt.Errorf("farm run: cleanup: %w", err)
 	}
 	return results, nil
+}
+
+func persistRunTokenIDs(ctx context.Context, sink *SinkClient, batch string, manifest *BatchManifest, runs []ManifestRun, ids map[string]string) error {
+	for i := range runs {
+		if id, ok := ids[runs[i].RunID]; ok {
+			runs[i].RunTokenID = id
+		}
+	}
+	manifest.Runs = runs
+	return PutManifest(context.WithoutCancel(ctx), sink, batch, *manifest)
 }
 
 // finalizeAfterFailure applies the ordinary settlement rules to runs created
@@ -567,11 +589,15 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 // recoverable when cleanup or storage fails.
 func finalizeAfterFailure(ctx context.Context, client PlatformClient, sink *SinkClient, opts RunOptions, actives []activeRun, blocked []RunResult, cause error, now func() time.Time, pollInterval time.Duration) ([]RunResult, error) {
 	results := append([]RunResult(nil), blocked...)
+	var cleanupErrs []error
 	endedByBudget := false
 	endedByInterrupt := false
 	for _, a := range actives {
-		rr, budget, interrupted := finalizeActiveRun(ctx, client, sink, a, opts, now, pollInterval)
+		rr, budget, interrupted, cleanupErr := finalizeActiveRun(ctx, client, sink, a, opts, now, pollInterval)
 		results = append(results, rr)
+		if cleanupErr != nil {
+			cleanupErrs = append(cleanupErrs, cleanupErr)
+		}
 		endedByBudget = endedByBudget || budget
 		endedByInterrupt = endedByInterrupt || interrupted
 	}
@@ -586,32 +612,39 @@ func finalizeAfterFailure(ctx context.Context, client PlatformClient, sink *Sink
 		summary.Runs = append(summary.Runs, SummaryRun(rr))
 	}
 	if err := PutSummary(context.WithoutCancel(ctx), sink, opts.Batch, summary); err != nil {
-		return results, fmt.Errorf("%v; farm run: final summary unavailable: %w", cause, err)
+		return results, errors.Join(cause, fmt.Errorf("farm run: final summary unavailable: %w", err))
 	}
-	return results, cause
+	return results, errors.Join(cause, errors.Join(cleanupErrs...))
 }
 
-func finalizeActiveRun(ctx context.Context, client PlatformClient, sink *SinkClient, a activeRun, opts RunOptions, now func() time.Time, pollInterval time.Duration) (RunResult, bool, bool) {
+func finalizeActiveRun(ctx context.Context, client PlatformClient, sink *SinkClient, a activeRun, opts RunOptions, now func() time.Time, pollInterval time.Duration) (RunResult, bool, bool, error) {
 	result, detail, settled := waitForDone(ctx, client, sink, a.RunID, a.ID, opts.CandidateSHA256, opts.EvaluatorSHA256, a.ProjectID, a.Deadline, now, pollInterval)
 	rr := RunResult{RunID: a.RunID, Scenario: a.ID, ProjectID: a.ProjectID, Result: result, Detail: detail, LaunchTokenID: a.LaunchTokenID}
 	if !settled {
-		return rr, detail != DetailInterrupted, detail == DetailInterrupted
+		return rr, detail != DetailInterrupted, detail == DetailInterrupted, nil
 	}
 	runProjectName := ProjectPrefix + a.RunID
+	var cleanupErrs []error
 	if err := Guard(ctx, client, a.ProjectID, runProjectName); err == nil {
 		rr.ProjectID = ""
+	} else {
+		cleanupErrs = append(cleanupErrs, fmt.Errorf("farm run: cleanup project %s: %w", a.RunID, err))
 	}
 	if a.Launch {
 		if prodID, ok := findProjectByName(ctx, client, opts.ClientID, runProjectName+prodSuffix); ok {
-			_ = Guard(ctx, client, prodID, runProjectName+prodSuffix)
+			if err := Guard(ctx, client, prodID, runProjectName+prodSuffix); err != nil {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("farm run: cleanup production project %s: %w", a.RunID, err))
+			}
 		}
 		if a.LaunchTokenID != "" {
 			if err := client.RevokeIntegrationToken(ctx, opts.ClientID, a.LaunchTokenID); err == nil {
 				rr.LaunchTokenID = ""
+			} else {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("farm run: revoke launch token %s: %w", a.LaunchTokenID, err))
 			}
 		}
 	}
-	return rr, false, false
+	return rr, false, false, errors.Join(cleanupErrs...)
 }
 
 // recordBlocked is D10's single call site for a creation-phase run

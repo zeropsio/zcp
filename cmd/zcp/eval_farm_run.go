@@ -143,6 +143,7 @@ func runFarmRun(args []string, envr *farm.EnvResolver) int {
 	}
 	results, err := farm.RunBatch(ctx, client, sink, opts)
 	if err != nil {
+		printFarmRecoveryIDs(results)
 		if isIntegrationTokenMintForbidden(err) {
 			fmt.Fprintln(os.Stderr, "error: ZCP_FARM_ACCOUNT_TOKEN must be a personal access token: integration tokens cannot mint run tokens")
 			return 1
@@ -180,6 +181,17 @@ func runFarmRun(args []string, envr *farm.EnvResolver) int {
 		return 1
 	}
 	return 0
+}
+
+func printFarmRecoveryIDs(results []farm.RunResult) {
+	for _, r := range results {
+		if r.ProjectID != "" {
+			fmt.Fprintf(os.Stderr, "recovery: run %s projectId=%s\n", r.RunID, r.ProjectID)
+		}
+		if r.LaunchTokenID != "" {
+			fmt.Fprintf(os.Stderr, "recovery: run %s launchTokenId=%s\n", r.RunID, r.LaunchTokenID)
+		}
+	}
 }
 
 // farmRunFlags is `zcp eval farm run`'s parsed command line.
