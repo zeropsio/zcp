@@ -22,9 +22,14 @@ import (
 // (FM-20).
 const ProjectPrefix = "zcp-farm-"
 
-// prodSuffix names a launch scenario's production target project, appended
-// to the run project's own name (§3.2 FM-19, §3.4 FM-23).
-const prodSuffix = "-prod"
+// productionProjectName uses a role marker outside both legacy and generated
+// run-id grammars. It therefore cannot equal a primary project name, even
+// when a scenario itself is named "prod" or ends in "-prod".
+func productionProjectName(runID string) string { return ProjectPrefix + "prod__" + runID }
+
+// ProductionProjectName returns the sole production-project name that a new
+// run may declare for controller cleanup.
+func ProductionProjectName(runID string) string { return productionProjectName(runID) }
 
 // Per-run acceptance verdicts (§5.1 vocabulary; "not-run" is a row-level
 // status this slice never assigns at the whole-run level — §5.1: "a run
@@ -172,9 +177,14 @@ type ScenarioRun struct {
 	ID string
 	// Launch marks a launch scenario: the controller mints a per-run
 	// ZCP_E2E_LAUNCH_KEY before creating its project and, once the run
-	// settles, also deletes its zcp-farm-<runId>-prod target and revokes
-	// the token (§3.4 FM-23).
+	// settles, also deletes its explicitly named production target and
+	// revokes the token (§3.4 FM-23).
 	Launch bool
+	// ProductionProjectName is an exact, scenario-declared production target.
+	// Empty means no structured ownership was declared; the controller never
+	// guesses/deletes a target from Launch alone, while launch-token handling
+	// still follows the Launch flag.
+	ProductionProjectName string
 }
 
 // RunOptions is the input to RunBatch (§3.3 FM-21/FM-22).
@@ -223,11 +233,12 @@ type RunOptions struct {
 // RunResult is one run's outcome — the CLI prints
 // "<runId> <scenario> passed|failed|blocked|not-run" from these.
 type RunResult struct {
-	RunID     string
-	Scenario  string
-	ProjectID string // empty once the run's project has been deleted
-	Result    string
-	Detail    string
+	RunID                 string
+	Scenario              string
+	ProjectID             string // empty once the run's project has been deleted
+	ProductionProjectName string
+	Result                string
+	Detail                string
 	// Error carries the wrapped error message for a run RunBatch blocked
 	// before or during creation (ProjectImportYAML, CreateAndImportProject,
 	// a non-403 mint, ServiceImportYAML, ImportServiceStack — D10). Empty
@@ -250,9 +261,10 @@ type scheduledRun struct {
 // carried into RunBatch's settle loop.
 type activeRun struct {
 	scheduledRun
-	ProjectID     string
-	LaunchTokenID string
-	RunTokenID    string
+	ProjectID             string
+	LaunchTokenID         string
+	RunTokenID            string
+	ProductionProjectName string
 	// Deadline is this run's own budget deadline, set once at creation —
 	// createdAt + RunBudget (R7). Runs are still waited on in order, but
 	// each against its own deadline: a hung run earlier in the batch must
@@ -291,7 +303,7 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 			// project was never created is not reported at all" (in the
 			// bucket/project sense: no project, no token to revoke) — but
 			// D10 requires the run itself still be reported blocked.
-			rr := recordBlocked(r.RunID, r.ID, fmt.Errorf("mint launch token: %w", err))
+			rr := recordBlocked(r.RunID, r.ID, r.ProductionProjectName, fmt.Errorf("mint launch token: %w", err))
 			return nil, &rr, nil
 		}
 		launchTokenID = minted.TokenID
@@ -341,7 +353,7 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 			if launchTokenID != "" {
 				revokeErr = client.RevokeIntegrationToken(ctx, opts.ClientID, launchTokenID)
 			}
-			rr := recordBlocked(r.RunID, r.ID, fmt.Errorf("mint run token: %w", err))
+			rr := recordBlocked(r.RunID, r.ID, r.ProductionProjectName, fmt.Errorf("mint run token: %w", err))
 			if rollbackErr != nil {
 				rr.ProjectID = result.ProjectID
 				rr.Error = fmt.Sprintf("%s; rollback failed: %v", rr.Error, rollbackErr)
@@ -370,10 +382,11 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 	}
 
 	return &activeRun{
-		scheduledRun:  r,
-		ProjectID:     result.ProjectID,
-		LaunchTokenID: launchTokenID,
-		RunTokenID:    minted.TokenID,
+		scheduledRun:          r,
+		ProjectID:             result.ProjectID,
+		LaunchTokenID:         launchTokenID,
+		RunTokenID:            minted.TokenID,
+		ProductionProjectName: r.ProductionProjectName,
 	}, nil, nil
 }
 
@@ -383,7 +396,7 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 // if the revoke itself fails, the id is kept on the result so RunBatch's
 // end-of-batch manifest/summary pass and `gc` can finish the job later.
 func recordBlockedRevokingLaunchToken(ctx context.Context, client PlatformClient, opts RunOptions, r scheduledRun, launchTokenID string, err error) RunResult {
-	rr := recordBlocked(r.RunID, r.ID, err)
+	rr := recordBlocked(r.RunID, r.ID, r.ProductionProjectName, err)
 	revokeLaunchTokenOnto(ctx, client, opts, launchTokenID, &rr)
 	return rr
 }
@@ -397,7 +410,7 @@ func recordBlockedRevokingLaunchToken(ctx context.Context, client PlatformClient
 // back onto rr when that revoke itself fails (FM-23).
 func recordBlockedAfterRollback(ctx context.Context, client PlatformClient, opts RunOptions, r scheduledRun, projectID, projectName, launchTokenID string, err error) RunResult {
 	rollbackErr := Guard(ctx, client, projectID, projectName)
-	rr := recordBlocked(r.RunID, r.ID, err)
+	rr := recordBlocked(r.RunID, r.ID, r.ProductionProjectName, err)
 	if rollbackErr != nil {
 		rr.ProjectID = projectID
 		rr.Error = fmt.Sprintf("%s; rollback failed: %v", rr.Error, rollbackErr)
@@ -427,8 +440,14 @@ func revokeLaunchTokenOnto(ctx context.Context, client PlatformClient, opts RunO
 // settled run's project(s) and — for launch scenarios — revokes the launch
 // token, then writes batches/<batch>/summary.json.
 func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts RunOptions) ([]RunResult, error) {
+	if !ValidBatchID(opts.Batch) {
+		return nil, fmt.Errorf("farm run: invalid batch %q", opts.Batch)
+	}
 	seenScenarios := make(map[string]struct{}, len(opts.Scenarios))
 	for _, sc := range opts.Scenarios {
+		if !ValidScenarioID(sc.ID) {
+			return nil, fmt.Errorf("farm run: invalid scenario %q", sc.ID)
+		}
 		if _, exists := seenScenarios[sc.ID]; exists {
 			return nil, fmt.Errorf("farm run: duplicate scenario %q", sc.ID)
 		}
@@ -447,11 +466,20 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 	scheduled := make([]scheduledRun, 0, len(opts.Scenarios))
 	manifestRuns := make([]ManifestRun, 0, len(opts.Scenarios))
 	for _, sc := range opts.Scenarios {
-		runID := opts.Batch + "-" + sc.ID
+		runID, err := EncodeRunID(opts.Batch, sc.ID)
+		if err != nil {
+			return nil, fmt.Errorf("farm run: encode %s: %w", sc.ID, err)
+		}
+		if sc.ProductionProjectName != "" && sc.ProductionProjectName != productionProjectName(runID) {
+			return nil, fmt.Errorf("farm run: scenario %s has foreign production project %q", sc.ID, sc.ProductionProjectName)
+		}
+		if !sc.Launch && sc.ProductionProjectName != "" {
+			return nil, fmt.Errorf("farm run: non-launch scenario %s has production project", sc.ID)
+		}
 		scheduled = append(scheduled, scheduledRun{ScenarioRun: sc, RunID: runID})
-		manifestRuns = append(manifestRuns, ManifestRun{
-			RunID: runID, Scenario: sc.ID, ProjectName: ProjectPrefix + runID,
-		})
+		mr := ManifestRun{RunID: runID, Scenario: sc.ID, ProjectName: ProjectPrefix + runID}
+		mr.ProductionProjectName = sc.ProductionProjectName
+		manifestRuns = append(manifestRuns, mr)
 	}
 
 	manifest := BatchManifest{
@@ -621,6 +649,7 @@ func finalizeAfterFailure(ctx context.Context, client PlatformClient, sink *Sink
 func finalizeActiveRun(ctx context.Context, client PlatformClient, sink *SinkClient, a activeRun, opts RunOptions, now func() time.Time, pollInterval time.Duration) (RunResult, bool, bool, error) {
 	result, detail, settled := waitForDone(ctx, client, sink, a.RunID, a.ID, opts.CandidateSHA256, opts.EvaluatorSHA256, a.ProjectID, a.Deadline, now, pollInterval)
 	rr := RunResult{RunID: a.RunID, Scenario: a.ID, ProjectID: a.ProjectID, Result: result, Detail: detail, LaunchTokenID: a.LaunchTokenID}
+	rr.ProductionProjectName = a.ProductionProjectName
 	if !settled {
 		return rr, detail != DetailInterrupted, detail == DetailInterrupted, nil
 	}
@@ -632,9 +661,11 @@ func finalizeActiveRun(ctx context.Context, client PlatformClient, sink *SinkCli
 		cleanupErrs = append(cleanupErrs, fmt.Errorf("farm run: cleanup project %s: %w", a.RunID, err))
 	}
 	if a.Launch {
-		if prodID, ok := findProjectByName(ctx, client, opts.ClientID, runProjectName+prodSuffix); ok {
-			if err := Guard(ctx, client, prodID, runProjectName+prodSuffix); err != nil {
-				cleanupErrs = append(cleanupErrs, fmt.Errorf("farm run: cleanup production project %s: %w", a.RunID, err))
+		if a.ProductionProjectName != "" {
+			if prodID, ok := findProjectByName(ctx, client, opts.ClientID, a.ProductionProjectName); ok {
+				if err := Guard(ctx, client, prodID, a.ProductionProjectName); err != nil {
+					cleanupErrs = append(cleanupErrs, fmt.Errorf("farm run: cleanup production project %s: %w", a.RunID, err))
+				}
 			}
 		}
 		if a.LaunchTokenID != "" {
@@ -653,9 +684,11 @@ func finalizeActiveRun(ctx context.Context, client PlatformClient, sink *SinkCli
 // the moment the failure happens, and returns the RunResult (result
 // "blocked", Error carrying err's message) for RunBatch to fold into its
 // results/summary — never a bare `continue` that reports nothing.
-func recordBlocked(runID, scenario string, err error) RunResult {
+func recordBlocked(runID, scenario, productionName string, err error) RunResult {
 	fmt.Fprintf(os.Stderr, "%s %s error: %v\n", runID, scenario, err)
-	return RunResult{RunID: runID, Scenario: scenario, Result: ResultBlocked, Error: err.Error()}
+	rr := RunResult{RunID: runID, Scenario: scenario, Result: ResultBlocked, Error: err.Error()}
+	rr.ProductionProjectName = productionName
+	return rr
 }
 
 // isScopedMintForbidden reports whether err is the typed platform error

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/eval/farm"
 )
 
 // --- item 5: one bad object never takes a page down ---------------------
@@ -191,6 +193,39 @@ func TestView_FindRunBatchTouchesOnlyMatchingBatch(t *testing.T) {
 	}
 	if !store.calledGet("batches/b2/manifest.json") {
 		t.Error("findRunBatch never loaded batch b2's manifest")
+	}
+}
+
+func TestView_FindRunBatch_NewIDIgnoresGlobalListingFailure(t *testing.T) {
+	store := newFakeStore()
+	runID, err := farm.EncodeRunID("new-batch", "scenario")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedBatch(t, store, "new-batch", "claude-sonnet-5", []runFixture{{runID: runID, scenario: "scenario", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true}}, true, map[string]string{runID: "passed"})
+	store.listErrOn, store.listErr = "batches/", errors.New("global listing unavailable")
+	batch, run, _, err := findRunBatch(context.Background(), store, runID)
+	if err != nil || batch != "new-batch" || run.RunID != runID {
+		t.Fatalf("findRunBatch=(%q,%+v) err=%v", batch, run, err)
+	}
+	if len(store.lists) != 0 {
+		t.Fatalf("new lookup listed batches: %v", store.lists)
+	}
+}
+
+func TestView_FindRunBatch_NewIDPropagatesManifestFailure(t *testing.T) {
+	store := newFakeStore()
+	runID, err := farm.EncodeRunID("broken-batch", "scenario")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.putText(t, "batches/broken-batch/manifest.json", "{not-json")
+	batch, run, manifest, err := findRunBatch(context.Background(), store, runID)
+	_ = batch
+	_ = run
+	_ = manifest
+	if err == nil || !strings.Contains(err.Error(), "parse manifest") || errors.Is(err, ErrRunNotFound) {
+		t.Fatalf("findRunBatch error=%v, want propagated manifest parse failure", err)
 	}
 }
 

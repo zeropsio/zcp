@@ -97,7 +97,7 @@ func runFarmRun(args []string, envr *farm.EnvResolver) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	scenarios, err := resolveScenarios(ctx, sink, flags.scenariosDigest, flags.set)
+	scenarios, err := resolveScenarios(ctx, sink, batch, flags.scenariosDigest, flags.set)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: resolve scenario set: %v\n", err)
 		return 1
@@ -284,7 +284,7 @@ func resolveObserver(flag string) (string, error) {
 // runs the binary only, no repo checkout (docs/spec-eval-farm.md §3.1
 // FM-17/FM-18), so every scenario fact is read from the bucket at
 // scenariosDigest, never from disk.
-func resolveScenarios(ctx context.Context, sink *farm.SinkClient, scenariosDigest, set string) ([]farm.ScenarioRun, error) {
+func resolveScenarios(ctx context.Context, sink *farm.SinkClient, batch, scenariosDigest, set string) ([]farm.ScenarioRun, error) {
 	var ids []string
 	var err error
 	switch set {
@@ -306,11 +306,11 @@ func resolveScenarios(ctx context.Context, sink *farm.SinkClient, scenariosDiges
 
 	scenarios := make([]farm.ScenarioRun, 0, len(ids))
 	for _, id := range ids {
-		launch, err := scenarioIsLaunch(ctx, sink, scenariosDigest, id)
+		launch, production, err := resolveScenarioOwnership(ctx, sink, scenariosDigest, id, batch)
 		if err != nil {
 			return nil, err
 		}
-		scenarios = append(scenarios, farm.ScenarioRun{ID: id, Launch: launch})
+		scenarios = append(scenarios, farm.ScenarioRun{ID: id, Launch: launch, ProductionProjectName: production})
 	}
 	return scenarios, nil
 }
@@ -357,34 +357,49 @@ func listAllScenarioIDsFromBucket(ctx context.Context, sink *farm.SinkClient, sc
 	return ids, nil
 }
 
-// scenarioIsLaunch reports whether scenario id's front matter area names a
-// launch scenario (§3.4 FM-23 mints/revokes a token only for these). The
-// scenario body is read from scenarios/<scenariosDigest>/<id>.md in the
-// bucket and parsed via eval.ParseScenario, which reads from a path — so
-// the fetched body is staged to a temp file for that one parse.
-func scenarioIsLaunch(ctx context.Context, sink *farm.SinkClient, scenariosDigest, id string) (bool, error) {
+// resolveScenarioOwnership reads and parses one bucket scenario exactly once.
+// Its area controls launch-token handling. Only a structured launchShape
+// target matching the canonical run-specific farm name grants the controller
+// ownership for automatic deletion.
+func resolveScenarioOwnership(ctx context.Context, sink *farm.SinkClient, scenariosDigest, id, batch string) (bool, string, error) {
 	key := fmt.Sprintf("scenarios/%s/%s.md", scenariosDigest, id)
 	body, err := sink.Get(ctx, key)
 	if err != nil {
-		return false, fmt.Errorf("resolve scenario %s: %w", id, err)
+		return false, "", fmt.Errorf("resolve scenario %s: %w", id, err)
 	}
 	tmp, err := os.CreateTemp("", "farm-scenario-*.md")
 	if err != nil {
-		return false, fmt.Errorf("resolve scenario %s: %w", id, err)
+		return false, "", fmt.Errorf("resolve scenario %s: %w", id, err)
 	}
 	defer os.Remove(tmp.Name())
 	if _, err := tmp.Write(body); err != nil {
 		_ = tmp.Close()
-		return false, fmt.Errorf("resolve scenario %s: %w", id, err)
+		return false, "", fmt.Errorf("resolve scenario %s: %w", id, err)
 	}
 	if err := tmp.Close(); err != nil {
-		return false, fmt.Errorf("resolve scenario %s: %w", id, err)
+		return false, "", fmt.Errorf("resolve scenario %s: %w", id, err)
 	}
 	sc, err := eval.ParseScenario(tmp.Name())
 	if err != nil {
-		return false, fmt.Errorf("resolve scenario %s: %w", id, err)
+		return false, "", fmt.Errorf("resolve scenario %s: %w", id, err)
 	}
-	return strings.HasPrefix(sc.Area, "launch"), nil
+	launch := strings.HasPrefix(sc.Area, "launch")
+	if sc.Verification == nil || sc.Verification.LaunchShape == nil || sc.Verification.LaunchShape.ProdProject == "" {
+		return launch, "", nil
+	}
+	if batch == "" {
+		return launch, "", nil
+	}
+	runID, err := farm.EncodeRunID(batch, id)
+	if err != nil {
+		return false, "", fmt.Errorf("resolve scenario %s: %w", id, err)
+	}
+	want := farm.ProductionProjectName(runID)
+	got := strings.ReplaceAll(sc.Verification.LaunchShape.ProdProject, "{{runId}}", runID)
+	if got != want {
+		return false, "", fmt.Errorf("resolve scenario %s: foreign production project %q", id, got)
+	}
+	return launch, got, nil
 }
 
 // resolvePin returns a digest pin: flag when given, else the trimmed body of

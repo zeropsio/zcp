@@ -766,15 +766,24 @@ func settledOrRunning(summary farm.BatchSummary, summaryFound bool, runID string
 	return verdictRunning
 }
 
-// findRunBatch locates the batch owning runID by scanning every batch's
-// manifest for a matching run entry (the bucket layout carries no reverse
-// index, §1.1) — runID is checked against the FM-47 grammar before any
-// store call. A run id is always "<batchId>-<scenario>" (§1.1), so only a
-// batch whose id is runID's own "<batch>-" prefix is ever worth a manifest
-// load (item 7b) — every other batch is skipped before any store call for
-// it.
+// findRunBatch locates the batch owning runID. A versioned ID decodes to one
+// exact batch and needs one manifest read. A legacy ID has no unambiguous
+// boundary, so the compatibility path scans only batch-prefix candidates.
 func findRunBatch(ctx context.Context, store observer.ObjectStore, runID string) (batchID string, run farm.ManifestRun, manifest farm.BatchManifest, err error) {
 	if !farm.ValidRunID(runID) {
+		return "", farm.ManifestRun{}, farm.BatchManifest{}, fmt.Errorf("%w: %q", ErrRunNotFound, runID)
+	}
+	if batch, _, ok := farm.DecodeRunID(runID); ok {
+		m, err := loadManifest(ctx, store, batch)
+		if err == nil {
+			for _, r := range m.Runs {
+				if r.RunID == runID {
+					return batch, r, m, nil
+				}
+			}
+		} else if !errors.Is(err, ErrBatchNotFound) {
+			return "", farm.ManifestRun{}, farm.BatchManifest{}, fmt.Errorf("console: find run batch %s: %w", runID, err)
+		}
 		return "", farm.ManifestRun{}, farm.BatchManifest{}, fmt.Errorf("%w: %q", ErrRunNotFound, runID)
 	}
 	batches, err := listBatchIDs(ctx, store)

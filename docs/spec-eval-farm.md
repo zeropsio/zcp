@@ -142,7 +142,8 @@ Shape, as implemented by the controller (S4):
   "set": "gate|all|<ids>",
   "candidateSha256": "…", "evaluatorSha256": "…", "scenariosDigest": "…",
   "observer": "claude-sonnet-5|off",
-  "runs": [{"runId": "…", "scenario": "…", "projectName": "zcp-farm-<runId>"}]
+  "runs": [{"runId": "…", "scenario": "…", "projectName": "zcp-farm-<runId>",
+            "productionProjectName": "zcp-farm-prod__<runId>"}]
 }
 ```
 
@@ -154,6 +155,7 @@ Shape, as implemented by the controller (S4):
     "runId": "…", "scenario": "…", "projectId": "…",
     "result": "passed|failed|blocked|not-run", "detail": "…",
     "error": "…",            // set when the run's project could not be created, minted or imported
+    "productionProjectName": "zcp-farm-prod__<runId>", // launch only; optional
     "launchTokenId": "…"
   }]
 }
@@ -418,7 +420,7 @@ over HTTP can create or delete a project.
 ### 3.2 The prefix rule
 
 **FM-19.** Every project the controller creates is named `zcp-farm-<runId>`
-(run projects) or `zcp-farm-<runId>-prod` (a launch scenario's target,
+(primary run projects) or the role-tagged `zcp-farm-prod__<runId>` production target,
 FM-23). Every project the controller deletes is matched against that prefix
 at the platform-call site — the guard lives where the `DeleteProject` call is
 made, never only in a caller one layer up. `TestFarmGC_ForeignPrefix_NeverListed`
@@ -445,7 +447,7 @@ existing object is preserved, never adopted as the new run's evidence.
 This live-controller requirement does not change FM-6's reporting of old
 unpinned bundles.
 
-It deletes every `zcp-farm-<runId>*` project belonging to a run once its
+It deletes every explicitly manifest-referenced project belonging to a run once its
 bound completion settles it. A run whose budget elapses without an
 acceptable bundle is **not** deleted by `farm run` and stays for inspection
 (FM-3). While waiting, the controller
@@ -499,7 +501,7 @@ run project.
 `ZCP_E2E_LAUNCH_KEY` (NO_ACCESS + `canCreateProjects`) per run before
 creating that run's project, injects it as a sensitive env (§2.2), and
 revokes it after that run's projects (the run project and its
-`zcp-farm-<runId>-prod` target) are deleted. A launch token is never reused
+explicitly recorded production target) are deleted. A launch token is never reused
 across runs and never survives past its run's project deletion. Mint is
 `POST /client/{clientId}/integration-token` (the body `MintDelegatedLaunchToken`
 already sends); revoke is `DELETE /client/{clientId}/integration-token/{tokenId}`
@@ -949,7 +951,9 @@ unverified-quote count.
 
 **FM-47.** Observer code writes only keys under `runs/<runId>/observer/`; the
 store refuses any other key. A batch id matches `^[a-z0-9][a-z0-9-]{0,62}$`; a
-run id is `<batch>-<scenarioId>` and matches `^[a-z0-9][a-z0-9-]{0,127}$`. The
+new run id is `r1_<base36 batch length>_<batch>_<scenarioId>` and remains within
+128 characters; legacy run ids use `<batch>-<scenarioId>` and match
+`^[a-z0-9][a-z0-9-]{0,127}$`. The
 store, the bundle readers and every console route reject any other id before
 building a key. Nothing under `runs/<runId>/{started.json,
 done.json, results/, capture/}` is written after `done.json`. Observations

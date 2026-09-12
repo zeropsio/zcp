@@ -50,6 +50,9 @@ type ManifestRun struct {
 	RunID       string `json:"runId"`
 	Scenario    string `json:"scenario"`
 	ProjectName string `json:"projectName"`
+	// ProductionProjectName is the explicit production target for a launch
+	// run. It is optional so legacy manifests remain readable.
+	ProductionProjectName string `json:"productionProjectName,omitempty"`
 	// RunTokenID is the id (never the value) of the project-scoped
 	// ZCP_API_KEY the controller mints for this run (§2.1 FM-10,
 	// platform.MintProjectScopedToken) — empty until the mint succeeds.
@@ -75,9 +78,10 @@ type SummaryRun struct {
 	Scenario string `json:"scenario"`
 	// ProjectID is empty once the run's project has been deleted (the
 	// common case for a settled run).
-	ProjectID string `json:"projectId,omitempty"`
-	Result    string `json:"result"` // "passed" | "failed" | "blocked" | "not-run"
-	Detail    string `json:"detail,omitempty"`
+	ProjectID             string `json:"projectId,omitempty"`
+	ProductionProjectName string `json:"productionProjectName,omitempty"`
+	Result                string `json:"result"` // "passed" | "failed" | "blocked" | "not-run"
+	Detail                string `json:"detail,omitempty"`
 	// Error carries the wrapped error message for a run RunBatch blocked
 	// before or during creation (D10) — never populated together with a
 	// settle-time Detail (a run either fails during creation, before any

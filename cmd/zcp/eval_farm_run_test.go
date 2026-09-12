@@ -685,7 +685,7 @@ func TestFarmRun_SetGate_ReadsListFromBucket(t *testing.T) {
 	}
 	sink := farm.NewSinkClient(cfg)
 
-	scenarios, err := resolveScenarios(t.Context(), sink, digest, "gate")
+	scenarios, err := resolveScenarios(t.Context(), sink, "test-batch", digest, "gate")
 	if err != nil {
 		t.Fatalf("resolveScenarios: %v", err)
 	}
@@ -728,7 +728,7 @@ func TestFarmRun_LaunchFlag_FromBucketScenario(t *testing.T) {
 	}
 	sink := farm.NewSinkClient(cfg)
 
-	scenarios, err := resolveScenarios(t.Context(), sink, digest, "launch-scenario")
+	scenarios, err := resolveScenarios(t.Context(), sink, "test-batch", digest, "launch-scenario")
 	if err != nil {
 		t.Fatalf("resolveScenarios: %v", err)
 	}
@@ -737,6 +737,30 @@ func TestFarmRun_LaunchFlag_FromBucketScenario(t *testing.T) {
 	}
 	if !scenarios[0].Launch {
 		t.Errorf("scenarios[0].Launch = false, want true for area: launch-production-recovery")
+	}
+}
+
+func TestFarmRun_ResolveScenario_UsesExactProductionTarget(t *testing.T) {
+	s3Srv, s3Fake := newStatusFakeS3ServerWithFake(t)
+	t.Setenv("ZCP_FARM_S3_URL", s3Srv.URL)
+	t.Setenv("ZCP_FARM_S3_BUCKET", "zcp-farm")
+	t.Setenv("ZCP_FARM_S3_KEY", "sink-key")
+	t.Setenv("ZCP_FARM_S3_SECRET", "sink-secret")
+	digest, batch, id := "scen-launch-target", "batch-launch-target", "launch-target"
+	runID, err := farm.EncodeRunID(batch, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s3Fake.mu.Lock()
+	s3Fake.objects["scenarios/"+digest+"/"+id+".md"] = fmt.Appendf(nil, "---\nid: %s\narea: launch\nseed: empty\nverification:\n  launchShape:\n    prodProject: %s\n---\nbody\n", id, farm.ProductionProjectName(runID))
+	s3Fake.mu.Unlock()
+	cfg, err := farm.ConfigFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scenarios, err := resolveScenarios(t.Context(), farm.NewSinkClient(cfg), batch, digest, id)
+	if err != nil || len(scenarios) != 1 || scenarios[0].ProductionProjectName != farm.ProductionProjectName(runID) {
+		t.Fatalf("scenarios=%+v err=%v", scenarios, err)
 	}
 }
 
