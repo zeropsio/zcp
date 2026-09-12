@@ -5,6 +5,7 @@ import (
 	"debug/buildinfo"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -385,7 +386,7 @@ func pushScenarioTree(ctx context.Context, client *farm.SinkClient, dir string, 
 		if filepath.ToSlash(rel) == boundGateSetFile {
 			return fmt.Errorf("scenario tree reserves %s for the digest-bound gate set", boundGateSetFile)
 		}
-		body, err := os.ReadFile(source)
+		body, err := readScenarioSnapshotFile(source, info)
 		if err != nil {
 			return fmt.Errorf("read %s: %w", source, err)
 		}
@@ -436,6 +437,18 @@ func pushScenarioTree(ctx context.Context, client *farm.SinkClient, dir string, 
 		return "", err
 	}
 	return digest, nil
+}
+
+// readScenarioSnapshotFile is isolated so the inventory/read boundary can be
+// exercised deterministically by the scenario staging tests.
+func readScenarioSnapshotFile(source string, expected fs.FileInfo) ([]byte, error) {
+	_ = expected
+	f, err := openScenarioSnapshotFile(source)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return io.ReadAll(f)
 }
 
 // resolveGateSetPath resolves the local gate scenario list `farm push`

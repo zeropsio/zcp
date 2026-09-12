@@ -690,6 +690,56 @@ func TestFarmPush_ScenarioTreeSkipsSpecialFiles(t *testing.T) {
 	}
 }
 
+func TestReadScenarioSnapshotFile_RejectsEntryReplacement(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "scenario.md")
+	if err := os.WriteFile(source, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := os.Lstat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(source); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("replacement"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := readScenarioSnapshotFile(source, expected)
+	if err == nil {
+		t.Fatalf("readScenarioSnapshotFile accepted replacement inode with body %q", body)
+	}
+}
+
+func TestReadScenarioSnapshotFile_DoesNotFollowReplacementSymlink(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "scenario.md")
+	canary := filepath.Join(t.TempDir(), "outside.md")
+	if err := os.WriteFile(source, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(canary, []byte("outside-canary"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := os.Lstat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(source); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(canary, source); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	body, err := readScenarioSnapshotFile(source, expected)
+	if err == nil {
+		t.Fatalf("readScenarioSnapshotFile followed replacement symlink with body %q", body)
+	}
+}
+
 // TestFarmPull_Batch_WritesManifestAndSummary pins outcome 4 of the S15
 // brief: `farm pull --batch <b>` also writes batches/<b>/manifest.json and
 // batches/<b>/summary.json (when present) directly under <out>/, where
