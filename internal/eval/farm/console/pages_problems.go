@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
@@ -68,6 +69,7 @@ func newestBuildLabel(runs []ProblemsRun) string {
 // linked to them.
 type problemMemberView struct {
 	FindingRow
+	FindingLink  string
 	Quote        string
 	QuoteStep    int
 	ScenarioLink string
@@ -78,18 +80,21 @@ type problemMemberView struct {
 func newProblemMemberView(f FindingRow, path string, values url.Values) problemMemberView {
 	v := problemMemberView{
 		FindingRow:   f,
+		FindingLink:  fmt.Sprintf("/r/%s#f%d", f.RunID, f.Index+1),
 		ScenarioLink: listURL(path, values, map[string]string{paramScenario: f.Scenario}),
 		BatchLink:    listURL(path, values, map[string]string{paramBatch: f.Batch}),
 		BuildLink:    listURL(path, values, map[string]string{paramBuild: f.Build.Sha12()}),
 	}
-	if len(f.Evidence) > 0 {
-		v.Quote = f.Evidence[0].Quote
-		v.QuoteStep = f.Evidence[0].Step
+	for _, evidence := range f.Evidence {
+		if evidence.Verified && evidence.Step > 0 && evidence.Quote != "" {
+			v.Quote, v.QuoteStep = evidence.Quote, evidence.Step
+			break
+		}
 	}
 	return v
 }
 
-// problemRowView is one /problems table row: Problem plus its members
+// problemRowView is one /problems disclosure row: Problem plus its members
 // resolved into problemMemberView, AnchorID (item 12) — the stable id the
 // Overview's Top problems now links into — and SurfaceLink (filter-tester
 // finding, round 1): the row's own surface chip narrows to that surface,
@@ -98,12 +103,9 @@ type problemRowView struct {
 	Problem
 	AnchorID    string
 	SurfaceLink string
+	FindingLink string
 	Members     []problemMemberView
-	// LastSeenShort/FirstSeenShort are item 8's own compact dates
-	// (pages_home.go's fmtTimeShort — "11 Sep 18:31" — reused rather than
-	// fmtTime's long, wrapping "11 Sep 2026, 18:31 UTC") — a stacked-table
-	// row is already tall with this row's other cells, so a wrapping date
-	// column is the difference between a compact row and a ~180px one.
+	// Compact UTC dates keep comparative facts readable in the closed row.
 	LastSeenShort, FirstSeenShort string
 }
 
@@ -118,6 +120,9 @@ func newProblemRowView(p Problem, path string, values url.Values) problemRowView
 	for _, m := range p.Members {
 		row.Members = append(row.Members, newProblemMemberView(m, path, values))
 	}
+	if len(row.Members) > 0 {
+		row.FindingLink = row.Members[0].FindingLink
+	}
 	return row
 }
 
@@ -130,7 +135,7 @@ const statusLiveValue = "live"
 // problemSortLabels names problemListSpec's sort keys (§8.7 table) for
 // their column headers.
 var problemSortLabels = map[string]string{
-	"rank": "Problem", "severity": "Severity", "runs": "Runs hit",
+	"rank": "Priority", "severity": "Severity", "runs": "Runs hit",
 	"last": "Last seen", "first": "First seen",
 }
 
@@ -186,6 +191,8 @@ type problemsPageData struct {
 	Summary     string
 	NewestBuild string
 	Rows        []problemRowView
+	EmptyTitle  string
+	EmptyDetail string
 	// FailedAssessmentPrefix/FailedAssessmentRuns are item 9 (FIX3)'s own
 	// warning: BuildProblems only clusters current observations with
 	// status ok, so a run whose assessment errored or failed to parse
@@ -243,32 +250,56 @@ func (s *Server) handleProblemsPage(w http.ResponseWriter, r *http.Request) {
 	scopeRuns := problemsRunsInWindow(allRuns, q.Since, now)
 	all := BuildProblemsScoped(allRuns, problemsRunIDSet(scopeRuns), s.stepTextFinder(ctx))
 
+	filtered, counts := problemEngine().Apply(all, q, now)
 	liveN, highN := 0, 0
-	for _, p := range all {
-		if !isLiveStatus(p.Status) {
-			continue
+	for _, p := range filtered {
+		if isLiveStatus(p.Status) {
+			liveN++
 		}
-		liveN++
 		if p.Severity == observer.SeverityHigh {
 			highN++
 		}
 	}
 
-	filtered, counts := problemEngine().Apply(all, q, now)
 	values := r.URL.Query()
 	rows := make([]problemRowView, len(filtered))
 	for i, p := range filtered {
 		rows[i] = newProblemRowView(p, "/problems", values)
 	}
 
+	nav := buildListNav("/problems", spec, q, values, counts, problemSortLabels, problemLabeler)
+	groupOrder := map[string]int{paramStatus: -2, "since": -1}
+	sort.SliceStable(nav.Filters.Groups, func(i, j int) bool {
+		return groupOrder[nav.Filters.Groups[i].Name] < groupOrder[nav.Filters.Groups[j].Name]
+	})
 	failedPrefix, failedRuns := buildFailedAssessmentBanner(scopeRuns)
+	emptyTitle, emptyDetail := "No problems match these filters", "Try a different cause, status or severity, or reset filters to the default live view."
+	if len(all) == 0 {
+		assessed := 0
+		for _, run := range scopeRuns {
+			if run.Row.Observation != nil && run.Row.Observation.Status == observationStatusOK {
+				assessed++
+			}
+		}
+		switch {
+		case len(scopeRuns) == 0:
+			emptyTitle, emptyDetail = "No runs in this window", "Choose a wider window to inspect earlier evaluations."
+		case assessed == 0:
+			emptyTitle, emptyDetail = "No assessed runs in this window", "Problems need a successful assessment. Runs without one do not establish that the build is clean."
+		default:
+			emptyTitle = "No problems reported in this window"
+			emptyDetail = fmt.Sprintf("%d of %d runs have a successful current assessment. A lack of findings is not proof that unassessed runs are clean.", assessed, len(scopeRuns))
+		}
+	}
 
 	renderPage(w, "problems", problemsPageData{
 		Meta:                   s.pageMeta(r, "Problems", navProblems, false),
-		Nav:                    buildListNav("/problems", spec, q, values, counts, problemSortLabels, problemLabeler),
-		Summary:                fmt.Sprintf("%d live problem%s · %d high", liveN, pluralS(liveN), highN),
+		Nav:                    nav,
+		Summary:                fmt.Sprintf("%d matching problem%s · %d live · %d high", len(filtered), pluralS(len(filtered)), liveN, highN),
 		NewestBuild:            newestBuildLabel(allRuns),
 		Rows:                   rows,
+		EmptyTitle:             emptyTitle,
+		EmptyDetail:            emptyDetail,
 		FailedAssessmentPrefix: failedPrefix,
 		FailedAssessmentRuns:   failedRuns,
 	})

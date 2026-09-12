@@ -531,57 +531,33 @@ func TestPages_HomeBatchesTableSortChipsAboveStackedTable(t *testing.T) {
 	}
 }
 
-// TestPages_ListPagesUseWideContainer pins item 6's closing note: a list
-// page (Overview, Problems, Findings) may use a wider container
-// (main.wrap.wide, max 1280px) than a single batch/run's prose.
-func TestPages_ListPagesUseWideContainer(t *testing.T) {
+// TestPages_UseSharedContentContainer verifies every route uses the same
+// responsive content boundary; actual widths are checked in the browser.
+func TestPages_UseSharedContentContainer(t *testing.T) {
 	srv, store, _ := testServer(t)
-	h := srv.Handler()
 	seedBatch(t, store, "wc1", "off", []runFixture{
 		{runID: "wc1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
 	}, true, map[string]string{"wc1-a": "passed"})
-
-	for _, route := range []string{"/", "/problems", "/findings"} {
-		body := doGET(t, h, route).Body.String()
-		if !strings.Contains(body, `<main class="wrap wide">`) {
-			t.Errorf("GET %s: main is not the wide container:\n%s", route, body)
-		}
-	}
-	for _, route := range []string{"/b/wc1", "/r/wc1-a"} {
-		body := doGET(t, h, route).Body.String()
-		if strings.Contains(body, `<main class="wrap wide">`) {
-			t.Errorf("GET %s: a detail page must not use the wide container:\n%s", route, body)
+	for _, route := range []string{"/", "/problems", "/findings", "/b/wc1", "/r/wc1-a"} {
+		body := doGET(t, srv.Handler(), route).Body.String()
+		if got := strings.Count(body, `<main class="farm-content"`); got != 1 {
+			t.Errorf("GET %s: content boundaries = %d, want one shared boundary", route, got)
 		}
 	}
 }
 
-// TestPages_ChromeMatchesMainWidth pins item 9 (FIX2): the top bar and the
-// observer-status line track main's own width — wide on the same list
-// pages that carry main.wrap.wide, plain elsewhere — instead of staying
-// stuck at the old, narrower width while the content below them grows.
-func TestPages_ChromeMatchesMainWidth(t *testing.T) {
+// TestPages_ChromeSharesContentShell ensures navigation chrome and the main
+// content live inside the same responsive shell, rather than independent
+// fixed-width wrappers that can drift apart.
+func TestPages_ChromeSharesContentShell(t *testing.T) {
 	srv, store, _ := testServer(t)
-	h := srv.Handler()
 	seedBatch(t, store, "cw1", "off", []runFixture{
 		{runID: "cw1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
 	}, true, map[string]string{"cw1-a": "passed"})
-
-	for _, route := range []string{"/", "/problems", "/findings"} {
-		body := doGET(t, h, route).Body.String()
-		if !strings.Contains(body, `<div class="wrap wide topbar-inner">`) {
-			t.Errorf("GET %s: top bar does not track main's wide width:\n%s", route, body)
-		}
-		if !strings.Contains(body, `<div class="wrap wide"><p class="observer-status`) {
-			t.Errorf("GET %s: observer-status line does not track main's wide width:\n%s", route, body)
-		}
-	}
-	for _, route := range []string{"/b/cw1", "/r/cw1-a"} {
-		body := doGET(t, h, route).Body.String()
-		if strings.Contains(body, `<div class="wrap wide topbar-inner">`) {
-			t.Errorf("GET %s: a detail page's top bar must not go wide:\n%s", route, body)
-		}
-		if strings.Contains(body, `<div class="wrap wide"><p class="observer-status`) {
-			t.Errorf("GET %s: a detail page's observer-status line must not go wide:\n%s", route, body)
+	for _, route := range []string{"/", "/problems", "/findings", "/b/cw1", "/r/cw1-a"} {
+		body := doGET(t, srv.Handler(), route).Body.String()
+		if !regexp.MustCompile(`(?s)<div class="farm-main">\s*<header class="farm-context">.*?<p class="observer-status">.*?</header>\s*<main class="farm-content"`).MatchString(body) {
+			t.Errorf("GET %s: contextual header, observer status and content do not share a shell", route)
 		}
 	}
 }

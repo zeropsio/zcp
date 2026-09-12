@@ -1,48 +1,46 @@
 {{define "problems"}}{{template "head" .Meta}}
-<div class="page-head">
-<h1>Problems</h1>
-<p class="muted">{{.Summary}}</p>
+<div class="page-head problem-page-head">
+<div><h1>Problems</h1><p class="muted result-summary">{{.Summary}}</p>{{if .NewestBuild}}<p class="problem-build-context">Newest assessed build <code>{{.NewestBuild}}</code></p>{{end}}</div>
+<a class="btn" href="/terms">How statuses work</a>
 </div>
 {{if .FailedAssessmentRuns}}<div class="callout callout-warn">{{.FailedAssessmentPrefix}}{{range $i, $r := .FailedAssessmentRuns}}{{if $i}}, {{end}}<a href="/r/{{$r.RunID}}">{{$r.RunID}}</a>{{end}}</div>{{end}}
-{{template "filterbar" .Nav.Filters}}
-{{template "sortchips" .Nav.Sorts}}
-<div class="table-wrap"><table class="stack">
-<thead><tr>
-{{with index .Nav.Sorts 0}}{{template "sortth" .}}{{end}}
-<th>Cause</th>
-<th>Where</th>
-{{with index .Nav.Sorts 1}}{{template "sortth" .}}{{end}}
-{{with index .Nav.Sorts 2}}{{template "sortth" .}}{{end}}
-<th>Status</th>
-{{with index .Nav.Sorts 3}}{{template "sortth" .}}{{end}}
-{{with index .Nav.Sorts 4}}{{template "sortth" .}}{{end}}
-</tr></thead>
-<tbody>
-{{range .Rows}}<tr id="{{.AnchorID}}">
-<td data-label="Problem"><strong>{{.Title}}</strong>{{if .Fix}}<br><span class="muted small">{{.Fix}}</span>{{end}}
-<details><summary>Members ({{len .Members}})</summary>
-<ul class="plain">
-{{range .Members}}<li>
-<a href="/r/{{.RunID}}">{{.RunID}}</a> <span class="muted small"><a href="{{.ScenarioLink}}">{{.Scenario}}</a> · <a href="{{.BatchLink}}">{{.Batch}}</a> · <a href="{{.BuildLink}}">{{.Build.Label}}</a></span>
-<span class="{{severityClass .Severity}}">{{severityLabel .Severity}}</span>
-<span class="chip cause-chip">{{.CauseLabel}}</span>
-<strong>{{.Title}}</strong>
-{{if .Quote}}<div class="quote"><a href="/r/{{.RunID}}#{{stepAnchor .QuoteStep}}">&#34;{{.Quote}}&#34;</a></div>{{end}}
-</li>
-{{end}}
-</ul>
+<div class="problem-toolbar">{{template "filterbar" .Nav.Filters}}
+<details class="list-sort"><summary class="btn">Sort: {{range .Nav.Sorts}}{{if .Active}}{{.Label}} {{if eq .Dir "asc"}}↑{{else}}↓{{end}}{{end}}{{end}}</summary><div class="filter-menu">{{range .Nav.Sorts}}<a href="{{.URL}}"{{if .Active}} aria-current="true"{{end}}>{{.Label}}{{if .Active}} {{if eq .Dir "asc"}}↑{{else}}↓{{end}}{{end}}</a>{{end}}</div></details></div>
+<div class="card problem-table">
+{{if .Rows}}<div class="problem-grid problem-columns" aria-hidden="true"><span>Problem</span><span>Status</span><span>Newest build</span><span>All history</span><span>Last seen · UTC</span></div>{{end}}
+{{range .Rows}}
+<details class="problem-row" id="{{.AnchorID}}">
+<summary class="problem-grid problem-summary">
+<div class="problem-primary">
+<h2><a class="problem-title" href="{{.FindingLink}}">{{.Title}}</a></h2>
+<div class="problem-subline"><span class="severity-word severity-{{.Severity}}" title="{{severityTooltip .Severity}}">{{severityLabel .Severity}}</span>{{range .CauseLabels}}<span>{{.}}</span>{{end}}{{if .Surface}}<code>{{.Surface}}</code>{{end}}</div>
+</div>
+<div class="problem-status"><span class="mobile-label">Status</span><span class="state-badge state-{{.Status}}" title="{{problemStatusTooltip .Status}}">{{problemStatusLabel .Status}}</span></div>
+<div class="problem-impact" data-label="Runs hit"><span class="mobile-label">Newest build</span>{{if .RunsAssessedOnNewest}}<strong class="numeric">{{.HitOnNewestBuild}} / {{.RunsAssessedOnNewest}}</strong><span class="metric-label">assessed scenario runs</span>{{else}}<strong class="numeric">—</strong><span class="metric-label">no assessed scenario runs</span>{{end}}</div>
+<div class="problem-history"><span class="mobile-label">All history</span><strong class="numeric">{{.RunsTotal}} run{{if ne .RunsTotal 1}}s{{end}}</strong><span class="metric-label">{{.BatchesTotal}} batch{{if ne .BatchesTotal 1}}es{{end}} · {{.BuildsTotal}} build{{if ne .BuildsTotal 1}}s{{end}}</span></div>
+<div class="problem-activity"><span class="mobile-label">Last seen · UTC</span><span class="numeric">{{.LastSeenShort}}</span></div>
+<span class="row-chevron" aria-hidden="true">›</span>
+</summary>
+<section class="member-content" aria-label="Problem evidence">
+<div class="member-heading"><h3>Members ({{len .Members}})</h3><a href="{{.FindingLink}}">Open representative finding →</a></div>
+<dl class="problem-context">
+<div><dt>Newest build coverage</dt><dd>{{if .RunsAssessedOnNewest}}hit {{.HitOnNewestBuild}}/{{.RunsAssessedOnNewest}} runs{{if $.NewestBuild}} on {{$.NewestBuild}}{{end}}{{else}}Unavailable: no assessed runs on the newest build for this problem's scenarios{{end}}</dd></div>
+<div><dt>Current time window</dt><dd>{{.InScopeHit}}/{{.InScopeAssessed}} in scope</dd></div>
+<div><dt>First seen · UTC</dt><dd>{{.FirstSeenShort}}</dd></div>
+<div><dt>Status</dt><dd>{{problemStatusTooltip .Status}}</dd></div>
+</dl>
+{{if or .Anchor .Surface}}<p class="problem-anchor">{{if .Anchor}}<span class="muted">Search for</span> <code>{{.Anchor}}</code>{{end}}{{if .Surface}} <a href="{{.SurfaceLink}}">Filter to {{.Surface}}</a>{{end}}</p>{{end}}
+{{if .Fix}}<p class="problem-fix"><strong>Suggested fix</strong> {{.Fix}}</p>{{end}}
+<ol class="member-list">
+{{range .Members}}<li class="member-item">
+<div class="member-title"><a href="{{.FindingLink}}">{{.Title}}</a><span class="severity-word severity-{{.Severity}}">{{severityLabel .Severity}}</span><span class="muted">{{.CauseLabel}}</span></div>
+<p class="member-context"><a href="/r/{{.RunID}}">{{.RunID}}</a> · <a href="{{.ScenarioLink}}">{{.Scenario}}</a> · <a href="{{.BatchLink}}">{{.Batch}}</a> · <a href="{{.BuildLink}}">{{.Build.Label}}</a></p>
+{{if .Quote}}<blockquote class="member-quote"><a href="/r/{{.RunID}}#{{stepAnchor .QuoteStep}}">&#34;{{.Quote}}&#34;</a><span class="metric-label">Step {{.QuoteStep}} · quote found</span></blockquote>{{else}}<p class="metric-label">No verified step quote recorded. <a href="{{.FindingLink}}">Inspect the finding</a>.</p>{{end}}
+</li>{{end}}
+</ol>
+</section>
 </details>
-</td>
-<td data-label="Cause">{{range .CauseLabels}}<span class="chip cause-chip">{{.}}</span> {{end}}</td>
-<td data-label="Where">{{if .Surface}}<a class="chip" href="{{.SurfaceLink}}"><code>{{.Surface}}</code></a>{{end}}{{if .Anchor}}<br><code>{{.Anchor}}</code>{{end}}</td>
-<td data-label="Severity"><span class="{{severityClass .Severity}}" title="{{severityTooltip .Severity}}">{{severityLabel .Severity}}</span></td>
-<td data-label="Runs hit">hit {{.HitOnNewestBuild}}/{{.RunsAssessedOnNewest}} runs{{if $.NewestBuild}} on {{$.NewestBuild}}{{end}} · {{.InScopeHit}}/{{.InScopeAssessed}} in scope · {{.RunsTotal}} run{{if ne .RunsTotal 1}}s{{end}} · {{.BatchesTotal}} batch{{if ne .BatchesTotal 1}}es{{end}} · {{.BuildsTotal}} build{{if ne .BuildsTotal 1}}s{{end}}</td>
-<td data-label="Status"><span class="chip" title="{{problemStatusTooltip .Status}}">{{problemStatusLabel .Status}}{{if problemStatusLive .Status}} (live){{end}}</span></td>
-<td data-label="Last seen">{{.LastSeenShort}}</td>
-<td data-label="First seen">{{.FirstSeenShort}}</td>
-</tr>
-{{else}}<tr><td colspan="8" class="empty">No problems in this window.</td></tr>
-{{end}}
-</tbody>
-</table></div>
+{{else}}<div class="empty-state"><h2>{{.EmptyTitle}}</h2><p>{{.EmptyDetail}}</p>{{if .Nav.Filters.ClearURL}}<a class="btn" href="{{.Nav.Filters.ClearURL}}">Reset filters</a>{{end}}</div>{{end}}
+{{if .Rows}}<div class="table-caption"><p><strong>Newest build:</strong> affected runs / assessed runs of each problem's scenarios. In-scope incidence follows the selected time window; history spans all recorded runs. No assessed runs means unavailable coverage.</p></div>{{end}}
+</div>
 {{template "foot"}}{{end}}

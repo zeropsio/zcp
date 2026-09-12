@@ -20,11 +20,16 @@ var loginHTMLSrc string
 
 var loginTemplate = template.Must(template.New("login").Parse(loginHTMLSrc))
 
-// appCSS is the console's one stylesheet, shared by the login page and
+// appCSS is the console's application stylesheet, shared by the login page and
 // every page (§8.2: served from the console itself, no external asset).
 //
 //go:embed assets/app.css
 var appCSS []byte
+
+// tablerCSS is the pinned, unmodified local visual foundation (§8.2).
+//
+//go:embed assets/vendor/tabler-1.5.1.min.css
+var tablerCSS []byte
 
 // Config configures a Server.
 type Config struct {
@@ -173,7 +178,9 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && p == "/healthz":
 		handleHealthz(w, r)
 	case r.Method == http.MethodGet && p == "/static/app.css":
-		serveAppCSS(w)
+		serveCSS(w, appCSS)
+	case r.Method == http.MethodGet && p == "/static/vendor/tabler-1.5.1.min.css":
+		serveCSS(w, tablerCSS)
 	case r.Method == http.MethodGet && p == "/":
 		s.requireAuth(s.handleRoot)(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(p, "/b/"):
@@ -223,10 +230,10 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// serveAppCSS answers GET /static/app.css, the one open static route (§8.2).
-func serveAppCSS(w http.ResponseWriter) {
+// serveCSS answers an exact embedded stylesheet route (§8.2).
+func serveCSS(w http.ResponseWriter, css []byte) {
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
-	_, _ = w.Write(appCSS)
+	_, _ = w.Write(css)
 }
 
 func handleHealthz(w http.ResponseWriter, _ *http.Request) {

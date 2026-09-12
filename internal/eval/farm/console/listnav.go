@@ -32,9 +32,10 @@ type FilterOptionView struct {
 
 // FilterGroupView is one filter's row in the bar.
 type FilterGroupView struct {
-	Name    string
-	Label   string
-	Options []FilterOptionView
+	Name      string
+	Label     string
+	Options   []FilterOptionView
+	Selection string
 }
 
 // ActiveChipView is one explicitly set filter value, removable.
@@ -43,8 +44,19 @@ type ActiveChipView struct {
 	RemoveURL string
 }
 
-// FilterBarView is a list's whole filter bar.
+// FilterInputView is one exact-value input or preserved GET parameter.
+type FilterInputView struct {
+	Name  string
+	Label string
+	Value string
+	Help  string
+}
+
+// FilterBarView is the URL-backed filter toolbar, including exact-value inputs.
 type FilterBarView struct {
+	Path     string
+	Open     []FilterInputView
+	Hidden   []FilterInputView
 	Groups   []FilterGroupView
 	Active   []ActiveChipView
 	ClearURL string
@@ -91,13 +103,19 @@ type listLabeler struct {
 	Title func(param, value string) string
 }
 
+const (
+	paramNotice    = "notice"
+	paramN         = "n"
+	filterAllLabel = "All"
+)
+
 // listURL returns path with values, every key in set applied (an empty
 // value deletes the key), and notice/n always dropped — they are never
 // carried into links (§8.7).
 func listURL(path string, values url.Values, set map[string]string) string {
 	v := url.Values{}
 	for k, vs := range values {
-		if k == "notice" || k == "n" {
+		if k == paramNotice || k == paramN {
 			continue
 		}
 		v[k] = append([]string(nil), vs...)
@@ -136,7 +154,7 @@ func toggled(allowed, set []string, v string) string {
 
 // buildListNav builds a list's filter bar and sort headers.
 func buildListNav(path string, spec ListSpec, q Query, values url.Values, counts map[string]OptionCounts, sortLabels map[string]string, lab listLabeler) listNav {
-	var bar FilterBarView
+	bar := FilterBarView{Path: path}
 	for _, cf := range spec.Closed {
 		g := FilterGroupView{Name: cf.Name, Label: lab.Param(cf.Name)}
 		active := q.Closed[cf.Name]
@@ -153,8 +171,6 @@ func buildListNav(path string, spec ListSpec, q Query, values url.Values, counts
 				o.Label += "+" // a minimum: this value or above
 			}
 			switch {
-			case (cf.Min || cf.Single) && o.Active:
-				o.URL = listURL(path, values, map[string]string{cf.Name: ""})
 			case cf.Min || cf.Single:
 				o.URL = listURL(path, values, map[string]string{cf.Name: v})
 			default:
@@ -164,6 +180,16 @@ func buildListNav(path string, spec ListSpec, q Query, values url.Values, counts
 				o.URL = ""
 			}
 			g.Options = append(g.Options, o)
+		}
+		selectedLabels := []string{}
+		for _, o := range g.Options {
+			if o.Active {
+				selectedLabels = append(selectedLabels, o.Label)
+			}
+		}
+		g.Selection = strings.Join(selectedLabels, ", ")
+		if g.Selection == "" {
+			g.Selection = filterAllLabel
 		}
 		bar.Groups = append(bar.Groups, g)
 		if values.Get(cf.Name) != "" {
@@ -181,6 +207,7 @@ func buildListNav(path string, spec ListSpec, q Query, values url.Values, counts
 		if current == "" {
 			current = spec.DefaultSince
 		}
+		g.Selection = current
 		for _, w := range sinceOptions {
 			g.Options = append(g.Options, FilterOptionView{Value: w, Label: w, Active: w == current,
 				URL: listURL(path, values, map[string]string{"since": w})})
@@ -192,9 +219,27 @@ func buildListNav(path string, spec ListSpec, q Query, values url.Values, counts
 		}
 	}
 	for _, name := range spec.Open {
-		if v := values.Get(name); v != "" {
+		help := "Exact " + strings.ToLower(lab.Param(name)) + " ID."
+		switch name {
+		case paramBuild:
+			help = "Binary SHA-256 prefix (12 characters), not the displayed commit label."
+		case paramSurface:
+			help = "Exact surface, or a kind prefix such as tool:*."
+		}
+		bar.Open = append(bar.Open, FilterInputView{Name: name, Label: lab.Param(name), Value: q.Open[name], Help: help})
+		if v := q.Open[name]; v != "" {
 			bar.Active = append(bar.Active, ActiveChipView{Label: lab.Param(name) + ": " + v,
 				RemoveURL: listURL(path, values, map[string]string{name: ""})})
+		}
+	}
+	// Form submission retains accepted non-open parameters verbatim. Open
+	// inputs submit one value each; a blank value clears that scope.
+	for _, name := range sortedValueKeys(values) {
+		if name == paramNotice || name == paramN || slices.Contains(spec.Open, name) {
+			continue
+		}
+		for _, value := range values[name] {
+			bar.Hidden = append(bar.Hidden, FilterInputView{Name: name, Value: value})
 		}
 	}
 	if len(bar.Active) > 0 {
@@ -259,4 +304,13 @@ func (s *Server) renderBadQuery(w http.ResponseWriter, r *http.Request, nav stri
 		Allowed: qerr.Allowed,
 		DropURL: listURL(r.URL.Path, r.URL.Query(), map[string]string{qerr.Param: ""}),
 	})
+}
+
+func sortedValueKeys(values url.Values) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
 }
