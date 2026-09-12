@@ -45,7 +45,8 @@ func TestUIFixture_Serve(t *testing.T) {
 	t.Logf("Fixture: http://localhost:8768/login — local-only test token: %s", testToken)
 	for _, route := range []string{
 		"/problems", "/problems?status=all", "/problems?cause=platform", "/problems?scenario=missing", "/problems?bogus=1",
-		"/", "/b/ui-current", "/r/ui-current-deploy", "/findings", "/terms", "/login", "/missing",
+		"/", "/?kind=all&sort=cost&dir=asc", "/b/ui-current", "/b/ui-states", "/b/ui-states?verdict=blocked",
+		"/r/ui-current-deploy", "/findings", "/terms", "/login", "/missing",
 	} {
 		t.Logf("route: http://localhost:8768%s", route)
 	}
@@ -106,4 +107,46 @@ func seedUIFixture(t *testing.T, store *fakeStore) {
 		}
 		store.putJSON(t, fmt.Sprintf("batches/%s/manifest.json", batch.id), manifest)
 	}
+
+	statesAt := now.Add(-time.Hour)
+	stateRuns := []runFixture{
+		{runID: "ui-states-failed", scenario: "failed-check", startedAt: statesAt, durationS: "22s", costUsd: 0.11, done: true, taskResult: farm.VerdictFailed, checks: [][5]string{{"deploy/status", "failed", "READY", "FAILED", "service detail"}}},
+		{runID: "ui-states-not-finished", scenario: "not-finished", startedAt: statesAt, done: false},
+		{runID: "ui-states-not-assessed", scenario: "not-assessed", startedAt: statesAt, durationS: "31s", costUsd: 0.09, done: true, taskResult: farm.VerdictPassed},
+		{runID: "ui-states-problem", scenario: "passed-with-problem", startedAt: statesAt, durationS: "48s", costUsd: 0.14, done: true, taskResult: farm.VerdictPassed},
+		{runID: "ui-states-clean", scenario: "clean", startedAt: statesAt, durationS: "16s", costUsd: 0.06, done: true, taskResult: farm.VerdictPassed},
+	}
+	seedBatchAt(t, store, "ui-states", "claude-sonnet-5", statesAt, stateRuns, true, map[string]string{
+		"ui-states-failed": farm.VerdictFailed, "ui-states-not-finished": farm.VerdictNotRun,
+		"ui-states-not-assessed": farm.VerdictPassed, "ui-states-problem": farm.VerdictPassed, "ui-states-clean": farm.VerdictPassed,
+	})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "ui-states-problem", ObsID: statesAt.Format("20060102T150405000Z") + "-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: statesAt.Add(time.Minute), Status: "ok", Outcome: observer.OutcomeProblem, Headline: "The run passed, but the recovery path stayed unclear",
+		Goal: observer.Goal{Reached: "partly"}, Findings: []observer.Finding{{Severity: observer.SeverityMedium, Owner: "zcp-tool", Surface: "tool:zerops_deploy", Title: "Recovery guidance is incomplete"}},
+	})
+	seedObservation(t, store, observer.Observation{
+		FormatVersion: observer.ObservationFormat2, RunID: "ui-states-clean", ObsID: statesAt.Format("20060102T150405000Z") + "-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: statesAt.Add(time.Minute), Status: "ok", Outcome: observer.OutcomeOK, Headline: "The run completed without a recorded problem", Goal: observer.Goal{Reached: "yes"},
+	})
+	// Keep real transcript evidence but remove usage, producing a partially
+	// known batch cost while the run remains meaningful and assessable.
+	store.putJSON(t, "runs/ui-states-problem/results/"+testResultsTS+"/passed-with-problem/meta.json", map[string]any{
+		"scenarioId": "passed-with-problem", "suiteId": "gate", "mode": "two-shot-resume",
+		"startedAt": statesAt.Format(time.RFC3339Nano), "duration": "48s", "evaluatorSha256": "eval-sha", "candidateSha256": "cand-sha",
+		"task": map[string]any{"mode": "required", "result": farm.VerdictPassed, "frozenAt": statesAt.Format(time.RFC3339Nano)},
+	})
+
+	unknownAt := now.Add(-3 * time.Hour)
+	seedBatchAt(t, store, "ui-unknown-cost", "claude-sonnet-5", unknownAt, []runFixture{{
+		runID: "ui-unknown-cost-a", scenario: "unknown-cost", startedAt: unknownAt, durationS: "25s", done: true, taskResult: farm.VerdictPassed,
+	}}, true, map[string]string{"ui-unknown-cost-a": farm.VerdictPassed})
+	store.putJSON(t, "runs/ui-unknown-cost-a/results/"+testResultsTS+"/unknown-cost/meta.json", map[string]any{
+		"scenarioId": "unknown-cost", "suiteId": "gate", "mode": "two-shot-resume",
+		"startedAt": unknownAt.Format(time.RFC3339Nano), "duration": "25s", "evaluatorSha256": "eval-sha", "candidateSha256": "cand-sha",
+		"task": map[string]any{"mode": "required", "result": farm.VerdictPassed, "frozenAt": unknownAt.Format(time.RFC3339Nano)},
+	})
+
+	emptyAt := now.Add(-4 * time.Hour)
+	seedBatchAt(t, store, "ui-empty", "off", emptyAt, []runFixture{{runID: "ui-empty-a", scenario: "never-started", startedAt: emptyAt, done: true, neverStarted: true}}, true, map[string]string{"ui-empty-a": farm.VerdictNotRun})
 }

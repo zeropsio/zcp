@@ -52,6 +52,8 @@ type batchRunView struct {
 	// last pre-store failure, both nil-safe absent a Queue.
 	JobStatusText       string
 	PreStoreFailureText string
+	Assessment          string
+	AssessmentOutcome   string
 }
 
 // maxFailedCheckChips caps the failed-check ids a batch row lists.
@@ -69,7 +71,14 @@ func observationFailed(obs *observer.Observation) bool {
 const observerFailedState = "observer failed"
 
 func newBatchRunView(row RunRow) batchRunView {
-	v := batchRunView{RunRow: row, State: row.ObserverState}
+	state := row.ObserverState
+	if assessmentWorkUnavailable(row) || !runDidWork(row) {
+		state = row.ObserverStateText
+	}
+	v := batchRunView{RunRow: row, State: state, Assessment: row.ObserverStateText, AssessmentOutcome: row.Outcome}
+	if row.Outcome != "" {
+		v.Assessment = assessmentOutcomeLabel(row.Outcome)
+	}
 	if row.Observation != nil && observationFailed(row.Observation) {
 		v.State = observerFailedState
 	} else if row.Observation != nil {
@@ -458,34 +467,45 @@ func buildCheckFailureFallback(rows []RunRow) []checkFailureRow {
 type batchDiffView struct {
 	PreviousBatchID string
 	Diff            BatchDiff
-	// Line is formatBatchDiffLine's rendered text — precomputed here so
-	// neither this page nor the Overview's own vs-previous line (pages_home.
-	// go's latestEvaluationView) needs template-side string assembly.
-	Line string
+	Comparison      batchComparisonView
 }
 
-// formatBatchDiffLine renders a batch-vs-previous-batch diff as one line
-// (FIX2 item 11's vocabulary fix): "newly failing: a, b; now passing: c;
-// still failing: d" — "fixed:" renamed "now passing:", groups joined with
-// "; " so a dangling trailing punctuation mark after the last populated
-// group is never printed, and "no change." when every list is empty.
-// Shared by this page and the Overview's own "Latest evaluation" panel
-// (pages_home.go), which renders the same BatchDiff.
-func formatBatchDiffLine(d BatchDiff) string {
-	var parts []string
-	if len(d.NewlyFailing) > 0 {
-		parts = append(parts, "newly failing: "+strings.Join(d.NewlyFailing, ", "))
+type batchComparisonEntry struct {
+	Scenario string
+	RunID    string
+	Verdict  string
+}
+
+type batchComparisonView struct {
+	NewlyNotPassing []batchComparisonEntry
+	NowPassing      []batchComparisonEntry
+	StillNotPassing []batchComparisonEntry
+	HasChanges      bool
+}
+
+func buildBatchComparison(d BatchDiff, current []RunRow) batchComparisonView {
+	byScenario := make(map[string]RunRow, len(current))
+	for _, row := range current {
+		chosen, exists := byScenario[row.Scenario]
+		if !exists || (chosen.Verdict == farm.VerdictPassed && row.Verdict != farm.VerdictPassed) {
+			byScenario[row.Scenario] = row
+		}
 	}
-	if len(d.Fixed) > 0 {
-		parts = append(parts, "now passing: "+strings.Join(d.Fixed, ", "))
+	entries := func(scenarios []string) []batchComparisonEntry {
+		out := make([]batchComparisonEntry, 0, len(scenarios))
+		for _, scenario := range scenarios {
+			row := byScenario[scenario]
+			out = append(out, batchComparisonEntry{Scenario: scenario, RunID: row.RunID, Verdict: row.Verdict})
+		}
+		return out
 	}
-	if len(d.StillFailing) > 0 {
-		parts = append(parts, "still failing: "+strings.Join(d.StillFailing, ", "))
+	v := batchComparisonView{
+		NewlyNotPassing: entries(d.NewlyFailing),
+		NowPassing:      entries(d.Fixed),
+		StillNotPassing: entries(d.StillFailing),
 	}
-	if len(parts) == 0 {
-		return "no change."
-	}
-	return strings.Join(parts, "; ")
+	v.HasChanges = len(v.NewlyNotPassing)+len(v.NowPassing)+len(v.StillNotPassing) > 0
+	return v
 }
 
 // causeCountView is one row of the summary block's per-cause-class
@@ -578,11 +598,14 @@ type batchPageData struct {
 	VsPrevious *batchDiffView
 
 	VerdictCounts                                  []VerdictCount
+	Verdicts                                       []verdictDisputeView
 	DisputedCount                                  int
 	GoalYes, GoalPartly, GoalNo                    int
 	OutcomeOK, OutcomeProblem, OutcomeInconclusive int
 	CauseCounts                                    []causeCountView
+	ZCPHigh, ZCPMedium                             int
 	TotalCostUsd                                   float64
+	Cost                                           string
 	CostUnknownN                                   int
 	ObservedN, ObservedM                           int
 	// SummaryLine is item 9's one labelled line ("Goal: 8 yes · 1 no —
@@ -596,16 +619,19 @@ type batchPageData struct {
 	// ProblemsLow holds the low-severity ones, folded behind a "N low"
 	// <details> of their own (FIX2 item 7) — the same one-line rows,
 	// collapsed by default rather than dropped.
-	Problems       []batchProblemView
-	ProblemsLow    []batchProblemView
-	FallbackChecks []checkFailureRow
+	Problems           []batchProblemView
+	ProblemsLow        []batchProblemView
+	HistoricalProblems []batchProblemView
+	FallbackChecks     []checkFailureRow
 
 	// InconclusiveBanner is FIX2 item 7's own top-of-page warning, "" unless
 	// at least half this batch's runs ended inconclusive (buildInconclusiveBanner).
 	InconclusiveBanner string
 
-	Nav    listNav
-	Groups []batchRunGroupView
+	Nav       listNav
+	Groups    []batchRunGroupView
+	MatchingN int
+	TotalRuns int
 	// SortByKey lets the runs table template place each sort header next
 	// to the column it actually sorts, with a plain "Why / headline"
 	// header (item 2) that sorts nothing in between — mirrors
@@ -619,12 +645,15 @@ type batchPageData struct {
 	UnassessedNeverN  int
 	UnassessedFailedN int
 	AnyAssessed       bool
+	ReassessEligibleN int
 	// ModelOptions is shared with pages_run.go's own model picker (FIX3
 	// item 1): one button per allowlisted model, properly labeled instead
 	// of a <select> of raw ids — batch forms never preselect one (there is
 	// no single "current model" across many runs), so every option's
 	// Selected is always false here.
 	ModelOptions []modelOptionView
+	PrimaryModel modelOptionView
+	OtherModels  []modelOptionView
 }
 
 // batchModelOptions is the batch forms' own model list (FIX3 item 1): the
@@ -653,6 +682,67 @@ func (s *Server) jobStatusText(runID string) (jobText, failureText string) {
 		failureText = fmt.Sprintf("The attempt at %s failed before anything was stored: %s. Re-assess to retry.", fmtTime(f.At), f.Err)
 	}
 	return jobText, failureText
+}
+
+func (s *Server) populateBatchSummary(data *batchPageData, rows []RunRow) {
+	verdictTally := map[string]int{}
+	causeCounts := newCauseClassCounts()
+	for _, row := range rows {
+		verdictTally[row.Verdict]++
+		data.TotalCostUsd += row.CostUsd
+		if !row.CostKnown {
+			data.CostUnknownN++
+		}
+		if row.Outcome != "" {
+			data.ObservedN++
+		}
+		if row.Disputed {
+			data.DisputedCount++
+		}
+		causeCounts = mergeCauseClassCounts(causeCounts, row.CauseCounts)
+		switch row.Outcome {
+		case observer.OutcomeOK:
+			data.OutcomeOK++
+		case observer.OutcomeProblem:
+			data.OutcomeProblem++
+		case observer.OutcomeInconclusive:
+			data.OutcomeInconclusive++
+		}
+		if row.Observation != nil && row.Observation.Status == observationStatusOK {
+			switch row.Observation.Goal.Reached {
+			case "yes":
+				data.GoalYes++
+			case "partly":
+				data.GoalPartly++
+			case "no":
+				data.GoalNo++
+			}
+		}
+		if NeedsAssessment(row, runQueued(s.queueState, row.RunID)) {
+			data.Unassessed++
+			if row.Observation == nil {
+				data.UnassessedNeverN++
+			} else {
+				data.UnassessedFailedN++
+			}
+		}
+		if row.Outcome != "" && runDidWork(row) && !assessmentWorkUnavailable(row) {
+			data.ReassessEligibleN++
+		}
+	}
+	data.VerdictCounts = orderedVerdictCounts(verdictTally)
+	data.Verdicts = verdictDisputeCounts(rows)
+	data.ObservedM = len(rows)
+	data.Cost = formatBatchCost(BatchRow{TotalCostUsd: data.TotalCostUsd, CostUnknownN: data.CostUnknownN, ObservedM: data.ObservedM})
+	data.InconclusiveBanner = buildInconclusiveBanner(data.OutcomeInconclusive, data.ObservedM)
+	for _, c := range causeCounts {
+		data.CauseCounts = append(data.CauseCounts, causeCountView{Label: causeClassDisplay[c.Class], High: c.High, Medium: c.Medium})
+		if c.Class == CauseClassZCP {
+			data.ZCPHigh, data.ZCPMedium = c.High, c.Medium
+		}
+	}
+	data.AnyAssessed = data.ReassessEligibleN > 0
+	data.SummaryLine = buildBatchSummaryLine(data.GoalYes, data.GoalPartly, data.GoalNo, data.OutcomeOK, data.OutcomeProblem, data.OutcomeInconclusive, data.CauseCounts)
 }
 
 func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
@@ -709,61 +799,16 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 		Build:        bc.build(),
 		ModelOptions: batchModelOptions(),
 	}
+	if len(data.ModelOptions) > 0 {
+		data.PrimaryModel = data.ModelOptions[0]
+		data.OtherModels = data.ModelOptions[1:]
+	}
 	if hasPrev {
 		diff := CompareBatches(prevRows, rows)
-		data.VsPrevious = &batchDiffView{PreviousBatchID: prevBatch.BatchID, Diff: diff, Line: formatBatchDiffLine(diff)}
+		data.VsPrevious = &batchDiffView{PreviousBatchID: prevBatch.BatchID, Diff: diff, Comparison: buildBatchComparison(diff, rows)}
 	}
 
-	verdictTally := map[string]int{}
-	causeCounts := newCauseClassCounts()
-	for _, row := range rows {
-		verdictTally[row.Verdict]++
-		data.TotalCostUsd += row.CostUsd
-		if !row.CostKnown {
-			data.CostUnknownN++
-		}
-		if row.Outcome != "" {
-			data.ObservedN++
-		}
-		if row.Disputed {
-			data.DisputedCount++
-		}
-		causeCounts = mergeCauseClassCounts(causeCounts, row.CauseCounts)
-		switch row.Outcome {
-		case observer.OutcomeOK:
-			data.OutcomeOK++
-		case observer.OutcomeProblem:
-			data.OutcomeProblem++
-		case observer.OutcomeInconclusive:
-			data.OutcomeInconclusive++
-		}
-		if row.Observation != nil && row.Observation.Status == observationStatusOK {
-			switch row.Observation.Goal.Reached {
-			case "yes":
-				data.GoalYes++
-			case "partly":
-				data.GoalPartly++
-			case "no":
-				data.GoalNo++
-			}
-		}
-		if NeedsAssessment(row, runQueued(s.queueState, row.RunID)) {
-			data.Unassessed++
-			if row.Observation == nil {
-				data.UnassessedNeverN++
-			} else {
-				data.UnassessedFailedN++
-			}
-		}
-	}
-	data.VerdictCounts = orderedVerdictCounts(verdictTally)
-	data.ObservedM = len(rows)
-	data.InconclusiveBanner = buildInconclusiveBanner(data.OutcomeInconclusive, data.ObservedM)
-	for _, c := range causeCounts {
-		data.CauseCounts = append(data.CauseCounts, causeCountView{Label: causeClassDisplay[c.Class], High: c.High, Medium: c.Medium})
-	}
-	data.AnyAssessed = data.ObservedN > 0
-	data.SummaryLine = buildBatchSummaryLine(data.GoalYes, data.GoalPartly, data.GoalNo, data.OutcomeOK, data.OutcomeProblem, data.OutcomeInconclusive, data.CauseCounts)
+	s.populateBatchSummary(&data, rows)
 
 	// Problems in this batch (item 3), or the deterministic-checks
 	// fallback when nothing here has ever been assessed — resolveBatchProblems
@@ -774,7 +819,17 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	data.Problems, data.ProblemsLow = problems, problemsLow
+	for _, problem := range append(problems, problemsLow...) {
+		if problem.HitInBatch == 0 {
+			data.HistoricalProblems = append(data.HistoricalProblems, problem)
+			continue
+		}
+		if problem.Severity == observer.SeverityLow {
+			data.ProblemsLow = append(data.ProblemsLow, problem)
+		} else {
+			data.Problems = append(data.Problems, problem)
+		}
+	}
 	data.ProblemsFallback, data.FallbackChecks = fallback, fallbackChecks
 
 	// Runs table (item 4): filter+sort through the shared engine so
@@ -783,6 +838,8 @@ func (s *Server) handleBatchPage(w http.ResponseWriter, r *http.Request) {
 	// after sorting keeps "sort orders runs within each group" true by
 	// construction.
 	filtered, counts := batchRunsEngine().Apply(rows, q, s.now())
+	data.MatchingN = len(filtered)
+	data.TotalRuns = len(rows)
 	byGroup := map[string][]batchRunView{}
 	for _, row := range filtered {
 		v := newBatchRunView(row)

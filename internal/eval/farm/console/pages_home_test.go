@@ -108,15 +108,30 @@ func TestHome_LatestEvaluationPanel(t *testing.T) {
 	if !strings.Contains(body, `href="/b/le0"`) {
 		t.Errorf("body missing the vs-previous-batch link to le0:\n%s", body)
 	}
-	if !strings.Contains(body, "newly failing: alpha") {
-		t.Errorf("body missing \"newly failing: alpha\":\n%s", body)
+	if !strings.Contains(body, "Newly not passing") || !strings.Contains(body, `href="/r/le1-alpha"`) {
+		t.Errorf("body missing linked Newly not passing scenario alpha:\n%s", body)
 	}
-	// Item 11 (FIX2): "fixed:" reads "now passing:".
-	if !strings.Contains(body, "now passing: beta") {
-		t.Errorf("body missing \"now passing: beta\":\n%s", body)
+	if !strings.Contains(body, "Now passing") || !strings.Contains(body, `href="/r/le1-beta"`) {
+		t.Errorf("body missing linked Now passing scenario beta:\n%s", body)
 	}
-	if !strings.Contains(body, "still failing: gamma") {
-		t.Errorf("body missing \"still failing: gamma\":\n%s", body)
+	if !strings.Contains(body, "Still not passing") || !strings.Contains(body, `href="/r/le1-gamma"`) {
+		t.Errorf("body missing linked Still not passing scenario gamma:\n%s", body)
+	}
+}
+
+// TestPages_HomeFailedScenario_DirectRunLink pins §8.3's investigation
+// path: every failed/blocked scenario in Latest evaluation links directly
+// to that concrete run, rather than requiring a second lookup in Batch.
+func TestPages_HomeFailedScenario_DirectRunLink(t *testing.T) {
+	srv, store, _ := testServer(t)
+	now := fixedNow(t)()
+	seedBatchAt(t, store, "link", "claude-sonnet-5", now.Add(-time.Hour), []runFixture{
+		{runID: "link-a", scenario: "recover-deploy", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "failed", done: true},
+	}, true, map[string]string{"link-a": "failed"})
+
+	body := doGET(t, srv.Handler(), "/").Body.String()
+	if !strings.Contains(body, `href="/r/link-a"`) || !strings.Contains(body, `>recover-deploy</a>`) {
+		t.Errorf("Latest evaluation has no direct scenario-to-run link:\n%s", body)
 	}
 }
 
@@ -452,7 +467,7 @@ func TestPages_HomeBatchesTableShortDatesAndSetChip(t *testing.T) {
 	if strings.Contains(body, `data-label="Started">1 Sep 2026,`) {
 		t.Errorf("the batches table's Started cell still shows the long date form:\n%s", body)
 	}
-	if !strings.Contains(body, `data-label="Set"><span class="chip">gate</span>`) {
+	if !strings.Contains(body, `data-label="Set"><span class="badge chip">gate</span>`) {
 		t.Errorf("body does not render the Set column as a chip:\n%s", body)
 	}
 }

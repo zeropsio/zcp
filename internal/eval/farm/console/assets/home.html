@@ -1,72 +1,51 @@
-{{/* GET / — the Overview (docs/spec-eval-farm.md §8.3 FM-51): three blocks
-   top to bottom — Latest evaluation, Top problems now, Batches. */}}
+{{/* GET / — current evaluation evidence followed by batch history. */}}
 {{define "home"}}{{template "head" .Meta}}
-<div class="page-head">
+<nav class="crumbs" aria-label="Breadcrumb"><span>Overview</span></nav>
+<div class="page-head overview-head">
 <h1>Overview</h1>
+<p class="muted">Current evaluation evidence and batch history</p>
 </div>
 
-<section>
-<h2>Latest evaluation</h2>
+<section class="dashboard-section" aria-label="Latest evaluation">
+<div class="section-heading"><div><h2>Latest evaluation</h2><p class="muted small">Newest finished evaluation batch</p></div></div>
 {{with .Latest}}
-<div class="card">
-<div class="batch-top">
-<a class="batch-id" href="/b/{{.BatchID}}">{{.BatchID}}</a>
-<span class="muted small">{{fmtTime .CreatedAt}} · {{.Build.Label}}{{if .Set}} · set {{.Set}}{{end}}</span>
+<article class="card latest-card">
+<div class="card-header latest-header"><div><a class="batch-id" href="/b/{{.BatchID}}">{{.BatchID}}</a><div class="muted small">{{fmtTime .CreatedAt}} · {{.Build.Label}}{{if .Set}} · set {{.Set}}{{end}}</div></div><div class="coverage-compact"><span class="metric-label">AI assessed</span><strong>{{.ObservedN}}/{{.ObservedM}}</strong></div></div>
+<div class="card-body latest-body">
+<div class="summary-block"><span class="summary-label">Automatic verdict</span><div class="stats">{{range .Verdicts}}<span class="{{verdictClass .Verdict}} badge">{{verdictIcon .Verdict}} {{.Count}} {{verdictLabel .Verdict}}{{if .Disputed}} ({{.Disputed}} disputed){{end}}</span>{{end}}</div></div>
+{{if .HasPrev}}<div class="batch-comparison"><div class="comparison-heading">Compared with <a href="/b/{{.PrevBatchID}}">{{.PrevBatchID}}</a></div>{{if .Comparison.HasChanges}}<div class="comparison-groups">{{if .Comparison.NewlyNotPassing}}<div><span class="comparison-label">Newly not passing</span><span class="comparison-items">{{range .Comparison.NewlyNotPassing}}<span><a href="/r/{{.RunID}}">{{.Scenario}}</a> <span class="{{verdictClass .Verdict}} badge">{{verdictLabel .Verdict}}</span></span>{{end}}</span></div>{{end}}{{if .Comparison.NowPassing}}<div><span class="comparison-label">Now passing</span><span class="comparison-items">{{range .Comparison.NowPassing}}<span><a href="/r/{{.RunID}}">{{.Scenario}}</a> <span class="{{verdictClass .Verdict}} badge">{{verdictLabel .Verdict}}</span></span>{{end}}</span></div>{{end}}{{if .Comparison.StillNotPassing}}<div><span class="comparison-label">Still not passing</span><span class="comparison-items">{{range .Comparison.StillNotPassing}}<span><a href="/r/{{.RunID}}">{{.Scenario}}</a> <span class="{{verdictClass .Verdict}} badge">{{verdictLabel .Verdict}}</span></span>{{end}}</span></div>{{end}}</div>{{else}}<span class="muted small">No verdict changes.</span>{{end}}</div>{{else}}<p class="comparison-absent muted small">No earlier finished batch of this set to compare.</p>{{end}}
+{{if .FailedOrBlocked}}<div class="attention-list" aria-label="Failed and blocked runs">{{range .FailedOrBlocked}}<div class="attention-row"><span class="{{verdictClass .Verdict}} badge">{{verdictIcon .Verdict}} {{verdictLabel .Verdict}}</span><div><a class="attention-title" href="/r/{{.RunID}}">{{.Scenario}}</a><span class="attention-headline">{{.Headline}}</span>{{if .DisputeWhy}}<span class="attention-dispute"><span class="disputed-marker">observer disputes</span> {{.DisputeWhy}}</span>{{end}}</div></div>{{end}}</div>{{else}}<p class="neutral-state">No failed or blocked runs in this batch.</p>{{end}}
 </div>
-<div class="stats">{{range .Verdicts}}<span class="{{verdictClass .Verdict}}">{{verdictIcon .Verdict}} {{.Count}} {{verdictLabel .Verdict}}{{if .Disputed}} ({{.Disputed}} disputed){{end}}</span>{{end}}</div>
-{{if .HasPrev}}<p class="small muted">vs <a href="/b/{{.PrevBatchID}}">{{.PrevBatchID}}</a>: {{.DiffLine}}</p>
-{{end}}
-{{if .FailedOrBlocked}}<ul class="plain">
-{{range .FailedOrBlocked}}<li><span class="{{verdictClass .Verdict}}">{{verdictIcon .Verdict}} {{verdictLabel .Verdict}}</span> <strong>{{.Scenario}}</strong> — {{.Headline}}{{if .DisputeWhy}}<br><span class="disputed-marker">observer disputes</span> {{.DisputeWhy}}{{end}}</li>
-{{end}}</ul>
-{{else}}<p class="muted small">No failed or blocked runs.</p>{{end}}
-</div>
-{{else}}<p class="empty">No evaluation batch has finished yet.</p>{{end}}
+</article>
+{{else}}<div class="card"><div class="card-body empty-state compact-empty"><h2>No evaluation has finished</h2><p>No evaluation batch has finished yet. The latest evaluation will appear here after a batch records meaningful work.</p></div></div>{{end}}
 </section>
 
-{{if .TopProblems}}<section>
-<h2>Top problems now</h2>
-<ul class="plain">
-{{range .TopProblems}}<li class="card">
-<span class="{{severityClass .Severity}}">{{severityLabel .Severity}}</span>
-{{range .CauseLabels}}<span class="chip cause-chip">{{.}}</span> {{end}}
-{{with .Surface}}<code class="chip">{{.}}</code> {{end}}
-<a href="/problems#{{.ID}}"><strong>{{.Title}}</strong></a>
-<span class="muted"> — {{.HowOften}}</span>
-</li>
-{{end}}</ul>
-</section>{{end}}
+<section class="dashboard-section" aria-label="Top problems now">
+<div class="section-heading"><div><h2>Top problems now</h2><p class="muted small">Up to five current problems, ordered by priority</p></div>{{if .TopProblems}}<a class="btn btn-sm" href="/problems">View all problems</a>{{end}}</div>
+{{if .TopProblems}}<div class="card compact-problem-list">{{range .TopProblems}}<div class="compact-problem-row"><div class="compact-problem-main"><a href="/problems#{{.ID}}"><strong>{{.Title}}</strong></a><span class="muted small">{{.HowOften}}</span></div><div class="compact-problem-meta"><span class="{{severityClass .Severity}} badge">{{severityLabel .Severity}}</span>{{range .CauseLabels}}<span class="chip cause-chip">{{.}}</span>{{end}}{{with .Surface}}<code class="chip">{{.}}</code>{{end}}</div></div>{{end}}</div>
+{{else}}<div class="card"><div class="card-body neutral-state"><strong>No current problems found.</strong>{{with .Latest}} <span class="muted">Assessment coverage is {{.ObservedN}} of {{.ObservedM}} runs in the latest evaluation.</span>{{else}} <span class="muted">There is no finished evaluation to assess yet.</span>{{end}}</div></div>{{end}}
+</section>
 
-<section>
-<h2>Batches</h2>
-{{template "filterbar" .Nav.Filters}}
-{{template "sortchips" .Nav.Sorts}}
-<div class="table-wrap"><table class="stack">
+<section class="dashboard-section history-section" aria-label="Batches">
+<div class="section-heading"><div><h2>Batches</h2><p class="result-summary"><strong>{{.MatchingN}} matching</strong> of {{.TotalN}} batches</p></div></div>
+<div class="list-toolbar">{{template "filterbar" .Nav.Filters}}{{template "sortchips" .Nav.Sorts}}</div>
+<div class="table-wrap history-table" role="region" tabindex="0" aria-label="Scrollable batch history table"><table class="table table-vcenter stack">
 <thead><tr>
-<th>Batch</th>
-{{with index .SortByKey "newest"}}{{template "sortth" .}}{{else}}<th>Started</th>{{end}}
-<th>Build</th>
-<th>Set</th>
-<th>Runs</th>
+{{with index .SortByKey "newest"}}<th aria-sort="{{.AriaSort}}"><a href="{{.URL}}">Batch{{if .Active}}<span class="sort-marker" aria-hidden="true">{{if eq .Dir "asc"}} ▲{{else}} ▼{{end}}</span>{{end}}</a></th>{{end}}<th>ZCP build</th><th>Set</th><th>Runs</th>
 {{with index .SortByKey "failed"}}{{template "sortth" .}}{{else}}<th>Verdicts</th>{{end}}
 {{with index .SortByKey "zcp"}}{{template "sortth" .}}{{else}}<th>ZCP findings</th>{{end}}
-{{with index .SortByKey "cost"}}{{template "sortth" .}}{{else}}<th>Cost</th>{{end}}
-<th>Assessed</th>
+{{with index .SortByKey "cost"}}{{template "sortth" .}}{{else}}<th>Cost</th>{{end}}<th>Assessed</th>
 </tr></thead>
 <tbody>
 {{range .Batches}}<tr>
-<td data-label="Batch"><a href="/b/{{.BatchID}}">{{.BatchID}}</a></td>
-<td data-label="Started">{{.StartedShort}}</td>
-<td data-label="Build">{{.Build.Label}}</td>
-<td data-label="Set">{{if .Set}}<span class="chip">{{.Set}}</span>{{else}}—{{end}}</td>
-<td data-label="Runs"><div class="dots">{{range .Dots}}<span class="dot dot-{{verdictKey .Verdict}}" title="{{.Tooltip}}"></span>{{end}}</div></td>
-<td data-label="Verdicts"><div class="stats">{{range .VerdictCounts}}<span class="{{verdictClass .Verdict}}">{{verdictIcon .Verdict}} {{.Count}} {{verdictLabel .Verdict}}</span>{{end}}{{if .DisputedCount}}<span class="disputed-marker">{{.DisputedCount}} disputed</span>{{end}}</div></td>
+<td data-label="Batch"><a class="table-primary" href="/b/{{.BatchID}}">{{.BatchID}}</a><span class="table-secondary">{{.StartedShort}}</span></td>
+<td data-label="ZCP build" title="{{.Build.Sha256}}">{{.Build.Label}}</td>
+<td data-label="Set">{{if .Set}}<span class="badge chip">{{.Set}}</span>{{else}}—{{end}}</td>
+<td data-label="Runs"><div class="dots" aria-label="Run verdicts">{{range .Dots}}<span class="dot dot-{{verdictKey .Verdict}}" title="{{.Tooltip}}"><span class="visually-hidden">{{.Tooltip}}</span></span>{{end}}</div></td>
+<td data-label="Verdicts"><div class="stats">{{range .VerdictCounts}}<span class="{{verdictClass .Verdict}} badge">{{verdictIcon .Verdict}} {{.Count}} {{verdictLabel .Verdict}}</span>{{end}}{{if .DisputedCount}}<span class="disputed-marker">{{.DisputedCount}} disputed</span>{{end}}</div></td>
 <td data-label="ZCP findings">{{if or .ZCPHigh .ZCPMedium}}{{if .ZCPHigh}}<span class="severity severity-high">{{.ZCPHigh}} high</span>{{end}}{{if .ZCPMedium}} <span class="severity severity-medium">{{.ZCPMedium}} medium</span>{{end}}{{else}}<span class="muted small">none</span>{{end}}</td>
-<td data-label="Cost">{{.Cost}}</td>
-<td data-label="Assessed">{{.ObservedN}}/{{.ObservedM}}</td>
-</tr>
-{{else}}<tr><td colspan="9"><p class="empty">No batches match this filter.</p></td></tr>
-{{end}}
+<td data-label="Cost" class="numeric">{{.Cost}}</td><td data-label="Assessed" class="numeric"><strong>{{.ObservedN}}/{{.ObservedM}}</strong></td>
+</tr>{{else}}<tr><td colspan="8"><div class="empty-state compact-empty"><h2>No batches match this scope</h2><p>Change or reset the filters to see batch history.</p></div></td></tr>{{end}}
 </tbody>
 </table></div>
 </section>

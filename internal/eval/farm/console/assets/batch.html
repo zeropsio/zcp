@@ -1,109 +1,56 @@
 {{define "batch"}}{{template "head" .Meta}}
-<nav class="crumbs"><a href="/">Overview</a><span class="sep">/</span>{{.BatchID}}</nav>
-{{if .InconclusiveBanner}}<div class="callout callout-warn">{{.InconclusiveBanner}}</div>{{end}}
-<div class="page-head">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="/">Overview</a><span class="sep">/</span><span>{{.BatchID}}</span></nav>
+{{if .InconclusiveBanner}}<div class="alert alert-warning callout callout-warn" role="status">{{.InconclusiveBanner}}</div>{{end}}
+<div class="page-head batch-page-head">
 <h1>{{.BatchID}}</h1>
 <p class="muted">{{fmtTime .CreatedAt}}{{if .Set}} · set {{.Set}}{{end}} · {{.Build.Label}}{{if .Note}} · {{.Note}}{{end}}</p>
-{{with .VsPrevious}}<p class="muted small">vs <a href="/b/{{.PreviousBatchID}}">{{.PreviousBatchID}}</a>: {{.Line}}</p>{{end}}
+{{with .VsPrevious}}<div class="batch-comparison"><div class="comparison-heading">Compared with previous same-set batch <a href="/b/{{.PreviousBatchID}}">{{.PreviousBatchID}}</a></div>{{if .Comparison.HasChanges}}<div class="comparison-groups">{{if .Comparison.NewlyNotPassing}}<div><span class="comparison-label">Newly not passing</span><span class="comparison-items">{{range .Comparison.NewlyNotPassing}}<span><a href="/r/{{.RunID}}">{{.Scenario}}</a> <span class="{{verdictClass .Verdict}} badge">{{verdictLabel .Verdict}}</span></span>{{end}}</span></div>{{end}}{{if .Comparison.NowPassing}}<div><span class="comparison-label">Now passing</span><span class="comparison-items">{{range .Comparison.NowPassing}}<span><a href="/r/{{.RunID}}">{{.Scenario}}</a> <span class="{{verdictClass .Verdict}} badge">{{verdictLabel .Verdict}}</span></span>{{end}}</span></div>{{end}}{{if .Comparison.StillNotPassing}}<div><span class="comparison-label">Still not passing</span><span class="comparison-items">{{range .Comparison.StillNotPassing}}<span><a href="/r/{{.RunID}}">{{.Scenario}}</a> <span class="{{verdictClass .Verdict}} badge">{{verdictLabel .Verdict}}</span></span>{{end}}</span></div>{{end}}</div>{{else}}<span class="muted small">No verdict changes.</span>{{end}}</div>{{else}}<p class="comparison-absent muted small">No earlier finished batch of this set to compare.</p>{{end}}
 </div>
 
-<div class="summary card">
-<div class="stats">{{range .VerdictCounts}}<span class="{{verdictClass .Verdict}} big">{{verdictIcon .Verdict}} {{.Count}} {{verdictLabel .Verdict}}</span>{{end}}</div>
-<div class="summary-nums">
-<span><strong>{{fmtCost .TotalCostUsd}}</strong>{{if .CostUnknownN}} + {{.CostUnknownN}} unknown{{end}}</span>
-<span><strong>{{.ObservedN}}/{{.ObservedM}}</strong> assessed</span>
-<span>{{.DisputedCount}} disputed</span>
+<section class="card batch-summary-card" aria-labelledby="summary-heading">
+<div class="card-header"><div><h2 class="card-title" id="summary-heading">Whole-batch summary</h2><p class="muted small">All {{.ObservedM}} runs; run filters below do not change these values.</p></div></div>
+<div class="card-body metric-strip">
+<div class="metric-cell"><span class="summary-label">Automatic verdict</span><div class="stats">{{range .Verdicts}}<span class="{{verdictClass .Verdict}} badge">{{verdictIcon .Verdict}} {{.Count}} {{verdictLabel .Verdict}}{{if .Disputed}} ({{.Disputed}} disputed){{end}}</span>{{end}}</div></div>
+<div class="metric-cell"><span class="summary-label">AI assessment</span><div class="metric-value"><strong>{{.ObservedN}}/{{.ObservedM}}</strong> assessed</div><div class="stats">{{if .OutcomeOK}}<span class="outcome outcome-ok">{{.OutcomeOK}} OK</span>{{end}}{{if .OutcomeProblem}}<span class="outcome outcome-problem">{{.OutcomeProblem}} needs attention</span>{{end}}{{if .OutcomeInconclusive}}<span class="outcome outcome-inconclusive">{{.OutcomeInconclusive}} inconclusive</span>{{end}}</div></div>
+<div class="metric-cell"><span class="summary-label">Goal reached</span>{{if or .GoalYes .GoalPartly .GoalNo}}<div class="stats">{{if .GoalYes}}<span class="pill pill-yes">{{.GoalYes}} yes</span>{{end}}{{if .GoalPartly}}<span class="pill pill-partly">{{.GoalPartly}} partly</span>{{end}}{{if .GoalNo}}<span class="pill pill-no">{{.GoalNo}} no</span>{{end}}</div>{{else}}<div class="metric-value muted">—</div><span class="metric-label">Not recorded</span>{{end}}</div>
+<div class="metric-cell"><span class="summary-label">ZCP findings</span>{{if or .ZCPHigh .ZCPMedium}}<div class="stats">{{if .ZCPHigh}}<span class="severity severity-high">{{.ZCPHigh}} high</span>{{end}}{{if .ZCPMedium}}<span class="severity severity-medium">{{.ZCPMedium}} medium</span>{{end}}</div>{{else}}<div class="metric-value">0</div><span class="metric-label">in assessed evidence</span>{{end}}</div>
+<div class="metric-cell"><span class="summary-label">Agent cost</span><div class="metric-value numeric">{{.Cost}}</div>{{if .CostUnknownN}}<span class="metric-label">{{.CostUnknownN}} run{{if ne .CostUnknownN 1}}s{{end}} unknown</span>{{end}}</div>
 </div>
-{{if .SummaryLine}}<p class="summary-line">{{.SummaryLine}}</p>{{end}}
-{{if .Unassessed}}<p class="summary-line"><a href="#assess">{{.Unassessed}} run{{if ne .Unassessed 1}}s{{end}} {{if eq .Unassessed 1}}needs{{else}}need{{end}} an assessment →</a> — {{.UnassessedNeverN}} never assessed, {{.UnassessedFailedN}} failed last time</p>{{end}}
-</div>
+{{if and .Unassessed (not .Meta.Observer.Hidden)}}<div class="card-footer assessment-prompt"><form class="callout" method="post" action="/b/{{.BatchID}}/observe" id="assess"><div><strong>{{.Unassessed}} finished run{{if ne .Unassessed 1}}s{{end}} {{if eq .Unassessed 1}}needs{{else}}need{{end}} an assessment.</strong><span class="muted small">{{.UnassessedNeverN}} never assessed, {{.UnassessedFailedN}} failed last time · whole batch</span></div><button class="btn btn-primary" type="submit" name="model" value="{{.PrimaryModel.Value}}">Assess with {{.PrimaryModel.Label}}</button>{{if .OtherModels}}<details class="model-options"><summary class="btn">Other models</summary><div class="callout-actions">{{range .OtherModels}}<button class="btn" type="submit" name="model" value="{{.Value}}">{{.Label}}</button>{{end}}</div></details>{{end}}</form></div>{{end}}
+</section>
+{{if and .AnyAssessed (not .Meta.Observer.Hidden)}}<details class="more reassess-disclosure"><summary>Re-assess every run of this batch</summary><form class="inline-form" method="post" action="/b/{{.BatchID}}/observe"><input type="hidden" name="all" value="1"><span class="muted small">{{.ReassessEligibleN}} eligible run{{if ne .ReassessEligibleN 1}}s{{end}} in the whole batch.</span><button class="btn" type="submit" name="model" value="{{.PrimaryModel.Value}}">Re-assess all {{.ReassessEligibleN}} runs with {{.PrimaryModel.Label}}</button>{{range .OtherModels}}<button class="btn" type="submit" name="model" value="{{.Value}}">Re-assess all {{$.ReassessEligibleN}} runs with {{.Label}}</button>{{end}}</form></details>{{end}}
 
-<section class="section">
-<h2>Problems in this batch</h2>
-{{if .ProblemsFallback}}
-<p class="muted small">No assessment yet in this batch — showing checks that failed in two or more runs.</p>
-{{if .FallbackChecks}}<ul class="plain">
-{{range .FallbackChecks}}<li class="card"><code class="chip"{{if .Title}} title="{{.Title}}"{{end}}>{{.Display}}</code> failed in {{len .RunIDs}} runs: {{range $i, $rid := .RunIDs}}{{if $i}}, {{end}}<a href="/r/{{$rid}}">{{$rid}}</a>{{end}}</li>
-{{end}}</ul>{{else}}<p class="empty">No check failed in two or more runs.</p>{{end}}
-{{else if or .Problems .ProblemsLow}}
-<div class="problem-list">
-{{range .Problems}}<details class="problem-line">
-<summary>
-<span class="{{severityClass .Severity}}">{{severityLabel .Severity}}</span>
-{{range .CauseLabels}}<span class="chip cause-chip">{{.}}</span>{{end}}
-<strong>{{.Title}}</strong>
-<span class="muted small">hit {{.HitInBatch}} of {{$.ObservedM}} runs in this batch</span>
-</summary>
-<div>
-<span class="chip" title="{{problemStatusTooltip .Status}}">{{problemStatusLabel .Status}}</span>
-{{with .Surface}}<code class="chip">{{.}}</code>{{end}}
-{{if .Anchor}}<code class="chip">{{.Anchor}}</code>{{end}}
-<div class="muted small">{{.RunsTotal}} runs · {{.BatchesTotal}} batches · {{.BuildsTotal}} builds</div>
-{{if .HasPrevCompare}}<div class="muted small">{{if .AlsoInPrev}}also in{{else}}not in{{end}} previous batch <a href="/b/{{$.VsPrevious.PreviousBatchID}}">{{$.VsPrevious.PreviousBatchID}}</a></div>{{end}}
-{{if .Fix}}<div>{{.Fix}}</div>{{end}}
+<section class="dashboard-section" aria-labelledby="batch-problems-heading">
+<div class="section-heading"><div><h2 id="batch-problems-heading">Problems in this batch</h2><p class="muted small">Current findings, with lifecycle status from full history</p></div></div>
+{{if .ProblemsFallback}}<div class="card"><div class="card-body"><p class="source-note">No assessment yet in this batch — showing checks that failed in two or more runs.</p>{{if .FallbackChecks}}<ul class="plain check-fallback">{{range .FallbackChecks}}<li><code class="chip"{{if .Title}} title="{{.Title}}"{{end}}>{{.Display}}</code><span>failed in {{len .RunIDs}} runs</span><span class="run-links">{{range .RunIDs}}<a href="/r/{{.}}">{{.}}</a>{{end}}</span></li>{{end}}</ul>{{else}}<div class="neutral-state"><strong>No repeated failed checks.</strong> <span class="muted">Assessment coverage is {{.ObservedN}} of {{.ObservedM}} runs; this does not establish a clean batch.</span></div>{{end}}</div></div>
+{{else if or .Problems .ProblemsLow}}<div class="card batch-problem-list">
+{{range .Problems}}<details class="batch-problem-row"><summary>
+<span class="{{severityClass .Severity}} badge">{{severityLabel .Severity}}</span>
+<span class="problem-summary-title">{{.Title}}</span>
+<span class="badge state-badge state-{{.Status}}" title="{{problemStatusTooltip .Status}}">{{problemStatusLabel .Status}}</span>
+<span class="problem-hit">hit {{.HitInBatch}} of {{$.ObservedM}} runs in this batch</span><span class="row-chevron" aria-hidden="true">›</span>
+</summary><div class="batch-problem-detail"><div class="problem-subline">{{range .CauseLabels}}<span class="chip cause-chip">{{.}}</span>{{end}}{{with .Surface}}<code>{{.}}</code>{{end}}{{if .Anchor}}<code>{{.Anchor}}</code>{{end}}</div>{{if .HasPrevCompare}}<p class="muted small">{{if .AlsoInPrev}}also in{{else}}not in{{end}} previous batch <a href="/b/{{$.VsPrevious.PreviousBatchID}}">{{$.VsPrevious.PreviousBatchID}}</a></p>{{end}}{{if .Fix}}<p><strong>Suggested fix:</strong> {{.Fix}}</p>{{end}}</div></details>{{end}}
+{{if .ProblemsLow}}<details class="batch-problem-row low-problems"><summary><span class="severity severity-low badge">{{len .ProblemsLow}} low</span><span class="problem-summary-title">Low-severity problems</span><span class="row-chevron" aria-hidden="true">›</span></summary><div class="batch-problem-detail">{{range .ProblemsLow}}<div class="low-problem-line"><strong>{{.Title}}</strong><span class="muted small">hit {{.HitInBatch}} of {{$.ObservedM}} runs in this batch · {{problemStatusLabel .Status}}</span></div>{{end}}</div></details>{{end}}
 </div>
-</details>
-{{end}}
-{{if .ProblemsLow}}<details class="problem-line">
-<summary>{{len .ProblemsLow}} low</summary>
-{{range .ProblemsLow}}<div class="problem-line">
-<span class="{{severityClass .Severity}}">{{severityLabel .Severity}}</span>
-{{range .CauseLabels}}<span class="chip cause-chip">{{.}}</span>{{end}}
-<strong>{{.Title}}</strong>
-<span class="muted small">hit {{.HitInBatch}} of {{$.ObservedM}} runs in this batch</span>
-<span class="chip" title="{{problemStatusTooltip .Status}}">{{problemStatusLabel .Status}}</span>
-{{if .Fix}}<div>{{.Fix}}</div>{{end}}
-</div>
-{{end}}</details>{{end}}
-</div>
-{{else}}<p class="empty">No problems found in this batch.</p>{{end}}
+{{else}}<div class="card"><div class="card-body neutral-state"><strong>No current findings.</strong> <span class="muted">Assessment coverage is {{.ObservedN}} of {{.ObservedM}} runs.</span></div></div>{{end}}
+{{if .HistoricalProblems}}<details class="card historical-problems"><summary class="card-header"><span><strong>Not found in this batch</strong><span class="muted small"> {{len .HistoricalProblems}} historical problem{{if ne (len .HistoricalProblems) 1}}s{{end}} from the comparison window</span></span></summary><div class="card-body">{{range .HistoricalProblems}}<div class="historical-row"><span class="state-badge state-{{.Status}}">{{problemStatusLabel .Status}}</span><span>{{.Title}}{{if .Fix}} — {{.Fix}}{{end}}</span>{{if $.VsPrevious}}<span class="muted small">present in <a href="/b/{{$.VsPrevious.PreviousBatchID}}">{{$.VsPrevious.PreviousBatchID}}</a></span>{{end}}</div>{{end}}</div></details>{{end}}
 </section>
 
-<section class="section">
-<h2>Runs</h2>
-{{template "filterbar" .Nav.Filters}}
-{{template "sortchips" .Nav.Sorts}}
-<div class="table-wrap"><table class="stack">
-<thead><tr>
-{{with index .SortByKey "problem"}}{{template "sortth" .}}{{end}}
-{{with index .SortByKey "scenario"}}{{template "sortth" .}}{{end}}
-<th>Why / headline</th>
-{{with index .SortByKey "duration"}}{{template "sortth" .}}{{end}}
-{{with index .SortByKey "cost"}}{{template "sortth" .}}{{end}}
-</tr></thead>
+<section class="dashboard-section" aria-labelledby="runs-heading">
+<div class="section-heading"><div><h2 id="runs-heading">Runs</h2><p class="result-summary"><strong>{{.MatchingN}} matching</strong> of {{.TotalRuns}} run{{if ne .TotalRuns 1}}s{{end}} in this batch</p></div></div>
+<div class="list-toolbar">{{template "filterbar" .Nav.Filters}}{{template "sortchips" .Nav.Sorts}}</div>
+<div class="table-wrap runs-table" role="region" tabindex="0" aria-label="Scrollable runs in this batch"><table class="table table-vcenter stack">
+<thead><tr><th>Scenario and Why / headline</th>{{with index .SortByKey "problem"}}{{template "sortth" .}}{{end}}<th>AI assessment</th>{{with index .SortByKey "duration"}}{{template "sortth" .}}{{end}}{{with index .SortByKey "cost"}}{{template "sortth" .}}{{end}}</tr></thead>
 <tbody>
-{{range .Groups}}<tr><td colspan="5" class="group-heading">{{.Title}} ({{len .Runs}})</td></tr>
-{{if .Collapsed}}<tr><td colspan="5">{{range $i, $r := .Runs}}{{if $i}}, {{end}}<a href="/r/{{$r.RunID}}"{{if $r.Headline}} title="{{$r.Headline}}"{{else if $r.State}} title="{{$r.State}}"{{end}}>{{$r.Scenario}}</a>{{end}}</td></tr>
+{{range .Groups}}<tr class="run-group-row"><td colspan="5" class="group-heading">{{.Title}} <span class="count">{{len .Runs}}</span></td></tr>
+{{if .Collapsed}}<tr class="clean-run-row"><td colspan="5"><details class="clean-runs"><summary>{{len .Runs}} clean run{{if ne (len .Runs) 1}}s{{end}}</summary><div>{{range .Runs}}<a href="/r/{{.RunID}}"{{if .Headline}} title="{{.Headline}}"{{else if .State}} title="{{.State}}"{{end}}>{{.Scenario}}</a>{{end}}</div></details></td></tr>
 {{else}}{{range .Runs}}<tr>
-<td data-label="Priority"><span class="{{verdictClass .Verdict}}">{{verdictIcon .Verdict}} {{verdictLabel .Verdict}}</span>{{if .Disputed}}<span class="disputed-marker">disputed</span>{{end}}</td>
-<td data-label="Scenario"><a href="/r/{{.RunID}}">{{.Scenario}}</a></td>
-<td data-label="Why / headline">
-{{if .FirstFailedText}}<div{{if .FirstFailedTitle}} title="{{.FirstFailedTitle}}"{{end}}>{{.FirstFailedText}}</div>{{end}}
-{{if .Reason}}<div class="muted">{{.Reason}}</div>{{end}}
-{{if .Headline}}<div>{{.Headline}}</div>{{else}}<div class="muted">{{.State}}</div>{{end}}
-{{if or .High .Medium .Low .FailedCheckIDs}}<span class="chips">{{if .High}}<span class="severity severity-high">{{.High}} high</span>{{end}}{{if .Medium}}<span class="severity severity-medium">{{.Medium}} medium</span>{{end}}{{if .Low}}<span class="severity severity-low">{{.Low}} low</span>{{end}}{{range .FailedCheckIDs}}<code class="chip">{{.}}</code>{{end}}{{if .FailedCheckMore}}<span class="muted small">+{{.FailedCheckMore}} more</span>{{end}}</span>{{end}}
-{{if .JobStatusText}}<div class="callout callout-info small">{{.JobStatusText}}</div>{{end}}
-{{if .PreStoreFailureText}}<div class="callout callout-error small">{{.PreStoreFailureText}}</div>{{end}}
-</td>
-<td data-label="Duration">{{fmtDuration .DurationSec}}</td>
-<td data-label="Cost">{{if .CostKnown}}{{fmtCost .CostUsd}}{{else}}—{{end}}</td>
-</tr>{{end}}{{end}}
-{{else}}<tr><td colspan="5" class="empty">No runs in this batch.</td></tr>
-{{end}}
-</tbody>
-</table></div>
+<td data-label="Scenario and why / headline"><a class="table-primary" href="/r/{{.RunID}}">{{.Scenario}}</a><div class="run-evidence">{{if .FirstFailedText}}<span{{if .FirstFailedTitle}} title="{{.FirstFailedTitle}}"{{end}}>{{.FirstFailedText}}</span>{{end}}{{if .Reason}}<span>{{.Reason}}</span>{{end}}{{if .Headline}}<span>{{.Headline}}</span>{{else if .State}}<span class="muted">{{.State}}</span>{{end}}</div>{{if or .High .Medium .Low .FailedCheckIDs}}<span class="chips">{{if .High}}<span class="severity severity-high">{{.High}} high</span>{{end}}{{if .Medium}}<span class="severity severity-medium">{{.Medium}} medium</span>{{end}}{{if .Low}}<span class="severity severity-low">{{.Low}} low</span>{{end}}{{range .FailedCheckIDs}}<code class="chip">{{.}}</code>{{end}}{{if .FailedCheckMore}}<span class="muted small">+{{.FailedCheckMore}} more</span>{{end}}</span>{{end}}{{if .JobStatusText}}<div class="alert alert-info compact-alert">{{.JobStatusText}}</div>{{end}}{{if .PreStoreFailureText}}<div class="alert alert-danger compact-alert">{{.PreStoreFailureText}}</div>{{end}}</td>
+<td data-label="Automatic verdict"><span class="{{verdictClass .Verdict}} badge">{{verdictIcon .Verdict}} {{verdictLabel .Verdict}}</span>{{if .Disputed}}<span class="disputed-marker">disputed</span>{{end}}</td>
+<td data-label="AI assessment">{{if .AssessmentOutcome}}<span class="{{assessmentOutcomeClass .AssessmentOutcome}}">{{.Assessment}}</span>{{else}}<span class="assessment-state">{{.Assessment}}</span>{{end}}</td>
+<td data-label="Duration" class="numeric">{{fmtDuration .DurationSec}}</td><td data-label="Cost" class="numeric">{{if .CostKnown}}{{fmtCost .CostUsd}}{{else}}—{{end}}</td>
+</tr>{{end}}{{end}}{{else}}<tr><td colspan="5"><div class="empty-state compact-empty">{{if .TotalRuns}}<h2>No runs match these filters.</h2><p><a class="btn" href="/b/{{.BatchID}}">Reset filters</a></p>{{else}}<h2>No runs in this batch.</h2><p>No run records are available.</p>{{end}}</div></td></tr>{{end}}
+</tbody></table></div>
 </section>
 
-{{if not .Meta.Observer.Hidden}}
-{{if .Unassessed}}<form class="callout" method="post" action="/b/{{.BatchID}}/observe" id="assess">
-<span>{{.Unassessed}} finished run{{if ne .Unassessed 1}}s{{end}} {{if eq .Unassessed 1}}needs{{else}}need{{end}} an assessment.</span>
-<span class="callout-actions">{{range .ModelOptions}}<button type="submit" name="model" value="{{.Value}}">{{.Label}}</button>{{end}}</span>
-</form>{{end}}
-{{if .AnyAssessed}}<details class="more"><summary>Re-assess every run of this batch</summary>
-<form class="inline-form" method="post" action="/b/{{.BatchID}}/observe">
-<input type="hidden" name="all" value="1">
-{{range .ModelOptions}}<button type="submit" name="model" value="{{.Value}}">Re-assess all {{$.ObservedM}} runs with {{.Label}}</button>{{end}}
-</form>
-</details>{{end}}
-{{end}}
 {{template "foot"}}{{end}}
