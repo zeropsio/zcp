@@ -78,12 +78,26 @@ func GC(ctx context.Context, client PlatformClient, sink *SinkClient, opts GCOpt
 			c.Exempt = "batch running"
 		case !info.hasDone:
 			c.Exempt = DetailNoBundle
-		case opts.OlderThan > 0 && now().Sub(info.finishedAt) < opts.OlderThan:
-			c.Exempt = "too recent"
+		case opts.OlderThan > 0 && !sufficientFinishAge(now(), info.finishedAt, opts.OlderThan):
+			c.Exempt = finishAgeExemption(now(), info.finishedAt)
 		}
 		candidates = append(candidates, c)
 	}
 	return candidates, nil
+}
+
+func sufficientFinishAge(now time.Time, finishedAt time.Time, olderThan time.Duration) bool {
+	if finishedAt.IsZero() || finishedAt.After(now) {
+		return false
+	}
+	return now.Sub(finishedAt) >= olderThan
+}
+
+func finishAgeExemption(now, finishedAt time.Time) string {
+	if finishedAt.IsZero() || finishedAt.After(now) {
+		return "unknown finish time"
+	}
+	return "too recent"
 }
 
 // buildBatchRunIndex walks every batch the bucket knows about
