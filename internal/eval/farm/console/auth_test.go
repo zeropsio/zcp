@@ -380,6 +380,9 @@ func TestConsole_LoginNextValidation(t *testing.T) {
 		want string
 	}{
 		{"//evil", "/"},
+		{"/\\evil.example/x", "/"},
+		{"/%5Cevil.example/x", "/"},
+		{"/%2F%2Fevil.example/x", "/"},
 		{"https://x", "/"},
 		{"relative", "/"},
 		{"/r/x#s1", "/r/x#s1"},
