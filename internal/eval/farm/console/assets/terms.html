@@ -45,5 +45,5 @@
 <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
 <tbody>{{range .ProblemStatuses}}<tr><td><span class="chip" title="{{.Tooltip}}">{{.Label}}{{if problemStatusLive .Value}} (live){{end}}</span></td><td>{{.Tooltip}}</td></tr>{{end}}</tbody>
 </table></div>
-<p class="muted small">live = new, first seen or recurring.</p>
+<p class="muted small">live = regressed, first seen, recurring or still emitted — every status that is not gone or unconfirmed.</p>
 {{template "foot"}}{{end}}

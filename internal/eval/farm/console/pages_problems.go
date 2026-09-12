@@ -167,7 +167,7 @@ var problemLabeler = listLabeler{
 		case paramStatus:
 			switch value {
 			case statusLiveValue:
-				return "new, first seen or recurring"
+				return "regressed, first seen, recurring or still emitted"
 			case filterAll:
 				return ""
 			default:

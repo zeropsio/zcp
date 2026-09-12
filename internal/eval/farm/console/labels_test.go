@@ -106,10 +106,10 @@ func TestLabels_EveryEnumValueHasALabel(t *testing.T) {
 		}
 	})
 
-	// §8.6/§8.8 (2026-09 update): problem status gains "first seen" — the
-	// set is now new/first-seen/recurring/gone/unconfirmed, and "live" =
-	// new, first seen or recurring (previously new/recurring/gone/
-	// unconfirmed, live = new or recurring).
+	// §8.6/§8.8 (2026-09 update): problem status gains "first seen" and
+	// "still emitted" — the set is now new/first-seen/recurring/
+	// still-emitted/gone/unconfirmed, and "live" is every status except
+	// gone and unconfirmed.
 	t.Run("problem status", func(t *testing.T) {
 		// Item 11 (FIX2): status "new" displays as "regressed" — the word
 		// "Problem" (not "new") stays reserved for the cross-run cluster

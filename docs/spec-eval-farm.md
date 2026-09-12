@@ -1227,12 +1227,20 @@ run, else of the newest batch with one. For a problem:
   assessed on an older build without hitting it (a regression);
 - `first seen` — hit on the newest build only, and none of its scenarios was
   assessed on an older build;
-- `gone` — not hit on the newest build although one of its scenarios was
-  assessed there in the same observation format as the problem's members,
-  and hit on an older build (fixed, or not reproduced);
+- `still emitted` — no assessment on the newest build reported it, but its
+  anchor is still present in the step texts of that build's own runs: ZCP
+  keeps printing the text and only the assessment stopped naming it, which
+  is not the same thing as fixed;
+- `gone` — not hit on the newest build, its anchor not emitted there either,
+  although one of its scenarios was assessed there in the same observation
+  format as the problem's members, and hit on an older build (fixed, or not
+  reproduced);
 - `unconfirmed` — not hit on the newest build and none of its scenarios was
   assessed there in that format.
-`live` = `recurring`, `new` or `first seen`.
+`live` = `recurring`, `new`, `first seen` or `still emitted` — every status
+except `gone` and `unconfirmed`. Proving `still emitted` reads the step
+texts of the newest build's own runs (each run at most once per request,
+cached) and searches them for the problem's normalized anchor.
 
 **Rank:** live before the rest; then highest member severity; then runs hit
 on the newest build; then runs hit in total; then last seen, newest first;
@@ -1275,7 +1283,7 @@ other parameters.
 | list | filters | sort keys — default direction; tie-break |
 |---|---|---|
 | Overview batches | `kind=evaluation\|empty\|all` (default `evaluation`), `since` | **`newest`** desc; batch id · `zcp` (ZCP high, then ZCP medium) desc; newest · `failed` (failed + blocked runs) desc; newest · `cost` desc; newest |
-| `/problems` | `cause`, `severity`, `status=live\|recurring\|new\|first-seen\|gone\|unconfirmed\|all` (default `live`), `surface`, `scenario`, `batch`, `build`, `since` (default `30d`) | **`rank`** (§8.6); key · `severity` desc; rank · `runs` (runs hit in total) desc; rank · `last` desc; rank · `first` desc; rank |
+| `/problems` | `cause`, `severity`, `status=live\|recurring\|new\|first-seen\|still-emitted\|gone\|unconfirmed\|all` (default `live`), `surface`, `scenario`, `batch`, `build`, `since` (default `30d`) | **`rank`** (§8.6); key · `severity` desc; rank · `runs` (runs hit in total) desc; rank · `last` desc; rank · `first` desc; rank |
 | `/findings` | `cause`, `severity`, `surface`, `scenario`, `batch`, `build`, `since` (default `7d`) | **`severity`** desc; newest, then run id, then finding index · `newest` desc; severity · `cause` (ZCP-first order) asc; severity |
 | batch runs | `verdict`, `outcome=ok\|problem\|inconclusive\|none`, `cause` | **`problem`** (verdict rank, disputed, highest severity, finding count) desc; scenario · `scenario` asc; — · `duration` desc; scenario · `cost` desc; scenario |
 | `/api/runs.md` | `batch`, `since`, `verdict`, `outcome`, `cause` | **`newest`** desc; run id |
@@ -1325,8 +1333,9 @@ carries its definition as a `title`.
   record.
 - **Finding** — one problem in one run, with quotes, where to look and a fix.
   **Problem** — the same finding across runs (§8.6). **Problem status**:
-  new · first seen · recurring · gone · unconfirmed; **live** = new, first
-  seen or recurring.
+  new (displayed as "regressed") · first seen · recurring · still emitted
+  (no longer reported) · gone · unconfirmed; **live** = every status except
+  gone and unconfirmed.
 - **Severity** — high: the goal was missed, something was destroyed, or (for
   a test cause) the verdict is wrong · medium: it cost many steps or much
   time · low: ZCP text or behavior that is wrong but cost this run nothing.
