@@ -236,9 +236,16 @@ func seedRun(t *testing.T, store *fakeStore, rf runFixture) {
 	store.putText(t, resultsDir+"/transcript.jsonl", fixtureTranscript())
 	store.putText(t, resultsDir+"/self-review.md", rf.selfReview)
 
+	// S2b fixture validity: an omitted duration means a real zero-duration
+	// run, not malformed metadata. Tests that exercise malformed metadata
+	// overwrite this raw object explicitly after seeding.
+	duration := rf.durationS
+	if duration == "" {
+		duration = "0s"
+	}
 	meta := map[string]any{
 		"scenarioId": rf.scenario, "suiteId": "gate", "mode": "two-shot-resume",
-		"startedAt": rf.startedAt.UTC().Format(time.RFC3339Nano), "duration": rf.durationS,
+		"startedAt": rf.startedAt.UTC().Format(time.RFC3339Nano), "duration": duration,
 		"evaluatorSha256": "eval-sha", "candidateSha256": "cand-sha",
 		"usage": map[string]any{"totalCostUsd": rf.costUsd},
 	}
