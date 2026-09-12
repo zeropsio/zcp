@@ -155,3 +155,26 @@ func TestFarmGC_RunningBatchReferenced_Skipped(t *testing.T) {
 		t.Errorf("running-batch project %s was deleted", ProjectPrefix+"inflight1")
 	}
 }
+
+func TestGC_UnknownFinishTime_RetentionExempts(t *testing.T) {
+	t.Parallel()
+	f := newControllerFixture(t, "client-s4-gc-age")
+	f.account.seedProject(ProjectPrefix + "unknown-age")
+	batch, runID := "batch-s4-gc-age", "unknown-age"
+	if err := PutManifest(context.Background(), f.sink, batch, BatchManifest{Batch: batch, Runs: []ManifestRun{{RunID: runID, Scenario: runID, ProjectName: ProjectPrefix + runID}}}); err != nil {
+		t.Fatalf("PutManifest: %v", err)
+	}
+	if err := f.sink.Put(context.Background(), "runs/"+runID+"/done.json", []byte(`{"runId":"unknown-age"}`)); err != nil {
+		t.Fatalf("Put done: %v", err)
+	}
+	if err := PutSummary(context.Background(), f.sink, batch, BatchSummary{Batch: batch, FinishedAt: "", EndedBy: "settled", Runs: []SummaryRun{{RunID: runID, Scenario: runID}}}); err != nil {
+		t.Fatalf("PutSummary: %v", err)
+	}
+	candidates, err := GC(context.Background(), f.client, f.sink, GCOptions{ClientID: "client-s4-gc-age", OlderThan: time.Hour, Now: func() time.Time { return time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC) }})
+	if err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+	if len(candidates) != 1 || candidates[0].Exempt != "unknown finish time" {
+		t.Fatalf("candidates = %+v, want one unknown finish time exemption", candidates)
+	}
+}

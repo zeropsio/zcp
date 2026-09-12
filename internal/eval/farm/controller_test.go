@@ -1911,6 +1911,86 @@ func TestFarmRun_RollbackFailure_KeepsProjectIDAndError(t *testing.T) {
 	}
 }
 
+// TestRunBatch_PostCreateManifestFailure_FinalizesAndReturnsError pins FM-24:
+// a failure while recording minted ids must still settle the already-created
+// run and persist the summary when the sink recovers for the final write.
+func TestRunBatch_PostCreateManifestFailure_FinalizesAndReturnsError(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-s4-manifest-fail"
+	f := newControllerFixture(t, clientID)
+	account, client := f.account, f.client
+	fake := newFakeS3()
+	var manifestPuts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/batches/batch-s4-manifest-fail/manifest.json") {
+			manifestPuts++
+			if manifestPuts >= 2 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+		}
+		fake.handler(t)(w, r)
+	}))
+	t.Cleanup(server.Close)
+	sink := NewSinkClient(Config{URL: server.URL, Bucket: fakeS3Bucket, Key: "key", Secret: "secret"})
+	batch := "batch-s4-manifest-fail"
+	sc := ScenarioRun{ID: "first", Launch: true}
+	// The fake done bundle is unavailable; the finalization path must keep
+	// the project rather than deleting unfinished work as an error shortcut.
+	opts := RunOptions{Batch: batch, ClientID: clientID, Set: "gate", CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen", Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth", Sink: Sink{URL: server.URL, Bucket: fakeS3Bucket, Key: "key", Secret: "secret"}, RunBudget: time.Millisecond, PollInterval: time.Millisecond}
+	results, err := RunBatch(context.Background(), client, sink, opts)
+	if err == nil || !strings.Contains(err.Error(), "update manifest") {
+		t.Fatalf("RunBatch error = %v, want post-create manifest failure", err)
+	}
+	if len(results) != 1 || results[0].Result != ResultBlocked {
+		t.Fatalf("results = %+v, want one blocked retained run", results)
+	}
+	if results[0].ProjectID == "" {
+		t.Errorf("results[0].ProjectID empty, want recovery id retained")
+	}
+	summary, summaryErr := GetSummary(context.Background(), sink, batch)
+	if summaryErr != nil {
+		t.Fatalf("GetSummary: %v", summaryErr)
+	}
+	if len(summary.Runs) != 1 || summary.Runs[0].ProjectID == "" {
+		t.Fatalf("summary.Runs = %+v, want retained project id", summary.Runs)
+	}
+	if account.countMethod("DELETE", "/api/rest/public/project/"+results[0].ProjectID) != 0 {
+		t.Errorf("unfinished project was deleted during finalization")
+	}
+}
+
+type failSecondRunTokenMint struct {
+	PlatformClient
+	calls int
+}
+
+func (c *failSecondRunTokenMint) MintProjectScopedToken(ctx context.Context, clientID, projectID, name string) (platform.MintedToken, error) {
+	c.calls++
+	if c.calls == 2 {
+		return platform.MintedToken{}, &platform.PlatformError{Code: platform.ErrDelegationUnavailable, Message: "simulated later mint failure"}
+	}
+	return c.PlatformClient.MintProjectScopedToken(ctx, clientID, projectID, name)
+}
+
+func TestRunBatch_LaterMintFailure_FinalizesEarlierRuns(t *testing.T) {
+	t.Parallel()
+	f := newControllerFixture(t, "client-s4-later-mint")
+	client := &failSecondRunTokenMint{PlatformClient: f.client}
+	batch := "batch-s4-later-mint"
+	opts := RunOptions{Batch: batch, ClientID: "client-s4-later-mint", Set: "gate", CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen", Scenarios: []ScenarioRun{{ID: "first"}, {ID: "second"}}, OAuthToken: "oauth", Sink: Sink{URL: f.sink.cfg.URL, Bucket: fakeS3Bucket, Key: "key", Secret: "secret"}, RunBudget: time.Millisecond, PollInterval: time.Millisecond}
+	results, err := RunBatch(context.Background(), client, f.sink, opts)
+	if err == nil || !strings.Contains(err.Error(), "mint run token") {
+		t.Fatalf("RunBatch error = %v, want later mint failure", err)
+	}
+	if len(results) != 1 || results[0].RunID != batch+"-first" || results[0].ProjectID == "" {
+		t.Fatalf("results = %+v, want earlier run retained for recovery", results)
+	}
+	if _, err := GetSummary(context.Background(), f.sink, batch); err != nil {
+		t.Fatalf("GetSummary: %v, want final summary", err)
+	}
+}
+
 // TestRunBatch_ManifestRecordsObserver pins §1.4/§3.3: `farm run`'s
 // --observer choice is recorded verbatim in batches/<batch>/manifest.json's
 // "observer" field. Independent oracle: the expected value is the literal

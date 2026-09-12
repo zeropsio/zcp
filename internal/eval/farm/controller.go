@@ -454,12 +454,14 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 	}
 
 	var actives []activeRun
-	var blocked []RunResult                                // D10: every creation-phase failure, printed + recorded, never silently skipped
+	var blocked []RunResult // D10: every creation-phase failure, printed + recorded, never silently skipped
+	results := make([]RunResult, 0, len(opts.Scenarios))
 	runTokenIDs := make(map[string]string, len(scheduled)) // runID -> minted run token id, for the manifest-evidence update below
 	for _, r := range scheduled {
 		active, blockedResult, abortErr := createRun(ctx, client, opts, r)
 		if abortErr != nil {
-			return nil, abortErr
+			results, finalizeErr := finalizeAfterFailure(ctx, client, sink, opts, actives, blocked, abortErr, now, pollInterval)
+			return results, finalizeErr
 		}
 		if blockedResult != nil {
 			blocked = append(blocked, *blockedResult)
@@ -492,11 +494,12 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 		// interrupted operator still wants the minted run token ids on
 		// record.
 		if err := PutManifest(context.WithoutCancel(ctx), sink, opts.Batch, manifest); err != nil {
-			return nil, fmt.Errorf("farm run: update manifest with run token ids: %w", err)
+			cause := fmt.Errorf("farm run: update manifest with run token ids: %w", err)
+			results, finalizeErr := finalizeAfterFailure(ctx, client, sink, opts, actives, blocked, cause, now, pollInterval)
+			return results, finalizeErr
 		}
 	}
 
-	results := make([]RunResult, 0, len(actives)+len(blocked))
 	results = append(results, blocked...)
 	endedByBudget := false
 	endedByInterrupt := false
@@ -556,6 +559,59 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 		return results, fmt.Errorf("farm run: write summary: %w", err)
 	}
 	return results, nil
+}
+
+// finalizeAfterFailure applies the ordinary settlement rules to runs created
+// before a later creation/final-write failure. It deliberately uses the same
+// summary boundary as a normal batch, so retained project/token ids remain
+// recoverable when cleanup or storage fails.
+func finalizeAfterFailure(ctx context.Context, client PlatformClient, sink *SinkClient, opts RunOptions, actives []activeRun, blocked []RunResult, cause error, now func() time.Time, pollInterval time.Duration) ([]RunResult, error) {
+	results := append([]RunResult(nil), blocked...)
+	endedByBudget := false
+	endedByInterrupt := false
+	for _, a := range actives {
+		rr, budget, interrupted := finalizeActiveRun(ctx, client, sink, a, opts, now, pollInterval)
+		results = append(results, rr)
+		endedByBudget = endedByBudget || budget
+		endedByInterrupt = endedByInterrupt || interrupted
+	}
+	endedBy := "settled"
+	if endedByInterrupt {
+		endedBy = "interrupt"
+	} else if endedByBudget {
+		endedBy = "budget"
+	}
+	summary := BatchSummary{Batch: opts.Batch, FinishedAt: now().UTC().Format(time.RFC3339), EndedBy: endedBy}
+	for _, rr := range results {
+		summary.Runs = append(summary.Runs, SummaryRun(rr))
+	}
+	if err := PutSummary(context.WithoutCancel(ctx), sink, opts.Batch, summary); err != nil {
+		return results, fmt.Errorf("%v; farm run: final summary unavailable: %w", cause, err)
+	}
+	return results, cause
+}
+
+func finalizeActiveRun(ctx context.Context, client PlatformClient, sink *SinkClient, a activeRun, opts RunOptions, now func() time.Time, pollInterval time.Duration) (RunResult, bool, bool) {
+	result, detail, settled := waitForDone(ctx, client, sink, a.RunID, a.ID, opts.CandidateSHA256, opts.EvaluatorSHA256, a.ProjectID, a.Deadline, now, pollInterval)
+	rr := RunResult{RunID: a.RunID, Scenario: a.ID, ProjectID: a.ProjectID, Result: result, Detail: detail, LaunchTokenID: a.LaunchTokenID}
+	if !settled {
+		return rr, detail != DetailInterrupted, detail == DetailInterrupted
+	}
+	runProjectName := ProjectPrefix + a.RunID
+	if err := Guard(ctx, client, a.ProjectID, runProjectName); err == nil {
+		rr.ProjectID = ""
+	}
+	if a.Launch {
+		if prodID, ok := findProjectByName(ctx, client, opts.ClientID, runProjectName+prodSuffix); ok {
+			_ = Guard(ctx, client, prodID, runProjectName+prodSuffix)
+		}
+		if a.LaunchTokenID != "" {
+			if err := client.RevokeIntegrationToken(ctx, opts.ClientID, a.LaunchTokenID); err == nil {
+				rr.LaunchTokenID = ""
+			}
+		}
+	}
+	return rr, false, false
 }
 
 // recordBlocked is D10's single call site for a creation-phase run
