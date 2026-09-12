@@ -388,10 +388,10 @@ func (s *Server) handleBatchObserve(w http.ResponseWriter, r *http.Request) {
 	// can only fail on an empty bundle.
 	for _, row := range rows {
 		switch {
-		case !row.DoneExists:
-			skipped = append(skipped, actionSkip{RunID: row.RunID, Reason: "run not finished"})
 		case assessmentWorkUnavailable(row):
 			skipped = append(skipped, actionSkip{RunID: row.RunID, Reason: "assessment evidence unavailable"})
+		case !row.DoneExists:
+			skipped = append(skipped, actionSkip{RunID: row.RunID, Reason: "run not finished"})
 		case !runDidWork(row):
 			skipped = append(skipped, actionSkip{RunID: row.RunID, Reason: "never started — nothing to assess"})
 		case all || NeedsAssessment(row, runQueued(s.queueState, row.RunID)):
