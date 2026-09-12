@@ -742,6 +742,75 @@ func TestWrapper_Redaction_MetacharValue_Redacted(t *testing.T) {
 	}
 }
 
+// TestWrapper_RedactionFailure_BlocksEvidenceAndCompletion pins FM-7's
+// fail-closed boundary. If a credential-bearing result cannot be rewritten,
+// the wrapper may retain the local evidence and its non-secret started marker,
+// but it must publish none of results/, capture/, or done.json and must not
+// claim the attempt was uploaded.
+func TestWrapper_RedactionFailure_BlocksEvidenceAndCompletion(t *testing.T) {
+	requireShAndCurl(t)
+
+	realPerl, err := exec.LookPath("perl")
+	if err != nil {
+		t.Skip("perl not on PATH")
+	}
+	h := newWrapperHarness(t)
+
+	// On macOS the wrapper also uses perl to start the evaluator in a new
+	// session. Delegate that invocation to the real binary and fail only the
+	// in-place redaction invocation, so the fixture definitely writes a secret
+	// before sanitization fails. Linux normally takes the setsid(1) branch and
+	// reaches only the failing -pi invocation here.
+	binDir := t.TempDir()
+	perlStub := filepath.Join(binDir, "perl")
+	stub := "#!/bin/sh\n" +
+		"case \"$*\" in\n" +
+		"*'use POSIX qw(setsid)'*) exec " + shQuote(realPerl) + " \"$@\" ;;\n" +
+		"*) exit 97 ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(perlStub, []byte(stub), 0o755); err != nil {
+		t.Fatalf("write failing perl stub: %v", err)
+	}
+
+	const secret = "oauth-redaction-must-fail-closed"
+	cmd := h.start(t, map[string]string{
+		"PATH":                    binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"CLAUDE_CODE_OAUTH_TOKEN": secret,
+	})
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("wrapper should retain local recovery evidence after redaction failure: %v", err)
+	}
+
+	localResult, err := os.ReadFile(filepath.Join(h.rundir, "results", h.scenarioID, "meta.json"))
+	if err != nil {
+		t.Fatalf("read retained local result: %v", err)
+	}
+	if !strings.Contains(string(localResult), secret) {
+		t.Fatalf("fixture did not retain the secret after forced rewrite failure: %q", localResult)
+	}
+
+	startedKey := "runs/" + h.runID + "/started.json"
+	if _, ok := h.fake.get(startedKey); !ok {
+		t.Fatal("non-secret started.json was not published")
+	}
+	runPrefix := "runs/" + h.runID + "/"
+	for _, key := range h.fake.puts() {
+		if key == startedKey {
+			continue
+		}
+		if strings.HasPrefix(key, runPrefix+"results/") ||
+			strings.HasPrefix(key, runPrefix+"capture/") ||
+			key == runPrefix+"done.json" {
+			t.Errorf("published %q after redaction failed", key)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(h.rundir, ".uploaded")); err == nil {
+		t.Fatal(".uploaded exists after redaction failed")
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat .uploaded: %v", err)
+	}
+}
+
 // TestWrapper_ApiKeyPresent_Refused pins the OAuth-only credential gate
 // (owner decision 2026-09-10, docs/spec-eval-farm.md §2.3 step 2 + §2.4): an
 // ANTHROPIC_API_KEY in the environment refuses before the child is even
