@@ -3,6 +3,7 @@ package console
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -471,6 +472,64 @@ func TestAPI_RunDetailMDUsesBuildLabelsForCandidateAndEvaluator(t *testing.T) {
 	}
 	if !strings.Contains(body, "evaluator build: build eval-sha") {
 		t.Errorf("run detail md missing the evaluator's §8.8 build label:\n%s", body)
+	}
+}
+
+func TestAPI_FindingsMetaUnavailableKeepsReadableFindingWithoutInventingStart(t *testing.T) {
+	base := newFakeStore()
+	now := fixedNow(t)
+	seedBatch(t, base, "finding-meta", "claude-sonnet-5", []runFixture{{
+		runID: "finding-meta-a", scenario: "a", startedAt: now().Add(-time.Hour),
+		durationS: "5s", costUsd: 0.1, taskResult: farm.VerdictPassed, done: true,
+	}}, true, map[string]string{"finding-meta-a": farm.VerdictPassed})
+	manifestAt := now().Add(-time.Hour)
+	base.putJSON(t, "batches/finding-meta/manifest.json", farm.BatchManifest{
+		Batch: "finding-meta", CreatedAt: manifestAt.Format(time.RFC3339), StartedAt: manifestAt.Format(time.RFC3339),
+		Set: "gate", CandidateSha256: "cand-sha", EvaluatorSha256: "eval-sha", Observer: "claude-sonnet-5",
+		Runs: []farm.ManifestRun{{RunID: "finding-meta-a", Scenario: "a", ProjectName: "zcp-farm-finding-meta-a"}},
+	})
+	obs := fixtureObservation("finding-meta-a")
+	obs.Findings = obs.Findings[:1]
+	seedObservation(t, base, obs)
+	store := &cacheFailGetStore{
+		ObjectStore: base,
+		key:         "runs/finding-meta-a/results/" + testResultsTS + "/a/meta.json",
+		err:         errors.New("meta backend unavailable"),
+	}
+	srv := NewServer(Config{Store: store, Token: testToken, Now: now})
+
+	body := doGET(t, srv.Handler(), "/api/findings.md?since=24h").Body.String()
+	if !strings.Contains(body, "Tool returned stale data") {
+		t.Fatalf("readable finding disappeared with meta failure:\n%s", body)
+	}
+	manifestStart := manifestAt.UTC().Format(time.RFC3339)
+	if strings.Contains(body, "started "+manifestStart) || strings.Contains(body, "0001-01-01") {
+		t.Errorf("markdown invented or leaked a run start:\n%s", body)
+	}
+	if !strings.Contains(body, "started —") {
+		t.Errorf("markdown missing explicit unavailable start:\n%s", body)
+	}
+
+	var payload struct {
+		Findings []FindingItem `json:"findings"`
+	}
+	if err := json.Unmarshal(doGET(t, srv.Handler(), "/api/findings.json?since=24h").Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal findings: %v", err)
+	}
+	if len(payload.Findings) != 1 || payload.Findings[0].StartedKnown || !payload.Findings[0].StartedAt.IsZero() {
+		t.Fatalf("JSON findings = %+v, want one finding with unknown start", payload.Findings)
+	}
+}
+
+func TestProblemsRunsInWindow_MetaUnavailableUsesPrivateScopeTime(t *testing.T) {
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	runs := []ProblemsRun{{Row: RunRow{RunID: "recent", scopeTime: now.Add(-time.Hour)}}}
+	got := problemsRunsInWindow(runs, 24*time.Hour, now)
+	if len(got) != 1 || got[0].Row.RunID != "recent" {
+		t.Fatalf("problems window = %+v, want recent row retained", got)
+	}
+	if !got[0].Row.StartedAt.IsZero() {
+		t.Fatalf("displayed run start = %v, want unknown zero", got[0].Row.StartedAt)
 	}
 }
 
@@ -1205,6 +1264,45 @@ func TestAPI_WindowUsesMetaStartedAt(t *testing.T) {
 	}
 }
 
+func TestAPI_UnknownRunTimingCarriesProvenance(t *testing.T) {
+	srv, store, _ := testServer(t)
+	now := fixedNow(t)()
+	seedBatch(t, store, "api-unknown-time", "off", []runFixture{{
+		runID: "api-unknown-time-a", scenario: "waiting", startedAt: now, done: false,
+	}}, false, nil)
+
+	jsonRR := doGET(t, srv.Handler(), "/api/runs/api-unknown-time-a.json")
+	if jsonRR.Code != http.StatusOK {
+		t.Fatalf("detail JSON status = %d; body=%s", jsonRR.Code, jsonRR.Body.String())
+	}
+	var detail RunDetail
+	if err := json.Unmarshal(jsonRR.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode detail JSON: %v", err)
+	}
+	if detail.StartedKnown || detail.DurationKnown {
+		t.Errorf("detail timing = started:%v duration:%v, want both unknown", detail.StartedKnown, detail.DurationKnown)
+	}
+
+	listRR := doGET(t, srv.Handler(), "/api/runs.json?batch=api-unknown-time")
+	var list struct {
+		Runs []RunsListItem `json:"runs"`
+	}
+	if err := json.Unmarshal(listRR.Body.Bytes(), &list); err != nil || len(list.Runs) != 1 {
+		t.Fatalf("decode list JSON: runs=%+v err=%v body=%s", list.Runs, err, listRR.Body.String())
+	}
+	if list.Runs[0].StartedKnown || list.Runs[0].DurationKnown {
+		t.Errorf("list timing = started:%v duration:%v, want both unknown", list.Runs[0].StartedKnown, list.Runs[0].DurationKnown)
+	}
+
+	md := doGET(t, srv.Handler(), "/api/runs/api-unknown-time-a.md").Body.String()
+	if !strings.Contains(md, "started: — (unavailable)") || !strings.Contains(md, "duration: — (unavailable)") {
+		t.Errorf("markdown invented unknown timing:\n%s", md)
+	}
+	if strings.Contains(md, "0001-01-01") || strings.Contains(md, "duration: 0.0s") {
+		t.Errorf("markdown leaked timing zero values:\n%s", md)
+	}
+}
+
 // TestAPI_JSONTwinsMatchMarkdownContent pins FM-52: "JSON twins carry
 // exactly the markdown's content as fields."
 func TestAPI_JSONTwinsMatchMarkdownContent(t *testing.T) {
@@ -1748,6 +1846,17 @@ func TestUnavailableEvidence_AggregatesSeparatelyFromVerdicts(t *testing.T) {
 // matching summary row, the automatic verdict stays unknown and the API's
 // observer state stays "not observed" while its explanatory text reports
 // the evidence failure.
+func TestAPI_ProblemTimesCarryKnownProvenance(t *testing.T) {
+	item := problemItemFromProblem(Problem{Key: "unknown-time"})
+	if item.FirstSeenKnown || item.LastSeenKnown || !item.FirstSeen.IsZero() || !item.LastSeen.IsZero() {
+		t.Fatalf("problem API time = first %v/%v last %v/%v, want unknown zero", item.FirstSeenKnown, item.FirstSeen, item.LastSeenKnown, item.LastSeen)
+	}
+	member := problemMemberItem(ProblemMember{RunID: "unknown-member"})
+	if member.StartedKnown || !member.StartedAt.IsZero() {
+		t.Fatalf("problem member time = %v/%v, want unknown zero", member.StartedKnown, member.StartedAt)
+	}
+}
+
 func TestAPI_UnavailableRunWithoutSummary_RemainsNotObserved(t *testing.T) {
 	srv, store, _ := testServer(t)
 	h := srv.Handler()

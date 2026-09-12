@@ -681,6 +681,13 @@ func TestPages_ProblemMembers_ShowFirstFoundStepQuote(t *testing.T) {
 }
 
 // FM-55: severity is counted across matching rows, including gone problems.
+func TestProblemRowView_UnknownTimesRenderAsDashes(t *testing.T) {
+	row := newProblemRowView(Problem{Key: "unknown-time"}, "/problems", nil)
+	if row.FirstSeenShort != unknownDash || row.LastSeenShort != unknownDash {
+		t.Fatalf("unknown time labels = %q/%q, want dashes", row.FirstSeenShort, row.LastSeenShort)
+	}
+}
+
 func TestPages_ProblemsHighSummary_CountsNonLiveMatches(t *testing.T) {
 	t.Parallel()
 	srv, store, _ := testServer(t)

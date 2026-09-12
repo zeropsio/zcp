@@ -358,6 +358,10 @@ type Problem struct {
 	BatchesTotal         int // m: distinct batches among members
 	BuildsTotal          int // k: distinct builds among members
 	FirstSeen, LastSeen  time.Time
+	// FirstSeenKnown/LastSeenKnown are true only when every member has an
+	// authoritative run start. Private scope times still order mixed evidence.
+	FirstSeenKnown, LastSeenKnown bool
+	firstScopeTime, lastScopeTime time.Time
 
 	// RunsHitByBatch and RunsAssessedByBatch are item 7's batch-local "hit N
 	// of M runs in this batch" counts (FIX2.md FIX2-DATA item 7), keyed by
@@ -390,6 +394,20 @@ type Problem struct {
 	Members []ProblemMember // ordered by severity desc, then newest
 }
 
+func (p Problem) firstScopeTimestamp() time.Time {
+	if !p.firstScopeTime.IsZero() {
+		return p.firstScopeTime
+	}
+	return p.FirstSeen
+}
+
+func (p Problem) lastScopeTimestamp() time.Time {
+	if !p.lastScopeTime.IsZero() {
+		return p.lastScopeTime
+	}
+	return p.LastSeen
+}
+
 // problemSeverityRank ranks §7.5 severities for comparison: high > medium > low
 // > unknown.
 func problemSeverityRank(sev string) int {
@@ -413,7 +431,7 @@ func memberMoreSevereThenNewer(a, b ProblemMember) bool {
 	if ra, rb := problemSeverityRank(a.Severity), problemSeverityRank(b.Severity); ra != rb {
 		return ra > rb
 	}
-	return a.StartedAt.After(b.StartedAt)
+	return a.scopeTimestamp().After(b.scopeTimestamp())
 }
 
 // buildProblemFromMembers assembles a Problem's display fields from its
@@ -426,6 +444,7 @@ func buildProblemFromMembers(key string, members []ProblemMember) Problem {
 	sort.SliceStable(sorted, func(i, j int) bool { return memberMoreSevereThenNewer(sorted[i], sorted[j]) })
 
 	p := Problem{Key: key, Members: sorted}
+	allStartsKnown := len(sorted) > 0
 
 	seenLabel := make(map[string]bool)
 	runs, batches, builds := make(map[string]bool), make(map[string]bool), make(map[string]bool)
@@ -441,12 +460,27 @@ func buildProblemFromMembers(key string, members []ProblemMember) Problem {
 		runs[m.RunID] = true
 		batches[m.Batch] = true
 		builds[m.Build.Sha256] = true
-		if p.FirstSeen.IsZero() || m.StartedAt.Before(p.FirstSeen) {
+		scopeAt := m.scopeTimestamp()
+		if !scopeAt.IsZero() && (p.firstScopeTime.IsZero() || scopeAt.Before(p.firstScopeTime)) {
+			p.firstScopeTime = scopeAt
+		}
+		if scopeAt.After(p.lastScopeTime) {
+			p.lastScopeTime = scopeAt
+		}
+		if !m.StartedKnown || m.StartedAt.IsZero() {
+			allStartsKnown = false
+		}
+		if m.StartedKnown && !m.StartedAt.IsZero() && (p.FirstSeen.IsZero() || m.StartedAt.Before(p.FirstSeen)) {
 			p.FirstSeen = m.StartedAt
 		}
-		if m.StartedAt.After(p.LastSeen) {
+		if m.StartedKnown && m.StartedAt.After(p.LastSeen) {
 			p.LastSeen = m.StartedAt
 		}
+	}
+	if allStartsKnown {
+		p.FirstSeenKnown, p.LastSeenKnown = true, true
+	} else {
+		p.FirstSeen, p.LastSeen = time.Time{}, time.Time{}
 	}
 	p.RunsTotal, p.BatchesTotal, p.BuildsTotal = len(runs), len(batches), len(builds)
 	return p
@@ -736,8 +770,8 @@ func rankLess(a, b Problem) bool {
 	if a.RunsTotal != b.RunsTotal {
 		return a.RunsTotal > b.RunsTotal
 	}
-	if !a.LastSeen.Equal(b.LastSeen) {
-		return a.LastSeen.After(b.LastSeen)
+	if !a.lastScopeTimestamp().Equal(b.lastScopeTimestamp()) {
+		return a.lastScopeTimestamp().After(b.lastScopeTimestamp())
 	}
 	return a.Key < b.Key
 }
@@ -1011,11 +1045,11 @@ func problemEngine() Engine[Problem] {
 				Tiebreak: problemRankCompare,
 			},
 			"last": {
-				Primary:  func(a, b Problem) int { return cmpTime(a.LastSeen, b.LastSeen) },
+				Primary:  func(a, b Problem) int { return cmpTime(a.lastScopeTimestamp(), b.lastScopeTimestamp()) },
 				Tiebreak: problemRankCompare,
 			},
 			"first": {
-				Primary:  func(a, b Problem) int { return cmpTime(a.FirstSeen, b.FirstSeen) },
+				Primary:  func(a, b Problem) int { return cmpTime(a.firstScopeTimestamp(), b.firstScopeTimestamp()) },
 				Tiebreak: problemRankCompare,
 			},
 		},

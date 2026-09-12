@@ -14,13 +14,28 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/eval/farm"
+	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
+
+type cacheFailGetStore struct {
+	observer.ObjectStore
+	key string
+	err error
+}
+
+func (s *cacheFailGetStore) Get(ctx context.Context, key string) ([]byte, error) {
+	if key == s.key && s.err != nil {
+		return nil, s.err
+	}
+	return s.ObjectStore.Get(ctx, key)
+}
 
 // mutableClock is a settable func() time.Time for tests that need to
 // advance "now" between calls (the 15s/2m TTL rules) — fixedNow (console_
@@ -54,8 +69,8 @@ func testS2bObserverFailure(t *testing.T) {
 	if err != nil || len(rows) != 2 || rows[0].RunID != "s2b-good" || rows[1].RunID != "s2b-bad" {
 		t.Fatalf("rows=%+v err=%v", rows, err)
 	}
-	if rows[1].Verdict != farm.VerdictFailed || !assessmentWorkUnavailable(rows[1]) || rows[1].DoneExists || rows[1].Observation != nil {
-		t.Fatalf("fallback=%+v", rows[1])
+	if rows[1].Verdict != farm.VerdictFailed || !assessmentWorkUnavailable(rows[1]) || !rows[1].DoneExists || rows[1].Observation != nil || !rows[1].StartedKnown {
+		t.Fatalf("partial observer row=%+v", rows[1])
 	}
 	actionStore := &transientListStore{fakeStore: store, failPrefix: "runs/s2b-bad/observer/", failures: 1}
 	srv := NewServer(Config{Store: actionStore, Token: testToken, Now: fixedNow(t), Queue: NewQueue(func(context.Context, Job) error { return nil })})
@@ -87,12 +102,12 @@ func testS2bResultsFailure(t *testing.T) {
 	ctx, store, manifest := seedS2bPair(t, "s2b-results")
 	wrapped := &transientListStore{fakeStore: store, failPrefix: "runs/s2b-results-bad/results/", failures: 1}
 	detail, err := loadRunRow(ctx, wrapped, false, "s2b-results-bad", nil, newRunCache(fixedNow(t)), newSummaryCache(fixedNow(t)))
-	if err != nil || !assessmentWorkUnavailable(detail) || detail.DoneExists {
+	if err != nil || !assessmentWorkUnavailable(detail) || !detail.DoneExists || detail.Observation == nil || detail.StartedKnown {
 		t.Fatalf("detail=%+v err=%v", detail, err)
 	}
 	wrapped = &transientListStore{fakeStore: store, failPrefix: "runs/s2b-results-bad/results/", failures: 1}
 	rows, err := batchWindowRowsWithManifest(ctx, wrapped, false, "s2b-results", manifest, nil, newRunCache(fixedNow(t)), newSummaryCache(fixedNow(t)), nil)
-	if err != nil || len(rows) != 2 || !assessmentWorkUnavailable(rows[1]) || rows[1].DoneExists {
+	if err != nil || len(rows) != 2 || !assessmentWorkUnavailable(rows[1]) || !rows[1].DoneExists || rows[1].Observation == nil || rows[1].StartedKnown {
 		t.Fatalf("rows=%+v err=%v", rows, err)
 	}
 }
@@ -108,11 +123,11 @@ func testS2bMalformed(t *testing.T, body string, corruptVerification bool) {
 	}
 	store.putText(t, key, body)
 	rows, err := batchWindowRowsWithManifest(ctx, store, false, "s2b-malformed", manifest, nil, newRunCache(fixedNow(t)), newSummaryCache(fixedNow(t)), nil)
-	if err != nil || len(rows) != 2 || !assessmentWorkUnavailable(rows[1]) || rows[1].DoneExists {
+	if err != nil || len(rows) != 2 || !assessmentWorkUnavailable(rows[1]) || !rows[1].DoneExists || rows[1].Observation == nil {
 		t.Fatalf("batch rows=%+v err=%v", rows, err)
 	}
 	detail, err := loadRunRow(ctx, store, false, "s2b-malformed-bad", nil, newRunCache(fixedNow(t)), newSummaryCache(fixedNow(t)))
-	if err != nil || !assessmentWorkUnavailable(detail) || detail.DoneExists || detail.Verdict != rows[1].Verdict {
+	if err != nil || !assessmentWorkUnavailable(detail) || !detail.DoneExists || detail.Observation == nil || detail.Verdict != rows[1].Verdict {
 		t.Fatalf("detail=%+v batch=%+v err=%v", detail, rows[1], err)
 	}
 }
@@ -125,11 +140,11 @@ func testS2bMissingRequired(t *testing.T, filename string) {
 	delete(store.objects, key)
 	store.mu.Unlock()
 	rows, err := batchWindowRowsWithManifest(ctx, store, false, "s2b-missing", manifest, nil, nil, nil, nil)
-	if err != nil || len(rows) != 2 || !assessmentWorkUnavailable(rows[1]) || rows[1].DoneExists {
+	if err != nil || len(rows) != 2 || !assessmentWorkUnavailable(rows[1]) || !rows[1].DoneExists || rows[1].Observation == nil || !rows[1].StartedKnown {
 		t.Fatalf("batch rows=%+v err=%v", rows, err)
 	}
 	detail, err := loadRunRow(ctx, store, false, "s2b-missing-bad", nil, newRunCache(fixedNow(t)), newSummaryCache(fixedNow(t)))
-	if err != nil || !assessmentWorkUnavailable(detail) || detail.DoneExists {
+	if err != nil || !assessmentWorkUnavailable(detail) || !detail.DoneExists || detail.Observation == nil || !detail.StartedKnown {
 		t.Fatalf("detail=%+v err=%v", detail, err)
 	}
 }
@@ -139,8 +154,8 @@ func testS2bMetaDisappears(t *testing.T) {
 	metaKey := "runs/s2b-meta-disappears-bad/results/" + testResultsTS + "/bad/meta.json"
 	wrapped := &missingGetStore{fakeStore: store, missingKey: metaKey}
 	rows, err := batchWindowRowsWithManifest(ctx, wrapped, false, "s2b-meta-disappears", manifest, nil, nil, nil, nil)
-	if err != nil || len(rows) != 2 || !assessmentWorkUnavailable(rows[1]) || rows[1].DoneExists {
-		t.Fatalf("meta disappearance rows=%+v err=%v, want unavailable fallback", rows, err)
+	if err != nil || len(rows) != 2 || !assessmentWorkUnavailable(rows[1]) || !rows[1].DoneExists || rows[1].Observation == nil || rows[1].StartedKnown {
+		t.Fatalf("meta disappearance rows=%+v err=%v, want partial evidence", rows, err)
 	}
 }
 
@@ -494,6 +509,122 @@ func TestCache_PartReadFailure_DoesNotFreezePartialRow(t *testing.T) {
 	}
 }
 
+func TestCache_IndependentPartFailuresPreserveReadableEvidenceAndRetry(t *testing.T) {
+	base := newFakeStore()
+	now := fixedNow(t)
+	seedBatch(t, base, "parts", "claude-sonnet-5", []runFixture{{
+		runID: "parts-a", scenario: "a", startedAt: now().Add(-time.Minute),
+		durationS: "5s", costUsd: 0.4, taskResult: farm.VerdictFailed, done: true,
+		checks: [][5]string{{"check-a", "failed", "ready", "failed", "service"}},
+	}}, true, map[string]string{"parts-a": farm.VerdictFailed})
+	obs := fixtureObservation("parts-a")
+	seedObservation(t, base, obs)
+
+	results := "runs/parts-a/results/" + testResultsTS + "/a/"
+	cases := []struct {
+		name, key string
+		check     func(t *testing.T, row RunRow)
+	}{
+		{"meta", results + "meta.json", func(t *testing.T, row RunRow) {
+			t.Helper()
+			if row.StartedKnown || row.DurationKnown || row.CostKnown {
+				t.Errorf("meta-derived facts survived failed meta: %+v", row)
+			}
+			if len(row.FailedChecks) != 1 || row.Observation == nil || row.Verdict != farm.VerdictFailed {
+				t.Errorf("independent verification/observation/summary evidence lost: %+v", row)
+			}
+			if row.StepCount != 0 || row.VisibleStepNumbers != nil {
+				t.Errorf("meta-dependent step index = %d/%v, want unknown", row.StepCount, row.VisibleStepNumbers)
+			}
+		}},
+		{"verification", results + "verification.json", func(t *testing.T, row RunRow) {
+			t.Helper()
+			if !row.StartedKnown || !row.DurationKnown || !row.CostKnown || row.Observation == nil || row.Verdict != farm.VerdictFailed {
+				t.Errorf("metadata/observation/summary evidence lost: %+v", row)
+			}
+			if len(row.FailedChecks) != 0 {
+				t.Errorf("failed checks = %+v, want unavailable verification only", row.FailedChecks)
+			}
+		}},
+		{"platform", results + "platform-snapshot.json", func(t *testing.T, row RunRow) {
+			t.Helper()
+			if !row.StartedKnown || len(row.FailedChecks) != 1 || row.Observation == nil || row.Verdict != farm.VerdictFailed {
+				t.Errorf("readable evidence lost with platform failure: %+v", row)
+			}
+		}},
+		{"transcript", results + "transcript.jsonl", func(t *testing.T, row RunRow) {
+			t.Helper()
+			if !row.StartedKnown || len(row.FailedChecks) != 1 || row.Observation == nil || row.Verdict != farm.VerdictFailed {
+				t.Errorf("readable evidence lost with transcript failure: %+v", row)
+			}
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &cacheFailGetStore{ObjectStore: base, key: tc.key, err: errors.New("private bucket detail")}
+			cache := newRunCache(now)
+			row, err := loadRunRow(context.Background(), store, false, "parts-a", nil, cache, newSummaryCache(now))
+			if err != nil {
+				t.Fatalf("partial load: %v", err)
+			}
+			if !row.DoneExists || len(row.evidenceReadErrors) == 0 {
+				t.Fatalf("partial row = done:%v errors:%v, want done with a section error", row.DoneExists, row.evidenceReadErrors)
+			}
+			tc.check(t, row)
+
+			store.err = nil
+			recovered, err := loadRunRow(context.Background(), store, false, "parts-a", nil, cache, newSummaryCache(now))
+			if err != nil {
+				t.Fatalf("recovered load: %v", err)
+			}
+			if len(recovered.evidenceReadErrors) != 0 || !recovered.StartedKnown || !recovered.DurationKnown || len(recovered.FailedChecks) != 1 {
+				t.Errorf("partial row was cached as immutable success: %+v", recovered)
+			}
+		})
+	}
+}
+
+func TestCache_VisibleStepNumbersShareImmutableTranscriptRead(t *testing.T) {
+	base := newFakeStore()
+	now := fixedNow(t)
+	seedBatch(t, base, "step-index", "off", []runFixture{{
+		runID: "step-index-a", scenario: "a", startedAt: now(), durationS: "3s",
+		costUsd: 0.1, taskResult: farm.VerdictPassed, done: true,
+	}}, true, map[string]string{"step-index-a": farm.VerdictPassed})
+
+	cache := newRunCache(now)
+	row, err := loadRunRow(context.Background(), base, false, "step-index-a", nil, cache, newSummaryCache(now))
+	if err != nil {
+		t.Fatalf("load run: %v", err)
+	}
+	if got := fmt.Sprint(row.VisibleStepNumbers); got != "[1 2 3]" {
+		t.Errorf("VisibleStepNumbers = %s, want [1 2 3]", got)
+	}
+
+	base.resetCallLog()
+	_, err = loadRunRow(context.Background(), base, false, "step-index-a", nil, cache, newSummaryCache(now))
+	if err != nil {
+		t.Fatalf("warm load: %v", err)
+	}
+	if base.calledGet("runs/step-index-a/results/" + testResultsTS + "/a/transcript.jsonl") {
+		t.Fatal("warm visible-step index re-read immutable transcript")
+	}
+
+	failing := &cacheFailGetStore{
+		ObjectStore: base,
+		key:         "runs/step-index-a/results/" + testResultsTS + "/a/transcript.jsonl",
+		err:         errors.New("unavailable"),
+	}
+	partial, err := loadRunRow(context.Background(), failing, false, "step-index-a", nil, newRunCache(now), newSummaryCache(now))
+	if err != nil {
+		t.Fatalf("partial load: %v", err)
+	}
+	if partial.VisibleStepNumbers != nil {
+		t.Errorf("partial VisibleStepNumbers = %v, want nil unknown", partial.VisibleStepNumbers)
+	}
+}
+
 // TestCache_ObservationReReadAfterTwoMinutes pins rule 2b: past the
 // observation's 2-minute TTL it is re-read; the immutable part is never
 // re-Head'd regardless.
@@ -535,6 +666,66 @@ func TestCache_ObservationReReadAfterTwoMinutes(t *testing.T) {
 	}
 	if store.calledHead("runs/ct1-a/done.json") {
 		t.Error("immutable part re-checked past the observation TTL — it must stay cached indefinitely")
+	}
+}
+
+func TestCache_ObservationRefreshDoesNotRelabelStaleObservationAsCurrent(t *testing.T) {
+	base := newFakeStore()
+	clock := newMutableClock(fixedNow(t)())
+	seedBatch(t, base, "obs-refresh", "claude-sonnet-5", []runFixture{{
+		runID: "obs-refresh-a", scenario: "a", startedAt: clock.now().Add(-time.Hour), durationS: "5s", taskResult: "passed", done: true,
+	}}, true, map[string]string{"obs-refresh-a": "passed"})
+	old := fixtureObservation("obs-refresh-a")
+	old.ObsID = "20260911T100000000Z-claude-sonnet-5"
+	old.Headline = "old readable assessment"
+	seedObservation(t, base, old)
+
+	cache := newRunCache(clock.now)
+	sc := newSummaryCache(clock.now)
+	first, err := loadRunRow(context.Background(), base, false, "obs-refresh-a", nil, cache, sc)
+	if err != nil || first.Observation == nil || first.Observation.ObsID != old.ObsID {
+		t.Fatalf("warm observation = %+v, err=%v", first.Observation, err)
+	}
+	store := &cacheFailGetStore{
+		ObjectStore: base,
+		key:         "runs/obs-refresh-a/observer/" + old.ObsID + ".json",
+		err:         errors.New("same observation temporarily unreadable"),
+	}
+	clock.advance(obsCacheTTL + time.Second)
+	sameIDFailure, err := loadRunRow(context.Background(), store, false, "obs-refresh-a", nil, cache, sc)
+	if err != nil || sameIDFailure.Observation == nil || sameIDFailure.Observation.ObsID != old.ObsID {
+		t.Fatalf("same-id refresh lost immutable current observation: %+v, err=%v", sameIDFailure.Observation, err)
+	}
+	if len(sameIDFailure.evidenceReadErrors) == 0 {
+		t.Fatal("same-id refresh missing current-read warning")
+	}
+
+	newest := fixtureObservation("obs-refresh-a")
+	newest.ObsID = "20260911T120000000Z-claude-sonnet-5"
+	newest.Headline = "new current assessment"
+	seedObservation(t, base, newest)
+	currentKey := "runs/obs-refresh-a/observer/" + newest.ObsID + ".json"
+	store.key = currentKey
+	store.err = errors.New("new observation upload incomplete")
+
+	partial, err := loadRunRow(context.Background(), store, false, "obs-refresh-a", nil, cache, sc)
+	if err != nil {
+		t.Fatalf("partial refresh: %v", err)
+	}
+	if partial.Observation != nil {
+		t.Fatalf("failed refresh relabeled stale observation as current: %+v", partial.Observation)
+	}
+	if partial.currentObsID != newest.ObsID || !slices.Contains(partial.OlderObsIDs, old.ObsID) {
+		t.Fatalf("partial identities = current %q older %v, want newest known and old retained as history", partial.currentObsID, partial.OlderObsIDs)
+	}
+	if len(partial.evidenceReadErrors) == 0 {
+		t.Fatal("partial refresh missing current-read warning")
+	}
+
+	store.err = nil
+	recovered, err := loadRunRow(context.Background(), store, false, "obs-refresh-a", nil, cache, sc)
+	if err != nil || recovered.Observation == nil || recovered.Observation.ObsID != newest.ObsID {
+		t.Fatalf("recovered current = %+v, err=%v", recovered.Observation, err)
 	}
 }
 

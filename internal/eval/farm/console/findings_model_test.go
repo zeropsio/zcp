@@ -93,6 +93,32 @@ func TestBuildFindingRows_IndexAndDedupeEvidence(t *testing.T) {
 	}
 }
 
+func TestFindingEngine_MetaUnavailableUsesPrivateScopeTime(t *testing.T) {
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	rows := []RunRow{{
+		RunID: "meta-missing", Batch: "recent-batch", scopeTime: now.Add(-time.Hour),
+		Observation: &observer.Observation{
+			Status:   observationStatusOK,
+			Findings: []observer.Finding{{Severity: observer.SeverityHigh, Owner: "zcp-tool", Title: "Readable finding"}},
+		},
+	}}
+	findings := BuildFindingRows(rows)
+	if len(findings) != 1 {
+		t.Fatalf("BuildFindingRows returned %d rows, want 1", len(findings))
+	}
+	if !findings[0].StartedAt.IsZero() {
+		t.Fatalf("displayed start = %v, want unknown zero", findings[0].StartedAt)
+	}
+	q, err := Parse(findingListSpec(), url.Values{"since": {"24h"}})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	got, _ := findingEngine().Apply(findings, q, now)
+	if len(got) != 1 || got[0].Title != "Readable finding" {
+		t.Fatalf("filtered findings = %+v, want readable finding retained", got)
+	}
+}
+
 // --- TestLists_Findings (item 5, §8.7) -------------------------------------
 
 func TestLists_Findings(t *testing.T) {

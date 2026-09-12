@@ -142,6 +142,7 @@ func pRun(runID, batch, scenario, build string, batchCreated time.Time, startedA
 	}
 	row := RunRow{
 		RunID: runID, Batch: batch, Scenario: scenario, StartedAt: startedAt,
+		StartedKnown: true, scopeTime: startedAt,
 		Build: BuildInfo{Sha256: build}, Observation: obs, Outcome: obs.Outcome,
 	}
 	return ProblemsRun{Row: row, BatchSet: "gate", BatchCreatedAt: batchCreated}
@@ -881,6 +882,29 @@ func TestLists_Problems(t *testing.T) {
 // candidate run) plus its own caching, which live outside this package's
 // write-set. Run: go test ./internal/eval/farm/console/ -bench
 // BuildProblemsScoped_StillEmitted -benchtime=10x -run '^$'.
+func TestProblemTimes_UnknownMembersDoNotInventDisplayedExtrema(t *testing.T) {
+	knownAt := time.Date(2026, 9, 11, 10, 0, 0, 0, time.UTC)
+	unknownScopeAt := knownAt.Add(time.Hour)
+	known := FindingRow{RunID: "known", Severity: observer.SeverityHigh, StartedAt: knownAt, StartedKnown: true, scopeTime: knownAt}
+	unknown := FindingRow{RunID: "unknown", Severity: observer.SeverityHigh, StartedAt: knownAt.Add(-24 * time.Hour), scopeTime: unknownScopeAt}
+
+	mixed := buildProblemFromMembers("mixed", []ProblemMember{unknown, known})
+	if mixed.FirstSeenKnown || mixed.LastSeenKnown || !mixed.FirstSeen.IsZero() || !mixed.LastSeen.IsZero() {
+		t.Fatalf("mixed displayed extrema = first %v/%v last %v/%v, want both unknown", mixed.FirstSeenKnown, mixed.FirstSeen, mixed.LastSeenKnown, mixed.LastSeen)
+	}
+	if !mixed.lastScopeTimestamp().Equal(unknownScopeAt) {
+		t.Fatalf("mixed private last scope = %v, want %v", mixed.lastScopeTimestamp(), unknownScopeAt)
+	}
+
+	onlyUnknown := buildProblemFromMembers("unknown", []ProblemMember{unknown})
+	if onlyUnknown.FirstSeenKnown || onlyUnknown.LastSeenKnown || !onlyUnknown.FirstSeen.IsZero() || !onlyUnknown.LastSeen.IsZero() {
+		t.Fatalf("unknown displayed extrema = first %v/%v last %v/%v, want unknown zero", onlyUnknown.FirstSeenKnown, onlyUnknown.FirstSeen, onlyUnknown.LastSeenKnown, onlyUnknown.LastSeen)
+	}
+	if !onlyUnknown.firstScopeTimestamp().Equal(unknownScopeAt) || !onlyUnknown.lastScopeTimestamp().Equal(unknownScopeAt) {
+		t.Fatalf("unknown private scope = %v..%v, want %v", onlyUnknown.firstScopeTimestamp(), onlyUnknown.lastScopeTimestamp(), unknownScopeAt)
+	}
+}
+
 func BenchmarkBuildProblemsScoped_StillEmitted(b *testing.B) {
 	day := func(n int) time.Time { return time.Date(2026, 9, n, 0, 0, 0, 0, time.UTC) }
 	stepText := make(map[string]string)

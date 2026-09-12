@@ -110,9 +110,16 @@ type problemRowView struct {
 }
 
 func newProblemRowView(p Problem, path string, values url.Values) problemRowView {
+	lastSeen, firstSeen := unknownDash, unknownDash
+	if p.LastSeenKnown {
+		lastSeen = fmtTimeShort(p.LastSeen)
+	}
+	if p.FirstSeenKnown {
+		firstSeen = fmtTimeShort(p.FirstSeen)
+	}
 	row := problemRowView{
 		Problem: p, AnchorID: problemAnchorID(p.Key),
-		LastSeenShort: fmtTimeShort(p.LastSeen), FirstSeenShort: fmtTimeShort(p.FirstSeen),
+		LastSeenShort: lastSeen, FirstSeenShort: firstSeen,
 	}
 	if p.Surface != "" {
 		row.SurfaceLink = listURL(path, values, map[string]string{paramSurface: p.Surface})
