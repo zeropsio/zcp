@@ -136,15 +136,29 @@ func pinSummarySnapshot(batch string, summary farm.BatchSummary, found bool) *su
 // failing the whole page — only the top-level batches/ listing itself can
 // fail the call outright. cache and sc are nil-safe (cache.go).
 func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, queueState func(runID string) string, cache *runCache, sc *summaryCache, logf func(format string, args ...any)) ([]BatchRow, error) {
+	snapshot, err := loadBatchSnapshot(ctx, store, consoleObserverDisabled, queueState, cache, sc, logf)
+	return snapshot.batches, err
+}
+
+// batchSnapshot retains one scan's resolved run rows alongside their batch
+// aggregates. An overview can derive every panel from the same evidence,
+// without repeating bucket reads for each representation of a run.
+type batchSnapshot struct {
+	batches     []BatchRow
+	runsByBatch map[string][]RunRow
+}
+
+func loadBatchSnapshot(ctx context.Context, store observer.ObjectStore, consoleObserverDisabled bool, queueState func(runID string) string, cache *runCache, sc *summaryCache, logf func(format string, args ...any)) (batchSnapshot, error) {
 	if logf == nil {
 		logf = defaultLogf
 	}
 	ids, err := listBatchIDs(ctx, store)
 	if err != nil {
-		return nil, fmt.Errorf("console: load batch rows: %w", err)
+		return batchSnapshot{}, fmt.Errorf("console: load batch rows: %w", err)
 	}
 
 	rows := make([]BatchRow, 0, len(ids))
+	runsByBatch := make(map[string][]RunRow, len(ids))
 	for _, id := range ids {
 		manifest, err := loadManifest(ctx, store, id)
 		if err != nil {
@@ -162,6 +176,10 @@ func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObser
 			logf("skip batch %s: %v", id, err)
 			continue
 		}
+		// Keep manifest order for consumers such as problem grouping, whose
+		// final tie breaker is input order. The aggregate below sorts its own
+		// slice to retain the batch row's run-id-ordered verdicts.
+		runsByBatch[id] = append([]RunRow(nil), runRows...)
 		createdAt, _ := time.Parse(time.RFC3339, manifest.CreatedAt)
 		bc := newBatchContext(manifest)
 
@@ -272,7 +290,7 @@ func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObser
 		}
 		return rows[i].BatchID > rows[j].BatchID
 	})
-	return rows, nil
+	return batchSnapshot{batches: rows, runsByBatch: runsByBatch}, nil
 }
 
 // batchIsOlder is loadBatchRows' own newest-first total order (CreatedAt

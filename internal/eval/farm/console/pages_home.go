@@ -148,32 +148,25 @@ func (s *Server) handleHomePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	allBatches, err := loadBatchRows(ctx, s.cfg.Store, s.cfg.ObserverDisabled, s.queueState, s.runCache, s.summaryCache, s.logf)
+	snapshot, err := loadBatchSnapshot(ctx, s.cfg.Store, s.cfg.ObserverDisabled, s.queueState, s.runCache, s.summaryCache, s.logf)
 	if err != nil {
 		s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The evaluation overview could not be read.", "load overview", err)
 		return
 	}
+	allBatches := snapshot.batches
 
 	now := s.now()
 	filtered, counts := batchEngine().Apply(allBatches, q, now)
 	nav := buildListNav("/", spec, q, r.URL.Query(), counts, homeBatchSortLabels, homeBatchLabeler())
 
-	rows, err := s.buildHomeBatchRows(ctx, filtered)
-	if err != nil {
-		s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The evaluation overview could not be read.", "load overview", err)
-		return
-	}
+	rows := buildHomeBatchRows(filtered, snapshot.runsByBatch, now)
 
 	var latest *latestEvaluationView
 	if latestRow, ok := pickLatestEvaluationBatch(allBatches); ok {
-		latest, err = s.buildLatestEvaluation(ctx, allBatches, latestRow)
-		if err != nil {
-			s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The latest evaluation could not be read.", "load latest evaluation", err)
-			return
-		}
+		latest = buildLatestEvaluation(snapshot, latestRow)
 	}
 
-	top, err := s.buildTopProblems(ctx, now)
+	top, err := s.buildTopProblems(ctx, now, snapshot.problemsRuns())
 	if err != nil {
 		s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The current problem summary could not be read.", "load current problems", err)
 		return
@@ -207,16 +200,12 @@ func (s *Server) anyObservationInFlight() bool {
 // buildHomeBatchRows resolves the dots and the cost string for every
 // visible batch (post-filter/sort) — the table's own additive facts beyond
 // BatchRow.
-func (s *Server) buildHomeBatchRows(ctx context.Context, batches []BatchRow) ([]homeBatchRow, error) {
+func buildHomeBatchRows(batches []BatchRow, runsByBatch map[string][]RunRow, now time.Time) []homeBatchRow {
 	out := make([]homeBatchRow, len(batches))
 	for i, b := range batches {
-		runRows, err := batchWindowRows(ctx, s.cfg.Store, s.cfg.ObserverDisabled, b.BatchID, s.queueState, s.runCache, s.summaryCache, s.logf)
-		if err != nil {
-			return nil, fmt.Errorf("console: home batch row %s: %w", b.BatchID, err)
-		}
-		out[i] = homeBatchRow{BatchRow: b, Dots: buildDots(runRows, s.now()), Cost: formatBatchCost(b), StartedShort: fmtTimeShort(b.CreatedAt)}
+		out[i] = homeBatchRow{BatchRow: b, Dots: buildDots(runsByBatch[b.BatchID], now), Cost: formatBatchCost(b), StartedShort: fmtTimeShort(b.CreatedAt)}
 	}
-	return out, nil
+	return out
 }
 
 // formatBatchCost implements §8.3's agent-cost rendering: "—" when every
@@ -402,12 +391,8 @@ func failedOrBlockedLines(rows []RunRow) []failedRunLine {
 // buildLatestEvaluation implements §8.3 item 1 end to end over latestRow,
 // the batch pickLatestEvaluationBatch already chose — the caller renders no
 // panel at all when that pick found nothing (never an empty placeholder).
-func (s *Server) buildLatestEvaluation(ctx context.Context, allBatches []BatchRow, latestRow BatchRow) (*latestEvaluationView, error) {
-	runRows, err := batchWindowRows(ctx, s.cfg.Store, s.cfg.ObserverDisabled, latestRow.BatchID, s.queueState, s.runCache, s.summaryCache, s.logf)
-	if err != nil {
-		return nil, fmt.Errorf("console: latest evaluation: %w", err)
-	}
-
+func buildLatestEvaluation(snapshot batchSnapshot, latestRow BatchRow) *latestEvaluationView {
+	runRows := snapshot.runsByBatch[latestRow.BatchID]
 	view := &latestEvaluationView{
 		BatchID: latestRow.BatchID, CreatedAt: latestRow.CreatedAt, Build: latestRow.Build, Set: latestRow.Set,
 		Verdicts:        verdictDisputeCounts(runRows),
@@ -421,16 +406,31 @@ func (s *Server) buildLatestEvaluation(ctx context.Context, allBatches []BatchRo
 		}
 	}
 
-	if prevRow, found := PreviousSameSet(allBatches, latestRow); found {
-		prevRunRows, err := batchWindowRows(ctx, s.cfg.Store, s.cfg.ObserverDisabled, prevRow.BatchID, s.queueState, s.runCache, s.summaryCache, s.logf)
-		if err != nil {
-			return nil, fmt.Errorf("console: latest evaluation vs previous: %w", err)
-		}
+	if prevRow, found := PreviousSameSet(snapshot.batches, latestRow); found {
+		prevRunRows := snapshot.runsByBatch[prevRow.BatchID]
 		view.HasPrev, view.PrevBatchID = true, prevRow.BatchID
 		view.Diff = CompareBatches(prevRunRows, runRows)
 		view.Comparison = buildBatchComparison(view.Diff, runRows)
 	}
-	return view, nil
+	return view
+}
+
+func (snapshot batchSnapshot) problemsRuns() []ProblemsRun {
+	// Match allProblemsRuns' batch-id scan order, including its tie-breaking
+	// order for findings of equal severity and timestamp.
+	batches := append([]BatchRow(nil), snapshot.batches...)
+	sort.Slice(batches, func(i, j int) bool { return batches[i].BatchID < batches[j].BatchID })
+	runCount := 0
+	for _, batch := range batches {
+		runCount += len(snapshot.runsByBatch[batch.BatchID])
+	}
+	runs := make([]ProblemsRun, 0, runCount)
+	for _, batch := range batches {
+		for _, row := range snapshot.runsByBatch[batch.BatchID] {
+			runs = append(runs, ProblemsRun{Row: row, BatchSet: batch.Set, BatchCreatedAt: batch.CreatedAt})
+		}
+	}
+	return runs
 }
 
 // fmtDateShort renders a timestamp as "10 Sep" (item 6) — problemHowOften's
@@ -470,7 +470,7 @@ func problemHowOften(p Problem) string {
 // buildTopProblems implements §8.3 item 2: the first five live problems
 // (§8.6), over the same since window /problems defaults to (30d) — kept in
 // sync with problemListSpec's own DefaultSince rather than a second literal.
-func (s *Server) buildTopProblems(ctx context.Context, now time.Time) ([]topProblemView, error) {
+func (s *Server) buildTopProblems(ctx context.Context, now time.Time, allRuns []ProblemsRun) ([]topProblemView, error) {
 	window, err := ParseWindow(problemListSpec().DefaultSince)
 	if err != nil {
 		return nil, fmt.Errorf("console: top problems: %w", err)
@@ -478,10 +478,6 @@ func (s *Server) buildTopProblems(ctx context.Context, now time.Time) ([]topProb
 	// Item 1 (FIX3): status is computed over the full farm history
 	// (allRuns), never just this page's own 30d window — that window only
 	// decides inScope (which problems are shown at all).
-	allRuns, err := s.allProblemsRuns(ctx)
-	if err != nil {
-		return nil, err
-	}
 	inScope := problemsRunIDSet(problemsRunsInWindow(allRuns, window, now))
 	problems := BuildProblemsScoped(allRuns, inScope, s.stepTextFinder(ctx))
 

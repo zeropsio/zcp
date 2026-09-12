@@ -314,13 +314,12 @@ func (c *runCache) row(ctx context.Context, store observer.ObjectStore, consoleO
 		if err != nil {
 			return RunRow{}, err
 		}
-		obsPart := c.refreshObservation(ctx, store, run.RunID, e, now)
 		e.mu.Lock()
 		if built.cacheable {
 			e.immutable = &built
 		}
 		e.mu.Unlock()
-		return combineRow(batchID, run, &built, obsPart, bc, summary, summaryFound, consoleObserverDisabled, queued, now), nil
+		imm = &built
 	}
 
 	e.mu.Lock()
