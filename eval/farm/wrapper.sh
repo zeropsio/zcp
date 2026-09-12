@@ -134,20 +134,69 @@ redact_dir() {
 	value="$2"
 	[ -z "$value" ] && return 0
 	[ -d "$dir" ] || return 0
-	find "$dir" -type f | while IFS= read -r f; do
-		grep -qF -- "$value" "$f" 2>/dev/null || continue
-		REDACT_VALUE="$value" perl -pi -e 's/\Q$ENV{REDACT_VALUE}\E/<redacted>/g' "$f"
-		printf '%s\n' "$f" >>"$RUNDIR/redacted.log"
-	done
+
+	# Materialize the traversal before touching a file. A pipeline would expose
+	# only its final command's status in POSIX sh, allowing a failed find/read to
+	# masquerade as a complete redaction pass.
+	redact_list="$RUNDIR/.redact-list"
+	if ! find "$dir" -type f >"$redact_list"; then
+		rm -f "$redact_list"
+		return 1
+	fi
+
+	redact_failed=0
+	while IFS= read -r f; do
+		[ -n "$f" ] || continue
+		grep -qF -- "$value" "$f" 2>/dev/null
+		grep_status=$?
+		case "$grep_status" in
+		0)
+			if ! REDACT_VALUE="$value" perl -pi -e 's/\Q$ENV{REDACT_VALUE}\E/<redacted>/g' "$f"; then
+				redact_failed=1
+				continue
+			fi
+			# A successful rewrite command is not proof that the credential was
+			# removed. Re-read the file and distinguish a remaining match (0)
+			# from verified absence (1) and a read failure (>1).
+			grep -qF -- "$value" "$f" 2>/dev/null
+			verify_status=$?
+			if [ "$verify_status" -ne 1 ]; then
+				redact_failed=1
+				continue
+			fi
+			if ! printf '%s\n' "$f" >>"$RUNDIR/redacted.log"; then
+				redact_failed=1
+			fi
+			;;
+		1) ;;
+		*) redact_failed=1 ;;
+		esac
+	done <"$redact_list"
+	if ! rm -f "$redact_list"; then
+		redact_failed=1
+	fi
+	return "$redact_failed"
 }
 
 redact_known_secrets() {
 	dir="$1"
-	redact_dir "$dir" "${ZCP_FARM_S3_SECRET:-}"
-	redact_dir "$dir" "${ZCP_FARM_S3_KEY:-}"
-	redact_dir "$dir" "${CLAUDE_CODE_OAUTH_TOKEN:-}"
-	redact_dir "$dir" "${ZCP_E2E_LAUNCH_KEY:-}"
-	redact_dir "$dir" "${ZCP_API_KEY:-}"
+	known_secrets_failed=0
+	if ! redact_dir "$dir" "${ZCP_FARM_S3_SECRET:-}"; then
+		known_secrets_failed=1
+	fi
+	if ! redact_dir "$dir" "${ZCP_FARM_S3_KEY:-}"; then
+		known_secrets_failed=1
+	fi
+	if ! redact_dir "$dir" "${CLAUDE_CODE_OAUTH_TOKEN:-}"; then
+		known_secrets_failed=1
+	fi
+	if ! redact_dir "$dir" "${ZCP_E2E_LAUNCH_KEY:-}"; then
+		known_secrets_failed=1
+	fi
+	if ! redact_dir "$dir" "${ZCP_API_KEY:-}"; then
+		known_secrets_failed=1
+	fi
+	return "$known_secrets_failed"
 }
 
 # ---- child-tree cleanup (D6) ----------------------------------------------
@@ -252,17 +301,38 @@ update_one_capture_manifest() {
 	manifest_dir=$(dirname "$manifest")
 
 	updates="$RUNDIR/redacted-updates.tsv"
-	: >"$updates"
-	sort -u "$RUNDIR/redacted.log" | while IFS= read -r f; do
+	sorted_redactions="$RUNDIR/.redacted-sorted"
+	if ! : >"$updates" || ! LC_ALL=C sort -u "$RUNDIR/redacted.log" >"$sorted_redactions"; then
+		rm -f "$updates" "$sorted_redactions"
+		return 1
+	fi
+	manifest_scan_failed=0
+	while IFS= read -r f; do
 		case "$f" in
 		"$manifest_dir"/*) ;;
 		*) continue ;;
 		esac
 		rel=${f#"$manifest_dir"/}
-		size=$(wc -c <"$f" | tr -d ' ')
-		sha=$(sha256sum "$f" | awk '{print $1}')
-		printf '%s\t%s\t%s\n' "$rel" "$size" "$sha" >>"$updates"
-	done
+		if ! size=$(wc -c <"$f"); then
+			manifest_scan_failed=1
+			continue
+		fi
+		if ! sha_line=$(sha256sum "$f"); then
+			manifest_scan_failed=1
+			continue
+		fi
+		sha=${sha_line%% *}
+		if ! printf '%s\t%s\t%s\n' "$rel" "$size" "$sha" >>"$updates"; then
+			manifest_scan_failed=1
+		fi
+	done <"$sorted_redactions"
+	if ! rm -f "$sorted_redactions"; then
+		manifest_scan_failed=1
+	fi
+	if [ "$manifest_scan_failed" -ne 0 ]; then
+		rm -f "$updates"
+		return 1
+	fi
 
 	[ -s "$updates" ] || return 0
 
@@ -289,9 +359,12 @@ update_one_capture_manifest() {
 			$file->{sha256} = $u->{sha};
 		}
 
-		open my $oh, ">", $manifest_path or die "write manifest: $!";
-		print $oh JSON::PP->new->canonical->encode($doc);
-		close $oh;
+		my $tmp = "$manifest_path.zcp-redact-$$";
+		open my $oh, ">", $tmp or die "write manifest temp: $!";
+		print $oh JSON::PP->new->canonical->encode($doc)
+			or die "write manifest temp: $!";
+		close $oh or die "close manifest temp: $!";
+		rename $tmp, $manifest_path or die "replace manifest: $!";
 	' "$manifest" "$updates"
 }
 
@@ -311,13 +384,19 @@ update_one_capture_manifest() {
 update_capture_manifest() {
 	[ -f "$RUNDIR/redacted.log" ] || return 0
 
+	manifest_rewrite_failed=0
 	if [ -f "$CAPTURE_DIR/manifest.json" ]; then
-		update_one_capture_manifest "$CAPTURE_DIR/manifest.json"
+		if ! update_one_capture_manifest "$CAPTURE_DIR/manifest.json"; then
+			manifest_rewrite_failed=1
+		fi
 	fi
 	for manifest in "$CAPTURE_DIR"/*/manifest.json; do
 		[ -f "$manifest" ] || continue
-		update_one_capture_manifest "$manifest"
+		if ! update_one_capture_manifest "$manifest"; then
+			manifest_rewrite_failed=1
+		fi
 	done
+	return "$manifest_rewrite_failed"
 }
 
 # redacted_json_array renders a JSON array of every path redact_dir logged
@@ -329,18 +408,40 @@ redacted_json_array() {
 		printf '[]'
 		return
 	fi
-	printf '['
+	redacted_json_list="$RUNDIR/.redacted-json-list"
+	if ! LC_ALL=C sort -u "$RUNDIR/redacted.log" >"$redacted_json_list"; then
+		rm -f "$redacted_json_list"
+		return 1
+	fi
+	redacted_json_failed=0
+	if ! printf '['; then
+		redacted_json_failed=1
+	fi
 	first=1
-	sort -u "$RUNDIR/redacted.log" | while IFS= read -r f; do
+	while IFS= read -r f; do
 		rel=${f#"$RUNDIR/"}
+		if ! escaped_rel=$(json_escape "$rel"); then
+			redacted_json_failed=1
+			continue
+		fi
 		if [ "$first" -eq 1 ]; then
-			printf '"%s"' "$(json_escape "$rel")"
+			if ! printf '"%s"' "$escaped_rel"; then
+				redacted_json_failed=1
+			fi
 			first=0
 		else
-			printf ',"%s"' "$(json_escape "$rel")"
+			if ! printf ',"%s"' "$escaped_rel"; then
+				redacted_json_failed=1
+			fi
 		fi
-	done
-	printf ']'
+	done <"$redacted_json_list"
+	if ! rm -f "$redacted_json_list"; then
+		redacted_json_failed=1
+	fi
+	if ! printf ']'; then
+		redacted_json_failed=1
+	fi
+	return "$redacted_json_failed"
 }
 
 # ---- upload ---------------------------------------------------------------
@@ -465,11 +566,11 @@ child_main() {
 
 # ---- supervisor (FM-13 step 4, FM-3/FM-4/FM-5/FM-7) --------------------
 
-# finish_and_upload is the trap body: it must run to completion best-effort
-# even if an individual step fails, so nothing here uses `set -e` past the
-# top of this function (docs/spec-eval-farm.md §1.2 FM-3: absence of
-# done.json, for any reason short of a supervisor SIGKILL, means the bundle
-# is incomplete — a partial upload must still try for done.json).
+# finish_and_upload is the trap body: cleanup and local evidence construction
+# continue best-effort even if an individual step fails, so nothing here uses
+# `set -e` past the top of this function. Publishing is fail-closed: a failed
+# sanitization or part upload leaves done.json absent from the sink, marking
+# the remote bundle incomplete under docs/spec-eval-farm.md §1.2 FM-3.
 finish_and_upload() {
 	set +e
 
@@ -514,17 +615,29 @@ finish_and_upload() {
 
 	kill_child_group
 
-	redact_known_secrets "$RESULTS_DIR"
-	redact_known_secrets "$CAPTURE_DIR"
-	update_capture_manifest
-	redacted_json=$(redacted_json_array)
-
-	parts_ok=1
-	if ! upload_dir "$RESULTS_DIR" "results"; then
-		parts_ok=0
+	sanitization_ok=1
+	if ! redact_known_secrets "$RESULTS_DIR"; then
+		sanitization_ok=0
 	fi
-	if ! upload_dir "$CAPTURE_DIR" "capture"; then
-		parts_ok=0
+	if ! redact_known_secrets "$CAPTURE_DIR"; then
+		sanitization_ok=0
+	fi
+	if ! update_capture_manifest; then
+		sanitization_ok=0
+	fi
+	if ! redacted_json=$(redacted_json_array); then
+		sanitization_ok=0
+		redacted_json='[]'
+	fi
+
+	parts_ok="$sanitization_ok"
+	if [ "$sanitization_ok" -eq 1 ]; then
+		if ! upload_dir "$RESULTS_DIR" "results"; then
+			parts_ok=0
+		fi
+		if ! upload_dir "$CAPTURE_DIR" "capture"; then
+			parts_ok=0
+		fi
 	fi
 
 	results_digest=$(tree_digest "$RESULTS_DIR")
