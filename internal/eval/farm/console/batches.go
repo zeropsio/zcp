@@ -143,8 +143,8 @@ func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObser
 		var totalCost float64
 		observedN, high, costUnknown := 0, 0, 0
 		// anyEvaluated implements item 6 (FIX2.md FIX2-DATA): a batch is
-		// batchKindEvaluation only when at least one run has a cost above 0
-		// or any recorded step — a run whose done.json exists but that
+		// batchKindEvaluation only when at least one run did work
+		// (runDidWork, view.go) — a run whose done.json exists but that
 		// blocked in 0.1-0.2s at $0 (gate1, asm7-9, tracerctl) never did any
 		// work, and must not count as "evaluated" just because DoneExists.
 		anyEvaluated := false
@@ -160,7 +160,7 @@ func loadBatchRows(ctx context.Context, store observer.ObjectStore, consoleObser
 			if !r.CostKnown {
 				costUnknown++
 			}
-			if r.CostUsd > 0 || r.StepCount > 0 {
+			if runDidWork(r) {
 				anyEvaluated = true
 			}
 			// Outcome != "" implies a current ok observation (computeOutcome,

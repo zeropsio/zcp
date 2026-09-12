@@ -477,7 +477,11 @@ type DigestResponse struct {
 	FailedBlockedRuns []RunsListItem     `json:"failedBlockedRuns"`
 	OmittedFailedRuns int                `json:"omittedFailedRuns,omitempty"`
 	UnassessedCount   int                `json:"unassessedCount"`
-	Truncated         bool               `json:"truncated"`
+	// NeverStartedCount is how many runs in scope never did any work
+	// (empty bundle): counted apart from UnassessedCount, which only
+	// holds runs an assessment can actually be made of.
+	NeverStartedCount int  `json:"neverStartedCount"`
+	Truncated         bool `json:"truncated"`
 }
 
 // renderDigestHeader renders §8.4's scope header: batches, builds, verdict
@@ -633,7 +637,7 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 	builds := make(map[string]bool)
 	verdictCounts := make(map[string]int)
 	var totalCost float64
-	costUnknownN, unassessed, assessmentFailed := 0, 0, 0
+	costUnknownN, unassessed, assessmentFailed, neverStarted := 0, 0, 0, 0
 	var failedBlocked []RunsListItem
 	for _, row := range rows {
 		builds[row.Build.Label()] = true
@@ -652,6 +656,12 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 			if row.Observation != nil && (row.Observation.Status == observationStatusError || row.Observation.Status == observationStatusUnparsed) {
 				assessmentFailed++
 			}
+		}
+		// A run that never did any work is reported on its own line, not
+		// under "not yet assessed": its bundle is empty, so no assessment
+		// can be made of it and asking for one only wastes a call.
+		if row.DoneExists && !runDidWork(row) {
+			neverStarted++
 		}
 		if row.Verdict == farm.VerdictFailed || row.Verdict == farm.VerdictBlocked {
 			failedBlocked = append(failedBlocked, runsListItemFromRow(row))
@@ -707,6 +717,9 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(&b, " (%d assessment failed)", assessmentFailed)
 	}
 	b.WriteString("\n")
+	if neverStarted > 0 {
+		fmt.Fprintf(&b, "Never started: %d run(s) — nothing to assess\n", neverStarted)
+	}
 
 	truncated := omittedProblems > 0 || omittedRuns > 0
 
@@ -716,7 +729,7 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 			CostUsd: totalCost, CostUnknownN: costUnknownN,
 			Problems: problemItems[:keptProblems], OmittedProblems: omittedProblems,
 			FailedBlockedRuns: failedBlocked[:keptRuns], OmittedFailedRuns: omittedRuns,
-			UnassessedCount: unassessed, Truncated: truncated,
+			UnassessedCount: unassessed, NeverStartedCount: neverStarted, Truncated: truncated,
 		})
 		return
 	}

@@ -149,11 +149,18 @@ func TestNeedsAssessment(t *testing.T) {
 		want     bool
 	}{
 		{"not finished", RunRow{DoneExists: false}, false, false},
-		{"in flight", RunRow{DoneExists: true}, true, false},
-		{"no observation", RunRow{DoneExists: true}, false, true},
-		{"current observation ok", RunRow{DoneExists: true, Observation: &observer.Observation{Status: "ok"}}, false, false},
-		{"current observation error", RunRow{DoneExists: true, Observation: &observer.Observation{Status: "error"}}, false, true},
-		{"current observation unparsed", RunRow{DoneExists: true, Observation: &observer.Observation{Status: "unparsed"}}, false, true},
+		{"in flight", RunRow{DoneExists: true, StepCount: 3}, true, false},
+		{"no observation", RunRow{DoneExists: true, StepCount: 3}, false, true},
+		{"current observation ok", RunRow{DoneExists: true, StepCount: 3, Observation: &observer.Observation{Status: "ok"}}, false, false},
+		{"current observation error", RunRow{DoneExists: true, StepCount: 3, Observation: &observer.Observation{Status: "error"}}, false, true},
+		{"current observation unparsed", RunRow{DoneExists: true, StepCount: 3, Observation: &observer.Observation{Status: "unparsed"}}, false, true},
+		// A run the batch ended before it did any work (live: 28 such runs
+		// across gate2-gate5 — 0.4s, no cost recorded, no steps) has an
+		// empty bundle: there is nothing to assess, so it must not be
+		// counted as needing one, nor queued by the Assess action.
+		{"never started", RunRow{DoneExists: true}, false, false},
+		{"never started with a failed assessment", RunRow{DoneExists: true, Observation: &observer.Observation{Status: "error"}}, false, false},
+		{"did work, cost only", RunRow{DoneExists: true, CostUsd: 0.2}, false, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

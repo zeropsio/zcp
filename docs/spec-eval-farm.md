@@ -1137,21 +1137,34 @@ resolves at most 8 rows at a time in sequential order.
 **FM-53.** One queue, at most three observations at a time, feeds both the
 worker and the actions. Every 60 s the worker lists batches whose manifest
 `createdAt` is within 14 days plus a 2-hour slack and whose `observer` names
-a model, and queues each of their runs that has `done.json` and no
-observation, with the manifest's model (`source: worker`). With
+a model, and queues each of their runs that has `done.json`, a
+`results/` bundle to read, and no observation, with the manifest's model
+(`source: worker`). With
 `ZCP_FARM_OBSERVER=off` it queues nothing.
 
-A run **needs an assessment** when it has `done.json`, is not queued or
-running, and either has no observation or its current one failed (`error`
-or `unparsed`). The batch callout counts exactly those runs, and
+A run **needs an assessment** when it has `done.json`, **did work**, is not
+queued or running, and either has no observation or its current one failed
+(`error` or `unparsed`). The batch callout counts exactly those runs, and
 `POST /b/<batch>/observe` without `all=1` queues exactly those.
+
+A run **did work** when its recorded cost is above 0 or it has at least one
+step — the same rule that tells an evaluation batch from an empty one
+(§8.3). A run the batch ended before it started still writes `done.json`
+but leaves no `results/` at all: there is nothing to assess, an observation
+of it can only fail on a missing task prompt, and a stored "assessment
+failed" for a run that never ran is noise. Such a run is never queued (the
+worker skips it, both batch actions report it skipped with the reason
+"never started — nothing to assess"), never counted as needing an
+assessment, and reported apart from the unassessed ones
+(`/api/digest`: `Never started: N run(s) — nothing to assess`,
+`neverStartedCount` in JSON).
 
 Actions (`source: action`): `POST /r/<runId>/observe` queues a new version
 with `model` from the allowlist `claude-sonnet-5`, `claude-opus-5`,
 `claude-fable-5-1` — absent `model`, the current observation's model, else
 the manifest's, else `claude-sonnet-5`; a value off the allowlist is 400.
 `POST /b/<batch>/observe` queues the runs that need an assessment, or every
-finished run with `all=1`. Actions work regardless of the manifest field and
+finished run that did work with `all=1`. Actions work regardless of the manifest field and
 the kill switch. A run without `done.json` is never queued (`/r/` answers
 409 `run not finished`; the batch action skips it). A run already queued or
 running answers 409 on `/r/`, and `all=1` answers 409 while any run of the

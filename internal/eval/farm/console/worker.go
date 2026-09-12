@@ -400,11 +400,17 @@ func (w *Worker) wkTickBatch(ctx context.Context, batch string, now time.Time) {
 }
 
 // wkTickRun handles one valid run id: enqueues it iff done.json exists,
-// the queue has no state for it already, and it carries no observation
-// yet. Queue.State is checked before ListObservations (item 6) — cheaper,
-// and a run already queued or running never needs its observations
-// listed at all; a list error skips the run rather than risking a
-// duplicate enqueue on doubt.
+// the queue has no state for it already, it carries no observation yet,
+// and its bundle holds a run to read. Queue.State is checked before
+// ListObservations (item 6) — cheaper, and a run already queued or
+// running never needs its observations listed at all; a list error skips
+// the run rather than risking a duplicate enqueue on doubt.
+//
+// The bundle check is last because it is the most expensive, and it is
+// the reason a run the batch ended before it started (done.json written,
+// no results/ at all) is left alone: observing it can only fail on a
+// missing task prompt, and a stored "assessment failed" for a run that
+// never ran is noise, not signal.
 func (w *Worker) wkTickRun(ctx context.Context, batch, runID, model string) {
 	doneExists, _, err := w.cfg.Bucket.Head(ctx, "runs/"+runID+"/done.json")
 	if err != nil || !doneExists {
@@ -418,6 +424,14 @@ func (w *Worker) wkTickRun(ctx context.Context, batch, runID, model string) {
 	store := observer.NewStore(w.cfg.Bucket)
 	obsIDs, err := store.ListObservations(ctx, runID)
 	if err != nil || len(obsIDs) > 0 {
+		return
+	}
+
+	bundle, err := observer.NewSinkBundle(ctx, w.cfg.Bucket, runID)
+	if err != nil {
+		return
+	}
+	if _, err := observer.ResultsDir(bundle); err != nil {
 		return
 	}
 

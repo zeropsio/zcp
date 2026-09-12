@@ -120,6 +120,7 @@ func TestWorker_ListErrorSkipsRun(t *testing.T) {
 	bucket := wkNewFakeBucket()
 	bucket.put("batches/b1/manifest.json", wkManifestJSON(t, now.Add(-time.Hour).Format(time.RFC3339), "claude-sonnet-5", "b1-scenario"))
 	bucket.put("runs/b1-scenario/done.json", []byte(`{}`))
+	wkSeedBundle(bucket, "b1-scenario")
 	bucket.failListOn("runs/b1-scenario/observer/", errors.New("bucket unreachable"))
 
 	obs := wkNewRecordingObserve()
@@ -142,6 +143,7 @@ func TestWorker_QueueStateCheckedBeforeListingObservations(t *testing.T) {
 	bucket := wkNewFakeBucket()
 	bucket.put("batches/b1/manifest.json", wkManifestJSON(t, now.Add(-time.Hour).Format(time.RFC3339), "claude-sonnet-5", "b1-scenario"))
 	bucket.put("runs/b1-scenario/done.json", []byte(`{}`))
+	wkSeedBundle(bucket, "b1-scenario")
 
 	obs := wkNewRecordingObserve()
 	defer close(obs.release)
@@ -248,6 +250,7 @@ func TestWorker_BatchWithinWindowSlackStillObserved(t *testing.T) {
 	bucket := wkNewFakeBucket()
 	bucket.put("batches/b1/manifest.json", wkManifestJSON(t, createdAt.Format(time.RFC3339), "claude-sonnet-5", "b1-scenario"))
 	bucket.put("runs/b1-scenario/done.json", []byte(`{}`))
+	wkSeedBundle(bucket, "b1-scenario")
 
 	obs := wkNewRecordingObserve()
 	defer close(obs.release)

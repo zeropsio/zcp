@@ -173,6 +173,11 @@ type runFixture struct {
 	checks [][5]string
 	// selfReview is optional; "" omits self-review.md entirely.
 	selfReview string
+	// neverStarted models a run the batch ended before it did any work
+	// (live: gate2-gate5, 0.4s, no results/ at all): started.json and
+	// done.json exist, the bundle is empty — no task prompt, no
+	// transcript, no meta, no verification.json (verdict "not-run").
+	neverStarted bool
 }
 
 // seedBatch writes batches/<batch>/manifest.json (+ summary.json when
@@ -216,6 +221,13 @@ func seedRun(t *testing.T, store *fakeStore, rf runFixture) {
 		"runId": rf.runID, "scenarioId": rf.scenario, "startedAt": rf.startedAt.UTC().Format(time.RFC3339),
 	})
 	if !rf.done {
+		return
+	}
+	if rf.neverStarted {
+		store.putJSON(t, "runs/"+rf.runID+"/done.json", map[string]any{
+			"runId": rf.runID, "scenarioId": rf.scenario,
+			"runnerDimensions": map[string]any{"execution": "ok", "taskEnd": "persisted, settled"},
+		})
 		return
 	}
 

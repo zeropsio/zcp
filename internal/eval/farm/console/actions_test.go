@@ -108,6 +108,7 @@ func TestConsole_WorkerStartsAndStopsWithServer(t *testing.T) {
 	bucket := wkNewFakeBucket()
 	bucket.put("batches/b1/manifest.json", wkManifestJSON(t, now.Add(-time.Hour).Format(time.RFC3339), "claude-sonnet-5", "b1-scenario"))
 	bucket.put("runs/b1-scenario/done.json", []byte(`{}`))
+	wkSeedBundle(bucket, "b1-scenario")
 
 	obs := wkNewRecordingObserve()
 	q := NewQueue(obs.fn)
@@ -971,4 +972,39 @@ func TestActions_MissingOAuthToken503(t *testing.T) {
 		t.Errorf("503 body = %q, want it to contain %q", body, "observer unavailable")
 	}
 	wkExpectNoCall(t, obs.calls)
+}
+
+// TestActions_BatchObserveSkipsNeverStartedRun pins the same rule on the
+// action side (§8.5): "Assess all" must not queue a run whose batch ended
+// before it did any work — its bundle holds no task prompt and no
+// transcript, so an observation can only fail. It is reported as skipped,
+// with the reason, rather than silently dropped.
+func TestActions_BatchObserveSkipsNeverStartedRun(t *testing.T) {
+	obs := wkNewRecordingObserve()
+	defer close(obs.release)
+	q := NewQueue(obs.fn)
+	srv, store := newActionServer(t, actionServerOpts{queue: q})
+	h := srv.Handler()
+
+	now := fixedNow(t)()
+	seedBatch(t, store, "ns2", "claude-sonnet-5", []runFixture{
+		{runID: "ns2-real", scenario: "a", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+		{runID: "ns2-never", scenario: "b", startedAt: now.Add(-time.Hour), durationS: "0.4s", done: true, neverStarted: true},
+	}, true, map[string]string{"ns2-real": "passed"})
+
+	rr := doBearerPOST(t, h, "/b/ns2/observe", url.Values{"model": {"claude-sonnet-5"}, "all": {"1"}})
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("POST /b/ns2/observe all=1: got %d, want 202, body=%s", rr.Code, rr.Body.String())
+	}
+	if body := rr.Body.String(); !strings.Contains(body, "ns2-never") || !strings.Contains(body, "never started") {
+		t.Errorf("response must report ns2-never as skipped, with the reason:\n%s", body)
+	}
+	if got := wkExpectCall(t, obs.calls).RunID; got != "ns2-real" {
+		t.Errorf("queued run = %q, want ns2-real (the only run that did work)", got)
+	}
+	select {
+	case c := <-obs.calls:
+		t.Errorf("a second run was queued (%s); only ns2-real should be", c.RunID)
+	case <-time.After(100 * time.Millisecond):
+	}
 }

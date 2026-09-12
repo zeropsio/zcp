@@ -366,29 +366,25 @@ func (s *Server) handleBatchObserve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if all {
-		for _, run := range manifest.Runs {
-			doneExists, _, err := s.cfg.Store.Head(ctx, doneKey(run.RunID))
-			if err != nil || !doneExists {
-				skipped = append(skipped, actionSkip{RunID: run.RunID, Reason: "run not finished"})
-				continue
-			}
-			enqueue(ctx, run.RunID)
-		}
-		s.respondActionAccepted(w, r, page, queued, skipped)
-		return
-	}
-
 	rows, err := batchWindowRowsWithManifest(ctx, s.cfg.Store, s.cfg.ObserverDisabled, batch, manifest, s.queueState, s.runCache, s.summaryCache, s.logf)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
+	// all=1 re-assesses every run that CAN be assessed; without it, only
+	// the runs that still need one (NeedsAssessment). Both skip a run with
+	// nothing to read — unfinished, or ended before it did any work
+	// (runDidWork) — and say so, rather than queueing an observation that
+	// can only fail on an empty bundle.
 	for _, row := range rows {
-		if !NeedsAssessment(row, runQueued(s.queueState, row.RunID)) {
-			continue
+		switch {
+		case !row.DoneExists:
+			skipped = append(skipped, actionSkip{RunID: row.RunID, Reason: "run not finished"})
+		case !runDidWork(row):
+			skipped = append(skipped, actionSkip{RunID: row.RunID, Reason: "never started — nothing to assess"})
+		case all || NeedsAssessment(row, runQueued(s.queueState, row.RunID)):
+			enqueue(ctx, row.RunID)
 		}
-		enqueue(ctx, row.RunID)
 	}
 
 	s.respondActionAccepted(w, r, page, queued, skipped)

@@ -252,13 +252,22 @@ func observerStateText(now, manifestCreatedAt time.Time, consoleObserverDisabled
 	}
 }
 
+// runDidWork reports whether a run actually did anything — a cost above 0
+// or at least one recorded step. It is the same rule batches.go uses to
+// tell an evaluation batch from an empty one, and the reason is the same:
+// a run the batch ended before it started still writes done.json (live:
+// 28 runs across gate2-gate5, 0.4s, "no verification.json in bundle"), so
+// DoneExists alone says nothing about whether there is anything to read.
+func runDidWork(row RunRow) bool { return row.CostUsd > 0 || row.StepCount > 0 }
+
 // NeedsAssessment implements §8.5's predicate: a run needs an assessment
-// when it has done.json, is not queued or running (inFlight), and either
-// has no observation or its current one failed (status error/unparsed).
-// The batch callout counts exactly these runs; POST /b/<batch>/observe
-// without all=1 queues exactly these (§8.5 FM-53).
+// when it has done.json, did some work (runDidWork — an empty bundle has
+// nothing to assess and an observation of it can only fail), is not queued
+// or running (inFlight), and either has no observation or its current one
+// failed (status error/unparsed). The batch callout counts exactly these
+// runs; POST /b/<batch>/observe queues exactly these (§8.5 FM-53).
 func NeedsAssessment(row RunRow, inFlight bool) bool {
-	if !row.DoneExists || inFlight {
+	if !row.DoneExists || inFlight || !runDidWork(row) {
 		return false
 	}
 	if row.Observation == nil {

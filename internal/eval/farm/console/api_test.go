@@ -1629,3 +1629,37 @@ func TestAPI_FindingsMDRowsCarryEverySpecField(t *testing.T) {
 		t.Errorf("findings.md legend must define Surface and Anchor again, now that the row prints them:\n%s", legend)
 	}
 }
+
+// TestAPI_DigestExcludesNeverStartedRuns pins the final clarity fix: a run
+// the batch ended before it did any work (no cost, no steps — live: 28
+// such runs across gate2-gate5, "no verification.json in bundle") has an
+// empty bundle, so there is nothing to assess. The digest must not count
+// it under "not yet assessed" (it told an agent 64 runs needed an
+// assessment when 28 of them never ran), and must say how many such runs
+// the scope holds instead.
+func TestAPI_DigestExcludesNeverStartedRuns(t *testing.T) {
+	srv, store, _ := testServer(t)
+	h := srv.Handler()
+	now := fixedNow(t)()
+
+	seedBatch(t, store, "ns1", "claude-sonnet-5", []runFixture{
+		{runID: "ns1-real", scenario: "a", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+		{runID: "ns1-never", scenario: "b", startedAt: now.Add(-time.Hour), durationS: "0.4s", done: true, neverStarted: true},
+	}, true, map[string]string{"ns1-real": "passed"})
+
+	body := doGET(t, h, "/api/digest.md?batch=ns1").Body.String()
+	if !strings.Contains(body, "Unassessed: 1 finished run(s) not yet assessed") {
+		t.Errorf("digest.md must count only the run that did work:\n%s", body)
+	}
+	if !strings.Contains(body, "Never started: 1 run(s) — nothing to assess") {
+		t.Errorf("digest.md must report the never-started runs on their own line:\n%s", body)
+	}
+
+	var got DigestResponse
+	if err := json.Unmarshal(doGET(t, h, "/api/digest.json?batch=ns1").Body.Bytes(), &got); err != nil {
+		t.Fatalf("digest.json: %v", err)
+	}
+	if got.UnassessedCount != 1 || got.NeverStartedCount != 1 {
+		t.Errorf("digest.json counts = unassessed %d / never started %d, want 1 / 1", got.UnassessedCount, got.NeverStartedCount)
+	}
+}

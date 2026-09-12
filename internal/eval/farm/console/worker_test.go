@@ -301,6 +301,14 @@ func wkFixedNow(t time.Time) func() time.Time {
 	return func() time.Time { return t }
 }
 
+// wkSeedBundle writes the one file that proves a run actually produced a
+// bundle — results/<ts>/<scenario>/meta.json, what observer.ResultsDir
+// looks for. A run whose batch ended before it started writes done.json
+// and nothing else, and must not be queued for an assessment.
+func wkSeedBundle(b *wkFakeBucket, runID string) {
+	b.put("runs/"+runID+"/results/20260911T110000000Z/s/meta.json", []byte(`{"scenarioId":"s"}`))
+}
+
 // TestWorker_ObservesDoneRunWithoutObservation pins §8.5 FM-53: a run whose
 // batch names an observer model, that has done.json and no observation,
 // gets enqueued with the manifest's model and Source "worker".
@@ -309,6 +317,7 @@ func TestWorker_ObservesDoneRunWithoutObservation(t *testing.T) {
 	bucket := wkNewFakeBucket()
 	bucket.put("batches/b1/manifest.json", wkManifestJSON(t, now.Add(-time.Hour).Format(time.RFC3339), "claude-sonnet-5", "b1-scenario"))
 	bucket.put("runs/b1-scenario/done.json", []byte(`{}`))
+	wkSeedBundle(bucket, "b1-scenario")
 
 	obs := wkNewRecordingObserve()
 	defer close(obs.release)
@@ -334,6 +343,7 @@ func TestWorker_SkipsRunWithoutDoneOrWithObservation(t *testing.T) {
 	bucket.put("batches/b1/manifest.json", wkManifestJSON(t, now.Add(-time.Hour).Format(time.RFC3339), "claude-sonnet-5", "b1-no-done", "b1-observed"))
 	// b1-no-done: no done.json at all.
 	bucket.put("runs/b1-observed/done.json", []byte(`{}`))
+	wkSeedBundle(bucket, "b1-observed")
 	bucket.put("runs/b1-observed/observer/20260911T110000000Z-claude-sonnet-5.json", []byte(`{}`))
 
 	obs := wkNewRecordingObserve()
@@ -361,8 +371,10 @@ func TestWorker_ManifestOffOrMissingNeverObserves(t *testing.T) {
 	bucket := wkNewFakeBucket()
 	bucket.put("batches/off-batch/manifest.json", wkManifestJSON(t, now.Add(-time.Hour).Format(time.RFC3339), "off", "off-batch-scenario"))
 	bucket.put("runs/off-batch-scenario/done.json", []byte(`{}`))
+	wkSeedBundle(bucket, "off-batch-scenario")
 	bucket.put("batches/no-field-batch/manifest.json", fmt.Appendf(nil, `{"batch":"no-field-batch","createdAt":%q,"startedAt":%q,"set":"gate","runs":[{"runId":"no-field-batch-scenario","scenario":"s"}]}`, now.Add(-time.Hour).Format(time.RFC3339), now.Add(-time.Hour).Format(time.RFC3339)))
 	bucket.put("runs/no-field-batch-scenario/done.json", []byte(`{}`))
+	wkSeedBundle(bucket, "no-field-batch-scenario")
 
 	obs := wkNewRecordingObserve()
 	defer close(obs.release)
@@ -384,6 +396,7 @@ func TestWorker_BatchOlderThan14DaysIgnored(t *testing.T) {
 	bucket := wkNewFakeBucket()
 	bucket.put("batches/old-batch/manifest.json", wkManifestJSON(t, old.Format(time.RFC3339), "claude-sonnet-5", "old-batch-scenario"))
 	bucket.put("runs/old-batch-scenario/done.json", []byte(`{}`))
+	wkSeedBundle(bucket, "old-batch-scenario")
 
 	obs := wkNewRecordingObserve()
 	defer close(obs.release)
@@ -404,6 +417,7 @@ func TestWorker_KillSwitchObservesNothing(t *testing.T) {
 	bucket := wkNewFakeBucket()
 	bucket.put("batches/b1/manifest.json", wkManifestJSON(t, now.Add(-time.Hour).Format(time.RFC3339), "claude-sonnet-5", "b1-scenario"))
 	bucket.put("runs/b1-scenario/done.json", []byte(`{}`))
+	wkSeedBundle(bucket, "b1-scenario")
 
 	obs := wkNewRecordingObserve()
 	defer close(obs.release)
@@ -432,6 +446,7 @@ func TestWorker_InvalidIDsSkippedBeforeAnyKey(t *testing.T) {
 	// Valid batch, one valid run and one invalid run id.
 	bucket.put("batches/b1/manifest.json", wkManifestJSON(t, now.Add(-time.Hour).Format(time.RFC3339), "claude-sonnet-5", "b1-good", "Invalid_Run!!"))
 	bucket.put("runs/b1-good/done.json", []byte(`{}`))
+	wkSeedBundle(bucket, "b1-good")
 
 	obs := wkNewRecordingObserve()
 	defer close(obs.release)
@@ -728,5 +743,36 @@ func TestQueue_JobInfoAndLastFailure(t *testing.T) {
 	}
 	if !wkEventually(t, func() bool { _, ok := q.LastFailure("batch-run1"); return !ok }) {
 		t.Error("LastFailure survived the start of the next job for the run")
+	}
+}
+
+// TestWorker_SkipsRunWithEmptyBundle pins the never-started rule on the
+// worker (§8.5): a run whose batch ended before it did any work has
+// done.json but no results/ at all, so an observation of it can only fail
+// on a missing task prompt. The worker leaves it alone instead of spending
+// a job on it.
+func TestWorker_SkipsRunWithEmptyBundle(t *testing.T) {
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	bucket := wkNewFakeBucket()
+	bucket.put("batches/b1/manifest.json", wkManifestJSON(t, now.Add(-time.Hour).Format(time.RFC3339), "claude-sonnet-5", "b1-empty", "b1-real"))
+	bucket.put("runs/b1-empty/done.json", []byte(`{}`))
+	bucket.put("runs/b1-real/done.json", []byte(`{}`))
+	wkSeedBundle(bucket, "b1-real")
+
+	obs := wkNewRecordingObserve()
+	defer close(obs.release)
+	q := NewQueue(obs.fn)
+	w := NewWorker(WorkerConfig{Bucket: bucket, Queue: q, Now: wkFixedNow(now)})
+
+	if err := w.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if job := wkExpectCall(t, obs.calls); job.RunID != "b1-real" {
+		t.Errorf("enqueued %q, want b1-real (the only run with a bundle)", job.RunID)
+	}
+	select {
+	case job := <-obs.calls:
+		t.Errorf("worker also enqueued %q; a run with an empty bundle must be skipped", job.RunID)
+	case <-time.After(100 * time.Millisecond):
 	}
 }
