@@ -12,8 +12,8 @@
 # upload, no done.json — the explicit "blocked: no bundle" outcome.
 #
 # Child: PUTs started.json, downloads the pinned evaluator/candidate
-# binaries and the scenario tree, verifies both binary digests before
-# running either, creates a private HOME, and execs the evaluator's
+# binaries and the scenario tree, verifies the scenario tree and both binary
+# digests before running either, creates a private HOME, and execs the evaluator's
 # unchanged spec-testing-architecture.md §10.4 binding — replacing its own
 # process image so the pidfile below always names whichever process is
 # actually doing the work.
@@ -84,12 +84,30 @@ download_prefix() {
 	prefix="$1"
 	dest="$2"
 	mkdir -p "$dest"
-	s3_list "$prefix" | while IFS= read -r key; do
+	list_file="$RUNDIR/.scenario-download-list"
+	if ! s3_list "$prefix" >"$list_file"; then
+		return 1
+	fi
+	while IFS= read -r key; do
+		[ -z "$key" ] && continue
+		case "$key" in
+		"$prefix"*) ;;
+		*) return 2 ;;
+		esac
+		rel=${key#"$prefix"}
+		case "$rel" in
+		"" | /* | *\\* | . | .. | ./* | ../* | */. | */.. | */./* | */../*) return 2 ;;
+		esac
+	done <"$list_file"
+	while IFS= read -r key; do
 		[ -z "$key" ] && continue
 		rel=${key#"$prefix"}
 		mkdir -p "$dest/$(dirname "$rel")"
-		s3_get "$key" "$dest/$rel"
-	done
+		if ! s3_get "$key" "$dest/$rel"; then
+			return 1
+		fi
+	done <"$list_file"
+	rm -f "$list_file"
 }
 
 # ---- content digests ----------------------------------------------------
@@ -505,7 +523,22 @@ child_main() {
 		exit 1
 	fi
 	chmod +x "$evaluator_bin" "$candidate_bin"
-	download_prefix "scenarios/$ZCP_FARM_SCENARIOS_DIGEST/" "$scen_dir"
+	if download_prefix "scenarios/$ZCP_FARM_SCENARIOS_DIGEST/" "$scen_dir"; then
+		:
+	else
+		download_status=$?
+		if [ "$download_status" -eq 2 ]; then
+			printf '%s' "refused: invalid scenario object key" >"$RUNDIR/execution-override"
+		else
+			printf '%s' "refused: scenario download failed" >"$RUNDIR/execution-override"
+		fi
+		exit 1
+	fi
+	scenario_digest=$(tree_digest "$scen_dir")
+	if [ "$scenario_digest" != "$ZCP_FARM_SCENARIOS_DIGEST" ]; then
+		printf '%s' "refused: scenario digest mismatch" >"$RUNDIR/execution-override"
+		exit 1
+	fi
 
 	eval_sha=$(sha256sum "$evaluator_bin" | awk '{print $1}')
 	cand_sha=$(sha256sum "$candidate_bin" | awk '{print $1}')

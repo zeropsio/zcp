@@ -5,6 +5,7 @@ import (
 	"debug/buildinfo"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -230,19 +231,24 @@ func runFarmPush(args []string, envr *farm.EnvResolver) int {
 		fmt.Fprintln(os.Stdout, "evaluator-pointer: evaluators/current")
 	}
 	if scenarios != "" {
-		digest, err := pushScenarioTree(ctx, client, scenarios)
+		gateSetPath, err := resolveGateSetPath(scenarios, gateSet)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: push gate set: %v\n", err)
+			return 1
+		}
+		gateSetBody, err := os.ReadFile(gateSetPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: push gate set: read %s: %v\n", gateSetPath, err)
+			return 1
+		}
+		digest, err := pushScenarioTree(ctx, client, scenarios, gateSetBody)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: push scenarios: %v\n", err)
 			return 1
 		}
 		fmt.Fprintf(os.Stdout, "scenarios: %s\n", digest)
 
-		gateSetPath, err := resolveGateSetPath(scenarios, gateSet)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: push gate set: %v\n", err)
-			return 1
-		}
-		gateKey, err := pushGateSet(ctx, client, digest, gateSetPath)
+		gateKey, err := pushGateSet(ctx, client, digest, gateSetBody)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: push gate set: %v\n", err)
 			return 1
@@ -346,21 +352,78 @@ func candidateInfoLine(info *farm.CandidateInfo) string {
 	return line
 }
 
-// pushScenarioTree uploads every regular file under dir to
-// "scenarios/<treeDigest>/<relative-path>" and returns the tree digest.
-func pushScenarioTree(ctx context.Context, client *farm.SinkClient, dir string) (digest string, err error) {
-	digest, err = farm.TreeDigest(dir)
+const boundGateSetFile = ".farm-gate-set.txt"
+
+// pushScenarioTree snapshots every regular file under dir together with gateSet
+// as one content-addressed tree. Symlinks and special files are skipped without
+// being opened. Staging first makes the bytes hashed exactly the bytes uploaded
+// even if the checkout changes during the push.
+func pushScenarioTree(ctx context.Context, client *farm.SinkClient, dir string, gateSet []byte) (digest string, err error) {
+	staged, err := os.MkdirTemp("", "farm-scenarios-")
 	if err != nil {
 		return "", err
 	}
-	err = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
+	defer func() { _ = os.RemoveAll(staged) }()
+
+	err = filepath.WalkDir(dir, func(source string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if entry.IsDir() {
 			return nil
 		}
-		rel, err := filepath.Rel(dir, path)
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("inspect %s: %w", source, err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, source)
+		if err != nil {
+			return fmt.Errorf("rel %s: %w", source, err)
+		}
+		if filepath.ToSlash(rel) == boundGateSetFile {
+			return fmt.Errorf("scenario tree reserves %s for the digest-bound gate set", boundGateSetFile)
+		}
+		body, err := readScenarioSnapshotFile(source, info)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", source, err)
+		}
+		dest := filepath.Join(staged, rel)
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return fmt.Errorf("stage %s: %w", source, err)
+		}
+		if err := os.WriteFile(dest, body, 0o600); err != nil {
+			return fmt.Errorf("stage %s: %w", source, err)
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(staged, boundGateSetFile), gateSet, 0o600); err != nil {
+		return "", fmt.Errorf("stage gate set: %w", err)
+	}
+	digest, err = farm.TreeDigest(staged)
+	if err != nil {
+		return "", err
+	}
+	err = filepath.WalkDir(staged, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("inspect %s: %w", path, err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		rel, err := filepath.Rel(staged, path)
 		if err != nil {
 			return fmt.Errorf("rel %s: %w", path, err)
 		}
@@ -368,13 +431,38 @@ func pushScenarioTree(ctx context.Context, client *farm.SinkClient, dir string) 
 		if err != nil {
 			return fmt.Errorf("read %s: %w", path, err)
 		}
-		key := fmt.Sprintf("scenarios/%s/%s", digest, filepath.ToSlash(rel))
-		return client.Put(ctx, key, body)
+		return client.Put(ctx, fmt.Sprintf("scenarios/%s/%s", digest, filepath.ToSlash(rel)), body)
 	})
 	if err != nil {
 		return "", err
 	}
 	return digest, nil
+}
+
+// readScenarioSnapshotFile opens the path without following a final symlink,
+// then proves that the opened descriptor is the same regular file WalkDir
+// inspected. The descriptor check closes the inventory/read race without
+// trusting a second pathname lookup; the platform opener also avoids blocking
+// if the entry was replaced by a FIFO between those operations.
+func readScenarioSnapshotFile(source string, expected fs.FileInfo) ([]byte, error) {
+	f, err := openScenarioSnapshotFile(source)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	actual, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat opened file: %w", err)
+	}
+	if !actual.Mode().IsRegular() || !os.SameFile(expected, actual) {
+		return nil, fmt.Errorf("scenario entry changed after inventory")
+	}
+	body, err := io.ReadAll(f)
+	if err != nil {
+		return nil, fmt.Errorf("read opened file: %w", err)
+	}
+	return body, nil
 }
 
 // resolveGateSetPath resolves the local gate scenario list `farm push`
@@ -398,17 +486,10 @@ func resolveGateSetPath(scenariosDir, override string) (string, error) {
 	return abs, nil
 }
 
-// pushGateSet uploads the local gate scenario list at gateSetPath (resolved
-// by resolveGateSetPath) to "sets/<scenariosDigest>/gate.txt" — the bucket
-// location `farm run --set gate` reads on the farm host, which has no
-// checkout of this file (docs/spec-eval-farm.md §3.1 FM-17/FM-18). Keyed by
-// the scenario tree digest it was just pushed against, so a set list always
-// names ids that actually exist in that tree.
-func pushGateSet(ctx context.Context, client *farm.SinkClient, scenariosDigest, gateSetPath string) (key string, err error) {
-	body, err := os.ReadFile(gateSetPath)
-	if err != nil {
-		return "", fmt.Errorf("read %s: %w", gateSetPath, err)
-	}
+// pushGateSet writes the legacy sets/<scenariosDigest>/gate.txt compatibility
+// copy. New farm runs trust only boundGateSetFile inside the verified scenario
+// tree; this object remains for older binaries during rollout.
+func pushGateSet(ctx context.Context, client *farm.SinkClient, scenariosDigest string, body []byte) (key string, err error) {
 	key = fmt.Sprintf("sets/%s/gate.txt", scenariosDigest)
 	if err := client.Put(ctx, key, body); err != nil {
 		return "", err

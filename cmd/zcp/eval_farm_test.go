@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -70,8 +73,11 @@ func (f *fakeFarmS3) server() *httptest.Server {
 		defer f.mu.Unlock()
 		switch r.Method {
 		case http.MethodPut:
-			body := make([]byte, r.ContentLength)
-			_, _ = r.Body.Read(body)
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			f.objects[key] = body
 			w.WriteHeader(http.StatusOK)
 		case http.MethodGet:
@@ -541,6 +547,196 @@ func TestFarmPush_UploadsGateSetAndCurrentPointer(t *testing.T) {
 	}
 	if !strings.Contains(stdout, gateKey) {
 		t.Errorf("stdout = %q, want it to contain the gate-set key %q", stdout, gateKey)
+	}
+
+	digest := strings.TrimSuffix(strings.TrimPrefix(gateKey, "sets/"), "/gate.txt")
+	boundGateKey := "scenarios/" + digest + "/.farm-gate-set.txt"
+	fake.mu.Lock()
+	boundGate, hasBoundGate := fake.objects[boundGateKey]
+	fake.mu.Unlock()
+	if !hasBoundGate {
+		t.Fatalf("fake bucket has no digest-bound gate object %s", boundGateKey)
+	}
+	if string(boundGate) != string(wantGateSetBody) {
+		t.Errorf("digest-bound gate set = %q, want %q", boundGate, wantGateSetBody)
+	}
+
+	downloaded := t.TempDir()
+	fake.mu.Lock()
+	for key, body := range fake.objects {
+		prefix := "scenarios/" + digest + "/"
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		rel := strings.TrimPrefix(key, prefix)
+		path := filepath.Join(downloaded, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			fake.mu.Unlock()
+			t.Fatalf("MkdirAll downloaded scenario tree: %v", err)
+		}
+		if err := os.WriteFile(path, body, 0o600); err != nil {
+			fake.mu.Unlock()
+			t.Fatalf("write downloaded scenario tree: %v", err)
+		}
+	}
+	fake.mu.Unlock()
+	gotDigest, err := farm.TreeDigest(downloaded)
+	if err != nil {
+		t.Fatalf("TreeDigest(downloaded scenario tree): %v", err)
+	}
+	if gotDigest != digest {
+		t.Errorf("uploaded scenario tree digest = %s, printed/keyed digest = %s", gotDigest, digest)
+	}
+}
+
+func TestFarmPush_ScenarioTreeSkipsSymlinkOutsideRoot(t *testing.T) {
+	fake := newFakeFarmS3()
+	server := fake.server()
+	defer server.Close()
+	setFarmEnv(t, server.URL)
+
+	scenariosDir := t.TempDir()
+	scenarioBody := []byte("---\nid: scenario-a\n---\n")
+	if err := os.WriteFile(filepath.Join(scenariosDir, "scenario-a.md"), scenarioBody, 0o600); err != nil {
+		t.Fatalf("write scenario: %v", err)
+	}
+	canaryBody := []byte("outside-tree-canary-must-never-be-uploaded")
+	canaryPath := filepath.Join(t.TempDir(), "canary.txt")
+	if err := os.WriteFile(canaryPath, canaryBody, 0o600); err != nil {
+		t.Fatalf("write canary: %v", err)
+	}
+	if err := os.Symlink(canaryPath, filepath.Join(scenariosDir, "linked-canary.md")); err != nil {
+		t.Fatalf("symlink canary: %v", err)
+	}
+
+	cfg, err := farm.ConfigFromEnv()
+	if err != nil {
+		t.Fatalf("ConfigFromEnv: %v", err)
+	}
+	gateSet := []byte("scenario-a\n")
+	digest, err := pushScenarioTree(t.Context(), farm.NewSinkClient(cfg), scenariosDir, gateSet)
+	if err != nil {
+		t.Fatalf("pushScenarioTree: %v", err)
+	}
+
+	wantTree := t.TempDir()
+	if err := os.WriteFile(filepath.Join(wantTree, "scenario-a.md"), scenarioBody, 0o600); err != nil {
+		t.Fatalf("write expected scenario: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wantTree, boundGateSetFile), gateSet, 0o600); err != nil {
+		t.Fatalf("write expected gate set: %v", err)
+	}
+	wantDigest, err := farm.TreeDigest(wantTree)
+	if err != nil {
+		t.Fatalf("TreeDigest(expected tree): %v", err)
+	}
+	if digest != wantDigest {
+		t.Errorf("pushScenarioTree digest = %s, want regular-files-only digest %s", digest, wantDigest)
+	}
+
+	prefix := "scenarios/" + digest + "/"
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	for key, body := range fake.objects {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		if strings.HasSuffix(key, "/linked-canary.md") {
+			t.Errorf("pushScenarioTree uploaded symlink as %q", key)
+		}
+		if bytes.Contains(body, canaryBody) {
+			t.Errorf("pushScenarioTree uploaded outside-tree canary bytes as %q", key)
+		}
+	}
+}
+
+func TestFarmPush_ScenarioTreeSkipsSpecialFiles(t *testing.T) {
+	fake := newFakeFarmS3()
+	server := fake.server()
+	defer server.Close()
+	setFarmEnv(t, server.URL)
+
+	// Unix-domain sockets have a short platform path limit, so t.TempDir's
+	// test-name prefix is too long on macOS.
+	scenariosDir, err := os.MkdirTemp("", "zcp-farm-special-") //nolint:usetesting
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(scenariosDir) })
+	if err := os.WriteFile(filepath.Join(scenariosDir, "scenario-a.md"), []byte("scenario"), 0o600); err != nil {
+		t.Fatalf("write scenario: %v", err)
+	}
+	socketPath := filepath.Join(scenariosDir, "runner.sock")
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(t.Context(), "unix", socketPath)
+	if err != nil {
+		t.Skipf("Unix sockets are unavailable: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	cfg, err := farm.ConfigFromEnv()
+	if err != nil {
+		t.Fatalf("ConfigFromEnv: %v", err)
+	}
+	digest, err := pushScenarioTree(t.Context(), farm.NewSinkClient(cfg), scenariosDir, []byte("scenario-a\n"))
+	if err != nil {
+		t.Fatalf("pushScenarioTree with Unix socket: %v", err)
+	}
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if _, ok := fake.objects["scenarios/"+digest+"/runner.sock"]; ok {
+		t.Error("pushScenarioTree uploaded a Unix socket")
+	}
+}
+
+func TestReadScenarioSnapshotFile_RejectsEntryReplacement(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "scenario.md")
+	if err := os.WriteFile(source, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := os.Lstat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(source); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("replacement"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := readScenarioSnapshotFile(source, expected)
+	if err == nil {
+		t.Fatalf("readScenarioSnapshotFile accepted replacement inode with body %q", body)
+	}
+}
+
+func TestReadScenarioSnapshotFile_DoesNotFollowReplacementSymlink(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "scenario.md")
+	canary := filepath.Join(t.TempDir(), "outside.md")
+	if err := os.WriteFile(source, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(canary, []byte("outside-canary"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := os.Lstat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(source); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(canary, source); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	body, err := readScenarioSnapshotFile(source, expected)
+	if err == nil {
+		t.Fatalf("readScenarioSnapshotFile followed replacement symlink with body %q", body)
 	}
 }
 
