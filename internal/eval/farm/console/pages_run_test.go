@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"testing"
@@ -292,7 +293,7 @@ func TestPages_RunStepsHaveAnchorsAndFullText(t *testing.T) {
 	if !strings.Contains(body, "looking into it") {
 		t.Errorf("body missing step 2's agent text:\n%s", body)
 	}
-	if !strings.Contains(body, "zerops_discover") || !strings.Contains(body, `{&#34;project&#34;:&#34;p1&#34;}`) {
+	if !strings.Contains(body, "zerops_discover") || !strings.Contains(body, `&#34;project&#34;: &#34;p1&#34;`) {
 		t.Errorf("body missing step 3's full tool input:\n%s", body)
 	}
 	if !strings.Contains(body, "discovered ok") {
@@ -428,7 +429,7 @@ func TestPages_RunAgentCostDashWhenUnknown(t *testing.T) {
 	})
 
 	body := doGET(t, h, "/r/cost1-a").Body.String()
-	if !strings.Contains(body, "· — ·") && !strings.Contains(body, "· —</p>") {
+	if !strings.Contains(body, `<span title="Not recorded">—</span>`) {
 		t.Errorf("body missing the \"—\" unknown-cost marker:\n%s", body)
 	}
 	if strings.Contains(body, "$0.00") {
@@ -674,14 +675,14 @@ func TestPages_RunModelPickerLabelsAndPreselection(t *testing.T) {
 
 	body := doGET(t, h, "/r/mp1-a").Body.String()
 	for _, want := range []string{
-		`<button type="submit" name="model" value="claude-sonnet-5">Re-assess with Sonnet 5 (default)</button>`,
-		`<button type="submit" name="model" value="claude-fable-5-1">Re-assess with Fable 5.1 (strongest)</button>`,
+		`<button class="btn" type="submit" name="model" value="claude-sonnet-5">Re-assess with Sonnet 5 (default)</button>`,
+		`<button class="btn" type="submit" name="model" value="claude-fable-5-1">Re-assess with Fable 5.1 (strongest)</button>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing model button %q:\n%s", want, body)
 		}
 	}
-	if !strings.Contains(body, `<button type="submit" name="model" value="claude-opus-5" class="primary">Re-assess with Opus 5 (stronger)</button>`) {
+	if !strings.Contains(body, `<button class="btn btn-primary" type="submit" name="model" value="claude-opus-5">Re-assess with Opus 5 (stronger)</button>`) {
 		t.Errorf("body does not mark the current observation's model as the primary button:\n%s", body)
 	}
 }
@@ -1024,7 +1025,7 @@ func TestPages_RunFailedChecksTableStacksAndWrapsLongIDs(t *testing.T) {
 	}, true, map[string]string{"wr1-a": "failed"})
 
 	body := doGET(t, h, "/r/wr1-a").Body.String()
-	if !strings.Contains(body, `<table class="stack">`) {
+	if !strings.Contains(body, `<table class="table table-vcenter stack">`) {
 		t.Errorf("failed-checks table is not opted into table.stack:\n%s", body)
 	}
 	if !strings.Contains(body, `data-label="Check"`) || !strings.Contains(body, `data-label="Expected"`) ||
@@ -1110,5 +1111,147 @@ func TestPages_RunFailedChecksTableRewritesMonotonicClockText(t *testing.T) {
 	}
 	if strings.Contains(body, "m=+0.112197840") {
 		t.Errorf("body still shows the raw monotonic-clock suffix:\n%s", body)
+	}
+}
+
+// TestPages_RunEvidenceLinks_FilteredAndHistoricalResolve pins FM-51's
+// evidence identity contract at the HTTP boundary. A real step hidden by the
+// active filter links to the same assessment with only steps reset to all;
+// an invalid step is rendered as unavailable rather than as a dead fragment.
+func TestPages_RunEvidenceLinks_FilteredAndHistoricalResolve(t *testing.T) {
+	srv, store, _ := testServer(t)
+	seedBatch(t, store, "el1", "claude-sonnet-5", []runFixture{{
+		runID: "el1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", taskResult: "passed", done: true,
+	}}, true, map[string]string{"el1-a": "passed"})
+
+	old := buildFormat2Observation("el1-a", []observer.Finding{{
+		Severity: "medium", Owner: "zcp-tool", Title: "historical evidence", What: "the older assessment cites the agent step",
+		Evidence: []observer.Evidence{{Step: 2, Quote: "looking into it", Verified: true}, {Step: 99, Quote: "missing", Verified: false}},
+	}}, nil, true)
+	old.ObsID = "20260910T090000000Z-claude-sonnet-5"
+	old.CreatedAt = time.Date(2026, 9, 10, 9, 0, 0, 0, time.UTC)
+	old.Story.Stuck = &observer.Stuck{From: 2, To: 3, What: "investigating"}
+	seedObservation(t, store, old)
+
+	current := buildFormat2Observation("el1-a", []observer.Finding{{
+		Severity: "low", Owner: "agent", Title: "current evidence", What: "the current assessment cites the tool step",
+		Evidence: []observer.Evidence{{Step: 3, Quote: "discovered ok", Verified: true}},
+	}}, nil, true)
+	seedObservation(t, store, current)
+
+	path := "/r/el1-a?obs=" + url.QueryEscape(old.ObsID) + "&steps=errors"
+	rr := doGET(t, srv.Handler(), path)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET %s: got %d, want 200, body=%s", path, rr.Code, rr.Body.String())
+	}
+	body := html.UnescapeString(rr.Body.String())
+	wantBase := "/r/el1-a?obs=" + url.QueryEscape(old.ObsID) + "&steps=all"
+	for _, target := range []string{"s2", "s3"} {
+		want := `href="` + wantBase + `#` + target + `"`
+		if !strings.Contains(body, want) {
+			t.Errorf("filtered historical page missing canonical link %s:\n%s", want, body)
+		}
+		linked := doGET(t, srv.Handler(), wantBase)
+		if linked.Code != http.StatusOK || !strings.Contains(linked.Body.String(), `id="`+target+`"`) {
+			t.Errorf("canonical target %s does not resolve: status=%d", target, linked.Code)
+		}
+	}
+	if strings.Contains(body, `href="#s99"`) || strings.Contains(body, `#s99"`) {
+		t.Errorf("invalid step 99 rendered as a link:\n%s", body)
+	}
+	if !strings.Contains(body, "step 99 unavailable") {
+		t.Errorf("invalid step 99 lacks explicit unavailable text:\n%s", body)
+	}
+}
+
+// TestPages_RunFailedLatest_ProvenanceBeforeFallback pins the ordering and
+// inspectability of a failed current attempt when an older successful
+// assessment supplies the displayed narrative.
+func TestPages_RunFailedLatest_ProvenanceBeforeFallback(t *testing.T) {
+	srv, store, _ := testServer(t)
+	seedBatch(t, store, "fp1", "claude-sonnet-5", []runFixture{{
+		runID: "fp1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", taskResult: "passed", done: true,
+	}}, true, map[string]string{"fp1-a": "passed"})
+	older := observer.Observation{
+		FormatVersion: observer.ObservationFormat1, RunID: "fp1-a", ObsID: "20260910T090000000Z-claude-sonnet-5",
+		Model: "claude-sonnet-5", CreatedAt: time.Date(2026, 9, 10, 9, 0, 0, 0, time.UTC), Status: "ok",
+		Headline: "older successful assessment", Goal: observer.Goal{Reached: "yes"}, Checks: observer.Checks{Agree: true},
+	}
+	seedObservation(t, store, older)
+	failed := observer.Observation{
+		FormatVersion: observer.ObservationFormat1, RunID: "fp1-a", ObsID: "20260911T120000000Z-claude-opus-5",
+		Model: "claude-opus-5", CreatedAt: fixedNow(t)(), Status: "error", Error: "model process exited",
+	}
+	seedObservation(t, store, failed)
+
+	body := html.UnescapeString(doGET(t, srv.Handler(), "/r/fp1-a").Body.String())
+	failureAt := strings.Index(body, "The newest assessment")
+	headlineAt := strings.Index(body, older.Headline)
+	if failureAt < 0 || headlineAt < 0 || failureAt > headlineAt {
+		t.Fatalf("failed-current provenance must precede fallback headline: failure=%d headline=%d\n%s", failureAt, headlineAt, body)
+	}
+	wantInspect := `/r/fp1-a?obs=` + url.QueryEscape(failed.ObsID)
+	if !strings.Contains(body, `href="`+wantInspect+`"`) {
+		t.Errorf("failed attempt lacks exact inspection link %q:\n%s", wantInspect, body)
+	}
+	for _, want := range []string{"claude-opus-5", "11 Sep 2026, 12:00 UTC", "claude-sonnet-5", "10 Sep 2026, 09:00 UTC"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("provenance missing %q:\n%s", want, body)
+		}
+	}
+}
+
+// TestPages_RunVisibleSteps_CountsWithoutRenumbering pins the distinction
+// between canonical recorded step numbers and rows that are useful to show.
+func TestPages_RunVisibleSteps_CountsWithoutRenumbering(t *testing.T) {
+	srv, store, _ := testServer(t)
+	seedBatch(t, store, "vc1", "off", []runFixture{{
+		runID: "vc1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", taskResult: "passed", done: true,
+	}}, true, map[string]string{"vc1-a": "passed"})
+	transcript := strings.Join([]string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"assistant","message":{"content":[{"type":"thinking","thinking":""},{"type":"text","text":"visible answer"}]}}`,
+	}, "\n") + "\n"
+	store.putText(t, "runs/vc1-a/results/"+testResultsTS+"/a/transcript.jsonl", transcript)
+
+	all := doGET(t, srv.Handler(), "/r/vc1-a").Body.String()
+	if !strings.Contains(all, "3 recorded steps") || !strings.Contains(all, "2 visible") {
+		t.Errorf("page does not distinguish recorded and visible counts:\n%s", all)
+	}
+	if strings.Contains(all, `id="s2"`) || !strings.Contains(all, `id="s1"`) || !strings.Contains(all, `id="s3"`) {
+		t.Errorf("empty thinking row was not omitted with canonical numbering retained:\n%s", all)
+	}
+
+	filtered := html.UnescapeString(doGET(t, srv.Handler(), "/r/vc1-a?steps=errors").Body.String())
+	if !strings.Contains(filtered, "0 matching steps") {
+		t.Errorf("filtered empty state lacks its matching count:\n%s", filtered)
+	}
+	if !strings.Contains(filtered, `href="/r/vc1-a?steps=all"`) {
+		t.Errorf("filtered empty state lacks an All recovery link:\n%s", filtered)
+	}
+}
+
+// TestPages_RunJudgmentReason_KeyboardReadable pins that the reasoning behind
+// a check judgment is ordinary readable content, not a pointer-only tooltip.
+func TestPages_RunJudgmentReason_KeyboardReadable(t *testing.T) {
+	srv, store, _ := testServer(t)
+	seedBatch(t, store, "jr1", "claude-sonnet-5", []runFixture{{
+		runID: "jr1-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", taskResult: "failed", done: true,
+		checks: [][5]string{{"check/one", "failed", "READY", "FAILED", "service detail"}, {"check/two", "failed", "200", "503", "HTTP probe"}},
+	}}, true, map[string]string{"jr1-a": "failed"})
+	obs := buildFormat2Observation("jr1-a", nil, []observer.JudgedCheck{
+		{ID: "check/one", Correct: false, Why: "The readiness snapshot was stale."},
+		{ID: "check/two", Correct: true, Why: "The endpoint really returned 503."},
+	}, false)
+	seedObservation(t, store, obs)
+
+	body := html.UnescapeString(doGET(t, srv.Handler(), "/r/jr1-a").Body.String())
+	for _, reason := range []string{"The readiness snapshot was stale.", "The endpoint really returned 503."} {
+		if !strings.Contains(body, `<p class="judgment-reason">`+reason+`</p>`) {
+			t.Errorf("judgment reason is not visible keyboard-readable text: %q\n%s", reason, body)
+		}
+		if strings.Contains(body, `title="`+reason+`"`) {
+			t.Errorf("judgment reason remains tooltip-only: %q\n%s", reason, body)
+		}
 	}
 }

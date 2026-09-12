@@ -39,6 +39,8 @@ type runPageData struct {
 	DisplayedObs *observer.Observation
 	ViewingOlder bool
 	OutcomeText  string
+	Story        *storyView
+	SectionLinks []runSectionLinkView
 
 	// FailedNewestText is item 1 (FIX2)'s own banner: non-empty exactly
 	// when the run's current (newest) observation failed and an older ok
@@ -46,6 +48,7 @@ type runPageData struct {
 	// which asked for one exact version and gets exactly that) leaves the
 	// card's usual ViewingOlder banner as the only one that can render.
 	FailedNewestText string
+	FailedNewestHref string
 
 	Disputed     bool
 	DisputedWhy  string
@@ -85,8 +88,11 @@ type runPageData struct {
 
 	OlderObservations []olderObsView
 
-	Steps      []stepView
-	StepsError string
+	Steps            []stepView
+	StepsError       string
+	VisibleStepCount int
+	StepsFiltered    bool
+	StepsAllURL      string
 	// StepsSuppressed is item 2 (FIX2)'s own dedup: true when Steps failed
 	// to load for the exact same reason RecordError already said once —
 	// the section then renders neither a filter bar nor a second copy of
@@ -102,6 +108,11 @@ type runPageData struct {
 	// inside the "Run metadata & forensic view" disclosure — "" unless
 	// RecordError is set.
 	RecordErrorDetail string
+	EvidenceWarning   string
+}
+
+type runSectionLinkView struct {
+	Href, Label, Count string
 }
 
 // findingView is one Findings-section entry (§8.3 part 4): N is its
@@ -110,6 +121,22 @@ type runPageData struct {
 type findingView struct {
 	N int
 	observer.Finding
+	EvidenceViews []findingEvidenceView
+}
+
+type findingEvidenceView struct {
+	observer.Evidence
+	Target stepTargetView
+}
+
+type storyView struct {
+	Task, Expected, Did, Ending string
+	Stuck                       *stuckView
+}
+
+type stuckView struct {
+	From, To stepTargetView
+	What     string
 }
 
 // checkRowView is one Failed-and-blocked-checks row (§8.3 part 5): the
@@ -212,6 +239,7 @@ type olderObsView struct {
 	Outcome   string
 	Text      string
 	Href      string
+	Selected  bool
 }
 
 // toolErrorView is one "How the run ended" tool-error line.
@@ -219,6 +247,7 @@ type toolErrorView struct {
 	Step   int
 	Tool   string
 	Result string
+	Target stepTargetView
 }
 
 // stepCitation is one finding's evidence entry rendered inside the step it
@@ -235,6 +264,9 @@ type stepCitation struct {
 type stepView struct {
 	observer.Step
 	DecodedResult string
+	DisplayInput  string
+	DisplayResult string
+	Preview       string
 	Citations     []stepCitation
 }
 
@@ -305,7 +337,7 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	displayedObs, viewingOlder, failedNewestText, ok := resolveDisplayedObs(row, older, q)
+	displayedObs, viewingOlder, failedNewestText, failedNewestHref, ok := resolveDisplayedObs(row, older, q)
 	if !ok {
 		http.NotFound(w, r)
 		return
@@ -325,7 +357,8 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 		DisplayedObs:      displayedObs,
 		ViewingOlder:      viewingOlder,
 		FailedNewestText:  failedNewestText,
-		OlderObservations: buildOlderObsViews(runID, older),
+		FailedNewestHref:  failedNewestHref,
+		OlderObservations: buildOlderObsViews(runID, older, q.Obs),
 		ModelOptions:      buildModelOptions(preselectModel),
 	}
 	data.ShowAssessForm = row.DoneExists && !assessmentWorkUnavailable(row) && runDidWork(row) && !data.Meta.Observer.Hidden && !busy
@@ -348,6 +381,10 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 	if row.DoneExists {
 		s.populateRecordAndSteps(ctx, &data, runID, q, r.URL.Query(), displayedObs)
 	}
+	if data.FailedNewestHref != "" && row.Observation != nil {
+		data.FailedNewestHref = listURL("/r/"+runID, r.URL.Query(), map[string]string{"obs": row.Observation.ObsID})
+	}
+	data.SectionLinks = buildRunSectionLinks(data)
 
 	renderPage(w, "run", data)
 }
@@ -357,14 +394,14 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 // 404) plus item 1 (FIX2)'s own fallback: absent ?obs=, a failed current
 // observation is replaced by the newest ok one, with failedNewestText
 // naming the failed attempt for the banner above the substituted card.
-func resolveDisplayedObs(row RunRow, older []observer.Observation, q Query) (obs *observer.Observation, viewingOlder bool, failedNewestText string, ok bool) {
+func resolveDisplayedObs(row RunRow, older []observer.Observation, q Query) (obs *observer.Observation, viewingOlder bool, failedNewestText, failedNewestHref string, ok bool) {
 	if q.Obs != "" {
 		found, foundOK := findObservation(row, older, q.Obs)
 		if !foundOK {
-			return nil, false, "", false
+			return nil, false, "", "", false
 		}
 		viewingOlder = row.Observation == nil || found.ObsID != row.Observation.ObsID
-		return found, viewingOlder, "", true
+		return found, viewingOlder, "", "", true
 	}
 
 	obs = row.Observation
@@ -373,10 +410,11 @@ func resolveDisplayedObs(row RunRow, older []observer.Observation, q Query) (obs
 			failedNewestText = fmt.Sprintf("The newest assessment (%s, %s) failed: %s; showing %s, %s.",
 				fmtTime(obs.CreatedAt), obs.Model, assessmentFailureReason(obs),
 				fmtTime(okObs.CreatedAt), okObs.Model)
+			failedNewestHref = "/r/" + row.RunID + "?obs=" + url.QueryEscape(obs.ObsID)
 			obs = okObs
 		}
 	}
-	return obs, false, failedNewestText, true
+	return obs, false, failedNewestText, failedNewestHref, true
 }
 
 // populateAssessmentCard implements §8.3 part 3 (the Assessment card) and
@@ -434,14 +472,17 @@ func populateAssessmentCard(data *runPageData, row RunRow, displayedObs *observe
 // failure shares that exact root cause (StepsSuppressed).
 func (s *Server) populateRecordAndSteps(ctx context.Context, data *runPageData, runID string, q Query, rawQuery url.Values, displayedObs *observer.Observation) {
 	rawSteps, stepsErr := loadSteps(ctx, s.cfg.Store, runID)
+	targets := newStepTargetIndex(runID, rawQuery, nil, nil)
 
 	taskPrompt, selfReview, textsErr := loadRunTexts(ctx, s.cfg.Store, runID)
 	switch {
 	case textsErr != nil && isBundleNotFound(textsErr):
 		data.RecordError = bundleNotFoundSentence
+		data.EvidenceWarning = bundleNotFoundSentence
 		data.RecordErrorDetail = textsErr.Error()
 	case textsErr != nil:
 		data.RecordError = "record unavailable — " + textsErr.Error()
+		data.EvidenceWarning = data.RecordError
 		data.RecordErrorDetail = textsErr.Error()
 	default:
 		data.TaskPrompt, data.SelfReview = taskPrompt, selfReview
@@ -449,14 +490,25 @@ func (s *Server) populateRecordAndSteps(ctx context.Context, data *runPageData, 
 
 	switch {
 	case stepsErr == nil:
+		visibleSteps := visibleEvidenceSteps(rawSteps)
 		cited := map[int]bool{}
 		for _, n := range evidenceSteps(displayedObs) {
 			cited[n] = true
 		}
 		mode := stepsFilterMode(q)
-		filtered := FilterSteps(rawSteps, mode, cited)
+		filtered := FilterSteps(visibleSteps, mode, cited)
 		data.Steps = buildStepViews(filtered, buildStepCitations(data.Findings))
-		nav := buildListNav("/r/"+runID, runStepsListSpec(), q, rawQuery, stepsFilterCounts(rawSteps, cited), nil, stepsFilterLabeler)
+		data.VisibleStepCount = len(filtered)
+		data.StepsFiltered = mode != filterAll
+		data.StepsAllURL = listURL("/r/"+runID, rawQuery, map[string]string{"steps": filterAll})
+		targets = newStepTargetIndex(runID, rawQuery, visibleSteps, filtered)
+		// The run step choices are mutually exclusive views. The shared
+		// parser accepts the historic closed-filter syntax, but links from
+		// this page replace the view so choosing Errors while on Cited can
+		// never leave an inert "cited,errors" URL behind.
+		navSpec := runStepsListSpec()
+		navSpec.Closed[0].Single = true
+		nav := buildListNav("/r/"+runID, navSpec, q, rawQuery, stepsFilterCounts(visibleSteps, cited), nil, stepsFilterLabeler)
 		data.StepsFilters = nav.Filters
 		if !data.HasCard {
 			data.LastAgentMessage = lastAgentMessageText(rawSteps)
@@ -468,12 +520,61 @@ func (s *Server) populateRecordAndSteps(ctx context.Context, data *runPageData, 
 		data.StepsSuppressed = true
 	case isBundleNotFound(stepsErr):
 		data.StepsError = bundleNotFoundSentence
+		if data.EvidenceWarning == "" {
+			data.EvidenceWarning = bundleNotFoundSentence
+		}
 	default:
 		// §8.3: "a run with no done.json or no task prompt renders the
 		// header and its reason — never a 502" (live bug:
 		// /r/gate5-resume-after-compaction). A corrupt/partial bundle
 		// degrades this section instead of failing the whole page.
 		data.StepsError = "steps unavailable — " + stepsErr.Error()
+		if data.EvidenceWarning == "" {
+			data.EvidenceWarning = data.StepsError
+		}
+	}
+	populateEvidenceTargets(data, displayedObs, targets)
+	for i := range data.ToolErrors {
+		data.ToolErrors[i].Target = targets.target(data.ToolErrors[i].Step)
+	}
+}
+
+func buildRunSectionLinks(data runPageData) []runSectionLinkView {
+	links := make([]runSectionLinkView, 0, 6)
+	if data.Row.DoneExists {
+		links = append(links, runSectionLinkView{Href: "#automatic-checks", Label: "Automatic checks"})
+	}
+	links = append(links, runSectionLinkView{Href: "#observation", Label: "Assessment"})
+	if len(data.Findings) > 0 {
+		links = append(links, runSectionLinkView{Href: "#findings", Label: "Findings", Count: fmtInt(len(data.Findings))})
+	}
+	if len(data.CheckRows) > 0 {
+		links = append(links, runSectionLinkView{Href: "#failed-checks", Label: "Checks", Count: fmtInt(len(data.CheckRows))})
+	}
+	if data.Row.DoneExists {
+		links = append(links,
+			runSectionLinkView{Href: "#steps", Label: "Steps", Count: fmtInt(data.VisibleStepCount)},
+			runSectionLinkView{Href: "#record", Label: "Record"},
+		)
+	}
+	return links
+}
+
+func populateEvidenceTargets(data *runPageData, obs *observer.Observation, targets stepTargetIndex) {
+	for i := range data.Findings {
+		finding := &data.Findings[i]
+		finding.EvidenceViews = make([]findingEvidenceView, len(finding.Evidence))
+		for j, evidence := range finding.Evidence {
+			finding.EvidenceViews[j] = findingEvidenceView{Evidence: evidence, Target: targets.target(evidence.Step)}
+		}
+	}
+	if obs == nil || obs.Story == nil {
+		return
+	}
+	story := obs.Story
+	data.Story = &storyView{Task: story.Task, Expected: story.Expected, Did: story.Did, Ending: story.Ending}
+	if story.Stuck != nil {
+		data.Story.Stuck = &stuckView{From: targets.target(story.Stuck.From), To: targets.target(story.Stuck.To), What: story.Stuck.What}
 	}
 }
 
@@ -625,10 +726,10 @@ func buildCheckRows(failed []FailedCheck, judged []observer.JudgedCheck) []check
 // buildOlderObsViews renders row.OlderObsIDs' full documents (already
 // loaded) as the "earlier assessments" list: outcome and headline, or —
 // review finding — the failure text in its place, never an empty line.
-func buildOlderObsViews(runID string, older []observer.Observation) []olderObsView {
+func buildOlderObsViews(runID string, older []observer.Observation, selectedObsID string) []olderObsView {
 	out := make([]olderObsView, len(older))
 	for i := range older {
-		o := &older[i]
+		o := &older[len(older)-1-i]
 		text := o.Headline
 		outcome := o.EffectiveOutcome()
 		switch {
@@ -643,7 +744,8 @@ func buildOlderObsViews(runID string, older []observer.Observation) []olderObsVi
 		out[i] = olderObsView{
 			ObsID: o.ObsID, Model: o.Model, CreatedAt: o.CreatedAt,
 			Outcome: outcome, Text: text,
-			Href: "/r/" + runID + "?obs=" + url.QueryEscape(o.ObsID),
+			Href:     "/r/" + runID + "?obs=" + url.QueryEscape(o.ObsID),
+			Selected: o.ObsID == selectedObsID,
 		}
 	}
 	return out
@@ -721,7 +823,11 @@ func buildStepCitations(findings []findingView) map[int][]stepCitation {
 func buildStepViews(steps []observer.Step, citations map[int][]stepCitation) []stepView {
 	out := make([]stepView, len(steps))
 	for i, st := range steps {
-		out[i] = stepView{Step: st, DecodedResult: observer.DecodeJSONEscapes(st.ToolResultText), Citations: citations[st.N]}
+		decoded := observer.DecodeJSONEscapes(st.ToolResultText)
+		out[i] = stepView{
+			Step: st, DecodedResult: decoded, DisplayInput: displayToolInput(st.ToolInputJSON),
+			DisplayResult: displayToolResult(st.ToolResultText), Preview: decoded, Citations: citations[st.N],
+		}
 	}
 	return out
 }
