@@ -9,7 +9,12 @@ package console
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -289,6 +294,84 @@ func TestPages_BatchModelPickersUseLabeledButtons(t *testing.T) {
 			t.Errorf("Re-assess-all is missing a labeled model button:\n%s", body)
 		}
 	})
+}
+
+// The all=1 confirmation describes every eligible run, including those with
+// no assessment yet. Its count must agree with the action's public response;
+// incomplete, never-started and unreadable runs are outside that operation.
+func TestPages_BatchReassessAllCount_MatchesEnqueuedRuns(t *testing.T) {
+	cases := []struct {
+		name     string
+		total    int
+		assessed int
+	}{
+		{name: "one assessed and nine unassessed", total: 10, assessed: 1},
+		{name: "every eligible run already assessed", total: 3, assessed: 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			release := make(chan struct{})
+			q := NewQueue(func(context.Context, Job) error {
+				<-release
+				return nil
+			})
+			t.Cleanup(func() {
+				close(release)
+				if !wkEventually(t, func() bool {
+					queued, running := q.Stats()
+					return queued == 0 && running == 0
+				}) {
+					t.Error("assessment queue did not drain")
+				}
+			})
+			srv, store := newActionServer(t, actionServerOpts{queue: q})
+			now := fixedNow(t)()
+			runs := make([]runFixture, 0, tc.total+3)
+			for i := range tc.total {
+				id := fmt.Sprintf("count-a%d", i)
+				runs = append(runs, runFixture{runID: id, scenario: id, startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true})
+			}
+			runs = append(runs,
+				runFixture{runID: "count-running", scenario: "running", startedAt: now},
+				runFixture{runID: "count-never", scenario: "never", startedAt: now, done: true, neverStarted: true},
+				runFixture{runID: "count-unavailable", scenario: "unavailable", startedAt: now, durationS: "5s", costUsd: 0.1, taskResult: "passed", done: true},
+			)
+			seedBatch(t, store, "count", observer.DefaultModel, runs, false, nil)
+			store.putText(t, "runs/count-unavailable/results/"+testResultsTS+"/unavailable/meta.json", "{")
+			for i := range tc.assessed {
+				seedObservation(t, store, fixtureObservation(runs[i].runID))
+			}
+
+			page := doGET(t, srv.Handler(), "/b/count")
+			if page.Code != http.StatusOK {
+				t.Fatalf("batch page: status %d: %s", page.Code, page.Body.String())
+			}
+			counts := regexp.MustCompile(`Re-assess all (\d+) runs with`).FindAllStringSubmatch(page.Body.String(), -1)
+			if len(counts) != len(observer.Models) {
+				t.Fatalf("re-assess buttons = %d, want %d", len(counts), len(observer.Models))
+			}
+			response := doBearerPOST(t, srv.Handler(), "/b/count/observe", url.Values{"model": {observer.DefaultModel}, "all": {"1"}})
+			if response.Code != http.StatusAccepted {
+				t.Fatalf("re-assess all: status %d: %s", response.Code, response.Body.String())
+			}
+			var result actionResponseBody
+			if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+				t.Fatalf("decode action response: %v", err)
+			}
+			if len(result.Queued) != tc.total || len(result.Skipped) != 3 {
+				t.Fatalf("action queued %v, skipped %v; want %d eligible and 3 excluded runs", result.Queued, result.Skipped, tc.total)
+			}
+			for _, count := range counts {
+				advertised, err := strconv.Atoi(count[1])
+				if err != nil {
+					t.Fatalf("parse button count: %v", err)
+				}
+				if advertised != len(result.Queued) {
+					t.Errorf("button advertises %d runs, action queues %d", advertised, len(result.Queued))
+				}
+			}
+		})
+	}
 }
 
 // TestPages_BatchVsPreviousBatchLine pins item 1's "vs <previous batch of
