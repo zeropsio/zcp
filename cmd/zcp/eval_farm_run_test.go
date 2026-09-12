@@ -28,6 +28,30 @@ func envrForTest() *farm.EnvResolver {
 	return farm.NewEnvResolver(context.Background(), nil, "", os.Getenv)
 }
 
+func seedScenarioTree(t *testing.T, fake *statusFakeS3, files map[string][]byte) string {
+	t.Helper()
+	dir := t.TempDir()
+	for rel, body := range files {
+		path := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create scenario fixture directory: %v", err)
+		}
+		if err := os.WriteFile(path, body, 0o600); err != nil {
+			t.Fatalf("write scenario fixture %s: %v", rel, err)
+		}
+	}
+	digest, err := farm.TreeDigest(dir)
+	if err != nil {
+		t.Fatalf("digest scenario fixture: %v", err)
+	}
+	fake.mu.Lock()
+	for rel, body := range files {
+		fake.objects["scenarios/"+digest+"/"+rel] = body
+	}
+	fake.mu.Unlock()
+	return digest
+}
+
 func TestFarmRun_FinalizationFailure_PrintsRecoveryIDs(t *testing.T) {
 	stdout, stderr := captureOutput(t, func() {
 		printFarmRecoveryIDs([]farm.RunResult{{RunID: "batch-r1", ProjectID: "proj-123", LaunchTokenID: "tok-456"}})
@@ -141,9 +165,9 @@ func TestEvalFarmRun_IntegrationTokenPreflight_NamesTheFix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read fixture scenario: %v", err)
 	}
-	s3Fake.mu.Lock()
-	s3Fake.objects["scenarios/scen-sha/api-node-postgres-classic-dev.md"] = scenarioBody
-	s3Fake.mu.Unlock()
+	scenariosDigest := seedScenarioTree(t, s3Fake, map[string][]byte{
+		"api-node-postgres-classic-dev.md": scenarioBody,
+	})
 
 	t.Setenv("ZCP_FARM_ACCOUNT_TOKEN", "integration-token-value")
 	t.Setenv("ZCP_FARM_CLIENT_ID", clientID)
@@ -158,7 +182,7 @@ func TestEvalFarmRun_IntegrationTokenPreflight_NamesTheFix(t *testing.T) {
 	var exitCode int
 	_, stderr := captureOutput(t, func() {
 		exitCode = runFarmRun([]string{
-			"--candidate", "cand-sha", "--scenarios", "scen-sha", "--evaluator", "eval-sha", "--wrapper", "wrap-sha",
+			"--candidate", "cand-sha", "--scenarios", scenariosDigest, "--evaluator", "eval-sha", "--wrapper", "wrap-sha",
 			"--set", "api-node-postgres-classic-dev", "--batch", "batch-preflight-1",
 		}, envrForTest())
 	})
@@ -660,24 +684,23 @@ func TestFarmStatus_NoSummaryYet_ReportsRunning(t *testing.T) {
 	}
 }
 
-// TestFarmRun_SetGate_ReadsListFromBucket pins outcome 2 of the S15 brief:
-// `--set gate` reads the scenario id list from sets/<scenariosDigest>/gate.txt
-// in the bucket, never from eval/farm/gate-set.txt on disk — nothing is
-// staged to disk for this test.
-func TestFarmRun_SetGate_ReadsListFromBucket(t *testing.T) {
+// TestFarmRun_SetGate_ReadsDigestBoundListFromBucket pins that `--set gate`
+// reads the gate list embedded in the content-addressed scenario tree. The
+// farm host has no checkout, and an overwriteable legacy sets/<digest>/ key
+// cannot decide which scenarios a manifest with that digest runs.
+func TestFarmRun_SetGate_ReadsDigestBoundListFromBucket(t *testing.T) {
 	s3Srv, s3Fake := newStatusFakeS3ServerWithFake(t)
 	t.Setenv("ZCP_FARM_S3_URL", s3Srv.URL)
 	t.Setenv("ZCP_FARM_S3_BUCKET", "zcp-farm")
 	t.Setenv("ZCP_FARM_S3_KEY", "sink-key")
 	t.Setenv("ZCP_FARM_S3_SECRET", "sink-secret")
 
-	const digest = "scen-gate-1"
-	s3Fake.mu.Lock()
-	s3Fake.objects["sets/"+digest+"/gate.txt"] = []byte("scenario-a\nscenario-b\n\nscenario-c\n")
-	s3Fake.objects["scenarios/"+digest+"/scenario-a.md"] = bucketScenarioFixture(t, "scenario-a", "bootstrap")
-	s3Fake.objects["scenarios/"+digest+"/scenario-b.md"] = bucketScenarioFixture(t, "scenario-b", "bootstrap")
-	s3Fake.objects["scenarios/"+digest+"/scenario-c.md"] = bucketScenarioFixture(t, "scenario-c", "bootstrap")
-	s3Fake.mu.Unlock()
+	digest := seedScenarioTree(t, s3Fake, map[string][]byte{
+		".farm-gate-set.txt": []byte("scenario-a\nscenario-b\n\nscenario-c\n"),
+		"scenario-a.md":      bucketScenarioFixture(t, "scenario-a", "bootstrap"),
+		"scenario-b.md":      bucketScenarioFixture(t, "scenario-b", "bootstrap"),
+		"scenario-c.md":      bucketScenarioFixture(t, "scenario-c", "bootstrap"),
+	})
 
 	cfg, err := farm.ConfigFromEnv()
 	if err != nil {
@@ -705,6 +728,102 @@ func TestFarmRun_SetGate_ReadsListFromBucket(t *testing.T) {
 	}
 }
 
+func TestFarmRun_SetGate_OverwrittenBoundObjectFailsClosed(t *testing.T) {
+	s3Srv, s3Fake := newStatusFakeS3ServerWithFake(t)
+	t.Setenv("ZCP_FARM_S3_URL", s3Srv.URL)
+	t.Setenv("ZCP_FARM_S3_BUCKET", "zcp-farm")
+	t.Setenv("ZCP_FARM_S3_KEY", "sink-key")
+	t.Setenv("ZCP_FARM_S3_SECRET", "sink-secret")
+
+	digest := seedScenarioTree(t, s3Fake, map[string][]byte{
+		".farm-gate-set.txt": []byte("scenario-a\n"),
+		"scenario-a.md":      bucketScenarioFixture(t, "scenario-a", "bootstrap"),
+		"scenario-b.md":      bucketScenarioFixture(t, "scenario-b", "bootstrap"),
+	})
+	s3Fake.mu.Lock()
+	s3Fake.objects["scenarios/"+digest+"/.farm-gate-set.txt"] = []byte("scenario-b\n")
+	// A matching overwrite of the old mutable key must not make the forged
+	// gate list acceptable.
+	s3Fake.objects["sets/"+digest+"/gate.txt"] = []byte("scenario-b\n")
+	s3Fake.mu.Unlock()
+
+	cfg, err := farm.ConfigFromEnv()
+	if err != nil {
+		t.Fatalf("ConfigFromEnv: %v", err)
+	}
+	_, err = resolveScenarios(t.Context(), farm.NewSinkClient(cfg), "test-batch", digest, "gate")
+	if err == nil || !strings.Contains(err.Error(), "scenario tree digest mismatch") {
+		t.Fatalf("resolveScenarios error = %v, want fail-closed scenario tree digest mismatch", err)
+	}
+}
+
+func TestFarmRun_ScenarioObjectPathValidation(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{path: "scenario.md", want: true},
+		{path: "fixtures/app.yaml", want: true},
+		{path: "../escape.md"},
+		{path: "/absolute.md"},
+		{path: "nested/../../escape.md"},
+		{path: "nested//file.md"},
+		{path: `nested\escape.md`},
+	} {
+		if got := validScenarioObjectPath(tc.path); got != tc.want {
+			t.Errorf("validScenarioObjectPath(%q) = %t, want %t", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestFarmRun_ScenarioTraversalObjectFailsBeforeRead(t *testing.T) {
+	s3Srv, s3Fake := newStatusFakeS3ServerWithFake(t)
+	t.Setenv("ZCP_FARM_S3_URL", s3Srv.URL)
+	t.Setenv("ZCP_FARM_S3_BUCKET", "zcp-farm")
+	t.Setenv("ZCP_FARM_S3_KEY", "sink-key")
+	t.Setenv("ZCP_FARM_S3_SECRET", "sink-secret")
+
+	digest := seedScenarioTree(t, s3Fake, map[string][]byte{
+		"scenario-a.md": bucketScenarioFixture(t, "scenario-a", "bootstrap"),
+	})
+	s3Fake.mu.Lock()
+	s3Fake.objects["scenarios/"+digest+"/../outside.md"] = []byte("bucket-controlled\n")
+	s3Fake.mu.Unlock()
+
+	cfg, err := farm.ConfigFromEnv()
+	if err != nil {
+		t.Fatalf("ConfigFromEnv: %v", err)
+	}
+	_, err = resolveScenarios(t.Context(), farm.NewSinkClient(cfg), "test-batch", digest, "scenario-a")
+	if err == nil || !strings.Contains(err.Error(), "invalid scenario object key") {
+		t.Fatalf("resolveScenarios error = %v, want invalid scenario object key", err)
+	}
+}
+
+func TestFarmRun_SetGate_LegacyUnboundListFailsClosed(t *testing.T) {
+	s3Srv, s3Fake := newStatusFakeS3ServerWithFake(t)
+	t.Setenv("ZCP_FARM_S3_URL", s3Srv.URL)
+	t.Setenv("ZCP_FARM_S3_BUCKET", "zcp-farm")
+	t.Setenv("ZCP_FARM_S3_KEY", "sink-key")
+	t.Setenv("ZCP_FARM_S3_SECRET", "sink-secret")
+
+	digest := seedScenarioTree(t, s3Fake, map[string][]byte{
+		"scenario-a.md": bucketScenarioFixture(t, "scenario-a", "bootstrap"),
+	})
+	s3Fake.mu.Lock()
+	s3Fake.objects["sets/"+digest+"/gate.txt"] = []byte("scenario-a\n")
+	s3Fake.mu.Unlock()
+
+	cfg, err := farm.ConfigFromEnv()
+	if err != nil {
+		t.Fatalf("ConfigFromEnv: %v", err)
+	}
+	_, err = resolveScenarios(t.Context(), farm.NewSinkClient(cfg), "test-batch", digest, "gate")
+	if err == nil || !strings.Contains(err.Error(), "no digest-bound gate set") {
+		t.Fatalf("resolveScenarios error = %v, want fail-closed legacy gate diagnostic", err)
+	}
+}
+
 // TestFarmRun_LaunchFlag_FromBucketScenario pins outcome 2 of the S15 brief:
 // scenarioIsLaunch reads scenarios/<digest>/<id>.md from the bucket and
 // marks a scenario Launch when its front matter area starts with "launch"
@@ -717,10 +836,9 @@ func TestFarmRun_LaunchFlag_FromBucketScenario(t *testing.T) {
 	t.Setenv("ZCP_FARM_S3_KEY", "sink-key")
 	t.Setenv("ZCP_FARM_S3_SECRET", "sink-secret")
 
-	const digest = "scen-launch-1"
-	s3Fake.mu.Lock()
-	s3Fake.objects["scenarios/"+digest+"/launch-scenario.md"] = bucketScenarioFixture(t, "launch-scenario", "launch-production-recovery")
-	s3Fake.mu.Unlock()
+	digest := seedScenarioTree(t, s3Fake, map[string][]byte{
+		"launch-scenario.md": bucketScenarioFixture(t, "launch-scenario", "launch-production-recovery"),
+	})
 
 	cfg, err := farm.ConfigFromEnv()
 	if err != nil {
@@ -746,14 +864,14 @@ func TestFarmRun_ResolveScenario_UsesExactProductionTarget(t *testing.T) {
 	t.Setenv("ZCP_FARM_S3_BUCKET", "zcp-farm")
 	t.Setenv("ZCP_FARM_S3_KEY", "sink-key")
 	t.Setenv("ZCP_FARM_S3_SECRET", "sink-secret")
-	digest, batch, id := "scen-launch-target", "batch-launch-target", "launch-target"
+	batch, id := "batch-launch-target", "launch-target"
 	runID, err := farm.EncodeRunID(batch, id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s3Fake.mu.Lock()
-	s3Fake.objects["scenarios/"+digest+"/"+id+".md"] = fmt.Appendf(nil, "---\nid: %s\narea: launch\nseed: empty\nverification:\n  launchShape:\n    prodProject: %s\n---\nbody\n", id, farm.ProductionProjectName(runID))
-	s3Fake.mu.Unlock()
+	digest := seedScenarioTree(t, s3Fake, map[string][]byte{
+		id + ".md": fmt.Appendf(nil, "---\nid: %s\narea: launch\nseed: empty\nverification:\n  launchShape:\n    prodProject: %s\n---\nbody\n", id, farm.ProductionProjectName(runID)),
+	})
 	cfg, err := farm.ConfigFromEnv()
 	if err != nil {
 		t.Fatal(err)
@@ -914,10 +1032,9 @@ func TestEvalFarmRun_SIGTERM_EndsBatchByInterrupt(t *testing.T) {
 	restSrv := newHangingRunFakeAccountServer(t, clientID, runProjectName)
 	s3Srv, s3Fake := newStatusFakeS3ServerWithFake(t)
 
-	const digest = "scen-sigterm-1"
-	s3Fake.mu.Lock()
-	s3Fake.objects["scenarios/"+digest+"/"+scenarioID+".md"] = bucketScenarioFixture(t, scenarioID, "bootstrap")
-	s3Fake.mu.Unlock()
+	digest := seedScenarioTree(t, s3Fake, map[string][]byte{
+		scenarioID + ".md": bucketScenarioFixture(t, scenarioID, "bootstrap"),
+	})
 
 	t.Setenv("ZCP_FARM_ACCOUNT_TOKEN", "farm-account-token")
 	t.Setenv("ZCP_FARM_CLIENT_ID", clientID)

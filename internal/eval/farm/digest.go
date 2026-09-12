@@ -50,7 +50,11 @@ func TreeDigest(dir string) (string, error) {
 		if entry.IsDir() {
 			return nil
 		}
-		if entry.Type()&fs.ModeSymlink != 0 {
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("inspect %s: %w", path, err)
+		}
+		if !info.Mode().IsRegular() {
 			return nil
 		}
 		rel, err := filepath.Rel(dir, path)
