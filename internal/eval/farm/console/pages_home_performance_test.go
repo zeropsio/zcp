@@ -3,10 +3,33 @@ package console
 import (
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestHome_SnapshotPreservesProblemInputOrder(t *testing.T) {
+	srv, store, _ := testServer(t)
+	now := fixedNow(t)()
+	for i, batch := range []string{"snapshot-a", "snapshot-b"} {
+		seedBatchAt(t, store, batch, ObserverOff, now.Add(-time.Duration(2-i)*time.Hour), []runFixture{
+			{runID: batch + "-z", scenario: "z", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.1, done: true},
+			{runID: batch + "-a", scenario: "a", startedAt: now.Add(-time.Hour), durationS: "5s", costUsd: 0.1, done: true},
+		}, false, nil)
+	}
+	want, err := srv.allProblemsRuns(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := loadBatchSnapshot(t.Context(), srv.cfg.Store, srv.cfg.ObserverDisabled, srv.queueState, srv.runCache, srv.summaryCache, srv.logf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(snapshot.problemsRuns(), want) {
+		t.Fatal("overview snapshot changed the full-history problem inputs or their tie-breaking order")
+	}
+}
 
 // A warm overview must resolve each batch once even though its rows feed
 // the table, latest/previous comparison, and full-history problem summary.
