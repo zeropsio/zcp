@@ -302,9 +302,18 @@ Wrapper steps, in order:
    stay under `$RUNDIR`, siblings of the results dir rather than the work
    dir (`cmd/zcp/eval_behavioral.go` `buildExecutionBinding`);
 5. at exit — success, failure, max-turns, or signal, via a trap that fires
-   regardless of exit path — redact (§1.3) and upload
+   regardless of exit path — first terminate the complete evaluator process
+   tree, including descendants that created a new process group or session,
+   then redact (§1.3) and upload
    `runs/<runId>/results/` then `runs/<runId>/capture/` (the `capture-<id>/`
    window inside it), then write `done.json` last (FM-3, FM-4).
+
+On Linux the wrapper supervisor is a child subreaper, so descendants orphaned
+by evaluator exit remain kernel-bound to that exact supervisor even after
+`setsid(2)`. Cleanup signals only those adopted children and verifies that no
+live child remains before redaction. If subreaper setup or that verification is
+unavailable, the wrapper publishes no evidence parts and no `done.json`; the
+run remains the explicit `blocked: no bundle` outcome.
 
 The trap's reentrancy guard is local to its supervisor process. A durable
 successful-upload marker is written only after the uploads and final

@@ -1106,6 +1106,12 @@ func TestWrapper_NormalExit_NewSessionDescendantCannotWriteAfterDone(t *testing.
 
 	h := newWrapperHarness(t)
 	cmd := h.start(t, map[string]string{"STUB_MODE": "escape-session"})
+	escapedPID := readPIDFile(t, filepath.Join(h.rundir, "escaped-session.pid"), 10*time.Second)
+	t.Cleanup(func() {
+		// The RED implementation leaves a real session leader behind. Kill its
+		// exact process group so a failing regression test never leaks it.
+		_ = syscall.Kill(-escapedPID, syscall.SIGKILL)
+	})
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("supervisor exited with error: %v", err)
 	}
@@ -1113,17 +1119,11 @@ func TestWrapper_NormalExit_NewSessionDescendantCannotWriteAfterDone(t *testing.
 	if _, ok := waitForS3Key(h.fake, "runs/"+h.runID+"/done.json", 10*time.Second); !ok {
 		t.Fatal("done.json never appeared")
 	}
-	escapedPID := readPIDFile(t, filepath.Join(h.rundir, "escaped-session.pid"), time.Second)
 	writesPath := filepath.Join(h.rundir, "escaped-session-writes")
 	before, err := os.Stat(writesPath)
 	if err != nil {
 		t.Fatalf("stat escaped-session-writes before stability check: %v", err)
 	}
-	t.Cleanup(func() {
-		// The RED implementation leaves a real session leader behind. Kill its
-		// exact process group so a failing regression test never leaks it.
-		_ = syscall.Kill(-escapedPID, syscall.SIGKILL)
-	})
 	time.Sleep(200 * time.Millisecond)
 	after, err := os.Stat(writesPath)
 	if err != nil {
