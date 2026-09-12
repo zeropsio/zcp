@@ -185,6 +185,54 @@ func TestFarmGC_DuplicateProjectOwnershipIsExempt(t *testing.T) {
 	}
 }
 
+// A running owner's manifest must not disappear from the index merely
+// because its invalid JSON value still decodes into a Go struct. Otherwise
+// the finished owner of the same project can make live work deletable.
+func TestFarmGC_InvalidManifestIdentity_NeverDeletes(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "null", body: `null`},
+		{name: "empty object", body: `{}`},
+		{name: "missing batch", body: `{"runs":[{"runId":"shared-run","projectName":"zcp-farm-shared-run"}]}`},
+		{name: "mismatched batch", body: `{"batch":"other-batch","runs":[{"runId":"shared-run","projectName":"zcp-farm-shared-run"}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			const clientID = "client-invalid-manifest"
+			f := newControllerFixture(t, clientID)
+			projectIDs := []string{
+				f.account.seedProject(ProjectPrefix + "shared-run"),
+				f.account.seedProject(ProjectPrefix + "other-run"),
+			}
+			seedFinishedBatch(t, f.sink, "batch-a-finished", "shared-run", true)
+			seedFinishedBatch(t, f.sink, "batch-b-finished", "other-run", true)
+			seedRunningBatch(t, f.sink, "batch-z-running", "shared-run")
+			if err := f.sink.Put(t.Context(), "batches/batch-z-running/manifest.json", []byte(tc.body)); err != nil {
+				t.Fatalf("Put invalid manifest: %v", err)
+			}
+
+			candidates, err := GC(t.Context(), f.client, f.sink, GCOptions{ClientID: clientID})
+			if err == nil || !strings.Contains(err.Error(), "batch-z-running manifest") {
+				t.Errorf("GC error = %v, want invalid manifest identity to stop classification", err)
+			}
+			if len(candidates) != 0 {
+				t.Errorf("GC candidates = %+v, want no partial candidate list", candidates)
+			}
+			if errs := GCApply(t.Context(), f.client, candidates); len(errs) != 0 {
+				t.Fatalf("GCApply errors: %v", errs)
+			}
+			for _, projectID := range projectIDs {
+				if n := f.account.countMethod(http.MethodDelete, "/api/rest/public/project/"+projectID); n != 0 {
+					t.Errorf("DELETE calls for %s = %d, want none with invalid manifest", projectID, n)
+				}
+			}
+		})
+	}
+}
+
 // TestFarmGC_UnreadableSummaryNeverBecomesDeletionCandidate pins the
 // destructive boundary: the existence of summary.json does not prove a batch
 // finished safely when that document cannot be read. GC must stop with an

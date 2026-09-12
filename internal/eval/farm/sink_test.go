@@ -203,6 +203,65 @@ func TestSinkClient_PutGetList_RoundTripAgainstFake(t *testing.T) {
 	}
 }
 
+// An incomplete listing must return neither keys nor deletion candidates:
+// a running batch on the missing page may own a finished batch's project.
+func TestSinkList_TruncatedWithoutToken_PreventsGCDeletion(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name         string
+		tokenElement string
+	}{
+		{name: "missing token"},
+		{name: "empty token", tokenElement: "<NextContinuationToken></NextContinuationToken>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			const clientID = "client-gc-incomplete-list"
+			f := newControllerFixture(t, clientID)
+			projectID := f.account.seedProject(ProjectPrefix + "shared-run")
+			seedFinishedBatch(t, f.sink, "batch-a-finished", "shared-run", true)
+			seedRunningBatch(t, f.sink, "batch-z-running", "shared-run")
+
+			handler := f.s3.handler(t)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/"+fakeS3Bucket || r.URL.Query().Get("prefix") != "batches/" {
+					handler(w, r)
+					return
+				}
+				w.Header().Set("Content-Type", "application/xml")
+				if r.URL.Query().Get("continuation-token") == "" {
+					fmt.Fprint(w, "<ListBucketResult><Contents><Key>batches/batch-a-finished/manifest.json</Key></Contents><IsTruncated>true</IsTruncated><NextContinuationToken>page-2</NextContinuationToken></ListBucketResult>")
+					return
+				}
+				fmt.Fprintf(w, "<ListBucketResult><Contents><Key>batches/batch-a-finished/summary.json</Key></Contents><IsTruncated>true</IsTruncated>%s</ListBucketResult>", tc.tokenElement)
+			}))
+			t.Cleanup(srv.Close)
+			sink := NewSinkClient(Config{URL: srv.URL, Bucket: fakeS3Bucket, Key: "sink-key", Secret: "sink-secret"})
+
+			keys, err := sink.List(t.Context(), "batches/")
+			if err == nil || !strings.Contains(err.Error(), "continuation token") {
+				t.Errorf("List error = %v, want missing continuation token", err)
+			}
+			if len(keys) != 0 {
+				t.Errorf("List keys = %v, want no partial listing", keys)
+			}
+			candidates, err := GC(t.Context(), f.client, sink, GCOptions{ClientID: clientID})
+			if err == nil || !strings.Contains(err.Error(), "index batches") {
+				t.Errorf("GC error = %v, want incomplete listing to stop classification", err)
+			}
+			if len(candidates) != 0 {
+				t.Errorf("GC candidates = %+v, want no partial candidate list", candidates)
+			}
+			if errs := GCApply(t.Context(), f.client, candidates); len(errs) != 0 {
+				t.Fatalf("GCApply errors: %v", errs)
+			}
+			if n := f.account.countMethod(http.MethodDelete, "/api/rest/public/project/"+projectID); n != 0 {
+				t.Errorf("DELETE calls = %d, want none with incomplete listing", n)
+			}
+		})
+	}
+}
+
 // TestSinkList_NonOKStatus_NamesBody pins R10d: before the fix, List read
 // the response body (for the success-path XML parse) before ever checking
 // the status code, so by the time statusError ran its own read on a non-2xx
