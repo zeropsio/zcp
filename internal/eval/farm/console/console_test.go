@@ -67,6 +67,18 @@ func (f *fakeStore) Put(_ context.Context, key string, body []byte) error {
 	return nil
 }
 
+func (f *fakeStore) PutIfAbsent(_ context.Context, key string, body []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, exists := f.objects[key]; exists {
+		return farm.ErrObjectExists
+	}
+	stored := make([]byte, len(body))
+	copy(stored, body)
+	f.objects[key] = stored
+	return nil
+}
+
 func (f *fakeStore) Head(_ context.Context, key string) (bool, int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -291,7 +303,7 @@ func fixtureTranscript() string {
 // it is retrievable through the same path production code uses.
 func seedObservation(t *testing.T, store *fakeStore, obs observer.Observation) {
 	t.Helper()
-	if err := observer.NewStore(store).PutObservation(context.Background(), obs.RunID, obs); err != nil {
+	if err := observer.NewWritableStore(store).PutObservation(context.Background(), obs.RunID, obs); err != nil {
 		t.Fatalf("seed observation: %v", err)
 	}
 }

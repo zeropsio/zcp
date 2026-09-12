@@ -11,15 +11,23 @@ import (
 	"github.com/zeropsio/zcp/internal/eval/farm"
 )
 
-// ObjectStore is the bucket seam Store needs — satisfied by *farm.SinkClient
-// (Get/Put/Head/List) and, in tests, by an in-memory fake. Kept as a small
+// ObjectStore is the bucket read seam Store needs — satisfied by
+// *farm.SinkClient and, in tests, by an in-memory fake. Kept as a small
 // interface here (rather than importing the farm package's own SinkClient
 // type into every call site) so tests never need a real HTTP server.
 type ObjectStore interface {
 	Get(ctx context.Context, key string) ([]byte, error)
-	Put(ctx context.Context, key string, body []byte) error
 	Head(ctx context.Context, key string) (exists bool, size int64, err error)
 	List(ctx context.Context, prefix string) ([]string, error)
+}
+
+// AtomicObjectStore adds the conditional create required to write immutable
+// observation documents. Keeping it separate lets read-only Store callers use
+// the smaller ObjectStore seam, while NewWritableStore enforces the stronger
+// capability at compile time for every writer.
+type AtomicObjectStore interface {
+	ObjectStore
+	PutIfAbsent(ctx context.Context, key string, body []byte) error
 }
 
 var (
@@ -29,22 +37,34 @@ var (
 	// ErrKeyOutsidePrefix is returned when a key falls outside
 	// runs/<runId>/observer/ (docs/spec-eval-farm.md §7.6 FM-47).
 	ErrKeyOutsidePrefix = errors.New("observer: key outside runs/<runId>/observer/ prefix")
-	// ErrObservationExists is returned by Store.PutObservation when the
+	// ErrObservationExists is returned by WritableStore.PutObservation when the
 	// target key already has an object (docs/spec-eval-farm.md §7.5: "the
 	// store never overwrites an existing observation key").
 	ErrObservationExists = errors.New("observer: observation already exists")
 )
 
-// Store reads and writes observations in the farm bucket, restricted to
+// Store reads observations in the farm bucket, restricted to
 // runs/<runId>/observer/ (docs/spec-eval-farm.md §7.5, §7.6 FM-47).
 type Store struct {
 	client ObjectStore
+}
+
+// WritableStore is a Store whose client can atomically create an observation.
+type WritableStore struct {
+	*Store
+	writer AtomicObjectStore
 }
 
 // NewStore returns a Store backed by client (a *farm.SinkClient in
 // production).
 func NewStore(client ObjectStore) *Store {
 	return &Store{client: client}
+}
+
+// NewWritableStore returns a Store that can write immutable observations with
+// one conditional request.
+func NewWritableStore(client AtomicObjectStore) *WritableStore {
+	return &WritableStore{Store: NewStore(client), writer: client}
 }
 
 // observerPrefix returns "runs/<runId>/observer/", after checking runID
@@ -79,10 +99,11 @@ func validateObserverKey(runID, key string) error {
 }
 
 // PutObservation stores obs at runs/<runId>/observer/<obs.ObsID>.json,
-// refusing to overwrite an existing observation (Head before Put, §7.5) and
+// refusing to overwrite an existing observation through one atomic conditional
+// create (§7.5) and
 // refusing any key outside the observer prefix before any network call
 // (§7.6 FM-47).
-func (s *Store) PutObservation(ctx context.Context, runID string, obs Observation) error {
+func (s *WritableStore) PutObservation(ctx context.Context, runID string, obs Observation) error {
 	if obs.ObsID == "" {
 		return fmt.Errorf("%w: empty observation id", ErrKeyOutsidePrefix)
 	}
@@ -91,20 +112,15 @@ func (s *Store) PutObservation(ctx context.Context, runID string, obs Observatio
 		return err
 	}
 
-	exists, _, err := s.client.Head(ctx, key)
-	if err != nil {
-		return fmt.Errorf("observer: head %s: %w", key, err)
-	}
-	if exists {
-		return fmt.Errorf("%w: %s", ErrObservationExists, key)
-	}
-
 	body, err := json.Marshal(obs)
 	if err != nil {
 		return fmt.Errorf("observer: marshal observation: %w", err)
 	}
-	if err := s.client.Put(ctx, key, body); err != nil {
-		return fmt.Errorf("observer: put %s: %w", key, err)
+	if err := s.writer.PutIfAbsent(ctx, key, body); err != nil {
+		if errors.Is(err, farm.ErrObjectExists) {
+			return fmt.Errorf("%w: %s", ErrObservationExists, key)
+		}
+		return fmt.Errorf("observer: conditional put %s: %w", key, err)
 	}
 	return nil
 }
