@@ -2,6 +2,7 @@ package observer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -39,6 +40,18 @@ func (f *fakeObjectStore) Get(_ context.Context, key string) ([]byte, error) {
 func (f *fakeObjectStore) Put(_ context.Context, key string, body []byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	stored := make([]byte, len(body))
+	copy(stored, body)
+	f.objects[key] = stored
+	return nil
+}
+
+func (f *fakeObjectStore) PutIfAbsent(_ context.Context, key string, body []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, exists := f.objects[key]; exists {
+		return farm.ErrObjectExists
+	}
 	stored := make([]byte, len(body))
 	copy(stored, body)
 	f.objects[key] = stored
@@ -118,7 +131,7 @@ func TestStore_RefusesOverwrite(t *testing.T) {
 	t.Parallel()
 
 	fake := newFakeObjectStore()
-	store := NewStore(fake)
+	store := NewWritableStore(fake)
 	ctx := context.Background()
 	const runID = "final1"
 
@@ -128,8 +141,8 @@ func TestStore_RefusesOverwrite(t *testing.T) {
 	}
 
 	second := Observation{FormatVersion: ObservationFormat1, RunID: runID, ObsID: first.ObsID, Headline: "second"}
-	if err := store.PutObservation(ctx, runID, second); err == nil {
-		t.Fatal("second PutObservation = nil error, want a refusal (FM-45: never overwrites)")
+	if err := store.PutObservation(ctx, runID, second); !errors.Is(err, ErrObservationExists) {
+		t.Fatalf("second PutObservation error = %v, want ErrObservationExists (FM-45: never overwrites)", err)
 	}
 
 	key := "runs/" + runID + "/observer/" + first.ObsID + ".json"
@@ -142,6 +155,101 @@ func TestStore_RefusesOverwrite(t *testing.T) {
 	}
 }
 
+// barrierObjectStore forces two creates of one observation key to finish
+// their existence check before either write can start. A HEAD-then-PUT
+// implementation therefore overwrites; an atomic conditional create permits
+// exactly one writer.
+type barrierObjectStore struct {
+	*fakeObjectStore
+	heads   sync.WaitGroup
+	release chan struct{}
+}
+
+func newBarrierObjectStore() *barrierObjectStore {
+	store := &barrierObjectStore{
+		fakeObjectStore: newFakeObjectStore(),
+		release:         make(chan struct{}),
+	}
+	store.heads.Add(2)
+	return store
+}
+
+func (s *barrierObjectStore) Head(_ context.Context, _ string) (bool, int64, error) {
+	s.heads.Done()
+	<-s.release
+	return false, 0, nil
+}
+
+// TestStore_ConcurrentCreateIsAtomic pins FM-45 under concurrency: two
+// writers racing for the same immutable observation key produce one success,
+// one ErrObservationExists, and one intact document from the winner.
+func TestStore_ConcurrentCreateIsAtomic(t *testing.T) {
+	t.Parallel()
+
+	fake := newBarrierObjectStore()
+	store := NewWritableStore(fake)
+	const runID = "atomic1"
+	const obsID = "20260912T100000000Z-claude-sonnet-5"
+
+	errs := make(chan error, 2)
+	for _, headline := range []string{"first", "second"} {
+		go func() {
+			errs <- store.PutObservation(context.Background(), runID, Observation{
+				FormatVersion: ObservationFormat1,
+				RunID:         runID,
+				ObsID:         obsID,
+				Headline:      headline,
+			})
+		}()
+	}
+	headsDone := make(chan struct{})
+	go func() {
+		fake.heads.Wait()
+		close(headsDone)
+	}()
+	results := make([]error, 0, 2)
+	select {
+	case <-headsDone:
+		// The old implementation reached both HEAD calls and is blocked until
+		// release, making its check-then-write race deterministic.
+	case err := <-errs:
+		// A conditional-create implementation can finish without calling Head.
+		// Balance the test-only barrier so its waiter exits too.
+		results = append(results, err)
+		fake.heads.Done()
+		fake.heads.Done()
+	}
+	close(fake.release)
+
+	successes := 0
+	existsErrors := 0
+	for len(results) < 2 {
+		results = append(results, <-errs)
+	}
+	for _, err := range results {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrObservationExists):
+			existsErrors++
+		default:
+			t.Fatalf("PutObservation error = %v, want nil or ErrObservationExists", err)
+		}
+	}
+	if successes != 1 || existsErrors != 1 {
+		t.Fatalf("concurrent creates: successes=%d exists-errors=%d, want 1 and 1", successes, existsErrors)
+	}
+
+	key := "runs/" + runID + "/observer/" + obsID + ".json"
+	body, err := fake.Get(context.Background(), key)
+	if err != nil {
+		t.Fatalf("Get winner: %v", err)
+	}
+	if got := strings.Count(string(body), `"headline":"first"`) + strings.Count(string(body), `"headline":"second"`); got != 1 {
+		t.Errorf("stored observation = %s, want exactly one intact contender", body)
+	}
+}
+
 // TestStore_CurrentIsNewestObsID pins §7.5: "the newest obsId is the run's
 // current observation" — CurrentObservation returns the lexicographically
 // last obsId (obsId's leading fixed-width UTC timestamp sorts
@@ -150,7 +258,7 @@ func TestStore_CurrentIsNewestObsID(t *testing.T) {
 	t.Parallel()
 
 	fake := newFakeObjectStore()
-	store := NewStore(fake)
+	store := NewWritableStore(fake)
 	ctx := context.Background()
 	const runID = "final1"
 
@@ -203,7 +311,7 @@ func TestStore_PutThenGetRoundTrips(t *testing.T) {
 	t.Parallel()
 
 	fake := newFakeObjectStore()
-	store := NewStore(fake)
+	store := NewWritableStore(fake)
 	ctx := context.Background()
 	const runID = "final1-recover-failed-buildfromgit-missing-dep"
 

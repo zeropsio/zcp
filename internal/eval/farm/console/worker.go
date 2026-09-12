@@ -265,7 +265,7 @@ type BucketReader interface {
 	List(ctx context.Context, prefix string) ([]string, error)
 	Get(ctx context.Context, key string) ([]byte, error)
 	Head(ctx context.Context, key string) (exists bool, size int64, err error)
-	Put(ctx context.Context, key string, body []byte) error
+	PutIfAbsent(ctx context.Context, key string, body []byte) error
 }
 
 // BucketObserveConfig carries NewBucketObserveFunc's fixed inputs: the
@@ -313,7 +313,7 @@ func NewBucketObserveFunc(bucket BucketReader, cfg BucketObserveConfig) ObserveF
 			Source:      job.Source,
 		})
 
-		store := observer.NewStore(bucket)
+		store := observer.NewWritableStore(bucket)
 		if err := store.PutObservation(ctx, job.RunID, obs); err != nil {
 			return fmt.Errorf("console: store observation for %s: %w", job.RunID, err)
 		}

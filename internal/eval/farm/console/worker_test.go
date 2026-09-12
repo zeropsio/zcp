@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/eval/farm"
 	"github.com/zeropsio/zcp/internal/eval/farm/observer"
 )
 
@@ -62,6 +63,16 @@ func (b *wkFakeBucket) Get(_ context.Context, key string) ([]byte, error) {
 func (b *wkFakeBucket) Put(_ context.Context, key string, body []byte) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.objects[key] = body
+	return nil
+}
+
+func (b *wkFakeBucket) PutIfAbsent(_ context.Context, key string, body []byte) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, exists := b.objects[key]; exists {
+		return farm.ErrObjectExists
+	}
 	b.objects[key] = body
 	return nil
 }
