@@ -2075,6 +2075,44 @@ func (c failLaunchRevokeClient) RevokeIntegrationToken(context.Context, string, 
 	return errors.New("simulated revoke failure")
 }
 
+type failProjectListClient struct{ PlatformClient }
+
+func (c failProjectListClient) ListProjects(context.Context, string) ([]platform.Project, error) {
+	return nil, errors.New("simulated project list outage")
+}
+
+func TestFinalizeActiveRun_ProductionListFailureIsCleanupError(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-production-list-failure"
+	f := newControllerFixture(t, clientID)
+	batch, scenario := "batch-production-list-failure", "launch"
+	runID := testRunID(t, batch, scenario)
+	primaryID := f.account.seedProject(ProjectPrefix + runID)
+	productionName := productionProjectName(runID)
+	f.account.seedProject(productionName)
+	seedSettledRun(t, f.s3, runID, scenario, ResultPassed)
+
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	a := activeRun{
+		scheduledRun: scheduledRun{ScenarioRun: ScenarioRun{ID: scenario, Launch: true}, RunID: runID},
+		ProjectID:    primaryID, ProductionProjectName: productionName, Deadline: now.Add(time.Minute),
+	}
+	rr, _, _, err := finalizeActiveRun(context.Background(), failProjectListClient{PlatformClient: f.client}, f.sink, a, RunOptions{
+		ClientID: clientID, CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha",
+	}, func() time.Time { return now }, time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "list production project") || !strings.Contains(err.Error(), "simulated project list outage") {
+		t.Fatalf("finalizeActiveRun error = %v, want production-list cleanup failure", err)
+	}
+	if rr.ProductionProjectName != productionName {
+		t.Fatalf("result production recovery identity = %q, want %q", rr.ProductionProjectName, productionName)
+	}
+	f.account.mu.Lock()
+	defer f.account.mu.Unlock()
+	if !findProjectByFakeName(f.account, productionName) {
+		t.Fatalf("production project %q disappeared despite failed lookup", productionName)
+	}
+}
+
 func TestRunBatch_RollbackFailure_RetainsRecoveryIDs(t *testing.T) {
 	t.Parallel()
 	f := newControllerFixture(t, "client-s4-recovery-ids")

@@ -2,6 +2,7 @@ package farm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -214,17 +215,24 @@ func RevokeOrphanedLaunchTokens(ctx context.Context, client PlatformClient, sink
 	if err != nil {
 		return fmt.Errorf("farm gc: list batches: %w", err)
 	}
+	var cleanupErrs []error
 	for _, batch := range batches {
 		finished, err := SummaryExists(ctx, sink, batch)
-		if err != nil || !finished {
+		if err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("farm gc: inspect batch %s summary: %w", batch, err))
+			continue
+		}
+		if !finished {
 			continue
 		}
 		summary, err := GetSummary(ctx, sink, batch)
 		if err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("farm gc: read batch %s summary: %w", batch, err))
 			continue
 		}
 		manifest, err := GetManifest(ctx, sink, batch)
 		if err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("farm gc: read batch %s manifest: %w", batch, err))
 			continue
 		}
 		summaryRunCounts := make(map[string]int, len(summary.Runs))
@@ -253,8 +261,10 @@ func RevokeOrphanedLaunchTokens(ctx context.Context, client PlatformClient, sink
 			if liveNames[runName] || liveNames[productionName] {
 				continue // still has a project — not this pass's job
 			}
-			_ = client.RevokeIntegrationToken(ctx, clientID, run.LaunchTokenID)
+			if err := client.RevokeIntegrationToken(ctx, clientID, run.LaunchTokenID); err != nil {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("farm gc: revoke launch token %s for run %s: %w", run.LaunchTokenID, run.RunID, err))
+			}
 		}
 	}
-	return nil
+	return errors.Join(cleanupErrs...)
 }
