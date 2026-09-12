@@ -1576,6 +1576,20 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request, runID, fileP
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	objectKey := "runs/" + runID + "/" + filePath
+	fileExists, fileSize, err := s.cfg.Store.Head(ctx, objectKey)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if !fileExists {
+		http.NotFound(w, r)
+		return
+	}
+	if fileSize > fileCacheBudget {
+		http.Error(w, "bundle file exceeds 64 MiB response limit", http.StatusRequestEntityTooLarge)
+		return
+	}
 	bundle, err := observer.NewSinkBundle(ctx, s.cfg.Store, runID)
 	if err != nil {
 		http.NotFound(w, r)
@@ -1584,6 +1598,10 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request, runID, fileP
 	data, err := bundle.ReadFile(filePath)
 	if err != nil {
 		http.NotFound(w, r)
+		return
+	}
+	if len(data) > fileCacheBudget {
+		http.Error(w, "bundle file exceeds 64 MiB response limit", http.StatusRequestEntityTooLarge)
 		return
 	}
 	if doneExists {

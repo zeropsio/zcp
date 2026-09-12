@@ -8,11 +8,30 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestSinkClient_DefaultTransportAndReadsAreBounded(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", strconv.FormatInt((64<<20)+1, 10))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewSinkClient(Config{URL: srv.URL, Bucket: "zcp-farm", Key: "key", Secret: "secret"})
+	if client.client == http.DefaultClient || client.client.Timeout <= 0 {
+		t.Fatalf("sink HTTP client has no independent finite timeout: client=%p timeout=%s", client.client, client.client.Timeout)
+	}
+	_, err := client.Get(context.Background(), "runs/r1/results/oversize.txt")
+	if err == nil || !strings.Contains(err.Error(), "exceeds 67108864 bytes") {
+		t.Fatalf("oversize GET error = %v, want 64 MiB limit", err)
+	}
+}
 
 func TestSink_ConditionalCreate_ConflictPreservesBytes(t *testing.T) {
 	t.Parallel()
