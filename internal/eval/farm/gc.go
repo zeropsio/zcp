@@ -108,7 +108,9 @@ func finishAgeExemption(now, finishedAt time.Time) string {
 // buildBatchRunIndex walks every batch the bucket knows about
 // (batches/<batch>/manifest.json) and maps each run id it lists to whether
 // that run's batch has finished and whether the run itself produced a
-// bundle.
+// bundle. Any storage uncertainty aborts the whole index: a partial index
+// must never turn a project into a destructive candidate or let gc report
+// successful cleanup from incomplete evidence.
 func buildBatchRunIndex(ctx context.Context, sink *SinkClient) (map[string]batchRunInfo, error) {
 	batches, err := ListBatches(ctx, sink)
 	if err != nil {
@@ -118,22 +120,24 @@ func buildBatchRunIndex(ctx context.Context, sink *SinkClient) (map[string]batch
 	for _, batch := range batches {
 		manifest, err := GetManifest(ctx, sink, batch)
 		if err != nil {
-			continue // an unreadable manifest leaves its runs "unknown"
+			return nil, fmt.Errorf("read batch %s manifest: %w", batch, err)
 		}
 		finished, err := SummaryExists(ctx, sink, batch)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("inspect batch %s summary: %w", batch, err)
 		}
 		var finishedAt time.Time
 		if finished {
-			if summary, err := GetSummary(ctx, sink, batch); err == nil {
-				finishedAt, _ = time.Parse(time.RFC3339, summary.FinishedAt)
+			summary, err := GetSummary(ctx, sink, batch)
+			if err != nil {
+				return nil, fmt.Errorf("read batch %s summary: %w", batch, err)
 			}
+			finishedAt, _ = time.Parse(time.RFC3339, summary.FinishedAt)
 		}
 		for _, run := range manifest.Runs {
 			hasDone, _, err := sink.Head(ctx, "runs/"+run.RunID+"/done.json")
 			if err != nil {
-				continue
+				return nil, fmt.Errorf("inspect run %s completion: %w", run.RunID, err)
 			}
 			info := batchRunInfo{batch: batch, runID: run.RunID, batchFinished: finished, hasDone: hasDone, finishedAt: finishedAt}
 			addProjectOwner(index, run.ProjectName, info)

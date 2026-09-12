@@ -2,10 +2,43 @@ package farm
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 )
+
+type gcFailingTransport struct {
+	base       http.RoundTripper
+	failMethod string
+	failPath   string
+}
+
+func (t gcFailingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method == t.failMethod && req.URL.Path == t.failPath {
+		return &http.Response{
+			StatusCode: http.StatusInternalServerError,
+			Status:     "500 Internal Server Error",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("simulated storage outage")),
+			Request:    req,
+		}, nil
+	}
+	return t.base.RoundTrip(req)
+}
+
+func failSinkRequest(sink *SinkClient, method, path string) {
+	originalClient := sink.client
+	transport := originalClient.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	sink.client = &http.Client{
+		Transport: gcFailingTransport{base: transport, failMethod: method, failPath: path},
+		Timeout:   originalClient.Timeout,
+	}
+}
 
 // seedFinishedBatch writes a finished batch (manifest.json + summary.json)
 // with one run whose done.json is present iff hasDone — the minimal bucket
@@ -149,6 +182,87 @@ func TestFarmGC_DuplicateProjectOwnershipIsExempt(t *testing.T) {
 	}
 	if candidates[0].Exempt != "ambiguous ownership" {
 		t.Fatalf("candidate=%+v", candidates[0])
+	}
+}
+
+// TestFarmGC_UnreadableSummaryNeverBecomesDeletionCandidate pins the
+// destructive boundary: the existence of summary.json does not prove a batch
+// finished safely when that document cannot be read. GC must stop with an
+// error before exposing the associated project to GCApply.
+func TestFarmGC_UnreadableSummaryNeverBecomesDeletionCandidate(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-gc-summary-outage"
+	f := newControllerFixture(t, clientID)
+	const batch = "batch-gc-summary-outage"
+	const runID = "summary-outage-run"
+	projectName := ProjectPrefix + runID
+	f.account.seedProject(projectName)
+	seedFinishedBatch(t, f.sink, batch, runID, true)
+
+	failSinkRequest(f.sink, http.MethodGet, "/"+fakeS3Bucket+"/batches/"+batch+"/summary.json")
+
+	candidates, err := GC(context.Background(), f.client, f.sink, GCOptions{ClientID: clientID})
+	if err == nil {
+		t.Fatalf("GC error = nil and candidates = %+v, want unreadable summary to stop destructive classification", candidates)
+	}
+	if len(candidates) != 0 {
+		t.Fatalf("GC candidates = %+v, want none on storage uncertainty", candidates)
+	}
+}
+
+// TestFarmGC_StorageUncertaintyStopsDestructiveClassification covers the
+// remaining reads that establish ownership, batch completion and bundle
+// completion. A failure at any one of them must prevent every candidate from
+// reaching GCApply.
+func TestFarmGC_StorageUncertaintyStopsDestructiveClassification(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-gc-storage-outage"
+	const batch = "batch-gc-storage-outage"
+	const runID = "storage-outage-run"
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		wantDetail string
+	}{
+		{
+			name:       "manifest GET",
+			method:     http.MethodGet,
+			path:       "/" + fakeS3Bucket + "/batches/" + batch + "/manifest.json",
+			wantDetail: "read batch " + batch + " manifest",
+		},
+		{
+			name:       "summary HEAD",
+			method:     http.MethodHead,
+			path:       "/" + fakeS3Bucket + "/batches/" + batch + "/summary.json",
+			wantDetail: "inspect batch " + batch + " summary",
+		},
+		{
+			name:       "done HEAD",
+			method:     http.MethodHead,
+			path:       "/" + fakeS3Bucket + "/runs/" + runID + "/done.json",
+			wantDetail: "inspect run " + runID + " completion",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newControllerFixture(t, clientID)
+			projectName := ProjectPrefix + runID
+			f.account.seedProject(projectName)
+			seedFinishedBatch(t, f.sink, batch, runID, true)
+
+			failSinkRequest(f.sink, tc.method, tc.path)
+
+			candidates, err := GC(context.Background(), f.client, f.sink, GCOptions{ClientID: clientID})
+			if err == nil || !strings.Contains(err.Error(), tc.wantDetail) {
+				t.Fatalf("GC error = %v, want contextual %q failure", err, tc.wantDetail)
+			}
+			if len(candidates) != 0 {
+				t.Fatalf("GC candidates = %+v, want none on storage uncertainty", candidates)
+			}
+		})
 	}
 }
 
