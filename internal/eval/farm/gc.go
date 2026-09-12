@@ -132,7 +132,17 @@ func buildBatchRunIndex(ctx context.Context, sink *SinkClient) (map[string]batch
 			if err != nil {
 				return nil, fmt.Errorf("read batch %s summary: %w", batch, err)
 			}
-			finishedAt, _ = time.Parse(time.RFC3339, summary.FinishedAt)
+			// Successful JSON decoding also accepts null and empty objects.
+			// Require this batch's identity and a recorded completion time
+			// before treating the summary as destructive evidence, even when
+			// the caller has not requested an additional retention period.
+			if summary.Batch != batch {
+				return nil, fmt.Errorf("batch %s summary: batch identity %q does not match", batch, summary.Batch)
+			}
+			finishedAt, err = time.Parse(time.RFC3339, summary.FinishedAt)
+			if err != nil {
+				return nil, fmt.Errorf("batch %s summary: invalid finishedAt: %w", batch, err)
+			}
 		}
 		for _, run := range manifest.Runs {
 			hasDone, _, err := sink.Head(ctx, "runs/"+run.RunID+"/done.json")
