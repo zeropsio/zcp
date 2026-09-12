@@ -425,25 +425,65 @@ func TestFarmGC_RunningBatchReferenced_Skipped(t *testing.T) {
 	}
 }
 
-func TestGC_UnknownFinishTime_RetentionExempts(t *testing.T) {
+// TestFarmGC_InvalidSummary_NeverDeletes exercises both destructive seams:
+// GC must reject an invalid completion document without returning even an
+// earlier valid candidate, and GCApply must consequently issue no DELETE.
+// Retention is optional, but valid evidence of batch completion is not.
+func TestFarmGC_InvalidSummary_NeverDeletes(t *testing.T) {
 	t.Parallel()
-	f := newControllerFixture(t, "client-s4-gc-age")
-	f.account.seedProject(ProjectPrefix + "unknown-age")
-	batch, runID := "batch-s4-gc-age", "unknown-age"
-	if err := PutManifest(context.Background(), f.sink, batch, BatchManifest{Batch: batch, Runs: []ManifestRun{{RunID: runID, Scenario: runID, ProjectName: ProjectPrefix + runID}}}); err != nil {
-		t.Fatalf("PutManifest: %v", err)
-	}
-	if err := f.sink.Put(context.Background(), "runs/"+runID+"/done.json", []byte(`{"runId":"unknown-age"}`)); err != nil {
-		t.Fatalf("Put done: %v", err)
-	}
-	if err := PutSummary(context.Background(), f.sink, batch, BatchSummary{Batch: batch, FinishedAt: "", EndedBy: "settled", Runs: []SummaryRun{{RunID: runID, Scenario: runID}}}); err != nil {
-		t.Fatalf("PutSummary: %v", err)
-	}
-	candidates, err := GC(context.Background(), f.client, f.sink, GCOptions{ClientID: "client-s4-gc-age", OlderThan: time.Hour, Now: func() time.Time { return time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC) }})
-	if err != nil {
-		t.Fatalf("GC: %v", err)
-	}
-	if len(candidates) != 1 || candidates[0].Exempt != "unknown finish time" {
-		t.Fatalf("candidates = %+v, want one unknown finish time exemption", candidates)
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "null", body: `null`},
+		{name: "empty object", body: `{}`},
+		{name: "mismatched batch", body: `{"batch":"other-batch","finishedAt":"2026-09-01T00:00:00Z","endedBy":"settled"}`},
+		{name: "invalid finish time", body: `{"batch":"batch-invalid","finishedAt":"not-a-time","endedBy":"settled"}`},
+		{name: "missing finish time", body: `{"batch":"batch-invalid","endedBy":"settled"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, retention := range []struct {
+				name string
+				age  time.Duration
+			}{
+				{name: "no retention"},
+				{name: "with retention", age: time.Hour},
+			} {
+				t.Run(retention.name, func(t *testing.T) {
+					t.Parallel()
+					const clientID = "client-invalid-summary"
+					f := newControllerFixture(t, clientID)
+					projectIDs := []string{
+						f.account.seedProject(ProjectPrefix + "valid-run"),
+						f.account.seedProject(ProjectPrefix + "invalid-run"),
+					}
+					seedFinishedBatch(t, f.sink, "batch-earlier", "valid-run", true)
+					seedFinishedBatch(t, f.sink, "batch-invalid", "invalid-run", true)
+					if err := f.sink.Put(t.Context(), "batches/batch-invalid/summary.json", []byte(tc.body)); err != nil {
+						t.Fatalf("Put invalid summary: %v", err)
+					}
+
+					candidates, err := GC(t.Context(), f.client, f.sink, GCOptions{
+						ClientID: clientID, OlderThan: retention.age,
+						Now: func() time.Time { return time.Now().Add(24 * time.Hour) },
+					})
+					if err == nil || !strings.Contains(err.Error(), "batch-invalid") {
+						t.Errorf("GC error = %v, want invalid batch summary to stop classification", err)
+					}
+					if len(candidates) != 0 {
+						t.Errorf("GC candidates = %+v, want no partial candidate list", candidates)
+					}
+					if errs := GCApply(t.Context(), f.client, candidates); len(errs) != 0 {
+						t.Fatalf("GCApply errors: %v", errs)
+					}
+					for _, projectID := range projectIDs {
+						if n := f.account.countMethod(http.MethodDelete, "/api/rest/public/project/"+projectID); n != 0 {
+							t.Errorf("DELETE calls for %s = %d, want none with invalid summary", projectID, n)
+						}
+					}
+				})
+			}
+		})
 	}
 }
