@@ -304,7 +304,7 @@ func TestNoLiteralProjectIDInEvalScenarios(t *testing.T) {
 						}
 						at += idx
 						rest := line[at+len("zcp-farm-"):]
-						if !strings.HasPrefix(rest, "{{runId}}") {
+						if !strings.HasPrefix(rest, "{{runId}}") && !strings.HasPrefix(rest, "prod__{{runId}}") {
 							violations = append(violations, violation{
 								file: rel, line: lineNo,
 								label:   "\"zcp-farm-\" run-project name not immediately followed by {{runId}} — the farm project name is templated, never a literal id",

@@ -106,6 +106,35 @@ func TestBatchSummary_JSONShape_MatchesFM9(t *testing.T) {
 	}
 }
 
+func TestManifestAndSummary_KeepProductionIdentity(t *testing.T) {
+	t.Parallel()
+	production := productionProjectName("r1_3_foo_prod")
+	m := BatchManifest{Runs: []ManifestRun{{RunID: "r1_3_foo_prod", Scenario: "prod", ProjectName: "zcp-farm-r1_3_foo_prod", ProductionProjectName: production}}}
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotM BatchManifest
+	if err := json.Unmarshal(b, &gotM); err != nil {
+		t.Fatal(err)
+	}
+	if gotM.Runs[0].ProductionProjectName != production {
+		t.Fatalf("manifest production = %q", gotM.Runs[0].ProductionProjectName)
+	}
+	s := BatchSummary{Runs: []SummaryRun{{RunID: "r1_3_foo_prod", ProductionProjectName: production, Result: ResultBlocked}}}
+	b, err = json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotS BatchSummary
+	if err := json.Unmarshal(b, &gotS); err != nil {
+		t.Fatal(err)
+	}
+	if gotS.Runs[0].ProductionProjectName != production {
+		t.Fatalf("summary production = %q", gotS.Runs[0].ProductionProjectName)
+	}
+}
+
 // TestPutManifest_GetManifest_RoundTrip proves the sink read/write helpers
 // against a minimal fake S3 (batches/<batch>/manifest.json, §1.1).
 func TestPutManifest_GetManifest_RoundTrip(t *testing.T) {

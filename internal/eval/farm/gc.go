@@ -34,6 +34,9 @@ type GCOptions struct {
 // does not, §3.6 FM-26) and whether the run itself produced a bundle
 // (runs/<runId>/done.json exists, FM-3).
 type batchRunInfo struct {
+	batch         string
+	runID         string
+	ambiguous     bool
 	batchFinished bool
 	hasDone       bool
 	finishedAt    time.Time
@@ -67,13 +70,14 @@ func GC(ctx context.Context, client PlatformClient, sink *SinkClient, opts GCOpt
 		if !strings.HasPrefix(p.Name, ProjectPrefix) {
 			continue // never listed (FM-19/FM-20)
 		}
-		runID := strings.TrimSuffix(strings.TrimPrefix(p.Name, ProjectPrefix), prodSuffix)
-		info, known := index[runID]
+		info, known := index[p.Name]
 
-		c := GCCandidate{ProjectID: p.ID, Name: p.Name, RunID: runID}
+		c := GCCandidate{ProjectID: p.ID, Name: p.Name, RunID: info.runID}
 		switch {
 		case !known:
 			c.Exempt = "unknown run"
+		case info.ambiguous:
+			c.Exempt = "ambiguous ownership"
 		case !info.batchFinished:
 			c.Exempt = "batch running"
 		case !info.hasDone:
@@ -130,10 +134,27 @@ func buildBatchRunIndex(ctx context.Context, sink *SinkClient) (map[string]batch
 			if err != nil {
 				continue
 			}
-			index[run.RunID] = batchRunInfo{batchFinished: finished, hasDone: hasDone, finishedAt: finishedAt}
+			info := batchRunInfo{batch: batch, runID: run.RunID, batchFinished: finished, hasDone: hasDone, finishedAt: finishedAt}
+			addProjectOwner(index, run.ProjectName, info)
+			if run.ProductionProjectName != "" {
+				addProjectOwner(index, run.ProductionProjectName, info)
+			}
 		}
 	}
 	return index, nil
+}
+
+func addProjectOwner(index map[string]batchRunInfo, name string, info batchRunInfo) {
+	if name == "" {
+		return
+	}
+	if previous, ok := index[name]; ok && (previous.batch != info.batch || previous.runID != info.runID || previous.batchFinished != info.batchFinished || previous.hasDone != info.hasDone) {
+		index[name] = batchRunInfo{ambiguous: true}
+		return
+	}
+	if !info.ambiguous {
+		index[name] = info
+	}
 }
 
 // ListBatches returns every distinct batch id under batches/ in the
@@ -174,8 +195,8 @@ func GCApply(ctx context.Context, client PlatformClient, candidates []GCCandidat
 }
 
 // RevokeOrphanedLaunchTokens revokes launch tokens recorded in finished
-// batch summaries whose projects (the run project and its -prod target) are
-// both gone from the account's live project list — the run's own settle
+// batch summaries whose explicitly recorded primary and production projects
+// are both gone from the account's live project list — the run's own settle
 // pass (RunBatch) never got to revoke it because FM-21's no-bundle
 // exemption kept the project around past that point, and a later gc finally
 // removed it.
@@ -202,12 +223,34 @@ func RevokeOrphanedLaunchTokens(ctx context.Context, client PlatformClient, sink
 		if err != nil {
 			continue
 		}
+		manifest, err := GetManifest(ctx, sink, batch)
+		if err != nil {
+			continue
+		}
+		summaryRunCounts := make(map[string]int, len(summary.Runs))
+		launchTokenCounts := make(map[string]int, len(summary.Runs))
 		for _, run := range summary.Runs {
-			if run.LaunchTokenID == "" {
+			summaryRunCounts[run.RunID]++
+			if run.LaunchTokenID != "" {
+				launchTokenCounts[run.LaunchTokenID]++
+			}
+		}
+		for _, run := range summary.Runs {
+			if run.LaunchTokenID == "" || summaryRunCounts[run.RunID] != 1 || launchTokenCounts[run.LaunchTokenID] != 1 {
 				continue
 			}
-			runName := ProjectPrefix + run.RunID
-			if liveNames[runName] || liveNames[runName+prodSuffix] {
+			var owners []ManifestRun
+			for _, candidate := range manifest.Runs {
+				if candidate.RunID == run.RunID {
+					owners = append(owners, candidate)
+				}
+			}
+			if len(owners) != 1 || owners[0].ProjectName == "" || owners[0].ProductionProjectName == "" || run.ProductionProjectName != owners[0].ProductionProjectName {
+				continue // incomplete or ambiguous same-batch ownership; retain token
+			}
+			runName := owners[0].ProjectName
+			productionName := owners[0].ProductionProjectName
+			if liveNames[runName] || liveNames[productionName] {
 				continue // still has a project — not this pass's job
 			}
 			_ = client.RevokeIntegrationToken(ctx, clientID, run.LaunchTokenID)

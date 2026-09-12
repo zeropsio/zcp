@@ -19,6 +19,80 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
+func testRunID(t *testing.T, batch, scenario string) string {
+	t.Helper()
+	id, err := EncodeRunID(batch, scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestRunBatch_InvalidIdentityDoesNotMutate(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		scenario string
+	}{
+		{name: "invalid grammar", scenario: "INVALID_ID"},
+		{name: "derived run id too long", scenario: strings.Repeat("s", 125)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newControllerFixture(t, "client-identity-validation")
+			batch := "batch-identity-validation"
+			before := len(f.timeline.events)
+			_, err := RunBatch(context.Background(), f.client, f.sink, RunOptions{
+				Batch: batch, Scenarios: []ScenarioRun{{ID: tc.scenario}},
+			})
+			if err == nil {
+				t.Fatalf("RunBatch accepted invalid scenario %q", tc.scenario)
+			}
+			if _, ok := f.s3.get("batches/" + batch + "/manifest.json"); ok {
+				t.Fatal("invalid run wrote a manifest")
+			}
+			if got := len(f.timeline.events); got != before {
+				t.Fatalf("invalid run made platform calls: %v", f.timeline.events[before:])
+			}
+		})
+	}
+}
+
+func TestRunBatch_MismatchedProductionIdentityDoesNotMutate(t *testing.T) {
+	t.Parallel()
+	f := newControllerFixture(t, "client-production-validation")
+	batch := "batch-production-validation"
+	before := len(f.timeline.events)
+	_, err := RunBatch(context.Background(), f.client, f.sink, RunOptions{Batch: batch, Scenarios: []ScenarioRun{{ID: "launch", Launch: true, ProductionProjectName: "zcp-farm-prod__foreign"}}})
+	if err == nil {
+		t.Fatal("RunBatch accepted foreign production identity")
+	}
+	if _, ok := f.s3.get("batches/" + batch + "/manifest.json"); ok {
+		t.Fatal("mismatched identity wrote a manifest")
+	}
+	if len(f.timeline.events) != before {
+		t.Fatalf("mismatched identity made platform calls: %v", f.timeline.events[before:])
+	}
+}
+
+func TestLaunchScenarioProjectNamesMatchControllerOwnership(t *testing.T) {
+	t.Parallel()
+	repoRoot := gatesetRepoRoot(t)
+	want := productionProjectName("{{runId}}")
+	for _, name := range []string{
+		"launch-production-from-standard-pair.md",
+		"launch-failure-build-stuck.md",
+	} {
+		body, err := os.ReadFile(filepath.Join(repoRoot, "eval", "behavioral", "scenarios", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Count(string(body), want); got < 2 {
+			t.Errorf("%s contains controller-owned production name %q %d times, want at least 2 (oracle and user request)", name, want, got)
+		}
+	}
+}
+
 // sharedTimeline records cross-server call order — the account REST fake
 // and the S3 fake are two independent httptest servers, so ordering claims
 // like "manifest PUT before the first create" need one shared sequence both
@@ -539,7 +613,7 @@ func TestFarmRun_CreatesPrefixedProjects_AndWritesManifest(t *testing.T) {
 	batch := "batch-1"
 	scenarios := []ScenarioRun{{ID: "recipe-a"}, {ID: "recipe-b"}}
 	for _, sc := range scenarios {
-		seedSettledRun(t, fake, batch+"-"+sc.ID, sc.ID, ResultPassed)
+		seedSettledRun(t, fake, testRunID(t, batch, sc.ID), sc.ID, ResultPassed)
 	}
 
 	opts := RunOptions{
@@ -579,7 +653,7 @@ func TestFarmRun_CreatesPrefixedProjects_AndWritesManifest(t *testing.T) {
 		t.Fatalf("manifest.Runs = %v, want 2 entries", manifest.Runs)
 	}
 	for i, sc := range scenarios {
-		wantRunID := batch + "-" + sc.ID
+		wantRunID := testRunID(t, batch, sc.ID)
 		if manifest.Runs[i].RunID != wantRunID || manifest.Runs[i].Scenario != sc.ID || manifest.Runs[i].ProjectName != ProjectPrefix+wantRunID {
 			t.Errorf("manifest.Runs[%d] = %+v, want RunID=%s ProjectName=%s", i, manifest.Runs[i], wantRunID, ProjectPrefix+wantRunID)
 		}
@@ -823,7 +897,7 @@ func TestFarmRun_MintForbidden_AbortsBeforeAnyProject(t *testing.T) {
 	batch := "batch-forbidden"
 	scenarios := []ScenarioRun{{ID: "recipe-a"}, {ID: "recipe-b"}}
 	for _, sc := range scenarios {
-		seedSettledRun(t, fake, batch+"-"+sc.ID, sc.ID, ResultPassed)
+		seedSettledRun(t, fake, testRunID(t, batch, sc.ID), sc.ID, ResultPassed)
 	}
 
 	opts := RunOptions{
@@ -898,9 +972,9 @@ func TestFarmRun_CreateFails_PrintsErrorAndSummaryRecordsBlocked(t *testing.T) {
 
 	batch := "batch-create-fail"
 	scenarios := []ScenarioRun{{ID: "recipe-fails"}, {ID: "recipe-ok"}}
-	seedSettledRun(t, fake, batch+"-recipe-ok", "recipe-ok", ResultPassed)
+	seedSettledRun(t, fake, testRunID(t, batch, "recipe-ok"), "recipe-ok", ResultPassed)
 
-	failRunID := batch + "-recipe-fails"
+	failRunID := testRunID(t, batch, "recipe-fails")
 	account.mu.Lock()
 	account.failImportProjectName = ProjectPrefix + failRunID
 	account.mu.Unlock()
@@ -936,7 +1010,7 @@ func TestFarmRun_CreateFails_PrintsErrorAndSummaryRecordsBlocked(t *testing.T) {
 		switch results[i].RunID {
 		case failRunID:
 			blockedResult = &results[i]
-		case batch + "-recipe-ok":
+		case testRunID(t, batch, "recipe-ok"):
 			okResult = &results[i]
 		}
 	}
@@ -992,7 +1066,7 @@ func TestFarmRun_DoneJSON_PartsVerified_ElseBlocked(t *testing.T) {
 		account, client, fake, sink := f.account, f.client, f.s3, f.sink
 		batch := "batch-2a"
 		sc := ScenarioRun{ID: "recipe-fail"}
-		runID := batch + "-" + sc.ID
+		runID := testRunID(t, batch, sc.ID)
 		seedSettledRun(t, fake, runID, sc.ID, ResultFailed)
 
 		opts := RunOptions{
@@ -1026,7 +1100,7 @@ func TestFarmRun_DoneJSON_PartsVerified_ElseBlocked(t *testing.T) {
 		account, client, fake, sink := f.account, f.client, f.s3, f.sink
 		batch := "batch-2b"
 		sc := ScenarioRun{ID: "recipe-corrupt"}
-		runID := batch + "-" + sc.ID
+		runID := testRunID(t, batch, sc.ID)
 		seedSettledRun(t, fake, runID, sc.ID, ResultPassed)
 
 		// Corrupt one byte of a results object WITHOUT updating done.json's
@@ -1085,7 +1159,7 @@ func TestFarmRun_NoDoneJSON_BudgetElapsed_ProjectKept(t *testing.T) {
 
 	batch := "batch-3"
 	sc := ScenarioRun{ID: "recipe-stuck"}
-	runID := batch + "-" + sc.ID
+	runID := testRunID(t, batch, sc.ID)
 	// No seedSettledRun call: the bucket never gets runs/<runID>/done.json.
 
 	opts := RunOptions{
@@ -1117,7 +1191,7 @@ func TestFarmRun_NoDoneJSON_BudgetElapsed_ProjectKept(t *testing.T) {
 
 // TestFarmRun_LaunchScenario_MintsThenRevokesToken pins §3.4 FM-23: a launch
 // scenario's token is minted before the run's project is created, deletes
-// both the run project and its zcp-farm-<runId>-prod target once the run
+// both the run project and its explicitly named production target once the run
 // settles, then revokes the token — and the token value never appears in
 // the manifest, the summary, or any recorded request.
 func TestFarmRun_LaunchScenario_MintsThenRevokesToken(t *testing.T) {
@@ -1127,11 +1201,11 @@ func TestFarmRun_LaunchScenario_MintsThenRevokesToken(t *testing.T) {
 	account, client, fake, sink, timeline := f.account, f.client, f.s3, f.sink, f.timeline
 
 	batch := "batch-4"
-	sc := ScenarioRun{ID: "launch-scenario", Launch: true}
-	runID := batch + "-" + sc.ID
+	sc := ScenarioRun{ID: "launch-scenario", Launch: true, ProductionProjectName: productionProjectName(testRunID(t, batch, "launch-scenario"))}
+	runID := testRunID(t, batch, sc.ID)
 	seedSettledRun(t, fake, runID, sc.ID, ResultPassed)
 	// Pre-seed the prod target as if the run's own agent had created it.
-	prodID := account.seedProject(ProjectPrefix + runID + "-prod")
+	prodID := account.seedProject(productionProjectName(runID))
 
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
@@ -1191,7 +1265,7 @@ func TestFarmRun_LaunchScenario_MintsThenRevokesToken(t *testing.T) {
 		t.Errorf("run project %s still present after settle", ProjectPrefix+runID)
 	}
 	if prodStillExists {
-		t.Errorf("prod project %s still present after settle", ProjectPrefix+runID+"-prod")
+		t.Errorf("prod project %s still present after settle", productionProjectName(runID))
 	}
 
 	// The token value itself must never appear in any recorded request path
@@ -1231,7 +1305,7 @@ func TestFarmRun_NeverRerunsAFailedRun(t *testing.T) {
 
 	batch := "batch-5"
 	sc := ScenarioRun{ID: "recipe-flaky"}
-	runID := batch + "-" + sc.ID
+	runID := testRunID(t, batch, sc.ID)
 	seedSettledRun(t, fake, runID, sc.ID, ResultFailed)
 
 	opts := RunOptions{
@@ -1279,7 +1353,7 @@ func TestFarmRun_ResultMetaUnderSuiteScenario_GradesFromTask(t *testing.T) {
 
 	batch := "batch-15a"
 	sc := ScenarioRun{ID: "classic-static-nginx-simple"}
-	runID := batch + "-" + sc.ID
+	runID := testRunID(t, batch, sc.ID)
 	seedSettledRunAt(t, fake, runID, sc.ID, ResultPassed, "gate/classic-static-nginx-simple/meta.json")
 
 	opts := RunOptions{
@@ -1312,7 +1386,7 @@ func TestFarmRun_ResultMetaMissingOrAmbiguous_Blocked(t *testing.T) {
 		client, fake, sink := f.client, f.s3, f.sink
 		batch := "batch-15b-missing"
 		sc := ScenarioRun{ID: "recipe-missing-meta"}
-		runID := batch + "-" + sc.ID
+		runID := testRunID(t, batch, sc.ID)
 
 		resultsDigest := seedPart(t, fake, runID, "results", map[string]string{
 			"output.log": "no meta.json here",
@@ -1351,7 +1425,7 @@ func TestFarmRun_ResultMetaMissingOrAmbiguous_Blocked(t *testing.T) {
 		client, fake, sink := f.client, f.s3, f.sink
 		batch := "batch-15b-ambiguous"
 		sc := ScenarioRun{ID: "recipe-ambiguous-meta"}
-		runID := batch + "-" + sc.ID
+		runID := testRunID(t, batch, sc.ID)
 
 		resultsDigest := seedPart(t, fake, runID, "results", map[string]string{
 			"gate/scenario-a/meta.json": `{"task":{"result":"passed"}}`,
@@ -1435,7 +1509,7 @@ func TestFarmRun_BlockedTask_DetailNamesBlockingChecks(t *testing.T) {
 
 			batch := fmt.Sprintf("batch-22a-%d", i)
 			sc := ScenarioRun{ID: "recipe-blocked"}
-			runID := batch + "-" + sc.ID
+			runID := testRunID(t, batch, sc.ID)
 			verification := fmt.Sprintf(`{"formatVersion":"zcp-eval-verification-2","mode":"required","result":"blocked","checks":%s,"advisory":[]}`, tc.checksJSON)
 
 			resultsDigest := seedPart(t, fake, runID, "results", map[string]string{
@@ -1481,7 +1555,7 @@ func TestFarmRun_BlockedTask_NoVerificationJSON_DetailSaysSo(t *testing.T) {
 
 	batch := "batch-22b"
 	sc := ScenarioRun{ID: "recipe-blocked-no-verification"}
-	runID := batch + "-" + sc.ID
+	runID := testRunID(t, batch, sc.ID)
 	seedSettledRun(t, fake, runID, sc.ID, ResultBlocked)
 
 	opts := RunOptions{
@@ -1515,7 +1589,7 @@ func TestFarmRun_FailedCreationProcess_SettlesBlockedBeforeBudget(t *testing.T) 
 
 	batch := "batch-19"
 	sc := ScenarioRun{ID: "recipe-dead-project"}
-	runID := batch + "-" + sc.ID
+	runID := testRunID(t, batch, sc.ID)
 	// No seedSettledRun call: this run's project never writes done.json.
 
 	account.mu.Lock()
@@ -1599,7 +1673,7 @@ func TestFarmRun_FailedImportAfterStarted_DoesNotDeleteProject(t *testing.T) {
 
 	batch := "batch-24-r1"
 	sc := ScenarioRun{ID: "recipe-mid-run-import"}
-	runID := batch + "-" + sc.ID
+	runID := testRunID(t, batch, sc.ID)
 	// No seedSettledRun: this run's project never writes done.json.
 
 	if err := sink.Put(context.Background(), "runs/"+runID+"/started.json", []byte(`{"runId":"`+runID+`"}`)); err != nil {
@@ -1738,7 +1812,7 @@ func TestFarmRun_Interrupt_WritesSummaryKeepsProjects(t *testing.T) {
 
 	batch := "batch-24-r3"
 	sc := ScenarioRun{ID: "recipe-interrupted"}
-	runID := batch + "-" + sc.ID
+	runID := testRunID(t, batch, sc.ID)
 	// No seedSettledRun: the run's project never writes done.json before
 	// the ctx is cancelled.
 
@@ -1814,7 +1888,7 @@ func TestFarmRun_LaunchTokenRevokedWhenCreateFails(t *testing.T) {
 
 	batch := "batch-24-r2"
 	sc := ScenarioRun{ID: "recipe-launch-create-fail", Launch: true}
-	runID := batch + "-" + sc.ID
+	runID := testRunID(t, batch, sc.ID)
 
 	account.mu.Lock()
 	account.failImportProjectName = ProjectPrefix + runID
@@ -1874,7 +1948,7 @@ func TestFarmRun_RollbackFailure_KeepsProjectIDAndError(t *testing.T) {
 
 	batch := "batch-24-r6"
 	sc := ScenarioRun{ID: "recipe-rollback-fail"}
-	runID := batch + "-" + sc.ID
+	runID := testRunID(t, batch, sc.ID)
 	runProjectName := ProjectPrefix + runID
 
 	account.mu.Lock()
@@ -1983,7 +2057,7 @@ func TestRunBatch_LaterMintFailure_FinalizesEarlierRuns(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "mint run token") {
 		t.Fatalf("RunBatch error = %v, want later mint failure", err)
 	}
-	if len(results) != 2 || results[1].RunID != batch+"-first" || results[1].ProjectID == "" {
+	if len(results) != 2 || results[1].RunID != testRunID(t, batch, "first") || results[1].ProjectID == "" {
 		t.Fatalf("results = %+v, want abort row plus earlier run retained for recovery", results)
 	}
 	if _, err := GetSummary(context.Background(), f.sink, batch); err != nil {
@@ -2005,12 +2079,12 @@ func TestRunBatch_RollbackFailure_RetainsRecoveryIDs(t *testing.T) {
 	t.Parallel()
 	f := newControllerFixture(t, "client-s4-recovery-ids")
 	batch := "batch-s4-recovery-ids"
-	runID := batch + "-launch"
+	runID := testRunID(t, batch, "launch")
 	f.account.mu.Lock()
 	f.account.failScopedMint = true
 	f.account.failDeleteProjectName = ProjectPrefix + runID
 	f.account.mu.Unlock()
-	opts := RunOptions{Batch: batch, ClientID: "client-s4-recovery-ids", Set: "gate", CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen", Scenarios: []ScenarioRun{{ID: "launch", Launch: true}}, OAuthToken: "oauth", Sink: Sink{URL: f.sink.cfg.URL, Bucket: fakeS3Bucket, Key: "key", Secret: "secret"}, RunBudget: time.Second, PollInterval: time.Millisecond}
+	opts := RunOptions{Batch: batch, ClientID: "client-s4-recovery-ids", Set: "gate", CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen", Scenarios: []ScenarioRun{{ID: "launch", Launch: true, ProductionProjectName: productionProjectName(runID)}}, OAuthToken: "oauth", Sink: Sink{URL: f.sink.cfg.URL, Bucket: fakeS3Bucket, Key: "key", Secret: "secret"}, RunBudget: time.Second, PollInterval: time.Millisecond}
 	results, err := RunBatch(context.Background(), failLaunchRevokeClient{PlatformClient: f.client}, f.sink, opts)
 	if err == nil || len(results) != 1 {
 		t.Fatalf("RunBatch results=%+v err=%v, want one failed run with recovery data", results, err)
@@ -2021,13 +2095,17 @@ func TestRunBatch_RollbackFailure_RetainsRecoveryIDs(t *testing.T) {
 	if !strings.Contains(results[0].Error, "rollback failed") || !strings.Contains(results[0].Error, "revoke failed") {
 		t.Fatalf("result.Error = %q, want both cleanup failures", results[0].Error)
 	}
+	summary, summaryErr := GetSummary(context.Background(), f.sink, batch)
+	if summaryErr != nil || len(summary.Runs) != 1 || summary.Runs[0].ProductionProjectName != productionProjectName(runID) {
+		t.Fatalf("summary=%+v err=%v, want explicit production identity", summary, summaryErr)
+	}
 }
 
 func TestRunBatch_FinalizationFailure_PreservesCleanupError(t *testing.T) {
 	t.Parallel()
 	f := newControllerFixture(t, "client-s4-final-errors")
 	batch := "batch-s4-final-errors"
-	runID := batch + "-settled"
+	runID := testRunID(t, batch, "settled")
 	seedSettledRun(t, f.s3, runID, "settled", ResultPassed)
 	f.account.mu.Lock()
 	f.account.failDeleteProjectName = ProjectPrefix + runID
@@ -2069,7 +2147,7 @@ func TestRunBatch_ManifestRecordsObserver(t *testing.T) {
 
 	batch := "batch-observer-1"
 	sc := ScenarioRun{ID: "recipe-observer"}
-	seedSettledRun(t, f.s3, batch+"-"+sc.ID, sc.ID, ResultPassed)
+	seedSettledRun(t, f.s3, testRunID(t, batch, sc.ID), sc.ID, ResultPassed)
 
 	opts := RunOptions{
 		Batch: batch, ClientID: clientID, Set: "gate",
