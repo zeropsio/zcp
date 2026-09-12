@@ -927,6 +927,44 @@ func TestAPI_FilesOnlyUnderResults(t *testing.T) {
 	}
 }
 
+type oversizedFileStore struct {
+	*fakeStore
+	key      string
+	getCalls int
+}
+
+func (s *oversizedFileStore) Head(ctx context.Context, key string) (bool, int64, error) {
+	if key == s.key {
+		return true, int64(fileCacheBudget) + 1, nil
+	}
+	return s.fakeStore.Head(ctx, key)
+}
+
+func (s *oversizedFileStore) Get(ctx context.Context, key string) ([]byte, error) {
+	if key == s.key {
+		s.getCalls++
+	}
+	return s.fakeStore.Get(ctx, key)
+}
+
+func TestAPI_FileRejectsOversizeObjectBeforeDownload(t *testing.T) {
+	base := newFakeStore()
+	now := fixedNow(t)()
+	seedBatch(t, base, "fl-large", "off", []runFixture{{
+		runID: "fl-large-a", scenario: "a", startedAt: now.Add(-time.Hour), taskResult: "passed", done: true,
+	}}, false, nil)
+	key := "runs/fl-large-a/results/huge.txt"
+	store := &oversizedFileStore{fakeStore: base, key: key}
+	srv := NewServer(Config{Store: store, Token: testToken, Now: fixedNow(t)})
+	rr := doGET(t, srv.Handler(), "/api/runs/fl-large-a/files/results/huge.txt")
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversize file status = %d, want 413; body=%s", rr.Code, rr.Body.String())
+	}
+	if store.getCalls != 0 {
+		t.Fatalf("oversize file was downloaded %d times, want 0", store.getCalls)
+	}
+}
+
 // TestAPI_InvalidRunOrBatchIDRejected pins FM-47: an id failing the run-id
 // or batch-id grammar is rejected with NO store call, at every run-scoped
 // and batch-scoped route — not just one representative route. A route that

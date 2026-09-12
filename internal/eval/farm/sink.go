@@ -26,8 +26,11 @@ var ErrObjectExists = fmt.Errorf("farm: object already exists")
 // on S3 (docs/spec-eval-farm.md §1: "AWS SigV4, region us-east-1, service
 // s3").
 const (
-	awsRegion  = "us-east-1"
-	awsService = "s3"
+	awsRegion           = "us-east-1"
+	awsService          = "s3"
+	sinkRequestTimeout  = 30 * time.Second
+	sinkMaxResponseSize = 64 << 20
+	sinkMaxListSize     = 8 << 20
 )
 
 // ErrObjectNotFound is returned by SinkClient.Get and reported via
@@ -99,9 +102,11 @@ type SinkClient struct {
 	now    func() time.Time
 }
 
-// NewSinkClient creates a SinkClient for cfg using http.DefaultClient.
+// NewSinkClient creates a SinkClient with its own finite request deadline.
+// Several CLI call sites intentionally use context.Background; the client
+// deadline keeps an unreachable object store from blocking them forever.
 func NewSinkClient(cfg Config) *SinkClient {
-	return &SinkClient{cfg: cfg, client: http.DefaultClient, now: time.Now}
+	return &SinkClient{cfg: cfg, client: &http.Client{Timeout: sinkRequestTimeout}, now: time.Now}
 }
 
 // objectURL returns the path-style URL for key ("" for the bucket root,
@@ -256,7 +261,7 @@ func (c *SinkClient) Get(ctx context.Context, key string) ([]byte, error) {
 	if resp.StatusCode/100 != 2 {
 		return nil, fmt.Errorf("farm: GET %s: %s", key, statusError(resp))
 	}
-	data, err := io.ReadAll(resp.Body)
+	data, err := readBodyLimited(resp.Body, resp.ContentLength, sinkMaxResponseSize)
 	if err != nil {
 		return nil, fmt.Errorf("farm: GET %s: read body: %w", key, err)
 	}
@@ -315,7 +320,7 @@ func (c *SinkClient) List(ctx context.Context, prefix string) ([]string, error) 
 			_ = resp.Body.Close()
 			return nil, fmt.Errorf("farm: LIST prefix=%s: %s", prefix, errMsg)
 		}
-		body, readErr := io.ReadAll(resp.Body)
+		body, readErr := readBodyLimited(resp.Body, resp.ContentLength, sinkMaxListSize)
 		_ = resp.Body.Close()
 		if readErr != nil {
 			return nil, fmt.Errorf("farm: LIST prefix=%s: read body: %w", prefix, readErr)
@@ -333,6 +338,20 @@ func (c *SinkClient) List(ctx context.Context, prefix string) ([]string, error) 
 		continuationToken = result.NextContinuationToken
 	}
 	return keys, nil
+}
+
+func readBodyLimited(r io.Reader, contentLength, limit int64) ([]byte, error) {
+	if contentLength > limit {
+		return nil, fmt.Errorf("response exceeds %d bytes", limit)
+	}
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("response exceeds %d bytes", limit)
+	}
+	return data, nil
 }
 
 func statusError(resp *http.Response) string {
