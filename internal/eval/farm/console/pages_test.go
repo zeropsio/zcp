@@ -2,11 +2,14 @@ package console
 
 import (
 	"context"
+	"errors"
 	"html"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -475,4 +478,222 @@ func TestPages_SharedShell_AccessibleNavigation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPages_AutoRefreshPauseIsHTMLOnlyAndPreserved(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	queue := NewQueue(func(context.Context, Job) error { <-release; return nil })
+	store := newFakeStore()
+	srv := NewServer(Config{Store: store, Token: testToken, Now: fixedNow(t), Queue: queue})
+	seedBatch(t, store, "refresh-pref", "claude-sonnet-5", []runFixture{{runID: "refresh-pref-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", done: true}}, true, map[string]string{"refresh-pref-a": "passed"})
+	if err := queue.Enqueue(context.Background(), Job{RunID: "refresh-pref-a", Batch: "refresh-pref"}); err != nil {
+		t.Fatal(err)
+	}
+	if !wkEventually(t, func() bool { return queue.State("refresh-pref-a") != "" }) {
+		t.Fatal("job did not start")
+	}
+
+	auto := doGET(t, srv.Handler(), "/b/refresh-pref")
+	if !strings.Contains(auto.Body.String(), `<meta http-equiv="refresh"`) || !strings.Contains(auto.Body.String(), "Pause automatic updates") {
+		t.Fatalf("automatic page lacks refresh and pause control: %s", auto.Body.String())
+	}
+	paused := doGET(t, srv.Handler(), "/b/refresh-pref?refresh=off&sort=scenario")
+	body := paused.Body.String()
+	if strings.Contains(body, `<meta http-equiv="refresh"`) || !strings.Contains(body, "Automatic updates paused") || !strings.Contains(body, `refresh=off`) {
+		t.Fatalf("paused page is not stable: %s", body)
+	}
+	if !strings.Contains(body, `href="/b/refresh-pref?refresh=off&amp;sort=scenario">Refresh now`) {
+		t.Errorf("Refresh now did not retain the preference and list state: %s", body)
+	}
+	if !strings.Contains(body, `href="/b/refresh-pref?sort=scenario">Resume automatic updates`) {
+		t.Errorf("Resume did not remove only the refresh preference: %s", body)
+	}
+	if strings.Contains(body, `href="/static/app.css?refresh=off"`) || !strings.Contains(body, `href="/static/app.css"`) {
+		t.Errorf("stylesheet URL was mutated: %s", body)
+	}
+	for _, path := range []string{"/?refresh=on", "/problems?refresh=on", "/findings?refresh=on", "/terms?refresh=on", "/b/refresh-pref?refresh=on", "/r/refresh-pref-a?refresh=on", "/terms?refresh=", "/terms?refresh=off&refresh=off"} {
+		if got := doGET(t, srv.Handler(), path).Code; got != http.StatusBadRequest {
+			t.Errorf("%s status = %d, want 400", path, got)
+		}
+	}
+	brokenSrv, brokenStore, _ := testServer(t)
+	brokenStore.failListOn("batches/", errors.New("store should not be reached"))
+	if got := doGET(t, brokenSrv.Handler(), "/?refresh=on").Code; got != http.StatusBadRequest {
+		t.Errorf("invalid Overview query during store outage = %d, want 400 before store I/O", got)
+	}
+	if got := doGET(t, srv.Handler(), "/api/batches.json?refresh=off").Code; got != http.StatusBadRequest {
+		t.Fatalf("API accepted HTML-only refresh parameter: %d", got)
+	}
+
+	for _, raw := range []string{"/", "/problems", "/findings?since=7d", "/terms", "/b/refresh-pref", "/r/refresh-pref-a#s3"} {
+		got := pageURL(raw, pageMeta{KeepRefresh: true})
+		if !strings.Contains(got, "refresh=off") {
+			t.Errorf("pageURL(%q) lost preference: %q", raw, got)
+		}
+	}
+	for _, raw := range []string{"#s3", "/api/runs.md", "/static/app.css", "/r/refresh-pref-a/observe", "https://example.com/"} {
+		if got := pageURL(raw, pageMeta{KeepRefresh: true}); got != raw {
+			t.Errorf("pageURL(%q) = %q", raw, got)
+		}
+	}
+
+	metaRequest := httptest.NewRequest(http.MethodGet, "/r/refresh-pref-a?refresh=off&obs=old-id&steps=errors&notice=queued&n=4", nil)
+	meta := srv.pageMeta(metaRequest, "Run", "", true)
+	if meta.RefreshNowURL != "/r/refresh-pref-a?obs=old-id&refresh=off&steps=errors" {
+		t.Errorf("RefreshNowURL = %q", meta.RefreshNowURL)
+	}
+	if meta.ResumeURL != "/r/refresh-pref-a?obs=old-id&steps=errors" {
+		t.Errorf("ResumeURL = %q", meta.ResumeURL)
+	}
+
+	for _, path := range []string{"/?refresh=off", "/problems?refresh=off", "/findings?refresh=off", "/terms?refresh=off", "/b/refresh-pref?refresh=off", "/r/refresh-pref-a?refresh=off"} {
+		rendered := doGET(t, srv.Handler(), path).Body.String()
+		for _, want := range []string{`href="/?refresh=off"`, `href="/problems?refresh=off"`, `href="/findings?refresh=off&amp;since=7d"`, `href="/terms?refresh=off"`} {
+			if !strings.Contains(rendered, want) {
+				t.Errorf("%s lost refresh preference on shell link %s", path, want)
+			}
+		}
+	}
+	problems := doGET(t, srv.Handler(), "/problems?refresh=off").Body.String()
+	if !strings.Contains(problems, `<input type="hidden" name="refresh" value="off">`) {
+		t.Errorf("GET filters do not submit the refresh preference: %s", problems)
+	}
+}
+
+func TestPages_StackedTablesRetainAccessibleHeaders(t *testing.T) {
+	srv, store, _ := testServer(t)
+	seedBatch(t, store, "table-a11y", "off", []runFixture{{runID: "table-a11y-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", done: true, taskResult: "failed", checks: [][5]string{{"check/a", "failed", "yes", "no", "result"}}}}, true, map[string]string{"table-a11y-a": "failed"})
+	for _, path := range []string{"/", "/b/table-a11y", "/r/table-a11y-a"} {
+		body := doGET(t, srv.Handler(), path).Body.String()
+		if !strings.Contains(body, `scope="col"`) || !strings.Contains(body, ` headers="`) || !strings.Contains(body, `class="mobile-cell-label" aria-hidden="true"`) {
+			t.Errorf("%s lacks explicit stacked-table associations: %s", path, body)
+		}
+	}
+	css := string(appCSS)
+	if strings.Contains(css, "table.stack thead { display: none") || strings.Contains(css, "content: attr(data-label)") {
+		t.Errorf("stacked tables still depend on hidden headers/generated labels")
+	}
+}
+
+func TestPages_DisclosureSummariesContainNoNestedInteractiveControls(t *testing.T) {
+	for _, name := range []string{"run.html", "batch.html", "problems.html", "findings.html", "lists.html"} {
+		raw, err := pagesHTMLSrc.ReadFile("assets/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, summary := range regexp.MustCompile(`(?s)<summary(?:\s[^>]*)?>.*?</summary>`).FindAll(raw, -1) {
+			if regexp.MustCompile(`<(?:a|button|input|select|textarea|form)\b`).Match(summary) {
+				t.Errorf("%s has an interactive control inside summary: %s", name, summary)
+			}
+		}
+	}
+	runTemplate, err := pagesHTMLSrc.ReadFile("assets/run.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(runTemplate), `class="step-disclosure-indicator" aria-hidden="true"`) {
+		t.Fatal("step disclosures lack a visible, non-interactive affordance")
+	}
+}
+
+func TestPages_SortControlsExposeCurrentAndNextDirection(t *testing.T) {
+	spec := batchListSpec()
+	q, err := Parse(spec, url.Values{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nav := buildListNav("/", spec, q, url.Values{}, nil, homeBatchSortLabels, homeBatchLabeler())
+	for _, sort := range nav.Sorts {
+		if !strings.Contains(sort.AccessibleName, "activate to sort") {
+			t.Errorf("sort %s lacks next direction: %+v", sort.Key, sort)
+		}
+		if sort.Active && !strings.Contains(sort.AccessibleName, "sorted ") {
+			t.Errorf("active sort lacks current direction: %+v", sort)
+		}
+	}
+	for _, name := range []string{"home.html", "batch.html", "problems.html", "findings.html", "lists.html"} {
+		raw, err := pagesHTMLSrc.ReadFile("assets/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), ".AccessibleName") && !strings.Contains(string(raw), `aria-label="{{.AccessibleName}}"`) {
+			t.Errorf("%s does not expose centralized sort name", name)
+		}
+	}
+}
+
+func TestAppCSS_MobileNavigationOrderMatchesDOM(t *testing.T) {
+	layout, err := pagesHTMLSrc.ReadFile("assets/layout.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := string(layout)
+	if strings.Index(raw, "farm-brand") >= strings.Index(raw, "navbar-nav") || strings.Index(raw, "navbar-nav") >= strings.Index(raw, "sidebar-footer") {
+		t.Fatal("shell DOM is not brand, primary navigation, sign out")
+	}
+	css := string(appCSS)
+	if strings.Contains(css, ".sidebar-footer { position: absolute") {
+		t.Fatal("mobile sign out is absolutely relocated out of DOM order")
+	}
+}
+
+func TestAppCSS_LightInteractiveTextContrast(t *testing.T) {
+	css := string(appCSS)
+	if !strings.Contains(css, "--accent: #2a63d1") {
+		t.Fatal("light accent is not the measured #2a63d1 token")
+	}
+	for _, pair := range [][2]string{
+		{"#2a63d1", "#ffffff"},
+		{"#2a63d1", "#f5f6f8"},
+		{"#2a63d1", "#f0f2f5"},
+		{"#2a63d1", "#fbe6e4"},
+		{"#2a63d1", "#e5ecfb"},
+		{"#2a63d1", "#fdf1d3"},
+		{"#2a63d1", "#eceef2"},
+		{"#1e7a3c", "#e3f5e9"},
+		{"#b3261e", "#fbe6e4"},
+		{"#8a6200", "#fdf1d3"},
+		{"#2a4fb3", "#e5ecfb"},
+		{"#5d6470", "#eceef2"},
+		{"#a9c1ff", "#1d2742"},
+		{"#ff9a92", "#3b1c1b"},
+		{"#f0c75e", "#3a2f12"},
+		{"#7aa7ff", "#171a20"},
+		{"#e7e9ee", "#1e222a"},
+	} {
+		if ratio := testContrastRatio(pair[0], pair[1]); ratio < 4.5 {
+			t.Errorf("contrast %s on %s = %.2f", pair[0], pair[1], ratio)
+		}
+	}
+	for _, selector := range []string{".farm-login .btn-primary, .farm-login .btn-primary:hover, .farm-login .btn-primary:focus, .farm-login .btn-primary:active { color: var(--on-accent); background-color: var(--accent); border-color: var(--accent); }", ".farm-console pre, .farm-console code { color: var(--fg); }", ".farm-console .table th, .farm-console .table th a { color: var(--fg); }", ".farm-console .alert-info { color: var(--info); background: var(--info-bg); }", ".farm-console .alert-warning { color: var(--blocked); background: var(--blocked-bg); }", ".farm-console .alert-danger { color: var(--failed); background: var(--failed-bg); }", ".farm-console a.table-primary { color: var(--accent); }", ".farm-console .skip-link, .farm-console .skip-link:focus { color: var(--accent); background: var(--surface); }"} {
+		if !strings.Contains(css, selector) {
+			t.Errorf("missing vendor-resistant foreground override %q", selector)
+		}
+	}
+	if ratio := testContrastRatio("#2a63d1", "#f5f6f8"); ratio < 3 {
+		t.Errorf("focus outline contrast = %.2f", ratio)
+	}
+}
+
+func testContrastRatio(fg, bg string) float64 {
+	lum := func(hex string) float64 {
+		var rgb [3]uint64
+		for i := range rgb {
+			rgb[i], _ = strconv.ParseUint(hex[1+i*2:3+i*2], 16, 8)
+		}
+		channel := func(v uint64) float64 {
+			x := float64(v) / 255
+			if x <= .04045 {
+				return x / 12.92
+			}
+			return math.Pow((x+.055)/1.055, 2.4)
+		}
+		return .2126*channel(rgb[0]) + .7152*channel(rgb[1]) + .0722*channel(rgb[2])
+	}
+	a, b := lum(fg), lum(bg)
+	if a < b {
+		a, b = b, a
+	}
+	return (a + .05) / (b + .05)
 }

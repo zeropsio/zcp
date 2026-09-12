@@ -87,5 +87,16 @@ At 200% zoom, verify the effective content width as well as text size.
 | Browser fixture matrix | Matrix above, using the emitted dynamic URLs | NOT RUN |
 | Deployed revision | Repeat critical auth/routes/warm reads against the named internal console | NOT RUN |
 
+S15 static and handler verification (2026-09-12):
+
+| Contract | Evidence | Result |
+|---|---|---|
+| HTML-only refresh preference | `TestPages_AutoRefreshPauseIsHTMLOnlyAndPreserved`; `TestActions_RefererPreservesAcceptedRefreshPreference` | PASS |
+| Stacked table semantics and disclosures | `TestPages_StackedTablesRetainAccessibleHeaders`; `TestPages_DisclosureSummariesContainNoNestedInteractiveControls` | PASS |
+| Sort names and mobile DOM order | `TestPages_SortControlsExposeCurrentAndNextDirection`; `TestAppCSS_MobileNavigationOrderMatchesDOM` | PASS |
+| Measured light tokens and vendor-resistant selectors | `TestAppCSS_LightInteractiveTextContrast` | PASS (static); computed-style recheck at 400/768/1440 pending root browser pass |
+| Safe error boundary | `TestPages_HTMLStoreFailure_LogsCauseOnceAndShowsSafeContext` | PASS |
+| Visible assessment identity | `TestPages_RunObservationIDsAreVisibleAndUnambiguous` | PASS |
+
 Keep failures and blockers as their own rows. A later successful rerun may add
 a new dated row; it must not erase the earlier evidence.

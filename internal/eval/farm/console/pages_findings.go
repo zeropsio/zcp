@@ -146,7 +146,7 @@ type findingsPageData struct {
 
 func (s *Server) handleFindingsPage(w http.ResponseWriter, r *http.Request) {
 	spec := findingListSpec()
-	q, err := Parse(spec, r.URL.Query())
+	q, err := parseHTMLQuery(spec, r.URL.Query())
 	if err != nil {
 		var qerr *QueryError
 		errors.As(err, &qerr)
@@ -156,7 +156,7 @@ func (s *Server) handleFindingsPage(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := rowsSinceWindow(r.Context(), s.cfg.Store, s.cfg.ObserverDisabled, q.Since, s.now(), s.queueState, s.runCache, s.summaryCache, s.logf)
 	if err != nil {
-		s.renderStoreError(w, r, http.StatusBadGateway, "Findings unavailable", "The finding evidence could not be read.")
+		s.renderStoreError(w, r, http.StatusBadGateway, "Findings unavailable", "The finding evidence could not be read.", "load findings", err)
 		return
 	}
 	all := BuildFindingRows(rows)
@@ -212,12 +212,13 @@ func (s *Server) handleFindingsPage(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]findingItemView, len(filtered))
 	for i, f := range filtered {
-		items[i] = newFindingItemView(f, "/findings", values, availableSteps[f.RunID])
+		items[i] = newFindingItemView(f, pathFindings, values, availableSteps[f.RunID])
 	}
 
-	renderPage(w, "findings", findingsPageData{
-		Meta:            s.pageMeta(r, "Findings", navFindings, false),
-		Nav:             buildListNav("/findings", spec, q, values, counts, findingSortLabels, findingLabeler),
+	meta := s.pageMeta(r, "Findings", navFindings, false)
+	data := findingsPageData{
+		Meta:            meta,
+		Nav:             buildListNav(pathFindings, spec, q, values, counts, findingSortLabels, findingLabeler),
 		Summary:         fmt.Sprintf("%d matching finding%s in %s", len(filtered), pluralS(len(filtered)), sinceLabelText(sinceRawOrDefault(values, spec))),
 		SourceRuns:      len(rows),
 		AssessedRuns:    assessedRuns,
@@ -226,5 +227,6 @@ func (s *Server) handleFindingsPage(w http.ResponseWriter, r *http.Request) {
 		Items:           items,
 		EmptyTitle:      emptyTitle,
 		EmptyDetail:     emptyDetail,
-	})
+	}
+	renderPage(w, "findings", data)
 }

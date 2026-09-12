@@ -1046,7 +1046,7 @@ func TestActions_CookieObserveRedirectsWithNotice(t *testing.T) {
 		wkExpectNoCall(t, obs.calls)
 	})
 
-	t.Run("same-origin Referer: redirects to its path (dropping its own query), not the default page", func(t *testing.T) {
+	t.Run("same-origin Referer: redirects to its path and accepted page state", func(t *testing.T) {
 		obs := wkNewRecordingObserve()
 		defer close(obs.release)
 		q := NewQueue(obs.fn)
@@ -1065,8 +1065,8 @@ func TestActions_CookieObserveRedirectsWithNotice(t *testing.T) {
 		if rr.Code != http.StatusSeeOther {
 			t.Fatalf("got %d, want 303, body=%s", rr.Code, rr.Body.String())
 		}
-		if loc := rr.Header().Get("Location"); loc != "/b/cn6?notice=queued&n=1" {
-			t.Errorf("Location = %q, want /b/cn6?notice=queued&n=1 (the Referer's path, dropping its own query)", loc)
+		if loc := rr.Header().Get("Location"); loc != "/b/cn6?sort=cost&notice=queued&n=1" {
+			t.Errorf("Location = %q, want accepted Referer state plus the new notice", loc)
 		}
 		wkExpectCall(t, obs.calls)
 	})
@@ -1095,6 +1095,37 @@ func TestActions_CookieObserveRedirectsWithNotice(t *testing.T) {
 		}
 		wkExpectCall(t, obs.calls)
 	})
+}
+
+func TestActions_RefererPreservesAcceptedRefreshPreference(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "https://console.example/r/a/observe", nil)
+	r.Host = "console.example"
+	r.Header.Set("Referer", "https://console.example/r/a?refresh=off&steps=errors&notice=busy&n=9")
+	if got := refererPathOrDefault(r, "/r/a"); got != "/r/a?refresh=off&steps=errors" {
+		t.Fatalf("referer target = %q", got)
+	}
+
+	s := &Server{}
+	rr := httptest.NewRecorder()
+	s.redirectWithNotice(rr, r, "/r/a", noticeQueued, 1)
+	if got := rr.Header().Get("Location"); got != "/r/a?refresh=off&steps=errors&notice=queued&n=1" {
+		t.Fatalf("redirect Location = %q", got)
+	}
+
+	for _, hostile := range []string{
+		"https://console.example//evil.example?refresh=off",
+		"https://console.example/%2f%2fevil.example?refresh=off",
+		"https://console.example/r/a%5c..%5cevil?refresh=off",
+		"https://console.example/%0d%0aLocation:%20https://evil.example?refresh=off",
+		"https://console.example/r/a?refresh=on",
+		"https://console.example/r/a?refresh=off&refresh=off",
+		"https://console.example/r/a?unknown=value",
+	} {
+		r.Header.Set("Referer", hostile)
+		if got := refererPathOrDefault(r, "/r/a"); got != "/r/a" {
+			t.Errorf("hostile/unaccepted referer %q produced %q", hostile, got)
+		}
+	}
 }
 
 // --- TestActions_WorkDespiteKillSwitchAndOffManifest --------------------

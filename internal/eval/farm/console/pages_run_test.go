@@ -260,8 +260,12 @@ func TestPages_RunListsOlderObservationVersions(t *testing.T) {
 	if !strings.Contains(body, "first pass, stale") {
 		t.Errorf("body missing the older observation's own headline:\n%s", body)
 	}
-	if n := strings.Count(body, "20260911T120000000Z-claude-sonnet-5"); n != 1 {
-		t.Errorf("current obsId appears %d times, want exactly 1 (not also under older versions):\n%s", n, body)
+	currentID := "20260911T120000000Z-claude-sonnet-5"
+	if n := strings.Count(body, currentID); n < 2 {
+		t.Errorf("current obsId is not visibly identified as displayed and current: count=%d\n%s", n, body)
+	}
+	if historyAt := strings.Index(body, `class="plain assessment-history"`); historyAt >= 0 && strings.Contains(body[historyAt:], currentID) {
+		t.Errorf("current obsId was incorrectly included under older versions:\n%s", body)
 	}
 }
 
@@ -1259,7 +1263,7 @@ func TestSoftWrapID_InsertsZeroWidthSpaceAfterSeparators(t *testing.T) {
 
 // TestPages_RunFailedChecksTableStacksAndWrapsLongIDs pins item 5 (round-1
 // follow-up): the failed/blocked checks table opts into table.stack with
-// data-label cells so it stacks on phones, and a long check id wraps only
+// explicit header associations and literal mobile labels so it stacks on phones, and a long check id wraps only
 // at "/ . - _" (a zero-width space after each, never a bare mid-word
 // break).
 func TestPages_RunFailedChecksTableStacksAndWrapsLongIDs(t *testing.T) {
@@ -1275,9 +1279,10 @@ func TestPages_RunFailedChecksTableStacksAndWrapsLongIDs(t *testing.T) {
 	if !strings.Contains(body, `<table class="table table-vcenter stack">`) {
 		t.Errorf("failed-checks table is not opted into table.stack:\n%s", body)
 	}
-	if !strings.Contains(body, `data-label="Check"`) || !strings.Contains(body, `data-label="Expected"`) ||
-		!strings.Contains(body, `data-label="Observed"`) || !strings.Contains(body, `data-label="Source"`) {
-		t.Errorf("failed-checks table cells are missing data-label attributes:\n%s", body)
+	if !strings.Contains(body, `headers="run-check-id"`) || !strings.Contains(body, `headers="run-check-expected"`) ||
+		!strings.Contains(body, `headers="run-check-observed"`) || !strings.Contains(body, `headers="run-check-source"`) ||
+		!strings.Contains(body, `class="mobile-cell-label" aria-hidden="true"`) {
+		t.Errorf("failed-checks table cells are missing explicit header associations/mobile labels:\n%s", body)
 	}
 	if !strings.Contains(body, "svc/\u200ba.\u200bb_\u200bc-\u200bd") {
 		t.Errorf("check id is not wrapped with zero-width spaces after / . - _:\n%s", body)
@@ -1498,5 +1503,27 @@ func TestPages_RunJudgmentReason_KeyboardReadable(t *testing.T) {
 		if strings.Contains(body, `title="`+reason+`"`) {
 			t.Errorf("judgment reason remains tooltip-only: %q\n%s", reason, body)
 		}
+	}
+}
+
+func TestPages_RunObservationIDsAreVisibleAndUnambiguous(t *testing.T) {
+	srv, store, _ := testServer(t)
+	seedBatch(t, store, "obs-visible", "claude-sonnet-5", []runFixture{{runID: "obs-visible-a", scenario: "a", startedAt: fixedNow(t)(), durationS: "5s", done: true, taskResult: "passed"}}, true, map[string]string{"obs-visible-a": "passed"})
+	older := fixtureObservation("obs-visible-a")
+	older.ObsID = "20260910T090000000Z-claude-sonnet-5"
+	older.CreatedAt = fixedNow(t)().Add(-time.Hour)
+	seedObservation(t, store, older)
+	current := fixtureObservation("obs-visible-a")
+	current.ObsID = "20260911T120000000Z-claude-opus-5"
+	current.Model = "claude-opus-5"
+	seedObservation(t, store, current)
+	body := doGET(t, srv.Handler(), "/r/obs-visible-a?obs="+url.QueryEscape(older.ObsID)).Body.String()
+	for _, want := range []string{"Displayed assessment ID", older.ObsID, "Current assessment ID", current.ObsID} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page lacks %q: %s", want, body)
+		}
+	}
+	if strings.Count(body, older.ObsID) < 2 {
+		t.Errorf("older history ID is not visible and copyable: %s", body)
 	}
 }

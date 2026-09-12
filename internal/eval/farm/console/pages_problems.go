@@ -221,7 +221,7 @@ func buildFailedAssessmentBanner(runs []ProblemsRun) (prefix string, affected []
 
 func (s *Server) handleProblemsPage(w http.ResponseWriter, r *http.Request) {
 	spec := problemListSpec()
-	q, err := Parse(spec, r.URL.Query())
+	q, err := parseHTMLQuery(spec, r.URL.Query())
 	if err != nil {
 		var qerr *QueryError
 		errors.As(err, &qerr)
@@ -236,7 +236,7 @@ func (s *Server) handleProblemsPage(w http.ResponseWriter, r *http.Request) {
 	// only decides scopeRuns, i.e. which problems are shown at all.
 	allRuns, err := s.allProblemsRuns(ctx)
 	if err != nil {
-		s.renderStoreError(w, r, http.StatusBadGateway, "Problems unavailable", "The problem history could not be read.")
+		s.renderStoreError(w, r, http.StatusBadGateway, "Problems unavailable", "The problem history could not be read.", "load problems", err)
 		return
 	}
 	scopeRuns := problemsRunsInWindow(allRuns, q.Since, now)
@@ -284,8 +284,9 @@ func (s *Server) handleProblemsPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	renderPage(w, "problems", problemsPageData{
-		Meta:                   s.pageMeta(r, "Problems", navProblems, false),
+	meta := s.pageMeta(r, "Problems", navProblems, false)
+	data := problemsPageData{
+		Meta:                   meta,
 		Nav:                    nav,
 		Summary:                fmt.Sprintf("%d matching problem%s · %d live · %d high", len(filtered), pluralS(len(filtered)), liveN, highN),
 		NewestBuild:            newestBuildLabel(allRuns),
@@ -294,5 +295,6 @@ func (s *Server) handleProblemsPage(w http.ResponseWriter, r *http.Request) {
 		EmptyDetail:            emptyDetail,
 		FailedAssessmentPrefix: failedPrefix,
 		FailedAssessmentRuns:   failedRuns,
-	})
+	}
+	renderPage(w, "problems", data)
 }

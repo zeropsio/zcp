@@ -12,7 +12,7 @@
 {{if .Active}}<div class="filter-row active-filters"><span class="k">Active</span>{{range .Active}}<a class="filter active-chip" href="{{.RemoveURL}}" title="Remove this filter">{{.Label}} ×</a>{{end}}<a class="clear-all" href="{{.ClearURL}}">Reset filters</a></div>{{end}}
 </div>{{end}}
 
-{{define "sortth"}}<th aria-sort="{{.AriaSort}}"><a href="{{.URL}}">{{.Label}}{{if .Active}}<span class="sort-marker" aria-hidden="true">{{if eq .Dir "asc"}} ▲{{else}} ▼{{end}}</span>{{end}}</a></th>{{end}}
+{{define "sortth"}}<th aria-sort="{{.AriaSort}}"><a href="{{.URL}}" aria-label="{{.AccessibleName}}">{{.Label}}{{if .Active}}<span class="sort-marker" aria-hidden="true">{{if eq .Dir "asc"}} ▲{{else}} ▼{{end}}</span>{{end}}</a></th>{{end}}
 
 {{/* sortchips renders a list's sort options as a chip row above its table
    (item 15: stacked tables hide thead on phones, so the sortable column
@@ -20,7 +20,7 @@
    The sort-row class (item 10, FIX3) is its own, distinct from every other
    .filter-row, so app.css can hide it above 640px — where the real <th>
    headers already do the same job — without touching a filter bar. */}}
-{{define "sortchips"}}<div class="filter-row sort-row"><span class="k">Sort</span>{{range .}}<a class="filter{{if .Active}} on{{end}}" href="{{.URL}}">{{.Label}}{{if .Active}}<span class="sort-marker" aria-hidden="true">{{if eq .Dir "asc"}} ▲{{else}} ▼{{end}}</span>{{end}}</a>{{end}}</div>{{end}}
+{{define "sortchips"}}<div class="filter-row sort-row"><span class="k">Sort</span>{{range .}}<a class="filter{{if .Active}} on{{end}}" href="{{.URL}}" aria-label="{{.AccessibleName}}">{{.Label}}{{if .Active}}<span class="sort-marker" aria-hidden="true">{{if eq .Dir "asc"}} ▲{{else}} ▼{{end}}</span>{{end}}</a>{{end}}</div>{{end}}
 
 {{define "badquery"}}{{template "head" .Meta}}
 <div class="page-head"><h1>Unknown filter</h1></div>
