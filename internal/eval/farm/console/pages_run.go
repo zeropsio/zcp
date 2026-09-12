@@ -38,6 +38,7 @@ type runPageData struct {
 	// marks that case for the "showing an earlier assessment" note.
 	HasCard      bool
 	DisplayedObs *observer.Observation
+	CurrentObsID string
 	ViewingOlder bool
 	OutcomeText  string
 	Story        *storyView
@@ -301,7 +302,7 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	q, err := Parse(runStepsListSpec(), r.URL.Query())
+	q, err := parseHTMLQuery(runStepsListSpec(), r.URL.Query())
 	if err != nil {
 		var qerr *QueryError
 		if !errors.As(err, &qerr) {
@@ -347,11 +348,15 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 		VerdictDisplay:    runVerdictDisplay(row),
 		VerdictReasonText: runVerdictReasonText(row),
 		DisplayedObs:      displayedObs,
+		CurrentObsID:      row.currentObsID,
 		ViewingOlder:      viewingOlder,
 		FailedNewestText:  failedNewestText,
 		FailedNewestHref:  failedNewestHref,
 		OlderObservations: buildOlderObsViews(runID, older, q.Obs),
 		ModelOptions:      buildModelOptions(preselectModel),
+	}
+	if data.CurrentObsID == "" && row.Observation != nil {
+		data.CurrentObsID = row.Observation.ObsID
 	}
 	data.ShowAssessForm = row.DoneExists && !assessmentWorkUnavailable(row) && runDidWork(row) && !data.Meta.Observer.Hidden && !busy
 	data.LiveStatusText, data.PreStoreFailureText = s.runLiveStatus(runID)

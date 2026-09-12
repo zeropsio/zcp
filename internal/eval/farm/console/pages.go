@@ -41,6 +41,7 @@ var pageFuncs = template.FuncMap{
 	"preview":    preview,
 	"capRaw":     capRaw,
 	"joinInts":   joinInts,
+	"pageURL":    pageURL,
 	"stepAnchor": func(n int) string { return fmt.Sprintf("s%d", n) },
 	"verifiedMark": func(v bool) string {
 		if v {
@@ -230,7 +231,12 @@ type pageMeta struct {
 	// target with a one-shot ?notice=/?n= stripped (view.go's
 	// cleanRefreshURL) — "" when neither was present, so a page with no
 	// notice keeps rendering the plain, pre-existing refresh tag.
-	RefreshURL string
+	RefreshURL    string
+	RefreshPaused bool
+	KeepRefresh   bool
+	PauseURL      string
+	RefreshNowURL string
+	ResumeURL     string
 }
 
 // observerStatus is pageMeta.Observer: the rendered §8.3 status line text,
@@ -251,14 +257,40 @@ type observerStatus struct {
 // flight" verdict — each page handler knows its own scope (one run, one
 // batch, or the whole console) better than this shared helper does.
 func (s *Server) pageMeta(r *http.Request, title, nav string, refresh bool) pageMeta {
+	paused := r.URL.Query().Get(paramRefresh) == refreshOff
+	values := r.URL.Query()
 	return pageMeta{
-		Title:      title,
-		Nav:        nav,
-		Observer:   s.observerStatusLine(),
-		Notice:     noticeFromQuery(r.URL.Query()),
-		Refresh:    refresh,
-		RefreshURL: cleanRefreshURL(r),
+		Title:         title,
+		Nav:           nav,
+		Observer:      s.observerStatusLine(),
+		Notice:        noticeFromQuery(r.URL.Query()),
+		Refresh:       refresh && !paused,
+		RefreshURL:    cleanRefreshURL(r),
+		RefreshPaused: refresh && paused,
+		KeepRefresh:   paused,
+		PauseURL:      listURL(r.URL.Path, values, map[string]string{paramRefresh: refreshOff}),
+		RefreshNowURL: listURL(r.URL.Path, values, nil),
+		ResumeURL:     listURL(r.URL.Path, values, map[string]string{paramRefresh: ""}),
 	}
+}
+
+// pageURL carries the accepted HTML-only refresh preference across internal
+// page navigation. API URLs and fragment-only links remain byte-for-byte.
+func pageURL(raw string, meta pageMeta) string {
+	if !meta.KeepRefresh || raw == "" || strings.HasPrefix(raw, "#") || strings.HasPrefix(raw, "/api/") || strings.HasPrefix(raw, "/static/") {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.IsAbs() || u.Host != "" || !strings.HasPrefix(u.Path, "/") {
+		return raw
+	}
+	if _, ok := htmlListSpecForPath(u.Path); !ok {
+		return raw
+	}
+	q := u.Query()
+	q.Set(paramRefresh, refreshOff)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // observerStatusLine resolves §8.3 FM-51's observer status line, in the
@@ -298,9 +330,9 @@ func (s *Server) observerStatusLine() observerStatus {
 type noticeView struct{ Text string }
 
 func noticeFromQuery(q url.Values) *noticeView {
-	switch q.Get("notice") {
-	case "queued":
-		n, err := strconv.Atoi(q.Get("n"))
+	switch q.Get(paramNotice) {
+	case noticeQueued:
+		n, err := strconv.Atoi(q.Get(paramN))
 		if err != nil || n < 0 {
 			n = 1
 		}
@@ -312,15 +344,15 @@ func noticeFromQuery(q url.Values) *noticeView {
 			plural = ""
 		}
 		return &noticeView{Text: fmt.Sprintf("Queued %d run%s for assessment.", n, plural)}
-	case "busy":
+	case noticeBusy:
 		return &noticeView{Text: "Already queued or running — try again once it settles."}
-	case "not-finished":
+	case noticeNotFinished:
 		return &noticeView{Text: "That run hasn't finished yet — nothing to assess."}
-	case "nothing-to-assess":
+	case noticeNothingToAssess:
 		return &noticeView{Text: "That run never started — nothing to assess."}
-	case "bad-model":
+	case noticeBadModel:
 		return &noticeView{Text: "That model isn't one of the ones this console supports."}
-	case "unavailable":
+	case noticeUnavailable:
 		return &noticeView{Text: "The observer isn't available right now."}
 	default:
 		return nil

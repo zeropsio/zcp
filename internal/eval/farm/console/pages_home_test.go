@@ -575,7 +575,7 @@ func TestPages_HomeBatchesTableShortDatesAndSetChip(t *testing.T) {
 	if strings.Contains(body, `data-label="Started">1 Sep 2026,`) {
 		t.Errorf("the batches table's Started cell still shows the long date form:\n%s", body)
 	}
-	if !strings.Contains(body, `data-label="Set"><span class="badge chip">gate</span>`) {
+	if !strings.Contains(body, `headers="history-set"><span class="mobile-cell-label" aria-hidden="true">Set</span><span class="badge chip">gate</span>`) {
 		t.Errorf("body does not render the Set column as a chip:\n%s", body)
 	}
 }

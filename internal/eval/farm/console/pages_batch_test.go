@@ -244,7 +244,7 @@ func TestPages_BatchSummaryLinksToAssessFormWithSplitCounts(t *testing.T) {
 	if !strings.Contains(body, `<form class="callout" method="post" action="/b/sf1/observe" id="assess">`) {
 		t.Errorf("summary is missing its Assess form:\n%s", body)
 	}
-	if form, runs := strings.Index(body, `id="assess"`), strings.Index(body, `aria-label="Scrollable runs in this batch"`); form < 0 || runs < 0 || form > runs {
+	if form, runs := strings.Index(body, `id="assess"`), strings.Index(body, `aria-label="Runs in this batch"`); form < 0 || runs < 0 || form > runs {
 		t.Errorf("Assess form must precede run filters and table:\n%s", body)
 	}
 }
@@ -668,7 +668,7 @@ func TestPages_BatchRunsTableHeaderMatchesDataColumns(t *testing.T) {
 	}, true, map[string]string{"hc1-a": "passed"})
 
 	body := doGET(t, h, "/b/hc1").Body.String()
-	if !strings.Contains(body, "Why / headline") {
+	if !strings.Contains(body, "why / headline") {
 		t.Errorf("runs table is missing the Why/headline header:\n%s", body)
 	}
 	if strings.Contains(body, `colspan="4"`) {

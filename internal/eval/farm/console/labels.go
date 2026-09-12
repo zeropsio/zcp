@@ -10,6 +10,7 @@
 package console
 
 import (
+	"errors"
 	"net/http"
 	"regexp"
 
@@ -310,6 +311,12 @@ func vocabRows(vocab []vocabEntry) []vocabRow {
 // value this file knows a label for (TestLabels_EveryEnumValueHasALabel
 // pins that the set below is exhaustive).
 func (s *Server) handleTermsPage(w http.ResponseWriter, r *http.Request) {
+	if _, err := parseHTMLQuery(ListSpec{}, r.URL.Query()); err != nil {
+		var qerr *QueryError
+		errors.As(err, &qerr)
+		s.renderBadQuery(w, r, navTerms, qerr)
+		return
+	}
 	data := termsPageData{
 		Meta:            s.pageMeta(r, "Terms", navTerms, false),
 		Glossary:        glossaryTerms,

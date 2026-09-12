@@ -1,18 +1,18 @@
 {{define "problems"}}{{template "head" .Meta}}
 <div class="page-head problem-page-head">
 <div><h1>Problems</h1><p class="muted result-summary">{{.Summary}}</p>{{if .NewestBuild}}<p class="problem-build-context">Newest assessed build <code>{{.NewestBuild}}</code></p>{{end}}</div>
-<a class="btn" href="/terms">How statuses work</a>
+<a class="btn" href="{{pageURL "/terms" .Meta}}">How statuses work</a>
 </div>
-{{if .FailedAssessmentRuns}}<div class="callout callout-warn">{{.FailedAssessmentPrefix}}{{range $i, $r := .FailedAssessmentRuns}}{{if $i}}, {{end}}<a href="/r/{{$r.RunID}}">{{$r.RunID}}</a>{{end}}</div>{{end}}
+{{if .FailedAssessmentRuns}}<div class="callout callout-warn">{{.FailedAssessmentPrefix}}{{range $i, $r := .FailedAssessmentRuns}}{{if $i}}, {{end}}<a href="{{pageURL (printf "/r/%s" $r.RunID) $.Meta}}">{{$r.RunID}}</a>{{end}}</div>{{end}}
 <div class="problem-toolbar">{{template "filterbar" .Nav.Filters}}
-<details class="list-sort"><summary class="btn">Sort: {{range .Nav.Sorts}}{{if .Active}}{{.Label}} {{if eq .Dir "asc"}}↑{{else}}↓{{end}}{{end}}{{end}}</summary><div class="filter-menu">{{range .Nav.Sorts}}<a href="{{.URL}}"{{if .Active}} aria-current="true"{{end}}>{{.Label}}{{if .Active}} {{if eq .Dir "asc"}}↑{{else}}↓{{end}}{{end}}</a>{{end}}</div></details></div>
+<details class="list-sort"><summary class="btn">Sort: {{range .Nav.Sorts}}{{if .Active}}{{.Label}} {{if eq .Dir "asc"}}↑{{else}}↓{{end}}{{end}}{{end}}</summary><div class="filter-menu">{{range .Nav.Sorts}}<a href="{{.URL}}" aria-label="{{.AccessibleName}}"{{if .Active}} aria-current="true"{{end}}>{{.Label}}{{if .Active}} <span aria-hidden="true">{{if eq .Dir "asc"}}↑{{else}}↓{{end}}</span>{{end}}</a>{{end}}</div></details></div>
 <div class="card problem-table">
 {{if .Rows}}<div class="problem-grid problem-columns" aria-hidden="true"><span>Problem</span><span>Status</span><span>Newest build</span><span>All history</span><span>Last seen · UTC</span></div>{{end}}
 {{range .Rows}}
 <details class="problem-row" id="{{.AnchorID}}">
 <summary class="problem-grid problem-summary">
 <div class="problem-primary">
-<h2><a class="problem-title" href="{{.FindingLink}}">{{.Title}}</a></h2>
+<h2 class="problem-title">{{.Title}}</h2>
 <div class="problem-subline"><span class="severity-word severity-{{.Severity}}" title="{{severityTooltip .Severity}}">{{severityLabel .Severity}}</span>{{range .CauseLabels}}<span>{{.}}</span>{{end}}{{if .Surface}}<code>{{.Surface}}</code>{{end}}</div>
 </div>
 <div class="problem-status"><span class="mobile-label">Status</span><span class="state-badge state-{{.Status}}" title="{{problemStatusTooltip .Status}}">{{problemStatusLabel .Status}}</span></div>
@@ -22,20 +22,20 @@
 <span class="row-chevron" aria-hidden="true">›</span>
 </summary>
 <section class="member-content" aria-label="Problem evidence">
-<div class="member-heading"><h3>Members ({{len .Members}})</h3><a href="{{.FindingLink}}">Open representative finding →</a></div>
+<div class="member-heading"><h3>Members ({{len .Members}})</h3><a href="{{pageURL .FindingLink $.Meta}}">Open representative finding →</a></div>
 <dl class="problem-context">
 <div><dt>Newest build coverage</dt><dd>{{if .RunsAssessedOnNewest}}hit {{.HitOnNewestBuild}}/{{.RunsAssessedOnNewest}} runs{{if $.NewestBuild}} on {{$.NewestBuild}}{{end}}{{else}}Unavailable: no assessed runs on the newest build for this problem's scenarios{{end}}</dd></div>
 <div><dt>Current time window</dt><dd>{{.InScopeHit}}/{{.InScopeAssessed}} in scope</dd></div>
 <div><dt>First seen · UTC</dt><dd>{{.FirstSeenShort}}</dd></div>
 <div><dt>Status</dt><dd>{{problemStatusTooltip .Status}}</dd></div>
 </dl>
-{{if or .Anchor .Surface}}<p class="problem-anchor">{{if .Anchor}}<span class="muted">Search for</span> <code>{{.Anchor}}</code>{{end}}{{if .Surface}} <a href="{{.SurfaceLink}}">Filter to {{.Surface}}</a>{{end}}</p>{{end}}
+{{if or .Anchor .Surface}}<p class="problem-anchor">{{if .Anchor}}<span class="muted">Search for</span> <code>{{.Anchor}}</code>{{end}}{{if .Surface}} <a href="{{pageURL .SurfaceLink $.Meta}}">Filter to {{.Surface}}</a>{{end}}</p>{{end}}
 {{if .Fix}}<p class="problem-fix"><strong>Suggested fix</strong> {{.Fix}}</p>{{end}}
 <ol class="member-list">
 {{range .Members}}<li class="member-item">
-<div class="member-title"><a href="{{.FindingLink}}">{{.Title}}</a><span class="severity-word severity-{{.Severity}}">{{severityLabel .Severity}}</span><span class="muted">{{.CauseLabel}}</span></div>
-<p class="member-context"><a href="/r/{{.RunID}}">{{.RunID}}</a> · <a href="{{.ScenarioLink}}">{{.Scenario}}</a> · <a href="{{.BatchLink}}">{{.Batch}}</a> · <a href="{{.BuildLink}}">{{.Build.Label}}</a></p>
-{{if .Quote}}<blockquote class="member-quote"><a href="/r/{{.RunID}}#{{stepAnchor .QuoteStep}}">&#34;{{.Quote}}&#34;</a><span class="metric-label">Step {{.QuoteStep}} · quote found</span></blockquote>{{else}}<p class="metric-label">No verified step quote recorded. <a href="{{.FindingLink}}">Inspect the finding</a>.</p>{{end}}
+<div class="member-title"><a href="{{pageURL .FindingLink $.Meta}}">{{.Title}}</a><span class="severity-word severity-{{.Severity}}">{{severityLabel .Severity}}</span><span class="muted">{{.CauseLabel}}</span></div>
+<p class="member-context"><a href="{{pageURL (printf "/r/%s" .RunID) $.Meta}}">{{.RunID}}</a> · <a href="{{pageURL .ScenarioLink $.Meta}}">{{.Scenario}}</a> · <a href="{{pageURL .BatchLink $.Meta}}">{{.Batch}}</a> · <a href="{{pageURL .BuildLink $.Meta}}">{{.Build.Label}}</a></p>
+{{if .Quote}}<blockquote class="member-quote"><a href="{{pageURL (printf "/r/%s#s%d" .RunID .QuoteStep) $.Meta}}">&#34;{{.Quote}}&#34;</a><span class="metric-label">Step {{.QuoteStep}} · quote found</span></blockquote>{{else}}<p class="metric-label">No verified step quote recorded. <a href="{{pageURL .FindingLink $.Meta}}">Inspect the finding</a>.</p>{{end}}
 </li>{{end}}
 </ol>
 </section>

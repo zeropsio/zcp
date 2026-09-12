@@ -139,19 +139,18 @@ func fmtTimeShort(t time.Time) string {
 
 func (s *Server) handleHomePage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
-	allBatches, err := loadBatchRows(ctx, s.cfg.Store, s.cfg.ObserverDisabled, s.queueState, s.runCache, s.summaryCache, s.logf)
-	if err != nil {
-		s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The evaluation overview could not be read.")
-		return
-	}
-
 	spec := batchListSpec()
-	q, err := Parse(spec, r.URL.Query())
+	q, err := parseHTMLQuery(spec, r.URL.Query())
 	if err != nil {
 		var qerr *QueryError
 		errors.As(err, &qerr)
 		s.renderBadQuery(w, r, navOverview, qerr)
+		return
+	}
+
+	allBatches, err := loadBatchRows(ctx, s.cfg.Store, s.cfg.ObserverDisabled, s.queueState, s.runCache, s.summaryCache, s.logf)
+	if err != nil {
+		s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The evaluation overview could not be read.", "load overview", err)
 		return
 	}
 
@@ -161,7 +160,7 @@ func (s *Server) handleHomePage(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.buildHomeBatchRows(ctx, filtered)
 	if err != nil {
-		s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The evaluation overview could not be read.")
+		s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The evaluation overview could not be read.", "load overview", err)
 		return
 	}
 
@@ -169,19 +168,20 @@ func (s *Server) handleHomePage(w http.ResponseWriter, r *http.Request) {
 	if latestRow, ok := pickLatestEvaluationBatch(allBatches); ok {
 		latest, err = s.buildLatestEvaluation(ctx, allBatches, latestRow)
 		if err != nil {
-			s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The latest evaluation could not be read.")
+			s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The latest evaluation could not be read.", "load latest evaluation", err)
 			return
 		}
 	}
 
 	top, err := s.buildTopProblems(ctx, now)
 	if err != nil {
-		s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The current problem summary could not be read.")
+		s.renderStoreError(w, r, http.StatusInternalServerError, "Overview unavailable", "The current problem summary could not be read.", "load current problems", err)
 		return
 	}
 
-	renderPage(w, "home", homePageData{
-		Meta:        s.pageMeta(r, "Overview", navOverview, s.anyObservationInFlight()),
+	meta := s.pageMeta(r, "Overview", navOverview, s.anyObservationInFlight())
+	data := homePageData{
+		Meta:        meta,
 		Latest:      latest,
 		TopProblems: top,
 		Nav:         nav,
@@ -189,7 +189,8 @@ func (s *Server) handleHomePage(w http.ResponseWriter, r *http.Request) {
 		Batches:     rows,
 		MatchingN:   len(filtered),
 		TotalN:      len(allBatches),
-	})
+	}
+	renderPage(w, "home", data)
 }
 
 // anyObservationInFlight reports whether any observation is queued or
