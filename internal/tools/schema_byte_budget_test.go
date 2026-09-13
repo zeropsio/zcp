@@ -79,7 +79,13 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// correctness fix (tell == what the platform now expects), not new
 		// surface.
 		"zerops_knowledge": 2973,
-		"zerops_deploy":    1908,
+		// Raised +245 (1908→2153) for the `appVersion` input (docs/spec-
+		// workflows.md §8 R2): set to "latest" to re-deploy a never-
+		// activated buildFromGit service's already-built appVersion in
+		// place, skipping source resolution entirely. Deliberate new
+		// field — optional, backward-compatible (omit → today's
+		// source-resolving deploy).
+		"zerops_deploy": 2153,
 		// Raised +62 (2484→2546) for the get-action contract change: get now
 		// returns env var KEYS + ${host_var} refs, NOT values, so the agent
 		// references $VAR by name instead of pasting a credential literal. The
