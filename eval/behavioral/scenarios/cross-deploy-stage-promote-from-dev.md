@@ -19,6 +19,7 @@ verification:
   spec: spec-workflows.md §8
   liveness: {service: appstage, marker: "nodejs"}
   artifactPromotion: [{from: appdev, to: appstage}]
+  mustOffer: ["(?i)promot\\w+ .*without (a )?rebuild"]
   noFailedProcesses: true
   never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |

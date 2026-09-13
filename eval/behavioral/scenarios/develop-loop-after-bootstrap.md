@@ -29,6 +29,8 @@ area: bootstrap-and-develop
 retrospective:
   promptStyle: briefing-future-agent
 verification:
+  mode: required
+  spec: spec-workflows.md §4
   expectedServices:
     - hostname: appdev
       status: [ACTIVE]
@@ -37,6 +39,9 @@ verification:
       status: [ACTIVE]
       type: postgresql@*
   noFailedProcesses: true
+  meta:
+    - {hostname: appdev, field: closeDeployMode, expect: "unset"}
+  never: ["zerops_import{override=true}", "zerops_delete"]
   retrospectiveMustNotMention:
     - smuggled
     - hand-edited yaml
