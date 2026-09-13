@@ -49,6 +49,9 @@ verification:
       status: [ACTIVE]
       type: postgresql@*
   unchanged: [appdev, appstage]
+  meta:
+    - {hostname: appdev, field: mode, expect: "standard"}
+    - {hostname: appdev, field: stageHostname, expect: "appstage"}
   never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
   Jsi vývojář a v Zerops dashboardu už máš standard pair postavený

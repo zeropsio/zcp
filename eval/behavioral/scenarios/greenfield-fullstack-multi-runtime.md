@@ -13,6 +13,27 @@ tags: [bootstrap, multi-runtime, fullstack, nextjs, node, postgres, env-wiring, 
 area: bootstrap-and-develop
 retrospective:
   promptStyle: briefing-future-agent
+verification:
+  mode: required
+  spec: spec-workflows.md §4
+  expectedServices:
+    - hostname: api
+      status: [ACTIVE]
+      type: nodejs@*
+    - hostname: web
+      status: [ACTIVE]
+      type: nginx@*
+    - hostname: db
+      status: [ACTIVE]
+      type: postgresql@*
+    - hostname: cache
+      status: [ACTIVE]
+      type: valkey@*
+  noFailedProcesses: true
+  liveness: {service: web, marker: "multiruntime-dashboard"}
+  containerCheck:
+    - {service: api, cmd: "printenv db_hostname", match: ".+"}
+  never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
   You are building a small fullstack app: a Next.js frontend that
   talks to a Node API which reads from Postgres. You want both
@@ -41,4 +62,4 @@ notableFriction:
       (db wait → api → frontend).
 ---
 
-Build me a small fullstack app on Zerops: a Next.js frontend that talks to a Node API, with Postgres for storage. I want dev environments on both the frontend and the API, plus a staging slot for each.
+Build me a small fullstack app on Zerops: a Next.js frontend (statically exported, served as `web`) that talks to a Node API (`api`), with Postgres (`db`) for storage and a small Redis-compatible cache (`cache`) for session data. I want dev environments on both `web` and `api`, plus a staging slot for each. Make sure the dashboard page served at `/` on `web` contains the text "multiruntime-dashboard" somewhere in its body.

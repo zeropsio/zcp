@@ -14,6 +14,36 @@ tags: [bootstrap, recipe-route, standard-pair, laravel, postgres, valkey, s3, me
 area: bootstrap
 retrospective:
   promptStyle: briefing-future-agent
+verification:
+  mode: required
+  spec: spec-workflows.md §2
+  expectedServices:
+    - hostname: appdev
+      status: [ACTIVE]
+      type: php-nginx@*
+    - hostname: appstage
+      status: [ACTIVE]
+      type: php-nginx@*
+    - hostname: workerstage
+      status: [ACTIVE]
+      type: php-nginx@*
+    - hostname: db
+      status: [ACTIVE]
+      type: postgresql@*
+    - hostname: redis
+      status: [ACTIVE]
+      type: valkey@*
+    - hostname: storage
+      status: [ACTIVE]
+      type: object-storage
+    - hostname: search
+      status: [ACTIVE]
+      type: meilisearch@*
+  noFailedProcesses: true
+  liveness: {service: appstage, marker: "Showcase dashboard"}
+  containerCheck:
+    - {service: appstage, cmd: "php -r 'echo getenv(\"APP_KEY\");'", match: "^base64:"}
+  never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
   You are setting up a Laravel app that needs the full toolkit:
   database, cache, object storage, full-text search, and a queue

@@ -12,6 +12,13 @@ tags: [adopt, simple-mode, self-deploy, develop, node, no-stage]
 area: adopt-and-develop
 retrospective:
   promptStyle: briefing-future-agent
+verification:
+  mode: required
+  spec: spec-workflows.md §8 DM-2
+  liveness: {service: api, marker: "nodejs"}
+  meta:
+    - {hostname: api, field: mode, expect: "simple"}
+  never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
   Your single Node service `api` is running on Zerops in simple
   mode (one container, no staging). You want to add `GET /version`
