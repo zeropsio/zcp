@@ -1268,3 +1268,47 @@ func TestPushSourceCheckFor(t *testing.T) {
 		})
 	}
 }
+
+// TestServiceMeta_PublicAccessFor_DefaultsToAuto_RoundTrips pins E9: a
+// missing PublicAccess entry defaults to {Intent: auto}; entries set for
+// both halves of a standard pair survive a WriteServiceMeta/ReadServiceMeta
+// round-trip; Hostnames() (the E8 pair-keyed enumeration) is unaffected by
+// the new field.
+func TestServiceMeta_PublicAccessFor_DefaultsToAuto_RoundTrips(t *testing.T) {
+	t.Parallel()
+	meta := &ServiceMeta{Hostname: "appdev", StageHostname: "appstage", BootstrappedAt: "2026-03-04T12:00:00Z"}
+
+	// Missing map entry defaults to auto.
+	if got := meta.PublicAccessFor("appdev"); got.Intent != topology.PublicAccessAuto {
+		t.Errorf("PublicAccessFor(appdev) with no entry = %+v, want Intent=auto", got)
+	}
+
+	meta.SetPublicAccess("appdev", topology.PublicAccessRecord{Intent: topology.PublicAccessSubdomain, SubdomainEnabledByZcpAt: "2026-04-01T00:00:00Z"})
+	meta.SetPublicAccess("appstage", topology.PublicAccessRecord{Intent: topology.PublicAccessNone})
+
+	dir := t.TempDir()
+	if err := WriteServiceMeta(dir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	loaded, err := ReadServiceMeta(dir, "appdev")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta: %v", err)
+	}
+	if loaded == nil {
+		t.Fatal("ReadServiceMeta returned nil")
+	}
+
+	devRec := loaded.PublicAccessFor("appdev")
+	if devRec.Intent != topology.PublicAccessSubdomain || devRec.SubdomainEnabledByZcpAt != "2026-04-01T00:00:00Z" {
+		t.Errorf("PublicAccessFor(appdev) = %+v, want subdomain/stamped", devRec)
+	}
+	stageRec := loaded.PublicAccessFor("appstage")
+	if stageRec.Intent != topology.PublicAccessNone {
+		t.Errorf("PublicAccessFor(appstage) = %+v, want none", stageRec)
+	}
+
+	// E8: Hostnames() enumeration is unaffected by the new per-hostname map.
+	if got := loaded.Hostnames(); len(got) != 2 || got[0] != "appdev" || got[1] != "appstage" {
+		t.Errorf("Hostnames() = %v, want [appdev appstage]", got)
+	}
+}
