@@ -32,7 +32,9 @@ carries the scope header, the ranked problems, the failed/blocked runs and the
 finished-not-yet-assessed count, all in one ≤8 KB read. Make it your first
 substantive read, scoped by what the owner asked for:
 
-- A batch id named → `digest.md?batch=<id>`.
+- A batch id named → `digest.md?batch=<id>`. Archived batches (bring-up,
+  mutation, negative checks — `kind=archived`, spec §3.7/§8.8) are not
+  baselines: triage them only when the owner names one explicitly.
 - **"today"** → **not** `since=24h`: a rolling 24h window drifts across UTC
   midnight and can silently miss or include the wrong batches. Instead, GET
   `/api/batches.md` first, keep the rows whose `createdAt` (UTC) falls on
@@ -59,6 +61,8 @@ not re-cluster by hand. `digest.md`'s problems (and `/api/problems.md`, the
 same list with its full member set) are pre-ranked: live status
 (`new`/`first-seen`/`recurring`) before `gone`/`unconfirmed`, then highest
 severity, then runs hit on the newest build. Work the list top to bottom.
+Identical batches flip 4-8 of 29 cells on agent variance (spec-scenarios §9.4):
+rank `recurring` (≥2 baseline batches) above anything seen once.
 
 Each problem row already carries severity, cause, **surface**, **anchor**,
 status, `hit <a>/<b> runs on <newest build>`, and one run link with its
@@ -159,7 +163,8 @@ anchor, runs affected (link each as
 evidence (step number + quote), code location(s) `file:line`, root cause
 (`VERIFIED`/`HYPOTHESIS`), fix proposal (direction, rough size, the test that
 would pin it). Then a "not a ZCP problem" section for findings whose cause is
-Agent mistake / Test scenario / Test check. Then a ranked recommendation list,
+Agent mistake / Test scenario / Test check, and runs `blocked: preparation`
+(spec §4.5 — the harness, never zcp or the agent). Then a ranked recommendation list,
 highest-impact first. Plain, short sentences — no essay.
 
 ## 7. Stop

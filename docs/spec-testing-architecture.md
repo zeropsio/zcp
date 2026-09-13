@@ -292,6 +292,9 @@ makes the richer set universal too.
 - `eval/behavioral/README.md` — the behavioral runner's operational home
   (round-trip protocol, failure modes); this spec governs where eval sits among
   the tiers, the README governs how it runs.
+- `docs/spec-eval-farm.md` — extends §10's row/oracle model (O1-O5) with O6-O12,
+  decision rows and the preparation gate for farm-scale runs; the scenarios it
+  runs are `spec-scenarios.md §9`.
 - `docs/spec-authoring-boundary.md` — the `ZCP_AUTHORING`-gated authoring domain
   has its own test surface under the same tier rule (depguard + `TestAuthoringBoundary_*`).
 

@@ -47,9 +47,9 @@ Key specs:
 - `docs/spec-architecture.md` — per-package map; `docs/spec-local-dev.md` — local vs container
 - `docs/spec-capture-inspector.md` — capture evidence contract, local UI security, and cold CLI-only inspector boundary
 - `docs/spec-welcome-mode.md` — agent-first mode: FE-driven onboarding (bidirectional bridge: announce/set-mode/launch-agent/agent-ready §4), container agent panel, terminal-only launch, versioned bootstrap install, skill packs + guided, FE wizard contract (§8)
-- `docs/spec-scenarios.md` — per-phase walkthroughs (pinned by `scenarios_test.go`)
+- `docs/spec-scenarios.md` — per-phase walkthroughs (pinned by `scenarios_test.go`); eval core matrix + derived gate set (§9, `TestEvalMatrix_*`)
 - `docs/spec-testing-architecture.md` — test+eval surface map: tier rule (offline/api/e2e/eval), api/e2e vs behavioral division, drift guards, scenario manifest
-- `docs/spec-eval-farm.md` — eval farm: sink + bundle contract (§1), self-driving run project + wrapper (§2), controller safety — prefix rule, maintainer gate, no rerun (§3), `verification:` fields + oracle families + decision rows (§4), report/coverage verdict vocabulary (§5), known gaps (§6), advisory observer — step numbering, digest, OAuth-only call, observation schema + quote check (§7), hosted console — auth, pages, agent API, worker (§8)
+- `docs/spec-eval-farm.md` — eval farm: sink + bundle contract (§1), self-driving run project + wrapper (§2), controller safety — prefix rule, maintainer gate, no rerun (§3), `verification:` fields, `seed.expect` → `blocked: preparation`, oracle families + decision rows (§4), report/coverage verdict vocabulary (§5), advisory observer — step numbering, digest, OAuth-only call, observation schema + quote check (§7), hosted console — auth, pages, agent API, worker (§8)
 - `docs/schema-integration.md` — schema validation ownership
 - `docs/spec-oss-port-flow.md` — gated `zerops_port` tool (foreign OSS → curated recipe)
 - `docs/spec-dataconsole.md` — Managed Data Console: code-isolated managed-service data viewer/editor; caller-bound write-token posture, embed/standalone reach, family taxonomy, value-fidelity wire contract (§7), install

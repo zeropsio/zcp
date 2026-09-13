@@ -575,7 +575,8 @@ least one cell. The matrix is a covering set, not the full product.
 5. **Outcome is function, not status**: at least one oracle that proves the app
    does the thing (record round-trip, marker rendered, env value reaches the
    process) AND `unchanged` for what must not move. `ACTIVE` or HTTP 200 alone
-   never satisfies a cell. `noFailedProcesses` on every cell.
+   never satisfies a cell. `noFailedProcesses` on every cell that mutates the
+   project (adopt-only, export-only and onboarding cells are exempt).
 6. **Decisions are pinned**: the runner injects `never: [zerops_import{override=true}]`
    on every cell; a cell lifts it only with `allow: {call, reason}`
    (`spec-eval-farm.md §4.2`). At least one further `never` or `toolArg` row per cell.
@@ -697,4 +698,15 @@ passed once per oracle family: a candidate with one planted regression per famil
 (env restart broken → B3; override skips DIAGNOSIS_REQUIRED → D4; mount resolved
 from cwd → B6; recipe offer skipped → A5; subdomain auto-enable dropped → A2, only
 once `internalLiveness` exists so the other liveness cells do not fail together).
-Every planted regression lands `failed` on its intended cell and nowhere else.
+Every planted regression lands `failed` on its intended ROW. The "nowhere else"
+half is read per row, not per cell: identical batches flip 4-8 of 29 cells on
+agent nondeterminism, timeouts and seed timing, so a cell that flips outside the
+intended row is variance unless the same row flips in two or more repeats. A
+single batch is a signal; a problem `recurring` across two or more baseline
+batches is evidence. Mutation and negative batches are archived (`farm
+archive`) so they never feed problem statistics.
+
+Run 2026-09-13 (spec-eval-farm.md §3.3 batches `mut-01..04` vs `matrix-3/4`):
+3 of 4 regressions detected on the intended row (B3, B6, A8); the subdomain
+auto-enable regression escaped — every current cell gets its subdomain from the
+import flag, so no cell depends on the deploy handler's auto-enable.
