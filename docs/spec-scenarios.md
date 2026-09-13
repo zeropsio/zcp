@@ -632,15 +632,14 @@ Legend: ↑ existing scenario to promote · ✚ scenario to write.
 | cell | scenario id | variation | task | oracle families | status |
 |---|---|---|---|---|---|
 | B1 | `develop-add-managed-dep-to-existing` | pair + add cache | | expectedServices unchanged containerCheck never(deploy on managed) | gate |
-| B3 ✚ | `env-service-scope-pair` | standard-pair, service env feature flag | turn FEATURE_X on for dev and stage | containerCheck toolResult(restartedServices) never | promote: containerCheck |
+| B3 | `env-service-scope-pair` | standard-pair, service env feature flag | turn FEATURE_X on for dev and stage | containerCheck toolResult(restartedServices) never | gate |
 | B4 ✚ | `env-yaml-baked-dev-only` | dev-only, key in `run.envVariables` | change the baked value | containerCheck never(manage reload as fix) | promote: containerCheck |
 | B5 ✚ | `env-project-scope-shared` | pair, project var + cross-ref | one secret shared by dev and stage | containerCheck noFabricatedSecret toolArg never | promote: containerCheck |
 | B13 ✚ | `env-build-time-simple` | simple, `build.envVariables` | the build needs a token | containerCheck never | promote: containerCheck |
-| B6 ✚ | `mount-edit-deploy` (absorbs `existing-standard-appdev-only-reminders`, `develop-edit-path-vs-deploy-source`) | pair, SSHFS; usersim triggers `start develop` mid-run | edit in the mount and ship dev only | liveness unchanged toolArg(workingDir ∈ /var/www/appdev; Bash ln -s never) containerCheck mustOffer(close-vs-continue) never | promote: toolArg |
-| B6a | `existing-standard-appdev-only-reminders` | pair, dev-only work | | liveness unchanged never | gate (until B6 lands, then absorbed) |
+| B6 | `mount-edit-deploy` (absorbed `existing-standard-appdev-only-reminders`, `develop-edit-path-vs-deploy-source`) | pair, SSHFS; usersim triggers `start develop` mid-run | edit in the mount and ship dev only | liveness unchanged toolArg(workingDir ∈ /var/www/appdev; Bash ln -s never) mustOffer(already-active) never | gate |
 | B7 ✚ | `mount-stale-recovery` | pair, preseed breaks the mount after deploy | continue editing | containerCheck liveness never | promote: containerCheck |
 | B8 | `cross-deploy-stage-promote-from-dev` | pair, promote | | artifactPromotion mustOffer(no-rebuild) never | gate |
-| B9 ✚ | `internal-only-worker` (absorbs D7 idle-worker verify) | pair + worker, no subdomain anywhere | add a queue worker | internalLiveness expectedServices never(subdomain enable) | promote: internalLiveness |
+| B9 | `internal-only-worker` (absorbed D7 idle-worker verify) | pair + worker, no subdomain anywhere | add a queue worker | internalLiveness expectedServices never(subdomain touched) | gate |
 | B10 ↑ | `develop-loop-after-bootstrap` | strategy unset → review gate | | meta expectedServices never | gate |
 | B11 ✚ | `git-push-configured-manual-close` | pair, git-push configured, close-mode manual | don't push for me | meta unchanged toolArg(no deploy after edits) never | promote: meta |
 | B12 ✚ | `develop-static-redeploy` | simple, static | change the page | liveness toolArg(no post-deploy start) never | promote: toolArg |
@@ -663,7 +662,7 @@ no buildFromGit), so the agent has a place to fix source. `allowFailed` explicit
 | cell | scenario id | prepared break | oracle families | status |
 |---|---|---|---|---|
 | D1 | `recover-failed-buildfromgit-missing-dep` | build OK, START fails (db env missing) — today the BUILD fails; re-prepare | seedExpect liveness never | gate |
-| D2 ✚ | `recover-build-failed` | build fails (bad dep) | seedExpect toolResult(failureClass) liveness never | promote: seedExpect |
+| D2 | `recover-build-failed` | build fails (bad dep) | seedExpect toolResult(failureClass) liveness never | gate |
 | D3 | `launch-failure-build-stuck` | | noFailedProcesses launchShape noFabricatedSecret never | gate |
 | D4 ✚ | `ready-to-deploy-stuck` | runtime imported without startWithoutCode | allow(override, reason: only path) mustOffer(DIAGNOSIS_REQUIRED before override) unchanged | promote: allow |
 | D5 | `resume-after-compaction` (absorbs `resume-status-not-discover`) | | expectedServices unchanged never | gate |

@@ -53,6 +53,7 @@ func (r *Runner) runPreseedScript(ctx context.Context, sc *Scenario, suiteID str
 		"ZCP_SCENARIO_ID="+sc.ID,
 		"ZCP_SUITE_ID="+suiteID,
 		"ZCP_WORK_DIR="+r.config.WorkDir,
+		"ZCP_PROJECT_ID="+r.projectID,
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
