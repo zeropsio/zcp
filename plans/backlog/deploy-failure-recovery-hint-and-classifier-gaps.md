@@ -10,21 +10,8 @@ deploy-failure / diagnose-before-destruct machinery (prior-session F-area:
 `ErrDiagnosisRequired`, `tools.DiagnosedDestruction`, `ops/deploy_failure*.go`),
 not the atom corpus. Recording because finding #1 is RECURRING (2 evals).
 
-## Finding 1 — DIAGNOSIS_REQUIRED recovery hint is missing copy-pasteable fields (recurring)
-After a failed build on a stage service in READY_TO_DEPLOY, redeploy is refused with
-`DIAGNOSIS_REQUIRED` → reimport with `override` + `confirmDestructive`. Agents lost
-round-trips because the recovery hint didn't carry every field they had to send:
-- **nextjs**: `confirmDestructive` needed `acknowledgedTargets` + `diagnosedFailureClass`;
-  the `diagnosedFailureClass` key "wasn't in the error response's recovery hint — I
-  constructed it by inference."
-- **laravel**: the reimport needed `startWithoutCode: true`; the agent did override-only
-  on the first try, landed stage in READY_TO_DEPLOY again, and needed a SECOND reimport.
-Both: the `recovery.args` (or `wouldDestroy`/`DiagnosedDestruction` payload) should be a
-COMPLETE copy-paste — every required field (override, startWithoutCode, acknowledgedTargets,
-diagnosedFailureClass) present with values, so the agent doesn't infer/miss one and re-loop.
-Fix lives at the `ErrDiagnosisRequired` rejection payload + the develop/import recovery hint.
-This is squarely "give the agent EXACT, paste-and-resend info" (the P0c meta-principle),
-applied to the destructive-recovery path.
+## Finding 1 — CLOSED 2026-09-13
+Superseded by `docs/spec-workflows.md §8 R2`: the override gate emits a ready-made retry only for a never-deployed misconfigured service (with `startWithoutCode`, `acknowledgedTargets`, `diagnosedFailureClass` filled); every failed-build shape gets `zerops_events` → `zerops_deploy` instead, so the copy-paste completeness question no longer arises there.
 
 ## Finding 2 — build-failure classifier mis-attributes missing-operand as command-not-found
 nextjs: a cross-deploy `buildCommands` ran `cp -r public .next/standalone/public`; `public/`
