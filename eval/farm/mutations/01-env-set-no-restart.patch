@@ -1,0 +1,13 @@
+diff --git a/internal/tools/env.go b/internal/tools/env.go
+index 46d49a35..d6c3d787 100644
+--- a/internal/tools/env.go
++++ b/internal/tools/env.go
+@@ -330,7 +330,7 @@ func applyAutoRestart(
+ 	resp *envChangeResult,
+ 	onProgress ops.ProgressCallback,
+ ) {
+-	if input.SkipRestart.Bool() {
++	if true {
+ 		resp.RestartSkipped = true
+ 		resp.NextActions = "skipRestart=true — the value lands in the env store (~5-10s) but the RUNNING process keeps its boot env until it restarts. Restart manually (zerops_manage action=restart) or deploy to pick it up."
+ 		return

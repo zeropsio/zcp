@@ -1,0 +1,14 @@
+diff --git a/internal/tools/workflow_checks_deploy.go b/internal/tools/workflow_checks_deploy.go
+index 2e855d8b..a7f86feb 100644
+--- a/internal/tools/workflow_checks_deploy.go
++++ b/internal/tools/workflow_checks_deploy.go
+@@ -102,7 +102,8 @@ func findAndParseZeropsYml(projectRoot, sourceHostname, workingDir string) (*ops
+ 	}
+ 
+ 	// Container environment: yaml on the source service's mount.
+-	mountPath := filepath.Join(projectRoot, sourceHostname)
++	cwd, _ := os.Getwd()
++	mountPath := filepath.Join(filepath.Dir(cwd), sourceHostname)
+ 	state, probeErr := probeMountForZeropsYml(mountPath)
+ 	switch {
+ 	case probeErr != nil:

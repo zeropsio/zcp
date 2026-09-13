@@ -1,0 +1,13 @@
+diff --git a/internal/workflow/bootstrap_outputs.go b/internal/workflow/bootstrap_outputs.go
+index a7538a21..8ae1009f 100644
+--- a/internal/workflow/bootstrap_outputs.go
++++ b/internal/workflow/bootstrap_outputs.go
+@@ -75,7 +75,7 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
+ 		meta := &ServiceMeta{
+ 			Hostname:         metaHostname,
+ 			Mode:             mode,
+-			StageHostname:    stageHostname,
++			StageHostname:    metaHostname,
+ 			ServesHTTP:       target.Runtime.ServesHTTP,
+ 			CloseDeployMode:  topology.CloseModeUnset,
+ 			GitPushState:     topology.GitPushUnconfigured,
