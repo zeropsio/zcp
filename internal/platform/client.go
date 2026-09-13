@@ -88,6 +88,14 @@ type Client interface {
 	EnableSubdomainAccess(ctx context.Context, serviceID string) (*Process, error)
 	DisableSubdomainAccess(ctx context.Context, serviceID string) (*Process, error)
 
+	// ListPublicHTTPRoutings reads the project's custom-domain routing list
+	// (GET /project/{id}/public-http-routing) — the service DTO carries no
+	// domain field, so this is the only read that surfaces a service's public
+	// domain(s) (docs/spec-workflows.md §8 O3). Iterate the returned slice;
+	// the platform's TotalCount field is unreliable (observed 0 with a
+	// non-empty list).
+	ListPublicHTTPRoutings(ctx context.Context, projectID string) ([]PublicHTTPRouting, error)
+
 	// Logs (2-step: get access URL, then fetch from log backend)
 	GetProjectLog(ctx context.Context, projectID string) (*LogAccess, error)
 

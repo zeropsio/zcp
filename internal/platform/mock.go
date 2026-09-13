@@ -28,11 +28,12 @@ type Mock struct {
 	activeServiceTypes []mockServiceTypeVersion
 	processEvents      []ProcessEvent
 	appVersionEvents   []AppVersionEvent
-	servicesDirect     []ServiceStack // optional override for ListServicesDirect; nil → falls back to services
-	projectProcesses   []Process      // returned by GetProjectProcessesDirect
-	autoscalingProcess *Process       // non-nil → SetAutoscaling returns this process
-	exportYAML         string         // project export YAML
-	serviceExportYAML  string         // service export YAML
+	servicesDirect     []ServiceStack      // optional override for ListServicesDirect; nil → falls back to services
+	projectProcesses   []Process           // returned by GetProjectProcessesDirect
+	publicHTTPRoutings []PublicHTTPRouting // returned by ListPublicHTTPRoutings
+	autoscalingProcess *Process            // non-nil → SetAutoscaling returns this process
+	exportYAML         string              // project export YAML
+	serviceExportYAML  string              // service export YAML
 
 	// deleteRemovesService — when true, a successful DeleteService call
 	// drops the service from m.services so subsequent ListServices reflects
@@ -210,6 +211,15 @@ func (m *Mock) WithProjectProcesses(procs []Process) *Mock {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.projectProcesses = procs
+	return m
+}
+
+// WithPublicHTTPRoutings sets the routings returned by
+// ListPublicHTTPRoutings. Unset (nil) returns an empty list.
+func (m *Mock) WithPublicHTTPRoutings(routings ...PublicHTTPRouting) *Mock {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.publicHTTPRoutings = routings
 	return m
 }
 
