@@ -703,9 +703,18 @@ Each yields one row per entry; an unreachable service or a missing file is
 `failed`, never `blocked`, because the seed's `expect` already proved the
 preparation.
 
-**FM-62.** A fixture that references a repository (`buildFromGit`, a push source)
-names a pinned `ref`; `TestEvalScenarioFixtures_BuildFromGitPinned` rejects an
-unpinned URL or a branch name. The pin is the fixture's identity across batches.
+**FM-62.** A fixture that references a repository (`buildFromGit`, a push
+source) pins it with a trailing `@pin/<label>` branch on a repository this
+project controls; the branch is created once and never moves, and the label
+names the date or purpose (`@pin/2026-09-13`). This is the only pin the
+platform honours — live-verified 2026-09-13 (project `eval-x`): a `@<sha>`,
+`@<short-sha>` or unknown `@<ref>` suffix is silently ignored and the default
+branch is built (`publicGitSource.branchName` = `main`, no commit sha is exposed
+on the appVersion), and a sibling `ref:` key is ignored, never rejected.
+`TestEvalScenarioFixtures_BuildFromGitPinned` therefore rejects a bare URL, a
+default-branch suffix, a sha or tag suffix (a false pin), and a sibling `ref:`.
+A live run may additionally assert `publicGitSource.branchName` equals the pin.
+Creating a `pin/*` branch is an owner action on the fixture repository.
 
 ### 4.3 Vocabulary is derived, never listed
 

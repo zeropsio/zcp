@@ -42,15 +42,21 @@ type fixtureDocument struct {
 	Services []fixtureService `yaml:"services"`
 }
 
-// shaOrTag matches a pinned ref: a 7-40 hex sha, or a vX.Y.Z semver tag.
-var shaOrTag = regexp.MustCompile(`^(v\d+\.\d+\.\d+|[0-9a-fA-F]{7,40})$`)
+// pinBranch matches the only ref shape the platform honours AND that does
+// not move: a branch named `pin/<label>` on a repository this project
+// controls. Live-verified 2026-09-13 (project eval-x): `@<sha>`, `@<short-sha>`
+// and an unknown `@<ref>` are silently ignored — the platform clones the
+// default branch and records publicGitSource.branchName = "main"; a sibling
+// `ref:` key is ignored too, never rejected. So a sha suffix is a FALSE pin
+// and is rejected here on purpose (docs/spec-eval-farm.md §4.2 FM-62).
+var pinBranch = regexp.MustCompile(`^pin/[A-Za-z0-9._-]+$`)
 
 // buildFromGitPinViolations returns one message per service entry in data
 // (a fixture YAML's raw bytes) whose buildFromGit repository is not pinned
-// (docs/spec-eval-farm.md §4.1 FM-62): the URL's own trailing `@<ref>`, or a
-// sibling `ref:` field in the same service block, must be a 7-40 hex sha or
-// a vX.Y.Z tag — a bare URL or a branch name (`@main`, `@feature-x`) is a
-// violation. A fixture with no `buildFromGit` at all yields no violations.
+// (docs/spec-eval-farm.md §4.2 FM-62): the URL must carry a trailing
+// `@pin/<label>` branch; a bare URL, a default branch (`@main`), a sha or tag
+// suffix, or a sibling `ref:` key is a violation. A fixture with no
+// `buildFromGit` at all yields no violations.
 func buildFromGitPinViolations(data []byte) ([]string, error) {
 	var doc fixtureDocument
 	if err := yaml.Unmarshal(data, &doc); err != nil {
@@ -61,18 +67,15 @@ func buildFromGitPinViolations(data []byte) ([]string, error) {
 		if svc.BuildFromGit == "" {
 			continue
 		}
+		if svc.Ref != "" {
+			violations = append(violations, fmt.Sprintf("service %q: sibling ref: %q is ignored by the import API — pin with a trailing @pin/<label> branch instead", svc.Hostname, svc.Ref))
+		}
 		url, urlRef, hasURLRef := strings.Cut(svc.BuildFromGit, "@")
 		switch {
-		case svc.Ref != "":
-			if !shaOrTag.MatchString(svc.Ref) {
-				violations = append(violations, fmt.Sprintf("service %q: ref %q is not a pinned sha/tag (want 7-40 hex sha or vX.Y.Z)", svc.Hostname, svc.Ref))
-			}
-		case hasURLRef:
-			if !shaOrTag.MatchString(urlRef) {
-				violations = append(violations, fmt.Sprintf("service %q: buildFromGit %q suffix %q is not a pinned sha/tag (looks like a branch name)", svc.Hostname, svc.BuildFromGit, urlRef))
-			}
-		default:
-			violations = append(violations, fmt.Sprintf("service %q: buildFromGit %q has no pinned ref (want a trailing @<sha|tag> or a sibling ref: field)", svc.Hostname, url))
+		case !hasURLRef:
+			violations = append(violations, fmt.Sprintf("service %q: buildFromGit %q has no pinned ref (want a trailing @pin/<label> branch)", svc.Hostname, url))
+		case !pinBranch.MatchString(urlRef):
+			violations = append(violations, fmt.Sprintf("service %q: buildFromGit %q suffix %q is not a pin/<label> branch (a sha, tag or default branch is not honoured as a pin by the platform)", svc.Hostname, svc.BuildFromGit, urlRef))
 		}
 	}
 	return violations, nil
@@ -88,10 +91,11 @@ func fixtureDirs(repoRoot string) []string {
 }
 
 // TestEvalScenarioFixtures_BuildFromGitPinned pins docs/spec-eval-farm.md
-// §4.1 FM-62: a fixture that references a repository via buildFromGit
-// names a pinned ref (a 7-40 hex sha or a vX.Y.Z tag) — never a bare URL,
-// never a branch name. The current corpus is allowed through via the
-// shrinking legacyUnpinned allowlist.
+// §4.2 FM-62: a fixture that references a repository via buildFromGit
+// carries a trailing `@pin/<label>` branch — never a bare URL, a default
+// branch, a sha or tag suffix (not honoured by the platform), or a sibling
+// `ref:` key (ignored by the platform). The current corpus is allowed
+// through via the shrinking legacyUnpinned allowlist.
 func TestEvalScenarioFixtures_BuildFromGitPinned(t *testing.T) {
 	t.Parallel()
 	t.Run("unit cases", func(t *testing.T) {
@@ -108,27 +112,31 @@ func TestEvalScenarioFixtures_BuildFromGitPinned(t *testing.T) {
 				wantFail: true,
 			},
 			{
-				name:    "sha-pinned URL suffix",
-				content: "services:\n  - hostname: x\n    buildFromGit: https://github.com/x/y@3f2a9c1\n",
+				name:    "pin branch suffix — the only honoured pin",
+				content: "services:\n  - hostname: x\n    buildFromGit: https://github.com/x/y@pin/2026-09-13\n",
 			},
 			{
-				name:    "tag-pinned URL suffix",
-				content: "services:\n  - hostname: x\n    buildFromGit: https://github.com/x/y@v1.2.3\n",
+				name:      "sha suffix — a false pin, platform builds the default branch",
+				content:   "services:\n  - hostname: x\n    buildFromGit: https://github.com/x/y@3f2a9c1\n",
+				wantFail:  true,
+				wantMatch: "not a pin/<label> branch",
 			},
 			{
-				name:    "sibling ref field",
-				content: "services:\n  - hostname: x\n    buildFromGit: https://github.com/x/y\n    ref: 3f2a9c1\n",
+				name:     "tag suffix — unproven, rejected",
+				content:  "services:\n  - hostname: x\n    buildFromGit: https://github.com/x/y@v1.2.3\n",
+				wantFail: true,
 			},
 			{
-				name:      "bare branch name — rejected",
+				name:      "default branch suffix — rejected",
 				content:   "services:\n  - hostname: x\n    buildFromGit: https://github.com/x/y@main\n",
 				wantFail:  true,
-				wantMatch: "branch name",
+				wantMatch: "not a pin/<label> branch",
 			},
 			{
-				name:     "sibling ref field is itself a branch name — rejected",
-				content:  "services:\n  - hostname: x\n    buildFromGit: https://github.com/x/y\n    ref: main\n",
-				wantFail: true,
+				name:      "sibling ref key — ignored by the API, rejected",
+				content:   "services:\n  - hostname: x\n    buildFromGit: https://github.com/x/y@pin/a\n    ref: 3f2a9c1\n",
+				wantFail:  true,
+				wantMatch: "sibling ref:",
 			},
 			{
 				name:    "no buildFromGit at all — not applicable",
