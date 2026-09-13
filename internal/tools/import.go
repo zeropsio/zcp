@@ -138,7 +138,8 @@ func gateOverrideOnFailedHistory(
 	var failedTargets []string
 	var diagnoses []TargetDiagnosis
 	envVarsByService := make(map[string][]string)
-	allFreshMisconfigured := true
+	allRetrySafe := true
+	var firstFailedState ops.RecoveryState
 	for _, hostname := range overrideTargets {
 		// Look up the live service once — used for the recovery-state status
 		// input, the startWithoutCode verdict, and the env-var snapshot.
@@ -160,8 +161,11 @@ func gateOverrideOnFailedHistory(
 		}
 
 		failedTargets = append(failedTargets, hostname)
-		if state.Shape != topology.RecoveryFreshMisconfigured {
-			allFreshMisconfigured = false
+		if len(failedTargets) == 1 {
+			firstFailedState = state
+		}
+		if !retrySafeOnOverride(state) {
+			allRetrySafe = false
 		}
 		// R6-P3: carry the gate's OWN per-target verdict so the agent never
 		// re-diagnoses what we already computed. NeedsStartWithoutCode is true
@@ -209,26 +213,30 @@ func gateOverrideOnFailedHistory(
 		},
 		Diagnoses: diagnoses,
 	}
-	if allFreshMisconfigured {
-		// R2: the ready-made re-import retry is emitted ONLY for
-		// fresh-misconfigured targets — no code/history exists to lose.
+	if allRetrySafe {
+		// R2 (amended): the ready-made re-import retry is emitted for
+		// fresh-misconfigured targets (no code/history exists to lose) AND
+		// for failed-build/stuck-building on a git-provisioned target with
+		// no container (nothing deployed is lost either — no version was
+		// ever activated; the platform has no in-place git rebuild route).
 		expected.Retry = buildImportRetryCall(input, failedTargets, diagnoses)
-	} else {
-		// R2: every failed-*/stuck-building shape reads-first via
-		// zerops_events, then the non-gated corrective is a plain
-		// zerops_deploy — never a re-import (the prior appVersion keeps
-		// serving in the meantime).
-		expected.Next = &topology.Recovery{
-			Tool:   "zerops_events",
-			Action: "fetch",
-			Args: map[string]string{
-				"serviceHostname": failedTargets[0],
-			},
+		// Fresh-misconfigured carries no Then — the retry alone recovers,
+		// nothing to fix first. The git-no-container failed-build/stuck-
+		// building shape DOES: ComputeRecoveryState's Then names the
+		// "fix the cause, then re-import" sequence the retry completes.
+		if firstFailedState.Shape != topology.RecoveryFreshMisconfigured {
+			expected.Then = firstFailedState.Then
 		}
-		expected.Then = fmt.Sprintf(
-			"zerops_deploy targetService=%s (never gated; the prior appVersion keeps serving)",
-			failedTargets[0],
-		)
+	} else {
+		// R2: every other failed-*/stuck-building shape reads-first via
+		// zerops_events, then the corrective ComputeRecoveryState already
+		// derived (Then) — the never-gated appVersion redeploy for a
+		// never-activated failed-init service, or the plain zerops_deploy
+		// fallback. Never a re-import here — a container (or unrecoverable
+		// facts) means override would destroy something the corrective
+		// doesn't need destroyed.
+		expected.Next = firstFailedState.Next
+		expected.Then = firstFailedState.Then
 	}
 
 	if validateErr := ValidateDestructiveAck(input.ConfirmDestructive, expected); validateErr != nil {
@@ -248,6 +256,28 @@ func gateOverrideOnFailedHistory(
 		), nil
 	}
 	return nil, nil //nolint:nilnil // gate-passed sentinel: matching ack, proceed with import
+}
+
+// retrySafeOnOverride reports whether a target's RecoveryState shape is one
+// R2 (amended) allows the gate to offer a ready-made zerops_import
+// override=true retry for: fresh-misconfigured (no history to lose) or a
+// failed-build/stuck-building appVersion on a git-provisioned service with
+// no container (no version was ever activated, so nothing deployed is
+// lost — the platform's only recovery for that shape IS re-import; there
+// is no in-place git rebuild route). Every other shape (a container
+// exists, or the artifact-redeploy shape applies instead) is NOT
+// retry-safe — override would destroy something the corrective doesn't
+// need destroyed.
+func retrySafeOnOverride(state ops.RecoveryState) bool {
+	switch state.Shape {
+	case topology.RecoveryFreshMisconfigured:
+		return true
+	case topology.RecoveryFailedBuild, topology.RecoveryStuckBuilding:
+		return state.GitProvisioned && !state.HasContainer
+	case topology.RecoveryHealthy, topology.RecoveryFailedInit:
+		return false
+	}
+	return false
 }
 
 // collectEnvVarKeys flattens the per-service env-var keys for the wire

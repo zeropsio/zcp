@@ -386,6 +386,97 @@ func TestImport_OverrideOnFreshMisconfigured_CarriesRetry(t *testing.T) {
 	}
 }
 
+// TestImport_OverrideOnFailedInit_NoContainer_ThenNamesAppVersionRedeploy
+// pins R2's artifact-redeploy amendment (docs/spec-workflows.md §8 R2,
+// live-verified 2026-09-14): a never-activated buildFromGit service —
+// failed-init (DEPLOY_FAILED), no container — carries NO ready-made
+// re-import retry (the built artifact would be destroyed for nothing); Then
+// names the in-place `zerops_deploy appVersion=latest` corrective instead.
+func TestImport_OverrideOnFailedInit_NoContainer_ThenNamesAppVersionRedeploy(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "s1", Name: "api", Status: platform.ServiceStatusReadyToDeploy},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av-2", ServiceStackID: "s1", Status: platform.BuildStatusDeployFailed, Source: "GIT", Created: "2026-09-14T10:00:00Z"},
+		}).
+		WithServiceAppVersions("s1", []platform.AppVersionEvent{
+			{ID: "av-2", ServiceStackID: "s1", Status: platform.BuildStatusDeployFailed, Source: "GIT", Sequence: 2},
+		})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{})
+
+	yaml := "services:\n  - hostname: api\n    type: nodejs@22\n"
+	result := callTool(t, srv, "zerops_import", map[string]any{
+		"content":  yaml,
+		"override": true,
+	})
+	if !result.IsError {
+		t.Fatalf("expected IsError on override of a never-activated failed-init service without ack")
+	}
+	var wire ErrorWire
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &wire); err != nil {
+		t.Fatalf("parse error wire: %v", err)
+	}
+	if wire.WouldDestroy == nil {
+		t.Fatalf("WouldDestroy missing")
+	}
+	if wire.WouldDestroy.Retry != nil {
+		t.Errorf("Retry = %+v, want nil — the built artifact must not be discarded via re-import", wire.WouldDestroy.Retry)
+	}
+	if !strings.Contains(wire.WouldDestroy.Then, "appVersion=latest") {
+		t.Errorf("Then = %q, want it to name the appVersion=latest in-place redeploy", wire.WouldDestroy.Then)
+	}
+}
+
+// TestImport_OverrideOnFailedBuild_GitNoContainer_CarriesRetry pins R2's
+// amendment: a never-activated buildFromGit service whose BUILD failed (no
+// artifact ever produced, no container) has nothing deployed to lose — the
+// gate now carries the ready-made override retry for this shape too (not
+// just fresh-misconfigured), alongside Then naming the fix-then-re-import
+// sequence.
+func TestImport_OverrideOnFailedBuild_GitNoContainer_CarriesRetry(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "s1", Name: "api", Status: platform.ServiceStatusReadyToDeploy},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av-1", ServiceStackID: "s1", Status: platform.BuildStatusBuildFailed, Source: "GIT", Created: "2026-09-14T10:00:00Z"},
+		}).
+		WithServiceAppVersions("s1", []platform.AppVersionEvent{
+			{ID: "av-1", ServiceStackID: "s1", Status: platform.BuildStatusBuildFailed, Source: "GIT", Sequence: 1},
+		})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{})
+
+	yaml := "services:\n  - hostname: api\n    type: nodejs@22\n"
+	result := callTool(t, srv, "zerops_import", map[string]any{
+		"content":  yaml,
+		"override": true,
+	})
+	if !result.IsError {
+		t.Fatalf("expected IsError on override of a never-activated failed-build service without ack")
+	}
+	var wire ErrorWire
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &wire); err != nil {
+		t.Fatalf("parse error wire: %v", err)
+	}
+	if wire.WouldDestroy == nil {
+		t.Fatalf("WouldDestroy missing")
+	}
+	rc := wire.WouldDestroy.Retry
+	if rc == nil || rc.Tool != "zerops_import" || rc.Args["override"] != true {
+		t.Fatalf("Retry = %+v, want zerops_import override=true — no version was ever activated, nothing is lost", rc)
+	}
+	if !strings.Contains(wire.WouldDestroy.Then, "override=true") {
+		t.Errorf("Then = %q, want it to name the fix-then-re-import sequence", wire.WouldDestroy.Then)
+	}
+}
+
 func TestImport_OverrideOnHealthyPasses(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
