@@ -242,7 +242,14 @@ func checkServiceStatusAny(ctx context.Context, client platform.Client, fetcher 
 // equality — Sunday-release 2026-05-18 moved Zerops upstream identifiers to
 // composite form (`alpine/php-nginx@8.4`, `postgresql:single@18`) while the
 // plan-side may still carry legacy bare form (`php-nginx@8.4`,
-// `postgresql@18`). Both must accept.
+// `postgresql@18`). Both must accept. Falling short of that, it accepts two
+// further tolerances instead of failing outright: isPlatformResolution (a
+// version-family SELECTOR the platform resolved to a concrete patch) and,
+// last, topology.TypeFamily (same runtime/service family, different
+// concrete version or OS variant — the platform sets a runtime's live type
+// from the deployed zerops.yaml `run.base` at the first build, so a plan
+// declaring any other concrete version can never match exactly,
+// docs/spec-workflows.md §2.4). Only a genuinely different family fails.
 func checkServiceType(svcMap map[string]platform.ServiceStack, hostname, expectedType string) []workflow.StepCheck {
 	svc, exists := svcMap[hostname]
 	if !exists {
@@ -264,6 +271,20 @@ func checkServiceType(svcMap map[string]platform.ServiceStack, hostname, expecte
 			Name:   hostname + "_type",
 			Status: statusPass,
 			Detail: fmt.Sprintf("%s resolved to %s (platform-selected concrete version)", expectedType, actual),
+		}}
+	}
+	// The platform sets a runtime's live type from the repo's zerops.yaml
+	// run.base at the first build (docs/spec-workflows.md §2.4), so a plan
+	// that declared a different concrete version — or OS variant — of the
+	// SAME runtime family can never satisfy the checks above. Family
+	// (topology.TypeFamily: OS prefix + @version stripped, deployment
+	// variant kept) tolerates that instead of failing; a genuinely
+	// different family still fails below.
+	if topology.TypeFamily(expectedType) == topology.TypeFamily(actual) {
+		return []workflow.StepCheck{{
+			Name:   hostname + "_type",
+			Status: statusPass,
+			Detail: fmt.Sprintf("platform resolved %s from the deployed zerops.yaml run.base (plan declared %s)", actual, expectedType),
 		}}
 	}
 	return []workflow.StepCheck{{
