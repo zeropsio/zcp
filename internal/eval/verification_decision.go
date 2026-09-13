@@ -55,12 +55,12 @@ func evaluateToolArgRow(entry ToolArgEntry, uses []TranscriptToolUse, transcript
 	kind, expr, ok := toolArgEntryShape(entry)
 	if !ok {
 		return RequiredCheck{
-			ID: "tool_arg/invalid", Check: "tool_arg", Result: CheckBlocked, ObservedAt: now, Source: "transcript",
+			ID: "tool_arg/invalid", Check: "toolArg", Result: CheckBlocked, ObservedAt: now, Source: "transcript",
 			Message: "toolArg entry declares none of never/always/max+call",
 		}
 	}
 	id := fmt.Sprintf("tool_arg/%s/%s", kind, expr)
-	check := "tool_arg_" + string(kind)
+	check := "toolArg"
 	if !transcriptPresent {
 		return RequiredCheck{ID: id, Check: check, Scope: expr, Result: CheckBlocked, ObservedAt: now, Source: "transcript", Message: "no transcript.jsonl for this run"}
 	}
@@ -160,7 +160,7 @@ func evaluateToolResultRows(entries []ToolResultEntry, _ string, calls []capture
 func evaluateToolResultRow(entry ToolResultEntry, calls []capture.MCPToolCall, streamPresent bool, now time.Time) RequiredCheck {
 	id := fmt.Sprintf("tool_result/%s/%s", entry.Tool, entry.Contains)
 	if !streamPresent {
-		return RequiredCheck{ID: id, Check: "tool_result", Scope: entry.Tool, Result: CheckBlocked, ObservedAt: now, Source: "mcp-stream", Message: "no captured MCP stream for this run"}
+		return RequiredCheck{ID: id, Check: "toolResult", Scope: entry.Tool, Result: CheckBlocked, ObservedAt: now, Source: "mcp-stream", Message: "no captured MCP stream for this run"}
 	}
 	for _, call := range calls {
 		if call.Tool != entry.Tool {
@@ -168,14 +168,14 @@ func evaluateToolResultRow(entry ToolResultEntry, calls []capture.MCPToolCall, s
 		}
 		if strings.Contains(call.ResultText, entry.Contains) {
 			return RequiredCheck{
-				ID: id, Check: "tool_result", Scope: entry.Tool, Result: CheckPassed, ObservedAt: now, Source: "mcp-stream",
+				ID: id, Check: "toolResult", Scope: entry.Tool, Result: CheckPassed, ObservedAt: now, Source: "mcp-stream",
 				Expected: fmt.Sprintf("result contains %q", entry.Contains), Observed: truncate(call.ResultText, 200),
 				Message: fmt.Sprintf("a call to %s produced a result containing %q", entry.Tool, entry.Contains),
 			}
 		}
 	}
 	return RequiredCheck{
-		ID: id, Check: "tool_result", Scope: entry.Tool, Result: CheckFailed, ObservedAt: now, Source: "mcp-stream",
+		ID: id, Check: "toolResult", Scope: entry.Tool, Result: CheckFailed, ObservedAt: now, Source: "mcp-stream",
 		Expected: fmt.Sprintf("result contains %q", entry.Contains), Observed: "no matching call",
 		Message: fmt.Sprintf("no call to %s produced a result containing %q", entry.Tool, entry.Contains),
 	}
@@ -196,23 +196,23 @@ func evaluateMustOfferRows(entries []string, _ string, calls []capture.MCPToolCa
 func evaluateMustOfferRow(n int, expr string, calls []capture.MCPToolCall, streamPresent bool, now time.Time) RequiredCheck {
 	id := fmt.Sprintf("must_offer/%d", n)
 	if !streamPresent {
-		return RequiredCheck{ID: id, Check: "must_offer", Scope: expr, Result: CheckBlocked, ObservedAt: now, Source: "mcp-stream", Message: "no captured MCP stream for this run"}
+		return RequiredCheck{ID: id, Check: "mustOffer", Scope: expr, Result: CheckBlocked, ObservedAt: now, Source: "mcp-stream", Message: "no captured MCP stream for this run"}
 	}
 	re, err := regexp.Compile(expr)
 	if err != nil {
-		return RequiredCheck{ID: id, Check: "must_offer", Scope: expr, Result: CheckBlocked, ObservedAt: now, Source: "mcp-stream", Message: fmt.Sprintf("invalid regex %q: %v", expr, err)}
+		return RequiredCheck{ID: id, Check: "mustOffer", Scope: expr, Result: CheckBlocked, ObservedAt: now, Source: "mcp-stream", Message: fmt.Sprintf("invalid regex %q: %v", expr, err)}
 	}
 	for _, call := range calls {
 		if re.MatchString(call.ResultText) {
 			return RequiredCheck{
-				ID: id, Check: "must_offer", Scope: expr, Result: CheckPassed, ObservedAt: now, Source: "mcp-stream",
+				ID: id, Check: "mustOffer", Scope: expr, Result: CheckPassed, ObservedAt: now, Source: "mcp-stream",
 				Expected: fmt.Sprintf("a result matches /%s/", expr), Observed: truncate(call.ResultText, 200),
 				Message: fmt.Sprintf("a captured result matched /%s/", expr),
 			}
 		}
 	}
 	return RequiredCheck{
-		ID: id, Check: "must_offer", Scope: expr, Result: CheckFailed, ObservedAt: now, Source: "mcp-stream",
+		ID: id, Check: "mustOffer", Scope: expr, Result: CheckFailed, ObservedAt: now, Source: "mcp-stream",
 		Expected: fmt.Sprintf("a result matches /%s/", expr), Observed: "no matching result",
 		Message: fmt.Sprintf("no captured result matched /%s/", expr),
 	}

@@ -891,13 +891,14 @@ func TestVerification_AskWhen_AdvisoryNeverGates(t *testing.T) {
 	}
 }
 
-// TestGenerateRequiredChecks_NewFamilies_EmitNotRunStubs pins that a
-// scenario declaring one entry of each of the seven new oracle-family
-// blocks (internalLiveness, containerCheck, meta, schemaValid, toolArg,
-// toolResult, mustOffer — docs/spec-eval-farm.md §4.1 FM-61/FM-59/FM-60)
-// yields exactly one not-run row per family, with the family name in
-// Check. Bodies land in S3/S4; this slice only declares the rows.
-func TestGenerateRequiredChecks_NewFamilies_EmitNotRunStubs(t *testing.T) {
+// TestGenerateRequiredChecks_NewFamilies_DispatchOnePerEntry pins that a
+// scenario declaring one entry of each of the seven manifest-v2 oracle
+// families (docs/spec-eval-farm.md §4.1 FM-59/FM-60/FM-61) yields exactly
+// one row per family with the family name in Check, and that no row is a
+// not-run stub any more: without an HTTP transport / SSH executor / transcript
+// the container- and transcript-side families grade blocked or failed on
+// their own evidence, never not-run.
+func TestGenerateRequiredChecks_NewFamilies_DispatchOnePerEntry(t *testing.T) {
 	t.Parallel()
 	sc := &Scenario{Verification: &VerificationConfig{
 		InternalLiveness: &InternalLivenessProbe{Service: "worker", Port: 8080, Path: "/healthz", Marker: "ok"},
@@ -911,17 +912,14 @@ func TestGenerateRequiredChecks_NewFamilies_EmitNotRunStubs(t *testing.T) {
 	client := platform.NewMock()
 	observation := collectPlatformObservation(context.Background(), client, "p1", false, false)
 
-	rows := generateRequiredChecks(context.Background(), sc, observation, nil, time.Time{}, "p1", client, true, nil, RuntimeInputs{})
+	rows := generateRequiredChecks(context.Background(), sc, observation, nil, time.Time{}, "p1", client, true, nil, RuntimeInputs{WorkDir: t.TempDir()})
 
 	wantFamilies := []string{"internalLiveness", "containerCheck", "meta", "schemaValid", "toolArg", "toolResult", "mustOffer"}
 	gotByFamily := map[string]int{}
 	for _, row := range rows {
 		gotByFamily[row.Check]++
-		if row.Check == "internalLiveness" || row.Check == "containerCheck" || row.Check == "meta" ||
-			row.Check == "schemaValid" || row.Check == "toolArg" || row.Check == "toolResult" || row.Check == "mustOffer" {
-			if row.Result != CheckNotRun {
-				t.Errorf("row %+v: Result = %q, want not-run (oracle body lands in S3/S4)", row, row.Result)
-			}
+		if row.Result == CheckNotRun {
+			t.Errorf("row %+v: Result = not-run — every family has a real evaluator now", row)
 		}
 	}
 	if len(rows) != len(wantFamilies) {

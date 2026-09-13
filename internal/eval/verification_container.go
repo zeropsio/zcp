@@ -24,25 +24,6 @@ import (
 // a bare closure.
 type execSSHFunc func(ctx context.Context, hostname, command string) ([]byte, error)
 
-// containerFamilyRowID builds the stable row id for a container-side
-// oracle family entry: "<family>/<n>", one-based (docs/spec-eval-farm.md
-// §4.1 FM-61). Still used by verification_decision.go's not-yet-implemented
-// decision-row stubs (toolArg/toolResult/mustOffer) — S4 scope.
-func containerFamilyRowID(family string, n int) string {
-	return fmt.Sprintf("%s/%d", family, n)
-}
-
-// notImplementedStub builds a not-run row declaring that family/id's oracle
-// body has not landed yet. Still used by verification_decision.go's
-// toolArg/toolResult/mustOffer stubs — S4 scope.
-func notImplementedStub(family string, n int, now time.Time) RequiredCheck {
-	return RequiredCheck{
-		ID: containerFamilyRowID(family, n), Check: family,
-		Result: CheckNotRun, ObservedAt: now,
-		Message: "oracle not implemented (S3/S4)",
-	}
-}
-
 // truncateObserved caps an Observed/Message-bound string at 200 characters
 // (docs/spec-eval-farm.md §4.1 row conventions) so a large body/stdout/error
 // join never blows up a result row. Byte-based; not rune-boundary aware —
@@ -73,6 +54,11 @@ func evaluateInternalLivenessRows(ctx context.Context, probe *InternalLivenessPr
 		return nil
 	}
 	id := internalLivenessRowID(probe.Service)
+	if httpDoer == nil {
+		// No HTTP transport wired (an offline harness) — the probe could not
+		// run, which is blocked, not a verdict about the service.
+		return []RequiredCheck{{ID: id, Check: "internalLiveness", Scope: probe.Service, Result: CheckBlocked, ObservedAt: now, Source: "internal-liveness", Message: "no HTTP transport available to the evaluator"}}
+	}
 	expected := "2xx"
 	if probe.Marker != "" {
 		expected = fmt.Sprintf("2xx with marker %q", probe.Marker)
@@ -137,6 +123,9 @@ func evaluateContainerCheckRows(ctx context.Context, entries []ContainerCheckEnt
 
 func evaluateOneContainerCheck(ctx context.Context, entry ContainerCheckEntry, n int, execSSH execSSHFunc, now time.Time) RequiredCheck {
 	id := containerCheckRowID(entry.Service, n)
+	if execSSH == nil {
+		return RequiredCheck{ID: id, Check: "containerCheck", Scope: entry.Service, Result: CheckBlocked, ObservedAt: now, Source: "container-check", Message: "no SSH executor available to the evaluator"}
+	}
 	out, err := execSSH(ctx, entry.Service, entry.Cmd)
 	observed := truncateObserved(string(out))
 	if err != nil {
