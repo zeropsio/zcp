@@ -32,6 +32,37 @@ type RecoveryState struct {
 	// none. A live process means Shape is never a failed-* shape: busy is
 	// not failure.
 	LiveProcess string
+
+	// LastAppVersionID is the newest appVersion's ID (by Sequence), read
+	// via the DIRECT ListServiceAppVersions — only set for a failed-*/
+	// stuck-building Shape (R2). Empty when the service has no app-version
+	// history, or for healthy/fresh-misconfigured shapes.
+	LastAppVersionID string
+	// ArtifactBuilt is true when the newest appVersion's status is
+	// DEPLOY_FAILED — the build FINISHED and produced a real artifact, only
+	// the deploy/init phase failed. This is the never-activated
+	// buildFromGit shape R2 names: the artifact can be redeployed in place
+	// via `zerops_deploy appVersion=latest` without a rebuild.
+	ArtifactBuilt bool
+	// HasContainer is true when the service is currently live (RUNNING/
+	// ACTIVE) or carries a non-nil ActiveAppVersion — i.e. a container
+	// exists to source an SSH self-deploy from. False is what makes the
+	// artifact-redeploy / re-import-with-override recovery the ONLY paths
+	// (no in-place rebuild exists on the platform for a container-less
+	// service).
+	HasContainer bool
+	// GitProvisioned is true when the newest appVersion's Source is "GIT"
+	// or it carries a PublicGitSource — the service was imported with
+	// buildFromGit, so a failed build with no container can be recovered
+	// by fixing the cause and re-importing with override=true (nothing
+	// deployed is ever lost: no version was ever activated).
+	GitProvisioned bool
+	// Then is the ONE corrective string R2 names for the shape + facts
+	// above — consumed by the zerops_import override gate payload and by
+	// NonRunningRecovery's text, and nothing else composes its own. Empty
+	// for healthy/fresh-misconfigured (those readers build their own
+	// corrective already).
+	Then string
 }
 
 // eventsRecovery is the read-first recovery pointer shared by every
@@ -73,6 +104,23 @@ func logsRecovery(hostname string) *topology.Recovery {
 // "Service busy = a LIVE process ... the SOLE busy-truth"). Only once no
 // live process is found does status/history classification run.
 func ComputeRecoveryState(
+	ctx context.Context,
+	client platform.Client,
+	fetcher platform.LogFetcher,
+	projectID, hostname, status string,
+) (RecoveryState, error) {
+	state, err := computeRecoveryStateShape(ctx, client, fetcher, projectID, hostname, status)
+	if err != nil {
+		return RecoveryState{}, err
+	}
+	return attachArtifactFacts(ctx, client, projectID, hostname, state), nil
+}
+
+// computeRecoveryStateShape is the R1 shape classifier — split out of
+// ComputeRecoveryState so the R2 artifact/container facts (attached by
+// attachArtifactFacts) run as a single post-processing step regardless of
+// which branch below produced the shape.
+func computeRecoveryStateShape(
 	ctx context.Context,
 	client platform.Client,
 	fetcher platform.LogFetcher,
@@ -162,6 +210,86 @@ func classifiedFailureState(
 		Cause:        failed.FailureCause,
 		Next:         eventsRecovery(hostname),
 	}, nil
+}
+
+// appVersionSourceGit is the appVersion Source value stamped on a
+// buildFromGit import (docs/spec-workflows.md §8 R2).
+const appVersionSourceGit = "GIT"
+
+// attachArtifactFacts fills the R2 artifact/container facts (LastAppVersionID/
+// ArtifactBuilt/HasContainer/GitProvisioned) and derives Then — but only for
+// a failed-*/stuck-building Shape; healthy and fresh-misconfigured already
+// carry their own corrective elsewhere (import.go's fresh-misconfigured
+// branch builds its own Retry) and get no Then here.
+//
+// Best-effort: a lookup/list failure leaves the facts at their zero values
+// rather than erroring the whole classification — Then still derives (to
+// the generic "every other failed shape" corrective) so a transient
+// enrichment failure never blanks out the already-computed Shape/Next.
+func attachArtifactFacts(
+	ctx context.Context,
+	client platform.Client,
+	projectID, hostname string,
+	state RecoveryState,
+) RecoveryState {
+	switch state.Shape {
+	case topology.RecoveryHealthy, topology.RecoveryFreshMisconfigured:
+		return state
+	case topology.RecoveryFailedInit, topology.RecoveryFailedBuild, topology.RecoveryStuckBuilding:
+	}
+
+	if svc, err := LookupService(ctx, client, projectID, hostname); err == nil && svc != nil {
+		state.HasContainer = svc.IsLive() || svc.ActiveAppVersion != nil
+
+		if versions, vErr := client.ListServiceAppVersions(ctx, svc.ID); vErr == nil && len(versions) > 0 {
+			newest := versions[0]
+			for _, v := range versions[1:] {
+				if v.Sequence > newest.Sequence {
+					newest = v
+				}
+			}
+			state.LastAppVersionID = newest.ID
+			state.ArtifactBuilt = newest.Status == platform.BuildStatusDeployFailed
+			state.GitProvisioned = newest.Source == appVersionSourceGit || newest.PublicGitSource != nil
+		}
+	}
+
+	state.Then = deriveRecoveryThen(state, hostname)
+	return state
+}
+
+// deriveRecoveryThen is the SINGLE producer of R2's "then" corrective text
+// for a failed-*/stuck-building shape — consumed by the zerops_import
+// override gate payload and NonRunningRecovery's text (nothing else
+// composes its own, per docs/spec-workflows.md §8 R2):
+//
+//   - failed-init with a built artifact and no container (a never-
+//     activated buildFromGit service) ⇒ the in-place appVersion redeploy —
+//     no rebuild, no re-import.
+//   - failed-build/stuck-building on a git-provisioned service with no
+//     container ⇒ fix the cause then re-import with override=true —
+//     nothing deployed is ever lost (no version was ever activated); the
+//     platform has no in-place git rebuild route.
+//   - every other failed-*/stuck-building shape (a container exists) ⇒
+//     today's plain, never-gated zerops_deploy — the prior appVersion
+//     keeps serving in the meantime.
+func deriveRecoveryThen(state RecoveryState, hostname string) string {
+	switch {
+	case state.Shape == topology.RecoveryFailedInit && state.ArtifactBuilt && !state.HasContainer:
+		return fmt.Sprintf(
+			"zerops_deploy targetService=%s appVersion=latest (re-deploys the built artifact; no rebuild, no re-import)",
+			hostname,
+		)
+	case (state.Shape == topology.RecoveryFailedBuild || state.Shape == topology.RecoveryStuckBuilding) &&
+		state.GitProvisioned && !state.HasContainer:
+		return "fix the cause, then re-import the same buildFromGit entry with override=true — " +
+			"nothing deployed is lost (no version ever activated); the platform has no in-place git rebuild"
+	default:
+		return fmt.Sprintf(
+			"zerops_deploy targetService=%s (never gated; the prior appVersion keeps serving)",
+			hostname,
+		)
+	}
 }
 
 // liveProcessForHostname returns the processId of a live (PENDING/RUNNING/
