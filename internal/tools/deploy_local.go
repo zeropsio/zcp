@@ -187,7 +187,7 @@ func RegisterDeployLocal(
 		switch {
 		case result != nil && result.Status == statusDeployed:
 			attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
-			maybeAutoEnableSubdomain(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
+			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
 		case result != nil && result.TimedOut:
 			// In-flight (B23): build still running at poll timeout, not failed.
 			attempt.Error = deployBuildInFlightMsg

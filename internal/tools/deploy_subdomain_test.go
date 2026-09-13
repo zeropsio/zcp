@@ -212,13 +212,9 @@ func TestServiceEligible_LookupFails_False(t *testing.T) {
 	}
 }
 
-// --- maybeAutoEnableSubdomain tests ----------------------------------------
+// --- ensurePublicAccess tests (S7 — O3/E9) ---------------------------------
 
-func TestMaybeAutoEnableSubdomain_FirstDeploy_DevMode_Enables(t *testing.T) {
-	// t.Parallel omitted — OverrideHTTPReadyConfigForTest mutates a
-	// package-level config; parallel tests would clobber each other's
-	// interval/timeout values even though the mutex keeps the race
-	// detector green.
+func TestEnsurePublicAccess_AutoFirstDeploy_EnablesAndStamps(t *testing.T) {
 	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
 	defer restore()
 
@@ -228,20 +224,178 @@ func TestMaybeAutoEnableSubdomain_FirstDeploy_DevMode_Enables(t *testing.T) {
 	mock := autoEnableTestMock(t, false /* subdomain off — fresh enable */)
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
 
-	maybeAutoEnableSubdomain(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
+	ensurePublicAccess(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
 
 	if !result.SubdomainAccessEnabled {
 		t.Error("SubdomainAccessEnabled: want true, got false")
 	}
-	if result.SubdomainURL == "" {
-		t.Error("SubdomainURL: want non-empty, got empty")
-	}
 	if mock.CallCounts["EnableSubdomainAccess"] != 1 {
 		t.Errorf("EnableSubdomainAccess calls: want 1, got %d", mock.CallCounts["EnableSubdomainAccess"])
 	}
+
+	meta, err := workflow.FindServiceMeta(dir, "app")
+	if err != nil {
+		t.Fatalf("FindServiceMeta: %v", err)
+	}
+	rec := meta.PublicAccessFor("app")
+	if rec.SubdomainEnabledByZcpAt == "" {
+		t.Error("PublicAccessFor(app).SubdomainEnabledByZcpAt: want non-empty stamp after auto-enable")
+	}
 }
 
-func TestMaybeAutoEnableSubdomain_AlreadyEnabled_SetsURL_NoAPICall(t *testing.T) {
+// writeMetaWithPublicAccess is writeMeta plus a pre-recorded public-access
+// record for autoEnableTestHostname — used by PA-2/PA-3 tests that need a
+// prior stamp or intent already on disk.
+func writeMetaWithPublicAccess(t *testing.T, dir string, mode topology.Mode, rec topology.PublicAccessRecord) {
+	t.Helper()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname:         autoEnableTestHostname,
+		Mode:             mode,
+		BootstrapSession: "sess1",
+		BootstrappedAt:   "2026-04-22",
+		PublicAccess:     map[string]topology.PublicAccessRecord{autoEnableTestHostname: rec},
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+}
+
+// TestEnsurePublicAccess_Stamped_UserDisabled_NeverReenables pins PA-2: once
+// zcp has auto-enabled a subdomain (stamp set), observing it off on a later
+// call means the USER switched it off — zcp must never re-enable, and the
+// persisted intent flips from auto to none so a future call stays silent.
+func TestEnsurePublicAccess_Stamped_UserDisabled_NeverReenables(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeMetaWithPublicAccess(t, dir, topology.PlanModeDev, topology.PublicAccessRecord{
+		Intent:                  topology.PublicAccessAuto,
+		SubdomainEnabledByZcpAt: "2026-04-22T00:00:00Z",
+	})
+
+	mock := autoEnableTestMock(t, false /* subdomain currently off — user switched it off */)
+	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
+
+	ensurePublicAccess(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
+
+	if mock.CallCounts["EnableSubdomainAccess"] != 0 {
+		t.Errorf("EnableSubdomainAccess calls: want 0 (PA-2 — never re-enable), got %d", mock.CallCounts["EnableSubdomainAccess"])
+	}
+
+	meta, err := workflow.FindServiceMeta(dir, "app")
+	if err != nil {
+		t.Fatalf("FindServiceMeta: %v", err)
+	}
+	if got := meta.PublicAccessFor("app").Intent; got != topology.PublicAccessNone {
+		t.Errorf("Intent = %q, want %q (PA-2 reconcile)", got, topology.PublicAccessNone)
+	}
+}
+
+// TestEnsurePublicAccess_CustomDomain_NoEnable_IntentDomain pins PA-3:
+// domains routed to this service always win over auto-enable, and the
+// persisted intent records "domain" so future calls skip the auto-enable
+// predicate cheaply (no need to re-derive from the routing list each time
+// — though O3 still reads it live everywhere else).
+func TestEnsurePublicAccess_CustomDomain_NoEnable_IntentDomain(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeMeta(t, dir, topology.PlanModeDev)
+
+	mock := autoEnableTestMock(t, false).WithPublicHTTPRoutings(platform.PublicHTTPRouting{
+		ID:      "routing-1",
+		Domains: []platform.PublicHTTPDomain{{Name: "example.com"}},
+		Locations: []platform.PublicHTTPLocation{
+			{Path: "/", Port: 3000, ServiceID: autoEnableTestServiceID},
+		},
+	})
+	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
+
+	ensurePublicAccess(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
+
+	if mock.CallCounts["EnableSubdomainAccess"] != 0 {
+		t.Errorf("EnableSubdomainAccess calls: want 0 (PA-3 — domains win), got %d", mock.CallCounts["EnableSubdomainAccess"])
+	}
+
+	meta, err := workflow.FindServiceMeta(dir, "app")
+	if err != nil {
+		t.Fatalf("FindServiceMeta: %v", err)
+	}
+	if got := meta.PublicAccessFor("app").Intent; got != topology.PublicAccessDomain {
+		t.Errorf("Intent = %q, want %q (PA-3 reconcile)", got, topology.PublicAccessDomain)
+	}
+}
+
+// TestEnsurePublicAccess_DeferredStartNoListener_SkipsWithoutStamp pins the
+// deploy-hook half of the two-hook design: a dev-mode dynamic runtime has no
+// listener until `zerops_dev_server action=start` runs, so the DEPLOYED-
+// result hook must NOT auto-enable (no listener ⇒ ShouldAutoEnableSubdomain
+// is false) — the second hook (dev-server start, S7 dev_server.go) is the
+// one that fires once a listener actually exists.
+func TestEnsurePublicAccess_DeferredStartNoListener_SkipsWithoutStamp(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeMeta(t, dir, topology.PlanModeDev)
+
+	mock := autoEnableTestMockWithType(t, false, "nodejs@22")
+	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
+
+	ensurePublicAccess(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
+
+	if mock.CallCounts["EnableSubdomainAccess"] != 0 {
+		t.Errorf("EnableSubdomainAccess calls: want 0 (deferred-start — no listener yet), got %d", mock.CallCounts["EnableSubdomainAccess"])
+	}
+	if result.SubdomainAccessEnabled {
+		t.Error("SubdomainAccessEnabled: want false, got true")
+	}
+
+	meta, err := workflow.FindServiceMeta(dir, "app")
+	if err != nil {
+		t.Fatalf("FindServiceMeta: %v", err)
+	}
+	if got := meta.PublicAccessFor("app").SubdomainEnabledByZcpAt; got != "" {
+		t.Errorf("SubdomainEnabledByZcpAt = %q, want empty (no stamp without a listener)", got)
+	}
+}
+
+// TestEnsurePublicAccess_NotHTTP_BenignSkip_NoStamp pins the caller-side
+// serviceStackIsNotHttp classification for the new entry point: worker /
+// non-HTTP stacks eat one wasted enable attempt (the platform is the source
+// of truth on "is this HTTP-shaped?"), get no warning, and — new for
+// E9 — no stamp, since the attempt didn't actually enable anything.
+func TestEnsurePublicAccess_NotHTTP_BenignSkip_NoStamp(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeMeta(t, dir, topology.PlanModeDev)
+
+	mock := notHTTPErrorMock(t)
+	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
+
+	ensurePublicAccess(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
+
+	if result.SubdomainAccessEnabled {
+		t.Error("serviceStackIsNotHttp must NOT set SubdomainAccessEnabled")
+	}
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "subdomain") {
+			t.Errorf("serviceStackIsNotHttp must NOT surface a subdomain warning (benign signal); got %q", w)
+		}
+	}
+	if mock.CallCounts["EnableSubdomainAccess"] != 1 {
+		t.Errorf("EnableSubdomainAccess calls: want 1 (caller attempts then classifies response), got %d",
+			mock.CallCounts["EnableSubdomainAccess"])
+	}
+
+	meta, err := workflow.FindServiceMeta(dir, "app")
+	if err != nil {
+		t.Fatalf("FindServiceMeta: %v", err)
+	}
+	if got := meta.PublicAccessFor("app").SubdomainEnabledByZcpAt; got != "" {
+		t.Errorf("SubdomainEnabledByZcpAt = %q, want empty (benign skip must not stamp)", got)
+	}
+}
+
+// --- more ensurePublicAccess tests (carried over from maybeAutoEnableSubdomain,
+// still valid under the O3/E9 design) ---------------------------------------
+
+func TestEnsurePublicAccess_AlreadyEnabled_SetsURL_NoAPICall(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	writeMeta(t, dir, topology.PlanModeStandard)
@@ -249,22 +403,23 @@ func TestMaybeAutoEnableSubdomain_AlreadyEnabled_SetsURL_NoAPICall(t *testing.T)
 	mock := autoEnableTestMock(t, true /* subdomain already on */)
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
 
-	maybeAutoEnableSubdomain(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
+	ensurePublicAccess(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
 
 	if !result.SubdomainAccessEnabled {
 		t.Error("SubdomainAccessEnabled: want true on already-on, got false")
 	}
 	if result.SubdomainURL == "" {
-		t.Error("SubdomainURL: want non-empty (URLs built from cached meta), got empty")
+		t.Error("SubdomainURL: want non-empty (URL resolved from observed state), got empty")
 	}
 	// Core invariant: ops.Subdomain.Enable check-before-mutate skips the
-	// API call when subdomain is already active.
+	// API call when subdomain is already active — and ensurePublicAccess
+	// doesn't even attempt an enable once obs.Observed.Subdomain is on.
 	if mock.CallCounts["EnableSubdomainAccess"] != 0 {
 		t.Errorf("EnableSubdomainAccess calls: want 0 (already-on), got %d", mock.CallCounts["EnableSubdomainAccess"])
 	}
 }
 
-func TestMaybeAutoEnableSubdomain_AlreadyEnabled_SkipsHTTPProbe(t *testing.T) {
+func TestEnsurePublicAccess_AlreadyEnabled_SkipsHTTPProbe(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	writeMeta(t, dir, topology.PlanModeDev)
@@ -274,59 +429,14 @@ func TestMaybeAutoEnableSubdomain_AlreadyEnabled_SkipsHTTPProbe(t *testing.T) {
 	// HTTPDoer that counts calls so we can verify it was NOT invoked.
 	doer := &countingDoer{status: http.StatusOK}
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
-	maybeAutoEnableSubdomain(context.Background(), mock, doer, "proj-1", dir, "app", result)
+	ensurePublicAccess(context.Background(), mock, doer, "proj-1", dir, "app", result)
 
 	if doer.calls != 0 {
 		t.Errorf("HTTP probe must be skipped on already_enabled; got %d calls", doer.calls)
 	}
 }
 
-// TestMaybeAutoEnable_ServiceStackIsNotHttp_BenignSkip pins the new
-// caller-side classification: when ops.Subdomain.Enable returns the
-// platform's serviceStackIsNotHttp apiCode, maybeAutoEnableSubdomain
-// silently swallows it (no warning, SubdomainAccessEnabled stays false).
-//
-// Covers the F8 dev+dynamic+zsc-noop case AND the worker case AND any
-// other non-HTTP-shaped stack the platform refuses to route. The previous
-// predicate over-protected by skipping enable entirely; now the platform
-// is the source of truth on "is this HTTP-shaped?" and the caller
-// classifies the response.
-//
-// IMPORTANT: this benign swallow lives ONLY in maybeAutoEnableSubdomain.
-// Explicit zerops_subdomain enable calls (TestSubdomain_* in subdomain_test.go)
-// still receive serviceStackIsNotHttp as a real error so the user sees the
-// "missing httpSupport: true on port" diagnostic.
-func TestMaybeAutoEnable_ServiceStackIsNotHttp_BenignSkip(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	writeMeta(t, dir, topology.PlanModeDev)
-
-	mock := notHTTPErrorMock(t)
-	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
-
-	maybeAutoEnableSubdomain(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
-
-	if result.SubdomainAccessEnabled {
-		t.Error("serviceStackIsNotHttp must NOT set SubdomainAccessEnabled")
-	}
-	if result.SubdomainURL != "" {
-		t.Errorf("serviceStackIsNotHttp must NOT set SubdomainURL; got %q", result.SubdomainURL)
-	}
-	for _, w := range result.Warnings {
-		if strings.Contains(w, "subdomain") {
-			t.Errorf("serviceStackIsNotHttp must NOT surface a subdomain warning (benign signal); got %q", w)
-		}
-	}
-	// Confirm the API call WAS issued — the §6.1 design choice is that
-	// workers / non-HTTP stacks eat one wasted RT in exchange for "no
-	// fallbacks" purity.
-	if mock.CallCounts["EnableSubdomainAccess"] != 1 {
-		t.Errorf("EnableSubdomainAccess calls: want 1 (caller attempts then classifies response), got %d",
-			mock.CallCounts["EnableSubdomainAccess"])
-	}
-}
-
-func TestMaybeAutoEnableSubdomain_OtherError_AddsWarning(t *testing.T) {
+func TestEnsurePublicAccess_OtherError_AddsWarning(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	writeMeta(t, dir, topology.PlanModeDev)
@@ -339,7 +449,7 @@ func TestMaybeAutoEnableSubdomain_OtherError_AddsWarning(t *testing.T) {
 	})
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
 
-	maybeAutoEnableSubdomain(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
+	ensurePublicAccess(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
 
 	if result.SubdomainAccessEnabled {
 		t.Error("must NOT set SubdomainAccessEnabled when enable failed")
@@ -359,7 +469,7 @@ func TestMaybeAutoEnableSubdomain_OtherError_AddsWarning(t *testing.T) {
 	}
 }
 
-func TestMaybeAutoEnableSubdomain_LocalOnlyMode_NoEnableCall(t *testing.T) {
+func TestEnsurePublicAccess_LocalOnlyMode_NoEnableCall(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	writeMeta(t, dir, topology.PlanModeLocalOnly)
@@ -367,7 +477,7 @@ func TestMaybeAutoEnableSubdomain_LocalOnlyMode_NoEnableCall(t *testing.T) {
 	mock := autoEnableTestMock(t, false)
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
 
-	maybeAutoEnableSubdomain(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
+	ensurePublicAccess(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
 
 	if result.SubdomainAccessEnabled {
 		t.Error("local-only mode must skip auto-enable (no Zerops runtime to route to)")
@@ -378,13 +488,13 @@ func TestMaybeAutoEnableSubdomain_LocalOnlyMode_NoEnableCall(t *testing.T) {
 	}
 }
 
-func TestMaybeAutoEnable_NoMeta_SystemService_NoEnableCall(t *testing.T) {
+func TestEnsurePublicAccess_NoMeta_SystemService_NoEnableCall(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir() // no meta
 
 	mock := systemStackMock(t, "BUILD")
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
-	maybeAutoEnableSubdomain(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
+	ensurePublicAccess(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
 
 	if result.SubdomainAccessEnabled {
 		t.Error("system-category service should skip auto-enable")
@@ -395,7 +505,7 @@ func TestMaybeAutoEnable_NoMeta_SystemService_NoEnableCall(t *testing.T) {
 	}
 }
 
-func TestMaybeAutoEnableSubdomain_AllEligibleModes_TriggerEnable(t *testing.T) {
+func TestEnsurePublicAccess_AllEligibleModes_TriggerEnable(t *testing.T) {
 	// t.Parallel omitted at the top level so the Override helper's config
 	// mutation doesn't interleave with sibling tests in the package.
 	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
@@ -422,7 +532,7 @@ func TestMaybeAutoEnableSubdomain_AllEligibleModes_TriggerEnable(t *testing.T) {
 
 			mock := autoEnableTestMock(t, false)
 			result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
-			maybeAutoEnableSubdomain(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
+			ensurePublicAccess(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
 
 			if result.SubdomainAccessEnabled != tc.want {
 				t.Errorf("mode %q: SubdomainAccessEnabled = %v, want %v", tc.mode, result.SubdomainAccessEnabled, tc.want)
@@ -436,7 +546,7 @@ func TestMaybeAutoEnableSubdomain_AllEligibleModes_TriggerEnable(t *testing.T) {
 // when meta.Mode is in the allow-list. meta.FirstDeployedAt is stamped on
 // the dev half and useless as a first-deploy signal for stage; the new
 // design doesn't read it — predicate fires Enable, platform classifies.
-func TestMaybeAutoEnableSubdomain_StageCrossDeploy_EnablesForStage(t *testing.T) {
+func TestEnsurePublicAccess_StageCrossDeploy_EnablesForStage(t *testing.T) {
 	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
 	defer restore()
 
@@ -480,7 +590,7 @@ func TestMaybeAutoEnableSubdomain_StageCrossDeploy_EnablesForStage(t *testing.T)
 		})
 
 	result := &ops.DeployResult{TargetService: "appstage", TargetServiceID: "svc-stage"}
-	maybeAutoEnableSubdomain(context.Background(), mock, okHTTP, "proj-1", dir, "appstage", result)
+	ensurePublicAccess(context.Background(), mock, okHTTP, "proj-1", dir, "appstage", result)
 
 	if !result.SubdomainAccessEnabled {
 		t.Error("stage cross-deploy must trigger enable — pair-keyed meta lookup + platform classifies")
@@ -505,48 +615,13 @@ func TestMaybeAutoEnableSubdomain_StageCrossDeploy_EnablesForStage(t *testing.T)
 // {Dev, Standard}) AND (class == Dynamic). Stage / simple modes auto-start
 // via run.start; static + implicit-webserver runtimes auto-serve regardless
 // of mode — those keep the probe + warning path.
+//
+// The dev/standard-mode-dynamic cases themselves are covered by
+// TestEnsurePublicAccess_DeferredStartNoListener_SkipsWithoutStamp above —
+// under the O3/E9 design the deploy hook no longer even attempts an enable
+// there (no listener yet), so there's nothing left to probe.
 
-func TestMaybeAutoEnable_DevModeDynamic_SkipsHTTPProbe(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	writeMeta(t, dir, topology.PlanModeDev)
-
-	mock := autoEnableTestMockWithType(t, false, "nodejs@22")
-	doer := &countingDoer{status: 200}
-	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
-
-	maybeAutoEnableSubdomain(context.Background(), mock, doer, "proj-1", dir, "app", result)
-
-	if !result.SubdomainAccessEnabled {
-		t.Error("auto-enable must succeed for dev-mode dynamic")
-	}
-	if doer.calls != 0 {
-		t.Errorf("HTTP probe must be skipped on deferred-start (dev-mode dynamic); got %d calls", doer.calls)
-	}
-	for _, w := range result.Warnings {
-		if strings.Contains(w, "not HTTP-ready") {
-			t.Errorf("must not emit not-HTTP-ready warning on deferred-start; got %q", w)
-		}
-	}
-}
-
-func TestMaybeAutoEnable_StandardModeDynamic_SkipsHTTPProbe(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	writeMeta(t, dir, topology.PlanModeStandard)
-
-	mock := autoEnableTestMockWithType(t, false, "go@1")
-	doer := &countingDoer{status: 200}
-	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
-
-	maybeAutoEnableSubdomain(context.Background(), mock, doer, "proj-1", dir, "app", result)
-
-	if doer.calls != 0 {
-		t.Errorf("HTTP probe must be skipped on standard-mode dynamic dev half; got %d calls", doer.calls)
-	}
-}
-
-func TestMaybeAutoEnable_DevModeStatic_StillProbes(t *testing.T) {
+func TestEnsurePublicAccess_DevModeStatic_StillProbes(t *testing.T) {
 	// t.Parallel omitted — OverrideHTTPReadyConfigForTest mutates package
 	// state shared with WaitHTTPReady; sibling parallel tests would race.
 	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
@@ -559,14 +634,14 @@ func TestMaybeAutoEnable_DevModeStatic_StillProbes(t *testing.T) {
 	doer := &countingDoer{status: 200}
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
 
-	maybeAutoEnableSubdomain(context.Background(), mock, doer, "proj-1", dir, "app", result)
+	ensurePublicAccess(context.Background(), mock, doer, "proj-1", dir, "app", result)
 
 	if doer.calls == 0 {
 		t.Error("static runtime must still probe — nginx auto-serves; 502 in dev mode is a real problem there")
 	}
 }
 
-func TestMaybeAutoEnable_DevModePHPNginx_StillProbes(t *testing.T) {
+func TestEnsurePublicAccess_DevModePHPNginx_StillProbes(t *testing.T) {
 	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
 	defer restore()
 
@@ -577,14 +652,14 @@ func TestMaybeAutoEnable_DevModePHPNginx_StillProbes(t *testing.T) {
 	doer := &countingDoer{status: 200}
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
 
-	maybeAutoEnableSubdomain(context.Background(), mock, doer, "proj-1", dir, "app", result)
+	ensurePublicAccess(context.Background(), mock, doer, "proj-1", dir, "app", result)
 
 	if doer.calls == 0 {
 		t.Error("implicit-webserver must still probe — php-nginx auto-starts; 502 means the deploy is broken")
 	}
 }
 
-// TestMaybeAutoEnable_StageDynamic_StillProbes pins the stage-half rule:
+// TestEnsurePublicAccess_StageDynamic_StillProbes pins the stage-half rule:
 // stage runtime runs run.start, so a 502 IS a real problem and the probe
 // must run. The fixture mirrors production shape — pair-keyed standard
 // meta (Hostname=dev half, StageHostname=stage half), targetService is
@@ -592,13 +667,7 @@ func TestMaybeAutoEnable_DevModePHPNginx_StillProbes(t *testing.T) {
 // shared mock fixture). ServiceMeta.ModeFor projects target=StageHostname
 // as ModeStage even though m.Mode is ModeStandard; IsDeferredStart
 // returns false for stage; probe runs.
-//
-// Pre-ModeFor wiring this case worked only with synthetic "Mode=ModeStage
-// as primary" fixtures that never exist in production (stage is always
-// the stage half of a Standard pair). The realistic fixture pinned here
-// would have failed before the resolveDeployTargetTopology /
-// maybeAutoEnableSubdomain ModeFor wiring landed.
-func TestMaybeAutoEnable_StageDynamic_StillProbes(t *testing.T) {
+func TestEnsurePublicAccess_StageDynamic_StillProbes(t *testing.T) {
 	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
 	defer restore()
 
@@ -617,14 +686,14 @@ func TestMaybeAutoEnable_StageDynamic_StillProbes(t *testing.T) {
 	doer := &countingDoer{status: 200}
 	result := &ops.DeployResult{TargetService: autoEnableTestHostname, TargetServiceID: "svc-1"}
 
-	maybeAutoEnableSubdomain(context.Background(), mock, doer, "proj-1", dir, autoEnableTestHostname, result)
+	ensurePublicAccess(context.Background(), mock, doer, "proj-1", dir, autoEnableTestHostname, result)
 
 	if doer.calls == 0 {
 		t.Error("stage half of a standard pair must still probe — run.start runs the real app; 502 means the deploy is broken")
 	}
 }
 
-func TestMaybeAutoEnable_NoMeta_DynamicType_StillProbes(t *testing.T) {
+func TestEnsurePublicAccess_NoMeta_DynamicType_StillProbes(t *testing.T) {
 	// No meta = no mode info, so we can't classify deferred-start. Fail
 	// closed: probe runs (recipe-authoring / manual-import path).
 	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
@@ -636,7 +705,7 @@ func TestMaybeAutoEnable_NoMeta_DynamicType_StillProbes(t *testing.T) {
 	doer := &countingDoer{status: 200}
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
 
-	maybeAutoEnableSubdomain(context.Background(), mock, doer, "proj-1", dir, "app", result)
+	ensurePublicAccess(context.Background(), mock, doer, "proj-1", dir, "app", result)
 
 	if doer.calls == 0 {
 		t.Error("no-meta path must still probe (fail closed) — recipe-authoring / manual import has no mode info")

@@ -265,7 +265,7 @@ func (s *Server) registerTools() {
 		// primitive for background dev servers on target containers.
 		// Skipped in local-only mode where SSH to Zerops siblings is
 		// not available.
-		tools.RegisterDevServer(s.server, s.client, projectID, s.sshDeployer)
+		tools.RegisterDevServer(s.server, s.client, httpClient, projectID, s.sshDeployer, stateDir)
 	} else {
 		tools.RegisterDeployLocal(s.server, s.client, httpClient, projectID, s.authInfo, s.logFetcher, stateDir, wfEngine, recipeProbe)
 	}
