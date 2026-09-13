@@ -65,7 +65,11 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// patchFlexBoolProperty like force/skipPipelineSetup. Deliberate new
 		// field — optional, backward-compatible (omit → today's launchKey-only
 		// publish path, D-5).
-		"zerops_workflow":    17828,
+		// Raised +6 (17828→17834) for RuntimeTarget.publicAccess (§8 O3
+		// PA-6): the plan's per-runtime public-access intent
+		// ("" | auto | subdomain | none). Deliberate new field — optional,
+		// backward-compatible (omit → auto, today's behavior).
+		"zerops_workflow":    17834,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services
