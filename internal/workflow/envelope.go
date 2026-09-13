@@ -104,10 +104,17 @@ type ServiceSnapshot struct {
 	TypeVersion  string                `json:"typeVersion"`
 	RuntimeClass topology.RuntimeClass `json:"runtimeClass"`
 	Status       string                `json:"status"`
-	Bootstrapped bool                  `json:"bootstrapped"`
-	Deployed     bool                  `json:"deployed,omitempty"`
-	Resumable    bool                  `json:"resumable,omitempty"`
-	Mode         topology.Mode         `json:"mode,omitempty"`
+	// DeployHistory is the recovery-shape classification (`none` · `failed`
+	// · `ok`) atom selection gates on via AxisVector.DeployHistories (spec-
+	// workflows.md §8 R1/R3). Only meaningful when Status is
+	// READY_TO_DEPLOY/FAILED; empty is the safe default (treated as "ok" by
+	// effectiveDeployHistory in synthesize.go) until a caller populates it
+	// from ops.ComputeRecoveryState.
+	DeployHistory string        `json:"deployHistory,omitempty"`
+	Bootstrapped  bool          `json:"bootstrapped"`
+	Deployed      bool          `json:"deployed,omitempty"`
+	Resumable     bool          `json:"resumable,omitempty"`
+	Mode          topology.Mode `json:"mode,omitempty"`
 
 	CloseDeployMode  topology.CloseDeployMode  `json:"closeDeployMode,omitempty"`
 	GitPushState     topology.GitPushState     `json:"gitPushState,omitempty"`

@@ -558,7 +558,7 @@ func TestPlanTargetSnapshots_CrossTypeStage(t *testing.T) {
 		StageType:     "static",
 		BootstrapMode: topology.PlanModeStandard,
 	}}
-	snaps := planTargetSnapshots(target, nil)
+	snaps := planTargetSnapshots(target, nil, nil)
 	if len(snaps) != 2 {
 		t.Fatalf("snapshots: got %d, want 2 (dev + stage)", len(snaps))
 	}
