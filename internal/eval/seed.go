@@ -167,7 +167,11 @@ func SeedBuilding(ctx context.Context, client platform.Client, projectID, fixtur
 	}
 	// Wait only until the build is RUNNING (window open), then return — leaving
 	// the build in flight for the agent to discover.
-	return waitProcessRunning(ctx, client, buildProc, 90*time.Second)
+	// Five minutes: on a loaded farm the build container takes longer than the
+	// original 90 s to reach RUNNING (matrix-2..4: the race-adopt seed timed out
+	// every batch). The race the scenario needs is "build still in flight when
+	// the agent starts", which a longer wait does not weaken.
+	return waitProcessRunning(ctx, client, buildProc, 5*time.Minute)
 }
 
 // actionStackBuild is the Zerops API action name for the build pipeline.
