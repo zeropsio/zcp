@@ -678,18 +678,37 @@ func (r *Runner) prepareWorkOrFail(ctx context.Context, sc *Scenario, suiteID, o
 	return true
 }
 
-// prepareBehavioralWork runs seed → init → capture MCP config → preseed →
-// seed.expect check, returning a human-readable error prefix ("seed: ...",
-// "init: ...", etc.) on the first failure, or "" on success. Factored out of
-// RunBehavioralScenario purely to keep that function's cyclomatic
-// complexity in check — each step's failure meaning is unchanged.
+// checkRequiredEnvVars returns "resource <NAME> missing" for the first
+// scenario.RequiredEnvVars entry that is unset or empty in the evaluator's
+// own environment (docs/spec-eval-farm.md §4.5 preparation extension;
+// spec-scenarios.md §9.2 rule 7), or "" when every entry is present. Never
+// logs or returns an env VALUE — only the variable NAME.
+func checkRequiredEnvVars(names []string) string {
+	for _, name := range names {
+		if os.Getenv(name) == "" {
+			return fmt.Sprintf("resource %s missing", name)
+		}
+	}
+	return ""
+}
+
+// prepareBehavioralWork runs requiredEnvVars check → seed → init → capture
+// MCP config → preseed → seed.expect check, returning a human-readable
+// error prefix ("seed: ...", "init: ...", etc.) on the first failure, or ""
+// on success. Factored out of RunBehavioralScenario purely to keep that
+// function's cyclomatic complexity in check — each step's failure meaning
+// is unchanged.
 //
-// When the scenario declares seed.expect and it does not hold
-// (docs/spec-eval-farm.md §4.5 FM-63), mismatch is non-empty and errMsg is
-// ""; the caller MUST treat that as preparation, not execution, failure —
-// r.notRunFailure still runs (every declared row freezes not-run) but
-// result.Error stays empty and the agent is never spawned.
+// When the scenario declares a requiredEnvVars entry that is missing, or a
+// seed.expect that does not hold (docs/spec-eval-farm.md §4.5 FM-63),
+// mismatch is non-empty and errMsg is ""; the caller MUST treat that as
+// preparation, not execution, failure — r.notRunFailure still runs (every
+// declared row freezes not-run) but result.Error stays empty and the agent
+// is never spawned.
 func (r *Runner) prepareBehavioralWork(ctx context.Context, sc *Scenario, suiteID, outDir string) (errMsg, mismatch string) {
+	if reason := checkRequiredEnvVars(sc.RequiredEnvVars); reason != "" {
+		return "", reason
+	}
 	if err := r.seedScenario(ctx, sc, suiteID); err != nil {
 		return fmt.Sprintf("seed: %v", err), ""
 	}

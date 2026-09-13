@@ -243,6 +243,7 @@ parsed-not-universal keys, none mass-added to the corpus:
 | `verification.toolArg` | decision rows over `transcript.jsonl` (FM-59/FM-60) |
 | `verification.toolResult` | decision rows over captured MCP results (FM-59) |
 | `verification.mustOffer` | decision rows over route-menu / next-step text (FM-59) |
+| `requiredEnvVars` | preparation gate (docs/spec-eval-farm.md §4.5): a missing/empty entry is a `blocked: preparation` mismatch, agent never spawned |
 
 Every row above still counts toward required mode's "≥1 executable check"
 (scenario.go's `validate()`) even though its S2 body is a `not-run` stub —

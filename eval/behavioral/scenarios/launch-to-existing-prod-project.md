@@ -61,7 +61,7 @@ verification:
       status: [ACTIVE]
       type: postgresql@*
   noFailedProcesses: true
-  launchShape: {prodProject: "zcp-farm-prod__{{runId}}"}
+  launchShape: {prodProjectIdEnv: ZCP_E2E_EXISTING_PROJECT_ID}
   toolResult:
     - {tool: zerops_workflow, contains: "TOKEN_SCOPE_MISMATCH"}
   noFabricatedSecret: true

@@ -609,6 +609,7 @@ verification:
   noFailedProcesses: true                  # O5 — unchanged from §10.1
   allowFailed: [api]                       # O5 — services whose FAILED is the seeded starting point
   liveness: {service: appdev, marker: "team-notes"}   # O2
+  launchShape: {prodProjectIdEnv: ZCP_E2E_EXISTING_PROJECT_ID}  # O6 — resolves by id read from the named env var; exactly one of prodProject/prodProjectIdEnv
   unchanged: [appstage]                    # O4 — standalone form of the nodePostgresRecord unrelated-artifact row
   never: [zerops_import{override=true}, zerops_delete]  # decision rows, gate
   askWhen: [GIT_TOKEN_MISSING]             # decision rows, advisory
@@ -770,7 +771,10 @@ every declared row freezes `not-run`, and the agent is never spawned — no
 candidate turn, no cost. A `preparation` block is never attributed to zcp or to
 the agent in `report`, `coverage`, or the observer (§7: no observation is
 produced for such a run). `TestSeed_ExpectMismatch_BlocksPreparation`,
-`TestSeed_ExpectMismatch_AgentNeverSpawned`.
+`TestSeed_ExpectMismatch_AgentNeverSpawned`. A missing/empty
+`requiredEnvVars` entry is a preparation mismatch too — checked before
+`seed.expect`, same `blocked: preparation` verdict, message `resource
+<NAME> missing`. `TestRun_RequiredEnvVarMissing_BlocksPreparation_AgentNeverSpawned`.
 
 **FM-64.** `seed.expect` is mandatory for a cell whose starting state is
 deliberately broken (spec-scenarios.md §9.2 rule 3); `mode: settled` without
