@@ -273,6 +273,95 @@ func TestDeployTool_SSHMode_AutoEnablesSubdomain(t *testing.T) {
 	}
 }
 
+// TestDeployResult_CarriesPublicAccessSummary pins PA-5 (docs/spec-
+// workflows.md §8 O3): every URL-bearing surface renders `publicAccess
+// {intent, subdomain, url, domains[]}`. Same fixture as
+// TestDeployTool_SSHMode_AutoEnablesSubdomain (auto intent, fresh
+// auto-enable succeeds) — asserts the new structured field instead of the
+// legacy flat SubdomainAccessEnabled/SubdomainURL pair.
+func TestDeployResult_CarriesPublicAccessSummary(t *testing.T) {
+	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
+	defer restore()
+
+	projectRoot := t.TempDir()
+	stateDir := filepath.Join(projectRoot, ".zcp", "state")
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "app",
+		Mode:             topology.PlanModeDev,
+		BootstrapSession: "sess1",
+		BootstrappedAt:   "2026-04-22",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	mountDir := filepath.Join(projectRoot, "app")
+	if err := os.MkdirAll(mountDir, 0o755); err != nil {
+		t.Fatalf("mkdir mount: %v", err)
+	}
+	minimalYaml := "zerops:\n  - setup: app\n    build:\n      base: nodejs@22\n      deployFiles: [.]\n    run:\n      ports:\n        - port: 3000\n          httpSupport: true\n      start: node server.js\n"
+	if err := os.WriteFile(filepath.Join(mountDir, "zerops.yaml"), []byte(minimalYaml), 0o600); err != nil {
+		t.Fatalf("write zerops.yaml: %v", err)
+	}
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app",
+				SubdomainAccess: false,
+				Ports:           []platform.Port{{Port: 3000, Protocol: "tcp", HTTPSupport: true}},
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeCategoryName: "USER",
+				}},
+		}).
+		WithService(&platform.ServiceStack{
+			ID: "svc-1", Name: "app",
+			SubdomainAccess: false,
+			Ports:           []platform.Port{{Port: 3000, Protocol: "tcp", HTTPSupport: true}},
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{
+				ServiceStackTypeCategoryName: "USER",
+			},
+		}).
+		WithProject(&platform.Project{
+			ID: "proj-1", Name: "test", Status: statusActive,
+			SubdomainHost: "abc1.prg1.zerops.app",
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusActive, Sequence: 1},
+		}).
+		WithProcess(&platform.Process{
+			ID:     "proc-subdomain-enable-svc-1",
+			Status: statusFinished,
+		})
+	ssh := &stubSSH{output: []byte("ok")}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "app",
+	})
+	if result.IsError {
+		t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var parsed ops.DeployResult
+	text := getTextContent(t, result)
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("parse result: %v (raw: %s)", err, text)
+	}
+	if parsed.PublicAccess == nil {
+		t.Fatalf("PublicAccess: want non-nil (raw: %s)", text)
+	}
+	if parsed.PublicAccess.Intent != "auto" {
+		t.Errorf("PublicAccess.Intent = %q, want %q", parsed.PublicAccess.Intent, "auto")
+	}
+	if parsed.PublicAccess.Subdomain != "on" {
+		t.Errorf("PublicAccess.Subdomain = %q, want %q", parsed.PublicAccess.Subdomain, "on")
+	}
+	if parsed.PublicAccess.URL == "" {
+		t.Error("PublicAccess.URL: want non-empty, got empty")
+	}
+}
+
 func TestDeployTool_SelfDeploy_TargetOnly(t *testing.T) {
 	t.Parallel()
 

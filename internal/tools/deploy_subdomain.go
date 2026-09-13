@@ -122,6 +122,22 @@ func ensurePublicAccess(
 		result.SubdomainURL = obs.URL
 	}
 
+	// PA-5 (docs/spec-workflows.md §8 O3): fill the structured summary
+	// from the same reconciled intent (rec2) and observation (obs) this
+	// hook already computed — Subdomain reflects "on" whenever this call
+	// enabled the route or found it already live (result.SubdomainAccessEnabled),
+	// else the pre-enable observed state (off/enabling).
+	subdomainState := obs.Observed.Subdomain
+	if result.SubdomainAccessEnabled {
+		subdomainState = topology.SubdomainOn
+	}
+	result.PublicAccess = &ops.PublicAccessSummary{
+		Intent:    string(rec2.Intent),
+		Subdomain: string(subdomainState),
+		URL:       result.SubdomainURL,
+		Domains:   obs.Observed.Domains,
+	}
+
 	// HTTP readiness wait. Skip when the route was already live before this
 	// call (meta present — an unmeta'd already-on state can't prove the L7
 	// route finished propagating, so still probe) or on deferred-start

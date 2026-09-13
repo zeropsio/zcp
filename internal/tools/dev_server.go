@@ -8,7 +8,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // DevServerInput is the input type for zerops_dev_server.
@@ -143,9 +142,7 @@ func RegisterDevServer(srv *mcp.Server, client platform.Client, httpClient ops.H
 			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.Hostname, scratch, true)
 			resp.SubdomainURL = scratch.SubdomainURL
 			resp.Warnings = scratch.Warnings
-			if meta, _ := workflow.FindServiceMeta(stateDir, input.Hostname); meta != nil {
-				resp.PublicAccess = string(meta.PublicAccessFor(input.Hostname).Intent)
-			}
+			resp.PublicAccess = scratch.PublicAccess
 		}
 		return jsonResult(resp), nil, nil
 	})
@@ -172,9 +169,11 @@ type devServerToolResult struct {
 	// SubdomainURL is the L7 subdomain URL when the start-success hook
 	// enabled (or found already-enabled) the route for this hostname.
 	SubdomainURL string `json:"subdomainUrl,omitempty"`
-	// PublicAccess is the persisted intent (auto/subdomain/domain/none)
-	// after the hook ran — "" when no ServiceMeta exists for hostname.
-	PublicAccess string `json:"publicAccess,omitempty"`
+	// PublicAccess is the PA-5 structured summary (docs/spec-workflows.md
+	// §8 O3): {intent, subdomain, url, domains[]}, copied verbatim from the
+	// hook's scratch *ops.DeployResult — nil when the hook never ran (a
+	// non-start action, or a failed start).
+	PublicAccess *ops.PublicAccessSummary `json:"publicAccess,omitempty"`
 	// Warnings carries any non-fatal public-access anomaly from the hook
 	// (e.g. an auto-enable failure) — ops.DevServerResult has no Warnings
 	// field of its own.

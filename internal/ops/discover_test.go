@@ -1447,6 +1447,71 @@ func TestExtractSubdomainURL_FetchError(t *testing.T) {
 	}
 }
 
+// TestDiscover_PublicAccessPerRuntime_OneRoutingRead pins PA-5 (docs/spec-
+// workflows.md §8 O3): every HTTP-class runtime in a discover response
+// carries `publicAccess`, and the project routing list is read exactly
+// once regardless of how many runtimes are in the project (batched via
+// ObservePublicAccessAll, not one ListPublicHTTPRoutings call per service).
+func TestDiscover_PublicAccessPerRuntime_OneRoutingRead(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: statusActive,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+			Ports:                []platform.Port{{Port: 3000, Protocol: "tcp", HTTPSupport: true}}},
+		{ID: "svc-2", Name: "web", ProjectID: "proj-1", Status: statusActive,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+			Ports:                []platform.Port{{Port: 8080, Protocol: "tcp", HTTPSupport: true}}},
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices(services).
+		WithPublicHTTPRoutings(platform.PublicHTTPRouting{
+			ID:        "r1",
+			Domains:   []platform.PublicHTTPDomain{{Name: "example.com"}},
+			Locations: []platform.PublicHTTPLocation{{ServiceID: "svc-2", Port: 8080}},
+		})
+
+	result, err := Discover(context.Background(), mock, "proj-1", "", false, false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Services) != 2 {
+		t.Fatalf("expected 2 services, got %d", len(result.Services))
+	}
+	byHost := make(map[string]*ServiceInfo, len(result.Services))
+	for i := range result.Services {
+		byHost[result.Services[i].Hostname] = &result.Services[i]
+	}
+
+	api := byHost["api"]
+	if api == nil || api.PublicAccess == nil {
+		t.Fatal("api: PublicAccess want non-nil")
+	}
+	if api.PublicAccess.Intent != "auto" {
+		t.Errorf("api PublicAccess.Intent = %q, want %q", api.PublicAccess.Intent, "auto")
+	}
+	if api.PublicAccess.Subdomain != "off" {
+		t.Errorf("api PublicAccess.Subdomain = %q, want %q", api.PublicAccess.Subdomain, "off")
+	}
+
+	web := byHost["web"]
+	if web == nil || web.PublicAccess == nil {
+		t.Fatal("web: PublicAccess want non-nil")
+	}
+	if web.PublicAccess.Intent != "domain" {
+		t.Errorf("web PublicAccess.Intent = %q, want %q", web.PublicAccess.Intent, "domain")
+	}
+	if len(web.PublicAccess.Domains) != 1 || web.PublicAccess.Domains[0] != "example.com" {
+		t.Errorf("web PublicAccess.Domains = %+v, want [example.com]", web.PublicAccess.Domains)
+	}
+
+	if got := mock.CallCounts["ListPublicHTTPRoutings"]; got != 1 {
+		t.Errorf("ListPublicHTTPRoutings calls: want 1, got %d", got)
+	}
+}
+
 func TestDiscover_ProjectNotFound(t *testing.T) {
 	t.Parallel()
 
