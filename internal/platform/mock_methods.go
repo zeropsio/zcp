@@ -160,6 +160,60 @@ func (m *Mock) GetAppVersionUserData(_ context.Context, appVersionID string) ([]
 	return out, nil
 }
 
+// GetAppVersionZeropsYaml returns the seeded ZEROPS_YAML blob text for
+// appVersionID, or "" when unseeded (R2 cascade treats empty as miss).
+// Seed via WithAppVersionZeropsYaml.
+func (m *Mock) GetAppVersionZeropsYaml(_ context.Context, appVersionID string) (string, error) {
+	m.trackCall("GetAppVersionZeropsYaml")
+	if err := m.getError("GetAppVersionZeropsYaml"); err != nil {
+		return "", err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.appVersionZeropsYaml[appVersionID], nil
+}
+
+// ListServiceAppVersions returns the seeded DIRECT (non-ES) app-version
+// list for serviceID, or nil when unseeded. Seed via
+// WithServiceAppVersions; returned in whatever order was seeded (tests
+// seed newest-first, mirroring the real client's contract).
+func (m *Mock) ListServiceAppVersions(_ context.Context, serviceID string) ([]AppVersionEvent, error) {
+	m.trackCall("ListServiceAppVersions")
+	if err := m.getError("ListServiceAppVersions"); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return append([]AppVersionEvent(nil), m.serviceAppVersions[serviceID]...), nil
+}
+
+// RedeployAppVersion records the call and returns the seeded process (see
+// WithRedeployAppVersionProcess), defaulting to a synthesized PENDING
+// stack.deploy process when unseeded.
+func (m *Mock) RedeployAppVersion(_ context.Context, appVersionID, zeropsYaml, setup string) (*Process, error) {
+	m.trackCall("RedeployAppVersion")
+	if err := m.getError("RedeployAppVersion"); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	m.CapturedRedeployAppVersion = append(m.CapturedRedeployAppVersion, CapturedRedeployAppVersion{
+		AppVersionID: appVersionID,
+		ZeropsYaml:   zeropsYaml,
+		Setup:        setup,
+	})
+	proc := m.redeployAppVersionProcess
+	m.mu.Unlock()
+	if proc == nil {
+		return &Process{
+			ID:         "redeploy-" + appVersionID,
+			ActionName: "stack.deploy",
+			Status:     ProcessStatusPending,
+		}, nil
+	}
+	out := *proc
+	return &out, nil
+}
+
 func (m *Mock) GetService(_ context.Context, serviceID string) (*ServiceStack, error) {
 	m.trackCall("GetService")
 	if err := m.getError("GetService"); err != nil {

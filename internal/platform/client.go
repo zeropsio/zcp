@@ -137,6 +137,28 @@ type Client interface {
 	// have none). Spec: docs/spec-zerops-env-lifecycle.md §1/§6.
 	GetAppVersionUserData(ctx context.Context, appVersionID string) ([]ServiceEnvVar, error)
 
+	// GetAppVersionZeropsYaml returns the app version's ZEROPS_YAML
+	// user-data blob — the full deployed zerops.yaml TEXT, verbatim
+	// (unlike GetAppVersionUserData, which filters that record out).
+	// Used by the R2 artifact-redeploy recovery (docs/spec-workflows.md
+	// §8 R2) as the first yaml source for PUT /app-version/{id}/deploy,
+	// which does not reuse the platform's stored yaml on its own.
+	GetAppVersionZeropsYaml(ctx context.Context, appVersionID string) (string, error)
+
+	// ListServiceAppVersions reads a service's app-version history via the
+	// DIRECT (non-Elasticsearch) GET /service-stack/{id}/app-version —
+	// lag-free, unlike the ES-backed SearchAppVersions. Returns newest-
+	// first by Sequence. Used by ops.ComputeRecoveryState for the R2
+	// artifact/container facts (docs/spec-workflows.md §8 R2).
+	ListServiceAppVersions(ctx context.Context, serviceID string) ([]AppVersionEvent, error)
+
+	// RedeployAppVersion re-deploys an existing appVersion via PUT
+	// /app-version/{id}/deploy — the ONLY in-place recovery for a never-
+	// activated buildFromGit service (docs/spec-workflows.md §8 R2): no
+	// rebuild, no re-import. Both zeropsYaml and setup MUST be supplied —
+	// the platform does not reuse the stored yaml.
+	RedeployAppVersion(ctx context.Context, appVersionID, zeropsYaml, setup string) (*Process, error)
+
 	// ListOwnTokenDelegations returns the delegations attached to the token
 	// this client authenticates with. Fresh read every call — the platform
 	// is the sole source of delegation truth (D-1); ZCP never persists or
