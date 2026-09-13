@@ -500,3 +500,199 @@ Do the thing.
 		t.Errorf("error should mention never, got: %v", err)
 	}
 }
+
+// TestScenarioParse_SeedScalarAndBlock_BothDecode pins docs/spec-eval-farm.md
+// §4.1: `seed:` accepts either the legacy bare scalar (mode only) or the
+// block mapping form (mode/fixture/ref/expect), and both decode to the same
+// Scenario.Seed/Fixture shape existing callers rely on.
+func TestScenarioParse_SeedScalarAndBlock_BothDecode(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	scalar := `---
+id: seed-scalar
+seed: deployed
+fixture: fixtures/whatever.yaml
+---
+Do the thing.
+`
+	scalarPath := filepath.Join(dir, "scalar.md")
+	if err := os.WriteFile(scalarPath, []byte(scalar), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sc, err := ParseScenario(scalarPath)
+	if err != nil {
+		t.Fatalf("scalar form: unexpected parse error: %v", err)
+	}
+	if sc.Seed != ModeDeployed {
+		t.Errorf("scalar form: Seed = %q, want %q", sc.Seed, ModeDeployed)
+	}
+	if sc.Fixture != "fixtures/whatever.yaml" {
+		t.Errorf("scalar form: Fixture = %q", sc.Fixture)
+	}
+	if sc.SeedExpect != nil {
+		t.Errorf("scalar form: SeedExpect = %+v, want nil", sc.SeedExpect)
+	}
+
+	block := `---
+id: seed-block
+seed:
+  mode: settled
+  fixture: fixtures/api-crash-on-start.yaml
+  ref: 3f2a9c1
+  expect:
+    services: [{hostname: api, status: [ACTIVE]}]
+    processes: [{service: api, action: stack.build, status: FINISHED}]
+    probe: {service: api, cmd: "test -f /var/www/zerops.yaml"}
+---
+Do the thing.
+`
+	blockPath := filepath.Join(dir, "block.md")
+	if err := os.WriteFile(blockPath, []byte(block), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sc, err = ParseScenario(blockPath)
+	if err != nil {
+		t.Fatalf("block form: unexpected parse error: %v", err)
+	}
+	if sc.Seed != ModeSettled {
+		t.Errorf("block form: Seed = %q, want %q", sc.Seed, ModeSettled)
+	}
+	if sc.Fixture != "fixtures/api-crash-on-start.yaml" {
+		t.Errorf("block form: Fixture = %q", sc.Fixture)
+	}
+	if sc.SeedRef != "3f2a9c1" {
+		t.Errorf("block form: SeedRef = %q", sc.SeedRef)
+	}
+	if sc.SeedExpect == nil {
+		t.Fatal("block form: SeedExpect = nil, want populated")
+	}
+	if len(sc.SeedExpect.Services) != 1 || sc.SeedExpect.Services[0].Hostname != "api" {
+		t.Errorf("block form: SeedExpect.Services = %+v", sc.SeedExpect.Services)
+	}
+	if len(sc.SeedExpect.Processes) != 1 || sc.SeedExpect.Processes[0].Action != "stack.build" {
+		t.Errorf("block form: SeedExpect.Processes = %+v", sc.SeedExpect.Processes)
+	}
+	if sc.SeedExpect.Probe == nil || sc.SeedExpect.Probe.Service != "api" {
+		t.Errorf("block form: SeedExpect.Probe = %+v", sc.SeedExpect.Probe)
+	}
+}
+
+// TestScenarioValidate_SeedBlockSettledWithoutExpect_Rejected pins FM-64: a
+// block-form `seed.mode: settled` with no `expect` is a validate() error.
+// The legacy bare scalar `seed: settled` stays valid (unchanged behavior).
+func TestScenarioValidate_SeedBlockSettledWithoutExpect_Rejected(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	rejected := `---
+id: seed-block-settled-no-expect
+seed:
+  mode: settled
+  fixture: fixtures/whatever.yaml
+---
+Do the thing.
+`
+	path := filepath.Join(dir, "rejected.md")
+	if err := os.WriteFile(path, []byte(rejected), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseScenario(path); err == nil {
+		t.Fatal("expected validate() error for block-form settled without expect")
+	} else if !strings.Contains(err.Error(), "seed.expect") {
+		t.Errorf("error should mention seed.expect, got: %v", err)
+	}
+
+	legacyOK := `---
+id: seed-scalar-settled-legacy
+seed: settled
+fixture: fixtures/whatever.yaml
+---
+Do the thing.
+`
+	legacyPath := filepath.Join(dir, "legacy.md")
+	if err := os.WriteFile(legacyPath, []byte(legacyOK), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseScenario(legacyPath); err != nil {
+		t.Errorf("legacy scalar seed: settled should stay valid without expect, got: %v", err)
+	}
+}
+
+// TestScenarioValidate_FixtureTopLevelAndSeedFixture_Rejected pins
+// docs/spec-eval-farm.md §4.1: declaring fixture at both the top level and
+// inside seed.fixture is a validate()-time error, not a silent override.
+func TestScenarioValidate_FixtureTopLevelAndSeedFixture_Rejected(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	content := `---
+id: fixture-conflict
+seed:
+  mode: imported
+  fixture: fixtures/from-seed-block.yaml
+fixture: fixtures/from-top-level.yaml
+---
+Do the thing.
+`
+	path := filepath.Join(dir, "conflict.md")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseScenario(path); err == nil {
+		t.Fatal("expected parse error for fixture declared both at top level and in seed.fixture")
+	} else if !strings.Contains(err.Error(), "fixture") {
+		t.Errorf("error should mention fixture, got: %v", err)
+	}
+}
+
+// TestScenarioValidate_NeverAndAllowSameShape_Rejected pins FM-58: an
+// `allow` entry naming a shape the file's own `never` list already names is
+// a validate() error — allow only lifts the runner-injected default.
+func TestScenarioValidate_NeverAndAllowSameShape_Rejected(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	content := `---
+id: allow-same-as-never
+seed: empty
+verification:
+  mode: observe
+  never: [zerops_delete]
+  allow: [{call: "zerops_delete", reason: "test"}]
+---
+Do the thing.
+`
+	path := filepath.Join(dir, "same-shape.md")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseScenario(path); err == nil {
+		t.Fatal("expected validate() error for allow naming a shape the file's own never already names")
+	} else if !strings.Contains(err.Error(), "allow") {
+		t.Errorf("error should mention allow, got: %v", err)
+	}
+}
+
+// TestScenarioValidate_AllowWithoutReason_Rejected pins FM-58: an `allow`
+// entry with an empty reason is a validate() error.
+func TestScenarioValidate_AllowWithoutReason_Rejected(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	content := `---
+id: allow-no-reason
+seed: empty
+verification:
+  mode: observe
+  allow: [{call: "zerops_import{override=true}"}]
+---
+Do the thing.
+`
+	path := filepath.Join(dir, "no-reason.md")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseScenario(path); err == nil {
+		t.Fatal("expected validate() error for allow entry with no reason")
+	} else if !strings.Contains(err.Error(), "reason") {
+		t.Errorf("error should mention reason, got: %v", err)
+	}
+}

@@ -504,3 +504,50 @@ func TestFarmReport_CaptureWindowMissingOrAmbiguous_Blocked(t *testing.T) {
 		}
 	})
 }
+
+// writeDoneJSONWithExecutionAndPreparation writes a done.json carrying both
+// runnerDimensions.execution and runnerDimensions.preparation, for FM-63's
+// preparation-mismatch grading tests.
+func writeDoneJSONWithExecutionAndPreparation(t *testing.T, runDir, runID, execution, preparation string, evaluatorSHA, candidateSHA string, resultsDigest, captureDigest string) {
+	t.Helper()
+	doc := `{"runId":"` + runID + `","scenarioId":"acceptance-node-postgres-record",` +
+		`"runnerDimensions":{"execution":"` + execution + `","preparation":"` + preparation + `","task":"unknown","taskEnd":"unknown"},` +
+		`"parts":{"results":{"treeDigest":"` + resultsDigest + `"},"capture":{"treeDigest":"` + captureDigest + `"}},` +
+		`"evaluatorSha256":"` + evaluatorSHA + `","candidateSha256":"` + candidateSHA + `"}`
+	writeFile(t, runDir, "done.json", doc)
+}
+
+// TestFarmReport_PreparationMismatch_BlockedNotFailed pins FM-63: a bundle
+// whose seed.expect did not hold (runnerDimensions.preparation carries a
+// "mismatch:" prefix, execution stays "ok") grades blocked with a reason
+// naming preparation — never failed, and never attributed to zcp or the
+// agent — even though there is no capture/eval/** window to build a report
+// from (the agent was never spawned).
+func TestFarmReport_PreparationMismatch_BlockedNotFailed(t *testing.T) {
+	t.Parallel()
+	runDir := t.TempDir()
+	writeFile(t, runDir, "results/meta.json", `{"scenarioId":"acceptance-node-postgres-record"}`)
+	writeFile(t, runDir, "capture/manifest.json", `{"status":"complete"}`)
+	// Deliberately no capture/eval/** — the agent was never spawned.
+
+	resultsDigest, err := TreeDigest(filepath.Join(runDir, "results"))
+	if err != nil {
+		t.Fatalf("TreeDigest(results): %v", err)
+	}
+	captureDigest, err := TreeDigest(filepath.Join(runDir, "capture"))
+	if err != nil {
+		t.Fatalf("TreeDigest(capture): %v", err)
+	}
+	writeDoneJSONWithExecutionAndPreparation(t, runDir, "run-prep-mismatch", "ok", "mismatch: service api status FAILED, want one of ACTIVE", "eval-sha", "cand-sha", resultsDigest, captureDigest)
+
+	outcome := ReportRun(runDir, "")
+	if outcome.Verdict != VerdictBlocked {
+		t.Fatalf("Verdict = %q, want %q (Reason: %s)", outcome.Verdict, VerdictBlocked, outcome.Reason)
+	}
+	if !strings.HasPrefix(outcome.Reason, "blocked: preparation") {
+		t.Errorf("Reason = %q, want it to start with %q", outcome.Reason, "blocked: preparation")
+	}
+	if outcome.Done == nil || outcome.Done.RunID != "run-prep-mismatch" {
+		t.Errorf("Done = %+v, want the parsed done.json carried through", outcome.Done)
+	}
+}

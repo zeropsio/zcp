@@ -92,6 +92,18 @@ func ReportRun(runDir, evaluatorPin string) RunOutcome {
 		}
 	}
 
+	// FM-63: a scenario whose seed.expect did not hold settles run-level
+	// `blocked: preparation` before the execution check runs — the agent
+	// was never spawned, so there is no capture/eval/** window to build a
+	// report from either, and the run is never attributed to zcp or the
+	// agent (docs/spec-eval-farm.md §4.5/§5.1).
+	if preparation, ok := done.RunnerDimensions["preparation"]; ok && strings.HasPrefix(preparation, "mismatch:") {
+		return RunOutcome{
+			RunID: done.RunID, ScenarioID: done.ScenarioID, Verdict: VerdictBlocked, Done: &done,
+			Reason: fmt.Sprintf("blocked: preparation — %s (docs/spec-eval-farm.md §4.5 FM-63)", preparation),
+		}
+	}
+
 	// D9/S16: a bundle whose done.json already names an abnormal execution
 	// (a signal-kill mid-run, an execution-binding preflight failure, or
 	// any other "error:"-prefixed execution) is graded from done.json

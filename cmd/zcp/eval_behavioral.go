@@ -325,6 +325,15 @@ func printBehavioralDimensions(r *eval.BehavioralResult) {
 	} else {
 		fmt.Fprintln(os.Stderr, "Execution:    ok")
 	}
+	// Preparation (docs/spec-eval-farm.md §4.5 FM-63): "" means the
+	// scenario declared no seed.expect, or every entry matched — printed
+	// as "ok" next to Execution; the wrapper (eval/farm/wrapper.sh) greps
+	// this line the same way it greps Execution.
+	if r.Preparation != "" {
+		fmt.Fprintf(os.Stderr, "Preparation:  %s\n", r.Preparation)
+	} else {
+		fmt.Fprintln(os.Stderr, "Preparation:  ok")
+	}
 	if r.Task != nil {
 		if r.Task.Mode == eval.VerificationObserve {
 			fmt.Fprintf(os.Stderr, "Task:         observe %s (advisory)\n", r.Task.Result)

@@ -204,5 +204,86 @@ func renderVerificationConfig(cfg *VerificationConfig, values TemplateValues) er
 			return err
 		}
 	}
-	return nil
+	return renderVerificationManifestV2Fields(cfg, values)
+}
+
+// renderVerificationManifestV2Fields substitutes {{runId}}/{{projectId}}
+// into the manifest-v2 slices' new verification: fields (docs/spec-eval-farm.md
+// §4.1: allow, internalLiveness, containerCheck, meta, schemaValid, toolArg,
+// toolResult, mustOffer). Split out of renderVerificationConfig purely to
+// keep that function's maintainability index in check — same field-list
+// discipline (TestScenarioRender_CoversEveryVerificationString's reflect-based
+// drift check covers both functions' fields together, via cfg as a whole).
+func renderVerificationManifestV2Fields(cfg *VerificationConfig, values TemplateValues) error {
+	var err error
+	for i := range cfg.Allow {
+		if cfg.Allow[i].Call, err = renderVerificationString("allow.call", cfg.Allow[i].Call, values); err != nil {
+			return err
+		}
+		if cfg.Allow[i].Reason, err = renderVerificationString("allow.reason", cfg.Allow[i].Reason, values); err != nil {
+			return err
+		}
+	}
+	if cfg.InternalLiveness != nil {
+		il := cfg.InternalLiveness
+		if il.Service, err = renderVerificationString("internalLiveness.service", il.Service, values); err != nil {
+			return err
+		}
+		if il.Path, err = renderVerificationString("internalLiveness.path", il.Path, values); err != nil {
+			return err
+		}
+		if il.Marker, err = renderVerificationString("internalLiveness.marker", il.Marker, values); err != nil {
+			return err
+		}
+	}
+	for i := range cfg.ContainerCheck {
+		if cfg.ContainerCheck[i].Service, err = renderVerificationString("containerCheck.service", cfg.ContainerCheck[i].Service, values); err != nil {
+			return err
+		}
+		if cfg.ContainerCheck[i].Cmd, err = renderVerificationString("containerCheck.cmd", cfg.ContainerCheck[i].Cmd, values); err != nil {
+			return err
+		}
+		if cfg.ContainerCheck[i].Expect, err = renderVerificationString("containerCheck.expect", cfg.ContainerCheck[i].Expect, values); err != nil {
+			return err
+		}
+		if cfg.ContainerCheck[i].Match, err = renderVerificationString("containerCheck.match", cfg.ContainerCheck[i].Match, values); err != nil {
+			return err
+		}
+	}
+	for i := range cfg.Meta {
+		if cfg.Meta[i].Hostname, err = renderVerificationString("meta.hostname", cfg.Meta[i].Hostname, values); err != nil {
+			return err
+		}
+		if cfg.Meta[i].Field, err = renderVerificationString("meta.field", cfg.Meta[i].Field, values); err != nil {
+			return err
+		}
+		if cfg.Meta[i].Expect, err = renderVerificationString("meta.expect", cfg.Meta[i].Expect, values); err != nil {
+			return err
+		}
+	}
+	if cfg.SchemaValid != nil {
+		if cfg.SchemaValid.Artifact, err = renderVerificationString("schemaValid.artifact", cfg.SchemaValid.Artifact, values); err != nil {
+			return err
+		}
+	}
+	for i := range cfg.ToolArg {
+		if cfg.ToolArg[i].Never, err = renderVerificationString("toolArg.never", cfg.ToolArg[i].Never, values); err != nil {
+			return err
+		}
+		if cfg.ToolArg[i].Always, err = renderVerificationString("toolArg.always", cfg.ToolArg[i].Always, values); err != nil {
+			return err
+		}
+		if cfg.ToolArg[i].Call, err = renderVerificationString("toolArg.call", cfg.ToolArg[i].Call, values); err != nil {
+			return err
+		}
+	}
+	for i := range cfg.ToolResult {
+		if cfg.ToolResult[i].Tool, err = renderVerificationString("toolResult.tool", cfg.ToolResult[i].Tool, values); err != nil {
+			return err
+		}
+		if cfg.ToolResult[i].Contains, err = renderVerificationString("toolResult.contains", cfg.ToolResult[i].Contains, values); err != nil {
+			return err
+		}
+	}
+	return renderVerificationStringSlice("mustOffer", cfg.MustOffer, values)
 }

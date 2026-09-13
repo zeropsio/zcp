@@ -595,3 +595,53 @@ func TestScenarioRuntimeInputs_CarriesUserSimTurnsAndMutatingTools(t *testing.T)
 		t.Errorf("TranscriptPath = %q", got.TranscriptPath)
 	}
 }
+
+// TestSeed_ExpectMismatch_AgentNeverSpawned pins docs/spec-eval-farm.md
+// §4.5 FM-63 at the RunBehavioralScenario level: when the scenario's
+// seed.expect does not hold, the fake "claude" spawner is never invoked
+// (proven by the absence of a marker file the script would otherwise
+// touch), result.Preparation carries the "mismatch:" prefix, result.Error
+// stays empty (a preparation mismatch is not an execution error), and
+// result.Task grades not-run (no declared verification checks — vacuously
+// every declared row is not-run).
+func TestSeed_ExpectMismatch_AgentNeverSpawned(t *testing.T) { // non-parallel: process environment
+	h := newBehavioralHarness(t)
+	spawnMarker := filepath.Join(h.root, "spawn-marker")
+	t.Setenv("SPAWN_MARKER", spawnMarker)
+	script := "#!/bin/sh\n" +
+		": > \"$SPAWN_MARKER\"\n" +
+		"printf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"offline-probe\",\"model\":\"fake-offline\"}'\n" +
+		"printf '%s\\n' '{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Done.\"}]}}'\n" +
+		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"offline-probe\",\"result\":\"Done.\"}'\n"
+	h.writeClaudeScript(t, script)
+	scenario := "---\n" +
+		"id: seed-expect-mismatch-no-spawn\n" +
+		"seed:\n" +
+		"  mode: empty\n" +
+		"  expect:\n" +
+		"    services: [{hostname: app, status: [ACTIVE]}]\n" +
+		"retrospective:\n" +
+		"  promptStyle: briefing-future-agent\n" +
+		"---\n" +
+		"Do the thing.\n"
+	scenarioPath := h.writeScenario(t, scenario)
+	mock := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "FAILED"}})
+	runner := NewRunner(h.config(), nil, mock, "offline-project")
+
+	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(result.Preparation, "mismatch:") {
+		t.Errorf("Preparation = %q, want a mismatch: prefix", result.Preparation)
+	}
+	if result.Error != "" {
+		t.Errorf("Error = %q, want empty (a preparation mismatch is not an execution error)", result.Error)
+	}
+	if _, statErr := os.Stat(spawnMarker); !os.IsNotExist(statErr) {
+		t.Error("spawn marker exists — the agent was spawned despite the seed.expect mismatch")
+	}
+	if result.Task == nil || result.Task.Result != CheckNotRun {
+		t.Errorf("Task = %+v, want not-run", result.Task)
+	}
+}

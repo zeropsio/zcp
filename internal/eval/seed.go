@@ -11,6 +11,82 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
+// SeedExpectExecer abstracts the SSH exec the seed.expect probe entry needs
+// (platform.SystemSSHDeployer.ExecSSH) so unit tests can inject a fake
+// without a live SSH connection.
+type SeedExpectExecer interface {
+	ExecSSH(ctx context.Context, hostname, command string) ([]byte, error)
+}
+
+// EvaluateSeedExpect grades a scenario's seed.expect block against a direct
+// platform observation (docs/spec-eval-farm.md §4.5 FM-63/FM-64): services
+// (reusing ExpectedService — hostname/status), processes (service hostname +
+// actionName prefix + status against the project's process list), and an
+// optional SSH probe (exit 0 = pass). Evaluated in that declaration order.
+// Returns ("", nil) when every declared entry matches; a non-empty first
+// return value names the first failing entry (a mismatch — never an error);
+// a non-nil err means the check itself could not be evaluated (a query
+// failure), distinct from a proven mismatch. expect == nil is a no-op
+// match.
+func EvaluateSeedExpect(ctx context.Context, expect *SeedExpect, client platform.Client, execer SeedExpectExecer, projectID string) (mismatch string, err error) {
+	if expect == nil {
+		return "", nil
+	}
+	if len(expect.Services) > 0 {
+		services, listErr := client.ListServicesDirect(ctx, projectID)
+		if listErr != nil {
+			return "", fmt.Errorf("seed.expect: ListServicesDirect: %w", listErr)
+		}
+		for _, exp := range expect.Services {
+			svc := findServiceByHostname(services, exp.Hostname)
+			if svc == nil {
+				return fmt.Sprintf("service %q not found", exp.Hostname), nil
+			}
+			if len(exp.Status) > 0 && !sliceContainsString(exp.Status, svc.Status) {
+				return fmt.Sprintf("service %q status %q, want one of %v", exp.Hostname, svc.Status, exp.Status), nil
+			}
+		}
+	}
+	if len(expect.Processes) > 0 {
+		processes, procErr := client.GetProjectProcessesDirect(ctx, projectID)
+		if procErr != nil {
+			return "", fmt.Errorf("seed.expect: GetProjectProcessesDirect: %w", procErr)
+		}
+		for _, exp := range expect.Processes {
+			if findSeedExpectProcess(processes, exp) == nil {
+				return fmt.Sprintf("process %s/%s not found (want status %q)", exp.Service, exp.Action, exp.Status), nil
+			}
+		}
+	}
+	if expect.Probe != nil {
+		out, probeErr := execer.ExecSSH(ctx, expect.Probe.Service, expect.Probe.Cmd)
+		if probeErr != nil {
+			return fmt.Sprintf("probe on %q (%s) failed: %v (output: %s)", expect.Probe.Service, expect.Probe.Cmd, probeErr, string(out)), nil
+		}
+	}
+	return "", nil
+}
+
+// findSeedExpectProcess returns the first process matching exp: named on
+// exp.Service (ServiceStacks), ActionName has exp.Action as a prefix (when
+// non-empty), and Status equals exp.Status (when non-empty).
+func findSeedExpectProcess(processes []platform.Process, exp SeedExpectProcess) *platform.Process {
+	for i := range processes {
+		p := &processes[i]
+		if exp.Service != "" && !processOnAllowedService(*p, []string{exp.Service}) {
+			continue
+		}
+		if exp.Action != "" && !strings.HasPrefix(p.ActionName, exp.Action) {
+			continue
+		}
+		if exp.Status != "" && p.Status != exp.Status {
+			continue
+		}
+		return p
+	}
+	return nil
+}
+
 // SeedEmpty cleans the project and workdir. Alias for CleanupProject; provided
 // for scenario-runner symmetry with SeedImported / SeedDeployed.
 func SeedEmpty(ctx context.Context, client platform.Client, projectID, workDir string) error {

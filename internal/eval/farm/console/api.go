@@ -31,7 +31,7 @@ import (
 // share labels.go's vocab tables (a different slice's write-set this
 // round).
 var apiLegendOverrides = map[string]string{
-	"Verdict":  "passed (every check held) · failed (a check proved the run wrong) · blocked (could not be graded — reason shown) · not started · running · stalled (no result after the batch's deadline, plus 30 minutes)",
+	"Verdict":  "passed (every check held) · failed (a check proved the run wrong) · blocked (could not be graded — reason shown, including blocked: preparation when the scenario's seed.expect did not hold and the agent was never spawned) · not started · running · stalled (no result after the batch's deadline, plus 30 minutes)",
 	"Severity": "high: the goal was missed, something was destroyed, or (for a test cause) the verdict is wrong · medium: it cost many steps or much time · low: ZCP text or behavior that is wrong but cost this run nothing",
 	"Cause":    "ZCP guidance · ZCP tool · Zerops platform · Agent mistake · Test scenario · Test check",
 	"Problem":  "The same finding across runs.",
