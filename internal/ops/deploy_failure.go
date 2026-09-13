@@ -145,7 +145,7 @@ func baselineForPhase(in FailureInput) *topology.DeployFailureClassification {
 		// or another tool bypassed our gate. Name the trap explicitly
 		// instead of pointing the agent at buildCommands bisection.
 		if len(in.BuildLogs) > 0 {
-			cls.SuggestedAction = "Read buildLogs for the exact stderr; fix buildCommands or dependencies in zerops.yaml."
+			cls.SuggestedAction = "Read the build log tail (deploy response `buildLogs`, event `buildLogTail`) for the exact stderr; fix buildCommands or dependencies in zerops.yaml."
 		} else {
 			cls.SuggestedAction = "Build container exited before producing logs (typically <10s). The most common cause is a reserved key in run.envVariables — HOSTNAME, Path, or path — which crashes runtime-init before any build output. Remove that key from zerops.yaml run.envVariables. If those aren't present, re-check buildCommands syntax + manifests. See the develop-reserved-env-names atom for the full reserved-key set."
 		}
@@ -162,7 +162,7 @@ func baselineForPhase(in FailureInput) *topology.DeployFailureClassification {
 			"php84-ctype, NOT php-ctype); some extensions are built-in since PHP 8.0 (json, tokenizer) — do not install those; " +
 			"(3) referencing /var/www/ paths (empty during prepare — use addToRunPrepare + /home/zerops/ instead)."
 		if len(in.BuildLogs) > 0 {
-			cls.SuggestedAction = "Fix run.prepareCommands (it exited non-zero before deploy files arrived — NOT buildCommands, NOT initCommands). Read buildLogs for the exact error. " + prepareCauses
+			cls.SuggestedAction = "Fix run.prepareCommands (it exited non-zero before deploy files arrived — NOT buildCommands, NOT initCommands). Read the build log tail (deploy response `buildLogs`, event `buildLogTail`) for the exact error. " + prepareCauses
 		} else {
 			cls.SuggestedAction = "Fix run.prepareCommands (it exited non-zero — NOT buildCommands, NOT initCommands). Prepare logs were not captured; fetch via zerops_logs serviceHostname={service} severity=ERROR since=5m. " + prepareCauses
 		}

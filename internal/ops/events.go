@@ -56,7 +56,13 @@ type TimelineEvent struct {
 	// discover/events/verify, not the deploy-poll path) got "what broke" but no
 	// "what to do" — weaker than a sync deploy failure (Wave-1 parity gap).
 	SuggestedAction string `json:"suggestedAction,omitempty"`
-	Hint            string `json:"hint,omitempty"`
+	// BuildLogTail carries the last lines of the failed build's pipeline
+	// output (the stderr the SuggestedAction refers to) — the event is the
+	// only surface an agent reads for an async (webhook/actions) build, and
+	// a failed build never started a runtime process, so `zerops_logs` has
+	// nothing for it. Populated only when a LogFetcher was available.
+	BuildLogTail []string `json:"buildLogTail,omitempty"`
+	Hint         string   `json:"hint,omitempty"`
 }
 
 // Event type constants.
@@ -275,6 +281,7 @@ func Events(
 		if fetcher != nil {
 			if phase := FailurePhaseFromStatus(av.Status); phase != "" {
 				logs := FetchBuildLogs(ctx, client, fetcher, projectID, &av, 200)
+				te.BuildLogTail = tailLines(logs, buildLogTailLines)
 				if cls := ClassifyDeployFailure(FailureInput{
 					Phase:     phase,
 					Status:    av.Status,
@@ -411,4 +418,16 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh%dm", h, m)
 	}
 	return fmt.Sprintf("%dh", h)
+}
+
+// buildLogTailLines bounds TimelineEvent.BuildLogTail: enough to show the
+// failing command and its error, small enough not to swamp the timeline.
+const buildLogTailLines = 40
+
+// tailLines returns the last n entries of lines (all of them when shorter).
+func tailLines(lines []string, n int) []string {
+	if len(lines) <= n {
+		return lines
+	}
+	return lines[len(lines)-n:]
 }
