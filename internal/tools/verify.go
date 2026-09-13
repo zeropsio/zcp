@@ -39,7 +39,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input VerifyInput) (*mcp.CallToolResult, any, error) {
 		if input.ServiceHostname == "" {
-			result, err := ops.VerifyAllWithRuntimeMeta(ctx, client, fetcher, httpClient, projectID, runtimeMetaResolver(stateDir))
+			result, err := ops.VerifyAllWithMeta(ctx, client, fetcher, httpClient, projectID, runtimeMetaResolver(stateDir), publicAccessResolver(stateDir))
 			if err != nil {
 				return convertError(err, WithRecoveryStatus()), nil, nil
 			}
@@ -63,7 +63,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 			redirectedFrom = host
 			host = buildHost
 		}
-		result, err := ops.VerifyWithRuntimeMeta(ctx, client, fetcher, httpClient, projectID, host, runtimeMetaForHost(stateDir, host))
+		result, err := ops.VerifyWithMeta(ctx, client, fetcher, httpClient, projectID, host, runtimeMetaForHost(stateDir, host), publicAccessInputForHost(ctx, client, projectID, stateDir, host))
 		if err != nil {
 			return convertError(err, WithRecoveryStatus()), nil, nil
 		}
@@ -155,6 +155,64 @@ func runtimeMetaFromServiceMeta(meta *workflow.ServiceMeta, host string) ops.Run
 		ServesHTTP: *meta.ServesHTTP,
 		Recorded:   true,
 		Setup:      meta.SetupNameFor(host),
+	}
+}
+
+// defaultPublicAccessInput is what a meta-less caller passes: auto intent,
+// not deferred-start — mirrors ops.defaultPublicAccessInput (unexported
+// there; tools has no access to it and constructs the equivalent directly).
+func defaultPublicAccessInput() ops.PublicAccessInput {
+	return ops.PublicAccessInput{Record: topology.PublicAccessRecord{Intent: topology.PublicAccessAuto}}
+}
+
+// publicAccessInputForHost builds the ops.PublicAccessInput for the
+// single-hostname verify path (§8 O3 PA-4) from host's persisted ServiceMeta
+// record plus a fresh (mode, runtime-class) DeferredStart classification —
+// mirroring tools/subdomain.go's skipDeferredStartProbe pattern (one extra
+// ops.LookupService call to get the live TypeVersion needed for
+// topology.RuntimeClassFor; ops itself has no Mode of its own to compute
+// this internally). A lookup failure degrades to DeferredStart=false (probe
+// runs) rather than blocking verify on an unrelated read.
+func publicAccessInputForHost(ctx context.Context, client platform.Client, projectID, stateDir, host string) ops.PublicAccessInput {
+	if stateDir == "" || host == "" {
+		return defaultPublicAccessInput()
+	}
+	meta, err := workflow.FindServiceMeta(stateDir, host)
+	if err != nil || meta == nil {
+		return defaultPublicAccessInput()
+	}
+	deferredStart := false
+	if svc, lookupErr := ops.LookupService(ctx, client, projectID, host); lookupErr == nil && svc != nil {
+		class := topology.RuntimeClassFor(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName)
+		deferredStart = topology.IsDeferredStart(meta.ModeFor(host), class)
+	}
+	return ops.PublicAccessInput{Record: meta.PublicAccessFor(host), DeferredStart: deferredStart}
+}
+
+// publicAccessResolver builds a per-hostname ops.PublicAccessResolver for
+// the all-services verify path from ServiceMeta's persisted intent only —
+// DeferredStart is left at its default (false) here rather than paying one
+// ops.LookupService per service (VerifyAll already reads every service once
+// internally; duplicating that N times in the tool layer would defeat the
+// "single ListServices call" property VerifyAll is pinned on). A deferred-
+// start dev runtime scanned via the all-services path therefore reads
+// http_internal as a real probe (not skipped) until it's verified by
+// hostname directly, where the DeferredStart classification is exact.
+func publicAccessResolver(stateDir string) ops.PublicAccessResolver {
+	if stateDir == "" {
+		return nil
+	}
+	metas, err := workflow.ListServiceMetas(stateDir)
+	if err != nil || len(metas) == 0 {
+		return nil
+	}
+	idx := workflow.ManagedRuntimeIndex(metas)
+	return func(hostname string) ops.PublicAccessInput {
+		meta := idx[hostname]
+		if meta == nil {
+			return defaultPublicAccessInput()
+		}
+		return ops.PublicAccessInput{Record: meta.PublicAccessFor(hostname)}
 	}
 }
 

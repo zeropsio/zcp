@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,11 +16,29 @@ import (
 
 const (
 	checkNameErrorLogs = "error_logs"
-	checkNameHTTPRoot  = "http_root"
-	runtimeStatic      = "static"
-	runtimeNginx       = "nginx"
-	runtimePHPApach    = "php-apache"
-	runtimePHPNginx    = "php-nginx"
+	// checkNameHTTPRoot names the PUBLIC-reachability check (subdomain URL /
+	// custom domain). The identifier is kept from the pre-PA-4 single-check
+	// design (verify_lifecycle_test.go, outside this slice's write-set,
+	// references it by identifier only) — its value moved from "http_root"
+	// to "http_public" because PA-4 (docs/spec-workflows.md §8 O3) splits
+	// the old single http_root check into an internal probe
+	// (checkNameHTTPInternal) and this public one. Nothing outside ops
+	// parses a verify check by the string "http_root" (grepped the eval
+	// liveness/internalLiveness families and internal/authoring/port —
+	// both derive their booleans independently, never by check name), so
+	// the rename needed no other reader updated.
+	checkNameHTTPRoot = "http_public"
+	// checkNameHTTPInternal names the project-network reachability probe
+	// (GET http://<hostname>:<port>/) — independent of public-access intent
+	// (docs/spec-workflows.md §8 O3 PA-4).
+	checkNameHTTPInternal = "http_internal"
+	// checkNamePublicDomain names one custom-domain reachability probe
+	// (GET https://<domain>/) — one per domain routed to the service.
+	checkNamePublicDomain = "public_domain"
+	runtimeStatic         = "static"
+	runtimeNginx          = "nginx"
+	runtimePHPApach       = "php-apache"
+	runtimePHPNginx       = "php-nginx"
 	// httpRootBodyReadCap bounds the bytes we read from the GET / response
 	// body. Detail still calls truncateBody(body, 200) for envelope
 	// compactness; the larger read budget exists so the browser-render
@@ -192,7 +212,152 @@ func isBenignBootNoise(msg string) bool {
 // shape checks (recipe's feature-sweep, bootstrap's /status curl) live
 // in the workflow that knows the path.
 func checkHTTPRoot(ctx context.Context, httpClient HTTPDoer, url string) CheckResult {
+	return probeHTTP(ctx, httpClient, url, checkNameHTTPRoot)
+}
+
+// checkHTTPInternal probes the runtime directly over the project network
+// (container mode) or the VPN it already needs (local mode) at
+// http://<hostname>:<port>/ — independent of subdomain/domain public-access
+// state (docs/spec-workflows.md §8 O3 PA-4).
+//
+// deferredStart skips the probe with a "start the dev server first" hint
+// instead of failing on the expected connection-refused: a dev-mode dynamic
+// runtime idles on `zsc noop --silent` with no app process until
+// `zerops_dev_server start` runs (§8 O4). deferredStart is exactly
+// topology.IsDeferredStart(mode, class) as computed by the caller (tools
+// layer) from the STATIC (mode, runtime-class) pair — it does not read the
+// dev server's live status. This means a deferred-start runtime's
+// http_internal check keeps skipping even after the dev server actually
+// starts, UNTIL something else (the caller's mode/class inputs) changes.
+// This is a known, documented limitation shared with every other
+// topology.IsDeferredStart call site in the codebase (tools/subdomain.go's
+// skipDeferredStartProbe, tools/next_actions.go) — none of them read live
+// dev-server status either. http_public is unaffected: once
+// zerops_dev_server's PA-1 hook auto-enables the subdomain, the LIVE
+// observed subdomain state (on/enabling) — not Listener — drives its
+// branch, so a running dev server is reflected there regardless of this
+// limitation.
+func checkHTTPInternal(ctx context.Context, httpClient HTTPDoer, svc *platform.ServiceStack, deferredStart bool) CheckResult {
+	name := checkNameHTTPInternal
+	if deferredStart {
+		return CheckResult{Name: name, Status: CheckSkip, Detail: "dev runtime has no process yet — start it with zerops_dev_server, then verify"}
+	}
+	port, ok := PreferredHTTPPort(svc.Ports)
+	if !ok {
+		return CheckResult{Name: name, Status: CheckSkip, Detail: "no HTTP port configured"}
+	}
+	url := "http://" + net.JoinHostPort(svc.Name, strconv.Itoa(port.Port)) + "/"
+	return probeHTTP(ctx, httpClient, url, name)
+}
+
+// buildHTTPPublicChecks implements PA-4's http_public rule set
+// (docs/spec-workflows.md §8 O3): live observed subdomain/domain state wins
+// first (on/enabling, regardless of intent — observed truth is never
+// suppressed by a stale intent), then domains-present, then the off-state
+// rule keyed by intent. listener is !DeferredStart (see checkHTTPInternal's
+// doc-comment for the caveat on how DeferredStart is computed).
+func buildHTTPPublicChecks(ctx context.Context, client platform.Client, httpClient HTTPDoer, projectID string, svc *platform.ServiceStack, intent topology.PublicAccessIntent, obs PublicAccessObservation, listener bool) []CheckResult {
 	name := checkNameHTTPRoot
+	switch {
+	case obs.Observed.Subdomain == topology.SubdomainOn:
+		probeURL := obs.URL
+		if probeURL == "" {
+			probeURL = ResolveSubdomainURL(ctx, client, projectID, svc)
+		}
+		if probeURL == "" {
+			return []CheckResult{{Name: name, Status: CheckSkip, Detail: "cannot resolve subdomain URL"}}
+		}
+		check := checkHTTPRoot(ctx, httpClient, probeURL+"/")
+		if check.HTTPStatus > 0 {
+			bodyText, consoleErrors := renderHTTPRoot(ctx, probeURL+"/")
+			check.BodyText = bodyText
+			check.ConsoleErrors = consoleErrors
+		}
+		return []CheckResult{check}
+	case obs.Observed.Subdomain == topology.SubdomainEnabling:
+		return []CheckResult{{Name: name, Status: CheckPending, Detail: "subdomain is being enabled"}}
+	case intent == topology.PublicAccessDomain || len(obs.Domains) > 0:
+		return publicDomainChecks(ctx, httpClient, obs.Domains)
+	case intent == topology.PublicAccessNone:
+		return []CheckResult{{Name: name, Status: CheckSkip, Detail: "internal-only by intent"}}
+	case intent == topology.PublicAccessAuto && !listener:
+		return []CheckResult{{Name: name, Status: CheckSkip, Detail: "subdomain is enabled automatically once the dev server runs"}}
+	case intent == topology.PublicAccessAuto && listener:
+		return []CheckResult{{
+			Name:     name,
+			Status:   CheckFail,
+			Detail:   "subdomain access not enabled — service is not reachable via HTTP",
+			Recovery: &Recovery{Tool: "zerops_subdomain", Action: subdomainActionEnable, Args: map[string]string{"serviceHostname": svc.Name}},
+		}}
+	case intent == topology.PublicAccessSubdomain:
+		return []CheckResult{{
+			Name:     name,
+			Status:   CheckFail,
+			Detail:   "subdomain access not enabled — service is not reachable via HTTP",
+			Recovery: &Recovery{Tool: "zerops_subdomain", Action: subdomainActionEnable, Args: map[string]string{"serviceHostname": svc.Name}},
+		}}
+	default:
+		// Unreachable for the four valid PublicAccessIntent values combined
+		// with the SubdomainState/domains-present cases above; kept as a
+		// safe default so an unexpected combination degrades to skip rather
+		// than a missing check crashing aggregateStatus's assumptions.
+		return []CheckResult{{Name: name, Status: CheckSkip, Detail: fmt.Sprintf("public access state unresolved for intent %q", intent)}}
+	}
+}
+
+// publicDomainChecks probes every distinct domain in routes (one
+// checkNamePublicDomain result each): a DNS check status other than "OK"
+// (PENDING/CHECKING/FAILED/IGNORED) fails without probing — DNS isn't
+// pointing at Zerops yet, so an HTTP attempt would only add a confusing
+// connect-timeout on top; otherwise the TLS/HTTP GET result IS the domain's
+// reported state. Routes are de-duplicated by name (a domain can have
+// multiple locations/paths; PA-4 wants one check per domain, not per route).
+func publicDomainChecks(ctx context.Context, httpClient HTTPDoer, routes []PublicDomainRoute) []CheckResult {
+	seen := make(map[string]bool, len(routes))
+	checks := make([]CheckResult, 0, len(routes))
+	for _, route := range routes {
+		if seen[route.Name] {
+			continue
+		}
+		seen[route.Name] = true
+		if route.DNSCheckStatus != "OK" {
+			checks = append(checks, CheckResult{
+				Name:   checkNamePublicDomain,
+				Status: CheckFail,
+				Detail: fmt.Sprintf("%s: DNS not pointing at Zerops yet (dnsCheckStatus=%s)", route.Name, route.DNSCheckStatus),
+			})
+			continue
+		}
+		check := probeHTTP(ctx, httpClient, "https://"+route.Name+"/", checkNamePublicDomain)
+		check.Detail = route.Name + ": " + check.Detail
+		checks = append(checks, check)
+	}
+	return checks
+}
+
+// probeHTTP performs GET <url> and classifies the response under check
+// `name` — pass on 2xx/3xx, fail on 4xx/5xx with the HTTP status surfaced in
+// detail. Shared by checkHTTPRoot (http_public), checkHTTPInternal
+// (http_internal), and publicDomainChecks (public_domain).
+//
+// History: this check previously passed on any non-5xx response (the
+// "is the server alive?" semantic) because flagging API-only services
+// as degraded over a `/` 404 produced noise across showcase runs. Eval
+// review 20260518-subset revealed the opposite trap: agents read
+// `http_root: pass, httpStatus: 404` as proof their endpoints work and
+// signed off broken services. Phase 3 of fix-plan inverted the rule —
+// the agent's "did the deploy succeed at delivering the user's app?"
+// question is what verify needs to answer; reachability-only probing
+// stays in `WaitHTTPReady` (used during L7 propagation polling) where
+// the "is the server up at all" semantic is still right.
+//
+// For API-only services where `/` is legitimately not served, the agent
+// reads the fail detail ("HTTP 404: ...") and either verifies a real
+// endpoint or accepts the cosmetic failure with a one-line note to the
+// user — both are honest about the state. Workflow-specific endpoint-
+// shape checks (recipe's feature-sweep, bootstrap's /status curl) live
+// in the workflow that knows the path.
+func probeHTTP(ctx context.Context, httpClient HTTPDoer, url, name string) CheckResult {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
