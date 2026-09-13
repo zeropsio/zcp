@@ -369,6 +369,9 @@ type ArtifactPromotionEntry struct {
 type LivenessProbe struct {
 	Service string `yaml:"service"`
 	Marker  string `yaml:"marker"`
+	// Path is appended to the resolved subdomain URL (default "/"), so a
+	// marker served by a specific route can be probed without a landing page.
+	Path string `yaml:"path,omitempty"`
 }
 
 // NodePostgresRecordConfig declares the hostnames the node-postgres

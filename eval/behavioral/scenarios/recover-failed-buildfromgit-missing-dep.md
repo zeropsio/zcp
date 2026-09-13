@@ -23,10 +23,6 @@ seed:
     services:
       - hostname: api
         status: [READY_TO_DEPLOY]
-    processes:
-      - service: api
-        action: stack.build
-        status: FINISHED
 tags: [recovery, failed-state, buildfromgit, missing-dep, simple-mode, node]
 area: recovery
 retrospective:

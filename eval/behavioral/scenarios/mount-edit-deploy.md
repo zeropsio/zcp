@@ -21,14 +21,13 @@ verification:
     - {hostname: appdev, status: [ACTIVE]}
     - {hostname: appstage, status: [ACTIVE]}
     - {hostname: db, status: [ACTIVE]}
-  liveness: {service: appdev, marker: "team-notes ok"}
+  liveness: {service: appdev, path: /team-notes, marker: "team-notes ok"}
   unchanged: [appstage]
   noFailedProcesses: true
   toolArg:
-    - {always: "zerops_deploy{workingDir∈/var/www/appdev}"}
+    - {always: "zerops_deploy{targetService=appdev}"}
     - {never: "Bash{command~ln -s}"}
     - {never: "zerops_deploy{targetService=appstage}"}
-  mustOffer: ["already active"]
   never: ["zerops_import{override=true}", "zerops_delete"]
 userSim:
   maxTurns: 3

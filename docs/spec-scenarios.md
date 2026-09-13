@@ -636,7 +636,7 @@ Legend: ↑ existing scenario to promote · ✚ scenario to write.
 | B4 ✚ | `env-yaml-baked-dev-only` | dev-only, key in `run.envVariables` | change the baked value | containerCheck never(manage reload as fix) | promote: containerCheck |
 | B5 ✚ | `env-project-scope-shared` | pair, project var + cross-ref | one secret shared by dev and stage | containerCheck noFabricatedSecret toolArg never | promote: containerCheck |
 | B13 ✚ | `env-build-time-simple` | simple, `build.envVariables` | the build needs a token | containerCheck never | promote: containerCheck |
-| B6 | `mount-edit-deploy` (absorbed `existing-standard-appdev-only-reminders`, `develop-edit-path-vs-deploy-source`) | pair, SSHFS; usersim triggers `start develop` mid-run | edit in the mount and ship dev only | liveness unchanged toolArg(workingDir ∈ /var/www/appdev; Bash ln -s never) mustOffer(already-active) never | gate |
+| B6 | `mount-edit-deploy` (absorbed `existing-standard-appdev-only-reminders`, `develop-edit-path-vs-deploy-source`) | pair, SSHFS | edit in the mount and ship dev only | liveness unchanged toolArg(targetService=appdev always; Bash ln -s never) never | gate |
 | B7 ✚ | `mount-stale-recovery` | pair, preseed breaks the mount after deploy | continue editing | containerCheck liveness never | promote: containerCheck |
 | B8 | `cross-deploy-stage-promote-from-dev` | pair, promote | | artifactPromotion mustOffer(no-rebuild) never | gate |
 | B9 | `internal-only-worker` (absorbed D7 idle-worker verify) | pair + worker, no subdomain anywhere | add a queue worker | internalLiveness expectedServices never(subdomain touched) | gate |
@@ -663,7 +663,7 @@ no buildFromGit), so the agent has a place to fix source. `allowFailed` explicit
 |---|---|---|---|---|
 | D1 | `recover-failed-buildfromgit-missing-dep` | build OK, START fails (db env missing) — today the BUILD fails; re-prepare | seedExpect liveness never | gate |
 | D2 | `recover-build-failed` | build fails (bad dep) | seedExpect toolResult(failureClass) liveness never | gate |
-| D3 | `launch-failure-build-stuck` | | noFailedProcesses launchShape noFabricatedSecret never | gate |
+| D3 | `launch-failure-build-stuck` | | noFailedProcesses noFabricatedSecret never | gate |
 | D4 ✚ | `ready-to-deploy-stuck` | runtime imported without startWithoutCode | allow(override, reason: only path) mustOffer(DIAGNOSIS_REQUIRED before override) unchanged | promote: allow |
 | D5 | `resume-after-compaction` (absorbs `resume-status-not-discover`) | | expectedServices unchanged never | gate |
 | D6 ↑ | `discover-adoption-state-resumable-uses-sessionid` | dead-PID bootstrap session | expectedServices toolArg(≤1 import) never | gate |

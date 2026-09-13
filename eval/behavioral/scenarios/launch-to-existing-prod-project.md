@@ -45,6 +45,7 @@ area: launch-production
 requiredEnvVars:
   - ZCP_E2E_EXISTING_PROJECT_ID
   - ZCP_E2E_EXISTING_PROD_TOKEN
+  - ZCP_E2E_GITHUB_PAT
 retrospective:
   promptStyle: briefing-future-agent
 verification:

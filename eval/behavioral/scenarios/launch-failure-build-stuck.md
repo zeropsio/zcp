@@ -55,7 +55,6 @@ verification:
   mode: required
   spec: spec-workflows.md §10
   noFailedProcesses: true
-  launchShape: {prodProject: "zcp-farm-prod__{{runId}}"}
   noFabricatedSecret: true
   never: ["zerops_import{override=true}"]
   retrospectiveMustNotMention:

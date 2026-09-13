@@ -61,6 +61,9 @@ fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
 '"'"''
 
 # Trigger the self-deploy of the now-broken source from INSIDE appdev.
+# zcli inside the service container is not logged in (matrix-2: "unauthenticated
+# user"); ops.DeploySSH logs in the same way before every push.
+ssh appdev "zcli login -- '${ZCP_API_KEY}' >/dev/null"
 ssh appdev "cd /var/www && zcli push --service-id ${APPDEV_ID} --no-git"
 
 # Poll the project's DIRECT process list (lag-free) for the newest

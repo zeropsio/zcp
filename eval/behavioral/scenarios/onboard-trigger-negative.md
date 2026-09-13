@@ -24,8 +24,8 @@ verification:
   mode: required
   spec: spec-welcome-mode.md §4
   toolArg:
-    - {never: "zerops_workflow{action=start}"}
-    - {never: "zerops_import"}
+    - {never: "zerops_knowledge{uri=zerops://playbooks/onboarding}"}
+    - {always: "zerops_workflow{action=start}"}
   never: ["zerops_import{override=true}", "zerops_delete"]
 notableFriction:
   - id: specific-technology-is-not-meta-onboarding

@@ -16,6 +16,8 @@ seed: deployed
 fixture: fixtures/nodejs-standard-deployed.yaml
 tags: [launch-production, prod-transition, one-shot-key, separate-project, trust-boundary]
 area: launch
+requiredEnvVars:
+  - ZCP_E2E_GITHUB_PAT
 retrospective:
   promptStyle: briefing-future-agent
 verification:

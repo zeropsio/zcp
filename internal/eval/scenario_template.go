@@ -175,6 +175,9 @@ func renderVerificationConfig(cfg *VerificationConfig, values TemplateValues) er
 		if cfg.Liveness.Marker, err = renderVerificationString("liveness.marker", cfg.Liveness.Marker, values); err != nil {
 			return err
 		}
+		if cfg.Liveness.Path, err = renderVerificationString("liveness.path", cfg.Liveness.Path, values); err != nil {
+			return err
+		}
 	}
 	if cfg.NodePostgresRecord != nil {
 		n := cfg.NodePostgresRecord

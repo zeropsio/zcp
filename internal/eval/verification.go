@@ -381,6 +381,9 @@ func evaluateLivenessRow(ctx context.Context, probe *LivenessProbe, observation 
 		return RequiredCheck{ID: id, Check: "liveness", Scope: probe.Service, Result: CheckFailed, Expected: "exists", Observed: "not found", ObservedAt: now, Source: "ListServicesDirect", Message: fmt.Sprintf("service %q not found in project", probe.Service)}
 	}
 	url := ops.ResolveSubdomainURL(ctx, client, projectID, svc)
+	if url != "" && probe.Path != "" {
+		url = strings.TrimSuffix(url, "/") + "/" + strings.TrimPrefix(probe.Path, "/")
+	}
 	if url == "" {
 		return RequiredCheck{ID: id, Check: "liveness", Scope: probe.Service, Result: CheckBlocked, Expected: "resolvable subdomain URL", ObservedAt: now, Source: "ListServicesDirect", Message: fmt.Sprintf("service %q has no resolvable subdomain URL", probe.Service)}
 	}
