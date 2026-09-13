@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/andybalholm/brotli"
 )
 
 const inspectionMessagesPath = "/v1/messages"
@@ -567,6 +569,12 @@ func decodeProviderResponse(body []byte, headers http.Header) ([]byte, error) {
 		gzipEncoded = len(body) >= 2 && body[0] == 0x1f && body[1] == 0x8b
 	case "gzip":
 		gzipEncoded = true
+	case "br":
+		decoded, err := io.ReadAll(brotli.NewReader(bytes.NewReader(body)))
+		if err != nil {
+			return nil, fmt.Errorf("read brotli stream: %w", err)
+		}
+		return decoded, nil
 	default:
 		return nil, fmt.Errorf("unsupported Content-Encoding %q", encoding)
 	}

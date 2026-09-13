@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/andybalholm/brotli"
 )
 
 func TestDeriveModelContext_ReportsHistoryRemovalAsReset(t *testing.T) {
@@ -307,10 +309,33 @@ func TestInspectSession_RejectsUnknownManifestFormat(t *testing.T) {
 func TestInspectSession_RejectsUnsupportedContentEncoding(t *testing.T) {
 	t.Parallel()
 
-	sessionDir := writeInspectionFixtureWith(t, CaptureComplete, "br")
+	sessionDir := writeInspectionFixtureWith(t, CaptureComplete, "zstd")
 	_, err := InspectSession(sessionDir)
-	if err == nil || !strings.Contains(err.Error(), `unsupported Content-Encoding "br"`) {
+	if err == nil || !strings.Contains(err.Error(), `unsupported Content-Encoding "zstd"`) {
 		t.Fatalf("InspectSession() error = %v, want unsupported encoding", err)
+	}
+}
+
+func TestDecodeProviderResponse_Brotli_Decodes(t *testing.T) {
+	t.Parallel()
+
+	plaintext := []byte(`{"hello":"world","exchange":"exchange-000002"}`)
+	compressed := brotliBytes(t, plaintext)
+	decoded, err := DecodeProviderResponseBody(compressed, http.Header{"Content-Encoding": []string{"br"}})
+	if err != nil {
+		t.Fatalf("DecodeProviderResponseBody() error = %v", err)
+	}
+	if !bytes.Equal(decoded, plaintext) {
+		t.Fatalf("DecodeProviderResponseBody() = %q, want %q", decoded, plaintext)
+	}
+}
+
+func TestDecodeProviderResponse_UnknownEncoding_StillRejected(t *testing.T) {
+	t.Parallel()
+
+	_, err := DecodeProviderResponseBody([]byte("irrelevant"), http.Header{"Content-Encoding": []string{"zstd"}})
+	if err == nil || !strings.Contains(err.Error(), `unsupported Content-Encoding "zstd"`) {
+		t.Fatalf("DecodeProviderResponseBody() error = %v, want unsupported encoding", err)
 	}
 }
 
@@ -475,6 +500,20 @@ func gzipBytes(t *testing.T, data []byte) []byte {
 	}
 	if err := writer.Close(); err != nil {
 		t.Fatalf("gzip close: %v", err)
+	}
+	return compressed.Bytes()
+}
+
+func brotliBytes(t *testing.T, data []byte) []byte {
+	t.Helper()
+
+	var compressed bytes.Buffer
+	writer := brotli.NewWriter(&compressed)
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("brotli write: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("brotli close: %v", err)
 	}
 	return compressed.Bytes()
 }
