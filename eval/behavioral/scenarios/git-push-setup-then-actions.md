@@ -52,7 +52,7 @@ verification:
   meta:
     - {hostname: appdev, field: gitPushState, expect: "configured"}
   containerCheck:
-    - {service: appdev, cmd: "ls .github/workflows", match: "\\.ya?ml"}
+    - {service: appdev, cmd: "ls /var/www/.github/workflows", match: "\\.ya?ml"}
   toolArg:
     - {never: "zerops_deploy{strategy≠git-push}"}
   askWhen: [GIT_TOKEN_MISSING]
