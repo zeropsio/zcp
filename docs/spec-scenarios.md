@@ -632,7 +632,7 @@ Legend: ↑ existing scenario to promote · ✚ scenario to write.
 | cell | scenario id | variation | task | oracle families | status |
 |---|---|---|---|---|---|
 | B1 | `develop-add-managed-dep-to-existing` | pair + add cache | | expectedServices unchanged containerCheck never(deploy on managed) | gate |
-| B3 ✚ | `env-service-scope-pair` | standard-pair, service env feature flag | turn FEATURE_X on for dev and stage | containerCheck toolResult(restartedServices) never | promote: containerCheck |
+| B3 | `env-service-scope-pair` | standard-pair, service env feature flag | turn FEATURE_X on for dev and stage | containerCheck toolResult(restartedServices) never | gate |
 | B4 ✚ | `env-yaml-baked-dev-only` | dev-only, key in `run.envVariables` | change the baked value | containerCheck never(manage reload as fix) | promote: containerCheck |
 | B5 ✚ | `env-project-scope-shared` | pair, project var + cross-ref | one secret shared by dev and stage | containerCheck noFabricatedSecret toolArg never | promote: containerCheck |
 | B13 ✚ | `env-build-time-simple` | simple, `build.envVariables` | the build needs a token | containerCheck never | promote: containerCheck |
