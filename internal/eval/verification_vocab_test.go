@@ -215,7 +215,10 @@ func (v verificationVocab) checkSpecPointer(pointer string) error {
 	if err != nil {
 		return fmt.Errorf("spec file %q not found: %w", file, err)
 	}
-	if !strings.Contains(string(data), "§"+section) {
+	// A section exists when the spec either cross-references it ("§3.5") or
+	// carries it as a heading ("### 3.5 …", "### 10.2b …").
+	heading := regexp.MustCompile(`(?m)^#+\s+` + regexp.QuoteMeta(section) + `[a-z]?\b`)
+	if !strings.Contains(string(data), "§"+section) && !heading.Match(data) {
 		return fmt.Errorf("docs/%s has no §%s anchor", file, section)
 	}
 	return nil
