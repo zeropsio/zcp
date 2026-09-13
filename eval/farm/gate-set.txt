@@ -3,7 +3,6 @@ greenfield-node-postgres-dev-stage
 recipe-nestjs-minimal-standard
 classic-static-nginx-simple
 develop-add-managed-dep-to-existing
-existing-standard-appdev-only-reminders
 cross-deploy-stage-promote-from-dev
 recover-failed-buildfromgit-missing-dep
 adopt-existing-standard-pair
@@ -24,3 +23,4 @@ onboard-trigger-fresh
 onboard-trigger-negative
 recipe-first-deploy-race-adopt
 recipe-laravel-showcase-fullstack
+mount-edit-deploy
