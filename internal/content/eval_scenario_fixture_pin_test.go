@@ -20,13 +20,14 @@ import (
 // field in the same service block) — promoted as S5/S6 re-prepare each
 // matrix cell (docs/spec-scenarios.md §9.3).
 var legacyUnpinned = map[string]bool{
-	"eval/behavioral/scenarios/fixtures/acceptance-node-postgres-record.yaml": true,
-	"eval/behavioral/scenarios/fixtures/dev-only-node-postgres-deployed.yaml": true,
-	"eval/behavioral/scenarios/fixtures/laravel-dev-deployed.yaml":            true,
-	"eval/behavioral/scenarios/fixtures/laravel-showcase-deployed.yaml":       true,
-	"eval/behavioral/scenarios/fixtures/nodejs-simple-deployed.yaml":          true,
-	"eval/behavioral/scenarios/fixtures/nodejs-standard-deployed.yaml":        true,
-	"eval/behavioral/scenarios/fixtures/nodejs-prod-failed-no-db.yaml":        true,
+	"eval/behavioral/scenarios/fixtures/acceptance-node-postgres-record.yaml":         true,
+	"eval/behavioral/scenarios/fixtures/dev-only-node-postgres-deployed.yaml":         true,
+	"eval/behavioral/scenarios/fixtures/laravel-dev-deployed.yaml":                    true,
+	"eval/behavioral/scenarios/fixtures/laravel-showcase-deployed.yaml":               true,
+	"eval/behavioral/scenarios/fixtures/nodejs-simple-deployed.yaml":                  true,
+	"eval/behavioral/scenarios/fixtures/nodejs-standard-deployed.yaml":                true,
+	"eval/behavioral/scenarios/fixtures/nodejs-prod-failed-no-db.yaml":                true,
+	"eval/behavioral/scenarios/fixtures/standard-pair-no-subdomain-worker-ready.yaml": true,
 }
 
 // fixtureService is the minimal shape TestEvalScenarioFixtures_BuildFromGitPinned

@@ -1,0 +1,28 @@
+# Node.js standard pair (dev/stage) with a managed Postgres dependency,
+# every service deliberately WITHOUT a public subdomain. Used by
+# internal-only-worker (B9): the agent adds a third, internal-only `worker`
+# service to this project and must never enable a subdomain anywhere in it.
+
+services:
+  - hostname: appdev
+    type: nodejs@22
+    zeropsSetup: dev
+    buildFromGit: https://github.com/zerops-recipe-apps/nodejs-hello-world-app
+    enableSubdomainAccess: false
+    verticalAutoscaling:
+      minRam: 0.5
+
+  - hostname: appstage
+    type: nodejs@22
+    zeropsSetup: prod
+    buildFromGit: https://github.com/zerops-recipe-apps/nodejs-hello-world-app
+    enableSubdomainAccess: false
+    verticalAutoscaling:
+      minRam: 0.5
+
+  - hostname: db
+    type: postgresql@18
+    mode: NON_HA
+    priority: 10
+    verticalAutoscaling:
+      minRam: 0.25

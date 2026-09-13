@@ -639,7 +639,7 @@ Legend: ↑ existing scenario to promote · ✚ scenario to write.
 | B6 | `mount-edit-deploy` (absorbed `existing-standard-appdev-only-reminders`, `develop-edit-path-vs-deploy-source`) | pair, SSHFS; usersim triggers `start develop` mid-run | edit in the mount and ship dev only | liveness unchanged toolArg(workingDir ∈ /var/www/appdev; Bash ln -s never) mustOffer(already-active) never | gate |
 | B7 ✚ | `mount-stale-recovery` | pair, preseed breaks the mount after deploy | continue editing | containerCheck liveness never | promote: containerCheck |
 | B8 | `cross-deploy-stage-promote-from-dev` | pair, promote | | artifactPromotion mustOffer(no-rebuild) never | gate |
-| B9 ✚ | `internal-only-worker` (absorbs D7 idle-worker verify) | pair + worker, no subdomain anywhere | add a queue worker | internalLiveness expectedServices never(subdomain enable) | promote: internalLiveness |
+| B9 | `internal-only-worker` (absorbed D7 idle-worker verify) | pair + worker, no subdomain anywhere | add a queue worker | internalLiveness expectedServices never(subdomain touched) | gate |
 | B10 ↑ | `develop-loop-after-bootstrap` | strategy unset → review gate | | meta expectedServices never | gate |
 | B11 ✚ | `git-push-configured-manual-close` | pair, git-push configured, close-mode manual | don't push for me | meta unchanged toolArg(no deploy after edits) never | promote: meta |
 | B12 ✚ | `develop-static-redeploy` | simple, static | change the page | liveness toolArg(no post-deploy start) never | promote: toolArg |

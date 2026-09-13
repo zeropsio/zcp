@@ -24,3 +24,4 @@ onboard-trigger-negative
 recipe-first-deploy-race-adopt
 recipe-laravel-showcase-fullstack
 mount-edit-deploy
+internal-only-worker
