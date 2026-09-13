@@ -108,3 +108,63 @@ Content-addressed (`farm/wrapper/<sha256>.sh`); updates the
 `farm/wrapper/current` pointer (§1.1, R5) — every run project verifies the
 fetched script's digest against its own run descriptor before executing
 it. Offline test: `go test ./internal/eval/farm -run TestWrapper_ -v`.
+
+## Mutation batch
+
+Before a batch verdict is trusted to change zcp, `docs/spec-scenarios.md §9.4`
+requires that a **mutation batch** has passed once per planted regression:
+a candidate built with exactly one regression applied, run against the gate
+set, must fail the ONE cell that regression breaks and nothing else. The
+four patches live in `eval/farm/mutations/*.patch`
+(`eval/farm/mutations/README.md` is the table of patch → regression → must-fail
+cell → files touched); `internal/eval/farm/mutations_test.go` keeps each one
+applying cleanly to the current tree.
+
+This is an **owner action** (`docs/spec-eval-farm.md §3.1` maintainer gate:
+the farm host holds an account-wide key) and each of the four mutations costs
+roughly one gate batch — run them one at a time, not concurrently, so a
+batch's own runs don't compete with another batch's runs for the same
+scenario set.
+
+For each patch, from a full checkout on the integration branch/sha you want
+to certify:
+
+```sh
+# 1. Build the candidate WITH the patch applied, in a throwaway worktree —
+#    never on the branch itself. Farm run-projects are always linux/amd64.
+git worktree add /tmp/mut-01 <integration sha>
+git -C /tmp/mut-01 apply eval/farm/mutations/01-env-set-no-restart.patch
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go -C /tmp/mut-01 build -o /tmp/mut-01/zcp-linux ./cmd/zcp
+
+# 2. Push the mutated candidate — prints its sha256.
+go run ./cmd/zcp eval farm push --candidate /tmp/mut-01/zcp-linux
+
+# 3. Run the gate set against it (exact flags: cmd/zcp/eval_farm.go usage /
+#    docs/spec-eval-farm.md §3.3 — quote them, never invent new ones).
+go run ./cmd/zcp eval farm run --candidate <sha256 from step 2> \
+  --scenarios <scenarios-digest, from an earlier `push --scenarios`> \
+  --set gate --batch mut-01-<date>
+
+# 4. Pull + report once it settles (§5.2).
+go run ./cmd/zcp eval farm pull --batch mut-01-<date> --out /tmp/mut-01-out
+go run ./cmd/zcp eval farm report /tmp/mut-01-out
+
+# 5. Clean up the throwaway worktree.
+git worktree remove /tmp/mut-01
+```
+
+Repeat for `02-subdomain-auto-enable-off.patch` (worktree `/tmp/mut-02`,
+batch `mut-02-<date>`), `03-mount-from-cwd.patch` (`/tmp/mut-03`,
+`mut-03-<date>`), and `04-adopt-wrong-stage-hostname.patch` (`/tmp/mut-04`,
+`mut-04-<date>`) — four batches, one per patch, never combined into one
+candidate.
+
+**Pass criterion**: the named cell in `eval/farm/mutations/README.md`'s table
+is `failed` on the mutated batch's report, and every other gate cell in that
+report carries the same verdict (`passed`/`blocked`/etc.) as the unmutated
+baseline gate batch it is compared against. A cell other than the named one
+flipping to `failed` means the mutation's isolation claim in the table is
+wrong — fix the table (or the patch) before trusting any future gate verdict
+against it. `02-subdomain-auto-enable-off.patch` is a known exception today:
+every subdomain-GET `liveness` cell also fails until those cells move to the
+`internalLiveness` oracle family — see the note in the mutations table.
