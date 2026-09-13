@@ -631,7 +631,7 @@ to every row this section adds.
 verification:
   mode: required
   spec: spec-workflows.md §4.3            # pointer only, never a copy
-  expectedServices: [...]                  # O3 — unchanged from §10.1
+  expectedServices: [...]                  # O3 — §10.1 shape; an entry may add `subdomainAccess: true|false` (live GetService flag)
   noFailedProcesses: true                  # O5 — unchanged from §10.1
   allowFailed: [api]                       # O5 — services whose FAILED is the seeded starting point
   liveness: {service: appdev, marker: "team-notes"}   # O2
@@ -642,7 +642,7 @@ verification:
   allow: [{call: "zerops_import{override=true}", reason: "READY_TO_DEPLOY has no other path"}]  # lifts a runner-injected default never (FM-58)
   internalLiveness: {service: worker, port: 8080, path: /healthz, marker: ok}   # O2' — GET over the project network, no subdomain (FM-61)
   containerCheck: [{service: appdev, cmd: "printenv FEATURE_X", expect: "on"}]   # O10 — one SSH command, exact/regex match (FM-61)
-  meta: [{hostname: appdev, field: closeDeployMode, expect: manual}]            # O11 — reads the candidate's .zcp/state (FM-61)
+  meta: [{hostname: appdev, field: publicAccess.appdev.intent, expect: none}]  # O11 — reads the candidate's .zcp/state; `field` is a dot path (FM-61)
   schemaValid: {artifact: export.yaml}                                          # O12 — schema-validate a produced artifact (FM-61)
   toolArg: [{never: "Bash{command~^ln -s}"}, {always: "zerops_deploy{workingDir∈/var/www/appdev}"}, {max: 1, call: "zerops_import"}]  # decision rows over transcript.jsonl (FM-59, FM-60)
   toolResult: [{tool: zerops_env, contains: restartedServices}]                  # decision rows over captured results (FM-59)
@@ -737,7 +737,7 @@ project network (no subdomain involved, never skipped — a missing service is
 `failed`); `containerCheck` runs one command over SSH via
 `platform.SystemSSHDeployer.ExecSSH` and matches stdout (`expect` exact or
 `match` regex); `meta` reads the candidate's `.zcp/state/services/<hostname>.json`
-field; `schemaValid` validates a produced artifact against the live schema.
+field (`field` is a dot path into the document, e.g. `publicAccess.appdev.intent`); `schemaValid` validates a produced artifact against the live schema.
 Each yields one row per entry; an unreachable service or a missing file is
 `failed`, never `blocked`, because the seed's `expect` already proved the
 preparation.

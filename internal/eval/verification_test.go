@@ -954,3 +954,45 @@ func TestMatchTypeGlob_InnerWildcard_MatchesNameVariants(t *testing.T) {
 		}
 	}
 }
+
+func TestRunVerification_ExpectedService_SubdomainAccess(t *testing.T) {
+	t.Parallel()
+	boolPtr := func(b bool) *bool { return &b }
+	// RunVerification reports findings only for failed/blocked rows, so the
+	// oracle here is "a fail finding named service_subdomain_access exists".
+	tests := []struct {
+		name     string
+		actual   bool
+		expected *bool
+		wantFail bool
+	}{
+		{"off_expected_off", false, boolPtr(false), false},
+		{"on_expected_off", true, boolPtr(false), true},
+		{"on_expected_on", true, boolPtr(true), false},
+		{"off_expected_on", false, boolPtr(true), true},
+		{"unset_no_row", true, nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			sc := &Scenario{Verification: &VerificationConfig{
+				ExpectedServices: []ExpectedService{
+					{Hostname: "appdev", Status: []string{"ACTIVE"}, SubdomainAccess: tt.expected},
+				},
+			}}
+			client := platform.NewMock().WithServices([]platform.ServiceStack{
+				{ID: "s1", Name: "appdev", Status: "ACTIVE", SubdomainAccess: tt.actual},
+			})
+			got := RunVerification(context.Background(), sc, "p1", client, nil, "", time.Time{}, RuntimeInputs{})
+			hasFail := false
+			for _, f := range got {
+				if f.Check == "service_subdomain_access" && f.Severity == "fail" {
+					hasFail = true
+				}
+			}
+			if hasFail != tt.wantFail {
+				t.Fatalf("fail=%v, want %v: %+v", hasFail, tt.wantFail, got)
+			}
+		})
+	}
+}

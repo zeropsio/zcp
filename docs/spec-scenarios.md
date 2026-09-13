@@ -644,7 +644,7 @@ Legend: ↑ existing scenario to promote · ✚ scenario to write.
 | B10 ↑ | `develop-loop-after-bootstrap` | strategy unset → review gate | | meta expectedServices never | gate |
 | B11 ✚ | `git-push-configured-manual-close` | pair, git-push configured, close-mode manual | don't push for me | meta unchanged toolArg(no deploy after edits) never | promote: meta |
 | B12 ✚ | `develop-static-redeploy` | simple, static | change the page | liveness toolArg(no post-deploy start) never | promote: toolArg |
-| B14 ✚ | `subdomain-user-disabled-stays-off` | dev-only, subdomain auto-enabled once then user-disabled | change the response text, redeploy | expectedServices internalLiveness toolArg(max 0 zerops_subdomain) never | gate |
+| B14 ✚ | `subdomain-user-disabled-stays-off` | dev-only, subdomain auto-enabled once then user-disabled | change the response text, redeploy | expectedServices(subdomainAccess false) internalLiveness meta(intent none) toolArg(max 0 zerops_subdomain) never | gate |
 | B15 ✚ | `custom-domain-present` | simple, custom domain routed instead of a subdomain | verify + report reachability | expectedServices toolArg(max 0 zerops_subdomain) toolResult(public_domain) mustOffer(domain) never | gate |
 
 #### C. Shipping (seed: deployed)

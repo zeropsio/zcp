@@ -221,6 +221,22 @@ func TestMeta_FieldMatchesAndAbsent_Rows(t *testing.T) {
 			expect:     "manual",
 			wantResult: CheckFailed,
 		},
+		{
+			name:       "dot path pass",
+			hostname:   "appdev",
+			fixture:    `{"publicAccess":{"appdev":{"intent":"none","subdomainEnabledByZcpAt":"2026-09-13T10:00:00Z"}}}`,
+			field:      "publicAccess.appdev.intent",
+			expect:     "none",
+			wantResult: CheckPassed,
+		},
+		{
+			name:       "dot path absent fail",
+			hostname:   "appdev",
+			fixture:    `{"publicAccess":{"appstage":{"intent":"auto"}}}`,
+			field:      "publicAccess.appdev.intent",
+			expect:     "none",
+			wantResult: CheckFailed,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

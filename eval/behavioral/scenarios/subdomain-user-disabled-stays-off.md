@@ -27,9 +27,10 @@ verification:
   mode: required
   spec: spec-workflows.md §8
   expectedServices:
-    - {hostname: appdev, status: [ACTIVE]}
+    - {hostname: appdev, status: [ACTIVE], subdomainAccess: false}
     - {hostname: db, status: [ACTIVE]}
   internalLiveness: {service: appdev, port: 3000, path: /, marker: hello-v2}
+  meta: [{hostname: appdev, field: publicAccess.appdev.intent, expect: none}]
   noFailedProcesses: true
   toolArg:
     - {max: 0, call: "zerops_subdomain"}

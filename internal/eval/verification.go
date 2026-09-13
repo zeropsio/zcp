@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -497,6 +498,17 @@ func evaluateExpectedService(
 			ID: expectedServiceRowID(exp.Hostname, "type"), Check: "service_type", Scope: exp.Hostname,
 			Result: result, Expected: exp.Type, Observed: found.ServiceStackTypeInfo.ServiceStackTypeVersionName, ObservedAt: now, Source: "ListServicesDirect",
 			Message: fmt.Sprintf("service %q type %q (want %q)", exp.Hostname, found.ServiceStackTypeInfo.ServiceStackTypeVersionName, exp.Type),
+		})
+	}
+	if exp.SubdomainAccess != nil {
+		result := CheckFailed
+		if found.SubdomainAccess == *exp.SubdomainAccess {
+			result = CheckPassed
+		}
+		rows = append(rows, RequiredCheck{
+			ID: expectedServiceRowID(exp.Hostname, "subdomainAccess"), Check: "service_subdomain_access", Scope: exp.Hostname,
+			Result: result, Expected: strconv.FormatBool(*exp.SubdomainAccess), Observed: strconv.FormatBool(found.SubdomainAccess), ObservedAt: now, Source: "ListServicesDirect",
+			Message: fmt.Sprintf("service %q subdomainAccess %v (want %v)", exp.Hostname, found.SubdomainAccess, *exp.SubdomainAccess),
 		})
 	}
 	if exp.SubdomainProbe != nil {
