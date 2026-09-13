@@ -52,6 +52,54 @@ func TestCallShape_Parse_Table(t *testing.T) {
 	}
 }
 
+// TestParseCallShape_Operators pins FM-60: the call-shape grammar gains
+// `k=v` (existing, unchanged), `k≠v`, `k∈<prefix>`, `k~<regex>`, plus the
+// existing error cases (a bad regex, and a symbol that isn't one of the
+// four recognised operators).
+func TestParseCallShape_Operators(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		expr    string
+		wantErr bool
+	}{
+		{"equals", "zerops_deploy{strategy=git-push}", false},
+		{"not_equals", "zerops_deploy{strategy≠git-push}", false},
+		{"prefix", "zerops_deploy{workingDir∈/var/www/appdev}", false},
+		{"regex", "zerops_deploy{hostname~^app.*$}", false},
+		{"bad_regex", "zerops_deploy{hostname~(unclosed}", true},
+		{"unknown_operator", "zerops_deploy{strategy!git-push}", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := ParseCallShape(tt.expr)
+			if tt.wantErr && err == nil {
+				t.Fatalf("ParseCallShape(%q): expected error, got none", tt.expr)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("ParseCallShape(%q): unexpected error: %v", tt.expr, err)
+			}
+		})
+	}
+}
+
+// TestCallShape_Match_AbsentKeyIsFalse pins the documented rule: a key
+// absent from the call's arguments makes ANY constraint on that key false,
+// regardless of operator — so `never: zerops_deploy{strategy≠git-push}`
+// does not fire on a call that carries no `strategy` argument at all.
+func TestCallShape_Match_AbsentKeyIsFalse(t *testing.T) {
+	t.Parallel()
+	shape, err := ParseCallShape("zerops_deploy{strategy≠git-push}")
+	if err != nil {
+		t.Fatalf("ParseCallShape: unexpected error: %v", err)
+	}
+	call := capture.MCPToolCall{Tool: "zerops_deploy", Arguments: map[string]any{"hostname": "api"}}
+	if shape.Matches(call) {
+		t.Error("shape.Matches(call) = true, want false — the call has no `strategy` argument at all")
+	}
+}
+
 // TestVerification_NeverRow_FailsOnMatchingCall pins FM-30: one matching
 // call anywhere in the stream fails the row; zero matching calls passes it;
 // no captured stream blocks it.
