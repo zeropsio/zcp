@@ -733,6 +733,29 @@ func (e *Engine) StoreDiscoveredStatuses(statuses map[string]string) error {
 	return saveSessionState(e.stateDir, e.sessionID, state)
 }
 
+// StoreDiscoveredDeployHistory overwrites the per-hostname deploy-history
+// classification (`none`/`failed`/`ok`, spec-workflows.md §8 R1) captured at
+// the most recent provision check. Mirrors StoreDiscoveredStatuses exactly —
+// read by synthesisEnvelope so atoms gated on deployHistory (e.g. the R3
+// override-scoped atoms) fire correctly during bootstrap-active phase. Map
+// is overwritten wholesale on each call, same rationale as
+// StoreDiscoveredStatuses. Not yet called by any L4 tool handler — the
+// caller must derive the map from ops.ComputeRecoveryState per hostname.
+func (e *Engine) StoreDiscoveredDeployHistory(deployHistories map[string]string) error {
+	state, err := e.loadState()
+	if err != nil {
+		return fmt.Errorf("store discovered deploy history: %w", err)
+	}
+	if state.Bootstrap == nil {
+		return fmt.Errorf("store discovered deploy history: no bootstrap state")
+	}
+	state.Bootstrap.DiscoveredDeployHistory = make(map[string]string, len(deployHistories))
+	maps.Copy(state.Bootstrap.DiscoveredDeployHistory, deployHistories)
+
+	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	return saveSessionState(e.stateDir, e.sessionID, state)
+}
+
 // BootstrapStatus returns the current bootstrap progress with full guidance for context recovery.
 func (e *Engine) BootstrapStatus() (*BootstrapResponse, error) {
 	state, err := e.loadState()

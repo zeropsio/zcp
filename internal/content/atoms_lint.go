@@ -195,6 +195,7 @@ func lintAtomCorpus(atoms []AtomFile) []AtomLintViolation {
 		out = append(out, staleActionViolations(ctx)...)
 		out = append(out, staleStrategyViolations(ctx)...)
 		out = append(out, statusTokenViolations(ctx)...)
+		out = append(out, overrideAdviceScopeViolations(ctx)...)
 	}
 	return out
 }
@@ -479,6 +480,67 @@ func axisListValues(raw string) []string {
 		}
 	}
 	return out
+}
+
+// overrideAdvicePattern matches `override=true` (tool-call arg form) or
+// `override: true` (frontmatter/prose form) anywhere in an atom body.
+//
+//nolint:gochecknoglobals // value-only regex, immutable after init.
+var overrideAdvicePattern = regexp.MustCompile(`override=true|override:\s*true`)
+
+// overrideAdviceExemptions lists atoms whose body mentions override=true /
+// override: true in a context OUTSIDE per-service deploy-history recovery
+// (spec-workflows.md §8 R3) — pre-dating the deployHistory axis and out of
+// S2b's write-set to reword or axis-gate. Each entry names the atom file
+// and the reason it is not R3-scoped advice. Prefer rewording an atom (so
+// it passes the rule legitimately) over adding an exemption when the atom
+// IS in scope — these four predate the axis and live outside this slice's
+// allowed file set.
+//
+//nolint:gochecknoglobals // immutable lookup table
+var overrideAdviceExemptions = map[string]string{
+	"bootstrap-env-var-discovery.md": "bootstrap-active provision guidance describing BOTH branches " +
+		"(never-built vs build-FAILED) in the same prose, already correctly conditioning override on " +
+		"the never-built sub-case and warning against it for build-FAILED; splitting/axis-gating this " +
+		"atom is out of S2b's write-set (only develop-ready-to-deploy.md and the new develop-failed-" +
+		"build-recover.md are in scope for that split).",
+	"bootstrap-route-options.md": "hostname-collision escape hatch during bootstrap route selection " +
+		"(\"reserved for explicit user requests\") — unrelated to per-service deploy-history recovery.",
+	"develop-platform-rules-common.md": "envelope-wide reference atom (reference:true, gated on " +
+		"envelopeDeployStates:[never-deployed], not the per-service deployHistory axis) warning " +
+		"generally against override as a shortcut for collisions/env-drift; not per-service recovery advice.",
+	"idle-adopt-entry.md": "idle-phase adopt guidance; override is mentioned only to say re-importing " +
+		"existing services is NOT the adopt path, never as per-service recovery advice.",
+}
+
+// overrideAdviceScopeViolations enforces R3 (spec-workflows.md §8): any atom
+// whose body names override=true/override: true must declare
+// deployHistory:[none] — the axis that scopes it to the never-deployed
+// shape (topology.RecoveryFreshMisconfigured). Without this, an atom can
+// recommend the destructive re-import path for a service that in fact
+// holds failed deploy history, wiping the exact evidence a repair needs —
+// the live contradiction R3 exists to make structurally impossible.
+func overrideAdviceScopeViolations(ctx atomLintCtx) []AtomLintViolation {
+	if _, exempt := overrideAdviceExemptions[ctx.file]; exempt {
+		return nil
+	}
+	deployHistory := axisListValues(ctx.frontmatter["deployHistory"])
+	if len(deployHistory) == 1 && deployHistory[0] == "none" {
+		return nil
+	}
+	for i, line := range ctx.bodyLines {
+		if !overrideAdvicePattern.MatchString(line) {
+			continue
+		}
+		return []AtomLintViolation{{
+			AtomFile: ctx.file,
+			Category: "override-scope",
+			Pattern:  "override-advice-requires-deployHistory-none",
+			Line:     ctx.frontmatterLines + i + 1,
+			Snippet:  strings.TrimSpace(line),
+		}}
+	}
+	return nil
 }
 
 // buildIntegrationViolations enforces axis-specific body-prose rules for

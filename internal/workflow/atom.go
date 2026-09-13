@@ -131,6 +131,19 @@ type AxisVector struct {
 	// `ACTIVE` or `READY_TO_DEPLOY`. Service-scoped: at least one service
 	// in the envelope must match for the atom to fire. Empty = any status.
 	ServiceStatuses []string
+	// DeployHistories scopes the atom to a specific recovery shape's
+	// deploy-history classification (`none` · `failed` · `ok`), derived
+	// from `ops.RecoveryState`/`ops.ComputeRecoveryState` (spec-workflows.md
+	// §8 R1) and projected onto `ServiceSnapshot.DeployHistory`. Only
+	// meaningful for services at `READY_TO_DEPLOY`/`FAILED` — every other
+	// status is unconditionally `ok`. Service-scoped: at least one service
+	// in the envelope must match. Empty = any deploy history (the axis
+	// doesn't gate). R3: an atom whose body names `override=true` MUST
+	// declare `[none]` here — `TestAtomAuthoringLint`/
+	// `atoms_lint.go::overrideAdviceScopeViolations` enforces it — so
+	// override-first advice can never render on a service with deploy
+	// history.
+	DeployHistories []string
 	// ExportStatuses scopes the atom to a specific export-workflow sub-
 	// state (see topology.ExportStatus). Envelope-scoped: matches against
 	// `StateEnvelope.ExportStatus` directly — the export workflow has at
@@ -205,6 +218,7 @@ var validAtomFrontmatterKeys = map[string]struct{}{
 	"deployStates":         {},
 	"envelopeDeployStates": {},
 	"serviceStatus":        {},
+	"deployHistory":        {},
 	"exportStatus":         {},
 	"managedTypes":         {},
 	"multiService":         {},
@@ -236,6 +250,7 @@ var listAxisKeys = map[string]struct{}{
 	"deployStates":         {},
 	"envelopeDeployStates": {},
 	"serviceStatus":        {},
+	"deployHistory":        {},
 	"exportStatus":         {},
 	"managedTypes":         {},
 	"references-fields":    {},
@@ -335,6 +350,11 @@ var validAtomEnumValues = map[string]map[string]struct{}{
 		"publish-ready":           {},
 		"compose-ready":           {},
 	},
+	"deployHistory": {
+		"none":   {},
+		"failed": {},
+		"ok":     {},
+	},
 }
 
 // validScalarEnumValues maps scalar (non-list) frontmatter keys to their
@@ -374,7 +394,7 @@ var validScalarEnumValues = map[string]map[string]struct{}{
 func validateAtomFrontmatter(fields map[string]string) error {
 	for key := range fields {
 		if _, ok := validAtomFrontmatterKeys[key]; !ok {
-			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, runtimeBases, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, exportStatus, managedTypes, multiService, reference, references-fields, references-atoms, pointer-atoms, pinned-by-scenario, coverageExempt)", key)
+			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, runtimeBases, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, deployHistory, exportStatus, managedTypes, multiService, reference, references-fields, references-atoms, pointer-atoms, pinned-by-scenario, coverageExempt)", key)
 		}
 	}
 	for key, raw := range fields {
@@ -515,6 +535,7 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 			DeployStates:         parseDeployStates(fields["deployStates"]),
 			EnvelopeDeployStates: parseDeployStates(fields["envelopeDeployStates"]),
 			ServiceStatuses:      parseYAMLList(fields["serviceStatus"]),
+			DeployHistories:      parseYAMLList(fields["deployHistory"]),
 			ExportStatuses:       parseExportStatuses(fields["exportStatus"]),
 			ManagedTypes:         parseYAMLList(fields["managedTypes"]),
 			MultiService:         MultiServiceMode(strings.TrimSpace(fields["multiService"])),

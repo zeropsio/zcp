@@ -60,13 +60,6 @@ notableFriction:
       appdev, never zerops_import override=true / zerops_delete —
       surfaces whether the agent reaches for the destructive escape
       hatch instead of the non-destructive redeploy path.
-  - id: no-structured-failure-class
-    description: |
-      Known gap (batch merge-ready-1): zcp does not yet surface a
-      structured failureClass for a FAILED build via zerops_events.
-      This toolResult row is expected to fail until that lands —
-      recorded here so a batch run doesn't misattribute the gap to
-      this scenario being wrong.
 ---
 
 ## Starting state
