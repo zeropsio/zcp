@@ -2304,3 +2304,42 @@ func TestRunBatch_MaxConcurrent_NeverExceedsWindow(t *testing.T) {
 		}
 	}
 }
+
+// TestRunBatch_MaxConcurrentZero_CreatesAll pins today's behaviour (§3.3
+// FM-65: MaxConcurrent: 0 means unlimited) — every scheduled run's project
+// is created before any of them settle, so the peak reaches all 5.
+func TestRunBatch_MaxConcurrentZero_CreatesAll(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-s11-unwindowed"
+	f := newControllerFixture(t, clientID)
+	tracked := &peakTrackingClient{PlatformClient: f.client}
+
+	batch := "batch-s11-unwindowed"
+	scenarios := []ScenarioRun{
+		{ID: "recipe-u1"}, {ID: "recipe-u2"}, {ID: "recipe-u3"}, {ID: "recipe-u4"}, {ID: "recipe-u5"},
+	}
+	for _, sc := range scenarios {
+		seedSettledRun(t, f.s3, testRunID(t, batch, sc.ID), sc.ID, ResultPassed)
+	}
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
+		Scenarios: scenarios, OAuthToken: "oauth-token",
+		Sink:          Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:     time.Hour,
+		PollInterval:  time.Millisecond,
+		MaxConcurrent: 0,
+	}
+
+	results, err := RunBatch(context.Background(), tracked, f.sink, opts)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if peak := tracked.Peak(); peak != 5 {
+		t.Errorf("peak live projects = %d, want 5 (MaxConcurrent: 0 is unlimited)", peak)
+	}
+	if len(results) != 5 {
+		t.Fatalf("results = %+v, want 5 entries", results)
+	}
+}
