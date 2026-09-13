@@ -88,8 +88,28 @@ func TestWorkflowBootstrap_PopulatesRuntimeURLs(t *testing.T) {
 			URL:      "https://tmponb3astage-24cb-3000.prg1.zerops.app",
 			Handoff:  true,
 		}
-		if resp.RuntimeURLs[0] != want {
-			t.Errorf("runtime URL = %+v, want %+v", resp.RuntimeURLs[0], want)
+		got := resp.RuntimeURLs[0]
+		gotPublicAccess := got.PublicAccess
+		got.PublicAccess = nil // compared separately below — carries a slice, not comparable via !=
+		if got != want {
+			t.Errorf("runtime URL = %+v, want %+v", got, want)
+		}
+		// PA-5 (docs/spec-workflows.md §8 O3): every URL-bearing surface,
+		// RCO-7 included, renders publicAccess. This stage entry is already
+		// subdomain-enabled (SubdomainAccess: true, no domains seeded) — no
+		// persisted ServiceMeta at this call site, so intent is derived from
+		// observed state alone (topology.DeriveAdoptedIntent): on ⇒ subdomain.
+		if gotPublicAccess == nil {
+			t.Fatal("RuntimeURL.PublicAccess: want non-nil")
+		}
+		if gotPublicAccess.Intent != "subdomain" {
+			t.Errorf("PublicAccess.Intent = %q, want %q", gotPublicAccess.Intent, "subdomain")
+		}
+		if gotPublicAccess.Subdomain != "on" {
+			t.Errorf("PublicAccess.Subdomain = %q, want %q", gotPublicAccess.Subdomain, "on")
+		}
+		if gotPublicAccess.URL != want.URL {
+			t.Errorf("PublicAccess.URL = %q, want %q", gotPublicAccess.URL, want.URL)
 		}
 		if resp.Current == nil || !strings.Contains(resp.Current.DetailedGuide, want.URL) {
 			t.Errorf("close guide should carry the resolved stage URL, got:\n%s", safeGuide(resp))

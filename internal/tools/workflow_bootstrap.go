@@ -16,6 +16,7 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/schema"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -276,24 +277,51 @@ func populateRuntimeURLs(ctx context.Context, client platform.Client, projectID 
 // subdomain-enabled service in services, classifying each hostname's role
 // against plan. A service whose URL can't be resolved (ResolveSubdomainURL
 // returning "") is omitted — best-effort, never a fabricated URL.
+//
+// PA-5 (docs/spec-workflows.md §8 O3): each entry also carries a
+// publicAccess summary, filled via ops.ObservePublicAccessAll — ONE batched
+// routing-list read across every subdomain-enabled service here, not one
+// per service. No persisted ServiceMeta at this call site (workflow_bootstrap.go
+// has no per-hostname meta index handy), so intent is derived from observed
+// state alone (topology.DeriveAdoptedIntent, the same PA-6 adopt rule): the
+// entries here are already subdomain-on by construction, so intent is
+// "domain" when a custom domain also routes to the service, else "subdomain".
 func buildRuntimeURLs(ctx context.Context, client platform.Client, projectID string, services []platform.ServiceStack, plan *workflow.ServicePlan) []workflow.RuntimeURL {
-	var urls []workflow.RuntimeURL
+	var enabled []*platform.ServiceStack
 	for i := range services {
-		svc := &services[i]
-		if !svc.SubdomainAccess {
-			continue
+		if services[i].SubdomainAccess {
+			enabled = append(enabled, &services[i])
 		}
+	}
+	if len(enabled) == 0 {
+		return nil
+	}
+	obsAll, obsErr := ops.ObservePublicAccessAll(ctx, client, projectID, enabled)
+
+	var urls []workflow.RuntimeURL
+	for _, svc := range enabled {
 		url := ops.ResolveSubdomainURL(ctx, client, projectID, svc)
 		if url == "" {
 			continue
 		}
 		role := runtimeRoleForHostname(plan, svc.Name)
-		urls = append(urls, workflow.RuntimeURL{
+		runtimeURL := workflow.RuntimeURL{
 			Hostname: svc.Name,
 			Role:     role,
 			URL:      url,
 			Handoff:  role == workflow.RuntimeURLRoleStage,
-		})
+		}
+		if obsErr == nil {
+			if obs, ok := obsAll[svc.Name]; ok {
+				runtimeURL.PublicAccess = &workflow.RuntimeURLPublicAccess{
+					Intent:    string(topology.DeriveAdoptedIntent(obs.Observed)),
+					Subdomain: string(obs.Observed.Subdomain),
+					URL:       obs.URL,
+					Domains:   obs.Observed.Domains,
+				}
+			}
+		}
+		urls = append(urls, runtimeURL)
 	}
 	return urls
 }
