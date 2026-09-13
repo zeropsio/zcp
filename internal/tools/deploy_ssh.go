@@ -148,6 +148,29 @@ func runAppVersionRedeploy(
 	return result, nil
 }
 
+// appVersionRedeploySuggestion returns the R2 corrective (docs/spec-
+// workflows.md §8 R2) when a SELF-deploy SSH failure (source omitted or
+// source==target) is explained by the target having no container to
+// source from at all — a never-activated buildFromGit service whose
+// artifact already built. Consumes RecoveryState.Then verbatim (the
+// single producer — nothing composes its own text here); empty string
+// (no override) for a cross-deploy, a lookup/classify failure, a target
+// with a container, or one whose artifact never built.
+func appVersionRedeploySuggestion(ctx context.Context, client platform.Client, projectID, sourceService, targetService string) string {
+	if sourceService != "" && sourceService != targetService {
+		return "" // cross-deploy: SSH connects to the SOURCE, not this target
+	}
+	svc, err := ops.LookupService(ctx, client, projectID, targetService)
+	if err != nil || svc == nil {
+		return ""
+	}
+	state, err := ops.ComputeRecoveryState(ctx, client, nil, projectID, targetService, svc.Status)
+	if err != nil || !state.ArtifactBuilt || state.HasContainer {
+		return ""
+	}
+	return state.Then
+}
+
 // DeploySSHInput is the input type for zerops_deploy in SSH (container) mode.
 //
 // includeGit is not user-facing: ZCP enables -g on self-deploys (so a
@@ -348,7 +371,12 @@ func RegisterDeploySSH(
 				attempt.FailureClass = topology.FailureClassNetwork
 			}
 			_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
-			return convertError(err, WithRecoveryStatus(), WithFailureClassification(classification)), nil, nil
+			// R2 (docs/spec-workflows.md §8): a self-deploy SSH failure
+			// against a never-activated buildFromGit target (no container
+			// to source from at all) can never succeed on retry — override
+			// the generic transport suggestion with the in-place redeploy.
+			suggestion := appVersionRedeploySuggestion(ctx, client, projectID, input.SourceService, input.TargetService)
+			return convertError(err, WithRecoveryStatus(), WithFailureClassification(classification), WithSuggestion(suggestion)), nil, nil
 		}
 
 		onProgress := buildProgressCallback(ctx, req)

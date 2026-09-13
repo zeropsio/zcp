@@ -913,6 +913,47 @@ func TestDeployTool_Error(t *testing.T) {
 	}
 }
 
+// TestDeployTool_SelfDeploySSHFailed_NoContainerArtifactBuilt_SuggestsAppVersionRedeploy
+// pins docs/spec-workflows.md §8 R2: a self-deploy SSH failure against a
+// never-activated buildFromGit target (READY_TO_DEPLOY, DEPLOY_FAILED
+// appVersion, no container) gets its Suggestion overridden to the
+// appVersion=latest corrective — retrying SSH against a target with no
+// container to source from can never succeed. RecoveryState.Then is the
+// single producer of that text (R2); this site consumes it verbatim.
+func TestDeployTool_SelfDeploySSHFailed_NoContainerArtifactBuilt_SuggestsAppVersionRedeploy(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "s1", Name: "api", Status: platform.ServiceStatusReadyToDeploy},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av-2", ServiceStackID: "s1", Status: platform.BuildStatusDeployFailed, Source: "GIT", Created: "2026-09-14T10:00:00Z"},
+		}).
+		WithServiceAppVersions("s1", []platform.AppVersionEvent{
+			{ID: "av-2", ServiceStackID: "s1", Status: platform.BuildStatusDeployFailed, Source: "GIT", Sequence: 2},
+		})
+	ssh := &stubSSH{err: fmt.Errorf("ssh failed: no route to host")}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "api", // self-deploy: sourceService omitted
+	})
+	if !result.IsError {
+		t.Fatalf("expected IsError for SSH failure")
+	}
+	var wire ErrorWire
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &wire); err != nil {
+		t.Fatalf("parse error wire: %v", err)
+	}
+	if !strings.Contains(wire.Suggestion, "appVersion=latest") {
+		t.Errorf("Suggestion = %q, want it to name the appVersion=latest in-place redeploy", wire.Suggestion)
+	}
+}
+
 func TestDeployTool_PreparingRuntimeFailed(t *testing.T) {
 	t.Parallel()
 
