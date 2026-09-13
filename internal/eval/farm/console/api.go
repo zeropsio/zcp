@@ -339,6 +339,19 @@ func (s *Server) forEachBatchRows(ctx context.Context, fn func(batchID string, m
 			s.logf("skip batch %s: load manifest: %v", b, err)
 			continue
 		}
+		// An archived batch (§3.7) is excluded from every full-history scan
+		// this helper feeds (allRunRows, allProblemsRuns) — the same
+		// precedence batches.go's Kind derivation gives it on the Overview
+		// list, so /problems and /api/digest.md agree with what the batch
+		// list shows by default.
+		archived, err := batchArchived(ctx, s.cfg.Store, b)
+		if err != nil {
+			s.logf("skip batch %s: check archived: %v", b, err)
+			continue
+		}
+		if archived {
+			continue
+		}
 		rows, err := batchWindowRowsWithManifest(ctx, s.cfg.Store, s.cfg.ObserverDisabled, b, manifest, s.queueState, s.runCache, s.summaryCache, s.logf)
 		if err != nil {
 			s.logf("skip batch %s: %v", b, err)

@@ -20,12 +20,32 @@ type VerdictCount struct {
 // Batch kinds (§8.8): evaluation means at least one run proves work; empty
 // means every run proves zero work; unavailable covers the remaining state,
 // where evidence is not available yet or cannot be read. done.json alone
-// proves neither work nor zero work.
+// proves neither work nor zero work. archived means the batch carries an
+// archive marker (§3.7) — it wins over every other kind: an archived batch
+// stays out of the default view regardless of what its runs prove.
 const (
 	batchKindEvaluation  = "evaluation"
 	batchKindEmpty       = "empty"
 	batchKindUnavailable = "unavailable"
+	batchKindArchived    = "archived"
 )
+
+// archivedKey is the bucket key for a batch's archive marker (§3.7),
+// duplicated locally the same way manifestKey/summaryKey are (view.go) —
+// the console reads the bucket layout directly, never through farm's own
+// unexported key helpers.
+func archivedKey(batch string) string { return "batches/" + batch + "/archived.json" }
+
+// batchArchived reports whether batch carries an archive marker (§3.7). Its
+// content (archivedAt, note) is not read here — presence alone is the
+// console's signal.
+func batchArchived(ctx context.Context, store observer.ObjectStore, batch string) (bool, error) {
+	exists, _, err := store.Head(ctx, archivedKey(batch))
+	if err != nil {
+		return false, fmt.Errorf("console: head archive marker: %w", err)
+	}
+	return exists, nil
+}
 
 // BatchRow is one row of the "/" batches page (§8.3 FM-51): id, created,
 // candidate sha (12 chars), set, count per verdict, total cost, observed
@@ -165,6 +185,11 @@ func loadBatchSnapshot(ctx context.Context, store observer.ObjectStore, consoleO
 			logf("skip batch %s: load manifest: %v", id, err)
 			continue
 		}
+		archived, err := batchArchived(ctx, store, id)
+		if err != nil {
+			logf("skip batch %s: check archived: %v", id, err)
+			continue
+		}
 		summary, finished, err := resolveSummary(ctx, store, sc, id)
 		if err != nil {
 			logf("skip batch %s: load summary boundary: %v", id, err)
@@ -257,6 +282,12 @@ func loadBatchSnapshot(ctx context.Context, store observer.ObjectStore, consoleO
 			kind = batchKindEvaluation
 		case !allZeroWorkKnown:
 			kind = batchKindUnavailable
+		}
+		if archived {
+			// Precedence: archived wins over whatever the runs prove — an
+			// operator archives a batch specifically to stop it counting
+			// toward evaluation/unavailable/empty totals (§3.7, §8.8).
+			kind = batchKindArchived
 		}
 		var zcpHigh, zcpMedium int
 		for _, c := range causeCounts {
@@ -404,7 +435,7 @@ func CompareBatches(prevRuns, curRuns []RunRow) BatchDiff {
 func batchListSpec() ListSpec {
 	return ListSpec{
 		Closed: []ClosedFilter{
-			{Name: paramKind, Allowed: []string{batchKindEvaluation, batchKindUnavailable, batchKindEmpty, filterAll}, Single: true},
+			{Name: paramKind, Allowed: []string{batchKindEvaluation, batchKindUnavailable, batchKindEmpty, batchKindArchived, filterAll}, Single: true},
 		},
 		Sorts: []SortKey{
 			{Name: "newest", DefaultDir: "desc"},

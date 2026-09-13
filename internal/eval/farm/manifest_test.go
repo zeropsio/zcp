@@ -3,6 +3,7 @@ package farm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"testing"
 )
@@ -156,5 +157,44 @@ func TestPutManifest_GetManifest_RoundTrip(t *testing.T) {
 	}
 	if got.Batch != want.Batch || got.Set != want.Set || len(got.Runs) != 1 || got.Runs[0].RunID != "r1" {
 		t.Errorf("GetManifest round-trip = %+v, want %+v", got, want)
+	}
+}
+
+// TestArchiveMarker_PutAndGet_RoundTrip proves the archive marker's sink
+// read/write helpers against a minimal fake S3 (batches/<batch>/archived.json,
+// docs/spec-eval-farm.md §3.7), and that a conditional re-create against an
+// already-archived batch fails closed with ErrObjectExists rather than
+// overwriting the first archivedAt/note (§3.7: re-archiving is a no-op).
+func TestArchiveMarker_PutAndGet_RoundTrip(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeS3()
+	server := httptest.NewServer(fake.handler(t))
+	defer server.Close()
+	client := NewSinkClient(Config{URL: server.URL, Bucket: "zcp-farm", Key: "k", Secret: "s"})
+	ctx := context.Background()
+
+	want := ArchiveMarker{ArchivedAt: "2026-09-13T00:00:00Z", Note: "bring-up batch"}
+	if err := PutArchive(ctx, client, "b1", want); err != nil {
+		t.Fatalf("PutArchive: %v", err)
+	}
+	got, err := GetArchive(ctx, client, "b1")
+	if err != nil {
+		t.Fatalf("GetArchive: %v", err)
+	}
+	if got.ArchivedAt != want.ArchivedAt || got.Note != want.Note {
+		t.Errorf("GetArchive round-trip = %+v, want %+v", got, want)
+	}
+
+	if err := PutArchive(ctx, client, "b1", ArchiveMarker{ArchivedAt: "2026-09-14T00:00:00Z"}); !errors.Is(err, ErrObjectExists) {
+		t.Errorf("second PutArchive error = %v, want ErrObjectExists", err)
+	}
+	// The first marker must survive the rejected second write untouched.
+	got2, err := GetArchive(ctx, client, "b1")
+	if err != nil {
+		t.Fatalf("GetArchive after rejected overwrite: %v", err)
+	}
+	if got2.ArchivedAt != want.ArchivedAt {
+		t.Errorf("GetArchive after rejected overwrite = %+v, want unchanged %+v", got2, want)
 	}
 }

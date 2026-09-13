@@ -173,3 +173,43 @@ func SummaryExists(ctx context.Context, client *SinkClient, batch string) (bool,
 	}
 	return exists, nil
 }
+
+// ArchiveMarker is batches/<batch>/archived.json, written by `farm archive`
+// (docs/spec-eval-farm.md §3.7). Its presence is the only signal the console
+// reads to hide a batch from every default view; archiving never deletes or
+// mutates any other evidence object (§1.4: manifests are evidence).
+type ArchiveMarker struct {
+	ArchivedAt string `json:"archivedAt"` // RFC3339
+	Note       string `json:"note,omitempty"`
+}
+
+// archiveKey is the bucket key for a batch's archive marker (§3.7).
+func archiveKey(batch string) string { return "batches/" + batch + "/archived.json" }
+
+// PutArchive reserves batch's archive marker. The conditional write mirrors
+// CreateManifest: a batch already archived returns ErrObjectExists, and the
+// caller treats a second archive as a no-op rather than overwriting the
+// first archivedAt/note.
+func PutArchive(ctx context.Context, client *SinkClient, batch string, m ArchiveMarker) error {
+	body, err := json.Marshal(m)
+	if err != nil {
+		return fmt.Errorf("farm: marshal archive marker: %w", err)
+	}
+	if err := client.PutIfAbsent(ctx, archiveKey(batch), body); err != nil {
+		return fmt.Errorf("farm: create archive marker: %w", err)
+	}
+	return nil
+}
+
+// GetArchive reads batch's archive marker.
+func GetArchive(ctx context.Context, client *SinkClient, batch string) (ArchiveMarker, error) {
+	body, err := client.Get(ctx, archiveKey(batch))
+	if err != nil {
+		return ArchiveMarker{}, fmt.Errorf("farm: get archive marker: %w", err)
+	}
+	var m ArchiveMarker
+	if err := json.Unmarshal(body, &m); err != nil {
+		return ArchiveMarker{}, fmt.Errorf("farm: parse archive marker: %w", err)
+	}
+	return m, nil
+}

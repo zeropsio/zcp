@@ -422,10 +422,19 @@ func (snapshot batchSnapshot) problemsRuns() []ProblemsRun {
 	sort.Slice(batches, func(i, j int) bool { return batches[i].BatchID < batches[j].BatchID })
 	runCount := 0
 	for _, batch := range batches {
+		if batch.Kind == batchKindArchived {
+			continue
+		}
 		runCount += len(snapshot.runsByBatch[batch.BatchID])
 	}
 	runs := make([]ProblemsRun, 0, runCount)
 	for _, batch := range batches {
+		// An archived batch (§3.7) is excluded here too, matching
+		// allProblemsRuns (api.go) — both full-history problem feeds must
+		// agree (TestHome_SnapshotPreservesProblemInputOrder).
+		if batch.Kind == batchKindArchived {
+			continue
+		}
 		for _, row := range snapshot.runsByBatch[batch.BatchID] {
 			runs = append(runs, ProblemsRun{Row: row, BatchSet: batch.Set, BatchCreatedAt: batch.CreatedAt})
 		}

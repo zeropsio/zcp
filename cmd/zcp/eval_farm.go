@@ -39,6 +39,7 @@ const (
 	farmVerbGC       = "gc"
 	farmVerbObserve  = "observe"
 	farmVerbConsole  = "console"
+	farmVerbArchive  = "archive"
 
 	// flagCandidate names the file under test — shared with
 	// eval_behavioral.go's own --candidate execution-binding flag (a
@@ -93,6 +94,8 @@ func runEvalFarm(args []string) int {
 		return runFarmObserve(args[1:])
 	case farmVerbConsole:
 		return runFarmConsole(args[1:])
+	case farmVerbArchive:
+		return runFarmArchive(args[1:], envr)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown farm subcommand: %s\n", args[0])
 		printEvalFarmUsage()
@@ -702,5 +705,7 @@ Commands (ZCP_AUTHORING=1 required):
   observe  <run-dir> [--model <m>] [--claude <path>]   Advisory evaluation of a pulled run; writes
                                                <run-dir>/observer/<obsId>.json, prints the rendering, never touches the bucket
   console  --listen :8080                       Serve the hosted console (§8): auth, read model, agent API over the farm bucket
-                                               (env ZCP_FARM_CONSOLE_TOKEN required, ZCP_FARM_S3_*, optional ZCP_FARM_OBSERVER=off)`)
+                                               (env ZCP_FARM_CONSOLE_TOKEN required, ZCP_FARM_S3_*, optional ZCP_FARM_OBSERVER=off)
+  archive  <batch…> [--note "<why>"] | --list  Hide bring-up batches from the console without deleting evidence (§3.7):
+                                               writes batches/<batch>/archived.json; --list prints archived batches`)
 }

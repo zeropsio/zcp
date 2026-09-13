@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"reflect"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -553,6 +555,163 @@ func TestBatchSort_UnknownCost_LastBothDirections(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBatchKind_ArchivedMarker_WinsOverEvaluation pins §3.7/§8.8: a batch
+// whose runs prove work (would otherwise resolve batchKindEvaluation)
+// resolves batchKindArchived once its archived.json marker exists — kind
+// precedence, archived wins over every other signal.
+func TestBatchKind_ArchivedMarker_WinsOverEvaluation(t *testing.T) {
+	store := newFakeStore()
+
+	manifest := farm.BatchManifest{
+		Batch: "archived-batch", CreatedAt: "2026-09-10T00:00:00Z", StartedAt: "2026-09-10T00:00:00Z",
+		Set: "gate", CandidateSha256: "cand-sha", EvaluatorSha256: "eval-sha", ScenariosDigest: "scn-sha",
+		Runs: []farm.ManifestRun{{RunID: "archived-batch-scn", Scenario: "scn", ProjectName: "p"}},
+	}
+	store.putJSON(t, "batches/archived-batch/manifest.json", manifest)
+	seedRun(t, store, runFixture{
+		runID: "archived-batch-scn", scenario: "scn", startedAt: time.Date(2026, 9, 10, 1, 0, 0, 0, time.UTC),
+		durationS: "5s", costUsd: 0.05, taskResult: "passed", done: true,
+	})
+	store.putJSON(t, "batches/archived-batch/archived.json", farm.ArchiveMarker{ArchivedAt: "2026-09-11T00:00:00Z", Note: "bring-up"})
+
+	rows, err := loadBatchRows(context.Background(), store, false, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("loadBatchRows: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	if rows[0].Kind != batchKindArchived {
+		t.Errorf("Kind = %q, want %q (a run proving work must not win over an archive marker)", rows[0].Kind, batchKindArchived)
+	}
+}
+
+// TestBatchesList_DefaultExcludesArchived_KindAllIncludes pins §8.7: the
+// Overview batches list's default (kind=evaluation,unavailable) excludes an
+// archived batch, kind=all includes it, and kind=archived selects only it.
+func TestBatchesList_DefaultExcludesArchived_KindAllIncludes(t *testing.T) {
+	rows := []BatchRow{
+		{BatchID: "live", Kind: batchKindEvaluation},
+		{BatchID: "gone", Kind: batchKindArchived},
+	}
+
+	def, err := Parse(batchListSpec(), url.Values{})
+	if err != nil {
+		t.Fatalf("Parse (default): %v", err)
+	}
+	got, _ := batchEngine().Apply(rows, def, time.Time{})
+	assertStrSlice(t, "default kind", batchIDs(got), []string{"live"})
+
+	all, err := Parse(batchListSpec(), url.Values{"kind": {filterAll}})
+	if err != nil {
+		t.Fatalf("Parse (kind=all): %v", err)
+	}
+	got, _ = batchEngine().Apply(rows, all, time.Time{})
+	gotAll := batchIDs(got)
+	sort.Strings(gotAll)
+	assertStrSlice(t, "kind=all", gotAll, []string{"gone", "live"})
+
+	archivedOnly, err := Parse(batchListSpec(), url.Values{"kind": {batchKindArchived}})
+	if err != nil {
+		t.Fatalf("Parse (kind=archived): %v", err)
+	}
+	got, _ = batchEngine().Apply(rows, archivedOnly, time.Time{})
+	assertStrSlice(t, "kind=archived", batchIDs(got), []string{"gone"})
+}
+
+// TestHome_LatestEvaluation_SkipsArchived pins §3.7/§8.3 item 1: an
+// archived batch is never picked as the "latest evaluation" batch, even
+// when it is the newest finished batch with readable work — pickLatestEvaluationBatch
+// falls through to the next finished evaluation batch instead.
+func TestHome_LatestEvaluation_SkipsArchived(t *testing.T) {
+	srv, store, _ := testServer(t)
+	now := fixedNow(t)()
+	seed := func(batch string, age time.Duration) {
+		seedBatchAt(t, store, batch, ObserverOff, now.Add(-age), []runFixture{{
+			runID: batch + "-run", scenario: "deploy", startedAt: now.Add(-age),
+			durationS: "5s", costUsd: 0.1, taskResult: farm.VerdictPassed, done: true,
+		}}, true, map[string]string{batch + "-run": farm.VerdictPassed})
+	}
+
+	seed("finished-older", 2*time.Hour)
+	seed("finished-newer-archived", time.Hour)
+	store.putJSON(t, "batches/finished-newer-archived/archived.json", farm.ArchiveMarker{ArchivedAt: now.UTC().Format(time.RFC3339)})
+
+	rows, err := loadBatchRows(t.Context(), store, false, srv.queueState, srv.runCache, srv.summaryCache, srv.logf)
+	if err != nil {
+		t.Fatalf("loadBatchRows: %v", err)
+	}
+	latest, found := pickLatestEvaluationBatch(rows)
+	if !found {
+		t.Fatal("pickLatestEvaluationBatch: found = false, want finished-older")
+	}
+	if latest.BatchID != "finished-older" {
+		t.Fatalf("latest = %q, want finished-older; an archived batch must never be picked", latest.BatchID)
+	}
+}
+
+// TestProblems_ArchivedBatch_NotInPopulation pins §3.7/§8.6: an archived
+// batch's runs are excluded from the full-history problem-clustering
+// population — both the live /problems feed (allProblemsRuns, api.go) and
+// the Home overview's snapshot-derived feed (problemsRuns, pages_home.go)
+// must agree (TestHome_SnapshotPreservesProblemInputOrder pins that
+// equivalence generally; this test pins that archived exclusion does not
+// break it).
+func TestProblems_ArchivedBatch_NotInPopulation(t *testing.T) {
+	srv, store, _ := testServer(t)
+	now := fixedNow(t)()
+	seedBatchAt(t, store, "kept", ObserverOff, now.Add(-2*time.Hour), []runFixture{{
+		runID: "kept-run", scenario: "deploy", startedAt: now.Add(-2 * time.Hour),
+		durationS: "5s", costUsd: 0.1, taskResult: farm.VerdictPassed, done: true,
+	}}, true, map[string]string{"kept-run": farm.VerdictPassed})
+	seedBatchAt(t, store, "archived", ObserverOff, now.Add(-time.Hour), []runFixture{{
+		runID: "archived-run", scenario: "deploy", startedAt: now.Add(-time.Hour),
+		durationS: "5s", costUsd: 0.1, taskResult: farm.VerdictFailed, done: true,
+	}}, true, map[string]string{"archived-run": farm.VerdictFailed})
+	store.putJSON(t, "batches/archived/archived.json", farm.ArchiveMarker{ArchivedAt: now.UTC().Format(time.RFC3339)})
+
+	apiRuns, err := srv.allProblemsRuns(t.Context())
+	if err != nil {
+		t.Fatalf("allProblemsRuns: %v", err)
+	}
+	for _, r := range apiRuns {
+		if r.Row.RunID == "archived-run" {
+			t.Errorf("allProblemsRuns included archived-run from an archived batch")
+		}
+	}
+	found := false
+	for _, r := range apiRuns {
+		if r.Row.RunID == "kept-run" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("allProblemsRuns dropped kept-run from a non-archived batch")
+	}
+
+	snapshot, err := loadBatchSnapshot(t.Context(), srv.cfg.Store, srv.cfg.ObserverDisabled, srv.queueState, srv.runCache, srv.summaryCache, srv.logf)
+	if err != nil {
+		t.Fatalf("loadBatchSnapshot: %v", err)
+	}
+	snapshotRuns := snapshot.problemsRuns()
+	for _, r := range snapshotRuns {
+		if r.Row.RunID == "archived-run" {
+			t.Errorf("snapshot.problemsRuns() included archived-run from an archived batch")
+		}
+	}
+	if !reflect.DeepEqual(snapshotRuns, apiRuns) {
+		t.Errorf("snapshot.problemsRuns() = %+v, want it to match allProblemsRuns() = %+v", snapshotRuns, apiRuns)
+	}
+}
+
+func batchIDs(rows []BatchRow) []string {
+	ids := make([]string, len(rows))
+	for i, r := range rows {
+		ids[i] = r.BatchID
+	}
+	return ids
 }
 
 func assertStrSlice(t *testing.T, label string, got, want []string) {
