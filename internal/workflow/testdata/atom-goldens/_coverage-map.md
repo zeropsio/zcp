@@ -51,6 +51,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `develop-env-cheatsheet-sql` | 1 | develop/first-deploy-recipe-implicit-standard |
 | `develop-env-var-channels` | 4 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision |
 | `develop-env-var-model` | 4 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision |
+| `develop-failed-build-recover` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-first-deploy-asset-pipeline-container` | 1 | develop/first-deploy-recipe-implicit-standard |
 | `develop-first-deploy-asset-pipeline-local` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-first-deploy-env-vars` | 4 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision |
