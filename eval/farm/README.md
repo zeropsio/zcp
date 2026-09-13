@@ -66,8 +66,9 @@ go run ./cmd/zcp eval farm observe /tmp/farm-out/<runId>
 
 `run` also takes `[--evaluator <sha256>] [--wrapper <sha256>]` (default to
 the `evaluators/current` / `farm/wrapper/current` pointers `push` wrote),
-`[--run-budget 45m]`, `[--detach]` (re-execs in the background, logs to
-`farm-<batch>.log` in the current directory — gitignored), and
+`[--run-budget 45m]`, `[--max-concurrent 8]` (env `ZCP_FARM_MAX_CONCURRENT`;
+`0` = unlimited; §3.3 FM-65), `[--detach]` (re-execs in the background, logs
+to `farm-<batch>.log` in the current directory — gitignored), and
 `[--observer <model>|off]`.
 
 Every command above assumes the checkout root as the current directory.

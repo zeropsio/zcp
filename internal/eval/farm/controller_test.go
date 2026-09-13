@@ -2208,3 +2208,248 @@ func TestRunBatch_ManifestRecordsObserver(t *testing.T) {
 		t.Errorf("manifest.Observer = %q, want %q", manifest.Observer, "claude-opus-5")
 	}
 }
+
+// peakTrackingClient wraps a PlatformClient and counts live run projects
+// (successful CreateAndImportProject calls minus successful DeleteProject
+// calls), recording the highest count ever observed — the independent
+// oracle S11's window tests use to prove RunBatch never exceeds
+// opts.MaxConcurrent: Peak is derived purely from the platform calls
+// RunBatch actually made, never from its own actives/resultsByRunID
+// bookkeeping.
+type peakTrackingClient struct {
+	PlatformClient
+	mu   sync.Mutex
+	live int
+	peak int
+}
+
+func (p *peakTrackingClient) CreateAndImportProject(ctx context.Context, yaml string) (*platform.ImportResult, error) {
+	res, err := p.PlatformClient.CreateAndImportProject(ctx, yaml)
+	if err != nil {
+		return res, err
+	}
+	p.mu.Lock()
+	p.live++
+	if p.live > p.peak {
+		p.peak = p.live
+	}
+	p.mu.Unlock()
+	return res, err
+}
+
+func (p *peakTrackingClient) DeleteProject(ctx context.Context, projectID string) (*platform.Process, error) {
+	res, err := p.PlatformClient.DeleteProject(ctx, projectID)
+	if err == nil {
+		p.mu.Lock()
+		p.live--
+		p.mu.Unlock()
+	}
+	return res, err
+}
+
+func (p *peakTrackingClient) Peak() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.peak
+}
+
+// TestRunBatch_MaxConcurrent_NeverExceedsWindow pins §3.3 FM-65:
+// opts.MaxConcurrent bounds how many run projects RunBatch keeps alive at
+// once. All 5 scenarios have their done.json pre-seeded (settle happens on
+// the first poll), so with MaxConcurrent: 2 the create/settle interleave
+// must still cap live projects at 2 — a naive "create all, then settle all"
+// batch would reach 5. Independent oracle: peakTrackingClient counts real
+// CreateAndImportProject/DeleteProject calls, never RunBatch's own
+// bookkeeping.
+func TestRunBatch_MaxConcurrent_NeverExceedsWindow(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-s11-window"
+	f := newControllerFixture(t, clientID)
+	tracked := &peakTrackingClient{PlatformClient: f.client}
+
+	batch := "batch-s11-window"
+	scenarios := []ScenarioRun{
+		{ID: "recipe-w1"}, {ID: "recipe-w2"}, {ID: "recipe-w3"}, {ID: "recipe-w4"}, {ID: "recipe-w5"},
+	}
+	for _, sc := range scenarios {
+		seedSettledRun(t, f.s3, testRunID(t, batch, sc.ID), sc.ID, ResultPassed)
+	}
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
+		Scenarios: scenarios, OAuthToken: "oauth-token",
+		Sink:          Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:     time.Hour,
+		PollInterval:  time.Millisecond,
+		MaxConcurrent: 2,
+	}
+
+	results, err := RunBatch(context.Background(), tracked, f.sink, opts)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if peak := tracked.Peak(); peak > 2 {
+		t.Errorf("peak live projects = %d, want <= 2 (opts.MaxConcurrent)", peak)
+	}
+	if len(results) != 5 {
+		t.Fatalf("results = %+v, want 5 entries", results)
+	}
+	for i, sc := range scenarios {
+		if results[i].Scenario != sc.ID {
+			t.Errorf("results[%d].Scenario = %q, want %q (results must stay in scheduled order)", i, results[i].Scenario, sc.ID)
+		}
+		if results[i].Result != ResultPassed {
+			t.Errorf("results[%d] = %+v, want Result=%q", i, results[i], ResultPassed)
+		}
+	}
+}
+
+// TestRunBatch_MaxConcurrentZero_CreatesAll pins today's behaviour (§3.3
+// FM-65: MaxConcurrent: 0 means unlimited) — every scheduled run's project
+// is created before any of them settle, so the peak reaches all 5.
+func TestRunBatch_MaxConcurrentZero_CreatesAll(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-s11-unwindowed"
+	f := newControllerFixture(t, clientID)
+	tracked := &peakTrackingClient{PlatformClient: f.client}
+
+	batch := "batch-s11-unwindowed"
+	scenarios := []ScenarioRun{
+		{ID: "recipe-u1"}, {ID: "recipe-u2"}, {ID: "recipe-u3"}, {ID: "recipe-u4"}, {ID: "recipe-u5"},
+	}
+	for _, sc := range scenarios {
+		seedSettledRun(t, f.s3, testRunID(t, batch, sc.ID), sc.ID, ResultPassed)
+	}
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
+		Scenarios: scenarios, OAuthToken: "oauth-token",
+		Sink:          Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:     time.Hour,
+		PollInterval:  time.Millisecond,
+		MaxConcurrent: 0,
+	}
+
+	results, err := RunBatch(context.Background(), tracked, f.sink, opts)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if peak := tracked.Peak(); peak != 5 {
+		t.Errorf("peak live projects = %d, want 5 (MaxConcurrent: 0 is unlimited)", peak)
+	}
+	if len(results) != 5 {
+		t.Fatalf("results = %+v, want 5 entries", results)
+	}
+}
+
+// failNthRunTokenMint fails MintProjectScopedToken's n-th call (1-indexed)
+// with the scoped-mint-forbidden platform error isScopedMintForbidden
+// checks for, so createRun reports a batchAbortError — every other call
+// succeeds via the wrapped PlatformClient.
+type failNthRunTokenMint struct {
+	PlatformClient
+	n     int
+	calls int
+}
+
+func (c *failNthRunTokenMint) MintProjectScopedToken(ctx context.Context, clientID, projectID, name string) (platform.MintedToken, error) {
+	c.calls++
+	if c.calls == c.n {
+		return platform.MintedToken{}, &platform.PlatformError{Code: platform.ErrDelegationUnavailable, Message: "simulated scoped mint forbidden"}
+	}
+	return c.PlatformClient.MintProjectScopedToken(ctx, clientID, projectID, name)
+}
+
+// TestRunBatch_MaxConcurrent_AbortMidWindow_FinalizesActives pins §3.3
+// FM-65's interaction with a batch-aborting failure: with MaxConcurrent: 2
+// and 3 scenarios, the 3rd scenario's creation aborts the batch (a scoped
+// mint 403) — by then the window has already settled the 1st scenario (its
+// budget elapses with no done.json seeded), leaving the 2nd still active.
+// Both actives end up finalized: one via the window mechanism during
+// creation, the other via finalizeAfterFailure's trailing settle pass — and
+// the abort's own blocked row carries the error detail, exactly as an
+// unwindowed abort does today.
+func TestRunBatch_MaxConcurrent_AbortMidWindow_FinalizesActives(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-s11-abort-window"
+	f := newControllerFixture(t, clientID)
+	client := &failNthRunTokenMint{PlatformClient: f.client, n: 3}
+
+	batch := "batch-s11-abort-window"
+	scenarios := []ScenarioRun{{ID: "recipe-a1"}, {ID: "recipe-a2"}, {ID: "recipe-a3"}}
+	// None of the three ever gets a seeded done.json — the two that reach
+	// waitForDone settle budget-blocked, never "passed"; only the abort
+	// destination (createRun's own mint failure) matters here.
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
+		Scenarios: scenarios, OAuthToken: "oauth-token",
+		Sink:          Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:     time.Millisecond,
+		PollInterval:  time.Millisecond,
+		MaxConcurrent: 2,
+	}
+
+	results, err := RunBatch(context.Background(), client, f.sink, opts)
+	if err == nil || !strings.Contains(err.Error(), "mint run token") {
+		t.Fatalf("RunBatch error = %v, want a mint run token abort", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("results = %+v, want 3 entries (2 finalized actives + the abort row)", results)
+	}
+	byScenario := make(map[string]RunResult, len(results))
+	for _, rr := range results {
+		byScenario[rr.Scenario] = rr
+	}
+	first, ok := byScenario["recipe-a1"]
+	if !ok || first.ProjectID == "" {
+		t.Errorf("recipe-a1 = %+v, ok=%v, want it finalized via the window mechanism with its project retained (budget exemption)", first, ok)
+	}
+	second, ok := byScenario["recipe-a2"]
+	if !ok || second.ProjectID == "" {
+		t.Errorf("recipe-a2 = %+v, ok=%v, want it finalized via finalizeAfterFailure's trailing pass with its project retained", second, ok)
+	}
+	third, ok := byScenario["recipe-a3"]
+	if !ok || third.Result != ResultBlocked || !strings.Contains(third.Error, "mint run token") {
+		t.Errorf("recipe-a3 = %+v, ok=%v, want the abort's own blocked row with the mint failure detail", third, ok)
+	}
+}
+
+// TestManifest_RecordsMaxConcurrent pins §3.3 FM-65: RunBatch writes
+// opts.MaxConcurrent into batches/<batch>/manifest.json at reservation time
+// (the same manifest write FM-22 already requires before any project
+// exists), so a reader can tell what window a batch ran under.
+func TestManifest_RecordsMaxConcurrent(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-s11-manifest"
+	f := newControllerFixture(t, clientID)
+	client, sink := f.client, f.sink
+
+	batch := "batch-s11-manifest"
+	sc := ScenarioRun{ID: "recipe-manifest-window"}
+	seedSettledRun(t, f.s3, testRunID(t, batch, sc.ID), sc.ID, ResultPassed)
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
+		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget: time.Second, PollInterval: time.Millisecond,
+		MaxConcurrent: 4,
+	}
+
+	if _, err := RunBatch(context.Background(), client, sink, opts); err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+
+	manifest, err := GetManifest(context.Background(), sink, batch)
+	if err != nil {
+		t.Fatalf("GetManifest: %v", err)
+	}
+	if manifest.MaxConcurrent != 4 {
+		t.Errorf("manifest.MaxConcurrent = %d, want %d", manifest.MaxConcurrent, 4)
+	}
+}

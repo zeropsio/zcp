@@ -519,6 +519,21 @@ binary carries `vcs.revision`; without it the batch has no `candidateInfo`
 and readers show the sha. None of these fields reaches a
 run project.
 
+**FM-65.** `farm run --max-concurrent <n>` (env `ZCP_FARM_MAX_CONCURRENT`,
+default 8; `0` means unlimited, the behaviour before this field existed)
+bounds how many run projects `farm run` keeps alive at once: scheduled runs
+are still created in order, but once the window is full the controller
+settles the OLDEST active run — the same wait/verify/delete/revoke path an
+unwindowed batch already uses — before creating the next one. A batch's
+results and `summary.json` stay in scheduled order regardless of the order
+in which runs actually settle. The resolved window is recorded on the
+manifest as `maxConcurrent` at the same reservation write FM-22 already
+requires, so a reader can tell what a batch ran under. A negative or
+non-integer `--max-concurrent` is a flag error, checked before any network
+dependency. Windowing changes only when projects are created relative to
+each other; FM-21's no-bundle exemption, FM-23's launch-token lifecycle,
+and R3's interrupt handling are unchanged.
+
 ### 3.4 Launch-token lifecycle
 
 **FM-23.** For a launch scenario, the controller mints one
