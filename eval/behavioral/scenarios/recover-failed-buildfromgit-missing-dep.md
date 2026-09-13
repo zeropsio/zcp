@@ -22,7 +22,7 @@ seed:
   expect:
     services:
       - hostname: api
-        status: [FAILED]
+        status: [READY_TO_DEPLOY]
     processes:
       - service: api
         action: stack.build

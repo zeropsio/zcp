@@ -19,7 +19,7 @@ verification:
     - {service: appstage, cmd: "printenv FEATURE_X", expect: "on"}
   toolResult:
     - {tool: zerops_env, contains: restartedServices}
-  unchanged: [db]
+  unchanged: [appdev, appstage]
   noFailedProcesses: true
   toolArg:
     - {never: "zerops_manage{action=reload}"}

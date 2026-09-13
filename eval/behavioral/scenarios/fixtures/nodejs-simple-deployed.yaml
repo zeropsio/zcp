@@ -8,6 +8,8 @@
 # production-style immutable build). This combination reliably reaches ACTIVE
 # at SeedDeployed under the 15-minute wait budget.
 
+# db: both `dev` and `prod` setups of nodejs-hello-world-app run a migrate
+# initCommand against ${db_*} — without a db the seed itself fails (matrix-1).
 services:
   - hostname: api
     type: nodejs@22
@@ -18,3 +20,10 @@ services:
     maxContainers: 1
     verticalAutoscaling:
       minRam: 0.5
+
+  - hostname: db
+    type: postgresql@18
+    mode: NON_HA
+    priority: 10
+    verticalAutoscaling:
+      minRam: 0.25

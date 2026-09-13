@@ -4,6 +4,8 @@
 # from inside appdev BEFORE the agent is spawned, so seed.expect can assert
 # the resulting FAILED build while the earlier appVersion keeps serving.
 
+# db: both `dev` and `prod` setups of nodejs-hello-world-app run a migrate
+# initCommand against ${db_*} — without a db the seed itself fails (matrix-1).
 services:
   - hostname: appdev
     type: nodejs@22
@@ -12,3 +14,10 @@ services:
     enableSubdomainAccess: true
     verticalAutoscaling:
       minRam: 0.5
+
+  - hostname: db
+    type: postgresql@18
+    mode: NON_HA
+    priority: 10
+    verticalAutoscaling:
+      minRam: 0.25
