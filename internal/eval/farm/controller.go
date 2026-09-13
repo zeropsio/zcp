@@ -226,6 +226,11 @@ type RunOptions struct {
 	// PollInterval is how often RunBatch re-checks the bucket for
 	// done.json while waiting; zero defaults to 2s.
 	PollInterval time.Duration
+	// MaxConcurrent bounds how many run projects RunBatch keeps alive at
+	// once (§3.3 FM-65): 0 means unlimited (today's behaviour, every
+	// scheduled run created before any settles) — `farm run
+	// --max-concurrent` sets it, defaulting to 8.
+	MaxConcurrent int
 	// Now defaults to time.Now; tests inject a fixed/advancing clock.
 	Now func() time.Time
 }
@@ -433,25 +438,188 @@ func revokeLaunchTokenOnto(ctx context.Context, client PlatformClient, opts RunO
 	}
 }
 
+// scheduleRuns validates scenarios (ValidScenarioID, no duplicate id, a
+// production project name only ever the controller-owned one and only for a
+// launch scenario) and assigns each one its runId, before any project is
+// created — RunBatch's first step.
+func scheduleRuns(batch string, scenarios []ScenarioRun) ([]scheduledRun, []ManifestRun, error) {
+	seenScenarios := make(map[string]struct{}, len(scenarios))
+	scheduled := make([]scheduledRun, 0, len(scenarios))
+	manifestRuns := make([]ManifestRun, 0, len(scenarios))
+	for _, sc := range scenarios {
+		if !ValidScenarioID(sc.ID) {
+			return nil, nil, fmt.Errorf("farm run: invalid scenario %q", sc.ID)
+		}
+		if _, exists := seenScenarios[sc.ID]; exists {
+			return nil, nil, fmt.Errorf("farm run: duplicate scenario %q", sc.ID)
+		}
+		seenScenarios[sc.ID] = struct{}{}
+
+		runID, err := EncodeRunID(batch, sc.ID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("farm run: encode %s: %w", sc.ID, err)
+		}
+		if sc.ProductionProjectName != "" && sc.ProductionProjectName != productionProjectName(runID) {
+			return nil, nil, fmt.Errorf("farm run: scenario %s has foreign production project %q", sc.ID, sc.ProductionProjectName)
+		}
+		if !sc.Launch && sc.ProductionProjectName != "" {
+			return nil, nil, fmt.Errorf("farm run: non-launch scenario %s has production project", sc.ID)
+		}
+		scheduled = append(scheduled, scheduledRun{ScenarioRun: sc, RunID: runID})
+		mr := ManifestRun{RunID: runID, Scenario: sc.ID, ProjectName: ProjectPrefix + runID}
+		mr.ProductionProjectName = sc.ProductionProjectName
+		manifestRuns = append(manifestRuns, mr)
+	}
+	return scheduled, manifestRuns, nil
+}
+
+// batchState is RunBatch's create/settle bookkeeping, factored out of the
+// function body so every run's outcome — creation-phase blocked, settled
+// early to respect opts.MaxConcurrent (§3.3 FM-65), or settled by the
+// trailing pass — is recorded through the one path finalizeOldestActive and
+// finalizeRemainingActives share, and reassembled in scheduled order by
+// orderedResults regardless of the order in which runs actually settle.
+type batchState struct {
+	client       PlatformClient
+	sink         *SinkClient
+	opts         RunOptions
+	scheduled    []scheduledRun
+	now          func() time.Time
+	pollInterval time.Duration
+
+	actives          []activeRun
+	resultsByRunID   map[string]RunResult
+	cleanupErrs      []error
+	endedByBudget    bool
+	endedByInterrupt bool
+}
+
+func (s *batchState) orderedResults() []RunResult {
+	ordered := make([]RunResult, 0, len(s.resultsByRunID))
+	for _, r := range s.scheduled {
+		if rr, ok := s.resultsByRunID[r.RunID]; ok {
+			ordered = append(ordered, rr)
+		}
+	}
+	return ordered
+}
+
+// recordFinalized folds one finalizeActiveRun outcome into s — shared by
+// finalizeOldestActive (the windowed early settle) and
+// finalizeRemainingActives (the trailing settle pass) so both paths update
+// endedByBudget/endedByInterrupt/cleanupErrs identically.
+func (s *batchState) recordFinalized(rr RunResult, budget, interrupted bool, cleanupErr error) {
+	s.resultsByRunID[rr.RunID] = rr
+	if cleanupErr != nil {
+		s.cleanupErrs = append(s.cleanupErrs, cleanupErr)
+	}
+	// FM-21's sole exemption (budget elapsed) and R3's interrupt exemption
+	// share the same shape: the project is kept for inspection, the token
+	// (if any) stays unrevoked and is recorded so `gc` can finish the job
+	// later.
+	if interrupted {
+		s.endedByInterrupt = true
+	} else if budget {
+		s.endedByBudget = true
+	}
+}
+
+// finalizeOldestActive settles actives[0] — the longest-running active
+// run — so §3.3 FM-65's window never exceeds opts.MaxConcurrent.
+func (s *batchState) finalizeOldestActive(ctx context.Context) {
+	a := s.actives[0]
+	s.actives = s.actives[1:]
+	rr, budget, interrupted, cleanupErr := finalizeActiveRun(ctx, s.client, s.sink, a, s.opts, s.now, s.pollInterval)
+	s.recordFinalized(rr, budget, interrupted, cleanupErr)
+}
+
+// finalizeRemainingActives settles every run still open once every
+// scheduled run has been created (or the batch stopped creating more).
+func (s *batchState) finalizeRemainingActives(ctx context.Context) {
+	for _, a := range s.actives {
+		rr, budget, interrupted, cleanupErr := finalizeActiveRun(ctx, s.client, s.sink, a, s.opts, s.now, s.pollInterval)
+		s.recordFinalized(rr, budget, interrupted, cleanupErr)
+	}
+}
+
+// runCreates creates each scheduled run in order, settling the oldest
+// active run first whenever opts.MaxConcurrent's window is full (§3.3
+// FM-65). aborted reports whether a batch-ending failure occurred (a
+// scoped-mint 403, or a manifest write failure): RunBatch must return
+// results/err immediately in that case, never fall through to its own
+// trailing settle pass.
+func (s *batchState) runCreates(ctx context.Context, manifest *BatchManifest, manifestRuns []ManifestRun) (results []RunResult, aborted bool, err error) {
+	runTokenIDs := make(map[string]string, len(s.scheduled)) // runID -> minted run token id, for the manifest-evidence update below
+	for _, r := range s.scheduled {
+		// §3.3 FM-65: never more than opts.MaxConcurrent run projects alive
+		// at once (0 = unlimited, today's behaviour) — settle the oldest
+		// active run before creating the next.
+		for s.opts.MaxConcurrent > 0 && len(s.actives) >= s.opts.MaxConcurrent {
+			s.finalizeOldestActive(ctx)
+		}
+		active, blockedResult, abortErr := createRun(ctx, s.client, s.opts, r)
+		if abortErr != nil {
+			var abort *batchAbortError
+			if errors.As(abortErr, &abort) && abort.result.RunID != "" {
+				s.resultsByRunID[abort.result.RunID] = abort.result
+			}
+			if len(runTokenIDs) > 0 {
+				if err := persistRunTokenIDs(ctx, s.sink, s.opts.Batch, manifest, manifestRuns, runTokenIDs); err != nil {
+					abortErr = errors.Join(abortErr, fmt.Errorf("farm run: update manifest with run token ids: %w", err))
+				}
+			}
+			results, finalizeErr := finalizeAfterFailure(ctx, s.client, s.sink, s.opts, s.actives, s.orderedResults(), abortErr, s.now, s.pollInterval)
+			return results, true, finalizeErr
+		}
+		if blockedResult != nil {
+			s.resultsByRunID[blockedResult.RunID] = *blockedResult
+			continue
+		}
+		// R7: the deadline is anchored at THIS run's own creation moment,
+		// never recomputed when its wait turn comes up in the settle loop
+		// below — otherwise a hung earlier run's wait time would silently
+		// extend every later run's budget by however long it took to give
+		// up on the earlier one.
+		active.Deadline = s.now().Add(s.opts.RunBudget)
+		runTokenIDs[active.RunID] = active.RunTokenID
+		s.actives = append(s.actives, *active)
+	}
+
+	// Record each minted run token's id (never the value, §3.4-style
+	// discipline) against its manifest entry — evidence for `gc`/`status`,
+	// never the registry (§1.4). This is a second write to the same
+	// manifest.json the pre-creation write above already produced; FM-22
+	// pins only that the FIRST write happens before any project exists,
+	// not that the manifest is written exactly once.
+	if len(runTokenIDs) > 0 {
+		// R3: this write must land even if ctx is cancelled mid-batch — an
+		// interrupted operator still wants the minted run token ids on
+		// record.
+		if err := persistRunTokenIDs(ctx, s.sink, s.opts.Batch, manifest, manifestRuns, runTokenIDs); err != nil {
+			cause := fmt.Errorf("farm run: update manifest with run token ids: %w", err)
+			results, finalizeErr := finalizeAfterFailure(ctx, s.client, s.sink, s.opts, s.actives, s.orderedResults(), cause, s.now, s.pollInterval)
+			return results, true, finalizeErr
+		}
+	}
+	return nil, false, nil
+}
+
 // RunBatch runs opts.Scenarios as one batch (§3.3 FM-21/FM-22): it writes
 // batches/<batch>/manifest.json before creating any project, creates one
-// project per scenario, watches the bucket for each run's done.json (or its
-// budget elapsing), verifies the parts digests FM-5 requires, deletes each
-// settled run's project(s) and — for launch scenarios — revokes the launch
-// token, then writes batches/<batch>/summary.json.
+// project per scenario (never more than opts.MaxConcurrent alive at once,
+// §3.3 FM-65 — 0 means unlimited), watches the bucket for each run's
+// done.json (or its budget elapsing), verifies the parts digests FM-5
+// requires, deletes each settled run's project(s) and — for launch
+// scenarios — revokes the launch token, then writes
+// batches/<batch>/summary.json. Results are returned in scheduled order
+// regardless of the order in which runs actually settle.
 func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts RunOptions) ([]RunResult, error) {
 	if !ValidBatchID(opts.Batch) {
 		return nil, fmt.Errorf("farm run: invalid batch %q", opts.Batch)
 	}
-	seenScenarios := make(map[string]struct{}, len(opts.Scenarios))
-	for _, sc := range opts.Scenarios {
-		if !ValidScenarioID(sc.ID) {
-			return nil, fmt.Errorf("farm run: invalid scenario %q", sc.ID)
-		}
-		if _, exists := seenScenarios[sc.ID]; exists {
-			return nil, fmt.Errorf("farm run: duplicate scenario %q", sc.ID)
-		}
-		seenScenarios[sc.ID] = struct{}{}
+	scheduled, manifestRuns, err := scheduleRuns(opts.Batch, opts.Scenarios)
+	if err != nil {
+		return nil, err
 	}
 	now := opts.Now
 	if now == nil {
@@ -462,25 +630,6 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 		pollInterval = 2 * time.Second
 	}
 	startedAt := now().UTC().Format(time.RFC3339)
-
-	scheduled := make([]scheduledRun, 0, len(opts.Scenarios))
-	manifestRuns := make([]ManifestRun, 0, len(opts.Scenarios))
-	for _, sc := range opts.Scenarios {
-		runID, err := EncodeRunID(opts.Batch, sc.ID)
-		if err != nil {
-			return nil, fmt.Errorf("farm run: encode %s: %w", sc.ID, err)
-		}
-		if sc.ProductionProjectName != "" && sc.ProductionProjectName != productionProjectName(runID) {
-			return nil, fmt.Errorf("farm run: scenario %s has foreign production project %q", sc.ID, sc.ProductionProjectName)
-		}
-		if !sc.Launch && sc.ProductionProjectName != "" {
-			return nil, fmt.Errorf("farm run: non-launch scenario %s has production project", sc.ID)
-		}
-		scheduled = append(scheduled, scheduledRun{ScenarioRun: sc, RunID: runID})
-		mr := ManifestRun{RunID: runID, Scenario: sc.ID, ProjectName: ProjectPrefix + runID}
-		mr.ProductionProjectName = sc.ProductionProjectName
-		manifestRuns = append(manifestRuns, mr)
-	}
 
 	manifest := BatchManifest{
 		Batch:           opts.Batch,
@@ -494,93 +643,29 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 		Note:            opts.Note,
 		RunBudgetSec:    opts.RunBudgetSec,
 		CandidateInfo:   opts.CandidateInfo,
+		MaxConcurrent:   opts.MaxConcurrent,
 		Runs:            manifestRuns,
 	}
 	if err := CreateManifest(ctx, sink, opts.Batch, manifest); err != nil {
 		return nil, fmt.Errorf("farm run: write manifest: %w", err)
 	}
 
-	var actives []activeRun
-	var blocked []RunResult // D10: every creation-phase failure, printed + recorded, never silently skipped
-	results := make([]RunResult, 0, len(opts.Scenarios))
-	runTokenIDs := make(map[string]string, len(scheduled)) // runID -> minted run token id, for the manifest-evidence update below
-	for _, r := range scheduled {
-		active, blockedResult, abortErr := createRun(ctx, client, opts, r)
-		if abortErr != nil {
-			var abort *batchAbortError
-			if errors.As(abortErr, &abort) && abort.result.RunID != "" {
-				blocked = append(blocked, abort.result)
-			}
-			if len(runTokenIDs) > 0 {
-				if err := persistRunTokenIDs(ctx, sink, opts.Batch, &manifest, manifestRuns, runTokenIDs); err != nil {
-					abortErr = errors.Join(abortErr, fmt.Errorf("farm run: update manifest with run token ids: %w", err))
-				}
-			}
-			results, finalizeErr := finalizeAfterFailure(ctx, client, sink, opts, actives, blocked, abortErr, now, pollInterval)
-			return results, finalizeErr
-		}
-		if blockedResult != nil {
-			blocked = append(blocked, *blockedResult)
-			continue
-		}
-		// R7: the deadline is anchored at THIS run's own creation moment,
-		// never recomputed when its wait turn comes up in the settle loop
-		// below — otherwise a hung earlier run's wait time would silently
-		// extend every later run's budget by however long it took to give
-		// up on the earlier one.
-		active.Deadline = now().Add(opts.RunBudget)
-		runTokenIDs[active.RunID] = active.RunTokenID
-		actives = append(actives, *active)
+	state := &batchState{
+		client: client, sink: sink, opts: opts, scheduled: scheduled,
+		now: now, pollInterval: pollInterval,
+		resultsByRunID: make(map[string]RunResult, len(scheduled)),
 	}
-
-	// Record each minted run token's id (never the value, §3.4-style
-	// discipline) against its manifest entry — evidence for `gc`/`status`,
-	// never the registry (§1.4). This is a second write to the same
-	// manifest.json the pre-creation write above already produced; FM-22
-	// pins only that the FIRST write happens before any project exists,
-	// not that the manifest is written exactly once.
-	if len(runTokenIDs) > 0 {
-		// R3: this write must land even if ctx is cancelled mid-batch — an
-		// interrupted operator still wants the minted run token ids on
-		// record.
-		if err := persistRunTokenIDs(ctx, sink, opts.Batch, &manifest, manifestRuns, runTokenIDs); err != nil {
-			cause := fmt.Errorf("farm run: update manifest with run token ids: %w", err)
-			results, finalizeErr := finalizeAfterFailure(ctx, client, sink, opts, actives, blocked, cause, now, pollInterval)
-			return results, finalizeErr
-		}
+	if createResults, aborted, createErr := state.runCreates(ctx, &manifest, manifestRuns); aborted {
+		return createResults, createErr
 	}
-
-	results = append(results, blocked...)
-	endedByBudget := false
-	endedByInterrupt := false
-	var cleanupErrs []error
-	for _, a := range actives {
-		rr, budget, interrupted, cleanupErr := finalizeActiveRun(ctx, client, sink, a, opts, now, pollInterval)
-		if cleanupErr != nil {
-			cleanupErrs = append(cleanupErrs, cleanupErr)
-		}
-		if budget || interrupted {
-			// FM-21's sole exemption (budget elapsed) and R3's interrupt
-			// exemption share the same shape: the project is kept for
-			// inspection, the token (if any) stays unrevoked and is
-			// recorded so `gc` can finish the job later.
-			if interrupted {
-				endedByInterrupt = true
-			} else {
-				endedByBudget = true
-			}
-			results = append(results, rr)
-			continue
-		}
-
-		results = append(results, rr)
-	}
+	state.finalizeRemainingActives(ctx)
+	results := state.orderedResults()
 
 	endedBy := "settled"
 	switch {
-	case endedByInterrupt:
+	case state.endedByInterrupt:
 		endedBy = batchEndedByInterrupt
-	case endedByBudget:
+	case state.endedByBudget:
 		endedBy = "budget"
 	}
 	summary := BatchSummary{Batch: opts.Batch, FinishedAt: now().UTC().Format(time.RFC3339), EndedBy: endedBy}
@@ -594,9 +679,9 @@ func RunBatch(ctx context.Context, client PlatformClient, sink *SinkClient, opts
 	// whole point of the interrupt exemption is that the operator's own
 	// Ctrl-C/SIGTERM must not also block the write that records it.
 	if err := PutSummary(context.WithoutCancel(ctx), sink, opts.Batch, summary); err != nil {
-		return results, errors.Join(fmt.Errorf("farm run: write summary: %w", err), errors.Join(cleanupErrs...))
+		return results, errors.Join(fmt.Errorf("farm run: write summary: %w", err), errors.Join(state.cleanupErrs...))
 	}
-	if err := errors.Join(cleanupErrs...); err != nil {
+	if err := errors.Join(state.cleanupErrs...); err != nil {
 		return results, fmt.Errorf("farm run: cleanup: %w", err)
 	}
 	return results, nil

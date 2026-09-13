@@ -2208,3 +2208,99 @@ func TestRunBatch_ManifestRecordsObserver(t *testing.T) {
 		t.Errorf("manifest.Observer = %q, want %q", manifest.Observer, "claude-opus-5")
 	}
 }
+
+// peakTrackingClient wraps a PlatformClient and counts live run projects
+// (successful CreateAndImportProject calls minus successful DeleteProject
+// calls), recording the highest count ever observed — the independent
+// oracle S11's window tests use to prove RunBatch never exceeds
+// opts.MaxConcurrent: Peak is derived purely from the platform calls
+// RunBatch actually made, never from its own actives/resultsByRunID
+// bookkeeping.
+type peakTrackingClient struct {
+	PlatformClient
+	mu   sync.Mutex
+	live int
+	peak int
+}
+
+func (p *peakTrackingClient) CreateAndImportProject(ctx context.Context, yaml string) (*platform.ImportResult, error) {
+	res, err := p.PlatformClient.CreateAndImportProject(ctx, yaml)
+	if err != nil {
+		return res, err
+	}
+	p.mu.Lock()
+	p.live++
+	if p.live > p.peak {
+		p.peak = p.live
+	}
+	p.mu.Unlock()
+	return res, err
+}
+
+func (p *peakTrackingClient) DeleteProject(ctx context.Context, projectID string) (*platform.Process, error) {
+	res, err := p.PlatformClient.DeleteProject(ctx, projectID)
+	if err == nil {
+		p.mu.Lock()
+		p.live--
+		p.mu.Unlock()
+	}
+	return res, err
+}
+
+func (p *peakTrackingClient) Peak() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.peak
+}
+
+// TestRunBatch_MaxConcurrent_NeverExceedsWindow pins §3.3 FM-65:
+// opts.MaxConcurrent bounds how many run projects RunBatch keeps alive at
+// once. All 5 scenarios have their done.json pre-seeded (settle happens on
+// the first poll), so with MaxConcurrent: 2 the create/settle interleave
+// must still cap live projects at 2 — a naive "create all, then settle all"
+// batch would reach 5. Independent oracle: peakTrackingClient counts real
+// CreateAndImportProject/DeleteProject calls, never RunBatch's own
+// bookkeeping.
+func TestRunBatch_MaxConcurrent_NeverExceedsWindow(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-s11-window"
+	f := newControllerFixture(t, clientID)
+	tracked := &peakTrackingClient{PlatformClient: f.client}
+
+	batch := "batch-s11-window"
+	scenarios := []ScenarioRun{
+		{ID: "recipe-w1"}, {ID: "recipe-w2"}, {ID: "recipe-w3"}, {ID: "recipe-w4"}, {ID: "recipe-w5"},
+	}
+	for _, sc := range scenarios {
+		seedSettledRun(t, f.s3, testRunID(t, batch, sc.ID), sc.ID, ResultPassed)
+	}
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
+		Scenarios: scenarios, OAuthToken: "oauth-token",
+		Sink:          Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:     time.Hour,
+		PollInterval:  time.Millisecond,
+		MaxConcurrent: 2,
+	}
+
+	results, err := RunBatch(context.Background(), tracked, f.sink, opts)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if peak := tracked.Peak(); peak > 2 {
+		t.Errorf("peak live projects = %d, want <= 2 (opts.MaxConcurrent)", peak)
+	}
+	if len(results) != 5 {
+		t.Fatalf("results = %+v, want 5 entries", results)
+	}
+	for i, sc := range scenarios {
+		if results[i].Scenario != sc.ID {
+			t.Errorf("results[%d].Scenario = %q, want %q (results must stay in scheduled order)", i, results[i].Scenario, sc.ID)
+		}
+		if results[i].Result != ResultPassed {
+			t.Errorf("results[%d] = %+v, want Result=%q", i, results[i], ResultPassed)
+		}
+	}
+}
