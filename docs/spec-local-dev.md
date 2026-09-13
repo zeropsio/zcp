@@ -407,7 +407,11 @@ and updated by `action="build-integration"` (which refuses unless
 ownership (`CloseDeployMode`) are orthogonal as records, but delivery is
 derived from `GitPushState`: once `configured`, push is the terminal act
 for every close-mode except `manual` (the legacy `git-push` close-mode
-value folds to `auto`).
+value folds to `auto`). The direct-deploy REDIRECT that enforces it is
+narrower — it fires only where a ZCP-managed integration consumes the
+pushes; on `BuildIntegration=none` nothing rebuilds the target from the
+repo, so the direct deploy proceeds as the delivery (spec-workflows.md
+§8 S5).
 
 ### local-only + default-deploy mechanism is blocked
 

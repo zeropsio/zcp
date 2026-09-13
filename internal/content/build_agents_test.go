@@ -569,6 +569,42 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 	}
 }
 
+// The pipeline rule covers the group's OTHER projects only. Measured on a
+// live Mate: told "code reaches another environment through the pipeline"
+// and "what ships the code is .gitea/workflows/", the agent read its own
+// in-project stage half as that other environment — it declared appstage
+// unreachable without CI, proposed wiring a webhook, and demoted appstage
+// to "the sandbox half" until the user asked for the dev→stage
+// cross-deploy the develop workflow had prescribed all along. Both blocks
+// must scope the pipeline to other projects and keep the in-project
+// promotion in the ZCP workflow.
+func TestBuildAgentsMD_Container_PipelineScopedToOtherProjects(t *testing.T) {
+	t.Parallel()
+	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp", GitHostKnown: true}, false)
+	if err != nil {
+		t.Fatalf("BuildAgentsMD: %v", err)
+	}
+	for _, unscoped := range []string{
+		"Code reaches another environment",
+		"What ships the code is",
+		"typically its stage and production",
+	} {
+		if strings.Contains(out, unscoped) {
+			t.Errorf("container AGENTS.md keeps unscoped pipeline wording %q", unscoped)
+		}
+	}
+	for _, want := range []string{
+		"Code reaches the group's other projects through the repository's pipeline",
+		"`zerops_deploy sourceService=",
+		"is not the group's stage project",
+		"What ships code to the group's other projects is `.gitea/workflows/`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("container AGENTS.md missing in-project scoping %q", want)
+		}
+	}
+}
+
 // A local install is not in a group and has no git host of its own, and
 // must not be told it does.
 func TestBuildAgentsMD_Local_HasNoMateContext(t *testing.T) {

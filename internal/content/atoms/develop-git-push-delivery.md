@@ -11,7 +11,7 @@ title: "Delivery = commit + git push — the repo is the source of truth"
 references-fields: [ops.GitPushResult.Status, ops.GitPushResult.BuildTarget, ops.GitPushResult.BuildStatus, ops.GitPushResult.AutoRecorded]
 references-atoms: [develop-git-push-broken]
 ---
-Git push is configured for this service (`gitPush=configured`), so the repo is the source of truth and delivery happens by pushing to it. Development work ends with a push, not a redeploy — code that reached the remote persists across container replacement, which is what made redeploy-for-persistence necessary in the first place. Direct self/cross `zerops_deploy` calls on this pair answer `push-delivery-required` with the recommended push call instead of deploying.
+Git push is configured for this service (`gitPush=configured`), so the repo is the source of truth and delivery happens by pushing to it. Development work ends with a push, not a redeploy — code that reached the remote persists across container replacement, which is what made redeploy-for-persistence necessary in the first place. Where an integration consumes the pushes (`buildIntegration=webhook|actions`), direct self/cross `zerops_deploy` calls on this pair answer `push-delivery-required` with the recommended push call instead of deploying; on `buildIntegration=none` nothing rebuilds from the repo, so those calls deploy and flag that the service now runs code the remote does not carry.
 
 **Push source vs build target.** For a standard pair, the push originates from the DEV half (push source) and the build lands on the STAGE half (build target). For simple / single-runtime modes, push source equals build target. <!-- axis-k-keep: signal #1 names topology roles (push source vs build target) load-bearing for the iteration cycle -->
 <!-- axis-l-keep -->
@@ -40,7 +40,7 @@ Git push is configured for this service (`gitPush=configured`), so the repo is t
 |---|---|
 | `webhook` | Zerops pulls the repo and runs the build pipeline on the build target. |
 | `actions` | Your GitHub Actions workflow runs `zcli push` from CI; the build lands on the build target. |
-| `none` | The push is archived at the remote; no watched build fires. The push response offers the choice: wire an integration via `zerops_workflow action="build-integration"`, keep your independent CI, or stay archive-only. |
+| `none` | The push is archived at the remote; no watched build fires. The push response offers the choice: wire an integration via `zerops_workflow action="build-integration"`, keep your independent CI, or stay archive-only. Until one is wired, a direct `zerops_deploy` is what puts code on the service — including the dev→stage promotion of a standard pair — and the push still matters as the durable copy. |
 
 ## After "DELIVERED"
 

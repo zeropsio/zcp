@@ -82,6 +82,14 @@ func RegisterDeployBatch(
 			}
 		}
 
+		// L1 terminal-act rule, same gate the single deploy applies
+		// (repoDeliveryRedirect): a pair whose pushes are consumed by a
+		// ZCP-managed integration delivers via PUSH. Batch used to skip
+		// this entirely.
+		if redirect := batchRepoDeliveryRedirect(stateDir, input.Targets); redirect != nil {
+			return redirect, nil, nil
+		}
+
 		// Pre-flight each target (matches zerops_deploy behavior); any
 		// failure aborts the whole batch so the agent sees the config issue
 		// before any build burns time. Pre-flight failures echo resolved

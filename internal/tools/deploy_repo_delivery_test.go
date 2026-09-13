@@ -4,19 +4,23 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // seedL1Meta writes a configured, first-deployed pair — the L1 (repo
-// delivery) state of the ladder.
-func seedL1Meta(t *testing.T, stateDir, host string, mode topology.Mode, stage string) {
+// delivery) state of the ladder — carrying the ZCP-managed integration
+// that consumes its pushes. The redirect is keyed on that integration:
+// only a declared one actually rebuilds the build target from a push.
+func seedL1Meta(t *testing.T, stateDir, host string, mode topology.Mode, stage string, integration topology.BuildIntegration) {
 	t.Helper()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         host,
 		Mode:             mode,
 		StageHostname:    stage,
 		GitPushState:     topology.GitPushConfigured,
+		BuildIntegration: integration,
 		RemoteURL:        "https://github.com/example/app.git",
 		FirstDeployedAt:  "2026-06-10T10:00:00Z",
 		BootstrapSession: "test",
@@ -33,7 +37,7 @@ func seedL1Meta(t *testing.T, stateDir, host string, mode topology.Mode, stage s
 func TestRepoDeliveryRedirect_L1DirectDeploy(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
-	seedL1Meta(t, stateDir, "weather", topology.PlanModeSimple, "")
+	seedL1Meta(t, stateDir, "weather", topology.PlanModeSimple, "", topology.BuildIntegrationWebhook)
 
 	res := repoDeliveryRedirect(stateDir, "weather", "", false)
 	if res == nil {
@@ -62,7 +66,7 @@ func TestRepoDeliveryRedirect_Passthroughs(t *testing.T) {
 	t.Run("push strategy proceeds", func(t *testing.T) {
 		t.Parallel()
 		stateDir := t.TempDir()
-		seedL1Meta(t, stateDir, "weather", topology.PlanModeSimple, "")
+		seedL1Meta(t, stateDir, "weather", topology.PlanModeSimple, "", topology.BuildIntegrationWebhook)
 		if res := repoDeliveryRedirect(stateDir, "weather", deployStrategyGitPush, false); res != nil {
 			t.Errorf("push delivery must proceed; got: %s", extractText(res))
 		}
@@ -70,7 +74,7 @@ func TestRepoDeliveryRedirect_Passthroughs(t *testing.T) {
 	t.Run("break-glass proceeds", func(t *testing.T) {
 		t.Parallel()
 		stateDir := t.TempDir()
-		seedL1Meta(t, stateDir, "weather", topology.PlanModeSimple, "")
+		seedL1Meta(t, stateDir, "weather", topology.PlanModeSimple, "", topology.BuildIntegrationWebhook)
 		if res := repoDeliveryRedirect(stateDir, "weather", "", true); res != nil {
 			t.Errorf("break-glass must proceed; got: %s", extractText(res))
 		}
@@ -118,7 +122,7 @@ func TestRepoDeliveryRedirect_Passthroughs(t *testing.T) {
 func TestRepoDeliveryRedirect_PairTargetsRedirectToo(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
-	seedL1Meta(t, stateDir, "appdev", topology.PlanModeStandard, "appstage")
+	seedL1Meta(t, stateDir, "appdev", topology.PlanModeStandard, "appstage", topology.BuildIntegrationActions)
 
 	res := repoDeliveryRedirect(stateDir, "appstage", "", false)
 	if res == nil {
@@ -133,11 +137,86 @@ func TestRepoDeliveryRedirect_PairTargetsRedirectToo(t *testing.T) {
 	}
 }
 
+// TestRepoDeliveryRedirect_NoIntegrationProceeds pins the case the
+// redirect used to deadlock. Measured on a live Mate: a standard pair
+// with git-push configured but NO ZCP-managed integration had its
+// dev→stage promotion refused with push-delivery-required; the push the
+// refusal recommended then answered "nothing rebuilds appstage — re-run
+// the deploy with breakGlass=true", i.e. two round trips back to the
+// refused call, with an outage escape as the only route through a
+// routine promotion. A push only delivers where an integration consumes
+// it, so with `none` (or the bootstrap's empty default) the direct
+// deploy IS the delivery and proceeds.
+func TestRepoDeliveryRedirect_NoIntegrationProceeds(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		integration topology.BuildIntegration
+	}{
+		{name: "declared none", integration: topology.BuildIntegrationNone},
+		{name: "bootstrap empty", integration: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			stateDir := t.TempDir()
+			seedL1Meta(t, stateDir, "appdev", topology.PlanModeStandard, "appstage", tc.integration)
+
+			if res := repoDeliveryRedirect(stateDir, "appstage", "", false); res != nil {
+				t.Errorf("no integration consumes the push — promotion must proceed; got: %s", extractText(res))
+			}
+			if res := repoDeliveryRedirect(stateDir, "appdev", "", false); res != nil {
+				t.Errorf("no integration consumes the push — self-deploy must proceed; got: %s", extractText(res))
+			}
+		})
+	}
+}
+
+// TestBatchRepoDeliveryRedirect pins that zerops_deploy_batch honours
+// the same terminal-act rule as the single deploy — it bypassed the gate
+// entirely, so a batch was a silent route around push delivery. Batch
+// targets carry no breakGlass field, so the refusal must name the single
+// deploy as the escape rather than dead-ending the agent.
+func TestBatchRepoDeliveryRedirect(t *testing.T) {
+	t.Parallel()
+
+	t.Run("integration declared refuses and names both routes", func(t *testing.T) {
+		t.Parallel()
+		stateDir := t.TempDir()
+		seedL1Meta(t, stateDir, "appdev", topology.PlanModeStandard, "appstage", topology.BuildIntegrationWebhook)
+
+		res := batchRepoDeliveryRedirect(stateDir, []ops.DeployBatchTarget{
+			{TargetService: "cache"},
+			{SourceService: "appdev", TargetService: "appstage"},
+		})
+		if res == nil {
+			t.Fatal("an L1 batch entry must refuse — batch was bypassing push delivery")
+		}
+		body := extractText(res)
+		for _, want := range []string{"push-delivery-required", `"strategy":"git-push"`, "breakGlass"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("batch refusal missing %q; got: %s", want, body)
+			}
+		}
+	})
+
+	t.Run("no integration proceeds", func(t *testing.T) {
+		t.Parallel()
+		stateDir := t.TempDir()
+		seedL1Meta(t, stateDir, "appdev", topology.PlanModeStandard, "appstage", topology.BuildIntegrationNone)
+
+		if res := batchRepoDeliveryRedirect(stateDir, []ops.DeployBatchTarget{
+			{SourceService: "appdev", TargetService: "appstage"},
+		}); res != nil {
+			t.Errorf("no integration consumes the push — batch must proceed; got: %s", extractText(res))
+		}
+	})
+}
+
 // TestRepoDeliveryDivergenceWarning pins the break-glass aftermath flag.
 func TestRepoDeliveryDivergenceWarning(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
-	seedL1Meta(t, stateDir, "weather", topology.PlanModeSimple, "")
+	seedL1Meta(t, stateDir, "weather", topology.PlanModeSimple, "", topology.BuildIntegrationWebhook)
 
 	warn := repoDeliveryDivergenceWarning(stateDir, "weather")
 	if !strings.Contains(warn, "AHEAD of the configured repo") || !strings.Contains(warn, `strategy="git-push"`) {
