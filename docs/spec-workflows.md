@@ -430,10 +430,12 @@ Per-service, not global. Multiple bootstraps coexist for different services. Sam
 1. `zerops_discover` — see existing services.
 2. Identify runtime + dependencies from user intent.
 3. Validate types against `availableStacks`.
-4. Choose mode:
-   - **Standard** (default): `{name}dev` + `{name}stage` + managed.
-   - **Dev**: `{name}dev` + managed.
-   - **Simple**: `{name}` + managed.
+4. Choose mode — `bootstrapMode` is required on every runtime target; there is
+   no silent default (`validate.go` rejects an empty mode). Recommended:
+   - **Standard** (recommended default): `{name}dev` + `{name}stage` + managed.
+   - **Simple**: `{name}` + managed — only when the user asks for one service.
+   - **Dev**: `{name}dev` + managed — only for an explicit scratch space with no
+     durable end state.
 5. Present plan to user, get confirmation.
 6. Submit: `action="complete" step="discover" plan=[...]`
 
@@ -445,7 +447,8 @@ ServicePlan {
       DevHostname    string  // a-z0-9, max 25 chars
       Type           string  // validated against live catalog
       IsExisting     bool    // true = adoption path (see §3)
-      BootstrapMode  string  // "standard" | "dev" | "simple" (empty → standard)
+      BootstrapMode  string  // "standard" | "dev" | "simple" (required; no default)
+      PublicAccess   string  // "auto" | "subdomain" | "none" (empty → auto; §8 O3 PA-6)
       ExplicitStage  string  // optional stage hostname override
     },
     Dependencies: [{
@@ -1038,6 +1041,7 @@ visibility.
 | E5 | Partial meta (no BootstrappedAt) signals bootstrap in-progress |
 | E6 | Only runtime services get ServiceMeta — managed services are API-authoritative |
 | E7 | IsAdopted() = BootstrapSession is empty AND IsComplete() — disambiguates adopted metas from orphan incomplete metas |
+| E9 | `ServiceMeta.PublicAccess` (`auto` default · `subdomain` · `domain` · `none`) and `SubdomainEnabledByZcpAt` (RFC3339, written once) are the only persisted public-access facts; everything else about public access is read live (O3). Pair-keyed like every other lifecycle stamp (E8): the stamp applies per hostname, so a standard pair carries one intent and one stamp per half (`PublicAccessFor(hostname)`). |
 | E8 | Runtime meta is pair-keyed, not hostname-keyed. Every managed runtime service is represented by exactly one ServiceMeta file keyed by m.Hostname. In container+standard and local+standard modes that single file represents two live hostnames — one in m.Hostname, its pair in m.StageHostname. In dev/simple/local-only modes m.StageHostname is empty. Consequences: (a) any code that maps hostnames → metas MUST iterate m.Hostnames() or use workflow.ManagedRuntimeIndex, never keying on m.Hostname alone; (b) lifecycle stamps (FirstDeployedAt, CloseDeployMode, GitPushState, BuildIntegration) written to either half apply to the pair as a whole; (c) the envelope pipeline deliberately splits the pair into two ServiceSnapshots for atom filtering — that split is a render concern, not a storage concern. Enforced by TestNoInlineManagedRuntimeIndex. |
 
 ### Deploy Modes
@@ -1108,10 +1112,18 @@ visibility.
 |----|-----------|
 | O1 | zerops_deploy blocks until build completes |
 | O2 | zerops_import blocks until all processes complete |
-| O3 | L7 subdomain activation is a deploy-handler concern, not an agent-step concern. `zerops_deploy` auto-enables the subdomain on first deploy for eligible modes (dev/stage/simple/standard/local-stage) and waits for HTTP readiness before returning; the response carries `subdomainAccessEnabled` and `subdomainUrl`. The auto-enable predicate is mode-allowlist + `IsSystem()` defensive guard — no platform DTO inspection. The platform classifies via the actual Enable response: success / already_enabled / `serviceStackIsNotHttp` (benign skip in the auto-enable caller for workers / deferred-start dev runtimes). The underlying `ops.Subdomain` path (used by the `zerops_subdomain` MCP tool for recovery or production opt-in) is idempotent via check-before-enable: it reads `SubdomainAccess` from a fresh `GetService` (REST-authoritative) and short-circuits to `status=already_enabled` without calling `EnableSubdomainAccess` when already live, preventing the platform's garbage FAILED-process pattern on redundant enable. `serviceStackIsNotHttp` returned by `ops.Subdomain.Enable` is a real diagnostic for explicit recovery callers — the benign-skip downgrade is contextual to `maybeAutoEnableSubdomain`, not structural. |
+| O3 | **Public access = user intent + live observed state; never guessed from DTO fields.** Observed state is read per call: `subdomain` on/off/enabling (`GetService.SubdomainAccess`, REST-authoritative, plus an in-flight `stack.enableSubdomainAccess` in `ops.ProjectActivity`); `domains` (the project routing list `ListPublicHTTPRoutings` filtered by `locations[].serviceStackId` — the service DTO carries no domain field, live-verified); `listener` (`topology.IsDeferredStart`: a dev-mode dynamic runtime idling on `zsc noop` has none until `zerops_dev_server start`). Intent lives in `ServiceMeta.PublicAccess` (E9): `auto` (default) · `subdomain` · `domain` · `none`, with `SubdomainEnabledByZcpAt` stamped once. **PA-1** auto-enable runs only for `auto ∧ not stamped ∧ domains = ∅ ∧ modeAllowsSubdomain`, at two hooks — after a DEPLOYED result and after a successful `zerops_dev_server start` — and stamps on success. `serviceStackIsNotHttp` is a benign skip that does not stamp: the platform refuses the enable until a listener exists, and the import flag `enableSubdomainAccess` on a `startWithoutCode` runtime is dropped by the platform without a process (live-verified). **PA-2** once stamped zcp never enables on its own again; observed `off` after the stamp means the user switched it off ⇒ intent `none`; only an explicit `zerops_subdomain enable` returns to `subdomain`, `disable` sets `none`. **PA-3** `domains ≠ ∅` ⇒ intent `domain`: no auto-enable, verify probes the domain. **PA-4** verify splits `http_root` into `http_internal` (every HTTP-class runtime, from the project network; deferred-start without a listener ⇒ `skip` "start the dev server first") and `http_public` by intent: `subdomain on` ⇒ probe the subdomain URL; `enabling` ⇒ `pending`; `domain` ⇒ probe `https://<domain>/` and report DNS/TLS/HTTP as the domain's state; `none` ⇒ `skip` "internal-only by intent"; `auto` without a listener ⇒ `skip` "enabled automatically once the dev server runs"; `auto` with a listener and nothing on ⇒ `fail` + `Recovery{zerops_subdomain enable}` — the only case that emits that recovery. **PA-5** every URL-bearing surface (deploy, dev-server, status/close RCO-7, discover) renders `publicAccess {intent, subdomain, url, domains[]}`. **PA-6** plan runtime entries accept `publicAccess: auto \| subdomain \| none` (`none` drops `enableSubdomainAccess` from the import yaml); adopt derives intent from observed state (on ⇒ `subdomain`, domains ⇒ `domain`, else `auto`). `ops.Subdomain` stays check-before-mutate: a redundant enable is accepted with HTTP 200 and yields a FAILED `noSubdomainPorts` process (live-verified; the code lives in the process DTO `error.code`, mapped into `Process.FailReason`). Enable/disable propagate flag, process and routing within ~1 s, so no surface waits on them. Production is untouched: P-PROD-2 strips the subdomain from the launch bundle and prod intent is never `auto`. |
 | O4 | Dev-server lifecycle in develop workflow is owned by `zerops_dev_server` (container env) or the harness background-task primitive (local env — e.g. `Bash run_in_background=true` in Claude Code). Platform auto-starts the process only for `simple`/`stage` modes and `implicit-webserver`/`static` runtimes — dev-mode dynamic runtimes start `zsc noop` and the agent runs the real process via the canonical primitive. `zerops_dev_server` returns structured `{running, healthStatus, startMillis, reason, logTail}` from a single call so diagnosis needs no follow-up. Agents never hand-roll SSH backgrounding (`ssh {host} "cmd &"`) for dev-server lifecycle in container env — the SSH channel holds open until the 120 s bash timeout because the child still owns stdio. Runtime-class guidance for agents lives in the atom corpus (develop-dynamic-runtime-start-container, develop-dev-server-triage, develop-platform-rules-container); post-deploy messages in `zerops_deploy` are honest about completion state without branching on runtime class. |
 | O5 | Stage entry written AFTER dev verified (standard mode) |
 | O6 | Stage deployFiles = build output, NOT [.] |
+
+### Recovery classification
+
+| ID | Invariant |
+|----|-----------|
+| R1 | One classification, many readers. `ops.RecoveryState(hostname)` yields `shape ∈ {healthy, fresh-misconfigured, failed-build, failed-init, stuck-building}` plus evidence, from `LatestFailedAppVersionContext` + `HasPriorDeployAttempt` + `ProjectActivity`. `fresh-misconfigured` = `READY_TO_DEPLOY` with no deploy attempt ever (imported without `startWithoutCode` and without `buildFromGit`). Every recovery reader — verify/provision `Recovery` pointers, the `zerops_import override` gate payload, atom selection — consumes it; none re-derives a recovery branch from `service.status` alone. |
+| R2 | The gate's ready-made `zerops_import override=true` retry is emitted only for `fresh-misconfigured`. For every `failed-*` shape the gate's `next` is `zerops_events` then `zerops_deploy` (never gated; the prior appVersion keeps serving), never a re-import. |
+| R3 | Atom selection carries a `deployHistory` axis (`none` · `failed` · `ok`, from R1). An atom whose body names `override=true` must declare `deployHistory: [none]` (`TestAtomAuthoringLint`), so override-first advice can never render on a service with deploy history. |
 
 ### Git Lifecycle (container env)
 
