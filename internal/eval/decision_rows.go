@@ -12,31 +12,80 @@ import (
 	"github.com/zeropsio/zcp/internal/capture"
 )
 
-// CallShape is one parsed `never`/coverage call-shape expression
-// (docs/spec-eval-farm.md §4.1 FM-30). Grammar:
+// CallShape is one parsed `never`/coverage/toolArg call-shape expression
+// (docs/spec-eval-farm.md §4.1 FM-30, §4.2 FM-60). Grammar:
 //
 //	<tool>                   — matches any call to that tool
 //	<tool>{k=v,k2=v2}        — matches a call to that tool where, for every
-//	                            k=v pair, arguments[k] JSON-stringified
-//	                            equals v exactly (string comparison)
+//	                            constraint, arguments[k] JSON-stringified
+//	                            satisfies the operator against v:
+//	                              k=v   — equals v exactly (string compare)
+//	                              k≠v   — does not equal v
+//	                              k∈v   — has v as a string prefix (v itself
+//	                                      counts, since any string is its
+//	                                      own prefix) — path-prefix intent
+//	                              k~v   — matches v as a Go regexp
+//	                            A key absent from the call's arguments makes
+//	                            EVERY operator false, never true (FM-60).
 //
 // Anything else is a parse error at scenario load (scenario.go's validate,
 // FM-30/FM-32).
 type CallShape struct {
 	Tool string
+	// Args holds only the `k=v` (equals) constraints, keyed by k — the
+	// surface FM-33's vocabulary lint and EffectiveNeverList's callers
+	// already read. The full constraint set (all four operators, in
+	// source order) lives in constraints; Matches/String use that, not
+	// Args, so mixed-operator shapes stay correct.
 	Args map[string]string
-	// argOrder preserves the source order of Args for a stable String().
-	argOrder []string
+	// constraints preserves every parsed constraint (any operator) in
+	// source order, for Matches and String.
+	constraints []callArgConstraint
 }
 
-// callShapePattern matches "<tool>" or "<tool>{k=v,k2=v2,...}". Tool and
-// key names are identifier-shaped (letters, digits, underscore); values are
-// anything but "}" or ",".
+// callArgOp is one call-shape argument constraint's comparison operator
+// (FM-60).
+type callArgOp int
+
+const (
+	callArgEquals callArgOp = iota
+	callArgNotEquals
+	callArgPrefix
+	callArgRegex
+)
+
+// callArgOpSymbols maps each operator to its grammar symbol, in both
+// parse-lookup and String()-reconstruction directions.
+var callArgOpSymbols = map[callArgOp]string{
+	callArgEquals:    "=",
+	callArgNotEquals: "≠",
+	callArgPrefix:    "∈",
+	callArgRegex:     "~",
+}
+
+// callArgConstraint is one parsed `k<op>v` argument constraint. re is
+// compiled once at parse time (callArgRegex only) so Matches never compiles
+// a regex per call.
+type callArgConstraint struct {
+	Key   string
+	Op    callArgOp
+	Value string
+	re    *regexp.Regexp
+}
+
+// callShapePattern matches "<tool>" or "<tool>{constraint,constraint,...}".
+// Tool names are identifier-shaped (letters, digits, underscore).
 var callShapePattern = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)(?:\{([^}]*)\})?$`)
+
+// callArgConstraintPattern splits one "k<op>v" constraint into its key,
+// operator symbol, and value. Key names are identifier-shaped; value is
+// everything after the operator (may be empty, may contain any character —
+// a regex value in particular needs that).
+var callArgConstraintPattern = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)(=|≠|∈|~)(.*)$`)
 
 // ParseCallShape parses one call-shape expression. Returns an error whose
 // message names the offending expression for any input that isn't
-// `<tool>` or `<tool>{k=v,...}`.
+// `<tool>` or `<tool>{k<op>v,...}` (FM-30, FM-60).
 func ParseCallShape(expr string) (CallShape, error) {
 	match := callShapePattern.FindStringSubmatch(strings.TrimSpace(expr))
 	if match == nil {
@@ -47,53 +96,92 @@ func ParseCallShape(expr string) (CallShape, error) {
 	if argsBlob == "" {
 		return shape, nil
 	}
+	seenKeys := map[string]bool{}
 	for pair := range strings.SplitSeq(argsBlob, ",") {
 		pair = strings.TrimSpace(pair)
 		if pair == "" {
 			return CallShape{}, fmt.Errorf("invalid call-shape expression %q: empty argument constraint", expr)
 		}
-		key, value, ok := strings.Cut(pair, "=")
-		key = strings.TrimSpace(key)
-		if !ok || key == "" {
-			return CallShape{}, fmt.Errorf("invalid call-shape expression %q: argument constraint %q must be k=v", expr, pair)
+		cm := callArgConstraintPattern.FindStringSubmatch(pair)
+		if cm == nil {
+			return CallShape{}, fmt.Errorf("invalid call-shape expression %q: argument constraint %q must be k=v (=, ≠, ∈, ~)", expr, pair)
 		}
-		value = strings.TrimSpace(value)
-		if _, exists := shape.Args[key]; exists {
+		key, opSymbol, value := cm[1], cm[2], cm[3]
+		if seenKeys[key] {
 			return CallShape{}, fmt.Errorf("invalid call-shape expression %q: duplicate key %q", expr, key)
 		}
-		shape.Args[key] = value
-		shape.argOrder = append(shape.argOrder, key)
+		seenKeys[key] = true
+		constraint := callArgConstraint{Key: key, Value: value}
+		switch opSymbol {
+		case "=":
+			constraint.Op = callArgEquals
+			shape.Args[key] = value
+		case "≠":
+			constraint.Op = callArgNotEquals
+		case "∈":
+			constraint.Op = callArgPrefix
+		case "~":
+			constraint.Op = callArgRegex
+			re, err := regexp.Compile(value)
+			if err != nil {
+				return CallShape{}, fmt.Errorf("invalid call-shape expression %q: bad regex %q: %w", expr, value, err)
+			}
+			constraint.re = re
+		default:
+			// Unreachable: callArgConstraintPattern only captures one of
+			// the four symbols above.
+			return CallShape{}, fmt.Errorf("invalid call-shape expression %q: unknown operator %q", expr, opSymbol)
+		}
+		shape.constraints = append(shape.constraints, constraint)
 	}
 	return shape, nil
 }
 
 // String reconstructs the canonical call-shape expression, used to build
-// the `decision/<expr>` row id (FM-30).
+// the `decision/<expr>` row id (FM-30) and to de-duplicate shapes in
+// EffectiveNeverList.
 func (c CallShape) String() string {
-	if len(c.argOrder) == 0 {
+	if len(c.constraints) == 0 {
 		return c.Tool
 	}
-	parts := make([]string, 0, len(c.argOrder))
-	for _, key := range c.argOrder {
-		parts = append(parts, fmt.Sprintf("%s=%s", key, c.Args[key]))
+	parts := make([]string, 0, len(c.constraints))
+	for _, con := range c.constraints {
+		parts = append(parts, fmt.Sprintf("%s%s%s", con.Key, callArgOpSymbols[con.Op], con.Value))
 	}
 	return fmt.Sprintf("%s{%s}", c.Tool, strings.Join(parts, ","))
 }
 
 // Matches reports whether call satisfies the shape: the tool name matches
-// exactly, and every k=v argument constraint holds — v is compared as a
-// string against the JSON-stringified value of arguments[k] (FM-30).
+// exactly, and every argument constraint holds. A key absent from the
+// call's arguments makes the constraint false regardless of operator
+// (FM-60) — so `k≠v` does NOT fire on a call that never carries k at all.
 func (c CallShape) Matches(call capture.MCPToolCall) bool {
 	if call.Tool != c.Tool {
 		return false
 	}
-	for key, want := range c.Args {
-		got, ok := call.Arguments[key]
+	for _, con := range c.constraints {
+		got, ok := call.Arguments[con.Key]
 		if !ok {
 			return false
 		}
-		if jsonScalarText(got) != want {
-			return false
+		text := jsonScalarText(got)
+		switch con.Op {
+		case callArgEquals:
+			if text != con.Value {
+				return false
+			}
+		case callArgNotEquals:
+			if text == con.Value {
+				return false
+			}
+		case callArgPrefix:
+			if !strings.HasPrefix(text, con.Value) {
+				return false
+			}
+		case callArgRegex:
+			if !con.re.MatchString(text) {
+				return false
+			}
 		}
 	}
 	return true

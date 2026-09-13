@@ -1,0 +1,7 @@
+{"type":"system","subtype":"init","session_id":"sess-s4-sample"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Deploying the api service now."}]},"timestamp":"2026-09-13T10:00:00Z"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01","name":"mcp__zerops__zerops_deploy","input":{"hostname":"api","strategy":"rebuild"}}]},"timestamp":"2026-09-13T10:00:05Z"}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_01","content":[{"type":"text","text":"deployed"}]}]}}
+this line is not valid json {{{
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_02","name":"Bash","input":{"command":"ls -la /var/www"}}]},"timestamp":"2026-09-13T10:00:10Z"}
+{"type":"result","subtype":"success","result":"done","session_id":"sess-s4-sample"}
