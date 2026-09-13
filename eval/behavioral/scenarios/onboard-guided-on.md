@@ -34,6 +34,12 @@ tags: [onboarding, trigger-positive, fresh, guided-on, consent]
 area: onboarding
 retrospective:
   promptStyle: briefing-future-agent
+verification:
+  mode: required
+  spec: spec-welcome-mode.md §4
+  toolArg:
+    - {always: "zerops_workflow{action=start}"}
+  never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
   You are new to Zerops and want the onboarding conversation before doing any
   work; guided mode is already on locally, though you don't know that. When

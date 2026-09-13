@@ -24,6 +24,12 @@ tags: [onboarding, trigger-positive, fresh, conversation-router, consent]
 area: onboarding
 retrospective:
   promptStyle: briefing-future-agent
+verification:
+  mode: required
+  spec: spec-welcome-mode.md §4
+  toolArg:
+    - {always: "zerops_workflow{action=start}"}
+  never: ["zerops_import{override=true}", "zerops_delete"]
 notableFriction:
   - id: exact-trigger-fetches-playbook
     description: |

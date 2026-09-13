@@ -35,6 +35,23 @@ tags: [onboarding, trigger-positive, populated, deployed-fixture, consent]
 area: onboarding
 retrospective:
   promptStyle: briefing-future-agent
+verification:
+  mode: required
+  spec: spec-welcome-mode.md §4
+  expectedServices:
+    - hostname: appdev
+      status: [ACTIVE]
+      type: nodejs@*
+    - hostname: appstage
+      status: [ACTIVE]
+      type: nodejs@*
+    - hostname: db
+      status: [ACTIVE]
+      type: postgresql@*
+  toolArg:
+    - {always: "zerops_discover"}
+    - {never: "zerops_workflow{action=start,workflow=bootstrap}"}
+  never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
   You are new to Zerops and this project already has services running, but
   you don't know that yet. When the agent first presents the onboarding
