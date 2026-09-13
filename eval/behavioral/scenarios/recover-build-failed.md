@@ -35,7 +35,7 @@ verification:
   noFailedProcesses: true
   allowFailed: [appdev]
   containerCheck:
-    - {service: appdev, cmd: "grep -c left-pad-does-not-exist /var/www/package.json", expect: "0"}
+    - {service: appdev, cmd: "grep -c left-pad-does-not-exist /var/www/package.json || true", expect: "0"}
   toolResult:
     - {tool: zerops_events, contains: failureClass}
   toolArg:
