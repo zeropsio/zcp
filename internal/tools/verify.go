@@ -20,8 +20,12 @@ type VerifyInput struct {
 	ServiceHostname string `json:"serviceHostname,omitempty" jsonschema:"Hostname of the service to verify. Omit to verify all services."`
 }
 
-// RegisterVerify registers the zerops_verify tool.
-func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.LogFetcher, projectID, stateDir string, rt runtime.Info) {
+// RegisterVerify registers the zerops_verify tool. ssh is used ONLY to
+// freshen the single-hostname path's DeferredStart classification against
+// a live dev-server liveness read (ops.DevServerRunning, §8 O3 PA-4) — nil
+// is accepted (local-only mode has no SSH deployer) and degrades to the
+// static (mode, class) classification.
+func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.LogFetcher, projectID, stateDir string, rt runtime.Info, ssh ops.SSHDeployer) {
 	httpClient := &http.Client{
 		Timeout: 15 * time.Second,
 		Transport: &http.Transport{
@@ -63,7 +67,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 			redirectedFrom = host
 			host = buildHost
 		}
-		result, err := ops.VerifyWithMeta(ctx, client, fetcher, httpClient, projectID, host, runtimeMetaForHost(stateDir, host), publicAccessInputForHost(ctx, client, projectID, stateDir, host))
+		result, err := ops.VerifyWithMeta(ctx, client, fetcher, httpClient, projectID, host, runtimeMetaForHost(stateDir, host), publicAccessInputForHost(ctx, client, ssh, projectID, stateDir, host))
 		if err != nil {
 			return convertError(err, WithRecoveryStatus()), nil, nil
 		}
@@ -173,7 +177,16 @@ func defaultPublicAccessInput() ops.PublicAccessInput {
 // topology.RuntimeClassFor; ops itself has no Mode of its own to compute
 // this internally). A lookup failure degrades to DeferredStart=false (probe
 // runs) rather than blocking verify on an unrelated read.
-func publicAccessInputForHost(ctx context.Context, client platform.Client, projectID, stateDir, host string) ops.PublicAccessInput {
+//
+// A statically deferred-start classification (dev-mode dynamic runtime) is
+// then freshened against ops.DevServerRunning (§8 O4): a live dev-server
+// process means the runtime DOES have a listener even though it starts
+// via `zsc noop`, so DeferredStart flips to false and http_internal probes
+// for real instead of skipping with the "start it with zerops_dev_server"
+// message. An SSH error (no deployer, unreachable container) falls back to
+// the static classification — verify must never fail because the listener
+// probe itself failed.
+func publicAccessInputForHost(ctx context.Context, client platform.Client, ssh ops.SSHDeployer, projectID, stateDir, host string) ops.PublicAccessInput {
 	if stateDir == "" || host == "" {
 		return defaultPublicAccessInput()
 	}
@@ -185,6 +198,11 @@ func publicAccessInputForHost(ctx context.Context, client platform.Client, proje
 	if svc, lookupErr := ops.LookupService(ctx, client, projectID, host); lookupErr == nil && svc != nil {
 		class := topology.RuntimeClassFor(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName)
 		deferredStart = topology.IsDeferredStart(meta.ModeFor(host), class)
+		if deferredStart && ssh != nil {
+			if running, sshErr := ops.DevServerRunning(ctx, ssh, host); sshErr == nil && running {
+				deferredStart = false
+			}
+		}
 	}
 	return ops.PublicAccessInput{Record: meta.PublicAccessFor(host), DeferredStart: deferredStart}
 }

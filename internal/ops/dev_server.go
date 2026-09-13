@@ -327,3 +327,19 @@ func devServerNotRunningErr(hostname, status string) error {
 		"Deploy the service (zerops_deploy) to bring it RUNNING, then start the dev server. If a previous deploy failed, read zerops_events to see why before redeploying.",
 	)
 }
+
+// DevServerRunning reports whether a dev-server process is currently
+// alive on hostname. It reuses checkProcessAlive — the same pidfile
+// `kill -0` liveness read the start/restart no-probe path uses — against
+// the default log/pidfile pair, so it needs no caller-supplied port and
+// performs no mutation.
+//
+// This is a coarser signal than the full `status` action (which does an
+// HTTP health probe and therefore requires Port): DevServerRunning only
+// answers "is a process alive", not "is it serving 2xx". That is exactly
+// what verify's listener classification needs (docs/spec-workflows.md §8
+// O3 PA-4, O4) — verify runs its own HTTP probe once it decides the
+// runtime has a listener at all.
+func DevServerRunning(ctx context.Context, ssh SSHDeployer, hostname string) (bool, error) {
+	return checkProcessAlive(ctx, ssh, hostname, pidFileFor(defaultLogFilePattern))
+}
