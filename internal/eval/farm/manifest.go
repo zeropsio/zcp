@@ -33,7 +33,10 @@ type BatchManifest struct {
 	// CandidateInfo is the candidate binary's embedded Go build info, when
 	// `farm push --candidate` recorded it (§3.3).
 	CandidateInfo *CandidateInfo `json:"candidateInfo,omitempty"`
-	Runs          []ManifestRun  `json:"runs"`
+	// MaxConcurrent is the run-project window `farm run --max-concurrent`
+	// enforced for this batch (§3.3 FM-65); 0 means unlimited.
+	MaxConcurrent int           `json:"maxConcurrent,omitempty"`
+	Runs          []ManifestRun `json:"runs"`
 }
 
 // CandidateInfo is read from the candidate binary's debug/buildinfo by

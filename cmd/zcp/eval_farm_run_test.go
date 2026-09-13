@@ -1283,3 +1283,65 @@ func TestResolveCandidateInfo_MissingPresentUnreadable(t *testing.T) {
 		}
 	})
 }
+
+// TestFarmRun_MaxConcurrentFlag_ParsesAndDefaults pins §3.3 FM-65:
+// --max-concurrent wins when given, else ZCP_FARM_MAX_CONCURRENT, else 8
+// (defaultMaxConcurrent); a negative or non-integer value is a flag error;
+// 0 is accepted as "unlimited", not an error.
+// non-parallel: t.Setenv panics under a parallel test or a parallel ancestor.
+func TestFarmRun_MaxConcurrentFlag_ParsesAndDefaults(t *testing.T) {
+	t.Run("flag wins over env", func(t *testing.T) {
+		t.Setenv("ZCP_FARM_MAX_CONCURRENT", "3")
+		got, err := resolveMaxConcurrent("7", envrForTest())
+		if err != nil {
+			t.Fatalf("resolveMaxConcurrent: %v", err)
+		}
+		if got != 7 {
+			t.Errorf("resolveMaxConcurrent = %d, want 7 (the flag)", got)
+		}
+	})
+
+	t.Run("env wins over default", func(t *testing.T) {
+		t.Setenv("ZCP_FARM_MAX_CONCURRENT", "3")
+		got, err := resolveMaxConcurrent("", envrForTest())
+		if err != nil {
+			t.Fatalf("resolveMaxConcurrent: %v", err)
+		}
+		if got != 3 {
+			t.Errorf("resolveMaxConcurrent = %d, want 3 (the env var)", got)
+		}
+	})
+
+	t.Run("absent flag and env default to 8", func(t *testing.T) {
+		t.Setenv("ZCP_FARM_MAX_CONCURRENT", "")
+		got, err := resolveMaxConcurrent("", envrForTest())
+		if err != nil {
+			t.Fatalf("resolveMaxConcurrent: %v", err)
+		}
+		if got != 8 {
+			t.Errorf("resolveMaxConcurrent = %d, want 8 (default)", got)
+		}
+	})
+
+	t.Run("-1 is a flag error", func(t *testing.T) {
+		if _, err := resolveMaxConcurrent("-1", envrForTest()); err == nil {
+			t.Fatal(`resolveMaxConcurrent("-1") err = nil, want an error`)
+		}
+	})
+
+	t.Run("non-integer is a flag error", func(t *testing.T) {
+		if _, err := resolveMaxConcurrent("x", envrForTest()); err == nil {
+			t.Fatal(`resolveMaxConcurrent("x") err = nil, want an error`)
+		}
+	})
+
+	t.Run("0 is unlimited, not an error", func(t *testing.T) {
+		got, err := resolveMaxConcurrent("0", envrForTest())
+		if err != nil {
+			t.Fatalf("resolveMaxConcurrent: %v", err)
+		}
+		if got != 0 {
+			t.Errorf("resolveMaxConcurrent = %d, want 0", got)
+		}
+	})
+}

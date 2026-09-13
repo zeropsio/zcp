@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -27,6 +28,10 @@ const maxNoteChars = 200
 
 // defaultRunBudget is used when `--run-budget` is not given.
 const defaultRunBudget = 45 * time.Minute
+
+// defaultMaxConcurrent is `farm run`'s run-project window when neither
+// --max-concurrent nor ZCP_FARM_MAX_CONCURRENT is given (§3.3 FM-65).
+const defaultMaxConcurrent = 8
 
 // flagBatch names the --batch flag, shared between runFarmRun's own parse
 // loop and planDetachRun's re-exec argv rewrite (goconst).
@@ -62,6 +67,11 @@ func runFarmRun(args []string, envr *farm.EnvResolver) int {
 	}
 	if n := utf8.RuneCountInString(flags.note); n > maxNoteChars {
 		fmt.Fprintf(os.Stderr, "error: --note: %d characters, want at most %d\n", n, maxNoteChars)
+		return 2
+	}
+	maxConcurrent, err := resolveMaxConcurrent(flags.maxConcurrent, envr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: --max-concurrent: %v\n", err)
 		return 2
 	}
 
@@ -141,6 +151,7 @@ func runFarmRun(args []string, envr *farm.EnvResolver) int {
 		Sink:      farm.Sink(cfg), // farm.Config and farm.Sink share the same field names/types/order
 		RunBudget: runBudget,
 		Note:      flags.note, RunBudgetSec: int(runBudget.Seconds()), CandidateInfo: candidateInfo,
+		MaxConcurrent: maxConcurrent,
 	}
 	results, err := farm.RunBatch(ctx, client, sink, opts)
 	if err != nil {
@@ -197,8 +208,8 @@ func printFarmRecoveryIDs(results []farm.RunResult) {
 
 // farmRunFlags is `zcp eval farm run`'s parsed command line.
 type farmRunFlags struct {
-	candidate, scenariosDigest, set, batch, runBudget, evaluator, wrapper, observer, note string
-	detach                                                                                bool
+	candidate, scenariosDigest, set, batch, runBudget, evaluator, wrapper, observer, note, maxConcurrent string
+	detach                                                                                               bool
 }
 
 // parseFarmRunFlags parses `farm run`'s flags; unknown arguments are
@@ -209,7 +220,7 @@ func parseFarmRunFlags(args []string) (farmRunFlags, error) {
 	valued := map[string]*string{
 		flagCandidate: &f.candidate, "--scenarios": &f.scenariosDigest, "--evaluator": &f.evaluator,
 		"--wrapper": &f.wrapper, "--set": &f.set, flagBatch: &f.batch, "--run-budget": &f.runBudget,
-		"--observer": &f.observer, "--note": &f.note,
+		"--observer": &f.observer, "--note": &f.note, "--max-concurrent": &f.maxConcurrent,
 	}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -276,6 +287,25 @@ func resolveObserver(flag string) (string, error) {
 		return flag, nil
 	}
 	return "", fmt.Errorf("%q is not \"off\" or one of %s", flag, strings.Join(observer.Models, ", "))
+}
+
+// resolveMaxConcurrent resolves `farm run`'s run-project window (§3.3
+// FM-65): flag wins when given, else envr's ZCP_FARM_MAX_CONCURRENT, else
+// defaultMaxConcurrent. A negative or non-integer value is a flag error; 0
+// means unlimited (today's behaviour before FM-65).
+func resolveMaxConcurrent(flag string, envr *farm.EnvResolver) (int, error) {
+	raw := flag
+	if raw == "" {
+		raw = envr.Lookup("ZCP_FARM_MAX_CONCURRENT")
+	}
+	if raw == "" {
+		return defaultMaxConcurrent, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("%q must be a non-negative integer", raw)
+	}
+	return n, nil
 }
 
 // resolveScenarios expands --set (gate|all|<id,id,...>) to the
