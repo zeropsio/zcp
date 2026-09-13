@@ -1,0 +1,12 @@
+diff --git a/internal/tools/deploy_subdomain.go b/internal/tools/deploy_subdomain.go
+index 38f453e7..81c35edb 100644
+--- a/internal/tools/deploy_subdomain.go
++++ b/internal/tools/deploy_subdomain.go
+@@ -68,6 +68,7 @@ func maybeAutoEnableSubdomain(
+ 	targetService string,
+ 	result *ops.DeployResult,
+ ) {
++	return
+ 	meta, _ := workflow.FindServiceMeta(stateDir, targetService)
+ 	svc, eligible := serviceEligibleForSubdomain(ctx, client, meta, projectID, targetService)
+ 	if !eligible {
