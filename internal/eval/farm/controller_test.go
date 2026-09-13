@@ -79,17 +79,30 @@ func TestLaunchScenarioProjectNamesMatchControllerOwnership(t *testing.T) {
 	t.Parallel()
 	repoRoot := gatesetRepoRoot(t)
 	want := productionProjectName("{{runId}}")
-	for _, name := range []string{
-		"launch-production-from-standard-pair.md",
-		"launch-failure-build-stuck.md",
-	} {
-		body, err := os.ReadFile(filepath.Join(repoRoot, "eval", "behavioral", "scenarios", name))
+	// Every scenario whose launchShape oracle names a prod project by NAME
+	// must use the controller-owned name in the oracle AND in the user
+	// request; scenarios that resolve the prod project by id
+	// (prodProjectIdEnv) or make the launch optional carry no such name.
+	paths, err := filepath.Glob(filepath.Join(repoRoot, "eval", "behavioral", "scenarios", "*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, path := range paths {
+		body, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := strings.Count(string(body), want); got < 2 {
-			t.Errorf("%s contains controller-owned production name %q %d times, want at least 2 (oracle and user request)", name, want, got)
+		if !strings.Contains(string(body), "prodProject:") {
+			continue
 		}
+		checked++
+		if got := strings.Count(string(body), want); got < 2 {
+			t.Errorf("%s contains controller-owned production name %q %d times, want at least 2 (oracle and user request)", filepath.Base(path), want, got)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no scenario declares launchShape.prodProject — the ownership rule has nothing to pin")
 	}
 }
 
