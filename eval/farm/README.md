@@ -95,6 +95,10 @@ Prints every `zcp-farm-*` project and why it is or isn't eligible; `--yes`
 deletes the eligible ones and revokes launch tokens orphaned by an earlier
 no-bundle exemption (§3.6). Without `--yes` it only reports.
 
+To hide bring-up/noise batches from the console without losing their evidence
+(§3.7): `go run ./cmd/zcp eval farm archive <batch…> [--note "<why>"]` —
+re-archiving is a no-op, and `farm archive --list` prints every archived batch.
+
 ## Wrapper (`eval/farm/wrapper.sh`)
 
 Run-project supervisor + child (§2.3 FM-13) — its contract, redaction

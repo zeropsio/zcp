@@ -576,6 +576,18 @@ the reason, not treated as ancient. A valid finish time must satisfy the
 requested age. With `--older-than=0`, no age proof is required; all other
 running-batch, no-bundle and prefix exemptions still apply.
 
+### 3.7 `farm archive`
+
+`farm archive <batch…> [--note "<why>"]` writes `batches/<batch>/archived.json`
+(`{archivedAt, note}`) as a conditional create — a batch already archived is a
+no-op, never overwritten — and `farm archive --list` prints every batch
+carrying one; a batch with no `manifest.json` is refused, and nothing is
+written. Archiving is display-only: it never deletes or mutates any other
+evidence object (§1.4), and the console (§8.7, §8.8) treats an archived batch
+as kind `archived` — excluded from every default listing, digest, problems
+clustering and the "latest evaluation" pick, visible only with `kind=archived`
+or `kind=all`.
+
 ---
 
 ## 4. `verification:` fields, oracle families, decision rows
@@ -1664,6 +1676,9 @@ carries its definition as a `title`.
   evidence is not available yet or could not be read. **Empty batch** — every
   run has readable evidence of zero work (for example setup failures or an
   abort before execution); `done.json` alone does not make it an evaluation.
+  **Archived batch** — carries an archive marker (§3.7); wins over every
+  other kind and stays out of the default view, digest and problems
+  clustering, with its evidence kept, never deleted.
   **Run** — one scenario done once by an agent in a fresh project.
   **Scenario** — a scripted user task plus the automatic checks that grade it.
 - **ZCP build** — the candidate binary, identified by its sha256; shown as
