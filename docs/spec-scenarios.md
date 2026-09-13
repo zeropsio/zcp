@@ -522,5 +522,176 @@ At iteration 5 → STOP + session closes with `iteration-cap`.
 - **Multi-project** workflows within one zcp invocation (PID state is per-project).
 - **Parallel deploys** to multiple services at once — plan is sequential per service.
 - **Recipe authoring UI** (`zcp sync recipe create-repo` etc.) — separate command surface.
-- **Eval pipeline** (`internal/eval`) — runs outside the workflow envelope.
+- **Eval pipeline mechanics** (`internal/eval`) — run outside the workflow envelope; the scenario matrix it runs is §9.
 - **Stale WorkSession garbage collection** policy — handled by registry prune, separate from envelope logic.
+
+---
+
+## 9. Eval core matrix — the anchored scenario set the farm runs
+
+This section is the single source for WHICH behavioral scenarios the eval farm
+(`spec-eval-farm.md`) runs and what each must prove. `eval/farm/gate-set.txt` is
+derived from the table in §9.3 and pinned by `TestEvalMatrix_GateSetMatchesSpec`;
+a hand edit to either side fails the test. Historical scenarios outside this
+table are inspiration, not corpus.
+
+### 9.1 Axes
+
+What actually varies for a user of zcp. Every value appears in at least one cell;
+every pair the code branches on (route × topology, delivery × close-mode,
+env-channel × topology, access × verify, runtime-class × develop) appears in at
+least one cell. The matrix is a covering set, not the full product.
+
+| Axis | Values | Home |
+|---|---|---|
+| Pre-state | brand-new · managed-only · unmanaged (adopt) · mixed · bootstrapped · +git-push · +CI · launched-to-prod | §1 |
+| Route | recipe · classic · adopt · resume | §2 |
+| Topology | simple · dev-only · standard-pair · (local-stage · local-only: deferred) | spec-workflows §4 |
+| Runtime class | dynamic · static · implicit-webserver | §3.2 |
+| Managed deps | none · db · db+cache+storage | platform |
+| Repo shape | monorepo multi-`setup:` (platform default) · one repo per service | platform |
+| Access | public subdomain · internal-only (worker/backend, `http://host:port`) | platform |
+| Delivery | zcli push (auto) · git-push configured · GitHub Actions · webhook · manual | spec-workflows §4.3, §11 |
+| Env channel | service env (restart) · `run.envVariables` (redeploy) · `build.envVariables` (next build) · project env / cross-ref | atoms `develop-env-var-*` |
+| Failure | build failed · build stuck · READY_TO_DEPLOY · stale mount · idle worker · compaction · dead-PID resume · bad import yaml | §3.3-3.9, §6 |
+| Environment | container · (local: deferred) | `runtime.Detect` |
+
+### 9.2 Scenario contract — every core cell
+
+1. **Starting state** is written down: services, apps, data; what works; what is
+   deliberately broken and how.
+2. **Preparation is versioned**: `seed.fixture` + `seed.ref` pin a sha/tag of a
+   repository this project owns; a buildFromGit URL inside a fixture carries a ref
+   (`TestEvalScenarioFixtures_BuildFromGitPinned`). Preseed scripts stay for
+   host-side breakage.
+3. **Preparation is asserted by a machine**: `seed.expect` names the exact state
+   (service statuses, process outcomes, a probe). Evaluated once, before the agent
+   starts, no AI. Mismatch ⇒ run-level `blocked` with reason `preparation`
+   (`spec-eval-farm.md §4.5`); the run never counts against zcp or the agent.
+   A bare `seed: settled` is not an accepted preparation for a recovery cell.
+4. **Task is in the user's voice** and complete: everything needed is in the
+   prompt or discoverable from the environment; no hidden service names or
+   magic strings; no transcript replays.
+5. **Outcome is function, not status**: at least one oracle that proves the app
+   does the thing (record round-trip, marker rendered, env value reaches the
+   process) AND `unchanged` for what must not move. `ACTIVE` or HTTP 200 alone
+   never satisfies a cell. `noFailedProcesses` on every cell.
+6. **Decisions are pinned**: the runner injects `never: [zerops_import{override=true}]`
+   on every cell; a cell lifts it only with `allow: {call, reason}`
+   (`spec-eval-farm.md §4.2`). At least one further `never` or `toolArg` row per cell.
+7. **Resources are prepared**: tokens, permissions, and the usersim persona's
+   answers for every `askWhen` the cell expects.
+8. `verification.mode: required`, `verification.spec` points at the section the
+   cell proves. One cell, one scenario; a second scenario for one cell needs a
+   written reason in this table.
+
+Principle: a deliberately broken app is a correctly prepared test; a wrongly
+prepared test must never be graded as an agent or zcp failure.
+
+### 9.3 The matrix
+
+`status` is the definition of *runnable*: `gate` = the scenario file exists,
+carries `mode: required`, and every oracle family the row names is a field the
+runner evaluates today; `pending: <family>` = the row waits on that oracle family
+(or the scenario file) and is NOT in the gate set. `wants: <family>` on a `gate`
+row names an oracle the row must adopt as soon as the family exists.
+`TestEvalMatrix_PendingOracleAbsent` fails the moment a `pending`/`wants` family
+becomes a runner field, so a marker cannot rot: the row is then promoted or the
+table is wrong. Oracle families: `expectedServices liveness subdomainProbe
+nodePostgresRecord unchanged noFailedProcesses never askWhen launchShape
+artifactPromotion noFabricatedSecret` (today) · `seedExpect internalLiveness
+containerCheck meta schemaValid toolArg toolResult mustOffer allow` (added by the
+manifest v2 slices).
+
+Legend: ↑ existing scenario to promote · ✚ scenario to write.
+
+#### A. First contact and bootstrap
+
+| cell | scenario id | pre-state · route · topology · stack · deps | task | oracle families | status |
+|---|---|---|---|---|---|
+| A1 | `api-node-postgres-classic-dev` | brand-new · classic · dev-only · node · db | small API with one table | expectedServices liveness nodePostgresRecord never | gate |
+| A2 | `classic-static-nginx-simple` | brand-new · classic · simple · static · none | public landing page | expectedServices liveness subdomainProbe never | gate |
+| A3 ↑ | `greenfield-fullstack-multi-runtime` | brand-new · classic · standard-pair · node+static · db+cache | API + SPA dashboard | expectedServices liveness containerCheck never | pending: containerCheck |
+| A4 ↑ | `classic-php-mariadb-standard` | brand-new · classic · standard-pair · php (implicit-webserver) · mariadb | | expectedServices liveness never | pending: scenario (add `verification`) |
+| A5 ↑ | `recipe-nestjs-minimal-standard` | brand-new · recipe · standard-pair · node · db | NestJS API | expectedServices liveness mustOffer never | gate · wants: mustOffer |
+| A5b ✚ | `recipe-nonviable-falls-to-classic` | brand-new · recipe named, non-viable | | mustOffer(classic) never | pending: mustOffer |
+| A5c | `greenfield-node-postgres-dev-stage` | brand-new · recipe · standard-pair · node · db | dashboard with records | expectedServices liveness nodePostgresRecord never | gate |
+| A6 ↑ | `recipe-laravel-showcase-fullstack` | brand-new · recipe · standard-pair · php · db+cache+storage+search | | expectedServices liveness containerCheck never | pending: containerCheck |
+| A7 ↑ | `recipe-first-deploy-race-adopt` | building · adopt · standard-pair | user starts while first build runs | expectedServices toolArg(≤1 import) never | pending: toolArg |
+| A8 | `adopt-existing-standard-pair` | unmanaged · adopt · standard-pair · node · db | connect to what I have | expectedServices unchanged meta never | gate · wants: meta |
+| A9 ✚ | `managed-only-add-runtime` | managed-only · classic · dev-only | I have a DB, add an app | expectedServices unchanged nodePostgresRecord never | pending: scenario |
+| A10 ↑ | `existing-simple-mode-node-add-endpoint` | unmanaged simple svc · adopt · simple | add an endpoint | liveness meta never | pending: meta |
+| A11 ✚ | `bootstrap-managed-only-target` | brand-new · classic · plan = db only | just a Postgres for now | expectedServices meta never | pending: meta |
+
+#### B. Developing (seed: deployed fixture)
+
+| cell | scenario id | variation | task | oracle families | status |
+|---|---|---|---|---|---|
+| B1 | `develop-add-managed-dep-to-existing` | pair + add cache | | expectedServices unchanged containerCheck never(deploy on managed) | gate · wants: containerCheck |
+| B3 ✚ | `env-service-scope-pair` | standard-pair, service env feature flag | turn FEATURE_X on for dev and stage | containerCheck toolResult(restartedServices) never | pending: containerCheck |
+| B4 ✚ | `env-yaml-baked-dev-only` | dev-only, key in `run.envVariables` | change the baked value | containerCheck never(manage reload as fix) | pending: containerCheck |
+| B5 ✚ | `env-project-scope-shared` | pair, project var + cross-ref | one secret shared by dev and stage | containerCheck noFabricatedSecret toolArg never | pending: containerCheck |
+| B13 ✚ | `env-build-time-simple` | simple, `build.envVariables` | the build needs a token | containerCheck never | pending: containerCheck |
+| B6 ✚ | `mount-edit-deploy` (absorbs `existing-standard-appdev-only-reminders`, `develop-edit-path-vs-deploy-source`) | pair, SSHFS; usersim triggers `start develop` mid-run | edit in the mount and ship dev only | liveness unchanged toolArg(workingDir ∈ /var/www/appdev; Bash ln -s never) containerCheck mustOffer(close-vs-continue) never | pending: toolArg |
+| B6a | `existing-standard-appdev-only-reminders` | pair, dev-only work | | liveness unchanged never | gate (until B6 lands, then absorbed) |
+| B7 ✚ | `mount-stale-recovery` | pair, preseed breaks the mount after deploy | continue editing | containerCheck liveness never | pending: containerCheck |
+| B8 | `cross-deploy-stage-promote-from-dev` | pair, promote | | artifactPromotion unchanged mustOffer(no-rebuild) never | gate · wants: mustOffer |
+| B9 ✚ | `internal-only-worker` (absorbs D7 idle-worker verify) | pair + worker, no subdomain anywhere | add a queue worker | internalLiveness expectedServices never(subdomain enable) | pending: internalLiveness |
+| B10 ↑ | `develop-loop-after-bootstrap` | strategy unset → review gate | | meta expectedServices never | pending: meta |
+| B11 ✚ | `git-push-configured-manual-close` | pair, git-push configured, close-mode manual | don't push for me | meta unchanged toolArg(no deploy after edits) never | pending: meta |
+| B12 ✚ | `develop-static-redeploy` | simple, static | change the page | liveness toolArg(no post-deploy start) never | pending: toolArg |
+
+#### C. Shipping (seed: deployed)
+
+| cell | scenario id | variation | oracle families | status |
+|---|---|---|---|---|
+| C1 ↑ | `git-push-setup-then-actions` (+ phase 2 absorbs `launch-with-existing-cicd`) | git-push + actions; usersim supplies the prepared PAT | meta containerCheck(.github/workflows) toolArg(no non-git-push deploy after setup) askWhen(GIT_TOKEN_MISSING) never | pending: meta |
+| C2 | `launch-production-from-standard-pair` | new prod project | launchShape noFabricatedSecret never | gate |
+| C3 ↑ | `launch-to-existing-prod-project` | existing prod project token | launchShape toolResult(TOKEN_SCOPE_MISMATCH once) never | pending: toolResult |
+| C4 ✚ | `webhook-delivery` | dashboard webhook on push | containerCheck(no Actions file) meta(buildIntegration=webhook) never | pending: meta |
+| C5 ↑ | `export-buildfromgit-self-snapshot` | | schemaValid toolResult(secret classes) never | pending: schemaValid |
+
+#### D. Something went wrong (seed: prepared dev service + `seed.expect`)
+
+The broken app lives on a MOUNTED dev service (fixture pushes pinned source;
+no buildFromGit), so the agent has a place to fix source. `allowFailed` explicit.
+
+| cell | scenario id | prepared break | oracle families | status |
+|---|---|---|---|---|
+| D1 | `recover-failed-buildfromgit-missing-dep` | build OK, START fails (db env missing) — today the BUILD fails; re-prepare | seedExpect liveness never | gate · wants: seedExpect |
+| D2 ✚ | `recover-build-failed` | build fails (bad dep) | seedExpect toolResult(failureClass) liveness never | pending: seedExpect |
+| D3 | `launch-failure-build-stuck` | | noFailedProcesses launchShape noFabricatedSecret never | gate |
+| D4 ✚ | `ready-to-deploy-stuck` | runtime imported without startWithoutCode | allow(override, reason: only path) mustOffer(DIAGNOSIS_REQUIRED before override) unchanged | pending: allow |
+| D5 | `resume-after-compaction` (absorbs `resume-status-not-discover`) | | expectedServices unchanged never | gate |
+| D6 ↑ | `discover-adoption-state-resumable-uses-sessionid` | dead-PID bootstrap session | expectedServices toolArg(≤1 import) never | pending: toolArg |
+| D8 ✚ | `bootstrap-import-fails` | bad yaml at provision | toolArg(≤1 import) askWhen never | pending: toolArg |
+
+#### E. First contact surfaces
+
+| cell | scenario id | | oracle families | status |
+|---|---|---|---|---|
+| E1 ↑ | `onboard-trigger-fresh` | fixed onboard prompt replayed | toolArg(workflow start bootstrap) never | pending: toolArg |
+| E2 ↑ | `onboard-populated` | populated project | toolArg(discover first, no bootstrap) never | pending: toolArg |
+| E3 ↑ | `onboard-trigger-negative` | unrelated ask | toolArg(no workflow start) never | pending: toolArg |
+| E4 ↑ | `onboard-guided-on` | guided marker on | toolArg(bootstrap reached) containerCheck(guided block) never | pending: containerCheck |
+
+#### F. Named gaps — a cell, no gate entry until the feature lands
+
+| cell | what | status |
+|---|---|---|
+| F1 | multi-repo: web + api, each its own repo, each pair its own `RemoteURL`, both git-push | pending: scenario (baseline batch first) |
+| F2 | monorepo multi-`setup:` from the classic route | pending: scenario (baseline batch first) |
+| F3 | service deleted externally (§6.5 known gap) | pending: scenario |
+| L1-L3 | local-stage first deploy · local + managed over VPN · local-only adopt | pending: local mode in farm |
+
+Deliberately not covered: recipe × simple (no simple-capable recipe in the
+catalog); iteration-cap auto-close (internal state, unit-tested, not a journey).
+
+### 9.4 Trusting the loop
+
+Before a batch verdict is used to change zcp, a **mutation batch** must have
+passed once per oracle family: a candidate with one planted regression per family
+(env restart broken → B3; override skips DIAGNOSIS_REQUIRED → D4; mount resolved
+from cwd → B6; recipe offer skipped → A5; subdomain auto-enable dropped → A2, only
+once `internalLiveness` exists so the other liveness cells do not fail together).
+Every planted regression lands `failed` on its intended cell and nowhere else.

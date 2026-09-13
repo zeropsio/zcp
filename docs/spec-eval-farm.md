@@ -600,6 +600,28 @@ verification:
   unchanged: [appstage]                    # O4 — standalone form of the nodePostgresRecord unrelated-artifact row
   never: [zerops_import{override=true}, zerops_delete]  # decision rows, gate
   askWhen: [GIT_TOKEN_MISSING]             # decision rows, advisory
+  allow: [{call: "zerops_import{override=true}", reason: "READY_TO_DEPLOY has no other path"}]  # lifts a runner-injected default never (FM-58)
+  internalLiveness: {service: worker, port: 8080, path: /healthz, marker: ok}   # O2' — GET over the project network, no subdomain (FM-61)
+  containerCheck: [{service: appdev, cmd: "printenv FEATURE_X", expect: "on"}]   # O10 — one SSH command, exact/regex match (FM-61)
+  meta: [{hostname: appdev, field: closeDeployMode, expect: manual}]            # O11 — reads the candidate's .zcp/state (FM-61)
+  schemaValid: {artifact: export.yaml}                                          # O12 — schema-validate a produced artifact (FM-61)
+  toolArg: [{never: "Bash{command~^ln -s}"}, {always: "zerops_deploy{workingDir∈/var/www/appdev}"}, {max: 1, call: "zerops_import"}]  # decision rows over transcript.jsonl (FM-59, FM-60)
+  toolResult: [{tool: zerops_env, contains: restartedServices}]                  # decision rows over captured results (FM-59)
+  mustOffer: ["recipe:nestjs-minimal"]                                           # decision rows over route-menu / next-step text (FM-59)
+```
+
+A `seed:` block replaces the bare seed mode for cells that prepare state
+(spec-scenarios.md §9.2):
+
+```yaml
+seed:
+  mode: deployed                            # empty|imported|building|deployed|settled — unchanged semantics
+  fixture: fixtures/api-crash-on-start.yaml
+  ref: 3f2a9c1                              # sha/tag of every repository the fixture references (FM-62)
+  expect:                                   # evaluated once, no AI, before the agent starts (§4.5)
+    services: [{hostname: api, status: [ACTIVE]}]
+    processes: [{service: api, action: stack.build, status: FINISHED}, {service: api, action: stack.deploy, status: FAILED}]
+    probe: {service: api, cmd: "test -f /var/www/zerops.yaml"}
 ```
 
 **FM-27.** `spec` names the spec section this scenario proves — one pointer,
@@ -646,6 +668,40 @@ gating row for an individual scenario once the baseline shows it is stable
 spec supports; the observed route is coverage data (§4.3), and a correct
 outcome reached by an unexpected route is never a failure.
 
+**FM-58.** The runner injects `never: [zerops_import{override=true}]` into every
+scenario's decision rows before evaluation; a scenario file need not repeat it.
+A cell lifts an injected default only with `allow: {call, reason}`; `allow` on a
+shape the file's own `never` also names is a `validate()` error, and `allow`
+without `reason` is a `validate()` error. `TestScenarioValidate_NeverAndAllowSameShape_Rejected`.
+
+**FM-59.** Decision rows have two sources: the captured MCP stream (FM-30) and
+`transcript.jsonl` — the agent's own `stream-json` output, where every
+`tool_use` block (MCP tools AND the agent's `Bash`, `Read`, …) lives at
+`message.content[].name` / `.input`. `toolArg` rows read the transcript;
+`toolResult` and `mustOffer` rows read the MCP stream's result text. A run with
+no transcript freezes every `toolArg` row `blocked`, never `passed`.
+
+**FM-60.** Call-shape grammar (FM-30) gains operators: `k≠v`, `k∈<path-prefix>`,
+`k~<regex>`, and a row-level `max: N` count. `toolArg` rows are `never` (one
+match ⇒ `failed`), `always` (zero matches ⇒ `failed`), or `max` (more than N
+matches ⇒ `failed`). FM-33's vocabulary lint accepts the operators; FM-32 still
+holds — an ordered route is never an assertion.
+
+**FM-61.** Oracle families O10-O12 run from the evaluator process in the run
+container: `internalLiveness` GETs `http://<service>:<port><path>` over the
+project network (no subdomain involved, never skipped — a missing service is
+`failed`); `containerCheck` runs one command over SSH via
+`platform.SystemSSHDeployer.ExecSSH` and matches stdout (`expect` exact or
+`match` regex); `meta` reads the candidate's `.zcp/state/services/<hostname>.json`
+field; `schemaValid` validates a produced artifact against the live schema.
+Each yields one row per entry; an unreachable service or a missing file is
+`failed`, never `blocked`, because the seed's `expect` already proved the
+preparation.
+
+**FM-62.** A fixture that references a repository (`buildFromGit`, a push source)
+names a pinned `ref`; `TestEvalScenarioFixtures_BuildFromGitPinned` rejects an
+unpinned URL or a branch name. The pin is the fixture's identity across batches.
+
 ### 4.3 Vocabulary is derived, never listed
 
 **FM-33.** Every name a `never`/`askWhen`/coverage cell can use — tool names,
@@ -676,6 +732,24 @@ but are excluded from the aggregation §10.1 defines.
 
 ---
 
+### 4.5 `seed.expect` — preparation is asserted, not assumed
+
+**FM-63.** When a scenario carries `seed.expect`, the runner evaluates it exactly
+once, after the seed mode's own wait and after the preseed script, before the
+agent is spawned. No AI, no retry. Every `services[]`, `processes[]` and `probe`
+entry must hold; `probe` runs over SSH like `containerCheck`. On mismatch the run
+settles run-level `blocked` with reason `preparation` (§5.1), the mismatch is
+written to `done.json` `runnerDimensions.preparation` and to the run's `meta.json`,
+every declared row freezes `not-run`, and the agent is never spawned — no
+candidate turn, no cost. A `preparation` block is never attributed to zcp or to
+the agent in `report`, `coverage`, or the observer (§7: no observation is
+produced for such a run). `TestSeed_ExpectMismatch_BlocksPreparation`,
+`TestSeed_ExpectMismatch_AgentNeverSpawned`.
+
+**FM-64.** `seed.expect` is mandatory for a cell whose starting state is
+deliberately broken (spec-scenarios.md §9.2 rule 3); `mode: settled` without
+`expect` is a `validate()` error on such a cell (`TestScenarioValidate_SettledWithoutExpect_Rejected`).
+
 ## 5. Report and coverage — verdict vocabulary over many bundles
 
 This section extends `spec-testing-architecture.md §10.5`'s single-run report
@@ -690,6 +764,7 @@ what is already frozen in the bundle's own files.
 | `passed` | every row for this dimension is proven true | a run, or a single row |
 | `failed` | at least one row is proven false | a run, or a single row |
 | `blocked` | evidence for at least one row could not be obtained, or the bundle itself is incomplete/unverifiable | a run, or a single row; a bundle with a digest mismatch (FM-5) or a foreign evaluator (FM-35) is `blocked`, never `failed` |
+| `blocked: preparation` | the scenario's `seed.expect` did not hold; the agent was never spawned (FM-63) | a run only; never counts against zcp or the agent, never observed |
 | `not-run` | no task work happened for this row/run | a row (§10.1) only — a run whose project was never created is reported `blocked` with its `error` (FM-9), never dropped |
 | `unpinned` | the bundle predates FM-4's digest fields and cannot be checked against the evaluator/candidate pin | a bundle only, never a row; distinct from `blocked` — `unpinned` is "cannot check," `blocked` is "checked and failed" |
 
@@ -719,6 +794,10 @@ never reached a window the report builder can open.
 network beyond the initial `farm pull`) and reproduces the single-run report
 shape of `spec-testing-architecture.md §10.5` per run, plus a batch roll-up:
 per-scenario verdict, cost, and the manifest/summary it read from (FM-9).
+When a batch manifest is present, its run inventory determines the report's
+scope, including runs with no local directory (`blocked: no bundle`). Other
+directories are ignored. Invalid or duplicate run IDs and unreadable manifests
+are errors; directory discovery is only the fallback when no manifest exists.
 `TestFarmReport_Run5Golden_ByteIdentical` pins that `report` over the
 preserved S5 run-5 bundle reproduces that run's known-good `report.txt`
 byte-for-byte — the farm's report is not a new format, it is the single-run
@@ -740,6 +819,10 @@ outside any phase still shows up in the table. A scenario removed from the
 corpus drops every cell it was the sole source of; a re-run with fewer
 scenarios visibly shows fewer cells, never stale ones held over from a prior
 batch.
+
+The coverage table's `Runs` count is the number of distinct runs that exercised
+the cell. Repeated calls within one run, including across multiple MCP process
+streams, contribute only once to that cell.
 
 **FM-40.** Coverage is descriptive, not a gate: it never contributes a row to
 any scenario's aggregated result. Its only effect on §4/§5's verdicts is
