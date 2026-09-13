@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -33,12 +35,17 @@ import (
 //     zerops.yaml). archiveYamlFetcher is a package var so tests can stub
 //     the HTTP+zip round trip (ops cannot import workflow, which owns the
 //     production-grade equivalent — see archiveYamlFetcher's doc).
-//  3. Neither yields text → error naming both attempts.
+//  3. The public git source (publicGitSource url + branch → raw
+//     zerops.yaml on github.com/gitlab.com; rawGitYamlFetcher is the
+//     stubbable fetch). Live-verified 2026-09-14: for a buildFromGit
+//     appVersion the platform stores no yaml and the app-code archive is
+//     the build output, so this is the step that actually fires.
+//  4. Nothing yields text → error naming every attempt.
 //
-// setup: the caller-supplied value when non-empty, else the hostname (the
-// platform's own default) — matching the caller's fallback contract
-// (ServiceMeta.PrimarySetupName/ProdSetupName resolution lives above this
-// layer; this function takes whatever the caller already resolved).
+// setup: the caller-supplied value when non-empty, else derived from the
+// yaml (resolveRedeploySetup: the only setup, or the one named like the
+// hostname); ambiguity is an error listing the candidates because the
+// platform records no setup name for a GIT appVersion.
 func RedeployLastAppVersion(
 	ctx context.Context,
 	client platform.Client,
@@ -71,14 +78,14 @@ func RedeployLastAppVersion(
 		)
 	}
 
-	yaml, err := resolveRedeployYaml(ctx, client, newest.ID)
+	yaml, err := resolveRedeployYaml(ctx, client, newest)
 	if err != nil {
 		return nil, fmt.Errorf("redeploy last app version: %w", err)
 	}
 
-	effectiveSetup := setup
-	if effectiveSetup == "" {
-		effectiveSetup = hostname
+	effectiveSetup, err := resolveRedeploySetup(setup, hostname, yaml)
+	if err != nil {
+		return nil, fmt.Errorf("redeploy last app version: %w", err)
 	}
 
 	proc, err := client.RedeployAppVersion(ctx, newest.ID, yaml, effectiveSetup)
@@ -118,23 +125,115 @@ func RedeployLastAppVersion(
 
 // resolveRedeployYaml runs the yaml-source cascade described on
 // RedeployLastAppVersion's doc comment.
-func resolveRedeployYaml(ctx context.Context, client platform.Client, appVersionID string) (string, error) {
-	yaml, err := client.GetAppVersionZeropsYaml(ctx, appVersionID)
+func resolveRedeployYaml(ctx context.Context, client platform.Client, av platform.AppVersionEvent) (string, error) {
+	yaml, err := client.GetAppVersionZeropsYaml(ctx, av.ID)
 	if err == nil && yaml != "" {
 		return yaml, nil
 	}
 
-	url, urlErr := client.GetAppVersionAppCode(ctx, appVersionID)
+	url, urlErr := client.GetAppVersionAppCode(ctx, av.ID)
 	if urlErr == nil && url != "" {
 		if archiveYaml, fetchErr := archiveYamlFetcher(ctx, url); fetchErr == nil && archiveYaml != "" {
 			return archiveYaml, nil
 		}
 	}
 
+	// Step 3: a GIT-sourced appVersion (buildFromGit) — live-verified
+	// 2026-09-14: the platform stores neither the zerops.yaml text nor the
+	// setup name for it, and the app-code archive is the build OUTPUT
+	// (deployFiles), which normally omits zerops.yaml. The repo itself is
+	// the only source: fetch the file raw from the public git host.
+	if av.PublicGitSource != nil && av.PublicGitSource.GitURL != "" {
+		rawURL, urlErr := rawZeropsYamlURL(av.PublicGitSource.GitURL, av.PublicGitSource.BranchName)
+		if urlErr != nil {
+			return "", fmt.Errorf("no zerops.yaml source available for appVersion %s: no ZEROPS_YAML user-data blob, the app-code archive yielded no zerops.yaml, and the git source cannot be fetched raw: %w", av.ID, urlErr)
+		}
+		gitYaml, fetchErr := rawGitYamlFetcher(ctx, rawURL)
+		if fetchErr != nil {
+			return "", fmt.Errorf("no zerops.yaml source available for appVersion %s: no ZEROPS_YAML user-data blob, the app-code archive yielded no zerops.yaml, and %s: %w", av.ID, rawURL, fetchErr)
+		}
+		if gitYaml != "" {
+			return gitYaml, nil
+		}
+	}
+
 	return "", fmt.Errorf(
-		"no zerops.yaml source available for appVersion %s: no ZEROPS_YAML user-data blob, and the app-code archive yielded no zerops.yaml",
-		appVersionID,
+		"no zerops.yaml source available for appVersion %s: no ZEROPS_YAML user-data blob, the app-code archive yielded no zerops.yaml, and the appVersion has no public git source",
+		av.ID,
 	)
+}
+
+// rawZeropsYamlURL maps a public git repo URL + branch to the raw
+// zerops.yaml URL of the hosts buildFromGit supports. An empty branch is
+// the platform's default branch name, `main`.
+func rawZeropsYamlURL(gitURL, branch string) (string, error) {
+	u, err := url.Parse(strings.TrimSuffix(strings.TrimSpace(gitURL), ".git"))
+	if err != nil {
+		return "", fmt.Errorf("git source url %q: %w", gitURL, err)
+	}
+	if branch == "" {
+		branch = "main"
+	}
+	repoPath := strings.Trim(u.Path, "/")
+	switch strings.ToLower(u.Host) {
+	case "github.com", "www.github.com":
+		return "https://raw.githubusercontent.com/" + repoPath + "/" + branch + "/zerops.yaml", nil
+	case "gitlab.com", "www.gitlab.com":
+		return "https://gitlab.com/" + repoPath + "/-/raw/" + branch + "/zerops.yaml", nil
+	}
+	return "", fmt.Errorf("git host %q is not supported for a raw zerops.yaml fetch (github.com and gitlab.com are)", u.Host)
+}
+
+// rawGitYamlFetcher fetches the raw zerops.yaml text from a public git
+// host (cascade step 3). Package var so tests stub the network.
+var rawGitYamlFetcher = defaultRawGitYamlFetcher
+
+func defaultRawGitYamlFetcher(ctx context.Context, rawURL string) (string, error) {
+	const maxBytes = 1 << 20
+	timeoutCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(timeoutCtx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("raw git fetch: new request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("raw git fetch: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("raw git fetch: HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+	if err != nil {
+		return "", fmt.Errorf("raw git fetch: read body: %w", err)
+	}
+	return string(body), nil
+}
+
+// resolveRedeploySetup picks the zerops.yaml setup block for the redeploy:
+// the caller's explicit choice; else the only setup the yaml declares; else
+// the setup named like the hostname (the platform's own default); else an
+// error listing the candidates — the platform records no setup name for a
+// GIT appVersion, so there is nothing further to read.
+func resolveRedeploySetup(setup, hostname, yamlText string) (string, error) {
+	if setup != "" {
+		return setup, nil
+	}
+	doc, err := ParseZeropsYmlContent([]byte(yamlText), "zerops.yaml")
+	if err != nil {
+		return "", err
+	}
+	names := doc.SetupNames()
+	switch {
+	case len(names) == 1:
+		return names[0], nil
+	case slices.Contains(names, hostname):
+		return hostname, nil
+	case len(names) == 0:
+		return hostname, nil
+	}
+	return "", fmt.Errorf("zerops.yaml declares setups %v and none is named %q — pass setup=<name> to zerops_deploy", names, hostname)
 }
 
 // archiveYamlFetcher is the app-code archive fallback: HTTP GET the signed
