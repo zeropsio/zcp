@@ -311,6 +311,77 @@ func TestCheckProvision_StoresDiscoveredEnvVars(t *testing.T) {
 	}
 }
 
+// TestEnvelope_DeployHistory_SuppliedForNonRunning_Table pins the R1/R3
+// DeployHistory supply point (docs/spec-workflows.md §8 R1/R3): checkProvision
+// classifies every service at READY_TO_DEPLOY/FAILED via
+// ops.ComputeRecoveryState and stores the shape → none|failed|ok mapping via
+// engine.StoreDiscoveredDeployHistory, alongside StoreDiscoveredStatuses. A
+// RUNNING service gets no map entry (defaults to "ok" downstream,
+// bootstrap_guide_assembly.go's deployHistoryFor) and — the busy-truth
+// invariant (CLAUDE.md trap) — never triggers a recovery-state read at all:
+// GetProjectProcessesDirect (ComputeRecoveryState's liveProcessForHostname
+// probe) is called exactly once per READY_TO_DEPLOY/FAILED hostname, never
+// for the RUNNING one.
+func TestEnvelope_DeployHistory_SuppliedForNonRunning_Table(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := workflow.NewEngine(dir, workflow.EnvLocal, nil)
+
+	_, err := eng.BootstrapStart("proj-1", "test intent")
+	if err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	_, err = eng.BootstrapCompletePlan([]workflow.BootstrapTarget{{
+		Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "dev"},
+	}}, nil, nil)
+	if err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "s-appdev", Name: "appdev", Status: serviceStatusRunning},
+		{ID: "s-fresh", Name: "freshsvc", Status: serviceStatusReadyToDeploy},
+		{ID: "s-failed", Name: "failedsvc", Status: platform.ServiceStatusFailed},
+	}).WithAppVersionEvents([]platform.AppVersionEvent{
+		{ID: "av-1", ServiceStackID: "s-failed", Status: platform.BuildStatusBuildFailed, Created: "2026-05-05T10:00:00Z"},
+	})
+
+	state, err := eng.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+
+	checker := checkProvision(mock, nil, "proj-1", eng)
+	result, err := checker(context.Background(), state.Bootstrap.Plan, state.Bootstrap)
+	if err != nil {
+		t.Fatalf("checker error: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected pass: %s", result.Summary)
+		for _, c := range result.Checks {
+			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+		}
+	}
+
+	state, err = eng.GetState()
+	if err != nil {
+		t.Fatalf("GetState after check: %v", err)
+	}
+	dh := state.Bootstrap.DiscoveredDeployHistory
+	if got := dh["freshsvc"]; got != "none" {
+		t.Errorf("freshsvc deployHistory = %q, want %q", got, "none")
+	}
+	if got := dh["failedsvc"]; got != "failed" {
+		t.Errorf("failedsvc deployHistory = %q, want %q", got, "failed")
+	}
+	if got, ok := dh["appdev"]; ok {
+		t.Errorf("appdev (RUNNING) must carry no deployHistory entry, got %q", got)
+	}
+	if got := mock.CallCounts["GetProjectProcessesDirect"]; got != 2 {
+		t.Errorf("GetProjectProcessesDirect calls: want 2 (freshsvc+failedsvc only, never appdev/RUNNING), got %d", got)
+	}
+}
+
 func TestCheckProvision_ExistingRuntime_StageActive_Pass(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
