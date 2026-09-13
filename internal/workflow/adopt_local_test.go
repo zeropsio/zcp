@@ -116,6 +116,47 @@ func TestLocalAutoAdopt_OneRuntime_LocalStageLinked(t *testing.T) {
 	}
 }
 
+// TestAdopt_DerivesPublicAccessIntent_Table pins §8 O3 PA-6's adopt rule:
+// LocalAutoAdopt's single-runtime auto-link derives PublicAccess for the
+// linked stage hostname from the observed live SubdomainAccess flag — on
+// stays subdomain, off stays auto (domains arrive in a later slice; not
+// exercised here — Domains stays empty on this adopt path for now).
+func TestAdopt_DerivesPublicAccessIntent_Table(t *testing.T) {
+	tests := []struct {
+		name            string
+		subdomainAccess bool
+		wantIntent      topology.PublicAccessIntent
+	}{
+		{"subdomain_on_derives_subdomain", true, topology.PublicAccessSubdomain},
+		{"subdomain_off_derives_auto", false, topology.PublicAccessAuto},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			mock := platform.NewMock().
+				WithProject(&platform.Project{ID: "p1", Name: "myproject"}).
+				WithServices([]platform.ServiceStack{
+					{
+						ID: "rt-1", Name: "apistage", Status: "ACTIVE", SubdomainAccess: tt.subdomainAccess,
+						ServiceStackTypeInfo: platform.ServiceTypeInfo{
+							ServiceStackTypeVersionName:  "nodejs@22",
+							ServiceStackTypeCategoryName: "USER",
+						},
+					},
+				})
+
+			result, err := LocalAutoAdopt(context.Background(), mock, "p1", dir)
+			if err != nil {
+				t.Fatalf("LocalAutoAdopt: %v", err)
+			}
+			got := result.Meta.PublicAccessFor("apistage")
+			if got.Intent != tt.wantIntent {
+				t.Errorf("PublicAccessFor(apistage) = %+v, want Intent=%q", got, tt.wantIntent)
+			}
+		})
+	}
+}
+
 func TestLocalAutoAdopt_OneRuntime_ReadyToDeploy_NoStamp(t *testing.T) {
 	dir := t.TempDir()
 	mock := platform.NewMock().
