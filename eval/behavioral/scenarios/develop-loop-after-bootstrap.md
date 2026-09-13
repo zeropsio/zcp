@@ -40,7 +40,7 @@ verification:
       type: postgresql@*
   noFailedProcesses: true
   meta:
-    - {hostname: appdev, field: closeDeployMode, expect: "unset"}
+    - {hostname: appdev, field: closeDeployMode, expect: "auto"}
   never: ["zerops_import{override=true}", "zerops_delete"]
   retrospectiveMustNotMention:
     - smuggled

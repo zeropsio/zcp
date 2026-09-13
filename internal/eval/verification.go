@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -663,8 +664,15 @@ func matchTypeGlob(actual, pattern string) bool {
 	if topology.CanonicalBareForm(pattern) == pattern {
 		candidate = topology.CanonicalBareForm(actual)
 	}
-	if prefix, hadStar := strings.CutSuffix(pattern, "*"); hadStar {
+	if prefix, hadStar := strings.CutSuffix(pattern, "*"); hadStar && !strings.Contains(prefix, "*") {
 		return strings.HasPrefix(candidate, prefix)
+	}
+	if strings.Contains(pattern, "*") {
+		// An inner wildcard (`php-*@*` for php-nginx/php-apache) is a plain
+		// glob over the candidate form; path.Match's `*` never crosses a
+		// `/`, which is exactly the OS-prefix boundary.
+		ok, err := path.Match(pattern, candidate)
+		return err == nil && ok
 	}
 	return candidate == pattern
 }

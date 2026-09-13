@@ -931,3 +931,26 @@ func TestGenerateRequiredChecks_NewFamilies_DispatchOnePerEntry(t *testing.T) {
 		}
 	}
 }
+
+// TestMatchTypeGlob_InnerWildcard_MatchesNameVariants pins that a pattern
+// with a wildcard inside the name (`php-*@*`) accepts the platform's
+// composite forms for every php variant, while a trailing-only wildcard
+// keeps its prefix semantics (docs/spec-eval-farm.md §4.1 expectedServices).
+func TestMatchTypeGlob_InnerWildcard_MatchesNameVariants(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		actual, pattern string
+		want            bool
+	}{
+		{"ubuntu/php-nginx@8.4", "php-*@*", true},
+		{"ubuntu/php-apache@8.3", "php-*@*", true},
+		{"ubuntu/nodejs@22", "php-*@*", false},
+		{"ubuntu/nodejs@22", "nodejs@*", true},
+		{"postgresql:single@18", "postgresql@*", true},
+	}
+	for _, tc := range cases {
+		if got := matchTypeGlob(tc.actual, tc.pattern); got != tc.want {
+			t.Errorf("matchTypeGlob(%q, %q) = %v, want %v", tc.actual, tc.pattern, got, tc.want)
+		}
+	}
+}
