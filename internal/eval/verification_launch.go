@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -53,14 +54,15 @@ func evaluateLaunchShapeRows(
 	}
 	var rows []RequiredCheck
 
-	prodProject, projectRow := findLaunchProdProject(ctx, client, cfg.ProdProject)
+	scope := launchShapeScope(cfg)
+	prodProject, projectRow := resolveLaunchProdProject(ctx, client, cfg)
 	rows = append(rows, projectRow)
 	if prodProject == nil {
 		reason := "prod project not found or not resolvable: " + projectRow.Message
 		rows = append(rows,
-			notRunLaunchShapeRow("runtimes_start_without_code", cfg.ProdProject, reason),
-			notRunLaunchShapeRow("no_build_from_git", cfg.ProdProject, reason),
-			notRunLaunchShapeRow("first_release_is_first_build", cfg.ProdProject, reason),
+			notRunLaunchShapeRow("runtimes_start_without_code", scope, reason),
+			notRunLaunchShapeRow("no_build_from_git", scope, reason),
+			notRunLaunchShapeRow("first_release_is_first_build", scope, reason),
 		)
 	} else {
 		rows = append(rows, evaluateLaunchProdRuntimeRows(ctx, client, prodProject.ID)...)
@@ -76,6 +78,60 @@ func notRunLaunchShapeRow(field, scope, message string) RequiredCheck {
 	return RequiredCheck{
 		ID: launchShapeRowID(field), Check: "launch_shape", Scope: scope,
 		Result: CheckNotRun, Message: message,
+	}
+}
+
+// launchShapeScope returns the row Scope identifier for a launch shape
+// config: the prod project NAME when resolving by name, or the env VAR
+// NAME when resolving by id (cfg.ProdProjectIDEnv) — never the id value
+// itself, which may be a caller-supplied secret-adjacent identifier.
+func launchShapeScope(cfg *LaunchShapeConfig) string {
+	if cfg.ProdProjectIDEnv != "" {
+		return cfg.ProdProjectIDEnv
+	}
+	return cfg.ProdProject
+}
+
+// resolveLaunchProdProject dispatches to name-based or id-based prod
+// project resolution depending on which of cfg.ProdProject /
+// cfg.ProdProjectIDEnv is set (validate() guarantees exactly one).
+func resolveLaunchProdProject(ctx context.Context, client platform.Client, cfg *LaunchShapeConfig) (*platform.Project, RequiredCheck) {
+	if cfg.ProdProjectIDEnv != "" {
+		return findLaunchProdProjectByIDEnv(ctx, client, cfg.ProdProjectIDEnv)
+	}
+	return findLaunchProdProject(ctx, client, cfg.ProdProject)
+}
+
+// findLaunchProdProjectByIDEnv resolves launchShape.prodProjectIdEnv
+// (docs/spec-eval-farm.md §4.1/§4.4 O6): reads the project id from the
+// named environment variable and resolves it via a direct
+// client.GetProject read (not a name search, unlike findLaunchProdProject).
+// The project_exists row's Scope is the env NAME, never the id value. An
+// unset/empty env var, or a GetProject failure, blocks the row rather than
+// failing it — the id was never available to check.
+func findLaunchProdProjectByIDEnv(ctx context.Context, client platform.Client, envName string) (*platform.Project, RequiredCheck) {
+	id := launchShapeRowID("project_exists")
+	if client == nil {
+		return nil, RequiredCheck{ID: id, Check: "launch_shape", Scope: envName, Result: CheckBlocked, Message: "no platform client available"}
+	}
+	projectID := os.Getenv(envName)
+	if projectID == "" {
+		return nil, RequiredCheck{
+			ID: id, Check: "launch_shape", Scope: envName, Result: CheckBlocked,
+			Message: fmt.Sprintf("resource %s missing", envName),
+		}
+	}
+	project, err := client.GetProject(ctx, projectID)
+	if err != nil {
+		return nil, RequiredCheck{
+			ID: id, Check: "launch_shape", Scope: envName, Result: CheckBlocked, Source: "GetProject",
+			Message: fmt.Sprintf("GetProject failed: %v", err),
+		}
+	}
+	return project, RequiredCheck{
+		ID: id, Check: "launch_shape", Scope: envName, Result: CheckPassed,
+		Expected: "exists", Observed: "found", Source: "GetProject",
+		Message: fmt.Sprintf("project resolved by id from env %s", envName),
 	}
 }
 

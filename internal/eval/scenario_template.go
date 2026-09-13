@@ -195,6 +195,9 @@ func renderVerificationConfig(cfg *VerificationConfig, values TemplateValues) er
 		if cfg.LaunchShape.ProdProject, err = renderVerificationString("launchShape.prodProject", cfg.LaunchShape.ProdProject, values); err != nil {
 			return err
 		}
+		if cfg.LaunchShape.ProdProjectIDEnv, err = renderVerificationString("launchShape.prodProjectIdEnv", cfg.LaunchShape.ProdProjectIDEnv, values); err != nil {
+			return err
+		}
 	}
 	for i := range cfg.ArtifactPromotion {
 		if cfg.ArtifactPromotion[i].From, err = renderVerificationString("artifactPromotion.from", cfg.ArtifactPromotion[i].From, values); err != nil {

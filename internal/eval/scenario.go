@@ -47,6 +47,14 @@ type Scenario struct {
 	// seed field used the legacy scalar shape, or the block form omitted
 	// expect.
 	SeedExpect *SeedExpect
+	// RequiredEnvVars names environment variables the runner must find
+	// non-empty in its OWN environment before spawning the agent
+	// (docs/spec-eval-farm.md §4.5 preparation extension; spec-scenarios.md
+	// §9.2 rule 7): a missing/empty entry is a preparation mismatch
+	// ("resource <NAME> missing"), routed through the same
+	// blocked:preparation path as a seed.expect mismatch — the agent is
+	// never spawned and no row is graded.
+	RequiredEnvVars []string
 	// SeedRef is the seed.ref field (docs/spec-eval-farm.md §4.1) — the
 	// pinned sha/tag of every repository the seed fixture references.
 	// Parsed and carried here; not yet consumed at seed time (a later
@@ -336,8 +344,15 @@ type VerificationConfig struct {
 // (docs/spec-eval-farm.md §4.4 O6).
 type LaunchShapeConfig struct {
 	// ProdProject is the prod project name (post-Scenario.Render
-	// templating, e.g. "zcp-farm-{{runId}}-prod").
-	ProdProject string `yaml:"prodProject"`
+	// templating, e.g. "zcp-farm-{{runId}}-prod"). Exactly one of
+	// ProdProject / ProdProjectIDEnv is required (validate()).
+	ProdProject string `yaml:"prodProject,omitempty"`
+	// ProdProjectIDEnv names an environment variable, read at oracle time,
+	// holding the id of an existing prod project to resolve by id
+	// (platform.Client.GetProject) instead of by name. Exactly one of
+	// ProdProject / ProdProjectIDEnv is required (validate()). The row's
+	// Scope carries this env NAME, never the id value.
+	ProdProjectIDEnv string `yaml:"prodProjectIdEnv,omitempty"`
 }
 
 // ArtifactPromotionEntry declares one O7 artifact-promotion oracle entry
@@ -429,6 +444,7 @@ type scenarioFrontmatter struct {
 	UserSim         *UserSimConfig         `yaml:"userSim"`
 	Verification    *VerificationConfig    `yaml:"verification"`
 	ExcludeFromAll  bool                   `yaml:"excludeFromAll"`
+	RequiredEnvVars []string               `yaml:"requiredEnvVars"`
 }
 
 // ParseScenario reads a scenario markdown file and returns the parsed structure.
@@ -480,6 +496,7 @@ func ParseScenario(path string) (*Scenario, error) {
 		UserSim:         fm.UserSim,
 		Verification:    fm.Verification,
 		ExcludeFromAll:  fm.ExcludeFromAll,
+		RequiredEnvVars: fm.RequiredEnvVars,
 		SeedExpect:      fm.Seed.Expect,
 		SeedRef:         fm.Seed.Ref,
 		seedIsBlock:     fm.Seed.IsBlock,
@@ -614,8 +631,12 @@ func (s *Scenario) validate() error {
 				return fmt.Errorf("verification.allow: %q is already named by this file's own never list — allow only lifts the runner-injected default (FM-58)", a.Call)
 			}
 		}
-		if s.Verification.LaunchShape != nil && s.Verification.LaunchShape.ProdProject == "" {
-			return fmt.Errorf("verification.launchShape requires prodProject")
+		if ls := s.Verification.LaunchShape; ls != nil {
+			hasName := ls.ProdProject != ""
+			hasEnv := ls.ProdProjectIDEnv != ""
+			if hasName == hasEnv {
+				return fmt.Errorf("verification.launchShape requires exactly one of prodProject or prodProjectIdEnv")
+			}
 		}
 		for _, ap := range s.Verification.ArtifactPromotion {
 			if ap.From == "" || ap.To == "" {

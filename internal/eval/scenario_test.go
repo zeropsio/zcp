@@ -696,3 +696,67 @@ Do the thing.
 		t.Errorf("error should mention reason, got: %v", err)
 	}
 }
+
+// TestScenarioValidate_LaunchShape_ProdProjectXorIDEnv_Rejected pins
+// docs/spec-eval-farm.md §4.4 O6/§4.1: verification.launchShape requires
+// exactly one of prodProject / prodProjectIdEnv — neither set, and both
+// set, are both validate() errors.
+func TestScenarioValidate_LaunchShape_ProdProjectXorIDEnv_Rejected(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	neither := `---
+id: launch-shape-neither
+seed: empty
+verification:
+  mode: observe
+  launchShape: {}
+---
+Do the thing.
+`
+	neitherPath := filepath.Join(dir, "neither.md")
+	if err := os.WriteFile(neitherPath, []byte(neither), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseScenario(neitherPath); err == nil {
+		t.Fatal("expected validate() error when neither prodProject nor prodProjectIdEnv is set")
+	} else if !strings.Contains(err.Error(), "prodProject") {
+		t.Errorf("error should mention prodProject/prodProjectIdEnv, got: %v", err)
+	}
+
+	both := `---
+id: launch-shape-both
+seed: empty
+verification:
+  mode: observe
+  launchShape: {prodProject: "zcp-farm-prod", prodProjectIdEnv: ZCP_E2E_EXISTING_PROJECT_ID}
+---
+Do the thing.
+`
+	bothPath := filepath.Join(dir, "both.md")
+	if err := os.WriteFile(bothPath, []byte(both), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseScenario(bothPath); err == nil {
+		t.Fatal("expected validate() error when both prodProject and prodProjectIdEnv are set")
+	} else if !strings.Contains(err.Error(), "prodProject") {
+		t.Errorf("error should mention prodProject/prodProjectIdEnv, got: %v", err)
+	}
+
+	envOnly := `---
+id: launch-shape-env-only
+seed: empty
+verification:
+  mode: observe
+  launchShape: {prodProjectIdEnv: ZCP_E2E_EXISTING_PROJECT_ID}
+---
+Do the thing.
+`
+	envOnlyPath := filepath.Join(dir, "env-only.md")
+	if err := os.WriteFile(envOnlyPath, []byte(envOnly), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseScenario(envOnlyPath); err != nil {
+		t.Errorf("prodProjectIdEnv alone should be valid, got: %v", err)
+	}
+}

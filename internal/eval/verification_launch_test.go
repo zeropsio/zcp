@@ -176,6 +176,60 @@ func TestVerification_LaunchShape_ListNotPermitted_Blocked(t *testing.T) {
 	}
 }
 
+// TestLaunchShape_ProdProjectIDEnv_ResolvesByID pins docs/spec-eval-farm.md
+// §4.4 O6/§4.1: launchShape.prodProjectIdEnv resolves the prod project by
+// id (client.GetProject), not by name — and the project_exists row's Scope
+// carries the env NAME, never the id value.
+func TestLaunchShape_ProdProjectIDEnv_ResolvesByID(t *testing.T) {
+	const envName = "ZCP_E2E_EXISTING_PROJECT_ID"
+	t.Setenv(envName, "prod-secret-id-1")
+	cfg := &LaunchShapeConfig{ProdProjectIDEnv: envName}
+	client := platform.NewMock().
+		WithProject(&platform.Project{ID: "prod-secret-id-1", Name: "some-prod-name"}).
+		WithServicesDirect([]platform.ServiceStack{
+			{ID: "svc-app1", ProjectID: "prod-secret-id-1", Name: "app1", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av1", ProjectID: "prod-secret-id-1", ServiceStackID: "svc-app1", Source: "NONE", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z"},
+		})
+
+	rows := evaluateLaunchShapeRows(context.Background(), cfg, client, "", nil, "")
+	row := findRow(t, rows, "launch_shape/project_exists")
+	if row.Result != CheckPassed {
+		t.Fatalf("expected project_exists to pass, got %+v", row)
+	}
+	if row.Scope != envName {
+		t.Errorf("Scope = %q, want the env NAME %q (never the id value)", row.Scope, envName)
+	}
+	if strings.Contains(row.Message, "prod-secret-id-1") {
+		t.Errorf("Message leaks the project id value: %q", row.Message)
+	}
+}
+
+// TestLaunchShape_ProdProjectIDEnv_Unset_Blocked pins the defensive path:
+// even though the runner's requiredEnvVars gate normally prevents the
+// oracle from ever being reached with the env unset, the oracle itself
+// grades project_exists blocked with a "resource … missing" message rather
+// than panicking or silently resolving an empty id.
+func TestLaunchShape_ProdProjectIDEnv_Unset_Blocked(t *testing.T) {
+	const envName = "ZCP_E2E_EXISTING_PROJECT_ID_UNSET"
+	t.Setenv(envName, "")
+	cfg := &LaunchShapeConfig{ProdProjectIDEnv: envName}
+	client := platform.NewMock()
+
+	rows := evaluateLaunchShapeRows(context.Background(), cfg, client, "", nil, "")
+	row := findRow(t, rows, "launch_shape/project_exists")
+	if row.Result != CheckBlocked {
+		t.Fatalf("expected project_exists blocked when env is unset, got %+v", row)
+	}
+	if !strings.Contains(row.Message, "resource") || !strings.Contains(row.Message, envName) || !strings.Contains(row.Message, "missing") {
+		t.Errorf("Message should read as a resource-missing block, got %q", row.Message)
+	}
+	if row.Scope != envName {
+		t.Errorf("Scope = %q, want the env NAME %q", row.Scope, envName)
+	}
+}
+
 func assertRowResults(t *testing.T, rows []RequiredCheck, want map[string]CheckResult) {
 	t.Helper()
 	for id, expected := range want {
