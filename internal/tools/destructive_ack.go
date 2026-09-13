@@ -34,18 +34,24 @@ type DiagnosedDestruction struct {
 	Diagnoses []TargetDiagnosis `json:"diagnoses,omitempty"`
 	// Retry is the complete, executable corrective (R6-P4): the exact call that,
 	// re-sent, clears the gate AND reaches the intended end state in one shot.
-	// Present ONLY for a fresh-misconfigured target (docs/spec-workflows.md §8
-	// "Recovery classification" R2) — every failed-*/stuck-building target
-	// carries Next/Then instead, never a ready-made re-import.
+	// Present for a fresh-misconfigured target, and (docs/spec-workflows.md §8
+	// "Recovery classification" R2, amended) for failed-build/stuck-building on
+	// a git-provisioned target with no container — neither shape has anything
+	// deployed to lose. Every other failed-*/stuck-building target carries
+	// Next/Then instead, never a ready-made re-import.
 	Retry *RetryCall `json:"retryCall,omitempty"`
 	// Next is the one read-only next call for a failed-*/stuck-building
-	// target: read the failure timeline before any reset (R2). Mutually
-	// exclusive with Retry.
+	// target that is NOT retry-safe: read the failure timeline before any
+	// reset (R2). Mutually exclusive with Retry.
 	Next *topology.Recovery `json:"next,omitempty"`
-	// Then names the non-gated corrective once the target's diagnosed —
-	// a plain zerops_deploy, never a re-import (R2: "for every failed-*
-	// shape the gate's next is zerops_events then zerops_deploy ... never
-	// a re-import"). Set alongside Next.
+	// Then names the corrective ComputeRecoveryState derived for the target's
+	// shape (R2) — the never-gated `zerops_deploy appVersion=latest` in-place
+	// redeploy for a never-activated failed-init service, the fix-then-
+	// re-import sequence alongside Retry for the git-no-container failed-
+	// build/stuck-building shape, or the plain non-gated `zerops_deploy`
+	// fallback. Set alongside Next when Retry is absent; set alongside Retry
+	// only for the git-no-container shape (never for fresh-misconfigured,
+	// where the retry alone recovers).
 	Then string `json:"then,omitempty"`
 }
 

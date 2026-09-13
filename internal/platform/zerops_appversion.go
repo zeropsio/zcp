@@ -2,8 +2,14 @@ package platform
 
 import (
 	"context"
+	"sort"
+	"time"
 
+	"github.com/zeropsio/zerops-go/dto/input/body"
 	"github.com/zeropsio/zerops-go/dto/input/path"
+	"github.com/zeropsio/zerops-go/dto/input/query"
+	"github.com/zeropsio/zerops-go/dto/output"
+	"github.com/zeropsio/zerops-go/types"
 	"github.com/zeropsio/zerops-go/types/uuid"
 )
 
@@ -114,4 +120,112 @@ func (z *ZeropsClient) GetAppVersionUserData(ctx context.Context, appVersionID s
 		})
 	}
 	return vars, nil
+}
+
+// GetAppVersionZeropsYaml returns the app version's ZEROPS_YAML user-data
+// blob — the full deployed zerops.yaml TEXT, verbatim. Unlike
+// GetAppVersionUserData (which filters ZEROPS_YAML out by key — it only
+// ever returns genuine run.envVariables), this is the one accessor that
+// surfaces the blob itself. Used by the R2 artifact-redeploy recovery
+// (docs/spec-workflows.md §8 R2 / ops.RedeployLastAppVersion) as the FIRST
+// yaml source — the platform does not reuse the stored yaml on its own, so
+// ZCP must resend it verbatim on PUT /app-version/{id}/deploy.
+//
+// Returns ("", nil) when no ZEROPS_YAML record exists (e.g. a
+// startWithoutCode appVersion) — callers fall back to the app-code archive.
+func (z *ZeropsClient) GetAppVersionZeropsYaml(ctx context.Context, appVersionID string) (string, error) {
+	pathParam := path.AppVersionId{Id: uuid.AppVersionId(appVersionID)}
+	resp, err := z.handler.GetAppVersion(ctx, pathParam)
+	if err != nil {
+		return "", mapSDKError(err, "appVersion")
+	}
+	out, err := resp.Output()
+	if err != nil {
+		return "", mapSDKError(err, "appVersion")
+	}
+	for _, ud := range out.UserDataList {
+		if ud.Key.String() == zeropsYamlUserDataKey {
+			return string(ud.Content), nil
+		}
+	}
+	return "", nil
+}
+
+// ListServiceAppVersions reads a service's app-version history via the
+// DIRECT (non-Elasticsearch) GET /service-stack/{id}/app-version — lag-
+// free, unlike the ES-backed SearchAppVersions. Used by
+// ops.ComputeRecoveryState to read facts about the newest appVersion
+// (ArtifactBuilt/GitProvisioned/HasContainer) right after a mutation,
+// where ES lag could otherwise misclassify a just-settled service.
+//
+// Returns newest-first by Sequence descending regardless of what order the
+// platform emits `list` in — callers key off index 0 as "the newest".
+func (z *ZeropsClient) ListServiceAppVersions(ctx context.Context, serviceID string) ([]AppVersionEvent, error) {
+	pathParam := path.ServiceStackId{Id: uuid.ServiceStackId(serviceID)}
+	resp, err := z.handler.GetServiceStackAppVersion(ctx, pathParam, query.ListServiceStackAppVersions{})
+	if err != nil {
+		return nil, mapSDKError(err, "appVersion")
+	}
+	out, err := resp.Output()
+	if err != nil {
+		return nil, mapSDKError(err, "appVersion")
+	}
+	events := make([]AppVersionEvent, 0, len(out.List))
+	for _, av := range out.List {
+		events = append(events, mapDirectAppVersion(av))
+	}
+	sort.Slice(events, func(i, j int) bool { return events[i].Sequence > events[j].Sequence })
+	return events, nil
+}
+
+// mapDirectAppVersion projects the SDK's GetAppVersion (as returned by the
+// DIRECT service-stack app-version list) onto AppVersionEvent — the same
+// wire shape ES-backed SearchAppVersions returns (mapEsAppVersionEvent in
+// zerops_event_mappers.go), so callers can treat both sources
+// interchangeably. Kept self-contained here rather than sharing that
+// mapper: the two source DTOs (output.EsAppVersion / output.GetAppVersion)
+// are structurally similar but distinct generated types.
+func mapDirectAppVersion(av output.GetAppVersion) AppVersionEvent {
+	event := AppVersionEvent{
+		ID:             av.Id.TypedString().String(),
+		ProjectID:      av.ProjectId.TypedString().String(),
+		ServiceStackID: av.ServiceStackId.TypedString().String(),
+		Source:         av.Source.String(),
+		Status:         av.Status.String(),
+		Sequence:       av.Sequence.Native(),
+		Created:        av.Created.Format(time.RFC3339Nano),
+		LastUpdate:     av.LastUpdate.Format(time.RFC3339Nano),
+	}
+	if av.PublicGitSource != nil {
+		event.PublicGitSource = &AppVersionGitSource{
+			GitURL:     av.PublicGitSource.GitUrl.String(),
+			BranchName: av.PublicGitSource.BranchName.String(),
+		}
+	}
+	return event
+}
+
+// RedeployAppVersion re-deploys an existing appVersion via PUT
+// /app-version/{id}/deploy — the ONLY in-place recovery for a never-
+// activated buildFromGit service (docs/spec-workflows.md §8 R2): no
+// rebuild, no re-import, the already-built artifact goes ACTIVE. BOTH
+// zeropsYaml and zeropsYamlSetup MUST be sent — the platform does NOT
+// reuse the stored yaml (live-verified: omitting either 400s with
+// zeropsYamlSetupNotFound).
+func (z *ZeropsClient) RedeployAppVersion(ctx context.Context, appVersionID, zeropsYaml, setup string) (*Process, error) {
+	pathParam := path.AppVersionId{Id: uuid.AppVersionId(appVersionID)}
+	bodyParam := body.PutAppVersionDeploy{
+		ZeropsYaml:      types.NewMediumTextNull(zeropsYaml),
+		ZeropsYamlSetup: types.NewStringNull(setup),
+	}
+	resp, err := z.handler.PutAppVersionDeploy(ctx, pathParam, bodyParam)
+	if err != nil {
+		return nil, mapSDKError(err, "appVersion")
+	}
+	out, err := resp.Output()
+	if err != nil {
+		return nil, mapSDKError(err, "appVersion")
+	}
+	proc := mapProcess(out)
+	return &proc, nil
 }

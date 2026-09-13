@@ -133,6 +133,22 @@ func WithRecovery(hint *RecoveryHint) ErrorOption {
 	}
 }
 
+// WithSuggestion overrides the wire's Suggestion text with a MORE SPECIFIC
+// corrective than the originating *platform.PlatformError carries — e.g.
+// the R2 artifact-redeploy suggestion (docs/spec-workflows.md §8 R2) on an
+// SSH transport failure against a container-less target, where the
+// error's generic "check SSH" text would send the agent into a retry loop
+// that can never succeed. Empty string is a no-op so callers can pass a
+// conditionally-computed value unconditionally.
+func WithSuggestion(suggestion string) ErrorOption {
+	return func(w *ErrorWire) {
+		if suggestion == "" {
+			return
+		}
+		w.Suggestion = suggestion
+	}
+}
+
 // WithFailureClassification attaches the structured deploy-failure analysis
 // to a transport/preflight error response. nil arg is a no-op so deploy
 // handlers can call it unconditionally — `WithFailureClassification(nil)`

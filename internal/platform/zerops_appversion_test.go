@@ -2,6 +2,10 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -68,5 +72,106 @@ func TestGetAppVersionUserData_NewModel_ReturnsUserOnly(t *testing.T) {
 	}
 	if got[0].Sensitive {
 		t.Error("Sensitive must be false — the app-version DTO carries no Sensitive field to derive it from")
+	}
+}
+
+// TestListServiceAppVersions_MapsListNewestFirst pins the DIRECT (non-ES)
+// GET /service-stack/{id}/app-version read (docs/spec-workflows.md §8 R2):
+// ComputeRecoveryState needs a lag-free view of the newest appVersion right
+// after a mutation, unlike SearchAppVersions (ES-backed). Regardless of the
+// order the platform emits `list` in, the wrapper returns newest-first by
+// Sequence so callers can always key off index 0.
+func TestListServiceAppVersions_MapsListNewestFirst(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/rest/public/service-stack/svc-1/app-version" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"list": [
+				{"id": "av-1", "serviceStackId": "svc-1", "source": "GIT", "status": "ACTIVE", "sequence": 1, "created": "2026-09-01T00:00:00Z", "lastUpdate": "2026-09-01T00:00:00Z"},
+				{"id": "av-2", "serviceStackId": "svc-1", "source": "GIT", "status": "DEPLOY_FAILED", "sequence": 2, "created": "2026-09-14T00:00:00Z", "lastUpdate": "2026-09-14T00:00:00Z", "publicGitSource": {"gitUrl": "https://github.com/example/repo", "branchName": "main"}}
+			],
+			"totalCount": 2
+		}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	z, err := NewZeropsClient("fake-token", srv.URL)
+	if err != nil {
+		t.Fatalf("NewZeropsClient: %v", err)
+	}
+
+	events, err := z.ListServiceAppVersions(context.Background(), "svc-1")
+	if err != nil {
+		t.Fatalf("ListServiceAppVersions: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2", len(events))
+	}
+	if events[0].ID != "av-2" {
+		t.Errorf("events[0].ID = %q, want av-2 (newest by sequence)", events[0].ID)
+	}
+	if events[0].Status != "DEPLOY_FAILED" {
+		t.Errorf("events[0].Status = %q, want DEPLOY_FAILED", events[0].Status)
+	}
+	if events[0].PublicGitSource == nil || events[0].PublicGitSource.GitURL != "https://github.com/example/repo" {
+		t.Errorf("events[0].PublicGitSource = %+v, want gitUrl set", events[0].PublicGitSource)
+	}
+	if events[1].ID != "av-1" {
+		t.Errorf("events[1].ID = %q, want av-1", events[1].ID)
+	}
+}
+
+// TestRedeployAppVersion_SendsYamlAndSetup_ReturnsProcess pins the live-
+// verified wire contract (docs/spec-workflows.md §8 R2): PUT /app-version/
+// {id}/deploy MUST carry BOTH zeropsYaml and zeropsYamlSetup — the platform
+// does not reuse the stored yaml (a partial body 400s with
+// zeropsYamlSetupNotFound).
+func TestRedeployAppVersion_SendsYamlAndSetup_ReturnsProcess(t *testing.T) {
+	t.Parallel()
+
+	var capturedBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/api/rest/public/app-version/av-2/deploy" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"proc-redeploy-1","status":"PENDING","actionName":"stack.deploy"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	z, err := NewZeropsClient("fake-token", srv.URL)
+	if err != nil {
+		t.Fatalf("NewZeropsClient: %v", err)
+	}
+
+	proc, err := z.RedeployAppVersion(context.Background(), "av-2", "run:\n  start: npm start\n", "prod")
+	if err != nil {
+		t.Fatalf("RedeployAppVersion: %v", err)
+	}
+	if proc.ID != "proc-redeploy-1" {
+		t.Errorf("proc.ID = %q, want proc-redeploy-1", proc.ID)
+	}
+	if proc.Status != "PENDING" {
+		t.Errorf("proc.Status = %q, want PENDING", proc.Status)
+	}
+
+	if capturedBody == nil {
+		t.Fatal("request body was not captured")
+	}
+	if capturedBody["zeropsYaml"] != "run:\n  start: npm start\n" {
+		t.Errorf("zeropsYaml = %v, want the full yaml text", capturedBody["zeropsYaml"])
+	}
+	if capturedBody["zeropsYamlSetup"] != "prod" {
+		t.Errorf("zeropsYamlSetup = %v, want %q", capturedBody["zeropsYamlSetup"], "prod")
 	}
 }
