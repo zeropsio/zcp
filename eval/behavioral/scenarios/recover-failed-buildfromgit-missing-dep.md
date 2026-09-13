@@ -2,12 +2,13 @@
 id: recover-failed-buildfromgit-missing-dep
 description: |
   Tier-1 FAILED-state recovery scenario. The fixture imports the
-  python-hello-world-app via buildFromGit but deliberately omits
-  the `db` service the repo's zerops.yaml hard-references in env
-  vars + initCommand (migrate.py). The runtime container builds
-  successfully, then crashes on init when migrate.py cannot resolve
-  `${db_hostname}`. The api service settles in FAILED status before
-  the agent runs.
+  nodejs-hello-world-app via buildFromGit (zeropsSetup: prod) but
+  deliberately omits the `db` service the repo's zerops.yaml
+  hard-references in env vars + initCommand (`node dist/migrate.js`).
+  The build itself FINISHES; the container then crashes at init
+  when migrate.js cannot resolve `${db_hostname}`. The api service
+  settles in FAILED status before the agent runs (seed.expect proves
+  this mechanically — no AI, before the agent is spawned).
 
   This scenario is the empirical baseline for measuring ZCP's
   FAILED-state recovery surface (plans/zcp-failed-state-recovery-
@@ -15,29 +16,37 @@ description: |
   structured Recovery on FAILED services in `zerops_discover` /
   `zerops_verify` / `zerops_deploy` — they pass through normal flow
   until something downstream errors with no actionable next step.
-seed: settled
-fixture: fixtures/python-simple-failed-no-db.yaml
-tags: [recovery, failed-state, buildfromgit, missing-dep, simple-mode, python]
+seed:
+  mode: settled
+  fixture: fixtures/nodejs-prod-failed-no-db.yaml
+  expect:
+    services:
+      - hostname: api
+        status: [FAILED]
+    processes:
+      - service: api
+        action: stack.build
+        status: FINISHED
+tags: [recovery, failed-state, buildfromgit, missing-dep, simple-mode, node]
 area: recovery
 retrospective:
   promptStyle: briefing-future-agent
 verification:
   mode: required
   spec: spec-workflows.md §8
-  liveness: {service: api, marker: "python"}
+  liveness: {service: api, marker: "nodejs"}
   noFailedProcesses: true
   allowFailed: [api]
   never: ["zerops_import{override=true}"]
 userPersona: |
-  Your Python service `api` is supposed to be running on Zerops
-  but it's broken — you can't tell why, only that the deploy
-  doesn't work. You expect the agent to figure out the cause from
-  logs/state and fix it. You don't know that the underlying
-  zerops.yaml in the repo expects a Postgres database next to it.
-  If the agent suggests adding a database, that's plausible; agree
-  if the rationale is grounded in evidence (logs, env vars). Push
-  back if the agent proposes recreating the project from scratch
-  instead of fixing what's there.
+  Your `api` service is supposed to be running on Zerops but it's
+  down — you can't tell why, only that it's not working. You expect
+  the agent to figure out the cause from logs/state and fix it. You
+  don't know that the underlying zerops.yaml in the repo expects a
+  Postgres database next to it. If the agent suggests adding a
+  database, that's plausible; agree if the rationale is grounded in
+  evidence (logs, env vars). Push back if the agent proposes
+  recreating the project from scratch instead of fixing what's there.
 notableFriction:
   - id: detect-failed-state
     description: |
@@ -48,7 +57,7 @@ notableFriction:
       lets it discover the problem by hitting downstream errors.
   - id: read-runtime-logs
     description: |
-      The crash cause (`migrate.py` failing on unresolved
+      The crash cause (`migrate.js` failing on unresolved
       `${db_hostname}`) lives in runtime logs, not build logs.
       Surfaces whether the agent reaches for `zerops_logs
       facility=application` early or wastes turns on build-side
@@ -67,4 +76,4 @@ notableFriction:
       FAILED state or silently re-runs the broken deploy cycle.
 ---
 
-The `api` Python service in this Zerops project is failing — I expected it to be running. Diagnose what's wrong and fix it so the service ends up healthy.
+The `api` service in this Zerops project is down — I expected it to be running. Diagnose what's wrong and fix it so the service ends up healthy.

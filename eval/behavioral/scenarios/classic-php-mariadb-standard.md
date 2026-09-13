@@ -11,6 +11,22 @@ tags: [bootstrap, classic-route, standard-pair, implicit-webserver, php, mariadb
 area: bootstrap
 retrospective:
   promptStyle: briefing-future-agent
+verification:
+  mode: required
+  spec: spec-workflows.md §2
+  expectedServices:
+    - hostname: appdev
+      status: [ACTIVE]
+      type: php-*@*
+    - hostname: appstage
+      status: [ACTIVE]
+      type: php-*@*
+    - hostname: db
+      status: [ACTIVE]
+      type: mariadb@*
+  noFailedProcesses: true
+  liveness: {service: appstage, marker: "php-mariadb-ready"}
+  never: ["zerops_import{override=true}", "zerops_delete"]
 notableFriction:
   - id: implicit-webserver-no-start
     description: |
@@ -31,4 +47,4 @@ notableFriction:
       assumptions.
 ---
 
-I want to deploy a PHP web app backed by MariaDB. I need both a development environment and a staging slot for testing builds.
+I want to deploy a PHP web app backed by MariaDB. Name the dev service `appdev`, the stage service `appstage`, and the database `db`. I need both a development environment and a staging slot for testing builds. Make sure the page served at `/` on `appstage` contains the text "php-mariadb-ready".

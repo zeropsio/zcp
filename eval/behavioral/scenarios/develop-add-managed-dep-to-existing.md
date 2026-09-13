@@ -23,7 +23,9 @@ verification:
       type: nodejs@*
   unchanged: [appstage]
   noFailedProcesses: true
-  never: ["zerops_import{override=true}", "zerops_delete"]
+  containerCheck:
+    - {service: appdev, cmd: "printenv cache_hostname", match: ".+"}
+  never: ["zerops_import{override=true}", "zerops_delete", "zerops_deploy{targetService=cache}"]
 userPersona: |
   Your Node app `appdev` is healthy with Postgres but a particular
   endpoint is slow because it re-runs an expensive query. You want
@@ -47,4 +49,4 @@ notableFriction:
       when the topology is a standard pair.
 ---
 
-The `appdev` Node app is working but the `/api/dashboard` endpoint runs the same heavy Postgres query on every request. Add a Redis-compatible cache to the project and wire it into appdev so we can cache the query. Don't touch `appstage` yet — I want to validate on dev first.
+The `appdev` Node app is working but the `/api/dashboard` endpoint runs the same heavy Postgres query on every request. Add a Redis-compatible cache service named `cache` to the project and wire it into appdev so we can cache the query. Don't touch `appstage` yet — I want to validate on dev first.

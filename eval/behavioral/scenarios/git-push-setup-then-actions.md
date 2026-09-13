@@ -36,6 +36,8 @@ requiredEnvVars:
 retrospective:
   promptStyle: briefing-future-agent
 verification:
+  mode: required
+  spec: spec-workflows.md §4.3
   expectedServices:
     - hostname: appdev
       status: [ACTIVE]
@@ -47,6 +49,14 @@ verification:
       status: [ACTIVE]
       type: postgresql@*
   noFailedProcesses: true
+  meta:
+    - {hostname: appdev, field: gitPushState, expect: "configured"}
+  containerCheck:
+    - {service: appdev, cmd: "ls .github/workflows", match: "\\.ya?ml"}
+  toolArg:
+    - {never: "zerops_deploy{strategy≠git-push}"}
+  askWhen: [GIT_TOKEN_MISSING]
+  never: ["zerops_import{override=true}", "zerops_delete"]
   retrospectiveMustNotMention:
     - ghp_
     - hand-edited token

@@ -10,3 +10,17 @@ adopt-existing-standard-pair
 resume-after-compaction
 launch-production-from-standard-pair
 launch-failure-build-stuck
+classic-php-mariadb-standard
+develop-loop-after-bootstrap
+discover-adoption-state-resumable-uses-sessionid
+existing-simple-mode-node-add-endpoint
+export-buildfromgit-self-snapshot
+git-push-setup-then-actions
+greenfield-fullstack-multi-runtime
+launch-to-existing-prod-project
+onboard-guided-on
+onboard-populated
+onboard-trigger-fresh
+onboard-trigger-negative
+recipe-first-deploy-race-adopt
+recipe-laravel-showcase-fullstack

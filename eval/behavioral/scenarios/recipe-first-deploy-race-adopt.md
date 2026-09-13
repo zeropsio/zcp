@@ -45,6 +45,23 @@ tags: [bootstrap, adopt-route, activity, build-in-flight, race, node, postgres, 
 area: bootstrap
 retrospective:
   promptStyle: briefing-future-agent
+verification:
+  mode: required
+  spec: spec-workflows.md §3.5
+  expectedServices:
+    - hostname: appdev
+      status: [ACTIVE]
+      type: nodejs@*
+    - hostname: appstage
+      status: [ACTIVE]
+      type: nodejs@*
+    - hostname: db
+      status: [ACTIVE]
+      type: postgresql@*
+  noFailedProcesses: true
+  toolArg:
+    - {max: 0, call: "zerops_import"}
+  never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
   Jsi vývojář. Před chvílí jsi v Zerops dashboardu vytvořil nový projekt
   z recipe (Node.js appdev/appstage + Postgres) a zrovna se to poprvé

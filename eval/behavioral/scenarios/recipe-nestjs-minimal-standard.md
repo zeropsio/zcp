@@ -24,6 +24,7 @@ verification:
       type: nodejs@*
   noFailedProcesses: true
   liveness: {service: appdev, marker: "NestJS Minimal"}
+  mustOffer: ["\"recipeSlug\"\\s*:\\s*\"nestjs-minimal\""]
   never: ["zerops_import{override=true}"]
 userPersona: |
   You are a developer building a small NestJS API and you want a dev

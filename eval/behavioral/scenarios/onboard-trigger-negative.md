@@ -20,6 +20,13 @@ tags: [onboarding, trigger-negative, normal-routing, postgresql]
 area: onboarding
 retrospective:
   promptStyle: briefing-future-agent
+verification:
+  mode: required
+  spec: spec-welcome-mode.md §4
+  toolArg:
+    - {never: "zerops_workflow{action=start}"}
+    - {never: "zerops_import"}
+  never: ["zerops_import{override=true}", "zerops_delete"]
 notableFriction:
   - id: specific-technology-is-not-meta-onboarding
     description: |
