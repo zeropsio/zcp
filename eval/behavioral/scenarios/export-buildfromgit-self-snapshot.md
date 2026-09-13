@@ -15,6 +15,13 @@ tags: [export, buildfromgit, self-snapshot, single-repo, three-call-narrowing, v
 area: export
 retrospective:
   promptStyle: briefing-future-agent
+verification:
+  mode: required
+  spec: spec-workflows.md §9
+  schemaValid: {artifact: /var/www/export.yaml}
+  toolResult:
+    - {tool: zerops_workflow, contains: "envClassificationTable"}
+  never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
   You currently deploy by direct push and you want to move to
   buildFromGit so the platform clones and builds from your GitHub
@@ -68,4 +75,4 @@ notableFriction:
       delivery setup.
 ---
 
-The `app` service is working fine but I deploy it by pushing directly. I want to turn this project into a re-importable bundle that points at GitHub: switch the deploy to buildFromGit from `https://github.com/example/teamapi` AND give me the matching `zerops-project-import.yaml` + `zerops.yaml` pair so a teammate (or my future self) can recreate the project from scratch later. Use whatever workflow path is canonical for this — I don't want a raw cleartext dump of the project state, I want the curated re-importable form.
+The `app` service is working fine but I deploy it by pushing directly. I want to turn this project into a re-importable bundle that points at GitHub: switch the deploy to buildFromGit from `https://github.com/example/teamapi` AND give me the matching `zerops-project-import.yaml` + `zerops.yaml` pair so a teammate (or my future self) can recreate the project from scratch later. Use whatever workflow path is canonical for this — I don't want a raw cleartext dump of the project state, I want the curated re-importable form. Save the composed import bundle to `/var/www/export.yaml` on the dev container so I can review it.
