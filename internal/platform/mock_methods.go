@@ -85,6 +85,16 @@ func (m *Mock) GetProjectProcessesDirect(_ context.Context, _ string) ([]Process
 	return m.projectProcesses, nil
 }
 
+func (m *Mock) ListPublicHTTPRoutings(_ context.Context, _ string) ([]PublicHTTPRouting, error) {
+	m.trackCall("ListPublicHTTPRoutings")
+	if err := m.getError("ListPublicHTTPRoutings"); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.publicHTTPRoutings, nil
+}
+
 // GetServiceStackIntegrationStatus returns the seeded IntegrationStatus
 // or IntegrationStatus{State: IntegrationNotConfigured} when unseeded —
 // mirrors the real wrapper's HTTP-400-as-state mapping. Seed via
