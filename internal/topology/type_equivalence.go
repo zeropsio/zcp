@@ -256,6 +256,30 @@ func WithDeploymentVariant(serviceType, variant string) string {
 	return out
 }
 
+// TypeFamily reduces a service type to the family the provision type check's
+// same-family/different-version tolerance compares (docs/spec-workflows.md
+// §2.4): OS prefix and @version are stripped, but — unlike CanonicalBaseName
+// — a managed-service deployment variant (:single/:ha) is NOT stripped. The
+// platform sets a runtime's live type from the repo's zerops.yaml `run.base`
+// at the first build, so a plan-declared version can never match the live
+// version once a different OS/version is resolved; family tolerance accepts
+// that for runtimes (`nodejs@22` and `ubuntu/nodejs@24` share the "nodejs"
+// family). A deployment-variant mismatch stays a genuine difference —
+// `postgresql:ha@18` and `postgresql:single@18` are different families
+// ("postgresql:ha" vs "postgresql:single") — never papered over as a
+// version-resolution tolerance.
+//
+//	nodejs@22            -> nodejs
+//	ubuntu/nodejs@24     -> nodejs
+//	postgresql:single@18 -> postgresql:single
+//	postgresql:ha@18     -> postgresql:ha
+//	postgresql@18        -> postgresql
+func TypeFamily(t string) string {
+	t = strings.ToLower(stripKnownOSPrefix(t))
+	base, _, _ := strings.Cut(t, "@")
+	return base
+}
+
 // IsProfileBearing reports whether a managed-service type takes a scaling
 // `profile` (autoscaling tier): PostgreSQL and Valkey only. Every other managed
 // type scales via verticalAutoscaling and the import endpoint rejects a profile

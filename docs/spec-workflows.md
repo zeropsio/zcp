@@ -510,7 +510,10 @@ Mount + InitServiceGit are skipped entirely in local env (`mounter == nil`, `ssh
 **Checker**: All services exist, types match, and statuses are correct.
 Connection-oriented managed dependencies must expose their environment
 variables; object/shared/Local Storage do not. Local Storage readiness never
-waits for database-style connection envs.
+waits for database-style connection envs. The type check compares families,
+not concrete versions: the platform sets the service type from the repo's
+`zerops.yaml` `run.base` at the first build, so a same-family/different-version
+live type passes with a resolution note; a different family fails.
 
 ### 2.5 Step 3: Close
 

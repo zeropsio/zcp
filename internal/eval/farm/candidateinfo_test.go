@@ -1,6 +1,7 @@
 package farm
 
 import (
+	"bytes"
 	"debug/buildinfo"
 	"reflect"
 	"runtime/debug"
@@ -91,5 +92,39 @@ func TestCandidateInfoKey_Layout(t *testing.T) {
 	want := "candidates/abc123.info.json"
 	if got != want {
 		t.Errorf("CandidateInfoKey(%q) = %q, want %q", "abc123", got, want)
+	}
+}
+
+// TestCorpusMarkerCount_EmbeddedAndEmpty_Table pins docs/spec-eval-farm.md
+// FM-66: a candidate binary carries the recipe corpus embedded from disk at
+// build time, and each embedded recipe's frontmatter contributes one
+// `guiSlug: "` marker to the binary's bytes. MinCorpusMarkers is the
+// refusal threshold (§3.3).
+func TestCorpusMarkerCount_EmbeddedAndEmpty_Table(t *testing.T) {
+	if MinCorpusMarkers != 20 {
+		t.Fatalf("MinCorpusMarkers = %d, want 20", MinCorpusMarkers)
+	}
+
+	repeat := func(n int) []byte {
+		return bytes.Repeat([]byte(`guiSlug: "`), n)
+	}
+
+	tests := []struct {
+		name string
+		data []byte
+		want int
+	}{
+		{name: "no markers", data: []byte("pretend candidate binary"), want: 0},
+		{name: "19 markers, below threshold", data: repeat(19), want: 19},
+		{name: "20 markers, at threshold", data: repeat(20), want: 20},
+		{name: "47 markers, a real local build", data: repeat(47), want: 47},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CorpusMarkerCount(tt.data)
+			if got != tt.want {
+				t.Errorf("CorpusMarkerCount(%d bytes) = %d, want %d", len(tt.data), got, tt.want)
+			}
+		})
 	}
 }

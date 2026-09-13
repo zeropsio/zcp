@@ -48,6 +48,10 @@ const (
 	// split across the two dispatchers.
 	flagCandidate = "--candidate"
 
+	// flagAllowEmptyCorpus opts a `push --candidate` out of the recipe
+	// corpus guard (docs/spec-eval-farm.md FM-66).
+	flagAllowEmptyCorpus = "--allow-empty-corpus"
+
 	// Bundle completeness (docs/spec-eval-farm.md §5: "bundle:
 	// complete|partial|missing").
 	bundleComplete = "complete"
@@ -151,6 +155,7 @@ func farmConfigFromResolver(envr *farm.EnvResolver) (farm.Config, error) {
 // it uploaded.
 func runFarmPush(args []string, envr *farm.EnvResolver) int {
 	var candidate, evaluator, scenarios, wrapper, gateSet string
+	var allowEmptyCorpus bool
 	for i := 0; i < len(args); i++ {
 		arg := args[i] //nolint:gosec // G602 false positive: i is loop-bounded by i < len(args) each iteration (same shape as eval_behavioral.go parseExecutionBindingFlags)
 		switch arg {
@@ -161,6 +166,8 @@ func runFarmPush(args []string, envr *farm.EnvResolver) int {
 			}
 			candidate = args[i+1]
 			i++
+		case flagAllowEmptyCorpus:
+			allowEmptyCorpus = true
 		case "--evaluator":
 			if i+1 >= len(args) {
 				fmt.Fprintf(os.Stderr, "error: %s requires a value\n", arg)
@@ -204,6 +211,12 @@ func runFarmPush(args []string, envr *farm.EnvResolver) int {
 	client := farm.NewSinkClient(cfg)
 	ctx := context.Background()
 
+	if candidate != "" && !allowEmptyCorpus {
+		if err := checkCandidateCorpus(candidate); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+	}
 	if candidate != "" {
 		digest, err := pushSinglePart(ctx, client, "candidates", candidate)
 		if err != nil {
@@ -290,6 +303,26 @@ func runFarmPush(args []string, envr *farm.EnvResolver) int {
 		fmt.Fprintln(os.Stdout, "wrapper-pointer: farm/wrapper/current")
 	}
 	return 0
+}
+
+// checkCandidateCorpus refuses a candidate binary that embeds fewer than
+// farm.MinCorpusMarkers recipe markers (docs/spec-eval-farm.md FM-66): the
+// recipe corpus is embedded from disk at build time
+// (internal/knowledge/documents.go's `//go:embed`), and
+// internal/knowledge/recipes/*.md is gitignored (CLAUDE.md "Knowledge
+// sync"), so a worktree or fresh clone that never ran `zcp sync pull
+// recipes` builds a candidate with none. --allow-empty-corpus (the caller's
+// allowEmptyCorpus check, before this is called) opts out.
+func checkCandidateCorpus(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	n := farm.CorpusMarkerCount(data)
+	if n < farm.MinCorpusMarkers {
+		return fmt.Errorf("candidate embeds no recipe corpus (%d markers): build from a checkout where 'zcp sync pull recipes' ran, or pass %s", n, flagAllowEmptyCorpus)
+	}
+	return nil
 }
 
 // pushSinglePart uploads the file at path to "<prefix>/<sha256(file)>/zcp"

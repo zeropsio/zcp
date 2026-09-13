@@ -1,6 +1,26 @@
 package farm
 
-import "debug/buildinfo"
+import (
+	"bytes"
+	"debug/buildinfo"
+)
+
+// MinCorpusMarkers is the refusal threshold for CorpusMarkerCount
+// (docs/spec-eval-farm.md FM-66): a candidate binary embedding fewer than
+// this many `guiSlug: "` recipe markers was built from a tree whose recipe
+// corpus was never pulled (internal/knowledge/recipes/*.md is gitignored —
+// CLAUDE.md "Knowledge sync"), not from a real local build (47 markers as
+// of 2026-09-13).
+const MinCorpusMarkers = 20
+
+// CorpusMarkerCount counts occurrences of the literal `guiSlug: "` in data
+// — the recipe frontmatter field internal/knowledge/documents.go embeds
+// from disk at build time (`//go:embed … all:recipes …`), one per recipe.
+// A candidate binary built from a worktree/fresh clone with no recipe .md
+// files on disk embeds zero (docs/spec-eval-farm.md FM-66).
+func CorpusMarkerCount(data []byte) int {
+	return bytes.Count(data, []byte(`guiSlug: "`))
+}
 
 // CandidateInfoKey returns the bucket key `farm push --candidate` stores a
 // candidate binary's build info under: the literal

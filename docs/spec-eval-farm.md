@@ -534,6 +534,17 @@ dependency. Windowing changes only when projects are created relative to
 each other; FM-21's no-bundle exemption, FM-23's launch-token lifecycle,
 and R3's interrupt handling are unchanged.
 
+**FM-66.** A candidate whose bytes carry fewer than 20 `guiSlug: "` recipe
+markers is refused — the corpus is embedded from disk at build time and a
+worktree/fresh clone has none. `farm push --candidate <file>` counts
+`guiSlug: "` occurrences in the file's bytes (`farm.CorpusMarkerCount`,
+`farm.MinCorpusMarkers == 20`) before uploading; below the threshold it
+exits nonzero without uploading anything, naming the marker count and
+`--allow-empty-corpus` as the opt-out. This guards only the candidate; the
+evaluator upload is not corpus-checked. CI and release workflows run `zcp
+sync pull` before building (CLAUDE.md "Knowledge sync"), so they are
+unaffected.
+
 ### 3.4 Launch-token lifecycle
 
 **FM-23.** For a launch scenario, the controller mints one

@@ -152,7 +152,7 @@ func TestFarmPush_Candidate_UploadsUnderSha256Key(t *testing.T) {
 
 	var code int
 	stdout, stderr := captureOutput(t, func() {
-		code = runEvalFarm([]string{"push", "--candidate", candidatePath})
+		code = runEvalFarm([]string{"push", "--candidate", candidatePath, "--allow-empty-corpus"})
 	})
 	if code != 0 {
 		t.Fatalf("runEvalFarm(push --candidate) = %d, stderr = %q", code, stderr)
@@ -213,7 +213,7 @@ func TestFarmPush_CandidateInfo_UploadsWhenVCSPresent(t *testing.T) {
 
 	var code int
 	stdout, stderr := captureOutput(t, func() {
-		code = runEvalFarm([]string{"push", "--candidate", candidatePath})
+		code = runEvalFarm([]string{"push", "--candidate", candidatePath, "--allow-empty-corpus"})
 	})
 	if code != 0 {
 		t.Fatalf("runEvalFarm(push --candidate) = %d, stderr = %q", code, stderr)
@@ -261,7 +261,7 @@ func TestFarmPush_CandidateInfo_NoneWithoutVCSStamping(t *testing.T) {
 
 	var code int
 	stdout, stderr := captureOutput(t, func() {
-		code = runEvalFarm([]string{"push", "--candidate", candidatePath})
+		code = runEvalFarm([]string{"push", "--candidate", candidatePath, "--allow-empty-corpus"})
 	})
 	if code != 0 {
 		t.Fatalf("runEvalFarm(push --candidate) = %d, stderr = %q", code, stderr)
@@ -276,6 +276,80 @@ func TestFarmPush_CandidateInfo_NoneWithoutVCSStamping(t *testing.T) {
 	if ok {
 		t.Errorf("fake bucket has candidates/%s.info.json, want none uploaded without VCS info", wantDigest)
 	}
+}
+
+// TestFarmPush_CandidateWithoutCorpus_Refused pins docs/spec-eval-farm.md
+// FM-66: `farm push --candidate <file>` refuses, nonzero, a candidate
+// binary carrying fewer than farm.MinCorpusMarkers `guiSlug: "` markers —
+// the corpus is embedded from disk at build time
+// (internal/knowledge/documents.go), and a worktree/fresh clone has none
+// (CLAUDE.md "Knowledge sync"). --allow-empty-corpus opts out; a candidate
+// carrying the full local-build marker count (47) proceeds either way.
+func TestFarmPush_CandidateWithoutCorpus_Refused(t *testing.T) {
+	writeCandidate := func(t *testing.T, markers int) string {
+		t.Helper()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "zcp")
+		body := append([]byte("pretend candidate binary\n"), bytes.Repeat([]byte(`guiSlug: "`), markers)...)
+		if err := os.WriteFile(path, body, 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+		return path
+	}
+
+	t.Run("zero markers refused", func(t *testing.T) {
+		fake := newFakeFarmS3()
+		server := fake.server()
+		defer server.Close()
+		setFarmEnv(t, server.URL)
+
+		candidatePath := writeCandidate(t, 0)
+		var code int
+		stdout, stderr := captureOutput(t, func() {
+			code = runEvalFarm([]string{"push", "--candidate", candidatePath})
+		})
+		if code == 0 {
+			t.Fatalf("runEvalFarm(push --candidate, 0 markers) = 0, want nonzero; stdout = %q", stdout)
+		}
+		if !strings.Contains(stderr, "embeds no recipe corpus") {
+			t.Errorf("stderr = %q, want it to mention the missing corpus", stderr)
+		}
+		if len(fake.objects) != 0 {
+			t.Errorf("fake bucket objects = %v, want none uploaded on refusal", fake.objects)
+		}
+	})
+
+	t.Run("allow-empty-corpus proceeds", func(t *testing.T) {
+		fake := newFakeFarmS3()
+		server := fake.server()
+		defer server.Close()
+		setFarmEnv(t, server.URL)
+
+		candidatePath := writeCandidate(t, 0)
+		var code int
+		_, stderr := captureOutput(t, func() {
+			code = runEvalFarm([]string{"push", "--candidate", candidatePath, "--allow-empty-corpus"})
+		})
+		if code != 0 {
+			t.Fatalf("runEvalFarm(push --candidate --allow-empty-corpus) = %d, stderr = %q", code, stderr)
+		}
+	})
+
+	t.Run("47 markers proceeds", func(t *testing.T) {
+		fake := newFakeFarmS3()
+		server := fake.server()
+		defer server.Close()
+		setFarmEnv(t, server.URL)
+
+		candidatePath := writeCandidate(t, 47)
+		var code int
+		_, stderr := captureOutput(t, func() {
+			code = runEvalFarm([]string{"push", "--candidate", candidatePath})
+		})
+		if code != 0 {
+			t.Fatalf("runEvalFarm(push --candidate, 47 markers) = %d, stderr = %q", code, stderr)
+		}
+	})
 }
 
 // TestFarmPush_WrapperContentAddressed pins R5 (LAND review):
