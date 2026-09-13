@@ -18,7 +18,8 @@ const (
 	CheckPass       = "pass"
 	CheckFail       = "fail"
 	CheckSkip       = "skip"
-	CheckInfo       = "info" // advisory — LLM sees the data but aggregateStatus ignores it
+	CheckInfo       = "info"    // advisory — LLM sees the data but aggregateStatus ignores it
+	CheckPending    = "pending" // in-flight state change (e.g. subdomain enable) — never degrades, like skip
 )
 
 // HTTPDoer executes HTTP requests (satisfied by *http.Client).
@@ -44,12 +45,12 @@ type VerifyResult struct {
 // PassedForLifecycle reports whether this verify result should count as a
 // successful verify for work-session auto-close. Healthy always passes. A
 // DEGRADED result passes ONLY when its sole failing checks are cosmetic
-// http_root 4xx responses — the server is reachable and routing, and a 404 at
+// http_public 4xx responses — the server is reachable and routing, and a 404 at
 // `/` is normal for a REST API with no root route, so the deploy genuinely
 // delivered a working app. A 5xx, a connection error, a failed service_running
 // check, or any other failing check is a real problem and does NOT pass.
 //
-// This decouples the auto-close GATE from the cosmetic http_root fail: the
+// This decouples the auto-close GATE from the cosmetic http_public fail: the
 // verify RESPONSE still reports status=degraded (the agent stays honest about
 // the 404 and is nudged to verify a real endpoint), but a REST API whose `/`
 // 404s no longer blocks the session from auto-closing — which previously
@@ -95,6 +96,28 @@ func (m RuntimeMeta) recordedServesHTTP() *bool {
 // vocabulary so workflow.StepCheck and tools.CheckWire both reference the
 // same struct without per-layer mirrors.
 type Recovery = topology.Recovery
+
+// PublicAccessInput carries the user's persisted public-access intent plus
+// whether the runtime is deferred-start into verify, without coupling ops to
+// workflow's ServiceMeta persistence layer (mirrors RuntimeMeta's
+// decoupling pattern). DeferredStart is topology.IsDeferredStart(mode,
+// class) as computed by the caller — ops has no Mode of its own (topology.
+// Mode is a ZCP concept persisted in ServiceMeta, which ops must not
+// import per the architecture's layering rule).
+type PublicAccessInput struct {
+	Record        topology.PublicAccessRecord
+	DeferredStart bool
+}
+
+// defaultPublicAccessInput is what meta-less callers (Verify, VerifyAll, and
+// any caller not wired to workflow.ServiceMeta) pass: auto intent, not
+// deferred-start. This reproduces the historical single-rule verify
+// behavior for a service with no recorded intent — subdomain off ⇒ fail +
+// enable recovery (docs/spec-workflows.md §8 O3 PA-4's auto∧listener∧off
+// case).
+func defaultPublicAccessInput() PublicAccessInput {
+	return PublicAccessInput{Record: topology.PublicAccessRecord{Intent: topology.PublicAccessAuto}}
+}
 
 // CheckResult is the result of a single verification check.
 type CheckResult struct {
@@ -145,6 +168,9 @@ func Verify(
 
 // VerifyWithRuntimeMeta runs health verification for one service with optional
 // local deploy metadata that records whether the deployed setup serves HTTP.
+// Public-access intent defaults to auto/not-deferred-start (see
+// defaultPublicAccessInput) — callers that know the service's persisted
+// public-access record use VerifyWithMeta directly.
 func VerifyWithRuntimeMeta(
 	ctx context.Context,
 	client platform.Client,
@@ -154,6 +180,21 @@ func VerifyWithRuntimeMeta(
 	hostname string,
 	runtimeMeta RuntimeMeta,
 ) (*VerifyResult, error) {
+	return VerifyWithMeta(ctx, client, fetcher, httpClient, projectID, hostname, runtimeMeta, defaultPublicAccessInput())
+}
+
+// VerifyWithMeta runs health verification for one service with both local
+// deploy metadata and the caller-supplied public-access input (§8 O3 PA-4).
+func VerifyWithMeta(
+	ctx context.Context,
+	client platform.Client,
+	fetcher platform.LogFetcher,
+	httpClient HTTPDoer,
+	projectID string,
+	hostname string,
+	runtimeMeta RuntimeMeta,
+	publicAccess PublicAccessInput,
+) (*VerifyResult, error) {
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -162,7 +203,7 @@ func VerifyWithRuntimeMeta(
 	if err != nil {
 		return nil, err
 	}
-	return verifyService(ctx, client, fetcher, httpClient, projectID, svc, runtimeMeta)
+	return verifyService(ctx, client, fetcher, httpClient, projectID, svc, runtimeMeta, publicAccess)
 }
 
 // verifyService runs health verification checks for a pre-resolved service.
@@ -175,6 +216,7 @@ func verifyService(
 	projectID string,
 	svc *platform.ServiceStack,
 	runtimeMeta RuntimeMeta,
+	publicAccess PublicAccessInput,
 ) (*VerifyResult, error) {
 	managed := isManagedCategory(svc.ServiceStackTypeInfo.ServiceStackTypeCategoryName)
 
@@ -213,12 +255,18 @@ func verifyService(
 	// forcing serial recovery instead of parallel. Plan v4 §2.1 side fix.
 	if runningCheck.Status != CheckPass {
 		result.Checks = append(result.Checks, skipChecksForClass(rc)...)
-		// Replace the http_root skip with a subdomain-disabled fail when
+		// Replace the http_public skip with a subdomain-disabled fail when
 		// the service has neither subdomain access nor a running container,
-		// so the agent sees BOTH actionable hints in one verify pass.
-		if !svc.SubdomainAccess && (rc == RuntimeDynamic || rc == RuntimeImplicit || rc == RuntimeStatic) {
-			replaceCheck(result.Checks, "http_root", CheckResult{
-				Name:     "http_root",
+		// so the agent sees BOTH actionable hints in one verify pass. Only
+		// for the auto/subdomain intents (§8 O3 PA-4) — a `none` or
+		// `domain` intent means the user opted out of subdomain reachability
+		// or is served by a custom domain instead, so no subdomain recovery
+		// applies there even while the container is down.
+		intent := publicAccess.Record.Intent
+		wantsSubdomain := intent == topology.PublicAccessAuto || intent == topology.PublicAccessSubdomain
+		if !svc.SubdomainAccess && wantsSubdomain && (rc == RuntimeDynamic || rc == RuntimeImplicit || rc == RuntimeStatic) {
+			replaceCheck(result.Checks, checkNameHTTPRoot, CheckResult{
+				Name:     checkNameHTTPRoot,
 				Status:   CheckFail,
 				Detail:   "subdomain access not enabled — service is not reachable via HTTP (independent of service_running)",
 				Recovery: &Recovery{Tool: "zerops_subdomain", Action: subdomainActionEnable, Args: map[string]string{"serviceHostname": svc.Name}},
@@ -248,52 +296,35 @@ func verifyService(
 		})
 	}
 
-	// Group B: HTTP check (single probe — "is the HTTP server alive?").
-	// verify is a generic aliveness tool: it does NOT curl workflow-
-	// specific health paths because those paths are framework-dependent
-	// (recipes live at /api/status, bootstrap at /status, Laravel at
-	// /up, etc.). Workflow layers that know their paths iterate them
-	// themselves: the recipe workflow's feature-sweep-dev sub-step
-	// iterates plan.Features and curls each health path with a content-
-	// type contract; bootstrap's workflow guidance explicitly curls
-	// its /status endpoint. Those checks belong to the workflows, not
-	// to a generic "does this service respond?" probe. http_root asks
-	// the single question verify is qualified to answer.
+	// Group B: HTTP checks — http_internal (project-network reachability,
+	// every HTTP-class runtime) + http_public (subdomain/domain
+	// reachability, gated by the user's public-access intent). verify is a
+	// generic aliveness tool: it does NOT curl workflow-specific health
+	// paths because those paths are framework-dependent (recipes live at
+	// /api/status, bootstrap at /status, Laravel at /up, etc.). Workflow
+	// layers that know their paths iterate them themselves: the recipe
+	// workflow's feature-sweep-dev sub-step iterates plan.Features and
+	// curls each health path with a content-type contract; bootstrap's
+	// workflow guidance explicitly curls its /status endpoint. Those checks
+	// belong to the workflows, not to a generic "does this service
+	// respond?" probe. http_internal/http_public ask the two questions
+	// verify is qualified to answer (docs/spec-workflows.md §8 O3 PA-4).
 	needHTTP := rc == RuntimeDynamic || rc == RuntimeImplicit || rc == RuntimeStatic
 	if needHTTP {
 		wg.Go(func() {
-			subdomainURL := ResolveSubdomainURL(ctx, client, projectID, svc)
+			listener := !publicAccess.DeferredStart
 			var checks []CheckResult
-			if subdomainURL == "" {
-				if svc.SubdomainAccess {
-					checks = append(checks, CheckResult{
-						Name:   "http_root",
-						Status: CheckSkip,
-						Detail: "cannot resolve subdomain URL",
-					})
-				} else {
-					checks = append(checks, CheckResult{
-						Name:     "http_root",
-						Status:   CheckFail,
-						Detail:   "subdomain access not enabled — service is not reachable via HTTP",
-						Recovery: &Recovery{Tool: "zerops_subdomain", Action: subdomainActionEnable, Args: map[string]string{"serviceHostname": svc.Name}},
-					})
-				}
+			checks = append(checks, checkHTTPInternal(ctx, httpClient, svc, publicAccess.DeferredStart))
+
+			obs, obsErr := ObservePublicAccess(ctx, client, projectID, svc)
+			if obsErr != nil {
+				checks = append(checks, CheckResult{
+					Name:   checkNameHTTPRoot,
+					Status: CheckFail,
+					Detail: fmt.Sprintf("observe public access: %v", obsErr),
+				})
 			} else {
-				probeURL := subdomainURL + "/"
-				check := checkHTTPRoot(ctx, httpClient, probeURL)
-				// Render augmentation runs once per service-verify call
-				// AFTER the connect probe succeeded (HTTPStatus > 0). Both
-				// 2xx (documents the rendered state) and 5xx (surfaces the
-				// framework error page) benefit. Connect failures skip the
-				// browser walk — a wedged TCP path won't render anyway and
-				// the agent-browser timeout would just delay the verdict.
-				if check.HTTPStatus > 0 {
-					bodyText, consoleErrors := renderHTTPRoot(ctx, probeURL)
-					check.BodyText = bodyText
-					check.ConsoleErrors = consoleErrors
-				}
-				checks = append(checks, check)
+				checks = append(checks, buildHTTPPublicChecks(ctx, client, httpClient, projectID, svc, publicAccess.Record.Intent, obs, listener)...)
 			}
 			mu.Lock()
 			httpChecks = checks
@@ -313,7 +344,7 @@ func verifyService(
 
 // replaceCheck overwrites the named check in-place with the replacement.
 // No-op when the check is absent. Used by the service-not-running branch
-// to upgrade an http_root skip to a subdomain-disabled fail with Recovery
+// to upgrade an http_public skip to a subdomain-disabled fail with Recovery
 // (plan v4 §2.1 side fix).
 func replaceCheck(checks []CheckResult, name string, replacement CheckResult) {
 	for i := range checks {
@@ -351,17 +382,20 @@ func skipChecksForClass(rc RuntimeClass) []CheckResult {
 	switch rc {
 	case RuntimeDynamic:
 		checks = append(checks,
-			CheckResult{Name: "error_logs", Status: CheckSkip, Detail: skipDetail},
-			CheckResult{Name: "http_root", Status: CheckSkip, Detail: skipDetail},
+			CheckResult{Name: checkNameErrorLogs, Status: CheckSkip, Detail: skipDetail},
+			CheckResult{Name: checkNameHTTPInternal, Status: CheckSkip, Detail: skipDetail},
+			CheckResult{Name: checkNameHTTPRoot, Status: CheckSkip, Detail: skipDetail},
 		)
 	case RuntimeImplicit:
 		checks = append(checks,
-			CheckResult{Name: "error_logs", Status: CheckSkip, Detail: skipDetail},
-			CheckResult{Name: "http_root", Status: CheckSkip, Detail: skipDetail},
+			CheckResult{Name: checkNameErrorLogs, Status: CheckSkip, Detail: skipDetail},
+			CheckResult{Name: checkNameHTTPInternal, Status: CheckSkip, Detail: skipDetail},
+			CheckResult{Name: checkNameHTTPRoot, Status: CheckSkip, Detail: skipDetail},
 		)
 	case RuntimeStatic:
 		checks = append(checks,
-			CheckResult{Name: "http_root", Status: CheckSkip, Detail: skipDetail},
+			CheckResult{Name: checkNameHTTPInternal, Status: CheckSkip, Detail: skipDetail},
+			CheckResult{Name: checkNameHTTPRoot, Status: CheckSkip, Detail: skipDetail},
 		)
 	case RuntimeWorker:
 		checks = append(checks,
@@ -395,8 +429,16 @@ func VerifyAll(
 // RuntimeMetaResolver returns optional local deploy metadata by hostname.
 type RuntimeMetaResolver func(hostname string) RuntimeMeta
 
+// PublicAccessResolver returns the public-access input for a hostname. A nil
+// resolver (or a hostname it has no opinion on) falls back to
+// defaultPublicAccessInput.
+type PublicAccessResolver func(hostname string) PublicAccessInput
+
 // VerifyAllWithRuntimeMeta runs health verification for all services with
-// optional per-service local deploy metadata.
+// optional per-service local deploy metadata. Public-access intent defaults
+// to auto/not-deferred-start for every service (see defaultPublicAccessInput)
+// — callers that know per-service persisted public-access records use
+// VerifyAllWithMeta directly.
 func VerifyAllWithRuntimeMeta(
 	ctx context.Context,
 	client platform.Client,
@@ -404,6 +446,20 @@ func VerifyAllWithRuntimeMeta(
 	httpClient HTTPDoer,
 	projectID string,
 	runtimeMetaFor RuntimeMetaResolver,
+) (*VerifyAllResult, error) {
+	return VerifyAllWithMeta(ctx, client, fetcher, httpClient, projectID, runtimeMetaFor, nil)
+}
+
+// VerifyAllWithMeta runs health verification for all services with both
+// per-service local deploy metadata and per-service public-access input.
+func VerifyAllWithMeta(
+	ctx context.Context,
+	client platform.Client,
+	fetcher platform.LogFetcher,
+	httpClient HTTPDoer,
+	projectID string,
+	runtimeMetaFor RuntimeMetaResolver,
+	publicAccessFor PublicAccessResolver,
 ) (*VerifyAllResult, error) {
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
@@ -443,7 +499,11 @@ func VerifyAllWithRuntimeMeta(
 			if runtimeMetaFor != nil {
 				runtimeMeta = runtimeMetaFor(targets[idx].Name)
 			}
-			r, verifyErr := verifyService(ctx, client, fetcher, httpClient, projectID, &targets[idx], runtimeMeta)
+			publicAccess := defaultPublicAccessInput()
+			if publicAccessFor != nil {
+				publicAccess = publicAccessFor(targets[idx].Name)
+			}
+			r, verifyErr := verifyService(ctx, client, fetcher, httpClient, projectID, &targets[idx], runtimeMeta, publicAccess)
 			if verifyErr != nil {
 				results[idx] = VerifyResult{
 					Hostname: targets[idx].Name,
@@ -471,7 +531,7 @@ func VerifyAllWithRuntimeMeta(
 // aggregateAllStatus computes the project-wide verify status + healthy count
 // from per-service results. overall is `unhealthy` ONLY on a total outage (a
 // hard-down service AND nothing healthy left); a partial outage (some healthy)
-// or purely cosmetic degradation (e.g. a lone http_root 4xx, no hard-down) is
+// or purely cosmetic degradation (e.g. a lone http_public 4xx, no hard-down) is
 // `degraded`, never `unhealthy` — so the project status can't contradict the
 // lifecycle accepting the deploy (see VerifyResult.PassedForLifecycle).
 func aggregateAllStatus(results []VerifyResult) (overall string, healthy int) {

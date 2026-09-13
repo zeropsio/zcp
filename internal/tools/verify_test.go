@@ -290,6 +290,62 @@ func TestVerifyTool_ReportsLifecycleState(t *testing.T) {
 	}
 }
 
+// TestVerifyTool_PassesIntentFromMeta pins that the tool layer reads the
+// service's persisted public-access intent (ServiceMeta.PublicAccessFor,
+// §8 O3 PA-4) and passes it into ops.VerifyWithMeta: an intent=none host
+// with subdomain access off gets a SKIPPED http_public check, never the
+// zerops_subdomain-enable Recovery the old single-rule behavior always
+// emitted for an off subdomain.
+func TestVerifyTool_PassesIntentFromMeta(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname:         "app",
+		BootstrapSession: "s", BootstrappedAt: "2026-06-01",
+		PublicAccess: map[string]topology.PublicAccessRecord{
+			"app": {Intent: topology.PublicAccessNone},
+		},
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: serviceStatusRunning, SubdomainAccess: false, Ports: []platform.Port{{Port: 3000}}},
+		})
+	fetcher := platform.NewMockLogFetcher()
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterVerify(srv, mock, fetcher, "proj-1", dir, runtime.Info{})
+
+	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "app"})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	var vr ops.VerifyResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &vr); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	var found bool
+	for _, c := range vr.Checks {
+		if c.Name != "http_public" {
+			continue
+		}
+		found = true
+		if c.Status != "skip" {
+			t.Errorf("http_public status = %q, want skip (intent=none)", c.Status)
+		}
+		if c.Recovery != nil {
+			t.Errorf("http_public.Recovery = %+v, want nil (intent=none must never emit the subdomain-enable recovery)", c.Recovery)
+		}
+	}
+	if !found {
+		t.Fatalf("http_public check not found in %+v", vr.Checks)
+	}
+}
+
 // TestDeferredStartDurabilityNote pins RC-A′: a passing verify on a dev-mode
 // dynamic runtime annotates the transience; durable runtimes / non-healthy
 // results get no note.

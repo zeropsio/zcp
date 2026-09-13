@@ -133,15 +133,15 @@ func TestVerify_PreservesSubdomainRecoveryWhenServiceNotRunning(t *testing.T) {
 		t.Fatalf("service_running Recovery missing on FAILED")
 	}
 
-	httpRoot := findVerifyCheck(t, result.Checks, "http_root")
-	if httpRoot.Status != CheckFail {
-		t.Fatalf("http_root status = %q, want fail (so subdomain Recovery emits); got: %+v", httpRoot.Status, httpRoot)
+	httpPublic := findVerifyCheck(t, result.Checks, "http_public")
+	if httpPublic.Status != CheckFail {
+		t.Fatalf("http_public status = %q, want fail (so subdomain Recovery emits); got: %+v", httpPublic.Status, httpPublic)
 	}
-	if httpRoot.Recovery == nil {
-		t.Fatalf("http_root Recovery missing — subdomain Recovery must surface even when service_running fails")
+	if httpPublic.Recovery == nil {
+		t.Fatalf("http_public Recovery missing — subdomain Recovery must surface even when service_running fails")
 	}
-	if httpRoot.Recovery.Tool != "zerops_subdomain" {
-		t.Errorf("http_root Recovery.Tool = %q, want zerops_subdomain", httpRoot.Recovery.Tool)
+	if httpPublic.Recovery.Tool != "zerops_subdomain" {
+		t.Errorf("http_public Recovery.Tool = %q, want zerops_subdomain", httpPublic.Recovery.Tool)
 	}
 }
 
