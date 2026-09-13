@@ -247,8 +247,18 @@ func planTargetSnapshots(t BootstrapTarget, statuses, deployHistories map[string
 // not wired yet) is used verbatim; an empty classification (not yet
 // computed) also defaults to "ok", mirroring effectiveDeployHistory in
 // synthesize.go — the safe default for an override-gated atom.
+// deployHistoryRecoveryStatuses are the two platform.ServiceStatus* values
+// deployHistoryFor treats as recovery-relevant (R1/R3) — a local literal
+// pair rather than a platform import (this package doesn't otherwise import
+// platform for status strings; see atom.go's note on platform-side status
+// strings staying outside ZCP's vocabulary).
+const (
+	deployHistoryStatusReadyToDeploy = "READY_TO_DEPLOY"
+	deployHistoryStatusFailed        = "FAILED"
+)
+
 func deployHistoryFor(status, discovered string) string {
-	if status != "READY_TO_DEPLOY" && status != "FAILED" {
+	if status != deployHistoryStatusReadyToDeploy && status != deployHistoryStatusFailed {
 		return "ok"
 	}
 	if discovered == "" {

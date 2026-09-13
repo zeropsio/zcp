@@ -343,6 +343,22 @@ func reconcileRecipeOverrides(shape RecipeImportShape, submitted []BootstrapTarg
 			overrides.RuntimeHostnameByOriginal[d.Runtime.ExplicitStage] = s.Runtime.ExplicitStage
 		}
 
+		// §8 O3 PA-6: publicAccess=none drops enableSubdomainAccess from the
+		// import yaml (RewriteRecipeImportYAMLFromShape reads this map).
+		// Keyed by the recipe's ORIGINAL hostnames (matches setPlanPublicAccess
+		// in bootstrap_outputs.go, which stamps ServiceMeta.PublicAccess for
+		// BOTH halves of a target from one RuntimeTarget.PublicAccess value) —
+		// both the dev half and, when present, the stage half.
+		if s.Runtime.PublicAccess == string(topology.PublicAccessNone) {
+			if overrides.PublicAccessNoneHosts == nil {
+				overrides.PublicAccessNoneHosts = map[string]bool{}
+			}
+			overrides.PublicAccessNoneHosts[d.Runtime.DevHostname] = true
+			if d.Runtime.ExplicitStage != "" {
+				overrides.PublicAccessNoneHosts[d.Runtime.ExplicitStage] = true
+			}
+		}
+
 		// Managed EXISTS flips — matched by hostname identity (managed
 		// hostnames are fixed). A submitted managed hostname not in the
 		// recipe is a rename attempt → reject. EqualFold: resolution

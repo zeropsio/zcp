@@ -110,18 +110,27 @@ type ServiceInfo struct {
 	// nudged agents to author the deprecated legacy `mode:` form. Populated for
 	// internal consumers only (export/launch bundle composition, prod
 	// autoscaling). See buildSummaryServiceInfo.
-	Mode             string           `json:"-"`
-	AdoptionState    AdoptionState    `json:"adoptionState"`
-	IsInfrastructure bool             `json:"isInfrastructure"`
-	MountPath        string           `json:"mountPath,omitempty"`
-	SubdomainEnabled bool             `json:"subdomainEnabled,omitempty"`
-	SubdomainURL     string           `json:"subdomainUrl,omitempty"`
-	Created          string           `json:"created,omitempty"`
-	Containers       map[string]any   `json:"containers,omitempty"`
-	Resources        map[string]any   `json:"resources,omitempty"`
-	Ports            []map[string]any `json:"ports,omitempty"`
-	Envs             []map[string]any `json:"envs,omitempty"`
-	Refs             []string         `json:"refs,omitempty"`
+	Mode             string        `json:"-"`
+	AdoptionState    AdoptionState `json:"adoptionState"`
+	IsInfrastructure bool          `json:"isInfrastructure"`
+	MountPath        string        `json:"mountPath,omitempty"`
+	SubdomainEnabled bool          `json:"subdomainEnabled,omitempty"`
+	SubdomainURL     string        `json:"subdomainUrl,omitempty"`
+	// PublicAccess is the PA-5 structured summary (docs/spec-workflows.md
+	// §8 O3): {intent, subdomain, url, domains[]}, populated for every
+	// HTTP-class runtime (dynamic/implicit/static — never managed deps,
+	// workers, or system services) via ObservePublicAccessAll. Intent here
+	// is derived from observed state alone (topology.DeriveAdoptedIntent) —
+	// ops has no ServiceMeta access (layering: ops must not import
+	// workflow); the tools-layer discover wrapper overlays the persisted
+	// intent when a meta index is available (enrichWithMetaStatus).
+	PublicAccess *PublicAccessSummary `json:"publicAccess,omitempty"`
+	Created      string               `json:"created,omitempty"`
+	Containers   map[string]any       `json:"containers,omitempty"`
+	Resources    map[string]any       `json:"resources,omitempty"`
+	Ports        []map[string]any     `json:"ports,omitempty"`
+	Envs         []map[string]any     `json:"envs,omitempty"`
+	Refs         []string             `json:"refs,omitempty"`
 	// Activity holds the FULL set of live build/deploy/lifecycle processes running
 	// on this service right now — set by the discover tool's enrichWithMetaStatus
 	// step, never by the ops layer (so zerops_env action="get", which calls
@@ -209,6 +218,14 @@ func Discover(
 		if detail.SubdomainAccess {
 			info.SubdomainURL = ExtractSubdomainURL(ctx, client, detail.ID, rawEnvs)
 		}
+		if isHTTPClassService(detail) {
+			if obs, obsErr := ObservePublicAccess(ctx, client, projectID, detail); obsErr == nil {
+				info.PublicAccess = publicAccessSummaryFromObservation(obs)
+			} else {
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("public access observation failed for %s: %s", info.Hostname, obsErr.Error()))
+			}
+		}
 		result.Services = []ServiceInfo{info}
 		if includeEnvs && includeProjectEnvs {
 			attachProjectEnvs(ctx, client, &result.Project, projectID, result, includeEnvValues)
@@ -218,6 +235,7 @@ func Discover(
 	}
 
 	result.Services = make([]ServiceInfo, 0, len(services))
+	var httpSvcs []*platform.ServiceStack
 	for i := range services {
 		if services[i].IsSystem() {
 			continue
@@ -227,6 +245,25 @@ func Discover(
 			attachEnvs(ctx, client, &info, services[i], result, includeEnvValues)
 		}
 		result.Services = append(result.Services, info)
+		if isHTTPClassService(&services[i]) {
+			httpSvcs = append(httpSvcs, &services[i])
+		}
+	}
+
+	// PA-5 (docs/spec-workflows.md §8 O3): one ListPublicHTTPRoutings +
+	// one ProjectActivity read for the whole project, not one per HTTP-
+	// class runtime — ObservePublicAccessAll batches both.
+	if len(httpSvcs) > 0 {
+		if obsAll, obsErr := ObservePublicAccessAll(ctx, client, projectID, httpSvcs); obsErr == nil {
+			for i := range result.Services {
+				if obs, ok := obsAll[result.Services[i].Hostname]; ok {
+					result.Services[i].PublicAccess = publicAccessSummaryFromObservation(obs)
+				}
+			}
+		} else {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("public access observation failed: %s", obsErr.Error()))
+		}
 	}
 
 	if includeEnvs {
@@ -235,6 +272,34 @@ func Discover(
 
 	addEnvRefNotes(result)
 	return result, nil
+}
+
+// isHTTPClassService reports whether svc is an HTTP-class runtime eligible
+// for the PA-5 publicAccess field: dynamic/implicit-webserver/static —
+// never a managed dependency, worker, or system service (system services
+// are already filtered upstream of every call site here).
+func isHTTPClassService(svc *platform.ServiceStack) bool {
+	typeVersion := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
+	if topology.IsManagedService(typeVersion) {
+		return false
+	}
+	rc := classifyRuntime(typeVersion, len(svc.Ports) > 0, nil)
+	return rc == RuntimeDynamic || rc == RuntimeImplicit || rc == RuntimeStatic
+}
+
+// publicAccessSummaryFromObservation renders a PublicAccessSummary from a
+// live PublicAccessObservation with no persisted ServiceMeta available —
+// intent is derived from observed state alone (topology.DeriveAdoptedIntent,
+// the same rule PA-6 adopt uses for a never-recorded hostname). The tools-
+// layer discover wrapper overlays the persisted intent when a meta index is
+// available (ops must not import workflow — layering rule).
+func publicAccessSummaryFromObservation(obs PublicAccessObservation) *PublicAccessSummary {
+	return &PublicAccessSummary{
+		Intent:    string(topology.DeriveAdoptedIntent(obs.Observed)),
+		Subdomain: string(obs.Observed.Subdomain),
+		URL:       obs.URL,
+		Domains:   obs.Observed.Domains,
+	}
 }
 
 func buildSummaryServiceInfo(svc *platform.ServiceStack) ServiceInfo {

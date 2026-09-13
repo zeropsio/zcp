@@ -151,6 +151,26 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string, activity 
 		}
 	}
 
+	// PA-5/PA-6 (docs/spec-workflows.md §8 O3): overlay the persisted
+	// public-access intent onto ops.Discover's observation-only PublicAccess
+	// (which derived Intent from live state alone — no ServiceMeta access at
+	// the ops layer). Read-only: discover is annotated ReadOnlyHint, so this
+	// NEVER persists a reconciled record back to disk — only ensurePublicAccess
+	// (a mutating deploy/dev-server hook) does that.
+	for i := range result.Services {
+		s := &result.Services[i]
+		if s.PublicAccess == nil {
+			continue
+		}
+		rec := idx[s.Hostname].PublicAccessFor(s.Hostname)
+		observed := topology.PublicAccessObserved{
+			Subdomain: topology.SubdomainState(s.PublicAccess.Subdomain),
+			Domains:   s.PublicAccess.Domains,
+		}
+		reconciled, _ := topology.ReconcilePublicAccess(rec, observed)
+		s.PublicAccess.Intent = string(reconciled.Intent)
+	}
+
 	// Services planned by an alive bootstrap session but not yet meta-stamped
 	// (the import→provision-complete window) are mid-bootstrap, not adoptable.
 	inFlight := workflow.InFlightBootstrapHostnames(stateDir)

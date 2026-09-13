@@ -174,6 +174,36 @@ func checkProvision(client platform.Client, fetcher platform.LogFetcher, project
 					Detail: fmt.Sprintf("persist discovered statuses: %v", storeErr),
 				})
 			}
+
+			// R1/R3 (docs/spec-workflows.md §8): supply DiscoveredDeployHistory
+			// alongside DiscoveredStatuses so synthesisEnvelope's deployHistory
+			// axis (R3-gated atoms, e.g. an override=true recovery atom) fires
+			// correctly during bootstrap-active phase. Classified ONLY for
+			// READY_TO_DEPLOY/FAILED services — every other status defaults to
+			// "ok" downstream (deployHistoryFor) and is never worth a recovery-
+			// state read here (busy-truth invariant: a RUNNING service is never
+			// a recovery candidate, CLAUDE.md trap).
+			deployHistoryMap := make(map[string]string, len(services))
+			for _, svc := range services {
+				if svc.Status != platform.ServiceStatusReadyToDeploy && svc.Status != platform.ServiceStatusFailed {
+					continue
+				}
+				recovery, rsErr := ops.ComputeRecoveryState(ctx, client, fetcher, projectID, svc.Name, svc.Status)
+				if rsErr != nil {
+					// Best-effort, same posture as the env-var store failures
+					// above: a lookup failure just leaves this hostname
+					// unclassified — deployHistoryFor's "" default is "ok".
+					continue
+				}
+				deployHistoryMap[svc.Name] = deployHistoryValueForShape(recovery.Shape)
+			}
+			if storeErr := engine.StoreDiscoveredDeployHistory(deployHistoryMap); storeErr != nil {
+				checks = append(checks, workflow.StepCheck{
+					Name:   "_deploy_history_persist",
+					Status: statusFail,
+					Detail: fmt.Sprintf("persist discovered deploy history: %v", storeErr),
+				})
+			}
 		}
 
 		for i := range checks {
@@ -358,4 +388,31 @@ func isManagedNonStorage(serviceType string) bool {
 		return false
 	}
 	return topology.IsManagedService(serviceType)
+}
+
+// deployHistory axis values (docs/spec-workflows.md §8 R1/R3) — named
+// constants so this file's occurrences don't collide with the many
+// unrelated "failed"/"none"/"ok" literals elsewhere in the package
+// (goconst counts across the whole package, tests included).
+const (
+	deployHistoryNone   = "none"
+	deployHistoryFailed = "failed"
+	deployHistoryOK     = "ok"
+)
+
+// deployHistoryValueForShape maps ops.RecoveryState.Shape to the R1/R3
+// deployHistory axis value: fresh-misconfigured (READY_TO_DEPLOY, no deploy
+// attempt ever) ⇒ none; any failed-*/stuck-building shape ⇒ failed; healthy
+// (including a live build/deploy process — busy is not failure) ⇒ ok.
+func deployHistoryValueForShape(shape topology.RecoveryShape) string {
+	switch shape {
+	case topology.RecoveryFreshMisconfigured:
+		return deployHistoryNone
+	case topology.RecoveryFailedBuild, topology.RecoveryFailedInit, topology.RecoveryStuckBuilding:
+		return deployHistoryFailed
+	case topology.RecoveryHealthy:
+		return deployHistoryOK
+	default:
+		return deployHistoryOK
+	}
 }

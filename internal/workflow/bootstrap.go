@@ -118,6 +118,22 @@ type RuntimeURL struct {
 	Role     string `json:"role"`
 	URL      string `json:"url"`
 	Handoff  bool   `json:"handoff"`
+	// PublicAccess is the PA-5 structured summary (docs/spec-workflows.md
+	// §8 O3): {intent, subdomain, url, domains[]}. Duplicated shape (not
+	// ops.PublicAccessSummary) because this package must not import ops
+	// (layering rule) — the L4 caller (workflow_bootstrap.go) fills it from
+	// the ops-computed value.
+	PublicAccess *RuntimeURLPublicAccess `json:"publicAccess,omitempty"`
+}
+
+// RuntimeURLPublicAccess mirrors ops.PublicAccessSummary's JSON shape field-
+// for-field — see RuntimeURL.PublicAccess's doc-comment for why it's
+// duplicated here rather than imported.
+type RuntimeURLPublicAccess struct {
+	Intent    string   `json:"intent"`
+	Subdomain string   `json:"subdomain"`
+	URL       string   `json:"url,omitempty"`
+	Domains   []string `json:"domains,omitempty"`
 }
 
 // RuntimeURL role values (RCO-7). Plain strings, not a named Mode alias

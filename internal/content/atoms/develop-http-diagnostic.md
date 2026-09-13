@@ -21,6 +21,10 @@ default to
    adds `-{port}`. `${zeropsSubdomainHost}` is numeric and project-scope,
    not the projectId. Read it with `env | grep zeropsSubdomainHost`, or
    use `zerops_discover` for the resolved URL. Do not guess a UUID.
+   A subdomain URL answering 502 (not a connection error — the L7
+   balancer is up, the runtime behind it isn't reachable) after it used
+   to work often means the subdomain was switched off (`zerops_discover`'s
+   `publicAccess.subdomain` reads `"off"`) rather than the app crashing.
 3. **`zerops_logs severity="error" since="5m"`** — recent platform errors
    (nginx, crash traces, deploy failures) without opening a shell.
 4. **Framework log file** — read via Read tool at the framework's
