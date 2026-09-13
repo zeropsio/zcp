@@ -406,6 +406,10 @@ type ExpectedService struct {
 	Status         []string        `yaml:"status"`
 	Type           string          `yaml:"type,omitempty"`
 	SubdomainProbe *SubdomainProbe `yaml:"subdomainProbe,omitempty"`
+	// SubdomainAccess, when set, asserts the platform's subdomainAccess flag
+	// (GetService, REST-authoritative) equals the value — the live half of
+	// the public-access model (docs/spec-workflows.md §8 O3).
+	SubdomainAccess *bool `yaml:"subdomainAccess,omitempty"`
 }
 
 // SubdomainProbe configures an HTTP probe against the service's subdomain

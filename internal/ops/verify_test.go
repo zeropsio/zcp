@@ -4,13 +4,31 @@ package ops
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
+
+// alwaysOKHTTPDoer answers every request with 200 OK — used by Verify
+// orchestrator tests that don't care about the specific HTTP outcome of
+// http_internal/http_public, only about which checks are present/skipped/
+// failed for OTHER reasons (subdomain state, intent, runtime class).
+// http_internal now probes http://<hostname>:<port>/ unconditionally for
+// every running needHTTP service (PA-4, docs/spec-workflows.md §8 O3) — a
+// bare alwaysOKHTTPDoer{} against a fictitious hostname like "app:3000"
+// would attempt a real DNS lookup and fail, which is both slow/flaky for a
+// unit test and would silently turn an intended "healthy" fixture into
+// "degraded" via an unrelated check.
+type alwaysOKHTTPDoer struct{}
+
+func (alwaysOKHTTPDoer) Do(_ *http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("OK"))}, nil
+}
 
 // callbackLogFetcher returns different log entries based on the fetch params.
 type callbackLogFetcher struct {
@@ -206,7 +224,7 @@ func TestVerify_DynamicRuntime_AllChecks(t *testing.T) {
 		return nil, nil
 	}}
 
-	result, err := Verify(context.Background(), mock, fetcher, http.DefaultClient, "proj-1", "app")
+	result, err := Verify(context.Background(), mock, fetcher, alwaysOKHTTPDoer{}, "proj-1", "app")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -220,20 +238,21 @@ func TestVerify_DynamicRuntime_AllChecks(t *testing.T) {
 	if result.Status != "degraded" {
 		t.Errorf("Status = %q, want %q", result.Status, "degraded")
 	}
-	// Dynamic: service_running, error_logs, http_root = 3
-	if len(result.Checks) != 3 {
-		t.Fatalf("Checks count = %d, want 3; checks: %v", len(result.Checks), checkNames(result.Checks))
+	// Dynamic: service_running, error_logs, http_internal, http_public = 4
+	if len(result.Checks) != 4 {
+		t.Fatalf("Checks count = %d, want 4; checks: %v", len(result.Checks), checkNames(result.Checks))
 	}
 
 	findCheck(t, result, "service_running", "pass")
 	findCheck(t, result, "error_logs", "pass")
-	findCheck(t, result, "http_root", "fail")
+	findCheck(t, result, "http_internal", "pass")
+	findCheck(t, result, "http_public", "fail")
 }
 
 func TestVerify_RuntimeStopped(t *testing.T) {
 	t.Parallel()
 
-	// SubdomainAccess: true so the §2.1 side fix doesn't replace http_root
+	// SubdomainAccess: true so the §2.1 side fix doesn't replace http_public
 	// — the original semantics (service_running fail + remaining skips)
 	// stay intact. The side fix is exercised separately in
 	// TestVerify_PreservesSubdomainRecoveryWhenServiceNotRunning.
@@ -242,7 +261,7 @@ func TestVerify_RuntimeStopped(t *testing.T) {
 			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "READY_TO_DEPLOY", SubdomainAccess: true, Ports: []platform.Port{{Port: 3000}}},
 		})
 
-	result, err := Verify(context.Background(), mock, platform.NewMockLogFetcher(), http.DefaultClient, "proj-1", "app")
+	result, err := Verify(context.Background(), mock, platform.NewMockLogFetcher(), alwaysOKHTTPDoer{}, "proj-1", "app")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -250,9 +269,10 @@ func TestVerify_RuntimeStopped(t *testing.T) {
 	if result.Status != "unhealthy" {
 		t.Errorf("Status = %q, want unhealthy", result.Status)
 	}
-	// Dynamic stopped: 3 checks (service_running fail + 2 skip)
-	if len(result.Checks) != 3 {
-		t.Fatalf("Checks count = %d, want 3; checks: %v", len(result.Checks), checkNames(result.Checks))
+	// Dynamic stopped: 4 checks (service_running fail + 3 skip: error_logs,
+	// http_internal, http_public)
+	if len(result.Checks) != 4 {
+		t.Fatalf("Checks count = %d, want 4; checks: %v", len(result.Checks), checkNames(result.Checks))
 	}
 	if result.Checks[0].Status != "fail" {
 		t.Errorf("service_running status = %q, want fail", result.Checks[0].Status)
@@ -287,7 +307,7 @@ func TestVerify_RuntimeErrorLogs(t *testing.T) {
 		return nil, nil
 	}}
 
-	result, err := Verify(context.Background(), mock, fetcher, http.DefaultClient, "proj-1", "app")
+	result, err := Verify(context.Background(), mock, fetcher, alwaysOKHTTPDoer{}, "proj-1", "app")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -314,7 +334,7 @@ func TestVerify_RuntimeNoSubdomain(t *testing.T) {
 		return nil, nil
 	}}
 
-	result, err := Verify(context.Background(), mock, fetcher, http.DefaultClient, "proj-1", "app")
+	result, err := Verify(context.Background(), mock, fetcher, alwaysOKHTTPDoer{}, "proj-1", "app")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -322,20 +342,20 @@ func TestVerify_RuntimeNoSubdomain(t *testing.T) {
 	if result.Status != "degraded" {
 		t.Errorf("Status = %q, want degraded", result.Status)
 	}
-	httpRoot := findCheck(t, result, "http_root", "fail")
-	if httpRoot.Detail != "subdomain access not enabled — service is not reachable via HTTP" {
-		t.Errorf("http_root detail = %q, want subdomain-access failure", httpRoot.Detail)
+	httpPublic := findCheck(t, result, "http_public", "fail")
+	if httpPublic.Detail != "subdomain access not enabled — service is not reachable via HTTP" {
+		t.Errorf("http_public detail = %q, want subdomain-access failure", httpPublic.Detail)
 	}
-	if httpRoot.Recovery == nil {
-		t.Fatal("http_root recovery is nil")
+	if httpPublic.Recovery == nil {
+		t.Fatal("http_public recovery is nil")
 	}
-	if httpRoot.Recovery.Tool != "zerops_subdomain" {
-		t.Errorf("recovery.tool = %q, want zerops_subdomain", httpRoot.Recovery.Tool)
+	if httpPublic.Recovery.Tool != "zerops_subdomain" {
+		t.Errorf("recovery.tool = %q, want zerops_subdomain", httpPublic.Recovery.Tool)
 	}
-	if httpRoot.Recovery.Action != "enable" {
-		t.Errorf("recovery.action = %q, want enable", httpRoot.Recovery.Action)
+	if httpPublic.Recovery.Action != "enable" {
+		t.Errorf("recovery.action = %q, want enable", httpPublic.Recovery.Action)
 	}
-	if got := httpRoot.Recovery.Args["serviceHostname"]; got != "app" {
+	if got := httpPublic.Recovery.Args["serviceHostname"]; got != "app" {
 		t.Errorf("recovery.args.serviceHostname = %q, want app", got)
 	}
 }
@@ -357,7 +377,7 @@ func TestVerify_RuntimeSubdomainAccessUnresolved_SkipsHTTPRoot(t *testing.T) {
 		return nil, nil
 	}}
 
-	result, err := Verify(context.Background(), mock, fetcher, http.DefaultClient, "proj-1", "app")
+	result, err := Verify(context.Background(), mock, fetcher, alwaysOKHTTPDoer{}, "proj-1", "app")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -365,12 +385,12 @@ func TestVerify_RuntimeSubdomainAccessUnresolved_SkipsHTTPRoot(t *testing.T) {
 	if result.Status != "healthy" {
 		t.Errorf("Status = %q, want healthy", result.Status)
 	}
-	httpRoot := findCheck(t, result, "http_root", "skip")
-	if httpRoot.Detail != "cannot resolve subdomain URL" {
-		t.Errorf("http_root detail = %q, want cannot resolve subdomain URL", httpRoot.Detail)
+	httpPublic := findCheck(t, result, "http_public", "skip")
+	if httpPublic.Detail != "cannot resolve subdomain URL" {
+		t.Errorf("http_public detail = %q, want cannot resolve subdomain URL", httpPublic.Detail)
 	}
-	if httpRoot.Recovery != nil {
-		t.Errorf("http_root recovery = %+v, want nil", httpRoot.Recovery)
+	if httpPublic.Recovery != nil {
+		t.Errorf("http_public recovery = %+v, want nil", httpPublic.Recovery)
 	}
 }
 
@@ -401,7 +421,7 @@ func TestVerify_RuntimeCrashLoop(t *testing.T) {
 		return nil, nil
 	}}
 
-	result, err := Verify(context.Background(), mock, fetcher, http.DefaultClient, "proj-1", "app")
+	result, err := Verify(context.Background(), mock, fetcher, alwaysOKHTTPDoer{}, "proj-1", "app")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -428,7 +448,7 @@ func TestVerify_StaticRuntime_SkipsStatusAndStartup(t *testing.T) {
 		}).
 		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
 
-	result, err := Verify(context.Background(), mock, platform.NewMockLogFetcher(), http.DefaultClient, "proj-1", "web")
+	result, err := Verify(context.Background(), mock, platform.NewMockLogFetcher(), alwaysOKHTTPDoer{}, "proj-1", "web")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -436,12 +456,14 @@ func TestVerify_StaticRuntime_SkipsStatusAndStartup(t *testing.T) {
 	if result.Status != "degraded" {
 		t.Errorf("Status = %q, want degraded", result.Status)
 	}
-	// Static: service_running + http_root = 2 checks (no logs, no startup, no status)
-	if len(result.Checks) != 2 {
-		t.Fatalf("Checks count = %d, want 2; checks: %v", len(result.Checks), checkNames(result.Checks))
+	// Static: service_running + http_internal + http_public = 3 checks (no
+	// logs, no startup, no status)
+	if len(result.Checks) != 3 {
+		t.Fatalf("Checks count = %d, want 3; checks: %v", len(result.Checks), checkNames(result.Checks))
 	}
 	findCheck(t, result, "service_running", "pass")
-	findCheck(t, result, "http_root", "fail") // subdomain access disabled
+	findCheck(t, result, "http_internal", "pass")
+	findCheck(t, result, "http_public", "fail") // subdomain access disabled
 }
 
 func TestVerify_ImplicitWebserver_SkipsStartup(t *testing.T) {
@@ -457,7 +479,7 @@ func TestVerify_ImplicitWebserver_SkipsStartup(t *testing.T) {
 		return nil, nil
 	}}
 
-	result, err := Verify(context.Background(), mock, fetcher, http.DefaultClient, "proj-1", "phpapp")
+	result, err := Verify(context.Background(), mock, fetcher, alwaysOKHTTPDoer{}, "proj-1", "phpapp")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -465,13 +487,15 @@ func TestVerify_ImplicitWebserver_SkipsStartup(t *testing.T) {
 	if result.Status != "degraded" {
 		t.Errorf("Status = %q, want degraded", result.Status)
 	}
-	// Implicit: service_running + error_logs + http_root = 3 checks (no startup)
-	if len(result.Checks) != 3 {
-		t.Fatalf("Checks count = %d, want 3; checks: %v", len(result.Checks), checkNames(result.Checks))
+	// Implicit: service_running + error_logs + http_internal + http_public =
+	// 4 checks (no startup)
+	if len(result.Checks) != 4 {
+		t.Fatalf("Checks count = %d, want 4; checks: %v", len(result.Checks), checkNames(result.Checks))
 	}
 	findCheck(t, result, "service_running", "pass")
 	findCheck(t, result, "error_logs", "pass")
-	findCheck(t, result, "http_root", "fail") // subdomain access disabled
+	findCheck(t, result, "http_internal", "pass")
+	findCheck(t, result, "http_public", "fail") // subdomain access disabled
 }
 
 func TestVerify_PhpNginxWorker_RecordedSetup_NoHTTPChecks(t *testing.T) {
@@ -484,7 +508,7 @@ func TestVerify_PhpNginxWorker_RecordedSetup_NoHTTPChecks(t *testing.T) {
 		}).
 		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
 
-	result, err := VerifyWithRuntimeMeta(context.Background(), mock, platform.NewMockLogFetcher(), http.DefaultClient, "proj-1", "phpworker", RuntimeMeta{
+	result, err := VerifyWithRuntimeMeta(context.Background(), mock, platform.NewMockLogFetcher(), alwaysOKHTTPDoer{}, "proj-1", "phpworker", RuntimeMeta{
 		ServesHTTP: recordedWorker,
 		Recorded:   true,
 		Setup:      "worker",
@@ -508,8 +532,8 @@ func TestVerify_PhpNginxWorker_RecordedSetup_NoHTTPChecks(t *testing.T) {
 	findCheck(t, result, "service_running", CheckPass)
 	findCheck(t, result, "error_logs", CheckPass)
 	for _, c := range result.Checks {
-		if c.Name == "http_root" {
-			t.Fatalf("http_root should not be present for recorded php-nginx worker; checks: %v", result.Checks)
+		if c.Name == "http_internal" || c.Name == "http_public" {
+			t.Fatalf("%s should not be present for recorded php-nginx worker; checks: %v", c.Name, result.Checks)
 		}
 	}
 }
@@ -524,7 +548,7 @@ func TestVerify_PhpNginxWeb_RecordedSetup_HTTPProbed(t *testing.T) {
 		}).
 		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
 
-	result, err := VerifyWithRuntimeMeta(context.Background(), mock, platform.NewMockLogFetcher(), http.DefaultClient, "proj-1", "phpweb", RuntimeMeta{
+	result, err := VerifyWithRuntimeMeta(context.Background(), mock, platform.NewMockLogFetcher(), alwaysOKHTTPDoer{}, "proj-1", "phpweb", RuntimeMeta{
 		ServesHTTP: recordedWeb,
 		Recorded:   true,
 		Setup:      "dev",
@@ -542,7 +566,8 @@ func TestVerify_PhpNginxWeb_RecordedSetup_HTTPProbed(t *testing.T) {
 	if !strings.Contains(result.RuntimeClassification, "classified HTTP runtime from deployed setup \"dev\"") {
 		t.Errorf("RuntimeClassification = %q, want deployed setup provenance", result.RuntimeClassification)
 	}
-	findCheck(t, result, "http_root", CheckFail)
+	findCheck(t, result, "http_internal", CheckPass)
+	findCheck(t, result, "http_public", CheckFail)
 }
 
 func TestVerify_WorkerRuntime_NoHTTPChecks(t *testing.T) {
@@ -558,7 +583,7 @@ func TestVerify_WorkerRuntime_NoHTTPChecks(t *testing.T) {
 		return nil, nil
 	}}
 
-	result, err := Verify(context.Background(), mock, fetcher, http.DefaultClient, "proj-1", "worker")
+	result, err := Verify(context.Background(), mock, fetcher, alwaysOKHTTPDoer{}, "proj-1", "worker")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -575,8 +600,8 @@ func TestVerify_WorkerRuntime_NoHTTPChecks(t *testing.T) {
 
 	// No HTTP checks for workers.
 	for _, c := range result.Checks {
-		if c.Name == "http_root" {
-			t.Errorf("http_root should not be present for worker runtime")
+		if c.Name == "http_internal" || c.Name == "http_public" {
+			t.Errorf("%s should not be present for worker runtime", c.Name)
 		}
 	}
 }
@@ -589,7 +614,7 @@ func TestVerify_ManagedRunning(t *testing.T) {
 			{ID: "svc-1", Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16", ServiceStackTypeCategoryName: "STANDARD"}, Status: "RUNNING"},
 		})
 
-	result, err := Verify(context.Background(), mock, platform.NewMockLogFetcher(), http.DefaultClient, "proj-1", "db")
+	result, err := Verify(context.Background(), mock, platform.NewMockLogFetcher(), alwaysOKHTTPDoer{}, "proj-1", "db")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -622,7 +647,7 @@ func TestVerify_ManagedStopped(t *testing.T) {
 			{ID: "svc-1", Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16", ServiceStackTypeCategoryName: "STANDARD"}, Status: "RESTARTING"},
 		})
 
-	result, err := Verify(context.Background(), mock, platform.NewMockLogFetcher(), http.DefaultClient, "proj-1", "db")
+	result, err := Verify(context.Background(), mock, platform.NewMockLogFetcher(), alwaysOKHTTPDoer{}, "proj-1", "db")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -647,7 +672,7 @@ func TestVerify_LogFetchError(t *testing.T) {
 		}).
 		WithError("GetProjectLog", fmt.Errorf("log backend down"))
 
-	result, err := Verify(context.Background(), mock, platform.NewMockLogFetcher(), http.DefaultClient, "proj-1", "app")
+	result, err := Verify(context.Background(), mock, platform.NewMockLogFetcher(), alwaysOKHTTPDoer{}, "proj-1", "app")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -673,7 +698,7 @@ func TestVerify_ServiceNotFound(t *testing.T) {
 			{ID: "svc-1", Name: "app"},
 		})
 
-	_, err := Verify(context.Background(), mock, platform.NewMockLogFetcher(), http.DefaultClient, "proj-1", "nonexistent")
+	_, err := Verify(context.Background(), mock, platform.NewMockLogFetcher(), alwaysOKHTTPDoer{}, "proj-1", "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent service")
 	}
@@ -683,6 +708,226 @@ func TestVerify_ServiceNotFound(t *testing.T) {
 	}
 	if pe.Code != platform.ErrServiceNotFound {
 		t.Errorf("error code = %q, want %q", pe.Code, platform.ErrServiceNotFound)
+	}
+}
+
+// --- PublicAccessInput matrix (docs/spec-workflows.md §8 O3 PA-4) ---
+
+// recordingHTTPDoer answers every request with 200 OK and records every
+// requested URL — used to assert WHICH url a probe hit (the subdomain URL,
+// specifically), which alwaysOKHTTPDoer cannot do.
+type recordingHTTPDoer struct {
+	urls []string
+}
+
+func (d *recordingHTTPDoer) Do(req *http.Request) (*http.Response, error) {
+	d.urls = append(d.urls, req.URL.String())
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("OK"))}, nil
+}
+
+// TestVerify_PublicAccess_Matrix_Table pins PA-4's http_internal/http_public
+// rule set: PublicAccessInput{Record.Intent, DeferredStart} × the live
+// ObservePublicAccess read together decide http_internal's skip/probe and
+// http_public's skip/pending/fail/probe, independent of the old single
+// "subdomain off ⇒ fail" rule. Each row's oracle is PA-4's verbatim text
+// (docs/spec-workflows.md §8 O3), not the pre-existing implementation.
+func TestVerify_PublicAccess_Matrix_Table(t *testing.T) {
+	t.Parallel()
+
+	dynamicSvc := func(subdomainAccess bool) platform.ServiceStack {
+		return platform.ServiceStack{
+			ID: "svc-1", Name: "app",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"},
+			Status:               "RUNNING",
+			SubdomainAccess:      subdomainAccess,
+			Ports:                []platform.Port{{Port: 3000}},
+		}
+	}
+
+	t.Run("auto/off/listener: internal pass, public fail+recovery", func(t *testing.T) {
+		t.Parallel()
+		mock := platform.NewMock().WithServices([]platform.ServiceStack{dynamicSvc(false)})
+		result, err := VerifyWithMeta(context.Background(), mock, platform.NewMockLogFetcher(), alwaysOKHTTPDoer{}, "proj-1", "app",
+			RuntimeMeta{}, PublicAccessInput{Record: topology.PublicAccessRecord{Intent: topology.PublicAccessAuto}, DeferredStart: false})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		findCheck(t, result, "http_internal", CheckPass)
+		httpPublic := findCheck(t, result, "http_public", CheckFail)
+		if httpPublic.Recovery == nil || httpPublic.Recovery.Tool != "zerops_subdomain" {
+			t.Errorf("http_public.Recovery = %+v, want zerops_subdomain enable", httpPublic.Recovery)
+		}
+	})
+
+	t.Run("auto/off/no-listener (deferred): internal skip, public skip, not degraded", func(t *testing.T) {
+		t.Parallel()
+		mock := platform.NewMock().WithServices([]platform.ServiceStack{dynamicSvc(false)})
+		result, err := VerifyWithMeta(context.Background(), mock, platform.NewMockLogFetcher(), alwaysOKHTTPDoer{}, "proj-1", "app",
+			RuntimeMeta{}, PublicAccessInput{Record: topology.PublicAccessRecord{Intent: topology.PublicAccessAuto}, DeferredStart: true})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		findCheck(t, result, "http_internal", CheckSkip)
+		findCheck(t, result, "http_public", CheckSkip)
+		if result.Status == StatusDegraded {
+			t.Errorf("Status = %q, want not degraded (skip must never degrade)", result.Status)
+		}
+	})
+
+	t.Run("auto/on: public probe hits the resolved subdomain URL", func(t *testing.T) {
+		t.Parallel()
+		mock := platform.NewMock().
+			WithServices([]platform.ServiceStack{dynamicSvc(true)}).
+			WithProject(&platform.Project{ID: "proj-1", SubdomainHost: "1df2.prg1.zerops.app"})
+		wantURL := BuildSubdomainURL("app", "1df2.prg1.zerops.app", 3000)
+		if wantURL == "" {
+			t.Fatal("test setup: BuildSubdomainURL returned empty")
+		}
+		doer := &recordingHTTPDoer{}
+		result, err := VerifyWithMeta(context.Background(), mock, platform.NewMockLogFetcher(), doer, "proj-1", "app",
+			RuntimeMeta{}, PublicAccessInput{Record: topology.PublicAccessRecord{Intent: topology.PublicAccessAuto}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		findCheck(t, result, "http_public", CheckPass)
+		found := false
+		for _, u := range doer.urls {
+			if u == wantURL+"/" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("probed URLs = %v, want to contain %q", doer.urls, wantURL+"/")
+		}
+	})
+
+	t.Run("auto/enabling: public pending", func(t *testing.T) {
+		t.Parallel()
+		mock := platform.NewMock().
+			WithServices([]platform.ServiceStack{dynamicSvc(false)}).
+			WithProjectProcesses([]platform.Process{{
+				ID: "proc-1", ActionName: "stack.enableSubdomainAccess", Status: platform.ProcessStatusPending,
+				ServiceStacks: []platform.ServiceStackRef{{ID: "svc-1", Name: "app"}},
+				Created:       "2026-09-13T10:00:00Z",
+			}})
+		result, err := VerifyWithMeta(context.Background(), mock, platform.NewMockLogFetcher(), alwaysOKHTTPDoer{}, "proj-1", "app",
+			RuntimeMeta{}, PublicAccessInput{Record: topology.PublicAccessRecord{Intent: topology.PublicAccessAuto}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		httpPublic := findCheck(t, result, "http_public", CheckPending)
+		if httpPublic.Detail != "subdomain is being enabled" {
+			t.Errorf("Detail = %q, want %q", httpPublic.Detail, "subdomain is being enabled")
+		}
+	})
+
+	t.Run("none/off: public skip, no recovery, not degraded", func(t *testing.T) {
+		t.Parallel()
+		mock := platform.NewMock().WithServices([]platform.ServiceStack{dynamicSvc(false)})
+		result, err := VerifyWithMeta(context.Background(), mock, platform.NewMockLogFetcher(), alwaysOKHTTPDoer{}, "proj-1", "app",
+			RuntimeMeta{}, PublicAccessInput{Record: topology.PublicAccessRecord{Intent: topology.PublicAccessNone}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		httpPublic := findCheck(t, result, "http_public", CheckSkip)
+		if httpPublic.Recovery != nil {
+			t.Errorf("Recovery = %+v, want nil", httpPublic.Recovery)
+		}
+		if httpPublic.Detail != "internal-only by intent" {
+			t.Errorf("Detail = %q, want %q", httpPublic.Detail, "internal-only by intent")
+		}
+		if result.Status == StatusDegraded {
+			t.Errorf("Status = %q, want not degraded", result.Status)
+		}
+	})
+
+	t.Run("domain (routing present)/off: public_domain check present, no subdomain recovery", func(t *testing.T) {
+		t.Parallel()
+		mock := platform.NewMock().
+			WithServices([]platform.ServiceStack{dynamicSvc(false)}).
+			WithPublicHTTPRoutings(platform.PublicHTTPRouting{
+				ID: "routing-1",
+				Domains: []platform.PublicHTTPDomain{
+					{Name: "custom.example.com", DNSCheckStatus: "OK"},
+				},
+				Locations: []platform.PublicHTTPLocation{
+					{Path: "/", Port: 3000, ServiceID: "svc-1"},
+				},
+			})
+		result, err := VerifyWithMeta(context.Background(), mock, platform.NewMockLogFetcher(), alwaysOKHTTPDoer{}, "proj-1", "app",
+			RuntimeMeta{}, PublicAccessInput{Record: topology.PublicAccessRecord{Intent: topology.PublicAccessDomain}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		domainCheck := findCheck(t, result, "public_domain", CheckPass)
+		if !strings.Contains(domainCheck.Detail, "custom.example.com") {
+			t.Errorf("Detail = %q, want to mention the domain", domainCheck.Detail)
+		}
+		for _, c := range result.Checks {
+			if c.Recovery != nil {
+				t.Errorf("check %q carries Recovery %+v, want none for domain intent", c.Name, c.Recovery)
+			}
+		}
+	})
+
+	t.Run("subdomain/off/listener: fail+recovery", func(t *testing.T) {
+		t.Parallel()
+		mock := platform.NewMock().WithServices([]platform.ServiceStack{dynamicSvc(false)})
+		result, err := VerifyWithMeta(context.Background(), mock, platform.NewMockLogFetcher(), alwaysOKHTTPDoer{}, "proj-1", "app",
+			RuntimeMeta{}, PublicAccessInput{Record: topology.PublicAccessRecord{Intent: topology.PublicAccessSubdomain}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		httpPublic := findCheck(t, result, "http_public", CheckFail)
+		if httpPublic.Recovery == nil || httpPublic.Recovery.Tool != "zerops_subdomain" {
+			t.Errorf("Recovery = %+v, want zerops_subdomain enable", httpPublic.Recovery)
+		}
+	})
+
+	t.Run("worker runtime class: no http checks at all", func(t *testing.T) {
+		t.Parallel()
+		mock := platform.NewMock().WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "worker", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING"},
+		})
+		result, err := VerifyWithMeta(context.Background(), mock, platform.NewMockLogFetcher(), alwaysOKHTTPDoer{}, "proj-1", "worker",
+			RuntimeMeta{}, PublicAccessInput{Record: topology.PublicAccessRecord{Intent: topology.PublicAccessAuto}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, c := range result.Checks {
+			if c.Name == "http_internal" || c.Name == "http_public" {
+				t.Errorf("%s should not be present for worker runtime; checks: %v", c.Name, checkNames(result.Checks))
+			}
+		}
+	})
+}
+
+// TestVerify_NotRunning_IntentNone_NoSubdomainRecovery pins that the
+// not-running short-circuit (verify.go's runningCheck.Status != CheckPass
+// branch) never emits the subdomain-enable Recovery for `none`/`domain`
+// intent — the parallel hint is intent-gated the same way the running path
+// is (PA-4's "never for none/domain").
+func TestVerify_NotRunning_IntentNone_NoSubdomainRecovery(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{
+				ID: "svc-1", Name: "app",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"},
+				Status:               platform.ServiceStatusFailed,
+				SubdomainAccess:      false,
+				Ports:                []platform.Port{{Port: 3000}},
+			},
+		})
+
+	result, err := VerifyWithMeta(context.Background(), mock, platform.NewMockLogFetcher(), alwaysOKHTTPDoer{}, "proj-1", "app",
+		RuntimeMeta{}, PublicAccessInput{Record: topology.PublicAccessRecord{Intent: topology.PublicAccessNone}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	httpPublic := findCheck(t, result, "http_public", CheckSkip)
+	if httpPublic.Recovery != nil {
+		t.Errorf("http_public.Recovery = %+v, want nil for intent=none even while service is down", httpPublic.Recovery)
 	}
 }
 
@@ -701,8 +946,8 @@ func TestCheckHTTPRoot_Success(t *testing.T) {
 	if c.Status != CheckPass {
 		t.Errorf("status = %q, want pass", c.Status)
 	}
-	if c.Name != "http_root" {
-		t.Errorf("name = %q, want http_root", c.Name)
+	if c.Name != "http_public" {
+		t.Errorf("name = %q, want http_public", c.Name)
 	}
 	if c.HTTPStatus != 200 {
 		t.Errorf("httpStatus = %d, want 200", c.HTTPStatus)
@@ -1047,7 +1292,7 @@ func TestVerifyAll_AllHealthy(t *testing.T) {
 		return nil, nil
 	}}
 
-	result, err := VerifyAll(context.Background(), mock, fetcher, http.DefaultClient, "proj-1")
+	result, err := VerifyAll(context.Background(), mock, fetcher, alwaysOKHTTPDoer{}, "proj-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1072,7 +1317,7 @@ func TestVerifyAll_MixedResults(t *testing.T) {
 			{ID: "svc-2", Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16", ServiceStackTypeCategoryName: "STANDARD"}, Status: "RUNNING"},
 		})
 
-	result, err := VerifyAll(context.Background(), mock, platform.NewMockLogFetcher(), http.DefaultClient, "proj-1")
+	result, err := VerifyAll(context.Background(), mock, platform.NewMockLogFetcher(), alwaysOKHTTPDoer{}, "proj-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1094,7 +1339,7 @@ func TestVerifyAll_EmptyProject(t *testing.T) {
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{})
 
-	result, err := VerifyAll(context.Background(), mock, platform.NewMockLogFetcher(), http.DefaultClient, "proj-1")
+	result, err := VerifyAll(context.Background(), mock, platform.NewMockLogFetcher(), alwaysOKHTTPDoer{}, "proj-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1127,7 +1372,7 @@ func TestVerifyAll_SingleListServicesCall(t *testing.T) {
 		return nil, nil
 	}}
 
-	result, err := VerifyAll(context.Background(), mock, fetcher, http.DefaultClient, "proj-1")
+	result, err := VerifyAll(context.Background(), mock, fetcher, alwaysOKHTTPDoer{}, "proj-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

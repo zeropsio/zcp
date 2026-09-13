@@ -6,6 +6,7 @@ package ops
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -137,6 +138,74 @@ func TestNonRunningRecovery_ReadyToDeployWithQueuedBuild_PointsAtEvents(t *testi
 	}
 	if rec.Args["override"] != "" {
 		t.Errorf("recovery must NOT carry a destructive override arg, got override=%q", rec.Args["override"])
+	}
+}
+
+// TestNonRunningRecovery_MatchesRecoveryState_Table pins that
+// NonRunningRecovery is a thin adapter over ComputeRecoveryState: for every
+// input the existing NonRunningRecovery tests exercise, the returned
+// Recovery equals ComputeRecoveryState(...).Next exactly (docs/spec-
+// workflows.md §8 R1: "none re-derives a recovery branch from
+// service.status alone").
+func TestNonRunningRecovery_MatchesRecoveryState_Table(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		status      string
+		appVersions []platform.AppVersionEvent
+	}{
+		{
+			name:   "ready_to_deploy_with_failed_history",
+			status: platform.ServiceStatusReadyToDeploy,
+			appVersions: []platform.AppVersionEvent{
+				{ID: "av-1", ServiceStackID: "s1", Status: platform.BuildStatusBuildFailed, Created: "2026-05-05T10:00:00Z"},
+			},
+		},
+		{
+			name:   "ready_to_deploy_no_history",
+			status: platform.ServiceStatusReadyToDeploy,
+		},
+		{
+			name:   "ready_to_deploy_queued_build",
+			status: platform.ServiceStatusReadyToDeploy,
+			appVersions: []platform.AppVersionEvent{
+				{ID: "av-queued", ServiceStackID: "s1", Status: "WAITING_TO_BUILD", Source: "GIT_PUSH", Created: "2026-05-18T14:00:00Z"},
+			},
+		},
+		{
+			name:   "failed_status",
+			status: platform.ServiceStatusFailed,
+		},
+		{
+			name:   "stopped",
+			status: platform.ServiceStatusStopped,
+		},
+		{
+			name:   "new",
+			status: platform.ServiceStatusNew,
+		},
+		{
+			name:   "running",
+			status: platform.ServiceStatusRunning,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := platform.NewMock().
+				WithServices([]platform.ServiceStack{{ID: "s1", Name: "api", Status: tt.status}}).
+				WithAppVersionEvents(tt.appVersions)
+
+			rec := NonRunningRecovery(context.Background(), client, nil, "p-1", "api", tt.status)
+
+			state, err := ComputeRecoveryState(context.Background(), client, nil, "p-1", "api", tt.status)
+			if err != nil {
+				t.Fatalf("ComputeRecoveryState: %v", err)
+			}
+			if !reflect.DeepEqual(rec, state.Next) {
+				t.Errorf("NonRunningRecovery = %+v, ComputeRecoveryState(...).Next = %+v — adapter must match exactly", rec, state.Next)
+			}
+		})
 	}
 }
 

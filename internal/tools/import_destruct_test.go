@@ -87,24 +87,19 @@ func TestImport_OverrideOnFailedRequiresAck(t *testing.T) {
 		t.Errorf("Diagnosis = %+v, want api/build/needsStartWithoutCode", d)
 	}
 
-	// R6-P4: the gate emits a complete, non-authoring retryCall — same call,
-	// override=true, confirmDestructive pre-filled, + a startWithoutCode patch hint.
-	rc := wire.WouldDestroy.Retry
-	if rc == nil || rc.Tool != "zerops_import" || rc.Args["override"] != true {
-		t.Fatalf("Retry = %+v, want zerops_import override=true", rc)
+	// R2 (docs/spec-workflows.md §8 "Recovery classification"): a
+	// failed-build target carries NO ready-made re-import retry — only a
+	// fresh-misconfigured target does. The gate's corrective is read-first
+	// (Next=zerops_events) then a plain zerops_deploy (Then), never a
+	// re-import.
+	if wire.WouldDestroy.Retry != nil {
+		t.Errorf("Retry = %+v, want nil — no re-import retry on a failed-build target", wire.WouldDestroy.Retry)
 	}
-	cd, _ := rc.Args["confirmDestructive"].(map[string]any)
-	if cd == nil || cd["operation"] != "import-override" {
-		t.Errorf("retryCall confirmDestructive = %v, want pre-filled operation", cd)
+	if wire.WouldDestroy.Next == nil || wire.WouldDestroy.Next.Tool != "zerops_events" {
+		t.Fatalf("Next = %+v, want zerops_events", wire.WouldDestroy.Next)
 	}
-	hintFound := false
-	for _, h := range rc.PatchHints {
-		if strings.Contains(h, "startWithoutCode") && strings.Contains(h, "api") {
-			hintFound = true
-		}
-	}
-	if !hintFound {
-		t.Errorf("retryCall.patchHints missing startWithoutCode hint for api: %v", rc.PatchHints)
+	if !strings.Contains(wire.WouldDestroy.Then, "zerops_deploy") {
+		t.Errorf("Then = %q, want it to name zerops_deploy as the non-gated corrective", wire.WouldDestroy.Then)
 	}
 }
 
@@ -256,14 +251,17 @@ func TestGateOverrideOnFailedHistory_PopulatesEnvVarLoss(t *testing.T) {
 // JSON snippet of the next zerops_import call (operation +
 // acknowledgedTargets matching wouldDestroy). Pre-fix the agent had to
 // hand-construct the ack payload from the wouldDestroy shape.
+//
+// R2 (docs/spec-workflows.md §8 "Recovery classification") restricts the
+// ready-made re-import retry to fresh-misconfigured targets — a
+// never-deployed READY_TO_DEPLOY service, no appVersion history — so this
+// fixture carries none. A failed-build target's suggestion text is pinned
+// separately by TestImport_OverrideOnFailedBuild_NoRetrySuggestion_NextIsDeploy.
 func TestGateOverrideOnFailedHistory_SuggestionIncludesRetryShape(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
 			{ID: "s1", Name: "api", Status: platform.ServiceStatusReadyToDeploy},
-		}).
-		WithAppVersionEvents([]platform.AppVersionEvent{
-			{ID: "av-1", ServiceStackID: "s1", Status: platform.BuildStatusBuildFailed, Created: "2026-05-05T10:00:00Z"},
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
@@ -290,6 +288,192 @@ func TestGateOverrideOnFailedHistory_SuggestionIncludesRetryShape(t *testing.T) 
 		if !strings.Contains(wire.Suggestion, want) {
 			t.Errorf("Suggestion missing %q; full suggestion:\n%s", want, wire.Suggestion)
 		}
+	}
+}
+
+// TestImport_OverrideOnFailedBuild_NoRetrySuggestion_NextIsDeploy pins R2
+// (docs/spec-workflows.md §8 "Recovery classification"): the ready-made
+// zerops_import override=true retry is emitted ONLY for fresh-misconfigured
+// targets. A failed-build target's wouldDestroy payload carries no retryCall
+// at all — Next points at zerops_events and Then names zerops_deploy as the
+// non-gated corrective (the prior appVersion keeps serving).
+func TestImport_OverrideOnFailedBuild_NoRetrySuggestion_NextIsDeploy(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "s1", Name: "api", Status: platform.ServiceStatusReadyToDeploy},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av-1", ServiceStackID: "s1", Status: platform.BuildStatusBuildFailed, Created: "2026-05-05T10:00:00Z"},
+		})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{})
+
+	yaml := "services:\n  - hostname: api\n    type: nodejs@22\n"
+	result := callTool(t, srv, "zerops_import", map[string]any{
+		"content":  yaml,
+		"override": true,
+	})
+	if !result.IsError {
+		t.Fatalf("expected IsError on override of a failed-build service without ack")
+	}
+	var wire ErrorWire
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &wire); err != nil {
+		t.Fatalf("parse error wire: %v", err)
+	}
+	if wire.Code != platform.ErrDiagnosisRequired {
+		t.Errorf("Code = %q, want %q", wire.Code, platform.ErrDiagnosisRequired)
+	}
+	if wire.WouldDestroy == nil {
+		t.Fatalf("WouldDestroy missing")
+	}
+	if wire.WouldDestroy.Retry != nil {
+		t.Errorf("Retry = %+v, want nil — no ready-made re-import retry on a failed-build target", wire.WouldDestroy.Retry)
+	}
+	if wire.WouldDestroy.Next == nil || wire.WouldDestroy.Next.Tool != "zerops_events" {
+		t.Fatalf("Next = %+v, want zerops_events", wire.WouldDestroy.Next)
+	}
+	if !strings.Contains(wire.WouldDestroy.Then, "zerops_deploy") {
+		t.Errorf("Then = %q, want it to name zerops_deploy as the non-gated corrective", wire.WouldDestroy.Then)
+	}
+}
+
+// TestImport_OverrideOnFreshMisconfigured_CarriesRetry pins R2: a
+// never-deployed READY_TO_DEPLOY target (no appVersion history at all) is
+// the ONLY shape whose gate carries the ready-made override retry, with a
+// startWithoutCode:true patch hint.
+func TestImport_OverrideOnFreshMisconfigured_CarriesRetry(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "s1", Name: "api", Status: platform.ServiceStatusReadyToDeploy},
+		})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{})
+
+	yaml := "services:\n  - hostname: api\n    type: nodejs@22\n"
+	result := callTool(t, srv, "zerops_import", map[string]any{
+		"content":  yaml,
+		"override": true,
+	})
+	if !result.IsError {
+		t.Fatalf("expected IsError — fresh-misconfigured is gated too (R1: Shape != healthy)")
+	}
+	var wire ErrorWire
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &wire); err != nil {
+		t.Fatalf("parse error wire: %v", err)
+	}
+	if wire.Code != platform.ErrDiagnosisRequired {
+		t.Errorf("Code = %q, want %q", wire.Code, platform.ErrDiagnosisRequired)
+	}
+	if wire.WouldDestroy == nil {
+		t.Fatalf("WouldDestroy missing")
+	}
+	rc := wire.WouldDestroy.Retry
+	if rc == nil || rc.Tool != "zerops_import" || rc.Args["override"] != true {
+		t.Fatalf("Retry = %+v, want zerops_import override=true", rc)
+	}
+	hintFound := false
+	for _, h := range rc.PatchHints {
+		if strings.Contains(h, "startWithoutCode") && strings.Contains(h, "api") {
+			hintFound = true
+		}
+	}
+	if !hintFound {
+		t.Errorf("retryCall.patchHints missing startWithoutCode hint for api: %v", rc.PatchHints)
+	}
+}
+
+// TestImport_OverrideOnFailedInit_NoContainer_ThenNamesAppVersionRedeploy
+// pins R2's artifact-redeploy amendment (docs/spec-workflows.md §8 R2,
+// live-verified 2026-09-14): a never-activated buildFromGit service —
+// failed-init (DEPLOY_FAILED), no container — carries NO ready-made
+// re-import retry (the built artifact would be destroyed for nothing); Then
+// names the in-place `zerops_deploy appVersion=latest` corrective instead.
+func TestImport_OverrideOnFailedInit_NoContainer_ThenNamesAppVersionRedeploy(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "s1", Name: "api", Status: platform.ServiceStatusReadyToDeploy},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av-2", ServiceStackID: "s1", Status: platform.BuildStatusDeployFailed, Source: "GIT", Created: "2026-09-14T10:00:00Z"},
+		}).
+		WithServiceAppVersions("s1", []platform.AppVersionEvent{
+			{ID: "av-2", ServiceStackID: "s1", Status: platform.BuildStatusDeployFailed, Source: "GIT", Sequence: 2},
+		})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{})
+
+	yaml := "services:\n  - hostname: api\n    type: nodejs@22\n"
+	result := callTool(t, srv, "zerops_import", map[string]any{
+		"content":  yaml,
+		"override": true,
+	})
+	if !result.IsError {
+		t.Fatalf("expected IsError on override of a never-activated failed-init service without ack")
+	}
+	var wire ErrorWire
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &wire); err != nil {
+		t.Fatalf("parse error wire: %v", err)
+	}
+	if wire.WouldDestroy == nil {
+		t.Fatalf("WouldDestroy missing")
+	}
+	if wire.WouldDestroy.Retry != nil {
+		t.Errorf("Retry = %+v, want nil — the built artifact must not be discarded via re-import", wire.WouldDestroy.Retry)
+	}
+	if !strings.Contains(wire.WouldDestroy.Then, "appVersion=latest") {
+		t.Errorf("Then = %q, want it to name the appVersion=latest in-place redeploy", wire.WouldDestroy.Then)
+	}
+}
+
+// TestImport_OverrideOnFailedBuild_GitNoContainer_CarriesRetry pins R2's
+// amendment: a never-activated buildFromGit service whose BUILD failed (no
+// artifact ever produced, no container) has nothing deployed to lose — the
+// gate now carries the ready-made override retry for this shape too (not
+// just fresh-misconfigured), alongside Then naming the fix-then-re-import
+// sequence.
+func TestImport_OverrideOnFailedBuild_GitNoContainer_CarriesRetry(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "s1", Name: "api", Status: platform.ServiceStatusReadyToDeploy},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av-1", ServiceStackID: "s1", Status: platform.BuildStatusBuildFailed, Source: "GIT", Created: "2026-09-14T10:00:00Z"},
+		}).
+		WithServiceAppVersions("s1", []platform.AppVersionEvent{
+			{ID: "av-1", ServiceStackID: "s1", Status: platform.BuildStatusBuildFailed, Source: "GIT", Sequence: 1},
+		})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{})
+
+	yaml := "services:\n  - hostname: api\n    type: nodejs@22\n"
+	result := callTool(t, srv, "zerops_import", map[string]any{
+		"content":  yaml,
+		"override": true,
+	})
+	if !result.IsError {
+		t.Fatalf("expected IsError on override of a never-activated failed-build service without ack")
+	}
+	var wire ErrorWire
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &wire); err != nil {
+		t.Fatalf("parse error wire: %v", err)
+	}
+	if wire.WouldDestroy == nil {
+		t.Fatalf("WouldDestroy missing")
+	}
+	rc := wire.WouldDestroy.Retry
+	if rc == nil || rc.Tool != "zerops_import" || rc.Args["override"] != true {
+		t.Fatalf("Retry = %+v, want zerops_import override=true — no version was ever activated, nothing is lost", rc)
+	}
+	if !strings.Contains(wire.WouldDestroy.Then, "override=true") {
+		t.Errorf("Then = %q, want it to name the fix-then-re-import sequence", wire.WouldDestroy.Then)
 	}
 }
 

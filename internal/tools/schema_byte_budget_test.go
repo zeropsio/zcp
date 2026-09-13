@@ -65,7 +65,11 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// patchFlexBoolProperty like force/skipPipelineSetup. Deliberate new
 		// field — optional, backward-compatible (omit → today's launchKey-only
 		// publish path, D-5).
-		"zerops_workflow":    17828,
+		// Raised +6 (17828→17834) for RuntimeTarget.publicAccess (§8 O3
+		// PA-6): the plan's per-runtime public-access intent
+		// ("" | auto | subdomain | none). Deliberate new field — optional,
+		// backward-compatible (omit → auto, today's behavior).
+		"zerops_workflow":    17834,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services
@@ -75,7 +79,13 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// correctness fix (tell == what the platform now expects), not new
 		// surface.
 		"zerops_knowledge": 2973,
-		"zerops_deploy":    1908,
+		// Raised +245 (1908→2153) for the `appVersion` input (docs/spec-
+		// workflows.md §8 R2): set to "latest" to re-deploy a never-
+		// activated buildFromGit service's already-built appVersion in
+		// place, skipping source resolution entirely. Deliberate new
+		// field — optional, backward-compatible (omit → today's
+		// source-resolving deploy).
+		"zerops_deploy": 2153,
 		// Raised +62 (2484→2546) for the get-action contract change: get now
 		// returns env var KEYS + ${host_var} refs, NOT values, so the agent
 		// references $VAR by name instead of pasting a credential literal. The

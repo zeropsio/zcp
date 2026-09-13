@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -11,7 +12,10 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-const actionEnable = "enable"
+const (
+	actionEnable  = "enable"
+	actionDisable = "disable"
+)
 
 // SubdomainInput is the input type for zerops_subdomain.
 type SubdomainInput struct {
@@ -108,8 +112,36 @@ func RegisterSubdomain(srv *mcp.Server, client platform.Client, httpClient ops.H
 		if input.Action == actionEnable {
 			result.NextActions = nextActionSubdomainEnable
 		}
+		recordExplicitPublicAccessIntent(stateDir, input.ServiceHostname, input.Action)
 		return jsonResult(result), nil, nil
 	})
+}
+
+// recordExplicitPublicAccessIntent records the user's explicit public-access
+// intent (E9) after a zerops_subdomain call: enable ⇒ Intent=subdomain
+// (stamping SubdomainEnabledByZcpAt if this is the first record, so a later
+// platform-observed "off" is correctly read as PA-2 "user switched it off"
+// rather than "zcp never touched this"); disable ⇒ Intent=none. A missing
+// ServiceMeta (manual/adopted service, no Work Session) is a silent no-op —
+// there's nothing to persist to, and that's not a caller error.
+func recordExplicitPublicAccessIntent(stateDir, hostname, action string) {
+	meta, _ := workflow.FindServiceMeta(stateDir, hostname)
+	if meta == nil {
+		return
+	}
+	rec := meta.PublicAccessFor(hostname)
+	switch action {
+	case actionEnable:
+		rec.Intent = topology.PublicAccessSubdomain
+		if rec.SubdomainEnabledByZcpAt == "" {
+			rec.SubdomainEnabledByZcpAt = time.Now().UTC().Format(time.RFC3339)
+		}
+	case actionDisable:
+		rec.Intent = topology.PublicAccessNone
+	default:
+		return
+	}
+	persistPublicAccess(stateDir, hostname, rec)
 }
 
 // skipDeferredStartProbe returns true when the L7-readiness probe should be

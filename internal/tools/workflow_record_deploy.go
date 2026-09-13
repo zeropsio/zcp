@@ -63,10 +63,10 @@ type recordDeployResult struct {
 // (workflow-less ack of a service outside the current scope).
 //
 // Phase 7 of the deploy-strategy decomposition: on successful stamp
-// (stamped=true), call maybeAutoEnableSubdomain so the L7 route lands
+// (stamped=true), call ensurePublicAccess so the L7 route lands
 // alongside the deploy stamp — same auto-enable behaviour the in-tree
 // deploy paths get on first deploy. Eligibility and idempotency are
-// checked inside maybeAutoEnableSubdomain; record-deploy stays a no-op
+// checked inside ensurePublicAccess; record-deploy stays a no-op
 // at the platform layer when the subdomain is already enabled or the
 // mode doesn't qualify (e.g. ModeLocalOnly).
 //
@@ -176,14 +176,14 @@ func handleRecordDeploy(
 	}
 
 	// Phase 7: auto-enable subdomain on a fresh stamp (matches the in-tree
-	// deploy paths). maybeAutoEnableSubdomain mutates a *ops.DeployResult,
+	// deploy paths). ensurePublicAccess mutates a *ops.DeployResult,
 	// so build a synthetic and copy fields back. Eligibility, idempotency,
 	// and platform-side check-before-enable all live inside the helper.
 	// Append (not replace) the helper's warnings so any earlier work-
 	// session bridge warning above survives.
 	if stamped && client != nil && httpClient != nil {
 		dr := &ops.DeployResult{}
-		maybeAutoEnableSubdomain(ctx, client, httpClient, projectID, stateDir, input.TargetService, dr)
+		ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, dr)
 		resp.SubdomainAccessEnabled = dr.SubdomainAccessEnabled
 		resp.SubdomainURL = dr.SubdomainURL
 		resp.Warnings = append(resp.Warnings, dr.Warnings...)

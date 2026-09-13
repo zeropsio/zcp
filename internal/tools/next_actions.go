@@ -39,7 +39,7 @@ const (
 // liveness heuristics that produced dishonest "server NOT running" /
 // "auto-start" claims. The canonical post-DS-01 predicate is
 // `topology.IsDeferredStart` (dev/standard mode + dynamic runtime) —
-// same predicate used by `deploy_subdomain.go::maybeAutoEnableSubdomain`
+// same predicate used by `deploy_subdomain.go::ensurePublicAccess`
 // to skip the L7 HTTP-readiness probe. It names the next tool to call,
 // not what the runtime is doing right now.
 //

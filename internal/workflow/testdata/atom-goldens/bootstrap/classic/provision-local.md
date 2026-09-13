@@ -94,8 +94,13 @@ Set these during import-yaml generation:
 |----------|-----------|---------------|----------------|
 | `startWithoutCode` | `true` | omit | `true` |
 | `maxContainers` | `1` | omit | omit |
-| `enableSubdomainAccess` | `true` | `true` | `true` |
+| `enableSubdomainAccess` | `true`* | `true`* | `true`* |
 | `verticalAutoscaling.minRam` | `1.0` for compiled runtimes | omit | omit |
+
+\* Omit `enableSubdomainAccess` entirely for a runtime whose submitted
+plan set `publicAccess: "none"` — that runtime is internal-only by
+intent, and a stale `true` would surface a subdomain the plan asked to
+keep private.
 
 `startWithoutCode: true` lets dev/simple reach RUNNING before first
 deploy; without it they sit at READY_TO_DEPLOY, blocking SSHFS and SSH.

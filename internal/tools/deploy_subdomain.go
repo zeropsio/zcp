@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -24,129 +25,157 @@ import (
 // ops.Subdomain.Enable still returns it as an error to that caller.
 const apiCodeServiceStackIsNotHTTP = "serviceStackIsNotHttp"
 
-// maybeAutoEnableSubdomain activates the L7 subdomain route for a freshly
-// deployed runtime. Called from every deploy handler after the platform
-// reports the deploy succeeded (result.Status == DEPLOYED).
+// ensurePublicAccess is the O3/E9 hook (docs/spec-workflows.md §8 O3 PA-1..
+// PA-3, E9): auto-enable the subdomain at most once per runtime, only when
+// intent allows it, and record what actually happened in ServiceMeta so a
+// later call never re-enables a route the user switched off. Decided purely
+// from mode+IsSystem and calling ops.Subdomain unconditionally used to be
+// the whole predicate; this version reads the persisted intent
+// (ServiceMeta.PublicAccess) and the live observation
+// (ops.ObservePublicAccess) and only proceeds when
+// topology.ShouldAutoEnableSubdomain agrees.
 //
-// Design: let the platform answer "should this have a subdomain?" rather
-// than predicting from local signals. The flow:
-//
-//  1. Mode allow-list: production / unknown modes opt out (modeAllowsSubdomain).
-//  2. IsSystem() defensive guard: BUILD/CORE/INTERNAL/PREPARE_RUNTIME/
-//     HTTP_L7_BALANCER stacks are never routed via L7. Five upstream filters
-//     (discover, route, compute_envelope, adopt) make these unreachable on
-//     normal codepaths, but the guard defends against future call sites.
-//  3. ops.Subdomain.Enable does check-before-mutate internally (returns
-//     SubdomainStatusAlreadyEnabled when subdomain is currently active) and
-//     bounded retry on noSubdomainPorts (L7 propagation race).
-//  4. Classify the response:
-//     - success → set SubdomainAccessEnabled + URL, probe HTTP-ready.
-//     - already_enabled → set SubdomainAccessEnabled + URL, skip probe
-//     when ServiceMeta is supplied (bootstrapped earlier, route is live).
-//     - serviceStackIsNotHttp → silent benign skip (worker, F8 deferred-
-//     start dev runtime idling on `zsc noop --silent`, any non-HTTP stack
-//     the platform refuses to route).
-//     - other error → result.Warnings entry, deploy still succeeds.
-//
-// Why no DTO checks (the historical wrong path): the previous predicate read
-// detail.SubdomainAccess and detail.Ports[].HTTPSupport as if they reflected
-// import-yaml intent. Live verification (plan §2.2) proved both flip true
-// only AFTER a successful EnableSubdomainAccess call. The platform DTO
-// `ServicePort.HttpRouting` (mapped to ZCP's HTTPSupport in
-// internal/platform/zerops_mappers.go) is the post-enable routing flag, NOT
-// the deployed zerops.yaml's ports[].httpSupport intent — the SDK type at
-// /Users/macbook/go/pkg/mod/github.com/zeropsio/zerops-go@v1.0.17/dto/output/
-// servicePort.go has no httpSupport field at all. Reading these fields as
-// pre-enable intent always returned false → predicate skipped enable → user
-// had to call zerops_subdomain manually. Plan archive details the chain of
-// fixes (R-13-12, R-14-1, F8) that all operated on this misunderstanding.
-func maybeAutoEnableSubdomain(
+// listenerOverride is variadic so the deploy hooks (deploy_local.go,
+// deploy_ssh.go, deploy_batch.go, workflow_record_deploy.go) need no change
+// beyond the identifier rename: when omitted, "is a listener up now" is
+// derived from the runtime's static deferred-start classification — a
+// dev-mode dynamic runtime idling on `zsc noop --silent` has none until
+// `zerops_dev_server action=start` runs, so the deploy hook correctly does
+// NOT auto-enable there (PA-1's first hook only fires when a listener
+// already exists). The dev-server-start hook passes true explicitly — a
+// passing health probe just proved a live listener regardless of that
+// static classification, which is what fires PA-1's second hook.
+func ensurePublicAccess(
 	ctx context.Context,
 	client platform.Client,
 	httpClient ops.HTTPDoer,
-	projectID, stateDir string,
-	targetService string,
+	projectID, stateDir, hostname string,
 	result *ops.DeployResult,
+	listenerOverride ...bool,
 ) {
-	meta, _ := workflow.FindServiceMeta(stateDir, targetService)
-	svc, eligible := serviceEligibleForSubdomain(ctx, client, meta, projectID, targetService)
+	meta, _ := workflow.FindServiceMeta(stateDir, hostname)
+	svc, eligible := serviceEligibleForSubdomain(ctx, client, meta, projectID, hostname)
 	if !eligible {
 		return
 	}
 
-	subRes, err := ops.Subdomain(ctx, client, projectID, targetService, "enable")
+	deferredStart := isDeferredStartTarget(meta, svc, hostname)
+	listener := !deferredStart
+	if len(listenerOverride) > 0 {
+		listener = listenerOverride[0]
+	}
+
+	obs, err := ops.ObservePublicAccess(ctx, client, projectID, svc)
 	if err != nil {
-		if isServiceStackIsNotHTTPErr(err) {
-			// Platform: "service stack is not http or https". Worker, F8
-			// deferred dev-server (dev runtime idling on `zsc noop --silent`),
-			// or any other non-HTTP-shaped stack. Benign signal in the
-			// auto-enable context — silently swallow. Explicit
-			// zerops_subdomain enable callers still get this error from
-			// ops.Subdomain (the downgrade is contextual).
-			return
-		}
 		result.Warnings = append(result.Warnings,
-			fmt.Sprintf("auto-enable subdomain failed: %v (run zerops_subdomain action=enable manually)", err))
+			fmt.Sprintf("observe public access failed: %v (subdomain state unknown)", err))
 		return
 	}
+	obs.Observed.Listener = listener
 
-	result.SubdomainAccessEnabled = true
-	// Pick the HTTP-serving port's URL by scheme (set at deploy time, so it's
-	// reliable here right after deploy). Multi-port services (e.g. mailpit: SMTP
-	// 1025 + HTTP UI 8025) must not report a non-HTTP port as the URL. Pure (no
-	// probe) so the already-enabled fast path stays probe-free; fall back to the
-	// first enabled URL only if it can't resolve one (never empty).
-	httpURL := ops.ResolveSubdomainURL(ctx, client, projectID, svc)
-	if httpURL == "" && len(subRes.SubdomainUrls) > 0 {
-		httpURL = subRes.SubdomainUrls[0]
-	}
-	result.SubdomainURL = httpURL
-	for _, w := range subRes.Warnings {
-		result.Warnings = append(result.Warnings, "subdomain: "+w)
+	rec := meta.PublicAccessFor(hostname)
+	rec2, changed := topology.ReconcilePublicAccess(rec, obs.Observed)
+	if changed && meta != nil {
+		persistPublicAccess(stateDir, hostname, rec2)
 	}
 
-	// HTTP readiness wait. Skip in two cases:
-	//
-	//  1. already_enabled with ServiceMeta — meta presence proves the
-	//     service was bootstrapped earlier, so the L7 route has been live
-	//     for a while; a probe just adds latency. Without ServiceMeta
-	//     (recipe-authoring scaffolds, manual import, adoption), an
-	//     already_enabled status reflects the import-time state without
-	//     proving the L7 router has finished propagating ports (R-14-1
-	//     race) — always probe in that case so the next zerops_verify
-	//     doesn't race.
-	//
-	//  2. deferred-start runtime (dev-mode dynamic idling on `zsc noop --silent`).
-	//     The container is alive but no app process exists yet by design;
-	//     HTTP probe returns 502 until the agent invokes
-	//     `zerops_dev_server action=start`. Surfacing the 502 as a warning
-	//     trains agents to misread successful deploys as failures (eval:
-	//     suite 20260503-211240, 4-of-9 scenarios flagged the noise).
-	//     Subtractive root fix — silence the probe; agent's next move
-	//     (dev_server start) tests HTTP readiness more reliably anyway.
-	deferredStart := false
-	if svc != nil && meta != nil {
-		runtimeClass := topology.RuntimeClassFor(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName)
-		// Target-relative mode projection (ServiceMeta.ModeFor) — for a
-		// standard pair (m.Mode = ModeStandard, m.StageHostname populated),
-		// auto-enabling subdomain on the stage hostname must NOT skip the
-		// HTTP probe. The stage runtime runs run.start (HTTP-shaped from
-		// boot); only the dev half is deferred-start (no `run.start`).
-		// Reading meta.Mode directly would treat both halves as deferred
-		// and silently swallow legitimate "subdomain not HTTP-ready"
-		// warnings for stage deploys.
-		deferredStart = topology.IsDeferredStart(meta.ModeFor(targetService), runtimeClass)
-	}
-
-	skipProbe := (subRes.Status == ops.SubdomainStatusAlreadyEnabled && meta != nil) || deferredStart
-	// Probe only the HTTP-serving URL — probing every enabled port would warn on
-	// a non-HTTP port (e.g. SMTP) that can never go HTTP-ready.
-	if !skipProbe && httpURL != "" {
-		if waitErr := ops.WaitHTTPReady(ctx, httpClient, httpURL); waitErr != nil {
+	enabledNow := false
+	if topology.ShouldAutoEnableSubdomain(rec2, obs.Observed) {
+		subRes, enableErr := ops.Subdomain(ctx, client, projectID, hostname, "enable")
+		switch {
+		case enableErr == nil:
+			rec2.SubdomainEnabledByZcpAt = time.Now().UTC().Format(time.RFC3339)
+			if meta != nil {
+				persistPublicAccess(stateDir, hostname, rec2)
+			}
+			result.SubdomainAccessEnabled = true
+			// Pick the HTTP-serving port's URL by scheme — multi-port
+			// services (e.g. mailpit: SMTP 1025 + HTTP UI 8025) must not
+			// report a non-HTTP port as the URL. svc here is the
+			// pre-enable snapshot (SubdomainAccess still false), so
+			// ResolveSubdomainURL is a no-op belt-and-suspenders read;
+			// the real value comes from subRes (built fresh inside
+			// ops.Subdomain via GetService).
+			httpURL := ops.ResolveSubdomainURL(ctx, client, projectID, svc)
+			if httpURL == "" && len(subRes.SubdomainUrls) > 0 {
+				httpURL = subRes.SubdomainUrls[0]
+			}
+			result.SubdomainURL = httpURL
+			for _, w := range subRes.Warnings {
+				result.Warnings = append(result.Warnings, "subdomain: "+w)
+			}
+			enabledNow = true
+		case isServiceStackIsNotHTTPErr(enableErr):
+			// Platform: "service stack is not http or https" — benign in
+			// this context (worker, deferred-start dev runtime not yet
+			// started, any other non-HTTP-shaped stack). No stamp, no
+			// warning — see isServiceStackIsNotHTTPErr doc.
+		default:
 			result.Warnings = append(result.Warnings,
-				fmt.Sprintf("subdomain %s not HTTP-ready: %v (next zerops_verify may need to retry)", httpURL, waitErr))
+				fmt.Sprintf("auto-enable subdomain failed: %v (run zerops_subdomain action=enable manually)", enableErr))
+		}
+	} else if obs.Observed.Subdomain == topology.SubdomainOn {
+		// Not eligible for a fresh auto-enable (already stamped, custom
+		// domain, or simply already on) but the route IS live — surface
+		// it so the deploy result stays accurate.
+		result.SubdomainAccessEnabled = true
+		result.SubdomainURL = obs.URL
+	}
+
+	// PA-5 (docs/spec-workflows.md §8 O3): fill the structured summary
+	// from the same reconciled intent (rec2) and observation (obs) this
+	// hook already computed — Subdomain reflects "on" whenever this call
+	// enabled the route or found it already live (result.SubdomainAccessEnabled),
+	// else the pre-enable observed state (off/enabling).
+	subdomainState := obs.Observed.Subdomain
+	if result.SubdomainAccessEnabled {
+		subdomainState = topology.SubdomainOn
+	}
+	result.PublicAccess = &ops.PublicAccessSummary{
+		Intent:    string(rec2.Intent),
+		Subdomain: string(subdomainState),
+		URL:       result.SubdomainURL,
+		Domains:   obs.Observed.Domains,
+	}
+
+	// HTTP readiness wait. Skip when the route was already live before this
+	// call (meta present — an unmeta'd already-on state can't prove the L7
+	// route finished propagating, so still probe) or on deferred-start
+	// (container alive, no app process by design — 502 is expected until
+	// zerops_dev_server action=start runs).
+	skipProbe := (!enabledNow && meta != nil) || deferredStart
+	if !skipProbe && result.SubdomainURL != "" {
+		if waitErr := ops.WaitHTTPReady(ctx, httpClient, result.SubdomainURL); waitErr != nil {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("subdomain %s not HTTP-ready: %v (next zerops_verify may need to retry)", result.SubdomainURL, waitErr))
 		}
 	}
+}
+
+// persistPublicAccess writes rec as hostname's public-access record via the
+// locked FindServiceMeta/WriteServiceMeta read-modify-write pair
+// (workflow.UpdateServiceMeta). Errors are swallowed — a failed persist
+// means the next hook re-reconciles from the live observation again next
+// time, same as every other best-effort ServiceMeta stamp in this file.
+func persistPublicAccess(stateDir, hostname string, rec topology.PublicAccessRecord) {
+	_ = workflow.UpdateServiceMeta(stateDir, hostname, func(m *workflow.ServiceMeta) error {
+		m.SetPublicAccess(hostname, rec)
+		return nil
+	})
+}
+
+// isDeferredStartTarget reports whether hostname is a deferred-start runtime
+// right now — a dev-mode dynamic container idling on `zsc noop --silent`
+// with no app process until `zerops_dev_server action=start`. Nil meta or
+// svc (recipe-authoring / manual-import / lookup failure) fails closed to
+// false (not deferred) so the caller's default listener assumption stays
+// permissive, matching the pre-E9 behavior for meta-less services.
+func isDeferredStartTarget(meta *workflow.ServiceMeta, svc *platform.ServiceStack, hostname string) bool {
+	if meta == nil || svc == nil {
+		return false
+	}
+	class := topology.RuntimeClassFor(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName)
+	return topology.IsDeferredStart(meta.ModeFor(hostname), class)
 }
 
 // modeAllowsSubdomain is the topology-side guard: production and unknown
@@ -215,7 +244,7 @@ func serviceEligibleForSubdomain(
 }
 
 // isServiceStackIsNotHTTPErr classifies a platform error as the
-// "stack is not HTTP-shaped" rejection. Used by maybeAutoEnableSubdomain
+// "stack is not HTTP-shaped" rejection. Used by ensurePublicAccess
 // to swallow this specific signal silently — workers, F8 deferred dev-
 // servers, and any non-HTTP stack land here without polluting result.Warnings.
 //

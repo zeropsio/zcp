@@ -46,8 +46,18 @@ type BootstrapState struct {
 	// this, planTargetSnapshots emitted Status="" and status-gated atoms never
 	// matched — fix per plans/eval-review-20260518-subset/fix-plan.md Phase 2.1.
 	DiscoveredStatuses map[string]string `json:"discoveredStatuses,omitempty"`
-	Route              BootstrapRoute    `json:"route,omitempty"`
-	RecipeMatch        *RecipeMatch      `json:"recipeMatch,omitempty"`
+	// DiscoveredDeployHistory carries the per-hostname recovery-shape
+	// classification (`none` · `failed` · `ok`, spec-workflows.md §8 R1)
+	// for services at READY_TO_DEPLOY/FAILED, mirroring DiscoveredStatuses.
+	// The L4 caller must derive this from ops.ComputeRecoveryState and call
+	// Engine.StoreDiscoveredDeployHistory alongside StoreDiscoveredStatuses
+	// (workflow_checks.go, next to the existing call) — not yet wired, so
+	// this map stays empty and planTargetSnapshots defaults every service
+	// to "ok" (deployHistoryFor), the safe no-match default for atoms
+	// declaring deployHistory:[none]/[failed].
+	DiscoveredDeployHistory map[string]string `json:"discoveredDeployHistory,omitempty"`
+	Route                   BootstrapRoute    `json:"route,omitempty"`
+	RecipeMatch             *RecipeMatch      `json:"recipeMatch,omitempty"`
 	// RecipeOverrides records the agent's only legal recipe-route adjustments
 	// (runtime hostname renames + managed EXISTS flips), reconciled from the
 	// submitted plan at discover-complete. The provision YAML rewrite reads it
@@ -108,6 +118,22 @@ type RuntimeURL struct {
 	Role     string `json:"role"`
 	URL      string `json:"url"`
 	Handoff  bool   `json:"handoff"`
+	// PublicAccess is the PA-5 structured summary (docs/spec-workflows.md
+	// §8 O3): {intent, subdomain, url, domains[]}. Duplicated shape (not
+	// ops.PublicAccessSummary) because this package must not import ops
+	// (layering rule) — the L4 caller (workflow_bootstrap.go) fills it from
+	// the ops-computed value.
+	PublicAccess *RuntimeURLPublicAccess `json:"publicAccess,omitempty"`
+}
+
+// RuntimeURLPublicAccess mirrors ops.PublicAccessSummary's JSON shape field-
+// for-field — see RuntimeURL.PublicAccess's doc-comment for why it's
+// duplicated here rather than imported.
+type RuntimeURLPublicAccess struct {
+	Intent    string   `json:"intent"`
+	Subdomain string   `json:"subdomain"`
+	URL       string   `json:"url,omitempty"`
+	Domains   []string `json:"domains,omitempty"`
 }
 
 // RuntimeURL role values (RCO-7). Plain strings, not a named Mode alias

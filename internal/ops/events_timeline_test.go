@@ -4,6 +4,7 @@ package ops
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -404,5 +405,60 @@ func TestEvents_ParallelFetchError(t *testing.T) {
 	_, err := Events(context.Background(), mock, nil, "proj-1", "", 50)
 	if err == nil {
 		t.Fatal("expected error from SearchProcesses")
+	}
+}
+
+func TestEvents_FailedAppVersion_CarriesBuildLogTail(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}}).
+		WithLogAccess(&platform.LogAccess{URL: "https://log.example.com/logs"}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{
+				ID:             "av-fail",
+				ServiceStackID: "svc-1",
+				Status:         platform.BuildStatusBuildFailed,
+				Created:        "2024-01-01T00:04:00Z",
+				Build:          &platform.BuildInfo{PipelineStart: strPtr("2024-01-01T00:04:01Z"), ServiceStackID: strPtr("svc-1")},
+			},
+		})
+	fetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
+		{Facility: "local0", Tag: "zbuilder@av-fail", Message: "npm ERR! missing script: build"},
+		{Facility: "local0", Tag: "zbuilder@av-fail", Message: "npm ERR! A complete log of this run can be found in /root/.npm/_logs/x.log"},
+	})
+	result, err := Events(context.Background(), mock, fetcher, "proj-1", "api", 50)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var fail *TimelineEvent
+	for i := range result.Events {
+		if result.Events[i].Status == platform.BuildStatusBuildFailed {
+			fail = &result.Events[i]
+			break
+		}
+	}
+	if fail == nil {
+		t.Fatalf("no BUILD_FAILED event in timeline: %+v", result.Events)
+	}
+	if len(fail.BuildLogTail) == 0 || !strings.Contains(strings.Join(fail.BuildLogTail, "\n"), "missing script") {
+		t.Errorf("BuildLogTail missing the fetched stderr: %+v", fail.BuildLogTail)
+	}
+}
+
+// The baseline (no recognized signal) suggestion must name the field that
+// actually carries the stderr on each surface — the farm observed an agent
+// chasing a `buildLogs` field that an event never has.
+func TestClassifyDeployFailure_BuildBaseline_NamesBuildLogTail(t *testing.T) {
+	t.Parallel()
+	cls := ClassifyDeployFailure(FailureInput{
+		Phase:     FailurePhaseFromStatus(platform.BuildStatusBuildFailed),
+		Status:    platform.BuildStatusBuildFailed,
+		BuildLogs: []string{"an unrecognized failure line"},
+	})
+	if cls == nil {
+		t.Fatal("expected a baseline classification")
+	}
+	if !strings.Contains(cls.SuggestedAction, "buildLogTail") || !strings.Contains(cls.SuggestedAction, "buildLogs") {
+		t.Errorf("baseline SuggestedAction must name both `buildLogs` (deploy response) and `buildLogTail` (event), got %q", cls.SuggestedAction)
 	}
 }

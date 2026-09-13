@@ -1,4 +1,4 @@
-.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build install all clean release release-patch schema-sync catalog-sync e2e-build e2e-deploy e2e-zcp e2e-zcp-fast e2e-zcp-deploy flow-eval-local dc-live dc-live-full dc-live-remote
+.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build build-nocorpuscheck install all clean release release-patch schema-sync catalog-sync e2e-build e2e-deploy e2e-zcp e2e-zcp-fast e2e-zcp-deploy flow-eval-local dc-live dc-live-full dc-live-remote
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -9,6 +9,7 @@ LDFLAGS  = -s -w \
   -X $(MODULE)/internal/server.Version=$(VERSION) \
   -X $(MODULE)/internal/server.Commit=$(COMMIT) \
   -X $(MODULE)/internal/server.Built=$(BUILT)
+GOBUILD_ZCP = go build -ldflags "$(LDFLAGS)" -o bin/zcp ./cmd/zcp
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -45,10 +46,10 @@ lint: ## Run linter for all target platforms
 lint-fast: ## Fast lint (native platform, fast linters only, ~3s)
 	$(LINT) run ./... --fast-only
 
-sync: build ## Pull all knowledge from external sources
+sync: build-nocorpuscheck ## Pull all knowledge from external sources
 	./bin/zcp sync pull
 
-sync-recipes: build ## Pull recipes from API
+sync-recipes: build-nocorpuscheck ## Pull recipes from API
 	./bin/zcp sync pull recipes
 
 sync-push: build ## Push knowledge changes as GitHub PRs
@@ -73,7 +74,17 @@ vet-tags: ## Compile-check build-tagged test files (api/e2e) so they can't silen
 	go vet -tags e2e ./...
 
 build: ## Build binary
-	go build -ldflags "$(LDFLAGS)" -o bin/zcp ./cmd/zcp
+	@[ "$$(ls internal/knowledge/recipes/*.md 2>/dev/null | wc -l)" -ge 20 ] || { echo "recipe corpus missing — run: make sync-recipes" >&2; exit 1; }
+	$(GOBUILD_ZCP)
+
+# build-nocorpuscheck builds bin/zcp without the recipe-corpus guard above —
+# `sync`/`sync-recipes` depend on this, not on `build`, so the very command
+# the guard recommends (`make sync-recipes`) is not itself blocked by the
+# guard it is meant to resolve (a fresh clone has no recipe .md files until
+# this runs). `zcp sync pull` does not read the embedded corpus, so building
+# without it here is safe.
+build-nocorpuscheck:
+	$(GOBUILD_ZCP)
 
 install: build ## Build + install zcp to /usr/local/bin/zcp (uses sudo on Mac)
 	sudo install -m 0755 bin/zcp /usr/local/bin/zcp

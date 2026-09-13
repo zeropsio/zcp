@@ -9,6 +9,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -112,11 +113,16 @@ func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, e
 	})
 }
 
-// gateOverrideOnFailedHistory enforces plan v4 §3.2: when override=true
-// would REPLACE a service that has failed appVersion history, refuse the
-// first call with ErrDiagnosisRequired + a structured wouldDestroy payload.
+// gateOverrideOnFailedHistory enforces docs/spec-workflows.md §8 "Recovery
+// classification" R1/R2: when override=true would REPLACE a service whose
+// ops.ComputeRecoveryState shape is not healthy, refuse the first call with
+// ErrDiagnosisRequired + a structured wouldDestroy payload. Every target's
+// shape comes from the ONE classifier (R1: "none re-derives a recovery
+// branch from service.status alone") — the gate no longer re-derives its
+// own healthy/prior-attempt branch.
+//
 // Returns (blocked, nil) when the gate fires (caller emits blocked verbatim);
-// (nil, nil) when the gate passes (no failed targets OR matching ack);
+// (nil, nil) when the gate passes (no non-healthy targets OR matching ack);
 // (nil, err) when target identification itself fails.
 func gateOverrideOnFailedHistory(
 	ctx context.Context,
@@ -132,65 +138,51 @@ func gateOverrideOnFailedHistory(
 	var failedTargets []string
 	var diagnoses []TargetDiagnosis
 	envVarsByService := make(map[string][]string)
+	allRetrySafe := true
+	var firstFailedState ops.RecoveryState
 	for _, hostname := range overrideTargets {
-		failed, err := ops.LatestFailedAppVersionContext(ctx, client, nil, projectID, hostname)
-		if err != nil {
-			return nil, err
-		}
-		// Look up the live service once — used by both the destructive-risk
-		// decision below and the env-var snapshot. Best-effort: a lookup error
-		// leaves svc nil (the classified-failure gate still fires on `failed`).
+		// Look up the live service once — used for the recovery-state status
+		// input, the startWithoutCode verdict, and the env-var snapshot.
+		// Best-effort: a lookup error leaves svc nil and status "" (unknown),
+		// which ComputeRecoveryState treats as not-proven-healthy rather than
+		// failing OPEN on a destructive op (Codex review: a lookup error must
+		// not silently bypass the gate).
 		svc, _ := ops.LookupService(ctx, client, projectID, hostname)
-
-		gated := failed != nil
-		if !gated {
-			// No CLASSIFIED failure context, but a service with any prior
-			// deploy/build attempt (e.g. WAITING_TO_BUILD whose build process
-			// failed at 0s — the recover-failed case) still holds buildFromGit
-			// code/config worth preserving; override would silently wipe it.
-			// LatestFailedAppVersionContext misses this because WAITING_TO_BUILD
-			// has no FailurePhaseFromStatus mapping (Wave-1 gate-bypass that let
-			// the override wipe the source under diagnosis). Uses the SAME
-			// HasPriorDeployAttempt signal the recovery hint keys on, so the
-			// read-first recovery and the destruct gate can't drift.
-			//
-			// Skip the backstop ONLY when we can POSITIVELY confirm the service
-			// is currently healthy (RUNNING/ACTIVE) — a legit reconfigure-
-			// override. A non-running status OR an unknown status (svc==nil
-			// because lookup failed) falls through to the history check rather
-			// than failing OPEN on a destructive op (Codex review: a lookup
-			// error must not silently bypass the gate).
-			healthy := svc != nil &&
-				svc.IsLive()
-			if !healthy {
-				prior, priorErr := ops.HasPriorDeployAttempt(ctx, client, projectID, hostname)
-				if priorErr != nil {
-					return nil, priorErr
-				}
-				gated = prior
-			}
+		status := ""
+		if svc != nil {
+			status = svc.Status
 		}
-		if !gated {
+		state, stateErr := ops.ComputeRecoveryState(ctx, client, nil, projectID, hostname, status)
+		if stateErr != nil {
+			return nil, stateErr
+		}
+		if state.Shape == topology.RecoveryHealthy {
 			continue
 		}
+
 		failedTargets = append(failedTargets, hostname)
+		if len(failedTargets) == 1 {
+			firstFailedState = state
+		}
+		if !retrySafeOnOverride(state) {
+			allRetrySafe = false
+		}
 		// R6-P3: carry the gate's OWN per-target verdict so the agent never
 		// re-diagnoses what we already computed. NeedsStartWithoutCode is true
 		// when the target's live status lacks an ACTIVE version (override alone
 		// re-lands it in READY_TO_DEPLOY); an unknown status (svc==nil) assumes
 		// it needs the field rather than risk a re-land.
 		diag := TargetDiagnosis{Hostname: hostname}
-		if failed != nil {
-			diag.FailureClass = string(failed.FailureClass)
-			diag.Cause = failed.FailureCause
+		if state.FailureClass != "" {
+			diag.FailureClass = string(state.FailureClass)
+			diag.Cause = state.Cause
 		}
-		diag.NeedsStartWithoutCode = svc == nil ||
-			!svc.IsLive()
+		diag.NeedsStartWithoutCode = svc == nil || !svc.IsLive()
 		diagnoses = append(diagnoses, diag)
 		// Snapshot the live env-var keys so wouldDestroy.envVars reflects
 		// what override would actually erase. Best-effort: a lookup or
 		// fetch failure leaves the key list empty for this host (the
-		// gate still fires on the failed history alone). Keys only —
+		// gate still fires on the non-healthy shape alone). Keys only —
 		// values stay on the platform.
 		if svc == nil {
 			continue
@@ -207,8 +199,8 @@ func gateOverrideOnFailedHistory(
 	}
 
 	if len(failedTargets) == 0 {
-		// Gate bypassed: all override targets are healthy or healthy-after-
-		// success. The standard B10 warning in ops.Import still fires.
+		// Gate bypassed: all override targets are healthy. The standard B10
+		// warning in ops.Import still fires.
 		return nil, nil //nolint:nilnil // gate-passed sentinel: caller proceeds with import
 	}
 
@@ -220,7 +212,31 @@ func gateOverrideOnFailedHistory(
 			EnvVars:       collectEnvVarKeys(envVarsByService, failedTargets),
 		},
 		Diagnoses: diagnoses,
-		Retry:     buildImportRetryCall(input, failedTargets, diagnoses),
+	}
+	if allRetrySafe {
+		// R2 (amended): the ready-made re-import retry is emitted for
+		// fresh-misconfigured targets (no code/history exists to lose) AND
+		// for failed-build/stuck-building on a git-provisioned target with
+		// no container (nothing deployed is lost either — no version was
+		// ever activated; the platform has no in-place git rebuild route).
+		expected.Retry = buildImportRetryCall(input, failedTargets, diagnoses)
+		// Fresh-misconfigured carries no Then — the retry alone recovers,
+		// nothing to fix first. The git-no-container failed-build/stuck-
+		// building shape DOES: ComputeRecoveryState's Then names the
+		// "fix the cause, then re-import" sequence the retry completes.
+		if firstFailedState.Shape != topology.RecoveryFreshMisconfigured {
+			expected.Then = firstFailedState.Then
+		}
+	} else {
+		// R2: every other failed-*/stuck-building shape reads-first via
+		// zerops_events, then the corrective ComputeRecoveryState already
+		// derived (Then) — the never-gated appVersion redeploy for a
+		// never-activated failed-init service, or the plain zerops_deploy
+		// fallback. Never a re-import here — a container (or unrecoverable
+		// facts) means override would destroy something the corrective
+		// doesn't need destroyed.
+		expected.Next = firstFailedState.Next
+		expected.Then = firstFailedState.Then
 	}
 
 	if validateErr := ValidateDestructiveAck(input.ConfirmDestructive, expected); validateErr != nil {
@@ -240,6 +256,28 @@ func gateOverrideOnFailedHistory(
 		), nil
 	}
 	return nil, nil //nolint:nilnil // gate-passed sentinel: matching ack, proceed with import
+}
+
+// retrySafeOnOverride reports whether a target's RecoveryState shape is one
+// R2 (amended) allows the gate to offer a ready-made zerops_import
+// override=true retry for: fresh-misconfigured (no history to lose) or a
+// failed-build/stuck-building appVersion on a git-provisioned service with
+// no container (no version was ever activated, so nothing deployed is
+// lost — the platform's only recovery for that shape IS re-import; there
+// is no in-place git rebuild route). Every other shape (a container
+// exists, or the artifact-redeploy shape applies instead) is NOT
+// retry-safe — override would destroy something the corrective doesn't
+// need destroyed.
+func retrySafeOnOverride(state ops.RecoveryState) bool {
+	switch state.Shape {
+	case topology.RecoveryFreshMisconfigured:
+		return true
+	case topology.RecoveryFailedBuild, topology.RecoveryStuckBuilding:
+		return state.GitProvisioned && !state.HasContainer
+	case topology.RecoveryHealthy, topology.RecoveryFailedInit:
+		return false
+	}
+	return false
 }
 
 // collectEnvVarKeys flattens the per-service env-var keys for the wire

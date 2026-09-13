@@ -172,7 +172,7 @@ func (b *BootstrapState) synthesisEnvelope(step string, env Environment) StateEn
 	services := make([]ServiceSnapshot, 0)
 	if b.Plan != nil {
 		for _, t := range b.Plan.Targets {
-			services = append(services, planTargetSnapshots(t, b.DiscoveredStatuses)...)
+			services = append(services, planTargetSnapshots(t, b.DiscoveredStatuses, b.DiscoveredDeployHistory)...)
 		}
 	}
 	route := b.Route
@@ -201,15 +201,20 @@ func (b *BootstrapState) synthesisEnvelope(step string, env Environment) StateEn
 // provision check (BootstrapState.DiscoveredStatuses). Status is populated on
 // each snapshot when the hostname is present in the map; absence yields
 // Status="" which is the safe default (status-gated atoms simply don't match).
-func planTargetSnapshots(t BootstrapTarget, statuses map[string]string) []ServiceSnapshot {
+//
+// `deployHistories` carries the per-hostname recovery-shape classification
+// (BootstrapState.DiscoveredDeployHistory); see deployHistoryFor.
+func planTargetSnapshots(t BootstrapTarget, statuses, deployHistories map[string]string) []ServiceSnapshot {
 	mode := planModeToEnvelopeMode(t.Runtime.EffectiveMode())
 	runtimeClass := classifyEnvelopeRuntime(t.Runtime.Type)
+	devStatus := statuses[t.Runtime.DevHostname]
 	snaps := []ServiceSnapshot{{
-		Hostname:     t.Runtime.DevHostname,
-		TypeVersion:  t.Runtime.Type,
-		RuntimeClass: runtimeClass,
-		Mode:         mode,
-		Status:       statuses[t.Runtime.DevHostname],
+		Hostname:      t.Runtime.DevHostname,
+		TypeVersion:   t.Runtime.Type,
+		RuntimeClass:  runtimeClass,
+		Mode:          mode,
+		Status:        devStatus,
+		DeployHistory: deployHistoryFor(devStatus, deployHistories[t.Runtime.DevHostname]),
 	}}
 	if mode == topology.ModeStandard {
 		if stage := t.Runtime.StageHostname(); stage != "" {
@@ -218,16 +223,48 @@ func planTargetSnapshots(t BootstrapTarget, statuses map[string]string) []Servic
 			// (nodejs dev → static stage), so the stage snapshot carries the
 			// stage's own type + class — not the dev runtimeClass computed above.
 			stageType := t.Runtime.StageEffectiveType()
+			stageStatus := statuses[stage]
 			snaps = append(snaps, ServiceSnapshot{
-				Hostname:     stage,
-				TypeVersion:  stageType,
-				RuntimeClass: classifyEnvelopeRuntime(stageType),
-				Mode:         topology.ModeStage,
-				Status:       statuses[stage],
+				Hostname:      stage,
+				TypeVersion:   stageType,
+				RuntimeClass:  classifyEnvelopeRuntime(stageType),
+				Mode:          topology.ModeStage,
+				Status:        stageStatus,
+				DeployHistory: deployHistoryFor(stageStatus, deployHistories[stage]),
 			})
 		}
 	}
 	return snaps
+}
+
+// deployHistoryFor derives the deployHistory axis value for a bootstrap
+// service snapshot. The axis is only meaningful for the two recovery
+// statuses (READY_TO_DEPLOY, FAILED) that any recovery atom selects on
+// (spec-workflows.md §8 R1/R3) — every other status is unconditionally
+// "ok" so no recovery atom ever considers it. For a recovery status, the
+// caller-supplied classification (from BootstrapState.DiscoveredDeployHistory,
+// populated once the L4 caller runs ops.ComputeRecoveryState per hostname —
+// not wired yet) is used verbatim; an empty classification (not yet
+// computed) also defaults to "ok", mirroring effectiveDeployHistory in
+// synthesize.go — the safe default for an override-gated atom.
+// deployHistoryRecoveryStatuses are the two platform.ServiceStatus* values
+// deployHistoryFor treats as recovery-relevant (R1/R3) — a local literal
+// pair rather than a platform import (this package doesn't otherwise import
+// platform for status strings; see atom.go's note on platform-side status
+// strings staying outside ZCP's vocabulary).
+const (
+	deployHistoryStatusReadyToDeploy = "READY_TO_DEPLOY"
+	deployHistoryStatusFailed        = "FAILED"
+)
+
+func deployHistoryFor(status, discovered string) string {
+	if status != deployHistoryStatusReadyToDeploy && status != deployHistoryStatusFailed {
+		return "ok"
+	}
+	if discovered == "" {
+		return "ok"
+	}
+	return discovered
 }
 
 // planModeToEnvelopeMode translates the plan's mode into the envelope

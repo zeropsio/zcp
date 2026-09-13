@@ -505,3 +505,32 @@ type UserRef struct {
 	FullName string `json:"fullName"`
 	Email    string `json:"email"`
 }
+
+// PublicHTTPRouting is one custom-domain routing entry on a project's public
+// HTTP routing list (docs/spec-workflows.md §8 O3). The service-stack DTO and
+// /service-stack/{id}/export carry no domain field — this is the only read
+// that surfaces a service's public domain(s). A routing is "present" the
+// moment it exists on the platform, regardless of DNS sync state (IsSynced
+// false / a domain's DNSCheckStatus PENDING is a valid, existing routing).
+type PublicHTTPRouting struct {
+	ID         string
+	SSLEnabled bool
+	IsSynced   bool
+	Domains    []PublicHTTPDomain
+	Locations  []PublicHTTPLocation
+}
+
+// PublicHTTPDomain is one domain entry on a PublicHTTPRouting.
+type PublicHTTPDomain struct {
+	Name           string
+	DNSCheckStatus string
+	SSLStatus      string
+}
+
+// PublicHTTPLocation maps a routing path to the service stack that serves
+// it.
+type PublicHTTPLocation struct {
+	Path      string
+	Port      int
+	ServiceID string
+}

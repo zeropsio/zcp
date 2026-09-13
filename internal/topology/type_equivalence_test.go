@@ -228,6 +228,37 @@ func TestIsProfileBearing(t *testing.T) {
 	}
 }
 
+// TestTypeFamily_StripsOSPrefixAndVersion_KeepsVariant pins
+// docs/spec-workflows.md §2.4: TypeFamily strips OS prefix and @version (so
+// alpine/nodejs@22 and ubuntu/nodejs@24 share a family) but, unlike
+// CanonicalBaseName, does NOT strip a managed-service deployment variant
+// (:single/:ha) — a mode mismatch is a genuine difference, not a
+// version-resolution tolerance the provision type check should paper over.
+func TestTypeFamily_StripsOSPrefixAndVersion_KeepsVariant(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"bare runtime", "nodejs@22", "nodejs"},
+		{"OS-prefixed runtime, different version", "ubuntu/nodejs@24", "nodejs"},
+		{"alpine runtime", "alpine/bun@1.2", "bun"},
+		{"bare, no version", "nodejs", "nodejs"},
+		{"managed, single variant kept", "postgresql:single@18", "postgresql:single"},
+		{"managed, ha variant kept", "postgresql:ha@18", "postgresql:ha"},
+		{"managed, bare (no variant)", "postgresql@18", "postgresql"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := TypeFamily(tt.in); got != tt.want {
+				t.Errorf("TypeFamily(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestScalingProfileName(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

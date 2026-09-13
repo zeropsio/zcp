@@ -246,7 +246,7 @@ func (s *Server) registerTools() {
 	tools.RegisterLogs(s.server, s.client, s.logFetcher, projectID)
 	tools.RegisterEvents(s.server, s.client, s.logFetcher, projectID)
 	tools.RegisterProcess(s.server, s.client, projectID)
-	tools.RegisterVerify(s.server, s.client, s.logFetcher, projectID, stateDir, s.rtInfo)
+	tools.RegisterVerify(s.server, s.client, s.logFetcher, projectID, stateDir, s.rtInfo, s.sshDeployer)
 	tools.RegisterPreprocess(s.server)
 
 	// Mutating tools — deploy registration routes by environment.
@@ -265,7 +265,7 @@ func (s *Server) registerTools() {
 		// primitive for background dev servers on target containers.
 		// Skipped in local-only mode where SSH to Zerops siblings is
 		// not available.
-		tools.RegisterDevServer(s.server, s.client, projectID, s.sshDeployer)
+		tools.RegisterDevServer(s.server, s.client, httpClient, projectID, s.sshDeployer, stateDir)
 	} else {
 		tools.RegisterDeployLocal(s.server, s.client, httpClient, projectID, s.authInfo, s.logFetcher, stateDir, wfEngine, recipeProbe)
 	}

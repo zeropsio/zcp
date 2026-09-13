@@ -25,6 +25,9 @@ import (
 //     (stage and worker) is dropped so the import provisions only the dev
 //     container and its managed deps (the paid stage is skipped). Opt-in,
 //     gated by CanNarrowRecipeDevOnly upstream.
+//   - PublicAccessNoneHosts — drop `enableSubdomainAccess` entirely from a
+//     runtime whose plan intent is `none` (§8 O3 PA-6), keyed by the
+//     recipe's ORIGINAL hostname (checked before any rename above).
 //
 // Everything else (buildFromGit, type, envSecrets, autoscaling, priority, …) is
 // preserved verbatim. Empty overrides therefore yield a faithful re-marshal of
@@ -64,6 +67,12 @@ func RewriteRecipeImportYAMLFromShape(recipe string, overrides RecipeShapeOverri
 			// Apply a hostname override if one is present.
 			if nh, ok := overrides.RuntimeHostnameByOriginal[hostname]; ok && nh != "" && nh != hostname {
 				setMappingScalar(svc, "hostname", nh)
+			}
+			// §8 O3 PA-6: intent=none drops enableSubdomainAccess entirely —
+			// a stale `true` surviving from the recipe's own YAML would
+			// auto-carry public access past the user's explicit opt-out.
+			if overrides.PublicAccessNoneHosts[hostname] {
+				deleteMappingKey(svc, "enableSubdomainAccess")
 			}
 			continue
 		}
@@ -136,4 +145,21 @@ func setMappingScalar(mapNode *yaml.Node, key, value string) {
 	v.Value = value
 	// Preserve scalar style: if the original was quoted, the library keeps
 	// its Style field; we only update Value. Platform parses either way.
+}
+
+// deleteMappingKey removes a key/value pair from a MappingNode entirely
+// (not just blanking the value) — a `key: false` line would still read as
+// an explicit assertion, where the goal is "this runtime carries no
+// enableSubdomainAccess entry at all". No-op when the key is absent or
+// mapNode is not a mapping.
+func deleteMappingKey(mapNode *yaml.Node, key string) {
+	if mapNode == nil || mapNode.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(mapNode.Content); i += 2 {
+		if mapNode.Content[i].Value == key {
+			mapNode.Content = append(mapNode.Content[:i], mapNode.Content[i+2:]...)
+			return
+		}
+	}
 }

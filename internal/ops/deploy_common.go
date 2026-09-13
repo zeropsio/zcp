@@ -41,6 +41,13 @@ type DeployResult struct {
 	// and details available via zerops_discover.
 	SubdomainURL string `json:"subdomainUrl,omitempty"`
 
+	// PublicAccess is the PA-5 structured summary (docs/spec-workflows.md
+	// §8 O3): {intent, subdomain, url, domains[]}, filled by the same
+	// public-access hook that sets SubdomainAccessEnabled/SubdomainURL
+	// above. Nil when the hook never ran (e.g. the target isn't eligible
+	// for subdomain auto-enable at all — non-HTTP stack, system service).
+	PublicAccess *PublicAccessSummary `json:"publicAccess,omitempty"`
+
 	// FailureClassification is populated by the deploy handler on any
 	// non-success outcome (build/prepare/init failures) so the agent has
 	// a structured next-step instead of having to parse buildLogs/

@@ -236,7 +236,7 @@ func calcBuildDuration(event *platform.AppVersionEvent) string {
 // (which runs run.start), and the post-deploy next-action handler
 // would emit a "start dev server" hint on a runtime where that tool
 // doesn't apply. Same shape applies to `deploy_subdomain.go::
-// maybeAutoEnableSubdomain` and `subdomain.go::skipDeferredStartProbe`,
+// ensurePublicAccess` and `subdomain.go::skipDeferredStartProbe`,
 // which now use ModeFor for the same reason.
 func resolveDeployTargetTopology(stateDir, target, typeVersion string) (topology.Mode, topology.RuntimeClass) {
 	if stateDir == "" || target == "" {

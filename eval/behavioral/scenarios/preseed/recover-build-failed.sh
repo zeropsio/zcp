@@ -30,8 +30,8 @@
 # in ASSEMBLE before this cell is trusted.
 set -eu
 
-: "${ZCP_API_KEY:?ZCP_API_KEY not set — required to resolve appdev's service id}"
-: "${ZCP_PROJECT_ID:?ZCP_PROJECT_ID not set — required to resolve appdev's service id}"
+: "${ZCP_API_KEY:?ZCP_API_KEY not set — required to resolve the appdev service id}"
+: "${ZCP_PROJECT_ID:?ZCP_PROJECT_ID not set — required to resolve the appdev service id}"
 
 API_HOST="${ZCP_API_HOST:-api.app-prg1.zerops.io}"
 API_BASE="https://${API_HOST}/api/rest/public"

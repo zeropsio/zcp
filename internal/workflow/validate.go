@@ -58,6 +58,16 @@ func ValidBootstrapModes() []string {
 	return out
 }
 
+// validPublicAccessPlanValues is the set of accepted RuntimeTarget.PublicAccess
+// values (§8 O3 PA-6). Empty is valid here (unlike bootstrapMode) — it means
+// "auto", the default. "domain" is deliberately excluded: it is derive-only
+// (adopt sets it from observed custom domains), never planned by an agent.
+//
+//nolint:gochecknoglobals // enum-set table; value-only, not mutated.
+var validPublicAccessPlanValues = map[string]bool{
+	"": true, string(topology.PublicAccessAuto): true, string(topology.PublicAccessSubdomain): true, string(topology.PublicAccessNone): true,
+}
+
 // BootstrapTarget represents one runtime service and its dependencies in the bootstrap plan.
 type BootstrapTarget struct {
 	Runtime      RuntimeTarget `json:"runtime"`
@@ -174,6 +184,12 @@ type RuntimeTarget struct {
 	// plans. Derive-only; flows to ServiceMeta.{Primary,Stage}SetupName. (R3-P4)
 	PrimarySetupName string `json:"primarySetupName,omitempty"`
 	StageSetupName   string `json:"stageSetupName,omitempty"`
+	// PublicAccess is the plan's public-access intent for this runtime
+	// (§8 O3 PA-6): "" | "auto" | "subdomain" | "none". Empty means auto —
+	// the default one-time subdomain auto-enable. "domain" is DERIVE-ONLY
+	// (adopt sets it from observed custom domains) and is rejected here by
+	// ValidateBootstrapTargets — an agent-authored plan cannot request it.
+	PublicAccess string `json:"publicAccess,omitempty"`
 }
 
 // StageEffectiveType returns the stage half's runtime type: StageType when set
@@ -204,6 +220,18 @@ func catalogTypeErrors(rt RuntimeTarget, schemas *schema.Schemas) []string {
 		errs = append(errs, fmt.Sprintf("target %q stage type %q not found in available service types", rt.DevHostname, rt.StageType))
 	}
 	return errs
+}
+
+// publicAccessPlanError validates a target's publicAccess field (§8 O3
+// PA-6): "" (→auto), auto, subdomain, none. "domain" is derive-only — adopt
+// sets it from observed custom domains; an agent-authored plan can never
+// request it. Returns "" when valid. Extracted from ValidateBootstrapTargets
+// to keep that loop under the maintainability-index lint threshold.
+func publicAccessPlanError(rt RuntimeTarget) string {
+	if validPublicAccessPlanValues[rt.PublicAccess] {
+		return ""
+	}
+	return fmt.Sprintf(`target %q: invalid publicAccess %q (must be "", auto, subdomain, or none)`, rt.DevHostname, rt.PublicAccess)
 }
 
 // EffectiveMode returns the bootstrap mode. Empty is no longer mapped to
@@ -383,7 +411,7 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 	var errs []string
 	var defaulted []string
 
-	for i, target := range targets {
+	for _, target := range targets {
 		rt := target.Runtime
 
 		// Validate dev hostname.
@@ -399,6 +427,13 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 		}
 		if !validBootstrapModes[rt.BootstrapMode] {
 			errs = append(errs, fmt.Sprintf("target %q: invalid bootstrapMode %q (must be standard, dev, or simple)", rt.DevHostname, rt.BootstrapMode))
+			continue
+		}
+
+		// Validate publicAccess (§8 O3 PA-6). Extracted (like catalogTypeErrors)
+		// to keep this loop under the maintainability-index lint threshold.
+		if err := publicAccessPlanError(rt); err != "" {
+			errs = append(errs, err)
 			continue
 		}
 
@@ -442,75 +477,15 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 			}
 		}
 
-		// Validate dependencies.
-		depSeen := make(map[string]bool, len(target.Dependencies))
-		for j, dep := range target.Dependencies {
-			if err := ValidatePlanHostname(dep.Hostname); err != nil {
-				errs = append(errs, fmt.Sprintf("target %q dependency %q: %v", rt.DevHostname, dep.Hostname, err))
-				continue
-			}
-			if depSeen[dep.Hostname] {
-				errs = append(errs, fmt.Sprintf("target %q: duplicate dependency hostname %q", rt.DevHostname, dep.Hostname))
-				continue
-			}
-			depSeen[dep.Hostname] = true
-
-			if dep.Type == "" {
-				errs = append(errs, fmt.Sprintf("target %q dependency %q has empty type", rt.DevHostname, dep.Hostname))
-				continue
-			}
-			if schemas != nil && !schemas.HasServiceType(dep.Type) {
-				errs = append(errs, fmt.Sprintf("target %q dependency %q type %q not found in available service types", rt.DevHostname, dep.Hostname, dep.Type))
-				continue
-			}
-
-			// Normalize resolution to uppercase (LLMs send mixed case).
-			targets[i].Dependencies[j].Resolution = strings.ToUpper(dep.Resolution)
-			dep = targets[i].Dependencies[j]
-
-			// Resolution validation.
-			switch dep.Resolution {
-			case ResolutionCreate:
-				if liveServices != nil && liveServiceNames[dep.Hostname] {
-					errs = append(errs, fmt.Sprintf("target %q dependency %q: CREATE but service already exists", rt.DevHostname, dep.Hostname))
-					continue
-				}
-			case ResolutionExists:
-				if liveServices != nil && !liveServiceNames[dep.Hostname] {
-					errs = append(errs, fmt.Sprintf("target %q dependency %q: EXISTS but service not found in project", rt.DevHostname, dep.Hostname))
-					continue
-				}
-			case ResolutionShared:
-				if !sharedAnchors[dep.Hostname] {
-					errs = append(errs, fmt.Sprintf("target %q dependency %q: SHARED resolution requires another target to declare it (CREATE for greenfield, EXISTS for adopt)", rt.DevHostname, dep.Hostname))
-					continue
-				}
-			default:
-				errs = append(errs, fmt.Sprintf("target %q dependency %q: invalid resolution %q (must be CREATE, EXISTS, or SHARED)", rt.DevHostname, dep.Hostname, dep.Resolution))
-				continue
-			}
-
-			// Normalize mode to uppercase (LLMs send mixed case).
-			if dep.Mode != "" {
-				targets[i].Dependencies[j].Mode = strings.ToUpper(dep.Mode)
-				dep = targets[i].Dependencies[j]
-			}
-
-			// Mode resolution for managed services (see resolveManagedDepMode):
-			// the deployment variant in the type is authoritative; the legacy
-			// bare form still defaults to NON_HA for backward compatibility.
-			if isManagedTypeWithLive(dep.Type, liveManaged) {
-				mode, wasDefaulted, modeErr := resolveManagedDepMode(dep.Type, dep.Mode)
-				if modeErr != "" {
-					errs = append(errs, fmt.Sprintf("target %q dependency %q %s", rt.DevHostname, dep.Hostname, modeErr))
-				} else {
-					targets[i].Dependencies[j].Mode = mode
-					if wasDefaulted {
-						defaulted = append(defaulted, dep.Hostname)
-					}
-				}
-			}
-		}
+		// Validate dependencies. Extracted to validateTargetDependencies (see
+		// its doc-comment) — the per-dependency resolution/mode switch alone
+		// carried more branches than the rest of this loop combined. The
+		// helper mutates target.Dependencies' backing array in place
+		// (Resolution/Mode normalization), which IS targets[i].Dependencies'
+		// backing array — both are the same slice header from this range.
+		depErrs, depDefaulted := validateTargetDependencies(rt.DevHostname, target.Dependencies, schemas, liveServices, liveServiceNames, sharedAnchors, liveManaged)
+		errs = append(errs, depErrs...)
+		defaulted = append(defaulted, depDefaulted...)
 	}
 
 	if len(errs) > 0 {
@@ -520,6 +495,86 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 		return nil, fmt.Errorf("%d validation errors:\n- %s", len(errs), strings.Join(errs, "\n- "))
 	}
 	return defaulted, nil
+}
+
+// validateTargetDependencies validates one target's dependency list,
+// normalizing Resolution/Mode case and defaulting managed HA mode IN PLACE
+// on deps (the caller's target.Dependencies backing array), and returns
+// per-dependency validation errors plus dependency hostnames whose mode was
+// auto-defaulted to NON_HA. Extracted from ValidateBootstrapTargets — the
+// resolution switch + mode-normalization + managed-mode-resolution block
+// alone carried more branches than the rest of that loop combined, pushing
+// it over the maintainability-index lint threshold.
+func validateTargetDependencies(devHostname string, deps []Dependency, schemas *schema.Schemas, liveServices []platform.ServiceStack, liveServiceNames, sharedAnchors, liveManaged map[string]bool) (errs []string, defaulted []string) {
+	depSeen := make(map[string]bool, len(deps))
+	for j, dep := range deps {
+		if err := ValidatePlanHostname(dep.Hostname); err != nil {
+			errs = append(errs, fmt.Sprintf("target %q dependency %q: %v", devHostname, dep.Hostname, err))
+			continue
+		}
+		if depSeen[dep.Hostname] {
+			errs = append(errs, fmt.Sprintf("target %q: duplicate dependency hostname %q", devHostname, dep.Hostname))
+			continue
+		}
+		depSeen[dep.Hostname] = true
+
+		if dep.Type == "" {
+			errs = append(errs, fmt.Sprintf("target %q dependency %q has empty type", devHostname, dep.Hostname))
+			continue
+		}
+		if schemas != nil && !schemas.HasServiceType(dep.Type) {
+			errs = append(errs, fmt.Sprintf("target %q dependency %q type %q not found in available service types", devHostname, dep.Hostname, dep.Type))
+			continue
+		}
+
+		// Normalize resolution to uppercase (LLMs send mixed case).
+		deps[j].Resolution = strings.ToUpper(dep.Resolution)
+		dep = deps[j]
+
+		// Resolution validation.
+		switch dep.Resolution {
+		case ResolutionCreate:
+			if liveServices != nil && liveServiceNames[dep.Hostname] {
+				errs = append(errs, fmt.Sprintf("target %q dependency %q: CREATE but service already exists", devHostname, dep.Hostname))
+				continue
+			}
+		case ResolutionExists:
+			if liveServices != nil && !liveServiceNames[dep.Hostname] {
+				errs = append(errs, fmt.Sprintf("target %q dependency %q: EXISTS but service not found in project", devHostname, dep.Hostname))
+				continue
+			}
+		case ResolutionShared:
+			if !sharedAnchors[dep.Hostname] {
+				errs = append(errs, fmt.Sprintf("target %q dependency %q: SHARED resolution requires another target to declare it (CREATE for greenfield, EXISTS for adopt)", devHostname, dep.Hostname))
+				continue
+			}
+		default:
+			errs = append(errs, fmt.Sprintf("target %q dependency %q: invalid resolution %q (must be CREATE, EXISTS, or SHARED)", devHostname, dep.Hostname, dep.Resolution))
+			continue
+		}
+
+		// Normalize mode to uppercase (LLMs send mixed case).
+		if dep.Mode != "" {
+			deps[j].Mode = strings.ToUpper(dep.Mode)
+			dep = deps[j]
+		}
+
+		// Mode resolution for managed services (see resolveManagedDepMode):
+		// the deployment variant in the type is authoritative; the legacy
+		// bare form still defaults to NON_HA for backward compatibility.
+		if isManagedTypeWithLive(dep.Type, liveManaged) {
+			mode, wasDefaulted, modeErr := resolveManagedDepMode(dep.Type, dep.Mode)
+			if modeErr != "" {
+				errs = append(errs, fmt.Sprintf("target %q dependency %q %s", devHostname, dep.Hostname, modeErr))
+			} else {
+				deps[j].Mode = mode
+				if wasDefaulted {
+					defaulted = append(defaulted, dep.Hostname)
+				}
+			}
+		}
+	}
+	return errs, defaulted
 }
 
 // runtimeCollisionError returns a diagnostic string when a target's runtime

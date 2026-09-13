@@ -174,6 +174,36 @@ func checkProvision(client platform.Client, fetcher platform.LogFetcher, project
 					Detail: fmt.Sprintf("persist discovered statuses: %v", storeErr),
 				})
 			}
+
+			// R1/R3 (docs/spec-workflows.md §8): supply DiscoveredDeployHistory
+			// alongside DiscoveredStatuses so synthesisEnvelope's deployHistory
+			// axis (R3-gated atoms, e.g. an override=true recovery atom) fires
+			// correctly during bootstrap-active phase. Classified ONLY for
+			// READY_TO_DEPLOY/FAILED services — every other status defaults to
+			// "ok" downstream (deployHistoryFor) and is never worth a recovery-
+			// state read here (busy-truth invariant: a RUNNING service is never
+			// a recovery candidate, CLAUDE.md trap).
+			deployHistoryMap := make(map[string]string, len(services))
+			for _, svc := range services {
+				if svc.Status != platform.ServiceStatusReadyToDeploy && svc.Status != platform.ServiceStatusFailed {
+					continue
+				}
+				recovery, rsErr := ops.ComputeRecoveryState(ctx, client, fetcher, projectID, svc.Name, svc.Status)
+				if rsErr != nil {
+					// Best-effort, same posture as the env-var store failures
+					// above: a lookup failure just leaves this hostname
+					// unclassified — deployHistoryFor's "" default is "ok".
+					continue
+				}
+				deployHistoryMap[svc.Name] = deployHistoryValueForShape(recovery.Shape)
+			}
+			if storeErr := engine.StoreDiscoveredDeployHistory(deployHistoryMap); storeErr != nil {
+				checks = append(checks, workflow.StepCheck{
+					Name:   "_deploy_history_persist",
+					Status: statusFail,
+					Detail: fmt.Sprintf("persist discovered deploy history: %v", storeErr),
+				})
+			}
 		}
 
 		for i := range checks {
@@ -242,7 +272,14 @@ func checkServiceStatusAny(ctx context.Context, client platform.Client, fetcher 
 // equality — Sunday-release 2026-05-18 moved Zerops upstream identifiers to
 // composite form (`alpine/php-nginx@8.4`, `postgresql:single@18`) while the
 // plan-side may still carry legacy bare form (`php-nginx@8.4`,
-// `postgresql@18`). Both must accept.
+// `postgresql@18`). Both must accept. Falling short of that, it accepts two
+// further tolerances instead of failing outright: isPlatformResolution (a
+// version-family SELECTOR the platform resolved to a concrete patch) and,
+// last, topology.TypeFamily (same runtime/service family, different
+// concrete version or OS variant — the platform sets a runtime's live type
+// from the deployed zerops.yaml `run.base` at the first build, so a plan
+// declaring any other concrete version can never match exactly,
+// docs/spec-workflows.md §2.4). Only a genuinely different family fails.
 func checkServiceType(svcMap map[string]platform.ServiceStack, hostname, expectedType string) []workflow.StepCheck {
 	svc, exists := svcMap[hostname]
 	if !exists {
@@ -264,6 +301,20 @@ func checkServiceType(svcMap map[string]platform.ServiceStack, hostname, expecte
 			Name:   hostname + "_type",
 			Status: statusPass,
 			Detail: fmt.Sprintf("%s resolved to %s (platform-selected concrete version)", expectedType, actual),
+		}}
+	}
+	// The platform sets a runtime's live type from the repo's zerops.yaml
+	// run.base at the first build (docs/spec-workflows.md §2.4), so a plan
+	// that declared a different concrete version — or OS variant — of the
+	// SAME runtime family can never satisfy the checks above. Family
+	// (topology.TypeFamily: OS prefix + @version stripped, deployment
+	// variant kept) tolerates that instead of failing; a genuinely
+	// different family still fails below.
+	if topology.TypeFamily(expectedType) == topology.TypeFamily(actual) {
+		return []workflow.StepCheck{{
+			Name:   hostname + "_type",
+			Status: statusPass,
+			Detail: fmt.Sprintf("platform resolved %s from the deployed zerops.yaml run.base (plan declared %s)", actual, expectedType),
 		}}
 	}
 	return []workflow.StepCheck{{
@@ -337,4 +388,31 @@ func isManagedNonStorage(serviceType string) bool {
 		return false
 	}
 	return topology.IsManagedService(serviceType)
+}
+
+// deployHistory axis values (docs/spec-workflows.md §8 R1/R3) — named
+// constants so this file's occurrences don't collide with the many
+// unrelated "failed"/"none"/"ok" literals elsewhere in the package
+// (goconst counts across the whole package, tests included).
+const (
+	deployHistoryNone   = "none"
+	deployHistoryFailed = "failed"
+	deployHistoryOK     = "ok"
+)
+
+// deployHistoryValueForShape maps ops.RecoveryState.Shape to the R1/R3
+// deployHistory axis value: fresh-misconfigured (READY_TO_DEPLOY, no deploy
+// attempt ever) ⇒ none; any failed-*/stuck-building shape ⇒ failed; healthy
+// (including a live build/deploy process — busy is not failure) ⇒ ok.
+func deployHistoryValueForShape(shape topology.RecoveryShape) string {
+	switch shape {
+	case topology.RecoveryFreshMisconfigured:
+		return deployHistoryNone
+	case topology.RecoveryFailedBuild, topology.RecoveryFailedInit, topology.RecoveryStuckBuilding:
+		return deployHistoryFailed
+	case topology.RecoveryHealthy:
+		return deployHistoryOK
+	default:
+		return deployHistoryOK
+	}
 }

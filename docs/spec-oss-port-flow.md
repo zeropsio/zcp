@@ -182,7 +182,7 @@ tier:
 |---|---|---|
 | C1 Builds | agent-observed build terminal + warnings | gate |
 | C2 Boots (STABLE) | process status + runtime logs after a stability hold (catches the 200ms-exit / crash-loop false-positive) | gate |
-| C3 Serves HTTP | core `zerops_verify` http_root (agent-run) | Tier 0/1 |
+| C3 Serves HTTP | core `zerops_verify` `http_internal`/`http_public` (agent-run) | Tier 0/1 |
 | C4 Core flow | agent-authored probe (the loop can't understand a foreign app's health endpoint) | Tier 2/3 |
 | C5 Persists across redeploy | harden sentinel | Tier 4 |
 | C6 HA-capable | scale ≥2 + managed HA-mode (throughput ≠ HA replication, kept distinct) | Tier 5 |

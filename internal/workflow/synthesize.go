@@ -459,7 +459,8 @@ func hasServiceScopedAxes(axes AxisVector) bool {
 		len(axes.Runtimes) > 0 ||
 		len(axes.RuntimeBases) > 0 ||
 		len(axes.DeployStates) > 0 ||
-		len(axes.ServiceStatuses) > 0
+		len(axes.ServiceStatuses) > 0 ||
+		len(axes.DeployHistories) > 0
 }
 
 // serviceSatisfiesAxes returns true when this single service satisfies
@@ -501,7 +502,25 @@ func serviceSatisfiesAxes(svc ServiceSnapshot, axes AxisVector) bool {
 	if len(axes.ServiceStatuses) > 0 && !slices.Contains(axes.ServiceStatuses, svc.Status) {
 		return false
 	}
+	if len(axes.DeployHistories) > 0 && !slices.Contains(axes.DeployHistories, effectiveDeployHistory(svc.DeployHistory)) {
+		return false
+	}
 	return true
+}
+
+// effectiveDeployHistory normalizes an unset ServiceSnapshot.DeployHistory
+// to "ok" — the safe default for a snapshot no live caller has classified
+// yet (spec-workflows.md §8 R1/R3). Meaningful values ("none"/"failed") are
+// only ever assigned to a READY_TO_DEPLOY/FAILED snapshot by a caller that
+// ran ops.ComputeRecoveryState; every other snapshot (and any snapshot
+// built before that wiring lands) carries the zero value here, which must
+// behave as "ok" so an override-gated atom (deployHistory:[none]) never
+// fires on a service whose recovery shape is unknown.
+func effectiveDeployHistory(raw string) string {
+	if raw == "" {
+		return "ok"
+	}
+	return raw
 }
 
 // matchesRuntimeBase reports whether a service's TypeVersion belongs to

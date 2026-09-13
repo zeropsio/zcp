@@ -109,6 +109,40 @@ type ServiceMeta struct {
 	// feeds production X" and a later session knows production exists.
 	// Non-secret (IDs + names + timestamp only). F4 ledger completion.
 	ProdLaunches []ProdLaunchRef `json:"prodLaunches,omitempty"`
+
+	// PublicAccess persists the user's public-access INTENT per hostname
+	// (docs/spec-workflows.md §8 E9) — everything else about public access
+	// (subdomain on/off, domains, listener) is read live (O3), never
+	// persisted. Keyed by hostname rather than shared across the pair like
+	// the other per-pair dimensions above: a standard pair's dev and stage
+	// halves each carry their own entry, since one half can be publicly
+	// exposed while the other isn't. Use PublicAccessFor/SetPublicAccess —
+	// a missing entry means "never recorded", which defaults to auto, NOT
+	// the zero value of PublicAccessRecord (whose Intent would be "").
+	PublicAccess map[string]topology.PublicAccessRecord `json:"publicAccess,omitempty"`
+}
+
+// PublicAccessFor returns the persisted public-access record for hostname —
+// {Intent: auto} when no entry was ever recorded (E9 default). hostname must
+// be one of m.Hostnames(); an unrelated hostname also returns the auto
+// default since there is nothing to look up.
+func (m *ServiceMeta) PublicAccessFor(hostname string) topology.PublicAccessRecord {
+	if m == nil || m.PublicAccess == nil {
+		return topology.PublicAccessRecord{Intent: topology.PublicAccessAuto}
+	}
+	if rec, ok := m.PublicAccess[hostname]; ok {
+		return rec
+	}
+	return topology.PublicAccessRecord{Intent: topology.PublicAccessAuto}
+}
+
+// SetPublicAccess records the public-access intent for hostname, allocating
+// the map on first use.
+func (m *ServiceMeta) SetPublicAccess(hostname string, rec topology.PublicAccessRecord) {
+	if m.PublicAccess == nil {
+		m.PublicAccess = make(map[string]topology.PublicAccessRecord, 2)
+	}
+	m.PublicAccess[hostname] = rec
 }
 
 // ProdLaunchRef is one production promotion record on the source pair.

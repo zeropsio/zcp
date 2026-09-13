@@ -382,6 +382,83 @@ func TestProvisionMeta_WritesPartialMeta(t *testing.T) {
 	}
 }
 
+// TestBootstrapProvision_WritesPublicAccessIntent pins §8 O3 PA-6: the
+// provision-step writer stamps PublicAccess for BOTH halves of a standard
+// pair from the plan's publicAccess field ("" defaults to auto).
+func TestBootstrapProvision_WritesPublicAccessIntent(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvContainer, nil)
+
+	_, err := eng.BootstrapStart("proj-1", "app + db")
+	if err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage", PublicAccess: "none"},
+		Dependencies: []Dependency{
+			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
+		},
+	}}, nil, nil)
+	if err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
+	if _, err := eng.BootstrapComplete(context.Background(), "provision", "Provisioned all services ok", nil); err != nil {
+		t.Fatalf("BootstrapComplete(provision): %v", err)
+	}
+
+	appMeta, err := ReadServiceMeta(dir, "appdev")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta(appdev): %v", err)
+	}
+	if appMeta == nil {
+		t.Fatal("expected appdev meta after provision")
+	}
+	if got := appMeta.PublicAccessFor("appdev"); got.Intent != topology.PublicAccessNone {
+		t.Errorf("PublicAccessFor(appdev) = %+v, want Intent=none (from plan)", got)
+	}
+	if got := appMeta.PublicAccessFor("appstage"); got.Intent != topology.PublicAccessNone {
+		t.Errorf("PublicAccessFor(appstage) = %+v, want Intent=none (plan intent applies to both halves)", got)
+	}
+}
+
+// TestBootstrapProvision_WritesPublicAccessIntent_DefaultsToAuto pins that an
+// empty plan publicAccess ("") stamps auto, not an empty/zero record.
+func TestBootstrapProvision_WritesPublicAccessIntent_DefaultsToAuto(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvContainer, nil)
+
+	_, err := eng.BootstrapStart("proj-1", "app")
+	if err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "myapp", Type: "nodejs@22", BootstrapMode: "dev"},
+	}}, nil, nil)
+	if err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
+	if _, err := eng.BootstrapComplete(context.Background(), "provision", "Provisioned ok", nil); err != nil {
+		t.Fatalf("BootstrapComplete(provision): %v", err)
+	}
+
+	meta, err := ReadServiceMeta(dir, "myapp")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta(myapp): %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected myapp meta after provision")
+	}
+	if got := meta.PublicAccessFor("myapp"); got.Intent != topology.PublicAccessAuto {
+		t.Errorf("PublicAccessFor(myapp) = %+v, want Intent=auto (empty plan value defaults to auto)", got)
+	}
+}
+
 func TestProvisionMeta_PreExistingDepMetaSurvives(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

@@ -28,11 +28,12 @@ type Mock struct {
 	activeServiceTypes []mockServiceTypeVersion
 	processEvents      []ProcessEvent
 	appVersionEvents   []AppVersionEvent
-	servicesDirect     []ServiceStack // optional override for ListServicesDirect; nil → falls back to services
-	projectProcesses   []Process      // returned by GetProjectProcessesDirect
-	autoscalingProcess *Process       // non-nil → SetAutoscaling returns this process
-	exportYAML         string         // project export YAML
-	serviceExportYAML  string         // service export YAML
+	servicesDirect     []ServiceStack      // optional override for ListServicesDirect; nil → falls back to services
+	projectProcesses   []Process           // returned by GetProjectProcessesDirect
+	publicHTTPRoutings []PublicHTTPRouting // returned by ListPublicHTTPRoutings
+	autoscalingProcess *Process            // non-nil → SetAutoscaling returns this process
+	exportYAML         string              // project export YAML
+	serviceExportYAML  string              // service export YAML
 
 	// deleteRemovesService — when true, a successful DeleteService call
 	// drops the service from m.services so subsequent ListServices reflects
@@ -71,6 +72,20 @@ type Mock struct {
 	integrationStatus  map[string]IntegrationStatus
 	appVersionURLs     map[string]string
 	appVersionUserData map[string][]ServiceEnvVar
+	// appVersionZeropsYaml seeds GetAppVersionZeropsYaml — the ZEROPS_YAML
+	// blob text per app-version ID (R2 artifact-redeploy yaml source #1).
+	appVersionZeropsYaml map[string]string
+	// serviceAppVersions seeds ListServiceAppVersions — the DIRECT
+	// (non-ES) app-version list per service ID (R2 artifact/container
+	// facts). Distinct from appVersionEvents (SearchAppVersions, ES).
+	serviceAppVersions map[string][]AppVersionEvent
+	// redeployAppVersionProcess is the process RedeployAppVersion
+	// returns; nil → a default PENDING stack.deploy process is
+	// synthesized so unseeded tests still get a pollable shape.
+	redeployAppVersionProcess *Process
+	// CapturedRedeployAppVersion records every RedeployAppVersion call so
+	// tests can assert the (appVersionID, zeropsYaml, setup) tuple sent.
+	CapturedRedeployAppVersion []CapturedRedeployAppVersion
 
 	// tokenDelegations / mintedToken back ListOwnTokenDelegations /
 	// MintDelegatedLaunchToken. Seed via WithTokenDelegations /
@@ -97,6 +112,15 @@ type CapturedProjectEnvCreate struct {
 	Sensitive bool
 }
 
+// CapturedRedeployAppVersion is one row of CapturedRedeployAppVersion —
+// the args a RedeployAppVersion call carried. Field shapes mirror
+// platform.Client.RedeployAppVersion so tests can compare values directly.
+type CapturedRedeployAppVersion struct {
+	AppVersionID string
+	ZeropsYaml   string
+	Setup        string
+}
+
 type mockServiceTypeVersion struct {
 	Name   string
 	Status string
@@ -105,14 +129,16 @@ type mockServiceTypeVersion struct {
 // NewMock creates a new configurable mock.
 func NewMock() *Mock {
 	return &Mock{
-		processes:          make(map[string]*Process),
-		processScenarios:   make(map[string]*processScenarioState),
-		envVars:            make(map[string][]ServiceEnvVar),
-		integrationStatus:  make(map[string]IntegrationStatus),
-		appVersionURLs:     make(map[string]string),
-		appVersionUserData: make(map[string][]ServiceEnvVar),
-		CallCounts:         make(map[string]int),
-		errors:             make(map[string]error),
+		processes:            make(map[string]*Process),
+		processScenarios:     make(map[string]*processScenarioState),
+		envVars:              make(map[string][]ServiceEnvVar),
+		integrationStatus:    make(map[string]IntegrationStatus),
+		appVersionURLs:       make(map[string]string),
+		appVersionUserData:   make(map[string][]ServiceEnvVar),
+		appVersionZeropsYaml: make(map[string]string),
+		serviceAppVersions:   make(map[string][]AppVersionEvent),
+		CallCounts:           make(map[string]int),
+		errors:               make(map[string]error),
 	}
 }
 
@@ -151,6 +177,38 @@ func (m *Mock) WithAppVersionUserData(appVersionID string, vars []ServiceEnvVar)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.appVersionUserData[appVersionID] = vars
+	return m
+}
+
+// WithAppVersionZeropsYaml seeds the ZEROPS_YAML blob text returned by
+// GetAppVersionZeropsYaml for an app-version ID. Unseeded IDs return "" —
+// the R2 artifact-redeploy cascade falls back to the app-code archive.
+func (m *Mock) WithAppVersionZeropsYaml(appVersionID, yaml string) *Mock {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.appVersionZeropsYaml[appVersionID] = yaml
+	return m
+}
+
+// WithServiceAppVersions seeds the DIRECT (non-ES) app-version list
+// returned by ListServiceAppVersions for a service ID — distinct from
+// WithAppVersionEvents (which backs the ES-backed SearchAppVersions).
+// Callers key off index 0 as newest, mirroring the real client's
+// newest-first-by-sequence contract; seed already in that order.
+func (m *Mock) WithServiceAppVersions(serviceID string, events []AppVersionEvent) *Mock {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.serviceAppVersions[serviceID] = events
+	return m
+}
+
+// WithRedeployAppVersionProcess seeds the process RedeployAppVersion
+// returns. Unseeded → a default PENDING stack.deploy process keyed
+// "redeploy-<appVersionID>" is synthesized per call.
+func (m *Mock) WithRedeployAppVersionProcess(p *Process) *Mock {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.redeployAppVersionProcess = p
 	return m
 }
 
@@ -210,6 +268,15 @@ func (m *Mock) WithProjectProcesses(procs []Process) *Mock {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.projectProcesses = procs
+	return m
+}
+
+// WithPublicHTTPRoutings sets the routings returned by
+// ListPublicHTTPRoutings. Unset (nil) returns an empty list.
+func (m *Mock) WithPublicHTTPRoutings(routings ...PublicHTTPRouting) *Mock {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.publicHTTPRoutings = routings
 	return m
 }
 

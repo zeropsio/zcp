@@ -1053,3 +1053,46 @@ func TestValidateBootstrapTargets_StandardWithoutStage_HasActionableSuggestion(t
 		t.Errorf("error must hint at dev mode alternative: %v", err)
 	}
 }
+
+// TestValidatePlan_PublicAccess_Table pins PA-6: the plan's publicAccess
+// field accepts "", "auto", "subdomain", "none" — "domain" is DERIVED-only
+// (adopt sets it from observed domains; an agent-authored plan can never
+// request it), so both "domain" and any other bogus value are rejected with
+// the allowed set named in the message.
+func TestValidatePlan_PublicAccess_Table(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{"empty_accepted", "", false},
+		{"auto_accepted", "auto", false},
+		{"subdomain_accepted", "subdomain", false},
+		{"none_accepted", "none", false},
+		{"domain_rejected_derive_only", "domain", true},
+		{"bogus_rejected", "public", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			targets := []BootstrapTarget{
+				{Runtime: RuntimeTarget{DevHostname: "myapp", Type: "nodejs@22", BootstrapMode: "dev", PublicAccess: tt.value}},
+			}
+			_, err := ValidateBootstrapTargets(targets, testSchemas, nil)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("publicAccess %q: expected error, got nil", tt.value)
+				}
+				msg := err.Error()
+				for _, want := range []string{"auto", "subdomain", "none"} {
+					if !strings.Contains(msg, want) {
+						t.Errorf("publicAccess %q: error must enumerate allowed set (missing %q): %v", tt.value, want, err)
+					}
+				}
+			} else if err != nil {
+				t.Fatalf("publicAccess %q: unexpected error: %v", tt.value, err)
+			}
+		})
+	}
+}

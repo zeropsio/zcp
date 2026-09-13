@@ -54,7 +54,7 @@ func mutatingToolRegistrySnapshot() *mcp.Server {
 	RegisterEnv(srv, client, projectID, "")
 	RegisterImport(srv, client, projectID, nil, "", nil, rt)
 	RegisterMount(srv, client, projectID, mounter, rt, "", nil, nil)
-	RegisterDevServer(srv, client, projectID, nil)
+	RegisterDevServer(srv, client, nil, projectID, nil, "")
 	RegisterDeployLocal(srv, client, nil, projectID, authInfo, logFetcher, "", nil, nil)
 	RegisterDeployBatch(srv, client, nil, projectID, nil, authInfo, logFetcher, rt, "", nil, nil)
 

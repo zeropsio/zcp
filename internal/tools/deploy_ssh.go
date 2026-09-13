@@ -74,6 +74,103 @@ const deployStrategyZCLILabel = "zcli"
 // and batch deploy paths so the agent gets the same in-flight guidance.
 const deployBuildInFlightMsg = "deploy build still running at poll timeout — check zerops_events, then record-deploy"
 
+// deployStrategyAppVersionLabel is the DeployAttempt.Strategy label for the
+// R2 in-place appVersion-redeploy recovery path (docs/spec-workflows.md §8
+// R2) — distinct from deployStrategyZCLILabel so attempt history tells the
+// two mechanisms apart.
+const deployStrategyAppVersionLabel = "appversion"
+
+// appVersionLatest is the only supported value for the appVersion input —
+// see validateAppVersionParam.
+const appVersionLatest = "latest"
+
+// validateAppVersionParam rejects any appVersion value other than "latest".
+// The input field is shaped to admit a specific appVersion id in the
+// future (docs/spec-workflows.md §8 R2 design), but ops.RedeployLastAppVersion
+// only ever targets the newest appVersion today — accepting an arbitrary id
+// here would silently redeploy the newest regardless of what was asked for.
+func validateAppVersionParam(appVersion string) *mcp.CallToolResult {
+	if appVersion == appVersionLatest {
+		return nil
+	}
+	return convertError(platform.NewPlatformError(
+		platform.ErrInvalidParameter,
+		fmt.Sprintf("appVersion=%q is not supported — only \"latest\" is", appVersion),
+		"Omit appVersion for a normal deploy, or pass appVersion=\"latest\" to re-deploy the target's already-built artifact in place",
+	), WithRecoveryStatus())
+}
+
+// runAppVersionRedeploy is the R2 in-place-recovery path for zerops_deploy
+// appVersion="latest" (docs/spec-workflows.md §8 R2): re-deploys the
+// target's already-built appVersion via ops.RedeployLastAppVersion — no
+// rebuild, no re-import, no source resolution. Shared by both SSH
+// (container) and local deploy handlers; the redeploy call is a pure
+// platform API operation, env-agnostic. Records the deploy attempt and
+// runs ensurePublicAccess on success (the import's own subdomain-enable
+// process is CANCELED on a never-activated service — live-verified — so
+// this is the first chance subdomain access gets switched on).
+//
+// Returns (result, nil) on a completed (success or classified-failure)
+// attempt for the caller to wrap into its own response envelope; (nil,
+// blocked) when RedeployLastAppVersion itself errored (the caller returns
+// blocked verbatim).
+func runAppVersionRedeploy(
+	ctx context.Context,
+	client platform.Client,
+	httpClient ops.HTTPDoer,
+	projectID, stateDir, targetService, setup, mode string,
+) (*ops.DeployResult, *mcp.CallToolResult) {
+	attempt := workflow.DeployAttempt{
+		AttemptedAt: time.Now().UTC().Format(time.RFC3339),
+		Setup:       setup,
+		Strategy:    deployStrategyAppVersionLabel,
+	}
+
+	result, err := ops.RedeployLastAppVersion(ctx, client, projectID, targetService, setup)
+	if err != nil {
+		attempt.Error = err.Error()
+		_ = workflow.RecordDeployAttempt(stateDir, targetService, attempt)
+		return nil, convertError(err, WithRecoveryStatus())
+	}
+	result.Mode = mode
+
+	switch {
+	case result.Status == statusDeployed:
+		attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
+		ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, targetService, result)
+	case result.TimedOut:
+		attempt.Error = deployBuildInFlightMsg
+	default:
+		attempt.Error = fmt.Sprintf("deploy status %s", result.Status)
+		attempt.FailureClass = classifyDeployStatus(result.Status)
+	}
+	_ = workflow.RecordDeployAttempt(stateDir, targetService, attempt)
+	return result, nil
+}
+
+// appVersionRedeploySuggestion returns the R2 corrective (docs/spec-
+// workflows.md §8 R2) when a SELF-deploy SSH failure (source omitted or
+// source==target) is explained by the target having no container to
+// source from at all — a never-activated buildFromGit service whose
+// artifact already built. Consumes RecoveryState.Then verbatim (the
+// single producer — nothing composes its own text here); empty string
+// (no override) for a cross-deploy, a lookup/classify failure, a target
+// with a container, or one whose artifact never built.
+func appVersionRedeploySuggestion(ctx context.Context, client platform.Client, projectID, sourceService, targetService string) string {
+	if sourceService != "" && sourceService != targetService {
+		return "" // cross-deploy: SSH connects to the SOURCE, not this target
+	}
+	svc, err := ops.LookupService(ctx, client, projectID, targetService)
+	if err != nil || svc == nil {
+		return ""
+	}
+	state, err := ops.ComputeRecoveryState(ctx, client, nil, projectID, targetService, svc.Status)
+	if err != nil || !state.ArtifactBuilt || state.HasContainer {
+		return ""
+	}
+	return state.Then
+}
+
 // DeploySSHInput is the input type for zerops_deploy in SSH (container) mode.
 //
 // includeGit is not user-facing: ZCP enables -g on self-deploys (so a
@@ -91,6 +188,13 @@ type DeploySSHInput struct {
 	// BreakGlass overrides the L1 push-delivery redirect for a FUNDAMENTAL
 	// reason (git host outage, recovery). See repoDeliveryRedirect.
 	BreakGlass FlexBool `json:"breakGlass,omitempty"`
+	// AppVersion, when set to "latest", switches this call to the R2
+	// in-place recovery for a never-activated buildFromGit service (docs/
+	// spec-workflows.md §8 R2): the target's already-built appVersion is
+	// RE-DEPLOYED via the platform's PUT /app-version/{id}/deploy — no
+	// rebuild, no re-import, no source resolution. Only "latest" is
+	// supported today.
+	AppVersion string `json:"appVersion,omitempty"`
 }
 
 func deploySSHInputSchema() *jsonschema.Schema {
@@ -103,6 +207,7 @@ func deploySSHInputSchema() *jsonschema.Schema {
 		"remoteUrl":     {Type: "string", Description: "Git remote URL (HTTPS). Required for strategy=git-push on first push. Omit on subsequent pushes if remote already configured."},
 		"branch":        {Type: "string", Description: "Git branch name for git-push. Default: main."},
 		"breakGlass":    {Type: "boolean", Description: "Override for the push-delivery redirect: a pair with git-push configured delivers via push (the repo is the source of truth); a direct deploy is refused with the recommended push call unless breakGlass=true. Reserve for fundamental reasons (git host outage, recovery) — the response then flags that the container is ahead of the repo."},
+		"appVersion":    {Type: "string", Description: "Set to 'latest' to re-deploy the already-built appVersion in place, skipping source resolution — recovery for a never-activated buildFromGit service with no container. Only 'latest' is supported."},
 	}, "targetService")
 }
 
@@ -149,6 +254,25 @@ func RegisterDeploySSH(
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeploySSHInput) (*mcp.CallToolResult, any, error) {
+		// R2 in-place recovery (docs/spec-workflows.md §8 R2): appVersion
+		// redeploy has no source to resolve and no cross/self distinction —
+		// dispatch BEFORE strategy validation, the adoption gate, and the
+		// push-delivery redirect, all of which assume a source container.
+		if input.AppVersion != "" {
+			if blocked := validateAppVersionParam(input.AppVersion); blocked != nil {
+				return blocked, nil, nil
+			}
+			result, blocked := runAppVersionRedeploy(ctx, client, httpClient, projectID, stateDir, input.TargetService, input.Setup, "ssh")
+			if blocked != nil {
+				return blocked, nil, nil
+			}
+			return jsonResult(deploySSHResponse{
+				DeployResult:     result,
+				WorkSessionState: sessionAnnotations(stateDir),
+				Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
+			}), nil, nil
+		}
+
 		// Strategy validation. "manual" is a ServiceMeta declaration only —
 		// calling zerops_deploy on a manual-strategy service is a contradiction
 		// ZCP refuses to resolve silently.
@@ -247,7 +371,12 @@ func RegisterDeploySSH(
 				attempt.FailureClass = topology.FailureClassNetwork
 			}
 			_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
-			return convertError(err, WithRecoveryStatus(), WithFailureClassification(classification)), nil, nil
+			// R2 (docs/spec-workflows.md §8): a self-deploy SSH failure
+			// against a never-activated buildFromGit target (no container
+			// to source from at all) can never succeed on retry — override
+			// the generic transport suggestion with the in-place redeploy.
+			suggestion := appVersionRedeploySuggestion(ctx, client, projectID, input.SourceService, input.TargetService)
+			return convertError(err, WithRecoveryStatus(), WithFailureClassification(classification), WithSuggestion(suggestion)), nil, nil
 		}
 
 		onProgress := buildProgressCallback(ctx, req)
@@ -270,7 +399,7 @@ func RegisterDeploySSH(
 			// check-before-enable). Runs before RecordDeployAttempt so the
 			// result payload surfaces SubdomainAccessEnabled + SubdomainURL
 			// alongside the deploy outcome.
-			maybeAutoEnableSubdomain(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
+			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
 		case result != nil && result.TimedOut:
 			// In-flight (B23): the build is still running at poll timeout, not
 			// failed. Record without a FailureClass so the envelope doesn't

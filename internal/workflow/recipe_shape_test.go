@@ -558,7 +558,7 @@ func TestPlanTargetSnapshots_CrossTypeStage(t *testing.T) {
 		StageType:     "static",
 		BootstrapMode: topology.PlanModeStandard,
 	}}
-	snaps := planTargetSnapshots(target, nil)
+	snaps := planTargetSnapshots(target, nil, nil)
 	if len(snaps) != 2 {
 		t.Fatalf("snapshots: got %d, want 2 (dev + stage)", len(snaps))
 	}
@@ -749,6 +749,58 @@ func TestReconcileRecipeOverrides(t *testing.T) {
 			t.Error("a target whose type the recipe doesn't have must be rejected")
 		}
 	})
+}
+
+// TestReconcileRecipeOverrides_PublicAccessNone_MapsHosts pins the S5 gap:
+// a submitted target's publicAccess="none" must populate
+// RecipeShapeOverrides.PublicAccessNoneHosts, keyed by the recipe's ORIGINAL
+// (derived) hostnames — matched the same way every other override is
+// matched (signature + identity, reorder-safe) — so
+// RewriteRecipeImportYAMLFromShape drops enableSubdomainAccess for that
+// runtime (docs/spec-workflows.md §8 O3 PA-6). Both halves of a standard
+// pair get marked (setPlanPublicAccess in bootstrap_outputs.go stamps
+// ServiceMeta.PublicAccess for both halves from one RuntimeTarget.PublicAccess
+// value; reconcile's map mirrors that symmetry). A target submitted WITHOUT
+// publicAccess="none" must not appear in the map at all.
+func TestReconcileRecipeOverrides_PublicAccessNone_MapsHosts(t *testing.T) {
+	t.Parallel()
+	shape, err := ParseRecipeImportShape(`services:
+  - hostname: appdev
+    type: php-nginx@8.4
+    zeropsSetup: dev
+    buildFromGit: https://example.com/app
+  - hostname: appstage
+    type: php-nginx@8.4
+    zeropsSetup: prod
+    buildFromGit: https://example.com/app
+  - hostname: workerstage
+    type: php-nginx@8.4
+    zeropsSetup: worker
+    buildFromGit: https://example.com/app
+  - hostname: db
+    type: postgresql@18
+`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	submitted := []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", ExplicitStage: "appstage", Type: "php-nginx@8.4", BootstrapMode: topology.PlanModeStandard, PublicAccess: string(topology.PublicAccessNone)}},
+		{Runtime: RuntimeTarget{DevHostname: "workerstage", Type: "php-nginx@8.4", BootstrapMode: topology.PlanModeSimple}},
+	}
+	ov, err := reconcileRecipeOverrides(shape, submitted, false)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !ov.PublicAccessNoneHosts["appdev"] {
+		t.Errorf("PublicAccessNoneHosts[appdev] = %v, want true", ov.PublicAccessNoneHosts["appdev"])
+	}
+	if !ov.PublicAccessNoneHosts["appstage"] {
+		t.Errorf("PublicAccessNoneHosts[appstage] = %v, want true", ov.PublicAccessNoneHosts["appstage"])
+	}
+	if ov.PublicAccessNoneHosts["workerstage"] {
+		t.Error("PublicAccessNoneHosts[workerstage] = true, want false (submitted without publicAccess=none)")
+	}
 }
 
 // TestReconcileRecipeOverrides_DevOnly pins that the dev-only opt-in survives

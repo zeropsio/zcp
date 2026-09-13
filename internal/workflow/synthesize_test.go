@@ -223,6 +223,148 @@ func TestSynthesize_DeployStateFilter(t *testing.T) {
 	}
 }
 
+// TestAtomSelection_DeployHistoryAxis_Table pins R3 (spec-workflows.md §8):
+// atom selection carries a deployHistory axis (none/failed/ok, from R1) so
+// override-first advice and non-destructive-recovery advice are mutually
+// exclusive per recovery shape. An atom without the axis is unaffected
+// (wildcard) regardless of the snapshot's classification.
+func TestAtomSelection_DeployHistoryAxis_Table(t *testing.T) {
+	t.Parallel()
+
+	corpus := []KnowledgeAtom{
+		{
+			ID: "ready-to-deploy-fixture", Priority: 2,
+			Axes: AxisVector{
+				Phases:          []Phase{PhaseDevelopActive},
+				ServiceStatuses: []string{"READY_TO_DEPLOY"},
+				DeployHistories: []string{"none"},
+			},
+			Body: "Re-import override=true.",
+		},
+		{
+			ID: "failed-build-recover-fixture", Priority: 2,
+			Axes: AxisVector{
+				Phases:          []Phase{PhaseDevelopActive},
+				ServiceStatuses: []string{"READY_TO_DEPLOY", "FAILED"},
+				DeployHistories: []string{"failed"},
+			},
+			Body: "Read zerops_events then zerops_deploy again.",
+		},
+		{
+			ID: "no-deploy-history-axis-fixture", Priority: 3,
+			Axes: AxisVector{
+				Phases: []Phase{PhaseDevelopActive},
+			},
+			Body: "Applies regardless of deploy history.",
+		},
+	}
+
+	tests := []struct {
+		name          string
+		deployHistory string
+		wantIDs       []string
+		notWantIDs    []string
+	}{
+		{
+			name:          "none_selects_ready_to_deploy_not_failed_recover",
+			deployHistory: "none",
+			wantIDs:       []string{"ready-to-deploy-fixture", "no-deploy-history-axis-fixture"},
+			notWantIDs:    []string{"failed-build-recover-fixture"},
+		},
+		{
+			name:          "failed_selects_failed_recover_not_ready_to_deploy",
+			deployHistory: "failed",
+			wantIDs:       []string{"failed-build-recover-fixture", "no-deploy-history-axis-fixture"},
+			notWantIDs:    []string{"ready-to-deploy-fixture"},
+		},
+		{
+			name:          "ok_selects_neither_recovery_atom",
+			deployHistory: "ok",
+			wantIDs:       []string{"no-deploy-history-axis-fixture"},
+			notWantIDs:    []string{"ready-to-deploy-fixture", "failed-build-recover-fixture"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			envelope := StateEnvelope{
+				Phase: PhaseDevelopActive,
+				Services: []ServiceSnapshot{{
+					Hostname:      "appdev",
+					RuntimeClass:  topology.RuntimeDynamic,
+					Bootstrapped:  true,
+					Status:        "READY_TO_DEPLOY",
+					DeployHistory: tt.deployHistory,
+				}},
+			}
+			matches, err := Synthesize(envelope, corpus)
+			if err != nil {
+				t.Fatalf("Synthesize: %v", err)
+			}
+			got := make(map[string]bool, len(matches))
+			for _, m := range matches {
+				got[m.AtomID] = true
+			}
+			for _, id := range tt.wantIDs {
+				if !got[id] {
+					t.Errorf("deployHistory=%q: expected atom %q to match; matched=%v", tt.deployHistory, id, got)
+				}
+			}
+			for _, id := range tt.notWantIDs {
+				if got[id] {
+					t.Errorf("deployHistory=%q: expected atom %q NOT to match; matched=%v", tt.deployHistory, id, got)
+				}
+			}
+		})
+	}
+}
+
+// TestComposedGuidance_FailedHistoryReadyToDeploy_NoOverrideAdvice is the
+// independent-oracle counterpart to TestAtomSelection_DeployHistoryAxis_Table:
+// it renders the REAL embedded corpus (not fixtures) for a READY_TO_DEPLOY
+// service whose deploy history is "failed" and asserts the FINAL composed
+// text — not just atom selection — never carries `override=true` alongside
+// the non-destructive recovery advice. This is the exact contradiction R3
+// exists to make impossible: develop-ready-to-deploy.md used to fire on
+// serviceStatus alone, telling the agent to re-import+override even when
+// the service held failed deploy history it would destroy.
+func TestComposedGuidance_FailedHistoryReadyToDeploy_NoOverrideAdvice(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+	envelope := StateEnvelope{
+		Phase:       PhaseDevelopActive,
+		Environment: EnvContainer,
+		Services: []ServiceSnapshot{{
+			Hostname:      "appdev",
+			RuntimeClass:  topology.RuntimeDynamic,
+			Mode:          topology.ModeDev,
+			Bootstrapped:  true,
+			Deployed:      true,
+			Status:        "READY_TO_DEPLOY",
+			DeployHistory: "failed",
+		}},
+	}
+	bodies, err := SynthesizeBodies(envelope, corpus)
+	if err != nil {
+		t.Fatalf("SynthesizeBodies: %v", err)
+	}
+	composed := strings.Join(bodies, "\n---\n")
+	if strings.Contains(composed, "override=true") {
+		t.Errorf("composed develop guidance for a failed-history READY_TO_DEPLOY service must never contain override=true, got:\n%s", composed)
+	}
+	if !strings.Contains(composed, "zerops_deploy") {
+		t.Errorf("composed develop guidance must instruct zerops_deploy (non-destructive redeploy), got:\n%s", composed)
+	}
+	if !strings.Contains(composed, "zerops_events") {
+		t.Errorf("composed develop guidance must instruct reading zerops_events for the failure diagnosis, got:\n%s", composed)
+	}
+}
+
 // TestSynthesize_RenderTimeBodyDedup pins the post-substitution dedup
 // added in Phase 4 of atom-corpus-context-trim. Two renders of the same
 // atom that produce byte-identical bodies (e.g. service-scoped axis but

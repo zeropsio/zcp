@@ -125,6 +125,18 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 		if rt.Status == StatusActive {
 			meta.FirstDeployedAt = time.Now().UTC().Format(time.RFC3339)
 		}
+		// §8 O3 PA-6: derive the linked runtime's public-access intent from
+		// observed live state — an adopted service has no prior recorded
+		// intent to reconcile against. Domains arrive in a later slice
+		// (custom-domain adoption); Domains stays empty here, so this can
+		// only derive subdomain or auto, never domain.
+		subdomain := topology.SubdomainOff
+		if rt.SubdomainAccess {
+			subdomain = topology.SubdomainOn
+		}
+		meta.SetPublicAccess(rt.Name, topology.PublicAccessRecord{
+			Intent: topology.DeriveAdoptedIntent(topology.PublicAccessObserved{Subdomain: subdomain}),
+		})
 		if err := UpsertServiceMeta(stateDir, meta.Hostname, func(m *ServiceMeta, existed bool) error {
 			if existed {
 				return ErrSkipWrite // another process already adopted this project; don't clobber

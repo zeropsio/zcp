@@ -503,7 +503,7 @@ func TestPlanTargetSnapshots_PopulatesStatusFromLive(t *testing.T) {
 			ExplicitStage: "appstage",
 		},
 	}
-	snaps := planTargetSnapshots(target, statuses)
+	snaps := planTargetSnapshots(target, statuses, nil)
 	if len(snaps) != 2 {
 		t.Fatalf("standard mode: expected 2 snapshots, got %d", len(snaps))
 	}
@@ -518,7 +518,7 @@ func TestPlanTargetSnapshots_PopulatesStatusFromLive(t *testing.T) {
 
 	// Absent hostname yields empty Status — the safe default before the
 	// first provision check or in fixtures that don't carry live state.
-	empty := planTargetSnapshots(target, nil)
+	empty := planTargetSnapshots(target, nil, nil)
 	if empty[0].Status != "" {
 		t.Errorf("nil statuses: Status must be empty, got %q", empty[0].Status)
 	}

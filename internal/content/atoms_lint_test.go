@@ -350,6 +350,56 @@ func TestAtomAuthoringLint_FiresOnKnownViolations(t *testing.T) {
 	}
 }
 
+// TestAtomAuthoringLint_OverrideAdviceRequiresDeployHistoryNone pins R3
+// (spec-workflows.md §8): any atom whose body names override=true (or
+// override: true) must declare deployHistory:[none], so override-first
+// advice can never render on a service with deploy history. Table: a
+// passing atom (declares deployHistory:[none]) and a failing fixture
+// (mentions override=true with no deployHistory axis at all).
+func TestAtomAuthoringLint_OverrideAdviceRequiresDeployHistoryNone(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		frontmatter string
+		body        string
+		wantFires   bool
+	}{
+		{
+			name:        "passing-atom-declares-deployHistory-none",
+			frontmatter: "---\nphases: [develop-active]\ndeployHistory: [none]\n---\n",
+			body:        "Re-import with `zerops_import override=true` for this never-deployed shape.\n",
+			wantFires:   false,
+		},
+		{
+			name:        "failing-fixture-no-deployHistory-axis",
+			frontmatter: "---\nphases: [develop-active]\n---\n",
+			body:        "Re-import with `zerops_import override=true`.\n",
+			wantFires:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			atom := AtomFile{
+				Name:    tt.name + "-fixture.md",
+				Content: tt.frontmatter + tt.body,
+			}
+			violations := lintAtomCorpus([]AtomFile{atom})
+			var fired bool
+			for _, v := range violations {
+				if v.Category == "override-scope" {
+					fired = true
+				}
+			}
+			if fired != tt.wantFires {
+				t.Errorf("override-scope rule: got fired=%v, want %v; violations=%+v", fired, tt.wantFires, violations)
+			}
+		})
+	}
+}
+
 // TestStatusTokenLint_NoFalsePositives pins the discriminator (B8): real
 // platform statuses and env-var / config identifiers must NOT be flagged — only
 // status-SHAPED tokens that aren't real statuses are. Without this the lint

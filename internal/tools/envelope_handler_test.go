@@ -77,7 +77,7 @@ func TestVerifyTool_CarriesEnvelope(t *testing.T) {
 
 	engine := testEngine(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterVerify(srv, mock, nil, "proj-1", engine.StateDir(), runtime.Info{})
+	RegisterVerify(srv, mock, nil, "proj-1", engine.StateDir(), runtime.Info{}, nil)
 
 	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "api"})
 	if result.IsError {

@@ -29,7 +29,7 @@ func TestVerifyTool_RuntimeHealthy(t *testing.T) {
 	fetcher := platform.NewMockLogFetcher()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterVerify(srv, mock, fetcher, "proj-1", "", runtime.Info{})
+	RegisterVerify(srv, mock, fetcher, "proj-1", "", runtime.Info{}, nil)
 
 	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "app"})
 
@@ -60,7 +60,7 @@ func TestVerifyTool_ManagedHealthy(t *testing.T) {
 	fetcher := platform.NewMockLogFetcher()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterVerify(srv, mock, fetcher, "proj-1", "", runtime.Info{})
+	RegisterVerify(srv, mock, fetcher, "proj-1", "", runtime.Info{}, nil)
 
 	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "db"})
 
@@ -94,7 +94,7 @@ func TestVerifyTool_RuntimeActive(t *testing.T) {
 	fetcher := platform.NewMockLogFetcher()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterVerify(srv, mock, fetcher, "proj-1", "", runtime.Info{})
+	RegisterVerify(srv, mock, fetcher, "proj-1", "", runtime.Info{}, nil)
 
 	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "app"})
 
@@ -130,7 +130,7 @@ func TestVerifyTool_NotFound(t *testing.T) {
 	fetcher := platform.NewMockLogFetcher()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterVerify(srv, mock, fetcher, "proj-1", "", runtime.Info{})
+	RegisterVerify(srv, mock, fetcher, "proj-1", "", runtime.Info{}, nil)
 
 	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "nonexistent"})
 
@@ -150,7 +150,7 @@ func TestVerifyTool_GracefulLogError(t *testing.T) {
 	fetcher := platform.NewMockLogFetcher()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterVerify(srv, mock, fetcher, "proj-1", "", runtime.Info{})
+	RegisterVerify(srv, mock, fetcher, "proj-1", "", runtime.Info{}, nil)
 
 	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "app"})
 
@@ -183,7 +183,7 @@ func TestVerifyTool_BatchMode(t *testing.T) {
 	fetcher := platform.NewMockLogFetcher()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterVerify(srv, mock, fetcher, "proj-1", "", runtime.Info{})
+	RegisterVerify(srv, mock, fetcher, "proj-1", "", runtime.Info{}, nil)
 
 	// Call with empty serviceHostname → batch mode.
 	result := callTool(t, srv, "zerops_verify", map[string]any{})
@@ -215,7 +215,7 @@ func TestVerifyTool_SingleMode(t *testing.T) {
 	fetcher := platform.NewMockLogFetcher()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterVerify(srv, mock, fetcher, "proj-1", "", runtime.Info{})
+	RegisterVerify(srv, mock, fetcher, "proj-1", "", runtime.Info{}, nil)
 
 	// Call with serviceHostname → single mode, returns VerifyResult.
 	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "app"})
@@ -270,7 +270,7 @@ func TestVerifyTool_ReportsLifecycleState(t *testing.T) {
 	fetcher := platform.NewMockLogFetcher()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterVerify(srv, mock, fetcher, "proj-1", dir, runtime.Info{})
+	RegisterVerify(srv, mock, fetcher, "proj-1", dir, runtime.Info{}, nil)
 
 	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "worker"})
 	if result.IsError {
@@ -287,6 +287,62 @@ func TestVerifyTool_ReportsLifecycleState(t *testing.T) {
 		if !contains(text, needle) {
 			t.Errorf("response missing %q:\n%s", needle, text)
 		}
+	}
+}
+
+// TestVerifyTool_PassesIntentFromMeta pins that the tool layer reads the
+// service's persisted public-access intent (ServiceMeta.PublicAccessFor,
+// §8 O3 PA-4) and passes it into ops.VerifyWithMeta: an intent=none host
+// with subdomain access off gets a SKIPPED http_public check, never the
+// zerops_subdomain-enable Recovery the old single-rule behavior always
+// emitted for an off subdomain.
+func TestVerifyTool_PassesIntentFromMeta(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname:         "app",
+		BootstrapSession: "s", BootstrappedAt: "2026-06-01",
+		PublicAccess: map[string]topology.PublicAccessRecord{
+			"app": {Intent: topology.PublicAccessNone},
+		},
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: serviceStatusRunning, SubdomainAccess: false, Ports: []platform.Port{{Port: 3000}}},
+		})
+	fetcher := platform.NewMockLogFetcher()
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterVerify(srv, mock, fetcher, "proj-1", dir, runtime.Info{}, nil)
+
+	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "app"})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	var vr ops.VerifyResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &vr); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	var found bool
+	for _, c := range vr.Checks {
+		if c.Name != "http_public" {
+			continue
+		}
+		found = true
+		if c.Status != "skip" {
+			t.Errorf("http_public status = %q, want skip (intent=none)", c.Status)
+		}
+		if c.Recovery != nil {
+			t.Errorf("http_public.Recovery = %+v, want nil (intent=none must never emit the subdomain-enable recovery)", c.Recovery)
+		}
+	}
+	if !found {
+		t.Fatalf("http_public check not found in %+v", vr.Checks)
 	}
 }
 
@@ -328,5 +384,157 @@ func TestDeferredStartDurabilityNote(t *testing.T) {
 				t.Fatalf("expected no note, got: %s", note)
 			}
 		})
+	}
+}
+
+// TestVerifyTool_DevServerRunning_ListenerTrue_InternalProbed pins §8 O3
+// PA-4 / O4: a dev-mode dynamic runtime whose dev server IS running (the
+// pidfile liveness check ops.DevServerRunning reports alive) has a real
+// listener — http_internal probes instead of skipping with the
+// "start it with zerops_dev_server" deferred-start message.
+func TestVerifyTool_DevServerRunning_ListenerTrue_InternalProbed(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeDev,
+		BootstrapSession: "s", BootstrappedAt: "2026-06-01",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/bun@1.3.9", ServiceStackTypeCategoryName: "USER"}, Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000}}},
+		})
+	fetcher := platform.NewMockLogFetcher()
+	ssh := &scriptSSH{queue: []scriptStep{{output: "alive"}}}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterVerify(srv, mock, fetcher, "proj-1", dir, runtime.Info{}, ssh)
+
+	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "appdev"})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	var vr ops.VerifyResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &vr); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	var found bool
+	for _, c := range vr.Checks {
+		if c.Name != "http_internal" {
+			continue
+		}
+		found = true
+		if c.Status == "skip" && contains(c.Detail, "start it with zerops_dev_server") {
+			t.Errorf("http_internal = %+v, want a real probe (dev server is running, not the deferred-start skip)", c)
+		}
+	}
+	if !found {
+		t.Fatalf("http_internal check not found in %+v", vr.Checks)
+	}
+}
+
+// TestVerifyTool_DevServerStopped_StaysDeferred pins the complementary
+// case: the dev server is NOT running (liveness check reports "dead") —
+// http_internal stays the deferred-start skip, and no probe is attempted.
+func TestVerifyTool_DevServerStopped_StaysDeferred(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeDev,
+		BootstrapSession: "s", BootstrappedAt: "2026-06-01",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/bun@1.3.9", ServiceStackTypeCategoryName: "USER"}, Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000}}},
+		})
+	fetcher := platform.NewMockLogFetcher()
+	ssh := &scriptSSH{queue: []scriptStep{{output: "dead"}}}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterVerify(srv, mock, fetcher, "proj-1", dir, runtime.Info{}, ssh)
+
+	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "appdev"})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	var vr ops.VerifyResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &vr); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	var found bool
+	for _, c := range vr.Checks {
+		if c.Name != "http_internal" {
+			continue
+		}
+		found = true
+		if c.Status != "skip" || !contains(c.Detail, "start it with zerops_dev_server") {
+			t.Errorf("http_internal = %+v, want skip with the deferred-start message (dev server not running)", c)
+		}
+	}
+	if !found {
+		t.Fatalf("http_internal check not found in %+v", vr.Checks)
+	}
+}
+
+// TestVerifyTool_DevServerStatusError_FallsBackToStatic pins the failure
+// mode: the SSH liveness read errors (no SSH deployer, unreachable
+// container) — verify must not fail because of it, and the classification
+// falls back to the static (mode, class) DeferredStart, same as "stopped".
+func TestVerifyTool_DevServerStatusError_FallsBackToStatic(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeDev,
+		BootstrapSession: "s", BootstrappedAt: "2026-06-01",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/bun@1.3.9", ServiceStackTypeCategoryName: "USER"}, Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000}}},
+		})
+	fetcher := platform.NewMockLogFetcher()
+	ssh := &scriptSSH{queue: []scriptStep{{err: fmt.Errorf("ssh: connection refused")}}}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterVerify(srv, mock, fetcher, "proj-1", dir, runtime.Info{}, ssh)
+
+	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "appdev"})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	text := getTextContent(t, result)
+	if contains(text, "warning") {
+		t.Errorf("response carries an unexpected warning field on SSH liveness failure:\n%s", text)
+	}
+
+	var vr ops.VerifyResult
+	if err := json.Unmarshal([]byte(text), &vr); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	var found bool
+	for _, c := range vr.Checks {
+		if c.Name != "http_internal" {
+			continue
+		}
+		found = true
+		if c.Status != "skip" || !contains(c.Detail, "start it with zerops_dev_server") {
+			t.Errorf("http_internal = %+v, want skip with the deferred-start message (SSH error falls back to static)", c)
+		}
+	}
+	if !found {
+		t.Fatalf("http_internal check not found in %+v", vr.Checks)
 	}
 }

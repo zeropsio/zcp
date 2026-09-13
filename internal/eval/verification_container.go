@@ -192,7 +192,7 @@ func evaluateOneMetaCheck(entry MetaCheckEntry, workDir string, now time.Time) R
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return RequiredCheck{ID: id, Check: "meta", Scope: entry.Hostname, Result: CheckFailed, Expected: entry.Expect, ObservedAt: now, Source: "meta", Message: fmt.Sprintf("parse %s: %v", path, err)}
 	}
-	value, ok := doc[entry.Field]
+	value, ok := lookupMetaField(doc, entry.Field)
 	if !ok {
 		return RequiredCheck{ID: id, Check: "meta", Scope: entry.Hostname, Result: CheckFailed, Expected: entry.Expect, Observed: "absent", ObservedAt: now, Source: "meta", Message: fmt.Sprintf("field %s absent", entry.Field)}
 	}
@@ -201,6 +201,24 @@ func evaluateOneMetaCheck(entry MetaCheckEntry, workDir string, now time.Time) R
 		return RequiredCheck{ID: id, Check: "meta", Scope: entry.Hostname, Result: CheckFailed, Expected: entry.Expect, Observed: observed, ObservedAt: now, Source: "meta", Message: fmt.Sprintf("field %s: expected %q, observed %q", entry.Field, entry.Expect, observed)}
 	}
 	return RequiredCheck{ID: id, Check: "meta", Scope: entry.Hostname, Result: CheckPassed, Expected: entry.Expect, Observed: observed, ObservedAt: now, Source: "meta", Message: fmt.Sprintf("field %s matched %q", entry.Field, observed)}
+}
+
+// lookupMetaField resolves a dot-separated field path inside the decoded
+// meta document (`publicAccess.appdev.intent`); a bare key reads the top
+// level. Every intermediate segment must be a JSON object.
+func lookupMetaField(doc map[string]any, field string) (any, bool) {
+	var cur any = doc
+	for seg := range strings.SplitSeq(field, ".") {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		cur, ok = m[seg]
+		if !ok {
+			return nil, false
+		}
+	}
+	return cur, true
 }
 
 // schemaValidRowID builds the O12 schemaValid row id (docs/spec-eval-farm.md

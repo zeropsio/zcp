@@ -42,6 +42,8 @@ If the plan you're about to submit includes a dynamic runtime (Node, Go, Python,
 
 Confirm dev/stage pairing with the user before submitting the plan. Mode + close-mode + git-push capability decisions all happen later in develop, not here.
 
+Add `"publicAccess": "none"` inside `runtime` when the user wants this runtime kept internal-only (no public subdomain ever) — omit the field entirely for the default (a public subdomain switches on automatically the first time it can).
+
 ---
 
 === bootstrap-classic-plan-static ===
@@ -84,14 +86,15 @@ submitting the plan.
 - **stage** — never bootstrapped alone; it is the stage half of a
   standard pair.
 
-Choose on the OUTCOME, not iteration habit: a service that should stay
-reachable → **simple** (or **standard** for a dev+stage split); a scratch
-space for hands-on iteration with no durable end-state → **dev**. For a
-"build me X" request that ends at a URL, **simple** is the safe default —
-dev's transience is a footgun for anything left running. The plan commits
-the mode when you submit it; the envelope then exposes it as
-`ServiceSnapshot.Mode`. Changing mode later requires a mode-expansion
-bootstrap session, surfaced in develop when actionable.
+**standard is the recommended default**: a dev container to iterate in plus
+a supervised stage that stays reachable after every container cycle. Pick
+**simple** only when the user asks for exactly one service (a single
+always-on app, a background worker); pick **dev** only for an explicit
+scratch space with no durable end-state — dev's transience is a footgun
+for anything left running. The plan commits the mode when you submit it;
+the envelope then exposes it as `ServiceSnapshot.Mode`. Changing mode
+later requires a mode-expansion bootstrap session, surfaced in develop
+when actionable.
 
 ---
 

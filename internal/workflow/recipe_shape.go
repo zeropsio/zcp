@@ -212,6 +212,12 @@ type RecipeShapeOverrides struct {
 	RuntimeHostnameByOriginal map[string]string `json:"runtimeHostnameByOriginal,omitempty"`
 	ManagedResolutionByHost   map[string]string `json:"managedResolutionByHost,omitempty"`
 	DevOnly                   bool              `json:"devOnly,omitempty"`
+	// PublicAccessNoneHosts (keyed by the recipe's ORIGINAL runtime
+	// hostname) drops `enableSubdomainAccess: true` from that runtime's
+	// import entry — the plan's public-access intent is `none`, so the
+	// platform must not auto-carry a stale `true` from the recipe's own
+	// YAML past the user's explicit opt-out (§8 O3 PA-6).
+	PublicAccessNoneHosts map[string]bool `json:"publicAccessNoneHosts,omitempty"`
 }
 
 // CanNarrowRecipeDevOnly reports whether the recipe shape can be narrowed to a
@@ -335,6 +341,22 @@ func reconcileRecipeOverrides(shape RecipeImportShape, submitted []BootstrapTarg
 		}
 		if d.Runtime.ExplicitStage != "" && s.Runtime.ExplicitStage != "" && s.Runtime.ExplicitStage != d.Runtime.ExplicitStage {
 			overrides.RuntimeHostnameByOriginal[d.Runtime.ExplicitStage] = s.Runtime.ExplicitStage
+		}
+
+		// §8 O3 PA-6: publicAccess=none drops enableSubdomainAccess from the
+		// import yaml (RewriteRecipeImportYAMLFromShape reads this map).
+		// Keyed by the recipe's ORIGINAL hostnames (matches setPlanPublicAccess
+		// in bootstrap_outputs.go, which stamps ServiceMeta.PublicAccess for
+		// BOTH halves of a target from one RuntimeTarget.PublicAccess value) —
+		// both the dev half and, when present, the stage half.
+		if s.Runtime.PublicAccess == string(topology.PublicAccessNone) {
+			if overrides.PublicAccessNoneHosts == nil {
+				overrides.PublicAccessNoneHosts = map[string]bool{}
+			}
+			overrides.PublicAccessNoneHosts[d.Runtime.DevHostname] = true
+			if d.Runtime.ExplicitStage != "" {
+				overrides.PublicAccessNoneHosts[d.Runtime.ExplicitStage] = true
+			}
 		}
 
 		// Managed EXISTS flips — matched by hostname identity (managed

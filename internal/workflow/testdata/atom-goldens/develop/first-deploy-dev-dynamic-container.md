@@ -176,6 +176,10 @@ default to
    adds `-{port}`. `${zeropsSubdomainHost}` is numeric and project-scope,
    not the projectId. Read it with `env | grep zeropsSubdomainHost`, or
    use `zerops_discover` for the resolved URL. Do not guess a UUID.
+   A subdomain URL answering 502 (not a connection error — the L7
+   balancer is up, the runtime behind it isn't reachable) after it used
+   to work often means the subdomain was switched off (`zerops_discover`'s
+   `publicAccess.subdomain` reads `"off"`) rather than the app crashing.
 3. **`zerops_logs severity="error" since="5m"`** — recent platform errors
    (nginx, crash traces, deploy failures) without opening a shell.
 4. **Framework log file** — read via Read tool at the framework's
@@ -348,13 +352,19 @@ distilled from the logs. Only fall through to `buildLogs` /
 the same broken `zerops.yaml` burns another deploy slot without new
 information.
 
-On first-deploy success the response carries `subdomainAccessEnabled:
-true` and a `subdomainUrl` — no manual `zerops_subdomain` call is
-needed in the happy path. Run verify next.
+The subdomain switches on once, automatically, the first moment the
+platform can accept it — right after this deploy succeeds, for a
+runtime whose listener is up by then. Read the response's `publicAccess`
+field (`{intent, subdomain, url, domains}`): `subdomain: "on"` with a
+`url` means it's live — no manual `zerops_subdomain` call needed. Once
+switched off (by you or the user), it stays off — the one-time enable
+never repeats. Run verify next.
 
-If you imported a service that you deliberately want to keep without a
-public subdomain (internal-only HTTP service), call `zerops_subdomain
-action="disable"` after the deploy.
+If the bootstrap plan set `publicAccess: "none"` for this runtime,
+it's internal-only by design: `publicAccess.subdomain` stays `"off"`
+and no URL ever appears — `zerops_verify` proves reachability from
+inside the project instead. To make an already-public runtime
+internal-only after the fact, call `zerops_subdomain action="disable"`.
 
 Run for each runtime that hasn't been deployed:
 
@@ -375,7 +385,7 @@ before any browser probe.
 | Shape | Check |
 |---|---|
 | non-web (managed / worker / no HTTP port) | `zerops_verify` → `status=healthy` is the whole check |
-| web (dynamic / static / implicit-webserver) | `zerops_verify` → judge `http_root`: `httpStatus` + `bodyText` + `consoleErrors`; healthy + a real body (not a blank shell / error page, no fatal console error) proves it |
+| web (dynamic / static / implicit-webserver) | `zerops_verify` → `http_internal` (project-network reachability) always runs; `http_public` (a custom domain instead runs as `public_domain`) reflects public-access intent: a public subdomain/domain → judge `httpStatus` + `bodyText` + `consoleErrors` — healthy + a real body (not a blank shell / error page, no fatal console error) proves it; internal-only by intent → `skip` (expected, not a failure — verify `http_internal` instead); mid-switch-on → `pending`, re-verify shortly |
 
 When `bodyText`/`consoleErrors` are missing, truncated, or the page needs
 interaction / SPA routes / non-root / auth, drive the browser **inline** with
@@ -384,7 +394,7 @@ interaction / SPA routes / non-root / auth, drive the browser **inline** with
 pass `screenshot: true` for visual evidence; failed/4xx/5xx network requests
 are always reported alongside errors/console, no flag needed. Never spawn a
 sub-agent, call raw `agent-browser`, or use `eval`.
-Internal-only service (no public subdomain) → `zerops_subdomain action="disable"` after deploy.
+To make an already-public service internal-only, call `zerops_subdomain action="disable"` — after that, `http_public` reports `skip` on every later verify, same as a `publicAccess: "none"` plan intent.
 
 - **VERDICT: PASS** — healthy + real rendered content; proceed.
 - **VERDICT: FAIL** — healthy infra but blank/broken/error page, or a failing check; iterate from the check's `detail` + render evidence.
@@ -396,8 +406,9 @@ Internal-only service (no public subdomain) → `zerops_subdomain action="disabl
 ### Before verify on dev-mode dynamic runtimes
 
 Dev-mode dynamic runtimes deploy with `start: zsc noop --silent` (a
-no-op keepalive) — nothing is listening yet. `zerops_verify` will return
-`http_root: HTTP 502` and that is NOT a deploy failure. Start the dev
+no-op keepalive) — nothing is listening yet. `zerops_verify` reports
+`http_internal` and `http_public` as `skip` ("start it with
+zerops_dev_server") and that is NOT a deploy failure. Start the dev
 process via `zerops_dev_server action=start` first, then verify.
 
 For simple-mode and standard-mode runtimes the runtime starts on

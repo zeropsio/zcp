@@ -38,6 +38,10 @@ type DeployLocalInput struct {
 	// BreakGlass overrides the L1 push-delivery redirect (see
 	// repoDeliveryRedirect).
 	BreakGlass FlexBool `json:"breakGlass,omitempty"`
+	// AppVersion, when set to "latest", switches this call to the R2
+	// in-place recovery for a never-activated buildFromGit service (docs/
+	// spec-workflows.md §8 R2) — see DeploySSHInput.AppVersion.
+	AppVersion string `json:"appVersion,omitempty"`
 }
 
 func deployLocalInputSchema() *jsonschema.Schema {
@@ -49,6 +53,7 @@ func deployLocalInputSchema() *jsonschema.Schema {
 		"remoteUrl":     {Type: "string", Description: "Git remote URL (HTTPS). Optional for strategy=git-push — used only when origin isn't already configured in the local repo; otherwise the existing origin is reused."},
 		"branch":        {Type: "string", Description: "Git branch for strategy=git-push. Default: current HEAD branch."},
 		"breakGlass":    {Type: "boolean", Description: "Override for the push-delivery redirect: a pair with git-push configured delivers via push (the repo is the source of truth); a direct deploy is refused with the recommended push call unless breakGlass=true. Reserve for fundamental reasons (git host outage, recovery)."},
+		"appVersion":    {Type: "string", Description: "Set to 'latest' to re-deploy the already-built appVersion in place, skipping source resolution — recovery for a never-activated buildFromGit service with no container. Only 'latest' is supported."},
 	}, "targetService")
 }
 
@@ -83,6 +88,25 @@ func RegisterDeployLocal(
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeployLocalInput) (*mcp.CallToolResult, any, error) {
+		// R2 in-place recovery (docs/spec-workflows.md §8 R2): appVersion
+		// redeploy has no source to resolve — dispatch BEFORE strategy
+		// validation and the adoption gate, both of which assume a local
+		// source directory.
+		if input.AppVersion != "" {
+			if blocked := validateAppVersionParam(input.AppVersion); blocked != nil {
+				return blocked, nil, nil
+			}
+			result, blocked := runAppVersionRedeploy(ctx, client, httpClient, projectID, stateDir, input.TargetService, input.Setup, "local")
+			if blocked != nil {
+				return blocked, nil, nil
+			}
+			return jsonResult(deployLocalResponse{
+				DeployResult:     result,
+				WorkSessionState: sessionAnnotations(stateDir),
+				Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
+			}), nil, nil
+		}
+
 		// Strategy validation. "manual" is a ServiceMeta declaration only —
 		// calling zerops_deploy on a manual-strategy service is a contradiction
 		// ZCP refuses to resolve silently.
@@ -187,7 +211,7 @@ func RegisterDeployLocal(
 		switch {
 		case result != nil && result.Status == statusDeployed:
 			attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
-			maybeAutoEnableSubdomain(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
+			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
 		case result != nil && result.TimedOut:
 			// In-flight (B23): build still running at poll timeout, not failed.
 			attempt.Error = deployBuildInFlightMsg

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -83,7 +84,15 @@ func devServerInputSchema() *jsonschema.Schema {
 // RegisterDevServer registers the zerops_dev_server tool. The tool is
 // only useful when zcp has an SSH deployer wired in — local (non-
 // container) installs skip registration.
-func RegisterDevServer(srv *mcp.Server, client platform.Client, projectID string, ssh ops.SSHDeployer) {
+//
+// httpClient + stateDir are S7's public-access hook plumbing (docs/spec-
+// workflows.md §8 O3 PA-1's second hook): after a successful start, a
+// passing health probe proves a live listener exists, so ensurePublicAccess
+// runs with that fact forced regardless of the runtime's static deferred-
+// start classification. Both may be nil/empty (annotations-only registry
+// snapshots, local-only installs) — the hook then no-ops (ensurePublicAccess
+// needs a real stateDir to find ServiceMeta at all).
+func RegisterDevServer(srv *mcp.Server, client platform.Client, httpClient ops.HTTPDoer, projectID string, ssh ops.SSHDeployer, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_dev_server",
 		Description: "Start, stop, probe, tail, or restart a long-running development server on a Zerops dev container. " +
@@ -121,6 +130,52 @@ func RegisterDevServer(srv *mcp.Server, client platform.Client, projectID string
 			// its own Suggestion through convertError.
 			return convertError(err), nil, nil
 		}
-		return jsonResult(result), nil, nil
+
+		resp := &devServerToolResult{DevServerResult: result}
+		// PA-1's second hook (docs/spec-workflows.md §8 O3): a successful
+		// start/restart with a passing health probe just proved a live
+		// listener exists, so force listener=true regardless of the
+		// runtime's static deferred-start classification — a dev-mode
+		// dynamic runtime has none until THIS call.
+		if result.Running && isDevServerStartAction(input.Action) {
+			scratch := &ops.DeployResult{}
+			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.Hostname, scratch, true)
+			resp.SubdomainURL = scratch.SubdomainURL
+			resp.Warnings = scratch.Warnings
+			resp.PublicAccess = scratch.PublicAccess
+		}
+		return jsonResult(resp), nil, nil
 	})
+}
+
+// isDevServerStartAction reports whether action is one that can bring up a
+// listener — start or restart. status/stop/logs never do.
+func isDevServerStartAction(action string) bool {
+	switch strings.ToLower(action) {
+	case actionStart, "restart":
+		return true
+	default:
+		return false
+	}
+}
+
+// devServerToolResult is the zerops_dev_server response envelope: every
+// field of ops.DevServerResult plus the public-access enrichment the
+// start-success hook adds (S7, docs/spec-workflows.md §8 O3/E9).
+// ops.DevServerResult itself can't carry these fields directly —
+// internal/ops/** is outside this slice's write-set.
+type devServerToolResult struct {
+	*ops.DevServerResult
+	// SubdomainURL is the L7 subdomain URL when the start-success hook
+	// enabled (or found already-enabled) the route for this hostname.
+	SubdomainURL string `json:"subdomainUrl,omitempty"`
+	// PublicAccess is the PA-5 structured summary (docs/spec-workflows.md
+	// §8 O3): {intent, subdomain, url, domains[]}, copied verbatim from the
+	// hook's scratch *ops.DeployResult — nil when the hook never ran (a
+	// non-start action, or a failed start).
+	PublicAccess *ops.PublicAccessSummary `json:"publicAccess,omitempty"`
+	// Warnings carries any non-fatal public-access anomaly from the hook
+	// (e.g. an auto-enable failure) — ops.DevServerResult has no Warnings
+	// field of its own.
+	Warnings []string `json:"warnings,omitempty"`
 }
