@@ -8,3 +8,5 @@ cross-deploy-stage-promote-from-dev
 recover-failed-buildfromgit-missing-dep
 adopt-existing-standard-pair
 resume-after-compaction
+launch-production-from-standard-pair
+launch-failure-build-stuck

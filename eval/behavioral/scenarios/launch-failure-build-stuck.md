@@ -57,6 +57,7 @@ verification:
   noFailedProcesses: true
   launchShape: {prodProject: "zcp-farm-prod__{{runId}}"}
   noFabricatedSecret: true
+  never: ["zerops_import{override=true}"]
   retrospectiveMustNotMention:
     - YJQTh.
     - github_pat_

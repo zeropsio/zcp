@@ -610,7 +610,7 @@ Legend: ↑ existing scenario to promote · ✚ scenario to write.
 | cell | scenario id | pre-state · route · topology · stack · deps | task | oracle families | status |
 |---|---|---|---|---|---|
 | A1 | `api-node-postgres-classic-dev` | brand-new · classic · dev-only · node · db | small API with one table | expectedServices liveness nodePostgresRecord never | gate |
-| A2 | `classic-static-nginx-simple` | brand-new · classic · simple · static · none | public landing page | expectedServices liveness subdomainProbe never | gate |
+| A2 | `classic-static-nginx-simple` | brand-new · classic · simple · static · none | public landing page | expectedServices subdomainProbe never | gate |
 | A3 ↑ | `greenfield-fullstack-multi-runtime` | brand-new · classic · standard-pair · node+static · db+cache | API + SPA dashboard | expectedServices liveness containerCheck never | pending: containerCheck |
 | A4 ↑ | `classic-php-mariadb-standard` | brand-new · classic · standard-pair · php (implicit-webserver) · mariadb | | expectedServices liveness never | pending: scenario (add `verification`) |
 | A5 ↑ | `recipe-nestjs-minimal-standard` | brand-new · recipe · standard-pair · node · db | NestJS API | expectedServices liveness mustOffer never | gate · wants: mustOffer |
@@ -635,7 +635,7 @@ Legend: ↑ existing scenario to promote · ✚ scenario to write.
 | B6 ✚ | `mount-edit-deploy` (absorbs `existing-standard-appdev-only-reminders`, `develop-edit-path-vs-deploy-source`) | pair, SSHFS; usersim triggers `start develop` mid-run | edit in the mount and ship dev only | liveness unchanged toolArg(workingDir ∈ /var/www/appdev; Bash ln -s never) containerCheck mustOffer(close-vs-continue) never | pending: toolArg |
 | B6a | `existing-standard-appdev-only-reminders` | pair, dev-only work | | liveness unchanged never | gate (until B6 lands, then absorbed) |
 | B7 ✚ | `mount-stale-recovery` | pair, preseed breaks the mount after deploy | continue editing | containerCheck liveness never | pending: containerCheck |
-| B8 | `cross-deploy-stage-promote-from-dev` | pair, promote | | artifactPromotion unchanged mustOffer(no-rebuild) never | gate · wants: mustOffer |
+| B8 | `cross-deploy-stage-promote-from-dev` | pair, promote | | artifactPromotion mustOffer(no-rebuild) never | gate · wants: mustOffer |
 | B9 ✚ | `internal-only-worker` (absorbs D7 idle-worker verify) | pair + worker, no subdomain anywhere | add a queue worker | internalLiveness expectedServices never(subdomain enable) | pending: internalLiveness |
 | B10 ↑ | `develop-loop-after-bootstrap` | strategy unset → review gate | | meta expectedServices never | pending: meta |
 | B11 ✚ | `git-push-configured-manual-close` | pair, git-push configured, close-mode manual | don't push for me | meta unchanged toolArg(no deploy after edits) never | pending: meta |
