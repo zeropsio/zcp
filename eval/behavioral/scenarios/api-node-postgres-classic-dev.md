@@ -47,6 +47,8 @@ verification:
   noFailedProcesses: true
   liveness: {service: apidev, marker: "api-ready"}
   nodePostgresRecord: {stage: apidev, database: db, environment: dev}
+  toolArg:
+    - {max: 0, call: "zerops_subdomain"}
   never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
   Jsi backend dev, chceš si rychle rozjet Node.js REST API s
@@ -121,6 +123,19 @@ notableFriction:
       the develop-loop atom telegraphs this pattern. If agent uses
       plain pg client, no migration init needed (table create at
       app boot).
+  - id: subdomain-from-dev-server-hook-not-manual-call
+    description: |
+      `apidev` is dev-only (deferred start — the container idles on
+      `zsc noop` until the agent starts the dev server), so its
+      subdomain can only come from zcp's own auto-enable, fired after a
+      live listener exists (docs/spec-workflows.md §8 O3 PA-1's second
+      hook, after `zerops_dev_server action=start`) — never from the
+      import flag (no listener yet at import time) and never from the
+      agent calling `zerops_subdomain` itself. This is the row that
+      would have caught the escaped 2026-09-13 mutation batch finding
+      (docs/spec-scenarios.md §9.4): every other cell got its subdomain
+      from the import flag, so none of them depended on the deploy
+      handler's auto-enable the way this one does.
 ---
 
 Mám rozjet Node.js API s Postgres databází, klasická REST, zatím jen pro vývoj — chci to mít na Zerops abych mohl iterovat na kódu. Žádná stage, žádná produkce, žádné existující repo. Použij project `{{projectId}}`. Službu s API pojmenuj `apidev`.
