@@ -64,7 +64,7 @@ fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
 # zcli inside the service container is not logged in (matrix-2: "unauthenticated
 # user"); ops.DeploySSH logs in the same way before every push.
 ssh appdev "zcli login -- '${ZCP_API_KEY}' >/dev/null"
-ssh appdev "cd /var/www && zcli push --service-id ${APPDEV_ID} --no-git"
+ssh appdev "cd /var/www && zcli push --service-id ${APPDEV_ID} --setup dev --no-git"
 
 # Poll the project's DIRECT process list (lag-free) for the newest
 # stack.build process against appdev to land in FAILED. 10-minute cap.
