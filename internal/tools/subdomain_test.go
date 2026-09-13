@@ -735,3 +735,73 @@ func TestSubdomainTool_Enable_StandardPairStageHalf_StillProbes(t *testing.T) {
 		t.Errorf("standard-pair stage half must still probe and warn on persistent 502 (stage runs run.start, not zsc-noop); got %v", sr.Warnings)
 	}
 }
+
+// TestSubdomainTool_EnableDisable_RecordsIntent_Table pins E9's explicit-tool
+// half: zerops_subdomain is the user's explicit voice — enable records
+// Intent=subdomain (and stamps SubdomainEnabledByZcpAt if this is the first
+// record, so a later platform-observed "off" reads as PA-2 "user switched it
+// off" rather than "never touched"), disable records Intent=none.
+func TestSubdomainTool_EnableDisable_RecordsIntent_Table(t *testing.T) {
+	tests := []struct {
+		name        string
+		action      string
+		subdomainOn bool
+		wantIntent  topology.PublicAccessIntent
+	}{
+		{name: "enable", action: "enable", subdomainOn: false, wantIntent: topology.PublicAccessSubdomain},
+		{name: "disable", action: "disable", subdomainOn: true, wantIntent: topology.PublicAccessNone},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+				Hostname:         "app",
+				Mode:             topology.PlanModeDev,
+				BootstrapSession: "sess1",
+				BootstrappedAt:   "2026-04-22",
+			}); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{
+					{ID: "svc-1", Name: "app", SubdomainAccess: tc.subdomainOn,
+						Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}}},
+				}).
+				WithService(&platform.ServiceStack{
+					ID: "svc-1", Name: "app", SubdomainAccess: tc.subdomainOn,
+					Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}},
+				}).
+				WithProject(&platform.Project{
+					ID: "proj-1", Name: "myproject", Status: statusActive,
+					SubdomainHost: "abc1.prg1.zerops.app",
+				}).
+				WithProcess(&platform.Process{
+					ID:     "proc-subdomain-" + tc.action + "-svc-1",
+					Status: statusFinished,
+				})
+
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterSubdomain(srv, mock, okHTTP, "proj-1", dir)
+
+			result := callTool(t, srv, "zerops_subdomain", map[string]any{
+				"serviceHostname": "app", "action": tc.action,
+			})
+			if result.IsError {
+				t.Fatalf("unexpected error: %s", getTextContent(t, result))
+			}
+
+			meta, err := workflow.FindServiceMeta(dir, "app")
+			if err != nil {
+				t.Fatalf("FindServiceMeta: %v", err)
+			}
+			rec := meta.PublicAccessFor("app")
+			if rec.Intent != tc.wantIntent {
+				t.Errorf("Intent = %q, want %q", rec.Intent, tc.wantIntent)
+			}
+			if tc.action == "enable" && rec.SubdomainEnabledByZcpAt == "" {
+				t.Error("SubdomainEnabledByZcpAt: want non-empty stamp after explicit enable")
+			}
+		})
+	}
+}
