@@ -143,6 +143,18 @@ func classifiedFailureState(
 		if failed.FailedAt.IsZero() {
 			shape = topology.RecoveryStuckBuilding
 		}
+	case topology.FailureClassStart,
+		topology.FailureClassVerify,
+		topology.FailureClassNetwork,
+		topology.FailureClassConfig,
+		topology.FailureClassCredential,
+		topology.FailureClassOther:
+		// LatestFailedAppVersionContext only ever classifies via the
+		// build/prepare/init phases reachable from an appVersion status
+		// (FailurePhaseFromStatus); prepare/init both map to
+		// FailureClassStart. Every non-build class here collapses to
+		// failed-init (the shape's default) — build is the only class
+		// this classifier path produces that needs its own shape.
 	}
 	return RecoveryState{
 		Shape:        shape,
