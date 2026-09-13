@@ -1,0 +1,14 @@
+# Single dev-only Node.js runtime, deployed and mounted, subdomain on.
+# Used by recover-build-failed (D2): the preseed script breaks the mounted
+# source (an unresolvable dependency) and triggers a self-deploy over SSH
+# from inside appdev BEFORE the agent is spawned, so seed.expect can assert
+# the resulting FAILED build while the earlier appVersion keeps serving.
+
+services:
+  - hostname: appdev
+    type: nodejs@22
+    zeropsSetup: dev
+    buildFromGit: https://github.com/zerops-recipe-apps/nodejs-hello-world-app
+    enableSubdomainAccess: true
+    verticalAutoscaling:
+      minRam: 0.5

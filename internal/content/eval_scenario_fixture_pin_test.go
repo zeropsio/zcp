@@ -28,6 +28,7 @@ var legacyUnpinned = map[string]bool{
 	"eval/behavioral/scenarios/fixtures/nodejs-standard-deployed.yaml":                true,
 	"eval/behavioral/scenarios/fixtures/nodejs-prod-failed-no-db.yaml":                true,
 	"eval/behavioral/scenarios/fixtures/standard-pair-no-subdomain-worker-ready.yaml": true,
+	"eval/behavioral/scenarios/fixtures/nodejs-dev-deployed-mounted.yaml":             true,
 }
 
 // fixtureService is the minimal shape TestEvalScenarioFixtures_BuildFromGitPinned
