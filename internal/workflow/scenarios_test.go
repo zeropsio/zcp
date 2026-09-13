@@ -1098,7 +1098,15 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		// Develop-active deployed iterations across modes/close-modes/triggers.
 		{"develop-active/auto/dev/container", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvContainer,
-			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true, Status: "READY_TO_DEPLOY"}},
+			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true, Status: "READY_TO_DEPLOY", DeployHistory: "none"}},
+		}},
+		// R3 (spec-workflows.md §8): a READY_TO_DEPLOY/FAILED service that
+		// already holds failed deploy history — reachability pin for
+		// develop-failed-build-recover, the non-destructive sibling of
+		// develop-ready-to-deploy (mutually exclusive per deployHistory).
+		{"develop-active/failed-build-recover", StateEnvelope{
+			Phase: PhaseDevelopActive, Environment: EnvContainer,
+			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true, Status: "FAILED", DeployHistory: "failed"}},
 		}},
 		{"develop-active/auto/simple/container", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvContainer,
@@ -1364,6 +1372,7 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"develop-close-mode-auto-deploy-local",
 		"develop-close-mode-auto-workflow-simple",
 		"develop-ready-to-deploy",
+		"develop-failed-build-recover",
 		"develop-record-external-deploy",
 		"develop-build-observe",
 		"develop-close-mode-auto",
