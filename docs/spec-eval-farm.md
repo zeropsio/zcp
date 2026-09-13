@@ -668,8 +668,13 @@ gating row for an individual scenario once the baseline shows it is stable
 spec supports; the observed route is coverage data (§4.3), and a correct
 outcome reached by an unexpected route is never a failure.
 
-**FM-58.** The runner injects `never: [zerops_import{override=true}]` into every
-scenario's decision rows before evaluation; a scenario file need not repeat it.
+**FM-58.** The runner injects `never: [zerops_import{override=true}]` into the
+decision rows of every scenario that declares decision rows (`never` or `allow`)
+before evaluation; a scenario file need not repeat it. spec-scenarios.md §9.2
+rule 6 makes every core cell declare at least one, so every cell carries the
+default; a scenario with no decision rows at all (offline harness fixtures)
+gets none, because without a captured MCP stream the injected row could only
+grade `blocked`.
 A cell lifts an injected default only with `allow: {call, reason}`; `allow` on a
 shape the file's own `never` also names is a `validate()` error, and `allow`
 without `reason` is a `validate()` error. `TestScenarioValidate_NeverAndAllowSameShape_Rejected`.

@@ -592,12 +592,16 @@ prepared test must never be graded as an agent or zcp failure.
 
 `status` is the definition of *runnable*: `gate` = the scenario file exists,
 carries `mode: required`, and every oracle family the row names is a field the
-runner evaluates today; `pending: <family>` = the row waits on that oracle family
-(or the scenario file) and is NOT in the gate set. `wants: <family>` on a `gate`
-row names an oracle the row must adopt as soon as the family exists.
-`TestEvalMatrix_PendingOrWantsFamily_NotYetARunnerField` fails the moment a `pending`/`wants` family
-becomes a runner field, so a marker cannot rot: the row is then promoted or the
-table is wrong. Oracle families: `expectedServices liveness subdomainProbe
+runner evaluates today; `pending: <family>` = the runner does not evaluate that
+family yet, the row is NOT in the gate set; `promote: <family>` = the runner
+evaluates the family but the scenario does not carry it yet (or the file does
+not exist), NOT in the gate set; `gate · promote: <family>` = in the gate set
+with what it has, and must adopt the named family. `pending: scenario` /
+`pending: local mode in farm` name a missing scenario, not a family. Two tests
+keep the markers honest: `TestEvalMatrix_PendingFamily_NotYetARunnerField`
+fails when a `pending` family becomes a runner field (flip it to `promote`), and
+`TestEvalMatrix_PromoteFamily_ExistsAndScenarioLacksIt` fails when a `promote`
+family is not a runner field or the scenario already carries it (flip to `gate`). Oracle families: `expectedServices liveness subdomainProbe
 nodePostgresRecord unchanged noFailedProcesses never askWhen launchShape
 artifactPromotion noFabricatedSecret` (today) · `seedExpect internalLiveness
 containerCheck meta schemaValid toolArg toolResult mustOffer allow` (added by the
@@ -611,45 +615,45 @@ Legend: ↑ existing scenario to promote · ✚ scenario to write.
 |---|---|---|---|---|---|
 | A1 | `api-node-postgres-classic-dev` | brand-new · classic · dev-only · node · db | small API with one table | expectedServices liveness nodePostgresRecord never | gate |
 | A2 | `classic-static-nginx-simple` | brand-new · classic · simple · static · none | public landing page | expectedServices subdomainProbe never | gate |
-| A3 ↑ | `greenfield-fullstack-multi-runtime` | brand-new · classic · standard-pair · node+static · db+cache | API + SPA dashboard | expectedServices liveness containerCheck never | pending: containerCheck |
+| A3 ↑ | `greenfield-fullstack-multi-runtime` | brand-new · classic · standard-pair · node+static · db+cache | API + SPA dashboard | expectedServices liveness containerCheck never | promote: containerCheck |
 | A4 ↑ | `classic-php-mariadb-standard` | brand-new · classic · standard-pair · php (implicit-webserver) · mariadb | | expectedServices liveness never | pending: scenario (add `verification`) |
-| A5 ↑ | `recipe-nestjs-minimal-standard` | brand-new · recipe · standard-pair · node · db | NestJS API | expectedServices liveness mustOffer never | gate · wants: mustOffer |
-| A5b ✚ | `recipe-nonviable-falls-to-classic` | brand-new · recipe named, non-viable | | mustOffer(classic) never | pending: mustOffer |
+| A5 ↑ | `recipe-nestjs-minimal-standard` | brand-new · recipe · standard-pair · node · db | NestJS API | expectedServices liveness mustOffer never | gate · promote: mustOffer |
+| A5b ✚ | `recipe-nonviable-falls-to-classic` | brand-new · recipe named, non-viable | | mustOffer(classic) never | promote: mustOffer |
 | A5c | `greenfield-node-postgres-dev-stage` | brand-new · recipe · standard-pair · node · db | dashboard with records | expectedServices liveness nodePostgresRecord never | gate |
-| A6 ↑ | `recipe-laravel-showcase-fullstack` | brand-new · recipe · standard-pair · php · db+cache+storage+search | | expectedServices liveness containerCheck never | pending: containerCheck |
-| A7 ↑ | `recipe-first-deploy-race-adopt` | building · adopt · standard-pair | user starts while first build runs | expectedServices toolArg(≤1 import) never | pending: toolArg |
-| A8 | `adopt-existing-standard-pair` | unmanaged · adopt · standard-pair · node · db | connect to what I have | expectedServices unchanged meta never | gate · wants: meta |
+| A6 ↑ | `recipe-laravel-showcase-fullstack` | brand-new · recipe · standard-pair · php · db+cache+storage+search | | expectedServices liveness containerCheck never | promote: containerCheck |
+| A7 ↑ | `recipe-first-deploy-race-adopt` | building · adopt · standard-pair | user starts while first build runs | expectedServices toolArg(≤1 import) never | promote: toolArg |
+| A8 | `adopt-existing-standard-pair` | unmanaged · adopt · standard-pair · node · db | connect to what I have | expectedServices unchanged meta never | gate · promote: meta |
 | A9 ✚ | `managed-only-add-runtime` | managed-only · classic · dev-only | I have a DB, add an app | expectedServices unchanged nodePostgresRecord never | pending: scenario |
-| A10 ↑ | `existing-simple-mode-node-add-endpoint` | unmanaged simple svc · adopt · simple | add an endpoint | liveness meta never | pending: meta |
-| A11 ✚ | `bootstrap-managed-only-target` | brand-new · classic · plan = db only | just a Postgres for now | expectedServices meta never | pending: meta |
+| A10 ↑ | `existing-simple-mode-node-add-endpoint` | unmanaged simple svc · adopt · simple | add an endpoint | liveness meta never | promote: meta |
+| A11 ✚ | `bootstrap-managed-only-target` | brand-new · classic · plan = db only | just a Postgres for now | expectedServices meta never | promote: meta |
 
 #### B. Developing (seed: deployed fixture)
 
 | cell | scenario id | variation | task | oracle families | status |
 |---|---|---|---|---|---|
-| B1 | `develop-add-managed-dep-to-existing` | pair + add cache | | expectedServices unchanged containerCheck never(deploy on managed) | gate · wants: containerCheck |
-| B3 ✚ | `env-service-scope-pair` | standard-pair, service env feature flag | turn FEATURE_X on for dev and stage | containerCheck toolResult(restartedServices) never | pending: containerCheck |
-| B4 ✚ | `env-yaml-baked-dev-only` | dev-only, key in `run.envVariables` | change the baked value | containerCheck never(manage reload as fix) | pending: containerCheck |
-| B5 ✚ | `env-project-scope-shared` | pair, project var + cross-ref | one secret shared by dev and stage | containerCheck noFabricatedSecret toolArg never | pending: containerCheck |
-| B13 ✚ | `env-build-time-simple` | simple, `build.envVariables` | the build needs a token | containerCheck never | pending: containerCheck |
-| B6 ✚ | `mount-edit-deploy` (absorbs `existing-standard-appdev-only-reminders`, `develop-edit-path-vs-deploy-source`) | pair, SSHFS; usersim triggers `start develop` mid-run | edit in the mount and ship dev only | liveness unchanged toolArg(workingDir ∈ /var/www/appdev; Bash ln -s never) containerCheck mustOffer(close-vs-continue) never | pending: toolArg |
+| B1 | `develop-add-managed-dep-to-existing` | pair + add cache | | expectedServices unchanged containerCheck never(deploy on managed) | gate · promote: containerCheck |
+| B3 ✚ | `env-service-scope-pair` | standard-pair, service env feature flag | turn FEATURE_X on for dev and stage | containerCheck toolResult(restartedServices) never | promote: containerCheck |
+| B4 ✚ | `env-yaml-baked-dev-only` | dev-only, key in `run.envVariables` | change the baked value | containerCheck never(manage reload as fix) | promote: containerCheck |
+| B5 ✚ | `env-project-scope-shared` | pair, project var + cross-ref | one secret shared by dev and stage | containerCheck noFabricatedSecret toolArg never | promote: containerCheck |
+| B13 ✚ | `env-build-time-simple` | simple, `build.envVariables` | the build needs a token | containerCheck never | promote: containerCheck |
+| B6 ✚ | `mount-edit-deploy` (absorbs `existing-standard-appdev-only-reminders`, `develop-edit-path-vs-deploy-source`) | pair, SSHFS; usersim triggers `start develop` mid-run | edit in the mount and ship dev only | liveness unchanged toolArg(workingDir ∈ /var/www/appdev; Bash ln -s never) containerCheck mustOffer(close-vs-continue) never | promote: toolArg |
 | B6a | `existing-standard-appdev-only-reminders` | pair, dev-only work | | liveness unchanged never | gate (until B6 lands, then absorbed) |
-| B7 ✚ | `mount-stale-recovery` | pair, preseed breaks the mount after deploy | continue editing | containerCheck liveness never | pending: containerCheck |
-| B8 | `cross-deploy-stage-promote-from-dev` | pair, promote | | artifactPromotion mustOffer(no-rebuild) never | gate · wants: mustOffer |
-| B9 ✚ | `internal-only-worker` (absorbs D7 idle-worker verify) | pair + worker, no subdomain anywhere | add a queue worker | internalLiveness expectedServices never(subdomain enable) | pending: internalLiveness |
-| B10 ↑ | `develop-loop-after-bootstrap` | strategy unset → review gate | | meta expectedServices never | pending: meta |
-| B11 ✚ | `git-push-configured-manual-close` | pair, git-push configured, close-mode manual | don't push for me | meta unchanged toolArg(no deploy after edits) never | pending: meta |
-| B12 ✚ | `develop-static-redeploy` | simple, static | change the page | liveness toolArg(no post-deploy start) never | pending: toolArg |
+| B7 ✚ | `mount-stale-recovery` | pair, preseed breaks the mount after deploy | continue editing | containerCheck liveness never | promote: containerCheck |
+| B8 | `cross-deploy-stage-promote-from-dev` | pair, promote | | artifactPromotion mustOffer(no-rebuild) never | gate · promote: mustOffer |
+| B9 ✚ | `internal-only-worker` (absorbs D7 idle-worker verify) | pair + worker, no subdomain anywhere | add a queue worker | internalLiveness expectedServices never(subdomain enable) | promote: internalLiveness |
+| B10 ↑ | `develop-loop-after-bootstrap` | strategy unset → review gate | | meta expectedServices never | promote: meta |
+| B11 ✚ | `git-push-configured-manual-close` | pair, git-push configured, close-mode manual | don't push for me | meta unchanged toolArg(no deploy after edits) never | promote: meta |
+| B12 ✚ | `develop-static-redeploy` | simple, static | change the page | liveness toolArg(no post-deploy start) never | promote: toolArg |
 
 #### C. Shipping (seed: deployed)
 
 | cell | scenario id | variation | oracle families | status |
 |---|---|---|---|---|
-| C1 ↑ | `git-push-setup-then-actions` (+ phase 2 absorbs `launch-with-existing-cicd`) | git-push + actions; usersim supplies the prepared PAT | meta containerCheck(.github/workflows) toolArg(no non-git-push deploy after setup) askWhen(GIT_TOKEN_MISSING) never | pending: meta |
+| C1 ↑ | `git-push-setup-then-actions` (+ phase 2 absorbs `launch-with-existing-cicd`) | git-push + actions; usersim supplies the prepared PAT | meta containerCheck(.github/workflows) toolArg(no non-git-push deploy after setup) askWhen(GIT_TOKEN_MISSING) never | promote: meta |
 | C2 | `launch-production-from-standard-pair` | new prod project | launchShape noFabricatedSecret never | gate |
-| C3 ↑ | `launch-to-existing-prod-project` | existing prod project token | launchShape toolResult(TOKEN_SCOPE_MISMATCH once) never | pending: toolResult |
-| C4 ✚ | `webhook-delivery` | dashboard webhook on push | containerCheck(no Actions file) meta(buildIntegration=webhook) never | pending: meta |
-| C5 ↑ | `export-buildfromgit-self-snapshot` | | schemaValid toolResult(secret classes) never | pending: schemaValid |
+| C3 ↑ | `launch-to-existing-prod-project` | existing prod project token | launchShape toolResult(TOKEN_SCOPE_MISMATCH once) never | promote: toolResult |
+| C4 ✚ | `webhook-delivery` | dashboard webhook on push | containerCheck(no Actions file) meta(buildIntegration=webhook) never | promote: meta |
+| C5 ↑ | `export-buildfromgit-self-snapshot` | | schemaValid toolResult(secret classes) never | promote: schemaValid |
 
 #### D. Something went wrong (seed: prepared dev service + `seed.expect`)
 
@@ -658,22 +662,22 @@ no buildFromGit), so the agent has a place to fix source. `allowFailed` explicit
 
 | cell | scenario id | prepared break | oracle families | status |
 |---|---|---|---|---|
-| D1 | `recover-failed-buildfromgit-missing-dep` | build OK, START fails (db env missing) — today the BUILD fails; re-prepare | seedExpect liveness never | gate · wants: seedExpect |
-| D2 ✚ | `recover-build-failed` | build fails (bad dep) | seedExpect toolResult(failureClass) liveness never | pending: seedExpect |
+| D1 | `recover-failed-buildfromgit-missing-dep` | build OK, START fails (db env missing) — today the BUILD fails; re-prepare | seedExpect liveness never | gate · promote: seedExpect |
+| D2 ✚ | `recover-build-failed` | build fails (bad dep) | seedExpect toolResult(failureClass) liveness never | promote: seedExpect |
 | D3 | `launch-failure-build-stuck` | | noFailedProcesses launchShape noFabricatedSecret never | gate |
-| D4 ✚ | `ready-to-deploy-stuck` | runtime imported without startWithoutCode | allow(override, reason: only path) mustOffer(DIAGNOSIS_REQUIRED before override) unchanged | pending: allow |
+| D4 ✚ | `ready-to-deploy-stuck` | runtime imported without startWithoutCode | allow(override, reason: only path) mustOffer(DIAGNOSIS_REQUIRED before override) unchanged | promote: allow |
 | D5 | `resume-after-compaction` (absorbs `resume-status-not-discover`) | | expectedServices unchanged never | gate |
-| D6 ↑ | `discover-adoption-state-resumable-uses-sessionid` | dead-PID bootstrap session | expectedServices toolArg(≤1 import) never | pending: toolArg |
-| D8 ✚ | `bootstrap-import-fails` | bad yaml at provision | toolArg(≤1 import) askWhen never | pending: toolArg |
+| D6 ↑ | `discover-adoption-state-resumable-uses-sessionid` | dead-PID bootstrap session | expectedServices toolArg(≤1 import) never | promote: toolArg |
+| D8 ✚ | `bootstrap-import-fails` | bad yaml at provision | toolArg(≤1 import) askWhen never | promote: toolArg |
 
 #### E. First contact surfaces
 
 | cell | scenario id | | oracle families | status |
 |---|---|---|---|---|
-| E1 ↑ | `onboard-trigger-fresh` | fixed onboard prompt replayed | toolArg(workflow start bootstrap) never | pending: toolArg |
-| E2 ↑ | `onboard-populated` | populated project | toolArg(discover first, no bootstrap) never | pending: toolArg |
-| E3 ↑ | `onboard-trigger-negative` | unrelated ask | toolArg(no workflow start) never | pending: toolArg |
-| E4 ↑ | `onboard-guided-on` | guided marker on | toolArg(bootstrap reached) containerCheck(guided block) never | pending: containerCheck |
+| E1 ↑ | `onboard-trigger-fresh` | fixed onboard prompt replayed | toolArg(workflow start bootstrap) never | promote: toolArg |
+| E2 ↑ | `onboard-populated` | populated project | toolArg(discover first, no bootstrap) never | promote: toolArg |
+| E3 ↑ | `onboard-trigger-negative` | unrelated ask | toolArg(no workflow start) never | promote: toolArg |
+| E4 ↑ | `onboard-guided-on` | guided marker on | toolArg(bootstrap reached) containerCheck(guided block) never | promote: containerCheck |
 
 #### F. Named gaps — a cell, no gate entry until the feature lands
 

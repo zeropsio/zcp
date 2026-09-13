@@ -55,7 +55,7 @@ type matrixRow struct {
 	statusRaw     string
 	families      []string // family tokens named in the row, qualifiers stripped
 	isGate        bool
-	wantsFamily   string // non-empty only for "gate · wants: <family>"
+	promoteFamily string // non-empty for "promote: <family>" and "gate · promote: <family>"
 	isPending     bool
 	pendingFamily string // non-empty only for "pending: <family>" (not "pending: scenario"/"pending: local mode in farm")
 }
@@ -116,22 +116,21 @@ func tokenizeFamilies(cell string) []string {
 	return tokens
 }
 
-// parseRowStatus fills in isGate/wantsFamily/isPending/pendingFamily from the
-// row's raw status cell. Grammar (docs/spec-scenarios.md §9.3): `gate`,
-// optionally followed by `· wants: <family>`; or `pending: <family>`; or
-// `pending: scenario` / `pending: local mode in farm` (no family).
+// parseRowStatus fills in isGate/promoteFamily/isPending/pendingFamily from
+// the row's raw status cell. Grammar (docs/spec-scenarios.md §9.3): `gate`,
+// optionally followed by `· promote: <family>`; or `promote: <family>`; or
+// `pending: <family>`; or `pending: scenario` / `pending: local mode in farm`
+// (no family).
 func parseRowStatus(row *matrixRow) {
 	s := row.statusRaw
 	switch {
 	case strings.HasPrefix(s, "gate"):
 		row.isGate = true
-		if _, after, ok := strings.Cut(s, "wants:"); ok {
-			rest := strings.TrimSpace(after)
-			if pi := strings.IndexAny(rest, " ("); pi >= 0 {
-				rest = rest[:pi]
-			}
-			row.wantsFamily = strings.TrimSpace(rest)
+		if _, after, ok := strings.Cut(s, "promote:"); ok {
+			row.promoteFamily = firstToken(after)
 		}
+	case strings.HasPrefix(s, "promote:"):
+		row.promoteFamily = firstToken(strings.TrimPrefix(s, "promote:"))
 	case strings.HasPrefix(s, "pending:"):
 		row.isPending = true
 		rest := strings.TrimSpace(strings.TrimPrefix(s, "pending:"))
@@ -142,6 +141,15 @@ func parseRowStatus(row *matrixRow) {
 			row.pendingFamily = rest
 		}
 	}
+}
+
+// firstToken returns the first whitespace/paren-delimited token of s.
+func firstToken(s string) string {
+	rest := strings.TrimSpace(s)
+	if pi := strings.IndexAny(rest, " ("); pi >= 0 {
+		rest = rest[:pi]
+	}
+	return strings.TrimSpace(rest)
 }
 
 // parseMatrixRows reads docs/spec-scenarios.md, isolates §9.3 ("### 9.3 The
@@ -301,16 +309,16 @@ func TestEvalMatrix_GateSetMatchesSpec_ExactIDs(t *testing.T) {
 		missingFromFile, extraInFile)
 }
 
-// requiredFamilies returns the row's family tokens minus any `wants:`
-// family — a `wants:` family is an oracle the row must adopt once it
-// exists, not one the scenario carries today.
+// requiredFamilies returns the row's family tokens minus any `promote:`
+// family — a `promote:` family is an oracle the row must adopt, not one
+// the scenario carries today.
 func (r matrixRow) requiredFamilies() []string {
-	if r.wantsFamily == "" {
+	if r.promoteFamily == "" {
 		return r.families
 	}
 	out := make([]string, 0, len(r.families))
 	for _, f := range r.families {
-		if f != r.wantsFamily {
+		if f != r.promoteFamily {
 			out = append(out, f)
 		}
 	}
@@ -425,20 +433,10 @@ func reflectionExistingFamilies() map[string]bool {
 // type itself has an `Expect` field. Scenario.Seed is currently a bare
 // SeedMode string alias, so this is false — derived, not assumed.
 func seedExpectExists() bool {
-	st := reflect.TypeFor[eval.Scenario]()
-	f, ok := st.FieldByName("Seed")
-	if !ok {
-		return false
-	}
-	name := strings.Split(f.Tag.Get("yaml"), ",")[0]
-	if name != "seed" {
-		return false
-	}
-	if f.Type.Kind() != reflect.Struct {
-		return false
-	}
-	_, hasExpect := f.Type.FieldByName("Expect")
-	return hasExpect
+	// The runner exposes the parsed `seed.expect` block as Scenario.SeedExpect
+	// (the manifest's `seed:` scalar/block duality is resolved at parse time).
+	_, ok := reflect.TypeFor[eval.Scenario]().FieldByName("SeedExpect")
+	return ok
 }
 
 // familyExistsAsRunnerField reports whether family is a family the runner
@@ -450,27 +448,42 @@ func familyExistsAsRunnerField(family string) bool {
 	return reflectionExistingFamilies()[family]
 }
 
-// TestEvalMatrix_PendingOrWantsFamily_NotYetARunnerField proves every
-// `pending: <family>` / `wants: <family>` marker in §9.3 still points at an
-// oracle the runner does NOT evaluate today. The moment a marked family
-// becomes a runner field, this test fails — the row must be promoted (its
-// status/family list updated) or the table corrected; the marker can never
-// silently rot (docs/spec-scenarios.md §9.3).
-func TestEvalMatrix_PendingOrWantsFamily_NotYetARunnerField(t *testing.T) {
+// TestEvalMatrix_PendingFamily_NotYetARunnerField proves every
+// `pending: <family>` marker in §9.3 still points at an oracle the runner does
+// NOT evaluate today. The moment a pending family becomes a runner field, this
+// test fails — the row must move to `promote:` (docs/spec-scenarios.md §9.3).
+func TestEvalMatrix_PendingFamily_NotYetARunnerField(t *testing.T) {
 	repoRoot := evalMatrixRepoRoot(t)
-	rows := parseMatrixRows(t, repoRoot)
+	for _, row := range parseMatrixRows(t, repoRoot) {
+		if row.pendingFamily != "" && familyExistsAsRunnerField(row.pendingFamily) {
+			t.Errorf("row %q (%s): family %q already exists as a runner field — "+
+				"move the row to promote:", row.id, row.statusRaw, row.pendingFamily)
+		}
+	}
+}
 
-	seen := map[string]bool{}
-	for _, row := range rows {
-		for _, family := range []string{row.wantsFamily, row.pendingFamily} {
-			if family == "" || seen[row.id+"/"+family] {
-				continue
-			}
-			seen[row.id+"/"+family] = true
-			if familyExistsAsRunnerField(family) {
-				t.Errorf("row %q (%s): family %q already exists as a runner field — "+
-					"promote the row: its oracle now exists", row.id, row.statusRaw, family)
-			}
+// TestEvalMatrix_PromoteFamily_ExistsAndScenarioLacksIt proves every
+// `promote: <family>` marker names an oracle the runner evaluates today AND
+// one the scenario file does not carry yet (or the file does not exist). Once
+// the scenario adopts it, this test fails — the row must become `gate`
+// (docs/spec-scenarios.md §9.3).
+func TestEvalMatrix_PromoteFamily_ExistsAndScenarioLacksIt(t *testing.T) {
+	repoRoot := evalMatrixRepoRoot(t)
+	for _, row := range parseMatrixRows(t, repoRoot) {
+		if row.promoteFamily == "" {
+			continue
+		}
+		if !familyExistsAsRunnerField(row.promoteFamily) {
+			t.Errorf("row %q (%s): family %q is not a runner field — use pending:", row.id, row.statusRaw, row.promoteFamily)
+			continue
+		}
+		path := filepath.Join(repoRoot, "eval", "behavioral", "scenarios", row.id+".md")
+		sc, err := eval.ParseScenario(path)
+		if err != nil {
+			continue // scenario not written yet — promote: is still truthful
+		}
+		if sc.Verification != nil && familyPresent(sc.Verification, row.promoteFamily) {
+			t.Errorf("row %q (%s): scenario already carries %q — flip the row to gate", row.id, row.statusRaw, row.promoteFamily)
 		}
 	}
 }
