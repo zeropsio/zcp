@@ -426,8 +426,9 @@ To make an already-public service internal-only, call `zerops_subdomain action="
 ### Before verify on dev-mode dynamic runtimes
 
 Dev-mode dynamic runtimes deploy with `start: zsc noop --silent` (a
-no-op keepalive) — nothing is listening yet. `zerops_verify` will return
-`http_root: HTTP 502` and that is NOT a deploy failure. Start the dev
+no-op keepalive) — nothing is listening yet. `zerops_verify` reports
+`http_internal` and `http_public` as `skip` ("start it with
+zerops_dev_server") and that is NOT a deploy failure. Start the dev
 process via `zerops_dev_server action=start` first, then verify.
 
 For simple-mode and standard-mode runtimes the runtime starts on
