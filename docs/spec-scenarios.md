@@ -595,7 +595,7 @@ carries `mode: required`, and every oracle family the row names is a field the
 runner evaluates today; `pending: <family>` = the row waits on that oracle family
 (or the scenario file) and is NOT in the gate set. `wants: <family>` on a `gate`
 row names an oracle the row must adopt as soon as the family exists.
-`TestEvalMatrix_PendingOracleAbsent` fails the moment a `pending`/`wants` family
+`TestEvalMatrix_PendingOrWantsFamily_NotYetARunnerField` fails the moment a `pending`/`wants` family
 becomes a runner field, so a marker cannot rot: the row is then promoted or the
 table is wrong. Oracle families: `expectedServices liveness subdomainProbe
 nodePostgresRecord unchanged noFailedProcesses never askWhen launchShape
