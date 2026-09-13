@@ -241,6 +241,77 @@ func TestSeedBuilding_NoBuildProcess_Errors(t *testing.T) {
 	}
 }
 
+// fakeSeedExpectExecer is a bare in-memory SeedExpectExecer for unit tests —
+// no live SSH connection.
+type fakeSeedExpectExecer struct {
+	calls []string
+	out   []byte
+	err   error
+}
+
+func (f *fakeSeedExpectExecer) ExecSSH(_ context.Context, hostname, command string) ([]byte, error) {
+	f.calls = append(f.calls, hostname+": "+command)
+	return f.out, f.err
+}
+
+// TestSeed_ExpectMismatch_BlocksPreparation pins docs/spec-eval-farm.md
+// §4.5 FM-63: a seed.expect processes entry whose status differs from the
+// project's actual process list is a mismatch, naming the failing entry —
+// never an error (the query itself succeeded; the assertion just didn't
+// hold).
+func TestSeed_ExpectMismatch_BlocksPreparation(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServicesDirect([]platform.ServiceStack{{ID: "svc-api", Name: "api", Status: "ACTIVE"}}).
+		WithProjectProcesses([]platform.Process{
+			{ID: "proc-deploy", ActionName: "stack.deploy", Status: "FINISHED", ServiceStacks: []platform.ServiceStackRef{{Name: "api"}}},
+		})
+	expect := &SeedExpect{
+		Services:  []ExpectedService{{Hostname: "api", Status: []string{"ACTIVE"}}},
+		Processes: []SeedExpectProcess{{Service: "api", Action: "stack.deploy", Status: "FAILED"}},
+	}
+
+	mismatch, err := EvaluateSeedExpect(context.Background(), expect, mock, nil, "proj-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mismatch == "" {
+		t.Fatal("expected a mismatch (process status differs), got none")
+	}
+	if !strings.Contains(mismatch, "api") || !strings.Contains(mismatch, "stack.deploy") {
+		t.Errorf("mismatch should name the failing entry, got: %q", mismatch)
+	}
+}
+
+// TestSeed_ExpectMatch_ProceedsToSpawn pins the success path: every
+// services/processes/probe entry matching produces no mismatch and no
+// error, and the probe actually runs over the injected SeedExpectExecer.
+func TestSeed_ExpectMatch_ProceedsToSpawn(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServicesDirect([]platform.ServiceStack{{ID: "svc-api", Name: "api", Status: "ACTIVE"}}).
+		WithProjectProcesses([]platform.Process{
+			{ID: "proc-deploy", ActionName: "stack.deploy", Status: "FINISHED", ServiceStacks: []platform.ServiceStackRef{{Name: "api"}}},
+		})
+	execer := &fakeSeedExpectExecer{}
+	expect := &SeedExpect{
+		Services:  []ExpectedService{{Hostname: "api", Status: []string{"ACTIVE"}}},
+		Processes: []SeedExpectProcess{{Service: "api", Action: "stack.deploy", Status: "FINISHED"}},
+		Probe:     &SeedExpectProbe{Service: "api", Cmd: "test -f /var/www/zerops.yaml"},
+	}
+
+	mismatch, err := EvaluateSeedExpect(context.Background(), expect, mock, execer, "proj-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mismatch != "" {
+		t.Fatalf("expected no mismatch, got: %q", mismatch)
+	}
+	if len(execer.calls) != 1 {
+		t.Fatalf("expected probe to run exactly once, got %d calls: %v", len(execer.calls), execer.calls)
+	}
+}
+
 func writeTempFixture(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()

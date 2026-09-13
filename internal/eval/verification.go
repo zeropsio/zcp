@@ -41,6 +41,15 @@ type RuntimeInputs struct {
 	TranscriptPath    string
 	UserSimTurns      []UserSimTurn
 	MutatingTools     map[string]bool
+	// WorkDir and ExecSSH feed the O10/O2' container-side oracle stubs
+	// (internalLiveness, containerCheck, meta, schemaValid —
+	// verification_container.go). ExecSSH mirrors
+	// platform.SystemSSHDeployer.ExecSSH's shape as a plain func value so
+	// those evaluators have no platform.Client dependency; nil is valid
+	// when the caller has no SSH capability (the stub bodies this slice
+	// ships never call it).
+	WorkDir string
+	ExecSSH func(ctx context.Context, hostname, command string) ([]byte, error)
 }
 
 // readRuntimeMCPCalls reads every path in mcpStreamPaths via capture.ReadMCPStream
@@ -261,9 +270,45 @@ func generateRequiredChecks(
 	for _, entry := range sc.Verification.ArtifactPromotion {
 		rows = append(rows, evaluateArtifactPromotionRows(ctx, entry, client, projectID, runStart, baseline)...)
 	}
-	if len(sc.Verification.Never) > 0 {
+	// FM-58: a scenario that already participates in the never/allow
+	// vocabulary gets the runner-injected default folded into its
+	// effective list (minus anything `allow` lifts) instead of its raw
+	// `never:` list. Scoped to scenarios that declare `never`/`allow` at
+	// all — universal injection into every scenario regardless (the
+	// broadest reading of "a scenario file need not repeat it") is left to
+	// a later slice, once the offline/CLI harnesses can produce a real
+	// captured MCP stream for a scripted scenario and the manifest's
+	// pending-family rows are promoted (docs/spec-scenarios.md §9.3);
+	// see this slice's report for the full rationale.
+	if len(sc.Verification.Never) > 0 || len(sc.Verification.Allow) > 0 {
+		if effectiveNever := EffectiveNeverList(sc); len(effectiveNever) > 0 {
+			calls, present := readRuntimeMCPCalls(runtime.MCPStreamPaths)
+			rows = append(rows, EvaluateNeverRows(effectiveNever, calls, present, observation.observedAt)...)
+		}
+	}
+	if sc.Verification.InternalLiveness != nil {
+		rows = append(rows, evaluateInternalLivenessRows(ctx, sc.Verification.InternalLiveness, runtime.WorkDir, runtime.ExecSSH, httpDoer, observation.observedAt)...)
+	}
+	if len(sc.Verification.ContainerCheck) > 0 {
+		rows = append(rows, evaluateContainerCheckRows(ctx, sc.Verification.ContainerCheck, runtime.WorkDir, runtime.ExecSSH, httpDoer, observation.observedAt)...)
+	}
+	if len(sc.Verification.Meta) > 0 {
+		rows = append(rows, evaluateMetaRows(ctx, sc.Verification.Meta, runtime.WorkDir, runtime.ExecSSH, httpDoer, observation.observedAt)...)
+	}
+	if sc.Verification.SchemaValid != nil {
+		rows = append(rows, evaluateSchemaValidRow(ctx, sc.Verification.SchemaValid, runtime.WorkDir, runtime.ExecSSH, httpDoer, observation.observedAt)...)
+	}
+	if len(sc.Verification.ToolArg) > 0 || len(sc.Verification.ToolResult) > 0 || len(sc.Verification.MustOffer) > 0 {
 		calls, present := readRuntimeMCPCalls(runtime.MCPStreamPaths)
-		rows = append(rows, EvaluateNeverRows(sc.Verification.Never, calls, present, observation.observedAt)...)
+		if len(sc.Verification.ToolArg) > 0 {
+			rows = append(rows, evaluateToolArgRows(sc.Verification.ToolArg, runtime.TranscriptPath, calls, present, observation.observedAt)...)
+		}
+		if len(sc.Verification.ToolResult) > 0 {
+			rows = append(rows, evaluateToolResultRows(sc.Verification.ToolResult, runtime.TranscriptPath, calls, present, observation.observedAt)...)
+		}
+		if len(sc.Verification.MustOffer) > 0 {
+			rows = append(rows, evaluateMustOfferRows(sc.Verification.MustOffer, runtime.TranscriptPath, calls, present, observation.observedAt)...)
+		}
 	}
 	return rows
 }

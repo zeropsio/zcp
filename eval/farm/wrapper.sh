@@ -786,6 +786,7 @@ finish_and_upload() {
 	finish_running=1
 
 	execution=""
+	preparation=""
 	task=""
 	task_end=""
 
@@ -805,6 +806,7 @@ finish_and_upload() {
 			task_end="unknown"
 		elif [ -f "$RUNDIR/child.log" ]; then
 			execution=$(grep '^Execution:' "$RUNDIR/child.log" | tail -n1 | sed -e 's/^Execution:[[:space:]]*//')
+			preparation=$(grep '^Preparation:' "$RUNDIR/child.log" | tail -n1 | sed -e 's/^Preparation:[[:space:]]*//')
 			task=$(grep '^Task:' "$RUNDIR/child.log" | tail -n1 | sed -e 's/^Task:[[:space:]]*//')
 			task_end=$(grep '^Task-end evidence:' "$RUNDIR/child.log" | tail -n1 | sed -e 's/^Task-end evidence:[[:space:]]*//')
 		fi
@@ -813,6 +815,11 @@ finish_and_upload() {
 			task="unknown"
 			task_end="unknown"
 		fi
+	fi
+	# FM-63: an older evaluator predating the Preparation: line, or any
+	# non-child.log branch above, defaults to "ok" — never absent.
+	if [ -z "$preparation" ]; then
+		preparation="ok"
 	fi
 
 	cleanup_ok=1
@@ -860,10 +867,11 @@ finish_and_upload() {
 	credential_mode="oauth-token"
 
 	done_json="$RUNDIR/done.json"
-	printf '{"runId":"%s","scenarioId":"%s","runnerDimensions":{"execution":"%s","task":"%s","taskEnd":"%s"},"parts":{"results":{"treeDigest":"%s"},"capture":{"treeDigest":"%s"}},"evaluatorSha256":"%s","candidateSha256":"%s","credentialMode":"%s","redacted":%s}' \
+	printf '{"runId":"%s","scenarioId":"%s","runnerDimensions":{"execution":"%s","preparation":"%s","task":"%s","taskEnd":"%s"},"parts":{"results":{"treeDigest":"%s"},"capture":{"treeDigest":"%s"}},"evaluatorSha256":"%s","candidateSha256":"%s","credentialMode":"%s","redacted":%s}' \
 		"$(json_escape "$ZCP_FARM_RUN")" \
 		"$(json_escape "$ZCP_FARM_SCENARIO")" \
 		"$(json_escape "$execution")" \
+		"$(json_escape "$preparation")" \
 		"$(json_escape "$task")" \
 		"$(json_escape "$task_end")" \
 		"$results_digest" "$capture_digest" \

@@ -117,6 +117,49 @@ func jsonScalarText(v any) string {
 	}
 }
 
+// DefaultNeverOverride is the runner-injected default `never` entry every
+// scenario's decision rows carry unless lifted by a matching `allow` entry
+// (docs/spec-eval-farm.md §4.1/§4.2 FM-58).
+const DefaultNeverOverride = "zerops_import{override=true}"
+
+// EffectiveNeverList returns the never list generateRequiredChecks
+// evaluates (FM-58): DefaultNeverOverride plus the scenario's own
+// verification.never, de-duplicated by normalised call-shape string, minus
+// any shape lifted by a verification.allow entry. sc.Verification.Allow/
+// Never entries are already validated at parse time (scenario.go's
+// validate()); an expression this function can't parse is skipped rather
+// than causing a panic — evaluateNeverRow reports it blocked downstream
+// instead.
+func EffectiveNeverList(sc *Scenario) []string {
+	if sc == nil || sc.Verification == nil {
+		return nil
+	}
+	allowed := make(map[string]bool, len(sc.Verification.Allow))
+	for _, a := range sc.Verification.Allow {
+		if shape, err := ParseCallShape(a.Call); err == nil {
+			allowed[shape.String()] = true
+		}
+	}
+	seen := make(map[string]bool)
+	var out []string
+	add := func(expr string) {
+		key := expr
+		if shape, err := ParseCallShape(expr); err == nil {
+			key = shape.String()
+		}
+		if seen[key] || allowed[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, expr)
+	}
+	add(DefaultNeverOverride)
+	for _, expr := range sc.Verification.Never {
+		add(expr)
+	}
+	return out
+}
+
 // decisionRowID builds the stable row id for a `never` decision row
 // (docs/spec-eval-farm.md §4.1 FM-30).
 func decisionRowID(expr string) string {

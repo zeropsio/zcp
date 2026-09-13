@@ -229,6 +229,25 @@ enforces only what the harness reads, never an invented field):
 the corpus is not migrated: a scenario opts into `required` only when it is
 touched and its assertions are known to be independently provable.
 
+The manifest-v2 slices (docs/spec-eval-farm.md §4) add further optional,
+parsed-not-universal keys, none mass-added to the corpus:
+
+| Key | Parsed by |
+|---|---|
+| `seed` (block form: `mode, fixture, ref, expect`) | `Scenario.Seed`/`Fixture`/`SeedExpect`/`SeedRef` (`internal/eval/scenario.go`'s `SeedSpec`) — the legacy bare-scalar `seed: <mode>` form still decodes, unchanged |
+| `verification.allow` | lifts a runner-injected default `never` entry (FM-58) — not a row family itself |
+| `verification.internalLiveness` | O2' oracle stub (FM-61) |
+| `verification.containerCheck` | O10 oracle stub (FM-61) |
+| `verification.meta` | O11 oracle stub (FM-61) |
+| `verification.schemaValid` | O12 oracle stub (FM-61) |
+| `verification.toolArg` | decision rows over `transcript.jsonl` (FM-59/FM-60) |
+| `verification.toolResult` | decision rows over captured MCP results (FM-59) |
+| `verification.mustOffer` | decision rows over route-menu / next-step text (FM-59) |
+
+Every row above still counts toward required mode's "≥1 executable check"
+(scenario.go's `validate()`) even though its S2 body is a `not-run` stub —
+S3/S4 fill in the actual grading.
+
 **Deferred — FUTURE fields, none parsed today:** the audit recommends a richer
 curation manifest (`canonical` / `overlaps` / `last-reviewed`) to make de-dup
 toward the founding 12-15 matrix mechanical and to give the drift lint an

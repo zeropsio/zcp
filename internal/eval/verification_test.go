@@ -890,3 +890,46 @@ func TestVerification_AskWhen_AdvisoryNeverGates(t *testing.T) {
 		t.Fatalf("expected one fail advisory finding for the un-asked error, got %+v", findings)
 	}
 }
+
+// TestGenerateRequiredChecks_NewFamilies_EmitNotRunStubs pins that a
+// scenario declaring one entry of each of the seven new oracle-family
+// blocks (internalLiveness, containerCheck, meta, schemaValid, toolArg,
+// toolResult, mustOffer — docs/spec-eval-farm.md §4.1 FM-61/FM-59/FM-60)
+// yields exactly one not-run row per family, with the family name in
+// Check. Bodies land in S3/S4; this slice only declares the rows.
+func TestGenerateRequiredChecks_NewFamilies_EmitNotRunStubs(t *testing.T) {
+	t.Parallel()
+	sc := &Scenario{Verification: &VerificationConfig{
+		InternalLiveness: &InternalLivenessProbe{Service: "worker", Port: 8080, Path: "/healthz", Marker: "ok"},
+		ContainerCheck:   []ContainerCheckEntry{{Service: "appdev", Cmd: "printenv FEATURE_X", Expect: "on"}},
+		Meta:             []MetaCheckEntry{{Hostname: "appdev", Field: "closeDeployMode", Expect: "manual"}},
+		SchemaValid:      &SchemaValidCheck{Artifact: "export.yaml"},
+		ToolArg:          []ToolArgEntry{{Always: "zerops_deploy{workingDir∈/var/www/appdev}"}},
+		ToolResult:       []ToolResultEntry{{Tool: "zerops_env", Contains: "restartedServices"}},
+		MustOffer:        []string{"recipe:nestjs-minimal"},
+	}}
+	client := platform.NewMock()
+	observation := collectPlatformObservation(context.Background(), client, "p1", false, false)
+
+	rows := generateRequiredChecks(context.Background(), sc, observation, nil, time.Time{}, "p1", client, true, nil, RuntimeInputs{})
+
+	wantFamilies := []string{"internalLiveness", "containerCheck", "meta", "schemaValid", "toolArg", "toolResult", "mustOffer"}
+	gotByFamily := map[string]int{}
+	for _, row := range rows {
+		gotByFamily[row.Check]++
+		if row.Check == "internalLiveness" || row.Check == "containerCheck" || row.Check == "meta" ||
+			row.Check == "schemaValid" || row.Check == "toolArg" || row.Check == "toolResult" || row.Check == "mustOffer" {
+			if row.Result != CheckNotRun {
+				t.Errorf("row %+v: Result = %q, want not-run (oracle body lands in S3/S4)", row, row.Result)
+			}
+		}
+	}
+	if len(rows) != len(wantFamilies) {
+		t.Fatalf("rows = %+v, want exactly %d rows (one per family)", rows, len(wantFamilies))
+	}
+	for _, family := range wantFamilies {
+		if gotByFamily[family] != 1 {
+			t.Errorf("family %q: got %d rows, want 1", family, gotByFamily[family])
+		}
+	}
+}

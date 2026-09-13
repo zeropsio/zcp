@@ -41,6 +41,24 @@ type Scenario struct {
 	Prompt        string
 	SourcePath    string
 
+	// SeedExpect declares the seed.expect block (docs/spec-eval-farm.md
+	// §4.1/§4.5, FM-63/FM-64), evaluated once after the seed mode's own wait
+	// and the preseed script, before the agent is spawned. Nil when the
+	// seed field used the legacy scalar shape, or the block form omitted
+	// expect.
+	SeedExpect *SeedExpect
+	// SeedRef is the seed.ref field (docs/spec-eval-farm.md §4.1) — the
+	// pinned sha/tag of every repository the seed fixture references.
+	// Parsed and carried here; not yet consumed at seed time (a later
+	// slice wires substitution). The fixture-pin content lint (FM-62)
+	// validates fixture files directly, independent of this field.
+	SeedRef string
+	// seedIsBlock records whether `seed:` decoded from the block mapping
+	// form rather than the legacy bare scalar — validate() (FM-64) rejects
+	// `mode: settled` without `expect` only for the block form; the legacy
+	// scalar stays valid until S5 re-prepares those cells.
+	seedIsBlock bool
+
 	// Behavioral-mode fields (optional). When Retrospective is non-nil the
 	// scenario is intended for RunBehavioralScenario (two-shot resume: run +
 	// post-hoc retrospective) instead of plain parse-only use. Tags/Area/
@@ -73,6 +91,133 @@ type Scenario struct {
 	// cleanup; in required mode they are frozen at task end and gate the CLI
 	// exit (docs/spec-testing-architecture.md §10). See VerificationConfig.
 	Verification *VerificationConfig
+}
+
+// SeedSpec is the parsed form of a scenario's `seed:` frontmatter field,
+// which accepts either a bare scalar (`seed: deployed` — legacy shape, mode
+// only) or a mapping (`seed: {mode, fixture, ref, expect}` —
+// docs/spec-eval-farm.md §4.1). See SeedSpec.UnmarshalYAML.
+type SeedSpec struct {
+	Mode    SeedMode
+	Fixture string
+	Ref     string
+	Expect  *SeedExpect
+	// IsBlock is true when `seed:` decoded from the mapping form. See
+	// Scenario.seedIsBlock (FM-64).
+	IsBlock bool
+}
+
+// UnmarshalYAML decodes both shapes of `seed:` into SeedSpec: a scalar
+// string (`seed: deployed`) becomes {Mode: deployed}; a mapping decodes
+// every sub-field and sets IsBlock=true.
+func (s *SeedSpec) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		s.Mode = SeedMode(value.Value)
+		s.IsBlock = false
+		return nil
+	}
+	var raw struct {
+		Mode    string      `yaml:"mode"`
+		Fixture string      `yaml:"fixture"`
+		Ref     string      `yaml:"ref"`
+		Expect  *SeedExpect `yaml:"expect"`
+	}
+	if err := value.Decode(&raw); err != nil {
+		return fmt.Errorf("seed: %w", err)
+	}
+	s.Mode = SeedMode(raw.Mode)
+	s.Fixture = raw.Fixture
+	s.Ref = raw.Ref
+	s.Expect = raw.Expect
+	s.IsBlock = true
+	return nil
+}
+
+// SeedExpect declares the seed.expect block (docs/spec-eval-farm.md §4.1/
+// §4.5): every services/processes/probe entry must hold before the agent is
+// spawned (FM-63).
+type SeedExpect struct {
+	// Services reuses ExpectedService's hostname/status shape.
+	Services []ExpectedService `yaml:"services,omitempty"`
+	// Processes match the project's process list by service hostname +
+	// actionName prefix + status.
+	Processes []SeedExpectProcess `yaml:"processes,omitempty"`
+	// Probe runs one command over SSH (like containerCheck); exit 0 = pass.
+	Probe *SeedExpectProbe `yaml:"probe,omitempty"`
+}
+
+// SeedExpectProcess is one seed.expect.processes entry.
+type SeedExpectProcess struct {
+	Service string `yaml:"service"`
+	Action  string `yaml:"action"`
+	Status  string `yaml:"status"`
+}
+
+// SeedExpectProbe is the seed.expect.probe entry: one SSH command against
+// Service; exit 0 = pass.
+type SeedExpectProbe struct {
+	Service string `yaml:"service"`
+	Cmd     string `yaml:"cmd"`
+}
+
+// AllowEntry lifts a runner-injected default `never` decision row
+// (docs/spec-eval-farm.md §4.1/§4.2 FM-58). Not a row family itself — it
+// only removes an entry from the effective never list (decision_rows.go's
+// EffectiveNeverList).
+type AllowEntry struct {
+	Call   string `yaml:"call"`
+	Reason string `yaml:"reason"`
+}
+
+// InternalLivenessProbe declares the O2' oracle (docs/spec-eval-farm.md §4.1
+// FM-61): a GET over the project network (no subdomain involved).
+type InternalLivenessProbe struct {
+	Service string `yaml:"service"`
+	Port    int    `yaml:"port"`
+	Path    string `yaml:"path"`
+	Marker  string `yaml:"marker"`
+}
+
+// ContainerCheckEntry declares one O10 oracle entry (docs/spec-eval-farm.md
+// §4.1 FM-61): one command over SSH, matched exact (Expect) or regex
+// (Match).
+type ContainerCheckEntry struct {
+	Service string `yaml:"service"`
+	Cmd     string `yaml:"cmd"`
+	Expect  string `yaml:"expect,omitempty"`
+	Match   string `yaml:"match,omitempty"`
+}
+
+// MetaCheckEntry declares one O11 oracle entry (docs/spec-eval-farm.md §4.1
+// FM-61): a field read from the candidate's `.zcp/state/services/<hostname>.json`.
+type MetaCheckEntry struct {
+	Hostname string `yaml:"hostname"`
+	Field    string `yaml:"field"`
+	Expect   string `yaml:"expect"`
+}
+
+// SchemaValidCheck declares the O12 oracle (docs/spec-eval-farm.md §4.1
+// FM-61): schema-validate a produced artifact against the live schema.
+type SchemaValidCheck struct {
+	Artifact string `yaml:"artifact"`
+}
+
+// ToolArgEntry declares one decision row over transcript.jsonl
+// (docs/spec-eval-farm.md §4.1/§4.2 FM-59/FM-60). Exactly one of
+// Never/Always/(Max+Call) is meaningful per entry; grading semantics land
+// in S3/S4.
+type ToolArgEntry struct {
+	Never  string `yaml:"never,omitempty"`
+	Always string `yaml:"always,omitempty"`
+	Max    int    `yaml:"max,omitempty"`
+	Call   string `yaml:"call,omitempty"`
+}
+
+// ToolResultEntry declares one decision row over captured MCP results
+// (docs/spec-eval-farm.md §4.1/§4.2 FM-59).
+type ToolResultEntry struct {
+	Tool     string `yaml:"tool"`
+	Contains string `yaml:"contains"`
 }
 
 // UserSimConfig configures the user-sim simulator transport. All fields
@@ -166,6 +311,25 @@ type VerificationConfig struct {
 	// arguments for token-shaped values not among the scenario's declared
 	// inputs.
 	NoFabricatedSecret bool `yaml:"noFabricatedSecret,omitempty"`
+
+	// Allow lifts a runner-injected default `never` entry (FM-58). Not a
+	// row family — see decision_rows.go's EffectiveNeverList.
+	Allow []AllowEntry `yaml:"allow,omitempty"`
+	// InternalLiveness declares the O2' oracle (FM-61).
+	InternalLiveness *InternalLivenessProbe `yaml:"internalLiveness,omitempty"`
+	// ContainerCheck declares O10 oracle entries (FM-61).
+	ContainerCheck []ContainerCheckEntry `yaml:"containerCheck,omitempty"`
+	// Meta declares O11 oracle entries (FM-61).
+	Meta []MetaCheckEntry `yaml:"meta,omitempty"`
+	// SchemaValid declares the O12 oracle (FM-61).
+	SchemaValid *SchemaValidCheck `yaml:"schemaValid,omitempty"`
+	// ToolArg declares decision rows over transcript.jsonl (FM-59/FM-60).
+	ToolArg []ToolArgEntry `yaml:"toolArg,omitempty"`
+	// ToolResult declares decision rows over captured MCP results (FM-59).
+	ToolResult []ToolResultEntry `yaml:"toolResult,omitempty"`
+	// MustOffer declares decision rows over route-menu / next-step text
+	// (FM-59).
+	MustOffer []string `yaml:"mustOffer,omitempty"`
 }
 
 // LaunchShapeConfig declares the O6 launch-shape oracle
@@ -254,7 +418,7 @@ type NotableFrictionEntry struct {
 type scenarioFrontmatter struct {
 	ID              string                 `yaml:"id"`
 	Description     string                 `yaml:"description"`
-	Seed            string                 `yaml:"seed"`
+	Seed            SeedSpec               `yaml:"seed"`
 	Fixture         string                 `yaml:"fixture"`
 	PreseedScript   string                 `yaml:"preseedScript"`
 	Tags            []string               `yaml:"tags"`
@@ -292,12 +456,19 @@ func ParseScenario(path string) (*Scenario, error) {
 	if err := rejectUnknownVerificationFields(front); err != nil {
 		return nil, fmt.Errorf("scenario %q: %w", path, err)
 	}
+	if fm.Fixture != "" && fm.Seed.Fixture != "" {
+		return nil, fmt.Errorf("scenario %q: fixture is set both at top level and in seed.fixture — declare it once", path)
+	}
+	fixture := fm.Fixture
+	if fm.Seed.Fixture != "" {
+		fixture = fm.Seed.Fixture
+	}
 
 	sc := &Scenario{
 		ID:              fm.ID,
 		Description:     fm.Description,
-		Seed:            SeedMode(fm.Seed),
-		Fixture:         fm.Fixture,
+		Seed:            fm.Seed.Mode,
+		Fixture:         fixture,
 		PreseedScript:   fm.PreseedScript,
 		Prompt:          strings.TrimSpace(body),
 		SourcePath:      path,
@@ -309,6 +480,9 @@ func ParseScenario(path string) (*Scenario, error) {
 		UserSim:         fm.UserSim,
 		Verification:    fm.Verification,
 		ExcludeFromAll:  fm.ExcludeFromAll,
+		SeedExpect:      fm.Seed.Expect,
+		SeedRef:         fm.Seed.Ref,
+		seedIsBlock:     fm.Seed.IsBlock,
 	}
 
 	if err := rejectUnknownTemplateTokens(sc.Prompt); err != nil {
@@ -368,6 +542,13 @@ func (s *Scenario) validate() error {
 	if s.Seed != ModeEmpty && s.Fixture == "" {
 		return fmt.Errorf("fixture required for seed=%s", s.Seed)
 	}
+	// FM-64: a cell whose starting state is deliberately broken (settled)
+	// must assert it held, not assume it — but only for the block form;
+	// the legacy bare scalar `seed: settled` stays valid until S5
+	// re-prepares those cells.
+	if s.Seed == ModeSettled && s.seedIsBlock && s.SeedExpect == nil {
+		return fmt.Errorf("seed.mode: settled requires seed.expect when seed is given in block form (docs/spec-eval-farm.md §4.5 FM-64)")
+	}
 	if s.Prompt == "" {
 		return fmt.Errorf("prompt body required")
 	}
@@ -389,9 +570,16 @@ func (s *Scenario) validate() error {
 				len(s.Verification.Never) > 0 ||
 				len(s.Verification.ArtifactPromotion) > 0 ||
 				s.Verification.LaunchShape != nil ||
-				s.Verification.NoFabricatedSecret
+				s.Verification.NoFabricatedSecret ||
+				s.Verification.InternalLiveness != nil ||
+				len(s.Verification.ContainerCheck) > 0 ||
+				len(s.Verification.Meta) > 0 ||
+				s.Verification.SchemaValid != nil ||
+				len(s.Verification.ToolArg) > 0 ||
+				len(s.Verification.ToolResult) > 0 ||
+				len(s.Verification.MustOffer) > 0
 			if !hasExecutableCheck {
-				return fmt.Errorf("verification.mode required needs at least one executable check (expectedServices, noFailedProcesses, nodePostgresRecord, liveness, unchanged, never, artifactPromotion, launchShape, or noFabricatedSecret; retrospectiveMustNotMention and askWhen are advisory and do not count)")
+				return fmt.Errorf("verification.mode required needs at least one executable check (expectedServices, noFailedProcesses, nodePostgresRecord, liveness, unchanged, never, artifactPromotion, launchShape, noFabricatedSecret, internalLiveness, containerCheck, meta, schemaValid, toolArg, toolResult, or mustOffer; retrospectiveMustNotMention and askWhen are advisory and do not count; allow is not a row family and never counts)")
 			}
 		}
 		if npr := s.Verification.NodePostgresRecord; npr != nil {
@@ -402,9 +590,28 @@ func (s *Scenario) validate() error {
 		if s.Verification.Reach != nil {
 			return fmt.Errorf("verification.reach is not a supported field (FM-32: no reach:/expected-route field — the observed route is coverage data, never an assertion)")
 		}
+		neverShapes := make(map[string]bool, len(s.Verification.Never))
 		for _, expr := range s.Verification.Never {
-			if _, err := ParseCallShape(expr); err != nil {
+			shape, err := ParseCallShape(expr)
+			if err != nil {
 				return fmt.Errorf("verification.never: %w", err)
+			}
+			neverShapes[shape.String()] = true
+		}
+		// FM-58: allow lifts a runner-injected default never; it is a
+		// validate() error when the call it names is already declared by
+		// this file's own never list (redundant/contradictory), or when it
+		// carries no reason.
+		for _, a := range s.Verification.Allow {
+			if a.Reason == "" {
+				return fmt.Errorf("verification.allow: call %q requires a non-empty reason (FM-58)", a.Call)
+			}
+			shape, err := ParseCallShape(a.Call)
+			if err != nil {
+				return fmt.Errorf("verification.allow: %w", err)
+			}
+			if neverShapes[shape.String()] {
+				return fmt.Errorf("verification.allow: %q is already named by this file's own never list — allow only lifts the runner-injected default (FM-58)", a.Call)
 			}
 		}
 		if s.Verification.LaunchShape != nil && s.Verification.LaunchShape.ProdProject == "" {

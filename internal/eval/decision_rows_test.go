@@ -258,3 +258,53 @@ func TestAskWhen_WindowAnchorsOnCodedErrorOnly(t *testing.T) {
 		t.Error("UserSimTurnAsked = true, want false — the turn happened before the coded error, wrongly anchored by the earlier unrelated error under the pre-fix trigger")
 	}
 }
+
+// TestNeverRows_DefaultOverrideInjected_AndAllowLifts pins FM-58:
+// EffectiveNeverList always folds in DefaultNeverOverride alongside the
+// scenario's own never list (de-duplicated), and an allow entry naming the
+// same shape lifts it out of the effective list.
+func TestNeverRows_DefaultOverrideInjected_AndAllowLifts(t *testing.T) {
+	t.Parallel()
+
+	t.Run("default injected when file declares nothing", func(t *testing.T) {
+		t.Parallel()
+		sc := &Scenario{Verification: &VerificationConfig{Never: []string{"zerops_delete"}}}
+		got := EffectiveNeverList(sc)
+		if len(got) != 2 {
+			t.Fatalf("EffectiveNeverList = %v, want 2 entries (default + file's own)", got)
+		}
+		foundDefault, foundFile := false, false
+		for _, expr := range got {
+			if expr == DefaultNeverOverride {
+				foundDefault = true
+			}
+			if expr == "zerops_delete" {
+				foundFile = true
+			}
+		}
+		if !foundDefault || !foundFile {
+			t.Errorf("EffectiveNeverList = %v, want both %q and %q", got, DefaultNeverOverride, "zerops_delete")
+		}
+	})
+
+	t.Run("file repeating the default does not duplicate it", func(t *testing.T) {
+		t.Parallel()
+		sc := &Scenario{Verification: &VerificationConfig{Never: []string{DefaultNeverOverride}}}
+		got := EffectiveNeverList(sc)
+		if len(got) != 1 || got[0] != DefaultNeverOverride {
+			t.Errorf("EffectiveNeverList = %v, want exactly one entry (no duplicate)", got)
+		}
+	})
+
+	t.Run("allow lifts the default", func(t *testing.T) {
+		t.Parallel()
+		sc := &Scenario{Verification: &VerificationConfig{
+			Never: []string{"zerops_delete"},
+			Allow: []AllowEntry{{Call: DefaultNeverOverride, Reason: "READY_TO_DEPLOY has no other path"}},
+		}}
+		got := EffectiveNeverList(sc)
+		if len(got) != 1 || got[0] != "zerops_delete" {
+			t.Errorf("EffectiveNeverList = %v, want only the file's own never entry (default lifted)", got)
+		}
+	})
+}

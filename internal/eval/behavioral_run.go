@@ -58,6 +58,12 @@ type BehavioralResult struct {
 	// after seed/init and before the initial agent invocation. Nil when the
 	// scenario doesn't declare verification.nodePostgresRecord.
 	Baseline *ScenarioBaseline `json:"baseline,omitempty"`
+	// Preparation is the seed.expect verdict (docs/spec-eval-farm.md §4.5
+	// FM-63/FM-64): "" (equivalent to "ok") when the scenario declares no
+	// seed.expect or every entry matched; "mismatch: <reason>" when it did
+	// not — in that case Error stays empty (a preparation mismatch is not
+	// an execution error) and the agent is never spawned.
+	Preparation string `json:"preparation,omitempty"`
 	// Binding and ProcessIdentity are the §10.4 explicit-candidate-binding
 	// dimensions: Binding is nil unless this run carried an explicit
 	// binding; ProcessIdentity accumulates every observation taken while an
@@ -415,9 +421,8 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 		r.finishBehavioralCapture(context.WithoutCancel(ctx), suiteID, sc.ID, scenarioPath, outDir, result, returnErr)
 	}()
 
-	if errMsg := r.prepareBehavioralWork(ctx, sc, suiteID, outDir); errMsg != "" {
-		result.Error = errMsg
-		return r.notRunFailure(ctx, sc, outDir, result, startedAt), nil
+	if r.prepareWorkOrFail(ctx, sc, suiteID, outDir, result, startedAt) {
+		return result, nil
 	}
 
 	if err := os.WriteFile(filepath.Join(outDir, "task-prompt.txt"), []byte(sc.Prompt), 0o600); err != nil {
@@ -649,28 +654,67 @@ func (r *Runner) recordScenarioBaseline(ctx context.Context, hostnames []string,
 	result.Baseline = &ScenarioBaseline{AppVersions: appVersions, ObservedAt: time.Now().UTC()}
 }
 
-// prepareBehavioralWork runs seed → init → capture MCP config → preseed,
-// returning a human-readable error prefix ("seed: ...", "init: ...", etc.)
-// on the first failure, or "" on success. Factored out of
+// prepareWorkOrFail runs prepareBehavioralWork and, on any failure
+// (execution error or FM-63 seed.expect mismatch), records the right
+// dimension on result and freezes the task end as not-run — returning true
+// so RunBehavioralScenario can return immediately, before the agent is ever
+// spawned. Factored out purely to keep RunBehavioralScenario's own
+// maintainability index in check.
+func (r *Runner) prepareWorkOrFail(ctx context.Context, sc *Scenario, suiteID, outDir string, result *BehavioralResult, startedAt time.Time) bool {
+	errMsg, mismatch := r.prepareBehavioralWork(ctx, sc, suiteID, outDir)
+	if errMsg == "" && mismatch == "" {
+		return false
+	}
+	if mismatch != "" {
+		// FM-63: a seed.expect mismatch is preparation, not execution,
+		// failure — result.Error stays empty and the agent is never
+		// spawned (the caller returns right after this, before
+		// runInitialAgent).
+		result.Preparation = "mismatch: " + mismatch
+	} else {
+		result.Error = errMsg
+	}
+	r.notRunFailure(ctx, sc, outDir, result, startedAt)
+	return true
+}
+
+// prepareBehavioralWork runs seed → init → capture MCP config → preseed →
+// seed.expect check, returning a human-readable error prefix ("seed: ...",
+// "init: ...", etc.) on the first failure, or "" on success. Factored out of
 // RunBehavioralScenario purely to keep that function's cyclomatic
 // complexity in check — each step's failure meaning is unchanged.
-func (r *Runner) prepareBehavioralWork(ctx context.Context, sc *Scenario, suiteID, outDir string) string {
+//
+// When the scenario declares seed.expect and it does not hold
+// (docs/spec-eval-farm.md §4.5 FM-63), mismatch is non-empty and errMsg is
+// ""; the caller MUST treat that as preparation, not execution, failure —
+// r.notRunFailure still runs (every declared row freezes not-run) but
+// result.Error stays empty and the agent is never spawned.
+func (r *Runner) prepareBehavioralWork(ctx context.Context, sc *Scenario, suiteID, outDir string) (errMsg, mismatch string) {
 	if err := r.seedScenario(ctx, sc, suiteID); err != nil {
-		return fmt.Sprintf("seed: %v", err)
+		return fmt.Sprintf("seed: %v", err), ""
 	}
 	if err := resetGuidedForScenario(r.config.WorkDir); err != nil {
-		return fmt.Sprintf("init: %v", err)
+		return fmt.Sprintf("init: %v", err), ""
 	}
 	if err := r.runInit(ctx); err != nil {
-		return fmt.Sprintf("init: %v", err)
+		return fmt.Sprintf("init: %v", err), ""
 	}
 	if err := r.prepareCaptureMCPConfig(outDir); err != nil {
-		return fmt.Sprintf("capture MCP config: %v", err)
+		return fmt.Sprintf("capture MCP config: %v", err), ""
 	}
 	if err := r.runPreseedScript(ctx, sc, suiteID); err != nil {
-		return fmt.Sprintf("preseed: %v", err)
+		return fmt.Sprintf("preseed: %v", err), ""
 	}
-	return ""
+	if sc.SeedExpect != nil {
+		reason, err := EvaluateSeedExpect(ctx, sc.SeedExpect, r.client, platform.NewSystemSSHDeployer(), r.projectID)
+		if err != nil {
+			return fmt.Sprintf("seed.expect: %v", err), ""
+		}
+		if reason != "" {
+			return "", reason
+		}
+	}
+	return "", ""
 }
 
 // runInit runs `zcp init` for the work dir. With a binding (§10.4 "Candidate
@@ -910,7 +954,10 @@ func (r *Runner) freezeTaskEnd(
 // itself is read once here, hashed immediately, and never stored, logged,
 // or passed anywhere else — only the digest crosses into RuntimeInputs.
 func (r *Runner) scenarioRuntimeInputs(sc *Scenario, result *BehavioralResult) RuntimeInputs {
-	runtime := RuntimeInputs{TranscriptPath: result.TranscriptFile, MutatingTools: r.config.MutatingTools}
+	runtime := RuntimeInputs{
+		TranscriptPath: result.TranscriptFile, MutatingTools: r.config.MutatingTools,
+		WorkDir: r.config.WorkDir, ExecSSH: platform.NewSystemSSHDeployer().ExecSSH,
+	}
 	if result.UserSim != nil {
 		runtime.UserSimTurns = result.UserSim.Turns
 	}
