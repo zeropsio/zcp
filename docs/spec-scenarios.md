@@ -614,7 +614,7 @@ Legend: ↑ existing scenario to promote · ✚ scenario to write.
 
 | cell | scenario id | pre-state · route · topology · stack · deps | task | oracle families | status |
 |---|---|---|---|---|---|
-| A1 | `api-node-postgres-classic-dev` | brand-new · classic · dev-only · node · db | small API with one table | expectedServices liveness nodePostgresRecord never | gate |
+| A1 | `api-node-postgres-classic-dev` | brand-new · classic · dev-only · node · db | small API with one table | expectedServices liveness nodePostgresRecord toolArg(max 0 zerops_subdomain) never | gate |
 | A2 | `classic-static-nginx-simple` | brand-new · classic · simple · static · none | public landing page | expectedServices subdomainProbe never | gate |
 | A3 ↑ | `greenfield-fullstack-multi-runtime` | brand-new · classic · standard-pair · node+static · db+cache | API + SPA dashboard | expectedServices liveness containerCheck never | gate |
 | A4 ↑ | `classic-php-mariadb-standard` | brand-new · classic · standard-pair · php (implicit-webserver) · mariadb | | expectedServices liveness never | gate |
@@ -644,6 +644,8 @@ Legend: ↑ existing scenario to promote · ✚ scenario to write.
 | B10 ↑ | `develop-loop-after-bootstrap` | strategy unset → review gate | | meta expectedServices never | gate |
 | B11 ✚ | `git-push-configured-manual-close` | pair, git-push configured, close-mode manual | don't push for me | meta unchanged toolArg(no deploy after edits) never | promote: meta |
 | B12 ✚ | `develop-static-redeploy` | simple, static | change the page | liveness toolArg(no post-deploy start) never | promote: toolArg |
+| B14 ✚ | `subdomain-user-disabled-stays-off` | dev-only, subdomain auto-enabled once then user-disabled | change the response text, redeploy | expectedServices internalLiveness toolArg(max 0 zerops_subdomain) never | gate |
+| B15 ✚ | `custom-domain-present` | simple, custom domain routed instead of a subdomain | verify + report reachability | expectedServices toolArg(max 0 zerops_subdomain) toolResult(public_domain) mustOffer(domain) never | gate |
 
 #### C. Shipping (seed: deployed)
 
@@ -710,3 +712,8 @@ Run 2026-09-13 (spec-eval-farm.md §3.3 batches `mut-01..04` vs `matrix-3/4`):
 3 of 4 regressions detected on the intended row (B3, B6, A8); the subdomain
 auto-enable regression escaped — every current cell gets its subdomain from the
 import flag, so no cell depends on the deploy handler's auto-enable.
+
+That gap is closed: A1 (dev-only, deferred-start) and B14 (subdomain
+auto-enabled once, then user-disabled) both depend on the deploy/dev-server
+auto-enable hook rather than the import flag, so a regression in that hook
+now lands on an intended row instead of escaping.
