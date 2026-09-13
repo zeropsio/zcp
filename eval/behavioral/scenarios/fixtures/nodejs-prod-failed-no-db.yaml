@@ -1,0 +1,34 @@
+# Tier-1 FAILED-state fixture — re-prepared S5 (docs/spec-eval-farm.md §4.5
+# FM-63/FM-64). Replaces the python-hello-world-app fixture for this scenario:
+# that fixture made the BUILD itself fail (the wrong shape for "build OK,
+# deploy fails"). This one imports nodejs-hello-world-app via buildFromGit
+# with zeropsSetup: prod but omits the `db` service the repo's zerops.yaml
+# hard-references via `${db_hostname}` + a `migrate.js` initCommand.
+#
+# Live-verified 2026-09-13: the build itself FINISHES (`stack.build` process
+# settles Status=FINISHED — internal/platform/types.go ProcessStatusFinished);
+# the container then crashes at the initCommand (`node dist/migrate.js`)
+# with `ENOTFOUND ${db_hostname}` because no `db` service exists, and the
+# service settles ServiceStatusFailed ("FAILED"). The platform models
+# build+deploy as ONE process/action (`stack.build` — there is no separate
+# "stack.deploy" action anywhere in internal/platform or internal/ops;
+# confirmed live 2026-06-30 in internal/ops/testdata/activity/direct_deploying.json,
+# same process id, RUNNING throughout, only the embedded appVersion.status
+# cycles BUILDING -> DEPLOYING), so the deploy-phase failure is only
+# observable via the service's own terminal status, not a second process row.
+#
+# DO NOT use with `seed: deployed` — `waitAllActive` aborts on FAILED and the
+# eval cannot proceed. Use the `seed: {mode: settled, ...}` block form with
+# `expect:` (FM-64: `mode: settled` without `expect` is a validate() error for
+# the block form).
+
+services:
+  - hostname: api
+    type: nodejs@22
+    zeropsSetup: prod
+    buildFromGit: https://github.com/zerops-recipe-apps/nodejs-hello-world-app
+    enableSubdomainAccess: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      minRam: 0.5

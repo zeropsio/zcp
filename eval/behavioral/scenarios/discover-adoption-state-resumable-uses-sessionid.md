@@ -41,6 +41,8 @@ area: bootstrap
 retrospective:
   promptStyle: briefing-future-agent
 verification:
+  mode: required
+  spec: spec-workflows.md §3.5
   expectedServices:
     - hostname: appdev
       status: [ACTIVE]
@@ -52,6 +54,9 @@ verification:
       status: [ACTIVE]
       type: postgresql@*
   noFailedProcesses: true
+  toolArg:
+    - {max: 0, call: "zerops_import"}
+  never: ["zerops_import{override=true}", "zerops_delete"]
   retrospectiveMustNotMention:
     - "asked user for session"
     - "tried classic"
