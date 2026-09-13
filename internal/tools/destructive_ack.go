@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // DiagnosedDestruction is the structured "what's about to be erased"
@@ -33,7 +34,19 @@ type DiagnosedDestruction struct {
 	Diagnoses []TargetDiagnosis `json:"diagnoses,omitempty"`
 	// Retry is the complete, executable corrective (R6-P4): the exact call that,
 	// re-sent, clears the gate AND reaches the intended end state in one shot.
+	// Present ONLY for a fresh-misconfigured target (docs/spec-workflows.md §8
+	// "Recovery classification" R2) — every failed-*/stuck-building target
+	// carries Next/Then instead, never a ready-made re-import.
 	Retry *RetryCall `json:"retryCall,omitempty"`
+	// Next is the one read-only next call for a failed-*/stuck-building
+	// target: read the failure timeline before any reset (R2). Mutually
+	// exclusive with Retry.
+	Next *topology.Recovery `json:"next,omitempty"`
+	// Then names the non-gated corrective once the target's diagnosed —
+	// a plain zerops_deploy, never a re-import (R2: "for every failed-*
+	// shape the gate's next is zerops_events then zerops_deploy ... never
+	// a re-import"). Set alongside Next.
+	Then string `json:"then,omitempty"`
 }
 
 // TargetDiagnosis carries the gate's per-target verdict (R6-P3). FailureClass /
@@ -185,6 +198,15 @@ func (d DiagnosedDestruction) JoinTargets() string {
 // stays in sync with the actual handler signature.
 func suggestionForFirstCallRefusal(expected DiagnosedDestruction) string {
 	const fallback = "Read zerops_events for the targets (failed/never-started services have no runtime logs), then re-call with confirmDestructive matching wouldDestroy."
+	if expected.Retry == nil {
+		// A failed-*/stuck-building target (R2): no ready-made re-import —
+		// read the timeline first, then the non-gated corrective is Then
+		// (a plain zerops_deploy), never a re-import.
+		if expected.Then != "" {
+			return fmt.Sprintf("Read zerops_events for the targets first (failed/never-started services have no runtime logs) — recovery is never a re-import; once diagnosed, retry with %s.", expected.Then)
+		}
+		return fallback
+	}
 	tool, paramPrefix := retryShapeFor(expected.Operation)
 	if tool == "" {
 		return fallback
