@@ -24,5 +24,5 @@ while you fix and retry, so there is no rush and no destructive
 confirmation to acknowledge. A re-import with the destructive override
 flag is **not** a repair for this shape: it replaces the service stack
 and the mounted code you need to fix, wiping the exact evidence the
-diagnosis depends on. Reserve that override path for a never-deployed
-(`deployHistory: none`) target only.
+diagnosis depends on. That override path exists only for a runtime that
+has never deployed at all.
