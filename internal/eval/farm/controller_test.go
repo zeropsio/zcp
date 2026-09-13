@@ -2417,3 +2417,39 @@ func TestRunBatch_MaxConcurrent_AbortMidWindow_FinalizesActives(t *testing.T) {
 		t.Errorf("recipe-a3 = %+v, ok=%v, want the abort's own blocked row with the mint failure detail", third, ok)
 	}
 }
+
+// TestManifest_RecordsMaxConcurrent pins §3.3 FM-65: RunBatch writes
+// opts.MaxConcurrent into batches/<batch>/manifest.json at reservation time
+// (the same manifest write FM-22 already requires before any project
+// exists), so a reader can tell what window a batch ran under.
+func TestManifest_RecordsMaxConcurrent(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-s11-manifest"
+	f := newControllerFixture(t, clientID)
+	client, sink := f.client, f.sink
+
+	batch := "batch-s11-manifest"
+	sc := ScenarioRun{ID: "recipe-manifest-window"}
+	seedSettledRun(t, f.s3, testRunID(t, batch, sc.ID), sc.ID, ResultPassed)
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
+		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget: time.Second, PollInterval: time.Millisecond,
+		MaxConcurrent: 4,
+	}
+
+	if _, err := RunBatch(context.Background(), client, sink, opts); err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+
+	manifest, err := GetManifest(context.Background(), sink, batch)
+	if err != nil {
+		t.Fatalf("GetManifest: %v", err)
+	}
+	if manifest.MaxConcurrent != 4 {
+		t.Errorf("manifest.MaxConcurrent = %d, want %d", manifest.MaxConcurrent, 4)
+	}
+}
