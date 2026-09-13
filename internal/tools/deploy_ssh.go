@@ -270,7 +270,7 @@ func RegisterDeploySSH(
 			// check-before-enable). Runs before RecordDeployAttempt so the
 			// result payload surfaces SubdomainAccessEnabled + SubdomainURL
 			// alongside the deploy outcome.
-			maybeAutoEnableSubdomain(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
+			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
 		case result != nil && result.TimedOut:
 			// In-flight (B23): the build is still running at poll timeout, not
 			// failed. Record without a FailureClass so the envelope doesn't
