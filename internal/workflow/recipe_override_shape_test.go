@@ -188,3 +188,47 @@ func TestRewriteRecipeImportYAMLFromShape_DevOnly(t *testing.T) {
 		t.Errorf("managed db must be preserved under dev-only:\n%s", out)
 	}
 }
+
+// TestRewriteRecipeImportYAMLFromShape_PublicAccessNone pins §8 O3 PA-6: a
+// runtime whose plan intent is `none` must not import with
+// `enableSubdomainAccess: true` — the platform would otherwise auto-carry a
+// stale `true` from the recipe's own YAML past the user's explicit opt-out.
+// A runtime NOT named in PublicAccessNoneHosts is untouched (byte-identical
+// enableSubdomainAccess line survives).
+func TestRewriteRecipeImportYAMLFromShape_PublicAccessNone(t *testing.T) {
+	t.Parallel()
+	y := `services:
+  - hostname: appdev
+    type: nodejs@22
+    zeropsSetup: dev
+    buildFromGit: https://example.com/app
+  - hostname: appstage
+    type: nodejs@22
+    zeropsSetup: prod
+    buildFromGit: https://example.com/app
+    enableSubdomainAccess: true
+  - hostname: db
+    type: postgresql@18
+`
+	out, err := RewriteRecipeImportYAMLFromShape(y, RecipeShapeOverrides{
+		PublicAccessNoneHosts: map[string]bool{"appstage": true},
+	})
+	if err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	if strings.Contains(out, "enableSubdomainAccess") {
+		t.Errorf("appstage intent=none must drop enableSubdomainAccess entirely:\n%s", out)
+	}
+	if !strings.Contains(out, "hostname: appstage") {
+		t.Errorf("appstage runtime itself must survive (only the flag is dropped):\n%s", out)
+	}
+
+	// Otherwise unchanged: no PublicAccessNoneHosts entry → the line survives.
+	unchanged, err := RewriteRecipeImportYAMLFromShape(y, RecipeShapeOverrides{})
+	if err != nil {
+		t.Fatalf("rewrite (no overrides): %v", err)
+	}
+	if !strings.Contains(unchanged, "enableSubdomainAccess: true") {
+		t.Errorf("without a none override the enableSubdomainAccess line must survive:\n%s", unchanged)
+	}
+}

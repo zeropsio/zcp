@@ -83,6 +83,7 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 			BootstrapSession: bootstrapSession,
 			BootstrappedAt:   now,
 		}
+		setPlanPublicAccess(meta, target.Runtime.PublicAccess, metaHostname, stageHostname)
 
 		// Gate R — recipe-bootstrap setup names come from the recipe shape's
 		// LITERAL zeropsSetup (carried on the target by DeriveRecipePlan): a
@@ -181,6 +182,7 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 			BuildIntegration: topology.BuildIntegrationNone,
 			BootstrapSession: bootstrapSession,
 		}
+		setPlanPublicAccess(meta, target.Runtime.PublicAccess, metaHostname, stageHostname)
 
 		// Gate R — partial-write counterpart of writeBootstrapOutputs (setup
 		// names from the target's literal zeropsSetup). So a crash between
@@ -233,4 +235,30 @@ func mergeExistingMeta(meta, existing *ServiceMeta) {
 	// Sticky once set either side: the recipe-buildFromGit provenance can't
 	// regress on a later partial write or pair-expansion merge (B4).
 	meta.ProvisionedFromGit = existing.ProvisionedFromGit || meta.ProvisionedFromGit
+
+	// Per-hostname public-access intent (§8 E9): an existing recorded entry
+	// (the user's prior choice, or a stamp from a past auto-enable) survives
+	// a mode-expansion re-plan. A hostname the existing meta never recorded
+	// (e.g. the new stage half of a dev→standard expansion) keeps the fresh
+	// meta's plan-derived value already set by setPlanPublicAccess.
+	for hostname, rec := range existing.PublicAccess {
+		meta.SetPublicAccess(hostname, rec)
+	}
+}
+
+// setPlanPublicAccess stamps meta.PublicAccess for both halves of a target
+// from the plan's RuntimeTarget.PublicAccess (§8 O3 PA-6). Empty/invalid
+// defaults to auto at this I/O boundary — PublicAccessIntent.IsValid()
+// deliberately rejects "" so this default lives at the single call site,
+// not duplicated across every reader. stageHostname empty is a no-op (dev/
+// simple/local-only targets have no stage half to stamp).
+func setPlanPublicAccess(meta *ServiceMeta, planned, hostname, stageHostname string) {
+	intent, ok := topology.ParsePublicAccessIntent(planned)
+	if !ok {
+		intent = topology.PublicAccessAuto
+	}
+	meta.SetPublicAccess(hostname, topology.PublicAccessRecord{Intent: intent})
+	if stageHostname != "" {
+		meta.SetPublicAccess(stageHostname, topology.PublicAccessRecord{Intent: intent})
+	}
 }

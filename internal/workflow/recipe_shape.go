@@ -212,6 +212,12 @@ type RecipeShapeOverrides struct {
 	RuntimeHostnameByOriginal map[string]string `json:"runtimeHostnameByOriginal,omitempty"`
 	ManagedResolutionByHost   map[string]string `json:"managedResolutionByHost,omitempty"`
 	DevOnly                   bool              `json:"devOnly,omitempty"`
+	// PublicAccessNoneHosts (keyed by the recipe's ORIGINAL runtime
+	// hostname) drops `enableSubdomainAccess: true` from that runtime's
+	// import entry — the plan's public-access intent is `none`, so the
+	// platform must not auto-carry a stale `true` from the recipe's own
+	// YAML past the user's explicit opt-out (§8 O3 PA-6).
+	PublicAccessNoneHosts map[string]bool `json:"publicAccessNoneHosts,omitempty"`
 }
 
 // CanNarrowRecipeDevOnly reports whether the recipe shape can be narrowed to a
