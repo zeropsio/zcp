@@ -662,7 +662,7 @@ no buildFromGit), so the agent has a place to fix source. `allowFailed` explicit
 
 | cell | scenario id | prepared break | oracle families | status |
 |---|---|---|---|---|
-| D1 | `recover-failed-buildfromgit-missing-dep` | build OK, START fails (db env missing) — today the BUILD fails; re-prepare | seedExpect liveness never | gate · promote: seedExpect |
+| D1 | `recover-failed-buildfromgit-missing-dep` | build OK, START fails (db env missing) — today the BUILD fails; re-prepare | seedExpect liveness never | gate |
 | D2 ✚ | `recover-build-failed` | build fails (bad dep) | seedExpect toolResult(failureClass) liveness never | promote: seedExpect |
 | D3 | `launch-failure-build-stuck` | | noFailedProcesses launchShape noFabricatedSecret never | gate |
 | D4 ✚ | `ready-to-deploy-stuck` | runtime imported without startWithoutCode | allow(override, reason: only path) mustOffer(DIAGNOSIS_REQUIRED before override) unchanged | promote: allow |

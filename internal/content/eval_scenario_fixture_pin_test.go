@@ -26,7 +26,6 @@ var legacyUnpinned = map[string]bool{
 	"eval/behavioral/scenarios/fixtures/laravel-showcase-deployed.yaml":       true,
 	"eval/behavioral/scenarios/fixtures/nodejs-simple-deployed.yaml":          true,
 	"eval/behavioral/scenarios/fixtures/nodejs-standard-deployed.yaml":        true,
-	"eval/behavioral/scenarios/fixtures/python-simple-failed-no-db.yaml":      true,
 	"eval/behavioral/scenarios/fixtures/nodejs-prod-failed-no-db.yaml":        true,
 }
 

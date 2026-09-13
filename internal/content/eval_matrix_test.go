@@ -331,6 +331,15 @@ func (r matrixRow) requiredFamilies() []string {
 // VerificationConfig field but a nested ExpectedService one
 // (docs/spec-scenarios.md §9.3 lists it as an existing "today" family) — any
 // expectedServices entry carrying a subdomainProbe.
+// scenarioCarriesFamily is familyPresent plus the one family that lives
+// outside VerificationConfig: seedExpect is the scenario's `seed.expect` block.
+func scenarioCarriesFamily(sc *eval.Scenario, family string) bool {
+	if family == "seedExpect" {
+		return sc.SeedExpect != nil
+	}
+	return sc.Verification != nil && familyPresent(sc.Verification, family)
+}
+
 func familyPresent(v *eval.VerificationConfig, family string) bool {
 	rv := reflect.ValueOf(*v)
 	rt := rv.Type()
@@ -392,7 +401,7 @@ func TestEvalMatrix_GateRows_ScenarioRequiredAndCarriesFamilies(t *testing.T) {
 				t.Errorf("scenario %q: verification.spec missing", row.id)
 			}
 			for _, family := range row.requiredFamilies() {
-				if !familyPresent(sc.Verification, family) {
+				if !scenarioCarriesFamily(sc, family) {
 					t.Errorf("scenario %q: row names family %q but verification.%s is absent", row.id, family, family)
 				}
 			}
@@ -482,7 +491,7 @@ func TestEvalMatrix_PromoteFamily_ExistsAndScenarioLacksIt(t *testing.T) {
 		if err != nil {
 			continue // scenario not written yet — promote: is still truthful
 		}
-		if sc.Verification != nil && familyPresent(sc.Verification, row.promoteFamily) {
+		if scenarioCarriesFamily(sc, row.promoteFamily) {
 			t.Errorf("row %q (%s): scenario already carries %q — flip the row to gate", row.id, row.statusRaw, row.promoteFamily)
 		}
 	}
