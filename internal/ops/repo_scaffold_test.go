@@ -4,6 +4,8 @@ package ops
 
 import (
 	"context"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -84,6 +86,36 @@ func TestReadRepoStatus_NoRepo_ReturnsNotPresentNoError(t *testing.T) {
 	}
 	if got.Present {
 		t.Error("Present = true, want false (no repo)")
+	}
+}
+
+func TestLocalRepoHead_RealRepo_ReturnsPresentAndHead(t *testing.T) {
+	dir := t.TempDir()
+	runGit := func(args ...string) {
+		cmd := exec.CommandContext(context.Background(), "git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	runGit("init", "-q", "-b", "main")
+	runGit("commit", "-q", "--allow-empty", "-m", "init")
+
+	present, head := LocalRepoHead(context.Background(), dir)
+	if !present {
+		t.Fatal("present = false, want true")
+	}
+	if head == "" {
+		t.Error("head is empty, want a resolved sha")
+	}
+}
+
+func TestLocalRepoHead_NotARepo_ReturnsNotPresent(t *testing.T) {
+	dir := t.TempDir()
+	present, head := LocalRepoHead(context.Background(), dir)
+	if present {
+		t.Errorf("present = true, want false (not a repo): head=%q", head)
 	}
 }
 

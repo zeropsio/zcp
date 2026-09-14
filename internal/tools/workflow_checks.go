@@ -9,6 +9,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -37,13 +38,102 @@ const (
 	defaultSkipReason = "skipped by user"
 )
 
-func buildStepChecker(step string, client platform.Client, fetcher platform.LogFetcher, projectID string, _ ops.HTTPDoer, engine *workflow.Engine, _ string) workflow.StepChecker {
+func buildStepChecker(step string, client platform.Client, fetcher platform.LogFetcher, projectID string, _ ops.HTTPDoer, engine *workflow.Engine, stateDir string, ssh ops.SSHDeployer, rt runtime.Info) workflow.StepChecker {
 	if step == stepProvision {
-		return checkProvision(client, fetcher, projectID, engine)
+		provision := checkProvision(client, fetcher, projectID, engine)
+		return func(ctx context.Context, plan *workflow.ServicePlan, bs *workflow.BootstrapState) (*workflow.StepCheckResult, error) {
+			result, err := provision(ctx, plan, bs)
+			if err != nil {
+				return result, err
+			}
+			repoChecks := checkRepoInitAt(ctx, ssh, rt, plan, projectRootFromState(stateDir))
+			if len(repoChecks) == 0 {
+				return result, nil
+			}
+			if result == nil {
+				result = &workflow.StepCheckResult{Passed: true}
+			}
+			result.Checks = append(result.Checks, repoChecks...)
+			if !checksAllPassed(repoChecks) {
+				result.Passed = false
+				result.Summary = "provisioning incomplete"
+			}
+			return result, nil
+		}
 	}
 	// discover and close steps have nil checkers (attestation-only triggers
 	// under Option A — bootstrap owns infra provisioning, not deploy).
 	return nil
+}
+
+// checkRepoInit gates bootstrap completion on a repo being present for
+// every dev-mode target (docs/spec-workflows.md §4.10, G1): container
+// mode self-heals via ops.EnsureScaffoldRepo (bootstrap owns /var/www,
+// so it may act); local mode only reads — dir is the user's own
+// checkout, so a missing repo is reported, not created. Kept separate
+// from checkProvision's SSH-independent checks so this function alone
+// carries the ssh/rt dependency.
+func checkRepoInit(ctx context.Context, ssh ops.SSHDeployer, rt runtime.Info, plan *workflow.ServicePlan) []workflow.StepCheck {
+	return checkRepoInitAt(ctx, ssh, rt, plan, "")
+}
+
+// checkRepoInitAt is checkRepoInit with an explicit local root (used by
+// buildStepChecker, which already has stateDir resolved to a project
+// root; the local-only path in checkRepoInit's doc-comment needs
+// localRoot to probe CWD-equivalent state without live SSH).
+func checkRepoInitAt(ctx context.Context, ssh ops.SSHDeployer, rt runtime.Info, plan *workflow.ServicePlan, localRoot string) []workflow.StepCheck {
+	if plan == nil {
+		return nil
+	}
+	var checks []workflow.StepCheck
+	for _, target := range plan.Targets {
+		hostname := target.Runtime.DevHostname
+		if hostname == "" {
+			continue
+		}
+		name := hostname + "_repo"
+		class := topology.RuntimeClassFor(target.Runtime.Type)
+
+		if rt.InContainer {
+			if ssh == nil {
+				continue
+			}
+			if err := ops.EnsureScaffoldRepo(ctx, ssh, hostname, class); err != nil {
+				checks = append(checks, workflow.StepCheck{
+					Name:   name,
+					Status: statusFail,
+					Detail: fmt.Sprintf("repo not ready on %s: %v", hostname, err),
+				})
+				continue
+			}
+			checks = append(checks, workflow.StepCheck{
+				Name:         name,
+				Status:       statusPass,
+				PreAttestCmd: "git -C /var/www rev-parse HEAD",
+			})
+			continue
+		}
+
+		// Local mode: read-only. A missing repo is reported so the
+		// finalize step blocks until the agent runs `git init` itself —
+		// zcp never silently inits a directory it didn't create.
+		present, head := ops.LocalRepoHead(ctx, localRoot)
+		if !present {
+			checks = append(checks, workflow.StepCheck{
+				Name:   name,
+				Status: statusFail,
+				Detail: fmt.Sprintf("%s is not a git repository yet — run `git init` (and an initial commit) in the project root before finishing bootstrap", localRoot),
+			})
+			continue
+		}
+		checks = append(checks, workflow.StepCheck{
+			Name:         name,
+			Status:       statusPass,
+			Detail:       "HEAD " + head,
+			PreAttestCmd: "git rev-parse HEAD",
+		})
+	}
+	return checks
 }
 
 func checkProvision(client platform.Client, fetcher platform.LogFetcher, projectID string, engine *workflow.Engine) workflow.StepChecker {

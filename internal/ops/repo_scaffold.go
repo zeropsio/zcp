@@ -70,6 +70,20 @@ func ReadRepoStatus(ctx context.Context, ssh SSHDeployer, hostname string) (Repo
 	return RepoStatus{Present: true, Head: head, Baseline: baseline}, nil
 }
 
+// LocalRepoHead reports whether dir (a local working directory, not a
+// container) is already a git repository with a reachable HEAD, and its
+// sha if so (docs/spec-workflows.md §4.10). Read-only — unlike
+// EnsureScaffoldRepo, it never runs `git init`: dir is the user's own
+// local checkout, not container state zcp owns, so the bootstrap checker
+// only reports the gap and lets the agent run `git init` itself.
+func LocalRepoHead(ctx context.Context, dir string) (present bool, head string) {
+	head, err := git.ResolveSHA(ctx, git.LocalRunner{}, dir, "HEAD")
+	if err != nil {
+		return false, ""
+	}
+	return true, head
+}
+
 // readBaselineTag returns the appVersion id embedded in dir's
 // zcp/baseline/<id> tag pointing at the current HEAD, or "" when none
 // exists. Best-effort: a Runner failure (no such tag) just means no

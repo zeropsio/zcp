@@ -153,7 +153,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 		Timeout:   15 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}},
 	}
-	checker := buildStepChecker(input.Step, client, logFetcher, projectID, httpClient, engine, stateDir)
+	checker := buildStepChecker(input.Step, client, logFetcher, projectID, httpClient, engine, stateDir, sshDeployer, rt)
 
 	resp, err := engine.BootstrapComplete(ctx, input.Step, input.Attestation, checker)
 	if err != nil {
