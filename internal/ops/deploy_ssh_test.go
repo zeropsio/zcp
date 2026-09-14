@@ -14,6 +14,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 type sshCall struct {
@@ -562,7 +563,7 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 		APIHost: "api.app-prg1.zerops.io",
 		Region:  "prg1",
 	}
-	cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false)
+	cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, topology.RuntimeDynamic)
 
 	wantContains := []string{
 		"zcli login -- 'test-token'",
@@ -608,7 +609,7 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 func extractGitEnsureChain(t *testing.T, dir string) string {
 	t.Helper()
 	authInfo := auth.Info{Token: "tok"}
-	full := buildSSHCommand(authInfo, "svc-target", dir, "", false)
+	full := buildSSHCommand(authInfo, "svc-target", dir, "", false, topology.RuntimeDynamic)
 	chain, _, found := strings.Cut(full, " && zcli push")
 	if !found {
 		t.Fatalf("command missing `zcli push` anchor, shape drifted:\n%s", full)

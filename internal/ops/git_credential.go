@@ -2,6 +2,8 @@ package ops
 
 import (
 	"fmt"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // gitCredentialHelperShell is the inline git credential helper that replaced
@@ -80,13 +82,17 @@ func BuildGitSessionAuthProbeCommand(remoteURL string) string {
 // callers may run it idempotently after a presence check without a
 // TOCTOU window.
 // Auth: the SESSION env credential helper — reconstruction only runs for
-// pairs whose GIT_TOKEN service secret already exists.
-func BuildGitReconstructCommand(workingDir, remoteURL string, identity GitIdentity) string {
+// pairs whose GIT_TOKEN service secret already exists. class picks the
+// .git/info/exclude pattern set seeded on the fresh init (git.ExcludePatterns) —
+// same fragment GitEnsureRepoHeadCommand composes; pass topology.RuntimeUnknown
+// when no runtime classification is available at the call site.
+func BuildGitReconstructCommand(workingDir, remoteURL string, identity GitIdentity, class topology.RuntimeClass) string {
 	quoted := shellQuote(remoteURL)
 	return fmt.Sprintf(
-		`cd %s && if test ! -d .git; then git init -q -b main && %s && git remote add origin %s && %s && GIT_TERMINAL_PROMPT=0 git %s fetch -q origin HEAD && git update-ref refs/heads/main FETCH_HEAD && git reset -q FETCH_HEAD; fi`,
+		`cd %s && if test ! -d .git; then git init -q -b main && %s && %s && git remote add origin %s && %s && GIT_TERMINAL_PROMPT=0 git %s fetch -q origin HEAD && git update-ref refs/heads/main FETCH_HEAD && git reset -q FETCH_HEAD; fi`,
 		shellQuote(workingDir),
 		gitIdentityEnsureFragmentFor(identity),
+		gitExcludeSeedFragment(class),
 		quoted,
 		gitCredentialHelperConfigFragment(remoteURL),
 		gitCredentialHelperArgs(),

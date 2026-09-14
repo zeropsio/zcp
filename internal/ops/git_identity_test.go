@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // TestGitIdentityEnsureFragment_Shape pins the two load-bearing shell
@@ -53,20 +55,130 @@ func TestGitHeadEnsureFragment_Shape(t *testing.T) {
 func TestGitEnsureRepoHeadCommand_Shape(t *testing.T) {
 	t.Parallel()
 
-	cmd := GitEnsureRepoHeadCommand("/var/www")
+	cmd := GitEnsureRepoHeadCommand("/var/www", topology.RuntimeDynamic)
 	cdIdx := strings.Index(cmd, "cd '/var/www'")
 	initIdx := strings.Index(cmd, "(test -d .git || git init -q -b main)")
 	identityIdx := strings.Index(cmd, `test -n "$(git config user.email)"`)
+	excludeIdx := strings.Index(cmd, "mkdir -p .git/info")
 	headIdx := strings.Index(cmd, "git rev-parse -q --verify HEAD")
 
-	for name, idx := range map[string]int{"cd": cdIdx, "init guard": initIdx, "identity ensure": identityIdx, "HEAD guarantee": headIdx} {
+	for name, idx := range map[string]int{"cd": cdIdx, "init guard": initIdx, "identity ensure": identityIdx, "exclude seed": excludeIdx, "HEAD guarantee": headIdx} {
 		if idx < 0 {
 			t.Fatalf("command missing %s piece:\n%s", name, cmd)
 		}
 	}
-	if cdIdx >= initIdx || initIdx >= identityIdx || identityIdx >= headIdx {
-		t.Errorf("chain out of order (want cd < init < identity < head): cd=%d init=%d identity=%d head=%d\n%s",
-			cdIdx, initIdx, identityIdx, headIdx, cmd)
+	if cdIdx >= initIdx || initIdx >= identityIdx || identityIdx >= excludeIdx || excludeIdx >= headIdx {
+		t.Errorf("chain out of order (want cd < init < identity < exclude < head): cd=%d init=%d identity=%d exclude=%d head=%d\n%s",
+			cdIdx, initIdx, identityIdx, excludeIdx, headIdx, cmd)
+	}
+}
+
+// TestGitExcludeSeedFragment_Shape pins the idempotent append-per-pattern
+// shape: each pattern gets its own `grep -qxF || printf >>` guard, so a
+// re-run never duplicates a line already present, and a runtime class that
+// runs application code carries the code-specific patterns on top of the
+// base set.
+func TestGitExcludeSeedFragment_Shape(t *testing.T) {
+	t.Parallel()
+
+	frag := gitExcludeSeedFragment(topology.RuntimeDynamic)
+	if !strings.Contains(frag, "mkdir -p .git/info && touch .git/info/exclude") {
+		t.Errorf("fragment must ensure .git/info/exclude exists: %s", frag)
+	}
+	for _, want := range []string{"node_modules/", "dist/", "build/", ".env", ".env.*", "*.log", ".zcp/"} {
+		q := "'" + want + "'"
+		if !strings.Contains(frag, "grep -qxF -- "+q+" .git/info/exclude") {
+			t.Errorf("fragment missing idempotent presence check for %q: %s", want, frag)
+		}
+		if !strings.Contains(frag, "printf '%s\\n' "+q+" >> .git/info/exclude") {
+			t.Errorf("fragment missing append for %q: %s", want, frag)
+		}
+	}
+}
+
+// TestGitExcludeSeedFragment_ManagedClass_OmitsCodePatterns pins that a
+// managed/unknown class only gets the base patterns — no application code
+// working tree to speak of, so node_modules/dist/build are meaningless.
+func TestGitExcludeSeedFragment_ManagedClass_OmitsCodePatterns(t *testing.T) {
+	t.Parallel()
+
+	frag := gitExcludeSeedFragment(topology.RuntimeManaged)
+	for _, unwanted := range []string{"node_modules/", "dist/", "build/"} {
+		if strings.Contains(frag, "'"+unwanted+"'") {
+			t.Errorf("managed-class fragment must not seed %q: %s", unwanted, frag)
+		}
+	}
+	if !strings.Contains(frag, "'.env'") {
+		t.Errorf("managed-class fragment must still seed the base patterns: %s", frag)
+	}
+}
+
+// TestGitEnsureRepoHeadCommand_SeedsExcludeForClass is the real-git
+// behavioral proof: running the composed chain against a fresh dir leaves
+// a .git/info/exclude containing the runtime class's patterns.
+func TestGitEnsureRepoHeadCommand_SeedsExcludeForClass(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping under -short; needs real git binary")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	env := isolatedGitEnv(t)
+	runShellChain(t, GitEnsureRepoHeadCommand(dir, topology.RuntimeDynamic), env)
+
+	content, err := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
+	if err != nil {
+		t.Fatalf("read .git/info/exclude: %v", err)
+	}
+	for _, want := range []string{"node_modules/", "dist/", "build/", ".env", "*.log", ".zcp/"} {
+		if !strings.Contains(string(content), want) {
+			t.Errorf(".git/info/exclude missing %q, got:\n%s", want, content)
+		}
+	}
+}
+
+// TestGitEnsureRepoHeadCommand_ExcludeSeedIdempotent_PreservesManualLines
+// proves the append-if-absent shape survives repeated runs (every deploy
+// re-runs the chain): a manually-added line is never duplicated or
+// clobbered, and the class patterns never appear twice.
+func TestGitEnsureRepoHeadCommand_ExcludeSeedIdempotent_PreservesManualLines(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping under -short; needs real git binary")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	env := isolatedGitEnv(t)
+	mustRunGit(t, dir, env, "init", "-q", "-b", "main")
+	if err := os.MkdirAll(filepath.Join(dir, ".git", "info"), 0o755); err != nil {
+		t.Fatalf("mkdir .git/info: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".git", "info", "exclude"), []byte("my-custom-line\n"), 0o644); err != nil {
+		t.Fatalf("seed a manual exclude line: %v", err)
+	}
+
+	cmd := GitEnsureRepoHeadCommand(dir, topology.RuntimeDynamic)
+	runShellChain(t, cmd, env)
+	runShellChain(t, cmd, env) // second run: must not duplicate anything
+
+	content, err := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
+	if err != nil {
+		t.Fatalf("read .git/info/exclude: %v", err)
+	}
+	counts := map[string]int{}
+	for line := range strings.SplitSeq(strings.TrimRight(string(content), "\n"), "\n") {
+		counts[line]++
+	}
+	for line, n := range counts {
+		if n > 1 {
+			t.Errorf("line %q appears %d times, want at most 1 (idempotent seeding)", line, n)
+		}
+	}
+	if counts["my-custom-line"] != 1 {
+		t.Errorf("manual line survived wrongly: counts=%v", counts)
+	}
+	if counts["node_modules/"] != 1 {
+		t.Errorf("class pattern seeded wrongly: counts=%v", counts)
 	}
 }
 
@@ -155,7 +267,7 @@ func TestGitEnsureRepoHeadCommand_MakesWriteProbeUseDryRunBranch(t *testing.T) {
 		t.Fatalf("pre-condition violated: HEAD predicate = %q before ensure, want %q", got, "no")
 	}
 
-	runShellChain(t, GitEnsureRepoHeadCommand(dir), env)
+	runShellChain(t, GitEnsureRepoHeadCommand(dir, topology.RuntimeDynamic), env)
 
 	//nolint:gosec // test-only, dir is a t.TempDir path
 	after := exec.CommandContext(context.Background(), "bash", "-c", "cd "+shellQuote(dir)+" && git rev-parse --verify -q HEAD >/dev/null 2>&1 && echo yes || echo no")
@@ -180,7 +292,7 @@ func TestGitEnsureRepoHeadCommand_Idempotent(t *testing.T) {
 
 	dir := t.TempDir()
 	env := isolatedGitEnv(t)
-	cmd := GitEnsureRepoHeadCommand(dir)
+	cmd := GitEnsureRepoHeadCommand(dir, topology.RuntimeDynamic)
 
 	runShellChain(t, cmd, env)
 	first := gitHeadSHA(dir, env)
