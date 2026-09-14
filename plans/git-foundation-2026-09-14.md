@@ -1,6 +1,6 @@
 # Git as the foundation — plan
 
-Status: FRAME + PROVE done (live on project `eval`, 2026-09-14). Awaiting owner decision on P-1/P-2.
+Status: SUPERSEDED as the entry point by `git-foundation-handoff-2026-09-14.md` (read that first; §3 there lists what this plan got wrong). Kept for the platform ledger (§1) and the eval tables (§6).
 
 ## 0. Thesis (one sentence)
 
