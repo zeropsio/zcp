@@ -690,12 +690,12 @@ no buildFromGit), so the agent has a place to fix source. `allowFailed` explicit
 | F3 | service deleted externally (§6.5 known gap) | pending: scenario |
 | L1-L3 | local-stage first deploy · local + managed over VPN · local-only adopt | pending: local mode in farm |
 
-#### G. Git foundation (docs/spec-workflows.md §4.9, Git Lifecycle §8 GLC; not in the gate set)
+#### G. Git foundation (docs/spec-workflows.md §4.9, §12, Git Lifecycle §8 GLC; a row enters the gate set once its scenario carries every family it names)
 
 | cell | scenario id | pre-state · task | oracle families | status |
 |---|---|---|---|---|
 | G1 ✚ | `repo-always-bootstrap` | brand-new classic pair · build a small API | expectedServices liveness never | promote: containerCheck |
-| G2 ✚ | `repo-always-adopt-baseline` | unmanaged pair deployed without git · connect to what I have | expectedServices unchanged never | promote: containerCheck |
+| G2 ✚ | `repo-always-adopt-baseline` | unmanaged pair deployed without git · connect to what I have | expectedServices unchanged containerCheck(baseline tag tree non-empty; snapshot commit) never | gate |
 | G3 ✚ | `deploy-from-commit-stage` | pair, both buildFromGit-deployed · ship a specific commit to stage | toolArg(targetService=appstage) toolResult(sha/appVersionId) liveness never | promote: containerCheck |
 | G4 ✚ | `dev-self-deploy-keeps-repo` | pair with one ledger entry on appdev (preseed) · change the response text, ship dev | liveness toolArg(targetService=appdev) never | promote: containerCheck |
 | G5 ✚ | `rollback-stage-from-ledger` | stage with 2 ledger entries (preseed) · roll back to the previous version | seedExpect toolArg(targetService=appstage; max 0 import) mustOffer(no rebuild) never | promote: containerCheck |

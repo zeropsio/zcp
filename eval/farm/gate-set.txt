@@ -29,3 +29,4 @@ recover-build-failed
 env-service-scope-pair
 subdomain-user-disabled-stays-off
 custom-domain-present
+repo-always-adopt-baseline
