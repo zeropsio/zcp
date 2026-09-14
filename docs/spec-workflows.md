@@ -1445,6 +1445,131 @@ What the agent still owns: generating the import YAML fragment that creates only
 
 ---
 
+## 12. Git Foundation — source, change path, delivery, evidence
+
+This section states ONCE the path a change takes from "where does the code come from" to
+"what runs, and how do I put the previous version back". Every git-shaped rule elsewhere in
+this spec (§2/§3 entry routes, §4.3 derived delivery, §4.9 deploy-from-commit + evidence,
+§8 Git Lifecycle GLC-1..7, §10 launch gates) is an instance of it, and `spec-mate.md §6`
+is the same model seen from the mate side. It is provider-agnostic: an origin is any HTTPS
+git host reachable with a PAT (GitHub, GitLab, self-hosted Gitea, anything else); the
+GitHub- and GitLab-specific parts are only the two CI shapes the platform can consume today
+(§12.5). Rules are numbered GF-n; a rule marked OPEN is stated so the design is whole, but
+is not built — the "Home" column says where it lives once it is.
+
+Owner intent this section serves (Karel, 2026-09-14): git is the base of every code path;
+any git host; new, imported and adopted projects alike; production always means an origin
+plus CI; Gitea inside Zerops is the optional default origin, not a requirement; mate
+collaboration happens over a shared repository.
+
+### 12.1 Vocabulary
+
+| Term | Meaning | Home |
+|---|---|---|
+| checkout | `/var/www` of ONE dev service: one working tree, one process, one subdomain. The isolation unit is the service, never a directory — worktrees are refused (`spec-mate.md §6.3`). Two agents (or two mates) on one dev service share the same uncommitted files; independent parallel work is a SECOND dev service with its own checkout. | GLC-1, `spec-mate.md §6.1/§6.3` |
+| origin | The shared remote of a checkout: `ServiceMeta.RemoteURL` + `GitPushState`, written only by `git-push-setup` (probe-first, PAT as the `GIT_TOKEN` service secret, url-scoped credential helper). Optional for dev; mandatory for production (P-LP-10). | §4.3, §4.4 |
+| tracked ref | The ref a target consumes — what stage or prod is built from. Today `main` is implicit in three places: the `git-push` default branch (`tools/deploy_git_push.go`), the Actions template (`tools/workflow_build_integration.go`, `branches: [main]`), and the launch gate's remote-HEAD compare (`tools/launch_source_control_gate.go`). | GF-7 (OPEN) |
+| delivery | Whatever turns a working tree or a commit into an appVersion on a target: the dev self-deploy (working tree, `-g`), deploy-from-commit (cross-deploy, §4.9), CI on push (§12.5), or the user's own CI that zcp cannot see. Which one applies is DERIVED (§4.3), never chosen by close-mode. | §4.3, §8 DM |
+| evidence | The record of which commit an appVersion was built from: the annotated tag `zcp/deploy/<projectId>/<target>/<appVersionId>` in the checkout that deployed (§4.9). The platform is the authority for the ACTIVE appVersion; "what runs" is the join of the two. No tag ⇒ source unknown, and the answer says so. | §4.9, GF-5 |
+| baseline | Adopt's starting point: the `zcp/baseline/<appVersionId>` tag on either zcp's snapshot of the files found on the container or a pre-existing HEAD with content; recorded as provenance `snapshot` / `existing`. Neither is a claim that the tree equals the running appVersion. | GLC-7 |
+
+### 12.2 Entry — where the source comes from
+
+| Route | Source of code | Repo state after the route | Origin |
+|---|---|---|---|
+| bootstrap `recipe` / `classic` (§2) | recipe or agent-written tree in the dev service | GLC-1: repo with a reachable HEAD, identity set-if-absent, exclude seeded by runtime class. zcp asserts nothing about clone history the platform may or may not have left. | none until `git-push-setup` |
+| user's existing repository | `git-push-setup remoteUrl=<their host>` on the dev service; reconstruction from the remote when `/var/www/.git` is missing (§4.4) | repo synced to origin, `GitPushState=configured` | the user's, any host |
+| `adopt` (§3) | a running service, with or without git | GLC-7: baseline tag over a snapshot (no repo / marker-only HEAD) or over the existing HEAD; provenance recorded | none until `git-push-setup` |
+| launch-production (§10) | never a clone: prod starts `startWithoutCode`, the first release is the first CI build | prod services carry no repo | the dev checkout's origin, mandatory |
+
+### 12.3 The change path — one checkout
+
+```
+edit ──► dev self-deploy ──► commit ──► push ──► deliver to target ──► verify ──► roll back
+ │            │                │          │             │                │            │
+ │  mate checkpoints        working    user/agent    origin,      stage: §4.9 or    zerops_   re-activate a
+ │  (refs/t3/*, turn        tree, -g,  commit with   tracked      CI-on-push        verify    recorded
+ │  history; never          repo       ambient       ref          prod: CI-on-push            appVersion
+ │  a delivery)             travels    identity                   only (P-LP-10/11)           (GF-8)
+ └──────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+- **edit → dev self-deploy** is the fast loop and stays dirty by design: the working tree
+  ships via zcli's stash-archive with `-g`, so the repository travels inside the artifact
+  and survives the container replacement (GLC-2, verified live 2026-09-14). The evidence tag
+  for such a deploy carries `dirty:true` — it records HEAD plus "uncommitted changes on top",
+  never "commit X is what runs".
+- **commit** is the user's or the agent's, with ambient identity (GLC-3). zcp mints no
+  user-visible commit; its own objects (HEAD marker, adopt snapshot, evidence tags) carry the
+  robot identity inline (GF-2).
+- **push** needs an origin (§4.4). The pushed branch is the tracked ref (GF-7).
+- **deliver**: a stage receives either a deploy-from-commit (§4.9, cross-deploy) or a CI
+  build of the tracked ref; production receives ONLY a CI build of a pushed, clean HEAD
+  (P-LP-10/11). A direct deploy on a configured pair redirects to the push only where a
+  zcp-managed integration consumes pushes (§4.3).
+- **verify** is `zerops_verify` against the target; **roll back** re-activates a recorded
+  appVersion (GF-8) — a rebuild of an older commit is a different act and is named as such.
+
+### 12.4 Two checkouts, one origin
+
+`dev1` and `dev2` are two services, each its own repository (GF-1), sharing one origin.
+Independent work lives on branches; integration happens at the origin (a pull request on the
+host, or a fast-forward of the tracked ref); the stage consumes the tracked ref, so which
+checkout produced a change is invisible to delivery. Evidence tags are written in the
+checkout that deployed; the other checkout sees them only through the origin (GF-9, OPEN).
+Mate checkpoints stay per checkout (`spec-mate.md §6.4`) and are never pushed.
+
+### 12.5 Delivery contract — provider-agnostic
+
+The contract every CI shape fulfils: **take one specific revision, deploy it to one specific
+target, and leave an appVersion whose version name is that revision's sha.** Shapes:
+
+| Shape | Status | Evidence the platform keeps |
+|---|---|---|
+| GitHub Actions running `zcli push` with `ZEROPS_TOKEN_PROD` (§10) / `BuildIntegration=actions` | built | version name if the workflow passes `--version-name` (OPEN: today it does not) |
+| GitLab webhook → platform pulls (`BuildIntegration=webhook`) | built | none — the appVersion DTO carries no sha (verified 2026-09-14); source is unknown to zcp unless the platform adds it |
+| Gitea Actions (act_runner) running `zcli push` | live proof pending (2026-09-14) | as GitHub Actions |
+| user's own CI outside zcp | supported, opaque | unknown unless it sets the version name |
+| zcp-owned webhook relay | NOT planned unless the Gitea proof fails — an extra service with credentials, event handling and concurrency is justified only by a proven missing capability | — |
+
+Platform limits that bound this table (verified 2026-09-14, `platform-verifier` memory):
+`buildFromGit` accepts only github.com / gitlab.com; webhook receivers exist only for those
+two and require the account's OAuth link; no generic authenticated build trigger carrying a
+ref; no sha on the appVersion DTO; integration tokens have no TTL. Asks to the platform
+team, in order of leverage: a host allowlist (or none) for `buildFromGit`; an authenticated
+build trigger taking `{ref|sha, setup}`; the commit sha on the appVersion DTO; a TTL on
+integration tokens. Each ask, if granted, deletes a row from the table above rather than
+adding code.
+
+### 12.6 Rules
+
+| # | Rule | Home / status |
+|---|---|---|
+| GF-1 | A checkout is a service. No worktrees, no second checkout inside one service; parallel independent work is a second dev service. | `spec-mate.md §6.3` |
+| GF-2 | zcp mints no user-visible commit. Its own objects — HEAD marker (GLC-2), adopt snapshot (GLC-7), evidence tags (§4.9) — carry the robot identity inline and never touch the index or the working tree. | GLC-2/3/7, §4.9 |
+| GF-3 | Deploy-from-commit is a cross-deploy only. A self-deploy always ships the working tree with `.git` (`-g`); shipping an extracted tree to the source service itself would delete the container's repository. | §4.9; `TestDeploySSH_ShaSelfTarget_Refused` |
+| GF-4 | The `zerops.yaml` that is validated is the one that is deployed: the commit's for a sha deploy, the working tree's otherwise. | §4.9 |
+| GF-5 | Evidence never overclaims. No tag ⇒ "source unknown"; a working-tree deploy ⇒ `dirty:true`; a baseline ⇒ `snapshot` or `existing`, never parity with the running appVersion; the platform's active appVersion is the only "what runs". | §4.9, GLC-7 |
+| GF-6 | Production is delivered only by CI from an origin, from a clean, pushed HEAD; zcp never self-deploys production. | P-LP-10/11 — unchanged |
+| GF-7 | The tracked ref is recorded once per target and read by the push default, the CI template and the launch gate. | OPEN — today `main` in three places (§12.1) |
+| GF-8 | Rollback is the re-activation of a recorded appVersion (`PUT /app-version/{id}/deploy`, the R2 path generalised from `latest` to any recorded id) with no build; deploying an older commit is a NEW build and is offered as the fallback, named as such. | OPEN — live proof of re-activating a superseded appVersion pending (2026-09-14) |
+| GF-9 | Evidence tags reach the origin with the push (`refs/tags/zcp/deploy/*` alongside the tracked ref), so a second checkout and the mate see one deploy history; the version-name convention (GF-10) is the platform-side copy. | OPEN — decide after GF-8 and the Gitea proof |
+| GF-10 | Every zcp-driven build passes `--version-name <sha>` (sha deploys do; working-tree deploys and CI templates OPEN), so `SearchAppVersions.name` is a platform-side breadcrumb even when no tag is reachable. | OPEN |
+
+### 12.7 Open items and owners
+
+- GF-7 tracked ref — build after the branch's first farm pass (G1/G3/G4).
+- GF-8 rollback — settle from the live verification; then rewrite scenario G5 to assert the
+  re-activated appVersion id and the absence of a `stack.build` process.
+- GF-9/GF-10 evidence sharing — one decision, after GF-8 and the Gitea proof.
+- Gitea Actions as CI (§12.5) — live verification decides whether a relay exists at all.
+- Managed Gitea: recipe (verified shape: `ubuntu@24.04`, `HOME`, `app.ini` before
+  `gitea migrate`, ≥1 GB) + placement (owner recommendation: one hub project per org).
+- Mate commit/push through zcp (`spec-mate.md §6.3`) — the fork's side of GF-2.
+- Platform asks (§12.5) — owner sends; each granted ask removes code.
+
+---
+
 ## Appendix A: Recovery Patterns
 
 | Symptom | Cause | Fix |
