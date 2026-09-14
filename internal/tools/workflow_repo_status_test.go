@@ -1,5 +1,5 @@
 // Tests for: tools/workflow_repo_status.go — the SSH-side wiring behind
-// the envelope's per-service repo block (docs/spec-workflows.md §4.10,
+// the envelope's per-service repo block (docs/spec-workflows.md §8 GLC-7,
 // G1/G2). workflow.ApplyRepoStatus itself is unit-tested in the
 // workflow package; this covers only attachRepoStatus's gating (which
 // services get an SSH read at all) and the SSH-failure fallback.

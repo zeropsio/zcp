@@ -3,7 +3,7 @@ id: repo-always-adopt-baseline
 description: |
   Unmanaged standard pair deployed outside ZCP (no ServiceMeta, no git
   history — same pre-state as `adopt-existing-standard-pair`). Tests G2
-  (docs/spec-workflows.md §4.10): adopt tags the running appVersion as a
+  (docs/spec-workflows.md §8 GLC-7): adopt tags the running appVersion as a
   baseline (`zcp/baseline/<appVersionId>`) on every adopted dev service —
   `git init` first only if `/var/www` isn't already a repo, otherwise
   only the tag moves — and persists `ServiceMeta.Repo.BaselineAppVersion`.

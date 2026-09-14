@@ -1,5 +1,5 @@
 // Tests for: topology/repo.go — provenance classification for the
-// repo-always adopt baseline (docs/spec-workflows.md §4.10).
+// repo-always adopt baseline (docs/spec-workflows.md §8 GLC-7).
 package topology
 
 import "testing"

@@ -1,7 +1,7 @@
 // Tests for: tools/workflow_checks.go's repo-init check — the provision
 // StepChecker addition that gates bootstrap completion on a repo being
 // present at /var/www (container) or CWD (local), per
-// docs/spec-workflows.md §4.10, G1.
+// docs/spec-workflows.md §8 GLC-7, G1.
 package tools
 
 import (

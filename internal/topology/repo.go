@@ -3,7 +3,7 @@ package topology
 import "strings"
 
 // RepoProvenance classifies where a dev service's baseline commit content
-// actually came from at adopt time (docs/spec-workflows.md §4.10).
+// actually came from at adopt time (docs/spec-workflows.md §8 GLC-7).
 type RepoProvenance string
 
 const (
@@ -22,7 +22,7 @@ const (
 
 // Repo is the adopt-time marker recording which appVersion a dev service's
 // git baseline was tagged against, and whether that baseline's tree is
-// known to match the deployed content (docs/spec-workflows.md §4.10).
+// known to match the deployed content (docs/spec-workflows.md §8 GLC-7).
 type Repo struct {
 	BaselineAppVersion string         `json:"baselineAppVersion,omitempty"`
 	Provenance         RepoProvenance `json:"provenance,omitempty"`

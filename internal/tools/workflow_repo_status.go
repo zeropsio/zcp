@@ -11,7 +11,7 @@ import (
 
 // attachRepoStatus populates services[i].Repo for every non-managed
 // service by reading its repo state fresh over SSH (docs/spec-workflows.md
-// §4.10, G1/G2) — the tools-layer half of workflow.ApplyRepoStatus, which
+// §8 GLC-7, G1/G2) — the tools-layer half of workflow.ApplyRepoStatus, which
 // stays SSH-free so workflow/ never imports ops/. No-op outside a
 // container (local-mode envelope status doesn't carry a per-service repo
 // block in this slice — the bootstrap-time local check in

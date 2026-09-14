@@ -476,7 +476,7 @@ func autoMountTargets(ctx context.Context, client platform.Client, projectID str
 }
 
 // adoptRepoBaseline tags hostname's current HEAD with the running
-// appVersion's baseline (docs/spec-workflows.md §4.10, G2) and persists
+// appVersion's baseline (docs/spec-workflows.md §8 GLC-7, G2) and persists
 // the marker on the hostname's ServiceMeta. Best-effort, same posture as
 // InitServiceGit above: errors go to stderr, never to AutoMountInfo.
 //
@@ -487,7 +487,7 @@ func autoMountTargets(ctx context.Context, client platform.Client, projectID str
 // GAP: Provenance is classified from ClassifyProvenance("", nil) —
 // always "source" — because the adopted appVersion's sourceService/
 // deployFiles aren't yet modeled on platform.ServiceStack/AppVersion (an
-// unverified platform fact; see docs/spec-workflows.md §4.10). A live
+// unverified platform fact; see docs/spec-workflows.md §8 GLC-7). A live
 // read replaces this placeholder once that surface is proven.
 func adoptRepoBaseline(ctx context.Context, client platform.Client, projectID string, ssh ops.SSHDeployer, engine *workflow.Engine, hostname, typeVersion string) {
 	services, err := client.ListServicesDirect(ctx, projectID)

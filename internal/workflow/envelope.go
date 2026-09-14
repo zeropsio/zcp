@@ -142,7 +142,7 @@ type ServiceSnapshot struct {
 	StageSetupName string `json:"stageSetupName,omitempty"`
 
 	// Repo is the live repo state for this service (docs/spec-workflows.md
-	// §4.10, G1/G2) — nil for managed/unknown-class services (they never
+	// §8 GLC-7, G1/G2) — nil for managed/unknown-class services (they never
 	// carry a working tree) and for any runtime service ApplyRepoStatus
 	// wasn't given a live read for. Populated by the tools layer via
 	// ApplyRepoStatus, never persisted on ServiceMeta or the bootstrap
@@ -151,7 +151,7 @@ type ServiceSnapshot struct {
 }
 
 // RepoStatus is the live per-service repo state exposed on the envelope
-// (docs/spec-workflows.md §4.10). Mirrors ops.RepoStatus one-to-one; kept
+// (docs/spec-workflows.md §8 GLC-7). Mirrors ops.RepoStatus one-to-one; kept
 // as a separate type here because workflow/ must not import ops/.
 type RepoStatus struct {
 	Present  bool   `json:"present"`

@@ -213,7 +213,7 @@ func TestAutoMountTargets_NilSSHDeployer(t *testing.T) {
 	}
 }
 
-// AdoptRoute (G2, docs/spec-workflows.md §4.10): autoMountTargets tags the
+// AdoptRoute (G2, docs/spec-workflows.md §8 GLC-7): autoMountTargets tags the
 // adopted service's HEAD with its running appVersion's baseline instead
 // of (in addition to) the bare scaffold init, and persists the marker on
 // ServiceMeta.

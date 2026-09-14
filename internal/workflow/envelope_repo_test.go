@@ -1,5 +1,5 @@
 // Tests for: workflow/envelope.go's repo block — the ServiceSnapshot.Repo
-// field and ApplyRepoStatus gating (docs/spec-workflows.md §4.10, G1/G2).
+// field and ApplyRepoStatus gating (docs/spec-workflows.md §8 GLC-7, G1/G2).
 // ApplyRepoStatus is the pure gating logic; the live SSH read that feeds
 // it (ops.ReadRepoStatus) is wired in at the tools layer, out of scope
 // for this workflow-layer unit test.

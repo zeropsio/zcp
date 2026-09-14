@@ -122,7 +122,7 @@ type ServiceMeta struct {
 	PublicAccess map[string]topology.PublicAccessRecord `json:"publicAccess,omitempty"`
 
 	// Repo is the adopt-time baseline marker (docs/spec-workflows.md
-	// §4.10, G2) — which appVersion the adopted dev service's git
+	// §8 GLC-7, G2) — which appVersion the adopted dev service's git
 	// baseline was tagged against, and whether that baseline's tree is
 	// known to match what's deployed. nil for a service bootstrapped
 	// fresh (no adopt step ran) or not yet adopted.
