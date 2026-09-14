@@ -206,17 +206,26 @@ func mapDirectAppVersion(av output.GetAppVersion) AppVersionEvent {
 }
 
 // RedeployAppVersion re-deploys an existing appVersion via PUT
-// /app-version/{id}/deploy — the ONLY in-place recovery for a never-
-// activated buildFromGit service (docs/spec-workflows.md §8 R2): no
-// rebuild, no re-import, the already-built artifact goes ACTIVE. BOTH
-// zeropsYaml and zeropsYamlSetup MUST be sent — the platform does NOT
-// reuse the stored yaml (live-verified: omitting either 400s with
-// zeropsYamlSetupNotFound).
+// /app-version/{id}/deploy: no rebuild, no re-import, the already-built
+// artifact goes ACTIVE. Two callers, two body shapes (docs/spec-workflows.md
+// §8 R2 / §12.6 GF-8):
+//   - R2 recovery of a never-activated DEPLOY_FAILED version: BOTH
+//     zeropsYaml and zeropsYamlSetup MUST be sent — the platform does NOT
+//     reuse the stored yaml (live-verified: omitting either 400s with
+//     zeropsYamlSetupNotFound).
+//   - GF-8 rollback of a BACKUP version: the platform re-activates with the
+//     config recorded at the version's original activation and ignores a
+//     null body — but REJECTS empty strings (`zeropsYamlSetup … value
+//     should not be empty`, 400 invalidUserInput; live 2026-09-14, eval G5).
+//     An empty argument is therefore sent as JSON null, never as "".
 func (z *ZeropsClient) RedeployAppVersion(ctx context.Context, appVersionID, zeropsYaml, setup string) (*Process, error) {
 	pathParam := path.AppVersionId{Id: uuid.AppVersionId(appVersionID)}
-	bodyParam := body.PutAppVersionDeploy{
-		ZeropsYaml:      types.NewMediumTextNull(zeropsYaml),
-		ZeropsYamlSetup: types.NewStringNull(setup),
+	var bodyParam body.PutAppVersionDeploy // zero values marshal as null
+	if zeropsYaml != "" {
+		bodyParam.ZeropsYaml = types.NewMediumTextNull(zeropsYaml)
+	}
+	if setup != "" {
+		bodyParam.ZeropsYamlSetup = types.NewStringNull(setup)
 	}
 	resp, err := z.handler.PutAppVersionDeploy(ctx, pathParam, bodyParam)
 	if err != nil {

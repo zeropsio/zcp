@@ -53,7 +53,7 @@ func TestReactivateAppVersion_Backup_Reactivates(t *testing.T) {
 		t.Errorf("AppVersionID sent = %q, want av-old", got.AppVersionID)
 	}
 	if got.ZeropsYaml != "" || got.Setup != "" {
-		t.Errorf("body = (yaml=%q, setup=%q), want both empty — the platform ignores the body for a BACKUP target", got.ZeropsYaml, got.Setup)
+		t.Errorf("body = (yaml=%q, setup=%q), want both empty — the client sends them as JSON null, which the platform ignores for a BACKUP target (empty strings are rejected)", got.ZeropsYaml, got.Setup)
 	}
 }
 
