@@ -122,6 +122,60 @@ func TestRedeployLastAppVersion_NoYaml_Errors(t *testing.T) {
 	}
 }
 
+// TestRedeployLastAppVersion_NewestStatus_Table pins which newest-appVersion
+// statuses RedeployLastAppVersion will act on (docs/spec-workflows.md §8 R2 /
+// §12.6 GF-8). Live-verified 2026-09-14: the platform 400s
+// (`appVersionInvalidStatus`) a PUT /app-version/{id}/deploy against the
+// CURRENTLY ACTIVE version — so ACTIVE is never a redeployable "newest"
+// status here, unlike the pre-fix code that let it through. DEPLOY_FAILED
+// (the R2 recovery case) still proceeds unchanged.
+func TestRedeployLastAppVersion_NewestStatus_Table(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		status        string
+		wantProceeds  bool
+		wantErrSubstr string
+	}{
+		{"deploy_failed_proceeds", platform.BuildStatusDeployFailed, true, ""},
+		{"active_refused", platform.ServiceStatusActive, false, platform.ServiceStatusActive},
+		{"building_refused", platform.BuildStatusBuilding, false, platform.BuildStatusBuilding},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := platform.NewMock().
+				WithServices([]platform.ServiceStack{{ID: "s1", Name: "api", Status: platform.ServiceStatusReadyToDeploy}}).
+				WithServiceAppVersions("s1", []platform.AppVersionEvent{
+					{ID: "av-2", ServiceStackID: "s1", Status: tt.status, Source: "GIT", Sequence: 2},
+				}).
+				WithAppVersionZeropsYaml("av-2", "run:\n  start: npm start\n").
+				WithRedeployAppVersionProcess(&platform.Process{ID: "proc-1", Status: platform.ProcessStatusPending, ActionName: "stack.deploy"}).
+				WithProcess(&platform.Process{ID: "proc-1", Status: platform.ProcessStatusFinished, ActionName: "stack.deploy"})
+
+			_, err := RedeployLastAppVersion(context.Background(), client, "p-1", "api", "prod")
+			if tt.wantProceeds {
+				if err != nil {
+					t.Fatalf("RedeployLastAppVersion: %v", err)
+				}
+				if len(client.CapturedRedeployAppVersion) != 1 {
+					t.Fatalf("CapturedRedeployAppVersion len = %d, want 1", len(client.CapturedRedeployAppVersion))
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected an error refusing the newest status, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.wantErrSubstr) {
+				t.Errorf("err = %q, want it to name the status %q", err.Error(), tt.wantErrSubstr)
+			}
+			if len(client.CapturedRedeployAppVersion) != 0 {
+				t.Errorf("RedeployAppVersion must not be called when the newest status is refused: %+v", client.CapturedRedeployAppVersion)
+			}
+		})
+	}
+}
+
 // TestRawZeropsYamlURL_Table pins the git-source → raw zerops.yaml URL
 // mapping (yaml cascade step 3): the platform exposes only the repo URL and
 // branch of a GIT appVersion, never its zerops.yaml or setup name.
