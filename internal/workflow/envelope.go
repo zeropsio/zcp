@@ -222,11 +222,16 @@ type AttemptInfo struct {
 	Reason       string                `json:"reason,omitempty"`
 	FailureClass topology.FailureClass `json:"failureClass,omitempty"`
 	Summary      string                `json:"summary,omitempty"`
-	// SHA and AppVersionID mirror DeployAttempt's fields for a
-	// deploy-from-commit attempt (docs/spec-workflows.md §4.9). Deploy-only,
-	// both empty for a deploy with no sha and for every verify attempt.
+	// SHA and AppVersionID mirror DeployAttempt's fields for a zcp deploy
+	// attempt (docs/spec-workflows.md §4.9) — set for an explicit
+	// deploy-from-commit AND for a working-tree deploy whose source had a
+	// git repo with a reachable HEAD. Deploy-only, both empty when the
+	// source had no repo at all, and for every verify attempt.
 	SHA          string `json:"sha,omitempty"`
 	AppVersionID string `json:"appVersionId,omitempty"`
+	// Dirty mirrors DeployAttempt.Dirty: true when this attempt shipped
+	// uncommitted changes on top of SHA. Deploy-only.
+	Dirty bool `json:"dirty,omitempty"`
 }
 
 // BootstrapSessionSummary is the bootstrap projection on the envelope used

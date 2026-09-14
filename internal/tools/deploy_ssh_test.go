@@ -25,9 +25,26 @@ type stubSSH struct {
 	err    error
 }
 
-func (s *stubSSH) ExecSSH(_ context.Context, _, _ string) ([]byte, error) {
+// ExecSSH is command-blind EXCEPT for one pattern: item 4's HeadStatus
+// round trip (docs/spec-workflows.md §4.9), which this generic stub
+// answers as "no git repo" — the realistic default for a stub that
+// doesn't simulate any actual repo state. Tests that DO want to exercise
+// a working-tree deploy's HEAD recording use the command-aware stubSSHSHA
+// instead (deploy_ssh_sha_test.go).
+func (s *stubSSH) ExecSSH(_ context.Context, _ string, command string) ([]byte, error) {
+	if strings.Contains(command, "rev-parse --verify HEAD") && strings.Contains(command, "git status --porcelain") {
+		return nil, errStubSSHNoRepo
+	}
 	return s.output, s.err
 }
+
+// errStubSSHNoRepo simulates HeadStatus's `git rev-parse --verify HEAD`
+// failing on a source with no git repo — stubSSH's default assumption.
+var errStubSSHNoRepo = &stubSSHNoRepoError{}
+
+type stubSSHNoRepoError struct{}
+
+func (*stubSSHNoRepoError) Error() string { return "fatal: not a git repository" }
 func (s *stubSSH) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return s.output, s.err
 }

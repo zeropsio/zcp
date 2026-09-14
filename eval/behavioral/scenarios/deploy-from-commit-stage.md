@@ -6,14 +6,15 @@ description: |
   the current HEAD — shipped to appstage, and wants to be able to prove
   later exactly which commit is running there. Tests G3 (docs/
   spec-workflows.md §4.9): `zerops_deploy sha=` deploy-from-commit and the
-  refs/zcp/* ledger it leaves in appdev's repo.
+  zcp/deploy/* annotated-tag ledger it leaves in appdev's repo.
 
   Status `promote: containerCheck` (docs/spec-scenarios.md §9.3 table G):
   the runner evaluates containerCheck today, but this file does not carry
-  one yet — a follow-up adds a direct `git rev-parse refs/zcp/env/appstage`
-  check and flips the row to `gate`. Today's oracle coverage
-  (toolArg/toolResult/liveness) proves the same behavior indirectly, via
-  the deploy response rather than a container read.
+  one yet — a follow-up adds a direct
+  `git tag -l 'zcp/deploy/*/appstage/*'` check and flips the row to
+  `gate`. Today's oracle coverage (toolArg/toolResult/liveness) proves the
+  same behavior indirectly, via the deploy response rather than a
+  container read.
 seed: deployed
 fixture: fixtures/nodejs-standard-deployed.yaml
 tags: [deploy-from-commit, ledger, git-foundation, cross-deploy, node]
@@ -49,8 +50,9 @@ notableFriction:
   - id: ledger-as-the-answer
     description: |
       When the user later asks "what's running on stage", the agent
-      should point at `refs/zcp/env/appstage` (or the deploy response's
-      own `sha`/`appVersionId` fields) rather than inventing a tracking
+      should point at the deploy response's own `sha`/`appVersionId`
+      fields (or the `zcp/deploy/<project>/appstage/<appVersionId>`
+      annotated tag in appdev's repo) rather than inventing a tracking
       mechanism or claiming there is no way to know.
 ---
 

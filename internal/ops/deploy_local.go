@@ -59,7 +59,7 @@ func OverrideRunnerForTest(r commandRunner) func() {
 // never zcli's own --workspace-state archiver — see ops/git.
 // ExtractCommitToTemp), and the push runs from THAT tree with
 // --version-name <sha> instead of workingDir directly. docs/spec-workflows.md
-// §4.5.
+// §4.9.
 func DeployLocal(
 	ctx context.Context,
 	client platform.Client,
@@ -113,7 +113,7 @@ func DeployLocal(
 		workingDir = "."
 	}
 
-	// 3b. Resolve sha (docs/spec-workflows.md §4.5). Explicit sha only —
+	// 3b. Resolve sha (docs/spec-workflows.md §4.9). Explicit sha only —
 	// empty sha runs today's zcli push args unchanged (no git commands at
 	// all: no resolve, no extraction, no --version-name). The RESPONSE is
 	// not byte-identical, though: pollDeployBuild always fills
@@ -126,38 +126,31 @@ func DeployLocal(
 	// deployDir is the exact
 	// tree being pushed.
 	deployDir := workingDir
-	resolvedSHA := ""
-	previousSHA := ""
+	var resolvedSHA, previousOnRecord string
+	var dirty bool
 	var cleanupTemp func()
 	if sha != "" {
-		resolved, resolveErr := git.ResolveSHA(ctx, git.LocalRunner{}, workingDir, sha)
-		if resolveErr != nil {
-			return nil, platform.NewPlatformError(
-				platform.ErrInvalidParameter,
-				fmt.Sprintf("sha %q did not resolve to a commit in %s: %v", sha, workingDir, resolveErr),
-				`Pass a commit sha reachable via "git rev-parse" in workingDir.`,
-			)
+		var newDeployDir string
+		var prepErr error
+		resolvedSHA, previousOnRecord, newDeployDir, cleanupTemp, prepErr = deployLocalFromCommitPrep(ctx, workingDir, projectID, targetService, sha)
+		if prepErr != nil {
+			return nil, prepErr
 		}
-		resolvedSHA = resolved
-		// Read BEFORE the ledger moves it (WriteLedger runs later, in the
-		// tools layer, once the build resolves) — this is the "what's
-		// running there now" the response's message names.
-		previousSHA, _ = git.ReadEnvRef(ctx, git.LocalRunner{}, workingDir, targetService)
-
-		tmpDir, mkErr := git.MkTempDir(ctx, git.LocalRunner{})
-		if mkErr != nil {
-			return nil, fmt.Errorf("create archive tmp dir: %w", mkErr)
+		deployDir = newDeployDir
+	} else {
+		// Record every zcp deploy, not only the sha path (docs/spec-
+		// workflows.md §4.9): if the SOURCE (the local working dir) has a
+		// git repo with a reachable HEAD, record what actually shipped —
+		// read-only, before the push, never altering the push args
+		// themselves. No repo / no HEAD ⇒ no ledger, no warning, no
+		// behaviour change.
+		if headSHA, isDirty, hasRepo, _ := git.HeadStatus(ctx, git.LocalRunner{}, workingDir); hasRepo {
+			resolvedSHA = headSHA
+			dirty = isDirty
+			if entry, ok, _ := git.LastDeployOnRecord(ctx, git.LocalRunner{}, workingDir, projectID, targetService); ok {
+				previousOnRecord = entry.SHA
+			}
 		}
-		cleanupTemp = func() {
-			cctx, cancel := cleanupTempCtx(ctx)
-			defer cancel()
-			_ = git.RemoveTemp(cctx, git.LocalRunner{}, tmpDir)
-		}
-		if extractErr := git.ExtractCommitToTemp(ctx, git.LocalRunner{}, workingDir, resolvedSHA, tmpDir); extractErr != nil {
-			cleanupTemp()
-			return nil, fmt.Errorf("extract commit %s: %w", resolvedSHA, extractErr)
-		}
-		deployDir = tmpDir
 	}
 	if cleanupTemp != nil {
 		defer cleanupTemp()
@@ -237,7 +230,11 @@ func DeployLocal(
 		args = append(args, "--setup", setup)
 	}
 	args = append(args, "--no-git")
-	if resolvedSHA != "" {
+	// --version-name only for an EXPLICIT deploy-from-commit — resolvedSHA
+	// is also set for a plain working-tree deploy whose source has a git
+	// repo (item 4, docs/spec-workflows.md §4.9), and that path's push
+	// args must stay byte-identical to today's.
+	if sha != "" {
 		args = append(args, "--version-name", resolvedSHA)
 	}
 	_, stderr, err = runner.Run(ctx, "zcli", args...)
@@ -250,7 +247,7 @@ func DeployLocal(
 	}
 
 	message := fmt.Sprintf("Build triggered for %s via zcli push", targetService)
-	if resolvedSHA != "" {
+	if sha != "" {
 		message = fmt.Sprintf("Build triggered for %s via zcli push (commit %s)", targetService, resolvedSHA)
 	}
 	return &DeployResult{
@@ -263,8 +260,47 @@ func DeployLocal(
 		MonitorHint:       "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
 		Warnings:          warnings,
 		SHA:               resolvedSHA,
-		PreviousSHA:       previousSHA,
+		Dirty:             dirty,
+		PreviousOnRecord:  previousOnRecord,
 	}, nil
+}
+
+// deployLocalFromCommitPrep resolves sha, reads its previous-on-record
+// ledger entry, and extracts the commit's tree into a fresh temp dir
+// OUTSIDE workingDir. Returns the temp dir as the deployDir the caller
+// should push from, plus a cleanup func the caller must defer on success.
+// docs/spec-workflows.md §4.9.
+func deployLocalFromCommitPrep(ctx context.Context, workingDir, projectID, targetService, sha string) (resolvedSHA, previousOnRecord, deployDir string, cleanupTemp func(), err error) {
+	resolved, resolveErr := git.ResolveSHA(ctx, git.LocalRunner{}, workingDir, sha)
+	if resolveErr != nil {
+		return "", "", "", nil, platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("sha %q did not resolve to a commit in %s: %v", sha, workingDir, resolveErr),
+			`Pass a commit sha reachable via "git rev-parse" in workingDir.`,
+		)
+	}
+	resolvedSHA = resolved
+	// Read BEFORE the ledger moves it (WriteLedger runs later, in the
+	// tools layer, once the build resolves) — this is the "what's running
+	// there now" the response's message names.
+	if entry, ok, _ := git.LastDeployOnRecord(ctx, git.LocalRunner{}, workingDir, projectID, targetService); ok {
+		previousOnRecord = entry.SHA
+	}
+
+	tmpDir, mkErr := git.MkTempDir(ctx, git.LocalRunner{})
+	if mkErr != nil {
+		return "", "", "", nil, fmt.Errorf("create archive tmp dir: %w", mkErr)
+	}
+	cleanup := func() {
+		cctx, cancel := cleanupTempCtx(ctx)
+		defer cancel()
+		_ = git.RemoveTemp(cctx, git.LocalRunner{}, tmpDir)
+	}
+	if extractErr := git.ExtractCommitToTemp(ctx, git.LocalRunner{}, workingDir, resolvedSHA, tmpDir); extractErr != nil {
+		cleanup()
+		return "", "", "", nil, fmt.Errorf("extract commit %s: %w", resolvedSHA, extractErr)
+	}
+	return resolvedSHA, previousOnRecord, tmpDir, cleanup, nil
 }
 
 // lastLines is defined in deploy_classify.go

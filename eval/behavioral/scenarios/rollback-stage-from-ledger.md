@@ -13,8 +13,8 @@ description: |
   appVersion id>` — rollback re-activates that recorded BACKUP appVersion
   in place (`stack.deploy.backup`, no build). The agent learns the id
   from the status envelope's deploy attempts, `zerops_events`, or the
-  evidence tag messages on appdev — never from a ledger sha, and never by
-  guessing.
+  evidence tag messages on appdev (`git for-each-ref refs/tags/zcp/deploy/`)
+  — never from a ledger sha, and never by guessing.
 
   Status `promote: <platform-side appVersion check>` (docs/spec-
   scenarios.md §9.3 table G): the runner has no oracle family today for
@@ -38,8 +38,7 @@ seed:
     probe:
       service: appdev
       cmd: >-
-        git rev-parse --verify refs/zcp/env/appstage >/dev/null 2>&1 &&
-        [ "$(git for-each-ref refs/zcp/deploy/* | wc -l)" -eq 2 ]
+        [ "$(git tag -l 'zcp/deploy/*/appstage/*' | wc -l)" -eq 2 ]
 preseedScript: preseed/deploy-from-commit-twice.sh
 tags: [rollback, deploy-from-commit, ledger, git-foundation, cross-deploy, node]
 area: develop
@@ -54,7 +53,7 @@ verification:
     - {never: "zerops_deploy{targetService=appstage,appVersion=latest}"}
     - {max: 0, call: "zerops_import"}
     - {max: 0, call: "zerops_deploy{sha~.+}"}
-  mustOffer: ["(?i)(no|without a) rebuild", "(?i)refs/zcp/deploy|ledger|previous (version|commit|deploy)"]
+  mustOffer: ["(?i)(no|without a) rebuild", "(?i)zcp/deploy/|ledger|previous (version|commit|deploy)"]
   noFailedProcesses: true
   never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
@@ -69,7 +68,7 @@ notableFriction:
       Agent must learn the PRIOR appVersion id before issuing the
       rollback — from the status envelope's deploy attempts, from
       `zerops_events`, or from the evidence tag messages on appdev
-      (`git log refs/zcp/deploy/*` — each tag still names the
+      (`git for-each-ref refs/tags/zcp/deploy/` — each tag names the
       appVersionId of the deploy it recorded) — never by guessing or
       asking the user to supply a commit or id by hand.
   - id: rollback-is-appversion-not-a-new-verb

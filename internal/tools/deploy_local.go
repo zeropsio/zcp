@@ -60,7 +60,7 @@ func deployLocalInputSchema() *jsonschema.Schema {
 		"branch":        {Type: "string", Description: "Git branch for strategy=git-push. Default: current HEAD branch."},
 		"breakGlass":    {Type: "boolean", Description: "Override for the push-delivery redirect: a pair with git-push configured delivers via push (the repo is the source of truth); a direct deploy is refused with the recommended push call unless breakGlass=true. Reserve for fundamental reasons (git host outage, recovery)."},
 		"appVersion":    {Type: "string", Description: "Set to 'latest' to re-deploy the already-built appVersion in place, skipping source resolution — recovery for a never-activated buildFromGit service with no container. Only 'latest' is supported."},
-		"sha":           {Type: "string", Description: "Deploy this exact git commit instead of the working tree. Records it in the repo's refs/zcp/* ledger."},
+		"sha":           {Type: "string", Description: "Deploy this exact git commit instead of the working tree. Recorded as a zcp/deploy/* git tag in the repo."},
 	}, "targetService")
 }
 
@@ -244,6 +244,7 @@ func RegisterDeployLocal(
 		if result != nil {
 			attempt.SHA = result.SHA
 			attempt.AppVersionID = result.AppVersionID
+			attempt.Dirty = result.Dirty
 		}
 		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 

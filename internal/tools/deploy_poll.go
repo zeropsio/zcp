@@ -62,24 +62,37 @@ func pollDeployBuild(
 		// for next-tool now lives on NextActions; pinned by
 		// TestDeployPostMessageHonesty.
 		//
-		// A resolved sha (docs/spec-workflows.md §4.5) gets its own
-		// message shape naming the commit + appVersion, since that IS the
-		// point of a deploy-from-commit call — the ledger write that
-		// follows (tools layer, post-poll) needs exactly this pairing.
-		if result.SHA != "" {
+		// A resolved sha (docs/spec-workflows.md §4.9) gets its own message
+		// shape naming the commit + appVersion, since that IS the point of
+		// a deploy-from-commit call — the ledger write that follows (tools
+		// layer, post-poll) needs exactly this pairing. The platform stays
+		// the authority for the ACTIVE appVersion, so the message never
+		// claims this deploy "replaces" a specific prior one — it names
+		// what the ledger has ON RECORD for this target and nothing more;
+		// when nothing is on record the clause is omitted entirely rather
+		// than asserting "first deploy" (the ledger cannot see deploys
+		// that predate it).
+		switch {
+		case result.SHA != "" && result.Dirty:
+			// A dirty working-tree deploy never claims "deployed commit
+			// X" — that implies exactly X's tree shipped, which a dirty
+			// tree contradicts (docs/spec-workflows.md §4.9).
+			result.Message = fmt.Sprintf("recorded: HEAD %s + uncommitted changes → %s (appVersion %s)",
+				shortSHA(result.SHA), result.TargetService, event.ID)
+		case result.SHA != "":
 			short := shortSHA(result.SHA)
-			switch result.PreviousSHA {
+			record := ""
+			switch result.PreviousOnRecord {
 			case "":
-				result.Message = fmt.Sprintf("deployed %s → %s, first deploy to %s (appVersion %s)",
-					short, result.TargetService, result.TargetService, event.ID)
+				// nothing on record — say nothing about it.
 			case result.SHA:
-				result.Message = fmt.Sprintf("deployed %s → %s, already the ledger's current commit (appVersion %s)",
-					short, result.TargetService, event.ID)
+				record = ", already the ledger's current commit"
 			default:
-				result.Message = fmt.Sprintf("deployed %s → %s, replaces %s (appVersion %s)",
-					short, result.TargetService, shortSHA(result.PreviousSHA), event.ID)
+				record = fmt.Sprintf(", previous zcp deploy on record: %s", shortSHA(result.PreviousOnRecord))
 			}
-		} else {
+			result.Message = fmt.Sprintf("deployed %s → %s%s (appVersion %s)",
+				short, result.TargetService, record, event.ID)
+		default:
 			result.Message = fmt.Sprintf("Successfully deployed to %s.", result.TargetService)
 			if result.SourceService == result.TargetService {
 				// Strategy-agnostic fact: push-dev replaces the container, which

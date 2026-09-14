@@ -3,21 +3,21 @@ id: dev-self-deploy-keeps-repo
 description: |
   Existing dev/stage Node pair, both buildFromGit-deployed (real cloned
   repo mounted on appdev). The preseed already ran ONE deploy-from-commit
-  push to appstage, so appdev's repo carries a real refs/zcp/env/appstage
-  + refs/zcp/deploy/* ledger entry before the agent is spawned. Tests G4
-  (docs/spec-workflows.md's Git Lifecycle section, GLC-1/GLC-2): a plain
-  dev self-deploy (`zerops_deploy targetService=appdev`, no sha) runs
-  `buildSSHCommand`'s safety-net on the SAME repo — init-if-missing
-  (no-op here), identity set-if-absent (no-op), `.git/info/exclude`
-  re-seeded (idempotent), HEAD guarantee (no-op, HEAD already reachable)
-  — and none of that self-heal composition ever touches the
-  `refs/zcp/*` namespace the preseed's ledger lives in, nor re-writes
-  `.git/info/exclude` from scratch (it appends missing lines only).
+  push to appstage, so appdev's repo carries a real zcp/deploy/* ledger
+  tag before the agent is spawned. Tests G4 (docs/spec-workflows.md's Git
+  Lifecycle section, GLC-1/GLC-2): a plain dev self-deploy
+  (`zerops_deploy targetService=appdev`, no sha) runs `buildSSHCommand`'s
+  safety-net on the SAME repo — init-if-missing (no-op here), identity
+  set-if-absent (no-op), `.git/info/exclude` re-seeded (idempotent), HEAD
+  guarantee (no-op, HEAD already reachable) — and none of that self-heal
+  composition ever touches the `zcp/deploy/*` tag namespace the preseed's
+  ledger lives in, nor re-writes `.git/info/exclude` from scratch (it
+  appends missing lines only).
 
   Status `promote: containerCheck` (docs/spec-scenarios.md §9.3 table G):
   the runner evaluates containerCheck today, but this file does not
   carry one yet — a follow-up adds a direct
-  `git -C /var/www for-each-ref refs/zcp` (non-empty, ledger survives)
+  `git -C /var/www tag -l 'zcp/deploy/*'` (non-empty, ledger survives)
   and a re-check that `.git/info/exclude` still carries the runtime
   class's patterns after the deploy, and flips the row to `gate`.
   Today's oracle coverage (liveness/toolArg) proves the self-deploy
@@ -33,8 +33,7 @@ seed:
     probe:
       service: appdev
       cmd: >-
-        git rev-parse --verify refs/zcp/env/appstage >/dev/null 2>&1 &&
-        [ "$(git for-each-ref refs/zcp/deploy/* | wc -l)" -eq 1 ]
+        [ "$(git tag -l 'zcp/deploy/*/appstage/*' | wc -l)" -eq 1 ]
 preseedScript: preseed/deploy-from-commit-once.sh
 tags: [repo-always, git-foundation, self-deploy, ledger, node]
 area: develop
@@ -68,10 +67,10 @@ notableFriction:
       buildSSHCommand's GLC-2 safety-net (init-if-missing, identity
       set-if-absent, exclude re-seed, HEAD guarantee) runs on every
       self-deploy on THIS SAME repo that already carries the preseed's
-      refs/zcp/* ledger. None of those four guards write, move, or
-      delete any ref outside HEAD itself — a regression here would
-      silently corrupt or orphan the ledger the next `sha=` deploy or
-      rollback depends on.
+      zcp/deploy/* ledger tag. None of those four guards write, move, or
+      delete any tag or ref outside HEAD itself — a regression here
+      would silently corrupt or orphan the ledger the next `sha=` deploy
+      or rollback depends on.
   - id: exclude-reseed-is-additive
     description: |
       The exclude-seed fragment re-runs on every deploy call, appending

@@ -10,6 +10,45 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
+// TestValidateZeropsYmlContent_SameFindingsAsPathBased proves the
+// content-taking core (docs/spec-workflows.md §4.9 — used to validate a
+// deploy-from-commit's zerops.yaml read via `git show <sha>:zerops.yaml`,
+// never the working tree) produces the SAME findings as the path-based
+// ValidateZeropsYml for identical content, and that the path-based
+// function's behavior is byte-identical to before (it now delegates).
+func TestValidateZeropsYmlContent_SameFindingsAsPathBased(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	content := []byte("zerops:\n  - setup: app\n")
+	if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), content, 0o644); err != nil {
+		t.Fatalf("write zerops.yaml: %v", err)
+	}
+
+	pathWarnings, pathErr := ValidateZeropsYml(dir, "app", "", DeployClassCross)
+	contentWarnings, contentErr := ValidateZeropsYmlContent(content, "app", "", DeployClassCross)
+
+	if pathErr != nil || contentErr != nil {
+		t.Fatalf("unexpected errors: path=%v content=%v", pathErr, contentErr)
+	}
+	if strings.Join(pathWarnings, "|") != strings.Join(contentWarnings, "|") {
+		t.Errorf("path-based warnings = %v, content-based = %v, want identical", pathWarnings, contentWarnings)
+	}
+}
+
+// TestValidateZeropsYmlContent_DM2SelfDeployViolation_ReturnsError proves
+// the content-based core still enforces DM-2 (self-deploy deployFiles
+// contract) — the hard-error channel is not a path-based-only behavior.
+func TestValidateZeropsYmlContent_DM2SelfDeployViolation_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	content := []byte("zerops:\n  - setup: app\n    build:\n      deployFiles: dist\n")
+	_, err := ValidateZeropsYmlContent(content, "app", "", DeployClassSelf)
+	if err == nil {
+		t.Fatal("expected a DM-2 error for self-deploy with narrower-than-[.] deployFiles")
+	}
+}
+
 func TestValidateZeropsYml_Parsing(t *testing.T) {
 	t.Parallel()
 

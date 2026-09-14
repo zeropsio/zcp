@@ -6,12 +6,11 @@
 # ACTIVE (seed.mode: deployed). It then performs ONE deploy-from-commit push
 # to appstage from appdev's mounted repo, replicating by hand what
 # `zerops_deploy sha=` does (docs/spec-workflows.md §4.9) so the agent
-# arrives at a pair where appdev already carries a real refs/zcp/* ledger
-# (refs/zcp/env/appstage + one refs/zcp/deploy/* entry) BEFORE it is asked
-# to touch anything — the test point is that a plain dev self-deploy
-# (buildSSHCommand's GLC-2 safety-net) never disturbs that ledger namespace
-# or the .git/info/exclude seed while doing its own HEAD-ensure/exclude-seed
-# work on the SAME repo.
+# arrives at a pair where appdev already carries a real zcp/deploy/* tag
+# ledger entry BEFORE it is asked to touch anything — the test point is
+# that a plain dev self-deploy (buildSSHCommand's GLC-2 safety-net) never
+# disturbs that tag namespace or the .git/info/exclude seed while doing its
+# own HEAD-ensure/exclude-seed work on the SAME repo.
 #
 # NOT LIVE-VERIFIED (brief S6 stop condition, docs/spec-eval-farm.md §4.5):
 # this script cannot be run in this session. The archive|tar-extraction push
@@ -83,11 +82,8 @@ app_version_id=$(curl -sS -H "Authorization: Bearer ${ZCP_API_KEY}" \
 at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 msg=$(printf '{"sha":"%s","appVersionId":"%s","target":"appstage","project":"%s","at":"%s"}' \
   "$resolved" "$app_version_id" "$ZCP_PROJECT_ID" "$at")
-deploy_ref="refs/zcp/deploy/$(date +%s%N)"
-ssh appdev "cd /var/www && \
-  TREE=\$(git rev-parse '${resolved}^{tree}') && \
-  COMMIT=\$(git commit-tree \"\$TREE\" -p '${resolved}' -m '$(printf '%s' "$msg" | sed "s/'/'\\\\''/g")') && \
-  git update-ref '${deploy_ref}' \"\$COMMIT\" && \
-  git update-ref refs/zcp/env/appstage '${resolved}'"
+tag_name="zcp/deploy/${ZCP_PROJECT_ID}/appstage/${app_version_id}"
+ssh appdev "cd /var/www && git -c user.name='Zerops Agent' -c user.email='agent@zerops.io' \
+  tag -a -f -m '$(printf '%s' "$msg" | sed "s/'/'\\\\''/g")' '${tag_name}' '${resolved}'"
 
-echo "preseed: deployed ${resolved} to appstage (appVersion ${app_version_id:-unknown}), ledger entry ${deploy_ref}, refs/zcp/env/appstage=${resolved}"
+echo "preseed: deployed ${resolved} to appstage (appVersion ${app_version_id:-unknown}), ledger tag ${tag_name}"

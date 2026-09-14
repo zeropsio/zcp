@@ -87,8 +87,8 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// source-resolving deploy).
 		//
 		// Raised +154 (2153→2307) for the `sha` input (docs/spec-
-		// workflows.md §4.5): deploy an exact git commit instead of the
-		// working tree, recorded in refs/zcp/*. Deliberate new field —
+		// workflows.md §4.9): deploy an exact git commit instead of the
+		// working tree, recorded as a zcp/deploy/* git tag. Deliberate new field —
 		// optional, backward-compatible (omit → today's path unchanged).
 		//
 		// Raised +55 (2307→2362) for the `appVersion` description rewrite

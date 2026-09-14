@@ -1,5 +1,5 @@
 // Tests for: ops/deploy_local.go — the sha parameter (docs/spec-workflows.md
-// §4.5): DeployLocal resolves an explicit sha, extracts its tree into a temp
+// §4.9): DeployLocal resolves an explicit sha, extracts its tree into a temp
 // dir outside workingDir, and pushes from there with --version-name.
 package ops
 
@@ -82,8 +82,8 @@ func TestDeployLocal_WithSHA_ResolvesExtractsAndPassesVersionName(t *testing.T) 
 	if result.SHA != sha {
 		t.Errorf("result.SHA = %q, want %q", result.SHA, sha)
 	}
-	if result.PreviousSHA != "" {
-		t.Errorf("result.PreviousSHA = %q, want empty (fresh repo, no ledger yet)", result.PreviousSHA)
+	if result.PreviousOnRecord != "" {
+		t.Errorf("result.PreviousOnRecord = %q, want empty (fresh repo, no ledger yet)", result.PreviousOnRecord)
 	}
 
 	pushArgs := strings.Join(mr.runCalls[1].args, " ")
@@ -137,5 +137,80 @@ func TestDeployLocal_WithUnresolvableSHA_ReturnsInvalidParameterError(t *testing
 	}
 	if len(mr.runCalls) != 0 {
 		t.Errorf("no zcli command should run when sha does not resolve, got %d calls", len(mr.runCalls))
+	}
+}
+
+// TestDeployLocal_NoSHA_SourceHasCleanRepo_RecordsHEADAndKeepsPushArgsUnchanged
+// pins item 4 (docs/spec-workflows.md §4.9): a working-tree deploy (no
+// explicit sha) whose workingDir is a git repo with a reachable HEAD
+// records that HEAD as SHA, Dirty=false — and the zcli push args (no
+// --version-name) stay exactly what a no-git-repo source would have
+// produced.
+func TestDeployLocal_NoSHA_SourceHasCleanRepo_RecordsHEADAndKeepsPushArgsUnchanged(t *testing.T) {
+	if testing.Short() {
+		t.Skip("shells out to the real git binary")
+	}
+	dir, sha := initGitRepoWithZerops(t)
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "appstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		})
+	mr := &mockRunner{runResults: []runResult{{}, {}}}
+	restore := OverrideRunnerForTest(mr)
+	defer restore()
+
+	result, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
+		"appstage", "", dir, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.SHA != sha {
+		t.Errorf("result.SHA = %q, want %q (source repo's HEAD)", result.SHA, sha)
+	}
+	if result.Dirty {
+		t.Error("result.Dirty = true, want false (clean status)")
+	}
+	if len(mr.runCalls) != 2 {
+		t.Fatalf("zcli calls = %d, want 2 (login, push)", len(mr.runCalls))
+	}
+	pushArgs := strings.Join(mr.runCalls[1].args, " ")
+	if strings.Contains(pushArgs, "--version-name") {
+		t.Errorf("push args must NOT contain --version-name for a working-tree deploy, got: %s", pushArgs)
+	}
+	if !strings.Contains(pushArgs, "--working-dir "+dir) {
+		t.Errorf("push args should carry --working-dir %s (the repo itself, no extraction), got: %s", dir, pushArgs)
+	}
+}
+
+// TestDeployLocal_NoSHA_SourceHasDirtyRepo_RecordsDirty pins the
+// Dirty=true case for local mode.
+func TestDeployLocal_NoSHA_SourceHasDirtyRepo_RecordsDirty(t *testing.T) {
+	if testing.Short() {
+		t.Skip("shells out to the real git binary")
+	}
+	dir, sha := initGitRepoWithZerops(t)
+	if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte("zerops:\n  - setup: app\n  - setup: app2\n"), 0o644); err != nil {
+		t.Fatalf("dirty the tree: %v", err)
+	}
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "appstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		})
+	mr := &mockRunner{runResults: []runResult{{}, {}}}
+	restore := OverrideRunnerForTest(mr)
+	defer restore()
+
+	result, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
+		"appstage", "", dir, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.SHA != sha {
+		t.Errorf("result.SHA = %q, want %q (HEAD unchanged by an uncommitted edit)", result.SHA, sha)
+	}
+	if !result.Dirty {
+		t.Error("result.Dirty = false, want true")
 	}
 }

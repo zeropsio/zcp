@@ -10,11 +10,12 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// writeDeployLedgerLocal records a successful deploy-from-commit in the
-// SOURCE repo's refs/zcp/* ledger (docs/spec-workflows.md §4.5). No-op when
-// the deploy did not resolve a sha or never reached a resolved appVersion —
-// a ledger write failure is a warning, never a deploy failure: the build
-// already succeeded.
+// writeDeployLedgerLocal records a successful zcp deploy as an annotated
+// git tag in the SOURCE repo (docs/spec-workflows.md §4.9). No-op when the
+// deploy never reached a resolved appVersion, or has no SHA at all (no
+// explicit sha AND the source has no git repo with a HEAD) — a ledger
+// write failure is a warning, never a deploy failure: the build already
+// succeeded.
 func writeDeployLedgerLocal(ctx context.Context, workingDir, projectID string, result *ops.DeployResult) {
 	if result == nil || result.SHA == "" || result.AppVersionID == "" {
 		return
@@ -29,6 +30,7 @@ func writeDeployLedgerLocal(ctx context.Context, workingDir, projectID string, r
 		Target:       result.TargetService,
 		Project:      projectID,
 		At:           time.Now().UTC().Format(time.RFC3339),
+		Dirty:        result.Dirty,
 	}
 	if err := git.WriteLedger(ctx, git.LocalRunner{}, dir, entry); err != nil {
 		result.Warnings = append(result.Warnings, fmt.Sprintf("ledger write failed: %v", err))
@@ -56,6 +58,7 @@ func writeDeployLedgerSSH(ctx context.Context, sshDeployer ops.SSHDeployer, work
 		Target:       result.TargetService,
 		Project:      projectID,
 		At:           time.Now().UTC().Format(time.RFC3339),
+		Dirty:        result.Dirty,
 	}
 	runner := git.SSHRunner{Executor: sshDeployer, Hostname: hostname}
 	if err := git.WriteLedger(ctx, runner, dir, entry); err != nil {

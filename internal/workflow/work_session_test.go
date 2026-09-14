@@ -99,6 +99,40 @@ func TestWorkSession_DeleteIdempotent(t *testing.T) {
 	}
 }
 
+// TestRecordDeployAttempt_DirtyField_PersistsThroughRecord pins
+// DeployAttempt.Dirty (docs/spec-workflows.md §4.9) alongside the existing
+// SHA/AppVersionID fields — a working-tree deploy that shipped
+// uncommitted changes on top of its recorded HEAD.
+func TestRecordDeployAttempt_DirtyField_PersistsThroughRecord(t *testing.T) {
+	dir := t.TempDir()
+	ws := NewWorkSession("p", "container", "test", []string{"web"})
+	if err := SaveWorkSession(dir, ws); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	if err := RecordDeployAttempt(dir, "web", DeployAttempt{
+		AttemptedAt:  "t",
+		SucceededAt:  "t",
+		SHA:          "abc123",
+		AppVersionID: "av-1",
+		Dirty:        true,
+	}); err != nil {
+		t.Fatalf("RecordDeployAttempt: %v", err)
+	}
+
+	loaded, err := LoadWorkSession(dir, os.Getpid())
+	if err != nil {
+		t.Fatalf("LoadWorkSession: %v", err)
+	}
+	attempts := loaded.Deploys["web"]
+	if len(attempts) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(attempts))
+	}
+	if !attempts[0].Dirty {
+		t.Error("attempts[0].Dirty = false, want true")
+	}
+}
+
 func TestRecordDeployAttempt_AppendsAndCaps(t *testing.T) {
 	dir := t.TempDir()
 	ws := NewWorkSession("p", "container", "test", []string{"web"})
