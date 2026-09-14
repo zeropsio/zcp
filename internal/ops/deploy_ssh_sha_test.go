@@ -21,6 +21,7 @@ func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.
 		})
 	ssh := &mockSSHDeployer{results: []sshResult{
 		{output: []byte("fullsha1234567\n")},     // resolve
+		{output: []byte("oldsha7654321\n")},      // ReadEnvRef (previous sha)
 		{output: []byte("/tmp/zcp-extract-1\n")}, // mktemp -d
 		{output: []byte("")},                     // extract (archive | tar -x)
 		{output: []byte("ok")},                   // login+push
@@ -36,24 +37,30 @@ func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.
 	if result.SHA != "fullsha1234567" {
 		t.Errorf("result.SHA = %q, want fullsha1234567", result.SHA)
 	}
-	if len(ssh.calls) != 5 {
-		t.Fatalf("ssh calls = %d, want 5 (resolve, mktemp, extract, push, cleanup): %+v", len(ssh.calls), ssh.calls)
+	if result.PreviousSHA != "oldsha7654321" {
+		t.Errorf("result.PreviousSHA = %q, want oldsha7654321", result.PreviousSHA)
+	}
+	if len(ssh.calls) != 6 {
+		t.Fatalf("ssh calls = %d, want 6 (resolve, readEnvRef, mktemp, extract, push, cleanup): %+v", len(ssh.calls), ssh.calls)
 	}
 	for _, c := range ssh.calls {
 		if c.hostname != "builder" {
 			t.Errorf("call hostname = %q, want builder (the SOURCE container): %+v", c.hostname, c)
 		}
 	}
-	if !strings.Contains(ssh.calls[0].command, "rev-parse --verify") {
-		t.Errorf("call[0] = %q, want a rev-parse --verify", ssh.calls[0].command)
+	if !strings.Contains(ssh.calls[0].command, "rev-parse --verify") || !strings.Contains(ssh.calls[0].command, "^{commit}") {
+		t.Errorf("call[0] = %q, want a rev-parse --verify ...^{commit}", ssh.calls[0].command)
 	}
-	if !strings.Contains(ssh.calls[1].command, "mktemp -d") {
-		t.Errorf("call[1] = %q, want mktemp -d", ssh.calls[1].command)
+	if !strings.Contains(ssh.calls[1].command, "rev-parse --verify") || !strings.Contains(ssh.calls[1].command, "refs/zcp/env/app") {
+		t.Errorf("call[1] = %q, want ReadEnvRef against refs/zcp/env/app", ssh.calls[1].command)
 	}
-	if !strings.Contains(ssh.calls[2].command, "git archive --format=tar") || !strings.Contains(ssh.calls[2].command, "| tar -x -C") {
-		t.Errorf("call[2] = %q, want the archive|tar pipe", ssh.calls[2].command)
+	if !strings.Contains(ssh.calls[2].command, "mktemp -d") {
+		t.Errorf("call[2] = %q, want mktemp -d", ssh.calls[2].command)
 	}
-	pushCmd := ssh.calls[3].command
+	if !strings.Contains(ssh.calls[3].command, "git archive --format=tar") || !strings.Contains(ssh.calls[3].command, "| tar -x -C") {
+		t.Errorf("call[3] = %q, want the archive|tar pipe", ssh.calls[3].command)
+	}
+	pushCmd := ssh.calls[4].command
 	if !strings.Contains(pushCmd, "--no-git") {
 		t.Errorf("push command = %q, want --no-git", pushCmd)
 	}
@@ -66,8 +73,8 @@ func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.
 	if strings.Contains(pushCmd, " -g") {
 		t.Errorf("push command = %q, must not include -g (no .git in an extracted tree)", pushCmd)
 	}
-	if !strings.Contains(ssh.calls[4].command, "rm -rf '/tmp/zcp-extract-1'") {
-		t.Errorf("call[4] = %q, want cleanup of the extracted dir", ssh.calls[4].command)
+	if !strings.Contains(ssh.calls[5].command, "rm -rf '/tmp/zcp-extract-1'") {
+		t.Errorf("call[5] = %q, want cleanup of the extracted dir", ssh.calls[5].command)
 	}
 }
 

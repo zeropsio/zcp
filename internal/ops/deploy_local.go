@@ -114,13 +114,20 @@ func DeployLocal(
 	}
 
 	// 3b. Resolve sha (docs/spec-workflows.md §4.5). Explicit sha only —
-	// empty sha is today's path, byte-identical, no git commands run at
-	// all. On resolution, sha's tree is extracted into a fresh temp dir
-	// OUTSIDE workingDir; every step below (yaml validation, push) reads
-	// from deployDir instead of workingDir, since deployDir is the exact
+	// empty sha runs today's zcli push args unchanged (no git commands at
+	// all: no resolve, no extraction, no --version-name). The RESPONSE is
+	// not byte-identical, though: pollDeployBuild always fills
+	// AppVersionID from the resolved build event regardless of sha (tools/
+	// deploy_poll.go), so every successful deploy's JSON gains that field
+	// — a strict superset addition (omitempty), not a behavior change to
+	// any existing field. On sha resolution, sha's tree is extracted into
+	// a fresh temp dir OUTSIDE workingDir; every step below (yaml
+	// validation, push) reads from deployDir instead of workingDir, since
+	// deployDir is the exact
 	// tree being pushed.
 	deployDir := workingDir
 	resolvedSHA := ""
+	previousSHA := ""
 	var cleanupTemp func()
 	if sha != "" {
 		resolved, resolveErr := git.ResolveSHA(ctx, git.LocalRunner{}, workingDir, sha)
@@ -132,12 +139,20 @@ func DeployLocal(
 			)
 		}
 		resolvedSHA = resolved
+		// Read BEFORE the ledger moves it (WriteLedger runs later, in the
+		// tools layer, once the build resolves) — this is the "what's
+		// running there now" the response's message names.
+		previousSHA, _ = git.ReadEnvRef(ctx, git.LocalRunner{}, workingDir, targetService)
 
 		tmpDir, mkErr := git.MkTempDir(ctx, git.LocalRunner{})
 		if mkErr != nil {
 			return nil, fmt.Errorf("create archive tmp dir: %w", mkErr)
 		}
-		cleanupTemp = func() { _ = git.RemoveTemp(ctx, git.LocalRunner{}, tmpDir) }
+		cleanupTemp = func() {
+			cctx, cancel := cleanupTempCtx(ctx)
+			defer cancel()
+			_ = git.RemoveTemp(cctx, git.LocalRunner{}, tmpDir)
+		}
 		if extractErr := git.ExtractCommitToTemp(ctx, git.LocalRunner{}, workingDir, resolvedSHA, tmpDir); extractErr != nil {
 			cleanupTemp()
 			return nil, fmt.Errorf("extract commit %s: %w", resolvedSHA, extractErr)
@@ -248,6 +263,7 @@ func DeployLocal(
 		MonitorHint:       "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
 		Warnings:          warnings,
 		SHA:               resolvedSHA,
+		PreviousSHA:       previousSHA,
 	}, nil
 }
 

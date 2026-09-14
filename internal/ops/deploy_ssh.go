@@ -206,6 +206,7 @@ func deploySSH(
 	// unlike buildSSHCommand's single combined command, correctness here
 	// matters more than round-trip count for a first slice.
 	resolvedSHA := ""
+	previousSHA := ""
 	var cleanupTemp func()
 	if sha != "" {
 		gitRunner := git.SSHRunner{Executor: sshDeployer, Hostname: source.Name}
@@ -218,12 +219,19 @@ func deploySSH(
 			)
 		}
 		resolvedSHA = resolved
+		// Read BEFORE the ledger moves it (WriteLedger runs later, in the
+		// tools layer, once the build resolves).
+		previousSHA, _ = git.ReadEnvRef(ctx, gitRunner, workingDir, targetService)
 
 		tmpDir, mkErr := git.MkTempDir(ctx, gitRunner)
 		if mkErr != nil {
 			return nil, fmt.Errorf("create archive tmp dir on %s: %w", source.Name, mkErr)
 		}
-		cleanupTemp = func() { _ = git.RemoveTemp(ctx, gitRunner, tmpDir) }
+		cleanupTemp = func() {
+			cctx, cancel := cleanupTempCtx(ctx)
+			defer cancel()
+			_ = git.RemoveTemp(cctx, gitRunner, tmpDir)
+		}
 		if extractErr := git.ExtractCommitToTemp(ctx, gitRunner, workingDir, resolvedSHA, tmpDir); extractErr != nil {
 			cleanupTemp()
 			return nil, fmt.Errorf("extract commit %s on %s: %w", resolvedSHA, source.Name, extractErr)
@@ -265,6 +273,7 @@ func deploySSH(
 				MonitorHint:       "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
 				Warnings:          warnings,
 				SHA:               resolvedSHA,
+				PreviousSHA:       previousSHA,
 			}, nil
 		}
 		return nil, classifySSHError(err, sourceService, targetService)
@@ -281,6 +290,7 @@ func deploySSH(
 		MonitorHint:       "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
 		Warnings:          warnings,
 		SHA:               resolvedSHA,
+		PreviousSHA:       previousSHA,
 	}, nil
 }
 

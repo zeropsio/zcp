@@ -26,11 +26,21 @@ type stubSSHSHA struct {
 	sha   string
 	tmp   string
 	calls []string
+	// prevSHA, when set, is what refs/zcp/env/<target> already names —
+	// the ReadEnvRef call returns it. Empty means "no ledger yet": the
+	// rev-parse against the env ref fails, exactly like a real repo with
+	// no refs/zcp/env/* ref.
+	prevSHA string
 }
 
 func (s *stubSSHSHA) ExecSSH(_ context.Context, _, command string) ([]byte, error) {
 	s.calls = append(s.calls, command)
 	switch {
+	case strings.Contains(command, "rev-parse --verify") && strings.Contains(command, "refs/zcp/env/"):
+		if s.prevSHA == "" {
+			return []byte(""), errStubNoSuchRef
+		}
+		return []byte(s.prevSHA + "\n"), nil
 	case strings.Contains(command, "rev-parse --verify") && strings.Contains(command, "^{commit}"):
 		return []byte(s.sha + "\n"), nil
 	case strings.Contains(command, "mktemp -d"):
@@ -141,3 +151,82 @@ func TestDeployTool_SSHMode_NoSHA_NoLedgerCalls(t *testing.T) {
 		}
 	}
 }
+
+func TestDeployTool_SSHMode_WithSHA_FirstDeploy_MessageSaysFirstDeploy(t *testing.T) {
+	t.Parallel()
+
+	const sha = "fullshaabc1234567"
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "builder"},
+			{ID: "svc-2", Name: "app"},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-2", Status: statusActive, Sequence: 1},
+		})
+	ssh := &stubSSHSHA{sha: sha, tmp: "/tmp/zcp-extract-9"} // prevSHA empty: no ledger yet
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"sourceService": "builder",
+		"targetService": "app",
+		"sha":           sha[:7],
+	})
+	if result.IsError {
+		t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
+	}
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	if !strings.Contains(parsed.Message, "first deploy to app") {
+		t.Errorf("message = %q, want it to say \"first deploy to app\" (no prior ledger entry)", parsed.Message)
+	}
+}
+
+func TestDeployTool_SSHMode_WithSHA_Redeploy_MessageSaysReplaces(t *testing.T) {
+	t.Parallel()
+
+	const sha = "fullshaabc1234567"
+	const prevSHA = "oldshadeadbeef0001"
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "builder"},
+			{ID: "svc-2", Name: "app"},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-2", Status: statusActive, Sequence: 1},
+		})
+	ssh := &stubSSHSHA{sha: sha, tmp: "/tmp/zcp-extract-9", prevSHA: prevSHA}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"sourceService": "builder",
+		"targetService": "app",
+		"sha":           sha[:7],
+	})
+	if result.IsError {
+		t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
+	}
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	if !strings.Contains(parsed.Message, "replaces "+prevSHA[:7]) {
+		t.Errorf("message = %q, want it to say \"replaces %s\"", parsed.Message, prevSHA[:7])
+	}
+}
+
+// errStubNoSuchRef simulates `git rev-parse --verify` failing on a ref that
+// does not exist yet (a real repo with no refs/zcp/env/* ref).
+var errStubNoSuchRef = &stubNoSuchRefError{}
+
+type stubNoSuchRefError struct{}
+
+func (*stubNoSuchRefError) Error() string { return "fatal: needed a single revision" }

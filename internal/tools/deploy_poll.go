@@ -67,11 +67,18 @@ func pollDeployBuild(
 		// point of a deploy-from-commit call — the ledger write that
 		// follows (tools layer, post-poll) needs exactly this pairing.
 		if result.SHA != "" {
-			short := result.SHA
-			if len(short) > 7 {
-				short = short[:7]
+			short := shortSHA(result.SHA)
+			switch result.PreviousSHA {
+			case "":
+				result.Message = fmt.Sprintf("deployed %s → %s, first deploy to %s (appVersion %s)",
+					short, result.TargetService, result.TargetService, event.ID)
+			case result.SHA:
+				result.Message = fmt.Sprintf("deployed %s → %s, already the ledger's current commit (appVersion %s)",
+					short, result.TargetService, event.ID)
+			default:
+				result.Message = fmt.Sprintf("deployed %s → %s, replaces %s (appVersion %s)",
+					short, result.TargetService, shortSHA(result.PreviousSHA), event.ID)
 			}
-			result.Message = fmt.Sprintf("deployed %s → %s (appVersion %s)", short, result.TargetService, event.ID)
 		} else {
 			result.Message = fmt.Sprintf("Successfully deployed to %s.", result.TargetService)
 			if result.SourceService == result.TargetService {
