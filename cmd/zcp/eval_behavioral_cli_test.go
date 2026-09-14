@@ -127,14 +127,15 @@ done
 if [ "$IS_RESUME" = "1" ] && [ -n "$ZCP_EVAL_FAKE_CLAUDE_BREAK_CAPTURE" ] && [ -n "$ZCP_CAPTURE_SESSION_DIR" ]; then
   chmod 0500 "$ZCP_CAPTURE_SESSION_DIR"
 fi
+MCP_CMD=""
 if [ -n "$MCP_CONFIG" ] && [ -f "$MCP_CONFIG" ]; then
   MCP_CMD=$(grep -o '"command": *"[^"]*"' "$MCP_CONFIG" | head -1 | sed 's/.*"command": *"//;s/"$//')
-  if [ -n "$MCP_CMD" ]; then
-    (sleep 1) | env projectId="` + fakeProjectID + `" serviceId="` + fakeZCPServiceID + `" "$MCP_CMD" serve >/dev/null 2>&1 &
-    MCP_JOB=$!
-    sleep 0.3
-    wait "$MCP_JOB"
-  fi
+fi
+if [ -n "$MCP_CMD" ]; then
+  (sleep 1) | env projectId="` + fakeProjectID + `" serviceId="` + fakeZCPServiceID + `" "$MCP_CMD" serve >/dev/null 2>&1 &
+  MCP_JOB=$!
+  sleep 0.3
+  wait "$MCP_JOB"
 fi
 SESSION_ID="fake-session-$$"
 printf '{"type":"system","subtype":"init","session_id":"%s"}\n' "$SESSION_ID"
