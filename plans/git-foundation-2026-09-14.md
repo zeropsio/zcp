@@ -14,7 +14,7 @@ and for unattended delivery, never for "having a prod".
 | # | Claim | Verdict | Consequence for the design |
 |---|---|---|---|
 | P1 | `zcli push --version-name <sha>` accepted; name visible only in ES `SearchAppVersions` (`name`), absent from direct GET DTOs; no sha/branch on any appVersion, incl. `source: GIT` | VERIFIED | Ledger of record lives in git refs; platform name is a hint. `ListServiceAppVersions` cannot read it. |
-| P2 | Self-deploy replaces the container: `/var/www` = artifact; `.git`, `.env`, `node_modules` all gone | VERIFIED | The dev service NEVER self-deploys (DM-2 gate becomes absolute). Dev = working tree + dev server. Builds go to stage/prod only. |
+| P2 | Self-deploy replaces the container: `/var/www` = artifact; ignored files (`.env`, `node_modules`) gone. **Correction 2026-09-14 (Karel):** zcp's self-deploy already passes `zcli push -g` (GLC-2), which ships `.git/` inside the artifact, so the repo — refs/zcp/* included — travels with the deploy. | VERIFIED, consequence WITHDRAWN | Dev self-deploy stays (DM-2 as today: `deployFiles: [.]` + `-g`). Dev-only topology unchanged. P10 (verifier) pins exactly what survives a `-g` self-deploy. |
 | P3 | `zcli push` from a git dir = ls-files + untracked-unignored, excludes ignored + `.git`; non-git dir needs `--no-git` | VERIFIED | Push-from-commit = `git archive <sha>` → tmp outside workdir → `zcli push --no-git --version-name <sha>`. Exact, reproducible. |
 | P4 | `buildFromGit` accepts only github.com / gitlab.com hosts (Gitea + Codeberg fail 36 ms after a successful ls-remote; `internalServerError`) | REFUTED for Gitea | Platform pull (`track` via Zerops integration) is GitHub/GitLab only. Any other forge needs a zcp-owned relay. |
 | P5 | Webhook receivers exist only as `github-webhook` / `gitlab-webhook`, bound via account OAuth (`githubAuthorizationRequired`); no generic HMAC trigger. Authenticated trigger: `PUT /service-stack/{id}/trigger-pipeline` (host-restricted) or `zcli push` | VERIFIED | Same as P4: relay is the universal path. |
@@ -108,7 +108,7 @@ GitPushState × BuildIntegration.
 ## 4. Slices (each green + landable alone)
 
 1. **Ledger + push-from-commit** — `refs/zcp/*`, `versionName=sha`, `zerops_deploy sha=`, stage only. Deletes nothing yet. Tests: ledger round-trip, archive push, P3 semantics.
-2. **Repo-always** — init/clone/baseline at bootstrap/import/adopt, exclude seeding, `artifact-only` marker. Absolute dev-never-self-deploys gate (P2).
+2. **Repo-always** — GLC-1 already inits at bootstrap/adopt; this slice adds exclude seeding, adopt baseline tag + provenance, `repo:` envelope block. (2b dropped, see §6.3.)
 3. **Origin + GitHost adapters** — replaces `GitPushState`/`git-push-setup`; GH/GL adapters first (port T3's `gh`/`glab` shape), `generic` third.
 4. **Env source + close switches** — replaces close-mode derivation + `BuildIntegration`; `track` for GH/GL via Zerops integration.
 5. **Delegation** — prod push with mint→use→delete; `launch-production` push mode without any origin.
@@ -170,13 +170,15 @@ edits live in the branch (`gate-set.txt` ⇔ spec §9.3, pinned by
 
 Non-gate: `delivery-git-push-actions-setup` DELETE; `launch-production-{existing-with-webhook,new-project-push-mode,existing-project-token}` + `launch-with-existing-cicd` REWRITE at slice 5; `eval_scenario_drift_test.go` guards for `CICDMethod`/`closeMode=git-push`/`.netrc` rewritten at slice 3–4.
 
-### 6.3 P2b — REFUTED (live 2026-09-14, probes gitv8n/u/s)
+### 6.3 P2b — REFUTED, and moot (live 2026-09-14, probes gitv8n/u/s)
 
-A self-deploy creates a new container on a new ZFS root: `/home/zerops` is reset to
-image state too, not only `/var/www`. Nothing on the container survives a deploy.
-Consequences: (a) dev never self-deploys is absolute — no pointer-file trick;
-(b) B6/A1/B8 and every dev-only cell are rewritten in slice 2b; (c) dev-only
-topology = working tree + dev server, never deployed (owner ack before 2b).
+A self-deploy creates a new container on a new ZFS root: `/home/zerops` is reset
+too. But the container's own self-deploy ships `.git/` via `zcli push -g` (GLC-2),
+so the repo survives INSIDE the artifact. Slice 2b (absolute dev gate) is
+**dropped**; B6/A1/B8 and the dev-only cells stay as they are; G4 becomes
+`dev-self-deploy-keeps-repo` (containerCheck: refs/zcp/* + exclude present after a
+dev self-deploy). Existing git lifecycle rules GLC-1..6 (spec §11.33) stay the
+owner of init/identity/HEAD; slice 2a is consolidated onto them.
 
 Two more facts: P8 — zcli has NO tarball input (`--archive-file-path` is an output
 tee joined onto the workdir); push-from-commit = `git archive sha | tar -x -C tmp` +
