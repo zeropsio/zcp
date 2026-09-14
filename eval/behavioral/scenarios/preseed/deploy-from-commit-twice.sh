@@ -74,7 +74,7 @@ deploy_from_commit() {
   resolved=$(ssh appdev "cd /var/www && git rev-parse --verify '${sha}^{commit}'")
   tmp=$(ssh appdev "mktemp -d")
   ssh appdev "cd /var/www && git archive --format=tar '${resolved}' | tar -x -C '${tmp}'"
-  ssh appdev "cd '${tmp}' && zcli push --service-id ${APPSTAGE_ID} --no-git --version-name '${resolved}'"
+  ssh appdev "cd '${tmp}' && zcli push --service-id ${APPSTAGE_ID} --setup prod --no-git --version-name '${resolved}'"
   ssh appdev "rm -rf '${tmp}'"
   wait_active "$APPSTAGE_ID"
 

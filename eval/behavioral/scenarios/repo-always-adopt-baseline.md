@@ -8,15 +8,14 @@ description: |
   `git init` first only if `/var/www` isn't already a repo, otherwise
   only the tag moves — and persists `ServiceMeta.Repo.BaselineAppVersion`.
 
-  This fixture provisions both runtimes via buildFromGit — the platform's
-  build pipeline deploys the compiled artifact to `/var/www`, never the
-  clone's `.git/` history — so at adopt time `ops.InitServiceGit` (GLC-1)
-  is the FIRST thing to ever run `git init` here, leaving a HEAD over the
-  empty tree. AdoptBaseline (GLC-7) therefore always takes the snapshot
-  case for this scenario, never the existing-content case: the two
-  containerChecks below assert exactly that (a non-empty tagged tree, and
-  a commit message starting with `zcp: snapshot`) rather than the
-  existing-HEAD alternative, which this fixture's premise can't produce.
+  This fixture provisions both runtimes via buildFromGit. Observed live on
+  the farm (2026-09-14): the platform's build leaves the clone's `.git/`
+  history in `/var/www`, so HEAD already carries content and AdoptBaseline
+  (GLC-7) takes the **existing** case — the tag moves onto that HEAD, no
+  commit is minted. A service that really had no git (or only GLC-1's
+  empty marker HEAD) would take the **snapshot** case instead. The two
+  containerChecks below are decidable in either case: the tagged tree is
+  non-empty, and the tag points at HEAD.
 seed: deployed
 fixture: fixtures/nodejs-standard-deployed.yaml
 tags: [repo-always, adopt-route, standard-mode, git-foundation, node]
@@ -39,7 +38,7 @@ verification:
   unchanged: [appdev, appstage]
   containerCheck:
     - {service: appdev, cmd: "git -C /var/www ls-tree -r \"$(git -C /var/www tag -l 'zcp/baseline/*' | head -1)\" | wc -l", match: "[1-9]"}
-    - {service: appdev, cmd: "git -C /var/www log -1 --format=%s \"$(git -C /var/www tag -l 'zcp/baseline/*' | head -1)\"", match: "^zcp: snapshot"}
+    - {service: appdev, cmd: "[ \"$(git -C /var/www rev-parse \"$(git -C /var/www tag -l 'zcp/baseline/*' | head -1)^{commit}\")\" = \"$(git -C /var/www rev-parse HEAD)\" ] && echo same", match: "^same"}
   never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
   You already have a working standard pair (appdev/appstage, nodejs@22)

@@ -68,7 +68,7 @@ ssh appdev "zcli login -- '${ZCP_API_KEY}' >/dev/null"
 resolved=$(ssh appdev "cd /var/www && git rev-parse --verify '${SHA}^{commit}'")
 tmp=$(ssh appdev "mktemp -d")
 ssh appdev "cd /var/www && git archive --format=tar '${resolved}' | tar -x -C '${tmp}'"
-ssh appdev "cd '${tmp}' && zcli push --service-id ${APPSTAGE_ID} --no-git --version-name '${resolved}'"
+ssh appdev "cd '${tmp}' && zcli push --service-id ${APPSTAGE_ID} --setup prod --no-git --version-name '${resolved}'"
 ssh appdev "rm -rf '${tmp}'"
 wait_active "$APPSTAGE_ID"
 

@@ -1558,7 +1558,7 @@ collaboration happens over a shared repository.
 
 | Route | Source of code | Repo state after the route | Origin |
 |---|---|---|---|
-| bootstrap `recipe` / `classic` (§2) | recipe or agent-written tree in the dev service | GLC-1: repo with a reachable HEAD, identity set-if-absent, exclude seeded by runtime class. zcp asserts nothing about clone history the platform may or may not have left. | none until `git-push-setup` |
+| bootstrap `recipe` / `classic` (§2) | recipe or agent-written tree in the dev service | GLC-1: repo with a reachable HEAD, identity set-if-absent, exclude seeded by runtime class. A buildFromGit build leaves the clone's `.git/` history in `/var/www` (observed live on the farm 2026-09-14, G2 run), so such a service adopts as `existing`; zcp does not depend on it. | none until `git-push-setup` |
 | user's existing repository | `git-push-setup remoteUrl=<their host>` on the dev service; reconstruction from the remote when `/var/www/.git` is missing (§4.4) | repo synced to origin, `GitPushState=configured` | the user's, any host |
 | `adopt` (§3) | a running service, with or without git | GLC-7: baseline tag over a snapshot (no repo / marker-only HEAD) or over the existing HEAD; provenance recorded | none until `git-push-setup` |
 | launch-production (§10) | never a clone: prod starts `startWithoutCode`, the first release is the first CI build | prod services carry no repo | the dev checkout's origin, mandatory |
