@@ -150,13 +150,19 @@ type ServiceSnapshot struct {
 	Repo *RepoStatus `json:"repo,omitempty"`
 }
 
-// RepoStatus is the live per-service repo state exposed on the envelope
-// (docs/spec-workflows.md §8 GLC-7). Mirrors ops.RepoStatus one-to-one; kept
-// as a separate type here because workflow/ must not import ops/.
+// RepoStatus is the per-service repo state exposed on the envelope
+// (docs/spec-workflows.md §8 GLC-7). Present/Head/Baseline mirror
+// ops.RepoStatus one-to-one (kept as a separate type here because
+// workflow/ must not import ops/) and are read LIVE on every envelope
+// computation. Provenance is the one exception — a recorded fact read
+// from ServiceMeta.Repo.Provenance (tools.attachRepoStatus's job), never
+// live state; it says which AdoptBaseline case produced the baseline, not
+// whether the baseline still matches the current HEAD.
 type RepoStatus struct {
-	Present  bool   `json:"present"`
-	Head     string `json:"head,omitempty"`
-	Baseline string `json:"baseline,omitempty"`
+	Present    bool                    `json:"present"`
+	Head       string                  `json:"head,omitempty"`
+	Baseline   string                  `json:"baseline,omitempty"`
+	Provenance topology.RepoProvenance `json:"provenance,omitempty"`
 }
 
 // ApplyRepoStatus attaches a live repo status to each service snapshot

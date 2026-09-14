@@ -10,13 +10,16 @@ import (
 )
 
 // attachRepoStatus populates services[i].Repo for every non-managed
-// service by reading its repo state fresh over SSH (docs/spec-workflows.md
-// §8 GLC-7, G1/G2) — the tools-layer half of workflow.ApplyRepoStatus, which
-// stays SSH-free so workflow/ never imports ops/. No-op outside a
+// service (docs/spec-workflows.md §8 GLC-7, G1/G2) — the tools-layer half
+// of workflow.ApplyRepoStatus, which stays SSH-free so workflow/ never
+// imports ops/. Present/Head/Baseline are read fresh over SSH on every
+// call; Provenance is the one exception — a recorded fact read from
+// ServiceMeta.Repo under stateDir, never live state (AdoptBaseline's case
+// isn't something a live git read can reconstruct). No-op outside a
 // container (local-mode envelope status doesn't carry a per-service repo
 // block in this slice — the bootstrap-time local check in
 // checkRepoInitAt covers local mode) or without an SSH deployer.
-func attachRepoStatus(ctx context.Context, services []workflow.ServiceSnapshot, ssh ops.SSHDeployer, rt runtime.Info) {
+func attachRepoStatus(ctx context.Context, services []workflow.ServiceSnapshot, ssh ops.SSHDeployer, rt runtime.Info, stateDir string) {
 	if !rt.InContainer || ssh == nil {
 		return
 	}
@@ -29,7 +32,11 @@ func attachRepoStatus(ctx context.Context, services []workflow.ServiceSnapshot, 
 		if err != nil {
 			continue // best-effort — a read failure just leaves this hostname without a repo block
 		}
-		statuses[svc.Hostname] = workflow.RepoStatus{Present: st.Present, Head: st.Head, Baseline: st.Baseline}
+		status := workflow.RepoStatus{Present: st.Present, Head: st.Head, Baseline: st.Baseline}
+		if meta, metaErr := workflow.FindServiceMeta(stateDir, svc.Hostname); metaErr == nil && meta != nil && meta.Repo != nil {
+			status.Provenance = meta.Repo.Provenance
+		}
+		statuses[svc.Hostname] = status
 	}
 	workflow.ApplyRepoStatus(services, statuses)
 }

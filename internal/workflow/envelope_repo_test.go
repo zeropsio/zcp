@@ -26,6 +26,26 @@ func TestApplyRepoStatus_DevService_GetsRepoBlock(t *testing.T) {
 	}
 }
 
+// TestApplyRepoStatus_ProvenanceCopiedThrough proves RepoStatus.Provenance
+// survives the copy ApplyRepoStatus makes onto the snapshot — the field is
+// a recorded fact from ServiceMeta (tools.attachRepoStatus's job to
+// populate), not something ApplyRepoStatus itself derives, but it must not
+// be dropped by the struct copy (docs/spec-workflows.md §8 GLC-7).
+func TestApplyRepoStatus_ProvenanceCopiedThrough(t *testing.T) {
+	services := []ServiceSnapshot{
+		{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic},
+	}
+	ApplyRepoStatus(services, map[string]RepoStatus{
+		"appdev": {Present: true, Head: "abc123", Baseline: "av-1", Provenance: topology.RepoProvenanceSnapshot},
+	})
+	if services[0].Repo == nil {
+		t.Fatal("Repo is nil, want it populated")
+	}
+	if services[0].Repo.Provenance != topology.RepoProvenanceSnapshot {
+		t.Errorf("Provenance = %q, want %q", services[0].Repo.Provenance, topology.RepoProvenanceSnapshot)
+	}
+}
+
 func TestApplyRepoStatus_ManagedService_StaysNilEvenIfStatusSupplied(t *testing.T) {
 	services := []ServiceSnapshot{
 		{Hostname: "db", RuntimeClass: topology.RuntimeManaged},
