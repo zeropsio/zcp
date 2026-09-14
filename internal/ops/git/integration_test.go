@@ -4,7 +4,9 @@
 package git
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +15,30 @@ import (
 
 	"github.com/zeropsio/zcp/internal/topology"
 )
+
+// isolatedHomeRunner is a Runner that isolates HOME (and both git config
+// scopes) so a test proves WriteLedger's `git commit-tree` supplies its OWN
+// author/committer identity rather than accidentally passing because the
+// machine running the test happens to have ~/.gitconfig set.
+type isolatedHomeRunner struct {
+	homeDir string
+}
+
+func (r isolatedHomeRunner) Run(ctx context.Context, dir, script string) (string, string, error) {
+	cmd := exec.CommandContext(ctx, "sh", "-c", script)
+	cmd.Dir = dir
+	cmd.Env = []string{
+		"HOME=" + r.homeDir,
+		"PATH=" + os.Getenv("PATH"),
+		"GIT_CONFIG_GLOBAL=" + filepath.Join(r.homeDir, "no-such-gitconfig"),
+		"GIT_CONFIG_SYSTEM=" + filepath.Join(r.homeDir, "no-such-gitconfig-system"),
+	}
+	var out, errBuf bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errBuf
+	err := cmd.Run()
+	return out.String(), errBuf.String(), err
+}
 
 // initRepo creates a git repo at dir with one commit containing file.txt,
 // returning the commit's full sha.
@@ -104,15 +130,29 @@ func TestOpsGit_EndToEnd_ResolveExtractLedgerRoundTrip(t *testing.T) {
 		t.Fatalf("ReadEnvRef = %s, want %s", gotSHA, resolved)
 	}
 
-	entries, err := ListDeploys(ctx, r, repoDir)
+	// The ledger's history is read directly via `git log
+	// refs/zcp/deploy/*` (no Go-side reader — nothing calls one): confirm
+	// exactly one entry exists and its commit message round-trips the
+	// exact JSON WriteLedger wrote.
+	refOut, err := exec.CommandContext(ctx, "git", "-C", repoDir, "for-each-ref",
+		"--format=%(objectname)", topology.DeployRefPrefix).CombinedOutput()
 	if err != nil {
-		t.Fatalf("ListDeploys: %v", err)
+		t.Fatalf("for-each-ref %s: %v\n%s", topology.DeployRefPrefix, err, refOut)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("entries = %d, want 1: %+v", len(entries), entries)
+	refs := strings.Fields(strings.TrimSpace(string(refOut)))
+	if len(refs) != 1 {
+		t.Fatalf("refs/zcp/deploy/* entries = %d, want 1: %v", len(refs), refs)
 	}
-	if entries[0] != entry {
-		t.Fatalf("entries[0] = %+v, want %+v", entries[0], entry)
+	msgOut, err := exec.CommandContext(ctx, "git", "-C", repoDir, "log", "-1", "--format=%B", refs[0]).CombinedOutput()
+	if err != nil {
+		t.Fatalf("log -1 --format=%%B %s: %v\n%s", refs[0], err, msgOut)
+	}
+	var gotEntry topology.LedgerEntry
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(msgOut))), &gotEntry); err != nil {
+		t.Fatalf("decode ledger message: %v (message: %s)", err, msgOut)
+	}
+	if gotEntry != entry {
+		t.Fatalf("ledger message = %+v, want %+v", gotEntry, entry)
 	}
 
 	// Ledger refs are on a NEVER-checked-out branch — the repo's own HEAD
@@ -141,5 +181,43 @@ func TestReadEnvRef_UnbornRepo_ReturnsEmptyNoError(t *testing.T) {
 	}
 	if got != "" {
 		t.Errorf("got = %q, want empty", got)
+	}
+}
+
+// TestWriteLedger_NoAmbientIdentity_StillSucceeds proves WriteLedger's
+// `git commit-tree` supplies its own identity: on a buildFromGit-provisioned
+// container there is no ~/.gitconfig and no GIT_AUTHOR_*/GIT_COMMITTER_* env
+// (unlike a self-deploy container, which InitServiceGit seeds), so without
+// an explicit identity commit-tree fails "unable to auto-detect email
+// address" and the ledger write is silently lost. isolatedHomeRunner
+// removes every ambient identity source (HOME, both git config scopes) so
+// this test cannot pass by accident on a dev machine with its own
+// ~/.gitconfig.
+func TestWriteLedger_NoAmbientIdentity_StillSucceeds(t *testing.T) {
+	if testing.Short() {
+		t.Skip("shells out to the real git binary")
+	}
+	ctx := context.Background()
+	repoDir := t.TempDir()
+	sha := initRepo(t, repoDir)
+	r := isolatedHomeRunner{homeDir: t.TempDir()}
+
+	entry := topology.LedgerEntry{
+		SHA:          sha,
+		AppVersionID: "av-1",
+		Target:       "appstage",
+		Project:      "proj-1",
+		At:           "2026-09-14T12:00:00Z",
+	}
+	if err := WriteLedger(ctx, r, repoDir, entry); err != nil {
+		t.Fatalf("WriteLedger with no ambient identity: %v", err)
+	}
+
+	got, err := ReadEnvRef(ctx, r, repoDir, "appstage")
+	if err != nil {
+		t.Fatalf("ReadEnvRef: %v", err)
+	}
+	if got != sha {
+		t.Errorf("ReadEnvRef = %s, want %s", got, sha)
 	}
 }
