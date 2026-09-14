@@ -15,9 +15,9 @@ report. That reading contract is what this spec owns.
   with no pairing code and no shared container secret — §3.
 - Client flow — how a browser reaches a hosted mate: session/candidates, registration, the
   provisioning waiter, the readiness probe, identity connect, new project, first prompt — §4.
-- Zerops-aware client — the service map as a client projection of the Zerops API signalled by
-  the platform websocket, the server's lifecycle feed from the envelope, and the web surfaces that
-  read them: service map, lifecycle strip, result cards, quick actions — §5.
+- Zerops-aware client — the service map as a client projection of the Zerops API, maintained by
+  native platform streams under §5.1, the server's lifecycle feed from the envelope, and the web
+  surfaces that read them: service map, lifecycle strip, result cards, quick actions — §5.
 - Git — each mounted dev service is its own repository, reached over a multiplexed SSH
   connection rather than the sshfs mount; multi-repo checkpoints, diff, restore, pruning — §6.
 - The fork — Zerops Mate is a hard fork of T3 Code: frozen upstream base, four zones (import / port /
@@ -58,7 +58,7 @@ Every fact has one owner and one path to the client:
 |---|---|---|
 | identity, membership | Zerops API, user token | client; once through the door (§3) |
 | what exists in the project, its status, its subdomains | Zerops API, user token | client projection (§5.1) |
-| that something changed in the project | the platform websocket, user token | client signal, then a re-read (§5.1) |
+| live platform observations | native platform websocket plus direct bootstrap/repair, user token | shared client read model (§5.1) |
 | what the platform is doing now | Zerops API, user token | client overlay (§5.4) |
 | where the agent is in the workflow | the envelope in a tool result | mate server reducer → lifecycle feed (§1, §5.2) |
 | which services are mounted | the container's mount table | mate server (§6.1) |
@@ -85,7 +85,7 @@ Anything else is a violation and needs this section changed first.
 
 | ID | Invariant |
 |---|---|
-| MA-6 | `apps/server/src/zerops/**` spawns `zcp` with no argv outside the closed list `agent mark-oauth` and `studio console serve`. `scripts/mate-boundaries.test.ts` (a dated allowlist for the topology spawns exists until S4 deletes them, and the test fails once the allowlist is stale). |
+| MA-6 | `apps/server/src/zerops/**` spawns `zcp` with no argv outside the closed list `agent mark-oauth`, `mate status`, `mate update` (§2.9 MU-2) and `studio console serve`. `scripts/mate-boundaries.test.ts` (a dated allowlist for the topology spawns exists until S4 deletes them, and the test fails once the allowlist is stale). |
 | MA-7 | The env-store reader keeps only the `ZCP_AGENT_OAUTH_*` and `ZCP_AGENT_TOKEN_*` keys; a store carrying `ZCP_API_KEY` and `VSCODE_PASSWORD` yields neither. `ZeropsAgentAuth.test.ts` — "keeps only the agent flag keys". |
 
 ## 1. Envelope on the wire
@@ -999,40 +999,48 @@ apart".
 
 ## 5. Zerops-aware client
 
-Once a member is inside a thread, the mate server itself becomes a **reader** of the same Zerops
-project: two independent, read-only feeds — **topology** (what exists) and **lifecycle** (where
-the agent is) — surface as a service map, a lifecycle strip, and cards under the tool calls that
-carry them. Neither feed imports the other; neither ever mutates the platform.
+Once a member is inside a thread, the client and mate server supply two independent feeds:
+**topology** (what exists) comes from the client's platform model, while **lifecycle** (where the
+agent is) comes from the server's envelope reducer. They surface as a service map, lifecycle strip
+and cards under tool calls. Neither feed imports the other.
 
 ### 5.1 The service map is a client projection of the Zerops API
 
-What exists in a project — its services, their status, their subdomains, the processes the
-platform is running — is the platform's fact, read by the client with the user's own token (§0,
-rule 1). There is no server topology feed: the mate server spawns no `zcp studio watch`, holds no
-snapshot, and answers no topology RPC. `packages/client-runtime/src/zerops/topology.ts`
-(`projectTopology(project, services, processes)`) is the one mapping owner; it consumes the direct
-reads `GET /project/{id}/service-stack` and `GET /project/{id}/process` (never `/project/search`,
-§4.4) and yields the view the map, quick actions and chat chrome render. Grouping is ordered: the
-`zcp` type prefix ⇒ **infrastructure**; `isInfrastructure` (a managed data service) ⇒ **data**;
-otherwise ⇒ **runtimes** — the OS prefix is stripped before the type check. A service is
-**transient** while its status is unsettled or an in-flight process names it. `topology.test.ts` —
-"groups a captured project into runtime, data and infrastructure", "marks a service transient
-while a process names it", "composes the subdomain origin only for subdomain-enabled ports".
+**Implemented in the client, 2026-09-08.** The client owns one account-scoped
+`ZeropsDataRuntime`: an event-driven, normalized reactive domain read model with ports/adapters,
+pure reducers and command/query separation without client event sourcing. Project, ServiceStack
+and Process have shared typed identities; query membership, configuration facets, telemetry
+windows, logs and command attempts have distinct representations. Native list/update/metric
+streams deliver ordinary changes, including operations initiated by agents, CLI or other users.
+REST establishes baselines, hydrates details and repairs observations. There is no general query
+cache, SWR, TTL freshness layer or per-event refetch path.
 
-**Change reaches the map as a signal, never as data.** `platformWatch.ts` rides the platform's
-websocket the way the Zerops web app does (login exchange → `wss://…/web-socket/<receiverId>/<token>`
-→ four search POSTs carrying `subscriptionName`/`receiverId`/`wsOutputType`: `listStream` for
-membership and `updateStream` for status, on `ServiceStack` and `Process`; ping every 15 s, pong
-deadline 8 s, the Process list re-issued every 160 s, a fresh login and receiverId on every
-reconnect). Every push is reduced to `changed` + `subscriptionName`; the payload is never decoded
-or rendered. `useProjectTopology` then re-reads the two documents, debounced, so a burst is one
-read. While the socket is open the map reports `live`; while it is down the map reports
-`polling` and reads every 5 s if anything is transient, else every 30 s, paused while the tab is
-hidden (the socket closes after 60 s hidden and reopens on show). A read error keeps the last view.
-`platformWatch.test.ts` — "logs in, connects, subscribes list and update for ServiceStack and
-Process in order", "emits changed for every search push and never exposes the payload";
-`projectTopologyWatcher.test.ts` — "a resubscribed watcher starts as polling and reads even when
-the socket never connects", "only the latest overlapping read publishes".
+The detailed contracts live in the fork's
+[architecture decision](../../z3/docs/internals/zerops/platform-data-architecture.md) and
+[consistency contract](../../z3/docs/internals/zerops/platform-data-consistency.md). They fix
+source-aware admission, terminating recovery, separate entity/membership/access semantics and
+explicit `observing` health without claiming source order, replay or lossless reconnect. Effect
+scopes own one receiver per demanded organization, multiplexed interests, bounded ingress/repair,
+access-aware resources and build-log sessions. Atom projections publish narrow views. Features read those
+projections and invoke typed commands. The existing account verification/admission contract is
+unchanged; observations never renew authorization and the server holds no platform token or model.
+
+Inventory, candidates, topology, activity, configuration, current usage, build logs and existing
+product mutation callers use this runtime. The former signal/refetch topology watcher, direct
+activity poller, inventory reconciliation and feature-owned build-log session are removed. A
+successful organization-authorized project creation/import can admit its returned project only
+until the unchanged access deadline and next authoritative verification.
+
+What exists in a project — its services, status, subdomains and running processes — is the
+platform's fact, read by the client with the user's token (§0, rule 1). There is no server topology
+feed: the mate server spawns no `zcp studio watch`, holds no snapshot and answers no topology RPC.
+`packages/client-runtime/src/zerops/topology.ts` remains the mapping owner. It composes shared
+canonical Project, ServiceStack and Process observations produced by native streams plus direct
+bootstrap/repair into the map, quick actions and chat chrome. Grouping is ordered: the `zcp` type
+prefix ⇒ **infrastructure**; categories `STANDARD` and `OBJECT_STORAGE` ⇒ **data**; category
+`USER` ⇒ **runtimes**; unknown categories ⇒ **infrastructure**. The OS prefix is stripped before
+the prefix check. A service is **transient** while its status is unsettled or an
+in-flight process names it. `data/runtime.test.ts`; `topology.test.ts`.
 
 **Which project an environment is** is remembered by the client, not asked of the server: the
 candidate connected at the door carries its project and organization ids, stored per environment
@@ -1105,8 +1113,8 @@ absence is its pending presentation, while an undecodable terminal result render
 generic tool block *inside* its result region. Only an unrecognized tool call uses the ordinary
 generic row from end to end. Quick actions only **prefill** the composer; the component's whole
 module graph is asserted to import no mutating RPC. The question card gained a visible **"Other"** free-text option and
-arrow-key navigation beside the digit keys. A map that is `polling` (socket down) says so in one
-quiet line, deliberately not a degraded banner.
+arrow-key navigation beside the digit keys. A map whose required interests are not all `observing`
+reports `polling` and says so in one quiet line, deliberately not a degraded banner.
 `ZeropsQuickActions.test.tsx` — "cannot reach Zerops or the RPC layer at all";
 `ComposerPendingUserInputPanel.test.tsx` — "offers Other as a visible way to answer in the user's
 own words".
@@ -1157,9 +1165,8 @@ call anchors, card set, and order.
 
 **Platform activity is an overlay, never a verdict.** The agent's tool result is the only authority
 a card has. While a `zerops_deploy` call is pending and the browser holds the user's own Zerops
-session, the client may read the project's processes directly (`GET /project/{id}/process`, the
-lag-free direct read, polled — never the ES search, never a websocket as data source) and render
-the attributed process's pipeline steps in the shell's optional region, every string labelled
+session, the client reads the shared native Process projection with direct bootstrap/repair and
+renders the attributed process's pipeline steps in the shell's optional region, every string labelled
 "Platform".
 Attribution requires all of: the topology snapshot's `serviceId` for the call's `targetService`,
 the snapshot's project id, `created` no earlier than the server-stamped tool start minus 5 s, and
@@ -1168,8 +1175,8 @@ the snapshot's project id, `created` no earlier than the server-stamped tool sta
 chips. The overlay is ownership-neutral, per viewer, and in memory only: it never persists, never
 enters the transcript or the envelope, and is discarded the moment a normal `resultText` lands — a
 disagreement is resolved by the result, silently. Its reducer distinguishes no completed read,
-successful-empty searching, observed, settled-on-platform, stale, unavailable, and resolved; every
-poll attempt publishes success or failure so recovery and time-based transitions cannot freeze.
+successful-empty searching, observed, settled-on-platform, stale, unavailable, and resolved; each
+shared activity projection publishes observation or failure state so recovery cannot freeze.
 Absence of activity is never rendered as done or idle; a process that settles on the platform
 before the result reads "waiting for the agent's result", not ✓/✗. When observation cannot run (no
 Zerops session, 401/403/404, project mismatch, stale beyond 60 s, or 30 min past the tool's start),
@@ -1181,8 +1188,8 @@ reopened recognized call that never resolved shows a quiet pending shell without
 or verdict.
 
 The shell root and semantic step ids stay stable while mutable regions change. Card and step
-enter/update/exit motion is one-shot and bounded to 150–200 ms, never tied to the 2.5 s poll loop;
-settled cards do not pulse, and `prefers-reduced-motion` removes nonessential transitions.
+enter/update/exit motion is one-shot and bounded to 150–200 ms. Settled cards do not pulse, and
+`prefers-reduced-motion` removes nonessential transitions.
 
 The web sidebar presents the hierarchy the client can prove: a logical project contains its
 connected environment/workspace members, and each member contains its own threads. A Zerops
@@ -1326,16 +1333,16 @@ contract (§2.8) — an old zcp reports `unsupported`.
 
 | ID | Invariant |
 |---|---|
-| MF-1 | The service map is a client projection of `GET /project/{id}/service-stack` + `GET /project/{id}/process` read with the user's token; the mate server exposes no topology RPC and spawns no `zcp studio watch`. `topology.test.ts`; `scripts/mate-boundaries.test.ts` (MA-6). |
-| MF-2 | Taxonomy order is type-prefix `zcp` ⇒ infrastructure, then `isInfrastructure` ⇒ data, else runtimes; the OS prefix is stripped before the type check. `topology.test.ts` — "groups a captured project into runtime, data and infrastructure". |
+| MF-1 | The service map is a shared client projection of platform observations read with the user's token through native streams plus direct bootstrap/repair; the mate server exposes no topology RPC and spawns no `zcp studio watch`. `data/runtime.test.ts`; `topology.test.ts`; `scripts/mate-boundaries.test.ts` (MA-6). |
+| MF-2 | Taxonomy order is type-prefix `zcp` ⇒ infrastructure, then category `STANDARD` or `OBJECT_STORAGE` ⇒ data, category `USER` ⇒ runtimes, else infrastructure; the OS prefix is stripped before the prefix check. `topology.test.ts` — "groups a captured project into runtime, data and infrastructure". |
 | MF-3 | The lifecycle reducer gates on the tool NAME, never `itemType`. `zeropsActivityResult.test.ts` — "accepts zerops_delete, whose itemType Claude misclassifies". |
 | MF-4 | A JSON-document result's top-level `envelope` key is the unconditional carrier; the fence rule never runs on it, even when the document's own text quotes a fence. `zeropsEnvelope.test.ts` — "does not read a fenced block quoted inside a JSON document", "still prefers the envelope key when the document also quotes a block". |
 | MF-5 | The latest envelope per thread survives a container restart. `ZeropsLifecycle.test.ts` — "reads a thread's state back after a restart". |
 | MF-6 | A `zerops_*` result's raw text reaches the client on all three projection routes, capped at 48,000 bytes; over the cap the text is dropped whole, never sliced. `ActivityPayloadProjection.test.ts` — "carries it on the live event path", "carries it on the thread-detail snapshot a reopened thread renders from"; `zeropsActivityResult.test.ts` — "drops the text whole when it exceeds the cap, and says so". |
 | MF-7 | A recognized call whose result cannot decode keeps its call shell and renders the generic tool block inside the result region; an unrecognized call stays a generic row. Quick actions never call a mutating RPC. `ZeropsCallCard.test.tsx` — "keeps the shell for an undecodable terminal result"; `ZeropsQuickActions.test.tsx` — "cannot reach Zerops or the RPC layer at all". |
-| MF-8 | A platform push is a signal: `platformWatch` exposes only `type` + `subscriptionName`, and the map re-reads through the REST decoder; live push measured 2026-09-04 (`listStream` membership, `updateStream` status transitions within ~1 s). `platformWatch.test.ts` — "emits changed for every search push and never exposes the payload"; `verified.md`. |
+| MF-8 | Native typed payloads update the shared model without per-event rereads; membership and entity state are separate; reconnect, overflow or failed registration degrades affected interests and triggers bounded recovery. `data/runtime.test.ts`; `data/platformProtocol.test.ts`; `data/restAdapter.test.ts`. Live observations are recorded in the fork's `verified.md`; no lossless or monotonic guarantee is claimed. |
 | MF-9 | A recognized call keeps its first call key/id/time/position/row kind and mounted shell through completion. Result-derived `plan:<sessionId>` identity may fold matching calls into the first PLAN anchor; pending association never invents identity and safely detaches on start/reset/ambiguity/mismatch. Every decoded result kind is a visible milestone. `callLifecycle.test.ts`; `MessagesTimeline.logic.test.ts`; `identity.test.ts`; `milestone.test.ts`. |
-| MF-10 | Platform activity is an in-memory, ownership-neutral, "Platform"-labelled optional region read from the direct process endpoint with the user's own session. It publishes every poll attempt, never persists or renders a verdict, and disappears without removing the recognized shell. The only post-result continuation is a `BUILD_TRIGGERED` deploy. `reducer.test.ts`; `projectActivityPoller.test.ts`; `ZeropsDeployActivityCard.test.tsx`. |
+| MF-10 | Platform activity is an in-memory, ownership-neutral, "Platform"-labelled optional region read from the §5.1 shared Process projection with direct bootstrap/repair. It publishes observation and failure state, never persists or renders a verdict, and disappears without removing the recognized shell. The only post-result continuation is a `BUILD_TRIGGERED` deploy. `data/activity.test.ts`; `useProjectActivity.test.ts`; `ZeropsDeployActivityCard.test.tsx`. |
 | MF-11 | Projected activity order uses orchestration event sequence. Legacy NULL rows use `createdAt`, lifecycle rank `started < updated < completed`, then activity id; newest-window selection and compaction preserve the same order and terminal row. `ProjectionPipeline.test.ts`; `ProjectionSnapshotQuery.test.ts`; `ActivityPayloadProjection.test.ts`. |
 | MB-1 | One browser vocabulary: mate carries no MCP server and no browser of its own; the agent's browser is `zerops_browser` and nothing else. `scripts/mate-boundaries.test.ts` (MA-6); `serve accepts --no-browser`; fork.md delete rows for the preview directories. |
 | MB-2 | The container browser reaches the client only through the mate server: frames over `subscribeZeropsBrowserStream` with forwarded acks (one daemon ack per seq, sent after the client's Ack), input over `zeropsBrowserInput` (operate scope), the daemon port read from `~/.agent-browser/default.stream` and never written, the socket closed on the last unsubscribe. `ZeropsBrowserStream.test.ts` — "connects on first subscriber and disconnects on last", "two subscribers, one stalled: one ack per seq", "an ack or input during reconnect never ends the subscription"; `server.test.ts` — "subscribeZeropsBrowserStream applies flow control (Ack after every Chunk)". |
