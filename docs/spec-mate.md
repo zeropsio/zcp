@@ -1392,10 +1392,10 @@ client's environment→project ref (§5.1). Additive only; a server too old to h
 server without it, never an error.
 
 zcp guarantees every mounted dev service's `/var/www/<host>` is already a git repository by the
-time mate would look — bootstrap seeds a scaffold commit, adopt tags a baseline
-(`docs/spec-workflows.md` §4.10) — so mate never scans for one or falls back to initializing it
-itself; `ZeropsRepositorySource` still reads the mount table, not `.git`, to answer "which
-repositories exist" (§6.1 above).
+time mate would look — bootstrap runs the HEAD guarantee (GLC-1), adopt tags a baseline (GLC-7)
+(`docs/spec-workflows.md`'s Git Lifecycle section) — so mate never scans for one or falls back to
+initializing it itself; `ZeropsRepositorySource` still reads the mount table, not `.git`, to
+answer "which repositories exist" (§6.1 above).
 
 ### 6.2 The SSH executor
 
