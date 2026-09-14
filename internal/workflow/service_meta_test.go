@@ -1312,3 +1312,38 @@ func TestServiceMeta_PublicAccessFor_DefaultsToAuto_RoundTrips(t *testing.T) {
 		t.Errorf("Hostnames() = %v, want [appdev appstage]", got)
 	}
 }
+
+func TestSetRepoBaseline_WriteReadRoundTrip_PersistsBaselineAndProvenance(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	meta := NewServiceMeta("proj", topology.PlanModeLocalStage)
+	meta.Hostname = "appdev"
+	meta.SetRepoBaseline("av-7", topology.RepoProvenanceArtifactOnly)
+
+	if err := WriteServiceMeta(dir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	loaded, err := ReadServiceMeta(dir, "appdev")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta: %v", err)
+	}
+	if loaded == nil || loaded.Repo == nil {
+		t.Fatal("loaded.Repo is nil, want the persisted baseline marker")
+	}
+	if loaded.Repo.BaselineAppVersion != "av-7" {
+		t.Errorf("BaselineAppVersion = %q, want av-7", loaded.Repo.BaselineAppVersion)
+	}
+	if loaded.Repo.Provenance != topology.RepoProvenanceArtifactOnly {
+		t.Errorf("Provenance = %q, want artifact-only", loaded.Repo.Provenance)
+	}
+}
+
+func TestServiceMeta_Repo_NilByDefault(t *testing.T) {
+	t.Parallel()
+	meta := NewServiceMeta("proj", topology.PlanModeLocalStage)
+	if meta.Repo != nil {
+		t.Errorf("Repo = %+v, want nil for a meta with no adopt baseline recorded", meta.Repo)
+	}
+}
