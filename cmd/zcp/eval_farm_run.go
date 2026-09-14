@@ -539,7 +539,7 @@ func startDetached(argv []string, logPath string) error {
 	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec,noctx // G204: argv[0] is this same binary's own resolved path (os.Executable), never user input; noctx: the detached child must outlive this process's own context by design (§3.1 FM-18), so it is never bound to one
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.SysProcAttr = detachedSysProcAttr()
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()
 		return fmt.Errorf("start detached: %w", err)
