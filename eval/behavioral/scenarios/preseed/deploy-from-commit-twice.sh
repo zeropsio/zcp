@@ -103,9 +103,13 @@ SHA_OLD=$(ssh appdev "cd /var/www && git rev-parse HEAD")
 deploy_from_commit "$SHA_OLD"
 
 # One trivial commit so the two ledger entries are genuinely distinct
-# (same tree would make the second push a no-op build).
-ssh appdev "cd /var/www && echo '// preseed marker' >> index.js && \
-  git -c user.email='preseed@zcp.local' -c user.name='ZCP Preseed' commit -q -am 'preseed: second commit for rollback ledger'"
+# (same tree would make the second push a no-op build). A NEW tracked file,
+# not an append to a guessed entry point: the recipe's tree has no tracked
+# index.js, and `commit -am` on an untracked file commits nothing (exit 1 —
+# the first live pass died exactly there).
+ssh appdev "cd /var/www && echo 'preseed marker: second commit for the rollback ledger' > zcp-preseed-marker.txt && \
+  git add zcp-preseed-marker.txt && \
+  git -c user.email='preseed@zcp.local' -c user.name='ZCP Preseed' commit -q -m 'preseed: second commit for rollback ledger'"
 SHA_NEW=$(ssh appdev "cd /var/www && git rev-parse HEAD")
 deploy_from_commit "$SHA_NEW"
 
