@@ -970,9 +970,14 @@ Test prompt body.
 // never produces a FAILED creation-phase process and never gets a
 // done.json: it hangs in waitForDone until something ends the batch (the
 // RED test's SIGTERM, via runFarmRun's signal.NotifyContext wiring, R3).
-func newHangingRunFakeAccountServer(t *testing.T, clientID, runProjectName string) *httptest.Server {
+// The returned channel closes on the first process poll — the point at which
+// the run is provably hung waiting for done.json — so a caller can deliver a
+// signal into the hang rather than into the preceding scenario fetch.
+func newHangingRunFakeAccountServer(t *testing.T, clientID, runProjectName string) (*httptest.Server, <-chan struct{}) {
 	t.Helper()
 	var mu sync.Mutex
+	hanging := make(chan struct{})
+	var hangOnce sync.Once
 	projects := map[string]string{} // id -> name
 	nextID := 0
 	nextTok := 0
@@ -1006,6 +1011,7 @@ func newHangingRunFakeAccountServer(t *testing.T, clientID, runProjectName strin
 			fmt.Fprintf(w, `{"projectId":%q,"projectName":%q,"serviceStacks":[{"id":"svc-1","name":"zcp"}]}`, id, name)
 
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/rest/public/project/") && strings.HasSuffix(r.URL.Path, "/process"):
+			hangOnce.Do(func() { close(hanging) })
 			fmt.Fprint(w, `{"list":[],"totalCount":0}`)
 
 		default:
@@ -1014,7 +1020,7 @@ func newHangingRunFakeAccountServer(t *testing.T, clientID, runProjectName strin
 		}
 	}))
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, hanging
 }
 
 // TestEvalFarmRun_SIGTERM_EndsBatchByInterrupt pins R3's end-to-end wiring:
@@ -1029,7 +1035,7 @@ func TestEvalFarmRun_SIGTERM_EndsBatchByInterrupt(t *testing.T) {
 	const scenarioID = "recipe-hang"
 	runProjectName := farm.ProjectPrefix + batch + "-" + scenarioID
 
-	restSrv := newHangingRunFakeAccountServer(t, clientID, runProjectName)
+	restSrv, hanging := newHangingRunFakeAccountServer(t, clientID, runProjectName)
 	s3Srv, s3Fake := newStatusFakeS3ServerWithFake(t)
 
 	digest := seedScenarioTree(t, s3Fake, map[string][]byte{
@@ -1047,7 +1053,10 @@ func TestEvalFarmRun_SIGTERM_EndsBatchByInterrupt(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 
 	go func() {
-		time.Sleep(150 * time.Millisecond)
+		// Deliver the signal only once the run is hung (first process poll);
+		// a fixed sleep lands in the scenario fetch under -race and reads as
+		// "context canceled" instead of an interrupted batch.
+		<-hanging
 		_ = syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
 	}()
 
