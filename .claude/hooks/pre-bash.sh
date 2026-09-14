@@ -22,12 +22,21 @@ if echo "$COMMAND" | grep -qE 'rm\s' && \
     exit 2
 fi
 
-# Block dangerous git operations
-# force push (but allow --force-with-lease), hard reset, clean -f, checkout .,
-# restore ., stash drop/clear, branch -D, push --delete
-if echo "$COMMAND" | grep -qE 'git\s+(push\s+.*--force(\s|$)|push\s+-f\b|reset\s+--hard|clean\s+-[a-zA-Z]*f|checkout\s+(--\s+)?\.(\s|$)|checkout\s+-f\b|restore\s+\.(\s|$)|stash\s+(drop|clear)|branch\s+-[a-zA-Z]*D|push\s+\S+\s+--delete)'; then
-    echo "BLOCKED: Dangerous git operation. Use safer alternatives." >&2
-    exit 2
+# Block force push of main to origin (--force, -f, +refspec; --force-with-lease allowed).
+# Remote omitted = origin; refspec omitted = current branch, so a bare `git push -f`
+# is blocked when main is checked out. Every other git operation (stash drop,
+# reset --hard, branch -D, ...) is allowed — history lives in git.
+PUSH_SEG=$(echo "$COMMAND" | grep -oE 'git\s+push\b[^;&|]*' | head -1)
+if [ -n "$PUSH_SEG" ] && \
+   echo "$PUSH_SEG" | grep -qE '\s--force(\s|$)|\s-[a-zA-Z]*f[a-zA-Z]*(\s|$)|\s\+\S'; then
+    ARGS=$(echo "$PUSH_SEG" | tr -s ' ' '\n' | sed '1,2d' | grep -vE '^-')
+    REMOTE=$(echo "$ARGS" | sed -n '1p')
+    REF=$(echo "$ARGS" | sed -n '2p' | sed -E 's/^\+//; s/^.*://')
+    [ -z "$REF" ] && REF=$(git -C "${CLAUDE_PROJECT_DIR:-.}" rev-parse --abbrev-ref HEAD 2>/dev/null)
+    if { [ -z "$REMOTE" ] || [ "$REMOTE" = "origin" ]; } && [ "$REF" = "main" ]; then
+        echo "BLOCKED: Force push of main to origin is not allowed." >&2
+        exit 2
+    fi
 fi
 
 # Block chmod 777 and other overly permissive operations
