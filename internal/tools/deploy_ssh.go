@@ -195,6 +195,12 @@ type DeploySSHInput struct {
 	// rebuild, no re-import, no source resolution. Only "latest" is
 	// supported today.
 	AppVersion string `json:"appVersion,omitempty"`
+	// SHA, when set, deploys the EXACT git commit instead of the current
+	// working tree: resolved via `git rev-parse` inside the SOURCE
+	// container, its tree extracted into a temp dir there, and pushed with
+	// --version-name. On success, records the deploy in the source
+	// container's refs/zcp/* ledger. docs/spec-workflows.md §4.5.
+	SHA string `json:"sha,omitempty"`
 }
 
 func deploySSHInputSchema() *jsonschema.Schema {
@@ -208,6 +214,7 @@ func deploySSHInputSchema() *jsonschema.Schema {
 		"branch":        {Type: "string", Description: "Git branch name for git-push. Default: main."},
 		"breakGlass":    {Type: "boolean", Description: "Override for the push-delivery redirect: a pair with git-push configured delivers via push (the repo is the source of truth); a direct deploy is refused with the recommended push call unless breakGlass=true. Reserve for fundamental reasons (git host outage, recovery) — the response then flags that the container is ahead of the repo."},
 		"appVersion":    {Type: "string", Description: "Set to 'latest' to re-deploy the already-built appVersion in place, skipping source resolution — recovery for a never-activated buildFromGit service with no container. Only 'latest' is supported."},
+		"sha":           {Type: "string", Description: "Deploy this exact git commit instead of the working tree. Records it in the source container's refs/zcp/* ledger."},
 	}, "targetService")
 }
 
@@ -360,7 +367,7 @@ func RegisterDeploySSH(
 
 		// Default: zcli push to Zerops.
 		result, err := ops.DeploySSH(ctx, client, projectID, sshDeployer, *authInfo,
-			input.SourceService, input.TargetService, input.Setup, input.WorkingDir)
+			input.SourceService, input.TargetService, input.Setup, input.WorkingDir, input.SHA)
 		if err != nil {
 			attempt.Error = err.Error()
 			// SSH/transport-layer failure — we never reached the build.
@@ -400,6 +407,7 @@ func RegisterDeploySSH(
 			// result payload surfaces SubdomainAccessEnabled + SubdomainURL
 			// alongside the deploy outcome.
 			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
+			writeDeployLedgerSSH(ctx, sshDeployer, input.WorkingDir, projectID, result)
 		case result != nil && result.TimedOut:
 			// In-flight (B23): the build is still running at poll timeout, not
 			// failed. Record without a FailureClass so the envelope doesn't
@@ -408,6 +416,10 @@ func RegisterDeploySSH(
 		case result != nil:
 			attempt.Error = fmt.Sprintf("deploy status %s", result.Status)
 			attempt.FailureClass = classifyDeployStatus(result.Status)
+		}
+		if result != nil {
+			attempt.SHA = result.SHA
+			attempt.AppVersionID = result.AppVersionID
 		}
 		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 

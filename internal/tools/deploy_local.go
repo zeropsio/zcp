@@ -42,6 +42,12 @@ type DeployLocalInput struct {
 	// in-place recovery for a never-activated buildFromGit service (docs/
 	// spec-workflows.md §8 R2) — see DeploySSHInput.AppVersion.
 	AppVersion string `json:"appVersion,omitempty"`
+	// SHA, when set, deploys the EXACT git commit instead of the current
+	// working tree: resolved via `git rev-parse`, its tree extracted into
+	// a temp dir outside workingDir, and pushed with --version-name. On
+	// success, records the deploy in the workingDir repo's refs/zcp/*
+	// ledger. docs/spec-workflows.md §4.5.
+	SHA string `json:"sha,omitempty"`
 }
 
 func deployLocalInputSchema() *jsonschema.Schema {
@@ -54,6 +60,7 @@ func deployLocalInputSchema() *jsonschema.Schema {
 		"branch":        {Type: "string", Description: "Git branch for strategy=git-push. Default: current HEAD branch."},
 		"breakGlass":    {Type: "boolean", Description: "Override for the push-delivery redirect: a pair with git-push configured delivers via push (the repo is the source of truth); a direct deploy is refused with the recommended push call unless breakGlass=true. Reserve for fundamental reasons (git host outage, recovery)."},
 		"appVersion":    {Type: "string", Description: "Set to 'latest' to re-deploy the already-built appVersion in place, skipping source resolution — recovery for a never-activated buildFromGit service with no container. Only 'latest' is supported."},
+		"sha":           {Type: "string", Description: "Deploy this exact git commit instead of the working tree. Records it in the repo's refs/zcp/* ledger."},
 	}, "targetService")
 }
 
@@ -181,7 +188,7 @@ func RegisterDeployLocal(
 		}
 
 		result, err := ops.DeployLocal(ctx, client, projectID, *authInfo,
-			input.TargetService, input.Setup, input.WorkingDir)
+			input.TargetService, input.Setup, input.WorkingDir, input.SHA)
 		if err != nil {
 			attempt.Error = err.Error()
 			// Local push failed before reaching the platform — transport-
@@ -212,12 +219,17 @@ func RegisterDeployLocal(
 		case result != nil && result.Status == statusDeployed:
 			attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
 			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
+			writeDeployLedgerLocal(ctx, input.WorkingDir, projectID, result)
 		case result != nil && result.TimedOut:
 			// In-flight (B23): build still running at poll timeout, not failed.
 			attempt.Error = deployBuildInFlightMsg
 		case result != nil:
 			attempt.Error = fmt.Sprintf("deploy status %s", result.Status)
 			attempt.FailureClass = classifyDeployStatus(result.Status)
+		}
+		if result != nil {
+			attempt.SHA = result.SHA
+			attempt.AppVersionID = result.AppVersionID
 		}
 		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 

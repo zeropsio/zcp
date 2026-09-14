@@ -104,7 +104,7 @@ func DeployBatchSSH(
 
 			result, err := DeploySSH(
 				ctx, client, projectID, sshDeployer, authInfo,
-				tgt.SourceService, tgt.TargetService, tgt.Setup, tgt.WorkingDir,
+				tgt.SourceService, tgt.TargetService, tgt.Setup, tgt.WorkingDir, "",
 			)
 			if err != nil {
 				entry.Error = err.Error()

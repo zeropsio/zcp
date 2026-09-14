@@ -36,7 +36,7 @@ func TestDeployLocal_FailedTargetProceeds(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(dir, "zerops.yml"), []byte("zerops:\n  - setup: app\n    build:\n      base: nodejs@22\n"), 0o644)
 
 	result, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
-		"app", "", dir)
+		"app", "", dir, "")
 	if err != nil {
 		t.Fatalf("FAILED target must redeploy (corrective, non-destructive), got refusal: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestDeployLocal_ReadyToDeployFreshProceeds(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(dir, "zerops.yml"), []byte("zerops:\n  - setup: app\n    build:\n      base: nodejs@22\n"), 0o644)
 
 	result, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
-		"app", "", dir)
+		"app", "", dir, "")
 	if err != nil {
 		t.Fatalf("first-deploy READY_TO_DEPLOY should proceed: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestDeployLocal_ReadyToDeployAfterFailureProceeds(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(dir, "zerops.yml"), []byte("zerops:\n  - setup: app\n    build:\n      base: nodejs@22\n"), 0o644)
 
 	result, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
-		"app", "", dir)
+		"app", "", dir, "")
 	if err != nil {
 		t.Fatalf("corrective redeploy after BUILD_FAILED must proceed (no diagnose-gate deadlock), got: %v", err)
 	}
