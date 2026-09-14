@@ -170,10 +170,16 @@ edits live in the branch (`gate-set.txt` ⇔ spec §9.3, pinned by
 
 Non-gate: `delivery-git-push-actions-setup` DELETE; `launch-production-{existing-with-webhook,new-project-push-mode,existing-project-token}` + `launch-with-existing-cicd` REWRITE at slice 5; `eval_scenario_drift_test.go` guards for `CICDMethod`/`closeMode=git-push`/`.netrc` rewritten at slice 3–4.
 
-### 6.3 Open before slice 2b — P2b
+### 6.3 P2b — REFUTED (live 2026-09-14, probes gitv8n/u/s)
 
-If `/home/zerops` survives a self-deploy, the repo can live at
-`/home/zerops/.zcp/git/<svc>` with `/var/www/.git` as a `gitdir:` pointer file that
-zcp restores after every self-deploy; then dev-only topology and self-deploy keep
-working and B6/A1/B8 stay. If it does not survive, dev never self-deploys and the
-cells above are rewritten. Verified by platform-verifier on `eval` before 2b starts.
+A self-deploy creates a new container on a new ZFS root: `/home/zerops` is reset to
+image state too, not only `/var/www`. Nothing on the container survives a deploy.
+Consequences: (a) dev never self-deploys is absolute — no pointer-file trick;
+(b) B6/A1/B8 and every dev-only cell are rewritten in slice 2b; (c) dev-only
+topology = working tree + dev server, never deployed (owner ack before 2b).
+
+Two more facts: P8 — zcli has NO tarball input (`--archive-file-path` is an output
+tee joined onto the workdir); push-from-commit = `git archive sha | tar -x -C tmp` +
+`zcli push --working-dir tmp --no-git --version-name sha`. P9 — zcli default
+`--workspace-state all` exits 128 on a `gitdir:` pointer-file `.git` (temp index
+inside `.git`); `clean` works. git + zcli present on nodejs@22, ubuntu@24.04, static.
