@@ -8,9 +8,10 @@ import (
 )
 
 // baseExcludePatterns are seeded into .git/info/exclude for every runtime
-// class — content that is never source (docs/spec-workflows.md §4.10). zcp
-// seeds `.git/info/exclude`, NEVER a tracked `.gitignore` — the exclude
-// file is repo-local and invisible to the user's own history.
+// class — content that is never source (docs/spec-workflows.md's Git
+// Lifecycle section, GLC-1). zcp seeds `.git/info/exclude`, NEVER a tracked
+// `.gitignore` — the exclude file is repo-local and invisible to the
+// user's own history.
 var baseExcludePatterns = []string{".env", ".env.*", "*.log", ".zcp/"}
 
 // codeExcludePatterns are added on top of baseExcludePatterns for runtime
@@ -56,38 +57,9 @@ func SeedExclude(ctx context.Context, r Runner, dir string, class topology.Runti
 	return nil
 }
 
-// InitRepo guarantees dir is a git repository with a scaffold commit,
-// idempotently (docs/spec-workflows.md §4.10, G1). Called once bootstrap's
-// scaffold has landed on disk:
-//   - not yet a repo: `git init -q -b main`, seed the exclude file, then
-//     (since a fresh init has no HEAD) `git add -A && git commit -m
-//     "scaffold"` to commit whatever the scaffold wrote.
-//   - already a repo: exclude is re-seeded (cheap, idempotent); if HEAD
-//     already exists, InitRepo does nothing further — a prior call (or a
-//     user's own git usage) already committed something, and InitRepo must
-//     never create a second scaffold commit or touch history again.
-func InitRepo(ctx context.Context, r Runner, dir string, class topology.RuntimeClass) error {
-	isRepo := probeIsRepo(ctx, r, dir)
-	if !isRepo {
-		if _, stderr, err := r.Run(ctx, dir, "git init -q -b main"); err != nil {
-			return wrapErr("git init", err, stderr)
-		}
-	}
-	if err := SeedExclude(ctx, r, dir, class); err != nil {
-		return err
-	}
-	if probeHasHEAD(ctx, r, dir) {
-		return nil
-	}
-	if _, stderr, err := r.Run(ctx, dir, "git add -A && git commit -q -m "+shellQuote("scaffold")); err != nil {
-		return wrapErr("commit scaffold", err, stderr)
-	}
-	return nil
-}
-
 // AdoptBaseline tags dir's current HEAD with the appVersion-scoped
 // baseline tag (topology.BaselineTagName), guaranteeing a repo exists
-// first (docs/spec-workflows.md §4.10, G2):
+// first (docs/spec-workflows.md's Git Lifecycle section, GLC-7):
 //   - not yet a repo: init + seed exclude + a baseline commit (message
 //     records the adopted appVersion id), then tag it.
 //   - already a repo: only the tag moves (force — re-adopting the same or
@@ -124,11 +96,5 @@ func AdoptBaseline(ctx context.Context, r Runner, dir, appVersionID string, clas
 // other failure mode worth distinguishing.
 func probeIsRepo(ctx context.Context, r Runner, dir string) bool {
 	_, _, err := r.Run(ctx, dir, "test -d .git")
-	return err == nil
-}
-
-// probeHasHEAD reports whether dir's repo has a reachable HEAD commit.
-func probeHasHEAD(ctx context.Context, r Runner, dir string) bool {
-	_, _, err := r.Run(ctx, dir, "git rev-parse -q --verify HEAD")
 	return err == nil
 }

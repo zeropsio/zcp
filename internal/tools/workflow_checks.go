@@ -67,9 +67,9 @@ func buildStepChecker(step string, client platform.Client, fetcher platform.LogF
 }
 
 // checkRepoInit gates bootstrap completion on a repo being present for
-// every dev-mode target (docs/spec-workflows.md §4.10, G1): container
-// mode self-heals via ops.EnsureScaffoldRepo (bootstrap owns /var/www,
-// so it may act); local mode only reads — dir is the user's own
+// every dev-mode target (docs/spec-workflows.md's Git Lifecycle section,
+// GLC-1): container mode self-heals via ops.InitServiceGit (bootstrap owns
+// /var/www, so it may act); local mode only reads — dir is the user's own
 // checkout, so a missing repo is reported, not created. Kept separate
 // from checkProvision's SSH-independent checks so this function alone
 // carries the ssh/rt dependency.
@@ -98,7 +98,7 @@ func checkRepoInitAt(ctx context.Context, ssh ops.SSHDeployer, rt runtime.Info, 
 			if ssh == nil {
 				continue
 			}
-			if err := ops.EnsureScaffoldRepo(ctx, ssh, hostname, class); err != nil {
+			if err := ops.InitServiceGit(ctx, ssh, hostname, class); err != nil {
 				checks = append(checks, workflow.StepCheck{
 					Name:   name,
 					Status: statusFail,

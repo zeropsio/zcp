@@ -1,7 +1,7 @@
-// Tests for: ops/git/repo.go — the repo-always guarantees run at
-// bootstrap (scaffold commit) and adopt (baseline tag), both driven
-// through the Runner abstraction so they work identically over SSH
-// (container) and locally (docs/spec-workflows.md §4.10).
+// Tests for: ops/git/repo.go — the repo-always guarantee run at adopt
+// (baseline tag), driven through the Runner abstraction so it works
+// identically over SSH (container) and locally (docs/spec-workflows.md's
+// Git Lifecycle section, GLC-7).
 package git
 
 import (
@@ -45,59 +45,6 @@ func TestSeedExclude_WritesInfoExcludeWithPatterns(t *testing.T) {
 	}
 	if !strings.Contains(script, "node_modules/") {
 		t.Errorf("script = %q, want node_modules/ pattern", script)
-	}
-}
-
-func TestInitRepo_FreshDir_InitsSeedsAddsAndCommitsScaffold(t *testing.T) {
-	r := &fakeRunner{results: []fakeResult{
-		{err: errTest}, // test -d .git -> not a repo
-		{},             // git init -b main
-		{},             // seed exclude
-		{err: errTest}, // rev-parse HEAD -> no HEAD yet
-		{},             // git add -A && git commit -m scaffold
-	}}
-	if err := InitRepo(context.Background(), r, "/var/www", topology.RuntimeDynamic); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(r.calls) != 5 {
-		t.Fatalf("calls = %d, want 5: %+v", len(r.calls), r.calls)
-	}
-	if !strings.Contains(r.calls[0].script, "test -d .git") {
-		t.Errorf("call[0] = %q, want a .git existence probe", r.calls[0].script)
-	}
-	if !strings.Contains(r.calls[1].script, "git init") || !strings.Contains(r.calls[1].script, "-b main") {
-		t.Errorf("call[1] = %q, want git init -b main", r.calls[1].script)
-	}
-	if !strings.Contains(r.calls[2].script, ".git/info/exclude") {
-		t.Errorf("call[2] = %q, want the exclude seed", r.calls[2].script)
-	}
-	if !strings.Contains(r.calls[3].script, "rev-parse") {
-		t.Errorf("call[3] = %q, want a HEAD probe", r.calls[3].script)
-	}
-	if !strings.Contains(r.calls[4].script, "git add -A") || !strings.Contains(r.calls[4].script, `commit -q -m 'scaffold'`) {
-		t.Errorf("call[4] = %q, want git add -A && commit -q -m 'scaffold'", r.calls[4].script)
-	}
-}
-
-func TestInitRepo_ExistingRepoWithHEAD_SkipsInitAndCommit(t *testing.T) {
-	r := &fakeRunner{results: []fakeResult{
-		{},                 // test -d .git -> is a repo
-		{},                 // seed exclude (always re-seeded — idempotent overwrite)
-		{stdout: "abc123"}, // rev-parse HEAD -> already has a commit
-	}}
-	if err := InitRepo(context.Background(), r, "/var/www", topology.RuntimeDynamic); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(r.calls) != 3 {
-		t.Fatalf("calls = %d, want 3 (no init, no scaffold commit): %+v", len(r.calls), r.calls)
-	}
-	for _, c := range r.calls {
-		if strings.Contains(c.script, "git init") {
-			t.Errorf("call = %q, must not re-init an existing repo", c.script)
-		}
-		if strings.Contains(c.script, "commit -m 'scaffold'") {
-			t.Errorf("call = %q, must not re-commit an existing HEAD", c.script)
-		}
 	}
 }
 
