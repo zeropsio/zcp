@@ -1,6 +1,6 @@
 # Git foundation — handoff (read this first)
 
-Status 2026-09-14: branch `feat/git-foundation` carries working code (slice 1 + 2a, see §4).
+Status 2026-09-14 (evening): branch `feat/git-foundation` carries slices 1, 2a, A (tag evidence), B (adopt baseline), C (rollback) — read §8 first, it supersedes §4–§7 where they differ.
 The original plan `git-foundation-2026-09-14.md` was written before its author read the
 spec's git lifecycle section; §3 below states what it got wrong. Treat THIS file as the
 entry point; the older plan is kept only for its scenario tables (§6) and platform ledger.
@@ -170,3 +170,66 @@ stays; new G cells are added.
    <ids>`) before adding any further code — nothing on the branch has been run live.
 4. Every platform claim in a new brief goes through `platform-verifier` phrased as zcp's
    real command path, not as the design's wording.
+
+## 8. Day 2 (2026-09-14 evening) — what changed, what was proven, what is next
+
+Read this section before §4–§7; where they differ, §8 wins. Owner decisions taken today:
+direction "extend, not replace" confirmed; evidence as **git tags** (owner's ask); `sha`
+stays explicit, never a default; Gitea placement still open (recommendation: hub).
+
+### 8.1 Codex's review of this handoff — all six points verified against code and fixed
+
+| # | Finding (verified) | Fix landed |
+|---|---|---|
+| 1 | No single place says which ref a target consumes: `main` hard-coded in the git-push default, the Actions template and the launch gate | Stated as GF-7 (OPEN) in spec §12; not built |
+| 2 | Ledger was two custom refs keyed by hostname, written only on the sha path — stale after any ordinary deploy | Replaced by one annotated tag `zcp/deploy/<project>/<target>/<appVersionId>` per zcp deploy (sha path, working-tree path with `dirty`, batch); platform stays the authority for the active appVersion; "what runs" = join; no tag ⇒ source unknown (§4.9, GF-5) |
+| 3 | sha deploy with source==target shipped `--no-git` (would delete the container's repo); validated the mount's `zerops.yaml`, not the commit's | Self-deploy refused before any SSH call (GF-3); `zerops.yaml` read from `git show <sha>:zerops.yaml` (GF-4) |
+| 4 | Adopt tagged GLC-1's empty marker commit as the baseline; provenance hard-coded `source` | `AdoptBaseline` decides by content (empty-tree HEAD ⇒ snapshot commit with robot identity inline; content ⇒ tag only); provenance `snapshot` / `existing`, neither claims parity (GLC-7) |
+| 5 | G5 demanded "no rebuild" but prescribed a rebuild; `appVersion` accepted only `latest` | `zerops_deploy appVersion=<id>` re-activates a BACKUP appVersion (`stack.deploy.backup`, no build) in SSH and local mode; `RedeployLastAppVersion` refuses ACTIVE (§8 R2, GF-8) |
+| 6 | Relay was a premature architecture | Dropped: Gitea Actions proven (8.2) |
+
+### 8.2 Verified live today (platform-verifier memory, sections dated 2026-09-14)
+
+- **Rollback**: `PUT /app-version/{id}/deploy` on a `BACKUP` version → one `stack.deploy.backup`
+  process, no build, ~50–70 s, repeatable; body ignored for BACKUP; ACTIVE → `appVersionInvalidStatus`.
+- **Gitea Actions + `zcli push`**: Gitea 1.24.6 + act_runner 0.2.13 HOST mode in the same
+  `ubuntu@24.04` container, push → ACTIVE in 83–105 s, survives a service restart; no node on
+  the host (plain `git clone`, never `actions/checkout`); pass the token as step `env`, never
+  `zcli login`. Recipe shape recorded in spec §12.5. **No zcp relay is needed.**
+- **Farm, first live pass** (batch `gf-g-1`, candidate from this branch): G1 `repo-always-bootstrap`
+  PASSED; G3 `deploy-from-commit-stage` PASSED (sha → `zcli push --no-git --version-name`,
+  tag written, result carries sha + appVersionId); G2 failed on a wrong scenario premise — a
+  buildFromGit build DOES leave the clone's `.git` history, so adopt correctly took `existing`
+  (scenario and spec §12.2 corrected); G4/G5 failed in the preseed (`zcli push` without
+  `--setup prod`; fixed). Rerun of G2/G4/G5 = batch `gf-g-2`; full gate set on the branch
+  candidate = batch `gf-gate-1` (32 cells, G2 now gated) — results in the farm console.
+
+### 8.3 What landed (commits 1fc1840d..HEAD)
+
+- Hygiene: the branch was rebuilt without 376 swept-in plan files and 28 unrelated recipe
+  `.import.yml` bumps (those live on `chore/recipe-import-bumps`); diff vs main is code/docs/eval only.
+- Spec: §12 "Git Foundation" (vocabulary, entry routes, the change path, two checkouts over one
+  origin, provider-agnostic delivery contract with the platform limits, GF-1..GF-10, open items);
+  §4.9 rewritten to the tag model; GLC-7 rewritten; §8 R2 extended; §12.5 Gitea row verified.
+- Code: `topology.DeployTagName/DeployTagPrefix`, `LedgerEntry.Dirty`; `ops/git.WriteLedger`
+  (tag), `LastDeployOnRecord`, `HeadStatus`, `ReadFileAtCommit`, `ResolveSHA` hex-validated,
+  `SSHRunner` surfaces git stderr; `ops.DeploySSH` self-guard + commit validation +
+  `deployFromCommitPrep`; `ops.ValidateZeropsYmlContent`; `ops.ReactivateAppVersion`
+  (`deploy_rollback.go`), `platform.BuildStatusBackup`; `ops/git.AdoptBaseline` content rule,
+  `topology.RepoProvenance{snapshot,existing}`; tools: `runAppVersionRollback`, batch evidence,
+  `Dirty` on `DeployResult`/`DeployAttempt`/`AttemptInfo`, envelope `repo.provenance`.
+- Eval: G2 gated (+ gate-set.txt); G3/G4/G5 + preseeds on tags; G5 = appVersion-id rollback.
+- `plans/git-foundation-platform-asks-2026-09-14.md`: the four asks for the platform team.
+
+### 8.4 Open, in order
+
+1. Read `gf-g-2` and `gf-gate-1` in the farm console; fix what falls (one batch = signal).
+2. GF-7 tracked ref: record once per target, read by push default / CI template / launch gate.
+3. GF-9/GF-10 evidence sharing: push `refs/tags/zcp/deploy/*` with the tracked ref, and
+   `--version-name <sha>` on every zcp-driven build and CI template — one decision.
+4. D2 `GitHostKind gitea|generic` + `git-push-setup` verified live against a Gitea.
+5. Managed Gitea recipe (spec §12.5 shape) with act_runner; placement decision (owner).
+6. Judge NOTES not yet acted on: `zerops.yml` (not only `.yaml`) at the commit; exclude
+   patterns for non-Node ecosystems (`vendor/`, `.venv/`, `target/`) in GLC-1's list.
+7. Mate commit/push through zcp (`spec-mate.md §6.3`) — z3 fork.
+
