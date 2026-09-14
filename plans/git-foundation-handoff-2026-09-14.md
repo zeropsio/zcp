@@ -175,7 +175,8 @@ stays; new G cells are added.
 
 Read this section before §4–§7; where they differ, §8 wins. Owner decisions taken today:
 direction "extend, not replace" confirmed; evidence as **git tags** (owner's ask); `sha`
-stays explicit, never a default; Gitea placement still open (recommendation: hub).
+stays explicit, never a default; Gitea placement still open (recommendation: hub). Judge
+review of the landing: 4 FIX-FIRST + 6 NOTES, all but one acted on (8.4 item 6).
 
 ### 8.1 Codex's review of this handoff — all six points verified against code and fixed
 
@@ -196,13 +197,27 @@ stays explicit, never a default; Gitea placement still open (recommendation: hub
   `ubuntu@24.04` container, push → ACTIVE in 83–105 s, survives a service restart; no node on
   the host (plain `git clone`, never `actions/checkout`); pass the token as step `env`, never
   `zcli login`. Recipe shape recorded in spec §12.5. **No zcp relay is needed.**
-- **Farm, first live pass** (batch `gf-g-1`, candidate from this branch): G1 `repo-always-bootstrap`
-  PASSED; G3 `deploy-from-commit-stage` PASSED (sha → `zcli push --no-git --version-name`,
-  tag written, result carries sha + appVersionId); G2 failed on a wrong scenario premise — a
-  buildFromGit build DOES leave the clone's `.git` history, so adopt correctly took `existing`
-  (scenario and spec §12.2 corrected); G4/G5 failed in the preseed (`zcli push` without
-  `--setup prod`; fixed). Rerun of G2/G4/G5 = batch `gf-g-2`; full gate set on the branch
-  candidate = batch `gf-gate-1` (32 cells, G2 now gated) — results in the farm console.
+- **Farm — all five G cells PASSED live** (batches `gf-g-1`..`gf-g-5`, candidates from this
+  branch): G1 `repo-always-bootstrap`; G2 `repo-always-adopt-baseline` (after fixing a wrong
+  premise: a buildFromGit build DOES leave the clone's `.git` history, so adopt takes
+  `existing` — scenario + spec §12.2 corrected); G3 `deploy-from-commit-stage` (sha →
+  `zcli push --no-git --version-name`, tag written, result carries sha + appVersionId);
+  G4 `dev-self-deploy-keeps-repo`; G5 `rollback-stage-from-ledger` — `appVersion=<id>`,
+  no `latest`, no `sha`, no rebuild. G5 took four runs: preseed lacked `--setup prod`;
+  preseed appended to an untracked file (now adds a tracked marker file); one fixture build
+  failed on the platform; and one REAL zcp defect — the rollback body sent empty strings,
+  which the platform rejects with `invalidUserInput` (null is what it ignores) — fixed in
+  `platform.RedeployAppVersion` + `TestRedeployAppVersion_EmptyFields_SendNull`.
+  Note from the passing run: the agent first called `appVersion="__lookup_probe__"` to
+  harvest the candidate list from the error, then the real id — see 8.4.
+- **Farm — full gate set on the branch candidate** (batch `gf-gate-1`, 32 cells): 22 passed;
+  5 fail identically on the `main` baselines matrix-2/3/4 (`develop-add-managed-dep-to-existing`,
+  `export-buildfromgit-self-snapshot`, `existing-simple-mode-node-add-endpoint`,
+  `recipe-laravel-showcase-fullstack`, `greenfield-fullstack-multi-runtime`); 1 flip
+  (`cross-deploy-stage-promote-from-dev`, mustOffer phrasing) passed on the second sample
+  `gf-gate-1b`; 1 was G2 on the pre-fix scenario digest; 3 blocked by farm env not set for
+  these batches (`ZCP_E2E_GITHUB_PAT`, `ZCP_E2E_EXISTING_PROJECT_ID`). **No regression
+  attributable to the branch.**
 
 ### 8.3 What landed (commits 1fc1840d..HEAD)
 
@@ -223,13 +238,16 @@ stays explicit, never a default; Gitea placement still open (recommendation: hub
 
 ### 8.4 Open, in order
 
-1. Read `gf-g-2` and `gf-gate-1` in the farm console; fix what falls (one batch = signal).
+1. Rollback UX: the target's appVersion list (id, status, sequence, version name) is reachable
+   only through the "does not belong" error today — expose it on the status envelope /
+   `zerops_events` so the agent never has to probe with a fake id.
 2. GF-7 tracked ref: record once per target, read by push default / CI template / launch gate.
 3. GF-9/GF-10 evidence sharing: push `refs/tags/zcp/deploy/*` with the tracked ref, and
    `--version-name <sha>` on every zcp-driven build and CI template — one decision.
 4. D2 `GitHostKind gitea|generic` + `git-push-setup` verified live against a Gitea.
 5. Managed Gitea recipe (spec §12.5 shape) with act_runner; placement decision (owner).
-6. Judge NOTES not yet acted on: `zerops.yml` (not only `.yaml`) at the commit; exclude
-   patterns for non-Node ecosystems (`vendor/`, `.venv/`, `target/`) in GLC-1's list.
+6. Judge NOTE not yet acted on: exclude patterns for non-Node ecosystems (`vendor/`,
+   `.venv/`, `target/`) in GLC-1's list; the two SSH round trips of the working-tree record
+   (`HeadStatus` + `LastDeployOnRecord`) could be one script.
 7. Mate commit/push through zcp (`spec-mate.md §6.3`) — z3 fork.
 
