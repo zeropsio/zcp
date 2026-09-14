@@ -466,9 +466,56 @@ func autoMountTargets(ctx context.Context, client platform.Client, projectID str
 			if initErr := ops.InitServiceGit(ctx, sshDeployer, hostname); initErr != nil {
 				fmt.Fprintf(os.Stderr, "zcp: InitServiceGit %s: %v\n", hostname, initErr)
 			}
+			if state.Bootstrap.Route == workflow.BootstrapRouteAdopt {
+				adoptRepoBaseline(ctx, client, projectID, sshDeployer, engine, hostname, target.Runtime.Type)
+			}
 		}
 	}
 	return results
+}
+
+// adoptRepoBaseline tags hostname's current HEAD with the running
+// appVersion's baseline (docs/spec-workflows.md §4.10, G2) and persists
+// the marker on the hostname's ServiceMeta. Best-effort, same posture as
+// InitServiceGit above: errors go to stderr, never to AutoMountInfo.
+//
+// appVersionID comes from ListServicesDirect (lag-free — CLAUDE.md's
+// ES-search trap: this runs moments after adopt/import, when the
+// ES-backed ListServices could still miss the service or its version).
+//
+// GAP: Provenance is classified from ClassifyProvenance("", nil) —
+// always "source" — because the adopted appVersion's sourceService/
+// deployFiles aren't yet modeled on platform.ServiceStack/AppVersion (an
+// unverified platform fact; see docs/spec-workflows.md §4.10). A live
+// read replaces this placeholder once that surface is proven.
+func adoptRepoBaseline(ctx context.Context, client platform.Client, projectID string, ssh ops.SSHDeployer, engine *workflow.Engine, hostname, typeVersion string) {
+	services, err := client.ListServicesDirect(ctx, projectID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zcp: AdoptRepoBaseline %s: list services: %v\n", hostname, err)
+		return
+	}
+	var appVersionID string
+	for _, s := range services {
+		if s.Name == hostname && s.ActiveAppVersion != nil {
+			appVersionID = s.ActiveAppVersion.ID
+			break
+		}
+	}
+	if appVersionID == "" {
+		return // no active appVersion yet — nothing to baseline against
+	}
+	class := topology.RuntimeClassFor(typeVersion)
+	if _, adoptErr := ops.AdoptRepoBaseline(ctx, ssh, hostname, appVersionID, class); adoptErr != nil {
+		fmt.Fprintf(os.Stderr, "zcp: AdoptRepoBaseline %s: %v\n", hostname, adoptErr)
+		return
+	}
+	provenance := topology.ClassifyProvenance("", nil)
+	if metaErr := workflow.UpsertServiceMeta(engine.StateDir(), hostname, func(m *workflow.ServiceMeta, _ bool) error {
+		m.SetRepoBaseline(appVersionID, provenance)
+		return nil
+	}); metaErr != nil {
+		fmt.Fprintf(os.Stderr, "zcp: persist repo baseline %s: %v\n", hostname, metaErr)
+	}
 }
 
 // populateStacks injects the schema-derived stack catalog into a bootstrap response.
