@@ -181,6 +181,11 @@ type AttemptInfo struct {
 	Reason       string                `json:"reason,omitempty"`
 	FailureClass topology.FailureClass `json:"failureClass,omitempty"`
 	Summary      string                `json:"summary,omitempty"`
+	// SHA and AppVersionID mirror DeployAttempt's fields for a
+	// deploy-from-commit attempt (docs/spec-workflows.md §4.9). Deploy-only,
+	// both empty for a deploy with no sha and for every verify attempt.
+	SHA          string `json:"sha,omitempty"`
+	AppVersionID string `json:"appVersionId,omitempty"`
 }
 
 // BootstrapSessionSummary is the bootstrap projection on the envelope used

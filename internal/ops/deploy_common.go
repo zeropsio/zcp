@@ -67,6 +67,13 @@ type DeployResult struct {
 	// until then, or on a failed/timed-out build. The tools layer threads
 	// SHA + AppVersionID together into the refs/zcp/* ledger.
 	AppVersionID string `json:"appVersionId,omitempty"`
+	// PreviousSHA is what refs/zcp/env/<target> named BEFORE this sha
+	// deploy (read before WriteLedger moves it) — empty when the target
+	// never received a sha deploy before, or when this deploy has no sha
+	// at all. Lets the response say "replaces <prev7>" vs "first deploy
+	// to <target>" instead of staying silent about the target's prior
+	// state.
+	PreviousSHA string `json:"previousSha,omitempty"`
 }
 
 // GitPushResult contains the outcome of a git-push deploy operation.
@@ -153,4 +160,19 @@ func ClassifyDeploy(sourceService, targetService string) DeployClass {
 type SSHDeployer interface {
 	ExecSSH(ctx context.Context, hostname string, command string) ([]byte, error)
 	ExecSSHBackground(ctx context.Context, hostname string, command string, timeout time.Duration) ([]byte, error)
+}
+
+// deployShaTempCleanupTimeout bounds cleanupTempCtx's detached context — a
+// best-effort tmp-dir removal must not hang the caller indefinitely if the
+// runner (local shell or SSH) never returns.
+const deployShaTempCleanupTimeout = 30 * time.Second
+
+// cleanupTempCtx derives a context for a deferred tmp-dir removal
+// (git.RemoveTemp) that survives the parent ctx being canceled or timing
+// out — a sha deploy's cleanup runs in a `defer` after the push already
+// succeeded, and a caller-side cancellation (client disconnect, deploy
+// timeout) must not leave the extracted tree orphaned on the local disk or
+// inside the source container. Callers must invoke the returned cancel.
+func cleanupTempCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), deployShaTempCleanupTimeout)
 }

@@ -391,11 +391,13 @@ func deployAttemptsToInfo(attempts []DeployAttempt) []AttemptInfo {
 	out := make([]AttemptInfo, 0, len(attempts))
 	for i, a := range attempts {
 		info := AttemptInfo{
-			At:        parseOrZero(firstNonEmpty(a.SucceededAt, a.AttemptedAt)),
-			Success:   a.SucceededAt != "",
-			Iteration: i + 1,
-			Setup:     a.Setup,
-			Strategy:  a.Strategy,
+			At:           parseOrZero(firstNonEmpty(a.SucceededAt, a.AttemptedAt)),
+			Success:      a.SucceededAt != "",
+			Iteration:    i + 1,
+			Setup:        a.Setup,
+			Strategy:     a.Strategy,
+			SHA:          a.SHA,
+			AppVersionID: a.AppVersionID,
 		}
 		if !info.Success {
 			info.Reason = a.Error

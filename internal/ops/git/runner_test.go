@@ -89,6 +89,27 @@ func TestMkTempDir_LocalRunner_UsesOSMkdirTempOutsideDir(t *testing.T) {
 	}
 }
 
+func TestSSHRunner_Run_EmptyDir_OmitsCDPrefix(t *testing.T) {
+	exec := &fakeSSHExecutor{output: []byte("/tmp/zcpXXXX\n")}
+	r := SSHRunner{Executor: exec, Hostname: "appdev"}
+	_, _, err := r.Run(context.Background(), "", "mktemp -d")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(exec.calls) != 1 {
+		t.Fatalf("ssh calls = %d, want 1", len(exec.calls))
+	}
+	cmd := exec.calls[0].command
+	// `cd ''` is a bash error ("cd: '': No such file or directory") — an
+	// empty dir must run the script directly, with no cd prefix at all.
+	if strings.Contains(cmd, "cd ''") {
+		t.Errorf("command = %q, must not contain cd '' for an empty dir", cmd)
+	}
+	if cmd != "mktemp -d" {
+		t.Errorf("command = %q, want the bare script with no cd prefix", cmd)
+	}
+}
+
 func TestMkTempDir_SSHRunner_RunsMktempDCommand(t *testing.T) {
 	exec := &fakeSSHExecutor{output: []byte("/tmp/zcpXXXX\n")}
 	r := SSHRunner{Executor: exec, Hostname: "appdev"}

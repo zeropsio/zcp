@@ -711,6 +711,43 @@ func TestAttemptInfo_PreservesFailureContext(t *testing.T) {
 	}
 }
 
+// TestAttemptInfo_CarriesSHAAndAppVersionID pins that a deploy-from-commit
+// attempt's SHA/AppVersionID (docs/spec-workflows.md §4.9) reach the
+// envelope projection — otherwise action="status" has no way to tell the
+// agent which commit is running without a fresh zerops_deploy call.
+func TestAttemptInfo_CarriesSHAAndAppVersionID(t *testing.T) {
+	t.Parallel()
+
+	ws := &WorkSession{
+		PID:       42,
+		Services:  []string{"apistage"},
+		CreatedAt: "2026-04-26T09:00:00Z",
+		Deploys: map[string][]DeployAttempt{
+			"apistage": {{
+				AttemptedAt:  "2026-04-26T10:00:00Z",
+				SucceededAt:  "2026-04-26T10:02:00Z",
+				Setup:        "stage",
+				Strategy:     "zcli",
+				SHA:          "abc123def456",
+				AppVersionID: "av-99",
+			}},
+		},
+	}
+
+	summary := buildWorkSessionSummary(t.TempDir(), ws)
+	if summary == nil {
+		t.Fatal("buildWorkSessionSummary returned nil")
+	}
+
+	gotDeploy := summary.Deploys["apistage"][0]
+	if gotDeploy.SHA != "abc123def456" {
+		t.Errorf("deploy SHA: got %q, want %q", gotDeploy.SHA, "abc123def456")
+	}
+	if gotDeploy.AppVersionID != "av-99" {
+		t.Errorf("deploy AppVersionID: got %q, want %q", gotDeploy.AppVersionID, "av-99")
+	}
+}
+
 // TestAttemptInfo_SuccessLeavesFailureFieldsEmpty pins the inverse: a
 // successful attempt MUST NOT carry Reason/FailureClass — those are
 // failure-only signals. Setup/Strategy persist; Summary persists for

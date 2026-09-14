@@ -10,6 +10,19 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
+// ledgerIdentityName/ledgerIdentityEmail are the author/committer identity
+// WriteLedger stamps on every ledger commit — matching ops.DeployGitIdentity
+// (this package cannot import internal/ops; kept in sync by inspection,
+// same values). commit-tree creates a real commit object, which git
+// refuses without SOME identity; a buildFromGit-provisioned container has
+// no ~/.gitconfig and no GIT_AUTHOR_*/GIT_COMMITTER_* env (unlike a
+// self-deploy container, which InitServiceGit seeds), so relying on
+// ambient config fails there with "unable to auto-detect email address".
+const (
+	ledgerIdentityName  = "Zerops Agent"
+	ledgerIdentityEmail = "agent@zerops.io"
+)
+
 // WriteLedger records one deploy-from-commit attempt: moves
 // refs/zcp/env/<target> to entry.SHA, and appends a new
 // refs/zcp/deploy/<n> ref pointing at a commit (same tree as entry.SHA,
@@ -28,7 +41,9 @@ func WriteLedger(ctx context.Context, r Runner, dir string, entry topology.Ledge
 		return wrapErr("marshal ledger entry", err, "")
 	}
 
-	commitScript := "git commit-tree " + shellQuote(tree) + " -p " + shellQuote(entry.SHA) + " -m " + shellQuote(string(msg))
+	commitScript := "git -c user.name=" + shellQuote(ledgerIdentityName) +
+		" -c user.email=" + shellQuote(ledgerIdentityEmail) +
+		" commit-tree " + shellQuote(tree) + " -p " + shellQuote(entry.SHA) + " -m " + shellQuote(string(msg))
 	commitOut, stderr, err := r.Run(ctx, dir, commitScript)
 	if err != nil {
 		return wrapErr("commit-tree", err, stderr)
@@ -57,31 +72,4 @@ func ReadEnvRef(ctx context.Context, r Runner, dir, target string) (string, erro
 		return "", nil //nolint:nilerr // "no ledger ref yet" is not a failure — see the doc-comment
 	}
 	return strings.TrimSpace(out), nil
-}
-
-// ListDeploys returns every refs/zcp/deploy/* entry, oldest first, decoded
-// from each ref-commit's one-line JSON message.
-func ListDeploys(ctx context.Context, r Runner, dir string) ([]topology.LedgerEntry, error) {
-	script := "git for-each-ref --sort=creatordate --format='%(objectname)' " + shellQuote(topology.DeployRefPrefix)
-	out, stderr, err := r.Run(ctx, dir, script)
-	if err != nil {
-		return nil, wrapErr("for-each-ref "+topology.DeployRefPrefix, err, stderr)
-	}
-	var entries []topology.LedgerEntry
-	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		msgOut, stderr, err := r.Run(ctx, dir, "git log -1 --format=%B "+shellQuote(line))
-		if err != nil {
-			return nil, wrapErr("read ledger message for "+line, err, stderr)
-		}
-		var entry topology.LedgerEntry
-		if err := json.Unmarshal([]byte(strings.TrimSpace(msgOut)), &entry); err != nil {
-			return nil, wrapErr("decode ledger entry "+line, err, "")
-		}
-		entries = append(entries, entry)
-	}
-	return entries, nil
 }
