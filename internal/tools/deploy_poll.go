@@ -47,6 +47,7 @@ func pollDeployBuild(
 	if event.Status == statusActive {
 		result.Status = statusDeployed
 		result.MonitorHint = ""
+		result.AppVersionID = event.ID
 		// Post-deploy message is runtime-class-agnostic and strategy-agnostic
 		// (invariant DS-01, plans/dev-server-canonical-primitive.md):
 		// reports only what the platform told us, no liveness claims, no
@@ -60,12 +61,25 @@ func pollDeployBuild(
 		// runs across the 20260517-20260519 suite. Single source of truth
 		// for next-tool now lives on NextActions; pinned by
 		// TestDeployPostMessageHonesty.
-		result.Message = fmt.Sprintf("Successfully deployed to %s.", result.TargetService)
-		if result.SourceService == result.TargetService {
-			// Strategy-agnostic fact: push-dev replaces the container, which
-			// drops any prior SSH sessions. Agents holding open sessions
-			// from before the deploy need to reconnect.
-			result.Message += " New container replaced old — prior SSH sessions are gone."
+		//
+		// A resolved sha (docs/spec-workflows.md §4.5) gets its own
+		// message shape naming the commit + appVersion, since that IS the
+		// point of a deploy-from-commit call — the ledger write that
+		// follows (tools layer, post-poll) needs exactly this pairing.
+		if result.SHA != "" {
+			short := result.SHA
+			if len(short) > 7 {
+				short = short[:7]
+			}
+			result.Message = fmt.Sprintf("deployed %s → %s (appVersion %s)", short, result.TargetService, event.ID)
+		} else {
+			result.Message = fmt.Sprintf("Successfully deployed to %s.", result.TargetService)
+			if result.SourceService == result.TargetService {
+				// Strategy-agnostic fact: push-dev replaces the container, which
+				// drops any prior SSH sessions. Agents holding open sessions
+				// from before the deploy need to reconnect.
+				result.Message += " New container replaced old — prior SSH sessions are gone."
+			}
 		}
 		mode, class := resolveDeployTargetTopology(stateDir, result.TargetService, result.TargetServiceType)
 		result.NextActions = deploySuccessNextActions(result, mode, class)

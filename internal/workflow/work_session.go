@@ -80,6 +80,11 @@ type DeployAttempt struct {
 	Strategy     string                `json:"strategy,omitempty"`
 	Error        string                `json:"error,omitempty"`
 	FailureClass topology.FailureClass `json:"failureClass,omitempty"`
+	// SHA and AppVersionID mirror ops.DeployResult's fields for a
+	// deploy-from-commit attempt (docs/spec-workflows.md §4.5). Both empty
+	// for a deploy with no sha.
+	SHA          string `json:"sha,omitempty"`
+	AppVersionID string `json:"appVersionId,omitempty"`
 }
 
 // VerifyAttempt is one zerops_verify invocation for a hostname.
