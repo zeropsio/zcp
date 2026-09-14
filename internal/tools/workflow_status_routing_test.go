@@ -55,7 +55,7 @@ func TestHandleLifecycleStatus_EmptyProject_RoutesToBootstrap(t *testing.T) {
 		WithProject(&platform.Project{ID: "proj-1", Name: "test"})
 
 	result, _, err := handleLifecycleStatus(
-		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true},
+		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true}, nil,
 	)
 	if err != nil {
 		t.Fatalf("handleLifecycleStatus: %v", err)
@@ -114,7 +114,7 @@ func TestHandleLifecycleStatus_BootstrappedProject_RoutesToDevelop(t *testing.T)
 		})
 
 	result, _, err := handleLifecycleStatus(
-		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true},
+		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true}, nil,
 	)
 	if err != nil {
 		t.Fatalf("handleLifecycleStatus: %v", err)
@@ -151,7 +151,7 @@ func TestHandleLifecycleStatus_PlatformError_PropagatesAsMCP(t *testing.T) {
 		})
 
 	result, _, err := handleLifecycleStatus(
-		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true},
+		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true}, nil,
 	)
 	if err != nil {
 		t.Fatalf("handleLifecycleStatus must not return raw error (use convertError); got: %v", err)
@@ -193,7 +193,7 @@ func TestHandleLifecycleStatus_CorruptWorkSession_SurfacesRecovery(t *testing.T)
 		WithProject(&platform.Project{ID: "proj-1", Name: "test"})
 
 	result, _, err := handleLifecycleStatus(
-		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true},
+		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true}, nil,
 	)
 	if err != nil {
 		t.Fatalf("handleLifecycleStatus must not return raw error; got: %v", err)

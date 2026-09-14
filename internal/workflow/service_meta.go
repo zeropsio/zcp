@@ -120,6 +120,18 @@ type ServiceMeta struct {
 	// a missing entry means "never recorded", which defaults to auto, NOT
 	// the zero value of PublicAccessRecord (whose Intent would be "").
 	PublicAccess map[string]topology.PublicAccessRecord `json:"publicAccess,omitempty"`
+
+	// Repo is the adopt-time baseline marker (docs/spec-workflows.md
+	// §4.10, G2) — which appVersion the adopted dev service's git
+	// baseline was tagged against, and whether that baseline's tree is
+	// known to match what's deployed. nil for a service bootstrapped
+	// fresh (no adopt step ran) or not yet adopted.
+	Repo *topology.Repo `json:"repo,omitempty"`
+}
+
+// SetRepoBaseline records the adopt-time baseline marker for this meta.
+func (m *ServiceMeta) SetRepoBaseline(appVersionID string, provenance topology.RepoProvenance) {
+	m.Repo = &topology.Repo{BaselineAppVersion: appVersionID, Provenance: provenance}
 }
 
 // PublicAccessFor returns the persisted public-access record for hostname —

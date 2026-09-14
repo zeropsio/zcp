@@ -1,0 +1,148 @@
+// Tests for: ops/git/repo.go — the repo-always guarantees run at
+// bootstrap (scaffold commit) and adopt (baseline tag), both driven
+// through the Runner abstraction so they work identically over SSH
+// (container) and locally (docs/spec-workflows.md §4.10).
+package git
+
+import (
+	"context"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
+)
+
+func TestExcludePatterns_Dynamic_IncludesNodeModulesAndBuildOutputs(t *testing.T) {
+	got := ExcludePatterns(topology.RuntimeDynamic)
+	for _, want := range []string{"node_modules/", "dist/", "build/", ".env", "*.log", ".zcp/"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("ExcludePatterns(dynamic) = %v, want it to contain %q", got, want)
+		}
+	}
+}
+
+func TestExcludePatterns_Managed_OmitsBuildOutputs(t *testing.T) {
+	got := ExcludePatterns(topology.RuntimeManaged)
+	for _, unwanted := range []string{"node_modules/", "dist/", "build/"} {
+		if slices.Contains(got, unwanted) {
+			t.Errorf("ExcludePatterns(managed) = %v, want it NOT to contain %q", got, unwanted)
+		}
+	}
+}
+
+func TestSeedExclude_WritesInfoExcludeWithPatterns(t *testing.T) {
+	r := &fakeRunner{results: []fakeResult{{}}}
+	if err := SeedExclude(context.Background(), r, "/repo", topology.RuntimeDynamic); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(r.calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(r.calls))
+	}
+	script := r.calls[0].script
+	if !strings.Contains(script, ".git/info/exclude") {
+		t.Errorf("script = %q, want it to write .git/info/exclude", script)
+	}
+	if !strings.Contains(script, "node_modules/") {
+		t.Errorf("script = %q, want node_modules/ pattern", script)
+	}
+}
+
+func TestInitRepo_FreshDir_InitsSeedsAddsAndCommitsScaffold(t *testing.T) {
+	r := &fakeRunner{results: []fakeResult{
+		{err: errTest}, // test -d .git -> not a repo
+		{},             // git init -b main
+		{},             // seed exclude
+		{err: errTest}, // rev-parse HEAD -> no HEAD yet
+		{},             // git add -A && git commit -m scaffold
+	}}
+	if err := InitRepo(context.Background(), r, "/var/www", topology.RuntimeDynamic); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(r.calls) != 5 {
+		t.Fatalf("calls = %d, want 5: %+v", len(r.calls), r.calls)
+	}
+	if !strings.Contains(r.calls[0].script, "test -d .git") {
+		t.Errorf("call[0] = %q, want a .git existence probe", r.calls[0].script)
+	}
+	if !strings.Contains(r.calls[1].script, "git init") || !strings.Contains(r.calls[1].script, "-b main") {
+		t.Errorf("call[1] = %q, want git init -b main", r.calls[1].script)
+	}
+	if !strings.Contains(r.calls[2].script, ".git/info/exclude") {
+		t.Errorf("call[2] = %q, want the exclude seed", r.calls[2].script)
+	}
+	if !strings.Contains(r.calls[3].script, "rev-parse") {
+		t.Errorf("call[3] = %q, want a HEAD probe", r.calls[3].script)
+	}
+	if !strings.Contains(r.calls[4].script, "git add -A") || !strings.Contains(r.calls[4].script, `commit -q -m 'scaffold'`) {
+		t.Errorf("call[4] = %q, want git add -A && commit -q -m 'scaffold'", r.calls[4].script)
+	}
+}
+
+func TestInitRepo_ExistingRepoWithHEAD_SkipsInitAndCommit(t *testing.T) {
+	r := &fakeRunner{results: []fakeResult{
+		{},                 // test -d .git -> is a repo
+		{},                 // seed exclude (always re-seeded — idempotent overwrite)
+		{stdout: "abc123"}, // rev-parse HEAD -> already has a commit
+	}}
+	if err := InitRepo(context.Background(), r, "/var/www", topology.RuntimeDynamic); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(r.calls) != 3 {
+		t.Fatalf("calls = %d, want 3 (no init, no scaffold commit): %+v", len(r.calls), r.calls)
+	}
+	for _, c := range r.calls {
+		if strings.Contains(c.script, "git init") {
+			t.Errorf("call = %q, must not re-init an existing repo", c.script)
+		}
+		if strings.Contains(c.script, "commit -m 'scaffold'") {
+			t.Errorf("call = %q, must not re-commit an existing HEAD", c.script)
+		}
+	}
+}
+
+func TestAdoptBaseline_NotARepo_InitsCommitsAndTags(t *testing.T) {
+	r := &fakeRunner{results: []fakeResult{
+		{err: errTest}, // test -d .git -> not a repo
+		{},             // git init -b main
+		{},             // seed exclude
+		{},             // git add -A && commit -m "baseline: adopted appVersion <id>"
+		{},             // git tag -f zcp/baseline/<id> HEAD
+	}}
+	alreadyRepo, err := AdoptBaseline(context.Background(), r, "/var/www", "av-1", topology.RuntimeDynamic)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if alreadyRepo {
+		t.Error("alreadyRepo = true, want false (repo was created fresh)")
+	}
+	if len(r.calls) != 5 {
+		t.Fatalf("calls = %d, want 5: %+v", len(r.calls), r.calls)
+	}
+	if !strings.Contains(r.calls[3].script, `commit -q -m 'baseline: adopted appVersion av-1'`) {
+		t.Errorf("call[3] = %q, want the baseline commit message", r.calls[3].script)
+	}
+	if !strings.Contains(r.calls[4].script, "tag -f 'zcp/baseline/av-1' HEAD") {
+		t.Errorf("call[4] = %q, want the baseline tag", r.calls[4].script)
+	}
+}
+
+func TestAdoptBaseline_ExistingRepo_OnlyTagsHEAD(t *testing.T) {
+	r := &fakeRunner{results: []fakeResult{
+		{},                         // test -d .git -> is a repo
+		{stdout: "sha-existing\n"}, // git tag -f zcp/baseline/<id> HEAD (returns nothing meaningful; recorded call)
+	}}
+	alreadyRepo, err := AdoptBaseline(context.Background(), r, "/var/www", "av-2", topology.RuntimeDynamic)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !alreadyRepo {
+		t.Error("alreadyRepo = false, want true (repo pre-existed)")
+	}
+	if len(r.calls) != 2 {
+		t.Fatalf("calls = %d, want 2 (probe + tag only, no init/commit): %+v", len(r.calls), r.calls)
+	}
+	if !strings.Contains(r.calls[1].script, "tag -f 'zcp/baseline/av-2' HEAD") {
+		t.Errorf("call[1] = %q, want the baseline tag", r.calls[1].script)
+	}
+}

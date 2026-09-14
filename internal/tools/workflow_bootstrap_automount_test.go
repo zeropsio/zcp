@@ -84,6 +84,20 @@ func seedBootstrapPlan(t *testing.T, eng *workflow.Engine, targets []workflow.Bo
 	}
 }
 
+// seedAdoptBootstrapPlan is seedBootstrapPlan for the adopt route — Route
+// is stamped "adopt" by BootstrapStartWithRoute BEFORE the plan lands, so
+// autoMountTargets's route branch (AdoptRepoBaseline instead of a bare
+// scaffold init) fires.
+func seedAdoptBootstrapPlan(t *testing.T, eng *workflow.Engine, targets []workflow.BootstrapTarget) {
+	t.Helper()
+	if _, err := eng.BootstrapStartWithRoute("proj-1", "test", workflow.BootstrapRouteAdopt, ""); err != nil {
+		t.Fatalf("BootstrapStartWithRoute: %v", err)
+	}
+	if _, err := eng.BootstrapCompletePlan(targets, nil, nil); err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+}
+
 func TestAutoMountTargets_CallsInitServiceGit(t *testing.T) {
 	t.Parallel()
 
@@ -196,6 +210,52 @@ func TestAutoMountTargets_NilSSHDeployer(t *testing.T) {
 	}
 	if results[0].Status == "FAILED" {
 		t.Errorf("mount should succeed without ssh deployer: %s", results[0].Error)
+	}
+}
+
+// AdoptRoute (G2, docs/spec-workflows.md §4.10): autoMountTargets tags the
+// adopted service's HEAD with its running appVersion's baseline instead
+// of (in addition to) the bare scaffold init, and persists the marker on
+// ServiceMeta.
+func TestAutoMountTargets_AdoptRoute_TagsBaselineAndPersistsMeta(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	eng := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+	seedAdoptBootstrapPlan(t, eng, []workflow.BootstrapTarget{
+		{Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"}},
+	})
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-app", Name: "appdev", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-99"}},
+	})
+	mounter := &mountRecorder{}
+	ssh := &sshRecorder{}
+
+	results := autoMountTargets(context.Background(), mock, "proj-1", mounter, ssh, eng)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 mount info, got %d", len(results))
+	}
+
+	found := false
+	for _, c := range ssh.calls {
+		if c.Host == "appdev" && strings.Contains(c.Cmd, "zcp/baseline/av-99") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("ssh calls = %+v, want one tagging zcp/baseline/av-99", ssh.calls)
+	}
+
+	loaded, err := workflow.ReadServiceMeta(dir, "appdev")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta: %v", err)
+	}
+	if loaded == nil || loaded.Repo == nil {
+		t.Fatal("loaded.Repo is nil, want the persisted baseline marker")
+	}
+	if loaded.Repo.BaselineAppVersion != "av-99" {
+		t.Errorf("BaselineAppVersion = %q, want av-99", loaded.Repo.BaselineAppVersion)
 	}
 }
 

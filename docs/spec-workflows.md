@@ -895,6 +895,70 @@ already-succeeded build. `refs/zcp/*` is never pruned (`spec-mate.md`
 sha read back from `refs/zcp/deploy/*` — there is no separate rollback
 primitive in this slice.
 
+### 4.10 Repo Is Always Present
+
+Every dev service is a git repository once bootstrap or adopt finishes —
+additive to §4.9, no deploy-behaviour change. zcp seeds
+`.git/info/exclude`, NEVER a tracked `.gitignore` (the exclude file is
+repo-local and invisible to the user's own history, so it can never
+collide with anything the user commits).
+
+**Bootstrap (G1).** Once the scaffold has landed on disk, the finalize
+step's provision `StepChecker` guarantees a repo exists:
+
+- Container mode self-heals (`ops.EnsureScaffoldRepo` → `ops/git.InitRepo`
+  over SSH, rooted at `/var/www`): `git init -q -b main` if not yet a
+  repo, seed `.git/info/exclude` (always re-seeded — idempotent, since the
+  file is never user-edited), then `git add -A && git commit -q -m
+  "scaffold"` — but ONLY if HEAD doesn't already exist. A repo with an
+  existing HEAD (a second bootstrap call, or the user's own git usage) is
+  left alone: no re-init, no second scaffold commit.
+- Local mode is read-only: the checker probes CWD via `ops.LocalRepoHead`
+  and reports a `git init` instruction if it isn't a repo yet — zcp never
+  silently initializes a directory it didn't create on the user's own
+  machine.
+- `.git/info/exclude` content is runtime-class-scoped
+  (`ops/git.ExcludePatterns`): every class gets `.env`, `.env.*`, `*.log`,
+  `.zcp/`; classes that run application code (dynamic, static,
+  implicit-webserver) additionally get `node_modules/`, `dist/`, `build/`.
+  Managed and unknown classes get the base set only.
+
+**Adopt (G2).** `ops/git.AdoptBaseline` (over SSH, `ops.AdoptRepoBaseline`)
+tags the adopted service's current HEAD with
+`zcp/baseline/<appVersionId>` (`topology.BaselineTagName`):
+
+- Not yet a repo: `git init -q -b main` + seed exclude + a baseline
+  commit (`"baseline: adopted appVersion <id>"`), then the tag.
+- Already a repo: only the tag moves (force-move — re-adopting the same
+  or a newer appVersion must not fail on a pre-existing tag); no commit,
+  no history change — the existing HEAD is trusted as the baseline.
+
+`ServiceMeta.Repo` (`SetRepoBaseline`) persists the marker:
+`{BaselineAppVersion, Provenance}`. `topology.ClassifyProvenance(source
+Service, deployFiles)` classifies `RepoProvenanceSource` (the appVersion
+was built from this service's own tree — no sourceService, deployFiles
+unset or exactly `["."]`) vs `RepoProvenanceArtifactOnly` (built
+elsewhere — a sourceService is set, or deployFiles names a narrower
+path). Wired at `autoMountTargets` (tools/workflow_bootstrap.go) for the
+adopt route: `appVersionID` comes from `ListServicesDirect`
+(`ActiveAppVersion.ID`, lag-free per CLAUDE.md's ES-search trap — this
+runs moments after adopt/import). **Gap**: `ClassifyProvenance` is
+called with `("", nil)` — always `source` — because the adopted
+appVersion's sourceService/deployFiles aren't yet modeled on
+`platform.ServiceStack`/`AppVersionEvent` (an unverified platform fact).
+A live read replaces this placeholder once that surface is proven.
+
+**Envelope.** `zerops_workflow` status exposes `repo: {present, head,
+baseline}` per non-managed service (`ServiceSnapshot.Repo`,
+`workflow.ApplyRepoStatus`) — read live via `ops.ReadRepoStatus` (`git
+rev-parse HEAD` + `git tag --points-at HEAD --list 'zcp/baseline/*'`),
+never cached on `ServiceMeta` or the bootstrap session.
+`handleLifecycleStatus` (`tools/workflow.go`) wires the two together via
+`attachRepoStatus` (`tools/workflow_repo_status.go`) — container mode
+only; local mode carries no per-service repo block on the envelope in
+this slice (its repo state is covered by the bootstrap-time
+`checkRepoInitAt` read-only check instead).
+
 ---
 
 ## 5. Environment Differences

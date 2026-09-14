@@ -140,6 +140,41 @@ type ServiceSnapshot struct {
 	// §ServiceMeta schema.
 	SetupName      string `json:"setupName,omitempty"`
 	StageSetupName string `json:"stageSetupName,omitempty"`
+
+	// Repo is the live repo state for this service (docs/spec-workflows.md
+	// §4.10, G1/G2) — nil for managed/unknown-class services (they never
+	// carry a working tree) and for any runtime service ApplyRepoStatus
+	// wasn't given a live read for. Populated by the tools layer via
+	// ApplyRepoStatus, never persisted on ServiceMeta or the bootstrap
+	// session — a fresh read every envelope computation.
+	Repo *RepoStatus `json:"repo,omitempty"`
+}
+
+// RepoStatus is the live per-service repo state exposed on the envelope
+// (docs/spec-workflows.md §4.10). Mirrors ops.RepoStatus one-to-one; kept
+// as a separate type here because workflow/ must not import ops/.
+type RepoStatus struct {
+	Present  bool   `json:"present"`
+	Head     string `json:"head,omitempty"`
+	Baseline string `json:"baseline,omitempty"`
+}
+
+// ApplyRepoStatus attaches a live repo status to each service snapshot
+// that has one in statuses (keyed by hostname), skipping managed/unknown
+// services even if the caller mistakenly supplied one — a repo block
+// only ever makes sense for a service that runs application code.
+func ApplyRepoStatus(services []ServiceSnapshot, statuses map[string]RepoStatus) {
+	for i := range services {
+		if services[i].RuntimeClass == topology.RuntimeManaged || services[i].RuntimeClass == topology.RuntimeUnknown {
+			continue
+		}
+		st, ok := statuses[services[i].Hostname]
+		if !ok {
+			continue
+		}
+		copied := st
+		services[i].Repo = &copied
+	}
 }
 
 // WorkSessionSummary mirrors the persistent WorkSession at envelope build time.

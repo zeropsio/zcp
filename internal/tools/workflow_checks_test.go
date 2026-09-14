@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -217,7 +218,7 @@ func TestCheckProvision_APIError_ReturnsError(t *testing.T) {
 
 func TestBuildStepChecker_UnknownStep_ReturnsNil(t *testing.T) {
 	t.Parallel()
-	checker := buildStepChecker("discover", nil, nil, "", nil, nil, "")
+	checker := buildStepChecker("discover", nil, nil, "", nil, nil, "", nil, runtime.Info{})
 	if checker != nil {
 		t.Error("expected nil checker for unknown step 'discover'")
 	}
@@ -240,7 +241,7 @@ func TestBuildStepChecker_KnownSteps(t *testing.T) {
 		t.Run(tt.step, func(t *testing.T) {
 			t.Parallel()
 			mock := platform.NewMock()
-			checker := buildStepChecker(tt.step, mock, nil, "proj-1", nil, nil, t.TempDir())
+			checker := buildStepChecker(tt.step, mock, nil, "proj-1", nil, nil, t.TempDir(), nil, runtime.Info{})
 			if tt.wantNil && checker != nil {
 				t.Errorf("expected nil checker for step %q", tt.step)
 			}
