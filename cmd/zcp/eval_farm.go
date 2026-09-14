@@ -479,7 +479,12 @@ func pushScenarioTree(ctx context.Context, client *farm.SinkClient, dir string, 
 // then proves that the opened descriptor is the same regular file WalkDir
 // inspected. The descriptor check closes the inventory/read race without
 // trusting a second pathname lookup; the platform opener also avoids blocking
-// if the entry was replaced by a FIFO between those operations.
+// if the entry was replaced by a FIFO between those operations. Size is
+// compared alongside identity: some filesystems (observed on ephemeral CI
+// runners) reuse a just-freed inode number immediately for an unlinked
+// entry's replacement, which os.SameFile alone cannot tell apart from the
+// original — a size mismatch on an otherwise "same" file is exactly the
+// entry-replaced signal this check exists to catch.
 func readScenarioSnapshotFile(source string, expected fs.FileInfo) ([]byte, error) {
 	f, err := openScenarioSnapshotFile(source)
 	if err != nil {
@@ -491,7 +496,7 @@ func readScenarioSnapshotFile(source string, expected fs.FileInfo) ([]byte, erro
 	if err != nil {
 		return nil, fmt.Errorf("stat opened file: %w", err)
 	}
-	if !actual.Mode().IsRegular() || !os.SameFile(expected, actual) {
+	if !actual.Mode().IsRegular() || !os.SameFile(expected, actual) || actual.Size() != expected.Size() {
 		return nil, fmt.Errorf("scenario entry changed after inventory")
 	}
 	body, err := io.ReadAll(f)
