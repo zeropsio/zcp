@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,9 +13,9 @@ import (
 // runFarmReport implements `zcp eval farm report <dir>` (docs/spec-eval-farm.md
 // §5.2 FM-37): entirely over pulled bundles, no network. <dir> is either a
 // pulled batch dir (one subdirectory per run, from `farm pull --batch`) or a
-// single pulled run dir (from `farm pull <runId>`) — batchOrRunDir is a
-// batch dir when it holds no done.json/results/capture of its own but at
-// least one subdirectory that does; otherwise it is treated as one run.
+// single pulled run dir (from `farm pull <runId>`). Batch manifests supply
+// the full expected run inventory; legacy directories without a manifest
+// are discovered from their immediate subdirectories.
 func runFarmReport(args []string) int {
 	var dir, evaluatorPin string
 	for i := 0; i < len(args); i++ {
@@ -110,11 +111,32 @@ func printFarmRollup(dir string, runDirs []string, counts map[string]int) {
 
 // farmReportRunDirs resolves dir into the list of run directories to grade:
 // dir itself when it looks like a single run (has done.json, results/, or
-// capture/ directly under it), otherwise every direct subdirectory (a
-// pulled batch dir).
+// capture/ directly under it), otherwise the batch manifest's full inventory,
+// including missing bundles. Without a manifest, discover legacy directories.
 func farmReportRunDirs(dir string) ([]string, error) {
 	if isFarmRunDir(dir) {
 		return []string{dir}, nil
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err == nil {
+		var manifest farm.BatchManifest
+		if err := json.Unmarshal(body, &manifest); err != nil {
+			return nil, fmt.Errorf("parse batch manifest: %w", err)
+		}
+		seen := make(map[string]bool)
+		var runDirs []string
+		for _, run := range manifest.Runs {
+			if !farm.ValidRunID(run.RunID) || seen[run.RunID] {
+				return nil, fmt.Errorf("batch manifest: invalid or duplicate run id %q", run.RunID)
+			}
+			seen[run.RunID] = true
+			runDirs = append(runDirs, filepath.Join(dir, run.RunID))
+		}
+		sort.Strings(runDirs)
+		return runDirs, nil
+	}
+	if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("read batch manifest: %w", err)
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {

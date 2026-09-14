@@ -3,9 +3,61 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestEvalFarmReport_ManifestMissingRun_Blocked(t *testing.T) {
+	// Non-parallel: captureOutput redirects process stdout/stderr.
+	dir := t.TempDir()
+	writeFarmReportTestFile(t, dir, "manifest.json", `{"runs":[{"runId":"run-a"},{"runId":"run-b"}]}`)
+	writeFarmReportTestFile(t, dir, "run-a/done.json", `{"runId":"run-a"}`)
+	var code int
+	stdout, _ := captureOutput(t, func() { code = runFarmReport([]string{dir}) })
+	if code == 0 || !strings.Contains(stdout, "run run-b (scenario=) verdict=blocked") || !strings.Contains(stdout, "runs: 2") {
+		t.Fatalf("code=%d output=%s; want both runs and missing run blocked", code, stdout)
+	}
+}
+
+func TestFarmReportRunDirs_ManifestInventory(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, manifest string
+		want           []string
+		wantErr        bool
+	}{
+		{name: "missing and present", manifest: `{"runs":[{"runId":"run-b"},{"runId":"run-a"}]}`, want: []string{"run-a", "run-b"}},
+		{name: "malformed", manifest: `{`, wantErr: true},
+		{name: "escaping id", manifest: `{"runs":[{"runId":"../outside"}]}`, wantErr: true},
+		{name: "duplicate", manifest: `{"runs":[{"runId":"run-a"},{"runId":"run-a"}]}`, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeFarmReportTestFile(t, dir, "manifest.json", tc.manifest)
+			writeFarmReportTestFile(t, dir, "run-a/done.json", `{}`)
+			writeFarmReportTestFile(t, dir, "unrelated/notes.txt", "not a batch run")
+			got, err := farmReportRunDirs(dir)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("want manifest error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var want []string
+			for _, id := range tc.want {
+				want = append(want, filepath.Join(dir, id))
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("got %v want %v", got, want)
+			}
+		})
+	}
+}
 
 // writeFarmReportTestFile writes content to dir/rel, creating parents.
 func writeFarmReportTestFile(t *testing.T, dir, rel, content string) {
