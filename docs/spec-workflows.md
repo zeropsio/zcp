@@ -860,6 +860,41 @@ When deploy fails, the agent can iterate. The escalating guidance tiers are deli
 - Storage attach after first stage deploy: a `local-storage` volume is declared in zerops.yaml `run.volume` and needs no post-deploy step; a `seaweedfs` service is mounted by the runtime itself from `run.startCommands`. `zerops_manage action="connect-storage"` drives the platform-managed mount retired with Shared Storage and is recovery-only, not part of the standard flow.
 - `zerops_deploy targetService=<h> appVersion=latest` (DM-6, R2) re-deploys a never-activated buildFromGit service's already-built appVersion in place — no source, no rebuild, no re-import; skips the adoption gate and source resolution entirely.
 
+### 4.9 Deploy from a Commit and the Ledger
+
+`zerops_deploy` accepts an optional `sha`. When set, it is resolved via
+`git rev-parse --verify <sha>^{commit}` in the source repo (the local
+working dir for local-mode deploys, the source container's working dir
+over SSH for container-mode deploys — never the SSHFS mount, per
+`spec-mate.md` §"git"). The resolved commit's tree is extracted with
+`git archive --format=tar <sha> | tar -x` into a fresh temp directory
+OUTSIDE the repo (`os.MkdirTemp` locally, `mktemp -d` in the container),
+and the push runs from that extracted tree with `--no-git` and
+`--version-name <sha>` — never zcli's own `--workspace-state` archiver,
+which trips when the repo's `.git` is a `gitdir:` pointer file. The temp
+directory is removed after the push. Omitting `sha` is the unaffected,
+byte-identical existing path: no git commands run, no ledger entry is
+written.
+
+Once the triggered build resolves to an appVersion, the tools layer
+records the attempt as a ledger entry in the SAME repo the commit was
+resolved from:
+
+- `refs/zcp/env/<targetHostname>` is moved to `sha` — "what runs where."
+- `refs/zcp/deploy/<unix-nanos>` is created pointing at a new commit
+  (same tree as `sha`, parented on it) whose message is one line of JSON
+  — `{"sha","appVersionId","target","project","at"}` — so
+  `git log refs/zcp/deploy/*` is the ledger's full history, oldest to
+  newest.
+
+Both ref writes happen via `git update-ref` / `git commit-tree` only —
+no working-tree change, no branch moves, `HEAD` never touched. A ledger
+write failure downgrades to a response warning; it never fails an
+already-succeeded build. `refs/zcp/*` is never pruned (`spec-mate.md`
+§6). A rollback is an ordinary deploy-from-commit call naming an earlier
+sha read back from `refs/zcp/deploy/*` — there is no separate rollback
+primitive in this slice.
+
 ---
 
 ## 5. Environment Differences

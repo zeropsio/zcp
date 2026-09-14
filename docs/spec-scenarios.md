@@ -690,6 +690,13 @@ no buildFromGit), so the agent has a place to fix source. `allowFailed` explicit
 | F3 | service deleted externally (§6.5 known gap) | pending: scenario |
 | L1-L3 | local-stage first deploy · local + managed over VPN · local-only adopt | pending: local mode in farm |
 
+#### G. Git foundation (docs/spec-workflows.md §4.9; not in the gate set)
+
+| cell | scenario id | pre-state · task | oracle families | status |
+|---|---|---|---|---|
+| G3 ✚ | `deploy-from-commit-stage` | pair, both buildFromGit-deployed · ship a specific commit to stage | toolArg(targetService=appstage) toolResult(sha/appVersionId) liveness never | promote: containerCheck |
+| G5 ✚ | `rollback-stage-from-ledger` | stage with 2 ledger entries (preseed) · roll back to the previous version | seedExpect toolArg(targetService=appstage; max 0 import) mustOffer(no rebuild) never | promote: containerCheck |
+
 Deliberately not covered: recipe × simple (no simple-capable recipe in the
 catalog); iteration-cap auto-close (internal state, unit-tested, not a journey).
 
