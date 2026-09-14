@@ -57,6 +57,16 @@ type DeployResult struct {
 	// Pattern library + classifier in deploy_failure.go +
 	// deploy_failure_signals.go (ticket E2).
 	FailureClassification *topology.DeployFailureClassification `json:"failureClassification,omitempty"`
+
+	// SHA is the resolved commit hash this deploy was pushed from — set
+	// only when zerops_deploy resolved an explicit sha (docs/
+	// spec-workflows.md §4.5). Empty for every deploy without a sha.
+	SHA string `json:"sha,omitempty"`
+	// AppVersionID is the platform appVersion id this build produced,
+	// filled by pollDeployBuild once the build event resolves. Empty
+	// until then, or on a failed/timed-out build. The tools layer threads
+	// SHA + AppVersionID together into the refs/zcp/* ledger.
+	AppVersionID string `json:"appVersionId,omitempty"`
 }
 
 // GitPushResult contains the outcome of a git-push deploy operation.

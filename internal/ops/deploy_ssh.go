@@ -9,10 +9,16 @@ import (
 	"sync"
 
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
 const defaultWorkingDir = "/var/www"
+
+// DefaultWorkingDir is the container-side deploy working directory used
+// when the caller omits workingDir. Exported so the tools layer can locate
+// the same directory for git-ledger writes after a sha deploy.
+const DefaultWorkingDir = defaultWorkingDir
 
 // GitIdentity holds user name and email for git commits.
 type GitIdentity struct {
@@ -76,6 +82,11 @@ func (m *keyedMutex) lock(ctx context.Context, key string) (func(), error) {
 //   - includeGit is derived from the source/target pair: true for self-deploy
 //     (the service pushes its own code, .git must stay), false for cross-deploy
 //     (dev→stage would otherwise carry the dev container's .git across).
+//
+// sha, when non-empty, switches the push to a deploy-from-commit: sha is
+// resolved and its tree extracted into a fresh temp dir inside the SOURCE
+// container (outside workingDir), then pushed from there with
+// --version-name <sha>. docs/spec-workflows.md §4.5.
 func DeploySSH(
 	ctx context.Context,
 	client platform.Client,
@@ -86,6 +97,7 @@ func DeploySSH(
 	targetService string,
 	setup string,
 	workingDir string,
+	sha string,
 ) (*DeployResult, error) {
 	if sshDeployer == nil {
 		return nil, platform.NewPlatformError(
@@ -107,7 +119,7 @@ func DeploySSH(
 	includeGit := SelfBuildTarget(sourceService, targetService)
 
 	return deploySSH(ctx, client, projectID, sshDeployer, authInfo,
-		sourceService, targetService, setup, workingDir, includeGit)
+		sourceService, targetService, setup, workingDir, includeGit, sha)
 }
 
 func deploySSH(
@@ -121,6 +133,7 @@ func deploySSH(
 	setup string,
 	workingDir string,
 	includeGit bool,
+	sha string,
 ) (*DeployResult, error) {
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
@@ -186,7 +199,47 @@ func deploySSH(
 		}
 	}
 
-	cmd := buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit)
+	// Deploy-from-commit (docs/spec-workflows.md §4.5): sha is resolved and
+	// materialized INSIDE the source container, reached over SSH — never
+	// the SSHFS mount (docs/spec-mate.md §"git"), so this works whether or
+	// not the mount is present. Every step is a discrete SSH round trip;
+	// unlike buildSSHCommand's single combined command, correctness here
+	// matters more than round-trip count for a first slice.
+	resolvedSHA := ""
+	var cleanupTemp func()
+	if sha != "" {
+		gitRunner := git.SSHRunner{Executor: sshDeployer, Hostname: source.Name}
+		resolved, resolveErr := git.ResolveSHA(ctx, gitRunner, workingDir, sha)
+		if resolveErr != nil {
+			return nil, platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				fmt.Sprintf("sha %q did not resolve to a commit in %s on %s: %v", sha, workingDir, source.Name, resolveErr),
+				`Pass a commit sha reachable via "git rev-parse" in the source container's working dir.`,
+			)
+		}
+		resolvedSHA = resolved
+
+		tmpDir, mkErr := git.MkTempDir(ctx, gitRunner)
+		if mkErr != nil {
+			return nil, fmt.Errorf("create archive tmp dir on %s: %w", source.Name, mkErr)
+		}
+		cleanupTemp = func() { _ = git.RemoveTemp(ctx, gitRunner, tmpDir) }
+		if extractErr := git.ExtractCommitToTemp(ctx, gitRunner, workingDir, resolvedSHA, tmpDir); extractErr != nil {
+			cleanupTemp()
+			return nil, fmt.Errorf("extract commit %s on %s: %w", resolvedSHA, source.Name, extractErr)
+		}
+		workingDir = tmpDir
+	}
+	if cleanupTemp != nil {
+		defer cleanupTemp()
+	}
+
+	var cmd string
+	if resolvedSHA != "" {
+		cmd = buildSSHCommandSHA(authInfo, target.ID, workingDir, setup, resolvedSHA)
+	} else {
+		cmd = buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit)
+	}
 
 	unlockGit, lockErr := deploySourceGitLocks.lock(ctx, source.Name)
 	if lockErr != nil {
@@ -211,6 +264,7 @@ func deploySSH(
 				Message:           fmt.Sprintf("Build triggered from %s to %s (SSH session closed after push)", sourceService, targetService),
 				MonitorHint:       "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
 				Warnings:          warnings,
+				SHA:               resolvedSHA,
 			}, nil
 		}
 		return nil, classifySSHError(err, sourceService, targetService)
@@ -226,6 +280,7 @@ func deploySSH(
 		Message:           fmt.Sprintf("Build triggered from %s to %s via SSH", sourceService, targetService),
 		MonitorHint:       "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
 		Warnings:          warnings,
+		SHA:               resolvedSHA,
 	}, nil
 }
 
@@ -274,4 +329,20 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 	parts = append(parts, pushCmd)
 
 	return strings.Join(parts, " && ")
+}
+
+// buildSSHCommandSHA builds the push command for a resolved deploy-from-
+// commit: extractedDir already holds sha's tree (see ExtractCommitToTemp)
+// with no .git of its own, so — unlike buildSSHCommand — there is no
+// GitEnsureRepoHeadCommand step and no -g flag; --no-git is unconditional
+// and --version-name records the sha the platform can't otherwise see
+// (docs/spec-workflows.md §4.5, P1).
+func buildSSHCommandSHA(authInfo auth.Info, targetServiceID, extractedDir, setup, sha string) string {
+	loginCmd := fmt.Sprintf("zcli login -- %s", shellQuote(authInfo.Token))
+	pushArgs := fmt.Sprintf("zcli push --service-id %s --no-git --version-name %s", targetServiceID, shellQuote(sha))
+	if setup != "" {
+		pushArgs += " --setup " + shellQuote(setup)
+	}
+	pushCmd := fmt.Sprintf("cd %s && %s", shellQuote(extractedDir), pushArgs)
+	return loginCmd + " && " + pushCmd
 }
