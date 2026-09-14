@@ -56,7 +56,13 @@ type SSHRunner struct {
 }
 
 func (r SSHRunner) Run(ctx context.Context, dir, script string) (string, string, error) {
-	cmd := "cd " + shellQuote(dir) + " && " + script
+	cmd := script
+	if dir != "" {
+		// `cd ''` is a bash error ("No such file or directory") — MkTempDir/
+		// RemoveTemp call Run with dir="" (the command doesn't need a repo
+		// working directory), so the cd prefix is conditional, not always-on.
+		cmd = "cd " + shellQuote(dir) + " && " + script
+	}
 	out, err := r.Executor.ExecSSH(ctx, r.Hostname, cmd)
 	// ExecSSH returns combined output; stderr distinguishing detail (if
 	// any) lives on the *platform.SSHExecError itself — callers that need
