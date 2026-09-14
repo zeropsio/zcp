@@ -335,6 +335,10 @@
                     },
                     {
                       "type": "boolean"
+                    },
+                    {
+                      "description": "Removes the variable inherited through extends.",
+                      "type": "null"
                     }
                   ]
                 },
@@ -444,6 +448,223 @@
           },
           "run": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "base": {
+                      "enum": [
+                        "alpine/static",
+                        "alpine/static@1.0",
+                        "alpine/static@latest",
+                        "static",
+                        "ubuntu/static",
+                        "ubuntu/static@1.0",
+                        "ubuntu/static@latest"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "base"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "documentRoot": false
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "base": {
+                      "enum": [
+                        "alpine/nginx@1.22",
+                        "alpine/nginx@latest",
+                        "alpine/php-apache@8.1",
+                        "alpine/php-apache@8.1+2.4",
+                        "alpine/php-apache@8.3",
+                        "alpine/php-apache@8.3+2.4",
+                        "alpine/php-apache@8.4",
+                        "alpine/php-apache@8.4+2.4",
+                        "alpine/php-apache@8.5",
+                        "alpine/php-apache@8.5+2.4",
+                        "alpine/php-apache@latest",
+                        "alpine/php-nginx@8.3",
+                        "alpine/php-nginx@8.3+1.22",
+                        "alpine/php-nginx@8.4",
+                        "alpine/php-nginx@8.4+1.22",
+                        "alpine/php-nginx@8.5",
+                        "alpine/php-nginx@8.5+1.28",
+                        "alpine/php-nginx@latest",
+                        "ubuntu/nginx@1.22",
+                        "ubuntu/nginx@latest",
+                        "ubuntu/php-apache@8.1",
+                        "ubuntu/php-apache@8.1+2.4",
+                        "ubuntu/php-apache@8.3",
+                        "ubuntu/php-apache@8.3+2.4",
+                        "ubuntu/php-apache@8.4",
+                        "ubuntu/php-apache@8.4+2.4",
+                        "ubuntu/php-apache@8.5",
+                        "ubuntu/php-apache@8.5+2.4",
+                        "ubuntu/php-apache@latest",
+                        "ubuntu/php-nginx@8.3",
+                        "ubuntu/php-nginx@8.3+1.22",
+                        "ubuntu/php-nginx@8.4",
+                        "ubuntu/php-nginx@8.4+1.22",
+                        "ubuntu/php-nginx@8.5",
+                        "ubuntu/php-nginx@8.5+1.28",
+                        "ubuntu/php-nginx@latest"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "base"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "routing": false
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "base": {
+                      "enum": [
+                        "alpine/bun@1",
+                        "alpine/bun@1.2",
+                        "alpine/bun@1.2.2",
+                        "alpine/bun@1.3",
+                        "alpine/bun@1.3.9",
+                        "alpine/bun@canary",
+                        "alpine/bun@latest",
+                        "alpine/bun@nightly",
+                        "alpine/docker@26",
+                        "alpine/docker@26.1",
+                        "alpine/docker@26.1.5",
+                        "alpine/docker@latest",
+                        "alpine/dotnet@10",
+                        "alpine/dotnet@8",
+                        "alpine/dotnet@9",
+                        "alpine/dotnet@latest",
+                        "alpine/elixir@1",
+                        "alpine/elixir@1.16",
+                        "alpine/elixir@1.16.3",
+                        "alpine/elixir@latest",
+                        "alpine/gleam@1",
+                        "alpine/gleam@1.5",
+                        "alpine/gleam@1.5.1",
+                        "alpine/gleam@latest",
+                        "alpine/go@1",
+                        "alpine/go@1.22",
+                        "alpine/go@latest",
+                        "alpine/golang@1",
+                        "alpine/golang@1.22",
+                        "alpine/golang@latest",
+                        "alpine/java@17",
+                        "alpine/java@21",
+                        "alpine/java@latest",
+                        "alpine/nodejs@20",
+                        "alpine/nodejs@22",
+                        "alpine/nodejs@24",
+                        "alpine/nodejs@latest",
+                        "alpine/python@3.11",
+                        "alpine/python@3.12",
+                        "alpine/python@latest",
+                        "alpine/ruby@3.3",
+                        "alpine/ruby@3.4",
+                        "alpine/ruby@4.0",
+                        "alpine/ruby@latest",
+                        "alpine/rust@1",
+                        "alpine/rust@latest",
+                        "alpine/rust@nightly",
+                        "alpine/rust@stable",
+                        "alpine/zero@0.1",
+                        "alpine/zero@latest",
+                        "alpine/zero@nightly",
+                        "alpine@3.21",
+                        "alpine@3.22",
+                        "alpine@3.23",
+                        "alpine@3.24",
+                        "alpine@latest",
+                        "ubuntu/bun@1",
+                        "ubuntu/bun@1.1",
+                        "ubuntu/bun@1.1.34",
+                        "ubuntu/bun@1.2",
+                        "ubuntu/bun@1.2.2",
+                        "ubuntu/bun@1.3",
+                        "ubuntu/bun@1.3.9",
+                        "ubuntu/bun@canary",
+                        "ubuntu/bun@latest",
+                        "ubuntu/bun@nightly",
+                        "ubuntu/deno@2",
+                        "ubuntu/deno@2.0",
+                        "ubuntu/deno@2.0.0",
+                        "ubuntu/deno@latest",
+                        "ubuntu/dotnet@10",
+                        "ubuntu/dotnet@8",
+                        "ubuntu/dotnet@9",
+                        "ubuntu/dotnet@latest",
+                        "ubuntu/elixir@1",
+                        "ubuntu/elixir@1.16",
+                        "ubuntu/elixir@1.16.2",
+                        "ubuntu/elixir@latest",
+                        "ubuntu/gleam@1",
+                        "ubuntu/gleam@1.5",
+                        "ubuntu/gleam@1.5.1",
+                        "ubuntu/gleam@latest",
+                        "ubuntu/go@1",
+                        "ubuntu/go@1.22",
+                        "ubuntu/go@latest",
+                        "ubuntu/golang@1",
+                        "ubuntu/golang@1.22",
+                        "ubuntu/golang@latest",
+                        "ubuntu/java@17",
+                        "ubuntu/java@21",
+                        "ubuntu/java@latest",
+                        "ubuntu/nodejs@20",
+                        "ubuntu/nodejs@22",
+                        "ubuntu/nodejs@24",
+                        "ubuntu/nodejs@latest",
+                        "ubuntu/python@3.11",
+                        "ubuntu/python@3.12",
+                        "ubuntu/python@3.14",
+                        "ubuntu/python@latest",
+                        "ubuntu/ruby@3.3",
+                        "ubuntu/ruby@3.4",
+                        "ubuntu/ruby@4.0",
+                        "ubuntu/ruby@latest",
+                        "ubuntu/rust@1",
+                        "ubuntu/rust@latest",
+                        "ubuntu/rust@nightly",
+                        "ubuntu/rust@stable",
+                        "ubuntu/zero@0.1",
+                        "ubuntu/zero@latest",
+                        "ubuntu/zero@nightly",
+                        "ubuntu@22.04",
+                        "ubuntu@24.04",
+                        "ubuntu@26.04",
+                        "ubuntu@latest",
+                        "zcp@1",
+                        "zcp@latest"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "base"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "documentRoot": false,
+                    "routing": false,
+                    "siteConfigPath": false
+                  }
+                }
+              }
+            ],
             "description": "Runtime configuration.",
             "properties": {
               "base": {
@@ -643,7 +864,7 @@
                 "type": "array"
               },
               "documentRoot": {
-                "description": "Customizes the folder that will be used as the root of the publicly accessible web server content. This attribute is available only for runtimes with webservers.",
+                "description": "Folder served as the web root, relative to /var/www. Honoured by the Nginx and PHP services only. The Static service ignores it, use routing.root there.",
                 "type": "string"
               },
               "envReplace": {
@@ -693,6 +914,10 @@
                     },
                     {
                       "type": "boolean"
+                    },
+                    {
+                      "description": "Removes the variable inherited through extends.",
+                      "type": "null"
                     }
                   ]
                 },
@@ -820,6 +1045,7 @@
               },
               "routing": {
                 "additionalProperties": false,
+                "description": "Declarative Nginx configuration of the Static service: document root, redirects, CORS and headers. Ignored by every other service, including the Nginx service, which takes a custom configuration via siteConfigPath instead.",
                 "properties": {
                   "cors": {
                     "description": "Content of default Access-Control headers (Allow-Origin, Allow-Methods, Allow-Headers and Expose-Headers), e.g. \"'*' always\"",
@@ -883,13 +1109,14 @@
                     "type": "array"
                   },
                   "root": {
+                    "description": "Folder served by the Static service, relative to /var/www. Replaces documentRoot, which the Static service ignores.",
                     "type": "string"
                   }
                 },
                 "type": "object"
               },
               "siteConfigPath": {
-                "description": "Sets the custom webserver configuration. This attribute is available only for runtimes with webservers.",
+                "description": "Path to your own web server configuration, relative to /var/www, deployed together with your files. Honoured by the Nginx, PHP and Static services. A .tmpl file is rendered with {{.DocumentRoot}} and {{.Environment.NAME}}, any other file is used verbatim. The Static service ignores it whenever routing is set.",
                 "type": "string"
               },
               "start": {
@@ -902,6 +1129,7 @@
                   "additionalProperties": false,
                   "properties": {
                     "command": {
+                      "description": "The command that starts the process. It is restarted when it exits.",
                       "type": "string"
                     },
                     "initCommands": {
@@ -912,9 +1140,15 @@
                       "type": "array"
                     },
                     "name": {
+                      "description": "Distinguishes the process in runtime logs and the process list. Letters and digits only, must start with a letter.",
+                      "type": "string"
+                    },
+                    "user": {
+                      "description": "System user the command and its initCommands run under (default: zerops). The user has to exist in the runtime container.",
                       "type": "string"
                     },
                     "workingDir": {
+                      "description": "The directory the command and its initCommands run in (default: /var/www).",
                       "type": "string"
                     }
                   },
