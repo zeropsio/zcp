@@ -8,26 +8,10 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// EnsureScaffoldRepo guarantees /var/www on hostname is a git repository
-// with a scaffold commit (docs/spec-workflows.md §4.10, G1) — the
-// container-side counterpart of ops/git.InitRepo, run over SSH once the
-// bootstrap scaffold has landed on disk. Idempotent: safe to call again
-// on a service that already has a commit.
-func EnsureScaffoldRepo(ctx context.Context, ssh SSHDeployer, hostname string, class topology.RuntimeClass) error {
-	if hostname == "" {
-		return fmt.Errorf("EnsureScaffoldRepo: hostname is required")
-	}
-	runner := git.SSHRunner{Executor: ssh, Hostname: hostname}
-	if err := git.InitRepo(ctx, runner, defaultWorkingDir, class); err != nil {
-		return fmt.Errorf("ensure scaffold repo on %s: %w", hostname, err)
-	}
-	return nil
-}
-
 // AdoptRepoBaseline tags /var/www's current HEAD on hostname with the
 // appVersionID-scoped baseline tag, initializing a repo first when one
-// doesn't yet exist (docs/spec-workflows.md §4.10, G2) — the container-
-// side counterpart of ops/git.AdoptBaseline.
+// doesn't yet exist (docs/spec-workflows.md's Git Lifecycle section,
+// GLC-7) — the container-side counterpart of ops/git.AdoptBaseline.
 func AdoptRepoBaseline(ctx context.Context, ssh SSHDeployer, hostname, appVersionID string, class topology.RuntimeClass) (alreadyRepo bool, err error) {
 	if hostname == "" {
 		return false, fmt.Errorf("AdoptRepoBaseline: hostname is required")
@@ -41,8 +25,9 @@ func AdoptRepoBaseline(ctx context.Context, ssh SSHDeployer, hostname, appVersio
 }
 
 // RepoStatus is the live, per-service repo state exposed on the
-// zerops_workflow envelope (docs/spec-workflows.md §4.10). Read fresh on
-// every call — never cached on ServiceMeta or the bootstrap session.
+// zerops_workflow envelope (docs/spec-workflows.md's Git Lifecycle
+// section). Read fresh on every call — never cached on ServiceMeta or the
+// bootstrap session.
 type RepoStatus struct {
 	Present  bool
 	Head     string
@@ -72,10 +57,11 @@ func ReadRepoStatus(ctx context.Context, ssh SSHDeployer, hostname string) (Repo
 
 // LocalRepoHead reports whether dir (a local working directory, not a
 // container) is already a git repository with a reachable HEAD, and its
-// sha if so (docs/spec-workflows.md §4.10). Read-only — unlike
-// EnsureScaffoldRepo, it never runs `git init`: dir is the user's own
-// local checkout, not container state zcp owns, so the bootstrap checker
-// only reports the gap and lets the agent run `git init` itself.
+// sha if so (docs/spec-workflows.md's Git Lifecycle section, GLC-6).
+// Read-only — unlike ops.InitServiceGit's container-side self-heal, it
+// never runs `git init`: dir is the user's own local checkout, not
+// container state zcp owns, so the bootstrap checker only reports the gap
+// and lets the agent run `git init` itself.
 func LocalRepoHead(ctx context.Context, dir string) (present bool, head string) {
 	head, err := git.ResolveSHA(ctx, git.LocalRunner{}, dir, "HEAD")
 	if err != nil {

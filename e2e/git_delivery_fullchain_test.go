@@ -27,6 +27,7 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 func TestE2E_GitDeliveryFullChain(t *testing.T) {
@@ -116,7 +117,7 @@ func TestE2E_GitDeliveryFullChain(t *testing.T) {
 	t.Log("container replaced git-less (legacy no -g workflow) — exercising live reconstruction")
 
 	// 4. Live reconstruction from the recorded remote.
-	if out, err := ssh.ExecSSH(ctx, hostname, ops.BuildGitReconstructCommand("/var/www", remote, ops.DeployGitIdentity)); err != nil {
+	if out, err := ssh.ExecSSH(ctx, hostname, ops.BuildGitReconstructCommand("/var/www", remote, ops.DeployGitIdentity, topology.RuntimeUnknown)); err != nil {
 		t.Fatalf("reconstruction: %v\n%s", err, out)
 	}
 	state, err := ssh.ExecSSH(ctx, hostname,

@@ -3,6 +3,8 @@ package ops
 import (
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // TestBuildGitWritePushProbeCommand_Shape pins the load-bearing properties of
@@ -71,7 +73,7 @@ func TestBuildGitWritePushProbeCommand_TokenShellQuoted(t *testing.T) {
 // url-scoped credential helper + the one-way stray-.netrc cleanup.
 func TestBuildGitOriginSyncCommand_Shape(t *testing.T) {
 	t.Parallel()
-	cmd := BuildGitOriginSyncCommand("/var/www", "https://github.com/example/app.git")
+	cmd := BuildGitOriginSyncCommand("/var/www", "https://github.com/example/app.git", topology.RuntimeDynamic)
 
 	if !strings.Contains(cmd, "cd '/var/www'") {
 		t.Errorf("origin sync should cd to workingDir: %s", cmd)
@@ -117,7 +119,7 @@ func TestBuildGitOriginSyncCommand_Shape(t *testing.T) {
 // and before origin is touched.
 func TestBuildGitOriginSyncCommand_SetsIdentityIfAbsent(t *testing.T) {
 	t.Parallel()
-	cmd := BuildGitOriginSyncCommand("/var/www", "https://github.com/example/app.git")
+	cmd := BuildGitOriginSyncCommand("/var/www", "https://github.com/example/app.git", topology.RuntimeDynamic)
 
 	if !strings.Contains(cmd, `(test -n "$(git config user.email)" || git config user.email 'agent@zerops.io') && (test -n "$(git config user.name)" || git config user.name 'Zerops Agent')`) {
 		t.Errorf("origin sync must fill identity if absent (single-owner ensure fragment): %s", cmd)

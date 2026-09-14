@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 func containsSubstring(s, sub string) bool {
@@ -116,7 +117,7 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cmd := buildSSHCommand(tt.authInfo, tt.serviceID, tt.workDir, "", tt.includeGit)
+			cmd := buildSSHCommand(tt.authInfo, tt.serviceID, tt.workDir, "", tt.includeGit, topology.RuntimeDynamic)
 
 			for _, part := range tt.wantParts {
 				if !contains(cmd, part) {
@@ -135,7 +136,7 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 func TestBuildSSHCommand_FreshInit_BranchMain(t *testing.T) {
 	t.Parallel()
 
-	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false)
+	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false, topology.RuntimeDynamic)
 
 	if !contains(cmd, "git init -q -b main") {
 		t.Errorf("fresh init must use -b main\ngot: %s", cmd)
@@ -152,7 +153,7 @@ func TestBuildSSHCommand_FreshInit_BranchMain(t *testing.T) {
 func TestBuildSSHCommand_NoAutoCommit_HeadGuardPresent(t *testing.T) {
 	t.Parallel()
 
-	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false)
+	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false, topology.RuntimeDynamic)
 
 	for _, forbidden := range []string{"git add -A", "git add ", "-m 'deploy'", "git commit"} {
 		if contains(cmd, forbidden) {
@@ -176,7 +177,7 @@ func TestBuildSSHCommand_NoAutoCommit_HeadGuardPresent(t *testing.T) {
 func TestBuildSSHCommand_PreservesRemoteAndGitignore(t *testing.T) {
 	t.Parallel()
 
-	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false)
+	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false, topology.RuntimeDynamic)
 
 	unwanted := []string{"git remote", ".gitignore"}
 	for _, s := range unwanted {

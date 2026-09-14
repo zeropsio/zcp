@@ -1,20 +1,23 @@
 ---
 id: repo-always-bootstrap
 description: |
-  Brand-new classic Node pair. Tests G1 (docs/spec-workflows.md §4.10):
-  every dev service is a git repository with a scaffold commit once
-  bootstrap finishes — `git init -b main`, a runtime-class-scoped
-  `.git/info/exclude` (never a tracked `.gitignore`), and `git add -A &&
-  git commit -m "scaffold"` for whatever the agent wrote.
+  Brand-new classic Node pair. Tests G1 (docs/spec-workflows.md's Git
+  Lifecycle section, GLC-1): every dev service is a git repository with a
+  reachable HEAD once bootstrap finishes — `git init -b main`, a
+  runtime-class-scoped `.git/info/exclude` (append-only, idempotent,
+  never a tracked `.gitignore`), and the HEAD guarantee's empty `zcp
+  init` marker commit if HEAD was otherwise unborn. zcp mints no
+  user-visible commit of the agent's own written files — the working
+  tree stays whatever it is until something actually deploys or commits
+  it (GLC-2's "dev container stays dirty across iterations" behavior).
 
   Status `promote: containerCheck` (docs/spec-scenarios.md §9.3 table G):
   the runner evaluates containerCheck today, but this file does not
   carry one yet — a follow-up adds a direct
-  `git -C /var/www rev-parse HEAD` / `git log --oneline` / `.git/info/
-  exclude` non-empty / no-`.gitignore` check and flips the row to `gate`.
-  Today's oracle coverage (expectedServices/never) proves bootstrap
-  completed cleanly; it does not yet reach into the container to prove
-  the repo itself.
+  `git -C /var/www rev-parse HEAD` / `.git/info/exclude` non-empty /
+  no-`.gitignore` check and flips the row to `gate`. Today's oracle
+  coverage (expectedServices/never) proves bootstrap completed cleanly;
+  it does not yet reach into the container to prove the repo itself.
 seed: empty
 tags: [repo-always, bootstrap, classic-route, git-foundation, node]
 area: bootstrap
@@ -22,7 +25,7 @@ retrospective:
   promptStyle: briefing-future-agent
 verification:
   mode: required
-  spec: spec-workflows.md §4.10
+  spec: spec-workflows.md §8 GLC-1
   expectedServices:
     - hostname: appdev
       status: [ACTIVE]
@@ -41,13 +44,14 @@ notableFriction:
       committed file. Surfaces whether an agent reflexively writes one
       out of habit, which would sit alongside (not conflict with) zcp's
       exclude but is still off-contract for this scenario's checks.
-  - id: scaffold-commit-is-real-content
+  - id: dirty-tree-is-not-a-bug
     description: |
-      The scaffold commit must carry the agent's actual written files —
-      not the pre-existing empty "zcp init" placeholder commit from
-      post-mount InitServiceGit. Surfaces whether the provision
-      StepChecker's self-heal (`ops.EnsureScaffoldRepo`) fires after the
-      scaffold lands rather than only at mount time.
+      zcp never commits the agent's written files on the agent's behalf —
+      after bootstrap the working tree can legitimately stay dirty
+      (uncommitted) across iterations; only the empty "zcp init" HEAD
+      marker (if any) and the class-scoped `.git/info/exclude` seed are
+      zcp's doing. Surfaces whether the agent mistakes this for a bug and
+      tries to "fix" it by hand-authoring a scaffold commit itself.
 ---
 
 I want to deploy a small Node.js API. Name the dev service `appdev` and the stage service `appstage`. I need both a development environment and a staging slot for testing builds. Make sure the page served at `/` on `appstage` contains the text "small-api-ready".

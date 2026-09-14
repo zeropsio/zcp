@@ -1,5 +1,5 @@
 // Tests for: ops/repo_scaffold.go — the SSH-side wiring of ops/git's
-// repo-always primitives (docs/spec-workflows.md §4.10).
+// repo-always primitives (docs/spec-workflows.md's Git Lifecycle section).
 package ops
 
 import (
@@ -11,30 +11,6 @@ import (
 
 	"github.com/zeropsio/zcp/internal/topology"
 )
-
-func TestEnsureScaffoldRepo_EmptyHostname_ReturnsError(t *testing.T) {
-	if err := EnsureScaffoldRepo(context.Background(), &mockSSHDeployer{}, "", topology.RuntimeDynamic); err == nil {
-		t.Fatal("expected error for empty hostname")
-	}
-}
-
-func TestEnsureScaffoldRepo_RunsOverSSHAgainstVarWww(t *testing.T) {
-	m := &mockSSHDeployer{output: []byte("")}
-	if err := EnsureScaffoldRepo(context.Background(), m, "appdev", topology.RuntimeDynamic); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(m.calls) == 0 {
-		t.Fatal("expected at least one SSH call")
-	}
-	for _, c := range m.calls {
-		if c.hostname != "appdev" {
-			t.Errorf("call hostname = %q, want appdev", c.hostname)
-		}
-		if !strings.Contains(c.command, "cd '/var/www'") {
-			t.Errorf("command = %q, want it to cd into /var/www", c.command)
-		}
-	}
-}
 
 func TestAdoptRepoBaseline_EmptyHostname_ReturnsError(t *testing.T) {
 	if _, err := AdoptRepoBaseline(context.Background(), &mockSSHDeployer{}, "", "av-1", topology.RuntimeDynamic); err == nil {

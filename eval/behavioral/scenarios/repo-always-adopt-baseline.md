@@ -24,7 +24,7 @@ retrospective:
   promptStyle: briefing-future-agent
 verification:
   mode: required
-  spec: spec-workflows.md §4.10
+  spec: spec-workflows.md §8 GLC-7
   expectedServices:
     - hostname: appdev
       status: [ACTIVE]

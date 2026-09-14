@@ -895,70 +895,6 @@ already-succeeded build. `refs/zcp/*` is never pruned (`spec-mate.md`
 sha read back from `refs/zcp/deploy/*` — there is no separate rollback
 primitive in this slice.
 
-### 4.10 Repo Is Always Present
-
-Every dev service is a git repository once bootstrap or adopt finishes —
-additive to §4.9, no deploy-behaviour change. zcp seeds
-`.git/info/exclude`, NEVER a tracked `.gitignore` (the exclude file is
-repo-local and invisible to the user's own history, so it can never
-collide with anything the user commits).
-
-**Bootstrap (G1).** Once the scaffold has landed on disk, the finalize
-step's provision `StepChecker` guarantees a repo exists:
-
-- Container mode self-heals (`ops.EnsureScaffoldRepo` → `ops/git.InitRepo`
-  over SSH, rooted at `/var/www`): `git init -q -b main` if not yet a
-  repo, seed `.git/info/exclude` (always re-seeded — idempotent, since the
-  file is never user-edited), then `git add -A && git commit -q -m
-  "scaffold"` — but ONLY if HEAD doesn't already exist. A repo with an
-  existing HEAD (a second bootstrap call, or the user's own git usage) is
-  left alone: no re-init, no second scaffold commit.
-- Local mode is read-only: the checker probes CWD via `ops.LocalRepoHead`
-  and reports a `git init` instruction if it isn't a repo yet — zcp never
-  silently initializes a directory it didn't create on the user's own
-  machine.
-- `.git/info/exclude` content is runtime-class-scoped
-  (`ops/git.ExcludePatterns`): every class gets `.env`, `.env.*`, `*.log`,
-  `.zcp/`; classes that run application code (dynamic, static,
-  implicit-webserver) additionally get `node_modules/`, `dist/`, `build/`.
-  Managed and unknown classes get the base set only.
-
-**Adopt (G2).** `ops/git.AdoptBaseline` (over SSH, `ops.AdoptRepoBaseline`)
-tags the adopted service's current HEAD with
-`zcp/baseline/<appVersionId>` (`topology.BaselineTagName`):
-
-- Not yet a repo: `git init -q -b main` + seed exclude + a baseline
-  commit (`"baseline: adopted appVersion <id>"`), then the tag.
-- Already a repo: only the tag moves (force-move — re-adopting the same
-  or a newer appVersion must not fail on a pre-existing tag); no commit,
-  no history change — the existing HEAD is trusted as the baseline.
-
-`ServiceMeta.Repo` (`SetRepoBaseline`) persists the marker:
-`{BaselineAppVersion, Provenance}`. `topology.ClassifyProvenance(source
-Service, deployFiles)` classifies `RepoProvenanceSource` (the appVersion
-was built from this service's own tree — no sourceService, deployFiles
-unset or exactly `["."]`) vs `RepoProvenanceArtifactOnly` (built
-elsewhere — a sourceService is set, or deployFiles names a narrower
-path). Wired at `autoMountTargets` (tools/workflow_bootstrap.go) for the
-adopt route: `appVersionID` comes from `ListServicesDirect`
-(`ActiveAppVersion.ID`, lag-free per CLAUDE.md's ES-search trap — this
-runs moments after adopt/import). **Gap**: `ClassifyProvenance` is
-called with `("", nil)` — always `source` — because the adopted
-appVersion's sourceService/deployFiles aren't yet modeled on
-`platform.ServiceStack`/`AppVersionEvent` (an unverified platform fact).
-A live read replaces this placeholder once that surface is proven.
-
-**Envelope.** `zerops_workflow` status exposes `repo: {present, head,
-baseline}` per non-managed service (`ServiceSnapshot.Repo`,
-`workflow.ApplyRepoStatus`) — read live via `ops.ReadRepoStatus` (`git
-rev-parse HEAD` + `git tag --points-at HEAD --list 'zcp/baseline/*'`),
-never cached on `ServiceMeta` or the bootstrap session.
-`handleLifecycleStatus` (`tools/workflow.go`) wires the two together via
-`attachRepoStatus` (`tools/workflow_repo_status.go`) — container mode
-only; local mode carries no per-service repo block on the envelope in
-this slice (its repo state is covered by the bootstrap-time
-`checkRepoInitAt` read-only check instead).
-
 ---
 
 ## 5. Environment Differences
@@ -1235,7 +1171,7 @@ Managed runtime services carry a `/var/www/.git/` that direct `zerops_deploy` tr
 
 **Execution flow — when `.git/` is created**:
 
-- **Bootstrap/adopt time (canonical path, GLC-1)** — When `zerops_workflow action="complete" step="provision"` succeeds, `autoMountTargets` iterates `plan.Targets` and for each runtime target runs `ops.MountService` followed by `ops.InitServiceGit`. The init runs SSH-exec (not SFTP) so `.git/` lands owned by `zerops:zerops`. Identity is filled SET-IF-ABSENT (default `agent@zerops.io` / `Zerops Agent`; a value already present — including one the user set — is never overwritten), and a HEAD guarantee ensures a reachable commit exists (`ops.GitEnsureRepoHeadCommand`). This happens **once per service**.
+- **Bootstrap/adopt time (canonical path, GLC-1)** — When `zerops_workflow action="complete" step="provision"` succeeds, `autoMountTargets` iterates `plan.Targets` and for each runtime target runs `ops.MountService` followed by `ops.InitServiceGit`. The init runs SSH-exec (not SFTP) so `.git/` lands owned by `zerops:zerops`. Identity is filled SET-IF-ABSENT (default `agent@zerops.io` / `Zerops Agent`; a value already present — including one the user set — is never overwritten), `.git/info/exclude` is seeded by runtime class, and a HEAD guarantee ensures a reachable commit exists (`ops.GitEnsureRepoHeadCommand`). This happens **once per service** (the exclude seed and HEAD guarantee still re-run — idempotently — on every later deploy, GLC-2).
 
 - **Deploy time — happy path (GLC-2)** — Every `zerops_deploy` in container mode runs `buildSSHCommand`'s safety-net, composed from the SAME `ops.GitEnsureRepoHeadCommand` bootstrap uses: init-if-missing, identity set-if-absent, HEAD guarantee. On a service where bootstrap has already run, every guard no-ops — the deploy goes straight to `zcli push`. No `git add` / `git commit` runs here: the (possibly dirty) working tree ships via zcli's own `--workspace-state=all` ephemeral stash-archive, never a ZCP-minted commit.
 
@@ -1243,16 +1179,17 @@ Managed runtime services carry a `/var/www/.git/` that direct `zerops_deploy` tr
 
 - **Never** — ZCP-host container's own `/var/www` (GLC-4: it's the SSHFS mount base, not a code directory); user's local working directory (GLC-6: that's the user's own git territory); any path that went through the SSHFS mount from the ZCP host (GLC-5: mount-side `git init` would produce root-owned dirs due to a zembed SFTP MKDIR regression).
 
-**Single source of identity + HEAD guarantee (GLC-3)**: `ops.DeployGitIdentity` backs two single-owner shell-fragment builders (`gitIdentityEnsureFragment`, `gitHeadEnsureFragment`, composed into `ops.GitEnsureRepoHeadCommand`), consumed by every self-heal site — `InitServiceGit`, `buildSSHCommand`'s safety-net, `BuildGitOriginSyncCommand`, `BuildGitReconstructCommand`, and git-push-setup's pre-probe ensure. Write policy: repo-local identity is SET-IF-ABSENT (never stomps a user-set value); the ZCP-internal HEAD-guarantee marker commit always uses per-invocation `git -c`, never persistent config — it's ZCP's commit, not the user's.
+**Single source of identity + HEAD guarantee (GLC-3)**: `ops.DeployGitIdentity` backs three single-owner shell-fragment builders (`gitIdentityEnsureFragment`, `gitExcludeSeedFragment`, `gitHeadEnsureFragment`, composed into `ops.GitEnsureRepoHeadCommand`), consumed by every self-heal site — `InitServiceGit`, `buildSSHCommand`'s safety-net, `BuildGitOriginSyncCommand`, `BuildGitReconstructCommand`, and git-push-setup's pre-probe ensure — each threading the runtime class through to `gitExcludeSeedFragment` (`topology.RuntimeUnknown` when the call site has no classification handy, e.g. git-push-setup, which still seeds the base patterns). Write policy: repo-local identity is SET-IF-ABSENT (never stomps a user-set value); exclude seeding is append-if-absent (never duplicates a line, never clobbers one already there); the ZCP-internal HEAD-guarantee marker commit always uses per-invocation `git -c`, never persistent config — it's ZCP's commit, not the user's.
 
 | ID | Invariant |
 |----|-----------|
-| GLC-1 | Every runtime service added to the project via bootstrap or adopt has `/var/www/.git/` initialized **container-side** (via `ops.SSHDeployer.ExecSSH`, never SFTP MKDIR), owned by `zerops:zerops`, with identity filled set-if-absent (default `user.email = agent@zerops.io`, `user.name = Zerops Agent`) and a reachable HEAD. Enforced by `autoMountTargets` post-mount hook: after `ops.MountService` succeeds it calls `ops.InitServiceGit`. The SSH-exec path matters because zembed's SFTP MKDIR regression creates root-owned directories, which would corrupt `.git/objects/` and break subsequent git operations. Errors are logged but do not mark the mount FAILED — GLC-2 is the safety net. |
+| GLC-1 | Every runtime service added to the project via bootstrap or adopt has `/var/www/.git/` initialized **container-side** (via `ops.SSHDeployer.ExecSSH`, never SFTP MKDIR), owned by `zerops:zerops`, with identity filled set-if-absent (default `user.email = agent@zerops.io`, `user.name = Zerops Agent`) and a reachable HEAD. Enforced by `autoMountTargets` post-mount hook: after `ops.MountService` succeeds it calls `ops.InitServiceGit`. The SSH-exec path matters because zembed's SFTP MKDIR regression creates root-owned directories, which would corrupt `.git/objects/` and break subsequent git operations. Errors are logged but do not mark the mount FAILED — GLC-2 is the safety net. Every self-heal composition also seeds `.git/info/exclude` by runtime class (`ops/git.ExcludePatterns` via `gitExcludeSeedFragment`): every class gets `.env`, `.env.*`, `*.log`, `.zcp/`; classes that run application code (dynamic, static, implicit-webserver) additionally get `node_modules/`, `dist/`, `build/` — managed/unknown get the base set only. Append-only and idempotent (each pattern gets its own `grep -qxF || printf >>` guard, so a re-run never duplicates a line or clobbers one already there) — NEVER a tracked `.gitignore` (the exclude file is repo-local and invisible to the user's own history). |
 | GLC-2 | `deploy_ssh.go::buildSSHCommand` must tolerate a missing `.git/` as the migration/recovery fallback. The init guard stays inside the OR branch (`test -d .git || git init -q -b main`); identity is set-if-absent OUTSIDE it (never stomping a user-set value — the B13 fix's actual requirement was "identity exists", not "identity is ZCP's"); a HEAD guarantee follows so zcli's archiver always has a commit to diff against. Direct deploy mints NO other commit — the dirty tree ships via zcli's ephemeral stash-archive. Same identity-ensure shape in `BuildGitOriginSyncCommand` (GAP4-1). Pinned by `ops/deploy_git_test.go` + `ops/git_identity_test.go`. |
 | GLC-3 | `ops.DeployGitIdentity` is the single source of the default identity value, consumed only through the single-owner fragment builders in `ops/git_identity.go`. No code path writes identity unconditionally or persists the HEAD-guarantee marker commit's identity into repo config. **Human attribution (F3)**: at git-push-setup, `ops.DeriveGitHubIdentity` derives name/email from the PAT for github.com remotes only (`ops.IsGitHubRemote` — fail-closed exact-host gate — decides); the result seeds repo-local config IFF the current value is absent or EXACTLY equals the robot identity (`ops.BuildGitIdentitySeedCommand`) — a genuinely custom value is preserved and reported, never overwritten. This migration fires ONCE per value: a later PAT rotation to a different GitHub account does NOT re-seed, because the now-human identity no longer exactly-matches the robot default (identity is user-owned once set). A buildFromGit clone carrying a recipe-baked non-robot identity is likewise never auto-migrated (neither absent nor exactly-robot) — same preserved/reported treatment. Reconstruction (`BuildGitReconstructCommand`) takes the derived identity directly when available, landing a rebuilt repo human-attributed from its first init rather than robot-then-migrate; the tokenless recall path has no PAT to derive from, so it only detects a still-exactly-robot identity and prompts a one-time re-run with `gitToken` — it never fabricates one. Release tags, export commits, and flatten commits carry no inline identity of their own (`git tag -a` / plain `git commit`) — they read ambient repo config, so they inherit the seeded human identity automatically once F3 has run. |
 | GLC-4 | The ZCP-host container has no git state. `/var/www` there is the SSHFS mount base, not a code directory; no `.git/` is ever initialized on it, and no `git config --global` is written. `zcp init` in container mode (`init_container.go::containerSteps`) performs only Claude config + optional VS Code setup. Developer-side git workflows (e.g. `zcp sync recipe push-app`) run on developer laptops with the developer's own `~/.gitconfig` and are never expected to pass through a Zerops-deployed ZCP service. |
 | GLC-5 | Mount-side `git init` (from the ZCP-host into a managed service's SSHFS-mounted `/var/www/{hostname}/`) is forbidden agent behavior, covered by `develop-first-deploy-write-app.md` guidance. zembed's SFTP MKDIR would produce root-owned `.git/objects/` which poisons every subsequent deploy. Recovery: `ssh {host} "sudo rm -rf /var/www/.git"` and let GLC-2's safety net re-init. |
 | GLC-6 | Local-env `strategy=git-push` requires a user-owned git repo with ≥1 commit (verified against `zcli@v1.0.61` `handler_archiveGitFiles.go:67-75`). ZCP does **not** auto-init git in the user's working directory — identity, default branch and `.gitignore` conventions are personal. `develop-platform-rules-local.md` instructs the agent to ask the user to run `git init && git add -A && git commit -m '<msg>'` themselves; `handleLocalGitPush` pre-flight catches the case as a hard fallback. The default `zerops_deploy` strategy uses `zcli --no-git` and needs no git state. The container-mode default path (GLC-2) depends on the same zcli floor for its `--workspace-state=all` archiver — no runtime probe, containers ship platform-maintained zcli. |
+| GLC-7 | Adopt (G2) tags the adopted service's current HEAD with `zcp/baseline/<appVersionId>` (`topology.BaselineTagName`, `ops/git.AdoptBaseline` over SSH via `ops.AdoptRepoBaseline`). Not yet a repo: init + seed exclude + a baseline commit (`"baseline: adopted appVersion <id>"`), then the tag — in the canonical `autoMountTargets` flow this branch is a defensive fallback only, since `ops.InitServiceGit` (GLC-1) already ran first and left a reachable HEAD. Already a repo: only the tag moves (force — re-adopting the same or a newer appVersion must not fail on a pre-existing tag); no commit, no history change — the existing HEAD is trusted as the baseline. `ServiceMeta.Repo` (`SetRepoBaseline`) persists `{BaselineAppVersion, Provenance}`; `topology.ClassifyProvenance(sourceService, deployFiles)` classifies `RepoProvenanceSource` (built from this service's own tree) vs `RepoProvenanceArtifactOnly` (built elsewhere). Wired at `autoMountTargets` for the adopt route: `appVersionID` comes from `ListServicesDirect` (`ActiveAppVersion.ID`, lag-free per CLAUDE.md's ES-search trap). **Gap**: `ClassifyProvenance` is called with `("", nil)` — always `source` — because the adopted appVersion's sourceService/deployFiles aren't yet modeled on `platform.ServiceStack`/`AppVersionEvent` (an unverified platform fact); a live read replaces this placeholder once that surface is proven. **Envelope**: `zerops_workflow` status exposes `repo: {present, head, baseline}` per non-managed service (`ServiceSnapshot.Repo`, `workflow.ApplyRepoStatus`) — read live via `ops.ReadRepoStatus` (`git rev-parse HEAD` + `git tag --points-at HEAD --list 'zcp/baseline/*'`), never cached on `ServiceMeta` or the bootstrap session; `handleLifecycleStatus` wires the two together via `attachRepoStatus` — container mode only, local mode covered by the bootstrap-time `checkRepoInitAt` read-only check (GLC-6) instead. |
 
 **Explicit behavior change (git-contract fix, 2026-07-12)**: since direct deploy no longer auto-commits (GLC-2), a dev container's working tree stays dirty across iterations until something actually commits it — the launch `dev-tree-dirty` gate (§10, P-LP-11) is now the explicit sign-off-commit enforcement that the old invisible auto-commit used to fake. This is intended, not a regression.
 

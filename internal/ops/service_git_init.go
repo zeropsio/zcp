@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // InitServiceGit ensures /var/www/.git/ exists on the target service, with
@@ -21,7 +22,8 @@ import (
 // Composes ops.GitEnsureRepoHeadCommand — the single owner shared with
 // buildSSHCommand's safety-net and git-push-setup's pre-probe ensure, so
 // bootstrap and deploy paths can't drift on what "commit-ready" means.
-func InitServiceGit(ctx context.Context, ssh SSHDeployer, hostname string) error {
+// class picks the .git/info/exclude pattern set (git.ExcludePatterns).
+func InitServiceGit(ctx context.Context, ssh SSHDeployer, hostname string, class topology.RuntimeClass) error {
 	if hostname == "" {
 		return platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -37,7 +39,7 @@ func InitServiceGit(ctx context.Context, ssh SSHDeployer, hostname string) error
 		)
 	}
 
-	cmd := GitEnsureRepoHeadCommand(defaultWorkingDir)
+	cmd := GitEnsureRepoHeadCommand(defaultWorkingDir, class)
 
 	if _, err := ssh.ExecSSH(ctx, hostname, cmd); err != nil {
 		return fmt.Errorf("init git on %s: %w", hostname, err)
