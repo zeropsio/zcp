@@ -280,7 +280,7 @@ func RegisterDeploySSH(
 			// (docs/spec-workflows.md §12.6 GF-8), not the R2 newest-only
 			// recovery below.
 			if input.AppVersion != appVersionLatest {
-				result, blocked := runAppVersionRollback(ctx, client, projectID, stateDir, input.TargetService, input.AppVersion)
+				result, blocked := runAppVersionRollback(ctx, client, projectID, stateDir, input.TargetService, input.AppVersion, "ssh")
 				if blocked != nil {
 					return blocked, nil, nil
 				}

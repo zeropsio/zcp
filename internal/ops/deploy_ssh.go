@@ -344,11 +344,16 @@ func deployFromCommitPrep(
 		previousOnRecord = entry.SHA
 	}
 
+	// Same file-name fallback as ParseZeropsYml/DeployLocal: a pre-rename
+	// repo carries zerops.yml, and a working-tree deploy accepts it.
 	content, showErr := git.ReadFileAtCommit(ctx, gitRunner, workingDir, resolvedSHA, "zerops.yaml")
+	if showErr != nil {
+		content, showErr = git.ReadFileAtCommit(ctx, gitRunner, workingDir, resolvedSHA, "zerops.yml")
+	}
 	if showErr != nil {
 		return "", "", nil, "", nil, platform.NewPlatformError(
 			platform.ErrInvalidParameter,
-			fmt.Sprintf("commit %s has no zerops.yaml: %v", resolvedSHA[:min(10, len(resolvedSHA))], showErr),
+			fmt.Sprintf("commit %s has no zerops.yaml (or zerops.yml): %v", resolvedSHA[:min(10, len(resolvedSHA))], showErr),
 			"Add zerops.yaml to the commit being deployed, or deploy a different sha.",
 		)
 	}

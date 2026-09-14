@@ -67,8 +67,8 @@ func TestAdoptBaseline_Integration_FilesNoRepo_TagsNonEmptyTreeWithRobotIdentity
 		t.Errorf("commit message = %q, want it to start with %q", msg, "zcp: snapshot")
 	}
 	authorEmail := gitOutput(t, dir, "log", "-1", "--format=%ae", tag)
-	if authorEmail != snapshotIdentityEmail {
-		t.Errorf("author email = %q, want %q (robot identity, no ambient ~/.gitconfig)", authorEmail, snapshotIdentityEmail)
+	if authorEmail != robotIdentityEmail {
+		t.Errorf("author email = %q, want %q (robot identity, no ambient ~/.gitconfig)", authorEmail, robotIdentityEmail)
 	}
 }
 

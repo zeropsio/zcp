@@ -93,7 +93,6 @@ func ReactivateAppVersion(
 	}
 
 	result := &DeployResult{
-		Mode:            "appversion",
 		TargetService:   hostname,
 		TargetServiceID: svc.ID,
 		AppVersionID:    appVersionID,

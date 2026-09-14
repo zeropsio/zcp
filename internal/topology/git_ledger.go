@@ -27,8 +27,8 @@ type LedgerEntry struct {
 // the same appVersion overwrites its own tag (-f) instead of accumulating
 // duplicates. Never refs/zcp/* — an ordinary annotated tag survives a
 // plain `git fetch --tags` the way a custom ref namespace would not, and
-// needs no ref-pruning exemption (docs/spec-mate.md §6 governs refs/zcp/*
-// only).
+// mate's ref pruning sweeps only refs/t3/checkpoints/* (docs/spec-mate.md
+// §6.4), so the tags are never swept.
 func DeployTagName(projectID, target, appVersionID string) string {
 	return "zcp/deploy/" + projectID + "/" + target + "/" + appVersionID
 }

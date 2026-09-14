@@ -698,7 +698,7 @@ no buildFromGit), so the agent has a place to fix source. `allowFailed` explicit
 | G2 ✚ | `repo-always-adopt-baseline` | unmanaged pair deployed without git · connect to what I have | expectedServices unchanged containerCheck(baseline tag tree non-empty; snapshot commit) never | gate |
 | G3 ✚ | `deploy-from-commit-stage` | pair, both buildFromGit-deployed · ship a specific commit to stage | toolArg(targetService=appstage) toolResult(sha/appVersionId) liveness never | promote: containerCheck |
 | G4 ✚ | `dev-self-deploy-keeps-repo` | pair with one ledger entry on appdev (preseed) · change the response text, ship dev | liveness toolArg(targetService=appdev) never | promote: containerCheck |
-| G5 ✚ | `rollback-stage-from-ledger` | stage with 2 ledger entries (preseed) · roll back to the previous version | seedExpect toolArg(targetService=appstage; max 0 import) mustOffer(no rebuild) never | promote: containerCheck |
+| G5 ✚ | `rollback-stage-from-ledger` | stage with 2 recorded deploys (preseed) · roll back to the previous version | seedExpect toolArg(targetService=appstage; appVersion=<id>, never latest; max 0 import; max 0 sha) mustOffer(no rebuild) never | pending: activeAppVersion |
 
 Deliberately not covered: recipe × simple (no simple-capable recipe in the
 catalog); iteration-cap auto-close (internal state, unit-tested, not a journey).

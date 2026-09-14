@@ -15,18 +15,6 @@ import (
 // exists" — an empty-tree HEAD is content-equivalent to no repo at all.
 const emptyTreeSHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
-// snapshotIdentityName/snapshotIdentityEmail are the identity AdoptBaseline
-// inlines onto its snapshot commit — matching ops.DeployGitIdentity (this
-// package cannot import internal/ops; kept in sync by inspection, same
-// values as ledger.go's ledgerIdentityName/ledgerIdentityEmail). A
-// buildFromGit-provisioned container has no ~/.gitconfig and no
-// GIT_AUTHOR_*/GIT_COMMITTER_* env, so relying on ambient config fails
-// there with "unable to auto-detect email address".
-const (
-	snapshotIdentityName  = "Zerops Agent"
-	snapshotIdentityEmail = "agent@zerops.io"
-)
-
 // AdoptCase records which branch AdoptBaseline took, so the caller can
 // classify provenance from the return value alone — no separate probe of
 // repo state needed (docs/spec-workflows.md's Git Lifecycle section, GLC-7).
@@ -45,11 +33,6 @@ const (
 // AdoptResult is AdoptBaseline's outcome.
 type AdoptResult struct {
 	Case AdoptCase
-	// EmptyCommit is true when the snapshot commit (AdoptCaseSnapshot only)
-	// was minted with --allow-empty because `git add -A` staged nothing —
-	// an empty working tree still gets tagged, so the case is recorded
-	// rather than silently skipped.
-	EmptyCommit bool
 }
 
 // baseExcludePatterns are seeded into .git/info/exclude for every runtime
@@ -123,7 +106,7 @@ func SeedExclude(ctx context.Context, r Runner, dir string, class topology.Runti
 //     — it is a snapshot of whatever adopt found on disk, never the source
 //     commit of the running appVersion. An empty working tree (`git add
 //     -A` stages nothing) still commits, with --allow-empty, so the case
-//     is recorded rather than silently skipped (AdoptResult.EmptyCommit).
+//     still lands — the empty commit itself is the record.
 func AdoptBaseline(ctx context.Context, r Runner, dir, appVersionID string, class topology.RuntimeClass) (AdoptResult, error) {
 	exists, hasContent := probeContentCase(ctx, r, dir)
 	tag := topology.BaselineTagName(appVersionID)
@@ -143,14 +126,13 @@ func AdoptBaseline(ctx context.Context, r Runner, dir, appVersionID string, clas
 	if err := SeedExclude(ctx, r, dir, class); err != nil {
 		return AdoptResult{}, err
 	}
-	emptyCommit, err := commitSnapshot(ctx, r, dir, appVersionID)
-	if err != nil {
+	if err := commitSnapshot(ctx, r, dir, appVersionID); err != nil {
 		return AdoptResult{}, err
 	}
 	if _, stderr, err := r.Run(ctx, dir, "git tag -f "+shellQuote(tag)+" HEAD"); err != nil {
 		return AdoptResult{}, wrapErr("tag baseline", err, stderr)
 	}
-	return AdoptResult{Case: AdoptCaseSnapshot, EmptyCommit: emptyCommit}, nil
+	return AdoptResult{Case: AdoptCaseSnapshot}, nil
 }
 
 // commitSnapshot stages everything in dir and commits it with the robot
@@ -159,19 +141,18 @@ func AdoptBaseline(ctx context.Context, r Runner, dir, appVersionID string, clas
 // in ops/git_identity.go). Falls back to --allow-empty when the normal
 // commit fails because nothing was staged (an empty working tree) — a
 // genuine commit failure surfaces from that second attempt instead.
-func commitSnapshot(ctx context.Context, r Runner, dir, appVersionID string) (emptyCommit bool, err error) {
+func commitSnapshot(ctx context.Context, r Runner, dir, appVersionID string) error {
 	if _, stderr, addErr := r.Run(ctx, dir, "git add -A"); addErr != nil {
-		return false, wrapErr("git add -A", addErr, stderr)
+		return wrapErr("git add -A", addErr, stderr)
 	}
 	msg := "zcp: snapshot of " + dir + " as found at adopt (appVersion " + appVersionID + ")"
-	commitFlags := "-c user.name=" + shellQuote(snapshotIdentityName) + " -c user.email=" + shellQuote(snapshotIdentityEmail)
+	commitFlags := "-c user.name=" + shellQuote(robotIdentityName) + " -c user.email=" + shellQuote(robotIdentityEmail)
 	if _, _, commitErr := r.Run(ctx, dir, "git "+commitFlags+" commit -q -m "+shellQuote(msg)); commitErr != nil {
 		if _, stderr, emptyErr := r.Run(ctx, dir, "git "+commitFlags+" commit -q --allow-empty -m "+shellQuote(msg)); emptyErr != nil {
-			return false, wrapErr("commit snapshot (allow-empty fallback)", emptyErr, stderr)
+			return wrapErr("commit snapshot (allow-empty fallback)", emptyErr, stderr)
 		}
-		return true, nil
 	}
-	return false, nil
+	return nil
 }
 
 // probeIsRepo reports whether dir already has a .git directory. A Runner

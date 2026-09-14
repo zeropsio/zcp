@@ -35,7 +35,7 @@ const deployStrategyRollbackLabel = "rollback"
 func runAppVersionRollback(
 	ctx context.Context,
 	client platform.Client,
-	projectID, stateDir, targetService, appVersionID string,
+	projectID, stateDir, targetService, appVersionID, mode string,
 ) (*ops.DeployResult, *mcp.CallToolResult) {
 	attempt := workflow.DeployAttempt{
 		AttemptedAt:  time.Now().UTC().Format(time.RFC3339),
@@ -49,6 +49,7 @@ func runAppVersionRollback(
 		_ = workflow.RecordDeployAttempt(stateDir, targetService, attempt)
 		return nil, convertError(err, WithRecoveryStatus())
 	}
+	result.Mode = mode
 
 	switch {
 	case result.Status == statusDeployed:

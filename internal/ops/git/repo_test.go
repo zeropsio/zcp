@@ -67,9 +67,6 @@ func TestAdoptBaseline_NoRepo_InitsSnapshotsAndTags(t *testing.T) {
 	if result.Case != AdoptCaseSnapshot {
 		t.Errorf("Case = %q, want %q", result.Case, AdoptCaseSnapshot)
 	}
-	if result.EmptyCommit {
-		t.Error("EmptyCommit = true, want false (the normal commit succeeded)")
-	}
 	if len(r.calls) != 6 {
 		t.Fatalf("calls = %d, want 6: %+v", len(r.calls), r.calls)
 	}
@@ -158,7 +155,7 @@ func TestAdoptBaseline_ContentHEAD_OnlyTagsHEAD(t *testing.T) {
 // working-tree edge case: `git add -A` stages nothing (a genuinely empty
 // directory), so the normal commit fails with "nothing to commit" and
 // AdoptBaseline falls back to --allow-empty so the tag still lands and the
-// case is recorded via AdoptResult.EmptyCommit.
+// commit itself is the record.
 func TestAdoptBaseline_NothingStaged_CommitsWithAllowEmpty(t *testing.T) {
 	r := &fakeRunner{results: []fakeResult{
 		{err: errTest}, // test -d .git -> not a repo
@@ -175,9 +172,6 @@ func TestAdoptBaseline_NothingStaged_CommitsWithAllowEmpty(t *testing.T) {
 	}
 	if result.Case != AdoptCaseSnapshot {
 		t.Errorf("Case = %q, want %q", result.Case, AdoptCaseSnapshot)
-	}
-	if !result.EmptyCommit {
-		t.Error("EmptyCommit = false, want true (the normal commit failed, fell back to --allow-empty)")
 	}
 	if len(r.calls) != 7 {
 		t.Fatalf("calls = %d, want 7: %+v", len(r.calls), r.calls)

@@ -9,8 +9,8 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// ledgerIdentityName/ledgerIdentityEmail are the author/committer identity
-// WriteLedger stamps on every ledger tag — matching ops.DeployGitIdentity
+// robotIdentityName/robotIdentityEmail are the identity WriteLedger stamps
+// on every ledger tag and commitSnapshot on every adopt snapshot commit — matching ops.DeployGitIdentity
 // (this package cannot import internal/ops; kept in sync by inspection,
 // same values). `git tag -a` creates a tag OBJECT (tagger line), which
 // needs SOME identity — a buildFromGit-provisioned container has no
@@ -18,8 +18,8 @@ import (
 // self-deploy container, which InitServiceGit seeds), so relying on
 // ambient config fails there with "unable to auto-detect email address".
 const (
-	ledgerIdentityName  = "Zerops Agent"
-	ledgerIdentityEmail = "agent@zerops.io"
+	robotIdentityName  = "Zerops Agent"
+	robotIdentityEmail = "agent@zerops.io"
 )
 
 // WriteLedger records one zcp deploy: creates/overwrites ONE annotated git
@@ -34,8 +34,8 @@ func WriteLedger(ctx context.Context, r Runner, dir string, entry topology.Ledge
 		return wrapErr("marshal ledger entry", err, "")
 	}
 	tag := topology.DeployTagName(entry.Project, entry.Target, entry.AppVersionID)
-	script := "git -c user.name=" + shellQuote(ledgerIdentityName) +
-		" -c user.email=" + shellQuote(ledgerIdentityEmail) +
+	script := "git -c user.name=" + shellQuote(robotIdentityName) +
+		" -c user.email=" + shellQuote(robotIdentityEmail) +
 		" tag -a -f -m " + shellQuote(string(msg)) + " " + shellQuote(tag) + " " + shellQuote(entry.SHA)
 	if _, stderr, err := r.Run(ctx, dir, script); err != nil {
 		return wrapErr("tag "+tag, err, stderr)

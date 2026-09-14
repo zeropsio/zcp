@@ -105,7 +105,8 @@ func TestDeploySSH_WithSHA_CommitMissingZeropsYaml_ReturnsErrorBeforeExtraction(
 	ssh := &mockSSHDeployer{results: []sshResult{
 		{output: []byte("f0115ba1234567\n")}, // resolve
 		{output: []byte("")},                 // LastDeployOnRecord: nothing on record
-		{output: []byte("fatal: path 'zerops.yaml' does not exist in 'f0115ba1234567'"), err: errTestNoZeropsYaml}, // git show fails
+		{output: []byte("fatal: path 'zerops.yaml' does not exist in 'f0115ba1234567'"), err: errTestNoZeropsYaml}, // git show zerops.yaml fails
+		{output: []byte("fatal: path 'zerops.yml' does not exist in 'f0115ba1234567'"), err: errTestNoZeropsYaml},  // …and the zerops.yml fallback fails too
 	}}
 	authInfo := testAuthInfo()
 
@@ -124,8 +125,11 @@ func TestDeploySSH_WithSHA_CommitMissingZeropsYaml_ReturnsErrorBeforeExtraction(
 	if !strings.Contains(pe.Message, "f0115ba") && !strings.Contains(pe.Message, "no zerops.yaml") {
 		t.Errorf("message = %q, want it to name the commit and the missing file", pe.Message)
 	}
-	if len(ssh.calls) != 3 {
-		t.Fatalf("ssh calls = %d, want 3 (resolve, lastDeployOnRecord, git show) — mktemp/extract must NOT run: %+v", len(ssh.calls), ssh.calls)
+	if len(ssh.calls) != 4 {
+		t.Fatalf("ssh calls = %d, want 4 (resolve, lastDeployOnRecord, git show zerops.yaml, git show zerops.yml) — mktemp/extract must NOT run: %+v", len(ssh.calls), ssh.calls)
+	}
+	if !strings.Contains(ssh.calls[3].command, "zerops.yml") {
+		t.Errorf("call[3] = %q, want the zerops.yml fallback read", ssh.calls[3].command)
 	}
 	for _, c := range ssh.calls {
 		if strings.Contains(c.command, "mktemp") || strings.Contains(c.command, "git archive") {
