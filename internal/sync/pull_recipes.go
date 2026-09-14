@@ -110,6 +110,12 @@ func PullRecipes(cfg *Config, root, filter string, dryRun bool) ([]PullResult, e
 }
 
 func pullOneRecipe(recipe APIRecipe, slug, outDir string, dryRun bool) PullResult {
+	// A row published without sourceData (absent key / JSON null — a Strapi
+	// draft) is "no content", never a pull error: one draft must not fail the
+	// whole corpus pull (and with it every CI/release run).
+	if len(recipe.SourceData) == 0 {
+		return PullResult{Slug: slug, Status: Skipped, Reason: "no sourceData in API"}
+	}
 	var sd sourceData
 	if err := json.Unmarshal(recipe.SourceData, &sd); err != nil {
 		return PullResult{Slug: slug, Status: Error, Reason: fmt.Sprintf("parse sourceData: %v", err)}

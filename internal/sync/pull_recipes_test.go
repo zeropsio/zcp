@@ -437,3 +437,28 @@ func TestBuildRecipeMarkdown_ByteIdempotent(t *testing.T) {
 		t.Errorf("two pulls of the same payload must be byte-identical:\nfirst:\n%q\nsecond:\n%q", first, second)
 	}
 }
+
+// TestPullOneRecipe_NullSourceData_Skipped pins the half-published shape seen
+// live 2026-09-14: a recipe row published with `sourceData: null` (the
+// RawMessage decodes to nil). It is "no content", the same class as an
+// empty document — never a pull error, which would fail every CI/release run
+// on a single Strapi draft.
+func TestPullOneRecipe_NullSourceData_Skipped(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		raw  json.RawMessage
+	}{
+		{"absent key", nil},
+		{"json null", json.RawMessage("null")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := pullOneRecipe(APIRecipe{Slug: "medusa", Name: "medusa-showcase", SourceData: tc.raw}, "medusa", t.TempDir(), true)
+			if got.Status != Skipped {
+				t.Fatalf("status = %v (%s), want Skipped", got.Status, got.Reason)
+			}
+		})
+	}
+}
