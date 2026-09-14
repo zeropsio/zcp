@@ -114,12 +114,12 @@ Landed and green (`go test ./... -short`, `make lint-fast`, `make lint-local`):
   cleanup). Genuinely new: today nothing records which commit runs where (P1).
 - **Slice 2a — repo extras** (e34098fb..d689ec4c). `ServiceMeta.Repo{BaselineAppVersion,
   Provenance}`, adopt tags `zcp/baseline/<appVersionId>`, `.git/info/exclude` seeding by
-  runtime class, `repo:` block in the status envelope, provision StepChecker. **Written
-  without knowing GLC-1 exists; it duplicated the init.** A consolidation builder is
-  in flight (worktree `agent-a259f013f4d44ce3a`): delete `git.InitRepo`/scaffold commit
-  and `ops.EnsureScaffoldRepo`, move exclude seeding into `GitEnsureRepoHeadCommand`,
-  fold §4.10 into the GLC table (GLC-1 + new GLC-7), keep baseline tag / provenance /
-  envelope. If that worktree is gone, do this consolidation first.
+  runtime class, `repo:` block in the status envelope, provision StepChecker. Written
+  without knowing GLC-1 exists and first duplicated the init; **consolidated** (commits
+  a6d47f94..70c5f92b): `git.InitRepo`/scaffold commit and `ops.EnsureScaffoldRepo`
+  deleted, exclude seeding is a fragment inside `GitEnsureRepoHeadCommand` (threaded by
+  runtime class through every caller), §4.10 folded into the GLC table (GLC-1 + new
+  GLC-7). G4 `dev-self-deploy-keeps-repo` scenario written (not run).
 - **Eval**: scenarios written, NOT run: `deploy-from-commit-stage` (G3),
   `rollback-stage-from-ledger` (G5, preseed `deploy-from-commit-twice.sh` unverified),
   `repo-always-bootstrap` (G1), `repo-always-adopt-baseline` (G2); table G in
@@ -164,7 +164,7 @@ stays; new G cells are added.
 ## 7. How to continue safely
 
 1. Read §3's spec sections first. Then `git log main..feat/git-foundation`.
-2. Merge the 2a consolidation worktree if it is still there; otherwise redo it (§4).
+2. Nothing is in flight; all worktrees are merged.
 3. Run the G1/G3 scenarios once on the farm against a branch candidate
    (`farm push --candidate`, `--scenarios eval/behavioral/scenarios`, `farm run --set
    <ids>`) before adding any further code — nothing on the branch has been run live.
