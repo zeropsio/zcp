@@ -103,6 +103,20 @@ func RegisterDeployLocal(
 			if blocked := validateAppVersionParam(input.AppVersion); blocked != nil {
 				return blocked, nil, nil
 			}
+			// A non-"latest" value is an appVersion id: rollback
+			// (docs/spec-workflows.md §12.6 GF-8), not the R2 newest-only
+			// recovery below.
+			if input.AppVersion != appVersionLatest {
+				result, blocked := runAppVersionRollback(ctx, client, projectID, stateDir, input.TargetService, input.AppVersion)
+				if blocked != nil {
+					return blocked, nil, nil
+				}
+				return jsonResult(deployLocalResponse{
+					DeployResult:     result,
+					WorkSessionState: sessionAnnotations(stateDir),
+					Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
+				}), nil, nil
+			}
 			result, blocked := runAppVersionRedeploy(ctx, client, httpClient, projectID, stateDir, input.TargetService, input.Setup, "local")
 			if blocked != nil {
 				return blocked, nil, nil

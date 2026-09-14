@@ -90,7 +90,14 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// workflows.md §4.5): deploy an exact git commit instead of the
 		// working tree, recorded in refs/zcp/*. Deliberate new field —
 		// optional, backward-compatible (omit → today's path unchanged).
-		"zerops_deploy": 2307,
+		//
+		// Raised +55 (2307→2362) for the `appVersion` description rewrite
+		// (docs/spec-workflows.md §12.6 GF-8): it now also documents an
+		// appVersion id re-activating a recorded BACKUP artifact (rollback,
+		// no build), not just "latest". Same field, wider contract — a
+		// correctness fix (tell == what the field now accepts), not new
+		// surface.
+		"zerops_deploy": 2362,
 		// Raised +62 (2484→2546) for the get-action contract change: get now
 		// returns env var KEYS + ${host_var} refs, NOT values, so the agent
 		// references $VAR by name instead of pasting a credential literal. The

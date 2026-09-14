@@ -233,6 +233,11 @@ const (
 	BuildStatusDeployFailed         = "DEPLOY_FAILED"
 	BuildStatusPreparingRuntimeFail = "PREPARING_RUNTIME_FAILED"
 	BuildStatusDeployed             = "DEPLOYED"
+	// BuildStatusBackup is the appVersion status the PREVIOUSLY active
+	// version flips to once a newer one activates (live-verified
+	// 2026-09-14, docs/spec-workflows.md §8 R2 / §12.6 GF-8) — the only
+	// status ops.ReactivateAppVersion accepts as a rollback target.
+	BuildStatusBackup = "BACKUP"
 
 	ServiceStatusNew           = "NEW"
 	ServiceStatusActive        = "ACTIVE"

@@ -891,9 +891,12 @@ Both ref writes happen via `git update-ref` / `git commit-tree` only —
 no working-tree change, no branch moves, `HEAD` never touched. A ledger
 write failure downgrades to a response warning; it never fails an
 already-succeeded build. `refs/zcp/*` is never pruned (`spec-mate.md`
-§6). A rollback is an ordinary deploy-from-commit call naming an earlier
-sha read back from `refs/zcp/deploy/*` — there is no separate rollback
-primitive in this slice.
+§6). Rollback is `zerops_deploy targetService=<h> appVersion=<id>`
+re-activating a recorded appVersion in place, no build (§8 R2 / §12.6
+GF-8) — the id and its commit are read back from `refs/zcp/deploy/*`.
+Deploying an earlier sha via deploy-from-commit is the fallback once no
+matching `BACKUP` appVersion remains (a NEW build), and is named as such
+in the response.
 
 ---
 
@@ -1162,7 +1165,7 @@ visibility.
 | ID | Invariant |
 |----|-----------|
 | R1 | One classification, many readers. `ops.RecoveryState(hostname)` yields `shape ∈ {healthy, fresh-misconfigured, failed-build, failed-init, stuck-building}` plus evidence, from `LatestFailedAppVersionContext` + `HasPriorDeployAttempt` + `ProjectActivity`. `fresh-misconfigured` = `READY_TO_DEPLOY` with no deploy attempt ever (imported without `startWithoutCode` and without `buildFromGit`). Every recovery reader — verify/provision `Recovery` pointers, the `zerops_import override` gate payload, atom selection — consumes it; none re-derives a recovery branch from `service.status` alone. |
-| R2 | The gate's `next` is always the read-only diagnosis (`zerops_events`). What follows (`then`) depends on the shape AND on what exists to recover: `failed-init` with a built artifact and no container (a never-activated buildFromGit service — `DEPLOY_FAILED` appVersion, `READY_TO_DEPLOY`, `activeAppVersion=null`) ⇒ `zerops_deploy targetService=<h> appVersion=latest`, which re-deploys the built artifact through `PUT /app-version/{id}/deploy` (live-verified: same appVersion goes ACTIVE in ~25 s; the call must carry the zerops.yaml text + setup name, the platform does not reuse the stored yaml); any `failed-*` shape with a container ⇒ `zerops_deploy targetService=<h>` (never gated; the prior appVersion keeps serving). The ready-made `zerops_import override=true` retry is emitted only where nothing deployed can be lost and no in-place path exists: `fresh-misconfigured`, and `failed-build`/`stuck-building` on a git-provisioned service with no activated version (the platform has no public-git rebuild route — `build-and-deploy` only builds a freshly uploaded appVersion). |
+| R2 | The gate's `next` is always the read-only diagnosis (`zerops_events`). What follows (`then`) depends on the shape AND on what exists to recover: `failed-init` with a built artifact and no container (a never-activated buildFromGit service — `DEPLOY_FAILED` appVersion, `READY_TO_DEPLOY`, `activeAppVersion=null`) ⇒ `zerops_deploy targetService=<h> appVersion=latest`, which re-deploys the built artifact through `PUT /app-version/{id}/deploy` (live-verified: same appVersion goes ACTIVE in ~25 s; the call must carry the zerops.yaml text + setup name, the platform does not reuse the stored yaml); any `failed-*` shape with a container ⇒ `zerops_deploy targetService=<h>` (never gated; the prior appVersion keeps serving). The ready-made `zerops_import override=true` retry is emitted only where nothing deployed can be lost and no in-place path exists: `fresh-misconfigured`, and `failed-build`/`stuck-building` on a git-provisioned service with no activated version (the platform has no public-git rebuild route — `build-and-deploy` only builds a freshly uploaded appVersion). Rollback (`appVersion=<id>`, GF-8 §12.6) generalises this to any RECORDED appVersion id, not just the newest: live-verified 2026-09-14, the previously-active version flips to `BACKUP` once a newer one activates, `PUT /app-version/{id}/deploy` against a `BACKUP` id re-activates it (`stack.deploy.backup`, no build, the request body is ignored) in ~50-70s, and the same call against the CURRENTLY ACTIVE id 400s `appVersionInvalidStatus`. |
 | R3 | Atom selection carries a `deployHistory` axis (`none` · `failed` · `ok`, from R1). An atom whose body names `override=true` must declare `deployHistory: [none]` (`TestAtomAuthoringLint`), so override-first advice can never render on a service with deploy history. |
 
 ### Git Lifecycle (container env)
@@ -1552,15 +1555,13 @@ adding code.
 | GF-5 | Evidence never overclaims. No tag ⇒ "source unknown"; a working-tree deploy ⇒ `dirty:true`; a baseline ⇒ `snapshot` or `existing`, never parity with the running appVersion; the platform's active appVersion is the only "what runs". | §4.9, GLC-7 |
 | GF-6 | Production is delivered only by CI from an origin, from a clean, pushed HEAD; zcp never self-deploys production. | P-LP-10/11 — unchanged |
 | GF-7 | The tracked ref is recorded once per target and read by the push default, the CI template and the launch gate. | OPEN — today `main` in three places (§12.1) |
-| GF-8 | Rollback is the re-activation of a recorded appVersion (`PUT /app-version/{id}/deploy`, the R2 path generalised from `latest` to any recorded id) with no build; deploying an older commit is a NEW build and is offered as the fallback, named as such. | OPEN — live proof of re-activating a superseded appVersion pending (2026-09-14) |
+| GF-8 | Rollback is the re-activation of a recorded appVersion (`PUT /app-version/{id}/deploy`, the R2 path generalised from `latest` to any recorded id) with no build; deploying an older commit is a NEW build and is offered as the fallback, named as such. | built — `ops.ReactivateAppVersion` (`TestReactivateAppVersion_*`), `tools.runAppVersionRollback` (`TestDeploySSH_AppVersionID_*`) |
 | GF-9 | Evidence tags reach the origin with the push (`refs/tags/zcp/deploy/*` alongside the tracked ref), so a second checkout and the mate see one deploy history; the version-name convention (GF-10) is the platform-side copy. | OPEN — decide after GF-8 and the Gitea proof |
 | GF-10 | Every zcp-driven build passes `--version-name <sha>` (sha deploys do; working-tree deploys and CI templates OPEN), so `SearchAppVersions.name` is a platform-side breadcrumb even when no tag is reachable. | OPEN |
 
 ### 12.7 Open items and owners
 
 - GF-7 tracked ref — build after the branch's first farm pass (G1/G3/G4).
-- GF-8 rollback — settle from the live verification; then rewrite scenario G5 to assert the
-  re-activated appVersion id and the absence of a `stack.build` process.
 - GF-9/GF-10 evidence sharing — one decision, after GF-8 and the Gitea proof.
 - Gitea Actions as CI (§12.5) — live verification decides whether a relay exists at all.
 - Managed Gitea: recipe (verified shape: `ubuntu@24.04`, `HOME`, `app.ini` before
