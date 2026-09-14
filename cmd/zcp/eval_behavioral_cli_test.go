@@ -100,17 +100,41 @@ func buildZCPBinary(t *testing.T) string {
 // deterministic close/manifest failure even though the task result already
 // froze "passed" before the retrospective ran (docs/spec-testing-
 // architecture.md §10.2 "only after step 5 does the optional retrospective
-// run").
+// run"). When invoked with --mcp-config, it also launches the configured
+// "zerops" MCP server (the candidate binary's `serve`) in the background,
+// mirroring what the real `claude` CLI does on startup — §10.4 "Observed
+// process identity" needs a real candidate `serve` process alive under the
+// capture window's env for the runner's /proc poll to find, which a claude
+// stub that never starts it can never provide. The script then sleeps past
+// the runner's identity poll interval so the poll has a chance to observe
+// the server before this invocation returns; the server's stdin comes from a
+// `sleep`-fed pipe, and the script `wait`s for it before exiting, so the
+// server has already received EOF and flushed its capture file — never left
+// running past this invocation for the capture window to close over an
+// unflushed file.
 func writeFakeClaude(t *testing.T, dir string) string {
 	t.Helper()
 	script := `#!/bin/sh
 set -e
 IS_RESUME=0
+MCP_CONFIG=""
+PREV=""
 for a in "$@"; do
   if [ "$a" = "--resume" ]; then IS_RESUME=1; fi
+  if [ "$PREV" = "--mcp-config" ]; then MCP_CONFIG="$a"; fi
+  PREV="$a"
 done
 if [ "$IS_RESUME" = "1" ] && [ -n "$ZCP_EVAL_FAKE_CLAUDE_BREAK_CAPTURE" ] && [ -n "$ZCP_CAPTURE_SESSION_DIR" ]; then
   chmod 0500 "$ZCP_CAPTURE_SESSION_DIR"
+fi
+if [ -n "$MCP_CONFIG" ] && [ -f "$MCP_CONFIG" ]; then
+  MCP_CMD=$(grep -o '"command": *"[^"]*"' "$MCP_CONFIG" | head -1 | sed 's/.*"command": *"//;s/"$//')
+  if [ -n "$MCP_CMD" ]; then
+    (sleep 1) | env projectId="` + fakeProjectID + `" serviceId="` + fakeZCPServiceID + `" "$MCP_CMD" serve >/dev/null 2>&1 &
+    MCP_JOB=$!
+    sleep 0.3
+    wait "$MCP_JOB"
+  fi
 fi
 SESSION_ID="fake-session-$$"
 printf '{"type":"system","subtype":"init","session_id":"%s"}\n' "$SESSION_ID"
@@ -144,6 +168,8 @@ type fakeRequest struct {
 // fakeZeropsServer is a loopback httptest server answering exactly the REST
 // paths the real platform.ZeropsClient hits in the CLI acceptance path:
 // GET /api/rest/public/user/info, POST /api/rest/public/project/search, GET
+// /api/rest/public/project/{id} (the candidate `serve` process's own
+// runtime-context lookup on Linux CLI acceptance runs), GET
 // /api/rest/public/project/{id}/service-stack (direct), POST
 // /api/rest/public/service-stack/search (Elasticsearch-backed, used by
 // SeedEmpty/CleanupProject), GET /api/rest/public/project/{id}/process
@@ -250,6 +276,10 @@ func (f *fakeZeropsServer) handle(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/project/search":
 		fmt.Fprintf(w, `{"limit":100,"offset":0,"totalHits":1,"items":[{"id":%q,"clientId":%q,"name":"cli-test-project","status":"ACTIVE"}]}`,
 			fakeProjectID, fakeClientID)
+		return
+
+	case r.Method == http.MethodGet && r.URL.Path == "/api/rest/public/project/"+fakeProjectID:
+		fmt.Fprintf(w, `{"id":%q,"name":"cli-test-project","status":"ACTIVE"}`, fakeProjectID)
 		return
 
 	case r.Method == http.MethodGet && r.URL.Path == "/api/rest/public/project/"+fakeProjectID+"/service-stack":
@@ -888,7 +918,14 @@ func TestExecutionBinding_WrongProject_RefusedBeforeRunner(t *testing.T) {
 // Both branches are real assertions (runtime.GOOS decides which), not a
 // skip.
 func TestBehavioralCLI_Bound_RequiredRefusesOnUnsupportedOS_OrAcceptsOnLinux(t *testing.T) {
-	h := newCLIHarness(t, "")
+	// appStatus "ACTIVE" + hideAppForFirstDirectCall: the scenario's
+	// required check (hostname app ACTIVE) must actually be able to pass —
+	// on Linux, exit 0 requires a passed task AND accepted process
+	// identity, not process identity alone (behavioralAccepted checks task
+	// result first). An absent "app" would fail the task regardless of
+	// platform and made the "OrAcceptsOnLinux" branch untestable.
+	h := newCLIHarness(t, "ACTIVE")
+	h.server.hideAppForFirstDirectCall()
 	scenarioDir := t.TempDir()
 	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-bound-identity", "required")
 

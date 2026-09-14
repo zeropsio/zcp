@@ -837,17 +837,20 @@ func TestWrapper_RedactionFailure_BlocksEvidenceAndCompletion(t *testing.T) {
 	}
 	h := newWrapperHarness(t)
 
-	// On macOS the wrapper also uses perl to start the evaluator in a new
-	// session. Delegate that invocation to the real binary and fail only the
-	// in-place redaction invocation, so the fixture definitely writes a secret
-	// before sanitization fails. Linux normally takes the setsid(1) branch and
-	// reaches only the failing -pi invocation here.
+	// The wrapper also uses perl for several things that are not the
+	// redaction pass under test: on macOS to start the evaluator in a new
+	// session (perl -e 'use POSIX qw(setsid) ...'), and on Linux to re-exec
+	// itself as a child subreaper (exec_as_child_subreaper's perl -e
+	// syscall(...) — every Linux run takes this path before anything else
+	// runs, since Darwin has no PR_SET_CHILD_SUBREAPER). Delegate every
+	// invocation to the real binary except the redaction pass's `-pi`, so
+	// the fixture definitely writes a secret before sanitization fails.
 	binDir := t.TempDir()
 	perlStub := filepath.Join(binDir, "perl")
 	stub := "#!/bin/sh\n" +
 		"case \"$*\" in\n" +
-		"*'use POSIX qw(setsid)'*) exec " + shQuote(realPerl) + " \"$@\" ;;\n" +
-		"*) exit 97 ;;\n" +
+		"*-pi*) exit 97 ;;\n" +
+		"*) exec " + shQuote(realPerl) + " \"$@\" ;;\n" +
 		"esac\n"
 	if err := os.WriteFile(perlStub, []byte(stub), 0o755); err != nil {
 		t.Fatalf("write failing perl stub: %v", err)
