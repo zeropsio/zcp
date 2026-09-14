@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -84,19 +85,23 @@ const deployStrategyAppVersionLabel = "appversion"
 // see validateAppVersionParam.
 const appVersionLatest = "latest"
 
-// validateAppVersionParam rejects any appVersion value other than "latest".
-// The input field is shaped to admit a specific appVersion id in the
-// future (docs/spec-workflows.md §8 R2 design), but ops.RedeployLastAppVersion
-// only ever targets the newest appVersion today — accepting an arbitrary id
-// here would silently redeploy the newest regardless of what was asked for.
+// validateAppVersionParam accepts "latest" (R2 in-place recovery of the
+// newest appVersion, runAppVersionRedeploy) or a specific appVersion id —
+// any non-empty value with no whitespace (rollback to that recorded
+// appVersion, docs/spec-workflows.md §12.6 GF-8, runAppVersionRollback).
+// Everything else (whitespace, e.g. a hostname pasted by mistake) is
+// rejected before either op runs.
 func validateAppVersionParam(appVersion string) *mcp.CallToolResult {
 	if appVersion == appVersionLatest {
 		return nil
 	}
+	if appVersion != "" && !strings.ContainsAny(appVersion, " \t\n") {
+		return nil
+	}
 	return convertError(platform.NewPlatformError(
 		platform.ErrInvalidParameter,
-		fmt.Sprintf("appVersion=%q is not supported — only \"latest\" is", appVersion),
-		"Omit appVersion for a normal deploy, or pass appVersion=\"latest\" to re-deploy the target's already-built artifact in place",
+		fmt.Sprintf("appVersion=%q is not a valid appVersion id", appVersion),
+		"Pass appVersion=\"latest\" to re-deploy the target's already-built artifact in place, or an appVersion id (from zerops_events / the status envelope's deploy attempts) to roll back to it",
 	), WithRecoveryStatus())
 }
 
@@ -188,12 +193,14 @@ type DeploySSHInput struct {
 	// BreakGlass overrides the L1 push-delivery redirect for a FUNDAMENTAL
 	// reason (git host outage, recovery). See repoDeliveryRedirect.
 	BreakGlass FlexBool `json:"breakGlass,omitempty"`
-	// AppVersion, when set to "latest", switches this call to the R2
-	// in-place recovery for a never-activated buildFromGit service (docs/
-	// spec-workflows.md §8 R2): the target's already-built appVersion is
-	// RE-DEPLOYED via the platform's PUT /app-version/{id}/deploy — no
-	// rebuild, no re-import, no source resolution. Only "latest" is
-	// supported today.
+	// AppVersion switches this call to a source-free path against the
+	// platform's PUT /app-version/{id}/deploy — no rebuild, no re-import,
+	// no source resolution. "latest" is the R2 in-place recovery for a
+	// never-activated buildFromGit service (docs/spec-workflows.md §8 R2):
+	// the target's newest (DEPLOY_FAILED) appVersion is re-deployed. Any
+	// other value is a specific appVersion id: the GF-8 rollback
+	// (§12.6) — that recorded appVersion is re-activated, which only
+	// succeeds when it is currently BACKUP.
 	AppVersion string `json:"appVersion,omitempty"`
 	// SHA, when set, deploys the EXACT git commit instead of the current
 	// working tree: resolved via `git rev-parse` inside the SOURCE
@@ -213,7 +220,7 @@ func deploySSHInputSchema() *jsonschema.Schema {
 		"remoteUrl":     {Type: "string", Description: "Git remote URL (HTTPS). Required for strategy=git-push on first push. Omit on subsequent pushes if remote already configured."},
 		"branch":        {Type: "string", Description: "Git branch name for git-push. Default: main."},
 		"breakGlass":    {Type: "boolean", Description: "Override for the push-delivery redirect: a pair with git-push configured delivers via push (the repo is the source of truth); a direct deploy is refused with the recommended push call unless breakGlass=true. Reserve for fundamental reasons (git host outage, recovery) — the response then flags that the container is ahead of the repo."},
-		"appVersion":    {Type: "string", Description: "Set to 'latest' to re-deploy the already-built appVersion in place, skipping source resolution — recovery for a never-activated buildFromGit service with no container. Only 'latest' is supported."},
+		"appVersion":    {Type: "string", Description: "'latest' re-deploys the newest built artifact in place (recovery). An appVersion id of the target re-activates that BACKUP artifact without a build (rollback, ~1 min) — ids and statuses come from zerops_events / the status envelope's deploy attempts."},
 		"sha":           {Type: "string", Description: "Deploy this exact git commit instead of the working tree. Records it in the source container's refs/zcp/* ledger."},
 	}, "targetService")
 }
@@ -228,6 +235,8 @@ func deploySSHInputSchema() *jsonschema.Schema {
 // a recipe session whose Plan owns the deploy target satisfies the
 // adoption gate so cross-deploys (e.g. `apidev → apistage`) succeed
 // before any bootstrap workflow runs. May be nil in tests.
+//
+//nolint:maintidx // linear dispatch chain (appVersion rollback/R2 → strategy validate → adoption gate → push redirect → pre-flight → git-push/zcli routes); the maintainability index is dominated by Halstead volume (sequential branches + response plumbing), not nested control flow.
 func RegisterDeploySSH(
 	srv *mcp.Server,
 	client platform.Client,
@@ -268,6 +277,20 @@ func RegisterDeploySSH(
 		if input.AppVersion != "" {
 			if blocked := validateAppVersionParam(input.AppVersion); blocked != nil {
 				return blocked, nil, nil
+			}
+			// A non-"latest" value is an appVersion id: rollback
+			// (docs/spec-workflows.md §12.6 GF-8), not the R2 newest-only
+			// recovery below.
+			if input.AppVersion != appVersionLatest {
+				result, blocked := runAppVersionRollback(ctx, client, projectID, stateDir, input.TargetService, input.AppVersion)
+				if blocked != nil {
+					return blocked, nil, nil
+				}
+				return jsonResult(deploySSHResponse{
+					DeployResult:     result,
+					WorkSessionState: sessionAnnotations(stateDir),
+					Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
+				}), nil, nil
 			}
 			result, blocked := runAppVersionRedeploy(ctx, client, httpClient, projectID, stateDir, input.TargetService, input.Setup, "ssh")
 			if blocked != nil {
