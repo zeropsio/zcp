@@ -1528,9 +1528,9 @@ target, and leave an appVersion whose version name is that revision's sha.** Sha
 |---|---|---|
 | GitHub Actions running `zcli push` with `ZEROPS_TOKEN_PROD` (§10) / `BuildIntegration=actions` | built | version name if the workflow passes `--version-name` (OPEN: today it does not) |
 | GitLab webhook → platform pulls (`BuildIntegration=webhook`) | built | none — the appVersion DTO carries no sha (verified 2026-09-14); source is unknown to zcp unless the platform adds it |
-| Gitea Actions (act_runner) running `zcli push` | live proof pending (2026-09-14) | as GitHub Actions |
+| Gitea Actions (act_runner, HOST mode, same container as Gitea) running `zcli push --version-name $GITHUB_SHA` with a project-scoped integration token from a repo secret | **verified live 2026-09-14**: push → ACTIVE in 83–105 s, twice, the second after a Gitea service restart; `zcli push` blocks until the pipeline ends so job status = deploy status; no node on the host (plain `git clone` + `git checkout $GITHUB_SHA`, never `actions/checkout`); pass the token as step `env`, never `zcli login` (it persists `cli.data` on the runner host); persistence across a REDEPLOY of the Gitea service untested (no volume in the probe) | version name = sha, readable via `SearchAppVersions` |
 | user's own CI outside zcp | supported, opaque | unknown unless it sets the version name |
-| zcp-owned webhook relay | NOT planned unless the Gitea proof fails — an extra service with credentials, event handling and concurrency is justified only by a proven missing capability | — |
+| zcp-owned webhook relay | **not needed** — the Gitea proof passed; removed from the plan | — |
 
 Platform limits that bound this table (verified 2026-09-14, `platform-verifier` memory):
 `buildFromGit` accepts only github.com / gitlab.com; webhook receivers exist only for those
