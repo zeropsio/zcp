@@ -2,6 +2,8 @@ package git
 
 import (
 	"context"
+	"errors"
+	"regexp"
 	"strings"
 )
 
@@ -15,8 +17,20 @@ func ResolveSHA(ctx context.Context, r Runner, dir, sha string) (string, error) 
 	if err != nil {
 		return "", wrapErr("resolve sha "+sha, err, stderr)
 	}
-	return strings.TrimSpace(out), nil
+	resolved := strings.TrimSpace(out)
+	// rev-parse prints warnings (e.g. "refname … is ambiguous") on the same
+	// combined stream over SSH; accept nothing but a full commit hash so a
+	// warning never becomes part of a tag name or --version-name.
+	if !fullSHA.MatchString(resolved) {
+		return "", wrapErr("resolve sha "+sha, errNotACommitHash, out)
+	}
+	return resolved, nil
 }
+
+// fullSHA is the only shape ResolveSHA hands back: 7–40 lowercase hex chars (git prints 40; fixtures may abbreviate).
+var fullSHA = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+
+var errNotACommitHash = errors.New("git rev-parse did not print a single full commit hash")
 
 // HeadStatus reads the SOURCE's current HEAD sha and whether its working
 // tree is dirty, via one combined `git rev-parse --verify HEAD && git

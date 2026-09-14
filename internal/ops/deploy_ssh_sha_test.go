@@ -21,7 +21,7 @@ func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.
 			{ID: "svc-2", Name: "app"},
 		})
 	ssh := &mockSSHDeployer{results: []sshResult{
-		{output: []byte("fullsha1234567\n")}, // resolve
+		{output: []byte("f0115ba1234567\n")}, // resolve
 		{output: []byte("oldsha7654321\t" + // LastDeployOnRecord (previous on record)
 			`{"sha":"oldsha7654321","appVersionId":"av-0","target":"app","project":"proj-1","at":"2026-09-14T11:00:00Z"}` + "\n")},
 		{output: []byte(validCommitZeropsYaml)},  // git show <sha>:zerops.yaml
@@ -37,8 +37,8 @@ func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.SHA != "fullsha1234567" {
-		t.Errorf("result.SHA = %q, want fullsha1234567", result.SHA)
+	if result.SHA != "f0115ba1234567" {
+		t.Errorf("result.SHA = %q, want f0115ba1234567", result.SHA)
 	}
 	if result.PreviousOnRecord != "oldsha7654321" {
 		t.Errorf("result.PreviousOnRecord = %q, want oldsha7654321", result.PreviousOnRecord)
@@ -59,8 +59,8 @@ func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.
 	}
 	// The commit's zerops.yaml is validated, NEVER the SSHFS mount — the
 	// mount may be missing or stale relative to the deployed commit.
-	if !strings.Contains(ssh.calls[2].command, "git show") || !strings.Contains(ssh.calls[2].command, "'fullsha1234567:zerops.yaml'") {
-		t.Errorf("call[2] = %q, want git show 'fullsha1234567:zerops.yaml'", ssh.calls[2].command)
+	if !strings.Contains(ssh.calls[2].command, "git show") || !strings.Contains(ssh.calls[2].command, "'f0115ba1234567:zerops.yaml'") {
+		t.Errorf("call[2] = %q, want git show 'f0115ba1234567:zerops.yaml'", ssh.calls[2].command)
 	}
 	if !strings.Contains(ssh.calls[3].command, "mktemp -d") {
 		t.Errorf("call[3] = %q, want mktemp -d", ssh.calls[3].command)
@@ -72,8 +72,8 @@ func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.
 	if !strings.Contains(pushCmd, "--no-git") {
 		t.Errorf("push command = %q, want --no-git", pushCmd)
 	}
-	if !strings.Contains(pushCmd, "--version-name 'fullsha1234567'") {
-		t.Errorf("push command = %q, want --version-name 'fullsha1234567'", pushCmd)
+	if !strings.Contains(pushCmd, "--version-name 'f0115ba1234567'") {
+		t.Errorf("push command = %q, want --version-name 'f0115ba1234567'", pushCmd)
 	}
 	if !strings.Contains(pushCmd, "cd '/tmp/zcp-extract-1'") {
 		t.Errorf("push command = %q, want to cd into the extracted dir", pushCmd)
@@ -103,9 +103,9 @@ func TestDeploySSH_WithSHA_CommitMissingZeropsYaml_ReturnsErrorBeforeExtraction(
 			{ID: "svc-2", Name: "app"},
 		})
 	ssh := &mockSSHDeployer{results: []sshResult{
-		{output: []byte("fullsha1234567\n")}, // resolve
+		{output: []byte("f0115ba1234567\n")}, // resolve
 		{output: []byte("")},                 // LastDeployOnRecord: nothing on record
-		{output: []byte("fatal: path 'zerops.yaml' does not exist in 'fullsha1234567'"), err: errTestNoZeropsYaml}, // git show fails
+		{output: []byte("fatal: path 'zerops.yaml' does not exist in 'f0115ba1234567'"), err: errTestNoZeropsYaml}, // git show fails
 	}}
 	authInfo := testAuthInfo()
 
@@ -121,7 +121,7 @@ func TestDeploySSH_WithSHA_CommitMissingZeropsYaml_ReturnsErrorBeforeExtraction(
 	if pe.Code != platform.ErrInvalidParameter {
 		t.Errorf("code = %s, want %s", pe.Code, platform.ErrInvalidParameter)
 	}
-	if !strings.Contains(pe.Message, "fullshaa") && !strings.Contains(pe.Message, "no zerops.yaml") {
+	if !strings.Contains(pe.Message, "f0115ba") && !strings.Contains(pe.Message, "no zerops.yaml") {
 		t.Errorf("message = %q, want it to name the commit and the missing file", pe.Message)
 	}
 	if len(ssh.calls) != 3 {
@@ -331,7 +331,7 @@ func TestDeploySSH_WithSHA_AlwaysDirtyFalse(t *testing.T) {
 			{ID: "svc-2", Name: "app"},
 		})
 	ssh := &mockSSHDeployer{results: []sshResult{
-		{output: []byte("fullsha1234567\n")},     // resolve
+		{output: []byte("f0115ba1234567\n")},     // resolve
 		{output: []byte("")},                     // LastDeployOnRecord: nothing on record
 		{output: []byte(validCommitZeropsYaml)},  // git show
 		{output: []byte("/tmp/zcp-extract-1\n")}, // mktemp -d

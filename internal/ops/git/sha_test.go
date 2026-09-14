@@ -1,6 +1,6 @@
 // Tests for: ops/git/sha.go — resolving a sha and materializing its tree
 // into a temp directory, both via a fake Runner recording the exact command
-// sequence (docs/spec-workflows.md §4.5, P3: `git archive <sha> | tar -x`
+// sequence (docs/spec-workflows.md §4.9, P3: `git archive <sha> | tar -x`
 // reproduces exactly what `git ls-files` would push, without a .tgz
 // round-trip through zcli's own archive-output flag).
 package git
@@ -190,5 +190,20 @@ func TestExtractCommitToTemp_ArchiveFails_ReturnsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not a valid object name") {
 		t.Errorf("error = %v, want it to surface git stderr", err)
+	}
+}
+
+// TestResolveSHA_WarningLineInOutput_Rejected: over SSH rev-parse's
+// warnings share the combined stream with the hash; anything but a bare
+// hex hash is refused so a warning never becomes part of a tag name or
+// --version-name.
+func TestResolveSHA_WarningLineInOutput_Rejected(t *testing.T) {
+	r := &fakeRunner{results: []fakeResult{{stdout: "warning: refname 'main' is ambiguous.\nabc123abc123\n"}}}
+	_, err := ResolveSHA(context.Background(), r, "/var/www", "main")
+	if err == nil {
+		t.Fatal("expected an error for non-hash rev-parse output")
+	}
+	if !strings.Contains(err.Error(), "did not print a single full commit hash") {
+		t.Errorf("error = %q, want it to name the malformed output", err)
 	}
 }

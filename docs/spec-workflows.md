@@ -920,11 +920,9 @@ an already-succeeded build.
 ledger tag only maps an appVersionId → the commit it was built from —
 "what runs" is a JOIN: the platform's active appVersion for a target,
 looked up against the tag of that name in the source repo. Nothing in
-ZCP moves a pointer to say "this is what's running now" the way the old
-`refs/zcp/env/<host>` ref tried to; that ref is gone (`ops/git.ReadEnvRef`
-no longer exists) because it was keyed by hostname only (colliding
-across two projects sharing a checkout) and went stale the moment an
-ordinary working-tree deploy ran after it. `ops/git.LastDeployOnRecord`
+ZCP moves a pointer to say "this is what's running now": a per-hostname
+pointer would collide across two projects sharing a checkout and go stale
+the moment an ordinary working-tree deploy ran after it. `ops/git.LastDeployOnRecord`
 reads the newest tag under `zcp/deploy/<projectId>/<target>` (by tagger
 date: `git for-each-ref --sort=-taggerdate --count=1
 --format='%(*objectname)%09%(contents:subject)'

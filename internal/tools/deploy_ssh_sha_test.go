@@ -85,7 +85,7 @@ func (s *stubSSHSHA) ExecSSHBackground(_ context.Context, _, _ string, _ time.Du
 func TestDeployTool_SSHMode_WithSHA_ThreadsAndWritesLedger(t *testing.T) {
 	t.Parallel()
 
-	const sha = "fullshaabc1234567"
+	const sha = "f0115ba0abc1234567"
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-1", Name: "builder"},
@@ -171,7 +171,7 @@ func TestDeployTool_SSHMode_NoSHA_NoLedgerCalls(t *testing.T) {
 func TestDeployTool_SSHMode_WithSHA_NoPriorRecord_MessageOmitsPreviousClause(t *testing.T) {
 	t.Parallel()
 
-	const sha = "fullshaabc1234567"
+	const sha = "f0115ba0abc1234567"
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-1", Name: "builder"},
@@ -209,7 +209,7 @@ func TestDeployTool_SSHMode_WithSHA_NoPriorRecord_MessageOmitsPreviousClause(t *
 func TestDeployTool_SSHMode_WithSHA_Redeploy_MessageNamesPreviousOnRecord(t *testing.T) {
 	t.Parallel()
 
-	const sha = "fullshaabc1234567"
+	const sha = "f0115ba0abc1234567"
 	const prevSHA = "oldshadeadbeef0001"
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
@@ -335,3 +335,42 @@ var errStubNoRepo = &stubNoRepoError{}
 type stubNoRepoError struct{}
 
 func (*stubNoRepoError) Error() string { return "fatal: not a git repository" }
+
+// TestDeployTool_SSHMode_SelfDeploy_CleanRepo_MessageKeepsSessionsGoneFact:
+// under GLC-1/2 a container self-deploy always has a repo, so the message
+// takes the "deployed <sha7>" shape — the strategy-agnostic fact that the
+// container was replaced (prior SSH sessions are gone) must survive that
+// shape, not live only in the no-repo default branch.
+func TestDeployTool_SSHMode_SelfDeploy_CleanRepo_MessageKeepsSessionsGoneFact(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app"},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusActive, Sequence: 1},
+		})
+	ssh := &stubSSHSHA{headSHA: "fullhead1234567"}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "app",
+	})
+	if result.IsError {
+		t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
+	}
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	if !strings.Contains(parsed.Message, "deployed "+shortSHA("fullhead1234567")) {
+		t.Errorf("message = %q, want the deployed <sha7> shape", parsed.Message)
+	}
+	if !strings.Contains(parsed.Message, "prior SSH sessions are gone") {
+		t.Errorf("message = %q, want the container-replaced fact appended", parsed.Message)
+	}
+}

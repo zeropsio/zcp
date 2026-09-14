@@ -94,12 +94,14 @@ func pollDeployBuild(
 				short, result.TargetService, record, event.ID)
 		default:
 			result.Message = fmt.Sprintf("Successfully deployed to %s.", result.TargetService)
-			if result.SourceService == result.TargetService {
-				// Strategy-agnostic fact: push-dev replaces the container, which
-				// drops any prior SSH sessions. Agents holding open sessions
-				// from before the deploy need to reconnect.
-				result.Message += " New container replaced old — prior SSH sessions are gone."
-			}
+		}
+		if result.SourceService == result.TargetService {
+			// Strategy-agnostic fact: a self-deploy replaces the container,
+			// which drops any prior SSH sessions. Agents holding open sessions
+			// from before the deploy need to reconnect. Appended after every
+			// message shape — under GLC-1/2 a container self-deploy always
+			// has a repo, so SHA is set and the default branch never runs.
+			result.Message += " New container replaced old — prior SSH sessions are gone."
 		}
 		mode, class := resolveDeployTargetTopology(stateDir, result.TargetService, result.TargetServiceType)
 		result.NextActions = deploySuccessNextActions(result, mode, class)

@@ -14,9 +14,7 @@ import (
 // GLC-7) — the container-side counterpart of ops/git.AdoptBaseline.
 // Returns the topology.RepoProvenance the caller should persist: which
 // AdoptBaseline case ran is exactly what determines it, so this converts
-// git.AdoptResult.Case directly rather than making the caller re-derive it
-// from platform facts (the old ClassifyProvenance placeholder this
-// replaces read no such facts — see docs/spec-workflows.md §8 GLC-7).
+// git.AdoptResult.Case directly (docs/spec-workflows.md §8 GLC-7).
 func AdoptRepoBaseline(ctx context.Context, ssh SSHDeployer, hostname, appVersionID string, class topology.RuntimeClass) (topology.RepoProvenance, error) {
 	if hostname == "" {
 		return "", fmt.Errorf("AdoptRepoBaseline: hostname is required")

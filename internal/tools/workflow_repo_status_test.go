@@ -17,7 +17,7 @@ import (
 func TestAttachRepoStatus_LocalMode_NoOp(t *testing.T) {
 	t.Parallel()
 	services := []workflow.ServiceSnapshot{{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic}}
-	attachRepoStatus(context.Background(), services, &stubSSH{output: []byte("sha1\n")}, runtime.Info{InContainer: false}, t.TempDir())
+	attachRepoStatus(context.Background(), services, &stubSSH{output: []byte("5ba1\n")}, runtime.Info{InContainer: false}, t.TempDir())
 	if services[0].Repo != nil {
 		t.Errorf("Repo = %+v, want nil in local mode (attachRepoStatus is container-only)", services[0].Repo)
 	}
@@ -34,7 +34,7 @@ func TestAttachRepoStatus_NilSSH_NoOp(t *testing.T) {
 
 func TestAttachRepoStatus_Container_DevService_GetsRepoBlock(t *testing.T) {
 	t.Parallel()
-	ssh := &stubSSH{output: []byte("sha-abc\n")}
+	ssh := &stubSSH{output: []byte("5ba0abc\n")}
 	services := []workflow.ServiceSnapshot{{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic}}
 	attachRepoStatus(context.Background(), services, ssh, runtime.Info{InContainer: true}, t.TempDir())
 	if services[0].Repo == nil || !services[0].Repo.Present {
@@ -44,7 +44,7 @@ func TestAttachRepoStatus_Container_DevService_GetsRepoBlock(t *testing.T) {
 
 func TestAttachRepoStatus_Container_ManagedService_StaysNil(t *testing.T) {
 	t.Parallel()
-	ssh := &stubSSH{output: []byte("sha-abc\n")}
+	ssh := &stubSSH{output: []byte("5ba0abc\n")}
 	services := []workflow.ServiceSnapshot{{Hostname: "db", RuntimeClass: topology.RuntimeManaged}}
 	attachRepoStatus(context.Background(), services, ssh, runtime.Info{InContainer: true}, t.TempDir())
 	if services[0].Repo != nil {
@@ -79,7 +79,7 @@ func TestAttachRepoStatus_MetaHasProvenance_AddsProvenanceToRepoBlock(t *testing
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
 
-	ssh := &stubSSH{output: []byte("sha-abc\n")}
+	ssh := &stubSSH{output: []byte("5ba0abc\n")}
 	services := []workflow.ServiceSnapshot{{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic}}
 	attachRepoStatus(context.Background(), services, ssh, runtime.Info{InContainer: true}, stateDir)
 
@@ -99,7 +99,7 @@ func TestAttachRepoStatus_MetaHasProvenance_AddsProvenanceToRepoBlock(t *testing
 // block with no provenance rather than a fabricated one.
 func TestAttachRepoStatus_NoMeta_ProvenanceStaysEmpty(t *testing.T) {
 	t.Parallel()
-	ssh := &stubSSH{output: []byte("sha-abc\n")}
+	ssh := &stubSSH{output: []byte("5ba0abc\n")}
 	services := []workflow.ServiceSnapshot{{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic}}
 	attachRepoStatus(context.Background(), services, ssh, runtime.Info{InContainer: true}, t.TempDir())
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -230,4 +231,52 @@ func statusOrNone(r *ops.DeployResult) string {
 		return "<nil>"
 	}
 	return r.Status
+}
+
+// TestDeployBatch_Deployed_WritesEvidenceTagPerTarget pins evidence parity
+// with the single deploy path (docs/spec-workflows.md §4.9): every
+// successful batch entry leaves a zcp/deploy/<project>/<target>/<appVersion>
+// tag in its source repo, so a later single deploy's LastDeployOnRecord
+// can see it.
+func TestDeployBatch_Deployed_WritesEvidenceTagPerTarget(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-api-src", Name: "apidev"},
+			{ID: "svc-app-src", Name: "appdev"},
+			{ID: "svc-api-tgt", Name: "apistage"},
+			{ID: "svc-app-tgt", Name: "appstage"},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av-api", ServiceStackID: "svc-api-tgt", Status: statusActive, Sequence: 1},
+			{ID: "av-app", ServiceStackID: "svc-app-tgt", Status: statusActive, Sequence: 1},
+		})
+	ssh := &stubSSHSHA{headSHA: "f00dbeef1234567"}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeployBatch(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true}, "", testDeployEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy_batch", map[string]any{
+		"targets": []map[string]any{
+			{"sourceService": "apidev", "targetService": "apistage", "setup": "prod"},
+			{"sourceService": "appdev", "targetService": "appstage", "setup": "prod"},
+		},
+	})
+	if result.IsError {
+		t.Fatalf("tool returned error: %s", getTextContent(t, result))
+	}
+	for _, want := range []string{"zcp/deploy/proj-1/apistage/av-api", "zcp/deploy/proj-1/appstage/av-app"} {
+		found := false
+		for _, c := range ssh.calls {
+			if strings.Contains(c, "tag -a -f -m") && strings.Contains(c, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected a `git tag -a -f -m` call for %s; calls: %v", want, ssh.calls)
+		}
+	}
 }

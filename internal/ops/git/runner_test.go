@@ -2,13 +2,16 @@
 // commands either via local os/exec (LocalRunner) or over SSH (SSHRunner),
 // so the deploy-from-commit resolve/archive/ledger functions work
 // identically for the interactive-local and interactive-container
-// transports (docs/spec-workflows.md §4.5).
+// transports (docs/spec-workflows.md §4.9).
 package git
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // fakeSSHExecutor records every command it was asked to run over SSH and
@@ -122,5 +125,40 @@ func TestMkTempDir_SSHRunner_RunsMktempDCommand(t *testing.T) {
 	}
 	if len(exec.calls) != 1 || !strings.Contains(exec.calls[0].command, "mktemp -d") {
 		t.Fatalf("calls = %+v, want one call containing mktemp -d", exec.calls)
+	}
+}
+
+// TestSSHRunner_Run_SurfacesSSHExecErrorOutputAsStderr pins the CLAUDE.md
+// SSH-error trap at the Runner boundary: SSHExecError.Error() drops git's
+// own reason (it lives in .Output), so the Runner must hand it back as
+// stderr or every wrapErr caller reports a bare "exit status 128".
+func TestSSHRunner_Run_SurfacesSSHExecErrorOutputAsStderr(t *testing.T) {
+	exec := &fakeSSHExecutor{err: &platform.SSHExecError{
+		Hostname: "appdev",
+		Output:   "fatal: bad revision 'nope^{commit}'",
+		Err:      errors.New("exit status 128"),
+	}}
+	r := SSHRunner{Executor: exec, Hostname: "appdev"}
+	_, stderr, err := r.Run(context.Background(), "/var/www", "git rev-parse --verify 'nope^{commit}'")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if stderr != "fatal: bad revision 'nope^{commit}'" {
+		t.Errorf("stderr = %q, want the SSHExecError output", stderr)
+	}
+}
+
+// TestSSHRunner_Run_PlainError_EmptyStderr: a non-SSHExecError (transport
+// failure) carries no remote output — stderr stays empty rather than
+// inventing one.
+func TestSSHRunner_Run_PlainError_EmptyStderr(t *testing.T) {
+	exec := &fakeSSHExecutor{err: errors.New("dial tcp: i/o timeout")}
+	r := SSHRunner{Executor: exec, Hostname: "appdev"}
+	_, stderr, err := r.Run(context.Background(), "", "git --version")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if stderr != "" {
+		t.Errorf("stderr = %q, want empty", stderr)
 	}
 }

@@ -63,7 +63,7 @@ func TestAdoptRepoBaseline_EmptyTreeHEAD_ReturnsSnapshotProvenance(t *testing.T)
 
 func TestReadRepoStatus_HeadResolves_ReturnsPresentWithHeadAndBaseline(t *testing.T) {
 	m := &mockSSHDeployer{results: []sshResult{
-		{output: []byte("sha-abc123\n")},         // rev-parse --verify HEAD^{commit}
+		{output: []byte("5ba0abc123\n")},         // rev-parse --verify HEAD^{commit}
 		{output: []byte("zcp/baseline/av-42\n")}, // tag --points-at HEAD --list
 	}}
 	got, err := ReadRepoStatus(context.Background(), m, "appdev")
@@ -73,8 +73,8 @@ func TestReadRepoStatus_HeadResolves_ReturnsPresentWithHeadAndBaseline(t *testin
 	if !got.Present {
 		t.Error("Present = false, want true")
 	}
-	if got.Head != "sha-abc123" {
-		t.Errorf("Head = %q, want sha-abc123", got.Head)
+	if got.Head != "5ba0abc123" {
+		t.Errorf("Head = %q, want 5ba0abc123", got.Head)
 	}
 	if got.Baseline != "av-42" {
 		t.Errorf("Baseline = %q, want av-42", got.Baseline)

@@ -1,7 +1,8 @@
-// Package git drives the git operations behind zerops_deploy's sha
-// parameter — resolving a commit, materializing it into a temp directory
-// outside the working tree, and recording the deploy-from-commit ledger in
-// refs/zcp/* (docs/spec-workflows.md §4.5).
+// Package git drives the git operations behind zerops_deploy — resolving a
+// commit, materializing it into a temp directory outside the working tree,
+// reading a source's HEAD state, recording each deploy as a zcp/deploy/*
+// annotated tag, and the adopt baseline (docs/spec-workflows.md §4.9, §8
+// GLC-7).
 //
 // Every operation goes through a Runner so the same logic works for both
 // deploy transports: LocalRunner shells out via os/exec when the repo lives
@@ -16,9 +17,12 @@ package git
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // Runner executes script (a shell script, run via `sh -c`) rooted at dir.
@@ -64,10 +68,16 @@ func (r SSHRunner) Run(ctx context.Context, dir, script string) (string, string,
 		cmd = "cd " + shellQuote(dir) + " && " + script
 	}
 	out, err := r.Executor.ExecSSH(ctx, r.Hostname, cmd)
-	// ExecSSH returns combined output; stderr distinguishing detail (if
-	// any) lives on the *platform.SSHExecError itself — callers that need
-	// it wrap via tools.withSSHStderr at the tools layer.
-	return string(out), "", err
+	// ExecSSH returns combined output; on failure git's own reason lives
+	// only on the *platform.SSHExecError (its Error() drops it — CLAUDE.md
+	// trap). Surface it as this Runner's stderr so every wrapErr caller
+	// reports "sha did not resolve: fatal: …" instead of "exit status 128".
+	var stderr string
+	var execErr *platform.SSHExecError
+	if errors.As(err, &execErr) {
+		stderr = execErr.Output
+	}
+	return string(out), stderr, err
 }
 
 // shellQuote wraps s in POSIX single quotes, escaping embedded single
