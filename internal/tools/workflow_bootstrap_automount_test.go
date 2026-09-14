@@ -15,6 +15,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -56,10 +57,19 @@ func (m *mountRecorder) CleanupUnit(_ context.Context, _ string) error     { ret
 type sshRecorder struct {
 	calls     []struct{ Host, Cmd string }
 	errByHost map[string]error
+	// respond, when set, computes this call's (output, error) from the
+	// exact command string — lets a test script a specific probe result
+	// (e.g. AdoptBaseline's HEAD^{tree} probe returning the empty-tree
+	// sha) without simulating a real git process. Checked before
+	// errByHost.
+	respond func(cmd string) ([]byte, error)
 }
 
 func (s *sshRecorder) ExecSSH(_ context.Context, hostname, command string) ([]byte, error) {
 	s.calls = append(s.calls, struct{ Host, Cmd string }{hostname, command})
+	if s.respond != nil {
+		return s.respond(command)
+	}
 	if s.errByHost != nil {
 		if err, ok := s.errByHost[hostname]; ok {
 			return nil, err
@@ -256,6 +266,65 @@ func TestAutoMountTargets_AdoptRoute_TagsBaselineAndPersistsMeta(t *testing.T) {
 	}
 	if loaded.Repo.BaselineAppVersion != "av-99" {
 		t.Errorf("BaselineAppVersion = %q, want av-99", loaded.Repo.BaselineAppVersion)
+	}
+	// sshRecorder's default (unscripted) response is nil/nil for every
+	// command, including AdoptBaseline's HEAD^{tree} probe — an empty
+	// string is not the empty-tree sha, so this drives the "existing"
+	// case (see TestAutoMountTargets_AdoptRoute_EmptyTreeHEAD_Snapshots
+	// below for the empty-tree/snapshot case, scripted explicitly).
+	if loaded.Repo.Provenance != topology.RepoProvenanceExisting {
+		t.Errorf("Provenance = %q, want %q", loaded.Repo.Provenance, topology.RepoProvenanceExisting)
+	}
+}
+
+// AdoptRoute, empty-tree HEAD (G2, docs/spec-workflows.md §8 GLC-7): the
+// canonical flow runs ops.InitServiceGit (GLC-1) before adoptRepoBaseline,
+// which leaves a reachable HEAD over the EMPTY tree on a service that had
+// no git before adopt. AdoptBaseline must not trust that as "content" —
+// it mints a snapshot commit instead, and the persisted provenance must
+// say so.
+func TestAutoMountTargets_AdoptRoute_EmptyTreeHEAD_Snapshots(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	eng := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+	seedAdoptBootstrapPlan(t, eng, []workflow.BootstrapTarget{
+		{Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"}},
+	})
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-app", Name: "appdev", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-100"}},
+	})
+	mounter := &mountRecorder{}
+	ssh := &sshRecorder{respond: func(cmd string) ([]byte, error) {
+		if strings.Contains(cmd, "HEAD^{tree}") {
+			return []byte("4b825dc642cb6eb9a060e54bf8d69288fbee4904\n"), nil
+		}
+		return nil, nil // probeIsRepo/init/seed/add/commit/tag all no-op successfully
+	}}
+
+	autoMountTargets(context.Background(), mock, "proj-1", mounter, ssh, eng)
+
+	wantMsg := "zcp: snapshot of /var/www as found at adopt (appVersion av-100)"
+	found := false
+	for _, c := range ssh.calls {
+		if c.Host == "appdev" && strings.Contains(c.Cmd, wantMsg) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("ssh calls = %+v, want a commit carrying %q", ssh.calls, wantMsg)
+	}
+
+	loaded, err := workflow.ReadServiceMeta(dir, "appdev")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta: %v", err)
+	}
+	if loaded == nil || loaded.Repo == nil {
+		t.Fatal("loaded.Repo is nil, want the persisted baseline marker")
+	}
+	if loaded.Repo.Provenance != topology.RepoProvenanceSnapshot {
+		t.Errorf("Provenance = %q, want %q", loaded.Repo.Provenance, topology.RepoProvenanceSnapshot)
 	}
 }
 

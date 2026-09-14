@@ -12,16 +12,24 @@ import (
 // appVersionID-scoped baseline tag, initializing a repo first when one
 // doesn't yet exist (docs/spec-workflows.md's Git Lifecycle section,
 // GLC-7) — the container-side counterpart of ops/git.AdoptBaseline.
-func AdoptRepoBaseline(ctx context.Context, ssh SSHDeployer, hostname, appVersionID string, class topology.RuntimeClass) (alreadyRepo bool, err error) {
+// Returns the topology.RepoProvenance the caller should persist: which
+// AdoptBaseline case ran is exactly what determines it, so this converts
+// git.AdoptResult.Case directly rather than making the caller re-derive it
+// from platform facts (the old ClassifyProvenance placeholder this
+// replaces read no such facts — see docs/spec-workflows.md §8 GLC-7).
+func AdoptRepoBaseline(ctx context.Context, ssh SSHDeployer, hostname, appVersionID string, class topology.RuntimeClass) (topology.RepoProvenance, error) {
 	if hostname == "" {
-		return false, fmt.Errorf("AdoptRepoBaseline: hostname is required")
+		return "", fmt.Errorf("AdoptRepoBaseline: hostname is required")
 	}
 	runner := git.SSHRunner{Executor: ssh, Hostname: hostname}
-	alreadyRepo, err = git.AdoptBaseline(ctx, runner, defaultWorkingDir, appVersionID, class)
+	result, err := git.AdoptBaseline(ctx, runner, defaultWorkingDir, appVersionID, class)
 	if err != nil {
-		return alreadyRepo, fmt.Errorf("adopt repo baseline on %s: %w", hostname, err)
+		return "", fmt.Errorf("adopt repo baseline on %s: %w", hostname, err)
 	}
-	return alreadyRepo, nil
+	if result.Case == git.AdoptCaseExisting {
+		return topology.RepoProvenanceExisting, nil
+	}
+	return topology.RepoProvenanceSnapshot, nil
 }
 
 // RepoStatus is the live, per-service repo state exposed on the

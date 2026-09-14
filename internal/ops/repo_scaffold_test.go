@@ -20,8 +20,12 @@ func TestAdoptRepoBaseline_EmptyHostname_ReturnsError(t *testing.T) {
 
 func TestAdoptRepoBaseline_RunsOverSSH(t *testing.T) {
 	m := &mockSSHDeployer{output: []byte("")}
-	if _, err := AdoptRepoBaseline(context.Background(), m, "appstage", "av-1", topology.RuntimeDynamic); err != nil {
+	provenance, err := AdoptRepoBaseline(context.Background(), m, "appstage", "av-1", topology.RuntimeDynamic)
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if provenance != topology.RepoProvenanceExisting {
+		t.Errorf("provenance = %q, want %q (a non-empty-tree HEAD^{tree} probe result — the mock's static empty-string output isn't the empty-tree sha)", provenance, topology.RepoProvenanceExisting)
 	}
 	found := false
 	for _, c := range m.calls {
@@ -31,6 +35,29 @@ func TestAdoptRepoBaseline_RunsOverSSH(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("calls = %+v, want one containing the baseline tag", m.calls)
+	}
+}
+
+// TestAdoptRepoBaseline_EmptyTreeHEAD_ReturnsSnapshotProvenance proves the
+// SSH-side wiring converts git.AdoptCaseSnapshot to
+// topology.RepoProvenanceSnapshot — the case docs/spec-workflows.md §8
+// GLC-7 describes for a service adopted with no prior git (GLC-1's marker
+// commit leaves a HEAD over the empty tree).
+func TestAdoptRepoBaseline_EmptyTreeHEAD_ReturnsSnapshotProvenance(t *testing.T) {
+	m := &mockSSHDeployer{results: []sshResult{
+		{output: []byte("")}, // test -d .git -> is a repo
+		{output: []byte("4b825dc642cb6eb9a060e54bf8d69288fbee4904\n")}, // rev-parse HEAD^{tree} -> empty tree
+		{output: []byte("")}, // seed exclude
+		{output: []byte("")}, // git add -A
+		{output: []byte("")}, // commit
+		{output: []byte("")}, // tag
+	}}
+	provenance, err := AdoptRepoBaseline(context.Background(), m, "appdev", "av-2", topology.RuntimeDynamic)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provenance != topology.RepoProvenanceSnapshot {
+		t.Errorf("provenance = %q, want %q", provenance, topology.RepoProvenanceSnapshot)
 	}
 }
 

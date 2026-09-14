@@ -1,30 +1,19 @@
-// Tests for: topology/repo.go — provenance classification for the
-// repo-always adopt baseline (docs/spec-workflows.md §8 GLC-7).
+// Tests for: topology/repo.go — the adopt-baseline provenance vocabulary
+// and tag naming (docs/spec-workflows.md §8 GLC-7).
 package topology
 
 import "testing"
 
-func TestClassifyProvenance_Table(t *testing.T) {
-	tests := []struct {
-		name          string
-		sourceService string
-		deployFiles   []string
-		want          RepoProvenance
-	}{
-		{"sourceService set", "appdev", nil, RepoProvenanceArtifactOnly},
-		{"sourceService set with deployFiles dot", "appdev", []string{"."}, RepoProvenanceArtifactOnly},
-		{"no sourceService, deployFiles unset", "", nil, RepoProvenanceSource},
-		{"no sourceService, deployFiles exactly dot", "", []string{"."}, RepoProvenanceSource},
-		{"no sourceService, deployFiles narrower", "", []string{"dist"}, RepoProvenanceArtifactOnly},
-		{"no sourceService, deployFiles multiple", "", []string{"dist", "public"}, RepoProvenanceArtifactOnly},
+// TestRepoProvenance_Values pins the two provenance strings: they are the
+// wire/on-disk representation (ServiceMeta.Repo.Provenance JSON, the
+// envelope's repo.provenance field) — a value drifting silently would
+// break both without a compile error.
+func TestRepoProvenance_Values(t *testing.T) {
+	if RepoProvenanceSnapshot != "snapshot" {
+		t.Errorf("RepoProvenanceSnapshot = %q, want %q", RepoProvenanceSnapshot, "snapshot")
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := ClassifyProvenance(tt.sourceService, tt.deployFiles)
-			if got != tt.want {
-				t.Errorf("ClassifyProvenance(%q, %v) = %q, want %q", tt.sourceService, tt.deployFiles, got, tt.want)
-			}
-		})
+	if RepoProvenanceExisting != "existing" {
+		t.Errorf("RepoProvenanceExisting = %q, want %q", RepoProvenanceExisting, "existing")
 	}
 }
 

@@ -8,14 +8,15 @@ description: |
   `git init` first only if `/var/www` isn't already a repo, otherwise
   only the tag moves — and persists `ServiceMeta.Repo.BaselineAppVersion`.
 
-  Status `promote: containerCheck` (docs/spec-scenarios.md §9.3 table G):
-  the runner evaluates containerCheck today, but this file does not
-  carry one yet — a follow-up adds a direct
-  `git tag -l 'zcp/baseline/*'` check (asserting it names the service's
-  running appVersion id) and flips the row to `gate`. Today's oracle
-  coverage (expectedServices/unchanged/never) proves adopt completed
-  without touching infra; it does not yet reach into the container to
-  prove the tag itself.
+  This fixture provisions both runtimes via buildFromGit — the platform's
+  build pipeline deploys the compiled artifact to `/var/www`, never the
+  clone's `.git/` history — so at adopt time `ops.InitServiceGit` (GLC-1)
+  is the FIRST thing to ever run `git init` here, leaving a HEAD over the
+  empty tree. AdoptBaseline (GLC-7) therefore always takes the snapshot
+  case for this scenario, never the existing-content case: the two
+  containerChecks below assert exactly that (a non-empty tagged tree, and
+  a commit message starting with `zcp: snapshot`) rather than the
+  existing-HEAD alternative, which this fixture's premise can't produce.
 seed: deployed
 fixture: fixtures/nodejs-standard-deployed.yaml
 tags: [repo-always, adopt-route, standard-mode, git-foundation, node]
@@ -36,6 +37,9 @@ verification:
       status: [ACTIVE]
       type: postgresql@*
   unchanged: [appdev, appstage]
+  containerCheck:
+    - {service: appdev, cmd: "git -C /var/www ls-tree -r \"$(git -C /var/www tag -l 'zcp/baseline/*' | head -1)\" | wc -l", match: "[1-9]"}
+    - {service: appdev, cmd: "git -C /var/www log -1 --format=%s \"$(git -C /var/www tag -l 'zcp/baseline/*' | head -1)\"", match: "^zcp: snapshot"}
   never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
   You already have a working standard pair (appdev/appstage, nodejs@22)

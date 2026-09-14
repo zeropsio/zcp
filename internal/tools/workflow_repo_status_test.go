@@ -17,7 +17,7 @@ import (
 func TestAttachRepoStatus_LocalMode_NoOp(t *testing.T) {
 	t.Parallel()
 	services := []workflow.ServiceSnapshot{{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic}}
-	attachRepoStatus(context.Background(), services, &stubSSH{output: []byte("sha1\n")}, runtime.Info{InContainer: false})
+	attachRepoStatus(context.Background(), services, &stubSSH{output: []byte("sha1\n")}, runtime.Info{InContainer: false}, t.TempDir())
 	if services[0].Repo != nil {
 		t.Errorf("Repo = %+v, want nil in local mode (attachRepoStatus is container-only)", services[0].Repo)
 	}
@@ -26,7 +26,7 @@ func TestAttachRepoStatus_LocalMode_NoOp(t *testing.T) {
 func TestAttachRepoStatus_NilSSH_NoOp(t *testing.T) {
 	t.Parallel()
 	services := []workflow.ServiceSnapshot{{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic}}
-	attachRepoStatus(context.Background(), services, nil, runtime.Info{InContainer: true})
+	attachRepoStatus(context.Background(), services, nil, runtime.Info{InContainer: true}, t.TempDir())
 	if services[0].Repo != nil {
 		t.Errorf("Repo = %+v, want nil without an SSH deployer", services[0].Repo)
 	}
@@ -36,7 +36,7 @@ func TestAttachRepoStatus_Container_DevService_GetsRepoBlock(t *testing.T) {
 	t.Parallel()
 	ssh := &stubSSH{output: []byte("sha-abc\n")}
 	services := []workflow.ServiceSnapshot{{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic}}
-	attachRepoStatus(context.Background(), services, ssh, runtime.Info{InContainer: true})
+	attachRepoStatus(context.Background(), services, ssh, runtime.Info{InContainer: true}, t.TempDir())
 	if services[0].Repo == nil || !services[0].Repo.Present {
 		t.Errorf("Repo = %+v, want Present:true", services[0].Repo)
 	}
@@ -46,7 +46,7 @@ func TestAttachRepoStatus_Container_ManagedService_StaysNil(t *testing.T) {
 	t.Parallel()
 	ssh := &stubSSH{output: []byte("sha-abc\n")}
 	services := []workflow.ServiceSnapshot{{Hostname: "db", RuntimeClass: topology.RuntimeManaged}}
-	attachRepoStatus(context.Background(), services, ssh, runtime.Info{InContainer: true})
+	attachRepoStatus(context.Background(), services, ssh, runtime.Info{InContainer: true}, t.TempDir())
 	if services[0].Repo != nil {
 		t.Errorf("Repo = %+v, want nil for a managed service (no SSH read attempted)", services[0].Repo)
 	}
@@ -56,11 +56,57 @@ func TestAttachRepoStatus_Container_SSHFailure_ReportsNotPresentNoPanic(t *testi
 	t.Parallel()
 	ssh := &stubSSH{err: errWorkflowChecksRepo}
 	services := []workflow.ServiceSnapshot{{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic}}
-	attachRepoStatus(context.Background(), services, ssh, runtime.Info{InContainer: true})
+	attachRepoStatus(context.Background(), services, ssh, runtime.Info{InContainer: true}, t.TempDir())
 	if services[0].Repo == nil {
 		t.Fatal("Repo is nil, want {Present:false} reported for a no-repo-yet service")
 	}
 	if services[0].Repo.Present {
 		t.Error("Repo.Present = true, want false on an SSH failure (no repo yet)")
+	}
+}
+
+// TestAttachRepoStatus_MetaHasProvenance_AddsProvenanceToRepoBlock proves
+// provenance is read from ServiceMeta (a recorded fact), not derived from
+// the live SSH read (docs/spec-workflows.md §8 GLC-7): present/head/
+// baseline stay live even though provenance came from disk.
+func TestAttachRepoStatus_MetaHasProvenance_AddsProvenanceToRepoBlock(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	meta := workflow.NewServiceMeta("proj", topology.PlanModeLocalStage)
+	meta.Hostname = "appdev"
+	meta.SetRepoBaseline("av-1", topology.RepoProvenanceSnapshot)
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	ssh := &stubSSH{output: []byte("sha-abc\n")}
+	services := []workflow.ServiceSnapshot{{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic}}
+	attachRepoStatus(context.Background(), services, ssh, runtime.Info{InContainer: true}, stateDir)
+
+	if services[0].Repo == nil {
+		t.Fatal("Repo is nil, want it populated")
+	}
+	if !services[0].Repo.Present {
+		t.Error("Present = false, want true (still live)")
+	}
+	if services[0].Repo.Provenance != topology.RepoProvenanceSnapshot {
+		t.Errorf("Provenance = %q, want %q", services[0].Repo.Provenance, topology.RepoProvenanceSnapshot)
+	}
+}
+
+// TestAttachRepoStatus_NoMeta_ProvenanceStaysEmpty proves a service with no
+// recorded adopt baseline (bootstrapped fresh, never adopted) gets a repo
+// block with no provenance rather than a fabricated one.
+func TestAttachRepoStatus_NoMeta_ProvenanceStaysEmpty(t *testing.T) {
+	t.Parallel()
+	ssh := &stubSSH{output: []byte("sha-abc\n")}
+	services := []workflow.ServiceSnapshot{{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic}}
+	attachRepoStatus(context.Background(), services, ssh, runtime.Info{InContainer: true}, t.TempDir())
+
+	if services[0].Repo == nil {
+		t.Fatal("Repo is nil, want it populated")
+	}
+	if services[0].Repo.Provenance != "" {
+		t.Errorf("Provenance = %q, want empty (no ServiceMeta.Repo recorded)", services[0].Repo.Provenance)
 	}
 }

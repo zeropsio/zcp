@@ -1319,7 +1319,7 @@ func TestSetRepoBaseline_WriteReadRoundTrip_PersistsBaselineAndProvenance(t *tes
 
 	meta := NewServiceMeta("proj", topology.PlanModeLocalStage)
 	meta.Hostname = "appdev"
-	meta.SetRepoBaseline("av-7", topology.RepoProvenanceArtifactOnly)
+	meta.SetRepoBaseline("av-7", topology.RepoProvenanceExisting)
 
 	if err := WriteServiceMeta(dir, meta); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
@@ -1335,8 +1335,8 @@ func TestSetRepoBaseline_WriteReadRoundTrip_PersistsBaselineAndProvenance(t *tes
 	if loaded.Repo.BaselineAppVersion != "av-7" {
 		t.Errorf("BaselineAppVersion = %q, want av-7", loaded.Repo.BaselineAppVersion)
 	}
-	if loaded.Repo.Provenance != topology.RepoProvenanceArtifactOnly {
-		t.Errorf("Provenance = %q, want artifact-only", loaded.Repo.Provenance)
+	if loaded.Repo.Provenance != topology.RepoProvenanceExisting {
+		t.Errorf("Provenance = %q, want existing", loaded.Repo.Provenance)
 	}
 }
 
