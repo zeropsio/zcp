@@ -214,7 +214,7 @@ func deploySSHInputSchema() *jsonschema.Schema {
 		"branch":        {Type: "string", Description: "Git branch name for git-push. Default: main."},
 		"breakGlass":    {Type: "boolean", Description: "Override for the push-delivery redirect: a pair with git-push configured delivers via push (the repo is the source of truth); a direct deploy is refused with the recommended push call unless breakGlass=true. Reserve for fundamental reasons (git host outage, recovery) — the response then flags that the container is ahead of the repo."},
 		"appVersion":    {Type: "string", Description: "Set to 'latest' to re-deploy the already-built appVersion in place, skipping source resolution — recovery for a never-activated buildFromGit service with no container. Only 'latest' is supported."},
-		"sha":           {Type: "string", Description: "Deploy this exact git commit instead of the working tree. Records it in the source container's refs/zcp/* ledger."},
+		"sha":           {Type: "string", Description: "Deploy this exact git commit instead of the working tree. Recorded as a zcp/deploy/* tag in the source container."},
 	}, "targetService")
 }
 
@@ -352,91 +352,109 @@ func RegisterDeploySSH(
 			return handleGitPush(ctx, client, projectID, sshDeployer, logFetcher, buildProgressCallback(ctx, req), input, stateDir, rtInfo)
 		}
 
-		// Record attempt up front so a crash still leaves a trace.
-		// Strategy is "zcli" for the default zcli-push mechanism; the
-		// git-push branch above takes its own handler (`Strategy: "git-push"`)
-		// before we reach here, so this site is exclusively the default-zcli
-		// case. `record-deploy` writes `Strategy: "record-deploy"` for
-		// externally-stamped deploys.
-		attemptedAt := time.Now().UTC().Format(time.RFC3339)
-		attempt := workflow.DeployAttempt{
-			AttemptedAt: attemptedAt,
-			Setup:       input.Setup,
-			Strategy:    deployStrategyZCLILabel,
-		}
+		return runDeploySSHZCLIPush(ctx, req, client, httpClient, sshDeployer, authInfo, logFetcher, rtInfo, projectID, stateDir, input)
+	})
+}
 
-		// Default: zcli push to Zerops.
-		result, err := ops.DeploySSH(ctx, client, projectID, sshDeployer, *authInfo,
-			input.SourceService, input.TargetService, input.Setup, input.WorkingDir, input.SHA)
-		if err != nil {
-			attempt.Error = err.Error()
-			// SSH/transport-layer failure — we never reached the build.
-			classification := classifyTransportError(err, deployStrategyZCLILabel)
-			if classification != nil {
-				attempt.FailureClass = classification.Category
-			} else {
-				attempt.FailureClass = topology.FailureClassNetwork
-			}
-			_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
-			// R2 (docs/spec-workflows.md §8): a self-deploy SSH failure
-			// against a never-activated buildFromGit target (no container
-			// to source from at all) can never succeed on retry — override
-			// the generic transport suggestion with the in-place redeploy.
-			suggestion := appVersionRedeploySuggestion(ctx, client, projectID, input.SourceService, input.TargetService)
-			return convertError(err, WithRecoveryStatus(), WithFailureClassification(classification), WithSuggestion(suggestion)), nil, nil
-		}
+// runDeploySSHZCLIPush is the default zcli-push branch of zerops_deploy's
+// SSH-mode handler — split out of RegisterDeploySSH's closure to keep both
+// under the maintainability-index ceiling. Strategy is "zcli" for this
+// mechanism; the git-push branch takes its own handler (`Strategy:
+// "git-push"`) before the caller reaches here, so this site is exclusively
+// the default-zcli case. `record-deploy` writes `Strategy: "record-deploy"`
+// for externally-stamped deploys.
+func runDeploySSHZCLIPush(
+	ctx context.Context,
+	req *mcp.CallToolRequest,
+	client platform.Client,
+	httpClient ops.HTTPDoer,
+	sshDeployer ops.SSHDeployer,
+	authInfo *auth.Info,
+	logFetcher platform.LogFetcher,
+	rtInfo runtime.Info,
+	projectID, stateDir string,
+	input DeploySSHInput,
+) (*mcp.CallToolResult, any, error) {
+	// Record attempt up front so a crash still leaves a trace.
+	attemptedAt := time.Now().UTC().Format(time.RFC3339)
+	attempt := workflow.DeployAttempt{
+		AttemptedAt: attemptedAt,
+		Setup:       input.Setup,
+		Strategy:    deployStrategyZCLILabel,
+	}
 
-		onProgress := buildProgressCallback(ctx, req)
-		pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, sshDeployer, stateDir)
-
-		// L1 break-glass aftermath: a direct deploy on a push-delivering
-		// pair leaves the container ahead of the repo — flag the standing
-		// reconcile push (spec-git-delivery-target §1.1).
-		if result.Status == statusDeployed {
-			if warn := repoDeliveryDivergenceWarning(stateDir, input.TargetService); warn != "" {
-				result.Warnings = append(result.Warnings, warn)
-			}
-		}
-
-		switch {
-		case result != nil && result.Status == statusDeployed:
-			attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
-			// Plan 2: activate L7 subdomain for dev/stage/simple/standard/
-			// local-stage modes on first deploy (idempotent via ops.Subdomain's
-			// check-before-enable). Runs before RecordDeployAttempt so the
-			// result payload surfaces SubdomainAccessEnabled + SubdomainURL
-			// alongside the deploy outcome.
-			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
-			writeDeployLedgerSSH(ctx, sshDeployer, input.WorkingDir, projectID, result)
-		case result != nil && result.TimedOut:
-			// In-flight (B23): the build is still running at poll timeout, not
-			// failed. Record without a FailureClass so the envelope doesn't
-			// say "last attempt failed" and direct a redeploy on top of it.
-			attempt.Error = deployBuildInFlightMsg
-		case result != nil:
-			attempt.Error = fmt.Sprintf("deploy status %s", result.Status)
-			attempt.FailureClass = classifyDeployStatus(result.Status)
-		}
-		if result != nil {
-			attempt.SHA = result.SHA
-			attempt.AppVersionID = result.AppVersionID
+	// Default: zcli push to Zerops.
+	result, err := ops.DeploySSH(ctx, client, projectID, sshDeployer, *authInfo,
+		input.SourceService, input.TargetService, input.Setup, input.WorkingDir, input.SHA)
+	if err != nil {
+		attempt.Error = err.Error()
+		// SSH/transport-layer failure — we never reached the build.
+		classification := classifyTransportError(err, deployStrategyZCLILabel)
+		if classification != nil {
+			attempt.FailureClass = classification.Category
+		} else {
+			attempt.FailureClass = topology.FailureClassNetwork
 		}
 		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
+		// R2 (docs/spec-workflows.md §8): a self-deploy SSH failure
+		// against a never-activated buildFromGit target (no container
+		// to source from at all) can never succeed on retry — override
+		// the generic transport suggestion with the in-place redeploy.
+		suggestion := appVersionRedeploySuggestion(ctx, client, projectID, input.SourceService, input.TargetService)
+		return convertError(err, WithRecoveryStatus(), WithFailureClassification(classification), WithSuggestion(suggestion)), nil, nil
+	}
 
-		// F10 fix (round-3 audit): default container SSH zerops_deploy was
-		// the sole deploy path returning raw *ops.DeployResult — the F5
-		// `WorkSessionState` lifecycle signal was already on every other
-		// deploy path (deploy_local, deploy_batch, deploy_git_push,
-		// deploy_local_git, verify, record-deploy) but not here. The
-		// asymmetry meant container agents had to call status after every
-		// deploy to discover whether auto-close fired; local agents got the
-		// signal inline. Wrap to match.
-		return jsonResult(deploySSHResponse{
-			DeployResult:     result,
-			WorkSessionState: sessionAnnotations(stateDir),
-			Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
-		}), nil, nil
-	})
+	onProgress := buildProgressCallback(ctx, req)
+	pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, sshDeployer, stateDir)
+
+	// L1 break-glass aftermath: a direct deploy on a push-delivering
+	// pair leaves the container ahead of the repo — flag the standing
+	// reconcile push (spec-git-delivery-target §1.1).
+	if result.Status == statusDeployed {
+		if warn := repoDeliveryDivergenceWarning(stateDir, input.TargetService); warn != "" {
+			result.Warnings = append(result.Warnings, warn)
+		}
+	}
+
+	switch {
+	case result != nil && result.Status == statusDeployed:
+		attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
+		// Plan 2: activate L7 subdomain for dev/stage/simple/standard/
+		// local-stage modes on first deploy (idempotent via ops.Subdomain's
+		// check-before-enable). Runs before RecordDeployAttempt so the
+		// result payload surfaces SubdomainAccessEnabled + SubdomainURL
+		// alongside the deploy outcome.
+		ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
+		writeDeployLedgerSSH(ctx, sshDeployer, input.WorkingDir, projectID, result)
+	case result != nil && result.TimedOut:
+		// In-flight (B23): the build is still running at poll timeout, not
+		// failed. Record without a FailureClass so the envelope doesn't
+		// say "last attempt failed" and direct a redeploy on top of it.
+		attempt.Error = deployBuildInFlightMsg
+	case result != nil:
+		attempt.Error = fmt.Sprintf("deploy status %s", result.Status)
+		attempt.FailureClass = classifyDeployStatus(result.Status)
+	}
+	if result != nil {
+		attempt.SHA = result.SHA
+		attempt.AppVersionID = result.AppVersionID
+		attempt.Dirty = result.Dirty
+	}
+	_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
+
+	// F10 fix (round-3 audit): default container SSH zerops_deploy was
+	// the sole deploy path returning raw *ops.DeployResult — the F5
+	// `WorkSessionState` lifecycle signal was already on every other
+	// deploy path (deploy_local, deploy_batch, deploy_git_push,
+	// deploy_local_git, verify, record-deploy) but not here. The
+	// asymmetry meant container agents had to call status after every
+	// deploy to discover whether auto-close fired; local agents got the
+	// signal inline. Wrap to match.
+	return jsonResult(deploySSHResponse{
+		DeployResult:     result,
+		WorkSessionState: sessionAnnotations(stateDir),
+		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
+	}), nil, nil
 }
 
 // deploySSHResponse mirrors deployLocalResponse — wraps the SSH-mode

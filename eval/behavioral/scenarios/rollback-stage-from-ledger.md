@@ -2,21 +2,22 @@
 id: rollback-stage-from-ledger
 description: |
   Existing dev/stage Node pair; appstage has already received TWO
-  deploy-from-commit pushes (preseed: deploy-from-commit-twice.sh) —
-  refs/zcp/env/appstage points at the newer commit, refs/zcp/deploy/*
-  holds both entries. User wants stage rolled back to the version before
-  the current one. Tests G5 (docs/spec-workflows.md §4.9): the ledger is
-  the rollback's source of truth, and a rollback is just another
+  deploy-from-commit pushes (preseed: deploy-from-commit-twice.sh) — the
+  ledger holds two zcp/deploy/* tags, the newest pointing at the newer
+  commit. User wants stage rolled back to the version before the current
+  one. Tests G5 (docs/spec-workflows.md §4.9): the ledger is the
+  rollback's source of truth, and a rollback is just another
   deploy-from-commit call naming the earlier sha — no separate rollback
   primitive exists.
 
   Status `promote: containerCheck` (docs/spec-scenarios.md §9.3 table G):
   the runner evaluates containerCheck today, but this file does not carry
   one yet on the post-rollback verification — a follow-up adds a direct
-  `refs/zcp/env/appstage == oldest ledger entry` check and flips the row
-  to `gate`. The seed-side `probe` (proving the preseed left two ledger
-  entries) already uses a containerCheck-shaped SSH command, but that is
-  a different family (`seedExpect`), not this row's `promote:` target.
+  "newest zcp/deploy/*/appstage/* tag == oldest ledger entry" check and
+  flips the row to `gate`. The seed-side `probe` (proving the preseed
+  left two ledger tags) already uses a containerCheck-shaped SSH command,
+  but that is a different family (`seedExpect`), not this row's
+  `promote:` target.
 seed:
   mode: deployed
   fixture: fixtures/nodejs-standard-deployed.yaml
@@ -27,8 +28,7 @@ seed:
     probe:
       service: appdev
       cmd: >-
-        git rev-parse --verify refs/zcp/env/appstage >/dev/null 2>&1 &&
-        [ "$(git for-each-ref refs/zcp/deploy/* | wc -l)" -eq 2 ]
+        [ "$(git tag -l 'zcp/deploy/*/appstage/*' | wc -l)" -eq 2 ]
 preseedScript: preseed/deploy-from-commit-twice.sh
 tags: [rollback, deploy-from-commit, ledger, git-foundation, cross-deploy, node]
 area: develop
@@ -41,7 +41,7 @@ verification:
   toolArg:
     - {always: "zerops_deploy{targetService=appstage}"}
     - {max: 0, call: "zerops_import"}
-  mustOffer: ["(?i)(no|without a) rebuild", "(?i)refs/zcp/deploy|ledger|previous (version|commit|deploy)"]
+  mustOffer: ["(?i)(no|without a) rebuild", "(?i)zcp/deploy/|ledger|previous (version|commit|deploy)"]
   noFailedProcesses: true
   never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
@@ -53,7 +53,7 @@ userPersona: |
 notableFriction:
   - id: ledger-read-before-act
     description: |
-      Agent must read the ledger (`git log refs/zcp/deploy/*` on appdev,
+      Agent must read the ledger (`git tag -l 'zcp/deploy/*'` on appdev,
       or equivalent) to find the PRIOR sha before issuing the rollback —
       guessing or asking the user to supply the commit is a miss.
   - id: rollback-is-deploy-not-a-new-verb

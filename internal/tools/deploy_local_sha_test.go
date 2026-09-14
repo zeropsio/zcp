@@ -1,8 +1,8 @@
 // Tests for: tools/deploy_local.go — the sha parameter end to end through
-// the zerops_deploy MCP tool in local mode (docs/spec-workflows.md §4.5):
+// the zerops_deploy MCP tool in local mode (docs/spec-workflows.md §4.9):
 // sha threads into ops.DeployLocal, the response carries sha/appVersionId
 // and the "deployed <sha7> → ..." message, and a successful build writes
-// the refs/zcp/* ledger in workingDir.
+// the zcp/deploy/* tag ledger in workingDir.
 package tools
 
 import (
@@ -103,11 +103,14 @@ func TestDeployLocalTool_WithSHA_ThreadsAndWritesLedger(t *testing.T) {
 		t.Errorf("message = %q, want it to name the short sha and appVersion", parsed.Message)
 	}
 
-	gotSHA, err := git.ReadEnvRef(context.Background(), git.LocalRunner{}, dir, "app")
+	gotEntry, ok, err := git.LastDeployOnRecord(context.Background(), git.LocalRunner{}, dir, "proj-1", "app")
 	if err != nil {
-		t.Fatalf("ReadEnvRef: %v", err)
+		t.Fatalf("LastDeployOnRecord: %v", err)
 	}
-	if gotSHA != sha {
-		t.Errorf("ledger refs/zcp/env/app = %q, want %q", gotSHA, sha)
+	if !ok {
+		t.Fatal("LastDeployOnRecord: ok = false, want true")
+	}
+	if gotEntry.SHA != sha {
+		t.Errorf("ledger tag sha = %q, want %q", gotEntry.SHA, sha)
 	}
 }

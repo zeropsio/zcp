@@ -18,6 +18,40 @@ func ResolveSHA(ctx context.Context, r Runner, dir, sha string) (string, error) 
 	return strings.TrimSpace(out), nil
 }
 
+// HeadStatus reads the SOURCE's current HEAD sha and whether its working
+// tree is dirty, via one combined `git rev-parse --verify HEAD && git
+// status --porcelain | head -c1` round trip, rooted at dir. Used by a
+// working-tree deploy (no explicit sha) to record what was actually
+// shipped (docs/spec-workflows.md §4.9) — read-only, never touches the
+// push itself. ok=false with no error when dir has no repo or no
+// reachable HEAD yet (a fresh/unborn repo) — not itself a failure, just
+// nothing to record.
+func HeadStatus(ctx context.Context, r Runner, dir string) (sha string, dirty bool, ok bool, err error) {
+	script := "git rev-parse --verify HEAD && git status --porcelain | head -c1"
+	out, _, runErr := r.Run(ctx, dir, script)
+	if runErr != nil {
+		return "", false, false, nil //nolint:nilerr // no repo/no HEAD yet is not a failure
+	}
+	head, rest, _ := strings.Cut(out, "\n")
+	return strings.TrimSpace(head), rest != "", true, nil
+}
+
+// ReadFileAtCommit reads path's content AT sha via `git show <sha>:<path>`,
+// rooted at dir. Used to validate a deploy-from-commit's zerops.yaml
+// against exactly what will ship, never the working tree/SSHFS mount —
+// which may differ from the commit (docs/spec-workflows.md §4.9). A
+// missing file at the commit surfaces as the underlying git failure
+// (typically exit 128, "fatal: path '<path>' does not exist in '<sha>'");
+// callers translate that into a deploy-specific message.
+func ReadFileAtCommit(ctx context.Context, r Runner, dir, sha, path string) (string, error) {
+	script := "git show " + shellQuote(sha+":"+path)
+	out, stderr, err := r.Run(ctx, dir, script)
+	if err != nil {
+		return "", wrapErr("read "+path+" at "+sha, err, stderr)
+	}
+	return out, nil
+}
+
 // ExtractCommitToTemp materializes sha's tree into tmpDir via
 // `git archive --format=tar <sha> | tar -x -C <tmpDir>`. tmpDir MUST be
 // outside dir's working tree — create it with MkTempDir. This sidesteps

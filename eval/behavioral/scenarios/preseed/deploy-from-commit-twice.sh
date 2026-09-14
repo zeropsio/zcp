@@ -6,14 +6,14 @@
 # ACTIVE (seed.mode: deployed). It then performs TWO deploy-from-commit
 # pushes to appstage from appdev's mounted repo, replicating by hand what
 # `zerops_deploy sha=` does (docs/spec-workflows.md §4.9) so the agent
-# arrives at a stage with a real two-entry refs/zcp/deploy/* ledger to read
-# back and roll back from:
+# arrives at a stage with two zcp/deploy/* ledger tags to read back and
+# roll back from:
 #   1. deploy appdev's original HEAD (SHA_OLD) to appstage;
 #   2. add one trivial commit on appdev (SHA_NEW) and deploy that too.
 # seed.expect (rollback-stage-from-ledger.md frontmatter) then asserts,
-# before the agent is spawned: refs/zcp/env/appstage == SHA_NEW, and
-# refs/zcp/deploy/* has exactly two entries (oldest SHA_OLD, newest
-# SHA_NEW) — the "previous version" the agent must roll back to.
+# before the agent is spawned: the ledger has exactly two zcp/deploy/*
+# tags for appstage (oldest SHA_OLD, newest SHA_NEW) — the "previous
+# version" the agent must roll back to.
 #
 # NOT LIVE-VERIFIED (brief S6 stop condition, docs/spec-eval-farm.md §4.5):
 # this script cannot be run in this session. The archive|tar-extraction
@@ -88,18 +88,15 @@ deploy_from_commit() {
       | sort_by(.created) | last | .appVersion.id // empty
     ')
 
-  local at msg deploy_ref
+  local at msg tag_name
   at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   msg=$(printf '{"sha":"%s","appVersionId":"%s","target":"appstage","project":"%s","at":"%s"}' \
     "$resolved" "$app_version_id" "$ZCP_PROJECT_ID" "$at")
-  deploy_ref="refs/zcp/deploy/$(date +%s%N)"
-  ssh appdev "cd /var/www && \
-    TREE=\$(git rev-parse '${resolved}^{tree}') && \
-    COMMIT=\$(git commit-tree \"\$TREE\" -p '${resolved}' -m '$(printf '%s' "$msg" | sed "s/'/'\\\\''/g")') && \
-    git update-ref '${deploy_ref}' \"\$COMMIT\" && \
-    git update-ref refs/zcp/env/appstage '${resolved}'"
+  tag_name="zcp/deploy/${ZCP_PROJECT_ID}/appstage/${app_version_id}"
+  ssh appdev "cd /var/www && git -c user.name='Zerops Agent' -c user.email='agent@zerops.io' \
+    tag -a -f -m '$(printf '%s' "$msg" | sed "s/'/'\\\\''/g")' '${tag_name}' '${resolved}'"
 
-  echo "preseed: deployed ${resolved} to appstage (appVersion ${app_version_id:-unknown}), ledger entry ${deploy_ref}"
+  echo "preseed: deployed ${resolved} to appstage (appVersion ${app_version_id:-unknown}), ledger tag ${tag_name}"
 }
 
 SHA_OLD=$(ssh appdev "cd /var/www && git rev-parse HEAD")
@@ -112,4 +109,4 @@ ssh appdev "cd /var/www && echo '// preseed marker' >> index.js && \
 SHA_NEW=$(ssh appdev "cd /var/www && git rev-parse HEAD")
 deploy_from_commit "$SHA_NEW"
 
-echo "preseed: ledger ready — SHA_OLD=${SHA_OLD} SHA_NEW=${SHA_NEW}, refs/zcp/env/appstage=${SHA_NEW}"
+echo "preseed: ledger ready — SHA_OLD=${SHA_OLD} SHA_NEW=${SHA_NEW}, newest zcp/deploy/* tag for appstage points at ${SHA_NEW}"

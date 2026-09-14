@@ -73,6 +73,88 @@ func TestResolveSHA_InvalidSHA_ReturnsError(t *testing.T) {
 	}
 }
 
+func TestHeadStatus_CleanRepo_ReturnsSHANotDirty(t *testing.T) {
+	r := &fakeRunner{results: []fakeResult{{stdout: "abc123def456\n"}}}
+	sha, dirty, ok, err := HeadStatus(context.Background(), r, "/repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	if sha != "abc123def456" {
+		t.Errorf("sha = %q, want abc123def456", sha)
+	}
+	if dirty {
+		t.Error("dirty = true, want false (clean status)")
+	}
+	if len(r.calls) != 1 {
+		t.Fatalf("calls = %d, want 1 (single combined round trip)", len(r.calls))
+	}
+	if !strings.Contains(r.calls[0].script, "git rev-parse --verify HEAD") || !strings.Contains(r.calls[0].script, "git status --porcelain") {
+		t.Errorf("script = %q, want the combined rev-parse+status command", r.calls[0].script)
+	}
+}
+
+func TestHeadStatus_DirtyRepo_ReturnsSHAAndDirty(t *testing.T) {
+	r := &fakeRunner{results: []fakeResult{{stdout: "abc123def456\nM"}}}
+	sha, dirty, ok, err := HeadStatus(context.Background(), r, "/repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	if sha != "abc123def456" {
+		t.Errorf("sha = %q, want abc123def456", sha)
+	}
+	if !dirty {
+		t.Error("dirty = false, want true (non-empty porcelain byte)")
+	}
+}
+
+func TestHeadStatus_NoRepoOrNoHead_ReturnsNotOkNoError(t *testing.T) {
+	r := &fakeRunner{results: []fakeResult{{stderr: "fatal: not a git repository", err: errors.New("exit 128")}}}
+	sha, dirty, ok, err := HeadStatus(context.Background(), r, "/repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v (no repo/no HEAD is not a failure)", err)
+	}
+	if ok {
+		t.Error("ok = true, want false")
+	}
+	if sha != "" || dirty {
+		t.Errorf("sha=%q dirty=%v, want both zero-value", sha, dirty)
+	}
+}
+
+func TestReadFileAtCommit_Success_RunsGitShowShaPath(t *testing.T) {
+	r := &fakeRunner{results: []fakeResult{{stdout: "zerops:\n  - setup: app\n"}}}
+	got, err := ReadFileAtCommit(context.Background(), r, "/repo", "abc123", "zerops.yaml")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "zerops:\n  - setup: app\n" {
+		t.Errorf("got = %q, want the file content", got)
+	}
+	if len(r.calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(r.calls))
+	}
+	if !strings.Contains(r.calls[0].script, "git show 'abc123:zerops.yaml'") {
+		t.Errorf("script = %q, want git show 'abc123:zerops.yaml'", r.calls[0].script)
+	}
+}
+
+func TestReadFileAtCommit_MissingFile_ReturnsError(t *testing.T) {
+	r := &fakeRunner{results: []fakeResult{{stderr: "fatal: path 'zerops.yaml' does not exist in 'abc123'", err: errors.New("exit 128")}}}
+	_, err := ReadFileAtCommit(context.Background(), r, "/repo", "abc123", "zerops.yaml")
+	if err == nil {
+		t.Fatal("expected error for a commit missing the file")
+	}
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("error = %v, want it to surface the git stderr", err)
+	}
+}
+
 func TestExtractCommitToTemp_RunsArchivePipedToTar(t *testing.T) {
 	r := &fakeRunner{results: []fakeResult{{}}}
 	err := ExtractCommitToTemp(context.Background(), r, "/repo", "abc123", "/tmp/zcp-1")

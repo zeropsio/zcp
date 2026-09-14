@@ -862,11 +862,38 @@ When deploy fails, the agent can iterate. The escalating guidance tiers are deli
 
 ### 4.9 Deploy from a Commit and the Ledger
 
-`zerops_deploy` accepts an optional `sha`. When set, it is resolved via
-`git rev-parse --verify <sha>^{commit}` in the source repo (the local
-working dir for local-mode deploys, the source container's working dir
-over SSH for container-mode deploys — never the SSHFS mount, per
-`spec-mate.md` §"git"). The resolved commit's tree is extracted with
+`zerops_deploy` accepts an optional `sha`. It is rejected on a SELF-deploy
+(source and target are the same service, including the auto-inferred
+case where `sourceService` is omitted) — `ops.DeploySSH` returns
+`ErrInvalidParameter` BEFORE any SSH round trip, `ops.DeployLocal` has no
+self case at all. A self-deploy from a commit would extract the commit's
+tree and push it `--no-git`, shipping no `.git` and losing the
+container's own repository that the normal (no-`sha`) path keeps via
+`-g` (GLC-2). Recovery: deploy the working tree instead (omit
+`sha`), or cross-deploy the commit to another service. On a cross-deploy,
+`sha` is resolved via `git rev-parse --verify <sha>^{commit}` in the
+source repo (the local working dir for local-mode deploys, the source
+container's working dir over SSH for container-mode deploys — never the
+SSHFS mount, per `spec-mate.md` §"git").
+
+**Validation reads whichever tree will actually be pushed, never a stale
+stand-in.** For container-mode deploys, `zerops.yaml` is read straight
+off the resolved commit — `git show <sha>:zerops.yaml` over SSH,
+`ops/git.ReadFileAtCommit` — and validated via
+`ops.ValidateZeropsYmlContent` + `ops.ValidatePreDeployContent` (the
+content-taking cores `ops.ValidateZeropsYml` /
+`ops.RunPreDeployValidation` themselves delegate to, so the no-`sha`
+path — which still reads the SSHFS mount — is byte-identical to before).
+The SSHFS mount may be missing entirely or simply stale relative to an
+older/newer commit than whatever happens to be checked out there right
+now, so it is never consulted for a deploy-from-commit. A commit with no
+`zerops.yaml` at all (`git show` fails) is a hard `ErrInvalidParameter`
+("commit `<sha7>` has no zerops.yaml") raised BEFORE any extraction
+work — no temp dir, no archive. For local-mode deploys `zerops.yaml` is
+already read from the post-extraction temp dir (extraction happens
+before validation there), so no separate content-reading step is needed.
+
+The resolved commit's tree is extracted with
 `git archive --format=tar <sha> | tar -x` into a fresh temp directory
 OUTSIDE the repo (`os.MkdirTemp` locally, `mktemp -d` in the container),
 and the push runs from that extracted tree with `--no-git` and
@@ -877,23 +904,75 @@ byte-identical existing path: no git commands run, no ledger entry is
 written.
 
 Once the triggered build resolves to an appVersion, the tools layer
-records the attempt as a ledger entry in the SAME repo the commit was
-resolved from:
+records the deploy as an annotated git TAG in the SAME repo the commit
+was resolved from — `topology.DeployTagName(projectID, target,
+appVersionID)` → `zcp/deploy/<projectId>/<target>/<appVersionId>`,
+pointing at the deployed commit, whose message is one line of JSON:
+`{"sha","appVersionId","target","project","at","dirty"}`
+(`ops/git.WriteLedger`, `git tag -a -f -m <json> <name> <sha>` — `-f`
+because a retried deploy of the same appVersion must not fail on an
+already-existing tag). The write is a single `git tag` call — no
+commit-tree, no ref moves, no working-tree change, `HEAD` never touched.
+A ledger write failure downgrades to a response warning; it never fails
+an already-succeeded build.
 
-- `refs/zcp/env/<targetHostname>` is moved to `sha` — "what runs where."
-- `refs/zcp/deploy/<unix-nanos>` is created pointing at a new commit
-  (same tree as `sha`, parented on it) whose message is one line of JSON
-  — `{"sha","appVersionId","target","project","at"}` — so
-  `git log refs/zcp/deploy/*` is the ledger's full history, oldest to
-  newest.
+**The platform stays the sole authority for the ACTIVE appVersion.** The
+ledger tag only maps an appVersionId → the commit it was built from —
+"what runs" is a JOIN: the platform's active appVersion for a target,
+looked up against the tag of that name in the source repo. Nothing in
+ZCP moves a pointer to say "this is what's running now" the way the old
+`refs/zcp/env/<host>` ref tried to; that ref is gone (`ops/git.ReadEnvRef`
+no longer exists) because it was keyed by hostname only (colliding
+across two projects sharing a checkout) and went stale the moment an
+ordinary working-tree deploy ran after it. `ops/git.LastDeployOnRecord`
+reads the newest tag under `zcp/deploy/<projectId>/<target>` (by tagger
+date: `git for-each-ref --sort=-taggerdate --count=1
+--format='%(*objectname)%09%(contents:subject)'
+refs/tags/zcp/deploy/<projectId>/<target>`) — `ok=false` with no error
+when nothing is on record yet. **Nothing on record is not "no prior
+deploy" — it means the ledger has no visibility further back, and ZCP
+never infers a source for what's running:** a service adopted or
+buildFromGit-provisioned before this feature shipped, or one whose
+current appVersion was never deployed as a zcp deploy at all, simply has
+no tag to read. `zcp/deploy/*` tags are ordinary annotated tags, not
+`refs/zcp/*` — they need no ref-pruning exemption (`spec-mate.md` §6
+covers `refs/zcp/*` only) and survive a plain `git fetch --tags`.
 
-Both ref writes happen via `git update-ref` / `git commit-tree` only —
-no working-tree change, no branch moves, `HEAD` never touched. A ledger
-write failure downgrades to a response warning; it never fails an
-already-succeeded build. `refs/zcp/*` is never pruned (`spec-mate.md`
-§6). A rollback is an ordinary deploy-from-commit call naming an earlier
-sha read back from `refs/zcp/deploy/*` — there is no separate rollback
-primitive in this slice.
+`DeployResult.SHA` carries the commit actually shipped — set for an
+explicit-`sha` deploy, AND for an ordinary working-tree deploy (no `sha`
+param) whose SOURCE has a git repo with a reachable `HEAD`: the tools
+layer records that deploy too, so the ledger isn't sha-deploys-only.
+`DeployResult.Dirty` is true when a working-tree deploy shipped
+uncommitted changes on top of `SHA` — always `false` for an explicit-sha
+deploy, since that path ships exactly `sha`'s tree. `SHA` stays empty
+only when the source has no git repo at all (or no HEAD yet) — that
+deploy leaves no ledger entry and is not itself a failure.
+
+For the working-tree path, `ops/git.HeadStatus` reads the SOURCE's HEAD
+and dirty state with one combined, read-only round trip — `git rev-parse
+--verify HEAD && git status --porcelain | head -c1`, rooted at the
+container/local working dir — run BEFORE the push but never altering it:
+the push command's args, `-g` flag, and `--workspace-state` archiving
+behavior stay byte-identical to the pre-item-4 no-sha path (pinned by
+tests asserting the push command string is unchanged). `ok=false` with
+no error when there's no repo or no reachable HEAD — no ledger write, no
+warning, no other behavior change. `ops/git.LastDeployOnRecord` is then
+read the same way as the sha path, so a working-tree redeploy's message
+can also say "previous zcp deploy on record: `<prev7>`".
+
+Response/status text never says "replaces `<prev7>`" — the ledger cannot
+see deploys that predate it, so a redeploy over an untracked prior state
+would misreport what it displaced. Instead: "previous zcp deploy on
+record: `<prev7>`" when `LastDeployOnRecord` found one, and nothing at
+all when it didn't. A dirty working-tree deploy's message never claims
+"deployed commit `<sha>`" either (that implies exactly `sha`'s tree
+shipped, which a dirty tree contradicts) — it says "recorded: HEAD
+`<sha7>` + uncommitted changes" instead.
+
+A rollback is an ordinary deploy-from-commit call naming an earlier sha
+read back from the ledger (`git tag -l 'zcp/deploy/<projectId>/<target>/*'`
++ `git for-each-ref`/`git log` for the message history) — there is no
+separate rollback primitive in this slice.
 
 ---
 

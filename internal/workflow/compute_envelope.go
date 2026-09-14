@@ -398,6 +398,7 @@ func deployAttemptsToInfo(attempts []DeployAttempt) []AttemptInfo {
 			Strategy:     a.Strategy,
 			SHA:          a.SHA,
 			AppVersionID: a.AppVersionID,
+			Dirty:        a.Dirty,
 		}
 		if !info.Success {
 			info.Reason = a.Error

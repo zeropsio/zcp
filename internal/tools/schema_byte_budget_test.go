@@ -87,9 +87,9 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// source-resolving deploy).
 		//
 		// Raised +154 (2153→2307) for the `sha` input (docs/spec-
-		// workflows.md §4.5): deploy an exact git commit instead of the
-		// working tree, recorded in refs/zcp/*. Deliberate new field —
-		// optional, backward-compatible (omit → today's path unchanged).
+		// workflows.md §4.9): deploy an exact git commit instead of the
+		// working tree, recorded as a zcp/deploy/* git tag. Deliberate new
+		// field — optional, backward-compatible (omit → today's path unchanged).
 		"zerops_deploy": 2307,
 		// Raised +62 (2484→2546) for the get-action contract change: get now
 		// returns env var KEYS + ${host_var} refs, NOT values, so the agent

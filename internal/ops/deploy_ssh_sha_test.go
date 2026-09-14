@@ -1,5 +1,5 @@
 // Tests for: ops/deploy_ssh.go — the sha parameter (docs/spec-workflows.md
-// §4.5): DeploySSH resolves an explicit sha, extracts its tree into a fresh
+// §4.9): DeploySSH resolves an explicit sha, extracts its tree into a fresh
 // temp dir inside the source container (over SSH, never the SSHFS mount),
 // and pushes from there with --version-name, --no-git, and no
 // GitEnsureRepoHeadCommand step.
@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.T) {
@@ -20,8 +21,10 @@ func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.
 			{ID: "svc-2", Name: "app"},
 		})
 	ssh := &mockSSHDeployer{results: []sshResult{
-		{output: []byte("fullsha1234567\n")},     // resolve
-		{output: []byte("oldsha7654321\n")},      // ReadEnvRef (previous sha)
+		{output: []byte("fullsha1234567\n")}, // resolve
+		{output: []byte("oldsha7654321\t" + // LastDeployOnRecord (previous on record)
+			`{"sha":"oldsha7654321","appVersionId":"av-0","target":"app","project":"proj-1","at":"2026-09-14T11:00:00Z"}` + "\n")},
+		{output: []byte(validCommitZeropsYaml)},  // git show <sha>:zerops.yaml
 		{output: []byte("/tmp/zcp-extract-1\n")}, // mktemp -d
 		{output: []byte("")},                     // extract (archive | tar -x)
 		{output: []byte("ok")},                   // login+push
@@ -37,11 +40,11 @@ func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.
 	if result.SHA != "fullsha1234567" {
 		t.Errorf("result.SHA = %q, want fullsha1234567", result.SHA)
 	}
-	if result.PreviousSHA != "oldsha7654321" {
-		t.Errorf("result.PreviousSHA = %q, want oldsha7654321", result.PreviousSHA)
+	if result.PreviousOnRecord != "oldsha7654321" {
+		t.Errorf("result.PreviousOnRecord = %q, want oldsha7654321", result.PreviousOnRecord)
 	}
-	if len(ssh.calls) != 6 {
-		t.Fatalf("ssh calls = %d, want 6 (resolve, readEnvRef, mktemp, extract, push, cleanup): %+v", len(ssh.calls), ssh.calls)
+	if len(ssh.calls) != 7 {
+		t.Fatalf("ssh calls = %d, want 7 (resolve, lastDeployOnRecord, git show zerops.yaml, mktemp, extract, push, cleanup): %+v", len(ssh.calls), ssh.calls)
 	}
 	for _, c := range ssh.calls {
 		if c.hostname != "builder" {
@@ -51,16 +54,21 @@ func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.
 	if !strings.Contains(ssh.calls[0].command, "rev-parse --verify") || !strings.Contains(ssh.calls[0].command, "^{commit}") {
 		t.Errorf("call[0] = %q, want a rev-parse --verify ...^{commit}", ssh.calls[0].command)
 	}
-	if !strings.Contains(ssh.calls[1].command, "rev-parse --verify") || !strings.Contains(ssh.calls[1].command, "refs/zcp/env/app") {
-		t.Errorf("call[1] = %q, want ReadEnvRef against refs/zcp/env/app", ssh.calls[1].command)
+	if !strings.Contains(ssh.calls[1].command, "for-each-ref") || !strings.Contains(ssh.calls[1].command, "refs/tags/zcp/deploy/proj-1/app") {
+		t.Errorf("call[1] = %q, want LastDeployOnRecord against refs/tags/zcp/deploy/proj-1/app", ssh.calls[1].command)
 	}
-	if !strings.Contains(ssh.calls[2].command, "mktemp -d") {
-		t.Errorf("call[2] = %q, want mktemp -d", ssh.calls[2].command)
+	// The commit's zerops.yaml is validated, NEVER the SSHFS mount — the
+	// mount may be missing or stale relative to the deployed commit.
+	if !strings.Contains(ssh.calls[2].command, "git show") || !strings.Contains(ssh.calls[2].command, "'fullsha1234567:zerops.yaml'") {
+		t.Errorf("call[2] = %q, want git show 'fullsha1234567:zerops.yaml'", ssh.calls[2].command)
 	}
-	if !strings.Contains(ssh.calls[3].command, "git archive --format=tar") || !strings.Contains(ssh.calls[3].command, "| tar -x -C") {
-		t.Errorf("call[3] = %q, want the archive|tar pipe", ssh.calls[3].command)
+	if !strings.Contains(ssh.calls[3].command, "mktemp -d") {
+		t.Errorf("call[3] = %q, want mktemp -d", ssh.calls[3].command)
 	}
-	pushCmd := ssh.calls[4].command
+	if !strings.Contains(ssh.calls[4].command, "git archive --format=tar") || !strings.Contains(ssh.calls[4].command, "| tar -x -C") {
+		t.Errorf("call[4] = %q, want the archive|tar pipe", ssh.calls[4].command)
+	}
+	pushCmd := ssh.calls[5].command
 	if !strings.Contains(pushCmd, "--no-git") {
 		t.Errorf("push command = %q, want --no-git", pushCmd)
 	}
@@ -73,10 +81,64 @@ func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.
 	if strings.Contains(pushCmd, " -g") {
 		t.Errorf("push command = %q, must not include -g (no .git in an extracted tree)", pushCmd)
 	}
-	if !strings.Contains(ssh.calls[5].command, "rm -rf '/tmp/zcp-extract-1'") {
-		t.Errorf("call[5] = %q, want cleanup of the extracted dir", ssh.calls[5].command)
+	if !strings.Contains(ssh.calls[6].command, "rm -rf '/tmp/zcp-extract-1'") {
+		t.Errorf("call[6] = %q, want cleanup of the extracted dir", ssh.calls[6].command)
 	}
 }
+
+// validCommitZeropsYaml is the zerops.yaml content a `git show
+// <sha>:zerops.yaml` call returns in these tests — a minimal setup entry
+// matching the "app" target hostname used throughout this file.
+const validCommitZeropsYaml = "zerops:\n  - setup: app\n"
+
+// TestDeploySSH_WithSHA_CommitMissingZeropsYaml_ReturnsErrorBeforeExtraction
+// pins the hard-error path (docs/spec-workflows.md §4.9): a commit with no
+// zerops.yaml at all (git show fails) aborts BEFORE mktemp/extraction ever
+// runs — no wasted temp-dir or archive work for an input that cannot
+// deploy.
+func TestDeploySSH_WithSHA_CommitMissingZeropsYaml_ReturnsErrorBeforeExtraction(t *testing.T) {
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "builder"},
+			{ID: "svc-2", Name: "app"},
+		})
+	ssh := &mockSSHDeployer{results: []sshResult{
+		{output: []byte("fullsha1234567\n")}, // resolve
+		{output: []byte("")},                 // LastDeployOnRecord: nothing on record
+		{output: []byte("fatal: path 'zerops.yaml' does not exist in 'fullsha1234567'"), err: errTestNoZeropsYaml}, // git show fails
+	}}
+	authInfo := testAuthInfo()
+
+	_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
+		"builder", "app", "", "", "abc123")
+	if err == nil {
+		t.Fatal("expected error for a commit with no zerops.yaml")
+	}
+	var pe *platform.PlatformError
+	if !errorAs(err, &pe) {
+		t.Fatalf("expected PlatformError, got %T: %v", err, err)
+	}
+	if pe.Code != platform.ErrInvalidParameter {
+		t.Errorf("code = %s, want %s", pe.Code, platform.ErrInvalidParameter)
+	}
+	if !strings.Contains(pe.Message, "fullshaa") && !strings.Contains(pe.Message, "no zerops.yaml") {
+		t.Errorf("message = %q, want it to name the commit and the missing file", pe.Message)
+	}
+	if len(ssh.calls) != 3 {
+		t.Fatalf("ssh calls = %d, want 3 (resolve, lastDeployOnRecord, git show) — mktemp/extract must NOT run: %+v", len(ssh.calls), ssh.calls)
+	}
+	for _, c := range ssh.calls {
+		if strings.Contains(c.command, "mktemp") || strings.Contains(c.command, "git archive") {
+			t.Errorf("extraction step ran despite the missing zerops.yaml: %q", c.command)
+		}
+	}
+}
+
+var errTestNoZeropsYaml = &noZeropsYamlError{}
+
+type noZeropsYamlError struct{}
+
+func (*noZeropsYamlError) Error() string { return "exit 128" }
 
 func TestDeploySSH_WithUnresolvableSHA_ReturnsInvalidParameterError(t *testing.T) {
 	mock := platform.NewMock().
@@ -104,13 +166,73 @@ func TestDeploySSH_WithUnresolvableSHA_ReturnsInvalidParameterError(t *testing.T
 	}
 }
 
-func TestDeploySSH_NoSHA_UnaffectedByShaMachinery(t *testing.T) {
+// TestDeploySSH_SelfDeployWithSHA_RefusesBeforeAnySSHCall pins the DM-2-
+// style self-deploy guard on the sha path (docs/spec-workflows.md §4.9):
+// a self-deploy from a commit would extract sha's tree and push
+// --no-git, shipping no .git and losing the container's repository that
+// the normal path keeps via -g (GLC-2, P10). The guard must fire BEFORE
+// any SSH round trip — not even the resolve call runs.
+func TestDeploySSH_SelfDeployWithSHA_RefusesBeforeAnySSHCall(t *testing.T) {
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app"},
+		})
+	ssh := &mockSSHDeployer{output: []byte("ok")}
+	authInfo := testAuthInfo()
+
+	_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
+		"", "app", "", "", "abc123") // sourceService omitted → auto-infers self-deploy
+	if err == nil {
+		t.Fatal("expected error for a self-deploy sha")
+	}
+	var pe *platform.PlatformError
+	if !errorAs(err, &pe) {
+		t.Fatalf("expected PlatformError, got %T: %v", err, err)
+	}
+	if pe.Code != platform.ErrInvalidParameter {
+		t.Errorf("code = %s, want %s", pe.Code, platform.ErrInvalidParameter)
+	}
+	if len(ssh.calls) != 0 {
+		t.Errorf("zero SSH calls expected — the guard must fire before any SSH round trip, got %d: %+v", len(ssh.calls), ssh.calls)
+	}
+}
+
+// TestDeploySSH_SelfDeployWithSHA_ExplicitSameSource_AlsoRefused proves
+// the guard fires on an EXPLICIT source==target pair too, not only the
+// auto-inferred (empty sourceService) case.
+func TestDeploySSH_SelfDeployWithSHA_ExplicitSameSource_AlsoRefused(t *testing.T) {
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app"},
+		})
+	ssh := &mockSSHDeployer{output: []byte("ok")}
+	authInfo := testAuthInfo()
+
+	_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
+		"app", "app", "", "", "abc123")
+	if err == nil {
+		t.Fatal("expected error for an explicit self-deploy sha")
+	}
+	if len(ssh.calls) != 0 {
+		t.Errorf("zero SSH calls expected, got %d: %+v", len(ssh.calls), ssh.calls)
+	}
+}
+
+// TestDeploySSH_NoSHA_SourceHasNoRepo_UnaffectedByRecording pins the "no
+// behaviour change" half of item 4 (docs/spec-workflows.md §4.9): when the
+// source has no git repo at all (HeadStatus's rev-parse fails), the
+// working-tree deploy is untouched — no ledger fields set, no extra
+// machinery beyond the one read-only HeadStatus round trip.
+func TestDeploySSH_NoSHA_SourceHasNoRepo_UnaffectedByRecording(t *testing.T) {
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-1", Name: "builder"},
 			{ID: "svc-2", Name: "app"},
 		})
-	ssh := &mockSSHDeployer{output: []byte("ok")}
+	ssh := &mockSSHDeployer{results: []sshResult{
+		{err: errTestSHA},      // HeadStatus: source has no git repo
+		{output: []byte("ok")}, // login+push
+	}}
 	authInfo := testAuthInfo()
 
 	result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
@@ -119,10 +241,113 @@ func TestDeploySSH_NoSHA_UnaffectedByShaMachinery(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result.SHA != "" {
-		t.Errorf("result.SHA = %q, want empty (no sha requested)", result.SHA)
+		t.Errorf("result.SHA = %q, want empty (source has no git repo)", result.SHA)
 	}
-	if len(ssh.calls) != 1 {
-		t.Fatalf("ssh calls = %d, want 1 — sha machinery must not run at all when sha is empty", len(ssh.calls))
+	if result.Dirty {
+		t.Error("result.Dirty = true, want false")
+	}
+	if len(ssh.calls) != 2 {
+		t.Fatalf("ssh calls = %d, want 2 (HeadStatus, push): %+v", len(ssh.calls), ssh.calls)
+	}
+	if !strings.Contains(ssh.calls[0].command, "rev-parse --verify HEAD") {
+		t.Errorf("call[0] = %q, want the HeadStatus check", ssh.calls[0].command)
+	}
+}
+
+// TestDeploySSH_NoSHA_SourceHasCleanRepo_RecordsHEADAndKeepsPushByteIdentical
+// pins item 4's positive case: a working-tree deploy (no explicit sha)
+// from a source with a clean git repo records HEAD as SHA, Dirty=false —
+// and the push command itself (args, -g, workspace-state) is BYTE
+// IDENTICAL to what a no-git-repo source would have produced (the only
+// difference is the extra read-only HeadStatus round trip beforehand).
+func TestDeploySSH_NoSHA_SourceHasCleanRepo_RecordsHEADAndKeepsPushByteIdentical(t *testing.T) {
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app"},
+		})
+	ssh := &mockSSHDeployer{results: []sshResult{
+		{output: []byte("fullhead1234567\n")}, // HeadStatus: clean
+		{output: []byte("")},                  // LastDeployOnRecord: nothing on record
+		{output: []byte("ok")},                // login+push
+	}}
+	authInfo := testAuthInfo()
+
+	result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
+		"app", "app", "", "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.SHA != "fullhead1234567" {
+		t.Errorf("result.SHA = %q, want fullhead1234567", result.SHA)
+	}
+	if result.Dirty {
+		t.Error("result.Dirty = true, want false (clean status)")
+	}
+	if len(ssh.calls) != 3 {
+		t.Fatalf("ssh calls = %d, want 3 (HeadStatus, LastDeployOnRecord, push): %+v", len(ssh.calls), ssh.calls)
+	}
+
+	// The push command must be EXACTLY what buildSSHCommand produces for
+	// a plain self-deploy — recording HEAD must never perturb it.
+	want := buildSSHCommand(authInfo, "svc-1", defaultWorkingDir, "", true, topology.RuntimeUnknown)
+	if ssh.calls[2].command != want {
+		t.Errorf("push command = %q, want byte-identical to buildSSHCommand's output %q", ssh.calls[2].command, want)
+	}
+}
+
+// TestDeploySSH_NoSHA_SourceHasDirtyRepo_RecordsDirty pins the Dirty=true
+// case: an uncommitted change on top of HEAD is recorded, never claimed
+// as a clean deploy of that commit.
+func TestDeploySSH_NoSHA_SourceHasDirtyRepo_RecordsDirty(t *testing.T) {
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app"},
+		})
+	ssh := &mockSSHDeployer{results: []sshResult{
+		{output: []byte("fullhead1234567\nM")}, // HeadStatus: dirty
+		{output: []byte("ok")},                 // login+push
+	}}
+	authInfo := testAuthInfo()
+
+	result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
+		"app", "app", "", "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.SHA != "fullhead1234567" {
+		t.Errorf("result.SHA = %q, want fullhead1234567", result.SHA)
+	}
+	if !result.Dirty {
+		t.Error("result.Dirty = false, want true")
+	}
+}
+
+// TestDeploySSH_WithSHA_AlwaysDirtyFalse pins that the deploy-from-commit
+// path never sets Dirty — it always ships exactly sha's tree.
+func TestDeploySSH_WithSHA_AlwaysDirtyFalse(t *testing.T) {
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "builder"},
+			{ID: "svc-2", Name: "app"},
+		})
+	ssh := &mockSSHDeployer{results: []sshResult{
+		{output: []byte("fullsha1234567\n")},     // resolve
+		{output: []byte("")},                     // LastDeployOnRecord: nothing on record
+		{output: []byte(validCommitZeropsYaml)},  // git show
+		{output: []byte("/tmp/zcp-extract-1\n")}, // mktemp -d
+		{output: []byte("")},                     // extract
+		{output: []byte("ok")},                   // login+push
+		{output: []byte("")},                     // cleanup
+	}}
+	authInfo := testAuthInfo()
+
+	result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
+		"builder", "app", "", "", "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Dirty {
+		t.Error("result.Dirty = true, want false — a deploy-from-commit is never dirty")
 	}
 }
 
