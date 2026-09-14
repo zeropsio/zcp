@@ -323,6 +323,7 @@ read_adopted_children_snapshot() {
 # tests; production uses /proc and $$. Return 2 when a listed PID vanished:
 # its children may only become adopted after that snapshot, so the caller must
 # rescan before it can prove the tree empty. Other uncertainty returns 1.
+# shellcheck disable=SC2120  # arguments are the test seam; production callers take the defaults
 collect_adopted_children() {
 	proc_root="${1:-/proc}"
 	supervisor_pid="${2:-$$}"

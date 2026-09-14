@@ -31,7 +31,7 @@ func TestProcessIdentity_LinuxReadsProcOfCapturedChild(t *testing.T) {
 	}
 
 	t.Run("child with the window env is counted", func(t *testing.T) {
-		cmd := exec.Command(shPath, "-c", "sleep 30") //nolint:gosec // fixed test binary, no user input
+		cmd := exec.CommandContext(t.Context(), shPath, "-c", "sleep 30")
 		cmd.Env = append(os.Environ(),
 			"ZCP_CAPTURE_SESSION_ID="+windowID,
 			"projectId=proj-linux-test",
@@ -62,7 +62,7 @@ func TestProcessIdentity_LinuxReadsProcOfCapturedChild(t *testing.T) {
 	})
 
 	t.Run("child without the window env is unobservable", func(t *testing.T) {
-		cmd := exec.Command(shPath, "-c", "sleep 30") //nolint:gosec // fixed test binary, no user input
+		cmd := exec.CommandContext(t.Context(), shPath, "-c", "sleep 30")
 		cmd.Env = os.Environ()
 		if err := cmd.Start(); err != nil {
 			t.Fatalf("start child: %v", err)
@@ -83,7 +83,7 @@ func TestProcessIdentity_LinuxReadsProcOfCapturedChild(t *testing.T) {
 		if err := os.MkdirAll(mcpDir, 0o700); err != nil {
 			t.Fatalf("mkdir mcp dir: %v", err)
 		}
-		cmd := exec.Command(shPath, "-c", "sleep 30") //nolint:gosec // fixed test binary, no user input
+		cmd := exec.CommandContext(t.Context(), shPath, "-c", "sleep 30")
 		cmd.Env = append(os.Environ(), "ZCP_CAPTURE_SESSION_ID="+windowID, "projectId=proj-linux-test")
 		if err := cmd.Start(); err != nil {
 			t.Fatalf("start child: %v", err)

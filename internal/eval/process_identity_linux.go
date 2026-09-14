@@ -70,7 +70,7 @@ func observeOneProcess(pid int, windowID, candidateSHA256 string) ProcessIdentit
 
 func parseProcEnviron(data []byte) map[string]string {
 	env := make(map[string]string)
-	for _, kv := range bytes.Split(data, []byte{0}) {
+	for kv := range bytes.SplitSeq(data, []byte{0}) {
 		if len(kv) == 0 {
 			continue
 		}
