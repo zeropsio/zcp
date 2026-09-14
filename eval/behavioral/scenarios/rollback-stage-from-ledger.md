@@ -2,21 +2,32 @@
 id: rollback-stage-from-ledger
 description: |
   Existing dev/stage Node pair; appstage has already received TWO
-  deploy-from-commit pushes (preseed: deploy-from-commit-twice.sh) —
-  refs/zcp/env/appstage points at the newer commit, refs/zcp/deploy/*
-  holds both entries. User wants stage rolled back to the version before
-  the current one. Tests G5 (docs/spec-workflows.md §4.9): the ledger is
-  the rollback's source of truth, and a rollback is just another
-  deploy-from-commit call naming the earlier sha — no separate rollback
-  primitive exists.
+  deploy-from-commit pushes (preseed: deploy-from-commit-twice.sh) — each
+  push produced its own appVersion, so appstage now carries an ACTIVE
+  appVersion (the newer push) and a BACKUP one (the older push;
+  live-verified 2026-09-14: the previously-active version flips to
+  BACKUP once a newer one activates). User wants stage rolled back to
+  the version before the current one, right now, no rebuild. Tests G5
+  (docs/spec-workflows.md §8 R2 generalised / §12.6 GF-8): the correct
+  move is `zerops_deploy targetService=appstage appVersion=<the older
+  appVersion id>` — rollback re-activates that recorded BACKUP appVersion
+  in place (`stack.deploy.backup`, no build). The agent learns the id
+  from the status envelope's deploy attempts, `zerops_events`, or the
+  evidence tag messages on appdev — never from a ledger sha, and never by
+  guessing.
 
-  Status `promote: containerCheck` (docs/spec-scenarios.md §9.3 table G):
-  the runner evaluates containerCheck today, but this file does not carry
-  one yet on the post-rollback verification — a follow-up adds a direct
-  `refs/zcp/env/appstage == oldest ledger entry` check and flips the row
-  to `gate`. The seed-side `probe` (proving the preseed left two ledger
-  entries) already uses a containerCheck-shaped SSH command, but that is
-  a different family (`seedExpect`), not this row's `promote:` target.
+  Status `promote: <platform-side appVersion check>` (docs/spec-
+  scenarios.md §9.3 table G): the runner has no oracle family today for
+  "the active appVersion after == a specific id learned during preseed"
+  or "no stack.build process ran on appstage after the agent started" —
+  `expectedServices` checks status shape only and `containerCheck` runs
+  an SSH command inside a service, neither reads a specific appVersion
+  id. A follow-up either adds such a family or accepts these two as
+  live-verification-only; `toolArg` + `mustOffer` below already cover
+  what the current families can express. The seed-side `probe` (proving
+  the preseed left two ledger entries) is unaffected — it is a different
+  family (`seedExpect`), asserting the preseed ran, not the rollback's
+  outcome.
 seed:
   mode: deployed
   fixture: fixtures/nodejs-standard-deployed.yaml
@@ -39,8 +50,10 @@ verification:
   spec: spec-workflows.md §4.9
   liveness: {service: appstage, marker: "nodejs"}
   toolArg:
-    - {always: "zerops_deploy{targetService=appstage}"}
+    - {always: "zerops_deploy{targetService=appstage,appVersion~.+}"}
+    - {never: "zerops_deploy{targetService=appstage,appVersion=latest}"}
     - {max: 0, call: "zerops_import"}
+    - {max: 0, call: "zerops_deploy{sha~.+}"}
   mustOffer: ["(?i)(no|without a) rebuild", "(?i)refs/zcp/deploy|ledger|previous (version|commit|deploy)"]
   noFailedProcesses: true
   never: ["zerops_import{override=true}", "zerops_delete"]
@@ -53,16 +66,22 @@ userPersona: |
 notableFriction:
   - id: ledger-read-before-act
     description: |
-      Agent must read the ledger (`git log refs/zcp/deploy/*` on appdev,
-      or equivalent) to find the PRIOR sha before issuing the rollback —
-      guessing or asking the user to supply the commit is a miss.
-  - id: rollback-is-deploy-not-a-new-verb
+      Agent must learn the PRIOR appVersion id before issuing the
+      rollback — from the status envelope's deploy attempts, from
+      `zerops_events`, or from the evidence tag messages on appdev
+      (`git log refs/zcp/deploy/*` — each tag still names the
+      appVersionId of the deploy it recorded) — never by guessing or
+      asking the user to supply a commit or id by hand.
+  - id: rollback-is-appversion-not-a-new-verb
     description: |
-      There is no separate rollback tool/action in this slice: the
-      correct move is `zerops_deploy sha=<prior sha>` again. An agent
-      that goes looking for a dedicated rollback action, or that tries to
-      revert via a fresh git commit + normal deploy, is off the intended
-      path.
+      There is no separate rollback tool/action: the correct move is
+      `zerops_deploy targetService=appstage appVersion=<id>` — the SAME
+      tool as a normal deploy, distinguished only by an appVersion
+      parameter naming a specific recorded id (not "latest"). An agent
+      that goes looking for a dedicated rollback action, that reverts via
+      a fresh git commit + a normal (re-build) deploy, or that calls
+      `zerops_deploy sha=<prior sha>` (a NEW build — the fallback only,
+      once no BACKUP appVersion remains) is off the intended path.
 ---
 
 Something's wrong with the latest thing running on `appstage` — I want it
