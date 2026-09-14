@@ -952,13 +952,12 @@ A live read replaces this placeholder once that surface is proven.
 baseline}` per non-managed service (`ServiceSnapshot.Repo`,
 `workflow.ApplyRepoStatus`) — read live via `ops.ReadRepoStatus` (`git
 rev-parse HEAD` + `git tag --points-at HEAD --list 'zcp/baseline/*'`),
-never cached on `ServiceMeta` or the bootstrap session. **Gap**: the live
-SSH read is implemented (`ops.ReadRepoStatus`) and the envelope-side gate
-is implemented and tested (`ApplyRepoStatus`), but wiring the two
-together at the tools layer (`handleLifecycleStatus` and its call sites)
-is not done in this slice — a follow-up threads `ops.SSHDeployer` through
-and calls `ApplyRepoStatus` with per-hostname `ReadRepoStatus` results
-before rendering.
+never cached on `ServiceMeta` or the bootstrap session.
+`handleLifecycleStatus` (`tools/workflow.go`) wires the two together via
+`attachRepoStatus` (`tools/workflow_repo_status.go`) — container mode
+only; local mode carries no per-service repo block on the envelope in
+this slice (its repo state is covered by the bootstrap-time
+`checkRepoInitAt` read-only check instead).
 
 ---
 

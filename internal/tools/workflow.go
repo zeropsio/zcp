@@ -468,7 +468,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 			// appended inside handleLifecycleStatus (launchOverlayAddendum) — it
 			// no longer preempts and hides develop (the old launch-recovery
 			// short-circuit ran before handleLifecycleStatus).
-			return handleLifecycleStatus(ctx, engine, client, projectID, rt)
+			return handleLifecycleStatus(ctx, engine, client, projectID, rt, sshDeployer)
 		case workflow.FocusIdle: // no infra, no open work: launch recovery may take over.
 			// Mid-flight launch-production recovery: a non-terminal state file
 			// for this source project → resumable launch envelope. Read-only
@@ -484,11 +484,11 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 				corpus, _ := workflow.LoadAtomCorpus()
 				return renderLaunchTerminalRecovery(corpus, recent), nil, nil
 			}
-			return handleLifecycleStatus(ctx, engine, client, projectID, rt)
+			return handleLifecycleStatus(ctx, engine, client, projectID, rt, sshDeployer)
 		}
 		// Unreachable: ResolveLifecycle returns one of the four Focus values
 		// handled above; the compiler can't prove the switch exhaustive.
-		return handleLifecycleStatus(ctx, engine, client, projectID, rt)
+		return handleLifecycleStatus(ctx, engine, client, projectID, rt, sshDeployer)
 	case "close":
 		return handleWorkSessionClose(ctx, engine, client, projectID, rt, input)
 	case "resume":
@@ -905,11 +905,12 @@ func handleListSessions(engine *workflow.Engine) (*mcp.CallToolResult, any, erro
 // check and surfaces non-fresh / non-skipped results as a guidance line
 // so agents notice when `.env` has drifted from sources without having
 // to invoke generate-dotenv preview manually.
-func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info) (*mcp.CallToolResult, any, error) {
+func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
 	envelope, err := workflow.ComputeEnvelope(ctx, client, engine.StateDir(), projectID, rt, time.Now())
 	if err != nil {
 		return convertError(wrapStageErr("Compute envelope", err), WithRecoveryStatus()), nil, nil
 	}
+	attachRepoStatus(ctx, envelope.Services, sshDeployer, rt)
 	corpus, err := workflow.LoadAtomCorpus()
 	if err != nil {
 		return convertError(wrapStageErr("Load knowledge atoms", err), WithRecoveryStatus()), nil, nil
