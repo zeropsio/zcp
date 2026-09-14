@@ -7,6 +7,31 @@ import (
 	"testing"
 )
 
+func TestCoverage_RepeatedCallsAcrossStreams_CountsRunOnce(t *testing.T) {
+	t.Parallel()
+	dir := copyDirToTemp(t, "testdata/coverage/basic")
+	streamDir := filepath.Join(dir, "run-a", "capture", "capture-a1", "mcp")
+	body, err := os.ReadFile(filepath.Join(streamDir, "zcp-4001.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(streamDir, "zcp-9999.jsonl"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Coverage(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Cell{
+		{ScenarioID: "s1", Step: "deploy-active", Decision: "zerops_deploy", Count: 1},
+		{ScenarioID: "s1", Step: "develop-active", Decision: "zerops_workflow:status", Count: 2},
+		{ScenarioID: "s1", Step: "discover-done", Decision: "zerops_discover", Count: 1},
+	}
+	if !reflect.DeepEqual(report.Cells, want) {
+		t.Fatalf("got %+v want %+v", report.Cells, want)
+	}
+}
+
 // TestCoverage_CellsDerivedFromStream_SortedDeterministic pins the exact
 // (scenario, workflow step, tool decision) cells Coverage derives from the
 // two fixture runs under testdata/coverage/basic/ — the expected table is a

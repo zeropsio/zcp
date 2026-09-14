@@ -102,6 +102,7 @@ func Coverage(dir string, since string) (CoverageReport, error) {
 			continue
 		}
 
+		seenCells := make(map[[2]string]bool)
 		for _, streamPath := range matches {
 			calls, err := capture.ReadMCPStream(streamPath)
 			if err != nil {
@@ -113,6 +114,11 @@ func Coverage(dir string, since string) (CoverageReport, error) {
 					decision = call.Tool + ":" + call.Action
 				}
 				step := call.EnvelopePhase
+				key := [2]string{step, decision}
+				if seenCells[key] {
+					continue
+				}
+				seenCells[key] = true
 
 				if counts[scenarioID] == nil {
 					counts[scenarioID] = make(map[string]map[string]int)
@@ -122,7 +128,6 @@ func Coverage(dir string, since string) (CoverageReport, error) {
 				}
 				counts[scenarioID][step][decision]++
 
-				key := [2]string{step, decision}
 				if scenarioSteps[scenarioID] == nil {
 					scenarioSteps[scenarioID] = make(map[[2]string]bool)
 				}
