@@ -1,5 +1,7 @@
 package topology
 
+import "strings"
+
 // RepoProvenance classifies where a dev service's baseline commit content
 // actually came from at adopt time (docs/spec-workflows.md §4.10).
 type RepoProvenance string
@@ -52,4 +54,29 @@ func ClassifyProvenance(sourceService string, deployFiles []string) RepoProvenan
 // mark the appVersion a dev service was adopted at (refs/tags/zcp/baseline/<id>).
 func BaselineTagName(appVersionID string) string {
 	return "zcp/baseline/" + appVersionID
+}
+
+// baselineTagPrefix is BaselineTagName's fixed prefix, factored out so
+// BaselineIDFromTag stays the single place that strips it back off.
+const baselineTagPrefix = "zcp/baseline/"
+
+// BaselineIDFromTag extracts the appVersion id from a `git tag --list
+// 'zcp/baseline/*'` line (one tag name, optionally with trailing
+// whitespace/newline). Returns "" when tagOutput doesn't name a
+// zcp/baseline/* tag at all — including empty output (no tag found).
+func BaselineIDFromTag(tagOutput string) string {
+	line := strings.TrimSpace(tagOutput)
+	if line == "" {
+		return ""
+	}
+	// `git tag --points-at` can list more than one tag per line (rare,
+	// but possible if a caller ever double-tags); the baseline is always
+	// the first one recorded.
+	if idx := strings.IndexAny(line, "\n"); idx >= 0 {
+		line = line[:idx]
+	}
+	if !strings.HasPrefix(line, baselineTagPrefix) {
+		return ""
+	}
+	return strings.TrimPrefix(line, baselineTagPrefix)
 }
