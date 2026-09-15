@@ -165,15 +165,26 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 
 	// Auto-mount runtime services after successful provision completion.
 	// mounter is nil in local env — no-op naturally.
+	adoptProvisionComplete := false
 	if input.Step == workflow.StepProvision && (resp.CheckResult == nil || resp.CheckResult.Passed) {
 		resp.AutoMounts = autoMountTargets(ctx, client, projectID, mounter, sshDeployer, engine)
 		cleanupImportYAML(stateDir, resp.AutoMounts, engine.Environment() == workflow.EnvContainer)
+		adoptProvisionComplete = bootstrapSessionRoute(engine) == workflow.BootstrapRouteAdopt
 	}
 
 	appendTransitionMessage(resp, engine)
 	populateRuntimeURLs(ctx, client, projectID, engine, resp)
 	if needsStacks(resp) {
 		populateStacks(ctx, resp, schemaCache)
+	}
+	// The adopt route's provision-complete response is the one place that
+	// tells the agent to check services[].repo before reporting done
+	// (buildAdoptionTransitionMessage, bootstrap-adopt-baseline-commit) —
+	// carry the same block action="status" renders in THIS response
+	// instead of sending the agent to a separate status call. Every other
+	// path stays on the terser bootstrapResult.
+	if adoptProvisionComplete {
+		return bootstrapResultWithRepoStatus(ctx, resp, engine, client, projectID, rt, sshDeployer), nil, nil
 	}
 	return bootstrapResult(ctx, resp, engine, client, projectID, rt), nil, nil
 }

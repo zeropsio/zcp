@@ -601,7 +601,7 @@ func buildAdoptionTransitionMessage(state *WorkflowState) string {
 	var sb strings.Builder
 	sb.WriteString(bootstrapCompleteMsg + " Services adopted — existing code and configuration preserved.\n\n## Services\n\n")
 	writeServiceList(&sb, state.Bootstrap.Plan)
-	sb.WriteString("\nBefore moving on, check each service's `repo` block in the status envelope: `provenance: initialized` means that tree came back uncommitted, and it still needs a `.gitignore` and a baseline commit over SSH.\n")
+	sb.WriteString("\nBefore moving on, check each service's `repo` block in this response's envelope (`services[].repo` — the same block `zerops_workflow action=\"status\"` carries): `provenance: initialized` means that tree came back uncommitted, and it still needs a `.gitignore` and a baseline commit over SSH.\n")
 	sb.WriteString("\nNext: `zerops_workflow action=\"start\" workflow=\"develop\"` — develop reads each service's existing code and runs the iterate-edit-deploy loop. Platform invariants surface via the develop-active atoms on the first call.\n")
 
 	return sb.String()

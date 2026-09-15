@@ -31,8 +31,10 @@ When `zerops_discover` shows a runtime stuck at `status=READY_TO_DEPLOY`, branch
 `complete step="provision"` is what actually mounts and initializes an
 adopted service's repository. Check each adopted dev runtime once that
 call returns, before reporting adopt as done — a runtime whose tree came
-back uncommitted (`repo.provenance: initialized` on the status envelope,
-or `git status` over SSH shows untracked/staged content) still needs:
+back uncommitted (`repo.provenance: initialized` in this response's
+envelope — `services[].repo`, the same block `zerops_workflow
+action="status"` carries — or `git status` over SSH shows
+untracked/staged content) still needs:
 
 1. A `.gitignore` for the stack: dependency directories, build output,
    local caches, and `.env`/`.env.*` files all belong in it.
