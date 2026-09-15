@@ -53,7 +53,12 @@ verification:
   meta:
     - {hostname: appdev, field: gitPushState, expect: "configured"}
   containerCheck:
-    - {service: appdev, cmd: "ls /var/www/.github/workflows", match: "\\.ya?ml"}
+    # The workflow's home is ORIGIN, not the dev container: the Actions run
+    # this push triggers redeploys appdev from the GitHub runner with a
+    # deployFiles-filtered artifact, so /var/www/.github may legitimately be
+    # gone afterwards (observed gf-cargo-6). Read origin through the
+    # container's own GIT_TOKEN — the value never leaves the container.
+    - {service: appdev, cmd: "curl -sf -H \"Authorization: Bearer $GIT_TOKEN\" https://api.github.com/repos/krls2020/eval2/contents/.github/workflows | grep -o '\"name\": *\"[^\"]*\\.ya\\?ml\"'", match: "\\.ya?ml"}
   toolArg:
     - {never: "zerops_deploy{strategy≠git-push}"}
   askWhen: [GIT_TOKEN_MISSING]
@@ -98,6 +103,15 @@ userPersona: |
    - Žádné nové služby vytvořené, žádný redeploy
 
 notableFriction:
+  - id: remote-history-is-not-zcps-to-discard
+    description: |
+      The farm resets eval2 to a single unrelated baseline commit before
+      seed, so the first push from appdev is non-fast-forward — the shape
+      of a fresh GitHub repo created with a README. zcp classifies this
+      (GF-11: rebase, merge or replace-remote) and never force-pushes or
+      merges on its own; an agent that runs `git push --force` or a merge
+      without the user choosing is off-contract (gf-cargo-6 forced,
+      gf-cargo-3 merged — both improvised).
   - id: pat-permissions-enumeration
     description: |
       Agent musí enumerovat PŘESNÉ permissions požadované GitHub PAT
