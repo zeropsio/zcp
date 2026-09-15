@@ -367,3 +367,9 @@ which only `action=status` attaches — the provision-complete response's envelo
 carries no `repo` block, so the agents improvised with `git status`. Fix in flight: the adopt
 provision-complete response attaches the same block (`attachRepoStatus`), wording says "this
 response's envelope".
+
+Farm `gf-guide-3` (candidate efe9b7e3; G6, G2): both passed. G6's agent read `provenance:
+initialized` / `repoState: dirty` from the provision-complete response itself, added the `.env`
+rule and made the baseline commit over SSH "per the adopt guide" — no improvised probing. G2 left
+the existing history untouched. Net state of the branch: every G cell passes with non-leading
+prompts and content-based oracles (G1, G2, G3, G4, G5, G6 across gf-guide-1..3).
