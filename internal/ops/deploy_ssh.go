@@ -271,6 +271,14 @@ func deploySSH(
 		} else if headSHA, isDirty, hasRepo, _ := git.HeadStatus(ctx, gitRunner, workingDir); hasRepo {
 			resolvedSHA = headSHA
 			dirty = isDirty
+			// GF-5: a dirty cross-deploy shipped code that isn't
+			// reproducible from git alone — say so where the agent will
+			// see it. Self-deploy is excluded by construction (this
+			// branch only runs when class == DeployClassCross); the
+			// explicit-sha branch above never reaches here at all.
+			if dirty {
+				warnings = append(warnings, dirtyCrossDeployWarning(target.Name, source.Name, resolvedSHA))
+			}
 		}
 	}
 	if cleanupTemp != nil {

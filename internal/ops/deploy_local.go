@@ -128,6 +128,7 @@ func DeployLocal(
 	deployDir := workingDir
 	var resolvedSHA string
 	var dirty bool
+	var dirtyWarning string
 	var cleanupTemp func()
 	if sha != "" {
 		var newDeployDir string
@@ -147,6 +148,13 @@ func DeployLocal(
 		if headSHA, isDirty, hasRepo, _ := git.HeadStatus(ctx, git.LocalRunner{}, workingDir); hasRepo {
 			resolvedSHA = headSHA
 			dirty = isDirty
+			// GF-5: DeployLocal is always cross-deploy (DM-1) — a dirty
+			// working tree shipped code that isn't reproducible from git
+			// alone. Empty source selects the LOCAL wording (there is no
+			// named Zerops source service to point at).
+			if dirty {
+				dirtyWarning = dirtyCrossDeployWarning(targetService, "", resolvedSHA)
+			}
 		}
 	}
 	if cleanupTemp != nil {
@@ -185,6 +193,9 @@ func DeployLocal(
 	warnings, vErr := ValidateZeropsYml(deployDir, setupName, serviceType, DeployClassCross)
 	if vErr != nil {
 		return nil, vErr
+	}
+	if dirtyWarning != "" {
+		warnings = append(warnings, dirtyWarning)
 	}
 	// .deployignore lint surfaces every finding (artifact patterns and
 	// redundant entries alike) as warnings. The TEACH-side teaching
