@@ -10,6 +10,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `bootstrap-classic-plan-dynamic` | 1 | bootstrap/classic/discover-standard-dynamic |
 | `bootstrap-classic-plan-static` | 1 | bootstrap/classic/discover-standard-dynamic |
 | `bootstrap-close` | 1 | bootstrap/recipe/close |
+| `bootstrap-close-baseline-commit` | 1 | bootstrap/recipe/close |
 | `bootstrap-discover-local` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `bootstrap-env-var-discovery` | 1 | bootstrap/classic/provision-local |
 | `bootstrap-intro` | 2 | bootstrap/adopt/discover-existing-pair, bootstrap/classic/discover-standard-dynamic |
@@ -79,7 +80,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `develop-ready-to-deploy` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-record-external-deploy` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-reserved-env-names` | 4 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision |
-| `develop-self-deploy-reproducibility` | 6 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-unset-decision, develop/mode-expansion-source, develop/multi-service-scope-narrow, develop/steady-dev-auto-container |
+| `develop-self-deploy-reproducibility` | 11 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/git-push-broken, develop/git-push-configured-webhook, develop/mode-expansion-source, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/steady-dev-auto-container |
 | `develop-standard-unset-iterate` | 1 | develop/post-adopt-standard-unset |
 | `develop-standard-unset-promote-stage` | 1 | develop/post-adopt-standard-unset |
 | `develop-static-workflow` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
