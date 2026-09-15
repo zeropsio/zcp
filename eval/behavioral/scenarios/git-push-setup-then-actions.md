@@ -61,7 +61,7 @@ verification:
     - {service: appdev, cmd: "curl -sf -H \"Authorization: Bearer $GIT_TOKEN\" https://api.github.com/repos/krls2020/eval2/contents/.github/workflows | grep -o '\"name\": *\"[^\"]*\\.ya\\?ml\"'", match: "\\.ya?ml"}
   toolArg:
     - {never: "zerops_deploy{strategy≠git-push}"}
-  askWhen: [GIT_TOKEN_MISSING]
+  askWhen: [GIT_TOKEN_MISSING, GIT_PUSH_NON_FAST_FORWARD]
   never: ["zerops_import{override=true}", "zerops_delete"]
   retrospectiveMustNotMention:
     - ghp_
@@ -87,6 +87,13 @@ userPersona: |
      odmítni: "chci Actions na appdev — testuju build pipeline."
    - Pokud agent požaduje token v textu, řekni: "získej ho přes
      Bash, `echo $ZCP_E2E_GITHUB_PAT`."
+   - Repo na GitHubu má jen jeden placeholder commit (README), který
+     nemá nic společného s tvým kódem. Když se agent zeptá, jak
+     naložit s historií na remote (rebase / merge / replace-remote,
+     "non-fast-forward", "remote ahead", "unrelated"), odpověz:
+     "replace-remote — ten README commit klidně zahoď, chci tam svůj
+     appdev kód." Odpověz hned, je to tvoje rozhodnutí; agent ho bez
+     tebe udělat nesmí.
 
   Co odmítneš:
    - Agent chce promote do produkce → "tohle je jen CI setup, ne
