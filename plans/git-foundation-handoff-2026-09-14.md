@@ -311,3 +311,36 @@ Open: launch-production template `--version-name`; `versionName` on rollback can
   `develop-self-deploy-reproducibility`.
 - Farm `gf-cargo-14` on the merged branch: G1, G2, G3, G4 (ignored file gone, `notCarried` +
   `envFiles` in the result), G5, G6-initialized — all passed.
+
+### 9.3 Day 3, night — the process must lead, not the prompt
+
+Review of the merged branch (Karel's four questions: what changed on cross-deploy, is
+production safe, is the code sound, do agents make the commits) found the code green and
+production untouched, but the guidance claim false. Verified on `gf-cargo-14` transcripts: G1
+(60 steps), G6 (11 steps) and G4 (32 steps) contain no `git commit`, no `git add`, no
+`.gitignore` write — and all three cells PASSED because the oracles never asked. Three causes,
+all in code: `develop-self-deploy-reproducibility` was `modes: [dev, simple]` while a pair's
+dev half is `Mode = standard`; it rendered only in develop-active, after bootstrap/adopt close
+had already ended; no atom mentioned `sha=` at all (G3 passed only because its prompt said
+"by its sha"). Owner rule restated: farm prompts must not lead; the process must.
+
+Landed (five parallel builder slices, merged):
+- Atoms: `bootstrap-close-baseline-commit` (adopt/recipe close), `develop-self-deploy-reproducibility`
+  now includes `standard`, the three stage-promotion atoms say commit-before-promote, `sha=` for an
+  exact commit, `appVersion=<id>` for rollback. Goldens regenerated.
+- Deploy result: a dirty working-tree deploy to a CROSS target appends a `Warnings` entry naming
+  HEAD and pointing at `sha=` (`ops.dirtyCrossDeployWarning`); never on self-deploy or the sha path.
+- Scenarios: G1/G6 oracles require a non-robot commit, tracked `.gitignore`, no `.env`/`node_modules`
+  in HEAD (G6's cargo file must now BE tracked by the agent's commit); G3 prompt de-led ("Ship what's
+  on appdev to appstage. Afterwards tell me exactly which commit is running…") with
+  `toolArg always zerops_deploy{targetService=appstage,sha~^[0-9a-f]+$}`.
+- Launch + release push-proof: a meta without `TrackedRef` compares `HEAD` (pre-GF-7 behaviour),
+  not the literal `main` (`tools.launchPushProofRef`) — regression for legacy metas on non-main
+  default branches removed.
+- `action=status`: repo + rollback blocks read concurrently (bounded 4) — one round trip of wall
+  time instead of N.
+
+Still open from the review (not fixed, by choice): self-deploy refusals (worktree/submodules) are
+fail-open on a preflight transport error; the local-mode provision gate ("project root must be a
+git repo") is live-unverified (farm is container-only); without a `.gitignore` the zcli archiver
+ships `node_modules` on a self-deploy — the guidance fix above is the mitigation.
