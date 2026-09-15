@@ -10,11 +10,18 @@ description: |
   leaves a fresh service in — init-if-missing, identity set-if-absent,
   an empty marker HEAD if none was reachable — WITHOUT staging or
   committing anything it found, and records `repo.provenance=initialized`.
-  The containerCheck proves the files found on disk stay exactly as
-  found: `.env` and the cargo file are both on disk and untracked, no
-  commit carries either of them, any commit that exists is the robot's
-  marker only, and no tag was written. Neither the marker nor its
-  appVersion record claims the files built the running appVersion.
+  zcp's part stops there; the persona then asks for a `.gitignore` and a
+  baseline commit of the found files, which is agent work done over SSH
+  against the container's own git state, never `git init`/`git commit`
+  run by hand from the ZCP-side mount (root-owned `.git/objects/` —
+  `develop-first-deploy-write-app.md`).
+
+  The containerCheck proves the intended end state, not the absence of
+  one: `cargo-untracked.txt` is tracked in HEAD by a commit authored by
+  a non-robot identity; `.env` stays on disk with its preseed value but
+  is never tracked and never enters any commit, ever; `.gitignore` is
+  tracked and carries a rule for `.env`; no tag was written; and at
+  least one commit overall carries a non-robot author.
 seed: deployed
 fixture: fixtures/nodejs-standard-deployed.yaml
 preseedScript: preseed/adopt-snapshot-no-git.sh
@@ -38,12 +45,16 @@ verification:
   unchanged: [appdev, appstage]
   containerCheck:
     - {service: appdev, cmd: "git -C /var/www rev-list --count HEAD", match: "^[1-9][0-9]*\\s*$"}
-    - {service: appdev, cmd: "git -C /var/www ls-tree -r HEAD --name-only | grep -qx cargo-untracked.txt && echo cargo-tracked || echo cargo-not-tracked", match: "^cargo-not-tracked"}
+    - {service: appdev, cmd: "git -C /var/www ls-tree -r HEAD --name-only | grep -qx cargo-untracked.txt && echo cargo-tracked || echo cargo-not-tracked", match: "^cargo-tracked"}
+    - {service: appdev, cmd: "git -C /var/www log --format=%ae -- cargo-untracked.txt | grep -qv '^agent@zerops.io$' && echo cargo-agent-authored || echo cargo-robot-or-absent", match: "^cargo-agent-authored"}
     - {service: appdev, cmd: "grep -q untracked /var/www/cargo-untracked.txt && echo cargo-on-disk", match: "^cargo-on-disk"}
     - {service: appdev, cmd: "git -C /var/www ls-tree -r HEAD --name-only | grep -qx .env && echo env-tracked || echo env-not-tracked", match: "^env-not-tracked"}
     - {service: appdev, cmd: "grep -q preseed-secret-value /var/www/.env && echo env-on-disk", match: "^env-on-disk"}
-    - {service: appdev, cmd: "git -C /var/www log --format=%ae -- cargo-untracked.txt | grep -q agent@zerops.io && echo robot-touched-cargo || echo cargo-untouched-by-robot", match: "^cargo-untouched-by-robot"}
+    - {service: appdev, cmd: "git -C /var/www log --all --format=%H -- .env | wc -l", match: "^\\s*0"}
+    - {service: appdev, cmd: "git -C /var/www ls-files --error-unmatch .gitignore >/dev/null 2>&1 && echo gitignore-tracked", match: "^gitignore-tracked"}
+    - {service: appdev, cmd: "grep -q '\\.env' /var/www/.gitignore && echo env-ignored", match: "^env-ignored"}
     - {service: appdev, cmd: "git -C /var/www tag -l | wc -l", match: "^\\s*0"}
+    - {service: appdev, cmd: "git -C /var/www log --format=%ae | grep -qv '^agent@zerops.io$' && echo agent-committed", match: "^agent-committed"}
   meta:
     - {hostname: appdev, field: repo.provenance, expect: initialized}
   never: ["zerops_import{override=true}", "zerops_delete"]
@@ -64,10 +75,14 @@ notableFriction:
       inside adopt (GLC-7) — but staging and committing the files found
       on disk is not: zcp never commits user files. An agent that skips
       writing `.gitignore` and making the baseline commit the persona
-      asked for is leaving that half of the job undone; an agent that
-      `git init`s or commits on the mounted tree BY HAND from the
-      ZCP-side mount (GLC-5 forbids mount-side git init — root-owned
-      objects) is doing it the wrong way.
+      asked for is leaving that half of the job undone; the containerCheck
+      gates it directly (cargo-untracked.txt must land in a non-robot
+      commit). An agent that instead reaches for `git init`/`git commit`
+      on the mounted tree BY HAND from the ZCP-side mount (GLC-5 forbids
+      mount-side git init — it leaves root-owned `.git/objects/` that
+      breaks the container's own git, `develop-first-deploy-write-app.md`)
+      is doing the right work the wrong way — the commit must happen
+      inside the container, over SSH.
   - id: secret-never-committed
     description: |
       `.env` is on disk and must stay on disk, and must never enter any
