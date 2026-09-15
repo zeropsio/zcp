@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -522,6 +523,43 @@ func TestLaunchGate_ComparesTrackedRef(t *testing.T) {
 	}
 	if strings.Contains(lsRemote, "'HEAD'") || strings.HasSuffix(strings.TrimSpace(lsRemote), "HEAD") {
 		t.Errorf("ls-remote must not fall back to the symbolic HEAD ref when a tracked ref is supplied:\n%s", lsRemote)
+	}
+}
+
+// TestLaunchGate_LegacyMetaWithoutTrackedRef_ComparesHEAD pins the GF-7
+// regression fix (docs/spec-workflows.md §12.6): every ServiceMeta
+// written before GF-7 carries an empty TrackedRef, and
+// trackedRefOrDefault falls back to the literal "main" for ALL of
+// them — even a target whose remote's actual default branch is
+// something else (e.g. "master"), which flips the gate from passing
+// to a hard head-not-pushed block for every pre-existing meta. The
+// push-proof call must instead fall back to "HEAD" (the pre-GF-7
+// compare against whatever the remote considers its default) when no
+// tracked ref was ever recorded — never soften a RECORDED tracked ref
+// (TestLaunchGate_ComparesTrackedRef pins that half).
+func TestLaunchGate_LegacyMetaWithoutTrackedRef_ComparesHEAD(t *testing.T) {
+	stateDir := t.TempDir()
+	seedLaunchGateReadyMeta(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+	installFakeLiveRemoteReader(t, map[string]string{"app": canonicalLaunchTestRemoteURL})
+
+	var gotTrackedRef string
+	cleanup := setLaunchPushProofReader(func(_ context.Context, _ ops.SSHDeployer, _ runtime.Info, _ string, _ string, trackedRef string) (LaunchPushProofResult, error) {
+		gotTrackedRef = trackedRef
+		return LaunchPushProofResult{DirtyTree: false, LocalHead: canonicalLaunchTestHeadSHA, RemoteHead: canonicalLaunchTestHeadSHA}, nil
+	})
+	defer cleanup()
+
+	_, blockers, err := validateLaunchSourceControl(
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "", "app", nil,
+	)
+	if err != nil {
+		t.Fatalf("validateLaunchSourceControl: %v", err)
+	}
+	if len(blockers) != 0 {
+		t.Fatalf("blockers: got %d want 0\n%+v", len(blockers), blockers)
+	}
+	if gotTrackedRef != "HEAD" {
+		t.Errorf("trackedRef passed to push-proof reader for a legacy meta (no TrackedRef): got %q want %q", gotTrackedRef, "HEAD")
 	}
 }
 
