@@ -138,6 +138,12 @@ func gitPushMetaPreflight(
 
 const gitTokenCheckCmd = `test -n "$GIT_TOKEN" && echo 1 || echo 0`
 
+// defaultTrackedRef is the GF-7 "main" fallback (docs/spec-workflows.md
+// §12.6) — the single literal every reader / writer of ServiceMeta.
+// TrackedRef falls back to when nothing else resolves one. One constant so
+// the fallback stays byte-identical everywhere it's used.
+const defaultTrackedRef = "main"
+
 // statusNothingToPush is the GitPushResult.Status when `git push` finds the
 // remote already at HEAD ("Everything up-to-date"). Single owner so the
 // container + local git-push paths and the build-watch skip agree.
@@ -181,6 +187,32 @@ func resolveEffectiveRemote(stateDir, targetService, inputRemote string) string 
 		return ""
 	}
 	return meta.RemoteURL
+}
+
+// trackedRefOrDefault is the single owner of the GF-7 "main" fallback
+// (docs/spec-workflows.md §12.6): every reader of ServiceMeta.TrackedRef
+// — the git-push default branch, the GitHub Actions template, the launch
+// gate's remote-HEAD compare — falls back to "main" identically when meta
+// carries none (pre-existing metas written before GF-7, or a recall that
+// never ran detection). Never re-detects; git-push-setup is the sole
+// writer of TrackedRef.
+func trackedRefOrDefault(meta *workflow.ServiceMeta) string {
+	if meta != nil && meta.TrackedRef != "" {
+		return meta.TrackedRef
+	}
+	return defaultTrackedRef
+}
+
+// resolveTrackedBranch resolves the branch a container-mode git-push
+// transmits to: an explicit inputBranch always wins (back-compat with the
+// pre-GF-7 `branch` input), else the target's recorded tracked ref (GF-7),
+// else "main".
+func resolveTrackedBranch(stateDir, targetService, inputBranch string) string {
+	if inputBranch != "" {
+		return inputBranch
+	}
+	meta, _ := workflow.FindServiceMeta(stateDir, targetService)
+	return trackedRefOrDefault(meta)
 }
 
 // gitPushEnvRefPreflight validates the run.envVariables refs of the named
@@ -335,10 +367,7 @@ func handleGitPush(
 	if workingDir == "" {
 		workingDir = "/var/www"
 	}
-	branch := input.Branch
-	if branch == "" {
-		branch = "main"
-	}
+	branch := resolveTrackedBranch(stateDir, input.TargetService, input.Branch)
 
 	effectiveRemote := resolveEffectiveRemote(stateDir, input.TargetService, input.RemoteURL)
 

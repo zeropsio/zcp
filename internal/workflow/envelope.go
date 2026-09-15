@@ -94,8 +94,8 @@ type ProjectSummary struct {
 // ServiceSnapshot is one service's point-in-time state inside the envelope.
 //
 // Per-pair deploy dimensions (CloseDeployMode / GitPushState /
-// BuildIntegration / RemoteURL) project ServiceMeta state onto the
-// envelope so atoms filter on the orthogonal post-decomposition
+// BuildIntegration / RemoteURL / TrackedRef) project ServiceMeta state onto
+// the envelope so atoms filter on the orthogonal post-decomposition
 // vocabulary. See plan
 // `plans/archive/deploy-strategy-decomposition-2026-04-28.md` §3.1 for
 // the orthogonality matrix.
@@ -120,6 +120,11 @@ type ServiceSnapshot struct {
 	GitPushState     topology.GitPushState     `json:"gitPushState,omitempty"`
 	BuildIntegration topology.BuildIntegration `json:"buildIntegration,omitempty"`
 	RemoteURL        string                    `json:"remoteUrl,omitempty"`
+	// TrackedRef mirrors ServiceMeta.TrackedRef (GF-7, docs/spec-workflows.md
+	// §12.6) — empty when no confirm has recorded one yet (readers apply the
+	// "main" fallback independently; the envelope shows the raw recorded
+	// value, never the derived default).
+	TrackedRef string `json:"trackedRef,omitempty"`
 	// FeedsProduction lists the production projects this pair was
 	// promoted into ("name (projectID)") — the F4 post-launch
 	// back-reference projected for render, so develop-side status can

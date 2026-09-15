@@ -47,6 +47,16 @@ type ServiceMeta struct {
 	GitPushState             topology.GitPushState     `json:"gitPushState,omitempty"`
 	RemoteURL                string                    `json:"remoteUrl,omitempty"` // cache; runtime source of truth = `git remote get-url origin`
 	BuildIntegration         topology.BuildIntegration `json:"buildIntegration,omitempty"`
+	// TrackedRef is the ref a target consumes — what stage or prod is built
+	// from (GF-7, docs/spec-workflows.md §12.6). Recorded ONCE by
+	// git-push-setup's confirm step: an explicit trackedRef input always
+	// wins; otherwise the push source's current branch is detected (its
+	// attached HEAD, else the remote's default branch), falling back to
+	// "main" when neither resolves. Every reader (git-push's default
+	// branch, the GitHub Actions template, the launch gate's remote-HEAD
+	// compare) applies the SAME "main" fallback when this is empty
+	// (pre-existing metas written before GF-7) — never re-detected here.
+	TrackedRef string `json:"trackedRef,omitempty"`
 	// BuildIntegrationVerifiedAt is the RFC3339 timestamp of the last
 	// EARNED verification of the declared BuildIntegration — a checkable
 	// signal ZCP observed, never the declaration itself:

@@ -21,7 +21,7 @@ import (
 func TestActionsWorkflowYAML_SelfTargetParity(t *testing.T) {
 	t.Parallel()
 
-	self := actionsWorkflowYAML("weather", true)
+	self := actionsWorkflowYAML("weather", true, "main")
 	if !strings.Contains(self, "-g") || !strings.Contains(self, `--setup "weather" -g`) {
 		t.Errorf("self-target workflow must push with -g:\n%s", self)
 	}
@@ -29,12 +29,60 @@ func TestActionsWorkflowYAML_SelfTargetParity(t *testing.T) {
 		t.Errorf("self-target workflow must disable checkout credential persistence:\n%s", self)
 	}
 
-	pair := actionsWorkflowYAML("prod", false)
+	pair := actionsWorkflowYAML("prod", false, "main")
 	if strings.Contains(pair, " -g") {
 		t.Errorf("stage-targeting workflow must NOT ship .git (cross-build):\n%s", pair)
 	}
 	if strings.Contains(pair, "persist-credentials") {
 		t.Errorf("stage-targeting workflow needs no checkout override:\n%s", pair)
+	}
+}
+
+// TestBuildIntegration_ActionsTemplateUsesTrackedRef pins GF-7 (docs/spec-
+// workflows.md §12.6): the emitted Actions workflow triggers on the
+// SERVICE's recorded tracked ref, not a hardcoded "main" — every template
+// variant (self-target, pair, and the compact wrapper-action variant).
+func TestBuildIntegration_ActionsTemplateUsesTrackedRef(t *testing.T) {
+	t.Parallel()
+
+	self := actionsWorkflowYAML("weather", true, "release")
+	if !strings.Contains(self, "branches: [release]") {
+		t.Errorf("self-target workflow must trigger on the tracked ref 'release':\n%s", self)
+	}
+
+	pair := actionsWorkflowYAML("prod", false, "release")
+	if !strings.Contains(pair, "branches: [release]") {
+		t.Errorf("pair workflow must trigger on the tracked ref 'release':\n%s", pair)
+	}
+
+	wrapper := actionsSingleSetupWorkflowYAML("release")
+	if !strings.Contains(wrapper, "branches: [release]") {
+		t.Errorf("wrapper-action workflow must trigger on the tracked ref 'release':\n%s", wrapper)
+	}
+}
+
+// TestActionsTemplate_VersionNameSHA pins GF-10 (docs/spec-workflows.md
+// §12.6): the setup-aware zcli push line records the built commit via
+// --version-name "$GITHUB_SHA" so SearchAppVersions.name is a platform-
+// side breadcrumb independent of local session history. The compact
+// wrapper-action variant cannot express it (zeropsio/actions exposes no
+// version-name input) and must not claim to.
+func TestActionsTemplate_VersionNameSHA(t *testing.T) {
+	t.Parallel()
+
+	self := actionsWorkflowYAML("weather", true, "main")
+	if !strings.Contains(self, `zcli push --service-id "${{ secrets.ZEROPS_SERVICE_ID }}" --setup "weather" -g --version-name "$GITHUB_SHA"`) {
+		t.Errorf("self-target zcli push must carry --version-name \"$GITHUB_SHA\":\n%s", self)
+	}
+
+	pair := actionsWorkflowYAML("prod", false, "main")
+	if !strings.Contains(pair, `zcli push --service-id "${{ secrets.ZEROPS_SERVICE_ID }}" --setup "prod" --version-name "$GITHUB_SHA"`) {
+		t.Errorf("pair zcli push must carry --version-name \"$GITHUB_SHA\":\n%s", pair)
+	}
+
+	wrapper := actionsSingleSetupWorkflowYAML("main")
+	if strings.Contains(wrapper, "version-name") {
+		t.Errorf("wrapper-action variant cannot express --version-name (no such zeropsio/actions input) and must not claim to:\n%s", wrapper)
 	}
 }
 

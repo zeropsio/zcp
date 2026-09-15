@@ -30,6 +30,7 @@ func SnapshotsFromMetas(metas []*ServiceMeta) []ServiceSnapshot {
 			GitPushState:     m.GitPushState,
 			BuildIntegration: m.BuildIntegration,
 			RemoteURL:        m.RemoteURL,
+			TrackedRef:       m.TrackedRef,
 			StageHostname:    m.StageHostname,
 			Bootstrapped:     true,
 			Deployed:         deployed,
@@ -42,6 +43,7 @@ func SnapshotsFromMetas(metas []*ServiceMeta) []ServiceSnapshot {
 				GitPushState:     m.GitPushState,
 				BuildIntegration: m.BuildIntegration,
 				RemoteURL:        m.RemoteURL,
+				TrackedRef:       m.TrackedRef,
 				Bootstrapped:     true,
 				Deployed:         deployed,
 			})

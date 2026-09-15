@@ -313,7 +313,7 @@ func TestReadLaunchPushProofLocal_LsRemoteError_ReturnsError(t *testing.T) {
 		t.Skip("not inside a git work tree — skipping local push-proof reader test")
 	}
 	// A nonexistent local path is a guaranteed-offline ls-remote failure.
-	_, err := readLaunchPushProofLocal(context.Background(), "/nonexistent/zcp-bogus-remote.git")
+	_, err := readLaunchPushProofLocal(context.Background(), "/nonexistent/zcp-bogus-remote.git", "main")
 	if err == nil {
 		t.Fatal("ls-remote against a nonexistent remote must return an error (gate → source-read-failed), not swallow it into an empty RemoteHead (head-not-pushed)")
 	}
@@ -492,6 +492,36 @@ func TestHandleLaunchProduction_ReadSideGate_DoesNotAudit(t *testing.T) {
 		t.Fatalf("stat audit: %v", statErr)
 	} else if statResult {
 		t.Errorf("read-side gate must NOT write audit entries; %s exists", auditPath)
+	}
+}
+
+// TestLaunchGate_ComparesTrackedRef pins GF-7 (docs/spec-workflows.md
+// §12.6): the push-proof's remote-HEAD read must target the SERVICE'S
+// recorded tracked ref, never a hardcoded/symbolic "HEAD" — a target on a
+// non-default tracked ref (e.g. "release") must be compared against THAT
+// branch's remote SHA, not whatever the remote considers its default.
+func TestLaunchGate_ComparesTrackedRef(t *testing.T) {
+	t.Parallel()
+	ssh := &containerSSHStub{}
+
+	if _, err := readLaunchPushProofContainer(context.Background(), ssh, "pushhost", "https://github.com/example/app.git", "release"); err != nil {
+		t.Fatalf("readLaunchPushProofContainer: %v", err)
+	}
+
+	var lsRemote string
+	for _, cmd := range ssh.commands {
+		if strings.Contains(cmd, "ls-remote") {
+			lsRemote = cmd
+		}
+	}
+	if lsRemote == "" {
+		t.Fatal("no ls-remote command was issued")
+	}
+	if !strings.Contains(lsRemote, "'release'") {
+		t.Errorf("ls-remote must target the tracked ref 'release':\n%s", lsRemote)
+	}
+	if strings.Contains(lsRemote, "'HEAD'") || strings.HasSuffix(strings.TrimSpace(lsRemote), "HEAD") {
+		t.Errorf("ls-remote must not fall back to the symbolic HEAD ref when a tracked ref is supplied:\n%s", lsRemote)
 	}
 }
 

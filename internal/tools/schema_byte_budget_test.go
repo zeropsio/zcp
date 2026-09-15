@@ -69,7 +69,12 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// PA-6): the plan's per-runtime public-access intent
 		// ("" | auto | subdomain | none). Deliberate new field — optional,
 		// backward-compatible (omit → auto, today's behavior).
-		"zerops_workflow":    17834,
+		// Raised +207 (17834→18041) for the `trackedRef` input on
+		// action=git-push-setup (GF-7, docs/spec-workflows.md §12.6): lets
+		// the agent explicitly name the branch stage/prod builds from,
+		// overriding auto-detection. Deliberate new field — optional,
+		// backward-compatible (omit → today's auto-detect-then-"main" path).
+		"zerops_workflow":    18041,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services

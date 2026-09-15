@@ -52,18 +52,19 @@ func TestGitCredentialHelperArgs_ResetsConfiguredHelpers(t *testing.T) {
 }
 
 // TestBuildGitAuthedLsRemoteCommand_Shape pins the single authenticated
-// remote-HEAD read shared by the launch push-proof (container) — the
+// remote-ref read shared by the launch push-proof (container) — the
 // consolidation the 2026-05-28 audit ordered (one primitive, no inline
-// duplicates in tools/).
+// duplicates in tools/). GF-7: the ref is the caller-supplied tracked ref,
+// never a hardcoded "HEAD".
 func TestBuildGitAuthedLsRemoteCommand_Shape(t *testing.T) {
 	t.Parallel()
 
-	cmd := BuildGitAuthedLsRemoteCommand("https://github.com/example/app")
+	cmd := BuildGitAuthedLsRemoteCommand("https://github.com/example/app", "main")
 	for _, req := range []struct{ name, substr string }{
 		{"prompt disabled", "GIT_TERMINAL_PROMPT=0"},
 		{"inline helper", "-c credential.helper='!f()"},
 		{"read-only probe", "git"},
-		{"ls-remote HEAD", "ls-remote 'https://github.com/example/app' HEAD"},
+		{"ls-remote against the tracked ref", "ls-remote 'https://github.com/example/app' 'main'"},
 		{"first SHA column", "head -1 | cut -f1"},
 		{"state-not-transport tolerance", "|| true"},
 	} {
@@ -75,6 +76,22 @@ func TestBuildGitAuthedLsRemoteCommand_Shape(t *testing.T) {
 		if strings.Contains(cmd, forbidden) {
 			t.Errorf("authed ls-remote must not use the retired .netrc pattern (%q):\n%s", forbidden, cmd)
 		}
+	}
+}
+
+// TestBuildGitAuthedLsRemoteCommand_RefIsParameterized pins GF-7: passing a
+// non-default ref produces a command targeting THAT ref, never a hardcoded
+// "HEAD" — the launch gate compares against the recorded tracked ref, not
+// whatever the remote's symbolic default happens to be.
+func TestBuildGitAuthedLsRemoteCommand_RefIsParameterized(t *testing.T) {
+	t.Parallel()
+
+	cmd := BuildGitAuthedLsRemoteCommand("https://github.com/example/app", "release")
+	if !strings.Contains(cmd, "ls-remote 'https://github.com/example/app' 'release'") {
+		t.Errorf("command must target the supplied ref 'release':\n%s", cmd)
+	}
+	if strings.Contains(cmd, "' HEAD") {
+		t.Errorf("command must not fall back to the symbolic HEAD ref when a tracked ref is supplied:\n%s", cmd)
 	}
 }
 
