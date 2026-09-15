@@ -1167,3 +1167,114 @@ func TestDeploy_NilSSHDeployer(t *testing.T) {
 		t.Errorf("code = %s, want %s", pe.Code, platform.ErrNotImplemented)
 	}
 }
+
+// TestDeploySSH_CrossDeployDirty_WarnsNotReproducible pins the GF-5
+// visibility rule (docs/spec-workflows.md §4.9, §12.6): a working-tree
+// (no explicit sha) cross-deploy whose source has uncommitted changes on
+// top of HEAD must say so in Warnings — the target now runs code that
+// isn't reproducible from git alone.
+func TestDeploySSH_CrossDeployDirty_WarnsNotReproducible(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "builder"},
+			{ID: "svc-2", Name: "app"},
+		})
+	sha := "fullhead1234567"
+	ssh := &mockSSHDeployer{results: []sshResult{
+		{output: []byte(sha + "\nM")}, // HeadStatus: dirty (non-empty porcelain char)
+		{output: []byte("ok")},        // login+push
+	}}
+	authInfo := testAuthInfo()
+
+	result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
+		"builder", "app", "", "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Dirty {
+		t.Fatalf("result.Dirty = false, want true")
+	}
+	want := fmt.Sprintf(
+		"app received HEAD %s plus uncommitted changes from builder — not reproducible from git. Commit on builder and redeploy, or pass sha=%q to ship an exact commit.",
+		sha[:7], sha,
+	)
+	found := false
+	for _, w := range result.Warnings {
+		if w == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Warnings = %#v, want to contain %q", result.Warnings, want)
+	}
+}
+
+// TestDeploySSH_SelfDeployDirty_NoReproducibilityWarning pins the negative
+// case: a dirty SELF-deploy never carries the cross-deploy reproducibility
+// warning — DM-7's repoState/notCarried facts already cover that ground,
+// and the dev loop is dirty by design.
+func TestDeploySSH_SelfDeployDirty_NoReproducibilityWarning(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app"},
+		})
+	ssh := &mockSSHDeployer{results: []sshResult{
+		{output: []byte("ZCP:GITFILE:0\nZCP:SUBMODULES:0\nZCP:HASREPO:1\nZCP:SHA:fullhead1234567\nZCP:DIRTY:1\nZCP:REPOSTATE:dirty\n")}, // self-deploy preflight: dirty
+		{output: []byte("ok")}, // login+push
+	}}
+	authInfo := testAuthInfo()
+
+	result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
+		"app", "app", "", "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Dirty {
+		t.Fatalf("result.Dirty = false, want true (fixture requires it for this pin to mean anything)")
+	}
+	for _, w := range result.Warnings {
+		if containsSubstring(w, "not reproducible from git") {
+			t.Errorf("self-deploy must not carry the cross-deploy reproducibility warning, got: %q", w)
+		}
+	}
+}
+
+// TestDeploySSH_ShaPath_NoReproducibilityWarning pins the other negative
+// case: an explicit-sha deploy is never Dirty (it ships exactly sha's
+// tree), so it never carries the reproducibility warning either.
+func TestDeploySSH_ShaPath_NoReproducibilityWarning(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "builder"},
+			{ID: "svc-2", Name: "app"},
+		})
+	ssh := &mockSSHDeployer{results: []sshResult{
+		{output: []byte("f0115ba1234567\n")},     // resolve
+		{output: []byte(validCommitZeropsYaml)},  // git show <sha>:zerops.yaml
+		{output: []byte("/tmp/zcp-extract-1\n")}, // mktemp -d
+		{output: []byte("")},                     // extract
+		{output: []byte("ok")},                   // login+push
+		{output: []byte("")},                     // cleanup
+	}}
+	authInfo := testAuthInfo()
+
+	result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
+		"builder", "app", "", "", "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Dirty {
+		t.Fatalf("result.Dirty = true, want false — a deploy-from-commit is never dirty")
+	}
+	for _, w := range result.Warnings {
+		if containsSubstring(w, "not reproducible from git") {
+			t.Errorf("an explicit-sha deploy must not carry the reproducibility warning, got: %q", w)
+		}
+	}
+}

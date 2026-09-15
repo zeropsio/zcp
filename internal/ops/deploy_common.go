@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/ops/git"
@@ -168,6 +169,33 @@ func ClassifyDeploy(sourceService, targetService string) DeployClass {
 		return DeployClassSelf
 	}
 	return DeployClassCross
+}
+
+// dirtyCrossDeployWarning builds the DeployResult.Warnings sentence for a
+// working-tree (no explicit sha) deploy that shipped source's HEAD plus
+// uncommitted changes to a CROSS target (docs/spec-workflows.md §4.9,
+// §12.6 GF-5): the target now runs code that isn't reproducible from git
+// alone. Single owner for both transports — callers append its result
+// only when dirty is true and sha was empty; never on a self-deploy
+// (DM-7's repoState already reports that) and never on the explicit-sha
+// path (always clean, GF-3). An empty source selects the LOCAL wording
+// (ops.DeployLocal's source is the caller's own machine, not a named
+// Zerops service).
+func dirtyCrossDeployWarning(target, source, sha string) string {
+	short := sha
+	if len(short) > 7 {
+		short = short[:7]
+	}
+	if source == "" {
+		return fmt.Sprintf(
+			"%s received HEAD %s plus uncommitted changes — not reproducible from git. Commit and redeploy, or pass sha=%q to ship an exact commit.",
+			target, short, sha,
+		)
+	}
+	return fmt.Sprintf(
+		"%s received HEAD %s plus uncommitted changes from %s — not reproducible from git. Commit on %s and redeploy, or pass sha=%q to ship an exact commit.",
+		target, short, source, source, sha,
+	)
 }
 
 // SSHDeployer executes commands on remote Zerops services.

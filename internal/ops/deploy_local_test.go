@@ -329,3 +329,80 @@ func TestDeployLocal_ServiceNotFound(t *testing.T) {
 		t.Errorf("code = %s, want %s", pe.Code, platform.ErrServiceNotFound)
 	}
 }
+
+// TestDeployLocal_Dirty_WarnsNotReproducible pins the GF-5 visibility rule
+// (docs/spec-workflows.md §4.9, §12.6): a working-tree (no explicit sha)
+// local deploy whose source has uncommitted changes on top of HEAD must
+// say so in Warnings — the target now runs code that isn't reproducible
+// from git alone. Local deploy is always cross-deploy (DM-1), so this
+// applies unconditionally whenever the source is dirty.
+func TestDeployLocal_Dirty_WarnsNotReproducible(t *testing.T) {
+	if testing.Short() {
+		t.Skip("shells out to the real git binary")
+	}
+	dir, sha := initGitRepoWithZerops(t)
+	if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte("zerops:\n  - setup: app\n  - setup: app2\n"), 0o644); err != nil {
+		t.Fatalf("dirty the tree: %v", err)
+	}
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "appstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		})
+	mr := &mockRunner{runResults: []runResult{{}, {}}}
+	restore := OverrideRunnerForTest(mr)
+	defer restore()
+
+	result, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
+		"appstage", "", dir, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Dirty {
+		t.Fatalf("result.Dirty = false, want true")
+	}
+	want := fmt.Sprintf(
+		"appstage received HEAD %s plus uncommitted changes — not reproducible from git. Commit and redeploy, or pass sha=%q to ship an exact commit.",
+		sha[:7], sha,
+	)
+	found := false
+	for _, w := range result.Warnings {
+		if w == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Warnings = %#v, want to contain %q", result.Warnings, want)
+	}
+}
+
+// TestDeployLocal_Clean_NoReproducibilityWarning pins the negative case: a
+// clean working-tree deploy never carries the reproducibility warning.
+func TestDeployLocal_Clean_NoReproducibilityWarning(t *testing.T) {
+	if testing.Short() {
+		t.Skip("shells out to the real git binary")
+	}
+	dir, _ := initGitRepoWithZerops(t)
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "appstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		})
+	mr := &mockRunner{runResults: []runResult{{}, {}}}
+	restore := OverrideRunnerForTest(mr)
+	defer restore()
+
+	result, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
+		"appstage", "", dir, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Dirty {
+		t.Fatalf("result.Dirty = true, want false (clean tree)")
+	}
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "not reproducible from git") {
+			t.Errorf("a clean deploy must not carry the reproducibility warning, got: %q", w)
+		}
+	}
+}
