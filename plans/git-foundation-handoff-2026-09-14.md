@@ -344,3 +344,17 @@ Still open from the review (not fixed, by choice): self-deploy refusals (worktre
 fail-open on a preflight transport error; the local-mode provision gate ("project root must be a
 git repo") is live-unverified (farm is container-only); without a `.gitignore` the zcli archiver
 ships `node_modules` on a self-deploy — the guidance fix above is the mitigation.
+
+Farm `gf-guide-1` (candidate 93a1fe62, six G cells): G2, G3, G4, G5 passed — G3 with the de-led
+prompt, the agent chose `sha=` unprompted. G1 and G6 failed, both instructive:
+- G1: the PROCESS worked — the agent wrote `.gitignore`, committed the baseline "per guidance"
+  before deploying, then read the dirty cross-deploy warning (`recorded: HEAD … + uncommitted`),
+  committed the stray `package-lock.json` and redeployed clean. The oracle failed only because it
+  demanded a non-robot AUTHOR, which a container cannot produce before git-push-setup (GLC-3: the
+  ambient identity is the robot's). Oracles now prove CONTENT: non-empty HEAD tree (G1), tracked
+  cargo file (G6), tracked `.gitignore`, no `.env`/`node_modules` in HEAD.
+- G6: adopt auto-skips the close step (`validateSkip`, `IsAllExisting`), so a close-step atom never
+  renders there. Split: `bootstrap-close-baseline-commit` stays for recipe close;
+  `bootstrap-adopt-baseline-commit` renders at adopt's provision step (the repo is initialized when
+  provision completes) and the adopt transition message carries one line pointing at
+  `repo.provenance: initialized`. `existing` trees are left untouched (G2 guards that).
