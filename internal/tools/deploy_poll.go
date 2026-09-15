@@ -61,17 +61,8 @@ func pollDeployBuild(
 		// runs across the 20260517-20260519 suite. Single source of truth
 		// for next-tool now lives on NextActions; pinned by
 		// TestDeployPostMessageHonesty.
-		//
-		// A resolved sha (docs/spec-workflows.md §4.9) gets its own message
-		// shape naming the commit + appVersion, since that IS the point of
-		// a deploy-from-commit call — the ledger write that follows (tools
-		// layer, post-poll) needs exactly this pairing. The platform stays
-		// the authority for the ACTIVE appVersion, so the message never
-		// claims this deploy "replaces" a specific prior one — it names
-		// what the ledger has ON RECORD for this target and nothing more;
-		// when nothing is on record the clause is omitted entirely rather
-		// than asserting "first deploy" (the ledger cannot see deploys
-		// that predate it).
+		// A dirty working tree is recorded as HEAD plus uncommitted changes.
+		// Deploy history is held in ZCP attempts, never in git tags.
 		switch {
 		case result.SHA != "" && result.Dirty:
 			// A dirty working-tree deploy never claims "deployed commit
@@ -80,18 +71,8 @@ func pollDeployBuild(
 			result.Message = fmt.Sprintf("recorded: HEAD %s + uncommitted changes → %s (appVersion %s)",
 				shortSHA(result.SHA), result.TargetService, event.ID)
 		case result.SHA != "":
-			short := shortSHA(result.SHA)
-			record := ""
-			switch result.PreviousOnRecord {
-			case "":
-				// nothing on record — say nothing about it.
-			case result.SHA:
-				record = ", already the ledger's current commit"
-			default:
-				record = fmt.Sprintf(", previous zcp deploy on record: %s", shortSHA(result.PreviousOnRecord))
-			}
-			result.Message = fmt.Sprintf("deployed %s → %s%s (appVersion %s)",
-				short, result.TargetService, record, event.ID)
+			result.Message = fmt.Sprintf("deployed %s → %s (appVersion %s)",
+				shortSHA(result.SHA), result.TargetService, event.ID)
 		default:
 			result.Message = fmt.Sprintf("Successfully deployed to %s.", result.TargetService)
 		}

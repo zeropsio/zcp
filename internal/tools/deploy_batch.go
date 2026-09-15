@@ -172,10 +172,6 @@ func RegisterDeployBatch(
 			case entry.Result != nil && entry.Result.Status == statusDeployed:
 				attempt.SucceededAt = entry.EndedAt
 				ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, entry.Result.TargetService, entry.Result)
-				// Evidence parity with the single path (docs/spec-workflows.md
-				// §4.9): a batch deploy leaves the same zcp/deploy/* tag, or the
-				// next single deploy's LastDeployOnRecord cannot see it.
-				writeDeployLedgerSSH(ctx, sshDeployer, entry.Target.WorkingDir, projectID, entry.Result)
 			case entry.Result != nil && entry.Result.TimedOut:
 				// In-flight (B23): the build is still running — record the
 				// attempt without a FailureClass so the gate doesn't read it

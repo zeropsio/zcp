@@ -1,7 +1,7 @@
 // Package git drives the git operations behind zerops_deploy — resolving a
 // commit, materializing it into a temp directory outside the working tree,
-// reading a source's HEAD state, recording each deploy as a zcp/deploy/*
-// annotated tag, and the adopt baseline (docs/spec-workflows.md §4.9, §8
+// reading a source's HEAD state, and snapshotting an adopted repository
+// (docs/spec-workflows.md §4.9, §8
 // GLC-7).
 //
 // Every operation goes through a Runner so the same logic works for both

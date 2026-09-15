@@ -126,13 +126,13 @@ func DeployLocal(
 	// deployDir is the exact
 	// tree being pushed.
 	deployDir := workingDir
-	var resolvedSHA, previousOnRecord string
+	var resolvedSHA string
 	var dirty bool
 	var cleanupTemp func()
 	if sha != "" {
 		var newDeployDir string
 		var prepErr error
-		resolvedSHA, previousOnRecord, newDeployDir, cleanupTemp, prepErr = deployLocalFromCommitPrep(ctx, workingDir, projectID, targetService, sha)
+		resolvedSHA, newDeployDir, cleanupTemp, prepErr = deployLocalFromCommitPrep(ctx, workingDir, sha)
 		if prepErr != nil {
 			return nil, prepErr
 		}
@@ -142,14 +142,11 @@ func DeployLocal(
 		// workflows.md §4.9): if the SOURCE (the local working dir) has a
 		// git repo with a reachable HEAD, record what actually shipped —
 		// read-only, before the push, never altering the push args
-		// themselves. No repo / no HEAD ⇒ no ledger, no warning, no
+		// themselves. No repo / no HEAD ⇒ no source revision, no warning, no
 		// behaviour change.
 		if headSHA, isDirty, hasRepo, _ := git.HeadStatus(ctx, git.LocalRunner{}, workingDir); hasRepo {
 			resolvedSHA = headSHA
 			dirty = isDirty
-			if entry, ok, _ := git.LastDeployOnRecord(ctx, git.LocalRunner{}, workingDir, projectID, targetService); ok {
-				previousOnRecord = entry.SHA
-			}
 		}
 	}
 	if cleanupTemp != nil {
@@ -261,35 +258,27 @@ func DeployLocal(
 		Warnings:          warnings,
 		SHA:               resolvedSHA,
 		Dirty:             dirty,
-		PreviousOnRecord:  previousOnRecord,
 	}, nil
 }
 
-// deployLocalFromCommitPrep resolves sha, reads its previous-on-record
-// ledger entry, and extracts the commit's tree into a fresh temp dir
+// deployLocalFromCommitPrep resolves sha and extracts the commit's tree into a fresh temp dir
 // OUTSIDE workingDir. Returns the temp dir as the deployDir the caller
 // should push from, plus a cleanup func the caller must defer on success.
 // docs/spec-workflows.md §4.9.
-func deployLocalFromCommitPrep(ctx context.Context, workingDir, projectID, targetService, sha string) (resolvedSHA, previousOnRecord, deployDir string, cleanupTemp func(), err error) {
+func deployLocalFromCommitPrep(ctx context.Context, workingDir, sha string) (resolvedSHA, deployDir string, cleanupTemp func(), err error) {
 	resolved, resolveErr := git.ResolveSHA(ctx, git.LocalRunner{}, workingDir, sha)
 	if resolveErr != nil {
-		return "", "", "", nil, platform.NewPlatformError(
+		return "", "", nil, platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("sha %q did not resolve to a commit in %s: %v", sha, workingDir, resolveErr),
 			`Pass a commit sha reachable via "git rev-parse" in workingDir.`,
 		)
 	}
 	resolvedSHA = resolved
-	// Read BEFORE the ledger moves it (WriteLedger runs later, in the
-	// tools layer, once the build resolves) — this is the "what's running
-	// there now" the response's message names.
-	if entry, ok, _ := git.LastDeployOnRecord(ctx, git.LocalRunner{}, workingDir, projectID, targetService); ok {
-		previousOnRecord = entry.SHA
-	}
 
 	tmpDir, mkErr := git.MkTempDir(ctx, git.LocalRunner{})
 	if mkErr != nil {
-		return "", "", "", nil, fmt.Errorf("create archive tmp dir: %w", mkErr)
+		return "", "", nil, fmt.Errorf("create archive tmp dir: %w", mkErr)
 	}
 	cleanup := func() {
 		cctx, cancel := cleanupTempCtx(ctx)
@@ -298,9 +287,9 @@ func deployLocalFromCommitPrep(ctx context.Context, workingDir, projectID, targe
 	}
 	if extractErr := git.ExtractCommitToTemp(ctx, git.LocalRunner{}, workingDir, resolvedSHA, tmpDir); extractErr != nil {
 		cleanup()
-		return "", "", "", nil, fmt.Errorf("extract commit %s: %w", resolvedSHA, extractErr)
+		return "", "", nil, fmt.Errorf("extract commit %s: %w", resolvedSHA, extractErr)
 	}
-	return resolvedSHA, previousOnRecord, tmpDir, cleanup, nil
+	return resolvedSHA, tmpDir, cleanup, nil
 }
 
 // lastLines is defined in deploy_classify.go

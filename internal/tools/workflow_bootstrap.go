@@ -475,8 +475,8 @@ func autoMountTargets(ctx context.Context, client platform.Client, projectID str
 	return results
 }
 
-// adoptRepoBaseline tags hostname's current HEAD with the running
-// appVersion's baseline (docs/spec-workflows.md §8 GLC-7, G2) and persists
+// adoptRepoBaseline preserves a content HEAD or snapshots the files found
+// at adoption (docs/spec-workflows.md §8 GLC-7, G2) and persists
 // the marker + the provenance ops.AdoptRepoBaseline reports on the
 // hostname's ServiceMeta. Best-effort, same posture as InitServiceGit
 // above: errors go to stderr, never to AutoMountInfo.

@@ -23,9 +23,8 @@ const deployStrategyRollbackLabel = "rollback"
 // appVersion=<id> (any value other than "latest", which stays
 // runAppVersionRedeploy's R2 recovery in deploy_ssh.go): re-activates
 // that SPECIFIC recorded appVersion via ops.ReactivateAppVersion — no
-// rebuild, no source resolution, no ledger/tag write (the evidence tag is
-// keyed by appVersionId and already maps it to its commit; "what runs" is
-// the platform's active appVersion). Shared by both SSH and local deploy
+// rebuild and no source resolution. The platform's active appVersion
+// is the authority for what runs. Shared by both SSH and local deploy
 // handlers, mirroring runAppVersionRedeploy's shape.
 //
 // Returns (result, nil) on a completed (success or classified-failure)

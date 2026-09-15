@@ -1,17 +1,20 @@
 // Tests for: ops/git/repo.go — the repo-always guarantee run at adopt
-// (baseline tag), driven through the Runner abstraction so it works
+// (snapshot when needed), driven through the Runner abstraction so it works
 // identically over SSH (container) and locally (docs/spec-workflows.md's
 // Git Lifecycle section, GLC-7).
 package git
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/topology"
 )
+
+var errTest = errors.New("test failure")
 
 func TestExcludePatterns_Dynamic_IncludesNodeModulesAndBuildOutputs(t *testing.T) {
 	got := ExcludePatterns(topology.RuntimeDynamic)
@@ -48,17 +51,16 @@ func TestSeedExclude_WritesInfoExcludeWithPatterns(t *testing.T) {
 	}
 }
 
-// TestAdoptBaseline_NoRepo_InitsSnapshotsAndTags pins the probe=1 case (no
+// TestAdoptBaseline_NoRepo_InitsAndSnapshots pins the probe=1 case (no
 // repo at all): git init runs (probe=1 skips the tree check entirely —
-// exists is already false), then seed/add/commit/tag.
-func TestAdoptBaseline_NoRepo_InitsSnapshotsAndTags(t *testing.T) {
+// exists is already false), then seed/add/commit.
+func TestAdoptBaseline_NoRepo_InitsAndSnapshots(t *testing.T) {
 	r := &fakeRunner{results: []fakeResult{
 		{err: errTest}, // test -d .git -> not a repo
 		{},             // git init -b main
 		{},             // seed exclude
 		{},             // git add -A
 		{},             // git -c ... commit -q -m "zcp: snapshot ..."
-		{},             // git tag -f zcp/baseline/<id> HEAD
 	}}
 	result, err := AdoptBaseline(context.Background(), r, "/var/www", "av-1", topology.RuntimeDynamic)
 	if err != nil {
@@ -67,8 +69,8 @@ func TestAdoptBaseline_NoRepo_InitsSnapshotsAndTags(t *testing.T) {
 	if result.Case != AdoptCaseSnapshot {
 		t.Errorf("Case = %q, want %q", result.Case, AdoptCaseSnapshot)
 	}
-	if len(r.calls) != 6 {
-		t.Fatalf("calls = %d, want 6: %+v", len(r.calls), r.calls)
+	if len(r.calls) != 5 {
+		t.Fatalf("calls = %d, want 5: %+v", len(r.calls), r.calls)
 	}
 	if r.calls[1].script != "git init -q -b main" {
 		t.Errorf("call[1] = %q, want git init", r.calls[1].script)
@@ -80,9 +82,6 @@ func TestAdoptBaseline_NoRepo_InitsSnapshotsAndTags(t *testing.T) {
 	if r.calls[4].script != wantCommit {
 		t.Errorf("call[4] = %q, want %q", r.calls[4].script, wantCommit)
 	}
-	if !strings.Contains(r.calls[5].script, "tag -f 'zcp/baseline/av-1' HEAD") {
-		t.Errorf("call[5] = %q, want the baseline tag", r.calls[5].script)
-	}
 }
 
 // TestAdoptBaseline_EmptyTreeHEAD_SkipsInitButStillSnapshots pins the
@@ -90,7 +89,7 @@ func TestAdoptBaseline_NoRepo_InitsSnapshotsAndTags(t *testing.T) {
 // repo that already exists (ops.InitServiceGit's GLC-1 marker commit ran
 // first) but whose HEAD is over the empty tree must NOT be trusted as
 // content — no git init (the repo already exists), but the same
-// seed/add/commit/tag sequence as the no-repo case.
+// seed/add/commit sequence as the no-repo case.
 func TestAdoptBaseline_EmptyTreeHEAD_SkipsInitButStillSnapshots(t *testing.T) {
 	r := &fakeRunner{results: []fakeResult{
 		{}, // test -d .git -> is a repo
@@ -98,7 +97,6 @@ func TestAdoptBaseline_EmptyTreeHEAD_SkipsInitButStillSnapshots(t *testing.T) {
 		{}, // seed exclude
 		{}, // git add -A
 		{}, // git -c ... commit -q -m "zcp: snapshot ..."
-		{}, // git tag -f zcp/baseline/<id> HEAD
 	}}
 	result, err := AdoptBaseline(context.Background(), r, "/var/www", "av-2", topology.RuntimeDynamic)
 	if err != nil {
@@ -107,8 +105,8 @@ func TestAdoptBaseline_EmptyTreeHEAD_SkipsInitButStillSnapshots(t *testing.T) {
 	if result.Case != AdoptCaseSnapshot {
 		t.Errorf("Case = %q, want %q", result.Case, AdoptCaseSnapshot)
 	}
-	if len(r.calls) != 6 {
-		t.Fatalf("calls = %d, want 6 (no git init call): %+v", len(r.calls), r.calls)
+	if len(r.calls) != 5 {
+		t.Fatalf("calls = %d, want 5 (no git init call): %+v", len(r.calls), r.calls)
 	}
 	for _, c := range r.calls {
 		if c.script == "git init -q -b main" {
@@ -122,19 +120,14 @@ func TestAdoptBaseline_EmptyTreeHEAD_SkipsInitButStillSnapshots(t *testing.T) {
 	if r.calls[4].script != wantCommit {
 		t.Errorf("call[4] = %q, want %q", r.calls[4].script, wantCommit)
 	}
-	if !strings.Contains(r.calls[5].script, "tag -f 'zcp/baseline/av-2' HEAD") {
-		t.Errorf("call[5] = %q, want the baseline tag", r.calls[5].script)
-	}
 }
 
-// TestAdoptBaseline_ContentHEAD_OnlyTagsHEAD pins the probe=3 case: a HEAD
-// whose tree already carries content is trusted as-is — only the tag
-// moves, no commit, no history change.
-func TestAdoptBaseline_ContentHEAD_OnlyTagsHEAD(t *testing.T) {
+// TestAdoptBaseline_ContentHEAD_PreservesHEAD pins the probe=3 case: a HEAD
+// whose tree already carries content is trusted as-is — the HEAD is preserved, no commit, no history change.
+func TestAdoptBaseline_ContentHEAD_PreservesHEAD(t *testing.T) {
 	r := &fakeRunner{results: []fakeResult{
 		{},                          // test -d .git -> is a repo
 		{stdout: "tree-sha-real\n"}, // rev-parse HEAD^{tree} -> real content
-		{},                          // git tag -f zcp/baseline/<id> HEAD
 	}}
 	result, err := AdoptBaseline(context.Background(), r, "/var/www", "av-3", topology.RuntimeDynamic)
 	if err != nil {
@@ -143,18 +136,15 @@ func TestAdoptBaseline_ContentHEAD_OnlyTagsHEAD(t *testing.T) {
 	if result.Case != AdoptCaseExisting {
 		t.Errorf("Case = %q, want %q", result.Case, AdoptCaseExisting)
 	}
-	if len(r.calls) != 3 {
-		t.Fatalf("calls = %d, want 3 (probe + tree probe + tag only, no init/seed/commit): %+v", len(r.calls), r.calls)
-	}
-	if !strings.Contains(r.calls[2].script, "tag -f 'zcp/baseline/av-3' HEAD") {
-		t.Errorf("call[2] = %q, want the baseline tag", r.calls[2].script)
+	if len(r.calls) != 2 {
+		t.Fatalf("calls = %d, want 2 (probe + tree probe only, no init/seed/commit): %+v", len(r.calls), r.calls)
 	}
 }
 
 // TestAdoptBaseline_NothingStaged_CommitsWithAllowEmpty pins the empty-
 // working-tree edge case: `git add -A` stages nothing (a genuinely empty
 // directory), so the normal commit fails with "nothing to commit" and
-// AdoptBaseline falls back to --allow-empty so the tag still lands and the
+// AdoptBaseline falls back to --allow-empty so the
 // commit itself is the record.
 func TestAdoptBaseline_NothingStaged_CommitsWithAllowEmpty(t *testing.T) {
 	r := &fakeRunner{results: []fakeResult{
@@ -164,7 +154,6 @@ func TestAdoptBaseline_NothingStaged_CommitsWithAllowEmpty(t *testing.T) {
 		{},             // git add -A (nothing to stage)
 		{err: errTest}, // git -c ... commit -q -m "..." -> fails, nothing staged
 		{},             // git -c ... commit -q --allow-empty -m "..."
-		{},             // git tag -f zcp/baseline/<id> HEAD
 	}}
 	result, err := AdoptBaseline(context.Background(), r, "/var/www", "av-4", topology.RuntimeDynamic)
 	if err != nil {
@@ -173,8 +162,8 @@ func TestAdoptBaseline_NothingStaged_CommitsWithAllowEmpty(t *testing.T) {
 	if result.Case != AdoptCaseSnapshot {
 		t.Errorf("Case = %q, want %q", result.Case, AdoptCaseSnapshot)
 	}
-	if len(r.calls) != 7 {
-		t.Fatalf("calls = %d, want 7: %+v", len(r.calls), r.calls)
+	if len(r.calls) != 6 {
+		t.Fatalf("calls = %d, want 6: %+v", len(r.calls), r.calls)
 	}
 	wantEmptyCommit := `git -c user.name='Zerops Agent' -c user.email='agent@zerops.io' commit -q --allow-empty -m 'zcp: snapshot of /var/www as found at adopt (appVersion av-4)'`
 	if r.calls[5].script != wantEmptyCommit {

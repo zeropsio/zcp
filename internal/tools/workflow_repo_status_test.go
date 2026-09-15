@@ -67,8 +67,8 @@ func TestAttachRepoStatus_Container_SSHFailure_ReportsNotPresentNoPanic(t *testi
 
 // TestAttachRepoStatus_MetaHasProvenance_AddsProvenanceToRepoBlock proves
 // provenance is read from ServiceMeta (a recorded fact), not derived from
-// the live SSH read (docs/spec-workflows.md §8 GLC-7): present/head/
-// baseline stay live even though provenance came from disk.
+// the live SSH read (docs/spec-workflows.md §8 GLC-7): present/head
+// stay live while baseline and provenance come from disk.
 func TestAttachRepoStatus_MetaHasProvenance_AddsProvenanceToRepoBlock(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
@@ -89,6 +89,9 @@ func TestAttachRepoStatus_MetaHasProvenance_AddsProvenanceToRepoBlock(t *testing
 	if !services[0].Repo.Present {
 		t.Error("Present = false, want true (still live)")
 	}
+	if services[0].Repo.Baseline != "av-1" {
+		t.Errorf("Baseline = %q, want metadata av-1", services[0].Repo.Baseline)
+	}
 	if services[0].Repo.Provenance != topology.RepoProvenanceSnapshot {
 		t.Errorf("Provenance = %q, want %q", services[0].Repo.Provenance, topology.RepoProvenanceSnapshot)
 	}
@@ -108,5 +111,25 @@ func TestAttachRepoStatus_NoMeta_ProvenanceStaysEmpty(t *testing.T) {
 	}
 	if services[0].Repo.Provenance != "" {
 		t.Errorf("Provenance = %q, want empty (no ServiceMeta.Repo recorded)", services[0].Repo.Provenance)
+	}
+}
+
+func TestAttachRepoStatus_PairedStage_DoesNotInheritDevAdoption(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	meta := workflow.NewServiceMeta("proj", topology.PlanModeStandard)
+	meta.Hostname = "appdev"
+	meta.StageHostname = "appstage"
+	meta.SetRepoBaseline("av-dev", topology.RepoProvenanceExisting)
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		t.Fatal(err)
+	}
+	services := []workflow.ServiceSnapshot{{Hostname: "appstage", RuntimeClass: topology.RuntimeDynamic}}
+	attachRepoStatus(context.Background(), services, &stubSSH{output: []byte("5ba0abc\n")}, runtime.Info{InContainer: true}, stateDir)
+	if services[0].Repo == nil {
+		t.Fatal("missing live repo status")
+	}
+	if services[0].Repo.Baseline != "" || services[0].Repo.Provenance != "" {
+		t.Fatalf("stage inherited dev adoption: %+v", services[0].Repo)
 	}
 }

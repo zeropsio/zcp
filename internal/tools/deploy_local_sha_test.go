@@ -1,8 +1,7 @@
 // Tests for: tools/deploy_local.go — the sha parameter end to end through
 // the zerops_deploy MCP tool in local mode (docs/spec-workflows.md §4.9):
 // sha threads into ops.DeployLocal, the response carries sha/appVersionId
-// and the "deployed <sha7> → ..." message, and a successful build writes
-// the zcp/deploy/* tag ledger in workingDir.
+// and the "deployed <sha7> → ..." message, without changing git tags.
 package tools
 
 import (
@@ -17,7 +16,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/ops"
-	git "github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -62,8 +60,22 @@ func (localZcliMock) Run(_ context.Context, _ string, _ ...string) (string, stri
 	return "", "", nil
 }
 
-func TestDeployLocalTool_WithSHA_ThreadsAndWritesLedger(t *testing.T) {
+func TestDeployLocalTool_WithSHA_PreservesExistingTags(t *testing.T) {
 	dir, sha := initGitRepoWithZerops(t)
+	for _, tag := range []string{"v1.0.0", "zcp/deploy/proj-1/app/av-1", "zcp/baseline/legacy"} {
+		if out, err := exec.CommandContext(context.Background(), "git", "-C", dir, "tag", tag).CombinedOutput(); err != nil {
+			t.Fatalf("seed tag: %v: %s", err, out)
+		}
+	}
+	refs := func() string {
+		t.Helper()
+		out, err := exec.CommandContext(context.Background(), "git", "-C", dir, "show-ref", "--tags").CombinedOutput()
+		if err != nil {
+			t.Fatalf("read tags: %v: %s", err, out)
+		}
+		return string(out)
+	}
+	before := refs()
 
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
@@ -103,14 +115,8 @@ func TestDeployLocalTool_WithSHA_ThreadsAndWritesLedger(t *testing.T) {
 		t.Errorf("message = %q, want it to name the short sha and appVersion", parsed.Message)
 	}
 
-	gotEntry, ok, err := git.LastDeployOnRecord(context.Background(), git.LocalRunner{}, dir, "proj-1", "app")
-	if err != nil {
-		t.Fatalf("LastDeployOnRecord: %v", err)
-	}
-	if !ok {
-		t.Fatal("LastDeployOnRecord: ok = false, want true")
-	}
-	if gotEntry.SHA != sha {
-		t.Errorf("ledger tag sha = %q, want %q", gotEntry.SHA, sha)
+	after := refs()
+	if after != before {
+		t.Errorf("deploy changed git tags:\nbefore: %s\nafter: %s", before, after)
 	}
 }

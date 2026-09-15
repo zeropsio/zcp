@@ -2,7 +2,6 @@ package ops
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -83,17 +82,7 @@ func gitHeadEnsureFragment() string {
 // GitEnsureRepoHeadCommand. Never writes a tracked `.gitignore` — exclude
 // is repo-local and invisible to the user's own history.
 func gitExcludeSeedFragment(class topology.RuntimeClass) string {
-	patterns := git.ExcludePatterns(class)
-	parts := make([]string, 0, len(patterns)+1)
-	parts = append(parts, "mkdir -p .git/info && touch .git/info/exclude")
-	for _, p := range patterns {
-		q := shellQuote(p)
-		parts = append(parts, fmt.Sprintf(
-			"(grep -qxF -- %s .git/info/exclude || printf '%%s\\n' %s >> .git/info/exclude)",
-			q, q,
-		))
-	}
-	return strings.Join(parts, " && ")
+	return git.ExcludeSeedFragment(class)
 }
 
 // GitEnsureRepoHeadCommand composes the full self-heal chain — init-if-

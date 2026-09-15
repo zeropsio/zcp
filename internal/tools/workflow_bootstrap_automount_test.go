@@ -223,11 +223,10 @@ func TestAutoMountTargets_NilSSHDeployer(t *testing.T) {
 	}
 }
 
-// AdoptRoute (G2, docs/spec-workflows.md §8 GLC-7): autoMountTargets tags the
-// adopted service's HEAD with its running appVersion's baseline instead
-// of (in addition to) the bare scaffold init, and persists the marker on
-// ServiceMeta.
-func TestAutoMountTargets_AdoptRoute_TagsBaselineAndPersistsMeta(t *testing.T) {
+// AdoptRoute (G2, docs/spec-workflows.md §8 GLC-7): autoMountTargets records the
+// adopted service's running appVersion in metadata instead
+// of a Git tag, alongside the bare scaffold init.
+func TestAutoMountTargets_AdoptRoute_PreservesTagsAndPersistsMeta(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -247,14 +246,10 @@ func TestAutoMountTargets_AdoptRoute_TagsBaselineAndPersistsMeta(t *testing.T) {
 		t.Fatalf("expected 1 mount info, got %d", len(results))
 	}
 
-	found := false
 	for _, c := range ssh.calls {
-		if c.Host == "appdev" && strings.Contains(c.Cmd, "zcp/baseline/av-99") {
-			found = true
+		if strings.Contains(c.Cmd, "git tag") {
+			t.Errorf("adoption must not mutate tags: %s", c.Cmd)
 		}
-	}
-	if !found {
-		t.Errorf("ssh calls = %+v, want one tagging zcp/baseline/av-99", ssh.calls)
 	}
 
 	loaded, err := workflow.ReadServiceMeta(dir, "appdev")
@@ -300,7 +295,7 @@ func TestAutoMountTargets_AdoptRoute_EmptyTreeHEAD_Snapshots(t *testing.T) {
 		if strings.Contains(cmd, "HEAD^{tree}") {
 			return []byte("4b825dc642cb6eb9a060e54bf8d69288fbee4904\n"), nil
 		}
-		return nil, nil // probeIsRepo/init/seed/add/commit/tag all no-op successfully
+		return nil, nil // probeIsRepo/init/seed/add/commit all no-op successfully
 	}}
 
 	autoMountTargets(context.Background(), mock, "proj-1", mounter, ssh, eng)

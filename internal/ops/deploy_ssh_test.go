@@ -141,12 +141,12 @@ func TestDeploy_SSHMode_Success(t *testing.T) {
 			if result.SourceService != tt.sourceService {
 				t.Errorf("sourceService = %s, want %s", result.SourceService, tt.sourceService)
 			}
-			// 3 calls: HeadStatus + LastDeployOnRecord (item 4's working-
+			// 2 calls: HeadStatus (item 4's working-
 			// tree recording — the mock's canned "ok" output satisfies
 			// HeadStatus's rev-parse, so the source "has a repo" from the
 			// mock's perspective) + the push itself.
-			if len(ssh.calls) != 3 {
-				t.Fatalf("ssh calls = %d, want 3", len(ssh.calls))
+			if len(ssh.calls) != 2 {
+				t.Fatalf("ssh calls = %d, want 2", len(ssh.calls))
 			}
 			for _, c := range ssh.calls {
 				if c.hostname != "builder" {
@@ -385,12 +385,12 @@ func TestDeploy_SSHMode_WithRegion(t *testing.T) {
 	if result.Mode != "ssh" {
 		t.Errorf("mode = %s, want ssh", result.Mode)
 	}
-	// Verify login command is present without --zeropsRegion. 3 calls:
-	// HeadStatus + LastDeployOnRecord (item 4) + the push itself.
-	if len(ssh.calls) != 3 {
-		t.Fatalf("ssh calls = %d, want 3", len(ssh.calls))
+	// Verify login command is present without --zeropsRegion. 2 calls:
+	// HeadStatus (item 4) + the push itself.
+	if len(ssh.calls) != 2 {
+		t.Fatalf("ssh calls = %d, want 2", len(ssh.calls))
 	}
-	cmd := ssh.calls[2].command
+	cmd := ssh.calls[1].command
 	if !containsSubstring(cmd, "zcli login -- 'test-token'") {
 		t.Errorf("SSH command should contain 'zcli login -- test-token', got: %s", cmd)
 	}
@@ -923,9 +923,9 @@ func TestDeploy_SelfDeploy_AutoInfer(t *testing.T) {
 	if result.TargetService != "app" {
 		t.Errorf("targetService = %s, want app", result.TargetService)
 	}
-	// 3 calls: HeadStatus + LastDeployOnRecord (item 4) + the push itself.
-	if len(ssh.calls) != 3 {
-		t.Fatalf("ssh calls = %d, want 3", len(ssh.calls))
+	// 2 calls: HeadStatus (item 4) + the push itself.
+	if len(ssh.calls) != 2 {
+		t.Fatalf("ssh calls = %d, want 2", len(ssh.calls))
 	}
 	for _, c := range ssh.calls {
 		if c.hostname != "app" {
@@ -954,11 +954,11 @@ func TestDeploy_SelfDeploy_IncludesGit(t *testing.T) {
 	if result.Mode != "ssh" {
 		t.Errorf("mode = %s, want ssh", result.Mode)
 	}
-	// 3 calls: HeadStatus + LastDeployOnRecord (item 4) + the push itself.
-	if len(ssh.calls) != 3 {
-		t.Fatalf("ssh calls = %d, want 3", len(ssh.calls))
+	// 2 calls: HeadStatus (item 4) + the push itself.
+	if len(ssh.calls) != 2 {
+		t.Fatalf("ssh calls = %d, want 2", len(ssh.calls))
 	}
-	cmd := ssh.calls[2].command
+	cmd := ssh.calls[1].command
 	if !containsSubstring(cmd, " -g") {
 		t.Errorf("SSH command should contain -g flag for self-deploy, got: %s", cmd)
 	}
@@ -982,11 +982,11 @@ func TestDeploy_CrossDeploy_OmitsGit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// 3 calls: HeadStatus + LastDeployOnRecord (item 4) + the push itself.
-	if len(ssh.calls) != 3 {
-		t.Fatalf("ssh calls = %d, want 3", len(ssh.calls))
+	// 2 calls: HeadStatus (item 4) + the push itself.
+	if len(ssh.calls) != 2 {
+		t.Fatalf("ssh calls = %d, want 2", len(ssh.calls))
 	}
-	cmd := ssh.calls[2].command
+	cmd := ssh.calls[1].command
 	if containsSubstring(cmd, " -g") {
 		t.Errorf("SSH command must NOT contain -g flag for cross-deploy, got: %s", cmd)
 	}

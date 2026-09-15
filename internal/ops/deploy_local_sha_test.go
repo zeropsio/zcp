@@ -82,9 +82,6 @@ func TestDeployLocal_WithSHA_ResolvesExtractsAndPassesVersionName(t *testing.T) 
 	if result.SHA != sha {
 		t.Errorf("result.SHA = %q, want %q", result.SHA, sha)
 	}
-	if result.PreviousOnRecord != "" {
-		t.Errorf("result.PreviousOnRecord = %q, want empty (fresh repo, no ledger yet)", result.PreviousOnRecord)
-	}
 
 	pushArgs := strings.Join(mr.runCalls[1].args, " ")
 	if !strings.Contains(pushArgs, "--version-name "+sha) {

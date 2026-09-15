@@ -63,7 +63,7 @@ type DeployResult struct {
 	// working-tree deploy's SOURCE has a git repo with a reachable HEAD
 	// (docs/spec-workflows.md §4.9: ops/git.HeadStatus records it even
 	// without an explicit sha). Empty only when the source has no git
-	// repo at all (or no HEAD yet) — that deploy leaves no ledger entry.
+	// repo at all (or no HEAD yet) — its source revision is unknown.
 	SHA string `json:"sha,omitempty"`
 	// Dirty is true when this deploy shipped uncommitted changes on top
 	// of SHA — only possible on the working-tree path (no explicit sha);
@@ -73,16 +73,8 @@ type DeployResult struct {
 	// AppVersionID is the platform appVersion id this build produced,
 	// filled by pollDeployBuild once the build event resolves. Empty
 	// until then, or on a failed/timed-out build. The tools layer threads
-	// SHA + AppVersionID together into the zcp/deploy/* tag ledger.
+	// SHA + AppVersionID into the recorded deploy attempt.
 	AppVersionID string `json:"appVersionId,omitempty"`
-	// PreviousOnRecord is the SHA of the previous zcp deploy ON RECORD
-	// for this target — read via ops/git.LastDeployOnRecord BEFORE this
-	// deploy's own WriteLedger call — empty when nothing is on record yet
-	// (the target never received a zcp deploy before), or when this
-	// deploy itself has no SHA at all. "On record" means the ledger's
-	// tag, never a moving pointer — the platform stays the authority for
-	// which appVersion is actually ACTIVE. docs/spec-workflows.md §4.9.
-	PreviousOnRecord string `json:"previousOnRecord,omitempty"`
 }
 
 // GitPushResult contains the outcome of a git-push deploy operation.

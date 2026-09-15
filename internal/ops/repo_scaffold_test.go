@@ -27,14 +27,10 @@ func TestAdoptRepoBaseline_RunsOverSSH(t *testing.T) {
 	if provenance != topology.RepoProvenanceExisting {
 		t.Errorf("provenance = %q, want %q (a non-empty-tree HEAD^{tree} probe result — the mock's static empty-string output isn't the empty-tree sha)", provenance, topology.RepoProvenanceExisting)
 	}
-	found := false
 	for _, c := range m.calls {
-		if strings.Contains(c.command, "zcp/baseline/av-1") {
-			found = true
+		if strings.Contains(c.command, "git tag") {
+			t.Errorf("adoption mutated tags: %s", c.command)
 		}
-	}
-	if !found {
-		t.Errorf("calls = %+v, want one containing the baseline tag", m.calls)
 	}
 }
 
@@ -50,7 +46,6 @@ func TestAdoptRepoBaseline_EmptyTreeHEAD_ReturnsSnapshotProvenance(t *testing.T)
 		{output: []byte("")}, // seed exclude
 		{output: []byte("")}, // git add -A
 		{output: []byte("")}, // commit
-		{output: []byte("")}, // tag
 	}}
 	provenance, err := AdoptRepoBaseline(context.Background(), m, "appdev", "av-2", topology.RuntimeDynamic)
 	if err != nil {
@@ -61,10 +56,9 @@ func TestAdoptRepoBaseline_EmptyTreeHEAD_ReturnsSnapshotProvenance(t *testing.T)
 	}
 }
 
-func TestReadRepoStatus_HeadResolves_ReturnsPresentWithHeadAndBaseline(t *testing.T) {
+func TestReadRepoStatus_HeadResolves_ReturnsPresentWithHead(t *testing.T) {
 	m := &mockSSHDeployer{results: []sshResult{
-		{output: []byte("5ba0abc123\n")},         // rev-parse --verify HEAD^{commit}
-		{output: []byte("zcp/baseline/av-42\n")}, // tag --points-at HEAD --list
+		{output: []byte("5ba0abc123\n")}, // rev-parse --verify HEAD^{commit}
 	}}
 	got, err := ReadRepoStatus(context.Background(), m, "appdev")
 	if err != nil {
@@ -76,8 +70,8 @@ func TestReadRepoStatus_HeadResolves_ReturnsPresentWithHeadAndBaseline(t *testin
 	if got.Head != "5ba0abc123" {
 		t.Errorf("Head = %q, want 5ba0abc123", got.Head)
 	}
-	if got.Baseline != "av-42" {
-		t.Errorf("Baseline = %q, want av-42", got.Baseline)
+	if len(m.calls) != 1 {
+		t.Errorf("calls = %d, want one HEAD read", len(m.calls))
 	}
 }
 

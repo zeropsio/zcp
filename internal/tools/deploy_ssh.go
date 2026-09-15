@@ -205,8 +205,8 @@ type DeploySSHInput struct {
 	// SHA, when set, deploys the EXACT git commit instead of the current
 	// working tree: resolved via `git rev-parse` inside the SOURCE
 	// container, its tree extracted into a temp dir there, and pushed with
-	// --version-name. On success, records the deploy in the source
-	// container as a zcp/deploy/* tag. docs/spec-workflows.md §4.9.
+	// --version-name. The deploy attempt records its source revision.
+	// docs/spec-workflows.md §4.9.
 	SHA string `json:"sha,omitempty"`
 }
 
@@ -221,7 +221,7 @@ func deploySSHInputSchema() *jsonschema.Schema {
 		"branch":        {Type: "string", Description: "Git branch name for git-push. Default: main."},
 		"breakGlass":    {Type: "boolean", Description: "Override for the push-delivery redirect: a pair with git-push configured delivers via push (the repo is the source of truth); a direct deploy is refused with the recommended push call unless breakGlass=true. Reserve for fundamental reasons (git host outage, recovery) — the response then flags that the container is ahead of the repo."},
 		"appVersion":    {Type: "string", Description: "'latest' re-deploys the newest built artifact in place (recovery). An appVersion id of the target re-activates that BACKUP artifact without a build (rollback, ~1 min) — ids and statuses come from zerops_events / the status envelope's deploy attempts."},
-		"sha":           {Type: "string", Description: "Deploy this exact git commit instead of the working tree. Recorded as a zcp/deploy/* tag in the source container."},
+		"sha":           {Type: "string", Description: "Deploy this exact git commit instead of the working tree. Returns the resolved sha and deployed appVersionId."},
 	}, "targetService")
 }
 
@@ -446,7 +446,6 @@ func runDeploySSHZCLIPush(
 		// result payload surfaces SubdomainAccessEnabled + SubdomainURL
 		// alongside the deploy outcome.
 		ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
-		writeDeployLedgerSSH(ctx, sshDeployer, input.WorkingDir, projectID, result)
 	case result != nil && result.TimedOut:
 		// In-flight (B23): the build is still running at poll timeout, not
 		// failed. Record without a FailureClass so the envelope doesn't

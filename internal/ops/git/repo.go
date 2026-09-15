@@ -15,6 +15,12 @@ import (
 // exists" — an empty-tree HEAD is content-equivalent to no repo at all.
 const emptyTreeSHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
+// Snapshot commits use the same robot identity as ops.DeployGitIdentity.
+const (
+	robotIdentityName  = "Zerops Agent"
+	robotIdentityEmail = "agent@zerops.io"
+)
+
 // AdoptCase records which branch AdoptBaseline took, so the caller can
 // classify provenance from the return value alone — no separate probe of
 // repo state needed (docs/spec-workflows.md's Git Lifecycle section, GLC-7).
@@ -22,11 +28,11 @@ type AdoptCase string
 
 const (
 	// AdoptCaseExisting means AdoptBaseline found a HEAD whose tree already
-	// carried content — only the tag moved; no commit, no history change.
+	// carried content — no commit or history change.
 	AdoptCaseExisting AdoptCase = "existing"
 	// AdoptCaseSnapshot means AdoptBaseline found no content (no repo, an
 	// unborn HEAD, or a HEAD over the empty tree) and minted a commit from
-	// whatever it found on disk before tagging.
+	// whatever it found on disk.
 	AdoptCaseSnapshot AdoptCase = "snapshot"
 )
 
@@ -71,50 +77,35 @@ func ExcludePatterns(class topology.RuntimeClass) []string {
 	}
 }
 
-// SeedExclude (over)writes dir's .git/info/exclude with ExcludePatterns(class).
-// Idempotent by construction — a re-run with the same class produces the
-// same file content. info/exclude is repo-local (never shared, never
-// tracked), so overwriting it on every call never clobbers anything a
-// collaborator committed.
-func SeedExclude(ctx context.Context, r Runner, dir string, class topology.RuntimeClass) error {
+// ExcludeSeedFragment appends missing patterns without replacing user exclusions.
+// A leading newline also preserves the final pattern in files without a newline.
+func ExcludeSeedFragment(class topology.RuntimeClass) string {
 	patterns := ExcludePatterns(class)
-	script := "mkdir -p .git/info && printf '%s\\n' " + shellQuote(strings.Join(patterns, "\n")) + " > .git/info/exclude"
-	if _, stderr, err := r.Run(ctx, dir, script); err != nil {
+	parts := make([]string, 0, len(patterns)+1)
+	parts = append(parts, "mkdir -p .git/info && touch .git/info/exclude")
+	for _, pattern := range patterns {
+		q := shellQuote(pattern)
+		parts = append(parts, "(grep -qxF -- "+q+" .git/info/exclude || printf '\\n%s\\n' "+q+" >> .git/info/exclude)")
+	}
+	return strings.Join(parts, " && ")
+}
+
+// SeedExclude preserves existing patterns and appends the runtime defaults.
+func SeedExclude(ctx context.Context, r Runner, dir string, class topology.RuntimeClass) error {
+	if _, stderr, err := r.Run(ctx, dir, ExcludeSeedFragment(class)); err != nil {
 		return wrapErr("seed .git/info/exclude", err, stderr)
 	}
 	return nil
 }
 
-// AdoptBaseline tags dir's current HEAD with the appVersion-scoped
-// baseline tag (topology.BaselineTagName), deciding by CONTENT rather than
-// by "is a repo already" (docs/spec-workflows.md's Git Lifecycle section,
-// GLC-7) — the canonical `autoMountTargets` flow runs ops.InitServiceGit
-// (GLC-1) first, which leaves a reachable HEAD over the EMPTY tree on a
-// service that had no git before adopt; treating "a repo exists" as proof
-// of content would tag that empty tree and call it a baseline.
-//
-//   - AdoptCaseExisting: HEAD^{tree} resolves to something other than the
-//     empty tree — only the tag moves (force — re-adopting the same or a
-//     newer appVersion must not fail on a pre-existing tag); no commit, no
-//     history change. The existing HEAD is trusted as the baseline.
-//   - AdoptCaseSnapshot: no repo, an unborn HEAD, or a HEAD over the empty
-//     tree — init only if no repo exists at all (GLC-1 normally already
-//     ran; AdoptBaseline is correct in either order), seed exclude, then
-//     `git add -A` and a commit carrying the robot identity INLINE (this
-//     package cannot import internal/ops for ops.DeployGitIdentity) with
-//     message "zcp: snapshot of <dir> as found at adopt (appVersion <id>)"
-//     — it is a snapshot of whatever adopt found on disk, never the source
-//     commit of the running appVersion. An empty working tree (`git add
-//     -A` stages nothing) still commits, with --allow-empty, so the case
-//     still lands — the empty commit itself is the record.
+// AdoptBaseline preserves an existing content HEAD. When the repository has no
+// content history it commits a snapshot of the files found on disk, with robot
+// attribution. This snapshot does not claim to have built the running appVersion.
+// It never creates, moves, or deletes tags. The caller records adoption metadata.
 func AdoptBaseline(ctx context.Context, r Runner, dir, appVersionID string, class topology.RuntimeClass) (AdoptResult, error) {
 	exists, hasContent := probeContentCase(ctx, r, dir)
-	tag := topology.BaselineTagName(appVersionID)
 
 	if exists && hasContent {
-		if _, stderr, err := r.Run(ctx, dir, "git tag -f "+shellQuote(tag)+" HEAD"); err != nil {
-			return AdoptResult{}, wrapErr("tag baseline", err, stderr)
-		}
 		return AdoptResult{Case: AdoptCaseExisting}, nil
 	}
 
@@ -128,9 +119,6 @@ func AdoptBaseline(ctx context.Context, r Runner, dir, appVersionID string, clas
 	}
 	if err := commitSnapshot(ctx, r, dir, appVersionID); err != nil {
 		return AdoptResult{}, err
-	}
-	if _, stderr, err := r.Run(ctx, dir, "git tag -f "+shellQuote(tag)+" HEAD"); err != nil {
-		return AdoptResult{}, wrapErr("tag baseline", err, stderr)
 	}
 	return AdoptResult{Case: AdoptCaseSnapshot}, nil
 }
@@ -168,7 +156,7 @@ func probeIsRepo(ctx context.Context, r Runner, dir string) bool {
 // tree. A repo that isn't a repo at all never gets the tree probe (exists
 // implies it). An unborn HEAD (rev-parse fails) counts as "no content",
 // same as an empty-tree HEAD — both mean AdoptBaseline has nothing trustworthy
-// to tag as-is.
+// to preserve as-is.
 func probeContentCase(ctx context.Context, r Runner, dir string) (exists, hasContent bool) {
 	exists = probeIsRepo(ctx, r, dir)
 	if !exists {

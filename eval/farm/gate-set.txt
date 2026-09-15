@@ -30,3 +30,7 @@ env-service-scope-pair
 subdomain-user-disabled-stays-off
 custom-domain-present
 repo-always-adopt-baseline
+repo-always-bootstrap
+deploy-from-commit-stage
+dev-self-deploy-keeps-repo
+repo-adopt-snapshot-no-git

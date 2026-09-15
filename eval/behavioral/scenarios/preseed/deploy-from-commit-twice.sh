@@ -1,26 +1,12 @@
 #!/bin/bash
 # Preseed for rollback-stage-from-ledger (G5).
 #
-# The fixture (nodejs-standard-deployed.yaml) deploys appdev + appstage via
-# buildFromGit and this preseed runs AFTER that first build has settled
-# ACTIVE (seed.mode: deployed). It then performs TWO deploy-from-commit
-# pushes to appstage from appdev's mounted repo, replicating by hand what
-# `zerops_deploy sha=` does (docs/spec-workflows.md §4.9) so the agent
-# arrives at a stage with two zcp/deploy/* ledger tags to read back and
-# roll back from:
-#   1. deploy appdev's original HEAD (SHA_OLD) to appstage;
-#   2. add one trivial commit on appdev (SHA_NEW) and deploy that too.
-# seed.expect (rollback-stage-from-ledger.md frontmatter) then asserts,
-# before the agent is spawned: the ledger has exactly two zcp/deploy/*
-# tags for appstage (oldest SHA_OLD, newest SHA_NEW) — the "previous
-# version" the agent must roll back to.
-#
-# NOT LIVE-VERIFIED (brief S6 stop condition, docs/spec-eval-farm.md §4.5):
-# this script cannot be run in this session. The archive|tar-extraction
-# push shape was verified live for the feature itself (plans/
-# git-foundation-2026-09-14.md); running it TWICE back-to-back inside one
-# preseed, against the direct process-poll endpoints, needs one live pass
-# in ASSEMBLE before this cell is trusted.
+# The buildFromGit fixture leaves appdev with source history. This preseed
+# deploys archived commits to stage with --version-name carrying the SHA.
+# It saves resulting appVersion IDs in /tmp/zcp-preseed-appversions on
+# appdev solely as seed-completion evidence, not as a product deploy ledger.
+# Rollback discovers the prior version through platform events.
+# The revised tag-free preseed requires a new live farm pass.
 set -eu
 
 : "${ZCP_API_KEY:?ZCP_API_KEY not set — required to resolve service ids}"
@@ -44,7 +30,7 @@ APPSTAGE_ID=$(resolve_id appstage)
 
 # wait_active <serviceId> — polls the direct project process list for the
 # newest stack.build/stack.deploy process against serviceId to reach
-# FINISHED, then confirms the appVersion is ACTIVE. 5-minute cap per call.
+# FINISHED. The seed service-status check verifies ACTIVE. 5-minute cap per call.
 wait_active() {
   local id="$1" deadline status
   deadline=$((SECONDS + 300))
@@ -67,9 +53,9 @@ wait_active() {
 
 # deploy_from_commit <sha> — replicates zerops_deploy sha=<sha> by hand,
 # inside appdev, over its own SSH session: resolve, extract outside the
-# working tree, push with --no-git --version-name, write the ledger.
+# working tree, push with --no-git --version-name, save seed evidence.
 deploy_from_commit() {
-  local sha="$1" tmp resolved commit_id
+  local sha="$1" tmp resolved
   ssh appdev "zcli login -- '${ZCP_API_KEY}' >/dev/null"
   resolved=$(ssh appdev "cd /var/www && git rev-parse --verify '${sha}^{commit}'")
   tmp=$(ssh appdev "mktemp -d")
@@ -79,7 +65,7 @@ deploy_from_commit() {
   wait_active "$APPSTAGE_ID"
 
   # Resolve the appVersion id this push produced (newest event against
-  # appstage) so the ledger entry is accurate, not a placeholder.
+  # appstage) for the fixture completion probe.
   local app_version_id
   app_version_id=$(curl -sS -H "Authorization: Bearer ${ZCP_API_KEY}" \
     "${API_BASE}/project/${ZCP_PROJECT_ID}/process?limit=50" \
@@ -88,29 +74,25 @@ deploy_from_commit() {
       | sort_by(.created) | last | .appVersion.id // empty
     ')
 
-  local at msg tag_name
-  at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  msg=$(printf '{"sha":"%s","appVersionId":"%s","target":"appstage","project":"%s","at":"%s"}' \
-    "$resolved" "$app_version_id" "$ZCP_PROJECT_ID" "$at")
-  tag_name="zcp/deploy/${ZCP_PROJECT_ID}/appstage/${app_version_id}"
-  ssh appdev "cd /var/www && git -c user.name='Zerops Agent' -c user.email='agent@zerops.io' \
-    tag -a -f -m '$(printf '%s' "$msg" | sed "s/'/'\\\\''/g")' '${tag_name}' '${resolved}'"
-
-  echo "preseed: deployed ${resolved} to appstage (appVersion ${app_version_id:-unknown}), ledger tag ${tag_name}"
+  [ -n "$app_version_id" ] || { echo "preseed: missing appVersion id" >&2; exit 1; }
+  printf '%s\n' "$app_version_id" | ssh appdev 'cat >> /tmp/zcp-preseed-appversions'
+  echo "preseed: deployed ${resolved} to appstage (appVersion ${app_version_id})"
 }
+
+ssh appdev ': > /tmp/zcp-preseed-appversions'
 
 SHA_OLD=$(ssh appdev "cd /var/www && git rev-parse HEAD")
 deploy_from_commit "$SHA_OLD"
 
-# One trivial commit so the two ledger entries are genuinely distinct
+# One trivial commit so the two deployed commits are genuinely distinct
 # (same tree would make the second push a no-op build). A NEW tracked file,
 # not an append to a guessed entry point: the recipe's tree has no tracked
 # index.js, and `commit -am` on an untracked file commits nothing (exit 1 —
 # the first live pass died exactly there).
-ssh appdev "cd /var/www && echo 'preseed marker: second commit for the rollback ledger' > zcp-preseed-marker.txt && \
+ssh appdev "cd /var/www && echo 'preseed marker: second commit for the rollback fixture' > zcp-preseed-marker.txt && \
   git add zcp-preseed-marker.txt && \
-  git -c user.email='preseed@zcp.local' -c user.name='ZCP Preseed' commit -q -m 'preseed: second commit for rollback ledger'"
+  git -c user.email='preseed@zcp.local' -c user.name='ZCP Preseed' commit -q -m 'preseed: second commit for rollback fixture'"
 SHA_NEW=$(ssh appdev "cd /var/www && git rev-parse HEAD")
 deploy_from_commit "$SHA_NEW"
 
-echo "preseed: ledger ready — SHA_OLD=${SHA_OLD} SHA_NEW=${SHA_NEW}, newest zcp/deploy/* tag for appstage points at ${SHA_NEW}"
+echo "preseed: rollback fixture ready — SHA_OLD=${SHA_OLD} SHA_NEW=${SHA_NEW}"

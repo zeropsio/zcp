@@ -21,9 +21,7 @@ func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.
 			{ID: "svc-2", Name: "app"},
 		})
 	ssh := &mockSSHDeployer{results: []sshResult{
-		{output: []byte("f0115ba1234567\n")}, // resolve
-		{output: []byte("oldsha7654321\t" + // LastDeployOnRecord (previous on record)
-			`{"sha":"oldsha7654321","appVersionId":"av-0","target":"app","project":"proj-1","at":"2026-09-14T11:00:00Z"}` + "\n")},
+		{output: []byte("f0115ba1234567\n")},     // resolve
 		{output: []byte(validCommitZeropsYaml)},  // git show <sha>:zerops.yaml
 		{output: []byte("/tmp/zcp-extract-1\n")}, // mktemp -d
 		{output: []byte("")},                     // extract (archive | tar -x)
@@ -40,11 +38,8 @@ func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.
 	if result.SHA != "f0115ba1234567" {
 		t.Errorf("result.SHA = %q, want f0115ba1234567", result.SHA)
 	}
-	if result.PreviousOnRecord != "oldsha7654321" {
-		t.Errorf("result.PreviousOnRecord = %q, want oldsha7654321", result.PreviousOnRecord)
-	}
-	if len(ssh.calls) != 7 {
-		t.Fatalf("ssh calls = %d, want 7 (resolve, lastDeployOnRecord, git show zerops.yaml, mktemp, extract, push, cleanup): %+v", len(ssh.calls), ssh.calls)
+	if len(ssh.calls) != 6 {
+		t.Fatalf("ssh calls = %d, want 6 (resolve, git show zerops.yaml, mktemp, extract, push, cleanup): %+v", len(ssh.calls), ssh.calls)
 	}
 	for _, c := range ssh.calls {
 		if c.hostname != "builder" {
@@ -54,21 +49,18 @@ func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.
 	if !strings.Contains(ssh.calls[0].command, "rev-parse --verify") || !strings.Contains(ssh.calls[0].command, "^{commit}") {
 		t.Errorf("call[0] = %q, want a rev-parse --verify ...^{commit}", ssh.calls[0].command)
 	}
-	if !strings.Contains(ssh.calls[1].command, "for-each-ref") || !strings.Contains(ssh.calls[1].command, "refs/tags/zcp/deploy/proj-1/app") {
-		t.Errorf("call[1] = %q, want LastDeployOnRecord against refs/tags/zcp/deploy/proj-1/app", ssh.calls[1].command)
-	}
 	// The commit's zerops.yaml is validated, NEVER the SSHFS mount — the
 	// mount may be missing or stale relative to the deployed commit.
-	if !strings.Contains(ssh.calls[2].command, "git show") || !strings.Contains(ssh.calls[2].command, "'f0115ba1234567:zerops.yaml'") {
-		t.Errorf("call[2] = %q, want git show 'f0115ba1234567:zerops.yaml'", ssh.calls[2].command)
+	if !strings.Contains(ssh.calls[1].command, "git show") || !strings.Contains(ssh.calls[1].command, "'f0115ba1234567:zerops.yaml'") {
+		t.Errorf("call[1] = %q, want git show 'f0115ba1234567:zerops.yaml'", ssh.calls[1].command)
 	}
-	if !strings.Contains(ssh.calls[3].command, "mktemp -d") {
-		t.Errorf("call[3] = %q, want mktemp -d", ssh.calls[3].command)
+	if !strings.Contains(ssh.calls[2].command, "mktemp -d") {
+		t.Errorf("call[2] = %q, want mktemp -d", ssh.calls[2].command)
 	}
-	if !strings.Contains(ssh.calls[4].command, "git archive --format=tar") || !strings.Contains(ssh.calls[4].command, "| tar -x -C") {
-		t.Errorf("call[4] = %q, want the archive|tar pipe", ssh.calls[4].command)
+	if !strings.Contains(ssh.calls[3].command, "git archive --format=tar") || !strings.Contains(ssh.calls[3].command, "| tar -x -C") {
+		t.Errorf("call[3] = %q, want the archive|tar pipe", ssh.calls[3].command)
 	}
-	pushCmd := ssh.calls[5].command
+	pushCmd := ssh.calls[4].command
 	if !strings.Contains(pushCmd, "--no-git") {
 		t.Errorf("push command = %q, want --no-git", pushCmd)
 	}
@@ -81,8 +73,8 @@ func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.
 	if strings.Contains(pushCmd, " -g") {
 		t.Errorf("push command = %q, must not include -g (no .git in an extracted tree)", pushCmd)
 	}
-	if !strings.Contains(ssh.calls[6].command, "rm -rf '/tmp/zcp-extract-1'") {
-		t.Errorf("call[6] = %q, want cleanup of the extracted dir", ssh.calls[6].command)
+	if !strings.Contains(ssh.calls[5].command, "rm -rf '/tmp/zcp-extract-1'") {
+		t.Errorf("call[5] = %q, want cleanup of the extracted dir", ssh.calls[5].command)
 	}
 }
 
@@ -104,7 +96,6 @@ func TestDeploySSH_WithSHA_CommitMissingZeropsYaml_ReturnsErrorBeforeExtraction(
 		})
 	ssh := &mockSSHDeployer{results: []sshResult{
 		{output: []byte("f0115ba1234567\n")}, // resolve
-		{output: []byte("")},                 // LastDeployOnRecord: nothing on record
 		{output: []byte("fatal: path 'zerops.yaml' does not exist in 'f0115ba1234567'"), err: errTestNoZeropsYaml}, // git show zerops.yaml fails
 		{output: []byte("fatal: path 'zerops.yml' does not exist in 'f0115ba1234567'"), err: errTestNoZeropsYaml},  // …and the zerops.yml fallback fails too
 	}}
@@ -125,11 +116,11 @@ func TestDeploySSH_WithSHA_CommitMissingZeropsYaml_ReturnsErrorBeforeExtraction(
 	if !strings.Contains(pe.Message, "f0115ba") && !strings.Contains(pe.Message, "no zerops.yaml") {
 		t.Errorf("message = %q, want it to name the commit and the missing file", pe.Message)
 	}
-	if len(ssh.calls) != 4 {
-		t.Fatalf("ssh calls = %d, want 4 (resolve, lastDeployOnRecord, git show zerops.yaml, git show zerops.yml) — mktemp/extract must NOT run: %+v", len(ssh.calls), ssh.calls)
+	if len(ssh.calls) != 3 {
+		t.Fatalf("ssh calls = %d, want 3 (resolve, git show zerops.yaml, git show zerops.yml) — mktemp/extract must NOT run: %+v", len(ssh.calls), ssh.calls)
 	}
-	if !strings.Contains(ssh.calls[3].command, "zerops.yml") {
-		t.Errorf("call[3] = %q, want the zerops.yml fallback read", ssh.calls[3].command)
+	if !strings.Contains(ssh.calls[2].command, "zerops.yml") {
+		t.Errorf("call[2] = %q, want the zerops.yml fallback read", ssh.calls[2].command)
 	}
 	for _, c := range ssh.calls {
 		if strings.Contains(c.command, "mktemp") || strings.Contains(c.command, "git archive") {
@@ -225,7 +216,7 @@ func TestDeploySSH_SelfDeployWithSHA_ExplicitSameSource_AlsoRefused(t *testing.T
 // TestDeploySSH_NoSHA_SourceHasNoRepo_UnaffectedByRecording pins the "no
 // behaviour change" half of item 4 (docs/spec-workflows.md §4.9): when the
 // source has no git repo at all (HeadStatus's rev-parse fails), the
-// working-tree deploy is untouched — no ledger fields set, no extra
+// working-tree deploy is untouched — no source revision set, no extra
 // machinery beyond the one read-only HeadStatus round trip.
 func TestDeploySSH_NoSHA_SourceHasNoRepo_UnaffectedByRecording(t *testing.T) {
 	mock := platform.NewMock().
@@ -271,7 +262,6 @@ func TestDeploySSH_NoSHA_SourceHasCleanRepo_RecordsHEADAndKeepsPushByteIdentical
 		})
 	ssh := &mockSSHDeployer{results: []sshResult{
 		{output: []byte("fullhead1234567\n")}, // HeadStatus: clean
-		{output: []byte("")},                  // LastDeployOnRecord: nothing on record
 		{output: []byte("ok")},                // login+push
 	}}
 	authInfo := testAuthInfo()
@@ -287,15 +277,15 @@ func TestDeploySSH_NoSHA_SourceHasCleanRepo_RecordsHEADAndKeepsPushByteIdentical
 	if result.Dirty {
 		t.Error("result.Dirty = true, want false (clean status)")
 	}
-	if len(ssh.calls) != 3 {
-		t.Fatalf("ssh calls = %d, want 3 (HeadStatus, LastDeployOnRecord, push): %+v", len(ssh.calls), ssh.calls)
+	if len(ssh.calls) != 2 {
+		t.Fatalf("ssh calls = %d, want 2 (HeadStatus, push): %+v", len(ssh.calls), ssh.calls)
 	}
 
 	// The push command must be EXACTLY what buildSSHCommand produces for
 	// a plain self-deploy — recording HEAD must never perturb it.
 	want := buildSSHCommand(authInfo, "svc-1", defaultWorkingDir, "", true, topology.RuntimeUnknown)
-	if ssh.calls[2].command != want {
-		t.Errorf("push command = %q, want byte-identical to buildSSHCommand's output %q", ssh.calls[2].command, want)
+	if ssh.calls[1].command != want {
+		t.Errorf("push command = %q, want byte-identical to buildSSHCommand's output %q", ssh.calls[1].command, want)
 	}
 }
 
@@ -336,7 +326,6 @@ func TestDeploySSH_WithSHA_AlwaysDirtyFalse(t *testing.T) {
 		})
 	ssh := &mockSSHDeployer{results: []sshResult{
 		{output: []byte("f0115ba1234567\n")},     // resolve
-		{output: []byte("")},                     // LastDeployOnRecord: nothing on record
 		{output: []byte(validCommitZeropsYaml)},  // git show
 		{output: []byte("/tmp/zcp-extract-1\n")}, // mktemp -d
 		{output: []byte("")},                     // extract
@@ -360,3 +349,20 @@ type shaTestError struct{ msg string }
 func (e *shaTestError) Error() string { return e.msg }
 
 var errTestSHA = &shaTestError{"exit 128: bad revision"}
+
+func TestDeploySSH_WorkingTree_DoesNotReadDeploymentTags(t *testing.T) {
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-1", Name: "builder"},
+		{ID: "svc-2", Name: "app"},
+	})
+	ssh := &mockSSHDeployer{output: []byte("abcdef1234567\n")}
+	if _, err := DeploySSH(context.Background(), mock, "proj-1", ssh, testAuthInfo(),
+		"builder", "app", "", "", ""); err != nil {
+		t.Fatalf("DeploySSH: %v", err)
+	}
+	for _, call := range ssh.calls {
+		if strings.Contains(call.command, "for-each-ref") || strings.Contains(call.command, "git tag") {
+			t.Errorf("deployment must not read or mutate tags: %s", call.command)
+		}
+	}
+}

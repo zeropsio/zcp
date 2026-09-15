@@ -6,18 +6,24 @@ description: |
   the current HEAD — shipped to appstage, and wants to be able to prove
   later exactly which commit is running there. Tests G3 (docs/
   spec-workflows.md §4.9): `zerops_deploy sha=` deploy-from-commit and the
-  zcp/deploy/* annotated-tag ledger it leaves in appdev's repo.
+  SHA/appVersionId fields in the response. These are recorded operation
+  evidence, not proof that a stale or concurrent platform result belongs
+  to this push: the correlation limitation in §4.9 remains open.
 
-  Status `promote: containerCheck` (docs/spec-scenarios.md §9.3 table G):
-  the runner evaluates containerCheck today, but this file does not carry
-  one yet — a follow-up adds a direct
-  `git tag -l 'zcp/deploy/*/appstage/*'` check and flips the row to
-  `gate`. Today's oracle coverage (toolArg/toolResult/liveness) proves the
-  same behavior indirectly, via the deploy response rather than a
-  container read.
+  Status `promote: containerCheck`: a follow-up must independently check
+  the deployed artifact/source; today's toolResult and liveness checks
+  establish response shape and a healthy target only.
+  The preseed (plant-repo-cargo.sh) leaves appdev's repository on a
+  feature branch with a dirty tracked file, an untracked file, a user
+  tag, a custom ref, a user identity and a foreign origin. A
+  deploy-from-commit extracts the commit OUTSIDE the working tree (GF-3),
+  so the containerCheck proves the source checkout is byte-for-byte
+  untouched: same HEAD, same branch, same dirty state, nothing committed
+  or stashed on the user's behalf.
 seed: deployed
 fixture: fixtures/nodejs-standard-deployed.yaml
-tags: [deploy-from-commit, ledger, git-foundation, cross-deploy, node]
+preseedScript: preseed/plant-repo-cargo.sh
+tags: [deploy-from-commit, deploy-evidence, git-foundation, cross-deploy, node]
 area: develop
 retrospective:
   promptStyle: briefing-future-agent
@@ -30,6 +36,19 @@ verification:
   toolResult:
     - {tool: zerops_deploy, contains: "\"sha\":\""}
     - {tool: zerops_deploy, contains: "\"appVersionId\":\""}
+  containerCheck:
+    - {service: appdev, cmd: "git -C /var/www merge-base --is-ancestor refs/preseed/head HEAD && echo history-kept", match: "^history-kept"}
+    - {service: appdev, cmd: "git -C /var/www symbolic-ref --short HEAD", match: "^feature/preseed-cargo"}
+    - {service: appdev, cmd: "git -C /var/www tag -l v0.1-user-release", match: "^v0.1-user-release"}
+    - {service: appdev, cmd: "git -C /var/www rev-parse -q --verify refs/t3/checkpoints/preseed >/dev/null && echo ref-kept", match: "^ref-kept"}
+    - {service: appdev, cmd: "grep -q 'v2 uncommitted' /var/www/cargo-tracked.txt && test -f /var/www/cargo-untracked.txt && echo dirty-kept", match: "^dirty-kept"}
+    - {service: appdev, cmd: "grep -qxF user-private-dir/ /var/www/.git/info/exclude && echo exclude-kept", match: "^exclude-kept"}
+    - {service: appdev, cmd: "git -C /var/www config user.email", match: "^preseed@example\\.com"}
+    - {service: appdev, cmd: "git -C /var/www remote get-url origin", match: "^https://example\\.invalid/preseed/repo\\.git"}
+    - {service: appdev, cmd: "git -C /var/www tag -l 'zcp/*' | wc -l", match: "^\\s*0"}
+    - {service: appdev, cmd: "git -C /var/www rev-parse HEAD refs/preseed/head | uniq | wc -l", match: "^\\s*1"}
+    - {service: appdev, cmd: "git -C /var/www status --porcelain -- cargo-tracked.txt cargo-untracked.txt", match: "(?s)^ M cargo-tracked\\.txt.*\\?\\? cargo-untracked\\.txt"}
+    - {service: appdev, cmd: "test -f /var/www/user-private-dir/keep && echo ignored-kept", match: "^ignored-kept"}
   noFailedProcesses: true
   never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
@@ -50,10 +69,11 @@ notableFriction:
   - id: ledger-as-the-answer
     description: |
       When the user later asks "what's running on stage", the agent
-      should point at the deploy response's own `sha`/`appVersionId`
-      fields (or the `zcp/deploy/<project>/appstage/<appVersionId>`
-      annotated tag in appdev's repo) rather than inventing a tracking
-      mechanism or claiming there is no way to know.
+      should inspect the platform's active appVersion, then use the deploy
+      response or recorded attempt's sha/appVersionId as operation evidence.
+      Missing or uncorrelated evidence must be stated as uncertainty; the
+      agent must not invent a tag ledger or promise a proven source mapping.
+
 ---
 
 I want to ship the exact commit currently checked out on `appdev` to

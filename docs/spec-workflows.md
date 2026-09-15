@@ -899,83 +899,36 @@ OUTSIDE the repo (`os.MkdirTemp` locally, `mktemp -d` in the container),
 and the push runs from that extracted tree with `--no-git` and
 `--version-name <sha>` — never zcli's own `--workspace-state` archiver,
 which trips when the repo's `.git` is a `gitdir:` pointer file. The temp
-directory is removed after the push. Omitting `sha` is the unaffected,
-byte-identical existing path: no git commands run, no ledger entry is
-written.
+directory is removed after the push. Omitting `sha` ships the source working tree.
 
-Once the triggered build resolves to an appVersion, the tools layer
-records the deploy as an annotated git TAG in the SAME repo the commit
-was resolved from — `topology.DeployTagName(projectID, target,
-appVersionID)` → `zcp/deploy/<projectId>/<target>/<appVersionId>`,
-pointing at the deployed commit, whose message is one line of JSON:
-`{"sha","appVersionId","target","project","at","dirty"}`
-(`ops/git.WriteLedger`, `git tag -a -f -m <json> <name> <sha>` — `-f`
-because a retried deploy of the same appVersion must not fail on an
-already-existing tag). The write is a single `git tag` call — no
-commit-tree, no ref moves, no working-tree change, `HEAD` never touched.
-A ledger write failure downgrades to a response warning; it never fails
-an already-succeeded build.
+Deploy responses carry `SHA`, `AppVersionID` and `Dirty`; Work Session deploy
+attempts retain these fields when a session is present. No automatic Git tag is
+created, read, moved or synchronized for a deploy. Tags belong to the user's
+release workflow.
 
-**The platform stays the sole authority for the ACTIVE appVersion.** The
-ledger tag only maps an appVersionId → the commit it was built from —
-"what runs" is a JOIN: the platform's active appVersion for a target,
-looked up against the tag of that name in the source repo. Nothing in
-ZCP moves a pointer to say "this is what's running now": a per-hostname
-pointer would collide across two projects sharing a checkout and go stale
-the moment an ordinary working-tree deploy ran after it. `ops/git.LastDeployOnRecord`
-reads the newest tag under `zcp/deploy/<projectId>/<target>` (by tagger
-date: `git for-each-ref --sort=-taggerdate --count=1
---format='%(*objectname)%09%(contents:subject)'
-refs/tags/zcp/deploy/<projectId>/<target>`) — `ok=false` with no error
-when nothing is on record yet. **Nothing on record is not "no prior
-deploy" — it means the ledger has no visibility further back, and ZCP
-never infers a source for what's running:** a service adopted or
-buildFromGit-provisioned before this feature shipped, or one whose
-current appVersion was never deployed as a zcp deploy at all, simply has
-no tag to read. `zcp/deploy/*` tags are ordinary annotated tags, not
-`refs/zcp/*` — mate's ref pruning sweeps only `refs/t3/checkpoints/*`
-(`spec-mate.md` §6.4), so `refs/tags/zcp/deploy/*` is never swept, and the
-tags survive a plain `git fetch --tags`.
+`DeployResult.SHA` is the resolved commit for an explicit-sha deploy. For an
+ordinary working-tree deploy, `ops/git.HeadStatus` reads the source HEAD and
+uncommitted state before pushing, without changing the checkout. `Dirty` is true
+when that working tree has uncommitted changes; it is false for an explicit-sha
+archive. Without a reachable source HEAD, SHA stays empty and the deploy can
+still succeed. A dirty result means “HEAD plus uncommitted changes”, never that
+SHA alone reproduces the shipped files.
 
-`DeployResult.SHA` carries the commit actually shipped — set for an
-explicit-`sha` deploy, AND for an ordinary working-tree deploy (no `sha`
-param) whose SOURCE has a git repo with a reachable `HEAD`: the tools
-layer records that deploy too, so the ledger isn't sha-deploys-only.
-`DeployResult.Dirty` is true when a working-tree deploy shipped
-uncommitted changes on top of `SHA` — always `false` for an explicit-sha
-deploy, since that path ships exactly `sha`'s tree. `SHA` stays empty
-only when the source has no git repo at all (or no HEAD yet) — that
-deploy leaves no ledger entry and is not itself a failure.
+**The platform is the sole authority for the ACTIVE appVersion.** A response or
+recorded attempt describes a ZCP operation, not a live pointer to what runs now.
+Session history is bounded and local, not a shared deployment database. Missing
+source evidence means source unknown, not no previous deployment. In particular,
+the current polling path still selects the newest service event rather than a
+process correlated to the push: SHA/appVersionID output is not yet a proven
+commit-to-artifact mapping under search lag or concurrent deploys. Removing tags
+does not fix that correlation limitation.
 
-For the working-tree path, `ops/git.HeadStatus` reads the SOURCE's HEAD
-and dirty state with one combined, read-only round trip — `git rev-parse
---verify HEAD && git status --porcelain | head -c1`, rooted at the
-container/local working dir — run BEFORE the push but never altering it:
-the push command's args, `-g` flag, and `--workspace-state` archiving
-behavior stay byte-identical to the pre-item-4 no-sha path (pinned by
-tests asserting the push command string is unchanged). `ok=false` with
-no error when there's no repo or no reachable HEAD — no ledger write, no
-warning, no other behavior change. `ops/git.LastDeployOnRecord` is then
-read the same way as the sha path, so a working-tree redeploy's message
-can also say "previous zcp deploy on record: `<prev7>`".
-
-Response/status text never says "replaces `<prev7>`" — the ledger cannot
-see deploys that predate it, so a redeploy over an untracked prior state
-would misreport what it displaced. Instead: "previous zcp deploy on
-record: `<prev7>`" when `LastDeployOnRecord` found one, and nothing at
-all when it didn't. A dirty working-tree deploy's message never claims
-"deployed commit `<sha>`" either (that implies exactly `sha`'s tree
-shipped, which a dirty tree contradicts) — it says "recorded: HEAD
-`<sha7>` + uncommitted changes" instead.
-
-A rollback is `zerops_deploy targetService=<h> appVersion=<id>`: it
-re-activates a recorded appVersion in place, no build (§8 R2 / §12.6
-GF-8). The id and its commit are read back from the target's
-`zcp/deploy/<projectId>/<target>/*` tags (`git for-each-ref` for the JSON
-messages, `git log` for the history) or from the status envelope's deploy
-attempts. Deploying an earlier sha via deploy-from-commit is the fallback
-once no matching `BACKUP` appVersion remains (a NEW build), and is named
-as such in the response.
+A rollback is `zerops_deploy targetService=<h> appVersion=<id>`: it re-activates
+an existing BACKUP appVersion belonging to the target, without a build (§8 R2 /
+§12.6 GF-8). Obtain candidates from platform history (`zerops_events`) or recorded
+ZCP attempts and validate their current eligibility on the platform. Git tags are
+not involved. Deploying an earlier SHA is a NEW build, offered as a fallback
+when no suitable BACKUP artifact remains and named as such in the response.
 
 ---
 
@@ -1271,7 +1224,7 @@ Managed runtime services carry a `/var/www/.git/` that direct `zerops_deploy` tr
 | GLC-4 | The ZCP-host container has no git state. `/var/www` there is the SSHFS mount base, not a code directory; no `.git/` is ever initialized on it, and no `git config --global` is written. `zcp init` in container mode (`init_container.go::containerSteps`) performs only Claude config + optional VS Code setup. Developer-side git workflows (e.g. `zcp sync recipe push-app`) run on developer laptops with the developer's own `~/.gitconfig` and are never expected to pass through a Zerops-deployed ZCP service. |
 | GLC-5 | Mount-side `git init` (from the ZCP-host into a managed service's SSHFS-mounted `/var/www/{hostname}/`) is forbidden agent behavior, covered by `develop-first-deploy-write-app.md` guidance. zembed's SFTP MKDIR would produce root-owned `.git/objects/` which poisons every subsequent deploy. Recovery: `ssh {host} "sudo rm -rf /var/www/.git"` and let GLC-2's safety net re-init. |
 | GLC-6 | Local-env `strategy=git-push` requires a user-owned git repo with ≥1 commit (verified against `zcli@v1.0.61` `handler_archiveGitFiles.go:67-75`). ZCP does **not** auto-init git in the user's working directory — identity, default branch and `.gitignore` conventions are personal. `develop-platform-rules-local.md` instructs the agent to ask the user to run `git init && git add -A && git commit -m '<msg>'` themselves; `handleLocalGitPush` pre-flight catches the case as a hard fallback. The default `zerops_deploy` strategy uses `zcli --no-git` and needs no git state. The container-mode default path (GLC-2) depends on the same zcli floor for its `--workspace-state=all` archiver — no runtime probe, containers ship platform-maintained zcli. |
-| GLC-7 | Adopt (G2) tags the adopted service's current HEAD with `zcp/baseline/<appVersionId>` (`topology.BaselineTagName`, `ops/git.AdoptBaseline` over SSH via `ops.AdoptRepoBaseline`) — decided by CONTENT, never by "is a repo already": `git rev-parse --verify HEAD^{tree}` resolving to anything other than the well-known empty tree (`4b825dc642cb6eb9a060e54bf8d69288fbee4904`) is the ONLY thing that counts as content. No repo, an unborn HEAD, or a HEAD over the empty tree (exactly what `ops.InitServiceGit`'s GLC-1 marker commit leaves behind on a service with no prior git — GLC-1 normally runs first in `autoMountTargets`, but `AdoptBaseline` is correct in either order since it never trusts repo-existence alone) all take the **snapshot** case: `git init -q -b main` only if no repo exists at all, seed exclude, `git add -A`, then a commit carrying the robot identity INLINE (`git -c user.name=... -c user.email=...` — the same values as GLC-3's default, copied rather than imported since `ops/git` cannot depend on `internal/ops`) with the exact message `zcp: snapshot of <dir> as found at adopt (appVersion <id>)` — never call it the source commit, since it proves only what the working tree held at adopt time, not what built the running appVersion. A working tree with nothing to stage (`git add -A` stages nothing) still commits, with `--allow-empty`, after the exclude seed, so the tag lands — the empty commit itself is the record. A HEAD whose tree already carries content takes the **existing** case: only the tag moves (force — re-adopting the same or a newer appVersion must not fail on a pre-existing tag); no commit, no history change — the pre-existing HEAD is trusted as-is. `topology.RepoProvenance` records which case ran: `RepoProvenanceSnapshot` (zcp minted the baseline commit from what it found on disk) or `RepoProvenanceExisting` (the tag landed on a pre-existing HEAD) — NEITHER value claims the tagged tree matches the running appVersion's build input; that relation stays unproven either way (the platform surface that would prove it — the appVersion's sourceService/deployFiles — isn't modeled on `platform.ServiceStack`/`AppVersionEvent`). `ServiceMeta.Repo` (`SetRepoBaseline`) persists `{BaselineAppVersion, Provenance}`, converted directly from `ops/git.AdoptResult.Case` by `ops.AdoptRepoBaseline` — no separate classification step. Wired at `autoMountTargets` for the adopt route: `appVersionID` comes from `ListServicesDirect` (`ActiveAppVersion.ID`, lag-free per CLAUDE.md's ES-search trap). **Envelope**: `zerops_workflow` status exposes `repo: {present, head, baseline, provenance}` per non-managed service (`ServiceSnapshot.Repo`, `workflow.ApplyRepoStatus`) — `present`/`head`/`baseline` are read live via `ops.ReadRepoStatus` (`git rev-parse HEAD` + `git tag --points-at HEAD --list 'zcp/baseline/*'`), never cached; `provenance` is the one exception, read from `ServiceMeta.Repo.Provenance` (a recorded fact, not live state). `handleLifecycleStatus` wires the two together via `attachRepoStatus` — container mode only, local mode covered by the bootstrap-time `checkRepoInitAt` read-only check (GLC-6) instead. |
+| GLC-7 | Adopt establishes repository history through `ops/git.AdoptBaseline` over SSH via `ops.AdoptRepoBaseline`, without creating or reading Git tags. The decision is based on CONTENT: a reachable HEAD tree different from the empty tree takes the **existing** case, preserving HEAD and history. No repo, an unborn HEAD or an empty marker tree takes the **snapshot** case: initialize only when absent, seed exclude, stage the found files and create an inline robot-attributed snapshot commit (allowing an empty snapshot). Neither `RepoProvenanceSnapshot` nor `RepoProvenanceExisting` proves those files built the running appVersion. `ServiceMeta.Repo` (`SetRepoBaseline`) stores `{BaselineAppVersion, Provenance}`; the adoption-time active appVersion ID comes from `ListServicesDirect`. Container lifecycle status exposes `repo: {present, head, baseline, provenance}`: present/head are read live through `ops.ReadRepoStatus`, while baseline/provenance come from ServiceMeta as adoption metadata, independent of the current HEAD. Local mode uses the bootstrap-time read-only repo check (GLC-6). |
 
 **Explicit behavior change (git-contract fix, 2026-07-12)**: since direct deploy no longer auto-commits (GLC-2), a dev container's working tree stays dirty across iterations until something actually commits it — the launch `dev-tree-dirty` gate (§10, P-LP-11) is now the explicit sign-off-commit enforcement that the old invisible auto-commit used to fake. This is intended, not a regression.
 
@@ -1552,8 +1505,8 @@ collaboration happens over a shared repository.
 | origin | The shared remote of a checkout: `ServiceMeta.RemoteURL` + `GitPushState`, written only by `git-push-setup` (probe-first, PAT as the `GIT_TOKEN` service secret, url-scoped credential helper). Optional for dev; mandatory for production (P-LP-10). | §4.3, §4.4 |
 | tracked ref | The ref a target consumes — what stage or prod is built from. Today `main` is implicit in three places: the `git-push` default branch (`tools/deploy_git_push.go`), the Actions template (`tools/workflow_build_integration.go`, `branches: [main]`), and the launch gate's remote-HEAD compare (`tools/launch_source_control_gate.go`). | GF-7 (OPEN) |
 | delivery | Whatever turns a working tree or a commit into an appVersion on a target: the dev self-deploy (working tree, `-g`), deploy-from-commit (cross-deploy, §4.9), CI on push (§12.5), or the user's own CI that zcp cannot see. Which one applies is DERIVED (§4.3), never chosen by close-mode. | §4.3, §8 DM |
-| evidence | The record of which commit an appVersion was built from: the annotated tag `zcp/deploy/<projectId>/<target>/<appVersionId>` in the checkout that deployed (§4.9). The platform is the authority for the ACTIVE appVersion; "what runs" is the join of the two. No tag ⇒ source unknown, and the answer says so. | §4.9, GF-5 |
-| baseline | Adopt's starting point: the `zcp/baseline/<appVersionId>` tag on either zcp's snapshot of the files found on the container or a pre-existing HEAD with content; recorded as provenance `snapshot` / `existing`. Neither is a claim that the tree equals the running appVersion. | GLC-7 |
+| evidence | Deploy result and local Work Session attempt fields (`sha`, `appVersionId`, `dirty`), subject to the correlation limitation in §4.9. Platform state owns the ACTIVE appVersion; absent evidence means source unknown. | §4.9, GF-5 |
+| baseline | Adopt's starting point: repository history preserved or a snapshot of the files found on the container, with the adoption-time appVersion and provenance `snapshot` / `existing` stored in ServiceMeta. Neither is a claim that the tree equals the running appVersion. | GLC-7 |
 
 ### 12.2 Entry — where the source comes from
 
@@ -1561,7 +1514,7 @@ collaboration happens over a shared repository.
 |---|---|---|---|
 | bootstrap `recipe` / `classic` (§2) | recipe or agent-written tree in the dev service | GLC-1: repo with a reachable HEAD, identity set-if-absent, exclude seeded by runtime class. A buildFromGit build leaves the clone's `.git/` history in `/var/www` (observed live on the farm 2026-09-14, G2 run), so such a service adopts as `existing`; zcp does not depend on it. | none until `git-push-setup` |
 | user's existing repository | `git-push-setup remoteUrl=<their host>` on the dev service; reconstruction from the remote when `/var/www/.git` is missing (§4.4) | repo synced to origin, `GitPushState=configured` | the user's, any host |
-| `adopt` (§3) | a running service, with or without git | GLC-7: baseline tag over a snapshot (no repo / marker-only HEAD) or over the existing HEAD; provenance recorded | none until `git-push-setup` |
+| `adopt` (§3) | a running service, with or without git | GLC-7: snapshot (no repo / marker-only HEAD) or preserved existing HEAD; adoption appVersion and provenance recorded in metadata | none until `git-push-setup` |
 | launch-production (§10) | never a clone: prod starts `startWithoutCode`, the first release is the first CI build | prod services carry no repo | the dev checkout's origin, mandatory |
 
 ### 12.3 The change path — one checkout
@@ -1578,11 +1531,11 @@ edit ──► dev self-deploy ──► commit ──► push ──► deliver
 
 - **edit → dev self-deploy** is the fast loop and stays dirty by design: the working tree
   ships via zcli's stash-archive with `-g`, so the repository travels inside the artifact
-  and survives the container replacement (GLC-2, verified live 2026-09-14). The evidence tag
-  for such a deploy carries `dirty:true` — it records HEAD plus "uncommitted changes on top",
+  and survives the container replacement (GLC-2, verified live 2026-09-14). The recorded attempt
+  for a dirty deploy carries `dirty:true` — it records HEAD plus "uncommitted changes on top",
   never "commit X is what runs".
-- **commit** is the user's or the agent's, with ambient identity (GLC-3). zcp mints no
-  user-visible commit; its own objects (HEAD marker, adopt snapshot, evidence tags) carry the
+- **commit** is the user's or the agent's, with ambient identity (GLC-3). zcp does not
+  auto-commit routine edits; its own objects (HEAD marker, adopt snapshot) carry the
   robot identity inline (GF-2).
 - **push** needs an origin (§4.4). The pushed branch is the tracked ref (GF-7).
 - **deliver**: a stage receives either a deploy-from-commit (§4.9, cross-deploy) or a CI
@@ -1628,20 +1581,20 @@ adding code.
 | # | Rule | Home / status |
 |---|---|---|
 | GF-1 | A checkout is a service. No worktrees, no second checkout inside one service; parallel independent work is a second dev service. | `spec-mate.md §6.3` |
-| GF-2 | zcp mints no user-visible commit. Its own objects — HEAD marker (GLC-2), adopt snapshot (GLC-7), evidence tags (§4.9) — carry the robot identity inline and never touch the index or the working tree. | GLC-2/3/7, §4.9 |
+| GF-2 | zcp never auto-commits routine development changes. Its HEAD marker (GLC-2) and adoption snapshot (GLC-7) carry inline robot identity; the snapshot stages the found files. No automatic deploy or baseline tags are written. | GLC-2/3/7, §4.9 |
 | GF-3 | Deploy-from-commit is a cross-deploy only. A self-deploy always ships the working tree with `.git` (`-g`); shipping an extracted tree to the source service itself would delete the container's repository. | §4.9; `TestDeploySSH_ShaSelfTarget_Refused` |
 | GF-4 | The `zerops.yaml` that is validated is the one that is deployed: the commit's for a sha deploy, the working tree's otherwise. | §4.9 |
-| GF-5 | Evidence never overclaims. No tag ⇒ "source unknown"; a working-tree deploy ⇒ `dirty:true`; a baseline ⇒ `snapshot` or `existing`, never parity with the running appVersion; the platform's active appVersion is the only "what runs". | §4.9, GLC-7 |
+| GF-5 | Evidence never overclaims. No source evidence ⇒ "source unknown"; uncommitted working-tree changes ⇒ `dirty:true`; a baseline ⇒ `snapshot` or `existing`, never parity with the running appVersion; the platform's active appVersion is the only "what runs". | §4.9, GLC-7 |
 | GF-6 | Production is delivered only by CI from an origin, from a clean, pushed HEAD; zcp never self-deploys production. | P-LP-10/11 — unchanged |
 | GF-7 | The tracked ref is recorded once per target and read by the push default, the CI template and the launch gate. | OPEN — today `main` in three places (§12.1) |
 | GF-8 | Rollback is the re-activation of a recorded appVersion (`PUT /app-version/{id}/deploy`, the R2 path generalised from `latest` to any recorded id) with no build; deploying an older commit is a NEW build and is offered as the fallback, named as such. | built — `ops.ReactivateAppVersion` (`TestReactivateAppVersion_*`), `tools.runAppVersionRollback` (`TestDeploySSH_AppVersionID_*`) |
-| GF-9 | Evidence tags reach the origin with the push (`refs/tags/zcp/deploy/*` alongside the tracked ref), so a second checkout and the mate see one deploy history; the version-name convention (GF-10) is the platform-side copy. | OPEN — decide after GF-8 and the Gitea proof |
-| GF-10 | Every zcp-driven build passes `--version-name <sha>` (sha deploys do; working-tree deploys and CI templates OPEN), so `SearchAppVersions.name` is a platform-side breadcrumb even when no tag is reachable. | OPEN |
+| GF-9 | Git tags are user-owned release markers, not a deploy ledger. No automatic deploy/baseline tag creation, lookup or synchronization. | §4.9, GLC-7 |
+| GF-10 | Every zcp-driven build passes `--version-name <sha>` (sha deploys do; working-tree deploys and CI templates OPEN), so `SearchAppVersions.name` is a platform-side breadcrumb independent of local session history. | OPEN |
 
 ### 12.7 Open items and owners
 
 - GF-7 tracked ref — build after the branch's first farm pass (G1/G3/G4).
-- GF-9/GF-10 evidence sharing — one decision, after GF-8 and the Gitea proof.
+- GF-10 platform-side source evidence — correlate each push with its appVersion before treating the mapping as proof; keep dirty workspace evidence explicit.
 - Gitea Actions as CI (§12.5) — live verification decides whether a relay exists at all.
 - Managed Gitea: recipe (verified shape: `ubuntu@24.04`, `HOME`, `app.ini` before
   `gitea migrate`, ≥1 GB) + placement (owner recommendation: one hub project per org).

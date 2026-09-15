@@ -11,13 +11,9 @@ description: |
   tree stays whatever it is until something actually deploys or commits
   it (GLC-2's "dev container stays dirty across iterations" behavior).
 
-  Status `promote: containerCheck` (docs/spec-scenarios.md §9.3 table G):
-  the runner evaluates containerCheck today, but this file does not
-  carry one yet — a follow-up adds a direct
-  `git -C /var/www rev-parse HEAD` / `.git/info/exclude` non-empty /
-  no-`.gitignore` check and flips the row to `gate`. Today's oracle
-  coverage (expectedServices/never) proves bootstrap completed cleanly;
-  it does not yet reach into the container to prove the repo itself.
+  The containerCheck reaches into appdev: a reachable HEAD, the
+  class-scoped exclude seed present, an identity set, and no
+  zcp-authored tag.
 seed: empty
 tags: [repo-always, bootstrap, classic-route, git-foundation, node]
 area: bootstrap
@@ -35,6 +31,11 @@ verification:
       type: nodejs@*
   noFailedProcesses: true
   liveness: {service: appstage, marker: "small-api-ready"}
+  containerCheck:
+    - {service: appdev, cmd: "git -C /var/www rev-parse --verify HEAD >/dev/null && echo head-ok", match: "^head-ok"}
+    - {service: appdev, cmd: "grep -qxF node_modules/ /var/www/.git/info/exclude && grep -qxF .env /var/www/.git/info/exclude && echo exclude-ok", match: "^exclude-ok"}
+    - {service: appdev, cmd: "git -C /var/www tag -l 'zcp/*' | wc -l", match: "^\\s*0"}
+    - {service: appdev, cmd: "git -C /var/www config user.email", match: ".+"}
   never: ["zerops_import{override=true}", "zerops_delete"]
 notableFriction:
   - id: no-gitignore-authored

@@ -694,11 +694,12 @@ no buildFromGit), so the agent has a place to fix source. `allowFailed` explicit
 
 | cell | scenario id | pre-state · task | oracle families | status |
 |---|---|---|---|---|
-| G1 ✚ | `repo-always-bootstrap` | brand-new classic pair · build a small API | expectedServices liveness never | promote: containerCheck |
-| G2 ✚ | `repo-always-adopt-baseline` | unmanaged pair deployed without git · connect to what I have | expectedServices unchanged containerCheck(baseline tag tree non-empty; snapshot commit) never | gate |
-| G3 ✚ | `deploy-from-commit-stage` | pair, both buildFromGit-deployed · ship a specific commit to stage | toolArg(targetService=appstage) toolResult(sha/appVersionId) liveness never | promote: containerCheck |
-| G4 ✚ | `dev-self-deploy-keeps-repo` | pair with one ledger entry on appdev (preseed) · change the response text, ship dev | liveness toolArg(targetService=appdev) never | promote: containerCheck |
+| G1 ✚ | `repo-always-bootstrap` | brand-new classic pair · build a small API | expectedServices liveness containerCheck(HEAD reachable; exclude seeded; identity set; no zcp tag) never | gate |
+| G2 ✚ | `repo-always-adopt-baseline` | unmanaged buildFromGit pair with history + planted user cargo (preseed) · connect to what I have | expectedServices unchanged containerCheck(cargo untouched: history, branch, tag, ref, dirty+untracked, exclude line, identity, origin; HEAD unmoved; no zcp tag) meta(repo.provenance=existing) never | gate |
+| G3 ✚ | `deploy-from-commit-stage` | pair, both buildFromGit-deployed, dev carries user cargo (preseed) · ship a specific commit to stage | toolArg(targetService=appstage) toolResult(sha/appVersionId) liveness containerCheck(dev checkout untouched — same cargo set as G2) never | gate |
+| G4 ✚ | `dev-self-deploy-keeps-repo` | pair with one previous stage deploy + user cargo on dev (preseed) · change the response text, ship dev | liveness toolArg(targetService=appdev) containerCheck(cargo travelled into the replacement container: history, branch, tag, ref, uncommitted content, exclude line, identity, origin; no zcp tag) never | gate |
 | G5 ✚ | `rollback-stage-from-ledger` | stage with 2 recorded deploys (preseed) · roll back to the previous version | seedExpect toolArg(targetService=appstage; appVersion=<id>, never latest; max 0 import; max 0 sha) mustOffer(no rebuild) never | pending: activeAppVersion |
+| G6 ✚ | `repo-adopt-snapshot-no-git` | unmanaged pair, dev has NO repository, files + secret `.env` on disk (preseed) · connect to what I have | expectedServices unchanged containerCheck(snapshot: cargo tracked, `.env` excluded yet on disk, clean tree, robot author, ≤2 commits, no tag) meta(repo.provenance=snapshot) never | gate |
 
 Deliberately not covered: recipe × simple (no simple-capable recipe in the
 catalog); iteration-cap auto-close (internal state, unit-tested, not a journey).

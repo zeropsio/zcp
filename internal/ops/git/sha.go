@@ -10,7 +10,7 @@ import (
 // ResolveSHA resolves sha to a full commit hash via `git rev-parse --verify
 // <sha>^{commit}`, rooted at dir. The ^{commit} suffix rejects a sha that
 // names a tree/blob/tag rather than a commit — the only object
-// ExtractCommitToTemp and the ledger can act on.
+// ExtractCommitToTemp can materialize.
 func ResolveSHA(ctx context.Context, r Runner, dir, sha string) (string, error) {
 	script := "git rev-parse --verify " + shellQuote(sha+"^{commit}")
 	out, stderr, err := r.Run(ctx, dir, script)

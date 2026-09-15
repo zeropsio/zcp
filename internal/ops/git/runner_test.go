@@ -1,6 +1,6 @@
 // Tests for: ops/git/runner.go — the Runner abstraction driving git
 // commands either via local os/exec (LocalRunner) or over SSH (SSHRunner),
-// so the deploy-from-commit resolve/archive/ledger functions work
+// so the deploy-from-commit resolve/archive functions work
 // identically for the interactive-local and interactive-container
 // transports (docs/spec-workflows.md §4.9).
 package git

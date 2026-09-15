@@ -17,8 +17,7 @@ import (
 const defaultWorkingDir = "/var/www"
 
 // DefaultWorkingDir is the container-side deploy working directory used
-// when the caller omits workingDir. Exported so the tools layer can locate
-// the same directory for git-ledger writes after a sha deploy.
+// when the caller omits workingDir. Shared with the tools layer.
 const DefaultWorkingDir = defaultWorkingDir
 
 // GitIdentity holds user name and email for git commits.
@@ -221,14 +220,13 @@ func deploySSH(
 	// now. The no-sha branch keeps validating the mount, unchanged.
 	resolvedSHA := ""
 	dirty := false
-	previousOnRecord := ""
 	var cleanupTemp func()
 	gitRunner := git.SSHRunner{Executor: sshDeployer, Hostname: source.Name}
 	if sha != "" {
 		var newWorkingDir string
 		var prepErr error
-		resolvedSHA, previousOnRecord, warnings, newWorkingDir, cleanupTemp, prepErr = deployFromCommitPrep(
-			ctx, client, target, gitRunner, source.Name, workingDir, setupName, serviceType, class, projectID, targetService, sha)
+		resolvedSHA, warnings, newWorkingDir, cleanupTemp, prepErr = deployFromCommitPrep(
+			ctx, client, target, gitRunner, source.Name, workingDir, setupName, serviceType, class, sha)
 		if prepErr != nil {
 			return nil, prepErr
 		}
@@ -255,13 +253,10 @@ func deploySSH(
 		// workflows.md §4.9): if the SOURCE has a git repo with a
 		// reachable HEAD, record what actually shipped — read-only,
 		// before the push, never altering the push command itself. No
-		// repo / no HEAD ⇒ no ledger, no warning, no behaviour change.
+		// repo / no HEAD ⇒ no source revision, no warning, no behaviour change.
 		if headSHA, isDirty, hasRepo, _ := git.HeadStatus(ctx, gitRunner, workingDir); hasRepo {
 			resolvedSHA = headSHA
 			dirty = isDirty
-			if entry, ok, _ := git.LastDeployOnRecord(ctx, gitRunner, workingDir, projectID, targetService); ok {
-				previousOnRecord = entry.SHA
-			}
 		}
 	}
 	if cleanupTemp != nil {
@@ -291,7 +286,6 @@ func deploySSH(
 				MonitorHint:       "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
 				Warnings:          warnings,
 				SHA:               resolvedSHA,
-				PreviousOnRecord:  previousOnRecord,
 				Dirty:             dirty,
 			}, nil
 		}
@@ -309,13 +303,11 @@ func deploySSH(
 		MonitorHint:       "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
 		Warnings:          warnings,
 		SHA:               resolvedSHA,
-		PreviousOnRecord:  previousOnRecord,
 		Dirty:             dirty,
 	}, nil
 }
 
-// deployFromCommitPrep resolves sha, reads its previous-on-record ledger
-// entry, validates the COMMIT's zerops.yaml (never the SSHFS mount, which
+// deployFromCommitPrep resolves sha, validates the COMMIT's zerops.yaml (never the SSHFS mount, which
 // may be missing or stale relative to an arbitrary sha), and extracts the
 // commit's tree into a fresh temp dir. Returns the tmpDir as the
 // workingDir the caller should push from, plus a cleanup func the caller
@@ -327,22 +319,17 @@ func deployFromCommitPrep(
 	gitRunner git.SSHRunner,
 	sourceName, workingDir, setupName, serviceType string,
 	class DeployClass,
-	projectID, targetService, sha string,
-) (resolvedSHA, previousOnRecord string, warnings []string, newWorkingDir string, cleanupTemp func(), err error) {
+	sha string,
+) (resolvedSHA string, warnings []string, newWorkingDir string, cleanupTemp func(), err error) {
 	resolved, resolveErr := git.ResolveSHA(ctx, gitRunner, workingDir, sha)
 	if resolveErr != nil {
-		return "", "", nil, "", nil, platform.NewPlatformError(
+		return "", nil, "", nil, platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("sha %q did not resolve to a commit in %s on %s: %v", sha, workingDir, sourceName, resolveErr),
 			`Pass a commit sha reachable via "git rev-parse" in the source container's working dir.`,
 		)
 	}
 	resolvedSHA = resolved
-	// Read BEFORE the ledger moves it (WriteLedger runs later, in the
-	// tools layer, once the build resolves).
-	if entry, ok, _ := git.LastDeployOnRecord(ctx, gitRunner, workingDir, projectID, targetService); ok {
-		previousOnRecord = entry.SHA
-	}
 
 	// Same file-name fallback as ParseZeropsYml/DeployLocal: a pre-rename
 	// repo carries zerops.yml, and a working-tree deploy accepts it.
@@ -351,7 +338,7 @@ func deployFromCommitPrep(
 		content, showErr = git.ReadFileAtCommit(ctx, gitRunner, workingDir, resolvedSHA, "zerops.yml")
 	}
 	if showErr != nil {
-		return "", "", nil, "", nil, platform.NewPlatformError(
+		return "", nil, "", nil, platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("commit %s has no zerops.yaml (or zerops.yml): %v", resolvedSHA[:min(10, len(resolvedSHA))], showErr),
 			"Add zerops.yaml to the commit being deployed, or deploy a different sha.",
@@ -363,19 +350,19 @@ func deployFromCommitPrep(
 	// travel with the error for visibility but the caller won't issue a
 	// push.
 	if vErr != nil {
-		return "", "", warnings, "", nil, vErr
+		return "", warnings, "", nil, vErr
 	}
 	// Pre-deploy API validation: Zerops checks the full zerops.yaml
 	// (field/syntax/version) server-side before we waste a build cycle on
 	// a YAML the platform will reject. Any failure — validation,
 	// transport, auth — aborts deploy.
 	if err := ValidatePreDeployContent(ctx, client, target, setupName, content); err != nil {
-		return "", "", warnings, "", nil, err
+		return "", warnings, "", nil, err
 	}
 
 	tmpDir, mkErr := git.MkTempDir(ctx, gitRunner)
 	if mkErr != nil {
-		return "", "", warnings, "", nil, fmt.Errorf("create archive tmp dir on %s: %w", sourceName, mkErr)
+		return "", warnings, "", nil, fmt.Errorf("create archive tmp dir on %s: %w", sourceName, mkErr)
 	}
 	cleanup := func() {
 		cctx, cancel := cleanupTempCtx(ctx)
@@ -384,9 +371,9 @@ func deployFromCommitPrep(
 	}
 	if extractErr := git.ExtractCommitToTemp(ctx, gitRunner, workingDir, resolvedSHA, tmpDir); extractErr != nil {
 		cleanup()
-		return "", "", warnings, "", nil, fmt.Errorf("extract commit %s on %s: %w", resolvedSHA, sourceName, extractErr)
+		return "", warnings, "", nil, fmt.Errorf("extract commit %s on %s: %w", resolvedSHA, sourceName, extractErr)
 	}
-	return resolvedSHA, previousOnRecord, warnings, tmpDir, cleanup, nil
+	return resolvedSHA, warnings, tmpDir, cleanup, nil
 }
 
 func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup string, includeGit bool, class topology.RuntimeClass) string {

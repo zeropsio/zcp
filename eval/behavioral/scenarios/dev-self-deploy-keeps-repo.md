@@ -1,28 +1,20 @@
 ---
 id: dev-self-deploy-keeps-repo
 description: |
-  Existing dev/stage Node pair, both buildFromGit-deployed (real cloned
-  repo mounted on appdev). The preseed already ran ONE deploy-from-commit
-  push to appstage, so appdev's repo carries a real zcp/deploy/* ledger
-  tag before the agent is spawned. Tests G4 (docs/spec-workflows.md's Git
-  Lifecycle section, GLC-1/GLC-2): a plain dev self-deploy
-  (`zerops_deploy targetService=appdev`, no sha) runs `buildSSHCommand`'s
-  safety-net on the SAME repo — init-if-missing (no-op here), identity
-  set-if-absent (no-op), `.git/info/exclude` re-seeded (idempotent), HEAD
-  guarantee (no-op, HEAD already reachable) — and none of that self-heal
-  composition ever touches the `zcp/deploy/*` tag namespace the preseed's
-  ledger lives in, nor re-writes `.git/info/exclude` from scratch (it
-  appends missing lines only).
-
-  Status `promote: containerCheck` (docs/spec-scenarios.md §9.3 table G):
-  the runner evaluates containerCheck today, but this file does not
-  carry one yet — a follow-up adds a direct
-  `git -C /var/www tag -l 'zcp/deploy/*'` (non-empty, ledger survives)
-  and a re-check that `.git/info/exclude` still carries the runtime
-  class's patterns after the deploy, and flips the row to `gate`.
-  Today's oracle coverage (liveness/toolArg) proves the self-deploy
-  shipped the new response text to appdev only; it does not yet reach
-  into the container to prove the ledger/exclude survived untouched.
+  Existing buildFromGit dev/stage pair with one previous commit deploy to
+  stage. Tests G4: ordinary dev self-deploy ships the working tree with
+  its repository. The init/identity/exclude/HEAD safety-net preserves
+  existing history and appends missing exclude patterns only.
+  The preseed also plants user cargo on appdev (lib-repo-cargo.sh): a
+  feature branch, a user commit, a release tag, a custom ref, a dirty
+  tracked file, an untracked file, a hand-added exclude line, a user
+  identity and a foreign origin. The containerCheck runs INSIDE the
+  replacement container and proves each item travelled with the
+  artifact (`zcli push -g`, workspace-state all — P10): history reachable,
+  branch, tag, ref, uncommitted content, exclude line, identity, origin
+  all intact, and no zcp-authored tag. Ignored files (the exclude's own
+  `user-private-dir/`) are platform-dropped on a container replacement
+  and are deliberately NOT asserted here.
 seed:
   mode: deployed
   fixture: fixtures/nodejs-standard-deployed.yaml
@@ -33,9 +25,10 @@ seed:
     probe:
       service: appdev
       cmd: >-
-        [ "$(git tag -l 'zcp/deploy/*/appstage/*' | wc -l)" -eq 1 ]
+        git rev-parse --verify HEAD >/dev/null &&
+        [ "$(wc -l < /tmp/zcp-preseed-appversions)" -eq 1 ]
 preseedScript: preseed/deploy-from-commit-once.sh
-tags: [repo-always, git-foundation, self-deploy, ledger, node]
+tags: [repo-always, git-foundation, self-deploy, repo-preservation, node]
 area: develop
 retrospective:
   promptStyle: briefing-future-agent
@@ -46,6 +39,16 @@ verification:
   toolArg:
     - {always: "zerops_deploy{targetService=appdev}"}
     - {max: 0, call: "zerops_import"}
+  containerCheck:
+    - {service: appdev, cmd: "git -C /var/www merge-base --is-ancestor refs/preseed/head HEAD && echo history-kept", match: "^history-kept"}
+    - {service: appdev, cmd: "git -C /var/www symbolic-ref --short HEAD", match: "^feature/preseed-cargo"}
+    - {service: appdev, cmd: "git -C /var/www tag -l v0.1-user-release", match: "^v0.1-user-release"}
+    - {service: appdev, cmd: "git -C /var/www rev-parse -q --verify refs/t3/checkpoints/preseed >/dev/null && echo ref-kept", match: "^ref-kept"}
+    - {service: appdev, cmd: "grep -q 'v2 uncommitted' /var/www/cargo-tracked.txt && test -f /var/www/cargo-untracked.txt && echo dirty-kept", match: "^dirty-kept"}
+    - {service: appdev, cmd: "grep -qxF user-private-dir/ /var/www/.git/info/exclude && echo exclude-kept", match: "^exclude-kept"}
+    - {service: appdev, cmd: "git -C /var/www config user.email", match: "^preseed@example\\.com"}
+    - {service: appdev, cmd: "git -C /var/www remote get-url origin", match: "^https://example\\.invalid/preseed/repo\\.git"}
+    - {service: appdev, cmd: "git -C /var/www tag -l 'zcp/*' | wc -l", match: "^\\s*0"}
   noFailedProcesses: true
   never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
@@ -64,13 +67,10 @@ notableFriction:
       commit".
   - id: safety-net-must-not-touch-ledger
     description: |
-      buildSSHCommand's GLC-2 safety-net (init-if-missing, identity
-      set-if-absent, exclude re-seed, HEAD guarantee) runs on every
-      self-deploy on THIS SAME repo that already carries the preseed's
-      zcp/deploy/* ledger tag. None of those four guards write, move, or
-      delete any tag or ref outside HEAD itself — a regression here
-      would silently corrupt or orphan the ledger the next `sha=` deploy
-      or rollback depends on.
+      buildSSHCommand's init/identity/exclude/HEAD safety-net runs on the
+      same repository after the stage deploy. Existing history and any
+      user-owned release tags must survive the dev container replacement.
+      Deployment and rollback do not depend on any automatic Git tag.
   - id: exclude-reseed-is-additive
     description: |
       The exclude-seed fragment re-runs on every deploy call, appending

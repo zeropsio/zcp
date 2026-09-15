@@ -90,7 +90,7 @@ func TestGitExcludeSeedFragment_Shape(t *testing.T) {
 		if !strings.Contains(frag, "grep -qxF -- "+q+" .git/info/exclude") {
 			t.Errorf("fragment missing idempotent presence check for %q: %s", want, frag)
 		}
-		if !strings.Contains(frag, "printf '%s\\n' "+q+" >> .git/info/exclude") {
+		if !strings.Contains(frag, "printf '\\n%s\\n' "+q+" >> .git/info/exclude") {
 			t.Errorf("fragment missing append for %q: %s", want, frag)
 		}
 	}
@@ -159,14 +159,24 @@ func TestGitEnsureRepoHeadCommand_ExcludeSeedIdempotent_PreservesManualLines(t *
 
 	cmd := GitEnsureRepoHeadCommand(dir, topology.RuntimeDynamic)
 	runShellChain(t, cmd, env)
+	first, err := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
+	if err != nil {
+		t.Fatalf("read first exclude: %v", err)
+	}
 	runShellChain(t, cmd, env) // second run: must not duplicate anything
 
 	content, err := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
 	if err != nil {
 		t.Fatalf("read .git/info/exclude: %v", err)
 	}
+	if string(content) != string(first) {
+		t.Fatalf("second seed changed excludes: first %q, second %q", first, content)
+	}
 	counts := map[string]int{}
 	for line := range strings.SplitSeq(strings.TrimRight(string(content), "\n"), "\n") {
+		if line == "" {
+			continue // Blank separators are not exclusion patterns.
+		}
 		counts[line]++
 	}
 	for line, n := range counts {

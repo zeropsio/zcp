@@ -1,23 +1,12 @@
 #!/bin/bash
 # Preseed for dev-self-deploy-keeps-repo (G4).
 #
-# The fixture (nodejs-standard-deployed.yaml) deploys appdev + appstage via
-# buildFromGit and this preseed runs AFTER that first build has settled
-# ACTIVE (seed.mode: deployed). It then performs ONE deploy-from-commit push
-# to appstage from appdev's mounted repo, replicating by hand what
-# `zerops_deploy sha=` does (docs/spec-workflows.md §4.9) so the agent
-# arrives at a pair where appdev already carries a real zcp/deploy/* tag
-# ledger entry BEFORE it is asked to touch anything — the test point is
-# that a plain dev self-deploy (buildSSHCommand's GLC-2 safety-net) never
-# disturbs that tag namespace or the .git/info/exclude seed while doing its
-# own HEAD-ensure/exclude-seed work on the SAME repo.
-#
-# NOT LIVE-VERIFIED (brief S6 stop condition, docs/spec-eval-farm.md §4.5):
-# this script cannot be run in this session. The archive|tar-extraction push
-# shape was verified live for the feature itself (plans/
-# git-foundation-2026-09-14.md); this single-deploy preseed is a
-# simplification of the live-verified deploy-from-commit-twice.sh and needs
-# one live pass in ASSEMBLE before this cell is trusted.
+# The buildFromGit fixture leaves appdev with source history. This preseed
+# deploys archived commits to stage with --version-name carrying the SHA.
+# It saves resulting appVersion IDs in /tmp/zcp-preseed-appversions on
+# appdev solely as seed-completion evidence, not as a product deploy ledger.
+# Rollback discovers the prior version through platform events.
+# The revised tag-free preseed requires a new live farm pass.
 set -eu
 
 : "${ZCP_API_KEY:?ZCP_API_KEY not set — required to resolve service ids}"
@@ -41,7 +30,7 @@ APPSTAGE_ID=$(resolve_id appstage)
 
 # wait_active <serviceId> — polls the direct project process list for the
 # newest stack.build/stack.deploy process against serviceId to reach
-# FINISHED, then confirms the appVersion is ACTIVE. 5-minute cap.
+# FINISHED. The seed service-status check verifies ACTIVE. 5-minute cap.
 wait_active() {
   local id="$1" deadline status
   deadline=$((SECONDS + 300))
@@ -62,6 +51,8 @@ wait_active() {
   return 1
 }
 
+ssh appdev ': > /tmp/zcp-preseed-appversions'
+
 SHA=$(ssh appdev "cd /var/www && git rev-parse HEAD")
 
 ssh appdev "zcli login -- '${ZCP_API_KEY}' >/dev/null"
@@ -79,11 +70,14 @@ app_version_id=$(curl -sS -H "Authorization: Bearer ${ZCP_API_KEY}" \
     | sort_by(.created) | last | .appVersion.id // empty
   ')
 
-at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-msg=$(printf '{"sha":"%s","appVersionId":"%s","target":"appstage","project":"%s","at":"%s"}' \
-  "$resolved" "$app_version_id" "$ZCP_PROJECT_ID" "$at")
-tag_name="zcp/deploy/${ZCP_PROJECT_ID}/appstage/${app_version_id}"
-ssh appdev "cd /var/www && git -c user.name='Zerops Agent' -c user.email='agent@zerops.io' \
-  tag -a -f -m '$(printf '%s' "$msg" | sed "s/'/'\\\\''/g")' '${tag_name}' '${resolved}'"
+[ -n "$app_version_id" ] || { echo "preseed: missing appVersion id" >&2; exit 1; }
+printf '%s\n' "$app_version_id" | ssh appdev 'cat >> /tmp/zcp-preseed-appversions'
+echo "preseed: deployed ${resolved} to appstage (appVersion ${app_version_id})"
 
-echo "preseed: deployed ${resolved} to appstage (appVersion ${app_version_id:-unknown}), ledger tag ${tag_name}"
+# G4 cargo: after the stage deploy, load appdev's repository with user-owned
+# state (branch, tag, custom ref, dirty + untracked files, exclude line,
+# identity, origin) — the self-deploy must carry all of it into the
+# replacement container (docs/spec-workflows.md §12.6 GF-2/GF-9; P10).
+# shellcheck source=lib-repo-cargo.sh
+. "$(dirname "$0")/lib-repo-cargo.sh"
+plant_repo_cargo appdev

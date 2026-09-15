@@ -12,9 +12,8 @@ description: |
   move is `zerops_deploy targetService=appstage appVersion=<the older
   appVersion id>` — rollback re-activates that recorded BACKUP appVersion
   in place (`stack.deploy.backup`, no build). The agent learns the id
-  from the status envelope's deploy attempts, `zerops_events`, or the
-  evidence tag messages on appdev (`git for-each-ref refs/tags/zcp/deploy/`)
-  — never from a ledger sha, and never by guessing.
+  from the status envelope's deploy attempts or `zerops_events` — never
+  from a Git tag or by guessing. The scenario ID is retained for matrix stability.
 
   Status `promote: <platform-side appVersion check>` (docs/spec-
   scenarios.md §9.3 table G): the runner has no oracle family today for
@@ -25,7 +24,7 @@ description: |
   id. A follow-up either adds such a family or accepts these two as
   live-verification-only; `toolArg` + `mustOffer` below already cover
   what the current families can express. The seed-side `probe` (proving
-  the preseed left two ledger entries) is unaffected — it is a different
+  the preseed saved two non-empty distinct appVersion IDs) is unaffected — it is a different
   family (`seedExpect`), asserting the preseed ran, not the rollback's
   outcome.
 seed:
@@ -38,9 +37,9 @@ seed:
     probe:
       service: appdev
       cmd: >-
-        [ "$(git tag -l 'zcp/deploy/*/appstage/*' | wc -l)" -eq 2 ]
+        [ "$(sort -u /tmp/zcp-preseed-appversions | wc -l)" -eq 2 ]
 preseedScript: preseed/deploy-from-commit-twice.sh
-tags: [rollback, deploy-from-commit, ledger, git-foundation, cross-deploy, node]
+tags: [rollback, deploy-from-commit, deploy-evidence, git-foundation, cross-deploy, node]
 area: develop
 retrospective:
   promptStyle: briefing-future-agent
@@ -53,7 +52,7 @@ verification:
     - {never: "zerops_deploy{targetService=appstage,appVersion=latest}"}
     - {max: 0, call: "zerops_import"}
     - {max: 0, call: "zerops_deploy{sha~.+}"}
-  mustOffer: ["(?i)(no|without a) rebuild", "(?i)zcp/deploy/|ledger|previous (version|commit|deploy)"]
+  mustOffer: ["(?i)(no|without a) rebuild", "(?i)previous (version|commit|deploy)|appVersion"]
   noFailedProcesses: true
   never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
@@ -67,9 +66,7 @@ notableFriction:
     description: |
       Agent must learn the PRIOR appVersion id before issuing the
       rollback — from the status envelope's deploy attempts, from
-      `zerops_events`, or from the evidence tag messages on appdev
-      (`git for-each-ref refs/tags/zcp/deploy/` — each tag names the
-      appVersionId of the deploy it recorded) — never by guessing or
+      `zerops_events` — never by guessing or
       asking the user to supply a commit or id by hand.
   - id: rollback-is-appversion-not-a-new-verb
     description: |

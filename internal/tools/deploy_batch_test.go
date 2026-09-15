@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -233,12 +232,8 @@ func statusOrNone(r *ops.DeployResult) string {
 	return r.Status
 }
 
-// TestDeployBatch_Deployed_WritesEvidenceTagPerTarget pins evidence parity
-// with the single deploy path (docs/spec-workflows.md §4.9): every
-// successful batch entry leaves a zcp/deploy/<project>/<target>/<appVersion>
-// tag in its source repo, so a later single deploy's LastDeployOnRecord
-// can see it.
-func TestDeployBatch_Deployed_WritesEvidenceTagPerTarget(t *testing.T) {
+// Successful batch entries retain deploy results without operating on git tags.
+func TestDeployBatch_Deployed_NoTagOperations(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock().
@@ -267,16 +262,21 @@ func TestDeployBatch_Deployed_WritesEvidenceTagPerTarget(t *testing.T) {
 	if result.IsError {
 		t.Fatalf("tool returned error: %s", getTextContent(t, result))
 	}
-	for _, want := range []string{"zcp/deploy/proj-1/apistage/av-api", "zcp/deploy/proj-1/appstage/av-app"} {
-		found := false
-		for _, c := range ssh.calls {
-			if strings.Contains(c, "tag -a -f -m") && strings.Contains(c, want) {
-				found = true
-				break
-			}
+	var batch ops.DeployBatchResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &batch); err != nil {
+		t.Fatalf("parse batch result: %v", err)
+	}
+	if batch.Succeeded != 2 || len(batch.Entries) != 2 {
+		t.Fatalf("expected two successful deploys, got %+v", batch)
+	}
+	versions := map[string]string{"apistage": "av-api", "appstage": "av-app"}
+	for _, entry := range batch.Entries {
+		if entry.Result == nil {
+			t.Fatalf("missing result for %s", entry.Target.TargetService)
 		}
-		if !found {
-			t.Errorf("expected a `git tag -a -f -m` call for %s; calls: %v", want, ssh.calls)
+		if entry.Result.SHA != ssh.headSHA || entry.Result.AppVersionID != versions[entry.Target.TargetService] || entry.Result.Status != statusDeployed {
+			t.Errorf("unexpected deploy result: %+v", entry.Result)
 		}
 	}
+	assertNoDeployTagOperations(t, ssh.calls)
 }

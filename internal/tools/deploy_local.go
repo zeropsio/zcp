@@ -48,8 +48,7 @@ type DeployLocalInput struct {
 	// SHA, when set, deploys the EXACT git commit instead of the current
 	// working tree: resolved via `git rev-parse`, its tree extracted into
 	// a temp dir outside workingDir, and pushed with --version-name. On
-	// success, records the deploy as a zcp/deploy/* tag in the workingDir
-	// repo. docs/spec-workflows.md §4.9.
+	// success, records the revision in the deploy attempt. docs/spec-workflows.md §4.9.
 	SHA string `json:"sha,omitempty"`
 }
 
@@ -63,7 +62,7 @@ func deployLocalInputSchema() *jsonschema.Schema {
 		"branch":        {Type: "string", Description: "Git branch for strategy=git-push. Default: current HEAD branch."},
 		"breakGlass":    {Type: "boolean", Description: "Override for the push-delivery redirect: a pair with git-push configured delivers via push (the repo is the source of truth); a direct deploy is refused with the recommended push call unless breakGlass=true. Reserve for fundamental reasons (git host outage, recovery)."},
 		"appVersion":    {Type: "string", Description: "'latest' re-deploys the newest built artifact in place (recovery). An appVersion id of the target re-activates that BACKUP artifact without a build (rollback, ~1 min) — ids and statuses come from zerops_events / the status envelope's deploy attempts."},
-		"sha":           {Type: "string", Description: "Deploy this exact git commit instead of the working tree. Recorded as a zcp/deploy/* git tag in the repo."},
+		"sha":           {Type: "string", Description: "Deploy this exact git commit instead of the working tree. Returns the resolved sha and deployed appVersionId."},
 	}, "targetService")
 }
 
@@ -236,7 +235,6 @@ func RegisterDeployLocal(
 		case result != nil && result.Status == statusDeployed:
 			attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
 			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
-			writeDeployLedgerLocal(ctx, input.WorkingDir, projectID, result)
 		case result != nil && result.TimedOut:
 			// In-flight (B23): build still running at poll timeout, not failed.
 			attempt.Error = deployBuildInFlightMsg

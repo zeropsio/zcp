@@ -29,18 +29,17 @@ func gitOutput(t *testing.T, dir string, args ...string) string {
 }
 
 // baselineTreeLineCount returns the number of entries `git ls-tree -r`
-// reports for the zcp/baseline/<id> tag on dir — the same "is the tagged
-// tree non-empty" question the eval scenario's containerCheck asks.
-func baselineTreeLineCount(t *testing.T, dir, tag string) int {
+// reports for a revision on dir.
+func baselineTreeLineCount(t *testing.T, dir, revision string) int {
 	t.Helper()
-	out := gitOutput(t, dir, "ls-tree", "-r", tag)
+	out := gitOutput(t, dir, "ls-tree", "-r", revision)
 	if out == "" {
 		return 0
 	}
 	return len(strings.Split(out, "\n"))
 }
 
-func TestAdoptBaseline_Integration_FilesNoRepo_TagsNonEmptyTreeWithRobotIdentity(t *testing.T) {
+func TestAdoptBaseline_Integration_FilesNoRepo_SnapshotsNonEmptyTreeWithRobotIdentity(t *testing.T) {
 	if testing.Short() {
 		t.Skip("shells out to the real git binary")
 	}
@@ -58,15 +57,15 @@ func TestAdoptBaseline_Integration_FilesNoRepo_TagsNonEmptyTreeWithRobotIdentity
 		t.Errorf("Case = %q, want %q", result.Case, AdoptCaseSnapshot)
 	}
 
-	tag := topology.BaselineTagName("av-real-1")
-	if n := baselineTreeLineCount(t, dir, tag); n == 0 {
-		t.Error("tagged tree is empty, want app.js to be present")
+	revision := "HEAD"
+	if n := baselineTreeLineCount(t, dir, revision); n == 0 {
+		t.Error("snapshot tree is empty, want app.js to be present")
 	}
-	msg := gitOutput(t, dir, "log", "-1", "--format=%s", tag)
+	msg := gitOutput(t, dir, "log", "-1", "--format=%s", revision)
 	if !strings.HasPrefix(msg, "zcp: snapshot") {
 		t.Errorf("commit message = %q, want it to start with %q", msg, "zcp: snapshot")
 	}
-	authorEmail := gitOutput(t, dir, "log", "-1", "--format=%ae", tag)
+	authorEmail := gitOutput(t, dir, "log", "-1", "--format=%ae", revision)
 	if authorEmail != robotIdentityEmail {
 		t.Errorf("author email = %q, want %q (robot identity, no ambient ~/.gitconfig)", authorEmail, robotIdentityEmail)
 	}
@@ -124,20 +123,20 @@ func TestAdoptBaseline_Integration_EmptyTreeMarkerHEAD_SkipsInitStillSnapshots(t
 		t.Errorf("Case = %q, want %q", result.Case, AdoptCaseSnapshot)
 	}
 
-	tag := topology.BaselineTagName("av-real-2")
-	if n := baselineTreeLineCount(t, dir, tag); n == 0 {
-		t.Error("tagged tree is empty, want app.js to be present")
+	revision := "HEAD"
+	if n := baselineTreeLineCount(t, dir, revision); n == 0 {
+		t.Error("snapshot tree is empty, want app.js to be present")
 	}
-	// Exactly one commit reachable from the tag beyond the marker — no
+	// Exactly one commit reachable from the revision beyond the marker — no
 	// re-init happened (a re-init would have produced a fresh unborn repo
 	// with no marker commit to be "beyond").
-	revCount := gitOutput(t, dir, "rev-list", "--count", tag)
+	revCount := gitOutput(t, dir, "rev-list", "--count", revision)
 	if revCount != "2" {
-		t.Errorf("rev-list --count %s = %q, want 2 (marker commit + snapshot commit)", tag, revCount)
+		t.Errorf("rev-list --count %s = %q, want 2 (marker commit + snapshot commit)", revision, revCount)
 	}
 }
 
-func TestAdoptBaseline_Integration_RealContentHEAD_TagsWithoutNewCommit(t *testing.T) {
+func TestAdoptBaseline_Integration_RealContentHEAD_PreservesHEADWithoutNewCommit(t *testing.T) {
 	if testing.Short() {
 		t.Skip("shells out to the real git binary")
 	}
@@ -153,13 +152,42 @@ func TestAdoptBaseline_Integration_RealContentHEAD_TagsWithoutNewCommit(t *testi
 		t.Errorf("Case = %q, want %q", result.Case, AdoptCaseExisting)
 	}
 
-	tag := topology.BaselineTagName("av-real-3")
-	taggedSHA := gitOutput(t, dir, "rev-parse", tag)
-	if taggedSHA != sha {
-		t.Errorf("tagged sha = %q, want %q (the pre-existing HEAD, no new commit)", taggedSHA, sha)
-	}
 	headSHA := gitOutput(t, dir, "rev-parse", "HEAD")
 	if headSHA != sha {
 		t.Errorf("HEAD moved to %q, want it to stay at %q — AdoptBaseline must not commit on the existing-content path", headSHA, sha)
+	}
+}
+
+func TestAdoptBaseline_Integration_PreservesTagsAndExcludes(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run(map[bool]string{false: "snapshot", true: "existing"}[existing], func(t *testing.T) {
+			dir := t.TempDir()
+			if existing {
+				initRepo(t, dir)
+			} else {
+				gitOutput(t, dir, "init", "-q", "-b", "main")
+				gitOutput(t, dir, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "init")
+			}
+			gitOutput(t, dir, "tag", "v1.0.0")
+			gitOutput(t, dir, "tag", "zcp/baseline/av-existing")
+			before := gitOutput(t, dir, "show-ref", "--tags")
+			for name, content := range map[string]string{"app.js": "app", "credentials.json": "private", ".git/info/exclude": "credentials.json"} {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := AdoptBaseline(context.Background(), isolatedHomeRunner{homeDir: t.TempDir()}, dir, "av-new", topology.RuntimeDynamic); err != nil {
+				t.Fatal(err)
+			}
+			if after := gitOutput(t, dir, "show-ref", "--tags"); after != before {
+				t.Errorf("tags changed: before %s, after %s", before, after)
+			}
+			if tracked := gitOutput(t, dir, "ls-files", "credentials.json"); tracked != "" {
+				t.Error("adoption committed an excluded credential file")
+			}
+			if ignored := gitOutput(t, dir, "check-ignore", "credentials.json"); ignored != "credentials.json" {
+				t.Error("custom exclusion lost")
+			}
+		})
 	}
 }

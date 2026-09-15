@@ -8,8 +8,8 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// AdoptRepoBaseline tags /var/www's current HEAD on hostname with the
-// appVersionID-scoped baseline tag, initializing a repo first when one
+// AdoptRepoBaseline preserves /var/www's content HEAD or snapshots the files
+// present at adoption, initializing a repo first when one
 // doesn't yet exist (docs/spec-workflows.md's Git Lifecycle section,
 // GLC-7) — the container-side counterpart of ops/git.AdoptBaseline.
 // Returns the topology.RepoProvenance the caller should persist: which
@@ -35,16 +35,11 @@ func AdoptRepoBaseline(ctx context.Context, ssh SSHDeployer, hostname, appVersio
 // section). Read fresh on every call — never cached on ServiceMeta or the
 // bootstrap session.
 type RepoStatus struct {
-	Present  bool
-	Head     string
-	Baseline string
+	Present bool
+	Head    string
 }
 
-// ReadRepoStatus reads /var/www's current repo state on hostname over
-// SSH: whether it's a repository at all (Present), its HEAD sha (Head,
-// empty on an unborn or absent repo), and the appVersion id its
-// zcp/baseline/* tag names, if any (Baseline — empty when no baseline tag
-// exists, e.g. a bootstrapped-not-adopted service).
+// ReadRepoStatus reads whether /var/www has a reachable HEAD and its SHA.
 func ReadRepoStatus(ctx context.Context, ssh SSHDeployer, hostname string) (RepoStatus, error) {
 	if hostname == "" {
 		return RepoStatus{}, fmt.Errorf("ReadRepoStatus: hostname is required")
@@ -57,8 +52,7 @@ func ReadRepoStatus(ctx context.Context, ssh SSHDeployer, hostname string) (Repo
 		// error the caller needs to react to.
 		return RepoStatus{}, nil //nolint:nilerr // absence is the expected, non-error outcome — see doc-comment
 	}
-	baseline := readBaselineTag(ctx, runner)
-	return RepoStatus{Present: true, Head: head, Baseline: baseline}, nil
+	return RepoStatus{Present: true, Head: head}, nil
 }
 
 // LocalRepoHead reports whether dir (a local working directory, not a
@@ -74,16 +68,4 @@ func LocalRepoHead(ctx context.Context, dir string) (present bool, head string) 
 		return false, ""
 	}
 	return true, head
-}
-
-// readBaselineTag returns the appVersion id embedded in dir's
-// zcp/baseline/<id> tag pointing at the current HEAD, or "" when none
-// exists. Best-effort: a Runner failure (no such tag) just means no
-// baseline was ever recorded — not an error worth propagating.
-func readBaselineTag(ctx context.Context, runner git.Runner) string {
-	out, _, err := runner.Run(ctx, defaultWorkingDir, "git tag --points-at HEAD --list 'zcp/baseline/*'")
-	if err != nil {
-		return ""
-	}
-	return topology.BaselineIDFromTag(out)
 }
