@@ -76,6 +76,85 @@ func TestEventsTool_WithService(t *testing.T) {
 	}
 }
 
+// TestEvents_ServiceFilter_ListsAppVersions pins the GF-8 candidate
+// source (docs/spec-workflows.md §8 R2 / §12.6 GF-8): filtering
+// zerops_events by serviceHostname populates the `appVersions` section
+// with the target's app-version history, ACTIVE/BACKUP flagged — the
+// same rows ops.ReactivateAppVersion's "does not belong" refusal lists,
+// reachable here WITHOUT an agent needing to probe zerops_deploy with a
+// fake appVersion id first.
+func TestEvents_ServiceFilter_ListsAppVersions(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "appstage"},
+		}).
+		WithProcessEvents([]platform.ProcessEvent{}).
+		WithAppVersionEvents([]platform.AppVersionEvent{}).
+		WithServiceAppVersions("svc-1", []platform.AppVersionEvent{
+			{ID: "av-new", ServiceStackID: "svc-1", Status: platform.ServiceStatusActive, Sequence: 2},
+			{ID: "av-old", ServiceStackID: "svc-1", Status: platform.BuildStatusBackup, Sequence: 1},
+		})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterEvents(srv, mock, nil, "proj-1")
+
+	result := callTool(t, srv, "zerops_events", map[string]any{"serviceHostname": "appstage"})
+	if result.IsError {
+		t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var er ops.EventsResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &er); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if len(er.AppVersions) != 2 {
+		t.Fatalf("len(AppVersions) = %d, want 2: %+v", len(er.AppVersions), er.AppVersions)
+	}
+	byID := make(map[string]ops.AppVersionCandidate, len(er.AppVersions))
+	for _, c := range er.AppVersions {
+		byID[c.ID] = c
+	}
+	if !byID["av-new"].Active {
+		t.Errorf("av-new not marked Active: %+v", byID["av-new"])
+	}
+	if !byID["av-old"].Backup {
+		t.Errorf("av-old not marked Backup: %+v", byID["av-old"])
+	}
+}
+
+// TestEvents_NoServiceFilter_OmitsAppVersions pins that AppVersions stays
+// empty for a project-wide (unfiltered) call — the section only makes
+// sense once a caller has scoped to a single service.
+func TestEvents_NoServiceFilter_OmitsAppVersions(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "appstage"},
+		}).
+		WithProcessEvents([]platform.ProcessEvent{}).
+		WithAppVersionEvents([]platform.AppVersionEvent{}).
+		WithServiceAppVersions("svc-1", []platform.AppVersionEvent{
+			{ID: "av-new", ServiceStackID: "svc-1", Status: platform.ServiceStatusActive, Sequence: 1},
+		})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterEvents(srv, mock, nil, "proj-1")
+
+	result := callTool(t, srv, "zerops_events", nil)
+	if result.IsError {
+		t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var er ops.EventsResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &er); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if len(er.AppVersions) != 0 {
+		t.Errorf("AppVersions = %+v, want empty for an unfiltered call", er.AppVersions)
+	}
+}
+
 func TestEventsTool_WithLimit(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().

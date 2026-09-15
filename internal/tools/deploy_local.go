@@ -61,7 +61,7 @@ func deployLocalInputSchema() *jsonschema.Schema {
 		"remoteUrl":     {Type: "string", Description: "Git remote URL (HTTPS). Optional for strategy=git-push — used only when origin isn't already configured in the local repo; otherwise the existing origin is reused."},
 		"branch":        {Type: "string", Description: "Git branch for strategy=git-push. Default: current HEAD branch."},
 		"breakGlass":    {Type: "boolean", Description: "Override for the push-delivery redirect: a pair with git-push configured delivers via push (the repo is the source of truth); a direct deploy is refused with the recommended push call unless breakGlass=true. Reserve for fundamental reasons (git host outage, recovery)."},
-		"appVersion":    {Type: "string", Description: "'latest' re-deploys the newest built artifact in place (recovery). An appVersion id of the target re-activates that BACKUP artifact without a build (rollback, ~1 min) — ids and statuses come from zerops_events / the status envelope's deploy attempts."},
+		"appVersion":    {Type: "string", Description: "'latest' re-deploys the newest built artifact in place (recovery). An appVersion id of the target re-activates that BACKUP artifact without a build (rollback, ~1 min) — read candidates from zerops_events or the status rollback block, never a probed id."},
 		"sha":           {Type: "string", Description: "Deploy this exact git commit instead of the working tree. Returns the resolved sha and deployed appVersionId."},
 	}, "targetService")
 }

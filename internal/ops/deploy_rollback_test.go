@@ -135,3 +135,98 @@ func TestReactivateAppVersion_WrongStatus_Refuses(t *testing.T) {
 		t.Errorf("RedeployAppVersion must not be called on a non-BACKUP id: %+v", client.CapturedRedeployAppVersion)
 	}
 }
+
+// TestAppVersionCandidates_MarksActiveAndBackup pins the exported
+// candidate reader zerops_events and the status envelope both render
+// from (docs/spec-workflows.md §8 R2 / §12.6 GF-8): the currently ACTIVE
+// row is flagged Active, a BACKUP (rollback-eligible) row is flagged
+// Backup, and a row in neither status carries both flags false.
+func TestAppVersionCandidates_MarksActiveAndBackup(t *testing.T) {
+	t.Parallel()
+
+	client := platform.NewMock().
+		WithServiceAppVersions("s1", []platform.AppVersionEvent{
+			{ID: "av-new", ServiceStackID: "s1", Status: platform.ServiceStatusActive, Sequence: 3, Created: "2026-09-14T10:00:00Z"},
+			{ID: "av-old", ServiceStackID: "s1", Status: platform.BuildStatusBackup, Sequence: 2, Created: "2026-09-13T10:00:00Z"},
+			{ID: "av-failed", ServiceStackID: "s1", Status: platform.BuildStatusDeployFailed, Sequence: 1, Created: "2026-09-12T10:00:00Z"},
+		})
+
+	candidates, err := AppVersionCandidates(context.Background(), client, "s1")
+	if err != nil {
+		t.Fatalf("AppVersionCandidates: %v", err)
+	}
+	if len(candidates) != 3 {
+		t.Fatalf("len(candidates) = %d, want 3", len(candidates))
+	}
+
+	byID := make(map[string]AppVersionCandidate, len(candidates))
+	for _, c := range candidates {
+		byID[c.ID] = c
+	}
+
+	active := byID["av-new"]
+	if !active.Active || active.Backup {
+		t.Errorf("av-new = %+v, want Active=true Backup=false", active)
+	}
+	backup := byID["av-old"]
+	if backup.Active || !backup.Backup {
+		t.Errorf("av-old = %+v, want Active=false Backup=true", backup)
+	}
+	failed := byID["av-failed"]
+	if failed.Active || failed.Backup {
+		t.Errorf("av-failed = %+v, want Active=false Backup=false", failed)
+	}
+	if failed.Created != "2026-09-12T10:00:00Z" {
+		t.Errorf("av-failed.Created = %q, want the seeded timestamp passed through", failed.Created)
+	}
+}
+
+// TestAppVersionCandidates_OrderedNewestFirst pins that the candidate
+// list preserves ListServiceAppVersions' own newest-first (Sequence
+// descending) ordering — callers (the rollback error, zerops_events, the
+// envelope) all rely on index 0 being the newest without re-sorting.
+func TestAppVersionCandidates_OrderedNewestFirst(t *testing.T) {
+	t.Parallel()
+
+	client := platform.NewMock().
+		WithServiceAppVersions("s1", []platform.AppVersionEvent{
+			{ID: "av-3", ServiceStackID: "s1", Status: platform.ServiceStatusActive, Sequence: 3},
+			{ID: "av-2", ServiceStackID: "s1", Status: platform.BuildStatusBackup, Sequence: 2},
+			{ID: "av-1", ServiceStackID: "s1", Status: platform.BuildStatusBackup, Sequence: 1},
+		})
+
+	candidates, err := AppVersionCandidates(context.Background(), client, "s1")
+	if err != nil {
+		t.Fatalf("AppVersionCandidates: %v", err)
+	}
+	want := []string{"av-3", "av-2", "av-1"}
+	got := make([]string, len(candidates))
+	for i, c := range candidates {
+		got[i] = c.ID
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("candidates[%d].ID = %q, want %q (order = %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+// TestAppVersionCandidates_PropagatesError pins that a platform error
+// from ListServiceAppVersions is wrapped and returned, not swallowed.
+func TestAppVersionCandidates_PropagatesError(t *testing.T) {
+	t.Parallel()
+
+	client := platform.NewMock().
+		WithError("ListServiceAppVersions", platform.NewPlatformError(platform.ErrAPIError, "boom", ""))
+
+	_, err := AppVersionCandidates(context.Background(), client, "s1")
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "boom") {
+		t.Errorf("err = %q, want it to wrap the underlying platform error", err.Error())
+	}
+}

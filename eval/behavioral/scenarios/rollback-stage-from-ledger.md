@@ -12,8 +12,11 @@ description: |
   move is `zerops_deploy targetService=appstage appVersion=<the older
   appVersion id>` — rollback re-activates that recorded BACKUP appVersion
   in place (`stack.deploy.backup`, no build). The agent learns the id
-  from the status envelope's deploy attempts or `zerops_events` — never
-  from a Git tag or by guessing. The scenario ID is retained for matrix stability.
+  from the status envelope's `rollback` block or `zerops_events
+  serviceHostname=appstage`'s `appVersions` section — never from a Git
+  tag, by guessing, or by probing `zerops_deploy` with a fake id to
+  harvest the candidate list from the refusal error. The scenario ID is
+  retained for matrix stability.
 
   Status `promote: <platform-side appVersion check>` (docs/spec-
   scenarios.md §9.3 table G): the runner has no oracle family today for
@@ -50,6 +53,7 @@ verification:
   toolArg:
     - {always: "zerops_deploy{targetService=appstage,appVersion~.+}"}
     - {never: "zerops_deploy{targetService=appstage,appVersion=latest}"}
+    - {never: "zerops_deploy{targetService=appstage,appVersion~^__}"}
     - {max: 0, call: "zerops_import"}
     - {max: 0, call: "zerops_deploy{sha~.+}"}
   mustOffer: ["(?i)(no|without a) rebuild", "(?i)previous (version|commit|deploy)|appVersion"]
@@ -65,9 +69,11 @@ notableFriction:
   - id: ledger-read-before-act
     description: |
       Agent must learn the PRIOR appVersion id before issuing the
-      rollback — from the status envelope's deploy attempts, from
-      `zerops_events` — never by guessing or
-      asking the user to supply a commit or id by hand.
+      rollback — from the status envelope's `rollback` block, from
+      `zerops_events serviceHostname=appstage`'s `appVersions` section —
+      never by guessing, by asking the user to supply a commit or id by
+      hand, or by probing `zerops_deploy` with a fake id to harvest the
+      candidate list from the "does not belong" refusal.
   - id: rollback-is-appversion-not-a-new-verb
     description: |
       There is no separate rollback tool/action: the correct move is

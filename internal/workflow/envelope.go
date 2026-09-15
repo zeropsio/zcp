@@ -148,6 +148,29 @@ type ServiceSnapshot struct {
 	// ApplyRepoStatus, never persisted on ServiceMeta or the bootstrap
 	// session — a fresh read every envelope computation.
 	Repo *RepoStatus `json:"repo,omitempty"`
+
+	// Rollback names this service's GF-8 rollback candidates (docs/spec-
+	// workflows.md §8 R2 generalised / §12.6 GF-8) — ids only, so an
+	// agent reads eligible `zerops_deploy targetService=<h> appVersion=<id>`
+	// targets straight off action="status" instead of probing
+	// zerops_deploy with a fake id or round-tripping zerops_events. Nil
+	// for managed/unknown-class services and for any runtime service
+	// ApplyRollbackInfo wasn't given a live read for. Populated by the
+	// tools layer via ApplyRollbackInfo, never persisted — a fresh read
+	// every envelope computation.
+	Rollback *RollbackInfo `json:"rollback,omitempty"`
+}
+
+// RollbackInfo is the per-service rollback-candidate id summary (docs/
+// spec-workflows.md §8 R2 / §12.6 GF-8). Active is empty when no
+// appVersion is currently active (a never-deployed service). Backup lists
+// every BACKUP (rollback-eligible) appVersion id, newest first — the
+// SAME candidates ops.AppVersionCandidates and zerops_events'
+// `appVersions` section carry, reduced to ids to keep the envelope small
+// (spec-mate.md §1 reducer rule).
+type RollbackInfo struct {
+	Active string   `json:"active,omitempty"`
+	Backup []string `json:"backup,omitempty"`
 }
 
 // RepoStatus is the per-service repository state. Present/Head are read live.
@@ -176,6 +199,25 @@ func ApplyRepoStatus(services []ServiceSnapshot, statuses map[string]RepoStatus)
 		}
 		copied := st
 		services[i].Repo = &copied
+	}
+}
+
+// ApplyRollbackInfo attaches per-service rollback candidate ids to each
+// service snapshot that has one in infos (keyed by hostname), skipping
+// managed/unknown services even if the caller mistakenly supplied one —
+// rollback only ever makes sense for a runtime service with app-version
+// history.
+func ApplyRollbackInfo(services []ServiceSnapshot, infos map[string]RollbackInfo) {
+	for i := range services {
+		if services[i].RuntimeClass == topology.RuntimeManaged || services[i].RuntimeClass == topology.RuntimeUnknown {
+			continue
+		}
+		info, ok := infos[services[i].Hostname]
+		if !ok {
+			continue
+		}
+		copied := info
+		services[i].Rollback = &copied
 	}
 }
 

@@ -101,7 +101,7 @@ func validateAppVersionParam(appVersion string) *mcp.CallToolResult {
 	return convertError(platform.NewPlatformError(
 		platform.ErrInvalidParameter,
 		fmt.Sprintf("appVersion=%q is not a valid appVersion id", appVersion),
-		"Pass appVersion=\"latest\" to re-deploy the target's already-built artifact in place, or an appVersion id (from zerops_events / the status envelope's deploy attempts) to roll back to it",
+		"Pass appVersion=\"latest\" to re-deploy the target's already-built artifact in place, or an appVersion id (read candidates from zerops_events or the status envelope's rollback block — never a probed/fake id) to roll back to it",
 	), WithRecoveryStatus())
 }
 
@@ -220,7 +220,7 @@ func deploySSHInputSchema() *jsonschema.Schema {
 		"remoteUrl":     {Type: "string", Description: "Git remote URL (HTTPS). Required for strategy=git-push on first push. Omit on subsequent pushes if remote already configured."},
 		"branch":        {Type: "string", Description: "Git branch name for git-push. Default: main."},
 		"breakGlass":    {Type: "boolean", Description: "Override for the push-delivery redirect: a pair with git-push configured delivers via push (the repo is the source of truth); a direct deploy is refused with the recommended push call unless breakGlass=true. Reserve for fundamental reasons (git host outage, recovery) — the response then flags that the container is ahead of the repo."},
-		"appVersion":    {Type: "string", Description: "'latest' re-deploys the newest built artifact in place (recovery). An appVersion id of the target re-activates that BACKUP artifact without a build (rollback, ~1 min) — ids and statuses come from zerops_events / the status envelope's deploy attempts."},
+		"appVersion":    {Type: "string", Description: "'latest' re-deploys the newest built artifact in place (recovery). An appVersion id of the target re-activates that BACKUP artifact without a build (rollback, ~1 min) — read candidates from zerops_events or the status rollback block, never a probed id."},
 		"sha":           {Type: "string", Description: "Deploy this exact git commit instead of the working tree. Returns the resolved sha and deployed appVersionId."},
 	}, "targetService")
 }
