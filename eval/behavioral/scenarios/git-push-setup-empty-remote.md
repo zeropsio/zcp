@@ -23,8 +23,10 @@ description: |
    2. Adopt-first vs bootstrap — services already exist; agent runs
       adopt → ServiceMeta, then proceeds to git-push-setup.
    3. Persona-reveals-token-via-Bash pattern, same as the sibling.
-   4. git-push-setup only — no build-integration=actions here (the empty-
-      remote shape is the focus; Actions wiring is the sibling's job).
+   4. git-push-setup, then ONE plain `zerops_deploy strategy=git-push` so
+      the empty remote actually receives appdev's history — no
+      build-integration (neither actions nor webhook; CI wiring is the
+      sibling's job, and the persona refuses both).
    5. The FIRST push must be a clean fast-forward: the repo is genuinely
       empty (no baseline commit, unlike gitRepoReset's shared repo), so
       zcp's own pre-push classification (the `remote` block on the
@@ -47,11 +49,15 @@ verification:
   meta:
     - {hostname: appdev, field: gitPushState, expect: "configured"}
   containerCheck:
-    - {service: appdev, cmd: "url='{{gitRepoURL}}'; curl -sf -H \"Authorization: Bearer $GIT_TOKEN\" \"https://api.github.com/repos/${url#https://github.com/}/contents/.github/workflows\" | grep -o '\"name\": *\"[^\"]*\\.ya\\?ml\"'", match: "\\.ya?ml"}
+    # The push landed: origin's `main` exists on the per-run repo. Read
+    # through the container's own GIT_TOKEN — the value never leaves it.
+    - {service: appdev, cmd: "url='{{gitRepoURL}}'; curl -sf -H \"Authorization: Bearer $GIT_TOKEN\" \"https://api.github.com/repos/${url#https://github.com/}/branches/main\" | grep -o '\"name\": *\"main\"'", match: "main"}
   toolResult:
     - {tool: zerops_workflow, contains: "\"state\":\"empty\""}
   toolArg:
+    - {always: "zerops_deploy{strategy=git-push}"}
     - {never: "zerops_deploy{strategy≠git-push}"}
+    - {max: 0, call: "zerops_workflow{action=build-integration}"}
   never: ["zerops_import{override=true}", "zerops_delete"]
   retrospectiveMustNotMention:
     - ghp_
@@ -74,9 +80,12 @@ userPersona: |
    - Pokud agent navrhne přejmenování hostnames, odmítni.
    - Pokud agent navrhne založení DALŠÍHO nového GitHub repa, odmítni:
      "ne, repo už existuje na {{gitRepoURL}}, jen tam ještě nic není."
-   - GitHub Actions teď neřeš — jen git-push-setup. Pokud agent nabídne
-     i build-integration=actions, řekni: "díky, ale to teď nepotřebuju,
-     stačí mi git push deploy."
+   - Žádné CI: pokud agent nabídne build-integration (GitHub Actions
+     NEBO webhook), odmítni: "žádné Actions ani webhook, chci jen
+     nastavit git push a hned tam pushnout aktuální stav appdev."
+   - Když je git-push-setup hotový, chceš, aby agent rovnou udělal jeden
+     git push deploy (`zerops_deploy strategy=git-push`), aby v repu byl
+     kód. Bez toho úkol není hotový.
    - Pokud agent požaduje token v textu, řekni: "získej ho přes Bash,
      `echo $ZCP_E2E_GITHUB_PAT_ADMIN`."
 
@@ -90,7 +99,9 @@ userPersona: |
   Co očekáváš na konci:
    - ServiceMeta pro appdev má GitPushState=configured +
      RemoteURL={{gitRepoURL}}
-   - Žádné nové služby vytvořené, žádný redeploy, žádné Actions wiring
+   - Na `{{gitRepoURL}}` existuje větev `main` s kódem appdev (jeden
+     git push deploy proběhl)
+   - Žádné nové služby vytvořené, žádné Actions/webhook wiring
 
 notableFriction:
   - id: empty-remote-never-non-fast-forward
@@ -129,4 +140,4 @@ notableFriction:
       zeptá.
 ---
 
-Mám na Zerops Node.js standard pair (`appdev` + `appstage` + `db`) co byl postavený mimo ZCP. Nastav mi ho do ZCP — adopt, pak nastavení git push deploy na `{{gitRepoURL}}` (čerstvě založený, prázdný repo). Mám PAT v env var `$ZCP_E2E_GITHUB_PAT_ADMIN` (Contents+Secrets+Workflows write na ten repo). Až bude git push deploy hotový, řekni mi co se nastavilo.
+Mám na Zerops Node.js standard pair (`appdev` + `appstage` + `db`) co byl postavený mimo ZCP. Nastav mi ho do ZCP — adopt, pak nastavení git push deploy na `{{gitRepoURL}}` (čerstvě založený, prázdný repo) a rovnou tam jedním git push deployem pushni aktuální stav appdev. Žádné CI (Actions ani webhook) teď nechci. Mám PAT v env var `$ZCP_E2E_GITHUB_PAT_ADMIN` (Contents+Secrets+Workflows write na ten repo). Až bude push hotový, řekni mi co se nastavilo.
