@@ -295,3 +295,19 @@ Open: launch-production template `--version-name`; `versionName` on rollback can
   where the agent asks right after a Bash call was affected.
 - Farm traps: push `--evaluator` on any eval-code change; a scenario persona must answer every
   decision zcp hands back (GF-11), or the run ends on the question.
+
+### 9.2 Day 3, evening — zcp commits nothing, seeds nothing; self-deploy contract (GF-12)
+
+- Adopt's snapshot commit and the `.git/info/exclude` seeding are gone (`45a73741`): adopt
+  without a content HEAD = init + empty marker, files stay uncommitted, `provenance=initialized`.
+  `.gitignore` and the baseline commit are the agent's (guided), never zcp's. Corpus audit:
+  no recipe/atom/guide requires a `.env` at build or runtime (Laravel/NestJS say so explicitly).
+- GF-12 (`64366035`): a dev checkout is reproducible from git; the self-deploy boundary is
+  zcli's git archiver (facts cited in spec §8 DM-7/DM-8 from zcli v1.1.0-13-g9827852: ignored
+  files never ship, no flag changes that; `-g` copies `.git/` raw; submodules arrive empty;
+  `deployFiles` is server-side; `zcli deploy -g` is a no-op). Self-deploy result carries
+  `notCarried`, `envFiles`, `repoState`; `.git`-as-file and `.gitmodules` are refused with
+  `GIT_WORKTREE_UNSUPPORTED` / `GIT_SUBMODULES_UNSUPPORTED`. Atom
+  `develop-self-deploy-reproducibility`.
+- Farm `gf-cargo-14` on the merged branch: G1, G2, G3, G4 (ignored file gone, `notCarried` +
+  `envFiles` in the result), G5, G6-initialized — all passed.
