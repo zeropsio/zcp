@@ -396,24 +396,31 @@ type LaunchPushProofResult struct {
 	RemoteHead string
 }
 
+// symbolicHeadRef is the git symbolic ref meaning "whatever the remote
+// considers its current/default branch" — the compare target every
+// push-proof read used before GF-7 introduced a recorded tracked ref.
+// One named constant so the fallback in launchPushProofRef reads as
+// the deliberate git-symbolic-ref choice it is, not a stray literal.
+const symbolicHeadRef = "HEAD"
+
 // launchPushProofRef is the single owner of what ref the P3 push-proof
 // `git ls-remote` compares against (docs/spec-workflows.md §12.6 GF-7,
 // amended): a RECORDED meta.TrackedRef is never softened — the compare
 // stays strict against that exact ref. A meta with NO recorded ref
 // (every ServiceMeta written before GF-7, since TrackedRef only starts
 // getting written by git-push-setup's confirm step going forward) falls
-// back to the literal "HEAD" — the pre-GF-7 behavior of comparing
-// against whatever the remote considers its default branch via `git
-// ls-remote <url> HEAD`. This is deliberately NOT trackedRefOrDefault's
-// "main" fallback: "main" assumes a specific branch name, which breaks
-// every pre-existing meta whose remote's actual default is something
-// else (e.g. "master") and who pushed there successfully before GF-7 —
+// back to symbolicHeadRef — the pre-GF-7 behavior of comparing against
+// whatever the remote considers its default branch via `git ls-remote
+// <url> HEAD`. This is deliberately NOT trackedRefOrDefault's "main"
+// fallback: "main" assumes a specific branch name, which breaks every
+// pre-existing meta whose remote's actual default is something else
+// (e.g. "master") and who pushed there successfully before GF-7 —
 // turning a passing gate into a false head-not-pushed block. Nil-safe.
 func launchPushProofRef(meta *workflow.ServiceMeta) string {
 	if meta != nil && meta.TrackedRef != "" {
 		return meta.TrackedRef
 	}
-	return "HEAD"
+	return symbolicHeadRef
 }
 
 // readLaunchPushProof is the default env-aware push-proof reader.
