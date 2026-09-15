@@ -10,13 +10,17 @@ import (
 var scenarioTemplateToken = regexp.MustCompile(`\{\{\s*([A-Za-z0-9_]+)\s*\}\}`)
 
 // TemplateValues are the explicit substitution values a caller supplies to
-// Scenario.Render for {{runId}}/{{projectId}} placeholders in a scenario's
-// prompt/userPersona. A zero-value TemplateValues is valid for a scenario
-// with no placeholders; a placeholder present in the scenario whose
-// corresponding value is empty is a Render error.
+// Scenario.Render for {{runId}}/{{projectId}}/{{gitRepoURL}} placeholders in
+// a scenario's prompt/userPersona. A zero-value TemplateValues is valid for
+// a scenario with no placeholders; a placeholder present in the scenario
+// whose corresponding value is empty is a Render error.
 type TemplateValues struct {
 	RunID     string
 	ProjectID string
+	// GitRepoURL is the HTTPS URL of the repository a `gitRepoCreate`
+	// scenario's runner created before seed (docs/spec-eval-farm.md §3.3
+	// FM-67 sibling) — only ever non-empty for such a scenario.
+	GitRepoURL string
 }
 
 // rejectUnknownTemplateTokens scans s for {{...}} placeholders and errors on
@@ -26,9 +30,9 @@ type TemplateValues struct {
 func rejectUnknownTemplateTokens(s string) error {
 	for _, m := range scenarioTemplateToken.FindAllStringSubmatch(s, -1) {
 		switch m[1] {
-		case "runId", "projectId":
+		case "runId", "projectId", "gitRepoURL":
 		default:
-			return fmt.Errorf("unknown template token {{%s}} (want {{runId}} or {{projectId}})", m[1])
+			return fmt.Errorf("unknown template token {{%s}} (want {{runId}}, {{projectId}}, or {{gitRepoURL}})", m[1])
 		}
 	}
 	return nil
@@ -62,8 +66,14 @@ func substituteScenarioTemplate(s string, values TemplateValues) (string, error)
 				return tok
 			}
 			return values.ProjectID
+		case "gitRepoURL":
+			if values.GitRepoURL == "" {
+				firstErr = fmt.Errorf("template token {{gitRepoURL}} used but no git repo URL was given")
+				return tok
+			}
+			return values.GitRepoURL
 		default:
-			firstErr = fmt.Errorf("unknown template token {{%s}} (want {{runId}} or {{projectId}})", name)
+			firstErr = fmt.Errorf("unknown template token {{%s}} (want {{runId}}, {{projectId}}, or {{gitRepoURL}})", name)
 			return tok
 		}
 	})
@@ -73,7 +83,7 @@ func substituteScenarioTemplate(s string, values TemplateValues) (string, error)
 	return result, nil
 }
 
-// Render substitutes {{runId}}/{{projectId}} into sc.Prompt, sc.UserPersona,
+// Render substitutes {{runId}}/{{projectId}}/{{gitRepoURL}} into sc.Prompt, sc.UserPersona,
 // and every string / []string field of sc.Verification (and its nested
 // structs), in place, using the explicit values the caller supplies. A
 // scenario with no placeholders renders to itself, byte for byte. A

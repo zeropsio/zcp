@@ -1039,6 +1039,123 @@ func TestFarmRun_GitHubPAT_NotInjectedWhenScenarioDoesNotRequireIt(t *testing.T)
 	}
 }
 
+// TestFarmRun_RequiredGitHubAdminPAT_MissingBlocksPreparationBeforeAnyProject
+// mirrors TestFarmRun_RequiredGitHubPAT_MissingBlocksPreparationBeforeAnyProject
+// for the FM-67 gitRepoCreate sibling PAT.
+func TestFarmRun_RequiredGitHubAdminPAT_MissingBlocksPreparationBeforeAnyProject(t *testing.T) {
+	// Not t.Parallel(): captureStderr swaps the process-wide os.Stderr.
+	f := newControllerFixture(t, "client-pat-admin-missing")
+	batch := "batch-pat-admin-missing"
+	scenarios := []ScenarioRun{{ID: "recipe-a", RequiredEnvVars: []string{eval.GitHubAdminPATEnvVar}}}
+
+	opts := RunOptions{
+		Batch: batch, Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
+		Scenarios: scenarios, OAuthToken: "oauth-farm-token",
+		Sink:         Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:    time.Second,
+		PollInterval: time.Millisecond,
+		// GitHubAdminPAT left empty — the controller has none of its own.
+	}
+
+	var results []RunResult
+	stderr := captureStderr(t, func() {
+		var err error
+		results, err = RunBatch(context.Background(), panicClient{t: t}, f.sink, opts)
+		if err != nil {
+			t.Fatalf("RunBatch: %v", err)
+		}
+	})
+
+	if len(results) != 1 {
+		t.Fatalf("results = %+v, want 1 entry", results)
+	}
+	rr := results[0]
+	if rr.Result != ResultBlocked {
+		t.Errorf("Result = %q, want %q", rr.Result, ResultBlocked)
+	}
+	wantMsg := "resource " + eval.GitHubAdminPATEnvVar + " missing"
+	if !strings.Contains(rr.Error, wantMsg) {
+		t.Errorf("Error = %q, want it to contain %q", rr.Error, wantMsg)
+	}
+	if rr.ProjectID != "" {
+		t.Errorf("ProjectID = %q, want empty — no project was ever created", rr.ProjectID)
+	}
+	if !strings.Contains(stderr, wantMsg) {
+		t.Errorf("stderr = %q, want it to contain %q (D10)", stderr, wantMsg)
+	}
+}
+
+// TestFarmRun_RequiredGitHubAdminPAT_PresentInjectsIntoServiceEnv mirrors
+// TestFarmRun_RequiredGitHubPAT_PresentInjectsIntoServiceEnv for the FM-67
+// gitRepoCreate sibling PAT.
+func TestFarmRun_RequiredGitHubAdminPAT_PresentInjectsIntoServiceEnv(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-pat-admin-present"
+	f := newControllerFixture(t, clientID)
+	capture := &capturingImportClient{PlatformClient: f.client}
+
+	batch := "batch-pat-admin-present"
+	scenarios := []ScenarioRun{{ID: "recipe-a", RequiredEnvVars: []string{eval.GitHubAdminPATEnvVar}}}
+	seedSettledRun(t, f.s3, testRunID(t, batch, "recipe-a"), "recipe-a", ResultPassed)
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
+		Scenarios: scenarios, OAuthToken: "oauth-farm-token",
+		Sink:           Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:      time.Second,
+		PollInterval:   time.Millisecond,
+		GitHubAdminPAT: "github-pat-admin-value",
+	}
+
+	results, err := RunBatch(context.Background(), capture, f.sink, opts)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if len(results) != 1 || results[0].Result != ResultPassed {
+		t.Fatalf("results = %+v, want 1 passed entry", results)
+	}
+	if !strings.Contains(capture.lastYAML(), `ZCP_E2E_GITHUB_PAT_ADMIN: "github-pat-admin-value"`) {
+		t.Errorf("service import yaml missing injected admin PAT env, got:\n%s", capture.lastYAML())
+	}
+}
+
+// TestFarmRun_GitHubAdminPAT_NotInjectedWhenScenarioDoesNotRequireIt mirrors
+// TestFarmRun_GitHubPAT_NotInjectedWhenScenarioDoesNotRequireIt for the
+// FM-67 gitRepoCreate sibling PAT.
+func TestFarmRun_GitHubAdminPAT_NotInjectedWhenScenarioDoesNotRequireIt(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-pat-admin-unrequired"
+	f := newControllerFixture(t, clientID)
+	capture := &capturingImportClient{PlatformClient: f.client}
+
+	batch := "batch-pat-admin-unrequired"
+	scenarios := []ScenarioRun{{ID: "recipe-a"}}
+	seedSettledRun(t, f.s3, testRunID(t, batch, "recipe-a"), "recipe-a", ResultPassed)
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
+		Scenarios: scenarios, OAuthToken: "oauth-farm-token",
+		Sink:           Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:      time.Second,
+		PollInterval:   time.Millisecond,
+		GitHubAdminPAT: "github-pat-admin-value",
+	}
+
+	results, err := RunBatch(context.Background(), capture, f.sink, opts)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if len(results) != 1 || results[0].Result != ResultPassed {
+		t.Fatalf("results = %+v, want 1 passed entry", results)
+	}
+	if strings.Contains(capture.lastYAML(), "ZCP_E2E_GITHUB_PAT_ADMIN") {
+		t.Errorf("service import yaml carries ZCP_E2E_GITHUB_PAT_ADMIN for a scenario that never declared it required:\n%s", capture.lastYAML())
+	}
+}
+
 // TestFarmRun_MintForbidden_AbortsBeforeAnyProject pins the brief's rollback
 // behavior: when the run-token mint comes back 403 (the minting credential
 // is an integration token, not a personal access token), RunBatch rolls

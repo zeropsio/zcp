@@ -207,6 +207,13 @@ func scenarioRequiresGitHubPAT(names []string) bool {
 	return slices.Contains(names, eval.GitHubPATEnvVar)
 }
 
+// scenarioRequiresGitHubAdminPAT reports whether names declares
+// eval.GitHubAdminPATEnvVar — the FM-67 gitRepoCreate sibling of
+// scenarioRequiresGitHubPAT.
+func scenarioRequiresGitHubAdminPAT(names []string) bool {
+	return slices.Contains(names, eval.GitHubAdminPATEnvVar)
+}
+
 // RunOptions is the input to RunBatch (§3.3 FM-21/FM-22).
 type RunOptions struct {
 	Batch    string
@@ -233,6 +240,12 @@ type RunOptions struct {
 	// environment does not carry it, which blocks any such run in
 	// createRun before a project is created.
 	GitHubPAT string
+	// GitHubAdminPAT is the controller's own ZCP_E2E_GITHUB_PAT_ADMIN
+	// (eval.GitHubAdminPATEnvVar) — the FM-67 gitRepoCreate sibling of
+	// GitHubPAT, same pass-through discipline (own environment only,
+	// injected only for a run whose scenario requires it, blocks the run
+	// in createRun before a project is created when absent).
+	GitHubAdminPAT string
 	// Observer is `farm run`'s --observer choice ("<model>" or "off"),
 	// recorded verbatim in the manifest (§1.4, §3.3, §7.7); RunBatch never
 	// reads it beyond that — it never reaches a run project.
@@ -341,6 +354,14 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 			return nil, &rr, nil
 		}
 	}
+	var githubAdminPAT string
+	if scenarioRequiresGitHubAdminPAT(r.RequiredEnvVars) {
+		githubAdminPAT = opts.GitHubAdminPAT
+		if githubAdminPAT == "" {
+			rr := recordBlocked(r.RunID, r.ID, r.ProductionProjectName, fmt.Errorf("preparation: resource %s missing", eval.GitHubAdminPATEnvVar))
+			return nil, &rr, nil
+		}
+	}
 
 	var launchTokenID, launchKeyValue string
 	if r.Launch {
@@ -369,6 +390,7 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 		OAuthToken:      opts.OAuthToken,
 		LaunchKey:       launchKeyValue,
 		GitHubPAT:       githubPAT,
+		GitHubAdminPAT:  githubAdminPAT,
 	}
 
 	// §2.1 step 1: create the empty project shell. The REST import route

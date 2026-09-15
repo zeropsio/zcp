@@ -155,7 +155,8 @@ func runFarmRun(args []string, envr *farm.EnvResolver) int {
 		// §2.4/§3.3: read from this process's own environment only — the
 		// operator sources it from ~/.zerops-dev/agent-creds/farm.env, never
 		// resolved from the farm service env the way ZCP_FARM_* keys are.
-		GitHubPAT: os.Getenv(eval.GitHubPATEnvVar),
+		GitHubPAT:      os.Getenv(eval.GitHubPATEnvVar),
+		GitHubAdminPAT: os.Getenv(eval.GitHubAdminPATEnvVar),
 	}
 	results, err := farm.RunBatch(ctx, client, sink, opts)
 	if err != nil {
@@ -775,6 +776,23 @@ func runFarmGC(args []string, envr *farm.EnvResolver) int {
 		fmt.Fprintf(os.Stdout, "%s candidate\n", c.Name)
 	}
 
+	// §3.6 sibling: zcp-farm-* repositories a `gitRepoCreate` scenario
+	// created, under the admin PAT's own GitHub account — opt-in on the
+	// admin PAT's presence (RepoGC no-ops when it's absent), same
+	// list/report posture as the project GC above.
+	repoCandidates, err := farm.RepoGC(ctx, farm.RepoGCOptions{Token: os.Getenv(eval.GitHubAdminPATEnvVar), OlderThan: olderThan})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	for _, c := range repoCandidates {
+		if c.Exempt != "" {
+			fmt.Fprintf(os.Stdout, "repo %s/%s exempt: %s\n", c.Owner, c.Name, c.Exempt)
+			continue
+		}
+		fmt.Fprintf(os.Stdout, "repo %s/%s candidate\n", c.Owner, c.Name)
+	}
+
 	if !yes {
 		return 0
 	}
@@ -787,6 +805,12 @@ func runFarmGC(args []string, envr *farm.EnvResolver) int {
 	}
 	if err := farm.RevokeOrphanedLaunchTokens(ctx, client, sink, clientID); err != nil {
 		fmt.Fprintf(os.Stderr, "error: revoke orphaned launch tokens: %v\n", err)
+		return 1
+	}
+	if errs := farm.RepoGCApply(ctx, os.Getenv(eval.GitHubAdminPATEnvVar), repoCandidates, nil); len(errs) > 0 {
+		for _, gcErr := range errs {
+			fmt.Fprintf(os.Stderr, "error: %v\n", gcErr)
+		}
 		return 1
 	}
 	return 0

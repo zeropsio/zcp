@@ -19,6 +19,8 @@ the operator credential file; `ZCP_FARM_PROJECT_ID` is new and non-secret:
 | `ZEROPS_API_KEY` | credential file — unused by `farm`, kept for other `zcp` commands |
 | `GIT_FARM_REPO` | credential file — unused by `farm` directly |
 | `ZCP_FARM_PROJECT_ID` | non-secret; the current farm project — `swY2yczpQlqVLlcz0fCyFA` |
+| `ZCP_E2E_GITHUB_PAT` | credential file — optional; only needed for a scenario declaring `gitRepoReset` (setup-then-actions) |
+| `ZCP_E2E_GITHUB_PAT_ADMIN` | credential file — optional; only needed for a scenario declaring `gitRepoCreate` (setup-empty-remote) and `farm gc`'s repo-cleanup pass |
 
 With `ZCP_FARM_PROJECT_ID` set, any `ZCP_FARM_*` key a verb needs and the
 environment doesn't already have — `ZCP_FARM_S3_URL/BUCKET/KEY/SECRET`,

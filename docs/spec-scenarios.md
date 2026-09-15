@@ -652,6 +652,7 @@ Legend: ↑ existing scenario to promote · ✚ scenario to write.
 | cell | scenario id | variation | oracle families | status |
 |---|---|---|---|---|
 | C1 ↑ | `git-push-setup-then-actions` (+ phase 2 absorbs `launch-with-existing-cicd`) | git-push + actions; usersim supplies the prepared PAT | meta containerCheck(.github/workflows) toolArg(no non-git-push deploy after setup) askWhen(GIT_TOKEN_MISSING) never | gate |
+| C6 ✚ | `git-push-setup-empty-remote` | git-push on a brand-new, genuinely EMPTY GitHub repo (farm creates + deletes it per run, no baseline commit) — first push must be a clean fast-forward, never the shared-repo sibling's non-fast-forward friction | meta containerCheck(.github/workflows) toolResult(remote state=empty) toolArg never | gate |
 | C2 | `launch-production-from-standard-pair` | new prod project | launchShape noFabricatedSecret never | gate |
 | C3 ↑ | `launch-to-existing-prod-project` | existing prod project token | launchShape toolResult(TOKEN_SCOPE_MISMATCH once) never | gate |
 | C4 ✚ | `webhook-delivery` | dashboard webhook on push | containerCheck(no Actions file) meta(buildIntegration=webhook) never | promote: meta |

@@ -846,3 +846,127 @@ func TestRun_GitRepoReset_RequiredMode_ResetsBeforeSeedAndAfterRun(t *testing.T)
 		t.Fatalf("git repo resets = %v, want exactly two (before seed, after run) for %s", resets, repoURL)
 	}
 }
+
+// TestRun_GitRepoCreate_MissingPAT_BlocksPreparation_AgentNeverSpawned pins
+// docs/spec-eval-farm.md §3.3 FM-67's gitRepoCreate sibling: a scenario
+// declaring gitRepoCreate creates its fresh repo BEFORE seed — checked here
+// without any network access reaching GitHub, by leaving
+// ZCP_E2E_GITHUB_PAT_ADMIN unset so createScenarioGitRepo fails
+// deterministically. The failure is a preparation mismatch (not an execution
+// error), routed through the same path as a seed.expect/requiredEnvVars
+// mismatch: the agent is never spawned.
+func TestRun_GitRepoCreate_MissingPAT_BlocksPreparation_AgentNeverSpawned(t *testing.T) { // non-parallel: process environment
+	t.Setenv(GitHubAdminPATEnvVar, "")
+
+	h := newBehavioralHarness(t)
+	spawnMarker := filepath.Join(h.root, "spawn-marker")
+	t.Setenv("SPAWN_MARKER", spawnMarker)
+	script := "#!/bin/sh\n" +
+		": > \"$SPAWN_MARKER\"\n" +
+		"printf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"offline-probe\",\"model\":\"fake-offline\"}'\n" +
+		"printf '%s\\n' '{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Done.\"}]}}'\n" +
+		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"offline-probe\",\"result\":\"Done.\"}'\n"
+	h.writeClaudeScript(t, script)
+	scenario := "---\n" +
+		"id: git-repo-create-missing-pat-no-spawn\n" +
+		"seed: empty\n" +
+		"gitRepoCreate: krls2020\n" +
+		"retrospective:\n" +
+		"  promptStyle: briefing-future-agent\n" +
+		"---\n" +
+		"Do the thing at {{gitRepoURL}}.\n"
+	scenarioPath := h.writeScenario(t, scenario)
+	mock := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
+	runner := NewRunner(h.config(), nil, mock, "offline-project")
+
+	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantMsg := "mismatch: git repo create krls2020/zcp-farm-suite: " + GitHubAdminPATEnvVar + " not set in this process's environment"
+	if result.Preparation != wantMsg {
+		t.Errorf("Preparation = %q, want %q", result.Preparation, wantMsg)
+	}
+	if result.Error != "" {
+		t.Errorf("Error = %q, want empty (a preparation mismatch is not an execution error)", result.Error)
+	}
+	if _, statErr := os.Stat(spawnMarker); !os.IsNotExist(statErr) {
+		t.Error("spawn marker exists — the agent was spawned despite the git repo create failure")
+	}
+	if result.Task == nil || result.Task.Result != CheckNotRun {
+		t.Errorf("Task = %+v, want not-run", result.Task)
+	}
+}
+
+// TestRun_GitRepoCreate_RequiredMode_CreatesBeforeSeedDeletesAfterAndSubstitutesURL
+// pins the gitRepoCreate sibling's second half: the repo is created ONCE
+// before seed (unlike gitRepoReset, no serialization lane — one repo per
+// run), deleted ONCE once the run is over, in EVERY verification mode
+// (required mode keeps the run project under retention but the created repo
+// must not leak), and the created URL is substituted for {{gitRepoURL}} in
+// the rendered prompt written to task-prompt.txt. The create/delete calls
+// are injected so no network reaches GitHub.
+func TestRun_GitRepoCreate_RequiredMode_CreatesBeforeSeedDeletesAfterAndSubstitutesURL(t *testing.T) { // non-parallel: process environment
+	t.Setenv(GitHubAdminPATEnvVar, "offline-admin-pat")
+
+	h := newBehavioralHarness(t)
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"offline-probe\",\"model\":\"fake-offline\"}'\n" +
+		"printf '%s\\n' '{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Done.\"}]}}'\n" +
+		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"offline-probe\",\"result\":\"Done.\"}'\n"
+	h.writeClaudeScript(t, script)
+	scenario := "---\n" +
+		"id: git-repo-create-required-mode\n" +
+		"seed: empty\n" +
+		"gitRepoCreate: krls2020\n" +
+		"retrospective:\n" +
+		"  promptStyle: briefing-future-agent\n" +
+		"verification:\n" +
+		"  mode: required\n" +
+		"  expectedServices:\n" +
+		"    - hostname: app\n" +
+		"      status: [ACTIVE]\n" +
+		"---\n" +
+		"Push it to {{gitRepoURL}}.\n"
+	scenarioPath := h.writeScenario(t, scenario)
+	mock := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
+	cfg := h.config()
+	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
+	cfg.CaptureOwned = true
+	h.requiredBinding(t, &cfg)
+	runner := NewRunner(cfg, nil, &freshThenRealClient{Client: mock}, "offline-project")
+
+	var created, deleted []string
+	runner.gitRepoCreate = func(_ context.Context, owner, name string) (string, error) {
+		created = append(created, owner+"/"+name)
+		return "https://github.com/" + owner + "/" + name, nil
+	}
+	runner.gitRepoDelete = func(_ context.Context, owner, name string) error {
+		deleted = append(deleted, owner+"/"+name)
+		return nil
+	}
+
+	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite-empty-remote")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Preparation != "" || result.Error != "" {
+		t.Fatalf("Preparation = %q, Error = %q, want a clean run", result.Preparation, result.Error)
+	}
+	wantFullName := "krls2020/zcp-farm-suite-empty-remote"
+	if len(created) != 1 || created[0] != wantFullName {
+		t.Fatalf("git repo creates = %v, want exactly one %q (before seed)", created, wantFullName)
+	}
+	if len(deleted) != 1 || deleted[0] != wantFullName {
+		t.Fatalf("git repo deletes = %v, want exactly one %q (after run)", deleted, wantFullName)
+	}
+
+	promptBytes, err := os.ReadFile(filepath.Join(result.OutputDir, "task-prompt.txt"))
+	if err != nil {
+		t.Fatalf("read task-prompt.txt: %v", err)
+	}
+	wantPrompt := "Push it to https://github.com/" + wantFullName + "."
+	if string(promptBytes) != wantPrompt {
+		t.Errorf("task-prompt.txt = %q, want %q ({{gitRepoURL}} substituted with the created repo's URL)", promptBytes, wantPrompt)
+	}
+}

@@ -42,6 +42,13 @@ func githubPATDescriptor() RunDescriptor {
 	return d
 }
 
+func githubAdminPATDescriptor() RunDescriptor {
+	d := oauthDescriptor()
+	d.RunID = "run-githubpatadmin345"
+	d.GitHubAdminPAT = "github-pat-admin-gggg"
+	return d
+}
+
 // TestImportYAML_SplitProjectAndService_CarriesRunToken pins the byte-stable
 // render of both halves against hand-written goldens (never dumped from the
 // generator's own first run — spec-eval-farm.md §2.1's verified two-step
@@ -59,6 +66,7 @@ func TestImportYAML_SplitProjectAndService_CarriesRunToken(t *testing.T) {
 		{"oauth-token", oauthDescriptor(), "testdata/project_yaml/oauth_token.project.golden.yaml", "testdata/project_yaml/oauth_token.service.golden.yaml"},
 		{"launch-key", launchDescriptor(), "testdata/project_yaml/launch_key.project.golden.yaml", "testdata/project_yaml/launch_key.service.golden.yaml"},
 		{"github-pat", githubPATDescriptor(), "testdata/project_yaml/github_pat.project.golden.yaml", "testdata/project_yaml/github_pat.service.golden.yaml"},
+		{"github-pat-admin", githubAdminPATDescriptor(), "testdata/project_yaml/github_pat_admin.project.golden.yaml", "testdata/project_yaml/github_pat_admin.service.golden.yaml"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -283,6 +291,7 @@ func TestImportYAML_ValidatesAgainstImportSchema(t *testing.T) {
 		{"oauth-token", oauthDescriptor()},
 		{"launch-key", launchDescriptor()},
 		{"github-pat", githubPATDescriptor()},
+		{"github-pat-admin", githubAdminPATDescriptor()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

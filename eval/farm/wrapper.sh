@@ -217,6 +217,9 @@ redact_known_secrets() {
 	if ! redact_dir "$dir" "${ZCP_E2E_GITHUB_PAT:-}"; then
 		known_secrets_failed=1
 	fi
+	if ! redact_dir "$dir" "${ZCP_E2E_GITHUB_PAT_ADMIN:-}"; then
+		known_secrets_failed=1
+	fi
 	return "$known_secrets_failed"
 }
 

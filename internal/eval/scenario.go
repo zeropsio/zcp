@@ -3,10 +3,16 @@ package eval
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// githubOwnerPattern matches a bare GitHub username/org login (letters,
+// digits, single hyphens, no leading/trailing hyphen) — the shape
+// `gitRepoCreate` accepts (GitHub's own username grammar).
+var githubOwnerPattern = regexp.MustCompile(`^[A-Za-z0-9](?:-?[A-Za-z0-9])*$`)
 
 // SeedMode controls the starting state of the project before the agent runs.
 type SeedMode string
@@ -64,6 +70,24 @@ type Scenario struct {
 	// every run declaring the same GitRepoReset value so two of them never
 	// hold the shared repo at once.
 	GitRepoReset string
+	// GitRepoCreate is the `gitRepoCreate: <owner>` frontmatter field — the
+	// "user just created a repo" sibling to GitRepoReset (docs/spec-eval-farm.md
+	// §3.3 FM-67): when set (and ZCP_E2E_GITHUB_PAT_ADMIN is present in the
+	// runner's own environment), the runner creates a fresh, empty, private
+	// GitHub repository under owner before seed and deletes it once the run
+	// is over, in every verification mode. Unlike GitRepoReset's shared
+	// repo, no cross-run serialization lane is needed — every run gets its
+	// own repository. The created repo's URL is exposed to the scenario's
+	// prompt/userPersona/verification strings as the {{gitRepoURL}}
+	// template token (internal/eval/scenario_template.go).
+	GitRepoCreate string
+	// gitRepoCreatedName/gitRepoCreatedURL record the repository this run
+	// actually created (set by prepareBehavioralWork when GitRepoCreate is
+	// non-empty and creation succeeds) — the deferred cleanup deletes
+	// exactly this name, never re-derives it, and Render substitutes this
+	// URL for {{gitRepoURL}}.
+	gitRepoCreatedName string
+	gitRepoCreatedURL  string
 	// SeedRef is the seed.ref field (docs/spec-eval-farm.md §4.1) — the
 	// pinned sha/tag of every repository the seed fixture references.
 	// Parsed and carried here; not yet consumed at seed time (a later
@@ -462,6 +486,7 @@ type scenarioFrontmatter struct {
 	ExcludeFromAll  bool                   `yaml:"excludeFromAll"`
 	RequiredEnvVars []string               `yaml:"requiredEnvVars"`
 	GitRepoReset    string                 `yaml:"gitRepoReset"`
+	GitRepoCreate   string                 `yaml:"gitRepoCreate"`
 }
 
 // ParseScenario reads a scenario markdown file and returns the parsed structure.
@@ -515,6 +540,7 @@ func ParseScenario(path string) (*Scenario, error) {
 		ExcludeFromAll:  fm.ExcludeFromAll,
 		RequiredEnvVars: fm.RequiredEnvVars,
 		GitRepoReset:    fm.GitRepoReset,
+		GitRepoCreate:   fm.GitRepoCreate,
 		SeedExpect:      fm.Seed.Expect,
 		SeedRef:         fm.Seed.Ref,
 		seedIsBlock:     fm.Seed.IsBlock,
@@ -581,6 +607,9 @@ func (s *Scenario) validate() error {
 		if _, _, err := parseGitHubRepo(s.GitRepoReset); err != nil {
 			return fmt.Errorf("gitRepoReset: %w", err)
 		}
+	}
+	if s.GitRepoCreate != "" && !githubOwnerPattern.MatchString(s.GitRepoCreate) {
+		return fmt.Errorf("gitRepoCreate: %q must be a bare GitHub owner/org login (no slashes, scheme, or spaces)", s.GitRepoCreate)
 	}
 	// FM-64: a cell whose starting state is deliberately broken (settled)
 	// must assert it held, not assume it — but only for the block form;
