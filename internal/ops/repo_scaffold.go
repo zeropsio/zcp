@@ -38,22 +38,27 @@ func AdoptRepoBaseline(ctx context.Context, ssh SSHDeployer, hostname string) (t
 type RepoStatus struct {
 	Present bool
 	Head    string
+	// RepoState classifies the working tree at read time —
+	// "clean" | "dirty" | "merging" | "rebasing" | "detached" (docs/
+	// spec-workflows.md §12.6 GF-12). Empty when Present is false.
+	RepoState string
 }
 
-// ReadRepoStatus reads whether /var/www has a reachable HEAD and its SHA.
+// ReadRepoStatus reads whether /var/www has a reachable HEAD, its SHA, and
+// its repo state, in one SSH round trip.
 func ReadRepoStatus(ctx context.Context, ssh SSHDeployer, hostname string) (RepoStatus, error) {
 	if hostname == "" {
 		return RepoStatus{}, fmt.Errorf("ReadRepoStatus: hostname is required")
 	}
 	runner := git.SSHRunner{Executor: ssh, Hostname: hostname}
-	head, err := git.ResolveSHA(ctx, runner, defaultWorkingDir, "HEAD")
-	if err != nil {
-		// No repo, or a repo with no reachable HEAD yet — either way,
-		// "not present" from the envelope's point of view. Not itself an
-		// error the caller needs to react to.
-		return RepoStatus{}, nil //nolint:nilerr // absence is the expected, non-error outcome — see doc-comment
+	// ReadHeadAndState never itself returns an error — no repo, or a repo
+	// with no reachable HEAD yet, is "not present" from the envelope's
+	// point of view, not a failure the caller needs to react to.
+	head, state, ok, _ := git.ReadHeadAndState(ctx, runner, defaultWorkingDir)
+	if !ok {
+		return RepoStatus{}, nil
 	}
-	return RepoStatus{Present: true, Head: head}, nil
+	return RepoStatus{Present: true, Head: head, RepoState: state}, nil
 }
 
 // LocalRepoHead reports whether dir (a local working directory, not a

@@ -3,8 +3,8 @@ id: dev-self-deploy-keeps-repo
 description: |
   Existing buildFromGit dev/stage pair with one previous commit deploy to
   stage. Tests G4: ordinary dev self-deploy ships the working tree with
-  its repository. The init/identity/exclude/HEAD safety-net preserves
-  existing history and appends missing exclude patterns only.
+  its repository. The init/identity/HEAD safety-net preserves existing
+  history; zcp touches nothing in `.git/info/exclude`.
   The preseed also plants user cargo on appdev (lib-repo-cargo.sh): a
   feature branch, a user commit, a release tag, a custom ref, a dirty
   tracked file, an untracked file, a hand-added exclude line, a user
@@ -15,6 +15,12 @@ description: |
   all intact, and no zcp-authored tag. Ignored files (the exclude's own
   `user-private-dir/`) are platform-dropped on a container replacement
   and are deliberately NOT asserted here.
+  The preseed additionally plants a `.env` (config-in-a-file) and a
+  git-ignored `cargo-ignored.txt` (docs/spec-workflows.md §8 DM-7,
+  §12.6 GF-12) — the self-deploy's response must carry both as
+  `notCarried`/`envFiles`, and the replacement container must NOT have
+  `cargo-ignored.txt` even though `cargo-untracked.txt` (untracked but
+  NOT ignored) does survive.
 seed:
   mode: deployed
   fixture: fixtures/nodejs-standard-deployed.yaml
@@ -39,6 +45,9 @@ verification:
   toolArg:
     - {always: "zerops_deploy{targetService=appdev}"}
     - {max: 0, call: "zerops_import"}
+  toolResult:
+    - {tool: zerops_deploy, contains: "\"notCarried\""}
+    - {tool: zerops_deploy, contains: "\"envFiles\""}
   containerCheck:
     - {service: appdev, cmd: "git -C /var/www merge-base --is-ancestor refs/preseed/head HEAD && echo history-kept", match: "^history-kept"}
     - {service: appdev, cmd: "git -C /var/www symbolic-ref --short HEAD", match: "^feature/preseed-cargo"}
@@ -49,6 +58,7 @@ verification:
     - {service: appdev, cmd: "git -C /var/www config user.email", match: "^preseed@example\\.com"}
     - {service: appdev, cmd: "git -C /var/www remote get-url origin", match: "^https://example\\.invalid/preseed/repo\\.git"}
     - {service: appdev, cmd: "git -C /var/www tag -l 'zcp/*' | wc -l", match: "^\\s*0"}
+    - {service: appdev, cmd: "test ! -e /var/www/cargo-ignored.txt && echo gone", match: "^gone"}
   noFailedProcesses: true
   never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
@@ -67,17 +77,16 @@ notableFriction:
       commit".
   - id: safety-net-must-not-touch-ledger
     description: |
-      buildSSHCommand's init/identity/exclude/HEAD safety-net runs on the
+      buildSSHCommand's init/identity/HEAD safety-net runs on the
       same repository after the stage deploy. Existing history and any
       user-owned release tags must survive the dev container replacement.
       Deployment and rollback do not depend on any automatic Git tag.
-  - id: exclude-reseed-is-additive
+  - id: exclude-untouched-by-zcp
     description: |
-      The exclude-seed fragment re-runs on every deploy call, appending
-      only lines not already present in `.git/info/exclude` — it must
-      never rewrite the file from scratch (which would be harmless here
-      since the patterns are the same, but is the exact mechanism that
-      would silently drop a hand-added line on a real user's container).
+      zcp touches nothing in `.git/info/exclude` — it never seeds it, never
+      rewrites it, never appends to it. The preseeded user line surviving
+      the dev container replacement is exactly what that non-involvement
+      predicts, not the result of some reseed-if-absent mechanism.
 ---
 
 I want to change the text my Node app responds with on `appdev` — just a

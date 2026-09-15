@@ -187,6 +187,10 @@ type RepoStatus struct {
 	Head       string                  `json:"head,omitempty"`
 	Baseline   string                  `json:"baseline,omitempty"`
 	Provenance topology.RepoProvenance `json:"provenance,omitempty"`
+	// RepoState classifies the working tree at read time —
+	// "clean" | "dirty" | "merging" | "rebasing" | "detached" (docs/
+	// spec-workflows.md §12.6 GF-12). Empty when Present is false.
+	RepoState string `json:"repoState,omitempty"`
 }
 
 // ApplyRepoStatus attaches a live repo status to each service snapshot

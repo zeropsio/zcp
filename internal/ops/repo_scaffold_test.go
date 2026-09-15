@@ -57,7 +57,7 @@ func TestAdoptRepoBaseline_EmptyTreeHEAD_ReturnsInitializedProvenance(t *testing
 
 func TestReadRepoStatus_HeadResolves_ReturnsPresentWithHead(t *testing.T) {
 	m := &mockSSHDeployer{results: []sshResult{
-		{output: []byte("5ba0abc123\n")}, // rev-parse --verify HEAD^{commit}
+		{output: []byte("5ba0abc123\nSTATE:clean\n")}, // sha + repoStateExpr classification
 	}}
 	got, err := ReadRepoStatus(context.Background(), m, "appdev")
 	if err != nil {
@@ -69,8 +69,27 @@ func TestReadRepoStatus_HeadResolves_ReturnsPresentWithHead(t *testing.T) {
 	if got.Head != "5ba0abc123" {
 		t.Errorf("Head = %q, want 5ba0abc123", got.Head)
 	}
+	if got.RepoState != "clean" {
+		t.Errorf("RepoState = %q, want clean", got.RepoState)
+	}
 	if len(m.calls) != 1 {
-		t.Errorf("calls = %d, want one HEAD read", len(m.calls))
+		t.Errorf("calls = %d, want one combined HEAD+state read", len(m.calls))
+	}
+}
+
+// TestReadRepoStatus_DirtyState_ReturnsRepoState pins GF-12
+// (docs/spec-workflows.md §12.6): a dirty working tree is classified, not
+// silently folded into "clean".
+func TestReadRepoStatus_DirtyState_ReturnsRepoState(t *testing.T) {
+	m := &mockSSHDeployer{results: []sshResult{
+		{output: []byte("5ba0abc123\nSTATE:dirty\n")},
+	}}
+	got, err := ReadRepoStatus(context.Background(), m, "appdev")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.RepoState != "dirty" {
+		t.Errorf("RepoState = %q, want dirty", got.RepoState)
 	}
 }
 

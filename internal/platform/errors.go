@@ -125,6 +125,23 @@ const (
 	// but never executes any of them; the decision belongs to the user.
 	// docs/spec-workflows.md §12 GF-11.
 	ErrGitPushNonFastForward = "GIT_PUSH_NON_FAST_FORWARD"
+	// ErrGitWorktreeUnsupported signals that a self-deploy's source
+	// container has .git as a regular FILE (a linked-worktree or
+	// submodule-style gitdir pointer), not a directory. zcli's git
+	// archiver (`--workspace-state all`) walks .git byte-for-byte
+	// (filepath.Walk) to carry it into the replacement container — for a
+	// pointer file that ships only the pointer, producing a broken
+	// repository on the other side. Self-deploy only (GF-12, docs/
+	// spec-workflows.md §8 DM); a cross-deploy from a distinct source
+	// isn't affected by the target's own worktree shape.
+	ErrGitWorktreeUnsupported = "GIT_WORKTREE_UNSUPPORTED"
+	// ErrGitSubmodulesUnsupported signals that a self-deploy's source
+	// container carries a .gitmodules file. `git archive` (the
+	// deploy-from-commit path) and the working-tree self-deploy archiver
+	// both ship submodule directories EMPTY — no --recurse-submodules —
+	// so the replacement container would start without that code. GF-12,
+	// docs/spec-workflows.md §8 DM.
+	ErrGitSubmodulesUnsupported = "GIT_SUBMODULES_UNSUPPORTED"
 )
 
 // Error subcodes narrow a specific top-level code into a stable, more

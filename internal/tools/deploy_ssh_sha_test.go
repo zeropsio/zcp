@@ -39,6 +39,22 @@ func (s *stubSSHSHA) ExecSSH(_ context.Context, _, command string) ([]byte, erro
 	s.calls = append(s.calls, command)
 	s.mu.Unlock()
 	switch {
+	// Self-deploy's combined GF-12 preflight (docs/spec-workflows.md §8 DM)
+	// carries a unique "ZCP:GITFILE" marker in the SCRIPT TEXT itself —
+	// checked before the plain HeadStatus case below, which a self-deploy
+	// script also happens to contain as a substring (both embed "rev-parse
+	// --verify HEAD" + "git status --porcelain").
+	case strings.Contains(command, "ZCP:GITFILE"):
+		if s.headSHA == "" {
+			return []byte("ZCP:GITFILE:0\nZCP:SUBMODULES:0\nZCP:HASREPO:0\n"), nil
+		}
+		dirtyFlag, state := "0", "clean"
+		if s.headDirty {
+			dirtyFlag, state = "1", "dirty"
+		}
+		out := "ZCP:GITFILE:0\nZCP:SUBMODULES:0\nZCP:HASREPO:1\nZCP:SHA:" + s.headSHA +
+			"\nZCP:DIRTY:" + dirtyFlag + "\nZCP:REPOSTATE:" + state + "\n"
+		return []byte(out), nil
 	case strings.Contains(command, "rev-parse --verify HEAD") && strings.Contains(command, "git status --porcelain"):
 		if s.headSHA == "" {
 			return nil, errStubNoRepo

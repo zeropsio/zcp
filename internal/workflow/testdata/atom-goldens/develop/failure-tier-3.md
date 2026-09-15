@@ -1,6 +1,6 @@
 ---
 id: develop/failure-tier-3
-atomIds: [develop-first-deploy-intro, develop-env-var-model, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-first-deploy-env-vars, develop-first-deploy-scaffold-yaml, develop-http-diagnostic, develop-nodejs-greenfield-buildhint, develop-platform-rules-common, develop-reserved-env-names, develop-checklist-dev-mode, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-first-deploy-write-app, develop-knowledge-pointers, develop-auto-close-semantics, develop-first-deploy-execute, develop-verify-matrix, develop-first-deploy-verify, develop-platform-rules-container, develop-strategy-awareness]
+atomIds: [develop-first-deploy-intro, develop-env-var-model, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-first-deploy-env-vars, develop-first-deploy-scaffold-yaml, develop-http-diagnostic, develop-nodejs-greenfield-buildhint, develop-platform-rules-common, develop-reserved-env-names, develop-self-deploy-reproducibility, develop-checklist-dev-mode, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-first-deploy-write-app, develop-knowledge-pointers, develop-auto-close-semantics, develop-first-deploy-execute, develop-verify-matrix, develop-first-deploy-verify, develop-platform-rules-container, develop-strategy-awareness]
 description: "Active session, third-iteration failure history — three failed deploy attempts on appdev (close-mode auto)."
 ---
 === develop-first-deploy-intro ===
@@ -206,6 +206,38 @@ Fresh Node scaffold with no committed `package-lock.json`: `npm install` in `bui
 
 === develop-reserved-env-names ===
 **Reserved env-var keys** — pull on demand: `zerops_knowledge uri="zerops://atoms/develop-reserved-env-names"`
+
+---
+
+=== develop-self-deploy-reproducibility ===
+### The dev container is disposable; the repository isn't
+
+A self-deploy replaces the dev container with a fresh one. Nothing on the
+old dev container's disk survives that swap except what git carries with
+it — project envs (auto-injected as OS env vars, never a file) and
+managed-service data (Postgres, object storage, …) are the other two
+persistence mechanisms, and neither lives on the dev container's
+filesystem either. A file that exists only on today's dev container — an
+untracked script, a local SQLite DB, a `.env` — is gone the moment the new
+container replaces it.
+
+`zerops_deploy`'s response on a self-deploy carries this as data, not a
+guess: `notCarried` names the git-ignored paths (count, bytes, a sample)
+that will not exist in the new container, and `envFiles` lists any
+`.env`/`.env.*` files found regardless of ignore state — a config file the
+agent should move into `zerops_env`, not carry forward as a workaround.
+`repoState` reports whether the source is clean, dirty, mid-merge, mid-
+rebase, or on a detached HEAD at deploy time.
+
+### After bootstrap or adopt, commit before changing anything
+
+Once a runtime's working tree is ready to iterate on — right after
+bootstrap writes the scaffold, or right after adopt inherits an existing
+one — write a `.gitignore` for the stack (build output, dependency
+directories, local env files) and make a baseline commit before making any
+other change. Every self-deploy after that point is then reproducible from
+that commit forward; skipping this step means the first self-deploy is the
+first moment anyone discovers what wasn't tracked.
 
 ---
 

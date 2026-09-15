@@ -219,6 +219,9 @@ func deploySSH(
 	// now. The no-sha branch keeps validating the mount, unchanged.
 	resolvedSHA := ""
 	dirty := false
+	var notCarried *git.NotCarried
+	var envFiles []string
+	var repoState string
 	var cleanupTemp func()
 	gitRunner := git.SSHRunner{Executor: sshDeployer, Hostname: source.Name}
 	if sha != "" {
@@ -253,7 +256,19 @@ func deploySSH(
 		// reachable HEAD, record what actually shipped — read-only,
 		// before the push, never altering the push command itself. No
 		// repo / no HEAD ⇒ no source revision, no warning, no behaviour change.
-		if headSHA, isDirty, hasRepo, _ := git.HeadStatus(ctx, gitRunner, workingDir); hasRepo {
+		//
+		// Self-deploy additionally runs the combined GF-12 preflight (docs/
+		// spec-workflows.md §8 DM, §12.6): notCarried/envFiles/repoState
+		// facts, plus the two hard refusals — never a gate on the
+		// cross-deploy path, whose target's own repo shape a distinct
+		// source doesn't inherit.
+		if class == DeployClassSelf {
+			var pfErr error
+			resolvedSHA, dirty, repoState, notCarried, envFiles, pfErr = selfDeployPreflightFacts(ctx, gitRunner, workingDir, source.Name)
+			if pfErr != nil {
+				return nil, pfErr
+			}
+		} else if headSHA, isDirty, hasRepo, _ := git.HeadStatus(ctx, gitRunner, workingDir); hasRepo {
 			resolvedSHA = headSHA
 			dirty = isDirty
 		}
@@ -287,12 +302,15 @@ func deploySSH(
 				TargetService:     targetService,
 				TargetServiceID:   target.ID,
 				TargetServiceType: target.ServiceStackTypeInfo.ServiceStackTypeVersionName,
-				Message:           fmt.Sprintf("Build triggered from %s to %s (SSH session closed after push)", sourceService, targetService),
+				Message:           appendPreflightNote(fmt.Sprintf("Build triggered from %s to %s (SSH session closed after push)", sourceService, targetService), notCarried, envFiles),
 				MonitorHint:       "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
 				Warnings:          warnings,
 				SHA:               resolvedSHA,
 				Dirty:             dirty,
 				VersionName:       versionName,
+				NotCarried:        notCarried,
+				EnvFiles:          envFiles,
+				RepoState:         repoState,
 			}, nil
 		}
 		return nil, classifySSHError(err, sourceService, targetService)
@@ -305,13 +323,74 @@ func deploySSH(
 		TargetService:     targetService,
 		TargetServiceID:   target.ID,
 		TargetServiceType: target.ServiceStackTypeInfo.ServiceStackTypeVersionName,
-		Message:           fmt.Sprintf("Build triggered from %s to %s via SSH", sourceService, targetService),
+		Message:           appendPreflightNote(fmt.Sprintf("Build triggered from %s to %s via SSH", sourceService, targetService), notCarried, envFiles),
 		MonitorHint:       "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
 		Warnings:          warnings,
 		SHA:               resolvedSHA,
 		Dirty:             dirty,
 		VersionName:       versionName,
+		NotCarried:        notCarried,
+		EnvFiles:          envFiles,
+		RepoState:         repoState,
 	}, nil
+}
+
+// selfDeployPreflightFacts runs the combined GF-12 self-deploy preflight
+// (docs/spec-workflows.md §8 DM-7/DM-8, §12.6) and turns it into the
+// values deploySSH's no-sha branch needs: the recorded HEAD sha/dirty
+// flag (same facts HeadStatus would report), repoState, notCarried, and
+// envFiles. Returns a *platform.PlatformError (as a plain error, so the
+// caller can return it directly) for the two hard refusals — GitIsFile /
+// HasSubmodules — and nil otherwise; the read itself never fails a plain
+// self-deploy (facts, never a gate).
+func selfDeployPreflightFacts(ctx context.Context, gitRunner git.SSHRunner, workingDir, sourceName string) (
+	resolvedSHA string, dirty bool, repoState string, notCarried *git.NotCarried, envFiles []string, err error,
+) {
+	preflight, _ := git.ReadSelfDeployPreflight(ctx, gitRunner, workingDir)
+	if preflight.GitIsFile {
+		return "", false, "", nil, nil, platform.NewPlatformError(
+			platform.ErrGitWorktreeUnsupported,
+			fmt.Sprintf("%s's .git is a regular file (a linked-worktree or submodule gitdir pointer), not a directory — a self-deploy archive carries only that pointer file, producing a broken repository in the replacement container", sourceName),
+			"This container can't self-deploy from a linked worktree or submodule checkout. Replace .git with a real repository (a fresh `git clone`, or copy the real gitdir contents in place of the pointer), or cross-deploy a resolved commit to a different target instead.",
+		)
+	}
+	if preflight.HasSubmodules {
+		return "", false, "", nil, nil, platform.NewPlatformError(
+			platform.ErrGitSubmodulesUnsupported,
+			fmt.Sprintf("%s has a .gitmodules file — a self-deploy archive (git archive, no --recurse-submodules) ships submodule directories EMPTY, so the replacement container would start without that code", sourceName),
+			"Vendor the submodule's content directly into the parent repository (remove .gitmodules, commit the files), or deploy a resolved commit sha to a different (cross) target instead.",
+		)
+	}
+	if preflight.HasRepo {
+		resolvedSHA = preflight.SHA
+		dirty = preflight.Dirty
+	}
+	repoState = preflight.RepoState
+	envFiles = preflight.EnvFiles
+	if preflight.NotCarried.Count > 0 {
+		nc := preflight.NotCarried
+		notCarried = &nc
+	}
+	return resolvedSHA, dirty, repoState, notCarried, envFiles, nil
+}
+
+// appendPreflightNote appends the GF-12 not-carried/env-files sentence to
+// message when the self-deploy preflight (docs/spec-workflows.md §8 DM,
+// §12.6) found anything to flag. Returns message unchanged when notCarried
+// is nil (or empty) and envFiles is empty — including every cross-deploy,
+// which never runs the preflight at all.
+func appendPreflightNote(message string, notCarried *git.NotCarried, envFiles []string) string {
+	var parts []string
+	if notCarried != nil && notCarried.Count > 0 {
+		parts = append(parts, fmt.Sprintf("%d ignored path(s) will not survive this deploy", notCarried.Count))
+	}
+	if len(envFiles) > 0 {
+		parts = append(parts, fmt.Sprintf(".env file(s) present (%s)", strings.Join(envFiles, ", ")))
+	}
+	if len(parts) == 0 {
+		return message
+	}
+	return message + " — " + strings.Join(parts, "; ") + "; configuration belongs in service env vars"
 }
 
 // deployFromCommitPrep resolves sha, validates the COMMIT's zerops.yaml (never the SSHFS mount, which

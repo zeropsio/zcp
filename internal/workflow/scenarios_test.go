@@ -972,7 +972,8 @@ func TestScenario_S8_DevelopIterationFailure(t *testing.T) {
 	// to this set.
 	requireAtomIDsContain(t, "S8", matches,
 		"develop-close-mode-auto-deploy-container",
-		"develop-close-mode-auto-workflow-dev")
+		"develop-close-mode-auto-workflow-dev",
+		"develop-self-deploy-reproducibility")
 }
 
 // TestScenario_PinCoverage_AllAtomsReachable is the Phase 8 G2 pin-density

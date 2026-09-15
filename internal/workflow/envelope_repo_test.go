@@ -26,6 +26,24 @@ func TestApplyRepoStatus_DevService_GetsRepoBlock(t *testing.T) {
 	}
 }
 
+// TestApplyRepoStatus_RepoStateCopiedThrough proves RepoStatus.RepoState
+// (docs/spec-workflows.md §12.6 GF-12) survives the copy onto the
+// snapshot exactly like Head/Baseline/Provenance.
+func TestApplyRepoStatus_RepoStateCopiedThrough(t *testing.T) {
+	services := []ServiceSnapshot{
+		{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic},
+	}
+	ApplyRepoStatus(services, map[string]RepoStatus{
+		"appdev": {Present: true, Head: "abc123", RepoState: "dirty"},
+	})
+	if services[0].Repo == nil {
+		t.Fatal("Repo is nil, want it populated for a dynamic (dev) service")
+	}
+	if services[0].Repo.RepoState != "dirty" {
+		t.Errorf("RepoState = %q, want dirty", services[0].Repo.RepoState)
+	}
+}
+
 // TestApplyRepoStatus_ProvenanceCopiedThrough proves RepoStatus.Provenance
 // survives the copy ApplyRepoStatus makes onto the snapshot — the field is
 // a recorded fact from ServiceMeta (tools.attachRepoStatus's job to

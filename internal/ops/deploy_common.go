@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -84,6 +85,22 @@ type DeployResult struct {
 	// (GF-5): correlate it with the resulting appVersion before treating
 	// the mapping as source-of-truth.
 	VersionName string `json:"versionName,omitempty"`
+
+	// NotCarried lists the self-deploy source's git-ignored paths that
+	// zcli's archiver never ships — present only on a self-deploy
+	// (DeployClassSelf) preflight read, and only when non-empty (docs/
+	// spec-workflows.md §8 DM, §12.6 GF-12). Cross-deploy never sets this
+	// (the target's own repo shape isn't what a cross-deploy ships).
+	NotCarried *git.NotCarried `json:"notCarried,omitempty"`
+	// EnvFiles lists .env / .env.* paths found in a self-deploy source's
+	// working tree regardless of git-ignore state (a tracked .env is
+	// still a config-in-a-file mistake) — GF-12, empty when none found.
+	EnvFiles []string `json:"envFiles,omitempty"`
+	// RepoState classifies a self-deploy source's working tree at
+	// preflight time — "clean" | "dirty" | "merging" | "rebasing" |
+	// "detached" (GF-12). Empty when the source has no repo yet, or on a
+	// cross-deploy (preflight is self-deploy only).
+	RepoState string `json:"repoState,omitempty"`
 }
 
 // GitPushResult contains the outcome of a git-push deploy operation.

@@ -256,21 +256,22 @@ func TestDeploySSH_NoSHA_SourceHasNoRepo_UnaffectedByRecording(t *testing.T) {
 
 // TestDeploySSH_NoSHA_SourceHasCleanRepo_RecordsHEADAndPassesVersionName
 // pins item 4's positive case, updated for GF-10 (docs/spec-workflows.md
-// §12.6): a working-tree deploy (no explicit sha) from a source with a
-// clean git repo records HEAD as SHA, Dirty=false — and the push command
-// carries --version-name <HEAD sha> (no "-dirty" suffix, clean status),
-// otherwise identical (args, -g, workspace-state) to what buildSSHCommand
-// produces for that exact versionName (the only difference from a
-// no-git-repo source is the extra read-only HeadStatus round trip
-// beforehand, plus the now-present --version-name flag).
+// §12.6): a self-deploy working-tree deploy (no explicit sha) from a
+// source with a clean git repo records HEAD as SHA, Dirty=false, and
+// RepoState=clean — and the push command carries --version-name <HEAD
+// sha> (no "-dirty" suffix, clean status), otherwise identical (args, -g,
+// workspace-state) to what buildSSHCommand produces for that exact
+// versionName (the only difference from a no-git-repo source is the extra
+// read-only self-deploy preflight round trip beforehand, plus the
+// now-present --version-name flag).
 func TestDeploySSH_NoSHA_SourceHasCleanRepo_RecordsHEADAndPassesVersionName(t *testing.T) {
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-1", Name: "app"},
 		})
 	ssh := &mockSSHDeployer{results: []sshResult{
-		{output: []byte("fullhead1234567\n")}, // HeadStatus: clean
-		{output: []byte("ok")},                // login+push
+		{output: []byte("ZCP:GITFILE:0\nZCP:SUBMODULES:0\nZCP:HASREPO:1\nZCP:SHA:fullhead1234567\nZCP:DIRTY:0\nZCP:REPOSTATE:clean\n")}, // self-deploy preflight: clean
+		{output: []byte("ok")}, // login+push
 	}}
 	authInfo := testAuthInfo()
 
@@ -288,8 +289,14 @@ func TestDeploySSH_NoSHA_SourceHasCleanRepo_RecordsHEADAndPassesVersionName(t *t
 	if result.VersionName != "fullhead1234567" {
 		t.Errorf("result.VersionName = %q, want fullhead1234567 (clean — no -dirty suffix)", result.VersionName)
 	}
+	if result.RepoState != "clean" {
+		t.Errorf("result.RepoState = %q, want clean", result.RepoState)
+	}
+	if result.NotCarried != nil {
+		t.Errorf("result.NotCarried = %+v, want nil (no ignored paths reported)", result.NotCarried)
+	}
 	if len(ssh.calls) != 2 {
-		t.Fatalf("ssh calls = %d, want 2 (HeadStatus, push): %+v", len(ssh.calls), ssh.calls)
+		t.Fatalf("ssh calls = %d, want 2 (self-deploy preflight, push): %+v", len(ssh.calls), ssh.calls)
 	}
 
 	// The push command must be EXACTLY what buildSSHCommand produces for
@@ -313,8 +320,8 @@ func TestDeploySSH_NoSHA_SourceHasDirtyRepo_RecordsDirty(t *testing.T) {
 			{ID: "svc-1", Name: "app"},
 		})
 	ssh := &mockSSHDeployer{results: []sshResult{
-		{output: []byte("fullhead1234567\nM")}, // HeadStatus: dirty
-		{output: []byte("ok")},                 // login+push
+		{output: []byte("ZCP:GITFILE:0\nZCP:SUBMODULES:0\nZCP:HASREPO:1\nZCP:SHA:fullhead1234567\nZCP:DIRTY:1\nZCP:REPOSTATE:dirty\n")}, // self-deploy preflight: dirty
+		{output: []byte("ok")}, // login+push
 	}}
 	authInfo := testAuthInfo()
 
@@ -331,6 +338,9 @@ func TestDeploySSH_NoSHA_SourceHasDirtyRepo_RecordsDirty(t *testing.T) {
 	}
 	if result.VersionName != "fullhead1234567-dirty" {
 		t.Errorf("result.VersionName = %q, want fullhead1234567-dirty (GF-10 dirty suffix)", result.VersionName)
+	}
+	if result.RepoState != "dirty" {
+		t.Errorf("result.RepoState = %q, want dirty", result.RepoState)
 	}
 }
 

@@ -81,3 +81,13 @@ echo "preseed: deployed ${resolved} to appstage (appVersion ${app_version_id})"
 # shellcheck source=lib-repo-cargo.sh
 . "$(dirname "$0")/lib-repo-cargo.sh"
 plant_repo_cargo appdev
+
+# GF-12 (docs/spec-workflows.md §8 DM-7, §12.6): additionally plant a
+# config file (.env) and a git-ignored artifact (cargo-ignored.txt) so the
+# self-deploy's preflight facts have something real to report — .env
+# regardless of ignore state, cargo-ignored.txt because it's excluded via
+# .gitignore. Neither is expected to survive the container replacement.
+ssh appdev "cd /var/www && \
+  printf 'SECRET=preseed\n' > .env && \
+  printf '.env\ncargo-ignored.txt\n' >> .gitignore && \
+  printf 'ignored artifact\n' > cargo-ignored.txt"

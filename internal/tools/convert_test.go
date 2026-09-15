@@ -34,6 +34,20 @@ func TestConvertError_PlatformError(t *testing.T) {
 			wantMsg:   "Authentication required",
 			wantIsErr: true,
 		},
+		{
+			name:      "git worktree unsupported",
+			err:       platform.NewPlatformError(platform.ErrGitWorktreeUnsupported, "app's .git is a regular file", "Replace .git with a real repository."),
+			wantCode:  platform.ErrGitWorktreeUnsupported,
+			wantMsg:   "app's .git is a regular file",
+			wantIsErr: true,
+		},
+		{
+			name:      "git submodules unsupported",
+			err:       platform.NewPlatformError(platform.ErrGitSubmodulesUnsupported, "app has a .gitmodules file", "Vendor the submodule's content directly."),
+			wantCode:  platform.ErrGitSubmodulesUnsupported,
+			wantMsg:   "app has a .gitmodules file",
+			wantIsErr: true,
+		},
 	}
 
 	for _, tt := range tests {

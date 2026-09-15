@@ -50,6 +50,53 @@ func HeadStatus(ctx context.Context, r Runner, dir string) (sha string, dirty bo
 	return strings.TrimSpace(head), rest != "", true, nil
 }
 
+// repoStateExpr is a shell expression (no trailing newline on stdout) that
+// classifies the CURRENT repo state of the directory it runs in, assuming
+// a reachable HEAD already exists there: "merging" (.git/MERGE_HEAD
+// present), "rebasing" (.git/rebase-merge or .git/rebase-apply present),
+// "detached" (HEAD is not on a branch), "dirty" (a clean working tree
+// would otherwise be reported, but `git status --porcelain` is non-empty),
+// or "clean". Shared between ReadHeadAndState (the envelope's live repo
+// block, one round trip) and the self-deploy preflight script (folded
+// into ITS single round trip) — one classification, two call sites.
+const repoStateExpr = `if [ -f .git/MERGE_HEAD ]; then
+  printf merging
+elif [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ]; then
+  printf rebasing
+elif ! git symbolic-ref -q HEAD >/dev/null 2>&1; then
+  printf detached
+elif [ -n "$(git status --porcelain | head -c1)" ]; then
+  printf dirty
+else
+  printf clean
+fi`
+
+// repoStatusScript reads HEAD's sha and repoStateExpr's classification in
+// one round trip. Kept separate from ResolveSHA (whose single-sha output
+// shape other callers — deploy-from-commit's sha resolve — depend on).
+const repoStatusScript = `HEAD_SHA=$(git rev-parse --verify 'HEAD^{commit}' 2>/dev/null)
+if [ -z "$HEAD_SHA" ]; then
+  exit 1
+fi
+echo "$HEAD_SHA"
+echo "STATE:$(` + repoStateExpr + `)"`
+
+// ReadHeadAndState reads dir's HEAD sha and repo state
+// (clean/dirty/merging/rebasing/detached) in one round trip, for
+// ops.ReadRepoStatus (the envelope's live repo block, docs/spec-
+// workflows.md §8 GLC-7 / GF-12). ok is false with no error when dir has
+// no repo or no reachable HEAD yet — same non-fatal-absence contract as
+// HeadStatus.
+func ReadHeadAndState(ctx context.Context, r Runner, dir string) (sha, state string, ok bool, err error) {
+	out, _, runErr := r.Run(ctx, dir, repoStatusScript)
+	if runErr != nil {
+		return "", "", false, nil //nolint:nilerr // no repo/no HEAD yet is not a failure — see doc-comment
+	}
+	head, rest, _ := strings.Cut(out, "\n")
+	state = strings.TrimPrefix(strings.TrimSpace(rest), "STATE:")
+	return strings.TrimSpace(head), state, true, nil
+}
+
 // ReadFileAtCommit reads path's content AT sha via `git show <sha>:<path>`,
 // rooted at dir. Used to validate a deploy-from-commit's zerops.yaml
 // against exactly what will ship, never the working tree/SSHFS mount —

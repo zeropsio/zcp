@@ -32,7 +32,7 @@ func attachRepoStatus(ctx context.Context, services []workflow.ServiceSnapshot, 
 		if err != nil {
 			continue // best-effort — a read failure just leaves this hostname without a repo block
 		}
-		status := workflow.RepoStatus{Present: st.Present, Head: st.Head}
+		status := workflow.RepoStatus{Present: st.Present, Head: st.Head, RepoState: st.RepoState}
 		if meta, metaErr := workflow.FindServiceMeta(stateDir, svc.Hostname); metaErr == nil && meta != nil && meta.Hostname == svc.Hostname && meta.Repo != nil {
 			status.Baseline = meta.Repo.BaselineAppVersion
 			status.Provenance = meta.Repo.Provenance
