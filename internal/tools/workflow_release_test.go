@@ -69,6 +69,46 @@ func TestHandleRelease_PromptSuggestsNextVersion(t *testing.T) {
 	}
 }
 
+// TestHandleRelease_LegacyMetaWithoutTrackedRef_ComparesHEAD pins the
+// GF-7 regression fix (docs/spec-workflows.md §12.6) on the release
+// path's reuse of the P-LP-11 freshness read. seedReleaseMeta writes no
+// TrackedRef — every ServiceMeta written before GF-7 — and
+// trackedRefOrDefault falls back to the literal "main" for all of
+// them, the same false-block risk the launch gate's P3 check carries.
+// The release freshness read must fall back to launchPushProofRef's
+// "HEAD" (the pre-GF-7 remote-default compare) instead.
+func TestHandleRelease_LegacyMetaWithoutTrackedRef_ComparesHEAD(t *testing.T) {
+	// non-parallel: stubs the package-level push-proof reader.
+	stateDir := t.TempDir()
+	seedReleaseMeta(t, stateDir, nil)
+
+	var gotTrackedRef string
+	prev := launchPushProofReader
+	launchPushProofReader = func(_ context.Context, _ ops.SSHDeployer, _ runtime.Info, _ string, _ string, trackedRef string) (LaunchPushProofResult, error) {
+		gotTrackedRef = trackedRef
+		return LaunchPushProofResult{LocalHead: "abc123def456", RemoteHead: "abc123def456"}, nil
+	}
+	t.Cleanup(func() { launchPushProofReader = prev })
+
+	ssh := &containerSSHStub{
+		dispatch: func(cmd string) ([]byte, error) {
+			if strings.Contains(cmd, "ls-remote --tags") {
+				return []byte(""), nil
+			}
+			return []byte("ok"), nil
+		},
+	}
+
+	result, _, _ := handleRelease(context.Background(), ssh,
+		WorkflowInput{Service: "weather"}, stateDir, runtime.Info{InContainer: true})
+	if result.IsError {
+		t.Fatalf("expected release-prompt, got error: %s", extractText(result))
+	}
+	if gotTrackedRef != "HEAD" {
+		t.Errorf("trackedRef passed to push-proof reader for a legacy meta (no TrackedRef): got %q want %q", gotTrackedRef, "HEAD")
+	}
+}
+
 // TestHandleRelease_RefusesUnpushedState pins the freshness gate: dirty
 // tree or HEAD-not-on-remote refuse the release — a tag must name
 // exactly the pushed state the production pipeline builds.
