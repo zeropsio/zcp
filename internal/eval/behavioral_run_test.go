@@ -739,3 +739,54 @@ func TestRun_RequiredEnvVarPresent_Proceeds(t *testing.T) { // non-parallel: pro
 		t.Errorf("spawn marker missing — the agent was never spawned despite the requiredEnvVars entry being present: %v", statErr)
 	}
 }
+
+// TestRun_GitRepoReset_MissingPAT_BlocksPreparation_AgentNeverSpawned pins
+// docs/spec-eval-farm.md §3.3 FM-67: a scenario declaring gitRepoReset resets
+// that repo BEFORE seed — checked here without any network access reaching
+// GitHub, by leaving ZCP_E2E_GITHUB_PAT unset so resetScenarioGitRepo fails
+// deterministically. The failure is a preparation mismatch (not an execution
+// error), routed through the same path as a seed.expect/requiredEnvVars
+// mismatch: the agent is never spawned.
+func TestRun_GitRepoReset_MissingPAT_BlocksPreparation_AgentNeverSpawned(t *testing.T) { // non-parallel: process environment
+	t.Setenv(GitHubPATEnvVar, "")
+
+	h := newBehavioralHarness(t)
+	spawnMarker := filepath.Join(h.root, "spawn-marker")
+	t.Setenv("SPAWN_MARKER", spawnMarker)
+	script := "#!/bin/sh\n" +
+		": > \"$SPAWN_MARKER\"\n" +
+		"printf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"offline-probe\",\"model\":\"fake-offline\"}'\n" +
+		"printf '%s\\n' '{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Done.\"}]}}'\n" +
+		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"offline-probe\",\"result\":\"Done.\"}'\n"
+	h.writeClaudeScript(t, script)
+	const repoURL = "https://github.com/krls2020/eval2"
+	scenario := "---\n" +
+		"id: git-repo-reset-missing-pat-no-spawn\n" +
+		"seed: empty\n" +
+		"gitRepoReset: " + repoURL + "\n" +
+		"retrospective:\n" +
+		"  promptStyle: briefing-future-agent\n" +
+		"---\n" +
+		"Do the thing.\n"
+	scenarioPath := h.writeScenario(t, scenario)
+	mock := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
+	runner := NewRunner(h.config(), nil, mock, "offline-project")
+
+	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantMsg := "mismatch: git repo " + repoURL + " not clean: " + GitHubPATEnvVar + " not set in this process's environment"
+	if result.Preparation != wantMsg {
+		t.Errorf("Preparation = %q, want %q", result.Preparation, wantMsg)
+	}
+	if result.Error != "" {
+		t.Errorf("Error = %q, want empty (a preparation mismatch is not an execution error)", result.Error)
+	}
+	if _, statErr := os.Stat(spawnMarker); !os.IsNotExist(statErr) {
+		t.Error("spawn marker exists — the agent was spawned despite the git repo reset failure")
+	}
+	if result.Task == nil || result.Task.Result != CheckNotRun {
+		t.Errorf("Task = %+v, want not-run", result.Task)
+	}
+}
