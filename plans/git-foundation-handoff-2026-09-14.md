@@ -279,3 +279,19 @@ candidate (batch `gf-cargo-7`, PAT cell `gf-cargo-8`; all seven cells passed):
 
 Open: launch-production template `--version-name`; `versionName` on rollback candidates (ES
 `SearchAppVersions.name`, not on the direct DTO); Gitea recipe + placement; mate commit/push.
+
+### 9.1 Day 3, afternoon — two remote shapes, user-sim fix
+
+- `gitRepoCreate: krls2020` (admin PAT `ZCP_E2E_GITHUB_PAT_ADMIN`, all repos of the test
+  account): a private empty `zcp-farm-<ts>` repo per run, created before seed, deleted after
+  the run in every mode, swept by `farm gc`. New gate scenario `git-push-setup-empty-remote`
+  (setup + ONE git-push deploy, no CI of either kind): passed `gf-cargo-13` — `remote.state=empty`,
+  no non-fast-forward question, origin `main` exists, repo gone afterwards.
+- `git-push-setup-then-actions` (shared `eval2`, README baseline) passed `gf-cargo-10` with the
+  GF-11 question answered by the persona (replace-remote).
+- Eval bug fixed on the way (`28121489`): a Bash `tool_result` carries string `content`; the
+  decoder dropped the whole user event, the classifier merged the burst into the prior
+  tool_use and graded a closing question "working" — the user-sim never fired. Every scenario
+  where the agent asks right after a Bash call was affected.
+- Farm traps: push `--evaluator` on any eval-code change; a scenario persona must answer every
+  decision zcp hands back (GF-11), or the run ends on the question.
