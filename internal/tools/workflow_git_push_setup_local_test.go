@@ -104,6 +104,7 @@ func TestGitPushSetupLocal_Success_NextStepStatesWriteAuthProven(t *testing.T) {
 	// GF-7: stub detection too — this test must not shell out real git
 	// against the test process's own cwd.
 	defer setLocalGitBranchDetector(func(context.Context, string, string) (string, error) { return "main", nil })()
+	defer setLocalGitDivergenceRunner(noNetworkGitRunner)()
 
 	result, _, _ := handleGitPushSetup(
 		context.Background(), nil, nil, nil, "test-project",

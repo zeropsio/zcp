@@ -207,9 +207,12 @@ func TestHandleGitPushSetup_Confirm(t *testing.T) {
 	}
 
 	// Stub local probe + origin sync — return nil for both so the
-	// verifier reaches the meta-stamp step.
+	// verifier reaches the meta-stamp step. Also stub the §4.4 divergence
+	// probe so the success path never shells out to real git against the
+	// test process's actual working directory.
 	defer setLocalGitProbeReader(func(context.Context, string, string) error { return nil })()
 	defer setLocalGitOriginSyncer(func(context.Context, string, string) error { return nil })()
+	defer setLocalGitDivergenceRunner(noNetworkGitRunner)()
 
 	result, _, err := handleGitPushSetup(context.Background(), nil, nil, nil, "test-project", WorkflowInput{
 		Service:   "appdev",

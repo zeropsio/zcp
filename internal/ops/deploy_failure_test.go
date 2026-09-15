@@ -473,10 +473,11 @@ func TestClassifyDeployFailure_Transport(t *testing.T) {
 		},
 		{
 			// A non-fast-forward push rejection (remote has commits the
-			// local push lacks). NOT auth, NOT network — the fix is to
-			// integrate the remote or force-push. Pre-fix this fell through
-			// to the transport baseline (category=network), which sent the
-			// agent chasing connectivity/PAT instead of the real cause.
+			// local push lacks). NOT auth, NOT network — the choice
+			// (rebase/merge/replace-remote) belongs to the user, never
+			// zcp. Pre-fix this fell through to the transport baseline
+			// (category=network), which sent the agent chasing
+			// connectivity/PAT instead of the real cause.
 			name: "git-non-fast-forward-push-git",
 			input: FailureInput{
 				Phase:    PhaseTransport,

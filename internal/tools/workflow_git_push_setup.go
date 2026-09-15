@@ -368,6 +368,24 @@ func setLocalGitBranchDetector(f func(ctx context.Context, workingDir, remoteURL
 	return func() { localGitBranchDetector = prev }
 }
 
+// localGitDivergenceRunner produces the ops.GitRunner the local-mode
+// git-push-setup success path uses to compute the §4.4 probe-time
+// early-warning `remote` block. Same indirection pattern as
+// localGitProbeReader/localGitOriginSyncer — tests swap it so the
+// divergence probe never shells out to real git against the test
+// process's actual working directory.
+//
+//nolint:gochecknoglobals // test hook for local-mode divergence probe
+var localGitDivergenceRunner = localGitRunner
+
+// setLocalGitDivergenceRunner swaps localGitDivergenceRunner for the
+// duration of one test; returns a cleanup func to defer-restore.
+func setLocalGitDivergenceRunner(f func(ctx context.Context, workingDir string) ops.GitRunner) func() {
+	prev := localGitDivergenceRunner
+	localGitDivergenceRunner = f
+	return func() { localGitDivergenceRunner = prev }
+}
+
 // confirmGitPushSetupLocal implements the local-mode probe-first verifier.
 // Reached only when rt.InContainer is false. Symmetric to the container
 // path but uses the user's local git config + credential helper instead
@@ -469,8 +487,12 @@ func confirmGitPushSetupLocal(
 	meta.RemoteURL = input.RemoteURL
 	meta.TrackedRef = trackedRef
 
+	// Probe-time early warning (§4.4) — parity with the container path.
+	// Best-effort: a probe failure just omits the `remote` block.
+	remoteState := probeGitPushRemoteState(localGitDivergenceRunner(ctx, workingDir), trackedRef)
+
 	localDelivery := deliveryDecisionForMeta(meta)
-	return jsonResult(attachWorkSessionState(map[string]any{
+	body := map[string]any{
 		"status":                    "configured",
 		"service":                   input.Service,
 		"gitPushState":              meta.GitPushState,
@@ -479,7 +501,14 @@ func confirmGitPushSetupLocal(
 		"recommendedIntegration":    string(localDelivery.Recommended),
 		"recommendedIntegrationWhy": localDelivery.Why,
 		"nextStep":                  fmt.Sprintf("git-push wiring verified (local mode): your git credential passed the push auth probe (`git push --dry-run`; on a repo with no commit yet it falls back to read reachability and the first push proves write) and origin is synced in workingDir. A non-fast-forward (the remote branch has commits yours doesn't) still surfaces at the first real push, not here. Wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
-	}, stateDir)), nil, nil
+	}
+	if remoteState != nil {
+		body["remote"] = remoteState
+		if warn := gitPushRemoteStateWarning(remoteState); warn != "" {
+			body["remoteStateWarning"] = warn
+		}
+	}
+	return jsonResult(attachWorkSessionState(body, stateDir)), nil, nil
 }
 
 // confirmGitPushSetupContainer implements the container-mode probe-first
@@ -707,9 +736,16 @@ func confirmGitPushSetupContainer(
 	meta.RemoteURL = input.RemoteURL
 	meta.TrackedRef = trackedRef
 
+	// 8. Probe-time early warning (§4.4): compute the tracked ref's
+	// divergence state the same way GIT_PUSH_NON_FAST_FORWARD does, so a
+	// remote pre-seeded with commits (or diverged/unrelated history) is
+	// visible BEFORE the first push, not only after a rejected one.
+	// Best-effort — a probe failure just omits the `remote` block.
+	remoteState := probeGitPushRemoteState(sshGitRunner(ctx, sshDeployer, pushHost, "/var/www"), trackedRef)
+
 	return jsonResult(attachWorkSessionState(
 		gitPushContainerConfiguredResponse(input, meta, rotation, reconstructed, reconstructDivergence,
-			identity, emailSeeded, nameSeeded, emailPreserved, namePreserved, identityWarning),
+			identity, emailSeeded, nameSeeded, emailPreserved, namePreserved, identityWarning, remoteState),
 		stateDir)), nil, nil
 }
 
@@ -931,6 +967,7 @@ func gitPushSetupPreProbeSelfHeal(ctx context.Context, sshDeployer ops.SSHDeploy
 func gitPushContainerConfiguredResponse(
 	input WorkflowInput, meta *workflow.ServiceMeta, rotation, reconstructed bool, reconstructDivergence string,
 	identity ops.GitIdentity, emailSeeded, nameSeeded, emailPreserved, namePreserved bool, identityWarning string,
+	remoteState *gitPushRemoteStateWire,
 ) map[string]any {
 	delivery := deliveryDecisionForMeta(meta)
 	resp := map[string]any{
@@ -942,6 +979,12 @@ func gitPushContainerConfiguredResponse(
 		"recommendedIntegration":    string(delivery.Recommended),
 		"recommendedIntegrationWhy": delivery.Why,
 		"nextStep":                  fmt.Sprintf("git-push wiring verified: the token passed the push auth probe (`git push --dry-run`; on a repo with no commit yet it falls back to read reachability and the first push proves write), origin + credential helper synced on /var/www/.git, and a FRESH session authenticated with the stored secret (rotation needs no restart — fresh sessions read the live value). A non-fast-forward (the remote branch has commits yours doesn't) still surfaces at the first real push, not here. Wire CI (integration=\"actions\" recommended for GitHub; \"webhook\" for GitLab; \"none\" for external CI/CD): zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
+	}
+	if remoteState != nil {
+		resp["remote"] = remoteState
+		if warn := gitPushRemoteStateWarning(remoteState); warn != "" {
+			resp["remoteStateWarning"] = warn
+		}
 	}
 	if rotation {
 		resp["rotated"] = true

@@ -54,6 +54,13 @@ type ErrorWire struct {
 	// Populated via WithWouldDestroy by destructive-tool handlers that
 	// gate on agent acknowledgment. Plan v4 §3.1.
 	WouldDestroy *DiagnosedDestruction `json:"wouldDestroy,omitempty"`
+
+	// GitPushRejection carries the structured divergence + named-options
+	// payload on a GIT_PUSH_NON_FAST_FORWARD refusal. Populated via
+	// WithGitPushRejection. zcp classifies a rejected push but never
+	// executes rebase/merge/replace-remote itself (docs/spec-workflows.md
+	// §12 GF-11).
+	GitPushRejection *GitPushRejectionPayload `json:"gitPushRejection,omitempty"`
 }
 
 // CheckWire is the wire form of a single check failure. Generic enough
@@ -159,6 +166,18 @@ func WithFailureClassification(c *topology.DeployFailureClassification) ErrorOpt
 			return
 		}
 		w.FailureClassification = c
+	}
+}
+
+// WithGitPushRejection attaches the structured GIT_PUSH_NON_FAST_FORWARD
+// payload to the wire response. nil arg is a no-op so callers can pass a
+// conditionally-computed value unconditionally.
+func WithGitPushRejection(p *GitPushRejectionPayload) ErrorOption {
+	return func(w *ErrorWire) {
+		if p == nil {
+			return
+		}
+		w.GitPushRejection = p
 	}
 }
 

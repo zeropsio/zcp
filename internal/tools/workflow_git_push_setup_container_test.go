@@ -413,14 +413,16 @@ func TestGitPushSetupContainer_SameRemoteNewToken_Rotates(t *testing.T) {
 	}
 	// The full chain ran: .git presence check (captured BEFORE any self-heal
 	// — Codex finding 1's ordering fix) + local self-heal (F2) + inline
-	// probe + origin sync (with helper assert) + session probe = 5 SSH
-	// calls; the probe carries the candidate token, the last must NOT
-	// (session env). This fixture's stub reports "ok" (not "absent") for
-	// the presence check, so needsReconstruct is false and the self-heal
-	// still runs — the reconstruction-instead-of-self-heal path is covered
-	// separately by TestGitPushSetupContainer_RotationWithToken_MissingGitStillReconstructs.
-	if len(ssh.commands) != 5 {
-		t.Fatalf("rotation should run presence+self-heal+probe+origin+session (5 SSH calls); got %d: %v", len(ssh.commands), ssh.commands)
+	// probe + origin sync (with helper assert) + session probe + the §4.4
+	// probe-time early-warning divergence probe (fetch + 2×rev-list +
+	// merge-base) = 9 SSH calls; the probe carries the candidate token,
+	// the session probe must NOT (session env). This fixture's stub
+	// reports "ok" (not "absent") for the presence check, so
+	// needsReconstruct is false and the self-heal still runs — the
+	// reconstruction-instead-of-self-heal path is covered separately by
+	// TestGitPushSetupContainer_RotationWithToken_MissingGitStillReconstructs.
+	if len(ssh.commands) != 9 {
+		t.Fatalf("rotation should run presence+self-heal+probe+origin+session+divergence(4) (9 SSH calls); got %d: %v", len(ssh.commands), ssh.commands)
 	}
 	if !strings.Contains(ssh.commands[0], "test -d /var/www/.git") {
 		t.Errorf("first SSH call should be the presence check; got: %s", ssh.commands[0])

@@ -1211,8 +1211,6 @@ func setupDeployedService(t *testing.T, stateDir, hostname, stageHostname string
 //
 // reusable for any future git-push test that targets a different fixture
 // hostname; keeping the parameter keeps the call site self-documenting.
-//
-//nolint:unparam // hostname is always "appdev" today but the helper is
 func markGitPushConfigured(t *testing.T, stateDir, hostname string) {
 	t.Helper()
 	meta, err := workflow.ReadServiceMeta(stateDir, hostname)

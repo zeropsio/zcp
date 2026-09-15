@@ -34,6 +34,23 @@ func gitPushErrorDetail(err error, output []byte) string {
 	return err.Error()
 }
 
+// sshGitRunner adapts an ops.SSHDeployer into an ops.GitRunner: each call
+// runs one `git <args...>` step over SSH at workingDir, authenticating the
+// `fetch` step via the session-env credential helper (ops.
+// BuildGitDivergenceStepCommand decides which). Used to probe remote
+// divergence (ops.ProbeGitDivergence) after a GIT_PUSH_NON_FAST_FORWARD
+// rejection — never to push or mutate anything.
+func sshGitRunner(ctx context.Context, sshDeployer ops.SSHDeployer, hostname, workingDir string) ops.GitRunner {
+	return func(args ...string) (string, error) {
+		cmd := ops.BuildGitDivergenceStepCommand(workingDir, args)
+		out, err := sshDeployer.ExecSSH(ctx, hostname, cmd)
+		if err != nil {
+			return string(out), fmt.Errorf("%s", gitPushErrorDetail(err, out))
+		}
+		return string(out), nil
+	}
+}
+
 // fetchZeropsYamlOverSSH reads zerops.yaml (or zerops.yml fallback) from
 // the target container via SSH `cat`. Returns ("", nil) when the file is
 // absent so callers can treat "no yaml" the same way the filesystem path
@@ -520,11 +537,27 @@ func handleGitPush(
 		// missing), which sits in the command output. Parity with the local
 		// git-push path (handleLocalGitPush, which already truncates stderr).
 		detail := gitPushErrorDetail(err, output)
+
+		// GF-11: a non-fast-forward rejection is a structured, non-
+		// destructive decision (rebase / merge / replace-remote) that
+		// belongs to the user — never the generic SSH_DEPLOY_FAILED, and
+		// zcp never force-pushes or merges on its own to resolve it.
+		if ops.IsNonFastForwardRejection(detail) {
+			rejection := classifyGitPushNonFastForward(sshGitRunner(ctx, sshDeployer, hostname, workingDir), effectiveRemote, branch)
+			recordAttempt(fmt.Sprintf("git-push rejected non-fast-forward: %s", detail), topology.FailureClassConfig)
+			return convertError(
+				newGitPushNonFastForwardError(hostname, detail),
+				WithFailureClassification(classification),
+				WithGitPushRejection(rejection),
+				WithRecoveryStatus(),
+			), nil, nil
+		}
+
 		recordAttempt(fmt.Sprintf("git-push failed: %s", detail), category)
 		return convertError(platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
 			fmt.Sprintf("git-push from %s failed: %s", hostname, detail),
-			"See the git error above and `failureClassification` for the specific fix. Common cases: non-fast-forward (remote has commits you lack) → `git pull --rebase` then re-push or force-push; protected branch (the ref was refused by a pre-receive hook, NOT a credential fault) → push a topic branch and open a pull request, and do not rotate the token; auth rejected → re-run zerops_workflow action=\"git-push-setup\" with a fresh PAT; GIT_TOKEN missing → restart the runtime via zerops_manage action=\"restart\" then retry.",
+			"See the git error above and `failureClassification` for the specific fix. Common cases: non-fast-forward pushes are classified as GIT_PUSH_NON_FAST_FORWARD, not this generic error; protected branch (the ref was refused by a pre-receive hook, NOT a credential fault) → push a topic branch and open a pull request, and do not rotate the token; auth rejected → re-run zerops_workflow action=\"git-push-setup\" with a fresh PAT; GIT_TOKEN missing → restart the runtime via zerops_manage action=\"restart\" then retry.",
 		), WithFailureClassification(classification)), nil, nil
 	}
 

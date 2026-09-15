@@ -113,6 +113,18 @@ const (
 	// agent asks the user to create a token in the dashboard. See
 	// docs/spec-workflows.md P-LP-15 (delegated launch-token minting).
 	ErrDelegationUnavailable = "DELEGATION_UNAVAILABLE"
+	// ErrGitPushNonFastForward signals that a git-push strategy deploy (or
+	// its local-mode twin) was rejected by the remote as non-fast-forward
+	// — the tracked ref carries commits the local push lacks (a common
+	// real-life shape: a fresh GitHub repo seeded with a README, or a
+	// second agent/human pushing concurrently). Replaces the generic
+	// ErrSSHDeployFailed/ErrDeployFailed for this specific rejection
+	// family so the response carries structured divergence counts
+	// (remoteAhead/localAhead/unrelated) and a `next` block naming
+	// exactly three choices (rebase/merge/replace-remote) — zcp classifies
+	// but never executes any of them; the decision belongs to the user.
+	// docs/spec-workflows.md §12 GF-11.
+	ErrGitPushNonFastForward = "GIT_PUSH_NON_FAST_FORWARD"
 )
 
 // Error subcodes narrow a specific top-level code into a stable, more
