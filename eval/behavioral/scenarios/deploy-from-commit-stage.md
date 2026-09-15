@@ -2,13 +2,18 @@
 id: deploy-from-commit-stage
 description: |
   Existing dev/stage Node pair, both buildFromGit-deployed (real cloned
-  repo mounted on appdev). User wants a SPECIFIC commit — not necessarily
-  the current HEAD — shipped to appstage, and wants to be able to prove
-  later exactly which commit is running there. Tests G3 (docs/
-  spec-workflows.md §4.9): `zerops_deploy sha=` deploy-from-commit and the
-  SHA/appVersionId fields in the response. These are recorded operation
-  evidence, not proof that a stale or concurrent platform result belongs
-  to this push: the correlation limitation in §4.9 remains open.
+  repo mounted on appdev), and appdev's working tree is dirty (preseed).
+  The prompt only says "ship what's on appdev" and asks to be told later
+  exactly which commit is running — it never names `sha`, a parameter or
+  a tool. Tests G3 (docs/spec-workflows.md §4.9): the process, not the
+  prompt, must lead the agent to `zerops_deploy sha=` deploy-from-commit
+  — a plain cross-deploy would ship the dirty working tree's contents
+  rather than a provable commit, so "ship what's on appdev, and prove
+  which commit later" cannot be answered honestly without naming a
+  commit and deploying it without touching the tree. The SHA/appVersionId
+  fields in the response are recorded operation evidence, not proof that
+  a stale or concurrent platform result belongs to this push: the
+  correlation limitation in §4.9 remains open.
 
   Status `promote: containerCheck`: a follow-up must independently check
   the deployed artifact/source; today's toolResult and liveness checks
@@ -19,7 +24,9 @@ description: |
   deploy-from-commit extracts the commit OUTSIDE the working tree (GF-3),
   so the containerCheck proves the source checkout is byte-for-byte
   untouched: same HEAD, same branch, same dirty state, nothing committed
-  or stashed on the user's behalf.
+  or stashed on the user's behalf — this is the set that actually forces
+  the agent toward `sha=` rather than committing appdev's dirty state to
+  make "what's on appdev" a clean answer.
 seed: deployed
 fixture: fixtures/nodejs-standard-deployed.yaml
 preseedScript: preseed/plant-repo-cargo.sh
@@ -32,7 +39,7 @@ verification:
   spec: spec-workflows.md §4.9
   liveness: {service: appstage, marker: "nodejs"}
   toolArg:
-    - {always: "zerops_deploy{targetService=appstage}"}
+    - {always: "zerops_deploy{targetService=appstage,sha~^[0-9a-f]+$}"}
   toolResult:
     - {tool: zerops_deploy, contains: "\"sha\":\""}
     - {tool: zerops_deploy, contains: "\"appVersionId\":\""}
@@ -62,10 +69,17 @@ userPersona: |
 notableFriction:
   - id: sha-param-discovery
     description: |
-      Agent must discover `zerops_deploy` takes a `sha` parameter (rather
-      than resolving the commit itself and passing it as `workingDir` or
-      some other field) and pass the commit reachable in appdev's mounted
-      repo.
+      Nothing in the prompt names `sha`, a parameter, or a tool — the
+      agent must work out, from the persona's insistence on shipping a
+      provable commit rather than "whatever's in the working tree" and
+      from appdev's dirty/branched/tagged preseeded state, that
+      `zerops_deploy` takes a `sha` parameter for exactly this case: a
+      named commit deployed without touching the working tree. An agent
+      that commits appdev's dirty state to make the deploy "clean", or
+      that resolves the commit itself and passes it via `workingDir` or
+      another field, has picked the wrong route; the containerCheck's
+      untouched-checkout assertions and the `sha~` toolArg row both catch
+      it directly.
   - id: ledger-as-the-answer
     description: |
       When the user later asks "what's running on stage", the agent
@@ -76,8 +90,5 @@ notableFriction:
 
 ---
 
-I want to ship the exact commit currently checked out on `appdev` to
-`appstage` — not just "whatever's in the working tree right now" in some
-vague sense, the actual commit, by its sha. Can you do that, and
-afterwards tell me exactly what's now running on appstage so I can check
-it later?
+Ship what's on `appdev` to `appstage`. Afterwards tell me exactly which
+commit is running on `appstage` so I can verify it later.
