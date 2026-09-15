@@ -55,6 +55,15 @@ type Scenario struct {
 	// blocked:preparation path as a seed.expect mismatch — the agent is
 	// never spawned and no row is graded.
 	RequiredEnvVars []string
+	// GitRepoReset is the `https://github.com/<owner>/<repo>` URL of a
+	// GitHub repository this scenario's fixture pushes to and shares with
+	// other farm cells. When set (and ZCP_E2E_GITHUB_PAT is present in the
+	// runner's own environment), the runner resets the repo to a clean
+	// single-commit baseline before seed and again in cleanup
+	// (docs/spec-eval-farm.md §3.3), and the farm controller serializes
+	// every run declaring the same GitRepoReset value so two of them never
+	// hold the shared repo at once.
+	GitRepoReset string
 	// SeedRef is the seed.ref field (docs/spec-eval-farm.md §4.1) — the
 	// pinned sha/tag of every repository the seed fixture references.
 	// Parsed and carried here; not yet consumed at seed time (a later
@@ -452,6 +461,7 @@ type scenarioFrontmatter struct {
 	Verification    *VerificationConfig    `yaml:"verification"`
 	ExcludeFromAll  bool                   `yaml:"excludeFromAll"`
 	RequiredEnvVars []string               `yaml:"requiredEnvVars"`
+	GitRepoReset    string                 `yaml:"gitRepoReset"`
 }
 
 // ParseScenario reads a scenario markdown file and returns the parsed structure.
@@ -504,6 +514,7 @@ func ParseScenario(path string) (*Scenario, error) {
 		Verification:    fm.Verification,
 		ExcludeFromAll:  fm.ExcludeFromAll,
 		RequiredEnvVars: fm.RequiredEnvVars,
+		GitRepoReset:    fm.GitRepoReset,
 		SeedExpect:      fm.Seed.Expect,
 		SeedRef:         fm.Seed.Ref,
 		seedIsBlock:     fm.Seed.IsBlock,
@@ -565,6 +576,11 @@ func (s *Scenario) validate() error {
 	}
 	if s.Seed != ModeEmpty && s.Fixture == "" {
 		return fmt.Errorf("fixture required for seed=%s", s.Seed)
+	}
+	if s.GitRepoReset != "" {
+		if _, _, err := parseGitHubRepo(s.GitRepoReset); err != nil {
+			return fmt.Errorf("gitRepoReset: %w", err)
+		}
 	}
 	// FM-64: a cell whose starting state is deliberately broken (settled)
 	// must assert it held, not assume it — but only for the block form;

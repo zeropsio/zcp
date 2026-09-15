@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/eval"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -185,6 +187,24 @@ type ScenarioRun struct {
 	// guesses/deletes a target from Launch alone, while launch-token handling
 	// still follows the Launch flag.
 	ProductionProjectName string
+	// RequiredEnvVars is the scenario's requiredEnvVars frontmatter list
+	// (eval.Scenario.RequiredEnvVars). createRun only acts on the one entry
+	// it knows how to satisfy itself — eval.GitHubPATEnvVar — injecting
+	// RunOptions.GitHubPAT into the run project when present; any other
+	// name is passed through unchecked at this layer (the in-run evaluator
+	// still gates on it via checkRequiredEnvVars).
+	RequiredEnvVars []string
+	// GitRepoReset is the scenario's gitRepoReset frontmatter value
+	// (eval.Scenario.GitRepoReset) — a non-empty value puts this run in
+	// that repo's serialization lane (§3.3): the scheduler never keeps two
+	// runs sharing the same GitRepoReset alive at once.
+	GitRepoReset string
+}
+
+// scenarioRequiresGitHubPAT reports whether names declares
+// eval.GitHubPATEnvVar.
+func scenarioRequiresGitHubPAT(names []string) bool {
+	return slices.Contains(names, eval.GitHubPATEnvVar)
 }
 
 // RunOptions is the input to RunBatch (§3.3 FM-21/FM-22).
@@ -206,6 +226,13 @@ type RunOptions struct {
 	// (CLAUDE_CODE_OAUTH_TOKEN) — the agent credential is OAuth-only, no
 	// api-key mode and no fallback (§2.4/FM-16, spec commit 79ced2cc).
 	OAuthToken string
+	// GitHubPAT is the controller's own ZCP_E2E_GITHUB_PAT (eval.GitHubPATEnvVar),
+	// read from this process's environment — never resolved from a run
+	// project or service env (§2.4/§3.3). Injected only into a run whose
+	// scenario declares it in requiredEnvVars; empty when the controller's
+	// environment does not carry it, which blocks any such run in
+	// createRun before a project is created.
+	GitHubPAT string
 	// Observer is `farm run`'s --observer choice ("<model>" or "off"),
 	// recorded verbatim in the manifest (§1.4, §3.3, §7.7); RunBatch never
 	// reads it beyond that — it never reaches a run project.
@@ -300,6 +327,21 @@ func (e *batchAbortError) Unwrap() error { return e.cause }
 //     delegation): every other run would fail identically, so RunBatch
 //     aborts the batch.
 func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r scheduledRun) (active *activeRun, blockedResult *RunResult, abortErr error) {
+	// §3.3/§2.4: a scenario that declares eval.GitHubPATEnvVar in
+	// requiredEnvVars needs the controller's own PAT to inject into the run
+	// project — checked, and blocked as a preparation failure naming the
+	// var, before any project is created. checkRequiredEnvVars's shape
+	// ("resource <NAME> missing") is reused verbatim so both the in-run and
+	// pre-create preparation blocks read the same way.
+	var githubPAT string
+	if scenarioRequiresGitHubPAT(r.RequiredEnvVars) {
+		githubPAT = opts.GitHubPAT
+		if githubPAT == "" {
+			rr := recordBlocked(r.RunID, r.ID, r.ProductionProjectName, fmt.Errorf("preparation: resource %s missing", eval.GitHubPATEnvVar))
+			return nil, &rr, nil
+		}
+	}
+
 	var launchTokenID, launchKeyValue string
 	if r.Launch {
 		minted, err := client.MintDelegatedLaunchToken(ctx, "farm-"+r.RunID)
@@ -326,6 +368,7 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 		Sink:            opts.Sink,
 		OAuthToken:      opts.OAuthToken,
 		LaunchKey:       launchKeyValue,
+		GitHubPAT:       githubPAT,
 	}
 
 	// §2.1 step 1: create the empty project shell. The REST import route
@@ -524,13 +567,31 @@ func (s *batchState) recordFinalized(rr RunResult, budget, interrupted bool, cle
 	}
 }
 
+// finalizeActiveAt settles s.actives[idx] and removes it from the window —
+// the shared primitive finalizeOldestActive (idx 0, §3.3 FM-65) and the
+// gitRepoReset lane gate (an arbitrary idx, §3.3) both settle through.
+func (s *batchState) finalizeActiveAt(ctx context.Context, idx int) {
+	a := s.actives[idx]
+	s.actives = append(s.actives[:idx], s.actives[idx+1:]...)
+	rr, budget, interrupted, cleanupErr := finalizeActiveRun(ctx, s.client, s.sink, a, s.opts, s.now, s.pollInterval)
+	s.recordFinalized(rr, budget, interrupted, cleanupErr)
+}
+
 // finalizeOldestActive settles actives[0] — the longest-running active
 // run — so §3.3 FM-65's window never exceeds opts.MaxConcurrent.
 func (s *batchState) finalizeOldestActive(ctx context.Context) {
-	a := s.actives[0]
-	s.actives = s.actives[1:]
-	rr, budget, interrupted, cleanupErr := finalizeActiveRun(ctx, s.client, s.sink, a, s.opts, s.now, s.pollInterval)
-	s.recordFinalized(rr, budget, interrupted, cleanupErr)
+	s.finalizeActiveAt(ctx, 0)
+}
+
+// indexOfActiveGitRepoReset returns the index of the active run sharing
+// repo (a scenario's non-empty GitRepoReset), or -1 when none is active.
+func (s *batchState) indexOfActiveGitRepoReset(repo string) int {
+	for i, a := range s.actives {
+		if a.GitRepoReset == repo {
+			return i
+		}
+	}
+	return -1
 }
 
 // finalizeRemainingActives settles every run still open once every
@@ -544,13 +605,27 @@ func (s *batchState) finalizeRemainingActives(ctx context.Context) {
 
 // runCreates creates each scheduled run in order, settling the oldest
 // active run first whenever opts.MaxConcurrent's window is full (§3.3
-// FM-65). aborted reports whether a batch-ending failure occurred (a
-// scoped-mint 403, or a manifest write failure): RunBatch must return
-// results/err immediately in that case, never fall through to its own
-// trailing settle pass.
+// FM-65), and — independently — settling whichever active run shares the
+// next run's non-empty GitRepoReset before creating it (§3.3: one lane per
+// repo URL, so two runs sharing a reset repo are never simultaneously
+// live; a run with an empty GitRepoReset, or one whose repo has no active
+// run yet, is never held back by this gate). aborted reports whether a
+// batch-ending failure occurred (a scoped-mint 403, or a manifest write
+// failure): RunBatch must return results/err immediately in that case,
+// never fall through to its own trailing settle pass.
 func (s *batchState) runCreates(ctx context.Context, manifest *BatchManifest, manifestRuns []ManifestRun) (results []RunResult, aborted bool, err error) {
 	runTokenIDs := make(map[string]string, len(s.scheduled)) // runID -> minted run token id, for the manifest-evidence update below
 	for _, r := range s.scheduled {
+		// §3.3: one lane per gitRepoReset repo — settle the active run
+		// sharing this one's repo (if any) before creating it. Independent
+		// of and checked before the MaxConcurrent window below.
+		for r.GitRepoReset != "" {
+			idx := s.indexOfActiveGitRepoReset(r.GitRepoReset)
+			if idx < 0 {
+				break
+			}
+			s.finalizeActiveAt(ctx, idx)
+		}
 		// §3.3 FM-65: never more than opts.MaxConcurrent run projects alive
 		// at once (0 = unlimited, today's behaviour) — settle the oldest
 		// active run before creating the next.

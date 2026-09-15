@@ -411,11 +411,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	// cleanup defer (when present) is registered BEFORE the bundle defer so
 	// it runs AFTER the bundle (LIFO): bundle → cleanup.
 	if !sc.IsRequired() {
-		defer func() {
-			if cleanErr := CleanupProject(context.WithoutCancel(ctx), r.client, r.projectID, r.config.WorkDir); cleanErr != nil {
-				fmt.Fprintf(os.Stderr, "warning: post-scenario cleanup: %v\n", cleanErr)
-			}
-		}()
+		defer r.cleanupAfterScenario(ctx, sc)
 	}
 	defer func() {
 		r.finishBehavioralCapture(context.WithoutCancel(ctx), suiteID, sc.ID, scenarioPath, outDir, result, returnErr)
@@ -692,6 +688,41 @@ func checkRequiredEnvVars(names []string) string {
 	return ""
 }
 
+// cleanupAfterScenario is the non-required-mode post-scenario defer body:
+// project cleanup, then — when sc.GitRepoReset is set — resetting the
+// shared repo again so the next cell to claim it (this batch or a later
+// one) never inherits whatever the agent pushed. Factored out of
+// RunBehavioralScenario purely to keep that function's maintainability
+// index in check (mirrors prepareWorkOrFail below). Both failures are only
+// logged — the run's own result has already been frozen by the time this
+// runs.
+func (r *Runner) cleanupAfterScenario(ctx context.Context, sc *Scenario) {
+	if cleanErr := CleanupProject(context.WithoutCancel(ctx), r.client, r.projectID, r.config.WorkDir); cleanErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: post-scenario cleanup: %v\n", cleanErr)
+	}
+	if sc.GitRepoReset == "" {
+		return
+	}
+	if err := resetScenarioGitRepo(context.WithoutCancel(ctx), sc); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: post-scenario git repo reset: %v\n", err)
+	}
+}
+
+// resetScenarioGitRepo resets sc.GitRepoReset to a clean single-commit
+// baseline (ResetGitHubRepo) using GitHubPATEnvVar from this process's own
+// environment. A scenario declaring gitRepoReset is expected to also
+// declare GitHubPATEnvVar in requiredEnvVars, so checkRequiredEnvVars has
+// already gated preparation on its presence by the time this runs; this
+// still checks for itself rather than trusting that declaration, since it
+// is also called from cleanup, past the requiredEnvVars gate.
+func resetScenarioGitRepo(ctx context.Context, sc *Scenario) error {
+	pat := os.Getenv(GitHubPATEnvVar)
+	if pat == "" {
+		return fmt.Errorf("%s not set in this process's environment", GitHubPATEnvVar)
+	}
+	return ResetGitHubRepo(ctx, sc.GitRepoReset, pat)
+}
+
 // prepareBehavioralWork runs requiredEnvVars check → seed → init → capture
 // MCP config → preseed → seed.expect check, returning a human-readable
 // error prefix ("seed: ...", "init: ...", etc.) on the first failure, or ""
@@ -708,6 +739,11 @@ func checkRequiredEnvVars(names []string) string {
 func (r *Runner) prepareBehavioralWork(ctx context.Context, sc *Scenario, suiteID, outDir string) (errMsg, mismatch string) {
 	if reason := checkRequiredEnvVars(sc.RequiredEnvVars); reason != "" {
 		return "", reason
+	}
+	if sc.GitRepoReset != "" {
+		if err := resetScenarioGitRepo(ctx, sc); err != nil {
+			return "", fmt.Sprintf("git repo %s not clean: %v", sc.GitRepoReset, err)
+		}
 	}
 	if err := r.seedScenario(ctx, sc, suiteID); err != nil {
 		return fmt.Sprintf("seed: %v", err), ""

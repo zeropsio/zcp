@@ -33,6 +33,7 @@ tags: [adopt, git-push-setup, build-integration, github-actions, node, czech-pro
 area: develop-cicd
 requiredEnvVars:
   - ZCP_E2E_GITHUB_PAT
+gitRepoReset: https://github.com/krls2020/eval2
 retrospective:
   promptStyle: briefing-future-agent
 verification:
