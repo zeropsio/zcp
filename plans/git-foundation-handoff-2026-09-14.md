@@ -358,3 +358,12 @@ prompt, the agent chose `sha=` unprompted. G1 and G6 failed, both instructive:
   `bootstrap-adopt-baseline-commit` renders at adopt's provision step (the repo is initialized when
   provision completes) and the adopt transition message carries one line pointing at
   `repo.provenance: initialized`. `existing` trees are left untouched (G2 guards that).
+
+Farm `gf-guide-2` (candidate a671587f; G1, G2, G6): all three passed. G6's agent SSHed into
+appdev after provision, found the tree uncommitted and `.env` unignored, wrote the `.gitignore`
+rule and made the baseline commit over SSH; G2's agent confirmed pre-existing history and left it
+untouched. Observer finding on both adopt runs (real): the guidance points at `services[].repo`,
+which only `action=status` attaches — the provision-complete response's envelope (`freshEnvelope`)
+carries no `repo` block, so the agents improvised with `git status`. Fix in flight: the adopt
+provision-complete response attaches the same block (`attachRepoStatus`), wording says "this
+response's envelope".
