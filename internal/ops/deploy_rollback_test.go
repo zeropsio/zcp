@@ -41,8 +41,8 @@ func TestReactivateAppVersion_Backup_Reactivates(t *testing.T) {
 	if result.TargetService != "appstage" {
 		t.Errorf("TargetService = %q, want appstage", result.TargetService)
 	}
-	if !strings.Contains(result.Message, "av-old") || !strings.Contains(result.Message, "appstage") || !strings.Contains(result.Message, "no build") {
-		t.Errorf("Message = %q, want it to name the appVersion, target, and no-build", result.Message)
+	if !strings.Contains(result.Message, "av-old") || !strings.Contains(result.Message, "appstage") || !strings.Contains(result.Message, "without a rebuild") {
+		t.Errorf("Message = %q, want it to name the appVersion, target, and without-a-rebuild", result.Message)
 	}
 
 	if len(client.CapturedRedeployAppVersion) != 1 {

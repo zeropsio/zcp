@@ -160,7 +160,7 @@ func ReactivateAppVersion(
 
 	if final.Status == platform.ProcessStatusFinished {
 		result.Status = platform.BuildStatusDeployed
-		result.Message = fmt.Sprintf("re-activated appVersion %s on %s (stack.deploy.backup, no build)", appVersionID, hostname)
+		result.Message = fmt.Sprintf("re-activated appVersion %s on %s without a rebuild (stack.deploy.backup)", appVersionID, hostname)
 		return result, nil
 	}
 
