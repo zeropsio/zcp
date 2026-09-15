@@ -230,6 +230,51 @@ Run the thing.
 	}
 }
 
+// TestParseScenario_GitRepoReset covers the gitRepoReset frontmatter field
+// (docs/spec-eval-farm.md §3.3): a valid github.com URL parses through to
+// Scenario.GitRepoReset verbatim, an absent field defaults to "", and a
+// non-github.com URL is a validate() error naming gitRepoReset.
+func TestParseScenario_GitRepoReset(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		front   string
+		want    string
+		wantErr bool
+	}{
+		{"valid github url", "gitRepoReset: https://github.com/krls2020/eval2\n", "https://github.com/krls2020/eval2", false},
+		{"absent defaults empty", "", "", false},
+		{"non-github host rejected", "gitRepoReset: https://gitlab.com/krls2020/eval2\n", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			scPath := filepath.Join(dir, "scenario.md")
+			content := "---\nid: git-repo-reset-test\ndescription: test\nseed: empty\n" + tt.front + "---\n\nDo the thing.\n"
+			if err := os.WriteFile(scPath, []byte(content), 0o600); err != nil {
+				t.Fatalf("write scenario: %v", err)
+			}
+			sc, err := ParseScenario(scPath)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("ParseScenario: want error, got nil")
+				}
+				if !strings.Contains(err.Error(), "gitRepoReset") {
+					t.Errorf("error %q missing \"gitRepoReset\"", err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseScenario: %v", err)
+			}
+			if sc.GitRepoReset != tt.want {
+				t.Errorf("GitRepoReset: got %q, want %q", sc.GitRepoReset, tt.want)
+			}
+		})
+	}
+}
+
 // TestScenario_RequiredWithoutChecks_RejectedBeforeMutation pins
 // docs/spec-testing-architecture.md §10.1: mode=required with no executable
 // check is a parse error, mode=bogus is rejected, and — driven through the
