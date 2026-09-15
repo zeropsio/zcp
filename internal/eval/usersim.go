@@ -255,11 +255,9 @@ func decodeEvent(line []byte) (parsedEvent, error) {
 				ID        string          `json:"id"`
 				Input     json.RawMessage `json:"input"`
 				ToolUseID string          `json:"tool_use_id"` //nolint:tagliatelle // upstream
-				// tool_result content (nested)
-				Content []struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
-				} `json:"content"`
+				// tool_result content (nested): a block array for MCP tools,
+				// a plain string for Bash — decoded by toolResultText.
+				Content json.RawMessage `json:"content"`
 			} `json:"content"`
 		} `json:"message"`
 	}
@@ -298,17 +296,41 @@ func decodeEvent(line []byte) (parsedEvent, error) {
 		for _, c := range raw.Message.Content {
 			if c.Type == contentTypeToolRes {
 				pe.ToolResultID = c.ToolUseID
-				var rtexts []string
-				for _, inner := range c.Content {
-					if inner.Type == contentTypeText {
-						rtexts = append(rtexts, inner.Text)
-					}
-				}
-				pe.ToolResultText = strings.Join(rtexts, "\n")
+				pe.ToolResultText = toolResultText(c.Content)
 			}
 		}
 	}
 	return pe, nil
+}
+
+// toolResultText flattens a tool_result's content, which claude headless
+// emits either as a plain string (Bash and other built-in tools) or as an
+// array of text blocks (MCP tools). A shape that is neither yields "" — the
+// event itself is still kept, because dropping a user event lets
+// lastAssistantTextAndShape walk the burst back into the previous tool_use
+// message and grade a plain closing question as "working" (rule 7).
+func toolResultText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return ""
+	}
+	var texts []string
+	for _, b := range blocks {
+		if b.Type == contentTypeText {
+			texts = append(texts, b.Text)
+		}
+	}
+	return strings.Join(texts, "\n")
 }
 
 // findLastResult returns the last result event in the transcript, or
