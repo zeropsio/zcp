@@ -16,7 +16,7 @@ import (
 func stubPushProof(t *testing.T, proof LaunchPushProofResult) {
 	t.Helper()
 	prev := launchPushProofReader
-	launchPushProofReader = func(_ context.Context, _ ops.SSHDeployer, _ runtime.Info, _ string, _ string) (LaunchPushProofResult, error) {
+	launchPushProofReader = func(_ context.Context, _ ops.SSHDeployer, _ runtime.Info, _ string, _ string, _ string) (LaunchPushProofResult, error) {
 		return proof, nil
 	}
 	t.Cleanup(func() { launchPushProofReader = prev })

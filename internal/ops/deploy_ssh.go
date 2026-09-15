@@ -264,10 +264,16 @@ func deploySSH(
 	}
 
 	var cmd string
+	var versionName string
 	if sha != "" {
 		cmd = buildSSHCommandSHA(authInfo, target.ID, workingDir, setup, resolvedSHA)
+		versionName = resolvedSHA
 	} else {
-		cmd = buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit, topology.RuntimeClassFor(serviceType))
+		// GF-10: a plain working-tree deploy also passes --version-name
+		// when the source has a reachable HEAD, with a "-dirty" suffix on
+		// top of an uncommitted working tree.
+		versionName = versionNameForHead(resolvedSHA, dirty)
+		cmd = buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit, topology.RuntimeClassFor(serviceType), versionName)
 	}
 
 	output, err := sshDeployer.ExecSSH(ctx, source.Name, cmd)
@@ -287,6 +293,7 @@ func deploySSH(
 				Warnings:          warnings,
 				SHA:               resolvedSHA,
 				Dirty:             dirty,
+				VersionName:       versionName,
 			}, nil
 		}
 		return nil, classifySSHError(err, sourceService, targetService)
@@ -304,6 +311,7 @@ func deploySSH(
 		Warnings:          warnings,
 		SHA:               resolvedSHA,
 		Dirty:             dirty,
+		VersionName:       versionName,
 	}, nil
 }
 
@@ -376,7 +384,26 @@ func deployFromCommitPrep(
 	return resolvedSHA, warnings, tmpDir, cleanup, nil
 }
 
-func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup string, includeGit bool, class topology.RuntimeClass) string {
+// versionNameForHead formats a HeadStatus read into the --version-name
+// value a zcp-driven build passes (GF-10, docs/spec-workflows.md §12.6):
+// the resolved sha, with a "-dirty" suffix when the working tree carries
+// uncommitted changes on top of it — so SearchAppVersions.name is a
+// platform-side breadcrumb independent of local session history. Returns
+// "" when sha is empty (no reachable HEAD — unborn/no repo), so the
+// caller omits the flag entirely rather than passing a meaningless value.
+// Never itself a claim about what was deployed (GF-5) — that discipline
+// lives at the call site / evidence-reading layer.
+func versionNameForHead(sha string, dirty bool) string {
+	if sha == "" {
+		return ""
+	}
+	if dirty {
+		return sha + "-dirty"
+	}
+	return sha
+}
+
+func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup string, includeGit bool, class topology.RuntimeClass, versionName string) string {
 	parts := make([]string, 0, 2)
 
 	// Login to zcli on the remote host.
@@ -410,6 +437,9 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 	// resolution), so it's shell-quoted — a setup name with
 	// whitespace/metacharacters would otherwise splice the compound command.
 	pushArgs := fmt.Sprintf("zcli push --service-id %s", targetServiceID)
+	if versionName != "" {
+		pushArgs += " --version-name " + shellQuote(versionName)
+	}
 	if setup != "" {
 		pushArgs += " --setup " + shellQuote(setup)
 	}

@@ -75,6 +75,15 @@ type DeployResult struct {
 	// until then, or on a failed/timed-out build. The tools layer threads
 	// SHA + AppVersionID into the recorded deploy attempt.
 	AppVersionID string `json:"appVersionId,omitempty"`
+	// VersionName is the --version-name value this deploy actually passed
+	// to zcli push, when it passed one (GF-10, docs/spec-workflows.md
+	// §12.6): SHA for a deploy-from-commit, or SHA with a "-dirty" suffix
+	// for a working-tree deploy whose source has uncommitted changes on
+	// top of HEAD. Empty when no flag was passed (no reachable HEAD). This
+	// is platform-side evidence only — NEVER proof of what was deployed
+	// (GF-5): correlate it with the resulting appVersion before treating
+	// the mapping as source-of-truth.
+	VersionName string `json:"versionName,omitempty"`
 }
 
 // GitPushResult contains the outcome of a git-push deploy operation.

@@ -209,6 +209,7 @@ func buildServiceSnapshots(
 			GitPushState:     m.GitPushState,
 			BuildIntegration: m.BuildIntegration,
 			RemoteURL:        m.RemoteURL,
+			TrackedRef:       m.TrackedRef,
 			FeedsProduction:  prodLaunchRefsRender(m.ProdLaunches),
 			SetupName:        m.PrimarySetupName,
 		}
@@ -263,6 +264,7 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSess
 		// were copied raw, so the atom chain silently never fired.
 		normalizeDeployDims(&snap)
 		snap.RemoteURL = meta.RemoteURL
+		snap.TrackedRef = meta.TrackedRef
 		snap.FeedsProduction = prodLaunchRefsRender(meta.ProdLaunches)
 		if meta.StageHostname != "" && svc.Name == meta.Hostname {
 			snap.StageHostname = meta.StageHostname

@@ -71,7 +71,7 @@ func handleRelease(
 
 	// Freshness evidence — the P-LP-11 read, reused verbatim: the tag must
 	// name exactly the pushed state the production pipeline will build.
-	proof, proofErr := launchPushProofReader(ctx, sshDeployer, rt, meta.Hostname, meta.RemoteURL)
+	proof, proofErr := launchPushProofReader(ctx, sshDeployer, rt, meta.Hostname, meta.RemoteURL, trackedRefOrDefault(meta))
 	if proofErr != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
