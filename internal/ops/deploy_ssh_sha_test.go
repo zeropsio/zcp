@@ -241,21 +241,30 @@ func TestDeploySSH_NoSHA_SourceHasNoRepo_UnaffectedByRecording(t *testing.T) {
 	if result.Dirty {
 		t.Error("result.Dirty = true, want false")
 	}
+	if result.VersionName != "" {
+		t.Errorf("result.VersionName = %q, want empty (no repo ⇒ no reachable HEAD ⇒ no flag, GF-10)", result.VersionName)
+	}
 	if len(ssh.calls) != 2 {
 		t.Fatalf("ssh calls = %d, want 2 (HeadStatus, push): %+v", len(ssh.calls), ssh.calls)
 	}
 	if !strings.Contains(ssh.calls[0].command, "rev-parse --verify HEAD") {
 		t.Errorf("call[0] = %q, want the HeadStatus check", ssh.calls[0].command)
 	}
+	if strings.Contains(ssh.calls[1].command, "--version-name") {
+		t.Errorf("push command must NOT carry --version-name when there is no reachable HEAD: %s", ssh.calls[1].command)
+	}
 }
 
-// TestDeploySSH_NoSHA_SourceHasCleanRepo_RecordsHEADAndKeepsPushByteIdentical
-// pins item 4's positive case: a working-tree deploy (no explicit sha)
-// from a source with a clean git repo records HEAD as SHA, Dirty=false —
-// and the push command itself (args, -g, workspace-state) is BYTE
-// IDENTICAL to what a no-git-repo source would have produced (the only
-// difference is the extra read-only HeadStatus round trip beforehand).
-func TestDeploySSH_NoSHA_SourceHasCleanRepo_RecordsHEADAndKeepsPushByteIdentical(t *testing.T) {
+// TestDeploySSH_NoSHA_SourceHasCleanRepo_RecordsHEADAndPassesVersionName
+// pins item 4's positive case, updated for GF-10 (docs/spec-workflows.md
+// §12.6): a working-tree deploy (no explicit sha) from a source with a
+// clean git repo records HEAD as SHA, Dirty=false — and the push command
+// carries --version-name <HEAD sha> (no "-dirty" suffix, clean status),
+// otherwise identical (args, -g, workspace-state) to what buildSSHCommand
+// produces for that exact versionName (the only difference from a
+// no-git-repo source is the extra read-only HeadStatus round trip
+// beforehand, plus the now-present --version-name flag).
+func TestDeploySSH_NoSHA_SourceHasCleanRepo_RecordsHEADAndPassesVersionName(t *testing.T) {
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-1", Name: "app"},
@@ -277,15 +286,22 @@ func TestDeploySSH_NoSHA_SourceHasCleanRepo_RecordsHEADAndKeepsPushByteIdentical
 	if result.Dirty {
 		t.Error("result.Dirty = true, want false (clean status)")
 	}
+	if result.VersionName != "fullhead1234567" {
+		t.Errorf("result.VersionName = %q, want fullhead1234567 (clean — no -dirty suffix)", result.VersionName)
+	}
 	if len(ssh.calls) != 2 {
 		t.Fatalf("ssh calls = %d, want 2 (HeadStatus, push): %+v", len(ssh.calls), ssh.calls)
 	}
 
 	// The push command must be EXACTLY what buildSSHCommand produces for
-	// a plain self-deploy — recording HEAD must never perturb it.
-	want := buildSSHCommand(authInfo, "svc-1", defaultWorkingDir, "", true, topology.RuntimeUnknown)
+	// a plain self-deploy carrying this versionName — recording HEAD must
+	// never perturb anything else.
+	want := buildSSHCommand(authInfo, "svc-1", defaultWorkingDir, "", true, topology.RuntimeUnknown, "fullhead1234567")
 	if ssh.calls[1].command != want {
 		t.Errorf("push command = %q, want byte-identical to buildSSHCommand's output %q", ssh.calls[1].command, want)
+	}
+	if !strings.Contains(ssh.calls[1].command, "--version-name 'fullhead1234567'") {
+		t.Errorf("push command must carry --version-name 'fullhead1234567': %s", ssh.calls[1].command)
 	}
 }
 
@@ -313,6 +329,9 @@ func TestDeploySSH_NoSHA_SourceHasDirtyRepo_RecordsDirty(t *testing.T) {
 	}
 	if !result.Dirty {
 		t.Error("result.Dirty = false, want true")
+	}
+	if result.VersionName != "fullhead1234567-dirty" {
+		t.Errorf("result.VersionName = %q, want fullhead1234567-dirty (GF-10 dirty suffix)", result.VersionName)
 	}
 }
 

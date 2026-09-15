@@ -227,12 +227,18 @@ func DeployLocal(
 		args = append(args, "--setup", setup)
 	}
 	args = append(args, "--no-git")
-	// --version-name only for an EXPLICIT deploy-from-commit — resolvedSHA
-	// is also set for a plain working-tree deploy whose source has a git
-	// repo (item 4, docs/spec-workflows.md §4.9), and that path's push
-	// args must stay byte-identical to today's.
-	if sha != "" {
-		args = append(args, "--version-name", resolvedSHA)
+	// --version-name (GF-10, docs/spec-workflows.md §12.6): an explicit
+	// deploy-from-commit passes resolvedSHA verbatim (never dirty — it
+	// ships exactly sha's tree); a plain working-tree deploy passes it too
+	// when the source has a reachable HEAD, with a "-dirty" suffix when
+	// the working tree carries uncommitted changes on top. versionName is
+	// "" (flag omitted) only when there is no reachable HEAD at all.
+	versionName := resolvedSHA
+	if sha == "" {
+		versionName = versionNameForHead(resolvedSHA, dirty)
+	}
+	if versionName != "" {
+		args = append(args, "--version-name", versionName)
 	}
 	_, stderr, err = runner.Run(ctx, "zcli", args...)
 	if err != nil {
@@ -258,6 +264,7 @@ func DeployLocal(
 		Warnings:          warnings,
 		SHA:               resolvedSHA,
 		Dirty:             dirty,
+		VersionName:       versionName,
 	}, nil
 }
 

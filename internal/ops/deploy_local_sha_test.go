@@ -137,13 +137,13 @@ func TestDeployLocal_WithUnresolvableSHA_ReturnsInvalidParameterError(t *testing
 	}
 }
 
-// TestDeployLocal_NoSHA_SourceHasCleanRepo_RecordsHEADAndKeepsPushArgsUnchanged
-// pins item 4 (docs/spec-workflows.md §4.9): a working-tree deploy (no
+// TestDeployLocal_VersionNameFromHead pins GF-10 (docs/spec-workflows.md
+// §12.6), updating item 4's clean-repo pin: a working-tree deploy (no
 // explicit sha) whose workingDir is a git repo with a reachable HEAD
-// records that HEAD as SHA, Dirty=false — and the zcli push args (no
-// --version-name) stay exactly what a no-git-repo source would have
-// produced.
-func TestDeployLocal_NoSHA_SourceHasCleanRepo_RecordsHEADAndKeepsPushArgsUnchanged(t *testing.T) {
+// records that HEAD as SHA, Dirty=false — and the zcli push args now DO
+// carry --version-name <HEAD sha> (no "-dirty" suffix, clean status),
+// otherwise unchanged from a no-git-repo source.
+func TestDeployLocal_VersionNameFromHead(t *testing.T) {
 	if testing.Short() {
 		t.Skip("shells out to the real git binary")
 	}
@@ -168,12 +168,15 @@ func TestDeployLocal_NoSHA_SourceHasCleanRepo_RecordsHEADAndKeepsPushArgsUnchang
 	if result.Dirty {
 		t.Error("result.Dirty = true, want false (clean status)")
 	}
+	if result.VersionName != sha {
+		t.Errorf("result.VersionName = %q, want %q (clean — no -dirty suffix)", result.VersionName, sha)
+	}
 	if len(mr.runCalls) != 2 {
 		t.Fatalf("zcli calls = %d, want 2 (login, push)", len(mr.runCalls))
 	}
 	pushArgs := strings.Join(mr.runCalls[1].args, " ")
-	if strings.Contains(pushArgs, "--version-name") {
-		t.Errorf("push args must NOT contain --version-name for a working-tree deploy, got: %s", pushArgs)
+	if !strings.Contains(pushArgs, "--version-name "+sha) {
+		t.Errorf("push args should carry --version-name %s for a clean working-tree deploy, got: %s", sha, pushArgs)
 	}
 	if !strings.Contains(pushArgs, "--working-dir "+dir) {
 		t.Errorf("push args should carry --working-dir %s (the repo itself, no extraction), got: %s", dir, pushArgs)
@@ -181,7 +184,7 @@ func TestDeployLocal_NoSHA_SourceHasCleanRepo_RecordsHEADAndKeepsPushArgsUnchang
 }
 
 // TestDeployLocal_NoSHA_SourceHasDirtyRepo_RecordsDirty pins the
-// Dirty=true case for local mode.
+// Dirty=true case for local mode, and GF-10's "-dirty" version-name suffix.
 func TestDeployLocal_NoSHA_SourceHasDirtyRepo_RecordsDirty(t *testing.T) {
 	if testing.Short() {
 		t.Skip("shells out to the real git binary")
@@ -209,5 +212,12 @@ func TestDeployLocal_NoSHA_SourceHasDirtyRepo_RecordsDirty(t *testing.T) {
 	}
 	if !result.Dirty {
 		t.Error("result.Dirty = false, want true")
+	}
+	if result.VersionName != sha+"-dirty" {
+		t.Errorf("result.VersionName = %q, want %q (GF-10 dirty suffix)", result.VersionName, sha+"-dirty")
+	}
+	pushArgs := strings.Join(mr.runCalls[1].args, " ")
+	if !strings.Contains(pushArgs, "--version-name "+sha+"-dirty") {
+		t.Errorf("push args should carry --version-name %s-dirty, got: %s", sha, pushArgs)
 	}
 }

@@ -570,7 +570,7 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 		APIHost: "api.app-prg1.zerops.io",
 		Region:  "prg1",
 	}
-	cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, topology.RuntimeDynamic)
+	cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, topology.RuntimeDynamic, "")
 
 	wantContains := []string{
 		"zcli login -- 'test-token'",
@@ -607,6 +607,66 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 	}
 }
 
+// TestBuildSSHCommand_VersionNameFromHead pins GF-10 (docs/spec-workflows.md
+// §12.6): buildSSHCommand passes --version-name exactly when the caller
+// supplies a non-empty versionName — clean (bare sha), dirty (sha with a
+// "-dirty" suffix, computed by versionNameForHead at the call site, not
+// here), and unborn/no-repo (empty versionName ⇒ no flag at all).
+func TestBuildSSHCommand_VersionNameFromHead(t *testing.T) {
+	t.Parallel()
+	authInfo := auth.Info{Token: "test-token"}
+
+	t.Run("clean", func(t *testing.T) {
+		t.Parallel()
+		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, topology.RuntimeDynamic, "fullhead1234567")
+		if !containsSubstring(cmd, "--version-name 'fullhead1234567'") {
+			t.Errorf("command missing --version-name 'fullhead1234567':\n%s", cmd)
+		}
+	})
+
+	t.Run("dirty", func(t *testing.T) {
+		t.Parallel()
+		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, topology.RuntimeDynamic, "fullhead1234567-dirty")
+		if !containsSubstring(cmd, "--version-name 'fullhead1234567-dirty'") {
+			t.Errorf("command missing --version-name 'fullhead1234567-dirty':\n%s", cmd)
+		}
+	})
+
+	t.Run("unborn", func(t *testing.T) {
+		t.Parallel()
+		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, topology.RuntimeDynamic, "")
+		if containsSubstring(cmd, "--version-name") {
+			t.Errorf("command must NOT carry --version-name when versionName is empty (no reachable HEAD):\n%s", cmd)
+		}
+	})
+}
+
+// TestVersionNameForHead pins the shared GF-10 formatting rule
+// (docs/spec-workflows.md §12.6) both deploy transports (SSH, local) call:
+// empty sha ⇒ empty (no reachable HEAD, omit the flag); non-empty +
+// !dirty ⇒ bare sha; non-empty + dirty ⇒ sha with a "-dirty" suffix.
+func TestVersionNameForHead(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name  string
+		sha   string
+		dirty bool
+		want  string
+	}{
+		{"unborn/no repo", "", false, ""},
+		{"unborn/no repo, dirty flag ignored", "", true, ""},
+		{"clean", "abc123", false, "abc123"},
+		{"dirty", "abc123", true, "abc123-dirty"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := versionNameForHead(tt.sha, tt.dirty); got != tt.want {
+				t.Errorf("versionNameForHead(%q, %v) = %q, want %q", tt.sha, tt.dirty, got, tt.want)
+			}
+		})
+	}
+}
+
 // extractGitEnsureChain pulls the self-heal chain (cd ... init ...
 // identity ... HEAD guarantee) out of buildSSHCommand's full output —
 // everything up to (not including) " && zcli push". Running only this
@@ -616,7 +676,7 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 func extractGitEnsureChain(t *testing.T, dir string) string {
 	t.Helper()
 	authInfo := auth.Info{Token: "tok"}
-	full := buildSSHCommand(authInfo, "svc-target", dir, "", false, topology.RuntimeDynamic)
+	full := buildSSHCommand(authInfo, "svc-target", dir, "", false, topology.RuntimeDynamic, "")
 	chain, _, found := strings.Cut(full, " && zcli push")
 	if !found {
 		t.Fatalf("command missing `zcli push` anchor, shape drifted:\n%s", full)
