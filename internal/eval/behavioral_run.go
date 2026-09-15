@@ -411,7 +411,13 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	// cleanup defer (when present) is registered BEFORE the bundle defer so
 	// it runs AFTER the bundle (LIFO): bundle → cleanup.
 	if !sc.IsRequired() {
-		defer r.cleanupAfterScenario(ctx, sc)
+		defer r.cleanupAfterScenario(ctx)
+	}
+	// The shared repo reset (FM-67) is independent of project retention: it
+	// runs after the bundle in EVERY mode, so the next cell claiming the
+	// repo never inherits this agent's push.
+	if sc.GitRepoReset != "" {
+		defer r.resetSharedRepoAfterScenario(ctx, sc)
 	}
 	defer func() {
 		r.finishBehavioralCapture(context.WithoutCancel(ctx), suiteID, sc.ID, scenarioPath, outDir, result, returnErr)
@@ -689,21 +695,22 @@ func checkRequiredEnvVars(names []string) string {
 }
 
 // cleanupAfterScenario is the non-required-mode post-scenario defer body:
-// project cleanup, then — when sc.GitRepoReset is set — resetting the
-// shared repo again so the next cell to claim it (this batch or a later
-// one) never inherits whatever the agent pushed. Factored out of
-// RunBehavioralScenario purely to keep that function's maintainability
-// index in check (mirrors prepareWorkOrFail below). Both failures are only
-// logged — the run's own result has already been frozen by the time this
-// runs.
-func (r *Runner) cleanupAfterScenario(ctx context.Context, sc *Scenario) {
+// project cleanup. Factored out of RunBehavioralScenario purely to keep that
+// function's maintainability index in check (mirrors prepareWorkOrFail
+// below). A failure is only logged — the run's own result has already been
+// frozen by the time this runs.
+func (r *Runner) cleanupAfterScenario(ctx context.Context) {
 	if cleanErr := CleanupProject(context.WithoutCancel(ctx), r.client, r.projectID, r.config.WorkDir); cleanErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: post-scenario cleanup: %v\n", cleanErr)
 	}
-	if sc.GitRepoReset == "" {
-		return
-	}
-	if err := resetScenarioGitRepo(context.WithoutCancel(ctx), sc); err != nil {
+}
+
+// resetSharedRepoAfterScenario resets sc.GitRepoReset once the run is over
+// (docs/spec-eval-farm.md §3.3 FM-67), in every verification mode — required
+// mode keeps its project (retention) but must still hand the shared repo
+// back clean. Only logged: the result is already frozen.
+func (r *Runner) resetSharedRepoAfterScenario(ctx context.Context, sc *Scenario) {
+	if err := r.gitRepoReset(context.WithoutCancel(ctx), sc); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: post-scenario git repo reset: %v\n", err)
 	}
 }
@@ -741,7 +748,7 @@ func (r *Runner) prepareBehavioralWork(ctx context.Context, sc *Scenario, suiteI
 		return "", reason
 	}
 	if sc.GitRepoReset != "" {
-		if err := resetScenarioGitRepo(ctx, sc); err != nil {
+		if err := r.gitRepoReset(ctx, sc); err != nil {
 			return "", fmt.Sprintf("git repo %s not clean: %v", sc.GitRepoReset, err)
 		}
 	}

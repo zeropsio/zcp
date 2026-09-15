@@ -790,3 +790,59 @@ func TestRun_GitRepoReset_MissingPAT_BlocksPreparation_AgentNeverSpawned(t *test
 		t.Errorf("Task = %+v, want not-run", result.Task)
 	}
 }
+
+// TestRun_GitRepoReset_RequiredMode_ResetsBeforeSeedAndAfterRun pins
+// docs/spec-eval-farm.md §3.3 FM-67's second half: the shared repo is reset
+// AGAIN once the run is over, in EVERY verification mode. Required mode keeps
+// the run project (retention, §10.2) and so skips project cleanup — the repo
+// reset must not ride on that defer, or the next cell to claim the repo
+// inherits whatever the agent pushed (observed live on gf-cargo-4). The reset
+// is injected so no network reaches GitHub.
+func TestRun_GitRepoReset_RequiredMode_ResetsBeforeSeedAndAfterRun(t *testing.T) { // non-parallel: process environment
+	t.Setenv(GitHubPATEnvVar, "offline-pat")
+
+	h := newBehavioralHarness(t)
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"offline-probe\",\"model\":\"fake-offline\"}'\n" +
+		"printf '%s\\n' '{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Done.\"}]}}'\n" +
+		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"offline-probe\",\"result\":\"Done.\"}'\n"
+	h.writeClaudeScript(t, script)
+	const repoURL = "https://github.com/krls2020/eval2"
+	scenario := "---\n" +
+		"id: git-repo-reset-required-mode\n" +
+		"seed: empty\n" +
+		"gitRepoReset: " + repoURL + "\n" +
+		"retrospective:\n" +
+		"  promptStyle: briefing-future-agent\n" +
+		"verification:\n" +
+		"  mode: required\n" +
+		"  expectedServices:\n" +
+		"    - hostname: app\n" +
+		"      status: [ACTIVE]\n" +
+		"---\n" +
+		"Do the thing.\n"
+	scenarioPath := h.writeScenario(t, scenario)
+	mock := platform.NewMock().WithServicesDirect([]platform.ServiceStack{{ID: "app-1", Name: "app", Status: "ACTIVE"}})
+	cfg := h.config()
+	cfg.Capture = &capture.Connection{CaptureID: "owned", ProxyURL: "http://127.0.0.1:1", SessionDir: t.TempDir()}
+	cfg.CaptureOwned = true
+	h.requiredBinding(t, &cfg)
+	runner := NewRunner(cfg, nil, &freshThenRealClient{Client: mock}, "offline-project")
+
+	var resets []string
+	runner.gitRepoReset = func(_ context.Context, sc *Scenario) error {
+		resets = append(resets, sc.GitRepoReset)
+		return nil
+	}
+
+	result, err := runner.RunBehavioralScenario(context.Background(), scenarioPath, "suite")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Preparation != "" || result.Error != "" {
+		t.Fatalf("Preparation = %q, Error = %q, want a clean run", result.Preparation, result.Error)
+	}
+	if len(resets) != 2 || resets[0] != repoURL || resets[1] != repoURL {
+		t.Fatalf("git repo resets = %v, want exactly two (before seed, after run) for %s", resets, repoURL)
+	}
+}

@@ -62,6 +62,10 @@ type Runner struct {
 	httpDoer        ops.HTTPDoer
 	userSimOverride UserSimRunner
 	strictMCPConfig bool
+	// gitRepoReset resets a scenario's shared gitRepoReset repository
+	// (docs/spec-eval-farm.md §3.3 FM-67); resetScenarioGitRepo in
+	// production, injected by tests so no network reaches GitHub.
+	gitRepoReset func(context.Context, *Scenario) error
 }
 
 // NewRunner creates a new eval runner.
@@ -97,7 +101,8 @@ func NewRunner(config RunnerConfig, store *knowledge.Store, client platform.Clie
 		projectID: projectID,
 		// 10s is enough for a single GET against a freshly-deployed subdomain;
 		// the scenario-level timeout already bounds the full run.
-		httpDoer: &http.Client{Timeout: 10 * time.Second},
+		httpDoer:     &http.Client{Timeout: 10 * time.Second},
+		gitRepoReset: resetScenarioGitRepo,
 	}
 }
 

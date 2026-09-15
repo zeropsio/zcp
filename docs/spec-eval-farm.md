@@ -561,7 +561,7 @@ A scenario may also carry `gitRepoReset: https://github.com/<owner>/<repo>`
 (§4.1): the runner resets that repo to a clean single-commit baseline (a
 parentless commit containing only README.md, force-replacing
 `refs/heads/main`, every other branch and every tag deleted) via the GitHub
-REST Git Data API before seed and again in cleanup — a reset failure before
+REST Git Data API before seed and again once the run is over, in EVERY verification mode (required mode keeps its project under retention but still hands the repo back clean; `TestRun_GitRepoReset_RequiredMode_ResetsBeforeSeedAndAfterRun`) — a reset failure before
 seed is `blocked: preparation` (the repo was not left clean by whatever ran
 before), a cleanup failure is logged only. Two scheduled runs whose
 scenarios declare the same `gitRepoReset` value are never kept alive at
