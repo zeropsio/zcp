@@ -102,7 +102,7 @@ func idleGoldenScenarios() []goldenScenario {
 	}
 }
 
-// bootstrapGoldenScenarios returns the 5 scenarios pinning atoms that
+// bootstrapGoldenScenarios returns the 6 scenarios pinning atoms that
 // fire across the recipe / classic / adopt routes during PhaseBootstrap
 // Active.
 func bootstrapGoldenScenarios() []goldenScenario {
@@ -189,6 +189,27 @@ func bootstrapGoldenScenarios() []goldenScenario {
 						TypeVersion:  "nodejs@22",
 						RuntimeClass: topology.RuntimeDynamic,
 						Status:       "ACTIVE",
+					},
+				},
+			},
+		},
+		{
+			id:          "bootstrap/adopt/provision",
+			description: "Adopt route, provision step — complete step=provision just returned; agent checks the adopted runtime's repo state before reporting adopt done.",
+			envelope: StateEnvelope{
+				Phase:       PhaseBootstrapActive,
+				Environment: EnvContainer,
+				Bootstrap: &BootstrapSessionSummary{
+					Route: BootstrapRouteAdopt,
+					Step:  StepProvision,
+				},
+				Services: []ServiceSnapshot{
+					{
+						Hostname:     "appdev",
+						TypeVersion:  "nodejs@22",
+						RuntimeClass: topology.RuntimeDynamic,
+						Status:       "ACTIVE",
+						Bootstrapped: true,
 					},
 				},
 			},

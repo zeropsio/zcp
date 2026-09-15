@@ -6,13 +6,14 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 
 | Atom ID | Scenario count | Scenarios |
 |---|---|---|
+| `bootstrap-adopt-baseline-commit` | 1 | bootstrap/adopt/provision |
 | `bootstrap-adopt-discover` | 1 | bootstrap/adopt/discover-existing-pair |
 | `bootstrap-classic-plan-dynamic` | 1 | bootstrap/classic/discover-standard-dynamic |
 | `bootstrap-classic-plan-static` | 1 | bootstrap/classic/discover-standard-dynamic |
 | `bootstrap-close` | 1 | bootstrap/recipe/close |
 | `bootstrap-close-baseline-commit` | 1 | bootstrap/recipe/close |
 | `bootstrap-discover-local` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
-| `bootstrap-env-var-discovery` | 1 | bootstrap/classic/provision-local |
+| `bootstrap-env-var-discovery` | 2 | bootstrap/adopt/provision, bootstrap/classic/provision-local |
 | `bootstrap-intro` | 2 | bootstrap/adopt/discover-existing-pair, bootstrap/classic/discover-standard-dynamic |
 | `bootstrap-mode-prompt` | 1 | bootstrap/classic/discover-standard-dynamic |
 | `bootstrap-provision-local` | 1 | bootstrap/classic/provision-local |

@@ -1051,6 +1051,11 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 			Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteAdopt, Step: StepDiscover},
 			Services:  []ServiceSnapshot{{Hostname: "app", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Bootstrapped: true}},
 		}},
+		{"bootstrap/adopt/provision", StateEnvelope{
+			Phase: PhaseBootstrapActive, Environment: EnvContainer,
+			Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteAdopt, Step: StepProvision},
+			Services:  []ServiceSnapshot{{Hostname: "app", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Bootstrapped: true}},
+		}},
 		{"bootstrap/classic/provision/container", StateEnvelope{
 			Phase: PhaseBootstrapActive, Environment: EnvContainer,
 			Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepProvision},
@@ -1309,7 +1314,8 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		// envelope above. The rare-type cheatsheets (clickhouse-kafka /
 		// storage / search) were deleted as redundant with themes/services.md.
 		"develop-env-cheatsheet-sql",
-		// bootstrap-* (16 atoms)
+		// bootstrap-* (17 atoms)
+		"bootstrap-adopt-baseline-commit",
 		"bootstrap-adopt-discover",
 		"bootstrap-classic-plan-dynamic",
 		"bootstrap-classic-plan-static",
