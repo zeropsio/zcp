@@ -728,6 +728,53 @@ func TestFarmRun_SetGate_ReadsDigestBoundListFromBucket(t *testing.T) {
 	}
 }
 
+// TestFarmRun_ResolveScenarios_CarriesRequiredEnvVarsAndGitRepoReset pins
+// that resolveScenarios threads a scenario's requiredEnvVars and
+// gitRepoReset frontmatter through to farm.ScenarioRun (docs/spec-eval-farm.md
+// §2.4/§3.3) — the controller needs both to decide the PAT injection/block
+// and the shared-repo serialization lane, and the farm host has no
+// checkout to re-derive them from later.
+func TestFarmRun_ResolveScenarios_CarriesRequiredEnvVarsAndGitRepoReset(t *testing.T) {
+	s3Srv, s3Fake := newStatusFakeS3ServerWithFake(t)
+	t.Setenv("ZCP_FARM_S3_URL", s3Srv.URL)
+	t.Setenv("ZCP_FARM_S3_BUCKET", "zcp-farm")
+	t.Setenv("ZCP_FARM_S3_KEY", "sink-key")
+	t.Setenv("ZCP_FARM_S3_SECRET", "sink-secret")
+
+	scenarioMD := []byte(`---
+id: scenario-git-reset
+area: bootstrap
+seed: empty
+requiredEnvVars: [ZCP_E2E_GITHUB_PAT]
+gitRepoReset: https://github.com/krls2020/eval2
+---
+Test prompt body.
+`)
+	digest := seedScenarioTree(t, s3Fake, map[string][]byte{
+		".farm-gate-set.txt":    []byte("scenario-git-reset\n"),
+		"scenario-git-reset.md": scenarioMD,
+	})
+
+	cfg, err := farm.ConfigFromEnv()
+	if err != nil {
+		t.Fatalf("ConfigFromEnv: %v", err)
+	}
+	scenarios, err := resolveScenarios(t.Context(), farm.NewSinkClient(cfg), "test-batch", digest, "gate")
+	if err != nil {
+		t.Fatalf("resolveScenarios: %v", err)
+	}
+	if len(scenarios) != 1 {
+		t.Fatalf("scenarios = %+v, want 1 entry", scenarios)
+	}
+	got := scenarios[0]
+	if len(got.RequiredEnvVars) != 1 || got.RequiredEnvVars[0] != "ZCP_E2E_GITHUB_PAT" {
+		t.Errorf("RequiredEnvVars = %v, want [ZCP_E2E_GITHUB_PAT]", got.RequiredEnvVars)
+	}
+	if got.GitRepoReset != "https://github.com/krls2020/eval2" {
+		t.Errorf("GitRepoReset = %q, want https://github.com/krls2020/eval2", got.GitRepoReset)
+	}
+}
+
 func TestFarmRun_SetGate_OverwrittenBoundObjectFailsClosed(t *testing.T) {
 	s3Srv, s3Fake := newStatusFakeS3ServerWithFake(t)
 	t.Setenv("ZCP_FARM_S3_URL", s3Srv.URL)

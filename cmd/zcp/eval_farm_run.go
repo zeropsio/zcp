@@ -152,6 +152,10 @@ func runFarmRun(args []string, envr *farm.EnvResolver) int {
 		RunBudget: runBudget,
 		Note:      flags.note, RunBudgetSec: int(runBudget.Seconds()), CandidateInfo: candidateInfo,
 		MaxConcurrent: maxConcurrent,
+		// §2.4/§3.3: read from this process's own environment only — the
+		// operator sources it from ~/.zerops-dev/agent-creds/farm.env, never
+		// resolved from the farm service env the way ZCP_FARM_* keys are.
+		GitHubPAT: os.Getenv(eval.GitHubPATEnvVar),
 	}
 	results, err := farm.RunBatch(ctx, client, sink, opts)
 	if err != nil {
@@ -352,11 +356,18 @@ func resolveScenarios(ctx context.Context, sink *farm.SinkClient, batch, scenari
 		if !farm.ValidScenarioID(id) {
 			return nil, fmt.Errorf("invalid scenario %q in set %q", id, set)
 		}
-		launch, production, err := resolveScenarioOwnership(scenariosDir, id, batch)
+		sc, err := eval.ParseScenario(filepath.Join(scenariosDir, id+".md"))
+		if err != nil {
+			return nil, fmt.Errorf("resolve scenario %s: %w", id, err)
+		}
+		launch, production, err := resolveScenarioOwnership(sc, id, batch)
 		if err != nil {
 			return nil, err
 		}
-		scenarios = append(scenarios, farm.ScenarioRun{ID: id, Launch: launch, ProductionProjectName: production})
+		scenarios = append(scenarios, farm.ScenarioRun{
+			ID: id, Launch: launch, ProductionProjectName: production,
+			RequiredEnvVars: sc.RequiredEnvVars, GitRepoReset: sc.GitRepoReset,
+		})
 	}
 	return scenarios, nil
 }
@@ -456,16 +467,13 @@ func listAllScenarioIDsFromDir(scenariosDir string) ([]string, error) {
 	return ids, nil
 }
 
-// resolveScenarioOwnership reads and parses one scenario from the verified
-// local snapshot exactly once.
-// Its area controls launch-token handling. Only a structured launchShape
-// target matching the canonical run-specific farm name grants the controller
-// ownership for automatic deletion.
-func resolveScenarioOwnership(scenariosDir, id, batch string) (bool, string, error) {
-	sc, err := eval.ParseScenario(filepath.Join(scenariosDir, id+".md"))
-	if err != nil {
-		return false, "", fmt.Errorf("resolve scenario %s: %w", id, err)
-	}
+// resolveScenarioOwnership derives launch-token/production-target ownership
+// from sc, one scenario already parsed from the verified local snapshot
+// (resolveScenarios parses each scenario exactly once and reuses it here for
+// RequiredEnvVars/GitRepoReset too). Area controls launch-token handling.
+// Only a structured launchShape target matching the canonical run-specific
+// farm name grants the controller ownership for automatic deletion.
+func resolveScenarioOwnership(sc *eval.Scenario, id, batch string) (bool, string, error) {
 	launch := strings.HasPrefix(sc.Area, "launch")
 	if sc.Verification == nil || sc.Verification.LaunchShape == nil || sc.Verification.LaunchShape.ProdProject == "" {
 		return launch, "", nil
