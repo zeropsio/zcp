@@ -77,12 +77,12 @@ Complete this step before starting develop.
 ---
 
 === bootstrap-close-baseline-commit ===
-### Commit what bootstrap or adopt found before calling it done
+### Commit what bootstrap found before calling it done
 
-Bootstrap and adopt bring runtimes online; neither stages nor commits a
-single file that already sits on a dev runtime's working tree. Before
-treating the session as finished, check every dev runtime that has files
-on disk — one per hostname if more than one was provisioned or adopted:
+Bootstrap brings runtimes online; it never stages or commits a single
+file that already sits on a dev runtime's working tree. Before treating
+the session as finished, check every dev runtime that has files on disk
+— one per hostname if more than one was provisioned:
 
 1. Write a `.gitignore` for the stack: dependency directories, build
    output, local caches, and `.env`/`.env.*` files all belong in it.
