@@ -256,7 +256,7 @@ func validateLaunchSourceControl(
 	// push the code." Both run via the same launchPushProofReader hook
 	// so tests can stub the SSH/local exec without a real container.
 	if len(check.FailedChecks) == 0 {
-		proof, proofErr := launchPushProofReader(ctx, sshDeployer, rt, pushHost, check.MetaRemoteURL, trackedRefOrDefault(meta))
+		proof, proofErr := launchPushProofReader(ctx, sshDeployer, rt, pushHost, check.MetaRemoteURL, launchPushProofRef(meta))
 		switch {
 		case proofErr != nil:
 			// Unable to READ the push proof — transport, not state.
@@ -396,12 +396,32 @@ type LaunchPushProofResult struct {
 	RemoteHead string
 }
 
+// launchPushProofRef is the single owner of what ref the P3 push-proof
+// `git ls-remote` compares against (docs/spec-workflows.md §12.6 GF-7,
+// amended): a RECORDED meta.TrackedRef is never softened — the compare
+// stays strict against that exact ref. A meta with NO recorded ref
+// (every ServiceMeta written before GF-7, since TrackedRef only starts
+// getting written by git-push-setup's confirm step going forward) falls
+// back to the literal "HEAD" — the pre-GF-7 behavior of comparing
+// against whatever the remote considers its default branch via `git
+// ls-remote <url> HEAD`. This is deliberately NOT trackedRefOrDefault's
+// "main" fallback: "main" assumes a specific branch name, which breaks
+// every pre-existing meta whose remote's actual default is something
+// else (e.g. "master") and who pushed there successfully before GF-7 —
+// turning a passing gate into a false head-not-pushed block. Nil-safe.
+func launchPushProofRef(meta *workflow.ServiceMeta) string {
+	if meta != nil && meta.TrackedRef != "" {
+		return meta.TrackedRef
+	}
+	return "HEAD"
+}
+
 // readLaunchPushProof is the default env-aware push-proof reader.
 // Container mode SSH-execs `git status` + `git rev-parse HEAD` + `git
 // ls-remote` against the push hostname's /var/www; local mode exec's
 // the same commands against the current working directory. trackedRef
 // (GF-7) is the ref the ls-remote step compares against — callers resolve
-// it via trackedRefOrDefault before calling.
+// it via launchPushProofRef before calling.
 func readLaunchPushProof(ctx context.Context, sshDeployer ops.SSHDeployer, rt runtime.Info, pushHostname string, remoteURL string, trackedRef string) (LaunchPushProofResult, error) {
 	if rt.InContainer {
 		if sshDeployer == nil {
