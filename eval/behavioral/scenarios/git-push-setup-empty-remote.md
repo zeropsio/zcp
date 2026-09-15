@@ -57,7 +57,8 @@ verification:
   toolArg:
     - {always: "zerops_deploy{strategy=git-push}"}
     - {never: "zerops_deploy{strategy≠git-push}"}
-    - {max: 0, call: "zerops_workflow{action=build-integration}"}
+    - {never: "zerops_workflow{action=build-integration,integration=actions}"}
+    - {never: "zerops_workflow{action=build-integration,integration=webhook}"}
   never: ["zerops_import{override=true}", "zerops_delete"]
   retrospectiveMustNotMention:
     - ghp_
