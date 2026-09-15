@@ -251,3 +251,31 @@ review of the landing: 4 FIX-FIRST + 6 NOTES, all but one acted on (8.4 item 6).
    (`HeadStatus` + `LastDeployOnRecord`) could be one script.
 7. Mate commit/push through zcp (`spec-mate.md §6.3`) — z3 fork.
 
+
+## 9. Day 3 (2026-09-15) — supersedes §8.4 where they differ
+
+Landed on `feat/git-foundation` (`8a79c1d9`..`71966fe6`), every slice farm-proven on the final
+candidate (batch `gf-cargo-7`, PAT cell `gf-cargo-8`; all seven cells passed):
+
+- Tag ledger removed (GF-9); adopt records `provenance` only; user exclude lines preserved.
+- Repo-cargo preservation proven: `preseed/lib-repo-cargo.sh` plants branch, user commit, tag,
+  custom ref, dirty + untracked file, exclude line, identity, foreign origin; G2 adopt, G3
+  deploy-from-commit, G4 self-deploy assert every item intact; G6 `repo-adopt-snapshot-no-git`
+  proves the snapshot case (`.env` on disk, never committed). Matrix rows G1/G3/G4 → gate, G6 added.
+- Rollback candidates: `zerops_events serviceHostname=<h>` lists appVersions (active/backup);
+  status envelope carries `rollback: {active, backup[]}`; the "does not belong" error points
+  there; result says "without a rebuild". G5 passed twice with no fake-id probe.
+- GF-7 `ServiceMeta.TrackedRef` recorded at git-push-setup, read by push default, Actions
+  template, launch gate. GF-10 `--version-name <sha>[-dirty]` on every zcp-driven deploy and
+  `$GITHUB_SHA` in the Actions template; the §10 launch-production template still lacks it (OPEN).
+- GF-11 (new): a rejected non-fast-forward push is classified (`GIT_PUSH_NON_FAST_FORWARD`,
+  remoteAhead/localAhead/unrelated, options rebase | merge | replace-remote), git-push-setup
+  reports `remote.state`; zcp never forces or merges. Live: the agent asked the user, chose
+  nothing on its own (`gf-cargo-7`), and completed once the persona answered (`gf-cargo-8`).
+- Farm: `ZCP_E2E_GITHUB_PAT` pass-through from the controller env to runs that declare it;
+  `gitRepoReset:` resets `krls2020/eval2` to an orphan README before seed and after the run in
+  every mode (FM-67); one lane per repo; PAT redacted from bundles. Trap: the evaluator must be
+  re-pushed when eval code changes (`farm push --evaluator`), the candidate alone carries nothing.
+
+Open: launch-production template `--version-name`; `versionName` on rollback candidates (ES
+`SearchAppVersions.name`, not on the direct DTO); Gitea recipe + placement; mate commit/push.
