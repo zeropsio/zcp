@@ -2,7 +2,7 @@
 id: develop-self-deploy-reproducibility
 priority: 2
 phases: [develop-active]
-modes: [dev, simple]
+modes: [dev, simple, standard]
 environments: [container]
 title: "Self-deploy reproducibility — git is the only persistence"
 references-fields: [ops.DeployResult.NotCarried, ops.DeployResult.EnvFiles, ops.DeployResult.RepoState]

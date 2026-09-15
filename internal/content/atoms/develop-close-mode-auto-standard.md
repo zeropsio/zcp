@@ -10,6 +10,7 @@ gitPushStates: [unconfigured, broken]
 environments: [container]
 multiService: aggregate
 title: "Close task — close-mode=auto, standard mode"
+references-fields: [ops.DeployResult.SHA, ops.DeployResult.Dirty, ops.DeployResult.AppVersionID, workflow.ServiceSnapshot.Rollback]
 references-atoms: [develop-auto-close-semantics, develop-dynamic-runtime-start-container]
 ---
 
@@ -28,3 +29,15 @@ zerops_verify serviceHostname="{stage-hostname}"}
 
 <!-- axis-o-keep: conditional inspection — phrase is "If the dev server is already running" inside an `action=status`-then-decide flow, not a state assertion -->
 Cross-deploy builds the dev source on stage (dev side unchanged); stage has a real `run.start` + `healthCheck`, so it auto-starts (no `zerops_dev_server` on the stage side). The work session closes once both halves have a successful deploy + passing verify (`closeReason=auto-complete`). If the dev server is already running after a code-only change, run `action=status` first; if `running: true`, skip `action=start`.
+
+Commit the dev half over SSH after it verifies and before the cross-deploy
+— not the mount — so the stage receives a commit: the response then
+carries `sha` with `dirty: false` and an `appVersionId`. Cross-deploying
+uncommitted work still succeeds, but the response marks `dirty: true`
+and that stage build isn't reproducible from git alone. To ship an exact
+or older commit without touching the dev working tree, add
+`sha="<commit>"` to the cross-deploy — never on the dev self-deploy
+above. To roll the stage back without a rebuild, re-activate a recorded
+build instead: `zerops_deploy targetService="{stage-hostname}"
+appVersion="<id>"`, with candidate ids from the status envelope's
+`rollback` block or `zerops_events serviceHostname="{stage-hostname}"`.

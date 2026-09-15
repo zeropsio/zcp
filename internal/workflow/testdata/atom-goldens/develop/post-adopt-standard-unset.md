@@ -1,6 +1,6 @@
 ---
 id: develop/post-adopt-standard-unset
-atomIds: [develop-intro, develop-strategy-review, develop-change-drives-deploy, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-standard-unset-iterate, develop-standard-unset-promote-stage, develop-auto-close-semantics, develop-verify-matrix]
+atomIds: [develop-intro, develop-strategy-review, develop-change-drives-deploy, develop-self-deploy-reproducibility, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-standard-unset-iterate, develop-standard-unset-promote-stage, develop-auto-close-semantics, develop-verify-matrix]
 description: "Adopted standard pair, both halves running, close-mode never picked."
 ---
 === develop-intro ===
@@ -44,6 +44,38 @@ Iteration cadence is mode-specific:
 
 Once close-mode is `auto` and every resolved deploy
 target is deployed + verified, the work session auto-closes.
+
+---
+
+=== develop-self-deploy-reproducibility ===
+### The dev container is disposable; the repository isn't
+
+A self-deploy replaces the dev container with a fresh one. Nothing on the
+old dev container's disk survives that swap except what git carries with
+it — project envs (auto-injected as OS env vars, never a file) and
+managed-service data (Postgres, object storage, …) are the other two
+persistence mechanisms, and neither lives on the dev container's
+filesystem either. A file that exists only on today's dev container — an
+untracked script, a local SQLite DB, a `.env` — is gone the moment the new
+container replaces it.
+
+`zerops_deploy`'s response on a self-deploy carries this as data, not a
+guess: `notCarried` names the git-ignored paths (count, bytes, a sample)
+that will not exist in the new container, and `envFiles` lists any
+`.env`/`.env.*` files found regardless of ignore state — a config file the
+agent should move into `zerops_env`, not carry forward as a workaround.
+`repoState` reports whether the source is clean, dirty, mid-merge, mid-
+rebase, or on a detached HEAD at deploy time.
+
+### After bootstrap or adopt, commit before changing anything
+
+Once a runtime's working tree is ready to iterate on — right after
+bootstrap writes the scaffold, or right after adopt inherits an existing
+one — write a `.gitignore` for the stack (build output, dependency
+directories, local env files) and make a baseline commit before making any
+other change. Every self-deploy after that point is then reproducible from
+that commit forward; skipping this step means the first self-deploy is the
+first moment anyone discovers what wasn't tracked.
 
 ---
 
@@ -124,6 +156,18 @@ zerops_verify serviceHostname="appstage"
 ```
 
 Cross-deploy builds the dev source on stage (dev side unchanged); stage runs its own `run.start`. Independent of close-mode — close-mode picks the per-mode iteration cadence on the dev side, not whether the stage half stays current. Standard-pair auto-close requires both halves to carry a successful deploy + passing verify and `closeDeployMode = auto` (`manual` keeps the session open); while `unset`, the session stays open until you pick a close-mode.
+
+Commit the dev half over SSH before cross-deploying — not the mount —
+so the stage receives a commit: the response then carries `sha` with
+`dirty: false` and an `appVersionId`. Cross-deploying uncommitted work
+still succeeds, but the response marks `dirty: true` and that stage
+build isn't reproducible from git alone. To ship an exact or older
+commit without touching the dev working tree, add `sha="<commit>"` to
+the cross-deploy — never on a self-deploy. To roll the stage back
+without a rebuild, re-activate a recorded build instead: `zerops_deploy
+targetService="appstage" appVersion="<id>"`, with candidate ids
+from the status envelope's `rollback` block or `zerops_events
+serviceHostname="appstage"`.
 
 ---
 

@@ -1309,11 +1309,12 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		// envelope above. The rare-type cheatsheets (clickhouse-kafka /
 		// storage / search) were deleted as redundant with themes/services.md.
 		"develop-env-cheatsheet-sql",
-		// bootstrap-* (15 atoms)
+		// bootstrap-* (16 atoms)
 		"bootstrap-adopt-discover",
 		"bootstrap-classic-plan-dynamic",
 		"bootstrap-classic-plan-static",
 		"bootstrap-close",
+		"bootstrap-close-baseline-commit",
 		"bootstrap-discover-local",
 		"bootstrap-env-var-discovery",
 		"bootstrap-mode-prompt",
