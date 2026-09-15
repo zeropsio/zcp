@@ -8,6 +8,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -126,5 +127,35 @@ func bootstrapResult(
 	return jsonResult(bootstrapResponse{
 		BootstrapResponse: resp,
 		Envelope:          freshEnvelope(ctx, engine.StateDir(), client, projectID, rt),
+	})
+}
+
+// bootstrapResultWithRepoStatus is bootstrapResult's twin for the one call
+// site that must carry services[].repo in the SAME response that promises
+// the agent to check it: the adopt route's provision-complete response
+// (buildAdoptionTransitionMessage, the bootstrap-adopt-baseline-commit atom
+// — docs/spec-workflows.md §8 GLC-7). It attaches a live repo read via
+// attachRepoStatus to the freshly computed envelope's Services before
+// embedding it — the same tools-layer helper handleLifecycleStatus uses for
+// action="status" — so the promise and the payload can never describe
+// different moments. Every other bootstrap response routes through
+// bootstrapResult and stays byte-identical; only this call site pays the
+// per-service SSH round trips (bounded, concurrent — attachRepoStatusConcurrency).
+func bootstrapResultWithRepoStatus(
+	ctx context.Context,
+	resp *workflow.BootstrapResponse,
+	engine *workflow.Engine,
+	client platform.Client,
+	projectID string,
+	rt runtime.Info,
+	sshDeployer ops.SSHDeployer,
+) *mcp.CallToolResult {
+	envelope := freshEnvelope(ctx, engine.StateDir(), client, projectID, rt)
+	if envelope != nil {
+		attachRepoStatus(ctx, envelope.Services, sshDeployer, rt, engine.StateDir())
+	}
+	return jsonResult(bootstrapResponse{
+		BootstrapResponse: resp,
+		Envelope:          envelope,
 	})
 }
