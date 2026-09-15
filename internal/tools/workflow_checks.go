@@ -92,13 +92,12 @@ func checkRepoInitAt(ctx context.Context, ssh ops.SSHDeployer, rt runtime.Info, 
 			continue
 		}
 		name := hostname + "_repo"
-		class := topology.RuntimeClassFor(target.Runtime.Type)
 
 		if rt.InContainer {
 			if ssh == nil {
 				continue
 			}
-			if err := ops.InitServiceGit(ctx, ssh, hostname, class); err != nil {
+			if err := ops.InitServiceGit(ctx, ssh, hostname); err != nil {
 				checks = append(checks, workflow.StepCheck{
 					Name:   name,
 					Status: statusFail,

@@ -41,7 +41,6 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/topology"
 )
 
 func TestE2E_GitDeliveryPrimitives(t *testing.T) {
@@ -91,7 +90,7 @@ func TestE2E_GitDeliveryPrimitives(t *testing.T) {
 	// no longer exists.
 
 	t.Run("reconstruction no-ops on present repo", func(t *testing.T) {
-		if _, err := ssh.ExecSSH(ctx, hostname, ops.BuildGitReconstructCommand("/var/www", remote, ops.DeployGitIdentity, topology.RuntimeUnknown)); err != nil {
+		if _, err := ssh.ExecSSH(ctx, hostname, ops.BuildGitReconstructCommand("/var/www", remote, ops.DeployGitIdentity)); err != nil {
 			t.Fatalf("reconstruction guard run failed: %v", err)
 		}
 		headAfter, err := ssh.ExecSSH(ctx, hostname, "cd /var/www && git rev-parse HEAD 2>/dev/null || echo NONE")

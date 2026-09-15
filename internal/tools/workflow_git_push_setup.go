@@ -634,7 +634,7 @@ func confirmGitPushSetupContainer(
 			}
 		}
 
-		originCmd := ops.BuildGitOriginSyncCommand("/var/www", input.RemoteURL, topology.RuntimeUnknown)
+		originCmd := ops.BuildGitOriginSyncCommand("/var/www", input.RemoteURL)
 		if _, originErr := sshDeployer.ExecSSH(ctx, pushHost, originCmd); originErr != nil {
 			// Same stderr swallow lived here (B6-N1) — surface it too, else
 			// shipping the probe fix just re-creates the bug one branch lower.
@@ -947,7 +947,7 @@ func gitPushSetupPreProbeSelfHeal(ctx context.Context, sshDeployer ops.SSHDeploy
 		// origin sync, no meta write). That local repair is unconditional
 		// and best-effort; it happens even when the probe that follows
 		// subsequently fails.
-		if _, ensureErr := sshDeployer.ExecSSH(ctx, pushHost, ops.GitEnsureRepoHeadCommand("/var/www", topology.RuntimeUnknown)); ensureErr != nil {
+		if _, ensureErr := sshDeployer.ExecSSH(ctx, pushHost, ops.GitEnsureRepoHeadCommand("/var/www")); ensureErr != nil {
 			return needsReconstruct, convertError(platform.NewPlatformError(
 				platform.ErrSSHDeployFailed,
 				withSSHStderr(fmt.Sprintf("git-push-setup: could not ensure a commit-ready repo on %q before probing", pushHost), ensureErr),
@@ -1101,7 +1101,7 @@ func gitPushSessionAuthVerify(ctx context.Context, sshDeployer ops.SSHDeployer, 
 // during the reconstruction's init — a GitHub-derived identity when the
 // caller has one (F3), or ops.DeployGitIdentity as the robot fallback.
 func gitPushReconstruct(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost, remoteURL string, identity ops.GitIdentity) (string, error) {
-	reconCmd := ops.BuildGitReconstructCommand("/var/www", remoteURL, identity, topology.RuntimeUnknown)
+	reconCmd := ops.BuildGitReconstructCommand("/var/www", remoteURL, identity)
 	if _, reconErr := sshDeployer.ExecSSH(ctx, pushHost, reconCmd); reconErr != nil {
 		return "", reconErr
 	}

@@ -10,8 +10,8 @@ import "testing"
 // envelope's repo.provenance field) — a value drifting silently would
 // break both without a compile error.
 func TestRepoProvenance_Values(t *testing.T) {
-	if RepoProvenanceSnapshot != "snapshot" {
-		t.Errorf("RepoProvenanceSnapshot = %q, want %q", RepoProvenanceSnapshot, "snapshot")
+	if RepoProvenanceInitialized != "initialized" {
+		t.Errorf("RepoProvenanceInitialized = %q, want %q", RepoProvenanceInitialized, "initialized")
 	}
 	if RepoProvenanceExisting != "existing" {
 		t.Errorf("RepoProvenanceExisting = %q, want %q", RepoProvenanceExisting, "existing")

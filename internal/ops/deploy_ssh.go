@@ -11,7 +11,6 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/topology"
 )
 
 const defaultWorkingDir = "/var/www"
@@ -273,7 +272,7 @@ func deploySSH(
 		// when the source has a reachable HEAD, with a "-dirty" suffix on
 		// top of an uncommitted working tree.
 		versionName = versionNameForHead(resolvedSHA, dirty)
-		cmd = buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit, topology.RuntimeClassFor(serviceType), versionName)
+		cmd = buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit, versionName)
 	}
 
 	output, err := sshDeployer.ExecSSH(ctx, source.Name, cmd)
@@ -403,7 +402,7 @@ func versionNameForHead(sha string, dirty bool) string {
 	return sha
 }
 
-func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup string, includeGit bool, class topology.RuntimeClass, versionName string) string {
+func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup string, includeGit bool, versionName string) string {
 	parts := make([]string, 0, 2)
 
 	// Login to zcli on the remote host.
@@ -430,7 +429,7 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 	// No `git add` / `git commit` here — zcli ships the tree via an
 	// ephemeral stash-archive (no ref moves, no history written); ZCP never
 	// touches the user's repo history on a direct deploy.
-	gitEnsure := GitEnsureRepoHeadCommand(workingDir, class)
+	gitEnsure := GitEnsureRepoHeadCommand(workingDir)
 
 	// Push. setup is an agent-supplied tool input (and recipe-session
 	// deploys reach here with meta=nil, bypassing the tools-layer setup

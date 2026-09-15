@@ -463,12 +463,11 @@ func autoMountTargets(ctx context.Context, client platform.Client, projectID str
 		// on demand, so a transient SSH failure here doesn't block any
 		// downstream deploy.
 		if sshDeployer != nil {
-			class := topology.RuntimeClassFor(target.Runtime.Type)
-			if initErr := ops.InitServiceGit(ctx, sshDeployer, hostname, class); initErr != nil {
+			if initErr := ops.InitServiceGit(ctx, sshDeployer, hostname); initErr != nil {
 				fmt.Fprintf(os.Stderr, "zcp: InitServiceGit %s: %v\n", hostname, initErr)
 			}
 			if state.Bootstrap.Route == workflow.BootstrapRouteAdopt {
-				adoptRepoBaseline(ctx, client, projectID, sshDeployer, engine, hostname, target.Runtime.Type)
+				adoptRepoBaseline(ctx, client, projectID, sshDeployer, engine, hostname)
 			}
 		}
 	}
@@ -484,7 +483,7 @@ func autoMountTargets(ctx context.Context, client platform.Client, projectID str
 // appVersionID comes from ListServicesDirect (lag-free — CLAUDE.md's
 // ES-search trap: this runs moments after adopt/import, when the
 // ES-backed ListServices could still miss the service or its version).
-func adoptRepoBaseline(ctx context.Context, client platform.Client, projectID string, ssh ops.SSHDeployer, engine *workflow.Engine, hostname, typeVersion string) {
+func adoptRepoBaseline(ctx context.Context, client platform.Client, projectID string, ssh ops.SSHDeployer, engine *workflow.Engine, hostname string) {
 	services, err := client.ListServicesDirect(ctx, projectID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "zcp: AdoptRepoBaseline %s: list services: %v\n", hostname, err)
@@ -500,8 +499,7 @@ func adoptRepoBaseline(ctx context.Context, client platform.Client, projectID st
 	if appVersionID == "" {
 		return // no active appVersion yet — nothing to baseline against
 	}
-	class := topology.RuntimeClassFor(typeVersion)
-	provenance, adoptErr := ops.AdoptRepoBaseline(ctx, ssh, hostname, appVersionID, class)
+	provenance, adoptErr := ops.AdoptRepoBaseline(ctx, ssh, hostname)
 	if adoptErr != nil {
 		fmt.Fprintf(os.Stderr, "zcp: AdoptRepoBaseline %s: %v\n", hostname, adoptErr)
 		return

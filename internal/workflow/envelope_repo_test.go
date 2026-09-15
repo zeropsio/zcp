@@ -36,13 +36,13 @@ func TestApplyRepoStatus_ProvenanceCopiedThrough(t *testing.T) {
 		{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic},
 	}
 	ApplyRepoStatus(services, map[string]RepoStatus{
-		"appdev": {Present: true, Head: "abc123", Baseline: "av-1", Provenance: topology.RepoProvenanceSnapshot},
+		"appdev": {Present: true, Head: "abc123", Baseline: "av-1", Provenance: topology.RepoProvenanceInitialized},
 	})
 	if services[0].Repo == nil {
 		t.Fatal("Repo is nil, want it populated")
 	}
-	if services[0].Repo.Provenance != topology.RepoProvenanceSnapshot {
-		t.Errorf("Provenance = %q, want %q", services[0].Repo.Provenance, topology.RepoProvenanceSnapshot)
+	if services[0].Repo.Provenance != topology.RepoProvenanceInitialized {
+		t.Errorf("Provenance = %q, want %q", services[0].Repo.Provenance, topology.RepoProvenanceInitialized)
 	}
 }
 

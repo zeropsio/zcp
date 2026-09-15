@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
-
-	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // gitWriteAuthProbeBranch is the throwaway remote ref the write-auth probe
@@ -81,11 +79,8 @@ func BuildGitWritePushProbeCommand(workingDir, remoteURL, token string) string {
 // gitCredentialHelperConfigFragment.
 //
 // Caller passes workingDir absolute path (e.g. /var/www). remoteURL is
-// shell-quoted. class picks the .git/info/exclude pattern set seeded on a
-// fresh init (git.ExcludePatterns) — same fragment GitEnsureRepoHeadCommand
-// composes; pass topology.RuntimeUnknown when no runtime classification is
-// available at the call site.
-func BuildGitOriginSyncCommand(workingDir, remoteURL string, class topology.RuntimeClass) string {
+// shell-quoted.
+func BuildGitOriginSyncCommand(workingDir, remoteURL string) string {
 	quoted := shellQuote(remoteURL)
 	// Non-destructive (F1b): before pointing origin at the user's repo,
 	// preserve any pre-existing origin (e.g. a recipe-bootstrapped service's
@@ -98,8 +93,8 @@ func BuildGitOriginSyncCommand(workingDir, remoteURL string, class topology.Runt
 		quoted,
 	)
 	return fmt.Sprintf(
-		`cd %s && (test -d .git || git init -q -b main) && %s && %s && %s && (git remote add origin %s 2>/dev/null || git remote set-url origin %s) && %s`,
-		shellQuote(workingDir), gitIdentityEnsureFragment(), gitExcludeSeedFragment(class), preserve, quoted, quoted, gitCredentialHelperConfigFragment(remoteURL),
+		`cd %s && (test -d .git || git init -q -b main) && %s && %s && (git remote add origin %s 2>/dev/null || git remote set-url origin %s) && %s`,
+		shellQuote(workingDir), gitIdentityEnsureFragment(), preserve, quoted, quoted, gitCredentialHelperConfigFragment(remoteURL),
 	)
 }
 

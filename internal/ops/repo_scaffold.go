@@ -8,26 +8,27 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// AdoptRepoBaseline preserves /var/www's content HEAD or snapshots the files
-// present at adoption, initializing a repo first when one
-// doesn't yet exist (docs/spec-workflows.md's Git Lifecycle section,
-// GLC-7) — the container-side counterpart of ops/git.AdoptBaseline.
-// Returns the topology.RepoProvenance the caller should persist: which
-// AdoptBaseline case ran is exactly what determines it, so this converts
-// git.AdoptResult.Case directly (docs/spec-workflows.md §8 GLC-7).
-func AdoptRepoBaseline(ctx context.Context, ssh SSHDeployer, hostname, appVersionID string, class topology.RuntimeClass) (topology.RepoProvenance, error) {
+// AdoptRepoBaseline preserves /var/www's content HEAD as-is, or brings the
+// repo to a commit-ready state without committing anything, initializing a
+// repo first when one doesn't yet exist (docs/spec-workflows.md's Git
+// Lifecycle section, GLC-7) — the container-side counterpart of
+// ops/git.AdoptBaseline. Returns the topology.RepoProvenance the caller
+// should persist: which AdoptBaseline case ran is exactly what determines
+// it, so this converts git.AdoptResult.Case directly (docs/spec-
+// workflows.md §8 GLC-7).
+func AdoptRepoBaseline(ctx context.Context, ssh SSHDeployer, hostname string) (topology.RepoProvenance, error) {
 	if hostname == "" {
 		return "", fmt.Errorf("AdoptRepoBaseline: hostname is required")
 	}
 	runner := git.SSHRunner{Executor: ssh, Hostname: hostname}
-	result, err := git.AdoptBaseline(ctx, runner, defaultWorkingDir, appVersionID, class)
+	result, err := git.AdoptBaseline(ctx, runner, defaultWorkingDir)
 	if err != nil {
 		return "", fmt.Errorf("adopt repo baseline on %s: %w", hostname, err)
 	}
 	if result.Case == git.AdoptCaseExisting {
 		return topology.RepoProvenanceExisting, nil
 	}
-	return topology.RepoProvenanceSnapshot, nil
+	return topology.RepoProvenanceInitialized, nil
 }
 
 // RepoStatus is the live, per-service repo state exposed on the

@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/topology"
 )
 
 func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.T) {
@@ -296,7 +295,7 @@ func TestDeploySSH_NoSHA_SourceHasCleanRepo_RecordsHEADAndPassesVersionName(t *t
 	// The push command must be EXACTLY what buildSSHCommand produces for
 	// a plain self-deploy carrying this versionName — recording HEAD must
 	// never perturb anything else.
-	want := buildSSHCommand(authInfo, "svc-1", defaultWorkingDir, "", true, topology.RuntimeUnknown, "fullhead1234567")
+	want := buildSSHCommand(authInfo, "svc-1", defaultWorkingDir, "", true, "fullhead1234567")
 	if ssh.calls[1].command != want {
 		t.Errorf("push command = %q, want byte-identical to buildSSHCommand's output %q", ssh.calls[1].command, want)
 	}

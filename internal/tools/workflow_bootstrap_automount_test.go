@@ -265,8 +265,8 @@ func TestAutoMountTargets_AdoptRoute_PreservesTagsAndPersistsMeta(t *testing.T) 
 	// sshRecorder's default (unscripted) response is nil/nil for every
 	// command, including AdoptBaseline's HEAD^{tree} probe — an empty
 	// string is not the empty-tree sha, so this drives the "existing"
-	// case (see TestAutoMountTargets_AdoptRoute_EmptyTreeHEAD_Snapshots
-	// below for the empty-tree/snapshot case, scripted explicitly).
+	// case (see TestAutoMountTargets_AdoptRoute_EmptyTreeHEAD_Initializes
+	// below for the empty-tree/initialized case, scripted explicitly).
 	if loaded.Repo.Provenance != topology.RepoProvenanceExisting {
 		t.Errorf("Provenance = %q, want %q", loaded.Repo.Provenance, topology.RepoProvenanceExisting)
 	}
@@ -276,9 +276,10 @@ func TestAutoMountTargets_AdoptRoute_PreservesTagsAndPersistsMeta(t *testing.T) 
 // canonical flow runs ops.InitServiceGit (GLC-1) before adoptRepoBaseline,
 // which leaves a reachable HEAD over the EMPTY tree on a service that had
 // no git before adopt. AdoptBaseline must not trust that as "content" —
-// it mints a snapshot commit instead, and the persisted provenance must
-// say so.
-func TestAutoMountTargets_AdoptRoute_EmptyTreeHEAD_Snapshots(t *testing.T) {
+// it brings the repo to the same commit-ready state bootstrap leaves a
+// fresh service in (identity + HEAD ensure), without staging or
+// committing anything, and the persisted provenance must say so.
+func TestAutoMountTargets_AdoptRoute_EmptyTreeHEAD_Initializes(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -295,20 +296,18 @@ func TestAutoMountTargets_AdoptRoute_EmptyTreeHEAD_Snapshots(t *testing.T) {
 		if strings.Contains(cmd, "HEAD^{tree}") {
 			return []byte("4b825dc642cb6eb9a060e54bf8d69288fbee4904\n"), nil
 		}
-		return nil, nil // probeIsRepo/init/seed/add/commit all no-op successfully
+		return nil, nil // probeIsRepo/identity ensure/HEAD ensure all no-op successfully
 	}}
 
 	autoMountTargets(context.Background(), mock, "proj-1", mounter, ssh, eng)
 
-	wantMsg := "zcp: snapshot of /var/www as found at adopt (appVersion av-100)"
-	found := false
+	// AdoptBaseline must never stage or commit the files it found — no
+	// `git add`, no commit carrying a message, anywhere in the adopt-route
+	// calls against appdev beyond InitServiceGit's own bootstrap marker.
 	for _, c := range ssh.calls {
-		if c.Host == "appdev" && strings.Contains(c.Cmd, wantMsg) {
-			found = true
+		if c.Host == "appdev" && strings.Contains(c.Cmd, "git add") {
+			t.Errorf("adoption must never stage files: %s", c.Cmd)
 		}
-	}
-	if !found {
-		t.Errorf("ssh calls = %+v, want a commit carrying %q", ssh.calls, wantMsg)
 	}
 
 	loaded, err := workflow.ReadServiceMeta(dir, "appdev")
@@ -318,8 +317,8 @@ func TestAutoMountTargets_AdoptRoute_EmptyTreeHEAD_Snapshots(t *testing.T) {
 	if loaded == nil || loaded.Repo == nil {
 		t.Fatal("loaded.Repo is nil, want the persisted baseline marker")
 	}
-	if loaded.Repo.Provenance != topology.RepoProvenanceSnapshot {
-		t.Errorf("Provenance = %q, want %q", loaded.Repo.Provenance, topology.RepoProvenanceSnapshot)
+	if loaded.Repo.Provenance != topology.RepoProvenanceInitialized {
+		t.Errorf("Provenance = %q, want %q", loaded.Repo.Provenance, topology.RepoProvenanceInitialized)
 	}
 }
 

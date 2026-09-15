@@ -6,8 +6,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // TestInitServiceGit_HappyPath verifies the canonical command emitted by
@@ -18,7 +16,7 @@ func TestInitServiceGit_HappyPath(t *testing.T) {
 	t.Parallel()
 
 	ssh := &mockSSHDeployer{}
-	err := InitServiceGit(context.Background(), ssh, "probe", topology.RuntimeDynamic)
+	err := InitServiceGit(context.Background(), ssh, "probe")
 	if err != nil {
 		t.Fatalf("InitServiceGit: unexpected error: %v", err)
 	}
@@ -39,9 +37,6 @@ func TestInitServiceGit_HappyPath(t *testing.T) {
 		"test -d .git || git init -q -b main",
 		`test -n "$(git config user.email)" || git config user.email 'agent@zerops.io'`,
 		`test -n "$(git config user.name)" || git config user.name 'Zerops Agent'`,
-		// The class arg reaches the exclude-seed fragment: RuntimeDynamic
-		// gets the code-specific patterns, proving the param isn't dropped.
-		"'node_modules/' .git/info/exclude",
 		"git rev-parse -q --verify HEAD",
 		"-m 'zcp init'",
 	}
@@ -49,6 +44,9 @@ func TestInitServiceGit_HappyPath(t *testing.T) {
 		if !strings.Contains(call.command, want) {
 			t.Errorf("command missing %q\nfull command: %s", want, call.command)
 		}
+	}
+	if strings.Contains(call.command, "exclude") {
+		t.Errorf("command must NOT seed .git/info/exclude — zcp never authors ignore rules: %s", call.command)
 	}
 }
 
@@ -60,7 +58,7 @@ func TestInitServiceGit_Idempotent(t *testing.T) {
 
 	ssh := &mockSSHDeployer{}
 	for i := range 2 {
-		if err := InitServiceGit(context.Background(), ssh, "probe", topology.RuntimeDynamic); err != nil {
+		if err := InitServiceGit(context.Background(), ssh, "probe"); err != nil {
 			t.Fatalf("call %d: unexpected error: %v", i, err)
 		}
 	}
@@ -78,7 +76,7 @@ func TestInitServiceGit_EmptyHostname(t *testing.T) {
 	t.Parallel()
 
 	ssh := &mockSSHDeployer{}
-	err := InitServiceGit(context.Background(), ssh, "", topology.RuntimeDynamic)
+	err := InitServiceGit(context.Background(), ssh, "")
 	if err == nil {
 		t.Fatal("InitServiceGit(\"\"): expected error, got nil")
 	}
@@ -96,7 +94,7 @@ func TestInitServiceGit_EmptyHostname(t *testing.T) {
 func TestInitServiceGit_NilSSH(t *testing.T) {
 	t.Parallel()
 
-	err := InitServiceGit(context.Background(), nil, "probe", topology.RuntimeDynamic)
+	err := InitServiceGit(context.Background(), nil, "probe")
 	if err == nil {
 		t.Fatal("InitServiceGit(nil ssh): expected error, got nil")
 	}
@@ -113,7 +111,7 @@ func TestInitServiceGit_SSHFailure(t *testing.T) {
 
 	sentinel := errors.New("ssh: connection refused")
 	ssh := &mockSSHDeployer{err: sentinel}
-	err := InitServiceGit(context.Background(), ssh, "probe", topology.RuntimeDynamic)
+	err := InitServiceGit(context.Background(), ssh, "probe")
 	if err == nil {
 		t.Fatal("InitServiceGit: expected error when ExecSSH fails")
 	}

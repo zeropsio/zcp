@@ -2,9 +2,6 @@ package ops
 
 import (
 	"fmt"
-
-	"github.com/zeropsio/zcp/internal/ops/git"
-	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // gitIdentityEnsureFragment returns the shell fragment that sets
@@ -73,33 +70,19 @@ func gitHeadEnsureFragment() string {
 	)
 }
 
-// gitExcludeSeedFragment returns the shell fragment that appends class's
-// exclude patterns (git.ExcludePatterns) into .git/info/exclude, one line
-// at a time, skipping any line already present — idempotent, and safe to
-// re-run on every deploy without ever duplicating or clobbering a line a
-// prior run (or the user) left there. Sibling of gitIdentityEnsureFragment
-// / gitHeadEnsureFragment: the third piece composed into
-// GitEnsureRepoHeadCommand. Never writes a tracked `.gitignore` — exclude
-// is repo-local and invisible to the user's own history.
-func gitExcludeSeedFragment(class topology.RuntimeClass) string {
-	return git.ExcludeSeedFragment(class)
-}
-
 // GitEnsureRepoHeadCommand composes the full self-heal chain — init-if-
-// missing, set-if-absent identity, exclude seeding by runtime class, HEAD
-// guarantee — as one standalone SSH command body rooted at workingDir.
-// Single owner for the "commit-ready repo" invariant: InitServiceGit
-// (bootstrap), buildSSHCommand's safety-net (deploy), BuildGitOriginSyncCommand
-// and BuildGitReconstructCommand (git-push-setup), and git-push-setup's
-// pre-probe ensure all compose from this same function (or its sibling
-// gitExcludeSeedFragment) so the guarantees can never drift out of step
-// with each other. class picks the exclude pattern set (git.ExcludePatterns);
-// pass topology.RuntimeUnknown when the caller has no runtime classification
-// handy — it still seeds the base patterns (env files, logs, zcp's own state
-// dir), just not the code-specific ones (node_modules/, dist/, build/).
-func GitEnsureRepoHeadCommand(workingDir string, class topology.RuntimeClass) string {
-	return fmt.Sprintf("cd %s && (test -d .git || git init -q -b main) && %s && %s && %s",
-		shellQuote(workingDir), gitIdentityEnsureFragment(), gitExcludeSeedFragment(class), gitHeadEnsureFragment())
+// missing, set-if-absent identity, HEAD guarantee — as one standalone SSH
+// command body rooted at workingDir. Single owner for the "commit-ready
+// repo" invariant: InitServiceGit (bootstrap), buildSSHCommand's
+// safety-net (deploy), BuildGitOriginSyncCommand and
+// BuildGitReconstructCommand (git-push-setup), and git-push-setup's
+// pre-probe ensure all compose from this same function so the guarantees
+// can never drift out of step with each other. zcp never seeds
+// `.git/info/exclude` or authors a `.gitignore` — that's the agent's job,
+// guided (docs/spec-workflows.md §12.6, GF-2).
+func GitEnsureRepoHeadCommand(workingDir string) string {
+	return fmt.Sprintf("cd %s && (test -d .git || git init -q -b main) && %s && %s",
+		shellQuote(workingDir), gitIdentityEnsureFragment(), gitHeadEnsureFragment())
 }
 
 // Dispatch tokens emitted by BuildGitIdentitySeedCommand — ALWAYS exactly

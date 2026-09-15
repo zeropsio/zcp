@@ -3,8 +3,6 @@ package ops
 import (
 	"strings"
 	"testing"
-
-	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // TestGitCredentialHelper_Shape pins the inline credential helper that
@@ -131,7 +129,7 @@ func TestGitCredentialHelperConfigFragment_URLScoped(t *testing.T) {
 // without actually running as part of the missing-.git recovery.
 func TestBuildGitReconstructCommand_Shape(t *testing.T) {
 	t.Parallel()
-	cmd := BuildGitReconstructCommand("/var/www", "https://github.com/example/app.git", DeployGitIdentity, topology.RuntimeDynamic)
+	cmd := BuildGitReconstructCommand("/var/www", "https://github.com/example/app.git", DeployGitIdentity)
 
 	ifIdx := strings.Index(cmd, "if test ! -d .git; then git init -q -b main")
 	if ifIdx < 0 {
@@ -171,7 +169,7 @@ func TestBuildGitReconstructCommand_Shape(t *testing.T) {
 func TestBuildGitReconstructCommand_UsesSuppliedIdentity(t *testing.T) {
 	t.Parallel()
 	derived := GitIdentity{Name: "octocat", Email: "octocat@users.noreply.github.com"}
-	cmd := BuildGitReconstructCommand("/var/www", "https://github.com/example/app.git", derived, topology.RuntimeDynamic)
+	cmd := BuildGitReconstructCommand("/var/www", "https://github.com/example/app.git", derived)
 
 	if !strings.Contains(cmd, `git config user.email 'octocat@users.noreply.github.com'`) {
 		t.Errorf("reconstruction must fill the SUPPLIED derived email, not the robot default: %s", cmd)

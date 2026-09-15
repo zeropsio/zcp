@@ -35,7 +35,6 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/topology"
 )
 
 func TestE2E_InitServiceGit(t *testing.T) {
@@ -68,7 +67,7 @@ func TestE2E_InitServiceGit(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	ssh := platform.NewSystemSSHDeployer()
-	if err := ops.InitServiceGit(ctx, ssh, hostname, topology.RuntimeUnknown); err != nil {
+	if err := ops.InitServiceGit(ctx, ssh, hostname); err != nil {
 		t.Fatalf("InitServiceGit(%s): %v", hostname, err)
 	}
 
@@ -106,23 +105,19 @@ func TestE2E_InitServiceGit(t *testing.T) {
 		}
 	}
 
-	// GLC-1: .git/info/exclude is seeded by runtime class. RuntimeUnknown
-	// (this test has no live classification for hostname) still gets the
-	// base patterns.
-	excludeOut, err := sshExec(t, hostname, "cat /var/www/.git/info/exclude")
-	if err != nil {
-		t.Errorf("cat .git/info/exclude: %v", err)
-	} else {
-		for _, want := range []string{".env", "*.log", ".zcp/"} {
-			if !strings.Contains(excludeOut, want) {
-				t.Errorf(".git/info/exclude missing %q\nfull: %q", want, excludeOut)
-			}
+	// GLC-1: zcp never seeds `.git/info/exclude` or writes a `.gitignore` —
+	// the agent owns the repo's ignore rules, guided.
+	excludeOut, err := sshExec(t, hostname, "cat /var/www/.git/info/exclude 2>/dev/null && echo EXCLUDE-END || echo EXCLUDE-END")
+	if err == nil {
+		before, _, _ := strings.Cut(excludeOut, "EXCLUDE-END")
+		if strings.TrimSpace(before) != "" {
+			t.Errorf(".git/info/exclude should be empty/absent — zcp never seeds it, got: %q", before)
 		}
 	}
 
 	// Idempotency: a second call against the same service must succeed
 	// without error and not change the on-disk state visibly.
-	if err := ops.InitServiceGit(ctx, ssh, hostname, topology.RuntimeUnknown); err != nil {
+	if err := ops.InitServiceGit(ctx, ssh, hostname); err != nil {
 		t.Errorf("InitServiceGit second call: %v", err)
 	}
 }

@@ -9,12 +9,14 @@ package topology
 type RepoProvenance string
 
 const (
-	// RepoProvenanceSnapshot means AdoptBaseline minted the baseline
-	// commit itself, from whatever files it found on disk at adopt time
-	// (no repo yet, an unborn HEAD, or a HEAD over the empty tree). It is
-	// a snapshot of the working tree adopt found, never a claim about
-	// what built the running appVersion.
-	RepoProvenanceSnapshot RepoProvenance = "snapshot"
+	// RepoProvenanceInitialized means AdoptBaseline found no content HEAD
+	// (no repo yet, an unborn HEAD, or a HEAD over the empty tree) and
+	// brought the repo to the same commit-ready state bootstrap leaves a
+	// fresh service in: init-if-missing, identity set-if-absent, an empty
+	// marker HEAD if none was reachable. It never stages or commits the
+	// files it found — the working tree stays exactly as adopt found it,
+	// uncommitted. zcp never commits user files.
+	RepoProvenanceInitialized RepoProvenance = "initialized"
 	// RepoProvenanceExisting means adoption preserved a
 	// pre-existing HEAD that already carried content — AdoptBaseline
 	// trusted it as-is rather than minting a commit. Its relation to the

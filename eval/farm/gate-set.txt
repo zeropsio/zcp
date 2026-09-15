@@ -34,4 +34,4 @@ repo-always-adopt-baseline
 repo-always-bootstrap
 deploy-from-commit-stage
 dev-self-deploy-keeps-repo
-repo-adopt-snapshot-no-git
+repo-adopt-initialized-no-git

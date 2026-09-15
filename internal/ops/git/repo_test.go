@@ -1,112 +1,77 @@
 // Tests for: ops/git/repo.go — the repo-always guarantee run at adopt
-// (snapshot when needed), driven through the Runner abstraction so it works
-// identically over SSH (container) and locally (docs/spec-workflows.md's
-// Git Lifecycle section, GLC-7).
+// (init-if-missing + identity + HEAD guarantee when needed), driven
+// through the Runner abstraction so it works identically over SSH
+// (container) and locally (docs/spec-workflows.md's Git Lifecycle
+// section, GLC-7).
 package git
 
 import (
 	"context"
 	"errors"
-	"slices"
-	"strings"
 	"testing"
-
-	"github.com/zeropsio/zcp/internal/topology"
 )
 
 var errTest = errors.New("test failure")
 
-func TestExcludePatterns_Dynamic_IncludesNodeModulesAndBuildOutputs(t *testing.T) {
-	got := ExcludePatterns(topology.RuntimeDynamic)
-	for _, want := range []string{"node_modules/", "dist/", "build/", ".env", "*.log", ".zcp/"} {
-		if !slices.Contains(got, want) {
-			t.Errorf("ExcludePatterns(dynamic) = %v, want it to contain %q", got, want)
-		}
-	}
-}
-
-func TestExcludePatterns_Managed_OmitsBuildOutputs(t *testing.T) {
-	got := ExcludePatterns(topology.RuntimeManaged)
-	for _, unwanted := range []string{"node_modules/", "dist/", "build/"} {
-		if slices.Contains(got, unwanted) {
-			t.Errorf("ExcludePatterns(managed) = %v, want it NOT to contain %q", got, unwanted)
-		}
-	}
-}
-
-func TestSeedExclude_WritesInfoExcludeWithPatterns(t *testing.T) {
-	r := &fakeRunner{results: []fakeResult{{}}}
-	if err := SeedExclude(context.Background(), r, "/repo", topology.RuntimeDynamic); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(r.calls) != 1 {
-		t.Fatalf("calls = %d, want 1", len(r.calls))
-	}
-	script := r.calls[0].script
-	if !strings.Contains(script, ".git/info/exclude") {
-		t.Errorf("script = %q, want it to write .git/info/exclude", script)
-	}
-	if !strings.Contains(script, "node_modules/") {
-		t.Errorf("script = %q, want node_modules/ pattern", script)
-	}
-}
-
-// TestAdoptBaseline_NoRepo_InitsAndSnapshots pins the probe=1 case (no
-// repo at all): git init runs (probe=1 skips the tree check entirely —
-// exists is already false), then seed/add/commit.
-func TestAdoptBaseline_NoRepo_InitsAndSnapshots(t *testing.T) {
+// TestAdoptBaseline_NoRepo_InitsAndEnsures pins the probe=1 case (no repo
+// at all): git init runs (probe=1 skips the tree check entirely — exists
+// is already false), then identity ensure, then HEAD ensure — the same
+// three steps bootstrap's InitServiceGit runs, minus any staging or
+// commit of the files found on disk.
+func TestAdoptBaseline_NoRepo_InitsAndEnsures(t *testing.T) {
 	r := &fakeRunner{results: []fakeResult{
 		{err: errTest}, // test -d .git -> not a repo
 		{},             // git init -b main
-		{},             // seed exclude
-		{},             // git add -A
-		{},             // git -c ... commit -q -m "zcp: snapshot ..."
+		{},             // identity ensure
+		{},             // HEAD ensure
 	}}
-	result, err := AdoptBaseline(context.Background(), r, "/var/www", "av-1", topology.RuntimeDynamic)
+	result, err := AdoptBaseline(context.Background(), r, "/var/www")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Case != AdoptCaseSnapshot {
-		t.Errorf("Case = %q, want %q", result.Case, AdoptCaseSnapshot)
+	if result.Case != AdoptCaseInitialized {
+		t.Errorf("Case = %q, want %q", result.Case, AdoptCaseInitialized)
 	}
-	if len(r.calls) != 5 {
-		t.Fatalf("calls = %d, want 5: %+v", len(r.calls), r.calls)
+	if len(r.calls) != 4 {
+		t.Fatalf("calls = %d, want 4: %+v", len(r.calls), r.calls)
 	}
 	if r.calls[1].script != "git init -q -b main" {
 		t.Errorf("call[1] = %q, want git init", r.calls[1].script)
 	}
-	if r.calls[3].script != "git add -A" {
-		t.Errorf("call[3] = %q, want git add -A", r.calls[3].script)
+	wantIdentity := `(test -n "$(git config user.email)" || git config user.email 'agent@zerops.io') && (test -n "$(git config user.name)" || git config user.name 'Zerops Agent')`
+	if r.calls[2].script != wantIdentity {
+		t.Errorf("call[2] = %q, want %q", r.calls[2].script, wantIdentity)
 	}
-	wantCommit := `git -c user.name='Zerops Agent' -c user.email='agent@zerops.io' commit -q -m 'zcp: snapshot of /var/www as found at adopt (appVersion av-1)'`
-	if r.calls[4].script != wantCommit {
-		t.Errorf("call[4] = %q, want %q", r.calls[4].script, wantCommit)
+	wantHead := `(git rev-parse -q --verify HEAD >/dev/null || git update-ref HEAD "$(git -c user.email='agent@zerops.io' -c user.name='Zerops Agent' commit-tree "$(git mktree </dev/null)" -m 'zcp init')")`
+	if r.calls[3].script != wantHead {
+		t.Errorf("call[3] = %q, want %q", r.calls[3].script, wantHead)
 	}
 }
 
-// TestAdoptBaseline_EmptyTreeHEAD_SkipsInitButStillSnapshots pins the
+// TestAdoptBaseline_EmptyTreeHEAD_SkipsInitButStillEnsures pins the
 // probe=2 case (docs/spec-workflows.md's Git Lifecycle section, GLC-7): a
 // repo that already exists (ops.InitServiceGit's GLC-1 marker commit ran
 // first) but whose HEAD is over the empty tree must NOT be trusted as
-// content — no git init (the repo already exists), but the same
-// seed/add/commit sequence as the no-repo case.
-func TestAdoptBaseline_EmptyTreeHEAD_SkipsInitButStillSnapshots(t *testing.T) {
+// content — no git init (the repo already exists), but identity + HEAD
+// ensure still run (both no-op in practice, since GLC-1 already filled
+// them — this proves AdoptBaseline doesn't skip the guarantee just
+// because SOME repo state is already present).
+func TestAdoptBaseline_EmptyTreeHEAD_SkipsInitButStillEnsures(t *testing.T) {
 	r := &fakeRunner{results: []fakeResult{
 		{}, // test -d .git -> is a repo
 		{stdout: "4b825dc642cb6eb9a060e54bf8d69288fbee4904\n"}, // rev-parse HEAD^{tree} -> empty tree
-		{}, // seed exclude
-		{}, // git add -A
-		{}, // git -c ... commit -q -m "zcp: snapshot ..."
+		{}, // identity ensure
+		{}, // HEAD ensure
 	}}
-	result, err := AdoptBaseline(context.Background(), r, "/var/www", "av-2", topology.RuntimeDynamic)
+	result, err := AdoptBaseline(context.Background(), r, "/var/www")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Case != AdoptCaseSnapshot {
-		t.Errorf("Case = %q, want %q", result.Case, AdoptCaseSnapshot)
+	if result.Case != AdoptCaseInitialized {
+		t.Errorf("Case = %q, want %q", result.Case, AdoptCaseInitialized)
 	}
-	if len(r.calls) != 5 {
-		t.Fatalf("calls = %d, want 5 (no git init call): %+v", len(r.calls), r.calls)
+	if len(r.calls) != 4 {
+		t.Fatalf("calls = %d, want 4 (no git init call): %+v", len(r.calls), r.calls)
 	}
 	for _, c := range r.calls {
 		if c.script == "git init -q -b main" {
@@ -115,10 +80,6 @@ func TestAdoptBaseline_EmptyTreeHEAD_SkipsInitButStillSnapshots(t *testing.T) {
 	}
 	if r.calls[1].script != `git rev-parse --verify 'HEAD^{tree}'` {
 		t.Errorf("call[1] = %q, want the tree probe", r.calls[1].script)
-	}
-	wantCommit := `git -c user.name='Zerops Agent' -c user.email='agent@zerops.io' commit -q -m 'zcp: snapshot of /var/www as found at adopt (appVersion av-2)'`
-	if r.calls[4].script != wantCommit {
-		t.Errorf("call[4] = %q, want %q", r.calls[4].script, wantCommit)
 	}
 }
 
@@ -129,7 +90,7 @@ func TestAdoptBaseline_ContentHEAD_PreservesHEAD(t *testing.T) {
 		{},                          // test -d .git -> is a repo
 		{stdout: "tree-sha-real\n"}, // rev-parse HEAD^{tree} -> real content
 	}}
-	result, err := AdoptBaseline(context.Background(), r, "/var/www", "av-3", topology.RuntimeDynamic)
+	result, err := AdoptBaseline(context.Background(), r, "/var/www")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -137,36 +98,36 @@ func TestAdoptBaseline_ContentHEAD_PreservesHEAD(t *testing.T) {
 		t.Errorf("Case = %q, want %q", result.Case, AdoptCaseExisting)
 	}
 	if len(r.calls) != 2 {
-		t.Fatalf("calls = %d, want 2 (probe + tree probe only, no init/seed/commit): %+v", len(r.calls), r.calls)
+		t.Fatalf("calls = %d, want 2 (probe + tree probe only, no init/identity/head): %+v", len(r.calls), r.calls)
 	}
 }
 
-// TestAdoptBaseline_NothingStaged_CommitsWithAllowEmpty pins the empty-
-// working-tree edge case: `git add -A` stages nothing (a genuinely empty
-// directory), so the normal commit fails with "nothing to commit" and
-// AdoptBaseline falls back to --allow-empty so the
-// commit itself is the record.
-func TestAdoptBaseline_NothingStaged_CommitsWithAllowEmpty(t *testing.T) {
+// TestAdoptBaseline_IdentityWriteFails_ReturnsError pins that a failure
+// mid-chain (identity ensure) surfaces as an error rather than silently
+// reporting AdoptCaseInitialized.
+func TestAdoptBaseline_IdentityWriteFails_ReturnsError(t *testing.T) {
 	r := &fakeRunner{results: []fakeResult{
 		{err: errTest}, // test -d .git -> not a repo
 		{},             // git init -b main
-		{},             // seed exclude
-		{},             // git add -A (nothing to stage)
-		{err: errTest}, // git -c ... commit -q -m "..." -> fails, nothing staged
-		{},             // git -c ... commit -q --allow-empty -m "..."
+		{err: errTest, stderr: "permission denied"}, // identity ensure fails
 	}}
-	result, err := AdoptBaseline(context.Background(), r, "/var/www", "av-4", topology.RuntimeDynamic)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := AdoptBaseline(context.Background(), r, "/var/www")
+	if err == nil {
+		t.Fatal("expected error when identity ensure fails")
 	}
-	if result.Case != AdoptCaseSnapshot {
-		t.Errorf("Case = %q, want %q", result.Case, AdoptCaseSnapshot)
-	}
-	if len(r.calls) != 6 {
-		t.Fatalf("calls = %d, want 6: %+v", len(r.calls), r.calls)
-	}
-	wantEmptyCommit := `git -c user.name='Zerops Agent' -c user.email='agent@zerops.io' commit -q --allow-empty -m 'zcp: snapshot of /var/www as found at adopt (appVersion av-4)'`
-	if r.calls[5].script != wantEmptyCommit {
-		t.Errorf("call[5] = %q, want %q", r.calls[5].script, wantEmptyCommit)
+}
+
+// TestAdoptBaseline_HeadEnsureFails_ReturnsError mirrors the identity
+// failure pin for the HEAD-ensure step.
+func TestAdoptBaseline_HeadEnsureFails_ReturnsError(t *testing.T) {
+	r := &fakeRunner{results: []fakeResult{
+		{err: errTest},                      // test -d .git -> not a repo
+		{},                                  // git init -b main
+		{},                                  // identity ensure
+		{err: errTest, stderr: "disk full"}, // HEAD ensure fails
+	}}
+	_, err := AdoptBaseline(context.Background(), r, "/var/www")
+	if err == nil {
+		t.Fatal("expected error when HEAD ensure fails")
 	}
 }

@@ -74,7 +74,7 @@ func TestAttachRepoStatus_MetaHasProvenance_AddsProvenanceToRepoBlock(t *testing
 	stateDir := t.TempDir()
 	meta := workflow.NewServiceMeta("proj", topology.PlanModeLocalStage)
 	meta.Hostname = "appdev"
-	meta.SetRepoBaseline("av-1", topology.RepoProvenanceSnapshot)
+	meta.SetRepoBaseline("av-1", topology.RepoProvenanceInitialized)
 	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
@@ -92,8 +92,8 @@ func TestAttachRepoStatus_MetaHasProvenance_AddsProvenanceToRepoBlock(t *testing
 	if services[0].Repo.Baseline != "av-1" {
 		t.Errorf("Baseline = %q, want metadata av-1", services[0].Repo.Baseline)
 	}
-	if services[0].Repo.Provenance != topology.RepoProvenanceSnapshot {
-		t.Errorf("Provenance = %q, want %q", services[0].Repo.Provenance, topology.RepoProvenanceSnapshot)
+	if services[0].Repo.Provenance != topology.RepoProvenanceInitialized {
+		t.Errorf("Provenance = %q, want %q", services[0].Repo.Provenance, topology.RepoProvenanceInitialized)
 	}
 }
 

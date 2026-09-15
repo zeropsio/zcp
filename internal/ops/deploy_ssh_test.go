@@ -14,7 +14,6 @@ import (
 
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/topology"
 )
 
 type sshCall struct {
@@ -570,7 +569,7 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 		APIHost: "api.app-prg1.zerops.io",
 		Region:  "prg1",
 	}
-	cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, topology.RuntimeDynamic, "")
+	cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "")
 
 	wantContains := []string{
 		"zcli login -- 'test-token'",
@@ -618,7 +617,7 @@ func TestBuildSSHCommand_VersionNameFromHead(t *testing.T) {
 
 	t.Run("clean", func(t *testing.T) {
 		t.Parallel()
-		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, topology.RuntimeDynamic, "fullhead1234567")
+		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "fullhead1234567")
 		if !containsSubstring(cmd, "--version-name 'fullhead1234567'") {
 			t.Errorf("command missing --version-name 'fullhead1234567':\n%s", cmd)
 		}
@@ -626,7 +625,7 @@ func TestBuildSSHCommand_VersionNameFromHead(t *testing.T) {
 
 	t.Run("dirty", func(t *testing.T) {
 		t.Parallel()
-		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, topology.RuntimeDynamic, "fullhead1234567-dirty")
+		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "fullhead1234567-dirty")
 		if !containsSubstring(cmd, "--version-name 'fullhead1234567-dirty'") {
 			t.Errorf("command missing --version-name 'fullhead1234567-dirty':\n%s", cmd)
 		}
@@ -634,7 +633,7 @@ func TestBuildSSHCommand_VersionNameFromHead(t *testing.T) {
 
 	t.Run("unborn", func(t *testing.T) {
 		t.Parallel()
-		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, topology.RuntimeDynamic, "")
+		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "")
 		if containsSubstring(cmd, "--version-name") {
 			t.Errorf("command must NOT carry --version-name when versionName is empty (no reachable HEAD):\n%s", cmd)
 		}
@@ -676,7 +675,7 @@ func TestVersionNameForHead(t *testing.T) {
 func extractGitEnsureChain(t *testing.T, dir string) string {
 	t.Helper()
 	authInfo := auth.Info{Token: "tok"}
-	full := buildSSHCommand(authInfo, "svc-target", dir, "", false, topology.RuntimeDynamic, "")
+	full := buildSSHCommand(authInfo, "svc-target", dir, "", false, "")
 	chain, _, found := strings.Cut(full, " && zcli push")
 	if !found {
 		t.Fatalf("command missing `zcli push` anchor, shape drifted:\n%s", full)
