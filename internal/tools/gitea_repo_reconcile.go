@@ -29,6 +29,11 @@ const giteaStateDir = "gitea"
 // the pair's git repository is — the same default the git-push deploy uses.
 const giteaPairWorkingDir = "/var/www"
 
+// giteaPairMountRoot is where the Mate mounts each pair's working directory,
+// one per hostname (ops.MountService). It is how a reconcile running in the
+// `zcp` container reads a pair's files without an SSH round trip.
+const giteaPairMountRoot = "/var/www"
+
 // giteaProtectedBase is the branch a Mate lands on and never pushes: every
 // repository's `main` is protected (docs/vocabulary.md). It is the fallback
 // when the broker's answer named no default branch.
