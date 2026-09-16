@@ -107,8 +107,8 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 				resp.Message += fmt.Sprintf(" Git-push state reconciled from live for %s — these services already have a working remote + token, so launch-production will NOT require re-running git-push-setup on them.", strings.Join(reconciled, ", "))
 			}
 			// The adopt route is the other pass that reaches a just-written
-			// set of metas, so it is the other place A1 catches up from.
-			appendGiteaReport(resp, reconcileGiteaRepositories(
+			// set of metas, so it is the other place A1 and A2 catch up from.
+			appendGiteaReport(resp, reconcileGitea(
 				ctx, client, httpClient, sshDeployer, rt, stateDir, mate.LiveEnvStorePath))
 			if needsStacks(resp) {
 				populateStacks(ctx, resp, schemaCache)
@@ -178,9 +178,10 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 		cleanupImportYAML(stateDir, resp.AutoMounts, engine.Environment() == workflow.EnvContainer)
 		// A1 (guide 2.1): the pair exists and its .git is initialized — the
 		// earliest honest moment to give it a repository on the account's
-		// Gitea. Reconcile, not a step: it does nothing outside a Mate, backs
-		// off while the variables have not landed, and never blocks bootstrap.
-		appendGiteaReport(resp, reconcileGiteaRepositories(
+		// Gitea; A2 proposes the recipe from the repositories A1 just made.
+		// Reconcile, not a step: it does nothing outside a Mate, backs off
+		// while the variables have not landed, and never blocks bootstrap.
+		appendGiteaReport(resp, reconcileGitea(
 			ctx, client, httpClient, sshDeployer, rt, stateDir, mate.LiveEnvStorePath))
 	}
 

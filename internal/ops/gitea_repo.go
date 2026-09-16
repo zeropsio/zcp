@@ -214,9 +214,15 @@ type giteaPullRequest struct {
 // a duplicate, but relying on that would make the ordinary path an error
 // path — so the open list is read first.
 //
-// head is a plain branch name (a same-repository pull request): the bot is a
-// collaborator on its own repositories and never works from a fork.
-func EnsureGiteaPullRequest(ctx context.Context, httpClient HTTPDoer, giteaURL, token, fullName, head, base, title string) (number int, created bool, err error) {
+// headRepo is which repository head lives in. Empty, or equal to fullName,
+// means a same-repository request — the shape a service repository takes,
+// where the bot is a collaborator on its own repositories. Anything else is
+// CROSS-FORK: the group repo, which no Mate's bot may push to, so it commits
+// on its own fork and proposes from there. Gitea takes `{owner}:{branch}` on
+// the create and reports the branch alone, with the fork beside it, in the
+// open list — so the match is on both, never on the ref alone: two Mates fork
+// one group repo and their branches can share a name.
+func EnsureGiteaPullRequest(ctx context.Context, httpClient HTTPDoer, giteaURL, token, fullName, headRepo, head, base, title string) (number int, created bool, err error) {
 	if httpClient == nil {
 		return 0, false, fmt.Errorf("no HTTP client configured")
 	}
@@ -227,9 +233,12 @@ func EnsureGiteaPullRequest(ctx context.Context, httpClient HTTPDoer, giteaURL, 
 	if fullName == "" || head == "" || base == "" {
 		return 0, false, fmt.Errorf("pull request needs a repository, a head and a base")
 	}
+	if headRepo == "" {
+		headRepo = fullName
+	}
 	repoRoot := apiBase + "/repos/" + fullName
 
-	existing, err := giteaOpenPullRequest(ctx, httpClient, repoRoot, token, head, base)
+	existing, err := giteaOpenPullRequest(ctx, httpClient, repoRoot, token, headRepo, head, base)
 	if err != nil {
 		return 0, false, err
 	}
@@ -237,7 +246,12 @@ func EnsureGiteaPullRequest(ctx context.Context, httpClient HTTPDoer, giteaURL, 
 		return existing, false, nil
 	}
 
-	payload, err := json.Marshal(map[string]string{"head": head, "base": base, "title": title})
+	createHead := head
+	if headRepo != fullName {
+		owner, _, _ := strings.Cut(headRepo, "/")
+		createHead = owner + ":" + head
+	}
+	payload, err := json.Marshal(map[string]string{"head": createHead, "base": base, "title": title})
 	if err != nil {
 		return 0, false, fmt.Errorf("encode pull-request body failed")
 	}
@@ -248,7 +262,7 @@ func EnsureGiteaPullRequest(ctx context.Context, httpClient HTTPDoer, giteaURL, 
 	if status == http.StatusConflict {
 		// Someone (a concurrent pass, or a person) opened it between the
 		// list and the create. Not an error — re-read and report it.
-		if n, reErr := giteaOpenPullRequest(ctx, httpClient, repoRoot, token, head, base); reErr == nil && n != 0 {
+		if n, reErr := giteaOpenPullRequest(ctx, httpClient, repoRoot, token, headRepo, head, base); reErr == nil && n != 0 {
 			return n, false, nil
 		}
 		return 0, false, nil
@@ -263,11 +277,11 @@ func EnsureGiteaPullRequest(ctx context.Context, httpClient HTTPDoer, giteaURL, 
 	return pr.Number, true, nil
 }
 
-// giteaOpenPullRequest returns the number of the open pull request from head
-// to base, or 0 when there is none. Gitea's list endpoint takes no head/base
-// filter that can be relied on across versions, so the open page is read and
-// matched here.
-func giteaOpenPullRequest(ctx context.Context, httpClient HTTPDoer, repoRoot, token, head, base string) (int, error) {
+// giteaOpenPullRequest returns the number of the open pull request from
+// headRepo's head to base, or 0 when there is none. Gitea's list endpoint
+// takes no head/base filter that can be relied on across versions, so the open
+// page is read and matched here.
+func giteaOpenPullRequest(ctx context.Context, httpClient HTTPDoer, repoRoot, token, headRepo, head, base string) (int, error) {
 	body, status, err := giteaAPICall(ctx, httpClient, http.MethodGet, repoRoot+"/pulls?state=open&limit=50", token, nil)
 	if err != nil {
 		return 0, err
@@ -278,7 +292,10 @@ func giteaOpenPullRequest(ctx context.Context, httpClient HTTPDoer, repoRoot, to
 	var open []struct {
 		giteaPullRequest
 		Head struct {
-			Ref string `json:"ref"`
+			Ref  string `json:"ref"`
+			Repo *struct {
+				FullName string `json:"full_name"` //nolint:tagliatelle // Gitea's wire schema
+			} `json:"repo"`
 		} `json:"head"`
 		Base struct {
 			Ref string `json:"ref"`
@@ -288,9 +305,14 @@ func giteaOpenPullRequest(ctx context.Context, httpClient HTTPDoer, repoRoot, to
 		return 0, fmt.Errorf("the Gitea pull-request list was not valid JSON")
 	}
 	for _, pr := range open {
-		if pr.Head.Ref == head && pr.Base.Ref == base {
-			return pr.Number, nil
+		if pr.Head.Ref != head || pr.Base.Ref != base {
+			continue
 		}
+		// A deleted fork leaves head.repo null; it is not ours to reuse.
+		if pr.Head.Repo == nil || pr.Head.Repo.FullName != headRepo {
+			continue
+		}
+		return pr.Number, nil
 	}
 	return 0, nil
 }

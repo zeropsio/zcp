@@ -222,7 +222,7 @@ func reconcileOneGiteaPair(
 
 	line := fmt.Sprintf("repository %s wired; this Mate works on %q and lands on %q through a pull request (never pushing %s directly)", repo.FullName, branch, base, base)
 	if number, created, prErr := ops.EnsureGiteaPullRequest(
-		ctx, httpClient, wiring.GiteaURL, wiring.Token, repo.FullName, branch, base,
+		ctx, httpClient, wiring.GiteaURL, wiring.Token, repo.FullName, repo.FullName, branch, base,
 		"Mate: "+m.Hostname,
 	); prErr == nil && number != 0 {
 		verb := "tracked by"

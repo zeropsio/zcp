@@ -212,12 +212,20 @@ func TestEnsureGiteaPullRequest(t *testing.T) {
 		},
 		{
 			name:       "ours is already open",
-			openList:   `[{"number":4,"state":"open","head":{"ref":"mate/mate-p1"},"base":{"ref":"main"}}]`,
+			openList:   `[{"number":4,"state":"open","head":{"ref":"mate/mate-p1","repo":{"full_name":"acme/api"}},"base":{"ref":"main"}}]`,
 			wantNumber: 4,
 		},
 		{
 			name:       "someone else's branch is open, ours is not",
-			openList:   `[{"number":4,"state":"open","head":{"ref":"mate/other"},"base":{"ref":"main"}}]`,
+			openList:   `[{"number":4,"state":"open","head":{"ref":"mate/other","repo":{"full_name":"acme/api"}},"base":{"ref":"main"}}]`,
+			createCode: http.StatusCreated,
+			wantNumber: 7, wantCreated: true, wantPosts: 1,
+		},
+		{
+			// A repository's own pull requests are same-repo; one whose head
+			// repo is gone (a deleted fork) is not ours to reuse.
+			name:       "our branch name, another repository's head",
+			openList:   `[{"number":4,"state":"open","head":{"ref":"mate/mate-p1","repo":null},"base":{"ref":"main"}}]`,
 			createCode: http.StatusCreated,
 			wantNumber: 7, wantCreated: true, wantPosts: 1,
 		},
@@ -267,7 +275,7 @@ func TestEnsureGiteaPullRequest(t *testing.T) {
 
 			number, created, err := EnsureGiteaPullRequest(
 				context.Background(), srv.Client(), srv.URL, "bot-token",
-				"acme/api", "mate/mate-p1", "main", "Mate: api",
+				"acme/api", "acme/api", "mate/mate-p1", "main", "Mate: api",
 			)
 			if tt.wantErr {
 				if err == nil {
@@ -293,13 +301,13 @@ func TestEnsureGiteaPullRequest(t *testing.T) {
 
 func TestEnsureGiteaPullRequest_Degenerate(t *testing.T) {
 	t.Parallel()
-	if _, _, err := EnsureGiteaPullRequest(context.Background(), nil, "https://g", "t", "acme/api", "b", "main", "t"); err == nil {
+	if _, _, err := EnsureGiteaPullRequest(context.Background(), nil, "https://g", "t", "acme/api", "acme/api", "b", "main", "t"); err == nil {
 		t.Error("a nil HTTP client must be an error, not a panic")
 	}
-	if _, _, err := EnsureGiteaPullRequest(context.Background(), http.DefaultClient, "", "t", "acme/api", "b", "main", "t"); err == nil {
+	if _, _, err := EnsureGiteaPullRequest(context.Background(), http.DefaultClient, "", "t", "acme/api", "acme/api", "b", "main", "t"); err == nil {
 		t.Error("an unset GITEA_URL must be an error")
 	}
-	if _, _, err := EnsureGiteaPullRequest(context.Background(), http.DefaultClient, "https://g", "t", "acme/api", "", "main", "t"); err == nil {
+	if _, _, err := EnsureGiteaPullRequest(context.Background(), http.DefaultClient, "https://g", "t", "acme/api", "acme/api", "", "main", "t"); err == nil {
 		t.Error("an empty head must be an error")
 	}
 }
