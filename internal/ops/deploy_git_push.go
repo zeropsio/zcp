@@ -66,6 +66,23 @@ func BuildGitPushCommand(workingDir, remoteURL, branch string) string {
 	return strings.Join(parts, " && ")
 }
 
+// BuildGitCheckoutBranchCommand puts the working tree on branch, creating it
+// at HEAD when it is not there. A Mate's pair is git-initialised on `main`
+// (BuildGitInitCommand) while the branch it works on is `mate/{bot}`, decided
+// when the broker hands out the repository — and `git push -u origin
+// <branch>` needs a LOCAL branch of that name, or git answers "src refspec
+// <branch> does not match any" and the pair can never deliver (live-verified
+// 2026-09-16). Idempotent: a second call on the same branch is a no-op
+// checkout. Never `-B`: moving an existing branch would discard work.
+func BuildGitCheckoutBranchCommand(workingDir, branch string) string {
+	if branch == "" {
+		branch = defaultBranch
+	}
+	quoted := shellQuote(branch)
+	return fmt.Sprintf("cd %s && (git checkout %s 2>/dev/null || git checkout -b %s)",
+		shellQuote(workingDir), quoted, quoted)
+}
+
 // gitHostnameRe matches a valid hostname (letters, digits, dots, hyphens).
 // Used to reject anything else extracted from a remote URL before it is
 // interpolated into the url-scoped credential config key

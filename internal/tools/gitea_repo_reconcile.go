@@ -25,6 +25,10 @@ import (
 // the ServiceMeta, where the rest of ZCP can already see it.
 const giteaStateDir = "gitea"
 
+// giteaPairWorkingDir is where a Zerops runtime's code lives, and so where
+// the pair's git repository is — the same default the git-push deploy uses.
+const giteaPairWorkingDir = "/var/www"
+
 // giteaProtectedBase is the branch a Mate lands on and never pushes: every
 // repository's `main` is protected (docs/vocabulary.md). It is the fallback
 // when the broker's answer named no default branch.
@@ -199,6 +203,18 @@ func reconcileOneGiteaPair(
 	)
 	if result != nil && result.IsError {
 		return fmt.Sprintf("repository %s is ready but wiring git-push to it failed — retrying on the next pass.", repo.FullName)
+	}
+
+	// The push source works ON that branch from now on. git-push-setup owns
+	// the remote and the credential but never touches branches, and the pair
+	// was git-initialised on `main`, so without this `git push -u origin
+	// mate/{bot}` has no local ref to push and the delivery fails at the
+	// refspec. Best-effort: a container that refuses the checkout still has
+	// its repository, and the next pass tries again.
+	if _, checkoutErr := sshDeployer.ExecSSH(ctx, m.Hostname,
+		ops.BuildGitCheckoutBranchCommand(giteaPairWorkingDir, branch)); checkoutErr != nil {
+		return fmt.Sprintf("repository %s is ready, but %s could not be put on %q (%v) — a push would have nothing to send; retrying on the next pass.",
+			repo.FullName, m.Hostname, branch, checkoutErr)
 	}
 
 	base := repo.DefaultBranch

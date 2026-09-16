@@ -471,3 +471,31 @@ func truncateForTest(s string) string {
 	}
 	return s
 }
+
+// TestReconcileGiteaRepositories_PutsThePairOnItsBranch pins what A1 owes the
+// push source. The Mate's branch is decided here and recorded on the meta,
+// and `git push -u origin <branch>` needs a LOCAL branch of that name: a pair
+// whose git init left it on `main` answers "src refspec mate/{bot} does not
+// match any" and can never deliver (live-verified 2026-09-16 — the first
+// zerops_deploy strategy="git-push" on a real Mate failed exactly there).
+func TestReconcileGiteaRepositories_PutsThePairOnItsBranch(t *testing.T) {
+	stateDir := t.TempDir()
+	writeGiteaPairMeta(t, stateDir)
+	fake := newFakeGitea()
+	srv := fake.start(t)
+	ssh := giteaReconcileSSH()
+	client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
+
+	reconcileGiteaRepositories(
+		context.Background(), client, srv.Client(), ssh,
+		runtime.Info{InContainer: true, ProjectID: "p1"}, stateDir,
+		writeLiveEnvFile(t, map[string]string{
+			"GITEA_URL": srv.URL, "MATE_BROKER_URL": srv.URL, "GITEA_TOKEN": giteaBotToken,
+		}),
+	)
+
+	joined := strings.Join(ssh.commands, "\n")
+	if !strings.Contains(joined, "checkout") || !strings.Contains(joined, "mate/mate-p1") {
+		t.Fatalf("A1 must leave the push source on its own branch; commands were:\n%s", joined)
+	}
+}
