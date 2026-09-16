@@ -390,6 +390,11 @@ func actionsConfirmResponse(
 	return jsonResult(attachWorkSessionState(body, stateDir))
 }
 
+// giteaWorkflowFilePath is where a Gitea service repository carries its
+// workflow. One owner: A1 writes the file there when it wires a pair, and the
+// build-integration response names the same path.
+const giteaWorkflowFilePath = ".gitea/workflows/zerops.yml"
+
 // giteaBrokerDeployAction is the action a Gitea workflow deploys with. It
 // lives in the gitea-mate repository beside the broker it calls, and takes
 // only an environment and a service — never a commit, a ref, or a key: what
@@ -431,7 +436,7 @@ func giteaConfirmResponse(
 		"forge":            string(topology.GitHostGitea),
 		"pushSource":       meta.Hostname,
 		"workflowFile": map[string]any{
-			"path":        ".gitea/workflows/zerops.yml",
+			"path":        giteaWorkflowFilePath,
 			"variant":     "gitea-broker-deploy",
 			"description": "Runs on the group's runner and asks the account's broker to deploy. No repository secret and no Zerops credential of any kind — the job authenticates with its own token, which dies when the job ends, and the broker deploys only what protected state approved.",
 			"content":     giteaWorkflowYAML(hostname),

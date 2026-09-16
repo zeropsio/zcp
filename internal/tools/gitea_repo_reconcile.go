@@ -263,7 +263,21 @@ func reconcileOneGiteaPair(
 		return fmt.Sprintf("repository %s is wired but recording it failed (%v) — the next pass re-reads it.", repo.FullName, err)
 	}
 
-	line := fmt.Sprintf("repository %s wired; this Mate works on %q and lands on %q through a pull request (never pushing %s directly)", repo.FullName, branch, base, base)
+	// A3: the workflow that ships this repository's code to the group's stage
+	// has to BE in the repository. Nothing else in the backbone writes it —
+	// build-integration only ever offered it as text for an agent to copy —
+	// so a Mate's repository never carried one and the runner path never ran.
+	// Written before the first push, content-idempotent, and reported rather
+	// than fatal: a pair whose container refused the write still has its
+	// repository, and the next pass writes it again.
+	workflowNote := ""
+	if _, emitErr := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildWriteRepoFileCommand(
+		giteaPairWorkingDir, giteaWorkflowFilePath, giteaWorkflowYAML(m.Hostname),
+	)); emitErr != nil {
+		workflowNote = fmt.Sprintf("; %s could not be written (%v) — nothing deploys the group's stage until it is there", giteaWorkflowFilePath, emitErr)
+	}
+
+	line := fmt.Sprintf("repository %s wired; this Mate works on %q and lands on %q through a pull request (never pushing %s directly)", repo.FullName, branch, base, base) + workflowNote
 	// The branch exists only locally at this point, so this ordinarily finds
 	// nothing — it is here for the pair whose branch a previous generation
 	// already pushed. The request's real triggers are the git-push deploy and
