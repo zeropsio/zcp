@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -76,4 +78,36 @@ func reconcileAdoptedGitPush(ctx context.Context, client platform.Client, sshDep
 		}
 	}
 	return reconciled
+}
+
+// reconcileGitPushOnBootstrapFinish is the SECOND pass, and the one that
+// actually does the work on a first adoption (A4). The discover-step pass runs
+// against metas the plan has just written — partial, no BootstrappedAt — so
+// its own IsComplete() precondition excludes every one of them and it
+// reconciles nothing. Those metas become complete at the terminal bootstrap
+// step (writeBootstrapOutputs), which is here.
+//
+// Terminal-only (resp.Current == nil) and best-effort throughout: it lists the
+// project itself because the discover-step service list is long out of scope by
+// now, and a listing failure just means no reconcile — never a failed
+// bootstrap. Harmless on a non-adopt route: a greenfield service has no origin,
+// so the live read returns empty and it is skipped.
+func reconcileGitPushOnBootstrapFinish(
+	ctx context.Context,
+	client platform.Client,
+	sshDeployer ops.SSHDeployer,
+	rt runtime.Info,
+	projectID, stateDir string,
+	resp *workflow.BootstrapResponse,
+) {
+	if resp == nil || resp.Current != nil || !rt.InContainer || sshDeployer == nil || client == nil {
+		return
+	}
+	existing, err := ops.ListProjectServices(ctx, client, projectID)
+	if err != nil || len(existing) == 0 {
+		return
+	}
+	if reconciled := reconcileAdoptedGitPush(ctx, client, sshDeployer, rt, stateDir, existing); len(reconciled) > 0 {
+		resp.Message += fmt.Sprintf(" Git-push state reconciled from live for %s — these services already have a working remote + token, so launch-production will NOT require re-running git-push-setup on them.", strings.Join(reconciled, ", "))
+	}
 }

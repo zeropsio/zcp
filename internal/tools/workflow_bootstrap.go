@@ -184,6 +184,11 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			ctx, client, httpClient, sshDeployer, rt, stateDir, mate.LiveEnvStorePath))
 	}
 
+	// A4: bootstrap's terminal step is where the metas the adopt route wrote
+	// at discover become complete — and so the first moment the git-push
+	// reflect-and-report can see them at all.
+	reconcileGitPushOnBootstrapFinish(ctx, client, sshDeployer, rt, projectID, stateDir, resp)
+
 	appendTransitionMessage(resp, engine)
 	populateRuntimeURLs(ctx, client, projectID, engine, resp)
 	if needsStacks(resp) {
