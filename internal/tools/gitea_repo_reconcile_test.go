@@ -34,6 +34,9 @@ type fakeGitea struct {
 	pullsOpen    string
 	pullCreates  int
 	userStatus   int
+	// branchExists is whether the Mate's branch is on the remote — false
+	// until the pair's first push, which is the state A1 leaves behind.
+	branchExists bool
 }
 
 func newFakeGitea() *fakeGitea {
@@ -65,6 +68,13 @@ func (f *fakeGitea) start(t *testing.T) *httptest.Server {
 			f.repoRequests = append(f.repoRequests, string(buf))
 			w.WriteHeader(f.repoStatus)
 			_, _ = w.Write([]byte(f.repoBody))
+		case strings.Contains(r.URL.Path, "/branches/"):
+			if !f.branchExists {
+				// Gitea 1.27.2 answers a branch it cannot resolve with 404.
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_, _ = w.Write([]byte(`{"name":"mate/mate-p1"}`))
 		case strings.HasSuffix(r.URL.Path, "/pulls"):
 			if r.Method == http.MethodPost {
 				f.pullCreates++

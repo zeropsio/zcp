@@ -300,6 +300,7 @@ already own continues unchanged. After setup completes, retry the push.`
 func handleGitPush(
 	ctx context.Context,
 	client platform.Client,
+	httpClient ops.HTTPDoer,
 	projectID string,
 	sshDeployer ops.SSHDeployer,
 	logFetcher platform.LogFetcher,
@@ -578,7 +579,12 @@ func handleGitPush(
 	}
 
 	return jsonResult(deployGitPushResponse{
-		GitPushResult:    result,
+		GitPushResult: result,
+		// The push is what put the Mate's branch on the account's Gitea, and
+		// `main` there takes no direct push from anyone — so this is the
+		// moment the request that lands it can first exist, and the Mate is
+		// done pushing. Idempotent: a second push finds the open one.
+		PullRequest:      giteaPullRequestAfterPush(ctx, httpClient, stateDir, hostname, effectiveRemote),
 		Warnings:         warnings,
 		WorkSessionState: sessionAnnotations(stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
@@ -592,8 +598,11 @@ func handleGitPush(
 // want.
 type deployGitPushResponse struct {
 	*ops.GitPushResult
-	Warnings         []string          `json:"warnings,omitempty"`
-	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
+	// PullRequest is the request this push's branch lands through on the
+	// account's own Gitea — absent everywhere else.
+	PullRequest      *giteaPullRequestRef `json:"pullRequest,omitempty"`
+	Warnings         []string             `json:"warnings,omitempty"`
+	WorkSessionState *WorkSessionState    `json:"workSessionState,omitempty"`
 	// Envelope is the post-mutation lifecycle state (docs/spec-mate.md §1.3).
 	// Absent when its computation failed — the rest of the response is
 	// unaffected.

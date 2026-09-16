@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -353,4 +354,40 @@ func giteaAPIBase(giteaURL string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSuffix(endpoint, giteaUserAPIPath) + "/api/v1", nil
+}
+
+// GiteaBranchExists reports whether branch is on fullName's remote. It is
+// what tells a reconcile pass whether a pull request CAN be opened yet: A1
+// creates the Mate's branch locally, and only the pair's first deploy puts it
+// on the remote — Gitea refuses a pull request whose head it cannot resolve,
+// so asking for one before the push turns the ordinary path into an error
+// path.
+//
+// A branch that is not there is not an error: false, nil. Gitea answers 404
+// for an unresolvable branch on this endpoint (and a `400 sha not found` on
+// the tree reads the same way, so both are honoured here).
+func GiteaBranchExists(ctx context.Context, httpClient HTTPDoer, giteaURL, token, fullName, branch string) (bool, error) {
+	if httpClient == nil {
+		return false, fmt.Errorf("no HTTP client configured")
+	}
+	apiBase, err := giteaAPIBase(giteaURL)
+	if err != nil {
+		return false, err
+	}
+	if fullName == "" || branch == "" {
+		return false, fmt.Errorf("a branch read needs a repository and a branch")
+	}
+	endpoint := apiBase + "/repos/" + fullName + "/branches/" + url.PathEscape(branch)
+	body, status, err := giteaAPICall(ctx, httpClient, http.MethodGet, endpoint, token, nil)
+	if err != nil {
+		return false, err
+	}
+	switch {
+	case status == http.StatusOK:
+		return true, nil
+	case status == http.StatusNotFound, giteaRefAbsent(status, body):
+		return false, nil
+	default:
+		return false, fmt.Errorf("the Gitea branch read of %s@%s returned status %d", fullName, branch, status)
+	}
 }

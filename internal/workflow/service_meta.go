@@ -140,6 +140,12 @@ type GiteaRepoRef struct {
 	Branch        string `json:"branch"`                  // mate/{bot login} — never main
 	DefaultBranch string `json:"defaultBranch,omitempty"` // the base a pull request targets
 	RequestedAt   string `json:"requestedAt,omitempty"`   // RFC3339, when the broker answered
+	// PullRequest is the number of the request that lands Branch on
+	// DefaultBranch, 0 until one exists. Recorded rather than re-derived: the
+	// branch is pushed long after the repository is wired, so the request has
+	// its own moment, and a pair that has one must never make Gitea answer
+	// about it again on every later pass.
+	PullRequest int `json:"pullRequest,omitempty"`
 }
 
 // PublicAccessFor returns the persisted public-access record for hostname —

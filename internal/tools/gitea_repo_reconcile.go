@@ -108,7 +108,7 @@ func reconcileGiteaRepositories(
 
 	pending := make([]*workflow.ServiceMeta, 0, len(metas))
 	for _, m := range metas {
-		if giteaPairNeedsRepository(m) {
+		if giteaPairNeedsRepository(m) || giteaPairNeedsPullRequest(m) {
 			pending = append(pending, m)
 		}
 	}
@@ -126,15 +126,26 @@ func reconcileGiteaRepositories(
 		if !giteaAttemptDue(state, now) {
 			continue
 		}
-		outcome := reconcileOneGiteaPair(ctx, client, httpClient, sshDeployer, rt, stateDir, wiring, m)
-		if outcome == "" {
-			continue
+		// A pair A1 already finished with is here for one reason only: the
+		// pull request its branch lands through, which could not exist in the
+		// pass that wired the repository.
+		var outcome string
+		if giteaPairNeedsRepository(m) {
+			outcome = reconcileOneGiteaPair(ctx, client, httpClient, sshDeployer, rt, stateDir, wiring, m)
+		} else {
+			outcome = reconcileGiteaPairPullRequest(ctx, httpClient, stateDir, wiring, m)
 		}
+		// The attempt is recorded even when it had nothing to say: a wired
+		// pair that has not pushed yet is the ORDINARY state, and without the
+		// backoff every agent tool call would ask Gitea about its branch.
 		writeGiteaPairState(stateDir, m.Hostname, giteaPairState{
 			Attempts:      state.Attempts + 1,
 			LastAttemptAt: now.Format(time.RFC3339),
 			LastOutcome:   outcome,
 		})
+		if outcome == "" {
+			continue
+		}
 		report = append(report, m.Hostname+": "+outcome)
 	}
 	return report
@@ -154,6 +165,15 @@ func giteaPairNeedsRepository(m *workflow.ServiceMeta) bool {
 	// A pair the user already pointed at a remote of their own is theirs.
 	// ZCP does not move a working repository to Gitea behind their back.
 	return m.RemoteURL == "" || m.Gitea != nil
+}
+
+// giteaPairNeedsPullRequest reports whether a pair A1 already wired is still
+// missing the request its branch lands through. Stateful like the repository:
+// the number is recorded on the pair, so a Mate that has one asks Gitea
+// nothing on any later pass.
+func giteaPairNeedsPullRequest(m *workflow.ServiceMeta) bool {
+	return m != nil && m.IsComplete() && m.Gitea != nil &&
+		m.Gitea.FullName != "" && m.Gitea.Branch != "" && m.Gitea.PullRequest == 0
 }
 
 // reconcileOneGiteaPair does the work for one pair and returns a report line
@@ -239,15 +259,17 @@ func reconcileOneGiteaPair(
 	}
 
 	line := fmt.Sprintf("repository %s wired; this Mate works on %q and lands on %q through a pull request (never pushing %s directly)", repo.FullName, branch, base, base)
-	if number, created, prErr := ops.EnsureGiteaPullRequest(
-		ctx, httpClient, wiring.GiteaURL, wiring.Token, repo.FullName, repo.FullName, branch, base,
-		"Mate: "+m.Hostname,
-	); prErr == nil && number != 0 {
+	// The branch exists only locally at this point, so this ordinarily finds
+	// nothing — it is here for the pair whose branch a previous generation
+	// already pushed. The request's real triggers are the git-push deploy and
+	// the catch-up pass; both share this owner, and both record the number.
+	m.Gitea = &workflow.GiteaRepoRef{FullName: repo.FullName, Branch: branch, DefaultBranch: base}
+	if ref := openGiteaPairPullRequest(ctx, httpClient, wiring, stateDir, m); ref != nil {
 		verb := "tracked by"
-		if created {
+		if ref.Created {
 			verb = "opened as"
 		}
-		line += fmt.Sprintf("; %s pull request #%d", verb, number)
+		line += fmt.Sprintf("; %s pull request #%d", verb, ref.Number)
 	}
 	return line
 }
