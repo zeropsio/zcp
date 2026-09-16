@@ -112,7 +112,7 @@ func handleBuildIntegration(
 				fmt.Sprintf("build-integration synthesis failed: %v", err),
 				"Build-time defect — report it. Run `make lint-local` to verify the atom corpus."), WithRecoveryStatus()), nil, nil
 		}
-		decision := deliveryDecisionForMeta(meta)
+		decision := deliveryDecisionForMeta(meta, rt.GiteaURL)
 		recommended := string(decision.Recommended)
 		buildHost, buildSetup, btDecision := resolveBuildTarget(meta, input.Service, input.BuildTarget)
 		body := map[string]any{

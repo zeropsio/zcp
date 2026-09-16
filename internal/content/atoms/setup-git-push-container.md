@@ -13,7 +13,7 @@ Runtime containers have no user credentials, so pushes to an external git remote
 
 The `git-push-setup` walkthrough response carries `inputsRequired` for exactly these three; render them as a structured picker rather than free-text questions. The walkthrough also carries `recommendedIntegration` (default `actions` for GitHub remotes — zero manual Zerops dashboard step; `webhook` for GitLab and policy-constrained repos).
 
-1. **Git remote URL (HTTPS only)** — `https://github.com/{owner}/{repo}.git`. Container mode authenticates via a PAT (session-env git credential helper), which requires HTTPS. SSH (`git@host:owner/repo`) remotes are rejected — use the HTTPS clone URL.
+1. **Git remote URL (HTTPS only)** — `https://github.com/{owner}/{repo}.git`, or on the account's own Gitea the canonical URL the broker returned (host = `$GITEA_URL`, no `.git` suffix). Container mode authenticates via a PAT (session-env git credential helper), which requires HTTPS. SSH (`git@host:owner/repo`) remotes are rejected — use the HTTPS clone URL.
 2. **GIT_TOKEN** (fine-grained PAT, secret) — single-repo scope, created/edited at <https://github.com/settings/personal-access-tokens>. Under **Repository access** select **Only select repositories** → this repo, NOT **Public repositories** (read-only — cannot push). **Push-only minimum:** `Contents: Read and write`. **Recommended Actions integration (full set):** `Contents: Read and write` + `Workflows: Read and write` (REQUIRED — pushing any file under `.github/workflows/` is rejected without it) + `Secrets: Read and write` (for `gh secret set`) + `Actions: Read` and `Checks: Read` (so `gh run list` / `gh run watch` can read the run). GitLab equivalent: `write_repository` + `api`. Single-repo blast radius — the container can only mutate this one repo. PATs require an expiration; pick the longest you're comfortable with (max 1 year). <!-- axis-m-keep -->
 3. **Build integration** — pick one of `actions` (recommended for GitHub remotes; agent writes workflow YAML + `gh secret set` from the terminal), `webhook` (Zerops dashboard OAuth — one manual dashboard step; fallback for GitLab / policy-constrained repos), or `none` (external CI/CD you already own).
 
@@ -22,6 +22,7 @@ The `git-push-setup` walkthrough response carries `inputsRequired` for exactly t
 | GitHub fine-grained (git-push only) | `Contents: Read and write`. |
 | GitHub fine-grained (actions integration) | `Contents: Read and write` + `Workflows: Read and write` (push `.github/workflows/`) + `Secrets: Read and write` (`gh secret set`) + `Actions: Read` and `Checks: Read` (watch the run). Create at <https://github.com/settings/personal-access-tokens>. |
 | GitLab personal access | `write_repository` + `api` (covers push + webhook integration). |
+| The account's own Gitea (host = `$GITEA_URL`) | Nothing to create. The Mate's bot token is already in `$GITEA_TOKEN` (`write:repository`, `read:user`); a person never mints one and there is no settings page to send them to. |
 
 ## 1. Verify + configure git-push capability in one call
 

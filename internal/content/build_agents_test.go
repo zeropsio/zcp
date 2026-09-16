@@ -605,6 +605,36 @@ func TestBuildAgentsMD_Container_PipelineScopedToOtherProjects(t *testing.T) {
 	}
 }
 
+// The git host is the account's own Gitea, and ZCP knows it as one — guide
+// 2.3. Told only "an access token minted for you alone", a Mate reads its
+// host as a generic self-hosted forge: it goes looking for a settings page to
+// mint a token on, and it has no idea a repository comes from the broker
+// rather than from it. The paragraph must name the forge, the broker, and
+// whose commits these are.
+func TestBuildAgentsMD_Container_GitHostIsGitea(t *testing.T) {
+	t.Parallel()
+	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp", GitHostKnown: true}, false)
+	if err != nil {
+		t.Fatalf("BuildAgentsMD: %v", err)
+	}
+	for _, want := range []string{
+		"$GITEA_URL",
+		"$GITEA_TOKEN",
+		"$MATE_BROKER_URL",
+		"write:repository",
+		"read:user",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("git-host paragraph missing %q", want)
+		}
+	}
+	// GITEA_REPO was retired with the broker (docs/vocabulary.md, "A Mate's
+	// environment"): a Mate asks for its repository, it is not handed one.
+	if strings.Contains(out, "GITEA_REPO") {
+		t.Errorf("git-host paragraph still names the retired GITEA_REPO:\n%s", out)
+	}
+}
+
 // A local install is not in a group and has no git host of its own, and
 // must not be told it does.
 func TestBuildAgentsMD_Local_HasNoMateContext(t *testing.T) {

@@ -336,6 +336,82 @@ func TestGitPushSetupContainer_NonGitHubHost_SkipsDerivation(t *testing.T) {
 	}
 }
 
+// TestGitPushSetupContainer_GiteaHost_SeedsBotIdentity pins guide 2.3: on the
+// account's own Gitea the commits are the MATE's, not a person's — the bot's
+// login and `{login}@mate.invalid`. The same remote host with no GITEA_URL in
+// the environment is just an unidentified forge and derives nothing, which is
+// what keeps the bot's token from being sent at a stranger's server.
+func TestGitPushSetupContainer_GiteaHost_SeedsBotIdentity(t *testing.T) {
+	t.Parallel()
+	const giteaURL = "https://web-2ff4-3000.prg1.zerops.app"
+	const remote = giteaURL + "/acme/api"
+
+	t.Run("gitea known", func(t *testing.T) {
+		t.Parallel()
+		stateDir := t.TempDir()
+		writeFirstTimeConfigMeta(t, stateDir)
+
+		ssh := &containerSSHStub{
+			dispatch: func(cmd string) ([]byte, error) {
+				if strings.Contains(cmd, "cur_email=$(git config user.email)") {
+					return []byte("ZCP_EMAIL_SEEDED\nZCP_NAME_SEEDED\n"), nil
+				}
+				return []byte("ok"), nil
+			},
+		}
+		httpDoer := &stubGitHubUserHTTP{status: 200, body: `{"login":"mate-p1","id":7}`}
+		client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
+
+		result, _, _ := handleGitPushSetup(
+			context.Background(), client, httpDoer, ssh, "test-project",
+			WorkflowInput{Service: "appdev", RemoteURL: remote, GitToken: "gitea_bot_token"},
+			stateDir, runtime.Info{InContainer: true, GitHostKnown: true, GiteaURL: giteaURL},
+		)
+		if result.IsError {
+			t.Fatalf("expected success, got error: %s", extractText(result))
+		}
+		if httpDoer.callCount != 1 {
+			t.Errorf("expected exactly 1 Gitea /user call, got %d", httpDoer.callCount)
+		}
+		var seedCmd string
+		for _, c := range ssh.commands {
+			if strings.Contains(c, "cur_email=$(git config user.email)") {
+				seedCmd = c
+				break
+			}
+		}
+		if seedCmd == "" {
+			t.Fatalf("seed command never issued; commands: %v", ssh.commands)
+		}
+		if !strings.Contains(seedCmd, "git config user.email 'mate-p1@mate.invalid'") ||
+			!strings.Contains(seedCmd, "git config user.name 'mate-p1'") {
+			t.Errorf("seed command must carry the bot identity: %s", seedCmd)
+		}
+	})
+
+	t.Run("same host, no GITEA_URL", func(t *testing.T) {
+		t.Parallel()
+		stateDir := t.TempDir()
+		writeFirstTimeConfigMeta(t, stateDir)
+
+		ssh := &containerSSHStub{}
+		httpDoer := &stubGitHubUserHTTP{status: 200, body: `{"login":"mate-p1","id":7}`}
+		client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
+
+		result, _, _ := handleGitPushSetup(
+			context.Background(), client, httpDoer, ssh, "test-project",
+			WorkflowInput{Service: "appdev", RemoteURL: remote, GitToken: "some_token"},
+			stateDir, runtime.Info{InContainer: true},
+		)
+		if result.IsError {
+			t.Fatalf("expected success, got error: %s", extractText(result))
+		}
+		if httpDoer.callCount != 0 {
+			t.Errorf("an unidentified host must not be asked who it thinks we are; got %d calls", httpDoer.callCount)
+		}
+	})
+}
+
 // TestGitPushSetupContainer_DerivationFails_NonBlockingWarning pins F3's
 // core non-blocking contract: a GitHub API failure (or a nil httpClient)
 // must NOT fail git-push-setup — it falls back to the robot identity and

@@ -40,6 +40,15 @@ type Info struct {
 	// emitted agent context, so a container without one is never told about
 	// variables it does not have.
 	GitHostKnown bool
+
+	// GiteaURL is GITEA_URL verbatim — the origin of the account's own Gitea,
+	// written onto the `zcp` service when the Mate was made. It is the ONLY
+	// thing that makes a remote recognisable as that Gitea
+	// (topology.ClassifyGitHost takes it as a parameter), so it is read once
+	// here and passed down rather than reached for from inside a classifier.
+	// Empty outside a Mate, and empty in a container the app has not written
+	// it onto yet.
+	GiteaURL string
 }
 
 // Detect reads Zerops container env vars and returns runtime info.
@@ -51,7 +60,7 @@ type Info struct {
 func Detect() Info {
 	authoring := os.Getenv("ZCP_AUTHORING") == "1"
 	mateEnabled := EnvEnabled(os.Getenv("ZCP_MATE_ENABLED"))
-	gitHostKnown := os.Getenv("GITEA_URL") != ""
+	giteaURL := os.Getenv("GITEA_URL")
 	serviceID := os.Getenv("serviceId")
 	if serviceID == "" {
 		return Info{Authoring: authoring, MateEnabled: mateEnabled}
@@ -63,7 +72,8 @@ func Detect() Info {
 		ProjectID:    os.Getenv("projectId"),
 		Authoring:    authoring,
 		MateEnabled:  mateEnabled,
-		GitHostKnown: gitHostKnown,
+		GitHostKnown: giteaURL != "",
+		GiteaURL:     giteaURL,
 	}
 }
 

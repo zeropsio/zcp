@@ -1,7 +1,5 @@
 package topology
 
-import "strings"
-
 // DeliveryInputs is the resolved per-pair state the production-delivery
 // recommendation keys on — all five fields read from one ServiceMeta, so the
 // recommendation derives from the SAME source the launch source-control gate's
@@ -12,7 +10,8 @@ type DeliveryInputs struct {
 	BuildIntegration BuildIntegration
 	Verified         bool   // meta.BuildIntegrationVerifiedAt != "" (earned proof)
 	HasStage         bool   // meta.StageHostname != ""
-	RemoteURL        string // host detection: gitlab → webhook, else actions
+	RemoteURL        string // forge detection: gitlab → webhook, else actions
+	GiteaURL         string // the process's GITEA_URL — what makes a Gitea remote recognisable
 }
 
 // DeliveryDecision is the recommendation RecommendDelivery returns. Recommended
@@ -40,12 +39,19 @@ type DeliveryDecision struct {
 // pipeline-first (a tag/push triggers a build) — the agent never self-deploys
 // to prod from its own machine.
 func RecommendDelivery(in DeliveryInputs) DeliveryDecision {
-	isGitLab := strings.Contains(strings.ToLower(in.RemoteURL), "gitlab")
 	ciFamily := BuildIntegrationActions
 	ciWhy := "GitHub Actions — the agent can land the workflow file + repo secret via `gh` without leaving the terminal"
-	if isGitLab {
+	switch ClassifyGitHost(in.RemoteURL, in.GiteaURL) {
+	case GitHostGitLab:
 		ciFamily = BuildIntegrationWebhook
 		ciWhy = "the Zerops dashboard OAuth webhook — GitLab has no equivalent CLI-driven secret wiring"
+	case GitHostGitea:
+		// Gitea Actions IS the actions family — the same workflow shape in
+		// `.gitea/workflows/`. What differs is who deploys: the account's
+		// broker, off protected branches and tags, with the job's own token.
+		// There is no secret to wire and no Zerops token anywhere in it.
+		ciWhy = "a `.gitea/workflows/` workflow that asks the account's broker to deploy — no secret to wire and no Zerops token in CI; the broker deploys only what protected state approved"
+	case GitHostGitHub, GitHostUnknown:
 	}
 
 	// 1. git-push not configured — no family is meaningful until push works.
