@@ -1,5 +1,9 @@
 # Empty account → Gitea → a Mate that ships to production — runbook
 
+> **Demo mechanics, not the product design.** The product design (2026-09-15) is
+> `zerops-auth-backbone-implementation-2026-09-15.md`; it drops the shared `mate` user and the
+> production token in repository secrets used below.
+
 Written 2026-09-06, after proving every step on the Onboarding org. This is the execution script
 for doing it again from nothing. The reasoning lives in
 `z3-new-mate-and-gitea-cicd-research-2026-09-06.md`; this file is only *what to run, in what order,
