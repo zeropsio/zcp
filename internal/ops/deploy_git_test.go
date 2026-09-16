@@ -78,10 +78,9 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 			serviceID: "svc-789",
 			workDir:   "/var/www",
 			wantParts: []string{
-				"zcli login -- 'my-token'",
+				"ZEROPS_TOKEN='my-token' zcli push --service-id svc-789",
 				"(test -d .git || git init -q -b main)",
 				"git config user.email 'agent@zerops.io'",
-				"zcli push --service-id svc-789",
 			},
 		},
 		{
@@ -183,5 +182,58 @@ func TestBuildSSHCommand_PreservesRemoteAndGitignore(t *testing.T) {
 		if contains(cmd, s) {
 			t.Errorf("command must NOT contain %q\ngot: %s", s, cmd)
 		}
+	}
+}
+
+// TestBuildSSHCommand_TokenNeverPersists pins guide 0.9 / A6: a self-deploy
+// must not leave the Mate's Zerops key behind in the app container's zcli
+// config, where the app's own dependencies run. `zcli login` writes the token
+// to ~/.config/zcli — so there is none; the one `zcli push` gets the key
+// through its environment on the command line (zcli reads ZEROPS_TOKEN), and
+// the value is POSIX single-quoted like every other shell composition here.
+func TestBuildSSHCommand_TokenNeverPersists(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		authInfo   auth.Info
+		setup      string
+		includeGit bool
+		wantParts  []string
+	}{
+		{
+			name:      "plain push",
+			authInfo:  testAuthInfo(),
+			wantParts: []string{"ZEROPS_TOKEN='test-token' zcli push --service-id svc-1"},
+		},
+		{
+			name:       "push with setup and .git",
+			authInfo:   testAuthInfo(),
+			setup:      "prod",
+			includeGit: true,
+			wantParts:  []string{"ZEROPS_TOKEN='test-token' zcli push --service-id svc-1 --setup 'prod' -g"},
+		},
+		{
+			name:      "token with a shell metacharacter stays quoted",
+			authInfo:  auth.Info{Token: "tok'en; rm -rf /"},
+			wantParts: []string{`ZEROPS_TOKEN='tok'\''en; rm -rf /' zcli push`},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd := buildSSHCommand(tt.authInfo, "svc-1", "/var/www", tt.setup, tt.includeGit)
+
+			if contains(cmd, "zcli login") {
+				t.Errorf("command must NOT log zcli in on the remote host (the token would persist)\ngot: %s", cmd)
+			}
+			for _, want := range tt.wantParts {
+				if !contains(cmd, want) {
+					t.Errorf("command missing %q\ngot: %s", want, cmd)
+				}
+			}
+		})
 	}
 }

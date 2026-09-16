@@ -434,16 +434,15 @@ func TestGitPushMetaPreflight_PassesAfterSetup(t *testing.T) {
 // post-2026-04-29 confirm shape for `integration=actions`. The terse
 // `status:configured + nextStep:"After the integration is wired..."` body
 // surfaced in live agent feedback as actionably useless: agent didn't know
-// the workflow YAML to write, the secrets to set, or that ZEROPS_TOKEN is
-// the same PAT as ZCP_API_KEY. The new body MUST carry:
+// the workflow YAML to write or the secrets to set. The new body MUST carry:
 //
 //   - workflowFile.path + content (.github/workflows/zerops.yml YAML body)
 //   - secrets[] with ZEROPS_TOKEN + ZEROPS_SERVICE_ID, each with a
 //     ready-to-run `gh secret set` command
-//   - ZCP_API_KEY reuse hint (no new PAT generation)
-//   - per-repo fine-grained PAT recommendation
-//   - env-aware ZCP_API_KEY source (this test pins local env via
-//     runtime.Info{InContainer:false} → jq extraction from .mcp.json)
+//   - the mint guidance for the CI-only ZEROPS_TOKEN (guide 0.9: the user's
+//     own token, never ZCP's container key — pinned negatively by
+//     TestActionsConfirm_NeverHandsOutTheContainerKey)
+//   - per-repo fine-grained PAT recommendation for the `gh` calls themselves
 func TestHandleBuildIntegration_ActionsConfirmEnrichesResponse(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
@@ -495,13 +494,9 @@ func TestHandleBuildIntegration_ActionsConfirmEnrichesResponse(t *testing.T) {
 		"gh secret set ZEROPS_TOKEN",
 		"gh secret set ZEROPS_SERVICE_ID",
 		"example/demo", // owner/repo splice from RemoteURL
-		// Local env hint: jq extraction from .mcp.json — the MCP server is
-		// keyed "zerops" in .mcp.json (BI-NEW-1: the prior "zcp" key was a
-		// phantom path that returned null → empty secret).
-		`jq -r '.mcpServers.zerops.env.ZCP_API_KEY' .mcp.json`,
-		"ZCP_API_KEY",
-		// Reuse hint — no new PAT generation
-		"DON'T generate a new token",
+		// The CI token is the user's own, scoped to the one target project.
+		"NO_ACCESS",
+		"BASIC_USER",
 		// Per-repo fine-grained PAT lead recommendation
 		"fine-grained GitHub PAT scoped ONLY to example/demo",
 		"Secrets: Read and write",
@@ -535,7 +530,8 @@ func TestHandleBuildIntegration_ActionsConfirmEnrichesResponse(t *testing.T) {
 		t.Errorf("response must not reference nonexistent setup action: %s", body)
 	}
 
-	// Container env path: $ZCP_API_KEY substitution instead of jq.
+	// Container env path: the GH_TOKEN conveyance reads $GIT_TOKEN over SSH
+	// from the push source (the CI Zerops token stays a paste in both envs).
 	stateDirContainer := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDirContainer, &workflow.ServiceMeta{
 		Hostname:         "appdev",
@@ -553,12 +549,6 @@ func TestHandleBuildIntegration_ActionsConfirmEnrichesResponse(t *testing.T) {
 		Integration: string(topology.BuildIntegrationActions),
 	}, stateDirContainer, runtime.Info{InContainer: true})
 	containerBody := getTextContent(t, resultContainer)
-	if strings.Contains(containerBody, "jq -r") {
-		t.Errorf("container response should NOT contain jq extraction (that's the local env path): %s", containerBody)
-	}
-	if !strings.Contains(containerBody, `\"$ZCP_API_KEY\"`) {
-		t.Errorf("container response missing direct $ZCP_API_KEY substitution: %s", containerBody)
-	}
 	// B1 container-mode gh-auth tell: read $GIT_TOKEN over SSH from the
 	// push-source (appdev — the dev half, NOT buildTarget appstage), guarded
 	// against the empty-token device-code hang, idempotent on an already-authed

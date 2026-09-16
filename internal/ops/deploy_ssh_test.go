@@ -361,13 +361,13 @@ func TestDeploy_SSHMode_WithRegion(t *testing.T) {
 	if result.Mode != "ssh" {
 		t.Errorf("mode = %s, want ssh", result.Mode)
 	}
-	// Verify login command is present without --zeropsRegion.
+	// Verify the token rides the push's environment, without --zeropsRegion.
 	if len(ssh.calls) != 1 {
 		t.Fatalf("ssh calls = %d, want 1", len(ssh.calls))
 	}
 	cmd := ssh.calls[0].command
-	if !containsSubstring(cmd, "zcli login -- 'test-token'") {
-		t.Errorf("SSH command should contain 'zcli login -- test-token', got: %s", cmd)
+	if !containsSubstring(cmd, "ZEROPS_TOKEN='test-token' zcli push") {
+		t.Errorf("SSH command should pass the token through the push env, got: %s", cmd)
 	}
 	if containsSubstring(cmd, "--zeropsRegion") {
 		t.Errorf("SSH command should NOT contain '--zeropsRegion', got: %s", cmd)
@@ -548,14 +548,13 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 	cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false)
 
 	wantContains := []string{
-		"zcli login -- 'test-token'",
+		"ZEROPS_TOKEN='test-token' zcli push --service-id svc-target",
 		"cd '/var/www'",
 		"(test -d .git || git init -q -b main)",
 		`(test -n "$(git config user.email)" || git config user.email 'agent@zerops.io') && (test -n "$(git config user.name)" || git config user.name 'Zerops Agent')`,
 		`git rev-parse -q --verify HEAD >/dev/null || git update-ref HEAD`,
 		"commit-tree",
 		"-m 'zcp init'",
-		"zcli push --service-id svc-target",
 	}
 	for _, want := range wantContains {
 		if !containsSubstring(cmd, want) {
@@ -584,20 +583,17 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 
 // extractGitEnsureChain pulls the self-heal chain (cd ... init ...
 // identity ... HEAD guarantee) out of buildSSHCommand's full output —
-// everything up to (not including) " && zcli push". Running only this
-// piece against a scratch dir is what a cold-path deploy would actually
-// execute; the trailing `zcli push` would fail locally against a fake
-// token and isn't the part these tests care about.
+// everything up to (not including) " && ZEROPS_TOKEN=… zcli push". Running
+// only this piece against a scratch dir is what a cold-path deploy would
+// actually execute; the trailing `zcli push` would fail locally against a
+// fake token and isn't the part these tests care about.
 func extractGitEnsureChain(t *testing.T, dir string) string {
 	t.Helper()
 	authInfo := auth.Info{Token: "tok"}
 	full := buildSSHCommand(authInfo, "svc-target", dir, "", false)
-	chain, _, found := strings.Cut(full, " && zcli push")
+	chain, _, found := strings.Cut(full, " && ZEROPS_TOKEN=")
 	if !found {
 		t.Fatalf("command missing `zcli push` anchor, shape drifted:\n%s", full)
-	}
-	if prefix := "zcli login -- 'tok' && "; strings.HasPrefix(chain, prefix) {
-		chain = chain[len(prefix):]
 	}
 	return chain
 }

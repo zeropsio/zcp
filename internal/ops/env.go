@@ -57,6 +57,7 @@ var credentialValueKeys = map[string]bool{
 	GitTokenEnvKey:    true,
 	"ZCP_API_KEY":     true,
 	LaunchTokenEnvKey: true,
+	GiteaTokenEnvKey:  true,
 }
 
 // managedCredentialFieldKeys are env-var KEYS whose VALUE is a generated
@@ -117,6 +118,14 @@ func RedactCredentialValue(key, value, serviceType string) (string, bool) {
 // read-back command from it. Every tell/check that names the key must
 // reference this constant so they cannot drift apart.
 const GitTokenEnvKey = "GIT_TOKEN"
+
+// GiteaTokenEnvKey is the single owner of the Mate's Gitea bot-token env-var
+// name. The Mate app writes it (sensitive) onto the `zcp` service when the
+// Mate is made; zcp reads it from its PROCESS environment and never writes it
+// anywhere. It is a credential like every other in credentialValueKeys: the
+// value is masked at every echo site, so a variable dump cannot hand a reader
+// write access to the group's code repositories.
+const GiteaTokenEnvKey = "GITEA_TOKEN"
 
 // LaunchTokenEnvKey is the single owner of the staged launch-token env-var
 // name (single-token launch lifecycle). The launch-production mutation

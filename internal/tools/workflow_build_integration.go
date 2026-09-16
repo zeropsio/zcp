@@ -45,9 +45,8 @@ var validBuildIntegrations = map[topology.BuildIntegration]bool{
 //   - Confirm (input.Integration ∈ {webhook, actions, none}): pre-check
 //     GitPushState; if unconfigured return chained guidance pointer; on
 //     pass write meta.BuildIntegration AND for `actions` enrich the response
-//     with the workflow YAML body, prefilled `gh secret set` snippets
-//     (env-aware: container reads $ZCP_API_KEY, local extracts from
-//     .mcp.json), and the explicit ZEROPS_TOKEN=ZCP_API_KEY reuse hint.
+//     with the workflow YAML body, prefilled `gh secret set` snippets, and
+//     the guidance for the ZEROPS_TOKEN the user mints for CI.
 //     The enrichment closes the gap surfaced in live agent feedback
 //     2026-04-29 where the terse `status:configured` response left the
 //     agent guessing what to do next on the GitHub side.
@@ -267,8 +266,8 @@ func handleBuildIntegration(
 
 // actionsConfirmResponse builds the enriched confirm body for the GitHub
 // Actions integration: workflow YAML, prefilled `gh secret set` snippets
-// keyed by runtime env, and the explicit ZEROPS_TOKEN=ZCP_API_KEY reuse
-// hint. ServiceID is looked up via ops.LookupService when client+projectID
+// keyed by runtime env, and the mint guidance for the CI-only ZEROPS_TOKEN.
+// ServiceID is looked up via ops.LookupService when client+projectID
 // are available; on miss (e.g. handler called from a unit test without
 // mock platform), the placeholder `<run zerops_discover>` falls in so the
 // response is still self-describing.
@@ -331,12 +330,12 @@ func actionsConfirmResponse(
 		"secrets": []map[string]any{
 			{
 				"name":   "ZEROPS_TOKEN",
-				"reuse":  "Same Zerops PAT as ZCP_API_KEY — DON'T generate a new token. ZCP already holds the value; reuse it as the GitHub secret to keep one credential, one rotation surface.",
-				"source": ghSecretSourceHint(rt),
+				"mint":   ciTokenMintGuidance,
+				"source": ciTokenSourceHint,
 				"command": ghSecretSetCommand(
 					rt, meta.Hostname,
 					"ZEROPS_TOKEN",
-					ghSecretValueExpr(rt),
+					ciTokenValueExpr(),
 					ownerRepo,
 				),
 			},
@@ -677,25 +676,23 @@ func actionsLookupServiceID(ctx context.Context, client platform.Client, project
 	return svc.ID
 }
 
-// ghSecretSourceHint describes WHERE the agent should read ZCP_API_KEY from
-// in the current runtime env. Container: $ZCP_API_KEY is injected. Local:
-// ZCP runs from the user's machine and ZCP_API_KEY lives in .mcp.json
-// alongside the MCP server config.
-func ghSecretSourceHint(rt runtime.Info) string {
-	if rt.InContainer {
-		return "ZCP runs in a Zerops container; ZCP_API_KEY is in the container env. The command below substitutes via $ZCP_API_KEY at shell-expansion time — the literal value never crosses the MCP wire."
-	}
-	return "ZCP runs locally; ZCP_API_KEY lives in .mcp.json (env block of the zerops server). The command below extracts via jq at shell-expansion time — the literal value never crosses the MCP wire."
-}
+// ciTokenMintGuidance / ciTokenSourceHint own the CI Zerops credential TELL
+// (guide 0.9). The key ZCP itself runs on is scoped to ZCP's own project and
+// stays in the container: CI is a different actor, on a machine ZCP does not
+// own, so it gets a token of the person's own, scoped to the one project it
+// deploys. Naming the container's key here — as the old `reuse` hint did —
+// walked the agent into pasting a project-wide credential into a repository
+// secret, where it outlives every rotation ZCP can see.
+const (
+	ciTokenMintGuidance = "A Zerops access token the USER mints for CI, never ZCP's own key: `NO_ACCESS` at the organization, `BASIC_USER` on the target project only (app.zerops.io → Access Token Management). Single-project blast radius, revocable without touching ZCP."
+	ciTokenSourceHint   = "The value comes from the user — paste it into the command below. NEVER substitute a container/env variable: ZCP's key belongs to ZCP's project and must not leave the container."
+)
 
-// ghSecretValueExpr returns the env-aware shell expression for the
-// ZCP_API_KEY value. Container reads the env var directly; local extracts
-// from .mcp.json via jq.
-func ghSecretValueExpr(rt runtime.Info) string {
-	if rt.InContainer {
-		return `"$ZCP_API_KEY"`
-	}
-	return `"$(jq -r '.mcpServers.zerops.env.ZCP_API_KEY' .mcp.json)"`
+// ciTokenValueExpr is the `gh secret set -b` argument for ZEROPS_TOKEN: a
+// placeholder the agent replaces with the value the user pasted. No shell
+// substitution — there is deliberately nothing in the environment to read.
+func ciTokenValueExpr() string {
+	return `"<the CI token the user provides — collect via ` + credentialAskMechanism + `; NEVER generate one and NEVER read it from the container env>"`
 }
 
 // ghSecretSetCommand assembles a `gh secret set <name> -b <valueExpr> -R
