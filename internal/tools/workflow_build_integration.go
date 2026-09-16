@@ -295,6 +295,13 @@ func actionsConfirmResponse(
 	if buildSetup == "" {
 		buildSetup = buildHost
 	}
+	// A remote on the account's own Gitea deploys through the broker, and
+	// nothing else about the GitHub track applies to it: no repo secret to
+	// set, no Zerops token to convey, no zcli to install, no `gh` to run.
+	if topology.ClassifyGitHost(meta.RemoteURL, rt.GiteaURL) == topology.GitHostGitea {
+		return giteaConfirmResponse(hostname, meta, stateDir, repoDriftWarning)
+	}
+
 	serviceID := actionsLookupServiceID(ctx, client, projectID, buildHost)
 	owner, repo, repoOK := ops.ParseGitRemoteOwnerRepo(meta.RemoteURL)
 	ownerRepo := ownerRepoPlaceholder
@@ -381,6 +388,98 @@ func actionsConfirmResponse(
 		body["buildTargetDecision"] = btDecision
 	}
 	return jsonResult(attachWorkSessionState(body, stateDir))
+}
+
+// giteaBrokerDeployAction is the action a Gitea workflow deploys with. It
+// lives in the gitea-mate repository beside the broker it calls, and takes
+// only an environment and a service — never a commit, a ref, or a key: what
+// a stage deploys is the head of its source ref and what production deploys
+// is what an approved release tag lists, both decided by the broker off
+// protected state the workflow cannot reach.
+const giteaBrokerDeployAction = "zeropsio/gitea-mate/actions/deploy@v1"
+
+// giteaDefaultEnvironment is the environment a service repository's own
+// workflow deploys. Production is reached by a release tag on the GROUP
+// repository, never by a push to a service repository, so a service
+// repository's workflow names a stage and nothing else.
+const giteaDefaultEnvironment = "stage"
+
+// giteaConfirmResponse builds the confirm body for a remote on the account's
+// own Gitea (guide 2.3 + 5.4). It is deliberately much smaller than the
+// GitHub one: everything that track spends its length on — the repo secret,
+// the token conveyance, the PAT scopes, the CLI install — exists only because
+// CI there holds a Zerops credential. Here it holds none. The job asks the
+// broker with its OWN token, the broker proves which repository the job
+// really runs in, and Zerops builds from the commit.
+//
+// It also carries NO buildTarget: what this workflow deploys is a service of
+// the GROUP's stage environment — a different Zerops project — not the Mate's
+// own stage half. Reporting the in-project build target here is the exact
+// confusion measured on a live Mate, which read the group's pipeline as the
+// route to its own stage and declared that half unreachable.
+func giteaConfirmResponse(
+	hostname string,
+	meta *workflow.ServiceMeta,
+	stateDir, repoDriftWarning string,
+) *mcp.CallToolResult {
+	body := map[string]any{
+		"status":           "declared",
+		"service":          hostname,
+		"buildIntegration": topology.BuildIntegrationActions,
+		"verified":         meta.BuildIntegrationVerifiedAt != "",
+		"verification":     buildIntegrationVerificationNote(meta),
+		"forge":            string(topology.GitHostGitea),
+		"pushSource":       meta.Hostname,
+		"workflowFile": map[string]any{
+			"path":        ".gitea/workflows/zerops.yml",
+			"variant":     "gitea-broker-deploy",
+			"description": "Runs on the group's runner and asks the account's broker to deploy. No repository secret and no Zerops credential of any kind — the job authenticates with its own token, which dies when the job ends, and the broker deploys only what protected state approved.",
+			"content":     giteaWorkflowYAML(hostname),
+		},
+		"deploysWhat": fmt.Sprintf(
+			"The %q service of the group's %q environment — another Zerops project, reached through the broker. NOT this Mate's own stage half: promotion inside this project stays a ZCP deploy.",
+			hostname, giteaDefaultEnvironment,
+		),
+		"credentials": "None. Do not add a secret to this repository and never put a Zerops token in a workflow — the broker refuses a caller it cannot prove, and a key in CI is the thing this whole path exists to remove.",
+		"permissions": "Leave the workflow's permissions at their default. The broker proves the caller by reading the job (`GET /repos/{repo}/actions/jobs/{taskId}`), which needs `actions: read` — the default already grants it, and declaring a narrower set breaks the proof.",
+		"tests":       "Put the project's test command in the marked step before the deploy step. ZCP does not know it — read the project's own manifest rather than guessing one.",
+		"nextStep":    "1) Write workflowFile.content at .gitea/workflows/zerops.yml and fill in the test step. 2) Commit it on the Mate's branch and open a pull request — `main` is protected on every repository and the bot lands through pull requests, never by pushing. Once it merges, every push to main deploys the group's stage through the broker.",
+	}
+	if repoDriftWarning != "" {
+		body["repoDriftWarning"] = repoDriftWarning
+	}
+	return jsonResult(attachWorkSessionState(body, stateDir))
+}
+
+// giteaWorkflowYAML is the workflow a Gitea service repository carries. The
+// deploy step names an environment and a service and nothing else: a stage
+// deploys the head of its source ref, so there is no sha, no ref and no
+// credential for the workflow to get wrong or to leak. serviceName is the
+// name the service carries in the group's environments, which is the name
+// its repository was created under (guide 2.1).
+func giteaWorkflowYAML(serviceName string) string {
+	return fmt.Sprintf(`name: Zerops deploy
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        # Replace with this project's own test command; the deploy step
+        # below runs only if this one passes.
+        run: echo "no test command configured"
+      - name: Deploy through the broker
+        # The broker deploys what the environment's protected source ref
+        # holds, authenticating this job by its own token. No secret and no
+        # Zerops key anywhere in this file.
+        uses: %s
+        with:
+          environment: %s
+          service: %s
+`, giteaBrokerDeployAction, giteaDefaultEnvironment, serviceName)
 }
 
 // webhookConfirmResponse builds the confirm body for the dashboard-OAuth
