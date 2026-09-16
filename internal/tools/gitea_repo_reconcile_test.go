@@ -478,6 +478,11 @@ func truncateForTest(s string) string {
 // whose git init left it on `main` answers "src refspec mate/{bot} does not
 // match any" and can never deliver (live-verified 2026-09-16 — the first
 // zerops_deploy strategy="git-push" on a real Mate failed exactly there).
+//
+// The branch must also DESCEND from the repository's protected base: the
+// broker's `main` is born with an initial commit, so a branch cut from zcp's
+// own fresh history shares no commit with it and Gitea refuses both `merge`
+// and `squash` on the pull request (measured the same day).
 func TestReconcileGiteaRepositories_PutsThePairOnItsBranch(t *testing.T) {
 	stateDir := t.TempDir()
 	writeGiteaPairMeta(t, stateDir)
@@ -495,7 +500,9 @@ func TestReconcileGiteaRepositories_PutsThePairOnItsBranch(t *testing.T) {
 	)
 
 	joined := strings.Join(ssh.commands, "\n")
-	if !strings.Contains(joined, "checkout") || !strings.Contains(joined, "mate/mate-p1") {
-		t.Fatalf("A1 must leave the push source on its own branch; commands were:\n%s", joined)
+	for _, want := range []string{"checkout", "mate/mate-p1", "fetch --no-tags origin 'main'", "rebase -X theirs FETCH_HEAD"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("A1 must branch the push source off the protected base (missing %q); commands were:\n%s", want, joined)
+		}
 	}
 }

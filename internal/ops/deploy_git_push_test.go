@@ -1,7 +1,6 @@
 package ops
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -173,49 +172,6 @@ func TestParseGitHost(t *testing.T) {
 			got := parseGitHost(tt.url)
 			if got != tt.want {
 				t.Errorf("parseGitHost(%q) = %q, want %q", tt.url, got, tt.want)
-			}
-		})
-	}
-}
-
-// TestBuildGitCheckoutBranchCommand pins the shape: switch if it is there,
-// create at HEAD if it is not, and never move an existing branch.
-func TestBuildGitCheckoutBranchCommand(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name       string
-		workingDir string
-		branch     string
-		want       []string
-		absent     []string
-	}{
-		{
-			name: "the Mate's branch", workingDir: "/var/www", branch: "mate/mate-p1",
-			want:   []string{"cd '/var/www'", "git checkout 'mate/mate-p1'", "git checkout -b 'mate/mate-p1'"},
-			absent: []string{"checkout -B", "--force"},
-		},
-		{
-			name: "no branch falls back to the default", workingDir: "/var/www", branch: "",
-			want: []string{"git checkout 'main'"},
-		},
-		{
-			name: "a hostile branch name is quoted", workingDir: "/var/www", branch: "a'; rm -rf /; '",
-			absent: []string{"; rm -rf /; git"},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := BuildGitCheckoutBranchCommand(tt.workingDir, tt.branch)
-			for _, want := range tt.want {
-				if !strings.Contains(got, want) {
-					t.Errorf("missing %q in: %s", want, got)
-				}
-			}
-			for _, absent := range tt.absent {
-				if strings.Contains(got, absent) {
-					t.Errorf("unexpected %q in: %s", absent, got)
-				}
 			}
 		})
 	}

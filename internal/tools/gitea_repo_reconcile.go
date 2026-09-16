@@ -205,21 +205,23 @@ func reconcileOneGiteaPair(
 		return fmt.Sprintf("repository %s is ready but wiring git-push to it failed — retrying on the next pass.", repo.FullName)
 	}
 
-	// The push source works ON that branch from now on. git-push-setup owns
-	// the remote and the credential but never touches branches, and the pair
-	// was git-initialised on `main`, so without this `git push -u origin
-	// mate/{bot}` has no local ref to push and the delivery fails at the
-	// refspec. Best-effort: a container that refuses the checkout still has
-	// its repository, and the next pass tries again.
-	if _, checkoutErr := sshDeployer.ExecSSH(ctx, m.Hostname,
-		ops.BuildGitCheckoutBranchCommand(giteaPairWorkingDir, branch)); checkoutErr != nil {
-		return fmt.Sprintf("repository %s is ready, but %s could not be put on %q (%v) — a push would have nothing to send; retrying on the next pass.",
-			repo.FullName, m.Hostname, branch, checkoutErr)
-	}
-
 	base := repo.DefaultBranch
 	if base == "" {
 		base = giteaProtectedBase
+	}
+
+	// The push source works ON that branch from now on, and the branch has to
+	// DESCEND from the repository's protected base. git-push-setup owns the
+	// remote and the credential but never touches branches, and the pair was
+	// git-initialised with a history of its own — so without this `git push
+	// -u origin mate/{bot}` has no local ref to push (the refspec fails), and
+	// a branch pushed from an unrelated history makes Gitea refuse `merge`
+	// and `squash` on the pull request. Best-effort: a container that refuses
+	// still has its repository, and the next pass tries again.
+	if _, branchErr := sshDeployer.ExecSSH(ctx, m.Hostname,
+		ops.BuildGiteaMateBranchCommand(giteaPairWorkingDir, branch, base)); branchErr != nil {
+		return fmt.Sprintf("repository %s is ready, but %s could not be put on %q branched off %q (%v) — a push would have nothing to send, or nothing Gitea could merge; retrying on the next pass.",
+			repo.FullName, m.Hostname, branch, base, branchErr)
 	}
 	if err := workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
 		if !existed {
