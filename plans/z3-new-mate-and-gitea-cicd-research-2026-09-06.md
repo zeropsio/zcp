@@ -1,5 +1,10 @@
 # Adding a Mate by cloning, and Gitea-driven CI/CD — research
 
+> **Superseded as a design on 2026-09-15** by `zerops-auth-backbone-implementation-2026-09-15.md`
+> (*Where the design stands*): per-Mate bot users instead of one `mate` user, a group repo holding the
+> recipe instead of clones, and no production token in repository secrets. The measured facts here
+> still hold.
+
 2026-09-06. Written for the owner's two questions:
 
 1. Is this flow possible — *clone an environment → an empty project with zcp comes up (with "the
