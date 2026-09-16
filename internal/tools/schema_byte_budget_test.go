@@ -69,7 +69,12 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// PA-6): the plan's per-runtime public-access intent
 		// ("" | auto | subdomain | none). Deliberate new field — optional,
 		// backward-compatible (omit → auto, today's behavior).
-		"zerops_workflow":    17834,
+		// Raised +108 (17834→17942) for action="group-recipe" (guide 2.2 /
+		// A2): the agent's way to ask for the group repo's recipe export and
+		// get its pull request. One enumerated action in the Action
+		// description; the explanation lives in the tool Description, which
+		// this budget does not cover.
+		"zerops_workflow":    17942,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services

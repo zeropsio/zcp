@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -311,4 +313,104 @@ func giteaBlobSHAForTest(body string) string {
 	fmt.Fprintf(sum, "blob %d\x00", len(body))
 	sum.Write([]byte(body))
 	return hex.EncodeToString(sum.Sum(nil))
+}
+
+// The agent-facing surface answers on every pass, including the one that
+// changed nothing — being asked is itself a reason to say where the recipe is.
+func TestHandleGroupRecipe_Table(t *testing.T) {
+	tests := []struct {
+		name       string
+		noWiring   bool
+		twice      bool
+		wantErr    bool
+		wantFields map[string]string
+		wantText   []string
+	}{
+		{
+			name:       "proposed",
+			wantFields: map[string]string{"groupRepo": "acme/group", "branch": "mate/mate-p1", "fork": "mate-p1/group"},
+			wantText:   []string{"pull request #11", "/acme/group/pulls/11", "production rights"},
+		},
+		{
+			name:     "asked again, nothing changed — still answers with the pull request",
+			twice:    true,
+			wantText: []string{"already current", "pull request #11", "/acme/group/pulls/11"},
+		},
+		{
+			name:     "the variables have not landed",
+			noWiring: true,
+			wantErr:  true,
+			wantText: []string{"was not proposed", "GITEA_URL"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			stateDir := t.TempDir()
+			writeGiteaWiredPairMeta(t, stateDir)
+			fake := newFakeGroupGitea()
+			srv := fake.start(t)
+			env := map[string]string{"GITEA_URL": srv.URL, "MATE_BROKER_URL": srv.URL, "GITEA_TOKEN": giteaBotToken}
+			if tc.noWiring {
+				env = map[string]string{}
+			}
+			envPath := writeLiveEnvFile(t, env)
+			rt := runtime.Info{InContainer: true, ProjectID: "p1"}
+			ctx := context.Background()
+
+			if tc.twice {
+				if _, _, err := handleGroupRecipe(ctx, recipeReconcileClient(), srv.Client(), rt, stateDir, envPath); err != nil {
+					t.Fatalf("first pass: %v", err)
+				}
+			}
+			res, typed, err := handleGroupRecipe(ctx, recipeReconcileClient(), srv.Client(), rt, stateDir, envPath)
+			if err != nil {
+				t.Fatalf("handleGroupRecipe: %v", err)
+			}
+			if typed != nil {
+				t.Error("a handler's typed output must stay nil — machine state rides in the text")
+			}
+			if res.IsError != tc.wantErr {
+				t.Errorf("IsError = %v, want %v", res.IsError, tc.wantErr)
+			}
+			text := resultText(t, res)
+			for _, want := range tc.wantText {
+				if !strings.Contains(text, want) {
+					t.Errorf("result is missing %q:\n%s", want, text)
+				}
+			}
+			for key, want := range tc.wantFields {
+				if !strings.Contains(text, `"`+key+`": "`+want+`"`) && !strings.Contains(text, `"`+key+`":"`+want+`"`) {
+					t.Errorf("result is missing %s=%s:\n%s", key, want, text)
+				}
+			}
+			if !tc.wantErr && fake.pullPosts != 1 {
+				t.Errorf("pull-request POSTs = %d, want exactly 1 across %d passes", fake.pullPosts, 1+boolToInt(tc.twice))
+			}
+			assertNoTokenOnDisk(t, stateDir)
+		})
+	}
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// resultText is a tool result's model-facing text — the only surface machine
+// state rides on (the typed second return stays nil).
+func resultText(t *testing.T, res *mcp.CallToolResult) string {
+	t.Helper()
+	if res == nil || len(res.Content) == 0 {
+		t.Fatal("the result carries no content")
+	}
+	var b strings.Builder
+	for _, content := range res.Content {
+		if text, ok := content.(*mcp.TextContent); ok {
+			b.WriteString(text.Text)
+		}
+	}
+	return b.String()
 }

@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -17,6 +19,33 @@ import (
 
 // giteaRecipeBranchTitle heads the pull request the recipe lands through.
 const giteaRecipeBranchTitle = "Mate: the group's import files"
+
+// giteaRecipeOutcome is what one pass did. The reconcile reads Line (empty
+// when there is nothing worth saying on a bootstrap response); the agent-facing
+// action reads the rest, because a person who ASKED for the export wants the
+// pull request's address even on the pass that changed nothing.
+type giteaRecipeOutcome struct {
+	// Line is the reconcile's report, "" when the pass was a no-op.
+	Line string
+	// GroupRepo is `{slug}/group`, Fork the bot's copy of it.
+	GroupRepo string
+	Fork      string
+	Branch    string
+	// PullNumber is 0 when no pull request could be read or opened.
+	PullNumber int
+	// PullURL addresses it on the account's Gitea.
+	PullURL string
+	// Committed is whether this pass wrote anything; Created whether it
+	// opened the pull request.
+	Committed bool
+	Created   bool
+	// Warnings are the composer's — an unclassified secret, an unverified
+	// setup, an unreadable scaling shape.
+	Warnings []string
+	// Blocked names why nothing happened, for the action to report. Empty on
+	// a pass that reached Gitea.
+	Blocked string
+}
 
 // reconcileGiteaGroupRecipe proposes this Mate's project to the group repo as
 // the recipe, and keeps that proposal current (guide 2.2, A2).
@@ -45,12 +74,25 @@ func reconcileGiteaGroupRecipe(
 	stateDir string,
 	liveEnvPath string,
 ) string {
+	return giteaGroupRecipeOutcome(ctx, client, httpClient, rt, stateDir, liveEnvPath).Line
+}
+
+// giteaGroupRecipeOutcome is the reconcile itself. Split from the reporter so
+// the agent-facing action can read what happened rather than parse a sentence.
+func giteaGroupRecipeOutcome(
+	ctx context.Context,
+	client platform.Client,
+	httpClient ops.HTTPDoer,
+	rt runtime.Info,
+	stateDir string,
+	liveEnvPath string,
+) giteaRecipeOutcome {
 	if !rt.InContainer || client == nil || httpClient == nil {
-		return ""
+		return giteaRecipeOutcome{Blocked: "the group recipe is a Mate's act — there is no Mate environment here"}
 	}
 	metas, err := workflow.ListServiceMetas(stateDir)
 	if err != nil || len(metas) == 0 {
-		return ""
+		return giteaRecipeOutcome{Blocked: "no service has been bootstrapped yet, so there is nothing to export"}
 	}
 	// Only pairs A1 has already given a repository: the group repo's org comes
 	// from one of them, and a runtime with no repository has no buildFromGit
@@ -62,53 +104,61 @@ func reconcileGiteaGroupRecipe(
 		}
 	}
 	if len(wired) == 0 {
-		return ""
+		return giteaRecipeOutcome{Blocked: "no pair has its Gitea repository yet — the recipe names what builds each runtime, so it waits for them"}
 	}
 	sort.Slice(wired, func(i, j int) bool { return wired[i].Hostname < wired[j].Hostname })
 
 	wiring := ops.ReadGiteaWiring(giteaEnvLookup(liveEnvPath))
 	if !wiring.Ready() {
 		// A1's reconcile already reports which variable is missing, on the
-		// same pass. Saying it twice is noise.
-		return ""
+		// same pass, so Line stays empty — but a person who asked deserves
+		// the reason.
+		return giteaRecipeOutcome{Blocked: "waiting for Gitea (" + strings.Join(wiring.MissingKeys(), ", ") + " not on this service yet)"}
 	}
 	groupRepo := ops.GroupRepoFullName(wired[0].Gitea.FullName)
 	if groupRepo == "" {
-		return ""
+		return giteaRecipeOutcome{Blocked: "the pair's repository does not name an org, so the group repo cannot be derived"}
 	}
 
 	identity, err := ops.DeriveGiteaIdentity(ctx, httpClient, wiring.GiteaURL, wiring.Token)
 	if err != nil {
-		return fmt.Sprintf("the group recipe is not proposed yet (could not read this Mate's bot identity: %v) — retrying on the next pass.", err)
+		return giteaRecipeOutcome{Line: fmt.Sprintf("the group recipe is not proposed yet (could not read this Mate's bot identity: %v) — retrying on the next pass.", err)}
 	}
 	branch := ops.GiteaMateBranch(identity.Name)
 	if branch == "" {
-		return ""
+		return giteaRecipeOutcome{Blocked: "the Gitea bot has no login, so there is no branch to propose from"}
 	}
+	outcome := giteaRecipeOutcome{GroupRepo: groupRepo, Branch: branch}
 
 	inputs, err := composeGroupRecipeInputs(ctx, client, rt.ProjectID, wired)
 	if err != nil {
-		return fmt.Sprintf("the group recipe is not proposed yet (%v) — retrying on the next pass.", err)
+		outcome.Line = fmt.Sprintf("the group recipe is not proposed yet (%v) — retrying on the next pass.", err)
+		return outcome
 	}
 	// No classifications: this composes unattended, and the classification map
 	// is an agent decision made in the export/launch flows. The secret-safe
 	// default is what protects the repo — an unclassified user-set service env
 	// emits REPLACE_ME, never its value.
-	layout, _, err := bundle.BuildGroupRecipe(inputs, nil)
+	layout, warnings, err := bundle.BuildGroupRecipe(inputs, nil)
 	if err != nil {
-		return fmt.Sprintf("the group recipe does not compose yet (%v).", err)
+		outcome.Line = fmt.Sprintf("the group recipe does not compose yet (%v).", err)
+		return outcome
 	}
+	outcome.Warnings = warnings
 	files, err := recipe.Build(layout)
 	if err != nil {
-		return fmt.Sprintf("the group recipe does not compose yet (%v).", err)
+		outcome.Line = fmt.Sprintf("the group recipe does not compose yet (%v).", err)
+		return outcome
 	}
 
 	// The bot is a reader on the group's org, never a writer on {slug}/group
 	// (measured on Gitea 1.27.2) — so it proposes from its own fork.
 	fork, err := ops.EnsureGiteaFork(ctx, httpClient, wiring.GiteaURL, wiring.Token, groupRepo, identity.Name)
 	if err != nil {
-		return fmt.Sprintf("could not fork %s to propose the recipe (%v) — the project is unaffected; retrying on the next pass.", groupRepo, err)
+		outcome.Line = fmt.Sprintf("could not fork %s to propose the recipe (%v) — the project is unaffected; retrying on the next pass.", groupRepo, err)
+		return outcome
 	}
+	outcome.Fork = fork
 
 	base := wired[0].Gitea.DefaultBranch
 	if base == "" {
@@ -117,22 +167,29 @@ func reconcileGiteaGroupRecipe(
 	committed, err := ops.PublishGiteaFiles(ctx, httpClient, wiring.GiteaURL, wiring.Token,
 		fork, branch, base, "recipe: the group's import files, from "+inputs.MateProjectName, files)
 	if err != nil {
-		return fmt.Sprintf("could not write the recipe to %s (%v) — retrying on the next pass.", fork, err)
+		outcome.Line = fmt.Sprintf("could not write the recipe to %s (%v) — retrying on the next pass.", fork, err)
+		return outcome
 	}
+	outcome.Committed = committed
 
 	number, created, err := ops.EnsureGiteaPullRequest(ctx, httpClient, wiring.GiteaURL, wiring.Token,
 		groupRepo, fork, branch, base, giteaRecipeBranchTitle)
 	if err != nil {
-		return fmt.Sprintf("the recipe is on %s@%s but proposing it to %s failed (%v) — retrying on the next pass.", fork, branch, groupRepo, err)
+		outcome.Line = fmt.Sprintf("the recipe is on %s@%s but proposing it to %s failed (%v) — retrying on the next pass.", fork, branch, groupRepo, err)
+		return outcome
+	}
+	outcome.PullNumber = number
+	outcome.Created = created
+	if number != 0 {
+		outcome.PullURL = fmt.Sprintf("%s/%s/pulls/%d", strings.TrimRight(wiring.GiteaURL, "/"), groupRepo, number)
 	}
 	switch {
 	case created:
-		return fmt.Sprintf("the group recipe is proposed to %s as pull request #%d (from %s@%s); a person with production rights merges it", groupRepo, number, fork, branch)
+		outcome.Line = fmt.Sprintf("the group recipe is proposed to %s as pull request #%d (from %s@%s); a person with production rights merges it", groupRepo, number, fork, branch)
 	case committed:
-		return fmt.Sprintf("the group recipe changed; pull request #%d on %s carries the update", number, groupRepo)
-	default:
-		return ""
+		outcome.Line = fmt.Sprintf("the group recipe changed; pull request #%d on %s carries the update", number, groupRepo)
 	}
+	return outcome
 }
 
 // composeGroupRecipeInputs reads the Mate's own project and folds it, with
@@ -238,4 +295,60 @@ func reconcileGitea(
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+// handleGroupRecipe is the agent's way to ask for the export outright
+// (`zerops_workflow action="group-recipe"`). The reconcile already runs on
+// every bootstrap and adopt pass, so this exists for the other direction: a
+// person says "propose the recipe now", or wants the pull request's address
+// after a service change, without waiting for the next pass.
+//
+// Same code path as the reconcile — there is no second composer and no second
+// idempotence rule. What differs is the reporting: a pass that changed nothing
+// is silent on a bootstrap response and ANSWERS here, with the pull request it
+// found, because being asked is itself a reason to say where the recipe is.
+func handleGroupRecipe(
+	ctx context.Context,
+	client platform.Client,
+	httpClient ops.HTTPDoer,
+	rt runtime.Info,
+	stateDir string,
+	liveEnvPath string,
+) (*mcp.CallToolResult, any, error) {
+	outcome := giteaGroupRecipeOutcome(ctx, client, httpClient, rt, stateDir, liveEnvPath)
+	if outcome.Blocked != "" {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"The group recipe was not proposed: "+outcome.Blocked,
+			"The recipe is proposed automatically once a dev pair has its Gitea repository and the Mate's Gitea variables have landed; nothing else is blocked meanwhile.",
+		), WithRecoveryStatus()), nil, nil
+	}
+
+	result := map[string]any{
+		"groupRepo": outcome.GroupRepo,
+		"branch":    outcome.Branch,
+		"committed": outcome.Committed,
+	}
+	if outcome.Fork != "" {
+		result["fork"] = outcome.Fork
+	}
+	if outcome.PullNumber != 0 {
+		result["pullRequest"] = outcome.PullNumber
+		result["pullRequestUrl"] = outcome.PullURL
+	}
+	if len(outcome.Warnings) > 0 {
+		result["warnings"] = outcome.Warnings
+	}
+	switch {
+	case outcome.Line != "":
+		result["message"] = strings.ToUpper(outcome.Line[:1]) + outcome.Line[1:] + "."
+	case outcome.PullNumber != 0:
+		result["message"] = fmt.Sprintf(
+			"The group recipe is already current; pull request #%d on %s carries it. A person with production rights merges it.",
+			outcome.PullNumber, outcome.GroupRepo)
+	default:
+		result["message"] = "The group recipe is written to " + outcome.Fork + "@" + outcome.Branch +
+			", but no pull request could be read or opened on " + outcome.GroupRepo + " — retry, or open it by hand."
+	}
+	return jsonResult(result), nil, nil
 }
