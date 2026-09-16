@@ -223,13 +223,28 @@ func trackedRefOrDefault(meta *workflow.ServiceMeta) string {
 // resolveTrackedBranch resolves the branch a container-mode git-push
 // transmits to: an explicit inputBranch always wins (back-compat with the
 // pre-GF-7 `branch` input), else the target's recorded tracked ref (GF-7),
-// else "main".
+// else the Mate's own Gitea branch, else "main".
+//
+// The Gitea step sits between TrackedRef and the "main" fallback because on
+// the account's own Gitea `main` is protected on every repository and a
+// direct push is refused by a pre-receive hook (docs/vocabulary.md,
+// "protected branches"): there the branch to push is the Mate's own,
+// recorded on the pair when the broker gave it the repository (A5, guide
+// 1.5). Falling through to `main` there would make every delivery fail at
+// the remote, and the failure reads like a credential fault — the one
+// diagnosis that leads an agent to rotate a perfectly good token.
 func resolveTrackedBranch(stateDir, targetService, inputBranch string) string {
 	if inputBranch != "" {
 		return inputBranch
 	}
 	meta, _ := workflow.FindServiceMeta(stateDir, targetService)
-	return trackedRefOrDefault(meta)
+	if meta != nil && meta.TrackedRef != "" {
+		return meta.TrackedRef
+	}
+	if meta != nil && meta.Gitea != nil && meta.Gitea.Branch != "" {
+		return meta.Gitea.Branch
+	}
+	return defaultTrackedRef
 }
 
 // gitPushEnvRefPreflight validates the run.envVariables refs of the named
@@ -332,6 +347,7 @@ already own continues unchanged. After setup completes, retry the push.`
 func handleGitPush(
 	ctx context.Context,
 	client platform.Client,
+	httpClient ops.HTTPDoer,
 	projectID string,
 	sshDeployer ops.SSHDeployer,
 	logFetcher platform.LogFetcher,
@@ -623,7 +639,12 @@ func handleGitPush(
 	}
 
 	return jsonResult(deployGitPushResponse{
-		GitPushResult:    result,
+		GitPushResult: result,
+		// The push is what put the Mate's branch on the account's Gitea, and
+		// `main` there takes no direct push from anyone — so this is the
+		// moment the request that lands it can first exist, and the Mate is
+		// done pushing. Idempotent: a second push finds the open one.
+		PullRequest:      giteaPullRequestAfterPush(ctx, httpClient, stateDir, hostname, effectiveRemote),
 		Warnings:         warnings,
 		WorkSessionState: sessionAnnotations(stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
@@ -637,8 +658,11 @@ func handleGitPush(
 // want.
 type deployGitPushResponse struct {
 	*ops.GitPushResult
-	Warnings         []string          `json:"warnings,omitempty"`
-	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
+	// PullRequest is the request this push's branch lands through on the
+	// account's own Gitea — absent everywhere else.
+	PullRequest      *giteaPullRequestRef `json:"pullRequest,omitempty"`
+	Warnings         []string             `json:"warnings,omitempty"`
+	WorkSessionState *WorkSessionState    `json:"workSessionState,omitempty"`
 	// Envelope is the post-mutation lifecycle state (docs/spec-mate.md §1.3).
 	// Absent when its computation failed — the rest of the response is
 	// unaffected.

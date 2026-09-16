@@ -77,7 +77,7 @@ func TestHandleBootstrapComplete_AdoptProvisionComplete_CarriesRepoBlock(t *test
 	rt := runtime.Info{InContainer: true}
 	input := WorkflowInput{Step: workflow.StepProvision, Attestation: "provisioned"}
 
-	result, typed, err := handleBootstrapComplete(context.Background(), eng, mock, nil, input, nil, "proj-1", dir, mounter, ssh, rt)
+	result, typed, err := handleBootstrapComplete(context.Background(), eng, mock, nil, nil, input, nil, "proj-1", dir, mounter, ssh, rt)
 	if err != nil {
 		t.Fatalf("handleBootstrapComplete: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestHandleBootstrapComplete_ClassicProvisionComplete_CarriesNoRepoBlock(t *
 	rt := runtime.Info{InContainer: true}
 	input := WorkflowInput{Step: workflow.StepProvision, Attestation: "provisioned"}
 
-	result, typed, err := handleBootstrapComplete(context.Background(), eng, mock, nil, input, nil, "proj-1", dir, mounter, ssh, rt)
+	result, typed, err := handleBootstrapComplete(context.Background(), eng, mock, nil, nil, input, nil, "proj-1", dir, mounter, ssh, rt)
 	if err != nil {
 		t.Fatalf("handleBootstrapComplete: %v", err)
 	}

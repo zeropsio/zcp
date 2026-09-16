@@ -1,6 +1,8 @@
 package ops
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestBuildGitPushCommand_Basic(t *testing.T) {
 	t.Parallel()

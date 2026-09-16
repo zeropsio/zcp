@@ -370,7 +370,7 @@ func RegisterDeploySSH(
 		// Route: git-push strategy pushes to the external git remote, then
 		// follows the integration-triggered build to terminal (§6.1 watch).
 		if input.Strategy == deployStrategyGitPush {
-			return handleGitPush(ctx, client, projectID, sshDeployer, logFetcher, buildProgressCallback(ctx, req), input, stateDir, rtInfo)
+			return handleGitPush(ctx, client, httpClient, projectID, sshDeployer, logFetcher, buildProgressCallback(ctx, req), input, stateDir, rtInfo)
 		}
 
 		return runDeploySSHZCLIPush(ctx, req, client, httpClient, sshDeployer, authInfo, logFetcher, rtInfo, projectID, stateDir, input)

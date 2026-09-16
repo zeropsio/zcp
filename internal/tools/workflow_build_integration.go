@@ -45,9 +45,8 @@ var validBuildIntegrations = map[topology.BuildIntegration]bool{
 //   - Confirm (input.Integration ∈ {webhook, actions, none}): pre-check
 //     GitPushState; if unconfigured return chained guidance pointer; on
 //     pass write meta.BuildIntegration AND for `actions` enrich the response
-//     with the workflow YAML body, prefilled `gh secret set` snippets
-//     (env-aware: container reads $ZCP_API_KEY, local extracts from
-//     .mcp.json), and the explicit ZEROPS_TOKEN=ZCP_API_KEY reuse hint.
+//     with the workflow YAML body, prefilled `gh secret set` snippets, and
+//     the guidance for the ZEROPS_TOKEN the user mints for CI.
 //     The enrichment closes the gap surfaced in live agent feedback
 //     2026-04-29 where the terse `status:configured` response left the
 //     agent guessing what to do next on the GitHub side.
@@ -113,7 +112,7 @@ func handleBuildIntegration(
 				fmt.Sprintf("build-integration synthesis failed: %v", err),
 				"Build-time defect — report it. Run `make lint-local` to verify the atom corpus."), WithRecoveryStatus()), nil, nil
 		}
-		decision := deliveryDecisionForMeta(meta)
+		decision := deliveryDecisionForMeta(meta, rt.GiteaURL)
 		recommended := string(decision.Recommended)
 		buildHost, buildSetup, btDecision := resolveBuildTarget(meta, input.Service, input.BuildTarget)
 		body := map[string]any{
@@ -267,8 +266,8 @@ func handleBuildIntegration(
 
 // actionsConfirmResponse builds the enriched confirm body for the GitHub
 // Actions integration: workflow YAML, prefilled `gh secret set` snippets
-// keyed by runtime env, and the explicit ZEROPS_TOKEN=ZCP_API_KEY reuse
-// hint. ServiceID is looked up via ops.LookupService when client+projectID
+// keyed by runtime env, and the mint guidance for the CI-only ZEROPS_TOKEN.
+// ServiceID is looked up via ops.LookupService when client+projectID
 // are available; on miss (e.g. handler called from a unit test without
 // mock platform), the placeholder `<run zerops_discover>` falls in so the
 // response is still self-describing.
@@ -296,6 +295,13 @@ func actionsConfirmResponse(
 	if buildSetup == "" {
 		buildSetup = buildHost
 	}
+	// A remote on the account's own Gitea deploys through the broker, and
+	// nothing else about the GitHub track applies to it: no repo secret to
+	// set, no Zerops token to convey, no zcli to install, no `gh` to run.
+	if topology.ClassifyGitHost(meta.RemoteURL, rt.GiteaURL) == topology.GitHostGitea {
+		return giteaConfirmResponse(hostname, meta, stateDir, repoDriftWarning)
+	}
+
 	serviceID := actionsLookupServiceID(ctx, client, projectID, buildHost)
 	owner, repo, repoOK := ops.ParseGitRemoteOwnerRepo(meta.RemoteURL)
 	ownerRepo := ownerRepoPlaceholder
@@ -334,12 +340,12 @@ func actionsConfirmResponse(
 		"secrets": []map[string]any{
 			{
 				"name":   "ZEROPS_TOKEN",
-				"reuse":  "Same Zerops PAT as ZCP_API_KEY — DON'T generate a new token. ZCP already holds the value; reuse it as the GitHub secret to keep one credential, one rotation surface.",
-				"source": ghSecretSourceHint(rt),
+				"mint":   ciTokenMintGuidance,
+				"source": ciTokenSourceHint,
 				"command": ghSecretSetCommand(
 					rt, meta.Hostname,
 					"ZEROPS_TOKEN",
-					ghSecretValueExpr(rt),
+					ciTokenValueExpr(),
 					ownerRepo,
 				),
 			},
@@ -385,6 +391,103 @@ func actionsConfirmResponse(
 		body["buildTargetDecision"] = btDecision
 	}
 	return jsonResult(attachWorkSessionState(body, stateDir))
+}
+
+// giteaWorkflowFilePath is where a Gitea service repository carries its
+// workflow. One owner: A1 writes the file there when it wires a pair, and the
+// build-integration response names the same path.
+const giteaWorkflowFilePath = ".gitea/workflows/zerops.yml"
+
+// giteaBrokerDeployAction is the action a Gitea workflow deploys with. It
+// lives in the gitea-mate repository beside the broker it calls, and takes
+// only an environment and a service — never a commit, a ref, or a key: what
+// a stage deploys is the head of its source ref and what production deploys
+// is what an approved release tag lists, both decided by the broker off
+// protected state the workflow cannot reach.
+const giteaBrokerDeployAction = "zeropsio/gitea-mate/actions/deploy@v1"
+
+// giteaDefaultEnvironment is the environment a service repository's own
+// workflow deploys. Production is reached by a release tag on the GROUP
+// repository, never by a push to a service repository, so a service
+// repository's workflow names a stage and nothing else.
+const giteaDefaultEnvironment = "stage"
+
+// giteaConfirmResponse builds the confirm body for a remote on the account's
+// own Gitea (guide 2.3 + 5.4). It is deliberately much smaller than the
+// GitHub one: everything that track spends its length on — the repo secret,
+// the token conveyance, the PAT scopes, the CLI install — exists only because
+// CI there holds a Zerops credential. Here it holds none. The job asks the
+// broker with its OWN token, the broker proves which repository the job
+// really runs in, and Zerops builds from the commit.
+//
+// It also carries NO buildTarget: what this workflow deploys is a service of
+// the GROUP's stage environment — a different Zerops project — not the Mate's
+// own stage half. Reporting the in-project build target here is the exact
+// confusion measured on a live Mate, which read the group's pipeline as the
+// route to its own stage and declared that half unreachable.
+func giteaConfirmResponse(
+	hostname string,
+	meta *workflow.ServiceMeta,
+	stateDir, repoDriftWarning string,
+) *mcp.CallToolResult {
+	body := map[string]any{
+		"status":           "declared",
+		"service":          hostname,
+		"buildIntegration": topology.BuildIntegrationActions,
+		"verified":         meta.BuildIntegrationVerifiedAt != "",
+		"verification":     buildIntegrationVerificationNote(meta),
+		"forge":            string(topology.GitHostGitea),
+		"pushSource":       meta.Hostname,
+		"workflowFile": map[string]any{
+			"path":        giteaWorkflowFilePath,
+			"variant":     "gitea-broker-deploy",
+			"description": "Runs on the group's runner and asks the account's broker to deploy. No repository secret and no Zerops credential of any kind — the job authenticates with its own token, which dies when the job ends, and the broker deploys only what protected state approved.",
+			"content":     giteaWorkflowYAML(hostname),
+		},
+		"deploysWhat": fmt.Sprintf(
+			"The %q service of the group's %q environment — another Zerops project, reached through the broker. NOT this Mate's own stage half: promotion inside this project stays a ZCP deploy.",
+			hostname, giteaDefaultEnvironment,
+		),
+		"credentials": "None. Do not add a secret to this repository and never put a Zerops token in a workflow — the broker refuses a caller it cannot prove, and a key in CI is the thing this whole path exists to remove.",
+		"permissions": "Leave the workflow's permissions at their default. The broker proves the caller by reading the job (`GET /repos/{repo}/actions/jobs/{taskId}`), which needs `actions: read` — the default already grants it, and declaring a narrower set breaks the proof.",
+		"tests":       "Put the project's test command in the marked step before the deploy step. ZCP does not know it — read the project's own manifest rather than guessing one.",
+		"nextStep":    "1) Write workflowFile.content at .gitea/workflows/zerops.yml and fill in the test step. 2) Commit it on the Mate's branch and open a pull request — `main` is protected on every repository and the bot lands through pull requests, never by pushing. Once it merges, every push to main deploys the group's stage through the broker.",
+	}
+	if repoDriftWarning != "" {
+		body["repoDriftWarning"] = repoDriftWarning
+	}
+	return jsonResult(attachWorkSessionState(body, stateDir))
+}
+
+// giteaWorkflowYAML is the workflow a Gitea service repository carries. The
+// deploy step names an environment and a service and nothing else: a stage
+// deploys the head of its source ref, so there is no sha, no ref and no
+// credential for the workflow to get wrong or to leak. serviceName is the
+// name the service carries in the group's environments, which is the name
+// its repository was created under (guide 2.1).
+func giteaWorkflowYAML(serviceName string) string {
+	return fmt.Sprintf(`name: Zerops deploy
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        # Replace with this project's own test command; the deploy step
+        # below runs only if this one passes.
+        run: echo "no test command configured"
+      - name: Deploy through the broker
+        # The broker deploys what the environment's protected source ref
+        # holds, authenticating this job by its own token. No secret and no
+        # Zerops key anywhere in this file.
+        uses: %s
+        with:
+          environment: %s
+          service: %s
+`, giteaBrokerDeployAction, giteaDefaultEnvironment, serviceName)
 }
 
 // webhookConfirmResponse builds the confirm body for the dashboard-OAuth
@@ -686,25 +789,23 @@ func actionsLookupServiceID(ctx context.Context, client platform.Client, project
 	return svc.ID
 }
 
-// ghSecretSourceHint describes WHERE the agent should read ZCP_API_KEY from
-// in the current runtime env. Container: $ZCP_API_KEY is injected. Local:
-// ZCP runs from the user's machine and ZCP_API_KEY lives in .mcp.json
-// alongside the MCP server config.
-func ghSecretSourceHint(rt runtime.Info) string {
-	if rt.InContainer {
-		return "ZCP runs in a Zerops container; ZCP_API_KEY is in the container env. The command below substitutes via $ZCP_API_KEY at shell-expansion time — the literal value never crosses the MCP wire."
-	}
-	return "ZCP runs locally; ZCP_API_KEY lives in .mcp.json (env block of the zerops server). The command below extracts via jq at shell-expansion time — the literal value never crosses the MCP wire."
-}
+// ciTokenMintGuidance / ciTokenSourceHint own the CI Zerops credential TELL
+// (guide 0.9). The key ZCP itself runs on is scoped to ZCP's own project and
+// stays in the container: CI is a different actor, on a machine ZCP does not
+// own, so it gets a token of the person's own, scoped to the one project it
+// deploys. Naming the container's key here — as the old `reuse` hint did —
+// walked the agent into pasting a project-wide credential into a repository
+// secret, where it outlives every rotation ZCP can see.
+const (
+	ciTokenMintGuidance = "A Zerops access token the USER mints for CI, never ZCP's own key: `NO_ACCESS` at the organization, `BASIC_USER` on the target project only (app.zerops.io → Access Token Management). Single-project blast radius, revocable without touching ZCP."
+	ciTokenSourceHint   = "The value comes from the user — paste it into the command below. NEVER substitute a container/env variable: ZCP's key belongs to ZCP's project and must not leave the container."
+)
 
-// ghSecretValueExpr returns the env-aware shell expression for the
-// ZCP_API_KEY value. Container reads the env var directly; local extracts
-// from .mcp.json via jq.
-func ghSecretValueExpr(rt runtime.Info) string {
-	if rt.InContainer {
-		return `"$ZCP_API_KEY"`
-	}
-	return `"$(jq -r '.mcpServers.zerops.env.ZCP_API_KEY' .mcp.json)"`
+// ciTokenValueExpr is the `gh secret set -b` argument for ZEROPS_TOKEN: a
+// placeholder the agent replaces with the value the user pasted. No shell
+// substitution — there is deliberately nothing in the environment to read.
+func ciTokenValueExpr() string {
+	return `"<the CI token the user provides — collect via ` + credentialAskMechanism + `; NEVER generate one and NEVER read it from the container env>"`
 }
 
 // ghSecretSetCommand assembles a `gh secret set <name> -b <valueExpr> -R

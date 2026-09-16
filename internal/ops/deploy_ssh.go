@@ -490,12 +490,6 @@ func versionNameForHead(sha string, dirty bool) string {
 }
 
 func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup string, includeGit bool, versionName string) string {
-	parts := make([]string, 0, 2)
-
-	// Login to zcli on the remote host.
-	loginCmd := fmt.Sprintf("zcli login -- %s", shellQuote(authInfo.Token))
-	parts = append(parts, loginCmd)
-
 	// .git lifecycle (GLC-2 / GLC-3). Direct deploy is an ARTIFACT
 	// operation — it must reach a state where zcli's `--workspace-state
 	// all` archiver can snapshot the (possibly dirty) working tree, without
@@ -518,11 +512,20 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 	// touches the user's repo history on a direct deploy.
 	gitEnsure := GitEnsureRepoHeadCommand(workingDir)
 
-	// Push. setup is an agent-supplied tool input (and recipe-session
-	// deploys reach here with meta=nil, bypassing the tools-layer setup
-	// resolution), so it's shell-quoted — a setup name with
-	// whitespace/metacharacters would otherwise splice the compound command.
-	pushArgs := fmt.Sprintf("zcli push --service-id %s", targetServiceID)
+	// Push. The key reaches zcli through the ONE command's environment —
+	// never `zcli login`, which writes it to ~/.config/zcli and leaves the
+	// Mate's Zerops key sitting in the app's own container, where the app's
+	// dependencies run (guide 0.9). zcli reads ZEROPS_TOKEN from the
+	// environment and the assignment prefix scopes it to this process only.
+	// setup is an agent-supplied tool input (and recipe-session deploys reach
+	// here with meta=nil, bypassing the tools-layer setup resolution), so it's
+	// shell-quoted — a setup name with whitespace/metacharacters would
+	// otherwise splice the compound command; the token is quoted for the same
+	// reason.
+	pushArgs := fmt.Sprintf(
+		"ZEROPS_TOKEN=%s zcli push --service-id %s",
+		shellQuote(authInfo.Token), targetServiceID,
+	)
 	if versionName != "" {
 		pushArgs += " --version-name " + shellQuote(versionName)
 	}
@@ -533,10 +536,7 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 		pushArgs += " -g"
 	}
 
-	pushCmd := fmt.Sprintf("%s && %s", gitEnsure, pushArgs)
-	parts = append(parts, pushCmd)
-
-	return strings.Join(parts, " && ")
+	return fmt.Sprintf("%s && %s", gitEnsure, pushArgs)
 }
 
 // buildSSHCommandSHA builds the push command for a resolved deploy-from-
@@ -546,11 +546,14 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 // and --version-name records the sha the platform can't otherwise see
 // (docs/spec-workflows.md §4.9, P1).
 func buildSSHCommandSHA(authInfo auth.Info, targetServiceID, extractedDir, setup, sha string) string {
-	loginCmd := fmt.Sprintf("zcli login -- %s", shellQuote(authInfo.Token))
-	pushArgs := fmt.Sprintf("zcli push --service-id %s --no-git --version-name %s", targetServiceID, shellQuote(sha))
+	// Same key discipline as buildSSHCommand: the token rides this one
+	// command's environment, never `zcli login` (guide 0.9).
+	pushArgs := fmt.Sprintf(
+		"ZEROPS_TOKEN=%s zcli push --service-id %s --no-git --version-name %s",
+		shellQuote(authInfo.Token), targetServiceID, shellQuote(sha),
+	)
 	if setup != "" {
 		pushArgs += " --setup " + shellQuote(setup)
 	}
-	pushCmd := fmt.Sprintf("cd %s && %s", shellQuote(extractedDir), pushArgs)
-	return loginCmd + " && " + pushCmd
+	return fmt.Sprintf("cd %s && %s", shellQuote(extractedDir), pushArgs)
 }

@@ -74,7 +74,12 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// the agent explicitly name the branch stage/prod builds from,
 		// overriding auto-detection. Deliberate new field — optional,
 		// backward-compatible (omit → today's auto-detect-then-"main" path).
-		"zerops_workflow":    18041,
+		// Raised +108 (18041→18149) for action="group-recipe" (guide 2.2 /
+		// A2): the agent's way to ask for the group repo's recipe export and
+		// get its pull request. One enumerated action in the Action
+		// description; the explanation lives in the tool Description, which
+		// this budget does not cover.
+		"zerops_workflow":    18149,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services

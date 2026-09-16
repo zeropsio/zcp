@@ -33,7 +33,7 @@ const ownerRepoPlaceholder = "<owner>/<repo>"
 //   - actions=true  → the full CD-track set required to push the workflow file,
 //     set the repo secret, and watch the resulting run.
 func ghPATScopeRecommendation(ownerRepo string, actions bool) string {
-	return gitTokenRecommendation("", ownerRepo, actions)
+	return gitTokenRecommendation("", "", ownerRepo, actions)
 }
 
 // gitTokenRecommendation is the host-aware form. GitHub keeps the full
@@ -41,12 +41,28 @@ func ghPATScopeRecommendation(ownerRepo string, actions bool) string {
 // page and its own scope vocabulary, because sending a self-hosted Gitea user
 // to github.com/settings is a dead end they cannot act on. remoteURL "" keeps
 // the historical GitHub wording for the sites that have no remote in hand.
-func gitTokenRecommendation(remoteURL, ownerRepo string, actions bool) string {
+//
+// giteaURL is the container's GITEA_URL (runtime.Info.GiteaURL). It is what
+// separates the account's OWN Gitea — where the Mate is already a bot holding
+// its own token — from any other self-hosted forge, where a person really
+// does have to go and mint one.
+func gitTokenRecommendation(remoteURL, giteaURL, ownerRepo string, actions bool) string {
 	target := "the single target repo (owner/repo)"
 	if ownerRepo != "" && ownerRepo != ownerRepoPlaceholder {
 		target = ownerRepo
 	}
-	if kind := topology.ClassifyGitHost(remoteURL); remoteURL != "" && kind != topology.GitHostGitHub {
+	kind := topology.ClassifyGitHost(remoteURL, giteaURL)
+	if kind == topology.GitHostGitea {
+		extra := ""
+		if actions {
+			extra = " The CI track needs no token at all: a `.gitea/workflows/` workflow asks the account's broker to deploy with the job's own token, and never carries a Zerops key."
+		}
+		return fmt.Sprintf(
+			"nothing to create — %s is the Mate's own repository on the account's Gitea, and it authenticates as its bot with %s (scope `%s`). A person never mints a token for this host.%s",
+			target, topology.GiteaBotTokenSource, topology.GiteaPushMinScope, extra,
+		)
+	}
+	if remoteURL != "" && kind != topology.GitHostGitHub {
 		forge := "your git host"
 		if kind == topology.GitHostGitLab {
 			forge = "GitLab"
@@ -57,7 +73,7 @@ func gitTokenRecommendation(remoteURL, ownerRepo string, actions bool) string {
 		}
 		return fmt.Sprintf(
 			"a %s access token scoped to %s with `%s` (single-repo blast radius). Create or edit it at %s.%s",
-			forge, target, topology.GitTokenPushScope(remoteURL), topology.GitTokenSettingsURL(remoteURL), extra,
+			forge, target, topology.GitTokenPushScope(remoteURL, giteaURL), topology.GitTokenSettingsURL(remoteURL, giteaURL), extra,
 		)
 	}
 	if !actions {

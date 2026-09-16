@@ -137,11 +137,37 @@ type ServiceMeta struct {
 	// Neither provenance proves what built that appVersion. nil for a service bootstrapped
 	// fresh (no adopt step ran) or not yet adopted.
 	Repo *topology.Repo `json:"repo,omitempty"`
+
+	// Gitea is the pair's repository on the account's own Gitea, recorded
+	// when the broker gave it (guide 2.1). Absent on every pair whose remote
+	// is not that Gitea — which is every pair outside a Mate. Non-secret: a
+	// repository name and a branch name. The bot's token is never here (nor
+	// in any other file ZCP writes) — it lives where git-push-setup put it, a
+	// sensitive service env on the push source.
+	Gitea *GiteaRepoRef `json:"gitea,omitempty"`
 }
 
 // SetRepoBaseline records the adopt-time baseline marker for this meta.
 func (m *ServiceMeta) SetRepoBaseline(appVersionID string, provenance topology.RepoProvenance) {
 	m.Repo = &topology.Repo{BaselineAppVersion: appVersionID, Provenance: provenance}
+}
+
+// GiteaRepoRef is what a pair needs to keep working on its Gitea repository
+// across sessions: which repository it is, and which branch this Mate pushes.
+// `main` is protected on every repository (docs/vocabulary.md), so Branch is
+// never `main` — it is `mate/{bot login}`, and the Mate lands through a pull
+// request.
+type GiteaRepoRef struct {
+	FullName      string `json:"fullName"`                // "{org}/{name}"
+	Branch        string `json:"branch"`                  // mate/{bot login} — never main
+	DefaultBranch string `json:"defaultBranch,omitempty"` // the base a pull request targets
+	RequestedAt   string `json:"requestedAt,omitempty"`   // RFC3339, when the broker answered
+	// PullRequest is the number of the request that lands Branch on
+	// DefaultBranch, 0 until one exists. Recorded rather than re-derived: the
+	// branch is pushed long after the repository is wired, so the request has
+	// its own moment, and a pair that has one must never make Gitea answer
+	// about it again on every later pass.
+	PullRequest int `json:"pullRequest,omitempty"`
 }
 
 // PublicAccessFor returns the persisted public-access record for hostname —

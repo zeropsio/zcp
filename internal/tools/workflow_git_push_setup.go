@@ -314,7 +314,7 @@ func handleGitPushSetup(
 	}
 
 	if rt.InContainer {
-		return confirmGitPushSetupContainer(ctx, client, httpClient, sshDeployer, projectID, stateDir, input, meta)
+		return confirmGitPushSetupContainer(ctx, client, httpClient, sshDeployer, projectID, stateDir, rt.GiteaURL, input, meta)
 	}
 	return confirmGitPushSetupLocal(ctx, stateDir, input, meta)
 }
@@ -491,7 +491,9 @@ func confirmGitPushSetupLocal(
 	// Best-effort: a probe failure just omits the `remote` block.
 	remoteState := probeGitPushRemoteState(localGitDivergenceRunner(ctx, workingDir), trackedRef)
 
-	localDelivery := deliveryDecisionForMeta(meta)
+	// Local mode: ZCP runs on the user's own machine, which has no Mate
+	// Gitea of its own.
+	localDelivery := deliveryDecisionForMeta(meta, "")
 	body := map[string]any{
 		"status":                    "configured",
 		"service":                   input.Service,
@@ -520,7 +522,7 @@ func confirmGitPushSetupContainer(
 	client platform.Client,
 	httpClient ops.HTTPDoer,
 	sshDeployer ops.SSHDeployer,
-	projectID, stateDir string,
+	projectID, stateDir, giteaURL string,
 	input WorkflowInput,
 	meta *workflow.ServiceMeta,
 ) (*mcp.CallToolResult, any, error) {
@@ -566,7 +568,7 @@ func confirmGitPushSetupContainer(
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"Container git-push-setup requires gitToken (fine-grained PAT) — the handler verifies the token against the remote before writing project state.",
-			fmt.Sprintf("Re-call: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=%q gitToken=<TOKEN>. For git-push only use %s For the CI track use %s", input.Service, input.RemoteURL, gitTokenRecommendation(input.RemoteURL, "", false), gitTokenRecommendation(input.RemoteURL, "", true)),
+			fmt.Sprintf("Re-call: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=%q gitToken=<TOKEN>. For git-push only use %s For the CI track use %s", input.Service, input.RemoteURL, gitTokenRecommendation(input.RemoteURL, giteaURL, "", false), gitTokenRecommendation(input.RemoteURL, giteaURL, "", true)),
 		), WithRecoveryStatus()), nil, nil
 	}
 
@@ -617,7 +619,7 @@ func confirmGitPushSetupContainer(
 	// non-blocking warning; a genuinely custom pre-existing identity is
 	// preserved and reported, never silently left unexplained.
 	identity, emailSeeded, nameSeeded, emailPreserved, namePreserved, identityWarning := gitPushSetupDeriveAndSeedIdentity(
-		ctx, httpClient, sshDeployer, pushHost, input.RemoteURL, input.GitToken, needsReconstruct,
+		ctx, httpClient, sshDeployer, pushHost, input.RemoteURL, giteaURL, input.GitToken, needsReconstruct,
 	)
 
 	// 4. SSH sync origin + url-scoped credential helper in /var/www/.git
@@ -744,7 +746,7 @@ func confirmGitPushSetupContainer(
 	remoteState := probeGitPushRemoteState(sshGitRunner(ctx, sshDeployer, pushHost, "/var/www"), trackedRef)
 
 	return jsonResult(attachWorkSessionState(
-		gitPushContainerConfiguredResponse(input, meta, rotation, reconstructed, reconstructDivergence,
+		gitPushContainerConfiguredResponse(input, meta, giteaURL, rotation, reconstructed, reconstructDivergence,
 			identity, emailSeeded, nameSeeded, emailPreserved, namePreserved, identityWarning, remoteState),
 		stateDir)), nil, nil
 }
@@ -796,16 +798,17 @@ func classifyGitIdentitySeedLine(line, seededTok, preservedTok, writeFailedTok s
 	}
 }
 
-// gitPushSetupDeriveAndSeedIdentity implements F3 human attribution:
-// derives a git identity from the GitHub PAT (github.com remotes only —
-// ops.IsGitHubRemote is the single owner, a strict fail-CLOSED host check
-// deliberately distinct from parseGitHost's fail-open credential-
-// scoping default; other hosts skip derivation and keep the robot
-// fallback), then — unless reconstruction is about to run,
+// gitPushSetupDeriveAndSeedIdentity implements F3 attribution: derives a git
+// identity from the token, by forge (github.com remotes — ops.IsGitHubRemote
+// is the single owner, a strict fail-CLOSED host check deliberately distinct
+// from parseGitHost's fail-open credential-scoping default; and the account's
+// own Gitea, where the identity is the Mate's own bot rather than a person —
+// ops.DeriveGiteaIdentity. Any other host skips derivation and keeps the
+// robot fallback), then — unless reconstruction is about to run,
 // which fills identity itself as part of its own init (there is no .git
 // yet to seed into here) — seeds it into the already-present repo via the
 // single-owner seed-if-absent-or-exactly-robot command. Every failure mode
-// (non-github host, nil httpClient, GitHub API error, SSH failure, a
+// (an unrecognised host, nil httpClient, a forge API error, SSH failure, a
 // per-key write failure, malformed dispatch output) is non-blocking: the
 // caller always gets back a valid identity (the derived one, or
 // ops.DeployGitIdentity as fallback) plus a human-readable warning to
@@ -828,17 +831,40 @@ func gitPushSetupDeriveAndSeedIdentity(
 	ctx context.Context,
 	httpClient ops.HTTPDoer,
 	sshDeployer ops.SSHDeployer,
-	pushHost, remoteURL, token string,
+	pushHost, remoteURL, giteaURL, token string,
 	needsReconstruct bool,
 ) (identity ops.GitIdentity, emailSeeded, nameSeeded, emailPreserved, namePreserved bool, warning string) {
 	identity = ops.DeployGitIdentity
-	if !ops.IsGitHubRemote(remoteURL) {
+
+	// Whose commits these are differs by forge. On GitHub the token belongs
+	// to the PERSON, so their account names the commits. On the account's own
+	// Gitea the token belongs to the MATE — its bot commits as itself, which
+	// is also what tells two Mates on one repository apart in the history.
+	// Anywhere else ZCP knows no identity to derive and leaves whatever the
+	// repo already carries.
+	var (
+		derived    ops.GitIdentity
+		deriveErr  error
+		forge      string
+		derivable  = true
+		giteaRepo  = topology.ClassifyGitHost(remoteURL, giteaURL) == topology.GitHostGitea
+		githubRepo = ops.IsGitHubRemote(remoteURL)
+	)
+	switch {
+	case giteaRepo:
+		forge = "Gitea"
+		derived, deriveErr = ops.DeriveGiteaIdentity(ctx, httpClient, giteaURL, token)
+	case githubRepo:
+		forge = "GitHub"
+		derived, deriveErr = ops.DeriveGitHubIdentity(ctx, httpClient, token)
+	default:
+		derivable = false
+	}
+	if !derivable {
 		return identity, false, false, false, false, ""
 	}
-
-	derived, deriveErr := ops.DeriveGitHubIdentity(ctx, httpClient, token)
 	if deriveErr != nil {
-		return identity, false, false, false, false, fmt.Sprintf("Could not derive your GitHub identity for commit attribution (%v) — repo-local identity falls back to the ZCP default; re-run git-push-setup later to retry.", deriveErr)
+		return identity, false, false, false, false, fmt.Sprintf("Could not derive your %s identity for commit attribution (%v) — repo-local identity falls back to the ZCP default; re-run git-push-setup later to retry.", forge, deriveErr)
 	}
 	identity = derived
 
@@ -848,7 +874,7 @@ func gitPushSetupDeriveAndSeedIdentity(
 
 	seedOut, seedErr := sshDeployer.ExecSSH(ctx, pushHost, ops.BuildGitIdentitySeedCommand("/var/www", identity))
 	if seedErr != nil {
-		return identity, false, false, false, false, fmt.Sprintf("Derived your GitHub identity (%s <%s>) but could not seed it into the container's git config (%v) — repo-local identity is unchanged; re-run git-push-setup to retry.", identity.Name, identity.Email, seedErr)
+		return identity, false, false, false, false, fmt.Sprintf("Derived your %s identity (%s <%s>) but could not seed it into the container's git config (%v) — repo-local identity is unchanged; re-run git-push-setup to retry.", forge, identity.Name, identity.Email, seedErr)
 	}
 
 	// Positional parse — the command's stdout is ALWAYS exactly two lines
@@ -856,7 +882,7 @@ func gitPushSetupDeriveAndSeedIdentity(
 	// comment carries the full guarantee). Anything else is an anomaly.
 	lines := strings.Split(strings.TrimRight(string(seedOut), "\n"), "\n")
 	if len(lines) != 2 {
-		return identity, false, false, false, false, fmt.Sprintf("Derived your GitHub identity (%s <%s>) but the seed command produced unexpected output — repo-local identity state is uncertain; verify manually or re-run git-push-setup.", identity.Name, identity.Email)
+		return identity, false, false, false, false, fmt.Sprintf("Derived your %s identity (%s <%s>) but the seed command produced unexpected output — repo-local identity state is uncertain; verify manually or re-run git-push-setup.", forge, identity.Name, identity.Email)
 	}
 	emailOutcome := classifyGitIdentitySeedLine(lines[0], ops.GitIdentitySeedEmailSeeded, ops.GitIdentitySeedEmailPreserved, ops.GitIdentitySeedEmailWriteFailed)
 	nameOutcome := classifyGitIdentitySeedLine(lines[1], ops.GitIdentitySeedNameSeeded, ops.GitIdentitySeedNamePreserved, ops.GitIdentitySeedNameWriteFailed)
@@ -864,8 +890,8 @@ func gitPushSetupDeriveAndSeedIdentity(
 	if emailOutcome == seedKeyUnrecognized || nameOutcome == seedKeyUnrecognized ||
 		emailOutcome == seedKeyWriteFailed || nameOutcome == seedKeyWriteFailed {
 		return identity, false, false, false, false, fmt.Sprintf(
-			"Derived your GitHub identity (%s <%s>) but seeding it reported an unexpected result (email: %s, name: %s) — repo-local identity may be partially updated; verify manually or re-run git-push-setup.",
-			identity.Name, identity.Email, emailOutcome.describe(), nameOutcome.describe(),
+			"Derived your %s identity (%s <%s>) but seeding it reported an unexpected result (email: %s, name: %s) — repo-local identity may be partially updated; verify manually or re-run git-push-setup.",
+			forge, identity.Name, identity.Email, emailOutcome.describe(), nameOutcome.describe(),
 		)
 	}
 
@@ -965,11 +991,11 @@ func gitPushSetupPreProbeSelfHeal(ctx context.Context, sshDeployer ops.SSHDeploy
 // from confirmGitPushSetupContainer to keep that probe-orchestration function
 // under the maintainability ceiling.
 func gitPushContainerConfiguredResponse(
-	input WorkflowInput, meta *workflow.ServiceMeta, rotation, reconstructed bool, reconstructDivergence string,
+	input WorkflowInput, meta *workflow.ServiceMeta, giteaURL string, rotation, reconstructed bool, reconstructDivergence string,
 	identity ops.GitIdentity, emailSeeded, nameSeeded, emailPreserved, namePreserved bool, identityWarning string,
 	remoteState *gitPushRemoteStateWire,
 ) map[string]any {
-	delivery := deliveryDecisionForMeta(meta)
+	delivery := deliveryDecisionForMeta(meta, giteaURL)
 	resp := map[string]any{
 		"status":                    "configured",
 		"service":                   input.Service,
@@ -1291,12 +1317,13 @@ func gitPushWalkthroughSteps(rt runtime.Info, service string) []gitPushWalkthrou
 // (topology.RecommendDelivery) keyed on the same meta the launch earn-probe
 // reads — the host-only `gitlab→webhook else actions` heuristic this replaced
 // drifted from the full git-push × build-integration × stage matrix.
-func deliveryDecisionForMeta(meta *workflow.ServiceMeta) topology.DeliveryDecision {
+func deliveryDecisionForMeta(meta *workflow.ServiceMeta, giteaURL string) topology.DeliveryDecision {
 	return topology.RecommendDelivery(topology.DeliveryInputs{
 		GitPushState:     meta.GitPushState,
 		BuildIntegration: meta.BuildIntegration,
 		Verified:         meta.BuildIntegrationVerifiedAt != "",
 		HasStage:         meta.StageHostname != "",
 		RemoteURL:        meta.RemoteURL,
+		GiteaURL:         giteaURL,
 	})
 }

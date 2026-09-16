@@ -1,6 +1,9 @@
 package topology
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestRecommendDelivery_Matrix pins every cell of the production-delivery
 // recommendation matrix (F4b). RecommendDelivery is the SINGLE owner of the
@@ -11,6 +14,8 @@ func TestRecommendDelivery_Matrix(t *testing.T) {
 	t.Parallel()
 	const gh = "https://github.com/me/app"
 	const gl = "https://gitlab.com/me/app"
+	const giteaOrigin = "https://web-2ff4-3000.prg1.zerops.app"
+	const gt = giteaOrigin + "/acme/api"
 
 	tests := []struct {
 		name        string
@@ -70,6 +75,26 @@ func TestRecommendDelivery_Matrix(t *testing.T) {
 			wantFamily: BuildIntegrationWebhook,
 			wantStage:  true,
 		},
+		{
+			name:        "not configured (gitea) → actions, needs git-push first",
+			in:          DeliveryInputs{GitPushState: GitPushUnconfigured, RemoteURL: gt, GiteaURL: giteaOrigin},
+			wantFamily:  BuildIntegrationActions,
+			wantGitPush: true,
+		},
+		{
+			name:       "configured + none + has-stage (gitea) → actions",
+			in:         DeliveryInputs{GitPushState: GitPushConfigured, BuildIntegration: BuildIntegrationNone, HasStage: true, RemoteURL: gt, GiteaURL: giteaOrigin},
+			wantFamily: BuildIntegrationActions,
+			wantStage:  false,
+		},
+		{
+			// The same URL with no GITEA_URL in the environment is an
+			// unidentified self-hosted forge: nothing to say about a broker.
+			name:       "configured + none + has-stage (unknown host) → actions",
+			in:         DeliveryInputs{GitPushState: GitPushConfigured, BuildIntegration: BuildIntegrationNone, HasStage: true, RemoteURL: gt},
+			wantFamily: BuildIntegrationActions,
+			wantStage:  false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -87,6 +112,17 @@ func TestRecommendDelivery_Matrix(t *testing.T) {
 			}
 			if got.Why == "" {
 				t.Error("Why must never be empty — it IS the agent-facing tell")
+			}
+			// A Gitea remote never deploys with a Zerops token: the broker
+			// does, off protected state. The tell must say so, and must not
+			// send the agent shopping for a GitHub-shaped credential.
+			if ClassifyGitHost(tt.in.RemoteURL, tt.in.GiteaURL) == GitHostGitea {
+				if !strings.Contains(got.Why, "broker") {
+					t.Errorf("a Gitea remote's tell must name the broker, got %q", got.Why)
+				}
+				if strings.Contains(got.Why, "GitHub") || strings.Contains(got.Why, "`gh`") {
+					t.Errorf("a Gitea remote's tell must not name GitHub, got %q", got.Why)
+				}
 			}
 		})
 	}

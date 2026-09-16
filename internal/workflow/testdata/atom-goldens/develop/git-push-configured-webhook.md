@@ -56,7 +56,7 @@ Git push is configured for this service (`gitPush=configured`), so the repo is t
 zerops_deploy targetService="appdev" setup="<source-setup>" strategy="git-push"
 ```
 
-`targetService` is the PUSH SOURCE hostname (dev half of a standard pair, or the service itself for simple modes). The call refuses an empty tree or uncommitted changes — commit first (`ssh <host> "cd /var/www && git add -A && git commit -m '<msg>'"` for the runtime container, `git -C <workingDir> add -A && git commit -m '<msg>'` on a dev machine). It pushes HEAD to the configured remote and then follows the integration build on the build target until it settles:
+`targetService` is the PUSH SOURCE hostname (dev half of a standard pair, or the service itself for simple modes). Leave `branch` unset: it defaults to `main`, except on the account's own Gitea, where it defaults to this Mate's own branch because every repository's `main` is protected and the Mate lands through a pull request. The call refuses an empty tree or uncommitted changes — commit first (`ssh <host> "cd /var/www && git add -A && git commit -m '<msg>'"` for the runtime container, `git -C <workingDir> add -A && git commit -m '<msg>'` on a dev machine). It pushes HEAD to the configured remote and then follows the integration build on the build target until it settles:
 
 | Response `status` | Meaning |
 |---|---|
@@ -71,14 +71,14 @@ zerops_deploy targetService="appdev" setup="<source-setup>" strategy="git-push"
 | `buildIntegration` | What happens after the push |
 |---|---|
 | `webhook` | Zerops pulls the repo and runs the build pipeline on the build target. |
-| `actions` | Your GitHub Actions workflow runs `zcli push` from CI; the build lands on the build target. |
+| `actions` | A workflow in the repository runs the build from CI. On GitHub that is `.github/workflows/`, running `zcli push` with a CI token. On the account's own Gitea (a remote on `$GITEA_URL`) it is `.gitea/workflows/`, which asks the account's broker to deploy with the job's own token and carries no Zerops token at all. Either way the build lands on the build target. |
 | `none` | The push is archived at the remote; no watched build fires. The push response offers the choice: wire an integration via `zerops_workflow action="build-integration"`, keep your independent CI, or stay archive-only. Until one is wired, a direct `zerops_deploy` is what puts code on the service — including the dev→stage promotion of a standard pair — and the push still matters as the durable copy. |
 
 ## After "DELIVERED"
 
 Verify the build target: `zerops_verify serviceHostname="<build-target>"`. Deploy evidence for the session is already in place when the response said `autoRecorded: true`; `zerops_workflow action="record-deploy" targetService="<build-target>"` is only the recovery call for a build that landed OUTSIDE the watch window (confirm the app version via `zerops_events` first, then record).
 
-If the push fails with a credential cause, the token was rotated or revoked upstream — ask the user for a fresh token and re-run `zerops_workflow action="git-push-setup" service="appdev" remoteUrl="..." gitToken="<fresh PAT>"`. Never invent or reuse a token the user didn't supply.
+If the push fails with a credential cause, the token was rotated or revoked upstream — ask the user for a fresh token and re-run `zerops_workflow action="git-push-setup" service="appdev" remoteUrl="..." gitToken="<fresh PAT>"`. Never invent or reuse a token the user didn't supply. On a remote whose host is `$GITEA_URL` there is no user to ask: the credential is the Mate's own bot token in `$GITEA_TOKEN`, and a rejection there means the broker rotated it — re-read the variable rather than asking for one.
 
 A push rejected because the remote carries commits yours doesn't returns `GIT_PUSH_NON_FAST_FORWARD` with a `next` block naming exactly three options (rebase / merge / replace-remote) and their exact commands — that decision belongs to the user; never run `git push --force` or merge on their behalf without asking first.
 
