@@ -38,10 +38,18 @@ type DeployLocalInput struct {
 	// BreakGlass overrides the L1 push-delivery redirect (see
 	// repoDeliveryRedirect).
 	BreakGlass FlexBool `json:"breakGlass,omitempty"`
-	// AppVersion, when set to "latest", switches this call to the R2
+	// AppVersion, when set, skips source resolution. "latest" is the R2
 	// in-place recovery for a never-activated buildFromGit service (docs/
-	// spec-workflows.md §8 R2) — see DeploySSHInput.AppVersion.
+	// spec-workflows.md §8 R2): the target's newest (DEPLOY_FAILED)
+	// appVersion is re-deployed. Any other value is a specific appVersion
+	// id: the GF-8 rollback (§12.6) — that recorded appVersion is
+	// re-activated, which only succeeds when it is currently BACKUP.
 	AppVersion string `json:"appVersion,omitempty"`
+	// SHA, when set, deploys the EXACT git commit instead of the current
+	// working tree: resolved via `git rev-parse`, its tree extracted into
+	// a temp dir outside workingDir, and pushed with --version-name. On
+	// success, records the revision in the deploy attempt. docs/spec-workflows.md §4.9.
+	SHA string `json:"sha,omitempty"`
 }
 
 func deployLocalInputSchema() *jsonschema.Schema {
@@ -53,7 +61,8 @@ func deployLocalInputSchema() *jsonschema.Schema {
 		"remoteUrl":     {Type: "string", Description: "Git remote URL (HTTPS). Optional for strategy=git-push — used only when origin isn't already configured in the local repo; otherwise the existing origin is reused."},
 		"branch":        {Type: "string", Description: "Git branch for strategy=git-push. Default: current HEAD branch."},
 		"breakGlass":    {Type: "boolean", Description: "Override for the push-delivery redirect: a pair with git-push configured delivers via push (the repo is the source of truth); a direct deploy is refused with the recommended push call unless breakGlass=true. Reserve for fundamental reasons (git host outage, recovery)."},
-		"appVersion":    {Type: "string", Description: "Set to 'latest' to re-deploy the already-built appVersion in place, skipping source resolution — recovery for a never-activated buildFromGit service with no container. Only 'latest' is supported."},
+		"appVersion":    {Type: "string", Description: "'latest' re-deploys the newest built artifact in place (recovery). An appVersion id of the target re-activates that BACKUP artifact without a build (rollback, ~1 min) — read candidates from zerops_events or the status rollback block, never a probed id."},
+		"sha":           {Type: "string", Description: "Deploy this exact git commit instead of the working tree. Returns the resolved sha and deployed appVersionId."},
 	}, "targetService")
 }
 
@@ -95,6 +104,20 @@ func RegisterDeployLocal(
 		if input.AppVersion != "" {
 			if blocked := validateAppVersionParam(input.AppVersion); blocked != nil {
 				return blocked, nil, nil
+			}
+			// A non-"latest" value is an appVersion id: rollback
+			// (docs/spec-workflows.md §12.6 GF-8), not the R2 newest-only
+			// recovery below.
+			if input.AppVersion != appVersionLatest {
+				result, blocked := runAppVersionRollback(ctx, client, projectID, stateDir, input.TargetService, input.AppVersion, "local")
+				if blocked != nil {
+					return blocked, nil, nil
+				}
+				return jsonResult(deployLocalResponse{
+					DeployResult:     result,
+					WorkSessionState: sessionAnnotations(stateDir),
+					Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
+				}), nil, nil
 			}
 			result, blocked := runAppVersionRedeploy(ctx, client, httpClient, projectID, stateDir, input.TargetService, input.Setup, "local")
 			if blocked != nil {
@@ -181,7 +204,7 @@ func RegisterDeployLocal(
 		}
 
 		result, err := ops.DeployLocal(ctx, client, projectID, *authInfo,
-			input.TargetService, input.Setup, input.WorkingDir)
+			input.TargetService, input.Setup, input.WorkingDir, input.SHA)
 		if err != nil {
 			attempt.Error = err.Error()
 			// Local push failed before reaching the platform — transport-
@@ -218,6 +241,11 @@ func RegisterDeployLocal(
 		case result != nil:
 			attempt.Error = fmt.Sprintf("deploy status %s", result.Status)
 			attempt.FailureClass = classifyDeployStatus(result.Status)
+		}
+		if result != nil {
+			attempt.SHA = result.SHA
+			attempt.AppVersionID = result.AppVersionID
+			attempt.Dirty = result.Dirty
 		}
 		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 

@@ -365,7 +365,7 @@ func buildSignalLibrary() []failureSignal {
 			id:         "transport:git-non-fast-forward",
 			phases:     []DeployFailurePhase{PhaseTransport},
 			strategies: []string{"git-push"},
-			logRegex:   regexp.MustCompile(`(?:\[rejected\]|fetch first|non-fast-forward|Updates were rejected)`),
+			logRegex:   GitNonFastForwardPattern,
 			requireLog: true,
 			build:      transportGitNonFastForward,
 		},
@@ -750,9 +750,14 @@ func transportGitProtectedBranch(_ string) *topology.DeployFailureClassification
 
 func transportGitNonFastForward(_ string) *topology.DeployFailureClassification {
 	return &topology.DeployFailureClassification{
-		Category:        topology.FailureClassConfig,
-		LikelyCause:     "Git remote rejected the push as non-fast-forward — the remote branch has commits the local push does not (the repo was pre-seeded with a README/license, or something else pushed).",
-		SuggestedAction: "Integrate the remote first: in the source container `git pull --rebase origin <branch>` then re-push; or if the remote content is disposable, force-push (`git push --force`). Then re-run zerops_deploy strategy=\"git-push\".",
+		Category:    topology.FailureClassConfig,
+		LikelyCause: "Git remote rejected the push as non-fast-forward — the remote branch has commits the local push does not (the repo was pre-seeded with a README/license, or something else pushed).",
+		// GF-11: this is a user decision (rebase / merge / replace-remote),
+		// never zcp's to make automatically. The GIT_PUSH_NON_FAST_FORWARD
+		// error this signal accompanies carries the structured `next` block
+		// with the three named options and their exact commands — zcp
+		// never runs any of them on the user's behalf.
+		SuggestedAction: "Read the GIT_PUSH_NON_FAST_FORWARD error's `next` block for the three named options (rebase / merge / replace-remote) and their exact commands. zcp will not choose for you and never force-pushes or merges on its own — surface the choice to the user, or run the option they pick, then re-run zerops_deploy strategy=\"git-push\".",
 		Signals:         []string{"transport:git-non-fast-forward"},
 	}
 }

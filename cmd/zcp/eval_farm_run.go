@@ -152,6 +152,11 @@ func runFarmRun(args []string, envr *farm.EnvResolver) int {
 		RunBudget: runBudget,
 		Note:      flags.note, RunBudgetSec: int(runBudget.Seconds()), CandidateInfo: candidateInfo,
 		MaxConcurrent: maxConcurrent,
+		// §2.4/§3.3: read from this process's own environment only — the
+		// operator sources it from ~/.zerops-dev/agent-creds/farm.env, never
+		// resolved from the farm service env the way ZCP_FARM_* keys are.
+		GitHubPAT:      os.Getenv(eval.GitHubPATEnvVar),
+		GitHubAdminPAT: os.Getenv(eval.GitHubAdminPATEnvVar),
 	}
 	results, err := farm.RunBatch(ctx, client, sink, opts)
 	if err != nil {
@@ -352,11 +357,18 @@ func resolveScenarios(ctx context.Context, sink *farm.SinkClient, batch, scenari
 		if !farm.ValidScenarioID(id) {
 			return nil, fmt.Errorf("invalid scenario %q in set %q", id, set)
 		}
-		launch, production, err := resolveScenarioOwnership(scenariosDir, id, batch)
+		sc, err := eval.ParseScenario(filepath.Join(scenariosDir, id+".md"))
+		if err != nil {
+			return nil, fmt.Errorf("resolve scenario %s: %w", id, err)
+		}
+		launch, production, err := resolveScenarioOwnership(sc, id, batch)
 		if err != nil {
 			return nil, err
 		}
-		scenarios = append(scenarios, farm.ScenarioRun{ID: id, Launch: launch, ProductionProjectName: production})
+		scenarios = append(scenarios, farm.ScenarioRun{
+			ID: id, Launch: launch, ProductionProjectName: production,
+			RequiredEnvVars: sc.RequiredEnvVars, GitRepoReset: sc.GitRepoReset,
+		})
 	}
 	return scenarios, nil
 }
@@ -456,16 +468,13 @@ func listAllScenarioIDsFromDir(scenariosDir string) ([]string, error) {
 	return ids, nil
 }
 
-// resolveScenarioOwnership reads and parses one scenario from the verified
-// local snapshot exactly once.
-// Its area controls launch-token handling. Only a structured launchShape
-// target matching the canonical run-specific farm name grants the controller
-// ownership for automatic deletion.
-func resolveScenarioOwnership(scenariosDir, id, batch string) (bool, string, error) {
-	sc, err := eval.ParseScenario(filepath.Join(scenariosDir, id+".md"))
-	if err != nil {
-		return false, "", fmt.Errorf("resolve scenario %s: %w", id, err)
-	}
+// resolveScenarioOwnership derives launch-token/production-target ownership
+// from sc, one scenario already parsed from the verified local snapshot
+// (resolveScenarios parses each scenario exactly once and reuses it here for
+// RequiredEnvVars/GitRepoReset too). Area controls launch-token handling.
+// Only a structured launchShape target matching the canonical run-specific
+// farm name grants the controller ownership for automatic deletion.
+func resolveScenarioOwnership(sc *eval.Scenario, id, batch string) (bool, string, error) {
 	launch := strings.HasPrefix(sc.Area, "launch")
 	if sc.Verification == nil || sc.Verification.LaunchShape == nil || sc.Verification.LaunchShape.ProdProject == "" {
 		return launch, "", nil
@@ -767,6 +776,23 @@ func runFarmGC(args []string, envr *farm.EnvResolver) int {
 		fmt.Fprintf(os.Stdout, "%s candidate\n", c.Name)
 	}
 
+	// §3.6 sibling: zcp-farm-* repositories a `gitRepoCreate` scenario
+	// created, under the admin PAT's own GitHub account — opt-in on the
+	// admin PAT's presence (RepoGC no-ops when it's absent), same
+	// list/report posture as the project GC above.
+	repoCandidates, err := farm.RepoGC(ctx, farm.RepoGCOptions{Token: os.Getenv(eval.GitHubAdminPATEnvVar), OlderThan: olderThan})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	for _, c := range repoCandidates {
+		if c.Exempt != "" {
+			fmt.Fprintf(os.Stdout, "repo %s/%s exempt: %s\n", c.Owner, c.Name, c.Exempt)
+			continue
+		}
+		fmt.Fprintf(os.Stdout, "repo %s/%s candidate\n", c.Owner, c.Name)
+	}
+
 	if !yes {
 		return 0
 	}
@@ -779,6 +805,12 @@ func runFarmGC(args []string, envr *farm.EnvResolver) int {
 	}
 	if err := farm.RevokeOrphanedLaunchTokens(ctx, client, sink, clientID); err != nil {
 		fmt.Fprintf(os.Stderr, "error: revoke orphaned launch tokens: %v\n", err)
+		return 1
+	}
+	if errs := farm.RepoGCApply(ctx, os.Getenv(eval.GitHubAdminPATEnvVar), repoCandidates, nil); len(errs) > 0 {
+		for _, gcErr := range errs {
+			fmt.Fprintf(os.Stderr, "error: %v\n", gcErr)
+		}
 		return 1
 	}
 	return 0

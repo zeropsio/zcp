@@ -972,7 +972,8 @@ func TestScenario_S8_DevelopIterationFailure(t *testing.T) {
 	// to this set.
 	requireAtomIDsContain(t, "S8", matches,
 		"develop-close-mode-auto-deploy-container",
-		"develop-close-mode-auto-workflow-dev")
+		"develop-close-mode-auto-workflow-dev",
+		"develop-self-deploy-reproducibility")
 }
 
 // TestScenario_PinCoverage_AllAtomsReachable is the Phase 8 G2 pin-density
@@ -1048,6 +1049,11 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		{"bootstrap/adopt/discover", StateEnvelope{
 			Phase: PhaseBootstrapActive, Environment: EnvContainer,
 			Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteAdopt, Step: StepDiscover},
+			Services:  []ServiceSnapshot{{Hostname: "app", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Bootstrapped: true}},
+		}},
+		{"bootstrap/adopt/provision", StateEnvelope{
+			Phase: PhaseBootstrapActive, Environment: EnvContainer,
+			Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteAdopt, Step: StepProvision},
 			Services:  []ServiceSnapshot{{Hostname: "app", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Bootstrapped: true}},
 		}},
 		{"bootstrap/classic/provision/container", StateEnvelope{
@@ -1308,11 +1314,13 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		// envelope above. The rare-type cheatsheets (clickhouse-kafka /
 		// storage / search) were deleted as redundant with themes/services.md.
 		"develop-env-cheatsheet-sql",
-		// bootstrap-* (15 atoms)
+		// bootstrap-* (17 atoms)
+		"bootstrap-adopt-baseline-commit",
 		"bootstrap-adopt-discover",
 		"bootstrap-classic-plan-dynamic",
 		"bootstrap-classic-plan-static",
 		"bootstrap-close",
+		"bootstrap-close-baseline-commit",
 		"bootstrap-discover-local",
 		"bootstrap-env-var-discovery",
 		"bootstrap-mode-prompt",

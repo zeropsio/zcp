@@ -35,10 +35,27 @@ type mockSSHDeployer struct {
 	bgOutput []byte
 	bgErr    error
 	calls    []sshCall
+	// results, when non-empty, is consumed in call order — one entry per
+	// ExecSSH call — for tests (sha resolve/mktemp/extract/push) that need
+	// a different return per round trip. Falls back to output/err once
+	// exhausted, or entirely when unset, so every other test keeps its
+	// single static output.
+	results []sshResult
+	callIdx int
+}
+
+type sshResult struct {
+	output []byte
+	err    error
 }
 
 func (m *mockSSHDeployer) ExecSSH(_ context.Context, hostname, command string) ([]byte, error) {
 	m.calls = append(m.calls, sshCall{hostname: hostname, command: command})
+	if m.callIdx < len(m.results) {
+		r := m.results[m.callIdx]
+		m.callIdx++
+		return r.output, r.err
+	}
 	return m.output, m.err
 }
 
@@ -104,7 +121,7 @@ func TestDeploy_SSHMode_Success(t *testing.T) {
 			authInfo := testAuthInfo()
 
 			result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-				tt.sourceService, tt.targetService, "", tt.workingDir)
+				tt.sourceService, tt.targetService, "", tt.workingDir, "")
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -123,11 +140,17 @@ func TestDeploy_SSHMode_Success(t *testing.T) {
 			if result.SourceService != tt.sourceService {
 				t.Errorf("sourceService = %s, want %s", result.SourceService, tt.sourceService)
 			}
-			if len(ssh.calls) != 1 {
-				t.Fatalf("ssh calls = %d, want 1", len(ssh.calls))
+			// 2 calls: HeadStatus (item 4's working-
+			// tree recording — the mock's canned "ok" output satisfies
+			// HeadStatus's rev-parse, so the source "has a repo" from the
+			// mock's perspective) + the push itself.
+			if len(ssh.calls) != 2 {
+				t.Fatalf("ssh calls = %d, want 2", len(ssh.calls))
 			}
-			if ssh.calls[0].hostname != "builder" {
-				t.Errorf("ssh hostname = %s, want builder", ssh.calls[0].hostname)
+			for _, c := range ssh.calls {
+				if c.hostname != "builder" {
+					t.Errorf("ssh hostname = %s, want builder", c.hostname)
+				}
 			}
 		})
 	}
@@ -144,7 +167,7 @@ func TestDeploy_SSHMode_SourceNotFound(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"nonexistent", "app", "", "")
+		"nonexistent", "app", "", "", "")
 	if err == nil {
 		t.Fatal("expected error for nonexistent source service")
 	}
@@ -169,7 +192,7 @@ func TestDeploy_SSHMode_TargetNotFound(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"builder", "nonexistent", "", "")
+		"builder", "nonexistent", "", "", "")
 	if err == nil {
 		t.Fatal("expected error for nonexistent target service")
 	}
@@ -195,7 +218,7 @@ func TestDeploy_SSHMode_MountStyleWorkingDirSuggestsSourceService(t *testing.T) 
 	authInfo := testAuthInfo()
 
 	_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"weatherbun", "weatherbun", "", "/var/www/weatherbun")
+		"weatherbun", "weatherbun", "", "/var/www/weatherbun", "")
 	if err == nil {
 		t.Fatal("expected error for mount-style workingDir")
 	}
@@ -233,7 +256,7 @@ func TestDeploy_SSHMode_SSHError(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"builder", "app", "", "")
+		"builder", "app", "", "", "")
 	if err == nil {
 		t.Fatal("expected error for SSH failure")
 	}
@@ -262,7 +285,7 @@ func TestDeploy_SSHMode_SignalKilled(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"builder", "app", "", "")
+		"builder", "app", "", "", "")
 	if err == nil {
 		t.Fatal("expected error for signal killed")
 	}
@@ -294,7 +317,7 @@ func TestDeploy_SSHMode_CommandNotFound(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"builder", "app", "", "")
+		"builder", "app", "", "", "")
 	if err == nil {
 		t.Fatal("expected error for command not found")
 	}
@@ -324,7 +347,7 @@ func TestDeploy_SSHMode_GenericError(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"builder", "app", "", "")
+		"builder", "app", "", "", "")
 	if err == nil {
 		t.Fatal("expected error for generic SSH failure")
 	}
@@ -354,18 +377,20 @@ func TestDeploy_SSHMode_WithRegion(t *testing.T) {
 	}
 
 	result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"builder", "app", "", "")
+		"builder", "app", "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result.Mode != "ssh" {
 		t.Errorf("mode = %s, want ssh", result.Mode)
 	}
-	// Verify the token rides the push's environment, without --zeropsRegion.
-	if len(ssh.calls) != 1 {
-		t.Fatalf("ssh calls = %d, want 1", len(ssh.calls))
+	// Verify the token rides the push's environment, without
+	// --zeropsRegion. 2 calls: the self-deploy preflight read (item 4) +
+	// the push itself.
+	if len(ssh.calls) != 2 {
+		t.Fatalf("ssh calls = %d, want 2", len(ssh.calls))
 	}
-	cmd := ssh.calls[0].command
+	cmd := ssh.calls[1].command
 	if !containsSubstring(cmd, "ZEROPS_TOKEN='test-token' zcli push") {
 		t.Errorf("SSH command should pass the token through the push env, got: %s", cmd)
 	}
@@ -411,7 +436,7 @@ func TestDeploy_SSHMode_Exit255WithBuildSuccess(t *testing.T) {
 			authInfo := testAuthInfo()
 
 			result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-				"builder", "app", "", "")
+				"builder", "app", "", "", "")
 			if err != nil {
 				t.Fatalf("expected success (build triggered recovery), got error: %v", err)
 			}
@@ -465,7 +490,7 @@ func TestDeploy_SSHMode_Exit255RealFailure(t *testing.T) {
 			authInfo := testAuthInfo()
 
 			_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-				"builder", "app", "", "")
+				"builder", "app", "", "", "")
 			if err == nil {
 				t.Fatal("expected error for exit 255 without build success markers")
 			}
@@ -545,7 +570,7 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 		APIHost: "api.app-prg1.zerops.io",
 		Region:  "prg1",
 	}
-	cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false)
+	cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "")
 
 	wantContains := []string{
 		"ZEROPS_TOKEN='test-token' zcli push --service-id svc-target",
@@ -581,6 +606,66 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 	}
 }
 
+// TestBuildSSHCommand_VersionNameFromHead pins GF-10 (docs/spec-workflows.md
+// §12.6): buildSSHCommand passes --version-name exactly when the caller
+// supplies a non-empty versionName — clean (bare sha), dirty (sha with a
+// "-dirty" suffix, computed by versionNameForHead at the call site, not
+// here), and unborn/no-repo (empty versionName ⇒ no flag at all).
+func TestBuildSSHCommand_VersionNameFromHead(t *testing.T) {
+	t.Parallel()
+	authInfo := auth.Info{Token: "test-token"}
+
+	t.Run("clean", func(t *testing.T) {
+		t.Parallel()
+		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "fullhead1234567")
+		if !containsSubstring(cmd, "--version-name 'fullhead1234567'") {
+			t.Errorf("command missing --version-name 'fullhead1234567':\n%s", cmd)
+		}
+	})
+
+	t.Run("dirty", func(t *testing.T) {
+		t.Parallel()
+		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "fullhead1234567-dirty")
+		if !containsSubstring(cmd, "--version-name 'fullhead1234567-dirty'") {
+			t.Errorf("command missing --version-name 'fullhead1234567-dirty':\n%s", cmd)
+		}
+	})
+
+	t.Run("unborn", func(t *testing.T) {
+		t.Parallel()
+		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "")
+		if containsSubstring(cmd, "--version-name") {
+			t.Errorf("command must NOT carry --version-name when versionName is empty (no reachable HEAD):\n%s", cmd)
+		}
+	})
+}
+
+// TestVersionNameForHead pins the shared GF-10 formatting rule
+// (docs/spec-workflows.md §12.6) both deploy transports (SSH, local) call:
+// empty sha ⇒ empty (no reachable HEAD, omit the flag); non-empty +
+// !dirty ⇒ bare sha; non-empty + dirty ⇒ sha with a "-dirty" suffix.
+func TestVersionNameForHead(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name  string
+		sha   string
+		dirty bool
+		want  string
+	}{
+		{"unborn/no repo", "", false, ""},
+		{"unborn/no repo, dirty flag ignored", "", true, ""},
+		{"clean", "abc123", false, "abc123"},
+		{"dirty", "abc123", true, "abc123-dirty"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := versionNameForHead(tt.sha, tt.dirty); got != tt.want {
+				t.Errorf("versionNameForHead(%q, %v) = %q, want %q", tt.sha, tt.dirty, got, tt.want)
+			}
+		})
+	}
+}
+
 // extractGitEnsureChain pulls the self-heal chain (cd ... init ...
 // identity ... HEAD guarantee) out of buildSSHCommand's full output —
 // everything up to (not including) " && ZEROPS_TOKEN=… zcli push". Running
@@ -590,7 +675,7 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 func extractGitEnsureChain(t *testing.T, dir string) string {
 	t.Helper()
 	authInfo := auth.Info{Token: "tok"}
-	full := buildSSHCommand(authInfo, "svc-target", dir, "", false)
+	full := buildSSHCommand(authInfo, "svc-target", dir, "", false, "")
 	chain, _, found := strings.Cut(full, " && ZEROPS_TOKEN=")
 	if !found {
 		t.Fatalf("command missing `zcli push` anchor, shape drifted:\n%s", full)
@@ -881,7 +966,7 @@ func TestDeploy_SelfDeploy_AutoInfer(t *testing.T) {
 
 	// Only targetService provided, sourceService empty → auto-infer self-deploy.
 	result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"", "app", "", "")
+		"", "app", "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -894,11 +979,14 @@ func TestDeploy_SelfDeploy_AutoInfer(t *testing.T) {
 	if result.TargetService != "app" {
 		t.Errorf("targetService = %s, want app", result.TargetService)
 	}
-	if len(ssh.calls) != 1 {
-		t.Fatalf("ssh calls = %d, want 1", len(ssh.calls))
+	// 2 calls: HeadStatus (item 4) + the push itself.
+	if len(ssh.calls) != 2 {
+		t.Fatalf("ssh calls = %d, want 2", len(ssh.calls))
 	}
-	if ssh.calls[0].hostname != "app" {
-		t.Errorf("ssh hostname = %s, want app", ssh.calls[0].hostname)
+	for _, c := range ssh.calls {
+		if c.hostname != "app" {
+			t.Errorf("ssh hostname = %s, want app", c.hostname)
+		}
 	}
 }
 
@@ -915,17 +1003,18 @@ func TestDeploy_SelfDeploy_IncludesGit(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"app", "app", "", "")
+		"app", "app", "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result.Mode != "ssh" {
 		t.Errorf("mode = %s, want ssh", result.Mode)
 	}
-	if len(ssh.calls) != 1 {
-		t.Fatalf("ssh calls = %d, want 1", len(ssh.calls))
+	// 2 calls: HeadStatus (item 4) + the push itself.
+	if len(ssh.calls) != 2 {
+		t.Fatalf("ssh calls = %d, want 2", len(ssh.calls))
 	}
-	cmd := ssh.calls[0].command
+	cmd := ssh.calls[1].command
 	if !containsSubstring(cmd, " -g") {
 		t.Errorf("SSH command should contain -g flag for self-deploy, got: %s", cmd)
 	}
@@ -945,14 +1034,15 @@ func TestDeploy_CrossDeploy_OmitsGit(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"builder", "app", "", "")
+		"builder", "app", "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(ssh.calls) != 1 {
-		t.Fatalf("ssh calls = %d, want 1", len(ssh.calls))
+	// 2 calls: HeadStatus (item 4) + the push itself.
+	if len(ssh.calls) != 2 {
+		t.Fatalf("ssh calls = %d, want 2", len(ssh.calls))
 	}
-	cmd := ssh.calls[0].command
+	cmd := ssh.calls[1].command
 	if containsSubstring(cmd, " -g") {
 		t.Errorf("SSH command must NOT contain -g flag for cross-deploy, got: %s", cmd)
 	}
@@ -969,7 +1059,7 @@ func TestDeploy_TargetOnly_NoSSH(t *testing.T) {
 
 	// sshDeployer=nil + targetService="app" → ErrNotImplemented.
 	_, err := DeploySSH(context.Background(), mock, "proj-1", nil, authInfo,
-		"", "app", "", "")
+		"", "app", "", "", "")
 	if err == nil {
 		t.Fatal("expected error for nil SSH deployer with target-only")
 	}
@@ -1030,7 +1120,7 @@ func TestDeploy_WorkingDir_MountPath_Rejected(t *testing.T) {
 			authInfo := testAuthInfo()
 
 			_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-				"app", "app", "", tt.workingDir)
+				"app", "app", "", tt.workingDir, "")
 
 			if tt.wantErr {
 				if err == nil {
@@ -1061,7 +1151,7 @@ func TestDeploy_NilSSHDeployer(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := DeploySSH(context.Background(), mock, "proj-1", nil, authInfo,
-		"builder", "app", "", "")
+		"builder", "app", "", "", "")
 	if err == nil {
 		t.Fatal("expected error for nil SSH deployer")
 	}
@@ -1072,5 +1162,116 @@ func TestDeploy_NilSSHDeployer(t *testing.T) {
 	}
 	if pe.Code != platform.ErrNotImplemented {
 		t.Errorf("code = %s, want %s", pe.Code, platform.ErrNotImplemented)
+	}
+}
+
+// TestDeploySSH_CrossDeployDirty_WarnsNotReproducible pins the GF-5
+// visibility rule (docs/spec-workflows.md §4.9, §12.6): a working-tree
+// (no explicit sha) cross-deploy whose source has uncommitted changes on
+// top of HEAD must say so in Warnings — the target now runs code that
+// isn't reproducible from git alone.
+func TestDeploySSH_CrossDeployDirty_WarnsNotReproducible(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "builder"},
+			{ID: "svc-2", Name: "app"},
+		})
+	sha := "fullhead1234567"
+	ssh := &mockSSHDeployer{results: []sshResult{
+		{output: []byte(sha + "\nM")}, // HeadStatus: dirty (non-empty porcelain char)
+		{output: []byte("ok")},        // login+push
+	}}
+	authInfo := testAuthInfo()
+
+	result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
+		"builder", "app", "", "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Dirty {
+		t.Fatalf("result.Dirty = false, want true")
+	}
+	want := fmt.Sprintf(
+		"app received HEAD %s plus uncommitted changes from builder — not reproducible from git. Commit on builder and redeploy, or pass sha=%q to ship an exact commit.",
+		sha[:7], sha,
+	)
+	found := false
+	for _, w := range result.Warnings {
+		if w == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Warnings = %#v, want to contain %q", result.Warnings, want)
+	}
+}
+
+// TestDeploySSH_SelfDeployDirty_NoReproducibilityWarning pins the negative
+// case: a dirty SELF-deploy never carries the cross-deploy reproducibility
+// warning — DM-7's repoState/notCarried facts already cover that ground,
+// and the dev loop is dirty by design.
+func TestDeploySSH_SelfDeployDirty_NoReproducibilityWarning(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app"},
+		})
+	ssh := &mockSSHDeployer{results: []sshResult{
+		{output: []byte("ZCP:GITFILE:0\nZCP:SUBMODULES:0\nZCP:HASREPO:1\nZCP:SHA:fullhead1234567\nZCP:DIRTY:1\nZCP:REPOSTATE:dirty\n")}, // self-deploy preflight: dirty
+		{output: []byte("ok")}, // login+push
+	}}
+	authInfo := testAuthInfo()
+
+	result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
+		"app", "app", "", "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Dirty {
+		t.Fatalf("result.Dirty = false, want true (fixture requires it for this pin to mean anything)")
+	}
+	for _, w := range result.Warnings {
+		if containsSubstring(w, "not reproducible from git") {
+			t.Errorf("self-deploy must not carry the cross-deploy reproducibility warning, got: %q", w)
+		}
+	}
+}
+
+// TestDeploySSH_ShaPath_NoReproducibilityWarning pins the other negative
+// case: an explicit-sha deploy is never Dirty (it ships exactly sha's
+// tree), so it never carries the reproducibility warning either.
+func TestDeploySSH_ShaPath_NoReproducibilityWarning(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "builder"},
+			{ID: "svc-2", Name: "app"},
+		})
+	ssh := &mockSSHDeployer{results: []sshResult{
+		{output: []byte("f0115ba1234567\n")},     // resolve
+		{output: []byte(validCommitZeropsYaml)},  // git show <sha>:zerops.yaml
+		{output: []byte("/tmp/zcp-extract-1\n")}, // mktemp -d
+		{output: []byte("")},                     // extract
+		{output: []byte("ok")},                   // login+push
+		{output: []byte("")},                     // cleanup
+	}}
+	authInfo := testAuthInfo()
+
+	result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
+		"builder", "app", "", "", "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Dirty {
+		t.Fatalf("result.Dirty = true, want false — a deploy-from-commit is never dirty")
+	}
+	for _, w := range result.Warnings {
+		if containsSubstring(w, "not reproducible from git") {
+			t.Errorf("an explicit-sha deploy must not carry the reproducibility warning, got: %q", w)
+		}
 	}
 }

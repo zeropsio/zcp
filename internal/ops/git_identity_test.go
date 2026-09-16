@@ -68,6 +68,9 @@ func TestGitEnsureRepoHeadCommand_Shape(t *testing.T) {
 		t.Errorf("chain out of order (want cd < init < identity < head): cd=%d init=%d identity=%d head=%d\n%s",
 			cdIdx, initIdx, identityIdx, headIdx, cmd)
 	}
+	if strings.Contains(cmd, "exclude") {
+		t.Errorf("command must NOT seed .git/info/exclude — zcp never authors ignore rules: %s", cmd)
+	}
 }
 
 // TestGitHeadEnsureFragment_UnbornRepoWithStagedFiles_NoStagedContentCommitted

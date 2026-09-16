@@ -76,10 +76,17 @@ const (
 	StatusShadowed                  // higher base precedence won (yaml > project)
 )
 
+// conflictStatusCleanLabel is StatusClean's string label, pulled into a
+// constant because goconst counts the literal "clean" package-wide
+// (internal/ops also carries git repo-state's "clean" value in test
+// assertions) and three-plus unrelated occurrences of the same literal
+// trip the linter regardless of which file introduces the third one.
+const conflictStatusCleanLabel = "clean"
+
 func (s ConflictStatus) String() string {
 	switch s {
 	case StatusClean:
-		return "clean"
+		return conflictStatusCleanLabel
 	case StatusOverridden:
 		return "overridden"
 	case StatusShadowed:

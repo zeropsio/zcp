@@ -19,6 +19,10 @@ type mockRunner struct {
 	runResults  []runResult // consumed in order
 	runCalls    []runCall
 	callIdx     int
+	// onRun, when set, is called with every (name, args) before consuming
+	// the next scripted result — lets a test observe a value only known at
+	// call time (e.g. a generated temp dir path) without pre-scripting it.
+	onRun func(name string, args []string)
 }
 
 type runResult struct {
@@ -41,6 +45,9 @@ func (m *mockRunner) LookPath(_ string) (string, error) {
 
 func (m *mockRunner) Run(_ context.Context, name string, args ...string) (string, string, error) {
 	m.runCalls = append(m.runCalls, runCall{name: name, args: args})
+	if m.onRun != nil {
+		m.onRun(name, args)
+	}
 	if m.callIdx >= len(m.runResults) {
 		return "", "", nil
 	}
@@ -90,7 +97,7 @@ func TestDeployLocal_Success(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(dir, "zerops.yml"), []byte("zerops:\n  - setup: appstage\n    build:\n      base: nodejs@22\n"), 0o644)
 
 	result, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
-		"appstage", "", dir)
+		"appstage", "", dir, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -136,7 +143,7 @@ func TestDeployLocal_ZcliNotFound(t *testing.T) {
 	defer restore()
 
 	_, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
-		"app", "", ".")
+		"app", "", ".", "")
 	if err == nil {
 		t.Fatal("expected error for missing zcli")
 	}
@@ -179,7 +186,7 @@ func TestDeployLocal_AcceptsZeropsYaml(t *testing.T) {
 	}
 
 	result, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
-		"appstage", "", dir)
+		"appstage", "", dir, "")
 	if err != nil {
 		t.Fatalf("zerops.yaml file present must be accepted; got: %v", err)
 	}
@@ -203,7 +210,7 @@ func TestDeployLocal_MissingZeropsYml(t *testing.T) {
 	dir := t.TempDir() // empty dir
 
 	_, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
-		"app", "", dir)
+		"app", "", dir, "")
 	if err == nil {
 		t.Fatal("expected error for missing zerops.yaml")
 	}
@@ -235,7 +242,7 @@ func TestDeployLocal_LoginFailed(t *testing.T) {
 	dir := tmpWithZeropsYml(t)
 
 	_, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
-		"app", "", dir)
+		"app", "", dir, "")
 	if err == nil {
 		t.Fatal("expected error for login failure")
 	}
@@ -265,7 +272,7 @@ func TestDeployLocal_PushFailed(t *testing.T) {
 	dir := tmpWithZeropsYml(t)
 
 	_, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
-		"app", "", dir)
+		"app", "", dir, "")
 	if err == nil {
 		t.Fatal("expected error for push failure")
 	}
@@ -286,7 +293,7 @@ func TestDeployLocal_NoTargetService(t *testing.T) {
 	defer restore()
 
 	_, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
-		"", "", ".")
+		"", "", ".", "")
 	if err == nil {
 		t.Fatal("expected error for empty targetService")
 	}
@@ -309,7 +316,7 @@ func TestDeployLocal_ServiceNotFound(t *testing.T) {
 	defer restore()
 
 	_, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
-		"nonexistent", "", ".")
+		"nonexistent", "", ".", "")
 	if err == nil {
 		t.Fatal("expected error for nonexistent service")
 	}
@@ -320,5 +327,82 @@ func TestDeployLocal_ServiceNotFound(t *testing.T) {
 	}
 	if pe.Code != platform.ErrServiceNotFound {
 		t.Errorf("code = %s, want %s", pe.Code, platform.ErrServiceNotFound)
+	}
+}
+
+// TestDeployLocal_Dirty_WarnsNotReproducible pins the GF-5 visibility rule
+// (docs/spec-workflows.md §4.9, §12.6): a working-tree (no explicit sha)
+// local deploy whose source has uncommitted changes on top of HEAD must
+// say so in Warnings — the target now runs code that isn't reproducible
+// from git alone. Local deploy is always cross-deploy (DM-1), so this
+// applies unconditionally whenever the source is dirty.
+func TestDeployLocal_Dirty_WarnsNotReproducible(t *testing.T) {
+	if testing.Short() {
+		t.Skip("shells out to the real git binary")
+	}
+	dir, sha := initGitRepoWithZerops(t)
+	if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte("zerops:\n  - setup: app\n  - setup: app2\n"), 0o644); err != nil {
+		t.Fatalf("dirty the tree: %v", err)
+	}
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "appstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		})
+	mr := &mockRunner{runResults: []runResult{{}, {}}}
+	restore := OverrideRunnerForTest(mr)
+	defer restore()
+
+	result, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
+		"appstage", "", dir, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Dirty {
+		t.Fatalf("result.Dirty = false, want true")
+	}
+	want := fmt.Sprintf(
+		"appstage received HEAD %s plus uncommitted changes — not reproducible from git. Commit and redeploy, or pass sha=%q to ship an exact commit.",
+		sha[:7], sha,
+	)
+	found := false
+	for _, w := range result.Warnings {
+		if w == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Warnings = %#v, want to contain %q", result.Warnings, want)
+	}
+}
+
+// TestDeployLocal_Clean_NoReproducibilityWarning pins the negative case: a
+// clean working-tree deploy never carries the reproducibility warning.
+func TestDeployLocal_Clean_NoReproducibilityWarning(t *testing.T) {
+	if testing.Short() {
+		t.Skip("shells out to the real git binary")
+	}
+	dir, _ := initGitRepoWithZerops(t)
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "appstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		})
+	mr := &mockRunner{runResults: []runResult{{}, {}}}
+	restore := OverrideRunnerForTest(mr)
+	defer restore()
+
+	result, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
+		"appstage", "", dir, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Dirty {
+		t.Fatalf("result.Dirty = true, want false (clean tree)")
+	}
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "not reproducible from git") {
+			t.Errorf("a clean deploy must not carry the reproducibility warning, got: %q", w)
+		}
 	}
 }

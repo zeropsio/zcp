@@ -45,6 +45,13 @@ func TestClassifyTranscriptTail(t *testing.T) {
 		// only content in the burst (text falls back to AskUQ question prose).
 		{"ask_user_question_denied", "ask_user_question_denied.jsonl", VerdictWaiting, "Mám tři možnosti"},
 		{"ask_user_question_alone", "ask_user_question_alone.jsonl", VerdictWaiting, "Which database engine"},
+		// A Bash tool_result carries its output as a plain STRING `content`,
+		// not a block array. Decoding it as an array dropped the whole user
+		// event, so the last-assistant burst walked back through it into the
+		// earlier tool_use message and rule 7 graded a plain question as
+		// "working" — no user-sim turn ever fired (farm gf-cargo-7/9: the
+		// agent asked rebase/merge/replace-remote and the run ended there).
+		{"waiting_question_after_bash_string_result", "waiting_question_after_bash_string_result.jsonl", VerdictWaiting, "Který chceš použít"},
 	}
 
 	for _, tt := range tests {

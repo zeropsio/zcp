@@ -34,6 +34,23 @@ func gitPushErrorDetail(err error, output []byte) string {
 	return err.Error()
 }
 
+// sshGitRunner adapts an ops.SSHDeployer into an ops.GitRunner: each call
+// runs one `git <args...>` step over SSH at workingDir, authenticating the
+// `fetch` step via the session-env credential helper (ops.
+// BuildGitDivergenceStepCommand decides which). Used to probe remote
+// divergence (ops.ProbeGitDivergence) after a GIT_PUSH_NON_FAST_FORWARD
+// rejection — never to push or mutate anything.
+func sshGitRunner(ctx context.Context, sshDeployer ops.SSHDeployer, hostname, workingDir string) ops.GitRunner {
+	return func(args ...string) (string, error) {
+		cmd := ops.BuildGitDivergenceStepCommand(workingDir, args)
+		out, err := sshDeployer.ExecSSH(ctx, hostname, cmd)
+		if err != nil {
+			return string(out), fmt.Errorf("%s", gitPushErrorDetail(err, out))
+		}
+		return string(out), nil
+	}
+}
+
 // fetchZeropsYamlOverSSH reads zerops.yaml (or zerops.yml fallback) from
 // the target container via SSH `cat`. Returns ("", nil) when the file is
 // absent so callers can treat "no yaml" the same way the filesystem path
@@ -138,6 +155,12 @@ func gitPushMetaPreflight(
 
 const gitTokenCheckCmd = `test -n "$GIT_TOKEN" && echo 1 || echo 0`
 
+// defaultTrackedRef is the GF-7 "main" fallback (docs/spec-workflows.md
+// §12.6) — the single literal every reader / writer of ServiceMeta.
+// TrackedRef falls back to when nothing else resolves one. One constant so
+// the fallback stays byte-identical everywhere it's used.
+const defaultTrackedRef = "main"
+
 // statusNothingToPush is the GitPushResult.Status when `git push` finds the
 // remote already at HEAD ("Everything up-to-date"). Single owner so the
 // container + local git-push paths and the build-watch skip agree.
@@ -172,23 +195,6 @@ func degradeGitPushStateToBroken(stateDir, targetService string) {
 //
 // Shared by handleGitPush (container) and handleLocalGitPush (local) so
 // both halves of the deploy stack honor the same atom claim.
-// defaultPushBranch is the branch a git-push targets when the caller named
-// none. It is `main` everywhere EXCEPT on the account's own Gitea, where
-// `main` is protected on every repository and a direct push is refused by a
-// pre-receive hook (docs/vocabulary.md, "protected branches"): there the
-// default is the Mate's own branch, recorded on the pair when the broker gave
-// it the repository (A5, guide 1.5). Defaulting to `main` there would make
-// every delivery fail at the remote, and the failure reads like a credential
-// fault — the one diagnosis that leads an agent to rotate a perfectly good
-// token.
-func defaultPushBranch(stateDir, targetService string) string {
-	meta, _ := workflow.FindServiceMeta(stateDir, targetService)
-	if meta != nil && meta.Gitea != nil && meta.Gitea.Branch != "" {
-		return meta.Gitea.Branch
-	}
-	return giteaProtectedBase
-}
-
 func resolveEffectiveRemote(stateDir, targetService, inputRemote string) string {
 	if inputRemote != "" {
 		return inputRemote
@@ -198,6 +204,47 @@ func resolveEffectiveRemote(stateDir, targetService, inputRemote string) string 
 		return ""
 	}
 	return meta.RemoteURL
+}
+
+// trackedRefOrDefault is the single owner of the GF-7 "main" fallback
+// (docs/spec-workflows.md §12.6): every reader of ServiceMeta.TrackedRef
+// — the git-push default branch, the GitHub Actions template, the launch
+// gate's remote-HEAD compare — falls back to "main" identically when meta
+// carries none (pre-existing metas written before GF-7, or a recall that
+// never ran detection). Never re-detects; git-push-setup is the sole
+// writer of TrackedRef.
+func trackedRefOrDefault(meta *workflow.ServiceMeta) string {
+	if meta != nil && meta.TrackedRef != "" {
+		return meta.TrackedRef
+	}
+	return defaultTrackedRef
+}
+
+// resolveTrackedBranch resolves the branch a container-mode git-push
+// transmits to: an explicit inputBranch always wins (back-compat with the
+// pre-GF-7 `branch` input), else the target's recorded tracked ref (GF-7),
+// else the Mate's own Gitea branch, else "main".
+//
+// The Gitea step sits between TrackedRef and the "main" fallback because on
+// the account's own Gitea `main` is protected on every repository and a
+// direct push is refused by a pre-receive hook (docs/vocabulary.md,
+// "protected branches"): there the branch to push is the Mate's own,
+// recorded on the pair when the broker gave it the repository (A5, guide
+// 1.5). Falling through to `main` there would make every delivery fail at
+// the remote, and the failure reads like a credential fault — the one
+// diagnosis that leads an agent to rotate a perfectly good token.
+func resolveTrackedBranch(stateDir, targetService, inputBranch string) string {
+	if inputBranch != "" {
+		return inputBranch
+	}
+	meta, _ := workflow.FindServiceMeta(stateDir, targetService)
+	if meta != nil && meta.TrackedRef != "" {
+		return meta.TrackedRef
+	}
+	if meta != nil && meta.Gitea != nil && meta.Gitea.Branch != "" {
+		return meta.Gitea.Branch
+	}
+	return defaultTrackedRef
 }
 
 // gitPushEnvRefPreflight validates the run.envVariables refs of the named
@@ -353,10 +400,7 @@ func handleGitPush(
 	if workingDir == "" {
 		workingDir = "/var/www"
 	}
-	branch := input.Branch
-	if branch == "" {
-		branch = defaultPushBranch(stateDir, input.TargetService)
-	}
+	branch := resolveTrackedBranch(stateDir, input.TargetService, input.Branch)
 
 	effectiveRemote := resolveEffectiveRemote(stateDir, input.TargetService, input.RemoteURL)
 
@@ -509,11 +553,27 @@ func handleGitPush(
 		// missing), which sits in the command output. Parity with the local
 		// git-push path (handleLocalGitPush, which already truncates stderr).
 		detail := gitPushErrorDetail(err, output)
+
+		// GF-11: a non-fast-forward rejection is a structured, non-
+		// destructive decision (rebase / merge / replace-remote) that
+		// belongs to the user — never the generic SSH_DEPLOY_FAILED, and
+		// zcp never force-pushes or merges on its own to resolve it.
+		if ops.IsNonFastForwardRejection(detail) {
+			rejection := classifyGitPushNonFastForward(sshGitRunner(ctx, sshDeployer, hostname, workingDir), effectiveRemote, branch)
+			recordAttempt(fmt.Sprintf("git-push rejected non-fast-forward: %s", detail), topology.FailureClassConfig)
+			return convertError(
+				newGitPushNonFastForwardError(hostname, detail),
+				WithFailureClassification(classification),
+				WithGitPushRejection(rejection),
+				WithRecoveryStatus(),
+			), nil, nil
+		}
+
 		recordAttempt(fmt.Sprintf("git-push failed: %s", detail), category)
 		return convertError(platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
 			fmt.Sprintf("git-push from %s failed: %s", hostname, detail),
-			"See the git error above and `failureClassification` for the specific fix. Common cases: non-fast-forward (remote has commits you lack) → `git pull --rebase` then re-push or force-push; protected branch (the ref was refused by a pre-receive hook, NOT a credential fault) → push a topic branch and open a pull request, and do not rotate the token; auth rejected → re-run zerops_workflow action=\"git-push-setup\" with a fresh PAT; GIT_TOKEN missing → restart the runtime via zerops_manage action=\"restart\" then retry.",
+			"See the git error above and `failureClassification` for the specific fix. Common cases: non-fast-forward pushes are classified as GIT_PUSH_NON_FAST_FORWARD, not this generic error; protected branch (the ref was refused by a pre-receive hook, NOT a credential fault) → push a topic branch and open a pull request, and do not rotate the token; auth rejected → re-run zerops_workflow action=\"git-push-setup\" with a fresh PAT; GIT_TOKEN missing → restart the runtime via zerops_manage action=\"restart\" then retry.",
 		), WithFailureClassification(classification)), nil, nil
 	}
 

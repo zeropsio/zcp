@@ -31,17 +31,23 @@ func gitCredentialHelperArgs() string {
 	return "-c credential.helper= -c credential.helper=" + shellQuote(gitCredentialHelperShell)
 }
 
-// BuildGitAuthedLsRemoteCommand builds the single authenticated remote-HEAD
-// read: `git ls-remote <url> HEAD` via the session-env credential helper,
+// BuildGitAuthedLsRemoteCommand builds the single authenticated remote-ref
+// read: `git ls-remote <url> <ref>` via the session-env credential helper,
 // emitting the bare SHA (or nothing). Shared by the launch push-proof so
 // tools/ carries no inline auth duplicates (the 2026-05-28 audit-ordered
 // consolidation). `|| true` keeps git-state problems (no token, unreachable
 // remote) flowing as EMPTY OUTPUT — state evidence — while SSH/exec
 // failures still surface as transport errors to the caller.
-func BuildGitAuthedLsRemoteCommand(remoteURL string) string {
+//
+// ref is the tracked ref (GF-7, docs/spec-workflows.md §12.6) — the caller
+// resolves it from ServiceMeta.TrackedRef (falling back to "main") rather
+// than passing the symbolic "HEAD" ref, so the compare is against the
+// SPECIFIC branch a target consumes, not whatever the remote happens to
+// consider its default branch.
+func BuildGitAuthedLsRemoteCommand(remoteURL, ref string) string {
 	return fmt.Sprintf(
-		"GIT_TERMINAL_PROMPT=0 git %s ls-remote %s HEAD 2>/dev/null | head -1 | cut -f1 || true",
-		gitCredentialHelperArgs(), shellQuote(remoteURL),
+		"GIT_TERMINAL_PROMPT=0 git %s ls-remote %s %s 2>/dev/null | head -1 | cut -f1 || true",
+		gitCredentialHelperArgs(), shellQuote(remoteURL), shellQuote(ref),
 	)
 }
 

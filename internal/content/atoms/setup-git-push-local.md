@@ -37,3 +37,5 @@ zerops_deploy targetService="{hostname}" strategy="git-push" \
 ```
 
 The response's `status` confirms the push. On `failureClassification.category=network` check VPN / proxy / network reachability. On `category=credential`, fix git auth locally; ZCP can't help — it never sees the credential. The `remoteUrl` arg is optional after step 2 (stamped meta carries it).
+
+Step 2's response also carries `remote.state` for the tracked ref (`empty|in-sync|ahead|behind|diverged|unrelated`); `ahead`, `diverged`, or `unrelated` means the FIRST push would be rejected non-fast-forward, and `remoteStateWarning` names three options (rebase / merge / replace-remote) and their exact commands up front — zcp never runs any of them on its own, so surface the choice to the user before pushing.

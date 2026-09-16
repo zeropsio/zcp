@@ -115,7 +115,7 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cmd := buildSSHCommand(tt.authInfo, tt.serviceID, tt.workDir, "", tt.includeGit)
+			cmd := buildSSHCommand(tt.authInfo, tt.serviceID, tt.workDir, "", tt.includeGit, "")
 
 			for _, part := range tt.wantParts {
 				if !contains(cmd, part) {
@@ -134,7 +134,7 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 func TestBuildSSHCommand_FreshInit_BranchMain(t *testing.T) {
 	t.Parallel()
 
-	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false)
+	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false, "")
 
 	if !contains(cmd, "git init -q -b main") {
 		t.Errorf("fresh init must use -b main\ngot: %s", cmd)
@@ -151,7 +151,7 @@ func TestBuildSSHCommand_FreshInit_BranchMain(t *testing.T) {
 func TestBuildSSHCommand_NoAutoCommit_HeadGuardPresent(t *testing.T) {
 	t.Parallel()
 
-	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false)
+	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false, "")
 
 	for _, forbidden := range []string{"git add -A", "git add ", "-m 'deploy'", "git commit"} {
 		if contains(cmd, forbidden) {
@@ -175,7 +175,7 @@ func TestBuildSSHCommand_NoAutoCommit_HeadGuardPresent(t *testing.T) {
 func TestBuildSSHCommand_PreservesRemoteAndGitignore(t *testing.T) {
 	t.Parallel()
 
-	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false)
+	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false, "")
 
 	unwanted := []string{"git remote", ".gitignore"}
 	for _, s := range unwanted {
@@ -224,7 +224,7 @@ func TestBuildSSHCommand_TokenNeverPersists(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cmd := buildSSHCommand(tt.authInfo, "svc-1", "/var/www", tt.setup, tt.includeGit)
+			cmd := buildSSHCommand(tt.authInfo, "svc-1", "/var/www", tt.setup, tt.includeGit, "")
 
 			if contains(cmd, "zcli login") {
 				t.Errorf("command must NOT log zcli in on the remote host (the token would persist)\ngot: %s", cmd)

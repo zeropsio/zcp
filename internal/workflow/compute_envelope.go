@@ -209,6 +209,7 @@ func buildServiceSnapshots(
 			GitPushState:     m.GitPushState,
 			BuildIntegration: m.BuildIntegration,
 			RemoteURL:        m.RemoteURL,
+			TrackedRef:       m.TrackedRef,
 			FeedsProduction:  prodLaunchRefsRender(m.ProdLaunches),
 			SetupName:        m.PrimarySetupName,
 		}
@@ -263,6 +264,7 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSess
 		// were copied raw, so the atom chain silently never fired.
 		normalizeDeployDims(&snap)
 		snap.RemoteURL = meta.RemoteURL
+		snap.TrackedRef = meta.TrackedRef
 		snap.FeedsProduction = prodLaunchRefsRender(meta.ProdLaunches)
 		if meta.StageHostname != "" && svc.Name == meta.Hostname {
 			snap.StageHostname = meta.StageHostname
@@ -391,11 +393,14 @@ func deployAttemptsToInfo(attempts []DeployAttempt) []AttemptInfo {
 	out := make([]AttemptInfo, 0, len(attempts))
 	for i, a := range attempts {
 		info := AttemptInfo{
-			At:        parseOrZero(firstNonEmpty(a.SucceededAt, a.AttemptedAt)),
-			Success:   a.SucceededAt != "",
-			Iteration: i + 1,
-			Setup:     a.Setup,
-			Strategy:  a.Strategy,
+			At:           parseOrZero(firstNonEmpty(a.SucceededAt, a.AttemptedAt)),
+			Success:      a.SucceededAt != "",
+			Iteration:    i + 1,
+			Setup:        a.Setup,
+			Strategy:     a.Strategy,
+			SHA:          a.SHA,
+			AppVersionID: a.AppVersionID,
+			Dirty:        a.Dirty,
 		}
 		if !info.Success {
 			info.Reason = a.Error

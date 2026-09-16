@@ -802,6 +802,8 @@ zerops_workflow action="build-integration" service="appdev" integration="webhook
 - User flips `BuildIntegration` mid-flow → next push picks up the new integration.
 - No "session strategy" concept — meta is the single source of truth.
 
+**A rejected push is a user decision, never zcp's (GF-11).** When a `strategy="git-push"` push (container or local) is rejected by the remote as non-fast-forward — the tracked ref carries commits the local push lacks (a fresh repo pre-seeded with a README, a second agent/human pushing concurrently) — zcp returns `GIT_PUSH_NON_FAST_FORWARD` (`internal/platform/errors.go`) instead of the generic `SSH_DEPLOY_FAILED`/`DEPLOY_FAILED`. The payload carries the canonical remote URL, the tracked ref, `remoteAhead`/`localAhead` commit counts and an `unrelated` flag (computed by fetching the ref and comparing against local HEAD — `ops.ProbeGitDivergence`), and a `next` block naming exactly three options: `rebase` (`git pull --rebase origin <ref>`), `merge` (`git pull --no-rebase origin <ref>`), and `replace-remote` (`git push --force-with-lease origin <ref>` — discards the remote's ahead commits, requires the user's explicit say-so). zcp classifies; it never executes any of the three itself. `git-push-setup`'s confirm-mode success result carries the same classification proactively as a `remote: {ref, state}` block (`empty|in-sync|ahead|behind|diverged|unrelated`, `ops.ClassifyRemoteRefState`) — `ahead`/`diverged`/`unrelated` states surface the same three named options up front (`remoteStateWarning`), before the first push is even attempted.
+
 ### 4.5 Pre-Deploy Phase
 
 Before actual deployment, the system:
@@ -859,6 +861,84 @@ When deploy fails, the agent can iterate. The escalating guidance tiers are deli
 - `zerops_deploy sourceService={dev} targetService={stage}` for cross-deploy — applies to `GitPushState=unconfigured` direct delivery only. Under `GitPushState=configured` WITH `BuildIntegration=webhook|actions`, stage rebuilds remotely from the configured remote; no local cross-deploy from dev is issued. With `BuildIntegration=none` no remote build exists, so the cross-deploy stays the promotion path. Deploy command resolution flows through `workflow.DeployIntent` (`internal/workflow/deploy_intent.go`), which centralizes the (delivery, pushSource, buildTarget, pushSetup, buildSetup, eventsService, recordDeployTarget, verifyTarget) projection. `workflow.Resolve` is consumed by `internal/workflow/build_plan.go`, `internal/workflow/deploy_intent_targets.go` (which `work_session.go::EvaluateAutoClose` reaches through `ResolvedDeployTargets`), `internal/tools/resolve_build_target.go`, and `internal/tools/workflow_build_integration.go`.
 - Storage attach after first stage deploy: a `local-storage` volume is declared in zerops.yaml `run.volume` and needs no post-deploy step; a `seaweedfs` service is mounted by the runtime itself from `run.startCommands`. `zerops_manage action="connect-storage"` drives the platform-managed mount retired with Shared Storage and is recovery-only, not part of the standard flow.
 - `zerops_deploy targetService=<h> appVersion=latest` (DM-6, R2) re-deploys a never-activated buildFromGit service's already-built appVersion in place — no source, no rebuild, no re-import; skips the adoption gate and source resolution entirely.
+
+### 4.9 Deploy from a Commit and the Ledger
+
+`zerops_deploy` accepts an optional `sha`. It is rejected on a SELF-deploy
+(source and target are the same service, including the auto-inferred
+case where `sourceService` is omitted) — `ops.DeploySSH` returns
+`ErrInvalidParameter` BEFORE any SSH round trip, `ops.DeployLocal` has no
+self case at all. A self-deploy from a commit would extract the commit's
+tree and push it `--no-git`, shipping no `.git` and losing the
+container's own repository that the normal (no-`sha`) path keeps via
+`-g` (GLC-2). Recovery: deploy the working tree instead (omit
+`sha`), or cross-deploy the commit to another service. On a cross-deploy,
+`sha` is resolved via `git rev-parse --verify <sha>^{commit}` in the
+source repo (the local working dir for local-mode deploys, the source
+container's working dir over SSH for container-mode deploys — never the
+SSHFS mount, per `spec-mate.md` §"git").
+
+**Validation reads whichever tree will actually be pushed, never a stale
+stand-in.** For container-mode deploys, `zerops.yaml` is read straight
+off the resolved commit — `git show <sha>:zerops.yaml` over SSH,
+`ops/git.ReadFileAtCommit` — and validated via
+`ops.ValidateZeropsYmlContent` + `ops.ValidatePreDeployContent` (the
+content-taking cores `ops.ValidateZeropsYml` /
+`ops.RunPreDeployValidation` themselves delegate to, so the no-`sha`
+path — which still reads the SSHFS mount — is byte-identical to before).
+The SSHFS mount may be missing entirely or simply stale relative to an
+older/newer commit than whatever happens to be checked out there right
+now, so it is never consulted for a deploy-from-commit. A commit with no
+`zerops.yaml` at all (`git show` fails) is a hard `ErrInvalidParameter`
+("commit `<sha7>` has no zerops.yaml") raised BEFORE any extraction
+work — no temp dir, no archive. For local-mode deploys `zerops.yaml` is
+already read from the post-extraction temp dir (extraction happens
+before validation there), so no separate content-reading step is needed.
+
+The resolved commit's tree is extracted with
+`git archive --format=tar <sha> | tar -x` into a fresh temp directory
+OUTSIDE the repo (`os.MkdirTemp` locally, `mktemp -d` in the container),
+and the push runs from that extracted tree with `--no-git` and
+`--version-name <sha>` — never zcli's own `--workspace-state` archiver,
+which trips when the repo's `.git` is a `gitdir:` pointer file. The temp
+directory is removed after the push. Omitting `sha` ships the source working tree.
+
+Deploy responses carry `SHA`, `AppVersionID` and `Dirty`; Work Session deploy
+attempts retain these fields when a session is present. No automatic Git tag is
+created, read, moved or synchronized for a deploy. Tags belong to the user's
+release workflow.
+
+`DeployResult.SHA` is the resolved commit for an explicit-sha deploy. For an
+ordinary working-tree deploy, `ops/git.HeadStatus` reads the source HEAD and
+uncommitted state before pushing, without changing the checkout. `Dirty` is true
+when that working tree has uncommitted changes; it is false for an explicit-sha
+archive. Without a reachable source HEAD, SHA stays empty and the deploy can
+still succeed. A dirty result means “HEAD plus uncommitted changes”, never that
+SHA alone reproduces the shipped files. A working-tree deploy that ships a dirty
+source to a CROSS target says so where the agent reads it: one `Warnings` entry
+naming the shipped HEAD and pointing at `sha=` as the reproducible alternative
+(`ops.dirtyCrossDeployWarning`; `TestDeploySSH_CrossDeployDirty_WarnsNotReproducible`,
+`TestDeployLocal_Dirty_WarnsNotReproducible`) — never on a self-deploy (the dev
+loop is dirty by design; DM-7 reports `repoState`) and never on the explicit-sha
+path (always clean).
+
+**The platform is the sole authority for the ACTIVE appVersion.** A response or
+recorded attempt describes a ZCP operation, not a live pointer to what runs now.
+Session history is bounded and local, not a shared deployment database. Missing
+source evidence means source unknown, not no previous deployment. In particular,
+the current polling path still selects the newest service event rather than a
+process correlated to the push: SHA/appVersionID output is not yet a proven
+commit-to-artifact mapping under search lag or concurrent deploys. Removing tags
+does not fix that correlation limitation.
+
+A rollback is `zerops_deploy targetService=<h> appVersion=<id>`: it re-activates
+an existing BACKUP appVersion belonging to the target, without a build (§8 R2 /
+§12.6 GF-8). Obtain candidates from `zerops_events serviceHostname=<h>`'s
+`appVersions` section or the status envelope's `rollback` block — never by
+probing `zerops_deploy` with a fake id — and validate their current
+eligibility on the platform. Git tags are
+not involved. Deploying an earlier SHA is a NEW build, offered as a fallback
+when no suitable BACKUP artifact remains and named as such in the response.
 
 ---
 
@@ -1058,6 +1138,10 @@ visibility.
 | DM-4 | Validation is layered with disjoint authority. ZCP client-side pre-flight validates only source-tree-knowable facts: YAML syntax, schema shape, role↔setup coherence, DM-2. Zerops API pre-flight (`ValidateZeropsYaml`) validates field values against the live service-type catalog. Zerops builder validates the post-build filesystem at build time (deployFiles paths existing in build container, emitted via tag-scoped `FetchBuildWarnings`). Runtime validates initCommands, readiness checks, start command. **No layer duplicates another's authority.** Formalizes W6 of `plans/api-validation-plumbing.md`. |
 | DM-5 | At runtime start, CWD is `/var/www`. Content-root expectations of foreground processes (ASP.NET's `ContentRootPath = Directory.GetCurrentDirectory()` → `wwwroot/` lookup at `/var/www/wwwroot`; Python's `__file__`-relative resolution; Java's classpath) are **runtime concerns**. Recipes MUST document content-root implications when their default `deployFiles` pattern interacts with a well-known runtime gotcha. Agents pick `deployFiles` preserve-vs-extract (`./out` vs `./out/~`) to match the runtime's content-root expectation — tilde extraction strips the prefix segment, preserve retains it. |
 | DM-6 | `zerops_deploy appVersion=latest` is a THIRD source class alongside self/cross-deploy: no `sourceService`, no `deployFiles`/DM-2 stat-check, no adoption gate — it re-deploys an already-built appVersion in place via `PUT /app-version/{id}/deploy` (R2), carrying the resolved zerops.yaml text + setup name the platform requires (it does not reuse the stored yaml). |
+| DM-7 | A self-deploy runs one combined pre-flight read before the push (`ops.DeploySSH` → `git.ReadSelfDeployPreflight`, one SSH round trip): `notCarried {count, bytes, sample}` names the git-ignored paths that won't exist in the replacement container, `envFiles` lists `.env`/`.env.*` paths found regardless of ignore state, and `repoState` classifies the source as `clean`\|`dirty`\|`merging`\|`rebasing`\|`detached`. Facts, never a gate — every field is omitted from the result when empty, and a transport hiccup or a source with no repo yet reads as a zero-value preflight rather than failing the deploy (GF-12). Cross-deploy never runs this preflight; the target's own repo shape isn't what a distinct source ships. |
+| DM-8 | A self-deploy hard-refuses BEFORE any push when the SAME preflight read (DM-7) finds `.git` as a regular file — a linked-worktree or submodule gitdir pointer (`GIT_WORKTREE_UNSUPPORTED`) — or a `.gitmodules` file present (`GIT_SUBMODULES_UNSUPPORTED`). Both are unrecoverable-in-place shapes for the zcli self-deploy archiver (see the zcli archiver facts below), not preferences: a worktree pointer ships as just the pointer file (broken repo in the replacement container), and `git archive` ships submodule directories empty (code silently missing at runtime). Recovery is named in the error, not attempted automatically — convert to a real repository / vendor the submodule content, or cross-deploy a resolved commit to a different target instead. |
+
+**zcli self-deploy archiver facts** (verified against `zcli@v1.1.0-13-g9827852`, `src/archiveClient`; cited because DM-7/DM-8 and GF-12 both depend on them): the git path (`zcli push` without `--no-git`) builds the archive via a temp index (`GIT_INDEX_FILE`) + `git add -A` + `git stash create` + `git archive` — ignored files (`.gitignore`, `.git/info/exclude`) NEVER ship, and no flag changes that. `--workspace-state all` (zcp's own self-deploy flag) ships tracked + untracked-unignored and mutates neither the working tree nor `.git/index`. `-g` copies the whole `.git/` directory byte-for-byte via `filepath.Walk` (`handler_archiveGitFiles.go:183-197`), so refs/stash/reflog/config travel — but a `.git` FILE (worktree/submodule pointer, DM-8) only tars the pointer, producing a broken repo in the new container. `git archive` runs without `--recurse-submodules`, so submodule directories arrive EMPTY (DM-8). `build.deployFiles` is server-side only — zero occurrences in zcli. `zcli deploy -g` never reads the flag, so `deploy` must never be used for self-deploy. `--no-git` (the deploy-from-commit / cross-deploy path) walks everything including `.git` and dotfiles, filtered only by `.deployignore`.
 
 ### Bootstrap (Option A — infrastructure only)
 
@@ -1127,7 +1211,7 @@ visibility.
 | ID | Invariant |
 |----|-----------|
 | R1 | One classification, many readers. `ops.RecoveryState(hostname)` yields `shape ∈ {healthy, fresh-misconfigured, failed-build, failed-init, stuck-building}` plus evidence, from `LatestFailedAppVersionContext` + `HasPriorDeployAttempt` + `ProjectActivity`. `fresh-misconfigured` = `READY_TO_DEPLOY` with no deploy attempt ever (imported without `startWithoutCode` and without `buildFromGit`). Every recovery reader — verify/provision `Recovery` pointers, the `zerops_import override` gate payload, atom selection — consumes it; none re-derives a recovery branch from `service.status` alone. |
-| R2 | The gate's `next` is always the read-only diagnosis (`zerops_events`). What follows (`then`) depends on the shape AND on what exists to recover: `failed-init` with a built artifact and no container (a never-activated buildFromGit service — `DEPLOY_FAILED` appVersion, `READY_TO_DEPLOY`, `activeAppVersion=null`) ⇒ `zerops_deploy targetService=<h> appVersion=latest`, which re-deploys the built artifact through `PUT /app-version/{id}/deploy` (live-verified: same appVersion goes ACTIVE in ~25 s; the call must carry the zerops.yaml text + setup name, the platform does not reuse the stored yaml); any `failed-*` shape with a container ⇒ `zerops_deploy targetService=<h>` (never gated; the prior appVersion keeps serving). The ready-made `zerops_import override=true` retry is emitted only where nothing deployed can be lost and no in-place path exists: `fresh-misconfigured`, and `failed-build`/`stuck-building` on a git-provisioned service with no activated version (the platform has no public-git rebuild route — `build-and-deploy` only builds a freshly uploaded appVersion). |
+| R2 | The gate's `next` is always the read-only diagnosis (`zerops_events`). What follows (`then`) depends on the shape AND on what exists to recover: `failed-init` with a built artifact and no container (a never-activated buildFromGit service — `DEPLOY_FAILED` appVersion, `READY_TO_DEPLOY`, `activeAppVersion=null`) ⇒ `zerops_deploy targetService=<h> appVersion=latest`, which re-deploys the built artifact through `PUT /app-version/{id}/deploy` (live-verified: same appVersion goes ACTIVE in ~25 s; the call must carry the zerops.yaml text + setup name, the platform does not reuse the stored yaml); any `failed-*` shape with a container ⇒ `zerops_deploy targetService=<h>` (never gated; the prior appVersion keeps serving). The ready-made `zerops_import override=true` retry is emitted only where nothing deployed can be lost and no in-place path exists: `fresh-misconfigured`, and `failed-build`/`stuck-building` on a git-provisioned service with no activated version (the platform has no public-git rebuild route — `build-and-deploy` only builds a freshly uploaded appVersion). Rollback (`appVersion=<id>`, GF-8 §12.6) generalises this to any RECORDED appVersion id, not just the newest: live-verified 2026-09-14, the previously-active version flips to `BACKUP` once a newer one activates, `PUT /app-version/{id}/deploy` against a `BACKUP` id re-activates it (`stack.deploy.backup`, no build, the request body is ignored when its fields are JSON null — empty strings are rejected with `invalidUserInput`, so `platform.RedeployAppVersion` sends null for an empty argument; `TestRedeployAppVersion_EmptyFields_SendNull`) in ~50-70s, and the same call against the CURRENTLY ACTIVE id 400s `appVersionInvalidStatus`. The candidate ids/statuses come from two sources — `zerops_events serviceHostname=<h>`'s `appVersions` section or the status envelope's per-service `rollback: {active, backup}` block (`ops.AppVersionCandidates`, the same reader the "does not belong" refusal renders from) — never from probing `zerops_deploy` with a fake id to harvest the list from an error message. |
 | R3 | Atom selection carries a `deployHistory` axis (`none` · `failed` · `ok`, from R1). An atom whose body names `override=true` must declare `deployHistory: [none]` (`TestAtomAuthoringLint`), so override-first advice can never render on a service with deploy history. |
 
 ### Git Lifecycle (container env)
@@ -1136,7 +1220,7 @@ Managed runtime services carry a `/var/www/.git/` that direct `zerops_deploy` tr
 
 **Execution flow — when `.git/` is created**:
 
-- **Bootstrap/adopt time (canonical path, GLC-1)** — When `zerops_workflow action="complete" step="provision"` succeeds, `autoMountTargets` iterates `plan.Targets` and for each runtime target runs `ops.MountService` followed by `ops.InitServiceGit`. The init runs SSH-exec (not SFTP) so `.git/` lands owned by `zerops:zerops`. Identity is filled SET-IF-ABSENT (default `agent@zerops.io` / `Zerops Agent`; a value already present — including one the user set — is never overwritten), and a HEAD guarantee ensures a reachable commit exists (`ops.GitEnsureRepoHeadCommand`). This happens **once per service**.
+- **Bootstrap/adopt time (canonical path, GLC-1)** — When `zerops_workflow action="complete" step="provision"` succeeds, `autoMountTargets` iterates `plan.Targets` and for each runtime target runs `ops.MountService` followed by `ops.InitServiceGit`. The init runs SSH-exec (not SFTP) so `.git/` lands owned by `zerops:zerops`. Identity is filled SET-IF-ABSENT (default `agent@zerops.io` / `Zerops Agent`; a value already present — including one the user set — is never overwritten), `.git/info/exclude` is seeded by runtime class, and a HEAD guarantee ensures a reachable commit exists (`ops.GitEnsureRepoHeadCommand`). This happens **once per service** (the exclude seed and HEAD guarantee still re-run — idempotently — on every later deploy, GLC-2).
 
 - **Deploy time — happy path (GLC-2)** — Every `zerops_deploy` in container mode runs `buildSSHCommand`'s safety-net, composed from the SAME `ops.GitEnsureRepoHeadCommand` bootstrap uses: init-if-missing, identity set-if-absent, HEAD guarantee. On a service where bootstrap has already run, every guard no-ops — the deploy goes straight to `zcli push`. No `git add` / `git commit` runs here: the (possibly dirty) working tree ships via zcli's own `--workspace-state=all` ephemeral stash-archive, never a ZCP-minted commit.
 
@@ -1144,16 +1228,17 @@ Managed runtime services carry a `/var/www/.git/` that direct `zerops_deploy` tr
 
 - **Never** — ZCP-host container's own `/var/www` (GLC-4: it's the SSHFS mount base, not a code directory); user's local working directory (GLC-6: that's the user's own git territory); any path that went through the SSHFS mount from the ZCP host (GLC-5: mount-side `git init` would produce root-owned dirs due to a zembed SFTP MKDIR regression).
 
-**Single source of identity + HEAD guarantee (GLC-3)**: `ops.DeployGitIdentity` backs two single-owner shell-fragment builders (`gitIdentityEnsureFragment`, `gitHeadEnsureFragment`, composed into `ops.GitEnsureRepoHeadCommand`), consumed by every self-heal site — `InitServiceGit`, `buildSSHCommand`'s safety-net, `BuildGitOriginSyncCommand`, `BuildGitReconstructCommand`, and git-push-setup's pre-probe ensure. Write policy: repo-local identity is SET-IF-ABSENT (never stomps a user-set value); the ZCP-internal HEAD-guarantee marker commit always uses per-invocation `git -c`, never persistent config — it's ZCP's commit, not the user's.
+**Single source of identity + HEAD guarantee (GLC-3)**: `ops.DeployGitIdentity` backs two single-owner shell-fragment builders (`gitIdentityEnsureFragment`, `gitHeadEnsureFragment`, composed into `ops.GitEnsureRepoHeadCommand`), consumed by every self-heal site — `InitServiceGit`, `buildSSHCommand`'s safety-net, `BuildGitOriginSyncCommand`, `BuildGitReconstructCommand`, and git-push-setup's pre-probe ensure. Write policy: repo-local identity is SET-IF-ABSENT (never stomps a user-set value); the ZCP-internal HEAD-guarantee marker commit always uses per-invocation `git -c`, never persistent config — it's ZCP's commit, not the user's. zcp seeds no `.git/info/exclude` and authors no `.gitignore` anywhere in this chain — the agent owns the repo's ignore rules, guided (§12.6, GF-2).
 
 | ID | Invariant |
 |----|-----------|
-| GLC-1 | Every runtime service added to the project via bootstrap or adopt has `/var/www/.git/` initialized **container-side** (via `ops.SSHDeployer.ExecSSH`, never SFTP MKDIR), owned by `zerops:zerops`, with identity filled set-if-absent (default `user.email = agent@zerops.io`, `user.name = Zerops Agent`) and a reachable HEAD. Enforced by `autoMountTargets` post-mount hook: after `ops.MountService` succeeds it calls `ops.InitServiceGit`. The SSH-exec path matters because zembed's SFTP MKDIR regression creates root-owned directories, which would corrupt `.git/objects/` and break subsequent git operations. Errors are logged but do not mark the mount FAILED — GLC-2 is the safety net. |
+| GLC-1 | Every runtime service added to the project via bootstrap or adopt has `/var/www/.git/` initialized **container-side** (via `ops.SSHDeployer.ExecSSH`, never SFTP MKDIR), owned by `zerops:zerops`, with identity filled set-if-absent (default `user.email = agent@zerops.io`, `user.name = Zerops Agent`) and a reachable HEAD. Enforced by `autoMountTargets` post-mount hook: after `ops.MountService` succeeds it calls `ops.InitServiceGit`. The SSH-exec path matters because zembed's SFTP MKDIR regression creates root-owned directories, which would corrupt `.git/objects/` and break subsequent git operations. Errors are logged but do not mark the mount FAILED — GLC-2 is the safety net. zcp never seeds `.git/info/exclude` and never writes a `.gitignore` — the agent owns the repo's ignore rules, guided (§12.6, GF-2). |
 | GLC-2 | `deploy_ssh.go::buildSSHCommand` must tolerate a missing `.git/` as the migration/recovery fallback. The init guard stays inside the OR branch (`test -d .git || git init -q -b main`); identity is set-if-absent OUTSIDE it (never stomping a user-set value — the B13 fix's actual requirement was "identity exists", not "identity is ZCP's"); a HEAD guarantee follows so zcli's archiver always has a commit to diff against. Direct deploy mints NO other commit — the dirty tree ships via zcli's ephemeral stash-archive. Same identity-ensure shape in `BuildGitOriginSyncCommand` (GAP4-1). Pinned by `ops/deploy_git_test.go` + `ops/git_identity_test.go`. |
 | GLC-3 | `ops.DeployGitIdentity` is the single source of the default identity value, consumed only through the single-owner fragment builders in `ops/git_identity.go`. No code path writes identity unconditionally or persists the HEAD-guarantee marker commit's identity into repo config. **Human attribution (F3)**: at git-push-setup, `ops.DeriveGitHubIdentity` derives name/email from the PAT for github.com remotes only (`ops.IsGitHubRemote` — fail-closed exact-host gate — decides); the result seeds repo-local config IFF the current value is absent or EXACTLY equals the robot identity (`ops.BuildGitIdentitySeedCommand`) — a genuinely custom value is preserved and reported, never overwritten. This migration fires ONCE per value: a later PAT rotation to a different GitHub account does NOT re-seed, because the now-human identity no longer exactly-matches the robot default (identity is user-owned once set). A buildFromGit clone carrying a recipe-baked non-robot identity is likewise never auto-migrated (neither absent nor exactly-robot) — same preserved/reported treatment. Reconstruction (`BuildGitReconstructCommand`) takes the derived identity directly when available, landing a rebuilt repo human-attributed from its first init rather than robot-then-migrate; the tokenless recall path has no PAT to derive from, so it only detects a still-exactly-robot identity and prompts a one-time re-run with `gitToken` — it never fabricates one. Release tags, export commits, and flatten commits carry no inline identity of their own (`git tag -a` / plain `git commit`) — they read ambient repo config, so they inherit the seeded human identity automatically once F3 has run. |
 | GLC-4 | The ZCP-host container has no git state. `/var/www` there is the SSHFS mount base, not a code directory; no `.git/` is ever initialized on it, and no `git config --global` is written. `zcp init` in container mode (`init_container.go::containerSteps`) performs only Claude config + optional VS Code setup. Developer-side git workflows (e.g. `zcp sync recipe push-app`) run on developer laptops with the developer's own `~/.gitconfig` and are never expected to pass through a Zerops-deployed ZCP service. |
 | GLC-5 | Mount-side `git init` (from the ZCP-host into a managed service's SSHFS-mounted `/var/www/{hostname}/`) is forbidden agent behavior, covered by `develop-first-deploy-write-app.md` guidance. zembed's SFTP MKDIR would produce root-owned `.git/objects/` which poisons every subsequent deploy. Recovery: `ssh {host} "sudo rm -rf /var/www/.git"` and let GLC-2's safety net re-init. |
 | GLC-6 | Local-env `strategy=git-push` requires a user-owned git repo with ≥1 commit (verified against `zcli@v1.0.61` `handler_archiveGitFiles.go:67-75`). ZCP does **not** auto-init git in the user's working directory — identity, default branch and `.gitignore` conventions are personal. `develop-platform-rules-local.md` instructs the agent to ask the user to run `git init && git add -A && git commit -m '<msg>'` themselves; `handleLocalGitPush` pre-flight catches the case as a hard fallback. The default `zerops_deploy` strategy uses `zcli --no-git` and needs no git state. The container-mode default path (GLC-2) depends on the same zcli floor for its `--workspace-state=all` archiver — no runtime probe, containers ship platform-maintained zcli. |
+| GLC-7 | Adopt establishes repository history through `ops/git.AdoptBaseline` over SSH via `ops.AdoptRepoBaseline`, without creating or reading Git tags. The decision is based on CONTENT: a reachable HEAD tree different from the empty tree takes the **existing** case, preserving HEAD and history untouched — no commit, no init. No repo, an unborn HEAD or an empty marker tree takes the **initialized** case: the same commit-ready state bootstrap leaves a fresh service in (init-if-missing, identity set-if-absent, an empty marker HEAD if none was reachable) — WITHOUT staging or committing the files adopt found. The working tree stays exactly as adopt found it, uncommitted; zcp never commits user files. Neither `RepoProvenanceInitialized` nor `RepoProvenanceExisting` proves those files built the running appVersion. `ServiceMeta.Repo` (`SetRepoBaseline`) stores `{BaselineAppVersion, Provenance}`; the adoption-time active appVersion ID comes from `ListServicesDirect`. Container lifecycle status exposes `repo: {present, head, baseline, provenance}`: present/head are read live through `ops.ReadRepoStatus` (one SSH round trip per runtime service, fanned out concurrently with bounded parallelism so a status call costs one round trip of wall time, not N — `TestAttachRepoStatus_ManyServices_ReadsRunConcurrently`; the `rollback` block's per-service `ops.AppVersionCandidates` reads fan out the same way), while baseline/provenance come from ServiceMeta as adoption metadata, independent of the current HEAD. Adopt's provision-complete response (`complete step="provision"`, the route's last step since close is auto-skipped) carries this same per-service `repo:` block via `bootstrapResultWithRepoStatus`, so the baseline-commit guidance in that response points at data in that response — every other bootstrap response stays terse (`TestHandleBootstrapComplete_AdoptProvisionComplete_CarriesRepoBlock`). Local mode uses the bootstrap-time read-only repo check (GLC-6). |
 
 **Explicit behavior change (git-contract fix, 2026-07-12)**: since direct deploy no longer auto-commits (GLC-2), a dev container's working tree stays dirty across iterations until something actually commits it — the launch `dev-tree-dirty` gate (§10, P-LP-11) is now the explicit sign-off-commit enforcement that the old invisible auto-commit used to fake. This is intended, not a regression.
 
@@ -1406,6 +1491,133 @@ What the engine guarantees:
 What the agent still owns: generating the import YAML fragment that creates only the new stage service (not the existing dev), appending the `setup: prod` entry to `zerops.yaml`, and running the cross-deploy `zerops_deploy sourceService="{dev}" targetService="{stage}"`. The atom body includes the step-by-step instructions; bootstrap provides the session frame and the meta merge, but does not auto-generate stage code.
 
 **Why bootstrap, not develop**: Creating services is infrastructure work. Bootstrap already handles service creation, ServiceMeta writes, and hostname locks. Develop flow handles code changes, not infrastructure topology changes.
+
+---
+
+## 12. Git Foundation — source, change path, delivery, evidence
+
+This section states ONCE the path a change takes from "where does the code come from" to
+"what runs, and how do I put the previous version back". Every git-shaped rule elsewhere in
+this spec (§2/§3 entry routes, §4.3 derived delivery, §4.9 deploy-from-commit + evidence,
+§8 Git Lifecycle GLC-1..7, §10 launch gates) is an instance of it, and `spec-mate.md §6`
+is the same model seen from the mate side. It is provider-agnostic: an origin is any HTTPS
+git host reachable with a PAT (GitHub, GitLab, self-hosted Gitea, anything else); the
+GitHub- and GitLab-specific parts are only the two CI shapes the platform can consume today
+(§12.5). Rules are numbered GF-n; a rule marked OPEN is stated so the design is whole, but
+is not built — the "Home" column says where it lives once it is.
+
+Owner intent this section serves (Karel, 2026-09-14): git is the base of every code path;
+any git host; new, imported and adopted projects alike; production always means an origin
+plus CI; Gitea inside Zerops is the optional default origin, not a requirement; mate
+collaboration happens over a shared repository.
+
+### 12.1 Vocabulary
+
+| Term | Meaning | Home |
+|---|---|---|
+| checkout | `/var/www` of ONE dev service: one working tree, one process, one subdomain. The isolation unit is the service, never a directory — worktrees are refused (`spec-mate.md §6.3`). Two agents (or two mates) on one dev service share the same uncommitted files; independent parallel work is a SECOND dev service with its own checkout. | GLC-1, `spec-mate.md §6.1/§6.3` |
+| origin | The shared remote of a checkout: `ServiceMeta.RemoteURL` + `GitPushState`, written only by `git-push-setup` (probe-first, PAT as the `GIT_TOKEN` service secret, url-scoped credential helper). Optional for dev; mandatory for production (P-LP-10). | §4.3, §4.4 |
+| tracked ref | The ref a target consumes — what stage or prod is built from. Recorded once in `ServiceMeta.TrackedRef` by `git-push-setup`'s confirm step (explicit `trackedRef` input, else the push source's current branch, else the remote's default branch, else `"main"`); read by the `git-push` default branch, the Actions template's `branches:` trigger, and the launch gate's remote-HEAD compare — each falling back to `"main"` independently (`trackedRefOrDefault`) when a pre-existing meta carries none. | GF-7 |
+| delivery | Whatever turns a working tree or a commit into an appVersion on a target: the dev self-deploy (working tree, `-g`), deploy-from-commit (cross-deploy, §4.9), CI on push (§12.5), or the user's own CI that zcp cannot see. Which one applies is DERIVED (§4.3), never chosen by close-mode. | §4.3, §8 DM |
+| evidence | Deploy result and local Work Session attempt fields (`sha`, `appVersionId`, `dirty`), subject to the correlation limitation in §4.9. Platform state owns the ACTIVE appVersion; absent evidence means source unknown. | §4.9, GF-5 |
+| baseline | Adopt's starting point: repository history preserved as-is, or the repo brought to a commit-ready state WITHOUT committing the files found on the container, with the adoption-time appVersion and provenance `initialized` / `existing` stored in ServiceMeta. Neither is a claim that the tree equals the running appVersion. | GLC-7 |
+
+### 12.2 Entry — where the source comes from
+
+| Route | Source of code | Repo state after the route | Origin |
+|---|---|---|---|
+| bootstrap `recipe` / `classic` (§2) | recipe or agent-written tree in the dev service | GLC-1: repo with a reachable HEAD, identity set-if-absent. zcp seeds no ignore rules and the working tree stays uncommitted — the agent writes `.gitignore` and makes the baseline commit itself, guided (§12.6, GF-2). A buildFromGit build leaves the clone's `.git/` history in `/var/www` (observed live on the farm 2026-09-14, G2 run), so such a service adopts as `existing`; zcp does not depend on it. | none until `git-push-setup` |
+| user's existing repository | `git-push-setup remoteUrl=<their host>` on the dev service; reconstruction from the remote when `/var/www/.git` is missing (§4.4) | repo synced to origin, `GitPushState=configured` | the user's, any host |
+| `adopt` (§3) | a running service, with or without git | GLC-7: `initialized` (no repo / marker-only HEAD — brought to commit-ready state, working tree left uncommitted) or preserved existing HEAD; adoption appVersion and provenance recorded in metadata | none until `git-push-setup` |
+| launch-production (§10) | never a clone: prod starts `startWithoutCode`, the first release is the first CI build | prod services carry no repo | the dev checkout's origin, mandatory |
+
+### 12.3 The change path — one checkout
+
+```
+edit ──► dev self-deploy ──► commit ──► push ──► deliver to target ──► verify ──► roll back
+ │            │                │          │             │                │            │
+ │  mate checkpoints        working    user/agent    origin,      stage: §4.9 or    zerops_   re-activate a
+ │  (refs/t3/*, turn        tree, -g,  commit with   tracked      CI-on-push        verify    recorded
+ │  history; never          repo       ambient       ref          prod: CI-on-push            appVersion
+ │  a delivery)             travels    identity                   only (P-LP-10/11)           (GF-8)
+ └──────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+- **edit → dev self-deploy** is the fast loop and stays dirty by design: the working tree
+  ships via zcli's stash-archive with `-g`, so the repository travels inside the artifact
+  and survives the container replacement (GLC-2, verified live 2026-09-14). The recorded attempt
+  for a dirty deploy carries `dirty:true` — it records HEAD plus "uncommitted changes on top",
+  never "commit X is what runs". Nothing outside the repository travels with it (GF-12): the
+  same self-deploy carries `notCarried`/`envFiles`/`repoState` (DM-7) so what won't survive
+  the next container is visible before it's lost, not discovered after.
+- **commit** is the user's or the agent's, with ambient identity (GLC-3). zcp does not
+  auto-commit routine edits; its own objects (HEAD marker, adopt's commit-ready
+  initialization) carry the robot identity inline but never stage or commit found files —
+  the `.gitignore` and the baseline commit of what was found are the agent's, guided (GF-2).
+- **push** needs an origin (§4.4). The pushed branch is the tracked ref (GF-7).
+- **deliver**: a stage receives either a deploy-from-commit (§4.9, cross-deploy) or a CI
+  build of the tracked ref; production receives ONLY a CI build of a pushed, clean HEAD
+  (P-LP-10/11). A direct deploy on a configured pair redirects to the push only where a
+  zcp-managed integration consumes pushes (§4.3).
+- **verify** is `zerops_verify` against the target; **roll back** re-activates a recorded
+  appVersion (GF-8) — a rebuild of an older commit is a different act and is named as such.
+
+### 12.4 Two checkouts, one origin
+
+`dev1` and `dev2` are two services, each its own repository (GF-1), sharing one origin.
+Independent work lives on branches; integration happens at the origin (a pull request on the
+host, or a fast-forward of the tracked ref); the stage consumes the tracked ref, so which
+checkout produced a change is invisible to delivery. Evidence tags are written in the
+checkout that deployed; the other checkout sees them only through the origin (GF-9, OPEN).
+Mate checkpoints stay per checkout (`spec-mate.md §6.4`) and are never pushed.
+
+### 12.5 Delivery contract — provider-agnostic
+
+The contract every CI shape fulfils: **take one specific revision, deploy it to one specific
+target, and leave an appVersion whose version name is that revision's sha.** Shapes:
+
+| Shape | Status | Evidence the platform keeps |
+|---|---|---|
+| GitHub Actions running `zcli push` with `ZEROPS_TOKEN_PROD` (§10) / `BuildIntegration=actions` | built | version name: `BuildIntegration=actions`'s setup-aware zcli workflow (`tools/workflow_build_integration.go`) passes `--version-name "$GITHUB_SHA"` (GF-10; the compact wrapper-action variant, `zeropsio/actions`, cannot express it). The §10 launch-production tag-triggered template (`tools/workflow_launch_production.go`, `ZEROPS_TOKEN_PROD`) does NOT yet — separate template, GF-10 not extended there. |
+| GitLab webhook → platform pulls (`BuildIntegration=webhook`) | built | none — the appVersion DTO carries no sha (verified 2026-09-14); source is unknown to zcp unless the platform adds it |
+| Gitea Actions (act_runner, HOST mode, same container as Gitea) running `zcli push --version-name $GITHUB_SHA` with a project-scoped integration token from a repo secret | **verified live 2026-09-14**: push → ACTIVE in 83–105 s, twice, the second after a Gitea service restart; `zcli push` blocks until the pipeline ends so job status = deploy status; no node on the host (plain `git clone` + `git checkout $GITHUB_SHA`, never `actions/checkout`); pass the token as step `env`, never `zcli login` (it persists `cli.data` on the runner host); persistence across a REDEPLOY of the Gitea service untested (no volume in the probe) | version name = sha, readable via `SearchAppVersions` |
+| user's own CI outside zcp | supported, opaque | unknown unless it sets the version name |
+| zcp-owned webhook relay | **not needed** — the Gitea proof passed; removed from the plan | — |
+
+Platform limits that bound this table (verified 2026-09-14, `platform-verifier` memory):
+`buildFromGit` accepts only github.com / gitlab.com; webhook receivers exist only for those
+two and require the account's OAuth link; no generic authenticated build trigger carrying a
+ref; no sha on the appVersion DTO; integration tokens have no TTL. Asks to the platform
+team, in order of leverage: a host allowlist (or none) for `buildFromGit`; an authenticated
+build trigger taking `{ref|sha, setup}`; the commit sha on the appVersion DTO; a TTL on
+integration tokens. Each ask, if granted, deletes a row from the table above rather than
+adding code.
+
+### 12.6 Rules
+
+| # | Rule | Home / status |
+|---|---|---|
+| GF-1 | A checkout is a service. No worktrees, no second checkout inside one service; parallel independent work is a second dev service. | `spec-mate.md §6.3` |
+| GF-2 | zcp never auto-commits routine development changes. Its HEAD marker (GLC-2) and adoption initialization (GLC-7) carry inline robot identity, but never stage or commit anything the agent or user wrote. No automatic deploy or baseline tags are written. `.gitignore` and the baseline commit are the agent's, guided; zcp seeds no ignore rules. The guidance that carries this obligation to the agent renders where the obligation arises, not later: `bootstrap-close-baseline-commit` at the recipe close step and `bootstrap-adopt-baseline-commit` at the adopt provision step plus one line in the adopt transition message (adopt auto-skips close, so a close-step atom never reaches it; the repo is initialized when provision completes), `develop-self-deploy-reproducibility` in develop-active for `dev`, `simple` AND `standard` (the dev half of a pair is `Mode = standard`, so an atom scoped to `dev` alone never reaches it), and the three standard-pair stage-promotion atoms (commit the dev half over SSH before the cross-deploy; `sha="<commit>"` ships an exact commit without touching the tree; rollback is `appVersion=<id>`). Proven by the farm oracles, not by the prompt — by CONTENT, never by author, because a dev container's ambient identity is the robot's until git-push-setup derives a human one (GLC-3): G1 requires a non-empty HEAD tree (zcp's marker is the empty tree) and G6 a tracked cargo file (zcp stages nothing), both a tracked `.gitignore` and no `.env`/`node_modules` in HEAD; G3's prompt names no parameter and its `toolArg` row requires `sha~` on the stage deploy (`spec-scenarios.md §9.3`). | GLC-2/3/7, §4.9 |
+| GF-3 | Deploy-from-commit is a cross-deploy only. A self-deploy always ships the working tree with `.git` (`-g`); shipping an extracted tree to the source service itself would delete the container's repository. | §4.9; `TestDeploySSH_ShaSelfTarget_Refused` |
+| GF-4 | The `zerops.yaml` that is validated is the one that is deployed: the commit's for a sha deploy, the working tree's otherwise. | §4.9 |
+| GF-5 | Evidence never overclaims. No source evidence ⇒ "source unknown"; uncommitted working-tree changes ⇒ `dirty:true`; a baseline ⇒ `initialized` or `existing`, never parity with the running appVersion; the platform's active appVersion is the only "what runs". | §4.9, GLC-7 |
+| GF-6 | Production is delivered only by CI from an origin, from a clean, pushed HEAD; zcp never self-deploys production. | P-LP-10/11 — unchanged |
+| GF-7 | The tracked ref is recorded once per target and read by the push default, the CI template and the launch gate. A meta that carries NO tracked ref (every ServiceMeta written before this rule) is compared by the launch and release push-proof against `HEAD` — the remote's default branch, exactly the pre-GF-7 compare — never against the literal `main` (`tools.launchPushProofRef`; `TestLaunchGate_LegacyMetaWithoutTrackedRef_ComparesHEAD`, `TestHandleRelease_LegacyMetaWithoutTrackedRef_ComparesHEAD`); a recorded ref is never softened. | built — `ServiceMeta.TrackedRef`, `ops/git.CurrentBranch` (`TestCurrentBranch_*`), `tools.resolveContainerTrackedRef`/`localGitBranchDetector` (`TestGitPushSetupContainer_RecordsTrackedRef_*`, `TestGitPushSetupLocal_RecordsTrackedRef_*`), `tools.resolveTrackedBranch`/`trackedRefOrDefault` (`TestGitPush_DefaultBranchFromMeta`), Actions template (`TestBuildIntegration_ActionsTemplateUsesTrackedRef`), launch gate (`TestLaunchGate_ComparesTrackedRef`) |
+| GF-8 | Rollback is the re-activation of a recorded appVersion (`PUT /app-version/{id}/deploy`, the R2 path generalised from `latest` to any recorded id) with no build; deploying an older commit is a NEW build and is offered as the fallback, named as such. The candidate ids come from `zerops_events` or the status envelope's `rollback` block (`ops.AppVersionCandidates`), never from a probe deploy call with a fake id. | built — `ops.ReactivateAppVersion` (`TestReactivateAppVersion_*`), `ops.AppVersionCandidates` (`TestAppVersionCandidates_*`), `tools.runAppVersionRollback` (`TestDeploySSH_AppVersionID_*`) |
+| GF-9 | Git tags are user-owned release markers, not a deploy ledger. No automatic deploy/baseline tag creation, lookup or synchronization. | §4.9, GLC-7 |
+| GF-10 | Every zcp-driven build passes `--version-name <sha>` (a working-tree deploy suffixes `-dirty` when uncommitted; no reachable HEAD ⇒ no flag), so `SearchAppVersions.name` is a platform-side breadcrumb independent of local session history. Never itself proof of what was deployed (GF-5) — correlate with the resulting appVersion. | built for zcp-driven SSH/local deploys and the `BuildIntegration=actions` template — `ops.versionNameForHead`, `DeployResult.VersionName` (`TestBuildSSHCommand_VersionNameFromHead`, `TestVersionNameForHead`, `TestDeployLocal_VersionNameFromHead`), Actions template's `--version-name "$GITHUB_SHA"` (`TestActionsTemplate_VersionNameSHA`) — OPEN: the §10 launch-production tag-triggered template (§12.5) still doesn't |
+| GF-11 | A rejected push is the user's decision: zcp classifies (rebase/merge/replace-remote) and never force-pushes or merges on its own. A non-fast-forward rejection returns `GIT_PUSH_NON_FAST_FORWARD` with the tracked ref's `remoteAhead`/`localAhead`/`unrelated` divergence (`ops.ProbeGitDivergence`) and a `next` block naming exactly the three options; `git-push-setup`'s confirm-mode success result surfaces the same classification proactively as `remote: {ref, state}` (`ahead`/`diverged`/`unrelated` ⇒ `remoteStateWarning`) so the risk is visible before the first push, not only after a rejected one. | built — `ops.IsNonFastForwardRejection`/`ProbeGitDivergence`/`ClassifyRemoteRefState` (`TestProbeGitDivergence_*`, `TestClassifyRemoteRefState`), `tools.classifyGitPushNonFastForward`/`newGitPushNonFastForwardError` in `handleGitPush`/`handleLocalGitPush` (`TestGitPush_NonFastForward_Classified`, `TestGitPush_NonFastForward_NeverForces`, `TestConvertError_NonFastForward`), `tools.probeGitPushRemoteState` in `confirmGitPushSetupContainer`/`confirmGitPushSetupLocal` (`TestGitPushSetup_RemoteState_Empty/InSync/Ahead/Unrelated`) |
+| GF-12 | Owner principle (Karel, 2026-09-15): a dev checkout is reproducible from its repository and nothing else on it is persistent — code in git, configuration in service env vars, data in managed services, no `.env` files. The self-deploy boundary is exactly what zcli's git archiver ships (see the zcli self-deploy archiver facts under DM-7/DM-8): a self-deploy's pre-flight read and its two hard refusals are how zcp makes that boundary visible instead of silent. | built — DM-7/DM-8, `git.ReadSelfDeployPreflight` (`TestReadSelfDeployPreflight_*`), `TestDeploySSH_SelfDeploy_PreflightNotCarried`, `TestDeploySSH_GitFile_Refused`, `TestDeploySSH_Submodules_Refused` |
+
+### 12.7 Open items and owners
+
+- GF-10 platform-side source evidence — the `--version-name` breadcrumb is built for SSH/local deploys and the `BuildIntegration=actions` template; the §10 launch-production tag-triggered template (`tools/workflow_launch_production.go`) still doesn't pass one, and reading the breadcrumb back via `SearchAppVersions` to correlate a push with its resulting appVersion is not built at all — needs a caller that reads it and treats the mapping as evidence, never proof (GF-5).
+- Gitea Actions as CI (§12.5) — live verification decides whether a relay exists at all.
+- Managed Gitea: recipe (verified shape: `ubuntu@24.04`, `HOME`, `app.ini` before
+  `gitea migrate`, ≥1 GB) + placement (owner recommendation: one hub project per org).
+- Mate commit/push through zcp (`spec-mate.md §6.3`) — the fork's side of GF-2.
+- Platform asks (§12.5) — owner sends; each granted ask removes code.
 
 ---
 

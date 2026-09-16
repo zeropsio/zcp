@@ -16,6 +16,13 @@ type EventsResult struct {
 	ProjectID string          `json:"projectId"`
 	Events    []TimelineEvent `json:"events"`
 	Summary   EventsSummary   `json:"summary"`
+	// AppVersions is populated only when serviceHostname scopes the call
+	// to one service (docs/spec-workflows.md §8 R2 / §12.6 GF-8): the
+	// SAME candidate rows ReactivateAppVersion's "does not belong"
+	// refusal lists (AppVersionCandidates), marked ACTIVE/BACKUP. An
+	// agent reads this instead of probing zerops_deploy with a fake
+	// appVersion id to harvest the candidate list from an error message.
+	AppVersions []AppVersionCandidate `json:"appVersions,omitempty"`
 }
 
 // EventsSummary contains event counts.
@@ -310,6 +317,11 @@ func Events(
 		events = filtered
 	}
 
+	appVersionCandidates, err := resolveAppVersionCandidates(ctx, client, services, serviceHostname)
+	if err != nil {
+		return nil, err
+	}
+
 	// Sort by parsed instant, descending (parse-compare — see
 	// sortTimelineDescending). Then trim to limit.
 	sortTimelineDescending(events)
@@ -337,7 +349,33 @@ func Events(
 			Processes: processCount,
 			Deploys:   deployCount,
 		},
+		AppVersions: appVersionCandidates,
 	}, nil
+}
+
+// resolveAppVersionCandidates is Events' per-service `appVersions`
+// section (docs/spec-workflows.md §8 R2 / §12.6 GF-8): only populated
+// when the caller scoped the call to one service, by resolving its
+// serviceID from the already-fetched services list and reading the SAME
+// candidate rows ReactivateAppVersion's "does not belong" refusal lists.
+// A hostname with no matching service (typo, or the service was just
+// deleted) returns (nil, nil) rather than erroring — the timeline itself
+// is still valid and useful without it.
+func resolveAppVersionCandidates(ctx context.Context, client platform.Client, services []platform.ServiceStack, serviceHostname string) ([]AppVersionCandidate, error) {
+	if serviceHostname == "" {
+		return nil, nil
+	}
+	for _, s := range services {
+		if s.Name != serviceHostname {
+			continue
+		}
+		candidates, err := AppVersionCandidates(ctx, client, s.ID)
+		if err != nil {
+			return nil, fmt.Errorf("events: %w", err)
+		}
+		return candidates, nil
+	}
+	return nil, nil
 }
 
 // mapActionName normalizes a Zerops action name.

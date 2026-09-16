@@ -132,7 +132,7 @@ func TestE2E_GitDeliveryFullChain(t *testing.T) {
 		t.Errorf("reconstructed origin must be the recorded remote: %s", body)
 	}
 	// The remote HEAD must match the local HEAD (the pushed commit).
-	lsOut, err := ssh.ExecSSH(ctx, hostname, ops.BuildGitAuthedLsRemoteCommand(remote))
+	lsOut, err := ssh.ExecSSH(ctx, hostname, ops.BuildGitAuthedLsRemoteCommand(remote, "HEAD"))
 	if err != nil {
 		t.Fatalf("authed ls-remote: %v", err)
 	}

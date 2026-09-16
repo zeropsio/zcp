@@ -231,3 +231,52 @@ func statusOrNone(r *ops.DeployResult) string {
 	}
 	return r.Status
 }
+
+// Successful batch entries retain deploy results without operating on git tags.
+func TestDeployBatch_Deployed_NoTagOperations(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-api-src", Name: "apidev"},
+			{ID: "svc-app-src", Name: "appdev"},
+			{ID: "svc-api-tgt", Name: "apistage"},
+			{ID: "svc-app-tgt", Name: "appstage"},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av-api", ServiceStackID: "svc-api-tgt", Status: statusActive, Sequence: 1},
+			{ID: "av-app", ServiceStackID: "svc-app-tgt", Status: statusActive, Sequence: 1},
+		})
+	ssh := &stubSSHSHA{headSHA: "f00dbeef1234567"}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeployBatch(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true}, "", testDeployEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy_batch", map[string]any{
+		"targets": []map[string]any{
+			{"sourceService": "apidev", "targetService": "apistage", "setup": "prod"},
+			{"sourceService": "appdev", "targetService": "appstage", "setup": "prod"},
+		},
+	})
+	if result.IsError {
+		t.Fatalf("tool returned error: %s", getTextContent(t, result))
+	}
+	var batch ops.DeployBatchResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &batch); err != nil {
+		t.Fatalf("parse batch result: %v", err)
+	}
+	if batch.Succeeded != 2 || len(batch.Entries) != 2 {
+		t.Fatalf("expected two successful deploys, got %+v", batch)
+	}
+	versions := map[string]string{"apistage": "av-api", "appstage": "av-app"}
+	for _, entry := range batch.Entries {
+		if entry.Result == nil {
+			t.Fatalf("missing result for %s", entry.Target.TargetService)
+		}
+		if entry.Result.SHA != ssh.headSHA || entry.Result.AppVersionID != versions[entry.Target.TargetService] || entry.Result.Status != statusDeployed {
+			t.Errorf("unexpected deploy result: %+v", entry.Result)
+		}
+	}
+	assertNoDeployTagOperations(t, ssh.calls)
+}

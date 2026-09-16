@@ -131,7 +131,7 @@ fi
 
 mkdir -p "results/$ZCP_FARM_SCENARIO" capture
 cat >"results/$ZCP_FARM_SCENARIO/meta.json" <<EOF
-{"scenarioId":"$ZCP_FARM_SCENARIO","secret1":"$CLAUDE_CODE_OAUTH_TOKEN","secret2":"$ZCP_FARM_S3_SECRET","secret3":"${ZCP_API_KEY:-}","secret4":"${ZCP_E2E_LAUNCH_KEY:-}"}
+{"scenarioId":"$ZCP_FARM_SCENARIO","secret1":"$CLAUDE_CODE_OAUTH_TOKEN","secret2":"$ZCP_FARM_S3_SECRET","secret3":"${ZCP_API_KEY:-}","secret4":"${ZCP_E2E_LAUNCH_KEY:-}","secret5":"${ZCP_E2E_GITHUB_PAT:-}","secret6":"${ZCP_E2E_GITHUB_PAT_ADMIN:-}"}
 EOF
 cat >"results/$ZCP_FARM_SCENARIO/verification.json" <<'EOF'
 {"formatVersion":"zcp-eval-verification-2","mode":"required","result":"passed"}
@@ -702,9 +702,10 @@ func TestWrapper_ScenarioTraversalKey_RefusesBeforeWrite(t *testing.T) {
 
 // TestWrapper_Redaction_NoSecretValueInBundle pins FM-7: every credential
 // value the wrapper holds — ZCP_FARM_S3_KEY/SECRET, CLAUDE_CODE_OAUTH_TOKEN,
-// ZCP_API_KEY, and ZCP_E2E_LAUNCH_KEY (redact_known_secrets' full set) — is
-// redacted from results/ and capture/ before upload. The stub evaluator
-// writes every secret value into results/<scenario>/meta.json and
+// ZCP_API_KEY, ZCP_E2E_LAUNCH_KEY, ZCP_E2E_GITHUB_PAT, and
+// ZCP_E2E_GITHUB_PAT_ADMIN (redact_known_secrets' full set) — is redacted
+// from results/ and capture/ before upload. The stub
+// evaluator writes every secret value into results/<scenario>/meta.json and
 // capture/manifest.json, and keeps an unredacted copy outside
 // results/capture (RUNDIR/pristine/meta.json) — so the test can prove the
 // values were genuinely present pre-redaction, not just absent because the
@@ -714,11 +715,13 @@ func TestWrapper_Redaction_NoSecretValueInBundle(t *testing.T) {
 
 	h := newWrapperHarness(t)
 	overrides := map[string]string{
-		"ZCP_FARM_S3_KEY":         "AKIDEXAMPLE-redact-me",
-		"ZCP_FARM_S3_SECRET":      "s3-secret-redact-me",
-		"CLAUDE_CODE_OAUTH_TOKEN": "oauth-tok-redact-me",
-		"ZCP_API_KEY":             "zcp-api-key-redact-me",
-		"ZCP_E2E_LAUNCH_KEY":      "launch-key-redact-me",
+		"ZCP_FARM_S3_KEY":          "AKIDEXAMPLE-redact-me",
+		"ZCP_FARM_S3_SECRET":       "s3-secret-redact-me",
+		"CLAUDE_CODE_OAUTH_TOKEN":  "oauth-tok-redact-me",
+		"ZCP_API_KEY":              "zcp-api-key-redact-me",
+		"ZCP_E2E_LAUNCH_KEY":       "launch-key-redact-me",
+		"ZCP_E2E_GITHUB_PAT":       "ghp-redact-me",
+		"ZCP_E2E_GITHUB_PAT_ADMIN": "ghp-admin-redact-me",
 	}
 	cmd := h.start(t, overrides)
 	if err := cmd.Wait(); err != nil {
@@ -727,7 +730,8 @@ func TestWrapper_Redaction_NoSecretValueInBundle(t *testing.T) {
 
 	secrets := []string{
 		overrides["ZCP_FARM_S3_KEY"], overrides["ZCP_FARM_S3_SECRET"], overrides["CLAUDE_CODE_OAUTH_TOKEN"],
-		overrides["ZCP_API_KEY"], overrides["ZCP_E2E_LAUNCH_KEY"],
+		overrides["ZCP_API_KEY"], overrides["ZCP_E2E_LAUNCH_KEY"], overrides["ZCP_E2E_GITHUB_PAT"],
+		overrides["ZCP_E2E_GITHUB_PAT_ADMIN"],
 	}
 
 	// Pristine copy (outside results/capture, so the wrapper never touches

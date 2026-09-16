@@ -181,6 +181,11 @@ func RegisterDeployBatch(
 				attempt.Error = fmt.Sprintf("deploy status %s", entry.Result.Status)
 				attempt.FailureClass = classifyDeployStatus(entry.Result.Status)
 			}
+			if entry.Result != nil {
+				attempt.SHA = entry.Result.SHA
+				attempt.AppVersionID = entry.Result.AppVersionID
+				attempt.Dirty = entry.Result.Dirty
+			}
 			_ = workflow.RecordDeployAttempt(stateDir, entry.Target.TargetService, attempt)
 		}
 

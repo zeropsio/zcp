@@ -2,8 +2,10 @@ package ops
 
 import (
 	"context"
+	"fmt"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -57,6 +59,49 @@ type DeployResult struct {
 	// Pattern library + classifier in deploy_failure.go +
 	// deploy_failure_signals.go (ticket E2).
 	FailureClassification *topology.DeployFailureClassification `json:"failureClassification,omitempty"`
+
+	// SHA is the commit hash this deploy shipped — set when zerops_deploy
+	// resolved an explicit sha (deploy-from-commit), AND when a
+	// working-tree deploy's SOURCE has a git repo with a reachable HEAD
+	// (docs/spec-workflows.md §4.9: ops/git.HeadStatus records it even
+	// without an explicit sha). Empty only when the source has no git
+	// repo at all (or no HEAD yet) — its source revision is unknown.
+	SHA string `json:"sha,omitempty"`
+	// Dirty is true when this deploy shipped uncommitted changes on top
+	// of SHA — only possible on the working-tree path (no explicit sha);
+	// the deploy-from-commit path always ships exactly SHA's tree, so it
+	// is always Dirty=false there. docs/spec-workflows.md §4.9.
+	Dirty bool `json:"dirty,omitempty"`
+	// AppVersionID is the platform appVersion id this build produced,
+	// filled by pollDeployBuild once the build event resolves. Empty
+	// until then, or on a failed/timed-out build. The tools layer threads
+	// SHA + AppVersionID into the recorded deploy attempt.
+	AppVersionID string `json:"appVersionId,omitempty"`
+	// VersionName is the --version-name value this deploy actually passed
+	// to zcli push, when it passed one (GF-10, docs/spec-workflows.md
+	// §12.6): SHA for a deploy-from-commit, or SHA with a "-dirty" suffix
+	// for a working-tree deploy whose source has uncommitted changes on
+	// top of HEAD. Empty when no flag was passed (no reachable HEAD). This
+	// is platform-side evidence only — NEVER proof of what was deployed
+	// (GF-5): correlate it with the resulting appVersion before treating
+	// the mapping as source-of-truth.
+	VersionName string `json:"versionName,omitempty"`
+
+	// NotCarried lists the self-deploy source's git-ignored paths that
+	// zcli's archiver never ships — present only on a self-deploy
+	// (DeployClassSelf) preflight read, and only when non-empty (docs/
+	// spec-workflows.md §8 DM, §12.6 GF-12). Cross-deploy never sets this
+	// (the target's own repo shape isn't what a cross-deploy ships).
+	NotCarried *git.NotCarried `json:"notCarried,omitempty"`
+	// EnvFiles lists .env / .env.* paths found in a self-deploy source's
+	// working tree regardless of git-ignore state (a tracked .env is
+	// still a config-in-a-file mistake) — GF-12, empty when none found.
+	EnvFiles []string `json:"envFiles,omitempty"`
+	// RepoState classifies a self-deploy source's working tree at
+	// preflight time — "clean" | "dirty" | "merging" | "rebasing" |
+	// "detached" (GF-12). Empty when the source has no repo yet, or on a
+	// cross-deploy (preflight is self-deploy only).
+	RepoState string `json:"repoState,omitempty"`
 }
 
 // GitPushResult contains the outcome of a git-push deploy operation.
@@ -126,6 +171,33 @@ func ClassifyDeploy(sourceService, targetService string) DeployClass {
 	return DeployClassCross
 }
 
+// dirtyCrossDeployWarning builds the DeployResult.Warnings sentence for a
+// working-tree (no explicit sha) deploy that shipped source's HEAD plus
+// uncommitted changes to a CROSS target (docs/spec-workflows.md §4.9,
+// §12.6 GF-5): the target now runs code that isn't reproducible from git
+// alone. Single owner for both transports — callers append its result
+// only when dirty is true and sha was empty; never on a self-deploy
+// (DM-7's repoState already reports that) and never on the explicit-sha
+// path (always clean, GF-3). An empty source selects the LOCAL wording
+// (ops.DeployLocal's source is the caller's own machine, not a named
+// Zerops service).
+func dirtyCrossDeployWarning(target, source, sha string) string {
+	short := sha
+	if len(short) > 7 {
+		short = short[:7]
+	}
+	if source == "" {
+		return fmt.Sprintf(
+			"%s received HEAD %s plus uncommitted changes — not reproducible from git. Commit and redeploy, or pass sha=%q to ship an exact commit.",
+			target, short, sha,
+		)
+	}
+	return fmt.Sprintf(
+		"%s received HEAD %s plus uncommitted changes from %s — not reproducible from git. Commit on %s and redeploy, or pass sha=%q to ship an exact commit.",
+		target, short, source, source, sha,
+	)
+}
+
 // SSHDeployer executes commands on remote Zerops services.
 //
 // Two exec shapes live on this interface intentionally:
@@ -143,4 +215,19 @@ func ClassifyDeploy(sourceService, targetService string) DeployClass {
 type SSHDeployer interface {
 	ExecSSH(ctx context.Context, hostname string, command string) ([]byte, error)
 	ExecSSHBackground(ctx context.Context, hostname string, command string, timeout time.Duration) ([]byte, error)
+}
+
+// deployShaTempCleanupTimeout bounds cleanupTempCtx's detached context — a
+// best-effort tmp-dir removal must not hang the caller indefinitely if the
+// runner (local shell or SSH) never returns.
+const deployShaTempCleanupTimeout = 30 * time.Second
+
+// cleanupTempCtx derives a context for a deferred tmp-dir removal
+// (git.RemoveTemp) that survives the parent ctx being canceled or timing
+// out — a sha deploy's cleanup runs in a `defer` after the push already
+// succeeded, and a caller-side cancellation (client disconnect, deploy
+// timeout) must not leave the extracted tree orphaned on the local disk or
+// inside the source container. Callers must invoke the returned cancel.
+func cleanupTempCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), deployShaTempCleanupTimeout)
 }

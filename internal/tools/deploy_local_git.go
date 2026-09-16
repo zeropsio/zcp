@@ -70,6 +70,20 @@ func readLocalZeropsYaml(workingDir string) string {
 	return ""
 }
 
+// localGitRunner adapts the local git binary into an ops.GitRunner: each
+// call runs `git -C workingDir <args...>` with terminal prompts disabled.
+// Used to probe remote divergence (ops.ProbeGitDivergence) after a
+// GIT_PUSH_NON_FAST_FORWARD rejection — never to push or mutate anything.
+// Unlike the container path, no credential helper is injected here: local
+// git-push already authenticates via the user's own local credentials
+// (SSH agent, OS credential manager), and the fetch step inherits them the
+// same way the push did.
+func localGitRunner(ctx context.Context, workingDir string) ops.GitRunner {
+	return func(args ...string) (string, error) {
+		return runGitWithEnv(ctx, workingDir, []string{"GIT_TERMINAL_PROMPT=0"}, args...)
+	}
+}
+
 // resolveTargetForValidation fetches the target ServiceStack from live
 // services so pre-deploy validation has the ServiceStackTypeID /
 // TypeVersionName required by the Zerops validator endpoint. Returns nil
@@ -230,21 +244,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 		"push", "origin", branch,
 	)
 	if pushErr != nil {
-		// Run the classifier against the git stderr — credential vs network
-		// vs ref-rejection all read differently and the agent's recovery
-		// path differs accordingly (E2).
-		gitWrap := &platform.SSHExecError{Hostname: "local-git", Output: pushOut, Err: pushErr}
-		classification := classifyTransportError(gitWrap, "git-push")
-		category := topology.FailureClassNetwork
-		if classification != nil {
-			category = classification.Category
-		}
-		record(fmt.Sprintf("git push: %v", pushErr), category)
-		return convertError(platform.NewPlatformError(
-			platform.ErrDeployFailed,
-			fmt.Sprintf("git push origin %s failed: %s", branch, truncateStderr(pushOut)),
-			"Check your local git credentials (SSH keys, credential manager) and the remote URL. For passphrase-protected keys, ensure ssh-agent is running.",
-		), WithRecoveryStatus(), WithFailureClassification(classification)), nil, nil
+		return handleLocalGitPushFailure(ctx, hostname, effectiveRemote, branch, workingDir, pushErr, record), nil, nil
 	}
 
 	status2 := "PUSHED"
@@ -293,6 +293,54 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 		WorkSessionState: sessionAnnotations(stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
 	}), nil, nil
+}
+
+// handleLocalGitPushFailure builds the error response for a failed local
+// `git push`. Extracted from handleLocalGitPush to keep it under the
+// maintainability-index ceiling: classifies the failure (credential /
+// network / config) and, for a non-fast-forward rejection, branches to the
+// structured GIT_PUSH_NON_FAST_FORWARD path (GF-11) instead of the generic
+// ErrDeployFailed — parity with the container path's equivalent branch in
+// handleGitPush. record is invoked exactly once.
+func handleLocalGitPushFailure(
+	ctx context.Context, hostname, effectiveRemote, branch, workingDir string,
+	pushErr error, record func(string, topology.FailureClass),
+) *mcp.CallToolResult {
+	// runGitWithEnv folds the real git stderr into pushErr.Error() (its
+	// first return is stdout only — git writes push progress/rejection
+	// text to stderr, so stdout is normally empty on failure). Use
+	// pushErr.Error() as the diagnosable detail; mirror it into
+	// gitWrap.Output so the classifier's SSHExecError.Output carries the
+	// same text the tools.withSSHStderr discipline expects elsewhere.
+	detail := truncateStderr(pushErr.Error())
+	gitWrap := &platform.SSHExecError{Hostname: "local-git", Output: detail, Err: pushErr}
+	classification := classifyTransportError(gitWrap, "git-push")
+	category := topology.FailureClassNetwork
+	if classification != nil {
+		category = classification.Category
+	}
+
+	// GF-11: a non-fast-forward rejection is a structured, non-destructive
+	// decision (rebase / merge / replace-remote) that belongs to the
+	// user — never the generic ErrDeployFailed, and zcp never
+	// force-pushes or merges on its own to resolve it.
+	if ops.IsNonFastForwardRejection(detail) {
+		rejection := classifyGitPushNonFastForward(localGitRunner(ctx, workingDir), effectiveRemote, branch)
+		record(fmt.Sprintf("git push rejected non-fast-forward: %s", detail), topology.FailureClassConfig)
+		return convertError(
+			newGitPushNonFastForwardError(hostname, detail),
+			WithFailureClassification(classification),
+			WithGitPushRejection(rejection),
+			WithRecoveryStatus(),
+		)
+	}
+
+	record(fmt.Sprintf("git push: %v", pushErr), category)
+	return convertError(platform.NewPlatformError(
+		platform.ErrDeployFailed,
+		fmt.Sprintf("git push origin %s failed: %s", branch, detail),
+		"Check your local git credentials (SSH keys, credential manager) and the remote URL. For passphrase-protected keys, ensure ssh-agent is running.",
+	), WithRecoveryStatus(), WithFailureClassification(classification))
 }
 
 // localGitPushResponse wraps the local git-push result with the

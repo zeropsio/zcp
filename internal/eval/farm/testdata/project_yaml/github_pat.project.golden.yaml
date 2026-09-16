@@ -1,0 +1,5 @@
+project:
+  name: zcp-farm-run-githubpat012
+  tags: [zcp-farm, disposable]
+  sshIsolation: "vpn project"
+services: []

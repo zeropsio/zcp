@@ -204,7 +204,7 @@ func runStudioDeploy(args []string) {
 		}
 	}
 
-	result, err := ops.DeployLocal(ctx, client, projectID, *authInfo, *service, setupName, *workingDir)
+	result, err := ops.DeployLocal(ctx, client, projectID, *authInfo, *service, setupName, *workingDir, "")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "deploy: %v\n", err)
 		os.Exit(1)

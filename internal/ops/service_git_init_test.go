@@ -45,6 +45,9 @@ func TestInitServiceGit_HappyPath(t *testing.T) {
 			t.Errorf("command missing %q\nfull command: %s", want, call.command)
 		}
 	}
+	if strings.Contains(call.command, "exclude") {
+		t.Errorf("command must NOT seed .git/info/exclude — zcp never authors ignore rules: %s", call.command)
+	}
 }
 
 // TestInitServiceGit_Idempotent verifies two back-to-back calls against

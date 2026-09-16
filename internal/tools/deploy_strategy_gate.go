@@ -40,6 +40,12 @@ func validateDeployStrategyParam(strategy string) error {
 			fmt.Sprintf("strategy %q is the internal label recorded into DeployAttempt — not a tool argument", deployStrategyZCLILabel),
 			fmt.Sprintf("Omit the strategy parameter to invoke the default zcli push (the path that records Strategy: %q in attempt history). Valid deploy strategies: omit (default push) or 'git-push'.", deployStrategyZCLILabel),
 		)
+	case deployStrategyRollbackLabel:
+		return platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("strategy %q is the internal label recorded into DeployAttempt for a rollback — not a tool argument", deployStrategyRollbackLabel),
+			"Roll back with appVersion=<id> (the recorded BACKUP appVersion to re-activate); omit the strategy parameter.",
+		)
 	default:
 		return platform.NewPlatformError(
 			platform.ErrInvalidParameter,

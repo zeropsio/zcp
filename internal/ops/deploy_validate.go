@@ -32,8 +32,6 @@ import (
 // contract, role-mode advisories). Post-build filesystem existence of
 // deployFiles paths is Zerops builder's authority, not ZCP's.
 func ValidateZeropsYml(workingDir, targetHostname, serviceType string, class DeployClass, roles ...topology.DeployRole) ([]string, error) {
-	var warnings []string
-
 	doc, err := ParseZeropsYml(workingDir)
 	if err != nil {
 		// Parse failures stay in the warnings channel (non-blocking): the
@@ -43,6 +41,30 @@ func ValidateZeropsYml(workingDir, targetHostname, serviceType string, class Dep
 		// channel is reserved for DM-2 (deploy-class contract) violations.
 		return []string{err.Error()}, nil //nolint:nilerr // parse error demoted to warning; authoritative validation is API-side
 	}
+	return validateZeropsYmlDoc(doc, targetHostname, serviceType, class, roles...)
+}
+
+// ValidateZeropsYmlContent is the content-based entry point for
+// ValidateZeropsYml's checks — used for a deploy-from-commit, which reads
+// zerops.yaml straight from the resolved commit (`git show
+// <sha>:zerops.yaml`, docs/spec-workflows.md §4.9) rather than a working
+// tree or SSHFS mount that may differ from what the commit will actually
+// ship. Same contract as ValidateZeropsYml (see its doc-comment);
+// ValidateZeropsYml itself delegates here after reading the file from
+// disk, so the two stay behaviorally identical for the same content.
+func ValidateZeropsYmlContent(content []byte, targetHostname, serviceType string, class DeployClass, roles ...topology.DeployRole) ([]string, error) {
+	doc, err := ParseZeropsYmlContent(content, "")
+	if err != nil {
+		return []string{err.Error()}, nil //nolint:nilerr // parse error demoted to warning; authoritative validation is API-side
+	}
+	return validateZeropsYmlDoc(doc, targetHostname, serviceType, class, roles...)
+}
+
+// validateZeropsYmlDoc holds the checks shared by ValidateZeropsYml
+// (path-based) and ValidateZeropsYmlContent (content-based) once the
+// document is already parsed.
+func validateZeropsYmlDoc(doc *ZeropsYmlDoc, targetHostname, serviceType string, class DeployClass, roles ...topology.DeployRole) ([]string, error) {
+	var warnings []string
 
 	if len(doc.Zerops) == 0 {
 		return []string{"zerops.yaml has no setup entries under 'zerops:' key"}, nil

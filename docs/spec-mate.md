@@ -1406,6 +1406,12 @@ only): a fact the env contract already owns, stated non-secretly, and the third 
 client's environment→project ref (§5.1). Additive only; a server too old to have the field is a
 server without it, never an error.
 
+zcp guarantees every mounted dev service's `/var/www/<host>` is already a git repository by the
+time mate would look — bootstrap runs the HEAD guarantee (GLC-1), adopt preserves existing history or creates a snapshot (GLC-7)
+(`docs/spec-workflows.md`'s Git Lifecycle section) — so mate never scans for one or falls back to
+initializing it itself; `ZeropsRepositorySource` still reads the mount table, not `.git`, to
+answer "which repositories exist" (§6.1 above).
+
 ### 6.2 The SSH executor
 
 Upstream has three git process paths, not one — `GitVcsDriverCore.executeRaw` (cwd form),

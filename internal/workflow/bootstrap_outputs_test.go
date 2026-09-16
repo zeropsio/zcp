@@ -1045,6 +1045,12 @@ func TestBuildTransitionMessage_Adoption_NoHelloWorld(t *testing.T) {
 	if !strings.Contains(msg, "develop") {
 		t.Error("adoption transition should mention develop workflow")
 	}
+	if !strings.Contains(msg, "repo") || !strings.Contains(msg, "provenance: initialized") {
+		t.Error("adoption transition should point at this response's envelope repo block and the provenance: initialized case that still needs a baseline commit")
+	}
+	if !strings.Contains(msg, "this response's envelope") {
+		t.Error("adoption transition should say the repo block rides THIS response's envelope (services[].repo), not send the agent to a separate status call")
+	}
 }
 
 // Bootstrap writes the meta keyed by the dev hostname regardless of

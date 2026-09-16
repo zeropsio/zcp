@@ -348,8 +348,9 @@ func TestReconcileGiteaRepositories_LeavesAUserRemoteAlone(t *testing.T) {
 	}
 }
 
-// TestDefaultPushBranch pins A5 at the delivery site: the default is `main`
-// everywhere except a Gitea pair, whose `main` is protected.
+// TestDefaultPushBranch pins A5 at the delivery site: the default is the
+// recorded tracked ref (GF-7), then — on a Gitea pair, whose `main` is
+// protected — the Mate's own branch, and `main` everywhere else.
 func TestDefaultPushBranch(t *testing.T) {
 	t.Parallel()
 
@@ -360,10 +361,10 @@ func TestDefaultPushBranch(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
-	if got := defaultPushBranch(plain, "appdev"); got != "main" {
+	if got := resolveTrackedBranch(plain, "appdev", ""); got != "main" {
 		t.Errorf("a plain pair defaults to %q, want main", got)
 	}
-	if got := defaultPushBranch(plain, "nobody"); got != "main" {
+	if got := resolveTrackedBranch(plain, "nobody", ""); got != "main" {
 		t.Errorf("an unknown service defaults to %q, want main", got)
 	}
 
@@ -375,8 +376,24 @@ func TestDefaultPushBranch(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
-	if got := defaultPushBranch(gitea, "appdev"); got != "mate/mate-p1" {
+	if got := resolveTrackedBranch(gitea, "appdev", ""); got != "mate/mate-p1" {
 		t.Errorf("a Gitea pair defaults to %q, want mate/mate-p1", got)
+	}
+
+	tracked := t.TempDir()
+	if err := workflow.WriteServiceMeta(tracked, &workflow.ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeSimple,
+		BootstrapSession: "t", BootstrappedAt: "2026-09-16",
+		TrackedRef: "release",
+		Gitea:      &workflow.GiteaRepoRef{FullName: "acme/appdev", Branch: "mate/mate-p1", DefaultBranch: "main"},
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	if got := resolveTrackedBranch(tracked, "appdev", ""); got != "release" {
+		t.Errorf("a recorded tracked ref wins, got %q, want release", got)
+	}
+	if got := resolveTrackedBranch(tracked, "appdev", "hotfix"); got != "hotfix" {
+		t.Errorf("an explicit branch wins, got %q, want hotfix", got)
 	}
 }
 

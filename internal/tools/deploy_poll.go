@@ -47,6 +47,7 @@ func pollDeployBuild(
 	if event.Status == statusActive {
 		result.Status = statusDeployed
 		result.MonitorHint = ""
+		result.AppVersionID = event.ID
 		// Post-deploy message is runtime-class-agnostic and strategy-agnostic
 		// (invariant DS-01, plans/dev-server-canonical-primitive.md):
 		// reports only what the platform told us, no liveness claims, no
@@ -60,11 +61,27 @@ func pollDeployBuild(
 		// runs across the 20260517-20260519 suite. Single source of truth
 		// for next-tool now lives on NextActions; pinned by
 		// TestDeployPostMessageHonesty.
-		result.Message = fmt.Sprintf("Successfully deployed to %s.", result.TargetService)
+		// A dirty working tree is recorded as HEAD plus uncommitted changes.
+		// Deploy history is held in ZCP attempts, never in git tags.
+		switch {
+		case result.SHA != "" && result.Dirty:
+			// A dirty working-tree deploy never claims "deployed commit
+			// X" — that implies exactly X's tree shipped, which a dirty
+			// tree contradicts (docs/spec-workflows.md §4.9).
+			result.Message = fmt.Sprintf("recorded: HEAD %s + uncommitted changes → %s (appVersion %s)",
+				shortSHA(result.SHA), result.TargetService, event.ID)
+		case result.SHA != "":
+			result.Message = fmt.Sprintf("deployed %s → %s (appVersion %s)",
+				shortSHA(result.SHA), result.TargetService, event.ID)
+		default:
+			result.Message = fmt.Sprintf("Successfully deployed to %s.", result.TargetService)
+		}
 		if result.SourceService == result.TargetService {
-			// Strategy-agnostic fact: push-dev replaces the container, which
-			// drops any prior SSH sessions. Agents holding open sessions
-			// from before the deploy need to reconnect.
+			// Strategy-agnostic fact: a self-deploy replaces the container,
+			// which drops any prior SSH sessions. Agents holding open sessions
+			// from before the deploy need to reconnect. Appended after every
+			// message shape — under GLC-1/2 a container self-deploy always
+			// has a repo, so SHA is set and the default branch never runs.
 			result.Message += " New container replaced old — prior SSH sessions are gone."
 		}
 		mode, class := resolveDeployTargetTopology(stateDir, result.TargetService, result.TargetServiceType)

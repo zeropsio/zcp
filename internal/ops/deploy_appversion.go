@@ -69,12 +69,19 @@ func RedeployLastAppVersion(
 			newest = v
 		}
 	}
+	// ACTIVE is deliberately NOT accepted here (live-verified 2026-09-14):
+	// the platform 400s (appVersionInvalidStatus) a PUT
+	// /app-version/{id}/deploy against the currently active version, so
+	// treating it as a redeployable "newest" status would always fail
+	// against the platform. Rolling an ACTIVE service's older BACKUP
+	// appVersion back into place is ops.ReactivateAppVersion's job
+	// (deploy_rollback.go), not this newest-only recovery path.
 	switch newest.Status {
-	case platform.BuildStatusDeployFailed, platform.ServiceStatusActive:
+	case platform.BuildStatusDeployFailed:
 	default:
 		return nil, fmt.Errorf(
-			"redeploy last app version: newest appVersion %s status is %s, want %s or %s",
-			newest.ID, newest.Status, platform.BuildStatusDeployFailed, platform.ServiceStatusActive,
+			"redeploy last app version: newest appVersion %s status is %s, want %s",
+			newest.ID, newest.Status, platform.BuildStatusDeployFailed,
 		)
 	}
 

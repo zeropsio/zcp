@@ -67,6 +67,7 @@ type WorkflowInput struct {
 	Service     string                     `json:"service,omitempty"     jsonschema:"Single-target runtime service hostname for action=git-push-setup and action=build-integration. Pair-keyed lookup honors stage hostnames (one ServiceMeta per dev/stage pair, indexed by either hostname)."`
 	BuildTarget string                     `json:"buildTarget,omitempty" jsonschema:"Optional for action=build-integration: pair hostname CI should build to, overriding the standard-pair default (stage receives builds). Set to the dev/push-source hostname to wire CI directly on it."`
 	GitToken    string                     `json:"gitToken,omitempty"    jsonschema:"Fine-grained PAT for action=git-push-setup confirm step (container env only). Required when remoteUrl is set in container mode. Handler probes the token against the remote BEFORE writing the service-scope secret or restarting — failed probe leaves project state untouched. Never echoed back in any response or state file."`
+	TrackedRef  string                     `json:"trackedRef,omitempty"  jsonschema:"Optional tracked ref for action=git-push-setup confirm (the branch stage/prod builds from). Overrides auto-detection; omit to let ZCP detect it. Recorded once."`
 	Force       FlexBool                   `json:"force,omitempty"       jsonschema:"Discard-and-replace flag for action=start workflow=develop. Required when the active session's services include a CloseDeployMode ∈ {manual, unset} and the new intent differs — auto-close cannot fire on those services, so the prior session needs an explicit close (or a force-discard via this flag) before a fresh session takes over (deploy-decomp P6 §3.4 Scenario D)."`
 
 	// Bootstrap route selection. The first call to action=start workflow=bootstrap
@@ -469,7 +470,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 			// appended inside handleLifecycleStatus (launchOverlayAddendum) — it
 			// no longer preempts and hides develop (the old launch-recovery
 			// short-circuit ran before handleLifecycleStatus).
-			return handleLifecycleStatus(ctx, engine, client, projectID, rt)
+			return handleLifecycleStatus(ctx, engine, client, projectID, rt, sshDeployer)
 		case workflow.FocusIdle: // no infra, no open work: launch recovery may take over.
 			// Mid-flight launch-production recovery: a non-terminal state file
 			// for this source project → resumable launch envelope. Read-only
@@ -485,11 +486,11 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 				corpus, _ := workflow.LoadAtomCorpus()
 				return renderLaunchTerminalRecovery(corpus, recent), nil, nil
 			}
-			return handleLifecycleStatus(ctx, engine, client, projectID, rt)
+			return handleLifecycleStatus(ctx, engine, client, projectID, rt, sshDeployer)
 		}
 		// Unreachable: ResolveLifecycle returns one of the four Focus values
 		// handled above; the compiler can't prove the switch exhaustive.
-		return handleLifecycleStatus(ctx, engine, client, projectID, rt)
+		return handleLifecycleStatus(ctx, engine, client, projectID, rt, sshDeployer)
 	case "close":
 		return handleWorkSessionClose(ctx, engine, client, projectID, rt, input)
 	case "resume":
@@ -910,11 +911,13 @@ func handleListSessions(engine *workflow.Engine) (*mcp.CallToolResult, any, erro
 // check and surfaces non-fresh / non-skipped results as a guidance line
 // so agents notice when `.env` has drifted from sources without having
 // to invoke generate-dotenv preview manually.
-func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info) (*mcp.CallToolResult, any, error) {
+func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
 	envelope, err := workflow.ComputeEnvelope(ctx, client, engine.StateDir(), projectID, rt, time.Now())
 	if err != nil {
 		return convertError(wrapStageErr("Compute envelope", err), WithRecoveryStatus()), nil, nil
 	}
+	attachRepoStatus(ctx, envelope.Services, sshDeployer, rt, engine.StateDir())
+	attachRollbackInfo(ctx, envelope.Services, client, projectID)
 	corpus, err := workflow.LoadAtomCorpus()
 	if err != nil {
 		return convertError(wrapStageErr("Load knowledge atoms", err), WithRecoveryStatus()), nil, nil

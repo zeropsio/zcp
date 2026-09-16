@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"s1","model":"fake"}
+{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ssh appdev 'cd /var/www && git log --oneline origin/main'"}}]}}
+{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_1","type":"tool_result","content":"6c752a9 farm baseline — reset by zcp eval farm"}]}}
+{"type":"assistant","message":{"id":"msg_2","role":"assistant","content":[{"type":"text","text":"Remote main má jen jeden placeholder commit, lokální main 18 commitů. Možnosti: replace-remote, merge, rebase. Který chceš použít?"}]}}
+{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"s1","result":"Remote main má jen jeden placeholder commit, lokální main 18 commitů. Možnosti: replace-remote, merge, rebase. Který chceš použít?"}

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/eval"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -886,6 +887,272 @@ func TestFarmRun_CreatesShellMintsTokenThenImportsService_InOrder(t *testing.T) 
 	}
 	if strings.Contains(manifest.Runs[0].RunTokenID, "launch-secret") {
 		t.Errorf("manifest.Runs[0].RunTokenID = %q looks like a token VALUE, not an id", manifest.Runs[0].RunTokenID)
+	}
+}
+
+// capturingImportClient wraps a PlatformClient and records the yaml body of
+// the last successful ImportServiceStack call — tests use it to assert on
+// envSecrets content createRun built into the descriptor (e.g. the
+// GitHub PAT injection), without needing fakeAccount itself to expose it.
+type capturingImportClient struct {
+	PlatformClient
+	mu   sync.Mutex
+	yaml string
+}
+
+func (c *capturingImportClient) ImportServiceStack(ctx context.Context, projectID, yaml string) (*platform.ImportResult, error) {
+	res, err := c.PlatformClient.ImportServiceStack(ctx, projectID, yaml)
+	if err == nil {
+		c.mu.Lock()
+		c.yaml = yaml
+		c.mu.Unlock()
+	}
+	return res, err
+}
+
+func (c *capturingImportClient) lastYAML() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.yaml
+}
+
+// TestFarmRun_RequiredGitHubPAT_MissingBlocksPreparationBeforeAnyProject
+// pins §2.4/§3.3: a scenario declaring eval.GitHubPATEnvVar in
+// requiredEnvVars, run against a controller with none of its own, is
+// blocked "resource ZCP_E2E_GITHUB_PAT missing" — the same shape
+// checkRequiredEnvVars already uses for the in-run check — before any
+// platform call is made (panicClient fails the test on any call).
+func TestFarmRun_RequiredGitHubPAT_MissingBlocksPreparationBeforeAnyProject(t *testing.T) {
+	// Not t.Parallel(): captureStderr swaps the process-wide os.Stderr.
+	f := newControllerFixture(t, "client-pat-missing")
+	batch := "batch-pat-missing"
+	scenarios := []ScenarioRun{{ID: "recipe-a", RequiredEnvVars: []string{eval.GitHubPATEnvVar}}}
+
+	opts := RunOptions{
+		Batch: batch, Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
+		Scenarios: scenarios, OAuthToken: "oauth-farm-token",
+		Sink:         Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:    time.Second,
+		PollInterval: time.Millisecond,
+		// GitHubPAT left empty — the controller has none of its own.
+	}
+
+	var results []RunResult
+	stderr := captureStderr(t, func() {
+		var err error
+		results, err = RunBatch(context.Background(), panicClient{t: t}, f.sink, opts)
+		if err != nil {
+			t.Fatalf("RunBatch: %v", err)
+		}
+	})
+
+	if len(results) != 1 {
+		t.Fatalf("results = %+v, want 1 entry", results)
+	}
+	rr := results[0]
+	if rr.Result != ResultBlocked {
+		t.Errorf("Result = %q, want %q", rr.Result, ResultBlocked)
+	}
+	wantMsg := "resource " + eval.GitHubPATEnvVar + " missing"
+	if !strings.Contains(rr.Error, wantMsg) {
+		t.Errorf("Error = %q, want it to contain %q", rr.Error, wantMsg)
+	}
+	if rr.ProjectID != "" {
+		t.Errorf("ProjectID = %q, want empty — no project was ever created", rr.ProjectID)
+	}
+	if !strings.Contains(stderr, wantMsg) {
+		t.Errorf("stderr = %q, want it to contain %q (D10)", stderr, wantMsg)
+	}
+}
+
+// TestFarmRun_RequiredGitHubPAT_PresentInjectsIntoServiceEnv pins the
+// injection half: when the controller's own GitHubPAT is set and the
+// scenario declares eval.GitHubPATEnvVar in requiredEnvVars, the rendered
+// service import yaml carries it as a sensitive env of the same name, and
+// the run proceeds normally.
+func TestFarmRun_RequiredGitHubPAT_PresentInjectsIntoServiceEnv(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-pat-present"
+	f := newControllerFixture(t, clientID)
+	capture := &capturingImportClient{PlatformClient: f.client}
+
+	batch := "batch-pat-present"
+	scenarios := []ScenarioRun{{ID: "recipe-a", RequiredEnvVars: []string{eval.GitHubPATEnvVar}}}
+	seedSettledRun(t, f.s3, testRunID(t, batch, "recipe-a"), "recipe-a", ResultPassed)
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
+		Scenarios: scenarios, OAuthToken: "oauth-farm-token",
+		Sink:         Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:    time.Second,
+		PollInterval: time.Millisecond,
+		GitHubPAT:    "github-pat-value",
+	}
+
+	results, err := RunBatch(context.Background(), capture, f.sink, opts)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if len(results) != 1 || results[0].Result != ResultPassed {
+		t.Fatalf("results = %+v, want 1 passed entry", results)
+	}
+	if !strings.Contains(capture.lastYAML(), `ZCP_E2E_GITHUB_PAT: "github-pat-value"`) {
+		t.Errorf("service import yaml missing injected PAT env, got:\n%s", capture.lastYAML())
+	}
+}
+
+// TestFarmRun_GitHubPAT_NotInjectedWhenScenarioDoesNotRequireIt pins the
+// scope half of §2.4: a controller GitHubPAT is never emitted into a run
+// whose scenario doesn't declare eval.GitHubPATEnvVar in requiredEnvVars,
+// even though the controller has one.
+func TestFarmRun_GitHubPAT_NotInjectedWhenScenarioDoesNotRequireIt(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-pat-unrequired"
+	f := newControllerFixture(t, clientID)
+	capture := &capturingImportClient{PlatformClient: f.client}
+
+	batch := "batch-pat-unrequired"
+	scenarios := []ScenarioRun{{ID: "recipe-a"}}
+	seedSettledRun(t, f.s3, testRunID(t, batch, "recipe-a"), "recipe-a", ResultPassed)
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
+		Scenarios: scenarios, OAuthToken: "oauth-farm-token",
+		Sink:         Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:    time.Second,
+		PollInterval: time.Millisecond,
+		GitHubPAT:    "github-pat-value",
+	}
+
+	results, err := RunBatch(context.Background(), capture, f.sink, opts)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if len(results) != 1 || results[0].Result != ResultPassed {
+		t.Fatalf("results = %+v, want 1 passed entry", results)
+	}
+	if strings.Contains(capture.lastYAML(), "ZCP_E2E_GITHUB_PAT") {
+		t.Errorf("service import yaml carries ZCP_E2E_GITHUB_PAT for a scenario that never declared it required:\n%s", capture.lastYAML())
+	}
+}
+
+// TestFarmRun_RequiredGitHubAdminPAT_MissingBlocksPreparationBeforeAnyProject
+// mirrors TestFarmRun_RequiredGitHubPAT_MissingBlocksPreparationBeforeAnyProject
+// for the FM-67 gitRepoCreate sibling PAT.
+func TestFarmRun_RequiredGitHubAdminPAT_MissingBlocksPreparationBeforeAnyProject(t *testing.T) {
+	// Not t.Parallel(): captureStderr swaps the process-wide os.Stderr.
+	f := newControllerFixture(t, "client-pat-admin-missing")
+	batch := "batch-pat-admin-missing"
+	scenarios := []ScenarioRun{{ID: "recipe-a", RequiredEnvVars: []string{eval.GitHubAdminPATEnvVar}}}
+
+	opts := RunOptions{
+		Batch: batch, Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
+		Scenarios: scenarios, OAuthToken: "oauth-farm-token",
+		Sink:         Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:    time.Second,
+		PollInterval: time.Millisecond,
+		// GitHubAdminPAT left empty — the controller has none of its own.
+	}
+
+	var results []RunResult
+	stderr := captureStderr(t, func() {
+		var err error
+		results, err = RunBatch(context.Background(), panicClient{t: t}, f.sink, opts)
+		if err != nil {
+			t.Fatalf("RunBatch: %v", err)
+		}
+	})
+
+	if len(results) != 1 {
+		t.Fatalf("results = %+v, want 1 entry", results)
+	}
+	rr := results[0]
+	if rr.Result != ResultBlocked {
+		t.Errorf("Result = %q, want %q", rr.Result, ResultBlocked)
+	}
+	wantMsg := "resource " + eval.GitHubAdminPATEnvVar + " missing"
+	if !strings.Contains(rr.Error, wantMsg) {
+		t.Errorf("Error = %q, want it to contain %q", rr.Error, wantMsg)
+	}
+	if rr.ProjectID != "" {
+		t.Errorf("ProjectID = %q, want empty — no project was ever created", rr.ProjectID)
+	}
+	if !strings.Contains(stderr, wantMsg) {
+		t.Errorf("stderr = %q, want it to contain %q (D10)", stderr, wantMsg)
+	}
+}
+
+// TestFarmRun_RequiredGitHubAdminPAT_PresentInjectsIntoServiceEnv mirrors
+// TestFarmRun_RequiredGitHubPAT_PresentInjectsIntoServiceEnv for the FM-67
+// gitRepoCreate sibling PAT.
+func TestFarmRun_RequiredGitHubAdminPAT_PresentInjectsIntoServiceEnv(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-pat-admin-present"
+	f := newControllerFixture(t, clientID)
+	capture := &capturingImportClient{PlatformClient: f.client}
+
+	batch := "batch-pat-admin-present"
+	scenarios := []ScenarioRun{{ID: "recipe-a", RequiredEnvVars: []string{eval.GitHubAdminPATEnvVar}}}
+	seedSettledRun(t, f.s3, testRunID(t, batch, "recipe-a"), "recipe-a", ResultPassed)
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
+		Scenarios: scenarios, OAuthToken: "oauth-farm-token",
+		Sink:           Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:      time.Second,
+		PollInterval:   time.Millisecond,
+		GitHubAdminPAT: "github-pat-admin-value",
+	}
+
+	results, err := RunBatch(context.Background(), capture, f.sink, opts)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if len(results) != 1 || results[0].Result != ResultPassed {
+		t.Fatalf("results = %+v, want 1 passed entry", results)
+	}
+	if !strings.Contains(capture.lastYAML(), `ZCP_E2E_GITHUB_PAT_ADMIN: "github-pat-admin-value"`) {
+		t.Errorf("service import yaml missing injected admin PAT env, got:\n%s", capture.lastYAML())
+	}
+}
+
+// TestFarmRun_GitHubAdminPAT_NotInjectedWhenScenarioDoesNotRequireIt mirrors
+// TestFarmRun_GitHubPAT_NotInjectedWhenScenarioDoesNotRequireIt for the
+// FM-67 gitRepoCreate sibling PAT.
+func TestFarmRun_GitHubAdminPAT_NotInjectedWhenScenarioDoesNotRequireIt(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-pat-admin-unrequired"
+	f := newControllerFixture(t, clientID)
+	capture := &capturingImportClient{PlatformClient: f.client}
+
+	batch := "batch-pat-admin-unrequired"
+	scenarios := []ScenarioRun{{ID: "recipe-a"}}
+	seedSettledRun(t, f.s3, testRunID(t, batch, "recipe-a"), "recipe-a", ResultPassed)
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
+		Scenarios: scenarios, OAuthToken: "oauth-farm-token",
+		Sink:           Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:      time.Second,
+		PollInterval:   time.Millisecond,
+		GitHubAdminPAT: "github-pat-admin-value",
+	}
+
+	results, err := RunBatch(context.Background(), capture, f.sink, opts)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if len(results) != 1 || results[0].Result != ResultPassed {
+		t.Fatalf("results = %+v, want 1 passed entry", results)
+	}
+	if strings.Contains(capture.lastYAML(), "ZCP_E2E_GITHUB_PAT_ADMIN") {
+		t.Errorf("service import yaml carries ZCP_E2E_GITHUB_PAT_ADMIN for a scenario that never declared it required:\n%s", capture.lastYAML())
 	}
 }
 
@@ -2354,6 +2621,183 @@ func TestRunBatch_MaxConcurrentZero_CreatesAll(t *testing.T) {
 	}
 	if len(results) != 5 {
 		t.Fatalf("results = %+v, want 5 entries", results)
+	}
+}
+
+// repoLaneTrackingClient wraps a PlatformClient and tracks, per gitRepoReset
+// lane (a test-supplied project-name -> repo mapping) and overall, how many
+// projects are simultaneously live — the independent oracle proving the
+// controller serializes only runs that share a repo (§3.3) and never holds
+// back an unrelated run (a different repo, or no repo at all): Peak/OverallPeak
+// are derived purely from the platform calls RunBatch actually made, never
+// from its own actives/resultsByRunID bookkeeping.
+type repoLaneTrackingClient struct {
+	PlatformClient
+	nameToRepo map[string]string // project name -> repo ("" = no lane)
+
+	mu          sync.Mutex
+	repoOfID    map[string]string
+	live        map[string]int
+	peak        map[string]int
+	overallLive int
+	overallPeak int
+}
+
+func newRepoLaneTrackingClient(client PlatformClient, nameToRepo map[string]string) *repoLaneTrackingClient {
+	return &repoLaneTrackingClient{
+		PlatformClient: client,
+		nameToRepo:     nameToRepo,
+		repoOfID:       make(map[string]string),
+		live:           make(map[string]int),
+		peak:           make(map[string]int),
+	}
+}
+
+func (c *repoLaneTrackingClient) CreateAndImportProject(ctx context.Context, yaml string) (*platform.ImportResult, error) {
+	res, err := c.PlatformClient.CreateAndImportProject(ctx, yaml)
+	if err != nil {
+		return res, err
+	}
+	repo := c.nameToRepo[res.ProjectName]
+	c.mu.Lock()
+	c.repoOfID[res.ProjectID] = repo
+	c.overallLive++
+	if c.overallLive > c.overallPeak {
+		c.overallPeak = c.overallLive
+	}
+	if repo != "" {
+		c.live[repo]++
+		if c.live[repo] > c.peak[repo] {
+			c.peak[repo] = c.live[repo]
+		}
+	}
+	c.mu.Unlock()
+	return res, err
+}
+
+func (c *repoLaneTrackingClient) DeleteProject(ctx context.Context, projectID string) (*platform.Process, error) {
+	res, err := c.PlatformClient.DeleteProject(ctx, projectID)
+	if err == nil {
+		c.mu.Lock()
+		c.overallLive--
+		if repo, ok := c.repoOfID[projectID]; ok {
+			if repo != "" {
+				c.live[repo]--
+			}
+			delete(c.repoOfID, projectID)
+		}
+		c.mu.Unlock()
+	}
+	return res, err
+}
+
+func (c *repoLaneTrackingClient) PeakFor(repo string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.peak[repo]
+}
+
+func (c *repoLaneTrackingClient) OverallPeak() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.overallPeak
+}
+
+// TestRunBatch_GitRepoReset_SerializesSharedRepo pins §3.3's gitRepoReset
+// serialization: two scheduled runs sharing a non-empty GitRepoReset value
+// never hold live projects at once — the scheduler settles the earlier one
+// before creating the later — while a run outside that lane (empty
+// GitRepoReset, or a different repo) is never held back by the gate.
+func TestRunBatch_GitRepoReset_SerializesSharedRepo(t *testing.T) {
+	t.Parallel()
+	const repoA = "https://github.com/acme/shared-a"
+	const repoB = "https://github.com/acme/shared-b"
+
+	tests := []struct {
+		name          string
+		batch         string
+		scenarios     []ScenarioRun
+		maxConcurrent int
+		wantPeakA     int
+		checkPeakB    bool
+		wantPeakB     int
+		wantOverall   int // overall peak this ordering must reach
+	}{
+		{
+			name:  "shared repo serializes, unrelated run stays concurrent",
+			batch: "batch-s12-shared",
+			scenarios: []ScenarioRun{
+				{ID: "s1", GitRepoReset: repoA},
+				{ID: "s2", GitRepoReset: repoA},
+				{ID: "s3"},
+			},
+			maxConcurrent: 0,
+			wantPeakA:     1,
+			wantOverall:   2, // s2 (repoA) + s3 (no lane) alive together once s1 has settled
+		},
+		{
+			name:  "two different repos run in independent lanes",
+			batch: "batch-s12-independent",
+			scenarios: []ScenarioRun{
+				{ID: "s4", GitRepoReset: repoA},
+				{ID: "s5", GitRepoReset: repoB},
+			},
+			maxConcurrent: 0,
+			wantPeakA:     1,
+			checkPeakB:    true,
+			wantPeakB:     1,
+			wantOverall:   2, // both alive together — different repos are never serialized against each other
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newControllerFixture(t, "client-"+tc.batch)
+			batch := tc.batch
+
+			nameToRepo := make(map[string]string, len(tc.scenarios))
+			for _, sc := range tc.scenarios {
+				runID := testRunID(t, batch, sc.ID)
+				nameToRepo[ProjectPrefix+runID] = sc.GitRepoReset
+				seedSettledRun(t, f.s3, runID, sc.ID, ResultPassed)
+			}
+			tracked := newRepoLaneTrackingClient(f.client, nameToRepo)
+
+			opts := RunOptions{
+				Batch: batch, ClientID: f.account.clientID, Set: "gate",
+				CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
+				Scenarios: tc.scenarios, OAuthToken: "oauth-token",
+				Sink:          Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+				RunBudget:     time.Hour,
+				PollInterval:  time.Millisecond,
+				MaxConcurrent: tc.maxConcurrent,
+			}
+
+			results, err := RunBatch(context.Background(), tracked, f.sink, opts)
+			if err != nil {
+				t.Fatalf("RunBatch: %v", err)
+			}
+			if len(results) != len(tc.scenarios) {
+				t.Fatalf("results = %+v, want %d entries", results, len(tc.scenarios))
+			}
+			for _, rr := range results {
+				if rr.Result != ResultPassed {
+					t.Errorf("result %+v, want Result=%q", rr, ResultPassed)
+				}
+			}
+			if peak := tracked.PeakFor(repoA); peak > tc.wantPeakA {
+				t.Errorf("peak live projects for repoA = %d, want <= %d", peak, tc.wantPeakA)
+			}
+			if tc.checkPeakB {
+				if peak := tracked.PeakFor(repoB); peak > tc.wantPeakB {
+					t.Errorf("peak live projects for repoB = %d, want <= %d", peak, tc.wantPeakB)
+				}
+			}
+			if overall := tracked.OverallPeak(); overall < tc.wantOverall {
+				t.Errorf("overall peak live projects = %d, want >= %d (a run outside the shared-repo lane must not be held back)", overall, tc.wantOverall)
+			}
+		})
 	}
 }
 

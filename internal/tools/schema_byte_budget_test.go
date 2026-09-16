@@ -69,12 +69,17 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// PA-6): the plan's per-runtime public-access intent
 		// ("" | auto | subdomain | none). Deliberate new field — optional,
 		// backward-compatible (omit → auto, today's behavior).
-		// Raised +108 (17834→17942) for action="group-recipe" (guide 2.2 /
+		// Raised +207 (17834→18041) for the `trackedRef` input on
+		// action=git-push-setup (GF-7, docs/spec-workflows.md §12.6): lets
+		// the agent explicitly name the branch stage/prod builds from,
+		// overriding auto-detection. Deliberate new field — optional,
+		// backward-compatible (omit → today's auto-detect-then-"main" path).
+		// Raised +108 (18041→18149) for action="group-recipe" (guide 2.2 /
 		// A2): the agent's way to ask for the group repo's recipe export and
 		// get its pull request. One enumerated action in the Action
 		// description; the explanation lives in the tool Description, which
 		// this budget does not cover.
-		"zerops_workflow":    17942,
+		"zerops_workflow":    18149,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services
@@ -90,7 +95,19 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// place, skipping source resolution entirely. Deliberate new
 		// field — optional, backward-compatible (omit → today's
 		// source-resolving deploy).
-		"zerops_deploy": 2153,
+		//
+		// Raised +154 (2153→2307) for the `sha` input (docs/spec-
+		// workflows.md §4.9): deploy an exact git commit instead of the
+		// working tree. Deliberate new field —
+		// optional, backward-compatible (omit → today's path unchanged).
+		//
+		// Raised +55 (2307→2362) for the `appVersion` description rewrite
+		// (docs/spec-workflows.md §12.6 GF-8): it now also documents an
+		// appVersion id re-activating a recorded BACKUP artifact (rollback,
+		// no build), not just "latest". Same field, wider contract — a
+		// correctness fix (tell == what the field now accepts), not new
+		// surface.
+		"zerops_deploy": 2362,
 		// Raised +62 (2484→2546) for the get-action contract change: get now
 		// returns env var KEYS + ${host_var} refs, NOT values, so the agent
 		// references $VAR by name instead of pasting a credential literal. The

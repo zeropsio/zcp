@@ -9,10 +9,15 @@ import (
 	"sync"
 
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
 const defaultWorkingDir = "/var/www"
+
+// DefaultWorkingDir is the container-side deploy working directory used
+// when the caller omits workingDir. Shared with the tools layer.
+const DefaultWorkingDir = defaultWorkingDir
 
 // GitIdentity holds user name and email for git commits.
 type GitIdentity struct {
@@ -76,6 +81,11 @@ func (m *keyedMutex) lock(ctx context.Context, key string) (func(), error) {
 //   - includeGit is derived from the source/target pair: true for self-deploy
 //     (the service pushes its own code, .git must stay), false for cross-deploy
 //     (dev→stage would otherwise carry the dev container's .git across).
+//
+// sha, when non-empty, switches the push to a deploy-from-commit: sha is
+// resolved and its tree extracted into a fresh temp dir inside the SOURCE
+// container (outside workingDir), then pushed from there with
+// --version-name <sha>. docs/spec-workflows.md §4.9.
 func DeploySSH(
 	ctx context.Context,
 	client platform.Client,
@@ -86,6 +96,7 @@ func DeploySSH(
 	targetService string,
 	setup string,
 	workingDir string,
+	sha string,
 ) (*DeployResult, error) {
 	if sshDeployer == nil {
 		return nil, platform.NewPlatformError(
@@ -107,7 +118,7 @@ func DeploySSH(
 	includeGit := SelfBuildTarget(sourceService, targetService)
 
 	return deploySSH(ctx, client, projectID, sshDeployer, authInfo,
-		sourceService, targetService, setup, workingDir, includeGit)
+		sourceService, targetService, setup, workingDir, includeGit, sha)
 }
 
 func deploySSH(
@@ -121,6 +132,7 @@ func deploySSH(
 	setup string,
 	workingDir string,
 	includeGit bool,
+	sha string,
 ) (*DeployResult, error) {
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
@@ -168,35 +180,125 @@ func deploySSH(
 	mountPath := filepath.Join("/var/www", sourceService)
 	serviceType := target.ServiceStackTypeInfo.ServiceStackTypeVersionName
 	class := ClassifyDeploy(sourceService, targetService)
-	if _, statErr := os.Stat(mountPath); statErr == nil {
-		var vErr error
-		warnings, vErr = ValidateZeropsYml(mountPath, setupName, serviceType, class)
-		// DM-2 violation is a hard error — deploy aborts, warnings (if
-		// any) travel with the error for visibility but the caller
-		// won't issue a push.
-		if vErr != nil {
-			return nil, vErr
-		}
-		// Pre-deploy API validation: Zerops checks the full zerops.yaml
-		// (field/syntax/version) server-side before we waste a build
-		// cycle on a YAML the platform will reject. Any failure —
-		// validation, transport, auth — aborts deploy.
-		if err := RunPreDeployValidation(ctx, client, target, setupName, mountPath); err != nil {
-			return nil, err
-		}
+
+	// Self-deploy guard on the sha path (docs/spec-workflows.md §4.9): a
+	// self-deploy from a commit would extract sha's tree and push
+	// --no-git, shipping no .git and losing the container's repository
+	// that the normal path keeps via -g (GLC-2). This must fire
+	// BEFORE any SSH round trip — not even the resolve call runs.
+	if sha != "" && class == DeployClassSelf {
+		return nil, platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("self-deploy from a commit sha is not supported for %q: extracting the commit's tree and pushing --no-git would ship no .git, losing the container's own repository", targetService),
+			"Deploy the working tree instead (omit sha), or cross-deploy this commit to another service (sourceService != targetService).",
+		)
 	}
 
-	cmd := buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit)
-
+	// Every git round trip against the source's shared /var/www tree —
+	// resolve/validate/record reads as well as the final push — is
+	// serialized per source so a concurrent batch deploy sharing a
+	// source cannot interleave git operations against the same repo
+	// (deploySourceGitLocks; TestDeployBatchSSH_SerializesPerSource).
 	unlockGit, lockErr := deploySourceGitLocks.lock(ctx, source.Name)
 	if lockErr != nil {
 		return nil, lockErr
 	}
-	var output []byte
-	func() {
-		defer unlockGit()
-		output, err = sshDeployer.ExecSSH(ctx, source.Name, cmd)
-	}()
+	defer unlockGit()
+
+	// Deploy-from-commit (docs/spec-workflows.md §4.9): sha is resolved and
+	// materialized INSIDE the source container, reached over SSH — never
+	// the SSHFS mount (docs/spec-mate.md §"git"), so this works whether or
+	// not the mount is present. Every step is a discrete SSH round trip;
+	// unlike buildSSHCommand's single combined command, correctness here
+	// matters more than round-trip count for a first slice.
+	//
+	// Validation reads whichever tree will actually be pushed: the sha
+	// branch validates the COMMIT's zerops.yaml (`git show
+	// <sha>:zerops.yaml`) — the SSHFS mount may be missing entirely or
+	// stale relative to an older/newer commit than what's on disk right
+	// now. The no-sha branch keeps validating the mount, unchanged.
+	resolvedSHA := ""
+	dirty := false
+	var notCarried *git.NotCarried
+	var envFiles []string
+	var repoState string
+	var cleanupTemp func()
+	gitRunner := git.SSHRunner{Executor: sshDeployer, Hostname: source.Name}
+	if sha != "" {
+		var newWorkingDir string
+		var prepErr error
+		resolvedSHA, warnings, newWorkingDir, cleanupTemp, prepErr = deployFromCommitPrep(
+			ctx, client, target, gitRunner, source.Name, workingDir, setupName, serviceType, class, sha)
+		if prepErr != nil {
+			return nil, prepErr
+		}
+		workingDir = newWorkingDir
+	} else {
+		if _, statErr := os.Stat(mountPath); statErr == nil {
+			var vErr error
+			warnings, vErr = ValidateZeropsYml(mountPath, setupName, serviceType, class)
+			// DM-2 violation is a hard error — deploy aborts, warnings (if
+			// any) travel with the error for visibility but the caller
+			// won't issue a push.
+			if vErr != nil {
+				return nil, vErr
+			}
+			// Pre-deploy API validation: Zerops checks the full
+			// zerops.yaml (field/syntax/version) server-side before we
+			// waste a build cycle on a YAML the platform will reject.
+			// Any failure — validation, transport, auth — aborts deploy.
+			if err := RunPreDeployValidation(ctx, client, target, setupName, mountPath); err != nil {
+				return nil, err
+			}
+		}
+		// Record every zcp deploy, not only the sha path (docs/spec-
+		// workflows.md §4.9): if the SOURCE has a git repo with a
+		// reachable HEAD, record what actually shipped — read-only,
+		// before the push, never altering the push command itself. No
+		// repo / no HEAD ⇒ no source revision, no warning, no behaviour change.
+		//
+		// Self-deploy additionally runs the combined GF-12 preflight (docs/
+		// spec-workflows.md §8 DM, §12.6): notCarried/envFiles/repoState
+		// facts, plus the two hard refusals — never a gate on the
+		// cross-deploy path, whose target's own repo shape a distinct
+		// source doesn't inherit.
+		if class == DeployClassSelf {
+			var pfErr error
+			resolvedSHA, dirty, repoState, notCarried, envFiles, pfErr = selfDeployPreflightFacts(ctx, gitRunner, workingDir, source.Name)
+			if pfErr != nil {
+				return nil, pfErr
+			}
+		} else if headSHA, isDirty, hasRepo, _ := git.HeadStatus(ctx, gitRunner, workingDir); hasRepo {
+			resolvedSHA = headSHA
+			dirty = isDirty
+			// GF-5: a dirty cross-deploy shipped code that isn't
+			// reproducible from git alone — say so where the agent will
+			// see it. Self-deploy is excluded by construction (this
+			// branch only runs when class == DeployClassCross); the
+			// explicit-sha branch above never reaches here at all.
+			if dirty {
+				warnings = append(warnings, dirtyCrossDeployWarning(target.Name, source.Name, resolvedSHA))
+			}
+		}
+	}
+	if cleanupTemp != nil {
+		defer cleanupTemp()
+	}
+
+	var cmd string
+	var versionName string
+	if sha != "" {
+		cmd = buildSSHCommandSHA(authInfo, target.ID, workingDir, setup, resolvedSHA)
+		versionName = resolvedSHA
+	} else {
+		// GF-10: a plain working-tree deploy also passes --version-name
+		// when the source has a reachable HEAD, with a "-dirty" suffix on
+		// top of an uncommitted working tree.
+		versionName = versionNameForHead(resolvedSHA, dirty)
+		cmd = buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit, versionName)
+	}
+
+	output, err := sshDeployer.ExecSSH(ctx, source.Name, cmd)
 	if err != nil {
 		if isSSHBuildTriggered(string(output)) {
 			// SSH connection dropped after successful zcli push (common exit 255).
@@ -208,9 +310,15 @@ func deploySSH(
 				TargetService:     targetService,
 				TargetServiceID:   target.ID,
 				TargetServiceType: target.ServiceStackTypeInfo.ServiceStackTypeVersionName,
-				Message:           fmt.Sprintf("Build triggered from %s to %s (SSH session closed after push)", sourceService, targetService),
+				Message:           appendPreflightNote(fmt.Sprintf("Build triggered from %s to %s (SSH session closed after push)", sourceService, targetService), notCarried, envFiles),
 				MonitorHint:       "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
 				Warnings:          warnings,
+				SHA:               resolvedSHA,
+				Dirty:             dirty,
+				VersionName:       versionName,
+				NotCarried:        notCarried,
+				EnvFiles:          envFiles,
+				RepoState:         repoState,
 			}, nil
 		}
 		return nil, classifySSHError(err, sourceService, targetService)
@@ -223,13 +331,165 @@ func deploySSH(
 		TargetService:     targetService,
 		TargetServiceID:   target.ID,
 		TargetServiceType: target.ServiceStackTypeInfo.ServiceStackTypeVersionName,
-		Message:           fmt.Sprintf("Build triggered from %s to %s via SSH", sourceService, targetService),
+		Message:           appendPreflightNote(fmt.Sprintf("Build triggered from %s to %s via SSH", sourceService, targetService), notCarried, envFiles),
 		MonitorHint:       "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
 		Warnings:          warnings,
+		SHA:               resolvedSHA,
+		Dirty:             dirty,
+		VersionName:       versionName,
+		NotCarried:        notCarried,
+		EnvFiles:          envFiles,
+		RepoState:         repoState,
 	}, nil
 }
 
-func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup string, includeGit bool) string {
+// selfDeployPreflightFacts runs the combined GF-12 self-deploy preflight
+// (docs/spec-workflows.md §8 DM-7/DM-8, §12.6) and turns it into the
+// values deploySSH's no-sha branch needs: the recorded HEAD sha/dirty
+// flag (same facts HeadStatus would report), repoState, notCarried, and
+// envFiles. Returns a *platform.PlatformError (as a plain error, so the
+// caller can return it directly) for the two hard refusals — GitIsFile /
+// HasSubmodules — and nil otherwise; the read itself never fails a plain
+// self-deploy (facts, never a gate).
+func selfDeployPreflightFacts(ctx context.Context, gitRunner git.SSHRunner, workingDir, sourceName string) (
+	resolvedSHA string, dirty bool, repoState string, notCarried *git.NotCarried, envFiles []string, err error,
+) {
+	preflight, _ := git.ReadSelfDeployPreflight(ctx, gitRunner, workingDir)
+	if preflight.GitIsFile {
+		return "", false, "", nil, nil, platform.NewPlatformError(
+			platform.ErrGitWorktreeUnsupported,
+			fmt.Sprintf("%s's .git is a regular file (a linked-worktree or submodule gitdir pointer), not a directory — a self-deploy archive carries only that pointer file, producing a broken repository in the replacement container", sourceName),
+			"This container can't self-deploy from a linked worktree or submodule checkout. Replace .git with a real repository (a fresh `git clone`, or copy the real gitdir contents in place of the pointer), or cross-deploy a resolved commit to a different target instead.",
+		)
+	}
+	if preflight.HasSubmodules {
+		return "", false, "", nil, nil, platform.NewPlatformError(
+			platform.ErrGitSubmodulesUnsupported,
+			fmt.Sprintf("%s has a .gitmodules file — a self-deploy archive (git archive, no --recurse-submodules) ships submodule directories EMPTY, so the replacement container would start without that code", sourceName),
+			"Vendor the submodule's content directly into the parent repository (remove .gitmodules, commit the files), or deploy a resolved commit sha to a different (cross) target instead.",
+		)
+	}
+	if preflight.HasRepo {
+		resolvedSHA = preflight.SHA
+		dirty = preflight.Dirty
+	}
+	repoState = preflight.RepoState
+	envFiles = preflight.EnvFiles
+	if preflight.NotCarried.Count > 0 {
+		nc := preflight.NotCarried
+		notCarried = &nc
+	}
+	return resolvedSHA, dirty, repoState, notCarried, envFiles, nil
+}
+
+// appendPreflightNote appends the GF-12 not-carried/env-files sentence to
+// message when the self-deploy preflight (docs/spec-workflows.md §8 DM,
+// §12.6) found anything to flag. Returns message unchanged when notCarried
+// is nil (or empty) and envFiles is empty — including every cross-deploy,
+// which never runs the preflight at all.
+func appendPreflightNote(message string, notCarried *git.NotCarried, envFiles []string) string {
+	var parts []string
+	if notCarried != nil && notCarried.Count > 0 {
+		parts = append(parts, fmt.Sprintf("%d ignored path(s) will not survive this deploy", notCarried.Count))
+	}
+	if len(envFiles) > 0 {
+		parts = append(parts, fmt.Sprintf(".env file(s) present (%s)", strings.Join(envFiles, ", ")))
+	}
+	if len(parts) == 0 {
+		return message
+	}
+	return message + " — " + strings.Join(parts, "; ") + "; configuration belongs in service env vars"
+}
+
+// deployFromCommitPrep resolves sha, validates the COMMIT's zerops.yaml (never the SSHFS mount, which
+// may be missing or stale relative to an arbitrary sha), and extracts the
+// commit's tree into a fresh temp dir. Returns the tmpDir as the
+// workingDir the caller should push from, plus a cleanup func the caller
+// must defer on success. docs/spec-workflows.md §4.9.
+func deployFromCommitPrep(
+	ctx context.Context,
+	client platform.Client,
+	target *platform.ServiceStack,
+	gitRunner git.SSHRunner,
+	sourceName, workingDir, setupName, serviceType string,
+	class DeployClass,
+	sha string,
+) (resolvedSHA string, warnings []string, newWorkingDir string, cleanupTemp func(), err error) {
+	resolved, resolveErr := git.ResolveSHA(ctx, gitRunner, workingDir, sha)
+	if resolveErr != nil {
+		return "", nil, "", nil, platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("sha %q did not resolve to a commit in %s on %s: %v", sha, workingDir, sourceName, resolveErr),
+			`Pass a commit sha reachable via "git rev-parse" in the source container's working dir.`,
+		)
+	}
+	resolvedSHA = resolved
+
+	// Same file-name fallback as ParseZeropsYml/DeployLocal: a pre-rename
+	// repo carries zerops.yml, and a working-tree deploy accepts it.
+	content, showErr := git.ReadFileAtCommit(ctx, gitRunner, workingDir, resolvedSHA, "zerops.yaml")
+	if showErr != nil {
+		content, showErr = git.ReadFileAtCommit(ctx, gitRunner, workingDir, resolvedSHA, "zerops.yml")
+	}
+	if showErr != nil {
+		return "", nil, "", nil, platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("commit %s has no zerops.yaml (or zerops.yml): %v", resolvedSHA[:min(10, len(resolvedSHA))], showErr),
+			"Add zerops.yaml to the commit being deployed, or deploy a different sha.",
+		)
+	}
+	var vErr error
+	warnings, vErr = ValidateZeropsYmlContent([]byte(content), setupName, serviceType, class)
+	// DM-2 violation is a hard error — deploy aborts, warnings (if any)
+	// travel with the error for visibility but the caller won't issue a
+	// push.
+	if vErr != nil {
+		return "", warnings, "", nil, vErr
+	}
+	// Pre-deploy API validation: Zerops checks the full zerops.yaml
+	// (field/syntax/version) server-side before we waste a build cycle on
+	// a YAML the platform will reject. Any failure — validation,
+	// transport, auth — aborts deploy.
+	if err := ValidatePreDeployContent(ctx, client, target, setupName, content); err != nil {
+		return "", warnings, "", nil, err
+	}
+
+	tmpDir, mkErr := git.MkTempDir(ctx, gitRunner)
+	if mkErr != nil {
+		return "", warnings, "", nil, fmt.Errorf("create archive tmp dir on %s: %w", sourceName, mkErr)
+	}
+	cleanup := func() {
+		cctx, cancel := cleanupTempCtx(ctx)
+		defer cancel()
+		_ = git.RemoveTemp(cctx, gitRunner, tmpDir)
+	}
+	if extractErr := git.ExtractCommitToTemp(ctx, gitRunner, workingDir, resolvedSHA, tmpDir); extractErr != nil {
+		cleanup()
+		return "", warnings, "", nil, fmt.Errorf("extract commit %s on %s: %w", resolvedSHA, sourceName, extractErr)
+	}
+	return resolvedSHA, warnings, tmpDir, cleanup, nil
+}
+
+// versionNameForHead formats a HeadStatus read into the --version-name
+// value a zcp-driven build passes (GF-10, docs/spec-workflows.md §12.6):
+// the resolved sha, with a "-dirty" suffix when the working tree carries
+// uncommitted changes on top of it — so SearchAppVersions.name is a
+// platform-side breadcrumb independent of local session history. Returns
+// "" when sha is empty (no reachable HEAD — unborn/no repo), so the
+// caller omits the flag entirely rather than passing a meaningless value.
+// Never itself a claim about what was deployed (GF-5) — that discipline
+// lives at the call site / evidence-reading layer.
+func versionNameForHead(sha string, dirty bool) string {
+	if sha == "" {
+		return ""
+	}
+	if dirty {
+		return sha + "-dirty"
+	}
+	return sha
+}
+
+func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup string, includeGit bool, versionName string) string {
 	// .git lifecycle (GLC-2 / GLC-3). Direct deploy is an ARTIFACT
 	// operation — it must reach a state where zcli's `--workspace-state
 	// all` archiver can snapshot the (possibly dirty) working tree, without
@@ -266,6 +526,9 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 		"ZEROPS_TOKEN=%s zcli push --service-id %s",
 		shellQuote(authInfo.Token), targetServiceID,
 	)
+	if versionName != "" {
+		pushArgs += " --version-name " + shellQuote(versionName)
+	}
 	if setup != "" {
 		pushArgs += " --setup " + shellQuote(setup)
 	}
@@ -274,4 +537,23 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 	}
 
 	return fmt.Sprintf("%s && %s", gitEnsure, pushArgs)
+}
+
+// buildSSHCommandSHA builds the push command for a resolved deploy-from-
+// commit: extractedDir already holds sha's tree (see ExtractCommitToTemp)
+// with no .git of its own, so — unlike buildSSHCommand — there is no
+// GitEnsureRepoHeadCommand step and no -g flag; --no-git is unconditional
+// and --version-name records the sha the platform can't otherwise see
+// (docs/spec-workflows.md §4.9, P1).
+func buildSSHCommandSHA(authInfo auth.Info, targetServiceID, extractedDir, setup, sha string) string {
+	// Same key discipline as buildSSHCommand: the token rides this one
+	// command's environment, never `zcli login` (guide 0.9).
+	pushArgs := fmt.Sprintf(
+		"ZEROPS_TOKEN=%s zcli push --service-id %s --no-git --version-name %s",
+		shellQuote(authInfo.Token), targetServiceID, shellQuote(sha),
+	)
+	if setup != "" {
+		pushArgs += " --setup " + shellQuote(setup)
+	}
+	return fmt.Sprintf("cd %s && %s", shellQuote(extractedDir), pushArgs)
 }

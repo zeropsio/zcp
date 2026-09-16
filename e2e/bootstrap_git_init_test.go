@@ -105,6 +105,16 @@ func TestE2E_InitServiceGit(t *testing.T) {
 		}
 	}
 
+	// GLC-1: zcp never seeds `.git/info/exclude` or writes a `.gitignore` —
+	// the agent owns the repo's ignore rules, guided.
+	excludeOut, err := sshExec(t, hostname, "cat /var/www/.git/info/exclude 2>/dev/null && echo EXCLUDE-END || echo EXCLUDE-END")
+	if err == nil {
+		before, _, _ := strings.Cut(excludeOut, "EXCLUDE-END")
+		if strings.TrimSpace(before) != "" {
+			t.Errorf(".git/info/exclude should be empty/absent — zcp never seeds it, got: %q", before)
+		}
+	}
+
 	// Idempotency: a second call against the same service must succeed
 	// without error and not change the on-disk state visibly.
 	if err := ops.InitServiceGit(ctx, ssh, hostname); err != nil {

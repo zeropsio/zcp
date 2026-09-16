@@ -59,6 +59,16 @@ type RunDescriptor struct {
 	// LaunchKey, when non-empty, is the per-run ZCP_E2E_LAUNCH_KEY minted by
 	// the controller for launch scenarios only (§2.4).
 	LaunchKey string
+	// GitHubPAT, when non-empty, is the farm host's ZCP_E2E_GITHUB_PAT —
+	// injected only for a run whose scenario declares that name in
+	// requiredEnvVars (§2.4, §3.3).
+	GitHubPAT string
+	// GitHubAdminPAT, when non-empty, is the farm host's own
+	// ZCP_E2E_GITHUB_PAT_ADMIN — injected only for a run whose scenario
+	// declares that name in requiredEnvVars (§2.4, §3.3 FM-67 sibling: the
+	// broader-scoped PAT a `gitRepoCreate` scenario's in-run create/delete
+	// needs).
+	GitHubAdminPAT string
 	// RunToken is the project-scoped ZCP_API_KEY the controller mints
 	// (platform.MintProjectScopedToken) after the project shell exists —
 	// required at ServiceImportYAML time only, since the project-creation
@@ -186,6 +196,12 @@ func ServiceImportYAML(d RunDescriptor) ([]byte, error) {
 	}
 	if d.LaunchKey != "" {
 		envSecrets = append(envSecrets, envKV{"ZCP_E2E_LAUNCH_KEY", d.LaunchKey})
+	}
+	if d.GitHubPAT != "" {
+		envSecrets = append(envSecrets, envKV{"ZCP_E2E_GITHUB_PAT", d.GitHubPAT})
+	}
+	if d.GitHubAdminPAT != "" {
+		envSecrets = append(envSecrets, envKV{"ZCP_E2E_GITHUB_PAT_ADMIN", d.GitHubAdminPAT})
 	}
 
 	data := serviceTemplateData{

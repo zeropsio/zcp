@@ -15,6 +15,7 @@ discover-adoption-state-resumable-uses-sessionid
 existing-simple-mode-node-add-endpoint
 export-buildfromgit-self-snapshot
 git-push-setup-then-actions
+git-push-setup-empty-remote
 greenfield-fullstack-multi-runtime
 launch-to-existing-prod-project
 onboard-guided-on
@@ -29,3 +30,8 @@ recover-build-failed
 env-service-scope-pair
 subdomain-user-disabled-stays-off
 custom-domain-present
+repo-always-adopt-baseline
+repo-always-bootstrap
+deploy-from-commit-stage
+dev-self-deploy-keeps-repo
+repo-adopt-initialized-no-git

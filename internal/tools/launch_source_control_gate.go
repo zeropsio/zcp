@@ -256,7 +256,7 @@ func validateLaunchSourceControl(
 	// push the code." Both run via the same launchPushProofReader hook
 	// so tests can stub the SSH/local exec without a real container.
 	if len(check.FailedChecks) == 0 {
-		proof, proofErr := launchPushProofReader(ctx, sshDeployer, rt, pushHost, check.MetaRemoteURL)
+		proof, proofErr := launchPushProofReader(ctx, sshDeployer, rt, pushHost, check.MetaRemoteURL, launchPushProofRef(meta))
 		switch {
 		case proofErr != nil:
 			// Unable to READ the push proof — transport, not state.
@@ -382,7 +382,9 @@ var launchGitPresenceReader = readLaunchGitPresence
 //	DirtyTree   — `git status --porcelain` on push hostname returned
 //	              non-empty (uncommitted/staged/untracked changes).
 //	LocalHead   — `git rev-parse HEAD` on push hostname.
-//	RemoteHead  — `git ls-remote <remoteURL> HEAD` (or default branch).
+//	RemoteHead  — `git ls-remote <remoteURL> <trackedRef>` (GF-7: the
+//	              recorded tracked ref, docs/spec-workflows.md §12.6 —
+//	              never the remote's symbolic default branch).
 //
 // Empty LocalHead OR empty RemoteHead OR mismatched LocalHead vs
 // RemoteHead all fail the gate (head-not-pushed). The reader returns
@@ -394,18 +396,47 @@ type LaunchPushProofResult struct {
 	RemoteHead string
 }
 
+// symbolicHeadRef is the git symbolic ref meaning "whatever the remote
+// considers its current/default branch" — the compare target every
+// push-proof read used before GF-7 introduced a recorded tracked ref.
+// One named constant so the fallback in launchPushProofRef reads as
+// the deliberate git-symbolic-ref choice it is, not a stray literal.
+const symbolicHeadRef = "HEAD"
+
+// launchPushProofRef is the single owner of what ref the P3 push-proof
+// `git ls-remote` compares against (docs/spec-workflows.md §12.6 GF-7,
+// amended): a RECORDED meta.TrackedRef is never softened — the compare
+// stays strict against that exact ref. A meta with NO recorded ref
+// (every ServiceMeta written before GF-7, since TrackedRef only starts
+// getting written by git-push-setup's confirm step going forward) falls
+// back to symbolicHeadRef — the pre-GF-7 behavior of comparing against
+// whatever the remote considers its default branch via `git ls-remote
+// <url> HEAD`. This is deliberately NOT trackedRefOrDefault's "main"
+// fallback: "main" assumes a specific branch name, which breaks every
+// pre-existing meta whose remote's actual default is something else
+// (e.g. "master") and who pushed there successfully before GF-7 —
+// turning a passing gate into a false head-not-pushed block. Nil-safe.
+func launchPushProofRef(meta *workflow.ServiceMeta) string {
+	if meta != nil && meta.TrackedRef != "" {
+		return meta.TrackedRef
+	}
+	return symbolicHeadRef
+}
+
 // readLaunchPushProof is the default env-aware push-proof reader.
 // Container mode SSH-execs `git status` + `git rev-parse HEAD` + `git
 // ls-remote` against the push hostname's /var/www; local mode exec's
-// the same commands against the current working directory.
-func readLaunchPushProof(ctx context.Context, sshDeployer ops.SSHDeployer, rt runtime.Info, pushHostname string, remoteURL string) (LaunchPushProofResult, error) {
+// the same commands against the current working directory. trackedRef
+// (GF-7) is the ref the ls-remote step compares against — callers resolve
+// it via launchPushProofRef before calling.
+func readLaunchPushProof(ctx context.Context, sshDeployer ops.SSHDeployer, rt runtime.Info, pushHostname string, remoteURL string, trackedRef string) (LaunchPushProofResult, error) {
 	if rt.InContainer {
 		if sshDeployer == nil {
 			return LaunchPushProofResult{}, fmt.Errorf("launch push-proof: SSH deployer unavailable in container mode")
 		}
-		return readLaunchPushProofContainer(ctx, sshDeployer, pushHostname, remoteURL)
+		return readLaunchPushProofContainer(ctx, sshDeployer, pushHostname, remoteURL, trackedRef)
 	}
-	return readLaunchPushProofLocal(ctx, remoteURL)
+	return readLaunchPushProofLocal(ctx, remoteURL, trackedRef)
 }
 
 // readLaunchPushProofContainer runs the three push-proof commands
@@ -415,7 +446,7 @@ func readLaunchPushProof(ctx context.Context, sshDeployer ops.SSHDeployer, rt ru
 // repos do not false-fail as `head-not-pushed`, and tools/ carries
 // no inline auth duplicate (the 2026-05-28 audit consolidation).
 // The session env is live per fresh SSH session, no restart coupling.
-func readLaunchPushProofContainer(ctx context.Context, ssh ops.SSHDeployer, pushHostname string, remoteURL string) (LaunchPushProofResult, error) {
+func readLaunchPushProofContainer(ctx context.Context, ssh ops.SSHDeployer, pushHostname string, remoteURL string, trackedRef string) (LaunchPushProofResult, error) {
 	statusCmd := fmt.Sprintf(`cd %s 2>/dev/null && git status --porcelain 2>/dev/null || true`, exportRepoRoot)
 	statusOut, err := ssh.ExecSSH(ctx, pushHostname, statusCmd)
 	if err != nil {
@@ -432,7 +463,7 @@ func readLaunchPushProofContainer(ctx context.Context, ssh ops.SSHDeployer, push
 
 	remote := ""
 	if remoteURL != "" {
-		lsOut, lsErr := ssh.ExecSSH(ctx, pushHostname, ops.BuildGitAuthedLsRemoteCommand(remoteURL))
+		lsOut, lsErr := ssh.ExecSSH(ctx, pushHostname, ops.BuildGitAuthedLsRemoteCommand(remoteURL, trackedRef))
 		if lsErr != nil {
 			return LaunchPushProofResult{}, fmt.Errorf("git ls-remote on %s: %w", pushHostname, lsErr)
 		}
@@ -446,7 +477,7 @@ func readLaunchPushProofContainer(ctx context.Context, ssh ops.SSHDeployer, push
 // runs with GIT_TERMINAL_PROMPT=0 + GIT_SSH_COMMAND='ssh -o BatchMode=yes'
 // so a missing credential helper fails fast instead of hanging the MCP
 // session on a credential prompt.
-func readLaunchPushProofLocal(ctx context.Context, remoteURL string) (LaunchPushProofResult, error) {
+func readLaunchPushProofLocal(ctx context.Context, remoteURL string, trackedRef string) (LaunchPushProofResult, error) {
 	// git status --porcelain
 	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
 	statusOut, err := statusCmd.Output()
@@ -464,7 +495,7 @@ func readLaunchPushProofLocal(ctx context.Context, remoteURL string) (LaunchPush
 
 	remote := ""
 	if remoteURL != "" {
-		lsCmd := exec.CommandContext(ctx, "git", "ls-remote", remoteURL, "HEAD")
+		lsCmd := exec.CommandContext(ctx, "git", "ls-remote", remoteURL, trackedRef)
 		lsCmd.Env = append(lsCmd.Environ(),
 			"GIT_TERMINAL_PROMPT=0",
 			"GIT_SSH_COMMAND=ssh -o BatchMode=yes",
@@ -498,7 +529,7 @@ var launchPushProofReader = readLaunchPushProof
 
 // setLaunchPushProofReader swaps the push-proof reader for tests.
 // Returns a cleanup func to restore the previous value via defer.
-func setLaunchPushProofReader(f func(ctx context.Context, ssh ops.SSHDeployer, rt runtime.Info, hostname string, remoteURL string) (LaunchPushProofResult, error)) func() {
+func setLaunchPushProofReader(f func(ctx context.Context, ssh ops.SSHDeployer, rt runtime.Info, hostname string, remoteURL string, trackedRef string) (LaunchPushProofResult, error)) func() {
 	prev := launchPushProofReader
 	launchPushProofReader = f
 	return func() { launchPushProofReader = prev }

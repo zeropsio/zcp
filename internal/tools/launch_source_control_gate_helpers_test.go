@@ -160,7 +160,7 @@ func defaultGateReadyPushProof(urlByHostname map[string]string) map[string]Launc
 // map with the failure shape (DirtyTree=true OR LocalHead!=RemoteHead).
 func installFakePushProofReader(t *testing.T, proofByHostname map[string]LaunchPushProofResult) {
 	t.Helper()
-	cleanup := setLaunchPushProofReader(func(_ context.Context, _ ops.SSHDeployer, _ runtime.Info, hostname string, _ string) (LaunchPushProofResult, error) {
+	cleanup := setLaunchPushProofReader(func(_ context.Context, _ ops.SSHDeployer, _ runtime.Info, hostname string, _ string, _ string) (LaunchPushProofResult, error) {
 		if p, ok := proofByHostname[hostname]; ok {
 			return p, nil
 		}

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -52,6 +53,13 @@ func OverrideRunnerForTest(r commandRunner) func() {
 // Always runs with --no-git; recipes that need committed history go
 // through strategy=git-push (handleLocalGitPush in the tool layer),
 // which drives the user's own git CLI on a separate code path.
+// sha, when non-empty, resolves via `git rev-parse --verify <sha>^{commit}`
+// in workingDir and switches the push to a deploy-from-commit: sha's tree is
+// extracted into a fresh temp dir OUTSIDE workingDir (git archive | tar -x,
+// never zcli's own --workspace-state archiver — see ops/git.
+// ExtractCommitToTemp), and the push runs from THAT tree with
+// --version-name <sha> instead of workingDir directly. docs/spec-workflows.md
+// §4.9.
 func DeployLocal(
 	ctx context.Context,
 	client platform.Client,
@@ -60,6 +68,7 @@ func DeployLocal(
 	targetService string,
 	setup string,
 	workingDir string,
+	sha string,
 ) (*DeployResult, error) {
 	// 1. Validate zcli.
 	if _, err := runner.LookPath("zcli"); err != nil {
@@ -104,6 +113,54 @@ func DeployLocal(
 		workingDir = "."
 	}
 
+	// 3b. Resolve sha (docs/spec-workflows.md §4.9). Explicit sha only —
+	// empty sha runs today's zcli push args unchanged (no git commands at
+	// all: no resolve, no extraction, no --version-name). The RESPONSE is
+	// not byte-identical, though: pollDeployBuild always fills
+	// AppVersionID from the resolved build event regardless of sha (tools/
+	// deploy_poll.go), so every successful deploy's JSON gains that field
+	// — a strict superset addition (omitempty), not a behavior change to
+	// any existing field. On sha resolution, sha's tree is extracted into
+	// a fresh temp dir OUTSIDE workingDir; every step below (yaml
+	// validation, push) reads from deployDir instead of workingDir, since
+	// deployDir is the exact
+	// tree being pushed.
+	deployDir := workingDir
+	var resolvedSHA string
+	var dirty bool
+	var dirtyWarning string
+	var cleanupTemp func()
+	if sha != "" {
+		var newDeployDir string
+		var prepErr error
+		resolvedSHA, newDeployDir, cleanupTemp, prepErr = deployLocalFromCommitPrep(ctx, workingDir, sha)
+		if prepErr != nil {
+			return nil, prepErr
+		}
+		deployDir = newDeployDir
+	} else {
+		// Record every zcp deploy, not only the sha path (docs/spec-
+		// workflows.md §4.9): if the SOURCE (the local working dir) has a
+		// git repo with a reachable HEAD, record what actually shipped —
+		// read-only, before the push, never altering the push args
+		// themselves. No repo / no HEAD ⇒ no source revision, no warning, no
+		// behaviour change.
+		if headSHA, isDirty, hasRepo, _ := git.HeadStatus(ctx, git.LocalRunner{}, workingDir); hasRepo {
+			resolvedSHA = headSHA
+			dirty = isDirty
+			// GF-5: DeployLocal is always cross-deploy (DM-1) — a dirty
+			// working tree shipped code that isn't reproducible from git
+			// alone. Empty source selects the LOCAL wording (there is no
+			// named Zerops source service to point at).
+			if dirty {
+				dirtyWarning = dirtyCrossDeployWarning(targetService, "", resolvedSHA)
+			}
+		}
+	}
+	if cleanupTemp != nil {
+		defer cleanupTemp()
+	}
+
 	// 4. Validate zerops.yaml exists. Try .yaml first (canonical Zerops
 	// convention — what every doc, recipe, and atom uses), fall back to
 	// .yml for repos created before the rename. Mirrors the same
@@ -112,13 +169,13 @@ func DeployLocal(
 	// under one name when the tool was looking for another (flow-eval-
 	// local suite 20260506-123002 burned five tool calls on the .yml-
 	// only check + .yaml-named error message disagreement).
-	yamlPath := filepath.Join(workingDir, "zerops.yaml")
+	yamlPath := filepath.Join(deployDir, "zerops.yaml")
 	if _, statErr := os.Stat(yamlPath); statErr != nil {
-		ymlPath := filepath.Join(workingDir, "zerops.yml")
+		ymlPath := filepath.Join(deployDir, "zerops.yml")
 		if _, statErr := os.Stat(ymlPath); statErr != nil {
 			return nil, platform.NewPlatformError(
 				platform.ErrInvalidParameter,
-				fmt.Sprintf("zerops.yaml not found in %s (also tried zerops.yml)", workingDir),
+				fmt.Sprintf("zerops.yaml not found in %s (also tried zerops.yml)", deployDir),
 				"Create zerops.yaml in your project directory. Use zerops_knowledge for examples.",
 			)
 		}
@@ -133,15 +190,18 @@ func DeployLocal(
 	// the source, the Zerops service is a distinct target. The deploy artifact
 	// overwrites the target's /var/www/ without touching the local working
 	// dir, so DM-2 (source-destruction) does not apply.
-	warnings, vErr := ValidateZeropsYml(workingDir, setupName, serviceType, DeployClassCross)
+	warnings, vErr := ValidateZeropsYml(deployDir, setupName, serviceType, DeployClassCross)
 	if vErr != nil {
 		return nil, vErr
+	}
+	if dirtyWarning != "" {
+		warnings = append(warnings, dirtyWarning)
 	}
 	// .deployignore lint surfaces every finding (artifact patterns and
 	// redundant entries alike) as warnings. The TEACH-side teaching
 	// lives in internal/knowledge/themes/core.md; deploy never blocks
 	// on filename-pattern matches here.
-	ignoreLint, ignoreErr := LintDeployignore(workingDir)
+	ignoreLint, ignoreErr := LintDeployignore(deployDir)
 	if ignoreErr != nil {
 		return nil, fmt.Errorf("lint .deployignore: %w", ignoreErr)
 	}
@@ -152,7 +212,7 @@ func DeployLocal(
 	// cycle is wasted. Any failure (validation, transport, auth) aborts
 	// deploy — no fallback: if Zerops is unreachable the push step would
 	// fail anyway.
-	if err := RunPreDeployValidation(ctx, client, target, setupName, workingDir); err != nil {
+	if err := RunPreDeployValidation(ctx, client, target, setupName, deployDir); err != nil {
 		return nil, err
 	}
 
@@ -172,12 +232,25 @@ func DeployLocal(
 		"push",
 		"--service-id", target.ID,
 		"--project-id", projectID,
-		"--working-dir", workingDir,
+		"--working-dir", deployDir,
 	}
 	if setup != "" {
 		args = append(args, "--setup", setup)
 	}
 	args = append(args, "--no-git")
+	// --version-name (GF-10, docs/spec-workflows.md §12.6): an explicit
+	// deploy-from-commit passes resolvedSHA verbatim (never dirty — it
+	// ships exactly sha's tree); a plain working-tree deploy passes it too
+	// when the source has a reachable HEAD, with a "-dirty" suffix when
+	// the working tree carries uncommitted changes on top. versionName is
+	// "" (flag omitted) only when there is no reachable HEAD at all.
+	versionName := resolvedSHA
+	if sha == "" {
+		versionName = versionNameForHead(resolvedSHA, dirty)
+	}
+	if versionName != "" {
+		args = append(args, "--version-name", versionName)
+	}
 	_, stderr, err = runner.Run(ctx, "zcli", args...)
 	if err != nil {
 		return nil, platform.NewPlatformError(
@@ -187,16 +260,54 @@ func DeployLocal(
 		)
 	}
 
+	message := fmt.Sprintf("Build triggered for %s via zcli push", targetService)
+	if sha != "" {
+		message = fmt.Sprintf("Build triggered for %s via zcli push (commit %s)", targetService, resolvedSHA)
+	}
 	return &DeployResult{
 		Status:            "BUILD_TRIGGERED",
 		Mode:              "local",
 		TargetService:     targetService,
 		TargetServiceID:   target.ID,
 		TargetServiceType: target.ServiceStackTypeInfo.ServiceStackTypeVersionName,
-		Message:           fmt.Sprintf("Build triggered for %s via zcli push", targetService),
+		Message:           message,
 		MonitorHint:       "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
 		Warnings:          warnings,
+		SHA:               resolvedSHA,
+		Dirty:             dirty,
+		VersionName:       versionName,
 	}, nil
+}
+
+// deployLocalFromCommitPrep resolves sha and extracts the commit's tree into a fresh temp dir
+// OUTSIDE workingDir. Returns the temp dir as the deployDir the caller
+// should push from, plus a cleanup func the caller must defer on success.
+// docs/spec-workflows.md §4.9.
+func deployLocalFromCommitPrep(ctx context.Context, workingDir, sha string) (resolvedSHA, deployDir string, cleanupTemp func(), err error) {
+	resolved, resolveErr := git.ResolveSHA(ctx, git.LocalRunner{}, workingDir, sha)
+	if resolveErr != nil {
+		return "", "", nil, platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("sha %q did not resolve to a commit in %s: %v", sha, workingDir, resolveErr),
+			`Pass a commit sha reachable via "git rev-parse" in workingDir.`,
+		)
+	}
+	resolvedSHA = resolved
+
+	tmpDir, mkErr := git.MkTempDir(ctx, git.LocalRunner{})
+	if mkErr != nil {
+		return "", "", nil, fmt.Errorf("create archive tmp dir: %w", mkErr)
+	}
+	cleanup := func() {
+		cctx, cancel := cleanupTempCtx(ctx)
+		defer cancel()
+		_ = git.RemoveTemp(cctx, git.LocalRunner{}, tmpDir)
+	}
+	if extractErr := git.ExtractCommitToTemp(ctx, git.LocalRunner{}, workingDir, resolvedSHA, tmpDir); extractErr != nil {
+		cleanup()
+		return "", "", nil, fmt.Errorf("extract commit %s: %w", resolvedSHA, extractErr)
+	}
+	return resolvedSHA, tmpDir, cleanup, nil
 }
 
 // lastLines is defined in deploy_classify.go

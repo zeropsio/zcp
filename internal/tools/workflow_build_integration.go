@@ -313,6 +313,9 @@ func actionsConfirmResponse(
 	// must ship .git (-g) or every CI build wipes the push source's git
 	// state (prod.txt T2).
 	selfTarget := ops.SelfBuildTarget(meta.Hostname, buildHost)
+	// GF-7: the CI template builds off the recorded tracked ref, falling
+	// back to "main" for a pre-existing meta (docs/spec-workflows.md §12.6).
+	trackedRef := trackedRefOrDefault(meta)
 
 	workflowDescription := "Default workflow: installs zcli directly and passes --setup, so it works when zerops.yaml has multiple setups or the setup must be selected explicitly."
 	if selfTarget {
@@ -332,7 +335,7 @@ func actionsConfirmResponse(
 			"variant":     "setup-aware-zcli",
 			"setup":       buildSetup,
 			"description": workflowDescription,
-			"content":     actionsWorkflowYAML(buildSetup, selfTarget),
+			"content":     actionsWorkflowYAML(buildSetup, selfTarget, trackedRef),
 		},
 		"secrets": []map[string]any{
 			{
@@ -367,7 +370,7 @@ func actionsConfirmResponse(
 				"path":        ".github/workflows/zerops.yml",
 				"variant":     "single-setup-action",
 				"description": "Use only when zerops.yaml has a single setup and no explicit --setup selection is required; zeropsio/actions exposes service-id/access-token only.",
-				"content":     actionsSingleSetupWorkflowYAML(),
+				"content":     actionsSingleSetupWorkflowYAML(trackedRef),
 			},
 		}
 	}
@@ -693,12 +696,12 @@ func resolveBuildTarget(meta *workflow.ServiceMeta, requestedService, override s
 // checkout must not persist its job-scoped GitHub credential into the
 // .git/config that -g ships into the runtime. Pair topologies (CI builds
 // the stage half) stay git-less, mirroring ZCP's cross-deploy semantics.
-func actionsWorkflowYAML(setupName string, selfTarget bool) string {
+func actionsWorkflowYAML(setupName string, selfTarget bool, trackedRef string) string {
 	if selfTarget {
 		return fmt.Sprintf(`name: Zerops deploy
 on:
   push:
-    branches: [main]
+    branches: [%s]
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -717,15 +720,17 @@ jobs:
           zcli login "$ZEROPS_TOKEN"
           # -g ships .git in the artifact: this service is its own push
           # source, and a deploy without it would wipe /var/www/.git.
-          zcli push --service-id "${{ secrets.ZEROPS_SERVICE_ID }}" --setup %s -g
+          # --version-name records the built commit (GF-10) so
+          # SearchAppVersions.name is a platform-side breadcrumb.
+          zcli push --service-id "${{ secrets.ZEROPS_SERVICE_ID }}" --setup %s -g --version-name "$GITHUB_SHA"
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-`, quoteShellLiteral(setupName))
+`, trackedRef, quoteShellLiteral(setupName))
 	}
 	return fmt.Sprintf(`name: Zerops deploy
 on:
   push:
-    branches: [main]
+    branches: [%s]
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -738,20 +743,24 @@ jobs:
       - name: Deploy to Zerops
         run: |
           zcli login "$ZEROPS_TOKEN"
-          zcli push --service-id "${{ secrets.ZEROPS_SERVICE_ID }}" --setup %s
+          # --version-name records the built commit (GF-10) so
+          # SearchAppVersions.name is a platform-side breadcrumb.
+          zcli push --service-id "${{ secrets.ZEROPS_SERVICE_ID }}" --setup %s --version-name "$GITHUB_SHA"
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-`, quoteShellLiteral(setupName))
+`, trackedRef, quoteShellLiteral(setupName))
 }
 
 // actionsSingleSetupWorkflowYAML returns the compact wrapper-action variant.
 // It intentionally does not support setup selection because zeropsio/actions
-// currently exposes no setup input.
-func actionsSingleSetupWorkflowYAML() string {
-	return `name: Zerops deploy
+// currently exposes no setup input; for the same reason it cannot pass
+// --version-name (GF-10 applies only to the setup-aware zcli variant, which
+// runs `zcli push` directly).
+func actionsSingleSetupWorkflowYAML(trackedRef string) string {
+	return fmt.Sprintf(`name: Zerops deploy
 on:
   push:
-    branches: [main]
+    branches: [%s]
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -761,7 +770,7 @@ jobs:
         with:
           access-token: ${{ secrets.ZEROPS_TOKEN }}
           service-id: ${{ secrets.ZEROPS_SERVICE_ID }}
-`
+`, trackedRef)
 }
 
 // actionsLookupServiceID is a thin wrapper around ops.LookupService that

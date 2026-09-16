@@ -47,6 +47,16 @@ type ServiceMeta struct {
 	GitPushState             topology.GitPushState     `json:"gitPushState,omitempty"`
 	RemoteURL                string                    `json:"remoteUrl,omitempty"` // cache; runtime source of truth = `git remote get-url origin`
 	BuildIntegration         topology.BuildIntegration `json:"buildIntegration,omitempty"`
+	// TrackedRef is the ref a target consumes — what stage or prod is built
+	// from (GF-7, docs/spec-workflows.md §12.6). Recorded ONCE by
+	// git-push-setup's confirm step: an explicit trackedRef input always
+	// wins; otherwise the push source's current branch is detected (its
+	// attached HEAD, else the remote's default branch), falling back to
+	// "main" when neither resolves. Every reader (git-push's default
+	// branch, the GitHub Actions template, the launch gate's remote-HEAD
+	// compare) applies the SAME "main" fallback when this is empty
+	// (pre-existing metas written before GF-7) — never re-detected here.
+	TrackedRef string `json:"trackedRef,omitempty"`
 	// BuildIntegrationVerifiedAt is the RFC3339 timestamp of the last
 	// EARNED verification of the declared BuildIntegration — a checkable
 	// signal ZCP observed, never the declaration itself:
@@ -121,6 +131,13 @@ type ServiceMeta struct {
 	// the zero value of PublicAccessRecord (whose Intent would be "").
 	PublicAccess map[string]topology.PublicAccessRecord `json:"publicAccess,omitempty"`
 
+	// Repo is the adopt-time baseline marker (docs/spec-workflows.md
+	// §8 GLC-7, G2) — which appVersion was running at adoption and
+	// whether adoption preserved existing history or created a snapshot.
+	// Neither provenance proves what built that appVersion. nil for a service bootstrapped
+	// fresh (no adopt step ran) or not yet adopted.
+	Repo *topology.Repo `json:"repo,omitempty"`
+
 	// Gitea is the pair's repository on the account's own Gitea, recorded
 	// when the broker gave it (guide 2.1). Absent on every pair whose remote
 	// is not that Gitea — which is every pair outside a Mate. Non-secret: a
@@ -128,6 +145,11 @@ type ServiceMeta struct {
 	// in any other file ZCP writes) — it lives where git-push-setup put it, a
 	// sensitive service env on the push source.
 	Gitea *GiteaRepoRef `json:"gitea,omitempty"`
+}
+
+// SetRepoBaseline records the adopt-time baseline marker for this meta.
+func (m *ServiceMeta) SetRepoBaseline(appVersionID string, provenance topology.RepoProvenance) {
+	m.Repo = &topology.Repo{BaselineAppVersion: appVersionID, Provenance: provenance}
 }
 
 // GiteaRepoRef is what a pair needs to keep working on its Gitea repository

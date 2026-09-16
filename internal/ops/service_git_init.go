@@ -21,6 +21,8 @@ import (
 // Composes ops.GitEnsureRepoHeadCommand — the single owner shared with
 // buildSSHCommand's safety-net and git-push-setup's pre-probe ensure, so
 // bootstrap and deploy paths can't drift on what "commit-ready" means.
+// Never seeds `.git/info/exclude` or writes a `.gitignore` — the agent
+// owns the repo's ignore rules, guided.
 func InitServiceGit(ctx context.Context, ssh SSHDeployer, hostname string) error {
 	if hostname == "" {
 		return platform.NewPlatformError(

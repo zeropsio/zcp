@@ -33,6 +33,7 @@ tags: [adopt, git-push-setup, build-integration, github-actions, node, czech-pro
 area: develop-cicd
 requiredEnvVars:
   - ZCP_E2E_GITHUB_PAT
+gitRepoReset: https://github.com/krls2020/eval2
 retrospective:
   promptStyle: briefing-future-agent
 verification:
@@ -52,10 +53,15 @@ verification:
   meta:
     - {hostname: appdev, field: gitPushState, expect: "configured"}
   containerCheck:
-    - {service: appdev, cmd: "ls /var/www/.github/workflows", match: "\\.ya?ml"}
+    # The workflow's home is ORIGIN, not the dev container: the Actions run
+    # this push triggers redeploys appdev from the GitHub runner with a
+    # deployFiles-filtered artifact, so /var/www/.github may legitimately be
+    # gone afterwards (observed gf-cargo-6). Read origin through the
+    # container's own GIT_TOKEN — the value never leaves the container.
+    - {service: appdev, cmd: "curl -sf -H \"Authorization: Bearer $GIT_TOKEN\" https://api.github.com/repos/krls2020/eval2/contents/.github/workflows | grep -o '\"name\": *\"[^\"]*\\.ya\\?ml\"'", match: "\\.ya?ml"}
   toolArg:
     - {never: "zerops_deploy{strategy≠git-push}"}
-  askWhen: [GIT_TOKEN_MISSING]
+  askWhen: [GIT_TOKEN_MISSING, GIT_PUSH_NON_FAST_FORWARD]
   never: ["zerops_import{override=true}", "zerops_delete"]
   retrospectiveMustNotMention:
     - ghp_
@@ -81,6 +87,13 @@ userPersona: |
      odmítni: "chci Actions na appdev — testuju build pipeline."
    - Pokud agent požaduje token v textu, řekni: "získej ho přes
      Bash, `echo $ZCP_E2E_GITHUB_PAT`."
+   - Repo na GitHubu má jen jeden placeholder commit (README), který
+     nemá nic společného s tvým kódem. Když se agent zeptá, jak
+     naložit s historií na remote (rebase / merge / replace-remote,
+     "non-fast-forward", "remote ahead", "unrelated"), odpověz:
+     "replace-remote — ten README commit klidně zahoď, chci tam svůj
+     appdev kód." Odpověz hned, je to tvoje rozhodnutí; agent ho bez
+     tebe udělat nesmí.
 
   Co odmítneš:
    - Agent chce promote do produkce → "tohle je jen CI setup, ne
@@ -97,6 +110,15 @@ userPersona: |
    - Žádné nové služby vytvořené, žádný redeploy
 
 notableFriction:
+  - id: remote-history-is-not-zcps-to-discard
+    description: |
+      The farm resets eval2 to a single unrelated baseline commit before
+      seed, so the first push from appdev is non-fast-forward — the shape
+      of a fresh GitHub repo created with a README. zcp classifies this
+      (GF-11: rebase, merge or replace-remote) and never force-pushes or
+      merges on its own; an agent that runs `git push --force` or a merge
+      without the user choosing is off-contract (gf-cargo-6 forced,
+      gf-cargo-3 merged — both improvised).
   - id: pat-permissions-enumeration
     description: |
       Agent musí enumerovat PŘESNÉ permissions požadované GitHub PAT

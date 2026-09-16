@@ -94,8 +94,8 @@ type ProjectSummary struct {
 // ServiceSnapshot is one service's point-in-time state inside the envelope.
 //
 // Per-pair deploy dimensions (CloseDeployMode / GitPushState /
-// BuildIntegration / RemoteURL) project ServiceMeta state onto the
-// envelope so atoms filter on the orthogonal post-decomposition
+// BuildIntegration / RemoteURL / TrackedRef) project ServiceMeta state onto
+// the envelope so atoms filter on the orthogonal post-decomposition
 // vocabulary. See plan
 // `plans/archive/deploy-strategy-decomposition-2026-04-28.md` §3.1 for
 // the orthogonality matrix.
@@ -120,6 +120,11 @@ type ServiceSnapshot struct {
 	GitPushState     topology.GitPushState     `json:"gitPushState,omitempty"`
 	BuildIntegration topology.BuildIntegration `json:"buildIntegration,omitempty"`
 	RemoteURL        string                    `json:"remoteUrl,omitempty"`
+	// TrackedRef mirrors ServiceMeta.TrackedRef (GF-7, docs/spec-workflows.md
+	// §12.6) — empty when no confirm has recorded one yet (readers apply the
+	// "main" fallback independently; the envelope shows the raw recorded
+	// value, never the derived default).
+	TrackedRef string `json:"trackedRef,omitempty"`
 	// FeedsProduction lists the production projects this pair was
 	// promoted into ("name (projectID)") — the F4 post-launch
 	// back-reference projected for render, so develop-side status can
@@ -140,6 +145,89 @@ type ServiceSnapshot struct {
 	// §ServiceMeta schema.
 	SetupName      string `json:"setupName,omitempty"`
 	StageSetupName string `json:"stageSetupName,omitempty"`
+
+	// Repo is the live repo state for this service (docs/spec-workflows.md
+	// §8 GLC-7, G1/G2) — nil for managed/unknown-class services (they never
+	// carry a working tree) and for any runtime service ApplyRepoStatus
+	// wasn't given a live read for. Populated by the tools layer via
+	// ApplyRepoStatus, never persisted on ServiceMeta or the bootstrap
+	// session — a fresh read every envelope computation.
+	Repo *RepoStatus `json:"repo,omitempty"`
+
+	// Rollback names this service's GF-8 rollback candidates (docs/spec-
+	// workflows.md §8 R2 generalised / §12.6 GF-8) — ids only, so an
+	// agent reads eligible `zerops_deploy targetService=<h> appVersion=<id>`
+	// targets straight off action="status" instead of probing
+	// zerops_deploy with a fake id or round-tripping zerops_events. Nil
+	// for managed/unknown-class services and for any runtime service
+	// ApplyRollbackInfo wasn't given a live read for. Populated by the
+	// tools layer via ApplyRollbackInfo, never persisted — a fresh read
+	// every envelope computation.
+	Rollback *RollbackInfo `json:"rollback,omitempty"`
+}
+
+// RollbackInfo is the per-service rollback-candidate id summary (docs/
+// spec-workflows.md §8 R2 / §12.6 GF-8). Active is empty when no
+// appVersion is currently active (a never-deployed service). Backup lists
+// every BACKUP (rollback-eligible) appVersion id, newest first — the
+// SAME candidates ops.AppVersionCandidates and zerops_events'
+// `appVersions` section carry, reduced to ids to keep the envelope small
+// (spec-mate.md §1 reducer rule).
+type RollbackInfo struct {
+	Active string   `json:"active,omitempty"`
+	Backup []string `json:"backup,omitempty"`
+}
+
+// RepoStatus is the per-service repository state. Present/Head are read live.
+// Baseline is the appVersion observed at adoption; it and Provenance come from
+// ServiceMeta.Repo and remain unchanged when HEAD advances. Neither field proves
+// a relationship between the current HEAD and the running appVersion.
+type RepoStatus struct {
+	Present    bool                    `json:"present"`
+	Head       string                  `json:"head,omitempty"`
+	Baseline   string                  `json:"baseline,omitempty"`
+	Provenance topology.RepoProvenance `json:"provenance,omitempty"`
+	// RepoState classifies the working tree at read time —
+	// "clean" | "dirty" | "merging" | "rebasing" | "detached" (docs/
+	// spec-workflows.md §12.6 GF-12). Empty when Present is false.
+	RepoState string `json:"repoState,omitempty"`
+}
+
+// ApplyRepoStatus attaches a live repo status to each service snapshot
+// that has one in statuses (keyed by hostname), skipping managed/unknown
+// services even if the caller mistakenly supplied one — a repo block
+// only ever makes sense for a service that runs application code.
+func ApplyRepoStatus(services []ServiceSnapshot, statuses map[string]RepoStatus) {
+	for i := range services {
+		if services[i].RuntimeClass == topology.RuntimeManaged || services[i].RuntimeClass == topology.RuntimeUnknown {
+			continue
+		}
+		st, ok := statuses[services[i].Hostname]
+		if !ok {
+			continue
+		}
+		copied := st
+		services[i].Repo = &copied
+	}
+}
+
+// ApplyRollbackInfo attaches per-service rollback candidate ids to each
+// service snapshot that has one in infos (keyed by hostname), skipping
+// managed/unknown services even if the caller mistakenly supplied one —
+// rollback only ever makes sense for a runtime service with app-version
+// history.
+func ApplyRollbackInfo(services []ServiceSnapshot, infos map[string]RollbackInfo) {
+	for i := range services {
+		if services[i].RuntimeClass == topology.RuntimeManaged || services[i].RuntimeClass == topology.RuntimeUnknown {
+			continue
+		}
+		info, ok := infos[services[i].Hostname]
+		if !ok {
+			continue
+		}
+		copied := info
+		services[i].Rollback = &copied
+	}
 }
 
 // WorkSessionSummary mirrors the persistent WorkSession at envelope build time.
@@ -181,6 +269,16 @@ type AttemptInfo struct {
 	Reason       string                `json:"reason,omitempty"`
 	FailureClass topology.FailureClass `json:"failureClass,omitempty"`
 	Summary      string                `json:"summary,omitempty"`
+	// SHA and AppVersionID mirror DeployAttempt's fields for a zcp deploy
+	// attempt (docs/spec-workflows.md §4.9) — set for an explicit
+	// deploy-from-commit AND for a working-tree deploy whose source had a
+	// git repo with a reachable HEAD. Deploy-only, both empty when the
+	// source had no repo at all, and for every verify attempt.
+	SHA          string `json:"sha,omitempty"`
+	AppVersionID string `json:"appVersionId,omitempty"`
+	// Dirty mirrors DeployAttempt.Dirty: true when this attempt shipped
+	// uncommitted changes on top of SHA. Deploy-only.
+	Dirty bool `json:"dirty,omitempty"`
 }
 
 // BootstrapSessionSummary is the bootstrap projection on the envelope used

@@ -346,24 +346,14 @@ type ScenarioBaseline struct {
 // The scenario.Prompt is sent as-is — no follow-up questions or assessment
 // instructions are appended (those would create observer effect; the whole
 // point of two-shot resume is the agent does not know it will be evaluated).
-// parseScenarioForRun loads the scenario at path, then renders its
-// {{runId}}/{{projectId}} placeholders with this run's suiteID and the
-// runner's project id (internal/eval/scenario_template.go), before any
-// seed/mutation for the run happens.
-func (r *Runner) parseScenarioForRun(path, suiteID string) (*Scenario, error) {
-	sc, err := ParseScenario(path)
-	if err != nil {
-		return nil, err
-	}
-	if err := sc.Render(TemplateValues{RunID: suiteID, ProjectID: r.projectID}); err != nil {
-		return nil, fmt.Errorf("scenario %s: %w", sc.ID, err)
-	}
-	return sc, nil
-}
-
+//
+// Its {{runId}}/{{projectId}}/{{gitRepoURL}} placeholders are rendered right
+// after prepareWorkOrFail succeeds, NOT at parse time: a gitRepoCreate
+// scenario's {{gitRepoURL}} value only exists once prepareBehavioralWork has
+// created the repository (internal/eval/scenario_template.go).
 func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteID string) (result *BehavioralResult, returnErr error) {
 	startedAt := time.Now()
-	sc, err := r.parseScenarioForRun(scenarioPath, suiteID)
+	sc, err := ParseScenario(scenarioPath)
 	if err != nil {
 		return nil, err
 	}
@@ -411,12 +401,13 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	// cleanup defer (when present) is registered BEFORE the bundle defer so
 	// it runs AFTER the bundle (LIFO): bundle → cleanup.
 	if !sc.IsRequired() {
-		defer func() {
-			if cleanErr := CleanupProject(context.WithoutCancel(ctx), r.client, r.projectID, r.config.WorkDir); cleanErr != nil {
-				fmt.Fprintf(os.Stderr, "warning: post-scenario cleanup: %v\n", cleanErr)
-			}
-		}()
+		defer r.cleanupAfterScenario(ctx)
 	}
+	// The gitRepoReset/gitRepoCreate cleanup (FM-67 + its sibling) is
+	// independent of project retention: it runs after the bundle in EVERY
+	// mode, so the next run (gitRepoReset's shared repo) or this run's own
+	// repo (gitRepoCreate) is never left behind.
+	defer r.cleanupGitRepoAfterScenario(ctx, sc)
 	defer func() {
 		r.finishBehavioralCapture(context.WithoutCancel(ctx), suiteID, sc.ID, scenarioPath, outDir, result, returnErr)
 	}()
@@ -663,7 +654,7 @@ func (r *Runner) recordScenarioBaseline(ctx context.Context, hostnames []string,
 func (r *Runner) prepareWorkOrFail(ctx context.Context, sc *Scenario, suiteID, outDir string, result *BehavioralResult, startedAt time.Time) bool {
 	errMsg, mismatch := r.prepareBehavioralWork(ctx, sc, suiteID, outDir)
 	if errMsg == "" && mismatch == "" {
-		return false
+		return r.renderScenarioOrFail(ctx, sc, suiteID, outDir, result, startedAt)
 	}
 	if mismatch != "" {
 		// FM-63: a seed.expect mismatch is preparation, not execution,
@@ -678,6 +669,24 @@ func (r *Runner) prepareWorkOrFail(ctx context.Context, sc *Scenario, suiteID, o
 	return true
 }
 
+// renderScenarioOrFail substitutes {{runId}}/{{projectId}}/{{gitRepoURL}}
+// into sc, right after prepareBehavioralWork succeeds — NOT at parse time —
+// so a gitRepoCreate scenario's {{gitRepoURL}} value (only known once
+// prepareBehavioralWork has created the repository) is available. Folded
+// into prepareWorkOrFail's own return, rather than a second top-level branch
+// in RunBehavioralScenario, purely to keep that function's maintainability
+// index in check. Returns true when Render failed, having already recorded
+// the execution error and frozen the task as not-run — the caller (via
+// prepareWorkOrFail) returns immediately.
+func (r *Runner) renderScenarioOrFail(ctx context.Context, sc *Scenario, suiteID, outDir string, result *BehavioralResult, startedAt time.Time) bool {
+	if err := sc.Render(TemplateValues{RunID: suiteID, ProjectID: r.projectID, GitRepoURL: sc.gitRepoCreatedURL}); err != nil {
+		result.Error = fmt.Sprintf("render scenario: %v", err)
+		r.notRunFailure(ctx, sc, outDir, result, startedAt)
+		return true
+	}
+	return false
+}
+
 // checkRequiredEnvVars returns "resource <NAME> missing" for the first
 // scenario.RequiredEnvVars entry that is unset or empty in the evaluator's
 // own environment (docs/spec-eval-farm.md §4.5 preparation extension;
@@ -690,6 +699,109 @@ func checkRequiredEnvVars(names []string) string {
 		}
 	}
 	return ""
+}
+
+// cleanupAfterScenario is the non-required-mode post-scenario defer body:
+// project cleanup. Factored out of RunBehavioralScenario purely to keep that
+// function's maintainability index in check (mirrors prepareWorkOrFail
+// below). A failure is only logged — the run's own result has already been
+// frozen by the time this runs.
+func (r *Runner) cleanupAfterScenario(ctx context.Context) {
+	if cleanErr := CleanupProject(context.WithoutCancel(ctx), r.client, r.projectID, r.config.WorkDir); cleanErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: post-scenario cleanup: %v\n", cleanErr)
+	}
+}
+
+// cleanupGitRepoAfterScenario runs sc's gitRepoReset/gitRepoCreate
+// post-scenario cleanup, once the run is over, in EVERY verification mode.
+// Folded into one deferred call (rather than two separate `if` blocks and
+// two separate `defer`s in RunBehavioralScenario) purely to keep that
+// function's maintainability index in check; a scenario declares at most
+// one of the two fields in practice, but both checks are cheap and
+// independent.
+func (r *Runner) cleanupGitRepoAfterScenario(ctx context.Context, sc *Scenario) {
+	if sc.GitRepoReset != "" {
+		r.resetSharedRepoAfterScenario(ctx, sc)
+	}
+	if sc.GitRepoCreate != "" {
+		r.deleteCreatedRepoAfterScenario(ctx, sc)
+	}
+}
+
+// resetSharedRepoAfterScenario resets sc.GitRepoReset once the run is over
+// (docs/spec-eval-farm.md §3.3 FM-67), in every verification mode — required
+// mode keeps its project (retention) but must still hand the shared repo
+// back clean. Only logged: the result is already frozen.
+func (r *Runner) resetSharedRepoAfterScenario(ctx context.Context, sc *Scenario) {
+	if err := r.gitRepoReset(context.WithoutCancel(ctx), sc); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: post-scenario git repo reset: %v\n", err)
+	}
+}
+
+// resetScenarioGitRepo resets sc.GitRepoReset to a clean single-commit
+// baseline (ResetGitHubRepo) using GitHubPATEnvVar from this process's own
+// environment. A scenario declaring gitRepoReset is expected to also
+// declare GitHubPATEnvVar in requiredEnvVars, so checkRequiredEnvVars has
+// already gated preparation on its presence by the time this runs; this
+// still checks for itself rather than trusting that declaration, since it
+// is also called from cleanup, past the requiredEnvVars gate.
+func resetScenarioGitRepo(ctx context.Context, sc *Scenario) error {
+	pat := os.Getenv(GitHubPATEnvVar)
+	if pat == "" {
+		return fmt.Errorf("%s not set in this process's environment", GitHubPATEnvVar)
+	}
+	return ResetGitHubRepo(ctx, sc.GitRepoReset, pat)
+}
+
+// deleteCreatedRepoAfterScenario deletes the repository a `gitRepoCreate`
+// scenario's runner created before seed (docs/spec-eval-farm.md §3.3 FM-67
+// sibling), in every verification mode. A no-op when creation never
+// succeeded (sc.gitRepoCreatedName empty) — nothing to delete. Only logged:
+// the result is already frozen.
+func (r *Runner) deleteCreatedRepoAfterScenario(ctx context.Context, sc *Scenario) {
+	if sc.gitRepoCreatedName == "" {
+		return
+	}
+	if err := r.gitRepoDelete(context.WithoutCancel(ctx), sc.GitRepoCreate, sc.gitRepoCreatedName); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: post-scenario git repo delete: %v\n", err)
+	}
+}
+
+// createScenarioGitRepo creates a fresh empty GitHub repository named name
+// under owner (CreateGitHubRepo) using GitHubAdminPATEnvVar from this
+// process's own environment. A scenario declaring gitRepoCreate is expected
+// to also declare GitHubAdminPATEnvVar in requiredEnvVars, so
+// checkRequiredEnvVars has already gated preparation on its presence by the
+// time this runs; this still checks for itself, mirroring
+// resetScenarioGitRepo's own discipline.
+func createScenarioGitRepo(ctx context.Context, owner, name string) (string, error) {
+	pat := os.Getenv(GitHubAdminPATEnvVar)
+	if pat == "" {
+		return "", fmt.Errorf("%s not set in this process's environment", GitHubAdminPATEnvVar)
+	}
+	return CreateGitHubRepo(ctx, owner, name, pat)
+}
+
+// deleteScenarioGitRepo is createScenarioGitRepo's cleanup half.
+func deleteScenarioGitRepo(ctx context.Context, owner, name string) error {
+	pat := os.Getenv(GitHubAdminPATEnvVar)
+	if pat == "" {
+		return fmt.Errorf("%s not set in this process's environment", GitHubAdminPATEnvVar)
+	}
+	return DeleteGitHubRepo(ctx, owner, name, pat)
+}
+
+// gitRepoCreateRepoName derives a `gitRepoCreate` scenario's fresh repo
+// name: "zcp-farm-<runId>" when suiteID is non-empty (the farm's run id,
+// unique per run — docs/spec-eval-farm.md §3.3, no serialization lane
+// needed since every run gets its own repository), or
+// "zcp-farm-<scenarioId>-<unix-nanos>" for a local/offline invocation with
+// no run id, so two manual runs never collide.
+func gitRepoCreateRepoName(sc *Scenario, suiteID string) string {
+	if suiteID != "" {
+		return "zcp-farm-" + suiteID
+	}
+	return fmt.Sprintf("zcp-farm-%s-%d", sc.ID, time.Now().UnixNano())
 }
 
 // prepareBehavioralWork runs requiredEnvVars check → seed → init → capture
@@ -708,6 +820,20 @@ func checkRequiredEnvVars(names []string) string {
 func (r *Runner) prepareBehavioralWork(ctx context.Context, sc *Scenario, suiteID, outDir string) (errMsg, mismatch string) {
 	if reason := checkRequiredEnvVars(sc.RequiredEnvVars); reason != "" {
 		return "", reason
+	}
+	if sc.GitRepoReset != "" {
+		if err := r.gitRepoReset(ctx, sc); err != nil {
+			return "", fmt.Sprintf("git repo %s not clean: %v", sc.GitRepoReset, err)
+		}
+	}
+	if sc.GitRepoCreate != "" {
+		name := gitRepoCreateRepoName(sc, suiteID)
+		url, err := r.gitRepoCreate(ctx, sc.GitRepoCreate, name)
+		if err != nil {
+			return "", fmt.Sprintf("git repo create %s/%s: %v", sc.GitRepoCreate, name, err)
+		}
+		sc.gitRepoCreatedName = name
+		sc.gitRepoCreatedURL = url
 	}
 	if err := r.seedScenario(ctx, sc, suiteID); err != nil {
 		return fmt.Sprintf("seed: %v", err), ""

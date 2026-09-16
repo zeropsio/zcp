@@ -1,6 +1,8 @@
 package ops
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // gitIdentityEnsureFragment returns the shell fragment that sets
 // user.email/user.name ONLY when currently absent — never stomping an
@@ -71,10 +73,13 @@ func gitHeadEnsureFragment() string {
 // GitEnsureRepoHeadCommand composes the full self-heal chain — init-if-
 // missing, set-if-absent identity, HEAD guarantee — as one standalone SSH
 // command body rooted at workingDir. Single owner for the "commit-ready
-// repo" invariant: InitServiceGit (bootstrap), buildSSHCommand's safety-net
-// (deploy), and git-push-setup's pre-probe ensure all compose from this same
-// function so the three guarantees can never drift out of step with each
-// other.
+// repo" invariant: InitServiceGit (bootstrap), buildSSHCommand's
+// safety-net (deploy), BuildGitOriginSyncCommand and
+// BuildGitReconstructCommand (git-push-setup), and git-push-setup's
+// pre-probe ensure all compose from this same function so the guarantees
+// can never drift out of step with each other. zcp never seeds
+// `.git/info/exclude` or authors a `.gitignore` — that's the agent's job,
+// guided (docs/spec-workflows.md §12.6, GF-2).
 func GitEnsureRepoHeadCommand(workingDir string) string {
 	return fmt.Sprintf("cd %s && (test -d .git || git init -q -b main) && %s && %s",
 		shellQuote(workingDir), gitIdentityEnsureFragment(), gitHeadEnsureFragment())

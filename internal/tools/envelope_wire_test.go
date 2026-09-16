@@ -32,7 +32,7 @@ func TestHandleLifecycleStatus_TextCarriesEnvelope(t *testing.T) {
 		})
 
 	result, structured, err := handleLifecycleStatus(
-		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true},
+		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true}, nil,
 	)
 	if err != nil {
 		t.Fatalf("handleLifecycleStatus: %v", err)

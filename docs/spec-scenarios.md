@@ -652,6 +652,7 @@ Legend: ↑ existing scenario to promote · ✚ scenario to write.
 | cell | scenario id | variation | oracle families | status |
 |---|---|---|---|---|
 | C1 ↑ | `git-push-setup-then-actions` (+ phase 2 absorbs `launch-with-existing-cicd`) | git-push + actions; usersim supplies the prepared PAT | meta containerCheck(.github/workflows) toolArg(no non-git-push deploy after setup) askWhen(GIT_TOKEN_MISSING) never | gate |
+| C6 ✚ | `git-push-setup-empty-remote` | git-push on a brand-new, genuinely EMPTY GitHub repo (farm creates + deletes it per run, no baseline commit) — first push must be a clean fast-forward, never the shared-repo sibling's non-fast-forward friction | meta containerCheck(.github/workflows) toolResult(remote state=empty) toolArg never | gate |
 | C2 | `launch-production-from-standard-pair` | new prod project | launchShape noFabricatedSecret never | gate |
 | C3 ↑ | `launch-to-existing-prod-project` | existing prod project token | launchShape toolResult(TOKEN_SCOPE_MISMATCH once) never | gate |
 | C4 ✚ | `webhook-delivery` | dashboard webhook on push | containerCheck(no Actions file) meta(buildIntegration=webhook) never | promote: meta |
@@ -689,6 +690,17 @@ no buildFromGit), so the agent has a place to fix source. `allowFailed` explicit
 | F2 | monorepo multi-`setup:` from the classic route | pending: scenario (baseline batch first) |
 | F3 | service deleted externally (§6.5 known gap) | pending: scenario |
 | L1-L3 | local-stage first deploy · local + managed over VPN · local-only adopt | pending: local mode in farm |
+
+#### G. Git foundation (docs/spec-workflows.md §4.9, §12, Git Lifecycle §8 GLC; a row enters the gate set once its scenario carries every family it names)
+
+| cell | scenario id | pre-state · task | oracle families | status |
+|---|---|---|---|---|
+| G1 ✚ | `repo-always-bootstrap` | brand-new classic pair · build a small API | expectedServices liveness containerCheck(HEAD reachable; identity set; no zcp tag; HEAD tree non-empty — zcp's marker is always the empty tree and zcp never stages files; `.gitignore` tracked; `node_modules` never tracked; `.env` never in HEAD) never | gate |
+| G2 ✚ | `repo-always-adopt-baseline` | unmanaged buildFromGit pair with history + planted user cargo (preseed) · connect to what I have | expectedServices unchanged containerCheck(cargo untouched: history, branch, tag, ref, dirty+untracked, exclude line, identity, origin; HEAD unmoved; no zcp tag) meta(repo.provenance=existing) never | gate |
+| G3 ✚ | `deploy-from-commit-stage` | pair, both buildFromGit-deployed, dev carries user cargo + a dirty tree (preseed) · ship what's on dev to stage, then report the exact commit running (never names sha/tool) | toolArg(targetService=appstage AND sha matches a hex regex, one call) toolResult(sha/appVersionId) liveness containerCheck(dev checkout untouched — same cargo set as G2, which is what forces sha= over committing the dirty tree) never | gate |
+| G4 ✚ | `dev-self-deploy-keeps-repo` | pair with one previous stage deploy + user cargo + `.env`/git-ignored file on dev (preseed) · change the response text, ship dev | liveness toolArg(targetService=appdev) toolResult(notCarried/envFiles) containerCheck(cargo travelled into the replacement container: history, branch, tag, ref, uncommitted content, exclude line, identity, origin; no zcp tag; git-ignored `cargo-ignored.txt` does NOT survive) never | gate |
+| G5 ✚ | `rollback-stage-from-ledger` | stage with 2 recorded deploys (preseed) · roll back to the previous version | seedExpect toolArg(targetService=appstage; appVersion=<id>, never latest; max 0 import; max 0 sha) mustOffer(no rebuild) never | pending: activeAppVersion |
+| G6 ✚ | `repo-adopt-initialized-no-git` | unmanaged pair, dev has NO repository, files + secret `.env` on disk (preseed) · connect to what I have (persona then wants `.gitignore` + a baseline commit) | expectedServices unchanged containerCheck(initialized: cargo tracked — zcp's adopt step never stages found files, so a tracked cargo file can only be the agent's; `.env` on disk, untracked, in no commit ever; `.gitignore` tracked with an `.env` rule; no tag; `rev-list --count HEAD` ≥ 1) meta(repo.provenance=initialized) never | gate |
 
 Deliberately not covered: recipe × simple (no simple-capable recipe in the
 catalog); iteration-cap auto-close (internal state, unit-tested, not a journey).

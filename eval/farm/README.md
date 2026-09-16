@@ -19,6 +19,8 @@ the operator credential file; `ZCP_FARM_PROJECT_ID` is new and non-secret:
 | `ZEROPS_API_KEY` | credential file — unused by `farm`, kept for other `zcp` commands |
 | `GIT_FARM_REPO` | credential file — unused by `farm` directly |
 | `ZCP_FARM_PROJECT_ID` | non-secret; the current farm project — `swY2yczpQlqVLlcz0fCyFA` |
+| `ZCP_E2E_GITHUB_PAT` | credential file — optional; only needed for a scenario declaring `gitRepoReset` (setup-then-actions) |
+| `ZCP_E2E_GITHUB_PAT_ADMIN` | credential file — optional; only needed for a scenario declaring `gitRepoCreate` (setup-empty-remote) and `farm gc`'s repo-cleanup pass |
 
 With `ZCP_FARM_PROJECT_ID` set, any `ZCP_FARM_*` key a verb needs and the
 environment doesn't already have — `ZCP_FARM_S3_URL/BUCKET/KEY/SECRET`,
@@ -40,7 +42,7 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/zcp-linux ./cmd/zcp
 # 2. Push each part; every push prints its digest. Pushing is always safe:
 #    parts are content-addressed, and `run` resolves the evaluator/wrapper
 #    pins once at kickoff, so a batch already running keeps the ones it started with.
-go run ./cmd/zcp eval farm push --evaluator /tmp/zcp-linux   # once per farm; writes evaluators/current
+go run ./cmd/zcp eval farm push --evaluator /tmp/zcp-linux   # writes evaluators/current — re-push whenever eval/oracle/runner code changed (the evaluator runs seed, preseed, gitRepoReset and every check; a new candidate alone does not carry them)
 go run ./cmd/zcp eval farm push --candidate /tmp/zcp-linux   # per batch
 go run ./cmd/zcp eval farm push --scenarios eval/behavioral/scenarios   # hashes .farm-gate-set.txt into the scenario tree; also writes a legacy sets/<digest>/gate.txt copy
 go run ./cmd/zcp eval farm push --wrapper eval/farm/wrapper.sh          # writes farm/wrapper/current

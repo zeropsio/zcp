@@ -80,6 +80,17 @@ type DeployAttempt struct {
 	Strategy     string                `json:"strategy,omitempty"`
 	Error        string                `json:"error,omitempty"`
 	FailureClass topology.FailureClass `json:"failureClass,omitempty"`
+	// SHA and AppVersionID mirror ops.DeployResult's fields for a zcp
+	// deploy attempt (docs/spec-workflows.md §4.9) — set both for an
+	// explicit deploy-from-commit AND for a working-tree deploy whose
+	// source had a git repo with a reachable HEAD; empty only when the
+	// source had no repo at all.
+	SHA          string `json:"sha,omitempty"`
+	AppVersionID string `json:"appVersionId,omitempty"`
+	// Dirty mirrors ops.DeployResult.Dirty: true when this attempt shipped
+	// uncommitted changes on top of SHA (working-tree path only — a
+	// deploy-from-commit is always Dirty=false).
+	Dirty bool `json:"dirty,omitempty"`
 }
 
 // VerifyAttempt is one zerops_verify invocation for a hostname.
