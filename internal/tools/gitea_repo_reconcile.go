@@ -25,6 +25,11 @@ import (
 // the ServiceMeta, where the rest of ZCP can already see it.
 const giteaStateDir = "gitea"
 
+// giteaProtectedBase is the branch a Mate lands on and never pushes: every
+// repository's `main` is protected (docs/vocabulary.md). It is the fallback
+// when the broker's answer named no default branch.
+const giteaProtectedBase = "main"
+
 // giteaWaitBackoff is how long a pass waits after an unproductive attempt
 // before trying again, doubling to giteaWaitBackoffMax. At sign-up the three
 // variables can land minutes after the Mate is up (guide 2.1), and the passes
@@ -198,7 +203,7 @@ func reconcileOneGiteaPair(
 
 	base := repo.DefaultBranch
 	if base == "" {
-		base = "main"
+		base = giteaProtectedBase
 	}
 	if err := workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
 		if !existed {

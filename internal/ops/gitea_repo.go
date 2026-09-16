@@ -183,7 +183,7 @@ func RequestMateRepository(ctx context.Context, httpClient HTTPDoer, brokerURL, 
 		return MateRepository{}, fmt.Errorf("broker /mate/repository response named no repository")
 	}
 	if repo.DefaultBranch == "" {
-		repo.DefaultBranch = "main"
+		repo.DefaultBranch = defaultBranch
 	}
 	return repo, nil
 }
@@ -254,11 +254,11 @@ func EnsureGiteaPullRequest(ctx context.Context, httpClient HTTPDoer, giteaURL, 
 		return 0, false, nil
 	}
 	if status != http.StatusCreated && status != http.StatusOK {
-		return 0, false, fmt.Errorf("Gitea pull-request create returned status %d", status)
+		return 0, false, fmt.Errorf("the Gitea pull-request create returned status %d", status)
 	}
 	var pr giteaPullRequest
 	if jsonErr := json.Unmarshal(body, &pr); jsonErr != nil {
-		return 0, false, fmt.Errorf("Gitea pull-request response was not valid JSON")
+		return 0, false, fmt.Errorf("the Gitea pull-request response was not valid JSON")
 	}
 	return pr.Number, true, nil
 }
@@ -273,7 +273,7 @@ func giteaOpenPullRequest(ctx context.Context, httpClient HTTPDoer, repoRoot, to
 		return 0, err
 	}
 	if status != http.StatusOK {
-		return 0, fmt.Errorf("Gitea pull-request list returned status %d", status)
+		return 0, fmt.Errorf("the Gitea pull-request list returned status %d", status)
 	}
 	var open []struct {
 		giteaPullRequest
@@ -285,7 +285,7 @@ func giteaOpenPullRequest(ctx context.Context, httpClient HTTPDoer, repoRoot, to
 		} `json:"base"`
 	}
 	if jsonErr := json.Unmarshal(body, &open); jsonErr != nil {
-		return 0, fmt.Errorf("Gitea pull-request list was not valid JSON")
+		return 0, fmt.Errorf("the Gitea pull-request list was not valid JSON")
 	}
 	for _, pr := range open {
 		if pr.Head.Ref == head && pr.Base.Ref == base {
@@ -314,7 +314,7 @@ func giteaAPICall(ctx context.Context, httpClient HTTPDoer, method, url, token s
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("Gitea API request failed (transport error)")
+		return nil, 0, fmt.Errorf("request to the Gitea API failed (transport error)")
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))

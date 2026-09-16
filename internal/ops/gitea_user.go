@@ -86,7 +86,7 @@ func DeriveGiteaIdentity(ctx context.Context, httpClient HTTPDoer, giteaURL, tok
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return GitIdentity{}, fmt.Errorf("Gitea /user request failed (transport error)")
+		return GitIdentity{}, fmt.Errorf("request to the Gitea /user endpoint failed (transport error)")
 	}
 	defer resp.Body.Close()
 
@@ -95,15 +95,15 @@ func DeriveGiteaIdentity(ctx context.Context, httpClient HTTPDoer, giteaURL, tok
 		return GitIdentity{}, fmt.Errorf("read Gitea /user response failed")
 	}
 	if resp.StatusCode != http.StatusOK {
-		return GitIdentity{}, fmt.Errorf("Gitea /user returned status %d", resp.StatusCode)
+		return GitIdentity{}, fmt.Errorf("the Gitea /user endpoint returned status %d", resp.StatusCode)
 	}
 
 	var parsed giteaUserAPIResponse
 	if jsonErr := json.Unmarshal(body, &parsed); jsonErr != nil {
-		return GitIdentity{}, fmt.Errorf("Gitea /user response was not valid JSON")
+		return GitIdentity{}, fmt.Errorf("the Gitea /user response was not valid JSON")
 	}
 	if parsed.Login == "" {
-		return GitIdentity{}, fmt.Errorf("Gitea /user response missing login")
+		return GitIdentity{}, fmt.Errorf("the Gitea /user response names no login")
 	}
 
 	name, email := topology.GiteaCommitIdentity(parsed.Login)
