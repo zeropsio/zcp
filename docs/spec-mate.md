@@ -710,9 +710,9 @@ carries that thumbprint, redeemable only with the matching proof.
 
 ### 3.3 The membership window
 
-The server holds no caller token and the platform has no member-list endpoint, so membership
-cannot be re-checked server-side. Instead the window IS the session's lifetime — but only for the
-sessions that can renew themselves. **The window follows the door, not the environment**: a grant
+The server holds no caller token and does not re-check membership with its own (any token can read
+the org's member list — `verified.md`, auth surface 2026-09-15 — but the door does not use it), so
+the window IS the session's lifetime — but only for the sessions that can renew themselves. **The window follows the door, not the environment**: a grant
 records which door minted it (`BootstrapGrant.method`, persisted on the pairing link), and
 `exchangeBootstrapCredentialForAccessToken` caps a session at
 `T3CODE_ZEROPS_MEMBERSHIP_TTL_SECONDS` (default 900s) iff that method is `zerops-identity` —
@@ -978,6 +978,21 @@ every reconnect to the same environment", "never writes into an environment some
 hand"; `clientMetadata.test.ts` — "names the device, so two clients on one container are told
 apart".
 
+One opening message is sent rather than composed. An environment this client created — the
+new-project wizard, or a new environment in a group — carries a **creation hand-off**
+(`creationHandoff.ts`): what the environment is, where its application came from, and the one job
+left. It takes the fixed prompt's place in the composer, and `useZeropsCreationJob` sends it once a
+coding agent is signed in and the thread can take it, retrying for up to 90 s. The hand-off is spent
+only when the send lands, so a reconnect, a second tab or a later visit says nothing, and a send that
+never lands leaves the job in the composer for the person to send.
+`creationHandoff.test.ts` — "says the job once everything it needs is there", "says nothing while no
+agent is signed in", "waits rather than gives up: the same input answers again once it is ready",
+"refuses an empty composer rather than reporting an empty send as sent".
+
+Open (kept in the auth-backbone plan until it lands): decided 2026-09-15, only the person's own words
+from *What are we building?* are sent by themselves; a generated hand-off is filled in and left for
+the person to send.
+
 ### Invariants
 
 | ID | Invariant |
@@ -989,7 +1004,7 @@ apart".
 | MC-5 | The mate descriptor is the readiness authority; a 5xx on either probe is always `unreachable`, never `predates-mate`; a pre-mate and an unreachable container get the same "Enable Zerops Mate" offer. `containerHealth.test.ts` — "treats the mate descriptor as the authority, and asks nothing else once it answers", "never reads a 5xx as a container that predates Zerops Mate". |
 | MC-6 | The Zerops access token appears in exactly one request body field during identity connect, never a header. `onboarding.zerops.test.ts` — "puts the Zerops token in the identity request and nowhere else". |
 | MC-7 | `VSCODE_PASSWORD` is generated client-side, sent once, and never read back; a container with a public subdomain always carries one. `newProject.test.ts` — "generates the container password, sends it, and forgets it", "never emits a container with a public subdomain and no password". |
-| MC-8 | The first onboarding prompt is composed into the composer, sent once per newly connected identity-door environment, never on reconnect or for a manually paired one. `firstPrompt.test.ts` — "composes once for a freshly connected Zerops environment", "stays quiet on every reconnect to the same environment", "never writes into an environment somebody paired by hand". |
+| MC-8 | The first onboarding prompt is composed into the composer once per newly connected identity-door environment, never on reconnect or for a manually paired one; a creation's hand-off takes its place and is the one opening message sent by itself, and only once a coding agent is signed in. `firstPrompt.test.ts` — "composes once for a freshly connected Zerops environment", "stays quiet on every reconnect to the same environment", "never writes into an environment somebody paired by hand"; `creationHandoff.test.ts` — "says nothing while no agent is signed in". |
 | MC-9 | "Enable Zerops Mate" WRITES `ZCP_MATE_ENABLED` and then restarts — a restart alone returns the container to the identical state, because `zcp init` registers no mate step without the flag (§2.0). The write is an upsert (delete-then-create, `sensitive` required, never the bulk env-file PUT), and a flag already reading as on is left untouched rather than rewritten. `api.test.ts` — "writes the Zerops Mate flag before restarting a container that lacks it", "replaces a Zerops Mate flag that is present but switched off", "writes nothing when the flag already reads as on, and still restarts". |
 | MC-10 | The Zerops account session fails closed at the outer product mount: only `signed-in` mounts routed/background product surfaces; `loading`, `signed-out`, and `totp-required` mount only account login, while `/zerops_/authorized` stays bare. `-accountGate.test.ts`, `AppRoot.test.tsx`, `ZeropsHostedLanding.test.tsx`. |
 | MC-11 | The agent selection reaches the container as `ZCP_AGENTS` (presentation policy, canonical order), and an EMPTY selection omits the key rather than emitting `""` — absent offers every agent, empty offers none. `ZCP_AGENT_AUTH_TYPE_*` is GUI parity with no in-container reader, and no agent token is ever written to the import document. `newProject.test.ts` — "never emits ZCP_AGENTS at all when the list is absent or empty", "emits ZCP_AGENTS as a comma-separated list in canonical order". |
