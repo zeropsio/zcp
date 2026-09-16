@@ -151,6 +151,41 @@ func TestE2E_GiteaBackboneLive(t *testing.T) {
 	})
 	t.Logf("CLOSE COMPLETE:\n%s", closeText)
 
+	// A1's branch must DESCEND from the repository's protected `main`. The
+	// broker's `main` is born with an initial commit and zcp git-initialises
+	// the pair with a history of its own; a branch off that history shares no
+	// commit with `main`, and Gitea then refuses both `merge` and `squash` on
+	// the pull request.
+	branch := devSSH(t, devHostname, "cd /var/www && git rev-parse --abbrev-ref HEAD")
+	t.Logf("BRANCH: %q", branch)
+	if !strings.HasPrefix(branch, "mate/") {
+		t.Errorf("the pair works on %q, want the Mate's own mate/{bot} branch", branch)
+	}
+	if out, err := devSSHErr(devHostname, "cd /var/www && git merge-base --is-ancestor origin/main HEAD"); err != nil {
+		t.Errorf("the pair's branch does not descend from origin/main (%v): %s\n%s",
+			err, out, devSSH(t, devHostname, "cd /var/www && git log --oneline --all | head -20"))
+	}
+
+	// A3: the workflow that ships this repository to the group's stage has to
+	// be IN the tree A1 wired, and it carries no credential of any kind.
+	workflowPath := "/var/www/" + devHostname + "/.gitea/workflows/zerops.yml"
+	workflowBody, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Errorf("A1 must leave the workflow at %s: %v", workflowPath, err)
+	} else {
+		t.Logf("WORKFLOW:\n%s", workflowBody)
+		for _, want := range []string{"zeropsio/gitea-mate/actions/deploy@v1", "environment: stage", "service: " + devHostname} {
+			if !strings.Contains(string(workflowBody), want) {
+				t.Errorf("the workflow is missing %q", want)
+			}
+		}
+		for _, forbidden := range []string{"secrets.", "ZEROPS_TOKEN", "zcli"} {
+			if strings.Contains(string(workflowBody), forbidden) {
+				t.Errorf("the workflow must carry no %q", forbidden)
+			}
+		}
+	}
+
 	statusText := s.mustCallSuccess("zerops_workflow", map[string]any{"action": "status"})
 	t.Logf("STATUS:\n%s", statusText)
 
@@ -200,10 +235,44 @@ func TestE2E_GiteaBackboneLive(t *testing.T) {
 	push := s.callTool("zerops_deploy", map[string]any{
 		"targetService": devHostname, "strategy": "git-push", "setup": devHostname,
 	})
-	t.Logf("GIT-PUSH DEPLOY (isError=%v):\n%s", push.IsError, getE2ETextContent(t, push))
+	pushText := getE2ETextContent(t, push)
+	t.Logf("GIT-PUSH DEPLOY (isError=%v):\n%s", push.IsError, pushText)
+	// The push is what puts the Mate's branch on the remote, so it is the
+	// first moment the pull request that lands it CAN exist — and the Mate is
+	// done pushing, so nothing else would open it.
+	if !push.IsError && !strings.Contains(pushText, `"pullRequest"`) {
+		t.Errorf("a git-push to the account's Gitea must open (or find) its pull request:\n%s", pushText)
+	}
+
+	// And it is idempotent: a second push finds the same request rather than
+	// piling up duplicates.
+	again2 := s.callTool("zerops_deploy", map[string]any{
+		"targetService": devHostname, "strategy": "git-push", "setup": devHostname,
+	})
+	t.Logf("GIT-PUSH AGAIN (isError=%v):\n%s", again2.IsError, getE2ETextContent(t, again2))
 
 	afterPush := s.callTool("zerops_workflow", map[string]any{"action": "group-recipe"})
 	t.Logf("GROUP-RECIPE AFTER THE PUSH (isError=%v):\n%s", afterPush.IsError, getE2ETextContent(t, afterPush))
+}
+
+// devSSH runs one command on a mounted dev container and returns its trimmed
+// output, failing the test when the command does.
+func devSSH(t *testing.T, hostname, command string) string {
+	t.Helper()
+	out, err := devSSHErr(hostname, command)
+	if err != nil {
+		t.Fatalf("ssh %s %q: %v\n%s", hostname, command, err, out)
+	}
+	return out
+}
+
+// devSSHErr is devSSH without the fatal: the error is the answer for a probe
+// whose failure is the thing being asserted.
+func devSSHErr(hostname, command string) (string, error) {
+	cmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+		"-o", "LogLevel=ERROR", hostname, command)
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
 }
 
 // liveEnvValue reads one key out of the container's live env store, the way
