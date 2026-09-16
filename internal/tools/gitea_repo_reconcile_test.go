@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -408,4 +409,65 @@ func assertNoTokenOnDisk(t *testing.T, stateDir string) {
 	if err != nil {
 		t.Fatalf("walk state dir: %v", err)
 	}
+}
+
+// TestBootstrapClose_WiresTheGiteaRepository pins WHERE A1 runs. Provision
+// writes PARTIAL metas (no BootstrappedAt — writeProvisionMetas), so a pass
+// that reconciles there sees no pair at all; the metas become complete at the
+// bootstrap's terminal step. Live-verified 2026-09-16 on a real Mate: a
+// classic bootstrap said nothing about Gitea at provision and left
+// action="group-recipe" answering "no pair has its Gitea repository yet".
+func TestBootstrapClose_WiresTheGiteaRepository(t *testing.T) {
+	stateDir := t.TempDir()
+	fake := newFakeGitea()
+	srv := fake.start(t)
+	t.Setenv("GITEA_URL", srv.URL)
+	t.Setenv("MATE_BROKER_URL", srv.URL)
+	t.Setenv("GITEA_TOKEN", giteaBotToken)
+
+	client := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-appdev", Name: "appdev", Status: "ACTIVE"},
+		{ID: "svc-appstage", Name: "appstage", Status: "READY_TO_DEPLOY"},
+	})
+	engine := workflow.NewEngine(stateDir, workflow.EnvContainer, nil)
+	mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(mcpSrv, client, srv.Client(), "p1", nil, engine, nil, stateDir, "zcp",
+		nil, giteaReconcileSSH(), runtime.Info{InContainer: true, ProjectID: "p1"}, "")
+
+	callTool(t, mcpSrv, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap", "route": "classic", "intent": "a Mate's first pair",
+	})
+	callTool(t, mcpSrv, "zerops_workflow", map[string]any{
+		"action": "complete", "step": "discover",
+		"plan": []map[string]any{{"runtime": map[string]any{
+			"devHostname": "appdev", "stageHostname": "appstage",
+			"type": "nodejs@22", "bootstrapMode": "standard",
+		}}},
+	})
+	provision := getTextContent(t, callTool(t, mcpSrv, "zerops_workflow", map[string]any{
+		"action": "complete", "step": "provision", "attestation": "The pair is up.",
+	}))
+	closed := getTextContent(t, callTool(t, mcpSrv, "zerops_workflow", map[string]any{
+		"action": "complete", "step": "close", "attestation": "Bootstrap closed.",
+	}))
+
+	if !strings.Contains(closed, "repository acme/appdev wired") {
+		t.Errorf("close must report the repository A1 wired.\nprovision: %s\nclose: %s",
+			truncateForTest(provision), truncateForTest(closed))
+	}
+	meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
+	if meta == nil || meta.Gitea == nil || meta.Gitea.FullName != "acme/appdev" {
+		t.Fatalf("the pair must carry its Gitea repository once bootstrap is closed, got %+v", meta)
+	}
+	if len(fake.repoRequests) != 1 {
+		t.Errorf("broker asked %d times, want exactly 1", len(fake.repoRequests))
+	}
+	assertNoTokenOnDisk(t, stateDir)
+}
+
+func truncateForTest(s string) string {
+	if len(s) > 400 {
+		return s[:400] + "…"
+	}
+	return s
 }

@@ -39,19 +39,23 @@ func needsStacks(resp *workflow.BootstrapResponse) bool {
 	return stackSteps[resp.Current.Name]
 }
 
-func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, schemaCache *schema.Cache, input WorkflowInput, logFetcher platform.LogFetcher, projectID string, stateDir string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info) (*mcp.CallToolResult, any, error) {
+func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, httpClient ops.HTTPDoer, schemaCache *schema.Cache, input WorkflowInput, logFetcher platform.LogFetcher, projectID string, stateDir string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info) (*mcp.CallToolResult, any, error) {
 	// Schema-derived catalog for plan validation + stack listing (the single
 	// client-side source; nil-safe when the cache is absent).
 	var schemas *schema.Schemas
 	if schemaCache != nil {
 		schemas = schemaCache.Get(ctx)
 	}
-	// Built here rather than at the first use: the step checker (below) and
-	// the Gitea reconcile (adopt route + post-provision) both need it, and
-	// the adopt route returns before the checker is ever built.
-	httpClient := &http.Client{
-		Timeout:   15 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}},
+	// The server's own client, threaded in: the step checker (below) and the
+	// Gitea reconciles both need one, and a handler that built a second
+	// client of its own could never be pointed at anything else — which is
+	// what left the A1 call site without a test of its own. Nil only in a
+	// caller that registered no client at all.
+	if httpClient == nil {
+		httpClient = &http.Client{
+			Timeout:   15 * time.Second,
+			Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}},
+		}
 	}
 	if input.Step == "" {
 		return convertError(platform.NewPlatformError(
@@ -176,21 +180,34 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 	if input.Step == workflow.StepProvision && (resp.CheckResult == nil || resp.CheckResult.Passed) {
 		resp.AutoMounts = autoMountTargets(ctx, client, projectID, mounter, sshDeployer, engine)
 		cleanupImportYAML(stateDir, resp.AutoMounts, engine.Environment() == workflow.EnvContainer)
-		// A1 (guide 2.1): the pair exists and its .git is initialized — the
-		// earliest honest moment to give it a repository on the account's
-		// Gitea; A2 proposes the recipe from the repositories A1 just made.
-		// Reconcile, not a step: it does nothing outside a Mate, backs off
-		// while the variables have not landed, and never blocks bootstrap.
-		appendGiteaReport(resp, reconcileGitea(
-			ctx, client, httpClient, sshDeployer, rt, stateDir, mate.LiveEnvStorePath))
 	}
+
+	// The terminal step REPLACES the message (appendTransitionMessage), so
+	// every reconcile that has something to say about it runs after — a line
+	// appended before this call reaches nobody.
+	appendTransitionMessage(resp, engine)
 
 	// A4: bootstrap's terminal step is where the metas the adopt route wrote
 	// at discover become complete — and so the first moment the git-push
 	// reflect-and-report can see them at all.
 	reconcileGitPushOnBootstrapFinish(ctx, client, sshDeployer, rt, projectID, stateDir, resp)
 
-	appendTransitionMessage(resp, engine)
+	// A1 and A2 (guide 2.1) belong to the same moment, and for the same
+	// reason: until bootstrap closes, a pair's meta is the PARTIAL one
+	// provision wrote — no BootstrappedAt — and every Gitea reconcile skips
+	// an incomplete meta, so a pass at provision saw no pair at all. Measured
+	// on a live Mate 2026-09-16: a classic bootstrap reported nothing about
+	// Gitea at provision and left action="group-recipe" answering "no pair
+	// has its Gitea repository yet" forever. The terminal step is the
+	// earliest honest moment to give a pair its repository; A2 then proposes
+	// the recipe from the repositories A1 just made. Reconcile, not a step:
+	// it does nothing outside a Mate, backs off while the variables have not
+	// landed, and never blocks bootstrap.
+	if resp != nil && resp.Current == nil {
+		appendGiteaReport(resp, reconcileGitea(
+			ctx, client, httpClient, sshDeployer, rt, stateDir, mate.LiveEnvStorePath))
+	}
+
 	populateRuntimeURLs(ctx, client, projectID, engine, resp)
 	if needsStacks(resp) {
 		populateStacks(ctx, resp, schemaCache)

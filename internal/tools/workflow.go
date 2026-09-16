@@ -440,7 +440,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 				"Deploy steps are handled automatically by zerops_deploy pre-flight validation",
 				"Use zerops_deploy to deploy, zerops_verify to verify"), WithRecoveryStatus()), nil, nil
 		}
-		return handleBootstrapComplete(ctx, engine, client, schemaCache, input, logFetcher, projectID, stateDir, mounter, sshDeployer, rt)
+		return handleBootstrapComplete(ctx, engine, client, httpClient, schemaCache, input, logFetcher, projectID, stateDir, mounter, sshDeployer, rt)
 	case "skip":
 		// Develop is stateless — step-based skipping is never valid.
 		if isDevelopStep(input.Step) {
