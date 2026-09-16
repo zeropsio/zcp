@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1" //nolint:gosec // git's own object hash; identity, not a security primitive
 	"encoding/base64"
@@ -217,7 +218,7 @@ func giteaTreeBlobs(ctx context.Context, httpClient HTTPDoer, apiBase, token, fu
 	if err != nil {
 		return nil, false, err
 	}
-	if status == http.StatusNotFound {
+	if status == http.StatusNotFound || giteaRefAbsent(status, body) {
 		return map[string]string{}, false, nil
 	}
 	if status != http.StatusOK {
@@ -247,6 +248,17 @@ func giteaTreeBlobs(ctx context.Context, httpClient HTTPDoer, apiBase, token, fu
 		}
 	}
 	return blobs, true, nil
+}
+
+// giteaRefAbsent recognises Gitea's answer to a read of a ref that is not
+// there. Gitea 1.27.2 answers `400 {"message":"sha not found [<ref>]"}` — NOT
+// 404 — for a branch, tag or sha it cannot resolve (measured live
+// 2026-09-16 on a Mate's fork whose `mate/{bot}` branch did not exist yet).
+// A reader that only knew 404 turned "this branch is new" into a hard
+// failure, and the group recipe could never be published from a fresh fork.
+// Narrow on purpose: a 400 that says anything else is still an error.
+func giteaRefAbsent(status int, body []byte) bool {
+	return status == http.StatusBadRequest && bytes.Contains(body, []byte("sha not found"))
 }
 
 // gitBlobSHA is git's own object hash for a file body — `blob <len>\0<body>`,

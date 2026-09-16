@@ -161,7 +161,10 @@ func (f *fakeGitea) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		branch := strings.ReplaceAll(ref, "%2F", "/")
 		files, ok := f.files[repo][branch]
 		if !ok {
-			write(http.StatusNotFound, map[string]string{"message": "branch does not exist"})
+			// What Gitea 1.27.2 actually answers for a ref it cannot
+			// resolve — 400, not 404 (measured live 2026-09-16 against
+			// a fork whose `mate/{bot}` branch did not exist yet).
+			write(http.StatusBadRequest, map[string]string{"message": "sha not found [" + branch + "]"})
 			return
 		}
 		tree := []map[string]any{}
@@ -417,4 +420,48 @@ func decodeB64(t *testing.T, s string) string {
 		t.Fatalf("file content is not base64: %v", err)
 	}
 	return string(raw)
+}
+
+// TestGiteaTreeBlobs_MissingRefIsNotAnError pins the shape Gitea 1.27.2
+// actually answers with when a ref does not exist — 400 "sha not found",
+// where every other API says 404. A 400 that says anything else stays an
+// error: this must not swallow a malformed request.
+func TestGiteaTreeBlobs_MissingRefIsNotAnError(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		status    int
+		body      string
+		wantExist bool
+		wantErr   bool
+	}{
+		{"missing ref", http.StatusBadRequest, `{"message":"sha not found [mate/bot]"}`, false, false},
+		{"not found", http.StatusNotFound, `{"message":"not found"}`, false, false},
+		{"some other bad request", http.StatusBadRequest, `{"message":"invalid page size"}`, false, true},
+		{"a tree", http.StatusOK, `{"tree":[{"path":"README.md","type":"blob","sha":"abc"}],"truncated":false}`, true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+			blobs, exists, err := giteaTreeBlobs(context.Background(), srv.Client(), srv.URL+"/api/v1", "t", "acme/group", "mate/bot")
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil {
+				return
+			}
+			if exists != tt.wantExist {
+				t.Errorf("branchExists = %v, want %v", exists, tt.wantExist)
+			}
+			if !tt.wantExist && len(blobs) != 0 {
+				t.Errorf("an absent ref must read as an empty tree, got %v", blobs)
+			}
+		})
+	}
 }
