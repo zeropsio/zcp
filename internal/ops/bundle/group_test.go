@@ -216,6 +216,7 @@ func TestBuildGroupRecipe_ProductionTransform(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.dir, func(t *testing.T) {
+			t.Parallel()
 			doc := tierDoc(t, files, tc.dir)
 			project, _ := doc["project"].(map[string]any)
 			if name, _ := project["name"].(string); name != tc.wantProject {
