@@ -43,6 +43,8 @@ zerops_deploy targetService="{hostname}" strategy="git-push" \
   branch="main"
 ```
 
+On the account's own Gitea, omit `branch` — `main` is protected on every repository and a direct push is refused by a pre-receive hook (which reads like a credential fault and is NOT one: never rotate the token over it). ZCP defaults the push to the Mate's own branch, `mate/{bot login}`, recorded on the pair when the broker gave it the repository, and the work lands on `main` through a pull request.
+
 `git init` already ran at bootstrap time (`InitServiceGit`); the commit step lives outside ZCP because `zerops_deploy strategy="git-push"` refuses to push an empty working tree. The deploy call authenticates via the push source's `GIT_TOKEN` (service-scope secret, read live by the credential helper) and the stamped `origin` — no extra plumbing needed.
 
 **Push via `zerops_deploy strategy="git-push"`** — it watches the integration build to completion (build logs + classification on failure) instead of stopping at the push receipt. A manual `git push` run ON the runtime container (`ssh {hostname} "cd /var/www && git push"`) also authenticates — the setup writes a url-scoped credential helper into the repo config reading the live `$GIT_TOKEN` — but skips the build watch, so prefer the deploy call. Shells OUTSIDE the container (the ZCP host, the SSHFS mount) hold no credential and still fail with "could not read Username".

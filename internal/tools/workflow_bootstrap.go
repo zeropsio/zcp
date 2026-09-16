@@ -12,6 +12,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/knowledge"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -44,6 +45,13 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 	var schemas *schema.Schemas
 	if schemaCache != nil {
 		schemas = schemaCache.Get(ctx)
+	}
+	// Built here rather than at the first use: the step checker (below) and
+	// the Gitea reconcile (adopt route + post-provision) both need it, and
+	// the adopt route returns before the checker is ever built.
+	httpClient := &http.Client{
+		Timeout:   15 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}},
 	}
 	if input.Step == "" {
 		return convertError(platform.NewPlatformError(
@@ -98,6 +106,10 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			if reconciled := reconcileAdoptedGitPush(ctx, client, sshDeployer, rt, stateDir, existing); len(reconciled) > 0 {
 				resp.Message += fmt.Sprintf(" Git-push state reconciled from live for %s — these services already have a working remote + token, so launch-production will NOT require re-running git-push-setup on them.", strings.Join(reconciled, ", "))
 			}
+			// The adopt route is the other pass that reaches a just-written
+			// set of metas, so it is the other place A1 catches up from.
+			appendGiteaReport(resp, reconcileGiteaRepositories(
+				ctx, client, httpClient, sshDeployer, rt, stateDir, mate.LiveEnvStorePath))
 			if needsStacks(resp) {
 				populateStacks(ctx, resp, schemaCache)
 			}
@@ -149,10 +161,6 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			"Describe what was accomplished in this step"), WithRecoveryStatus()), nil, nil
 	}
 
-	httpClient := &http.Client{
-		Timeout:   15 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}},
-	}
 	checker := buildStepChecker(input.Step, client, logFetcher, projectID, httpClient, engine, stateDir)
 
 	resp, err := engine.BootstrapComplete(ctx, input.Step, input.Attestation, checker)
@@ -168,6 +176,12 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 	if input.Step == workflow.StepProvision && (resp.CheckResult == nil || resp.CheckResult.Passed) {
 		resp.AutoMounts = autoMountTargets(ctx, client, projectID, mounter, sshDeployer, engine)
 		cleanupImportYAML(stateDir, resp.AutoMounts, engine.Environment() == workflow.EnvContainer)
+		// A1 (guide 2.1): the pair exists and its .git is initialized — the
+		// earliest honest moment to give it a repository on the account's
+		// Gitea. Reconcile, not a step: it does nothing outside a Mate, backs
+		// off while the variables have not landed, and never blocks bootstrap.
+		appendGiteaReport(resp, reconcileGiteaRepositories(
+			ctx, client, httpClient, sshDeployer, rt, stateDir, mate.LiveEnvStorePath))
 	}
 
 	appendTransitionMessage(resp, engine)

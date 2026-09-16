@@ -24,7 +24,7 @@ Git push is configured for this service (`gitPush=configured`), so the repo is t
 {services-list:zerops_deploy targetService="{hostname}" setup="<source-setup>" strategy="git-push"}
 ```
 
-`targetService` is the PUSH SOURCE hostname (dev half of a standard pair, or the service itself for simple modes). The call refuses an empty tree or uncommitted changes — commit first (`ssh <host> "cd /var/www && git add -A && git commit -m '<msg>'"` for the runtime container, `git -C <workingDir> add -A && git commit -m '<msg>'` on a dev machine). It pushes HEAD to the configured remote and then follows the integration build on the build target until it settles:
+`targetService` is the PUSH SOURCE hostname (dev half of a standard pair, or the service itself for simple modes). Leave `branch` unset: it defaults to `main`, except on the account's own Gitea, where it defaults to this Mate's own branch because every repository's `main` is protected and the Mate lands through a pull request. The call refuses an empty tree or uncommitted changes — commit first (`ssh <host> "cd /var/www && git add -A && git commit -m '<msg>'"` for the runtime container, `git -C <workingDir> add -A && git commit -m '<msg>'` on a dev machine). It pushes HEAD to the configured remote and then follows the integration build on the build target until it settles:
 
 | Response `status` | Meaning |
 |---|---|

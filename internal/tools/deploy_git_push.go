@@ -172,6 +172,23 @@ func degradeGitPushStateToBroken(stateDir, targetService string) {
 //
 // Shared by handleGitPush (container) and handleLocalGitPush (local) so
 // both halves of the deploy stack honor the same atom claim.
+// defaultPushBranch is the branch a git-push targets when the caller named
+// none. It is `main` everywhere EXCEPT on the account's own Gitea, where
+// `main` is protected on every repository and a direct push is refused by a
+// pre-receive hook (docs/vocabulary.md, "protected branches"): there the
+// default is the Mate's own branch, recorded on the pair when the broker gave
+// it the repository (A5, guide 1.5). Defaulting to `main` there would make
+// every delivery fail at the remote, and the failure reads like a credential
+// fault — the one diagnosis that leads an agent to rotate a perfectly good
+// token.
+func defaultPushBranch(stateDir, targetService string) string {
+	meta, _ := workflow.FindServiceMeta(stateDir, targetService)
+	if meta != nil && meta.Gitea != nil && meta.Gitea.Branch != "" {
+		return meta.Gitea.Branch
+	}
+	return "main"
+}
+
 func resolveEffectiveRemote(stateDir, targetService, inputRemote string) string {
 	if inputRemote != "" {
 		return inputRemote
@@ -337,7 +354,7 @@ func handleGitPush(
 	}
 	branch := input.Branch
 	if branch == "" {
-		branch = "main"
+		branch = defaultPushBranch(stateDir, input.TargetService)
 	}
 
 	effectiveRemote := resolveEffectiveRemote(stateDir, input.TargetService, input.RemoteURL)
