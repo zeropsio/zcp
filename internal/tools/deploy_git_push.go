@@ -186,7 +186,7 @@ func defaultPushBranch(stateDir, targetService string) string {
 	if meta != nil && meta.Gitea != nil && meta.Gitea.Branch != "" {
 		return meta.Gitea.Branch
 	}
-	return "main"
+	return giteaProtectedBase
 }
 
 func resolveEffectiveRemote(stateDir, targetService, inputRemote string) string {
