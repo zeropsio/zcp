@@ -983,6 +983,14 @@ glyph and nothing else. Before that the clock re-took the leases, which drop wha
 page painted "Reading your projects…" and an empty menu at every tick (the owner's run, 2026-09-17:
 "it does this full refresh, that's crazy bad").
 
+**A Mate is named after its bot** (2026-09-17, the owner, on a second Mate the dialog had called
+"Todo - dev 2": "why is it called that and not Todo - Fen?"). The first Mate at _New project_ is
+"Todo - Vera", every later one "Todo - Fen" — the name the person will say — numbered only when
+that name is taken; renaming the bot in the _Add Mate_ dialog renames the environment with it until
+the person edits the name by hand. A stage and a production are named after their role
+(`proposedEnvironmentName`; `ZeropsEnvironmentCreationDialog.logic.test.ts` "names a Mate after its
+bot, not its role").
+
 ### 4.8 Landing in the thread
 
 The mate server's own auto-bootstrap (§2.2) creates the first project and thread; the client composes
