@@ -5,14 +5,16 @@ phases 0–7 — is in `zerops-auth-backbone-implementation-2026-09-15.md` (the 
 in the fork's ledger (`z3/docs/internals/zerops/verified.md`, open questions in `questions.md`). The
 diagrams are on the page *Mate Auth Backbone* (https://claude.ai/artifact/Eub6X6kiqyANmjV6amcpmd).
 
-**Status.** Every decision is made. None of it is built yet beyond what exists today; the build
-order is near the end.
+**Status (2026-09-17).** Every decision is made and nearly all of it is built and proven live from an
+empty org: mate 0.11.5, zcp v9.176.0, gitea-mate v2.1. What is built, proven and open, slice by
+slice, is the fork's `docs/internals/zerops/primer.md`; the decisions as landed are the spec's §10;
+the build order is near the end.
 
 ---
 
 ## In one paragraph
 
-Every Zerops account gets its own Gitea, started in the background at sign-up. An app is a **group**:
+Every Zerops account gets its own Gitea, made with its first project (D18 as landed). An app is a **group**:
 a name and tags, not a Zerops project of its own. In Gitea each group has one **group repo** and one
 repo per codebase. The group repo holds the recipe, the import for every environment. Each person
 works through their own **Mate**, a Zerops project with zcp, the coding agent and a dev/stage pair
@@ -425,7 +427,7 @@ budget — 65 534 bytes per project, about 2 500 registry entries (Q-26); and th
 can stop and start a runner service in about six seconds each way, while Gitea reports a queued job
 within seconds and a waking runner takes it at once (Q-27).
 
-## Wrong today
+## Wrong on 2026-09-15
 
 - Opening a Mate sends your personal token, which covers your whole account and never expires, to a
   container any `BASIC_USER` colleague can change.
@@ -453,6 +455,11 @@ within seconds and a waking runner takes it at once (Q-27).
 
 Phase 0 fixes most of these without new infrastructure. The personal token stops reaching containers
 in Phase 3.
+
+**2026-09-17:** every item above is fixed and live (mate 0.11.0–0.11.5, zcp v9.176.0, gitea-mate
+v1–v2.1) but three: the terminal-copy limit stands by design (D6 is a guardrail, not a lock),
+*Set up Mate* remains for a project with no container, and the old demo's production token in repo
+secrets stays until the demo account is migrated.
 
 ---
 
@@ -482,6 +489,10 @@ Phases 1–2 don't need Phase 3; Phase 4 needs both.
 ## Where it lives
 
 - **This summary:** `zcp/plans/zerops-auth-backbone-summary-2026-09-15.md`.
+- **Where it stands (2026-09-17):** `z3/docs/internals/zerops/primer.md` — every slice's state, what
+  is proven, what is open.
+- **The broker and Gitea on Zerops:** `zeropsio/gitea-mate` (`~/www/gitea-mate`); the contracts the three
+  codebases share are its `docs/`.
 - **The guide:** `zcp/plans/zerops-auth-backbone-implementation-2026-09-15.md`.
 - **zcp's part, extracted:** `zcp/plans/zerops-auth-backbone-zcp-requirements-2026-09-16.md` — git per
   dev pair, the import file, the forge kind, joining, the key, the broker, the role function, the
@@ -495,8 +506,8 @@ Phases 1–2 don't need Phase 3; Phase 4 needs both.
   webhook and the browser's exchange* (the lab Gitea) and *Isolation flipped live, the key moved, the
   tag budget, a service asleep*.
 - **Open questions:** `z3/docs/internals/zerops/questions.md`: Q-11 and Q-16.
-- **The spec:** `zcp/docs/spec-mate.md`. It takes each decision when its slice lands; §4.8 already
-  records D17 as open.
+- **The spec:** `zcp/docs/spec-mate.md`. §10 records the backbone as landed (2026-09-17); §4.7 the
+  *New project* form as it is; §6.6 D20.
 - **The page:** *Mate Auth Backbone*, https://claude.ai/artifact/Eub6X6kiqyANmjV6amcpmd.
 - **The old Gitea demo:** `zcp/plans/z3-gitea-demo-runbook-2026-09-06.md`. It covers demo mechanics
   only.

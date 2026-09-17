@@ -4,6 +4,10 @@ The owner walks the released backbone (mate 0.11.0, zcp 9.176.0, gitea-mate v1) 
 emptied `Mate` org. One entry per screen, in the order seen. Findings, not decisions —
 decisions go to spec-mate.md once taken.
 
+The project's standing state — what is built, proven and open, slice by slice — is the fork's
+`docs/internals/zerops/primer.md`; the open items of these entries are listed there in the owner's
+order.
+
 ## 1. Empty projects page (signed in, no projects, no Gitea)
 
 What it shows: hero card "Start with a Mate" with a *New project* button; sidebar with
