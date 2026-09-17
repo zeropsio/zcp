@@ -355,6 +355,15 @@ redirect mismatch) or call its API from the browser. Open: how a second origin j
 Gitea (`MATE_APP_ORIGINS` on the broker and `GITEA_CORS_ALLOW_DOMAIN` on `web`, both restart) —
 today only by hand.
 
+**Closed 2026-09-17 (D22, mate 0.11.7 + gitea-mate v3.1).** The owner, on being told a Gitea made
+from mate.zerops.io could not be driven from localhost: "didn't you just make it so you don't have
+to login to gitea and you can use mate's logged in user's token to auth to gitea api?" — and about
+Gitea's own pages: "when someone uses the gitea url they should still be able to login with zerops".
+Both hold: under D21 every browser call carries a bearer and no cookie, so the two allowlists proved
+nothing and only pinned the Gitea to its creating origin. Gitea's `[cors]` and `POST /person/token`
+now answer `*`, the import sends no origin list (`__CORS__`, `MATE_APP_ORIGINS`,
+`GITEA_CORS_ALLOW_DOMAIN` and `appOrigins` are gone); Gitea's own-page OIDC sign-in is untouched.
+
 Second finding, same check: Zane's token is lowered (`NO_ACCESS` + `BASIC_USER`, the group-reach
 reconcile's write) but its creation delegation is still there and the project runs
 `envIsolation: none` with `ZCP_API_KEY` as a plain project variable — 0.4 and 0.10 exist only as
