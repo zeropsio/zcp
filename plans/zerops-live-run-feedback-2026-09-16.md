@@ -304,3 +304,31 @@ run it writes the three variables and restarts the container, minutes after the 
 started talking to the Mate. Two gaps: the reconcile should run wherever the app is (the
 conversation included), and the first credential should land before the Mate is first
 opened, so its arrival is never a restart mid-conversation.
+
+## 12. D20 built (2026-09-17 morning): the broker delivers a Mate's Gitea access
+
+gitea-mate `3c64092`/`8bffe09` (v2): the rights loop gathers every registered Mate's zcp service
+and variables, plans `DeliverMateAccess` when the token is absent, names another Gitea, is not
+the bot's newest generation, or the bot has none live; writes create/update, never restarts;
+`POST /mate/credential` deleted. Fork `fe4552b46`/`648df9a8a` (0.11.5): registering a Mate
+widens the broker's token with its project (shared with stages via `grantBrokerProject`); the
+app's credential fetch, receipts and the creation step are deleted; the Git tab's `provisioned`
+evidence went with the receipts (the remote probe is the remaining proof).
+Open: a reconcile that re-grants a registered Mate the broker cannot reach (a grant that failed
+after the registry write has no UI retry today; the loop reports it every pass). Research and
+measurements: ledger *Broker-shaped and Mate-shaped tokens against a seconds-old project*.
+
+## 13. D20 driven end to end (2026-09-17, ~07:34Z)
+
+Empty org → Gitea imported (gitea-mate v2) → group and Mate registered → Mate made with the
+client's YAML → broker granted the Mate project → nothing. The broker booted before Gitea
+published its admin token and held the reference unresolved (20 min of 401s; fix in flight:
+the broker resolves the admin credentials from the platform). After one broker restart: one
+pass, 13 actions, the Mate's three variables 20 s later; bot restricted in the `read` team, group
+repo and hook made, the delivered token authenticates as the bot and `POST /mate/repository`
+created `imperial-titan/hello`. Minor: the bot's full name is the project's name, not the Mate's.
+
+Boot-order fix landed as gitea-mate v2.1 (`47752ff`: the broker resolves its admin pair from
+`web`'s user-data through the Zerops API when unresolved or refused). Final run from an emptied
+org: delivered 328 s after registration, 226 s after the Mate was up, nothing restarted. The org
+is left populated for the owner (Gitea, Imperial Titan - dev, Mate Nova) on mate 0.11.5.
