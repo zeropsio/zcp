@@ -376,3 +376,15 @@ a repository appears with the first service") and frame the Gitea sign-in as the
 is; the composer should have carried the setting-up job (`useZeropsCreationJob` composes it once
 the agent is signed in) and did not — cause not yet known. Not blocking the run.
 
+Owner, on the button: "why am I not automatically logged into that Gitea? … it should be able to
+use the same login token as I, as a user, have." The chain behind the pill today is four screens:
+the pill, Gitea's login page (*Sign in with Zerops*), the app's own consent page (a click that
+mints the throwaway), Gitea's *Authorize application* page for the public client, then the PKCE
+exchange. Two of the four are ours and need no click; two are Gitea's. Proposed decision (D21,
+for the owner): a person's Gitea credential for the app is minted by the broker on a throwaway,
+exactly like the door — the rights loop creates every active member in Gitea bound to the OIDC
+source (so a later sign-in to Gitea's own UI still matches), and `POST /person/token` by throwaway
+answers a scoped token as the person, which the broker's loop retires after a bound. No Gitea
+screen, no button; the broker is in the token path, as it already is for OIDC. Cost: Gitea tokens
+carry no expiry, so retirement is the broker's job. Build after this run (a release restarts Zane).
+
