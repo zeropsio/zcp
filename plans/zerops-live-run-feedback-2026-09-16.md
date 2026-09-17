@@ -471,3 +471,18 @@ the same blank on the header's reload, the access renewal and after every start 
 (0.11.11): the runtime re-reads an organization on a fresh receiver and releases nothing
 (`runtime.refresh`); the page and the menu paint from the list already read (`readOnce`), and the
 header's glyph alone spins.
+
+## 19. Dara's first prompt (2026-09-17, 13:17Z): one simple-mode service, no pair, "no repo"
+
+"check the convo, it didnt do aything" / "no repo, no pairs" / "what confusing as well is that it
+didnt even create dev/stage pairs". Read from inside: the prompt "create a todo app" ran through
+zcp's classic route (no recipe matched) and the agent's plan chose `bootstrapMode: simple` — one
+`todoapp` service self-deployed over its own working copy, plus `tododb`; the app is live, the
+recipe PR merged by the broker in nine seconds, the service repo made empty by the broker on the
+deploy. Nothing was pushed, and the Git tab's row says "no repository yet" because a simple-mode
+service keeps no checkout. zcp's own gate names the rule: a simple-mode service cannot be a push
+source; production needs a repo-backed pair (`bootstrapMode: standard`, an explicit stage
+hostname). For the hardening person: the plan's mode is the agent's choice on the classic route,
+and "create a todo app" got the mode that cannot enter the release chain; a Mate whose group has a
+Gitea should default to standard, or the bootstrap should ask. For the run: the owner answers the
+agent's stack question with "standard mode, a dev/stage pair".
