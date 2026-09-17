@@ -513,3 +513,16 @@ note asks the agent to hand the person the pull request's link and the stage/pro
 rows with their verbs ("Stage · not set up yet · Add stage"). Release and rollback (5.5, 5.6) have
 never run live; the whole chain is rehearsed in the audit browser as the test owner before the
 owner's run.
+
+## 22. The rehearsal of the later legs (2026-09-17, 14:20Z–): what zcp leaves behind after an expansion
+
+Rehearsed in the audit browser as the test owner on Dara's org. The app's own breaks (the Git
+tab's pull-request and merge verbs unwired, the tier parser blind to four-space items, the project
+block rewritten at the wrong indentation) are fixed in the fork. Two things for the hardening
+person: (1) after `todoapp` was expanded into a pair, `zerops.yaml` got `prod` and `dev` setups but
+the group recipe on `main` still named `zeropsSetup: todoapp` — the broker refused the stage's
+first deploy with "has no setup "todoapp", which the tier names"; the recipe was never re-proposed
+(spec 2.2 "kept current"), and the person had to ask the agent for it; a topology or setup change
+should re-propose. (2) The service repo's workflow zcp writes runs on every push to `main` and fails
+when no environment follows `main` yet — a red check the Git tab shows as failing; the workflow
+could skip cleanly when the broker answers "no environment".
