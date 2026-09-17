@@ -429,3 +429,12 @@ Unblocked by a restart of `web` (the source added in three seconds; `POST /perso
 the owner, site admin, source 1). Fixed for good: gitea-mate v3.2 (`start.sh` serves only with the
 source; a Gitea refusal is `424 gitea_refused` in Gitea's words) and mate 0.11.8 (the refusal shown
 in place of the sign-in line). Ledger: _The owner's run through localhost on 0.11.7_.
+
+- The Git tab, once signed in: "btw appstage wont even have repo, it's the stage pair, it gets
+  compiled code deployed to it, its not mounted either" — the tab listed every runtime service and
+  said "appstage · no repository yet". Fixed in 0.11.10: one block per codebase, the dev half of
+  each pair, by the service map's own folding rule.
+- While Juno worked, the owner's design sketch: a Gitea button in the sidebar's bottom bar opening
+  an overview of every repository they can reach and its open PRs; and each group in the sidebar
+  drawn as a timeline — Mates, their open PRs as an accordion, then stage, then production. Noted
+  for the design pass (primer §7); the data is one person-token away since D21.
