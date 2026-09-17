@@ -116,7 +116,7 @@ flowchart LR
   app -- "P3 throwaway for Gitea" --> broker
   broker -- "P3 P4 roles, registry" --> zapi
   broker -- "P4 teams, bots, repositories" --> gitea
-  app -- "P5 a new Mate's bot token, as the person" --> broker
+  broker -- "P5 a registered Mate's bot token, into its env" --> zapi
   zcp -- "P5 new repositories, as its bot" --> broker
   zcp -- "P5 P10 pushes, recipe pull requests" --> gitea
   gitea -- "P6 P7 push and tag webhooks" --> broker
@@ -138,7 +138,7 @@ flowchart LR
 | **P2** Open a Mate | a throwaway token: no rights, named for that Mate, deleted within seconds | the raw personal token, to every container, every 15 minutes | the Mate traces the throwaway to its creator and checks their role with its own token, then re-checks it itself; scopes by role; ownership gate |
 | **P3** Sign in to Gitea | OIDC code flow, `groups` claim | none | the org's broker as OIDC provider, its consent step a throwaway named for that Gitea; teams re-synced at every sign-in (prototype measured) |
 | **P4** Keep Gitea honest | broker: org read token + Gitea admin | none | on a timer and on webhooks: teams, admin, departed people, bots, group orgs and repos |
-| **P5** A Mate's Gitea access | a throwaway as the person → the bot's token, written into the Mate's env; new repositories as the bot | the app writes the site-admin user's token into `zcp`'s env (`giteaCredential.ts`) | the same write, of a per-Mate bot token the broker mints for the person; the Mate asks the broker for repositories as its bot; its Zerops key stays home |
+| **P5** A Mate's Gitea access | the broker's rights loop writes the bot's token into the Mate's env for every registered Mate (D20); new repositories as the bot | the app writes the site-admin user's token into `zcp`'s env (`giteaCredential.ts`) | nobody asks: the registry entry authorizes, the loop delivers, zcp reads the live env store; the Mate asks the broker for repositories as its bot; its Zerops key stays home |
 | **P6** Deploy a group environment | the broker's one deploy key | production token in repo secrets (demo) | the broker deploys the head of the environment's source branch(es); workflows may orchestrate by calling it |
 | **P7** Release | a protected tag on the group repo | tag + repo-secret production token (demo) | the tag lists each service's commit; a release workflow orchestrates; the broker deploys exactly those commits |
 | **P8** Group membership | registry tags on the Gitea project | tags any Mate can write | written only by owners/admins; access widens only on a person's action |
@@ -191,6 +191,7 @@ Phase 4, because people need their Gitea sign-in and the app acts in Gitea as th
 | D17 | The first brief: composed or sent | **decided 2026-09-15: sent automatically only when it is the person's own words from *What are we building?*; filled in, never sent, otherwise**. Today the app already sends a generated creation hand-off by itself (`useZeropsCreationJob.ts`); spec §4.8 / MC-8 record that, with this narrowing as open until 4.2 lands | 4.2 |
 | D18 | Gitea starts at sign-up | **decided 2026-09-15: in the background as the account is created; later possibly from a pool** | 1.2 |
 | D19 | GitHub and GitLab | **stated 2026-09-16: the account's Gitea is the only forge Mate drives.** Code on GitHub or GitLab comes in once (Phase 6; a push mirror back if wanted); from then on Gitea holds it and the broker is the only path to a group's stages and production. GitHub's environments and GitLab's protected variables are not driven by Mate — "Zerops roles are the one source" holds only where the forge's permissions are mirrored from Zerops, and that is Gitea. zcp's GitHub integration for group Mates goes (0.9, Phase 7) | 0.9, 2.3, Phase 6 |
+| D20 | Who delivers a Mate's Gitea access | **decided 2026-09-17: the broker's rights loop, for every registered Mate, into its `zcp` service's variables, with the broker's own Zerops token granted `BASIC_USER` on the Mate project by the app at registration.** Replaces `POST /mate/credential` (the app, as the person, by a throwaway — brittle: a browser tab on the projects page finished a server-side setup, and delivered it with a restart mid-conversation; live run 2026-09-16). Measured 2026-09-17 (ledger, *Broker-shaped and Mate-shaped tokens against a seconds-old project*): a `READ_ONLY` token widened in place one second after the project's creation lists its services and writes plain and sensitive variables on the `NEW` zcp service, both tokens read them in clear, they are present once `ACTIVE`; zcp reads them from the live env store without a restart. Rejected: the Mate presenting its Zerops key to the broker (reverses "its key stays home"); a Mate-minted throwaway (unmeasured whether a token mints tokens). | 1.5 |
 
 ---
 
@@ -524,17 +525,23 @@ sequenceDiagram
 
 ### 1.5 Mate access (P5) *(broker)*
 
-- **Credential — fetched by the app, as the person, and written into the Mate.** When a Mate is
-  made (4.2, 4.3), or the pool's Mate is tagged into a group, the app calls
-  `POST /mate/credential {project}` proving who asks with a throwaway named for that Gitea (3.6's
-  check, which ships with the broker). The broker checks that the project is in the registry and that
-  the person may — the project's owner, or an org owner or admin — creates the bot if it is missing,
-  mints a `write:repository` token for it — generation 1, or nothing if one is live (`ensure`, below)
-  — and returns `{url, org, token}`; the
-  app writes `GITEA_URL` and `GITEA_TOKEN` as sensitive service variables on `zcp` — the write
-  `giteaCredential.ts` makes today (`:40-42,85-89`), with a per-Mate bot's token in place of the
-  site-admin user's. The Mate's Zerops key never leaves its container, and no broker endpoint takes
-  one.
+- **Credential — delivered by the broker's rights loop, asked for by nobody** *(D20, 2026-09-17;
+  replaces the app-as-person fetch that shipped in mate 0.11.0–0.11.4)*. The registry entry the
+  owner writes (`mate:gm:{group}:{project}:mate`) is the authorization. On every pass the loop makes
+  each registered Mate's access true: the bot exists (restricted, in its group's readers), the bot
+  has a live token (`mate/{bot}/{n}`, generation *n+1* minted when none is live), and the Mate's
+  `zcp@1` service carries `GITEA_URL`, `MATE_BROKER_URL` (plain) and `GITEA_TOKEN` (sensitive),
+  written with the broker's own Zerops token, which the app grants `BASIC_USER` on the Mate's
+  project at registration — the same in-place widening it does for stages (measured 2026-09-16).
+  No restart: zcp reads the three from the container's live env store, rewritten by the platform
+  within seconds of a service write (measured 2026-09-16, 2026-09-17), and waits with backoff
+  before that. A write onto a service still `NEW`/`READY_TO_DEPLOY` is accepted and present once
+  `ACTIVE` (measured 2026-09-17), so at sign-up the variables usually precede the first boot; the
+  account's very first project, where the broker is itself still building, is served on the
+  loop's first pass. The Mate's Zerops key still never leaves its container, and still no broker
+  endpoint takes one. Why the change: the fetch depended on a browser tab on one route repeating
+  the ask until Gitea was up, then restarted the Mate mid-conversation to deliver it (live run
+  2026-09-16, journal screen 11).
 - **Bots:** `gitea admin user create --user-type bot`, `restricted`, `max_repo_creation 0`,
   `allow_create_organization false`, in its group's readers; **write as a collaborator on the
   repositories it created**, nowhere else. A bot's token is `write:repository`, so its reach is

@@ -1560,6 +1560,19 @@ watch the mount for git state.
 | MG-8 | The untracked-file guard probes fresh before every capture (never memoized) and refuses only the overflowing repository. `ZeropsCheckpointTargets.test.ts` — "refuses only the repository whose untracked set overflows the probe", "keeps refusing while the repository still overflows, however often it is asked"; `ZeropsUntrackedProbe.test.ts` — "reports truncation once the untracked path list passes the cap"; `ZeropsGuardOverSsh.test.ts` — "refuses a repository whose untracked set overflows, exactly as it does locally". |
 | MG-9 | A deleted thread's checkpoint refs are pruned from every repository it touched; the swept set is the absolute mounted repository set on Zerops, not the thread's own cwd. `ZeropsCheckpointTargets.test.ts` — "deletes every ref the thread left in every repository it covered", "tolerates a repository that is gone and still prunes the rest", "sweeps every mounted repository, without needing the deleted thread's cwd". |
 
+### 6.6 A Mate's Gitea access is delivered, never fetched (D20, 2026-09-17)
+
+A Mate's Gitea bot token reaches its container through the org's broker, and nothing else. The
+owner's registry entry on the Gitea project (`mate:gm:{group}:{project}:mate`) is the authorization;
+the broker's rights loop, holding a Zerops token the app granted `BASIC_USER` on the Mate's
+project at registration, ensures the bot and a live token generation and writes `GITEA_URL`,
+`MATE_BROKER_URL` and `GITEA_TOKEN` (sensitive) as service variables on the Mate's `zcp@1` service,
+on every pass, for every registered Mate. zcp reads the three from the container's live env store,
+which the platform rewrites within seconds of the write — no restart, no person, no browser, and the
+Mate's own Zerops key never leaves its container. The app writes no credential and asks the broker
+for none; `POST /mate/credential` is gone. Contract: `gitea-mate/docs/broker-api.md`, *A Mate's
+Gitea access*; measurements in the mate ledger (2026-09-16, 2026-09-17).
+
 ## 7. The fork
 
 Zerops Mate is a **hard fork** of T3 Code (MIT), frozen at `upstream/main` `f94a0d646` on 2026-08-28 (fork tag

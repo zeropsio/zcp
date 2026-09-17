@@ -1,0 +1,306 @@
+# Live run on mate.zerops.io — screen-by-screen feedback (2026-09-16)
+
+The owner walks the released backbone (mate 0.11.0, zcp 9.176.0, gitea-mate v1) from an
+emptied `Mate` org. One entry per screen, in the order seen. Findings, not decisions —
+decisions go to spec-mate.md once taken.
+
+## 1. Empty projects page (signed in, no projects, no Gitea)
+
+What it shows: hero card "Start with a Mate" with a *New project* button; sidebar with
+"+ New project" and a second "No Zerops projects yet / New project"; below, a muted
+*Tools* section with "+ Add Gitea".
+
+- **The primary action is a dead end.** Every *New project* leads to the wizard, and the
+  wizard refuses without a Gitea ("Your account's Gitea is still being set up."). The
+  one step the account actually needs is the smallest, greyest link on the page.
+  Hierarchy is inverted: the required step reads as optional, the optional-looking
+  button is required.
+- **The refusal's copy lies on this account.** "still being set up" describes a Gitea
+  that is provisioning; here nothing was started. Two states, one sentence.
+- **Three *New project* affordances on one empty screen** (sidebar header, sidebar
+  empty state, hero). The sidebar empty state duplicates the hero; one is enough.
+- **Hero copy**: "A project holds as many as the people on it want." — "as many" has
+  no noun; reads as a typo.
+- **The person should never have to know the word Gitea to start.** Candidate fix:
+  *New project* on an account without Gitea stands Gitea up as the first step of the
+  creation (a `create-tool` step ahead of `create-project`), and the Tools section
+  only ever shows what exists. Alternative: the hero's button becomes "Set up" and
+  does both. Either way the muted link goes.
+- **"+ Add Gitea" is styled like a disabled label**: muted grey text, no button shape,
+  while the hero button is a filled blue pill. On a page with two possible actions the
+  contrast between them is the page's whole message, and it says the wrong thing.
+- **Two visual languages on one page**: the hero is a raised white card with a big
+  radius and marketing spacing; Tools below it is a bare heading and a line of text.
+  Either the Tools section is a card too, or the hero loses its card and becomes the
+  page's first section. As it is, Tools looks like a footnote.
+- **Sidebar empty state is centered** ("No Zerops projects yet" + outlined button)
+  while every other sidebar element is left-aligned; it also repeats the hero. Drop it
+  or left-align it as one quiet line.
+- **Tools heading is muted grey** at the same weight as its description; nothing marks
+  it as a section. Compare with "Projects" which is the only real heading on the page.
+- Fine as is: the face at rest, the page header with its refresh, the quiet sidebar
+  footer icons, the header's org switcher.
+
+Second look, after the fix (still an empty state that fails):
+
+- **The page frames emptiness as a failed list**: a "Projects" title with a refresh
+  icon over nothing. First run should own the page, not sit as a card under a list
+  header.
+- **The card is stranded top-left** in the upper fifth of a wide grey field, aligned to
+  a title, the rest blank. Neither centered as an invitation nor flowing as a page.
+- **The sidebar is pure chrome** on an empty account: a nav entry, a centered second
+  empty state, a footer of icons, and a fifth of the width. Gone or collapsed until
+  there is something to list.
+- **Heading and button disagree**: "Start with a Mate" over "New project" — two nouns
+  for one act, neither met yet.
+- **One verb, three styles**: filled pill in the hero, small outlined button in the
+  sidebar, plain "+" entry in the sidebar header.
+- **A paragraph where a line belongs**: four clauses explaining a Mate to someone who
+  has not seen one; the added Git-hosting sentence made it longer and clunkier.
+- **The face is a placeholder, not an invitation**: small, idle, slate, beside text.
+  If the Mate is the point, the Mate is the picture.
+- **Nothing sets expectations**: the click starts minutes of provisioning and a
+  running project; the page says nothing about what happens or how long.
+
+**Done (fork 7ea884702, iterated on localhost:5734):** New project stands Gitea up as
+the first half of the creation ("Setting up Git hosting" on the button), the wizard's
+refusal is gone, an account that has not started sees no Tools section at all, the hero
+sentence has its noun. Still open from this screen: the hero-vs-Tools card mismatch on
+accounts that have started, the sidebar's duplicate empty state.
+
+## 2. New project form (name, brief, location, Continue)
+
+- **The brief is premature.** "What are we building?" asks for a task before the person
+  has seen a Mate, an environment or a conversation; what they type vanishes into the
+  form and reappears minutes later as a message they did not watch being sent (D17's
+  handoff). Recommendation: drop the field; the conversation opens during provisioning
+  and the composer queues a first message until the Mate answers — same benefit, right
+  place. Reverses D17; the owner decides.
+- **Title said twice**: breadcrumb "Projects / New project" and an H1 "New project".
+- **The subtitle talks about stage and production** to someone making their first Mate.
+- **"Continue … in Mate"**: absurd when the org is called Mate; the org belongs in the
+  header (present on the projects page, absent here).
+- **"Continue" means a step two** (agents). A first run should not need one: default the
+  agents, create.
+- **Location**: an internal code in the label ("EU Central (prg1)") and two sentences of
+  helper for a preselected default.
+- **Grey on grey**: card, inputs and page share one tint; nothing reads as a field until
+  focused.
+- **Full-width inputs**: a name field a thousand pixels wide; the form wants ~560px.
+- **Sidebar** as on screen 1: chrome plus a duplicate empty state.
+
+## 3. Provisioning wait ("Preparing your project")
+
+- **Four ways of saying one thing**: "Preparing your project", a "PREPARING" pill,
+  "Waiting for the Zerops Mate container to start", and a lowercase orphan "project is
+  being created" — a raw platform status leaking through.
+- **Status words, no life**: no spinner, no elapsed time, no steps. The only live element
+  is the Mate's face in the sidebar — the element the design says carries state — and
+  the page ignores it.
+- **Stale header**: still "New project" with the form's subtitle, though the form is gone
+  and the project already exists in the sidebar.
+- **"Zerops Mate container"** is our vocabulary.
+- **"Back to projects" reads as cancel**: the only button on a wait page, outlined, and
+  nothing says leaving stops nothing.
+- **Card style flipped again**: grey form card → white wait card.
+- **Dead time wasted**: up to five minutes with nothing to do, the Mate row one click away.
+
+Recommendation (follows the design rules — one environment = one conversation, the face
+carries the state, syncing = header spinner): on create, land in the new Mate's
+conversation. Face "coming up", header spinner, one quiet line with the expectation, the
+composer takes the first message and holds it until the Mate answers. Kills this page and
+the form's brief field in one move; reverses D17 — owner decides.
+
+## 4. Agent selection step
+
+`ZCP_AGENTS` is presentation policy only (bootstrap extension: "which agents this container
+offers, in which order — NOT authorization"); the image carries all five, the key absent
+means offer everything, and the sign-in page can show them all. The step pre-narrows a menu
+the person sees in full one screen later, and cannot even express "none" (empty omits the
+key = all). Later Mates in a group inherit the group's authorized agents from what people
+signed into — that path stays. Recommendation: drop the step; omit the key.
+
+**Pending the owner's yes, one cut**: no brief, no agents step, name + location → Create,
+land in the Mate's conversation while it comes up (screens 2, 3, 4).
+
+## 5. Projects page after a reload, first Mate still starting
+
+- **"Wait for it" is styled as an action and is not one**: blue link-weight text beside
+  a status sentence; reads as a punchline. The face already says "starting".
+- **Three add affordances for a project two minutes old**: a dashed "+ Add Mate" tile as
+  big as the Mate, "+ Add stage" and "+ Add production" below, before the first Mate
+  has booted. The dashed placeholder tile is the cliché; hide the adds until the first
+  Mate is up, and make them a row's quiet verb, not a tile.
+- **Gitea's row is a service list** ("broker, db, volume, web"): hostnames, not "ready /
+  setting up" and, later, where it is. It is still building at this moment and the row
+  says nothing.
+- **Two row treatments on one page**: Mate = white card, Gitea = bare line.
+- **"New project" twice again**: sidebar and a filled header pill — the loudest element
+  on a page whose loud thing should be the Mate.
+- **Sidebar footer became "← Back"** on the root page; the footer icons from the empty
+  state are gone, so the sidebar changes shape between two visits to one route.
+- **A colored sliver along the sidebar's left edge** (purple→green, a few px): a bleed.
+- **Group heading is bare bold text**: no count, no menu, no line.
+- Question: did the card flash another state before settling on "starting" after the
+  reload? One frame cannot tell; if yes, the identity-cache rule (a reload paints
+  nothing it takes back) is broken here.
+
+## 6. First Mate comes up: "Wait for it" → silence → "Starting…" → "Connect"
+
+Why no auto-connect: `autoConnectServedZeropsEnvironment` fires only for the candidate
+whose container origin equals the page's origin — the Mate serving the app itself. On
+mate.zerops.io and localhost nothing matches, so every Mate waits for a click. The wizard's
+wait would have followed the creation into the conversation; the reload killed it and the
+projects page does not resume it, though the creation handoff is still in storage.
+
+The silent middle: container ACTIVE → row leaves "provisioning" → action `pending` renders
+no word until the health probe answers → "Starting…" → "Connect". Three states in words,
+one mute; "Wait for it" was never a thing to click (it starts the same wait the page could
+start itself).
+
+- **Resume the creation on reload**: handoff in storage + Mate not connected → start the
+  wait, land in the conversation when it answers.
+- **Clicking a Mate opens it**: connect is a step on the way, not a verb to learn. Card
+  and sidebar row open the conversation and connect if they must.
+- **The face carries the boot**: asleep (container starting), waking (server
+  initializing), awake (answers). No "Wait for it", no "Starting…", no mute gap.
+- **"Server 0.11.0" off the card**: menu or settings.
+
+## 7. Connect fails: "Could not connect to this container. The environment could not authorize the connection."
+
+**A bug, not a design note.** The 0.11.0 server's door read the org member list under
+`items`; the platform answers `clientUserList` (ledger 2026-09-16, *The first Mate on an
+emptied org*). Every connect answered 500. Fixed in fork `7e57be0e3`, released as 0.11.1;
+the test Mate's container restarted to converge.
+
+Design notes on the failure screen itself:
+- **"Project ready" + a green READY pill + "Zerops Mate is ready in this project" above a
+  red box** saying it could not connect. The card contradicts itself; the state is the
+  failure, and the heading should say so.
+- **The message names nothing the person can act on**: "could not authorize" reads as
+  "you are not allowed", when the server fell over. A 500 and a refusal need different
+  sentences; and a trace id somewhere for the report.
+- **"Try again" as a grey pill inside a pink box, "Back to projects" as an outlined
+  button below**: two styles, two places, one escape.
+- Header and sidebar as on screen 5.
+
+## 8. Delivering 0.11.1 to a running Mate
+
+The release took a minute; the restart did not converge — boot log: "mate 0.11.0 already
+installed, no network reached". zcp's manifest cache (`$Prefix/manifest.json`) is keyed by
+time only, one hour from the fetch, and a plain restart keeps the filesystem. Without a
+shell in the container (`zcp mate update` refreshes) the earliest pickup is the next
+restart after expiry. Open item for zcp: a boot should refresh the manifest when the cache
+is older than the running process (or always on `init mate`), so a fix reaches a Mate on
+the restart the app already does.
+
+## Built from the notes above (fork main, 2026-09-16 evening)
+
+- `271a530d8` wizard: one form (name, location), "Create project", no brief, no agents
+  step, no wait page; returns to the projects page. (screens 2, 3, 4)
+- `e090a363b` sidebar: no duplicate empty state; footer keeps its icons on /zerops with
+  Zerops active. (screens 1, 5) The left-edge sliver was not found in our code; the
+  owner runs `elementFromPoint(3, y)` on the projects page to name the painter.
+- `68634f145` projects page: first run owns the page (no title, refresh or header pill;
+  large face, "Start a project", one button); header pill gone everywhere; the face
+  carries the boot ("Coming up. A few minutes." / "Almost there." / nothing), no
+  "Wait for it" / "Starting…" / "Connect"; clicking a Mate opens it; a creation
+  resumes after a reload; the "Preparing your project" takeover deleted, wait/timeout/
+  failure on the Mate's card; add verbs wait for the first Mate, "Add Mate" a quiet verb;
+  Gitea a card with a link or "Setting up.". (screens 1, 3, 5, 6, 7)
+
+Not built: typing a first message while the Mate is still coming up (needs the
+conversation route to open without a server connection). The group heading (bare bold
+text) and the "one verb, three styles" note are covered by removing two of the three.
+
+## 1b. Empty state after the fix — owner's verdict: still a poor standard
+
+Removing the noise did not add design. Open, to be designed rather than patched:
+- **the real Mate logo** (the mark), not a generic idle face, as the picture;
+- **the left column closed or hidden** on an empty account; the page is the whole viewport;
+- **a proper full onboarding / empty state**: composed like a first screen someone chose —
+  type, spacing, one motion moment, name + button as the only inputs, the few-minutes
+  expectation said once; editorial treatment, not utilitarian. A real design pass with
+  screenshots at 1786 and 1280, both themes, before it ships.
+- The left-edge sliver (navy → green) is visible on the empty state too; likely the desktop
+  past the window edge in the capture — confirm with `elementFromPoint(3, y)`.
+
+## 2b. New project form after the fix — owner's verdict: design very poor
+
+Fewer fields, no better form. Open, to be designed with the empty state (1b) as one flow:
+- a floating white card on a grey field with grey inputs inside it; the intro line sits
+  outside the card as an orphan; the org switcher is missing from this page's header;
+- the location select shows an internal code and a bare chevron; the button is a small
+  pill disabled to pale blue with no explanation of why;
+- the form is a generic settings form. It should read as the second beat of onboarding:
+  one question, the name, large; location as a quiet secondary control; the card frame
+  gone or full-bleed; type and spacing from the same pass as 1b.
+
+## 5b. Projects page while the first Mate boots, after the fix — owner's verdict: still poor
+
+The general design and vibe, not one element: a bold group label, a white card with a
+small face and a sentence, an empty half-page to its right, a muted "Tools" heading and a
+second card, and nothing else in a wide grey field. Belongs to the same onboarding pass as
+1b and 2b: the first minutes of an account are one composed screen, not a list with one row.
+
+Two defects on top:
+- **Layout shift / flash on the transition from New project**: the page paints the empty
+  state (no candidates yet) and then the list once the inventory read lands — the rule "a
+  reload paints nothing it takes back" broken. Fix: a pending creation handoff counts as a
+  project — render its group and a coming-up card from the handoff's name before the
+  inventory answers, and never the first-run screen while one exists. Done in part
+  (fork 7abefe78f): no first-run screen while a creation is pending; the placeholder card
+  from the handoff is still open.
+- **Gitea reads "Not available." while it is being set up**: `deriveGiteaState` calls a
+  missing `web` service "unavailable"; right after the import the service list has not
+  caught up. Fixed: a missing web on a live project is "provisioning".
+
+## 9. Second run: the Mate project never left NEW ("Coming up" forever)
+
+Platform side: Gitea `goAPyoSmR2u4U65zehEjig` created and built fine at 20:21:16Z; the Mate
+project `txRlx5AcRbexBQEkAUIDLg` one second later got `project.create` FAILED
+(`internalServerError`, process `j2cJQm8VSTSyMQEZvm4e9g`, 20:21:18.151Z) and `stack.build`
+FAILED (`l5mjyAAIRfiGsiHlLX1t9A`, pipelineFailed 20:21:19Z); the project stayed NEW, the zcp
+service READY_TO_DEPLOY, no log. Org `Mate`, owner ales+mate@zerops.io. Zerops-side error;
+the previous run at 19:2x with the same timing succeeded.
+
+Client side, two gaps:
+- **The create-project step never looks at the process.** `POST /client/{id}/project` answers
+  200 with the project and the creation went on as if it had succeeded; the wizard navigated
+  away. Fix: after the POST, poll `project.create` for that project (process search by
+  projectId + actionName) to a terminal state, bounded; FAILED fails the step with the
+  platform's message and nothing else runs.
+- **A project stuck in NEW reads as "Coming up" forever.** Fix: a NEW/CREATING project whose
+  `project.create` process is FAILED (or that is older than a bound with no process running)
+  is a failed creation on the card — "Could not be created." with a "Remove" verb that
+  deletes it — never a boot that never ends.
+Org wiped again for a third run.
+
+Built (fork `938de7167`, merged `2ebc914c7`, released as 0.11.2): the create-project step
+polls `project.create` to a verdict (2 s, 60 s cap) and fails with the platform's message;
+a NEW/CREATING project whose process FAILED/CANCELED is "Could not be created." with a
+"Remove" verb (delete + forget the handoff). Caveat: the wizard's own path creates project
+and container in one call (`createProjectWithZeropsMate`) and does not run that step, so
+for the flow the owner uses it is the page-side verdict that catches a failed creation,
+on the card, after the wizard has returned to the projects page.
+
+## 10. A Mate whose server is restarting (release rollout) reads as "not connected"
+
+The owner's tab showed Milo as not connected during the container restart that installed
+0.11.4, with no hint he was coming back, then "all of a sudden" online when the socket
+reconnected on its own. The reconnect is right; the gap is unexplained.
+- The face should carry it: away, header spinner, and any sentence says the Mate is
+  restarting, never that it is gone.
+- The app cannot tell a restart from an outage today. A restart the app did not start is
+  exactly what a release rollout looks like, so this state will be common; the platform's
+  service status (RESTARTING / the process list) is readable and could name it.
+
+## 11. The Mate's Gitea credential arrives only when someone opens the projects page
+
+After the third run's conversation opened, Milo had none of `GITEA_URL`, `MATE_BROKER_URL`,
+`GITEA_TOKEN`, though Gitea and the broker were up: the credential reconcile runs on the
+projects page, and the owner had been on the Mate's page since it came up. When it does
+run it writes the three variables and restarts the container, minutes after the person
+started talking to the Mate. Two gaps: the reconcile should run wherever the app is (the
+conversation included), and the first credential should land before the Mate is first
+opened, so its arrival is never a restart mid-conversation.
