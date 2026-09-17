@@ -363,3 +363,16 @@ projects page applies them. Not blocking the run; a restart is safe (the key is 
 the project). Fix: run both right after the create, before the container's first boot, so nothing
 restarts.
 
+## 15. Zane opened, before the first prompt (2026-09-17): the Git tab reads as "not set up"
+
+Screenshot: "REPOSITORIES — This Mate has no code repository yet." and "THE PROJECT — Sign in to
+Gitea to see this project's environments, its releases and its pull requests. [Sign in to Gitea]";
+the composer empty with its generic placeholder; the hero "What should Zane do on Imperial Titan?".
+The owner's reaction: "you said this was set up?" Both lines are true — a repository is made with
+the first dev pair, and the Gitea side acts as the person, who has not signed in yet — but the tab
+says nothing about what IS ready (Zane's Git hosting, delivered by the broker), so a ready Mate and
+a broken one read the same. Open: the empty state should say the true state ("Git hosting is ready;
+a repository appears with the first service") and frame the Gitea sign-in as the one-time step it
+is; the composer should have carried the setting-up job (`useZeropsCreationJob` composes it once
+the agent is signed in) and did not — cause not yet known. Not blocking the run.
+
