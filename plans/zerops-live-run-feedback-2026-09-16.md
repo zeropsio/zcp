@@ -405,3 +405,27 @@ consent page completes on mount). The lab measurements are in the ledger. Zane's
 the new route reaches an org only with a broker built from `main` — a fresh Gitea (wipe and
 create), or the broker service redeployed.
 
+## 16. Owner's run through localhost on 0.11.7 (2026-09-17, ~11:18Z): a stale card, a stuck sign-in
+
+The owner, from the emptied org, on localhost (D22 live on the org's broker: its preflight answered
+every origin). What they saw, in their words:
+
+- "seems to be still stuck at almost there" — the Mate's card, minutes after its `zcp` reported
+  `initComplete`; "on refresh it redirected me to the convo". The wait reads the container from the
+  pushed inventory; a missed push leaves the card waiting. Open (primer §7, item 2).
+- The Git tab: "this is just stuck on this" ("Signing you in to Gitea…"); "why am I not signed in to
+  gitea once at page load when gitea exist anyway?" — it was signing in, every twenty seconds, and
+  being refused: `admin-init.sh` had left the OIDC source "for a later boot" (the broker's secret
+  unresolved nine seconds before the broker listened), no later boot came, and Gitea answered every
+  account creation `422 login source does not exist [id: 1]`. The broker turned that into a `502`,
+  the platform's edge replaced the `502` with its own HTML page, and the app read a bodiless `502`
+  as "still setting up".
+- On being asked for the runtime log: "why the fuck would you do anything from outside? you have
+  email and pass to ales+mate and you have agent-browser and all other tools" — the process note:
+  a stuck screen is diagnosed from inside, with the test owner's login, the logs and a replay of
+  the app's own call, before anything is asked of the owner.
+
+Unblocked by a restart of `web` (the source added in three seconds; `POST /person/token` → 200 as
+the owner, site admin, source 1). Fixed for good: gitea-mate v3.2 (`start.sh` serves only with the
+source; a Gitea refusal is `424 gitea_refused` in Gitea's words) and mate 0.11.8 (the refusal shown
+in place of the sign-in line). Ledger: _The owner's run through localhost on 0.11.7_.

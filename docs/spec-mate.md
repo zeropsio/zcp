@@ -1874,7 +1874,10 @@ by `giteaRecipe.test.ts`), placeholders filled: the region, the org and project 
 `[cors]` and the broker's `POST /person/token` answer every origin (D22). The OIDC seed and the
 webhook secret are generated inside the import. The project keeps the platform's default isolation, which is what stops a runner
 job reading Gitea's admin token. `web` builds Gitea from a pinned, checksummed release; `broker` is a
-static `go build`; both from gitea-mate's `main`.
+static `go build`; both from gitea-mate's `main`. Gitea's start script serves only once the `zerops`
+login source exists: the platform re-runs the boot until `admin-init.sh` could add it (the broker's
+secret resolved, its discovery answering), because a Gitea without the source serves nobody and no
+later boot comes by itself (measured 2026-09-17).
 
 **The broker** is stateless — no database, cache or queue: the registry, the group repo's `main`,
 the commit statuses it writes and the sha in each app version's name are its state, so a restart is
@@ -1943,7 +1946,9 @@ with `login_name` = the Zerops user id, no password — measured on 1.27.2), run
 rights loop when it had to create it, and mints the token with the site admin's basic auth
 (`mate-app/{stamp}`, scopes `read:user read:organization write:repository write:issue`). The
 session is module memory for the tab, one acquisition per Gitea in flight; a Gitea still setting
-up is asked again every twenty seconds; the first `401` forgets the session and the surface
+up is asked again every twenty seconds; a refusal — Gitea saying no, answered `424 gitea_refused`
+with Gitea's words, since the platform's edge replaces a `502` with its own page — is said once in
+place of the sign-in line; the first `401` forgets the session and the surface
 acquires another; the rights loop retires the tokens after twelve hours. Gitea's `[cors]` and the
 route answer every origin (`*`, credentials off): each call carries a bearer and no cookie, so the
 origin proves nothing, and one Gitea serves mate.zerops.io, a developer's localhost and the shells
@@ -2016,7 +2021,8 @@ release is still to run.
 | MB-12 | The Git tab offers one verb per block from the checkout's facts and never answers with the production. `gitTab.test.ts` — "a dev pair with no repository yet says so, and offers nothing", "an unpushed branch offers Push, and only Push", "never answers with the production, whose source is a release".                                                                                       |
 | MB-13 | The Gitea import document the app sends is gitea-mate's, byte for byte. `giteaRecipe.test.ts`.                                                                                                                                                                                                                                                                                                    |
 | MB-14 | zcp hands its key to no forge and no app container, and a Mate's `.gitea` workflow carries no secret, no Zerops token and no zcli. zcp `workflow_build_integration_citoken_test.go`, `deploy_ssh_test.go`; `e2e/gitea_backbone_live_test.go` (tag-gated).                                                                                                                                             |
-| MB-16 | The app's Gitea session is acquired from the broker by a throwaway named for that Gitea, once per Gitea however many surfaces ask, kept in memory, forgotten on the first `401`, and a broker that cannot reach Gitea is asked again while a refusal is said once. `giteaSession.test.ts` — "acquires a token from the broker by throwaway, once, and keeps it for the tab", "forgets the session on the first 401 Gitea answers, so the surface acquires again", "says the Gitea is still setting up when the broker cannot reach it, and is worth asking again"; `giteaBroker.test.ts` — "asks the broker with the throwaway as the bearer, and keeps what it answers"; gitea-mate `TestAPersonGetsATokenThatActsAsThemAndAnAccountBoundToTheSource`, `TestAPersonWhoIsNotAnActiveMemberGetsNothing`, `TestStaleAppTokensAreRetiredAndNeverCounted`. |
+| MB-16 | The app's Gitea session is acquired from the broker by a throwaway named for that Gitea, once per Gitea however many surfaces ask, kept in memory, forgotten on the first `401`, and a broker that cannot reach Gitea is asked again while a refusal is said once. `giteaSession.test.ts` — "acquires a token from the broker by throwaway, once, and keeps it for the tab", "forgets the session on the first 401 Gitea answers, so the surface acquires again", "says the Gitea is still setting up when the broker cannot reach it, and is worth asking again"; `giteaBroker.test.ts` — "asks the broker with the throwaway as the bearer, and keeps what it answers"; gitea-mate `TestAPersonGetsATokenThatActsAsThemAndAnAccountBoundToTheSource`, `TestAPersonWhoIsNotAnActiveMemberGetsNothing`, `TestStaleAppTokensAreRetiredAndNeverCounted`, `TestAGiteaRefusalIsAnsweredInItsWordsNotAsStillSettingUp`; "says what Gitea refused, in Gitea's words, and does not retry it". |
+| MB-18 | Gitea serves only with its `zerops` login source; a boot that cannot add it is re-run, never served. gitea-mate `TestStartRefusesToServeWithoutTheZeropsSource`. |
 | MB-17 | A Gitea and its broker answer every browser origin, since every call carries a bearer and no cookie: the import sends no origin list and `POST /person/token` answers `*`. `giteaRecipe.test.ts` — "sends no origin list: a Gitea answers every origin, since every call carries a bearer"; gitea-mate `TestGiteaProjectImportCarriesNoOriginList`, `TestPersonTokenAnswersEveryOrigin`. |
 | MB-15 | Live: from an emptied org, one _New project_ yields Gitea, the registry, a Mate on its lowered key, and the three variables delivered by the loop with nothing restarted; a merge deploys a stage through the webhook. Ledger 2026-09-16 _The backbone's first live run_, _A real Mate through the backbone_; 2026-09-17 _D20 driven end to end_.                                                     |
 
