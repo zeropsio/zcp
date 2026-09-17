@@ -975,7 +975,13 @@ While a creation is on its way — a project this browser made and has not conne
 still looking for its project or container — the projects page re-reads the inventory every twenty
 seconds as well as taking the platform's pushes (0.11.9): a missed push left the card at "Almost
 there." on a Mate that had answered minutes earlier, while a reload found it at once (the owner's
-run, 2026-09-17). A wait already probing a container by HTTP needs no push and gets no clock.
+run, 2026-09-17). A wait already probing a container by HTTP needs no push and gets no clock. The
+re-read keeps what the page holds (0.11.11): the runtime re-establishes the organization's interests
+on a fresh receiver and releases nothing, so the reads keep their members until the new baseline
+replaces them, and the page paints from the list already read — a re-read spins the header's reload
+glyph and nothing else. Before that the clock re-took the leases, which drop what they read, and the
+page painted "Reading your projects…" and an empty menu at every tick (the owner's run, 2026-09-17:
+"it does this full refresh, that's crazy bad").
 
 ### 4.8 Landing in the thread
 
@@ -2033,6 +2039,7 @@ release is still to run.
 | MB-16 | The app's Gitea session is acquired from the broker by a throwaway named for that Gitea, once per Gitea however many surfaces ask, kept in memory, forgotten on the first `401`, and a broker that cannot reach Gitea is asked again while a refusal is said once. `giteaSession.test.ts` — "acquires a token from the broker by throwaway, once, and keeps it for the tab", "forgets the session on the first 401 Gitea answers, so the surface acquires again", "says the Gitea is still setting up when the broker cannot reach it, and is worth asking again"; `giteaBroker.test.ts` — "asks the broker with the throwaway as the bearer, and keeps what it answers"; gitea-mate `TestAPersonGetsATokenThatActsAsThemAndAnAccountBoundToTheSource`, `TestAPersonWhoIsNotAnActiveMemberGetsNothing`, `TestStaleAppTokensAreRetiredAndNeverCounted`, `TestAGiteaRefusalIsAnsweredInItsWordsNotAsStillSettingUp`; "says what Gitea refused, in Gitea's words, and does not retry it". |
 | MB-18 | Gitea serves only with its `zerops` login source; a boot that cannot add it is re-run, never served. gitea-mate `TestStartRefusesToServeWithoutTheZeropsSource`. |
 | MB-19 | A recipe pull request a registered Mate's bot opened on the group repo is merged by the rights loop, and nobody else's is; `main` on the group repo keeps no merge whitelist. gitea-mate `TestAMatesRecipePullRequestIsMergedAndNobodyElses`, `TestAMatesRecipePullRequestIsMergedByThePass`, `TestAMatesRecipePullRequestNudgesTheLoop`, `TestGroupRepoProtections`. |
+| MB-20 | A re-read of the inventory keeps what the reads hold: no published state loses a member or goes back to unread, and the page paints from the list already read. `runtime.test.ts` "re-reads an organization's inventory on a fresh receiver and keeps what it holds"; `ZeropsProjectsPage.test.ts` "keeps an empty organization's invitation up while its list is re-read". |
 | MB-17 | A Gitea and its broker answer every browser origin, since every call carries a bearer and no cookie: the import sends no origin list and `POST /person/token` answers `*`. `giteaRecipe.test.ts` — "sends no origin list: a Gitea answers every origin, since every call carries a bearer"; gitea-mate `TestGiteaProjectImportCarriesNoOriginList`, `TestPersonTokenAnswersEveryOrigin`. |
 | MB-15 | Live: from an emptied org, one _New project_ yields Gitea, the registry, a Mate on its lowered key, and the three variables delivered by the loop with nothing restarted; a merge deploys a stage through the webhook. Ledger 2026-09-16 _The backbone's first live run_, _A real Mate through the backbone_; 2026-09-17 _D20 driven end to end_.                                                     |
 

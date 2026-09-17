@@ -460,3 +460,14 @@ image's other CLIs belong to zcp's own code-server page (`ZCP_AGENTS`), which th
 narrowed. Showing more here means porting their providers. And the Mate server titled the thread
 with Codex, which has no credentials in this Mate, and failed (its log); the provider choice for
 titles is to follow the signed-in agent.
+
+## 18. Waiting for the Mate on 0.11.10 (2026-09-17, ~14:50Z): the page blanked on every re-read
+
+"every now and then when waiting for the mate to come up it does this full refresh, that's crazy
+bad" — two screenshots: "Reading your projects…" over an empty left menu, then the roster again with
+Dara at "Almost there." and Gitea "Setting up.". Cause: the 0.11.9 clock (every twenty seconds while
+a creation is on its way) re-took the inventory leases, and a released lease drops what it read —
+the same blank on the header's reload, the access renewal and after every start or restart. Fix
+(0.11.11): the runtime re-reads an organization on a fresh receiver and releases nothing
+(`runtime.refresh`); the page and the menu paint from the list already read (`readOnce`), and the
+header's glyph alone spins.
