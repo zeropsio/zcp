@@ -1506,3 +1506,22 @@ func TestWriteBootstrapOutputs_WritesDeployDecompDefaults(t *testing.T) {
 		t.Errorf("RemoteURL must stay empty on fresh bootstrap, got %q", meta.RemoteURL)
 	}
 }
+
+func TestMergeExistingMetaKeepsThePairsGiteaRecord(t *testing.T) {
+	t.Parallel()
+	existing := &ServiceMeta{
+		Hostname:     "todoapp",
+		Mode:         topology.PlanModeSimple,
+		GitPushState: topology.GitPushConfigured,
+		RemoteURL:    "https://web-1234-3000.prg1.zerops.app/acme/todoapp",
+		Gitea:        &GiteaRepoRef{FullName: "acme/todoapp", Branch: "mate/mate-x", DefaultBranch: "main", PullRequest: 1},
+	}
+	meta := &ServiceMeta{Hostname: "todoapp", StageHostname: "todoappstage", Mode: topology.PlanModeStandard}
+	mergeExistingMeta(meta, existing)
+	if meta.Gitea == nil || meta.Gitea.FullName != "acme/todoapp" || meta.Gitea.PullRequest != 1 {
+		t.Fatalf("an expansion keeps the pair's Gitea record, got %+v", meta.Gitea)
+	}
+	if meta.GitPushState != topology.GitPushConfigured || meta.RemoteURL != existing.RemoteURL {
+		t.Fatalf("the push state travels with it, got %q %q", meta.GitPushState, meta.RemoteURL)
+	}
+}

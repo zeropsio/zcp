@@ -225,6 +225,13 @@ func mergeExistingMeta(meta, existing *ServiceMeta) {
 	meta.GitPushState = existing.GitPushState
 	meta.RemoteURL = existing.RemoteURL
 	meta.BuildIntegration = existing.BuildIntegration
+	// The pair's Gitea record (the broker's repository, the Mate's branch,
+	// the pull request) travels with the push state it belongs to: without
+	// it an expanded pair reads as "no pair has its Gitea repository yet"
+	// and the group recipe is never re-proposed (Dara's todoapp, 2026-09-17).
+	if meta.Gitea == nil {
+		meta.Gitea = existing.Gitea
+	}
 
 	if existing.PrimarySetupName != "" {
 		meta.PrimarySetupName = existing.PrimarySetupName
