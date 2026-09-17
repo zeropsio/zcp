@@ -499,3 +499,17 @@ merges the service meta on "dev/simple → standard" — and the dev half keeps 
 pair reads `todoapp` / `todoappstage`; the app folds that as a pair since 0.11.12. The owner tells
 the agent in words: "expand todoapp into a standard dev/stage pair, todoapp as the dev half and
 todoappstage as its stage, then continue".
+
+## 21. "What do we need to change to have a proper PoC run?" (2026-09-17, ~15:55Z)
+
+"so this is fucked up form the beigning I feel, what do we need to change to have a proper PoC run?"
+/ "I can start from scratch, but it needs to be a success in full". The backbone measured fine on
+the fresh org; the breaks were the agent's shape (simple mode), the agent's delivery (direct deploys,
+no pull request) and the page's silence about the next step. Landed the same afternoon: zcp
+`8ae175f6` — a Gitea-wired Mate plans standard pairs only on the classic route, a direct deploy of a
+wired pair names the git-push deploy that opens the pull request, the develop session's auto-close
+note asks the agent to hand the person the pull request's link and the stage/production step; mate
+0.11.13 — the projects page signs in to Gitea by itself and lists the tiers the recipe offers as
+rows with their verbs ("Stage · not set up yet · Add stage"). Release and rollback (5.5, 5.6) have
+never run live; the whole chain is rehearsed in the audit browser as the test owner before the
+owner's run.
