@@ -526,3 +526,8 @@ first deploy with "has no setup "todoapp", which the tier names"; the recipe was
 should re-propose. (2) The service repo's workflow zcp writes runs on every push to `main` and fails
 when no environment follows `main` yet — a red check the Git tab shows as failing; the workflow
 could skip cleanly when the broker answers "no environment".
+
+Addendum to 22 (14:50Z): the cause of (1) is `mergeExistingMeta` — the expansion carried the push
+state, remote and setup names over and dropped `meta.Gitea`, so `gitea_recipe_reconcile` answered
+"no pair has its Gitea repository yet" and the agent could not re-propose. Fixed in zcp (the record
+travels with the push state); the recipe was re-proposed by the agent through git for this run.
