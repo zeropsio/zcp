@@ -971,6 +971,12 @@ that project, whatever the order", "recognises the platform's empty internal err
 else"; `creationHandoff.test.ts` — "keeps a handoff against the project, which is all a creation
 knows", "forgets a creation whose project was removed, and only that one"; `ZeropsProjectsPage.test.ts`.
 
+While a creation is on its way — a project this browser made and has not connected to yet, or a wait
+still looking for its project or container — the projects page re-reads the inventory every twenty
+seconds as well as taking the platform's pushes (0.11.9): a missed push left the card at "Almost
+there." on a Mate that had answered minutes earlier, while a reload found it at once (the owner's
+run, 2026-09-17). A wait already probing a container by HTTP needs no push and gets no clock.
+
 ### 4.8 Landing in the thread
 
 The mate server's own auto-bootstrap (§2.2) creates the first project and thread; the client composes
