@@ -194,6 +194,36 @@ func TestBuildGroupRecipe_AIAgentTierIsTheMatesProject(t *testing.T) {
 	}
 }
 
+// A group's stage and production run what the Mate's stage half runs. A pair
+// records its halves' setups apart — dev and prod — and the group tiers named
+// the dev half's: a stage deployed the dev setup, or the broker refused it for
+// a setup the zerops.yaml did not have (measured 2026-09-17).
+func TestBuildGroupRecipe_GroupEnvironmentsBuildTheStageHalfsSetup(t *testing.T) {
+	t.Parallel()
+	in := groupInputsFixture()
+	in.Runtimes[0].SetupName = "dev"
+	in.Runtimes[0].StageSetupName = "prod"
+	in.Runtimes[0].ZeropsYAMLBody = "zerops:\n  - setup: dev\n    run:\n      base: nodejs@22\n  - setup: prod\n    run:\n      base: nodejs@22\n"
+	layout, _, err := BuildGroupRecipe(in, nil)
+	if err != nil {
+		t.Fatalf("BuildGroupRecipe: %v", err)
+	}
+	files := groupFiles(t, layout)
+	agent := serviceEntries(t, tierDoc(t, files, "0 — AI Agent"))
+	if got, _ := agent["apidev"]["zeropsSetup"].(string); got != "dev" {
+		t.Errorf("AI Agent apidev zeropsSetup = %q, want dev", got)
+	}
+	if got, _ := agent["apistage"]["zeropsSetup"].(string); got != "prod" {
+		t.Errorf("AI Agent apistage zeropsSetup = %q, want prod", got)
+	}
+	for _, dir := range []string{"3 — Stage", "4 — Small Production"} {
+		services := serviceEntries(t, tierDoc(t, files, dir))
+		if got, _ := services["api"]["zeropsSetup"].(string); got != "prod" {
+			t.Errorf("%s api zeropsSetup = %q, want the stage half's prod", dir, got)
+		}
+	}
+}
+
 // Stage and Small Production are the production transform: the mode suffix
 // stripped, one entry per pair, an HA floor on production.
 func TestBuildGroupRecipe_ProductionTransform(t *testing.T) {

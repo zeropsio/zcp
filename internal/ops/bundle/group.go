@@ -237,8 +237,10 @@ func composeGroupTierYAML(
 				})
 			}
 		} else {
+			// A group environment runs what the pair's stage half runs: the
+			// dev half's setup is the dev loop's, never a stage's.
 			halves = append(halves, struct{ hostname, setup string }{
-				groupPromotedHostname(r.DevHostname), r.SetupName,
+				groupPromotedHostname(r.DevHostname), firstNonBlank(r.StageSetupName, r.SetupName),
 			})
 		}
 		for _, half := range halves {
