@@ -531,3 +531,19 @@ Addendum to 22 (14:50Z): the cause of (1) is `mergeExistingMeta` — the expansi
 state, remote and setup names over and dropped `meta.Gitea`, so `gitea_recipe_reconcile` answered
 "no pair has its Gitea repository yet" and the agent could not re-propose. Fixed in zcp (the record
 travels with the push state); the recipe was re-proposed by the agent through git for this run.
+
+## 23. The chain ran end to end (2026-09-17, 14:20Z–15:14Z): ready for the owner's fresh run
+
+"ok finish everything that makes sense and prepare the account for a fresh manual testing from my
+side". Rehearsed as the test owner in the audit browser on Dara's org: pull request and merge from
+the Git tab, Add stage (the broker deployed `main`, published from the row, 200), Add production,
+_Release_ (`v0.1.0` tagged as the person, approved by the broker, the stage artifact promoted,
+deployed in 64 s, published, 200). Released: mate 0.11.14 (the Git tab's verbs, the tier parser and
+the project block at any indentation, no agent on a stage by default, the page finishing a creation
+whose group writes a reload lost), zcp v9.177.0 (pairs only in a wired Mate, the push named after
+a direct deploy, the hand-off note) and v9.178.0 (an expansion keeps the pair's Gitea record). The
+org is wiped for the owner's run on localhost: New project → prompt the Mate (a pair by rule now;
+say "deliver with a git-push deploy" to get the pull request opened by zcp, or open it from the Git
+tab) → _Merge_ → _Add stage_ → _Publish_ from the row → _Add production_ → _Release_ → _Publish_.
+Still theirs: the service repo's workflow red check on a push with no environment, re-proposing the
+recipe when setups change, the "uncertain" sentence on a refused import.
