@@ -438,3 +438,25 @@ in place of the sign-in line). Ledger: _The owner's run through localhost on 0.1
   an overview of every repository they can reach and its open PRs; and each group in the sidebar
   drawn as a timeline — Mates, their open PRs as an accordion, then stage, then production. Noted
   for the design pass (primer §7); the data is one person-token away since D21.
+
+## 17. Juno done with the app base (2026-09-17, ~12:05Z): no production, the recipe not merged
+
+"so Juno is done with the app base, but it never asked me to setup production, and I feel like it
+didnt auto merge the import yaml, can you check everything?" Read from inside: the pair built (zcp's
+first deploy goes direct to the pair's own stage); the app's code never pushed to `appdev` (zcp
+pushes on a git-push deploy, and the agent used the direct one); the recipe open as PR #1 on the
+group repo, `main` bare, no `environments.yaml`; so nothing could offer a stage or production.
+The tool gate refused a merge without review; "but they all should be able to merge on the import
+yaml repo imo" → **D23** (gitea-mate v3.3): `main` on the group repo keeps no merge whitelist and the
+broker merges a Mate's recipe pull request on arrival. Scope note from the owner: "our point is not
+to make zcp's prompting/flows flawless, there will be a separate person working on that for
+hardening.. but we at least need a full PoC working" — the push-after-deploy in zcp is left for
+them; for this run the owner pushes from the Git tab.
+
+Also seen: the "Authorize coding agents" card lists Claude Code and Codex only — "we removed the
+new project step where you select which agents should show up, but then they don't show up here".
+That list is `ZeropsAgentId` in the contracts, the two agents the Mate server can drive; the
+image's other CLIs belong to zcp's own code-server page (`ZCP_AGENTS`), which the removed step
+narrowed. Showing more here means porting their providers. And the Mate server titled the thread
+with Codex, which has no credentials in this Mate, and failed (its log); the provider choice for
+titles is to follow the signed-in agent.
