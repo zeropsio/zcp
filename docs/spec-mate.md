@@ -1803,6 +1803,7 @@ that only the broker deploys to.
 | D22 | **A Gitea serves every app origin** (2026-09-17, the owner: "didn't you just make it use Mate's logged-in user's token?"). Under D21 every browser call carries a bearer in a header and no cookie, so an origin allowlist proves nothing and only pinned a Gitea to the origin that made it. Gitea's `[cors]` and the broker's `POST /person/token` answer `*` (credentials off); the import sends no origin list; one Gitea serves mate.zerops.io, a developer's localhost and the shells. Gitea's own-page sign-in is untouched, its consent page on the origin that made the Gitea (`MATE_APP_URL`, a redirect target). |
 | D23 | **The group repo takes merges from anyone with write, and a Mate's recipe proposal lands by itself** (2026-09-17, the owner, on a first recipe that sat as PR #1 waiting for a releaser: "they all should be able to merge on the import yaml repo"). `main` on the group repo keeps no merge whitelist — the `write` and `release` teams merge — and the broker merges a pull request a registered Mate's bot opened against it on the next pass, nudged by the hook that announces it. What sets the releasers apart is the `v*` tag protection; a person's pull request stays theirs to merge. |
 | D24 | **A group's Mates share its service repositories** (2026-09-17, the owner asking for a run that ends with two Mates, a stage and a production, all wired). The AI Agent tier's `buildFromGit` names the same repository for every Mate the recipe creates, and the broker's `POST /mate/repository` answered `409 taken` to every bot but the one that made it, so no second Mate could push. A registered Mate of the group asking for a service repository that exists is made a collaborator with write — its own branch, its own pull requests, `main` behind them; the group repository stays refused by name, made yet or not. An owner's _Add Mate_ registers the Mate at birth, as _New project_ does. |
+| D26 | **The Git tab is the Mate's; the project's flow is the left menu's and the projects screen's; Gitea's overview is the footer's** (2026-09-17, the owner: "this seems like git for the whole project, shouldn't it be git for this Mate and have project git somewhere else … the left menu … a list of open PRs of each Mate between mates and the stage/prod", and earlier "at the bar down I imagine a 'gitea' button, where I'll see overview of all repos I have access to and their open PR; in the menu I imagine each group as a timeline: mates, their open PRs, stage, production"). One provider reads every project's flow for the account; a Mate's tab shows its own branch and pull request and nothing of the project's. |
 | —   | D2 (a relay), D7 (stage deploys), D9 (integration tokens at the door) and D14's build (adoption) are closed, superseded or not built; D14 stands as the design: adoption is the new-app flow with existing source, nothing adopted in place.                                                                                    |
 
 ### 10.3 The role function
@@ -2033,15 +2034,30 @@ platform cannot clone a private repository and refuses a setup without a source 
 group, widen the broker's token with it, and write the declaration (a commit for a releaser, a pull
 request otherwise). _Add Mate_ reads the AI Agent tier the same way.
 
-The **Git tab** — a right-panel kind `git` beside `diff`, `browser` and `data` — joins two sources
-and infers neither from the other: the checkout's branch and counts from the Mate server's
-`subscribeVcsStatus`, and from Gitea, as the person, the pull request open from that branch, its
-checks and the environment that takes it on merge; the remote's health from a live `git ls-remote`
-through the server (`ZeropsGitRemoteProbe`); what is deployed from the sha in the app version's
-name. Per codebase — the dev half of each pair, or the single service a pair grew from (zcp's expansion keeps the dev hostname: `todoapp` with `todoappstage`, mate 0.11.12); the stage half is deployed to and never a
-checkout (0.11.10) — one block with one verb — _Push_, _Update from main_, _Open pull request_,
-_Merge_ — and below it the group's environments, releases and open recipe pull requests. Checkout
-actions run as the agent's user for the Mate's owner only.
+The **Git tab** — a right-panel kind `git` beside `diff`, `browser` and `data` — is the Mate's
+own leg of the project's flow and nothing else (D26): per codebase — the dev half of each pair, or
+the single service a pair grew from (zcp's expansion keeps the dev hostname: `todoapp` with
+`todoappstage`, mate 0.11.12); the stage half is deployed to and never a checkout (0.11.10) — one
+block with the checkout's branch and counts from the Mate server's `subscribeVcsStatus`, and from
+Gitea, as the person, the pull request open from that branch, its checks and the environment that
+takes it on merge; the remote's health from a live `git ls-remote` through the server
+(`ZeropsGitRemoteProbe`); one verb — _Push_, _Update from main_, _Open pull request_, _Merge_.
+Checkout actions run as the agent's user for the Mate's owner only. It infers nothing from
+another source.
+
+The **project's flow** (`projectFlow.ts`, mate 0.11.16) is read once for the whole account
+(`ZeropsProjectFlowProvider`, every sixty seconds and at once after a verb) and drawn in two
+places. The **left menu** shows each project as a timeline, the way its code travels: the Mates,
+under each its open pull requests (zcp's branch `mate/{login}` or the bot that opened it says
+whose; a person's own follow the Mates; more than three fold behind a count), then stage and
+production unfolded, each with its last deploy as a dot and _Release_ on the production when there
+is something to release; _Merge_ sits on a pull request where Gitea says it merges. The
+**projects screen** shows the same flow as rows under the Mate cards: the Mates' open pull
+requests first, the environments with what they follow and run, why _Release_ is not offered when
+it is not, the releases with _Roll back to this_, the recipe changes last. A **Gitea overview**
+(`/gitea`, the footer's Gitea button) lists every repository the person can reach and the pull
+requests open on it, across the account. What an environment runs is the sha in the app version's
+name, read from Zerops; what is open and what was released is Gitea's.
 
 **Release** (`release.ts`): per service, what the stage runs against what production runs; a tag
 `v{semver}` on the group repo created as the person, its message listing each service's full sha and
@@ -2079,6 +2095,7 @@ release is still to run.
 | MB-25 | A second registered Mate asking for a service repository of its group joins it with write, and the group repository is refused whether it exists or not; an owner's _Add Mate_ registers the Mate through the path the card's _Register in {group}_ takes, and a Mate made from the recipe is sent to the group's code on Gitea. gitea-mate `TestASecondMateJoinsAServiceRepositoryOfItsGroup`, `TestRepositoryRefusals`; `brokerGrant.test.ts` "registerMateInGroup"; `creationHandoff.test.ts` "sends a Mate made from the recipe to the group's code on Gitea". |
 | MB-26 | A deploy onto a wired pair's stage half commits, pushes and opens the pull request with nothing asked of the agent; a dependency directory nobody ignored stops the commit; a push to the group's Gitea watches for no build and offers no integration; a wired pair's direct deploys are never redirected; a group's stage and production build the stage half's setup. zcp `TestAStageDeployOfAWiredPairDeliversItself`, `TestAWiredPairDeploysDirectlyAndIsNeverSentToPush`, `TestBuildGiteaDeliveryCommand_CommitsAndPushesTheDeployedTree`, `TestGitPushDeploy_OpensThePullRequest`, `TestBuildGroupRecipe_GroupEnvironmentsBuildTheStageHalfsSetup`. |
 | MB-27 | A second Mate joins its group's service repository and works from `main` (live, 2026-09-17); a recipe pull request is opened only for a branch ahead of `main`, and one Gitea calls empty is closed by the broker, never retried; a job's deploy takes a tier's name for the group's only environment of that tier; _Add Mate_ registers the Mate and remembers its hand-off as soon as the project exists, a failed later step included. zcp `TestReconcileGiteaGroupRecipe_OpensNothingMainAlreadyHas`; gitea-mate `TestAnEmptyRecipePullRequestIsClosedNotRetried`, `TestDeployTakesATiersNameForItsOnlyEnvironment`; `brokerGrant.test.ts` "registerMateInGroup"; ledger _The whole chain through the UI, from a wiped org_. |
+| MB-28 | A pull request belongs to the Mate whose branch it is (zcp's `mate/{login}`) or whose bot opened it, a person's own is listed after the Mates and never dropped, a group repo's is a recipe change whoever opened it, and a roll-back is offered only to an earlier approved release. `projectFlow.test.ts` — "whose pull request it is", "puts each Mate's under it, newest first, and the rest after the Mates", "is a recipe change on the group repo, whoever opened it", "a release's row"; `SidebarZeropsTree.test.tsx` "the project's flow under it"; `ZeropsGitPanel.test.tsx` "is this Mate's repositories and nothing of the project's". |
 | MB-17 | A Gitea and its broker answer every browser origin, since every call carries a bearer and no cookie: the import sends no origin list and `POST /person/token` answers `*`. `giteaRecipe.test.ts` — "sends no origin list: a Gitea answers every origin, since every call carries a bearer"; gitea-mate `TestGiteaProjectImportCarriesNoOriginList`, `TestPersonTokenAnswersEveryOrigin`. |
 | MB-15 | Live: from an emptied org, one _New project_ yields Gitea, the registry, a Mate on its lowered key, and the three variables delivered by the loop with nothing restarted; a merge deploys a stage through the webhook. Ledger 2026-09-16 _The backbone's first live run_, _A real Mate through the backbone_; 2026-09-17 _D20 driven end to end_.                                                     |
 
