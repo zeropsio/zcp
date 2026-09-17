@@ -2006,7 +2006,7 @@ and infers neither from the other: the checkout's branch and counts from the Mat
 `subscribeVcsStatus`, and from Gitea, as the person, the pull request open from that branch, its
 checks and the environment that takes it on merge; the remote's health from a live `git ls-remote`
 through the server (`ZeropsGitRemoteProbe`); what is deployed from the sha in the app version's
-name. Per codebase — the dev half of each pair; the stage half is deployed to and never a
+name. Per codebase — the dev half of each pair, or the single service a pair grew from (zcp's expansion keeps the dev hostname: `todoapp` with `todoappstage`, mate 0.11.12); the stage half is deployed to and never a
 checkout (0.11.10) — one block with one verb — _Push_, _Update from main_, _Open pull request_,
 _Merge_ — and below it the group's environments, releases and open recipe pull requests. Checkout
 actions run as the agent's user for the Mate's owner only.
