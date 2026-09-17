@@ -98,6 +98,14 @@ func TestGitPushDeploy_OpensThePullRequest(t *testing.T) {
 			if !strings.Contains(text, `"pullRequest"`) {
 				t.Errorf("the push must report the pull request it landed in:\n%s", text)
 			}
+			// Nothing builds from a Mate's branch: the push is not watched for a
+			// build, and the agent is never offered an integration to wire.
+			if strings.Contains(text, "build-integration") || strings.Contains(text, "NOT_OBSERVED") {
+				t.Errorf("a push to the group's Gitea must not watch for a build or offer an integration:\n%s", text)
+			}
+			if !strings.Contains(text, "merge") {
+				t.Errorf("the push must say the person merges the request:\n%s", text)
+			}
 			meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
 			if meta == nil || meta.Gitea == nil || meta.Gitea.PullRequest != tt.wantNumber {
 				t.Fatalf("the pair must record pull request #%d, got %+v", tt.wantNumber, meta.Gitea)

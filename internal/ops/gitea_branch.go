@@ -59,3 +59,48 @@ func BuildGiteaMateBranchCommand(workingDir, branch, base string) string {
 			" || (git rebase --abort >/dev/null 2>&1; false))",
 	}, " && ")
 }
+
+// giteaDeliveryUnignoredMarker prefixes the dependency directories a delivery
+// refused to commit, so the caller can name them.
+const giteaDeliveryUnignoredMarker = "ZCP_UNIGNORED:"
+
+// BuildGiteaDeliveryCommand delivers a wired pair's working tree as it was
+// deployed: it commits everything with the task's words and pushes the commit
+// to the Mate's own branch — never to `main`, which takes no direct push.
+//
+// A dependency directory the repository does not ignore stops it before
+// anything is staged: committing node_modules is never what a person meant,
+// and the .gitignore stays the agent's to write (InitServiceGit). A clean
+// tree commits nothing and the push reports the branch up to date.
+func BuildGiteaDeliveryCommand(workingDir, branch, message string) string {
+	if branch == "" {
+		branch = defaultBranch
+	}
+	return strings.Join([]string{
+		"cd " + shellQuote(workingDir),
+		gitIdentityEnsureFragment(),
+		`{ unignored=""; for d in node_modules vendor .venv; do if [ -d "$d" ] && ! git check-ignore -q "$d"; then unignored="$unignored $d"; fi; done; ` +
+			`if [ -n "$unignored" ]; then echo "` + giteaDeliveryUnignoredMarker + `$unignored"; exit 3; fi; }`,
+		"git add -A",
+		fmt.Sprintf("(git diff --cached --quiet || git commit -q -m %s)", shellQuote(message)),
+		fmt.Sprintf("GIT_TERMINAL_PROMPT=0 git %s push -u origin %s 2>&1",
+			gitCredentialHelperArgs(), shellQuote("HEAD:refs/heads/"+branch)),
+	}, " && ")
+}
+
+// GiteaDeliveryUnignored reads the dependency directories a delivery refused
+// to commit out of its output, space-separated; empty when it refused none.
+func GiteaDeliveryUnignored(output string) string {
+	for line := range strings.SplitSeq(output, "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), giteaDeliveryUnignoredMarker); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+	return ""
+}
+
+// GiteaDeliveryUpToDate reports whether a delivery's push found the branch
+// already carrying the commit.
+func GiteaDeliveryUpToDate(output string) bool {
+	return strings.Contains(output, "Everything up-to-date")
+}

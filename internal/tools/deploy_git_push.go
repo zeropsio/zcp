@@ -603,7 +603,14 @@ func handleGitPush(
 	// zerops_events. The result.NextActions text below names that bridge.
 	_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 
-	if result.Status == statusNothingToPush {
+	// Opened as soon as the push lands: the push is what put the Mate's branch
+	// on the account's Gitea, and `main` there takes no direct push from
+	// anyone. Idempotent: a second push finds the open one.
+	pullRequest := giteaPullRequestAfterPush(ctx, httpClient, stateDir, hostname, effectiveRemote)
+	giteaRemote := giteaRemoteOfThisMate(effectiveRemote)
+
+	switch {
+	case result.Status == statusNothingToPush && !giteaRemote:
 		// Nothing was transmitted, so no integration build will fire — skip the
 		// build watch (it would emit a false "Push landed…" nextActions). A
 		// dirty tree is the usual cause: the dirtyWarn below already names the
@@ -613,7 +620,11 @@ func handleGitPush(
 		} else {
 			result.NextActions = "Working tree is clean and the remote already has this HEAD — nothing to deploy."
 		}
-	} else {
+	case giteaRemote:
+		// The group's workflow runs on main, which the person's merge moves:
+		// nothing builds from a Mate's branch (gitea_delivery.go).
+		result.NextActions = giteaPushNextActions(pullRequest)
+	default:
 		// L1 build watch (spec-git-delivery-target §6.1): the push IS the
 		// deploy, so follow the integration-triggered build to terminal the
 		// way ZCP's own deploys are followed — discovery (new appVersion on
@@ -634,17 +645,13 @@ func handleGitPush(
 	if dirtyWarn != "" {
 		warnings = append(warnings, dirtyWarn)
 	}
-	if warn := trackTriggerMissingWarning(stateDir, hostname); warn != "" {
+	if warn := trackTriggerMissingWarning(stateDir, hostname); warn != "" && !giteaRemote {
 		warnings = append(warnings, warn)
 	}
 
 	return jsonResult(deployGitPushResponse{
-		GitPushResult: result,
-		// The push is what put the Mate's branch on the account's Gitea, and
-		// `main` there takes no direct push from anyone — so this is the
-		// moment the request that lands it can first exist, and the Mate is
-		// done pushing. Idempotent: a second push finds the open one.
-		PullRequest:      giteaPullRequestAfterPush(ctx, httpClient, stateDir, hostname, effectiveRemote),
+		GitPushResult:    result,
+		PullRequest:      pullRequest,
 		Warnings:         warnings,
 		WorkSessionState: sessionAnnotations(stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),

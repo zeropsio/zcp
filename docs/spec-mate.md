@@ -1999,13 +1999,19 @@ metas are complete.
 `MATE_BROKER_URL` and `GITEA_TOKEN` delivers through pull requests, and only a dev/stage pair can:
 the dev half is the checkout that pushes, the stage half the verified basis a production is promoted
 from. So zcp's classic route refuses a plan that gives such a Mate a runtime with no stage half
-(`bootstrapMode` simple or dev), naming the standard pair to re-submit; a direct deploy of a wired
-pair ends with the push named in its next action (`zerops_deploy strategy="git-push"`, which pushes
-the Mate's branch and opens the pull request); and the develop session's auto-close note tells the
-agent to hand the person the pull request's link and the next step — a stage and a production from
-the projects page. Measured missing on Dara's run: "create a todo app" got one simple-mode service,
-nothing pushed, no pull request (`gitea_delivery.go`; `TestAWiredMatePlansOnlyStandardPairs`,
-`TestADirectDeployOfAWiredPairNamesThePushThatLandsIt`).
+(`bootstrapMode` simple or dev), naming the standard pair to re-submit. A deploy onto a wired pair's
+stage half delivers it with nothing asked of the agent or the person — "build a todo app" is the
+whole prompt (the owner, of a prompt that had to name a git-push deploy: "no person is ever going to
+say this"): zcp commits the dev half's tree as deployed, in the work session's words, pushes the
+Mate's branch, opens or finds the pull request, and proposes the recipe again, whose stage and
+production build the stage half's setup; a dependency directory nobody ignored stops the commit and
+is named. A push to the group's Gitea is watched for no build and offers no integration — its
+workflow runs on `main`, which the person's merge moves — and a wired pair's direct deploys are
+never redirected to a push. The develop session's auto-close note tells the agent to hand the person
+the pull request's link and the next step: a stage and a production from the projects page. Measured
+missing on Dara's run ("create a todo app" got one simple-mode service, nothing pushed) and on the
+owner's run of the same evening (`gitea_delivery.go`; `TestAWiredMatePlansOnlyStandardPairs`,
+`TestAStageDeployOfAWiredPairDeliversItself`, `TestAWiredPairDeploysDirectlyAndIsNeverSentToPush`).
 
 ### 10.11 Environments, the Git tab, release
 
@@ -2061,6 +2067,7 @@ release is still to run.
 | MB-23 | A stage and a production run no agent unless the person says so; only a dev environment is a Mate by default. `createEnvironment.test.ts` "gives $role an agent". |
 | MB-24 | A stage or a production whose creation lost its group writes — the registry, the broker's grant, the declaration — is finished by the projects page on its next read; the declaration write declares nothing twice and reuses a branch or request an earlier attempt left. `groupEnvironments.test.ts` "halfMadeGroupEnvironments"; `addGroupEnvironment.test.ts` "declares nothing twice…", "reuses the branch it left…", "reuses the request it left…". |
 | MB-25 | A second registered Mate asking for a service repository of its group joins it with write, and the group repository is refused whether it exists or not; an owner's _Add Mate_ registers the Mate through the path the card's _Register in {group}_ takes, and a Mate made from the recipe is sent to the group's code on Gitea. gitea-mate `TestASecondMateJoinsAServiceRepositoryOfItsGroup`, `TestRepositoryRefusals`; `brokerGrant.test.ts` "registerMateInGroup"; `creationHandoff.test.ts` "sends a Mate made from the recipe to the group's code on Gitea". |
+| MB-26 | A deploy onto a wired pair's stage half commits, pushes and opens the pull request with nothing asked of the agent; a dependency directory nobody ignored stops the commit; a push to the group's Gitea watches for no build and offers no integration; a wired pair's direct deploys are never redirected; a group's stage and production build the stage half's setup. zcp `TestAStageDeployOfAWiredPairDeliversItself`, `TestAWiredPairDeploysDirectlyAndIsNeverSentToPush`, `TestBuildGiteaDeliveryCommand_CommitsAndPushesTheDeployedTree`, `TestGitPushDeploy_OpensThePullRequest`, `TestBuildGroupRecipe_GroupEnvironmentsBuildTheStageHalfsSetup`. |
 | MB-17 | A Gitea and its broker answer every browser origin, since every call carries a bearer and no cookie: the import sends no origin list and `POST /person/token` answers `*`. `giteaRecipe.test.ts` — "sends no origin list: a Gitea answers every origin, since every call carries a bearer"; gitea-mate `TestGiteaProjectImportCarriesNoOriginList`, `TestPersonTokenAnswersEveryOrigin`. |
 | MB-15 | Live: from an emptied org, one _New project_ yields Gitea, the registry, a Mate on its lowered key, and the three variables delivered by the loop with nothing restarted; a merge deploys a stage through the webhook. Ledger 2026-09-16 _The backbone's first live run_, _A real Mate through the backbone_; 2026-09-17 _D20 driven end to end_.                                                     |
 

@@ -214,3 +214,63 @@ func TestBuildGiteaMateBranchCommand_Shape(t *testing.T) {
 		t.Errorf("empty branch/base must fall back to main:\n%s", fallback)
 	}
 }
+
+// TestBuildGiteaDeliveryCommand_CommitsAndPushesTheDeployedTree is how a wired
+// pair's work reaches its group with nobody saying how (2026-09-17, the owner:
+// "no person is ever going to say this" of a prompt that had to name a
+// git-push deploy): the tree as deployed is committed with the task's words and
+// pushed to the Mate's own branch; a dependency directory nobody ignored stops
+// it before anything is staged; a second delivery of the same tree sends
+// nothing new.
+func TestBuildGiteaDeliveryCommand_CommitsAndPushesTheDeployedTree(t *testing.T) {
+	if testing.Short() {
+		t.Skip("exercises a real git repository")
+	}
+	pair := giteaBranchLab(t, nil)
+	runShell(t, BuildGiteaMateBranchCommand(pair, "mate/mate-p1", "main"))
+	writeLabFile(t, filepath.Join(pair, "index.js"), "the app\n")
+	if err := os.MkdirAll(filepath.Join(pair, "node_modules", "express"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeLabFile(t, filepath.Join(pair, "node_modules", "express", "index.js"), "a dependency\n")
+
+	// No .gitignore: the dependencies would ride along, so nothing is staged.
+	out, err := exec.CommandContext(t.Context(), "sh", "-c",
+		BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "Build a todo app")).CombinedOutput()
+	if err == nil {
+		t.Fatalf("a tree with an unignored node_modules must not be delivered:\n%s", out)
+	}
+	if got := GiteaDeliveryUnignored(string(out)); got != "node_modules" {
+		t.Fatalf("GiteaDeliveryUnignored = %q, want node_modules; output:\n%s", got, out)
+	}
+	if staged := runGit(t, pair, "diff", "--cached", "--name-only"); staged != "" {
+		t.Fatalf("nothing may be staged before the refusal, got %q", staged)
+	}
+
+	writeLabFile(t, filepath.Join(pair, ".gitignore"), "node_modules/\n")
+	runShell(t, BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "Build a todo app"))
+	remote := filepath.Join(filepath.Dir(pair), "remote.git")
+	if got := runGit(t, remote, "log", "-1", "--format=%s", "mate/mate-p1"); got != "Build a todo app" {
+		t.Errorf("the branch's head commit is %q, want the task's words", got)
+	}
+	files := runGit(t, remote, "ls-tree", "-r", "--name-only", "mate/mate-p1")
+	if !strings.Contains(files, "index.js") || !strings.Contains(files, ".gitignore") || strings.Contains(files, "node_modules") {
+		t.Errorf("the branch carries %q; want the app and its .gitignore, never node_modules", files)
+	}
+	if err := exec.CommandContext(t.Context(), "git", "-C", remote, "merge-base", "--is-ancestor", "main", "mate/mate-p1").Run(); err != nil {
+		t.Errorf("the delivered branch must descend from main: %v", err)
+	}
+
+	head := runGit(t, remote, "rev-parse", "mate/mate-p1")
+	out, err = exec.CommandContext(t.Context(), "sh", "-c",
+		BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "Build a todo app")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("a second delivery of the same tree: %v\n%s", err, out)
+	}
+	if again := runGit(t, remote, "rev-parse", "mate/mate-p1"); again != head {
+		t.Errorf("a clean tree must add no commit: %s → %s", head, again)
+	}
+	if GiteaDeliveryUpToDate(string(out)) != true {
+		t.Errorf("a second delivery must read as up to date:\n%s", out)
+	}
+}

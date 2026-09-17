@@ -86,11 +86,6 @@ func pollDeployBuild(
 		}
 		mode, class := resolveDeployTargetTopology(stateDir, result.TargetService, result.TargetServiceType)
 		result.NextActions = deploySuccessNextActions(result, mode, class)
-		// A wired pair's code lands through a pull request, and a direct
-		// deploy makes none: name the push (gitea_delivery.go).
-		if delivery := giteaDeliveryNextAction(stateDir, result.TargetService, giteaWired()); delivery != "" {
-			result.NextActions += " " + delivery
-		}
 		// Fetch build warnings/errors even on success (best-effort).
 		// Surfaces issues like silent build failures, missing deployFiles output.
 		if logFetcher != nil {

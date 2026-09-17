@@ -53,6 +53,9 @@ func repoDeliveryRedirect(stateDir, targetService, strategy string, breakGlass b
 	if err != nil || meta == nil {
 		return nil
 	}
+	if giteaWiredPair(meta) {
+		return nil // the group's workflow never rebuilds a Mate's services
+	}
 	if meta.GitPushState != topology.GitPushConfigured || meta.FirstDeployedAt == "" {
 		return nil // L0 artifact flow or first-deploy bypass (D2a)
 	}
@@ -122,11 +125,18 @@ func batchRepoDeliveryRedirect(stateDir string, targets []ops.DeployBatchTarget)
 // state the repo does not — the reconcile push is the standing next step.
 func repoDeliveryDivergenceWarning(stateDir, targetService string) string {
 	meta, err := workflow.FindServiceMeta(stateDir, targetService)
-	if err != nil || meta == nil {
-		return ""
+	if err != nil || meta == nil || giteaWiredPair(meta) {
+		return "" // a wired pair's stage deploy pushes by itself
 	}
 	if meta.GitPushState != topology.GitPushConfigured || meta.FirstDeployedAt == "" {
 		return ""
 	}
 	return "container is now AHEAD of the configured repo (direct deploy on a push-delivering pair) — reconcile with: zerops_deploy targetService=\"" + meta.Hostname + "\" strategy=\"git-push\""
+}
+
+// giteaWiredPair reports whether a pair delivers to its group's Gitea: its
+// deploys are the Mate's own, and its stage deploy pushes by itself
+// (gitea_delivery.go).
+func giteaWiredPair(meta *workflow.ServiceMeta) bool {
+	return meta != nil && meta.Gitea != nil && meta.Gitea.FullName != ""
 }

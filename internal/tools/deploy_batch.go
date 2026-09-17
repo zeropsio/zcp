@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
@@ -187,6 +188,18 @@ func RegisterDeployBatch(
 				attempt.Dirty = entry.Result.Dirty
 			}
 			_ = workflow.RecordDeployAttempt(stateDir, entry.Target.TargetService, attempt)
+		}
+
+		// A wired pair's stage deploy is its delivery (gitea_delivery.go),
+		// after the attempts are recorded.
+		for i := range result.Entries {
+			entry := &result.Entries[i]
+			if entry.Result == nil || entry.Result.Status != statusDeployed {
+				continue
+			}
+			if delivery := deliverGiteaPair(ctx, client, httpClient, sshDeployer, rtInfo, stateDir, entry.Target.TargetService); delivery != nil {
+				entry.Result.NextActions = strings.TrimSpace(entry.Result.NextActions + " " + delivery.Line)
+			}
 		}
 
 		return jsonResult(deployBatchResponse{
