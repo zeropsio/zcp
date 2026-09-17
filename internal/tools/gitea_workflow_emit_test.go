@@ -79,7 +79,9 @@ func TestReconcileGiteaRepositories_EmitsTheWorkflow(t *testing.T) {
 		"actions/checkout@v4",
 		"uses: zeropsio/gitea-mate/actions/deploy@v1",
 		"environment: stage",
-		"service: appdev",
+		// The stage runs the pair's promoted runtime, `app`, never `appdev`
+		// (measured 2026-09-17: the broker answered unknown_service).
+		"service: app\n",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the workflow is missing %q:\n%s", want, body)

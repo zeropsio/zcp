@@ -2006,8 +2006,10 @@ say this"): zcp commits the dev half's tree as deployed, in the work session's w
 Mate's branch, opens or finds the pull request, and proposes the recipe again, whose stage and
 production build the stage half's setup; a dependency directory nobody ignored stops the commit and
 is named. A push to the group's Gitea is watched for no build and offers no integration — its
-workflow runs on `main`, which the person's merge moves — and a wired pair's direct deploys are
-never redirected to a push. The develop session's auto-close note tells the agent to hand the person
+workflow runs on `main`, which the person's merge moves, and asks the broker for the pair's
+promoted runtime (`app` for `appdev`/`appstage`; a workflow naming `appdev` was answered
+`unknown_service`, measured 2026-09-17) — and a wired pair's direct deploys are never redirected
+to a push. The develop session's auto-close note tells the agent to hand the person
 the pull request's link and the next step: a stage and a production from the projects page. Measured
 missing on Dara's run ("create a todo app" got one simple-mode service, nothing pushed) and on the
 owner's run of the same evening (`gitea_delivery.go`; `TestAWiredMatePlansOnlyStandardPairs`,

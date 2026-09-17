@@ -240,7 +240,7 @@ func composeGroupTierYAML(
 			// A group environment runs what the pair's stage half runs: the
 			// dev half's setup is the dev loop's, never a stage's.
 			halves = append(halves, struct{ hostname, setup string }{
-				groupPromotedHostname(r.DevHostname), firstNonBlank(r.StageSetupName, r.SetupName),
+				GroupPromotedHostname(r.DevHostname), firstNonBlank(r.StageSetupName, r.SetupName),
 			})
 		}
 		for _, half := range halves {
@@ -361,9 +361,11 @@ func groupTierProjectName(inputs GroupRecipeInputs, policy groupTierPolicy) stri
 	return inputs.Name + " " + policy.projectSuffix
 }
 
-// groupPromotedHostname strips the pair's mode suffix: `apidev`/`apistage` →
-// `api`. A shared environment has one runtime per app, not a pair.
-func groupPromotedHostname(hostname string) string {
+// GroupPromotedHostname strips the pair's mode suffix: `apidev`/`apistage` →
+// `api`. A shared environment has one runtime per app, not a pair — and it is
+// the name a pair's workflow asks the broker to deploy (measured 2026-09-17:
+// a workflow naming `appdev` asked a stage whose runtime is `app`).
+func GroupPromotedHostname(hostname string) string {
 	for _, suffix := range []string{"-dev", "-stage", "stage", "dev"} {
 		if trimmed, ok := strings.CutSuffix(hostname, suffix); ok && trimmed != "" {
 			return trimmed

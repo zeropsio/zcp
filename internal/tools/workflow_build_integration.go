@@ -7,6 +7,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -442,11 +443,11 @@ func giteaConfirmResponse(
 			"path":        giteaWorkflowFilePath,
 			"variant":     "gitea-broker-deploy",
 			"description": "Runs on the group's runner and asks the account's broker to deploy. No repository secret and no Zerops credential of any kind — the job authenticates with its own token, which dies when the job ends, and the broker deploys only what protected state approved.",
-			"content":     giteaWorkflowYAML(hostname),
+			"content":     giteaWorkflowYAML(bundle.GroupPromotedHostname(hostname)),
 		},
 		"deploysWhat": fmt.Sprintf(
 			"The %q service of the group's %q environment — another Zerops project, reached through the broker. NOT this Mate's own stage half: promotion inside this project stays a ZCP deploy.",
-			hostname, giteaDefaultEnvironment,
+			bundle.GroupPromotedHostname(hostname), giteaDefaultEnvironment,
 		),
 		"credentials": "None. Do not add a secret to this repository and never put a Zerops token in a workflow — the broker refuses a caller it cannot prove, and a key in CI is the thing this whole path exists to remove.",
 		"permissions": "Leave the workflow's permissions at their default. The broker proves the caller by reading the job (`GET /repos/{repo}/actions/jobs/{taskId}`), which needs `actions: read` — the default already grants it, and declaring a narrower set breaks the proof.",
@@ -465,6 +466,8 @@ func giteaConfirmResponse(
 // credential for the workflow to get wrong or to leak. serviceName is the
 // name the service carries in the group's environments, which is the name
 // its repository was created under (guide 2.1).
+// serviceName is the runtime the group's environment runs — a pair's promoted
+// hostname (`app` for `appdev`/`appstage`), never the dev half's.
 func giteaWorkflowYAML(serviceName string) string {
 	return fmt.Sprintf(`name: Zerops deploy
 on:
