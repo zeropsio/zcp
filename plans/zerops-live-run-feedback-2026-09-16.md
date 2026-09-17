@@ -486,3 +486,16 @@ hostname). For the hardening person: the plan's mode is the agent's choice on th
 and "create a todo app" got the mode that cannot enter the release chain; a Mate whose group has a
 Gitea should default to standard, or the bootstrap should ask. For the run: the owner answers the
 agent's stack question with "standard mode, a dev/stage pair".
+
+## 20. After the first prompt (2026-09-17, ~13:30Z): the tab not live, and expanding into a pair
+
+"well I can see the repo now, after refresh, its not updated live? also can I tell it to turn this
+into a dev/stage pair and the continue on with the test". The Git tab's row had read its status once
+at subscription, and the turn's end refreshed only the workspace root, never a repository — fixed in
+mate 0.11.12 (the turn's end refreshes every mounted checkout; reaches a Mate at its next update, so
+the running Dara still needs the reload). The expansion is zcp's own flow — the adopt route with
+`isExisting`, `bootstrapMode: standard` and an explicit `stageHostname`; `bootstrap_outputs.go`
+merges the service meta on "dev/simple → standard" — and the dev half keeps its hostname, so the
+pair reads `todoapp` / `todoappstage`; the app folds that as a pair since 0.11.12. The owner tells
+the agent in words: "expand todoapp into a standard dev/stage pair, todoapp as the dev half and
+todoappstage as its stage, then continue".
