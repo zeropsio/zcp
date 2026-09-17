@@ -1779,6 +1779,7 @@ that only the broker deploys to.
 | D18 | Gitea is made **with the org's first _New project_**, in the same run as the first Mate; nothing happens at sign-up and there is no pool.                                                                                                                                                                                       |
 | D19 | The account's Gitea is the only forge Mate drives.                                                                                                                                                                                                                                                                              |
 | D20 | **A Mate's Gitea access is delivered by the broker's rights loop** into its `zcp` service's variables (§6.6); the app grants the broker the Mate's project at registration and asks for nothing.                                                                                                                                 |
+| D21 | **A person signed in to Mate is signed in to Gitea** (2026-09-17, the owner: "it should use the same login I have"). The app proves the person to the broker with a throwaway, as at the door, and the broker — Gitea's site admin — makes their account exist, bound to the OIDC source, and mints a token that acts as them (§10.9). No Gitea screen, no button; the OAuth2 client, the PKCE flow and the callback route are gone. |
 | —   | D2 (a relay), D7 (stage deploys), D9 (integration tokens at the door) and D14's build (adoption) are closed, superseded or not built; D14 stands as the design: adoption is the new-app flow with existing source, nothing adopted in place.                                                                                    |
 
 ### 10.3 The role function
@@ -1885,9 +1886,9 @@ boot publishes the token).
 Endpoints (`broker-api.md`): `POST /mate/repository` (a Mate, with its bot's Gitea token: a
 service repository in the bot's org, the bot as collaborator, the canonical clone URL); `POST
 /deploy` and `GET /deploy/{id}` (a job's token, proven by `GET /repos/{claimed}/actions/jobs/{taskId}`,
-never `GET /repos/{claimed}` alone); `POST /hooks/gitea` (HMAC); `GET /gitea/oauth-client` (no
-credential; the app's public client id, `503` until a pass has registered it); the OIDC provider
-(§10.9). No endpoint takes a Zerops key; there is no poke.
+never `GET /repos/{claimed}` alone); `POST /hooks/gitea` (HMAC); `POST /person/token` (a person,
+by a `gitea-signin` throwaway: their Gitea account made true, a token that acts as them — §10.9);
+the OIDC provider (§10.9). No endpoint takes a Zerops key; there is no poke.
 
 **The rights loop** — every `MIRROR_INTERVAL` (3 min), after every sign-in and on webhooks, a pure
 plan then an applier: a Gitea org, teams `read`/`write`/`release` and the group repo (`main`
@@ -1896,8 +1897,8 @@ restricted flags from the role function; departed people disabled and their toke
 restricted bot per Mate in its group's readers, its token `mate/{bot}/{n}` — generation n+1 minted
 when none is live, older generations revoked only once the newest is ten minutes old and never on a
 pass that mints; the Mate's `GITEA_URL`, `MATE_BROKER_URL` and `GITEA_TOKEN` written onto its `zcp`
-service, create or update, never a restart (D20); the app's public OAuth2 client with a callback on
-every origin. **A bad or partial read writes nothing**, and a plan that would take away more than
+service, create or update, never a restart (D20); every person's `mate-app/*` token older than
+`APP_TOKEN_TTL` (12 h) retired, never counted against the cap. **A bad or partial read writes nothing**, and a plan that would take away more than
 `MIRROR_CAP` (10) people, tokens or memberships stops and reports.
 
 **Deploys** from protected state only: a stage deploys the head of its sources, merged into
@@ -1931,12 +1932,23 @@ ES256 id token with `sub`, `email`, `groups`. Gitea maps `org:owner` to site adm
 `g:{slug}:…` to teams at every sign-in; the username is `u-{userId}`, never the e-mail's local part.
 Codes live in memory; a broker restart means signing in again.
 
-**As the person** (mate 0.11.0): the app drives Gitea from the browser over PKCE as a public client
-the rights loop registered (`giteaOAuth.ts`, `giteaSession.ts`; `[cors]` lists the app's origins,
-`localhost` does not cover `127.0.0.1`), so Gitea enforces the mirrored rights and the broker is not
-in the path. What it reads and does (`giteaClient.ts`): repositories, branches, contents, pull
-requests and their merge, Actions runs, jobs, logs and reruns, commit statuses, tags. The Git tab
-(§10.11) is where it shows.
+**As the person** (D21, mate 0.11.6, gitea-mate v3): the app drives Gitea from the browser with
+a token that acts as the person, so Gitea enforces the mirrored rights on every call. The token
+comes from the broker, not from Gitea's pages: the Git surface, the moment it knows the account's
+Gitea, mints a `gitea-signin` throwaway as the person and calls `POST /person/token`
+(`giteaSession.ts` → `acquireGiteaPersonToken`); the broker checks the throwaway, refuses anyone
+who is not an active member, makes the person's account exist (`u-{id}`, bound to the OIDC source
+with `login_name` = the Zerops user id, no password — measured on 1.27.2), runs one pass of the
+rights loop when it had to create it, and mints the token with the site admin's basic auth
+(`mate-app/{stamp}`, scopes `read:user read:organization write:repository write:issue`). The
+session is module memory for the tab, one acquisition per Gitea in flight; a Gitea still setting
+up is asked again every twenty seconds; the first `401` forgets the session and the surface
+acquires another; the rights loop retires the tokens after twelve hours. `[cors]` on Gitea lists
+the app's origins (`localhost` does not cover `127.0.0.1`), and the broker answers the route's
+CORS for the same list. What the app reads and does (`giteaClient.ts`): repositories, branches,
+contents, pull requests and their merge, Actions runs, jobs, logs and reruns, commit statuses,
+tags. The Git tab (§10.11) is where it shows; until the session is there it says "Signing you in
+to Gitea…" and nothing is clickable.
 
 ### 10.10 zcp inside a Mate
 
@@ -2002,6 +2014,7 @@ release is still to run.
 | MB-12 | The Git tab offers one verb per block from the checkout's facts and never answers with the production. `gitTab.test.ts` — "a dev pair with no repository yet says so, and offers nothing", "an unpushed branch offers Push, and only Push", "never answers with the production, whose source is a release".                                                                                       |
 | MB-13 | The Gitea import document the app sends is gitea-mate's, byte for byte. `giteaRecipe.test.ts`.                                                                                                                                                                                                                                                                                                    |
 | MB-14 | zcp hands its key to no forge and no app container, and a Mate's `.gitea` workflow carries no secret, no Zerops token and no zcli. zcp `workflow_build_integration_citoken_test.go`, `deploy_ssh_test.go`; `e2e/gitea_backbone_live_test.go` (tag-gated).                                                                                                                                             |
+| MB-16 | The app's Gitea session is acquired from the broker by a throwaway named for that Gitea, once per Gitea however many surfaces ask, kept in memory, forgotten on the first `401`, and a broker that cannot reach Gitea is asked again while a refusal is said once. `giteaSession.test.ts` — "acquires a token from the broker by throwaway, once, and keeps it for the tab", "forgets the session on the first 401 Gitea answers, so the surface acquires again", "says the Gitea is still setting up when the broker cannot reach it, and is worth asking again"; `giteaBroker.test.ts` — "asks the broker with the throwaway as the bearer, and keeps what it answers"; gitea-mate `TestAPersonGetsATokenThatActsAsThemAndAnAccountBoundToTheSource`, `TestAPersonWhoIsNotAnActiveMemberGetsNothing`, `TestStaleAppTokensAreRetiredAndNeverCounted`. |
 | MB-15 | Live: from an emptied org, one _New project_ yields Gitea, the registry, a Mate on its lowered key, and the three variables delivered by the loop with nothing restarted; a merge deploys a stage through the webhook. Ledger 2026-09-16 _The backbone's first live run_, _A real Mate through the backbone_; 2026-09-17 _D20 driven end to end_.                                                     |
 
 Open (kept in the primer until they land): joining from the recipe (zcp), the first live release

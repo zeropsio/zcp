@@ -197,6 +197,7 @@ Phase 4, because people need their Gitea sign-in and the app acts in Gitea as th
 | D17 | The first brief: composed or sent | **decided 2026-09-15: sent automatically only when it is the person's own words from *What are we building?*; filled in, never sent, otherwise**. Today the app already sends a generated creation hand-off by itself (`useZeropsCreationJob.ts`); spec §4.8 / MC-8 record that, with this narrowing as open until 4.2 lands | 4.2 |
 | D18 | Gitea starts at sign-up | **decided 2026-09-15: in the background as the account is created; later possibly from a pool** | 1.2 |
 | D19 | GitHub and GitLab | **stated 2026-09-16: the account's Gitea is the only forge Mate drives.** Code on GitHub or GitLab comes in once (Phase 6; a push mirror back if wanted); from then on Gitea holds it and the broker is the only path to a group's stages and production. GitHub's environments and GitLab's protected variables are not driven by Mate — "Zerops roles are the one source" holds only where the forge's permissions are mirrored from Zerops, and that is Gitea. zcp's GitHub integration for group Mates goes (0.9, Phase 7) | 0.9, 2.3, Phase 6 |
+| D21 | How a person is signed in to Gitea | **decided 2026-09-17 (the owner, on the run: "it should use the same login token I have"): the app proves the person to the broker with a throwaway, as at the door, and the broker — Gitea's site admin — makes their account exist bound to the OIDC source and mints a token that acts as them (`POST /person/token`).** Replaces 4.4's PKCE flow through Gitea's own pages (four screens for a person already signed in). Measured on the lab 2026-09-17 (fork ledger, *A person's Gitea token from the broker*). Gitea's own pages keep OIDC (3.6), the consent completing on its own | 4.4 |
 | D20 | Who delivers a Mate's Gitea access | **decided 2026-09-17: the broker's rights loop, for every registered Mate, into its `zcp` service's variables, with the broker's own Zerops token granted `BASIC_USER` on the Mate project by the app at registration.** Replaces `POST /mate/credential` (the app, as the person, by a throwaway — brittle: a browser tab on the projects page finished a server-side setup, and delivered it with a restart mid-conversation; live run 2026-09-16). Measured 2026-09-17 (ledger, *Broker-shaped and Mate-shaped tokens against a seconds-old project*): a `READ_ONLY` token widened in place one second after the project's creation lists its services and writes plain and sensitive variables on the `NEW` zcp service, both tokens read them in clear, they are present once `ACTIVE`; zcp reads them from the live env store without a restart. Rejected: the Mate presenting its Zerops key to the broker (reverses "its key stays home"); a Mate-minted throwaway (unmeasured whether a token mints tokens). | 1.5 |
 
 ---
@@ -842,6 +843,8 @@ holds tokens (measured).
   (`recipeExport.ts`).
 
 ### 4.4 Gitea inside Mate (P11) *(fork)*
+
+**As landed (D21, 2026-09-17):** the token that acts as the person comes from the broker on a throwaway, not from Gitea's OAuth pages; the PKCE client below was built (mate 0.11.0) and removed (0.11.6, gitea-mate v3).
 
 - **Auth:** Gitea is an OAuth2 provider — authorization code with PKCE, public clients, granular
   scopes since 1.23 (Gitea docs). The Mate app gets a token that acts as the person, so Gitea enforces

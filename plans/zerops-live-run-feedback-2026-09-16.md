@@ -388,3 +388,11 @@ answers a scoped token as the person, which the broker's loop retires after a bo
 screen, no button; the broker is in the token path, as it already is for OIDC. Cost: Gitea tokens
 carry no expiry, so retirement is the broker's job. Build after this run (a release restarts Zane).
 
+Built (2026-09-17 afternoon): D21 — gitea-mate v3 `93969e9` (`POST /person/token`: the person by
+throwaway, the account made bound to the OIDC source, one pass, a token minted as site admin; app
+tokens retired after 12 h; the OAuth2 client, its route and its registration deleted), mate 0.11.6
+`e6b1662f2` (the Git surface acquires the session by itself, the pill and the PKCE code gone, the
+consent page completes on mount). The lab measurements are in the ledger. Zane's broker runs v2.1:
+the new route reaches an org only with a broker built from `main` — a fresh Gitea (wipe and
+create), or the broker service redeployed.
+
