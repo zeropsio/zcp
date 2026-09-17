@@ -252,6 +252,17 @@ func EnsureGiteaPullRequest(ctx context.Context, httpClient HTTPDoer, giteaURL, 
 		owner, _, _ := strings.Cut(headRepo, "/")
 		createHead = owner + ":" + head
 	}
+	// A branch main already carries makes an EMPTY request: Gitea opens it,
+	// marks it "empty", answers every merge 405 "Please try again later", and
+	// the broker retried one every three minutes for as long as it was open
+	// (the owner's run, 2026-09-17: the recipe re-proposed after a stage
+	// deploy with nothing new to say). Nothing is proposed when the compare
+	// says the branch is not ahead; a compare Gitea does not answer keeps the
+	// old behaviour, since an unproposed change costs more than an empty
+	// request.
+	if ahead, known := giteaBranchAhead(ctx, httpClient, repoRoot, token, base, createHead); known && ahead == 0 {
+		return 0, false, nil
+	}
 	payload, err := json.Marshal(map[string]string{"head": createHead, "base": base, "title": title})
 	if err != nil {
 		return 0, false, fmt.Errorf("encode pull-request body failed")
@@ -390,4 +401,22 @@ func GiteaBranchExists(ctx context.Context, httpClient HTTPDoer, giteaURL, token
 	default:
 		return false, fmt.Errorf("the Gitea branch read of %s@%s returned status %d", fullName, branch, status)
 	}
+}
+
+// giteaBranchAhead is how many commits head carries that base does not, from
+// Gitea's compare (GET /repos/{o}/{r}/compare/{base}...{head}); known is false
+// when Gitea did not answer it, and the caller decides without it.
+func giteaBranchAhead(ctx context.Context, httpClient HTTPDoer, repoRoot, token, base, head string) (ahead int, known bool) {
+	body, status, err := giteaAPICall(ctx, httpClient, http.MethodGet,
+		repoRoot+"/compare/"+url.PathEscape(base)+"..."+url.PathEscape(head), token, nil)
+	if err != nil || status != http.StatusOK {
+		return 0, false
+	}
+	var compare struct {
+		TotalCommits *int `json:"total_commits"` //nolint:tagliatelle // Gitea's wire schema
+	}
+	if json.Unmarshal(body, &compare) != nil || compare.TotalCommits == nil {
+		return 0, false
+	}
+	return *compare.TotalCommits, true
 }

@@ -27,6 +27,9 @@ import (
 // fakeGroupGitea is the group repo's half of Gitea: an identity, a fork
 // registry, one branch per repository, and an open pull-request list.
 type fakeGroupGitea struct {
+	// ahead is what the compare answers: commits on the recipe branch that
+	// main lacks. 1 by default (a fresh proposal); -1 makes Gitea not answer.
+	ahead int
 	// branches is repo → branch → path → body.
 	branches map[string]map[string]map[string]string
 	forked   bool
@@ -40,10 +43,11 @@ type fakeGroupGitea struct {
 }
 
 func newFakeGroupGitea() *fakeGroupGitea {
-	return &fakeGroupGitea{branches: map[string]map[string]map[string]string{
-		"acme/group":    {"main": {"README.md": "# acme\n"}},
-		"mate-p1/group": {},
-	}}
+	return &fakeGroupGitea{
+		ahead: 1, branches: map[string]map[string]map[string]string{
+			"acme/group":    {"main": {"README.md": "# acme\n"}},
+			"mate-p1/group": {},
+		}}
 }
 
 func (f *fakeGroupGitea) start(t *testing.T) *httptest.Server {
@@ -121,6 +125,15 @@ func (f *fakeGroupGitea) start(t *testing.T) *httptest.Server {
 				f.lastCommitPaths = append(f.lastCommitPaths, file.Path)
 			}
 			write(http.StatusCreated, map[string]any{"commit": map[string]string{"sha": "abc123"}})
+
+		case strings.Contains(path, "/compare/"):
+			// Gitea's compare: how far the branch is ahead of main. -1 is a
+			// Gitea that does not answer it.
+			if f.ahead < 0 {
+				write(http.StatusNotFound, map[string]string{"message": "no compare"})
+				return
+			}
+			write(http.StatusOK, map[string]any{"total_commits": f.ahead, "commits": []any{}})
 
 		case strings.HasSuffix(path, "/pulls"):
 			if r.Method == http.MethodGet {
@@ -413,4 +426,52 @@ func resultText(t *testing.T, res *mcp.CallToolResult) string {
 		}
 	}
 	return b.String()
+}
+
+// TestReconcileGiteaGroupRecipe_OpensNothingMainAlreadyHas is the owner's run
+// of 2026-09-17: the recipe was re-proposed after a stage deploy with nothing
+// new — main had it from the request the broker had just merged — and the
+// pass still opened a pull request, which Gitea marked empty and the broker
+// then failed to merge every three minutes. A branch main already carries
+// opens nothing; one that is ahead with no open request does; a Gitea that
+// does not answer the compare keeps opening, as before.
+func TestReconcileGiteaGroupRecipe_OpensNothingMainAlreadyHas(t *testing.T) {
+	tests := []struct {
+		name      string
+		ahead     int
+		wantPulls int
+	}{
+		{name: "main already has the branch", ahead: 0, wantPulls: 1},
+		{name: "the branch is ahead and its request was closed", ahead: 1, wantPulls: 2},
+		{name: "a Gitea that does not answer the compare", ahead: -1, wantPulls: 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stateDir := t.TempDir()
+			writeGiteaWiredPairMeta(t, stateDir)
+			fake := newFakeGroupGitea()
+			srv := fake.start(t)
+			envPath := writeLiveEnvFile(t, map[string]string{
+				"GITEA_URL": srv.URL, "MATE_BROKER_URL": srv.URL, "GITEA_TOKEN": giteaBotToken,
+			})
+			rt := runtime.Info{InContainer: true, ProjectID: "p1"}
+			ctx := context.Background()
+
+			reconcileGiteaGroupRecipe(ctx, recipeReconcileClient(), srv.Client(), rt, stateDir, envPath)
+			if fake.commits != 1 || fake.pullPosts != 1 {
+				t.Fatalf("first pass: commits=%d pulls=%d, want 1/1", fake.commits, fake.pullPosts)
+			}
+			// The broker merged it: no request is open any more.
+			fake.pullNumber = 0
+			fake.ahead = tt.ahead
+
+			report := reconcileGiteaGroupRecipe(ctx, recipeReconcileClient(), srv.Client(), rt, stateDir, envPath)
+			if fake.commits != 1 {
+				t.Errorf("an identical export committed again: commits=%d", fake.commits)
+			}
+			if fake.pullPosts != tt.wantPulls {
+				t.Errorf("pull requests opened = %d, want %d (report %q)", fake.pullPosts, tt.wantPulls, report)
+			}
+		})
+	}
 }
