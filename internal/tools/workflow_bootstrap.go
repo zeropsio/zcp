@@ -141,6 +141,10 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			return bootstrapResult(ctx, resp, engine, client, projectID, rt), nil, nil
 		}
 		if input.Plan != nil {
+			// A wired Mate plans pairs only (gitea_delivery.go).
+			if pe := giteaPairPlanError(input.Plan, giteaWired()); pe != nil {
+				return convertError(pe, WithRecoveryStatus()), nil, nil
+			}
 			resp, err := engine.BootstrapCompletePlan(input.Plan, schemas, nil)
 			if err != nil {
 				pe := platform.NewPlatformError(

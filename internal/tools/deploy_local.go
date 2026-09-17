@@ -326,11 +326,17 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 		}
 	}
 	if closed, closedAt, reason := workflow.DeriveCloseState(stateDir, ws); closed {
+		note := closedSessionNote(closedAt, reason)
+		// In a wired group the person's next step is theirs to know
+		// (gitea_delivery.go).
+		if giteaWired() {
+			note += " " + giteaHandoffNote
+		}
 		return &WorkSessionState{
 			Status:      "auto-closed",
 			ClosedAt:    closedAt,
 			CloseReason: reason,
-			Note:        closedSessionNote(closedAt, reason),
+			Note:        note,
 		}
 	}
 	progress := workflow.AutoCloseProgressOf(stateDir, ws)

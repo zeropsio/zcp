@@ -1991,6 +1991,18 @@ dump, the one `zcli push` of a self-deploy given the key through its environment
 `zcli login`. A Mate joining from the recipe (clone each service repo per `buildFromGit`, deploy,
 migrate) is not built; the adopt-time reconcile runs where the metas are complete.
 
+**Delivery in a wired Mate (2026-09-17).** A Mate whose container carries `GITEA_URL`,
+`MATE_BROKER_URL` and `GITEA_TOKEN` delivers through pull requests, and only a dev/stage pair can:
+the dev half is the checkout that pushes, the stage half the verified basis a production is promoted
+from. So zcp's classic route refuses a plan that gives such a Mate a runtime with no stage half
+(`bootstrapMode` simple or dev), naming the standard pair to re-submit; a direct deploy of a wired
+pair ends with the push named in its next action (`zerops_deploy strategy="git-push"`, which pushes
+the Mate's branch and opens the pull request); and the develop session's auto-close note tells the
+agent to hand the person the pull request's link and the next step — a stage and a production from
+the projects page. Measured missing on Dara's run: "create a todo app" got one simple-mode service,
+nothing pushed, no pull request (`gitea_delivery.go`; `TestAWiredMatePlansOnlyStandardPairs`,
+`TestADirectDeployOfAWiredPairNamesThePushThatLandsIt`).
+
 ### 10.11 Environments, the Git tab, release
 
 `environments.yaml` in the group repo declares each environment: name, tier (`stage`,
