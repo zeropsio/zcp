@@ -235,6 +235,7 @@ func TestBuildGiteaDeliveryCommand_CommitsAndPushesTheDeployedTree(t *testing.T)
 	writeLabFile(t, filepath.Join(pair, "node_modules", "express", "index.js"), "a dependency\n")
 
 	// No .gitignore: the dependencies would ride along, so nothing is staged.
+	//nolint:gosec // test-only, the command under test against a t.TempDir repository
 	out, err := exec.CommandContext(t.Context(), "sh", "-c",
 		BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "Build a todo app")).CombinedOutput()
 	if err == nil {
@@ -262,6 +263,7 @@ func TestBuildGiteaDeliveryCommand_CommitsAndPushesTheDeployedTree(t *testing.T)
 	}
 
 	head := runGit(t, remote, "rev-parse", "mate/mate-p1")
+	//nolint:gosec // test-only, the command under test against a t.TempDir repository
 	out, err = exec.CommandContext(t.Context(), "sh", "-c",
 		BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "Build a todo app")).CombinedOutput()
 	if err != nil {
