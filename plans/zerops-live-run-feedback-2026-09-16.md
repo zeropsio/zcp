@@ -354,3 +354,12 @@ app serves the hosted app; the localhost dev pair cannot sign this org's person 
 redirect mismatch) or call its API from the browser. Open: how a second origin joins an existing
 Gitea (`MATE_APP_ORIGINS` on the broker and `GITEA_CORS_ALLOW_DOMAIN` on `web`, both restart) —
 today only by hand.
+
+Second finding, same check: Zane's token is lowered (`NO_ACCESS` + `BASIC_USER`, the group-reach
+reconcile's write) but its creation delegation is still there and the project runs
+`envIsolation: none` with `ZCP_API_KEY` as a plain project variable — 0.4 and 0.10 exist only as
+`createEnvironment` steps, which the one-call _New project_ of 0.11.2 skips, and nothing on the
+projects page applies them. Not blocking the run; a restart is safe (the key is re-injected from
+the project). Fix: run both right after the create, before the container's first boot, so nothing
+restarts.
+

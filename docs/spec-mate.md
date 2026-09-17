@@ -958,9 +958,9 @@ What _Create_ does, in order (`submitZeropsNewProject`, `ZeropsNewProjectWizard.
   platform's verdict on the creation is read from `POST /process/search` (`project.create` for
   that project); one it failed after answering `200` reads "Could not be created." with a _Remove_
   verb that deletes the project and forgets the hand-off (ledger 2026-09-16, _A project creation
-  that the platform failed after answering 200_). The page's reconcile then lowers the Mate's key,
-  deletes its delegation and isolates its project (§10.7) — the wizard's one-call path runs none of
-  the creation steps of `createEnvironment.ts` itself.
+  that the platform failed after answering 200_). The group-reach reconcile then lowers the Mate's
+  key (§10.7); the wizard's one-call path runs none of the creation steps of `createEnvironment.ts`
+  itself, so the delegation and the isolation are not applied to this Mate (open).
 
 `newProject.test.ts` — "generates the container password, sends it, and forgets it", "draws from the
 injected randomness without modulo bias", "never emits a container with a public subdomain and no
@@ -1854,9 +1854,12 @@ own project) → `drop-container-delegation` (the one-use _can create projects_ 
 platform-made key carries, deleted) → `isolate-project-env` (`envIsolation: service`; `ZCP_API_KEY`
 moved from the project onto the `zcp` service as a sensitive variable and deleted from the project;
 `sshIsolation` untouched; every service restarted, `zcp` last — a running process keeps what it
-captured at start) → `import-recipe` where a tier applies. The projects page's reconcile applies the
-same three to a Mate the wizard made in one call and to existing Mates, and deletes a key outright
-from a stage or production project that has no container to move it to. The Mate's server reads its
+captured at start) → `import-recipe` where a tier applies. The group-reach reconcile (`useZeropsGroupReach`) lowers
+the key of any Mate from any page; the delegation and the isolation run only as creation steps,
+which the wizard's one-call path (§4.7) skips — a Mate made by _New project_ keeps its delegation
+and runs `envIsolation: none` with its key at project level (measured 2026-09-17; open in the
+primer). `planProjectIsolation` also deletes a key outright from a stage or production project
+that has no container to move it to. The Mate's server reads its
 key from zcp's own env store, captured at first boot (ledger 2026-09-16).
 
 ### 10.8 Gitea and the broker
