@@ -336,3 +336,21 @@ Boot-order fix landed as gitea-mate v2.1 (`47752ff`: the broker resolves its adm
 `web`'s user-data through the Zerops API when unresolved or refused). Final run from an emptied
 org: delivered 328 s after registration, 226 s after the Mate was up, nothing restarted. The org
 is left populated for the owner (Gitea, Imperial Titan - dev, Mate Nova) on mate 0.11.5.
+
+## 14. Owner's run on mate.zerops.io (2026-09-17, ~10:40Z): backend ready; a Gitea serves one origin
+
+Read-only check before the first prompt, from the API and Gitea's admin API (a temporary
+integration token, deleted after). Gitea `web`/`broker`/`db`/`volume` ACTIVE; registry
+`imperial-titan` + Mate `Imperial Titan - dev` (Zane); the broker healthy, OIDC discovery and
+`GET /gitea/oauth-client` answering; Gitea org `imperial-titan` private with `Owners`/`read`/
+`write`/`release`, `imperial-titan/group` private with `main` protected to `release` and `env/*` to
+the admin, one org hook to the broker; the bot `mate-{projectId}` restricted, active, in `read`;
+the delivered `GITEA_TOKEN` authenticates as the bot; `mate:signer:claude-code` written. Nothing
+restarted, nobody asked — D20 through the released client, first time by the owner.
+
+Finding: the app's OAuth2 client carries one redirect, `https://mate.zerops.io/gitea/callback`, and
+Gitea's `[cors]` the same list — the origins the creating client sent. A Gitea made from the hosted
+app serves the hosted app; the localhost dev pair cannot sign this org's person in to Gitea (PKCE
+redirect mismatch) or call its API from the browser. Open: how a second origin joins an existing
+Gitea (`MATE_APP_ORIGINS` on the broker and `GITEA_CORS_ALLOW_DOMAIN` on `web`, both restart) —
+today only by hand.
