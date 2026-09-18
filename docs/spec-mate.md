@@ -1793,7 +1793,7 @@ that only the broker deploys to.
 | D11 | The creator of a Mate is its project's `OWNER`; org owners and admins keep their reach; _Assign_ (a project-role override to `OWNER`) hands a Mate over.                                                                                                                                                                       |
 | D12 | Every Mate keeps its own dev/stage pair; group stages are projects of the group's.                                                                                                                                                                                                                                              |
 | D13 | The recipe lives in the group repo as the published layout (`0 — AI Agent`, `3 — Stage`, `4 — Small Production`, each a whole-project `import.yaml`), never in a code repository; `main` is protected to the group's releasers.                                                                                                |
-| D15 | **The broker holds the only deploy key** and deploys only what protected state allows; workflows orchestrate by calling it. No deploy secret in Gitea, a repository or a runner.                                                                                                                                                 |
+| D15 | **The broker holds the only deploy key** and deploys only what protected state allows; workflows orchestrate by calling it. No deploy secret in Gitea or a repository. **Changed by D27:** the broker still decides and still holds every key, but it no longer deploys — a job does, with the environment's key in its memory for one `zcli push`.                                                                                                                                                 |
 | D16 | Any number of stages per group, each fed by a branch or a mix of branches merged into `env/{name}` by the broker; the default follows `main`; production's source is `release`.                                                                                                                                                 |
 | D17 | **No brief.** _New project_ asks for the name and nothing else (the owner, 2026-09-16); a creation's generated hand-off is composed into the composer and never sent by itself.                                                                                                                                                 |
 | D18 | Gitea is made **with the org's first _New project_**, in the same run as the first Mate; nothing happens at sign-up and there is no pool.                                                                                                                                                                                       |
@@ -1804,6 +1804,7 @@ that only the broker deploys to.
 | D23 | **The group repo takes merges from anyone with write, and a Mate's recipe proposal lands by itself** (2026-09-17, the owner, on a first recipe that sat as PR #1 waiting for a releaser: "they all should be able to merge on the import yaml repo"). `main` on the group repo keeps no merge whitelist — the `write` and `release` teams merge — and the broker merges a pull request a registered Mate's bot opened against it on the next pass, nudged by the hook that announces it. What sets the releasers apart is the `v*` tag protection; a person's pull request stays theirs to merge. |
 | D24 | **A group's Mates share its service repositories** (2026-09-17, the owner asking for a run that ends with two Mates, a stage and a production, all wired). The AI Agent tier's `buildFromGit` names the same repository for every Mate the recipe creates, and the broker's `POST /mate/repository` answered `409 taken` to every bot but the one that made it, so no second Mate could push. A registered Mate of the group asking for a service repository that exists is made a collaborator with write — its own branch, its own pull requests, `main` behind them; the group repository stays refused by name, made yet or not. An owner's _Add Mate_ registers the Mate at birth, as _New project_ does. |
 | D26 | **The Git tab is the Mate's; the project's flow is the left menu's and the projects screen's; Gitea's overview is the footer's** (2026-09-17, the owner: "this seems like git for the whole project, shouldn't it be git for this Mate and have project git somewhere else … the left menu … a list of open PRs of each Mate between mates and the stage/prod", and earlier "at the bar down I imagine a 'gitea' button, where I'll see overview of all repos I have access to and their open PR; in the menu I imagine each group as a timeline: mates, their open PRs, stage, production"). One provider reads every project's flow for the account; a Mate's tab shows its own branch and pull request and nothing of the project's. |
+| D27 | **A job deploys, with `zcli push`; the broker decides and hands over the key** (2026-09-18, the owner reading a tier's `buildFromGit` and then the broker's own upload: "the gitea runner should literally just do zcli push, the whole process must be as standard as possible"). Every deploy of a group environment is a job of the service repository's workflow on the group's runner: it checks the commit out and runs `zcli push` with the tier's setup, so the build's log is the job's log and nothing re-implements zcli. The broker keeps deciding: a push to `main` starts the job by itself; a release, a new environment and the catch-up pass dispatch it (`workflow_dispatch`); the job asks `POST /deploy/grant`, and the broker hands it the environment's **deploy token** only when the job is proved, runs the default branch's workflow, holds exactly the commit protected state wants there, and sits on a runner that has run nothing but such jobs since it was made (§10.8). The token is one per environment — `BASIC_USER` on that project and nothing else — minted by the app as the person who adds the environment and kept as a secret variable on the broker's service: a token cannot mint a token (ledger 2026-09-15), so it cannot be one per job. Production is built from the release's commits; promoting the stage's artifact is gone. Supersedes the second half of D15 and rewrites MB-14. |
 | —   | D2 (a relay), D7 (stage deploys), D9 (integration tokens at the door) and D14's build (adoption) are closed, superseded or not built; D14 stands as the design: adoption is the new-app flow with existing source, nothing adopted in place.                                                                                    |
 
 ### 10.3 The role function
@@ -1905,15 +1906,16 @@ later boot comes by itself (measured 2026-09-17).
 **The broker** is stateless — no database, cache or queue: the registry, the group repo's `main`,
 the commit statuses it writes and the sha in each app version's name are its state, so a restart is
 safe and the next pass catches up. Its Zerops token reaches the org read-only, the Gitea project,
-every registered Mate's project and every stage and production — the only deploy key. Its Gitea
+every registered Mate's project and every stage and production; since D27 it deploys nothing with
+it and reads with it — the environments' deploy tokens (below) are the deploy keys. Its Gitea
 admin pair arrives by reference from `web`, or from `web`'s variables through the Zerops API when
 the reference has not resolved or Gitea refuses it (v2.1: the broker can boot before Gitea's first
 boot publishes the token).
 
 Endpoints (`broker-api.md`): `POST /mate/repository` (a Mate, with its bot's Gitea token: a
 service repository in the bot's org, the bot as collaborator, the canonical clone URL); `POST
-/deploy` and `GET /deploy/{id}` (a job's token, proven by `GET /repos/{claimed}/actions/jobs/{taskId}`,
-never `GET /repos/{claimed}` alone); `POST /hooks/gitea` (HMAC); `POST /person/token` (a person,
+/deploy/grant` and `POST /deploy/{id}/result` (a job's token, proven by `GET
+/repos/{claimed}/actions/jobs/{taskId}`, never `GET /repos/{claimed}` alone); `POST /hooks/gitea` (HMAC); `POST /person/token` (a person,
 by a `gitea-signin` throwaway: their Gitea account made true, a token that acts as them — §10.9);
 the OIDC provider (§10.9). No endpoint takes a Zerops key; there is no poke.
 
@@ -1933,20 +1935,50 @@ service, create or update, never a restart (D20); every person's `mate-app/*` to
 deploys the commits listed by the newest `v*` tag on the group repo whose pusher had production
 rights when it arrived — recorded as the commit status `mate/release: approved` or `refused`, read
 back from the statuses and never the tag list, so a refused tag stays refused across a restart and a
-`/deploy`; for a bot's tag, the group's switch (D8). Per service: a stage version built from the
-same commit whose setup shares the `build` section is promoted, otherwise Gitea's commit archive is
-uploaded and built; versions are named by the sha (production's also by tag and tagger); a queue per
-environment, newest wins; results as commit statuses. Every pass compares each environment's desired
-head with the deployed version's sha and deploys the difference, which is how a push during
-downtime lands. When the group repo's recipe changes, the delta is imported into each environment of
-that tier before anything deploys there; a changed environment declaration is reported, never
-applied. The broker never executes repository code; the one `git` it runs merges refs with
+`/deploy/grant`; for a bot's tag, the group's switch (D8).
+
+**A job performs every deploy** (D27). The service repository's workflow runs on a push to its
+default branch and on `workflow_dispatch` (inputs `environment`, `service`, `sha`); the broker
+dispatches it, on the default branch, for a release, for an environment that has just been declared
+and for whatever a pass finds behind — once per commit while that commit's status is pending and
+younger than twenty minutes. The job checks the commit out, runs the project's tests and asks `POST
+/deploy/grant` with the sha it holds; a job started by a push names no environment and is granted
+whatever its branch feeds, one environment at a time. The broker answers the environment's deploy
+token, the service's id, the tier's setup and the version's name **only** when, in this order: the job
+is proved; its head is the repository's default branch and not a fork's (a branch's own workflow
+file is unreviewed code and gets nothing); the sha is the one protected state wants there now (an
+older one is `superseded`, no failure); `requireOnStage` is met; nothing younger holds a grant for the
+same commit; the runner is trusted (below); the environment has a token. The job then runs `zcli push
+--setup … --version-name … --workspace-state clean` — the commit's tree and nothing a test left in
+the working directory — with the token in that one process's environment and a throwaway `HOME`, and
+reports `POST /deploy/{id}/result`. Versions are named by the sha (production's also by tag and
+tagger); results are commit statuses: `pending` at the grant, `success` or `failure` at the result,
+and a pass that finds the sha live writes `success` for a job that died silent. The platform
+builds, as after any `zcli push`; production is built from the release's commits. When the group
+repo's recipe changes, the delta is imported into each environment of that tier before anything
+deploys there; a changed environment declaration is reported, never applied. The broker never
+executes repository code and no longer moves any; the one `git` it runs merges refs with
 `core.hooksPath=/dev/null`.
+
+**Deploy tokens**: one integration token per stage and production, `deploy-{environment}` —
+`NO_ACCESS` in the org, `BASIC_USER` on the environment's project — minted by the app as the person
+at _Add stage_ / _Add production_ (and by the projects page's repair for an environment that has
+none) and written as the secret variable `MATE_DEPLOY_TOKEN_{hex of the project id}` on the broker's
+service, which the broker reads through the API at every grant. A container reads only its own
+service's variables (ledger 2026-09-16), so no job can; the value reaches a job for the length of one
+`zcli push`. It is long-lived because nothing but a person can mint or regenerate a token; the
+person who made it owns it (the leaver flow replaces it like a Mate's key).
 
 **Runners**: one service per group in the Gitea project, imported from `import/runner.yaml` on the
 group's first `workflow_job`, registered at org scope, woken on `queued` and stopped after
-`RUNNER_QUIET_PERIOD` (15 min), deleted with the group; host mode, no Zerops credential, labels
-route jobs and only the registration scope isolates them.
+`RUNNER_QUIET_PERIOD` (15 min), deleted with the group; host mode, zcli installed, no credential at
+rest; labels route jobs and only the registration scope isolates them. **A runner is trusted only
+while it has run nothing but default-branch jobs**: jobs share one container and are root in it, so
+a branch's own workflow could leave a process behind that reads the next job's token. At every
+grant the broker reads the org's runs from Gitea (`GET /orgs/{org}/actions/runs`): a run started
+since the runner service was created whose head is not its repository's default branch, or is a
+fork's, taints the runner — the grant answers `runner_tainted`, the runner is deleted and imported
+afresh by the next queued job, and the pass dispatches the deploy again.
 
 ### 10.9 Sign in to Gitea, and Gitea as the person
 
@@ -2083,7 +2115,7 @@ release is still to run.
 | MB-11 | A tier is imported only after conversion, and a release tag carries only full shas. `recipeTierImport.test.ts`; `recipeTier.test.ts`; `release.test.ts` — "drops anything that is not a full sha rather than writing a tag the broker refuses", "round-trips: what it writes is what it reads".                                                                                                    |
 | MB-12 | The Git tab offers one verb per block from the checkout's facts and never answers with the production. `gitTab.test.ts` — "a dev pair with no repository yet says so, and offers nothing", "an unpushed branch offers Push, and only Push", "never answers with the production, whose source is a release".                                                                                       |
 | MB-13 | The Gitea import document the app sends is gitea-mate's, byte for byte. `giteaRecipe.test.ts`.                                                                                                                                                                                                                                                                                                    |
-| MB-14 | zcp hands its key to no forge and no app container, and a Mate's `.gitea` workflow carries no secret, no Zerops token and no zcli. zcp `workflow_build_integration_citoken_test.go`, `deploy_ssh_test.go`; `e2e/gitea_backbone_live_test.go` (tag-gated).                                                                                                                                             |
+| MB-14 | zcp hands its key to no forge and no app container, and a Mate's `.gitea` workflow carries no secret and no Zerops token: it deploys with `zcli push` on a key the broker hands the job (D27, MB-29). zcp `workflow_build_integration_citoken_test.go`, `deploy_ssh_test.go`; `e2e/gitea_backbone_live_test.go` (tag-gated).                                                                                                                                             |
 | MB-16 | The app's Gitea session is acquired from the broker by a throwaway named for that Gitea, once per Gitea however many surfaces ask, kept in memory, forgotten on the first `401`, and a broker that cannot reach Gitea is asked again while a refusal is said once. `giteaSession.test.ts` — "acquires a token from the broker by throwaway, once, and keeps it for the tab", "forgets the session on the first 401 Gitea answers, so the surface acquires again", "says the Gitea is still setting up when the broker cannot reach it, and is worth asking again"; `giteaBroker.test.ts` — "asks the broker with the throwaway as the bearer, and keeps what it answers"; gitea-mate `TestAPersonGetsATokenThatActsAsThemAndAnAccountBoundToTheSource`, `TestAPersonWhoIsNotAnActiveMemberGetsNothing`, `TestStaleAppTokensAreRetiredAndNeverCounted`, `TestAGiteaRefusalIsAnsweredInItsWordsNotAsStillSettingUp`; "says what Gitea refused, in Gitea's words, and does not retry it". |
 | MB-18 | Gitea serves only with its `zerops` login source; a boot that cannot add it is re-run, never served. gitea-mate `TestStartRefusesToServeWithoutTheZeropsSource`. |
 | MB-19 | A recipe pull request a registered Mate's bot opened on the group repo is merged by the rights loop, and nobody else's is; `main` on the group repo keeps no merge whitelist. gitea-mate `TestAMatesRecipePullRequestIsMergedAndNobodyElses`, `TestAMatesRecipePullRequestIsMergedByThePass`, `TestAMatesRecipePullRequestNudgesTheLoop`, `TestGroupRepoProtections`. |
@@ -2096,6 +2128,7 @@ release is still to run.
 | MB-26 | A deploy onto a wired pair's stage half commits, pushes and opens the pull request with nothing asked of the agent; a dependency directory nobody ignored stops the commit; a push to the group's Gitea watches for no build and offers no integration; a wired pair's direct deploys are never redirected; a group's stage and production build the stage half's setup. zcp `TestAStageDeployOfAWiredPairDeliversItself`, `TestAWiredPairDeploysDirectlyAndIsNeverSentToPush`, `TestBuildGiteaDeliveryCommand_CommitsAndPushesTheDeployedTree`, `TestGitPushDeploy_OpensThePullRequest`, `TestBuildGroupRecipe_GroupEnvironmentsBuildTheStageHalfsSetup`. |
 | MB-27 | A second Mate joins its group's service repository and works from `main` (live, 2026-09-17); a recipe pull request is opened only for a branch ahead of `main`, and one Gitea calls empty is closed by the broker, never retried; a job's deploy takes a tier's name for the group's only environment of that tier; _Add Mate_ registers the Mate and remembers its hand-off as soon as the project exists, a failed later step included. zcp `TestReconcileGiteaGroupRecipe_OpensNothingMainAlreadyHas`; gitea-mate `TestAnEmptyRecipePullRequestIsClosedNotRetried`, `TestDeployTakesATiersNameForItsOnlyEnvironment`; `brokerGrant.test.ts` "registerMateInGroup"; ledger _The whole chain through the UI, from a wiped org_. |
 | MB-28 | A pull request belongs to the Mate whose branch it is (zcp's `mate/{login}`) or whose bot opened it, a person's own is listed after the Mates and never dropped, a group repo's is a recipe change whoever opened it, and a roll-back is offered only to an earlier approved release. `projectFlow.test.ts` — "whose pull request it is", "puts each Mate's under it, newest first, and the rest after the Mates", "is a recipe change on the group repo, whoever opened it", "a release's row"; `SidebarZeropsTree.test.tsx` "the project's flow under it"; `ZeropsGitPanel.test.tsx` "is this Mate's repositories and nothing of the project's". |
+| MB-29 | A deploy token reaches a job only when the job is proved, runs the default branch's workflow from the repository itself, holds the commit protected state wants on that environment, and its runner has run nothing but such jobs since it was made; a superseded or already-live commit gets no token and no failure; the job pushes the commit's tree (`--workspace-state clean`), never the working directory. gitea-mate `internal/server/deploy_test.go`, `internal/pipeline/grant_test.go`, `internal/pipeline/runner_test.go`, `actions/deploy` script test; zcp `workflow_build_integration_test.go`. |
 | MB-17 | A Gitea and its broker answer every browser origin, since every call carries a bearer and no cookie: the import sends no origin list and `POST /person/token` answers `*`. `giteaRecipe.test.ts` — "sends no origin list: a Gitea answers every origin, since every call carries a bearer"; gitea-mate `TestGiteaProjectImportCarriesNoOriginList`, `TestPersonTokenAnswersEveryOrigin`. |
 | MB-15 | Live: from an emptied org, one _New project_ yields Gitea, the registry, a Mate on its lowered key, and the three variables delivered by the loop with nothing restarted; a merge deploys a stage through the webhook. Ledger 2026-09-16 _The backbone's first live run_, _A real Mate through the backbone_; 2026-09-17 _D20 driven end to end_.                                                     |
 
