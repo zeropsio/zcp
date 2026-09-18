@@ -63,6 +63,10 @@ func TestGitPushDeploy_OpensThePullRequest(t *testing.T) {
 		wantNumber  int
 		// wantTitle is what the request is opened as, when one is.
 		wantTitle string
+		// openTitle is what the request already open is called; wantRetitle is
+		// what it is renamed to, "" for left alone.
+		openTitle   string
+		wantRetitle string
 	}{
 		{name: "no request open yet", pullsOpen: `[]`, wantCreates: 1, wantNumber: 3, wantTitle: "Mate: appdev"},
 		{
@@ -78,11 +82,38 @@ func TestGitPushDeploy_OpensThePullRequest(t *testing.T) {
 				`"repo":{"full_name":"acme/appdev"}},"base":{"ref":"main"}}]`,
 			wantCreates: 0, wantNumber: 9,
 		},
+		{
+			// The owner's timeline, 2026-09-17: two Mates' rows read "Mate:
+			// appdev". A request opened with no session to name it takes the
+			// task's words from the first delivery that has them.
+			name: "an open one still under zcp's own words is named after the task",
+			pullsOpen: `[{"number":9,"state":"open","head":{"ref":"mate/mate-p1",` +
+				`"repo":{"full_name":"acme/appdev"}},"base":{"ref":"main"}}]`,
+			intent:      "Add a due date to each todo.",
+			openTitle:   "Mate: appdev",
+			wantCreates: 0, wantNumber: 9, wantRetitle: "Add a due date to each todo.",
+		},
+		{
+			name: "an open one somebody named keeps its name",
+			pullsOpen: `[{"number":9,"state":"open","head":{"ref":"mate/mate-p1",` +
+				`"repo":{"full_name":"acme/appdev"}},"base":{"ref":"main"}}]`,
+			intent:      "Then sort them by due date.",
+			openTitle:   "Add a due date to each todo.",
+			wantCreates: 0, wantNumber: 9,
+		},
+		{
+			name: "an open one is left alone when no session says what the work is",
+			pullsOpen: `[{"number":9,"state":"open","head":{"ref":"mate/mate-p1",` +
+				`"repo":{"full_name":"acme/appdev"}},"base":{"ref":"main"}}]`,
+			openTitle:   "Mate: appdev",
+			wantCreates: 0, wantNumber: 9,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fake := newFakeGitea()
 			fake.pullsOpen = tt.pullsOpen
+			fake.pullTitle = tt.openTitle
 			gitea := fake.start(t)
 
 			stateDir := t.TempDir()
@@ -116,6 +147,9 @@ func TestGitPushDeploy_OpensThePullRequest(t *testing.T) {
 			}
 			if tt.wantCreates > 0 && (len(fake.pullTitles) == 0 || fake.pullTitles[0] != tt.wantTitle) {
 				t.Errorf("pull request titled %q, want %q", strings.Join(fake.pullTitles, " | "), tt.wantTitle)
+			}
+			if got := strings.Join(fake.pullRetitles, " | "); got != tt.wantRetitle {
+				t.Errorf("the open request was renamed %q, want %q", got, tt.wantRetitle)
 			}
 			if !strings.Contains(text, `"pullRequest"`) {
 				t.Errorf("the push must report the pull request it landed in:\n%s", text)

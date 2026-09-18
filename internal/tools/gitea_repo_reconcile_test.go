@@ -35,7 +35,11 @@ type fakeGitea struct {
 	pullCreates  int
 	// pullTitles is the title of every request created, in order.
 	pullTitles []string
-	userStatus int
+	// pullTitle is what the open request is called; pullRetitles is every
+	// title it was given afterwards, in order.
+	pullTitle    string
+	pullRetitles []string
+	userStatus   int
 	// branchExists is whether the Mate's branch is on the remote — false
 	// until the pair's first push, which is the state A1 leaves behind.
 	branchExists bool
@@ -77,6 +81,17 @@ func (f *fakeGitea) start(t *testing.T) *httptest.Server {
 				return
 			}
 			_, _ = w.Write([]byte(`{"name":"mate/mate-p1"}`))
+		case strings.Contains(r.URL.Path, "/pulls/"):
+			if r.Method == http.MethodPatch {
+				var edit struct {
+					Title string `json:"title"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&edit)
+				f.pullRetitles = append(f.pullRetitles, edit.Title)
+				f.pullTitle = edit.Title
+			}
+			body, _ := json.Marshal(map[string]any{"number": 9, "state": "open", "title": f.pullTitle})
+			_, _ = w.Write(body)
 		case strings.HasSuffix(r.URL.Path, "/pulls"):
 			if r.Method == http.MethodPost {
 				f.pullCreates++

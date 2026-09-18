@@ -51,6 +51,13 @@ func giteaPairPullRequestTitle(stateDir string, m *workflow.ServiceMeta) string 
 	if intent := workSessionIntent(stateDir); intent != "" {
 		return intent
 	}
+	return giteaPairPullRequestFallbackTitle(m)
+}
+
+// giteaPairPullRequestFallbackTitle is zcp's own words for a request nothing
+// named: what it opens with when no work session is open, and the one title it
+// will replace once a session says what the work is.
+func giteaPairPullRequestFallbackTitle(m *workflow.ServiceMeta) string {
 	return "Mate: " + m.Hostname
 }
 
@@ -98,12 +105,19 @@ func openGiteaPairPullRequest(
 		base = giteaProtectedBase
 	}
 
+	title := giteaPairPullRequestTitle(stateDir, m)
 	number, created, err := ops.EnsureGiteaPullRequest(
-		ctx, httpClient, wiring.GiteaURL, wiring.Token, repo, repo, branch, base,
-		giteaPairPullRequestTitle(stateDir, m),
+		ctx, httpClient, wiring.GiteaURL, wiring.Token, repo, repo, branch, base, title,
 	)
 	if err != nil || number == 0 {
 		return nil
+	}
+	if !created {
+		// A request opened before any session named the work still reads "Mate:
+		// appdev" beside every other Mate's. Best-effort: the request is there
+		// either way, and the next delivery asks again.
+		_, _ = ops.RetitleGiteaPullRequest(ctx, httpClient, wiring.GiteaURL, wiring.Token, repo, number,
+			giteaPairPullRequestFallbackTitle(m), title)
 	}
 	recordGiteaPullRequest(stateDir, m, number)
 	return &giteaPullRequestRef{

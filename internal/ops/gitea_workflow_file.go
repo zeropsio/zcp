@@ -37,3 +37,9 @@ func BuildWriteRepoFileCommand(workingDir, relPath, body string) string {
 	)
 	return strings.Join(parts, " && ")
 }
+
+// BuildReadRepoFileCommand prints relPath inside workingDir, and prints nothing
+// for a file that is not there — a missing file is an answer, not a failure.
+func BuildReadRepoFileCommand(workingDir, relPath string) string {
+	return fmt.Sprintf("cd %s && (cat %s 2>/dev/null || true)", shellQuote(workingDir), shellQuote(relPath))
+}

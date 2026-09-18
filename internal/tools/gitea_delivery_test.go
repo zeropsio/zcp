@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -168,4 +169,142 @@ func (s *hostRecordingSSH) ExecSSH(_ context.Context, host, _ string) ([]byte, e
 func (s *hostRecordingSSH) ExecSSHBackground(_ context.Context, host, _ string, _ time.Duration) ([]byte, error) {
 	*s.hosts = append(*s.hosts, host)
 	return []byte("ok"), nil
+}
+
+// oldGiteaWorkflow is what zcp wrote before D27: the broker's deploy action at
+// v1, no dispatch, and here a Test step the project filled in.
+const oldGiteaWorkflow = `name: Zerops deploy
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        # The project's own.
+        run: |
+          npm ci
+          npm test
+      - name: Deploy through the broker
+        uses: zeropsio/gitea-mate/actions/deploy@v1
+        with:
+          environment: stage
+          service: app
+`
+
+// Wiring writes the workflow once and never runs again for a wired pair, so the
+// delivery — the one moment every wired pair passes through — is where the file
+// follows zcp (measured 2026-09-18: two Mates whose branches still named the
+// broker's old deploy action after D27, and nothing that would ever change it).
+func TestADeliveryBringsTheWorkflowToThisZcps(t *testing.T) {
+	tests := []struct {
+		name      string
+		existing  string
+		wantWrite bool
+		want      []string
+		wantNot   []string
+	}{
+		{
+			name: "an earlier zcp's workflow is replaced, its Test step kept", existing: oldGiteaWorkflow,
+			wantWrite: true,
+			want:      []string{"uses: " + giteaBrokerDeployAction, "workflow_dispatch", "npm ci\n          npm test", "# The project's own."},
+			wantNot:   []string{"actions/deploy@v1", "no test command configured", "environment: stage"},
+		},
+		{
+			name: "a missing file is written", existing: "",
+			wantWrite: true,
+			want:      []string{"uses: " + giteaBrokerDeployAction, "no test command configured"},
+		},
+		{
+			name:      "a file that names this zcp's deploy action is the project's, whatever else it says",
+			existing:  strings.Replace(giteaWorkflowYAML(), `run: echo "no test command configured"`, "run: make test", 1) + "# a person's note\n",
+			wantWrite: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newFakeGitea()
+			gitea := fake.start(t)
+			stateDir := t.TempDir()
+			writeWiredGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev")
+			t.Setenv("GITEA_URL", gitea.URL)
+			t.Setenv("MATE_BROKER_URL", gitea.URL)
+			t.Setenv("GITEA_TOKEN", giteaBotToken)
+
+			var commands []string
+			ssh := &scriptedSSH{respond: func(host, command string) string {
+				if host != "appdev" {
+					t.Errorf("everything runs in the dev half's checkout, got %q", host)
+				}
+				commands = append(commands, command)
+				if strings.Contains(command, "cat ") {
+					return tt.existing
+				}
+				return "ok"
+			}}
+			if d := deliverGiteaPair(context.Background(), platform.NewMock(), gitea.Client(), ssh,
+				runtime.Info{InContainer: true, ProjectID: "proj-1"}, stateDir, "appstage"); d == nil {
+				t.Fatal("want a delivery")
+			}
+
+			written, committed := "", -1
+			for i, command := range commands {
+				if strings.Contains(command, "base64 -d") {
+					if committed >= 0 {
+						t.Fatal("the workflow is written before the tree is committed, not after")
+					}
+					written = decodeWrittenFile(t, command)
+				}
+				if strings.Contains(command, "git add -A") {
+					committed = i
+				}
+			}
+			if committed < 0 {
+				t.Fatal("the delivery committed nothing")
+			}
+			if (written != "") != tt.wantWrite {
+				t.Fatalf("workflow written = %v, want %v", written != "", tt.wantWrite)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(written, want) {
+					t.Errorf("the workflow written misses %q:\n%s", want, written)
+				}
+			}
+			for _, not := range tt.wantNot {
+				if strings.Contains(written, not) {
+					t.Errorf("the workflow written still carries %q:\n%s", not, written)
+				}
+			}
+		})
+	}
+}
+
+// decodeWrittenFile reads the body out of a BuildWriteRepoFileCommand line.
+func decodeWrittenFile(t *testing.T, command string) string {
+	t.Helper()
+	_, rest, found := strings.Cut(command, "printf %s '")
+	if !found {
+		t.Fatalf("no file body in %q", command)
+	}
+	encoded, _, _ := strings.Cut(rest, "'")
+	body, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("the file body does not decode: %v", err)
+	}
+	return string(body)
+}
+
+// scriptedSSH answers each command with what respond says.
+type scriptedSSH struct {
+	respond func(host, command string) string
+}
+
+func (s *scriptedSSH) ExecSSH(_ context.Context, host, command string) ([]byte, error) {
+	return []byte(s.respond(host, command)), nil
+}
+
+func (s *scriptedSSH) ExecSSHBackground(_ context.Context, host, command string, _ time.Duration) ([]byte, error) {
+	return []byte(s.respond(host, command)), nil
 }

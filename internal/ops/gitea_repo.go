@@ -289,6 +289,51 @@ func EnsureGiteaPullRequest(ctx context.Context, httpClient HTTPDoer, giteaURL, 
 	return pr.Number, true, nil
 }
 
+// RetitleGiteaPullRequest renames a pull request that is still called from, and
+// only that one: a title somebody chose — a person in Gitea, or an earlier task
+// — is theirs. Reports whether it renamed it.
+func RetitleGiteaPullRequest(ctx context.Context, httpClient HTTPDoer, giteaURL, token, fullName string, number int, from, to string) (bool, error) {
+	if httpClient == nil {
+		return false, fmt.Errorf("no HTTP client configured")
+	}
+	apiBase, err := giteaAPIBase(giteaURL)
+	if err != nil {
+		return false, err
+	}
+	if fullName == "" || number <= 0 || to == "" || from == to {
+		return false, nil
+	}
+	pullURL := fmt.Sprintf("%s/repos/%s/pulls/%d", apiBase, fullName, number)
+	body, status, err := giteaAPICall(ctx, httpClient, http.MethodGet, pullURL, token, nil)
+	if err != nil {
+		return false, err
+	}
+	if status != http.StatusOK {
+		return false, fmt.Errorf("the Gitea pull-request read returned status %d", status)
+	}
+	var current struct {
+		Title string `json:"title"`
+	}
+	if jsonErr := json.Unmarshal(body, &current); jsonErr != nil {
+		return false, fmt.Errorf("the Gitea pull-request response was not valid JSON")
+	}
+	if current.Title != from {
+		return false, nil
+	}
+	payload, err := json.Marshal(map[string]string{"title": to})
+	if err != nil {
+		return false, fmt.Errorf("encode pull-request title failed")
+	}
+	_, status, err = giteaAPICall(ctx, httpClient, http.MethodPatch, pullURL, token, payload)
+	if err != nil {
+		return false, err
+	}
+	if status != http.StatusOK && status != http.StatusCreated {
+		return false, fmt.Errorf("the Gitea pull-request edit returned status %d", status)
+	}
+	return true, nil
+}
+
 // giteaOpenPullRequest returns the number of the open pull request from
 // headRepo's head to base, or 0 when there is none. Gitea's list endpoint
 // takes no head/base filter that can be relied on across versions, so the open
