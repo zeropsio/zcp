@@ -150,6 +150,30 @@ func DesiredRelease(ctx context.Context, client *http.Client, opts ManifestOptio
 		}
 	}
 
+	m, err := fetchManifest(ctx, client)
+	if err != nil {
+		// A refresh that could not reach the manifest keeps what the last one
+		// read, while that is fresh: a boot asks for a refresh so a release
+		// published inside the hour is not missed (init_mate.go), and a
+		// restart with the network down must not lose the release it had.
+		if opts.Refresh {
+			if cached, ok := readManifestCache(); ok {
+				return cached, nil
+			}
+		}
+		return Manifest{}, err
+	}
+
+	if err := validateManifest(m); err != nil {
+		return Manifest{}, err
+	}
+
+	writeManifestCache(m)
+	return m, nil
+}
+
+// fetchManifest reads the manifest from ManifestURL(), unvalidated.
+func fetchManifest(ctx context.Context, client *http.Client) (Manifest, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
@@ -173,12 +197,6 @@ func DesiredRelease(ctx context.Context, client *http.Client, opts ManifestOptio
 	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
 		return Manifest{}, fmt.Errorf("parse mate release manifest: %w", err)
 	}
-
-	if err := validateManifest(m); err != nil {
-		return Manifest{}, err
-	}
-
-	writeManifestCache(m)
 	return m, nil
 }
 

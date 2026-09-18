@@ -50,8 +50,13 @@ func newMateRig(t *testing.T) *mateRig {
 		return nil
 	})
 	zcpinit.SetMateUnitFilePath(rig.unitPath)
-	zcpinit.SetMateEnsureInstalled(func(mate.EnsureOptions) (mate.Result, error) {
+	zcpinit.SetMateEnsureInstalled(func(opts mate.EnsureOptions) (mate.Result, error) {
 		rig.installs++
+		// A boot reads the manifest afresh, so a release inside the cache's
+		// hour is not missed by a restart.
+		if !opts.Refresh {
+			t.Errorf("the boot's install step must refresh the release manifest, got %+v", opts)
+		}
 		return mate.Result{}, errors.New("installer not stubbed for this test")
 	})
 	t.Cleanup(func() {

@@ -112,7 +112,11 @@ func enableMate(rt runtime.Info) error {
 		return errors.New("no projectId in the container environment — mate has no Zerops project to bind to")
 	}
 
-	result, err := mateEnsureInstalled(mate.EnsureOptions{})
+	// A boot reads the release manifest afresh: the cache is an hour old at
+	// most, and a restart inside that hour kept the previous Mate build for
+	// the rest of it (the owner's runs, 2026-09-17). An unreachable manifest
+	// falls back to the cache, then to what is installed.
+	result, err := mateEnsureInstalled(mate.EnsureOptions{Refresh: true})
 	if err != nil {
 		return fmt.Errorf("ensure mate bundle: %w", err)
 	}

@@ -100,6 +100,34 @@ func TestDesiredRelease_Refresh_BypassesCache(t *testing.T) {
 	}
 }
 
+// TestDesiredRelease_Refresh_KeepsTheCacheWhenUnreachable — a boot asks for
+// a refresh (init_mate.go); with the manifest unreachable it must keep the
+// release the last fetch read rather than fail the boot's install step.
+func TestDesiredRelease_Refresh_KeepsTheCacheWhenUnreachable(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var reachable = true
+	client := manifestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		if !reachable {
+			http.Error(w, "gateway timeout", http.StatusGatewayTimeout)
+			return
+		}
+		_, _ = w.Write(validManifestJSON(t, nil))
+	})
+
+	first, err := mate.DesiredRelease(context.Background(), client, mate.ManifestOptions{})
+	if err != nil {
+		t.Fatalf("DesiredRelease(): %v", err)
+	}
+	reachable = false
+	again, err := mate.DesiredRelease(context.Background(), client, mate.ManifestOptions{Refresh: true})
+	if err != nil {
+		t.Fatalf("DesiredRelease(Refresh) with the manifest unreachable must answer from the cache: %v", err)
+	}
+	if again != first {
+		t.Errorf("DesiredRelease(Refresh) = %+v, want the cached %+v", again, first)
+	}
+}
+
 func TestDesiredRelease_UnreachableManifest_ReturnsError(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	client := manifestServer(t, func(w http.ResponseWriter, _ *http.Request) {
