@@ -36,8 +36,11 @@ included. Nothing below blocks that path; each item makes it cheaper, safer or l
    carries only the new work. Iris's branch shows it: `afed1e5` is the task, then
    `f4b4f3b "Merge remote-tracking branch 'origin/main' …"` as the bot. But between a merge and the
    next delivery the agent edits a tree without the work other Mates have landed, and a collision
-   first shows at delivery, as `ZCP_MERGE_CONFLICT:`. Fen now merges `main` by hand before it edits
-   ("main had moved twice since our last landing … so I merged origin/main in again"). Done when a
+   first shows at delivery, as `ZCP_MERGE_CONFLICT:`. The agents make up for it by hand. Fen now
+   merges `main` before it edits ("main had moved twice since our last landing … so I merged
+   origin/main in again"). Vera rebuilt its branch on `main` and rewrote the remote branch (`b911db6`
+   directly on #8's squash, its earlier `d32492f` gone), committing as "Todo App" instead of the bot.
+   Done when a
    develop session starts by taking the base in: the same fetch and merge, the same conflict
    marker, so the agent builds on the current `main` and the hand merge has no reason to exist.
 
