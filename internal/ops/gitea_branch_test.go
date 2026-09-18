@@ -237,7 +237,7 @@ func TestBuildGiteaDeliveryCommand_CommitsAndPushesTheDeployedTree(t *testing.T)
 	// No .gitignore: the dependencies would ride along, so nothing is staged.
 	//nolint:gosec // test-only, the command under test against a t.TempDir repository
 	out, err := exec.CommandContext(t.Context(), "sh", "-c",
-		BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "Build a todo app")).CombinedOutput()
+		BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Build a todo app")).CombinedOutput()
 	if err == nil {
 		t.Fatalf("a tree with an unignored node_modules must not be delivered:\n%s", out)
 	}
@@ -249,7 +249,7 @@ func TestBuildGiteaDeliveryCommand_CommitsAndPushesTheDeployedTree(t *testing.T)
 	}
 
 	writeLabFile(t, filepath.Join(pair, ".gitignore"), "node_modules/\n")
-	runShell(t, BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "Build a todo app"))
+	runShell(t, BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Build a todo app"))
 	remote := filepath.Join(filepath.Dir(pair), "remote.git")
 	if got := runGit(t, remote, "log", "-1", "--format=%s", "mate/mate-p1"); got != "Build a todo app" {
 		t.Errorf("the branch's head commit is %q, want the task's words", got)
@@ -265,7 +265,7 @@ func TestBuildGiteaDeliveryCommand_CommitsAndPushesTheDeployedTree(t *testing.T)
 	head := runGit(t, remote, "rev-parse", "mate/mate-p1")
 	//nolint:gosec // test-only, the command under test against a t.TempDir repository
 	out, err = exec.CommandContext(t.Context(), "sh", "-c",
-		BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "Build a todo app")).CombinedOutput()
+		BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Build a todo app")).CombinedOutput()
 	if err != nil {
 		t.Fatalf("a second delivery of the same tree: %v\n%s", err, out)
 	}
@@ -274,5 +274,107 @@ func TestBuildGiteaDeliveryCommand_CommitsAndPushesTheDeployedTree(t *testing.T)
 	}
 	if GiteaDeliveryUpToDate(string(out)) != true {
 		t.Errorf("a second delivery must read as up to date:\n%s", out)
+	}
+}
+
+// A second Mate merging first is the ordinary state of a group, and until
+// 2026-09-18 it was fatal: a Mate's branch was cut from `main` when its
+// repository was wired and never caught up, so the first merge killed every
+// other open pull request — Gitea simply stopped offering Merge, with nothing
+// said (the owner, on todo/appdev #3). A delivery now takes the base in before
+// it pushes, so the branch stays mergeable and the Mate's own tree carries
+// everybody's work.
+func TestBuildGiteaDeliveryCommand_TakesTheBaseInBeforeItPushes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("exercises a real git repository")
+	}
+	for _, tc := range []struct {
+		name string
+		// onMain is what another Mate merged first, by file and content.
+		onMain map[string]string
+		// inTree is what this Mate wrote.
+		inTree       map[string]string
+		wantConflict string
+	}{
+		{
+			name:   "another Mate's file comes in",
+			onMain: map[string]string{"other.js": "somebody else's work\n"},
+			inTree: map[string]string{"index.js": "the app\n"},
+		},
+		{
+			name:   "the same file, different lines",
+			onMain: map[string]string{"index.js": "the app\nand a footer\n"},
+			inTree: map[string]string{"other.js": "mine\n"},
+		},
+		{
+			name:         "the same line, two ways — the Mate is told, and nothing is pushed",
+			onMain:       map[string]string{"index.js": "somebody else's line\n"},
+			inTree:       map[string]string{"index.js": "my line\n"},
+			wantConflict: "index.js",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pair := giteaBranchLab(t, nil)
+			root := filepath.Dir(pair)
+			remote := filepath.Join(root, "remote.git")
+			runShell(t, BuildGiteaMateBranchCommand(pair, "mate/mate-p1", "main"))
+			writeLabFile(t, filepath.Join(pair, "index.js"), "the app\n")
+			runShell(t, BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Build the app"))
+
+			// This Mate's work is merged, the way a person merges it, and then
+			// another Mate lands its own on top — the ordinary life of a group.
+			other := filepath.Join(root, "other")
+			runGit(t, root, "clone", "-q", remote, "other")
+			runGit(t, other, "config", "user.email", "other@example.invalid")
+			runGit(t, other, "config", "user.name", "other")
+			runGit(t, other, "merge", "-q", "--no-edit", "origin/mate/mate-p1")
+			runGit(t, other, "push", "-q", "origin", "main")
+			for name, content := range tc.onMain {
+				writeLabFile(t, filepath.Join(other, name), content)
+			}
+			runGit(t, other, "add", "-A")
+			runGit(t, other, "commit", "-qm", "Another Mate's work")
+			runGit(t, other, "push", "-q", "origin", "main")
+
+			for name, content := range tc.inTree {
+				writeLabFile(t, filepath.Join(pair, name), content)
+			}
+			//nolint:gosec // test-only, the command under test against a t.TempDir repository
+			out, err := exec.CommandContext(t.Context(), "sh", "-c",
+				BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Add a feature")).CombinedOutput()
+
+			if tc.wantConflict != "" {
+				if err == nil {
+					t.Fatalf("a conflict must stop the delivery:\n%s", out)
+				}
+				if got := GiteaDeliveryConflict(string(out)); !strings.Contains(got, tc.wantConflict) {
+					t.Fatalf("GiteaDeliveryConflict = %q, want %q; output:\n%s", got, tc.wantConflict, out)
+				}
+				if state := runGit(t, pair, "status", "--porcelain=v1", "--untracked-files=no"); strings.Contains(state, "UU") {
+					t.Errorf("the checkout must be left whole, not half-merged: %q", state)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("delivery: %v\n%s", err, out)
+			}
+			if GiteaDeliveryConflict(string(out)) != "" {
+				t.Fatalf("no conflict was expected:\n%s", out)
+			}
+			// Mergeable again: the branch now contains main.
+			if err := exec.CommandContext(t.Context(), "git", "-C", remote,
+				"merge-base", "--is-ancestor", "main", "mate/mate-p1").Run(); err != nil {
+				t.Errorf("the delivered branch must contain main: %v", err)
+			}
+			// And the Mate's own checkout carries the other Mate's work, so
+			// its next task is written against what is really on main.
+			for name, content := range tc.onMain {
+				got, readErr := os.ReadFile(filepath.Join(pair, name))
+				if readErr != nil || string(got) != content {
+					t.Errorf("%s in the Mate's tree = %q (%v), want %q", name, got, readErr, content)
+				}
+			}
+		})
 	}
 }

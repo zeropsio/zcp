@@ -64,6 +64,10 @@ func BuildGiteaMateBranchCommand(workingDir, branch, base string) string {
 // refused to commit, so the caller can name them.
 const giteaDeliveryUnignoredMarker = "ZCP_UNIGNORED:"
 
+// giteaDeliveryConflictMarker prefixes the files the base and the Mate's work
+// both changed, when taking the base in could not be done without a decision.
+const giteaDeliveryConflictMarker = "ZCP_MERGE_CONFLICT:"
+
 // BuildGiteaDeliveryCommand delivers a wired pair's working tree as it was
 // deployed: it commits everything with the task's words and pushes the commit
 // to the Mate's own branch — never to `main`, which takes no direct push.
@@ -72,10 +76,14 @@ const giteaDeliveryUnignoredMarker = "ZCP_UNIGNORED:"
 // anything is staged: committing node_modules is never what a person meant,
 // and the .gitignore stays the agent's to write (InitServiceGit). A clean
 // tree commits nothing and the push reports the branch up to date.
-func BuildGiteaDeliveryCommand(workingDir, branch, message string) string {
+func BuildGiteaDeliveryCommand(workingDir, branch, base, message string) string {
 	if branch == "" {
 		branch = defaultBranch
 	}
+	if base == "" {
+		base = defaultBranch
+	}
+	remoteBase := shellQuote("origin/" + base)
 	return strings.Join([]string{
 		"cd " + shellQuote(workingDir),
 		gitIdentityEnsureFragment(),
@@ -83,6 +91,24 @@ func BuildGiteaDeliveryCommand(workingDir, branch, message string) string {
 			`if [ -n "$unignored" ]; then echo "` + giteaDeliveryUnignoredMarker + `$unignored"; exit 3; fi; }`,
 		"git add -A",
 		fmt.Sprintf("(git diff --cached --quiet || git commit -q -m %s)", shellQuote(message)),
+		// Take the base in before pushing. A group has more than one Mate and
+		// they land in turn, so a branch cut when the repository was wired is
+		// behind the moment somebody else merges — and Gitea then simply stops
+		// offering Merge (the owner, 2026-09-18, on a second Mate's request).
+		// A merge and not a rebase: history only moves forward, so the push
+		// stays an ordinary one and no force can lose a commit.
+		fmt.Sprintf("GIT_TERMINAL_PROMPT=0 git %s fetch --no-tags -q origin", gitCredentialHelperArgs()),
+		fmt.Sprintf("(git rev-parse -q --verify %s >/dev/null 2>&1 || true)", remoteBase),
+		// Already contains the base → nothing to do. Otherwise merge it, and a
+		// collision only a person or the agent can settle leaves the checkout
+		// exactly as it was, named in the output.
+		fmt.Sprintf("(git merge-base --is-ancestor %s HEAD 2>/dev/null"+
+			" || ! git rev-parse -q --verify %s >/dev/null 2>&1"+
+			" || git merge --no-edit -q %s"+
+			" || (conflicts=$(git diff --name-only --diff-filter=U | tr '\n' ' ');"+
+			" git merge --abort >/dev/null 2>&1;"+
+			` echo "%s$conflicts"; exit 4))`,
+			remoteBase, remoteBase, remoteBase, giteaDeliveryConflictMarker),
 		fmt.Sprintf("GIT_TERMINAL_PROMPT=0 git %s push -u origin %s 2>&1",
 			gitCredentialHelperArgs(), shellQuote("HEAD:refs/heads/"+branch)),
 	}, " && ")
@@ -93,6 +119,18 @@ func BuildGiteaDeliveryCommand(workingDir, branch, message string) string {
 func GiteaDeliveryUnignored(output string) string {
 	for line := range strings.SplitSeq(output, "\n") {
 		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), giteaDeliveryUnignoredMarker); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+	return ""
+}
+
+// GiteaDeliveryConflict reads the files the base and the Mate's work both
+// changed out of a delivery's output, space-separated; empty when the base
+// came in cleanly or there was none to take in.
+func GiteaDeliveryConflict(output string) string {
+	for line := range strings.SplitSeq(output, "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), giteaDeliveryConflictMarker); ok {
 			return strings.TrimSpace(rest)
 		}
 	}

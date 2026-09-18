@@ -106,7 +106,12 @@ func deliverGiteaPair(
 	refreshGiteaWorkflow(ctx, sshDeployer, meta.Hostname)
 
 	output, err := sshDeployer.ExecSSH(ctx, meta.Hostname,
-		ops.BuildGiteaDeliveryCommand(giteaPairWorkingDir, branch, giteaCommitMessage(stateDir, meta)))
+		ops.BuildGiteaDeliveryCommand(giteaPairWorkingDir, branch, giteaBaseOf(meta), giteaCommitMessage(stateDir, meta)))
+	if conflicts := ops.GiteaDeliveryConflict(string(output)); conflicts != "" {
+		return &giteaDelivery{Line: fmt.Sprintf(
+			"%s runs, but its code has not reached %s: %s has moved on and %s changes the same lines (%s). In %s's checkout run `git fetch origin && git merge origin/%s`, resolve it, then deploy %s again — the push and the pull request follow that deploy.",
+			target, repo, giteaBaseOf(meta), branch, conflicts, meta.Hostname, giteaBaseOf(meta), target)}
+	}
 	if unignored := ops.GiteaDeliveryUnignored(string(output)); unignored != "" {
 		return &giteaDelivery{Line: fmt.Sprintf(
 			"%s runs, but its code has not reached %s: %s in %s is not ignored and would be committed. Add a .gitignore that ignores it, then deploy %s again — the push and the pull request follow that deploy.",
