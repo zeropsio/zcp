@@ -234,17 +234,48 @@ func trackedRefOrDefault(meta *workflow.ServiceMeta) string {
 // the remote, and the failure reads like a credential fault — the one
 // diagnosis that leads an agent to rotate a perfectly good token.
 func resolveTrackedBranch(stateDir, targetService, inputBranch string) string {
-	if inputBranch != "" {
-		return inputBranch
-	}
 	meta, _ := workflow.FindServiceMeta(stateDir, targetService)
-	if meta != nil && meta.TrackedRef != "" {
+	return notTheProtectedBase(meta, resolveAskedBranch(meta, inputBranch))
+}
+
+// resolveAskedBranch is what was asked for, before the protected base is ruled
+// out: the caller's branch, the recorded tracked ref (GF-7), the Mate's own
+// branch, then `main`.
+func resolveAskedBranch(meta *workflow.ServiceMeta, inputBranch string) string {
+	switch {
+	case inputBranch != "":
+		return inputBranch
+	case meta != nil && meta.TrackedRef != "":
 		return meta.TrackedRef
-	}
-	if meta != nil && meta.Gitea != nil && meta.Gitea.Branch != "" {
+	case meta != nil && meta.Gitea != nil && meta.Gitea.Branch != "":
 		return meta.Gitea.Branch
 	}
 	return defaultTrackedRef
+}
+
+// notTheProtectedBase keeps a wired pair off the branch it may never push to.
+//
+// Every repository on the account's Gitea protects its default branch, and a
+// Mate lands on it through a pull request — but a pair wired before it had a
+// branch kept `main` as its tracked ref, and nothing since replaced it. Every
+// git-push deploy of such a pair therefore aimed at `main`, which Gitea
+// rejects as non-fast-forward the moment anybody merges, leaving the agent to
+// find its own way around (the owner, 2026-09-18: "it keeps running into this
+// as well"). Asked for the base or defaulted to it, a wired pair pushes to its
+// own branch; a pair with no Gitea has no other branch and keeps what it was
+// given.
+func notTheProtectedBase(meta *workflow.ServiceMeta, branch string) string {
+	if meta == nil || meta.Gitea == nil || meta.Gitea.Branch == "" {
+		return branch
+	}
+	base := meta.Gitea.DefaultBranch
+	if base == "" {
+		base = defaultTrackedRef
+	}
+	if branch != base {
+		return branch
+	}
+	return meta.Gitea.Branch
 }
 
 // gitPushEnvRefPreflight validates the run.envVariables refs of the named

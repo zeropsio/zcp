@@ -417,6 +417,32 @@ func TestDefaultPushBranch(t *testing.T) {
 	if got := resolveTrackedBranch(tracked, "appdev", "hotfix"); got != "hotfix" {
 		t.Errorf("an explicit branch wins, got %q, want hotfix", got)
 	}
+
+	// But never the protected base. A pair wired before it had a branch kept
+	// `main` as its tracked ref, and every git-push deploy then pushed the
+	// Mate's commits straight at protected `main` — rejected non-fast-forward
+	// the moment anybody merged, with the agent left to work around it by hand
+	// (the owner, 2026-09-18: "it keeps running into this as well").
+	base := t.TempDir()
+	if err := workflow.WriteServiceMeta(base, &workflow.ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeSimple,
+		BootstrapSession: "t", BootstrappedAt: "2026-09-16",
+		TrackedRef: "main",
+		Gitea:      &workflow.GiteaRepoRef{FullName: "acme/appdev", Branch: "mate/mate-p1", DefaultBranch: "main"},
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	for _, asked := range []string{"", "main"} {
+		if got := resolveTrackedBranch(base, "appdev", asked); got != "mate/mate-p1" {
+			t.Errorf("a wired pair asked for %q pushes to %q, want mate/mate-p1", asked, got)
+		}
+	}
+
+	// A pair with no Gitea has no other branch to offer, so what it was asked
+	// for stands.
+	if got := resolveTrackedBranch(plain, "appdev", "main"); got != "main" {
+		t.Errorf("a plain pair asked for main pushes to %q, want main", got)
+	}
 }
 
 // writeLiveEnvFile renders the container's live env store — the file the step
