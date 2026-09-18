@@ -135,10 +135,8 @@ func deliverGiteaPair(
 // giteaCommitMessage is the task in the person's words — the work session's
 // intent — or, with no session open, what the commit is.
 func giteaCommitMessage(stateDir string, meta *workflow.ServiceMeta) string {
-	if ws, err := workflow.CurrentWorkSession(stateDir); err == nil && ws != nil {
-		if intent, _, _ := strings.Cut(strings.TrimSpace(ws.Intent), "\n"); intent != "" {
-			return intent
-		}
+	if intent := workSessionIntent(stateDir); intent != "" {
+		return intent
 	}
 	return fmt.Sprintf("%s as deployed to %s", meta.Hostname, meta.StageHostname)
 }

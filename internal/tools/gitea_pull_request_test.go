@@ -11,6 +11,7 @@ package tools
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -55,11 +56,22 @@ func TestGitPushDeploy_OpensThePullRequest(t *testing.T) {
 	tests := []struct {
 		name string
 		// pullsOpen is what Gitea's open-pull-request list answers.
-		pullsOpen   string
+		pullsOpen string
+		// intent is the open work session's, "" for no session.
+		intent      string
 		wantCreates int
 		wantNumber  int
+		// wantTitle is what the request is opened as, when one is.
+		wantTitle string
 	}{
-		{name: "no request open yet", pullsOpen: `[]`, wantCreates: 1, wantNumber: 3},
+		{name: "no request open yet", pullsOpen: `[]`, wantCreates: 1, wantNumber: 3, wantTitle: "Mate: appdev"},
+		{
+			name:        "titled after the task, like the commit",
+			pullsOpen:   `[]`,
+			intent:      "Show how many todos are still open, above the list.\nThen check the count on the stage.",
+			wantCreates: 1, wantNumber: 3,
+			wantTitle: "Show how many todos are still open, above the list.",
+		},
 		{
 			name: "one is already open",
 			pullsOpen: `[{"number":9,"state":"open","head":{"ref":"mate/mate-p1",` +
@@ -76,6 +88,13 @@ func TestGitPushDeploy_OpensThePullRequest(t *testing.T) {
 			stateDir := t.TempDir()
 			remote := gitea.URL + "/acme/appdev.git"
 			writeWiredGiteaPairMeta(t, stateDir, remote)
+			if tt.intent != "" {
+				ws := workflow.NewWorkSession("proj-1", "container", tt.intent, []string{"appdev"})
+				if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+					t.Fatalf("SaveWorkSession: %v", err)
+				}
+				t.Cleanup(func() { _ = workflow.DeleteWorkSession(stateDir, os.Getpid()) })
+			}
 			t.Setenv("GITEA_URL", gitea.URL)
 			t.Setenv("MATE_BROKER_URL", gitea.URL)
 			t.Setenv("GITEA_TOKEN", giteaBotToken)
@@ -94,6 +113,9 @@ func TestGitPushDeploy_OpensThePullRequest(t *testing.T) {
 			}))
 			if fake.pullCreates != tt.wantCreates {
 				t.Errorf("pull requests created = %d, want %d\n%s", fake.pullCreates, tt.wantCreates, text)
+			}
+			if tt.wantCreates > 0 && (len(fake.pullTitles) == 0 || fake.pullTitles[0] != tt.wantTitle) {
+				t.Errorf("pull request titled %q, want %q", strings.Join(fake.pullTitles, " | "), tt.wantTitle)
 			}
 			if !strings.Contains(text, `"pullRequest"`) {
 				t.Errorf("the push must report the pull request it landed in:\n%s", text)

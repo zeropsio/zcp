@@ -42,9 +42,35 @@ type giteaPullRequestRef struct {
 	URL     string `json:"url,omitempty"`
 }
 
-// giteaPairPullRequestTitle heads the request a pair's branch lands through.
-func giteaPairPullRequestTitle(hostname string) string {
-	return "Mate: " + hostname
+// giteaPairPullRequestTitle heads the request a pair's branch lands through:
+// the task in the person's words, the same line the delivery commits under
+// (giteaCommitMessage), since that is what a person scans a list of requests
+// for. "Mate: appdev" only when no work session says what the work was (the
+// owner's timeline, 2026-09-17: two Mates' rows read the same words).
+func giteaPairPullRequestTitle(stateDir string, m *workflow.ServiceMeta) string {
+	if intent := workSessionIntent(stateDir); intent != "" {
+		return intent
+	}
+	return "Mate: " + m.Hostname
+}
+
+// pullRequestTitleRunes bounds a title to what a list can show; Gitea takes
+// 255, a row shows far fewer.
+const pullRequestTitleRunes = 120
+
+// workSessionIntent is the first line of this process's open work session's
+// intent, cut to a title's length, or "" when no session is open.
+func workSessionIntent(stateDir string) string {
+	ws, err := workflow.CurrentWorkSession(stateDir)
+	if err != nil || ws == nil {
+		return ""
+	}
+	intent, _, _ := strings.Cut(strings.TrimSpace(ws.Intent), "\n")
+	intent = strings.TrimSpace(intent)
+	if runes := []rune(intent); len(runes) > pullRequestTitleRunes {
+		return strings.TrimSpace(string(runes[:pullRequestTitleRunes-1])) + "…"
+	}
+	return intent
 }
 
 // openGiteaPairPullRequest opens the pair's request when none is open, finds
@@ -74,7 +100,7 @@ func openGiteaPairPullRequest(
 
 	number, created, err := ops.EnsureGiteaPullRequest(
 		ctx, httpClient, wiring.GiteaURL, wiring.Token, repo, repo, branch, base,
-		giteaPairPullRequestTitle(m.Hostname),
+		giteaPairPullRequestTitle(stateDir, m),
 	)
 	if err != nil || number == 0 {
 		return nil
