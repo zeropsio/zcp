@@ -50,7 +50,7 @@ func RecommendDelivery(in DeliveryInputs) DeliveryDecision {
 		// `.gitea/workflows/`. What differs is who deploys: the account's
 		// broker, off protected branches and tags, with the job's own token.
 		// There is no secret to wire and no Zerops token anywhere in it.
-		ciWhy = "a `.gitea/workflows/` workflow that asks the account's broker to deploy — no secret to wire and no Zerops token in CI; the broker deploys only what protected state approved"
+		ciWhy = "a `.gitea/workflows/` workflow that deploys with `zcli push` on a key the account's broker hands the job — no secret to wire and no Zerops token in the repository; the broker grants only what protected state approved"
 	case GitHostGitHub, GitHostUnknown:
 	}
 

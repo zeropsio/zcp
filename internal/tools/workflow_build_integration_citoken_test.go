@@ -72,13 +72,15 @@ func TestActionsConfirm_NeverHandsOutTheContainerKey(t *testing.T) {
 	}
 }
 
-// TestActionsConfirm_GiteaRemote_EmitsBrokerWorkflow pins guide 2.3 + 5.4: on
-// the account's own Gitea the emitted workflow lives at
-// `.gitea/workflows/zerops.yml` and deploys by ASKING the broker, with the
-// job's own token. There is nothing to wire: no repository secret, no Zerops
-// token, no zcli. Default permissions already grant the `actions: read` the
-// broker's proof needs (it reads the job to learn which repository really
-// called it), so the workflow declares none.
+// TestActionsConfirm_GiteaRemote_EmitsBrokerWorkflow pins guide 2.3 + 5.4 and
+// D27: on the account's own Gitea the emitted workflow lives at
+// `.gitea/workflows/zerops.yml`, runs on a push to main and on the broker's
+// dispatch, and deploys with `zcli push` through the broker's action — which
+// asks the broker, with the job's own token, for the environment's key. There
+// is nothing to wire: no repository secret and no Zerops token in the file.
+// Default permissions already grant the `actions: read` the broker's proof
+// needs (it reads the job to learn which repository really called it), so the
+// workflow declares none.
 func TestActionsConfirm_GiteaRemote_EmitsBrokerWorkflow(t *testing.T) {
 	t.Parallel()
 	const giteaURL = "https://web-2ff4-3000.prg1.zerops.app"
@@ -107,9 +109,11 @@ func TestActionsConfirm_GiteaRemote_EmitsBrokerWorkflow(t *testing.T) {
 
 	for _, want := range []string{
 		".gitea/workflows/zerops.yml",
-		"zeropsio/gitea-mate/actions/deploy@v1",
-		"environment: stage",
-		"service: api",
+		"zeropsio/gitea-mate/actions/deploy@v4",
+		"workflow_dispatch:",
+		"environment: ${{ inputs.environment }}",
+		"service: ${{ inputs.service }}",
+		"ref: ${{ inputs.sha || github.sha }}",
 		"actions/checkout@v4",
 		"branches: [main]",
 	} {
@@ -120,7 +124,7 @@ func TestActionsConfirm_GiteaRemote_EmitsBrokerWorkflow(t *testing.T) {
 	for _, forbidden := range []string{
 		"secrets.",
 		"ZEROPS_TOKEN",
-		"zcli",
+		"actions/deploy@v1",
 		".github/workflows",
 		"gh secret set",
 		"zeropsio/actions@",

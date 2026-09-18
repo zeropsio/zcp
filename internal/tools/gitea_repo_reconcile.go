@@ -13,7 +13,6 @@ import (
 
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
-	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -273,7 +272,7 @@ func reconcileOneGiteaPair(
 	// repository, and the next pass writes it again.
 	workflowNote := ""
 	if _, emitErr := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildWriteRepoFileCommand(
-		giteaPairWorkingDir, giteaWorkflowFilePath, giteaWorkflowYAML(bundle.GroupPromotedHostname(m.Hostname)),
+		giteaPairWorkingDir, giteaWorkflowFilePath, giteaWorkflowYAML(),
 	)); emitErr != nil {
 		workflowNote = fmt.Sprintf("; %s could not be written (%v) — nothing deploys the group's stage until it is there", giteaWorkflowFilePath, emitErr)
 	}

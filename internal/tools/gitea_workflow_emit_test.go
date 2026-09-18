@@ -77,19 +77,27 @@ func TestReconcileGiteaRepositories_EmitsTheWorkflow(t *testing.T) {
 	for _, want := range []string{
 		"on:", "push:", "branches: [main]",
 		"actions/checkout@v4",
-		"uses: zeropsio/gitea-mate/actions/deploy@v1",
-		"environment: stage",
-		// The stage runs the pair's promoted runtime, `app`, never `appdev`
-		// (measured 2026-09-17: the broker answered unknown_service).
-		"service: app\n",
+		"uses: zeropsio/gitea-mate/actions/deploy@v4",
+		// D27: the broker starts the same workflow for a release, a new
+		// environment and whatever fell behind, and says what for.
+		"workflow_dispatch:",
+		"ref: ${{ inputs.sha || github.sha }}",
+		// A push's job names no environment and no service: it deploys
+		// whatever its branch feeds, and the broker knows which service of
+		// the group's stage this repository builds (the pair's promoted
+		// runtime — measured 2026-09-17, when a workflow naming the dev half
+		// was answered unknown_service).
+		"environment: ${{ inputs.environment }}",
+		"service: ${{ inputs.service }}",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the workflow is missing %q:\n%s", want, body)
 		}
 	}
-	// The whole point of the Gitea track: no repository secret, no Zerops
-	// token, no CLI that would need one.
-	for _, forbidden := range []string{"secrets.", "ZEROPS_TOKEN", "zcli"} {
+	// The whole point of the Gitea track: no repository secret and no Zerops
+	// token in the file — the job is handed one environment's key by the
+	// broker for one push (MB-14, MB-29).
+	for _, forbidden := range []string{"secrets.", "ZEROPS_TOKEN", "actions/deploy@v1"} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("the workflow must carry no %q:\n%s", forbidden, body)
 		}
