@@ -2057,6 +2057,21 @@ missing on Dara's run ("create a todo app" got one simple-mode service, nothing 
 owner's run of the same evening (`gitea_delivery.go`; `TestAWiredMatePlansOnlyStandardPairs`,
 `TestAStageDeployOfAWiredPairDeliversItself`, `TestAWiredPairDeploysDirectlyAndIsNeverSentToPush`).
 
+**What became of the request (2026-09-19).** A pair records its pull request's number and never
+re-derives it, which is right for the number and wrong for its fate: the merge that ends a Mate's
+work is made in Gitea's own UI, by a colleague, by a script, or by the app's *Merge* — and none of
+those passes through this process. A design that waited to be told would be correct for one of the
+four and silently wrong for the rest, so nothing is pushed at the agent: a reconcile pass asks
+Gitea what became of the recorded request, on the same per-pair backoff as every other question
+(`giteaPairNeedsPullRequestOutcome`, `readGiteaPairPullRequestOutcome`). A request no longer open
+has its number forgotten, so the next delivery opens the next request instead of pushing at a
+closed one, and nothing downstream keeps reporting a merged request as the one the Mate waits in.
+Merged and closed-without-merging are reported apart — work delivered against work refused — and
+an open one is the ordinary state and says nothing. The branch itself needs no instruction: every
+delivery already takes the base in before pushing (`BuildGiteaDeliveryCommand`).
+`TestReconcile_TellsTheMateWhatBecameOfItsPullRequest`,
+`TestReconcile_AsksAboutASettledRequestOnABackoff`, `TestReadGiteaPullRequestOutcome`.
+
 ### 10.11 Environments, the Git tab, release
 
 `environments.yaml` in the group repo declares each environment: name, tier (`stage`,

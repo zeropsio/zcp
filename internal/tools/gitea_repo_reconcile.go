@@ -113,7 +113,8 @@ func reconcileGiteaRepositories(
 
 	pending := make([]*workflow.ServiceMeta, 0, len(metas))
 	for _, m := range metas {
-		if giteaPairNeedsRepository(m) || giteaPairNeedsPullRequest(m) {
+		if giteaPairNeedsRepository(m) || giteaPairNeedsPullRequest(m) ||
+			giteaPairNeedsPullRequestOutcome(m) {
 			pending = append(pending, m)
 		}
 	}
@@ -131,14 +132,17 @@ func reconcileGiteaRepositories(
 		if !giteaAttemptDue(state, now) {
 			continue
 		}
-		// A pair A1 already finished with is here for one reason only: the
-		// pull request its branch lands through, which could not exist in the
-		// pass that wired the repository.
+		// Three reasons a pair is here, in the order they arise: it has no
+		// repository yet; it has one and no pull request; or it has both, and
+		// the only open question is what became of the request.
 		var outcome string
-		if giteaPairNeedsRepository(m) {
+		switch {
+		case giteaPairNeedsRepository(m):
 			outcome = reconcileOneGiteaPair(ctx, client, httpClient, sshDeployer, rt, stateDir, wiring, m)
-		} else {
+		case giteaPairNeedsPullRequest(m):
 			outcome = reconcileGiteaPairPullRequest(ctx, httpClient, stateDir, wiring, m)
+		default:
+			outcome = readGiteaPairPullRequestOutcome(ctx, httpClient, stateDir, wiring, m)
 		}
 		// The attempt is recorded even when it had nothing to say: a wired
 		// pair that has not pushed yet is the ORDINARY state, and without the
@@ -179,6 +183,19 @@ func giteaPairNeedsRepository(m *workflow.ServiceMeta) bool {
 func giteaPairNeedsPullRequest(m *workflow.ServiceMeta) bool {
 	return m != nil && m.IsComplete() && m.Gitea != nil &&
 		m.Gitea.FullName != "" && m.Gitea.Branch != "" && m.Gitea.PullRequest == 0
+}
+
+// giteaPairNeedsPullRequestOutcome reports whether a pair that has both a
+// repository and a request still has a question worth asking Gitea.
+//
+// It always does, once, per backoff window: the request's number is recorded
+// and never re-derived, which is right for the number and wrong for its fate.
+// A merge happens in Gitea's own UI, from a colleague, from a script — none
+// of them passes through this process, so being told is not something that
+// can be relied on and asking is. The backoff is what keeps that affordable:
+// a settled pair reaches Gitea once per window, not once per tool call.
+func giteaPairNeedsPullRequestOutcome(m *workflow.ServiceMeta) bool {
+	return m != nil && m.Gitea != nil && m.Gitea.FullName != "" && m.Gitea.PullRequest != 0
 }
 
 // reconcileOneGiteaPair does the work for one pair and returns a report line

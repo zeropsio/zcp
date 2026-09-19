@@ -412,6 +412,70 @@ func giteaAPIBase(giteaURL string) (string, error) {
 	return strings.TrimSuffix(endpoint, giteaUserAPIPath) + "/api/v1", nil
 }
 
+// GiteaPullRequestOutcome is what became of a request a pair recorded.
+type GiteaPullRequestOutcome struct {
+	// Open is true while the request is still waiting on somebody.
+	Open bool
+	// Merged is true only where Gitea says the work actually landed. A
+	// request closed without merging is neither Open nor Merged, and the two
+	// mean opposite things to the Mate that opened it: one is work delivered,
+	// the other is work refused.
+	Merged bool
+}
+
+// ReadGiteaPullRequestOutcome reads what became of one recorded pull request.
+//
+// It exists because a pair records its request's number and then never asks
+// again — which is right for the number, and wrong for its fate. Merging
+// happens in Gitea's own UI, from a colleague, from a script, and none of
+// those passes through this process; the only reliable way to learn that a
+// Mate's work landed is to ask git about it, on a pass, rather than to be
+// told by whatever did the merging.
+//
+// A request that is not there any more is reported as closed and unmerged
+// rather than as an error: a deleted request is not a failure to read.
+func ReadGiteaPullRequestOutcome(
+	ctx context.Context,
+	httpClient HTTPDoer,
+	giteaURL, token, fullName string,
+	number int,
+) (GiteaPullRequestOutcome, error) {
+	var outcome GiteaPullRequestOutcome
+	if httpClient == nil {
+		return outcome, fmt.Errorf("no HTTP client configured")
+	}
+	apiBase, err := giteaAPIBase(giteaURL)
+	if err != nil {
+		return outcome, err
+	}
+	if fullName == "" || number <= 0 {
+		return outcome, fmt.Errorf("a pull-request read needs a repository and a number")
+	}
+	endpoint := fmt.Sprintf("%s/repos/%s/pulls/%d", apiBase, fullName, number)
+	body, status, err := giteaAPICall(ctx, httpClient, http.MethodGet, endpoint, token, nil)
+	if err != nil {
+		return outcome, err
+	}
+	switch status {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return GiteaPullRequestOutcome{}, nil
+	default:
+		return outcome, fmt.Errorf("the Gitea pull-request read of %s#%d returned status %d", fullName, number, status)
+	}
+	var read struct {
+		giteaPullRequest
+		Merged bool `json:"merged"`
+	}
+	if jsonErr := json.Unmarshal(body, &read); jsonErr != nil {
+		return outcome, fmt.Errorf("the Gitea pull-request read of %s#%d was not valid JSON", fullName, number)
+	}
+	return GiteaPullRequestOutcome{
+		Open:   strings.EqualFold(read.State, "open"),
+		Merged: read.Merged,
+	}, nil
+}
+
 // GiteaBranchExists reports whether branch is on fullName's remote. It is
 // what tells a reconcile pass whether a pull request CAN be opened yet: A1
 // creates the Mate's branch locally, and only the pair's first deploy puts it

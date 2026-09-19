@@ -43,6 +43,14 @@ type fakeGitea struct {
 	// branchExists is whether the Mate's branch is on the remote — false
 	// until the pair's first push, which is the state A1 leaves behind.
 	branchExists bool
+	// pullState and pullMerged are what a read of ONE request answers, for
+	// the pass that asks what became of the request a pair recorded. "open"
+	// by default, which is every other test's state.
+	pullState  string
+	pullMerged bool
+	// pullReads counts those reads, so a settled pair can be shown to ask
+	// once per backoff window rather than once per pass.
+	pullReads int
 }
 
 func newFakeGitea() *fakeGitea {
@@ -90,7 +98,16 @@ func (f *fakeGitea) start(t *testing.T) *httptest.Server {
 				f.pullRetitles = append(f.pullRetitles, edit.Title)
 				f.pullTitle = edit.Title
 			}
-			body, _ := json.Marshal(map[string]any{"number": 9, "state": "open", "title": f.pullTitle})
+			if r.Method == http.MethodGet {
+				f.pullReads++
+			}
+			state := f.pullState
+			if state == "" {
+				state = "open"
+			}
+			body, _ := json.Marshal(map[string]any{
+				"number": 9, "state": state, "merged": f.pullMerged, "title": f.pullTitle,
+			})
 			_, _ = w.Write(body)
 		case strings.HasSuffix(r.URL.Path, "/pulls"):
 			if r.Method == http.MethodPost {

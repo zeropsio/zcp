@@ -285,3 +285,120 @@ func TestReconcileGitea_RecordedPullRequestIsNotReopened(t *testing.T) {
 		t.Errorf("pull request created %d times across three passes, want exactly 1", fake.pullCreates)
 	}
 }
+
+// writeLandedGiteaPairMeta seeds the state this whole pass exists for: a pair
+// that is wired, has pushed, and recorded the number of the request its work
+// is waiting in.
+func writeLandedGiteaPairMeta(t *testing.T, stateDir, remoteURL string, number int) {
+	t.Helper()
+	writeWiredGiteaPairMeta(t, stateDir, remoteURL)
+	if err := workflow.UpsertServiceMeta(stateDir, "appdev",
+		func(meta *workflow.ServiceMeta, _ bool) error {
+			meta.Gitea.PullRequest = number
+			return nil
+		}); err != nil {
+		t.Fatalf("UpsertServiceMeta: %v", err)
+	}
+}
+
+// TestReconcile_TellsTheMateWhatBecameOfItsPullRequest is the pull side of the
+// feedback loop.
+//
+// The merge that ends a Mate's work is made in Gitea's UI, by a colleague, by
+// a script, or by the app's button — none of them passes through this
+// process. So nothing is pushed here: a pass asks git what became of the
+// request the pair recorded, which is right for all four.
+func TestReconcile_TellsTheMateWhatBecameOfItsPullRequest(t *testing.T) {
+	tests := []struct {
+		name       string
+		pullState  string
+		pullMerged bool
+		// wantNumber is what the pair still records afterwards; 0 means the
+		// number was forgotten, so the next delivery opens the next request.
+		wantNumber int
+		wantReport []string
+		wantSilent bool
+	}{
+		{
+			// The ordinary state: still waiting on somebody, and worth no words.
+			name: "still open", pullState: "open",
+			wantNumber: 4, wantSilent: true,
+		},
+		{
+			name: "merged", pullState: "closed", pullMerged: true,
+			wantNumber: 0,
+			wantReport: []string{"pull request #4 is merged", `"main"`, "opens a new request"},
+		},
+		{
+			// Closed and merged mean opposite things to the Mate that opened
+			// it: work delivered against work refused.
+			name: "closed without merging", pullState: "closed",
+			wantNumber: 0,
+			wantReport: []string{"closed without merging", "nothing of it is on"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newFakeGitea()
+			fake.branchExists = true
+			fake.pullState = tt.pullState
+			fake.pullMerged = tt.pullMerged
+			gitea := fake.start(t)
+
+			stateDir := t.TempDir()
+			writeLandedGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git", 4)
+			envPath := writeLiveEnvFile(t, map[string]string{
+				"GITEA_URL": gitea.URL, "MATE_BROKER_URL": gitea.URL, "GITEA_TOKEN": giteaBotToken,
+			})
+			client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
+
+			report := reconcileGiteaRepositories(
+				context.Background(), client, gitea.Client(), giteaReconcileSSH(),
+				runtime.Info{InContainer: true, ProjectID: "p1"}, stateDir, envPath,
+			)
+			joined := strings.Join(report, " | ")
+			if tt.wantSilent && joined != "" {
+				t.Errorf("an open request is the ordinary state and worth no words, got: %s", joined)
+			}
+			for _, want := range tt.wantReport {
+				if !strings.Contains(joined, want) {
+					t.Errorf("report missing %q: %s", want, joined)
+				}
+			}
+			meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
+			if meta == nil || meta.Gitea == nil || meta.Gitea.PullRequest != tt.wantNumber {
+				t.Fatalf("recorded request = %+v, want #%d", meta.Gitea, tt.wantNumber)
+			}
+			// Whatever became of the request, a wired pair never goes back to
+			// the broker for a second repository.
+			if len(fake.repoRequests) != 0 {
+				t.Errorf("a wired pair must ask the broker for nothing, got %v", fake.repoRequests)
+			}
+		})
+	}
+}
+
+// TestReconcile_AsksAboutASettledRequestOnABackoff pins the cost of the loop:
+// the passes are agent tool calls and arrive in bursts, so a settled pair must
+// reach Gitea once per window, not once per call.
+func TestReconcile_AsksAboutASettledRequestOnABackoff(t *testing.T) {
+	fake := newFakeGitea()
+	fake.branchExists = true
+	fake.pullState = "open"
+	gitea := fake.start(t)
+
+	stateDir := t.TempDir()
+	writeLandedGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git", 4)
+	envPath := writeLiveEnvFile(t, map[string]string{
+		"GITEA_URL": gitea.URL, "MATE_BROKER_URL": gitea.URL, "GITEA_TOKEN": giteaBotToken,
+	})
+	client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
+	rt := runtime.Info{InContainer: true, ProjectID: "p1"}
+
+	for range 5 {
+		reconcileGiteaRepositories(context.Background(), client, gitea.Client(), giteaReconcileSSH(), rt, stateDir, envPath)
+	}
+	if fake.pullReads != 1 {
+		t.Errorf("a burst of five passes asked Gitea %d times, want 1", fake.pullReads)
+	}
+}

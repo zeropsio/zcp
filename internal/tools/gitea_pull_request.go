@@ -214,6 +214,72 @@ func reconcileGiteaPairPullRequest(
 	return fmt.Sprintf("%s on %s is %s pull request #%d onto %q", ref.Branch, ref.Repo, verb, ref.Number, ref.Base)
 }
 
+// readGiteaPairPullRequestOutcome is the pull side of the feedback loop: it
+// asks Gitea what became of the request this pair opened, and says so once.
+//
+// Nothing pushes this fact. The merge that ends a Mate's work is made in
+// Gitea's UI, by a colleague, by a script, or by the app's own button, and a
+// design that waited to be told would be right for one of those four and
+// silently wrong for the rest. Git already knows; a pass asks it.
+//
+// The recorded number is cleared as soon as the request is no longer open, so
+// the pair's next delivery opens the next request rather than pushing at a
+// closed one — and nothing downstream keeps reporting a merged request as the
+// one this Mate is waiting on.
+//
+// Returns "" while the request is still open, which is the ordinary state and
+// worth no words.
+func readGiteaPairPullRequestOutcome(
+	ctx context.Context,
+	httpClient ops.HTTPDoer,
+	stateDir string,
+	wiring ops.GiteaWiring,
+	m *workflow.ServiceMeta,
+) string {
+	if !wiring.Ready() || m == nil || m.Gitea == nil {
+		return ""
+	}
+	number := m.Gitea.PullRequest
+	outcome, err := ops.ReadGiteaPullRequestOutcome(
+		ctx, httpClient, wiring.GiteaURL, wiring.Token, m.Gitea.FullName, number)
+	if err != nil {
+		// Saying nothing beats saying a request merged because a read failed.
+		return ""
+	}
+	if outcome.Open {
+		return ""
+	}
+	clearGiteaPullRequest(stateDir, m)
+	base := giteaBaseOf(m)
+	if outcome.Merged {
+		// Said as a fact about the code, not as an instruction: the branch
+		// takes the base in on its next delivery either way
+		// (BuildGiteaDeliveryCommand), so this tells the agent where its work
+		// went, not what to do about it.
+		return fmt.Sprintf(
+			"pull request #%d is merged — this Mate's work is on %q now, and its next change opens a new request",
+			number, base)
+	}
+	return fmt.Sprintf(
+		"pull request #%d was closed without merging — nothing of it is on %q; the next change opens a new request",
+		number, base)
+}
+
+// clearGiteaPullRequest forgets the number a pair recorded, in memory and on
+// disk, once Gitea says the request is no longer open. Best-effort on disk
+// for the same reason recording it is: a pass that could not write it asks
+// again on the next one, which costs a read.
+func clearGiteaPullRequest(stateDir string, m *workflow.ServiceMeta) {
+	m.Gitea.PullRequest = 0
+	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
+		if !existed || meta.Gitea == nil {
+			return nil
+		}
+		meta.Gitea.PullRequest = 0
+		return nil
+	})
+}
+
 // giteaBaseOf is the branch a pair's pull request targets.
 func giteaBaseOf(m *workflow.ServiceMeta) string {
 	if m != nil && m.Gitea != nil && m.Gitea.DefaultBranch != "" {

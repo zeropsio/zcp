@@ -311,3 +311,114 @@ func TestEnsureGiteaPullRequest_Degenerate(t *testing.T) {
 		t.Error("an empty head must be an error")
 	}
 }
+
+func TestReadGiteaPullRequestOutcome(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		status     int
+		body       string
+		wantOpen   bool
+		wantMerged bool
+		wantErr    bool
+	}{
+		{
+			name:     "still waiting on somebody",
+			status:   http.StatusOK,
+			body:     `{"number":4,"state":"open","merged":false}`,
+			wantOpen: true,
+		},
+		{
+			// The whole point: the work landed, and nothing in this process
+			// did the merging or was told about it.
+			name:       "merged",
+			status:     http.StatusOK,
+			body:       `{"number":4,"state":"closed","merged":true}`,
+			wantMerged: true,
+		},
+		{
+			// Closed and merged mean opposite things to the Mate that opened
+			// it — work delivered against work refused.
+			name:   "closed without merging",
+			status: http.StatusOK,
+			body:   `{"number":4,"state":"closed","merged":false}`,
+		},
+		{
+			name:   "gitea spells the state in capitals",
+			status: http.StatusOK,
+			body:   `{"number":4,"state":"OPEN","merged":false}`, wantOpen: true,
+		},
+		{
+			// A request somebody deleted is not a failure to read.
+			name:   "gone",
+			status: http.StatusNotFound,
+			body:   `{}`,
+		},
+		{
+			name:    "gitea refuses the read",
+			status:  http.StatusInternalServerError,
+			body:    `{}`,
+			wantErr: true,
+		},
+		{
+			name:    "not valid JSON",
+			status:  http.StatusOK,
+			body:    `<html>`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/v1/repos/acme/api/pulls/4" || r.Method != http.MethodGet {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+
+			got, err := ReadGiteaPullRequestOutcome(
+				context.Background(), srv.Client(), srv.URL, "bot-token", "acme/api", 4)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil {
+				return
+			}
+			if got.Open != tt.wantOpen || got.Merged != tt.wantMerged {
+				t.Errorf("outcome = %+v, want open=%v merged=%v", got, tt.wantOpen, tt.wantMerged)
+			}
+		})
+	}
+}
+
+func TestReadGiteaPullRequestOutcome_NeedsARepositoryAndANumber(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("no request should be made without a repository and a number")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	for _, tc := range []struct {
+		name     string
+		fullName string
+		number   int
+	}{
+		{name: "no repository", number: 4},
+		{name: "no number", fullName: "acme/api"},
+		{name: "a number Gitea never issues", fullName: "acme/api", number: -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := ReadGiteaPullRequestOutcome(
+				context.Background(), srv.Client(), srv.URL, "tok", tc.fullName, tc.number); err == nil {
+				t.Error("want an error, got none")
+			}
+		})
+	}
+}
