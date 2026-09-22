@@ -403,7 +403,7 @@ func TestReadGiteaPullRequestOutcome_NeedsARepositoryAndANumber(t *testing.T) {
 		t.Error("no request should be made without a repository and a number")
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	for _, tc := range []struct {
 		name     string
@@ -415,6 +415,7 @@ func TestReadGiteaPullRequestOutcome_NeedsARepositoryAndANumber(t *testing.T) {
 		{name: "a number Gitea never issues", fullName: "acme/api", number: -1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if _, err := ReadGiteaPullRequestOutcome(
 				context.Background(), srv.Client(), srv.URL, "tok", tc.fullName, tc.number); err == nil {
 				t.Error("want an error, got none")
