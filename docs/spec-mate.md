@@ -1671,11 +1671,22 @@ env store; events coalesce (~1 s, single-flight per agent).
 result spawns `zcp agent mark-oauth <agent>` (argv, no shell; idempotent; the OAuth flag is written
 non-sensitive because the GUI's flag read path redacts sensitive entries — `spec-welcome-mode.md §4.2`).
 Upstream's provider probe is NOT the gate: it reports Claude as authenticated from `~/.claude.json`'s
-account even after logout. The model picker, though, reads only that probe's snapshot, which re-probes
-on a background interval (5 min, skipped while no client is in the foreground — a Codex sign-in stayed
-"not authenticated" in the picker for 7 min, 2026-09-22). So every CHANGE of a verified status is
-handed to the picker (`spi/providerInstances.ts`, `reconcileAgentAuth`): when the agent's default
-provider instance holds a definite, contradicting `auth.status`, that instance is re-probed at once.
+account even after logout.
+
+**The flag decides what is signed in, for every surface** — as in the Zerops GUI and the VS Code panel,
+which read nothing else. One classification (`@t3tools/shared/zeropsAgentAuth`) answers for the rows,
+the band, the empty conversation and the model picker: `authorized` / `authorized-token` → signed in
+the moment the flag lands, whatever the CLI check has or has not answered; a definite
+`unauthenticated` from the CLI under a set flag → "sign in again"; `local-only` → registering (the
+flag not written yet); `reconnect` → sign in again (a rebuild left no credential); `not-authorized`.
+The server overlays it onto every provider list it sends (`server.getConfig`, the config stream —
+driven by the agent-auth feed too —, `server.refreshProviders`, `server.updateProvider`): on a set flag
+the agent's default instance is `ready`; otherwise it cannot be picked and its message says why and
+where to act. Models, version and usage stay the driver's. The driver's probe re-runs on its own
+interval only (5 min, skipped while no client is in the foreground — a Codex sign-in stayed "not
+authenticated" in the picker for 7 min, 2026-09-22), and Codex lists models only once signed in, so
+every CHANGE of a verified status is also handed to the registry (`spi/providerInstances.ts`,
+`reconcileAgentAuth`): a definite, contradicting `auth.status` on the instance is re-probed at once.
 A snapshot still `unknown` (its own startup probe pending) is left alone. An explicit Claude refresh
 drops the driver's cached capabilities probe (`CAPABILITIES_PROBE_TTL`) first, since the snapshot's
 auth comes from it. The registry's answer never flows back into this feed. The mark latch resets
@@ -1741,6 +1752,7 @@ again after 15 s, then 1 min, then every 5 min, instead of sitting at "Checking�
 | MA-6 | Live: moving the credential aside flips the feed within ~0.5 s and `providerAuth` to `unauthenticated`; restoring it returns `authorized`/`authenticated`; the public `/mate/` renders the hosted-static landing. `verified.md` S7-3 + follow-up rows. |
 | MA-8 | `submitCode` types the code then a separate Enter, only into a paste-code login at its prompt, and the code never reaches the published state. `ZeropsAgentLogin.test.ts` — "submitCode types the code, then Enter…", "…is refused when no login waits for a code", "the code never reaches the published login state". |
 | MA-9 | The signer is recorded from state by the person in `startedBy`, once per login, retried on its own; a finished login never overrides the verified status in a row. `useZeropsAgentSigner.test.ts` (`agentSignersToRecord`, "writes once per login", "tried again on its own"); `agentLogin.test.ts` (`classifyAgentRowLogin`). |
+| MA-10 | The platform flag decides signed-in for every surface; the CLI check only refines a set flag to "sign in again"; every provider list the server sends carries that answer. `packages/shared/src/zeropsAgentAuth.test.ts`; `zeropsAgentProviderOverlay.test.ts`; `agentLogin.test.ts` (`agentAuthLabel / agentAuthAction`). |
 
 Open (kept in the S7 plan until they land): the mobile card + parsed prompts on the phone (S7-4) and
 the `setup-token` path (S7-5, a second zcp verb).
