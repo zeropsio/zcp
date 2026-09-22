@@ -358,3 +358,141 @@ func TestBuildGiteaDeliveryCommand_ARealConflictAfterTheAbsorbedLandingStillAbor
 		t.Errorf("the checkout must be left whole, not half-merged: %q", state)
 	}
 }
+
+// TestBuildAbsorbLandedPullRequestCommand_FallsBackToPortablePlumbingWhenMergeTreeFails
+// pins L1(a) of the judge's review: on a container git without
+// `merge-tree --write-tree` (or that call failing for any other reason), a
+// genuinely lossless squash must still be provable — via a portable
+// plumbing 3-way merge into a temporary index — rather than falling
+// through to giteaAbsorbUnprovableMarker and reproducing the false
+// add/add conflict this whole mechanism exists to prevent. A fake `git`
+// ahead on PATH makes `merge-tree --write-tree` fail while every other
+// git subcommand runs for real, standing in for "unavailable".
+func TestBuildAbsorbLandedPullRequestCommand_FallsBackToPortablePlumbingWhenMergeTreeFails(t *testing.T) {
+	if testing.Short() {
+		t.Skip("exercises a real git repository")
+	}
+	pair := giteaBranchLab(t, nil)
+	root := filepath.Dir(pair)
+	remote := filepath.Join(root, "remote.git")
+	runShell(t, BuildGiteaMateBranchCommand(pair, "mate/mate-p1", "main"))
+
+	writeLabFile(t, filepath.Join(pair, "index.js"), "the app\n")
+	runShell(t, BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Build the app", "", ""))
+	branchTip := runGit(t, remote, "rev-parse", "mate/mate-p1")
+
+	other := filepath.Join(root, "other")
+	runGit(t, root, "clone", "-q", remote, "other")
+	runGit(t, other, "config", "user.email", "other@example.invalid")
+	runGit(t, other, "config", "user.name", "other")
+	runGit(t, other, "merge", "-q", "--squash", "origin/mate/mate-p1")
+	runGit(t, other, "commit", "-q", "-m", "Build the app (#1)")
+	runGit(t, other, "push", "-q", "origin", "main")
+	squashSHA := runGit(t, remote, "rev-parse", "main")
+
+	writeLabFile(t, filepath.Join(pair, "footer.js"), "the footer\n")
+
+	fakeGitPath := fakeGitRefusingMergeTreeWriteTree(t)
+	//nolint:gosec // test-only, the command under test against a t.TempDir repository
+	cmd := exec.CommandContext(t.Context(), "sh", "-c",
+		BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Add a footer", squashSHA, branchTip))
+	cmd.Env = append(os.Environ(), "PATH="+fakeGitPath+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("delivery with merge-tree unavailable: %v\n%s", err, out)
+	}
+	if GiteaAbsorbUnprovable(string(out)) {
+		t.Fatalf("the portable fallback must still prove a genuine squash lossless, not fall through:\n%s", out)
+	}
+	if GiteaDeliveryConflict(string(out)) != "" || GiteaAbsorbConflict(string(out)) != "" {
+		t.Fatalf("no conflict was expected:\n%s", out)
+	}
+	files := runGit(t, remote, "ls-tree", "-r", "--name-only", "mate/mate-p1")
+	for _, want := range []string{"index.js", "footer.js"} {
+		if !strings.Contains(files, want) {
+			t.Errorf("the delivered tree misses %q; got %q", want, files)
+		}
+	}
+	if err := exec.CommandContext(t.Context(), "git", "-C", remote,
+		"merge-base", "--is-ancestor", "main", "mate/mate-p1").Run(); err != nil {
+		t.Errorf("the delivered branch must descend from main: %v", err)
+	}
+}
+
+// fakeGitRefusingMergeTreeWriteTree returns a directory holding a `git`
+// wrapper that fails exactly `git merge-tree --write-tree ...` (simulating
+// a container git older than 2.38) and execs the real git for everything
+// else — prepend it to PATH to force BuildAbsorbLandedPullRequestCommand's
+// fast path to fail while keeping every other git call real.
+func fakeGitRefusingMergeTreeWriteTree(t *testing.T) string {
+	t.Helper()
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("no real git on PATH: %v", err)
+	}
+	dir := t.TempDir()
+	script := "#!/bin/sh\n" +
+		`if [ "$1" = "merge-tree" ] && [ "$2" = "--write-tree" ]; then echo "fatal: unknown option --write-tree" >&2; exit 129; fi` + "\n" +
+		"exec " + shellQuoteForTest(realGit) + ` "$@"` + "\n"
+	path := filepath.Join(dir, "git")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake git: %v", err)
+	}
+	return dir
+}
+
+// TestBuildAbsorbLandedPullRequestCommand_UncommittedChangesBlockTheMerge
+// pins L2 of the judge's review: uncommitted changes in a file S^1's merge
+// would touch make git refuse to even start the merge — no unmerged index
+// entry results, so GiteaAbsorbConflict's file list would read as empty,
+// indistinguishable from "no conflict" if a caller only checked that. The
+// dirty checkout must be its own marked case, checked BEFORE the merge is
+// attempted, and the chain must abort — no merge, no push, checkout left
+// exactly as it was (the uncommitted change included).
+func TestBuildAbsorbLandedPullRequestCommand_UncommittedChangesBlockTheMerge(t *testing.T) {
+	if testing.Short() {
+		t.Skip("exercises a real git repository")
+	}
+	pair := giteaBranchLab(t, nil)
+	root := filepath.Dir(pair)
+	remote := filepath.Join(root, "remote.git")
+	runShell(t, BuildGiteaMateBranchCommand(pair, "mate/mate-p1", "main"))
+
+	writeLabFile(t, filepath.Join(pair, "index.js"), "the app\n")
+	runShell(t, BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Build the app", "", ""))
+	branchTip := runGit(t, remote, "rev-parse", "mate/mate-p1")
+
+	other := filepath.Join(root, "other")
+	runGit(t, root, "clone", "-q", remote, "other")
+	runGit(t, other, "config", "user.email", "other@example.invalid")
+	runGit(t, other, "config", "user.name", "other")
+	runGit(t, other, "merge", "-q", "--squash", "origin/mate/mate-p1")
+	runGit(t, other, "commit", "-q", "-m", "Build the app (#1)")
+	runGit(t, other, "push", "-q", "origin", "main")
+	squashSHA := runGit(t, remote, "rev-parse", "main")
+
+	// An UNCOMMITTED edit to index.js — the exact file S^1's merge would
+	// touch — never staged, never committed.
+	writeLabFile(t, filepath.Join(pair, "index.js"), "an uncommitted edit\n")
+	preHead := runGit(t, pair, "rev-parse", "HEAD")
+
+	//nolint:gosec // test-only, the command under test against a t.TempDir repository
+	out, err := exec.CommandContext(t.Context(), "sh", "-c",
+		BuildGiteaAbsorbAndSyncCommand(pair, "main", squashSHA, branchTip)).CombinedOutput()
+	if err == nil {
+		t.Fatalf("uncommitted changes must block the absorb, not silently succeed:\n%s", out)
+	}
+	if !GiteaAbsorbDirty(string(out)) {
+		t.Fatalf("want the dirty marker, got:\n%s", out)
+	}
+	if conflicts := GiteaAbsorbConflict(string(out)); conflicts != "" {
+		t.Fatalf("a dirty-tree refusal is not a merge conflict, got file list %q", conflicts)
+	}
+	if head := runGit(t, pair, "rev-parse", "HEAD"); head != preHead {
+		t.Errorf("HEAD must be unchanged, was %s now %s", preHead, head)
+	}
+	body, readErr := os.ReadFile(filepath.Join(pair, "index.js"))
+	if readErr != nil || string(body) != "an uncommitted edit\n" {
+		t.Errorf("the uncommitted edit must survive untouched, got %q (%v)", body, readErr)
+	}
+}

@@ -20,15 +20,27 @@ const giteaAbsorbNoopCommand = "true"
 const giteaAbsorbConflictMarker = "ZCP_ABSORB_CONFLICT:"
 
 // giteaAbsorbUnprovableMarker marks a landing that WAS recorded but could
-// not be proven lossless — a rebase-merge, or a container git older than
-// 2.38 (no `merge-tree --write-tree`, e.g. Ubuntu 22.04's git 2.34). Either
-// way the absorb falls through as a silent no-op and the ordinary
-// take-the-base-in step runs unabsorbed — which, for a genuine squash of
-// this Mate's own earlier work, reproduces the very false add/add conflict
-// this whole mechanism exists to prevent. The marker lets a caller that
-// then sees an ordinary conflict tell the difference and give the right
-// advice instead of sending the agent in a circle.
+// not be proven lossless even after the portable plumbing fallback below —
+// a rebase-merge, or a merge commit a person resolved by hand differently
+// from a mechanical 3-way merge. Either way the absorb falls through as a
+// silent no-op and the ordinary take-the-base-in step runs unabsorbed —
+// which, for a genuine squash of this Mate's own earlier work, reproduces
+// the very false add/add conflict this whole mechanism exists to prevent.
+// The marker lets a caller that then sees an ordinary conflict tell the
+// difference and give the right advice instead of sending the agent in a
+// circle.
 const giteaAbsorbUnprovableMarker = "ZCP_ABSORB_UNPROVABLE"
+
+// giteaAbsorbDirtyMarker marks a landing that WAS recorded and provably
+// safe to absorb, but the S^1 merge itself never ran: uncommitted changes
+// in the checkout touch what it would merge, and git refuses to even start
+// rather than overwrite them. Distinct from giteaAbsorbConflictMarker
+// (which the S^1 merge's OWN abort emits, with a real conflicting-file
+// list) — this fires before any merge attempt, so there is no unmerged
+// index entry to name; a caller must not read the resulting bare marker as
+// "no conflict" (empty file list from GiteaAbsorbConflict) and push
+// anyway.
+const giteaAbsorbDirtyMarker = "ZCP_ABSORB_DIRTY"
 
 // BuildAbsorbLandedPullRequestCommand folds a pull request's landing on the
 // repository's protected base into HEAD as a REAL merge, before the ordinary
@@ -60,24 +72,36 @@ const giteaAbsorbUnprovableMarker = "ZCP_ABSORB_UNPROVABLE"
 //   - H is not an ancestor of HEAD → the checkout has moved since, in a way
 //     this fast track cannot reason about (a rewritten history, or a
 //     landing of some OTHER branch state); no-op, ordinary merge decides.
-//   - `git merge-tree --write-tree S^1 H` cannot prove the squash carries
-//     EXACTLY H's tree — true for a squash or an ordinary merge commit,
-//     unprovable for a rebase-merge, or for a container git older than
-//     2.38 (no `merge-tree --write-tree`); no-op, but marked
-//     (giteaAbsorbUnprovableMarker) — a landing WAS recorded, so a caller
-//     that then sees the ordinary step conflict can tell it may be this
-//     same false shape, unresolved.
+//   - Neither `git merge-tree --write-tree S^1 H` (fast path, git ≥2.38)
+//     NOR the portable plumbing fallback (a temporary index: `read-tree -m
+//     -i --aggressive <merge-base> S^1 H && write-tree`, which works on any
+//     git and is tried whenever the fast path fails for ANY reason —
+//     unsupported subcommand, or a real conflict the merge itself hit) can
+//     prove the squash carries EXACTLY S's tree — true for a squash or an
+//     ordinary merge commit computed mechanically, unprovable for a
+//     rebase-merge or a merge commit a person resolved by hand differently;
+//     no-op, but marked (giteaAbsorbUnprovableMarker) — a landing WAS
+//     recorded, so a caller that then sees the ordinary step conflict can
+//     tell it may be this same false shape, unresolved. Soundness of the
+//     fallback does not depend on which algorithm computed the candidate
+//     tree: either candidate is accepted ONLY on an exact match against
+//     S^{tree}, a direct byte-for-byte proof, never an inference from one
+//     merge strategy agreeing with another.
 //
-// Once proven lossless: `git merge --no-edit -q S^1` brings the base as it
-// stood the moment BEFORE the landing (a real merge — a genuine conflict
-// here is real: aborted, marked giteaAbsorbConflictMarker, and the chain
-// stopped there — never falls through to the ordinary step, which would
-// otherwise push a history that records S as merged while the checkout
-// still lacks whatever else was on the base before S), then
-// `git merge -s ours --no-edit -q S` records S itself as merged without
-// touching the tree, since its content is already proven present. The
-// ordinary `merge origin/<base>` step that follows brings in only whatever
-// landed on the base after S.
+// Once proven lossless: the checkout must be clean first — uncommitted
+// changes touching what S^1 would merge make git refuse to even start, and
+// that is marked too (giteaAbsorbDirtyMarker), distinctly from a real
+// conflict (there is no unmerged index entry to name; a caller must not
+// read the resulting bare marker as "no conflict" and push anyway). Then
+// `git merge --no-edit -q S^1` brings the base as it stood the moment
+// BEFORE the landing (a real merge — a genuine conflict here is real:
+// aborted, marked giteaAbsorbConflictMarker, and the chain stopped there —
+// never falls through to the ordinary step, which would otherwise push a
+// history that records S as merged while the checkout still lacks whatever
+// else was on the base before S), then `git merge -s ours --no-edit -q S`
+// records S itself as merged without touching the tree, since its content
+// is already proven present. The ordinary `merge origin/<base>` step that
+// follows brings in only whatever landed on the base after S.
 func BuildAbsorbLandedPullRequestCommand(commit, head string) string {
 	if commit == "" {
 		return giteaAbsorbNoopCommand
@@ -91,12 +115,34 @@ func BuildAbsorbLandedPullRequestCommand(commit, head string) string {
 		fmt.Sprintf("git merge-base --is-ancestor %s HEAD 2>/dev/null && exit 0", qCommit),
 		fmt.Sprintf("git rev-parse -q --verify %s >/dev/null 2>&1 || exit 0", qHead),
 		fmt.Sprintf("git merge-base --is-ancestor %s HEAD 2>/dev/null || exit 0", qHead),
-		fmt.Sprintf(`provenTree=$(git merge-tree --write-tree %s %s 2>/dev/null) || { echo "%s"; exit 0; }`,
-			qCommitParent, qHead, giteaAbsorbUnprovableMarker),
 		fmt.Sprintf(`wantTree=$(git rev-parse -q --verify %s 2>/dev/null) || { echo "%s"; exit 0; }`,
 			qCommitTree, giteaAbsorbUnprovableMarker),
+		// Fast path (git >=2.38): a pure plumbing merge, touches neither the
+		// working tree nor the index.
+		fmt.Sprintf(`provenTree=$(git merge-tree --write-tree %s %s 2>/dev/null)`, qCommitParent, qHead),
+		// Portable fallback, tried whenever the fast path did not already
+		// prove the match: a real 3-way merge into a TEMPORARY index (never
+		// the real one — GIT_INDEX_FILE + -i), using the actual merge-base
+		// of S^1 and H as the common ancestor, same as merge-tree computes
+		// internally. `--aggressive` auto-resolves the trivial cases (a
+		// file added/deleted/modified on only one side); unmerged entries
+		// after that are a REAL conflict the plumbing could not resolve —
+		// write-tree then refuses (conservative: reads as unprovable, never
+		// as a false match). `mktemp` itself creates the file (0 bytes,
+		// which `read-tree` rejects as "index file smaller than expected"
+		// — it is not the same as "does not exist yet"), so it is removed
+		// again right before use, leaving only the PATH; `read-tree` then
+		// initializes a fresh index there. Always cleaned up after.
+		fmt.Sprintf(`if [ -z "$provenTree" ] || [ "$provenTree" != "$wantTree" ]; then tmpidx=$(mktemp) && rm -f "$tmpidx" && base=$(git merge-base %s %s 2>/dev/null) && GIT_INDEX_FILE="$tmpidx" git read-tree -m -i --aggressive "$base" %s %s 2>/dev/null && provenTree=$(GIT_INDEX_FILE="$tmpidx" git write-tree 2>/dev/null); rm -f "$tmpidx"; fi`,
+			qCommitParent, qHead, qCommitParent, qHead),
 		fmt.Sprintf(`[ -n "$provenTree" ] && [ "$provenTree" = "$wantTree" ] || { echo "%s"; exit 0; }`,
 			giteaAbsorbUnprovableMarker),
+		// The checkout must be clean before the real merge below touches
+		// it — uncommitted changes to a path S^1 would merge make git
+		// refuse outright, with no unmerged index entry to name (unlike a
+		// real merge conflict), so this is its own marker, checked BEFORE
+		// the merge is attempted rather than inferred from its failure.
+		fmt.Sprintf(`[ -z "$(git status --porcelain 2>/dev/null)" ] || { echo "%s"; exit 6; }`, giteaAbsorbDirtyMarker),
 		// A brace group, not `(...)`: `exit 4` inside a `(...)` subshell only
 		// terminates THAT subshell — the `; `-joined chain below would still
 		// run `git merge -s ours`, the whole absorb block would exit 0, and
@@ -111,7 +157,7 @@ func BuildAbsorbLandedPullRequestCommand(commit, head string) string {
 		fmt.Sprintf("git merge -s ours --no-edit -q %s", qCommit),
 	}
 	// `; `, not `&&`/`||`: each step above already decides its own early
-	// exit (`|| exit 0`, `|| { ...; exit 4; }`), so the next one must run
+	// exit (`|| exit 0`, `|| { ...; exit N; }`), so the next one must run
 	// unconditionally unless a previous one exited the subshell outright.
 	return "(" + strings.Join(steps, "; ") + ")"
 }
@@ -129,6 +175,16 @@ func GiteaAbsorbConflict(output string) string {
 		}
 	}
 	return ""
+}
+
+// GiteaAbsorbDirty reports whether a recorded landing, proven safe to
+// absorb, could not actually be merged because the checkout was not clean
+// — never reported alongside GiteaAbsorbConflict (whose file list would be
+// empty here, since no merge ever started to leave an unmerged entry to
+// name; a caller must not read that empty list as "no conflict" and push
+// anyway).
+func GiteaAbsorbDirty(output string) bool {
+	return strings.Contains(output, giteaAbsorbDirtyMarker)
 }
 
 // GiteaAbsorbUnprovable reports whether a recorded landing fell through
