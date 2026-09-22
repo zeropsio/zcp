@@ -76,28 +76,66 @@ const giteaDeliveryConflictMarker = "ZCP_MERGE_CONFLICT:"
 // anything is staged: committing node_modules is never what a person meant,
 // and the .gitignore stays the agent's to write (InitServiceGit). A clean
 // tree commits nothing and the push reports the branch up to date.
-func BuildGiteaDeliveryCommand(workingDir, branch, base, message string) string {
+//
+// landedCommit and landedHead are the pull request landing this pair's own
+// earlier delivery is catching up to — workflow.GiteaRepoRef.Landed, "" when
+// none is recorded. Absorbed (BuildAbsorbLandedPullRequestCommand) BEFORE the
+// ordinary take-the-base-in merge below, so a squash of this Mate's own
+// history does not read as two unrelated histories that both add the same
+// files (MB-26).
+func BuildGiteaDeliveryCommand(workingDir, branch, base, message, landedCommit, landedHead string) string {
 	if branch == "" {
 		branch = defaultBranch
 	}
 	if base == "" {
 		base = defaultBranch
 	}
-	remoteBase := shellQuote("origin/" + base)
-	return strings.Join([]string{
+	steps := []string{ //nolint:prealloc // clearer as a literal; two known appends follow, not a growth loop
 		"cd " + shellQuote(workingDir),
 		gitIdentityEnsureFragment(),
 		`{ unignored=""; for d in node_modules vendor .venv; do if [ -d "$d" ] && ! git check-ignore -q "$d"; then unignored="$unignored $d"; fi; done; ` +
 			`if [ -n "$unignored" ]; then echo "` + giteaDeliveryUnignoredMarker + `$unignored"; exit 3; fi; }`,
 		"git add -A",
 		fmt.Sprintf("(git diff --cached --quiet || git commit -q -m %s)", shellQuote(message)),
-		// Take the base in before pushing. A group has more than one Mate and
-		// they land in turn, so a branch cut when the repository was wired is
-		// behind the moment somebody else merges — and Gitea then simply stops
-		// offering Merge (the owner, 2026-09-18, on a second Mate's request).
-		// A merge and not a rebase: history only moves forward, so the push
-		// stays an ordinary one and no force can lose a commit.
+	}
+	steps = append(steps, giteaFetchAbsorbAndTakeBaseInSteps(base, landedCommit, landedHead)...)
+	steps = append(steps, fmt.Sprintf("GIT_TERMINAL_PROMPT=0 git %s push -u origin %s 2>&1",
+		gitCredentialHelperArgs(), shellQuote("HEAD:refs/heads/"+branch)))
+	return strings.Join(steps, " && ")
+}
+
+// BuildGiteaAbsorbAndSyncCommand catches a pair's own checkout up with a
+// landing WITHOUT delivering anything of the agent's — no add, no commit, no
+// push. It runs the exact fetch/absorb/take-base-in sequence
+// BuildGiteaDeliveryCommand runs before its push, so a reconcile pass that
+// just learned a pull request merged can fold that landing into the Mate's
+// history right there (MB-26: the Mate's next task starts on current code,
+// not on whatever its checkout happened to be at). A conflict aborts and
+// leaves the checkout exactly as it was, same marker as a delivery's — the
+// caller treats this as best-effort and never surfaces the marker itself;
+// the next real delivery is the authoritative report.
+func BuildGiteaAbsorbAndSyncCommand(workingDir, base, landedCommit, landedHead string) string {
+	steps := append([]string{"cd " + shellQuote(workingDir)},
+		giteaFetchAbsorbAndTakeBaseInSteps(base, landedCommit, landedHead)...)
+	return strings.Join(steps, " && ")
+}
+
+// giteaFetchAbsorbAndTakeBaseInSteps is the shared tail BuildGiteaDeliveryCommand
+// and BuildGiteaAbsorbAndSyncCommand both run once the working directory is
+// current: fetch the remote, absorb a known-lossless landing as a real merge,
+// then take in whatever else the base carries that this branch doesn't.
+//
+// A group has more than one Mate and they land in turn, so a branch cut when
+// the repository was wired — or last delivered — is behind the moment
+// somebody else merges, and Gitea then simply stops offering Merge (the
+// owner, 2026-09-18, on a second Mate's request). A merge and not a rebase:
+// history only moves forward, so a push built on this stays an ordinary one
+// and no force can lose a commit.
+func giteaFetchAbsorbAndTakeBaseInSteps(base, landedCommit, landedHead string) []string {
+	remoteBase := shellQuote("origin/" + base)
+	return []string{
 		fmt.Sprintf("GIT_TERMINAL_PROMPT=0 git %s fetch --no-tags -q origin", gitCredentialHelperArgs()),
+		BuildAbsorbLandedPullRequestCommand(landedCommit, landedHead),
 		fmt.Sprintf("(git rev-parse -q --verify %s >/dev/null 2>&1 || true)", remoteBase),
 		// Already contains the base → nothing to do. Otherwise merge it, and a
 		// collision only a person or the agent can settle leaves the checkout
@@ -109,9 +147,7 @@ func BuildGiteaDeliveryCommand(workingDir, branch, base, message string) string 
 			" git merge --abort >/dev/null 2>&1;"+
 			` echo "%s$conflicts"; exit 4))`,
 			remoteBase, remoteBase, remoteBase, giteaDeliveryConflictMarker),
-		fmt.Sprintf("GIT_TERMINAL_PROMPT=0 git %s push -u origin %s 2>&1",
-			gitCredentialHelperArgs(), shellQuote("HEAD:refs/heads/"+branch)),
-	}, " && ")
+	}
 }
 
 // GiteaDeliveryUnignored reads the dependency directories a delivery refused

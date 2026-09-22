@@ -237,7 +237,7 @@ func TestBuildGiteaDeliveryCommand_CommitsAndPushesTheDeployedTree(t *testing.T)
 	// No .gitignore: the dependencies would ride along, so nothing is staged.
 	//nolint:gosec // test-only, the command under test against a t.TempDir repository
 	out, err := exec.CommandContext(t.Context(), "sh", "-c",
-		BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Build a todo app")).CombinedOutput()
+		BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Build a todo app", "", "")).CombinedOutput()
 	if err == nil {
 		t.Fatalf("a tree with an unignored node_modules must not be delivered:\n%s", out)
 	}
@@ -249,7 +249,7 @@ func TestBuildGiteaDeliveryCommand_CommitsAndPushesTheDeployedTree(t *testing.T)
 	}
 
 	writeLabFile(t, filepath.Join(pair, ".gitignore"), "node_modules/\n")
-	runShell(t, BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Build a todo app"))
+	runShell(t, BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Build a todo app", "", ""))
 	remote := filepath.Join(filepath.Dir(pair), "remote.git")
 	if got := runGit(t, remote, "log", "-1", "--format=%s", "mate/mate-p1"); got != "Build a todo app" {
 		t.Errorf("the branch's head commit is %q, want the task's words", got)
@@ -265,7 +265,7 @@ func TestBuildGiteaDeliveryCommand_CommitsAndPushesTheDeployedTree(t *testing.T)
 	head := runGit(t, remote, "rev-parse", "mate/mate-p1")
 	//nolint:gosec // test-only, the command under test against a t.TempDir repository
 	out, err = exec.CommandContext(t.Context(), "sh", "-c",
-		BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Build a todo app")).CombinedOutput()
+		BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Build a todo app", "", "")).CombinedOutput()
 	if err != nil {
 		t.Fatalf("a second delivery of the same tree: %v\n%s", err, out)
 	}
@@ -319,7 +319,7 @@ func TestBuildGiteaDeliveryCommand_TakesTheBaseInBeforeItPushes(t *testing.T) {
 			remote := filepath.Join(root, "remote.git")
 			runShell(t, BuildGiteaMateBranchCommand(pair, "mate/mate-p1", "main"))
 			writeLabFile(t, filepath.Join(pair, "index.js"), "the app\n")
-			runShell(t, BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Build the app"))
+			runShell(t, BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Build the app", "", ""))
 
 			// This Mate's work is merged, the way a person merges it, and then
 			// another Mate lands its own on top — the ordinary life of a group.
@@ -341,7 +341,7 @@ func TestBuildGiteaDeliveryCommand_TakesTheBaseInBeforeItPushes(t *testing.T) {
 			}
 			//nolint:gosec // test-only, the command under test against a t.TempDir repository
 			out, err := exec.CommandContext(t.Context(), "sh", "-c",
-				BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Add a feature")).CombinedOutput()
+				BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Add a feature", "", "")).CombinedOutput()
 
 			if tc.wantConflict != "" {
 				if err == nil {
