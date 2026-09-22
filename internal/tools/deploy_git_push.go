@@ -577,15 +577,29 @@ func handleGitPush(
 	// part of its own commit+push). A REAL conflict here — not the false
 	// squash-vs-history one — stops the push outright: pushing on top of a
 	// checkout the sync left mid-way is never right.
+	var giteaLearnedNote string
 	if giteaRemoteOfThisMate(effectiveRemote) {
 		meta, _ := workflow.FindServiceMeta(stateDir, hostname)
-		if conflicts := giteaAbsorbBeforePush(ctx, httpClient, sshDeployer, stateDir, hostname, workingDir, meta); conflicts != "" {
-			recordAttempt(fmt.Sprintf("gitea landing absorb conflict: %s has moved on and %s changes the same lines (%s)", giteaBaseOf(meta), branch, conflicts), topology.FailureClassConfig)
+		absorb := giteaAbsorbBeforePush(ctx, httpClient, sshDeployer, stateDir, hostname, workingDir, meta)
+		giteaLearnedNote = absorb.LearnedNote
+		if absorb.Conflict != "" {
+			var detail, sequence string
+			switch {
+			case absorb.IsAbsorbConflict:
+				detail = fmt.Sprintf("a real conflict inside absorbing this Mate's own earlier pull request — %s changes the same lines (%s)", giteaBaseOf(meta), absorb.Conflict)
+				sequence = giteaManualAbsorbSequence(hostname, absorb.LandedCommit, giteaBaseOf(meta))
+			case absorb.Unprovable:
+				detail = fmt.Sprintf("%s has moved on and %s changes the same lines (%s) — this may be this Mate's own squashed pull request, which this container's git could not prove safe to fold in automatically", giteaBaseOf(meta), branch, absorb.Conflict)
+				sequence = giteaManualAbsorbSequence(hostname, absorb.LandedCommit, giteaBaseOf(meta))
+			default:
+				detail = fmt.Sprintf("%s has moved on and %s changes the same lines (%s)", giteaBaseOf(meta), branch, absorb.Conflict)
+				sequence = fmt.Sprintf("In %s's checkout run `git fetch origin && git merge origin/%s`, resolve it", hostname, giteaBaseOf(meta))
+			}
+			recordAttempt(fmt.Sprintf("gitea landing absorb conflict: %s", detail), topology.FailureClassConfig)
 			return convertError(platform.NewPlatformError(
 				platform.ErrSSHDeployFailed,
-				fmt.Sprintf("git-push from %s has not reached %s: %s has moved on and %s changes the same lines (%s).",
-					hostname, meta.Gitea.FullName, giteaBaseOf(meta), branch, conflicts),
-				fmt.Sprintf("In %s's checkout run `git fetch origin && git merge origin/%s`, resolve it, then push again.", hostname, giteaBaseOf(meta)),
+				fmt.Sprintf("git-push from %s has not reached %s: %s.", hostname, meta.Gitea.FullName, detail),
+				sequence+", then push again.",
 			), WithRecoveryStatus()), nil, nil
 		}
 	}
@@ -726,6 +740,13 @@ func handleGitPush(
 	var warnings []string
 	if dirtyWarn != "" {
 		warnings = append(warnings, dirtyWarn)
+	}
+	// News about a PREVIOUSLY recorded pull request this push's own absorb
+	// step learned ("pull request #N is merged…") — independent of this
+	// push's own outcome, and the last place anything would ever say it
+	// once the number is gone from meta (giteaAbsorbBeforePush).
+	if giteaLearnedNote != "" {
+		warnings = append(warnings, giteaLearnedNote)
 	}
 	if warn := trackTriggerMissingWarning(stateDir, hostname); warn != "" && !giteaRemote {
 		warnings = append(warnings, warn)
