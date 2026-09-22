@@ -126,9 +126,23 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 	// FailureClassConfig (user repo state); the actual git push failure is
 	// FailureClassNetwork (transport to the remote). YAML validation is
 	// FailureClassConfig.
+	//
+	// GF-13, extended to the failure side (judge review, item 5): a
+	// destination with no wired BuildIntegration must not record a FAILED
+	// attempt either — nothing will ever record a successful one there to
+	// supersede it, so the failure would sit as a permanent, unexplained
+	// placeholder exactly like the in-flight one GF-13 already blocks on
+	// the success side (localGitPushTrackable, below). No Gitea-remote leg
+	// here, unlike the container path's gitPushDestinationTrackable: a
+	// local git-push never targets this Mate's own Gitea (no Mate exists
+	// on a developer's own machine). The error is still returned to the
+	// agent unconditionally.
 	record := func(errMsg string, class topology.FailureClass) {
 		attempt.Error = errMsg
 		attempt.FailureClass = class
+		if !gitPushBuildIntegrationConfigured(stateDir, hostname) {
+			return
+		}
 		_ = workflow.RecordDeployAttempt(stateDir, hostname, attempt)
 	}
 

@@ -219,6 +219,20 @@ func gitPushBuildIntegrationConfigured(stateDir, targetService string) bool {
 	return meta.BuildIntegration == topology.BuildIntegrationWebhook || meta.BuildIntegration == topology.BuildIntegrationActions
 }
 
+// gitPushDestinationTrackable mirrors the SUCCESS-path GF-13 gate (the
+// `trackable` local further down handleGitPush, minus its NothingToPush
+// leg — not yet knowable before a push has even run) for the FAILURE side
+// (judge review, item 5): a destination is worth recording a DeployAttempt
+// for, success or failure, only when something could later resolve it — a
+// wired BuildIntegration's build watch, or its manual record-deploy
+// fallback. Nothing ever builds from a wired pair's own Gitea branch
+// (spec-mate.md §6), so that destination is never trackable regardless of
+// BuildIntegration.
+func gitPushDestinationTrackable(stateDir, targetService, inputRemote string) bool {
+	effectiveRemote := resolveEffectiveRemote(stateDir, targetService, inputRemote)
+	return !giteaRemoteOfThisMate(effectiveRemote) && gitPushBuildIntegrationConfigured(stateDir, targetService)
+}
+
 // trackedRefOrDefault is the single owner of the GF-7 "main" fallback
 // (docs/spec-workflows.md §12.6): every reader of ServiceMeta.TrackedRef
 // — the git-push default branch, the GitHub Actions template, the launch
@@ -411,9 +425,26 @@ func handleGitPush(
 	// committed-code are FailureClassConfig; YAML validation is
 	// FailureClassConfig; the actual push failure is FailureClassNetwork
 	// (transport-layer failure to reach the remote).
+	//
+	// GF-13, extended to the failure side (judge review, item 5): a
+	// destination nothing can ever resolve — a Gitea remote (nothing builds
+	// from a Mate's branch) or no BuildIntegration wired — must not record
+	// a FAILED attempt either, for the identical reason GF-13 already
+	// blocked the success side from recording an in-flight one there: no
+	// later pass would EVER record a successful attempt to supersede it, so
+	// the failure would sit as a permanent, unexplained "failed deploy" on
+	// the push source forever. The error itself is still returned to the
+	// agent unconditionally — only the dangling placeholder is skipped.
+	// gitPushDestinationTrackable recomputes fresh on every call (this
+	// closure fires from points before effectiveRemote's own local is even
+	// resolved), mirroring the exact predicate the success path already
+	// uses at the trackable gate below.
 	recordAttempt := func(err string, class topology.FailureClass) {
 		attempt.Error = err
 		attempt.FailureClass = class
+		if !gitPushDestinationTrackable(stateDir, input.TargetService, input.RemoteURL) {
+			return
+		}
 		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 	}
 

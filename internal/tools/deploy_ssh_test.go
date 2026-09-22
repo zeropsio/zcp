@@ -1903,6 +1903,127 @@ func TestDeployTool_GitPush_NoFutureBuild_NeverRecordsDanglingAttempt(t *testing
 	}
 }
 
+// TestDeployTool_GitPush_UntrackableDestination_FailureRecordsNoDanglingAttempt
+// is item 5 of the judge's review: a genuine PRE-FLIGHT failure (never even
+// reaches the push) for a destination nothing will ever resolve — a Gitea
+// remote, or no BuildIntegration wired — must not record a failed
+// DeployAttempt either. GF-13 already stopped the SUCCESS side from leaving
+// a permanent, unexplained placeholder there; recording the FAILURE side
+// left the exact same kind of placeholder, since nothing later records a
+// successful attempt to supersede it. The error is still returned to the
+// agent either way — only the dangling record is skipped.
+func TestDeployTool_GitPush_UntrackableDestination_FailureRecordsNoDanglingAttempt(t *testing.T) {
+	tests := []struct {
+		name      string
+		remoteURL string
+		setup     func(t *testing.T)
+	}{
+		{
+			name:      "gitea remote of this Mate",
+			remoteURL: "https://gitea.example/acme/appdev",
+			setup: func(t *testing.T) {
+				t.Helper()
+				t.Setenv("GITEA_URL", "https://gitea.example")
+				t.Setenv("MATE_BROKER_URL", "https://gitea.example")
+				t.Setenv("GITEA_TOKEN", "bot-token")
+			},
+		},
+		{
+			name:      "no build integration wired on a user remote",
+			remoteURL: "https://github.com/example/repo",
+			setup:     func(t *testing.T) { t.Helper() },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stateDir := t.TempDir()
+			setupAdoptedService(t, stateDir, "appdev", "")
+			markGitPushConfigured(t, stateDir, "appdev")
+			tt.setup(t)
+
+			ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "ship it", []string{"appdev"})
+			if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+				t.Fatalf("SaveWorkSession: %v", err)
+			}
+			t.Cleanup(func() { _ = workflow.DeleteWorkSession(stateDir, os.Getpid()) })
+
+			mock := platform.NewMock()
+			// No committed code — a genuine pre-flight failure, never reaches
+			// the push itself.
+			ssh := &stubSSHWithCommands{committedOutput: []byte("0")}
+			authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil)
+
+			result := callTool(t, srv, "zerops_deploy", map[string]any{
+				"targetService": "appdev",
+				"strategy":      "git-push",
+				"remoteUrl":     tt.remoteURL,
+			})
+			if !result.IsError {
+				t.Fatalf("expected an error result on the untrackable destination's own pre-flight failure, got success")
+			}
+
+			loaded, err := workflow.LoadWorkSession(stateDir, os.Getpid())
+			if err != nil {
+				t.Fatalf("LoadWorkSession: %v", err)
+			}
+			if attempts := loaded.Deploys["appdev"]; len(attempts) != 0 {
+				t.Errorf("Deploys[appdev] = %+v, want none: nothing will ever resolve this attempt either", attempts)
+			}
+		})
+	}
+}
+
+// TestDeployTool_GitPush_TrackableDestination_FailureStillRecordsAttempt is
+// the regression guard for the fix above: a destination with a wired
+// BuildIntegration (something COULD resolve a later success) still records
+// a genuine failure as before — the FailureClass-carrying terminal state
+// GF-13 always meant for a real push failure.
+func TestDeployTool_GitPush_TrackableDestination_FailureStillRecordsAttempt(t *testing.T) {
+	stateDir := t.TempDir()
+	setupAdoptedService(t, stateDir, "appdev", "")
+	markGitPushConfigured(t, stateDir, "appdev")
+	if err := workflow.UpdateServiceMeta(stateDir, "appdev", func(m *workflow.ServiceMeta) error {
+		m.BuildIntegration = topology.BuildIntegrationWebhook
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "ship it", []string{"appdev"})
+	if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+		t.Fatalf("SaveWorkSession: %v", err)
+	}
+	t.Cleanup(func() { _ = workflow.DeleteWorkSession(stateDir, os.Getpid()) })
+
+	mock := platform.NewMock()
+	ssh := &stubSSHWithCommands{committedOutput: []byte("0")}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "appdev",
+		"strategy":      "git-push",
+		"remoteUrl":     "https://github.com/example/repo",
+	})
+	if !result.IsError {
+		t.Fatal("expected an error result")
+	}
+
+	loaded, err := workflow.LoadWorkSession(stateDir, os.Getpid())
+	if err != nil {
+		t.Fatalf("LoadWorkSession: %v", err)
+	}
+	attempts := loaded.Deploys["appdev"]
+	if len(attempts) != 1 || attempts[0].Error == "" || attempts[0].FailureClass == "" {
+		t.Errorf("Deploys[appdev] = %+v, want one failed attempt with Error+FailureClass", attempts)
+	}
+}
+
 // TestDeployTool_GitPush_WebhookIntegration_StillRecordsInFlightAttempt pins
 // that the genuine async path is unchanged by the fix above: when the target
 // has a ZCP-managed BuildIntegration wired, a successful push still records
