@@ -1714,9 +1714,10 @@ state — a `succeeded` login they started whose `authorizedBy` is not them — 
 screen happened to watch. One owner per conversation view writes it, whichever door the sign-in used
 (the panel's card, the thread's band, the empty conversation) and after a reload; a failed write is
 retried on its own (2 s / 5 s / 15 s) and surfaced with a retry. A finished login never overrides the
-verified status in a row: `succeeded` shows the verified status, `failed` too once that says signed in.
-A credential whose check answered `unknown` is checked again every 15 s instead of sitting at
-"Checking…".
+verified status in a row: the login's recheck resets the agent's `providerAuth` to `unknown`, a
+`succeeded` login shows "Confirming" until the check answers and the verified status after, and
+`failed` steps aside once that says signed in. A credential whose check answered `unknown` is checked
+again after 15 s, then 1 min, then every 5 min, instead of sitting at "Checking…".
 
 ### 8.3 Threat model
 - The agent process and every project member share the container home: a credential file is
