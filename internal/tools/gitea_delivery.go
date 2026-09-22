@@ -101,12 +101,27 @@ func deliverGiteaPair(
 	if !wiring.Ready() {
 		return nil
 	}
+
+	// A stage deploy is a delivery whether or not the reconcile pass has run
+	// since the last merge — the passes are backoff-gated (giteaAttemptDue)
+	// and a delivery must not wait on one to learn a fresh merge. Read the
+	// outcome directly when a request is still recorded, so a landing
+	// (Landed) is known before the command below is built.
+	if meta.Gitea.PullRequest != 0 {
+		_ = readGiteaPairPullRequestOutcome(ctx, httpClient, sshDeployer, stateDir, wiring, meta)
+	}
+
 	repo, branch := meta.Gitea.FullName, meta.Gitea.Branch
+	landedCommit, landedHead := "", ""
+	if landed := meta.Gitea.Landed; landed != nil {
+		landedCommit, landedHead = landed.Commit, landed.Head
+	}
 
 	refreshGiteaWorkflow(ctx, sshDeployer, meta.Hostname)
 
 	output, err := sshDeployer.ExecSSH(ctx, meta.Hostname,
-		ops.BuildGiteaDeliveryCommand(giteaPairWorkingDir, branch, giteaBaseOf(meta), giteaCommitMessage(stateDir, meta)))
+		ops.BuildGiteaDeliveryCommand(giteaPairWorkingDir, branch, giteaBaseOf(meta), giteaCommitMessage(stateDir, meta),
+			landedCommit, landedHead))
 	if conflicts := ops.GiteaDeliveryConflict(string(output)); conflicts != "" {
 		return &giteaDelivery{Line: fmt.Sprintf(
 			"%s runs, but its code has not reached %s: %s has moved on and %s changes the same lines (%s). In %s's checkout run `git fetch origin && git merge origin/%s`, resolve it, then deploy %s again — the push and the pull request follow that deploy.",
@@ -121,6 +136,13 @@ func deliverGiteaPair(
 		return &giteaDelivery{Line: fmt.Sprintf(
 			"%s runs, but its code has not reached %s: pushing %s failed (%s). Fix the cause, then deploy %s again — the push and the pull request follow that deploy.",
 			target, repo, branch, gitPushErrorDetail(err, output), target)}
+	}
+
+	// The push landed — whatever the landing needed (an absorb, or nothing:
+	// S was already an ancestor, or the ordinary merge already carried its
+	// content), this delivery is done with it.
+	if meta.Gitea.Landed != nil {
+		clearGiteaLanding(stateDir, meta)
 	}
 
 	delivery := &giteaDelivery{PullRequest: openGiteaPairPullRequest(ctx, httpClient, wiring, stateDir, meta)}

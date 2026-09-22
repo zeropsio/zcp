@@ -11,6 +11,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -286,6 +287,55 @@ func TestReconcileGitea_RecordedPullRequestIsNotReopened(t *testing.T) {
 	}
 }
 
+// TestAbsorbLandedPullRequestOnCheckout_OnlyOnACleanCheckoutOfTheMatesBranch
+// pins the guard: the catch-up absorb runs the Gitea sync command only when
+// the checkout is exactly the state it is safe to touch — clean, and on the
+// Mate's own branch — and is silent otherwise, best-effort by design.
+func TestAbsorbLandedPullRequestOnCheckout_OnlyOnACleanCheckoutOfTheMatesBranch(t *testing.T) {
+	tests := []struct {
+		name         string
+		porcelain    string
+		branch       string
+		porcelainErr error
+		branchErr    error
+		wantSynced   bool
+	}{
+		{name: "clean tree on the Mate's branch runs the sync", porcelain: "", branch: "mate/mate-p1", wantSynced: true},
+		{name: "a dirty tree is left alone", porcelain: " M index.js\n", branch: "mate/mate-p1", wantSynced: false},
+		{name: "a checkout on some other branch is left alone", porcelain: "", branch: "main", wantSynced: false},
+		{name: "an SSH failure reading status is left alone", porcelain: "", branch: "mate/mate-p1", porcelainErr: errors.New("ssh: broken"), wantSynced: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &workflow.ServiceMeta{
+				Hostname: "appdev",
+				Gitea:    &workflow.GiteaRepoRef{FullName: "acme/appdev", Branch: "mate/mate-p1", DefaultBranch: "main"},
+			}
+			ssh := &containerSSHStub{dispatch: func(cmd string) ([]byte, error) {
+				switch {
+				case strings.Contains(cmd, "status --porcelain"):
+					return []byte(tt.porcelain), tt.porcelainErr
+				case strings.Contains(cmd, "rev-parse --abbrev-ref HEAD"):
+					return []byte(tt.branch), tt.branchErr
+				default:
+					return []byte("ok"), nil
+				}
+			}}
+			absorbLandedPullRequestOnCheckout(context.Background(), ssh, m, "squash-sha", "branch-tip-sha")
+
+			synced := false
+			for _, cmd := range ssh.commands {
+				if strings.Contains(cmd, "squash-sha") {
+					synced = true
+				}
+			}
+			if synced != tt.wantSynced {
+				t.Errorf("sync command sent = %v, want %v; commands: %v", synced, tt.wantSynced, ssh.commands)
+			}
+		})
+	}
+}
+
 // writeLandedGiteaPairMeta seeds the state this whole pass exists for: a pair
 // that is wired, has pushed, and recorded the number of the request its work
 // is waiting in.
@@ -315,9 +365,12 @@ func TestReconcile_TellsTheMateWhatBecameOfItsPullRequest(t *testing.T) {
 		pullMerged bool
 		// wantNumber is what the pair still records afterwards; 0 means the
 		// number was forgotten, so the next delivery opens the next request.
-		wantNumber int
-		wantReport []string
-		wantSilent bool
+		wantNumber   int
+		wantReport   []string
+		wantSilent   bool
+		wantLanded   bool
+		wantCommit   string
+		wantLandHead string
 	}{
 		{
 			// The ordinary state: still waiting on somebody, and worth no words.
@@ -325,9 +378,14 @@ func TestReconcile_TellsTheMateWhatBecameOfItsPullRequest(t *testing.T) {
 			wantNumber: 4, wantSilent: true,
 		},
 		{
+			// A merge lands as a landing to absorb, not just a cleared number —
+			// Gitea squashes by default (MB-26), and only the recorded
+			// merge_commit_sha/head.sha let the next delivery fold it in
+			// losslessly instead of reading it as two unrelated histories.
 			name: "merged", pullState: "closed", pullMerged: true,
 			wantNumber: 0,
-			wantReport: []string{"pull request #4 is merged", `"main"`, "opens a new request"},
+			wantReport: []string{"pull request #4 is merged", `"main"`, "absorbs the landing", "opens a new request"},
+			wantLanded: true, wantCommit: "squash-sha", wantLandHead: "branch-tip-sha",
 		},
 		{
 			// Closed and merged mean opposite things to the Mate that opened
@@ -343,6 +401,8 @@ func TestReconcile_TellsTheMateWhatBecameOfItsPullRequest(t *testing.T) {
 			fake.branchExists = true
 			fake.pullState = tt.pullState
 			fake.pullMerged = tt.pullMerged
+			fake.pullMergeCommit = "squash-sha"
+			fake.pullMergeHead = "branch-tip-sha"
 			gitea := fake.start(t)
 
 			stateDir := t.TempDir()
@@ -368,6 +428,13 @@ func TestReconcile_TellsTheMateWhatBecameOfItsPullRequest(t *testing.T) {
 			meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
 			if meta == nil || meta.Gitea == nil || meta.Gitea.PullRequest != tt.wantNumber {
 				t.Fatalf("recorded request = %+v, want #%d", meta.Gitea, tt.wantNumber)
+			}
+			landed := meta.Gitea.Landed
+			if tt.wantLanded && (landed == nil || landed.Commit != tt.wantCommit || landed.Head != tt.wantLandHead) {
+				t.Fatalf("recorded landing = %+v, want commit=%q head=%q", landed, tt.wantCommit, tt.wantLandHead)
+			}
+			if !tt.wantLanded && landed != nil {
+				t.Fatalf("no landing should be recorded here, got %+v", landed)
 			}
 			// Whatever became of the request, a wired pair never goes back to
 			// the broker for a second repository.

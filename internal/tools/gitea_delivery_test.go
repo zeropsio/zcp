@@ -129,6 +129,65 @@ func TestAStageDeployOfAWiredPairDeliversItself(t *testing.T) {
 	})
 }
 
+// TestAStageDeployAbsorbsAFreshMergeWithoutWaitingForAReconcilePass is the
+// squash-landing bug, at the delivery: a stage deploy must not depend on a
+// reconcile pass having already learned the merge (the passes are backoff-
+// gated, giteaAttemptDue) — it reads the recorded pull request's outcome
+// itself, and once it learns of a squash landing it absorbs it (S, H) into
+// the pushed history rather than letting the ordinary take-the-base-in merge
+// read it as two unrelated histories that both add the same files (MB-26).
+// A successful delivery then forgets the landing — it has been absorbed, or
+// proven to need no absorbing, either way.
+func TestAStageDeployAbsorbsAFreshMergeWithoutWaitingForAReconcilePass(t *testing.T) {
+	fake := newFakeGitea()
+	fake.branchExists = true
+	fake.pullState = "closed"
+	fake.pullMerged = true
+	fake.pullMergeCommit = "squash-sha"
+	fake.pullMergeHead = "branch-tip-sha"
+	gitea := fake.start(t)
+
+	stateDir := t.TempDir()
+	writeLandedGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git", 4)
+	t.Setenv("GITEA_URL", gitea.URL)
+	t.Setenv("MATE_BROKER_URL", gitea.URL)
+	t.Setenv("GITEA_TOKEN", giteaBotToken)
+
+	var commands []string
+	ssh := &scriptedSSH{respond: func(_, command string) string {
+		commands = append(commands, command)
+		return "ok"
+	}}
+	delivery := deliverGiteaPair(context.Background(), platform.NewMock(), gitea.Client(), ssh,
+		runtime.Info{InContainer: true, ProjectID: "proj-1"}, stateDir, "appstage")
+	if delivery == nil {
+		t.Fatal("want a delivery")
+	}
+
+	var absorbed bool
+	for _, cmd := range commands {
+		if strings.Contains(cmd, "squash-sha") && strings.Contains(cmd, "branch-tip-sha") {
+			absorbed = true
+		}
+	}
+	if !absorbed {
+		t.Errorf("the delivery command must carry the landing it read itself, without a reconcile pass: %v", commands)
+	}
+
+	meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
+	if meta == nil || meta.Gitea == nil {
+		t.Fatal("meta vanished")
+	}
+	// The merged request (#4) is forgotten; the delivery's own push opens
+	// the NEXT one for the new work it just carried.
+	if meta.Gitea.PullRequest == 4 {
+		t.Errorf("the merged request must be forgotten, still recorded as #%d", meta.Gitea.PullRequest)
+	}
+	if meta.Gitea.Landed != nil {
+		t.Errorf("a successfully delivered landing must be forgotten, got %+v", meta.Gitea.Landed)
+	}
+}
+
 // A wired pair's direct deploys are the Mate's own: nothing a Gitea workflow
 // runs ever rebuilds a Mate's service, so no integration may turn them into
 // push-delivery-required, and no warning may send the agent to push by hand.

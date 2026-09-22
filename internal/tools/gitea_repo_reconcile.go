@@ -142,7 +142,7 @@ func reconcileGiteaRepositories(
 		case giteaPairNeedsPullRequest(m):
 			outcome = reconcileGiteaPairPullRequest(ctx, httpClient, stateDir, wiring, m)
 		default:
-			outcome = readGiteaPairPullRequestOutcome(ctx, httpClient, stateDir, wiring, m)
+			outcome = readGiteaPairPullRequestOutcome(ctx, httpClient, sshDeployer, stateDir, wiring, m)
 		}
 		// The attempt is recorded even when it had nothing to say: a wired
 		// pair that has not pushed yet is the ORDINARY state, and without the

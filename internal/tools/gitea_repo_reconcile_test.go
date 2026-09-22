@@ -48,6 +48,11 @@ type fakeGitea struct {
 	// by default, which is every other test's state.
 	pullState  string
 	pullMerged bool
+	// pullMergeCommit and pullMergeHead are what a merged read answers for
+	// merge_commit_sha / head.sha — Gitea's own words for what landed the
+	// request, which a delivery needs to absorb a squash losslessly.
+	pullMergeCommit string
+	pullMergeHead   string
 	// pullReads counts those reads, so a settled pair can be shown to ask
 	// once per backoff window rather than once per pass.
 	pullReads int
@@ -107,6 +112,8 @@ func (f *fakeGitea) start(t *testing.T) *httptest.Server {
 			}
 			body, _ := json.Marshal(map[string]any{
 				"number": 9, "state": state, "merged": f.pullMerged, "title": f.pullTitle,
+				"merge_commit_sha": f.pullMergeCommit,
+				"head":             map[string]any{"sha": f.pullMergeHead},
 			})
 			_, _ = w.Write(body)
 		case strings.HasSuffix(r.URL.Path, "/pulls"):

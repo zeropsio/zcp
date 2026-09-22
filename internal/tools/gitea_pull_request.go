@@ -225,13 +225,16 @@ func reconcileGiteaPairPullRequest(
 // The recorded number is cleared as soon as the request is no longer open, so
 // the pair's next delivery opens the next request rather than pushing at a
 // closed one — and nothing downstream keeps reporting a merged request as the
-// one this Mate is waiting on.
+// one this Mate is waiting on. sshDeployer may be nil (a caller with no SSH
+// access, e.g. none today, still gets the outcome and the recorded landing —
+// only the best-effort checkout catch-up is skipped).
 //
 // Returns "" while the request is still open, which is the ordinary state and
 // worth no words.
 func readGiteaPairPullRequestOutcome(
 	ctx context.Context,
 	httpClient ops.HTTPDoer,
+	sshDeployer ops.SSHDeployer,
 	stateDir string,
 	wiring ops.GiteaWiring,
 	m *workflow.ServiceMeta,
@@ -249,26 +252,30 @@ func readGiteaPairPullRequestOutcome(
 	if outcome.Open {
 		return ""
 	}
-	clearGiteaPullRequest(stateDir, m)
 	base := giteaBaseOf(m)
 	if outcome.Merged {
-		// Said as a fact about the code, not as an instruction: the branch
-		// takes the base in on its next delivery either way
-		// (BuildGiteaDeliveryCommand), so this tells the agent where its work
-		// went, not what to do about it.
+		// Gitea squashes by default (MB-26): the squash commit shares no
+		// history with the branch that became it, so recording what landed
+		// it (rather than just clearing the number) is what lets the next
+		// delivery fold it in as a real merge instead of the ordinary
+		// take-the-base-in step reading it as two histories that both add
+		// the same files (BuildAbsorbLandedPullRequestCommand).
+		recordGiteaLanding(stateDir, m, outcome.MergeCommit, outcome.Head)
+		absorbLandedPullRequestOnCheckout(ctx, sshDeployer, m, outcome.MergeCommit, outcome.Head)
 		return fmt.Sprintf(
-			"pull request #%d is merged — this Mate's work is on %q now, and its next change opens a new request",
+			"pull request #%d is merged — this Mate's work is on %q now, and its next delivery absorbs the landing; its next change opens a new request",
 			number, base)
 	}
+	clearGiteaPullRequest(stateDir, m)
 	return fmt.Sprintf(
 		"pull request #%d was closed without merging — nothing of it is on %q; the next change opens a new request",
 		number, base)
 }
 
 // clearGiteaPullRequest forgets the number a pair recorded, in memory and on
-// disk, once Gitea says the request is no longer open. Best-effort on disk
-// for the same reason recording it is: a pass that could not write it asks
-// again on the next one, which costs a read.
+// disk, once Gitea says the request is no longer open without merging.
+// Best-effort on disk for the same reason recording it is: a pass that could
+// not write it asks again on the next one, which costs a read.
 func clearGiteaPullRequest(stateDir string, m *workflow.ServiceMeta) {
 	m.Gitea.PullRequest = 0
 	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
@@ -278,6 +285,71 @@ func clearGiteaPullRequest(stateDir string, m *workflow.ServiceMeta) {
 		meta.Gitea.PullRequest = 0
 		return nil
 	})
+}
+
+// recordGiteaLanding forgets the request number and records what merged it,
+// in memory and on disk, once Gitea says the request is merged. The landing
+// rides on the pair until clearGiteaLanding proves a delivery absorbed it
+// (or proved it needed no absorbing) by pushing successfully. Best-effort on
+// disk like every other Gitea-pair stamp here: a pass that could not write it
+// re-reads the still-open number next time — Gitea answers the same merge
+// again, at the cost of one extra read.
+func recordGiteaLanding(stateDir string, m *workflow.ServiceMeta, commit, head string) {
+	m.Gitea.PullRequest = 0
+	m.Gitea.Landed = &workflow.LandedPullRequest{Commit: commit, Head: head}
+	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
+		if !existed || meta.Gitea == nil {
+			return nil
+		}
+		meta.Gitea.PullRequest = 0
+		meta.Gitea.Landed = &workflow.LandedPullRequest{Commit: commit, Head: head}
+		return nil
+	})
+}
+
+// clearGiteaLanding forgets a recorded landing once a delivery has absorbed
+// it (or proven it needed no absorbing) by pushing successfully — called
+// from deliverGiteaPair, never from here: reading the outcome only learns of
+// a landing, and only a delivery's own push proves it is done with it.
+func clearGiteaLanding(stateDir string, m *workflow.ServiceMeta) {
+	m.Gitea.Landed = nil
+	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
+		if !existed || meta.Gitea == nil {
+			return nil
+		}
+		meta.Gitea.Landed = nil
+		return nil
+	})
+}
+
+// gitCurrentBranchCmd reads the branch name workingDir's HEAD is on.
+func gitCurrentBranchCmd(workingDir string) string {
+	qwd := ops.ShellQuote(workingDir)
+	return fmt.Sprintf(`git -C %s rev-parse --abbrev-ref HEAD 2>/dev/null`, qwd)
+}
+
+// absorbLandedPullRequestOnCheckout is the point where a pass that just
+// learned a pull request merged tries to fold that landing into the pair's
+// own checkout right there — so the Mate's NEXT task starts on current code
+// instead of waiting for its next delivery to notice (MB-26). Best-effort and
+// silent: a dirty tree, a checkout not on the Mate's own branch, an SSH
+// failure, or a real conflict all leave the checkout exactly as it was —
+// deliverGiteaPair is the authoritative path and reports any real conflict
+// there, on the delivery that actually needs the absorb to have happened.
+func absorbLandedPullRequestOnCheckout(ctx context.Context, sshDeployer ops.SSHDeployer, m *workflow.ServiceMeta, commit, head string) {
+	if sshDeployer == nil || m == nil || m.Gitea == nil || m.Gitea.Branch == "" {
+		return
+	}
+	status, err := sshDeployer.ExecSSH(ctx, m.Hostname, gitStatusPorcelainCmd(giteaPairWorkingDir))
+	if err != nil || strings.TrimSpace(string(status)) != "" {
+		return
+	}
+	branch, err := sshDeployer.ExecSSH(ctx, m.Hostname, gitCurrentBranchCmd(giteaPairWorkingDir))
+	if err != nil || strings.TrimSpace(string(branch)) != m.Gitea.Branch {
+		return
+	}
+	_, _ = sshDeployer.ExecSSH(ctx, m.Hostname,
+		ops.BuildGiteaAbsorbAndSyncCommand(giteaPairWorkingDir, giteaBaseOf(m), commit, head))
 }
 
 // giteaBaseOf is the branch a pair's pull request targets.
