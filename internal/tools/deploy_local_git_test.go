@@ -237,12 +237,10 @@ func TestHandleLocalGitPush_DoesNotStampDeployed(t *testing.T) {
 // is no Mate on a developer's own machine — so there is no gitea-remote
 // case to gate on here.
 //
-// The companion NOTHING_TO_PUSH branch is pinned separately, by
-// TestLocalGitPushTrackable directly against the gate function: a real
-// second push here can't reach that status because runGitWithEnv (this
-// file) only captures stdout, and `git push` writes "Everything
-// up-to-date" to stderr — a separate, pre-existing detection gap, not
-// touched by this fix.
+// The companion NOTHING_TO_PUSH branch is pinned by
+// TestHandleLocalGitPush_NothingToPush_DetectedFromStderr (an end-to-end
+// case, since `git push` writes that status to stderr) and, at the gate
+// function itself, by TestLocalGitPushTrackable.
 func TestHandleLocalGitPush_NoFutureBuild_NeverRecordsDanglingAttempt(t *testing.T) {
 	workDir, _ := gitRepoFixture(t)
 	stateDir := t.TempDir()
@@ -290,9 +288,8 @@ func TestHandleLocalGitPush_NoFutureBuild_NeverRecordsDanglingAttempt(t *testing
 // TestLocalGitPushTrackable pins the gate itself, table-driven: recording
 // requires BOTH a wired BuildIntegration (the local path's only resolver —
 // no build watch runs here) AND an actual transmission. Exercised directly
-// because the NOTHING_TO_PUSH status is unreachable through a real `git
-// push` in this test file today (see the note on
-// TestHandleLocalGitPush_NoFutureBuild_NeverRecordsDanglingAttempt).
+// against the pure function as a fast complement to the real-git,
+// end-to-end coverage in TestHandleLocalGitPush_NothingToPush_DetectedFromStderr.
 func TestLocalGitPushTrackable(t *testing.T) {
 	tests := []struct {
 		name                   string
@@ -311,6 +308,67 @@ func TestLocalGitPushTrackable(t *testing.T) {
 				t.Errorf("localGitPushTrackable(%q, %v) = %v, want %v", tt.status, tt.buildIntegrationConfig, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestHandleLocalGitPush_NothingToPush_DetectedFromStderr pins a
+// pre-existing bug found while proving GF-13's local-path fix: `git push`
+// writes its routine status line ("Everything up-to-date") to STDERR, but
+// runGitWithEnv (the shared helper most of this file's pre-flight checks
+// rely on for a clean, parseable stdout) only returns stdout — so a real
+// second push that transmits nothing was always reported PUSHED, never
+// NOTHING_TO_PUSH. Fixed via a push-only capture (runGitPushCapture) that
+// reads both streams, without widening runGitWithEnv for its other
+// callers (rev-parse, remote get-url, status --porcelain) whose stdout
+// parsing must stay exactly what it is today.
+func TestHandleLocalGitPush_NothingToPush_DetectedFromStderr(t *testing.T) {
+	workDir, _ := gitRepoFixture(t)
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "myproject", Mode: topology.PlanModeLocalStage,
+		StageHostname:    "apistage",
+		BootstrappedAt:   "2026-04-01",
+		CloseDeployMode:  topology.CloseModeGitPush,
+		GitPushState:     topology.GitPushConfigured,
+		BuildIntegration: topology.BuildIntegrationWebhook,
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	ws := workflow.NewWorkSession("proj-test", string(workflow.EnvLocal), "ship it", []string{"myproject"})
+	if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+		t.Fatalf("SaveWorkSession: %v", err)
+	}
+	t.Cleanup(func() { _ = workflow.DeleteWorkSession(stateDir, os.Getpid()) })
+
+	input := DeployLocalInput{
+		TargetService: "myproject",
+		WorkingDir:    workDir,
+		Strategy:      deployStrategyGitPush,
+		Branch:        "main",
+	}
+	if result, _, err := handleLocalGitPush(context.Background(), nil, "proj-test", auth.Info{Email: "t@t.com", FullName: "test"}, input, stateDir); err != nil || result.IsError {
+		t.Fatalf("first push should transmit and succeed: err=%v result=%v", err, result)
+	}
+
+	result, _, err := handleLocalGitPush(context.Background(), nil, "proj-test", auth.Info{Email: "t@t.com", FullName: "test"}, input, stateDir)
+	if err != nil {
+		t.Fatalf("handleLocalGitPush: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected NOTHING_TO_PUSH, not an error; got: %s", getTextContent(t, result))
+	}
+	if text := getTextContent(t, result); !strings.Contains(text, "NOTHING_TO_PUSH") {
+		t.Fatalf("expected NOTHING_TO_PUSH status (git writes it to stderr, not stdout), got: %s", text)
+	}
+
+	// Only the first, trackable push should have recorded an attempt — the
+	// second push transmitted nothing, so it must not add a dangling one.
+	loaded, err := workflow.LoadWorkSession(stateDir, os.Getpid())
+	if err != nil {
+		t.Fatalf("LoadWorkSession: %v", err)
+	}
+	if attempts := loaded.Deploys["myproject"]; len(attempts) != 1 {
+		t.Fatalf("Deploys[myproject] = %+v, want exactly 1 (only the first, trackable push)", attempts)
 	}
 }
 

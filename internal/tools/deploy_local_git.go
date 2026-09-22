@@ -239,7 +239,11 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 	}
 
 	// 6. Push with prompt disabled so credential failures are fast and visible.
-	pushOut, pushErr := runGitWithEnv(ctx, workingDir,
+	// runGitPushCapture, not runGitWithEnv: `git push` writes its routine
+	// status line ("Everything up-to-date") to stderr, not stdout — unlike
+	// every other command this file runs, whose callers parse a clean
+	// stdout (branch name, porcelain status).
+	pushOut, pushErrOut, pushErr := runGitPushCapture(ctx, workingDir,
 		[]string{"GIT_TERMINAL_PROMPT=0"},
 		"push", "origin", branch,
 	)
@@ -249,7 +253,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 
 	status2 := "PUSHED"
 	message := fmt.Sprintf("Pushed %s to origin (%s)", branch, currentEffectiveOrigin(current, effectiveRemote))
-	if strings.Contains(pushOut, "Everything up-to-date") {
+	if strings.Contains(pushOut, "Everything up-to-date") || strings.Contains(pushErrOut, "Everything up-to-date") {
 		status2 = statusNothingToPush
 		message = fmt.Sprintf("Nothing to push on %s — remote already up-to-date", branch)
 	}
@@ -405,6 +409,37 @@ func runGitWithEnv(ctx context.Context, workingDir string, extraEnv []string, ar
 		return stdout.String(), fmt.Errorf("%s", msg)
 	}
 	return stdout.String(), nil
+}
+
+// runGitPushCapture runs `git push` with additional env vars, returning
+// stdout and stderr SEPARATELY (unlike runGitWithEnv, which folds a
+// non-zero exit's stderr into the error and otherwise discards it): `git
+// push` writes its routine status — "Everything up-to-date", "[new
+// branch]", the divergence summary on rejection — to stderr, never
+// stdout. Kept to this one push call site rather than widening
+// runGitWithEnv itself, whose other callers in this file (rev-parse,
+// remote get-url, status --porcelain) parse a clean, single-stream stdout
+// today and would be harder to reason about combined with stderr noise.
+// Non-zero exit still surfaces the same stderr-tail error message as
+// runGitWithEnv.
+func runGitPushCapture(ctx context.Context, workingDir string, extraEnv []string, args ...string) (stdout, stderr string, err error) {
+	fullArgs := append([]string{"-C", workingDir}, args...)
+	cmd := exec.CommandContext(ctx, "git", fullArgs...)
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	runErr := cmd.Run()
+	if runErr != nil {
+		msg := strings.TrimSpace(errBuf.String())
+		if msg == "" {
+			msg = runErr.Error()
+		}
+		return outBuf.String(), errBuf.String(), fmt.Errorf("%s", msg)
+	}
+	return outBuf.String(), errBuf.String(), nil
 }
 
 // truncateStderr keeps error reports compact — only the last few lines
