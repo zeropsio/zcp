@@ -168,6 +168,29 @@ type GiteaRepoRef struct {
 	// its own moment, and a pair that has one must never make Gitea answer
 	// about it again on every later pass.
 	PullRequest int `json:"pullRequest,omitempty"`
+	// Landed is the merge that closed PullRequest, recorded the moment a pass
+	// reads Gitea and finds it merged (ReadGiteaPullRequestOutcome) — nil
+	// until then, and cleared once a delivery has absorbed it (or proven it
+	// needed no absorbing) by pushing successfully. It rides between those
+	// two moments so a delivery that runs before the next reconcile pass
+	// (deliverGiteaPair reads the outcome itself rather than depending on
+	// one) still has what BuildAbsorbLandedPullRequestCommand needs: Gitea
+	// squashes by default (MB-26), and a squash commit shares no history
+	// with the branch that became it, so the ordinary take-the-base-in merge
+	// alone reads it as two histories that both add the same files.
+	Landed *LandedPullRequest `json:"landed,omitempty"`
+}
+
+// LandedPullRequest is what a pull request's merge needs recorded before a
+// delivery can absorb it losslessly: the merge/squash commit itself and the
+// branch tip it merged, straight from Gitea's pulls API
+// (merge_commit_sha, head.sha).
+type LandedPullRequest struct {
+	// Commit is Gitea's merge_commit_sha — S in BuildAbsorbLandedPullRequestCommand.
+	Commit string `json:"commit"`
+	// Head is the branch tip Gitea merged — H in BuildAbsorbLandedPullRequestCommand,
+	// i.e. what this Mate's own checkout was at the moment of the landing.
+	Head string `json:"head"`
 }
 
 // PublicAccessFor returns the persisted public-access record for hostname —
