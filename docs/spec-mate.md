@@ -1671,9 +1671,15 @@ env store; events coalesce (~1 s, single-flight per agent).
 result spawns `zcp agent mark-oauth <agent>` (argv, no shell; idempotent; the OAuth flag is written
 non-sensitive because the GUI's flag read path redacts sensitive entries — `spec-welcome-mode.md §4.2`).
 Upstream's provider probe is NOT the gate: it reports Claude as authenticated from `~/.claude.json`'s
-account even after logout. The registry refresh stays only to warm the picker's cache (which may lag
-≤5 min after a logout — upstream's `CAPABILITIES_PROBE_TTL`). The mark latch resets when the flag
-disappears from the env store. Verification results and spawns are logged.
+account even after logout. The model picker, though, reads only that probe's snapshot, which re-probes
+on a background interval (5 min, skipped while no client is in the foreground — a Codex sign-in stayed
+"not authenticated" in the picker for 7 min, 2026-09-22). So every CHANGE of a verified status is
+handed to the picker (`spi/providerInstances.ts`, `reconcileAgentAuth`): when the agent's default
+provider instance holds a definite, contradicting `auth.status`, that instance is re-probed at once.
+A snapshot still `unknown` (its own startup probe pending) is left alone. An explicit Claude refresh
+drops the driver's cached capabilities probe (`CAPABILITIES_PROBE_TTL`) first, since the snapshot's
+auth comes from it. The registry's answer never flows back into this feed. The mark latch resets
+when the flag disappears from the env store. Verification results and spawns are logged.
 
 ### 8.2 The login session
 
