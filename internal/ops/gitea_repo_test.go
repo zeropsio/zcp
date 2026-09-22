@@ -316,12 +316,14 @@ func TestReadGiteaPullRequestOutcome(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		status     int
-		body       string
-		wantOpen   bool
-		wantMerged bool
-		wantErr    bool
+		name            string
+		status          int
+		body            string
+		wantOpen        bool
+		wantMerged      bool
+		wantMergeCommit string
+		wantHead        string
+		wantErr         bool
 	}{
 		{
 			name:     "still waiting on somebody",
@@ -331,11 +333,16 @@ func TestReadGiteaPullRequestOutcome(t *testing.T) {
 		},
 		{
 			// The whole point: the work landed, and nothing in this process
-			// did the merging or was told about it.
-			name:       "merged",
-			status:     http.StatusOK,
-			body:       `{"number":4,"state":"closed","merged":true}`,
-			wantMerged: true,
+			// did the merging or was told about it. The merge/squash commit and
+			// the branch tip it merged travel with the outcome — what
+			// BuildAbsorbLandedPullRequestCommand needs to fold a squash into
+			// the Mate's own history losslessly (MB-26).
+			name:            "merged",
+			status:          http.StatusOK,
+			body:            `{"number":4,"state":"closed","merged":true,"merge_commit_sha":"deadbeef","head":{"sha":"c0ffee"}}`,
+			wantMerged:      true,
+			wantMergeCommit: "deadbeef",
+			wantHead:        "c0ffee",
 		},
 		{
 			// Closed and merged mean opposite things to the Mate that opened
@@ -392,6 +399,9 @@ func TestReadGiteaPullRequestOutcome(t *testing.T) {
 			}
 			if got.Open != tt.wantOpen || got.Merged != tt.wantMerged {
 				t.Errorf("outcome = %+v, want open=%v merged=%v", got, tt.wantOpen, tt.wantMerged)
+			}
+			if got.MergeCommit != tt.wantMergeCommit || got.Head != tt.wantHead {
+				t.Errorf("outcome = %+v, want mergeCommit=%q head=%q", got, tt.wantMergeCommit, tt.wantHead)
 			}
 		})
 	}

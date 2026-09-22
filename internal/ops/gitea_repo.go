@@ -421,6 +421,16 @@ type GiteaPullRequestOutcome struct {
 	// mean opposite things to the Mate that opened it: one is work delivered,
 	// the other is work refused.
 	Merged bool
+	// MergeCommit is Gitea's merge_commit_sha — the commit that landed the
+	// request on the base (a squash commit by default, MB-26, or an
+	// ordinary merge commit). Empty unless Merged.
+	MergeCommit string
+	// Head is the branch tip Gitea merged (the pulls API's head.sha) — what
+	// this Mate's own checkout was AT the moment of the landing. Together
+	// with MergeCommit this is what BuildAbsorbLandedPullRequestCommand
+	// needs to fold the landing into the branch's own history losslessly.
+	// Empty unless Merged.
+	Head string
 }
 
 // ReadGiteaPullRequestOutcome reads what became of one recorded pull request.
@@ -465,14 +475,20 @@ func ReadGiteaPullRequestOutcome(
 	}
 	var read struct {
 		giteaPullRequest
-		Merged bool `json:"merged"`
+		Merged         bool   `json:"merged"`
+		MergeCommitSHA string `json:"merge_commit_sha"` //nolint:tagliatelle // Gitea's wire schema
+		Head           struct {
+			SHA string `json:"sha"`
+		} `json:"head"`
 	}
 	if jsonErr := json.Unmarshal(body, &read); jsonErr != nil {
 		return outcome, fmt.Errorf("the Gitea pull-request read of %s#%d was not valid JSON", fullName, number)
 	}
 	return GiteaPullRequestOutcome{
-		Open:   strings.EqualFold(read.State, "open"),
-		Merged: read.Merged,
+		Open:        strings.EqualFold(read.State, "open"),
+		Merged:      read.Merged,
+		MergeCommit: read.MergeCommitSHA,
+		Head:        read.Head.SHA,
 	}, nil
 }
 
