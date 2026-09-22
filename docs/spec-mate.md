@@ -1690,17 +1690,41 @@ the PTY stream and runs the pure output parser ported from the Zerops GUI walker
 URL anchors, OSC 8, DEC graphics, paste/success/failure patterns, Y/N confirm, and a stall timer that
 presses Enter through any unrecognized screen (Claude's login-method menu). The parsed prompt rides
 the feed as `login.phase` (`starting | menu | awaiting-browser | awaiting-code | succeeded | failed |
-cancelled`) with `url`, `code` (Codex's device code), `message`, `terminalId`. The card renders the
-URL as an "Open sign-in link" action (+ copy link / copy code); the paste-code step stays in the
-terminal — the code is never a form field the server sees. Success re-runs the verification of §8.1.
-One session per agent; `zerops.agentLogin.cancel` sends Ctrl-C and closes the terminal.
+verifying-code | cancelled`) with `url`, `code` (Codex's device code), `message`, `terminalId` and
+`startedBy` (the Zerops user id of the session that started it, from the grant — never from input).
+The card renders the URL as an "Open sign-in link" action (+ copy link / copy code).
+
+Claude's code comes back through a field, as in the Zerops GUI dialog: `zerops.agentLogin.submitCode
+{agentId, code}` (scope `terminal:operate`, like start/cancel) types the code into the login terminal
+and, 100 ms later, Enter — the GUI measured that an Enter in the same chunk can be dropped, and Claude's
+prompt takes one chunk as a paste. It is accepted only while a paste-code login sits at its prompt
+(`awaiting-browser` or `awaiting-code`: Claude 2.1.278 prints "Paste code here if prompted >" right
+under the URL, measured live 2026-09-22), and only as one run of printable ASCII — a control character
+or a line break could run something else in that terminal. The phase becomes `verifying-code` until the
+CLI answers: "Login successful" → `succeeded`; a wrong code prints "OAuth error: Request failed with
+status code 400 / Press Enter to retry" → `failed`. Pasting into the terminal pane still works.
+
+Every `start` opens a fresh PTY (the previous login terminal is closed with its history): a CLI left
+at "Press Enter to retry" would otherwise take the next login command as its code. Success re-runs the
+verification of §8.1. One session per agent; `zerops.agentLogin.cancel` sends Ctrl-C and closes the
+terminal.
+
+The signer record (D6) is written by the client of the person in `startedBy`, from the snapshot's
+state — a `succeeded` login they started whose `authorizedBy` is not them — not from a transition one
+screen happened to watch. One owner per conversation view writes it, whichever door the sign-in used
+(the panel's card, the thread's band, the empty conversation) and after a reload; a failed write is
+retried on its own (2 s / 5 s / 15 s) and surfaced with a retry. A finished login never overrides the
+verified status in a row: `succeeded` shows the verified status, `failed` too once that says signed in.
+A credential whose check answered `unknown` is checked again every 15 s instead of sitting at
+"Checking…".
 
 ### 8.3 Threat model
 - The agent process and every project member share the container home: a credential file is
   project-wide. S7 does not change that; it is the platform's one-zcp-per-project model.
-- The authorization code / device URL cross the terminal RPC exactly as in any terminal; they never
-  enter a thread, a feed (the feed carries the URL the user must open, never the code they type
-  back), or the ledger.
+- The authorization code crosses the wire once, in `zerops.agentLogin.submitCode` — the same
+  exposure as the terminal-write RPC it replaces, under the same scope — and goes only into the PTY:
+  never a thread, the feed (which carries the URL the user must open, never the code they type
+  back), a span attribute, a log, or the ledger.
 - A planted or stale credential file cannot flip the platform flag: the flag is written only after
   the CLI's own status says logged in.
 
@@ -1711,9 +1735,11 @@ One session per agent; `zerops.agentLogin.cancel` sends Ctrl-C and closes the te
 | MA-1 | The feed's `state` equals the welcome panel's matrix for every combination of flag/credential; credential files are probed for presence only. `ZeropsAgentAuth.test.ts` (matrix table). |
 | MA-2 | `mark-oauth` is spawned only after a fresh `authenticated` verification, once per credential appearance; `unauthenticated`/`unknown` never spawn; a burst of file events coalesces into one verification. `ZeropsAgentAuthIo.test.ts`, `ZeropsAgentAuthVerify.test.ts`. |
 | MA-3 | The OAuth flag is written non-sensitive and a legacy sensitive row is migrated (`migrated:true`); token variables stay sensitive. zcp `TestMarkAgentOAuth_*`, `TestRunAgentMarkOAuth_SensitiveRow_MigratedTrue`. |
-| MA-4 | Owned product does not reach the provider registry at all: the agent-auth feed verifies through the agent CLI's own status command and the platform flag, never through a registry refresh. `ZeropsAgentAuth.test.ts` — "verification spawns only the CLI status command"; `scripts/mate-zone-architecture.test.ts` (no `provider/**` import from `apps/server/src/zerops/**`). |
+| MA-4 | The agent-auth feed verifies through the agent CLI's own status command and the platform flag, never through the registry's probe; it reaches the registry only through `spi/providerInstances.ts`, to re-probe a picker snapshot that contradicts a changed verified status. `ZeropsAgentAuth.test.ts` — "verification spawns only the CLI status command"; `ZeropsAgentAuthIo.test.ts` — "hands every CHANGE of the verified status to the model picker's reconcile"; `spi/providerInstances.test.ts`; `scripts/mate-zone-architecture.test.ts` (no `provider/**` import from `apps/server/src/zerops/**`). |
 | MA-5 | The login walker turns the CLI's output into `login` phases with `url`/`code` from the recorded lines (Codex device URL + code; Claude menu → oauth URL), and cancel ends the session. `zeropsAgentLoginWalker.test.ts`, `zeropsAgentLoginOutputParser.test.ts`, `ZeropsAgentLogin.test.ts`. |
 | MA-6 | Live: moving the credential aside flips the feed within ~0.5 s and `providerAuth` to `unauthenticated`; restoring it returns `authorized`/`authenticated`; the public `/mate/` renders the hosted-static landing. `verified.md` S7-3 + follow-up rows. |
+| MA-8 | `submitCode` types the code then a separate Enter, only into a paste-code login at its prompt, and the code never reaches the published state. `ZeropsAgentLogin.test.ts` — "submitCode types the code, then Enter…", "…is refused when no login waits for a code", "the code never reaches the published login state". |
+| MA-9 | The signer is recorded from state by the person in `startedBy`, once per login, retried on its own; a finished login never overrides the verified status in a row. `useZeropsAgentSigner.test.ts` (`agentSignersToRecord`, "writes once per login", "tried again on its own"); `agentLogin.test.ts` (`classifyAgentRowLogin`). |
 
 Open (kept in the S7 plan until they land): the mobile card + parsed prompts on the phone (S7-4) and
 the `setup-token` path (S7-5, a second zcp verb).
