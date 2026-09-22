@@ -266,11 +266,23 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 	// internal/tools/deploy_git_push.go. Local git-push has the same
 	// async-build-vs-stamp gap as the container path; auto-stamping
 	// FirstDeployedAt on push success made Deployed=true race ahead of the
-	// actual build. Now we record the in-flight push attempt (no
+	// actual build. So we record the in-flight push attempt (no
 	// SucceededAt) and require explicit record-deploy after the agent
 	// observes Status=ACTIVE on zerops_events. The result.NextActions text
 	// below names that bridge.
-	_ = workflow.RecordDeployAttempt(stateDir, hostname, attempt)
+	//
+	// That placeholder is only honest when something can later resolve it.
+	// The local path runs no build watch of its own — a wired
+	// BuildIntegration (webhook/actions) is the only resolver, via the
+	// manual record-deploy bridge — and nothing was transmitted on
+	// NOTHING_TO_PUSH. Recording it for either leaves a permanent,
+	// unexplained "failed deploy" on the push source (GF-13,
+	// docs/spec-workflows.md §12.6). Unlike the container path there is no
+	// gitea-remote case here: a local git-push never targets this Mate's
+	// own Gitea (no Mate exists on a developer's own machine).
+	if localGitPushTrackable(status2, gitPushBuildIntegrationConfigured(stateDir, hostname)) {
+		_ = workflow.RecordDeployAttempt(stateDir, hostname, attempt)
+	}
 
 	result.NextActions = fmt.Sprintf(
 		"Watch the build via zerops_events serviceHostname=%q until Status=ACTIVE, then ack with zerops_workflow action=\"record-deploy\" targetService=%q. The push transmitted bytes; the platform build runs async and FirstDeployedAt will not stamp until you bridge it.",
@@ -293,6 +305,15 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 		WorkSessionState: sessionAnnotations(stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
 	}), nil, nil
+}
+
+// localGitPushTrackable reports whether a completed local git-push should
+// record an in-flight DeployAttempt under the push source: something must
+// have transmitted (status != statusNothingToPush), and a wired
+// BuildIntegration must exist to later resolve it — the local path runs no
+// build watch of its own, only the manual record-deploy bridge names one.
+func localGitPushTrackable(status string, buildIntegrationConfigured bool) bool {
+	return status != statusNothingToPush && buildIntegrationConfigured
 }
 
 // handleLocalGitPushFailure builds the error response for a failed local

@@ -206,6 +206,19 @@ func resolveEffectiveRemote(stateDir, targetService, inputRemote string) string 
 	return meta.RemoteURL
 }
 
+// gitPushBuildIntegrationConfigured reports whether targetService has a
+// ZCP-managed CI integration wired (webhook or actions) — the only shape
+// that gives a successful git-push an async resolver (the build watch, or
+// its manual record-deploy fallback). Unset/none means nothing will ever
+// rebuild the target from this push.
+func gitPushBuildIntegrationConfigured(stateDir, targetService string) bool {
+	meta, _ := workflow.FindServiceMeta(stateDir, targetService)
+	if meta == nil {
+		return false
+	}
+	return meta.BuildIntegration == topology.BuildIntegrationWebhook || meta.BuildIntegration == topology.BuildIntegrationActions
+}
+
 // trackedRefOrDefault is the single owner of the GF-7 "main" fallback
 // (docs/spec-workflows.md §12.6): every reader of ServiceMeta.TrackedRef
 // — the git-push default branch, the GitHub Actions template, the launch
@@ -621,6 +634,12 @@ func handleGitPush(
 		result.Message = fmt.Sprintf("Nothing to push from %s — remote is up to date", hostname)
 	}
 
+	// Opened as soon as the push lands: the push is what put the Mate's branch
+	// on the account's Gitea, and `main` there takes no direct push from
+	// anyone. Idempotent: a second push finds the open one.
+	pullRequest := giteaPullRequestAfterPush(ctx, httpClient, stateDir, hostname, effectiveRemote)
+	giteaRemote := giteaRemoteOfThisMate(effectiveRemote)
+
 	// C2 closure (audit-prerelease-internal-testing-2026-04-29): the
 	// pre-fix path stamped attempt.SucceededAt = time.Now() right here,
 	// which RecordDeployAttempt then propagated to FirstDeployedAt via
@@ -628,17 +647,25 @@ func handleGitPush(
 	// BuildIntegration ∈ {webhook, actions} the build was still async at
 	// this point — meta.IsDeployed() flipped true while the actual deploy
 	// hadn't landed yet. Agents observed Deployed=true post-push, ran
-	// zerops_verify against stale state, and retried. Now we record the
+	// zerops_verify against stale state, and retried. So we record the
 	// in-flight push attempt (no SucceededAt) and require explicit
 	// record-deploy after the agent observes Status=ACTIVE on
 	// zerops_events. The result.NextActions text below names that bridge.
-	_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
-
-	// Opened as soon as the push lands: the push is what put the Mate's branch
-	// on the account's Gitea, and `main` there takes no direct push from
-	// anyone. Idempotent: a second push finds the open one.
-	pullRequest := giteaPullRequestAfterPush(ctx, httpClient, stateDir, hostname, effectiveRemote)
-	giteaRemote := giteaRemoteOfThisMate(effectiveRemote)
+	//
+	// That placeholder is only honest when SOMETHING can later resolve it
+	// (the build watch below, or its manual record-deploy fallback). Three
+	// outcomes have no such resolver — nothing was transmitted
+	// (statusNothingToPush), the destination is this Mate's own Gitea
+	// branch (nothing ever builds from it — gitea_delivery.go), or the
+	// target has no ZCP-managed BuildIntegration wired at all — and
+	// recording it there left a permanent, unexplained "failed deploy"
+	// (Success:false, no Reason) on the push source forever. A git-push
+	// that no build follows is delivery, not a deploy of that service, so
+	// those three cases record nothing (GF-13, docs/spec-workflows.md §12.6).
+	trackable := result.Status != statusNothingToPush && !giteaRemote && gitPushBuildIntegrationConfigured(stateDir, input.TargetService)
+	if trackable {
+		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
+	}
 
 	switch {
 	case result.Status == statusNothingToPush && !giteaRemote:

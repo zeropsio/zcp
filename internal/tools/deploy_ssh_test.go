@@ -1796,6 +1796,151 @@ func TestDeployTool_GitPush_DoesNotStampDeployed(t *testing.T) {
 	}
 }
 
+// TestDeployTool_GitPush_NoFutureBuild_NeverRecordsDanglingAttempt pins the
+// fix for the observed-live bug: a Gitea-wired pair's git-push (nothing ever
+// builds from a Mate's branch — gitea_delivery.go) and a push to a remote
+// with no BuildIntegration wired (nothing rebuilds the target either) both
+// used to unconditionally record an in-flight workflow.DeployAttempt (no
+// SucceededAt, no Error, no FailureClass) under deploys.<pushSource> before
+// even knowing whether anything would ever resolve it. Neither case has a
+// completion mechanism — no build watch runs, no record-deploy bridge is
+// offered — so the attempt sat there forever, and deployAttemptsToInfo
+// (compute_envelope.go) renders any SucceededAt=="" attempt as
+// Success:false: a permanent, unexplained "failed deploy" on the push
+// source. A git-push that no build follows is delivery, not a deploy of
+// that service, so it must not appear in Deploys at all for these two
+// cases. The genuine async path (BuildIntegration=webhook/actions, a real
+// build watch that can resolve or hand off to record-deploy) keeps
+// recording the in-flight placeholder — see the sibling
+// TestDeployTool_GitPush_WebhookIntegration_StillRecordsInFlightAttempt.
+func TestDeployTool_GitPush_NoFutureBuild_NeverRecordsDanglingAttempt(t *testing.T) {
+	tests := []struct {
+		name      string
+		remoteURL string
+		setup     func(t *testing.T)
+	}{
+		{
+			name:      "gitea remote of this Mate",
+			remoteURL: "https://gitea.example/acme/appdev",
+			setup: func(t *testing.T) {
+				t.Helper()
+				t.Setenv("GITEA_URL", "https://gitea.example")
+				t.Setenv("MATE_BROKER_URL", "https://gitea.example")
+				t.Setenv("GITEA_TOKEN", "bot-token")
+			},
+		},
+		{
+			name:      "no build integration wired on a user remote",
+			remoteURL: "https://github.com/example/repo",
+			setup:     func(t *testing.T) { t.Helper() },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stateDir := t.TempDir()
+			setupAdoptedService(t, stateDir, "appdev", "")
+			markGitPushConfigured(t, stateDir, "appdev")
+			tt.setup(t)
+
+			ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "ship it", []string{"appdev"})
+			if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+				t.Fatalf("SaveWorkSession: %v", err)
+			}
+			t.Cleanup(func() { _ = workflow.DeleteWorkSession(stateDir, os.Getpid()) })
+
+			mock := platform.NewMock()
+			ssh := &stubSSHWithCommands{
+				committedOutput: []byte("1"),
+				tokenOutput:     []byte("1"),
+				pushOutput:      []byte("ok"),
+			}
+			authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1", Email: "t@t.com", FullName: "T"}
+
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil)
+
+			result := callTool(t, srv, "zerops_deploy", map[string]any{
+				"targetService": "appdev",
+				"strategy":      "git-push",
+				"remoteUrl":     tt.remoteURL,
+			})
+			if result.IsError {
+				t.Fatalf("expected success on git-push, got error: %s", getTextContent(t, result))
+			}
+
+			loaded, err := workflow.LoadWorkSession(stateDir, os.Getpid())
+			if err != nil {
+				t.Fatalf("LoadWorkSession: %v", err)
+			}
+			if attempts := loaded.Deploys["appdev"]; len(attempts) != 0 {
+				t.Errorf("Deploys[appdev] = %+v, want none: nothing will ever resolve this attempt", attempts)
+			}
+		})
+	}
+}
+
+// TestDeployTool_GitPush_WebhookIntegration_StillRecordsInFlightAttempt pins
+// that the genuine async path is unchanged by the fix above: when the target
+// has a ZCP-managed BuildIntegration wired, a successful push still records
+// an in-flight DeployAttempt (no SucceededAt) — the build watch (or, on
+// timeout/compaction, the manual record-deploy bridge) is what can complete
+// it later.
+func TestDeployTool_GitPush_WebhookIntegration_StillRecordsInFlightAttempt(t *testing.T) {
+	stateDir := t.TempDir()
+	setupAdoptedService(t, stateDir, "appdev", "")
+	markGitPushConfigured(t, stateDir, "appdev")
+	meta, err := workflow.ReadServiceMeta(stateDir, "appdev")
+	if err != nil || meta == nil {
+		t.Fatalf("ReadServiceMeta: %v", err)
+	}
+	meta.BuildIntegration = topology.BuildIntegrationWebhook
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "ship it", []string{"appdev"})
+	if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+		t.Fatalf("SaveWorkSession: %v", err)
+	}
+	t.Cleanup(func() { _ = workflow.DeleteWorkSession(stateDir, os.Getpid()) })
+
+	// No matching service in the mock: the build-watch lookup fails and
+	// finishGitPushWithBuildWatch degrades to the manual bridge — the point
+	// here is only whether the pre-watch in-flight placeholder was recorded.
+	mock := platform.NewMock()
+	ssh := &stubSSHWithCommands{
+		committedOutput: []byte("1"),
+		tokenOutput:     []byte("1"),
+		pushOutput:      []byte("ok"),
+	}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1", Email: "t@t.com", FullName: "T"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "appdev",
+		"strategy":      "git-push",
+		"remoteUrl":     "https://github.com/example/repo",
+	})
+	if result.IsError {
+		t.Fatalf("expected success on git-push, got error: %s", getTextContent(t, result))
+	}
+
+	loaded, err := workflow.LoadWorkSession(stateDir, os.Getpid())
+	if err != nil {
+		t.Fatalf("LoadWorkSession: %v", err)
+	}
+	attempts := loaded.Deploys["appdev"]
+	if len(attempts) != 1 {
+		t.Fatalf("Deploys[appdev] = %+v, want exactly 1 in-flight attempt", attempts)
+	}
+	if attempts[0].SucceededAt != "" {
+		t.Errorf("in-flight attempt should have no SucceededAt yet, got %+v", attempts[0])
+	}
+}
+
 // TestDeployTool_GitPush_NoCommittedCode_Refuses pins the committed-code
 // guard in handleGitPush: git-push requires an actual commit at workingDir
 // so the push has something to transmit. If the working dir isn't a git

@@ -223,6 +223,150 @@ func TestHandleLocalGitPush_DoesNotStampDeployed(t *testing.T) {
 	}
 }
 
+// TestHandleLocalGitPush_NoFutureBuild_NeverRecordsDanglingAttempt mirrors
+// GF-13's container-path fix (deploy_git_push.go) on the local path: a
+// local git-push has no build watch at all — it only pushes bytes — so an
+// in-flight DeployAttempt under the push source is honest only when a
+// wired BuildIntegration gives it a resolver (the manual record-deploy
+// bridge, after the agent observes Status=ACTIVE). No BuildIntegration
+// wired has no resolver, so recording the placeholder there left a
+// permanent, unexplained Success:false "failed deploy" on the push source
+// — same bug class as the container path's, observed live on a Gitea-wired
+// pair. Unlike the container path, a local git-push never targets this
+// Mate's own Gitea — deploy_local_git.go never opens a pull request; there
+// is no Mate on a developer's own machine — so there is no gitea-remote
+// case to gate on here.
+//
+// The companion NOTHING_TO_PUSH branch is pinned separately, by
+// TestLocalGitPushTrackable directly against the gate function: a real
+// second push here can't reach that status because runGitWithEnv (this
+// file) only captures stdout, and `git push` writes "Everything
+// up-to-date" to stderr — a separate, pre-existing detection gap, not
+// touched by this fix.
+func TestHandleLocalGitPush_NoFutureBuild_NeverRecordsDanglingAttempt(t *testing.T) {
+	workDir, _ := gitRepoFixture(t)
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "myproject", Mode: topology.PlanModeLocalStage,
+		StageHostname:   "apistage",
+		BootstrappedAt:  "2026-04-01",
+		CloseDeployMode: topology.CloseModeGitPush,
+		GitPushState:    topology.GitPushConfigured,
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	ws := workflow.NewWorkSession("proj-test", string(workflow.EnvLocal), "ship it", []string{"myproject"})
+	if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+		t.Fatalf("SaveWorkSession: %v", err)
+	}
+	t.Cleanup(func() { _ = workflow.DeleteWorkSession(stateDir, os.Getpid()) })
+
+	result, _, err := handleLocalGitPush(
+		context.Background(), nil, "proj-test", auth.Info{Email: "t@t.com", FullName: "test"},
+		DeployLocalInput{
+			TargetService: "myproject",
+			WorkingDir:    workDir,
+			Strategy:      deployStrategyGitPush,
+			Branch:        "main",
+		},
+		stateDir,
+	)
+	if err != nil {
+		t.Fatalf("handleLocalGitPush: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected push success; got: %s", getTextContent(t, result))
+	}
+
+	loaded, err := workflow.LoadWorkSession(stateDir, os.Getpid())
+	if err != nil {
+		t.Fatalf("LoadWorkSession: %v", err)
+	}
+	if attempts := loaded.Deploys["myproject"]; len(attempts) != 0 {
+		t.Errorf("Deploys[myproject] = %+v, want none: nothing will ever resolve this attempt", attempts)
+	}
+}
+
+// TestLocalGitPushTrackable pins the gate itself, table-driven: recording
+// requires BOTH a wired BuildIntegration (the local path's only resolver —
+// no build watch runs here) AND an actual transmission. Exercised directly
+// because the NOTHING_TO_PUSH status is unreachable through a real `git
+// push` in this test file today (see the note on
+// TestHandleLocalGitPush_NoFutureBuild_NeverRecordsDanglingAttempt).
+func TestLocalGitPushTrackable(t *testing.T) {
+	tests := []struct {
+		name                   string
+		status                 string
+		buildIntegrationConfig bool
+		want                   bool
+	}{
+		{"pushed, integration wired", "PUSHED", true, true},
+		{"pushed, no integration", "PUSHED", false, false},
+		{"nothing to push, integration wired", statusNothingToPush, true, false},
+		{"nothing to push, no integration", statusNothingToPush, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := localGitPushTrackable(tt.status, tt.buildIntegrationConfig); got != tt.want {
+				t.Errorf("localGitPushTrackable(%q, %v) = %v, want %v", tt.status, tt.buildIntegrationConfig, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestHandleLocalGitPush_WebhookIntegration_StillRecordsInFlightAttempt
+// pins that the genuine trackable case is unchanged: a wired
+// BuildIntegration plus a real push still records the in-flight
+// placeholder that zerops_events + record-deploy bridges.
+func TestHandleLocalGitPush_WebhookIntegration_StillRecordsInFlightAttempt(t *testing.T) {
+	workDir, _ := gitRepoFixture(t)
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "myproject", Mode: topology.PlanModeLocalStage,
+		StageHostname:    "apistage",
+		BootstrappedAt:   "2026-04-01",
+		CloseDeployMode:  topology.CloseModeGitPush,
+		GitPushState:     topology.GitPushConfigured,
+		BuildIntegration: topology.BuildIntegrationWebhook,
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	ws := workflow.NewWorkSession("proj-test", string(workflow.EnvLocal), "ship it", []string{"myproject"})
+	if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+		t.Fatalf("SaveWorkSession: %v", err)
+	}
+	t.Cleanup(func() { _ = workflow.DeleteWorkSession(stateDir, os.Getpid()) })
+
+	result, _, err := handleLocalGitPush(
+		context.Background(), nil, "proj-test", auth.Info{Email: "t@t.com", FullName: "test"},
+		DeployLocalInput{
+			TargetService: "myproject",
+			WorkingDir:    workDir,
+			Strategy:      deployStrategyGitPush,
+			Branch:        "main",
+		},
+		stateDir,
+	)
+	if err != nil {
+		t.Fatalf("handleLocalGitPush: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected push success; got: %s", getTextContent(t, result))
+	}
+
+	loaded, err := workflow.LoadWorkSession(stateDir, os.Getpid())
+	if err != nil {
+		t.Fatalf("LoadWorkSession: %v", err)
+	}
+	attempts := loaded.Deploys["myproject"]
+	if len(attempts) != 1 {
+		t.Fatalf("Deploys[myproject] = %+v, want exactly 1 in-flight attempt", attempts)
+	}
+	if attempts[0].SucceededAt != "" {
+		t.Errorf("in-flight attempt should have no SucceededAt yet, got %+v", attempts[0])
+	}
+}
+
 func TestHandleLocalGitPush_RecordsServesHTTPFromSetup(t *testing.T) {
 	workDir, _ := gitRepoFixture(t)
 	if err := os.WriteFile(filepath.Join(workDir, "zerops.yaml"), []byte(`zerops:
