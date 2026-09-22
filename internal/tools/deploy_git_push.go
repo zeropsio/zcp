@@ -613,23 +613,44 @@ func handleGitPush(
 		meta, _ := workflow.FindServiceMeta(stateDir, hostname)
 		absorb := giteaAbsorbBeforePush(ctx, httpClient, sshDeployer, stateDir, hostname, workingDir, meta)
 		giteaLearnedNote = absorb.LearnedNote
+		// giteaLearnedNote (news about a PREVIOUSLY recorded pull request,
+		// independent of whether THIS absorb found anything to do) is
+		// folded into every return from here, error included — it must not
+		// only reach the success response's warnings; nothing else would
+		// ever say it once the number is off meta.Gitea.PullRequest.
+		if absorb.Dirty {
+			recordAttempt("gitea landing absorb: uncommitted changes block taking in the landed pull request", topology.FailureClassConfig)
+			msg := fmt.Sprintf("git-push from %s has not reached %s: uncommitted changes in %s's checkout block taking in this Mate's own landed pull request.",
+				hostname, meta.Gitea.FullName, hostname)
+			if giteaLearnedNote != "" {
+				msg += " " + giteaLearnedNote
+			}
+			return convertError(platform.NewPlatformError(
+				platform.ErrSSHDeployFailed, msg,
+				fmt.Sprintf("Commit the changes in %s's checkout, then push again.", hostname),
+			), WithRecoveryStatus()), nil, nil
+		}
 		if absorb.Conflict != "" {
 			var detail, sequence string
 			switch {
 			case absorb.IsAbsorbConflict:
 				detail = fmt.Sprintf("a real conflict inside absorbing this Mate's own earlier pull request — %s changes the same lines (%s)", giteaBaseOf(meta), absorb.Conflict)
-				sequence = giteaManualAbsorbSequence(hostname, absorb.LandedCommit, giteaBaseOf(meta))
+				sequence = giteaManualAbsorbSequence(hostname, absorb.LandedCommit, giteaBaseOf(meta), true)
 			case absorb.Unprovable:
 				detail = fmt.Sprintf("%s has moved on and %s changes the same lines (%s) — this may be this Mate's own squashed pull request, which this container's git could not prove safe to fold in automatically", giteaBaseOf(meta), branch, absorb.Conflict)
-				sequence = giteaManualAbsorbSequence(hostname, absorb.LandedCommit, giteaBaseOf(meta))
+				sequence = giteaManualAbsorbSequence(hostname, absorb.LandedCommit, giteaBaseOf(meta), false)
 			default:
 				detail = fmt.Sprintf("%s has moved on and %s changes the same lines (%s)", giteaBaseOf(meta), branch, absorb.Conflict)
 				sequence = fmt.Sprintf("In %s's checkout run `git fetch origin && git merge origin/%s`, resolve it", hostname, giteaBaseOf(meta))
 			}
 			recordAttempt(fmt.Sprintf("gitea landing absorb conflict: %s", detail), topology.FailureClassConfig)
+			msg := fmt.Sprintf("git-push from %s has not reached %s: %s.", hostname, meta.Gitea.FullName, detail)
+			if giteaLearnedNote != "" {
+				msg += " " + giteaLearnedNote
+			}
 			return convertError(platform.NewPlatformError(
 				platform.ErrSSHDeployFailed,
-				fmt.Sprintf("git-push from %s has not reached %s: %s.", hostname, meta.Gitea.FullName, detail),
+				msg,
 				sequence+", then push again.",
 			), WithRecoveryStatus()), nil, nil
 		}

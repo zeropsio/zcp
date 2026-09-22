@@ -389,7 +389,7 @@ func TestReconcile_TellsTheMateWhatBecameOfItsPullRequest(t *testing.T) {
 			// losslessly instead of reading it as two unrelated histories.
 			name: "merged", pullState: "closed", pullMerged: true,
 			wantNumber: 0,
-			wantReport: []string{"pull request #4 is merged", `"main"`, "absorbs the landing", "opens a new request"},
+			wantReport: []string{"pull request #4 is merged", `"main"`, "opens a new request"},
 			wantLanded: true, wantCommit: "squash-sha", wantLandHead: "branch-tip-sha",
 		},
 		{

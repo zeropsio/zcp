@@ -1404,17 +1404,14 @@ func (s *stubSSHWithCommands) ExecSSH(_ context.Context, _ string, command strin
 		s.yamlCalls++
 		return s.yamlContent, s.yamlErr
 	}
-	// Dirty-tree probe (`git status --porcelain`) — MUST precede the push
-	// fallthrough, else the porcelain command mis-routes to the push branch
-	// and corrupts pushCalls assertions.
-	if strings.Contains(command, "status --porcelain") {
-		s.statusCalls++
-		return s.statusOutput, s.statusErr
-	}
 	// BuildGiteaAbsorbAndSyncCommand fetches (`fetch --no-tags -q origin`)
 	// but never pushes — that substring is unique to it and to
 	// BuildGiteaDeliveryCommand (a different handler path), so it never
-	// collides with BuildGitPushCommand's `push -u origin` below.
+	// collides with BuildGitPushCommand's `push -u origin` below. Checked
+	// BEFORE the dirty-tree probe below: the absorb command embeds its OWN
+	// `git status --porcelain` guard (BuildAbsorbLandedPullRequestCommand's
+	// dirty-checkout check), which would otherwise mis-route the WHOLE
+	// absorb command into the probe branch.
 	if strings.Contains(command, "fetch --no-tags -q origin") {
 		s.absorbCalls++
 		out := s.absorbOutput
@@ -1422,6 +1419,13 @@ func (s *stubSSHWithCommands) ExecSSH(_ context.Context, _ string, command strin
 			out = []byte("ok")
 		}
 		return out, s.absorbErr
+	}
+	// Dirty-tree probe (`git status --porcelain`) — MUST precede the push
+	// fallthrough, else the porcelain command mis-routes to the push branch
+	// and corrupts pushCalls assertions.
+	if strings.Contains(command, "status --porcelain") {
+		s.statusCalls++
+		return s.statusOutput, s.statusErr
 	}
 	s.pushCalls++
 	return s.pushOutput, s.pushErr

@@ -329,6 +329,12 @@ func TestGitPushDeploy_AbsorbConflictGivesTheManualAbsorbSequence(t *testing.T) 
 			t.Errorf("the error misses %q:\n%s", want, text)
 		}
 	}
+	// L3: news about the OLD request (#4, merged) must not be lost just
+	// because THIS run's own absorb hit a conflict — nothing else would
+	// ever say it once the number is off meta.Gitea.PullRequest.
+	if !strings.Contains(text, "pull request #4 is merged") {
+		t.Errorf("the error must still surface what the absorb learned about the old request:\n%s", text)
+	}
 	if ssh.pushCalls != 0 {
 		t.Errorf("a real conflict must stop the push outright, got %d push calls", ssh.pushCalls)
 	}
@@ -440,6 +446,96 @@ func TestGitPushDeploy_AbsorbConflictBlocksThePush(t *testing.T) {
 	}
 }
 
+// TestGitPushDeploy_DirtyTreeBlocksThePushWithACommitFirstMessage pins L2
+// of the judge's re-review: uncommitted changes in a file the absorb's S^1
+// merge would touch make git refuse to even start — no unmerged index
+// entry results, so a caller checking only ops.GiteaAbsorbConflict's file
+// list would read the bare ZCP_ABSORB_DIRTY marker as "no conflict" and
+// push unabsorbed anyway. The dirty case must be recognized on its own and
+// block the push with a commit-first message.
+func TestGitPushDeploy_DirtyTreeBlocksThePushWithACommitFirstMessage(t *testing.T) {
+	fake := newFakeGitea()
+	fake.branchExists = true
+	fake.pullState = "closed"
+	fake.pullMerged = true
+	fake.pullMergeCommit = "squash-sha"
+	fake.pullMergeHead = "branch-tip-sha"
+	gitea := fake.start(t)
+
+	stateDir := t.TempDir()
+	writeLandedGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git")
+	t.Setenv("GITEA_URL", gitea.URL)
+	t.Setenv("MATE_BROKER_URL", gitea.URL)
+	t.Setenv("GITEA_TOKEN", giteaBotToken)
+
+	ssh := &stubSSHWithCommands{
+		tokenOutput:     []byte("1"),
+		committedOutput: []byte("1"),
+		absorbOutput:    []byte("ZCP_ABSORB_DIRTY"),
+		absorbErr:       errors.New("exit status 6"),
+	}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, platform.NewMock(), gitea.Client(), "proj-1", ssh, authInfo, nil,
+		runtime.Info{InContainer: true, ProjectID: "proj-1", GiteaURL: gitea.URL},
+		stateDir, testDeployEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "appdev",
+		"strategy":      "git-push",
+	})
+	if !result.IsError {
+		t.Fatalf("a dirty checkout must block the push, got success: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "uncommitted changes") || !strings.Contains(text, "commit") {
+		t.Errorf("the error must say uncommitted changes block the landed PR and to commit first, got:\n%s", text)
+	}
+	if !strings.Contains(text, "push again") {
+		t.Errorf("the error must say to push again after committing, got:\n%s", text)
+	}
+	if !strings.Contains(text, "pull request #4 is merged") {
+		t.Errorf("the error must still surface what the absorb learned about the old request:\n%s", text)
+	}
+	if ssh.pushCalls != 0 {
+		t.Errorf("a dirty checkout must stop the push outright, got %d push calls", ssh.pushCalls)
+	}
+
+	meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
+	if meta == nil || meta.Gitea == nil || meta.Gitea.Landed == nil {
+		t.Fatal("the unabsorbed landing must still be recorded, so the next attempt retries it")
+	}
+}
+
+// TestAStageDeployDirtyTreeGivesACommitFirstMessage is the delivery-path
+// half of the dirty-checkout case above — unreachable in ordinary
+// operation (BuildGiteaDeliveryCommand commits everything before the
+// absorb runs) but handled defensively, the same way.
+func TestAStageDeployDirtyTreeGivesACommitFirstMessage(t *testing.T) {
+	stateDir := t.TempDir()
+	writeWiredGiteaPairMeta(t, stateDir, "https://git.example/acme/appdev")
+	if err := workflow.UpsertServiceMeta(stateDir, "appdev", func(m *workflow.ServiceMeta, _ bool) error {
+		m.Gitea.Landed = &workflow.LandedPullRequest{Commit: "squash-sha", Head: "branch-tip-sha"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GITEA_URL", "https://git.example")
+	t.Setenv("MATE_BROKER_URL", "https://git.example")
+	t.Setenv("GITEA_TOKEN", giteaBotToken)
+	var hosts []string
+	ssh := &hostRecordingSSH{output: "ZCP_ABSORB_DIRTY", hosts: &hosts}
+
+	delivery := deliverGiteaPair(context.Background(), platform.NewMock(), okHTTP, ssh,
+		runtime.Info{InContainer: true, ProjectID: "proj-1"}, stateDir, "appstage")
+	if delivery == nil {
+		t.Fatal("want a delivery")
+	}
+	if !strings.Contains(delivery.Line, "uncommitted changes") || !strings.Contains(delivery.Line, "Commit") {
+		t.Errorf("the line must say uncommitted changes block the landed PR and to commit first:\n%s", delivery.Line)
+	}
+}
+
 // TestAStageDeployAbsorbConflictGivesTheManualAbsorbSequence pins item 2 of
 // the judge's review: the plain `git fetch origin && git merge origin/<base>`
 // advice, given for a REAL conflict inside the absorb's own S^1 merge, would
@@ -506,10 +602,16 @@ func TestAStageDeployUnprovableConflictGivesTheManualAbsorbSequenceToo(t *testin
 	if !strings.Contains(delivery.Line, "may be this Mate's own squashed pull request") {
 		t.Errorf("an unprovable landing behind an ordinary conflict must be named as a possible cause:\n%s", delivery.Line)
 	}
-	for _, want := range []string{"git merge squash-sha^1", "git merge -s ours squash-sha"} {
+	// L1(b): unprovable means nothing ever verified S's content — `-s ours`
+	// here would silently discard whatever it actually was. The advice must
+	// be a plain merge instead, resolved on its own merits.
+	for _, want := range []string{"git merge squash-sha^1", "git merge squash-sha`", "never `-s ours`"} {
 		if !strings.Contains(delivery.Line, want) {
 			t.Errorf("the line misses %q:\n%s", want, delivery.Line)
 		}
+	}
+	if strings.Contains(delivery.Line, "-s ours squash-sha") {
+		t.Errorf("an unprovable landing must never be told to -s ours — nothing proved it safe:\n%s", delivery.Line)
 	}
 }
 

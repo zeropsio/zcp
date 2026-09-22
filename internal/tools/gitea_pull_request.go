@@ -262,8 +262,12 @@ func readGiteaPairPullRequestOutcome(
 		// the same files (BuildAbsorbLandedPullRequestCommand).
 		recordGiteaLanding(stateDir, m, number, outcome.MergeCommit, outcome.Head)
 		absorbLandedPullRequestOnCheckout(ctx, sshDeployer, m, outcome.MergeCommit, outcome.Head)
+		// Never claims WHEN it is absorbed — the caller may be the very
+		// delivery or push about to do it in this same call (deliverGiteaPair,
+		// giteaAbsorbBeforePush), and saying "its next delivery" there would
+		// be wrong the moment this one already did. Just the fact.
 		return fmt.Sprintf(
-			"pull request #%d is merged — this Mate's work is on %q now, and its next delivery absorbs the landing; its next change opens a new request",
+			"pull request #%d is merged — this Mate's work is on %q now; its next change opens a new request",
 			number, base)
 	}
 	clearGiteaPullRequest(stateDir, m, number)

@@ -130,16 +130,21 @@ func deliverGiteaPair(
 	output, err := sshDeployer.ExecSSH(ctx, meta.Hostname,
 		ops.BuildGiteaDeliveryCommand(giteaPairWorkingDir, branch, giteaBaseOf(meta), giteaCommitMessage(stateDir, meta),
 			landedCommit, landedHead))
+	if ops.GiteaAbsorbDirty(string(output)) {
+		return &giteaDelivery{Line: fmt.Sprintf(
+			"%s runs, but its code has not reached %s: uncommitted changes in %s's checkout block taking in this Mate's own landed pull request. Commit them, then deploy %s again — the push and the pull request follow that deploy.",
+			target, repo, meta.Hostname, target)}
+	}
 	if conflicts := ops.GiteaAbsorbConflict(string(output)); conflicts != "" {
 		return &giteaDelivery{Line: fmt.Sprintf(
 			"%s runs, but its code has not reached %s: a real conflict inside absorbing this Mate's own earlier pull request — %s changes the same lines (%s). %s, then deploy %s again — the push and the pull request follow that deploy.",
-			target, repo, giteaBaseOf(meta), conflicts, giteaManualAbsorbSequence(meta.Hostname, landedCommit, giteaBaseOf(meta)), target)}
+			target, repo, giteaBaseOf(meta), conflicts, giteaManualAbsorbSequence(meta.Hostname, landedCommit, giteaBaseOf(meta), true), target)}
 	}
 	if conflicts := ops.GiteaDeliveryConflict(string(output)); conflicts != "" {
 		if ops.GiteaAbsorbUnprovable(string(output)) && landedCommit != "" {
 			return &giteaDelivery{Line: fmt.Sprintf(
 				"%s runs, but its code has not reached %s: %s has moved on and %s changes the same lines (%s) — this may be this Mate's own squashed pull request, which this container's git could not prove safe to fold in automatically. %s, then deploy %s again — the push and the pull request follow that deploy.",
-				target, repo, giteaBaseOf(meta), branch, conflicts, giteaManualAbsorbSequence(meta.Hostname, landedCommit, giteaBaseOf(meta)), target)}
+				target, repo, giteaBaseOf(meta), branch, conflicts, giteaManualAbsorbSequence(meta.Hostname, landedCommit, giteaBaseOf(meta), false), target)}
 		}
 		return &giteaDelivery{Line: fmt.Sprintf(
 			"%s runs, but its code has not reached %s: %s has moved on and %s changes the same lines (%s). In %s's checkout run `git fetch origin && git merge origin/%s`, resolve it, then deploy %s again — the push and the pull request follow that deploy.",
@@ -185,10 +190,29 @@ func deliverGiteaPair(
 // advice, which would recreate the very conflict it is meant to resolve:
 // the base still does not contain S's content until this sequence lands it.
 // hostname is the checkout to run it in; landedCommit is S.
-func giteaManualAbsorbSequence(hostname, landedCommit, base string) string {
+//
+// proven distinguishes the two shapes that reach this. An absorb conflict
+// (IsAbsorbConflict) already PROVED tree(S) == a mechanical merge of S^1
+// and H before the S^1 merge itself hit a real conflict against unrelated
+// later work — any conflict there can only be between that later work and
+// S^1 (S^1 and H were already proven not to collide), so resolving it by
+// hand leaves S's own content intact, and `git merge -s ours S` (record S
+// merged without touching the tree) is sound. An unprovable landing never
+// established that: `-s ours` there would silently discard whatever S's
+// real content was without checking it against anything. The advice is a
+// plain `git merge S` instead — once its own S^1 merge above lands,
+// merge-base(HEAD, S) is exactly S^1, so this is a REAL three-way merge (no
+// longer the "unrelated histories" problem the whole mechanism exists to
+// avoid), and any conflicts it raises are the agent's or person's to
+// resolve on their own merits, never assumed away.
+func giteaManualAbsorbSequence(hostname, landedCommit, base string, proven bool) string {
+	absorbStep := fmt.Sprintf("`git merge -s ours %s`", landedCommit)
+	if !proven {
+		absorbStep = fmt.Sprintf("`git merge %s` — never `-s ours` here, nothing proved its content is already accounted for — and resolve any conflicts on their own merits", landedCommit)
+	}
 	return fmt.Sprintf(
-		"In %s's checkout run `git merge %s^1`, resolve it and commit, then `git merge -s ours %s`, then `git fetch origin && git merge origin/%s`",
-		hostname, landedCommit, landedCommit, base)
+		"In %s's checkout run `git merge %s^1`, resolve it and commit, then %s, then `git fetch origin && git merge origin/%s`",
+		hostname, landedCommit, absorbStep, base)
 }
 
 // giteaLearnLanding reads a pair's own recorded pull request's outcome
@@ -227,6 +251,12 @@ func giteaLearnLanding(
 
 // giteaAbsorbOutcome is what giteaAbsorbBeforePush learned and did.
 type giteaAbsorbOutcome struct {
+	// Dirty is true when a proven-safe landing could not actually be
+	// merged because the checkout was not clean — checked and reported
+	// BEFORE Conflict, since it fires before any merge is attempted (no
+	// unmerged file list to give; the caller must not read that as "no
+	// conflict" and push anyway).
+	Dirty bool
 	// Conflict is the conflicting files, "" when there was none (nothing to
 	// absorb, absorbed cleanly, or a non-conflict failure — see
 	// giteaAbsorbBeforePush).
@@ -295,6 +325,9 @@ func giteaAbsorbBeforePush(
 	}
 	output, err := sshDeployer.ExecSSH(ctx, hostname,
 		ops.BuildGiteaAbsorbAndSyncCommand(workingDir, giteaBaseOf(meta), landed.Commit, landed.Head))
+	if ops.GiteaAbsorbDirty(string(output)) {
+		return giteaAbsorbOutcome{Dirty: true, LandedCommit: landed.Commit, LearnedNote: note}
+	}
 	if conflictFiles := ops.GiteaAbsorbConflict(string(output)); conflictFiles != "" {
 		return giteaAbsorbOutcome{Conflict: conflictFiles, IsAbsorbConflict: true, LandedCommit: landed.Commit, LearnedNote: note}
 	}
