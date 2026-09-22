@@ -260,13 +260,13 @@ func readGiteaPairPullRequestOutcome(
 		// delivery fold it in as a real merge instead of the ordinary
 		// take-the-base-in step reading it as two histories that both add
 		// the same files (BuildAbsorbLandedPullRequestCommand).
-		recordGiteaLanding(stateDir, m, outcome.MergeCommit, outcome.Head)
+		recordGiteaLanding(stateDir, m, number, outcome.MergeCommit, outcome.Head)
 		absorbLandedPullRequestOnCheckout(ctx, sshDeployer, m, outcome.MergeCommit, outcome.Head)
 		return fmt.Sprintf(
 			"pull request #%d is merged — this Mate's work is on %q now, and its next delivery absorbs the landing; its next change opens a new request",
 			number, base)
 	}
-	clearGiteaPullRequest(stateDir, m)
+	clearGiteaPullRequest(stateDir, m, number)
 	return fmt.Sprintf(
 		"pull request #%d was closed without merging — nothing of it is on %q; the next change opens a new request",
 		number, base)
@@ -276,10 +276,17 @@ func readGiteaPairPullRequestOutcome(
 // disk, once Gitea says the request is no longer open without merging.
 // Best-effort on disk for the same reason recording it is: a pass that could
 // not write it asks again on the next one, which costs a read.
-func clearGiteaPullRequest(stateDir string, m *workflow.ServiceMeta) {
+//
+// number is the request this read was FOR — the disk write only applies
+// when the fresh meta UpsertServiceMeta re-reads under lock still carries
+// that same number. A concurrent delivery or reconcile pass can have moved
+// the pair on to a NEWER request between this read and this write (its own
+// push opened one, or recorded a fresher outcome); writing over that would
+// clobber tracking for a request this pass never asked about.
+func clearGiteaPullRequest(stateDir string, m *workflow.ServiceMeta, number int) {
 	m.Gitea.PullRequest = 0
 	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
-		if !existed || meta.Gitea == nil {
+		if !existed || meta.Gitea == nil || meta.Gitea.PullRequest != number {
 			return nil
 		}
 		meta.Gitea.PullRequest = 0
@@ -294,11 +301,15 @@ func clearGiteaPullRequest(stateDir string, m *workflow.ServiceMeta) {
 // disk like every other Gitea-pair stamp here: a pass that could not write it
 // re-reads the still-open number next time — Gitea answers the same merge
 // again, at the cost of one extra read.
-func recordGiteaLanding(stateDir string, m *workflow.ServiceMeta, commit, head string) {
+//
+// number guards the disk write exactly as clearGiteaPullRequest's does: only
+// applied when the fresh meta still records the request this outcome was
+// read for, never a newer one a concurrent pass already moved onto.
+func recordGiteaLanding(stateDir string, m *workflow.ServiceMeta, number int, commit, head string) {
 	m.Gitea.PullRequest = 0
 	m.Gitea.Landed = &workflow.LandedPullRequest{Commit: commit, Head: head}
 	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
-		if !existed || meta.Gitea == nil {
+		if !existed || meta.Gitea == nil || meta.Gitea.PullRequest != number {
 			return nil
 		}
 		meta.Gitea.PullRequest = 0

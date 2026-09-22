@@ -474,3 +474,67 @@ func TestReconcile_AsksAboutASettledRequestOnABackoff(t *testing.T) {
 		t.Errorf("a burst of five passes asked Gitea %d times, want 1", fake.pullReads)
 	}
 }
+
+// TestRecordGiteaLanding_SkipsAStaleNumber pins item 4 of the judge's
+// review: recordGiteaLanding's disk write must not clobber a NEWER request
+// a concurrent delivery or reconcile pass already recorded between this
+// read and this write — the read that produced (number, commit, head) is
+// stale by the time the locked write runs.
+func TestRecordGiteaLanding_SkipsAStaleNumber(t *testing.T) {
+	stateDir := t.TempDir()
+	writeWiredGiteaPairMeta(t, stateDir, "https://git.example/acme/appdev")
+	if err := workflow.UpsertServiceMeta(stateDir, "appdev", func(m *workflow.ServiceMeta, _ bool) error {
+		m.Gitea.PullRequest = 4
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := workflow.FindServiceMeta(stateDir, "appdev") // this pass's own read: #4
+
+	// A concurrent pass moves the pair on to a NEWER request (#5) on disk,
+	// between this pass's read and its write.
+	if err := workflow.UpsertServiceMeta(stateDir, "appdev", func(meta *workflow.ServiceMeta, _ bool) error {
+		meta.Gitea.PullRequest = 5
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	recordGiteaLanding(stateDir, m, 4, "squash-sha", "branch-tip-sha") // stale number=4
+
+	onDisk, _ := workflow.FindServiceMeta(stateDir, "appdev")
+	if onDisk.Gitea.PullRequest != 5 {
+		t.Errorf("a stale write must not clobber the newer request, got #%d", onDisk.Gitea.PullRequest)
+	}
+	if onDisk.Gitea.Landed != nil {
+		t.Errorf("a stale write must not record a landing over the newer request, got %+v", onDisk.Gitea.Landed)
+	}
+}
+
+// TestClearGiteaPullRequest_SkipsAStaleNumber is recordGiteaLanding's test
+// above, for the sibling closed-without-merging path.
+func TestClearGiteaPullRequest_SkipsAStaleNumber(t *testing.T) {
+	stateDir := t.TempDir()
+	writeWiredGiteaPairMeta(t, stateDir, "https://git.example/acme/appdev")
+	if err := workflow.UpsertServiceMeta(stateDir, "appdev", func(m *workflow.ServiceMeta, _ bool) error {
+		m.Gitea.PullRequest = 4
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := workflow.FindServiceMeta(stateDir, "appdev")
+
+	if err := workflow.UpsertServiceMeta(stateDir, "appdev", func(meta *workflow.ServiceMeta, _ bool) error {
+		meta.Gitea.PullRequest = 5
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	clearGiteaPullRequest(stateDir, m, 4) // stale number=4
+
+	onDisk, _ := workflow.FindServiceMeta(stateDir, "appdev")
+	if onDisk.Gitea.PullRequest != 5 {
+		t.Errorf("a stale write must not clobber the newer request, got #%d", onDisk.Gitea.PullRequest)
+	}
+}
