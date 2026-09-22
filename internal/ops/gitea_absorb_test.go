@@ -8,6 +8,7 @@
 package ops
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -166,12 +167,147 @@ func TestBuildGiteaDeliveryCommand_UnprovableLandingFallsThroughToTheOrdinaryMer
 	if err != nil {
 		t.Fatalf("an unprovable landing must fall through to the ordinary merge, not fail: %v\n%s", err, out)
 	}
+	if !GiteaAbsorbUnprovable(string(out)) {
+		t.Errorf("a recorded landing that could not be proven lossless must be marked, output:\n%s", out)
+	}
 	files := runGit(t, remote, "ls-tree", "-r", "--name-only", "mate/mate-p1")
 	for _, want := range []string{"index.js", "footer.js", "unrelated.js"} {
 		if !strings.Contains(files, want) {
 			t.Errorf("the delivered tree misses %q; got %q", want, files)
 		}
 	}
+}
+
+// TestBuildGiteaDeliveryCommand_ARealS1ConflictAbortsTheWholeChain is the
+// blocker the judge reproduced (scen2.sh): a colleague X changes f and adds
+// to k on main BEFORE this Mate's PR1 (touching g only) is squashed on top
+// of X; the Mate then edits f on its own checkout. Absorbing S must merge
+// S^1 (main as it stood right before the squash, i.e. X's own change) into
+// HEAD — and HEAD's conflicting edit to f makes that merge conflict for
+// real. The bug: the conflict handler was `|| (…; exit 4)` — a NESTED
+// subshell, so `exit 4` only left THAT subshell; the `; `-joined chain
+// carried on to `git merge -s ours` regardless, the whole absorb block
+// exited 0, the ordinary step then saw origin/main as already an ancestor
+// and skipped, and the delivery PUSHED a history that records S as merged
+// while its tree still lacks X's change to k — the next pull request would
+// propose REVERTING it on main. Fixed with a brace group, `|| { …; exit 4; }`,
+// which exits the ENCLOSING subshell instead.
+func TestBuildGiteaDeliveryCommand_ARealS1ConflictAbortsTheWholeChain(t *testing.T) {
+	if testing.Short() {
+		t.Skip("exercises a real git repository")
+	}
+	pair, remote, squashSHA, branchTip := giteaS1ConflictLab(t)
+	preHead := runGit(t, pair, "rev-parse", "HEAD")
+
+	out, err := exec.CommandContext(t.Context(), "sh", "-c", //nolint:gosec // test-only, the command under test against a t.TempDir repository
+		BuildGiteaDeliveryCommand(pair, "mate/x", "main", "Add a footer", squashSHA, branchTip)).CombinedOutput()
+	if err == nil {
+		t.Fatalf("a real S^1 conflict must abort the whole chain, not push:\n%s", out)
+	}
+	if got := GiteaAbsorbConflict(string(out)); !strings.Contains(got, "f") {
+		t.Fatalf("GiteaAbsorbConflict = %q, want f; output:\n%s", got, out)
+	}
+
+	if head := runGit(t, pair, "rev-parse", "HEAD"); head != preHead {
+		t.Errorf("HEAD must be unchanged, was %s now %s", preHead, head)
+	}
+	if state := runGit(t, pair, "status", "--porcelain=v1", "--untracked-files=no"); strings.Contains(state, "UU") {
+		t.Errorf("the checkout must be left whole, not half-merged: %q", state)
+	}
+	if got := runGit(t, remote, "rev-parse", "mate/x"); got != branchTip {
+		t.Errorf("origin must be untouched, mate/x is still %s, got %s", branchTip, got)
+	}
+}
+
+// TestBuildGiteaAbsorbAndSyncCommand_ARealS1ConflictAbortsCleanly is the
+// same shape as the delivery test above, against the OTHER command that
+// embeds the absorb — the one the reconcile-pass catch-up and a plain
+// git-push's pre-push sync both run.
+func TestBuildGiteaAbsorbAndSyncCommand_ARealS1ConflictAbortsCleanly(t *testing.T) {
+	if testing.Short() {
+		t.Skip("exercises a real git repository")
+	}
+	pair, _, squashSHA, branchTip := giteaS1ConflictLab(t)
+	preHead := runGit(t, pair, "rev-parse", "HEAD")
+
+	out, err := exec.CommandContext(t.Context(), "sh", "-c", //nolint:gosec // test-only, the command under test against a t.TempDir repository
+		BuildGiteaAbsorbAndSyncCommand(pair, "main", squashSHA, branchTip)).CombinedOutput()
+	if err == nil {
+		t.Fatalf("a real S^1 conflict must abort, not silently succeed:\n%s", out)
+	}
+	if got := GiteaAbsorbConflict(string(out)); got == "" {
+		t.Fatalf("GiteaAbsorbConflict = %q, want the conflicting file; output:\n%s", got, out)
+	}
+	if head := runGit(t, pair, "rev-parse", "HEAD"); head != preHead {
+		t.Errorf("HEAD must be unchanged, was %s now %s", preHead, head)
+	}
+}
+
+// giteaS1ConflictLab builds the scen2.sh shape: colleague X changes f and
+// adds to k on main BEFORE this Mate's PR1 (touching g only) is squashed on
+// top of X; the Mate's own checkout then edits f on the SAME line X did.
+// Absorbing S has to merge S^1 (main as it stood right before the squash,
+// i.e. X's own commit) into HEAD, and HEAD's conflicting edit to f makes
+// that merge a REAL conflict — the shape the absorb's own conflict handler
+// has to abort on, not the ordinary take-the-base-in step's.
+func giteaS1ConflictLab(t *testing.T) (pair, remote, squashSHA, branchTip string) {
+	t.Helper()
+	root := t.TempDir()
+	remote = filepath.Join(root, "remote.git")
+	runGit(t, root, "init", "--bare", "-q", "-b", "main", "remote.git")
+
+	seed := filepath.Join(root, "seed")
+	runGit(t, root, "init", "-q", "-b", "main", "seed")
+	runGit(t, seed, "config", "user.email", "seed@example.invalid")
+	runGit(t, seed, "config", "user.name", "seed")
+	writeLabFile(t, filepath.Join(seed, "f"), "f1\nf2\nf3\n")
+	writeLabFile(t, filepath.Join(seed, "g"), "g1\ng2\ng3\n")
+	writeLabFile(t, filepath.Join(seed, "k"), "k1\n")
+	runGit(t, seed, "add", "-A")
+	runGit(t, seed, "commit", "-qm", "Initial")
+	runGit(t, seed, "remote", "add", "origin", remote)
+	runGit(t, seed, "push", "-q", "origin", "main")
+
+	pair = filepath.Join(root, "mate")
+	runGit(t, root, "clone", "-q", remote, "mate")
+	runGit(t, pair, "config", "user.email", "mate@example.invalid")
+	runGit(t, pair, "config", "user.name", "mate")
+	runGit(t, pair, "checkout", "-qb", "mate/x")
+	writeLabFile(t, filepath.Join(pair, "g"), "G1-H\ng2\ng3\n")
+	runGit(t, pair, "commit", "-qam", "H1")
+	branchTip = runGit(t, pair, "rev-parse", "HEAD")
+	runGit(t, pair, "push", "-q", "origin", "mate/x")
+
+	// Colleague X, on main, before the squash.
+	writeLabFile(t, filepath.Join(seed, "f"), "F1-X\nf2\nf3\n")
+	f, err := os.OpenFile(filepath.Join(seed, "k"), os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("k2-X\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	runGit(t, seed, "commit", "-qam", "X")
+	runGit(t, seed, "push", "-q", "origin", "main")
+
+	// Squash PR1 (mate/x) onto main, after X.
+	runGit(t, seed, "fetch", "-q", "origin")
+	runShell(t, "cd "+shellQuoteForTest(seed)+" && git merge --squash -q origin/mate/x >/dev/null 2>&1; git commit -qm 'Squash PR1'")
+	squashSHA = runGit(t, seed, "rev-parse", "HEAD")
+	runGit(t, seed, "push", "-q", "origin", "main")
+
+	// The Mate's own checkout, unaware, edits the SAME line X touched in f.
+	writeLabFile(t, filepath.Join(pair, "f"), "F1-MATE\nf2\nf3\n")
+	runGit(t, pair, "commit", "-qam", "W")
+	return pair, remote, squashSHA, branchTip
+}
+
+// shellQuoteForTest is a local, minimal single-quote escaper — the test
+// composes a raw shell command directly (not through the package under
+// test) to run `git merge --squash` outside any BuildXCommand helper.
+func shellQuoteForTest(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // TestBuildGiteaDeliveryCommand_ARealConflictAfterTheAbsorbedLandingStillAborts
