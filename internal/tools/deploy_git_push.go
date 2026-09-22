@@ -566,6 +566,30 @@ func handleGitPush(
 		}
 	}
 
+	// A push onto a wired pair's own Gitea branch can open or touch a pull
+	// request right after it (giteaPullRequestAfterPush below) — and Gitea
+	// computes that request's mergeability itself, independent of whether
+	// THIS push succeeds. So a landing of this Mate's own earlier pull
+	// request (a squash shares no history with the branch it came from) has
+	// to be absorbed BEFORE this push, or the request looks broken to
+	// whoever looks at it before the next stage delivery ever runs
+	// (gitea_delivery.go's deliverGiteaPair, which does the same absorb as
+	// part of its own commit+push). A REAL conflict here — not the false
+	// squash-vs-history one — stops the push outright: pushing on top of a
+	// checkout the sync left mid-way is never right.
+	if giteaRemoteOfThisMate(effectiveRemote) {
+		meta, _ := workflow.FindServiceMeta(stateDir, hostname)
+		if conflicts := giteaAbsorbBeforePush(ctx, httpClient, sshDeployer, stateDir, hostname, workingDir, meta); conflicts != "" {
+			recordAttempt(fmt.Sprintf("gitea landing absorb conflict: %s has moved on and %s changes the same lines (%s)", giteaBaseOf(meta), branch, conflicts), topology.FailureClassConfig)
+			return convertError(platform.NewPlatformError(
+				platform.ErrSSHDeployFailed,
+				fmt.Sprintf("git-push from %s has not reached %s: %s has moved on and %s changes the same lines (%s).",
+					hostname, meta.Gitea.FullName, giteaBaseOf(meta), branch, conflicts),
+				fmt.Sprintf("In %s's checkout run `git fetch origin && git merge origin/%s`, resolve it, then push again.", hostname, giteaBaseOf(meta)),
+			), WithRecoveryStatus()), nil, nil
+		}
+	}
+
 	// pushedAt anchors the build-watch discovery: integration builds
 	// created at-or-after this instant belong to THIS push.
 	pushedAt := time.Now().UTC()

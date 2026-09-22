@@ -1350,7 +1350,8 @@ func TestDeployTool_AdoptionGate_GitPush_BlocksUnadopted(t *testing.T) {
 }
 
 // stubSSHWithCommands dispatches on command content for fine-grained test control.
-// Pre-flight order in handleGitPush: committed-code check → GIT_TOKEN check → push.
+// Pre-flight order in handleGitPush: committed-code check → GIT_TOKEN check →
+// (Gitea-wired only) absorb/sync → push.
 type stubSSHWithCommands struct {
 	committedOutput []byte // output for committed-code check command ("1" = has commits, "0" = no)
 	committedErr    error
@@ -1360,17 +1361,27 @@ type stubSSHWithCommands struct {
 	yamlErr         error
 	statusOutput    []byte // output for `git status --porcelain` (dirty-tree probe); nil/empty = clean
 	statusErr       error
-	pushOutput      []byte // output for the actual push command
-	pushErr         error
+	// absorbOutput/absorbErr answer ops.BuildGiteaAbsorbAndSyncCommand — the
+	// pre-push landing sync a Gitea-wired pair's git-push runs, giteaAbsorbBeforePush.
+	// nil output on a Gitea-wired test defaults to a clean "ok" (no conflict).
+	absorbOutput []byte
+	absorbErr    error
+	pushOutput   []byte // output for the actual push command
+	pushErr      error
 
 	committedCalls int // committed-code check invocation counter
 	tokenCalls     int // GIT_TOKEN check invocation counter
 	yamlCalls      int // zerops.yaml cat invocation counter
 	statusCalls    int // dirty-tree probe invocation counter
+	absorbCalls    int // absorb/sync invocation counter
 	pushCalls      int // push invocation counter
+	// commands records every command this stub saw, in order — for tests
+	// that assert on the SEQUENCE (e.g. absorb runs before push).
+	commands []string
 }
 
 func (s *stubSSHWithCommands) ExecSSH(_ context.Context, _ string, command string) ([]byte, error) {
+	s.commands = append(s.commands, command)
 	// Committed-code pre-flight: looks at HEAD.
 	// The push command itself contains neither rev-parse nor `test -n` —
 	// auth is the inline credential helper, so substring discrimination
@@ -1399,6 +1410,18 @@ func (s *stubSSHWithCommands) ExecSSH(_ context.Context, _ string, command strin
 	if strings.Contains(command, "status --porcelain") {
 		s.statusCalls++
 		return s.statusOutput, s.statusErr
+	}
+	// BuildGiteaAbsorbAndSyncCommand fetches (`fetch --no-tags -q origin`)
+	// but never pushes — that substring is unique to it and to
+	// BuildGiteaDeliveryCommand (a different handler path), so it never
+	// collides with BuildGitPushCommand's `push -u origin` below.
+	if strings.Contains(command, "fetch --no-tags -q origin") {
+		s.absorbCalls++
+		out := s.absorbOutput
+		if out == nil {
+			out = []byte("ok")
+		}
+		return out, s.absorbErr
 	}
 	s.pushCalls++
 	return s.pushOutput, s.pushErr

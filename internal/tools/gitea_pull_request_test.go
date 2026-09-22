@@ -336,15 +336,20 @@ func TestAbsorbLandedPullRequestOnCheckout_OnlyOnACleanCheckoutOfTheMatesBranch(
 	}
 }
 
+// writeLandedGiteaPairMetaNumber is the pull request number every caller of
+// writeLandedGiteaPairMeta records — arbitrary but fixed, since nothing here
+// validates it against the number the fake server's fixed JSON answers with.
+const writeLandedGiteaPairMetaNumber = 4
+
 // writeLandedGiteaPairMeta seeds the state this whole pass exists for: a pair
 // that is wired, has pushed, and recorded the number of the request its work
 // is waiting in.
-func writeLandedGiteaPairMeta(t *testing.T, stateDir, remoteURL string, number int) {
+func writeLandedGiteaPairMeta(t *testing.T, stateDir, remoteURL string) {
 	t.Helper()
 	writeWiredGiteaPairMeta(t, stateDir, remoteURL)
 	if err := workflow.UpsertServiceMeta(stateDir, "appdev",
 		func(meta *workflow.ServiceMeta, _ bool) error {
-			meta.Gitea.PullRequest = number
+			meta.Gitea.PullRequest = writeLandedGiteaPairMetaNumber
 			return nil
 		}); err != nil {
 		t.Fatalf("UpsertServiceMeta: %v", err)
@@ -406,7 +411,7 @@ func TestReconcile_TellsTheMateWhatBecameOfItsPullRequest(t *testing.T) {
 			gitea := fake.start(t)
 
 			stateDir := t.TempDir()
-			writeLandedGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git", 4)
+			writeLandedGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git")
 			envPath := writeLiveEnvFile(t, map[string]string{
 				"GITEA_URL": gitea.URL, "MATE_BROKER_URL": gitea.URL, "GITEA_TOKEN": giteaBotToken,
 			})
@@ -455,7 +460,7 @@ func TestReconcile_AsksAboutASettledRequestOnABackoff(t *testing.T) {
 	gitea := fake.start(t)
 
 	stateDir := t.TempDir()
-	writeLandedGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git", 4)
+	writeLandedGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git")
 	envPath := writeLiveEnvFile(t, map[string]string{
 		"GITEA_URL": gitea.URL, "MATE_BROKER_URL": gitea.URL, "GITEA_TOKEN": giteaBotToken,
 	})

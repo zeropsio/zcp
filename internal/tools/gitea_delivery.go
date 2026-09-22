@@ -104,12 +104,8 @@ func deliverGiteaPair(
 
 	// A stage deploy is a delivery whether or not the reconcile pass has run
 	// since the last merge — the passes are backoff-gated (giteaAttemptDue)
-	// and a delivery must not wait on one to learn a fresh merge. Read the
-	// outcome directly when a request is still recorded, so a landing
-	// (Landed) is known before the command below is built.
-	if meta.Gitea.PullRequest != 0 {
-		_ = readGiteaPairPullRequestOutcome(ctx, httpClient, sshDeployer, stateDir, wiring, meta)
-	}
+	// and a delivery must not wait on one to learn a fresh merge.
+	giteaLearnLanding(ctx, httpClient, stateDir, wiring, meta)
 
 	repo, branch := meta.Gitea.FullName, meta.Gitea.Branch
 	landedCommit, landedHead := "", ""
@@ -159,6 +155,86 @@ func deliverGiteaPair(
 		delivery.Line += " The group's recipe: " + line
 	}
 	return delivery
+}
+
+// giteaLearnLanding reads a pair's own recorded pull request's outcome
+// directly — not through the backoff-gated reconcile pass — so a merge
+// landed since the last read is known before the caller acts on
+// meta.Gitea.Landed. Shared by deliverGiteaPair (which embeds the landing in
+// its own commit+push command, ops.BuildGiteaDeliveryCommand) and
+// giteaAbsorbBeforePush (which absorbs it in a standalone step ahead of an
+// unrelated push, handleGitPush): both need a landing known FRESH, not
+// whatever a reconcile pass happened to have seen last.
+//
+// Passes a nil SSHDeployer to readGiteaPairPullRequestOutcome, so its own
+// best-effort checkout catch-up (absorbLandedPullRequestOnCheckout) never
+// fires here — that catch-up exists for the RECONCILE PASS, the one caller
+// with no absorb step of its own right after. Both callers here run their
+// own absorb unconditionally the moment this returns, so a second, silent
+// attempt first would only be redundant SSH round trips.
+func giteaLearnLanding(
+	ctx context.Context,
+	httpClient ops.HTTPDoer,
+	stateDir string,
+	wiring ops.GiteaWiring,
+	m *workflow.ServiceMeta,
+) {
+	if m == nil || m.Gitea == nil || m.Gitea.PullRequest == 0 {
+		return
+	}
+	_ = readGiteaPairPullRequestOutcome(ctx, httpClient, nil, stateDir, wiring, m)
+}
+
+// giteaAbsorbBeforePush is what a wired pair's push OTHER than a delivery
+// (handleGitPush's plain strategy=git-push, never deliverGiteaPair's own
+// commit+push) needs first: without it, a pull request this push then opens
+// or touches (giteaPullRequestAfterPush) can show a false conflict to a
+// person the moment they look at it, before any delivery has run — a squash
+// of THIS Mate's own earlier work shares no history with the branch it came
+// from (ops.BuildAbsorbLandedPullRequestCommand), and nothing before this
+// point ever took it in. Measured live: the incident's PR #2 was opened by
+// exactly this path.
+//
+// Learns a fresh landing itself (giteaLearnLanding) — never waits on the
+// backoff-gated reconcile pass — then runs ops.BuildGiteaAbsorbAndSyncCommand
+// on the checkout. A clean run (nothing to absorb, or absorbed without a
+// conflict) clears the landing and returns "". A REAL conflict — the same
+// shape a delivery aborts on — returns the conflicting files and leaves the
+// checkout exactly as it was; the caller must not push on top of that. Any
+// other failure (a transport hiccup reaching the container) is not a real
+// conflict and is not this function's to classify — it returns "" on the
+// wager that a genuinely broken container fails the push that follows right
+// after through its own, better-classified path, rather than duplicating
+// that classification here.
+func giteaAbsorbBeforePush(
+	ctx context.Context,
+	httpClient ops.HTTPDoer,
+	sshDeployer ops.SSHDeployer,
+	stateDir, hostname, workingDir string,
+	meta *workflow.ServiceMeta,
+) string {
+	if meta == nil || meta.Gitea == nil {
+		return ""
+	}
+	wiring := ops.ReadGiteaWiring(giteaEnvLookup(mate.LiveEnvStorePath))
+	if !wiring.Ready() {
+		return ""
+	}
+	giteaLearnLanding(ctx, httpClient, stateDir, wiring, meta)
+	landed := meta.Gitea.Landed
+	if landed == nil {
+		return ""
+	}
+	output, err := sshDeployer.ExecSSH(ctx, hostname,
+		ops.BuildGiteaAbsorbAndSyncCommand(workingDir, giteaBaseOf(meta), landed.Commit, landed.Head))
+	if conflictFiles := ops.GiteaDeliveryConflict(string(output)); conflictFiles != "" {
+		return conflictFiles
+	}
+	if err != nil {
+		return ""
+	}
+	clearGiteaLanding(stateDir, meta)
+	return ""
 }
 
 // refreshGiteaWorkflow brings a wired pair's workflow to the one this zcp

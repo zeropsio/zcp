@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -148,7 +150,7 @@ func TestAStageDeployAbsorbsAFreshMergeWithoutWaitingForAReconcilePass(t *testin
 	gitea := fake.start(t)
 
 	stateDir := t.TempDir()
-	writeLandedGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git", 4)
+	writeLandedGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git")
 	t.Setenv("GITEA_URL", gitea.URL)
 	t.Setenv("MATE_BROKER_URL", gitea.URL)
 	t.Setenv("GITEA_TOKEN", giteaBotToken)
@@ -185,6 +187,142 @@ func TestAStageDeployAbsorbsAFreshMergeWithoutWaitingForAReconcilePass(t *testin
 	}
 	if meta.Gitea.Landed != nil {
 		t.Errorf("a successfully delivered landing must be forgotten, got %+v", meta.Gitea.Landed)
+	}
+}
+
+// TestGitPushDeploy_AbsorbsALandingBeforeItPushes is the manual-push half of
+// the squash-landing fix: PR #2 in the live incident was opened by exactly
+// this path — an ordinary `zerops_deploy strategy="git-push"` on the dev
+// half, not a stage deploy — and Gitea computes a pull request's
+// mergeability itself, independent of whether zcp's own push succeeds. So a
+// push onto a wired pair must absorb a fresh landing of THIS Mate's own
+// earlier pull request BEFORE it pushes, exactly as deliverGiteaPair does,
+// or the pull request it then opens/touches shows a false conflict to
+// whoever looks at it.
+func TestGitPushDeploy_AbsorbsALandingBeforeItPushes(t *testing.T) {
+	fake := newFakeGitea()
+	fake.branchExists = true
+	fake.pullState = "closed"
+	fake.pullMerged = true
+	fake.pullMergeCommit = "squash-sha"
+	fake.pullMergeHead = "branch-tip-sha"
+	gitea := fake.start(t)
+
+	stateDir := t.TempDir()
+	writeLandedGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git")
+	t.Setenv("GITEA_URL", gitea.URL)
+	t.Setenv("MATE_BROKER_URL", gitea.URL)
+	t.Setenv("GITEA_TOKEN", giteaBotToken)
+
+	ssh := &stubSSHWithCommands{tokenOutput: []byte("1"), committedOutput: []byte("1"), pushOutput: []byte("ok")}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, platform.NewMock(), gitea.Client(), "proj-1", ssh, authInfo, nil,
+		runtime.Info{InContainer: true, ProjectID: "proj-1", GiteaURL: gitea.URL},
+		stateDir, testDeployEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "appdev",
+		"strategy":      "git-push",
+	})
+	if result.IsError {
+		t.Fatalf("want success, got error: %s", getTextContent(t, result))
+	}
+
+	if ssh.absorbCalls != 1 {
+		t.Fatalf("the absorb/sync must run exactly once before the push, got %d calls: %v", ssh.absorbCalls, ssh.commands)
+	}
+	if ssh.pushCalls != 1 {
+		t.Fatalf("the push must still run, got %d calls", ssh.pushCalls)
+	}
+
+	var absorbIdx, pushIdx = -1, -1
+	for i, cmd := range ssh.commands {
+		if strings.Contains(cmd, "fetch --no-tags -q origin") && absorbIdx < 0 {
+			absorbIdx = i
+			if !strings.Contains(cmd, "squash-sha") || !strings.Contains(cmd, "branch-tip-sha") {
+				t.Errorf("the absorb command must carry the landing this push learned itself, got:\n%s", cmd)
+			}
+		}
+		if strings.Contains(cmd, "push -u origin") && pushIdx < 0 {
+			pushIdx = i
+		}
+	}
+	if absorbIdx < 0 || pushIdx < 0 || absorbIdx > pushIdx {
+		t.Fatalf("the absorb must run BEFORE the push, got absorb@%d push@%d in %v", absorbIdx, pushIdx, ssh.commands)
+	}
+
+	// PR #4 is merged and closed — the push must open the NEXT one (#3, the
+	// fake's next number), and that request's branch already carries the
+	// absorbed landing (proven at the ops layer by
+	// TestBuildGiteaDeliveryCommand_AbsorbsASquashLanding*; this asserts zcp
+	// ran the absorb before the request-opening push, not the git result).
+	if fake.pullCreates != 1 {
+		t.Errorf("a new pull request must open after the merged one, got %d creates", fake.pullCreates)
+	}
+
+	meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
+	if meta == nil || meta.Gitea == nil {
+		t.Fatal("meta vanished")
+	}
+	if meta.Gitea.Landed != nil {
+		t.Errorf("an absorbed landing must be forgotten, got %+v", meta.Gitea.Landed)
+	}
+}
+
+// TestGitPushDeploy_AbsorbConflictBlocksThePush is the other half: a REAL
+// conflict from the absorb/sync step (not the false squash-vs-history one)
+// must stop the push outright — pushing on top of a checkout the sync left
+// mid-way would be worse than the false conflict this whole fix exists to
+// avoid.
+func TestGitPushDeploy_AbsorbConflictBlocksThePush(t *testing.T) {
+	fake := newFakeGitea()
+	fake.branchExists = true
+	fake.pullState = "closed"
+	fake.pullMerged = true
+	fake.pullMergeCommit = "squash-sha"
+	fake.pullMergeHead = "branch-tip-sha"
+	gitea := fake.start(t)
+
+	stateDir := t.TempDir()
+	writeLandedGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git")
+	t.Setenv("GITEA_URL", gitea.URL)
+	t.Setenv("MATE_BROKER_URL", gitea.URL)
+	t.Setenv("GITEA_TOKEN", giteaBotToken)
+
+	ssh := &stubSSHWithCommands{
+		tokenOutput:     []byte("1"),
+		committedOutput: []byte("1"),
+		absorbOutput:    []byte("ZCP_MERGE_CONFLICT:index.js"),
+		absorbErr:       errors.New("exit status 4"),
+	}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, platform.NewMock(), gitea.Client(), "proj-1", ssh, authInfo, nil,
+		runtime.Info{InContainer: true, ProjectID: "proj-1", GiteaURL: gitea.URL},
+		stateDir, testDeployEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "appdev",
+		"strategy":      "git-push",
+	})
+	if !result.IsError {
+		t.Fatalf("a real conflict must block the push, got success: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "index.js") {
+		t.Errorf("the error must name the conflicting file, got:\n%s", text)
+	}
+	if !strings.Contains(text, "push again") {
+		t.Errorf("the error must say the fix is to resolve it and push again, got:\n%s", text)
+	}
+	if ssh.pushCalls != 0 {
+		t.Errorf("a real conflict must stop the push outright, got %d push calls", ssh.pushCalls)
+	}
+
+	meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
+	if meta == nil || meta.Gitea == nil || meta.Gitea.Landed == nil {
+		t.Fatal("the unabsorbed landing must still be recorded, so the next attempt retries it")
 	}
 }
 
