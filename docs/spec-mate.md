@@ -1702,11 +1702,15 @@ URL anchors, OSC 8, DEC graphics, paste/success/failure patterns, Y/N confirm, a
 presses Enter through any unrecognized screen (Claude's login-method menu). The parsed prompt rides
 the feed as `login.phase` (`starting | menu | awaiting-browser | awaiting-code | succeeded | failed |
 verifying-code | cancelled`) with `url`, `code` (Codex's device code), `message`, `terminalId` and
-`startedBy` (the Zerops user id of the session that started it, from the grant — never from input).
+`startedBy` (the Zerops user id of the session that started it, from the grant — never from input;
+optional on the wire: a Mate keeps its installed version while the hosted client moves on, and a
+required field an older server does not send fails the whole snapshot).
 The card renders the URL as an "Open sign-in link" action (+ copy link / copy code).
 
 Claude's code comes back through a field, as in the Zerops GUI dialog: `zerops.agentLogin.submitCode
-{agentId, code}` (scope `terminal:operate`, like start/cancel) types the code into the login terminal
+{agentId, code}` (scope `terminal:operate`, like start/cancel; offered where the descriptor's
+`capabilities.agentLoginCode` is true — without it the dialog asks for the code in the terminal, as
+before) types the code into the login terminal
 and, 100 ms later, Enter — the GUI measured that an Enter in the same chunk can be dropped, and Claude's
 prompt takes one chunk as a paste. It is accepted only while a paste-code login sits at its prompt
 (`awaiting-browser` or `awaiting-code`: Claude 2.1.278 prints "Paste code here if prompted >" right
@@ -1722,7 +1726,8 @@ terminal.
 
 The signer record (D6) is written by the client of the person in `startedBy`, from the snapshot's
 state — a `succeeded` login they started whose `authorizedBy` is not them — not from a transition one
-screen happened to watch. One owner per conversation view writes it, whichever door the sign-in used
+screen happened to watch (an older server that names no `startedBy` falls back to the success the
+client watched happen). One owner per conversation view writes it, whichever door the sign-in used
 (the panel's card, the thread's band, the empty conversation) and after a reload; a failed write is
 retried on its own (2 s / 5 s / 15 s) and surfaced with a retry. A finished login never overrides the
 verified status in a row: the login's recheck resets the agent's `providerAuth` to `unknown`, a
