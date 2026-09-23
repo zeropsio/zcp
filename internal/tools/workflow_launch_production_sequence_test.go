@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -579,5 +581,128 @@ func TestHandleLaunchProduction_FullSequence_ProcessFailedTransitionsToFailed(t 
 	}
 	if len(resp.Blockers) == 0 {
 		t.Fatal("expected failure blocker")
+	}
+}
+
+// countingLaunchSSH counts every SSH exec the handler makes on top of
+// launchSSHStub's canned answers — a refusal ahead of the source-control
+// gate reads no source over SSH at all.
+type countingLaunchSSH struct {
+	launchSSHStub
+	calls int
+}
+
+func (s *countingLaunchSSH) ExecSSH(ctx context.Context, host, command string) ([]byte, error) {
+	s.calls++
+	return s.launchSSHStub.ExecSSH(ctx, host, command)
+}
+
+// TestHandleLaunchProduction_GiteaWiring_RefusesBeforeAnyStep pins the
+// handler itself, not the refusal helper: handleLaunchProduction reads the
+// container's Gitea wiring (giteaWired) and, when wired, refuses a
+// complete publish call before scope, the source-control gate or the
+// mutation pipeline — no SSH read, no admin client built, no launch token
+// staged, no state file written. The same call on an unwired container
+// still launches, so the classic route is unchanged.
+//
+// Not parallel: the wiring is read from the process environment (t.Setenv).
+func TestHandleLaunchProduction_GiteaWiring_RefusesBeforeAnyStep(t *testing.T) {
+	tests := []struct {
+		name  string
+		wired bool
+	}{
+		{name: "wired Mate refuses", wired: true},
+		{name: "unwired container launches", wired: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wiring := map[string]string{
+				ops.GiteaURLEnvKey:      "",
+				ops.MateBrokerURLEnvKey: "",
+				ops.GiteaTokenEnvKey:    "",
+			}
+			if tt.wired {
+				wiring[ops.GiteaURLEnvKey] = "https://git.example"
+				wiring[ops.MateBrokerURLEnvKey] = "https://broker.example"
+				wiring[ops.GiteaTokenEnvKey] = giteaBotToken
+			}
+			for key, value := range wiring {
+				t.Setenv(key, value)
+			}
+
+			stateDir := withTempState(t)
+			installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+
+			mockAdmin := platform.NewMockProjectAdminClient().
+				WithImportResult(&platform.ImportResult{
+					ProjectID:   "new-prod-id",
+					ProjectName: "myapp-prod",
+					ServiceStacks: []platform.ImportedServiceStack{{
+						ID: "svc-app", Name: "app",
+						Processes: []platform.Process{{ID: "proc-build-1", Status: "FINISHED"}},
+					}},
+				}).
+				WithProcess(&platform.Process{ID: "proc-build-1", Status: "FINISHED"}).
+				WithClientUserID("client-user-abc")
+			adminBuilt := 0
+			defer setProjectAdminClientFactory(func(string, string) (platform.ProjectAdminClient, error) {
+				adminBuilt++
+				return mockAdmin, nil
+			})()
+
+			mockClient := platform.NewMock().
+				WithProject(&platform.Project{ID: "source-id", Name: "myapp-dev", Status: "ACTIVE"}).
+				WithServices([]platform.ServiceStack{{
+					ID: "svc-app-src", Name: "app",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{
+						ServiceStackTypeVersionName:  "nodejs@22",
+						ServiceStackTypeCategoryName: "USER",
+					},
+					Status: "ACTIVE", Mode: "NON_HA",
+				}}).
+				WithProjectEnv([]platform.ProjectEnvVar{{Key: "LOG_LEVEL", Content: "info"}})
+			ssh := &countingLaunchSSH{launchSSHStub: launchSSHStub{responses: map[string]string{
+				"cat /var/www/zerops.yaml": sequenceLaunchYAML,
+				"git remote get-url":       "https://github.com/example/myapp.git",
+				"git rev-parse HEAD":       "abc123def456",
+			}}}
+
+			result, _, err := handleLaunchProduction(context.Background(), "source-id", mockClient, nil, nil,
+				completeLaunchInput(), stateDir, runtime.Info{InContainer: true, ServiceName: "zcp"}, ssh, "")
+			if err != nil {
+				t.Fatalf("handleLaunchProduction: %v", err)
+			}
+			text := extractText(result)
+			_, stateErr := os.Stat(filepath.Join(stateDir, launchStateDir))
+
+			if !tt.wired {
+				if resp := decodeLaunchResp(t, []byte(text)); resp.Status != topology.LaunchStatusLaunched {
+					t.Fatalf("an unwired container keeps zcp's own launch-production: status %q\n%s", resp.Status, text)
+				}
+				if mockAdmin.CapturedImportYAML == "" || stateErr != nil {
+					t.Fatalf("an unwired launch imports and records its state: import %q, state dir err %v", mockAdmin.CapturedImportYAML, stateErr)
+				}
+				if ssh.calls == 0 || adminBuilt == 0 || mockClient.CallCounts["CreateServiceEnvVar"] == 0 {
+					t.Fatalf("an unwired launch reads source, builds the admin client and stages the token: ssh %d, admin %d, env writes %d", ssh.calls, adminBuilt, mockClient.CallCounts["CreateServiceEnvVar"])
+				}
+				return
+			}
+
+			if !strings.Contains(text, "wired_mate_production_is_the_groups") {
+				t.Fatalf("a wired Mate's handler refuses launch-production, got:\n%s", text)
+			}
+			if ssh.calls != 0 {
+				t.Errorf("refusal must precede the source-control gate: %d SSH execs", ssh.calls)
+			}
+			if adminBuilt != 0 || mockAdmin.CapturedImportYAML != "" {
+				t.Errorf("refusal must precede the mutation pipeline: admin built %d times, import %q", adminBuilt, mockAdmin.CapturedImportYAML)
+			}
+			if n := mockClient.CallCounts["CreateServiceEnvVar"]; n != 0 {
+				t.Errorf("refusal must stage no launch token: %d service env writes", n)
+			}
+			if !os.IsNotExist(stateErr) {
+				t.Errorf("refusal must write no launch state: stat %s: %v", launchStateDir, stateErr)
+			}
+		})
 	}
 }
