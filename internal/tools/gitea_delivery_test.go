@@ -48,6 +48,55 @@ func TestAWiredMatePlansOnlyStandardPairs(t *testing.T) {
 	}
 }
 
+// TestLaunchProduction_WiredMateRefusesAndNamesTheProjectsPage is the
+// backlog fix (plans/backlog/mate-wired-production-intent-misroutes-to-launch.md):
+// launch-production creates its own, ungrouped production project and has
+// no case for a group's, so a wired Mate refuses the whole workflow rather
+// than let it try. The next step says what is TRUE of this Mate's own
+// pairs — an open pull request by number, or the projects page once
+// nothing is open — never a generic lecture.
+func TestLaunchProduction_WiredMateRefusesAndNamesTheProjectsPage(t *testing.T) {
+	t.Parallel()
+
+	if refusal := giteaLaunchProductionRefusal(t.TempDir(), false); refusal != nil {
+		t.Fatalf("an unwired Mate keeps zcp's own launch-production, got a refusal: %q", resultText(t, refusal))
+	}
+
+	t.Run("nothing open", func(t *testing.T) {
+		t.Parallel()
+		stateDir := t.TempDir()
+		refusal := giteaLaunchProductionRefusal(stateDir, true)
+		if refusal == nil {
+			t.Fatal("a wired Mate refuses launch-production")
+		}
+		text := resultText(t, refusal)
+		if !strings.Contains(text, "wired_mate_production_is_the_groups") {
+			t.Fatalf("refusal carries no structured reason, got %q", text)
+		}
+		if !strings.Contains(text, "projects page") {
+			t.Fatalf("the next step names the projects page, got %q", text)
+		}
+	})
+
+	t.Run("an open pull request is named", func(t *testing.T) {
+		t.Parallel()
+		stateDir := t.TempDir()
+		if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+			Hostname: "appdev",
+			Gitea:    &workflow.GiteaRepoRef{FullName: "acme/appdev", Branch: "mate/bot", PullRequest: 3},
+		}); err != nil {
+			t.Fatalf("write service meta: %v", err)
+		}
+		text := resultText(t, giteaLaunchProductionRefusal(stateDir, true))
+		if !strings.Contains(text, "#3") || !strings.Contains(text, "acme/appdev") {
+			t.Fatalf("the next step names the open pull request, got %q", text)
+		}
+		if !strings.Contains(text, "merge") {
+			t.Fatalf("the next step says to merge it, got %q", text)
+		}
+	})
+}
+
 // TestAStageDeployOfAWiredPairDeliversItself is the owner's run of 2026-09-17:
 // "build a todo app" has to end with a pull request without the person saying
 // how code travels ("no person is ever going to say this"). The pair's stage

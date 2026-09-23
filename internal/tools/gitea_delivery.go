@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -50,6 +52,49 @@ func giteaPairPlanError(plan []workflow.BootstrapTarget, wired bool) *platform.P
 		)
 	}
 	return nil
+}
+
+// giteaLaunchProductionRefusal refuses the whole launch-production workflow
+// in a wired Mate (plans/backlog/mate-wired-production-intent-misroutes-to-launch.md):
+// launch-production creates and imports its OWN production project on a
+// user-owned remote (workflow_launch_production.go) — it has no case for a
+// group's production, which the person adds from the projects page and
+// which the broker feeds from a release tag on the group repo (spec-mate.md
+// §10, D16, D27, D28). Running it anyway would try to build a second,
+// unwired production the group's broker never touches, on a plan gate
+// (giteaPairPlanError) that already refuses it a stage half to build from.
+//
+// wired is the caller's own giteaWired() read — no second detector. nil
+// when the Mate is not wired, so the classic route is untouched.
+func giteaLaunchProductionRefusal(stateDir string, wired bool) *mcp.CallToolResult {
+	if !wired {
+		return nil
+	}
+	return launchFailedResponse(nil, topology.BlockerCategoryOther, "wired_mate_production_is_the_groups",
+		"This Mate is wired to its group's Gitea, where a group's production is a project the person adds "+
+			"from the projects page and runs only what a release tag lists — launch-production creates its "+
+			"own, ungrouped production project and has no case for that. "+giteaLaunchProductionNextStep(stateDir))
+}
+
+// giteaLaunchProductionNextStep says what is true of THIS Mate's own pairs
+// rather than a lecture (§10.10 "What became of the request" — a pair
+// forgets a pull request's number the moment it lands, so only a still-OPEN
+// request is ever named here): tell the person to merge it first when one
+// is open, or straight to the projects page when nothing is.
+func giteaLaunchProductionNextStep(stateDir string) string {
+	var open []string
+	if metas, err := workflow.ListServiceMetas(stateDir); err == nil {
+		for _, m := range metas {
+			if m != nil && m.Gitea != nil && m.Gitea.PullRequest != 0 {
+				open = append(open, fmt.Sprintf("%s's pull request #%d on %s", m.Hostname, m.Gitea.PullRequest, m.Gitea.FullName))
+			}
+		}
+	}
+	if len(open) == 0 {
+		return "Tell the person: production is added and released from the project on Mate's projects page."
+	}
+	return "Tell the person to merge " + strings.Join(open, " and ") +
+		" first — once it lands, production is added and released from the project on Mate's projects page."
 }
 
 // giteaStageNameFor suggests the stage half's hostname: appdev → appstage,

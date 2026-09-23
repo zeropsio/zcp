@@ -139,6 +139,13 @@ func handleLaunchProduction(
 			"Ensure ZCP is bound to a Zerops project (ZCP_PROJECT_ID or zcp config).",
 		), WithRecoveryStatus()), nil, nil
 	}
+	// A wired Mate's production belongs to its group, never to this
+	// workflow (gitea_delivery.go, plans/backlog/mate-wired-production-intent-misroutes-to-launch.md).
+	// Refuses unconditionally, ahead of scope/state/mutation — nothing
+	// below has a case for a group's production either.
+	if refusal := giteaLaunchProductionRefusal(stateDir, giteaWired()); refusal != nil {
+		return refusal, nil, nil
+	}
 
 	corpus, err := workflow.LoadAtomCorpus()
 	if err != nil {
