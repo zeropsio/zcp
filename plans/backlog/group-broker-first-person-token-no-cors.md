@@ -31,3 +31,13 @@ broker (`zeropsio/gitea-mate`), outside zcp and the Mate client.
 - Related: `mate-registry-outlives-deleted-projects.md` (its Sketch names the 502 without CORS).
 - Evidence (local, not committed): the mate repo's `.plans/mate-state-model/evidence/gate-G/s2-r*/`
   console and network logs.
+
+**Update 2026-09-24**: cause found in the KRLS broker's own log (2.7 h window): `POST /person/token`
+answered 200 ×148 and **502 ×156**. Every 502 follows `ERROR "the caller's rights could not be read":
+the org could not be read: the member list: zerops api: 400` or `"the throwaway could not be checked":
+reading the org's members: zerops api: 400` (`GET /client/{id}/user/list`), i.e. the broker checks the
+caller's freshly minted throwaway token against the org member list within milliseconds and Zerops
+answers 400 — the token is evidently not usable yet; the same request 2 s later passes. Sketch: the
+broker retries that member-list read on a short ladder (e.g. 250 ms, 500 ms, 1 s) before failing, and
+its 502 carries the CORS headers. Also seen once: at 22:10:12Z every registered Mate's services read
+answered 401 for one pass (the broker's own token), then recovered.
