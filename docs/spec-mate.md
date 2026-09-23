@@ -35,10 +35,8 @@ report. That reading contract is what this spec owns.
 
 ## 0. Boundaries
 
-Three rules bound every later section. A section written before this one that still describes
-another mechanism (§5.1's server topology feed over `zcp studio`, §6.1's repository set from the
-platform) is superseded by the ownership table below and is rewritten as the corresponding slice
-lands.
+Three rules bound every later section. A section that describes another mechanism is superseded
+by the ownership table below.
 
 1. **Identity is the client's.** The user's Zerops token exists only in the client. The client
    reads and writes the platform with it: organizations, projects, services, processes, subdomains,
@@ -85,7 +83,7 @@ Anything else is a violation and needs this section changed first.
 
 | ID | Invariant |
 |---|---|
-| MA-6 | `apps/server/src/zerops/**` spawns `zcp` with no argv outside the closed list `mate status`, `mate update` (§2.9 MU-2) and `studio console serve`. `scripts/mate-boundaries.test.ts` (a dated allowlist for the topology spawns exists until S4 deletes them, and the test fails once the allowlist is stale). |
+| MA-6 | `apps/server/src/zerops/**` spawns `zcp` with no argv outside the closed list `mate status`, `mate update` (§2.9 MU-2) and `studio console serve`. `scripts/mate-boundaries.test.ts`. |
 | MA-7 | The env-store reader keeps only the `ZCP_AGENT_OAUTH_*` and `ZCP_AGENT_TOKEN_*` keys; a store carrying `ZCP_API_KEY` and `VSCODE_PASSWORD` yields neither. `ZeropsAgentAuth.test.ts` — "keeps only the agent flag keys". |
 
 ## 1. Envelope on the wire
@@ -1344,10 +1342,7 @@ closes a latch and waits for the client's `[{"_tag":"Ack","requestId":"<id>"}]` 
 next. A client that never acks receives exactly one Chunk and no Exit on a healthy socket —
 indistinguishable from a feed that stopped publishing. `RpcClient` acks automatically, so every real
 client sees pushes; a hand-rolled WebSocket probe of any `subscribe*` method must ack every Chunk.
-Live-verified with an acking probe: `subscribeZeropsTopology` delivered an imported service 0.5 s
-after `zcli` began and a deletion ~2 s after it landed. `ZeropsTopology.test.ts` — "publishes a
-change made from inside an RPC handler's fiber to an open subscription", "a subscriber that arrives
-after the first one left still receives changes".
+`server.test.ts` — "subscribeZeropsBrowserStream applies flow control (Ack after every Chunk)".
 
 ### 5.6 Browser surface
 
@@ -1435,8 +1430,8 @@ contract (§2.8) — an old zcp reports `unsupported`.
 | MF-9 | A recognized call keeps its first call key/id/time/position/row kind and mounted shell through completion. Result-derived `plan:<sessionId>` identity may fold matching calls into the first PLAN anchor; pending association never invents identity and safely detaches on start/reset/ambiguity/mismatch. Every decoded result kind is a visible milestone. `callLifecycle.test.ts`; `MessagesTimeline.logic.test.ts`; `identity.test.ts`; `milestone.test.ts`. |
 | MF-10 | Platform activity is an in-memory, ownership-neutral, "Platform"-labelled optional region read from the §5.1 shared Process projection with direct bootstrap/repair. It publishes observation and failure state, never persists or renders a verdict, and disappears without removing the recognized shell. The only post-result continuation is a `BUILD_TRIGGERED` deploy. `data/activity.test.ts`; `useProjectActivity.test.ts`; `ZeropsDeployActivityCard.test.tsx`. |
 | MF-11 | Projected activity order uses orchestration event sequence. Legacy NULL rows use `createdAt`, lifecycle rank `started < updated < completed`, then activity id; newest-window selection and compaction preserve the same order and terminal row. `ProjectionPipeline.test.ts`; `ProjectionSnapshotQuery.test.ts`; `ActivityPayloadProjection.test.ts`. |
-| MB-1 | One browser vocabulary: mate carries no MCP server and no browser of its own; the agent's browser is `zerops_browser` and nothing else. `scripts/mate-boundaries.test.ts` (MA-6); `serve accepts --no-browser`; fork.md delete rows for the preview directories. |
-| MB-2 | The container browser reaches the client only through the mate server: frames over `subscribeZeropsBrowserStream` with forwarded acks (one daemon ack per seq, sent after the client's Ack), input over `zeropsBrowserInput` (operate scope), the daemon port read from `~/.agent-browser/default.stream` and never written, the socket closed on the last unsubscribe. `ZeropsBrowserStream.test.ts` — "connects on first subscriber and disconnects on last", "two subscribers, one stalled: one ack per seq", "an ack or input during reconnect never ends the subscription"; `server.test.ts` — "subscribeZeropsBrowserStream applies flow control (Ack after every Chunk)". |
+| MF-12 | One browser vocabulary: mate carries no MCP server and no browser of its own; the agent's browser is `zerops_browser` and nothing else. `scripts/mate-boundaries.test.ts` (MA-6); `serve accepts --no-browser`; fork.md delete rows for the preview directories. |
+| MF-13 | The container browser reaches the client only through the mate server: frames over `subscribeZeropsBrowserStream` with forwarded acks (one daemon ack per seq, sent after the client's Ack), input over `zeropsBrowserInput` (operate scope), the daemon port read from `~/.agent-browser/default.stream` and never written, the socket closed on the last unsubscribe. `ZeropsBrowserStream.test.ts` — "connects on first subscriber and disconnects on last", "two subscribers, one stalled: one ack per seq", "an ack or input during reconnect never ends the subscription"; `server.test.ts` — "subscribeZeropsBrowserStream applies flow control (Ack after every Chunk)". |
 
 ---
 
@@ -1602,9 +1597,8 @@ mount's file **content** and **path lookups** just as fast. What lags is **direc
 stale entries** specifically — a fixed 20 s `dcache_timeout` sshfs default the product mount does not
 override, because weakening it costs 3–27× on `git status`. No watcher works over the mount either:
 `inotify` never fires for a host-side change (only for a write made *through* the mount itself), so
-anything that needs to know about host-side change must poll over SSH rather than watch — the
-topology feed's own doorbell (§5.1) already does this for service state; nothing in S3 tries to
-watch the mount for git state.
+anything that needs to know about host-side change must poll over SSH rather than watch; nothing in
+S3 tries to watch the mount for git state.
 
 ### What S3 does not do
 
@@ -1617,10 +1611,6 @@ watch the mount for git state.
 - **Identity, remotes and push stay zcp's.** mate never runs `git init`, never touches a remote, never
   commits or pushes outside a checkpoint ref — those are zcp's workflow, reached from mate only by the
   agent going through MCP, the same as any other zcp mutation.
-- **Known cost, accepted rather than fixed**: two independent processes read the same topology on
-  their own schedules — the repository source here (30 s TTL, refreshed at turn start) and the S6
-  topology feed (§5.1, its own cache plus a doorbell). Unifying them was out of scope for this
-  stream; each read is cheap and direct, so the duplication costs a little latency, not load.
 
 ### Invariants
 
@@ -1834,7 +1824,7 @@ again after 15 s, then 1 min, then every 5 min, instead of sitting at "Checking�
 | MA-3 | The OAuth flag is written non-sensitive and a legacy sensitive row is replaced (`migrated:true`); sign-out deletes it and an `oauth` auth-type row, never a token's. `ZeropsAgentFlag.test.ts` (`planMarkSignedIn`, `planClearSignedIn`). |
 | MA-4 | The agent-auth feed verifies through the agent CLI's own status command and the platform flag, never through the registry's probe; it reaches the registry only through `spi/providerInstances.ts`, to re-probe a picker snapshot that contradicts a changed verified status. `ZeropsAgentAuth.test.ts` — "verification spawns only the CLI status command"; `ZeropsAgentAuthIo.test.ts` — "hands every CHANGE of the verified status to the model picker's reconcile"; `spi/providerInstances.test.ts`; `scripts/mate-zone-architecture.test.ts` (no `provider/**` import from `apps/server/src/zerops/**`). |
 | MA-5 | The login walker turns the CLI's output into `login` phases with `url`/`code` from the recorded lines (Codex device URL + code; Claude menu → oauth URL), and cancel ends the session. `zeropsAgentLoginWalker.test.ts`, `zeropsAgentLoginOutputParser.test.ts`, `ZeropsAgentLogin.test.ts`. |
-| MA-6 | Live: moving the credential aside flips the feed within ~0.5 s and `providerAuth` to `unauthenticated`; restoring it returns `authorized`/`authenticated`; the public `/mate/` renders the hosted-static landing. `verified.md` S7-3 + follow-up rows. |
+| MA-13 | Live: moving the credential aside flips the feed within ~0.5 s and `providerAuth` to `unauthenticated`; restoring it returns `authorized`/`authenticated`; the public `/mate/` renders the hosted-static landing. `verified.md` S7-3 + follow-up rows. |
 | MA-8 | `submitCode` types the code then a separate Enter, only into a paste-code login at its prompt, and the code never reaches the published state. `ZeropsAgentLogin.test.ts` — "submitCode types the code, then Enter…", "…is refused when no login waits for a code", "the code never reaches the published login state". |
 | MA-9 | The signer is recorded from state by the person in `startedBy`, once per login, retried on its own; a finished login never overrides the verified status in a row. `useZeropsAgentSigner.test.ts` (`agentSignersToRecord`, "writes once per login", "tried again on its own"); `agentLogin.test.ts` (`classifyAgentRowLogin`). |
 | MA-11 | Sign-out refuses a token agent, then cancels the login, stops that agent's live sessions, logs the CLI out, deletes the flag and re-checks, in that order, best-effort. `ZeropsAgentSignOut.test.ts` (`threadsToStopForAgent`, call order). |
@@ -2269,9 +2259,8 @@ another source.
 and §6's "What S3 does not do" says mate never touches a remote and never commits or pushes outside
 a checkpoint ref. This tab's _Update from main_ pulls into the checkout through the Mate server
 (`useVcsPullAction`), and _Open pull request_ and _Merge_ run in Gitea as the person; _Push_ is
-listed above, but the tab renders no Push verb, because the push is the agent's. §6.5 also cites
-the §5.1 topology feed's doorbell, and there is no server topology feed. Which rule governs a Mate's
-own checkout, §6's or this tab's, is undecided; neither section changes until it is.
+listed above, but the tab renders no Push verb, because the push is the agent's. Which rule governs
+a Mate's own checkout, §6's or this tab's, is undecided; neither section changes until it is.
 
 The **project's flow** (`projectFlow.ts`, mate 0.11.16) is read once for the whole account
 (`ZeropsProjectFlowProvider`, every sixty seconds and at once after a verb) and drawn in two
