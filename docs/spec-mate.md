@@ -643,23 +643,40 @@ else about "is there a newer Mate" is answered by zcp and merely displayed:
 | MU-2 | `zerops.mate.update` is offered only inside a Zerops project with `zcp` on PATH and requires `exec:operate`; a failing `zcp mate update` is a successful RPC carrying its JSON, never a transport error. `ZeropsMateUpdate.test.ts`. |
 | MU-3 | The descriptor's `update` field is absent, never fabricated, when `zcp` cannot be run; the card then shows the installed version alone. `ServerEnvironment.test.ts`. |
 
-## Current account contract — Mate 0.7.0
+## Current account contract — Mate 0.11.0
 
-Mate 0.7.0 supersedes the historical S1/S4 pairing and account behavior below. Every product
-client requires verified Zerops identity; manual pairing, startup credentials and cookie sessions
-are removed, including standalone entry. Effective project roles (including overrides that lower
-organization permissions) determine operation access. Independent sessions use `zerops-user:<id>`
-subjects, expire within the membership window (15 minutes by default), and revoke themselves via
-`POST /api/auth/logout` without administrative scopes. The GUI closes connections and clears
-account memory immediately on logout, retaining only account-scoped personal context for
+Mate 0.11.0 supersedes the historical S1/S4 pairing and account behavior below. Every product client
+requires verified Zerops identity; manual pairing, startup credentials and cookie sessions are
+removed, including standalone entry. Effective project roles (including overrides that lower
+organization permissions) determine operation access. Sessions come from the throwaway door (§10.4),
+use `zerops-user:<id>` subjects, and revoke themselves via `POST /api/auth/logout` without
+administrative scopes. A session holds no credential of the person's and has no membership window:
+the server re-reads the member list and the project's `userRoles` with its own key every
+`T3CODE_ZEROPS_ROLE_RECHECK_SECONDS` (default 300 s; from the fork's server slice S.0 a configured
+value above 300 s is clamped to 300 s), ends every session whose answer is no longer `open` (§3.3),
+tolerates one failed pass and ends every Zerops session on the second consecutive one, and ends any
+session older than 24 hours. Ending a session closes its sockets; the client opens a new one with a
+fresh throwaway, on every rejection and with backoff (from the fork's slice 0.9b). The client's
+credential renewer (`credentialRenewal.ts`) is reserved for a door that re-presents a credential;
+the throwaway door does not, so nothing renews a Zerops session. The GUI closes connections and
+clears account memory immediately on logout, retaining only account-scoped personal context for
 revalidated restoration. A removed project cannot return from an old local catalog.
 
-The GUI's minimum supported Mate server version is explicit and independent of its own package
-version. The hosted GUI is raised to 0.7.0 only after the zcp release carrying this pin is public,
-so its pre-connection restart can install the required version. Version mismatches show both the
-actual server version and the required minimum. Restart uses the platform service restart API
-with the user's current account, sends one confirmed request, and then checks the server version;
-it never repeatedly restarts on an uncertain response. No manually paired fallback exists.
+The GUI's minimum supported Mate server version (`MINIMUM_MATE_SERVER_VERSION`, 0.11.0: the first
+server whose only door is the throwaway one) is explicit and independent of its own package version.
+**Release rule:** the hosted client's floor never exceeds the Mate version the fork's published
+release manifest serves (`stable.json`, §2.1c), the version a pre-connection restart installs; a
+floor is raised only after the release carrying that version is published as the latest one. Every
+floor verdict — below the floor, and whether a restart helps because the descriptor's
+`update.latest` reaches the floor — comes from `serverCompatibility.ts`, the client's one version
+comparison (MU-1); below the floor with no restart that reaches it, the Mate is shown as needing a
+newer zcp and no verb is offered (the restart verdict from slice 0.9a). Version mismatches show both
+the actual server version and the required minimum. Restart uses the platform service restart API
+with the user's current account, sends one confirmed request, and then checks the server version; it
+never repeatedly restarts on an uncertain response. No manually paired fallback exists.
+
+A rule the fork's client makes true in a later slice names that slice; the fork's
+`docs/internals/zerops/client-state-model.md` lists every slice and what it lands.
 
 The complete contract and recovery procedure are maintained in
 [Mate account lifecycle](https://github.com/zeropsio/mate/blob/main/docs/internals/zerops/account-lifecycle.md)
@@ -670,9 +687,10 @@ are unchanged. Only the selected Mate version, its verified digest and contract 
 ## 3. The door (S1, historical baseline)
 
 **Superseded 2026-09-16 (mate 0.11.0):** the raw-token door of §3.2 is gone — a person's Zerops
-token no longer reaches a container at all — and with it the membership window of §3.3 and the
-client's re-mint (MS1-3, MS1-4b). In Zerops mode the server offers `zerops-throwaway` only, reads
-the caller's role with its own key and ends sessions itself (§10.4). §3.1 and §3.4–3.6 stand.
+token no longer reaches a container at all — and with it the membership window and the client's
+re-mint (MS1-3, MS1-4b). In Zerops mode the server offers `zerops-throwaway` only, reads the
+caller's role with its own key and ends sessions itself (§10.4). §3.3 states the session rule that
+replaced the window. §3.1 and §3.3–3.6 stand.
 
 
 A mate server running inside a Zerops project lets a member in on their own Zerops identity — no
@@ -713,38 +731,29 @@ carries that thumbprint, redeemable only with the matching proof.
 | Unknown project (`400`/`404`) | `404 not_found` `zerops_project_not_found` |
 | Zerops mode off / unresolved / platform unreachable | `404 not_found` `zerops_identity_unavailable` — or `500 internal` `zerops_membership_check_failed` on a transport failure |
 
-### 3.3 The membership window
+### 3.3 Session lifetime — no membership window
 
-The server holds no caller token and does not re-check membership with its own (any token can read
-the org's member list — `verified.md`, auth surface 2026-09-15 — but the door does not use it), so
-the window IS the session's lifetime — but only for the sessions that can renew themselves. **The window follows the door, not the environment**: a grant
-records which door minted it (`BootstrapGrant.method`, persisted on the pairing link), and
-`exchangeBootstrapCredentialForAccessToken` caps a session at
-`T3CODE_ZEROPS_MEMBERSHIP_TTL_SECONDS` (default 900s) iff that method is `zerops-identity` —
-including a DPoP session, whose upstream default would otherwise be one hour. The client re-mints
-with the Zerops token it still holds, and *that* re-mint is the real membership check — removing a
-member ends access within one window, with no stored credential and no second state field.
+A session from the throwaway door (§10.4) holds no credential of the person's, so nothing about it
+expires with a Zerops token and there is nothing to re-present. Its validity is the server's own
+re-check, `ZeropsMembershipWatch`: every `T3CODE_ZEROPS_ROLE_RECHECK_SECONDS` (default 300 s; from
+the fork's slice S.0 a configured value above 300 s is clamped to 300 s, so the bound below holds
+whatever `mate.env` sets) it re-reads the org's member list and the project's `userRoles` with the
+Mate's key, runs the role function (§10.3), and ends every Zerops session whose answer is no longer
+`open`. One pass costs two reads however many people are connected. One failed pass changes
+nothing; a second consecutive failure ends every Zerops session, because by then the server has not
+known who belongs for two intervals. A session older than `T3CODE_ZEROPS_SESSION_MAX_AGE_SECONDS`
+(default 24 hours) ends at the next pass whatever the read said. A removed member or a lowered role
+loses access within two re-check intervals plus one pass.
 
-The window is enforced on **both** ends of a connection's life. At the door, `/ws` verifies the
-session once. For the socket's life, the upgrade races its handler against the session's own end —
-its `expiresAt`, and a `clientRemoved` change naming it — and ends the connection when either
-arrives. Without that race the window bounded only the NEXT connect: a client that stayed connected
-was never re-checked at all, which exempted exactly the population the guarantee is about, and a
-revocation reached no open socket. A session with no stored deadline is left alone rather than
-closed on a guess; a `one-time-token` pairing legitimately has none.
+The end reaches open sockets. `/ws` verifies the session once at the upgrade; for the socket's
+life the upgrade races its handler against the session's own end — its deadline, and a
+`clientRemoved` change naming it — and ends the connection when either arrives (MS1-4a). A session
+with no stored deadline is left alone rather than closed on a guess.
 
-The client does not wait to be evicted. Its stored credential carries the deadline the exchange
-reported (from the RELATIVE `expires_in`, so a skewed client clock cannot move it) and a renewer
-rotates the bearer at 80% of the window, writing through the credential store rather than
-re-registering — the socket is authorised at upgrade only, so the next attempt carries the new token
-and a live one is never torn down to install it. Renewing early re-runs the membership check MORE
-often than letting the window lapse. A credential persisted before the deadline was stored has none,
-and keeps the reactive path: the connect fails and the client re-mints afterwards.
-
-A session from `one-time-token` pairing (the authenticated second-device path, §3.5) keeps
-upstream's lifetime, and a DPoP one keeps its hour. That device holds no Zerops token and so has
-nothing to re-mint with: capping it at the window would end its session every 15 minutes with no
-way back in, which is what an environment-wide cap did until it was found live on `z3-eval`.
+The client does not renew. When its socket is rejected it mints a fresh throwaway and exchanges
+again, and the door answers with the current role — on every rejection, with backoff, from the
+fork's slice 0.9b. `credentialRenewal.ts` keeps its contract for a door that re-presents a
+credential; the throwaway door does not, so nothing renews a Zerops session (MB-3).
 `revokeBySubject(userId)` revokes every live session for one user immediately (an ops-path
 primitive) — a no-op on an unknown subject, counted once per session however often it is called.
 
@@ -1927,6 +1936,23 @@ more interval. Nothing renews (`credentialRenewal.ts` keeps the contract, no cli
 Zerops credential); the client opens a new session with a fresh throwaway when it has to. The
 minimum server a client connects to is 0.11.0 (`serverCompatibility.ts`).
 
+**Minting and deleting a throwaway** (from the fork's slice 0.7). The mint, here and for Gitea
+(§10.9), waits up to 30 s for the account's verification window through `beforeProjectWrite`
+instead of throwing, and fails with a retryable reason when the wait elapses. Waiting is not
+admitting: the mint still runs only while the window is open, and its `project-write`
+classification is unchanged. The client checks no organization or project role for it — the door
+and the broker decide — so a `BASIC_USER`, or a `READ_ONLY` member with a project override, mints
+like anyone else. The delete is `deleteThrowaway({clientId, tokenId, name}, {token})`, an
+`account-write` call that refuses any name failing `isThrowawayName`, sends the minting token
+explicitly, never clears or refreshes the session, and carries its own 15 s timeout; it runs in a
+finalizer that neither the exchange's abort nor the account's close cancels, and retries once after
+5 s. A `401` or `403` there leaves the token to the sweep and never reaches the session, so a
+delete can neither run under another account nor sign anyone out. The sweep, under the same
+principal, uses the same call; `deleteIntegrationToken` stays `project-write` for every other
+caller (deploy tokens, grants). Deleting a throwaway only removes authority, and the name check
+keeps real tokens off this path. Mints are budgeted per tab: 10 door exchanges a minute and a
+separate 4 Gitea sign-ins a minute.
+
 ### 10.5 Who runs an agent (D6)
 
 When an agent's sign-in succeeds the app writes `mate:signer:{agent}:{userId}` onto the Mate's
@@ -2083,18 +2109,30 @@ Gitea, mints a `gitea-signin` throwaway as the person and calls `POST /person/to
 who is not an active member, makes the person's account exist (`u-{id}`, bound to the OIDC source
 with `login_name` = the Zerops user id, no password — measured on 1.27.2), runs one pass of the
 rights loop when it had to create it, and mints the token with the site admin's basic auth
-(`mate-app/{stamp}`, scopes `read:user read:organization write:repository write:issue`). The
-session is module memory for the tab, one acquisition per Gitea in flight; a Gitea still setting
-up is asked again every twenty seconds; a refusal — Gitea saying no, answered `424 gitea_refused`
-with Gitea's words, since the platform's edge replaces a `502` with its own page — is said once in
-place of the sign-in line; the first `401` forgets the session and the surface
-acquires another; the rights loop retires the tokens after twelve hours. Gitea's `[cors]` and the
-route answer every origin (`*`, credentials off): each call carries a bearer and no cookie, so the
-origin proves nothing, and one Gitea serves mate.zerops.io, a developer's localhost and the shells
-alike (D22; measured on 1.27.2, 2026-09-17). What the app reads and does (`giteaClient.ts`): repositories, branches,
-contents, pull requests and their merge, Actions runs, jobs, logs and reruns, commit statuses,
-tags. The Git tab (§10.11) is where it shows; until the session is there it says "Signing you in
-to Gitea…" and nothing is clickable.
+(`mate-app/{stamp}`, scopes `read:user read:organization write:repository write:issue`).
+
+**The session** is one per account lifetime and Gitea, held in memory and forgotten when the
+account closes (from the fork's slice 0.1); one acquisition per Gitea is in flight, and its mint
+follows §10.4's rules. From slice 0.13 it is a machine (`forge/giteaSession.ts`) whose every wait
+has an exit. A broker answering that Gitea is still setting up is asked again at 5 s rising to 60 s,
+and a broker that does not answer at 10 s rising to 60 s; before each of those mints the client sends
+one credential-less request to the broker origin and mints only when anything answers. A refusal —
+Gitea saying no, answered `424 gitea_refused` with Gitea's words, since the platform's edge
+replaces a `502` with its own page — is shown in Gitea's words and asked again every 5 minutes
+while the tab is visible and a surface wants the session. A `401` on any request re-acquires while
+requests wait up to 10 s and then retry once; a third `401` in 10 minutes refuses with "Gitea keeps
+refusing this sign-in." The token is renewed before the broker's `expiresIn` runs out (at the
+larger of 60 s or a tenth of it) only while a surface wants it, and is otherwise dropped at expiry
+and acquired again on the next want. Facts that depend on the session wait while it is acquired and
+keep their last value through the first two failed acquisitions, then show the cause; a `401` never
+empties them. The rights loop retires the tokens after twelve hours.
+
+Gitea's `[cors]` and the route answer every origin (`*`, credentials off): each call carries a
+bearer and no cookie, so the origin proves nothing, and one Gitea serves mate.zerops.io, a
+developer's localhost and the shells alike (D22; measured on 1.27.2, 2026-09-17). What the app reads
+and does (`giteaClient.ts`): repositories, branches, contents, pull requests and their merge,
+Actions runs, jobs, logs and reruns, commit statuses, tags. The Git tab (§10.11) is where it shows;
+until the session is there it says "Signing you in to Gitea…" and nothing is clickable.
 
 ### 10.10 zcp inside a Mate
 
@@ -2176,6 +2214,14 @@ takes it on merge; the remote's health from a live `git ls-remote` through the s
 Checkout actions run as the agent's user for the Mate's owner only. It infers nothing from
 another source.
 
+**Open, for decision: §6 and this tab disagree.** §6.3 keeps a second commit pipeline off on Zerops,
+and §6's "What S3 does not do" says mate never touches a remote and never commits or pushes outside
+a checkpoint ref. This tab's _Update from main_ pulls into the checkout through the Mate server
+(`useVcsPullAction`), and _Open pull request_ and _Merge_ run in Gitea as the person; _Push_ is
+listed above, but the tab renders no Push verb, because the push is the agent's. §6.5 also cites
+the §5.1 topology feed's doorbell, and there is no server topology feed. Which rule governs a Mate's
+own checkout, §6's or this tab's, is undecided; neither section changes until it is.
+
 The **project's flow** (`projectFlow.ts`, mate 0.11.16) is read once for the whole account
 (`ZeropsProjectFlowProvider`, every sixty seconds and at once after a verb) and drawn in two
 places. The **left menu** shows each project as a timeline, the way its code travels: the Mates,
@@ -2202,7 +2248,7 @@ release is still to run.
 | ID    | Invariant                                                                                                                                                                                                                                                                                                                                                                                         |
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | MB-1  | The door takes a throwaway and nothing else: any grant, any flag, another name, another org, a stale `created` or an inactive creator is refused, and the role comes from the role function with the Mate's own key. `ZeropsThrowawayIdentity.test.ts`, `ZeropsIdentityGate.test.ts`; `EnvironmentAuthPolicy.ts` offers `zerops-throwaway` only.                                                   |
-| MB-2  | The client mints, connects and deletes in that order, and deletes even when the connect threw; the mint carries no grants and no flags. `doorThrowaway.test.ts` — "mints, connects and deletes, in that order", "deletes even when the connect threw, and re-throws what threw", "sweeps every stale throwaway in one pass"; `zeropsThrowaway.test.ts` — "mints with no grants and no flags, under the name it was given". |
+| MB-2  | The client mints, connects and deletes in that order, and deletes even when the connect threw; the mint carries no grants and no flags. From the fork's slice 0.7 the mint waits up to 30 s for the account window and checks no role, and the delete is `deleteThrowaway` with the minting token: not cancelled by the exchange's abort, never clearing, refreshing or borrowing the current session, refusing any name that is not a throwaway's. `doorThrowaway.test.ts` — "mints, connects and deletes, in that order", "deletes even when the connect threw, and re-throws what threw", "sweeps every stale throwaway in one pass"; `zeropsThrowaway.test.ts` — "mints with no grants and no flags, under the name it was given"; slice 0.7 adds a mint during a renewal proceeding, a mint during a lapse waiting and running on the next grant, an elapsed wait failing retryably, an abort after the mint still deleting, a delete's `401` after sign-out and a new sign-in leaving the new session alone, and a `BASIC_USER` and an overridden `READ_ONLY` member minting. |
 | MB-3  | A session ends when the Mate's own re-check says so, and nothing renews a Zerops session. `ZeropsMembershipWatch.test.ts` — "leaves sessions that did not come from the Zerops door alone"; `credentialRenewal.ts`.                                                                                                                                                                                 |
 | MB-4  | The two role functions answer every fixture identically, and the fixture covers every outcome. `zeropsRoles.test.ts` — "carries every case the Go twin replays"; gitea-mate `TestComputeAgainstFixtures`, `TestFixturesCoverEveryOutcome`, `TestReleaseWithoutProduction`.                                                                                                                         |
 | MB-5  | Only the recorded signer's session starts a turn on an OAuth-signed agent; a signer the org no longer knows is signed out; an unreadable member list signs nobody out. `ZeropsProjectSigners.test.ts` — "gates the one command that spends a subscription", "signs out the agent whose signer the org no longer knows", "signs nobody out when the member list could not be read"; `agentOwnership.test.ts` — "says only the signer runs somebody else's agent". |
@@ -2215,7 +2261,7 @@ release is still to run.
 | MB-12 | The Git tab offers one verb per block from the checkout's facts and never answers with the production. `gitTab.test.ts` — "a dev pair with no repository yet says so, and offers nothing", "an unpushed branch offers Push, and only Push", "never answers with the production, whose source is a release".                                                                                       |
 | MB-13 | The Gitea import document the app sends is gitea-mate's, byte for byte. `giteaRecipe.test.ts`.                                                                                                                                                                                                                                                                                                    |
 | MB-14 | zcp hands its key to no forge and no app container, and a Mate's `.gitea` workflow carries no secret and no Zerops token: it deploys with `zcli push` on a key the broker hands the job (D27, MB-29). zcp `workflow_build_integration_citoken_test.go`, `deploy_ssh_test.go`; `e2e/gitea_backbone_live_test.go` (tag-gated).                                                                                                                                             |
-| MB-16 | The app's Gitea session is acquired from the broker by a throwaway named for that Gitea, once per Gitea however many surfaces ask, kept in memory, forgotten on the first `401`, and a broker that cannot reach Gitea is asked again while a refusal is said once. `giteaSession.test.ts` — "acquires a token from the broker by throwaway, once, and keeps it for the tab", "forgets the session on the first 401 Gitea answers, so the surface acquires again", "says the Gitea is still setting up when the broker cannot reach it, and is worth asking again"; `giteaBroker.test.ts` — "asks the broker with the throwaway as the bearer, and keeps what it answers"; gitea-mate `TestAPersonGetsATokenThatActsAsThemAndAnAccountBoundToTheSource`, `TestAPersonWhoIsNotAnActiveMemberGetsNothing`, `TestStaleAppTokensAreRetiredAndNeverCounted`, `TestAGiteaRefusalIsAnsweredInItsWordsNotAsStillSettingUp`; "says what Gitea refused, in Gitea's words, and does not retry it". |
+| MB-16 | The app's Gitea session is acquired from the broker by a throwaway named for that Gitea, once per Gitea however many surfaces ask, kept in memory for one account lifetime and forgotten when the account closes (the fork's slice 0.1). From slice 0.13: a `401` re-acquires, and a third `401` in 10 minutes refuses; a refusal is asked again every 5 minutes while the tab is visible and a surface wants it; "Gitea still setting up" and "broker unreachable" are separate waits, each re-mint preceded by a credential-less request to the broker, and nothing is minted while the broker does not answer; `expiresIn` is honoured and the token renewed only while wanted; dependent facts keep their values through a `401` and show the cause after two failed acquisitions. Refusal retries stay at or under 12 an hour and Gitea mints at or under 4 a minute per tab. `giteaSession.test.ts` — "acquires a token from the broker by throwaway, once, and keeps it for the tab", "sign-out, another person signs in on the same tab: no Gitea request carries the first person's token" (slice 0.1), and until slice 0.13 replaces them, "says what Gitea refused, in Gitea's words, and does not retry it", "names a refusal in the person's terms and does not retry it by itself" and "forgets the session on the first 401 Gitea answers, so the surface acquires again", which pin today's no-retry and forget-on-first-`401` behaviour; `forge/giteaSession.test.ts` (slice 0.13) — the session machine's transition table in the fork's `docs/internals/zerops/client-state-model.md`; `giteaBroker.test.ts` — "asks the broker with the throwaway as the bearer, and keeps what it answers"; gitea-mate `TestAPersonGetsATokenThatActsAsThemAndAnAccountBoundToTheSource`, `TestAPersonWhoIsNotAnActiveMemberGetsNothing`, `TestStaleAppTokensAreRetiredAndNeverCounted`, `TestAGiteaRefusalIsAnsweredInItsWordsNotAsStillSettingUp`. |
 | MB-18 | Gitea serves only with its `zerops` login source; a boot that cannot add it is re-run, never served. gitea-mate `TestStartRefusesToServeWithoutTheZeropsSource`. |
 | MB-19 | A recipe pull request a registered Mate's bot opened on the group repo is merged by the rights loop, and nobody else's is; `main` on the group repo keeps no merge whitelist. gitea-mate `TestAMatesRecipePullRequestIsMergedAndNobodyElses`, `TestAMatesRecipePullRequestIsMergedByThePass`, `TestAMatesRecipePullRequestNudgesTheLoop`, `TestGroupRepoProtections`. |
 | MB-20 | A re-read of the inventory keeps what the reads hold: no published state loses a member or goes back to unread, and the page paints from the list already read. `runtime.test.ts` "re-reads an organization's inventory on a fresh receiver and keeps what it holds"; `ZeropsProjectsPage.test.ts` "keeps an empty organization's invitation up while its list is re-read". |
