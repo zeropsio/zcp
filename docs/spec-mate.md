@@ -1936,13 +1936,24 @@ more interval. Nothing renews (`credentialRenewal.ts` keeps the contract, no cli
 Zerops credential); the client opens a new session with a fresh throwaway when it has to. The
 minimum server a client connects to is 0.11.0 (`serverCompatibility.ts`).
 
-**Minting and deleting a throwaway** (from the fork's slice 0.7). The mint, here and for Gitea
-(§10.9), waits up to 30 s for the account's verification window through `beforeProjectWrite`
-instead of throwing, and fails with a retryable reason when the wait elapses. Waiting is not
-admitting: the mint still runs only while the window is open, and its `project-write`
-classification is unchanged. The client checks no organization or project role for it — the door
-and the broker decide — so a `BASIC_USER`, or a `READ_ONLY` member with a project override, mints
-like anyone else. The delete is `deleteThrowaway({clientId, tokenId, name}, {token})`, an
+**Minting and deleting a throwaway** (from the fork's slice 0.7; its admission from slice 2.4).
+A mint of `roleCode: NO_ACCESS` with `projects: []` and every flag false, here and for Gitea
+(§10.9), is an `account-write`: the client mints one only once the sign-in's first access grant is
+admitted, because nothing that exchanges or signs in to Gitea runs before it, and a verification
+window that has closed since does not hold it up. Any mint that grants a project, or an organization
+role above `NO_ACCESS`, stays a `project-write` and is refused while the window is closed. The
+client checks no organization or project role for the throwaway — the door and the broker decide —
+so a `BASIC_USER`, or a `READ_ONLY` member with a project override, mints like anyone else.
+
+Why a closed window does not hold up the throwaway: the window guards against a person whose access
+lapsed acting on the platform past it. A token with no organization role, no project grant and no
+flag carries no rights, so minting one while project writes are closed cannot grant anything. What
+it opens is decided when it is presented, by the door and the broker, which re-derive the person's
+role from the member list and the project's `userRoles` with their own keys — a fresher check than
+the client's window — and refuse a token that carries a grant or a flag. A mint that grants a
+project would add authority, so it keeps the window.
+
+The delete is `deleteThrowaway({clientId, tokenId, name}, {token})`, an
 `account-write` call that refuses any name failing `isThrowawayName`, sends the minting token
 explicitly, never clears or refreshes the session, and carries its own 15 s timeout; it runs in a
 finalizer that neither the exchange's abort nor the account's close cancels, and retries once after
@@ -2113,7 +2124,7 @@ rights loop when it had to create it, and mints the token with the site admin's 
 
 **The session** is one per account lifetime and Gitea, held in memory and forgotten when the
 account closes (from the fork's slice 0.1); one acquisition per Gitea is in flight, and its mint
-follows §10.4's rules. From slice 0.13 it is a machine (`forge/giteaSession.ts`) whose every wait
+follows §10.4's rules: a verification window that has closed does not hold it up. From slice 0.13 it is a machine (`forge/giteaSession.ts`) whose every wait
 has an exit. A broker answering that Gitea is still setting up is asked again at 5 s rising to 60 s,
 and a broker that does not answer at 10 s rising to 60 s; before each of those mints the client sends
 one credential-less request to the broker origin and mints only when anything answers. A refusal —
@@ -2248,7 +2259,7 @@ release is still to run.
 | ID    | Invariant                                                                                                                                                                                                                                                                                                                                                                                         |
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | MB-1  | The door takes a throwaway and nothing else: any grant, any flag, another name, another org, a stale `created` or an inactive creator is refused, and the role comes from the role function with the Mate's own key. `ZeropsThrowawayIdentity.test.ts`, `ZeropsIdentityGate.test.ts`; `EnvironmentAuthPolicy.ts` offers `zerops-throwaway` only.                                                   |
-| MB-2  | The client mints, connects and deletes in that order, and deletes even when the connect threw; the mint carries no grants and no flags. From the fork's slice 0.7 the mint waits up to 30 s for the account window and checks no role, and the delete is `deleteThrowaway` with the minting token: not cancelled by the exchange's abort, never clearing, refreshing or borrowing the current session, refusing any name that is not a throwaway's. `doorThrowaway.test.ts` — "mints, connects and deletes, in that order", "deletes even when the connect threw, and re-throws what threw", "sweeps every stale throwaway in one pass"; `zeropsThrowaway.test.ts` — "mints with no grants and no flags, under the name it was given"; slice 0.7 adds a mint during a renewal proceeding, a mint during a lapse waiting and running on the next grant, an elapsed wait failing retryably, an abort after the mint still deleting, a delete's `401` after sign-out and a new sign-in leaving the new session alone, and a `BASIC_USER` and an overridden `READ_ONLY` member minting. |
+| MB-2  | The client mints, connects and deletes in that order, and deletes even when the connect threw; the mint carries no grants and no flags. From the fork's slice 0.7 the mint checks no role, and the delete is `deleteThrowaway` with the minting token: not cancelled by the exchange's abort, never clearing, refreshing or borrowing the current session, refusing any name that is not a throwaway's. From slice 2.4 that mint is an `account-write` that a closed verification window does not hold up, and a mint that grants a project stays a `project-write`. `doorThrowaway.test.ts` — "mints, connects and deletes, in that order", "deletes even when the connect threw, and re-throws what threw", "sweeps every stale throwaway in one pass"; `zeropsThrowaway.test.ts` — "mints with no grants and no flags, under the name it was given"; slice 0.7 adds a mint during a renewal proceeding, an abort after the mint still deleting, a delete's `401` after sign-out and a new sign-in leaving the new session alone, and a `BASIC_USER` and an overridden `READ_ONLY` member minting; slice 2.4 adds "a door throwaway mints while project writes are closed; a project-granting mint is refused" and a rights-less mint whose answer is lost reading as uncertain. |
 | MB-3  | A session ends when the Mate's own re-check says so, and nothing renews a Zerops session. `ZeropsMembershipWatch.test.ts` — "leaves sessions that did not come from the Zerops door alone"; `credentialRenewal.ts`.                                                                                                                                                                                 |
 | MB-4  | The two role functions answer every fixture identically, and the fixture covers every outcome. `zeropsRoles.test.ts` — "carries every case the Go twin replays"; gitea-mate `TestComputeAgainstFixtures`, `TestFixturesCoverEveryOutcome`, `TestReleaseWithoutProduction`.                                                                                                                         |
 | MB-5  | Only the recorded signer's session starts a turn on an OAuth-signed agent; a signer the org no longer knows is signed out; an unreadable member list signs nobody out. `ZeropsProjectSigners.test.ts` — "gates the one command that spends a subscription", "signs out the agent whose signer the org no longer knows", "signs nobody out when the member list could not be read"; `agentOwnership.test.ts` — "says only the signer runs somebody else's agent". |
