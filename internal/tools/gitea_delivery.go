@@ -84,11 +84,22 @@ func giteaLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, 
 // this runs. Every non-zero PullRequest is freshened with giteaLearnLanding
 // (the same fresh-read helper deliverGiteaPair and giteaAbsorbBeforePush
 // use) before it is ever named, so "merge #N first" is never said about work
-// that already landed (measured live: `Mate: weatherdev (#4)` merged on
-// Gitea while this still said to merge it).
+// that already landed.
+//
+// Three states, never collapsed into "nothing open means merged"
+// (measured live: `Mate: weatherdev (#4)` merged on Gitea while this still
+// said to merge it):
+//   - a request still open after the fresh read → name it, tell the person
+//     to merge it;
+//   - a merge recorded in Landed, or just learned by the fresh read → the
+//     code is on the group's main; point to the projects page;
+//   - no request at all (never pushed, no repository yet) or one closed
+//     without merging → nothing of this pair's work has reached main; tell
+//     the person to deliver through the stage half first.
 func giteaLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, stateDir string) string {
 	wiring := ops.ReadGiteaWiring(giteaEnvLookup(mate.LiveEnvStorePath))
 	var open []string
+	merged := false
 	if metas, err := workflow.ListServiceMetas(stateDir); err == nil {
 		for _, m := range metas {
 			if m == nil || m.Gitea == nil {
@@ -97,16 +108,22 @@ func giteaLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer,
 			if m.Gitea.PullRequest != 0 {
 				giteaLearnLanding(ctx, httpClient, stateDir, wiring, m)
 			}
-			if m.Gitea.PullRequest != 0 {
+			switch {
+			case m.Gitea.PullRequest != 0:
 				open = append(open, fmt.Sprintf("%s's pull request #%d on %s", m.Hostname, m.Gitea.PullRequest, m.Gitea.FullName))
+			case m.Gitea.Landed != nil:
+				merged = true
 			}
 		}
 	}
-	if len(open) == 0 {
+	if len(open) > 0 {
+		return "Tell the person to merge " + strings.Join(open, " and ") +
+			" first — once it lands, production is added and released from the project on Mate's projects page."
+	}
+	if merged {
 		return "Tell the person: production is added and released from the project on Mate's projects page."
 	}
-	return "Tell the person to merge " + strings.Join(open, " and ") +
-		" first — once it lands, production is added and released from the project on Mate's projects page."
+	return "Tell the person: none of this Mate's work has reached the group's repository yet — deliver it by deploying the pair's stage half first, then production is added and released from the project on Mate's projects page."
 }
 
 // giteaStageNameFor suggests the stage half's hostname: appdev → appstage,

@@ -62,7 +62,7 @@ func TestLaunchProduction_WiredMateRefusesAndNamesTheProjectsPage(t *testing.T) 
 		t.Fatalf("an unwired Mate keeps zcp's own launch-production, got a refusal: %q", resultText(t, refusal))
 	}
 
-	t.Run("nothing open", func(t *testing.T) {
+	t.Run("nothing recorded at all", func(t *testing.T) {
 		t.Parallel()
 		stateDir := t.TempDir()
 		refusal := giteaLaunchProductionRefusal(context.Background(), nil, stateDir, true)
@@ -73,8 +73,8 @@ func TestLaunchProduction_WiredMateRefusesAndNamesTheProjectsPage(t *testing.T) 
 		if !strings.Contains(text, "wired_mate_production_is_the_groups") {
 			t.Fatalf("refusal carries no structured reason, got %q", text)
 		}
-		if !strings.Contains(text, "projects page") {
-			t.Fatalf("the next step names the projects page, got %q", text)
+		if !strings.Contains(text, "stage half first") {
+			t.Fatalf("nothing was ever delivered, so the next step says to deliver first, got %q", text)
 		}
 	})
 
@@ -97,9 +97,9 @@ func TestLaunchProduction_WiredMateRefusesAndNamesTheProjectsPage(t *testing.T) 
 	})
 
 	// TestLaunchProduction_WiredMateRefusesAndNamesTheProjectsPage's own
-	// "already merged" case sits in the function below: it needs a fake
-	// Gitea server and t.Setenv, which cannot share a process with this
-	// function's own t.Parallel() subtests.
+	// "already merged" and "closed without merging" cases sit in the two
+	// functions below: they need a fake Gitea server and t.Setenv, which
+	// cannot share a process with this function's own t.Parallel() subtests.
 }
 
 // TestLaunchProductionNextStep_AFreshlyMergedRequestIsNotNamedAsOpen is the
@@ -133,6 +133,62 @@ func TestLaunchProductionNextStep_AFreshlyMergedRequestIsNotNamedAsOpen(t *testi
 	if !strings.Contains(text, "projects page") {
 		t.Fatalf("a merged request means the code reached main — the next step names the projects page, got %q", text)
 	}
+	if strings.Contains(text, "stage half first") {
+		t.Fatalf("the code already reached main — the next step must not say to deliver it again, got %q", text)
+	}
+}
+
+// TestLaunchProductionNextStep_NoRequestOrClosedWithoutMergingSaysDeliverFirst
+// covers the other half of the same bug: PullRequest is also 0 when a pair
+// never pushed, has no repository yet, or had its request closed without
+// merging (clearGiteaPullRequest) — none of those mean "reached the group",
+// so the next step must not say "released from the projects page" for them.
+func TestLaunchProductionNextStep_NoRequestOrClosedWithoutMergingSaysDeliverFirst(t *testing.T) {
+	t.Run("never pushed, no request yet", func(t *testing.T) {
+		stateDir := t.TempDir()
+		if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+			Hostname: "appdev",
+			Gitea:    &workflow.GiteaRepoRef{FullName: "acme/appdev", Branch: "mate/bot"},
+		}); err != nil {
+			t.Fatalf("write service meta: %v", err)
+		}
+		text := resultText(t, giteaLaunchProductionRefusal(context.Background(), nil, stateDir, true))
+		if !strings.Contains(text, "stage half first") {
+			t.Fatalf("nothing was ever delivered — the next step says to deliver first, got %q", text)
+		}
+		if strings.Contains(text, "Tell the person: production is added and released") {
+			t.Fatalf("nothing has reached main — the next step must not claim it is merged, got %q", text)
+		}
+	})
+
+	t.Run("closed without merging", func(t *testing.T) {
+		fake := newFakeGitea()
+		fake.pullState = "closed"
+		fake.pullMerged = false
+		gitea := fake.start(t)
+
+		stateDir := t.TempDir()
+		if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+			Hostname: "appdev",
+			Gitea:    &workflow.GiteaRepoRef{FullName: "acme/appdev", Branch: "mate/bot", DefaultBranch: "main", PullRequest: 5},
+		}); err != nil {
+			t.Fatalf("write service meta: %v", err)
+		}
+		t.Setenv("GITEA_URL", gitea.URL)
+		t.Setenv("MATE_BROKER_URL", gitea.URL)
+		t.Setenv("GITEA_TOKEN", giteaBotToken)
+
+		text := resultText(t, giteaLaunchProductionRefusal(context.Background(), gitea.Client(), stateDir, true))
+		if strings.Contains(text, "#5") {
+			t.Fatalf("a request closed without merging is no longer open — must not be named, got %q", text)
+		}
+		if !strings.Contains(text, "stage half first") {
+			t.Fatalf("nothing of the closed request landed — the next step says to deliver first, got %q", text)
+		}
+		if strings.Contains(text, "Tell the person: production is added and released") {
+			t.Fatalf("nothing has reached main — the next step must not claim it is merged, got %q", text)
+		}
+	})
 }
 
 // TestAStageDeployOfAWiredPairDeliversItself is the owner's run of 2026-09-17:
