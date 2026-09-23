@@ -76,7 +76,7 @@ func TestExecuteLaunchMutation_StagesTokenBeforeCreate(t *testing.T) {
 			WithClientUserID("client-user-abc")
 		defer installMockAdminFactory(t, mockAdmin)()
 
-		result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+		result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 			publishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 		if err != nil {
 			t.Fatalf("handleLaunchProduction: %v", err)
@@ -103,7 +103,7 @@ func TestExecuteLaunchMutation_StagesTokenBeforeCreate(t *testing.T) {
 			WithImportError(errors.New("simulated create failure"))
 		defer installMockAdminFactory(t, mockAdmin)()
 
-		result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+		result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 			publishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 		if err != nil {
 			t.Fatalf("handleLaunchProduction: %v", err)
@@ -127,7 +127,7 @@ func TestExecuteLaunchMutation_StagesTokenBeforeCreate(t *testing.T) {
 		mockAdmin := platform.NewMockProjectAdminClient()
 		defer installMockAdminFactory(t, mockAdmin)()
 
-		result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+		result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 			publishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 		if err != nil {
 			t.Fatalf("handleLaunchProduction: %v", err)
@@ -180,7 +180,7 @@ func TestStageLaunchToken_IsSensitive(t *testing.T) {
 		LaunchKey:             sentinelLaunchKey,
 	}
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 		input, stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -230,7 +230,7 @@ func TestLaunchStaging_KeyNeverInState(t *testing.T) {
 		WithClientUserID("client-user-abc")
 	defer installMockAdminFactory(t, mockAdmin)()
 
-	_, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+	_, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 		WorkflowInput{
 			Workflow:              workflowLaunchProduction,
 			ProductionProjectName: "myapp-prod",
@@ -278,7 +278,7 @@ func TestExecuteExistingProjectMutation_StagesToken(t *testing.T) {
 			return targetMock, nil
 		})()
 
-		result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+		result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 			existingCompleteInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 		if err != nil {
 			t.Fatalf("handleLaunchProduction: %v", err)
@@ -302,7 +302,7 @@ func TestExecuteExistingProjectMutation_StagesToken(t *testing.T) {
 			return targetMock, nil
 		})()
 
-		result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+		result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 			existingCompleteInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 		if err != nil {
 			t.Fatalf("handleLaunchProduction: %v", err)

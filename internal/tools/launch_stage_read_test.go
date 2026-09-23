@@ -184,7 +184,7 @@ func TestPipelineResume_StagedToken(t *testing.T) {
 	m := platform.NewMockProjectAdminClient()
 	captured := captureAdminFactory(t, m)
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 		WorkflowInput{
 			Workflow:              workflowLaunchProduction,
 			ProductionProjectName: "myapp-prod",

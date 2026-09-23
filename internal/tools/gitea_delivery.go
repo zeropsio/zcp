@@ -66,26 +66,38 @@ func giteaPairPlanError(plan []workflow.BootstrapTarget, wired bool) *platform.P
 //
 // wired is the caller's own giteaWired() read — no second detector. nil
 // when the Mate is not wired, so the classic route is untouched.
-func giteaLaunchProductionRefusal(stateDir string, wired bool) *mcp.CallToolResult {
+func giteaLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, stateDir string, wired bool) *mcp.CallToolResult {
 	if !wired {
 		return nil
 	}
 	return launchFailedResponse(nil, topology.BlockerCategoryOther, "wired_mate_production_is_the_groups",
 		"This Mate is wired to its group's Gitea, where a group's production is a project the person adds "+
 			"from the projects page and runs only what a release tag lists — launch-production creates its "+
-			"own, ungrouped production project and has no case for that. "+giteaLaunchProductionNextStep(stateDir))
+			"own, ungrouped production project and has no case for that. "+giteaLaunchProductionNextStep(ctx, httpClient, stateDir))
 }
 
 // giteaLaunchProductionNextStep says what is true of THIS Mate's own pairs
-// rather than a lecture (§10.10 "What became of the request" — a pair
-// forgets a pull request's number the moment it lands, so only a still-OPEN
-// request is ever named here): tell the person to merge it first when one
-// is open, or straight to the projects page when nothing is.
-func giteaLaunchProductionNextStep(stateDir string) string {
+// rather than a lecture (§10.10 "What became of the request"). A pair's
+// recorded PullRequest number is only cleared when a reconcile pass reads
+// Gitea, and that pass is backoff-gated — so a request the person already
+// merged or closed on Gitea can still be sitting here as "open" the moment
+// this runs. Every non-zero PullRequest is freshened with giteaLearnLanding
+// (the same fresh-read helper deliverGiteaPair and giteaAbsorbBeforePush
+// use) before it is ever named, so "merge #N first" is never said about work
+// that already landed (measured live: `Mate: weatherdev (#4)` merged on
+// Gitea while this still said to merge it).
+func giteaLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, stateDir string) string {
+	wiring := ops.ReadGiteaWiring(giteaEnvLookup(mate.LiveEnvStorePath))
 	var open []string
 	if metas, err := workflow.ListServiceMetas(stateDir); err == nil {
 		for _, m := range metas {
-			if m != nil && m.Gitea != nil && m.Gitea.PullRequest != 0 {
+			if m == nil || m.Gitea == nil {
+				continue
+			}
+			if m.Gitea.PullRequest != 0 {
+				giteaLearnLanding(ctx, httpClient, stateDir, wiring, m)
+			}
+			if m.Gitea.PullRequest != 0 {
 				open = append(open, fmt.Sprintf("%s's pull request #%d on %s", m.Hostname, m.Gitea.PullRequest, m.Gitea.FullName))
 			}
 		}

@@ -58,14 +58,14 @@ func TestAWiredMatePlansOnlyStandardPairs(t *testing.T) {
 func TestLaunchProduction_WiredMateRefusesAndNamesTheProjectsPage(t *testing.T) {
 	t.Parallel()
 
-	if refusal := giteaLaunchProductionRefusal(t.TempDir(), false); refusal != nil {
+	if refusal := giteaLaunchProductionRefusal(context.Background(), nil, t.TempDir(), false); refusal != nil {
 		t.Fatalf("an unwired Mate keeps zcp's own launch-production, got a refusal: %q", resultText(t, refusal))
 	}
 
 	t.Run("nothing open", func(t *testing.T) {
 		t.Parallel()
 		stateDir := t.TempDir()
-		refusal := giteaLaunchProductionRefusal(stateDir, true)
+		refusal := giteaLaunchProductionRefusal(context.Background(), nil, stateDir, true)
 		if refusal == nil {
 			t.Fatal("a wired Mate refuses launch-production")
 		}
@@ -87,7 +87,7 @@ func TestLaunchProduction_WiredMateRefusesAndNamesTheProjectsPage(t *testing.T) 
 		}); err != nil {
 			t.Fatalf("write service meta: %v", err)
 		}
-		text := resultText(t, giteaLaunchProductionRefusal(stateDir, true))
+		text := resultText(t, giteaLaunchProductionRefusal(context.Background(), nil, stateDir, true))
 		if !strings.Contains(text, "#3") || !strings.Contains(text, "acme/appdev") {
 			t.Fatalf("the next step names the open pull request, got %q", text)
 		}
@@ -95,6 +95,44 @@ func TestLaunchProduction_WiredMateRefusesAndNamesTheProjectsPage(t *testing.T) 
 			t.Fatalf("the next step says to merge it, got %q", text)
 		}
 	})
+
+	// TestLaunchProduction_WiredMateRefusesAndNamesTheProjectsPage's own
+	// "already merged" case sits in the function below: it needs a fake
+	// Gitea server and t.Setenv, which cannot share a process with this
+	// function's own t.Parallel() subtests.
+}
+
+// TestLaunchProductionNextStep_AFreshlyMergedRequestIsNotNamedAsOpen is the
+// measured incident (`Mate: weatherdev (#4)` merged on Gitea, "merge #4
+// first" still said): a pair's recorded PullRequest is only cleared by the
+// backoff-gated reconcile pass, so the next-step message must freshen it
+// itself — giteaLearnLanding — before ever naming it as open.
+func TestLaunchProductionNextStep_AFreshlyMergedRequestIsNotNamedAsOpen(t *testing.T) {
+	fake := newFakeGitea()
+	fake.pullState = "closed"
+	fake.pullMerged = true
+	fake.pullMergeCommit = "squash-sha"
+	fake.pullMergeHead = "branch-tip-sha"
+	gitea := fake.start(t)
+
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "weatherdev",
+		Gitea:    &workflow.GiteaRepoRef{FullName: "acme/weatherdev", Branch: "mate/bot", DefaultBranch: "main", PullRequest: 4},
+	}); err != nil {
+		t.Fatalf("write service meta: %v", err)
+	}
+	t.Setenv("GITEA_URL", gitea.URL)
+	t.Setenv("MATE_BROKER_URL", gitea.URL)
+	t.Setenv("GITEA_TOKEN", giteaBotToken)
+
+	text := resultText(t, giteaLaunchProductionRefusal(context.Background(), gitea.Client(), stateDir, true))
+	if strings.Contains(text, "#4") || strings.Contains(text, "merge ") {
+		t.Fatalf("a request already merged on Gitea must not be named as open, got %q", text)
+	}
+	if !strings.Contains(text, "projects page") {
+		t.Fatalf("a merged request means the code reached main — the next step names the projects page, got %q", text)
+	}
 }
 
 // TestAStageDeployOfAWiredPairDeliversItself is the owner's run of 2026-09-17:

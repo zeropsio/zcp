@@ -124,7 +124,7 @@ func TestPublishGate_ConfirmLaunchPublishes(t *testing.T) {
 	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 	sourceClient := pLP3MockClient() // no delegation seeded -> falls back
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 		delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -157,7 +157,7 @@ func TestPublishGate_NeitherKeyNorConfirm_StaysReadOnly(t *testing.T) {
 	sourceClient := pLP3MockClient()
 
 	input := pLP3CompleteInput()
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 		input, stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -191,7 +191,7 @@ func TestPublishGate_ConfirmLaunchWithIncompleteExistingPair_Refused(t *testing.
 			input.ExistingProjectID = tt.existingProjectID
 			input.ExistingProdToken = tt.existingProdToken
 
-			result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+			result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 				input, stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 			if err != nil {
 				t.Fatalf("handleLaunchProduction: %v", err)
@@ -221,7 +221,7 @@ func TestPublishGate_ConfirmLaunchWithExistingPair_Refused(t *testing.T) {
 	input.ExistingProjectID = expectedExistingProjectID
 	input.ExistingProdToken = sentinelExistingProdToken
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 		input, stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -257,7 +257,7 @@ func TestReadyToLaunch_DelegationAvailable_AdvertisesPrimaryPath(t *testing.T) {
 	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 	client := pLP3MockClient().WithTokenDelegations(usableDelegation())
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil, nil,
 		pLP3CompleteInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -285,7 +285,7 @@ func TestReadyToLaunch_NoDelegation_ManualPathUnchanged(t *testing.T) {
 	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 	client := pLP3MockClient() // no delegation seeded
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil, nil,
 		pLP3CompleteInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -309,7 +309,7 @@ func TestReadyToLaunch_ListError_FailsOpenToManualPath(t *testing.T) {
 
 	var result *mcp.CallToolResult
 	stderrOut := captureStderr(t, func() {
-		r, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil,
+		r, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil, nil,
 			pLP3CompleteInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 		if err != nil {
 			t.Fatalf("handleLaunchProduction: %v", err)
@@ -351,7 +351,7 @@ func TestExecuteLaunchMutation_Precedence_LaunchKeyZeroDelegationCalls(t *testin
 	input.LaunchKey = sentinelLaunchKey
 	input.ConfirmLaunch = FlexBool(true) // even if also set, launchKey wins per D-5
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 		input, stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -376,7 +376,7 @@ func TestExecuteLaunchMutation_Ordering_GateRefusalSkipsMint(t *testing.T) {
 	stateDir := withTempState(t) // no installLaunchGateReady -> gate refuses
 	sourceClient := pLP3MockClient().WithTokenDelegations(usableDelegation())
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 		delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -403,7 +403,7 @@ func TestExecuteLaunchMutation_Delegated_HappyPath(t *testing.T) {
 	mockAdmin := happyMockAdmin()
 	defer installMockAdminFactory(t, mockAdmin)()
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 		delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -449,7 +449,7 @@ func TestExecuteLaunchMutation_Fallback_NoDelegation_NoErrorEnvelope(t *testing.
 	mockAdmin := happyMockAdmin()
 	defer installMockAdminFactory(t, mockAdmin)()
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 		delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -496,7 +496,7 @@ func TestExecuteLaunchMutation_ListError_CouldNotCheckWording(t *testing.T) {
 
 	var result *mcp.CallToolResult
 	stderrOut := captureStderr(t, func() {
-		r, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+		r, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 			delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 		if err != nil {
 			t.Fatalf("handleLaunchProduction: %v", err)
@@ -545,7 +545,7 @@ func TestExecuteLaunchMutation_ConfirmedEmpty_KeepsDefinitiveWording(t *testing.
 	sourceClient := pLP3MockClient() // no delegation seeded, list succeeds empty
 	defer installMockAdminFactory(t, happyMockAdmin())()
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 		delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -579,7 +579,7 @@ func TestExecuteLaunchMutation_MintOutcome_Indeterminate(t *testing.T) {
 
 	var result *mcp.CallToolResult
 	stderrOut := captureStderr(t, func() {
-		r, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+		r, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 			delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 		if err != nil {
 			t.Fatalf("handleLaunchProduction: %v", err)
@@ -638,7 +638,7 @@ func TestExecuteLaunchMutation_MintOutcome_RaceUnavailable(t *testing.T) {
 	mockAdmin := happyMockAdmin()
 	defer installMockAdminFactory(t, mockAdmin)()
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 		delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -673,7 +673,7 @@ func TestExecuteLaunchMutation_MintOutcome_EmptyToken(t *testing.T) {
 	mockAdmin := happyMockAdmin()
 	defer installMockAdminFactory(t, mockAdmin)()
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 		delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -717,7 +717,7 @@ func TestExecuteLaunchMutation_MintOutcome_AdminFactoryFailure(t *testing.T) {
 	})
 	defer restore()
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 		delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -786,7 +786,7 @@ func TestExecuteLaunchMutation_StagedRetry_AdminFactoryRejectsStagedToken(t *tes
 
 	var text string
 	stderrOut := captureStderr(t, func() {
-		result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+		result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 			delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 		if err != nil {
 			t.Fatalf("handleLaunchProduction: %v", err)
@@ -848,7 +848,7 @@ func TestExecuteLaunchMutation_MintOutcome_StagingFailure(t *testing.T) {
 
 	var result *mcp.CallToolResult
 	stderrOut := captureStderr(t, func() {
-		r, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+		r, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 			delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 		if err != nil {
 			t.Fatalf("handleLaunchProduction: %v", err)
@@ -1003,7 +1003,7 @@ func TestExecuteLaunchMutation_AbortStateForensics(t *testing.T) {
 			sourceClient := tc.setup(t)
 
 			_ = captureStderr(t, func() {
-				if _, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+				if _, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 					delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), ""); err != nil {
 					t.Fatalf("handleLaunchProduction: %v", err)
 				}
@@ -1042,7 +1042,7 @@ func TestExecuteLaunchMutation_StagingFailureThenReset_ReachesSecretDelete(t *te
 		WithMintedToken(platform.MintedToken{Token: sentinelMintedToken, TokenID: "minted-id"}).
 		WithError("CreateServiceEnvVar", errors.New("simulated env write failure"))
 	restore := installMockAdminFactory(t, platform.NewMockProjectAdminClient())
-	if _, _, err := handleLaunchProduction(context.Background(), "source-project-id", failingClient, nil,
+	if _, _, err := handleLaunchProduction(context.Background(), "source-project-id", failingClient, nil, nil,
 		delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), ""); err != nil {
 		t.Fatalf("staging-failure mutation: %v", err)
 	}
@@ -1111,7 +1111,7 @@ func TestExecuteLaunchMutation_MintOutcome_PreMintStateWriteFailure(t *testing.T
 	mockAdmin := happyMockAdmin()
 	defer installMockAdminFactory(t, mockAdmin)()
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 		delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -1153,7 +1153,7 @@ func TestExecuteLaunchMutation_Delegated_SentinelNeverLeaks_Success(t *testing.T
 
 	var text string
 	stderrOut := captureStderr(t, func() {
-		result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+		result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 			delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 		if err != nil {
 			t.Fatalf("handleLaunchProduction: %v", err)
@@ -1187,7 +1187,7 @@ func TestExecuteLaunchMutation_Delegated_SentinelNeverLeaks_CreateFailure(t *tes
 
 	var text string
 	stderrOut := captureStderr(t, func() {
-		result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+		result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 			delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 		if err != nil {
 			t.Fatalf("handleLaunchProduction: %v", err)
@@ -1229,7 +1229,7 @@ func TestExecuteLaunchMutation_StageReadError_BlocksBeforeMint(t *testing.T) {
 	mockAdmin := happyMockAdmin()
 	defer installMockAdminFactory(t, mockAdmin)()
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 		delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -1273,7 +1273,7 @@ func TestExecuteLaunchMutation_DelegatedRetry_UsesStagedToken_ZeroDelegationCall
 
 	failingAdmin := platform.NewMockProjectAdminClient().WithImportError(errors.New("simulated create failure"))
 	restore := installMockAdminFactory(t, failingAdmin)
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 		delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 	restore()
 	if err != nil {
@@ -1296,7 +1296,7 @@ func TestExecuteLaunchMutation_DelegatedRetry_UsesStagedToken_ZeroDelegationCall
 	mintBefore := sourceClient.CallCounts["MintDelegatedLaunchToken"]
 	listBefore := sourceClient.CallCounts["ListOwnTokenDelegations"]
 
-	result2, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+	result2, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 		delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 	if err != nil {
 		t.Fatalf("retry call: %v", err)
@@ -1351,7 +1351,7 @@ func TestExecuteLaunchMutation_DelegatedRetry_StaleLaunching_UsesStagedToken(t *
 	mockAdmin := happyMockAdmin()
 	defer installMockAdminFactory(t, mockAdmin)()
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
 		delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
