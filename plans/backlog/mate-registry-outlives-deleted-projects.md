@@ -27,14 +27,29 @@ sees — and needs its own design.
   still ACTIVE with every token generation they hold. The broker reads bot tokens only for registered
   Mates, so it will never revoke them; deleting them needs Gitea site-admin write.
 
-## Sketch
-- Broker: a Mate whose project is confirmed gone (Zerops `projectNotFound`) is pruned from the
-  registry by the broker itself, and its bot is deactivated with its tokens revoked; destructive
-  actions above the cap are applied per group (or the cap is per group), so one dead group never
-  blocks the others; the plan is logged (not just counts).
-- Client: deleting a project from Mate removes its registry entries through the tag writer.
-- A broker 502 is returned with CORS headers (today the browser reports a CORS error instead of the
-  cause).
+## Shipped (gitea-mate main `67c11ba`, 2026-09-24)
+- The destructive cap holds one group, not the org: a group over it applies nothing and is reported
+  by name; every other group's actions apply. One bot's superseded-generation cleanup is one unit.
+- A registry entry whose project is missing from the org search and answers `projectNotFound` on two
+  lookups at least one interval apart is excluded before planning, and its bot `mate-{id}` is retired
+  (tokens deleted, login prohibited). Any other answer is not dead. Nothing is archived; no tag is
+  written.
+- A Mate's bot token is minted only after the plain variables were written, and deleted again on a
+  definite refusal of the token write, so a refused delivery no longer adds a generation per pass.
+  Older generations keep the full grace from when the held one replaced them.
+- The person-token route answers 503 with CORS instead of a 502 (`3bc69ab`).
+
+## Still open
+- `ReadOrg` callers outside the rights loop (runner reconcile, `server/mate.go`, person-token rights)
+  read the unfiltered registry, so a dead group's runner and environments are still served.
+- Uniqueness is judged before liveness: a dead production plus a new one is a `registry.Parse`
+  problem, and a dead group's slug stays taken.
+- Bots whose registry tags were removed by hand (the 7 KRLS leftovers) are never swept.
+- The broker's own token answering a deleted project is unmeasured; if it gets 403 instead of
+  `projectNotFound`, nothing is detected (fail closed; the per-group cap still protects the org).
+- Client: deleting a project from Mate does not touch its registry entries. Tags stay as tombstones by
+  design; pruning `mate:gn:` frees the slug and orphans the group's bots, so it must never be pruned
+  blindly.
 
 ## Refs
 - Record of the manual unblock (local, not committed): the mate repo's
