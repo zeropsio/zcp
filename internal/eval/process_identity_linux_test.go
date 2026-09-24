@@ -20,6 +20,11 @@ import (
 // short-lived child with an explicit Env.
 func TestProcessIdentity_LinuxReadsProcOfCapturedChild(t *testing.T) {
 	const windowID = "window-under-test"
+	// The trailing builtin keeps the shell from exec'ing sleep in its own
+	// place (dash does that for a script's last command), so the pid the test
+	// reads stays the shell: its /proc/<pid>/exe is the candidate binary and
+	// no exec runs while /proc/<pid>/environ is read.
+	const childScript = "sleep 30; :"
 
 	shPath, err := exec.LookPath("sh")
 	if err != nil {
@@ -31,7 +36,7 @@ func TestProcessIdentity_LinuxReadsProcOfCapturedChild(t *testing.T) {
 	}
 
 	t.Run("child with the window env is counted", func(t *testing.T) {
-		cmd := exec.CommandContext(t.Context(), shPath, "-c", "sleep 30")
+		cmd := exec.CommandContext(t.Context(), shPath, "-c", childScript)
 		cmd.Env = append(os.Environ(),
 			"ZCP_CAPTURE_SESSION_ID="+windowID,
 			"projectId=proj-linux-test",
@@ -62,7 +67,7 @@ func TestProcessIdentity_LinuxReadsProcOfCapturedChild(t *testing.T) {
 	})
 
 	t.Run("child without the window env is unobservable", func(t *testing.T) {
-		cmd := exec.CommandContext(t.Context(), shPath, "-c", "sleep 30")
+		cmd := exec.CommandContext(t.Context(), shPath, "-c", childScript)
 		cmd.Env = os.Environ()
 		if err := cmd.Start(); err != nil {
 			t.Fatalf("start child: %v", err)
@@ -83,7 +88,7 @@ func TestProcessIdentity_LinuxReadsProcOfCapturedChild(t *testing.T) {
 		if err := os.MkdirAll(mcpDir, 0o700); err != nil {
 			t.Fatalf("mkdir mcp dir: %v", err)
 		}
-		cmd := exec.CommandContext(t.Context(), shPath, "-c", "sleep 30")
+		cmd := exec.CommandContext(t.Context(), shPath, "-c", childScript)
 		cmd.Env = append(os.Environ(), "ZCP_CAPTURE_SESSION_ID="+windowID, "projectId=proj-linux-test")
 		if err := cmd.Start(); err != nil {
 			t.Fatalf("start child: %v", err)
