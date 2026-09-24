@@ -506,7 +506,7 @@ func confirmGitPushSetupLocal(
 	}
 	if remoteState != nil {
 		body["remote"] = remoteState
-		if warn := gitPushRemoteStateWarning(remoteState); warn != "" {
+		if warn := gitPushRemoteStateWarning(remoteState, false); warn != "" {
 			body["remoteStateWarning"] = warn
 		}
 	}
@@ -1008,7 +1008,7 @@ func gitPushContainerConfiguredResponse(
 	}
 	if remoteState != nil {
 		resp["remote"] = remoteState
-		if warn := gitPushRemoteStateWarning(remoteState); warn != "" {
+		if warn := gitPushRemoteStateWarning(remoteState, topology.ClassifyGitHost(meta.RemoteURL, giteaURL) == topology.GitHostGitea); warn != "" {
 			resp["remoteStateWarning"] = warn
 		}
 	}

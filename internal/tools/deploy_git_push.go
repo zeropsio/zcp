@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -305,6 +306,63 @@ func notTheProtectedBase(meta *workflow.ServiceMeta, branch string) string {
 	return meta.Gitea.Branch
 }
 
+// giteaPushGuard decides whether a pair whose remote is this Mate's Gitea may
+// push. A pair not yet recorded as wired — its wiring stopped half-way, with
+// the remote stamped and no branch — has its wiring retried once, here, and is
+// refused while it stays incomplete: pushing it would aim at the protected
+// base (test - Gita, 2026-09-24). A refusal the retry cannot change is told
+// its remedy, after which the next push wires the pair. A remote on this Gitea
+// that is not the pair's repository is the user's own and pushes as one,
+// without the broker being asked — it would create the pair's repository
+// (giteaRemoteIsThePairs). A wired pair asked to push the base itself is
+// refused and told its own branch. Nil when the push may go ahead.
+func giteaPushGuard(
+	ctx context.Context,
+	client platform.Client,
+	httpClient ops.HTTPDoer,
+	sshDeployer ops.SSHDeployer,
+	rt runtime.Info,
+	stateDir, hostname, remote, askedBranch string,
+) *platform.PlatformError {
+	meta, _ := workflow.FindServiceMeta(stateDir, hostname)
+	if meta == nil {
+		return nil
+	}
+	if meta.Gitea == nil {
+		metas, _ := workflow.ListServiceMetas(stateDir)
+		giteaURL := ops.ReadGiteaWiring(giteaEnvLookup(mate.LiveEnvStorePath)).GiteaURL
+		if !giteaRemoteIsThePairs(remote, giteaURL, hostname, knownGiteaOrg(metas)) {
+			return nil
+		}
+		attempt := rewireGiteaPair(ctx, client, httpClient, sshDeployer, rt, stateDir, mate.LiveEnvStorePath, meta)
+		if attempt.usersOwn {
+			return nil
+		}
+		if !attempt.wired {
+			suggestion := "Do not push to main or force-push. Deploy the pair directly (strategy \"ssh\") to run the code; every git-push retries the wiring, and once it completes the push goes to this Mate's own branch and its pull request."
+			if attempt.remedy != "" {
+				suggestion = attempt.remedy + " Do not push to main or force-push; the git-push after the remedy wires the pair and goes to this Mate's own branch and its pull request."
+			}
+			return platform.NewPlatformError(
+				platform.ErrPrerequisiteMissing,
+				fmt.Sprintf("git-push from %s did not run: wiring incomplete — %s Nothing was pushed; the repository's main is protected and takes no direct push.", hostname, attempt.line),
+				suggestion,
+			)
+		}
+		if meta, _ = workflow.FindServiceMeta(stateDir, hostname); meta == nil || meta.Gitea == nil {
+			return nil
+		}
+	}
+	if base := giteaBaseOf(meta); askedBranch == base {
+		return platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("git-push from %s to %q did not run: %q is the protected base of %s and takes no direct push.", hostname, base, base, meta.Gitea.FullName),
+			fmt.Sprintf("Push without a branch, or with branch=%q — this Mate's own branch; the person lands it on %q through the pull request.", meta.Gitea.Branch, base),
+		)
+	}
+	return nil
+}
+
 // gitPushEnvRefPreflight validates the run.envVariables refs of the named
 // setup block in yamlContent against live platform state. Returns a
 // blocking error response + the failure detail when a ${peer_var} ref is
@@ -475,9 +533,18 @@ func handleGitPush(
 	if workingDir == "" {
 		workingDir = "/var/www"
 	}
-	branch := resolveTrackedBranch(stateDir, input.TargetService, input.Branch)
-
 	effectiveRemote := resolveEffectiveRemote(stateDir, input.TargetService, input.RemoteURL)
+
+	// A pair on this Mate's Gitea pushes only once it is wired, and never to
+	// the protected base — refused here, before git runs, so a rejection can
+	// never read as a reason to force-push over it.
+	if giteaRemoteOfThisMate(effectiveRemote) {
+		if refusal := giteaPushGuard(ctx, client, httpClient, sshDeployer, rt, stateDir, hostname, effectiveRemote, input.Branch); refusal != nil {
+			recordAttempt(refusal.Message, topology.FailureClassConfig)
+			return convertError(refusal, WithRecoveryStatus()), nil, nil
+		}
+	}
+	branch := resolveTrackedBranch(stateDir, input.TargetService, input.Branch)
 
 	// Pre-flight: the container must have a git repo with at least one
 	// commit at workingDir. A git push with nothing to transmit is either
@@ -696,7 +763,7 @@ func handleGitPush(
 			rejection := classifyGitPushNonFastForward(sshGitRunner(ctx, sshDeployer, hostname, workingDir), effectiveRemote, branch)
 			recordAttempt(fmt.Sprintf("git-push rejected non-fast-forward: %s", detail), topology.FailureClassConfig)
 			return convertError(
-				newGitPushNonFastForwardError(hostname, detail),
+				newGitPushNonFastForwardError(hostname, detail, effectiveRemote),
 				WithFailureClassification(classification),
 				WithGitPushRejection(rejection),
 				WithRecoveryStatus(),

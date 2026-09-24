@@ -1845,6 +1845,9 @@ func TestDeployTool_GitPush_NoFutureBuild_NeverRecordsDanglingAttempt(t *testing
 		name      string
 		remoteURL string
 		setup     func(t *testing.T)
+		// wired records the pair's Gitea repository: a push to this Mate's
+		// Gitea runs only for a wired pair.
+		wired bool
 	}{
 		{
 			name:      "gitea remote of this Mate",
@@ -1855,6 +1858,7 @@ func TestDeployTool_GitPush_NoFutureBuild_NeverRecordsDanglingAttempt(t *testing
 				t.Setenv("MATE_BROKER_URL", "https://gitea.example")
 				t.Setenv("GITEA_TOKEN", "bot-token")
 			},
+			wired: true,
 		},
 		{
 			name:      "no build integration wired on a user remote",
@@ -1869,6 +1873,14 @@ func TestDeployTool_GitPush_NoFutureBuild_NeverRecordsDanglingAttempt(t *testing
 			setupAdoptedService(t, stateDir, "appdev", "")
 			markGitPushConfigured(t, stateDir, "appdev")
 			tt.setup(t)
+			if tt.wired {
+				if err := workflow.UpsertServiceMeta(stateDir, "appdev", func(m *workflow.ServiceMeta, _ bool) error {
+					m.Gitea = &workflow.GiteaRepoRef{FullName: "acme/appdev", Branch: "mate/mate-p1", DefaultBranch: "main"}
+					return nil
+				}); err != nil {
+					t.Fatalf("UpsertServiceMeta: %v", err)
+				}
+			}
 
 			ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "ship it", []string{"appdev"})
 			if err := workflow.SaveWorkSession(stateDir, ws); err != nil {

@@ -367,7 +367,7 @@ func handleLocalGitPushFailure(
 		rejection := classifyGitPushNonFastForward(localGitRunner(ctx, workingDir), effectiveRemote, branch)
 		record(fmt.Sprintf("git push rejected non-fast-forward: %s", detail), topology.FailureClassConfig)
 		return convertError(
-			newGitPushNonFastForwardError(hostname, detail),
+			newGitPushNonFastForwardError(hostname, detail, effectiveRemote),
 			WithFailureClassification(classification),
 			WithGitPushRejection(rejection),
 			WithRecoveryStatus(),

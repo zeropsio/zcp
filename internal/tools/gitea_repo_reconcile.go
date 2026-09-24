@@ -138,16 +138,11 @@ func reconcileGiteaRepositories(
 		// repository yet; it has one and no pull request; or it has both, and
 		// the only open question is what became of the request.
 		var outcome string
-		attempts := state.Attempts + 1
+		var wired bool
 		switch {
 		case giteaPairNeedsRepository(m, wiring.GiteaURL, org):
-			var wired bool
-			outcome, wired = reconcileOneGiteaPair(ctx, client, httpClient, sshDeployer, rt, stateDir, wiring, m)
-			// A pair that just got wired starts its backoff afresh: the
-			// failures that grew it are over, and its pull request is next.
-			if wired {
-				attempts = 1
-			}
+			attempt := reconcileOneGiteaPair(ctx, client, httpClient, sshDeployer, rt, stateDir, wiring, m)
+			outcome, wired = attempt.line, attempt.wired
 		case giteaPairNeedsPullRequest(m):
 			outcome = reconcileGiteaPairPullRequest(ctx, httpClient, stateDir, wiring, m)
 		default:
@@ -156,17 +151,48 @@ func reconcileGiteaRepositories(
 		// The attempt is recorded even when it had nothing to say: a wired
 		// pair that has not pushed yet is the ORDINARY state, and without the
 		// backoff every agent tool call would ask Gitea about its branch.
-		writeGiteaPairState(stateDir, m.Hostname, giteaPairState{
-			Attempts:      attempts,
-			LastAttemptAt: now.Format(time.RFC3339),
-			LastOutcome:   outcome,
-		})
+		recordGiteaAttempt(stateDir, m.Hostname, state, now, outcome, wired)
 		if outcome == "" {
 			continue
 		}
 		report = append(report, m.Hostname+": "+outcome)
 	}
 	return report
+}
+
+// rewireGiteaPair runs the wiring for one pair now, outside the backoff, and
+// records the attempt the way a pass does. It is the trigger a session has
+// after bootstrap: a git-push of a pair whose remote is this Mate's Gitea but
+// which was never recorded as wired (handleGitPush).
+func rewireGiteaPair(
+	ctx context.Context,
+	client platform.Client,
+	httpClient ops.HTTPDoer,
+	sshDeployer ops.SSHDeployer,
+	rt runtime.Info,
+	stateDir string,
+	liveEnvPath string,
+	m *workflow.ServiceMeta,
+) giteaWiringOutcome {
+	wiring := ops.ReadGiteaWiring(giteaEnvLookup(liveEnvPath))
+	attempt := reconcileOneGiteaPair(ctx, client, httpClient, sshDeployer, rt, stateDir, wiring, m)
+	recordGiteaAttempt(stateDir, m.Hostname, readGiteaPairState(stateDir, m.Hostname), time.Now().UTC(), attempt.line, attempt.wired)
+	return attempt
+}
+
+// recordGiteaAttempt writes one attempt onto the pair's backoff record. A
+// pass that wired the pair starts the backoff afresh: the failures that grew
+// it are over, and its pull request is what comes next.
+func recordGiteaAttempt(stateDir, hostname string, prior giteaPairState, at time.Time, outcome string, wired bool) {
+	attempts := prior.Attempts + 1
+	if wired {
+		attempts = 1
+	}
+	writeGiteaPairState(stateDir, hostname, giteaPairState{
+		Attempts:      attempts,
+		LastAttemptAt: at.Format(time.RFC3339),
+		LastOutcome:   outcome,
+	})
 }
 
 // giteaPairNeedsRepository reports whether this pair still has something to
@@ -251,10 +277,23 @@ func giteaPairNeedsPullRequestOutcome(m *workflow.ServiceMeta) bool {
 	return m != nil && m.Gitea != nil && m.Gitea.FullName != "" && m.Gitea.PullRequest != 0
 }
 
-// reconcileOneGiteaPair does the work for one pair and returns a report line
-// ("" when there is nothing worth saying) and whether the pair ended wired —
-// its meta.Gitea recorded. Never returns an error: every outcome is
-// reportable.
+// giteaWiringOutcome is what one wiring attempt for a pair ended in.
+type giteaWiringOutcome struct {
+	// line is the report line, "" when there is nothing worth saying.
+	line string
+	// wired: the pair's meta.Gitea is recorded.
+	wired bool
+	// remedy is the one thing to do before another attempt can wire the pair
+	// — a refusal of the branch step no retry changes; "" when a retry is
+	// enough.
+	remedy string
+	// usersOwn: the pair's remote is another repository than the one the
+	// broker answers with — the user's own, not a wiring to complete.
+	usersOwn bool
+}
+
+// reconcileOneGiteaPair does the work for one pair. Never returns an error:
+// every outcome is reportable.
 func reconcileOneGiteaPair(
 	ctx context.Context,
 	client platform.Client,
@@ -264,34 +303,37 @@ func reconcileOneGiteaPair(
 	stateDir string,
 	wiring ops.GiteaWiring,
 	m *workflow.ServiceMeta,
-) (string, bool) {
+) giteaWiringOutcome {
 	if !wiring.Ready() {
-		return "waiting for Gitea (" + strings.Join(wiring.MissingKeys(), ", ") + " not on this service yet)", false
+		return giteaWiringOutcome{line: "waiting for Gitea (" + strings.Join(wiring.MissingKeys(), ", ") + " not on this service yet)"}
 	}
 
 	// Who this Mate is on that Gitea. The login names the branch, so it has
 	// to be known before anything is pushed.
 	identity, identityErr := ops.DeriveGiteaIdentity(ctx, httpClient, wiring.GiteaURL, wiring.Token)
 	if identityErr != nil {
-		return fmt.Sprintf("waiting for Gitea (could not read this Mate's bot identity: %v)", identityErr), false
+		return giteaWiringOutcome{line: fmt.Sprintf("waiting for Gitea (could not read this Mate's bot identity: %v)", identityErr)}
 	}
 	branch := ops.GiteaMateBranch(identity.Name)
 
 	repo, repoErr := ops.RequestMateRepository(ctx, httpClient, wiring.BrokerURL, wiring.Token, m.Hostname)
 	switch {
 	case errors.Is(repoErr, ops.ErrRepositoryTaken):
-		return fmt.Sprintf("the broker refuses a repository named %q — it exists in the group's org and this Mate is not a collaborator on it. Rename the service, or have someone add this Mate's bot to that repository.", m.Hostname), false
+		return giteaWiringOutcome{line: fmt.Sprintf("the broker refuses a repository named %q — it exists in the group's org and this Mate is not a collaborator on it. Rename the service, or have someone add this Mate's bot to that repository.", m.Hostname)}
 	case errors.Is(repoErr, ops.ErrNotRegistered):
-		return "the broker does not know this project yet (not a registered Mate) — it will once the group is registered; nothing else is blocked.", false
+		return giteaWiringOutcome{line: "the broker does not know this project yet (not a registered Mate) — it will once the group is registered; nothing else is blocked."}
 	case repoErr != nil:
-		return fmt.Sprintf("could not reach the broker for a repository (%v) — retrying on the next pass.", repoErr), false
+		return giteaWiringOutcome{line: fmt.Sprintf("could not reach the broker for a repository (%v) — retrying on the next pass.", repoErr)}
 	}
 	// A remote on this Gitea counts as a wiring that stopped half-way only
 	// when it is THIS pair's repository; any other one the user chose, and
 	// git-push-setup would rewrite it.
 	if m.RemoteURL != "" && !sameGitRepository(m.RemoteURL, repo.CloneURL) {
-		return fmt.Sprintf("%s already pushes to %s, not to its repository %s — that remote is left as the user's own.",
-			m.Hostname, topology.RedactRepoURLCredentials(m.RemoteURL), repo.FullName), false
+		return giteaWiringOutcome{
+			line: fmt.Sprintf("%s already pushes to %s, not to its repository %s — that remote is left as the user's own.",
+				m.Hostname, topology.RedactRepoURLCredentials(m.RemoteURL), repo.FullName),
+			usersOwn: true,
+		}
 	}
 
 	// git-push-setup owns the credential, the probe, the origin sync and the
@@ -305,7 +347,7 @@ func reconcileOneGiteaPair(
 		m,
 	)
 	if result != nil && result.IsError {
-		return fmt.Sprintf("repository %s is ready but wiring git-push to it failed — retrying on the next pass.", repo.FullName), false
+		return giteaWiringOutcome{line: fmt.Sprintf("repository %s is ready but wiring git-push to it failed — retrying on the next pass.", repo.FullName)}
 	}
 
 	base := repo.DefaultBranch
@@ -326,9 +368,12 @@ func reconcileOneGiteaPair(
 		prefix := fmt.Sprintf("repository %s is ready, but %s could not be put on %q branched off %q", repo.FullName, m.Hostname, branch, base)
 		refusal := ops.GiteaBranchRefusal(string(out))
 		if remedy := ops.GiteaBranchRefusalRemedy(refusal, branch, base); remedy != "" {
-			return fmt.Sprintf("%s (%s): in %s on %s, %s", prefix, refusal, giteaPairWorkingDir, m.Hostname, remedy), false
+			return giteaWiringOutcome{
+				line:   fmt.Sprintf("%s (%s): in %s on %s, %s", prefix, refusal, giteaPairWorkingDir, m.Hostname, remedy),
+				remedy: fmt.Sprintf("In %s on %s, %s", giteaPairWorkingDir, m.Hostname, remedy),
+			}
 		}
-		return fmt.Sprintf("%s (%v) — a push would have nothing to send, or nothing Gitea could merge; retrying on the next pass.", prefix, branchErr), false
+		return giteaWiringOutcome{line: fmt.Sprintf("%s (%v) — a push would have nothing to send, or nothing Gitea could merge; retrying on the next pass.", prefix, branchErr)}
 	}
 	if err := workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
 		if !existed {
@@ -342,7 +387,7 @@ func reconcileOneGiteaPair(
 		}
 		return nil
 	}); err != nil {
-		return fmt.Sprintf("repository %s is wired but recording it failed (%v) — the next pass re-reads it.", repo.FullName, err), false
+		return giteaWiringOutcome{line: fmt.Sprintf("repository %s is wired but recording it failed (%v) — the next pass re-reads it.", repo.FullName, err)}
 	}
 
 	// A3: the workflow that ships this repository's code to the group's stage
@@ -372,7 +417,7 @@ func reconcileOneGiteaPair(
 		}
 		line += fmt.Sprintf("; %s pull request #%d", verb, ref.Number)
 	}
-	return line, true
+	return giteaWiringOutcome{line: line, wired: true}
 }
 
 // giteaAttemptDue applies the backoff: the first pass always runs, and each

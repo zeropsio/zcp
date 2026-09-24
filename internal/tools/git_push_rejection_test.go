@@ -319,3 +319,30 @@ func TestConvertError_NonFastForward(t *testing.T) {
 		t.Errorf("suggestion should state zcp never force-pushes on its own: %s", wire.Suggestion)
 	}
 }
+
+// TestClassifyGitPushNonFastForward_AGiteaPairIsNeverOfferedAForce: every
+// branch a Mate pushes on its group's Gitea is shared through a pull request,
+// and its base is protected, so a rejection there offers the two ways to take
+// the remote in and never replace-remote.
+func TestClassifyGitPushNonFastForward_AGiteaPairIsNeverOfferedAForce(t *testing.T) {
+	t.Setenv("GITEA_URL", "https://git.example")
+	t.Setenv("MATE_BROKER_URL", "https://broker.example")
+	t.Setenv("GITEA_TOKEN", giteaBotToken)
+	run := func(...string) (string, error) { return "", errFakeExit1 }
+
+	gitea := classifyGitPushNonFastForward(run, "https://git.example/acme/appdev.git", "mate/mate-p1")
+	for _, opt := range gitea.Next {
+		if opt.Name == "replace-remote" || strings.Contains(opt.Command, "--force") {
+			t.Errorf("a Gitea pair was offered %q: %s", opt.Name, opt.Command)
+		}
+	}
+	if len(gitea.Next) != 2 {
+		t.Errorf("want rebase and merge, got %+v", gitea.Next)
+	}
+	if suggestion := newGitPushNonFastForwardError("appdev", "rejected", "https://git.example/acme/appdev.git").Suggestion; strings.Contains(suggestion, "replace-remote") {
+		t.Errorf("a Gitea pair's suggestion must not name replace-remote: %s", suggestion)
+	}
+	if other := classifyGitPushNonFastForward(run, "https://github.com/example/repo", "main"); len(other.Next) != 3 {
+		t.Errorf("a remote of the user's own keeps all three options, got %+v", other.Next)
+	}
+}

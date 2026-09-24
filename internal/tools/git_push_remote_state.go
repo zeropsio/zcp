@@ -42,21 +42,23 @@ func probeGitPushRemoteState(run ops.GitRunner, ref string) *gitPushRemoteStateW
 	return &gitPushRemoteStateWire{Ref: ref, State: string(state)}
 }
 
-// gitPushRemoteStateWarning names the three GIT_PUSH_NON_FAST_FORWARD
-// options up front when the probe-time state already carries non-fast-
-// forward risk (ahead/diverged/unrelated) — the agent resolves it BEFORE
-// the first push. zcp still never runs any of the three itself.
-func gitPushRemoteStateWarning(s *gitPushRemoteStateWire) string {
+// gitPushRemoteStateWarning names the GIT_PUSH_NON_FAST_FORWARD options up
+// front when the probe-time state already carries non-fast-forward risk
+// (ahead/diverged/unrelated) — the agent resolves it BEFORE the first push.
+// giteaRemote is a remote on this Mate's Gitea, which is offered the same
+// options a rejection there is: never replace-remote. zcp still never runs
+// any of them itself.
+func gitPushRemoteStateWarning(s *gitPushRemoteStateWire, giteaRemote bool) string {
 	if s == nil || !ops.RemoteRefState(s.State).NeedsPushDecision() {
 		return ""
 	}
-	opts := buildGitPushRejectionOptions(s.Ref, 0)
+	opts := buildGitPushRejectionOptions(s.Ref, 0, giteaRemote)
 	names := make([]string, 0, len(opts))
 	for _, o := range opts {
 		names = append(names, fmt.Sprintf("%s (%s)", o.Name, o.Command))
 	}
 	return fmt.Sprintf(
-		"The tracked ref %q is already %q relative to this checkout — the FIRST push would be rejected non-fast-forward unless you resolve it first. %s Three options, none run automatically: %s.",
-		s.Ref, s.State, gitPushRejectionMessage, strings.Join(names, "; "),
+		"The tracked ref %q is already %q relative to this checkout — the FIRST push would be rejected non-fast-forward unless you resolve it first. %s Options, none run automatically: %s.",
+		s.Ref, s.State, gitPushRejectionSuggestion(giteaRemote), strings.Join(names, "; "),
 	)
 }
