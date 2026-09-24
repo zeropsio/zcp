@@ -599,7 +599,7 @@ func TestReconcileGiteaRepositories_PutsThePairOnItsBranch(t *testing.T) {
 	)
 
 	joined := strings.Join(ssh.commands, "\n")
-	for _, want := range []string{"checkout", "mate/mate-p1", "fetch --no-tags origin 'main'", "rebase -X theirs FETCH_HEAD"} {
+	for _, want := range []string{"mate/mate-p1", "fetch --no-tags origin 'main'", `commit-tree "HEAD^{tree}" -p HEAD -p FETCH_HEAD`} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("A1 must branch the push source off the protected base (missing %q); commands were:\n%s", want, joined)
 		}
