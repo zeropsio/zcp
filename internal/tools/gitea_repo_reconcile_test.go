@@ -6,6 +6,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -603,5 +605,296 @@ func TestReconcileGiteaRepositories_PutsThePairOnItsBranch(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("A1 must branch the push source off the protected base (missing %q); commands were:\n%s", want, joined)
 		}
+	}
+}
+
+// elapseGiteaBackoff moves the pair's last attempt an hour back, so the next
+// pass is due whatever the attempt count.
+func elapseGiteaBackoff(t *testing.T, stateDir, hostname string) {
+	t.Helper()
+	state := readGiteaPairState(stateDir, hostname)
+	state.LastAttemptAt = time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	writeGiteaPairState(stateDir, hostname, state)
+}
+
+// giteaBranchStepSSH answers like giteaReconcileSSH, except that the branch
+// step refuses with *refusal while it is set — the way a recipe pair's README
+// mode clash failed it on a live Mate (test - Gita, 2026-09-24).
+func giteaBranchStepSSH(refusal *string) *containerSSHStub {
+	return &containerSSHStub{
+		dispatch: func(cmd string) ([]byte, error) {
+			if strings.Contains(cmd, "cur_email=$(git config user.email)") {
+				return []byte("ZCP_EMAIL_SEEDED\nZCP_NAME_SEEDED\n"), nil
+			}
+			if *refusal != "" && strings.Contains(cmd, `commit-tree "HEAD^{tree}"`) {
+				return []byte("ZCP_BRANCH_REFUSED:" + *refusal + "\n"), errors.New("exit status 5")
+			}
+			return []byte("ok"), nil
+		},
+	}
+}
+
+// TestReconcileGiteaRepositories_RetriesAPairWhoseBranchStepFailed is D2: the
+// git-push-setup stamp lands before the branch step, so a failed branch step
+// left a Gitea remote with no record — which the next pass read as a remote
+// the user chose, and never touched again. A productive pass then starts the
+// backoff afresh.
+func TestReconcileGiteaRepositories_RetriesAPairWhoseBranchStepFailed(t *testing.T) {
+	stateDir := t.TempDir()
+	writeGiteaPairMeta(t, stateDir)
+	fake := newFakeGitea()
+	srv := fake.start(t)
+	envPath := writeLiveEnvFile(t, map[string]string{
+		"GITEA_URL": srv.URL, "MATE_BROKER_URL": srv.URL, "GITEA_TOKEN": giteaBotToken,
+	})
+	client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
+	rt := runtime.Info{InContainer: true, ProjectID: "p1"}
+	refusal := "ZCP_BASE_NOT_SEED"
+	ssh := giteaBranchStepSSH(&refusal)
+
+	for pass := 1; pass <= 2; pass++ {
+		report := reconcileGiteaRepositories(context.Background(), client, srv.Client(), ssh, rt, stateDir, envPath)
+		if joined := strings.Join(report, " | "); !strings.Contains(joined, "ZCP_BASE_NOT_SEED") {
+			t.Errorf("pass %d must name the refused state, got %q", pass, joined)
+		}
+		elapseGiteaBackoff(t, stateDir, "appdev")
+	}
+	if meta, _ := workflow.FindServiceMeta(stateDir, "appdev"); meta == nil || meta.Gitea != nil {
+		t.Fatalf("a refused branch step must leave the pair unrecorded, got %+v", meta)
+	}
+
+	refusal = ""
+	report := reconcileGiteaRepositories(context.Background(), client, srv.Client(), ssh, rt, stateDir, envPath)
+	if len(fake.repoRequests) != 3 {
+		t.Errorf("broker asked %d times, want 3 — every pass after a failed branch step retries", len(fake.repoRequests))
+	}
+	meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
+	if meta == nil || meta.Gitea == nil || meta.Gitea.Branch != "mate/mate-p1" {
+		t.Fatalf("the retried pair must end wired, got %+v; report %v", meta, report)
+	}
+	if got := readGiteaPairState(stateDir, "appdev").Attempts; got != 1 {
+		t.Errorf("a productive pass must start the backoff afresh, attempts = %d, want 1", got)
+	}
+}
+
+// TestReconcileGiteaRepositories_ARefusalNamesItsRemedy: a pass that only
+// said "retrying on the next pass" left a pair stuck for good — nothing that
+// retries changes the state the branch step refused. Each refusal is reported
+// with the one thing to do about it.
+func TestReconcileGiteaRepositories_ARefusalNamesItsRemedy(t *testing.T) {
+	for _, tc := range []struct {
+		refusal string
+		remedy  string
+	}{
+		{"ZCP_BASE_NOT_SEED", "git fetch origin 'main' && git merge --allow-unrelated-histories --no-edit FETCH_HEAD"},
+		{"ZCP_BRANCH_ELSEWHERE", "git checkout 'mate/mate-p1'"},
+		{"ZCP_STAGED_CHANGES", "git restore --staged ."},
+		{"ZCP_UNTRACKED_COLLISION app.js", "(app.js): move or delete them"},
+	} {
+		t.Run(tc.refusal, func(t *testing.T) {
+			stateDir := t.TempDir()
+			writeGiteaPairMeta(t, stateDir)
+			fake := newFakeGitea()
+			srv := fake.start(t)
+			refusal := tc.refusal
+			report := reconcileGiteaRepositories(context.Background(),
+				platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}}),
+				srv.Client(), giteaBranchStepSSH(&refusal),
+				runtime.Info{InContainer: true, ProjectID: "p1"}, stateDir,
+				writeLiveEnvFile(t, map[string]string{
+					"GITEA_URL": srv.URL, "MATE_BROKER_URL": srv.URL, "GITEA_TOKEN": giteaBotToken,
+				}))
+			joined := strings.Join(report, " | ")
+			if !strings.Contains(joined, tc.remedy) {
+				t.Errorf("the report must name the remedy %q, got %q", tc.remedy, joined)
+			}
+			if strings.Contains(joined, "next pass") {
+				t.Errorf("a refusal the pass cannot change must not be told to wait for one: %q", joined)
+			}
+		})
+	}
+}
+
+// TestReconcileGiteaRepositories_AGiteaRemoteNamingAnotherRepositoryIsTheUsersAndNeverReachesTheBroker:
+// the half-wired rule covers only this pair's own repository. A remote on the
+// same Gitea whose repository is not named after the pair is one the user
+// chose: no pass asks the broker for a repository on its behalf — the broker
+// would create one — and nothing rewrites the remote.
+func TestReconcileGiteaRepositories_AGiteaRemoteNamingAnotherRepositoryIsTheUsersAndNeverReachesTheBroker(t *testing.T) {
+	stateDir := t.TempDir()
+	fake := newFakeGitea()
+	srv := fake.start(t)
+	theirs := srv.URL + "/someone/their-app.git"
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeStandard, StageHostname: "appstage",
+		GitPushState: topology.GitPushConfigured, RemoteURL: theirs, TrackedRef: "main",
+		BootstrapSession: "test", BootstrappedAt: "2026-09-16",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	ssh := giteaReconcileSSH()
+	report := reconcileGiteaRepositories(context.Background(),
+		platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}}),
+		srv.Client(), ssh, runtime.Info{InContainer: true, ProjectID: "p1"}, stateDir,
+		writeLiveEnvFile(t, map[string]string{
+			"GITEA_URL": srv.URL, "MATE_BROKER_URL": srv.URL, "GITEA_TOKEN": giteaBotToken,
+		}))
+	meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
+	if meta == nil || meta.Gitea != nil || meta.RemoteURL != theirs {
+		t.Fatalf("another repository's remote must be left as it was, got %+v", meta)
+	}
+	if len(ssh.commands) != 0 {
+		t.Errorf("nothing may run on the pair, ran:\n%s", strings.Join(ssh.commands, "\n"))
+	}
+	if len(fake.repoRequests) != 0 {
+		t.Errorf("the broker must not be asked for a repository, asked %d times", len(fake.repoRequests))
+	}
+	if len(report) != 0 {
+		t.Errorf("the user's own remote is nothing to report, got %v", report)
+	}
+}
+
+// TestReconcileGiteaRepositories_AGiteaRemoteWithoutARecordIsOurs is the
+// mirror of LeavesAUserRemoteAlone: a remote on this Mate's own Gitea with no
+// record is a wiring that stopped half-way, not a remote the user chose.
+func TestReconcileGiteaRepositories_AGiteaRemoteWithoutARecordIsOurs(t *testing.T) {
+	stateDir := t.TempDir()
+	fake := newFakeGitea()
+	srv := fake.start(t)
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeStandard,
+		StageHostname:    "appstage",
+		GitPushState:     topology.GitPushConfigured,
+		RemoteURL:        srv.URL + "/acme/appdev",
+		TrackedRef:       "main",
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-09-16",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
+	report := reconcileGiteaRepositories(
+		context.Background(), client, srv.Client(), giteaReconcileSSH(),
+		runtime.Info{InContainer: true, ProjectID: "p1"}, stateDir,
+		writeLiveEnvFile(t, map[string]string{
+			"GITEA_URL": srv.URL, "MATE_BROKER_URL": srv.URL, "GITEA_TOKEN": giteaBotToken,
+		}),
+	)
+	meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
+	if meta == nil || meta.Gitea == nil || meta.Gitea.FullName != "acme/appdev" {
+		t.Fatalf("a Gitea remote with no record must be wired again, got %+v; report %v", meta, report)
+	}
+}
+
+// wireGiteaPairOnMain wires one pair against a fake Gitea from a container
+// whose working tree is on the seed's main when git-push-setup runs, the
+// state it is in on a live Mate before the branch step.
+func wireGiteaPairOnMain(t *testing.T, stateDir string) {
+	t.Helper()
+	writeGiteaPairMeta(t, stateDir)
+	fake := newFakeGitea()
+	srv := fake.start(t)
+	client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
+	ssh := &containerSSHStub{
+		dispatch: func(cmd string) ([]byte, error) {
+			switch {
+			case strings.Contains(cmd, "cur_email=$(git config user.email)"):
+				return []byte("ZCP_EMAIL_SEEDED\nZCP_NAME_SEEDED\n"), nil
+			case strings.Contains(cmd, "git symbolic-ref --short HEAD"):
+				return []byte("main\n"), nil
+			}
+			return []byte("ok"), nil
+		},
+	}
+	report := reconcileGiteaRepositories(
+		context.Background(), client, srv.Client(), ssh,
+		runtime.Info{InContainer: true, ProjectID: "p1"}, stateDir,
+		writeLiveEnvFile(t, map[string]string{
+			"GITEA_URL": srv.URL, "MATE_BROKER_URL": srv.URL, "GITEA_TOKEN": giteaBotToken,
+		}),
+	)
+	if meta, _ := workflow.FindServiceMeta(stateDir, "appdev"); meta == nil || meta.Gitea == nil {
+		t.Fatalf("the pair must end wired, got %+v; report %v", meta, report)
+	}
+}
+
+// TestReconcileGiteaRepositories_AWiredPairsTrackedRefStaysMain: wiring
+// records the repository's base as the tracked ref, as it always has. The
+// release freshness check compares HEAD with that ref, so a Mate's unmerged
+// branch never becomes what a release tags; git-push still goes to the
+// Mate's branch through notTheProtectedBase.
+func TestReconcileGiteaRepositories_AWiredPairsTrackedRefStaysMain(t *testing.T) {
+	stateDir := t.TempDir()
+	wireGiteaPairOnMain(t, stateDir)
+	meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
+	if meta.TrackedRef != "main" {
+		t.Errorf("tracked ref = %q, want main", meta.TrackedRef)
+	}
+	if got := resolveTrackedBranch(stateDir, "appdev", ""); got != "mate/mate-p1" {
+		t.Errorf("a default git-push must still go to the Mate's branch, got %q", got)
+	}
+}
+
+// TestHandleRelease_AWiredGiteaPairIsRefused: the Mate's pushed branch is not
+// main, so the freshness check against the tracked ref fails and no tag is
+// pushed at an unmerged commit of the group's repository.
+func TestHandleRelease_AWiredGiteaPairIsRefused(t *testing.T) {
+	// non-parallel: stubs the package-level push-proof reader.
+	stateDir := t.TempDir()
+	wireGiteaPairOnMain(t, stateDir)
+
+	var askedRef string
+	prev := launchPushProofReader
+	launchPushProofReader = func(_ context.Context, _ ops.SSHDeployer, _ runtime.Info, _ string, _ string, ref string) (LaunchPushProofResult, error) {
+		askedRef = ref
+		if ref == "mate/mate-p1" {
+			return LaunchPushProofResult{LocalHead: "branchhead", RemoteHead: "branchhead"}, nil
+		}
+		return LaunchPushProofResult{LocalHead: "branchhead", RemoteHead: "mainhead"}, nil
+	}
+	t.Cleanup(func() { launchPushProofReader = prev })
+
+	ssh := &containerSSHStub{dispatch: func(string) ([]byte, error) { return []byte("ok"), nil }}
+	result, _, _ := handleRelease(context.Background(), ssh,
+		WorkflowInput{Service: "appdev", ReleaseVersion: "v1.0.0"}, stateDir, runtime.Info{InContainer: true})
+	if askedRef != "main" {
+		t.Errorf("freshness compared against %q, want main", askedRef)
+	}
+	if result == nil || !result.IsError {
+		t.Fatalf("release of a wired pair must be refused, got %+v", result)
+	}
+	for _, cmd := range ssh.commands {
+		if strings.Contains(cmd, "git tag") {
+			t.Errorf("no tag may be pushed, but ran:\n%s", cmd)
+		}
+	}
+}
+
+// TestGiteaRemoteIsThePairs: a remote without a record counts as a half-way
+// wiring only when it names the repository the broker would hand the pair.
+func TestGiteaRemoteIsThePairs(t *testing.T) {
+	t.Parallel()
+	const gitea = "https://gitea.example.com"
+	tests := []struct {
+		name   string
+		remote string
+		org    string
+		want   bool
+	}{
+		{name: "the pair's repository, org unknown", remote: gitea + "/acme/appdev.git", want: true},
+		{name: "the pair's repository in the known org", remote: "https://tok@GITEA.example.com/acme/appdev/", org: "acme", want: true},
+		{name: "a repository named otherwise", remote: gitea + "/acme/their-app.git"},
+		{name: "the pair's name in another org", remote: gitea + "/someone/appdev.git", org: "acme"},
+		{name: "another host", remote: "https://github.com/acme/appdev.git"},
+		{name: "no org segment", remote: gitea + "/appdev"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := giteaRemoteIsThePairs(tt.remote, gitea, "appdev", tt.org); got != tt.want {
+				t.Errorf("giteaRemoteIsThePairs(%q, org %q) = %v, want %v", tt.remote, tt.org, got, tt.want)
+			}
+		})
 	}
 }
