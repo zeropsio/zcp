@@ -147,9 +147,9 @@ type giteaDelivery struct {
 // deploy: "no person is ever going to say this"). A deploy onto the pair's
 // stage half is the moment the work is shippable, so zcp commits the dev
 // half's tree as it was deployed, pushes the Mate's branch, opens or finds the
-// pull request, and proposes the group's recipe again — the deploys have just
-// recorded the setups it names. The dev half's deploys are the loop and
-// deliver nothing.
+// pull request, and proposes whatever tiers of the group's recipe the group
+// repo's main still lacks — the deploys have just recorded the setups they
+// name. The dev half's deploys are the loop and deliver nothing.
 //
 // Nil when there is nothing to deliver: no Gitea on this Mate, no wired pair
 // behind the target, not its stage half, not in a container. Otherwise a line

@@ -178,3 +178,52 @@ func TestBuild_Rejects(t *testing.T) {
 		})
 	}
 }
+
+// A recipe composed into a repository that already holds part of it adds
+// only what is not there, a tier at a time: a tier directory the repository
+// carries is the repository's — hand-written, or merged from an earlier
+// proposal — and composing over it is exactly how a second Mate replaced the
+// medusa group's hand-written tiers (2026-09-26).
+func TestMissing_ATierTheRepositoryHas_IsLeftWhole(t *testing.T) {
+	t.Parallel()
+	files, err := Build(sample())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	all := paths(files)
+	tests := []struct {
+		name    string
+		carried []string
+		want    []string
+	}{
+		{name: "an empty repository takes the whole recipe", want: all},
+		{
+			name:    "the broker's seed README stays the repository's",
+			carried: []string{"README.md"},
+			want:    []string{"0 — AI Agent/README.md", "0 — AI Agent/import.yaml", "4 — Small Production/README.md", "4 — Small Production/import.yaml"},
+		},
+		{
+			name:    "a hand-written tier without a README is still a tier the repository has",
+			carried: []string{"README.md", "4 — Small Production/import.yaml"},
+			want:    []string{"0 — AI Agent/README.md", "0 — AI Agent/import.yaml"},
+		},
+		{
+			name:    "every tier there, other files beside them — nothing to add",
+			carried: []string{"README.md", "environments.yaml", "0 — AI Agent/import.yaml", "4 — Small Production/import.yaml", "5 — Highly-available Production/import.yaml"},
+		},
+		{
+			name:    "a tier under another title is a different directory",
+			carried: []string{"README.md", "4 — Production/import.yaml"},
+			want:    []string{"0 — AI Agent/README.md", "0 — AI Agent/import.yaml", "4 — Small Production/README.md", "4 — Small Production/import.yaml"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := paths(Missing(files, tt.carried))
+			if strings.Join(got, "|") != strings.Join(tt.want, "|") {
+				t.Errorf("Missing = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

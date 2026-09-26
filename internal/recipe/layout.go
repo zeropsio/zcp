@@ -175,3 +175,37 @@ func ensureTrailingNewline(body string) string {
 	}
 	return body + "\n"
 }
+
+// Missing returns the files of a composed recipe that a repository holding
+// carried (paths relative to the recipe root) does not have yet, in the
+// order given.
+//
+// A tier is the unit: a tier directory the repository has any file in is the
+// repository's whole, and none of the recipe's files for it are returned — a
+// tier there was written by a person or merged from an earlier proposal, and
+// composing over it replaced a group's hand-written tiers once (2026-09-26).
+// The directory's full name is its identity, the way the recipe's readers
+// open `4 — Small Production/import.yaml` by path. A top-level file is
+// returned only when its own path is not carried.
+func Missing(files []File, carried []string) []File {
+	carriedPaths := make(map[string]bool, len(carried))
+	carriedDirs := map[string]bool{}
+	for _, path := range carried {
+		carriedPaths[path] = true
+		if dir, _, nested := strings.Cut(path, "/"); nested {
+			carriedDirs[dir] = true
+		}
+	}
+	var missing []File
+	for _, file := range files {
+		if dir, _, nested := strings.Cut(file.Path, "/"); nested {
+			if carriedDirs[dir] {
+				continue
+			}
+		} else if carriedPaths[file.Path] {
+			continue
+		}
+		missing = append(missing, file)
+	}
+	return missing
+}

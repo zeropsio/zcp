@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -76,17 +78,63 @@ type fakeGitea struct {
 	calls []string
 	// forkStatus overrides the fork POST response (0 = the default 202).
 	forkStatus int
-	nextPull   int
+	// syncStatus, createBranchStatus and closeStatus override the
+	// merge-upstream, branch-create and pull-request close responses.
+	syncStatus         int
+	createBranchStatus int
+	closeStatus        int
+	// posters is pull number → the login that opened it; a pull request
+	// missing here was opened by its head repository's owner.
+	posters  map[int]string
+	nextPull int
 }
 
 func newFakeGitea(t *testing.T) *fakeGitea {
 	t.Helper()
 	return &fakeGitea{
-		t:     t,
-		files: map[string]map[string]map[string]string{},
-		forks: map[string]string{},
-		pulls: map[string]int{},
+		t:       t,
+		files:   map[string]map[string]map[string]string{},
+		forks:   map[string]string{},
+		pulls:   map[string]int{},
+		posters: map[int]string{},
 	}
+}
+
+// branchHead is the fake's commit id for a branch: a hash of its tree, so a
+// branch cut from another starts at the same id and a commit moves it.
+func (f *fakeGitea) branchHead(repo, branch string) string {
+	files, ok := f.files[repo][branch]
+	if !ok {
+		return ""
+	}
+	return treeHead(files)
+}
+
+func treeHead(files map[string]string) string {
+	keys := make([]string, 0, len(files))
+	for path := range files {
+		keys = append(keys, path)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, path := range keys {
+		b.WriteString(path + "\x00" + gitBlobSHA(files[path]) + "\n")
+	}
+	return gitBlobSHA(b.String())
+}
+
+// resolve reads a ref of repo as Gitea does: a branch name, or a commit id
+// one of its branches is at.
+func (f *fakeGitea) resolve(repo, ref string) (map[string]string, bool) {
+	if files, ok := f.files[repo][ref]; ok {
+		return files, true
+	}
+	for _, files := range f.files[repo] {
+		if treeHead(files) == ref {
+			return files, true
+		}
+	}
+	return nil, false
 }
 
 func (f *fakeGitea) seed(repo, branch string, files map[string]string) {
@@ -129,6 +177,9 @@ func (f *fakeGitea) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(encoded)
 	}
 
+	if f.serveProposal(r, path, write) {
+		return
+	}
 	switch {
 	// POST /repos/{o}/{r}/forks
 	case r.Method == http.MethodPost && strings.HasSuffix(path, "/forks"):
@@ -159,7 +210,7 @@ func (f *fakeGitea) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && strings.Contains(path, "/git/trees/"):
 		repo, ref, _ := strings.Cut(strings.TrimPrefix(path, "repos/"), "/git/trees/")
 		branch := strings.ReplaceAll(ref, "%2F", "/")
-		files, ok := f.files[repo][branch]
+		files, ok := f.resolve(repo, branch)
 		if !ok {
 			// What Gitea 1.27.2 actually answers for a ref it cannot
 			// resolve — 400, not 404 (measured live 2026-09-16 against
@@ -204,8 +255,13 @@ func (f *fakeGitea) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			open := []map[string]any{}
 			for key, number := range f.pulls {
 				repo, ref, _ := strings.Cut(key, ":")
+				poster, _, _ := strings.Cut(repo, "/")
+				if login, ok := f.posters[number]; ok {
+					poster = login
+				}
 				open = append(open, map[string]any{
 					"number": number, "state": "open",
+					"user": map[string]any{"login": poster},
 					"head": map[string]any{"ref": ref, "repo": map[string]any{"full_name": repo}},
 					"base": map[string]any{"ref": "main"},
 				})
@@ -228,6 +284,87 @@ func (f *fakeGitea) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		write(http.StatusNotFound, map[string]string{"message": "unhandled " + r.Method + " " + path})
 	}
+}
+
+// serveProposal answers what a recipe proposal needs beyond the contents
+// API: branch reads and creates, the fork sync, and a pull-request close.
+func (f *fakeGitea) serveProposal(r *http.Request, path string, write func(int, any)) bool {
+	switch {
+	// GET /repos/{o}/{r}/branches/{branch}
+	case r.Method == http.MethodGet && strings.Contains(path, "/branches/"):
+		repo, branch, _ := strings.Cut(strings.TrimPrefix(path, "repos/"), "/branches/")
+		head := f.branchHead(repo, branch)
+		if head == "" {
+			write(http.StatusNotFound, map[string]string{"message": "branch does not exist"})
+			return true
+		}
+		write(http.StatusOK, map[string]any{"name": branch, "commit": map[string]any{"id": head}})
+
+	// POST /repos/{o}/{r}/branches
+	case r.Method == http.MethodPost && strings.HasSuffix(path, "/branches"):
+		repo := strings.TrimSuffix(strings.TrimPrefix(path, "repos/"), "/branches")
+		var body struct {
+			New string `json:"new_branch_name"` //nolint:tagliatelle // Gitea's wire schema
+			Old string `json:"old_ref_name"`    //nolint:tagliatelle // Gitea's wire schema
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if f.createBranchStatus != 0 {
+			write(f.createBranchStatus, map[string]string{"message": "forced"})
+			return true
+		}
+		if _, exists := f.files[repo][body.New]; exists {
+			write(http.StatusConflict, map[string]string{"message": "branch already exists"})
+			return true
+		}
+		files, ok := f.resolve(repo, body.Old)
+		if !ok {
+			write(http.StatusNotFound, map[string]string{"message": "old ref does not exist"})
+			return true
+		}
+		f.seed(repo, body.New, maps2(files))
+		write(http.StatusCreated, map[string]any{"name": body.New, "commit": map[string]any{"id": treeHead(files)}})
+
+	// POST /repos/{o}/{r}/merge-upstream
+	case r.Method == http.MethodPost && strings.HasSuffix(path, "/merge-upstream"):
+		fork := strings.TrimSuffix(strings.TrimPrefix(path, "repos/"), "/merge-upstream")
+		var body struct {
+			Branch string `json:"branch"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if f.syncStatus != 0 {
+			write(f.syncStatus, map[string]string{"message": "forced"})
+			return true
+		}
+		upstream, isFork := f.forks[fork]
+		if !isFork {
+			write(http.StatusBadRequest, map[string]string{"message": "not a fork"})
+			return true
+		}
+		f.seed(fork, body.Branch, maps2(f.files[upstream][body.Branch]))
+		write(http.StatusOK, map[string]string{"merge_type": "fast-forward"})
+
+	// PATCH /repos/{o}/{r}/pulls/{n}
+	case r.Method == http.MethodPatch && strings.Contains(path, "/pulls/"):
+		_, number, _ := strings.Cut(path, "/pulls/")
+		var body struct {
+			State string `json:"state"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if f.closeStatus != 0 {
+			write(f.closeStatus, map[string]string{"message": "forced"})
+			return true
+		}
+		for key, open := range f.pulls {
+			if fmt.Sprint(open) == number && body.State == "closed" {
+				delete(f.pulls, key)
+			}
+		}
+		write(http.StatusCreated, map[string]any{"number": number, "state": body.State})
+
+	default:
+		return false
+	}
+	return true
 }
 
 func maps2(in map[string]string) map[string]string {
@@ -461,6 +598,212 @@ func TestGiteaTreeBlobs_MissingRefIsNotAnError(t *testing.T) {
 			}
 			if !tt.wantExist && len(blobs) != 0 {
 				t.Errorf("an absent ref must read as an empty tree, got %v", blobs)
+			}
+		})
+	}
+}
+
+// A proposal diffs against the upstream's main as it is NOW, so the reader
+// takes main's tip and the tree AT that tip — one commit, never a tree that
+// moved between two reads.
+func TestReadGiteaBranchFiles_TipAndItsTree(t *testing.T) {
+	t.Parallel()
+	mainFiles := map[string]string{"README.md": "# acme\n", "4 — Small Production/import.yaml": "project:\n"}
+	tests := []struct {
+		name      string
+		branch    string
+		wantHead  string
+		wantPaths []string
+	}{
+		{name: "main is there — its tip and every path", branch: "main", wantHead: treeHead(mainFiles), wantPaths: []string{"4 — Small Production/import.yaml", "README.md"}},
+		{name: "no such branch — nothing, and not an error", branch: "develop"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fake := newFakeGitea(t)
+			fake.seed("acme/group", "main", maps2(mainFiles))
+			server := httptest.NewServer(fake)
+			defer server.Close()
+
+			got, err := ReadGiteaBranchFiles(context.Background(), server.Client(), server.URL, "tok", "acme/group", tt.branch)
+			if err != nil {
+				t.Fatalf("ReadGiteaBranchFiles: %v", err)
+			}
+			if got.Head != tt.wantHead {
+				t.Errorf("Head = %q, want %q", got.Head, tt.wantHead)
+			}
+			if strings.Join(got.Paths, "|") != strings.Join(tt.wantPaths, "|") {
+				t.Errorf("Paths = %v, want %v", got.Paths, tt.wantPaths)
+			}
+			if tt.wantHead != "" && fake.callsTo(http.MethodGet, "/git/trees/"+tt.wantHead) != 1 {
+				t.Errorf("the tree was not read at the tip it reported: %v", fake.calls)
+			}
+		})
+	}
+}
+
+func TestReadGiteaBranchFiles_AFailedReadIsAnError(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	if _, err := ReadGiteaBranchFiles(context.Background(), srv.Client(), srv.URL, "tok", "acme/group", "main"); err == nil {
+		t.Fatal("a 500 on the branch read must be an error, not an empty main")
+	}
+}
+
+func TestGiteaRecipeBranch_NamedAfterTheCommitItIsCutFrom(t *testing.T) {
+	t.Parallel()
+	tests := []struct{ head, want string }{
+		{"3f2a9c1b7d4e5f60718293a4b5c6d7e8f9012345", "recipe/3f2a9c1b7d4e"},
+		{"  3f2a9c1b7d4e5f60718293a4b5c6d7e8f9012345 ", "recipe/3f2a9c1b7d4e"},
+		{"abc", "recipe/abc"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := GiteaRecipeBranch(tt.head); got != tt.want {
+			t.Errorf("GiteaRecipeBranch(%q) = %q, want %q", tt.head, got, tt.want)
+		}
+	}
+}
+
+// A proposal branch starts at the upstream's main, whatever the fork held:
+// an old fork's main is behind the group's (a person merged since), and a
+// branch cut from it would carry that difference into the pull request.
+func TestEnsureGiteaProposalBranch_CutAtTheUpstreamsTip(t *testing.T) {
+	t.Parallel()
+	upstreamMain := map[string]string{"README.md": "# acme\n", "4 — Small Production/import.yaml": "hand-written\n"}
+	staleMain := map[string]string{"README.md": "# acme\n"}
+	tests := []struct {
+		name               string
+		forkMain           map[string]string
+		branchThere        bool
+		syncStatus         int
+		createBranchStatus int
+		wantCreated        bool
+		wantErr            string
+		wantSyncs          int
+		wantCreates        int
+	}{
+		{name: "already cut — no write at all", forkMain: upstreamMain, branchThere: true},
+		{name: "a fork at main — synced as a no-op, then cut", forkMain: upstreamMain, wantCreated: true, wantSyncs: 1, wantCreates: 1},
+		{name: "a fork behind main — synced first, then cut at main's tip", forkMain: staleMain, wantCreated: true, wantSyncs: 1, wantCreates: 1},
+		{name: "the sync is refused — reported, nothing cut", forkMain: staleMain, syncStatus: http.StatusInternalServerError, wantErr: "status 500", wantSyncs: 1},
+		{name: "a concurrent pass cut it first — read as there", forkMain: upstreamMain, createBranchStatus: http.StatusConflict, wantSyncs: 1, wantCreates: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fake := newFakeGitea(t)
+			fake.syncStatus = tt.syncStatus
+			fake.createBranchStatus = tt.createBranchStatus
+			fake.seed("acme/group", "main", maps2(upstreamMain))
+			fake.forks["bot/group"] = "acme/group"
+			fake.seed("bot/group", "main", maps2(tt.forkMain))
+			at := treeHead(upstreamMain)
+			branch := GiteaRecipeBranch(at)
+			if tt.branchThere {
+				fake.seed("bot/group", branch, maps2(upstreamMain))
+			}
+			server := httptest.NewServer(fake)
+			defer server.Close()
+
+			created, err := EnsureGiteaProposalBranch(context.Background(), server.Client(), server.URL, "tok",
+				"bot/group", branch, "main", at)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want one containing %q", err, tt.wantErr)
+				}
+			} else if err != nil {
+				t.Fatalf("EnsureGiteaProposalBranch: %v", err)
+			}
+			if created != tt.wantCreated {
+				t.Errorf("created = %v, want %v", created, tt.wantCreated)
+			}
+			if n := fake.callsTo(http.MethodPost, "/merge-upstream"); n != tt.wantSyncs {
+				t.Errorf("merge-upstream POSTs = %d, want %d", n, tt.wantSyncs)
+			}
+			if n := fake.callsTo(http.MethodPost, "/bot/group/branches"); n != tt.wantCreates {
+				t.Errorf("branch POSTs = %d, want %d", n, tt.wantCreates)
+			}
+			if tt.wantCreated && fake.branchHead("bot/group", branch) != at {
+				t.Errorf("the branch starts at %q, want the upstream's tip %q", fake.branchHead("bot/group", branch), at)
+			}
+		})
+	}
+}
+
+// A proposal a Mate's bot no longer stands behind is closed, and only its:
+// one cut from an older main, or one whose files main now carries. A person's
+// pull request, or another Mate's, is never touched.
+func TestCloseGiteaPullRequests_OnlyThePostersOthers(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		open        map[string]int
+		posters     map[int]string
+		keep        string
+		closeStatus int
+		wantClosed  []int
+		wantOpen    []int
+		wantErr     string
+	}{
+		{
+			name:       "the bot's other proposals closed, the kept one and everyone else's left",
+			open:       map[string]int{"bot/group:mate/bot": 3, "bot/group:recipe/aaa": 4, "bot/group:recipe/bbb": 5, "other/group:mate/other": 6, "acme/group:fix-readme": 7},
+			posters:    map[int]string{7: "alice"},
+			keep:       "recipe/bbb",
+			wantClosed: []int{3, 4}, wantOpen: []int{5, 6, 7},
+		},
+		{
+			name:       "nothing kept — every open proposal of the bot closed",
+			open:       map[string]int{"bot/group:mate/bot": 3, "other/group:mate/other": 6},
+			wantClosed: []int{3}, wantOpen: []int{6},
+		},
+		{
+			name:     "none of the bot's open — nothing closed",
+			open:     map[string]int{"other/group:mate/other": 6},
+			wantOpen: []int{6},
+		},
+		{
+			name:        "a refused close — reported",
+			open:        map[string]int{"bot/group:mate/bot": 3},
+			closeStatus: http.StatusForbidden,
+			wantErr:     "status 403", wantOpen: []int{3},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fake := newFakeGitea(t)
+			fake.closeStatus = tt.closeStatus
+			fake.seed("acme/group", "main", map[string]string{})
+			maps.Copy(fake.pulls, tt.open)
+			maps.Copy(fake.posters, tt.posters)
+			server := httptest.NewServer(fake)
+			defer server.Close()
+
+			closed, err := CloseGiteaPullRequests(context.Background(), server.Client(), server.URL, "tok",
+				"acme/group", "bot", "main", tt.keep)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want one containing %q", err, tt.wantErr)
+				}
+			} else if err != nil {
+				t.Fatalf("CloseGiteaPullRequests: %v", err)
+			}
+			if !slices.Equal(closed, tt.wantClosed) {
+				t.Errorf("closed = %v, want %v", closed, tt.wantClosed)
+			}
+			open := make([]int, 0, len(fake.pulls))
+			for _, number := range fake.pulls {
+				open = append(open, number)
+			}
+			sort.Ints(open)
+			if !slices.Equal(open, tt.wantOpen) {
+				t.Errorf("still open = %v, want %v", open, tt.wantOpen)
 			}
 		})
 	}

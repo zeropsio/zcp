@@ -271,3 +271,215 @@ func gitBlobSHA(body string) string {
 	sum.Write([]byte(body))
 	return hex.EncodeToString(sum.Sum(nil))
 }
+
+// GiteaBranchFiles is a branch as a proposal reads it: the commit at its tip,
+// and the paths of the tree AT that commit.
+type GiteaBranchFiles struct {
+	// Head is the tip's commit id, "" when the branch is not there.
+	Head string
+	// Paths are every file of the tree at Head, sorted.
+	Paths []string
+}
+
+// ReadGiteaBranchFiles reads branch of fullName: its tip, then the tree at
+// that tip — so the files and the commit a proposal is cut from are one
+// commit's, never a branch that moved between two reads. A branch that is not
+// there reads as the zero value, not an error.
+func ReadGiteaBranchFiles(ctx context.Context, httpClient HTTPDoer, giteaURL, token, fullName, branch string) (GiteaBranchFiles, error) {
+	head, err := giteaBranchHead(ctx, httpClient, giteaURL, token, fullName, branch)
+	if err != nil || head == "" {
+		return GiteaBranchFiles{}, err
+	}
+	apiBase, err := giteaAPIBase(giteaURL)
+	if err != nil {
+		return GiteaBranchFiles{}, err
+	}
+	blobs, found, err := giteaTreeBlobs(ctx, httpClient, apiBase, token, fullName, head)
+	if err != nil {
+		return GiteaBranchFiles{}, err
+	}
+	if !found {
+		return GiteaBranchFiles{}, fmt.Errorf("the Gitea tree of %s at %s is not there", fullName, head)
+	}
+	paths := make([]string, 0, len(blobs))
+	for path := range blobs {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return GiteaBranchFiles{Head: head, Paths: paths}, nil
+}
+
+// giteaBranchHead is branch's tip commit id on fullName, "" when the branch is
+// not there (Gitea answers 404, or the 400 "sha not found" its ref reads use).
+func giteaBranchHead(ctx context.Context, httpClient HTTPDoer, giteaURL, token, fullName, branch string) (string, error) {
+	if httpClient == nil {
+		return "", fmt.Errorf("no HTTP client configured")
+	}
+	apiBase, err := giteaAPIBase(giteaURL)
+	if err != nil {
+		return "", err
+	}
+	if fullName == "" || branch == "" {
+		return "", fmt.Errorf("a branch read needs a repository and a branch")
+	}
+	body, status, err := giteaAPICall(ctx, httpClient, http.MethodGet,
+		apiBase+"/repos/"+fullName+"/branches/"+url.PathEscape(branch), token, nil)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case status == http.StatusNotFound, giteaRefAbsent(status, body):
+		return "", nil
+	case status != http.StatusOK:
+		return "", fmt.Errorf("the Gitea branch read of %s@%s returned status %d", fullName, branch, status)
+	}
+	var read struct {
+		Commit struct {
+			ID string `json:"id"`
+		} `json:"commit"`
+	}
+	if json.Unmarshal(body, &read) != nil || read.Commit.ID == "" {
+		return "", fmt.Errorf("the Gitea branch read of %s@%s named no commit", fullName, branch)
+	}
+	return read.Commit.ID, nil
+}
+
+// GiteaRecipeBranch is the fork branch a recipe proposal is made from, named
+// after the upstream main commit it is cut from: `recipe/{12 hex}`.
+//
+// Named, not reused. A proposal must start at main as it is — a branch left
+// from an earlier proposal diffs against the main it was cut from, and a pull
+// request from it shows every file main has changed since as a modification.
+// Resetting one fixed branch means deleting it, and Gitea closes the pull
+// requests of a deleted branch from its push queue, after the delete returns
+// (DeleteBranch → PushUpdate → CloseBranchPulls in its source; not measured):
+// a pull request opened from the re-created branch in the same pass could be
+// closed under it. A branch per main commit is never deleted and never moves back,
+// so an open proposal stays open until zcp closes it by number. Not under
+// `mate/`: `mate/{login}` is the Mate's own branch everywhere else, and a ref
+// cannot be both a branch and a directory of branches.
+func GiteaRecipeBranch(mainHead string) string {
+	head := strings.TrimSpace(mainHead)
+	if head == "" {
+		return ""
+	}
+	if len(head) > 12 {
+		head = head[:12]
+	}
+	return "recipe/" + head
+}
+
+// EnsureGiteaProposalBranch makes sure fork carries branch, cut at the
+// upstream commit at, and reports whether this call cut it. A branch already
+// there is left exactly as it is: its name says which commit it was cut from
+// (GiteaRecipeBranch), and it may carry a proposal's commits.
+//
+// A fork is a copy, not a view: an upstream commit made after the fork is not
+// in it. So the fork's base is synced from the upstream first (Gitea's
+// merge-upstream; a fork zcp never commits to fast-forwards), and the branch
+// is then cut at the commit itself rather than at the fork's base — if the
+// upstream moved again in between, the proposal still starts where it was
+// composed against.
+func EnsureGiteaProposalBranch(ctx context.Context, httpClient HTTPDoer, giteaURL, token, fork, branch, base, at string) (bool, error) {
+	if fork == "" || branch == "" || base == "" || at == "" {
+		return false, fmt.Errorf("a proposal branch needs a fork, a branch, a base and a commit")
+	}
+	there, err := GiteaBranchExists(ctx, httpClient, giteaURL, token, fork, branch)
+	if err != nil || there {
+		return false, err
+	}
+	apiBase, err := giteaAPIBase(giteaURL)
+	if err != nil {
+		return false, err
+	}
+	payload, err := json.Marshal(map[string]string{"branch": base})
+	if err != nil {
+		return false, fmt.Errorf("encode the fork sync request failed")
+	}
+	_, status, err := giteaAPICall(ctx, httpClient, http.MethodPost, apiBase+"/repos/"+fork+"/merge-upstream", token, payload)
+	if err != nil {
+		return false, err
+	}
+	if status != http.StatusOK {
+		return false, fmt.Errorf("syncing %s@%s from its upstream returned status %d", fork, base, status)
+	}
+	payload, err = json.Marshal(map[string]string{"new_branch_name": branch, "old_ref_name": at})
+	if err != nil {
+		return false, fmt.Errorf("encode the branch request failed")
+	}
+	_, status, err = giteaAPICall(ctx, httpClient, http.MethodPost, apiBase+"/repos/"+fork+"/branches", token, payload)
+	if err != nil {
+		return false, err
+	}
+	switch status {
+	case http.StatusCreated, http.StatusOK:
+		return true, nil
+	case http.StatusConflict:
+		// A concurrent pass cut it between the read and the create.
+		return false, nil
+	default:
+		return false, fmt.Errorf("cutting %s@%s at %s returned status %d", fork, branch, at, status)
+	}
+}
+
+// CloseGiteaPullRequests closes every pull request open on fullName against
+// base that poster opened, except the one from keepHead ("" keeps none), and
+// returns the numbers it closed, sorted. Anybody else's pull request — a
+// person's, another Mate's — is never touched: on the group repo, which only
+// the group's people write, what a Mate's bot opened is that Mate's proposal
+// and zcp's to withdraw.
+func CloseGiteaPullRequests(ctx context.Context, httpClient HTTPDoer, giteaURL, token, fullName, poster, base, keepHead string) ([]int, error) {
+	if httpClient == nil {
+		return nil, fmt.Errorf("no HTTP client configured")
+	}
+	apiBase, err := giteaAPIBase(giteaURL)
+	if err != nil {
+		return nil, err
+	}
+	if fullName == "" || poster == "" || base == "" {
+		return nil, fmt.Errorf("closing pull requests needs a repository, a poster and a base")
+	}
+	repoRoot := apiBase + "/repos/" + fullName
+	body, status, err := giteaAPICall(ctx, httpClient, http.MethodGet, repoRoot+"/pulls?state=open&limit=50", token, nil)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("the Gitea pull-request list returned status %d", status)
+	}
+	var open []struct {
+		giteaPullRequest
+		User struct {
+			Login string `json:"login"`
+		} `json:"user"`
+		Head struct {
+			Ref string `json:"ref"`
+		} `json:"head"`
+		Base struct {
+			Ref string `json:"ref"`
+		} `json:"base"`
+	}
+	if jsonErr := json.Unmarshal(body, &open); jsonErr != nil {
+		return nil, fmt.Errorf("the Gitea pull-request list was not valid JSON")
+	}
+	sort.Slice(open, func(i, j int) bool { return open[i].Number < open[j].Number })
+	payload, err := json.Marshal(map[string]string{"state": "closed"})
+	if err != nil {
+		return nil, fmt.Errorf("encode the pull-request close failed")
+	}
+	var closed []int
+	for _, pr := range open {
+		if !strings.EqualFold(pr.User.Login, poster) || pr.Base.Ref != base || (keepHead != "" && pr.Head.Ref == keepHead) {
+			continue
+		}
+		_, status, err := giteaAPICall(ctx, httpClient, http.MethodPatch, fmt.Sprintf("%s/pulls/%d", repoRoot, pr.Number), token, payload)
+		if err != nil {
+			return closed, err
+		}
+		if status != http.StatusOK && status != http.StatusCreated {
+			return closed, fmt.Errorf("closing pull request #%d on %s returned status %d", pr.Number, fullName, status)
+		}
+		closed = append(closed, pr.Number)
+	}
+	return closed, nil
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -28,10 +29,15 @@ const giteaRecipeBranchTitle = "Mate: the group's import files"
 type giteaRecipeOutcome struct {
 	// Line is the reconcile's report, "" when the pass was a no-op.
 	Line string
-	// GroupRepo is `{slug}/group`, Fork the bot's copy of it.
+	// GroupRepo is `{slug}/group`, Fork the bot's copy of it, Branch the
+	// fork branch the proposal is made from (ops.GiteaRecipeBranch) — the
+	// last two empty when nothing is proposed.
 	GroupRepo string
 	Fork      string
 	Branch    string
+	// Proposed names what the proposal adds to main: tier directories, and a
+	// top-level file main has none of.
+	Proposed []string
 	// PullNumber is 0 when no pull request could be read or opened.
 	PullNumber int
 	// PullURL addresses it on the account's Gitea.
@@ -40,6 +46,11 @@ type giteaRecipeOutcome struct {
 	// opened the pull request.
 	Committed bool
 	Created   bool
+	// OnMain is true when the group repo's main already carries every tier
+	// this Mate would propose, so nothing was.
+	OnMain bool
+	// Closed are this bot's earlier proposals the pass closed.
+	Closed []int
 	// Warnings are the composer's — an unclassified secret, an unverified
 	// setup, an unreadable scaling shape.
 	Warnings []string
@@ -48,8 +59,25 @@ type giteaRecipeOutcome struct {
 	Blocked string
 }
 
-// reconcileGiteaGroupRecipe proposes this Mate's project to the group repo as
-// the recipe, and keeps that proposal current (guide 2.2, A2).
+// reconcileGiteaGroupRecipe proposes to the group repo the recipe tiers its
+// main does not carry yet, composed from this Mate's project (guide 2.2, A2).
+//
+// Additive, a tier at a time (recipe.Missing). A tier on main is the group's —
+// hand-written, or merged from an earlier proposal — and zcp never proposes
+// over it: every Mate composes the whole app from its OWN project, and on
+// 2026-09-26 a second Mate's proposal replaced the medusa group's hand-written
+// tiers (project env, secrets, the production setups), was merged, and the
+// next release built production with the dev setup. So a group's first recipe
+// lands whole, a tier main lacks is proposed on any later pass, and a group
+// whose main has every tier gets nothing — no fork, no commit, no pull request
+// — while this bot's own proposals still open there are closed.
+//
+// A proposal is cut from main's tip, on a fork branch named after that commit
+// (ops.GiteaRecipeBranch), so its pull request only ever adds files — the kind
+// the group's broker lands by itself. While main stays put an open proposal
+// follows the project: a changed composition commits onto the same branch and
+// request. Once main moves, a proposal still open is closed and cut again from
+// the new tip; a branch from an older main would diff as modifications.
 //
 // It runs on the SAME passes as A1's repository reconcile and right after it,
 // because it needs what A1 produces: a pair only belongs in the recipe once
@@ -66,7 +94,8 @@ type giteaRecipeOutcome struct {
 //
 // Idempotent on CONTENT: the export is composed from live state on every
 // pass, and PublishGiteaFiles commits only what differs from the branch. An
-// unchanged project makes two reads and no commit.
+// unchanged project makes reads and no write, and so does a group whose main
+// has every tier and no proposal of this Mate's open.
 func reconcileGiteaGroupRecipe(
 	ctx context.Context,
 	client platform.Client,
@@ -125,11 +154,10 @@ func giteaGroupRecipeOutcome(
 	if err != nil {
 		return giteaRecipeOutcome{Line: fmt.Sprintf("the group recipe is not proposed yet (could not read this Mate's bot identity: %v) — retrying on the next pass.", err)}
 	}
-	branch := ops.GiteaMateBranch(identity.Name)
-	if branch == "" {
-		return giteaRecipeOutcome{Blocked: "the Gitea bot has no login, so there is no branch to propose from"}
+	if identity.Name == "" {
+		return giteaRecipeOutcome{Blocked: "the Gitea bot has no login, so there is no fork to propose from"}
 	}
-	outcome := giteaRecipeOutcome{GroupRepo: groupRepo, Branch: branch}
+	outcome := giteaRecipeOutcome{GroupRepo: groupRepo}
 
 	inputs, err := composeGroupRecipeInputs(ctx, client, rt.ProjectID, giteaPairMountRoot, wired)
 	if err != nil {
@@ -152,6 +180,35 @@ func giteaGroupRecipeOutcome(
 		return outcome
 	}
 
+	base := wired[0].Gitea.DefaultBranch
+	if base == "" {
+		base = giteaProtectedBase
+	}
+	main, err := ops.ReadGiteaBranchFiles(ctx, httpClient, wiring.GiteaURL, wiring.Token, groupRepo, base)
+	if err != nil {
+		outcome.Line = fmt.Sprintf("could not read %s@%s to see which tiers it lacks (%v) — retrying on the next pass.", groupRepo, base, err)
+		return outcome
+	}
+	if main.Head == "" {
+		outcome.Line = fmt.Sprintf("the group repo %s has no %s yet, so there is nothing to propose the recipe to — retrying on the next pass.", groupRepo, base)
+		return outcome
+	}
+	missing := recipe.Missing(files, main.Paths)
+
+	if len(missing) == 0 {
+		outcome.OnMain = true
+		closed, closeErr := ops.CloseGiteaPullRequests(ctx, httpClient, wiring.GiteaURL, wiring.Token, groupRepo, identity.Name, base, "")
+		outcome.Closed = closed
+		switch {
+		case closeErr != nil:
+			outcome.Line = fmt.Sprintf("%s@%s already carries every tier of the recipe, but closing this Mate's earlier proposal failed (%v) — retrying on the next pass.", groupRepo, base, closeErr)
+		case len(closed) > 0:
+			outcome.Line = fmt.Sprintf("%s@%s already carries every tier of the recipe, so this Mate's earlier proposal %s is closed", groupRepo, base, pullNumbers(closed))
+		}
+		return outcome
+	}
+	outcome.Proposed = recipeEntries(missing)
+
 	// The bot is a reader on the group's org, never a writer on {slug}/group
 	// (measured on Gitea 1.27.2) — so it proposes from its own fork.
 	fork, err := ops.EnsureGiteaFork(ctx, httpClient, wiring.GiteaURL, wiring.Token, groupRepo, identity.Name)
@@ -160,13 +217,23 @@ func giteaGroupRecipeOutcome(
 		return outcome
 	}
 	outcome.Fork = fork
+	branch := ops.GiteaRecipeBranch(main.Head)
+	outcome.Branch = branch
 
-	base := wired[0].Gitea.DefaultBranch
-	if base == "" {
-		base = giteaProtectedBase
+	// Close first: a proposal from an older main is withdrawn before its
+	// replacement opens, so the group never holds two of this Mate's at once.
+	closed, closeErr := ops.CloseGiteaPullRequests(ctx, httpClient, wiring.GiteaURL, wiring.Token, groupRepo, identity.Name, base, branch)
+	outcome.Closed = closed
+	if closeErr != nil {
+		outcome.Line = fmt.Sprintf("could not close this Mate's earlier recipe proposal on %s (%v) — retrying on the next pass.", groupRepo, closeErr)
+		return outcome
+	}
+	if _, err := ops.EnsureGiteaProposalBranch(ctx, httpClient, wiring.GiteaURL, wiring.Token, fork, branch, base, main.Head); err != nil {
+		outcome.Line = fmt.Sprintf("could not cut %s@%s from %s@%s (%v) — retrying on the next pass.", fork, branch, groupRepo, base, err)
+		return outcome
 	}
 	committed, err := ops.PublishGiteaFiles(ctx, httpClient, wiring.GiteaURL, wiring.Token,
-		fork, branch, base, "recipe: the group's import files, from "+inputs.MateProjectName, files)
+		fork, branch, base, "recipe: the tiers "+groupRepo+" lacks, from "+inputs.MateProjectName, missing)
 	if err != nil {
 		outcome.Line = fmt.Sprintf("could not write the recipe to %s (%v) — retrying on the next pass.", fork, err)
 		return outcome
@@ -186,11 +253,38 @@ func giteaGroupRecipeOutcome(
 	}
 	switch {
 	case created:
-		outcome.Line = fmt.Sprintf("the group recipe is proposed to %s as pull request #%d (from %s@%s); a person with production rights merges it", groupRepo, number, fork, branch)
+		outcome.Line = fmt.Sprintf("what %s@%s lacks of the group recipe (%s) is proposed as pull request #%d (from %s@%s); it only adds files, so a tier the group already has is never touched",
+			groupRepo, base, strings.Join(outcome.Proposed, ", "), number, fork, branch)
 	case committed:
 		outcome.Line = fmt.Sprintf("the group recipe changed; pull request #%d on %s carries the update", number, groupRepo)
 	}
+	if len(closed) > 0 && outcome.Line != "" {
+		outcome.Line += fmt.Sprintf("; this Mate's earlier proposal %s, cut from an older %s, is closed", pullNumbers(closed), base)
+	}
 	return outcome
+}
+
+// recipeEntries names what a set of recipe files adds, the way a person reads
+// the group repo: each tier directory once, and a top-level file by its name.
+func recipeEntries(files []recipe.File) []string {
+	var entries []string
+	for _, file := range files {
+		entry, _, _ := strings.Cut(file.Path, "/")
+		if !slices.Contains(entries, entry) {
+			entries = append(entries, entry)
+		}
+	}
+	sort.Strings(entries)
+	return entries
+}
+
+// pullNumbers reads a list of pull-request numbers as "#9" or "#9, #11".
+func pullNumbers(numbers []int) string {
+	out := make([]string, 0, len(numbers))
+	for _, number := range numbers {
+		out = append(out, fmt.Sprintf("#%d", number))
+	}
+	return strings.Join(out, ", ")
 }
 
 // composeGroupRecipeInputs reads the Mate's own project and folds it, with
@@ -316,7 +410,8 @@ func reconcileGitea(
 // Same code path as the reconcile — there is no second composer and no second
 // idempotence rule. What differs is the reporting: a pass that changed nothing
 // is silent on a bootstrap response and ANSWERS here, with the pull request it
-// found, because being asked is itself a reason to say where the recipe is.
+// found or the fact that main already has every tier, because being asked is
+// itself a reason to say where the recipe is.
 func handleGroupRecipe(
 	ctx context.Context,
 	client platform.Client,
@@ -336,11 +431,22 @@ func handleGroupRecipe(
 
 	result := map[string]any{
 		"groupRepo": outcome.GroupRepo,
-		"branch":    outcome.Branch,
 		"committed": outcome.Committed,
+	}
+	if outcome.OnMain {
+		result["onMain"] = true
 	}
 	if outcome.Fork != "" {
 		result["fork"] = outcome.Fork
+	}
+	if outcome.Branch != "" {
+		result["branch"] = outcome.Branch
+	}
+	if len(outcome.Proposed) > 0 {
+		result["proposed"] = outcome.Proposed
+	}
+	if len(outcome.Closed) > 0 {
+		result["closedPullRequests"] = outcome.Closed
 	}
 	if outcome.PullNumber != 0 {
 		result["pullRequest"] = outcome.PullNumber
@@ -352,10 +458,14 @@ func handleGroupRecipe(
 	switch {
 	case outcome.Line != "":
 		result["message"] = strings.ToUpper(outcome.Line[:1]) + outcome.Line[1:] + "."
+	case outcome.OnMain:
+		result["message"] = fmt.Sprintf(
+			"The group repo %s already carries every tier of the recipe on its main, so nothing is proposed: a tier on main is the group's, and a change to one is a person's pull request.",
+			outcome.GroupRepo)
 	case outcome.PullNumber != 0:
 		result["message"] = fmt.Sprintf(
-			"The group recipe is already current; pull request #%d on %s carries it. A person with production rights merges it.",
-			outcome.PullNumber, outcome.GroupRepo)
+			"What main lacks of the group recipe (%s) is already proposed; pull request #%d on %s carries it.",
+			strings.Join(outcome.Proposed, ", "), outcome.PullNumber, outcome.GroupRepo)
 	default:
 		result["message"] = "The group recipe is written to " + outcome.Fork + "@" + outcome.Branch +
 			", but no pull request could be read or opened on " + outcome.GroupRepo + " — retry, or open it by hand."
