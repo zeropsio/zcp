@@ -1341,9 +1341,9 @@ visually quieter without being hidden.
 what the surfaces already hold — the group tree's members, the account's project flow (§10.11) and
 the platform's pushed deployments — and returns the project's Mates, its open code pull requests
 (recipe changes apart, never a step), `main`, its stages, its production and its one next step. The
-projects page, the left menu and a Mate's conversation feed it through the one input
-(`groupFlowInputOf`) and the one gate on _Add production_ (`productionAddable`), lay out what it
-returns and decide nothing of their own.
+projects page and the left menu feed it through the one input (`groupFlowInputOf`) and the one
+gate on _Add production_ (`productionAddable`), lay out what it returns and decide nothing of their
+own.
 What a stop runs is the platform's pushed deployment; the deploy half's version name stands for it
 only while that answer is on its way, so a production whose `appVersionName` names a merge waiting
 for its first release reads "Nothing live yet" (measured: `fsadfdasfsa`, `055a7e8`, nothing live).
@@ -1355,18 +1355,21 @@ has spoken to. A failed stage deploy is never the next step and never hides a re
 failed production keeps the release that might clear it, drawn beside the failure. _Add production_
 is the next step once `main` has code, the recipe's production tier is on `main`, and the person may
 create one; production reads "After the first merge", with no button, where `main` is known empty.
-A Mate's conversation answers from the same flow in the composer banner: this Mate's own mergeable
-code pull request first (MB-30, unchanged), then the release of what is merged — confirmed in the
-release dialog with the commits it carries, tagged as the person — then _Add production_, which opens
-the projects page at the project's card (`/zerops?view=projects&group=<groupId>`).
+A Mate's conversation offers only what is that Mate's, in the composer banner: its own mergeable
+code pull request (MB-30, unchanged), read from the flow's open changes, so the banner and the page
+cannot disagree about one. A release carries every Mate's merges and a production is the project's,
+so both stay with the project on the left menu and the projects page, and never offer themselves in
+one Mate's conversation (the owner, 2026-09-26: "merges could be coming from different mates, let's
+keep it on the left").
 `groupFlow.test.ts` — "takes the worst step first: $case" (its cases include "a failed stage does
 not hide a release either (D28)"), "still ranks a failed production above the release, unlike a
 failed stage", "reads production as $case", "offers Add production only where $case → $addable",
-`pairPreviewRoute` "is $case"; `mateNextStep.test.ts`; `useZeropsMateNextStep.test.ts` — "agrees
-with the page: a production nobody declared still stops Add production"; `ZeropsNextStepBanner.test.tsx`
-— "asks before a release, and releases only once the person confirms", "sends Add production to the
-project on the projects page"; `SidebarZeropsTree.test.tsx` — "agrees with the page: a merged change
-offers Add production here too".
+`pairPreviewRoute` "is $case"; `mateNextStep.test.ts` — "offers nothing for $case" (another Mate's
+change, its own that does not merge, a recipe change): it reads only the open changes, so it cannot
+offer a release or a production; `ZeropsNextStepBanner.test.tsx` — "offers this Mate's merge under
+the pull request's title";
+`SidebarZeropsTree.test.tsx` — "agrees with the page: a merged change offers Add production here
+too".
 
 **Open: `main` is not read.** No caller supplies `mainHasCode` or `mainHead`: `groupFlowInputOf`
 leaves both unread for every group, and the default-branch read (`planMainHeadReads`) runs only for
