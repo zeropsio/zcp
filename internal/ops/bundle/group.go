@@ -64,10 +64,12 @@ type GroupRuntime struct {
 	RepoURL string
 	// SetupName is the `setup:` block the dev half resolves at build time.
 	SetupName string
-	// StageSetupName is the stage half's block; empty falls back to SetupName.
+	// StageSetupName is the stage half's block, as a deploy of the stage half
+	// recorded it. Empty is resolved from ZeropsYAMLBody (groupStageSetup) —
+	// never taken from SetupName on a guess.
 	StageSetupName string
-	// ZeropsYAMLBody is the pair's zerops.yaml, read only to check that the
-	// named setups are declared in it.
+	// ZeropsYAMLBody is the pair's zerops.yaml: it verifies the named setups
+	// and names the stage half's when no deploy recorded it.
 	ZeropsYAMLBody string
 	// ServiceEnvs is the runtime's user-set per-service env layer, emitted as
 	// `envSecrets` through the same classification as export.
@@ -157,7 +159,11 @@ var groupTiers = []groupTierPolicy{
 // Nothing here is fatal that a reconcile could not act on. A missing setup
 // block, an unreadable scaling shape, an unclassified secret — each is a
 // warning against a tier that still composes, because this runs unattended
-// with nobody to ask.
+// with nobody to ask. The one thing never guessed is what a stage-shaped
+// entry builds: a tier naming a runtime whose stage setup nothing names is
+// withheld (a warning), and a recipe with no tier left is an error the
+// reconcile reports and retries — a tier that lands on the group repo stays
+// there, so an absent one is proposed later and a wrong one never heals.
 func BuildGroupRecipe(
 	inputs GroupRecipeInputs,
 	classifications map[string]topology.SecretClassification,
@@ -190,16 +196,34 @@ func BuildGroupRecipe(
 	managed := dedupeManagedByHostname(inputs.ManagedServices)
 	sort.SliceStable(managed, func(i, j int) bool { return managed[i].Hostname < managed[j].Hostname })
 
+	stageSetups := make(map[string]string, len(runtimes))
+	unresolved := map[string]string{}
+	for _, r := range runtimes {
+		setup, why := groupStageSetup(r)
+		if why != "" {
+			unresolved[r.DevHostname] = why
+			continue
+		}
+		stageSetups[r.DevHostname] = setup
+	}
+
 	var warnings []string
-	warnings = append(warnings, groupSetupWarnings(runtimes)...)
+	warnings = append(warnings, groupSetupWarnings(runtimes, stageSetups)...)
 
 	layout := recipe.Layout{
 		Name:  inputs.Name,
 		Title: firstNonBlank(inputs.Title, inputs.Name),
 		Intro: inputs.Intro,
 	}
+	withheld := map[string][]string{}
 	for _, policy := range groupTiers {
-		body, tierWarnings, err := composeGroupTierYAML(inputs, runtimes, managed, policy, classifications)
+		if blockers := groupTierBlockers(runtimes, policy, unresolved); len(blockers) > 0 {
+			for _, host := range blockers {
+				withheld[host] = append(withheld[host], policy.title)
+			}
+			continue
+		}
+		body, tierWarnings, err := composeGroupTierYAML(inputs, runtimes, managed, policy, stageSetups, classifications)
 		if err != nil {
 			return recipe.Layout{}, nil, fmt.Errorf("group recipe %q: tier %q: %w", inputs.Name, policy.title, err)
 		}
@@ -212,7 +236,90 @@ func BuildGroupRecipe(
 			Summary:    policy.summary,
 		})
 	}
-	return layout, warnings, nil
+
+	var reasons []string
+	for _, r := range runtimes {
+		if titles := withheld[r.DevHostname]; len(titles) > 0 {
+			reasons = append(reasons, fmt.Sprintf(
+				"runtime %q: its stage setup is not recorded and %s — %s withheld until it is (a deploy of its stage half records it, or set-default-setup names it as stageSetup)",
+				r.DevHostname, unresolved[r.DevHostname], joinTitles(titles)))
+		}
+	}
+	if len(layout.Tiers) == 0 {
+		return recipe.Layout{}, nil, fmt.Errorf("group recipe %q: no tier composes: %s", inputs.Name, strings.Join(reasons, "; "))
+	}
+	return layout, append(warnings, reasons...), nil
+}
+
+// groupStageSetup names the setup a runtime's stage-shaped entries build —
+// the AI Agent tier's stage half and the one runtime of every group
+// environment. why is non-empty when nothing names it without a guess.
+//
+// A stage setup is recorded only by a deploy of the stage half, and a Mate
+// that joined the group's repositories may never make one. Falling back to
+// the dev setup built production with the dev loop's `start: zsc noop` (the
+// medusa group, 2026-09-26), so the fallback is the pair's own zerops.yaml:
+// the one setup it declares beside the dev one, or its only setup, which
+// then serves both halves.
+func groupStageSetup(r GroupRuntime) (setup, why string) {
+	if recorded := strings.TrimSpace(r.StageSetupName); recorded != "" {
+		return recorded, ""
+	}
+	if strings.TrimSpace(r.ZeropsYAMLBody) == "" {
+		return "", "no zerops.yaml was read"
+	}
+	declared, err := setupNamesInZeropsYAML(r.ZeropsYAMLBody)
+	if err != nil {
+		return "", fmt.Sprintf("its zerops.yaml does not parse (%v)", err)
+	}
+	declared = dedupeStrings(declared)
+	others := make([]string, 0, len(declared))
+	for _, name := range declared {
+		if name != r.SetupName {
+			others = append(others, name)
+		}
+	}
+	switch {
+	case len(declared) == 0:
+		return "", "its zerops.yaml declares no setup"
+	case len(others) == 1:
+		return others[0], ""
+	case len(others) == 0:
+		return declared[0], ""
+	default:
+		sort.Strings(others)
+		return "", fmt.Sprintf("its zerops.yaml declares %s beside the dev setup %q", strings.Join(others, ", "), r.SetupName)
+	}
+}
+
+// groupTierBlockers lists the runtimes a tier would need a stage setup for
+// and has none: every runtime on a group environment, only those with a
+// stage half on the AI Agent tier.
+func groupTierBlockers(runtimes []GroupRuntime, policy groupTierPolicy, unresolved map[string]string) []string {
+	var blockers []string
+	for _, r := range runtimes {
+		if _, missing := unresolved[r.DevHostname]; !missing {
+			continue
+		}
+		if policy.pairs && r.StageHostname == "" {
+			continue
+		}
+		blockers = append(blockers, r.DevHostname)
+	}
+	return blockers
+}
+
+// joinTitles reads a list of tier titles as a sentence does: "A", "A and B",
+// "A, B and C" — followed by the verb it agrees with.
+func joinTitles(titles []string) string {
+	switch len(titles) {
+	case 0:
+		return ""
+	case 1:
+		return titles[0] + " is"
+	default:
+		return strings.Join(titles[:len(titles)-1], ", ") + " and " + titles[len(titles)-1] + " are"
+	}
 }
 
 // composeGroupTierYAML renders one tier's whole-project import.yaml.
@@ -221,6 +328,7 @@ func composeGroupTierYAML(
 	runtimes []GroupRuntime,
 	managed []ManagedServiceEntry,
 	policy groupTierPolicy,
+	stageSetups map[string]string,
 	classifications map[string]topology.SecretClassification,
 ) (string, []string, error) {
 	projectEnvs, warnings := composeProjectEnvVariables(inputs.ProjectEnvs, classifications)
@@ -233,14 +341,14 @@ func composeGroupTierYAML(
 			halves = append(halves, struct{ hostname, setup string }{r.DevHostname, r.SetupName})
 			if r.StageHostname != "" {
 				halves = append(halves, struct{ hostname, setup string }{
-					r.StageHostname, firstNonBlank(r.StageSetupName, r.SetupName),
+					r.StageHostname, stageSetups[r.DevHostname],
 				})
 			}
 		} else {
 			// A group environment runs what the pair's stage half runs: the
 			// dev half's setup is the dev loop's, never a stage's.
 			halves = append(halves, struct{ hostname, setup string }{
-				GroupPromotedHostname(r.DevHostname), firstNonBlank(r.StageSetupName, r.SetupName),
+				GroupPromotedHostname(r.DevHostname), stageSetups[r.DevHostname],
 			})
 		}
 		for _, half := range halves {
@@ -326,8 +434,10 @@ func groupRuntimeEntry(
 
 // groupSetupWarnings reports every runtime naming a setup its zerops.yaml does
 // not declare. A warning rather than an error: this composes in a reconcile,
-// and a recipe missing one setup name is still worth proposing.
-func groupSetupWarnings(runtimes []GroupRuntime) []string {
+// and a recipe missing one setup name is still worth proposing. stageSetups
+// is groupStageSetup's answer per dev hostname; one read from the yaml is
+// declared by construction, a recorded one is checked like the dev half's.
+func groupSetupWarnings(runtimes []GroupRuntime, stageSetups map[string]string) []string {
 	var warnings []string
 	for _, r := range runtimes {
 		if strings.TrimSpace(r.ZeropsYAMLBody) == "" {
@@ -340,7 +450,7 @@ func groupSetupWarnings(runtimes []GroupRuntime) []string {
 			warnings = append(warnings, fmt.Sprintf("runtime %q: zerops.yaml does not parse (%v) — its setup is unverified", r.DevHostname, err))
 			continue
 		}
-		for _, wanted := range dedupeStrings([]string{r.SetupName, r.StageSetupName}) {
+		for _, wanted := range dedupeStrings([]string{r.SetupName, stageSetups[r.DevHostname]}) {
 			if !slices.Contains(declared, wanted) {
 				warnings = append(warnings, fmt.Sprintf(
 					"runtime %q: setup %q is not declared in its zerops.yaml (declared: %s) — the tier names it anyway; fix the yaml or the recorded setup",

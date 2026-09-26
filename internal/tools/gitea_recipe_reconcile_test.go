@@ -173,6 +173,9 @@ func writeGiteaWiredPairMeta(t *testing.T, stateDir string) {
 		GitPushState:     topology.GitPushConfigured,
 		RemoteURL:        "https://gitea.example/acme/appdev.git",
 		PrimarySetupName: "api",
+		// Both halves deployed: the group tiers build the stage half's setup,
+		// and a stage setup nothing records is withheld rather than guessed.
+		StageSetupName: "prod",
 		Gitea: &workflow.GiteaRepoRef{
 			FullName: "acme/appdev", Branch: "mate/mate-p1", DefaultBranch: "main",
 		},

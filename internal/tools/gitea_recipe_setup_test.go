@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -52,6 +54,9 @@ func TestComposeGroupRecipeInputs_SetupName(t *testing.T) {
 		// wantWarning is a substring the composer's warnings must carry, ""
 		// when the setup must come out verified.
 		wantWarning string
+		// wantErr is a substring of the composer's refusal, "" when the
+		// recipe composes.
+		wantErr string
 	}{
 		{
 			name:      "no setup recorded, the yaml declares the hostname block",
@@ -66,9 +71,12 @@ func TestComposeGroupRecipeInputs_SetupName(t *testing.T) {
 			wantSetup: "appdev",
 		},
 		{
-			name:        "no setup recorded and no file on the mount",
-			wantSetup:   "appdev",
-			wantWarning: "no zerops.yaml was read",
+			// The dev half still names its conventional setup, but nothing
+			// says what the stage half builds — and a guess would land on
+			// the group repo's main for good — so nothing composes yet.
+			name:      "no setup recorded and no file on the mount",
+			wantSetup: "appdev",
+			wantErr:   "no zerops.yaml was read",
 		},
 		{
 			name:          "a recorded setup wins over the convention",
@@ -92,7 +100,9 @@ func TestComposeGroupRecipeInputs_SetupName(t *testing.T) {
 			stateDir := t.TempDir()
 			writeGiteaWiredPairMeta(t, stateDir)
 			if err := workflow.UpdateServiceMeta(stateDir, "appdev", func(m *workflow.ServiceMeta) error {
+				// A pair that has never deployed has neither half's setup.
 				m.PrimarySetupName = tt.recordedSetup
+				m.StageSetupName = ""
 				return nil
 			}); err != nil {
 				t.Fatalf("UpdateServiceMeta: %v", err)
@@ -115,6 +125,12 @@ func TestComposeGroupRecipeInputs_SetupName(t *testing.T) {
 			}
 
 			_, warnings, err := bundle.BuildGroupRecipe(inputs, nil)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want one containing %q", err, tt.wantErr)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("BuildGroupRecipe: %v", err)
 			}
@@ -127,6 +143,73 @@ func TestComposeGroupRecipeInputs_SetupName(t *testing.T) {
 			}
 			if !strings.Contains(joined, tt.wantWarning) {
 				t.Errorf("warnings %q are missing %q", joined, tt.wantWarning)
+			}
+		})
+	}
+}
+
+// A Mate that joined the group's existing repositories deploys its dev half
+// and never its stage half, so its metas record no stage setup (the medusa
+// group's second Mate, 2026-09-26). The group environments it proposes build
+// the setup the pair's zerops.yaml declares beside the dev one — never the dev
+// setup, whose `start: zsc noop` served production a 502.
+func TestComposeGroupRecipeInputs_JoinerWithoutStageSetup_BuildsTheYAMLsOtherSetup(t *testing.T) {
+	const yamlBody = "zerops:\n  - setup: appdev\n    run:\n      start: zsc noop\n  - setup: appprod\n    run:\n      start: npm start\n"
+	tests := []struct {
+		name string
+		// recordedDev is PrimarySetupName: what the joiner's own dev deploys
+		// recorded, "" before its first one.
+		recordedDev string
+	}{
+		{name: "its dev deploys recorded the dev setup", recordedDev: "appdev"},
+		{name: "nothing deployed yet — the hostname convention names the dev setup"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stateDir := t.TempDir()
+			writeGiteaWiredPairMeta(t, stateDir)
+			if err := workflow.UpdateServiceMeta(stateDir, "appdev", func(m *workflow.ServiceMeta) error {
+				m.PrimarySetupName = tt.recordedDev
+				m.StageSetupName = ""
+				return nil
+			}); err != nil {
+				t.Fatalf("UpdateServiceMeta: %v", err)
+			}
+			meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
+			mountRoot := mountWithZeropsYAML(t, "appdev", "zerops.yaml", yamlBody)
+
+			inputs, err := composeGroupRecipeInputs(
+				context.Background(), recipeReconcileClient(), "p1", mountRoot,
+				[]*workflow.ServiceMeta{meta},
+			)
+			if err != nil {
+				t.Fatalf("composeGroupRecipeInputs: %v", err)
+			}
+			layout, _, err := bundle.BuildGroupRecipe(inputs, nil)
+			if err != nil {
+				t.Fatalf("BuildGroupRecipe: %v", err)
+			}
+			for _, tier := range layout.Tiers {
+				doc := map[string]any{}
+				if err := yaml.Unmarshal([]byte(tier.ImportYAML), &doc); err != nil {
+					t.Fatalf("tier %q: %v", tier.Title, err)
+				}
+				services, _ := doc["services"].([]any)
+				for _, raw := range services {
+					entry, _ := raw.(map[string]any)
+					host, _ := entry["hostname"].(string)
+					setup, _ := entry["zeropsSetup"].(string)
+					want := "appprod"
+					switch host {
+					case "appdev":
+						want = "appdev"
+					case "db":
+						continue
+					}
+					if setup != want {
+						t.Errorf("tier %q: %s zeropsSetup = %q, want %q", tier.Title, host, setup, want)
+					}
+				}
 			}
 		})
 	}

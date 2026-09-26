@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -221,6 +222,120 @@ func TestBuildGroupRecipe_GroupEnvironmentsBuildTheStageHalfsSetup(t *testing.T)
 		if got, _ := services["api"]["zeropsSetup"].(string); got != "prod" {
 			t.Errorf("%s api zeropsSetup = %q, want the stage half's prod", dir, got)
 		}
+	}
+}
+
+// A pair's stage setup is recorded only by a deploy of its stage half, and a
+// Mate that joined the group's repositories never made one: the tiers then
+// named the dev setup for production, and the group's next release built its
+// storefront with `start: zsc noop` (the medusa group, 2026-09-26). The stage
+// setup is the recorded one, else the one setup the zerops.yaml declares
+// beside the dev one, else the yaml's only setup; anything else is a guess,
+// and a guess lands on main for good — so the tiers that would build it are
+// withheld until it is recorded.
+func TestBuildGroupRecipe_StageSetup_ResolvedOrWithheld(t *testing.T) {
+	t.Parallel()
+	const (
+		devAndProd = "zerops:\n  - setup: nextstoredev\n    run:\n      start: zsc noop\n  - setup: nextstoreprod\n    run:\n      start: npm start\n"
+		threeWay   = "zerops:\n  - setup: dev\n    run:\n      base: nodejs@22\n  - setup: stage\n    run:\n      base: nodejs@22\n  - setup: prod\n    run:\n      base: nodejs@22\n"
+		onlyAPI    = "zerops:\n  - setup: api\n    run:\n      base: nodejs@22\n"
+	)
+	allTiers := []string{"0 — AI Agent", "3 — Stage", "4 — Small Production"}
+	tests := []struct {
+		name          string
+		setup         string
+		recordedStage string
+		yaml          string
+		noStageHalf   bool
+		// wantStage is what every stage-shaped entry builds: the AI Agent
+		// tier's stage half and each group environment's runtime.
+		wantStage   string
+		wantTiers   []string
+		wantErr     string
+		wantWarning string
+	}{
+		{
+			name: "a recorded stage setup wins over the yaml", setup: "dev", recordedStage: "prod", yaml: threeWay,
+			wantStage: "prod", wantTiers: allTiers,
+		},
+		{
+			name: "a joiner never deployed its stage half — the yaml's other setup", setup: "nextstoredev", yaml: devAndProd,
+			wantStage: "nextstoreprod", wantTiers: allTiers,
+		},
+		{
+			name: "the yaml declares only the dev setup — it serves both halves", setup: "api", yaml: onlyAPI,
+			wantStage: "api", wantTiers: allTiers,
+		},
+		{
+			name: "the yaml's only setup is not the dev half's name — it is still the only one that builds", setup: "apidev", yaml: onlyAPI,
+			wantStage: "api", wantTiers: allTiers, wantWarning: `setup "apidev" is not declared`,
+		},
+		{
+			name: "several setups beside the dev one — nothing composes rather than a guess", setup: "dev", yaml: threeWay,
+			wantErr: "declares prod, stage beside the dev setup",
+		},
+		{
+			name: "no zerops.yaml was read — nothing composes rather than the dev setup", setup: "apidev",
+			wantErr: "no zerops.yaml was read",
+		},
+		{
+			name: "the zerops.yaml does not parse — nothing composes", setup: "apidev", yaml: "zerops: [",
+			wantErr: "does not parse",
+		},
+		{
+			name: "a runtime with no stage half — its AI Agent tier composes, the group environments wait", setup: "dev", yaml: threeWay, noStageHalf: true,
+			wantTiers: []string{"0 — AI Agent"}, wantWarning: "Stage and Small Production are withheld",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			in := groupInputsFixture()
+			in.Runtimes[0].SetupName = tt.setup
+			in.Runtimes[0].StageSetupName = tt.recordedStage
+			in.Runtimes[0].ZeropsYAMLBody = tt.yaml
+			if tt.noStageHalf {
+				in.Runtimes[0].StageHostname = ""
+			}
+			layout, warnings, err := BuildGroupRecipe(in, nil)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want one containing %q", err, tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), "apidev") || !strings.Contains(err.Error(), "stage setup") {
+					t.Errorf("err %q must name the runtime and its stage setup", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("BuildGroupRecipe: %v", err)
+			}
+			if tt.wantWarning != "" && !warningsContain(warnings, tt.wantWarning) {
+				t.Errorf("warnings %v are missing %q", warnings, tt.wantWarning)
+			}
+			files := groupFiles(t, layout)
+			for _, dir := range allTiers {
+				_, present := files[dir+"/import.yaml"]
+				if want := slices.Contains(tt.wantTiers, dir); present != want {
+					t.Errorf("tier %q composed = %v, want %v", dir, present, want)
+				}
+			}
+			agent := serviceEntries(t, tierDoc(t, files, "0 — AI Agent"))
+			if got, _ := agent["apidev"]["zeropsSetup"].(string); got != tt.setup {
+				t.Errorf("AI Agent apidev zeropsSetup = %q, want the dev half's %q", got, tt.setup)
+			}
+			if tt.noStageHalf {
+				return
+			}
+			if got, _ := agent["apistage"]["zeropsSetup"].(string); got != tt.wantStage {
+				t.Errorf("AI Agent apistage zeropsSetup = %q, want %q", got, tt.wantStage)
+			}
+			for _, dir := range []string{"3 — Stage", "4 — Small Production"} {
+				if got, _ := serviceEntries(t, tierDoc(t, files, dir))["api"]["zeropsSetup"].(string); got != tt.wantStage {
+					t.Errorf("%s api zeropsSetup = %q, want %q", dir, got, tt.wantStage)
+				}
+			}
+		})
 	}
 }
 
