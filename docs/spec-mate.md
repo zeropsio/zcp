@@ -1325,11 +1325,10 @@ quiet at rest and yields urgency to the canonical semantic status. The Zerops pa
 full-width on narrow surfaces but centers its sections in a readable maximum-width column on a wide
 surface.
 
-On wide web layouts, the Zerops project panel opens once when topology first proves that the active
-thread belongs to a Zerops environment and that thread has no prior panel choice. This default may
-not replace an already active Files, Diff, Preview, Terminal, or Agents surface. Closing the panel
-records a thread-scoped choice, including when its tab is removed, so rerender and reload do not
-make it spring back. Narrow layouts never auto-present the panel as a sheet.
+The Zerops project panel opens only when the person opens it — its button, the lifecycle strip, an
+agent's Authorize, a link in the conversation. It never presents itself on a Mate's first visit, on
+any layout (the owner, 2026-09-27: "this right panel keeps being opened on zerops by default (like
+when I add a new mate etc..) I don't think its necessary").
 
 Pending questions and approvals share one visible **Waiting for you** anatomy: attention state,
 human request kind, complete detail, progress when queued, and a legible action hierarchy. Provider
