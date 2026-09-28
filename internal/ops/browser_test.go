@@ -518,6 +518,106 @@ func TestBrowserBatch_NoScreenshotWhenNotRequested(t *testing.T) {
 	}
 }
 
+// TestBrowserBatch_ScreenshotTempPath_NotInResult pins that the temp file the
+// screenshot is written to — deleted as BrowserBatch returns — is named
+// nowhere in the result. An agent that read the path there linked it in its
+// answer, and a Mate showed "Image unavailable" for a picture already gone.
+// The picture goes back as its own image block; a screenshot the caller asked
+// for at a path of its own keeps that path, which outlives the call.
+func TestBrowserBatch_ScreenshotTempPath_NotInResult(t *testing.T) {
+	const ownPath = "/home/zerops/shots/front.png"
+	tests := []struct {
+		name string
+		// How agent-browser answers the screenshot step at path.
+		answer func(path string) (result any, errText string)
+	}{
+		{
+			name:   "the step echoes the path in its result",
+			answer: func(path string) (any, string) { return map[string]any{"path": path}, "" },
+		},
+		{
+			name: "the step fails naming the path",
+			answer: func(path string) (any, string) {
+				return nil, "failed to write " + path + ": no space left on device"
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &fakeEchoScreenshotRunner{png: testPNG(t, 4, 4), answer: tt.answer}
+			defer OverrideBrowserRunnerForTest(fake)()
+
+			result, err := BrowserBatch(context.Background(), BrowserBatchInput{
+				URL:        "https://example.com",
+				Commands:   [][]string{{"screenshot", ownPath}},
+				Screenshot: true,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if fake.tempPath == "" {
+				t.Fatal("the batch never carried the temp screenshot step")
+			}
+			out, err := json.Marshal(result)
+			if err != nil {
+				t.Fatalf("marshal result: %v", err)
+			}
+			if strings.Contains(string(out), fake.tempPath) {
+				t.Errorf("result names the temp screenshot file %q: %s", fake.tempPath, out)
+			}
+			if !strings.Contains(string(out), ownPath) {
+				t.Errorf("result lost the caller's own screenshot path %q: %s", ownPath, out)
+			}
+		})
+	}
+}
+
+// fakeEchoScreenshotRunner writes the PNG wherever the batch asks for a
+// screenshot, and answers each screenshot step as `answer` says for the temp
+// one (the path BrowserBatch generated) — a path agent-browser may echo back.
+type fakeEchoScreenshotRunner struct {
+	fakeBrowserRunner
+	png      []byte
+	answer   func(path string) (result any, errText string)
+	tempPath string
+}
+
+func (f *fakeEchoScreenshotRunner) Run(_ context.Context, stdin string, _ time.Duration) (string, string, bool, error) {
+	var batch [][]string
+	if err := json.Unmarshal([]byte(stdin), &batch); err != nil {
+		return "", "", false, fmt.Errorf("fakeEchoScreenshotRunner: parse stdin: %w", err)
+	}
+	out := make([]map[string]any, 0, len(batch))
+	for _, cmd := range batch {
+		step := map[string]any{"command": cmd, "success": true, "result": map[string]any{"ok": true}}
+		switch {
+		case cmd[0] == "errors":
+			step["result"] = map[string]any{"errors": []any{}}
+		case cmd[0] == "console":
+			step["result"] = map[string]any{"logs": []any{}}
+		case cmd[0] == "screenshot" && len(cmd) == 2 && strings.Contains(cmd[1], "zcp-browser-screenshot-"):
+			f.tempPath = cmd[1]
+			if err := os.WriteFile(cmd[1], f.png, 0o600); err != nil {
+				return "", "", false, fmt.Errorf("fakeEchoScreenshotRunner: write PNG: %w", err)
+			}
+			result, errText := f.answer(cmd[1])
+			step["result"] = result
+			if errText != "" {
+				step["success"] = false
+				step["error"] = errText
+			}
+		case cmd[0] == "screenshot" && len(cmd) == 2:
+			step["result"] = map[string]any{"path": cmd[1]}
+		}
+		out = append(out, step)
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return "", "", false, err
+	}
+	return string(b), "", false, nil
+}
+
 // testPNG encodes a minimal valid PNG of the given dimensions for tests
 // that need real, decodable image bytes.
 func testPNG(t *testing.T, w, h int) []byte {

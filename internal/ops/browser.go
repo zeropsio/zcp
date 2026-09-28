@@ -39,6 +39,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -763,6 +764,7 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 
 	if done, recovered := classifyRunResult(ctx, result, stdout, stderr, runErr, timeout); done {
 		recoveryNeeded = recovered
+		omitScreenshotTempPath(result, screenshotPath)
 		return result, nil
 	}
 
@@ -776,7 +778,35 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 		populateBrowserBatchOutputs(result, input.Screenshot, screenshotPath)
 	}
 
+	omitScreenshotTempPath(result, screenshotPath)
 	return result, nil
+}
+
+// omitScreenshotTempPath takes the temp file the screenshot was written to out
+// of the result: BrowserBatch deletes it as it returns, so a path an agent
+// read there names a picture that is already gone — linked in an answer, it
+// drew "Image unavailable". The picture itself goes back as its own image
+// block. Only the step BrowserBatch appended is touched: a screenshot the
+// caller asked for at a path of its own keeps that path, which outlives the
+// call.
+func omitScreenshotTempPath(result *BrowserBatchResult, path string) {
+	if result == nil || path == "" {
+		return
+	}
+	const said = "the screenshot file"
+	for i := range result.Steps {
+		step := &result.Steps[i]
+		if !isCommand(step.Command, browserCmdScreenshot) || !slices.Contains(step.Command, path) {
+			continue
+		}
+		step.Command = []string{browserCmdScreenshot}
+		step.Result = nil
+		if step.Error != nil {
+			text := strings.ReplaceAll(*step.Error, path, said)
+			step.Error = &text
+		}
+	}
+	result.Message = strings.ReplaceAll(result.Message, path, said)
 }
 
 // classifyRunResult inspects one agent-browser invocation's raw outcome
