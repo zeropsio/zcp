@@ -89,7 +89,10 @@ verdict (the adopt gate's `processStillLive` does exactly this). Project-level d
 too — `ListServicesDirect` (GET `/project/{id}/service-stack`) + `GetProjectProcessesDirect` (GET
 `/project/{id}/process`) are lag-free; `ops.Discover` + `ops.ProjectActivity` use THESE (not the
 searches) so a just-imported service + its live process are visible at-creation. The ES searches
-stay for history/timeline (`ops.Events`) + resolve/poll callers. Spec: `spec-workflows.md §3.5`.
+stay for history/timeline (`ops.Events`) + resolve/poll callers. Only the direct/by-id reads carry
+the active appVersion's `source`, so `ServiceStack.HasDeployedCode` tells a `startWithoutCode`
+runtime (ACTIVE, empty) from a deployed one ONLY on them — on an ES list it reads deployed.
+Spec: `spec-workflows.md §3.5`.
 
 ---
 
