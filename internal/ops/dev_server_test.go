@@ -1262,8 +1262,10 @@ func TestDevServer_FirstShellToken(t *testing.T) {
 }
 
 // TestContainerIdentity pins the container-life read the dev server keeper
-// compares: the container's hostname and its init's start time, one SSH round
-// trip. A restart starts a new init; a redeploy is a new container.
+// compares: the container's hostname, the kernel's boot id and its init's
+// start time, one SSH round trip. A restart starts a new init (and, in a
+// container that boots its own kernel, a new boot id); a redeploy is a new
+// container.
 func TestContainerIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -1274,9 +1276,10 @@ func TestContainerIdentity(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{name: "hostname and init start time", output: "appdev-1-376 8123456\n", want: "appdev-1-376/8123456"},
-		{name: "noise before the answer", output: "Welcome\nappdev-1-376 8123456\n", want: "appdev-1-376/8123456"},
-		{name: "no init start time", output: "appdev-1-376 \n", wantErr: true},
+		{name: "hostname, boot id and init start time", output: "appdev-1-376 5f0c-boot 8123456\n", want: "appdev-1-376/5f0c-boot/8123456"},
+		{name: "no boot id to read", output: "appdev-1-376 - 8123456\n", want: "appdev-1-376/-/8123456"},
+		{name: "noise before the answer", output: "Welcome\nappdev-1-376 5f0c-boot 8123456\n", want: "appdev-1-376/5f0c-boot/8123456"},
+		{name: "no init start time", output: "appdev-1-376 5f0c-boot \n", wantErr: true},
 		{name: "nothing", output: "", wantErr: true},
 		{name: "ssh failed", err: errors.New("exit status 255"), wantErr: true},
 	}
@@ -1300,8 +1303,10 @@ func TestContainerIdentity(t *testing.T) {
 			if len(ssh.calls) != 1 || ssh.calls[0].hostname != "appdev" || ssh.calls[0].background {
 				t.Fatalf("want one foreground ssh call to appdev, got %+v", ssh.calls)
 			}
-			if !strings.Contains(ssh.calls[0].command, "/proc/1/stat") {
-				t.Errorf("the identity reads init's start time from /proc/1/stat: %q", ssh.calls[0].command)
+			for _, want := range []string{"/proc/1/stat", "boot_id"} {
+				if !strings.Contains(ssh.calls[0].command, want) {
+					t.Errorf("the identity reads %s: %q", want, ssh.calls[0].command)
+				}
 			}
 		})
 	}

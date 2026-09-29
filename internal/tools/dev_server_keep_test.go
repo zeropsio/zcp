@@ -43,9 +43,9 @@ func (s *keepSSH) ExecSSH(_ context.Context, _ string, command string) ([]byte, 
 		if s.identity == "" {
 			return nil, errors.New("ssh: connect to host: connection refused")
 		}
-		// The remote prints "<hostname> <init start time>"; zcp names the
-		// life "<hostname>/<init start time>".
-		return []byte(strings.Replace(s.identity, "/", " ", 1) + "\n"), s.identityErr
+		// The remote prints "<hostname> <boot id> <init start time>"; zcp
+		// names the life "<hostname>/<boot id>/<init start time>".
+		return []byte(strings.ReplaceAll(s.identity, "/", " ") + "\n"), s.identityErr
 	case strings.Contains(command, "curl"):
 		if s.probeFails {
 			return []byte("FAIL 000"), errors.New("exit status 1")
@@ -87,14 +87,14 @@ func (u *recordingUnits) EnsureUnit(_ context.Context, name, command string) err
 }
 
 // keptAppdev is appdev's kept dev server as started in the container life
-// "appdev-1/100".
+// "appdev-1/boot-a/100".
 func keptAppdev() workflow.KeptDevServer {
 	return workflow.KeptDevServer{
 		Hostname:   "appdev",
 		Command:    "npm run dev",
 		Port:       3000,
 		HealthPath: "/",
-		Container:  "appdev-1/100",
+		Container:  "appdev-1/boot-a/100",
 		StartedAt:  "2026-09-29T20:20:00Z",
 	}
 }
@@ -119,12 +119,12 @@ func TestRestoreKeptDevServer(t *testing.T) {
 		wantResult  bool
 		wantRunning bool
 	}{
-		{name: "nothing kept", kept: nil, identity: "appdev-1/900"},
-		{name: "same container life — a crashed or stopped-by-hand server stays down", kept: keptAppdevStarted(), identity: "appdev-1/100"},
+		{name: "nothing kept", kept: nil, identity: "appdev-1/boot-b/900"},
+		{name: "same container life — a crashed or stopped-by-hand server stays down", kept: keptAppdevStarted(), identity: "appdev-1/boot-a/100"},
 		{name: "container unreachable", kept: keptAppdevStarted(), identity: ""},
-		{name: "restarted — brought back", kept: keptAppdevStarted(), identity: "appdev-1/900", wantResult: true, wantRunning: true},
-		{name: "redeployed — brought back", kept: keptAppdevStarted(), identity: "appdev-2/77", wantResult: true, wantRunning: true},
-		{name: "brought back but it does not come up", kept: keptAppdevStarted(), identity: "appdev-1/900", probeFails: true, wantResult: true},
+		{name: "restarted — brought back", kept: keptAppdevStarted(), identity: "appdev-1/boot-b/900", wantResult: true, wantRunning: true},
+		{name: "redeployed — brought back", kept: keptAppdevStarted(), identity: "appdev-2/boot-c/77", wantResult: true, wantRunning: true},
+		{name: "brought back but it does not come up", kept: keptAppdevStarted(), identity: "appdev-1/boot-b/900", probeFails: true, wantResult: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -177,13 +177,13 @@ func TestRestoreKeptDevServer(t *testing.T) {
 func TestKeepDevServers_OnePass(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	for _, rec := range []workflow.KeptDevServer{keptAppdev(), {Hostname: "apidev", Command: "go run .", Port: 8080, Container: "apidev-1/5"}} {
+	for _, rec := range []workflow.KeptDevServer{keptAppdev(), {Hostname: "apidev", Command: "go run .", Port: 8080, Container: "apidev-1/boot-d/5"}} {
 		if err := workflow.KeepDevServer(dir, rec); err != nil {
 			t.Fatalf("KeepDevServer: %v", err)
 		}
 	}
 	// Both answer with the same fake identity: appdev's changed, apidev's too.
-	ssh := &keepSSH{identity: "apidev-1/5"}
+	ssh := &keepSSH{identity: "apidev-1/boot-d/5"}
 	restored := KeepDevServers(context.Background(), ssh, dir)
 	if len(restored) != 1 || restored[0].Hostname != "appdev" {
 		t.Fatalf("restored = %+v, want only appdev (apidev runs in the same container life)", restored)
@@ -201,7 +201,7 @@ func TestDevServerTool_StartKeepsItAndStopForgetsIt(t *testing.T) {
 		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: "ACTIVE",
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeCategoryName: "USER", ServiceStackTypeVersionName: "nodejs@22"}}})
 	units := &recordingUnits{}
-	ssh := &keepSSH{identity: "appdev-1/100"}
+	ssh := &keepSSH{identity: "appdev-1/boot-a/100"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDevServer(srv, mock, nil, "proj-1", ssh, dir, units)
@@ -227,7 +227,7 @@ func TestDevServerTool_StartKeepsItAndStopForgetsIt(t *testing.T) {
 		t.Errorf("the message says zcp brings it back after a restart or a redeploy: %q", resp.Message)
 	}
 	rec, _ := workflow.KeptDevServerFor(dir, "appdev")
-	if rec == nil || rec.Command != "npm run dev" || rec.Port != 3000 || rec.Container != "appdev-1/100" {
+	if rec == nil || rec.Command != "npm run dev" || rec.Port != 3000 || rec.Container != "appdev-1/boot-a/100" {
 		t.Fatalf("kept record = %+v", rec)
 	}
 	if len(units.calls) != 1 || units.calls[0][0] != devServerKeeperUnit || !strings.Contains(units.calls[0][1], "zcp dev-server keep --state-dir "+dir) {
@@ -275,7 +275,7 @@ func TestDevServerTool_KeeperUnavailable_StillKeptWithWarning(t *testing.T) {
 		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: "ACTIVE"}})
 	units := &recordingUnits{err: errors.New("sudo: a password is required")}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDevServer(srv, mock, nil, "proj-1", &keepSSH{identity: "appdev-1/100"}, dir, units)
+	RegisterDevServer(srv, mock, nil, "proj-1", &keepSSH{identity: "appdev-1/boot-a/100"}, dir, units)
 
 	result := callTool(t, srv, "zerops_dev_server", map[string]any{
 		"action": "start", "hostname": "appdev", "command": "npm run dev", "port": 3000,
@@ -320,7 +320,7 @@ func TestBringBackKeptDevServer(t *testing.T) {
 					t.Fatalf("KeepDevServer: %v", err)
 				}
 			}
-			ssh := &keepSSH{identity: "appdev-2/77", probeFails: tt.probeFails}
+			ssh := &keepSSH{identity: "appdev-2/boot-c/77", probeFails: tt.probeFails}
 			result := &ops.DeployResult{Status: statusDeployed, TargetService: "appdev", NextActions: "deploy's own"}
 
 			listener := bringBackKeptDevServer(context.Background(), ssh, dir, "appdev", result)
@@ -371,7 +371,7 @@ func TestDeployTool_SSHMode_BringsBackKeptDevServer(t *testing.T) {
 		WithAppVersionEvents([]platform.AppVersionEvent{
 			{ID: "av-2", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusActive, Sequence: 2},
 		})
-	ssh := &deployKeepSSH{keepSSH: keepSSH{identity: "appdev-2/77"}}
+	ssh := &deployKeepSSH{keepSSH: keepSSH{identity: "appdev-2/boot-c/77"}}
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
@@ -399,7 +399,7 @@ func TestDeployTool_SSHMode_BringsBackKeptDevServer(t *testing.T) {
 	if !strings.Contains(parsed.NextActions, "zerops_verify") {
 		t.Errorf("next step is to verify, got %q", parsed.NextActions)
 	}
-	if rec, _ := workflow.KeptDevServerFor(stateDir, "appdev"); rec == nil || rec.Container != "appdev-2/77" {
+	if rec, _ := workflow.KeptDevServerFor(stateDir, "appdev"); rec == nil || rec.Container != "appdev-2/boot-c/77" {
 		t.Errorf("the kept record follows the new container: %+v", rec)
 	}
 }
@@ -429,7 +429,7 @@ func TestRunDevServerKeeper(t *testing.T) {
 	if err := workflow.KeepDevServer(dir, keptAppdev()); err != nil {
 		t.Fatalf("KeepDevServer: %v", err)
 	}
-	ssh := &keepSSH{identity: "appdev-1/900"}
+	ssh := &keepSSH{identity: "appdev-1/boot-b/900"}
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	var log strings.Builder
