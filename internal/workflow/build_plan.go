@@ -77,13 +77,13 @@ func planDevelopClosed() Plan {
 func planDevelopActive(env StateEnvelope) Plan {
 	perService := perServiceDevelopActions(env)
 	if env.WorkSession != nil {
-		for _, host := range env.WorkSession.Services {
+		for _, host := range plannedHosts(env.WorkSession) {
 			if needsDeploy(env.WorkSession, host) {
 				last := lastAttempt(env.WorkSession.Deploys[host])
 				return Plan{Primary: deployActionFor(host, last, env.Services), PerService: perService}
 			}
 		}
-		for _, host := range env.WorkSession.Services {
+		for _, host := range plannedHosts(env.WorkSession) {
 			if needsVerify(env.WorkSession, host) {
 				last := lastAttempt(env.WorkSession.Verifies[host])
 				return Plan{Primary: verifyActionFor(host, last), PerService: perService}
@@ -112,7 +112,7 @@ func perServiceDevelopActions(env StateEnvelope) map[string]NextAction {
 		return nil
 	}
 	out := make(map[string]NextAction, len(env.WorkSession.Services))
-	for _, host := range env.WorkSession.Services {
+	for _, host := range plannedHosts(env.WorkSession) {
 		switch {
 		case needsDeploy(env.WorkSession, host):
 			out[host] = deployActionFor(host, lastAttempt(env.WorkSession.Deploys[host]), env.Services)
@@ -124,6 +124,20 @@ func perServiceDevelopActions(env StateEnvelope) map[string]NextAction {
 		return nil
 	}
 	return out
+}
+
+// plannedHosts is the session's services a plan may point at: every declared
+// service except one left out of scope ("leave the stage as it is", RC-B).
+// That one stays visible as a reminder, never as a deploy or verify step.
+func plannedHosts(ws *WorkSessionSummary) []string {
+	hosts := make([]string, 0, len(ws.Services))
+	for _, host := range ws.Services {
+		if ws.Roles[host] == RoleOutOfScope {
+			continue
+		}
+		hosts = append(hosts, host)
+	}
+	return hosts
 }
 
 // lastAttempt returns the most recent attempt or a zero AttemptInfo when

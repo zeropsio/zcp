@@ -204,6 +204,65 @@ func TestBuildPlan_DevelopActiveDeployPending_DevHalf_SelfDeploy(t *testing.T) {
 	}
 }
 
+// TestBuildPlan_DevelopActive_OutOfScopeStageHalf pins RC-B in the typed
+// Plan: a service the session left out of scope ("leave the stage as it
+// is") never becomes a deploy or verify step — not the Primary while the dev
+// half is pending, not after it is green, and not in Per service. The session
+// closes on the required services alone, so the plan says close.
+func TestBuildPlan_DevelopActive_OutOfScopeStageHalf(t *testing.T) {
+	t.Parallel()
+
+	green := map[string][]AttemptInfo{"appdev": {{Success: true}}}
+	tests := []struct {
+		name       string
+		deploys    map[string][]AttemptInfo
+		verifies   map[string][]AttemptInfo
+		wantTool   string
+		wantTarget string
+		wantAction string
+	}{
+		{name: "dev half pending", deploys: map[string][]AttemptInfo{}, wantTool: "zerops_deploy", wantTarget: "appdev"},
+		{name: "dev half deployed, verify pending", deploys: green, wantTool: "zerops_verify"},
+		{name: "dev half green", deploys: green, verifies: green, wantTool: "zerops_workflow", wantAction: "close"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := planEnvelope(PhaseDevelopActive)
+			env.Services = []ServiceSnapshot{
+				{Hostname: "appdev", Mode: topology.ModeStandard, StageHostname: "appstage", Bootstrapped: true},
+				{Hostname: "appstage", Mode: topology.ModeStage, Bootstrapped: true},
+			}
+			env.WorkSession = &WorkSessionSummary{
+				Intent:   "stand up development",
+				Services: []string{"appdev", "appstage"},
+				Roles:    map[string]string{"appstage": RoleOutOfScope},
+				Deploys:  tt.deploys,
+				Verifies: tt.verifies,
+			}
+			plan := BuildPlan(env)
+
+			if plan.Primary.Tool != tt.wantTool {
+				t.Fatalf("Primary = %+v, want tool %s", plan.Primary, tt.wantTool)
+			}
+			if tt.wantTarget != "" && plan.Primary.Args["targetService"] != tt.wantTarget {
+				t.Errorf("Primary target = %q, want %q", plan.Primary.Args["targetService"], tt.wantTarget)
+			}
+			if tt.wantAction != "" && plan.Primary.Args["action"] != tt.wantAction {
+				t.Errorf("Primary action = %q, want %q", plan.Primary.Args["action"], tt.wantAction)
+			}
+			for _, arg := range []string{"targetService", "serviceHostname"} {
+				if plan.Primary.Args[arg] == "appstage" {
+					t.Errorf("the out-of-scope stage half is the Primary: %+v", plan.Primary)
+				}
+			}
+			if _, listed := plan.PerService["appstage"]; listed {
+				t.Errorf("the out-of-scope stage half is listed per service: %+v", plan.PerService["appstage"])
+			}
+		})
+	}
+}
+
 func TestBuildPlan_DevelopActiveVerifyPending(t *testing.T) {
 	t.Parallel()
 
