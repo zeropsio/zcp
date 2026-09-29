@@ -1311,3 +1311,61 @@ func TestContainerIdentity(t *testing.T) {
 		})
 	}
 }
+
+// TestPortListening pins the listener read a bring-back makes before it
+// spawns: the container's own socket table, no HTTP request (a GET would make
+// a dev server compile), no tool that a minimal image may lack.
+func TestPortListening(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		output  string
+		err     error
+		want    bool
+		wantErr bool
+	}{
+		{name: "listening", output: "listening\n", want: true},
+		{name: "not listening", output: "free\n", want: false},
+		{name: "ssh failed", err: errors.New("exit status 255"), wantErr: true},
+		{name: "no answer", output: "", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ssh := &scriptSSH{queue: []scriptStep{{output: tt.output, err: tt.err}}}
+			got, err := PortListening(context.Background(), ssh, "appdev", 3000)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("want an error, got %v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("PortListening: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("PortListening = %v, want %v", got, tt.want)
+			}
+			cmd := ssh.calls[0].command
+			for _, want := range []string{"/proc/net/tcp", ":0BB8 ", " 0A"} {
+				if !strings.Contains(cmd, want) {
+					t.Errorf("the read looks for a LISTEN socket on port 3000 (%q): %q", want, cmd)
+				}
+			}
+		})
+	}
+}
+
+// TestKillSpawnedDevServer stops exactly the process a spawn recorded in its
+// pidfile — not every process that looks like it.
+func TestKillSpawnedDevServer(t *testing.T) {
+	t.Parallel()
+	ssh := &scriptSSH{queue: []scriptStep{{output: ""}}}
+	if err := KillSpawnedDevServer(context.Background(), ssh, "appdev", ""); err != nil {
+		t.Fatalf("KillSpawnedDevServer: %v", err)
+	}
+	cmd := ssh.calls[0].command
+	if !strings.Contains(cmd, "/tmp/zcp-dev-server.log.pid") || !strings.Contains(cmd, "kill") || strings.Contains(cmd, "pkill") {
+		t.Errorf("kill by the default pidfile only: %q", cmd)
+	}
+}

@@ -369,6 +369,53 @@ func ContainerIdentity(ctx context.Context, ssh SSHDeployer, hostname string) (s
 	return strings.Join(fields, "/"), nil
 }
 
+// portListeningCmd prints "listening" when a TCP socket listens on port in the
+// container's own socket table — /proc/net/tcp and tcp6, a local :PORT (hex)
+// with remote port 0000 in state 0A (LISTEN) — and "free" otherwise. Nothing
+// is asked of the server (an HTTP request would make a dev server compile) and
+// no tool a minimal image may lack is needed.
+func portListeningCmd(port int) string {
+	return fmt.Sprintf(`if grep -Eqs ':%04X [0-9A-Fa-f]+:0000 0A' /proc/net/tcp /proc/net/tcp6; then echo listening; else echo free; fi`, port)
+}
+
+// PortListening reports whether something already listens on port inside
+// hostname's container — what a bring-back checks before it spawns, so a
+// server the agent (or another bring-back) already started is never doubled.
+func PortListening(ctx context.Context, ssh SSHDeployer, hostname string, port int) (bool, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, containerIdentityTimeout)
+	defer cancel()
+	out, err := ssh.ExecSSH(probeCtx, hostname, portListeningCmd(port))
+	if err != nil {
+		return false, fmt.Errorf("port %d listener on %s: %w", port, hostname, err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	switch strings.TrimSpace(lines[len(lines)-1]) {
+	case "listening":
+		return true, nil
+	case "free":
+		return false, nil
+	}
+	return false, fmt.Errorf("port %d listener on %s: unreadable answer %q", port, hostname, strings.TrimSpace(string(out)))
+}
+
+// KillSpawnedDevServer stops the process a dev-server spawn recorded in the
+// pidfile next to logFile (default log when empty) — that process and nothing
+// else, unlike stop's pattern match. Used when a bring-back finds the server
+// was stopped while it was starting it.
+func KillSpawnedDevServer(ctx context.Context, ssh SSHDeployer, hostname, logFile string) error {
+	if logFile == "" {
+		logFile = defaultLogFilePattern
+	}
+	cmd := fmt.Sprintf(`pid=$(cat %s 2>/dev/null); if [ -n "$pid" ]; then kill "$pid" 2>/dev/null; fi; true`,
+		shellQuote(pidFileFor(logFile)))
+	killCtx, cancel := context.WithTimeout(ctx, containerIdentityTimeout)
+	defer cancel()
+	if _, err := ssh.ExecSSH(killCtx, hostname, cmd); err != nil {
+		return fmt.Errorf("kill spawned dev server on %s: %w", hostname, err)
+	}
+	return nil
+}
+
 // DevServerRunning reports whether a dev-server process is currently
 // alive on hostname. It reuses checkProcessAlive — the same pidfile
 // `kill -0` liveness read the start/restart no-probe path uses — against
