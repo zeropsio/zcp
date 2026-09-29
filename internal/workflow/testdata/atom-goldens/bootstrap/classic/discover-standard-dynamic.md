@@ -67,8 +67,9 @@ Every runtime service needs a **mode**; confirm with the user before
 submitting the plan.
 
 - **dev** — single mutable dev container, SSHFS-mountable, no stage pair.
-  The app runs ONLY via `zerops_dev_server` (no supervised `run.start`),
-  so the public URL **502s after any container cycle** until restarted.
+  The app runs ONLY as the dev server you start with `zerops_dev_server`
+  (no supervised `run.start`); zcp starts it again after a container
+  cycle, but a crash leaves it down and the URL answers 502 while it is.
   Pick dev for hands-on iteration with no durable end-state — never as the
   final state of a service the user wants to stay reachable.
 - **standard** — dev + stage pair. The envelope reports `stageHostname`

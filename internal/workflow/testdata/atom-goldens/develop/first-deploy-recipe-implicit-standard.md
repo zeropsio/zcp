@@ -453,7 +453,7 @@ no restart needed.
 zerops_dev_server action=start hostname="appdev" command="npm run dev" port=5173 healthPath="/"
 ```
 
-Vite drops `public/build/hot`; helpers route assets through it. The dev-server primitive tracks the process via the runtime container's lifecycle, so backgrounding is not your concern. New containers start on every `zerops_deploy` — re-run `action=start` after each redeploy.
+Vite drops `public/build/hot`; helpers route assets through it. The dev-server primitive tracks the process via the runtime container's lifecycle, so backgrounding is not your concern. New containers start on every `zerops_deploy`; zcp starts the dev server it keeps again in the new one — the deploy response's `devServer` says whether it came up.
 
 **Do NOT add `npm run build` to dev `buildCommands`.** It defeats
 HMR-first dev setup: every push rebuilds assets (~20–30 s penalty).

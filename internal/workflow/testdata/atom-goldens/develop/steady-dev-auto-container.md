@@ -91,8 +91,10 @@ zerops_dev_server action=start hostname="appdev" command="{start-command}" port=
 Bash run_in_background=true command="{start-command}"
 ```
 
-After every redeploy the dev process is gone — re-run Step 2 before
-`zerops_verify`.
+A redeploy replaces the runtime container: a dev server zcp keeps is
+started again right after it — read the deploy response's `devServer` before
+`zerops_verify`; start one yourself only when none was kept or it did
+not come back.
 
 ---
 
@@ -139,7 +141,8 @@ runtimes the web server auto-starts and this checklist does not apply.
 
 - Dev setup block in `zerops.yaml`: **`run.start: zsc noop --silent`**
   (a no-op keepalive), **no** `healthCheck`. You start the real dev
-  process yourself via `zerops_dev_server action=start` after each deploy.
+  process yourself via `zerops_dev_server action=start`; zcp starts it
+  again after later redeploys and restarts, until `action=stop`.
 - Stage setup block (if a dev+stage pair exists): real `start:`
   command **plus** a `healthCheck`. Stage auto-starts on deploy and
   Zerops probes it on its configured interval.
@@ -173,7 +176,7 @@ The default stays auto until you explicitly switch.
 === develop-close-mode-auto-workflow-dev ===
 ### Development workflow
 
-Edit code at `/var/www/<hostname>/` for each in-scope dev runtime. **Verify the dev process is up first** — every redeploy drops it, and the deployed-state axis only confirms a deploy landed at some point, not that the dev server is currently live. Run `zerops_dev_server action=status hostname="appdev" port={port} healthPath="{path}"` per service; if `running: false`, run `action=start`. **Code-only edits never trigger `zerops_deploy`** — deploy is for `zerops.yaml` changes only (see "**`zerops.yaml` changes**" below).
+Edit code at `/var/www/<hostname>/` for each in-scope dev runtime. **Verify the dev process is up first** — zcp starts a dev server it keeps again after a restart or redeploy of its container, but a crash leaves it down, and the deployed-state axis only confirms a deploy landed at some point, not that the dev server is currently live. Run `zerops_dev_server action=status hostname="appdev" port={port} healthPath="{path}"` per service; if `running: false`, run `action=start`. **Code-only edits never trigger `zerops_deploy`** — deploy is for `zerops.yaml` changes only (see "**`zerops.yaml` changes**" below).
 
 **Code-only edit cycle**:
 - Dev runners with file-watch (`npm run dev`, `vite`, `nodemon`, `air`, `fastapi --reload`) pick up edits **only when configured for polling** — SSHFS does not surface inotify events. Set `CHOKIDAR_USEPOLLING=1` (vite/webpack), `--poll` (nodemon), or the runner's equivalent.
@@ -185,7 +188,7 @@ zerops_dev_server action=restart hostname="appdev" command="{start-command}" por
 
   The response carries `running`, `healthStatus`, `startMillis`, and on failure a `reason` code — read it before issuing another call.
 
-**`zerops.yaml` changes** (env vars, ports, run-block fields): `zerops_deploy` first; the deploy replaces the runtime container, so on the rebuilt container use `action=start` (NOT restart) — every redeploy needs a fresh dev-process start.
+**`zerops.yaml` changes** (env vars, ports, run-block fields): `zerops_deploy` first; the deploy replaces the runtime container, and zcp starts the dev server it keeps there again — the deploy response's `devServer` says whether it came up. Changed its command or port? `action=restart` with the new ones; a server that was never started needs `action=start` (NOT restart).
 
 **Diagnostic**: tail the log ring per service:
 
@@ -202,10 +205,13 @@ zerops_dev_server action=logs hostname="appdev" logLines=60
 
 Dev-mode dynamic runtime containers start running `zsc noop --silent`
 after deploy — a no-op keepalive; no dev process is live until you start
-one. The dev server is unsupervised, so
-the URL 502s after any container cycle until restarted: a passing verify
-means "live now", not "durably shipped". For an always-on service use
-simple mode. Action family on `zerops_dev_server`:
+one. Once started, zcp keeps it: when the dev container restarts or
+is redeployed, zcp starts it again with the same command, working
+directory and port — a deploy's response reports it under `devServer`
+— until you `stop` it. A server that crashes in its container stays
+down for you to read and fix. It is still a dev process: a passing
+verify means "live now", not "durably shipped" — for an always-on
+service use simple mode. Action family on `zerops_dev_server`:
 
 | Action | Use | Args |
 |---|---|---|
@@ -213,7 +219,7 @@ simple mode. Action family on `zerops_dev_server`:
 | `start` | spawn the dev process | `hostname command port healthPath` |
 | `restart` | survives-the-deploy config/code change | `hostname command port healthPath` |
 | `logs` | tail recent for diagnosis | `hostname logLines=40` |
-| `stop` | end of session, free the port | `hostname port` |
+| `stop` | free the port; zcp stops keeping it | `hostname port` |
 
 Args:
 - `command` — the app's dev-server start command (the real long-running
@@ -409,6 +415,6 @@ zerops_dev_server action=start hostname="appdev" command="{start-command}" port=
 zerops_verify serviceHostname="appdev"
 ```
 
-Each redeploy gives a new container with no dev server — check `action=status` first; if `running: false`, call `action=start`. The response carries `running`, `healthStatus`, `startMillis`, and on failure a `reason` code — read it before issuing another call.
+Each redeploy gives a new container: a dev server you started before it is started again by zcp and reported under the deploy response's `devServer`; otherwise check `action=status` first, and if `running: false`, call `action=start`. The response carries `running`, `healthStatus`, `startMillis`, and on failure a `reason` code — read it before issuing another call.
 
 For no-HTTP workers (no `port`/`healthPath`), `running` derives from the post-spawn liveness check; `healthStatus` stays 0 — use `action=logs` to confirm consumption.
