@@ -210,7 +210,11 @@ func TestAStageDeployOfAWiredPairDeliversItself(t *testing.T) {
 		{
 			name: "the stage half delivers", target: "appstage", sshOutput: "ok",
 			wantSSH: true, wantCreate: 1,
-			wantLine: []string{"mate/mate-p1", "acme/appdev", "pull request #3", "/acme/appdev/pulls/3"},
+			wantLine: []string{
+				"mate/mate-p1", "acme/appdev", "pull request #3", "/acme/appdev/pulls/3",
+				// The person reviews the change by its description.
+				`zerops_workflow action="describe-change" service="appdev"`,
+			},
 		},
 		{name: "the dev half delivers nothing", target: "appdev", wantNil: true},
 		{

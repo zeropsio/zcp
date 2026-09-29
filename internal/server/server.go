@@ -284,7 +284,7 @@ func (s *Server) registerTools() {
 	// container but absent from local dev machines, so the tool is gated on
 	// both container detection AND binary presence on PATH.
 	if s.rtInfo.InContainer && ops.AgentBrowserAvailable() {
-		tools.RegisterBrowser(s.server)
+		tools.RegisterBrowser(s.server, stateDir)
 	}
 }
 

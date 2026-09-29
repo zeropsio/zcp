@@ -2,10 +2,13 @@ package tools
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // BrowserInput is the tools-layer input for zerops_browser. It mirrors
@@ -34,7 +37,9 @@ func browserInputSchema() *jsonschema.Schema {
 
 // RegisterBrowser registers the zerops_browser tool. Only called by server.go
 // when running inside the ZCP container (where agent-browser is installed).
-func RegisterBrowser(srv *mcp.Server) {
+// stateDir is where a screenshot is kept as one of the Mate's pictures; ""
+// keeps none.
+func RegisterBrowser(srv *mcp.Server, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_browser",
 		Description: "Drive Chrome via agent-browser in ONE bounded batch (ZCP-container only). " +
@@ -63,7 +68,9 @@ func RegisterBrowser(srv *mcp.Server) {
 			"Do NOT pass [\"open\",...] or [\"close\"] in commands — both are stripped. " +
 			"Do NOT use [\"eval\",...] — it is stripped; dedicated commands produce structured output. " +
 			"Pass screenshot=true to capture a screenshot after your commands run — returned as " +
-			"an image content block alongside the text result, not inlined into it. " +
+			"an image content block alongside the text result, not inlined into it, and kept as a picture the " +
+			"result names (screenshot.picture, e.g. \"shot-3\"): write ![what it shows](shot-3) in a " +
+			"zerops_workflow action=\"describe-change\" description to show it to the person. " +
 			"Returns: steps[] (each with errorKind on failure), errorsOutput (from [errors]), " +
 			"consoleOutput (from [console]), networkOutput (4xx/5xx requests from [network requests], " +
 			"always populated — no flag needed; a request that failed at the network layer or is still " +
@@ -86,8 +93,26 @@ func RegisterBrowser(srv *mcp.Server) {
 		if err != nil {
 			return convertError(err), nil, nil
 		}
+		keepBrowserPicture(stateDir, result)
 		return browserToolResult(result), nil, nil
 	})
+}
+
+// keepBrowserPicture keeps a captured screenshot as one of the Mate's pictures
+// and names it in the result, so a change's description can show it
+// (workflow.KeepPicture). Best-effort: a picture that could not be kept is
+// still returned as the image block, only unnamed.
+func keepBrowserPicture(stateDir string, result *ops.BrowserBatchResult) {
+	if stateDir == "" || result == nil || result.Screenshot == nil || len(result.Screenshot.PNG) == 0 {
+		return
+	}
+	shot := result.Screenshot
+	pic, err := workflow.KeepPicture(stateDir, shot.PNG, shot.Width, shot.Height)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zerops_browser: the screenshot could not be kept as a picture: %v\n", err)
+		return
+	}
+	shot.Picture = pic.ID
 }
 
 // browserToolResult builds the zerops_browser CallToolResult: the JSON

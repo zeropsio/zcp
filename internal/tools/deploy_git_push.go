@@ -523,6 +523,15 @@ func handleGitPush(
 		)), nil, nil
 	}
 
+	// A wired pair pushes with a copy of this Mate's Gitea token, which the
+	// broker rotates: bring the copy to the current token first — which also
+	// heals a pair an earlier refusal marked, before the pre-flight below
+	// would refuse it (gitea_push_credential.go).
+	if refusal := giteaPushCredentialPreflight(ctx, client, sshDeployer, projectID, stateDir, input); refusal != nil {
+		recordAttempt(refusal.Message, topology.FailureClassCredential)
+		return convertError(refusal, WithRecoveryStatus()), nil, nil
+	}
+
 	// Meta-based source-of-push + setup-state pre-flight (deploy-decomp P4).
 	if blocked := gitPushMetaPreflight(stateDir, input.TargetService, recordAttempt); blocked != nil {
 		return blocked, nil, nil
@@ -838,7 +847,7 @@ func handleGitPush(
 	case giteaRemote:
 		// The group's workflow runs on main, which the person's merge moves:
 		// nothing builds from a Mate's branch (gitea_delivery.go).
-		result.NextActions = giteaPushNextActions(pullRequest)
+		result.NextActions = giteaPushNextActions(pullRequest, hostname)
 	default:
 		// L1 build watch (spec-git-delivery-target §6.1): the push IS the
 		// deploy, so follow the integration-triggered build to terminal the

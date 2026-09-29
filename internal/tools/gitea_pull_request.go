@@ -40,6 +40,12 @@ type giteaPullRequestRef struct {
 	Number  int    `json:"number"`
 	Created bool   `json:"created"`
 	URL     string `json:"url,omitempty"`
+	// Described is true when this call put the description the Mate kept
+	// for its change onto the request (gitea_change_description.go).
+	Described bool `json:"described,omitempty"`
+	// DescriptionNote says why the kept description did not go on — its
+	// pictures could not be attached — and is "" otherwise.
+	DescriptionNote string `json:"descriptionNote,omitempty"`
 }
 
 // giteaPairPullRequestTitle heads the request a pair's branch lands through:
@@ -81,11 +87,13 @@ func workSessionIntent(stateDir string) string {
 }
 
 // openGiteaPairPullRequest opens the pair's request when none is open, finds
-// the open one when there is, and records its number on the pair either way.
-// Returns nil when there is nothing to report — no wiring, no repository, or
-// a Gitea that could not answer. Never an error: every caller is a
-// best-effort hook on a path that has already succeeded, and a request that
-// could not be opened is retried by the next reconcile pass.
+// the open one when there is, and records its number on the pair either way —
+// then puts on it the description the Mate kept for its change, if any
+// (putKeptChangeDescription). Returns nil when there is nothing to report —
+// no wiring, no repository, or a Gitea that could not answer. Never an error:
+// every caller is a best-effort hook on a path that has already succeeded,
+// and a request that could not be opened is retried by the next reconcile
+// pass.
 func openGiteaPairPullRequest(
 	ctx context.Context,
 	httpClient ops.HTTPDoer,
@@ -120,14 +128,23 @@ func openGiteaPairPullRequest(
 			giteaPairPullRequestFallbackTitle(m), title)
 	}
 	recordGiteaPullRequest(stateDir, m, number)
+	described, note := putKeptChangeDescription(ctx, httpClient, wiring, stateDir, m, number)
 	return &giteaPullRequestRef{
-		Repo:    repo,
-		Branch:  branch,
-		Base:    base,
-		Number:  number,
-		Created: created,
-		URL:     fmt.Sprintf("%s/%s/pulls/%d", strings.TrimRight(wiring.GiteaURL, "/"), repo, number),
+		Repo:            repo,
+		Branch:          branch,
+		Base:            base,
+		Number:          number,
+		Created:         created,
+		URL:             giteaPullRequestURL(wiring.GiteaURL, repo, number),
+		Described:       described,
+		DescriptionNote: note,
 	}
+}
+
+// giteaPullRequestURL is where a person opens a request on the account's
+// Gitea.
+func giteaPullRequestURL(giteaURL, repo string, number int) string {
+	return fmt.Sprintf("%s/%s/pulls/%d", strings.TrimRight(giteaURL, "/"), repo, number)
 }
 
 // recordGiteaPullRequest stamps the number on the pair, in memory and on

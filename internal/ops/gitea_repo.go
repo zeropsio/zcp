@@ -334,6 +334,62 @@ func RetitleGiteaPullRequest(ctx context.Context, httpClient HTTPDoer, giteaURL,
 	return true, nil
 }
 
+// EditGiteaPullRequestBody sets a pull request's description — its body, in
+// markdown — and nothing else: the payload carries no title, so the request
+// keeps whatever it is called. The description is what a person reviews the
+// change by, in the app and in Gitea alike.
+//
+// A token with a Mate bot's scopes (write:repository, read:user) may do this:
+// the edit is a repository-scope route (measured on Gitea 1.27.2, 2026-09-29).
+func EditGiteaPullRequestBody(ctx context.Context, httpClient HTTPDoer, giteaURL, token, fullName string, number int, body string) error {
+	if httpClient == nil {
+		return fmt.Errorf("no HTTP client configured")
+	}
+	apiBase, err := giteaAPIBase(giteaURL)
+	if err != nil {
+		return err
+	}
+	if fullName == "" || number <= 0 {
+		return fmt.Errorf("a pull-request edit needs a repository and a number")
+	}
+	payload, err := json.Marshal(map[string]string{"body": body})
+	if err != nil {
+		return fmt.Errorf("encode pull-request body failed")
+	}
+	_, status, err := giteaAPICall(ctx, httpClient, http.MethodPatch,
+		fmt.Sprintf("%s/repos/%s/pulls/%d", apiBase, fullName, number), token, payload)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK && status != http.StatusCreated {
+		return fmt.Errorf("the Gitea pull-request edit of %s#%d returned status %d", fullName, number, status)
+	}
+	return nil
+}
+
+// FindGiteaPullRequest is EnsureGiteaPullRequest's read alone: the number of
+// the open pull request from headRepo's head onto base, 0 when there is none,
+// matched exactly as EnsureGiteaPullRequest matches. It never opens one — a
+// caller that only wants to reach a request already there (a person may have
+// opened it from the app's Git tab) must not re-propose a branch whose last
+// request somebody closed without merging.
+func FindGiteaPullRequest(ctx context.Context, httpClient HTTPDoer, giteaURL, token, fullName, headRepo, head, base string) (int, error) {
+	if httpClient == nil {
+		return 0, fmt.Errorf("no HTTP client configured")
+	}
+	apiBase, err := giteaAPIBase(giteaURL)
+	if err != nil {
+		return 0, err
+	}
+	if fullName == "" || head == "" || base == "" {
+		return 0, fmt.Errorf("a pull-request lookup needs a repository, a head and a base")
+	}
+	if headRepo == "" {
+		headRepo = fullName
+	}
+	return giteaOpenPullRequest(ctx, httpClient, apiBase+"/repos/"+fullName, token, headRepo, head, base)
+}
+
 // giteaOpenPullRequest returns the number of the open pull request from
 // headRepo's head to base, or 0 when there is none. Gitea's list endpoint
 // takes no head/base filter that can be relied on across versions, so the open

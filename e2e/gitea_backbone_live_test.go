@@ -5,8 +5,8 @@
 // Runs INSIDE a Mate's `zcp` container: the three variables the app writes
 // (GITEA_URL, MATE_BROKER_URL, GITEA_TOKEN) are read out of the container's
 // live env store, the broker hands the pair a repository, the branch is
-// pushed and a pull request opened (A1), and the group's recipe is proposed
-// to {org}/group (A2).
+// pushed and a pull request opened (A1) and described, and the group's recipe
+// is proposed to {org}/group (A2).
 //
 // Unlike newHarness this builds the server with runtime.Detect() and a real
 // mounter — an empty runtime.Info makes every Mate-shaped reconcile a no-op.
@@ -17,6 +17,8 @@ package e2e_test
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -244,6 +246,33 @@ func TestE2E_GiteaBackboneLive(t *testing.T) {
 		t.Errorf("a git-push to the account's Gitea must open (or find) its pull request:\n%s", pushText)
 	}
 
+	// The change's description is what the person reviews it by: a push
+	// that leaves a request open asks the Mate for it, and describe-change
+	// sets it as the request's body — with the bot's own token, since
+	// Gitea's pull-request edit is a repository-scope route.
+	if !push.IsError && strings.Contains(pushText, `"pullRequest"`) {
+		if !strings.Contains(pushText, "describe-change") {
+			t.Errorf("a push that leaves a request open must ask for its description:\n%s", pushText)
+		}
+		words := "## What it does\n\nServes the backbone's live probe page.\n\n" +
+			"## How it was checked\n\n- this run reads the words back from Gitea"
+		described := s.callTool("zerops_workflow", map[string]any{
+			"action": "describe-change", "service": devHostname, "description": words,
+		})
+		describedText := getE2ETextContent(t, described)
+		t.Logf("DESCRIBE-CHANGE (isError=%v):\n%s", described.IsError, describedText)
+		var answer struct {
+			PullRequest    int    `json:"pullRequest"`
+			PullRequestURL string `json:"pullRequestUrl"`
+			Described      bool   `json:"described"`
+		}
+		if err := json.Unmarshal([]byte(describedText), &answer); err != nil || !answer.Described {
+			t.Errorf("describe-change must put the words on the open pull request (%v):\n%s", err, describedText)
+		} else if body := giteaPullRequestBody(t, wiring, answer.PullRequestURL); body != words {
+			t.Errorf("Gitea's pull request #%d says %q, want the words as written", answer.PullRequest, body)
+		}
+	}
+
 	// And it is idempotent: a second push finds the same request rather than
 	// piling up duplicates.
 	again2 := s.callTool("zerops_deploy", map[string]any{
@@ -253,6 +282,33 @@ func TestE2E_GiteaBackboneLive(t *testing.T) {
 
 	afterPush := s.callTool("zerops_workflow", map[string]any{"action": "group-recipe"})
 	t.Logf("GROUP-RECIPE AFTER THE PUSH (isError=%v):\n%s", afterPush.IsError, getE2ETextContent(t, afterPush))
+}
+
+// giteaPullRequestBody reads a pull request's description back from Gitea by
+// the address a person opens it at, with the Mate's own token.
+func giteaPullRequestBody(t *testing.T, wiring ops.GiteaWiring, pullURL string) string {
+	t.Helper()
+	origin := strings.TrimRight(wiring.GiteaURL, "/")
+	endpoint := origin + "/api/v1/repos/" + strings.TrimPrefix(pullURL, origin+"/")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		t.Fatalf("build the pull-request read: %v", err)
+	}
+	req.Header.Set("Authorization", "token "+wiring.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("read the pull request: %v", err)
+	}
+	defer resp.Body.Close()
+	var pull struct {
+		Body string `json:"body"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&pull); err != nil {
+		t.Fatalf("decode the pull request (status %d): %v", resp.StatusCode, err)
+	}
+	return pull.Body
 }
 
 // devSSH runs one command on a mounted dev container and returns its trimmed

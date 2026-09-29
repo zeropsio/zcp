@@ -168,7 +168,7 @@ func deliverGiteaPair(
 	}
 	meta, _ := workflow.FindServiceMeta(stateDir, target)
 	if meta == nil || meta.Gitea == nil || meta.Gitea.FullName == "" || meta.Gitea.Branch == "" ||
-		meta.GitPushState != topology.GitPushConfigured || meta.StageHostname == "" || target != meta.StageHostname {
+		!giteaPairPushes(meta.GitPushState) || meta.StageHostname == "" || target != meta.StageHostname {
 		return nil
 	}
 	wiring := ops.ReadGiteaWiring(giteaEnvLookup(mate.LiveEnvStorePath))
@@ -197,6 +197,14 @@ func deliverGiteaPair(
 	landedCommit, landedHead := "", ""
 	if landed := meta.Gitea.Landed; landed != nil {
 		landedCommit, landedHead = landed.Commit, landed.Head
+	}
+
+	// The push below reads the push source's copy of this Mate's token, and
+	// the broker rotates the token itself (gitea_push_credential.go).
+	if err := giteaEnsurePushCredential(ctx, client, sshDeployer, rt.ProjectID, stateDir, wiring, meta); err != nil {
+		return &giteaDelivery{Line: fmt.Sprintf(
+			"%s runs, but its code has not reached %s: %v. %s is marked as refused; the next stage deploy checks its credential against this Mate's current Gitea token again and delivers once it works — if Gitea keeps refusing it, tell the person: this Mate's token is the broker's to deliver.",
+			target, repo, err, meta.Hostname)}
 	}
 
 	refreshGiteaWorkflow(ctx, sshDeployer, meta.Hostname)
@@ -230,6 +238,15 @@ func deliverGiteaPair(
 			target, repo, unignored, meta.Hostname, target)}
 	}
 	if err != nil {
+		// A refused credential marks the pair the way a plain git-push does
+		// (degradeGitPushStateToBroken), rather than reading as any other
+		// failed push while the pair still looks configured.
+		if cls := classifyTransportError(err, deployStrategyGitPush); cls != nil && cls.Category == topology.FailureClassCredential {
+			giteaMarkPushRefused(stateDir, meta)
+			return &giteaDelivery{Line: fmt.Sprintf(
+				"%s runs, but its code has not reached %s: Gitea refused %s's push credential (%s). %s is marked as refused; the next stage deploy checks its credential against this Mate's current Gitea token again and delivers once it works — if Gitea keeps refusing it, tell the person: this Mate's token is the broker's to deliver.",
+				target, repo, meta.Hostname, gitPushErrorDetail(err, output), meta.Hostname)}
+		}
 		return &giteaDelivery{Line: fmt.Sprintf(
 			"%s runs, but its code has not reached %s: pushing %s failed (%s). Fix the cause, then deploy %s again — the push and the pull request follow that deploy.",
 			target, repo, branch, gitPushErrorDetail(err, output), target)}
@@ -246,8 +263,8 @@ func deliverGiteaPair(
 	result := &giteaDelivery{PullRequest: openGiteaPairPullRequest(ctx, httpClient, wiring, stateDir, meta)}
 	if pr := result.PullRequest; pr != nil {
 		result.Line = fmt.Sprintf(
-			"Delivered: %s's code is on %s of %s, and pull request #%d (%s) carries it to %q. Tell the person that link — the code reaches the group's stage when they merge it.",
-			meta.Hostname, branch, repo, pr.Number, pr.URL, pr.Base)
+			"Delivered: %s's code is on %s of %s, and pull request #%d (%s) carries it to %q. %s Tell the person that link — the code reaches the group's stage when they merge it.",
+			meta.Hostname, branch, repo, pr.Number, pr.URL, pr.Base, giteaDescribeLine(pr, meta.Hostname))
 	} else {
 		result.Line = fmt.Sprintf(
 			"Delivered: %s's code is on %s of %s. No pull request is open onto %q yet — Gitea opens one only for a branch that differs from it; the next stage deploy asks again.",
@@ -257,6 +274,13 @@ func deliverGiteaPair(
 		result.Line += " The group's recipe: " + line
 	}
 	return result
+}
+
+// giteaPairPushes reports whether a wired pair's state lets it push: set up,
+// or marked by a refused credential — which the push credential step checks
+// again, so the mark heals by itself (giteaEnsurePushCredential).
+func giteaPairPushes(state topology.GitPushState) bool {
+	return state == topology.GitPushConfigured || state == topology.GitPushBroken
 }
 
 // giteaManualAbsorbSequence is the recovery a REAL conflict inside
@@ -505,16 +529,17 @@ func giteaRemoteOfThisMate(remoteURL string) bool {
 	return wiring.Ready() && topology.ClassifyGitHost(remoteURL, wiring.GiteaURL) == topology.GitHostGitea
 }
 
-// giteaPushNextActions answers a push to the account's Gitea. The group's
-// workflow runs on main, which the person's merge moves, so there is no build
-// to watch and no integration to offer: the Mate's own services change only
-// through a direct deploy, and deploying the stage half pushes by itself.
-func giteaPushNextActions(pr *giteaPullRequestRef) string {
+// giteaPushNextActions answers a push from hostname to the account's Gitea.
+// The group's workflow runs on main, which the person's merge moves, so there
+// is no build to watch and no integration to offer: the Mate's own services
+// change only through a direct deploy, and deploying the stage half pushes by
+// itself. A request left open asks for its description.
+func giteaPushNextActions(pr *giteaPullRequestRef, hostname string) string {
 	if pr == nil {
 		return "Pushed to this Mate's branch on the group's Gitea; no pull request is open yet (Gitea opens one only for a branch that differs from main). Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes and asks for the request again."
 	}
-	return fmt.Sprintf("Pushed to %s on the group's Gitea; pull request #%d (%s) carries it to %q, and the person merges it. Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes and updates the request by itself.",
-		pr.Branch, pr.Number, pr.URL, pr.Base)
+	return fmt.Sprintf("Pushed to %s on the group's Gitea; pull request #%d (%s) carries it to %q, and the person merges it. %s Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes and updates the request by itself.",
+		pr.Branch, pr.Number, pr.URL, pr.Base, giteaDescribeLine(pr, hostname))
 }
 
 // giteaHandoffNote is what the person needs from the Mate's closing message

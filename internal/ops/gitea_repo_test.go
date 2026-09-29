@@ -4,6 +4,7 @@ package ops
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -429,6 +430,166 @@ func TestReadGiteaPullRequestOutcome_NeedsARepositoryAndANumber(t *testing.T) {
 			if _, err := ReadGiteaPullRequestOutcome(
 				context.Background(), srv.Client(), srv.URL, "tok", tc.fullName, tc.number); err == nil {
 				t.Error("want an error, got none")
+			}
+		})
+	}
+}
+
+// TestEditGiteaPullRequestBody pins what a change's description travels as:
+// Gitea's pull-request edit, carrying the body and nothing else, in the bot's
+// `token` scheme. A title in the same edit would rename the request after
+// whatever the payload's zero value is, so the payload holds exactly one key.
+// Measured on Gitea 1.27.2 (2026-09-29): a token with the bot's scopes
+// (write:repository, read:user) edits the body and answers 201.
+func TestEditGiteaPullRequestBody(t *testing.T) {
+	t.Parallel()
+
+	const description = "## What it does\n\nShows how many todos are still open, above the list.\n\n" +
+		"## How I checked it\n\n- `curl -s /api/todos` answers `{\"open\":3}`\n- the count reads \"3 open\" — ✓"
+
+	tests := []struct {
+		name    string
+		status  int
+		wantErr string
+	}{
+		{name: "gitea takes it", status: http.StatusCreated},
+		{name: "an older gitea answers 200", status: http.StatusOK},
+		{name: "the request is gone", status: http.StatusNotFound, wantErr: "status 404"},
+		{name: "the token may not edit it", status: http.StatusForbidden, wantErr: "status 403"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var gotMethod, gotPath, gotAuth, gotType string
+			var gotPayload map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotMethod, gotPath = r.Method, r.URL.Path
+				gotAuth, gotType = r.Header.Get("Authorization"), r.Header.Get("Content-Type")
+				_ = json.NewDecoder(r.Body).Decode(&gotPayload)
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(`{"number":4,"state":"open"}`))
+			}))
+			defer srv.Close()
+
+			err := EditGiteaPullRequestBody(context.Background(), srv.Client(), srv.URL, "bot-token", "acme/api", 4, description)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want one naming %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("EditGiteaPullRequestBody: %v", err)
+			}
+			if gotMethod != http.MethodPatch || gotPath != "/api/v1/repos/acme/api/pulls/4" {
+				t.Errorf("request = %s %s, want PATCH /api/v1/repos/acme/api/pulls/4", gotMethod, gotPath)
+			}
+			if gotAuth != "token bot-token" {
+				t.Errorf("Authorization = %q, want Gitea's token scheme", gotAuth)
+			}
+			if gotType != "application/json" {
+				t.Errorf("Content-Type = %q, want application/json", gotType)
+			}
+			if len(gotPayload) != 1 || gotPayload["body"] != description {
+				t.Errorf("payload = %v, want exactly {body: the description, byte for byte}", gotPayload)
+			}
+		})
+	}
+}
+
+func TestEditGiteaPullRequestBody_NeedsAClientARepositoryAndANumber(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("no request should be made without a repository and a number")
+		w.WriteHeader(http.StatusCreated)
+	}))
+	t.Cleanup(srv.Close)
+
+	tests := []struct {
+		name     string
+		client   HTTPDoer
+		giteaURL string
+		fullName string
+		number   int
+	}{
+		{name: "no HTTP client", giteaURL: srv.URL, fullName: "acme/api", number: 4},
+		{name: "no GITEA_URL", client: srv.Client(), fullName: "acme/api", number: 4},
+		{name: "no repository", client: srv.Client(), giteaURL: srv.URL, number: 4},
+		{name: "no number", client: srv.Client(), giteaURL: srv.URL, fullName: "acme/api"},
+		{name: "a number Gitea never issues", client: srv.Client(), giteaURL: srv.URL, fullName: "acme/api", number: -1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if err := EditGiteaPullRequestBody(context.Background(), tt.client, tt.giteaURL, "tok", tt.fullName, tt.number, "words"); err == nil {
+				t.Error("want an error, got none")
+			}
+		})
+	}
+}
+
+// TestFindGiteaPullRequest pins the read-only half of EnsureGiteaPullRequest:
+// the open request from a pair's branch, matched the same way (head ref, head
+// repository and base), and never a create — describing a change must not
+// re-propose work a person closed without merging.
+func TestFindGiteaPullRequest(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		listStatus int
+		openList   string
+		wantNumber int
+		wantErr    bool
+	}{
+		{name: "none open", listStatus: http.StatusOK, openList: `[]`},
+		{
+			name:       "ours is open",
+			listStatus: http.StatusOK,
+			openList:   `[{"number":4,"state":"open","head":{"ref":"mate/mate-p1","repo":{"full_name":"acme/api"}},"base":{"ref":"main"}}]`,
+			wantNumber: 4,
+		},
+		{
+			name:       "another Mate's branch is open, ours is not",
+			listStatus: http.StatusOK,
+			openList:   `[{"number":4,"state":"open","head":{"ref":"mate/other","repo":{"full_name":"acme/api"}},"base":{"ref":"main"}}]`,
+		},
+		{
+			name:       "our branch name onto another base",
+			listStatus: http.StatusOK,
+			openList:   `[{"number":4,"state":"open","head":{"ref":"mate/mate-p1","repo":{"full_name":"acme/api"}},"base":{"ref":"release"}}]`,
+		},
+		{name: "gitea refuses the list", listStatus: http.StatusInternalServerError, openList: `{}`, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var writes int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					writes++
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+				if r.URL.Path != "/api/v1/repos/acme/api/pulls" || r.Header.Get("Authorization") != "token bot-token" {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				w.WriteHeader(tt.listStatus)
+				_, _ = w.Write([]byte(tt.openList))
+			}))
+			defer srv.Close()
+
+			number, err := FindGiteaPullRequest(context.Background(), srv.Client(), srv.URL, "bot-token",
+				"acme/api", "", "mate/mate-p1", "main")
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if number != tt.wantNumber {
+				t.Errorf("number = %d, want %d", number, tt.wantNumber)
+			}
+			if writes != 0 {
+				t.Errorf("a find made %d non-GET requests; it must never open one", writes)
 			}
 		})
 	}

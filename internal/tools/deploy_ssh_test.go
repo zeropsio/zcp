@@ -1369,12 +1369,14 @@ type stubSSHWithCommands struct {
 	pushOutput   []byte // output for the actual push command
 	pushErr      error
 
-	committedCalls int // committed-code check invocation counter
-	tokenCalls     int // GIT_TOKEN check invocation counter
-	yamlCalls      int // zerops.yaml cat invocation counter
-	statusCalls    int // dirty-tree probe invocation counter
-	absorbCalls    int // absorb/sync invocation counter
-	pushCalls      int // push invocation counter
+	committedCalls int   // committed-code check invocation counter
+	tokenCalls     int   // GIT_TOKEN check invocation counter
+	yamlCalls      int   // zerops.yaml cat invocation counter
+	statusCalls    int   // dirty-tree probe invocation counter
+	absorbCalls    int   // absorb/sync invocation counter
+	probeCalls     int   // fresh-session credential probe counter
+	probeErr       error // what the probe answers; nil = the credential works
+	pushCalls      int   // push invocation counter
 	// commands records every command this stub saw, in order — for tests
 	// that assert on the SEQUENCE (e.g. absorb runs before push).
 	commands []string
@@ -1419,6 +1421,15 @@ func (s *stubSSHWithCommands) ExecSSH(_ context.Context, _ string, command strin
 			out = []byte("ok")
 		}
 		return out, s.absorbErr
+	}
+	// The fresh-session credential probe (`ls-remote`) a wired pair's push
+	// credential step runs — a probe, never a push.
+	if strings.Contains(command, "ls-remote") {
+		s.probeCalls++
+		if s.probeErr != nil {
+			return []byte("fatal: Authentication failed"), s.probeErr
+		}
+		return []byte("ok"), nil
 	}
 	// Dirty-tree probe (`git status --porcelain`) — MUST precede the push
 	// fallthrough, else the porcelain command mis-routes to the push branch
