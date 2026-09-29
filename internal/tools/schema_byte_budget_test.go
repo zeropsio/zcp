@@ -79,7 +79,13 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// get its pull request. One enumerated action in the Action
 		// description; the explanation lives in the tool Description, which
 		// this budget does not cover.
-		"zerops_workflow":    18149,
+		// Raised +348 (18149→18497) for action="describe-change" and its
+		// `description` input (docs/spec-mate.md §10.10): a Mate writes the
+		// description a person reviews its change by, as its pull request's
+		// body. One enumerated action, one new field, and `service` naming
+		// the action it now also serves; the call's exact shape reaches the
+		// Mate in the delivery and push results, not here.
+		"zerops_workflow":    18497,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services

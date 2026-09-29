@@ -232,3 +232,33 @@ func TestWorkflowInput_UnmarshalsConfirmLaunch_StringTrue(t *testing.T) {
 		t.Error(`ConfirmLaunch: got false want true (stringified "true")`)
 	}
 }
+
+// TestWorkflowTool_DescribeChangeReachesItsHandler: the published schema takes
+// a change's description, and action="describe-change" is dispatched to its
+// handler — which, in a container with no Gitea wiring, says so rather than
+// failing as an unknown action or an unexpected property.
+func TestWorkflowTool_DescribeChangeReachesItsHandler(t *testing.T) {
+	t.Parallel()
+
+	_, session := schemaTestSession(t)
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "zerops_workflow",
+		Arguments: map[string]any{
+			"action":      "describe-change",
+			"service":     "appdev",
+			"description": "## What it does\n\nShows how many todos are still open.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	text := ""
+	for _, content := range result.Content {
+		if tc, ok := content.(*mcp.TextContent); ok {
+			text += tc.Text
+		}
+	}
+	if !result.IsError || !strings.Contains(text, "PREREQUISITE_MISSING") || !strings.Contains(text, "group's Gitea") {
+		t.Errorf("want the handler's refusal for a Mate with no Gitea, got isError=%v:\n%s", result.IsError, text)
+	}
+}

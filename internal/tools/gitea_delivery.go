@@ -246,8 +246,8 @@ func deliverGiteaPair(
 	result := &giteaDelivery{PullRequest: openGiteaPairPullRequest(ctx, httpClient, wiring, stateDir, meta)}
 	if pr := result.PullRequest; pr != nil {
 		result.Line = fmt.Sprintf(
-			"Delivered: %s's code is on %s of %s, and pull request #%d (%s) carries it to %q. Tell the person that link — the code reaches the group's stage when they merge it.",
-			meta.Hostname, branch, repo, pr.Number, pr.URL, pr.Base)
+			"Delivered: %s's code is on %s of %s, and pull request #%d (%s) carries it to %q. %s Tell the person that link — the code reaches the group's stage when they merge it.",
+			meta.Hostname, branch, repo, pr.Number, pr.URL, pr.Base, giteaDescribeLine(pr, meta.Hostname))
 	} else {
 		result.Line = fmt.Sprintf(
 			"Delivered: %s's code is on %s of %s. No pull request is open onto %q yet — Gitea opens one only for a branch that differs from it; the next stage deploy asks again.",
@@ -505,16 +505,17 @@ func giteaRemoteOfThisMate(remoteURL string) bool {
 	return wiring.Ready() && topology.ClassifyGitHost(remoteURL, wiring.GiteaURL) == topology.GitHostGitea
 }
 
-// giteaPushNextActions answers a push to the account's Gitea. The group's
-// workflow runs on main, which the person's merge moves, so there is no build
-// to watch and no integration to offer: the Mate's own services change only
-// through a direct deploy, and deploying the stage half pushes by itself.
-func giteaPushNextActions(pr *giteaPullRequestRef) string {
+// giteaPushNextActions answers a push from hostname to the account's Gitea.
+// The group's workflow runs on main, which the person's merge moves, so there
+// is no build to watch and no integration to offer: the Mate's own services
+// change only through a direct deploy, and deploying the stage half pushes by
+// itself. A request left open asks for its description.
+func giteaPushNextActions(pr *giteaPullRequestRef, hostname string) string {
 	if pr == nil {
 		return "Pushed to this Mate's branch on the group's Gitea; no pull request is open yet (Gitea opens one only for a branch that differs from main). Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes and asks for the request again."
 	}
-	return fmt.Sprintf("Pushed to %s on the group's Gitea; pull request #%d (%s) carries it to %q, and the person merges it. Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes and updates the request by itself.",
-		pr.Branch, pr.Number, pr.URL, pr.Base)
+	return fmt.Sprintf("Pushed to %s on the group's Gitea; pull request #%d (%s) carries it to %q, and the person merges it. %s Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes and updates the request by itself.",
+		pr.Branch, pr.Number, pr.URL, pr.Base, giteaDescribeLine(pr, hostname))
 }
 
 // giteaHandoffNote is what the person needs from the Mate's closing message

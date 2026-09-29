@@ -141,9 +141,10 @@ type ServiceMeta struct {
 	// Gitea is the pair's repository on the account's own Gitea, recorded
 	// when the broker gave it (guide 2.1). Absent on every pair whose remote
 	// is not that Gitea — which is every pair outside a Mate. Non-secret: a
-	// repository name and a branch name. The bot's token is never here (nor
-	// in any other file ZCP writes) — it lives where git-push-setup put it, a
-	// sensitive service env on the push source.
+	// repository name, a branch name, and at most the Mate's own words about
+	// its change until a pull request carries them. The bot's token is never
+	// here (nor in any other file ZCP writes) — it lives where git-push-setup
+	// put it, a sensitive service env on the push source.
 	Gitea *GiteaRepoRef `json:"gitea,omitempty"`
 }
 
@@ -179,6 +180,23 @@ type GiteaRepoRef struct {
 	// with the branch that became it, so the ordinary take-the-base-in merge
 	// alone reads it as two histories that both add the same files.
 	Landed *LandedPullRequest `json:"landed,omitempty"`
+	// ChangeDescription is what the Mate wrote about its change while no
+	// pull request could take it yet — none was open, or Gitea refused the
+	// edit. It is there only until a request carries it, and never longer
+	// than the request it was written for: the next change is another
+	// change, and inheriting the last one's words would tell the person
+	// about work that is not in it.
+	ChangeDescription *ChangeDescription `json:"changeDescription,omitempty"`
+}
+
+// ChangeDescription is a Mate's description of its change, kept for the pull
+// request that will carry it.
+type ChangeDescription struct {
+	// Text is the description, in markdown.
+	Text string `json:"text"`
+	// PullRequest is the request it was written for; 0 when it waits for
+	// whichever request the pair opens next.
+	PullRequest int `json:"pullRequest,omitempty"`
 }
 
 // LandedPullRequest is what a pull request's merge needs recorded before a

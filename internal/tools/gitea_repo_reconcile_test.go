@@ -58,6 +58,20 @@ type fakeGitea struct {
 	// pullReads counts those reads, so a settled pair can be shown to ask
 	// once per backoff window rather than once per pass.
 	pullReads int
+	// pullBodies is every description a request was given, in order, and
+	// pullBodyPaths the request each went to. pullEditStatus, when set, is
+	// what Gitea answers every edit instead, and nothing is recorded then;
+	// pullBodyAttempts counts description edits either way.
+	pullBodies       []string
+	pullBodyPaths    []string
+	pullEditStatus   int
+	pullBodyAttempts int
+	// onPullEdit runs as an edit arrives — the moment a concurrent call
+	// could change what a pair keeps.
+	onPullEdit func()
+	// requests counts every authorised request, so a call that must ask
+	// Gitea nothing can be shown to.
+	requests int
 }
 
 func newFakeGitea() *fakeGitea {
@@ -79,6 +93,7 @@ func (f *fakeGitea) start(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
+		f.requests++
 		switch {
 		case r.URL.Path == "/api/v1/user":
 			w.WriteHeader(f.userStatus)
@@ -99,11 +114,28 @@ func (f *fakeGitea) start(t *testing.T) *httptest.Server {
 		case strings.Contains(r.URL.Path, "/pulls/"):
 			if r.Method == http.MethodPatch {
 				var edit struct {
-					Title string `json:"title"`
+					Title *string `json:"title"`
+					Body  *string `json:"body"`
 				}
 				_ = json.NewDecoder(r.Body).Decode(&edit)
-				f.pullRetitles = append(f.pullRetitles, edit.Title)
-				f.pullTitle = edit.Title
+				if edit.Body != nil {
+					f.pullBodyAttempts++
+				}
+				if f.onPullEdit != nil {
+					f.onPullEdit()
+				}
+				if f.pullEditStatus != 0 {
+					w.WriteHeader(f.pullEditStatus)
+					return
+				}
+				if edit.Title != nil {
+					f.pullRetitles = append(f.pullRetitles, *edit.Title)
+					f.pullTitle = *edit.Title
+				}
+				if edit.Body != nil {
+					f.pullBodies = append(f.pullBodies, *edit.Body)
+					f.pullBodyPaths = append(f.pullBodyPaths, r.URL.Path)
+				}
 			}
 			if r.Method == http.MethodGet {
 				f.pullReads++

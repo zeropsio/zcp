@@ -838,7 +838,7 @@ func handleGitPush(
 	case giteaRemote:
 		// The group's workflow runs on main, which the person's merge moves:
 		// nothing builds from a Mate's branch (gitea_delivery.go).
-		result.NextActions = giteaPushNextActions(pullRequest)
+		result.NextActions = giteaPushNextActions(pullRequest, hostname)
 	default:
 		// L1 build watch (spec-git-delivery-target §6.1): the push IS the
 		// deploy, so follow the integration-triggered build to terminal the
