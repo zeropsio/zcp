@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -379,6 +380,9 @@ func TestDeferredStartDurabilityNote(t *testing.T) {
 			note := deferredStartDurabilityNote(dir, tc.host, tc.result)
 			if tc.wantHit && note == "" {
 				t.Fatalf("expected durability note, got empty")
+			}
+			if tc.wantHit && (strings.Contains(note, "502s after") || !strings.Contains(note, "restart or redeploy") || !strings.Contains(note, "crash")) {
+				t.Errorf("zcp starts a kept dev server again after a restart or redeploy; the note says a crash leaves it down: %s", note)
 			}
 			if !tc.wantHit && note != "" {
 				t.Fatalf("expected no note, got: %s", note)

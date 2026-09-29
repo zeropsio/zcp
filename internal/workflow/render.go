@@ -96,9 +96,10 @@ func intentSignalsProduction(intent string) bool {
 
 // transientRequiredHosts returns the required (RoleRequired) service hostnames
 // that are deferred-start — dev-mode dynamic runtimes served only by the
-// ephemeral zerops_dev_server (RC-A′). Their deploy+verify "pass" reflects a
-// live process, not a durable supervised state: the URL 502s after a container
-// cycle until the dev server is restarted. Pure over the snapshot's STABLE
+// zerops_dev_server process (RC-A′). Their deploy+verify "pass" reflects a
+// live dev process, not the app's own start: zcp starts a dev server it keeps
+// again after a restart or redeploy (spec-workflows §8 O4), but a crash leaves
+// it down until it is started. Pure over the snapshot's STABLE
 // (mode, class) — reads no liveness — so the envelope stays byte-deterministic
 // (the constraint the derived-close model depends on for compaction safety).
 func transientRequiredHosts(env StateEnvelope) []string {
@@ -201,7 +202,7 @@ func renderProgressAndBlockers(b *strings.Builder, env StateEnvelope) {
 	// dynamic service is live only via zerops_dev_server — name that here so the
 	// agent doesn't report the URL as durably shipped (the e2 failure).
 	if transient := transientRequiredHosts(env); len(transient) > 0 {
-		fmt.Fprintf(b, "Durability: %s served via zerops_dev_server (dev-mode) — live now but NOT supervised; the URL 502s after a container cycle. Use simple mode for an always-on service.\n", strings.Join(transient, ", "))
+		fmt.Fprintf(b, "Durability: %s served via zerops_dev_server (dev-mode) — live now; zcp starts the dev server again after a restart or redeploy, but a crash leaves it down until it is started. Use simple mode for an always-on service.\n", strings.Join(transient, ", "))
 	}
 	if len(pending) > 0 {
 		required := len(statuses)
@@ -318,10 +319,11 @@ func renderPhase(b *strings.Builder, env StateEnvelope) {
 		if env.WorkSession != nil {
 			if transient := transientRequiredHosts(env); len(transient) > 0 {
 				// RC-A′: the session completed (agent did the work), but a
-				// dev-mode dynamic required service is live only via the
-				// ephemeral dev-server — NOT durably delivered. Say so instead
-				// of "all services done", which reads as supervised/durable.
-				fmt.Fprintf(b, "Phase: develop-closed-auto — intent: %q (live via dev-server, NOT durable: %s — stops after a container cycle; switch to simple mode for an always-on service)\n",
+				// dev-mode dynamic required service is live only via the dev
+				// server — kept across restarts and redeploys, down after a
+				// crash. Say so instead of "all services done", which reads as
+				// an always-on start.
+				fmt.Fprintf(b, "Phase: develop-closed-auto — intent: %q (live via dev-server, not an always-on start: %s — zcp brings it back after a restart or redeploy, a crash leaves it down; switch to simple mode for an always-on service)\n",
 					env.WorkSession.Intent, strings.Join(transient, ", "))
 				return
 			}
@@ -385,7 +387,7 @@ func renderServiceLine(svc ServiceSnapshot) string {
 // from). Stated on the envelope service line itself, derived from the live
 // type: the rule reaches every develop path regardless of deploy state,
 // unlike a first-deploy-only atom gated on never-deployed, which an adopted
-// startWithoutCode service (deployed=true) never sees.
+// service already running deployed code never sees.
 //
 // Excluded on purpose: static runtimes (`run.base` is the bare special
 // token `static`, not an OS-prefixed base — the build base OS is the
