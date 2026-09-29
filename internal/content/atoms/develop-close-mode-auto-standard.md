@@ -4,6 +4,7 @@ priority: 7
 phases: [develop-active]
 deployStates: [deployed]
 modes: [standard]
+stageScope: [in-scope]
 runtimes: [dynamic]
 closeDeployModes: [auto]
 gitPushStates: [unconfigured, broken]

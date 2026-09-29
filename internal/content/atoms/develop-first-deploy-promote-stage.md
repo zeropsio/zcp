@@ -4,6 +4,7 @@ priority: 5
 phases: [develop-active]
 deployStates: [never-deployed]
 modes: [standard]
+stageScope: [in-scope]
 environments: [container]
 multiService: aggregate
 title: "First-deploy — promote dev to stage"

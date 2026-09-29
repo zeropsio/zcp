@@ -90,7 +90,7 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender
 			if scope != nil && !scope[svc.Hostname] {
 				continue
 			}
-			if serviceSatisfiesAxes(svc, atom.Axes) {
+			if serviceSatisfiesAxes(svc, atom.Axes, stageScopeOf(svc, envelope.WorkSession)) {
 				idxs = append(idxs, i)
 			}
 		}
@@ -355,7 +355,7 @@ func atomEnvelopeAxesMatch(atom KnowledgeAtom, env StateEnvelope) bool {
 			return false
 		}
 	}
-	if len(atom.Axes.EnvelopeDeployStates) > 0 && !envelopeDeployStateMatches(env.Services, atom.Axes.EnvelopeDeployStates) {
+	if len(atom.Axes.EnvelopeDeployStates) > 0 && !envelopeDeployStateMatches(env.Services, env.WorkSession, atom.Axes.EnvelopeDeployStates) {
 		return false
 	}
 	if len(atom.Axes.ExportStatuses) > 0 && !slices.Contains(atom.Axes.ExportStatuses, env.ExportStatus) {
@@ -395,9 +395,15 @@ func envelopeHasManagedType(services []ServiceSnapshot, want []string) bool {
 // Bootstrapped=false services are skipped: deploy state is only meaningful
 // once the bootstrap pipeline has stamped a service. This mirrors
 // serviceSatisfiesAxes's handling of DeployStates.
-func envelopeDeployStateMatches(services []ServiceSnapshot, want []DeployState) bool {
+func envelopeDeployStateMatches(services []ServiceSnapshot, ws *WorkSessionSummary, want []DeployState) bool {
 	for _, svc := range services {
 		if !svc.Bootstrapped {
+			continue
+		}
+		// A service the session left out of scope is not part of this work:
+		// a never-deployed stage the session leaves as it is must not hold
+		// the session in the first-deploy branch once its dev half deployed.
+		if ws != nil && ws.Roles[svc.Hostname] == RoleOutOfScope {
 			continue
 		}
 		state := DeployStateNeverDeployed
@@ -460,16 +466,37 @@ func hasServiceScopedAxes(axes AxisVector) bool {
 		len(axes.RuntimeBases) > 0 ||
 		len(axes.DeployStates) > 0 ||
 		len(axes.ServiceStatuses) > 0 ||
-		len(axes.DeployHistories) > 0
+		len(axes.DeployHistories) > 0 ||
+		len(axes.StageScopes) > 0
+}
+
+// stageScopeOf is where svc's paired stage half stands in the develop session
+// ws (the `stageScope:` axis): none for a service that is not a pair's dev
+// half, out-of-scope when the session left that stage half out of scope,
+// in-scope otherwise — required, deferred, not listed, or no session at all.
+// Read from the envelope alone, so a synthesis stays a pure function of it.
+func stageScopeOf(svc ServiceSnapshot, ws *WorkSessionSummary) StageScope {
+	if svc.StageHostname == "" {
+		return StageScopeNone
+	}
+	if ws != nil && ws.Roles[svc.StageHostname] == RoleOutOfScope {
+		return StageScopeOutOfScope
+	}
+	return StageScopeInScope
 }
 
 // serviceSatisfiesAxes returns true when this single service satisfies
 // every service-scoped axis declared on the atom. Empty axis = wildcard.
+// stageScope is the service's stageScopeOf in the envelope being
+// synthesized.
 // Mirrors the pre-C2 anyServiceMatchesAll loop body but exposes the
 // per-service decision so Synthesize can bind placeholder substitution
 // to the matched service.
-func serviceSatisfiesAxes(svc ServiceSnapshot, axes AxisVector) bool {
+func serviceSatisfiesAxes(svc ServiceSnapshot, axes AxisVector, stageScope StageScope) bool {
 	if len(axes.Modes) > 0 && !slices.Contains(axes.Modes, svc.Mode) {
+		return false
+	}
+	if len(axes.StageScopes) > 0 && !slices.Contains(axes.StageScopes, stageScope) {
 		return false
 	}
 	if len(axes.CloseDeployModes) > 0 && !slices.Contains(axes.CloseDeployModes, svc.CloseDeployMode) {

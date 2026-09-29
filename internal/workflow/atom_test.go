@@ -783,6 +783,46 @@ body`,
 	}
 }
 
+// TestParseAtom_StageScopeAxis pins the stageScope: axis — where a pair's
+// stage half stands in the develop session (in-scope, out-of-scope) or
+// none for a service that is not a pair's dev half. Closed enum; bare
+// scalars and unknown values fail the parse.
+func TestParseAtom_StageScopeAxis(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		axis    string
+		want    []StageScope
+		errFrag string
+	}{
+		{name: "in_scope", axis: "stageScope: [in-scope]", want: []StageScope{StageScopeInScope}},
+		{name: "in_scope_or_none", axis: "stageScope: [in-scope, none]", want: []StageScope{StageScopeInScope, StageScopeNone}},
+		{name: "out_of_scope", axis: "stageScope: [out-of-scope]", want: []StageScope{StageScopeOutOfScope}},
+		{name: "absent", axis: "", want: nil},
+		{name: "invalid_value", axis: "stageScope: [deferred]", errFrag: `key "stageScope" has invalid value "deferred"`},
+		{name: "bare_scalar", axis: "stageScope: in-scope", errFrag: `key "stageScope" must be inline list form`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			atom, err := ParseAtom("---\nid: stage-scope\nphases: [develop-active]\n" + tc.axis + "\n---\nbody")
+			if tc.errFrag != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.errFrag) {
+					t.Fatalf("error = %v, want one containing %q", err, tc.errFrag)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !slicesEqual(atom.Axes.StageScopes, tc.want) {
+				t.Errorf("StageScopes = %v, want %v", atom.Axes.StageScopes, tc.want)
+			}
+		})
+	}
+}
+
 // slicesEqual is a small helper for the deploy-decomp axis test —
 // reflect.DeepEqual would work but is overkill for typed string slices.
 func slicesEqual[T ~string](a, b []T) bool {

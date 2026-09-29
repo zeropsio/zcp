@@ -1,0 +1,513 @@
+---
+id: develop/standup-stage-out-of-scope
+atomIds: [develop-first-deploy-intro, develop-env-var-model, develop-stage-out-of-scope, develop-strategy-review, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-first-deploy-env-vars, develop-first-deploy-scaffold-yaml, develop-http-diagnostic, develop-nodejs-greenfield-buildhint, develop-platform-rules-common, develop-reserved-env-names, develop-self-deploy-reproducibility, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-first-deploy-write-app, develop-knowledge-pointers, develop-auto-close-semantics, develop-first-deploy-execute, develop-verify-matrix, develop-first-deploy-verify, develop-platform-rules-container]
+description: "A Mate's stand-up: an adopted standard pair imported without code (never deployed, close-mode unset), develop started with the stage half out of scope — what a Mate's develop start does by itself. The dev half's first deploy, no promotion."
+---
+=== develop-first-deploy-intro ===
+### You're in the develop first-deploy branch
+
+The envelope reports at least one in-scope service with
+`deployed: false` (bootstrapped but never received code). Finish that
+here: establish `zerops.yaml` and the app, deploy, verify.
+
+That includes an adopted service imported without code: ACTIVE, maybe
+with the repository's source already in its working directory, but
+with nothing built, installed or started — its dependencies arrive
+with this first deploy's build.
+
+Flow for each never-deployed runtime:
+
+1. **Establish `zerops.yaml`** — scaffold if absent, refine in place if
+   already present.
+2. **Establish the application code** — adapt existing source if the
+   mount carries it, scaffold real code otherwise.
+3. **Run `zerops_deploy targetService=<hostname>`** with NO `strategy`
+   argument. Every first deploy uses the default push path;
+   `strategy=git-push` requires `GIT_TOKEN` + committed code
+   (container) or a configured git remote (local), neither ready yet.
+4. **Verify** the service responds on its expected surface (web /
+   worker / managed). Close and completion semantics fire once the
+   close-mode is set and the deploy + verify pass.
+
+Auto-close stays blocked while `closeDeployMode` is `unset` — the
+DECISION section of this response carries the call to set it (it can
+precede the first deploy).
+
+Don't skip to edits before the first deploy lands — HTTP probes
+return errors before any code is delivered.
+
+---
+
+=== develop-env-var-model ===
+### Where values come from
+
+Project envs auto-inject as OS env vars into every container — app
+code reads them directly via `process.env.KEY`, no `zerops.yaml` line
+required.
+
+`run.envVariables` lines exist for two purposes only:
+
+1. **Rename a cross-service value** — destination on the left,
+   `${hostname_varname}` source on the right. Example:
+   ```yaml
+   run:
+     envVariables:
+       DATABASE_URL: postgresql://${db_user}:${db_password}@${db_hostname}:${db_port}/${db_dbName}
+       REDIS_URL: ${cache_connectionString}
+   ```
+   Reading a sibling's exposed VALUE (managed-service creds, a sibling's
+   own `run.envVariables`) is ALWAYS an explicit `${host_var}` ref — a
+   sibling's bare var never appears on its own; relying on that breaks
+   every isolated project (only `none` mode auto-shares siblings).
+   Reaching another RUNTIME's HTTP endpoint is different: runtimes expose
+   no URL env, so there is no `${api_url}`-style ref — use the internal-DNS
+   literal `http://<hostname>:<port>` (e.g. `API_BASE_URL: http://api:3000`),
+   http never https, over the project's private network.
+2. **Mode flag with a per-setup literal** — `NODE_ENV: development`
+   in `setup: appdev`, `NODE_ENV: production` in `setup: appstage`.
+
+### Self-shadow — never the same name on both sides
+
+```yaml
+db_hostname: ${db_hostname}   # WRONG — destination == source
+APP_KEY: ${APP_KEY}           # WRONG — re-declaring a project env
+```
+
+When destination == source the value resolves to the literal string `${db_hostname}` (not the resolved value), reaches `process.env` as that literal, and the app fails at connect/parse time.
+
+---
+
+=== develop-stage-out-of-scope ===
+### The stage stays as it is this session
+
+This develop session leaves the stage half of these pairs out of scope:
+
+- `appdev` — its stage `appstage` stays as it is
+
+The work runs on the dev half alone: deploy it, start its dev server and
+verify it. The session closes once the dev half is deployed and verified.
+
+Leave the stage untouched: no deploy, cross-deploy or promotion onto it, and
+no commit or push for it. In a Mate wired to its group's Gitea, a deploy onto
+a stage half is a delivery — a commit, a push and a pull request — so it
+happens only when the person asks for it.
+
+A Mate's stand-up is such a session: when a Mate first deploys services it
+adopted, zcp leaves their stage out on its own, and the stand-up ends at a
+running dev.
+
+When the dev half is verified, end by telling the person what runs on the dev
+half, and that promoting it to the stage is the next step they can ask for.
+
+---
+
+=== develop-strategy-review ===
+### DECISION — pick a close-mode now (auto-close stays BLOCKED until set)
+
+Close-mode is `unset` on the listed services — auto-close stays blocked no matter how much you deploy + verify. Set it per in-scope service; it can precede the first deploy. This is the one call that unblocks auto-close:
+
+```
+zerops_workflow action="close-mode" closeMode={"appdev":"auto"}
+```
+
+Swap `auto` for the close-mode you want:
+
+- `auto` — agent runs `zerops_deploy` directly via zcli; auto-close fires once scope-services are green. Fast for tight iteration.
+- `manual` — **you** drive every deploy; ZCP records evidence, never deploys, auto-close stays open until you call `action="close"`.
+
+Delivery is a SEPARATE dimension from close-mode: to deliver via git push, run `action="git-push-setup"` (then `zerops_deploy strategy="git-push"`); CI wiring is `action="build-integration"`. Both work under either close-mode — close-mode only owns the auto-close gate + iteration cadence, not how you deliver.
+
+close-mode does NOT change what `action="close"` does (always session-teardown) — it selects the per-mode iteration guidance and drives the auto-close gate.
+
+---
+
+=== develop-change-drives-deploy ===
+### Every code change must reach a durable state
+
+Iteration cadence is mode-specific:
+
+- Dev-mode dynamic runtime: edit code in place; reload via
+  `zerops_dev_server` (no full redeploy for code-only changes).
+- Simple / standard / local / first-deploy: every change →
+  `zerops_deploy`.
+
+Once close-mode is `auto` and every resolved deploy
+target is deployed + verified, the work session auto-closes.
+
+---
+
+=== develop-deploy-modes ===
+**Deploy modes — self-deploy vs cross-deploy** — pull on demand: `zerops_knowledge uri="zerops://atoms/develop-deploy-modes"`
+
+---
+
+=== develop-env-var-channels ===
+**Env var channels** — pull on demand: `zerops_knowledge uri="zerops://atoms/develop-env-var-channels"`
+
+---
+
+=== develop-first-deploy-env-vars ===
+### Env var catalog from bootstrap
+
+Managed services expose env var keys your runtime references. Fetch
+the live key list per managed service with `zerops_discover
+service="<hostname>" includeEnvs=true` and use those keys verbatim —
+**do not guess alternatives**. The catalog is the authoritative source;
+the host key is `hostname` (never `host`), other keys vary per service
+type. Values are redacted by default — names suffice; pass
+`includeEnvValues=true` only to troubleshoot.
+
+Per-service env KEYS come from the live discover catalog above, never a
+cheatsheet menu — use them verbatim. The SQL cheatsheet (SQL dep types
+only) adds non-derivable gotchas, not keys. For exotic types,
+`zerops_knowledge query="<service>"` returns the canonical page.
+
+**Reserved keys — never set these in `envVariables`:** `hostname`, `PATH`,
+`serviceId`, `projectId`, `appVersionId`, `appVersionName`, `zeropsSubdomain`
+are rejected at push (zcli names the offender). `HOSTNAME` / `Path` / `path`
+in `run.envVariables` crash runtime init — silent `BUILD_FAILED` in 4-5 s with
+empty logs (they're fine in `build.envVariables`). Rename (`APP_HOSTNAME`).
+
+---
+
+=== develop-first-deploy-scaffold-yaml ===
+### Establish `zerops.yaml`
+
+Scaffold `zerops.yaml` if absent or refine it in place if already
+present. The file lives at the repo root; `setup:` matches the runtime
+hostname (one `zerops:` entry per in-scope runtime).
+
+**Shape (one `zerops:` block per targeted runtime hostname):**
+
+```yaml
+zerops:
+  - setup: <hostname>
+    build:
+      base: <os>/<runtime>@<ver>   # same OS prefix as the service type from discover, e.g. ubuntu/nodejs@22; php builds with <os>/php@8.4
+      buildCommands: [...]       # optional for pre-built artefacts
+      deployFiles: [...]         # [.] for self-deploy; build-output subset for cross-deploy
+    run:
+      base: <os>/<run key>@<ver>   # same OS prefix as build; may differ in tech (php-nginx@8.4 vs php@8.4)
+      ports:
+        - port: <app-listens-on>
+          httpSupport: true
+      envVariables:
+        <KEY>: <value or ${service_KEY} cross-ref>
+      start: <run command, not a build command>
+```
+
+**Env var references** use `${hostname_KEY}` syntax — Zerops rewrites
+the placeholder at deploy time from the named service's catalog. Wrong
+spelling stays literal and the app fails at connect.
+
+**Mode-aware tips:** emit separate setup entries per targeted hostname.
+`deployFiles` selects which build-container files land in the runtime:
+- **Self-deploy** (single service, `sourceService == targetService`): MUST be
+  `[.]` — narrower patterns overwrite and destroy the target's own source.
+- **Cross-deploy** (dev → stage, `sourceService != targetService`): cherry-pick
+  the build output — a dir path like `[./out]` keeps the dir, `[./out/~]` (tilde)
+  extracts its contents to the deploy root.
+
+---
+
+=== develop-http-diagnostic ===
+### HTTP diagnostics
+
+For 500 / 502 / empty body, stop at the first useful signal; do **not**
+default to
+`ssh appdev curl localhost` for diagnosis.
+
+1. **`zerops_verify serviceHostname="appdev"`** — start with the
+   canonical health probe and structured diagnosis (it picks the right
+   check route per service shape).
+2. **Subdomain URL** — static / implicit-webserver:
+   `https://appdev-${zeropsSubdomainHost}.prg1.zerops.app/`; dynamic
+   adds `-{port}`. `${zeropsSubdomainHost}` is numeric and project-scope,
+   not the projectId. Read it with `env | grep zeropsSubdomainHost`, or
+   use `zerops_discover` for the resolved URL. Do not guess a UUID.
+   A subdomain URL answering 502 (not a connection error — the L7
+   balancer is up, the runtime behind it isn't reachable) after it used
+   to work often means the subdomain was switched off (`zerops_discover`'s
+   `publicAccess.subdomain` reads `"off"`) rather than the app crashing.
+3. **`zerops_logs severity="error" since="5m"`** — recent platform errors
+   (nginx, crash traces, deploy failures) without opening a shell.
+4. **Framework log file** — read via Read tool at the framework's
+   project-relative log path (`storage/logs/laravel.log`,
+   `var/log/...`). Path resolves against the runtime root configured
+   for the active environment.
+5. **Last resort: SSH + curl localhost** — only when earlier checks miss
+   container-local state (worker-only service, non-default bind). Even
+   then, `zerops_verify` usually already encodes the check.
+
+---
+
+=== develop-nodejs-greenfield-buildhint ===
+### Node.js — `npm install`, not `npm ci`
+
+Fresh Node scaffold with no committed `package-lock.json`: `npm install` in `build.buildCommands`. `npm ci` fails with `EUSAGE` until a lockfile is committed.
+
+---
+
+=== develop-platform-rules-common ===
+**Platform rules** — pull on demand: `zerops_knowledge uri="zerops://atoms/develop-platform-rules-common"`
+
+---
+
+=== develop-reserved-env-names ===
+**Reserved env-var keys** — pull on demand: `zerops_knowledge uri="zerops://atoms/develop-reserved-env-names"`
+
+---
+
+=== develop-self-deploy-reproducibility ===
+### The dev container is disposable; the repository isn't
+
+A self-deploy replaces the dev container with a fresh one. Nothing on the
+old dev container's disk survives that swap except what git carries with
+it — project envs (auto-injected as OS env vars, never a file) and
+managed-service data (Postgres, object storage, …) are the other two
+persistence mechanisms, and neither lives on the dev container's
+filesystem either. A file that exists only on today's dev container — an
+untracked script, a local SQLite DB, a `.env` — is gone the moment the new
+container replaces it.
+
+`zerops_deploy`'s response on a self-deploy carries this as data, not a
+guess: `notCarried` names the git-ignored paths (count, bytes, a sample)
+that will not exist in the new container, and `envFiles` lists any
+`.env`/`.env.*` files found regardless of ignore state — a config file the
+agent should move into `zerops_env`, not carry forward as a workaround.
+`repoState` reports whether the source is clean, dirty, mid-merge, mid-
+rebase, or on a detached HEAD at deploy time.
+
+### After bootstrap or adopt, commit before changing anything
+
+Once a runtime's working tree is ready to iterate on — right after
+bootstrap writes the scaffold, or right after adopt inherits an existing
+one — write a `.gitignore` for the stack (build output, dependency
+directories, local env files) and make a baseline commit before making any
+other change. Every self-deploy after that point is then reproducible from
+that commit forward; skipping this step means the first self-deploy is the
+first moment anyone discovers what wasn't tracked.
+
+---
+
+=== develop-deploy-files-self-deploy ===
+### Self-deploy destruction risk
+
+In a self-deploy, `sourceService == targetService` — the runtime is both
+the build source AND the destination. `deployFiles` selects which build
+artifacts overwrite the runtime's deploy root. When that selection is
+narrower than `[.]`, the result destroys the target.
+
+When a self-deploying service uses a narrower deployFiles pattern (e.g. `[./out]`):
+
+1. The build container assembles the artifact from the upload + any `buildCommands` output.
+2. `deployFiles` selects — with a cherry-pick pattern, only the selected subset enters the artifact.
+3. The runtime container's `/var/www/` is **overwritten** with that subset — source files disappear.
+4. On subsequent self-deploys, `zerops_deploy` finds no source to upload — the target is unrecoverable without a manual re-push from elsewhere.
+
+Client-side pre-flight rejects this with `INVALID_ZEROPS_YML` before any build triggers, so this failure mode cannot reach Zerops. (When `gitPush=configured`, direct deploys answer with the recommended push call instead of deploying, so this risk class applies only to the direct-deploy paths that remain.)
+
+---
+
+=== develop-dynamic-runtime-start-container ===
+### Dynamic-runtime dev server
+
+Dev-mode dynamic runtime containers start running `zsc noop --silent`
+after deploy — a no-op keepalive; no dev process is live until you start
+one. Once started, zcp keeps it — one per dev container, the last you
+started: when the dev container restarts or is redeployed, zcp starts
+it again with the same command, working directory and port — a
+deploy's response reports it under `devServer` — until you `stop` it.
+A server that crashes in its container stays down for you to read and
+fix. It is still a dev process: a passing
+verify means "live now", not "durably shipped" — for an always-on
+service use simple mode. Action family on `zerops_dev_server`:
+
+| Action | Use | Args |
+|---|---|---|
+| `status` | check before `start` (idempotent) — avoids duplicate listener | `hostname port healthPath` |
+| `start` | spawn the dev process | `hostname command port healthPath` |
+| `restart` | survives-the-deploy config/code change | `hostname command port healthPath` |
+| `logs` | tail recent for diagnosis | `hostname logLines=40` |
+| `stop` | free the port; zcp stops keeping it | `hostname port` |
+
+Args:
+- `command` — the app's dev-server start command (the real long-running
+  process, e.g. `npm run dev`). NOT the `zsc noop --silent` keepalive that
+  sits in the dev block's `run.start`.
+- `port` — `run.ports[0].port`.
+- `healthPath` — app-owned (`/api/health`, `/status`) or `/`.
+
+Response carries `running`, `healthStatus`, `url` (the hostname-vantage
+address to reach the server — the probe runs localhost inside the
+container, so the app must bind `0.0.0.0`, not loopback), `reason`, and
+`logTail` — read these before making another call.
+
+Don't hand-roll `ssh appdev "cmd &"`: the SSH session ends with
+the call and kills the process. Always go through `zerops_dev_server`.
+
+---
+
+=== develop-first-deploy-write-app ===
+### Write the application code
+
+Inspect `/var/www/<hostname>/` first. If the mount carries source — adapt
+to the user's intent; preserve the existing scaffold rather than rewriting.
+If empty — scaffold from scratch using the runtime + env-var catalog.
+If `ls` errors (stale SSHFS), run `zerops_mount action="mount"` to recover
+before deciding.
+
+**Checklist before deploying:**
+
+| Check | Requirement |
+|---|---|
+| Env vars | Read OS env at startup. Never hardcode connection strings, hosts, ports, or credentials; use bootstrap's discovered catalog. |
+| Bind | Listen on `0.0.0.0`, not `localhost`/`127.0.0.1`; loopback can pass local tests but fail `zerops_verify`. |
+| Start | `run.start` launches the production entry point as a long-running process. |
+| Health | Add `/status` or `/health` returning HTTP 200 so `zerops_verify` has a deterministic endpoint; include a cheap dependency check when useful. |
+| Framework defaults | For Streamlit, Gradio, Vite, Jupyter, etc., pin container-correct dev/proxy/headless settings in the framework config. Push-dev creates `/var/www/.git`, so auto-detecting dev mode from parent `.git/` misfires. Don't suppress dev mode — fix the operational mismatch and keep hot-reload. |
+
+**Don't run `git init` from the ZCP-side mount.** Push-dev deploy
+handlers manage the runtime container-side git state; running `git init` on
+the SSHFS mount creates root-owned `.git/objects/` that breaks the
+runtime container-side `git add`. Recovery: `ssh <hostname> "sudo rm -rf
+/var/www/.git"` — the next redeploy re-initializes it.
+
+---
+
+=== develop-knowledge-pointers ===
+### Knowledge on demand — pull extra context
+
+When the embedded guidance isn't enough, these are the canonical lookups:
+
+- **`zerops.yaml` schema / fields** — `zerops_knowledge query="zerops.yaml schema"`
+- **Runtime docs** (build tools, start commands, conventions) —
+  `zerops_knowledge query="<runtime>"` (e.g. `nodejs`, `go`, `php-nginx`, `bun`);
+  match the service's base stack.
+- **Env var keys** (no values, safe) — `zerops_discover includeEnvs=true`
+  (`includeEnvValues=true` only to troubleshoot).
+- **Deeper platform topics** (infra changes, scaling, status codes,
+  managed-service categories) — `zerops_knowledge query="<topic>"`.
+
+---
+
+=== develop-auto-close-semantics ===
+### Work session auto-close
+
+Auto-close fires only when EVERY in-scope service carries `closeDeployMode=auto` AND has a successful deploy + a passing verify that ran AFTER that deploy (`closeReason: auto-complete`; or `iteration-cap` at the retry ceiling — same `ClosedAt`/`CloseReason` shape). On a pair with `gitPush=configured`, the deploy evidence is the delivered push build on the build target — the same gate, fed by the watched build instead of a direct deploy. Re-deploying re-opens verify: a deploy replaces the running app version, so a verify that passed before it no longer describes what is live — re-verify after the latest deploy. `unset` / `manual` services BLOCK it: the session stays open until you set a close-mode or call `action="close"` explicitly.
+
+Scope follows session topology — standard pairs include both halves. For dev-only work pass `outOfScope=["<stage>"]` on develop start; the stage half drops to a non-blocking reminder and the session closes on the dev half alone.
+
+---
+
+=== develop-first-deploy-execute ===
+### Run the first deploy
+
+The Zerops container is empty until the deploy call lands, so probing
+its subdomain or (in container env) SSHing into it first will fail or
+hit a platform placeholder — deploy first, then inspect. `zerops_deploy`
+batches build + runtime container provision + start. The call returns
+when build completes; runtime container start is a separate phase
+surfaced by `failureClassification.failedPhase` if it fails — read
+that field rather than waiting on a fixed timeout.
+
+If `status` is non-success, read `failureClassification` first — it
+carries the matched `category`, `likelyCause`, and `suggestedAction`
+distilled from the logs. Only fall through to `buildLogs` /
+`runtimeLogs` when the classification is missing or its
+`suggestedAction` doesn't match what you observe. A second attempt on
+the same broken `zerops.yaml` burns another deploy slot without new
+information.
+
+The subdomain switches on once, automatically, the first moment the
+platform can accept it — right after this deploy succeeds, for a
+runtime whose listener is up by then. Read the response's `publicAccess`
+field (`{intent, subdomain, url, domains}`): `subdomain: "on"` with a
+`url` means it's live — no manual `zerops_subdomain` call needed. Once
+switched off (by you or the user), it stays off — the one-time enable
+never repeats. Run verify next.
+
+If the bootstrap plan set `publicAccess: "none"` for this runtime,
+it's internal-only by design: `publicAccess.subdomain` stays `"off"`
+and no URL ever appears — `zerops_verify` proves reachability from
+inside the project instead. To make an already-public runtime
+internal-only after the fact, call `zerops_subdomain action="disable"`.
+
+Run for each runtime that hasn't been deployed:
+
+```
+zerops_deploy targetService="appdev"
+```
+
+---
+
+=== develop-verify-matrix ===
+### Per-service verify matrix
+
+Verify every service after deploy — deploy success ≠ working app. Shape from
+`zerops_discover`: subdomain URL = web-facing; managed / no HTTP port = non-web.
+Run `zerops_verify` first; a check with a `recovery` field → run it, re-verify,
+before any browser probe.
+
+| Shape | Check |
+|---|---|
+| non-web (managed / worker / no HTTP port) | `zerops_verify` → `status=healthy` is the whole check |
+| web (dynamic / static / implicit-webserver) | `zerops_verify` → `http_internal` (project-network reachability) always runs; `http_public` (a custom domain instead runs as `public_domain`) reflects public-access intent: a public subdomain/domain → judge `httpStatus` + `bodyText` + `consoleErrors` — healthy + a real body (not a blank shell / error page, no fatal console error) proves it; internal-only by intent → `skip` (expected, not a failure — verify `http_internal` instead); mid-switch-on → `pending`, re-verify shortly |
+
+When `bodyText`/`consoleErrors` are missing, truncated, or the page needs
+interaction / SPA routes / non-root / auth, drive the browser **inline** with
+`zerops_browser` — inner commands cover click/fill/find/get/is/wait plus
+`set viewport`/`set device`/`set media` for responsive and dark-mode checks;
+pass `screenshot: true` for visual evidence; failed/4xx/5xx network requests
+are always reported alongside errors/console, no flag needed. Never spawn a
+sub-agent, call raw `agent-browser`, or use `eval`.
+To make an already-public service internal-only, call `zerops_subdomain action="disable"` — after that, `http_public` reports `skip` on every later verify, same as a `publicAccess: "none"` plan intent.
+
+- **VERDICT: PASS** — healthy + real rendered content; proceed.
+- **VERDICT: FAIL** — healthy infra but blank/broken/error page, or a failing check; iterate from the check's `detail` + render evidence.
+- **VERDICT: UNCERTAIN** — no render data + URL unreachable; fall back to `zerops_verify`.
+
+---
+
+=== develop-first-deploy-verify ===
+### Before verify on dev-mode dynamic runtimes
+
+Dev-mode dynamic runtimes deploy with `start: zsc noop --silent` (a
+no-op keepalive) — nothing is listening yet. `zerops_verify` reports
+`http_internal` and `http_public` as `skip` ("start it with
+zerops_dev_server") and that is NOT a deploy failure. Start the dev
+process via `zerops_dev_server action=start` first, then verify.
+
+For simple-mode and standard-mode runtimes the runtime starts on
+deploy; verify directly.
+
+### Verify the first deploy
+
+After running `zerops_verify`, the returned `status` is `healthy`,
+`degraded`, or `unhealthy`; scan `checks[]` for any with `status: fail`
+and read its `detail` for the specific failure. The verify flow picks
+the right check route per service shape (web / worker / managed).
+
+**If unhealthy:**
+
+1. Run `zerops_logs severity="error" since="5m"` — the start or
+   request error is in the log.
+2. Common first-deploy misconfigs, in frequency order:
+   - App bound to `localhost` instead of `0.0.0.0`.
+   - `run.start` invokes a build command rather than the entry point.
+   - `run.ports.port` doesn't match what the app actually listens on.
+   - Env var name drift — check `${hostname_KEY}` spelling against
+     the discovered catalog.
+3. Fix in place, redeploy, re-verify. Stop after 5 unsuccessful
+   attempts and reassess.
+
+Run for each runtime that hasn't been deployed:
+
+```
+zerops_verify serviceHostname="appdev"
+```
+
+---
+
+=== develop-platform-rules-container ===
+**Platform rules — mount & SSH usage** — pull on demand: `zerops_knowledge uri="zerops://atoms/develop-platform-rules-container"`

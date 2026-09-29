@@ -5,6 +5,7 @@ phases: [develop-active]
 gitPushStates: [configured]
 closeDeployModes: [auto, unset]
 modes: [standard, simple, local-stage, local-only]
+stageScope: [in-scope, none]
 deployStates: [deployed]
 multiService: aggregate
 title: "Delivery = commit + git push — the repo is the source of truth"
