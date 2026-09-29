@@ -235,6 +235,31 @@ func RecordDevServerRestore(stateDir, hostname, container string, restore DevSer
 	})
 }
 
+// MarkKeptDevServerUp records, at now, that the bring-back of container's life
+// which did not answer in time (a first compile) has come up since: a later
+// crash in that life is then the agent's, like any other. Only such a finished
+// bring-back is marked — a claim still running is its claimer's to record, and
+// another life or the agent's own start keeps its state.
+func MarkKeptDevServerUp(stateDir, hostname, container string, now time.Time) error {
+	return withKeptDevServers(stateDir, func(kept map[string]KeptDevServer) (bool, error) {
+		rec, ok := kept[hostname]
+		if !ok || rec.Container != container {
+			return false, nil
+		}
+		last := rec.LastRestore
+		if last == nil || last.Running || last.Reason == DevServerRestoring {
+			return false, nil
+		}
+		up := *last
+		up.At = now.UTC().Format(time.RFC3339)
+		up.Running = true
+		up.Reason = ""
+		rec.LastRestore = &up
+		kept[hostname] = rec
+		return true, nil
+	})
+}
+
 // withKeptDevServers runs fn on the kept-dev-server index under the index's own
 // lock and writes it back when fn reports a change.
 func withKeptDevServers(stateDir string, fn func(map[string]KeptDevServer) (bool, error)) error {

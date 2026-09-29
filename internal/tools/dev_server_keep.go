@@ -156,11 +156,19 @@ func restoreKeptDevServer(ctx context.Context, ssh ops.SSHDeployer, stateDir, ho
 		return nil
 	}
 	// A retry in this life after a bring-back that did not answer: that
-	// server may still be starting (compiling before it listens). While its
-	// process lives — or when that cannot be read — start nothing and spend
-	// no attempt.
+	// server may still be starting (compiling before it listens), or have
+	// come up since. While its process lives — or when that cannot be read —
+	// start nothing and spend no attempt; once it answers, record it up, so a
+	// later crash in this life stays down like any other.
 	if last := kept.LastRestore; kept.Container == container && last != nil && !last.Running && last.Reason != workflow.DevServerRestoring {
-		if alive, aliveErr := ops.SpawnedDevServerAlive(ctx, ssh, hostname, kept.LogFile); aliveErr != nil || alive {
+		alive, aliveErr := ops.SpawnedDevServerAlive(ctx, ssh, hostname, kept.LogFile)
+		if aliveErr != nil {
+			return nil
+		}
+		if alive {
+			if keptDevServerAnswers(ctx, ssh, *kept) {
+				_ = workflow.MarkKeptDevServerUp(stateDir, hostname, container, time.Now())
+			}
 			return nil
 		}
 	}
@@ -222,6 +230,17 @@ func restoreKeptDevServer(ctx context.Context, ssh ops.SSHDeployer, stateDir, ho
 	record(result)
 	result.Message = fmt.Sprintf("Brought back the dev server zcp keeps on %s (`%s`) after its container restarted or was redeployed. %s", hostname, rec.Command, result.Message)
 	return result
+}
+
+// keptDevServerAnswers reports whether a kept server whose process lives
+// counts as up: a worker without an HTTP probe by its process alone, an HTTP
+// server once something listens on its port.
+func keptDevServerAnswers(ctx context.Context, ssh ops.SSHDeployer, kept workflow.KeptDevServer) bool {
+	if kept.NoHTTPProbe || kept.Port <= 0 {
+		return true
+	}
+	listening, err := ops.PortListening(ctx, ssh, kept.Hostname, kept.Port)
+	return err == nil && listening
 }
 
 // deployRestoreAttempts / deployRestoreWait bound how long a deploy waits to

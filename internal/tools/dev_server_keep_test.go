@@ -213,7 +213,7 @@ func TestRestoreKeptDevServer(t *testing.T) {
 		{name: "brought back but it does not come up", kept: keptAppdevStarted(), identity: "appdev-1/boot-b/900", probeFails: true, wantResult: true, wantSpawn: true},
 		{name: "something already listens — left as it is", kept: keptAppdevStarted(), identity: "appdev-1/boot-b/900", listening: true, wantResult: true, wantRunning: true},
 		{name: "a failed bring-back is retried", kept: keptAppdevRestored(time.Now().Add(-time.Minute), false, "health_probe_connection_refused"), identity: "appdev-1/boot-b/900", wantResult: true, wantRunning: true, wantSpawn: true},
-		{name: "a slow one that came up since is marked up without a second copy", kept: keptAppdevRestored(time.Now().Add(-time.Minute), false, ops.ReasonHealthProbeTimeout), identity: "appdev-1/boot-b/900", listening: true, wantResult: true, wantRunning: true},
+		{name: "a retry that finds its port answering starts nothing beside it", kept: keptAppdevRestored(time.Now().Add(-time.Minute), false, ops.ReasonHealthProbeTimeout), identity: "appdev-1/boot-b/900", listening: true, wantResult: true, wantRunning: true},
 		{name: "a bring-back that came up — a later crash stays down", kept: keptAppdevRestored(time.Now().Add(-time.Hour), true, ""), identity: "appdev-1/boot-b/900"},
 		{name: "no retry while the last bring-back's process still starts", kept: keptAppdevRestored(time.Now().Add(-time.Minute), false, ops.ReasonHealthProbeTimeout), identity: "appdev-1/boot-b/900", aliveBeforeSpawn: true},
 	}
@@ -264,6 +264,63 @@ func TestRestoreKeptDevServer(t *testing.T) {
 			}
 			if ssh.spawnCount() != spawned {
 				t.Errorf("spawns after the second pass = %d, want %d", ssh.spawnCount(), spawned)
+			}
+		})
+	}
+}
+
+// TestRestoreKeptDevServer_SlowBringBackThatCameUp: a bring-back that did not
+// answer in time (a first compile) whose process lives on is left to start,
+// and once it answers — its port listens, or, for a worker without an HTTP
+// probe, its process lives — the keeper's next pass records it up without
+// starting anything. A later crash in that container life then stays down for
+// the agent, like any other.
+func TestRestoreKeptDevServer_SlowBringBackThatCameUp(t *testing.T) {
+	t.Parallel()
+	worker := func() *workflow.KeptDevServer {
+		rec := keptAppdevRestored(time.Now().Add(-time.Minute), false, "liveness_check_error")
+		rec.Port, rec.HealthPath, rec.NoHTTPProbe = 0, "", true
+		return rec
+	}
+	tests := []struct {
+		name      string
+		kept      *workflow.KeptDevServer
+		listening bool
+		wantUp    bool
+	}{
+		{name: "an HTTP server still compiling", kept: keptAppdevRestored(time.Now().Add(-time.Minute), false, ops.ReasonHealthProbeTimeout)},
+		{name: "an HTTP server whose port listens now", kept: keptAppdevRestored(time.Now().Add(-time.Minute), false, ops.ReasonHealthProbeTimeout), listening: true, wantUp: true},
+		{name: "a worker whose process lives", kept: worker(), wantUp: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := workflow.KeepDevServer(dir, *tt.kept); err != nil {
+				t.Fatalf("KeepDevServer: %v", err)
+			}
+			ssh := &keepSSH{identity: tt.kept.Container, aliveBeforeSpawn: true, listening: tt.listening}
+
+			if got := restoreKeptDevServer(context.Background(), ssh, dir, "appdev", ""); got != nil {
+				t.Fatalf("nothing is brought back while its process lives: %+v", got)
+			}
+			rec, _ := workflow.KeptDevServerFor(dir, "appdev")
+			if rec.LastRestore == nil || rec.LastRestore.Running != tt.wantUp || rec.LastRestore.Attempts != 1 {
+				t.Fatalf("LastRestore = %+v, want running=%v with no attempt spent", rec.LastRestore, tt.wantUp)
+			}
+			if !tt.wantUp {
+				return
+			}
+
+			// It crashes, or is killed by hand, in the same container life.
+			ssh.mu.Lock()
+			ssh.aliveBeforeSpawn, ssh.listening = false, false
+			ssh.mu.Unlock()
+			if got := restoreKeptDevServer(context.Background(), ssh, dir, "appdev", ""); got != nil {
+				t.Errorf("a crash in its own container life stays down: %+v", got)
+			}
+			if ssh.spawnCount() != 0 {
+				t.Errorf("spawns = %d, want none", ssh.spawnCount())
 			}
 		})
 	}

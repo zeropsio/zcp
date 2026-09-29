@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -220,6 +221,57 @@ func TestKeptDevServer_RestoringIn(t *testing.T) {
 			t.Parallel()
 			if got := tt.kept.RestoringIn(tt.container, devServerClock); got != tt.want {
 				t.Errorf("RestoringIn = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMarkKeptDevServerUp: a bring-back that did not answer in time (a first
+// compile) but came up since is recorded up, so a later crash in that life
+// stays down like any other — and only that one: never a claim still running
+// (its claimer records it), another life, or the agent's own start.
+func TestMarkKeptDevServerUp(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		kept      *KeptDevServer
+		container string
+		wantUp    bool
+	}{
+		{name: "nothing kept", container: "appdev-1/900"},
+		{name: "a bring-back that did not answer in time", kept: keptAfterRestore("appdev-1/900", devServerClock.Add(-time.Minute), false, "health_probe_timeout", 2), container: "appdev-1/900", wantUp: true},
+		{name: "another container life", kept: keptAfterRestore("appdev-1/900", devServerClock.Add(-time.Minute), false, "health_probe_timeout", 1), container: "appdev-2/5"},
+		{name: "a claim still running", kept: keptAfterRestore("appdev-1/900", devServerClock.Add(-10*time.Second), false, DevServerRestoring, 1), container: "appdev-1/900"},
+		{name: "the agent's own start", kept: keptPtr(keptFixture("appdev", "appdev-1/900")), container: "appdev-1/900"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if tt.kept != nil {
+				if err := KeepDevServer(dir, *tt.kept); err != nil {
+					t.Fatalf("KeepDevServer: %v", err)
+				}
+			}
+			if err := MarkKeptDevServerUp(dir, "appdev", tt.container, devServerClock); err != nil {
+				t.Fatalf("MarkKeptDevServerUp: %v", err)
+			}
+			got, err := KeptDevServerFor(dir, "appdev")
+			if err != nil {
+				t.Fatalf("KeptDevServerFor: %v", err)
+			}
+			if !tt.wantUp {
+				if !reflect.DeepEqual(got, tt.kept) {
+					t.Errorf("left as it was: got %+v, want %+v", got, tt.kept)
+				}
+				return
+			}
+			want := DevServerRestore{At: devServerClock.Format(time.RFC3339), Running: true, Attempts: tt.kept.LastRestore.Attempts}
+			if got.LastRestore == nil || *got.LastRestore != want {
+				t.Fatalf("LastRestore = %+v, want %+v", got.LastRestore, want)
+			}
+			if _, claimed, _ := ClaimKeptDevServer(dir, "appdev", tt.container, devServerClock.Add(time.Hour)); claimed {
+				t.Error("once up, a later crash in this life is not brought back")
 			}
 		})
 	}
