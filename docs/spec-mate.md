@@ -2289,7 +2289,8 @@ workflow runs on `main`, which the person's merge moves, and asks the broker for
 promoted runtime (`app` for `appdev`/`appstage`; a workflow naming `appdev` was answered
 `unknown_service`, measured 2026-09-17) — and a wired pair's direct deploys are never redirected
 to a push. The develop session's auto-close note tells the agent to hand the person
-the pull request's link and the next step: a stage and a production from the projects page. Measured
+the pull request's link and the next step: a stage and a production from the projects page — once
+the session delivered, that is deployed a stage half; a stand-up's closes without it. Measured
 missing on Dara's run ("create a todo app" got one simple-mode service, nothing pushed) and on the
 owner's run of the same evening (`gitea_delivery.go`; `TestAWiredMatePlansOnlyStandardPairs`,
 `TestAStageDeployOfAWiredPairDeliversItself`, `TestAWiredPairDeploysDirectlyAndIsNeverSentToPush`).

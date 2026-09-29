@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -940,4 +941,63 @@ func (s *scriptedSSH) ExecSSH(_ context.Context, host, command string) ([]byte, 
 
 func (s *scriptedSSH) ExecSSHBackground(_ context.Context, host, command string, _ time.Duration) ([]byte, error) {
 	return []byte(s.respond(host, command)), nil
+}
+
+// TestSessionAnnotations_WiredMate_HandoffOnlyAfterADelivery pins the closing
+// note of a wired Mate: it names the pull request to review only when the
+// session delivered — deployed a pair's stage half, the deploy that commits,
+// pushes and opens the request. A stand-up leaves the stage out of scope and
+// delivers nothing; told to hand over a request's link, the Mate would have
+// to open one nobody asked for.
+func TestSessionAnnotations_WiredMate_HandoffOnlyAfterADelivery(t *testing.T) {
+	t.Setenv("GITEA_URL", "https://gitea.example.test")
+	t.Setenv("MATE_BROKER_URL", "https://broker.example.test")
+	t.Setenv("GITEA_TOKEN", giteaBotToken)
+
+	tests := []struct {
+		name        string
+		roles       map[string]string
+		deployed    []string
+		wantHandoff bool
+	}{
+		{name: "a stand-up: the stage left out, nothing delivered", roles: map[string]string{"appstage": workflow.RoleOutOfScope}, deployed: []string{"appdev"}},
+		{name: "a task delivered through the stage", deployed: []string{"appdev", "appstage"}, wantHandoff: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			now := time.Now().UTC().Format(time.RFC3339)
+			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+				Hostname:        "appdev",
+				StageHostname:   "appstage",
+				Mode:            topology.PlanModeStandard,
+				CloseDeployMode: topology.CloseModeAuto,
+				BootstrappedAt:  now,
+			}); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+			ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "Stand up development of the project.", []string{"appdev", "appstage"})
+			ws.Roles = tt.roles
+			ws.Deploys = map[string][]workflow.DeployAttempt{}
+			ws.Verifies = map[string][]workflow.VerifyAttempt{}
+			for _, h := range tt.deployed {
+				ws.Deploys[h] = []workflow.DeployAttempt{{AttemptedAt: now, SucceededAt: now}}
+				ws.Verifies[h] = []workflow.VerifyAttempt{{AttemptedAt: now, PassedAt: now, Passed: true}}
+			}
+			ws.ClosedAt = now
+			ws.CloseReason = workflow.CloseReasonAutoComplete
+			if err := workflow.SaveWorkSession(dir, ws); err != nil {
+				t.Fatalf("SaveWorkSession: %v", err)
+			}
+			t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
+
+			got := sessionAnnotations(dir)
+			if got == nil || got.Status != "auto-closed" {
+				t.Fatalf("annotations = %+v, want auto-closed", got)
+			}
+			if gotHandoff := strings.Contains(got.Note, giteaHandoffNote); gotHandoff != tt.wantHandoff {
+				t.Errorf("handoff in the closing note = %v, want %v: %q", gotHandoff, tt.wantHandoff, got.Note)
+			}
+		})
+	}
 }
