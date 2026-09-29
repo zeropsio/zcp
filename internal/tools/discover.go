@@ -218,6 +218,9 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string, activity 
 	if len(resumeCandidates) > 0 {
 		result.Warnings = append(result.Warnings, formatResumeWarning(resumeCandidates))
 	}
+	if note := emptyRuntimesNote(result.Services); note != "" {
+		result.Notes = append(result.Notes, note)
+	}
 
 	// Project-level live-activity steer (prepended — the first thing the agent
 	// reads when the project is mid-change). Fires for EVERY service carrying a
@@ -229,6 +232,28 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string, activity 
 	if len(activity) > 0 {
 		result.Warnings = append([]string{liveActivityWarning(result.Services, activity)}, result.Warnings...)
 	}
+}
+
+// emptyRuntimesNote names the runtimes no code was ever deployed into
+// (ServiceInfo.Deployed false) — "" when there are none. A startWithoutCode
+// import leaves a runtime ACTIVE, and a checkout may already hold the
+// repository's source, so without it an agent reads "active and deployed"
+// and treats an empty container as a running app (the Beviro trial,
+// 2026-09-29). The note says what the flag means and what fills the service.
+func emptyRuntimesNote(services []ops.ServiceInfo) string {
+	var empty []string
+	for _, s := range services {
+		if s.Deployed != nil && !*s.Deployed {
+			empty = append(empty, s.Hostname)
+		}
+	}
+	if len(empty) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("Nothing deployed yet in %s (deployed: false): no code was ever deployed into these services. "+
+		"One imported without code still reads ACTIVE — the status only says its container is up, not that an app runs in it. "+
+		"Source files already in its working directory are not a deploy either: nothing is built, installed or started until the service's first `zerops_deploy` in the develop workflow. "+
+		"Adopting a service keeps it as it is.", strings.Join(empty, ", "))
 }
 
 // liveActivityWarning composes the project-level "look + wait" note: every
@@ -274,7 +299,7 @@ func liveActivityWarning(services []ops.ServiceInfo, activity map[string][]ops.L
 //     the handler accepts instead of the scope path it will bounce.
 func adoptableServicesWarning(hostnames, types []string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Services with adoptionState=\"adoptable\" (live but not tracked by ZCP): %s. ", strings.Join(hostnames, ", "))
+	fmt.Fprintf(&b, "Services with adoptionState=\"adoptable\" (they exist, but ZCP does not track them): %s. ", strings.Join(hostnames, ", "))
 	b.WriteString("Run `zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\"` before any service-scoped MUTATING or PROMOTING call — `zerops_deploy`, the `develop` / `build-integration` workflows, AND `launch-production` (promote-to-prod) all reject with ADOPT_REQUIRED until adoption completes. ")
 	if len(hostnames) == 2 && topology.CanonicalBareForm(types[0]) == topology.CanonicalBareForm(types[1]) {
 		fmt.Fprintf(&b, "NOTE: %s and %s share the same runtime stack (%s) — a bare `scope=[...]` adopt can't tell a standard dev/stage pair from two independent dev containers and WILL reject; on the discover-complete call submit an explicit `plan=[...]` (one entry for a standard pair, two for independent devs), not `scope`. ", hostnames[0], hostnames[1], topology.CanonicalBareForm(types[0]))

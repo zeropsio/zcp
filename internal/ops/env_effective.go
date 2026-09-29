@@ -132,24 +132,23 @@ func (e *EffectiveEnv) Keys() []string {
 // LIFECYCLE-AWARE (spec §1): returns nil for
 //   - managed deps (postgres, valkey…): not built from yaml, no app
 //     version; their connection vars live in the slim /env already.
-//   - never-deployed runtime services (bootstrap / startWithoutCode): no
-//     active app version yet.
+//   - never-deployed runtime services (IsRuntimeNeverDeployed): no active
+//     app version yet, or only the placeholder a startWithoutCode import
+//     leaves ACTIVE, which carries no zerops.yaml.
 //
-// Only a LIVE runtime service (deployed ≥1×, ActiveAppVersion.ID set)
-// returns yaml-baked vars. Callers branch on nil to fall back (local
-// zerops.yaml for a candidate deploy, or WARN "not yet deployed").
+// Only a LIVE runtime service (a real deploy active) returns yaml-baked
+// vars. Callers branch on nil to fall back (local zerops.yaml for a
+// candidate deploy, or WARN "not yet deployed").
 func AppVersionEnvVars(ctx context.Context, client platform.Client, svc platform.ServiceStack) ([]platform.ServiceEnvVar, error) {
-	if topology.IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
-		return nil, nil
-	}
-	if svc.ActiveAppVersion == nil || svc.ActiveAppVersion.ID == "" {
+	if topology.IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) || IsRuntimeNeverDeployed(svc) {
 		return nil, nil
 	}
 	return client.GetAppVersionUserData(ctx, svc.ActiveAppVersion.ID)
 }
 
-// IsRuntimeNeverDeployed reports a runtime service that has no active app
-// version yet (bootstrap / startWithoutCode). Its yaml-baked
+// IsRuntimeNeverDeployed reports a runtime service no code was ever deployed
+// into (platform.ServiceStack.HasDeployedCode): no active app version yet, or
+// the placeholder a startWithoutCode import leaves ACTIVE. Its yaml-baked
 // run.envVariables are NOT on the platform, so a cross-service ref to it
 // cannot be confirmed — callers WARN rather than FAIL. Managed deps are
 // excluded (they're never "deployed" but their vars ARE in the slim /env).
@@ -157,7 +156,7 @@ func IsRuntimeNeverDeployed(svc platform.ServiceStack) bool {
 	if topology.IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
 		return false
 	}
-	return svc.ActiveAppVersion == nil || svc.ActiveAppVersion.ID == ""
+	return !svc.HasDeployedCode()
 }
 
 // ServiceHigherLayers returns a service's env layers ABOVE project — the slim

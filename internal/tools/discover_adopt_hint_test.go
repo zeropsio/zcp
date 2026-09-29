@@ -367,3 +367,79 @@ func TestEnrichWithMetaStatus_ZCPSelf_StateExcludedFromWarning(t *testing.T) {
 		}
 	}
 }
+
+// TestEnrichWithMetaStatus_EmptyRuntimes_NoteNamesThem pins the one note an
+// agent needs before it reads a status: which runtimes hold no deployed code.
+// A startWithoutCode runtime reads ACTIVE like a deployed one, and a Mate's
+// checkout may already carry the repository's source — the Beviro trial's
+// agent read "all services active and deployed" and adopted them as running
+// apps (2026-09-29). The note names only the runtimes discover marked
+// deployed=false, and says what fills them.
+func TestEnrichWithMetaStatus_EmptyRuntimes_NoteNamesThem(t *testing.T) {
+	t.Parallel()
+	no, yes := false, true
+	tests := []struct {
+		name      string
+		services  []ops.ServiceInfo
+		wantHosts []string
+		wantNone  []string
+	}{
+		{
+			name: "recipe runtimes imported without code",
+			services: []ops.ServiceInfo{
+				{Hostname: "appdev", Type: "alpine/nodejs@24", Deployed: &no},
+				{Hostname: "appstage", Type: "alpine/nodejs@24", Deployed: &no},
+				{Hostname: "mailpit", Type: "alpine@3.24", Deployed: &no},
+				{Hostname: "api", Type: "alpine/nodejs@24", Deployed: &yes},
+				{Hostname: "db", Type: "postgresql:single@17", IsInfrastructure: true},
+			},
+			wantHosts: []string{"appdev", "appstage", "mailpit"},
+			wantNone:  []string{"api", "db"},
+		},
+		{
+			name: "every runtime deployed",
+			services: []ops.ServiceInfo{
+				{Hostname: "api", Type: "alpine/nodejs@24", Deployed: &yes},
+				{Hostname: "db", Type: "postgresql:single@17", IsInfrastructure: true},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := &ops.DiscoverResult{Services: tt.services}
+			enrichWithMetaStatus(result, filepath.Join(t.TempDir(), ".zcp", "state"), nil)
+
+			var note string
+			for _, n := range result.Notes {
+				if strings.Contains(n, "deployed: false") {
+					note = n
+				}
+			}
+			if len(tt.wantHosts) == 0 {
+				if note != "" {
+					t.Fatalf("no empty runtime, yet a note: %s", note)
+				}
+				return
+			}
+			if note == "" {
+				t.Fatalf("empty runtimes need the note; notes=%v", result.Notes)
+			}
+			for _, host := range tt.wantHosts {
+				if !strings.Contains(note, host) {
+					t.Errorf("note must name %q: %s", host, note)
+				}
+			}
+			for _, host := range tt.wantNone {
+				if strings.Contains(note, host+",") || strings.Contains(note, host+" ") {
+					t.Errorf("note must not name %q: %s", host, note)
+				}
+			}
+			for _, want := range []string{"ACTIVE", "zerops_deploy"} {
+				if !strings.Contains(note, want) {
+					t.Errorf("note must say %q: %s", want, note)
+				}
+			}
+		})
+	}
+}

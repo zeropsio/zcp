@@ -113,9 +113,15 @@ type ServiceInfo struct {
 	Mode             string        `json:"-"`
 	AdoptionState    AdoptionState `json:"adoptionState"`
 	IsInfrastructure bool          `json:"isInfrastructure"`
-	MountPath        string        `json:"mountPath,omitempty"`
-	SubdomainEnabled bool          `json:"subdomainEnabled,omitempty"`
-	SubdomainURL     string        `json:"subdomainUrl,omitempty"`
+	// Deployed answers, for a runtime, whether code was ever deployed into
+	// it (platform.ServiceStack.HasDeployedCode): false for a runtime that
+	// holds only the placeholder a startWithoutCode import leaves — ACTIVE,
+	// with a running container and nothing in it — or no app version at all.
+	// Nil for managed services and the control plane, which never take code.
+	Deployed         *bool  `json:"deployed,omitempty"`
+	MountPath        string `json:"mountPath,omitempty"`
+	SubdomainEnabled bool   `json:"subdomainEnabled,omitempty"`
+	SubdomainURL     string `json:"subdomainUrl,omitempty"`
 	// PublicAccess is the PA-5 structured summary (docs/spec-workflows.md
 	// §8 O3): {intent, subdomain, url, domains[]}, populated for every
 	// HTTP-class runtime (dynamic/implicit/static — never managed deps,
@@ -317,7 +323,7 @@ func buildSummaryServiceInfo(svc *platform.ServiceStack) ServiceInfo {
 	if topology.ServiceSupportsMode(typeVersion) {
 		mode = svc.Mode
 	}
-	return ServiceInfo{
+	info := ServiceInfo{
 		Hostname:         svc.Name,
 		ServiceID:        svc.ID,
 		Type:             typeVersion,
@@ -326,7 +332,16 @@ func buildSummaryServiceInfo(svc *platform.ServiceStack) ServiceInfo {
 		IsInfrastructure: topology.IsManagedService(typeVersion),
 		SubdomainEnabled: svc.SubdomainAccess,
 	}
+	if !info.IsInfrastructure && typeVersion != zcpSelfType {
+		deployed := svc.HasDeployedCode()
+		info.Deployed = &deployed
+	}
+	return info
 }
+
+// zcpSelfType is the service type of the control-plane container running
+// zcp itself — a runtime by category, but never a deploy target.
+const zcpSelfType = "zcp@1"
 
 func buildDetailedServiceInfo(svc *platform.ServiceStack) ServiceInfo {
 	info := buildSummaryServiceInfo(svc)
