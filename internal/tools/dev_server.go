@@ -167,7 +167,7 @@ func keepOrForgetDevServer(ctx context.Context, ssh ops.SSHDeployer, units ops.U
 	}
 	switch {
 	case resp.Running && isDevServerStartAction(input.Action):
-		warnings := keepStartedDevServer(ctx, ssh, units, stateDir, ops.DevServerParams{
+		kept, warnings := keepStartedDevServer(ctx, ssh, units, stateDir, ops.DevServerParams{
 			Hostname:    input.Hostname,
 			Command:     input.Command,
 			Port:        input.Port,
@@ -177,9 +177,10 @@ func keepOrForgetDevServer(ctx context.Context, ssh ops.SSHDeployer, units ops.U
 			WorkDir:     input.WorkDir,
 			NoHTTPProbe: input.NoHTTPProbe.Bool(),
 		})
-		kept := true
 		resp.Kept = &kept
-		resp.Message += keptDevServerNote
+		if kept {
+			resp.Message += keptDevServerNote
+		}
 		resp.Warnings = append(resp.Warnings, warnings...)
 	case strings.EqualFold(input.Action, "stop"):
 		if err := workflow.ForgetDevServer(stateDir, input.Hostname); err != nil {

@@ -49,10 +49,14 @@ type DevServerRestore struct {
 }
 
 // KeepDevServer records rec as the dev server zcp keeps on rec.Hostname,
-// replacing whatever was kept there before.
+// replacing whatever was kept there before. A record names the container life
+// it was started in; without one a restart could not be told from a crash.
 func KeepDevServer(stateDir string, rec KeptDevServer) error {
 	if rec.Hostname == "" {
 		return errors.New("keep dev server: empty hostname")
+	}
+	if rec.Container == "" {
+		return fmt.Errorf("keep dev server %s: its container life is unknown", rec.Hostname)
 	}
 	return withKeptDevServers(stateDir, func(kept map[string]KeptDevServer) (bool, error) {
 		kept[rec.Hostname] = rec
@@ -103,9 +107,7 @@ func KeptDevServers(stateDir string) ([]KeptDevServer, error) {
 // moves to this life and the caller gets it to start — claimed=true. Every
 // later caller in the same life finds it claimed, so the keeper's next tick and
 // a deploy's own restore never start it twice. An empty container (the
-// identity could not be read) claims nothing, and a record whose own life was
-// never read adopts this one as its baseline without a bring-back — nothing
-// says the server is gone.
+// identity could not be read) claims nothing.
 func ClaimKeptDevServer(stateDir, hostname, container string) (*KeptDevServer, bool, error) {
 	if container == "" {
 		return nil, false, nil
@@ -116,12 +118,9 @@ func ClaimKeptDevServer(stateDir, hostname, container string) (*KeptDevServer, b
 		if !ok || rec.Container == container {
 			return false, nil
 		}
-		baseline := rec.Container == ""
 		rec.Container = container
 		kept[hostname] = rec
-		if !baseline {
-			out = &rec
-		}
+		out = &rec
 		return true, nil
 	})
 	if err != nil {

@@ -36,18 +36,19 @@ func devServerKeeperCommand(stateDir string) string {
 const keptDevServerNote = " zcp keeps it: when this container restarts or is redeployed, zcp starts it again with the same command, until you stop it."
 
 // keepStartedDevServer records a successful start or restart as the dev server
-// zcp keeps on its hostname, and makes sure the keeper runs. It returns the
-// warnings the caller surfaces — never an error: the dev server already runs.
-func keepStartedDevServer(ctx context.Context, ssh ops.SSHDeployer, units ops.UnitRegistrar, stateDir string, p ops.DevServerParams) []string {
-	if stateDir == "" {
-		return nil
-	}
+// zcp keeps on its hostname, and makes sure the keeper runs. It reports whether
+// the server is kept and the warnings the caller surfaces — never an error: the
+// dev server already runs.
+func keepStartedDevServer(ctx context.Context, ssh ops.SSHDeployer, units ops.UnitRegistrar, stateDir string, p ops.DevServerParams) (bool, []string) {
 	// The container life the server runs in, read once more on a miss. Still
-	// unreadable (unlikely: ssh just worked) leaves it empty, and the keeper's
-	// first pass adopts the life it finds as the baseline.
+	// unreadable (unlikely: ssh just worked) means zcp could not tell a later
+	// restart from a crash, so it does not keep this one.
 	container, err := ops.ContainerIdentity(ctx, ssh, p.Hostname)
 	if err != nil {
-		container, _ = ops.ContainerIdentity(ctx, ssh, p.Hostname)
+		container, err = ops.ContainerIdentity(ctx, ssh, p.Hostname)
+	}
+	if err != nil {
+		return false, []string{fmt.Sprintf("zcp could not read %s's container to keep this dev server (%v): after a restart or redeploy, start it again yourself", p.Hostname, err)}
 	}
 	rec := workflow.KeptDevServer{
 		Hostname:    p.Hostname,
@@ -62,18 +63,18 @@ func keepStartedDevServer(ctx context.Context, ssh ops.SSHDeployer, units ops.Un
 		StartedAt:   time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := workflow.KeepDevServer(stateDir, rec); err != nil {
-		return []string{fmt.Sprintf("zcp could not record the dev server to keep it (%v): after a restart or redeploy of %s, start it again yourself", err, p.Hostname)}
+		return false, []string{fmt.Sprintf("zcp could not record the dev server to keep it (%v): after a restart or redeploy of %s, start it again yourself", err, p.Hostname)}
 	}
 	if units == nil {
-		return nil
+		return true, nil
 	}
 	if strings.ContainsAny(stateDir, " \t\n'\"") {
-		return []string{fmt.Sprintf("the dev-server keeper cannot run from a state directory with spaces or quotes (%q): %s's dev server comes back after zcp's own deploys only", stateDir, p.Hostname)}
+		return true, []string{fmt.Sprintf("the dev-server keeper cannot run from a state directory with spaces or quotes (%q): %s's dev server comes back after zcp's own deploys only", stateDir, p.Hostname)}
 	}
 	if err := units.EnsureUnit(ctx, devServerKeeperUnit, devServerKeeperCommand(stateDir)); err != nil {
-		return []string{fmt.Sprintf("zcp could not start its dev-server keeper (%v): %s's dev server comes back after zcp's own deploys, but not after a restart zcp does not make", err, p.Hostname)}
+		return true, []string{fmt.Sprintf("zcp could not start its dev-server keeper (%v): %s's dev server comes back after zcp's own deploys, but not after a restart zcp does not make", err, p.Hostname)}
 	}
-	return nil
+	return true, nil
 }
 
 // restoreKeptDevServer brings back the dev server kept on hostname when its
@@ -149,7 +150,7 @@ func restoreKeptDevServerAfterDeploy(ctx context.Context, ssh ops.SSHDeployer, s
 		if err != nil || rec == nil {
 			return nil
 		}
-		if rec.Container != before.Container && rec.Container != "" {
+		if rec.Container != before.Container {
 			if rec.LastRestore != nil {
 				return keeperRestoreResult(*rec)
 			}

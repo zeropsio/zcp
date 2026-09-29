@@ -63,6 +63,9 @@ func TestKeepDevServer_RoundTrip(t *testing.T) {
 	if err := ForgetDevServer(dir, "nothing-here"); err != nil {
 		t.Errorf("forgetting what was never kept is a no-op, got %v", err)
 	}
+	if err := KeepDevServer(dir, keptFixture("appdev", "")); err == nil {
+		t.Error("a start whose container life is unknown cannot be kept: a restart could not be told from a crash")
+	}
 }
 
 // TestClaimKeptDevServer pins the at-most-once bring-back per container life:
@@ -83,7 +86,6 @@ func TestClaimKeptDevServer(t *testing.T) {
 		{name: "restarted — a new container life", kept: keptPtr(keptFixture("appdev", "appdev-1/100")), container: "appdev-1/900", wantClaim: true},
 		{name: "redeployed — a new container", kept: keptPtr(keptFixture("appdev", "appdev-1/100")), container: "appdev-2/50", wantClaim: true},
 		{name: "unreadable identity claims nothing", kept: keptPtr(keptFixture("appdev", "appdev-1/100")), container: "", wantClaim: false},
-		{name: "a start whose life was never read adopts the one it finds", kept: keptPtr(keptFixture("appdev", "")), container: "appdev-1/100", wantClaim: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -102,15 +104,6 @@ func TestClaimKeptDevServer(t *testing.T) {
 				t.Fatalf("claimed = %v, want %v", claimed, tt.wantClaim)
 			}
 			if !claimed {
-				if tt.kept != nil && tt.kept.Container == "" {
-					got, _ := KeptDevServerFor(dir, "appdev")
-					if got.Container != tt.container {
-						t.Errorf("baseline: Container = %q, want %q", got.Container, tt.container)
-					}
-					if _, next, _ := ClaimKeptDevServer(dir, "appdev", "appdev-1/900"); !next {
-						t.Error("after its baseline, a new container life is claimed")
-					}
-				}
 				return
 			}
 			if rec == nil || rec.Command != "npm run dev" {
