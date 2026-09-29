@@ -152,6 +152,17 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 
 	srv.AddReceivingMiddleware(s.observe())
 	s.registerTools() //nolint:contextcheck // registerTools wires a lazy background schema provider (schemaCache.Get(context.Background())); no request context applies at startup wiring time
+
+	// A dev server kept on this project needs its keeper running, and a
+	// redeploy of this container drops the keeper's unit (tools/
+	// dev_server_keep.go). Best-effort and off the startup path.
+	if rtInfo.InContainer && sshDeployer != nil && stateDir != "" {
+		go func() {
+			if err := tools.EnsureDevServerKeeper(ctx, platform.NewSystemUnits(), stateDir); err != nil {
+				fmt.Fprintf(os.Stderr, "zcp: dev-server keeper: %v\n", err)
+			}
+		}()
+	}
 	return s
 }
 

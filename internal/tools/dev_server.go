@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -118,6 +117,11 @@ func RegisterDevServer(srv *mcp.Server, client platform.Client, httpClient ops.H
 			DestructiveHint: boolPtr(false),
 		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input DevServerInput) (*mcp.CallToolResult, any, error) {
+		// What zcp keeps changes before the process does: a stop is forgotten
+		// first — even if the kill then fails, nothing brings the server back —
+		// and a start of a kept server takes its container life over, so the
+		// keeper never starts a second copy beside it (dev_server_keep.go).
+		keeping := prepareDevServerKeeping(ctx, ssh, stateDir, input)
 		result, err := ops.ExecuteDevServer(ctx, ssh, client, projectID, ops.DevServerParams{
 			Action:       input.Action,
 			Hostname:     input.Hostname,
@@ -151,23 +155,74 @@ func RegisterDevServer(srv *mcp.Server, client platform.Client, httpClient ops.H
 			resp.Warnings = scratch.Warnings
 			resp.PublicAccess = scratch.PublicAccess
 		}
-		keepOrForgetDevServer(ctx, ssh, units, stateDir, input, resp)
+		finishDevServerKeeping(ctx, ssh, units, stateDir, input, keeping, resp)
 		return jsonResult(resp), nil, nil
 	})
 }
 
-// keepOrForgetDevServer applies the agent's start and stop to what zcp keeps
+// devServerKeeping is what prepareDevServerKeeping learned before the action
+// ran: the container life a start is made in (read only when a kept server is
+// being taken over), and whether a stop forgot the kept server.
+type devServerKeeping struct {
+	container string
+	forgot    bool
+}
+
+// prepareDevServerKeeping applies the agent's action to what zcp keeps before
+// the action runs. A stop that names the kept server (its port, its log file,
+// or a match on its command) forgets it first. A start or restart on a host
+// with a kept server takes the current container life over, so no bring-back
+// is claimed in it while this start runs.
+func prepareDevServerKeeping(ctx context.Context, ssh ops.SSHDeployer, stateDir string, input DevServerInput) devServerKeeping {
+	var keeping devServerKeeping
+	if stateDir == "" || ssh == nil {
+		return keeping
+	}
+	kept, err := workflow.KeptDevServerFor(stateDir, input.Hostname)
+	if err != nil || kept == nil {
+		return keeping
+	}
+	switch {
+	case strings.EqualFold(input.Action, "stop"):
+		if stopNamesKeptServer(input, *kept) && workflow.ForgetDevServer(stateDir, input.Hostname) == nil {
+			keeping.forgot = true
+		}
+	case isDevServerStartAction(input.Action):
+		if container, idErr := ops.ContainerIdentity(ctx, ssh, input.Hostname); idErr == nil {
+			keeping.container = container
+			_ = workflow.TakeOverKeptDevServer(stateDir, input.Hostname, container)
+		}
+	}
+	return keeping
+}
+
+// stopNamesKeptServer reports whether a stop is aimed at the kept dev server:
+// the same port, the same log file, or — when it names neither — a match
+// (processMatch, else command's first token) found in the kept command, the
+// way the stop's own kill matches processes.
+func stopNamesKeptServer(input DevServerInput, kept workflow.KeptDevServer) bool {
+	if input.Port > 0 || input.LogFile != "" {
+		return (input.Port > 0 && input.Port == kept.Port) || (input.LogFile != "" && input.LogFile == kept.LogFile)
+	}
+	match := strings.TrimSpace(input.ProcessMatch)
+	if match == "" {
+		match, _, _ = strings.Cut(strings.TrimSpace(input.Command), " ")
+	}
+	return match != "" && strings.Contains(kept.Command, match)
+}
+
+// finishDevServerKeeping applies the action's outcome to what zcp keeps
 // (dev_server_keep.go): a successful start or restart becomes the dev server
-// zcp brings back after its container restarts or is redeployed; stop forgets
-// it. A failed start leaves what was kept as it was; status and logs never
-// touch it.
-func keepOrForgetDevServer(ctx context.Context, ssh ops.SSHDeployer, units ops.UnitRegistrar, stateDir string, input DevServerInput, resp *devServerToolResult) {
+// zcp brings back after its container restarts or is redeployed; a stop that
+// forgot it says so. A failed start leaves what was kept as it was; status and
+// logs never touch it.
+func finishDevServerKeeping(ctx context.Context, ssh ops.SSHDeployer, units ops.UnitRegistrar, stateDir string, input DevServerInput, keeping devServerKeeping, resp *devServerToolResult) {
 	if stateDir == "" {
 		return
 	}
 	switch {
 	case resp.Running && isDevServerStartAction(input.Action):
-		kept, warnings := keepStartedDevServer(ctx, ssh, units, stateDir, ops.DevServerParams{
+		kept, warnings := keepStartedDevServer(ctx, ssh, units, stateDir, keeping.container, ops.DevServerParams{
 			Hostname:    input.Hostname,
 			Command:     input.Command,
 			Port:        input.Port,
@@ -182,11 +237,7 @@ func keepOrForgetDevServer(ctx context.Context, ssh ops.SSHDeployer, units ops.U
 			resp.Message += keptDevServerNote
 		}
 		resp.Warnings = append(resp.Warnings, warnings...)
-	case strings.EqualFold(input.Action, "stop"):
-		if err := workflow.ForgetDevServer(stateDir, input.Hostname); err != nil {
-			resp.Warnings = append(resp.Warnings, fmt.Sprintf("zcp could not forget the dev server it keeps on %s (%v): it may start it again after a restart", input.Hostname, err))
-			return
-		}
+	case keeping.forgot:
 		kept := false
 		resp.Kept = &kept
 		resp.Message += " zcp no longer keeps it running."

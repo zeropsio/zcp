@@ -2,9 +2,11 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
-	"strings"
+	"regexp"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/ops"
@@ -22,9 +24,19 @@ import (
 // A server that dies in the container it was started in (a crash, a kill by
 // hand) is left down: that is the agent's to see and fix, not to hide.
 
-// devServerKeeperUnit is the zcp container's unit running the keeper
-// (zerops@devservers).
-const devServerKeeperUnit = "devservers"
+// keeperStateDirRe bounds the state dir the keeper unit's command line
+// carries: the unit's command is rendered for systemd, which would expand
+// `$`, `%` and `\` and split on spaces.
+var keeperStateDirRe = regexp.MustCompile(`^/[A-Za-z0-9._/-]+$`)
+
+// devServerKeeperUnit names the zcp container's keeper unit for stateDir
+// (zerops@devservers-<hash>): one keeper per state directory, so a session
+// working from another directory is kept by its own keeper rather than by a
+// unit created for someone else's.
+func devServerKeeperUnit(stateDir string) string {
+	sum := sha256.Sum256([]byte(stateDir))
+	return "devservers-" + hex.EncodeToString(sum[:4])
+}
 
 // devServerKeeperCommand is the keeper unit's command line. The state dir is
 // passed explicitly: a unit's working directory is not the agent's.
@@ -35,20 +47,52 @@ func devServerKeeperCommand(stateDir string) string {
 // keptDevServerNote is appended to a successful start/restart's message.
 const keptDevServerNote = " zcp keeps it: when this container restarts or is redeployed, zcp starts it again with the same command, until you stop it."
 
+// reasonKeeperRestoring is a deploy's report while the keeper is still
+// starting the kept server in the deployed container.
+const reasonKeeperRestoring = "keeper_restoring"
+
+// EnsureDevServerKeeper makes sure the keeper unit runs for stateDir whenever a
+// dev server is kept there — at every zcp MCP start, so a keeper lost with its
+// unit comes back before anything needs it. A no-op without units (local) or
+// without kept servers.
+func EnsureDevServerKeeper(ctx context.Context, units ops.UnitRegistrar, stateDir string) error {
+	if units == nil || stateDir == "" {
+		return nil
+	}
+	kept, err := workflow.KeptDevServers(stateDir)
+	if err != nil || len(kept) == 0 {
+		return err
+	}
+	return ensureDevServerKeeperUnit(ctx, units, stateDir)
+}
+
+// ensureDevServerKeeperUnit registers the keeper unit for stateDir.
+func ensureDevServerKeeperUnit(ctx context.Context, units ops.UnitRegistrar, stateDir string) error {
+	if !keeperStateDirRe.MatchString(stateDir) {
+		return fmt.Errorf("state directory %q cannot go on a unit's command line (letters, digits, dot, dash, underscore and slash only)", stateDir)
+	}
+	return units.EnsureUnit(ctx, devServerKeeperUnit(stateDir), devServerKeeperCommand(stateDir))
+}
+
 // keepStartedDevServer records a successful start or restart as the dev server
-// zcp keeps on its hostname, and makes sure the keeper runs. It reports whether
-// the server is kept and the warnings the caller surfaces — never an error: the
-// dev server already runs.
-func keepStartedDevServer(ctx context.Context, ssh ops.SSHDeployer, units ops.UnitRegistrar, stateDir string, p ops.DevServerParams) (bool, []string) {
+// zcp keeps on its hostname, and makes sure the keeper runs. container is the
+// life prepareDevServerKeeping read before the start, "" when it read none. It
+// reports whether the server is kept and the warnings the caller surfaces —
+// never an error: the dev server already runs.
+func keepStartedDevServer(ctx context.Context, ssh ops.SSHDeployer, units ops.UnitRegistrar, stateDir, container string, p ops.DevServerParams) (bool, []string) {
 	// The container life the server runs in, read once more on a miss. Still
 	// unreadable (unlikely: ssh just worked) means zcp could not tell a later
-	// restart from a crash, so it does not keep this one.
-	container, err := ops.ContainerIdentity(ctx, ssh, p.Hostname)
-	if err != nil {
-		container, err = ops.ContainerIdentity(ctx, ssh, p.Hostname)
-	}
-	if err != nil {
-		return false, []string{fmt.Sprintf("zcp could not read %s's container to keep this dev server (%v): after a restart or redeploy, start it again yourself", p.Hostname, err)}
+	// restart from a crash: it keeps nothing on this host — not this start,
+	// and not an earlier one, which would come back in its place.
+	if container == "" {
+		var err error
+		if container, err = ops.ContainerIdentity(ctx, ssh, p.Hostname); err != nil {
+			container, err = ops.ContainerIdentity(ctx, ssh, p.Hostname)
+		}
+		if err != nil {
+			_ = workflow.ForgetDevServer(stateDir, p.Hostname)
+			return false, []string{fmt.Sprintf("zcp could not read %s's container to keep this dev server (%v): after a restart or redeploy, start it again yourself", p.Hostname, err)}
+		}
 	}
 	rec := workflow.KeptDevServer{
 		Hostname:    p.Hostname,
@@ -68,22 +112,20 @@ func keepStartedDevServer(ctx context.Context, ssh ops.SSHDeployer, units ops.Un
 	if units == nil {
 		return true, nil
 	}
-	if strings.ContainsAny(stateDir, " \t\n'\"") {
-		return true, []string{fmt.Sprintf("the dev-server keeper cannot run from a state directory with spaces or quotes (%q): %s's dev server comes back after zcp's own deploys only", stateDir, p.Hostname)}
-	}
-	if err := units.EnsureUnit(ctx, devServerKeeperUnit, devServerKeeperCommand(stateDir)); err != nil {
+	if err := ensureDevServerKeeperUnit(ctx, units, stateDir); err != nil {
 		return true, []string{fmt.Sprintf("zcp could not start its dev-server keeper (%v): %s's dev server comes back after zcp's own deploys, but not after a restart zcp does not make", err, p.Hostname)}
 	}
 	return true, nil
 }
 
 // restoreKeptDevServer brings back the dev server kept on hostname when its
-// container is no longer the one it was started in — restarted or redeployed.
-// Nil when nothing is kept, when the container is unreachable, when it is the
-// same container life (nothing to bring back), or when another caller already
-// claimed this life. Otherwise the start's result, running or not; the outcome
-// is recorded with the kept server either way, and no further attempt is made
-// until the container cycles again.
+// container is no longer the one it was started in — restarted or redeployed —
+// or retries a bring-back of this life that did not come up
+// (workflow.ClaimKeptDevServer decides, at most once at a time). Nil when
+// nothing is kept, the container is unreachable, or there is nothing to claim;
+// nil too when the agent stopped it while this start ran — the spawned process
+// is killed again. Otherwise the start's result, running or not, recorded with
+// the kept server.
 func restoreKeptDevServer(ctx context.Context, ssh ops.SSHDeployer, stateDir, hostname string) *ops.DevServerResult {
 	if stateDir == "" || ssh == nil {
 		return nil
@@ -95,10 +137,34 @@ func restoreKeptDevServer(ctx context.Context, ssh ops.SSHDeployer, stateDir, ho
 	if err != nil {
 		return nil
 	}
-	rec, claimed, err := workflow.ClaimKeptDevServer(stateDir, hostname, container)
+	rec, claimed, err := workflow.ClaimKeptDevServer(stateDir, hostname, container, time.Now())
 	if err != nil || !claimed {
 		return nil
 	}
+	record := func(result *ops.DevServerResult) {
+		_ = workflow.RecordDevServerRestore(stateDir, hostname, container, workflow.DevServerRestore{
+			At:      time.Now().UTC().Format(time.RFC3339),
+			Running: result.Running,
+			Reason:  result.Reason,
+		})
+	}
+
+	// Something already listens on its port — started by hand, or a slow
+	// first start that has come up since: never start a second copy.
+	if rec.Port > 0 && !rec.NoHTTPProbe {
+		if listening, lerr := ops.PortListening(ctx, ssh, hostname, rec.Port); lerr == nil && listening {
+			result := &ops.DevServerResult{
+				Action:   "start",
+				Hostname: hostname,
+				Port:     rec.Port,
+				Running:  true,
+				Message:  fmt.Sprintf("The dev server zcp keeps on %s (`%s`) already answers on port %d in this container; zcp left it as it is.", hostname, rec.Command, rec.Port),
+			}
+			record(result)
+			return result
+		}
+	}
+
 	result, err := ops.ExecuteDevServer(ctx, ssh, nil, "", ops.DevServerParams{
 		Action:      "start",
 		Hostname:    rec.Hostname,
@@ -110,7 +176,6 @@ func restoreKeptDevServer(ctx context.Context, ssh ops.SSHDeployer, stateDir, ho
 		WorkDir:     rec.WorkDir,
 		NoHTTPProbe: rec.NoHTTPProbe,
 	})
-	restore := workflow.DevServerRestore{At: time.Now().UTC().Format(time.RFC3339)}
 	if err != nil {
 		result = &ops.DevServerResult{
 			Action:   "start",
@@ -119,9 +184,13 @@ func restoreKeptDevServer(ctx context.Context, ssh ops.SSHDeployer, stateDir, ho
 			Message:  fmt.Sprintf("zcp could not start the dev server it keeps on %s again: %v", hostname, err),
 		}
 	}
-	restore.Running = result.Running
-	restore.Reason = result.Reason
-	_ = workflow.RecordDevServerRestore(stateDir, hostname, container, restore)
+	// Stopped while this start ran: the stop forgot it before killing, so a
+	// record that is gone means the process just spawned must go too.
+	if now, _ := workflow.KeptDevServerFor(stateDir, hostname); now == nil {
+		_ = ops.KillSpawnedDevServer(ctx, ssh, hostname, rec.LogFile)
+		return nil
+	}
+	record(result)
 	result.Message = fmt.Sprintf("Brought back the dev server zcp keeps on %s (`%s`) after its container restarted or was redeployed. %s", hostname, rec.Command, result.Message)
 	return result
 }
@@ -140,18 +209,24 @@ const (
 // old container, so an answer from the life before names the old container
 // still answering — wait and read again. A life that moved on meanwhile was
 // claimed by the keeper's pass: report that bring-back once it is recorded,
-// rather than nothing, which would send the agent to start a second copy.
-func restoreKeptDevServerAfterDeploy(ctx context.Context, ssh ops.SSHDeployer, stateDir, hostname string, before *workflow.KeptDevServer) *ops.DevServerResult {
+// and while it still runs, say so — never nothing, which would send the agent
+// to start a second copy.
+func restoreKeptDevServerAfterDeploy(ctx context.Context, ssh ops.SSHDeployer, stateDir, hostname string, before *workflow.KeptDevServer, wait time.Duration) *ops.DevServerResult {
 	if stateDir == "" || ssh == nil || before == nil {
 		return nil
 	}
+	var rec *workflow.KeptDevServer
 	for attempt := range deployRestoreAttempts {
-		rec, err := workflow.KeptDevServerFor(stateDir, hostname)
+		var err error
+		rec, err = workflow.KeptDevServerFor(stateDir, hostname)
 		if err != nil || rec == nil {
 			return nil
 		}
 		if rec.Container != before.Container {
-			if rec.LastRestore != nil {
+			if rec.LastRestore == nil {
+				return nil // the agent took this life over itself
+			}
+			if rec.LastRestore.Reason != workflow.DevServerRestoring {
 				return keeperRestoreResult(*rec)
 			}
 		} else if result := restoreKeptDevServer(ctx, ssh, stateDir, hostname); result != nil {
@@ -163,7 +238,16 @@ func restoreKeptDevServerAfterDeploy(ctx context.Context, ssh ops.SSHDeployer, s
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(deployRestoreWait):
+		case <-time.After(wait):
+		}
+	}
+	if rec != nil && rec.Container != before.Container && rec.LastRestore != nil && rec.LastRestore.Reason == workflow.DevServerRestoring {
+		return &ops.DevServerResult{
+			Action:   "start",
+			Hostname: hostname,
+			Port:     rec.Port,
+			Reason:   reasonKeeperRestoring,
+			Message:  fmt.Sprintf("zcp's dev-server keeper is starting the dev server it keeps on %s (`%s`) in the new container right now.", hostname, rec.Command),
 		}
 	}
 	return nil
@@ -192,7 +276,7 @@ func keeperRestoreResult(rec workflow.KeptDevServer) *ops.DevServerResult {
 // deploy began. Returns whether it answers — a listener the public-access hook
 // can count on. With nothing kept, result is untouched.
 func bringBackKeptDevServer(ctx context.Context, ssh ops.SSHDeployer, stateDir, hostname string, before *workflow.KeptDevServer, result *ops.DeployResult) bool {
-	ds := restoreKeptDevServerAfterDeploy(ctx, ssh, stateDir, hostname, before)
+	ds := restoreKeptDevServerAfterDeploy(ctx, ssh, stateDir, hostname, before, deployRestoreWait)
 	if ds == nil {
 		return false
 	}
@@ -207,8 +291,8 @@ func keptDevServerNextActions(hostname string, ds *ops.DevServerResult) string {
 	switch {
 	case ds.Running:
 		return fmt.Sprintf("zcp started the dev server it keeps on %s again and it answers — run zerops_verify serviceHostname=%q.", hostname, hostname)
-	case ds.Reason == ops.ReasonHealthProbeTimeout:
-		return fmt.Sprintf("zcp started the dev server it keeps on %s again; it did not answer within the wait and may still be starting (a first compile) — check zerops_dev_server action=status hostname=%q, then run zerops_verify.", hostname, hostname)
+	case ds.Reason == ops.ReasonHealthProbeTimeout, ds.Reason == reasonKeeperRestoring:
+		return fmt.Sprintf("zcp is starting the dev server it keeps on %s again; it did not answer yet and may still be starting (a first compile) — check zerops_dev_server action=status hostname=%q, then run zerops_verify.", hostname, hostname)
 	default:
 		return fmt.Sprintf("zcp started the dev server it keeps on %s again, but it did not come up: read devServer.reason and devServer.logTail, fix the cause, then zerops_dev_server action=restart hostname=%q.", hostname, hostname)
 	}
@@ -223,7 +307,8 @@ type KeptDevServerRestore struct {
 }
 
 // KeepDevServers is one pass of the keeper: every kept dev server whose
-// container restarted or was redeployed since it was started is started again.
+// container restarted or was redeployed since it was started is started again,
+// and one whose bring-back did not come up is retried while retries remain.
 // Returns the bring-backs it made, for the keeper's log.
 func KeepDevServers(ctx context.Context, ssh ops.SSHDeployer, stateDir string) []KeptDevServerRestore {
 	kept, err := workflow.KeptDevServers(stateDir)
