@@ -174,6 +174,7 @@ func TestHandleAdoptLocal_LinksRuntime_UpgradesMode(t *testing.T) {
 				ServiceStackTypeVersionName:  "nodejs@22",
 				ServiceStackTypeCategoryName: "USER",
 			},
+			ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-1", Source: "CLI", Built: true},
 		},
 	})
 
@@ -204,5 +205,45 @@ func TestHandleAdoptLocal_LinksRuntime_UpgradesMode(t *testing.T) {
 	// ACTIVE target stamps FirstDeployedAt.
 	if got.FirstDeployedAt == "" {
 		t.Error("FirstDeployedAt empty — ACTIVE target at link time must stamp")
+	}
+}
+
+// TestHandleAdoptLocal_StageStartedWithoutCode_NoStamp: linking a stage that
+// holds only the startWithoutCode placeholder (ACTIVE, nothing deployed) leaves
+// the first deploy ahead instead of stamping one that never happened.
+func TestHandleAdoptLocal_StageStartedWithoutCode_NoStamp(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname: "myproject", Mode: topology.PlanModeLocalOnly,
+		BootstrappedAt: "2026-04-01",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	mock := platform.NewMock().WithServicesDirect([]platform.ServiceStack{
+		{
+			ID: "rt-1", Name: "apistage", Status: "ACTIVE",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{
+				ServiceStackTypeVersionName:  "nodejs@22",
+				ServiceStackTypeCategoryName: "USER",
+			},
+			ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-1", Source: platform.AppVersionSourceNone},
+		},
+	})
+
+	result, _, _ := handleAdoptLocal(
+		context.Background(), mock, "p1", dir,
+		WorkflowInput{TargetService: "apistage"},
+		runtime.Info{},
+	)
+	if result.IsError {
+		t.Fatalf("expected success; got: %s", getTextContent(t, result))
+	}
+	got, _ := workflow.ReadServiceMeta(dir, "myproject")
+	if got.StageHostname != "apistage" {
+		t.Errorf("StageHostname = %q, want apistage", got.StageHostname)
+	}
+	if got.FirstDeployedAt != "" {
+		t.Errorf("FirstDeployedAt stamped for a stage holding only its placeholder; got %q", got.FirstDeployedAt)
 	}
 }

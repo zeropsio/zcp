@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -76,8 +75,10 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 			"To re-link, edit .zcp/state/services/ manually or delete the local meta and restart ZCP"), WithRecoveryStatus()), nil, nil
 	}
 
-	// Confirm the target hostname is a live runtime service.
-	services, err := ops.ListProjectServices(ctx, client, projectID)
+	// Confirm the target hostname is a live runtime service. The direct read:
+	// its active app version names its source, which tells a stage imported
+	// without code from one holding a deploy.
+	services, err := client.ListServicesDirect(ctx, projectID)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -119,7 +120,7 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 		// but write defensively in case an upgrade path leaves it stale.
 		m.CloseDeployMode = topology.CloseModeUnset
 		m.CloseDeployModeConfirmed = false
-		if target.Status == workflow.StatusActive && m.FirstDeployedAt == "" {
+		if target.Status == workflow.StatusActive && target.HasDeployedCode() && m.FirstDeployedAt == "" {
 			m.FirstDeployedAt = time.Now().UTC().Format(time.RFC3339)
 		}
 		return nil

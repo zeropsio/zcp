@@ -64,7 +64,9 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 		return nil, fmt.Errorf("local auto-adopt: project %q returned no name", projectID)
 	}
 
-	services, err := client.ListServices(ctx, projectID)
+	// The direct read: its active app version names its source, which tells
+	// a stage imported without code from one holding a deploy.
+	services, err := client.ListServicesDirect(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("local auto-adopt: list services: %w", err)
 	}
@@ -111,9 +113,10 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 	case 1:
 		// Exactly one runtime: auto-link as stage. Strategy stays unset so
 		// the router prompts for an explicit choice (auto / git-push /
-		// manual). If the platform service is already ACTIVE, stamp
-		// FirstDeployedAt — the adopted+ACTIVE case means code has landed
-		// there before ZCP was aware of it.
+		// manual). If the platform service is ACTIVE with deployed code,
+		// stamp FirstDeployedAt — code landed there before ZCP was aware of
+		// it. ACTIVE alone is not that: a stage imported startWithoutCode
+		// is ACTIVE holding only a placeholder version.
 		rt := runtimes[0]
 		// TOPO-1: NewServiceMeta stamps GitPushState/BuildIntegration — this
 		// local-stage branch previously omitted them, leaving them empty on
@@ -122,7 +125,7 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 		meta := NewServiceMeta(project.Name, topology.PlanModeLocalStage)
 		meta.StageHostname = rt.Name
 		meta.BootstrappedAt = now
-		if rt.Status == StatusActive {
+		if rt.Status == StatusActive && rt.HasDeployedCode() {
 			meta.FirstDeployedAt = time.Now().UTC().Format(time.RFC3339)
 		}
 		// §8 O3 PA-6: derive the linked runtime's public-access intent from
