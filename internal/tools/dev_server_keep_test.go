@@ -35,9 +35,13 @@ type keepSSH struct {
 	listening  bool
 	probeFails bool
 	stopFails  bool
-	onSpawn    func()
-	spawns     []string
-	kills      int
+	// aliveBeforeSpawn is the pidfile's process before this test's first
+	// spawn — a server from an earlier bring-back still starting. After a
+	// spawn, the spawned process is alive.
+	aliveBeforeSpawn bool
+	onSpawn          func()
+	spawns           []string
+	kills            int
 }
 
 func (s *keepSSH) ExecSSH(_ context.Context, _ string, command string) ([]byte, error) {
@@ -62,8 +66,11 @@ func (s *keepSSH) ExecSSH(_ context.Context, _ string, command string) ([]byte, 
 		}
 		return []byte("OK 200 42"), nil
 	case strings.Contains(command, "kill -0"):
-		return []byte("alive\n"), nil
-	case strings.Contains(command, `kill "$pid"`):
+		if len(s.spawns) > 0 || s.aliveBeforeSpawn {
+			return []byte("alive\n"), nil
+		}
+		return []byte("dead\n"), nil
+	case strings.Contains(command, "then kill 4242"):
 		s.kills++
 		return nil, nil
 	case strings.Contains(command, "pkill"), strings.Contains(command, "fuser"):
@@ -188,14 +195,15 @@ func TestRestoreKeptDevServer(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		kept        *workflow.KeptDevServer
-		identity    string
-		listening   bool
-		probeFails  bool
-		wantResult  bool
-		wantRunning bool
-		wantSpawn   bool
+		name             string
+		kept             *workflow.KeptDevServer
+		identity         string
+		listening        bool
+		probeFails       bool
+		aliveBeforeSpawn bool
+		wantResult       bool
+		wantRunning      bool
+		wantSpawn        bool
 	}{
 		{name: "nothing kept", kept: nil, identity: "appdev-1/boot-b/900"},
 		{name: "same container life — a crashed or stopped-by-hand server stays down", kept: keptAppdevStarted(), identity: "appdev-1/boot-a/100"},
@@ -207,6 +215,7 @@ func TestRestoreKeptDevServer(t *testing.T) {
 		{name: "a failed bring-back is retried", kept: keptAppdevRestored(time.Now().Add(-time.Minute), false, "health_probe_connection_refused"), identity: "appdev-1/boot-b/900", wantResult: true, wantRunning: true, wantSpawn: true},
 		{name: "a slow one that came up since is marked up without a second copy", kept: keptAppdevRestored(time.Now().Add(-time.Minute), false, ops.ReasonHealthProbeTimeout), identity: "appdev-1/boot-b/900", listening: true, wantResult: true, wantRunning: true},
 		{name: "a bring-back that came up — a later crash stays down", kept: keptAppdevRestored(time.Now().Add(-time.Hour), true, ""), identity: "appdev-1/boot-b/900"},
+		{name: "no retry while the last bring-back's process still starts", kept: keptAppdevRestored(time.Now().Add(-time.Minute), false, ops.ReasonHealthProbeTimeout), identity: "appdev-1/boot-b/900", aliveBeforeSpawn: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -217,9 +226,9 @@ func TestRestoreKeptDevServer(t *testing.T) {
 					t.Fatalf("KeepDevServer: %v", err)
 				}
 			}
-			ssh := &keepSSH{identity: tt.identity, listening: tt.listening, probeFails: tt.probeFails}
+			ssh := &keepSSH{identity: tt.identity, listening: tt.listening, probeFails: tt.probeFails, aliveBeforeSpawn: tt.aliveBeforeSpawn}
 
-			got := restoreKeptDevServer(context.Background(), ssh, dir, "appdev")
+			got := restoreKeptDevServer(context.Background(), ssh, dir, "appdev", "")
 			if (got != nil) != tt.wantResult {
 				t.Fatalf("restore result = %+v, want present=%v", got, tt.wantResult)
 			}
@@ -230,6 +239,11 @@ func TestRestoreKeptDevServer(t *testing.T) {
 				t.Errorf("the kept command is what runs again: %q", ssh.spawns[0])
 			}
 			if !tt.wantResult {
+				if tt.kept != nil {
+					if now, _ := workflow.KeptDevServerFor(dir, "appdev"); now.LastRestore != nil && tt.kept.LastRestore != nil && now.LastRestore.Attempts != tt.kept.LastRestore.Attempts {
+						t.Errorf("a pass that starts nothing spends no attempt: %+v", now.LastRestore)
+					}
+				}
 				return
 			}
 			if got.Running != tt.wantRunning {
@@ -245,7 +259,7 @@ func TestRestoreKeptDevServer(t *testing.T) {
 
 			// The keeper's next pass, straight after, finds nothing to do.
 			spawned := ssh.spawnCount()
-			if again := restoreKeptDevServer(context.Background(), ssh, dir, "appdev"); again != nil {
+			if again := restoreKeptDevServer(context.Background(), ssh, dir, "appdev", ""); again != nil {
 				t.Errorf("a second bring-back straight after: %+v", again)
 			}
 			if ssh.spawnCount() != spawned {
@@ -267,11 +281,53 @@ func TestRestoreKeptDevServer_StoppedMeanwhile(t *testing.T) {
 	ssh := &keepSSH{identity: "appdev-1/boot-b/900"}
 	ssh.onSpawn = func() { _ = workflow.ForgetDevServer(dir, "appdev") }
 
-	if got := restoreKeptDevServer(context.Background(), ssh, dir, "appdev"); got != nil {
+	if got := restoreKeptDevServer(context.Background(), ssh, dir, "appdev", ""); got != nil {
 		t.Fatalf("a server stopped mid-bring-back is not reported as brought back: %+v", got)
 	}
 	if ssh.killCount() != 1 {
 		t.Errorf("the spawned process is killed again, kills = %d", ssh.killCount())
+	}
+}
+
+// TestRestoreKeptDevServer_UnreadableIndexKillsNothing: only a record read
+// without error and found gone means "stopped" — a store that cannot be read
+// says nothing about the server, which keeps running.
+func TestRestoreKeptDevServer_UnreadableIndexKillsNothing(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := workflow.KeepDevServer(dir, keptAppdev()); err != nil {
+		t.Fatalf("KeepDevServer: %v", err)
+	}
+	ssh := &keepSSH{identity: "appdev-1/boot-b/900"}
+	ssh.onSpawn = func() {
+		if err := os.WriteFile(filepath.Join(dir, "dev-servers.json"), []byte("{not json"), 0o600); err != nil {
+			t.Error(err)
+		}
+	}
+	_ = restoreKeptDevServer(context.Background(), ssh, dir, "appdev", "")
+	if ssh.killCount() != 0 {
+		t.Errorf("an unreadable index must not kill the fresh server, kills = %d", ssh.killCount())
+	}
+}
+
+// TestRestoreKeptDevServerAfterDeploy_NeverClaimsThePreDeployLife: the old
+// container can still answer right after DEPLOYED. Even when its life holds a
+// retry-able failed bring-back, the deploy starts nothing in that dying
+// container — it waits for the new one.
+func TestRestoreKeptDevServerAfterDeploy_NeverClaimsThePreDeployLife(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	failed := keptAppdevRestored(time.Now().Add(-time.Minute), false, "health_probe_connection_refused")
+	if err := workflow.KeepDevServer(dir, *failed); err != nil {
+		t.Fatalf("KeepDevServer: %v", err)
+	}
+	before, _ := workflow.KeptDevServerFor(dir, "appdev")
+	ssh := &keepSSH{identity: failed.Container} // the old container still answers
+	if got := restoreKeptDevServerAfterDeploy(context.Background(), ssh, dir, "appdev", before, time.Millisecond); got != nil {
+		t.Fatalf("nothing is reported from the old container: %+v", got)
+	}
+	if ssh.spawnCount() != 0 {
+		t.Errorf("nothing starts in the dying container, spawns = %d", ssh.spawnCount())
 	}
 }
 
@@ -385,6 +441,7 @@ func TestDevServerTool_StopOnlyForgetsTheServerItNames(t *testing.T) {
 		{name: "another process", args: map[string]any{"processMatch": "vite"}, wantKept: true},
 		{name: "its port", args: map[string]any{"port": 3000}, wantKept: false},
 		{name: "its command", args: map[string]any{"command": "npm run dev"}, wantKept: false},
+		{name: "another port, but its process", args: map[string]any{"port": 5173, "processMatch": "npm run dev"}, wantKept: false},
 		{name: "its port, and the kill fails", args: map[string]any{"port": 3000}, stopFails: true, wantKept: false, wantErrOut: true},
 	}
 	for _, tt := range tests {
@@ -425,7 +482,7 @@ func TestDevServerTool_StartTakesTheContainerLifeOver(t *testing.T) {
 	// The keeper's pass lands while the agent's start is spawning.
 	var keeperClaimed *ops.DevServerResult
 	ssh.onSpawn = func() {
-		keeperClaimed = restoreKeptDevServer(context.Background(), &keepSSH{identity: "appdev-1/boot-b/900"}, dir, "appdev")
+		keeperClaimed = restoreKeptDevServer(context.Background(), &keepSSH{identity: "appdev-1/boot-b/900"}, dir, "appdev", "")
 	}
 	resp, result := callDevServerTool(t, srv, map[string]any{
 		"action": "start", "hostname": "appdev", "command": "npm run dev", "port": 3000,
@@ -442,6 +499,39 @@ func TestDevServerTool_StartTakesTheContainerLifeOver(t *testing.T) {
 	rec, _ := workflow.KeptDevServerFor(dir, "appdev")
 	if rec == nil || rec.Container != "appdev-1/boot-b/900" || rec.LastRestore != nil {
 		t.Errorf("the agent's start owns the new life: %+v", rec)
+	}
+}
+
+// TestDevServerTool_StartWaitsForARunningBringBack: the keeper claimed the
+// container's new life and is starting the server; an agent start in that
+// moment starts nothing beside it and says so.
+func TestDevServerTool_StartWaitsForARunningBringBack(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := workflow.KeepDevServer(dir, keptAppdev()); err != nil {
+		t.Fatalf("KeepDevServer: %v", err)
+	}
+	if _, claimed, _ := workflow.ClaimKeptDevServer(dir, "appdev", "appdev-1/boot-b/900", time.Now()); !claimed {
+		t.Fatal("keeper claim")
+	}
+	ssh := &keepSSH{identity: "appdev-1/boot-b/900"}
+	srv := devServerToolServer(t, dir, ssh, nil)
+
+	resp, result := callDevServerTool(t, srv, map[string]any{
+		"action": "start", "hostname": "appdev", "command": "npm run dev", "port": 3000,
+	})
+	if result.IsError {
+		t.Fatalf("start: %s", getTextContent(t, result))
+	}
+	if ssh.spawnCount() != 0 {
+		t.Fatalf("no second copy beside a running bring-back, spawns = %d", ssh.spawnCount())
+	}
+	if resp.Running || !strings.Contains(resp.Message, "bringing back") {
+		t.Errorf("the answer says zcp is bringing it back: %+v", resp)
+	}
+	rec, _ := workflow.KeptDevServerFor(dir, "appdev")
+	if rec == nil || rec.LastRestore == nil || rec.LastRestore.Reason != workflow.DevServerRestoring {
+		t.Errorf("the keeper's claim stands: %+v", rec)
 	}
 }
 

@@ -1356,16 +1356,90 @@ func TestPortListening(t *testing.T) {
 	}
 }
 
-// TestKillSpawnedDevServer stops exactly the process a spawn recorded in its
-// pidfile — not every process that looks like it.
+// TestKillSpawnedDevServer stops exactly the process one spawn started: only
+// while the pidfile still holds that spawn's pid (a later start overwrites it),
+// and never on a pid it does not know.
 func TestKillSpawnedDevServer(t *testing.T) {
 	t.Parallel()
+
 	ssh := &scriptSSH{queue: []scriptStep{{output: ""}}}
-	if err := KillSpawnedDevServer(context.Background(), ssh, "appdev", ""); err != nil {
+	if err := KillSpawnedDevServer(context.Background(), ssh, "appdev", "", 4242); err != nil {
 		t.Fatalf("KillSpawnedDevServer: %v", err)
 	}
 	cmd := ssh.calls[0].command
-	if !strings.Contains(cmd, "/tmp/zcp-dev-server.log.pid") || !strings.Contains(cmd, "kill") || strings.Contains(cmd, "pkill") {
-		t.Errorf("kill by the default pidfile only: %q", cmd)
+	for _, want := range []string{"/tmp/zcp-dev-server.log.pid", `= '4242'`, "kill 4242"} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("kill only the spawn's own pid while the pidfile holds it (%q): %q", want, cmd)
+		}
+	}
+	if strings.Contains(cmd, "pkill") {
+		t.Errorf("never a pattern kill: %q", cmd)
+	}
+
+	none := &scriptSSH{}
+	if err := KillSpawnedDevServer(context.Background(), none, "appdev", "", 0); err != nil || len(none.calls) != 0 {
+		t.Errorf("an unknown pid kills nothing: err=%v calls=%v", err, none.calls)
+	}
+}
+
+// TestDevServer_Start_ReportsSpawnPID: a start reports the pid its spawn
+// acknowledged, so a caller can later stop exactly that process.
+func TestDevServer_Start_ReportsSpawnPID(t *testing.T) {
+	t.Parallel()
+	ssh := &scriptSSH{queue: []scriptStep{
+		{output: "zcp-dev-server-spawned pid=4242"},
+		{output: "OK 200 12"},
+		{output: "ready"},
+		{output: "alive\n"},
+	}}
+	result, err := ExecuteDevServer(context.Background(), ssh, nil, "", DevServerParams{
+		Action: "start", Hostname: "appdev", Command: "npm run dev", Port: 3000,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteDevServer: %v", err)
+	}
+	if result.PID != 4242 {
+		t.Errorf("PID = %d, want 4242", result.PID)
+	}
+}
+
+// TestDevServerStopPattern is the pattern a stop's kill matches processes by —
+// what a caller compares a kept command against to know whether a stop hits it.
+func TestDevServerStopPattern(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		processMatch string
+		command      string
+		want         string
+	}{
+		{processMatch: "vite", command: "npm run dev", want: "vite"},
+		{command: "npm run dev", want: "npm"},
+		{command: "env PORT=3000 node server.js", want: "env"},
+		{command: "PORT=3000 node server.js", want: "node"},
+		{want: ""},
+	}
+	for _, tt := range tests {
+		if got := DevServerStopPattern(tt.processMatch, tt.command); got != tt.want {
+			t.Errorf("DevServerStopPattern(%q, %q) = %q, want %q", tt.processMatch, tt.command, got, tt.want)
+		}
+	}
+}
+
+// TestSpawnedDevServerAlive reads the spawn's pidfile liveness — a retry must
+// not start a second copy of a server that is still starting.
+func TestSpawnedDevServerAlive(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		output string
+		want   bool
+	}{{"alive\n", true}, {"dead\n", false}} {
+		ssh := &scriptSSH{queue: []scriptStep{{output: tt.output}}}
+		got, err := SpawnedDevServerAlive(context.Background(), ssh, "appdev", "/tmp/web.log")
+		if err != nil || got != tt.want {
+			t.Errorf("SpawnedDevServerAlive(%q) = %v, %v; want %v", tt.output, got, err, tt.want)
+		}
+		if !strings.Contains(ssh.calls[0].command, "/tmp/web.log.pid") {
+			t.Errorf("reads the log file's pidfile: %q", ssh.calls[0].command)
+		}
 	}
 }

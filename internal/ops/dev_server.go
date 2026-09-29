@@ -37,6 +37,9 @@ type DevServerResult struct {
 	// LogFile is the absolute path to the log file on the target
 	// container, so the agent can tail it further if needed.
 	LogFile string `json:"logFile,omitempty"`
+	// PID is the process a start/restart spawned, as its spawn acknowledged
+	// it; zero when unknown.
+	PID int `json:"pid,omitempty"`
 	// URL is the consumer-vantage address of the probed dev server —
 	// http://<hostname>:<port><healthPath>, reachable from the agent's
 	// container over the project-private network when the server binds
@@ -398,22 +401,47 @@ func PortListening(ctx context.Context, ssh SSHDeployer, hostname string, port i
 	return false, fmt.Errorf("port %d listener on %s: unreadable answer %q", port, hostname, strings.TrimSpace(string(out)))
 }
 
-// KillSpawnedDevServer stops the process a dev-server spawn recorded in the
-// pidfile next to logFile (default log when empty) — that process and nothing
-// else, unlike stop's pattern match. Used when a bring-back finds the server
-// was stopped while it was starting it.
-func KillSpawnedDevServer(ctx context.Context, ssh SSHDeployer, hostname, logFile string) error {
+// KillSpawnedDevServer stops the process one dev-server spawn started — pid,
+// as its ack reported it (DevServerResult.PID) — and only while the pidfile
+// next to logFile (default log when empty) still holds that pid: a later start
+// overwrites the pidfile, and its process is not this caller's to stop. An
+// unknown pid (0) stops nothing.
+func KillSpawnedDevServer(ctx context.Context, ssh SSHDeployer, hostname, logFile string, pid int) error {
+	if pid <= 0 {
+		return nil
+	}
 	if logFile == "" {
 		logFile = defaultLogFilePattern
 	}
-	cmd := fmt.Sprintf(`pid=$(cat %s 2>/dev/null); if [ -n "$pid" ]; then kill "$pid" 2>/dev/null; fi; true`,
-		shellQuote(pidFileFor(logFile)))
+	want := strconv.Itoa(pid)
+	cmd := fmt.Sprintf(`if [ "$(cat %s 2>/dev/null)" = %s ]; then kill %s 2>/dev/null; fi; true`,
+		shellQuote(pidFileFor(logFile)), shellQuote(want), want)
 	killCtx, cancel := context.WithTimeout(ctx, containerIdentityTimeout)
 	defer cancel()
 	if _, err := ssh.ExecSSH(killCtx, hostname, cmd); err != nil {
 		return fmt.Errorf("kill spawned dev server on %s: %w", hostname, err)
 	}
 	return nil
+}
+
+// SpawnedDevServerAlive reports whether the process recorded in the pidfile
+// next to logFile (default log when empty) is alive — a dev server that is
+// still starting, not yet listening, is alive.
+func SpawnedDevServerAlive(ctx context.Context, ssh SSHDeployer, hostname, logFile string) (bool, error) {
+	if logFile == "" {
+		logFile = defaultLogFilePattern
+	}
+	return checkProcessAlive(ctx, ssh, hostname, pidFileFor(logFile))
+}
+
+// DevServerStopPattern is the pattern a stop's kill matches processes by:
+// processMatch when given, else the command's first token past any leading
+// KEY=VAL assignments. "" when neither names one.
+func DevServerStopPattern(processMatch, command string) string {
+	if match := strings.TrimSpace(processMatch); match != "" {
+		return match
+	}
+	return firstShellToken(command)
 }
 
 // DevServerRunning reports whether a dev-server process is currently

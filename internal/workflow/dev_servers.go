@@ -31,8 +31,9 @@ const (
 	// devServerRestoreRetryAfter spaces the attempts within a life.
 	devServerRestoreRetryAfter = 30 * time.Second
 	// devServerRestoreStale lets a claim whose outcome was never recorded (its
-	// claimer died mid-start) be taken again.
-	devServerRestoreStale = 3 * time.Minute
+	// claimer died mid-start) be taken again. A bring-back is bounded well
+	// inside it: spawn 8 s, probe at most 50 s, tail and liveness 5 s each.
+	devServerRestoreStale = 2 * time.Minute
 )
 
 // KeptDevServer is one kept dev server: everything a bring-back needs to start
@@ -64,6 +65,17 @@ type DevServerRestore struct {
 	Reason  string `json:"reason,omitempty"`
 	// Attempts counts the bring-backs claimed in this container life.
 	Attempts int `json:"attempts"`
+}
+
+// RestoringIn reports a bring-back of this server running right now in the
+// container life container names — claimed, its outcome not recorded yet, and
+// not so old that its claimer must have died.
+func (r KeptDevServer) RestoringIn(container string, now time.Time) bool {
+	if r.Container != container || r.LastRestore == nil || r.LastRestore.Reason != DevServerRestoring {
+		return false
+	}
+	at, err := time.Parse(time.RFC3339, r.LastRestore.At)
+	return err == nil && now.Sub(at) < devServerRestoreStale
 }
 
 // KeepDevServer records rec as the dev server zcp keeps on rec.Hostname,

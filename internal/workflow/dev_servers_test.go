@@ -198,3 +198,29 @@ func TestTakeOverKeptDevServer(t *testing.T) {
 		t.Error("no bring-back is claimed in a life the agent took over")
 	}
 }
+
+// TestKeptDevServer_RestoringIn: a bring-back is running in a life while its
+// claim is fresh and unrecorded — the one moment an agent start must wait.
+func TestKeptDevServer_RestoringIn(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		kept      *KeptDevServer
+		container string
+		want      bool
+	}{
+		{name: "claimed just now in this life", kept: keptAfterRestore("appdev-1/900", devServerClock.Add(-10*time.Second), false, DevServerRestoring, 1), container: "appdev-1/900", want: true},
+		{name: "claimed in another life", kept: keptAfterRestore("appdev-1/900", devServerClock.Add(-10*time.Second), false, DevServerRestoring, 1), container: "appdev-2/5", want: false},
+		{name: "a stale claim", kept: keptAfterRestore("appdev-1/900", devServerClock.Add(-10*time.Minute), false, DevServerRestoring, 1), container: "appdev-1/900", want: false},
+		{name: "a finished bring-back", kept: keptAfterRestore("appdev-1/900", devServerClock.Add(-10*time.Second), true, "", 1), container: "appdev-1/900", want: false},
+		{name: "the agent's own start", kept: keptPtr(keptFixture("appdev", "appdev-1/900")), container: "appdev-1/900", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.kept.RestoringIn(tt.container, devServerClock); got != tt.want {
+				t.Errorf("RestoringIn = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

@@ -42,11 +42,8 @@ const (
 // the next start sees a guaranteed-free port and the agent never
 // invents a workaround.
 func stopDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams) (*DevServerResult, error) {
-	match := strings.TrimSpace(p.ProcessMatch)
-	if match == "" && strings.TrimSpace(p.Command) != "" {
-		// Derive a reasonable default match from the command's first token.
-		match = firstShellToken(p.Command)
-	}
+	// The command's first token is the default match (DevServerStopPattern).
+	match := DevServerStopPattern(p.ProcessMatch, p.Command)
 
 	var parts []string
 	if match != "" {

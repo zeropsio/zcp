@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -122,6 +123,9 @@ func RegisterDevServer(srv *mcp.Server, client platform.Client, httpClient ops.H
 		// and a start of a kept server takes its container life over, so the
 		// keeper never starts a second copy beside it (dev_server_keep.go).
 		keeping := prepareDevServerKeeping(ctx, ssh, stateDir, input)
+		if keeping.restoring != nil {
+			return jsonResult(&devServerToolResult{DevServerResult: keeping.restoring}), nil, nil
+		}
 		result, err := ops.ExecuteDevServer(ctx, ssh, client, projectID, ops.DevServerParams{
 			Action:       input.Action,
 			Hostname:     input.Hostname,
@@ -162,17 +166,21 @@ func RegisterDevServer(srv *mcp.Server, client platform.Client, httpClient ops.H
 
 // devServerKeeping is what prepareDevServerKeeping learned before the action
 // ran: the container life a start is made in (read only when a kept server is
-// being taken over), and whether a stop forgot the kept server.
+// being taken over), whether a stop forgot the kept server, and — when a
+// bring-back of it runs in this life right now — the answer that replaces the
+// start.
 type devServerKeeping struct {
 	container string
 	forgot    bool
+	restoring *ops.DevServerResult
 }
 
 // prepareDevServerKeeping applies the agent's action to what zcp keeps before
-// the action runs. A stop that names the kept server (its port, its log file,
-// or a match on its command) forgets it first. A start or restart on a host
-// with a kept server takes the current container life over, so no bring-back
-// is claimed in it while this start runs.
+// the action runs. A stop that hits the kept server (its port, its log file,
+// or its kill pattern found in the kept command) forgets it first. A start or
+// restart on a host with a kept server takes the current container life over,
+// so no bring-back is claimed in it while this start runs — unless one is
+// running already, which the start then waits for instead of doubling.
 func prepareDevServerKeeping(ctx context.Context, ssh ops.SSHDeployer, stateDir string, input DevServerInput) devServerKeeping {
 	var keeping devServerKeeping
 	if stateDir == "" || ssh == nil {
@@ -188,27 +196,32 @@ func prepareDevServerKeeping(ctx context.Context, ssh ops.SSHDeployer, stateDir 
 			keeping.forgot = true
 		}
 	case isDevServerStartAction(input.Action):
-		if container, idErr := ops.ContainerIdentity(ctx, ssh, input.Hostname); idErr == nil {
-			keeping.container = container
-			_ = workflow.TakeOverKeptDevServer(stateDir, input.Hostname, container)
+		container, idErr := ops.ContainerIdentity(ctx, ssh, input.Hostname)
+		if idErr != nil {
+			break
 		}
+		if kept.RestoringIn(container, time.Now()) {
+			keeping.restoring = keeperRestoringResult(strings.ToLower(input.Action), *kept)
+			break
+		}
+		keeping.container = container
+		_ = workflow.TakeOverKeptDevServer(stateDir, input.Hostname, container)
 	}
 	return keeping
 }
 
-// stopNamesKeptServer reports whether a stop is aimed at the kept dev server:
-// the same port, the same log file, or — when it names neither — a match
-// (processMatch, else command's first token) found in the kept command, the
-// way the stop's own kill matches processes.
+// stopNamesKeptServer reports whether a stop hits the kept dev server: the
+// same port (the kill frees it), the same log file, or the kill's own pattern
+// (ops.DevServerStopPattern) found in the kept command.
 func stopNamesKeptServer(input DevServerInput, kept workflow.KeptDevServer) bool {
-	if input.Port > 0 || input.LogFile != "" {
-		return (input.Port > 0 && input.Port == kept.Port) || (input.LogFile != "" && input.LogFile == kept.LogFile)
+	if input.Port > 0 && input.Port == kept.Port {
+		return true
 	}
-	match := strings.TrimSpace(input.ProcessMatch)
-	if match == "" {
-		match, _, _ = strings.Cut(strings.TrimSpace(input.Command), " ")
+	if input.LogFile != "" && input.LogFile == kept.LogFile {
+		return true
 	}
-	return match != "" && strings.Contains(kept.Command, match)
+	pattern := ops.DevServerStopPattern(input.ProcessMatch, input.Command)
+	return pattern != "" && strings.Contains(kept.Command, pattern)
 }
 
 // finishDevServerKeeping applies the action's outcome to what zcp keeps
