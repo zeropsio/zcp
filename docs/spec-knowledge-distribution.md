@@ -251,7 +251,7 @@ Where a standard pair's stage half stands in the develop session, read per servi
 | `out-of-scope` | The service is a pair's dev half and the session left its stage half out of scope (`RoleOutOfScope`, "leave the stage as it is"): the work runs on the dev half alone. |
 | `none` | The service is not a pair's dev half. |
 
-**Empty = no gate.** An atom that promotes to or delivers through the stage half declares `[in-scope]` (or `[in-scope, none]` when it also serves services with no stage half, as `develop-git-push-delivery` does), so a session that left the stage out gets no promotion or delivery guidance for it; `develop-stage-out-of-scope` declares `[out-of-scope]` and says what such a session does instead.
+**Empty = no gate.** An atom that promotes to or delivers through the stage half declares `[in-scope]` (or `[in-scope, none]` when it also serves services with no stage half, as `develop-git-push-delivery` does), so a session that left the stage out gets no promotion or delivery guidance for it; `develop-stage-out-of-scope` declares `[out-of-scope]` and says what such a session does instead. A Mate's stand-up is one: develop start leaves the stage of an adopted, never-deployed pair out of scope (`docs/spec-workflows.md` §8, D2f).
 
 ### 3.16 `multiService` (scalar attribute, optional)
 

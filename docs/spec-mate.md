@@ -2294,6 +2294,20 @@ missing on Dara's run ("create a todo app" got one simple-mode service, nothing 
 owner's run of the same evening (`gitea_delivery.go`; `TestAWiredMatePlansOnlyStandardPairs`,
 `TestAStageDeployOfAWiredPairDeliversItself`, `TestAWiredPairDeploysDirectlyAndIsNeverSentToPush`).
 
+**A stand-up stops at dev (2026-09-30).** A new Mate's stand-up — "Stand up development of the
+project.", sent once by its person's client — deploys the dev halves it adopted (their build installs
+the packages), starts their dev servers, verifies them, and names the stage as the next step the
+person can ask for: no promotion, so no commit, push or pull request unasked. zcp tells a
+recipe-born Mate's empty services from deployed ones since the Beviro trial of 2026-09-29, so their
+first deploy opens develop's first-deploy branch — which promotes each standard pair to its stage,
+and in a wired Mate a stage deploy is the delivery above. So in a Mate, develop start leaves the
+stage half of an adopted pair whose dev half never deployed out of the session's scope
+(spec-workflows D2f): nothing is asked of the agent, the session closes on the dev halves, and the
+next task's session, its dev half deployed, delivers through the stage as before. A pair a Mate
+created for a task keeps delivering through its stage on its first deploy — "build a todo app" is
+still the whole prompt (`TestHandleDevelopBriefing_MateStandUp_LeavesTheStageOut`,
+`TestScenario_S14_StageLeftOutOfScope`).
+
 **What became of the request (2026-09-19).** A pair records its pull request's number and never
 re-derives it, which is right for the number and wrong for its fate: the merge that ends a Mate's
 work is made in Gitea's own UI, by a colleague, by a script, or by the app's *Merge* — and none of

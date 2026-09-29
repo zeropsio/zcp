@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -257,11 +258,73 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 			"Pass scope=[\"hostname1\",\"hostname2\"] listing the runtime services this task works on. Copy hostnames from the bootstrap close transition message, or call zerops_discover to list what's available."), WithRecoveryStatus()), nil, nil
 	}
 
+	if rt.MateEnabled {
+		input.OutOfScope = appendMissing(input.OutOfScope, mateStandUpStages(ctx, client, projectID, runtimeMetas, scope)...)
+	}
+
 	if errResult := startDevelopSession(engine, projectID, input, scope); errResult != nil {
 		return errResult, nil, nil
 	}
 
 	return renderDevelopBriefing(ctx, engine, client, projectID, rt)
+}
+
+// mateStandUpStages is the stage half of every standard pair in scope that a
+// Mate's stand-up leaves as it is (docs/spec-workflows.md §8 D2f): a pair the
+// Mate adopted — every new Mate is born from the recipe, its services
+// imported without code — whose dev half has never been deployed. A stand-up
+// deploys, starts and verifies the dev half; promoting it is a delivery in a
+// Mate wired to its group's Gitea (a commit, a push and a pull request), so it
+// waits for the person to ask. That holds whether zcp auto-included the stage
+// or the agent named it. A pair the Mate created for a task (a classic
+// bootstrap), or one whose dev half already runs deployed code, keeps its
+// stage required: that task's delivery goes through its stage.
+//
+// Deployed code is read from the direct service list — the only read that
+// sees an import's placeholder version (source NONE) — and only when a pair
+// is a candidate; a failed read leaves the stage out, the side that
+// promotes nothing unasked.
+func mateStandUpStages(ctx context.Context, client platform.Client, projectID string, runtimeMetas map[string]*workflow.ServiceMeta, scope []string) []string {
+	var candidates []*workflow.ServiceMeta
+	for _, h := range scope {
+		m := runtimeMetas[h]
+		if m == nil || m.Mode != topology.PlanModeStandard || m.Hostname != h || m.StageHostname == "" {
+			continue
+		}
+		if !m.IsAdopted() || m.IsDeployed() {
+			continue
+		}
+		candidates = append(candidates, m)
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	live := map[string]*platform.ServiceStack{}
+	if client != nil {
+		if services, err := client.ListServicesDirect(ctx, projectID); err == nil {
+			for i := range services {
+				live[services[i].Name] = &services[i]
+			}
+		}
+	}
+	var stages []string
+	for _, m := range candidates {
+		if workflow.DeriveDeployed(m.Hostname, live[m.Hostname], m, nil) {
+			continue
+		}
+		stages = append(stages, m.StageHostname)
+	}
+	return stages
+}
+
+// appendMissing appends each of add not already in list.
+func appendMissing(list []string, add ...string) []string {
+	for _, h := range add {
+		if !slices.Contains(list, h) {
+			list = append(list, h)
+		}
+	}
+	return list
 }
 
 // renderDevelopBriefing runs the atom pipeline and returns the rendered status

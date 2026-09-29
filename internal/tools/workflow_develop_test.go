@@ -1011,3 +1011,88 @@ func TestHandleDevelopBriefing_StandardPair_OutOfScopeStage(t *testing.T) {
 		t.Fatalf("RequiredServices = %v, want [appdev]", req)
 	}
 }
+
+// TestHandleDevelopBriefing_MateStandUp_LeavesTheStageOut pins a Mate's
+// stand-up: in a Mate (ZCP_MATE_ENABLED), develop start leaves the stage half
+// of an adopted pair whose dev half was never deployed out of scope — whether
+// zcp auto-included it or the agent named it — so the session deploys,
+// starts and verifies the dev half and promotes nothing. Outside a Mate, for a
+// pair the Mate created itself (a task's classic bootstrap delivers through
+// its stage), and once the dev half has deployed code, the stage is required
+// as before.
+func TestHandleDevelopBriefing_MateStandUp_LeavesTheStageOut(t *testing.T) {
+	t.Parallel()
+
+	placeholder := &platform.ActiveAppVersionDigest{ID: "av-1", Source: platform.AppVersionSourceNone}
+	deployedCode := &platform.ActiveAppVersionDigest{ID: "av-2", Source: "CLI", Built: true}
+	tests := []struct {
+		name         string
+		mate         bool
+		adopted      bool
+		firstDeploy  string
+		devVersion   *platform.ActiveAppVersionDigest
+		scope        []string
+		wantStageOut bool
+	}{
+		{name: "Mate, adopted, never deployed", mate: true, adopted: true, devVersion: placeholder, scope: []string{"appdev"}, wantStageOut: true},
+		{name: "Mate, the agent names the stage too", mate: true, adopted: true, devVersion: placeholder, scope: []string{"appdev", "appstage"}, wantStageOut: true},
+		{name: "not a Mate", mate: false, adopted: true, devVersion: placeholder, scope: []string{"appdev"}},
+		{name: "Mate, a pair it created for a task", mate: true, adopted: false, devVersion: placeholder, scope: []string{"appdev"}},
+		{name: "Mate, dev half runs deployed code", mate: true, adopted: true, devVersion: deployedCode, scope: []string{"appdev"}},
+		{name: "Mate, a deploy on record", mate: true, adopted: true, firstDeploy: "2026-09-29T20:00:00Z", devVersion: placeholder, scope: []string{"appdev"}},
+		{name: "Mate, only the stage in scope", mate: true, adopted: true, devVersion: placeholder, scope: []string{"appstage"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+			session := "sess1"
+			if tt.adopted {
+				session = "" // adopted, not bootstrapped by a session of zcp's
+			}
+			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+				Hostname:         "appdev",
+				StageHostname:    "appstage",
+				Mode:             topology.PlanModeStandard,
+				BootstrapSession: session,
+				BootstrappedAt:   "2026-09-29",
+				FirstDeployedAt:  tt.firstDeploy,
+			}); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+			mock := platform.NewMock().WithServices([]platform.ServiceStack{
+				{ID: "svc-appdev", Name: "appdev", Status: "ACTIVE", ActiveAppVersion: tt.devVersion, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+				{ID: "svc-appstage", Name: "appstage", Status: "ACTIVE", ActiveAppVersion: placeholder, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+			})
+
+			result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
+				WorkflowInput{Intent: "Stand up development of the project.", Scope: tt.scope},
+				runtime.Info{InContainer: true, MateEnabled: tt.mate})
+			if err != nil {
+				t.Fatalf("handleDevelopBriefing: %v", err)
+			}
+			if result.IsError {
+				t.Fatalf("develop start failed:\n%s", extractText(result))
+			}
+			t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
+			ws, _ := workflow.CurrentWorkSession(dir)
+			if ws == nil {
+				t.Fatal("work session expected")
+			}
+			gotOut := workflow.RoleFor(ws, "appstage") == workflow.RoleOutOfScope
+			if gotOut != tt.wantStageOut {
+				t.Fatalf("appstage role = %q, want out-of-scope=%v (services %v)", workflow.RoleFor(ws, "appstage"), tt.wantStageOut, ws.Services)
+			}
+			if tt.wantStageOut {
+				if workflow.RoleFor(ws, "appdev") != workflow.RoleRequired {
+					t.Errorf("appdev role = %q, want required", workflow.RoleFor(ws, "appdev"))
+				}
+				text := extractText(result)
+				if !strings.Contains(text, "develop-stage-out-of-scope") && !strings.Contains(text, "The stage stays as it is this session") {
+					t.Errorf("the briefing says the stage stays as it is:\n%s", text)
+				}
+			}
+		})
+	}
+}

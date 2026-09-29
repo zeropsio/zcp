@@ -98,6 +98,8 @@ running dev.
 
 When the dev half is verified, end by telling the person what runs on the dev
 half, and that promoting it to the stage is the next step they can ask for.
+If they already asked for it, start a new develop session for it once this
+one closes — with the dev half deployed, its stage is part of the work again.
 
 ---
 
