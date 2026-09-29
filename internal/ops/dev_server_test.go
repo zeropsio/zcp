@@ -1356,9 +1356,11 @@ func TestPortListening(t *testing.T) {
 	}
 }
 
-// TestKillSpawnedDevServer stops exactly the process one spawn started: only
-// while the pidfile still holds that spawn's pid (a later start overwrites it),
-// and never on a pid it does not know.
+// TestKillSpawnedDevServer stops exactly what one spawn started — its process
+// group, which the spawn's setsid made that pid lead, so a runner that does not
+// pass SIGTERM on (npm, sh -c) leaves no listener behind: only while the
+// pidfile still holds that spawn's pid (a later start overwrites it), and never
+// on a pid it does not know.
 func TestKillSpawnedDevServer(t *testing.T) {
 	t.Parallel()
 
@@ -1367,7 +1369,7 @@ func TestKillSpawnedDevServer(t *testing.T) {
 		t.Fatalf("KillSpawnedDevServer: %v", err)
 	}
 	cmd := ssh.calls[0].command
-	for _, want := range []string{"/tmp/zcp-dev-server.log.pid", `= '4242'`, "kill 4242"} {
+	for _, want := range []string{"/tmp/zcp-dev-server.log.pid", `= '4242'`, "kill -TERM -4242"} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("kill only the spawn's own pid while the pidfile holds it (%q): %q", want, cmd)
 		}

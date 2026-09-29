@@ -70,7 +70,7 @@ func (s *keepSSH) ExecSSH(_ context.Context, _ string, command string) ([]byte, 
 			return []byte("alive\n"), nil
 		}
 		return []byte("dead\n"), nil
-	case strings.Contains(command, "then kill 4242"):
+	case strings.Contains(command, "then kill -TERM -4242"):
 		s.kills++
 		return nil, nil
 	case strings.Contains(command, "pkill"), strings.Contains(command, "fuser"):

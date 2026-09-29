@@ -401,11 +401,13 @@ func PortListening(ctx context.Context, ssh SSHDeployer, hostname string, port i
 	return false, fmt.Errorf("port %d listener on %s: unreadable answer %q", port, hostname, strings.TrimSpace(string(out)))
 }
 
-// KillSpawnedDevServer stops the process one dev-server spawn started — pid,
-// as its ack reported it (DevServerResult.PID) — and only while the pidfile
-// next to logFile (default log when empty) still holds that pid: a later start
-// overwrites the pidfile, and its process is not this caller's to stop. An
-// unknown pid (0) stops nothing.
+// KillSpawnedDevServer stops what one dev-server spawn started — pid, as its
+// ack reported it (DevServerResult.PID) — and only while the pidfile next to
+// logFile (default log when empty) still holds that pid: a later start
+// overwrites the pidfile, and its process is not this caller's to stop. The
+// spawn ran it under setsid, so pid leads its own process group and the whole
+// group is signalled: a runner that does not pass SIGTERM on (npm, sh -c)
+// would leave its listener up. An unknown pid (0) stops nothing.
 func KillSpawnedDevServer(ctx context.Context, ssh SSHDeployer, hostname, logFile string, pid int) error {
 	if pid <= 0 {
 		return nil
@@ -414,8 +416,8 @@ func KillSpawnedDevServer(ctx context.Context, ssh SSHDeployer, hostname, logFil
 		logFile = defaultLogFilePattern
 	}
 	want := strconv.Itoa(pid)
-	cmd := fmt.Sprintf(`if [ "$(cat %s 2>/dev/null)" = %s ]; then kill %s 2>/dev/null; fi; true`,
-		shellQuote(pidFileFor(logFile)), shellQuote(want), want)
+	cmd := fmt.Sprintf(`if [ "$(cat %s 2>/dev/null)" = %s ]; then kill -TERM -%s 2>/dev/null || kill -TERM %s 2>/dev/null; fi; true`,
+		shellQuote(pidFileFor(logFile)), shellQuote(want), want, want)
 	killCtx, cancel := context.WithTimeout(ctx, containerIdentityTimeout)
 	defer cancel()
 	if _, err := ssh.ExecSSH(killCtx, hostname, cmd); err != nil {
