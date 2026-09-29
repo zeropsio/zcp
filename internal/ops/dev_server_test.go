@@ -1377,6 +1377,9 @@ func TestKillSpawnedDevServer(t *testing.T) {
 	if strings.Contains(cmd, "pkill") {
 		t.Errorf("never a pattern kill: %q", cmd)
 	}
+	if strings.Contains(cmd, "kill -TERM 4242") {
+		t.Errorf("never the bare pid: with the group gone it can only name a process that reused it: %q", cmd)
+	}
 
 	none := &scriptSSH{}
 	if err := KillSpawnedDevServer(context.Background(), none, "appdev", "", 0); err != nil || len(none.calls) != 0 {

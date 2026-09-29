@@ -407,7 +407,8 @@ func PortListening(ctx context.Context, ssh SSHDeployer, hostname string, port i
 // overwrites the pidfile, and its process is not this caller's to stop. The
 // spawn ran it under setsid, so pid leads its own process group and the whole
 // group is signalled: a runner that does not pass SIGTERM on (npm, sh -c)
-// would leave its listener up. An unknown pid (0) stops nothing.
+// would leave its listener up. Never the bare pid — with its group gone, pid
+// can only name a process that reused it. An unknown pid (0) stops nothing.
 func KillSpawnedDevServer(ctx context.Context, ssh SSHDeployer, hostname, logFile string, pid int) error {
 	if pid <= 0 {
 		return nil
@@ -416,8 +417,8 @@ func KillSpawnedDevServer(ctx context.Context, ssh SSHDeployer, hostname, logFil
 		logFile = defaultLogFilePattern
 	}
 	want := strconv.Itoa(pid)
-	cmd := fmt.Sprintf(`if [ "$(cat %s 2>/dev/null)" = %s ]; then kill -TERM -%s 2>/dev/null || kill -TERM %s 2>/dev/null; fi; true`,
-		shellQuote(pidFileFor(logFile)), shellQuote(want), want, want)
+	cmd := fmt.Sprintf(`if [ "$(cat %s 2>/dev/null)" = %s ]; then kill -TERM -%s 2>/dev/null; fi; true`,
+		shellQuote(pidFileFor(logFile)), shellQuote(want), want)
 	killCtx, cancel := context.WithTimeout(ctx, containerIdentityTimeout)
 	defer cancel()
 	if _, err := ssh.ExecSSH(killCtx, hostname, cmd); err != nil {
