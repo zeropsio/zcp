@@ -337,6 +337,30 @@ func TestBringBackKeptDevServer(t *testing.T) {
 	}
 }
 
+// TestKeptDevServerNextActions: the next step after a bring-back follows from
+// how it went — a server that did not answer within the wait may still be
+// compiling, which is not the same as one that fell over.
+func TestKeptDevServerNextActions(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		ds   ops.DevServerResult
+		want string
+	}{
+		{name: "answers", ds: ops.DevServerResult{Running: true}, want: "zerops_verify"},
+		{name: "still starting", ds: ops.DevServerResult{Reason: ops.ReasonHealthProbeTimeout}, want: "action=status"},
+		{name: "fell over", ds: ops.DevServerResult{Reason: "health_probe_connection_refused"}, want: "action=restart"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := keptDevServerNextActions("appdev", &tt.ds); !strings.Contains(got, tt.want) {
+				t.Errorf("next actions %q, want it to contain %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestDeployTool_SSHMode_BringsBackKeptDevServer: a self-deploy onto a dev
 // container whose dev server zcp keeps answers with that server started again
 // — the agent no longer restarts it after every deploy.

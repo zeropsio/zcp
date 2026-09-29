@@ -395,7 +395,7 @@ func applyProbeFailure(result *DevServerResult, probeLine string, deadlineHit bo
 	result.Running = false
 	switch {
 	case deadlineHit:
-		result.Reason = "health_probe_timeout"
+		result.Reason = ReasonHealthProbeTimeout
 	case probeLine == "":
 		result.Reason = "health_probe_no_output"
 	case strings.HasPrefix(probeLine, "FAIL "):

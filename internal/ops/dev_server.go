@@ -122,6 +122,11 @@ const (
 	reasonPortInUse = "port_in_use"
 )
 
+// ReasonHealthProbeTimeout is the start/restart Reason when the health probe
+// got no ready answer within the wait — the process may still be starting (a
+// dev server compiling on its first request), unlike a refused connection.
+const ReasonHealthProbeTimeout = "health_probe_timeout"
+
 const (
 	// defaultDevServerWait is how long the start probe waits for a
 	// successful health check before giving up. 15s is enough for a

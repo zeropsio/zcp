@@ -169,12 +169,21 @@ func bringBackKeptDevServer(ctx context.Context, ssh ops.SSHDeployer, stateDir, 
 		return false
 	}
 	result.DevServer = ds
-	if ds.Running {
-		result.NextActions = fmt.Sprintf("zcp started the dev server it keeps on %s again and it answers — run zerops_verify serviceHostname=%q.", hostname, hostname)
-		return true
+	result.NextActions = keptDevServerNextActions(hostname, ds)
+	return ds.Running
+}
+
+// keptDevServerNextActions is the next step after a deploy brought back the
+// dev server zcp keeps on hostname, by how the bring-back went.
+func keptDevServerNextActions(hostname string, ds *ops.DevServerResult) string {
+	switch {
+	case ds.Running:
+		return fmt.Sprintf("zcp started the dev server it keeps on %s again and it answers — run zerops_verify serviceHostname=%q.", hostname, hostname)
+	case ds.Reason == ops.ReasonHealthProbeTimeout:
+		return fmt.Sprintf("zcp started the dev server it keeps on %s again; it did not answer within the wait and may still be starting (a first compile) — check zerops_dev_server action=status hostname=%q, then run zerops_verify.", hostname, hostname)
+	default:
+		return fmt.Sprintf("zcp started the dev server it keeps on %s again, but it did not come up: read devServer.reason and devServer.logTail, fix the cause, then zerops_dev_server action=restart hostname=%q.", hostname, hostname)
 	}
-	result.NextActions = fmt.Sprintf("zcp started the dev server it keeps on %s again, but it did not come up: read devServer.reason and devServer.logTail, fix the cause, then zerops_dev_server action=restart hostname=%q.", hostname, hostname)
-	return false
 }
 
 // KeptDevServerRestore names one bring-back made by a keeper pass.
