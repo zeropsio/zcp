@@ -1051,6 +1051,17 @@ func TestBuildTransitionMessage_Adoption_NoHelloWorld(t *testing.T) {
 	if !strings.Contains(msg, "this response's envelope") {
 		t.Error("adoption transition should say the repo block rides THIS response's envelope (services[].repo), not send the agent to a separate status call")
 	}
+	// The Beviro trial (2026-09-29): adopted services imported without code
+	// read as running apps. Adoption deploys nothing, and an adopted service
+	// with deployed=false opens develop with its first deploy.
+	if strings.Contains(msg, "existing code and configuration preserved") {
+		t.Error("adoption transition must not promise existing code — an adopted service may hold none")
+	}
+	for _, want := range []string{"nothing deployed", "deployed=false", "first deploy"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("adoption transition should say %q:\n%s", want, msg)
+		}
+	}
 }
 
 // Bootstrap writes the meta keyed by the dev hostname regardless of
