@@ -102,11 +102,12 @@ The default stays auto until you explicitly switch.
 
 Dev-mode dynamic runtime containers start running `zsc noop --silent`
 after deploy — a no-op keepalive; no dev process is live until you start
-one. Once started, zcp keeps it: when the dev container restarts or
-is redeployed, zcp starts it again with the same command, working
-directory and port — a deploy's response reports it under `devServer`
-— until you `stop` it. A server that crashes in its container stays
-down for you to read and fix. It is still a dev process: a passing
+one. Once started, zcp keeps it — one per dev container, the last you
+started: when the dev container restarts or is redeployed, zcp starts
+it again with the same command, working directory and port — a
+deploy's response reports it under `devServer` — until you `stop` it.
+A server that crashes in its container stays down for you to read and
+fix. It is still a dev process: a passing
 verify means "live now", not "durably shipped" — for an always-on
 service use simple mode. Action family on `zerops_dev_server`:
 
