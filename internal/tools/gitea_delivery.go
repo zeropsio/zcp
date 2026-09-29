@@ -168,7 +168,7 @@ func deliverGiteaPair(
 	}
 	meta, _ := workflow.FindServiceMeta(stateDir, target)
 	if meta == nil || meta.Gitea == nil || meta.Gitea.FullName == "" || meta.Gitea.Branch == "" ||
-		meta.GitPushState != topology.GitPushConfigured || meta.StageHostname == "" || target != meta.StageHostname {
+		!giteaPairPushes(meta.GitPushState) || meta.StageHostname == "" || target != meta.StageHostname {
 		return nil
 	}
 	wiring := ops.ReadGiteaWiring(giteaEnvLookup(mate.LiveEnvStorePath))
@@ -197,6 +197,14 @@ func deliverGiteaPair(
 	landedCommit, landedHead := "", ""
 	if landed := meta.Gitea.Landed; landed != nil {
 		landedCommit, landedHead = landed.Commit, landed.Head
+	}
+
+	// The push below reads the push source's copy of this Mate's token, and
+	// the broker rotates the token itself (gitea_push_credential.go).
+	if err := giteaEnsurePushCredential(ctx, client, sshDeployer, rt.ProjectID, stateDir, wiring, meta); err != nil {
+		return &giteaDelivery{Line: fmt.Sprintf(
+			"%s runs, but its code has not reached %s: %v. %s is marked as refused; the next stage deploy checks its credential against this Mate's current Gitea token again and delivers once it works — if Gitea keeps refusing it, tell the person: this Mate's token is the broker's to deliver.",
+			target, repo, err, meta.Hostname)}
 	}
 
 	refreshGiteaWorkflow(ctx, sshDeployer, meta.Hostname)
@@ -230,6 +238,15 @@ func deliverGiteaPair(
 			target, repo, unignored, meta.Hostname, target)}
 	}
 	if err != nil {
+		// A refused credential marks the pair the way a plain git-push does
+		// (degradeGitPushStateToBroken), rather than reading as any other
+		// failed push while the pair still looks configured.
+		if cls := classifyTransportError(err, deployStrategyGitPush); cls != nil && cls.Category == topology.FailureClassCredential {
+			giteaMarkPushRefused(stateDir, meta)
+			return &giteaDelivery{Line: fmt.Sprintf(
+				"%s runs, but its code has not reached %s: Gitea refused %s's push credential (%s). %s is marked as refused; the next stage deploy checks its credential against this Mate's current Gitea token again and delivers once it works — if Gitea keeps refusing it, tell the person: this Mate's token is the broker's to deliver.",
+				target, repo, meta.Hostname, gitPushErrorDetail(err, output), meta.Hostname)}
+		}
 		return &giteaDelivery{Line: fmt.Sprintf(
 			"%s runs, but its code has not reached %s: pushing %s failed (%s). Fix the cause, then deploy %s again — the push and the pull request follow that deploy.",
 			target, repo, branch, gitPushErrorDetail(err, output), target)}
@@ -257,6 +274,13 @@ func deliverGiteaPair(
 		result.Line += " The group's recipe: " + line
 	}
 	return result
+}
+
+// giteaPairPushes reports whether a wired pair's state lets it push: set up,
+// or marked by a refused credential — which the push credential step checks
+// again, so the mark heals by itself (giteaEnsurePushCredential).
+func giteaPairPushes(state topology.GitPushState) bool {
+	return state == topology.GitPushConfigured || state == topology.GitPushBroken
 }
 
 // giteaManualAbsorbSequence is the recovery a REAL conflict inside
