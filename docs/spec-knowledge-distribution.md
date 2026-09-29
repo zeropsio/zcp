@@ -192,8 +192,8 @@ Like `routes`, declaring `steps` implicitly scopes an atom to
 
 | Value | Meaning |
 |---|---|
-| `never-deployed` | ServiceMeta is complete (bootstrap finished) but `FirstDeployedAt` is empty. The first-deploy branch atoms gate on this state. |
-| `deployed` | ServiceMeta has `FirstDeployedAt` stamped. The edit-loop branch atoms gate on this state. |
+| `never-deployed` | ServiceMeta is complete (bootstrap finished) and no code deploy is on record. The first-deploy branch atoms gate on this state. |
+| `deployed` | A code deploy is on record (`workflow.DeriveDeployed`): `FirstDeployedAt` stamped, a successful deploy in the work session, or — for an adopted or recipe-`buildFromGit` runtime — the platform shows it ACTIVE with deployed code. ACTIVE alone is not deployed: a runtime imported `startWithoutCode` is ACTIVE holding a placeholder app version (source `NONE`, no build), so adopting it leaves it `never-deployed` (`platform.ServiceStack.HasDeployedCode`). The edit-loop branch atoms gate on this state. |
 
 **Empty = any state.** Non-bootstrapped services are skipped for this axis entirely — they have no tracked deploy state, and gating first-deploy atoms on them would surface scaffold guidance for pure-adoption services bootstrap never touched.
 

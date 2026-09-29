@@ -92,7 +92,7 @@ ServiceMeta {
   BuildIntegration         BuildIntegration // none | webhook | actions (ZCP-managed CI shape, requires GitPushState=configured)
   BootstrapSession         string           // session ID that created this; EMPTY for adoption
   BootstrappedAt           string           // date — empty = incomplete (bootstrap in progress)
-  FirstDeployedAt          string           // stamped on first real deploy (session or adoption-at-ACTIVE)
+  FirstDeployedAt          string           // stamped on first real deploy (session, or local adoption of a stage with deployed code)
 }
 ```
 
@@ -625,7 +625,10 @@ per-service `activity` LIST + a project-level "look + wait" steer, adopt
 hard-gates on it, and `zerops_process action="wait"` blocks until the work drains.
 
 - **Sourced from the DIRECT (non-ES) reads, not the search.** Discover's service
-  list comes from `ListServicesDirect` (GET `/project/{id}/service-stack`) and
+  list — and the lifecycle envelope's, and the route action's — comes from
+  `ListServicesDirect` (GET `/project/{id}/service-stack`), the only list whose
+  active app version names its source, so a runtime imported `startWithoutCode`
+  (ACTIVE, holding a source-`NONE` placeholder) reads `deployed: false` there; and
   `ops.ProjectActivity`'s processes from `GetProjectProcessesDirect` (GET
   `/project/{id}/process`). The Elasticsearch searches (`ListServices`,
   `SearchProcesses`, `SearchAppVersions`) trail the DB after an import (seconds,

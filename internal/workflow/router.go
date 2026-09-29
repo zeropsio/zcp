@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -21,10 +22,10 @@ type RouterInput struct {
 	ServiceMetas      []*ServiceMeta
 	ActiveSessions    []SessionEntry
 	LiveServices      []string
-	LiveServiceStatus map[string]string // hostname → platform Status; used by offerings that need deploy state (export)
-	UnmanagedRuntimes []string          // runtime hostnames without complete ServiceMeta
-	WorkSession       *WorkSession      // current-PID session, nil when none; used for deploy-history derivation
-	Environment       Environment       // container / local — gates env-scoped offerings (e.g. export is container-only)
+	LiveServiceStacks map[string]platform.ServiceStack // hostname → the service as listed; used by offerings that need deploy state (export)
+	UnmanagedRuntimes []string                         // runtime hostnames without complete ServiceMeta
+	WorkSession       *WorkSession                     // current-PID session, nil when none; used for deploy-history derivation
+	Environment       Environment                      // container / local — gates env-scoped offerings (e.g. export is container-only)
 }
 
 // Route takes environmental signals and returns available workflows.
@@ -71,7 +72,7 @@ func Route(input RouterInput) []FlowOffering {
 
 	// 3. Bootstrapped metas exist → strategy-based deploy.
 	if len(metas) > 0 {
-		offerings = append(offerings, strategyOfferings(metas, input.LiveServiceStatus, input.WorkSession, input.Environment)...)
+		offerings = append(offerings, strategyOfferings(metas, input.LiveServiceStacks, input.WorkSession, input.Environment)...)
 		// Offer adding new services only when nothing needs adoption.
 		if len(input.UnmanagedRuntimes) == 0 {
 			offerings = append(offerings, FlowOffering{
@@ -145,14 +146,14 @@ func filterStaleMetas(metas []*ServiceMeta, liveServices []string) []*ServiceMet
 
 // strategyOfferings creates offerings based on the dominant close-deploy mode across metas.
 // Deploy is always offered (close mode is resolved within the flow, not before).
-// liveStatus + ws are threaded for deploy-state derivation (see DeriveDeployed);
+// live + ws are threaded for deploy-state derivation (see DeriveDeployed);
 // both may be nil/empty — derivation degrades gracefully. env gates env-scoped
 // offerings (export is container-only in Release A; local export is deferred).
 //
 // Reads meta.GitPushState for the ladder-aware hint (L1 pairs deliver
 // via git push; spec-git-delivery-target §2) — close-mode no longer
 // carries delivery mechanism, only done-ness ownership.
-func strategyOfferings(metas []*ServiceMeta, liveStatus map[string]string, ws *WorkSession, env Environment) []FlowOffering {
+func strategyOfferings(metas []*ServiceMeta, live map[string]platform.ServiceStack, ws *WorkSession, env Environment) []FlowOffering {
 	// Always offer deploy — ladder-aware hint when any pair delivers via
 	// git push (L1: GitPushState=configured makes push the terminal act).
 	developHint := `zerops_workflow action="start" workflow="develop"`
@@ -194,7 +195,11 @@ func strategyOfferings(metas []*ServiceMeta, liveStatus map[string]string, ws *W
 	if env == EnvContainer {
 		for _, m := range metas {
 			for _, h := range m.Hostnames() {
-				if DeriveDeployed(h, liveStatus[h], m, ws) {
+				var svc *platform.ServiceStack
+				if s, ok := live[h]; ok {
+					svc = &s
+				}
+				if DeriveDeployed(h, svc, m, ws) {
 					offerings = append(offerings, FlowOffering{
 						Workflow: "export", Priority: 3,
 						Hint: `zerops_workflow workflow="export" — turn a deployed service into a re-importable single-repo bundle (zerops-project-import.yaml + zerops.yaml + buildFromGit). Multi-call narrowing: probe → classify envs → publish.`,

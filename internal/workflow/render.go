@@ -362,7 +362,10 @@ func renderServiceLine(svc ServiceSnapshot) string {
 		if svc.Bootstrapped {
 			parts = append(parts, renderBootstrappedFields(svc))
 		} else {
-			parts = append(parts, "not bootstrapped")
+			// deployed= comes from the platform alone here: a runtime imported
+			// without code is ACTIVE like a running app, and the status tag
+			// below is omitted for ACTIVE.
+			parts = append(parts, fmt.Sprintf("not bootstrapped, deployed=%t", svc.Deployed))
 		}
 		if svc.RuntimeClass == topology.RuntimeDynamic || svc.RuntimeClass == topology.RuntimeImplicitWeb {
 			if hint := renderBasePrefixHint(svc); hint != "" {

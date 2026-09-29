@@ -21,8 +21,12 @@ import (
 // ComputeEnvelope is the single entry point for computing state. Every
 // workflow-aware tool handler calls this.
 //
-// I/O parallelism: the three dependent reads (platform ListServices, local
-// ServiceMeta list, WorkSession load) are independent and run concurrently.
+// I/O parallelism: the three dependent reads (platform ListServicesDirect,
+// local ServiceMeta list, WorkSession load) are independent and run
+// concurrently. The service list is the DIRECT read, not the ES search: it
+// is lag-free (a just-imported service is in the envelope at once) and it is
+// the only list whose active app version names its source — which is how a
+// runtime imported startWithoutCode reads as not deployed (HasDeployedCode).
 // ComputeEnvelope itself is deterministic given the same inputs — callers
 // relying on compaction-safety should hold the client and stateDir stable.
 //
@@ -53,7 +57,7 @@ func ComputeEnvelope(
 
 	if client != nil && projectID != "" {
 		wg.Add(2)
-		go func() { defer wg.Done(); services, servicesErr = client.ListServices(ctx, projectID) }()
+		go func() { defer wg.Done(); services, servicesErr = client.ListServicesDirect(ctx, projectID) }()
 		go func() { defer wg.Done(); project, projectErr = client.GetProject(ctx, projectID) }()
 	}
 	wg.Add(2)
@@ -248,9 +252,14 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSess
 		Status:       svc.Status,
 		RuntimeClass: topology.RuntimeClassFor(typeVersion),
 	}
+	if snap.RuntimeClass != topology.RuntimeManaged {
+		// Untracked runtime: zcp has no record of its own, so the platform
+		// is the whole answer — false for one imported without code.
+		snap.Deployed = svc.HasDeployedCode()
+	}
 	if meta != nil && meta.IsComplete() {
 		snap.Bootstrapped = true
-		snap.Deployed = DeriveDeployed(svc.Name, svc.Status, meta, ws)
+		snap.Deployed = DeriveDeployed(svc.Name, &svc, meta, ws)
 		snap.Mode = meta.ModeFor(svc.Name)
 		snap.CloseDeployMode = meta.CloseDeployMode
 		snap.GitPushState = meta.GitPushState
@@ -296,7 +305,7 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSess
 const StatusActive = "ACTIVE"
 
 // DeriveDeployed answers "has this service ever received a real code deploy?"
-// Three signals, OR-composed:
+// Four signals, OR-composed:
 //
 //  1. meta.FirstDeployedAt — persistent stamp from a prior successful deploy
 //     (recorded by RecordDeployAttempt). Survives session closure; this is
@@ -304,36 +313,39 @@ const StatusActive = "ACTIVE"
 //  2. HasSuccessfulDeployFor — current session has recorded a successful
 //     deploy attempt. Covers the window between the deploy landing and the
 //     stamp reaching meta (same tick, but belt-and-suspenders).
-//  3. meta.IsAdopted() AND platform.Status == ACTIVE — services that were
-//     running before ZCP touched them (the fizzy-export case). Auto-adoption
-//     also stamps FirstDeployedAt so this path is primarily a fallback for
-//     legacy metas written before the stamping code shipped.
+//  3. meta.IsAdopted() AND the live service is ACTIVE with deployed code
+//     (platform.ServiceStack.HasDeployedCode) — services that were running
+//     before ZCP touched them (the fizzy-export case). ACTIVE alone is not
+//     enough: a runtime imported startWithoutCode is ACTIVE too, holding
+//     only a placeholder version, and adopting it must leave it
+//     never-deployed so develop runs its first deploy (the Beviro trial,
+//     2026-09-29: a Mate's recipe runtimes read "active and deployed").
+//  4. meta.ProvisionedFromGit AND live ACTIVE — see below.
 //
 // Fresh ZCP bootstrap (non-empty BootstrapSession) with empty
 // FirstDeployedAt and no session-recorded deploy correctly reports
 // Deployed=false, so the develop first-deploy branch fires even though
 // the platform may show Status=ACTIVE (startWithoutCode trap).
 //
-// hostname must match the platform service name. meta is the local record
+// hostname must match the platform service name. live is the service as
+// the platform lists it, nil when it is not live. meta is the local record
 // for that hostname (or its paired dev hostname); nil → Deployed=false.
-// ws is optional; when nil only signals 1 and 3 apply.
-func DeriveDeployed(hostname, status string, meta *ServiceMeta, ws *WorkSession) bool {
+// ws is optional; when nil only signals 1, 3 and 4 apply.
+func DeriveDeployed(hostname string, live *platform.ServiceStack, meta *ServiceMeta, ws *WorkSession) bool {
 	if meta != nil && meta.IsDeployed() {
 		return true
 	}
 	if HasSuccessfulDeployFor(ws, hostname) {
 		return true
 	}
-	if meta != nil && meta.IsAdopted() && status == StatusActive {
+	active := live != nil && live.Status == StatusActive
+	if meta != nil && meta.IsAdopted() && active && live.HasDeployedCode() {
 		return true
 	}
 	// B4/F11: a recipe-buildFromGit runtime is deployed by the platform at
 	// import — once it reaches ACTIVE it is serving curated code, not awaiting
-	// a first deploy. Mirrors the adopted signal above; classic metas never
-	// carry ProvisionedFromGit, so this can't false-positive a startWithoutCode
-	// dev container (whose status is RUNNING/READY_TO_DEPLOY, not ACTIVE, until
-	// real code lands).
-	if meta != nil && meta.ProvisionedFromGit && status == StatusActive {
+	// a first deploy. Classic metas never carry ProvisionedFromGit.
+	if meta != nil && meta.ProvisionedFromGit && active {
 		return true
 	}
 	return false

@@ -133,7 +133,7 @@ func TestHandleLifecycleStatus_BootstrappedProject_RoutesToDevelop(t *testing.T)
 }
 
 // TestHandleLifecycleStatus_PlatformError_PropagatesAsMCP proves the
-// error path: when ComputeEnvelope's underlying ListServices errors
+// error path: when ComputeEnvelope's underlying ListServicesDirect errors
 // out, the handler returns a structured MCP error rather than panicking
 // or returning empty content. Pipeline-repair P4 (errors stay terse,
 // recovery via status) means the error surface itself must remain
@@ -145,7 +145,7 @@ func TestHandleLifecycleStatus_PlatformError_PropagatesAsMCP(t *testing.T) {
 	eng := workflow.NewEngine(dir, workflow.EnvContainer, nil)
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "proj-1", Name: "test"}).
-		WithError("ListServices", &platform.PlatformError{
+		WithError("ListServicesDirect", &platform.PlatformError{
 			Code:    platform.ErrAPIError,
 			Message: "synthetic API failure",
 		})
