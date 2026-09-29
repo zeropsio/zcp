@@ -172,7 +172,13 @@ func RegisterDeployBatch(
 				}
 			case entry.Result != nil && entry.Result.Status == statusDeployed:
 				attempt.SucceededAt = entry.EndedAt
-				ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, entry.Result.TargetService, entry.Result)
+				// A dev server zcp keeps on the target is started again
+				// first: when it answers, a listener exists.
+				if bringBackKeptDevServer(ctx, sshDeployer, stateDir, entry.Result.TargetService, entry.Result) {
+					ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, entry.Result.TargetService, entry.Result, true)
+				} else {
+					ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, entry.Result.TargetService, entry.Result)
+				}
 			case entry.Result != nil && entry.Result.TimedOut:
 				// In-flight (B23): the build is still running — record the
 				// attempt without a FailureClass so the gate doesn't read it

@@ -444,8 +444,13 @@ func runDeploySSHZCLIPush(
 		// local-stage modes on first deploy (idempotent via ops.Subdomain's
 		// check-before-enable). Runs before RecordDeployAttempt so the
 		// result payload surfaces SubdomainAccessEnabled + SubdomainURL
-		// alongside the deploy outcome.
-		ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
+		// alongside the deploy outcome. A dev server zcp keeps on the
+		// target is started again first: when it answers, a listener exists.
+		if bringBackKeptDevServer(ctx, sshDeployer, stateDir, input.TargetService, result) {
+			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, result, true)
+		} else {
+			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
+		}
 	case result != nil && result.TimedOut:
 		// In-flight (B23): the build is still running at poll timeout, not
 		// failed. Record without a FailureClass so the envelope doesn't

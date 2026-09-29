@@ -2,12 +2,14 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // DevServerInput is the input type for zerops_dev_server.
@@ -39,7 +41,7 @@ func devServerInputSchema() *jsonschema.Schema {
 	return objectSchema(map[string]*jsonschema.Schema{
 		"action": {
 			Type:        "string",
-			Description: "Action to perform: start, stop, status, logs, restart. start spawns the dev-server command in the background and waits for the health endpoint to return 2xx. stop kills matching processes and frees the port. status probes the health endpoint without spawning anything. logs tails the dev-server log file. restart is stop+start.",
+			Description: "Action to perform: start, stop, status, logs, restart. start spawns the dev-server command in the background and waits for the health endpoint to return 2xx. stop kills matching processes, frees the port and ends zcp keeping it. status probes the health endpoint without spawning anything. logs tails the dev-server log file. restart is stop+start.",
 		},
 		"hostname": {
 			Type:        "string",
@@ -92,7 +94,11 @@ func devServerInputSchema() *jsonschema.Schema {
 // start classification. Both may be nil/empty (annotations-only registry
 // snapshots, local-only installs) — the hook then no-ops (ensurePublicAccess
 // needs a real stateDir to find ServiceMeta at all).
-func RegisterDevServer(srv *mcp.Server, client platform.Client, httpClient ops.HTTPDoer, projectID string, ssh ops.SSHDeployer, stateDir string) {
+//
+// units registers the dev-server keeper on the zcp container (nil locally and
+// in registry snapshots): a successful start is kept, and zcp brings it back
+// after its container restarts or is redeployed (dev_server_keep.go).
+func RegisterDevServer(srv *mcp.Server, client platform.Client, httpClient ops.HTTPDoer, projectID string, ssh ops.SSHDeployer, stateDir string, units ops.UnitRegistrar) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_dev_server",
 		Description: "Start, stop, probe, tail, or restart a long-running development server on a Zerops dev container. " +
@@ -103,6 +109,7 @@ func RegisterDevServer(srv *mcp.Server, client platform.Client, httpClient ops.H
 			"with a specific reason code on failure (spawn_timeout, spawn_error, health_probe_*) so the agent can diagnose without a follow-up call. " +
 			"For worker services with no HTTP port (NATS/queue consumers, cron runners), pass noHttpProbe=true — the tool spawns through the same bounded-timeout path, skips the HTTP probe, and scans the post-spawn log tail for crash markers instead (missing module, broker auth failure, panic). " +
 			"command runs via exec, NOT a shell — for env-var prefixes use `env KEY=VAL cmd` (the env binary handles the assignment before exec), NOT `KEY=VAL cmd` (parsed as program name). " +
+			"A started dev server is kept: when its container restarts or is redeployed, zcp starts it again with the same command, working directory and port (a zerops_deploy onto it reports it as devServer) until action=stop — a crash inside the same container is left down for you to fix. " +
 			"Prefer this tool over raw Bash + ssh for every dev-server lifecycle operation.",
 		InputSchema: devServerInputSchema(),
 		Annotations: &mcp.ToolAnnotations{
@@ -144,8 +151,45 @@ func RegisterDevServer(srv *mcp.Server, client platform.Client, httpClient ops.H
 			resp.Warnings = scratch.Warnings
 			resp.PublicAccess = scratch.PublicAccess
 		}
+		keepOrForgetDevServer(ctx, ssh, units, stateDir, input, resp)
 		return jsonResult(resp), nil, nil
 	})
+}
+
+// keepOrForgetDevServer applies the agent's start and stop to what zcp keeps
+// (dev_server_keep.go): a successful start or restart becomes the dev server
+// zcp brings back after its container restarts or is redeployed; stop forgets
+// it. A failed start leaves what was kept as it was; status and logs never
+// touch it.
+func keepOrForgetDevServer(ctx context.Context, ssh ops.SSHDeployer, units ops.UnitRegistrar, stateDir string, input DevServerInput, resp *devServerToolResult) {
+	if stateDir == "" {
+		return
+	}
+	switch {
+	case resp.Running && isDevServerStartAction(input.Action):
+		warnings := keepStartedDevServer(ctx, ssh, units, stateDir, ops.DevServerParams{
+			Hostname:    input.Hostname,
+			Command:     input.Command,
+			Port:        input.Port,
+			HealthPath:  input.HealthPath,
+			LogFile:     input.LogFile,
+			WaitSeconds: input.WaitSeconds,
+			WorkDir:     input.WorkDir,
+			NoHTTPProbe: input.NoHTTPProbe.Bool(),
+		})
+		kept := true
+		resp.Kept = &kept
+		resp.Message += keptDevServerNote
+		resp.Warnings = append(resp.Warnings, warnings...)
+	case strings.EqualFold(input.Action, "stop"):
+		if err := workflow.ForgetDevServer(stateDir, input.Hostname); err != nil {
+			resp.Warnings = append(resp.Warnings, fmt.Sprintf("zcp could not forget the dev server it keeps on %s (%v): it may start it again after a restart", input.Hostname, err))
+			return
+		}
+		kept := false
+		resp.Kept = &kept
+		resp.Message += " zcp no longer keeps it running."
+	}
 }
 
 // isDevServerStartAction reports whether action is one that can bring up a
@@ -178,4 +222,8 @@ type devServerToolResult struct {
 	// (e.g. an auto-enable failure) — ops.DevServerResult has no Warnings
 	// field of its own.
 	Warnings []string `json:"warnings,omitempty"`
+	// Kept says whether zcp keeps this dev server — brings it back after its
+	// container restarts or is redeployed: true after a successful start or
+	// restart, false after stop, absent otherwise.
+	Kept *bool `json:"kept,omitempty"`
 }

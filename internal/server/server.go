@@ -264,8 +264,13 @@ func (s *Server) registerTools() {
 		// dev_server depends on the SSH deployer — it's the lifecycle
 		// primitive for background dev servers on target containers.
 		// Skipped in local-only mode where SSH to Zerops siblings is
-		// not available.
-		tools.RegisterDevServer(s.server, s.client, httpClient, projectID, s.sshDeployer, stateDir)
+		// not available. In a container a started dev server is kept, and
+		// the keeper that brings it back runs as a unit on this container.
+		var units ops.UnitRegistrar
+		if s.rtInfo.InContainer {
+			units = platform.NewSystemUnits()
+		}
+		tools.RegisterDevServer(s.server, s.client, httpClient, projectID, s.sshDeployer, stateDir, units)
 	} else {
 		tools.RegisterDeployLocal(s.server, s.client, httpClient, projectID, s.authInfo, s.logFetcher, stateDir, wfEngine, recipeProbe)
 	}
