@@ -36,3 +36,39 @@ func TestServiceStack_IsSystem(t *testing.T) {
 		})
 	}
 }
+
+// TestServiceStack_HasDeployedCode pins the one question every reader of
+// "is this runtime empty?" asks the platform: a `startWithoutCode: true`
+// import leaves the service ACTIVE with an ACTIVE app version of source NONE
+// and no build (live-verified 2026-09-29 on a Mate added from its group's
+// recipe), so neither the status nor the presence of an app version says
+// code was ever deployed. Only the version's source does — and only the
+// full-DTO reads carry it; the Elasticsearch list's light digest names the
+// id alone, which reads as deployed, as it always has.
+func TestServiceStack_HasDeployedCode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		active *ActiveAppVersionDigest
+		want   bool
+	}{
+		{name: "no active version (a plain import, READY_TO_DEPLOY)", active: nil, want: false},
+		{name: "an empty digest", active: &ActiveAppVersionDigest{}, want: false},
+		{name: "startWithoutCode placeholder", active: &ActiveAppVersionDigest{ID: "av-1", Source: AppVersionSourceNone}, want: false},
+		{name: "a zcli push", active: &ActiveAppVersionDigest{ID: "av-2", Source: "CLI", Built: true}, want: true},
+		{name: "a buildFromGit import", active: &ActiveAppVersionDigest{ID: "av-3", Source: "GIT", Built: true}, want: true},
+		{name: "source NONE carrying a build is a real deploy", active: &ActiveAppVersionDigest{ID: "av-4", Source: AppVersionSourceNone, Built: true}, want: true},
+		{name: "the ES list's id-only digest reads as deployed", active: &ActiveAppVersionDigest{ID: "av-5"}, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			svc := ServiceStack{Name: "appdev", Status: ServiceStatusActive, ActiveAppVersion: tt.active}
+			if got := svc.HasDeployedCode(); got != tt.want {
+				t.Errorf("HasDeployedCode() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

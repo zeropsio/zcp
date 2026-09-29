@@ -371,3 +371,57 @@ func TestMapActiveAppVersion_CreatedSourcePublicGitSource(t *testing.T) {
 		})
 	}
 }
+
+// TestMapActiveAppVersion_Built records whether the active version carries a
+// build — the half of the startWithoutCode marker (source NONE, no build) the
+// digest had dropped, so a placeholder can be told from a real deploy.
+func TestMapActiveAppVersion_Built(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 29, 19, 55, 30, 0, time.UTC)
+
+	tests := []struct {
+		name            string
+		av              output.GetAppVersion
+		wantBuilt       bool
+		wantPlaceholder bool
+	}{
+		{
+			name: "startWithoutCode placeholder",
+			av: output.GetAppVersion{
+				Id:      mustAppVersionID(t, "av-none"),
+				Created: types.NewDateTime(now),
+				Source:  enum.AppVersionSourceEnumNone,
+			},
+			wantBuilt:       false,
+			wantPlaceholder: true,
+		},
+		{
+			name: "zcli push with a build",
+			av: output.GetAppVersion{
+				Id:      mustAppVersionID(t, "av-cli"),
+				Created: types.NewDateTime(now),
+				Source:  enum.AppVersionSourceEnumCli,
+				Build:   &output.AppVersionBuild{},
+			},
+			wantBuilt:       true,
+			wantPlaceholder: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := mapActiveAppVersion(&tt.av)
+			if result == nil {
+				t.Fatal("mapActiveAppVersion returned nil")
+			}
+			if result.Built != tt.wantBuilt {
+				t.Errorf("Built = %v, want %v", result.Built, tt.wantBuilt)
+			}
+			if got := result.IsStartWithoutCode(); got != tt.wantPlaceholder {
+				t.Errorf("IsStartWithoutCode() = %v, want %v", got, tt.wantPlaceholder)
+			}
+		})
+	}
+}
