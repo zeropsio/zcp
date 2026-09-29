@@ -143,6 +143,14 @@ func RegisterDeployBatch(
 		if authInfo != nil {
 			authVal = *authInfo
 		}
+		// The dev servers zcp keeps on the targets, as they stood before these
+		// deploys replace the containers (dev_server_keep.go).
+		keptBefore := map[string]*workflow.KeptDevServer{}
+		for _, t := range input.Targets {
+			if rec, err := workflow.KeptDevServerFor(stateDir, t.TargetService); err == nil && rec != nil {
+				keptBefore[t.TargetService] = rec
+			}
+		}
 		result := ops.DeployBatchSSH(
 			ctx, client, projectID, sshDeployer, authVal,
 			input.Targets, logFetcher, onProgress, pollFn,
@@ -174,7 +182,7 @@ func RegisterDeployBatch(
 				attempt.SucceededAt = entry.EndedAt
 				// A dev server zcp keeps on the target is started again
 				// first: when it answers, a listener exists.
-				if bringBackKeptDevServer(ctx, sshDeployer, stateDir, entry.Result.TargetService, entry.Result) {
+				if bringBackKeptDevServer(ctx, sshDeployer, stateDir, entry.Result.TargetService, keptBefore[entry.Result.TargetService], entry.Result) {
 					ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, entry.Result.TargetService, entry.Result, true)
 				} else {
 					ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, entry.Result.TargetService, entry.Result)

@@ -404,6 +404,10 @@ func runDeploySSHZCLIPush(
 		Strategy:    deployStrategyZCLILabel,
 	}
 
+	// The dev server zcp keeps on the target, as it stood before this deploy
+	// replaces the container (dev_server_keep.go).
+	keptBefore, _ := workflow.KeptDevServerFor(stateDir, input.TargetService)
+
 	// Default: zcli push to Zerops.
 	result, err := ops.DeploySSH(ctx, client, projectID, sshDeployer, *authInfo,
 		input.SourceService, input.TargetService, input.Setup, input.WorkingDir, input.SHA)
@@ -446,7 +450,7 @@ func runDeploySSHZCLIPush(
 		// result payload surfaces SubdomainAccessEnabled + SubdomainURL
 		// alongside the deploy outcome. A dev server zcp keeps on the
 		// target is started again first: when it answers, a listener exists.
-		if bringBackKeptDevServer(ctx, sshDeployer, stateDir, input.TargetService, result) {
+		if bringBackKeptDevServer(ctx, sshDeployer, stateDir, input.TargetService, keptBefore, result) {
 			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, result, true)
 		} else {
 			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)

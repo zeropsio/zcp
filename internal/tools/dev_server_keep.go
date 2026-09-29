@@ -42,10 +42,13 @@ func keepStartedDevServer(ctx context.Context, ssh ops.SSHDeployer, units ops.Un
 	if stateDir == "" {
 		return nil
 	}
-	// The container life the server runs in. Unreadable right after a start
-	// (unlikely: ssh just worked) leaves it empty, and the keeper's first
-	// pass adopts the life it finds as the baseline.
-	container, _ := ops.ContainerIdentity(ctx, ssh, p.Hostname)
+	// The container life the server runs in, read once more on a miss. Still
+	// unreadable (unlikely: ssh just worked) leaves it empty, and the keeper's
+	// first pass adopts the life it finds as the baseline.
+	container, err := ops.ContainerIdentity(ctx, ssh, p.Hostname)
+	if err != nil {
+		container, _ = ops.ContainerIdentity(ctx, ssh, p.Hostname)
+	}
 	rec := workflow.KeptDevServer{
 		Hostname:    p.Hostname,
 		Command:     p.Command,
@@ -131,11 +134,14 @@ const (
 )
 
 // restoreKeptDevServerAfterDeploy is restoreKeptDevServer for a deploy that
-// just replaced hostname's container: the kept server is gone with the old
-// container, so an answer from the kept container life means the old one
-// still answers — wait and read again.
-func restoreKeptDevServerAfterDeploy(ctx context.Context, ssh ops.SSHDeployer, stateDir, hostname string) *ops.DevServerResult {
-	if stateDir == "" || ssh == nil {
+// just replaced hostname's container; before is the kept record as it stood
+// when the deploy began (nil: nothing was kept). The kept server went with the
+// old container, so an answer from the life before names the old container
+// still answering — wait and read again. A life that moved on meanwhile was
+// claimed by the keeper's pass: report that bring-back once it is recorded,
+// rather than nothing, which would send the agent to start a second copy.
+func restoreKeptDevServerAfterDeploy(ctx context.Context, ssh ops.SSHDeployer, stateDir, hostname string, before *workflow.KeptDevServer) *ops.DevServerResult {
+	if stateDir == "" || ssh == nil || before == nil {
 		return nil
 	}
 	for attempt := range deployRestoreAttempts {
@@ -143,7 +149,11 @@ func restoreKeptDevServerAfterDeploy(ctx context.Context, ssh ops.SSHDeployer, s
 		if err != nil || rec == nil {
 			return nil
 		}
-		if result := restoreKeptDevServer(ctx, ssh, stateDir, hostname); result != nil {
+		if rec.Container != before.Container && rec.Container != "" {
+			if rec.LastRestore != nil {
+				return keeperRestoreResult(*rec)
+			}
+		} else if result := restoreKeptDevServer(ctx, ssh, stateDir, hostname); result != nil {
 			return result
 		}
 		if attempt == deployRestoreAttempts-1 {
@@ -158,13 +168,30 @@ func restoreKeptDevServerAfterDeploy(ctx context.Context, ssh ops.SSHDeployer, s
 	return nil
 }
 
+// keeperRestoreResult states a bring-back the keeper made, from its record.
+func keeperRestoreResult(rec workflow.KeptDevServer) *ops.DevServerResult {
+	state := "it answers"
+	if !rec.LastRestore.Running {
+		state = "it did not come up (" + rec.LastRestore.Reason + ")"
+	}
+	return &ops.DevServerResult{
+		Action:   "start",
+		Hostname: rec.Hostname,
+		Port:     rec.Port,
+		Running:  rec.LastRestore.Running,
+		Reason:   rec.LastRestore.Reason,
+		Message:  fmt.Sprintf("zcp's dev-server keeper brought back the dev server it keeps on %s (`%s`) in the new container; %s.", rec.Hostname, rec.Command, state),
+	}
+}
+
 // bringBackKeptDevServer runs after a successful deploy onto hostname. The
 // deploy replaced the container, so a dev server zcp keeps there is gone: it is
 // started again at once, reported as result.DevServer, and the next step
-// follows from whether it came up. Returns whether it answers — a listener the
-// public-access hook can count on. With nothing kept, result is untouched.
-func bringBackKeptDevServer(ctx context.Context, ssh ops.SSHDeployer, stateDir, hostname string, result *ops.DeployResult) bool {
-	ds := restoreKeptDevServerAfterDeploy(ctx, ssh, stateDir, hostname)
+// follows from whether it came up. before is the kept record read when the
+// deploy began. Returns whether it answers — a listener the public-access hook
+// can count on. With nothing kept, result is untouched.
+func bringBackKeptDevServer(ctx context.Context, ssh ops.SSHDeployer, stateDir, hostname string, before *workflow.KeptDevServer, result *ops.DeployResult) bool {
+	ds := restoreKeptDevServerAfterDeploy(ctx, ssh, stateDir, hostname, before)
 	if ds == nil {
 		return false
 	}

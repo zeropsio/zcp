@@ -323,7 +323,8 @@ func TestBringBackKeptDevServer(t *testing.T) {
 			ssh := &keepSSH{identity: "appdev-2/boot-c/77", probeFails: tt.probeFails}
 			result := &ops.DeployResult{Status: statusDeployed, TargetService: "appdev", NextActions: "deploy's own"}
 
-			listener := bringBackKeptDevServer(context.Background(), ssh, dir, "appdev", result)
+			before, _ := workflow.KeptDevServerFor(dir, "appdev")
+			listener := bringBackKeptDevServer(context.Background(), ssh, dir, "appdev", before, result)
 			if listener != tt.wantListener {
 				t.Errorf("listener = %v, want %v", listener, tt.wantListener)
 			}
@@ -334,6 +335,37 @@ func TestBringBackKeptDevServer(t *testing.T) {
 				t.Errorf("NextActions = %q, want it to contain %q", result.NextActions, tt.wantNext)
 			}
 		})
+	}
+}
+
+// TestBringBackKeptDevServer_KeeperWonTheRace: the keeper's pass can reach the
+// new container before the deploy does and claim its life. The deploy then
+// reports the keeper's bring-back instead of nothing — which would send the
+// agent to start a second copy onto a taken port.
+func TestBringBackKeptDevServer_KeeperWonTheRace(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	before := keptAppdev()
+	if err := workflow.KeepDevServer(dir, before); err != nil {
+		t.Fatalf("KeepDevServer: %v", err)
+	}
+	// The keeper's pass, while the deploy was finishing.
+	keeper := &keepSSH{identity: "appdev-2/boot-c/77"}
+	if got := restoreKeptDevServer(context.Background(), keeper, dir, "appdev"); got == nil || !got.Running {
+		t.Fatalf("keeper pass: %+v", got)
+	}
+
+	deploySSH := &keepSSH{identity: "appdev-2/boot-c/77"}
+	result := &ops.DeployResult{Status: statusDeployed, TargetService: "appdev", NextActions: "deploy's own"}
+	listener := bringBackKeptDevServer(context.Background(), deploySSH, dir, "appdev", &before, result)
+	if deploySSH.spawnCount() != 0 {
+		t.Fatalf("the deploy must not start a second copy, got %d spawns", deploySSH.spawnCount())
+	}
+	if result.DevServer == nil || !result.DevServer.Running || !listener {
+		t.Fatalf("the deploy reports the keeper's bring-back: listener=%v devServer=%+v", listener, result.DevServer)
+	}
+	if !strings.Contains(result.NextActions, "zerops_verify") {
+		t.Errorf("NextActions = %q", result.NextActions)
 	}
 }
 
