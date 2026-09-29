@@ -1260,3 +1260,49 @@ func TestDevServer_FirstShellToken(t *testing.T) {
 		}
 	}
 }
+
+// TestContainerIdentity pins the container-life read the dev server keeper
+// compares: the container's hostname and its init's start time, one SSH round
+// trip. A restart starts a new init; a redeploy is a new container.
+func TestContainerIdentity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		output  string
+		err     error
+		want    string
+		wantErr bool
+	}{
+		{name: "hostname and init start time", output: "appdev-1-376 8123456\n", want: "appdev-1-376/8123456"},
+		{name: "noise before the answer", output: "Welcome\nappdev-1-376 8123456\n", want: "appdev-1-376/8123456"},
+		{name: "no init start time", output: "appdev-1-376 \n", wantErr: true},
+		{name: "nothing", output: "", wantErr: true},
+		{name: "ssh failed", err: errors.New("exit status 255"), wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ssh := &scriptSSH{queue: []scriptStep{{output: tt.output, err: tt.err}}}
+			got, err := ContainerIdentity(context.Background(), ssh, "appdev")
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("want an error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ContainerIdentity: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("ContainerIdentity = %q, want %q", got, tt.want)
+			}
+			if len(ssh.calls) != 1 || ssh.calls[0].hostname != "appdev" || ssh.calls[0].background {
+				t.Fatalf("want one foreground ssh call to appdev, got %+v", ssh.calls)
+			}
+			if !strings.Contains(ssh.calls[0].command, "/proc/1/stat") {
+				t.Errorf("the identity reads init's start time from /proc/1/stat: %q", ssh.calls[0].command)
+			}
+		})
+	}
+}

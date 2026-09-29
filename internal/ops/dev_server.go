@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -326,6 +327,39 @@ func devServerNotRunningErr(hostname, status string) error {
 		fmt.Sprintf("dev server target %q is in %s — a dev server needs a RUNNING container to attach to", hostname, status),
 		"Deploy the service (zerops_deploy) to bring it RUNNING, then start the dev server. If a previous deploy failed, read zerops_events to see why before redeploying.",
 	)
+}
+
+// containerIdentityCmd prints the container's hostname and its init's start
+// time (field 22 of /proc/1/stat, counted after the parenthesised command name,
+// which may hold spaces). A restart starts a new init; a redeploy is a new
+// container with a new hostname. A crash of the dev server changes neither.
+const containerIdentityCmd = `printf '%s %s\n' "$(hostname)" "$(sed 's/^.*) //' /proc/1/stat 2>/dev/null | cut -d' ' -f20)"`
+
+// containerIdentityTimeout bounds the identity read: one round trip, no
+// retries — a container that does not answer is down or being replaced.
+const containerIdentityTimeout = 10 * time.Second
+
+// ContainerIdentity names the life of hostname's container — "<hostname>/<init
+// start time>" — so a kept dev server can tell "its container restarted or was
+// redeployed" (the process is gone and zcp starts it again) from "it crashed"
+// (the agent's to fix). An unreachable container, or an answer without both
+// parts, is an error: nothing may be concluded from it.
+func ContainerIdentity(ctx context.Context, ssh SSHDeployer, hostname string) (string, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, containerIdentityTimeout)
+	defer cancel()
+	out, err := ssh.ExecSSH(probeCtx, hostname, containerIdentityCmd)
+	if err != nil {
+		return "", fmt.Errorf("container identity of %s: %w", hostname, err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	fields := strings.Fields(lines[len(lines)-1])
+	if len(fields) != 2 {
+		return "", fmt.Errorf("container identity of %s: unreadable answer %q", hostname, strings.TrimSpace(string(out)))
+	}
+	if _, convErr := strconv.ParseUint(fields[1], 10, 64); convErr != nil {
+		return "", fmt.Errorf("container identity of %s: init start time %q: %w", hostname, fields[1], convErr)
+	}
+	return fields[0] + "/" + fields[1], nil
 }
 
 // DevServerRunning reports whether a dev-server process is currently
