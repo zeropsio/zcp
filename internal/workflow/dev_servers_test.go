@@ -154,7 +154,7 @@ func TestRecordDevServerRestore(t *testing.T) {
 	if _, claimed, _ := ClaimKeptDevServer(dir, "appdev", "appdev-2/50", devServerClock); !claimed {
 		t.Fatal("claim")
 	}
-	restore := DevServerRestore{At: "2026-09-29T21:00:20Z", Running: false, Reason: "health_probe_timeout"}
+	restore := DevServerRestore{At: "2026-09-29T21:00:20Z", Running: false, Reason: "health_probe_timeout", PID: 4242}
 	if err := RecordDevServerRestore(dir, "appdev", "appdev-2/50", restore); err != nil {
 		t.Fatalf("RecordDevServerRestore: %v", err)
 	}

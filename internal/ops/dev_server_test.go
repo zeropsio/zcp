@@ -1425,8 +1425,11 @@ func TestDevServerStopPattern(t *testing.T) {
 	}
 }
 
-// TestSpawnedDevServerAlive reads the spawn's pidfile liveness — a retry must
-// not start a second copy of a server that is still starting.
+// TestSpawnedDevServerAlive reads whether the process one spawn started still
+// lives — exactly that pid, and only while the pidfile still names it: a
+// pidfile left from an earlier container life, or a later start's, says
+// nothing about it. A pid the spawn never reported is no process, read without
+// a call.
 func TestSpawnedDevServerAlive(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
@@ -1434,12 +1437,20 @@ func TestSpawnedDevServerAlive(t *testing.T) {
 		want   bool
 	}{{"alive\n", true}, {"dead\n", false}} {
 		ssh := &scriptSSH{queue: []scriptStep{{output: tt.output}}}
-		got, err := SpawnedDevServerAlive(context.Background(), ssh, "appdev", "/tmp/web.log")
+		got, err := SpawnedDevServerAlive(context.Background(), ssh, "appdev", "/tmp/web.log", 4242)
 		if err != nil || got != tt.want {
 			t.Errorf("SpawnedDevServerAlive(%q) = %v, %v; want %v", tt.output, got, err, tt.want)
 		}
-		if !strings.Contains(ssh.calls[0].command, "/tmp/web.log.pid") {
-			t.Errorf("reads the log file's pidfile: %q", ssh.calls[0].command)
+		cmd := ssh.calls[0].command
+		for _, want := range []string{"/tmp/web.log.pid", `= '4242'`, "kill -0 4242"} {
+			if !strings.Contains(cmd, want) {
+				t.Errorf("reads exactly the spawn's pid while the pidfile names it (%q): %q", want, cmd)
+			}
 		}
+	}
+
+	none := &scriptSSH{}
+	if got, err := SpawnedDevServerAlive(context.Background(), none, "appdev", "/tmp/web.log", 0); got || err != nil || len(none.calls) != 0 {
+		t.Errorf("an unreported pid is no process: got %v, %v, calls=%v", got, err, none.calls)
 	}
 }

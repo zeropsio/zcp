@@ -149,12 +149,22 @@ func keptAppdevStarted() *workflow.KeptDevServer {
 }
 
 // keptAppdevRestored is appdev's kept server after a bring-back in the life
-// "appdev-1/boot-b/900" that ended as given, at the given moment.
+// "appdev-1/boot-b/900" that ended as given, at the given moment; its spawn
+// reported pid 4242.
 func keptAppdevRestored(at time.Time, running bool, reason string) *workflow.KeptDevServer {
 	rec := keptAppdev()
 	rec.Container = "appdev-1/boot-b/900"
-	rec.LastRestore = &workflow.DevServerRestore{At: at.UTC().Format(time.RFC3339), Running: running, Reason: reason, Attempts: 1}
+	rec.LastRestore = &workflow.DevServerRestore{At: at.UTC().Format(time.RFC3339), Running: running, Reason: reason, Attempts: 1, PID: 4242}
 	return &rec
+}
+
+// keptAppdevSpawnNeverRan is appdev's kept server after a bring-back whose
+// spawn never reached the container: it started no process, and the pidfile
+// it would have replaced may be an earlier life's.
+func keptAppdevSpawnNeverRan() *workflow.KeptDevServer {
+	rec := keptAppdevRestored(time.Now().Add(-time.Minute), false, "spawn_error")
+	rec.LastRestore.PID = 0
+	return rec
 }
 
 func devServerToolServer(t *testing.T, dir string, ssh ops.SSHDeployer, units ops.UnitRegistrar) *mcp.Server {
@@ -216,6 +226,7 @@ func TestRestoreKeptDevServer(t *testing.T) {
 		{name: "a retry that finds its port answering starts nothing beside it", kept: keptAppdevRestored(time.Now().Add(-time.Minute), false, ops.ReasonHealthProbeTimeout), identity: "appdev-1/boot-b/900", listening: true, wantResult: true, wantRunning: true},
 		{name: "a bring-back that came up — a later crash stays down", kept: keptAppdevRestored(time.Now().Add(-time.Hour), true, ""), identity: "appdev-1/boot-b/900"},
 		{name: "no retry while the last bring-back's process still starts", kept: keptAppdevRestored(time.Now().Add(-time.Minute), false, ops.ReasonHealthProbeTimeout), identity: "appdev-1/boot-b/900", aliveBeforeSpawn: true},
+		{name: "a bring-back that started no process is retried whatever an old pidfile names", kept: keptAppdevSpawnNeverRan(), identity: "appdev-1/boot-b/900", aliveBeforeSpawn: true, wantResult: true, wantRunning: true, wantSpawn: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -255,6 +266,9 @@ func TestRestoreKeptDevServer(t *testing.T) {
 			}
 			if rec.LastRestore == nil || rec.LastRestore.Running != tt.wantRunning || rec.LastRestore.Reason == workflow.DevServerRestoring {
 				t.Errorf("LastRestore = %+v, want the finished outcome running=%v", rec.LastRestore, tt.wantRunning)
+			}
+			if tt.wantSpawn && rec.LastRestore != nil && rec.LastRestore.PID != 4242 {
+				t.Errorf("the bring-back keeps the pid its spawn reported: %+v", rec.LastRestore)
 			}
 
 			// The keeper's next pass, straight after, finds nothing to do.

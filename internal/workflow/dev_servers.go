@@ -65,6 +65,9 @@ type DevServerRestore struct {
 	Reason  string `json:"reason,omitempty"`
 	// Attempts counts the bring-backs claimed in this container life.
 	Attempts int `json:"attempts"`
+	// PID is the process the last bring-back's spawn reported starting, 0
+	// when it started none: a retry waits on exactly that process.
+	PID int `json:"pid,omitempty"`
 }
 
 // RestoringIn reports a bring-back of this server running right now in the

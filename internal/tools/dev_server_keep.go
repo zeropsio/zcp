@@ -157,11 +157,12 @@ func restoreKeptDevServer(ctx context.Context, ssh ops.SSHDeployer, stateDir, ho
 	}
 	// A retry in this life after a bring-back that did not answer: that
 	// server may still be starting (compiling before it listens), or have
-	// come up since. While its process lives — or when that cannot be read —
-	// start nothing and spend no attempt; once it answers, record it up, so a
-	// later crash in this life stays down like any other.
+	// come up since. While the process its spawn reported lives — or when
+	// that cannot be read — start nothing and spend no attempt; once it
+	// answers, record it up, so a later crash in this life stays down like any
+	// other. A bring-back that started no process has nothing to wait on.
 	if last := kept.LastRestore; kept.Container == container && last != nil && !last.Running && last.Reason != workflow.DevServerRestoring {
-		alive, aliveErr := ops.SpawnedDevServerAlive(ctx, ssh, hostname, kept.LogFile)
+		alive, aliveErr := ops.SpawnedDevServerAlive(ctx, ssh, hostname, kept.LogFile, last.PID)
 		if aliveErr != nil {
 			return nil
 		}
@@ -181,6 +182,7 @@ func restoreKeptDevServer(ctx context.Context, ssh ops.SSHDeployer, stateDir, ho
 			At:      time.Now().UTC().Format(time.RFC3339),
 			Running: result.Running,
 			Reason:  result.Reason,
+			PID:     result.PID,
 		})
 	}
 

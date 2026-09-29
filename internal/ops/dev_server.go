@@ -424,14 +424,29 @@ func KillSpawnedDevServer(ctx context.Context, ssh SSHDeployer, hostname, logFil
 	return nil
 }
 
-// SpawnedDevServerAlive reports whether the process recorded in the pidfile
-// next to logFile (default log when empty) is alive — a dev server that is
-// still starting, not yet listening, is alive.
-func SpawnedDevServerAlive(ctx context.Context, ssh SSHDeployer, hostname, logFile string) (bool, error) {
+// SpawnedDevServerAlive reports whether the process one dev-server spawn
+// started — pid, as its ack reported it (DevServerResult.PID) — is alive while
+// the pidfile next to logFile (default log when empty) still names it: a dev
+// server that is still starting, not yet listening, is alive. A pidfile left
+// from an earlier container life, or a later start's, says nothing about it,
+// and an unknown pid (0) is no process, read without a call.
+func SpawnedDevServerAlive(ctx context.Context, ssh SSHDeployer, hostname, logFile string, pid int) (bool, error) {
+	if pid <= 0 {
+		return false, nil
+	}
 	if logFile == "" {
 		logFile = defaultLogFilePattern
 	}
-	return checkProcessAlive(ctx, ssh, hostname, pidFileFor(logFile))
+	want := strconv.Itoa(pid)
+	cmd := fmt.Sprintf(`if [ "$(cat %s 2>/dev/null)" = %s ] && kill -0 %s 2>/dev/null; then echo alive; else echo dead; fi`,
+		shellQuote(pidFileFor(logFile)), shellQuote(want), want)
+	probeCtx, cancel := context.WithTimeout(ctx, livenessCheckTimeout)
+	defer cancel()
+	out, err := ssh.ExecSSH(probeCtx, hostname, cmd)
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(string(out), "alive"), nil
 }
 
 // DevServerStopPattern is the pattern a stop's kill matches processes by:
