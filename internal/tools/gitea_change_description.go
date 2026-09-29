@@ -2,7 +2,10 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"html"
+	"math"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -88,6 +91,14 @@ func handleDescribeChange(
 			"Keep it to what the change does and why, and how you checked it — logs and long output belong in the conversation, not in the review.",
 		), WithRecoveryStatus()), nil, nil
 	}
+	if missing := giteaMissingPictures(stateDir, text); len(missing) > 0 {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("The description shows %s, and this Mate keeps no such picture — the newest %d screenshots are kept, and every one a kept description shows.",
+				strings.Join(missing, ", "), workflow.PictureKeep),
+			"Take the screenshot again with zerops_browser screenshot=true and use the picture its result names, or leave the picture out.",
+		), WithRecoveryStatus()), nil, nil
+	}
 	meta, refusal := giteaPairToDescribe(stateDir, input.Service)
 	if refusal != nil {
 		return refusal, nil, nil
@@ -132,6 +143,14 @@ func handleDescribeChange(
 
 	url := giteaPullRequestURL(wiring.GiteaURL, meta.Gitea.FullName, number)
 	if err := putChangeDescription(ctx, httpClient, wiring, stateDir, meta, number, text); err != nil {
+		if errors.Is(err, ops.ErrGiteaCannotAttach) {
+			return convertError(platform.NewPlatformError(
+				platform.ErrPrerequisiteMissing,
+				fmt.Sprintf("Nothing was written onto pull request #%d: %v. The description is kept, and goes onto #%d, pictures and all, with %s once this Mate's token can attach them.",
+					number, err, number, giteaNextDeliveryOf(meta)),
+				"Describe the change again without the pictures to put the words on it now. This Mate's token is the broker's to deliver — never ask for one.",
+			), WithRecoveryStatus()), nil, nil
+		}
 		if keepErr != nil {
 			return convertError(fmt.Errorf("gitea did not take the description of pull request #%d (%w), and it could not be kept either: %w",
 				number, err, keepErr), WithRecoveryStatus()), nil, nil
@@ -232,9 +251,11 @@ func keepChangeDescription(stateDir string, m *workflow.ServiceMeta, text string
 	return nil
 }
 
-// putChangeDescription sets text as request number's description and, once
-// Gitea took it, forgets the words the pair kept — unless newer ones were kept
-// meanwhile, which stay for the next put.
+// putChangeDescription sets text as request number's description — its
+// pictures attached to the request first (giteaChangeBody) — and, once Gitea
+// took it, forgets the words the pair kept, unless newer ones were kept
+// meanwhile, which stay for the next put. Nothing is written when a picture
+// could not be attached: never a body with a broken picture.
 func putChangeDescription(
 	ctx context.Context,
 	httpClient ops.HTTPDoer,
@@ -244,19 +265,95 @@ func putChangeDescription(
 	number int,
 	text string,
 ) error {
-	if err := ops.EditGiteaPullRequestBody(ctx, httpClient, wiring.GiteaURL, wiring.Token, m.Gitea.FullName, number, text); err != nil {
+	body, err := giteaChangeBody(ctx, httpClient, wiring, stateDir, m, number, text)
+	if err != nil {
+		return err
+	}
+	if err := ops.EditGiteaPullRequestBody(ctx, httpClient, wiring.GiteaURL, wiring.Token, m.Gitea.FullName, number, body); err != nil {
 		return err
 	}
 	forgetChangeDescription(stateDir, m, text)
 	return nil
 }
 
+// giteaChangeBody is text as it is published on request number: every
+// picture it shows attached to the request — once per request, the address
+// Gitea gave remembered with the picture — and written as an <img> with its
+// size (giteaPictureTag).
+func giteaChangeBody(
+	ctx context.Context,
+	httpClient ops.HTTPDoer,
+	wiring ops.GiteaWiring,
+	stateDir string,
+	m *workflow.ServiceMeta,
+	number int,
+	text string,
+) (string, error) {
+	ids := workflow.PictureRefs(text)
+	if len(ids) == 0 {
+		return text, nil
+	}
+	target := fmt.Sprintf("%s#%d", m.Gitea.FullName, number)
+	tags := make(map[string]func(alt string) string, len(ids))
+	for _, id := range ids {
+		pic, png, err := workflow.KeptPicture(stateDir, id)
+		if err != nil {
+			return "", fmt.Errorf("%s is no longer kept, so it cannot be shown: take the screenshot again", id)
+		}
+		url := pic.Uploads[target]
+		if url == "" {
+			url, err = ops.AttachGiteaPicture(ctx, httpClient, wiring.GiteaURL, wiring.Token, m.Gitea.FullName, number, id+".png", png)
+			if err != nil {
+				return "", err
+			}
+			_ = workflow.RecordPictureUpload(stateDir, id, target, url)
+		}
+		width, height := pic.Width, pic.Height
+		tags[id] = func(alt string) string { return giteaPictureTag(alt, url, width, height) }
+	}
+	return workflow.ReplacePictureRefs(text, func(alt, id string) string { return tags[id](alt) }), nil
+}
+
+// pictureDisplayWidth is the widest a picture is drawn in a description: about
+// the width of Gitea's pull-request column. Gitea's own stylesheet caps an
+// image at the column (max-width: 100%) but never sets height: auto, so a
+// height attribute taller than the capped width allows stretches the picture;
+// sized to the column, it is drawn true, and the app reserves the same shape.
+const pictureDisplayWidth = 720
+
+// giteaPictureTag is a picture as a published description carries it: an
+// <img> whose width and height give its shape at the width it is drawn, so
+// whoever reads the description reserves its box before the bytes arrive.
+// The picture itself keeps every pixel.
+func giteaPictureTag(alt, url string, width, height int) string {
+	if width <= 0 || height <= 0 {
+		return fmt.Sprintf(`<img alt="%s" src="%s">`, html.EscapeString(alt), html.EscapeString(url))
+	}
+	if width > pictureDisplayWidth {
+		height = int(math.Round(float64(height) * pictureDisplayWidth / float64(width)))
+		width = pictureDisplayWidth
+	}
+	return fmt.Sprintf(`<img alt="%s" width="%d" height="%d" src="%s">`, html.EscapeString(alt), width, height, html.EscapeString(url))
+}
+
+// giteaMissingPictures is the pictures text shows that this Mate does not
+// keep.
+func giteaMissingPictures(stateDir, text string) []string {
+	var missing []string
+	for _, id := range workflow.PictureRefs(text) {
+		if _, _, err := workflow.KeptPicture(stateDir, id); err != nil {
+			missing = append(missing, id)
+		}
+	}
+	return missing
+}
+
 // putKeptChangeDescription puts what the pair keeps onto request number — the
 // one a delivery, a push or a pass has just opened or found — and reports
-// whether it did. Read fresh from disk: the caller's copy of the pair can
-// predate a describe that landed while it worked. Words kept for another
-// request are dropped: that request is gone, and this one carries another
-// change.
+// whether it did, or, when a picture could not go with it, why not (the words
+// stay kept). Read fresh from disk: the caller's copy of the pair can predate
+// a describe that landed while it worked. Words kept for another request are
+// dropped: that request is gone, and this one carries another change.
 func putKeptChangeDescription(
 	ctx context.Context,
 	httpClient ops.HTTPDoer,
@@ -264,17 +361,21 @@ func putKeptChangeDescription(
 	stateDir string,
 	m *workflow.ServiceMeta,
 	number int,
-) bool {
+) (described bool, note string) {
 	fresh, err := workflow.FindServiceMeta(stateDir, m.Hostname)
 	if err != nil || fresh == nil || fresh.Gitea == nil || fresh.Gitea.ChangeDescription == nil {
-		return false
+		return false, ""
 	}
 	kept := *fresh.Gitea.ChangeDescription
 	if kept.PullRequest != 0 && kept.PullRequest != number {
 		forgetChangeDescription(stateDir, m, kept.Text)
-		return false
+		return false, ""
 	}
-	return putChangeDescription(ctx, httpClient, wiring, stateDir, m, number, kept.Text) == nil
+	err = putChangeDescription(ctx, httpClient, wiring, stateDir, m, number, kept.Text)
+	if errors.Is(err, ops.ErrGiteaCannotAttach) {
+		return false, err.Error()
+	}
+	return err == nil, ""
 }
 
 // forgetChangeDescription drops the words the pair keeps, in memory and on
@@ -307,11 +408,15 @@ func giteaNextDeliveryOf(m *workflow.ServiceMeta) string {
 // keeps working on top of an open change, so it describes the change as it
 // grows — or, when the words it kept went on with this call, that they did.
 func giteaDescribeLine(pr *giteaPullRequestRef, hostname string) string {
+	if pr.DescriptionNote != "" {
+		return fmt.Sprintf(`The description you wrote is kept, not on it yet: %s. It goes on with the next delivery once the token can attach its pictures — or describe it again without the pictures with zerops_workflow action="describe-change" service=%q to put the words on now.`,
+			pr.DescriptionNote, hostname)
+	}
 	if pr.Described {
 		return fmt.Sprintf(`It carries the description you wrote; rewrite it with zerops_workflow action="describe-change" service=%q description="…" whenever the change grows.`,
 			hostname)
 	}
-	return fmt.Sprintf(`Describe it for the person's review with zerops_workflow action="describe-change" service=%q description="…" — what it does and why, how you checked it — and again whenever it grows.`,
+	return fmt.Sprintf(`Describe it for the person's review with zerops_workflow action="describe-change" service=%q description="…" — what it does and why, how you checked it, and the zerops_browser screenshots that show it as ![what it shows](shot-N) — and again whenever it grows.`,
 		hostname)
 }
 

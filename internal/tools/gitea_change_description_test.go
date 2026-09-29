@@ -428,7 +428,10 @@ func TestGiteaPushNextActions_AsksForTheDescription(t *testing.T) {
 		{
 			name: "a request open",
 			pr:   &giteaPullRequestRef{Repo: "acme/appdev", Branch: "mate/mate-p1", Base: "main", Number: 3, URL: "https://gitea.example.invalid/acme/appdev/pulls/3"},
-			want: []string{`zerops_workflow action="describe-change" service="appdev"`, "what it does and why", "how you checked it", "whenever it grows"},
+			want: []string{
+				`zerops_workflow action="describe-change" service="appdev"`, "what it does and why", "how you checked it",
+				"zerops_browser screenshots", "![what it shows](shot-N)", "whenever it grows",
+			},
 		},
 		{
 			name: "the words it kept are on it now",

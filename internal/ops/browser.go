@@ -151,6 +151,10 @@ type BrowserScreenshotResult struct {
 	PNG    []byte `json:"-"`
 	Width  int    `json:"width,omitempty"`
 	Height int    `json:"height,omitempty"`
+	// Picture names the screenshot where the Mate's own pictures are kept
+	// ("shot-3") — how a change's description shows it, as
+	// ![what it shows](shot-3). Set by the tools layer, which keeps it.
+	Picture string `json:"picture,omitempty"`
 }
 
 // NetworkRequest is one entry from BrowserBatchResult.NetworkOutput.

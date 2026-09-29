@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -72,6 +74,17 @@ type fakeGitea struct {
 	// requests counts every authorised request, so a call that must ask
 	// Gitea nothing can be shown to.
 	requests int
+	// attachments is every picture attached, in order: the request it went
+	// to, its name and its bytes. attachStatus, when set, is what Gitea
+	// answers an attachment instead — 403 is a token without write:issue.
+	attachments  []fakeAttachment
+	attachStatus int
+}
+
+// fakeAttachment is one picture the fake Gitea took.
+type fakeAttachment struct {
+	path, name string
+	content    []byte
 }
 
 func newFakeGitea() *fakeGitea {
@@ -104,6 +117,23 @@ func (f *fakeGitea) start(t *testing.T) *httptest.Server {
 			f.repoRequests = append(f.repoRequests, string(buf))
 			w.WriteHeader(f.repoStatus)
 			_, _ = w.Write([]byte(f.repoBody))
+		case strings.Contains(r.URL.Path, "/issues/") && strings.HasSuffix(r.URL.Path, "/assets") && r.Method == http.MethodPost:
+			if f.attachStatus != 0 {
+				w.WriteHeader(f.attachStatus)
+				_, _ = w.Write([]byte(`{"message":"token does not have at least one of required scope(s), required=[write:issue], token scope=write:repository,read:user"}`))
+				return
+			}
+			file, header, err := r.FormFile("attachment")
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			content, _ := io.ReadAll(file)
+			f.attachments = append(f.attachments, fakeAttachment{path: r.URL.Path, name: header.Filename, content: content})
+			uuid := fmt.Sprintf("00000000-0000-4000-8000-%012d", len(f.attachments))
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprintf(w, `{"id":%d,"name":%q,"uuid":%q,"browser_download_url":"https://gitea.example.invalid/attachments/%s"}`,
+				len(f.attachments), header.Filename, uuid, uuid)
 		case strings.Contains(r.URL.Path, "/branches/"):
 			if !f.branchExists {
 				// Gitea 1.27.2 answers a branch it cannot resolve with 404.

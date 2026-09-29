@@ -85,7 +85,10 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// body. One enumerated action, one new field, and `service` naming
 		// the action it now also serves; the call's exact shape reaches the
 		// Mate in the delivery and push results, not here.
-		"zerops_workflow":    18497,
+		// Raised +62 (18497→18559) for the picture a description shows:
+		// `description` names the one way to put a zerops_browser screenshot
+		// in it, ![what it shows](shot-N).
+		"zerops_workflow":    18559,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services

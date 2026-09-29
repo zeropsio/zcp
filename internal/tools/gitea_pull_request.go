@@ -43,6 +43,9 @@ type giteaPullRequestRef struct {
 	// Described is true when this call put the description the Mate kept
 	// for its change onto the request (gitea_change_description.go).
 	Described bool `json:"described,omitempty"`
+	// DescriptionNote says why the kept description did not go on — its
+	// pictures could not be attached — and is "" otherwise.
+	DescriptionNote string `json:"descriptionNote,omitempty"`
 }
 
 // giteaPairPullRequestTitle heads the request a pair's branch lands through:
@@ -125,14 +128,16 @@ func openGiteaPairPullRequest(
 			giteaPairPullRequestFallbackTitle(m), title)
 	}
 	recordGiteaPullRequest(stateDir, m, number)
+	described, note := putKeptChangeDescription(ctx, httpClient, wiring, stateDir, m, number)
 	return &giteaPullRequestRef{
-		Repo:      repo,
-		Branch:    branch,
-		Base:      base,
-		Number:    number,
-		Created:   created,
-		URL:       giteaPullRequestURL(wiring.GiteaURL, repo, number),
-		Described: putKeptChangeDescription(ctx, httpClient, wiring, stateDir, m, number),
+		Repo:            repo,
+		Branch:          branch,
+		Base:            base,
+		Number:          number,
+		Created:         created,
+		URL:             giteaPullRequestURL(wiring.GiteaURL, repo, number),
+		Described:       described,
+		DescriptionNote: note,
 	}
 }
 
