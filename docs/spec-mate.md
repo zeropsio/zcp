@@ -1032,8 +1032,9 @@ page painted "Reading your projects…" and an empty menu at every re-read (the 
 **A Mate is named after its bot** (2026-09-17, the owner, on a second Mate the dialog had called
 "Todo - dev 2": "why is it called that and not Todo - Fen?"). The first Mate at _New project_ is
 "Todo - Vera", every later one "Todo - Fen" — the name the person will say — numbered only when
-that name is taken; renaming the bot in the _Add Mate_ dialog renames the environment with it until
-the person edits the name by hand. A stage and a production are named after their role
+that name is taken. The _Add Mate_ dialog asks for a name, a colour and a shape and nothing else:
+the environment is not named in it but follows from the name, `<project> - <name>`. A stage and a
+production are named after their role
 (`proposedEnvironmentName`; `ZeropsEnvironmentCreationDialog.logic.test.ts` "names a Mate after its
 bot, not its role").
 
