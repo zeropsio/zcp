@@ -101,6 +101,35 @@ type GroupRecipeInputs struct {
 	// the control plane's already left out: every tier carries them, config
 	// under envVariables and secrets under envSecrets (recipeSecret).
 	ProjectEnvs []ProjectEnvVar
+	// CorePackage is the project's live core package. Every tier's project
+	// carries a LIGHT or a SERIOUS; anything else is left to the platform's
+	// default.
+	CorePackage string
+	// Utilities are the runtimes the project builds from a public repository
+	// and no Gitea pair — a mailpit, an adminer.
+	Utilities []GroupUtility
+	// HAIncapable names the managed services whose type the platform ships no
+	// `:ha` variant of: the tier that promotes the rest keeps them single-node.
+	HAIncapable []string
+}
+
+// GroupUtility is a runtime the project builds from a public repository and
+// no Gitea pair: a utility such as mailpit, which no Mate develops. Every tier
+// writes it as the project runs it — its own hostname, its public build, its
+// own scale — with no tier's transform: there is no pair to promote and no
+// service repository to name.
+type GroupUtility struct {
+	Hostname    string
+	ServiceType string
+	// BuildFromGit is the public repository its active version was built from.
+	BuildFromGit string
+	// SetupName is the setup its build named; empty lets the platform build
+	// the setup named after the hostname, as an import that named none did.
+	SetupName        string
+	SubdomainEnabled bool
+	Scaling          *Scaling
+	// ServiceEnvs is its user-set service variables (recipeSecret).
+	ServiceEnvs []ProjectEnvVar
 }
 
 // groupTierPolicy is one tier's decision set. A tier is a decision, never an
@@ -191,6 +220,7 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 
 	managed := dedupeManagedByHostname(inputs.ManagedServices)
 	sort.SliceStable(managed, func(i, j int) bool { return managed[i].Hostname < managed[j].Hostname })
+	utilities, mateOnly, utilityWarnings := groupUtilities(inputs.Utilities, runtimes)
 
 	stageSetups := make(map[string]string, len(runtimes))
 	unresolved := map[string]string{}
@@ -203,10 +233,18 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 		stageSetups[r.DevHostname] = setup
 	}
 
-	var warnings []string
+	warnings := append([]string(nil), utilityWarnings...)
 	warnings = append(warnings, groupSetupWarnings(runtimes, stageSetups)...)
-	priorities, priorityWarnings := groupPriorities(groupApps(runtimes), inputs.ProjectEnvs)
+	priorities, priorityWarnings := groupPriorities(groupApps(runtimes, utilities), inputs.ProjectEnvs)
 	warnings = append(warnings, priorityWarnings...)
+	haIncapable := make(map[string]bool, len(inputs.HAIncapable))
+	for _, host := range inputs.HAIncapable {
+		haIncapable[host] = true
+	}
+	plan := groupPlan{
+		inputs: inputs, runtimes: runtimes, utilities: utilities, mateOnly: mateOnly,
+		managed: managed, haIncapable: haIncapable, stageSetups: stageSetups, priorities: priorities,
+	}
 
 	layout := recipe.Layout{
 		Name:  inputs.Name,
@@ -221,7 +259,7 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 			}
 			continue
 		}
-		body, tierWarnings, err := composeGroupTierYAML(inputs, runtimes, managed, policy, stageSetups, priorities)
+		body, tierWarnings, err := composeGroupTierYAML(plan, policy)
 		if err != nil {
 			return recipe.Layout{}, nil, fmt.Errorf("group recipe %q: tier %q: %w", inputs.Name, policy.title, err)
 		}
@@ -320,15 +358,23 @@ func joinTitles(titles []string) string {
 	}
 }
 
+// groupPlan is what every tier is composed from, decided once.
+type groupPlan struct {
+	inputs    GroupRecipeInputs
+	runtimes  []GroupRuntime
+	utilities []GroupUtility
+	// mateOnly names the utilities a group environment cannot carry: its
+	// runtime takes their hostname.
+	mateOnly    map[string]bool
+	managed     []ManagedServiceEntry
+	haIncapable map[string]bool
+	stageSetups map[string]string
+	priorities  map[string]int
+}
+
 // composeGroupTierYAML renders one tier's whole-project import.yaml.
-func composeGroupTierYAML(
-	inputs GroupRecipeInputs,
-	runtimes []GroupRuntime,
-	managed []ManagedServiceEntry,
-	policy groupTierPolicy,
-	stageSetups map[string]string,
-	priorities map[string]int,
-) (string, []string, error) {
+func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []string, error) {
+	inputs, runtimes, stageSetups, priorities := plan.inputs, plan.runtimes, plan.stageSetups, plan.priorities
 	warnings := make([]string, 0, len(runtimes))
 	source := firstNonBlank(inputs.MateProjectName, inputs.Name)
 
@@ -339,7 +385,7 @@ func composeGroupTierYAML(
 		priority int
 		item     yamlItem
 	}
-	ranked := make([]rankedItem, 0, 2*len(runtimes)+len(managed))
+	ranked := make([]rankedItem, 0, 2*len(runtimes)+len(plan.utilities)+len(plan.managed))
 	for _, r := range runtimes {
 		type half struct {
 			hostname, setup string
@@ -366,8 +412,26 @@ func composeGroupTierYAML(
 			ranked = append(ranked, rankedItem{priorities[r.DevHostname], yamlItem{fields: orderedFields(entry, serviceKeyOrder)}})
 		}
 	}
-	for _, m := range managed {
-		entry := managedEntryWithRules(m, policy.promoteHA, false /*keepNonHA*/)
+	for _, u := range plan.utilities {
+		if !policy.pairs && plan.mateOnly[u.Hostname] {
+			continue
+		}
+		entry := groupUtilityEntry(u, priorities[u.Hostname], source)
+		ranked = append(ranked, rankedItem{priorities[u.Hostname], yamlItem{fields: orderedFields(entry, serviceKeyOrder)}})
+	}
+	for _, m := range plan.managed {
+		// A type with no HA variant stays single-node where the rest are
+		// promoted: a fabricated `<type>:ha` fails the whole import.
+		keepSingle := policy.promoteHA && plan.haIncapable[m.Hostname]
+		if keepSingle {
+			warnings = append(warnings, fmt.Sprintf(
+				"managed service %q (%s) stays single-node on %s: the platform has no HA variant of its type",
+				m.Hostname, m.Type, policy.title))
+		}
+		entry := managedEntryWithRules(m, policy.promoteHA, keepSingle)
+		if vertical := managedVertical(m, policy); len(vertical) > 0 {
+			entry["verticalAutoscaling"] = vertical
+		}
 		ranked = append(ranked, rankedItem{managedPriority, yamlItem{fields: orderedFields(entry, serviceKeyOrder)}})
 	}
 	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].priority > ranked[j].priority })
@@ -377,6 +441,9 @@ func composeGroupTierYAML(
 	}
 
 	project := []yamlField{{key: "name", value: groupTierProjectName(inputs, policy)}}
+	if core := strings.TrimSpace(inputs.CorePackage); core == "LIGHT" || core == "SERIOUS" {
+		project = append(project, yamlField{key: "corePackage", value: core})
+	}
 	config, secrets := groupEnvFields(inputs.ProjectEnvs, source)
 	if len(config) > 0 {
 		project = append(project, yamlField{key: "envVariables", value: config})
@@ -411,9 +478,17 @@ func groupTierHeader(inputs GroupRecipeInputs, policy groupTierPolicy) []string 
 
 // groupApps is what the priorities rank: every runtime pair, by any name it
 // goes by, with the values that reference what it needs up first — its
-// zerops.yaml's variables and its own service variables.
-func groupApps(runtimes []GroupRuntime) []groupApp {
-	apps := make([]groupApp, 0, len(runtimes))
+// zerops.yaml's variables and its own service variables — and every utility
+// with its own variables.
+func groupApps(runtimes []GroupRuntime, utilities []GroupUtility) []groupApp {
+	apps := make([]groupApp, 0, len(runtimes)+len(utilities))
+	for _, u := range utilities {
+		sources := make([]string, 0, len(u.ServiceEnvs))
+		for _, env := range u.ServiceEnvs {
+			sources = append(sources, env.Value)
+		}
+		apps = append(apps, groupApp{key: u.Hostname, hostnames: []string{u.Hostname}, sources: sources})
+	}
 	for _, r := range runtimes {
 		sources := zeropsYAMLEnvValues(r.ZeropsYAMLBody)
 		for _, env := range append(append([]ProjectEnvVar(nil), r.ServiceEnvs...), r.StageServiceEnvs...) {
@@ -426,6 +501,74 @@ func groupApps(runtimes []GroupRuntime) []groupApp {
 		})
 	}
 	return apps
+}
+
+// groupUtilities is the utilities every tier writes, sorted, and those a
+// group environment cannot carry because its runtime takes their hostname.
+// A utility the reader did not describe whole is left out and said.
+func groupUtilities(in []GroupUtility, runtimes []GroupRuntime) ([]GroupUtility, map[string]bool, []string) {
+	promoted := make(map[string]string, len(runtimes))
+	for _, r := range runtimes {
+		promoted[GroupPromotedHostname(r.DevHostname)] = r.DevHostname
+	}
+	var utilities []GroupUtility
+	var warnings []string
+	mateOnly := map[string]bool{}
+	for _, u := range in {
+		if strings.TrimSpace(u.Hostname) == "" || strings.TrimSpace(u.ServiceType) == "" || strings.TrimSpace(u.BuildFromGit) == "" {
+			warnings = append(warnings, fmt.Sprintf("utility %q is left out of the recipe: its hostname, type or public build is unknown", u.Hostname))
+			continue
+		}
+		if pair, taken := promoted[u.Hostname]; taken {
+			mateOnly[u.Hostname] = true
+			warnings = append(warnings, fmt.Sprintf(
+				"utility %q stays on the AI Agent tier only: the group environments name the runtime of %q %q too",
+				u.Hostname, pair, u.Hostname))
+		}
+		utilities = append(utilities, u)
+	}
+	sort.SliceStable(utilities, func(i, j int) bool { return utilities[i].Hostname < utilities[j].Hostname })
+	return utilities, mateOnly, warnings
+}
+
+// groupUtilityEntry writes a utility as the project runs it: its public build
+// and its own scale, on every tier alike.
+func groupUtilityEntry(u GroupUtility, priority int, source string) map[string]any {
+	entry := map[string]any{
+		"hostname":     u.Hostname,
+		"type":         u.ServiceType,
+		"priority":     priority,
+		"buildFromGit": topology.CanonicalRepoURL(u.BuildFromGit),
+	}
+	if u.SetupName != "" {
+		entry["zeropsSetup"] = u.SetupName
+	}
+	if u.SubdomainEnabled {
+		entry["enableSubdomainAccess"] = true
+	}
+	projectScaling(entry, u.Scaling)
+	if secrets := serviceSecretFields(u.ServiceEnvs, source); len(secrets) > 0 {
+		entry["envSecrets"] = secrets
+	}
+	return entry
+}
+
+// managedVertical is the vertical scale a managed service is written with:
+// as it runs, on every tier but the one that decides a profile-bearing
+// service's scale — Small Production sets the production profile, and a
+// dev-sized database's bounds beside it would cap production. An object
+// storage has none; its size is objectStorageSize.
+func managedVertical(m ManagedServiceEntry, policy groupTierPolicy) map[string]any {
+	if m.Scaling == nil || RulesForType(m.Type).RequiresObjectStorageSize {
+		return nil
+	}
+	if policy.promoteHA && topology.IsProfileBearing(m.Type) {
+		return nil
+	}
+	shape := map[string]any{}
+	projectScaling(shape, m.Scaling)
+	vertical, _ := shape["verticalAutoscaling"].(map[string]any)
+	return vertical
 }
 
 // stageHalfEnvs is what a group environment's runtime carries of the pair's

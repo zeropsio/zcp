@@ -107,6 +107,12 @@ func managedEntryWithRules(m ManagedServiceEntry, launchPromote, keepNonHA bool)
 			size = 1
 		}
 		entry["objectStorageSize"] = size
+		if m.ObjectStoragePolicy != "" {
+			entry["objectStoragePolicy"] = m.ObjectStoragePolicy
+		}
+		if m.ObjectStorageRawPolicy != "" {
+			entry["objectStorageRawPolicy"] = m.ObjectStorageRawPolicy
+		}
 	}
 	return entry
 }

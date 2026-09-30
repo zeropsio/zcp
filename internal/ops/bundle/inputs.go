@@ -40,6 +40,15 @@ type ManagedServiceEntry struct {
 	// applies the production-default tier instead.
 	Profile     string
 	QuotaGBytes int // populated for object-storage; 0 → composer defaults to 1
+	// ObjectStoragePolicy is an object storage's live access policy (private,
+	// public-read, …, custom), and ObjectStorageRawPolicy the policy document
+	// a custom one carries. Empty emits nothing: the platform's default,
+	// private. Only the group recipe reads them today.
+	ObjectStoragePolicy    string
+	ObjectStorageRawPolicy string
+	// Scaling is the live vertical autoscaling shape. Only the group recipe
+	// reads it: its identity tiers carry it as the service runs.
+	Scaling *Scaling
 }
 
 // Scaling is the live platform-resolved autoscaling shape of a source runtime,
