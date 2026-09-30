@@ -109,7 +109,7 @@ func registerStandup(srv *mcp.Server, d standupDeps) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_standup",
 		Description: "Stands up this Mate's development from the group repo's AI Agent tier: adopts each dev/stage pair, " +
-			"checks main out into each dev half, deploys dev halves then stages by priority, reports each service's next step. " +
+			"checks main out into each dev half, deploys dev halves, then stages on a second call in build order, reports each service's next step. " +
 			"Call it first when the person's message is \"Stand up development of the project.\" Idempotent: call again after a fix.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Stand up development from the recipe",

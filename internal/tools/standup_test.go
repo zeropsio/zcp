@@ -200,6 +200,12 @@ type standupSSH struct {
 
 type standupSSHCall struct{ host, cmd string }
 
+// standupHead is the commit the dev halves' checkouts stand on.
+const (
+	standupHead      = "0123456789abcdef0123456789abcdef01234567"
+	standupHeadShort = "0123456"
+)
+
 func (s *standupSSH) ExecSSH(_ context.Context, host, cmd string) ([]byte, error) {
 	s.mu.Lock()
 	s.commands = append(s.commands, standupSSHCall{host, cmd})
@@ -208,6 +214,16 @@ func (s *standupSSH) ExecSSH(_ context.Context, host, cmd string) ([]byte, error
 		s.meet(flagValue(cmd, "--service-id"))
 	}
 	switch {
+	case strings.Contains(cmd, "rev-parse --verify") && strings.Contains(cmd, "^{commit}"):
+		return []byte(standupHead + "\n"), nil
+	case strings.Contains(cmd, "git show") && strings.Contains(cmd, ":zerops.yaml"):
+		return []byte(standupZeropsYAML(strings.TrimSuffix(host, "dev"))), nil
+	case strings.Contains(cmd, "mktemp -d"):
+		return []byte("/tmp/zcp-extract-1\n"), nil
+	case strings.Contains(cmd, "ZCP:BRANCH:%s"):
+		// The dev half's HEAD, on the Mate's branch, its tree dirtied by
+		// a dev server.
+		return []byte(standupHead + "\nZCP:BRANCH:mate/mate-p1\nM"), nil
 	case strings.Contains(cmd, "cur_email=$(git config user.email)"):
 		return []byte("ZCP_EMAIL_SEEDED\nZCP_NAME_SEEDED\n"), nil
 	case strings.Contains(cmd, "rev-parse --verify HEAD") && strings.Contains(cmd, "git status --porcelain"):
@@ -268,6 +284,19 @@ func (s *standupSSH) pushes() []string {
 		id := flagValue(c.cmd, "--service-id")
 		setup := strings.Trim(flagValue(c.cmd, "--setup"), "'")
 		out = append(out, fmt.Sprintf("%s → %s (%s)", c.host, id, setup))
+	}
+	return out
+}
+
+// commandsFor is every command that contains substr, in order.
+func (s *standupSSH) commandsFor(substr string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for _, c := range s.commands {
+		if strings.Contains(c.cmd, substr) {
+			out = append(out, c.cmd)
+		}
 	}
 	return out
 }
@@ -525,6 +554,18 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 	}
 	if !slices.Contains(f.mounter.mounted, "medusadev") || !slices.Contains(f.mounter.mounted, "nextstoredev") {
 		t.Errorf("dev halves mounted = %v", f.mounter.mounted)
+	}
+
+	// A stage ships the dev half's HEAD commit exactly, never its working
+	// tree: the dev servers the model starts between the two calls may touch
+	// tracked files, and a dirty name reads as no commit.
+	for _, cmd := range f.ssh.commandsFor("zcli push") {
+		if !strings.Contains(cmd, "svc-medusastage") && !strings.Contains(cmd, "svc-nextstorestage") {
+			continue
+		}
+		if !strings.Contains(cmd, "--no-git") || !strings.Contains(cmd, "--version-name 'mate/mate-p1 "+standupHeadShort+"'") {
+			t.Errorf("a stage push must ship HEAD's commit under a clean name: %s", cmd)
+		}
 	}
 
 	// Nothing is delivered: the stage runs main as it is.

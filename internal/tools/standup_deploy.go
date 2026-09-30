@@ -248,8 +248,12 @@ func (d standupDeps) deployAll(ctx context.Context, pairs []*standupPair, live m
 		tier = append(tier, p)
 		halves[p.Dev.Hostname] = standupHalf{pair: sp, dev: true,
 			target: ops.DeployBatchTarget{SourceService: p.Dev.Hostname, TargetService: p.Dev.Hostname, Setup: p.Dev.Setup}}
+		// A stage ships the dev half's HEAD commit exactly, never its
+		// working tree: the dev servers the model starts between the two
+		// calls may rewrite tracked files (`next dev` and next-env.d.ts),
+		// and a stage built from a dirty tree is named as no commit.
 		halves[p.Stage.Hostname] = standupHalf{pair: sp,
-			target: ops.DeployBatchTarget{SourceService: p.Dev.Hostname, TargetService: p.Stage.Hostname, Setup: p.Stage.Setup}}
+			target: ops.DeployBatchTarget{SourceService: p.Dev.Hostname, TargetService: p.Stage.Hostname, Setup: p.Stage.Setup, SHA: "HEAD"}}
 	}
 	reads, unread := standupReads(tier, standupBodies(projectRootFromState(d.batch.stateDir), pairs), projectEnvs)
 	after := standupAfter(tier, reads, unread)
