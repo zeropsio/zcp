@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"maps"
 	"sort"
 	"strings"
 
@@ -17,41 +18,40 @@ import (
 const runtimeLiftPrefix = "RUNTIME_"
 
 // BuildReadValues returns the values a zerops.yaml's build reads for setup
-// ("" for every setup): each of its build.envVariables, and for a
-// `${RUNTIME_X}` among them the value X has in that setup's run.envVariables,
-// else among serviceEnvs — a runtime variable the build lifts. A body that
-// does not parse reads nothing.
+// ("" for every setup): each of its build.envVariables — with those of the
+// setups it extends, its own winning a key both set — and for a
+// `${RUNTIME_X}` among them the value X has in that setup's run.envVariables
+// (inherited the same way), else among serviceEnvs — a runtime variable the
+// build lifts. A body that does not parse reads nothing.
 func BuildReadValues(body, setup string, serviceEnvs map[string]string) []string {
 	if strings.TrimSpace(body) == "" {
 		return nil
 	}
 	var doc struct {
-		Zerops []struct {
-			Setup string `yaml:"setup"`
-			Build struct {
-				EnvVariables map[string]any `yaml:"envVariables"`
-			} `yaml:"build"`
-			Run struct {
-				EnvVariables map[string]any `yaml:"envVariables"`
-			} `yaml:"run"`
-		} `yaml:"zerops"`
+		Zerops []buildReadSetup `yaml:"zerops"`
 	}
 	if err := yaml.Unmarshal([]byte(body), &doc); err != nil {
 		return nil
+	}
+	bySetup := make(map[string]buildReadSetup, len(doc.Zerops))
+	for _, s := range doc.Zerops {
+		bySetup[s.Setup] = s
 	}
 	var values []string
 	for _, s := range doc.Zerops {
 		if setup != "" && s.Setup != setup {
 			continue
 		}
-		for _, value := range sortedStringValues(s.Build.EnvVariables) {
+		build := inheritedVars(bySetup, s.Setup, func(x buildReadSetup) map[string]any { return x.Build.EnvVariables }, map[string]bool{})
+		run := inheritedVars(bySetup, s.Setup, func(x buildReadSetup) map[string]any { return x.Run.EnvVariables }, map[string]bool{})
+		for _, value := range sortedStringValues(build) {
 			values = append(values, value)
 			for _, name := range parseDollarBraceRefs(value) {
 				lifted, ok := strings.CutPrefix(name, runtimeLiftPrefix)
 				if !ok {
 					continue
 				}
-				if v, ok := s.Run.EnvVariables[lifted].(string); ok {
+				if v, ok := run[lifted].(string); ok {
 					values = append(values, v)
 				} else if v, ok := serviceEnvs[lifted]; ok {
 					values = append(values, v)
@@ -60,6 +60,52 @@ func BuildReadValues(body, setup string, serviceEnvs map[string]string) []string
 		}
 	}
 	return values
+}
+
+// buildReadSetup is one zerops.yaml setup as BuildReadValues reads it.
+type buildReadSetup struct {
+	Setup   string `yaml:"setup"`
+	Extends any    `yaml:"extends"`
+	Build   struct {
+		EnvVariables map[string]any `yaml:"envVariables"`
+	} `yaml:"build"`
+	Run struct {
+		EnvVariables map[string]any `yaml:"envVariables"`
+	} `yaml:"run"`
+}
+
+// extended names the setups a setup extends: one, or a list.
+func (s buildReadSetup) extended() []string {
+	switch v := s.Extends.(type) {
+	case string:
+		return []string{v}
+	case []any:
+		names := make([]string, 0, len(v))
+		for _, item := range v {
+			if name, ok := item.(string); ok {
+				names = append(names, name)
+			}
+		}
+		return names
+	}
+	return nil
+}
+
+// inheritedVars is a setup's variables of one block with those of every setup
+// it extends, farthest first so the nearer wins; a setup seen twice on the
+// way (a circle) adds nothing more.
+func inheritedVars(bySetup map[string]buildReadSetup, name string, block func(buildReadSetup) map[string]any, seen map[string]bool) map[string]any {
+	s, ok := bySetup[name]
+	if !ok || seen[name] {
+		return nil
+	}
+	seen[name] = true
+	merged := map[string]any{}
+	for _, parent := range s.extended() {
+		maps.Copy(merged, inheritedVars(bySetup, parent, block, seen))
+	}
+	maps.Copy(merged, block(s))
+	return merged
 }
 
 // ReferencedHosts returns the hostnames among hosts that values reference as

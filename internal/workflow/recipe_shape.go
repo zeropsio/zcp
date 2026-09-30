@@ -175,6 +175,8 @@ type recipeImportService struct {
 	BuildFromGit recipeGitSource `yaml:"buildFromGit"`
 	Mode         string          `yaml:"mode"`
 	Priority     int             `yaml:"priority"`
+	EnvVariables map[string]any  `yaml:"envVariables"`
+	EnvSecrets   map[string]any  `yaml:"envSecrets"`
 }
 
 // recipeGitSource is a service's `buildFromGit`, which a recipe writes either

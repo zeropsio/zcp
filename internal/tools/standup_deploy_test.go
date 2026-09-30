@@ -5,6 +5,7 @@ package tools
 import (
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -124,7 +125,7 @@ func TestStandupAfter_EveryDevHalfStartsAtOnce(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := standupAfter(tt.pairs, tt.reads)
+			got := standupAfter(tt.pairs, tt.reads, nil)
 			if !maps.EqualFunc(got, tt.want, slices.Equal[[]string]) {
 				t.Errorf("standupAfter =\n  %v\nwant\n  %v", got, tt.want)
 			}
@@ -182,12 +183,65 @@ func TestStandupReads_FromTheRecipe(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			reads := standupReads(pairs, map[string]string{"medusadev": medusa, "nextstoredev": tt.storefront}, tt.project)
+			reads, _ := standupReads(pairs, map[string]string{"medusadev": medusa, "nextstoredev": tt.storefront}, tt.project)
 			if !maps.EqualFunc(reads, tt.wantReads, slices.Equal[[]string]) {
 				t.Errorf("reads = %v, want %v", reads, tt.wantReads)
 			}
-			if got := standupAfter(pairs, reads)["nextstorestage"]; !slices.Equal(got, tt.wantAfter) {
+			if got := standupAfter(pairs, reads, nil)["nextstorestage"]; !slices.Equal(got, tt.wantAfter) {
 				t.Errorf("nextstorestage waits for %v, want %v", got, tt.wantAfter)
+			}
+		})
+	}
+}
+
+// TestStandupReads_EveryRouteTheWriterCounts: the stand-up reads a build the
+// way the recipe writer does, so a stage never builds before the stage it
+// reads. Three pairs — an API above a storefront and a worker; the worker's
+// stage reads the API's stage directly, so the order comes from reads — and
+// the storefront's stage reads the API's stage through each route a plain
+// read of its setup would miss.
+func TestStandupReads_EveryRouteTheWriterCounts(t *testing.T) {
+	t.Parallel()
+	const worker = "zerops:\n  - setup: workerdev\n    run:\n      start: zsc noop\n  - setup: workerprod\n    build:\n      envVariables:\n        API: ${apistage_hostname}\n"
+	const api = "zerops:\n  - setup: apidev\n    run:\n      start: zsc noop\n  - setup: apiprod\n    run:\n      start: node api.js\n"
+	tests := []struct {
+		name       string
+		storefront string // "" = the pair's zerops.yaml could not be read
+		stageEnvs  map[string]string
+	}{
+		{
+			name:       "a service variable the build lifts",
+			storefront: "zerops:\n  - setup: storefrontdev\n    run:\n      start: zsc noop\n  - setup: storefrontprod\n    build:\n      envVariables:\n        API: ${RUNTIME_API_URL}\n",
+			stageEnvs:  map[string]string{"API_URL": "https://${apistage_zeropsSubdomain}"},
+		},
+		{
+			name:       "a setup inherited through extends",
+			storefront: "zerops:\n  - setup: base\n    build:\n      envVariables:\n        API: https://${apistage_zeropsSubdomain}\n  - setup: storefrontdev\n    run:\n      start: zsc noop\n  - setup: storefrontprod\n    extends: base\n",
+		},
+		{
+			name: "a zerops.yaml that could not be read keeps its priority",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			pairs := []workflow.MateTierPair{standupTestPair("api", 5), standupTestPair("storefront", 0), standupTestPair("worker", 0)}
+			for i := range pairs {
+				name := strings.TrimSuffix(pairs[i].Dev.Hostname, "dev")
+				pairs[i].Dev.Setup, pairs[i].Stage.Setup = name+"dev", name+"prod"
+			}
+			pairs[1].Stage.Envs = tt.stageEnvs
+			bodies := map[string]string{"apidev": api, "workerdev": worker}
+			if tt.storefront != "" {
+				bodies["storefrontdev"] = tt.storefront
+			}
+			reads, unread := standupReads(pairs, bodies, nil)
+			after := standupAfter(pairs, reads, unread)
+			if got := after["storefrontstage"]; !slices.Contains(got, "apistage") {
+				t.Errorf("storefrontstage waits for %v, want apistage among them (reads %v)", got, reads)
+			}
+			if got := after["workerstage"]; !slices.Equal(got, []string{"apistage", "workerdev"}) {
+				t.Errorf("workerstage waits for %v, want its read and its dev half", got)
 			}
 		})
 	}

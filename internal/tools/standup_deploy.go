@@ -81,32 +81,39 @@ func (d *standupDeploy) running() bool {
 // before it deploys, sorted. reads is what each half's build reads of the
 // other halves (standupReads): a stage waits for its own dev half and for
 // what its build reads; a dev half waits for the dev halves its build reads —
-// never a stage, which comes after development. With no such read, or reads
-// that go round in a circle, the tier's priority orders the stages instead:
-// nothing for a dev half, and for a stage its own dev half and the stage of
-// every pair above it.
-func standupAfter(pairs []workflow.MateTierPair, reads map[string][]string) map[string][]string {
-	if after, ok := standupAfterReads(pairs, reads); ok {
+// never a stage, which comes after development. A pair whose zerops.yaml
+// could not be read (unread, by dev hostname) keeps the priority: its stage
+// also waits for every stage above it. With no read at all, or reads that go
+// round in a circle, the tier's priority orders every stage: nothing for a
+// dev half, and for a stage its own dev half and the stage of every pair
+// above it.
+func standupAfter(pairs []workflow.MateTierPair, reads map[string][]string, unread map[string]bool) map[string][]string {
+	if after, ok := standupAfterReads(pairs, reads, unread); ok {
 		return after
 	}
 	after := make(map[string][]string, 2*len(pairs))
 	for _, p := range pairs {
 		after[p.Dev.Hostname] = nil
-		waits := []string{p.Dev.Hostname}
-		for _, above := range pairs {
-			if above.Priority() > p.Priority() {
-				waits = append(waits, above.Stage.Hostname)
-			}
-		}
-		slices.Sort(waits)
-		after[p.Stage.Hostname] = waits
+		after[p.Stage.Hostname] = standupStagesAbove(pairs, p, []string{p.Dev.Hostname})
 	}
 	return after
 }
 
+// standupStagesAbove is waits with the stage of every pair above p by
+// priority, sorted.
+func standupStagesAbove(pairs []workflow.MateTierPair, p workflow.MateTierPair, waits []string) []string {
+	for _, above := range pairs {
+		if above.Priority() > p.Priority() && !slices.Contains(waits, above.Stage.Hostname) {
+			waits = append(waits, above.Stage.Hostname)
+		}
+	}
+	slices.Sort(waits)
+	return waits
+}
+
 // standupAfterReads is standupAfter from the build-time reads; false when
 // they order nothing or cannot be kept.
-func standupAfterReads(pairs []workflow.MateTierPair, reads map[string][]string) (map[string][]string, bool) {
+func standupAfterReads(pairs []workflow.MateTierPair, reads map[string][]string, unread map[string]bool) (map[string][]string, bool) {
 	dev := map[string]bool{}
 	known := map[string]bool{}
 	for _, p := range pairs {
@@ -128,7 +135,15 @@ func standupAfterReads(pairs []workflow.MateTierPair, reads map[string][]string)
 		after[p.Dev.Hostname] = add(p.Dev.Hostname, nil, func(read string) bool { return dev[read] })
 		after[p.Stage.Hostname] = add(p.Stage.Hostname, []string{p.Dev.Hostname}, func(string) bool { return true })
 	}
-	if !ordered || standupCircular(after) {
+	if !ordered {
+		return nil, false
+	}
+	for _, p := range pairs {
+		if unread[p.Dev.Hostname] {
+			after[p.Stage.Hostname] = standupStagesAbove(pairs, p, after[p.Stage.Hostname])
+		}
+	}
+	if standupCircular(after) {
 		return nil, false
 	}
 	return after, true
@@ -166,21 +181,28 @@ func standupCircular(after map[string][]string) bool {
 }
 
 // standupReads is what each half's build reads of the other halves, from its
-// own setup in its pair's zerops.yaml (bodies, by dev hostname) — directly,
-// through a runtime variable it lifts, or through the tier's project
-// variables (bundle.BuildReadValues, bundle.ReferencedHosts). A half that
-// reads none is left out.
-func standupReads(pairs []workflow.MateTierPair, bodies, projectEnvs map[string]string) map[string][]string {
+// own setup in its pair's zerops.yaml (bodies, by dev hostname) as the recipe
+// writer reads it — directly, through a setup it extends, through a runtime
+// variable it lifts from the setup or from its own service variables, or
+// through the tier's project variables (bundle.BuildReadValues,
+// bundle.ReferencedHosts). A half that reads none is left out; unread names
+// the pairs (by dev hostname) whose zerops.yaml could not be read.
+func standupReads(pairs []workflow.MateTierPair, bodies, projectEnvs map[string]string) (map[string][]string, map[string]bool) {
 	hosts := make([]string, 0, 2*len(pairs))
 	for _, p := range pairs {
 		hosts = append(hosts, p.Dev.Hostname, p.Stage.Hostname)
 	}
 	reads := map[string][]string{}
+	unread := map[string]bool{}
 	for _, p := range pairs {
-		body := bodies[p.Dev.Hostname]
+		body, ok := bodies[p.Dev.Hostname]
+		if !ok {
+			unread[p.Dev.Hostname] = true
+			continue
+		}
 		for _, half := range []workflow.MateTierRuntime{p.Dev, p.Stage} {
 			var read []string
-			for _, h := range bundle.ReferencedHosts(bundle.BuildReadValues(body, half.Setup, nil), hosts, projectEnvs) {
+			for _, h := range bundle.ReferencedHosts(bundle.BuildReadValues(body, half.Setup, half.Envs), hosts, projectEnvs) {
 				if h != half.Hostname {
 					read = append(read, h)
 				}
@@ -190,12 +212,12 @@ func standupReads(pairs []workflow.MateTierPair, bodies, projectEnvs map[string]
 			}
 		}
 	}
-	return reads
+	return reads, unread
 }
 
 // standupBodies reads each pair's zerops.yaml from its dev half's mount, as
-// main carries it once checked out; a pair whose file is not readable reads
-// nothing, and the priority orders it.
+// main carries it once checked out; a pair whose file is not readable is
+// left out, and the priority orders its stage.
 func standupBodies(mountRoot string, pairs []*standupPair) map[string]string {
 	bodies := map[string]string{}
 	for _, sp := range pairs {
@@ -229,7 +251,8 @@ func (d standupDeps) deployAll(ctx context.Context, pairs []*standupPair, live m
 		halves[p.Stage.Hostname] = standupHalf{pair: sp,
 			target: ops.DeployBatchTarget{SourceService: p.Dev.Hostname, TargetService: p.Stage.Hostname, Setup: p.Stage.Setup}}
 	}
-	after := standupAfter(tier, standupReads(tier, standupBodies(projectRootFromState(d.batch.stateDir), pairs), projectEnvs))
+	reads, unread := standupReads(tier, standupBodies(projectRootFromState(d.batch.stateDir), pairs), projectEnvs)
+	after := standupAfter(tier, reads, unread)
 	done := make(map[string]chan struct{}, len(halves))
 	for host := range halves {
 		done[host] = make(chan struct{})

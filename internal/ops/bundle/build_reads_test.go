@@ -63,3 +63,43 @@ func TestBuildReadValues_ALiftedVariableFallsBackToTheServices(t *testing.T) {
 		t.Errorf("build reads = %v, want [apistage]", got)
 	}
 }
+
+// A setup that extends another reads what the setup it extends builds with,
+// its own variables winning a key both set.
+func TestBuildReadValues_FollowsExtends(t *testing.T) {
+	t.Parallel()
+	const body = `zerops:
+  - setup: base
+    build:
+      envVariables:
+        API: https://${apistage_zeropsSubdomain}
+        SEARCH: ${searchstage_hostname}
+    run:
+      envVariables:
+        AUTH_URL: ${authstage_zeropsSubdomain}
+  - setup: storeprod
+    extends: base
+    build:
+      envVariables:
+        SEARCH: none
+        AUTH: ${RUNTIME_AUTH_URL}
+  - setup: listed
+    extends: [base]
+`
+	hosts := []string{"apistage", "searchstage", "authstage"}
+	for _, tt := range []struct {
+		setup string
+		want  []string
+	}{
+		{"storeprod", []string{"apistage", "authstage"}},
+		{"listed", []string{"apistage", "searchstage"}},
+		{"base", []string{"apistage", "searchstage"}},
+		// Every setup, as the recipe writer reads a pair: a lift through an
+		// inherited run variable counts too.
+		{"", []string{"apistage", "authstage", "searchstage"}},
+	} {
+		if got := ReferencedHosts(BuildReadValues(body, tt.setup, nil), hosts, nil); !slices.Equal(got, tt.want) {
+			t.Errorf("%s reads %v, want %v", tt.setup, got, tt.want)
+		}
+	}
+}

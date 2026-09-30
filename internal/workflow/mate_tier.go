@@ -39,6 +39,9 @@ type MateTierRuntime struct {
 	// or its hostname when it names none — the platform's own default.
 	Setup    string
 	Priority int
+	// Envs are its own service variables as the tier writes them — its
+	// envVariables and envSecrets — which a build lifts as ${RUNTIME_X}.
+	Envs map[string]string
 }
 
 // MateTierPair is a dev/stage pair built from one of the group's repositories.
@@ -264,7 +267,22 @@ func mateTierRuntime(svc recipeImportService) MateTierRuntime {
 	if setup == "" {
 		setup = svc.Hostname
 	}
-	return MateTierRuntime{Hostname: svc.Hostname, Type: svc.Type, Setup: setup, Priority: svc.Priority}
+	return MateTierRuntime{Hostname: svc.Hostname, Type: svc.Type, Setup: setup, Priority: svc.Priority, Envs: serviceEnvs(svc)}
+}
+
+// serviceEnvs is a service's own variables as the tier writes them, its
+// envVariables and envSecrets in one map; nil when it has none.
+func serviceEnvs(svc recipeImportService) map[string]string {
+	if len(svc.EnvVariables)+len(svc.EnvSecrets) == 0 {
+		return nil
+	}
+	envs := make(map[string]string, len(svc.EnvVariables)+len(svc.EnvSecrets))
+	for _, block := range []map[string]any{svc.EnvSecrets, svc.EnvVariables} {
+		for key, value := range block {
+			envs[key] = fmt.Sprint(value)
+		}
+	}
+	return envs
 }
 
 // giteaRepoPath is the org and name a repository URL on Gitea names — its
