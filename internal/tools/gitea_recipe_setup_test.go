@@ -110,9 +110,9 @@ func TestComposeGroupRecipeInputs_SetupName(t *testing.T) {
 			meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
 			mountRoot := mountWithZeropsYAML(t, "appdev", tt.yamlFile, tt.yamlBody)
 
-			inputs, err := composeGroupRecipeInputs(
-				context.Background(), recipeReconcileClient(), "p1", mountRoot,
-				[]*workflow.ServiceMeta{meta},
+			metas := []*workflow.ServiceMeta{meta}
+			inputs, _, err := composeGroupRecipeInputs(
+				context.Background(), recipeReconcileClient(), "p1", "acme", mountRoot, testGiteaURL, metas, metas,
 			)
 			if err != nil {
 				t.Fatalf("a pair that has never deployed must still compose: %v", err)
@@ -124,7 +124,7 @@ func TestComposeGroupRecipeInputs_SetupName(t *testing.T) {
 				t.Errorf("SetupName = %q, want %q", got, tt.wantSetup)
 			}
 
-			_, warnings, err := bundle.BuildGroupRecipe(inputs, nil)
+			_, warnings, err := bundle.BuildGroupRecipe(inputs)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("err = %v, want one containing %q", err, tt.wantErr)
@@ -178,14 +178,14 @@ func TestComposeGroupRecipeInputs_JoinerWithoutStageSetup_BuildsTheYAMLsOtherSet
 			meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
 			mountRoot := mountWithZeropsYAML(t, "appdev", "zerops.yaml", yamlBody)
 
-			inputs, err := composeGroupRecipeInputs(
-				context.Background(), recipeReconcileClient(), "p1", mountRoot,
-				[]*workflow.ServiceMeta{meta},
+			metas := []*workflow.ServiceMeta{meta}
+			inputs, _, err := composeGroupRecipeInputs(
+				context.Background(), recipeReconcileClient(), "p1", "acme", mountRoot, testGiteaURL, metas, metas,
 			)
 			if err != nil {
 				t.Fatalf("composeGroupRecipeInputs: %v", err)
 			}
-			layout, _, err := bundle.BuildGroupRecipe(inputs, nil)
+			layout, _, err := bundle.BuildGroupRecipe(inputs)
 			if err != nil {
 				t.Fatalf("BuildGroupRecipe: %v", err)
 			}
