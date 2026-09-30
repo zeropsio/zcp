@@ -423,7 +423,11 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 			}
 			warnings = append(warnings, entryWarnings...)
 			entry["priority"] = priorities[r.DevHostname]
-			ranked = append(ranked, rankedItem{priorities[r.DevHostname], yamlItem{fields: orderedFields(entry, serviceKeyOrder)}})
+			item := yamlItem{fields: orderedFields(entry, serviceKeyOrder)}
+			if _, built := entry["buildFromGit"]; !built {
+				item.comment = privateBuildComment(source)
+			}
+			ranked = append(ranked, rankedItem{priorities[r.DevHostname], item})
 		}
 	}
 	for _, u := range plan.utilities {
@@ -558,7 +562,7 @@ func groupUtilityEntry(u GroupUtility, priority int, source string, promote func
 	}
 	var comment string
 	if repo, private := publicRepoURL(u.BuildFromGit); private {
-		comment = fmt.Sprintf("Built from a private repository in %s; set its source by hand.", source)
+		comment = privateBuildComment(source)
 	} else {
 		entry["buildFromGit"] = repo
 		if u.SetupName != "" {
@@ -573,6 +577,11 @@ func groupUtilityEntry(u GroupUtility, priority int, source string, promote func
 		entry["envSecrets"] = secrets
 	}
 	return entry, comment
+}
+
+// privateBuildComment heads an entry whose build the tiers do not name.
+func privateBuildComment(source string) string {
+	return fmt.Sprintf("Built from a private repository in %s; set its source by hand.", source)
 }
 
 // publicRepoURL is a repository URL as a recipe carries it: canonical, with
@@ -642,10 +651,16 @@ func groupRuntimeEntry(
 	// No `mode`: a runtime is always HA on the platform, so a mode/variant on
 	// one is ignored — replica count is the minContainers axis below.
 	entry := map[string]any{
-		"hostname":     hostname,
-		"type":         r.ServiceType,
-		"buildFromGit": topology.CanonicalRepoURL(r.RepoURL),
-		"zeropsSetup":  setupName,
+		"hostname": hostname,
+		"type":     r.ServiceType,
+	}
+	// A pair's URL comes from a git-push setup that refuses a user, and is
+	// guarded the way a utility's is all the same: a user is a credential,
+	// and the tier then names no build — nor the setup, which the platform
+	// builds only from a repository.
+	if repo, private := publicRepoURL(r.RepoURL); !private {
+		entry["buildFromGit"] = repo
+		entry["zeropsSetup"] = setupName
 	}
 	if r.SubdomainEnabled {
 		entry["enableSubdomainAccess"] = true

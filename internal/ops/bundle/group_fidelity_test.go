@@ -305,6 +305,56 @@ func TestBuildGroupRecipe_UtilityBuildCarriesNoCredential(t *testing.T) {
 	}
 }
 
+// A runtime's build is guarded the way a utility's is, though the pairs'
+// URLs come from a git-push setup that refuses a user: a query and a
+// fragment are dropped, and a URL carrying a user names no build and no
+// setup on any tier — its source is set by hand, and no credential lands.
+func TestBuildGroupRecipe_RuntimeBuildCarriesNoCredential(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, live, wantBuild string
+		wantPrivate           bool
+	}{
+		{name: "the pair's repository", live: "https://git.example.com/acme/apidev.git", wantBuild: "https://git.example.com/acme/apidev"},
+		{name: "a query and a fragment are dropped", live: "https://git.example.com/acme/apidev.git?ref=main#readme", wantBuild: "https://git.example.com/acme/apidev"},
+		{name: "a token for the user", live: "https://oauth2:" + fakeGitHubToken + "@git.example.com/acme/apidev.git", wantPrivate: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			in := groupInputsFixture()
+			in.MateProjectName = "acme-juno"
+			in.Runtimes[0].RepoURL = tt.live
+			layout, _, err := BuildGroupRecipe(in)
+			if err != nil {
+				t.Fatalf("BuildGroupRecipe: %v", err)
+			}
+			for _, tier := range layout.Tiers {
+				for _, host := range []string{"apidev", "apistage", "api"} {
+					runtime := serviceNodeOrNil(t, tier.ImportYAML, host)
+					if runtime == nil {
+						continue
+					}
+					build, setup := mappingValue(runtime, "buildFromGit"), mappingValue(runtime, "zeropsSetup")
+					comment := strings.ToLower(runtime.HeadComment)
+					says := strings.Contains(comment, "private repository") && strings.Contains(comment, "acme-juno") && strings.Contains(comment, "by hand")
+					switch {
+					case tt.wantPrivate && (build != nil || setup != nil || !says):
+						t.Errorf("%s/%s: build %v, setup %v, comment %q; want neither, and a comment saying its source is set by hand", tier.Title, host, build, setup, runtime.HeadComment)
+					case !tt.wantPrivate && (build == nil || build.Value != tt.wantBuild || setup == nil || says):
+						t.Errorf("%s/%s: build %v, setup %v, comment %q; want %s and its setup", tier.Title, host, build, setup, runtime.HeadComment, tt.wantBuild)
+					}
+				}
+			}
+			for path, body := range groupFiles(t, layout) {
+				if strings.Contains(body, fakeGitHubToken) || strings.Contains(body, "?ref=") || strings.Contains(body, "#readme") {
+					t.Errorf("%s carries more of the build URL than its repository", path)
+				}
+			}
+		})
+	}
+}
+
 // A utility named like a group environment's runtime would give that tier
 // the hostname twice, which the import refuses: it stays on the Mate's tier
 // only, and the composer says why.
