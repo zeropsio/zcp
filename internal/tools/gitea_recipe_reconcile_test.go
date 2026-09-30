@@ -50,7 +50,7 @@ type fakeGroupGitea struct {
 
 type fakeGroupPull struct {
 	number           int
-	poster           string
+	poster, title    string
 	headRepo, branch string
 	open             bool
 }
@@ -86,9 +86,16 @@ func (f *fakeGroupGitea) withFork(forkMain map[string]string, branches map[strin
 	return f
 }
 
-// withOpenPull records an open pull request on the group repo.
+// withOpenPull records an open pull request on the group repo, under the
+// title zcp's recipe proposals carry.
 func (f *fakeGroupGitea) withOpenPull(number int, poster, headRepo, branch string) {
-	f.pulls[number] = &fakeGroupPull{number: number, poster: poster, headRepo: headRepo, branch: branch, open: true}
+	f.withOpenPullTitled(number, poster, headRepo, branch, giteaRecipeBranchTitle)
+}
+
+// withOpenPullTitled records an open pull request on the group repo under a
+// title of its opener's choosing.
+func (f *fakeGroupGitea) withOpenPullTitled(number int, poster, headRepo, branch, title string) {
+	f.pulls[number] = &fakeGroupPull{number: number, poster: poster, title: title, headRepo: headRepo, branch: branch, open: true}
 }
 
 // merge lands a pull request the way the broker does: its branch's files on
@@ -112,12 +119,12 @@ func (f *fakeGroupGitea) openPulls() []int {
 	return open
 }
 
-// proposal is the branch of the one open pull request the bot has.
+// proposal is the branch of the one recipe proposal the bot has open.
 func (f *fakeGroupGitea) proposal(t *testing.T) (string, map[string]string) {
 	t.Helper()
 	var found *fakeGroupPull
 	for _, pr := range f.pulls {
-		if pr.open && pr.poster == "mate-p1" {
+		if pr.open && pr.poster == "mate-p1" && pr.title == giteaRecipeBranchTitle {
 			if found != nil {
 				t.Fatalf("the bot has two open proposals: #%d and #%d", found.number, pr.number)
 			}
@@ -329,7 +336,7 @@ func (f *fakeGroupGitea) servePulls(r *http.Request, path string, write func(int
 		for _, number := range f.openPulls() {
 			pr := f.pulls[number]
 			open = append(open, map[string]any{
-				"number": pr.number, "state": "open",
+				"number": pr.number, "state": "open", "title": pr.title,
 				"user": map[string]any{"login": pr.poster},
 				"head": map[string]any{"ref": pr.branch, "repo": map[string]any{"full_name": pr.headRepo}},
 				"base": map[string]any{"ref": "main"},
@@ -338,14 +345,15 @@ func (f *fakeGroupGitea) servePulls(r *http.Request, path string, write func(int
 		write(http.StatusOK, open)
 	case r.Method == http.MethodPost && strings.HasSuffix(path, "/pulls"):
 		var body struct {
-			Head string `json:"head"`
+			Head  string `json:"head"`
+			Title string `json:"title"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		owner, branch, _ := strings.Cut(body.Head, ":")
 		f.pullPosts++
 		number := f.nextPull
 		f.nextPull++
-		f.pulls[number] = &fakeGroupPull{number: number, poster: "mate-p1", headRepo: owner + "/group", branch: branch, open: true}
+		f.pulls[number] = &fakeGroupPull{number: number, poster: "mate-p1", title: body.Title, headRepo: owner + "/group", branch: branch, open: true}
 		write(http.StatusCreated, map[string]any{"number": number})
 	default:
 		return false
@@ -649,6 +657,27 @@ func TestReconcileGiteaGroupRecipe_ProposesOnlyWhatMainLacks(t *testing.T) {
 			},
 			wantOnMain: true, wantOpen: []int{8},
 		},
+		{
+			// D31: a registered Mate writes the group repo, and a pull request
+			// its bot opened under a title of its own is the change its person
+			// asked for, not a recipe proposal of zcp's to withdraw.
+			name: "the Mate's own change to a tier on the group repo — left open",
+			setup: func(f *fakeGroupGitea) {
+				f.withMain(handWrittenTiers()).
+					withOpenPullTitled(8, "mate-p1", fakeGroupRepo, "add-a-mail-catcher", "Add a mail catcher to two tiers")
+			},
+			wantOnMain: true, wantOpen: []int{8},
+		},
+		{
+			name: "main lacks only Stage while the Mate's own change is open — both stay open",
+			setup: func(f *fakeGroupGitea) {
+				f.withMain(without(handWrittenTiers(), "3 — Stage")).
+					withOpenPullTitled(8, "mate-p1", fakeGroupRepo, "add-a-mail-catcher", "Add a mail catcher to two tiers")
+			},
+			wantProposed:  stageFiles,
+			wantForkPosts: 1, wantPullPosts: 1, wantOpen: []int{8, 11},
+			wantReport: []string{"#11", "3 — Stage"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -792,10 +821,16 @@ func TestHandleGroupRecipe_Table(t *testing.T) {
 			wantText:  []string{"already proposed", "pull request #11", "/acme/group/pulls/11"},
 		},
 		{
-			name:       "main already carries every tier — answers that, and proposes nothing",
+			// D31: a registered Mate writes the group repo, so a change to a
+			// tier main has is its pull request to open and, when the person
+			// asks, to merge — never "a person's pull request".
+			name:       "main already carries every tier — answers that, proposes nothing, and says how a tier changes",
 			main:       handWrittenTiers(),
 			wantFields: map[string]string{"groupRepo": "acme/group"},
-			wantText:   []string{"already carries every tier", `"onMain":true`},
+			wantText: []string{
+				"already carries every tier", `"onMain":true`,
+				"open a pull request against its main", "merge the pull request when the person asks",
+			},
 		},
 		{
 			name:     "the variables have not landed",

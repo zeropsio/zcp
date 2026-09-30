@@ -218,11 +218,12 @@ type giteaPullRequest struct {
 // headRepo is which repository head lives in. Empty, or equal to fullName,
 // means a same-repository request — the shape a service repository takes,
 // where the bot is a collaborator on its own repositories. Anything else is
-// CROSS-FORK: the group repo, which no Mate's bot may push to, so it commits
-// on its own fork and proposes from there. Gitea takes `{owner}:{branch}` on
-// the create and reports the branch alone, with the fork beside it, in the
-// open list — so the match is on both, never on the ref alone: two Mates fork
-// one group repo and their branches can share a name.
+// CROSS-FORK: the recipe proposal to the group repo, which zcp commits on the
+// bot's own fork and proposes from there even though a registered Mate writes
+// the group repo too (D31). Gitea takes `{owner}:{branch}` on the create and
+// reports the branch alone, with the fork beside it, in the open list — so the
+// match is on both, never on the ref alone: two Mates fork one group repo and
+// their branches can share a name.
 func EnsureGiteaPullRequest(ctx context.Context, httpClient HTTPDoer, giteaURL, token, fullName, headRepo, head, base, title string) (number int, created bool, err error) {
 	if httpClient == nil {
 		return 0, false, fmt.Errorf("no HTTP client configured")
