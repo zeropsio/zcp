@@ -49,8 +49,8 @@ type giteaRecipeOutcome struct {
 	OnMain bool
 	// Closed are this bot's earlier proposals the pass closed.
 	Closed []int
-	// Warnings are the composer's — an unclassified secret, an unverified
-	// setup, an unreadable scaling shape.
+	// Warnings are the reader's and the composer's — a runtime left out, a
+	// storage policy unread, an unverified setup, an unreadable scaling shape.
 	Warnings []string
 	// Blocked names why nothing happened, for the action to report. Empty on
 	// a pass that reached Gitea.

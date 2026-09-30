@@ -189,13 +189,14 @@ var groupTiers = []groupTierPolicy{
 // would commit noise on every pass and make the diff worthless.
 //
 // Nothing here is fatal that a reconcile could not act on. A missing setup
-// block, an unreadable scaling shape, an unclassified secret — each is a
-// warning against a tier that still composes, because this runs unattended
-// with nobody to ask. The one thing never guessed is what a stage-shaped
-// entry builds: a tier naming a runtime whose stage setup nothing names is
-// withheld (a warning), and a recipe with no tier left is an error the
-// reconcile reports and retries — a tier that lands on the group repo stays
-// there, so an absent one is proposed later and a wrong one never heals.
+// block, an unreadable scaling shape, a reference cycle, a managed type with
+// no HA variant — each is a warning against a tier that still composes,
+// because this runs unattended with nobody to ask. The one thing never
+// guessed is what a stage-shaped entry builds: a tier naming a runtime whose
+// stage setup nothing names is withheld (a warning), and a recipe with no
+// tier left is an error the reconcile reports and retries — a tier that
+// lands on the group repo stays there, so an absent one is proposed later
+// and a wrong one never heals.
 func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error) {
 	if strings.TrimSpace(inputs.Name) == "" {
 		return recipe.Layout{}, nil, fmt.Errorf("group recipe: Name required (the group's slug)")
