@@ -224,6 +224,7 @@ func deploySSH(
 	var repoState string
 	var cleanupTemp func()
 	gitRunner := git.SSHRunner{Executor: sshDeployer, Hostname: source.Name}
+	sourceWorkingDir := workingDir
 	if sha != "" {
 		var newWorkingDir string
 		var prepErr error
@@ -266,8 +267,9 @@ func deploySSH(
 	var cmd string
 	var versionName string
 	if sha != "" {
-		cmd = buildSSHCommandSHA(authInfo, target.ID, workingDir, setup, resolvedSHA)
-		versionName = resolvedSHA
+		headSHA, headBranch, _, _, _ := git.HeadStatus(ctx, gitRunner, sourceWorkingDir)
+		versionName = commitVersionName(resolvedSHA, headSHA, headBranch)
+		cmd = buildSSHCommandSHA(authInfo, target.ID, workingDir, setup, versionName)
 	} else {
 		// GF-10: a plain working-tree deploy also passes --version-name
 		// when the source has a reachable HEAD — its branch and short
@@ -493,34 +495,54 @@ func deployFromCommitPrep(
 	return resolvedSHA, warnings, tmpDir, cleanup, nil
 }
 
-// versionNameShort is how much of the sha a version name carries: what git
-// and the Mate app show.
-const versionNameShort = 7
-
-// versionNameFor is the --version-name a zcp-driven build passes (GF-10,
-// docs/spec-workflows.md §12.6), the name the platform keeps on the app
-// version and the Mate app and the broker read back: the branch HEAD is on
-// and the commit's short sha, exactly two tokens — "main 7e2d4c1" — with a
-// "-dirty" suffix on the sha when the working tree carries uncommitted
-// changes, which every reader takes for no commit. A HEAD on no branch (a
-// detached checkout; a branch name with a space, which git refuses anyway)
-// keeps the whole sha as one token, the one short form the Mate app reads as
-// a commit; a lone short sha would read as none there. "" when sha is empty
-// (no reachable HEAD), so the caller omits the flag. Never itself a claim
-// about what was deployed (GF-5).
+// versionNameFor is the --version-name a zcp-driven working-tree build
+// passes (GF-10, docs/spec-workflows.md §12.6), the name the platform keeps
+// on the app version and the Mate app and the broker read back: a label and
+// the commit's short sha, exactly two tokens — "main 7e2d4c1". The label is
+// the branch HEAD is on, or "HEAD" when it is on none (detached; a branch
+// name with whitespace, which git refuses anyway, counts as none) — git
+// refuses a branch named HEAD, so it never reads as one. A "-dirty" suffix on
+// the sha marks uncommitted changes, which every reader takes for no commit.
+// "" when sha is empty (no reachable HEAD), so the caller omits the flag.
+// Never itself a claim about what was deployed (GF-5).
 func versionNameFor(branch, sha string, dirty bool) string {
 	if sha == "" {
 		return ""
 	}
-	sha = strings.ToLower(sha)
-	name := sha
-	if branch != "" && !strings.ContainsAny(branch, " \t\n") {
-		name = branch + " " + sha[:min(versionNameShort, len(sha))]
+	if branch == "" || strings.ContainsAny(branch, " \t\n") {
+		branch = "HEAD"
 	}
+	name := branch + " " + shortSHA(sha)
 	if dirty {
 		name += "-dirty"
 	}
 	return name
+}
+
+// commitVersionName is a deploy-from-commit's --version-name: the checked-out
+// branch when sha is its tip, else "commit" — a label for people; every
+// reader takes the short sha for the commit whatever it says. Never dirty:
+// it ships exactly sha's tree. "" when sha is empty.
+func commitVersionName(sha, headSHA, headBranch string) string {
+	if sha == "" {
+		return ""
+	}
+	label := "commit"
+	if headBranch != "" && !strings.ContainsAny(headBranch, " \t\n") && strings.EqualFold(headSHA, sha) {
+		label = headBranch
+	}
+	return label + " " + shortSHA(sha)
+}
+
+// versionNameShort is how much of the sha a version name carries: what git
+// and the Mate app show.
+const versionNameShort = 7
+
+// shortSHA is sha as a version name spells it: lower case, its first
+// versionNameShort characters.
+func shortSHA(sha string) string {
+	sha = strings.ToLower(sha)
+	return sha[:min(versionNameShort, len(sha))]
 }
 
 func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup string, includeGit bool, versionName string) string {
@@ -577,14 +599,14 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 // commit: extractedDir already holds sha's tree (see ExtractCommitToTemp)
 // with no .git of its own, so — unlike buildSSHCommand — there is no
 // GitEnsureRepoHeadCommand step and no -g flag; --no-git is unconditional
-// and --version-name records the sha the platform can't otherwise see
-// (docs/spec-workflows.md §4.9, P1).
-func buildSSHCommandSHA(authInfo auth.Info, targetServiceID, extractedDir, setup, sha string) string {
+// and --version-name (commitVersionName) records the commit the platform
+// can't otherwise see (docs/spec-workflows.md §4.9, P1).
+func buildSSHCommandSHA(authInfo auth.Info, targetServiceID, extractedDir, setup, versionName string) string {
 	// Same key discipline as buildSSHCommand: the token rides this one
 	// command's environment, never `zcli login` (guide 0.9).
 	pushArgs := fmt.Sprintf(
 		"ZEROPS_TOKEN=%s zcli push --service-id %s --no-git --version-name %s",
-		shellQuote(authInfo.Token), targetServiceID, shellQuote(sha),
+		shellQuote(authInfo.Token), targetServiceID, shellQuote(versionName),
 	)
 	if setup != "" {
 		pushArgs += " --setup " + shellQuote(setup)

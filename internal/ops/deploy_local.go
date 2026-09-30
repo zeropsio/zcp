@@ -240,15 +240,17 @@ func DeployLocal(
 	}
 	args = append(args, "--no-git")
 	// --version-name (GF-10, docs/spec-workflows.md §12.6): an explicit
-	// deploy-from-commit passes resolvedSHA verbatim (never dirty — it
-	// ships exactly sha's tree, which no branch names); a plain
+	// deploy-from-commit names the checked-out branch when the commit is
+	// its tip, else "commit", and its short sha (commitVersionName, never
+	// dirty — it ships exactly sha's tree); a plain
 	// working-tree deploy passes its branch and short sha when the source
 	// has a reachable HEAD, with a "-dirty" suffix when the working tree
 	// carries uncommitted changes on top (versionNameFor). versionName is
 	// "" (flag omitted) only when there is no reachable HEAD at all.
-	versionName := resolvedSHA
-	if sha == "" {
-		versionName = versionNameFor(branch, resolvedSHA, dirty)
+	versionName := versionNameFor(branch, resolvedSHA, dirty)
+	if sha != "" {
+		headSHA, headBranch, _, _, _ := git.HeadStatus(ctx, git.LocalRunner{}, workingDir)
+		versionName = commitVersionName(resolvedSHA, headSHA, headBranch)
 	}
 	if versionName != "" {
 		args = append(args, "--version-name", versionName)

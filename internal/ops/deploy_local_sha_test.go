@@ -84,8 +84,9 @@ func TestDeployLocal_WithSHA_ResolvesExtractsAndPassesVersionName(t *testing.T) 
 	}
 
 	pushArgs := strings.Join(mr.runCalls[1].args, " ")
-	if !strings.Contains(pushArgs, "--version-name "+sha) {
-		t.Errorf("push args should contain --version-name %s, got: %s", sha, pushArgs)
+	// The commit is the checked-out branch's tip: named by the branch.
+	if !strings.Contains(pushArgs, "--version-name main "+sha[:7]) {
+		t.Errorf("push args should contain --version-name main %s, got: %s", sha[:7], pushArgs)
 	}
 	if !strings.Contains(pushArgs, "--no-git") {
 		t.Errorf("push args should still contain --no-git, got: %s", pushArgs)

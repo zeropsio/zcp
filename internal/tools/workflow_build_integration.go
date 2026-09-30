@@ -732,13 +732,14 @@ jobs:
           curl -sSL https://zerops.io/zcli/install.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Deploy to Zerops
+        shell: bash
         run: |
           zcli login "$ZEROPS_TOKEN"
           # -g ships .git in the artifact: this service is its own push
           # source, and a deploy without it would wipe /var/www/.git.
-          # --version-name records the built commit (GF-10) so
-          # SearchAppVersions.name is a platform-side breadcrumb.
-          zcli push --service-id "${{ secrets.ZEROPS_SERVICE_ID }}" --setup %s -g --version-name "$GITHUB_SHA"
+          # --version-name records the built commit (GF-10), "main 7e2d4c1":
+          # the pushed branch and the commit's short sha (bash's ${v::7}).
+          zcli push --service-id "${{ secrets.ZEROPS_SERVICE_ID }}" --setup %s -g --version-name "${GITHUB_REF_NAME} ${GITHUB_SHA::7}"
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
 `, trackedRef, quoteShellLiteral(setupName))
@@ -757,11 +758,12 @@ jobs:
           curl -sSL https://zerops.io/zcli/install.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Deploy to Zerops
+        shell: bash
         run: |
           zcli login "$ZEROPS_TOKEN"
-          # --version-name records the built commit (GF-10) so
-          # SearchAppVersions.name is a platform-side breadcrumb.
-          zcli push --service-id "${{ secrets.ZEROPS_SERVICE_ID }}" --setup %s --version-name "$GITHUB_SHA"
+          # --version-name records the built commit (GF-10), "main 7e2d4c1":
+          # the pushed branch and the commit's short sha (bash's ${v::7}).
+          zcli push --service-id "${{ secrets.ZEROPS_SERVICE_ID }}" --setup %s --version-name "${GITHUB_REF_NAME} ${GITHUB_SHA::7}"
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
 `, trackedRef, quoteShellLiteral(setupName))

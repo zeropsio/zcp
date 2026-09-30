@@ -644,12 +644,11 @@ func TestBuildSSHCommand_VersionNameFromHead(t *testing.T) {
 // (docs/spec-workflows.md §12.6) both deploy transports (SSH, local) call:
 // empty sha ⇒ empty (no reachable HEAD, omit the flag); non-empty +
 // !dirty ⇒ bare sha; non-empty + dirty ⇒ sha with a "-dirty" suffix.
-// TestVersionName is the name a zcp push gives its app version (GF-10): the
-// branch and the commit's short sha, two tokens, as the Mate app and the
-// broker read it; "-dirty" on the sha for a working tree with uncommitted
-// changes, which both read as no commit. A HEAD on no branch keeps the whole
-// sha, which both read as the commit, where a lone short sha would read as
-// none in the app.
+// TestVersionName is the name a zcp push of a working tree gives its app
+// version (GF-10): a label and the commit's short sha, two tokens, as the Mate
+// app and the broker read it — the branch HEAD is on, or HEAD when it is on
+// none — with "-dirty" on the sha for uncommitted changes, which both read as
+// no commit.
 func TestVersionName(t *testing.T) {
 	t.Parallel()
 	const sha = "7E2D4C1a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e"
@@ -663,9 +662,9 @@ func TestVersionName(t *testing.T) {
 		{"a clean push on a branch", "main", sha, false, "main 7e2d4c1"},
 		{"a working tree with uncommitted changes", "main", sha, true, "main 7e2d4c1-dirty"},
 		{"a Mate's branch", "mate/mate-p1", sha, false, "mate/mate-p1 7e2d4c1"},
-		{"HEAD on no branch keeps the whole sha", "", sha, false, "7e2d4c1a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e"},
-		{"HEAD on no branch, dirty", "", sha, true, "7e2d4c1a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e-dirty"},
-		{"a branch that would make a third token is no branch", "a b", sha, false, "7e2d4c1a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e"},
+		{"HEAD on no branch", "", sha, false, "HEAD 7e2d4c1"},
+		{"HEAD on no branch, dirty", "", sha, true, "HEAD 7e2d4c1-dirty"},
+		{"a branch that would make a third token is no branch", "a b", sha, false, "HEAD 7e2d4c1"},
 		{"no reachable HEAD names nothing", "main", "", false, ""},
 		{"no reachable HEAD, dirty flag ignored", "main", "", true, ""},
 	} {
@@ -675,6 +674,36 @@ func TestVersionName(t *testing.T) {
 				t.Errorf("versionNameFor(%q, %q, %v) = %q, want %q", tt.branch, tt.sha, tt.dirty, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestCommitVersionName is a deploy-from-commit's name: the checked-out
+// branch when the commit is its tip, else "commit" — a label for people only;
+// the short sha is the commit either way. Never dirty: it ships exactly the
+// commit's tree.
+func TestCommitVersionName(t *testing.T) {
+	t.Parallel()
+	const sha = "7e2d4c1a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e"
+	const other = "0123456789abcdef0123456789abcdef01234567"
+	for _, tt := range []struct {
+		name                string
+		headSHA, headBranch string
+		want                string
+	}{
+		{"the tip of the checked-out branch", sha, "main", "main 7e2d4c1"},
+		{"an older commit", other, "main", "commit 7e2d4c1"},
+		{"HEAD detached at the commit", sha, "", "commit 7e2d4c1"},
+		{"no HEAD read", "", "", "commit 7e2d4c1"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := commitVersionName(sha, tt.headSHA, tt.headBranch); got != tt.want {
+				t.Errorf("commitVersionName = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	if got := commitVersionName("", sha, "main"); got != "" {
+		t.Errorf("no commit names nothing, got %q", got)
 	}
 }
 
