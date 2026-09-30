@@ -270,6 +270,12 @@ func (d standupDeps) deployAll(ctx context.Context, pairs []*standupPair, live m
 			if h.pair.failed != "" {
 				return
 			}
+			// A half that already runs code — deployed by an earlier call or
+			// by hand — is left as it is, whatever it waits for.
+			if svc := live[host]; svc != nil && svc.HasDeployedCode() {
+				h.record(&standupDeploy{Status: standupAlreadyDeployed, URL: ops.ResolveSubdomainURL(ctx, d.batch.client, d.batch.projectID, svc)})
+				return
+			}
 			if held := h.held(halves, after[host]); held != nil {
 				h.record(held)
 				return

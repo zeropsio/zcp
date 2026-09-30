@@ -782,9 +782,13 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 
 // devsDeployed has the platform report code in both dev halves, as it does
 // after the stand-up's first call.
-func (f *standupFixture) devsDeployed() {
+func (f *standupFixture) devsDeployed() { f.deployed("medusadev", "nextstoredev") }
+
+// deployed has the platform report code in the named services.
+func (f *standupFixture) deployed(hosts ...string) {
 	for i := range f.services {
-		if strings.HasSuffix(f.services[i].Name, "dev") {
+		if slices.Contains(hosts, f.services[i].Name) {
+			f.services[i].Status = statusActive
 			f.services[i].ActiveAppVersion = &platform.ActiveAppVersionDigest{ID: "av-" + f.services[i].Name, Source: "CLI", Built: true}
 		}
 	}
@@ -982,6 +986,31 @@ func TestStandup_ReturnsOnceDevelopmentIsUp(t *testing.T) {
 			wantPushes:  []string{medusadev},
 			wantStatus:  map[string]string{"medusadev": standupDeployFailed, "nextstoredev": standupNotDeployed},
 			wantSaid:    map[string]string{"nextstoredev": "waits for medusadev, which did not stand up"},
+			wantNext:    []string{"zerops_standup"},
+		},
+		{
+			name:        "a stage deployed by hand runs its code: already deployed, never queued",
+			setup:       func(f *standupFixture) { f.deployed("nextstorestage") },
+			wantStandUp: standupDevelopment,
+			wantPushes:  []string{medusadev, nextstoredev},
+			wantStatus: map[string]string{
+				"medusastage": standupQueued, "nextstorestage": standupAlreadyDeployed,
+			},
+		},
+		{
+			name: "a dev half that runs its code is already deployed, whatever it waits for",
+			setup: func(f *standupFixture) {
+				body := strings.Replace(standupZeropsYAML("nextstore"), "buildCommands: [npm ci]",
+					"buildCommands: [npm ci]\n      envVariables:\n        API: ${medusadev_zeropsSubdomain}", 1)
+				if err := os.WriteFile(filepath.Join(f.root, "nextstoredev", "zerops.yaml"), []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				f.deployed("nextstoredev")
+				f.failBuild("svc-medusadev")
+			},
+			wantStandUp: standupPartial,
+			wantPushes:  []string{medusadev},
+			wantStatus:  map[string]string{"medusadev": standupDeployFailed, "nextstoredev": standupAlreadyDeployed},
 			wantNext:    []string{"zerops_standup"},
 		},
 		{
