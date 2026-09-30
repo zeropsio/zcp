@@ -2,12 +2,9 @@ package bundle
 
 import (
 	"fmt"
-	"maps"
 	"slices"
 	"sort"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/zeropsio/zcp/internal/recipe"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -333,8 +330,7 @@ func composeGroupTierYAML(
 ) (string, []string, error) {
 	projectEnvs, warnings := composeProjectEnvVariables(inputs.ProjectEnvs, classifications)
 
-	services := make([]any, 0, 2*len(runtimes)+len(managed))
-	allSecrets := map[string]string{}
+	services := make([]yamlItem, 0, 2*len(runtimes)+len(managed))
 	for _, r := range runtimes {
 		halves := []struct{ hostname, setup string }{}
 		if policy.pairs {
@@ -354,26 +350,40 @@ func composeGroupTierYAML(
 		for _, half := range halves {
 			entry, entryWarnings := groupRuntimeEntry(r, half.hostname, half.setup, policy, classifications)
 			warnings = append(warnings, entryWarnings...)
-			if secrets, ok := entry["envSecrets"].(map[string]string); ok {
-				maps.Copy(allSecrets, secrets)
-			}
-			services = append(services, entry)
+			services = append(services, yamlItem{fields: orderedFields(entry, serviceKeyOrder)})
 		}
 	}
 	for _, m := range managed {
-		services = append(services, managedEntryWithRules(m, policy.promoteHA, false /*keepNonHA*/))
+		entry := managedEntryWithRules(m, policy.promoteHA, false /*keepNonHA*/)
+		services = append(services, yamlItem{fields: orderedFields(entry, serviceKeyOrder)})
 	}
 
-	project := map[string]any{"name": groupTierProjectName(inputs, policy)}
+	project := []yamlField{{key: "name", value: groupTierProjectName(inputs, policy)}}
 	if len(projectEnvs) > 0 {
-		project["envVariables"] = projectEnvs
+		project = append(project, yamlField{key: "envVariables", value: fieldValue("envVariables", projectEnvs)})
 	}
 
-	out, err := yaml.Marshal(map[string]any{"project": project, "services": services})
+	body, err := tierDocument{
+		header:   groupTierHeader(inputs, policy),
+		project:  project,
+		services: services,
+	}.render()
 	if err != nil {
-		return "", nil, fmt.Errorf("marshal: %w", err)
+		return "", nil, err
 	}
-	return addPreprocessorHeader(string(out), projectEnvs, allSecrets), warnings, nil
+	return body, warnings, nil
+}
+
+// groupTierHeader is what a tier says about itself above its project: what
+// the tier is, that zcp wrote it and from which Mate, and that it is the
+// group's to change — zcp proposes only the tiers the group repo's main
+// lacks (D30), so a person's edit is never written over.
+func groupTierHeader(inputs GroupRecipeInputs, policy groupTierPolicy) []string {
+	return []string{
+		"The " + policy.title + " tier. " + policy.summary,
+		fmt.Sprintf("zcp wrote this file from the Mate %q. It is the group's now: a person may edit it, and zcp never proposes over a tier the group repo already carries.",
+			firstNonBlank(inputs.MateProjectName, inputs.Name)),
+	}
 }
 
 // groupRuntimeEntry composes one runtime's services[] entry under a policy.
