@@ -1,13 +1,12 @@
 diff --git a/internal/workflow/bootstrap_outputs.go b/internal/workflow/bootstrap_outputs.go
-index a7538a21..8ae1009f 100644
+index 8438a6de..6b27e578 100644
 --- a/internal/workflow/bootstrap_outputs.go
 +++ b/internal/workflow/bootstrap_outputs.go
-@@ -75,7 +75,7 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
- 		meta := &ServiceMeta{
- 			Hostname:         metaHostname,
- 			Mode:             mode,
--			StageHostname:    stageHostname,
-+			StageHostname:    metaHostname,
- 			ServesHTTP:       target.Runtime.ServesHTTP,
- 			CloseDeployMode:  topology.CloseModeUnset,
- 			GitPushState:     topology.GitPushUnconfigured,
+@@ -66,6 +66,7 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
+ 		}
+ 
+ 		meta := targetMeta(target, metaHostname, mode, stageHostname, state.SessionID, now)
++		meta.StageHostname = metaHostname
+ 
+ 		// Gate R — recipe-bootstrap setup names come from the recipe shape's
+ 		// LITERAL zeropsSetup (carried on the target by DeriveRecipePlan): a
