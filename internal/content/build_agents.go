@@ -67,10 +67,15 @@ func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 		// what its token answers for. The git-host block is a real env fact
 		// with no platform equivalent, so it stays gated: a container without
 		// GITEA_URL is never told about variables it does not have.
+		//
+		// The stand-up block is a Mate's: only there is zerops_standup a tool
+		// (docs/spec-mate.md D32), so it is gated on the same flag that
+		// registers it.
 		for _, block := range []struct {
 			include bool
 			name    string
 		}{
+			{rt.MateEnabled, "agents_standup.md"},
 			{true, "agents_group.md"},
 			{rt.GitHostKnown, "agents_git_host.md"},
 		} {

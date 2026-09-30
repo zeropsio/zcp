@@ -3,6 +3,7 @@ package tools_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -591,5 +592,62 @@ func TestAnnotations_DeleteToolRequiresExplicitApproval(t *testing.T) {
 	// Delete tool description must require explicit user approval.
 	if !strings.Contains(deleteTool.Description, "explicit user approval") {
 		t.Errorf("zerops_delete description should contain 'explicit user approval', got: %s", deleteTool.Description)
+	}
+}
+
+// TestAnnotations_StandupTool locks the metadata of the Mate-gated
+// zerops_standup, which the general table (runtime.Info{}) never sees: its
+// title and hints, the description cap every tool keeps, the phrase that
+// routes the first turn to it, and an input with nothing to fill in.
+func TestAnnotations_StandupTool(t *testing.T) {
+	t.Chdir(t.TempDir())
+	mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "test"}).WithServices(nil)
+	store, err := knowledge.GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("knowledge store: %v", err)
+	}
+	srv := server.New(context.Background(), mock, &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"},
+		store, platform.NewMockLogFetcher(), &nopSSH{}, &nopMounter{},
+		runtime.Info{InContainer: true, ServiceID: "s1", MateEnabled: true}, nil)
+	ctx := context.Background()
+	st, ct := mcp.NewInMemoryTransports()
+	if _, err := srv.MCPServer().Connect(ctx, st, nil); err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0.1"}, nil).Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	t.Cleanup(func() { session.Close() })
+	result, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	var tool *mcp.Tool
+	for _, tl := range result.Tools {
+		if tl.Name == "zerops_standup" {
+			tool = tl
+		}
+	}
+	if tool == nil {
+		t.Fatal("zerops_standup should be registered in a Mate's container")
+	}
+	ann := tool.Annotations
+	if ann == nil || ann.Title != "Stand up development from the recipe" || ann.ReadOnlyHint || !ann.IdempotentHint ||
+		ann.DestructiveHint == nil || !*ann.DestructiveHint {
+		t.Errorf("annotations = %+v, want the title, idempotent, destructive (it deploys)", ann)
+	}
+	if words := len(strings.Fields(tool.Description)); words > 60 {
+		t.Errorf("description has %d words (max 60):\n%s", words, tool.Description)
+	}
+	if !strings.Contains(tool.Description, "Stand up development of the project.") {
+		t.Error("the description names the message that routes the first turn to the tool")
+	}
+	schema, err := json.Marshal(tool.InputSchema)
+	if err != nil {
+		t.Fatalf("marshal schema: %v", err)
+	}
+	if len(schema) > 120 {
+		t.Errorf("input schema is %d bytes, want an empty object: %s", len(schema), schema)
 	}
 }

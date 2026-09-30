@@ -282,6 +282,12 @@ func (s *Server) registerTools() {
 			units = platform.NewSystemUnits()
 		}
 		tools.RegisterDevServer(s.server, s.client, httpClient, projectID, s.sshDeployer, stateDir, units)
+		// A Mate stands up from its group's recipe in one call (docs/spec-mate.md
+		// D32). Mate-gated like every mate-shaped effect (§2.0): a container
+		// without ZCP_MATE_ENABLED keeps the tool surface it had.
+		if s.rtInfo.InContainer && s.rtInfo.MateEnabled {
+			tools.RegisterStandup(s.server, s.client, httpClient, projectID, s.sshDeployer, s.mounter, s.authInfo, s.logFetcher, s.rtInfo, stateDir)
+		}
 	} else {
 		tools.RegisterDeployLocal(s.server, s.client, httpClient, projectID, s.authInfo, s.logFetcher, stateDir, wfEngine, recipeProbe)
 	}

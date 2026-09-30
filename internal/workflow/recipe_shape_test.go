@@ -855,3 +855,99 @@ func TestReconcileRecipeOverrides_DevOnly(t *testing.T) {
 
 // (TestValidateBootstrapRecipeMode deleted in R3-P4.2 with the function it
 // pinned — the recipe plan is derived, so its mode cannot deviate.)
+
+// TestParseRecipeImportShape_RolesFollowTheHostnameConvention pins the read
+// of a runtime's role. A recipe a group writes names its setups after the
+// pair — `medusadev` / `medusaprod` — and the old read took the role from the
+// setup's literal name, so both halves read as stage and the pair never
+// formed. zcp's convention decides instead: a hostname ending in `stage` is
+// the stage half, a `worker` setup a worker, a `dev` setup or a hostname
+// ending in `dev` the dev half, and anything else serves as the old fold did.
+func TestParseRecipeImportShape_RolesFollowTheHostnameConvention(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		hostname, setup string
+		want            RecipeRuntimeRoleKind
+	}{
+		{"medusadev", "medusadev", RecipeRuntimeRoleDev},
+		{"medusastage", "medusaprod", RecipeRuntimeRoleStage},
+		{"appdev", "dev", RecipeRuntimeRoleDev},
+		{"appstage", "prod", RecipeRuntimeRoleStage},
+		{"workerstage", "worker", RecipeRuntimeRoleWorker},
+		{"app", "dev", RecipeRuntimeRoleDev},
+		{"app", "prod", RecipeRuntimeRoleStage},
+		{"app", "staging", RecipeRuntimeRoleStage},
+		{"stage", "prod", RecipeRuntimeRoleStage},
+	}
+	for _, tt := range tests {
+		t.Run(tt.hostname+"/"+tt.setup, func(t *testing.T) {
+			t.Parallel()
+			shape, err := ParseRecipeImportShape("services:\n  - hostname: " + tt.hostname + "\n    type: nodejs@22\n    zeropsSetup: " + tt.setup + "\n")
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if got := shape.Runtimes[0].RoleKind; got != tt.want {
+				t.Errorf("role = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestDeriveRecipePlan_PairsSetupsNamedAfterThePair: the same misread made a
+// group's pair two stage-only runtimes; read by the convention it is one
+// standard pair carrying both literal setups, and its shape is standard.
+func TestDeriveRecipePlan_PairsSetupsNamedAfterThePair(t *testing.T) {
+	t.Parallel()
+	shape, err := ParseRecipeImportShape(`services:
+  - hostname: medusadev
+    type: nodejs@22
+    zeropsSetup: medusadev
+    buildFromGit: https://gitea.acme.example/beviro/medusadev
+  - hostname: medusastage
+    type: nodejs@22
+    zeropsSetup: medusaprod
+    buildFromGit: https://gitea.acme.example/beviro/medusadev
+`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if shape.Mode() != topology.PlanModeStandard {
+		t.Errorf("Mode() = %q, want standard", shape.Mode())
+	}
+	targets, err := DeriveRecipePlan(shape, RecipeShapeOverrides{})
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("targets = %+v, want one standard pair", targets)
+	}
+	rt := targets[0].Runtime
+	if rt.DevHostname != "medusadev" || rt.ExplicitStage != "medusastage" || rt.BootstrapMode != topology.PlanModeStandard ||
+		rt.PrimarySetupName != "medusadev" || rt.StageSetupName != "medusaprod" {
+		t.Errorf("pair = %+v, want medusadev→medusastage, standard, setups medusadev/medusaprod", rt)
+	}
+}
+
+// TestParseRecipeImportShape_ABlockFormBuildAndAPriority: `buildFromGit`
+// written as a block (`url:`, `ref:`) is a build like the scalar one — the
+// old read failed the whole document on it — and a runtime's `priority` is
+// carried.
+func TestParseRecipeImportShape_ABlockFormBuildAndAPriority(t *testing.T) {
+	t.Parallel()
+	shape, err := ParseRecipeImportShape(`services:
+  - hostname: apidev
+    type: nodejs@22
+    zeropsSetup: dev
+    priority: 5
+    buildFromGit:
+      url: https://gitea.acme.example/beviro/api
+      ref: main
+`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	rt := shape.Runtimes[0]
+	if rt.BuildFromGit != "https://gitea.acme.example/beviro/api" || rt.Priority != 5 {
+		t.Errorf("runtime = %+v, want the block's url and priority 5", rt)
+	}
+}

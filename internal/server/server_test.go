@@ -656,3 +656,64 @@ func TestObserve_PassesThrough(t *testing.T) {
 		t.Errorf("middleware should pass through handler error, got %v", err)
 	}
 }
+
+// nopStandupSSH satisfies ops.SSHDeployer for the stand-up gating test; no
+// handler runs.
+type nopStandupSSH struct{}
+
+func (nopStandupSSH) ExecSSH(context.Context, string, string) ([]byte, error) { return nil, nil }
+func (nopStandupSSH) ExecSSHBackground(context.Context, string, string, time.Duration) ([]byte, error) {
+	return nil, nil
+}
+
+// TestServer_StandupToolGating: zerops_standup is a Mate's — registered only
+// in a container with ZCP_MATE_ENABLED and an SSH deployer, so a container
+// without the flag keeps exactly the tool surface it had (docs/spec-mate.md
+// §2.0).
+func TestServer_StandupToolGating(t *testing.T) {
+	// Non-parallel: t.Chdir rebases the state dir server.New derives.
+	t.Chdir(t.TempDir())
+	tests := []struct {
+		name string
+		rt   runtime.Info
+		ssh  ops.SSHDeployer
+		want bool
+	}{
+		{name: "a Mate's container", rt: runtime.Info{InContainer: true, ServiceID: "s1", MateEnabled: true}, ssh: nopStandupSSH{}, want: true},
+		{name: "a container without the flag", rt: runtime.Info{InContainer: true, ServiceID: "s1"}, ssh: nopStandupSSH{}},
+		{name: "no SSH deployer", rt: runtime.Info{InContainer: true, ServiceID: "s1", MateEnabled: true}},
+		{name: "local, flag set", rt: runtime.Info{MateEnabled: true}, ssh: nopStandupSSH{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "test"}).WithServices(nil)
+			store, err := knowledge.GetEmbeddedStore()
+			if err != nil {
+				t.Fatalf("knowledge store: %v", err)
+			}
+			srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"},
+				store, platform.NewMockLogFetcher(), tt.ssh, nil, tt.rt, nil)
+			ctx := context.Background()
+			st, ct := mcp.NewInMemoryTransports()
+			if _, err := srv.MCPServer().Connect(ctx, st, nil); err != nil {
+				t.Fatalf("server connect: %v", err)
+			}
+			session, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0.1"}, nil).Connect(ctx, ct, nil)
+			if err != nil {
+				t.Fatalf("client connect: %v", err)
+			}
+			defer session.Close()
+			result, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+			if err != nil {
+				t.Fatalf("list tools: %v", err)
+			}
+			found := false
+			for _, tool := range result.Tools {
+				found = found || tool.Name == "zerops_standup"
+			}
+			if found != tt.want {
+				t.Errorf("zerops_standup registered = %v, want %v", found, tt.want)
+			}
+		})
+	}
+}

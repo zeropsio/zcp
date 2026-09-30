@@ -232,3 +232,24 @@ func TestRewriteRecipeImportYAMLFromShape_PublicAccessNone(t *testing.T) {
 		t.Errorf("without a none override the enableSubdomainAccess line must survive:\n%s", unchanged)
 	}
 }
+
+// TestRewriteRecipeImportYAMLFromShape_DevOnlyReadsTheConvention: dev-only
+// narrowing keeps the dev half of a pair whose setups are named after it and
+// drops its stage — the rewrite reads roles the way the plan does.
+func TestRewriteRecipeImportYAMLFromShape_DevOnlyReadsTheConvention(t *testing.T) {
+	t.Parallel()
+	out, err := RewriteRecipeImportYAMLFromShape(`services:
+  - hostname: medusadev
+    type: nodejs@22
+    zeropsSetup: medusadev
+  - hostname: medusastage
+    type: nodejs@22
+    zeropsSetup: medusaprod
+`, RecipeShapeOverrides{DevOnly: true})
+	if err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	if !strings.Contains(out, "hostname: medusadev") || strings.Contains(out, "hostname: medusastage") {
+		t.Errorf("dev-only must keep medusadev and drop medusastage:\n%s", out)
+	}
+}

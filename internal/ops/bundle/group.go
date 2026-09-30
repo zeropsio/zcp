@@ -2,12 +2,10 @@ package bundle
 
 import (
 	"fmt"
-	"maps"
+	"net/url"
 	"slices"
 	"sort"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/zeropsio/zcp/internal/recipe"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -41,11 +39,10 @@ import (
 // a person shows a client (guide 5.2/D16), so it keeps the single-node,
 // SHARED, one-container form and production takes the floor of two.
 //
-// Secrets are export's classification, unchanged: infrastructure and excluded
-// entries are dropped, auto-secrets become a generator directive the target
-// project expands, and anything else — INCLUDING an unclassified user-set
-// service env — becomes REPLACE_ME. No value a Mate holds reaches the group
-// repo verbatim by default.
+// The project's variables and each runtime's own go into every tier, and a
+// secret's value into none: the composer runs unattended, so it decides each
+// variable itself (recipeSecret, group_env.go) — config as written, a secret
+// as a generator every environment the tier creates expands for itself.
 
 // GroupRuntime is one runtime of the group's app as the Mate's project holds
 // it: a dev/stage pair built from one service repository.
@@ -71,9 +68,13 @@ type GroupRuntime struct {
 	// ZeropsYAMLBody is the pair's zerops.yaml: it verifies the named setups
 	// and names the stage half's when no deploy recorded it.
 	ZeropsYAMLBody string
-	// ServiceEnvs is the runtime's user-set per-service env layer, emitted as
-	// `envSecrets` through the same classification as export.
+	// ServiceEnvs is the dev half's user-set service variables, written as
+	// its `envSecrets` — config as written, secrets generated (recipeSecret).
 	ServiceEnvs []ProjectEnvVar
+	// StageServiceEnvs is the stage half's. The AI Agent tier's stage half
+	// carries them, and so does every group environment, which runs what the
+	// stage half runs; a pair with no stage half gives its dev half's.
+	StageServiceEnvs []ProjectEnvVar
 	// Scaling is the live autoscaling shape. The AI Agent tier reproduces it
 	// verbatim; the two transformed tiers reflect it and then apply their
 	// policy floors.
@@ -97,7 +98,41 @@ type GroupRecipeInputs struct {
 	MateProjectName string
 	Runtimes        []GroupRuntime
 	ManagedServices []ManagedServiceEntry
-	ProjectEnvs     []ProjectEnvVar
+	// ProjectEnvs is the project's user-set variables, the platform's own and
+	// the control plane's already left out: every tier carries them, config
+	// under envVariables and secrets under envSecrets (recipeSecret).
+	ProjectEnvs []ProjectEnvVar
+	// CorePackage is the project's live core package. Every tier's project
+	// carries a LIGHT or a SERIOUS; anything else is left to the platform's
+	// default.
+	CorePackage string
+	// Utilities are the runtimes the project builds from a public repository
+	// and no Gitea pair — a mailpit, an adminer.
+	Utilities []GroupUtility
+	// HAIncapable names the managed services whose type the platform ships no
+	// `:ha` variant of: the tier that promotes the rest keeps them single-node.
+	HAIncapable []string
+}
+
+// GroupUtility is a runtime the project builds from a public repository and
+// no Gitea pair: a utility such as mailpit, which no Mate develops. Every tier
+// writes it as the project runs it — its own hostname, its public build, its
+// own scale — with no tier's transform: there is no pair to promote and no
+// service repository to name.
+type GroupUtility struct {
+	Hostname    string
+	ServiceType string
+	// BuildFromGit is the public repository its active version was built
+	// from. The tiers carry its repository alone; a URL that carries a user
+	// names a private one, and the tiers name no build for it.
+	BuildFromGit string
+	// SetupName is the setup its build named; empty lets the platform build
+	// the setup named after the hostname, as an import that named none did.
+	SetupName        string
+	SubdomainEnabled bool
+	Scaling          *Scaling
+	// ServiceEnvs is its user-set service variables (recipeSecret).
+	ServiceEnvs []ProjectEnvVar
 }
 
 // groupTierPolicy is one tier's decision set. A tier is a decision, never an
@@ -157,27 +192,21 @@ var groupTiers = []groupTierPolicy{
 // would commit noise on every pass and make the diff worthless.
 //
 // Nothing here is fatal that a reconcile could not act on. A missing setup
-// block, an unreadable scaling shape, an unclassified secret — each is a
-// warning against a tier that still composes, because this runs unattended
-// with nobody to ask. The one thing never guessed is what a stage-shaped
-// entry builds: a tier naming a runtime whose stage setup nothing names is
-// withheld (a warning), and a recipe with no tier left is an error the
-// reconcile reports and retries — a tier that lands on the group repo stays
-// there, so an absent one is proposed later and a wrong one never heals.
-func BuildGroupRecipe(
-	inputs GroupRecipeInputs,
-	classifications map[string]topology.SecretClassification,
-) (recipe.Layout, []string, error) {
+// block, an unreadable scaling shape, a reference cycle, a managed type with
+// no HA variant — each is a warning against a tier that still composes,
+// because this runs unattended with nobody to ask. The one thing never
+// guessed is what a stage-shaped entry builds: a tier naming a runtime whose
+// stage setup nothing names is withheld (a warning), and a recipe with no
+// tier left is an error the reconcile reports and retries — a tier that
+// lands on the group repo stays there, so an absent one is proposed later
+// and a wrong one never heals.
+func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error) {
 	if strings.TrimSpace(inputs.Name) == "" {
 		return recipe.Layout{}, nil, fmt.Errorf("group recipe: Name required (the group's slug)")
 	}
 	if len(inputs.Runtimes) == 0 {
 		return recipe.Layout{}, nil, fmt.Errorf("group recipe %q: at least one runtime required", inputs.Name)
 	}
-	if classifications == nil {
-		classifications = map[string]topology.SecretClassification{}
-	}
-
 	runtimes := append([]GroupRuntime(nil), inputs.Runtimes...)
 	sort.SliceStable(runtimes, func(i, j int) bool { return runtimes[i].DevHostname < runtimes[j].DevHostname })
 	for i, r := range runtimes {
@@ -195,6 +224,7 @@ func BuildGroupRecipe(
 
 	managed := dedupeManagedByHostname(inputs.ManagedServices)
 	sort.SliceStable(managed, func(i, j int) bool { return managed[i].Hostname < managed[j].Hostname })
+	utilities, mateOnly, utilityWarnings := groupUtilities(inputs.Utilities, runtimes)
 
 	stageSetups := make(map[string]string, len(runtimes))
 	unresolved := map[string]string{}
@@ -207,8 +237,20 @@ func BuildGroupRecipe(
 		stageSetups[r.DevHostname] = setup
 	}
 
-	var warnings []string
+	warnings := append([]string(nil), utilityWarnings...)
+	warnings = append(warnings, groupStoragePolicyWarnings(managed)...)
 	warnings = append(warnings, groupSetupWarnings(runtimes, stageSetups)...)
+	priorities, priorityWarnings := groupPriorities(groupApps(runtimes, utilities), inputs.ProjectEnvs)
+	warnings = append(warnings, priorityWarnings...)
+	haIncapable := make(map[string]bool, len(inputs.HAIncapable))
+	for _, host := range inputs.HAIncapable {
+		haIncapable[host] = true
+	}
+	plan := groupPlan{
+		inputs: inputs, runtimes: runtimes, utilities: utilities, mateOnly: mateOnly,
+		managed: managed, haIncapable: haIncapable, stageSetups: stageSetups, priorities: priorities,
+		promoter: newPairPromoter(pairRenames(runtimes)),
+	}
 
 	layout := recipe.Layout{
 		Name:  inputs.Name,
@@ -223,7 +265,7 @@ func BuildGroupRecipe(
 			}
 			continue
 		}
-		body, tierWarnings, err := composeGroupTierYAML(inputs, runtimes, managed, policy, stageSetups, classifications)
+		body, tierWarnings, err := composeGroupTierYAML(plan, policy)
 		if err != nil {
 			return recipe.Layout{}, nil, fmt.Errorf("group recipe %q: tier %q: %w", inputs.Name, policy.title, err)
 		}
@@ -322,58 +364,281 @@ func joinTitles(titles []string) string {
 	}
 }
 
-// composeGroupTierYAML renders one tier's whole-project import.yaml.
-func composeGroupTierYAML(
-	inputs GroupRecipeInputs,
-	runtimes []GroupRuntime,
-	managed []ManagedServiceEntry,
-	policy groupTierPolicy,
-	stageSetups map[string]string,
-	classifications map[string]topology.SecretClassification,
-) (string, []string, error) {
-	projectEnvs, warnings := composeProjectEnvVariables(inputs.ProjectEnvs, classifications)
+// groupPlan is what every tier is composed from, decided once.
+type groupPlan struct {
+	inputs    GroupRecipeInputs
+	runtimes  []GroupRuntime
+	utilities []GroupUtility
+	// mateOnly names the utilities a group environment cannot carry: its
+	// runtime takes their hostname.
+	mateOnly    map[string]bool
+	managed     []ManagedServiceEntry
+	haIncapable map[string]bool
+	stageSetups map[string]string
+	priorities  map[string]int
+	// promoter names a group environment's own runtimes in a value.
+	promoter *pairPromoter
+}
 
-	services := make([]any, 0, 2*len(runtimes)+len(managed))
-	allSecrets := map[string]string{}
+// composeGroupTierYAML renders one tier's whole-project import.yaml.
+func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []string, error) {
+	inputs, runtimes, stageSetups, priorities := plan.inputs, plan.runtimes, plan.stageSetups, plan.priorities
+	warnings := make([]string, 0, len(runtimes))
+	source := firstNonBlank(inputs.MateProjectName, inputs.Name)
+	// The AI Agent tier re-creates the Mate's pairs and keeps every value as
+	// written; a group environment names its own runtimes.
+	var promote func(string) string
+	if !policy.pairs {
+		promote = plan.promoter.promote
+	}
+
+	// Every entry carries its priority, and the file lists the services in
+	// the order the platform creates them: highest first, a pair's halves
+	// together, the composer's own order kept among equals.
+	type rankedItem struct {
+		priority int
+		item     yamlItem
+	}
+	ranked := make([]rankedItem, 0, 2*len(runtimes)+len(plan.utilities)+len(plan.managed))
 	for _, r := range runtimes {
-		halves := []struct{ hostname, setup string }{}
+		type half struct {
+			hostname, setup string
+			envs            []ProjectEnvVar
+		}
+		var halves []half
 		if policy.pairs {
-			halves = append(halves, struct{ hostname, setup string }{r.DevHostname, r.SetupName})
+			halves = append(halves, half{r.DevHostname, r.SetupName, r.ServiceEnvs})
 			if r.StageHostname != "" {
-				halves = append(halves, struct{ hostname, setup string }{
-					r.StageHostname, stageSetups[r.DevHostname],
-				})
+				halves = append(halves, half{r.StageHostname, stageSetups[r.DevHostname], r.StageServiceEnvs})
 			}
 		} else {
 			// A group environment runs what the pair's stage half runs: the
 			// dev half's setup is the dev loop's, never a stage's.
-			halves = append(halves, struct{ hostname, setup string }{
-				GroupPromotedHostname(r.DevHostname), stageSetups[r.DevHostname],
-			})
+			halves = append(halves, half{GroupPromotedHostname(r.DevHostname), stageSetups[r.DevHostname], stageHalfEnvs(r)})
 		}
 		for _, half := range halves {
-			entry, entryWarnings := groupRuntimeEntry(r, half.hostname, half.setup, policy, classifications)
-			warnings = append(warnings, entryWarnings...)
-			if secrets, ok := entry["envSecrets"].(map[string]string); ok {
-				maps.Copy(allSecrets, secrets)
+			entry, entryWarnings := groupRuntimeEntry(r, half.hostname, half.setup, policy)
+			if secrets := serviceSecretFields(half.envs, source, promote); len(secrets) > 0 {
+				entry["envSecrets"] = secrets
 			}
-			services = append(services, entry)
+			warnings = append(warnings, entryWarnings...)
+			entry["priority"] = priorities[r.DevHostname]
+			item := yamlItem{fields: orderedFields(entry, serviceKeyOrder)}
+			if _, built := entry["buildFromGit"]; !built {
+				item.comment = privateBuildComment(source)
+			}
+			ranked = append(ranked, rankedItem{priorities[r.DevHostname], item})
 		}
 	}
-	for _, m := range managed {
-		services = append(services, managedEntryWithRules(m, policy.promoteHA, false /*keepNonHA*/))
+	for _, u := range plan.utilities {
+		if !policy.pairs && plan.mateOnly[u.Hostname] {
+			continue
+		}
+		entry, comment := groupUtilityEntry(u, priorities[u.Hostname], source, promote)
+		ranked = append(ranked, rankedItem{priorities[u.Hostname], yamlItem{comment: comment, fields: orderedFields(entry, serviceKeyOrder)}})
+	}
+	for _, m := range plan.managed {
+		// A type with no HA variant stays single-node where the rest are
+		// promoted: a fabricated `<type>:ha` fails the whole import.
+		keepSingle := policy.promoteHA && plan.haIncapable[m.Hostname]
+		if keepSingle {
+			warnings = append(warnings, fmt.Sprintf(
+				"managed service %q (%s) stays single-node on %s: the platform has no HA variant of its type",
+				m.Hostname, m.Type, policy.title))
+		}
+		entry := managedEntryWithRules(m, policy.promoteHA, keepSingle)
+		if vertical := managedVertical(m, policy); len(vertical) > 0 {
+			entry["verticalAutoscaling"] = vertical
+		}
+		ranked = append(ranked, rankedItem{managedPriority, yamlItem{fields: orderedFields(entry, serviceKeyOrder)}})
+	}
+	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].priority > ranked[j].priority })
+	services := make([]yamlItem, 0, len(ranked))
+	for _, r := range ranked {
+		services = append(services, r.item)
 	}
 
-	project := map[string]any{"name": groupTierProjectName(inputs, policy)}
-	if len(projectEnvs) > 0 {
-		project["envVariables"] = projectEnvs
+	project := []yamlField{{key: "name", value: groupTierProjectName(inputs, policy)}}
+	if core := strings.TrimSpace(inputs.CorePackage); core == "LIGHT" || core == "SERIOUS" {
+		project = append(project, yamlField{key: "corePackage", value: core})
+	}
+	config, secrets := groupEnvFields(inputs.ProjectEnvs, source, promote)
+	if len(config) > 0 {
+		project = append(project, yamlField{key: "envVariables", value: config})
+	}
+	if len(secrets) > 0 {
+		project = append(project, yamlField{key: "envSecrets", value: secrets})
 	}
 
-	out, err := yaml.Marshal(map[string]any{"project": project, "services": services})
+	body, err := tierDocument{
+		header:   groupTierHeader(inputs, policy),
+		project:  project,
+		services: services,
+	}.render()
 	if err != nil {
-		return "", nil, fmt.Errorf("marshal: %w", err)
+		return "", nil, err
 	}
-	return addPreprocessorHeader(string(out), projectEnvs, allSecrets), warnings, nil
+	return body, warnings, nil
+}
+
+// groupTierHeader is what a tier says about itself above its project: what
+// the tier is, that zcp wrote it and from which Mate, and that it is the
+// group's to change — zcp proposes only the tiers the group repo's main
+// lacks (D30), so a person's edit is never written over.
+func groupTierHeader(inputs GroupRecipeInputs, policy groupTierPolicy) []string {
+	return []string{
+		"The " + policy.title + " tier. " + policy.summary,
+		fmt.Sprintf("zcp wrote this file from the Mate %q. It is the group's now: a person may edit it, and zcp never proposes over a tier the group repo already carries.",
+			firstNonBlank(inputs.MateProjectName, inputs.Name)),
+		"Priority is the order services are created in, each wave deployed before the next starts: the managed services first, then every runtime before the runtimes that reference it.",
+	}
+}
+
+// groupApps is what the priorities rank: every runtime pair, by any name it
+// goes by, with the values that reference what it needs up first — its
+// zerops.yaml's variables and its own service variables — and every utility
+// with its own variables.
+func groupApps(runtimes []GroupRuntime, utilities []GroupUtility) []groupApp {
+	apps := make([]groupApp, 0, len(runtimes)+len(utilities))
+	for _, u := range utilities {
+		sources := make([]string, 0, len(u.ServiceEnvs))
+		for _, env := range u.ServiceEnvs {
+			sources = append(sources, env.Value)
+		}
+		apps = append(apps, groupApp{key: u.Hostname, hostnames: []string{u.Hostname}, sources: sources})
+	}
+	for _, r := range runtimes {
+		sources := zeropsYAMLEnvValues(r.ZeropsYAMLBody)
+		for _, env := range append(append([]ProjectEnvVar(nil), r.ServiceEnvs...), r.StageServiceEnvs...) {
+			sources = append(sources, env.Value)
+		}
+		apps = append(apps, groupApp{
+			key:       r.DevHostname,
+			hostnames: []string{r.DevHostname, r.StageHostname, GroupPromotedHostname(r.DevHostname)},
+			sources:   sources,
+		})
+	}
+	return apps
+}
+
+// groupUtilities is the utilities every tier writes, sorted, and those a
+// group environment cannot carry because its runtime takes their hostname.
+// A utility the reader did not describe whole is left out and said.
+func groupUtilities(in []GroupUtility, runtimes []GroupRuntime) ([]GroupUtility, map[string]bool, []string) {
+	promoted := make(map[string]string, len(runtimes))
+	for _, r := range runtimes {
+		promoted[GroupPromotedHostname(r.DevHostname)] = r.DevHostname
+	}
+	var utilities []GroupUtility
+	var warnings []string
+	mateOnly := map[string]bool{}
+	for _, u := range in {
+		if strings.TrimSpace(u.Hostname) == "" || strings.TrimSpace(u.ServiceType) == "" || strings.TrimSpace(u.BuildFromGit) == "" {
+			warnings = append(warnings, fmt.Sprintf("utility %q is left out of the recipe: its hostname, type or public build is unknown", u.Hostname))
+			continue
+		}
+		if pair, taken := promoted[u.Hostname]; taken {
+			mateOnly[u.Hostname] = true
+			warnings = append(warnings, fmt.Sprintf(
+				"utility %q stays on the AI Agent tier only: the group environments name the runtime of %q %q too",
+				u.Hostname, pair, u.Hostname))
+		}
+		utilities = append(utilities, u)
+	}
+	sort.SliceStable(utilities, func(i, j int) bool { return utilities[i].Hostname < utilities[j].Hostname })
+	return utilities, mateOnly, warnings
+}
+
+// groupUtilityEntry writes a utility as the project runs it: its public build
+// and its own scale, on every tier alike. A build URL that carried a user
+// carried a credential, so the repository is private: the entry names no
+// build — nor the setup, which the platform builds only from a repository —
+// and the comment it returns says the source is set by hand.
+func groupUtilityEntry(u GroupUtility, priority int, source string, promote func(string) string) (map[string]any, string) {
+	entry := map[string]any{
+		"hostname": u.Hostname,
+		"type":     u.ServiceType,
+		"priority": priority,
+	}
+	var comment string
+	if repo, private := publicRepoURL(u.BuildFromGit); private {
+		comment = privateBuildComment(source)
+	} else {
+		entry["buildFromGit"] = repo
+		if u.SetupName != "" {
+			entry["zeropsSetup"] = u.SetupName
+		}
+	}
+	if u.SubdomainEnabled {
+		entry["enableSubdomainAccess"] = true
+	}
+	projectScaling(entry, u.Scaling)
+	if secrets := serviceSecretFields(u.ServiceEnvs, source, promote); len(secrets) > 0 {
+		entry["envSecrets"] = secrets
+	}
+	return entry, comment
+}
+
+// privateBuildComment heads an entry whose build the tiers do not name.
+func privateBuildComment(source string) string {
+	return fmt.Sprintf("Built from a private repository in %s; set its source by hand.", source)
+}
+
+// publicRepoURL is a repository URL as a recipe carries it: canonical, with
+// no query and no fragment. private reports a URL that carried a user — a
+// token, or a password beside one — or does not parse: a private repository
+// the recipe names nowhere.
+func publicRepoURL(raw string) (repo string, private bool) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.User != nil {
+		return "", true
+	}
+	u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment = "", false, "", ""
+	return topology.CanonicalRepoURL(u.String()), false
+}
+
+// groupStoragePolicyWarnings says which object storage keeps a policy the
+// tiers do not carry: a custom one — a document, which can hold a secret
+// condition such as a Referer the bucket trusts — or one the platform does
+// not name. managedEntryWithRules writes neither, so the tiers leave the
+// platform's default, private.
+func groupStoragePolicyWarnings(managed []ManagedServiceEntry) []string {
+	var warnings []string
+	for _, m := range managed {
+		if m.ObjectStoragePolicy != "" && !namedObjectStoragePolicies[m.ObjectStoragePolicy] {
+			warnings = append(warnings, fmt.Sprintf(
+				"object storage %q: its %s access policy is not in the recipe, since a policy document can hold a secret condition — the tiers leave the platform's default, private; set its policy on them by hand",
+				m.Hostname, m.ObjectStoragePolicy))
+		}
+	}
+	return warnings
+}
+
+// managedVertical is the vertical scale a managed service is written with:
+// as it runs, on every tier but the one that decides a profile-bearing
+// service's scale — Small Production sets the production profile, and a
+// dev-sized database's bounds beside it would cap production. An object
+// storage has none; its size is objectStorageSize.
+func managedVertical(m ManagedServiceEntry, policy groupTierPolicy) map[string]any {
+	if m.Scaling == nil || RulesForType(m.Type).RequiresObjectStorageSize {
+		return nil
+	}
+	if policy.promoteHA && topology.IsProfileBearing(m.Type) {
+		return nil
+	}
+	shape := map[string]any{}
+	projectScaling(shape, m.Scaling)
+	vertical, _ := shape["verticalAutoscaling"].(map[string]any)
+	return vertical
+}
+
+// stageHalfEnvs is what a group environment's runtime carries of the pair's
+// own variables: the stage half's, or the dev half's when it has no stage.
+func stageHalfEnvs(r GroupRuntime) []ProjectEnvVar {
+	if r.StageHostname == "" {
+		return r.ServiceEnvs
+	}
+	return r.StageServiceEnvs
 }
 
 // groupRuntimeEntry composes one runtime's services[] entry under a policy.
@@ -381,16 +646,21 @@ func groupRuntimeEntry(
 	r GroupRuntime,
 	hostname, setupName string,
 	policy groupTierPolicy,
-	classifications map[string]topology.SecretClassification,
 ) (map[string]any, []string) {
 	var warnings []string
 	// No `mode`: a runtime is always HA on the platform, so a mode/variant on
 	// one is ignored — replica count is the minContainers axis below.
 	entry := map[string]any{
-		"hostname":     hostname,
-		"type":         r.ServiceType,
-		"buildFromGit": topology.CanonicalRepoURL(r.RepoURL),
-		"zeropsSetup":  setupName,
+		"hostname": hostname,
+		"type":     r.ServiceType,
+	}
+	// A pair's URL comes from a git-push setup that refuses a user, and is
+	// guarded the way a utility's is all the same: a user is a credential,
+	// and the tier then names no build — nor the setup, which the platform
+	// builds only from a repository.
+	if repo, private := publicRepoURL(r.RepoURL); !private {
+		entry["buildFromGit"] = repo
+		entry["zeropsSetup"] = setupName
 	}
 	if r.SubdomainEnabled {
 		entry["enableSubdomainAccess"] = true
@@ -422,12 +692,6 @@ func groupRuntimeEntry(
 			entry["verticalAutoscaling"] = vertical
 		}
 		vertical["cpuMode"] = policy.cpuMode
-	}
-
-	secrets, secretWarnings := composeServiceEnvSecrets(r.ServiceEnvs, classifications)
-	warnings = append(warnings, secretWarnings...)
-	if len(secrets) > 0 {
-		entry["envSecrets"] = secrets
 	}
 	return entry, warnings
 }

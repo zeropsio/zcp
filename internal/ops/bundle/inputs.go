@@ -10,6 +10,10 @@ package bundle
 type ProjectEnvVar struct {
 	Key   string
 	Value string
+	// Sensitive is the platform's sensitive flag. Only the group recipe reads
+	// it, as one signal among several (recipeSecret); export and launch
+	// classify every variable instead.
+	Sensitive bool
 }
 
 // ManagedServiceEntry describes a managed dep to re-import alongside
@@ -36,6 +40,15 @@ type ManagedServiceEntry struct {
 	// applies the production-default tier instead.
 	Profile     string
 	QuotaGBytes int // populated for object-storage; 0 → composer defaults to 1
+	// ObjectStoragePolicy is an object storage's live access policy (private,
+	// public-read, …, custom). Only a policy the platform names is written: a
+	// custom one's document can hold a secret, and is never read. Empty emits
+	// nothing: the platform's default, private. Only the group recipe reads
+	// it today.
+	ObjectStoragePolicy string
+	// Scaling is the live vertical autoscaling shape. Only the group recipe
+	// reads it: its identity tiers carry it as the service runs.
+	Scaling *Scaling
 }
 
 // Scaling is the live platform-resolved autoscaling shape of a source runtime,

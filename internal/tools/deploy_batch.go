@@ -69,26 +69,12 @@ func RegisterDeployBatch(
 				"Pass targets=[{targetService:...}, ...] with one entry per service to deploy."),
 				WithRecoveryStatus()), nil, nil
 		}
-
-		// Gate: each target (and its source, when set) must be adopted by
-		// ZCP. Recipe-authoring sessions whose Plan owns the host bypass
-		// adoption — see requireAdoption for the exemption rationale.
-		// Batch deploy is container-only (registered when sshDeployer != nil),
-		// so requireAdoption is called with InContainer=true to surface the
-		// bootstrap recovery hint.
-		containerRT := runtime.Info{InContainer: true}
-		for _, t := range input.Targets {
-			if blocked := requireAdoption(stateDir, containerRT, recipeProbe, t.TargetService, t.SourceService); blocked != nil {
-				return blocked, nil, nil
-			}
+		d := batchDeployer{
+			client: client, httpClient: httpClient, projectID: projectID, sshDeployer: sshDeployer,
+			authInfo: authInfo, logFetcher: logFetcher, rtInfo: rtInfo, stateDir: stateDir, recipeProbe: recipeProbe,
 		}
-
-		// L1 terminal-act rule, same gate the single deploy applies
-		// (repoDeliveryRedirect): a pair whose pushes are consumed by a
-		// ZCP-managed integration delivers via PUSH. Batch used to skip
-		// this entirely.
-		if redirect := batchRepoDeliveryRedirect(stateDir, input.Targets); redirect != nil {
-			return redirect, nil, nil
+		if blocked := d.gate(input.Targets); blocked != nil {
+			return blocked, nil, nil
 		}
 
 		// Pre-flight each target (matches zerops_deploy behavior); any
@@ -97,130 +83,209 @@ func RegisterDeployBatch(
 		// setup names back into the targets — v8.85 semantics carried
 		// through to batch.
 		for i := range input.Targets {
-			t := input.Targets[i]
-			// Source defaults to target for self-deploy (mirrors
-			// ops.DeploySSH auto-infer). Pre-flight reads yaml from the
-			// source service's mount.
-			sourceForPreflight := t.SourceService
-			if sourceForPreflight == "" {
-				sourceForPreflight = t.TargetService
+			resolved, refusal := d.preflight(ctx, input.Targets[i])
+			if refusal != nil {
+				return refusal.result(), nil, nil
 			}
-			// Batch entries are container-env SSH deploys; workingDir is "".
-			// See deploy_ssh.go for the same threading rationale.
-			resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, sourceForPreflight, t.TargetService, t.Setup, "", rtInfo.InContainer)
-			if pfErr != nil {
-				var blocker *workflow.ErrRequiresSetupInput
-				if errors.As(pfErr, &blocker) {
-					return jsonResult(buildRequiresSetupInputResponse(t.TargetService, blocker)), nil, nil
-				}
-				return convertError(platform.NewPlatformError(
-					platform.ErrInvalidParameter,
-					fmt.Sprintf("Pre-flight validation error for %s: %v", t.TargetService, pfErr),
-					"Check zerops.yaml and service configuration"),
-					WithRecoveryStatus()), nil, nil
-			}
-			if pfResult != nil && !pfResult.Passed {
-				return convertError(
-					platform.NewPlatformError(
-						platform.ErrPreflightFailed,
-						fmt.Sprintf("Preflight failed for %s: %s", t.TargetService, pfResult.Summary),
-						""),
-					WithChecks("preflight", pfResult.Checks),
-					WithRecoveryStatus(),
-				), nil, nil
-			}
-			if resolvedSetup != "" {
-				input.Targets[i].Setup = resolvedSetup
-			}
+			input.Targets[i] = resolved
 		}
 
-		onProgress := buildProgressCallback(ctx, req)
-		pollFn := func(c context.Context, r *ops.DeployResult, cb ops.ProgressCallback, lf platform.LogFetcher, d ops.SSHDeployer) {
-			pollDeployBuild(c, client, projectID, r, cb, lf, d, stateDir)
-		}
-
-		authVal := auth.Info{}
-		if authInfo != nil {
-			authVal = *authInfo
-		}
-		// The dev servers zcp keeps on the targets, as they stood before these
-		// deploys replace the containers (dev_server_keep.go).
-		keptBefore := map[string]*workflow.KeptDevServer{}
-		for _, t := range input.Targets {
-			if rec, err := workflow.KeptDevServerFor(stateDir, t.TargetService); err == nil && rec != nil {
-				keptBefore[t.TargetService] = rec
-			}
-		}
-		result := ops.DeployBatchSSH(
-			ctx, client, projectID, sshDeployer, authVal,
-			input.Targets, logFetcher, onProgress, pollFn,
-		)
-		_ = engine // engine is unused; per-entry DeployAttempt recording below uses stateDir directly.
-
-		// Record one DeployAttempt per entry (parity with every other deploy
-		// path) AND auto-enable subdomain for successes. Without the attempt
-		// recording the auto-close gate, FirstDeployedAt, and needsDeploy were
-		// all blind to batch deploys (P0-5). Best-effort, per-target.
-		for i := range result.Entries {
-			entry := &result.Entries[i]
-			attempt := workflow.DeployAttempt{
-				AttemptedAt: entry.StartedAt,
-				Setup:       entry.Target.Setup,
-				Strategy:    deployStrategyZCLILabel,
-			}
-			switch {
-			case entry.Error != "":
-				// Kickoff/transport failure (build never started).
-				attempt.Error = entry.Error
-				classification := classifyTransportError(errors.New(entry.Error), deployStrategyZCLILabel)
-				if classification != nil {
-					attempt.FailureClass = classification.Category
-				} else {
-					attempt.FailureClass = topology.FailureClassNetwork
-				}
-			case entry.Result != nil && entry.Result.Status == statusDeployed:
-				attempt.SucceededAt = entry.EndedAt
-				// A dev server zcp keeps on the target is started again
-				// first: when it answers, a listener exists.
-				if bringBackKeptDevServer(ctx, sshDeployer, stateDir, entry.Result.TargetService, keptBefore[entry.Result.TargetService], entry.Result) {
-					ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, entry.Result.TargetService, entry.Result, true)
-				} else {
-					ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, entry.Result.TargetService, entry.Result)
-				}
-			case entry.Result != nil && entry.Result.TimedOut:
-				// In-flight (B23): the build is still running — record the
-				// attempt without a FailureClass so the gate doesn't read it
-				// as failed and direct a redeploy on top of an in-flight build.
-				attempt.Error = deployBuildInFlightMsg
-			case entry.Result != nil:
-				attempt.Error = fmt.Sprintf("deploy status %s", entry.Result.Status)
-				attempt.FailureClass = classifyDeployStatus(entry.Result.Status)
-			}
-			if entry.Result != nil {
-				attempt.SHA = entry.Result.SHA
-				attempt.AppVersionID = entry.Result.AppVersionID
-				attempt.Dirty = entry.Result.Dirty
-			}
-			_ = workflow.RecordDeployAttempt(stateDir, entry.Target.TargetService, attempt)
-		}
-
-		// A wired pair's stage deploy is its delivery (gitea_delivery.go),
-		// after the attempts are recorded.
-		for i := range result.Entries {
-			entry := &result.Entries[i]
-			if entry.Result == nil || entry.Result.Status != statusDeployed {
-				continue
-			}
-			if delivery := deliverGiteaPair(ctx, client, httpClient, sshDeployer, rtInfo, stateDir, entry.Target.TargetService); delivery != nil {
-				entry.Result.NextActions = strings.TrimSpace(entry.Result.NextActions + " " + delivery.Line)
-			}
-		}
-
+		_ = engine // engine is unused; per-entry DeployAttempt recording uses stateDir directly.
+		result := d.deploy(ctx, buildProgressCallback(ctx, req), input.Targets, true)
 		return jsonResult(deployBatchResponse{
 			DeployBatchResult: result,
 			WorkSessionState:  sessionAnnotations(stateDir),
 		}), nil, nil
 	})
+}
+
+// batchDeployer is everything a batch of SSH deploys needs. zerops_deploy_batch
+// and a Mate's stand-up (standup.go) deploy through it, so both apply the same
+// gates, the same pre-flight and the same post-deploy steps to every entry.
+type batchDeployer struct {
+	client      platform.Client
+	httpClient  ops.HTTPDoer
+	projectID   string
+	sshDeployer ops.SSHDeployer
+	authInfo    *auth.Info
+	logFetcher  platform.LogFetcher
+	rtInfo      runtime.Info
+	stateDir    string
+	recipeProbe RecipeSessionProbe
+}
+
+// gate applies the adoption gate and the push-delivery redirect to every
+// target; the first refusal is the answer for the whole batch.
+func (d batchDeployer) gate(targets []ops.DeployBatchTarget) *mcp.CallToolResult {
+	// Gate: each target (and its source, when set) must be adopted by
+	// ZCP. Recipe-authoring sessions whose Plan owns the host bypass
+	// adoption — see requireAdoption for the exemption rationale.
+	// Batch deploy is container-only (registered when sshDeployer != nil),
+	// so requireAdoption is called with InContainer=true to surface the
+	// bootstrap recovery hint.
+	containerRT := runtime.Info{InContainer: true}
+	for _, t := range targets {
+		if blocked := requireAdoption(d.stateDir, containerRT, d.recipeProbe, t.TargetService, t.SourceService); blocked != nil {
+			return blocked
+		}
+	}
+	// L1 terminal-act rule, same gate the single deploy applies
+	// (repoDeliveryRedirect): a pair whose pushes are consumed by a
+	// ZCP-managed integration delivers via PUSH. Batch used to skip
+	// this entirely.
+	return batchRepoDeliveryRedirect(d.stateDir, targets)
+}
+
+// batchPreflightRefusal is why one target cannot deploy: the setup cannot be
+// resolved without the agent, pre-flight could not run, or it failed.
+type batchPreflightRefusal struct {
+	target     string
+	setupInput *workflow.ErrRequiresSetupInput
+	err        error
+	checks     *workflow.StepCheckResult
+}
+
+// result is the refusal as zerops_deploy_batch answers it.
+func (r *batchPreflightRefusal) result() *mcp.CallToolResult {
+	switch {
+	case r.setupInput != nil:
+		return jsonResult(buildRequiresSetupInputResponse(r.target, r.setupInput))
+	case r.err != nil:
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Pre-flight validation error for %s: %v", r.target, r.err),
+			"Check zerops.yaml and service configuration"),
+			WithRecoveryStatus())
+	default:
+		return convertError(
+			platform.NewPlatformError(
+				platform.ErrPreflightFailed,
+				fmt.Sprintf("Preflight failed for %s: %s", r.target, r.checks.Summary),
+				""),
+			WithChecks("preflight", r.checks.Checks),
+			WithRecoveryStatus(),
+		)
+	}
+}
+
+// preflight checks one target before any build burns time and resolves the
+// setup it deploys with.
+func (d batchDeployer) preflight(ctx context.Context, t ops.DeployBatchTarget) (ops.DeployBatchTarget, *batchPreflightRefusal) {
+	// Source defaults to target for self-deploy (mirrors
+	// ops.DeploySSH auto-infer). Pre-flight reads yaml from the
+	// source service's mount.
+	sourceForPreflight := t.SourceService
+	if sourceForPreflight == "" {
+		sourceForPreflight = t.TargetService
+	}
+	// Batch entries are container-env SSH deploys; workingDir is "".
+	// See deploy_ssh.go for the same threading rationale.
+	resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, d.client, d.projectID, d.stateDir, sourceForPreflight, t.TargetService, t.Setup, "", d.rtInfo.InContainer)
+	if pfErr != nil {
+		var blocker *workflow.ErrRequiresSetupInput
+		if errors.As(pfErr, &blocker) {
+			return t, &batchPreflightRefusal{target: t.TargetService, setupInput: blocker}
+		}
+		return t, &batchPreflightRefusal{target: t.TargetService, err: pfErr}
+	}
+	if pfResult != nil && !pfResult.Passed {
+		return t, &batchPreflightRefusal{target: t.TargetService, checks: pfResult}
+	}
+	if resolvedSetup != "" {
+		t.Setup = resolvedSetup
+	}
+	return t, nil
+}
+
+// deploy runs the targets as one batch and applies each entry's post-deploy
+// steps: its deploy attempt, the dev server zcp keeps on it, its public
+// access. deliver adds the Gitea delivery of a wired pair's stage half
+// (gitea_delivery.go) — the stand-up's first stage deploy builds `main` as
+// it is and has nothing to deliver.
+func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallback, targets []ops.DeployBatchTarget, deliver bool) *ops.DeployBatchResult {
+	pollFn := func(c context.Context, r *ops.DeployResult, cb ops.ProgressCallback, lf platform.LogFetcher, s ops.SSHDeployer) {
+		pollDeployBuild(c, d.client, d.projectID, r, cb, lf, s, d.stateDir)
+	}
+
+	authVal := auth.Info{}
+	if d.authInfo != nil {
+		authVal = *d.authInfo
+	}
+	// The dev servers zcp keeps on the targets, as they stood before these
+	// deploys replace the containers (dev_server_keep.go).
+	keptBefore := map[string]*workflow.KeptDevServer{}
+	for _, t := range targets {
+		if rec, err := workflow.KeptDevServerFor(d.stateDir, t.TargetService); err == nil && rec != nil {
+			keptBefore[t.TargetService] = rec
+		}
+	}
+	result := ops.DeployBatchSSH(
+		ctx, d.client, d.projectID, d.sshDeployer, authVal,
+		targets, d.logFetcher, onProgress, pollFn,
+	)
+
+	// Record one DeployAttempt per entry (parity with every other deploy
+	// path) AND auto-enable subdomain for successes. Without the attempt
+	// recording the auto-close gate, FirstDeployedAt, and needsDeploy were
+	// all blind to batch deploys (P0-5). Best-effort, per-target.
+	for i := range result.Entries {
+		entry := &result.Entries[i]
+		attempt := workflow.DeployAttempt{
+			AttemptedAt: entry.StartedAt,
+			Setup:       entry.Target.Setup,
+			Strategy:    deployStrategyZCLILabel,
+		}
+		switch {
+		case entry.Error != "":
+			// Kickoff/transport failure (build never started).
+			attempt.Error = entry.Error
+			classification := classifyTransportError(errors.New(entry.Error), deployStrategyZCLILabel)
+			if classification != nil {
+				attempt.FailureClass = classification.Category
+			} else {
+				attempt.FailureClass = topology.FailureClassNetwork
+			}
+		case entry.Result != nil && entry.Result.Status == statusDeployed:
+			attempt.SucceededAt = entry.EndedAt
+			// A dev server zcp keeps on the target is started again
+			// first: when it answers, a listener exists.
+			if bringBackKeptDevServer(ctx, d.sshDeployer, d.stateDir, entry.Result.TargetService, keptBefore[entry.Result.TargetService], entry.Result) {
+				ensurePublicAccess(ctx, d.client, d.httpClient, d.projectID, d.stateDir, entry.Result.TargetService, entry.Result, true)
+			} else {
+				ensurePublicAccess(ctx, d.client, d.httpClient, d.projectID, d.stateDir, entry.Result.TargetService, entry.Result)
+			}
+		case entry.Result != nil && entry.Result.TimedOut:
+			// In-flight (B23): the build is still running — record the
+			// attempt without a FailureClass so the gate doesn't read it
+			// as failed and direct a redeploy on top of an in-flight build.
+			attempt.Error = deployBuildInFlightMsg
+		case entry.Result != nil:
+			attempt.Error = fmt.Sprintf("deploy status %s", entry.Result.Status)
+			attempt.FailureClass = classifyDeployStatus(entry.Result.Status)
+		}
+		if entry.Result != nil {
+			attempt.SHA = entry.Result.SHA
+			attempt.AppVersionID = entry.Result.AppVersionID
+			attempt.Dirty = entry.Result.Dirty
+		}
+		_ = workflow.RecordDeployAttempt(d.stateDir, entry.Target.TargetService, attempt)
+	}
+
+	if !deliver {
+		return result
+	}
+	// A wired pair's stage deploy is its delivery (gitea_delivery.go),
+	// after the attempts are recorded.
+	for i := range result.Entries {
+		entry := &result.Entries[i]
+		if entry.Result == nil || entry.Result.Status != statusDeployed {
+			continue
+		}
+		if delivery := deliverGiteaPair(ctx, d.client, d.httpClient, d.sshDeployer, d.rtInfo, d.stateDir, entry.Target.TargetService); delivery != nil {
+			entry.Result.NextActions = strings.TrimSpace(entry.Result.NextActions + " " + delivery.Line)
+		}
+	}
+	return result
 }
 
 // deployBatchResponse wraps ops.DeployBatchResult with the same

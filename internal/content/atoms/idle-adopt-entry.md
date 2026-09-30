@@ -17,6 +17,15 @@ the warning), `managed-dep` (db/cache/storage, no adoption concept),
 response also surfaces directive warnings naming exact recovery calls
 per state — read them before deriving anything from per-service flags.
 
+**A new Mate's stand-up comes before adopt.** When the person's message
+is exactly "Stand up development of the project." and `zerops_standup`
+is among your tools, call it instead of opening an adopt session: it
+reads the project's recipe, adopts and checks out every dev/stage pair,
+deploys the dev halves and then the stages, and reports each service
+with its next step. Open adopt as below only when it reports a failure —
+carry that failure into the adopt session — or when `zerops_standup` is not
+there.
+
 **FIRST CALL when discover surfaces adoptable services:** open the
 bootstrap-adopt session immediately, with the SAME intent string you'd
 pass to develop/deploy later. Do NOT probe with `workflow="develop"`

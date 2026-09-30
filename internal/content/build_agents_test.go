@@ -646,3 +646,52 @@ func TestBuildAgentsMD_Local_HasNoMateContext(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildAgentsMD_Container_StandUpRoutesToTheTool pins how a new Mate's
+// first turn is routed. Its person's client sends "Stand up development of
+// the project." once, and without the route the model improvised an adopt
+// and one deploy after another (the Beviro trial, 2026-09-29, sixteen
+// minutes). In a Mate the agent context sends that message to zerops_standup
+// first — before the empty-mount adopt advice — and keeps today's tools as
+// the fallback when it reports a failure. A container without the Mate flag
+// has no such tool and is never told of one.
+func TestBuildAgentsMD_Container_StandUpRoutesToTheTool(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		rt   runtime.Info
+		want bool
+	}{
+		{name: "a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, want: true},
+		{name: "a container without the flag", rt: runtime.Info{InContainer: true, ServiceName: "zcp", GitHostKnown: true}},
+		{name: "local, flag set", rt: runtime.Info{MateEnabled: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := BuildAgentsMD(tc.rt, false)
+			if err != nil {
+				t.Fatalf("BuildAgentsMD: %v", err)
+			}
+			if got := strings.Contains(out, "zerops_standup"); got != tc.want {
+				t.Fatalf("stand-up route present = %v, want %v", got, tc.want)
+			}
+			if !tc.want {
+				return
+			}
+			for _, want := range []string{
+				`"Stand up development of the project."`,
+				"call `zerops_standup` first",
+				"`zerops_dev_server`",
+				`zerops_workflow action="start" workflow="bootstrap" route="adopt"`,
+				"`zerops_deploy_batch`",
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("stand-up route missing %q", want)
+				}
+			}
+			if strings.Index(out, "zerops_standup") > strings.Index(out, "## Zerops onboarding") {
+				t.Error("the stand-up route must come before the routing a first message would otherwise take")
+			}
+		})
+	}
+}

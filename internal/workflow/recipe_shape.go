@@ -62,7 +62,9 @@ type RecipeRuntimeShape struct {
 	BuildFromGit string
 	IsWorker     bool
 	ServesHTTP   bool
-	Index        int
+	// Priority is the service's import `priority` — higher is built first.
+	Priority int
+	Index    int
 }
 
 // RecipeManagedDepShape is one managed dependency in the recipe (a service
@@ -76,18 +78,47 @@ type RecipeManagedDepShape struct {
 	Index      int
 }
 
-// roleKindFromSetup maps a zeropsSetup value to a role kind. dev→Dev,
-// worker→Worker, everything else (prod, staging, …)→Stage — mirroring the
-// rewrite's historical non-dev→stage fold (recipe_override.go).
-func roleKindFromSetup(zeropsSetup string) RecipeRuntimeRoleKind {
-	switch zeropsSetup {
-	case RecipeSetupDev:
-		return RecipeRuntimeRoleDev
-	case RecipeSetupWorker:
+// recipeRoleKind reads a recipe runtime's role by zcp's convention for a
+// pair's hostnames. A `worker` setup is a worker; a hostname ending in
+// `stage` is the stage half (IsStageHostname); a `dev` setup, or a hostname
+// ending in `dev`, the dev half; anything else (prod, staging, …) serves as
+// the stage did in the historical non-dev→stage fold (recipe_override.go).
+//
+// The role used to come from the setup's literal name alone, which a group's
+// own recipe does not follow: it names setups after the pair — `medusadev` /
+// `medusaprod` — so both halves read as stage and the pair never formed. The
+// corpus recipes read the same either way: every runtime there is `…dev`
+// with setup `dev` or `…stage` with `prod` or `worker`.
+func recipeRoleKind(hostname, zeropsSetup string) RecipeRuntimeRoleKind {
+	switch {
+	case zeropsSetup == RecipeSetupWorker:
 		return RecipeRuntimeRoleWorker
+	case IsStageHostname(hostname):
+		return RecipeRuntimeRoleStage
+	case zeropsSetup == RecipeSetupDev, isDevHostname(hostname):
+		return RecipeRuntimeRoleDev
 	default:
 		return RecipeRuntimeRoleStage
 	}
+}
+
+// stageHostnameSuffix and devHostnameSuffix are how zcp names a pair's
+// halves: `appdev` and `appstage` (giteaStageNameFor, GroupPromotedHostname).
+const (
+	stageHostnameSuffix = "stage"
+	devHostnameSuffix   = "dev"
+)
+
+// IsStageHostname reports whether hostname names a pair's stage half by
+// zcp's convention: it ends in `stage`, with a name before it.
+func IsStageHostname(hostname string) bool {
+	return len(hostname) > len(stageHostnameSuffix) && strings.HasSuffix(hostname, stageHostnameSuffix)
+}
+
+// isDevHostname reports whether hostname names a pair's dev half by the same
+// convention.
+func isDevHostname(hostname string) bool {
+	return len(hostname) > len(devHostnameSuffix) && strings.HasSuffix(hostname, devHostnameSuffix)
 }
 
 // ParseRecipeImportShape parses a recipe's project-import YAML into the
@@ -102,15 +133,16 @@ func ParseRecipeImportShape(importYAML string) (RecipeImportShape, error) {
 	var shape RecipeImportShape
 	for i, svc := range doc.Services {
 		if svc.ZeropsSetup != "" {
-			role := roleKindFromSetup(svc.ZeropsSetup)
+			role := recipeRoleKind(svc.Hostname, svc.ZeropsSetup)
 			shape.Runtimes = append(shape.Runtimes, RecipeRuntimeShape{
 				Hostname:     svc.Hostname,
 				Type:         svc.Type,
 				RoleKind:     role,
 				ZeropsSetup:  svc.ZeropsSetup,
-				BuildFromGit: svc.BuildFromGit,
+				BuildFromGit: svc.BuildFromGit.URL,
 				IsWorker:     role == RecipeRuntimeRoleWorker,
 				ServesHTTP:   role != RecipeRuntimeRoleWorker,
+				Priority:     svc.Priority,
 				Index:        i,
 			})
 			continue
@@ -125,15 +157,49 @@ func ParseRecipeImportShape(importYAML string) (RecipeImportShape, error) {
 	return shape, nil
 }
 
-// recipeImportDoc is the single unmarshal target for a recipe import YAML.
+// recipeImportDoc is the single unmarshal target for a recipe import YAML —
+// the corpus recipes the recipe route reads and a group's tiers the stand-up
+// reads (ParseMateTier) alike.
 type recipeImportDoc struct {
-	Services []struct {
-		Hostname     string `yaml:"hostname"`
-		Type         string `yaml:"type"`
-		ZeropsSetup  string `yaml:"zeropsSetup"`
-		BuildFromGit string `yaml:"buildFromGit"`
-		Mode         string `yaml:"mode"`
-	} `yaml:"services"`
+	Services []recipeImportService `yaml:"services"`
+}
+
+// recipeImportService is one services[] entry.
+type recipeImportService struct {
+	Hostname     string          `yaml:"hostname"`
+	Type         string          `yaml:"type"`
+	ZeropsSetup  string          `yaml:"zeropsSetup"`
+	BuildFromGit recipeGitSource `yaml:"buildFromGit"`
+	Mode         string          `yaml:"mode"`
+	Priority     int             `yaml:"priority"`
+}
+
+// recipeGitSource is a service's `buildFromGit`, which a recipe writes either
+// as the repository URL or as a block naming it in `url:` (with a `ref:`
+// beside it). Both are a build from that repository; reading only the scalar
+// failed the whole document on the block form.
+type recipeGitSource struct {
+	URL string
+}
+
+// UnmarshalYAML reads either form.
+func (s *recipeGitSource) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		s.URL = strings.TrimSpace(node.Value)
+		return nil
+	case yaml.MappingNode:
+		var block struct {
+			URL string `yaml:"url"`
+		}
+		if err := node.Decode(&block); err != nil {
+			return fmt.Errorf("buildFromGit: %w", err)
+		}
+		s.URL = strings.TrimSpace(block.URL)
+		return nil
+	case yaml.DocumentNode, yaml.SequenceNode, yaml.AliasNode:
+	}
+	return fmt.Errorf("buildFromGit: line %d: want a repository URL or a block with url", node.Line)
 }
 
 // RuntimeCount returns the number of runtime services (including workers),
@@ -141,36 +207,34 @@ type recipeImportDoc struct {
 func (s RecipeImportShape) RuntimeCount() int { return len(s.Runtimes) }
 
 // Mode derives the bootstrap mode from the dev/stage runtimes, IGNORING worker
-// extras (a queue worker doesn't change whether the app is standard/simple/dev).
-// Byte-identical to the historical InferRecipeShape switch over non-worker
-// setups, so appdev+appstage+workerstage is "standard" rather than the old
-// lossy "" — letting worker recipes stop collapsing to unrecognized.
+// extras (a queue worker doesn't change whether the app is standard/simple/dev),
+// so appdev+appstage+workerstage is "standard" rather than the old lossy "" —
+// letting worker recipes stop collapsing to unrecognized. It reads each
+// runtime's role (recipeRoleKind), the same read DeriveRecipePlan pairs by,
+// so the shape a recipe is said to have is the plan it derives.
 //
-//	standard — one dev + one prod(stage)
-//	simple   — single prod(stage)
+//	standard — one dev + one stage
+//	simple   — single stage
 //	dev      — single dev
 //	""       — managed-only, unknown pattern
 func (s RecipeImportShape) Mode() topology.Mode {
-	var setups []string
+	var roles []RecipeRuntimeRoleKind
 	for _, r := range s.Runtimes {
 		if r.IsWorker {
 			continue
 		}
-		setups = append(setups, r.ZeropsSetup)
+		roles = append(roles, r.RoleKind)
 	}
-	switch len(setups) {
+	switch len(roles) {
 	case 1:
-		if setups[0] == RecipeSetupProd {
-			return topology.PlanModeSimple
-		}
-		if setups[0] == RecipeSetupDev {
+		if roles[0] == RecipeRuntimeRoleDev {
 			return topology.PlanModeDev
 		}
-		return ""
+		return topology.PlanModeSimple
 	case 2:
-		hasDev := setups[0] == RecipeSetupDev || setups[1] == RecipeSetupDev
-		hasProd := setups[0] == RecipeSetupProd || setups[1] == RecipeSetupProd
-		if hasDev && hasProd {
+		hasDev := roles[0] == RecipeRuntimeRoleDev || roles[1] == RecipeRuntimeRoleDev
+		hasStage := roles[0] == RecipeRuntimeRoleStage || roles[1] == RecipeRuntimeRoleStage
+		if hasDev && hasStage {
 			return topology.PlanModeStandard
 		}
 		return ""
@@ -183,10 +247,10 @@ func (s RecipeImportShape) Mode() topology.Mode {
 // bootstrap mode it implies plus the runtime service count. BC shim over
 // ParseRecipeShape + the derived Mode()/RuntimeCount() accessors (R3).
 //
-// Modes:
-//   - "standard" — two runtimes, one `zeropsSetup: dev` + one `zeropsSetup: prod`
-//   - "simple"   — single runtime with `zeropsSetup: prod`
-//   - "dev"      — single runtime with `zeropsSetup: dev`
+// Modes (roles read by recipeRoleKind):
+//   - "standard" — two runtimes, a dev half + a stage half
+//   - "simple"   — a single stage-role runtime (`zeropsSetup: prod`, …)
+//   - "dev"      — a single dev-role runtime
 //   - ""         — managed-only, unknown pattern, or invalid YAML
 func InferRecipeShape(importYAML string) (mode topology.Mode, runtimeCount int) {
 	shape, err := ParseRecipeImportShape(importYAML)
