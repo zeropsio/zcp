@@ -129,11 +129,14 @@ func (g *standupGitea) start(t *testing.T) *httptest.Server {
 		case path == "/api/v1/user":
 			write(http.StatusOK, map[string]any{"login": "mate-p1", "id": 7})
 		case path == "/api/v1/user/orgs":
-			orgs := []map[string]any{}
-			for _, name := range g.orgs {
-				orgs = append(orgs, map[string]any{"name": name, "username": name})
+			// A bot's token lacks read:organization (measured 2026-09-30).
+			write(http.StatusForbidden, map[string]string{"message": "token does not have at least one of required scope(s), required=[read:user read:organization]"})
+		case path == "/api/v1/user/repos":
+			repos := []map[string]any{}
+			for _, org := range g.orgs {
+				repos = append(repos, map[string]any{"name": "group", "full_name": org + "/group", "owner": map[string]any{"login": org}})
 			}
-			write(http.StatusOK, orgs)
+			write(http.StatusOK, repos)
 		case strings.HasPrefix(path, "/api/v1/repos/beviro/group/contents/"):
 			file := strings.TrimPrefix(path, "/api/v1/repos/beviro/group/contents/")
 			g.read = append(g.read, file)

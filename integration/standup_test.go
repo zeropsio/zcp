@@ -32,7 +32,7 @@ func TestStandup_OverMCP_ABotInNoGroupIsRefusedAndNothingIsTouched(t *testing.T)
 		switch r.URL.Path {
 		case "/api/v1/user":
 			_, _ = w.Write([]byte(`{"login":"mate-p1"}`))
-		case "/api/v1/user/orgs":
+		case "/api/v1/user/repos":
 			_, _ = w.Write([]byte(`[]`))
 		default:
 			w.WriteHeader(http.StatusNotFound)

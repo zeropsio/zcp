@@ -2380,8 +2380,9 @@ The order:
    - waits, bounded, for the Git variables (3 min) and for the runtimes (5 min: every dev half
      running and answering SSH, every stage half created), and for whatever the import still has in
      flight on them and on the managed services;
-   - reads the tier from `{slug}/group` `main` with the bot's token, the org being the one the bot
-     is a member of (`GET /user/orgs`) until a wired pair names it;
+   - reads the tier from `{slug}/group` `main` with the bot's token, the org being the owner of the
+     `group` repository the bot reads (`GET /user/repos`) until a wired pair names it — the bot's
+     token carries no `read:organization`, so `GET /user/orgs` is refused (403, measured 2026-09-30);
    - pairs the runtimes that build from the group's repositories, per repository, by zcp's naming —
      the stage half ends in `stage`, its dev half is the repository's other runtime or the one named
      like it — with each half's `zeropsSetup` (else its hostname) and the pair's priority, the
