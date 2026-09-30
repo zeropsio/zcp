@@ -244,6 +244,7 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 	plan := groupPlan{
 		inputs: inputs, runtimes: runtimes, utilities: utilities, mateOnly: mateOnly,
 		managed: managed, haIncapable: haIncapable, stageSetups: stageSetups, priorities: priorities,
+		promoter: newPairPromoter(pairRenames(runtimes)),
 	}
 
 	layout := recipe.Layout{
@@ -370,6 +371,8 @@ type groupPlan struct {
 	haIncapable map[string]bool
 	stageSetups map[string]string
 	priorities  map[string]int
+	// promoter names a group environment's own runtimes in a value.
+	promoter *pairPromoter
 }
 
 // composeGroupTierYAML renders one tier's whole-project import.yaml.
@@ -377,6 +380,12 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 	inputs, runtimes, stageSetups, priorities := plan.inputs, plan.runtimes, plan.stageSetups, plan.priorities
 	warnings := make([]string, 0, len(runtimes))
 	source := firstNonBlank(inputs.MateProjectName, inputs.Name)
+	// The AI Agent tier re-creates the Mate's pairs and keeps every value as
+	// written; a group environment names its own runtimes.
+	var promote func(string) string
+	if !policy.pairs {
+		promote = plan.promoter.promote
+	}
 
 	// Every entry carries its priority, and the file lists the services in
 	// the order the platform creates them: highest first, a pair's halves
@@ -404,7 +413,7 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 		}
 		for _, half := range halves {
 			entry, entryWarnings := groupRuntimeEntry(r, half.hostname, half.setup, policy)
-			if secrets := serviceSecretFields(half.envs, source); len(secrets) > 0 {
+			if secrets := serviceSecretFields(half.envs, source, promote); len(secrets) > 0 {
 				entry["envSecrets"] = secrets
 			}
 			warnings = append(warnings, entryWarnings...)
@@ -416,7 +425,7 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 		if !policy.pairs && plan.mateOnly[u.Hostname] {
 			continue
 		}
-		entry := groupUtilityEntry(u, priorities[u.Hostname], source)
+		entry := groupUtilityEntry(u, priorities[u.Hostname], source, promote)
 		ranked = append(ranked, rankedItem{priorities[u.Hostname], yamlItem{fields: orderedFields(entry, serviceKeyOrder)}})
 	}
 	for _, m := range plan.managed {
@@ -444,7 +453,7 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 	if core := strings.TrimSpace(inputs.CorePackage); core == "LIGHT" || core == "SERIOUS" {
 		project = append(project, yamlField{key: "corePackage", value: core})
 	}
-	config, secrets := groupEnvFields(inputs.ProjectEnvs, source)
+	config, secrets := groupEnvFields(inputs.ProjectEnvs, source, promote)
 	if len(config) > 0 {
 		project = append(project, yamlField{key: "envVariables", value: config})
 	}
@@ -533,7 +542,7 @@ func groupUtilities(in []GroupUtility, runtimes []GroupRuntime) ([]GroupUtility,
 
 // groupUtilityEntry writes a utility as the project runs it: its public build
 // and its own scale, on every tier alike.
-func groupUtilityEntry(u GroupUtility, priority int, source string) map[string]any {
+func groupUtilityEntry(u GroupUtility, priority int, source string, promote func(string) string) map[string]any {
 	entry := map[string]any{
 		"hostname":     u.Hostname,
 		"type":         u.ServiceType,
@@ -547,7 +556,7 @@ func groupUtilityEntry(u GroupUtility, priority int, source string) map[string]a
 		entry["enableSubdomainAccess"] = true
 	}
 	projectScaling(entry, u.Scaling)
-	if secrets := serviceSecretFields(u.ServiceEnvs, source); len(secrets) > 0 {
+	if secrets := serviceSecretFields(u.ServiceEnvs, source, promote); len(secrets) > 0 {
 		entry["envSecrets"] = secrets
 	}
 	return entry

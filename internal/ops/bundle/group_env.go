@@ -181,17 +181,23 @@ func matchesAny(patterns []*regexp.Regexp, value string) bool {
 }
 
 // groupEnvFields writes live variables for a tier, sorted by key: config as
-// written, secrets generated, a third party's credential with a line saying
-// it has to be set again. It returns the config and the secrets apart — a
-// project keeps them under envVariables and envSecrets, a service carries
-// both under envSecrets, the only channel an import has for its variables.
-func groupEnvFields(envs []ProjectEnvVar, source string) (config, secrets []yamlField) {
+// written — through promote, which names a group environment's own runtimes
+// (nil keeps it as it is) — secrets generated, a third party's credential with
+// a line saying it has to be set again. It returns the config and the secrets
+// apart — a project keeps them under envVariables and envSecrets, a service
+// carries both under envSecrets, the only channel an import has for its
+// variables.
+func groupEnvFields(envs []ProjectEnvVar, source string, promote func(string) string) (config, secrets []yamlField) {
 	sorted := append([]ProjectEnvVar(nil), envs...)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Key < sorted[j].Key })
 	for _, env := range sorted {
 		secret, external := recipeSecret(env)
 		if !secret {
-			config = append(config, yamlField{key: env.Key, value: env.Value})
+			value := env.Value
+			if promote != nil {
+				value = promote(value)
+			}
+			config = append(config, yamlField{key: env.Key, value: value})
 			continue
 		}
 		field := yamlField{key: env.Key, value: generatedSecret(env.Value)}
@@ -205,8 +211,8 @@ func groupEnvFields(envs []ProjectEnvVar, source string) (config, secrets []yaml
 
 // serviceSecretFields is a service's envSecrets: its config and its secrets
 // together, sorted by key.
-func serviceSecretFields(envs []ProjectEnvVar, source string) []yamlField {
-	config, secrets := groupEnvFields(envs, source)
+func serviceSecretFields(envs []ProjectEnvVar, source string, promote func(string) string) []yamlField {
+	config, secrets := groupEnvFields(envs, source, promote)
 	fields := make([]yamlField, 0, len(config)+len(secrets))
 	fields = append(fields, config...)
 	fields = append(fields, secrets...)
