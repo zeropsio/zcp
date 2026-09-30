@@ -100,7 +100,7 @@ func GiteaGroupOrgs(ctx context.Context, httpClient HTTPDoer, giteaURL, token st
 		}
 		var repos []struct {
 			Name     string `json:"name"`
-			FullName string `json:"full_name"`
+			FullName string `json:"full_name"` //nolint:tagliatelle // Gitea's wire schema
 			Owner    struct {
 				Login string `json:"login"`
 			} `json:"owner"`
