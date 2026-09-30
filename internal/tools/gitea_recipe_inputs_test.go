@@ -15,25 +15,36 @@ import (
 	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// medusaLikeProject is a Mate's live project: a wired pair, the data it uses,
-// a mail catcher built from a public repository, a runtime nothing wired yet,
-// and zcp itself.
-func medusaLikeProject() *platform.Mock {
+// liveRuntime is a running runtime service of a Mate's project.
+func liveRuntime(id, name, typ string) platform.ServiceStack {
+	return platform.ServiceStack{ID: id, Name: name, Status: "ACTIVE", SubdomainAccess: true,
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: typ, ServiceStackTypeCategoryName: "USER"},
+		CurrentAutoscaling:   &platform.CustomAutoscaling{HorizontalMinCount: 1, HorizontalMaxCount: 1, CPUMode: "SHARED", MinRAM: 0.5}}
+}
+
+// publicBuildRuntime is a runtime whose active version an import built from a
+// public repository.
+func publicBuildRuntime(id, name, typ, gitURL string) platform.ServiceStack {
 	explicit := false
-	runtime := func(id, name, typ string) platform.ServiceStack {
-		return platform.ServiceStack{ID: id, Name: name, Status: "ACTIVE", SubdomainAccess: true,
-			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: typ, ServiceStackTypeCategoryName: "USER"},
-			CurrentAutoscaling:   &platform.CustomAutoscaling{HorizontalMinCount: 1, HorizontalMaxCount: 1, CPUMode: "SHARED", MinRAM: 0.5}}
-	}
-	mailpit := runtime("svc-mailpit", "mailpit", "alpine@3.21")
-	mailpit.ActiveAppVersion = &platform.ActiveAppVersionDigest{
-		ID: "av-mailpit", Source: "GIT", Built: true,
-		PublicGitSource:            &platform.AppVersionGitSource{GitURL: "https://github.com/zerops-recipe-apps/mailpit-app", BranchName: "main"},
+	svc := liveRuntime(id, name, typ)
+	svc.ActiveAppVersion = &platform.ActiveAppVersionDigest{
+		ID: "av-" + name, Source: "GIT", Built: true,
+		PublicGitSource:            &platform.AppVersionGitSource{GitURL: gitURL, BranchName: "main"},
 		PublicGitSourceExplicitSet: &explicit,
 	}
+	return svc
+}
+
+// medusaLikeProject is a Mate's live project: a wired pair, the data it uses,
+// a mail catcher built from a public repository, a runtime nothing wired yet,
+// and zcp itself — and whatever else a test runs beside them.
+func medusaLikeProject(extra ...platform.ServiceStack) *platform.Mock {
+	runtime := liveRuntime
+	mailpit := publicBuildRuntime("svc-mailpit", "mailpit", "alpine@3.21", "https://github.com/zerops-recipe-apps/mailpit-app")
 	db := platform.ServiceStack{ID: "svc-db", Name: "db", Status: "ACTIVE", Profile: "oltp-hobby",
 		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@17", ServiceStackTypeCategoryName: "USER"},
 		CurrentAutoscaling:   &platform.CustomAutoscaling{CPUMode: "SHARED", MinRAM: 0.25, MaxRAM: 4}}
@@ -41,13 +52,13 @@ func medusaLikeProject() *platform.Mock {
 		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "object-storage", ServiceStackTypeCategoryName: "USER"}}
 	search := platform.ServiceStack{ID: "svc-search", Name: "search", Status: "ACTIVE",
 		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "meilisearch@1.20", ServiceStackTypeCategoryName: "USER"}}
-	services := []platform.ServiceStack{
+	services := append([]platform.ServiceStack{
 		runtime("svc-appdev", "appdev", "nodejs@22"),
 		runtime("svc-appstage", "appstage", "nodejs@22"),
 		runtime("svc-orphan", "orphan", "nodejs@22"),
 		runtime("svc-zcp", "zcp", "zcp@1"),
 		mailpit, db, storage, search,
-	}
+	}, extra...)
 	return platform.NewMock().
 		WithProject(&platform.Project{ID: "p1", Name: "acme-mate-1", Status: "ACTIVE", Mode: "SERIOUS"}).
 		WithServicesDirect(services).
@@ -181,6 +192,103 @@ func TestComposeGroupRecipeInputs_ReadFailures(t *testing.T) {
 				t.Errorf("warnings %v are missing %q", warnings, tt.wantWarning)
 			}
 		})
+	}
+}
+
+// A pair zcp knows and has not wired — its repository pass has not run yet,
+// or failed — is no utility, however public its build: written as two, a
+// pair built from a public recipe landed its halves in Small Production with
+// no setup, and a tier on main stays as it landed. Nor is a dev/stage pair
+// zcp knows nothing of. Only a runtime with no sibling and no pair recorded
+// is a utility, and while any pair waits nothing composes: the warnings say
+// which, and a later pass proposes.
+func TestComposeGroupRecipeInputs_WaitsForEveryPair(t *testing.T) {
+	workers := []platform.ServiceStack{
+		publicBuildRuntime("svc-workerdev", "workerdev", "nodejs@22", "https://github.com/zerops-recipe-apps/medusa-worker"),
+		publicBuildRuntime("svc-workerstage", "workerstage", "nodejs@22", "https://github.com/zerops-recipe-apps/medusa-worker"),
+	}
+	workerPair := func(bootstrapped string) *workflow.ServiceMeta {
+		return &workflow.ServiceMeta{Hostname: "workerdev", StageHostname: "workerstage", Mode: topology.PlanModeStandard,
+			BootstrapSession: "test", BootstrappedAt: bootstrapped}
+	}
+	tests := []struct {
+		name  string
+		meta  *workflow.ServiceMeta
+		extra []platform.ServiceStack
+		// wantWait are what the warnings must name; none when it composes.
+		wantWait []string
+	}{
+		{name: "a pair zcp knows and has not wired", meta: workerPair("2026-09-30"), extra: workers, wantWait: []string{`"workerdev"`}},
+		{name: "a pair whose bootstrap has not finished", meta: workerPair(""), extra: workers, wantWait: []string{`"workerdev"`}},
+		{name: "a dev/stage pair zcp knows nothing of", extra: workers, wantWait: []string{`"workerdev"`, `"workerstage"`}},
+		{name: "a pair whose services are gone holds nothing up", meta: workerPair("2026-09-30")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stateDir := t.TempDir()
+			writeGiteaWiredPairMeta(t, stateDir)
+			wired, err := workflow.ListServiceMetas(stateDir)
+			if err != nil {
+				t.Fatalf("ListServiceMetas: %v", err)
+			}
+			metas := wired
+			if tt.meta != nil {
+				metas = append(slices.Clone(wired), tt.meta)
+			}
+			inputs, warnings, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(tt.extra...), "p1", "acme", t.TempDir(), metas, wired)
+			if len(tt.wantWait) == 0 {
+				if err != nil {
+					t.Fatalf("composeGroupRecipeInputs: %v", err)
+				}
+				if len(inputs.Utilities) != 1 || inputs.Utilities[0].Hostname != "mailpit" {
+					t.Errorf("utilities = %+v, want mailpit alone", inputs.Utilities)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("composed with a pair waiting: utilities %+v", inputs.Utilities)
+			}
+			if len(inputs.Utilities) > 0 || len(inputs.Runtimes) > 0 {
+				t.Errorf("inputs = %+v, want nothing composed", inputs)
+			}
+			for _, want := range tt.wantWait {
+				if !warningsHave(warnings, want) || !strings.Contains(err.Error(), strings.Trim(want, `"`)) {
+					t.Errorf("warnings %v and error %q do not both name %s", warnings, err, want)
+				}
+			}
+		})
+	}
+}
+
+// Through the reconcile: while a pair waits for its repository nothing is
+// forked, committed or proposed, the outcome's warnings say which pair, and
+// its line says the recipe is proposed on a later pass.
+func TestReconcileGiteaGroupRecipe_WaitsForAnUnwiredPair(t *testing.T) {
+	stateDir := t.TempDir()
+	writeGiteaWiredPairMeta(t, stateDir)
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{Hostname: "workerdev", StageHostname: "workerstage",
+		Mode: topology.PlanModeStandard, BootstrapSession: "test", BootstrappedAt: "2026-09-30"}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	fake := newFakeGroupGitea()
+	srv := fake.start(t)
+	env := map[string]string{"GITEA_URL": srv.URL, "MATE_BROKER_URL": srv.URL, "GITEA_TOKEN": giteaBotToken}
+	client := medusaLikeProject(
+		publicBuildRuntime("svc-workerdev", "workerdev", "nodejs@22", "https://github.com/zerops-recipe-apps/medusa-worker"),
+		publicBuildRuntime("svc-workerstage", "workerstage", "nodejs@22", "https://github.com/zerops-recipe-apps/medusa-worker"),
+	)
+
+	outcome := giteaGroupRecipeOutcome(context.Background(), client, srv.Client(),
+		runtime.Info{InContainer: true, ProjectID: "p1"}, stateDir, writeLiveEnvFile(t, env))
+	if fake.forkPosts != 0 || fake.commits != 0 || fake.pullPosts != 0 || outcome.PullNumber != 0 {
+		t.Errorf("forks %d, commits %d, pull requests %d (#%d): want nothing proposed while a pair waits",
+			fake.forkPosts, fake.commits, fake.pullPosts, outcome.PullNumber)
+	}
+	if !warningsHave(outcome.Warnings, `"workerdev"`) {
+		t.Errorf("warnings %v do not name the pair the recipe waits for", outcome.Warnings)
+	}
+	if !strings.Contains(outcome.Line, "not proposed yet") || !strings.Contains(outcome.Line, "workerdev") {
+		t.Errorf("line %q does not say the recipe waits for workerdev", outcome.Line)
 	}
 }
 

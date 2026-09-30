@@ -84,8 +84,11 @@ type giteaRecipeOutcome struct {
 // It runs on the SAME passes as A1's repository reconcile and right after it,
 // because it needs what A1 produces: a pair only belongs in the recipe once
 // its service repository exists, since the recipe's whole job is to record
-// which repository builds which runtime (2.4). Before that there is nothing
-// to export and this returns silently.
+// which repository builds which runtime (2.4). Before any pair has one there
+// is nothing to export and this returns silently; while a pair the project
+// runs still lacks one, nothing composes and the warnings name it
+// (groupRecipeWaits) — a tier proposed without that runtime would stay
+// without it.
 //
 // Like A1 it is a reconcile, not a step, and nothing it can meet is fatal. A
 // Mate whose bot cannot fork, whose group repo has not been created yet, or
@@ -165,6 +168,7 @@ func giteaGroupRecipeOutcome(
 	// what the stage and production projects are named after.
 	group, _, _ := strings.Cut(groupRepo, "/")
 	inputs, readWarnings, err := composeGroupRecipeInputs(ctx, client, rt.ProjectID, group, giteaPairMountRoot, metas, wired)
+	outcome.Warnings = append(outcome.Warnings, readWarnings...)
 	if err != nil {
 		outcome.Line = fmt.Sprintf("the group recipe is not proposed yet (%v) — retrying on the next pass.", err)
 		return outcome
@@ -177,7 +181,6 @@ func giteaGroupRecipeOutcome(
 		outcome.Line = fmt.Sprintf("the group recipe does not compose yet (%v).", err)
 		return outcome
 	}
-	outcome.Warnings = append(outcome.Warnings, readWarnings...)
 	outcome.Warnings = append(outcome.Warnings, warnings...)
 	files, err := recipe.Build(layout)
 	if err != nil {

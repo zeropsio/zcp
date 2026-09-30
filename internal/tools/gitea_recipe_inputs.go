@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/ops"
@@ -32,7 +34,8 @@ import (
 // (D30), so a tier composed from a failed read would carry the gap for good,
 // the way the medusa group's first production came up with no project
 // variables at all. The next pass reads again. A read that only refines — a
-// scale, a profile, a storage's policy — is a warning.
+// scale, a profile, a storage's policy — is a warning. A pair not wired yet
+// fails the pass too (groupRecipeWaits), its warnings naming it.
 func composeGroupRecipeInputs(
 	ctx context.Context,
 	client platform.Client,
@@ -50,6 +53,9 @@ func composeGroupRecipeInputs(
 	projectEnvs, err := inventory.FetchProjectEnvs(ctx, client, projectID)
 	if err != nil {
 		return bundle.GroupRecipeInputs{}, nil, fmt.Errorf("could not read the project's variables: %w", err)
+	}
+	if waits, names := groupRecipeWaits(discovered.Services, metas, wired); len(waits) > 0 {
+		return bundle.GroupRecipeInputs{}, waits, fmt.Errorf("pairs not wired yet: %s", strings.Join(names, ", "))
 	}
 	live := make(map[string]ops.ServiceInfo, len(discovered.Services))
 	for _, svc := range discovered.Services {
@@ -110,12 +116,11 @@ func composeGroupRecipeInputs(
 	}
 
 	// Every managed dependency the project runs, as it runs: a recipe whose
-	// app has no database is not the app. Every other runtime is either a
-	// utility built from a public repository, written as it runs, or left
-	// out and said.
+	// app has no database is not the app. Every other runtime is standalone
+	// by now (groupRecipeWaits): a utility built from a public repository,
+	// written as it runs, or left out and said.
 	haCatalog := schema.Embedded()
 	paired := workflow.ManagedRuntimeIndex(wired)
-	known := workflow.ManagedRuntimeIndex(metas)
 	for _, svc := range discovered.Services {
 		switch {
 		case svc.IsInfrastructure && topology.IsManagedService(svc.Type):
@@ -131,7 +136,7 @@ func composeGroupRecipeInputs(
 		case svc.IsInfrastructure || paired[svc.Hostname] != nil || strings.HasPrefix(svc.Type, "zcp@"):
 			continue
 		default:
-			utility, utilityWarnings, err := groupRecipeUtility(ctx, client, svc, known[svc.Hostname])
+			utility, utilityWarnings, err := groupRecipeUtility(ctx, client, svc)
 			if err != nil {
 				return bundle.GroupRecipeInputs{}, nil, err
 			}
@@ -142,6 +147,64 @@ func composeGroupRecipeInputs(
 		}
 	}
 	return inputs, warnings, nil
+}
+
+// groupRecipeWaits names what keeps the recipe from composing yet: a live
+// runtime that is a half of a pair zcp knows and has not wired — the
+// repository pass has not run for it, or failed — and live runtimes that run
+// as a dev/stage pair zcp knows nothing of. Either would otherwise go down
+// the utility path: a pair built from a public recipe landed its halves in
+// Small Production with no setup, and a tier on main stays as it landed
+// (D30), so the recipe waits and a later pass proposes. Only a runtime with
+// no dev/stage sibling and no pair recorded is standalone. It returns a
+// warning per pair and the pairs' names.
+func groupRecipeWaits(services []ops.ServiceInfo, metas, wired []*workflow.ServiceMeta) (warnings, names []string) {
+	paired := workflow.ManagedRuntimeIndex(wired)
+	known := workflow.ManagedRuntimeIndex(metas)
+	var runtimes []string
+	stems := map[string][]string{}
+	for _, svc := range services {
+		if svc.IsInfrastructure || strings.HasPrefix(svc.Type, "zcp@") {
+			continue
+		}
+		runtimes = append(runtimes, svc.Hostname)
+		stem := bundle.GroupPromotedHostname(svc.Hostname)
+		stems[stem] = append(stems[stem], svc.Hostname)
+	}
+	sort.Strings(runtimes)
+	said := map[string]bool{}
+	for _, host := range runtimes {
+		stem := bundle.GroupPromotedHostname(host)
+		switch meta := known[host]; {
+		case paired[host] != nil:
+		case meta != nil && !said[meta.Hostname]:
+			said[meta.Hostname] = true
+			names = append(names, meta.Hostname)
+			warnings = append(warnings, fmt.Sprintf(
+				"the recipe waits for the pair %q: it has no Gitea repository yet, and the repository pass gives it one — a tier written without it would stay without it on the group repo",
+				meta.Hostname))
+		case meta == nil && len(stems[stem]) > 1 && !said["stem:"+stem]:
+			said["stem:"+stem] = true
+			siblings := slices.Sorted(slices.Values(stems[stem]))
+			names = append(names, strings.Join(siblings, "/"))
+			warnings = append(warnings, fmt.Sprintf(
+				"the recipe waits for %s: they run as a dev/stage pair zcp has not adopted — adopt them and the repository pass gives the pair its repository; a tier written without them would stay without them on the group repo",
+				quotedList(siblings)))
+		}
+	}
+	return warnings, names
+}
+
+// quotedList reads hostnames as `"a" and "b"`, or `"a", "b" and "c"`.
+func quotedList(hosts []string) string {
+	quoted := make([]string, len(hosts))
+	for i, host := range hosts {
+		quoted[i] = fmt.Sprintf("%q", host)
+	}
+	if len(quoted) < 2 {
+		return strings.Join(quoted, "")
+	}
+	return strings.Join(quoted[:len(quoted)-1], ", ") + " and " + quoted[len(quoted)-1]
 }
 
 // isControlPlaneEnv reports a variable that is the Mate's wiring, never the
@@ -214,10 +277,9 @@ func groupRecipeManaged(ctx context.Context, client platform.Client, svc ops.Ser
 	return entry, warnings, nil
 }
 
-// groupRecipeUtility reads a runtime no Gitea pair builds: a utility when its
-// active version was built from a public repository, left out and said
-// otherwise.
-func groupRecipeUtility(ctx context.Context, client platform.Client, svc ops.ServiceInfo, meta *workflow.ServiceMeta) (*bundle.GroupUtility, []string, error) {
+// groupRecipeUtility reads a standalone runtime: a utility when its active
+// version was built from a public repository, left out and said otherwise.
+func groupRecipeUtility(ctx context.Context, client platform.Client, svc ops.ServiceInfo) (*bundle.GroupUtility, []string, error) {
 	shape, err := ops.FetchServiceShape(ctx, client, svc.ServiceID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not read where %s is built from: %w", svc.Hostname, err)
@@ -231,8 +293,7 @@ func groupRecipeUtility(ctx context.Context, client platform.Client, svc ops.Ser
 		return nil, nil, err
 	}
 	var warnings []string
-	setup := recordedSetup(meta, svc.Hostname)
-	if setup == "" && shape.ExplicitSetup {
+	if shape.ExplicitSetup {
 		warnings = append(warnings, fmt.Sprintf(
 			"utility %q was built with a zeropsSetup the platform does not return, so the tiers name none and the platform builds the setup named %q",
 			svc.Hostname, svc.Hostname))
@@ -241,7 +302,6 @@ func groupRecipeUtility(ctx context.Context, client platform.Client, svc ops.Ser
 		Hostname:         svc.Hostname,
 		ServiceType:      svc.Type,
 		BuildFromGit:     shape.PublicGitURL,
-		SetupName:        setup,
 		SubdomainEnabled: svc.SubdomainEnabled,
 		Scaling:          shape.Scaling,
 		ServiceEnvs:      envs,
@@ -259,19 +319,6 @@ func isPublicGitHost(raw string) bool {
 		return false
 	}
 	return publicGitHosts[strings.TrimPrefix(strings.ToLower(u.Hostname()), "www.")]
-}
-
-// recordedSetup is the setup a runtime's meta records for its half, "" when
-// no meta holds it.
-func recordedSetup(meta *workflow.ServiceMeta, hostname string) string {
-	switch {
-	case meta == nil:
-		return ""
-	case meta.Hostname == hostname:
-		return meta.PrimarySetupName
-	default:
-		return meta.StageSetupName
-	}
 }
 
 // firstNonEmptySetup picks the first setup-block name that is there. The
