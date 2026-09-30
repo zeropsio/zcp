@@ -38,11 +38,10 @@ import (
 // a person shows a client (guide 5.2/D16), so it keeps the single-node,
 // SHARED, one-container form and production takes the floor of two.
 //
-// Secrets are export's classification, unchanged: infrastructure and excluded
-// entries are dropped, auto-secrets become a generator directive the target
-// project expands, and anything else — INCLUDING an unclassified user-set
-// service env — becomes REPLACE_ME. No value a Mate holds reaches the group
-// repo verbatim by default.
+// The project's variables and each runtime's own go into every tier, and a
+// secret's value into none: the composer runs unattended, so it decides each
+// variable itself (recipeSecret, group_env.go) — config as written, a secret
+// as a generator every environment the tier creates expands for itself.
 
 // GroupRuntime is one runtime of the group's app as the Mate's project holds
 // it: a dev/stage pair built from one service repository.
@@ -68,9 +67,13 @@ type GroupRuntime struct {
 	// ZeropsYAMLBody is the pair's zerops.yaml: it verifies the named setups
 	// and names the stage half's when no deploy recorded it.
 	ZeropsYAMLBody string
-	// ServiceEnvs is the runtime's user-set per-service env layer, emitted as
-	// `envSecrets` through the same classification as export.
+	// ServiceEnvs is the dev half's user-set service variables, written as
+	// its `envSecrets` — config as written, secrets generated (recipeSecret).
 	ServiceEnvs []ProjectEnvVar
+	// StageServiceEnvs is the stage half's. The AI Agent tier's stage half
+	// carries them, and so does every group environment, which runs what the
+	// stage half runs; a pair with no stage half gives its dev half's.
+	StageServiceEnvs []ProjectEnvVar
 	// Scaling is the live autoscaling shape. The AI Agent tier reproduces it
 	// verbatim; the two transformed tiers reflect it and then apply their
 	// policy floors.
@@ -94,7 +97,10 @@ type GroupRecipeInputs struct {
 	MateProjectName string
 	Runtimes        []GroupRuntime
 	ManagedServices []ManagedServiceEntry
-	ProjectEnvs     []ProjectEnvVar
+	// ProjectEnvs is the project's user-set variables, the platform's own and
+	// the control plane's already left out: every tier carries them, config
+	// under envVariables and secrets under envSecrets (recipeSecret).
+	ProjectEnvs []ProjectEnvVar
 }
 
 // groupTierPolicy is one tier's decision set. A tier is a decision, never an
@@ -161,20 +167,13 @@ var groupTiers = []groupTierPolicy{
 // withheld (a warning), and a recipe with no tier left is an error the
 // reconcile reports and retries — a tier that lands on the group repo stays
 // there, so an absent one is proposed later and a wrong one never heals.
-func BuildGroupRecipe(
-	inputs GroupRecipeInputs,
-	classifications map[string]topology.SecretClassification,
-) (recipe.Layout, []string, error) {
+func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error) {
 	if strings.TrimSpace(inputs.Name) == "" {
 		return recipe.Layout{}, nil, fmt.Errorf("group recipe: Name required (the group's slug)")
 	}
 	if len(inputs.Runtimes) == 0 {
 		return recipe.Layout{}, nil, fmt.Errorf("group recipe %q: at least one runtime required", inputs.Name)
 	}
-	if classifications == nil {
-		classifications = map[string]topology.SecretClassification{}
-	}
-
 	runtimes := append([]GroupRuntime(nil), inputs.Runtimes...)
 	sort.SliceStable(runtimes, func(i, j int) bool { return runtimes[i].DevHostname < runtimes[j].DevHostname })
 	for i, r := range runtimes {
@@ -222,7 +221,7 @@ func BuildGroupRecipe(
 			}
 			continue
 		}
-		body, tierWarnings, err := composeGroupTierYAML(inputs, runtimes, managed, policy, stageSetups, priorities, classifications)
+		body, tierWarnings, err := composeGroupTierYAML(inputs, runtimes, managed, policy, stageSetups, priorities)
 		if err != nil {
 			return recipe.Layout{}, nil, fmt.Errorf("group recipe %q: tier %q: %w", inputs.Name, policy.title, err)
 		}
@@ -329,9 +328,9 @@ func composeGroupTierYAML(
 	policy groupTierPolicy,
 	stageSetups map[string]string,
 	priorities map[string]int,
-	classifications map[string]topology.SecretClassification,
 ) (string, []string, error) {
-	projectEnvs, warnings := composeProjectEnvVariables(inputs.ProjectEnvs, classifications)
+	warnings := make([]string, 0, len(runtimes))
+	source := firstNonBlank(inputs.MateProjectName, inputs.Name)
 
 	// Every entry carries its priority, and the file lists the services in
 	// the order the platform creates them: highest first, a pair's halves
@@ -342,23 +341,26 @@ func composeGroupTierYAML(
 	}
 	ranked := make([]rankedItem, 0, 2*len(runtimes)+len(managed))
 	for _, r := range runtimes {
-		halves := []struct{ hostname, setup string }{}
+		type half struct {
+			hostname, setup string
+			envs            []ProjectEnvVar
+		}
+		var halves []half
 		if policy.pairs {
-			halves = append(halves, struct{ hostname, setup string }{r.DevHostname, r.SetupName})
+			halves = append(halves, half{r.DevHostname, r.SetupName, r.ServiceEnvs})
 			if r.StageHostname != "" {
-				halves = append(halves, struct{ hostname, setup string }{
-					r.StageHostname, stageSetups[r.DevHostname],
-				})
+				halves = append(halves, half{r.StageHostname, stageSetups[r.DevHostname], r.StageServiceEnvs})
 			}
 		} else {
 			// A group environment runs what the pair's stage half runs: the
 			// dev half's setup is the dev loop's, never a stage's.
-			halves = append(halves, struct{ hostname, setup string }{
-				GroupPromotedHostname(r.DevHostname), stageSetups[r.DevHostname],
-			})
+			halves = append(halves, half{GroupPromotedHostname(r.DevHostname), stageSetups[r.DevHostname], stageHalfEnvs(r)})
 		}
 		for _, half := range halves {
-			entry, entryWarnings := groupRuntimeEntry(r, half.hostname, half.setup, policy, classifications)
+			entry, entryWarnings := groupRuntimeEntry(r, half.hostname, half.setup, policy)
+			if secrets := serviceSecretFields(half.envs, source); len(secrets) > 0 {
+				entry["envSecrets"] = secrets
+			}
 			warnings = append(warnings, entryWarnings...)
 			entry["priority"] = priorities[r.DevHostname]
 			ranked = append(ranked, rankedItem{priorities[r.DevHostname], yamlItem{fields: orderedFields(entry, serviceKeyOrder)}})
@@ -375,8 +377,12 @@ func composeGroupTierYAML(
 	}
 
 	project := []yamlField{{key: "name", value: groupTierProjectName(inputs, policy)}}
-	if len(projectEnvs) > 0 {
-		project = append(project, yamlField{key: "envVariables", value: fieldValue("envVariables", projectEnvs)})
+	config, secrets := groupEnvFields(inputs.ProjectEnvs, source)
+	if len(config) > 0 {
+		project = append(project, yamlField{key: "envVariables", value: config})
+	}
+	if len(secrets) > 0 {
+		project = append(project, yamlField{key: "envSecrets", value: secrets})
 	}
 
 	body, err := tierDocument{
@@ -410,7 +416,7 @@ func groupApps(runtimes []GroupRuntime) []groupApp {
 	apps := make([]groupApp, 0, len(runtimes))
 	for _, r := range runtimes {
 		sources := zeropsYAMLEnvValues(r.ZeropsYAMLBody)
-		for _, env := range r.ServiceEnvs {
+		for _, env := range append(append([]ProjectEnvVar(nil), r.ServiceEnvs...), r.StageServiceEnvs...) {
 			sources = append(sources, env.Value)
 		}
 		apps = append(apps, groupApp{
@@ -422,12 +428,20 @@ func groupApps(runtimes []GroupRuntime) []groupApp {
 	return apps
 }
 
+// stageHalfEnvs is what a group environment's runtime carries of the pair's
+// own variables: the stage half's, or the dev half's when it has no stage.
+func stageHalfEnvs(r GroupRuntime) []ProjectEnvVar {
+	if r.StageHostname == "" {
+		return r.ServiceEnvs
+	}
+	return r.StageServiceEnvs
+}
+
 // groupRuntimeEntry composes one runtime's services[] entry under a policy.
 func groupRuntimeEntry(
 	r GroupRuntime,
 	hostname, setupName string,
 	policy groupTierPolicy,
-	classifications map[string]topology.SecretClassification,
 ) (map[string]any, []string) {
 	var warnings []string
 	// No `mode`: a runtime is always HA on the platform, so a mode/variant on
@@ -468,12 +482,6 @@ func groupRuntimeEntry(
 			entry["verticalAutoscaling"] = vertical
 		}
 		vertical["cpuMode"] = policy.cpuMode
-	}
-
-	secrets, secretWarnings := composeServiceEnvSecrets(r.ServiceEnvs, classifications)
-	warnings = append(warnings, secretWarnings...)
-	if len(secrets) > 0 {
-		entry["envSecrets"] = secrets
 	}
 	return entry, warnings
 }

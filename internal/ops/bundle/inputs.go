@@ -10,6 +10,10 @@ package bundle
 type ProjectEnvVar struct {
 	Key   string
 	Value string
+	// Sensitive is the platform's sensitive flag. Only the group recipe reads
+	// it, as one signal among several (recipeSecret); export and launch
+	// classify every variable instead.
+	Sensitive bool
 }
 
 // ManagedServiceEntry describes a managed dep to re-import alongside

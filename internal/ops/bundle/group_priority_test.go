@@ -138,7 +138,7 @@ func TestBuildGroupRecipe_PriorityFollowsReferences(t *testing.T) {
 		},
 		ManagedServices: []ManagedServiceEntry{{Hostname: "db", Type: "postgresql@16"}},
 	}
-	layout, _, err := BuildGroupRecipe(in, nil)
+	layout, _, err := BuildGroupRecipe(in)
 	if err != nil {
 		t.Fatalf("BuildGroupRecipe: %v", err)
 	}

@@ -124,7 +124,7 @@ func TestComposeGroupRecipeInputs_SetupName(t *testing.T) {
 				t.Errorf("SetupName = %q, want %q", got, tt.wantSetup)
 			}
 
-			_, warnings, err := bundle.BuildGroupRecipe(inputs, nil)
+			_, warnings, err := bundle.BuildGroupRecipe(inputs)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("err = %v, want one containing %q", err, tt.wantErr)
@@ -185,7 +185,7 @@ func TestComposeGroupRecipeInputs_JoinerWithoutStageSetup_BuildsTheYAMLsOtherSet
 			if err != nil {
 				t.Fatalf("composeGroupRecipeInputs: %v", err)
 			}
-			layout, _, err := bundle.BuildGroupRecipe(inputs, nil)
+			layout, _, err := bundle.BuildGroupRecipe(inputs)
 			if err != nil {
 				t.Fatalf("BuildGroupRecipe: %v", err)
 			}

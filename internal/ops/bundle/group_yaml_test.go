@@ -50,7 +50,7 @@ func TestBuildGroupRecipe_TierIsWrittenForPeople(t *testing.T) {
 	t.Parallel()
 	in := groupInputsFixture()
 	in.Runtimes[0].ServiceEnvs = []ProjectEnvVar{{Key: "LOG_LEVEL", Value: "debug"}}
-	layout, _, err := BuildGroupRecipe(in, nil)
+	layout, _, err := BuildGroupRecipe(in)
 	if err != nil {
 		t.Fatalf("BuildGroupRecipe: %v", err)
 	}

@@ -168,11 +168,10 @@ func giteaGroupRecipeOutcome(
 		outcome.Line = fmt.Sprintf("the group recipe is not proposed yet (%v) — retrying on the next pass.", err)
 		return outcome
 	}
-	// No classifications: this composes unattended, and the classification map
-	// is an agent decision made in the export/launch flows. The secret-safe
-	// default is what protects the repo — an unclassified user-set service env
-	// emits REPLACE_ME, never its value.
-	layout, warnings, err := bundle.BuildGroupRecipe(inputs, nil)
+	// This composes unattended, with nobody to classify a variable the way the
+	// export and launch flows ask the agent to, so the composer decides each
+	// one itself: config as written, a secret as a generator — never its value.
+	layout, warnings, err := bundle.BuildGroupRecipe(inputs)
 	if err != nil {
 		outcome.Line = fmt.Sprintf("the group recipe does not compose yet (%v).", err)
 		return outcome

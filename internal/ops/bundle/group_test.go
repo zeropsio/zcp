@@ -8,7 +8,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/zeropsio/zcp/internal/recipe"
-	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // groupFiles renders a composed layout through the published recipe layout —
@@ -118,7 +117,7 @@ func TestBuildGroupRecipe_Rejects(t *testing.T) {
 			t.Parallel()
 			in := groupInputsFixture()
 			tc.mutate(&in)
-			_, _, err := BuildGroupRecipe(in, nil)
+			_, _, err := BuildGroupRecipe(in)
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("err = %v, want one containing %q", err, tc.wantErr)
 			}
@@ -128,7 +127,7 @@ func TestBuildGroupRecipe_Rejects(t *testing.T) {
 
 func TestBuildGroupRecipe_EmitsThreeTiers(t *testing.T) {
 	t.Parallel()
-	layout, _, err := BuildGroupRecipe(groupInputsFixture(), nil)
+	layout, _, err := BuildGroupRecipe(groupInputsFixture())
 	if err != nil {
 		t.Fatalf("BuildGroupRecipe: %v", err)
 	}
@@ -161,7 +160,7 @@ func TestBuildGroupRecipe_EmitsThreeTiers(t *testing.T) {
 // scaling reproduced verbatim, managed deps as they run.
 func TestBuildGroupRecipe_AIAgentTierIsTheMatesProject(t *testing.T) {
 	t.Parallel()
-	layout, _, err := BuildGroupRecipe(groupInputsFixture(), nil)
+	layout, _, err := BuildGroupRecipe(groupInputsFixture())
 	if err != nil {
 		t.Fatalf("BuildGroupRecipe: %v", err)
 	}
@@ -205,7 +204,7 @@ func TestBuildGroupRecipe_GroupEnvironmentsBuildTheStageHalfsSetup(t *testing.T)
 	in.Runtimes[0].SetupName = "dev"
 	in.Runtimes[0].StageSetupName = "prod"
 	in.Runtimes[0].ZeropsYAMLBody = "zerops:\n  - setup: dev\n    run:\n      base: nodejs@22\n  - setup: prod\n    run:\n      base: nodejs@22\n"
-	layout, _, err := BuildGroupRecipe(in, nil)
+	layout, _, err := BuildGroupRecipe(in)
 	if err != nil {
 		t.Fatalf("BuildGroupRecipe: %v", err)
 	}
@@ -297,7 +296,7 @@ func TestBuildGroupRecipe_StageSetup_ResolvedOrWithheld(t *testing.T) {
 			if tt.noStageHalf {
 				in.Runtimes[0].StageHostname = ""
 			}
-			layout, warnings, err := BuildGroupRecipe(in, nil)
+			layout, warnings, err := BuildGroupRecipe(in)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("err = %v, want one containing %q", err, tt.wantErr)
@@ -343,7 +342,7 @@ func TestBuildGroupRecipe_StageSetup_ResolvedOrWithheld(t *testing.T) {
 // stripped, one entry per pair, an HA floor on production.
 func TestBuildGroupRecipe_ProductionTransform(t *testing.T) {
 	t.Parallel()
-	layout, _, err := BuildGroupRecipe(groupInputsFixture(), nil)
+	layout, _, err := BuildGroupRecipe(groupInputsFixture())
 	if err != nil {
 		t.Fatalf("BuildGroupRecipe: %v", err)
 	}
@@ -395,43 +394,6 @@ func TestBuildGroupRecipe_ProductionTransform(t *testing.T) {
 	}
 }
 
-// Secrets never reach the recipe verbatim: export's classification decides,
-// and an unclassified user-set service env collapses to the placeholder.
-func TestBuildGroupRecipe_SecretsAreClassifiedNeverVerbatim(t *testing.T) {
-	t.Parallel()
-	in := groupInputsFixture()
-	in.Runtimes[0].ServiceEnvs = []ProjectEnvVar{
-		{Key: "STRIPE_KEY", Value: "sk_live_realvalue"},
-		{Key: "SESSION_SECRET", Value: "old"},
-		{Key: "LOG_LEVEL", Value: "debug"},
-	}
-	classifications := map[string]topology.SecretClassification{
-		"SESSION_SECRET": topology.SecretClassAutoSecret,
-		"LOG_LEVEL":      topology.SecretClassPlainConfig,
-	}
-	layout, _, err := BuildGroupRecipe(in, classifications)
-	if err != nil {
-		t.Fatalf("BuildGroupRecipe: %v", err)
-	}
-	for _, tier := range layout.Tiers {
-		if strings.Contains(tier.ImportYAML, "sk_live_realvalue") {
-			t.Fatalf("tier %q leaks an unclassified service env value", tier.Title)
-		}
-		if !strings.Contains(tier.ImportYAML, ExternalSecretPlaceholder) {
-			t.Errorf("tier %q: unclassified secret did not collapse to %q", tier.Title, ExternalSecretPlaceholder)
-		}
-		if !strings.Contains(tier.ImportYAML, autoSecretPreprocessor) {
-			t.Errorf("tier %q: auto-secret env did not emit the generator directive", tier.Title)
-		}
-		if !strings.HasPrefix(tier.ImportYAML, preprocessorHeader) {
-			t.Errorf("tier %q: a generator directive without the preprocessor header on line 1", tier.Title)
-		}
-		if !strings.Contains(tier.ImportYAML, "debug") {
-			t.Errorf("tier %q: plain-config env dropped", tier.Title)
-		}
-	}
-}
-
 // The same project composes to the same bytes — a recipe that rewrites itself
 // on every pass makes a pull request that says nothing.
 func TestBuildGroupRecipe_Deterministic(t *testing.T) {
@@ -442,13 +404,13 @@ func TestBuildGroupRecipe_Deterministic(t *testing.T) {
 		RepoURL: "https://git.example.com/acme/workerdev.git", SetupName: "api",
 		ZeropsYAMLBody: groupZeropsYAML,
 	})
-	first, _, err := BuildGroupRecipe(in, nil)
+	first, _, err := BuildGroupRecipe(in)
 	if err != nil {
 		t.Fatalf("BuildGroupRecipe: %v", err)
 	}
 	// Re-order the inputs: composition sorts, so the bytes must not move.
 	in.Runtimes[0], in.Runtimes[1] = in.Runtimes[1], in.Runtimes[0]
-	second, _, err := BuildGroupRecipe(in, nil)
+	second, _, err := BuildGroupRecipe(in)
 	if err != nil {
 		t.Fatalf("BuildGroupRecipe: %v", err)
 	}
@@ -465,7 +427,7 @@ func TestBuildGroupRecipe_UnknownSetupWarnsNotFails(t *testing.T) {
 	t.Parallel()
 	in := groupInputsFixture()
 	in.Runtimes[0].SetupName = "nope"
-	layout, warnings, err := BuildGroupRecipe(in, nil)
+	layout, warnings, err := BuildGroupRecipe(in)
 	if err != nil {
 		t.Fatalf("BuildGroupRecipe: %v", err)
 	}
