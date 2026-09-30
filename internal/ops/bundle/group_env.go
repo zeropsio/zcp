@@ -64,21 +64,28 @@ const maskedSecretLength = 32
 const maskedValue = "REDACTED"
 
 // recipeCredentialWords are the words a credential goes by, wherever they
-// stand in a name. AUTH is one only as the last word (`MP_UI_AUTH`): before
-// another it names a mechanism (`AUTH_PROVIDER`).
+// stand in a name. A name is the only signal for what no shape tells from a
+// hostname or a word — a one-case run of letters, a passphrase, a PIN — so
+// the list is wide: a seed, a PIN, a phrase. AUTH is one only as the last
+// word (`MP_UI_AUTH`): before another it names a mechanism
+// (`AUTH_PROVIDER`). CODE is none: a ZIP_CODE is config.
 var recipeCredentialWords = map[string]bool{
-	"KEY": true, "KEYS": true, "PASS": true, "PWD": true, "PW": true,
-	"SALT": true, "SALTS": true, "PEPPER": true, "PEPPERS": true,
-	"CREDENTIAL": true, "CREDENTIALS": true, "CREDS": true,
+	"PASS": true, "PWD": true, "PW": true, "PIN": true, "PINS": true,
+	"SALT": true, "SALTS": true, "PEPPER": true, "PEPPERS": true, "CREDS": true,
 }
 
-// recipeCredentialEndings end a word that names a credential even run into
-// the word before it: `PASSWORD`, `DBPASSWORD`, `ACCESSTOKEN`, `jwtSecret`'s
-// `SECRET`.
+// recipeCredentialEndings end a word that names a credential, alone or run
+// into the words before it: `PASSWORD`, `DBPASSWORD`, `SECRETKEY`,
+// `MASTERKEY`, `AUTHTOKEN`, `jwtSecret`'s `SECRET`.
 var recipeCredentialEndings = []string{
-	"PASSWORD", "PASSWORDS", "PASSWD", "PASSPHRASE", "PASSPHRASES",
-	"SECRET", "SECRETS", "TOKEN", "TOKENS", "APIKEY", "APIKEYS", "PRIVATEKEY",
+	"PASSWORD", "PASSWORDS", "PASSWD", "PASSPHRASE", "PASSPHRASES", "PASSCODE", "PASSCODES",
+	"SECRET", "SECRETS", "TOKEN", "TOKENS", "KEY", "KEYS", "CREDENTIAL", "CREDENTIALS",
+	"MNEMONIC", "MNEMONICS", "PHRASE", "PHRASES", "SEED", "SEEDS", "WEBHOOK", "WEBHOOKS",
 }
+
+// recipeAddressWords are the property words a webhook's address goes by:
+// the address of a webhook is its credential, so they leave it one.
+var recipeAddressWords = map[string]bool{"URL": true, "URI": true, "ENDPOINT": true}
 
 // recipePropertyWords, after a credential word, make the name one about the
 // credential rather than the credential itself: `TOKEN_TTL`,
@@ -98,19 +105,24 @@ var recipePropertyWords = map[string]bool{
 
 // recipeCredentialName reports a name that says credential: a credential
 // word (recipeCredentialWords, recipeCredentialEndings) with no property word
-// after it.
+// after it — but for a webhook's address, which is the credential.
 func recipeCredentialName(key string) bool {
 	words := recipeNameWords(key)
 	for i, word := range words {
 		credential := recipeCredentialWords[word] ||
 			(word == "AUTH" && i == len(words)-1) ||
 			hasAnySuffix(word, recipeCredentialEndings)
-		if credential && !slices.ContainsFunc(words[i+1:], func(w string) bool { return recipePropertyWords[w] }) {
+		webhook := hasAnySuffix(word, []string{"WEBHOOK", "WEBHOOKS"})
+		property := func(w string) bool { return recipePropertyWords[w] && (!webhook || !recipeAddressWords[w]) }
+		if credential && !slices.ContainsFunc(words[i+1:], property) {
 			return true
 		}
 	}
 	return false
 }
+
+// recipeBoolean is a switch's value: it hides nothing, whatever the name.
+var recipeBoolean = regexp.MustCompile(`^(?i:true|false|yes|no|on|off|0|1)$`)
 
 // recipePublicName reports a name public by design — PUBLIC or PUBLISHABLE a
 // word of it: `NEXT_PUBLIC_*`, `*_PUBLISHABLE_KEY` — that says nothing
@@ -232,10 +244,10 @@ func recipeSecret(env ProjectEnvVar) (secret, setAgain bool) {
 }
 
 // recipeLooksSecret reports a value its name or its shape keeps out of the
-// repo: a credential's name, a secret's or a vendor's shape, or no config
-// shape at all.
+// repo: a credential's name — unless the value is a switch — a secret's or a
+// vendor's shape, or no config shape at all.
 func recipeLooksSecret(key, value string) bool {
-	return recipeCredentialName(key) ||
+	return (recipeCredentialName(key) && !recipeBoolean.MatchString(value)) ||
 		matchesAny(recipeSecretShapes, value) ||
 		matchesAny(recipeExternalShapes, value) ||
 		urlCarriesPassword(value) ||

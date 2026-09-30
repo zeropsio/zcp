@@ -95,6 +95,27 @@ func TestRecipeSecret_Rule(t *testing.T) {
 		{name: "camel case", env: ProjectEnvVar{Key: "jwtSecret", Value: "mysecret"}, wantSecret: true},
 		{name: "a credential word run into the one before it", env: ProjectEnvVar{Key: "DBPASSWORD", Value: "hunter"}, wantSecret: true},
 
+		// What no shape tells from a hostname or a word — a one-case run of
+		// letters, a passphrase, a PIN — its name tells.
+		{name: "a passcode", env: ProjectEnvVar{Key: "ADMIN_PASSCODE", Value: "Saddle-Piano8-Velvet-Silver"}, wantSecret: true, wantSetAgain: true},
+		{name: "a recovery phrase", env: ProjectEnvVar{Key: "RECOVERY_PHRASE", Value: "correct horse battery staple"}, wantSecret: true, wantSetAgain: true},
+		{name: "a mnemonic", env: ProjectEnvVar{Key: "WALLET_MNEMONIC", Value: "zoo ask axis bag bus cat cow dog egg era eye fan"}, wantSecret: true, wantSetAgain: true},
+		{name: "a PIN", env: ProjectEnvVar{Key: "ADMIN_PIN", Value: "482913"}, wantSecret: true, wantSetAgain: true},
+		{name: "a seed", env: ProjectEnvVar{Key: "OTP_SEED", Value: "JBSWYDPEHPKXPXPA"}, wantSecret: true, wantSetAgain: true},
+		{name: "SECRETKEY run together", env: ProjectEnvVar{Key: "SECRETKEY", Value: "kqzvbxwmtrplhdfg"}, wantSecret: true, wantSetAgain: true},
+		{name: "MASTERKEY run together", env: ProjectEnvVar{Key: "MASTERKEY", Value: "kqzvbxwmtrplhdfg"}, wantSecret: true, wantSetAgain: true},
+		{name: "ACCESSKEY run together", env: ProjectEnvVar{Key: "S3_ACCESSKEY", Value: "kqzvbxwmtrplhdfg"}, wantSecret: true, wantSetAgain: true},
+		{name: "AUTHTOKEN run together", env: ProjectEnvVar{Key: "TWILIO_AUTHTOKEN", Value: "kqzvbxwmtrplhdfg"}, wantSecret: true, wantSetAgain: true},
+		{name: "a webhook's address is its credential", env: ProjectEnvVar{Key: "SLACK_WEBHOOK_URL", Value: "https://hooks." + "slack.com/services/TABCDEFGH/BABCDEFGH/kqzvbxwmtrplhdfgnjcsyaeu"}, wantSecret: true, wantSetAgain: true},
+
+		// A code is no passcode, a boolean hides nothing, and a word about a
+		// credential names none.
+		{name: "a zip code", env: ProjectEnvVar{Key: "ZIP_CODE", Value: "11000"}},
+		{name: "a country code", env: ProjectEnvVar{Key: "COUNTRY_CODE", Value: "CZ"}},
+		{name: "a boolean under a credential's name", env: ProjectEnvVar{Key: "DB_SEED", Value: "true"}},
+		{name: "a PIN's length", env: ProjectEnvVar{Key: "PIN_LENGTH", Value: "6"}},
+		{name: "a webhook's route here", env: ProjectEnvVar{Key: "GITHUB_WEBHOOK_PATH", Value: "/hooks/github"}},
+
 		// A credential somebody else issued: generated, and asked for again.
 		{name: "_API_KEY", env: ProjectEnvVar{Key: "STRIPE_API_KEY", Value: fakeStripeKey}, wantSecret: true, wantSetAgain: true},
 		{name: "_TOKEN", env: ProjectEnvVar{Key: "GITHUB_TOKEN", Value: "tok"}, wantSecret: true, wantSetAgain: true},
@@ -189,6 +210,9 @@ func TestBuildGroupRecipe_FailsClosed(t *testing.T) {
 		{name: "a dash-led base64url seed", key: "COOKIE_SIGNING", value: "-" + "Xq9rT2pLm9Wn4Xc6Yb1Hd0Fs5Jg7Kh2Nc4Vx8Qa1Ze"},
 		{name: "an access key id before a colon", key: "AWS_CREDENTIALS", value: "AK" + "IAIOSFODNN7EXAMPLE:" + "wJalrXUtnFEMI/K7MDENG/bPxRfiCYzq8Lw2Vm", secret: "AK" + "IAIOSFODNN7EXAMPLE"},
 		{name: "a token before a colon", key: "GITLAB_AUTH", value: "gl" + "pat-Xq9rT2pLm9Wn4Xc6Yb1H:x-oauth-basic", secret: "gl" + "pat-Xq9rT2pLm9Wn4Xc6Yb1H"},
+		{name: "a passcode in words", key: "ADMIN_PASSCODE", value: "Saddle-Piano8-Velvet-Silver"},
+		{name: "a PIN", key: "ADMIN_PIN", value: "482913"},
+		{name: "a one-case seed", key: "SESSION_SEED", value: "kqzvbxwmtrplhdfgnjcsyaeu"},
 		{name: "a password among JVM options, abbreviated", key: "JAVA_OPTS", value: "-Xmx512m -Dspring.datasource." + "pwd=Jvm-Pa55-w0rd", secret: "Jvm-Pa55-w0rd"},
 		{name: "a public bucket's secret key", key: "S3_PUBLIC_BUCKET_SECRET_KEY", value: "wJalrXUtnFEMI" + "/K7MDENG/bPxRfiCYzq8Lw2Vm"},
 		{name: "a public CDN's private key", key: "CDN_PUBLIC_SIGNING_PRIVATE_KEY", value: "-----BEGIN " + "PRIVATE KEY-----\n" + pgpBody + "\n-----END PRIVATE KEY-----", secret: pgpBody},
@@ -216,6 +240,8 @@ func TestBuildGroupRecipe_FailsClosed(t *testing.T) {
 		{name: "a table prefix", key: "WORDPRESS_TABLE_PREFIX", value: "wp_", verbatim: true},
 		{name: "a memory limit", key: "PHP_INI_memory_limit", value: "512M", verbatim: true},
 		{name: "a version", key: "UMAMI_RELEASE_TAG", value: "v3.0.1", verbatim: true},
+		{name: "a seeding switch", key: "DB_SEED", value: "true", verbatim: true},
+		{name: "a zip code", key: "ZIP_CODE", value: "11000", verbatim: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -314,6 +340,44 @@ func TestRecipeSecret_RandomValuesAreGenerated(t *testing.T) {
 		}
 		if len(written) > 0 {
 			t.Errorf("%s: %d of 5000 written as they are, e.g. %q", shape.name, len(written), written[:min(3, len(written))])
+		}
+	}
+}
+
+// What a shape cannot tell from a hostname or a word — a one-case run of
+// letters, a passphrase, a PIN — is a secret by its name: under any name
+// that says so, every such value is generated.
+func TestRecipeSecret_CredentialNamesCoverWhatShapesCannot(t *testing.T) {
+	t.Parallel()
+	rng := rand.New(rand.NewPCG(20260930, 2)) //nolint:gosec // a seeded generator keeps the samples the same on every run
+	words := strings.Fields("apple river stone cloud tiger lemon piano rocket garden silver candle forest orange hammer mirror planet saddle velvet walnut zebra")
+	random := func(alphabet string, n int) string {
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = alphabet[rng.IntN(len(alphabet))]
+		}
+		return string(b)
+	}
+	passphrase := func() string {
+		parts := make([]string, 3+rng.IntN(6))
+		for i := range parts {
+			parts[i] = words[rng.IntN(len(words))]
+		}
+		return strings.Join(parts, []string{" ", "-", "_", "."}[rng.IntN(4)])
+	}
+	values := []func() string{
+		func() string { return random("abcdefghijklmnopqrstuvwxyz", 8+rng.IntN(17)) },
+		func() string { return random("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", 16) },
+		func() string { return random("0123456789", 4+rng.IntN(7)) },
+		passphrase,
+	}
+	for _, key := range []string{"SIGNING_SEED", "OTP_SEED", "ADMIN_PASSCODE", "RECOVERY_PHRASE", "WALLET_MNEMONIC", "ADMIN_PIN", "SECRETKEY", "MASTERKEY", "API_ACCESSKEY", "APP_AUTHTOKEN"} {
+		for range 2000 {
+			value := values[rng.IntN(len(values))]()
+			if secret, _ := recipeSecret(ProjectEnvVar{Key: key, Value: value}); !secret {
+				t.Errorf("%s=%q is written as it is", key, value)
+				break
+			}
 		}
 	}
 }
