@@ -94,7 +94,7 @@ func TestComposeGroupRecipeInputs_ReadsTheLiveProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListServiceMetas: %v", err)
 	}
-	inputs, warnings, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(), "p1", "acme", t.TempDir(), metas, metas)
+	inputs, warnings, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(), "p1", "acme", t.TempDir(), testGiteaURL, metas, metas)
 	if err != nil {
 		t.Fatalf("composeGroupRecipeInputs: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestComposeGroupRecipeInputs_ReadFailures(t *testing.T) {
 			writeGiteaWiredPairMeta(t, stateDir)
 			metas, _ := workflow.ListServiceMetas(stateDir)
 			client := medusaLikeProject().WithError(tt.method, errors.New("upstream timeout"))
-			_, warnings, err := composeGroupRecipeInputs(context.Background(), client, "p1", "acme", t.TempDir(), metas, metas)
+			_, warnings, err := composeGroupRecipeInputs(context.Background(), client, "p1", "acme", t.TempDir(), testGiteaURL, metas, metas)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("err = %v, want one naming %q", err, tt.wantErr)
@@ -195,33 +195,59 @@ func TestComposeGroupRecipeInputs_ReadFailures(t *testing.T) {
 	}
 }
 
-// A pair zcp knows and has not wired — its repository pass has not run yet,
-// or failed — is no utility, however public its build: written as two, a
-// pair built from a public recipe landed its halves in Small Production with
-// no setup, and a tier on main stays as it landed. Nor is a dev/stage pair
-// zcp knows nothing of. Only a runtime with no sibling and no pair recorded
-// is a utility, and while any pair waits nothing composes: the warnings say
-// which, and a later pass proposes.
-func TestComposeGroupRecipeInputs_WaitsForEveryPair(t *testing.T) {
-	workers := []platform.ServiceStack{
-		publicBuildRuntime("svc-workerdev", "workerdev", "nodejs@22", "https://github.com/zerops-recipe-apps/medusa-worker"),
-		publicBuildRuntime("svc-workerstage", "workerstage", "nodejs@22", "https://github.com/zerops-recipe-apps/medusa-worker"),
+// testGiteaURL is the Mate's Gitea in these tests: the wired pair's remote is
+// on it.
+const testGiteaURL = "https://gitea.example"
+
+// The recipe waits only for what a later pass brings: a finished pair the
+// repository pass will still wire, or a dev/stage pair zcp has not adopted.
+// Written without either, a tier on main would stay without it; written as
+// two utilities, a pair's halves landed in Small Production with no setup.
+// What no pass will ever wire must not hold the group's first recipe back
+// for good: a pair pushing to its own repository, or one whose bootstrap
+// never finished, is left out and said. A runtime is a utility only when it
+// is standalone — no pair records it, and no dev/stage sibling runs beside
+// it: `app` beside a wired appdev/appstage is one, and so are `back` and
+// `backstage`, which are no pair.
+func TestComposeGroupRecipeInputs_WaitsOnlyForWhatALaterPassBrings(t *testing.T) {
+	public := func(name string) platform.ServiceStack {
+		return publicBuildRuntime("svc-"+name, name, "nodejs@22", "https://github.com/zerops-recipe-apps/"+name)
 	}
-	workerPair := func(bootstrapped string) *workflow.ServiceMeta {
-		return &workflow.ServiceMeta{Hostname: "workerdev", StageHostname: "workerstage", Mode: topology.PlanModeStandard,
-			BootstrapSession: "test", BootstrappedAt: bootstrapped}
+	workers := []platform.ServiceStack{public("workerdev"), public("workerstage")}
+	workerPair := func(bootstrapped, remote string) *workflow.ServiceMeta {
+		m := &workflow.ServiceMeta{Hostname: "workerdev", StageHostname: "workerstage", Mode: topology.PlanModeStandard,
+			BootstrapSession: "test", BootstrappedAt: bootstrapped, RemoteURL: remote}
+		if remote != "" {
+			m.GitPushState = topology.GitPushConfigured
+		}
+		return m
 	}
 	tests := []struct {
 		name  string
 		meta  *workflow.ServiceMeta
 		extra []platform.ServiceStack
-		// wantWait are what the warnings must name; none when it composes.
+		// wantWait are what the warnings and the error name while the recipe
+		// waits; none when it composes.
 		wantWait []string
+		// wantLeftOut is what a warning must say when it composes.
+		wantLeftOut []string
+		// wantUtilities are the utilities it composes with.
+		wantUtilities []string
 	}{
-		{name: "a pair zcp knows and has not wired", meta: workerPair("2026-09-30"), extra: workers, wantWait: []string{`"workerdev"`}},
-		{name: "a pair whose bootstrap has not finished", meta: workerPair(""), extra: workers, wantWait: []string{`"workerdev"`}},
-		{name: "a dev/stage pair zcp knows nothing of", extra: workers, wantWait: []string{`"workerdev"`, `"workerstage"`}},
-		{name: "a pair whose services are gone holds nothing up", meta: workerPair("2026-09-30")},
+		{name: "a finished pair the repository pass will wire", meta: workerPair("2026-09-30", ""), extra: workers,
+			wantWait: []string{`"workerdev"`, "repository pass"}},
+		{name: "a dev/stage pair zcp has not adopted", extra: workers,
+			wantWait: []string{`"workerdev"`, `"workerstage"`, "adopt"}},
+		{name: "a pair pushing to its own repository is left out", meta: workerPair("2026-09-30", "https://github.com/acme/worker.git"), extra: workers,
+			wantLeftOut: []string{`"workerdev"`, "its own"}, wantUtilities: []string{"mailpit"}},
+		{name: "a pair whose bootstrap never finished is left out", meta: workerPair("", ""), extra: workers,
+			wantLeftOut: []string{`"workerdev"`, "bootstrap"}, wantUtilities: []string{"mailpit"}},
+		{name: "a runtime named like a wired pair's group runtime is standalone", extra: []platform.ServiceStack{public("app")},
+			wantUtilities: []string{"app", "mailpit"}},
+		{name: "back and backstage are no pair", extra: []platform.ServiceStack{public("back"), public("backstage")},
+			wantUtilities: []string{"back", "backstage", "mailpit"}},
+		{name: "a pair whose services are gone holds nothing up", meta: workerPair("2026-09-30", ""),
+			wantUtilities: []string{"mailpit"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -235,26 +261,42 @@ func TestComposeGroupRecipeInputs_WaitsForEveryPair(t *testing.T) {
 			if tt.meta != nil {
 				metas = append(slices.Clone(wired), tt.meta)
 			}
-			inputs, warnings, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(tt.extra...), "p1", "acme", t.TempDir(), metas, wired)
-			if len(tt.wantWait) == 0 {
-				if err != nil {
-					t.Fatalf("composeGroupRecipeInputs: %v", err)
+			inputs, warnings, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(tt.extra...), "p1", "acme", t.TempDir(), testGiteaURL, metas, wired)
+			if len(tt.wantWait) > 0 {
+				if err == nil {
+					t.Fatalf("composed while a pair waits: utilities %+v", inputs.Utilities)
 				}
-				if len(inputs.Utilities) != 1 || inputs.Utilities[0].Hostname != "mailpit" {
-					t.Errorf("utilities = %+v, want mailpit alone", inputs.Utilities)
+				if len(inputs.Utilities) > 0 || len(inputs.Runtimes) > 0 {
+					t.Errorf("inputs = %+v, want nothing composed", inputs)
+				}
+				for _, want := range tt.wantWait {
+					if !warningsHave(warnings, want) {
+						t.Errorf("warnings %v do not say %s", warnings, want)
+					}
+				}
+				if !strings.Contains(err.Error(), "workerdev") {
+					t.Errorf("error %q does not name the pair", err)
 				}
 				return
 			}
-			if err == nil {
-				t.Fatalf("composed with a pair waiting: utilities %+v", inputs.Utilities)
+			if err != nil {
+				t.Fatalf("composeGroupRecipeInputs: %v", err)
 			}
-			if len(inputs.Utilities) > 0 || len(inputs.Runtimes) > 0 {
-				t.Errorf("inputs = %+v, want nothing composed", inputs)
+			var utilities []string
+			for _, u := range inputs.Utilities {
+				utilities = append(utilities, u.Hostname)
 			}
-			for _, want := range tt.wantWait {
-				if !warningsHave(warnings, want) || !strings.Contains(err.Error(), strings.Trim(want, `"`)) {
-					t.Errorf("warnings %v and error %q do not both name %s", warnings, err, want)
+			slices.Sort(utilities)
+			if !slices.Equal(utilities, tt.wantUtilities) {
+				t.Errorf("utilities = %v, want %v", utilities, tt.wantUtilities)
+			}
+			for _, want := range tt.wantLeftOut {
+				if !warningsHave(warnings, want) {
+					t.Errorf("warnings %v do not say %s", warnings, want)
 				}
+			}
+			if warningsHave(warnings, "waits") {
+				t.Errorf("warnings %v say the recipe waits, yet it composed", warnings)
 			}
 		})
 	}

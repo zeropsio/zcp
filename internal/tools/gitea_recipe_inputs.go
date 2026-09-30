@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 
@@ -34,12 +33,12 @@ import (
 // (D30), so a tier composed from a failed read would carry the gap for good,
 // the way the medusa group's first production came up with no project
 // variables at all. The next pass reads again. A read that only refines — a
-// scale, a profile, a storage's policy — is a warning. A pair not wired yet
-// fails the pass too (groupRecipeWaits), its warnings naming it.
+// scale, a profile, a storage's policy — is a warning. A pair a later pass
+// wires fails the pass too (groupRecipeWaits), its warnings naming it.
 func composeGroupRecipeInputs(
 	ctx context.Context,
 	client platform.Client,
-	projectID, group, mountRoot string,
+	projectID, group, mountRoot, giteaURL string,
 	metas, wired []*workflow.ServiceMeta,
 ) (bundle.GroupRecipeInputs, []string, error) {
 	discovered, err := ops.Discover(ctx, client, projectID, "", false, false, false)
@@ -54,7 +53,8 @@ func composeGroupRecipeInputs(
 	if err != nil {
 		return bundle.GroupRecipeInputs{}, nil, fmt.Errorf("could not read the project's variables: %w", err)
 	}
-	if waits, names := groupRecipeWaits(discovered.Services, metas, wired); len(waits) > 0 {
+	waits, names, leftOut := groupRecipeWaits(discovered.Services, metas, wired, giteaURL)
+	if len(waits) > 0 {
 		return bundle.GroupRecipeInputs{}, waits, fmt.Errorf("pairs not wired yet: %s", strings.Join(names, ", "))
 	}
 	live := make(map[string]ops.ServiceInfo, len(discovered.Services))
@@ -69,7 +69,7 @@ func composeGroupRecipeInputs(
 		CorePackage:     project.Mode,
 		ProjectEnvs:     groupRecipeProjectEnvs(projectEnvs),
 	}
-	var warnings []string
+	warnings := leftOut
 	for _, m := range wired {
 		svc, ok := live[m.Hostname]
 		if !ok {
@@ -121,6 +121,7 @@ func composeGroupRecipeInputs(
 	// written as it runs, or left out and said.
 	haCatalog := schema.Embedded()
 	paired := workflow.ManagedRuntimeIndex(wired)
+	known := workflow.ManagedRuntimeIndex(metas)
 	for _, svc := range discovered.Services {
 		switch {
 		case svc.IsInfrastructure && topology.IsManagedService(svc.Type):
@@ -133,7 +134,9 @@ func composeGroupRecipeInputs(
 			if bundle.RulesForType(svc.Type).AcceptsMode && !haCatalog.SupportsHAVariant(svc.Type) {
 				inputs.HAIncapable = append(inputs.HAIncapable, svc.Hostname)
 			}
-		case svc.IsInfrastructure || paired[svc.Hostname] != nil || strings.HasPrefix(svc.Type, "zcp@"):
+		case svc.IsInfrastructure || paired[svc.Hostname] != nil || known[svc.Hostname] != nil || strings.HasPrefix(svc.Type, "zcp@"):
+			// A pair zcp knows and has not wired is left out and said
+			// (groupRecipeWaits): a pair is never a utility.
 			continue
 		default:
 			utility, utilityWarnings, err := groupRecipeUtility(ctx, client, svc)
@@ -149,50 +152,87 @@ func composeGroupRecipeInputs(
 	return inputs, warnings, nil
 }
 
-// groupRecipeWaits names what keeps the recipe from composing yet: a live
-// runtime that is a half of a pair zcp knows and has not wired — the
-// repository pass has not run for it, or failed — and live runtimes that run
-// as a dev/stage pair zcp knows nothing of. Either would otherwise go down
-// the utility path: a pair built from a public recipe landed its halves in
-// Small Production with no setup, and a tier on main stays as it landed
-// (D30), so the recipe waits and a later pass proposes. Only a runtime with
-// no dev/stage sibling and no pair recorded is standalone. It returns a
-// warning per pair and the pairs' names.
-func groupRecipeWaits(services []ops.ServiceInfo, metas, wired []*workflow.ServiceMeta) (warnings, names []string) {
+// groupRecipeWaits sorts the live runtimes no wired pair holds. The recipe
+// waits for what a later pass brings — a finished pair the repository pass
+// will still wire (its own giteaPairNeedsRepository), or a dev/stage pair
+// zcp has not adopted, both `<stem>dev` and `<stem>stage` running with no
+// pair recorded — since a tier proposed without it would stay without it
+// (D30), and written as utilities its halves landed in Small Production with
+// no setup. What no pass will wire is left out and said, so it never holds
+// the group's first recipe back for good: a pair pushing to a repository of
+// its own, or one whose bootstrap never finished. Every other runtime is
+// standalone, a utility or left out by groupRecipeUtility. It returns the
+// warnings of what it waits for, their pairs' names, and the warnings of
+// what it leaves out.
+func groupRecipeWaits(services []ops.ServiceInfo, metas, wired []*workflow.ServiceMeta, giteaURL string) (waits, names, leftOut []string) {
 	paired := workflow.ManagedRuntimeIndex(wired)
 	known := workflow.ManagedRuntimeIndex(metas)
+	org := knownGiteaOrg(metas)
+	live := map[string]bool{}
 	var runtimes []string
-	stems := map[string][]string{}
 	for _, svc := range services {
 		if svc.IsInfrastructure || strings.HasPrefix(svc.Type, "zcp@") {
 			continue
 		}
+		live[svc.Hostname] = true
 		runtimes = append(runtimes, svc.Hostname)
-		stem := bundle.GroupPromotedHostname(svc.Hostname)
-		stems[stem] = append(stems[stem], svc.Hostname)
 	}
 	sort.Strings(runtimes)
 	said := map[string]bool{}
 	for _, host := range runtimes {
-		stem := bundle.GroupPromotedHostname(host)
-		switch meta := known[host]; {
+		meta := known[host]
+		switch {
 		case paired[host] != nil:
-		case meta != nil && !said[meta.Hostname]:
+		case meta != nil && said[meta.Hostname]:
+		case meta != nil && giteaPairNeedsRepository(meta, giteaURL, org):
 			said[meta.Hostname] = true
 			names = append(names, meta.Hostname)
-			warnings = append(warnings, fmt.Sprintf(
-				"the recipe waits for the pair %q: it has no Gitea repository yet, and the repository pass gives it one — a tier written without it would stay without it on the group repo",
+			waits = append(waits, fmt.Sprintf(
+				"the recipe waits for the pair %q: the repository pass has not given it its Gitea repository yet, and a tier proposed without it would stay without it on the group repo",
 				meta.Hostname))
-		case meta == nil && len(stems[stem]) > 1 && !said["stem:"+stem]:
-			said["stem:"+stem] = true
-			siblings := slices.Sorted(slices.Values(stems[stem]))
-			names = append(names, strings.Join(siblings, "/"))
-			warnings = append(warnings, fmt.Sprintf(
-				"the recipe waits for %s: they run as a dev/stage pair zcp has not adopted — adopt them and the repository pass gives the pair its repository; a tier written without them would stay without them on the group repo",
-				quotedList(siblings)))
+		case meta != nil && !meta.IsComplete():
+			said[meta.Hostname] = true
+			leftOut = append(leftOut, fmt.Sprintf(
+				"pair %q is not in the recipe: its bootstrap has not finished, and the repository pass wires only a finished pair", meta.Hostname))
+		case meta != nil:
+			said[meta.Hostname] = true
+			leftOut = append(leftOut, fmt.Sprintf(
+				"pair %q is not in the recipe: it pushes to a repository of its own, not the group's Gitea, which the recipe does not name", meta.Hostname))
+		default:
+			dev, stage, ok := unadoptedPair(host, live, known)
+			if !ok || said[dev] {
+				continue
+			}
+			said[dev] = true
+			names = append(names, dev)
+			waits = append(waits, fmt.Sprintf(
+				"the recipe waits for %s: they run as a dev/stage pair zcp has not adopted — adopt them so the repository pass can give the pair its repository; a tier proposed without them would stay without them on the group repo",
+				quotedList([]string{dev, stage})))
 		}
 	}
-	return warnings, names
+	return waits, names, leftOut
+}
+
+// unadoptedPair reports a runtime that is a half of a dev/stage pair zcp has
+// not adopted: `<stem>dev` and `<stem>stage` (or `<stem>-dev` and
+// `<stem>-stage`) both run, and no pair records either.
+func unadoptedPair(host string, live map[string]bool, known map[string]*workflow.ServiceMeta) (dev, stage string, ok bool) {
+	for _, suffixes := range [][2]string{{"-dev", "-stage"}, {"dev", "stage"}} {
+		var stem string
+		if trimmed, isDev := strings.CutSuffix(host, suffixes[0]); isDev {
+			stem = trimmed
+		} else if trimmed, isStage := strings.CutSuffix(host, suffixes[1]); isStage {
+			stem = trimmed
+		}
+		if stem == "" {
+			continue
+		}
+		dev, stage = stem+suffixes[0], stem+suffixes[1]
+		if live[dev] && live[stage] && known[dev] == nil && known[stage] == nil {
+			return dev, stage, true
+		}
+	}
+	return "", "", false
 }
 
 // quotedList reads hostnames as `"a" and "b"`, or `"a", "b" and "c"`.

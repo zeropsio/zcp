@@ -112,7 +112,7 @@ func TestComposeGroupRecipeInputs_SetupName(t *testing.T) {
 
 			metas := []*workflow.ServiceMeta{meta}
 			inputs, _, err := composeGroupRecipeInputs(
-				context.Background(), recipeReconcileClient(), "p1", "acme", mountRoot, metas, metas,
+				context.Background(), recipeReconcileClient(), "p1", "acme", mountRoot, testGiteaURL, metas, metas,
 			)
 			if err != nil {
 				t.Fatalf("a pair that has never deployed must still compose: %v", err)
@@ -180,7 +180,7 @@ func TestComposeGroupRecipeInputs_JoinerWithoutStageSetup_BuildsTheYAMLsOtherSet
 
 			metas := []*workflow.ServiceMeta{meta}
 			inputs, _, err := composeGroupRecipeInputs(
-				context.Background(), recipeReconcileClient(), "p1", "acme", mountRoot, metas, metas,
+				context.Background(), recipeReconcileClient(), "p1", "acme", mountRoot, testGiteaURL, metas, metas,
 			)
 			if err != nil {
 				t.Fatalf("composeGroupRecipeInputs: %v", err)

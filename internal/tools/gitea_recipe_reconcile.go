@@ -167,7 +167,7 @@ func giteaGroupRecipeOutcome(
 	// The group's slug is the org of its repositories: the recipe's name, and
 	// what the stage and production projects are named after.
 	group, _, _ := strings.Cut(groupRepo, "/")
-	inputs, readWarnings, err := composeGroupRecipeInputs(ctx, client, rt.ProjectID, group, giteaPairMountRoot, metas, wired)
+	inputs, readWarnings, err := composeGroupRecipeInputs(ctx, client, rt.ProjectID, group, giteaPairMountRoot, wiring.GiteaURL, metas, wired)
 	outcome.Warnings = append(outcome.Warnings, readWarnings...)
 	if err != nil {
 		outcome.Line = fmt.Sprintf("the group recipe is not proposed yet (%v) — retrying on the next pass.", err)
