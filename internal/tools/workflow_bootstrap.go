@@ -519,7 +519,7 @@ func autoMountTargets(ctx context.Context, client platform.Client, projectID str
 				fmt.Fprintf(os.Stderr, "zcp: InitServiceGit %s: %v\n", hostname, initErr)
 			}
 			if state.Bootstrap.Route == workflow.BootstrapRouteAdopt {
-				adoptRepoBaseline(ctx, client, projectID, sshDeployer, engine, hostname)
+				adoptRepoBaseline(ctx, client, projectID, sshDeployer, engine.StateDir(), hostname)
 			}
 		}
 	}
@@ -535,7 +535,7 @@ func autoMountTargets(ctx context.Context, client platform.Client, projectID str
 // appVersionID comes from ListServicesDirect (lag-free — CLAUDE.md's
 // ES-search trap: this runs moments after adopt/import, when the
 // ES-backed ListServices could still miss the service or its version).
-func adoptRepoBaseline(ctx context.Context, client platform.Client, projectID string, ssh ops.SSHDeployer, engine *workflow.Engine, hostname string) {
+func adoptRepoBaseline(ctx context.Context, client platform.Client, projectID string, ssh ops.SSHDeployer, stateDir, hostname string) {
 	services, err := client.ListServicesDirect(ctx, projectID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "zcp: AdoptRepoBaseline %s: list services: %v\n", hostname, err)
@@ -556,7 +556,7 @@ func adoptRepoBaseline(ctx context.Context, client platform.Client, projectID st
 		fmt.Fprintf(os.Stderr, "zcp: AdoptRepoBaseline %s: %v\n", hostname, adoptErr)
 		return
 	}
-	if metaErr := workflow.UpsertServiceMeta(engine.StateDir(), hostname, func(m *workflow.ServiceMeta, _ bool) error {
+	if metaErr := workflow.UpsertServiceMeta(stateDir, hostname, func(m *workflow.ServiceMeta, _ bool) error {
 		m.SetRepoBaseline(appVersionID, provenance)
 		return nil
 	}); metaErr != nil {
