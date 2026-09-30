@@ -74,6 +74,7 @@ services:
       minRam: 0.25
       maxRam: 1
     envSecrets:
+      # Set by hand in medusa-juno; set it again here.
       MP_UI_AUTH: admin:<@generateRandomString(<16>)>
 
   - hostname: medusa

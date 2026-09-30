@@ -2,8 +2,8 @@ package bundle
 
 import (
 	"fmt"
-	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -16,34 +16,36 @@ import (
 // variable the way the export and launch flows ask the agent to — and what it
 // writes lands in a repository the whole group reads, merged by the broker
 // without a person when the proposal only adds files. So the composer decides
-// every variable itself, and a secret's value never enters the file:
+// every variable itself, and it fails closed: a value is written as it is
+// only when nothing says secret and the value has a config shape.
 //
-//   - A value made only of `${...}` references is wiring, kept as written
+//   - A value made only of `${name}` references is wiring, kept as written
 //     whatever its name or flag says: a reference carries no secret of its
 //     own, and replacing `STORE_PUBLISHABLE_KEY: ${medusa_CHANNEL_PUBLISHABLE_KEY}`
 //     with a random string would cut the storefront off its backend.
-//   - Anything else is a secret when the platform flags it sensitive, when
-//     it reads back masked (`REDACTED`, a read without the right to see it),
-//     when its name says credential (recipeCredentialName) or when its value
-//     is shaped like one (a URL carrying a password, a private key, a JWT, a
-//     token in a third party's own format).
-//   - Everything else is config, kept as written.
+//   - A value the platform flags sensitive or reads back masked (`REDACTED`,
+//     a read without the right to see it) is generated.
+//   - A name public by design — PUBLIC or PUBLISHABLE a word of it — is
+//     written as it is: a browser bundle ships its value anyway.
+//   - Anything else is generated when its name says credential
+//     (recipeCredentialName), when its value is shaped like a secret (a
+//     private key, a JWT, a URL carrying a password), or when its value has
+//     none of the narrow shapes a person writes a setting in
+//     (recipeConfigShape) — an opaque value is regenerated, never published.
 //
 // The platform's flag cannot be the only signal. It is the person's, not the
 // variable's: the 2026-08 migration read every older service secret back as
 // sensitive:false, a project variable's flag never persisted, and ZCP_API_KEY
 // — a bearer token — reads false (spec-zerops-env-lifecycle.md §7). So the
-// flag can only add secrets, and so can the name and the shape; a secret all
-// three miss is kept as written, which is why the flag stays the person's
-// lever: mark it sensitive and the next proposal generates it.
+// flag, the name and the shape can each only add secrets, and a value none of
+// them marks is still written only in a config shape.
 //
 // A secret becomes `<@generateRandomString(<N>)>`, N the live value's length
 // and at least 16, so every environment the tier creates gets its own value
-// of the shape its reader expects; an empty secret stays empty. A credential
-// a third party issued — a `*_API_KEY`, a `*_TOKEN`, a webhook or client
-// secret, a token in a vendor's own format — is useless regenerated, so it
-// gets a line above it saying it was set by hand in the Mate and has to be
-// set again.
+// of the shape its reader expects; an empty secret stays empty. A generated
+// value gets a line above it saying it was set by hand in the Mate and has to
+// be set again — all but a secret an app makes for itself (recipeAppSecret),
+// which a fresh environment simply generates anew.
 
 // minGeneratedSecret is the shortest secret the recipe generates.
 const minGeneratedSecret = 16
@@ -59,23 +61,114 @@ const maskedSecretLength = 32
 // may not see (spec-zerops-env-lifecycle.md §7).
 const maskedValue = "REDACTED"
 
-// recipeCredentialName is a key that names a credential: the last word a
-// secret's (`JWT_SECRET`, `SUPERADMIN_PASSWORD`, `STRIPE_API_KEY`, `APP_KEY`,
-// `HASH_SALT`), or SECRET opening the name (`SECRET_KEY_BASE`).
-var recipeCredentialName = regexp.MustCompile(
-	`(?i)((^|_)(KEY|APIKEY|TOKEN|SECRETS?|PASS|PASSWORD|PASSWD|PWD|SALT|PEPPER|CREDENTIALS?|AUTH)$)|(^SECRETS?_)`)
+// recipeCredentialWords are the words a credential goes by, wherever they
+// stand in a name. AUTH is one only as the last word (`MP_UI_AUTH`): before
+// another it names a mechanism (`AUTH_PROVIDER`).
+var recipeCredentialWords = map[string]bool{
+	"KEY": true, "KEYS": true, "PASS": true, "PWD": true, "PW": true,
+	"SALT": true, "SALTS": true, "PEPPER": true, "PEPPERS": true,
+	"CREDENTIAL": true, "CREDENTIALS": true, "CREDS": true,
+}
 
-// recipePublicName is a key naming something public by design — a
-// publishable key, a variable a browser bundle bakes. Its name alone does not
-// make it a secret.
-var recipePublicName = regexp.MustCompile(`(?i)(^|_)(PUBLIC|PUBLISHABLE)(_|$)`)
+// recipeCredentialEndings end a word that names a credential even run into
+// the word before it: `PASSWORD`, `DBPASSWORD`, `ACCESSTOKEN`, `jwtSecret`'s
+// `SECRET`.
+var recipeCredentialEndings = []string{
+	"PASSWORD", "PASSWORDS", "PASSWD", "PASSPHRASE", "PASSPHRASES",
+	"SECRET", "SECRETS", "TOKEN", "TOKENS", "APIKEY", "APIKEYS", "PRIVATEKEY",
+}
 
-// recipeExternalName is a key naming a credential a third party issued.
-var recipeExternalName = regexp.MustCompile(`(?i)(_API_?KEY|_TOKEN|_WEBHOOK_SECRET|_CLIENT_SECRET)$`)
+// recipePropertyWords, after a credential word, make the name one about the
+// credential rather than the credential itself: `TOKEN_TTL`,
+// `CACHE_KEY_PREFIX`, `JWT_SECRET_EXPIRES_IN`, `DB_PASSWORD_FILE`. Any other
+// word after it — `DB_PASSWORD_PROD` — leaves it a credential. A missing word
+// here costs setting a value again; its value is still judged by its shape.
+var recipePropertyWords = map[string]bool{
+	"TTL": true, "EXPIRY": true, "EXPIRE": true, "EXPIRES": true, "EXPIRATION": true,
+	"LIFETIME": true, "AGE": true, "TIMEOUT": true, "INTERVAL": true, "ROTATION": true,
+	"LENGTH": true, "LEN": true, "SIZE": true, "BITS": true, "MIN": true, "MAX": true,
+	"PREFIX": true, "SUFFIX": true, "HEADER": true, "NAME": true, "FIELD": true, "PARAM": true,
+	"TYPE": true, "ALGORITHM": true, "ALG": true, "ISSUER": true, "AUDIENCE": true,
+	"URL": true, "URI": true, "ENDPOINT": true, "HOST": true, "PORT": true, "REGION": true,
+	"PATH": true, "FILE": true, "DIR": true, "ID": true,
+	"ENABLED": true, "DISABLED": true, "REQUIRED": true, "MODE": true, "PROVIDER": true,
+}
 
-// recipeSecretShapes are values shaped like a secret whatever their name.
+// recipeCredentialName reports a name that says credential: a credential
+// word (recipeCredentialWords, recipeCredentialEndings) with no property word
+// after it.
+func recipeCredentialName(key string) bool {
+	words := recipeNameWords(key)
+	for i, word := range words {
+		credential := recipeCredentialWords[word] ||
+			(word == "AUTH" && i == len(words)-1) ||
+			hasAnySuffix(word, recipeCredentialEndings)
+		if credential && !slices.ContainsFunc(words[i+1:], func(w string) bool { return recipePropertyWords[w] }) {
+			return true
+		}
+	}
+	return false
+}
+
+// recipePublicName reports a name public by design — PUBLIC or PUBLISHABLE a
+// word of it: `NEXT_PUBLIC_*`, `*_PUBLISHABLE_KEY`.
+func recipePublicName(key string) bool {
+	return slices.ContainsFunc(recipeNameWords(key), func(w string) bool { return w == "PUBLIC" || w == "PUBLISHABLE" })
+}
+
+// recipeNameWords splits a variable's name into its words, upper-cased: at
+// `_ - .`, and where a lower-case letter or a digit meets an upper-case one
+// (`jwtSecret` → JWT, SECRET).
+func recipeNameWords(key string) []string {
+	var words []string
+	var word strings.Builder
+	prev := rune(0)
+	flush := func() {
+		if word.Len() > 0 {
+			words = append(words, word.String())
+			word.Reset()
+		}
+	}
+	for _, r := range key {
+		switch {
+		case r == '_' || r == '-' || r == '.':
+			flush()
+			prev = 0
+			continue
+		case unicode.IsUpper(r) && (unicode.IsLower(prev) || unicode.IsDigit(prev)):
+			flush()
+		}
+		word.WriteRune(unicode.ToUpper(r))
+		prev = r
+	}
+	flush()
+	return words
+}
+
+// recipeAppSecretEndings end the name of a secret an app makes for itself.
+var recipeAppSecretEndings = []string{"SECRET", "SALT", "PEPPER", "PASSWORD", "PASS", "PASSPHRASE", "KEY_BASE"}
+
+// recipeAppSecret reports a secret an app makes for itself — a name ending in
+// SECRET, SALT, PEPPER, PASSWORD, PASS, PASSPHRASE or KEY_BASE, and APP_KEY
+// and APP_KEYS — which a fresh environment simply generates anew. A webhook's
+// or a client's secret, or a value in a vendor's format, is the vendor's
+// whatever its name ends in.
+func recipeAppSecret(key, value string) bool {
+	upper := strings.ToUpper(key)
+	if recipeThirdPartySecretName.MatchString(upper) || matchesAny(recipeExternalShapes, value) {
+		return false
+	}
+	return upper == "APP_KEY" || upper == "APP_KEYS" || hasAnySuffix(upper, recipeAppSecretEndings)
+}
+
+// recipeThirdPartySecretName is a secret a vendor issues under a name that
+// ends in SECRET: Stripe's webhook secret, an OAuth client's.
+var recipeThirdPartySecretName = regexp.MustCompile(`(WEBHOOK|CLIENT)_?SECRETS?$`)
+
+// recipeSecretShapes are values shaped like a secret whatever their name: a
+// private key (PEM or PGP), a JWT.
 var recipeSecretShapes = []*regexp.Regexp{
-	regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`),
+	regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY`),
 	regexp.MustCompile(`^eyJ[0-9A-Za-z_-]+\.eyJ[0-9A-Za-z_-]+\.[0-9A-Za-z_-]+$`),
 }
 
@@ -93,63 +186,32 @@ var recipeExternalShapes = []*regexp.Regexp{
 	regexp.MustCompile(`^SG\.[0-9A-Za-z_-]{16,}\.[0-9A-Za-z_-]{16,}$`),
 }
 
-// recipeSecret decides one live variable: whether its value must stay out of
-// the group repo, and whether a third party issued it.
-func recipeSecret(env ProjectEnvVar) (secret, external bool) {
+// recipeSecret decides one live variable: whether its value stays out of the
+// group repo, and whether the generated value asks a person to set it again.
+func recipeSecret(env ProjectEnvVar) (secret, setAgain bool) {
 	value := strings.TrimSpace(env.Value)
-	if value != "" && isPureWiring(value) {
+	if isStrictWiring(value) {
 		return false, false
 	}
-	external = recipeExternalName.MatchString(env.Key) || matchesAny(recipeExternalShapes, value)
-	secret = env.Sensitive ||
-		value == maskedValue ||
-		external ||
-		(recipeCredentialName.MatchString(env.Key) && !recipePublicName.MatchString(env.Key)) ||
+	if value == "" {
+		return env.Sensitive || (recipeCredentialName(env.Key) && !recipePublicName(env.Key)), false
+	}
+	flagged := env.Sensitive || value == maskedValue
+	if !flagged && (recipePublicName(env.Key) || !recipeLooksSecret(env.Key, value)) {
+		return false, false
+	}
+	return true, !recipeAppSecret(env.Key, value)
+}
+
+// recipeLooksSecret reports a value its name or its shape keeps out of the
+// repo: a credential's name, a secret's or a vendor's shape, or no config
+// shape at all.
+func recipeLooksSecret(key, value string) bool {
+	return recipeCredentialName(key) ||
 		matchesAny(recipeSecretShapes, value) ||
+		matchesAny(recipeExternalShapes, value) ||
 		urlCarriesPassword(value) ||
-		(looksRandom(value) && !recipePublicName.MatchString(env.Key))
-	return secret, secret && external
-}
-
-// recipeTokenLike is a value made only of the characters tokens are written
-// in — letters, digits, `_ - + /` — with base64's padding at most at its end:
-// no spaces, no `=` inside, no `://`, no `@`, so a flag list, a path with a
-// scheme or an address is never one.
-var recipeTokenLike = regexp.MustCompile(`^[A-Za-z0-9_+/-]{24,}={0,2}$`)
-
-// minSecretEntropy is the Shannon entropy per character, in bits, above which
-// a token-like value reads as generated rather than written: a random string
-// over letters and digits sits near 5, a word joined by dashes well under 3.5.
-const minSecretEntropy = 3.5
-
-// looksRandom reports a value a person did not write: long, token-like, with
-// both letters and digits and the entropy of a generated string. It is the
-// rule that fails closed: an opaque value under an ordinary name — a signing
-// seed, a vendor key in no known format — is regenerated rather than
-// published, and a false alarm costs setting one value again.
-func looksRandom(value string) bool {
-	if !recipeTokenLike.MatchString(value) {
-		return false
-	}
-	hasLetter := strings.ContainsFunc(value, unicode.IsLetter)
-	hasDigit := strings.ContainsFunc(value, unicode.IsDigit)
-	return hasLetter && hasDigit && shannonEntropy(value) >= minSecretEntropy
-}
-
-// shannonEntropy is the entropy of a string's characters, in bits per character.
-func shannonEntropy(value string) float64 {
-	counts := map[rune]int{}
-	total := 0
-	for _, r := range value {
-		counts[r]++
-		total++
-	}
-	entropy := 0.0
-	for _, n := range counts {
-		p := float64(n) / float64(total)
-		entropy -= p * math.Log2(p)
-	}
-	return entropy
+		!recipeConfigShape(value)
 }
 
 // generatedSecret is the value a secret is written as: a generator as long as
@@ -205,16 +267,6 @@ func basicAuthPair(value string) (user, password string, ok bool) {
 	return user, password, true
 }
 
-// isPureWiring reports whether a value is only `${...}` references, joined by
-// nothing that could be a secret of its own.
-func isPureWiring(value string) bool {
-	if !strings.Contains(value, "${") {
-		return false
-	}
-	rest := stripReferences(value)
-	return !strings.ContainsFunc(rest, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) })
-}
-
 // stripReferences removes every complete `${...}` from a value.
 func stripReferences(value string) string {
 	var b strings.Builder
@@ -253,6 +305,11 @@ func urlCarriesPassword(value string) bool {
 	return hasPassword && strings.TrimSpace(stripReferences(password)) != ""
 }
 
+// hasAnySuffix reports whether s ends in any of suffixes.
+func hasAnySuffix(s string, suffixes []string) bool {
+	return slices.ContainsFunc(suffixes, func(suffix string) bool { return strings.HasSuffix(s, suffix) })
+}
+
 func matchesAny(patterns []*regexp.Regexp, value string) bool {
 	for _, p := range patterns {
 		if p.MatchString(value) {
@@ -264,8 +321,8 @@ func matchesAny(patterns []*regexp.Regexp, value string) bool {
 
 // groupEnvFields writes live variables for a tier, sorted by key: config as
 // written — through promote, which names a group environment's own runtimes
-// (nil keeps it as it is) — secrets generated, a third party's credential with
-// a line saying it has to be set again. It returns the config and the secrets
+// (nil keeps it as it is) — secrets generated, each but an app's own with a
+// line saying it has to be set again. It returns the config and the secrets
 // apart — a project keeps them under envVariables and envSecrets, a service
 // carries both under envSecrets, the only channel an import has for its
 // variables.
@@ -273,7 +330,7 @@ func groupEnvFields(envs []ProjectEnvVar, source string, promote func(string) st
 	sorted := append([]ProjectEnvVar(nil), envs...)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Key < sorted[j].Key })
 	for _, env := range sorted {
-		secret, external := recipeSecret(env)
+		secret, setAgain := recipeSecret(env)
 		if !secret {
 			value := env.Value
 			if promote != nil {
@@ -283,7 +340,7 @@ func groupEnvFields(envs []ProjectEnvVar, source string, promote func(string) st
 			continue
 		}
 		field := yamlField{key: env.Key, value: generatedSecret(env.Value)}
-		if external && env.Value != "" {
+		if setAgain {
 			field.comment = fmt.Sprintf("Set by hand in %s; set it again here.", source)
 		}
 		secrets = append(secrets, field)

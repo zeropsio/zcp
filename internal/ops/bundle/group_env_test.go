@@ -2,40 +2,52 @@ package bundle
 
 import (
 	"maps"
+	"math/rand/v2"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
 
+// Invented credentials in their owners' formats, built from parts so the
+// repository never holds one whole.
+var (
+	fakeGitHubToken  = "gh" + "p_" + strings.Repeat("Ab1", 12)
+	fakeStripeSecret = "sk_" + "live_" + strings.Repeat("a1", 12)
+	fakeStripeKey    = "rk_" + "live_" + "abcdef123456"
+	fakeStripeHook   = "wh" + "sec_" + "abcdefgh12345678"
+	fakeSendGridKey  = "S" + "G." + strings.Repeat("a", 22) + "." + strings.Repeat("b", 43)
+)
+
 // The group recipe composes unattended, with nobody to classify a variable,
 // and whatever it writes lands in a repository the whole group reads — the
 // broker merges a proposal that only adds files by itself. So the composer
-// decides every variable itself, and a secret's value never enters the file.
-//
-// The platform's sensitive flag is one signal and not the authority: the
-// 2026-08 migration read every older service secret back as sensitive:false,
-// a project variable's flag never persisted, and ZCP_API_KEY reads false
-// (spec-zerops-env-lifecycle §7). So a variable is a secret when the
-// platform flags it OR reads it back masked OR its name says credential OR
-// its value is shaped like one — and never when its value is only references,
-// which carry no secret of their own.
+// decides every variable itself, and it fails closed: a value is written as
+// it is only when nothing says secret — the platform's flag, a masked read, a
+// credential's name, a secret's shape — and it has a narrow config shape.
+// Anything else is generated, and every generated value but a secret an app
+// makes for itself says it was set by hand and has to be set again.
 func TestRecipeSecret_Rule(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name         string
 		env          ProjectEnvVar
 		wantSecret   bool
-		wantExternal bool
+		wantSetAgain bool
 	}{
-		// Config, kept as written.
+		// Config in a config shape, kept as written.
 		{name: "plain config", env: ProjectEnvVar{Key: "LOG_LEVEL", Value: "debug"}},
 		{name: "a URL built on references", env: ProjectEnvVar{Key: "API_URL", Value: "https://medusa-${zeropsSubdomainHost}-9000.prg1.zerops.app"}},
 		{name: "an internal URL", env: ProjectEnvVar{Key: "MEDUSA_INTERNAL_URL", Value: "http://medusa:9000"}},
 		{name: "an email", env: ProjectEnvVar{Key: "SUPERADMIN_EMAIL", Value: "admin@example.com"}},
 		{name: "a name that only ends near a credential word", env: ProjectEnvVar{Key: "CACHE_KEY_PREFIX", Value: "shop"}},
 		{name: "a token's lifetime is no token", env: ProjectEnvVar{Key: "TOKEN_TTL", Value: "3600"}},
+		{name: "a secret's expiry is no secret", env: ProjectEnvVar{Key: "JWT_SECRET_EXPIRES_IN", Value: "7d"}},
+		{name: "a password file's path is no password", env: ProjectEnvVar{Key: "DB_PASSWORD_FILE", Value: "/run/secrets/db_password"}},
 		{name: "a bypass is no pass", env: ProjectEnvVar{Key: "CACHE_BYPASS", Value: "true"}},
+		{name: "a flag list is no token", env: ProjectEnvVar{Key: "NODE_OPTIONS", Value: "--max-old-space-size=4096"}},
+		{name: "words joined by dashes are written, not generated", env: ProjectEnvVar{Key: "THEME_NAME", Value: "midnight-blue-with-orange-accents"}},
+		{name: "a reference whose default is config", env: ProjectEnvVar{Key: "SMTP_PORT", Value: "${SMTP_PORT_OVERRIDE:-587}"}},
 
 		// References are wiring, whatever the name or the flag says.
 		{name: "a reference under a key's name", env: ProjectEnvVar{Key: "STORE_PUBLISHABLE_KEY", Value: "${medusa_CHANNEL_PUBLISHABLE_KEY}"}},
@@ -43,55 +55,234 @@ func TestRecipeSecret_Rule(t *testing.T) {
 		{name: "references joined by punctuation", env: ProjectEnvVar{Key: "SEARCH_AUTH", Value: "${search_user}:${search_password}"}},
 		{name: "a URL whose password is a reference", env: ProjectEnvVar{Key: "DATABASE_URL", Value: "postgresql://${db_user}:${db_password}@${db_hostname}:5432/app"}},
 
-		// A public key is public: a browser bundle bakes it.
-		{name: "a publishable key", env: ProjectEnvVar{Key: "STRIPE_PUBLISHABLE_KEY", Value: "pk_live_51Hq0000publishable"}},
+		// A public name is public: a browser bundle bakes its value anyway.
+		{name: "a publishable key", env: ProjectEnvVar{Key: "STRIPE_PUBLISHABLE_KEY", Value: "pk_" + "live_" + "51Hq0000publishable"}},
 		{name: "a NEXT_PUBLIC_ variable", env: ProjectEnvVar{Key: "NEXT_PUBLIC_SEARCH_KEY", Value: "a1b2c3d4e5f6a7b8"}},
+		{name: "a public key stays public however random", env: ProjectEnvVar{Key: "NEXT_PUBLIC_ANALYTICS_KEY", Value: "phc_q8Zr2xLw7Tn4Vb1Kd9Fs3Hj6Mc0Pa5Ye"}},
 
-		// Secrets, by the platform's word.
-		{name: "the platform's sensitive flag", env: ProjectEnvVar{Key: "CUSTOM_SETTING", Value: "opaque", Sensitive: true}, wantSecret: true},
-		{name: "a value the platform masked", env: ProjectEnvVar{Key: "ANYTHING", Value: "REDACTED"}, wantSecret: true},
+		// The platform's word outranks every other signal but wiring.
+		{name: "the platform's sensitive flag", env: ProjectEnvVar{Key: "CUSTOM_SETTING", Value: "opaque", Sensitive: true}, wantSecret: true, wantSetAgain: true},
+		{name: "a value the platform masked", env: ProjectEnvVar{Key: "ANYTHING", Value: "REDACTED"}, wantSecret: true, wantSetAgain: true},
+		{name: "a flagged reference with a default carries the default", env: ProjectEnvVar{Key: "DB_PASSWORD", Value: "${DB_PASSWORD:-Sup3rS3cret}", Sensitive: true}, wantSecret: true},
+		{name: "a flagged public name is flagged", env: ProjectEnvVar{Key: "NEXT_PUBLIC_FLAG", Value: "beta", Sensitive: true}, wantSecret: true, wantSetAgain: true},
+		{name: "a masked public name has no value to write", env: ProjectEnvVar{Key: "NEXT_PUBLIC_FLAG", Value: "REDACTED"}, wantSecret: true, wantSetAgain: true},
 
-		// Secrets, by their name.
+		// Secrets by their name, whatever the value looks like: every word a
+		// credential goes by, a qualifier after it too.
 		{name: "_SECRET", env: ProjectEnvVar{Key: "JWT_SECRET", Value: "k3yk3yk3y"}, wantSecret: true},
 		{name: "_PASSWORD", env: ProjectEnvVar{Key: "SUPERADMIN_PASSWORD", Value: "correct-horse"}, wantSecret: true},
 		{name: "_PASS", env: ProjectEnvVar{Key: "SMTP_PASS", Value: "mailpass"}, wantSecret: true},
 		{name: "APP_KEY", env: ProjectEnvVar{Key: "APP_KEY", Value: "0123456789abcdef0123456789abcdef"}, wantSecret: true},
 		{name: "SECRET_ opening the name", env: ProjectEnvVar{Key: "SECRET_KEY_BASE", Value: "deadbeef"}, wantSecret: true},
 		{name: "_SALT", env: ProjectEnvVar{Key: "HASH_SALT", Value: "pepper"}, wantSecret: true},
-		{name: "_CREDENTIALS", env: ProjectEnvVar{Key: "GOOGLE_CREDENTIALS", Value: "{\"type\":\"service_account\"}"}, wantSecret: true},
+		{name: "_CREDENTIALS", env: ProjectEnvVar{Key: "GOOGLE_CREDENTIALS", Value: "{\"type\":\"service_account\"}"}, wantSecret: true, wantSetAgain: true},
 		{name: "lower case is the same name", env: ProjectEnvVar{Key: "cookie_secret", Value: "c00k1e"}, wantSecret: true},
+		{name: "a plural", env: ProjectEnvVar{Key: "APP_KEYS", Value: "alpha,beta"}, wantSecret: true},
+		{name: "a passphrase in words", env: ProjectEnvVar{Key: "GPG_PASSPHRASE", Value: "correct horse battery staple"}, wantSecret: true},
+		{name: "PW", env: ProjectEnvVar{Key: "ADMIN_PW", Value: "letmein"}, wantSecret: true, wantSetAgain: true},
+		{name: "a qualifier after the credential word", env: ProjectEnvVar{Key: "DB_PASSWORD_PROD", Value: "hunter"}, wantSecret: true, wantSetAgain: true},
+		{name: "camel case", env: ProjectEnvVar{Key: "jwtSecret", Value: "mysecret"}, wantSecret: true},
+		{name: "a credential word run into the one before it", env: ProjectEnvVar{Key: "DBPASSWORD", Value: "hunter"}, wantSecret: true},
 
-		// A credential a third party issued: generated, and asked for again.
-		{name: "_API_KEY", env: ProjectEnvVar{Key: "STRIPE_API_KEY", Value: "rk_live_abcdef123456"}, wantSecret: true, wantExternal: true},
-		{name: "_TOKEN", env: ProjectEnvVar{Key: "GITHUB_TOKEN", Value: "tok"}, wantSecret: true, wantExternal: true},
-		{name: "_WEBHOOK_SECRET", env: ProjectEnvVar{Key: "STRIPE_WEBHOOK_SECRET", Value: "whsec_abcdefgh12345678"}, wantSecret: true, wantExternal: true},
-		{name: "_CLIENT_SECRET", env: ProjectEnvVar{Key: "GOOGLE_CLIENT_SECRET", Value: "GOCSPX-abc"}, wantSecret: true, wantExternal: true},
+		// A credential somebody else issued: generated, and asked for again.
+		{name: "_API_KEY", env: ProjectEnvVar{Key: "STRIPE_API_KEY", Value: fakeStripeKey}, wantSecret: true, wantSetAgain: true},
+		{name: "_TOKEN", env: ProjectEnvVar{Key: "GITHUB_TOKEN", Value: "tok"}, wantSecret: true, wantSetAgain: true},
+		{name: "_WEBHOOK_SECRET, though it ends in SECRET", env: ProjectEnvVar{Key: "STRIPE_WEBHOOK_SECRET", Value: fakeStripeHook}, wantSecret: true, wantSetAgain: true},
+		{name: "_CLIENT_SECRET, though it ends in SECRET", env: ProjectEnvVar{Key: "GOOGLE_CLIENT_SECRET", Value: "GOC" + "SPX-abc"}, wantSecret: true, wantSetAgain: true},
+		{name: "a vendor's format under an app's own name", env: ProjectEnvVar{Key: "PAYMENTS_SECRET", Value: fakeStripeSecret}, wantSecret: true, wantSetAgain: true},
 
-		// Secrets, by their shape, whatever the name.
-		{name: "a URL carrying a password", env: ProjectEnvVar{Key: "DATABASE_URL", Value: "postgresql://medusa:s3cr3tpass@db:5432/medusa"}, wantSecret: true},
-		{name: "a private key", env: ProjectEnvVar{Key: "SIGNING", Value: "-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----"}, wantSecret: true},
-		{name: "a JWT", env: ProjectEnvVar{Key: "SERVICE_ROLE", Value: "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYWRtaW4ifQ.c2lnbmF0dXJl"}, wantSecret: true},
-		{name: "a Stripe secret key", env: ProjectEnvVar{Key: "PAYMENTS", Value: "sk_live_abcdefgh12345678"}, wantSecret: true, wantExternal: true},
-		{name: "a GitHub token", env: ProjectEnvVar{Key: "CI", Value: "ghp_abcdefghijklmnopqrstuvwxyz0123456789"}, wantSecret: true, wantExternal: true},
-		{name: "an OpenAI key", env: ProjectEnvVar{Key: "LLM", Value: "sk-proj-abcdefghijklmnopqrstuvwx"}, wantSecret: true, wantExternal: true},
-		{name: "an AWS access key id", env: ProjectEnvVar{Key: "S3_ID", Value: "AKIAABCDEFGHIJKLMNOP"}, wantSecret: true, wantExternal: true},
+		// Secrets by their shape, whatever the name.
+		{name: "a URL carrying a password", env: ProjectEnvVar{Key: "DATABASE_URL", Value: "postgresql://medusa:s3cr3tpass@db:5432/medusa"}, wantSecret: true, wantSetAgain: true},
+		{name: "a private key", env: ProjectEnvVar{Key: "SIGNING", Value: "-----BEGIN " + "PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----"}, wantSecret: true, wantSetAgain: true},
+		{name: "a JWT", env: ProjectEnvVar{Key: "SERVICE_ROLE", Value: "ey" + "JhbGciOiJIUzI1NiJ9.ey" + "Jyb2xlIjoiYWRtaW4ifQ.c2lnbmF0dXJl"}, wantSecret: true, wantSetAgain: true},
+		{name: "a Stripe secret key", env: ProjectEnvVar{Key: "PAYMENTS", Value: fakeStripeSecret}, wantSecret: true, wantSetAgain: true},
+		{name: "a GitHub token", env: ProjectEnvVar{Key: "CI", Value: fakeGitHubToken}, wantSecret: true, wantSetAgain: true},
+		{name: "an OpenAI key", env: ProjectEnvVar{Key: "LLM", Value: "sk-" + "proj-abcdefghijklmnopqrstuvwx"}, wantSecret: true, wantSetAgain: true},
+		{name: "an AWS access key id", env: ProjectEnvVar{Key: "S3_ID", Value: "AK" + "IAABCDEFGHIJKLMNOP"}, wantSecret: true, wantSetAgain: true},
 
-		// Secrets, by being random: an opaque value under an ordinary name fails closed.
-		{name: "a random value under an ordinary name", env: ProjectEnvVar{Key: "SIGNING_SEED", Value: "q8Zr2xLw7Tn4Vb1Kd9Fs3Hj6Mc0Pa5Ye"}, wantSecret: true},
-		{name: "a hex digest reads as generated", env: ProjectEnvVar{Key: "RELEASE_SHA", Value: "3f2a9c1e5b7d4f608a1c3e5f7b9d2a4c6e8f0a1b"}, wantSecret: true},
-		{name: "a flag list is no token", env: ProjectEnvVar{Key: "NODE_OPTIONS", Value: "--max-old-space-size=4096"}},
-		{name: "words joined by dashes are written, not generated", env: ProjectEnvVar{Key: "THEME_NAME", Value: "midnight-blue-with-orange-accents"}},
-		{name: "a public key stays public however random", env: ProjectEnvVar{Key: "NEXT_PUBLIC_ANALYTICS_KEY", Value: "phc_q8Zr2xLw7Tn4Vb1Kd9Fs3Hj6Mc0Pa5Ye"}},
+		// Anything outside a config shape is generated: an opaque value under
+		// an ordinary name fails closed, and a person sets it again.
+		{name: "a random value under an ordinary name", env: ProjectEnvVar{Key: "SIGNING_SEED", Value: "q8Zr2xLw7Tn4Vb1Kd9Fs3Hj6Mc0Pa5Ye"}, wantSecret: true, wantSetAgain: true},
+		{name: "a hex digest reads as generated", env: ProjectEnvVar{Key: "RELEASE_SHA", Value: "3f2a9c1e5b7d4f608a1c3e5f7b9d2a4c6e8f0a1b"}, wantSecret: true, wantSetAgain: true},
+		{name: "an opaque ID", env: ProjectEnvVar{Key: "STRIPE_PRICE_PRO", Value: "price_" + "1Mq7Xz2Lb9Rt4Wv8Kd3Nc6Hs"}, wantSecret: true, wantSetAgain: true},
+
+		// An empty value hides nothing: a secret's name keeps it a secret, and
+		// there is nothing to set again.
+		{name: "an empty credential", env: ProjectEnvVar{Key: "STRIPE_API_KEY", Value: ""}, wantSecret: true},
+		{name: "an empty setting", env: ProjectEnvVar{Key: "FEATURE_FLAGS", Value: ""}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			secret, external := recipeSecret(tt.env)
-			if secret != tt.wantSecret || external != tt.wantExternal {
-				t.Errorf("recipeSecret(%s=%q, sensitive=%v) = secret %v, external %v; want %v, %v",
-					tt.env.Key, tt.env.Value, tt.env.Sensitive, secret, external, tt.wantSecret, tt.wantExternal)
+			secret, setAgain := recipeSecret(tt.env)
+			if secret != tt.wantSecret || setAgain != tt.wantSetAgain {
+				t.Errorf("recipeSecret(%s=%q, sensitive=%v) = secret %v, set again %v; want %v, %v",
+					tt.env.Key, tt.env.Value, tt.env.Sensitive, secret, setAgain, tt.wantSecret, tt.wantSetAgain)
 			}
 		})
+	}
+}
+
+// Every value that leaked before the rule failed closed is generated now,
+// its live text in no file of the proposal — and the config a person wrote
+// is still written as it is, on every tier, as a project variable and as a
+// runtime's own.
+func TestBuildGroupRecipe_FailsClosed(t *testing.T) {
+	t.Parallel()
+	slackHook := "https://hooks." + "slack.com/services/" + "T0" + "4BX9RQ2LD/B0" + "5CM7WX1KE/" + strings.Repeat("Zk3v", 6)
+	azureKey := strings.Repeat("Zm9v", 21) + "YmE="
+	googleSecret := "GOC" + "SPX-" + strings.Repeat("q9", 14)
+	npmToken := "np" + "m_" + strings.Repeat("Xy7", 12)
+	pgpBody := "lQOYBGZk3vQ8rT2pLm9Wn4Xc6Yb1Hd0Fs5Jg7Kh2Nc4Vx8Qa1Ze3Rb6Tf9Ug"
+	tests := []struct {
+		name, key, value string
+		// secret is what no file may carry; the whole value when empty.
+		secret    string
+		sensitive bool
+		verbatim  bool
+	}{
+		// What leaked before.
+		{name: "Strapi's APP_KEYS", key: "APP_KEYS", value: "ZJ4/nKcrXq3bT9sLw2Vm8pYd1g==,uQ1NhR7cWk5eJ0zFa6Ts4Ob3iA=="},
+		{name: "a Slack webhook", key: "SLACK_WEBHOOK_URL", value: slackHook},
+		{name: "a DSN whose user is a key", key: "MAILER_DSN", value: "sendgrid+api://" + fakeSendGridKey + "@default", secret: fakeSendGridKey},
+		{name: "a clone URL whose user is a token", key: "THEME_REPO", value: "https://" + fakeGitHubToken + "@github.com/acme/theme", secret: fakeGitHubToken},
+		{name: "a password in a query", key: "REPORTS_DB_URL", value: "postgresql://reports:5432/app?password=Rep0rts-Pa55", secret: "Rep0rts-Pa55"},
+		{name: "a key in a query", key: "GEOCODER_URL", value: "https://geo.example.com/v1?api_key=k3y-9f8e7d6c5b4a", secret: "k3y-9f8e7d6c5b4a"},
+		{name: "a .NET connection string", key: "ConnectionStrings__Default", value: "Server=db;Database=app;User Id=sa;" + "Pass" + "word=Str0ng-Pa55;", secret: "Str0ng-Pa55"},
+		{name: "an Azure connection string", key: "AZURE_STORAGE_CONNECTION", value: "DefaultEndpointsProtocol=https;AccountName=acmefiles;Account" + "Key=" + azureKey + ";EndpointSuffix=core.windows.net", secret: azureKey},
+		{name: "a passphrase", key: "GPG_PASSPHRASE", value: "correct horse battery staple"},
+		{name: "a short password's name", key: "ADMIN_PW", value: "letmein"},
+		{name: "a password's name with a qualifier after it", key: "DB_PASSWORD_PROD", value: "hunter"},
+		{name: "an OAuth client document", key: "GOOGLE_OAUTH_CLIENT", value: `{"web":{"client_id":"1234-abc.apps.googleusercontent.com","client_secret":"` + googleSecret + `"}}`, secret: googleSecret},
+		{name: "a bearer header", key: "UPSTREAM_AUTHORIZATION", value: "Bearer " + fakeGitHubToken, secret: fakeGitHubToken},
+		{name: "an .npmrc line", key: "NPM_CONFIG_LINE", value: "//registry.npmjs.org/:_auth" + "Token=" + npmToken, secret: npmToken},
+		{name: "a password among JVM options", key: "JAVA_TOOL_OPTIONS", value: "-Xmx512m -Dspring.datasource." + "password=Jvm-Pa55-w0rd", secret: "Jvm-Pa55-w0rd"},
+		{name: "a PGP private key block", key: "RELEASE_SIGNER", value: "-----BEGIN PGP " + "PRIVATE KEY BLOCK-----\n\n" + pgpBody + "\n-----END PGP PRIVATE KEY BLOCK-----", secret: pgpBody},
+		{name: "a whole dotenv file", key: "DOTENV", value: "LOG_LEVEL=info\nMAIL_" + "PASSWORD=m4il-Pa55-w0rd", secret: "m4il-Pa55-w0rd"},
+		{name: "random hex, 24 characters", key: "INSTANCE_SEED", value: "5f1d9a3c7e2b4f80a6c1d3e5"},
+		{name: "random hex, 32 characters", key: "LICENSE_ID", value: "9c2e4a6b8d0f1e3c5a7b9d1f3e5c7a9b"},
+		{name: "a UUID", key: "TENANT_ID", value: "3b9e5c1a-7d2f-4e8b-9a6c-0f1e2d3c4b5a"},
+		{name: "a flagged reference whose default is a password", key: "DB_PASSWORD", value: "${DB_PASSWORD:-Sup3rS3cret}", secret: "Sup3rS3cret", sensitive: true},
+		{name: "a reference whose default is a URL with a password", key: "CACHE_URL", value: "${CACHE_OVERRIDE:-redis://:Cach3-Pa55@cache:6379}", secret: "Cach3-Pa55"},
+		{name: "a wired URL whose password defaults to a word", key: "QUEUE_URL", value: "amqp://${queue_user}:${QUEUE_PASS:-marmalade}@queue:5672", secret: "marmalade"},
+		{name: "an opaque ID", key: "STRIPE_PRICE_PRO", value: "price_" + "1Mq7Xz2Lb9Rt4Wv8Kd3Nc6Hs"},
+
+		// The medusa fixture's config, as a person wrote it.
+		{name: "medusa's storefront address", key: "APP_URL", value: "https://nextstorestage-${zeropsSubdomainHost}-8000.prg1.zerops.app", verbatim: true},
+		{name: "medusa's backend address", key: "API_URL", value: "https://medusastage-${zeropsSubdomainHost}-9000.prg1.zerops.app", verbatim: true},
+		{name: "medusa's backend inside the project", key: "MEDUSA_INTERNAL_URL", value: "http://medusastage:9000", verbatim: true},
+		{name: "medusa's storefront inside the project", key: "STOREFRONT_INTERNAL_URL", value: "http://nextstorestage:8000", verbatim: true},
+		{name: "medusa's publishable key, wired", key: "STORE_PUBLISHABLE_KEY", value: "${medusastage_CHANNEL_PUBLISHABLE_KEY}", verbatim: true},
+		{name: "medusa's admin email", key: "SUPERADMIN_EMAIL", value: "admin@example.com", verbatim: true},
+		{name: "medusa's worker mode", key: "MEDUSA_WORKER_MODE", value: "server", verbatim: true},
+		{name: "medusa's admin CORS", key: "ADMIN_CORS", value: "https://medusastage-${zeropsSubdomainHost}-9000.prg1.zerops.app", verbatim: true},
+
+		// Settings the platform's recipes carry.
+		{name: "node's flags", key: "NODE_OPTIONS", value: "--max-old-space-size=4096", verbatim: true},
+		{name: "a time zone", key: "TZ", value: "Europe/Prague", verbatim: true},
+		{name: "an API's versioned address", key: "API_BASE_URL", value: "https://api.example.com/v1", verbatim: true},
+		{name: "a runtime's address inside the project", key: "MEDUSA_BACKEND_URL", value: "http://medusastage:9000", verbatim: true},
+		{name: "a database URL wired by references", key: "DATABASE_URL", value: "postgresql://${db_user}:${db_password}@${db_hostname}:5432/app", verbatim: true},
+		{name: "an object storage's region", key: "S3_REGION", value: "us-east-1", verbatim: true},
+		{name: "a listen address", key: "HOST", value: "0.0.0.0", verbatim: true},
+		{name: "a list of origins", key: "STORE_CORS", value: "http://localhost:8000,https://docs.medusajs.com", verbatim: true},
+		{name: "a reference with a port for its default", key: "SMTP_PORT", value: "${SMTP_PORT_OVERRIDE:-587}", verbatim: true},
+		{name: "a table prefix", key: "WORDPRESS_TABLE_PREFIX", value: "wp_", verbatim: true},
+		{name: "a memory limit", key: "PHP_INI_memory_limit", value: "512M", verbatim: true},
+		{name: "a version", key: "UMAMI_RELEASE_TAG", value: "v3.0.1", verbatim: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := ProjectEnvVar{Key: tt.key, Value: tt.value, Sensitive: tt.sensitive}
+			in := groupInputsFixture()
+			in.ProjectEnvs = []ProjectEnvVar{env}
+			in.Runtimes[0].ServiceEnvs = []ProjectEnvVar{env}
+			in.Runtimes[0].StageServiceEnvs = []ProjectEnvVar{env}
+			layout, _, err := BuildGroupRecipe(in)
+			if err != nil {
+				t.Fatalf("BuildGroupRecipe: %v", err)
+			}
+			for _, tier := range layout.Tiers {
+				project := mappingValue(tierMapping(t, tier.ImportYAML), "project")
+				written := map[string]string{
+					"project": scalarMap(mappingValue(project, "envVariables"))[tt.key] + scalarMap(mappingValue(project, "envSecrets"))[tt.key],
+				}
+				for _, host := range []string{"apidev", "apistage", "api"} {
+					if service := serviceNodeOrNil(t, tier.ImportYAML, host); service != nil {
+						written[host] = scalarMap(mappingValue(service, "envSecrets"))[tt.key]
+					}
+				}
+				for where, got := range written {
+					switch {
+					case tt.verbatim && got != tt.value:
+						t.Errorf("%s: %s's %s = %q, want it written as it is", tier.Title, where, tt.key, got)
+					case !tt.verbatim && !strings.Contains(got, "<@generateRandomString("):
+						t.Errorf("%s: %s's %s = %q, want it generated", tier.Title, where, tt.key, got)
+					}
+				}
+			}
+			if tt.verbatim {
+				return
+			}
+			secret := tt.secret
+			if secret == "" {
+				secret = tt.value
+			}
+			for path, body := range groupFiles(t, layout) {
+				if strings.Contains(body, secret) {
+					t.Errorf("%s carries the live value of %s", path, tt.key)
+				}
+			}
+		})
+	}
+}
+
+// A value a generator made — random hex, a UUID, base62, base64 — is never a
+// config shape, whatever it is called: the rule does not guess at randomness,
+// it writes as it is only what a person writes a setting as. The guess it
+// replaced missed 55% of 24-character hex and 19% of 32-character.
+func TestRecipeSecret_RandomValuesAreGenerated(t *testing.T) {
+	t.Parallel()
+	const (
+		hex    = "0123456789abcdef"
+		base62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+		base64 = base62 + "+/"
+	)
+	rng := rand.New(rand.NewPCG(20260930, 1)) //nolint:gosec // a seeded generator keeps the samples the same on every run
+	random := func(alphabet string, n int) string {
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = alphabet[rng.IntN(len(alphabet))]
+		}
+		return string(b)
+	}
+	shapes := []struct {
+		name string
+		make func() string
+	}{
+		{"hex, 16 characters", func() string { return random(hex, 16) }},
+		{"hex, 24 characters", func() string { return random(hex, 24) }},
+		{"hex, 32 characters", func() string { return random(hex, 32) }},
+		{"hex, 40 characters", func() string { return random(hex, 40) }},
+		{"a UUID", func() string {
+			return random(hex, 8) + "-" + random(hex, 4) + "-" + random(hex, 4) + "-" + random(hex, 4) + "-" + random(hex, 12)
+		}},
+		{"base62, 24 characters", func() string { return random(base62, 24) }},
+		{"base62, 32 characters", func() string { return random(base62, 32) }},
+		{"base64, 44 characters", func() string { return random(base64, 42) + "==" }},
+	}
+	for _, shape := range shapes {
+		var written []string
+		for range 5000 {
+			value := shape.make()
+			if secret, _ := recipeSecret(ProjectEnvVar{Key: "SEED", Value: value}); !secret {
+				written = append(written, value)
+			}
+		}
+		if len(written) > 0 {
+			t.Errorf("%s: %d of 5000 written as they are, e.g. %q", shape.name, len(written), written[:min(3, len(written))])
+		}
 	}
 }
 
@@ -127,8 +318,9 @@ func TestGeneratedSecret_KeepsTheLength(t *testing.T) {
 }
 
 // The project's variables go into every tier: config as written, secrets as
-// generators under envSecrets, a third party's credential with a line saying
-// it has to be set again.
+// generators under envSecrets, each with a line saying it was set by hand and
+// has to be set again — but for a secret the app makes for itself, which a
+// fresh environment simply generates anew.
 func TestBuildGroupRecipe_ProjectVariables(t *testing.T) {
 	t.Parallel()
 	in := groupInputsFixture()
@@ -137,7 +329,8 @@ func TestBuildGroupRecipe_ProjectVariables(t *testing.T) {
 		{Key: "STORE_PUBLISHABLE_KEY", Value: "${api_CHANNEL_PUBLISHABLE_KEY}"},
 		{Key: "SUPERADMIN_EMAIL", Value: "admin@example.com"},
 		{Key: "JWT_SECRET", Value: strings.Repeat("j", 48)},
-		{Key: "STRIPE_API_KEY", Value: "rk_live_" + strings.Repeat("s", 22)},
+		{Key: "STRIPE_API_KEY", Value: "rk_" + "live_" + strings.Repeat("s", 22)},
+		{Key: "STRIPE_PRICE_PRO", Value: "price_" + "1Mq7Xz2Lb9Rt4Wv8Kd3Nc6Hs"},
 		{Key: "STRIPE_WEBHOOK_SECRET", Value: ""},
 	}
 	layout, _, err := BuildGroupRecipe(in)
@@ -157,24 +350,29 @@ func TestBuildGroupRecipe_ProjectVariables(t *testing.T) {
 			if !maps.Equal(vars, wantVars) {
 				t.Errorf("envVariables = %v, want %v", vars, wantVars)
 			}
-			secrets := scalarMap(mappingValue(project, "envSecrets"))
+			secrets := mappingValue(project, "envSecrets")
 			wantSecrets := map[string]string{
 				"JWT_SECRET":            "<@generateRandomString(<48>)>",
 				"STRIPE_API_KEY":        "<@generateRandomString(<30>)>",
+				"STRIPE_PRICE_PRO":      "<@generateRandomString(<30>)>",
 				"STRIPE_WEBHOOK_SECRET": "",
 			}
-			if !maps.Equal(secrets, wantSecrets) {
-				t.Errorf("envSecrets = %v, want %v", secrets, wantSecrets)
+			if got := scalarMap(secrets); !maps.Equal(got, wantSecrets) {
+				t.Errorf("envSecrets = %v, want %v", got, wantSecrets)
 			}
 			if !strings.HasPrefix(tier.ImportYAML, preprocessorHeader) {
 				t.Errorf("a generator without the preprocessor's first line")
 			}
-			comment := keyComment(mappingValue(project, "envSecrets"), "STRIPE_API_KEY")
-			if lower := strings.ToLower(comment); !strings.Contains(lower, "set by hand") || !strings.Contains(comment, in.MateProjectName) || !strings.Contains(lower, "set it again") {
-				t.Errorf("the third party's key says %q, want that it was set by hand in %s and must be set again", comment, in.MateProjectName)
+			for _, key := range []string{"STRIPE_API_KEY", "STRIPE_PRICE_PRO"} {
+				comment := keyComment(secrets, key)
+				if lower := strings.ToLower(comment); !strings.Contains(lower, "set by hand") || !strings.Contains(comment, in.MateProjectName) || !strings.Contains(lower, "set it again") {
+					t.Errorf("%s says %q, want that it was set by hand in %s and must be set again", key, comment, in.MateProjectName)
+				}
 			}
-			if c := keyComment(mappingValue(project, "envSecrets"), "JWT_SECRET"); c != "" {
-				t.Errorf("an app's own secret is simply regenerated, yet says %q", c)
+			for _, key := range []string{"JWT_SECRET", "STRIPE_WEBHOOK_SECRET"} {
+				if c := keyComment(secrets, key); c != "" {
+					t.Errorf("%s is simply regenerated, or empty, yet says %q", key, c)
+				}
 			}
 		})
 	}
@@ -193,7 +391,7 @@ func TestBuildGroupRecipe_ServiceVariables(t *testing.T) {
 	}
 	in.Runtimes[0].StageServiceEnvs = []ProjectEnvVar{
 		{Key: "NODE_ENV", Value: "production"},
-		{Key: "SENDGRID_API_KEY", Value: "SG." + strings.Repeat("a", 22) + "." + strings.Repeat("b", 43)},
+		{Key: "SENDGRID_API_KEY", Value: fakeSendGridKey},
 	}
 	layout, _, err := BuildGroupRecipe(in)
 	if err != nil {
@@ -288,4 +486,16 @@ func keyComment(m *yaml.Node, key string) string {
 		}
 	}
 	return ""
+}
+
+// serviceNodeOrNil is a tier's service with the given hostname, nil when the
+// tier has none.
+func serviceNodeOrNil(t *testing.T, body, hostname string) *yaml.Node {
+	t.Helper()
+	for _, item := range mappingValue(tierMapping(t, body), "services").Content {
+		if node := mappingValue(item, "hostname"); node != nil && node.Value == hostname {
+			return item
+		}
+	}
+	return nil
 }
