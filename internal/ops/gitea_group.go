@@ -19,16 +19,19 @@ import (
 // The group repo — where the recipe lives (D13) — and how a Mate's bot gets a
 // proposal into it.
 //
-// A Mate's bot is a READER on the group's org: it is a collaborator on the
-// repositories it created, never on `{slug}/group`, which only the group's
-// releasers write. Measured on Gitea 1.27.2 (2026-09-16): a bot in the org's
-// `read` team pushing a branch to the group repo with a `write:repository`
-// token is refused by the pre-receive hook ("User permission denied for
-// writing"). So the bot FORKS the group repo into its own namespace, commits
-// there, and opens a cross-fork pull request — which the same lab confirms
-// Gitea accepts (`head: "{bot}:{branch}"`), including for a restricted user
-// whose `max_repo_creation` is 0: a fork is not a repository creation as far
-// as that limit is concerned.
+// A Mate's bot reads the group's org and writes `{slug}/group` as a
+// collaborator the broker's rights loop makes (D31): it may push a branch
+// there and merge a pull request into `main`, never push `main` itself. The
+// recipe proposal does not lean on that write. The bot FORKS the group repo
+// into its own namespace, commits there, and opens a cross-fork pull request:
+// the fork serves whether or not the broker has made the bot a writer — under
+// a broker from before D31 a bot that only reads the org is refused a branch
+// push to the group repo by the pre-receive hook ("User permission denied for
+// writing", measured on Gitea 1.27.2, 2026-09-16) — and it keeps zcp's
+// proposal branches out of the group repo's own. The same lab confirms Gitea
+// accepts the cross-fork request (`head: "{bot}:{branch}"`), including for a
+// restricted user whose `max_repo_creation` is 0: a fork is not a repository
+// creation as far as that limit is concerned.
 //
 // The commit goes through Gitea's API rather than a working copy on purpose.
 // A clone would put the bot's token in a remote URL inside `.git/config` — a

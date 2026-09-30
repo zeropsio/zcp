@@ -70,7 +70,10 @@ type giteaRecipeOutcome struct {
 // next release built production with the dev setup. So a group's first recipe
 // lands whole, a tier main lacks is proposed on any later pass, and a group
 // whose main has every tier gets nothing — no fork, no commit, no pull request
-// — while this bot's own proposals still open there are closed.
+// — while this bot's own proposals still open there are closed. A tier on main
+// changes only through a pull request somebody chose to open — a person's, or
+// the Mate's own when its person asks, since a registered Mate writes the
+// group repo (D31) — never through this reconcile.
 //
 // A proposal is cut from main's tip, on a fork branch named after that commit
 // (ops.GiteaRecipeBranch), so its pull request only ever adds files — the kind
@@ -88,9 +91,9 @@ type giteaRecipeOutcome struct {
 // Like A1 it is a reconcile, not a step, and nothing it can meet is fatal. A
 // Mate whose bot cannot fork, whose group repo has not been created yet, or
 // whose Gitea is down keeps a working project and gets a line saying so; the
-// next pass tries again. The recipe is a proposal — a person with production
-// rights merges it (D13) — so a Mate that never gets one loses nothing but
-// the proposal.
+// next pass tries again. The recipe is a proposal — the broker lands one that
+// only adds files by itself (D23, D30), and anyone with write merges the rest
+// — so a Mate that never gets one loses nothing but the proposal.
 //
 // Idempotent on CONTENT: the export is composed from live state on every
 // pass, and PublishGiteaFiles commits only what differs from the branch. An
@@ -209,8 +212,11 @@ func giteaGroupRecipeOutcome(
 	}
 	outcome.Proposed = recipeEntries(missing)
 
-	// The bot is a reader on the group's org, never a writer on {slug}/group
-	// (measured on Gitea 1.27.2) — so it proposes from its own fork.
+	// The proposal is made from the bot's own fork. A registered Mate writes
+	// {slug}/group too (D31), but the reconcile needs none of that: a fork
+	// serves whether or not the broker has made the bot a writer — a broker
+	// from before D31 never does — and it keeps zcp's recipe/ branches out of
+	// the group repo's own.
 	fork, err := ops.EnsureGiteaFork(ctx, httpClient, wiring.GiteaURL, wiring.Token, groupRepo, identity.Name)
 	if err != nil {
 		outcome.Line = fmt.Sprintf("could not fork %s to propose the recipe (%v) — the project is unaffected; retrying on the next pass.", groupRepo, err)
@@ -460,7 +466,7 @@ func handleGroupRecipe(
 		result["message"] = strings.ToUpper(outcome.Line[:1]) + outcome.Line[1:] + "."
 	case outcome.OnMain:
 		result["message"] = fmt.Sprintf(
-			"The group repo %s already carries every tier of the recipe on its main, so nothing is proposed: a tier on main is the group's, and a change to one is a person's pull request.",
+			"The group repo %s already carries every tier of the recipe on its main, so nothing is proposed: a tier on main is the group's, and zcp never proposes over it. To change one, open a pull request against its main — you write the group repo, and may merge the pull request when the person asks.",
 			outcome.GroupRepo)
 	case outcome.PullNumber != 0:
 		result["message"] = fmt.Sprintf(

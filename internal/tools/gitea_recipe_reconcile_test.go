@@ -792,10 +792,16 @@ func TestHandleGroupRecipe_Table(t *testing.T) {
 			wantText:  []string{"already proposed", "pull request #11", "/acme/group/pulls/11"},
 		},
 		{
-			name:       "main already carries every tier — answers that, and proposes nothing",
+			// D31: a registered Mate writes the group repo, so a change to a
+			// tier main has is its pull request to open and, when the person
+			// asks, to merge — never "a person's pull request".
+			name:       "main already carries every tier — answers that, proposes nothing, and says how a tier changes",
 			main:       handWrittenTiers(),
 			wantFields: map[string]string{"groupRepo": "acme/group"},
-			wantText:   []string{"already carries every tier", `"onMain":true`},
+			wantText: []string{
+				"already carries every tier", `"onMain":true`,
+				"open a pull request against its main", "merge the pull request when the person asks",
+			},
 		},
 		{
 			name:     "the variables have not landed",
