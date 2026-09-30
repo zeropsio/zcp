@@ -48,6 +48,8 @@ func TestRecipeSecret_Rule(t *testing.T) {
 		{name: "a flag list is no token", env: ProjectEnvVar{Key: "NODE_OPTIONS", Value: "--max-old-space-size=4096"}},
 		{name: "words joined by dashes are written, not generated", env: ProjectEnvVar{Key: "THEME_NAME", Value: "midnight-blue-with-orange-accents"}},
 		{name: "a reference whose default is config", env: ProjectEnvVar{Key: "SMTP_PORT", Value: "${SMTP_PORT_OVERRIDE:-587}"}},
+		{name: "JVM options", env: ProjectEnvVar{Key: "JAVA_OPTS", Value: "-Xmx512m -XX:+UseG1GC -XX:MaxRAMPercentage=75.0 -Dfile.encoding=UTF-8"}},
+		{name: "node's inspector address", env: ProjectEnvVar{Key: "NODE_OPTIONS", Value: "--enable-source-maps --inspect=0.0.0.0:9229"}},
 
 		// References are wiring, whatever the name or the flag says.
 		{name: "a reference under a key's name", env: ProjectEnvVar{Key: "STORE_PUBLISHABLE_KEY", Value: "${medusa_CHANNEL_PUBLISHABLE_KEY}"}},
@@ -99,6 +101,15 @@ func TestRecipeSecret_Rule(t *testing.T) {
 		{name: "a GitHub token", env: ProjectEnvVar{Key: "CI", Value: fakeGitHubToken}, wantSecret: true, wantSetAgain: true},
 		{name: "an OpenAI key", env: ProjectEnvVar{Key: "LLM", Value: "sk-" + "proj-abcdefghijklmnopqrstuvwx"}, wantSecret: true, wantSetAgain: true},
 		{name: "an AWS access key id", env: ProjectEnvVar{Key: "S3_ID", Value: "AK" + "IAABCDEFGHIJKLMNOP"}, wantSecret: true, wantSetAgain: true},
+
+		// A flag is made of flag words, and names no credential: a generated
+		// token opening with a dash is no flag, and a line break ends a list.
+		{name: "a base64url token opening with a dash", env: ProjectEnvVar{Key: "COOKIE_SIGNING", Value: "-" + "Xq9rT2pLm9Wn4Xc6Yb1Hd0Fs5Jg7Kh2Nc4Vx8Qa1Ze"}, wantSecret: true, wantSetAgain: true},
+		{name: "a flag naming a password PWD", env: ProjectEnvVar{Key: "JAVA_OPTS", Value: "-Xmx512m -Dspring.datasource.pwd=hunter2"}, wantSecret: true, wantSetAgain: true},
+		{name: "a flag naming credentials", env: ProjectEnvVar{Key: "JAVA_TOOL_OPTIONS", Value: "-Dapp.credentials=Summer24"}, wantSecret: true, wantSetAgain: true},
+		{name: "a flag naming a password PW", env: ProjectEnvVar{Key: "NODE_OPTIONS", Value: "--db-pw=letmein"}, wantSecret: true, wantSetAgain: true},
+		{name: "flags naming a salt and creds", env: ProjectEnvVar{Key: "CATALINA_OPTS", Value: "-Dsalt=pepperpot -Dcreds=opensesame"}, wantSecret: true, wantSetAgain: true},
+		{name: "a line break is no flag list", env: ProjectEnvVar{Key: "EXTRA_ARGS", Value: "-v\nhunter2"}, wantSecret: true, wantSetAgain: true},
 
 		// Anything outside a config shape is generated: an opaque value under
 		// an ordinary name fails closed, and a person sets it again.
@@ -166,6 +177,8 @@ func TestBuildGroupRecipe_FailsClosed(t *testing.T) {
 		{name: "a reference whose default is a URL with a password", key: "CACHE_URL", value: "${CACHE_OVERRIDE:-redis://:Cach3-Pa55@cache:6379}", secret: "Cach3-Pa55"},
 		{name: "a wired URL whose password defaults to a word", key: "QUEUE_URL", value: "amqp://${queue_user}:${QUEUE_PASS:-marmalade}@queue:5672", secret: "marmalade"},
 		{name: "an opaque ID", key: "STRIPE_PRICE_PRO", value: "price_" + "1Mq7Xz2Lb9Rt4Wv8Kd3Nc6Hs"},
+		{name: "a dash-led base64url seed", key: "COOKIE_SIGNING", value: "-" + "Xq9rT2pLm9Wn4Xc6Yb1Hd0Fs5Jg7Kh2Nc4Vx8Qa1Ze"},
+		{name: "a password among JVM options, abbreviated", key: "JAVA_OPTS", value: "-Xmx512m -Dspring.datasource." + "pwd=Jvm-Pa55-w0rd", secret: "Jvm-Pa55-w0rd"},
 
 		// The medusa fixture's config, as a person wrote it.
 		{name: "medusa's storefront address", key: "APP_URL", value: "https://nextstorestage-${zeropsSubdomainHost}-8000.prg1.zerops.app", verbatim: true},
@@ -245,9 +258,10 @@ func TestBuildGroupRecipe_FailsClosed(t *testing.T) {
 func TestRecipeSecret_RandomValuesAreGenerated(t *testing.T) {
 	t.Parallel()
 	const (
-		hex    = "0123456789abcdef"
-		base62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-		base64 = base62 + "+/"
+		hex       = "0123456789abcdef"
+		base62    = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+		base64    = base62 + "+/"
+		base64url = base62 + "-_"
 	)
 	rng := rand.New(rand.NewPCG(20260930, 1)) //nolint:gosec // a seeded generator keeps the samples the same on every run
 	random := func(alphabet string, n int) string {
@@ -271,12 +285,17 @@ func TestRecipeSecret_RandomValuesAreGenerated(t *testing.T) {
 		{"base62, 24 characters", func() string { return random(base62, 24) }},
 		{"base62, 32 characters", func() string { return random(base62, 32) }},
 		{"base64, 44 characters", func() string { return random(base64, 42) + "==" }},
+		{"base64url, 22 characters", func() string { return random(base64url, 22) }},
+		{"base64url, 43 characters", func() string { return random(base64url, 43) }},
+		{"base64url, 64 characters", func() string { return random(base64url, 64) }},
+		{"base64url opening with a dash", func() string { return "-" + random(base64url, 42) }},
+		{"base64url opening with two dashes", func() string { return "--" + random(base64url, 41) }},
 	}
 	for _, shape := range shapes {
 		var written []string
 		for range 5000 {
 			value := shape.make()
-			if secret, _ := recipeSecret(ProjectEnvVar{Key: "SEED", Value: value}); !secret {
+			if secret, _ := recipeSecret(ProjectEnvVar{Key: "INSTANCE_REF", Value: value}); !secret {
 				written = append(written, value)
 			}
 		}

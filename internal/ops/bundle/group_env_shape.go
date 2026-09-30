@@ -50,6 +50,11 @@ var recipeReference = regexp.MustCompile(`\$\{[A-Za-z0-9_]+\}`)
 // isWord adds the case rule.
 var recipeWordShape = regexp.MustCompile(`^[A-Za-z]{1,24}[0-9]{0,2}$`)
 
+// recipePlainWord is a word in one case, or capitalized: `production`,
+// `UTF`, `Prague`. Beside `_` or `-` — where base64url puts its separators —
+// a word is plain, so a generator's short mixed-case runs are no phrase.
+var recipePlainWord = regexp.MustCompile(`^([a-z]{1,24}|[A-Z]{1,24}|[A-Z][a-z]{1,23})[0-9]{0,2}$`)
+
 // recipeShortNumber is a number that may follow a word: `us-east-1`.
 var recipeShortNumber = regexp.MustCompile(`^[0-9]{1,2}$`)
 
@@ -80,9 +85,17 @@ var recipeScalarShapes = []*regexp.Regexp{
 	regexp.MustCompile(`^v?[0-9]{1,6}(\.[0-9]{1,6}){1,3}(-[A-Za-z]{1,12}(\.?[0-9]{1,8})?)?$`),
 }
 
-// recipeFlagName is a command-line flag: `-Xmx512m`, `--max-old-space-size`,
-// `-XX:+UseG1GC`.
-var recipeFlagName = regexp.MustCompile(`^--?[A-Za-z][A-Za-z0-9._:+-]*$`)
+// recipeFlagName is a command-line flag, built from words so that no token a
+// generator opens with a dash reads as one: `--max-old-space-size`, `-v`,
+// `-Xmx512m`, `-XX:+UseG1GC`, and a system property `-Dfile.encoding` —
+// always dotted, which base64url never is.
+var recipeFlagName = regexp.MustCompile(`^(` +
+	`--[a-z]{1,24}[0-9]{0,2}(-[a-z]{1,24}[0-9]{0,2})*` +
+	`|-[a-z]{1,24}[0-9]{0,2}` +
+	`|-X[a-z]{2,3}[0-9]{1,6}[kKmMgGtT]?` +
+	`|-XX:[+-]?[A-Za-z][A-Za-z0-9]{0,63}` +
+	`|-D[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z][A-Za-z0-9_-]*)+` +
+	`)$`)
 
 // recipeFlagCredential is a word no flag and no flag's value may carry.
 var recipeFlagCredential = regexp.MustCompile(`(?i)password|secret|token|key|auth|pass`)
@@ -100,8 +113,14 @@ func isStrictWiring(value string) bool {
 
 // recipeConfigShape reports a value in a shape a person writes a setting in —
 // as the platform reads it, and with every reference's default in its place.
+// A setting is one line: a line break splits a list or a flag into what
+// no shape vouches for.
 func recipeConfigShape(value string) bool {
-	referenced, defaulted, ok := resolveDefaults(strings.TrimSpace(value))
+	value = strings.TrimSpace(value)
+	if strings.ContainsAny(value, "\n\r") {
+		return false
+	}
+	referenced, defaulted, ok := resolveDefaults(value)
 	return ok && isConfigValue(referenced) && isConfigValue(defaulted)
 }
 
@@ -164,40 +183,61 @@ func isConfigList(value string) bool {
 
 // isFlagList reports the flags a runtime is started with —
 // `--max-old-space-size=4096`, `-Xmx512m -Dspring.profiles.active=prod` —
-// each flag's value, after `=` or after the flag, a setting of its own, and
-// no credential word anywhere: `-Dspring.datasource.password=…` is no config.
+// each flag's value, after `=` or after the flag, a setting of its own. No
+// credential goes by a flag: none names one (recipeCredentialName on what
+// it names, `-Dspring.datasource.pwd`), and no credential word stands
+// anywhere in a field.
 func isFlagList(value string) bool {
 	flags := 0
 	for field := range strings.FieldsSeq(value) {
 		if recipeFlagCredential.MatchString(field) {
 			return false
 		}
-		name, setting, hasSetting := strings.Cut(field, "=")
-		switch {
-		case recipeFlagName.MatchString(name):
-			if hasSetting && !isConfigItem(setting) && !isConfigList(setting) {
+		if !strings.HasPrefix(field, "-") || matchesAny(recipeScalarShapes, field) {
+			// A flag's own value, standing after it: `-r dotenv/config`.
+			if !isConfigItem(field) {
 				return false
 			}
-			flags++
-		case !isConfigItem(field):
+			continue
+		}
+		name, setting, hasSetting := strings.Cut(field, "=")
+		if !recipeFlagName.MatchString(name) || recipeCredentialName(flagNameBody(name)) {
 			return false
 		}
+		if hasSetting && !isConfigItem(setting) && !isConfigList(setting) {
+			return false
+		}
+		flags++
 	}
 	return flags > 0
 }
 
+// flagNameBody is what a flag names: `db-pw` of `--db-pw`,
+// `spring.datasource.pwd` of `-Dspring.datasource.pwd`, `UseG1GC` of
+// `-XX:+UseG1GC`.
+func flagNameBody(name string) string {
+	if rest, ok := strings.CutPrefix(name, "-XX:"); ok {
+		return strings.TrimLeft(rest, "+-")
+	}
+	if rest, ok := strings.CutPrefix(name, "-D"); ok && strings.Contains(rest, ".") {
+		return rest
+	}
+	return strings.TrimLeft(name, "-")
+}
+
 // isPhrase reports a word, or words and references joined by spaces or
-// `_ . - /`. A number of one or two digits may follow a word, never open the
-// phrase.
+// `_ . - /` — plain words where `_` or `-` joins them. A number of one or two
+// digits may follow a word, never open the phrase.
 func isPhrase(value string) bool {
 	if len(value) > maxPhrase {
 		return false
 	}
+	plain := strings.ContainsAny(value, "_-")
 	words := 0
 	for _, token := range recipeTokens(value, " _./-") {
 		switch {
 		case token == "":
-		case isReference(token) || isWord(token):
+		case isReference(token) || isWordIn(token, plain):
 			words++
 		case words > 0 && recipeShortNumber.MatchString(token):
 		default:
@@ -215,7 +255,7 @@ func isEmail(value string) bool {
 		return false
 	}
 	for _, token := range recipeTokens(local, "._-+") {
-		if token != "" && !isReference(token) && !isWord(token) && !recipeShortNumber.MatchString(token) {
+		if token != "" && !isReference(token) && !isWordIn(token, true) && !recipeShortNumber.MatchString(token) {
 			return false
 		}
 	}
@@ -282,14 +322,14 @@ func isHost(host string, bare bool) bool {
 	}
 }
 
-// isHostLabel reports one DNS label of words, numbers and references joined
-// by `-`.
+// isHostLabel reports one DNS label of plain words, numbers and references
+// joined by `-`.
 func isHostLabel(label string) bool {
 	parts := 0
 	for _, token := range recipeTokens(label, "-") {
 		switch {
 		case token == "":
-		case isReference(token) || isWord(token) || recipeLabelNumber.MatchString(token):
+		case isReference(token) || isWordIn(token, true) || recipeLabelNumber.MatchString(token):
 			parts++
 		default:
 			return false
@@ -305,12 +345,14 @@ func isAbsolutePath(value string) bool {
 }
 
 // isPathSegments reports path segments made of words, numbers of one or two
-// digits and references joined by `. _ -`: `v1`, `store/search`,
-// `index.html`, `.well-known`, `python3.11`.
+// digits and references joined by `. _ -` — plain words where `_` or `-`
+// joins them: `v1`, `store/search`, `index.html`, `.well-known`,
+// `python3.11`.
 func isPathSegments(path string) bool {
 	for segment := range strings.SplitSeq(path, "/") {
+		plain := strings.ContainsAny(segment, "_-")
 		for _, token := range recipeTokens(segment, "._-") {
-			if token != "" && !isReference(token) && !isWord(token) && !recipeShortNumber.MatchString(token) {
+			if token != "" && !isReference(token) && !isWordIn(token, plain) && !recipeShortNumber.MatchString(token) {
 				return false
 			}
 		}
@@ -333,6 +375,14 @@ func isWord(token string) bool {
 		}
 	}
 	return changes <= 3
+}
+
+// isWordIn reports a word — a plain one when plain is set.
+func isWordIn(token string, plain bool) bool {
+	if plain {
+		return recipePlainWord.MatchString(token)
+	}
+	return isWord(token)
 }
 
 // isReference reports a token that is one `${name}` reference.
