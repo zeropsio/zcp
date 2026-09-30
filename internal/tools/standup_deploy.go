@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
+	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -16,28 +17,30 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// The stand-up deploys in waves by the tier's priority, highest first — the
-// order the recipe's author gave the import, so what a runtime needs at build
-// time (an API a storefront's build reads) is up before it. A wave holds every
-// pair of one priority, and a lower wave starts only once every pair above it
-// stands: a pair that did not stand up holds the rest, which report what they
-// wait for.
+// The stand-up deploys every half as soon as what it needs stands
+// (standupAfter), at most standupBatchMax at once.
 //
-// Within a wave, the dev halves go as one batch and the stage cross-deploys
-// as the next — never in one batch together. Both read the dev half's
-// /var/www, and ops.DeploySSH serialises every deploy from one source
-// container on a per-source git lock held across the whole `zcli push`, which
-// blocks until the pipeline ends: in one batch the pair's two deploys would
-// still run one after the other, in whichever order the goroutines take the
-// lock. With the dev push first, its SSH session dies as the new container
-// replaces the old one (the "common exit 255"), and the cross-deploy then
-// dials a container that may still be starting and uploads the dev build's
-// output rather than the checkout; with the cross-deploy first, it reads the
-// checkout. Two outcomes from one input, for no speed gained. As the next
-// batch, the stage deploys after its dev half's build succeeded and its new
-// container answered SSH (pollDeployBuild waits for it), reads what that
-// build deployed — the whole repository, deployFiles [.] — and is skipped
-// when the dev half failed, whose stage would only fail the same way.
+// A dev half's build installs dependencies and reads no API — every dev
+// setup of the recipes zcp knows is an install (`npm install`, `composer
+// install`, `go mod download`, …) and no dev setup's build variables name
+// another service — so every dev half starts at once.
+//
+// A stage waits for two things. Its own dev half: the stage is
+// cross-deployed from the dev half's checkout, and ops.DeploySSH serialises
+// every deploy from one source container on a per-source git lock held across
+// the whole `zcli push`, which blocks until the pipeline ends — started
+// together, the pair's two deploys would still run one after the other, in
+// whichever order the goroutines take the lock, and with the dev push first
+// its SSH session dies as the new container replaces the old one (the
+// "common exit 255") under a cross-deploy that may then dial a container
+// still starting. After its dev half, the stage deploys once that build
+// succeeded and its new container answered SSH (pollDeployBuild waits for
+// it), reads what that build deployed — the whole repository, deployFiles
+// [.] — and is skipped when the dev half failed, whose stage would only fail
+// the same way. And every stage above it by priority: the priority is the
+// order the recipe's author gave the import, so what a stage's build reads (a
+// storefront pre-rendering from its API's stage) is up before it. A stage
+// whose higher stage did not stand up says what it waited for.
 
 // standupDeploy is one half's deploy, as the report says it.
 type standupDeploy struct {
@@ -65,84 +68,107 @@ func (d *standupDeploy) running() bool {
 	return d != nil && (d.Status == standupDeployed || d.Status == standupAlreadyDeployed)
 }
 
-// deployWaves runs every wave in order.
-func (d standupDeps) deployWaves(ctx context.Context, pairs []*standupPair, progress *standupProgress) {
-	var held []string
-	for _, wave := range standupWaves(pairs) {
-		if len(held) > 0 {
-			reason := fmt.Sprintf("an earlier wave did not stand up (%s): a higher priority is built first, and this pair waits for it", strings.Join(held, ", "))
-			for _, sp := range wave {
-				if sp.failed != "" {
-					continue
-				}
-				sp.devDeploy = &standupDeploy{Status: standupNotDeployed, Reason: reason}
-				sp.stageDeploy = &standupDeploy{Status: standupNotDeployed, Reason: reason}
-			}
-		} else {
-			d.deployWave(ctx, wave, progress)
-		}
-		for _, sp := range wave {
-			if !sp.stoodUp() {
-				held = append(held, sp.pair.Dev.Hostname)
+// standupAfter maps every half of the pairs to the halves that must run code
+// before it deploys, sorted: nothing for a dev half; for a stage, its own dev
+// half and the stage of every pair above it by priority.
+func standupAfter(pairs []workflow.MateTierPair) map[string][]string {
+	after := make(map[string][]string, 2*len(pairs))
+	for _, p := range pairs {
+		after[p.Dev.Hostname] = nil
+		waits := []string{p.Dev.Hostname}
+		for _, above := range pairs {
+			if above.Priority() > p.Priority() {
+				waits = append(waits, above.Stage.Hostname)
 			}
 		}
+		slices.Sort(waits)
+		after[p.Stage.Hostname] = waits
 	}
+	return after
 }
 
-// standupWaves groups the pairs by priority, highest first; within a wave
-// they keep the tier's order.
-func standupWaves(pairs []*standupPair) [][]*standupPair {
-	byPriority := map[int][]*standupPair{}
-	var priorities []int
+// deployAll deploys every half of the pairs that got to their deploy, each as
+// soon as the halves it waits for (standupAfter) are done, at most
+// standupBatchMax at once. A half whose wait ended with one of them not
+// running code is not deployed and says which.
+func (d standupDeps) deployAll(ctx context.Context, pairs []*standupPair, progress *standupProgress) {
+	tier := make([]workflow.MateTierPair, 0, len(pairs))
+	halves := make(map[string]standupHalf, 2*len(pairs))
 	for _, sp := range pairs {
-		p := sp.pair.Priority()
-		if _, seen := byPriority[p]; !seen {
-			priorities = append(priorities, p)
-		}
-		byPriority[p] = append(byPriority[p], sp)
+		p := sp.pair
+		tier = append(tier, p)
+		halves[p.Dev.Hostname] = standupHalf{pair: sp, dev: true,
+			target: ops.DeployBatchTarget{SourceService: p.Dev.Hostname, TargetService: p.Dev.Hostname, Setup: p.Dev.Setup}}
+		halves[p.Stage.Hostname] = standupHalf{pair: sp,
+			target: ops.DeployBatchTarget{SourceService: p.Dev.Hostname, TargetService: p.Stage.Hostname, Setup: p.Stage.Setup}}
 	}
-	sort.Sort(sort.Reverse(sort.IntSlice(priorities)))
-	waves := make([][]*standupPair, 0, len(priorities))
-	for _, p := range priorities {
-		waves = append(waves, byPriority[p])
+	after := standupAfter(tier)
+	done := make(map[string]chan struct{}, len(halves))
+	for host := range halves {
+		done[host] = make(chan struct{})
 	}
-	return waves
+
+	slots := make(chan struct{}, standupBatchMax)
+	var wg sync.WaitGroup
+	for host, h := range halves {
+		wg.Go(func() {
+			defer close(done[host])
+			for _, dep := range after[host] {
+				<-done[dep]
+			}
+			// A pair stopped before its deploy says so in its report.
+			if h.pair.failed != "" {
+				return
+			}
+			if held := h.held(halves, after[host]); held != "" {
+				h.record(&standupDeploy{Status: standupNotDeployed, Reason: held})
+				return
+			}
+			select {
+			case slots <- struct{}{}:
+			case <-ctx.Done():
+				h.record(&standupDeploy{Status: standupNotDeployed, Reason: fmt.Sprintf("the stand-up was cancelled before it deployed: %v", ctx.Err())})
+				return
+			}
+			defer func() { <-slots }()
+			d.deployHalves(ctx, []standupHalf{h}, progress)
+		})
+	}
+	wg.Wait()
 }
 
-// deployWave deploys one wave: the dev halves that run no code yet, then the
-// stages of the pairs whose dev half runs.
-func (d standupDeps) deployWave(ctx context.Context, wave []*standupPair, progress *standupProgress) {
-	devs := make([]standupHalf, 0, len(wave))
-	for _, sp := range wave {
-		if sp.failed != "" {
-			continue
-		}
-		p := sp.pair
-		devs = append(devs, standupHalf{pair: sp, target: ops.DeployBatchTarget{SourceService: p.Dev.Hostname, TargetService: p.Dev.Hostname, Setup: p.Dev.Setup}, dev: true})
-	}
-	d.deployHalves(ctx, devs, progress)
-
-	stages := make([]standupHalf, 0, len(wave))
-	for _, sp := range wave {
-		if sp.failed != "" {
-			continue
-		}
-		p := sp.pair
-		if !sp.devDeploy.running() {
-			sp.stageDeploy = &standupDeploy{Status: standupNotDeployed,
-				Reason: fmt.Sprintf("%s did not deploy, and the stage is built from it", p.Dev.Hostname)}
-			continue
-		}
-		stages = append(stages, standupHalf{pair: sp, target: ops.DeployBatchTarget{SourceService: p.Dev.Hostname, TargetService: p.Stage.Hostname, Setup: p.Stage.Setup}})
-	}
-	d.deployHalves(ctx, stages, progress)
-}
-
-// standupHalf is one half of a pair a wave deploys.
+// standupHalf is one half of a pair the stand-up deploys.
 type standupHalf struct {
 	pair   *standupPair
 	target ops.DeployBatchTarget
 	dev    bool
+}
+
+// running reports a half that runs code — deployed now or before.
+func (h standupHalf) running() bool {
+	if h.dev {
+		return h.pair.devDeploy.running()
+	}
+	return h.pair.stageDeploy.running()
+}
+
+// held says why a half whose wait is over does not deploy: its dev half, when
+// it is a stage built from one that runs no code, else the stages above it
+// that did not stand up. Empty when everything it waited for runs.
+func (h standupHalf) held(halves map[string]standupHalf, waited []string) string {
+	if !h.dev && !h.pair.devDeploy.running() {
+		return fmt.Sprintf("%s did not deploy, and the stage is built from it", h.pair.pair.Dev.Hostname)
+	}
+	var down []string
+	for _, host := range waited {
+		if host != h.pair.pair.Dev.Hostname && !halves[host].running() {
+			down = append(down, host)
+		}
+	}
+	if len(down) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("waits for %s, which did not stand up: a stage is built after every stage above it by priority, whose API its build may read", strings.Join(down, ", "))
 }
 
 func (h standupHalf) record(deploy *standupDeploy) {

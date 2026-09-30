@@ -186,6 +186,12 @@ type standupSSH struct {
 	commands []standupSSHCall
 	// collide names dev halves whose checkout already holds files main carries.
 	collide map[string]bool
+	// together names the service ids whose pushes must be in flight at
+	// once: each waits for the others, and one that waits in vain is apart.
+	together map[string]bool
+	arrived  map[string]bool
+	allIn    chan struct{}
+	apart    []string
 }
 
 type standupSSHCall struct{ host, cmd string }
@@ -194,6 +200,9 @@ func (s *standupSSH) ExecSSH(_ context.Context, host, cmd string) ([]byte, error
 	s.mu.Lock()
 	s.commands = append(s.commands, standupSSHCall{host, cmd})
 	s.mu.Unlock()
+	if strings.Contains(cmd, "zcli push") {
+		s.meet(flagValue(cmd, "--service-id"))
+	}
 	switch {
 	case strings.Contains(cmd, "cur_email=$(git config user.email)"):
 		return []byte("ZCP_EMAIL_SEEDED\nZCP_NAME_SEEDED\n"), nil
@@ -208,6 +217,39 @@ func (s *standupSSH) ExecSSH(_ context.Context, host, cmd string) ([]byte, error
 
 func (s *standupSSH) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return []byte("ok"), nil
+}
+
+// meet holds a push to one of the together ids until every one of them is in
+// flight, or records it as apart once that does not happen within a second.
+func (s *standupSSH) meet(id string) {
+	s.mu.Lock()
+	if !s.together[id] {
+		s.mu.Unlock()
+		return
+	}
+	s.arrived[id] = true
+	if len(s.arrived) == len(s.together) {
+		close(s.allIn)
+	}
+	allIn := s.allIn
+	s.mu.Unlock()
+	select {
+	case <-allIn:
+	case <-time.After(time.Second):
+		s.mu.Lock()
+		s.apart = append(s.apart, id)
+		s.mu.Unlock()
+	}
+}
+
+// expectTogether makes the pushes to ids meet (meet).
+func (s *standupSSH) expectTogether(ids ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.together, s.arrived, s.allIn = map[string]bool{}, map[string]bool{}, make(chan struct{})
+	for _, id := range ids {
+		s.together[id] = true
+	}
 }
 
 // pushes is every `zcli push` in order: "<host> → <service id> (<setup>)".
@@ -419,12 +461,13 @@ func (r standupResponse) service(t *testing.T, hostname string) standupService {
 
 // TestStandup_StandsUpEveryPairFromTheRecipe is the whole stand-up on a real
 // group's tier: every pair adopted exactly as adopt records it, wired to the
-// repository its recipe names, its dev half deployed and then its stage
-// cross-deployed from it, in priority waves — and nothing committed, pushed
-// or proposed.
+// repository its recipe names, every dev half deployed at once, each stage
+// cross-deployed from its dev half once that stands and once the stages above
+// it by priority stand — and nothing committed, pushed or proposed.
 func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 	t.Parallel()
 	f := newStandupFixture(t)
+	f.ssh.expectTogether("svc-medusadev", "svc-nextstoredev")
 	result, body := f.run(t)
 	if result.IsError {
 		t.Fatalf("stand-up failed: %s", getTextContent(t, result))
@@ -436,16 +479,22 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 		t.Errorf("groupRepo = %q", body.GroupRepo)
 	}
 
-	// Waves by priority: the medusa pair (5) before the nextstore pair (0),
-	// each pair's dev push before its stage cross-deploy from the dev half.
-	wantPushes := []string{
-		"medusadev → svc-medusadev (medusadev)",
-		"medusadev → svc-medusastage (medusaprod)",
-		"nextstoredev → svc-nextstoredev (nextstoredev)",
-		"nextstoredev → svc-nextstorestage (nextstoreprod)",
+	// Every half deployed once: each stage cross-deployed from its dev half.
+	medusadev, medusastage := "medusadev → svc-medusadev (medusadev)", "medusadev → svc-medusastage (medusaprod)"
+	nextstoredev, nextstorestage := "nextstoredev → svc-nextstoredev (nextstoredev)", "nextstoredev → svc-nextstorestage (nextstoreprod)"
+	got := f.ssh.pushes()
+	if want := []string{medusadev, medusastage, nextstoredev, nextstorestage}; !slices.Equal(sorted(got), want) {
+		t.Errorf("deploys =\n  %s\nwant\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
 	}
-	if got := f.ssh.pushes(); !slices.Equal(got, wantPushes) {
-		t.Errorf("deploys =\n  %s\nwant\n  %s", strings.Join(got, "\n  "), strings.Join(wantPushes, "\n  "))
+	// Both dev halves build at once; a stage deploys after its own dev half,
+	// and the storefront's stage after the API's stage its build reads.
+	if len(f.ssh.apart) > 0 {
+		t.Errorf("the dev halves did not build at once: %v waited alone", f.ssh.apart)
+	}
+	for _, edge := range [][2]string{{medusadev, medusastage}, {nextstoredev, nextstorestage}, {medusastage, nextstorestage}} {
+		if slices.Index(got, edge[0]) > slices.Index(got, edge[1]) {
+			t.Errorf("%q deployed before %q: %v", edge[1], edge[0], got)
+		}
 	}
 
 	// The broker was asked for the repositories the recipe names.
@@ -559,7 +608,9 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 		wantStandUp string
 		want        map[string]string // hostname → substring of its failure or reason
 		wantNext    map[string]string // hostname → substring of its next step
-		wantPushes  []string
+		// wantDeployed are the halves deployed even so.
+		wantDeployed []string
+		wantPushes   []string
 	}{
 		{
 			name:    "Git access never arrives",
@@ -582,16 +633,34 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 			wantErr: []string{"INVALID_IMPORT_YML"},
 		},
 		{
-			name:        "a dev build fails: its stage waits, the next wave does not start",
+			name:        "a dev build fails: its stage is skipped, and the stage that reads it waits",
 			setup:       func(f *standupFixture) { f.failBuild("svc-medusadev") },
 			wantStandUp: standupFailed,
 			want: map[string]string{
 				"medusadev":      "BUILD_FAILED",
 				"medusastage":    "medusadev did not deploy",
-				"nextstoredev":   "an earlier wave did not stand up (medusadev)",
-				"nextstorestage": "an earlier wave did not stand up (medusadev)",
+				"nextstorestage": "waits for medusastage, which did not stand up",
 			},
-			wantPushes: []string{"medusadev → svc-medusadev (medusadev)"},
+			wantDeployed: []string{"nextstoredev"},
+			wantPushes: []string{
+				"medusadev → svc-medusadev (medusadev)",
+				"nextstoredev → svc-nextstoredev (nextstoredev)",
+			},
+		},
+		{
+			name:        "a stage build fails: the stage that reads it says what it waited for",
+			setup:       func(f *standupFixture) { f.failBuild("svc-medusastage") },
+			wantStandUp: standupFailed,
+			want: map[string]string{
+				"medusastage":    "BUILD_FAILED",
+				"nextstorestage": "waits for medusastage, which did not stand up",
+			},
+			wantDeployed: []string{"medusadev", "nextstoredev"},
+			wantPushes: []string{
+				"medusadev → svc-medusadev (medusadev)",
+				"medusadev → svc-medusastage (medusaprod)",
+				"nextstoredev → svc-nextstoredev (nextstoredev)",
+			},
 		},
 		{
 			name:        "the recipe names a repository that is not there",
@@ -607,14 +676,15 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 			},
 		},
 		{
-			name:        "a pair that does not stand up holds every lower wave",
+			name:        "a pair that does not stand up holds only the stages below it",
 			setup:       func(f *standupFixture) { f.gitea.repos = []string{"beviro/nextstoredev"} },
 			wantStandUp: standupFailed,
 			want: map[string]string{
 				"medusadev":      "beviro/medusadev is not on Gitea",
-				"nextstoredev":   "an earlier wave did not stand up (medusadev)",
-				"nextstorestage": "an earlier wave did not stand up (medusadev)",
+				"nextstorestage": "waits for medusastage, which did not stand up",
 			},
+			wantDeployed: []string{"nextstoredev"},
+			wantPushes:   []string{"nextstoredev → svc-nextstoredev (nextstoredev)"},
 		},
 		{
 			name:        "a dev half the import did not create, after the wait",
@@ -634,10 +704,15 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 			name:        "a stage half the import did not create, after the wait",
 			setup:       func(f *standupFixture) { f.mock.WithServices(withoutService(f.services, "medusastage")) },
 			wantStandUp: standupFailed,
-			want:        map[string]string{"medusastage": "not in this project after"},
+			want: map[string]string{
+				"medusastage":    "not in this project after",
+				"nextstorestage": "waits for medusastage, which did not stand up",
+			},
 			wantNext: map[string]string{
 				"medusastage": `zerops_import content="services: [{hostname: medusastage, type: nodejs@22}]"`,
 			},
+			wantDeployed: []string{"nextstoredev"},
+			wantPushes:   []string{"nextstoredev → svc-nextstoredev (nextstoredev)"},
 		},
 		{
 			name:        "a dev half imported with a build instead of empty",
@@ -690,12 +765,17 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 					t.Errorf("%s has no next step for the model", host)
 				}
 			}
+			for _, host := range tt.wantDeployed {
+				if d := body.service(t, host).Deploy; d == nil || d.Status != standupDeployed {
+					t.Errorf("%s deploy = %+v, want it deployed", host, d)
+				}
+			}
 			for host, want := range tt.wantNext {
 				if next := body.service(t, host).Next; !strings.Contains(next, want) {
 					t.Errorf("%s's next step = %q, want %q", host, next, want)
 				}
 			}
-			if got := f.ssh.pushes(); !slices.Equal(got, tt.wantPushes) {
+			if got := sorted(f.ssh.pushes()); !slices.Equal(got, tt.wantPushes) {
 				t.Errorf("deploys = %v, want %v", got, tt.wantPushes)
 			}
 			if !strings.Contains(body.Next, "zerops_standup") {
@@ -713,6 +793,13 @@ func (f *standupFixture) failBuild(id string) {
 		}
 	}
 	f.mock.WithAppVersionEvents(f.events)
+}
+
+// sorted is a sorted copy of s: deploys that run at once land in any order.
+func sorted(s []string) []string {
+	out := slices.Clone(s)
+	slices.Sort(out)
+	return out
 }
 
 func withoutService(services []platform.ServiceStack, hostname string) []platform.ServiceStack {

@@ -28,7 +28,8 @@ import (
 // its first deploy (READY_TO_DEPLOY) — and the broker is writing this
 // container's Git variables. What is left is zcp's: read the tier, adopt each
 // pair, put the repository's main into its dev half on the Mate's branch,
-// deploy the dev halves and then the stages, in the tier's priority order.
+// deploy every dev half at once and each stage once its dev half and the
+// stages above it by the tier's priority stand.
 //
 // Done by the model, that took sixteen minutes on the Beviro trial
 // (2026-09-29): an improvised adopt, then one deploy after another, and a
@@ -49,7 +50,7 @@ const (
 	// while they are still being created.
 	standupRuntimeWait = 5 * time.Minute
 	standupRuntimePoll = 5 * time.Second
-	// standupBatchMax is the most targets one batch carries: past five the
+	// standupBatchMax is the most halves deploying at once: past five the
 	// platform's build queue may fall back to serial scheduling
 	// (zerops_deploy_batch's own advice).
 	standupBatchMax = 5
@@ -140,7 +141,7 @@ func (d standupDeps) run(ctx context.Context, progress *standupProgress) *mcp.Ca
 	}
 
 	pairs, live := d.preparePairs(ctx, wiring, src, progress)
-	d.deployWaves(ctx, pairs, progress)
+	d.deployAll(ctx, pairs, progress)
 	d.observeDevServers(pairs)
 
 	resp := buildStandupResponse(src, pairs, live)
