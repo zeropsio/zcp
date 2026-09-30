@@ -199,7 +199,9 @@ func TestBuildGroupRecipe_HAIncapableStaysSingle(t *testing.T) {
 // A runtime the project builds from a public repository and no Gitea pair —
 // a utility such as mailpit — is written as the project runs it on every
 // tier: its own hostname, its public build, its own scale, no tier's
-// transform. It takes its place in the dependency order like any runtime.
+// transform. It takes its place in the dependency order like any runtime: one
+// read only once the reader runs orders nothing, so it shares the reader's
+// priority.
 func TestBuildGroupRecipe_PublicBuildUtility(t *testing.T) {
 	t.Parallel()
 	in := groupInputsFixture()
@@ -220,7 +222,7 @@ func TestBuildGroupRecipe_PublicBuildUtility(t *testing.T) {
 			t.Parallel()
 			mailpit := serviceNode(t, tier.ImportYAML, "mailpit")
 			want := map[string]string{
-				"hostname": "mailpit", "type": "alpine@3.21", "priority": "2",
+				"hostname": "mailpit", "type": "alpine@3.21", "priority": "1",
 				"buildFromGit": "https://github.com/zerops-recipe-apps/mailpit-app", "enableSubdomainAccess": "true",
 				"minContainers": "1", "maxContainers": "1",
 			}

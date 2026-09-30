@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 // A tier's priorities are its dependency order.
@@ -27,12 +25,14 @@ import (
 // that references no runtime sits in the lowest rank with the storefront —
 // nothing waits for it.
 //
-// A reference is a `${hostname_key}` the runtime's pair zerops.yaml carries in
-// any setup's build or run envVariables — a storefront's build bakes the
-// backend's publishable key — or one of the runtime's own service variables
-// carries, and a `${NAME}` naming a project variable counts as whatever that
-// variable references. Any hostname a pair goes by names the pair: its dev
-// half, its stage half, and the promoted name a group environment gives it.
+// A reference is what a runtime's BUILD reads (BuildReadValues): a
+// `${hostname_key}` in any setup's build.envVariables of the pair's
+// zerops.yaml — a storefront's build bakes the backend's publishable key and
+// pre-renders from its API — directly, through a runtime variable the build
+// lifts (`${RUNTIME_X}`), or through a project variable. What a runtime reads
+// only once it runs orders nothing: it starts in the same wave as what it
+// reads. Any hostname a pair goes by names the pair: its dev half, its stage
+// half, and the promoted name a group environment gives it.
 // Runtimes that reference each other share a rank, and the composer says so;
 // a chain deeper than the ranks below the managed services stops at the last
 // one, said too. The ranks are computed from sorted inputs, so the same
@@ -50,7 +50,8 @@ type groupApp struct {
 	key string
 	// hostnames are every name it goes by on any tier.
 	hostnames []string
-	// sources are the values whose references say what it needs up first.
+	// sources are the values its build reads (BuildReadValues): their
+	// references say what it needs up first.
 	sources []string
 }
 
@@ -60,53 +61,29 @@ func groupPriorities(apps []groupApp, projectEnvs []ProjectEnvVar) (map[string]i
 	sorted := append([]groupApp(nil), apps...)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].key < sorted[j].key })
 
-	owner := map[string]string{} // a canonical hostname → the app it names
+	owner := map[string]string{} // a hostname → the app it names
+	var hosts []string
 	for _, a := range sorted {
 		for _, h := range a.hostnames {
 			if h = strings.TrimSpace(h); h != "" {
-				owner[canonicalRefHost(h)] = a.key
+				owner[h] = a.key
+				hosts = append(hosts, h)
 			}
 		}
 	}
-	hosts := make([]string, 0, len(owner))
-	for h := range owner {
-		hosts = append(hosts, h)
-	}
-	// The longest hostname a reference opens with is the one it names:
-	// `${api_v2_port}` is api-v2's, not api's.
-	sort.Slice(hosts, func(i, j int) bool {
-		if len(hosts[i]) != len(hosts[j]) {
-			return len(hosts[i]) > len(hosts[j])
-		}
-		return hosts[i] < hosts[j]
-	})
 	project := make(map[string]string, len(projectEnvs))
 	for _, env := range projectEnvs {
 		project[env.Key] = env.Value
 	}
 
-	// references[a][b]: a references b, so b comes up first.
+	// references[a][b]: a's build reads b, so b comes up first.
 	references := make(map[string]map[string]bool, len(sorted))
 	for _, a := range sorted {
 		targets := map[string]bool{}
-		visited := map[string]bool{}
-		var walk func(value string)
-		walk = func(value string) {
-			for _, name := range parseDollarBraceRefs(value) {
-				if target := referencedApp(name, hosts, owner); target != "" {
-					if target != a.key {
-						targets[target] = true
-					}
-					continue
-				}
-				if next, ok := project[name]; ok && !visited[name] {
-					visited[name] = true
-					walk(next)
-				}
+		for _, h := range ReferencedHosts(a.sources, hosts, project) {
+			if target := owner[h]; target != a.key {
+				targets[target] = true
 			}
-		}
-		for _, source := range a.sources {
-			walk(source)
 		}
 		references[a.key] = targets
 	}
@@ -175,18 +152,6 @@ func canonicalRefHost(hostname string) string {
 	return strings.ReplaceAll(hostname, "-", "_")
 }
 
-// referencedApp names the app a `${name}` reference points into, "" when it
-// names no runtime — a managed service's variable, a project variable, the
-// runtime's own RUNTIME_ or BUILD_ alias. hosts is longest first.
-func referencedApp(name string, hosts []string, owner map[string]string) string {
-	for _, h := range hosts {
-		if strings.HasPrefix(name, h+"_") && len(name) > len(h)+1 {
-			return owner[h]
-		}
-	}
-	return ""
-}
-
 // referenceComponents groups the apps into the strongly connected components
 // of the reference graph (Tarjan), each component's members sorted, the
 // components in a deterministic order.
@@ -250,42 +215,4 @@ func quoteAnd(keys []string) string {
 		return quoted[0]
 	}
 	return strings.Join(quoted[:len(quoted)-1], ", ") + " and " + quoted[len(quoted)-1]
-}
-
-// zeropsYAMLEnvValues returns every string value a zerops.yaml sets in any
-// setup's build or run envVariables — where a pair's references to other
-// services live. A body that does not parse has none to offer.
-func zeropsYAMLEnvValues(body string) []string {
-	if strings.TrimSpace(body) == "" {
-		return nil
-	}
-	var doc struct {
-		Zerops []struct {
-			Build struct {
-				EnvVariables map[string]any `yaml:"envVariables"`
-			} `yaml:"build"`
-			Run struct {
-				EnvVariables map[string]any `yaml:"envVariables"`
-			} `yaml:"run"`
-		} `yaml:"zerops"`
-	}
-	if err := yaml.Unmarshal([]byte(body), &doc); err != nil {
-		return nil
-	}
-	var values []string
-	for _, setup := range doc.Zerops {
-		for _, vars := range []map[string]any{setup.Build.EnvVariables, setup.Run.EnvVariables} {
-			keys := make([]string, 0, len(vars))
-			for k := range vars {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
-				if s, ok := vars[k].(string); ok {
-					values = append(values, s)
-				}
-			}
-		}
-	}
-	return values
 }

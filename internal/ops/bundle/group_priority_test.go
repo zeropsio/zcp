@@ -174,3 +174,82 @@ func TestBuildGroupRecipe_PriorityFollowsReferences(t *testing.T) {
 		})
 	}
 }
+
+// The order a recipe is written in is designed from what each runtime's build
+// reads: a service read at build time outranks its readers, and services with
+// no build-time read between them share a priority — a runtime read only once
+// it runs waits for nothing.
+func TestBuildGroupRecipe_PriorityFollowsBuildReads(t *testing.T) {
+	t.Parallel()
+	pair := func(name, prodYAML string) GroupRuntime {
+		return GroupRuntime{
+			DevHostname: name + "dev", StageHostname: name + "stage", ServiceType: "nodejs@22",
+			RepoURL: "https://git.example.com/acme/" + name + "dev", SetupName: name + "dev",
+			ZeropsYAMLBody: "zerops:\n  - setup: " + name + "dev\n    run:\n      start: zsc noop\n  - setup: " + name + "prod\n" + prodYAML,
+		}
+	}
+	tests := []struct {
+		name        string
+		runtimes    []GroupRuntime
+		projectEnvs []ProjectEnvVar
+		want        map[string]int
+	}{
+		{
+			name: "a storefront's build reads the backend: the backend outranks it",
+			runtimes: []GroupRuntime{
+				pair("api", "    run:\n      start: node api.js\n"),
+				pair("store", "    build:\n      envVariables:\n        API: https://${apistage_zeropsSubdomain}\n    run:\n      start: node store.js\n"),
+			},
+			want: map[string]int{"apidev": 2, "apistage": 2, "storedev": 1, "storestage": 1},
+		},
+		{
+			name: "a storefront that reads the backend only once it runs: one priority",
+			runtimes: []GroupRuntime{
+				pair("api", "    run:\n      start: node api.js\n"),
+				pair("store", "    run:\n      envVariables:\n        API: https://${apistage_zeropsSubdomain}\n      start: node store.js\n"),
+			},
+			want: map[string]int{"apidev": 1, "apistage": 1, "storedev": 1, "storestage": 1},
+		},
+		{
+			name: "a build that lifts a runtime variable reading the backend",
+			runtimes: []GroupRuntime{
+				pair("api", "    run:\n      start: node api.js\n"),
+				pair("store", "    build:\n      envVariables:\n        API: ${RUNTIME_API_URL}\n    run:\n      envVariables:\n        API_URL: ${api_zeropsSubdomain}\n      start: node store.js\n"),
+			},
+			want: map[string]int{"apidev": 2, "apistage": 2, "storedev": 1, "storestage": 1},
+		},
+		{
+			name: "a build that reads the backend through a project variable",
+			runtimes: []GroupRuntime{
+				pair("api", "    run:\n      start: node api.js\n"),
+				pair("store", "    build:\n      envVariables:\n        API: ${API_URL}\n    run:\n      start: node store.js\n"),
+			},
+			projectEnvs: []ProjectEnvVar{{Key: "API_URL", Value: "https://${apistage_zeropsSubdomain}"}},
+			want:        map[string]int{"apidev": 2, "apistage": 2, "storedev": 1, "storestage": 1},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			layout, _, err := BuildGroupRecipe(GroupRecipeInputs{
+				Name: "acme", MateProjectName: "acme-mate-1", Runtimes: tt.runtimes, ProjectEnvs: tt.projectEnvs,
+				ManagedServices: []ManagedServiceEntry{{Hostname: "db", Type: "postgresql@16"}},
+			})
+			if err != nil {
+				t.Fatalf("BuildGroupRecipe: %v", err)
+			}
+			services := serviceEntries(t, tierDoc(t, groupFiles(t, layout), "0 — AI Agent"))
+			got := map[string]int{}
+			for host, entry := range services {
+				if host == "db" {
+					continue
+				}
+				p, _ := entry["priority"].(int)
+				got[host] = p
+			}
+			if !maps.Equal(got, tt.want) {
+				t.Errorf("priorities = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
