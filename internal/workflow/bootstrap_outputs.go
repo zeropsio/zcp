@@ -65,25 +65,7 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 			}
 		}
 
-		// Adopted services (isExisting=true) get empty BootstrapSession
-		// to signal adoption rather than fresh bootstrap.
-		bootstrapSession := state.SessionID
-		if target.Runtime.IsExisting {
-			bootstrapSession = ""
-		}
-
-		meta := &ServiceMeta{
-			Hostname:         metaHostname,
-			Mode:             mode,
-			StageHostname:    stageHostname,
-			ServesHTTP:       target.Runtime.ServesHTTP,
-			CloseDeployMode:  topology.CloseModeUnset,
-			GitPushState:     topology.GitPushUnconfigured,
-			BuildIntegration: topology.BuildIntegrationNone,
-			BootstrapSession: bootstrapSession,
-			BootstrappedAt:   now,
-		}
-		setPlanPublicAccess(meta, target.Runtime.PublicAccess, metaHostname, stageHostname)
+		meta := targetMeta(target, metaHostname, mode, stageHostname, state.SessionID, now)
 
 		// Gate R — recipe-bootstrap setup names come from the recipe shape's
 		// LITERAL zeropsSetup (carried on the target by DeriveRecipePlan): a
@@ -98,17 +80,7 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 			meta.ProvisionedFromGit = target.Runtime.BuildFromGit != ""
 		}
 
-		// Constructive write, atomic under .services.lock. For an existing-service
-		// expansion (IsExisting) the read+merge+write must be one critical section
-		// so a concurrent dimension write isn't clobbered; preserve the user's
-		// authored fields by merging the on-disk meta onto the constructed one.
-		if err := UpsertServiceMeta(e.stateDir, metaHostname, func(m *ServiceMeta, existed bool) error {
-			if target.Runtime.IsExisting && existed && m.IsComplete() {
-				mergeExistingMeta(meta, m)
-			}
-			*m = *meta
-			return nil
-		}); err != nil {
+		if err := writeTargetMeta(e.stateDir, target, meta); err != nil {
 			fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", metaHostname, err)
 		}
 	}
@@ -166,23 +138,9 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 			}
 		}
 
-		// Adopted services (isExisting=true) get empty BootstrapSession.
-		bootstrapSession := state.SessionID
-		if target.Runtime.IsExisting {
-			bootstrapSession = ""
-		}
-
-		meta := &ServiceMeta{
-			Hostname:         metaHostname,
-			Mode:             mode,
-			StageHostname:    stageHostname,
-			ServesHTTP:       target.Runtime.ServesHTTP,
-			CloseDeployMode:  topology.CloseModeUnset,
-			GitPushState:     topology.GitPushUnconfigured,
-			BuildIntegration: topology.BuildIntegrationNone,
-			BootstrapSession: bootstrapSession,
-		}
-		setPlanPublicAccess(meta, target.Runtime.PublicAccess, metaHostname, stageHostname)
+		// Partial: no BootstrappedAt, so the meta reads as provisioned, not
+		// bootstrapped, until writeBootstrapOutputs completes it.
+		meta := targetMeta(target, metaHostname, mode, stageHostname, state.SessionID, "")
 
 		// Gate R — partial-write counterpart of writeBootstrapOutputs (setup
 		// names from the target's literal zeropsSetup). So a crash between
@@ -193,16 +151,50 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 			meta.ProvisionedFromGit = target.Runtime.BuildFromGit != ""
 		}
 
-		if err := UpsertServiceMeta(e.stateDir, metaHostname, func(m *ServiceMeta, existed bool) error {
-			if target.Runtime.IsExisting && existed && m.IsComplete() {
-				mergeExistingMeta(meta, m)
-			}
-			*m = *meta
-			return nil
-		}); err != nil {
+		if err := writeTargetMeta(e.stateDir, target, meta); err != nil {
 			fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", metaHostname, err)
 		}
 	}
+}
+
+// targetMeta is the meta a plan target is recorded as: the three deploy
+// dimensions at their zero values, the plan's public-access intent on both
+// halves, and — for a service adopted rather than created (IsExisting) — no
+// bootstrap session, which is what makes it read as adopted (IsAdopted).
+// bootstrappedAt is empty for provision's partial write.
+func targetMeta(target BootstrapTarget, hostname string, mode topology.Mode, stageHostname, sessionID, bootstrappedAt string) *ServiceMeta {
+	bootstrapSession := sessionID
+	if target.Runtime.IsExisting {
+		bootstrapSession = ""
+	}
+	meta := &ServiceMeta{
+		Hostname:         hostname,
+		Mode:             mode,
+		StageHostname:    stageHostname,
+		ServesHTTP:       target.Runtime.ServesHTTP,
+		CloseDeployMode:  topology.CloseModeUnset,
+		GitPushState:     topology.GitPushUnconfigured,
+		BuildIntegration: topology.BuildIntegrationNone,
+		BootstrapSession: bootstrapSession,
+		BootstrappedAt:   bootstrappedAt,
+	}
+	setPlanPublicAccess(meta, target.Runtime.PublicAccess, hostname, stageHostname)
+	return meta
+}
+
+// writeTargetMeta is the constructive write of a target's meta, atomic under
+// .services.lock. For an existing service already recorded complete (a mode
+// expansion, or a second adoption) the read+merge+write is one critical
+// section so a concurrent dimension write isn't clobbered, and the user's
+// authored fields survive by merging the on-disk meta onto the constructed one.
+func writeTargetMeta(stateDir string, target BootstrapTarget, meta *ServiceMeta) error {
+	return UpsertServiceMeta(stateDir, meta.Hostname, func(m *ServiceMeta, existed bool) error {
+		if target.Runtime.IsExisting && existed && m.IsComplete() {
+			mergeExistingMeta(meta, m)
+		}
+		*m = *meta
+		return nil
+	})
 }
 
 // mergeExistingMeta preserves user-authored fields on meta during a

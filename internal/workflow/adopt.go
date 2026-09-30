@@ -300,3 +300,43 @@ func adoptPairingChoice(devHost, stageHost, devType, stageType string, deps []De
 	return fmt.Errorf("%w: %q (%s) and %q (%s) share runtime base %s — likely a dev/stage pair, which ZCP will not guess. Resubmit action=complete step=discover with ONE of these as an explicit plan:\n\n• dev/stage pair (cross-deploy promote — pick this if %q deploys to %q):\nplan=%s\n\n• two independent dev containers:\nplan=%s",
 		ErrAdoptPairingChoice, devHost, devType, stageHost, stageType, bare, devHost, stageHost, string(pairJSON), string(indepJSON))
 }
+
+// AdoptPair records an existing dev/stage pair as adopted — the meta the
+// adopt route's close writes for a standard target with isExisting
+// (writeBootstrapOutputs, through the same targetMeta/writeTargetMeta), so a
+// pair a Mate's stand-up adopted from its recipe passes the adoption gate and
+// reads in every envelope exactly as one adopted by hand. Two things differ
+// from the route, both because the caller read them from the pair's recipe:
+// the setups the halves build with (the recipe route's literal-setup rule,
+// Gate R — a group names them after the pair, so no convention finds them),
+// and no bootstrap session is opened or closed around the write.
+//
+// Idempotent: a pair already recorded complete keeps everything it earned
+// since (mergeExistingMeta) — its wiring, its first deploy, a setup somebody
+// chose. date is the BootstrappedAt a fresh record gets.
+//
+// Refuses a target that is no standard pair, and a stage half already
+// recorded as a service of its own: folding it into the pair would leave two
+// metas for one runtime, which the pair-keyed invariant forbids (E8).
+func AdoptPair(stateDir string, target BootstrapTarget, date string) error {
+	rt := target.Runtime
+	stage := rt.StageHostname()
+	if rt.DevHostname == "" || stage == "" {
+		return fmt.Errorf("adopt pair: %q is not a dev/stage pair (bootstrapMode %q, stage %q)", rt.DevHostname, rt.EffectiveMode(), rt.ExplicitStage)
+	}
+	own, err := ReadServiceMeta(stateDir, stage)
+	if err != nil {
+		return fmt.Errorf("adopt pair %s: %w", rt.DevHostname, err)
+	}
+	if own != nil {
+		return fmt.Errorf("adopt pair %s: its stage half %s is already recorded as a service of its own", rt.DevHostname, stage)
+	}
+	target.Runtime.IsExisting = true
+	meta := targetMeta(target, rt.DevHostname, topology.PlanModeStandard, stage, "", date)
+	meta.PrimarySetupName = rt.PrimarySetupName
+	meta.StageSetupName = rt.StageSetupName
+	if err := writeTargetMeta(stateDir, target, meta); err != nil {
+		return fmt.Errorf("adopt pair %s: %w", rt.DevHostname, err)
+	}
+	return nil
+}
