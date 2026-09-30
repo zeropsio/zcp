@@ -292,8 +292,9 @@ type giteaWiringOutcome struct {
 	usersOwn bool
 }
 
-// reconcileOneGiteaPair does the work for one pair. Never returns an error:
-// every outcome is reportable.
+// reconcileOneGiteaPair does the work for one pair zcp bootstrapped, whose
+// repository is named after its dev half. Never returns an error: every
+// outcome is reportable.
 func reconcileOneGiteaPair(
 	ctx context.Context,
 	client platform.Client,
@@ -303,6 +304,26 @@ func reconcileOneGiteaPair(
 	stateDir string,
 	wiring ops.GiteaWiring,
 	m *workflow.ServiceMeta,
+) giteaWiringOutcome {
+	return wireGiteaPair(ctx, client, httpClient, sshDeployer, rt, stateDir, wiring, m, m.Hostname)
+}
+
+// wireGiteaPair gives one pair its service repository and its own branch:
+// the broker's repository (asked for by repoName), git-push to it, the Mate's
+// branch cut from the repository's base, the Gitea record, the workflow file.
+// repoName is the pair's dev hostname for a pair zcp bootstrapped, and the
+// repository the group's recipe names for a pair a stand-up adopted from it
+// (standup.go) — the broker joins that one rather than making another.
+func wireGiteaPair(
+	ctx context.Context,
+	client platform.Client,
+	httpClient ops.HTTPDoer,
+	sshDeployer ops.SSHDeployer,
+	rt runtime.Info,
+	stateDir string,
+	wiring ops.GiteaWiring,
+	m *workflow.ServiceMeta,
+	repoName string,
 ) giteaWiringOutcome {
 	if !wiring.Ready() {
 		return giteaWiringOutcome{line: "waiting for Gitea (" + strings.Join(wiring.MissingKeys(), ", ") + " not on this service yet)"}
@@ -316,10 +337,10 @@ func reconcileOneGiteaPair(
 	}
 	branch := ops.GiteaMateBranch(identity.Name)
 
-	repo, repoErr := ops.RequestMateRepository(ctx, httpClient, wiring.BrokerURL, wiring.Token, m.Hostname)
+	repo, repoErr := ops.RequestMateRepository(ctx, httpClient, wiring.BrokerURL, wiring.Token, repoName)
 	switch {
 	case errors.Is(repoErr, ops.ErrRepositoryTaken):
-		return giteaWiringOutcome{line: fmt.Sprintf("the broker refuses a repository named %q — it exists in the group's org and this Mate is not a collaborator on it. Rename the service, or have someone add this Mate's bot to that repository.", m.Hostname)}
+		return giteaWiringOutcome{line: fmt.Sprintf("the broker refuses a repository named %q — it exists in the group's org and this Mate is not a collaborator on it. Rename the service, or have someone add this Mate's bot to that repository.", repoName)}
 	case errors.Is(repoErr, ops.ErrNotRegistered):
 		return giteaWiringOutcome{line: "the broker does not know this project yet (not a registered Mate) — it will once the group is registered; nothing else is blocked."}
 	case repoErr != nil:
