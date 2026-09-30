@@ -90,6 +90,9 @@ type fakeGitea struct {
 	// fakeProposalTitle, the title zcp's recipe proposals carry.
 	titles   map[int]string
 	nextPull int
+	// orgs is what GET /user/orgs answers: the orgs the token's user is a
+	// member of, by name.
+	orgs []string
 }
 
 // fakeProposalTitle is the title every recipe proposal is opened under.
@@ -188,6 +191,29 @@ func (f *fakeGitea) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	// GET /user/orgs
+	case r.Method == http.MethodGet && path == "user/orgs":
+		orgs := []map[string]any{}
+		for _, name := range f.orgs {
+			orgs = append(orgs, map[string]any{"id": len(orgs) + 1, "name": name, "username": name})
+		}
+		write(http.StatusOK, orgs)
+
+	// GET /repos/{o}/{r}/contents/{path}?ref={ref}
+	case r.Method == http.MethodGet && strings.Contains(path, "/contents/"):
+		repo, file, _ := strings.Cut(strings.TrimPrefix(path, "repos/"), "/contents/")
+		ref := r.URL.Query().Get("ref")
+		files, ok := f.resolve(repo, ref)
+		body, found := files[file]
+		if !ok || !found {
+			write(http.StatusNotFound, map[string]string{"message": "The target couldn't be found."})
+			return
+		}
+		write(http.StatusOK, map[string]any{
+			"type": "file", "path": file, "sha": gitBlobSHA(body), "encoding": "base64",
+			"content": base64.StdEncoding.EncodeToString([]byte(body)),
+		})
+
 	// POST /repos/{o}/{r}/forks
 	case r.Method == http.MethodPost && strings.HasSuffix(path, "/forks"):
 		upstream := strings.TrimSuffix(strings.TrimPrefix(path, "repos/"), "/forks")
