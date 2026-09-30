@@ -28,8 +28,9 @@ import (
 // its first deploy (READY_TO_DEPLOY) — and the broker is writing this
 // container's Git variables. What is left is zcp's: read the tier, adopt each
 // pair, put the repository's main into its dev half on the Mate's branch,
-// deploy every dev half at once and each stage once its dev half and the
-// stages above it by the tier's priority stand.
+// deploy every dev half at once and answer once they stand, then — on the
+// model's second call — each stage once its dev half and the stages above it
+// by the tier's priority stand.
 //
 // Done by the model, that took sixteen minutes on the Beviro trial
 // (2026-09-29): an improvised adopt, then one deploy after another, and a
@@ -141,7 +142,7 @@ func (d standupDeps) run(ctx context.Context, progress *standupProgress) *mcp.Ca
 	}
 
 	pairs, live := d.preparePairs(ctx, wiring, src, progress)
-	d.deployAll(ctx, pairs, progress)
+	d.deployAll(ctx, pairs, live, progress)
 	d.observeDevServers(pairs)
 
 	resp := buildStandupResponse(src, pairs, live)
@@ -274,7 +275,10 @@ type standupPair struct {
 	devDeploy                *standupDeploy
 	stageDeploy              *standupDeploy
 	devResult                *ops.DeployResult
-	devServer                *standupDevServer
+	// devRanBefore is a dev half that ran code when the call began: its
+	// stage deploys on this call, else on the next.
+	devRanBefore bool
+	devServer    *standupDevServer
 }
 
 // stoodUp is a pair whose two halves both run code.

@@ -17,6 +17,9 @@ const (
 	standupReady   = "ready"
 	standupPartial = "partial"
 	standupFailed  = "failed"
+	// standupDevelopment is every dev half standing with the stages queued
+	// for the next call.
+	standupDevelopment = "development"
 
 	// Roles.
 	standupRoleDev           = "dev"
@@ -35,6 +38,9 @@ const (
 	standupDeployFailed    = "failed"
 	standupInFlight        = "still building"
 	standupNotDeployed     = "not deployed"
+	// standupQueued is a stage whose dev half this call deployed: it builds on
+	// the next call.
+	standupQueued = "queued"
 
 	// Dev server states.
 	standupDevServerNotStarted = "not started"
@@ -82,46 +88,65 @@ func buildStandupResponse(src standupSource, pairs []*standupPair, live map[stri
 		GroupRepo: src.groupRepo,
 		Tier:      workflow.MateTierImportPath + "@" + giteaProtectedBase,
 	}
-	stood := 0
+	stood, devs, queued := 0, 0, 0
 	names := make([]string, 0, len(pairs))
 	for _, sp := range pairs {
 		resp.Services = append(resp.Services, standupDevService(sp), standupStageService(sp))
 		names = append(names, sp.pair.Dev.Hostname+"→"+sp.pair.Stage.Hostname)
-		if sp.stoodUp() {
+		switch {
+		case sp.stoodUp():
 			stood++
+		case sp.failed == "" && sp.stageDeploy != nil && sp.stageDeploy.Status == standupQueued:
+			queued++
+		}
+		if sp.failed == "" && sp.devDeploy.running() {
+			devs++
 		}
 	}
 	for _, s := range src.tier.Skipped {
 		resp.Services = append(resp.Services, standupSkippedService(s, live[s.Hostname]))
 	}
 
-	switch stood {
-	case len(pairs):
+	switch {
+	case stood == len(pairs):
 		resp.StandUp = standupReady
 		resp.Next = "Every pair stands: each dev half runs main's code on this Mate's branch, and each stage runs main as this Mate's preview. " +
-			"Start each dev half's dev server as its next step says, verify, then tell the person development is up, with the stages' URLs. " +
+			"Start each dev half's dev server as its next step says if it is not running yet, verify, then tell the person the stages are up, with their URLs. " +
 			"Nothing was committed, pushed or proposed."
-	case 0:
+	case devs == len(pairs) && stood+queued == len(pairs):
+		resp.StandUp = standupDevelopment
+		resp.Next = standupDevelopmentNext
+	case devs == 0 && stood == 0:
 		resp.StandUp = standupFailed
-		resp.Next = standupStoppedNext(stood, len(pairs))
+		resp.Next = standupStoppedNext(stood, len(pairs), queued)
 	default:
 		resp.StandUp = standupPartial
-		resp.Next = standupStoppedNext(stood, len(pairs))
+		resp.Next = standupStoppedNext(stood, len(pairs), queued)
 	}
-	resp.Message = fmt.Sprintf("%d of %d pairs stand, from %s's %s (%s).",
-		stood, len(pairs), src.groupRepo, workflow.MateTierImportPath, strings.Join(names, ", "))
+	resp.Message = fmt.Sprintf("%d of %d pairs stand and %d of %d dev halves run, from %s's %s (%s).",
+		stood, len(pairs), devs, len(pairs), src.groupRepo, workflow.MateTierImportPath, strings.Join(names, ", "))
 	return resp
 }
+
+// standupDevelopmentNext is the model's way on once every dev half stands and
+// the stages are queued: development first, then the stages on a second call.
+const standupDevelopmentNext = "Every dev half runs main's code on this Mate's branch; the stages are queued. " +
+	"Start each dev half's dev server with zerops_dev_server as its next step says, verify it, and tell the person development is up, with each dev half's address. " +
+	"Then call zerops_standup again in this turn: it builds the stages — this Mate's preview of main — each after its dev half and the stages above it by priority, and waits for them. " +
+	"Until that call the stages wait for their first deploy (READY_TO_DEPLOY), which breaks nothing. Nothing was committed, pushed or proposed."
 
 // standupStoppedNext is the model's way on from a stand-up that stopped short:
 // zcp's own tools, from each service's next step, and the stand-up again once
 // a cause is fixed.
-func standupStoppedNext(stood, pairs int) string {
+func standupStoppedNext(stood, pairs, queued int) string {
 	next := fmt.Sprintf("The stand-up stopped short: %d of %d pairs stand. Carry on in this turn with zcp's own tools — each service's next step names the call "+
 		"(adopt by hand: zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\"; deploy: zerops_deploy_batch; dev servers: zerops_dev_server). "+
 		"Once a cause is fixed, zerops_standup continues from where it stopped and skips what is done.", stood, pairs)
-	if stood > 0 {
-		next += " For the pairs that stand, start each dev half's dev server as its next step says."
+	if stood > 0 || queued > 0 {
+		next += " For the dev halves that run, start each dev server as its next step says."
+	}
+	if queued > 0 {
+		next += " The stages marked queued build on the next zerops_standup call."
 	}
 	return next
 }
@@ -179,6 +204,8 @@ func standupStageService(sp *standupPair) standupService {
 // standupDeployNext is the next step for a half that does not run code.
 func standupDeployNext(d *standupDeploy, hostname, byHand string) string {
 	switch d.Status {
+	case standupQueued:
+		return fmt.Sprintf("It is queued: %s. Until then it waits for its first deploy (READY_TO_DEPLOY). Or deploy it by hand: %s.", d.Reason, byHand)
 	case standupInFlight:
 		return fmt.Sprintf("Wait for its build: zerops_process action=\"wait\" service=%q, %s", hostname, standupAgain)
 	case standupDeployFailed:

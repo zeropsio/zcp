@@ -18,7 +18,13 @@ import (
 )
 
 // The stand-up deploys every half as soon as what it needs stands
-// (standupAfter), at most standupBatchMax at once.
+// (standupAfter), at most standupBatchMax at once, over two calls. The first
+// deploys the dev halves and answers once they stand, so the person hears
+// development is up while the stages still have to build; a stage whose dev
+// half this call deployed is queued, waiting for its first deploy
+// (READY_TO_DEPLOY), and the model's second call — the next step the answer
+// names — deploys the stages through the same order. A stage never called for
+// stays as the import left it, which breaks nothing.
 //
 // A dev half's build installs dependencies and reads no API — every dev
 // setup of the recipes zcp knows is an install (`npm install`, `composer
@@ -89,13 +95,17 @@ func standupAfter(pairs []workflow.MateTierPair) map[string][]string {
 
 // deployAll deploys every half of the pairs that got to their deploy, each as
 // soon as the halves it waits for (standupAfter) are done, at most
-// standupBatchMax at once. A half whose wait ended with one of them not
-// running code is not deployed and says which.
-func (d standupDeps) deployAll(ctx context.Context, pairs []*standupPair, progress *standupProgress) {
+// standupBatchMax at once. A stage whose dev half ran no code when the call
+// began is queued for the next call instead: the answer comes once the dev
+// halves stand. A half whose wait ended with one of them not running code is
+// not deployed and says which. live is the project as the call found it.
+func (d standupDeps) deployAll(ctx context.Context, pairs []*standupPair, live map[string]*platform.ServiceStack, progress *standupProgress) {
 	tier := make([]workflow.MateTierPair, 0, len(pairs))
 	halves := make(map[string]standupHalf, 2*len(pairs))
 	for _, sp := range pairs {
 		p := sp.pair
+		dev := live[p.Dev.Hostname]
+		sp.devRanBefore = dev != nil && dev.HasDeployedCode()
 		tier = append(tier, p)
 		halves[p.Dev.Hostname] = standupHalf{pair: sp, dev: true,
 			target: ops.DeployBatchTarget{SourceService: p.Dev.Hostname, TargetService: p.Dev.Hostname, Setup: p.Dev.Setup}}
@@ -120,8 +130,8 @@ func (d standupDeps) deployAll(ctx context.Context, pairs []*standupPair, progre
 			if h.pair.failed != "" {
 				return
 			}
-			if held := h.held(halves, after[host]); held != "" {
-				h.record(&standupDeploy{Status: standupNotDeployed, Reason: held})
+			if held := h.held(halves, after[host]); held != nil {
+				h.record(held)
 				return
 			}
 			select {
@@ -152,23 +162,47 @@ func (h standupHalf) running() bool {
 	return h.pair.stageDeploy.running()
 }
 
-// held says why a half whose wait is over does not deploy: its dev half, when
-// it is a stage built from one that runs no code, else the stages above it
-// that did not stand up. Empty when everything it waited for runs.
-func (h standupHalf) held(halves map[string]standupHalf, waited []string) string {
-	if !h.dev && !h.pair.devDeploy.running() {
-		return fmt.Sprintf("%s did not deploy, and the stage is built from it", h.pair.pair.Dev.Hostname)
+// queued reports a stage left for the next call.
+func (h standupHalf) queued() bool {
+	return !h.dev && h.pair.stageDeploy != nil && h.pair.stageDeploy.Status == standupQueued
+}
+
+// held is what becomes of a half whose wait is over and that does not deploy
+// on this call, nil when it does. A stage built from a dev half that runs no
+// code is not deployed; one whose dev half this call deployed is queued for
+// the next; one waiting for stages above it that did not stand up is not
+// deployed, and one waiting only for queued stages is queued with them.
+func (h standupHalf) held(halves map[string]standupHalf, waited []string) *standupDeploy {
+	if h.dev {
+		return nil
 	}
-	var down []string
+	dev := h.pair.pair.Dev.Hostname
+	if !h.pair.devDeploy.running() {
+		return &standupDeploy{Status: standupNotDeployed, Reason: fmt.Sprintf("%s did not deploy, and the stage is built from it", dev)}
+	}
+	if !h.pair.devRanBefore {
+		return &standupDeploy{Status: standupQueued,
+			Reason: fmt.Sprintf("%s was deployed on this call, and the stage builds on the next zerops_standup call", dev)}
+	}
+	var down, queued []string
 	for _, host := range waited {
-		if host != h.pair.pair.Dev.Hostname && !halves[host].running() {
+		switch above := halves[host]; {
+		case host == dev || above.running():
+		case above.queued():
+			queued = append(queued, host)
+		default:
 			down = append(down, host)
 		}
 	}
-	if len(down) == 0 {
-		return ""
+	switch {
+	case len(down) > 0:
+		return &standupDeploy{Status: standupNotDeployed,
+			Reason: fmt.Sprintf("waits for %s, which did not stand up: a stage is built after every stage above it by priority, whose API its build may read", strings.Join(down, ", "))}
+	case len(queued) > 0:
+		return &standupDeploy{Status: standupQueued,
+			Reason: fmt.Sprintf("waits for %s, which builds on the next zerops_standup call: a stage is built after every stage above it by priority", strings.Join(queued, ", "))}
 	}
-	return fmt.Sprintf("waits for %s, which did not stand up: a stage is built after every stage above it by priority, whose API its build may read", strings.Join(down, ", "))
+	return nil
 }
 
 func (h standupHalf) record(deploy *standupDeploy) {
