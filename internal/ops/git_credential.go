@@ -232,10 +232,13 @@ func gitCredentialScopeHost(remoteURL string) (string, bool) {
 // Mate's shell could authenticate to its Gitea keeps the old text until
 // git-push-setup syncs origin again; the push-credential step runs this before
 // each delivery, so such a repository heals on its next one. No repository,
-// nothing written: the command never creates one.
+// nothing written: the command never creates one. It writes the helper and
+// nothing else — the one-way ~/.netrc cleanup stays with origin sync and
+// reconstruction, since nothing ZCP runs writes that file any more and one
+// there now is the user's own.
 func BuildGitCredentialHelperAssertCommand(workingDir, remoteURL, giteaURL string) string {
 	return fmt.Sprintf("cd %s && if test -d .git; then %s; fi",
-		shellQuote(workingDir), gitCredentialHelperConfigFragment(remoteURL, giteaURL))
+		shellQuote(workingDir), gitCredentialHelperWriteFragment(remoteURL, giteaURL))
 }
 
 // BuildGitTagListCommand lists the remote's version tags (authenticated —

@@ -348,6 +348,24 @@ func TestBuildGitCredentialHelperAssertCommand(t *testing.T) {
 		}
 	})
 
+	t.Run("the user's own ~/.netrc survives", func(t *testing.T) {
+		t.Parallel()
+		repo, home := t.TempDir(), t.TempDir()
+		netrc := filepath.Join(home, ".netrc")
+		if err := os.WriteFile(netrc, []byte("machine proxy.golang.example login me password mine\n"), 0o600); err != nil {
+			t.Fatalf("seed .netrc: %v", err)
+		}
+		if out, err := gitShell(t, repo, home, nil, "", "git init -q"); err != nil {
+			t.Fatalf("seed: %v\n%s", err, out)
+		}
+		if out, err := gitShell(t, repo, home, nil, "", BuildGitCredentialHelperAssertCommand(repo, helperGiteaRepo, helperGiteaURL)); err != nil {
+			t.Fatalf("assert: %v\n%s", err, out)
+		}
+		if _, err := os.Stat(netrc); err != nil {
+			t.Errorf("the assert deleted the user's ~/.netrc: %v", err)
+		}
+	})
+
 	t.Run("a service with no repository is left alone", func(t *testing.T) {
 		t.Parallel()
 		dir, home := t.TempDir(), t.TempDir()
