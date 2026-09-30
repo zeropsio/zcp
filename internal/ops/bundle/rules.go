@@ -107,14 +107,20 @@ func managedEntryWithRules(m ManagedServiceEntry, launchPromote, keepNonHA bool)
 			size = 1
 		}
 		entry["objectStorageSize"] = size
-		if m.ObjectStoragePolicy != "" {
+		if namedObjectStoragePolicies[m.ObjectStoragePolicy] {
 			entry["objectStoragePolicy"] = m.ObjectStoragePolicy
-		}
-		if m.ObjectStorageRawPolicy != "" {
-			entry["objectStorageRawPolicy"] = m.ObjectStorageRawPolicy
 		}
 	}
 	return entry
+}
+
+// namedObjectStoragePolicies are the access policies the platform names. The
+// import takes a custom one too, as a document, and a document can hold a
+// secret condition — a Referer, an address the bucket trusts — so a composer
+// writes none but these.
+var namedObjectStoragePolicies = map[string]bool{
+	"private": true, "public-read": true, "public-objects-read": true,
+	"public-write": true, "public-read-write": true,
 }
 
 // managedProfile resolves the scaling-tier `profile` value for a managed

@@ -58,7 +58,7 @@ func TestBuildGroupRecipe_TierIsWrittenForPeople(t *testing.T) {
 	// service does not carry is skipped, never reordered around.
 	readingOrder := []string{
 		"hostname", "type", "priority", "mode", "profile", "zeropsSetup", "buildFromGit",
-		"enableSubdomainAccess", "objectStorageSize", "objectStoragePolicy", "objectStorageRawPolicy",
+		"enableSubdomainAccess", "objectStorageSize", "objectStoragePolicy",
 		"minContainers", "maxContainers", "verticalAutoscaling", "envSecrets",
 	}
 	for _, tier := range layout.Tiers {

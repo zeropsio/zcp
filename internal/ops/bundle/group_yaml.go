@@ -50,7 +50,7 @@ type tierDocument struct {
 // stores, how it scales, and its secrets last.
 var serviceKeyOrder = []string{
 	"hostname", "type", "priority", "mode", "profile", "zeropsSetup", "buildFromGit",
-	"enableSubdomainAccess", "objectStorageSize", "objectStoragePolicy", "objectStorageRawPolicy",
+	"enableSubdomainAccess", "objectStorageSize", "objectStoragePolicy",
 	"minContainers", "maxContainers", "verticalAutoscaling", "envSecrets",
 }
 

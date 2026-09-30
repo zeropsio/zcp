@@ -87,17 +87,13 @@ func TestFetchObjectStorageShape(t *testing.T) {
 			want:       ObjectStorageShape{SizeGB: 5, Policy: "public-read"},
 		},
 		{
-			name:       "a custom policy brings its document",
-			envs:       []platform.ServiceEnvVar{{Key: "quotaGBytes", Content: "2"}},
-			exportYAML: "services:\n  - hostname: storage\n    objectStoragePolicy: custom\n    objectStorageRawPolicy: '{\"Statement\":[]}'\n",
-			want:       ObjectStorageShape{SizeGB: 2, Policy: "custom", RawPolicy: `{"Statement":[]}`},
-		},
-		{
-			name: "a custom policy names the bucket each environment gets, not this one",
-			envs: []platform.ServiceEnvVar{{Key: "quotaGBytes", Content: "2"}, {Key: "bucketName", Content: "abc123-storage"}},
+			// A custom policy's document can hold a secret, and the recipe
+			// never carries one: its name is read, its document never.
+			name: "a custom policy is read by its name alone",
+			envs: []platform.ServiceEnvVar{{Key: "quotaGBytes", Content: "2"}},
 			exportYAML: "services:\n  - hostname: storage\n    objectStoragePolicy: custom\n" +
-				"    objectStorageRawPolicy: '{\"Resource\":[\"arn:aws:s3:::abc123-storage/*\"]}'\n",
-			want: ObjectStorageShape{SizeGB: 2, Policy: "custom", RawPolicy: `{"Resource":["arn:aws:s3:::{{ .BucketName }}/*"]}`},
+				"    objectStorageRawPolicy: '{\"Condition\":{\"StringLike\":{\"aws:Referer\":[\"https://shop.example.com/?k=live-referer-key\"]}}}'\n",
+			want: ObjectStorageShape{SizeGB: 2, Policy: "custom"},
 		},
 		{
 			name:       "no quota variable — the export's size",

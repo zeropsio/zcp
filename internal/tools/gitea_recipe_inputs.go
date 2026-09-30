@@ -267,7 +267,7 @@ func groupRecipeManaged(ctx context.Context, client platform.Client, svc ops.Ser
 		return bundle.ManagedServiceEntry{}, nil, fmt.Errorf("could not read %s's size: %w", svc.Hostname, err)
 	}
 	entry.QuotaGBytes = storage.SizeGB
-	entry.ObjectStoragePolicy, entry.ObjectStorageRawPolicy = storage.Policy, storage.RawPolicy
+	entry.ObjectStoragePolicy = storage.Policy
 	var warnings []string
 	if storage.PolicyUnread != "" {
 		warnings = append(warnings, fmt.Sprintf(

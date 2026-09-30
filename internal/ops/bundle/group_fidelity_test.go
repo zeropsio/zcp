@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -47,13 +48,17 @@ func TestBuildGroupRecipe_CorePackage(t *testing.T) {
 
 // An object storage is created the size and with the access policy it runs
 // with: the medusa group's storage lost `public-read` and its size, and the
-// storefront's product images stopped loading (2026-09-24).
+// storefront's product images stopped loading (2026-09-24). Only a policy the
+// platform names is carried: a custom one is a document, and a document can
+// hold a secret — a Referer or an address the bucket trusts — so the tiers
+// leave the platform's default and say so.
 func TestBuildGroupRecipe_ObjectStorageAsItRuns(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name  string
-		entry ManagedServiceEntry
-		want  map[string]string
+		name        string
+		entry       ManagedServiceEntry
+		want        map[string]string
+		wantWarning bool
 	}{
 		{
 			name:  "a named policy and its size",
@@ -61,10 +66,16 @@ func TestBuildGroupRecipe_ObjectStorageAsItRuns(t *testing.T) {
 			want:  map[string]string{"objectStorageSize": "5", "objectStoragePolicy": "public-read"},
 		},
 		{
-			name: "a custom policy carries its document",
-			entry: ManagedServiceEntry{Hostname: "storage", Type: "object-storage", QuotaGBytes: 2, ObjectStoragePolicy: "custom",
-				ObjectStorageRawPolicy: `{"Version":"2012-10-17","Statement":[]}`},
-			want: map[string]string{"objectStorageSize": "2", "objectStoragePolicy": "custom", "objectStorageRawPolicy": `{"Version":"2012-10-17","Statement":[]}`},
+			name:        "a custom policy stays out, said",
+			entry:       ManagedServiceEntry{Hostname: "storage", Type: "object-storage", QuotaGBytes: 2, ObjectStoragePolicy: "custom"},
+			want:        map[string]string{"objectStorageSize": "2"},
+			wantWarning: true,
+		},
+		{
+			name:        "a policy the platform does not name stays out, said",
+			entry:       ManagedServiceEntry{Hostname: "storage", Type: "object-storage", QuotaGBytes: 2, ObjectStoragePolicy: "world-writable"},
+			want:        map[string]string{"objectStorageSize": "2"},
+			wantWarning: true,
 		},
 		{
 			name:  "nothing read — the import's minimum and the platform's default policy",
@@ -77,9 +88,15 @@ func TestBuildGroupRecipe_ObjectStorageAsItRuns(t *testing.T) {
 			t.Parallel()
 			in := groupInputsFixture()
 			in.ManagedServices = append(in.ManagedServices, tt.entry)
-			layout, _, err := BuildGroupRecipe(in)
+			layout, warnings, err := BuildGroupRecipe(in)
 			if err != nil {
 				t.Fatalf("BuildGroupRecipe: %v", err)
+			}
+			said := slices.ContainsFunc(warnings, func(w string) bool {
+				return strings.Contains(w, `"storage"`) && strings.Contains(w, "policy")
+			})
+			if said != tt.wantWarning {
+				t.Errorf("warnings %v say the storage's policy is left out: %v, want %v", warnings, said, tt.wantWarning)
 			}
 			for _, tier := range layout.Tiers {
 				storage := serviceNode(t, tier.ImportYAML, "storage")

@@ -84,10 +84,10 @@ func FetchServiceShape(ctx context.Context, client platform.Client, serviceID st
 type ObjectStorageShape struct {
 	// SizeGB is its quota; 0 when neither source names one.
 	SizeGB int
-	// Policy is one of the import's policy names, RawPolicy a custom
-	// policy's document.
-	Policy    string
-	RawPolicy string
+	// Policy is one of the import's policy names. A custom policy's document
+	// is never read: it can hold a secret condition, and nothing that reads
+	// this shape may publish one.
+	Policy string
 	// PolicyUnread says why no policy was read, "" when one was.
 	PolicyUnread string
 }
@@ -102,26 +102,21 @@ var objectStoragePolicies = map[string]bool{
 // The size is its quotaGBytes variable, else the size the platform's export
 // of the service names; the policy is only in that export. The export is the
 // platform's own and not scrubbed, so nothing but these fields is read from
-// it. A custom policy's document names this bucket; the import's own
-// `{{ .BucketName }}` takes its place, so each environment's policy names its
-// own bucket. An unreadable variable is an error — a tier that lands with the
-// wrong size stays wrong — while a policy the export does not give is said in
-// PolicyUnread, never guessed.
+// it — a custom policy by its name alone. An unreadable variable is an error
+// — a tier that lands with the wrong size stays wrong — while a policy the
+// export does not give is said in PolicyUnread, never guessed.
 func FetchObjectStorageShape(ctx context.Context, client platform.Client, serviceID, hostname string) (ObjectStorageShape, error) {
 	envs, err := client.GetServiceEnv(ctx, serviceID)
 	if err != nil {
 		return ObjectStorageShape{}, fmt.Errorf("read %s's variables: %w", hostname, err)
 	}
 	var shape ObjectStorageShape
-	var bucket string
 	for _, env := range envs {
-		switch env.Key {
-		case "quotaGBytes":
-			if size, convErr := strconv.Atoi(strings.TrimSpace(env.Content)); convErr == nil && size > 0 {
-				shape.SizeGB = size
-			}
-		case "bucketName":
-			bucket = strings.TrimSpace(env.Content)
+		if env.Key != "quotaGBytes" {
+			continue
+		}
+		if size, convErr := strconv.Atoi(strings.TrimSpace(env.Content)); convErr == nil && size > 0 {
+			shape.SizeGB = size
 		}
 	}
 
@@ -132,10 +127,9 @@ func FetchObjectStorageShape(ctx context.Context, client platform.Client, servic
 	}
 	var doc struct {
 		Services []struct {
-			Hostname               string  `yaml:"hostname"`
-			ObjectStorageSize      float64 `yaml:"objectStorageSize"`
-			ObjectStoragePolicy    string  `yaml:"objectStoragePolicy"`
-			ObjectStorageRawPolicy string  `yaml:"objectStorageRawPolicy"`
+			Hostname            string  `yaml:"hostname"`
+			ObjectStorageSize   float64 `yaml:"objectStorageSize"`
+			ObjectStoragePolicy string  `yaml:"objectStoragePolicy"`
 		} `yaml:"services"`
 	}
 	if err := yaml.Unmarshal([]byte(exported), &doc); err != nil {
@@ -157,12 +151,6 @@ func FetchObjectStorageShape(ctx context.Context, client platform.Client, servic
 			shape.PolicyUnread = fmt.Sprintf("the platform's export of %s names a policy the import does not take (%q)", hostname, policy)
 		default:
 			shape.Policy = policy
-			if policy == "custom" {
-				shape.RawPolicy = svc.ObjectStorageRawPolicy
-				if bucket != "" {
-					shape.RawPolicy = strings.ReplaceAll(shape.RawPolicy, bucket, "{{ .BucketName }}")
-				}
-			}
 		}
 		return shape, nil
 	}

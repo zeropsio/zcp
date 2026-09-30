@@ -238,6 +238,7 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 	}
 
 	warnings := append([]string(nil), utilityWarnings...)
+	warnings = append(warnings, groupStoragePolicyWarnings(managed)...)
 	warnings = append(warnings, groupSetupWarnings(runtimes, stageSetups)...)
 	priorities, priorityWarnings := groupPriorities(groupApps(runtimes, utilities), inputs.ProjectEnvs)
 	warnings = append(warnings, priorityWarnings...)
@@ -585,6 +586,23 @@ func publicRepoURL(raw string) (repo string, private bool) {
 	}
 	u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment = "", false, "", ""
 	return topology.CanonicalRepoURL(u.String()), false
+}
+
+// groupStoragePolicyWarnings says which object storage keeps a policy the
+// tiers do not carry: a custom one — a document, which can hold a secret
+// condition such as a Referer the bucket trusts — or one the platform does
+// not name. managedEntryWithRules writes neither, so the tiers leave the
+// platform's default, private.
+func groupStoragePolicyWarnings(managed []ManagedServiceEntry) []string {
+	var warnings []string
+	for _, m := range managed {
+		if m.ObjectStoragePolicy != "" && !namedObjectStoragePolicies[m.ObjectStoragePolicy] {
+			warnings = append(warnings, fmt.Sprintf(
+				"object storage %q: its %s access policy is not in the recipe, since a policy document can hold a secret condition — the tiers leave the platform's default, private; set its policy on them by hand",
+				m.Hostname, m.ObjectStoragePolicy))
+		}
+	}
+	return warnings
 }
 
 // managedVertical is the vertical scale a managed service is written with:
