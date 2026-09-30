@@ -279,6 +279,7 @@ func TestPersistedCredentialHelper_TokenByShellAndHost(t *testing.T) {
 	const (
 		ipv6Gitea       = "https://[fd00::1]"
 		underscoreGitea = "https://my_gitea.example.com"
+		portGitea       = "https://gitea.example.invalid:3000"
 	)
 	tests := []struct {
 		name     string
@@ -298,6 +299,10 @@ func TestPersistedCredentialHelper_TokenByShellAndHost(t *testing.T) {
 		{"a Gitea on an IPv6 literal never answers github.com", ipv6Gitea + "/acme/appdev.git", ipv6Gitea, mateShell, helperGitHubRepo, ""},
 		{"a Gitea whose name has an underscore never answers github.com", underscoreGitea + "/acme/appdev.git", underscoreGitea, mateShell, helperGitHubRepo, ""},
 		{"a remote whose host is no credential scope answers github.com nothing, even in the dev service", ipv6Gitea + "/acme/appdev.git", ipv6Gitea, devSession, helperGitHubRepo, ""},
+		{"a Gitea on its own port answers the Mate's shell", portGitea + "/acme/appdev.git", portGitea, mateShell, "", helperBotToken},
+		{"a Gitea on its own port answers the dev service", portGitea + "/acme/appdev.git", portGitea, devSession, "", helperGitToken},
+		{"the Gitea's host on another port never gets the bot token", portGitea + "/acme/appdev.git", helperGiteaURL, mateShell, "", ""},
+		{"the Gitea's port stated as the default is the default", helperGiteaURL + ":443/acme/appdev.git", helperGiteaURL, mateShell, helperGiteaRepo, helperBotToken},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

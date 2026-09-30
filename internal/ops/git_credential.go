@@ -140,7 +140,8 @@ func SelfBuildTarget(pushSource, buildTarget string) bool {
 // The helper's text depends on the host: a remote on the Mate's Gitea
 // (giteaURL, "" on a container with no Gitea wiring) gets the helper that
 // also answers the Mate's shell (giteaCredentialHelperShell); every other
-// host answers GIT_TOKEN only. A remote whose host cannot be a scope (an
+// host answers GIT_TOKEN only. The Gitea helper's scope carries the
+// Gitea's port when it is not 443 (giteaCredentialScope). A remote whose host cannot be a scope (an
 // IPv6 literal, a name with an underscore, metacharacters) gets no helper at
 // all: parseGitHost's github.com default is never a scope, since a helper
 // stored there would answer github.com with this remote's token.
@@ -155,18 +156,61 @@ func gitCredentialHelperConfigFragment(remoteURL, giteaURL string) string {
 // gitCredentialHelperWriteFragment is the helper write alone — the no-op `:` when
 // the remote's host is no scope to write it under.
 func gitCredentialHelperWriteFragment(remoteURL, giteaURL string) string {
-	host, ok := gitCredentialScopeHost(remoteURL)
+	scope, ok := gitCredentialScopeHost(remoteURL)
 	if !ok {
 		return ":"
 	}
 	helper := gitCredentialHelperShell
-	if topology.ClassifyGitHost(remoteURL, giteaURL) == topology.GitHostGitea {
-		helper = giteaCredentialHelperShell
+	if giteaScope, onGitea := giteaCredentialScope(remoteURL, giteaURL, scope); onGitea {
+		scope, helper = giteaScope, giteaCredentialHelperShell
 	}
 	return fmt.Sprintf("git config %s %s",
-		shellQuote("credential.https://"+host+".helper"),
+		shellQuote("credential.https://"+scope+".helper"),
 		shellQuote(helper),
 	)
+}
+
+// giteaCredentialScope is the scope the Gitea helper is stored under — the
+// Gitea's host, with its port when it names one other than 443, since git
+// matches a scope's port exactly — and whether remoteURL is on the Mate's
+// Gitea at all. host is the scope host the remote already resolved to: the
+// helper that falls back to the bot's token is written only when it and the
+// forge classification name the same host, on the Gitea's own port.
+func giteaCredentialScope(remoteURL, giteaURL, host string) (string, bool) {
+	if topology.ClassifyGitHost(remoteURL, giteaURL) != topology.GitHostGitea {
+		return "", false
+	}
+	remote, err := url.Parse(remoteURL)
+	if err != nil || remote.Scheme != httpsScheme {
+		return "", false
+	}
+	gitea, err := url.Parse(giteaURL)
+	if err != nil || !strings.EqualFold(remote.Hostname(), host) || !strings.EqualFold(gitea.Hostname(), host) {
+		return "", false
+	}
+	port := httpsPort(remote)
+	if port != httpsPort(gitea) {
+		return "", false
+	}
+	if port == defaultHTTPSPort {
+		return host, true
+	}
+	return host + ":" + port, true
+}
+
+// The persisted helper's scope is always https (credential.https://…); a
+// Gitea remote over any other scheme gets the plain helper.
+const (
+	httpsScheme      = "https"
+	defaultHTTPSPort = "443"
+)
+
+// httpsPort is the port an https URL connects to.
+func httpsPort(u *url.URL) string {
+	if port := u.Port(); port != "" {
+		return port
+	}
+	return defaultHTTPSPort
 }
 
 // gitCredentialScopeHost is the host a persisted helper is stored under, and
