@@ -75,7 +75,7 @@ func TestResolveSHA_InvalidSHA_ReturnsError(t *testing.T) {
 
 func TestHeadStatus_CleanRepo_ReturnsSHANotDirty(t *testing.T) {
 	r := &fakeRunner{results: []fakeResult{{stdout: "abc123def456\n"}}}
-	sha, dirty, ok, err := HeadStatus(context.Background(), r, "/repo")
+	sha, _, dirty, ok, err := HeadStatus(context.Background(), r, "/repo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestHeadStatus_CleanRepo_ReturnsSHANotDirty(t *testing.T) {
 
 func TestHeadStatus_DirtyRepo_ReturnsSHAAndDirty(t *testing.T) {
 	r := &fakeRunner{results: []fakeResult{{stdout: "abc123def456\nM"}}}
-	sha, dirty, ok, err := HeadStatus(context.Background(), r, "/repo")
+	sha, _, dirty, ok, err := HeadStatus(context.Background(), r, "/repo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestHeadStatus_DirtyRepo_ReturnsSHAAndDirty(t *testing.T) {
 
 func TestHeadStatus_NoRepoOrNoHead_ReturnsNotOkNoError(t *testing.T) {
 	r := &fakeRunner{results: []fakeResult{{stderr: "fatal: not a git repository", err: errors.New("exit 128")}}}
-	sha, dirty, ok, err := HeadStatus(context.Background(), r, "/repo")
+	sha, _, dirty, ok, err := HeadStatus(context.Background(), r, "/repo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v (no repo/no HEAD is not a failure)", err)
 	}
@@ -205,5 +205,31 @@ func TestResolveSHA_WarningLineInOutput_Rejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "did not print a single full commit hash") {
 		t.Errorf("error = %q, want it to name the malformed output", err)
+	}
+}
+
+// HeadStatus reads the branch HEAD is on in the same round trip; none when
+// HEAD is detached.
+func TestHeadStatus_Branch(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name, stdout, wantBranch string
+		wantDirty                bool
+	}{
+		{"on a branch, clean", "abc123\nZCP:BRANCH:main\n", "main", false},
+		{"on a branch, dirty", "abc123\nZCP:BRANCH:mate/mate-p1\nM", "mate/mate-p1", true},
+		{"detached", "abc123\nZCP:BRANCH:\n", "", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := &fakeRunner{results: []fakeResult{{stdout: tt.stdout}}}
+			sha, branch, dirty, ok, err := HeadStatus(context.Background(), r, "/repo")
+			if err != nil || !ok || sha != "abc123" {
+				t.Fatalf("HeadStatus = %q, %v, %v", sha, ok, err)
+			}
+			if branch != tt.wantBranch || dirty != tt.wantDirty {
+				t.Errorf("branch, dirty = %q, %v, want %q, %v", branch, dirty, tt.wantBranch, tt.wantDirty)
+			}
+		})
 	}
 }

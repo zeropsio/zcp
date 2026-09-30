@@ -609,7 +609,7 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 // TestBuildSSHCommand_VersionNameFromHead pins GF-10 (docs/spec-workflows.md
 // §12.6): buildSSHCommand passes --version-name exactly when the caller
 // supplies a non-empty versionName — clean (bare sha), dirty (sha with a
-// "-dirty" suffix, computed by versionNameForHead at the call site, not
+// "-dirty" suffix, computed by versionNameFor at the call site, not
 // here), and unborn/no-repo (empty versionName ⇒ no flag at all).
 func TestBuildSSHCommand_VersionNameFromHead(t *testing.T) {
 	t.Parallel()
@@ -644,23 +644,35 @@ func TestBuildSSHCommand_VersionNameFromHead(t *testing.T) {
 // (docs/spec-workflows.md §12.6) both deploy transports (SSH, local) call:
 // empty sha ⇒ empty (no reachable HEAD, omit the flag); non-empty +
 // !dirty ⇒ bare sha; non-empty + dirty ⇒ sha with a "-dirty" suffix.
-func TestVersionNameForHead(t *testing.T) {
+// TestVersionName is the name a zcp push gives its app version (GF-10): the
+// branch and the commit's short sha, two tokens, as the Mate app and the
+// broker read it; "-dirty" on the sha for a working tree with uncommitted
+// changes, which both read as no commit. A HEAD on no branch keeps the whole
+// sha, which both read as the commit, where a lone short sha would read as
+// none in the app.
+func TestVersionName(t *testing.T) {
 	t.Parallel()
+	const sha = "7E2D4C1a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e"
 	for _, tt := range []struct {
-		name  string
-		sha   string
-		dirty bool
-		want  string
+		name   string
+		branch string
+		sha    string
+		dirty  bool
+		want   string
 	}{
-		{"unborn/no repo", "", false, ""},
-		{"unborn/no repo, dirty flag ignored", "", true, ""},
-		{"clean", "abc123", false, "abc123"},
-		{"dirty", "abc123", true, "abc123-dirty"},
+		{"a clean push on a branch", "main", sha, false, "main 7e2d4c1"},
+		{"a working tree with uncommitted changes", "main", sha, true, "main 7e2d4c1-dirty"},
+		{"a Mate's branch", "mate/mate-p1", sha, false, "mate/mate-p1 7e2d4c1"},
+		{"HEAD on no branch keeps the whole sha", "", sha, false, "7e2d4c1a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e"},
+		{"HEAD on no branch, dirty", "", sha, true, "7e2d4c1a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e-dirty"},
+		{"a branch that would make a third token is no branch", "a b", sha, false, "7e2d4c1a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e"},
+		{"no reachable HEAD names nothing", "main", "", false, ""},
+		{"no reachable HEAD, dirty flag ignored", "main", "", true, ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := versionNameForHead(tt.sha, tt.dirty); got != tt.want {
-				t.Errorf("versionNameForHead(%q, %v) = %q, want %q", tt.sha, tt.dirty, got, tt.want)
+			if got := versionNameFor(tt.branch, tt.sha, tt.dirty); got != tt.want {
+				t.Errorf("versionNameFor(%q, %q, %v) = %q, want %q", tt.branch, tt.sha, tt.dirty, got, tt.want)
 			}
 		})
 	}

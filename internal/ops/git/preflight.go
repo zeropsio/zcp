@@ -40,8 +40,10 @@ type SelfDeployPreflight struct {
 	GitIsFile     bool
 	HasSubmodules bool
 
-	HasRepo    bool
-	SHA        string
+	HasRepo bool
+	SHA     string
+	// Branch is the branch HEAD is on, "" on none (detached).
+	Branch     string
 	Dirty      bool
 	RepoState  string // "clean" | "dirty" | "merging" | "rebasing" | "detached"
 	NotCarried NotCarried
@@ -60,6 +62,7 @@ if [ -z "$HEAD_SHA" ]; then
 else
   echo 'ZCP:HASREPO:1'
   echo "ZCP:SHA:$HEAD_SHA"
+  echo "ZCP:BRANCH:$(git symbolic-ref -q --short HEAD 2>/dev/null)"
   if [ -n "$(git status --porcelain | head -c1)" ]; then echo 'ZCP:DIRTY:1'; else echo 'ZCP:DIRTY:0'; fi
   echo "ZCP:REPOSTATE:$(` + repoStateExpr + `)"
   git ls-files --others --ignored --exclude-standard | while IFS= read -r f; do
@@ -106,6 +109,8 @@ func parseSelfDeployPreflight(out string) SelfDeployPreflight {
 			p.HasRepo = val == "1"
 		case "SHA":
 			p.SHA = val
+		case "BRANCH":
+			p.Branch = val
 		case "DIRTY":
 			p.Dirty = val == "1"
 		case "REPOSTATE":

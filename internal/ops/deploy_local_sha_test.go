@@ -141,7 +141,7 @@ func TestDeployLocal_WithUnresolvableSHA_ReturnsInvalidParameterError(t *testing
 // §12.6), updating item 4's clean-repo pin: a working-tree deploy (no
 // explicit sha) whose workingDir is a git repo with a reachable HEAD
 // records that HEAD as SHA, Dirty=false — and the zcli push args now DO
-// carry --version-name <HEAD sha> (no "-dirty" suffix, clean status),
+// carry --version-name "<branch> <short sha>" (no "-dirty" suffix, clean status),
 // otherwise unchanged from a no-git-repo source.
 func TestDeployLocal_VersionNameFromHead(t *testing.T) {
 	if testing.Short() {
@@ -168,15 +168,16 @@ func TestDeployLocal_VersionNameFromHead(t *testing.T) {
 	if result.Dirty {
 		t.Error("result.Dirty = true, want false (clean status)")
 	}
-	if result.VersionName != sha {
-		t.Errorf("result.VersionName = %q, want %q (clean — no -dirty suffix)", result.VersionName, sha)
+	want := "main " + sha[:7]
+	if result.VersionName != want {
+		t.Errorf("result.VersionName = %q, want %q (branch and short sha, clean — no -dirty suffix)", result.VersionName, want)
 	}
 	if len(mr.runCalls) != 2 {
 		t.Fatalf("zcli calls = %d, want 2 (login, push)", len(mr.runCalls))
 	}
 	pushArgs := strings.Join(mr.runCalls[1].args, " ")
-	if !strings.Contains(pushArgs, "--version-name "+sha) {
-		t.Errorf("push args should carry --version-name %s for a clean working-tree deploy, got: %s", sha, pushArgs)
+	if !strings.Contains(pushArgs, "--version-name "+want) {
+		t.Errorf("push args should carry --version-name %s for a clean working-tree deploy, got: %s", want, pushArgs)
 	}
 	if !strings.Contains(pushArgs, "--working-dir "+dir) {
 		t.Errorf("push args should carry --working-dir %s (the repo itself, no extraction), got: %s", dir, pushArgs)
@@ -213,11 +214,12 @@ func TestDeployLocal_NoSHA_SourceHasDirtyRepo_RecordsDirty(t *testing.T) {
 	if !result.Dirty {
 		t.Error("result.Dirty = false, want true")
 	}
-	if result.VersionName != sha+"-dirty" {
-		t.Errorf("result.VersionName = %q, want %q (GF-10 dirty suffix)", result.VersionName, sha+"-dirty")
+	want := "main " + sha[:7] + "-dirty"
+	if result.VersionName != want {
+		t.Errorf("result.VersionName = %q, want %q (GF-10 dirty suffix)", result.VersionName, want)
 	}
 	pushArgs := strings.Join(mr.runCalls[1].args, " ")
-	if !strings.Contains(pushArgs, "--version-name "+sha+"-dirty") {
-		t.Errorf("push args should carry --version-name %s-dirty, got: %s", sha, pushArgs)
+	if !strings.Contains(pushArgs, "--version-name "+want) {
+		t.Errorf("push args should carry --version-name %s, got: %s", want, pushArgs)
 	}
 }

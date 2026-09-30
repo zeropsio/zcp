@@ -126,7 +126,7 @@ func DeployLocal(
 	// deployDir is the exact
 	// tree being pushed.
 	deployDir := workingDir
-	var resolvedSHA string
+	var resolvedSHA, branch string
 	var dirty bool
 	var dirtyWarning string
 	var cleanupTemp func()
@@ -145,8 +145,9 @@ func DeployLocal(
 		// read-only, before the push, never altering the push args
 		// themselves. No repo / no HEAD ⇒ no source revision, no warning, no
 		// behaviour change.
-		if headSHA, isDirty, hasRepo, _ := git.HeadStatus(ctx, git.LocalRunner{}, workingDir); hasRepo {
+		if headSHA, headBranch, isDirty, hasRepo, _ := git.HeadStatus(ctx, git.LocalRunner{}, workingDir); hasRepo {
 			resolvedSHA = headSHA
+			branch = headBranch
 			dirty = isDirty
 			// GF-5: DeployLocal is always cross-deploy (DM-1) — a dirty
 			// working tree shipped code that isn't reproducible from git
@@ -240,13 +241,14 @@ func DeployLocal(
 	args = append(args, "--no-git")
 	// --version-name (GF-10, docs/spec-workflows.md §12.6): an explicit
 	// deploy-from-commit passes resolvedSHA verbatim (never dirty — it
-	// ships exactly sha's tree); a plain working-tree deploy passes it too
-	// when the source has a reachable HEAD, with a "-dirty" suffix when
-	// the working tree carries uncommitted changes on top. versionName is
+	// ships exactly sha's tree, which no branch names); a plain
+	// working-tree deploy passes its branch and short sha when the source
+	// has a reachable HEAD, with a "-dirty" suffix when the working tree
+	// carries uncommitted changes on top (versionNameFor). versionName is
 	// "" (flag omitted) only when there is no reachable HEAD at all.
 	versionName := resolvedSHA
 	if sha == "" {
-		versionName = versionNameForHead(resolvedSHA, dirty)
+		versionName = versionNameFor(branch, resolvedSHA, dirty)
 	}
 	if versionName != "" {
 		args = append(args, "--version-name", versionName)

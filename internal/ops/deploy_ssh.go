@@ -217,8 +217,8 @@ func deploySSH(
 	// <sha>:zerops.yaml`) — the SSHFS mount may be missing entirely or
 	// stale relative to an older/newer commit than what's on disk right
 	// now. The no-sha branch keeps validating the mount, unchanged.
-	resolvedSHA := ""
-	dirty := false
+	var resolvedSHA, branch string
+	var dirty bool
 	var notCarried *git.NotCarried
 	var envFiles []string
 	var repoState string
@@ -251,35 +251,13 @@ func deploySSH(
 				return nil, err
 			}
 		}
-		// Record every zcp deploy, not only the sha path (docs/spec-
-		// workflows.md §4.9): if the SOURCE has a git repo with a
-		// reachable HEAD, record what actually shipped — read-only,
-		// before the push, never altering the push command itself. No
-		// repo / no HEAD ⇒ no source revision, no warning, no behaviour change.
-		//
-		// Self-deploy additionally runs the combined GF-12 preflight (docs/
-		// spec-workflows.md §8 DM, §12.6): notCarried/envFiles/repoState
-		// facts, plus the two hard refusals — never a gate on the
-		// cross-deploy path, whose target's own repo shape a distinct
-		// source doesn't inherit.
-		if class == DeployClassSelf {
-			var pfErr error
-			resolvedSHA, dirty, repoState, notCarried, envFiles, pfErr = selfDeployPreflightFacts(ctx, gitRunner, workingDir, source.Name)
-			if pfErr != nil {
-				return nil, pfErr
-			}
-		} else if headSHA, isDirty, hasRepo, _ := git.HeadStatus(ctx, gitRunner, workingDir); hasRepo {
-			resolvedSHA = headSHA
-			dirty = isDirty
-			// GF-5: a dirty cross-deploy shipped code that isn't
-			// reproducible from git alone — say so where the agent will
-			// see it. Self-deploy is excluded by construction (this
-			// branch only runs when class == DeployClassCross); the
-			// explicit-sha branch above never reaches here at all.
-			if dirty {
-				warnings = append(warnings, dirtyCrossDeployWarning(target.Name, source.Name, resolvedSHA))
-			}
+		head, headErr := readWorkingTreeHead(ctx, gitRunner, workingDir, class, source.Name, target.Name)
+		if headErr != nil {
+			return nil, headErr
 		}
+		resolvedSHA, branch, dirty = head.sha, head.branch, head.dirty
+		repoState, notCarried, envFiles = head.repoState, head.notCarried, head.envFiles
+		warnings = append(warnings, head.warnings...)
 	}
 	if cleanupTemp != nil {
 		defer cleanupTemp()
@@ -292,9 +270,10 @@ func deploySSH(
 		versionName = resolvedSHA
 	} else {
 		// GF-10: a plain working-tree deploy also passes --version-name
-		// when the source has a reachable HEAD, with a "-dirty" suffix on
-		// top of an uncommitted working tree.
-		versionName = versionNameForHead(resolvedSHA, dirty)
+		// when the source has a reachable HEAD — its branch and short
+		// sha, with a "-dirty" suffix on top of an uncommitted working
+		// tree (versionNameFor).
+		versionName = versionNameFor(branch, resolvedSHA, dirty)
 		cmd = buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit, versionName)
 	}
 
@@ -343,6 +322,49 @@ func deploySSH(
 	}, nil
 }
 
+// workingTreeHead is what a working-tree deploy records of its source's
+// repository: the HEAD it shipped, the branch it is on, whether uncommitted
+// changes rode on top, and the self-deploy preflight's facts.
+type workingTreeHead struct {
+	sha, branch string
+	dirty       bool
+	repoState   string
+	notCarried  *git.NotCarried
+	envFiles    []string
+	warnings    []string
+}
+
+// readWorkingTreeHead records every zcp deploy, not only the sha path (docs/
+// spec-workflows.md §4.9): if the SOURCE has a git repo with a reachable
+// HEAD, what actually shipped — read-only, before the push, never altering
+// the push command itself. No repo / no HEAD ⇒ no source revision, no
+// warning, no behaviour change.
+//
+// Self-deploy additionally runs the combined GF-12 preflight (docs/
+// spec-workflows.md §8 DM, §12.6): notCarried/envFiles/repoState facts,
+// plus the two hard refusals — never a gate on the cross-deploy path, whose
+// target's own repo shape a distinct source doesn't inherit.
+func readWorkingTreeHead(ctx context.Context, gitRunner git.SSHRunner, workingDir string, class DeployClass, sourceName, targetName string) (workingTreeHead, error) {
+	var head workingTreeHead
+	if class == DeployClassSelf {
+		var err error
+		head.sha, head.branch, head.dirty, head.repoState, head.notCarried, head.envFiles, err = selfDeployPreflightFacts(ctx, gitRunner, workingDir, sourceName)
+		return head, err
+	}
+	sha, branch, dirty, hasRepo, _ := git.HeadStatus(ctx, gitRunner, workingDir)
+	if !hasRepo {
+		return head, nil
+	}
+	head.sha, head.branch, head.dirty = sha, branch, dirty
+	// GF-5: a dirty cross-deploy shipped code that isn't reproducible from
+	// git alone — say so where the agent will see it. Self-deploy is
+	// excluded by construction; the explicit-sha path never reaches here.
+	if dirty {
+		head.warnings = append(head.warnings, dirtyCrossDeployWarning(targetName, sourceName, sha))
+	}
+	return head, nil
+}
+
 // selfDeployPreflightFacts runs the combined GF-12 self-deploy preflight
 // (docs/spec-workflows.md §8 DM-7/DM-8, §12.6) and turns it into the
 // values deploySSH's no-sha branch needs: the recorded HEAD sha/dirty
@@ -352,18 +374,18 @@ func deploySSH(
 // HasSubmodules — and nil otherwise; the read itself never fails a plain
 // self-deploy (facts, never a gate).
 func selfDeployPreflightFacts(ctx context.Context, gitRunner git.SSHRunner, workingDir, sourceName string) (
-	resolvedSHA string, dirty bool, repoState string, notCarried *git.NotCarried, envFiles []string, err error,
+	resolvedSHA, branch string, dirty bool, repoState string, notCarried *git.NotCarried, envFiles []string, err error,
 ) {
 	preflight, _ := git.ReadSelfDeployPreflight(ctx, gitRunner, workingDir)
 	if preflight.GitIsFile {
-		return "", false, "", nil, nil, platform.NewPlatformError(
+		return "", "", false, "", nil, nil, platform.NewPlatformError(
 			platform.ErrGitWorktreeUnsupported,
 			fmt.Sprintf("%s's .git is a regular file (a linked-worktree or submodule gitdir pointer), not a directory — a self-deploy archive carries only that pointer file, producing a broken repository in the replacement container", sourceName),
 			"This container can't self-deploy from a linked worktree or submodule checkout. Replace .git with a real repository (a fresh `git clone`, or copy the real gitdir contents in place of the pointer), or cross-deploy a resolved commit to a different target instead.",
 		)
 	}
 	if preflight.HasSubmodules {
-		return "", false, "", nil, nil, platform.NewPlatformError(
+		return "", "", false, "", nil, nil, platform.NewPlatformError(
 			platform.ErrGitSubmodulesUnsupported,
 			fmt.Sprintf("%s has a .gitmodules file — a self-deploy archive (git archive, no --recurse-submodules) ships submodule directories EMPTY, so the replacement container would start without that code", sourceName),
 			"Vendor the submodule's content directly into the parent repository (remove .gitmodules, commit the files), or deploy a resolved commit sha to a different (cross) target instead.",
@@ -371,6 +393,7 @@ func selfDeployPreflightFacts(ctx context.Context, gitRunner git.SSHRunner, work
 	}
 	if preflight.HasRepo {
 		resolvedSHA = preflight.SHA
+		branch = preflight.Branch
 		dirty = preflight.Dirty
 	}
 	repoState = preflight.RepoState
@@ -379,7 +402,7 @@ func selfDeployPreflightFacts(ctx context.Context, gitRunner git.SSHRunner, work
 		nc := preflight.NotCarried
 		notCarried = &nc
 	}
-	return resolvedSHA, dirty, repoState, notCarried, envFiles, nil
+	return resolvedSHA, branch, dirty, repoState, notCarried, envFiles, nil
 }
 
 // appendPreflightNote appends the GF-12 not-carried/env-files sentence to
@@ -470,23 +493,34 @@ func deployFromCommitPrep(
 	return resolvedSHA, warnings, tmpDir, cleanup, nil
 }
 
-// versionNameForHead formats a HeadStatus read into the --version-name
-// value a zcp-driven build passes (GF-10, docs/spec-workflows.md §12.6):
-// the resolved sha, with a "-dirty" suffix when the working tree carries
-// uncommitted changes on top of it — so SearchAppVersions.name is a
-// platform-side breadcrumb independent of local session history. Returns
-// "" when sha is empty (no reachable HEAD — unborn/no repo), so the
-// caller omits the flag entirely rather than passing a meaningless value.
-// Never itself a claim about what was deployed (GF-5) — that discipline
-// lives at the call site / evidence-reading layer.
-func versionNameForHead(sha string, dirty bool) string {
+// versionNameShort is how much of the sha a version name carries: what git
+// and the Mate app show.
+const versionNameShort = 7
+
+// versionNameFor is the --version-name a zcp-driven build passes (GF-10,
+// docs/spec-workflows.md §12.6), the name the platform keeps on the app
+// version and the Mate app and the broker read back: the branch HEAD is on
+// and the commit's short sha, exactly two tokens — "main 7e2d4c1" — with a
+// "-dirty" suffix on the sha when the working tree carries uncommitted
+// changes, which every reader takes for no commit. A HEAD on no branch (a
+// detached checkout; a branch name with a space, which git refuses anyway)
+// keeps the whole sha as one token, the one short form the Mate app reads as
+// a commit; a lone short sha would read as none there. "" when sha is empty
+// (no reachable HEAD), so the caller omits the flag. Never itself a claim
+// about what was deployed (GF-5).
+func versionNameFor(branch, sha string, dirty bool) string {
 	if sha == "" {
 		return ""
 	}
-	if dirty {
-		return sha + "-dirty"
+	sha = strings.ToLower(sha)
+	name := sha
+	if branch != "" && !strings.ContainsAny(branch, " \t\n") {
+		name = branch + " " + sha[:min(versionNameShort, len(sha))]
 	}
-	return sha
+	if dirty {
+		name += "-dirty"
+	}
+	return name
 }
 
 func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup string, includeGit bool, versionName string) string {
