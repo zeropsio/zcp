@@ -1,6 +1,9 @@
 package ops
 
 import (
+	"net/url"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -101,7 +104,7 @@ func TestBuildGitAuthedLsRemoteCommand_RefIsParameterized(t *testing.T) {
 func TestGitCredentialHelperConfigFragment_URLScoped(t *testing.T) {
 	t.Parallel()
 
-	frag := gitCredentialHelperConfigFragment("https://gitlab.com/team/app.git")
+	frag := gitCredentialHelperConfigFragment("https://gitlab.com/team/app.git", "")
 	if !strings.Contains(frag, "git config 'credential.https://gitlab.com.helper'") {
 		t.Errorf("config fragment must be url-scoped to the remote's host:\n%s", frag)
 	}
@@ -129,7 +132,7 @@ func TestGitCredentialHelperConfigFragment_URLScoped(t *testing.T) {
 // without actually running as part of the missing-.git recovery.
 func TestBuildGitReconstructCommand_Shape(t *testing.T) {
 	t.Parallel()
-	cmd := BuildGitReconstructCommand("/var/www", "https://github.com/example/app.git", DeployGitIdentity)
+	cmd := BuildGitReconstructCommand("/var/www", "https://github.com/example/app.git", "", DeployGitIdentity)
 
 	ifIdx := strings.Index(cmd, "if test ! -d .git; then git init -q -b main")
 	if ifIdx < 0 {
@@ -169,7 +172,7 @@ func TestBuildGitReconstructCommand_Shape(t *testing.T) {
 func TestBuildGitReconstructCommand_UsesSuppliedIdentity(t *testing.T) {
 	t.Parallel()
 	derived := GitIdentity{Name: "octocat", Email: "octocat@users.noreply.github.com"}
-	cmd := BuildGitReconstructCommand("/var/www", "https://github.com/example/app.git", derived)
+	cmd := BuildGitReconstructCommand("/var/www", "https://github.com/example/app.git", "", derived)
 
 	if !strings.Contains(cmd, `git config user.email 'octocat@users.noreply.github.com'`) {
 		t.Errorf("reconstruction must fill the SUPPLIED derived email, not the robot default: %s", cmd)
@@ -200,5 +203,102 @@ func TestBuildGitTagPushCommand_NoInlineIdentity(t *testing.T) {
 		if strings.Contains(cmd, forbidden) {
 			t.Errorf("release tag command must carry NO inline identity override (reads ambient config) — found %q: %s", forbidden, cmd)
 		}
+	}
+}
+
+// The persisted helper answers two shells. The dev service's own sessions
+// carry GIT_TOKEN, the service secret git-push-setup writes. The Mate's shell
+// runs git on the same repository through the mount, and carries the bot's
+// token as GITEA_TOKEN only — so on a remote on the Mate's Gitea the helper
+// falls back to it. Every other host answers GIT_TOKEN alone: the bot's token
+// is never sent anywhere but the Mate's own Gitea.
+const (
+	helperGiteaURL   = "https://gitea.example.invalid"
+	helperBotToken   = "the-mates-bot-token"
+	helperGitToken   = "the-service-secret"
+	helperGiteaRepo  = helperGiteaURL + "/acme/appdev.git"
+	helperGitHubRepo = "https://github.com/acme/appdev.git"
+)
+
+// gitShell runs a shell command in dir as a session carrying only env — a
+// HOME of its own and no system config, so nothing of the machine running the
+// test answers a credential.
+func gitShell(t *testing.T, dir, home string, env map[string]string, stdin, script string) (string, error) {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", script)
+	cmd.Dir = dir
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0"}
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	cmd.Stdin = strings.NewReader(stdin)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// answeredPassword asks the repository's configured helpers for a credential
+// to remoteURL, the way a `git fetch` in that shell would, and returns the
+// password they answered ("" for none).
+func answeredPassword(t *testing.T, repo, home string, env map[string]string, remoteURL string) string {
+	t.Helper()
+	u, err := url.Parse(remoteURL)
+	if err != nil {
+		t.Fatalf("parse %q: %v", remoteURL, err)
+	}
+	out, _ := gitShell(t, repo, home, env,
+		"protocol="+u.Scheme+"\nhost="+u.Host+"\npath="+strings.TrimPrefix(u.Path, "/")+"\n\n",
+		"git credential fill")
+	for line := range strings.SplitSeq(out, "\n") {
+		if v, ok := strings.CutPrefix(line, "password="); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+func requireGit(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+}
+
+// TestPersistedCredentialHelper_TokenByShellAndHost runs origin sync on a real
+// repository and asks the helper it persisted for a credential, from the dev
+// service's session and from the Mate's shell.
+func TestPersistedCredentialHelper_TokenByShellAndHost(t *testing.T) {
+	t.Parallel()
+	requireGit(t)
+
+	devSession := map[string]string{"GIT_TOKEN": helperGitToken}
+	mateShell := map[string]string{"GITEA_TOKEN": helperBotToken}
+	both := map[string]string{"GIT_TOKEN": helperGitToken, "GITEA_TOKEN": helperBotToken}
+
+	tests := []struct {
+		name     string
+		remote   string
+		giteaURL string
+		env      map[string]string
+		want     string
+	}{
+		{"the Mate's shell on its Gitea answers the bot token", helperGiteaRepo, helperGiteaURL, mateShell, helperBotToken},
+		{"the dev service on the Gitea answers its service secret", helperGiteaRepo, helperGiteaURL, devSession, helperGitToken},
+		{"the service secret wins where both are set", helperGiteaRepo, helperGiteaURL, both, helperGitToken},
+		{"github.com never gets the bot token", helperGitHubRepo, helperGiteaURL, mateShell, ""},
+		{"github.com answers the service secret", helperGitHubRepo, helperGiteaURL, both, helperGitToken},
+		{"another host never gets the bot token", "https://code.example.invalid/acme/appdev.git", helperGiteaURL, mateShell, ""},
+		{"a Mate with no Gitea wiring falls back to nothing", helperGiteaRepo, "", mateShell, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			repo, home := t.TempDir(), t.TempDir()
+			if out, err := gitShell(t, repo, home, nil, "", BuildGitOriginSyncCommand(repo, tt.remote, tt.giteaURL)); err != nil {
+				t.Fatalf("origin sync: %v\n%s", err, out)
+			}
+			if got := answeredPassword(t, repo, home, tt.env, tt.remote); got != tt.want {
+				t.Errorf("the helper answered %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

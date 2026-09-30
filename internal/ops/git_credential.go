@@ -2,6 +2,8 @@ package ops
 
 import (
 	"fmt"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // gitCredentialHelperShell is the inline git credential helper that replaced
@@ -21,6 +23,14 @@ import (
 // "store"/"erase" actions fall through silently — there is nothing to
 // persist; the platform env IS the store.
 const gitCredentialHelperShell = `!f() { test "$1" = get && { echo username=oauth2; echo "password=$GIT_TOKEN"; }; }; f`
+
+// giteaCredentialHelperShell is the helper persisted for a remote on the
+// Mate's own Gitea. The dev service's sessions answer from GIT_TOKEN as above;
+// the Mate's shell, which runs git on the same repository through the mount,
+// carries no GIT_TOKEN — the bot's token reaches it as GITEA_TOKEN — so the
+// helper falls back to that. Only this host's helper reads GITEA_TOKEN: a
+// remote anywhere else never receives the bot's token.
+const giteaCredentialHelperShell = `!f() { test "$1" = get && { echo username=oauth2; echo "password=${GIT_TOKEN:-$GITEA_TOKEN}"; }; }; f`
 
 // gitCredentialHelperArgs returns the `-c` git arguments that make ONE git
 // invocation authenticate via the session-env helper. The leading empty
@@ -87,14 +97,14 @@ func BuildGitSessionAuthProbeCommand(remoteURL string) string {
 // TOCTOU window.
 // Auth: the SESSION env credential helper — reconstruction only runs for
 // pairs whose GIT_TOKEN service secret already exists.
-func BuildGitReconstructCommand(workingDir, remoteURL string, identity GitIdentity) string {
+func BuildGitReconstructCommand(workingDir, remoteURL, giteaURL string, identity GitIdentity) string {
 	quoted := shellQuote(remoteURL)
 	return fmt.Sprintf(
 		`cd %s && if test ! -d .git; then git init -q -b main && %s && git remote add origin %s && %s && GIT_TERMINAL_PROMPT=0 git %s fetch -q origin HEAD && git update-ref refs/heads/main FETCH_HEAD && git reset -q FETCH_HEAD; fi`,
 		shellQuote(workingDir),
 		gitIdentityEnsureFragmentFor(identity),
 		quoted,
-		gitCredentialHelperConfigFragment(remoteURL),
+		gitCredentialHelperConfigFragment(remoteURL, giteaURL),
 		gitCredentialHelperArgs(),
 	)
 }
@@ -126,14 +136,23 @@ func SelfBuildTarget(pushSource, buildTarget string) bool {
 // the `-g` artifact into replacement containers exactly like the deploy
 // identity does.
 //
+// The helper's text depends on the host: a remote on the Mate's Gitea
+// (giteaURL, "" on a container with no Gitea wiring) gets the helper that
+// also answers the Mate's shell (giteaCredentialHelperShell); every other
+// host answers GIT_TOKEN only.
+//
 // The trailing `rm -f ~/.netrc` is the one-way migration off the
 // ephemeral-.netrc era: any stray fail-open residue dies the first time
 // the single owner re-asserts wiring.
-func gitCredentialHelperConfigFragment(remoteURL string) string {
+func gitCredentialHelperConfigFragment(remoteURL, giteaURL string) string {
 	host := parseGitHost(remoteURL)
+	helper := gitCredentialHelperShell
+	if topology.ClassifyGitHost(remoteURL, giteaURL) == topology.GitHostGitea {
+		helper = giteaCredentialHelperShell
+	}
 	return fmt.Sprintf("git config %s %s && rm -f ~/.netrc",
 		shellQuote("credential.https://"+host+".helper"),
-		shellQuote(gitCredentialHelperShell),
+		shellQuote(helper),
 	)
 }
 

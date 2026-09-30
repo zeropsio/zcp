@@ -387,6 +387,9 @@ func TestGitPushSetupContainer_GiteaHost_SeedsBotIdentity(t *testing.T) {
 			!strings.Contains(seedCmd, "git config user.name 'mate-p1'") {
 			t.Errorf("seed command must carry the bot identity: %s", seedCmd)
 		}
+		if helper := originSyncHelperFallsBackToBotToken(t, ssh.commands); !helper {
+			t.Errorf("origin sync on the Mate's Gitea must persist the helper the Mate's shell can answer: %v", ssh.commands)
+		}
 	})
 
 	t.Run("same host, no GITEA_URL", func(t *testing.T) {
@@ -409,7 +412,24 @@ func TestGitPushSetupContainer_GiteaHost_SeedsBotIdentity(t *testing.T) {
 		if httpDoer.callCount != 0 {
 			t.Errorf("an unidentified host must not be asked who it thinks we are; got %d calls", httpDoer.callCount)
 		}
+		if originSyncHelperFallsBackToBotToken(t, ssh.commands) {
+			t.Errorf("an unidentified host must never be answered with the bot's token: %v", ssh.commands)
+		}
 	})
+}
+
+// originSyncHelperFallsBackToBotToken reports whether the origin sync
+// git-push-setup ran persisted a helper that answers from GITEA_TOKEN — the
+// bot's token the Mate's own shell carries.
+func originSyncHelperFallsBackToBotToken(t *testing.T, commands []string) bool {
+	t.Helper()
+	for _, c := range commands {
+		if strings.Contains(c, "git remote add origin") && strings.Contains(c, "credential.https://") {
+			return strings.Contains(c, "GITEA_TOKEN")
+		}
+	}
+	t.Fatalf("origin sync never ran; commands: %v", commands)
+	return false
 }
 
 // TestGitPushSetupContainer_DerivationFails_NonBlockingWarning pins F3's

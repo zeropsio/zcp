@@ -80,7 +80,7 @@ func BuildGitWritePushProbeCommand(workingDir, remoteURL, token string) string {
 //
 // Caller passes workingDir absolute path (e.g. /var/www). remoteURL is
 // shell-quoted.
-func BuildGitOriginSyncCommand(workingDir, remoteURL string) string {
+func BuildGitOriginSyncCommand(workingDir, remoteURL, giteaURL string) string {
 	quoted := shellQuote(remoteURL)
 	// Non-destructive (F1b): before pointing origin at the user's repo,
 	// preserve any pre-existing origin (e.g. a recipe-bootstrapped service's
@@ -94,7 +94,7 @@ func BuildGitOriginSyncCommand(workingDir, remoteURL string) string {
 	)
 	return fmt.Sprintf(
 		`cd %s && (test -d .git || git init -q -b main) && %s && %s && (git remote add origin %s 2>/dev/null || git remote set-url origin %s) && %s`,
-		shellQuote(workingDir), gitIdentityEnsureFragment(), preserve, quoted, quoted, gitCredentialHelperConfigFragment(remoteURL),
+		shellQuote(workingDir), gitIdentityEnsureFragment(), preserve, quoted, quoted, gitCredentialHelperConfigFragment(remoteURL, giteaURL),
 	)
 }
 
