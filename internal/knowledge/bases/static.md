@@ -17,6 +17,10 @@ Build `alpine/nodejs@22`, run `static`.
 
 Automatic ($uri -> $uri.html -> $uri/index.html -> /index.html -> 404).
 
+### Caching
+
+Send `Cache-Control: no-cache` so a browser revalidates the HTML after a deploy rather than reusing a heuristically cached page: `run.routing.headers: [{for: "/", values: {Cache-Control: "'no-cache'"}}]` (a value carries its own nginx quotes; hashed assets then answer 304).
+
 ### Framework Output Directories
 
 - React/Vue: `dist/~`

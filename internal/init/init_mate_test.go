@@ -701,3 +701,70 @@ func TestRun_Mate_FirstBoot_DoesNotRestartFreshUnit(t *testing.T) {
 		t.Errorf("expected the unit to be created, got %v", rig.commands)
 	}
 }
+
+// TestRun_Mate_InstallsUnderTheSharedLock: `zcp init` installs and decides the
+// restart under the install lock the unit's own start takes, so a unit that
+// started while init was installing waits for it, then finds nothing to do
+// and starts the new release once — init's restart only ever stops a server
+// that runs the old one, or a start still waiting on the lock. A lock held
+// past the wait never fails the container start: init proceeds without it.
+func TestRun_Mate_InstallsUnderTheSharedLock(t *testing.T) {
+	for _, lockedAway := range []bool{false, true} {
+		name := "the lock is free"
+		if lockedAway {
+			name = "the lock is held past the wait"
+		}
+		t.Run(name, func(t *testing.T) {
+			rig := newMateRig(t)
+			rig.installBundle(t)
+			if err := os.WriteFile(rig.unitPath, []byte("[Unit]\n"), 0o644); err != nil {
+				t.Fatalf("seed unit file: %v", err)
+			}
+			zcpinit.SetMateLockWait(200 * time.Millisecond)
+			t.Cleanup(zcpinit.ResetMateLockWait)
+			if lockedAway {
+				release, err := mate.LockInstall(0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(release)
+			}
+			held := func() bool {
+				release, err := mate.LockInstall(0)
+				if err == nil {
+					release()
+				}
+				return errors.Is(err, mate.ErrInstallLockBusy)
+			}
+			ensured := false
+			zcpinit.SetMateEnsureInstalled(func(mate.EnsureOptions) (mate.Result, error) {
+				ensured = true
+				if !held() {
+					t.Error("the install ran without the lock held")
+				}
+				return mate.Result{Action: mate.ActionUpdated, From: "0.0.9", To: pinnedTestVersion}, nil
+			})
+			restartedHeld := false
+			zcpinit.SetCommandRunner(func(name string, args ...string) error {
+				if strings.Contains(strings.Join(args, " "), "systemctl restart") {
+					restartedHeld = held()
+				}
+				return nil
+			})
+			t.Cleanup(zcpinit.ResetCommandRunner)
+
+			if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
+				t.Fatalf("Run(): %v", err)
+			}
+			if !ensured {
+				t.Error("init must bring the bundle to the release whatever the lock says")
+			}
+			if !restartedHeld {
+				t.Error("the restart must be decided and issued with the lock held")
+			}
+			if !lockedAway && held() {
+				t.Error("init must release the lock when it is done")
+			}
+		})
+	}
+}

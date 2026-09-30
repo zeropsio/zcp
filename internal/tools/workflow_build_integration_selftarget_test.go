@@ -63,21 +63,27 @@ func TestBuildIntegration_ActionsTemplateUsesTrackedRef(t *testing.T) {
 
 // TestActionsTemplate_VersionNameSHA pins GF-10 (docs/spec-workflows.md
 // §12.6): the setup-aware zcli push line records the built commit via
-// --version-name "$GITHUB_SHA" so SearchAppVersions.name is a platform-
-// side breadcrumb independent of local session history. The compact
+// --version-name "${GITHUB_REF_NAME} ${GITHUB_SHA::7}" — the pushed branch
+// and the short sha, two tokens, as the Mate app and the broker read it — in
+// a bash step, which the substring expansion needs. The compact
 // wrapper-action variant cannot express it (zeropsio/actions exposes no
 // version-name input) and must not claim to.
 func TestActionsTemplate_VersionNameSHA(t *testing.T) {
 	t.Parallel()
 
 	self := actionsWorkflowYAML("weather", true, "main")
-	if !strings.Contains(self, `zcli push --service-id "${{ secrets.ZEROPS_SERVICE_ID }}" --setup "weather" -g --version-name "$GITHUB_SHA"`) {
-		t.Errorf("self-target zcli push must carry --version-name \"$GITHUB_SHA\":\n%s", self)
+	if !strings.Contains(self, `zcli push --service-id "${{ secrets.ZEROPS_SERVICE_ID }}" --setup "weather" -g --version-name "${GITHUB_REF_NAME} ${GITHUB_SHA::7}"`) {
+		t.Errorf("self-target zcli push must carry the branch and short sha as its version name:\n%s", self)
 	}
 
 	pair := actionsWorkflowYAML("prod", false, "main")
-	if !strings.Contains(pair, `zcli push --service-id "${{ secrets.ZEROPS_SERVICE_ID }}" --setup "prod" --version-name "$GITHUB_SHA"`) {
-		t.Errorf("pair zcli push must carry --version-name \"$GITHUB_SHA\":\n%s", pair)
+	if !strings.Contains(pair, `zcli push --service-id "${{ secrets.ZEROPS_SERVICE_ID }}" --setup "prod" --version-name "${GITHUB_REF_NAME} ${GITHUB_SHA::7}"`) {
+		t.Errorf("pair zcli push must carry the branch and short sha as its version name:\n%s", pair)
+	}
+	for name, workflow := range map[string]string{"self-target": self, "pair": pair} {
+		if !strings.Contains(workflow, "name: Deploy to Zerops\n        shell: bash\n") {
+			t.Errorf("%s deploy step must run in bash, which ${GITHUB_SHA::7} needs:\n%s", name, workflow)
+		}
 	}
 
 	wrapper := actionsSingleSetupWorkflowYAML("main")

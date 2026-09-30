@@ -61,9 +61,12 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		// Recorded under the build-target hostname so the work session's
 		// auto-close gate (which evaluates resolved targets after Phase 2)
 		// sees the green tick on the right key.
+		// A build target that never ran a deploy has nothing to check yet
+		// (a new Mate's stage waits READY_TO_DEPLOY until its first build):
+		// the service asked for is verified instead.
 		host := input.ServiceHostname
 		var redirectedFrom string
-		if buildHost, _ := resolveBuildTargetForHost(stateDir, host); buildHost != "" && buildHost != host {
+		if buildHost, _ := resolveBuildTargetForHost(stateDir, host); buildHost != "" && buildHost != host && runsDeploy(ctx, client, projectID, buildHost) {
 			redirectedFrom = host
 			host = buildHost
 		}
@@ -78,7 +81,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 			Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 		}
 		if redirectedFrom != "" {
-			resp.Note = fmt.Sprintf("verify: input serviceHostname=%q is a push source; verified build target %q instead (git-push standard pair builds on stage). Pass the build-target hostname directly next time.", redirectedFrom, host)
+			resp.Note = fmt.Sprintf("verify: checked %q, not %q: %q is a push source and %q is its build target (git-push standard pair builds on stage). Pass the build-target hostname directly next time.", host, redirectedFrom, redirectedFrom, host)
 		}
 		// RC-A′: a passing verify on a deferred-start (dev-mode dynamic)
 		// service reflects a LIVE dev-server process, not the app's own
@@ -93,6 +96,21 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		}
 		return jsonResult(resp), nil, nil
 	})
+}
+
+// runsDeploy reports a service that runs a deploy, read lag-free; false when
+// the read fails, so a verify never moves to a target it cannot see.
+func runsDeploy(ctx context.Context, client platform.Client, projectID, hostname string) bool {
+	services, err := client.ListServicesDirect(ctx, projectID)
+	if err != nil {
+		return false
+	}
+	for i := range services {
+		if services[i].Name == hostname {
+			return services[i].HasDeployedCode()
+		}
+	}
+	return false
 }
 
 // verifyResponse wraps ops.VerifyResult with the structured

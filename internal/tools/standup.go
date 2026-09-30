@@ -28,7 +28,9 @@ import (
 // its first deploy (READY_TO_DEPLOY) — and the broker is writing this
 // container's Git variables. What is left is zcp's: read the tier, adopt each
 // pair, put the repository's main into its dev half on the Mate's branch,
-// deploy the dev halves and then the stages, in the tier's priority order.
+// deploy every dev half at once and answer once they stand, then — on the
+// model's second call — each stage once its dev half and the stages above it
+// by the tier's priority stand.
 //
 // Done by the model, that took sixteen minutes on the Beviro trial
 // (2026-09-29): an improvised adopt, then one deploy after another, and a
@@ -49,7 +51,7 @@ const (
 	// while they are still being created.
 	standupRuntimeWait = 5 * time.Minute
 	standupRuntimePoll = 5 * time.Second
-	// standupBatchMax is the most targets one batch carries: past five the
+	// standupBatchMax is the most halves deploying at once: past five the
 	// platform's build queue may fall back to serial scheduling
 	// (zerops_deploy_batch's own advice).
 	standupBatchMax = 5
@@ -107,7 +109,7 @@ func registerStandup(srv *mcp.Server, d standupDeps) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_standup",
 		Description: "Stands up this Mate's development from the group repo's AI Agent tier: adopts each dev/stage pair, " +
-			"checks main out into each dev half, deploys dev halves then stages by priority, reports each service's next step. " +
+			"checks main out into each dev half, deploys dev halves, then stages on a second call in build order, reports each service's next step. " +
 			"Call it first when the person's message is \"Stand up development of the project.\" Idempotent: call again after a fix.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Stand up development from the recipe",
@@ -140,7 +142,7 @@ func (d standupDeps) run(ctx context.Context, progress *standupProgress) *mcp.Ca
 	}
 
 	pairs, live := d.preparePairs(ctx, wiring, src, progress)
-	d.deployWaves(ctx, pairs, progress)
+	d.deployAll(ctx, pairs, live, src.tier.ProjectEnvs, progress)
 	d.observeDevServers(pairs)
 
 	resp := buildStandupResponse(src, pairs, live)
@@ -273,7 +275,10 @@ type standupPair struct {
 	devDeploy                *standupDeploy
 	stageDeploy              *standupDeploy
 	devResult                *ops.DeployResult
-	devServer                *standupDevServer
+	// devRanBefore is a dev half that ran code when the call began: its
+	// stage deploys on this call, else on the next.
+	devRanBefore bool
+	devServer    *standupDevServer
 }
 
 // stoodUp is a pair whose two halves both run code.

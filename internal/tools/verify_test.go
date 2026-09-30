@@ -542,3 +542,63 @@ func TestVerifyTool_DevServerStatusError_FallsBackToStatic(t *testing.T) {
 		t.Fatalf("http_internal check not found in %+v", vr.Checks)
 	}
 }
+
+// TestVerifyTool_PushSourceRedirect: a verify of a git-push pair's dev half
+// goes to its stage only once the stage runs a deploy, and then says which
+// service it checked; a stage that never had one leaves the dev half checked.
+func TestVerifyTool_PushSourceRedirect(t *testing.T) {
+	t.Parallel()
+	deployed := &platform.ActiveAppVersionDigest{ID: "av-1", Source: "CLI", Built: true}
+	tests := []struct {
+		name        string
+		stageStatus string
+		stageCode   *platform.ActiveAppVersionDigest
+		wantHost    string
+		wantNote    string
+	}{
+		{name: "the stage never deployed: the dev half is checked", stageStatus: "READY_TO_DEPLOY", wantHost: "appdev"},
+		{name: "the stage runs a deploy: the stage is checked, and the answer says so", stageStatus: serviceStatusRunning, stageCode: deployed,
+			wantHost: "appstage", wantNote: `checked "appstage"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+				Hostname: "appdev", Mode: topology.PlanModeStandard, StageHostname: "appstage",
+				CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushConfigured,
+				BootstrapSession: "s", BootstrappedAt: "2026-06-01", FirstDeployedAt: "2026-06-01",
+			}); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+			nodeType := platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}
+			mock := platform.NewMock().WithServices([]platform.ServiceStack{
+				{ID: "svc-dev", Name: "appdev", ServiceStackTypeInfo: nodeType, Status: serviceStatusRunning, ActiveAppVersion: deployed},
+				{ID: "svc-stage", Name: "appstage", ServiceStackTypeInfo: nodeType, Status: tt.stageStatus, ActiveAppVersion: tt.stageCode},
+			})
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterVerify(srv, mock, platform.NewMockLogFetcher(), "proj-1", dir, runtime.Info{}, nil)
+
+			result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "appdev"})
+			if result.IsError {
+				t.Fatalf("unexpected error: %s", getTextContent(t, result))
+			}
+			var resp struct {
+				Hostname string `json:"hostname"`
+				Note     string `json:"note"`
+			}
+			if err := json.Unmarshal([]byte(getTextContent(t, result)), &resp); err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if resp.Hostname != tt.wantHost {
+				t.Errorf("checked %q, want %q", resp.Hostname, tt.wantHost)
+			}
+			if tt.wantNote == "" && strings.Contains(resp.Note, "push source") {
+				t.Errorf("note = %q, want no redirect", resp.Note)
+			}
+			if !strings.Contains(resp.Note, tt.wantNote) {
+				t.Errorf("note = %q, want it to say %q", resp.Note, tt.wantNote)
+			}
+		})
+	}
+}

@@ -20,12 +20,13 @@ func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.
 			{ID: "svc-2", Name: "app"},
 		})
 	ssh := &mockSSHDeployer{results: []sshResult{
-		{output: []byte("f0115ba1234567\n")},     // resolve
-		{output: []byte(validCommitZeropsYaml)},  // git show <sha>:zerops.yaml
-		{output: []byte("/tmp/zcp-extract-1\n")}, // mktemp -d
-		{output: []byte("")},                     // extract (archive | tar -x)
-		{output: []byte("ok")},                   // login+push
-		{output: []byte("")},                     // cleanup rm -rf
+		{output: []byte("f0115ba1234567\n")},                    // resolve
+		{output: []byte(validCommitZeropsYaml)},                 // git show <sha>:zerops.yaml
+		{output: []byte("/tmp/zcp-extract-1\n")},                // mktemp -d
+		{output: []byte("")},                                    // extract (archive | tar -x)
+		{output: []byte("0123456789abcdef\nZCP:BRANCH:main\n")}, // HEAD read: main is elsewhere
+		{output: []byte("ok")},                                  // login+push
+		{output: []byte("")},                                    // cleanup rm -rf
 	}}
 	authInfo := testAuthInfo()
 
@@ -37,8 +38,8 @@ func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.
 	if result.SHA != "f0115ba1234567" {
 		t.Errorf("result.SHA = %q, want f0115ba1234567", result.SHA)
 	}
-	if len(ssh.calls) != 6 {
-		t.Fatalf("ssh calls = %d, want 6 (resolve, git show zerops.yaml, mktemp, extract, push, cleanup): %+v", len(ssh.calls), ssh.calls)
+	if len(ssh.calls) != 7 {
+		t.Fatalf("ssh calls = %d, want 7 (resolve, git show zerops.yaml, mktemp, extract, HEAD read, push, cleanup): %+v", len(ssh.calls), ssh.calls)
 	}
 	for _, c := range ssh.calls {
 		if c.hostname != "builder" {
@@ -59,12 +60,14 @@ func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.
 	if !strings.Contains(ssh.calls[3].command, "git archive --format=tar") || !strings.Contains(ssh.calls[3].command, "| tar -x -C") {
 		t.Errorf("call[3] = %q, want the archive|tar pipe", ssh.calls[3].command)
 	}
-	pushCmd := ssh.calls[4].command
+	pushCmd := ssh.calls[5].command
 	if !strings.Contains(pushCmd, "--no-git") {
 		t.Errorf("push command = %q, want --no-git", pushCmd)
 	}
-	if !strings.Contains(pushCmd, "--version-name 'f0115ba1234567'") {
-		t.Errorf("push command = %q, want --version-name 'f0115ba1234567'", pushCmd)
+	// A commit that is not the checked-out branch's tip is labelled
+	// "commit"; its short sha is the commit.
+	if !strings.Contains(pushCmd, "--version-name 'commit f0115ba'") {
+		t.Errorf("push command = %q, want --version-name 'commit f0115ba'", pushCmd)
 	}
 	if !strings.Contains(pushCmd, "cd '/tmp/zcp-extract-1'") {
 		t.Errorf("push command = %q, want to cd into the extracted dir", pushCmd)
@@ -72,8 +75,8 @@ func TestDeploySSH_WithSHA_ResolvesExtractsAndPushesFromExtractedDir(t *testing.
 	if strings.Contains(pushCmd, " -g") {
 		t.Errorf("push command = %q, must not include -g (no .git in an extracted tree)", pushCmd)
 	}
-	if !strings.Contains(ssh.calls[5].command, "rm -rf '/tmp/zcp-extract-1'") {
-		t.Errorf("call[5] = %q, want cleanup of the extracted dir", ssh.calls[5].command)
+	if !strings.Contains(ssh.calls[6].command, "rm -rf '/tmp/zcp-extract-1'") {
+		t.Errorf("call[6] = %q, want cleanup of the extracted dir", ssh.calls[6].command)
 	}
 }
 
@@ -286,8 +289,8 @@ func TestDeploySSH_NoSHA_SourceHasCleanRepo_RecordsHEADAndPassesVersionName(t *t
 	if result.Dirty {
 		t.Error("result.Dirty = true, want false (clean status)")
 	}
-	if result.VersionName != "fullhead1234567" {
-		t.Errorf("result.VersionName = %q, want fullhead1234567 (clean — no -dirty suffix)", result.VersionName)
+	if result.VersionName != "HEAD fullhea" {
+		t.Errorf("result.VersionName = %q, want \"HEAD fullhea\" (no branch read, clean — no -dirty suffix)", result.VersionName)
 	}
 	if result.RepoState != "clean" {
 		t.Errorf("result.RepoState = %q, want clean", result.RepoState)
@@ -302,12 +305,12 @@ func TestDeploySSH_NoSHA_SourceHasCleanRepo_RecordsHEADAndPassesVersionName(t *t
 	// The push command must be EXACTLY what buildSSHCommand produces for
 	// a plain self-deploy carrying this versionName — recording HEAD must
 	// never perturb anything else.
-	want := buildSSHCommand(authInfo, "svc-1", defaultWorkingDir, "", true, "fullhead1234567")
+	want := buildSSHCommand(authInfo, "svc-1", defaultWorkingDir, "", true, "HEAD fullhea")
 	if ssh.calls[1].command != want {
 		t.Errorf("push command = %q, want byte-identical to buildSSHCommand's output %q", ssh.calls[1].command, want)
 	}
-	if !strings.Contains(ssh.calls[1].command, "--version-name 'fullhead1234567'") {
-		t.Errorf("push command must carry --version-name 'fullhead1234567': %s", ssh.calls[1].command)
+	if !strings.Contains(ssh.calls[1].command, "--version-name 'HEAD fullhea'") {
+		t.Errorf("push command must carry --version-name 'HEAD fullhea': %s", ssh.calls[1].command)
 	}
 }
 
@@ -336,8 +339,8 @@ func TestDeploySSH_NoSHA_SourceHasDirtyRepo_RecordsDirty(t *testing.T) {
 	if !result.Dirty {
 		t.Error("result.Dirty = false, want true")
 	}
-	if result.VersionName != "fullhead1234567-dirty" {
-		t.Errorf("result.VersionName = %q, want fullhead1234567-dirty (GF-10 dirty suffix)", result.VersionName)
+	if result.VersionName != "HEAD fullhea-dirty" {
+		t.Errorf("result.VersionName = %q, want \"HEAD fullhea-dirty\" (GF-10 dirty suffix)", result.VersionName)
 	}
 	if result.RepoState != "dirty" {
 		t.Errorf("result.RepoState = %q, want dirty", result.RepoState)

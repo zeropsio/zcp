@@ -8,7 +8,7 @@
 #
 # Priority is the order services are created in, each wave deployed before the
 # next starts: the managed services first, then every runtime before the
-# runtimes that reference it.
+# runtimes whose build reads it.
 
 project:
   name: medusa-juno
@@ -75,23 +75,6 @@ services:
     priority: 10
     objectStorageSize: 5
     objectStoragePolicy: public-read
-
-  - hostname: mailpit
-    type: alpine@3.21
-    priority: 3
-    buildFromGit: https://github.com/zerops-recipe-apps/mailpit-app
-    enableSubdomainAccess: true
-    minContainers: 1
-    maxContainers: 1
-    verticalAutoscaling:
-      cpuMode: SHARED
-      minCpu: 1
-      maxCpu: 2
-      minRam: 0.25
-      maxRam: 1
-    envSecrets:
-      # Set by hand in medusa-juno; set it again here.
-      MP_UI_AUTH: admin:<@generateRandomString(<16>)>
 
   - hostname: medusadev
     type: nodejs@22
@@ -170,3 +153,20 @@ services:
     envSecrets:
       # Set by hand in medusa-juno; set it again here.
       OPENAI_API_KEY: <@generateRandomString(<32>)>
+
+  - hostname: mailpit
+    type: alpine@3.21
+    priority: 1
+    buildFromGit: https://github.com/zerops-recipe-apps/mailpit-app
+    enableSubdomainAccess: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 2
+      minRam: 0.25
+      maxRam: 1
+    envSecrets:
+      # Set by hand in medusa-juno; set it again here.
+      MP_UI_AUTH: admin:<@generateRandomString(<16>)>

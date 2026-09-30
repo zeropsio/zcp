@@ -266,3 +266,41 @@ func TestParseMateTier_Refusals(t *testing.T) {
 		})
 	}
 }
+
+// The tier's project variables are what a build reads through a `${NAME}`.
+func TestParseMateTier_CarriesTheProjectVariables(t *testing.T) {
+	t.Parallel()
+	body := "project:\n  name: acme\n  envVariables:\n    API_URL: https://${apistage_zeropsSubdomain}\n    DEBUG: true\n" +
+		"services:\n  - hostname: apidev\n    type: nodejs@22\n    buildFromGit: " + tierGitea + "/acme/apidev\n  - hostname: apistage\n    type: nodejs@22\n    buildFromGit: " + tierGitea + "/acme/apidev\n"
+	tier, err := ParseMateTier(body, tierGitea, "acme")
+	if err != nil {
+		t.Fatalf("ParseMateTier: %v", err)
+	}
+	if got := tier.ProjectEnvs["API_URL"]; got != "https://${apistage_zeropsSubdomain}" {
+		t.Errorf("API_URL = %q", got)
+	}
+	if got := tier.ProjectEnvs["DEBUG"]; got != "true" {
+		t.Errorf("DEBUG = %q, want the scalar as written", got)
+	}
+}
+
+// A half carries its own service variables as the tier writes them — its
+// envVariables and envSecrets — which a build lifts as ${RUNTIME_X}.
+func TestParseMateTier_CarriesEachHalfsOwnVariables(t *testing.T) {
+	t.Parallel()
+	body := "services:\n" +
+		"  - hostname: storedev\n    type: nodejs@22\n    buildFromGit: " + tierGitea + "/acme/storedev\n" +
+		"  - hostname: storestage\n    type: nodejs@22\n    buildFromGit: " + tierGitea + "/acme/storedev\n" +
+		"    envVariables:\n      API_URL: https://${apistage_zeropsSubdomain}\n    envSecrets:\n      PORT_NUMBER: 8000\n"
+	tier, err := ParseMateTier(body, tierGitea, "acme")
+	if err != nil {
+		t.Fatalf("ParseMateTier: %v", err)
+	}
+	stage := tier.Pairs[0].Stage
+	if stage.Envs["API_URL"] != "https://${apistage_zeropsSubdomain}" || stage.Envs["PORT_NUMBER"] != "8000" {
+		t.Errorf("stage envs = %v", stage.Envs)
+	}
+	if len(tier.Pairs[0].Dev.Envs) != 0 {
+		t.Errorf("dev envs = %v, want none", tier.Pairs[0].Dev.Envs)
+	}
+}

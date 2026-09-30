@@ -490,28 +490,26 @@ func groupTierHeader(inputs GroupRecipeInputs, policy groupTierPolicy) []string 
 		"The " + policy.title + " tier. " + policy.summary,
 		fmt.Sprintf("zcp wrote this file from the Mate %q. It is the group's now: a person may edit it, and zcp never proposes over a tier the group repo already carries.",
 			firstNonBlank(inputs.MateProjectName, inputs.Name)),
-		"Priority is the order services are created in, each wave deployed before the next starts: the managed services first, then every runtime before the runtimes that reference it.",
+		"Priority is the order services are created in, each wave deployed before the next starts: the managed services first, then every runtime before the runtimes whose build reads it.",
 	}
 }
 
 // groupApps is what the priorities rank: every runtime pair, by any name it
-// goes by, with the values that reference what it needs up first — its
-// zerops.yaml's variables and its own service variables — and every utility
-// with its own variables.
+// goes by, with the values its build reads — its zerops.yaml's build
+// variables and the runtime variables they lift, its own service variables
+// among them — and every utility, whose build is the platform's from a
+// public repository and reads nothing of the project's.
 func groupApps(runtimes []GroupRuntime, utilities []GroupUtility) []groupApp {
 	apps := make([]groupApp, 0, len(runtimes)+len(utilities))
 	for _, u := range utilities {
-		sources := make([]string, 0, len(u.ServiceEnvs))
-		for _, env := range u.ServiceEnvs {
-			sources = append(sources, env.Value)
-		}
-		apps = append(apps, groupApp{key: u.Hostname, hostnames: []string{u.Hostname}, sources: sources})
+		apps = append(apps, groupApp{key: u.Hostname, hostnames: []string{u.Hostname}})
 	}
 	for _, r := range runtimes {
-		sources := zeropsYAMLEnvValues(r.ZeropsYAMLBody)
+		serviceEnvs := map[string]string{}
 		for _, env := range append(append([]ProjectEnvVar(nil), r.ServiceEnvs...), r.StageServiceEnvs...) {
-			sources = append(sources, env.Value)
+			serviceEnvs[env.Key] = env.Value
 		}
+		sources := BuildReadValues(r.ZeropsYAMLBody, "", serviceEnvs)
 		apps = append(apps, groupApp{
 			key:       r.DevHostname,
 			hostnames: []string{r.DevHostname, r.StageHostname, GroupPromotedHostname(r.DevHostname)},

@@ -20,6 +20,10 @@ type DeployBatchTarget struct {
 	TargetService string `json:"targetService"`
 	Setup         string `json:"setup,omitempty"`
 	WorkingDir    string `json:"workingDir,omitempty"`
+	// SHA, when set, deploys that commit of the source's repository exactly
+	// (DeploySSH's deploy-from-commit) instead of its working tree. Not an
+	// input of zerops_deploy_batch: set by callers inside zcp.
+	SHA string `json:"-"`
 }
 
 // DeployBatchEntryResult is the outcome for one target inside a batch. The
@@ -104,7 +108,7 @@ func DeployBatchSSH(
 
 			result, err := DeploySSH(
 				ctx, client, projectID, sshDeployer, authInfo,
-				tgt.SourceService, tgt.TargetService, tgt.Setup, tgt.WorkingDir, "",
+				tgt.SourceService, tgt.TargetService, tgt.Setup, tgt.WorkingDir, tgt.SHA,
 			)
 			if err != nil {
 				entry.Error = err.Error()

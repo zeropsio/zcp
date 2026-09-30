@@ -157,3 +157,28 @@ func TestReadHeadAndState_NoRepo_ReturnsNotOkNoError(t *testing.T) {
 		t.Errorf("got sha=%q state=%q ok=%v, want empty/empty/false", sha, state, ok)
 	}
 }
+
+// The branch HEAD is on names the push's app version; a HEAD on no branch
+// reads as none.
+func TestReadSelfDeployPreflight_Branch(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name, line, want string
+	}{
+		{"on a branch", "ZCP:BRANCH:mate/mate-p1\n", "mate/mate-p1"},
+		{"on no branch", "ZCP:BRANCH:\n", ""},
+		{"an older script without the line", "", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := &fakeRunner{results: []fakeResult{{stdout: "ZCP:GITFILE:0\nZCP:SUBMODULES:0\nZCP:HASREPO:1\nZCP:SHA:abc123\n" + tt.line + "ZCP:DIRTY:0\nZCP:REPOSTATE:clean\n"}}}
+			p, err := ReadSelfDeployPreflight(context.Background(), r, "/var/www")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.Branch != tt.want {
+				t.Errorf("Branch = %q, want %q", p.Branch, tt.want)
+			}
+		})
+	}
+}

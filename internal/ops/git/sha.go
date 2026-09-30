@@ -32,23 +32,35 @@ var fullSHA = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 
 var errNotACommitHash = errors.New("git rev-parse did not print a single full commit hash")
 
-// HeadStatus reads the SOURCE's current HEAD sha and whether its working
-// tree is dirty, via one combined `git rev-parse --verify HEAD && git
-// status --porcelain | head -c1` round trip, rooted at dir. Used by a
-// working-tree deploy (no explicit sha) to record what was actually
-// shipped (docs/spec-workflows.md §4.9) — read-only, never touches the
-// push itself. ok=false with no error when dir has no repo or no
-// reachable HEAD yet (a fresh/unborn repo) — not itself a failure, just
-// nothing to record.
-func HeadStatus(ctx context.Context, r Runner, dir string) (sha string, dirty bool, ok bool, err error) {
-	script := "git rev-parse --verify HEAD && git status --porcelain | head -c1"
+// HeadStatus reads the SOURCE's current HEAD sha, the branch HEAD is on ("" on
+// none: detached) and whether its working tree is dirty, via one combined
+// `git rev-parse --verify HEAD`, `git symbolic-ref`, `git status --porcelain
+// | head -c1` round trip, rooted at dir. Used by a working-tree deploy (no
+// explicit sha) to record what was actually shipped and name its app version
+// (docs/spec-workflows.md §4.9, §12.6 GF-10) — read-only, never touches the
+// push itself. ok=false with no error when dir has no repo or no reachable
+// HEAD yet (a fresh/unborn repo) — not itself a failure, just nothing to
+// record.
+func HeadStatus(ctx context.Context, r Runner, dir string) (sha, branch string, dirty, ok bool, err error) {
+	script := `git rev-parse --verify HEAD && printf '` + headBranchMarker + `%s\n' "$(git symbolic-ref -q --short HEAD)" && git status --porcelain | head -c1`
 	out, _, runErr := r.Run(ctx, dir, script)
 	if runErr != nil {
-		return "", false, false, nil //nolint:nilerr // no repo/no HEAD yet is not a failure
+		return "", "", false, false, nil //nolint:nilerr // no repo/no HEAD yet is not a failure
 	}
 	head, rest, _ := strings.Cut(out, "\n")
-	return strings.TrimSpace(head), rest != "", true, nil
+	if line, after, found := strings.Cut(rest, "\n"); strings.HasPrefix(line, headBranchMarker) {
+		branch = strings.TrimSpace(strings.TrimPrefix(line, headBranchMarker))
+		if found {
+			rest = after
+		} else {
+			rest = ""
+		}
+	}
+	return strings.TrimSpace(head), branch, rest != "", true, nil
 }
+
+// headBranchMarker heads HeadStatus's branch line.
+const headBranchMarker = "ZCP:BRANCH:"
 
 // repoStateExpr is a shell expression (no trailing newline on stdout) that
 // classifies the CURRENT repo state of the directory it runs in, assuming

@@ -125,7 +125,7 @@ func TestHeadStatus_RealRepo_CleanThenDirty(t *testing.T) {
 	sha := initRepo(t, repoDir)
 
 	r := LocalRunner{}
-	gotSHA, dirty, ok, err := HeadStatus(ctx, r, repoDir)
+	gotSHA, _, dirty, ok, err := HeadStatus(ctx, r, repoDir)
 	if err != nil {
 		t.Fatalf("HeadStatus (clean): %v", err)
 	}
@@ -142,7 +142,7 @@ func TestHeadStatus_RealRepo_CleanThenDirty(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("changed\n"), 0o644); err != nil {
 		t.Fatalf("dirty the tree: %v", err)
 	}
-	gotSHA, dirty, ok, err = HeadStatus(ctx, r, repoDir)
+	gotSHA, _, dirty, ok, err = HeadStatus(ctx, r, repoDir)
 	if err != nil {
 		t.Fatalf("HeadStatus (dirty): %v", err)
 	}
@@ -166,7 +166,10 @@ func TestHeadStatus_UnbornRepo_ReturnsNotOkNoError(t *testing.T) {
 	if out, err := exec.CommandContext(context.Background(), "git", "init", "-q", repoDir).CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v\n%s", err, out)
 	}
-	_, _, ok, err := HeadStatus(ctx, LocalRunner{}, repoDir)
+	sha, branch, dirty, ok, err := HeadStatus(ctx, LocalRunner{}, repoDir)
+	if sha != "" || branch != "" || dirty {
+		t.Errorf("an unborn HEAD read %q on %q (dirty %v), want nothing", sha, branch, dirty)
+	}
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
