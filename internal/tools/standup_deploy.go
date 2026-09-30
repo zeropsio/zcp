@@ -151,10 +151,8 @@ func standupCircular(after map[string][]string) bool {
 			return false
 		}
 		state[host] = open
-		for _, next := range after[host] {
-			if visit(next) {
-				return true
-			}
+		if slices.ContainsFunc(after[host], visit) {
+			return true
 		}
 		state[host] = closed
 		return false
