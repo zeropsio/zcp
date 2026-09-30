@@ -229,6 +229,65 @@ func TestBuildGroupRecipe_PublicBuildUtility(t *testing.T) {
 	}
 }
 
+// A utility's build names its repository and nothing else: a query or a
+// fragment is dropped, and a URL that carried a user carried a credential —
+// the repository is private, so the tiers name no build for it at all and
+// say its source is set by hand. The platform builds a named setup only from
+// a repository, so the setup goes with it.
+func TestBuildGroupRecipe_UtilityBuildCarriesNoCredential(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, live, wantBuild, wantSetup string
+		wantPrivate                      bool
+	}{
+		{name: "a public repository", live: "https://github.com/zerops-recipe-apps/mailpit-app.git",
+			wantBuild: "https://github.com/zerops-recipe-apps/mailpit-app", wantSetup: "mailpit"},
+		{name: "a query and a fragment are dropped", live: "https://github.com/acme/tool.git?ref=main#readme",
+			wantBuild: "https://github.com/acme/tool", wantSetup: "mailpit"},
+		{name: "a user and a password: a private repository", live: "https://x-access-token:" + fakeGitHubToken + "@github.com/acme/private-tool", wantPrivate: true},
+		{name: "a token for the user: a private repository", live: "https://" + fakeGitHubToken + "@github.com/acme/private-tool", wantPrivate: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			in := groupInputsFixture()
+			in.MateProjectName = "acme-juno"
+			in.Utilities = []GroupUtility{{Hostname: "mailpit", ServiceType: "alpine@3.21", BuildFromGit: tt.live, SetupName: "mailpit"}}
+			layout, _, err := BuildGroupRecipe(in)
+			if err != nil {
+				t.Fatalf("BuildGroupRecipe: %v", err)
+			}
+			for _, tier := range layout.Tiers {
+				mailpit := serviceNode(t, tier.ImportYAML, "mailpit")
+				got := map[string]string{}
+				for _, key := range []string{"buildFromGit", "zeropsSetup"} {
+					if node := mappingValue(mailpit, key); node != nil {
+						got[key] = node.Value
+					}
+				}
+				want := map[string]string{"buildFromGit": tt.wantBuild, "zeropsSetup": tt.wantSetup}
+				if tt.wantPrivate {
+					want = map[string]string{}
+				}
+				if !maps.Equal(got, want) {
+					t.Errorf("%s: mailpit = %v, want %v", tier.Title, got, want)
+				}
+				comment := strings.ToLower(mailpit.HeadComment)
+				says := strings.Contains(comment, "private repository") && strings.Contains(comment, "acme-juno") && strings.Contains(comment, "by hand")
+				if says != tt.wantPrivate {
+					t.Errorf("%s: mailpit's comment is %q; want one saying it builds from a private repository in acme-juno and its source is set by hand: %v",
+						tier.Title, mailpit.HeadComment, tt.wantPrivate)
+				}
+			}
+			for path, body := range groupFiles(t, layout) {
+				if strings.Contains(body, fakeGitHubToken) || strings.Contains(body, "?ref=") || strings.Contains(body, "#readme") {
+					t.Errorf("%s carries more of the build URL than its repository", path)
+				}
+			}
+		})
+	}
+}
+
 // A utility named like a group environment's runtime would give that tier
 // the hostname twice, which the import refuses: it stays on the Mate's tier
 // only, and the composer says why.

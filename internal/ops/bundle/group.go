@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"fmt"
+	"net/url"
 	"slices"
 	"sort"
 	"strings"
@@ -121,7 +122,9 @@ type GroupRecipeInputs struct {
 type GroupUtility struct {
 	Hostname    string
 	ServiceType string
-	// BuildFromGit is the public repository its active version was built from.
+	// BuildFromGit is the public repository its active version was built
+	// from. The tiers carry its repository alone; a URL that carries a user
+	// names a private one, and the tiers name no build for it.
 	BuildFromGit string
 	// SetupName is the setup its build named; empty lets the platform build
 	// the setup named after the hostname, as an import that named none did.
@@ -426,8 +429,8 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 		if !policy.pairs && plan.mateOnly[u.Hostname] {
 			continue
 		}
-		entry := groupUtilityEntry(u, priorities[u.Hostname], source, promote)
-		ranked = append(ranked, rankedItem{priorities[u.Hostname], yamlItem{fields: orderedFields(entry, serviceKeyOrder)}})
+		entry, comment := groupUtilityEntry(u, priorities[u.Hostname], source, promote)
+		ranked = append(ranked, rankedItem{priorities[u.Hostname], yamlItem{comment: comment, fields: orderedFields(entry, serviceKeyOrder)}})
 	}
 	for _, m := range plan.managed {
 		// A type with no HA variant stays single-node where the rest are
@@ -542,16 +545,24 @@ func groupUtilities(in []GroupUtility, runtimes []GroupRuntime) ([]GroupUtility,
 }
 
 // groupUtilityEntry writes a utility as the project runs it: its public build
-// and its own scale, on every tier alike.
-func groupUtilityEntry(u GroupUtility, priority int, source string, promote func(string) string) map[string]any {
+// and its own scale, on every tier alike. A build URL that carried a user
+// carried a credential, so the repository is private: the entry names no
+// build — nor the setup, which the platform builds only from a repository —
+// and the comment it returns says the source is set by hand.
+func groupUtilityEntry(u GroupUtility, priority int, source string, promote func(string) string) (map[string]any, string) {
 	entry := map[string]any{
-		"hostname":     u.Hostname,
-		"type":         u.ServiceType,
-		"priority":     priority,
-		"buildFromGit": topology.CanonicalRepoURL(u.BuildFromGit),
+		"hostname": u.Hostname,
+		"type":     u.ServiceType,
+		"priority": priority,
 	}
-	if u.SetupName != "" {
-		entry["zeropsSetup"] = u.SetupName
+	var comment string
+	if repo, private := publicRepoURL(u.BuildFromGit); private {
+		comment = fmt.Sprintf("Built from a private repository in %s; set its source by hand.", source)
+	} else {
+		entry["buildFromGit"] = repo
+		if u.SetupName != "" {
+			entry["zeropsSetup"] = u.SetupName
+		}
 	}
 	if u.SubdomainEnabled {
 		entry["enableSubdomainAccess"] = true
@@ -560,7 +571,20 @@ func groupUtilityEntry(u GroupUtility, priority int, source string, promote func
 	if secrets := serviceSecretFields(u.ServiceEnvs, source, promote); len(secrets) > 0 {
 		entry["envSecrets"] = secrets
 	}
-	return entry
+	return entry, comment
+}
+
+// publicRepoURL is a repository URL as a recipe carries it: canonical, with
+// no query and no fragment. private reports a URL that carried a user — a
+// token, or a password beside one — or does not parse: a private repository
+// the recipe names nowhere.
+func publicRepoURL(raw string) (repo string, private bool) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.User != nil {
+		return "", true
+	}
+	u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment = "", false, "", ""
+	return topology.CanonicalRepoURL(u.String()), false
 }
 
 // managedVertical is the vertical scale a managed service is written with:
