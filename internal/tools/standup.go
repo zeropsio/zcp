@@ -142,7 +142,7 @@ func (d standupDeps) run(ctx context.Context, progress *standupProgress) *mcp.Ca
 	}
 
 	pairs, live := d.preparePairs(ctx, wiring, src, progress)
-	d.deployAll(ctx, pairs, live, progress)
+	d.deployAll(ctx, pairs, live, src.tier.ProjectEnvs, progress)
 	d.observeDevServers(pairs)
 
 	resp := buildStandupResponse(src, pairs, live)

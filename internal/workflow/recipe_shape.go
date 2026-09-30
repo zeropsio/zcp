@@ -161,6 +161,9 @@ func ParseRecipeImportShape(importYAML string) (RecipeImportShape, error) {
 // the corpus recipes the recipe route reads and a group's tiers the stand-up
 // reads (ParseMateTier) alike.
 type recipeImportDoc struct {
+	Project struct {
+		EnvVariables map[string]any `yaml:"envVariables"`
+	} `yaml:"project"`
 	Services []recipeImportService `yaml:"services"`
 }
 

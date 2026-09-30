@@ -28,8 +28,9 @@ import (
 
 // standupTierTemplate is a real group's AI Agent tier (the Beviro trial,
 // 2026-09-29) with GITEA standing for the fake Gitea's origin: two pairs
-// whose setups are named after them, the API pair first by priority, a
-// public-build mailpit and a managed database.
+// whose setups are named after them, no priority between them — their order
+// is what the storefront's build reads (standupZeropsYAML) — a public-build
+// mailpit and a managed database.
 const standupTierTemplate = `#yamlPreprocessor=on
 project:
   name: beviro-wren
@@ -47,13 +48,11 @@ services:
     type: nodejs@22
     buildFromGit: GITEA/beviro/medusadev
     zeropsSetup: medusadev
-    priority: 5
   - hostname: medusastage
     type: nodejs@22
     buildFromGit: GITEA/beviro/medusadev
     zeropsSetup: medusaprod
     enableSubdomainAccess: true
-    priority: 5
   - hostname: mailpit
     type: alpine@3.20
     buildFromGit: https://github.com/zeropsio/recipe-mailpit
@@ -64,8 +63,13 @@ services:
 `
 
 // standupZeropsYAML is each dev half's zerops.yaml as main carries it: the
-// dev setup deploys the whole repository and idles on a no-op keepalive.
+// dev setup deploys the whole repository and idles on a no-op keepalive; the
+// storefront's stage build pre-renders from the API's stage.
 func standupZeropsYAML(pair string) string {
+	buildEnv := ""
+	if pair == "nextstore" {
+		buildEnv = "\n      envVariables:\n        NEXT_PUBLIC_MEDUSA_BACKEND_URL: https://${medusastage_zeropsSubdomain}"
+	}
 	return fmt.Sprintf(`zerops:
   - setup: %[1]sdev
     build:
@@ -82,14 +86,14 @@ func standupZeropsYAML(pair string) string {
     build:
       base: nodejs@22
       buildCommands: [npm ci, npm run build]
-      deployFiles: [.]
+      deployFiles: [.]%[2]s
     run:
       base: nodejs@22
       ports:
         - port: 9000
           httpSupport: true
       start: npm run start
-`, pair)
+`, pair, buildEnv)
 }
 
 // standupGitea is the broker and the group's Gitea in one TLS server — two
@@ -963,6 +967,22 @@ func TestStandup_ReturnsOnceDevelopmentIsUp(t *testing.T) {
 			},
 			wantSaid: map[string]string{"nextstorestage": "nextstoredev did not deploy"},
 			wantNext: []string{"zerops_standup"},
+		},
+		{
+			name: "a dev half whose build reads a failed dev half waits for it and says so",
+			setup: func(f *standupFixture) {
+				body := strings.Replace(standupZeropsYAML("nextstore"), "buildCommands: [npm ci]",
+					"buildCommands: [npm ci]\n      envVariables:\n        API: ${medusadev_zeropsSubdomain}", 1)
+				if err := os.WriteFile(filepath.Join(f.root, "nextstoredev", "zerops.yaml"), []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				f.failBuild("svc-medusadev")
+			},
+			wantStandUp: standupFailed,
+			wantPushes:  []string{medusadev},
+			wantStatus:  map[string]string{"medusadev": standupDeployFailed, "nextstoredev": standupNotDeployed},
+			wantSaid:    map[string]string{"nextstoredev": "waits for medusadev, which did not stand up"},
+			wantNext:    []string{"zerops_standup"},
 		},
 		{
 			name:        "the second call, the dev halves running: only the stages deploy, in order",

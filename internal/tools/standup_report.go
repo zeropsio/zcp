@@ -132,7 +132,7 @@ func buildStandupResponse(src standupSource, pairs []*standupPair, live map[stri
 // the stages are queued: development first, then the stages on a second call.
 const standupDevelopmentNext = "Every dev half runs main's code on this Mate's branch; the stages are queued. " +
 	"Start each dev half's dev server with zerops_dev_server as its next step says, verify it, and tell the person development is up, with each dev half's address. " +
-	"Then call zerops_standup again in this turn: it builds the stages — this Mate's preview of main — each after its dev half and the stages above it by priority, and waits for them. " +
+	"Then call zerops_standup again in this turn: it builds the stages — this Mate's preview of main — each after its dev half and what its build reads, and waits for them. " +
 	"Until that call the stages wait for their first deploy (READY_TO_DEPLOY), which breaks nothing. Nothing was committed, pushed or proposed."
 
 // standupStoppedNext is the model's way on from a stand-up that stopped short:

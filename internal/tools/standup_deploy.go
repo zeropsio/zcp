@@ -13,6 +13,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -26,27 +27,29 @@ import (
 // names — deploys the stages through the same order. A stage never called for
 // stays as the import left it, which breaks nothing.
 //
-// A dev half's build installs dependencies and reads no API — every dev
-// setup of the recipes zcp knows is an install (`npm install`, `composer
-// install`, `go mod download`, …) and no dev setup's build variables name
-// another service — so every dev half starts at once.
+// What orders the halves is what each build reads of the others
+// (standupReads): the pair's zerops.yaml names it in each setup's
+// build.envVariables — a storefront's stage build pre-renders from its API's
+// stage — and the recipe writer designed the tier's priorities from the same
+// reads (bundle.BuildReadValues). A dev half's build installs dependencies —
+// every dev setup of the recipes zcp knows is an install and reads no other
+// service — so every dev half starts at once unless its build reads another
+// dev half. A recipe whose builds read nothing of each other falls back to
+// its priority: a stage then waits for every stage above it.
 //
-// A stage waits for two things. Its own dev half: the stage is
-// cross-deployed from the dev half's checkout, and ops.DeploySSH serialises
-// every deploy from one source container on a per-source git lock held across
-// the whole `zcli push`, which blocks until the pipeline ends — started
-// together, the pair's two deploys would still run one after the other, in
-// whichever order the goroutines take the lock, and with the dev push first
-// its SSH session dies as the new container replaces the old one (the
-// "common exit 255") under a cross-deploy that may then dial a container
-// still starting. After its dev half, the stage deploys once that build
-// succeeded and its new container answered SSH (pollDeployBuild waits for
-// it), reads what that build deployed — the whole repository, deployFiles
-// [.] — and is skipped when the dev half failed, whose stage would only fail
-// the same way. And every stage above it by priority: the priority is the
-// order the recipe's author gave the import, so what a stage's build reads (a
-// storefront pre-rendering from its API's stage) is up before it. A stage
-// whose higher stage did not stand up says what it waited for.
+// A stage also waits for its own dev half: the stage is cross-deployed from
+// the dev half's checkout, and ops.DeploySSH serialises every deploy from one
+// source container on a per-source git lock held across the whole `zcli
+// push`, which blocks until the pipeline ends — started together, the pair's
+// two deploys would still run one after the other, in whichever order the
+// goroutines take the lock, and with the dev push first its SSH session dies
+// as the new container replaces the old one (the "common exit 255") under a
+// cross-deploy that may then dial a container still starting. After its dev
+// half, the stage deploys once that build succeeded and its new container
+// answered SSH (pollDeployBuild waits for it), reads what that build
+// deployed — the whole repository, deployFiles [.] — and is skipped when the
+// dev half failed, whose stage would only fail the same way. A half whose
+// wait ended with something it reads not standing says what it waited for.
 
 // standupDeploy is one half's deploy, as the report says it.
 type standupDeploy struct {
@@ -75,9 +78,17 @@ func (d *standupDeploy) running() bool {
 }
 
 // standupAfter maps every half of the pairs to the halves that must run code
-// before it deploys, sorted: nothing for a dev half; for a stage, its own dev
-// half and the stage of every pair above it by priority.
-func standupAfter(pairs []workflow.MateTierPair) map[string][]string {
+// before it deploys, sorted. reads is what each half's build reads of the
+// other halves (standupReads): a stage waits for its own dev half and for
+// what its build reads; a dev half waits for the dev halves its build reads —
+// never a stage, which comes after development. With no such read, or reads
+// that go round in a circle, the tier's priority orders the stages instead:
+// nothing for a dev half, and for a stage its own dev half and the stage of
+// every pair above it.
+func standupAfter(pairs []workflow.MateTierPair, reads map[string][]string) map[string][]string {
+	if after, ok := standupAfterReads(pairs, reads); ok {
+		return after
+	}
 	after := make(map[string][]string, 2*len(pairs))
 	for _, p := range pairs {
 		after[p.Dev.Hostname] = nil
@@ -93,13 +104,121 @@ func standupAfter(pairs []workflow.MateTierPair) map[string][]string {
 	return after
 }
 
+// standupAfterReads is standupAfter from the build-time reads; false when
+// they order nothing or cannot be kept.
+func standupAfterReads(pairs []workflow.MateTierPair, reads map[string][]string) (map[string][]string, bool) {
+	dev := map[string]bool{}
+	known := map[string]bool{}
+	for _, p := range pairs {
+		dev[p.Dev.Hostname], known[p.Dev.Hostname], known[p.Stage.Hostname] = true, true, true
+	}
+	after := make(map[string][]string, 2*len(pairs))
+	ordered := false
+	add := func(host string, waits []string, allowed func(string) bool) []string {
+		for _, read := range reads[host] {
+			if read != host && known[read] && allowed(read) && !slices.Contains(waits, read) {
+				waits = append(waits, read)
+				ordered = true
+			}
+		}
+		slices.Sort(waits)
+		return waits
+	}
+	for _, p := range pairs {
+		after[p.Dev.Hostname] = add(p.Dev.Hostname, nil, func(read string) bool { return dev[read] })
+		after[p.Stage.Hostname] = add(p.Stage.Hostname, []string{p.Dev.Hostname}, func(string) bool { return true })
+	}
+	if !ordered || standupCircular(after) {
+		return nil, false
+	}
+	return after, true
+}
+
+// standupCircular reports halves that wait for each other, however far round.
+func standupCircular(after map[string][]string) bool {
+	const (
+		unseen = iota
+		open
+		closed
+	)
+	state := map[string]int{}
+	var visit func(host string) bool
+	visit = func(host string) bool {
+		switch state[host] {
+		case open:
+			return true
+		case closed:
+			return false
+		}
+		state[host] = open
+		for _, next := range after[host] {
+			if visit(next) {
+				return true
+			}
+		}
+		state[host] = closed
+		return false
+	}
+	for host := range after {
+		if visit(host) {
+			return true
+		}
+	}
+	return false
+}
+
+// standupReads is what each half's build reads of the other halves, from its
+// own setup in its pair's zerops.yaml (bodies, by dev hostname) — directly,
+// through a runtime variable it lifts, or through the tier's project
+// variables (bundle.BuildReadValues, bundle.ReferencedHosts). A half that
+// reads none is left out.
+func standupReads(pairs []workflow.MateTierPair, bodies, projectEnvs map[string]string) map[string][]string {
+	hosts := make([]string, 0, 2*len(pairs))
+	for _, p := range pairs {
+		hosts = append(hosts, p.Dev.Hostname, p.Stage.Hostname)
+	}
+	reads := map[string][]string{}
+	for _, p := range pairs {
+		body := bodies[p.Dev.Hostname]
+		for _, half := range []workflow.MateTierRuntime{p.Dev, p.Stage} {
+			var read []string
+			for _, h := range bundle.ReferencedHosts(bundle.BuildReadValues(body, half.Setup, nil), hosts, projectEnvs) {
+				if h != half.Hostname {
+					read = append(read, h)
+				}
+			}
+			if len(read) > 0 {
+				reads[half.Hostname] = read
+			}
+		}
+	}
+	return reads
+}
+
+// standupBodies reads each pair's zerops.yaml from its dev half's mount, as
+// main carries it once checked out; a pair whose file is not readable reads
+// nothing, and the priority orders it.
+func standupBodies(mountRoot string, pairs []*standupPair) map[string]string {
+	bodies := map[string]string{}
+	for _, sp := range pairs {
+		host := sp.pair.Dev.Hostname
+		for _, name := range []string{"zerops.yaml", "zerops.yml"} {
+			if body, err := os.ReadFile(filepath.Join(mountRoot, host, name)); err == nil {
+				bodies[host] = string(body)
+				break
+			}
+		}
+	}
+	return bodies
+}
+
 // deployAll deploys every half of the pairs that got to their deploy, each as
 // soon as the halves it waits for (standupAfter) are done, at most
 // standupBatchMax at once. A stage whose dev half ran no code when the call
 // began is queued for the next call instead: the answer comes once the dev
 // halves stand. A half whose wait ended with one of them not running code is
 // not deployed and says which. live is the project as the call found it.
-func (d standupDeps) deployAll(ctx context.Context, pairs []*standupPair, live map[string]*platform.ServiceStack, progress *standupProgress) {
+func (d standupDeps) deployAll(ctx context.Context, pairs []*standupPair, live map[string]*platform.ServiceStack, projectEnvs map[string]string, progress *standupProgress) {
 	tier := make([]workflow.MateTierPair, 0, len(pairs))
 	halves := make(map[string]standupHalf, 2*len(pairs))
 	for _, sp := range pairs {
@@ -112,7 +231,7 @@ func (d standupDeps) deployAll(ctx context.Context, pairs []*standupPair, live m
 		halves[p.Stage.Hostname] = standupHalf{pair: sp,
 			target: ops.DeployBatchTarget{SourceService: p.Dev.Hostname, TargetService: p.Stage.Hostname, Setup: p.Stage.Setup}}
 	}
-	after := standupAfter(tier)
+	after := standupAfter(tier, standupReads(tier, standupBodies(projectRootFromState(d.batch.stateDir), pairs), projectEnvs))
 	done := make(map[string]chan struct{}, len(halves))
 	for host := range halves {
 		done[host] = make(chan struct{})
@@ -169,25 +288,24 @@ func (h standupHalf) queued() bool {
 
 // held is what becomes of a half whose wait is over and that does not deploy
 // on this call, nil when it does. A stage built from a dev half that runs no
-// code is not deployed; one whose dev half this call deployed is queued for
-// the next; one waiting for stages above it that did not stand up is not
-// deployed, and one waiting only for queued stages is queued with them.
+// code is not deployed, and one whose dev half this call deployed is queued
+// for the next. A half waiting for halves that did not stand up is not
+// deployed; one waiting only for queued stages is queued with them.
 func (h standupHalf) held(halves map[string]standupHalf, waited []string) *standupDeploy {
-	if h.dev {
-		return nil
-	}
 	dev := h.pair.pair.Dev.Hostname
-	if !h.pair.devDeploy.running() {
-		return &standupDeploy{Status: standupNotDeployed, Reason: fmt.Sprintf("%s did not deploy, and the stage is built from it", dev)}
-	}
-	if !h.pair.devRanBefore {
-		return &standupDeploy{Status: standupQueued,
-			Reason: fmt.Sprintf("%s was deployed on this call, and the stage builds on the next zerops_standup call", dev)}
+	if !h.dev {
+		if !h.pair.devDeploy.running() {
+			return &standupDeploy{Status: standupNotDeployed, Reason: fmt.Sprintf("%s did not deploy, and the stage is built from it", dev)}
+		}
+		if !h.pair.devRanBefore {
+			return &standupDeploy{Status: standupQueued,
+				Reason: fmt.Sprintf("%s was deployed on this call, and the stage builds on the next zerops_standup call", dev)}
+		}
 	}
 	var down, queued []string
 	for _, host := range waited {
 		switch above := halves[host]; {
-		case host == dev || above.running():
+		case (!h.dev && host == dev) || above.running():
 		case above.queued():
 			queued = append(queued, host)
 		default:
@@ -197,10 +315,10 @@ func (h standupHalf) held(halves map[string]standupHalf, waited []string) *stand
 	switch {
 	case len(down) > 0:
 		return &standupDeploy{Status: standupNotDeployed,
-			Reason: fmt.Sprintf("waits for %s, which did not stand up: a stage is built after every stage above it by priority, whose API its build may read", strings.Join(down, ", "))}
+			Reason: fmt.Sprintf("waits for %s, which did not stand up: it is built after what its build reads, or after the stages above it by priority when the recipe's builds read nothing of each other", strings.Join(down, ", "))}
 	case len(queued) > 0:
 		return &standupDeploy{Status: standupQueued,
-			Reason: fmt.Sprintf("waits for %s, which builds on the next zerops_standup call: a stage is built after every stage above it by priority", strings.Join(queued, ", "))}
+			Reason: fmt.Sprintf("waits for %s, which builds on the next zerops_standup call", strings.Join(queued, ", "))}
 	}
 	return nil
 }

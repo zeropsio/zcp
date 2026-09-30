@@ -93,6 +93,9 @@ type MateTierSkip struct {
 type MateTier struct {
 	Pairs   []MateTierPair
 	Skipped []MateTierSkip
+	// ProjectEnvs are the project's envVariables, as the tier writes them:
+	// what a build reads through a `${NAME}`.
+	ProjectEnvs map[string]string
 }
 
 // ParseMateTier reads a group's AI Agent tier. giteaURL is the group's Gitea
@@ -202,6 +205,12 @@ func ParseMateTier(importYAML, giteaURL, org string) (MateTier, error) {
 			held = append(held, s.Hostname+" ("+string(s.Reason)+")")
 		}
 		return tier, fmt.Errorf("%w; it holds %s", ErrMateTierNoPairs, strings.Join(held, ", "))
+	}
+	if len(doc.Project.EnvVariables) > 0 {
+		tier.ProjectEnvs = make(map[string]string, len(doc.Project.EnvVariables))
+		for key, value := range doc.Project.EnvVariables {
+			tier.ProjectEnvs[key] = fmt.Sprint(value)
+		}
 	}
 	return tier, nil
 }

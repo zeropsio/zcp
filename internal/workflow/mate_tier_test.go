@@ -266,3 +266,20 @@ func TestParseMateTier_Refusals(t *testing.T) {
 		})
 	}
 }
+
+// The tier's project variables are what a build reads through a `${NAME}`.
+func TestParseMateTier_CarriesTheProjectVariables(t *testing.T) {
+	t.Parallel()
+	body := "project:\n  name: acme\n  envVariables:\n    API_URL: https://${apistage_zeropsSubdomain}\n    DEBUG: true\n" +
+		"services:\n  - hostname: apidev\n    type: nodejs@22\n    buildFromGit: " + tierGitea + "/acme/apidev\n  - hostname: apistage\n    type: nodejs@22\n    buildFromGit: " + tierGitea + "/acme/apidev\n"
+	tier, err := ParseMateTier(body, tierGitea, "acme")
+	if err != nil {
+		t.Fatalf("ParseMateTier: %v", err)
+	}
+	if got := tier.ProjectEnvs["API_URL"]; got != "https://${apistage_zeropsSubdomain}" {
+		t.Errorf("API_URL = %q", got)
+	}
+	if got := tier.ProjectEnvs["DEBUG"]; got != "true" {
+		t.Errorf("DEBUG = %q, want the scalar as written", got)
+	}
+}
