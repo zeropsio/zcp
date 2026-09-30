@@ -276,20 +276,28 @@ func TestPersistedCredentialHelper_TokenByShellAndHost(t *testing.T) {
 	mateShell := map[string]string{"GITEA_TOKEN": helperBotToken}
 	both := map[string]string{"GIT_TOKEN": helperGitToken, "GITEA_TOKEN": helperBotToken}
 
+	const (
+		ipv6Gitea       = "https://[fd00::1]"
+		underscoreGitea = "https://my_gitea.example.com"
+	)
 	tests := []struct {
 		name     string
 		remote   string
 		giteaURL string
 		env      map[string]string
+		ask      string // the URL git asks a credential for; "" = the remote
 		want     string
 	}{
-		{"the Mate's shell on its Gitea answers the bot token", helperGiteaRepo, helperGiteaURL, mateShell, helperBotToken},
-		{"the dev service on the Gitea answers its service secret", helperGiteaRepo, helperGiteaURL, devSession, helperGitToken},
-		{"the service secret wins where both are set", helperGiteaRepo, helperGiteaURL, both, helperGitToken},
-		{"github.com never gets the bot token", helperGitHubRepo, helperGiteaURL, mateShell, ""},
-		{"github.com answers the service secret", helperGitHubRepo, helperGiteaURL, both, helperGitToken},
-		{"another host never gets the bot token", "https://code.example.invalid/acme/appdev.git", helperGiteaURL, mateShell, ""},
-		{"a Mate with no Gitea wiring falls back to nothing", helperGiteaRepo, "", mateShell, ""},
+		{"the Mate's shell on its Gitea answers the bot token", helperGiteaRepo, helperGiteaURL, mateShell, "", helperBotToken},
+		{"the dev service on the Gitea answers its service secret", helperGiteaRepo, helperGiteaURL, devSession, "", helperGitToken},
+		{"the service secret wins where both are set", helperGiteaRepo, helperGiteaURL, both, "", helperGitToken},
+		{"github.com never gets the bot token", helperGitHubRepo, helperGiteaURL, mateShell, "", ""},
+		{"github.com answers the service secret", helperGitHubRepo, helperGiteaURL, both, "", helperGitToken},
+		{"another host never gets the bot token", "https://code.example.invalid/acme/appdev.git", helperGiteaURL, mateShell, "", ""},
+		{"a Mate with no Gitea wiring falls back to nothing", helperGiteaRepo, "", mateShell, "", ""},
+		{"a Gitea on an IPv6 literal never answers github.com", ipv6Gitea + "/acme/appdev.git", ipv6Gitea, mateShell, helperGitHubRepo, ""},
+		{"a Gitea whose name has an underscore never answers github.com", underscoreGitea + "/acme/appdev.git", underscoreGitea, mateShell, helperGitHubRepo, ""},
+		{"a remote whose host is no credential scope answers github.com nothing, even in the dev service", ipv6Gitea + "/acme/appdev.git", ipv6Gitea, devSession, helperGitHubRepo, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -298,8 +306,12 @@ func TestPersistedCredentialHelper_TokenByShellAndHost(t *testing.T) {
 			if out, err := gitShell(t, repo, home, nil, "", BuildGitOriginSyncCommand(repo, tt.remote, tt.giteaURL)); err != nil {
 				t.Fatalf("origin sync: %v\n%s", err, out)
 			}
-			if got := answeredPassword(t, repo, home, tt.env, tt.remote); got != tt.want {
-				t.Errorf("the helper answered %q, want %q", got, tt.want)
+			ask := tt.ask
+			if ask == "" {
+				ask = tt.remote
+			}
+			if got := answeredPassword(t, repo, home, tt.env, ask); got != tt.want {
+				t.Errorf("asked for %s, the helper answered %q, want %q", ask, got, tt.want)
 			}
 		})
 	}

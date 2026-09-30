@@ -27,14 +27,14 @@ func TestGitCommandBuilders_QuoteDynamicInputs(t *testing.T) {
 		t.Errorf("workingDir should be single-quoted:\n%s", cmd)
 	}
 
-	// A crafted host (with $/backtick) must be rejected → default host in the
-	// url-scoped credential config key the origin-sync builder emits. (The
-	// push builder itself no longer interpolates a host anywhere — auth is
-	// the inline helper; the key is also shell-quoted, so this is defense in
-	// depth + scoping correctness, not the only barrier.)
+	// A crafted host (with $/backtick) must be rejected: the origin-sync
+	// builder persists no helper for it at all — never one under the default
+	// host, which would answer github.com with this remote's token. (The key
+	// is also shell-quoted, so this is scoping correctness plus defense in
+	// depth, not the only barrier.)
 	syncEvil := BuildGitOriginSyncCommand("/var/www", "https://ho$(whoami)st/o/r", "")
-	if !strings.Contains(syncEvil, "'credential.https://github.com.helper'") {
-		t.Errorf("invalid host should fall back to the default host in the credential config key:\n%s", syncEvil)
+	if strings.Contains(syncEvil, "credential.https://") {
+		t.Errorf("an invalid host must get no persisted helper:\n%s", syncEvil)
 	}
 
 	// Origin-sync builder quotes workingDir too.

@@ -2,6 +2,8 @@ package ops
 
 import (
 	"fmt"
+	"net/url"
+	"strings"
 
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -127,33 +129,58 @@ func SelfBuildTarget(pushSource, buildTarget string) bool {
 // remote's host (`credential.https://<host>.helper` — a GLOBAL helper
 // would answer for ANY https host, including an untrusted second remote;
 // url-scoping is parity with the retired .netrc `machine <host>` line).
-// parseGitHost stays the single host-derivation owner.
 //
 // Persisting the helper serves git invocations OUTSIDE ZCP's own commands
-// (manual `ssh <host> git push`, user tooling) — ZCP's own operations carry
-// the helper per-invocation via gitCredentialHelperArgs and do not depend
-// on this config state. Because the helper lives in .git/config, it rides
-// the `-g` artifact into replacement containers exactly like the deploy
-// identity does.
+// (manual `ssh <host> git push`, the Mate's own shell on the mount, user
+// tooling) — ZCP's own operations carry the helper per-invocation via
+// gitCredentialHelperArgs and do not depend on this config state. Because
+// the helper lives in .git/config, it rides the `-g` artifact into
+// replacement containers exactly like the deploy identity does.
 //
 // The helper's text depends on the host: a remote on the Mate's Gitea
 // (giteaURL, "" on a container with no Gitea wiring) gets the helper that
 // also answers the Mate's shell (giteaCredentialHelperShell); every other
-// host answers GIT_TOKEN only.
+// host answers GIT_TOKEN only. A remote whose host cannot be a scope (an
+// IPv6 literal, a name with an underscore, metacharacters) gets no helper at
+// all: parseGitHost's github.com default is never a scope, since a helper
+// stored there would answer github.com with this remote's token.
 //
 // The trailing `rm -f ~/.netrc` is the one-way migration off the
 // ephemeral-.netrc era: any stray fail-open residue dies the first time
 // the single owner re-asserts wiring.
 func gitCredentialHelperConfigFragment(remoteURL, giteaURL string) string {
-	host := parseGitHost(remoteURL)
+	return gitCredentialHelperWriteFragment(remoteURL, giteaURL) + " && rm -f ~/.netrc"
+}
+
+// gitCredentialHelperWriteFragment is the helper write alone — the no-op `:` when
+// the remote's host is no scope to write it under.
+func gitCredentialHelperWriteFragment(remoteURL, giteaURL string) string {
+	host, ok := gitCredentialScopeHost(remoteURL)
+	if !ok {
+		return ":"
+	}
 	helper := gitCredentialHelperShell
 	if topology.ClassifyGitHost(remoteURL, giteaURL) == topology.GitHostGitea {
 		helper = giteaCredentialHelperShell
 	}
-	return fmt.Sprintf("git config %s %s && rm -f ~/.netrc",
+	return fmt.Sprintf("git config %s %s",
 		shellQuote("credential.https://"+host+".helper"),
 		shellQuote(helper),
 	)
+}
+
+// gitCredentialScopeHost is the host a persisted helper is stored under, and
+// whether the remote has one: parseGitHost's answer only when it is the
+// remote's own host rather than its default.
+func gitCredentialScopeHost(remoteURL string) (string, bool) {
+	host := parseGitHost(remoteURL)
+	if host != defaultGitHost {
+		return host, true
+	}
+	if u, err := url.Parse(remoteURL); err == nil && strings.Contains(remoteURL, "://") {
+		return host, strings.EqualFold(u.Hostname(), defaultGitHost)
+	}
+	return host, strings.HasPrefix(strings.ToLower(remoteURL), defaultGitHost+"/")
 }
 
 // BuildGitCredentialHelperAssertCommand re-persists the helper origin sync
