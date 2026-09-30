@@ -60,7 +60,7 @@ func RewriteRecipeImportYAMLFromShape(recipe string, overrides RecipeShapeOverri
 			// runtimes (only the dev container + managed deps are provisioned) —
 			// keeping the import YAML in lockstep with the narrowed plan (single
 			// owner: both derive from shape+overrides).
-			if overrides.DevOnly && roleKindFromSetup(setup) != RecipeRuntimeRoleDev {
+			if overrides.DevOnly && recipeRoleKind(hostname, setup) != RecipeRuntimeRoleDev {
 				dropIndices = append(dropIndices, i)
 				continue
 			}
