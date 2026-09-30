@@ -75,6 +75,13 @@ func TestRecipeSecret_Rule(t *testing.T) {
 		{name: "a GitHub token", env: ProjectEnvVar{Key: "CI", Value: "ghp_abcdefghijklmnopqrstuvwxyz0123456789"}, wantSecret: true, wantExternal: true},
 		{name: "an OpenAI key", env: ProjectEnvVar{Key: "LLM", Value: "sk-proj-abcdefghijklmnopqrstuvwx"}, wantSecret: true, wantExternal: true},
 		{name: "an AWS access key id", env: ProjectEnvVar{Key: "S3_ID", Value: "AKIAABCDEFGHIJKLMNOP"}, wantSecret: true, wantExternal: true},
+
+		// Secrets, by being random: an opaque value under an ordinary name fails closed.
+		{name: "a random value under an ordinary name", env: ProjectEnvVar{Key: "SIGNING_SEED", Value: "q8Zr2xLw7Tn4Vb1Kd9Fs3Hj6Mc0Pa5Ye"}, wantSecret: true},
+		{name: "a hex digest reads as generated", env: ProjectEnvVar{Key: "RELEASE_SHA", Value: "3f2a9c1e5b7d4f608a1c3e5f7b9d2a4c6e8f0a1b"}, wantSecret: true},
+		{name: "a flag list is no token", env: ProjectEnvVar{Key: "NODE_OPTIONS", Value: "--max-old-space-size=4096"}},
+		{name: "words joined by dashes are written, not generated", env: ProjectEnvVar{Key: "THEME_NAME", Value: "midnight-blue-with-orange-accents"}},
+		{name: "a public key stays public however random", env: ProjectEnvVar{Key: "NEXT_PUBLIC_ANALYTICS_KEY", Value: "phc_q8Zr2xLw7Tn4Vb1Kd9Fs3Hj6Mc0Pa5Ye"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -103,6 +110,11 @@ func TestGeneratedSecret_KeepsTheLength(t *testing.T) {
 		{"characters, not bytes", strings.Repeat("é", 20), "<@generateRandomString(<20>)>"},
 		{"never past the preprocessor's 1024", strings.Repeat("x", 3000), "<@generateRandomString(<1024>)>"},
 		{"a masked read keeps no length", "REDACTED", "<@generateRandomString(<32>)>"},
+		{"Laravel's base64 key becomes the raw key its recipes write", "base64:" + strings.Repeat("A", 43) + "=", "<@generateRandomString(<32>)>"},
+		{"a basic-auth pair keeps its user", "mailpit:" + strings.Repeat("p", 24), "mailpit:<@generateRandomString(<24>)>"},
+		{"a pair's short password still gets 16", "admin:pw", "admin:<@generateRandomString(<16>)>"},
+		{"a URL is no pair", "redis://cache:6379", "<@generateRandomString(<18>)>"},
+		{"a second colon is no pair", "a:b:c", "<@generateRandomString(<16>)>"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

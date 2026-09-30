@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -105,22 +106,103 @@ func recipeSecret(env ProjectEnvVar) (secret, external bool) {
 		external ||
 		(recipeCredentialName.MatchString(env.Key) && !recipePublicName.MatchString(env.Key)) ||
 		matchesAny(recipeSecretShapes, value) ||
-		urlCarriesPassword(value)
+		urlCarriesPassword(value) ||
+		(looksRandom(value) && !recipePublicName.MatchString(env.Key))
 	return secret, secret && external
+}
+
+// recipeTokenLike is a value made only of the characters tokens are written
+// in — letters, digits, `_ - + /` — with base64's padding at most at its end:
+// no spaces, no `=` inside, no `://`, no `@`, so a flag list, a path with a
+// scheme or an address is never one.
+var recipeTokenLike = regexp.MustCompile(`^[A-Za-z0-9_+/-]{24,}={0,2}$`)
+
+// minSecretEntropy is the Shannon entropy per character, in bits, above which
+// a token-like value reads as generated rather than written: a random string
+// over letters and digits sits near 5, a word joined by dashes well under 3.5.
+const minSecretEntropy = 3.5
+
+// looksRandom reports a value a person did not write: long, token-like, with
+// both letters and digits and the entropy of a generated string. It is the
+// rule that fails closed: an opaque value under an ordinary name — a signing
+// seed, a vendor key in no known format — is regenerated rather than
+// published, and a false alarm costs setting one value again.
+func looksRandom(value string) bool {
+	if !recipeTokenLike.MatchString(value) {
+		return false
+	}
+	hasLetter := strings.ContainsFunc(value, unicode.IsLetter)
+	hasDigit := strings.ContainsFunc(value, unicode.IsDigit)
+	return hasLetter && hasDigit && shannonEntropy(value) >= minSecretEntropy
+}
+
+// shannonEntropy is the entropy of a string's characters, in bits per character.
+func shannonEntropy(value string) float64 {
+	counts := map[rune]int{}
+	total := 0
+	for _, r := range value {
+		counts[r]++
+		total++
+	}
+	entropy := 0.0
+	for _, n := range counts {
+		p := float64(n) / float64(total)
+		entropy -= p * math.Log2(p)
+	}
+	return entropy
 }
 
 // generatedSecret is the value a secret is written as: a generator as long as
 // the live value (16 to 1024 characters), 32 for a masked one whose length is
-// unknown, empty for an empty one.
+// unknown, empty for an empty one — keeping the shape its reader parses:
+//
+//   - `base64:…`, Laravel's APP_KEY, becomes 32 generated characters, the raw
+//     key Laravel takes for AES-256 and what the platform's Laravel recipes
+//     write; the same length behind the prefix would decode to a key of the
+//     wrong size.
+//   - `user:password`, a basic-auth pair like mailpit's MP_UI_AUTH, keeps its
+//     user and has only the password generated: the name is no secret, and a
+//     value without the colon is no pair at all.
 func generatedSecret(value string) string {
 	if value == "" {
 		return ""
 	}
-	n := maskedSecretLength
-	if value != maskedValue {
-		n = min(max(utf8.RuneCountInString(value), minGeneratedSecret), maxGeneratedSecret)
+	if value == maskedValue {
+		return generator(maskedSecretLength)
 	}
-	return fmt.Sprintf("<@generateRandomString(<%d>)>", n)
+	if strings.HasPrefix(value, "base64:") {
+		return generator(laravelKeyLength)
+	}
+	if user, password, ok := basicAuthPair(value); ok {
+		return user + ":" + generator(utf8.RuneCountInString(password))
+	}
+	return generator(utf8.RuneCountInString(value))
+}
+
+// laravelKeyLength is the raw key Laravel takes for AES-256-CBC.
+const laravelKeyLength = 32
+
+// generator is the preprocessor directive for a random string of n
+// characters, kept between 16 and the preprocessor's 1024.
+func generator(n int) string {
+	return fmt.Sprintf("<@generateRandomString(<%d>)>", min(max(n, minGeneratedSecret), maxGeneratedSecret))
+}
+
+// recipeBasicAuthUser is the user half of a `user:password` pair: a short
+// name, nothing a URL or a list would open with.
+var recipeBasicAuthUser = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,31}$`)
+
+// basicAuthPair splits a `user:password` value; a URL, a value with spaces or
+// a second colon is not one.
+func basicAuthPair(value string) (user, password string, ok bool) {
+	if strings.Contains(value, "://") || strings.ContainsFunc(value, unicode.IsSpace) {
+		return "", "", false
+	}
+	user, password, found := strings.Cut(value, ":")
+	if !found || password == "" || strings.Contains(password, ":") || !recipeBasicAuthUser.MatchString(user) {
+		return "", "", false
+	}
+	return user, password, true
 }
 
 // isPureWiring reports whether a value is only `${...}` references, joined by
