@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -15,7 +14,6 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/recipe"
 	"github.com/zeropsio/zcp/internal/runtime"
-	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -163,7 +161,10 @@ func giteaGroupRecipeOutcome(
 	}
 	outcome := giteaRecipeOutcome{GroupRepo: groupRepo}
 
-	inputs, err := composeGroupRecipeInputs(ctx, client, rt.ProjectID, giteaPairMountRoot, wired)
+	// The group's slug is the org of its repositories: the recipe's name, and
+	// what the stage and production projects are named after.
+	group, _, _ := strings.Cut(groupRepo, "/")
+	inputs, readWarnings, err := composeGroupRecipeInputs(ctx, client, rt.ProjectID, group, giteaPairMountRoot, metas, wired)
 	if err != nil {
 		outcome.Line = fmt.Sprintf("the group recipe is not proposed yet (%v) — retrying on the next pass.", err)
 		return outcome
@@ -176,7 +177,8 @@ func giteaGroupRecipeOutcome(
 		outcome.Line = fmt.Sprintf("the group recipe does not compose yet (%v).", err)
 		return outcome
 	}
-	outcome.Warnings = warnings
+	outcome.Warnings = append(outcome.Warnings, readWarnings...)
+	outcome.Warnings = append(outcome.Warnings, warnings...)
 	files, err := recipe.Build(layout)
 	if err != nil {
 		outcome.Line = fmt.Sprintf("the group recipe does not compose yet (%v).", err)
@@ -291,100 +293,6 @@ func pullNumbers(numbers []int) string {
 		out = append(out, fmt.Sprintf("#%d", number))
 	}
 	return strings.Join(out, ", ")
-}
-
-// composeGroupRecipeInputs reads the Mate's own project and folds it, with
-// what ZCP already knows about each pair, into the composer's inputs.
-//
-// The platform is the authority on what exists and how it scales; the metas
-// are the authority on which repository and which setup block a pair builds
-// from — neither is derivable from the other, which is why both are read.
-func composeGroupRecipeInputs(
-	ctx context.Context,
-	client platform.Client,
-	projectID, mountRoot string,
-	wired []*workflow.ServiceMeta,
-) (bundle.GroupRecipeInputs, error) {
-	discovered, err := ops.Discover(ctx, client, projectID, "", false, false, false)
-	if err != nil {
-		return bundle.GroupRecipeInputs{}, fmt.Errorf("could not read this Mate's project: %w", err)
-	}
-	live := make(map[string]ops.ServiceInfo, len(discovered.Services))
-	for _, svc := range discovered.Services {
-		live[svc.Hostname] = svc
-	}
-
-	inputs := bundle.GroupRecipeInputs{
-		Name:            discovered.Project.Name,
-		Title:           discovered.Project.Name,
-		MateProjectName: discovered.Project.Name,
-	}
-	for _, m := range wired {
-		svc, ok := live[m.Hostname]
-		if !ok {
-			// The meta outlived the service (deleted outside ZCP). It has
-			// nothing to contribute and must not stall the others.
-			continue
-		}
-		scaling, scalingErr := ops.FetchServiceScaling(ctx, client, svc.ServiceID)
-		if scalingErr != nil {
-			scaling = nil
-		}
-		// A pair that has never deployed has no setup recorded — the classic
-		// bootstrap route's ordinary state — and refusing there made the whole
-		// group recipe unproposable for a Mate that had not shipped yet. The
-		// conventional name is the pair's own hostname, the same fallback the
-		// git-push deploy already uses, and the pair's zerops.yaml is right
-		// there on the mount: reading it lets the composer VERIFY the block
-		// rather than warn that it could not.
-		yamlBody, _ := readLocalZeropsYAML(filepath.Join(mountRoot, m.Hostname))
-		inputs.Runtimes = append(inputs.Runtimes, bundle.GroupRuntime{
-			DevHostname:      m.Hostname,
-			StageHostname:    m.StageHostname,
-			ServiceType:      svc.Type,
-			RepoURL:          m.RemoteURL,
-			SetupName:        firstNonEmptySetup(m.PrimarySetupName, m.StageSetupName, m.Hostname),
-			StageSetupName:   m.StageSetupName,
-			ZeropsYAMLBody:   yamlBody,
-			SubdomainEnabled: svc.SubdomainEnabled,
-			Scaling:          scaling,
-		})
-	}
-	if len(inputs.Runtimes) == 0 {
-		return bundle.GroupRecipeInputs{}, fmt.Errorf("no wired pair is still running in this project")
-	}
-
-	// Every managed dependency the project runs, as it runs: a recipe whose
-	// app has no database is not the app.
-	for _, svc := range discovered.Services {
-		if !svc.IsInfrastructure || !topology.IsManagedService(svc.Type) {
-			continue
-		}
-		profile, profileErr := ops.FetchServiceProfile(ctx, client, svc.ServiceID)
-		if profileErr != nil {
-			profile = ""
-		}
-		inputs.ManagedServices = append(inputs.ManagedServices, bundle.ManagedServiceEntry{
-			Hostname: svc.Hostname,
-			Type:     svc.Type,
-			Mode:     svc.Mode,
-			Profile:  profile,
-		})
-	}
-	return inputs, nil
-}
-
-// firstNonEmptySetup picks the first setup-block name that is there. The
-// caller passes the recorded names first and the conventional one — the dev
-// hostname — last, so a recorded block always wins and a pair that has never
-// deployed still names something the recipe can build.
-func firstNonEmptySetup(names ...string) string {
-	for _, name := range names {
-		if strings.TrimSpace(name) != "" {
-			return name
-		}
-	}
-	return ""
 }
 
 // reconcileGitea runs both Gitea reconciles, in the one order that works: a
