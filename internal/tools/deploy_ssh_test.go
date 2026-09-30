@@ -1376,6 +1376,7 @@ type stubSSHWithCommands struct {
 	absorbCalls    int   // absorb/sync invocation counter
 	probeCalls     int   // fresh-session credential probe counter
 	probeErr       error // what the probe answers; nil = the credential works
+	helperCalls    int   // persisted credential helper re-asserts
 	pushCalls      int   // push invocation counter
 	// commands records every command this stub saw, in order — for tests
 	// that assert on the SEQUENCE (e.g. absorb runs before push).
@@ -1430,6 +1431,13 @@ func (s *stubSSHWithCommands) ExecSSH(_ context.Context, _ string, command strin
 			return []byte("fatal: Authentication failed"), s.probeErr
 		}
 		return []byte("ok"), nil
+	}
+	// The push credential step re-persists the repository's url-scoped
+	// credential helper (`git config credential.https://<host>.helper`) — a
+	// config write, never a push. The push carries its helper as `-c`.
+	if strings.Contains(command, "credential.https://") {
+		s.helperCalls++
+		return nil, nil
 	}
 	// Dirty-tree probe (`git status --porcelain`) — MUST precede the push
 	// fallthrough, else the porcelain command mis-routes to the push branch

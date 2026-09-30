@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -216,6 +217,7 @@ const (
 	helperGiteaURL   = "https://gitea.example.invalid"
 	helperBotToken   = "the-mates-bot-token"
 	helperGitToken   = "the-service-secret"
+	helperOldHelper  = `!f() { test "$1" = get && { echo username=oauth2; echo "password=$GIT_TOKEN"; }; }; f`
 	helperGiteaRepo  = helperGiteaURL + "/acme/appdev.git"
 	helperGitHubRepo = "https://github.com/acme/appdev.git"
 )
@@ -301,4 +303,42 @@ func TestPersistedCredentialHelper_TokenByShellAndHost(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBuildGitCredentialHelperAssertCommand heals a repository whose helper
+// was persisted before the Mate's shell could authenticate, and leaves a
+// service with no repository alone.
+func TestBuildGitCredentialHelperAssertCommand(t *testing.T) {
+	t.Parallel()
+	requireGit(t)
+
+	t.Run("an old helper on the Gitea host answers the Mate's shell again", func(t *testing.T) {
+		t.Parallel()
+		repo, home := t.TempDir(), t.TempDir()
+		if out, err := gitShell(t, repo, home, nil, "",
+			"git init -q && git config 'credential.https://gitea.example.invalid.helper' "+shellQuote(helperOldHelper)); err != nil {
+			t.Fatalf("seed: %v\n%s", err, out)
+		}
+		mateShell := map[string]string{"GITEA_TOKEN": helperBotToken}
+		if got := answeredPassword(t, repo, home, mateShell, helperGiteaRepo); got != "" {
+			t.Fatalf("the old helper answered %q; the seed does not reproduce the failure", got)
+		}
+		if out, err := gitShell(t, repo, home, nil, "", BuildGitCredentialHelperAssertCommand(repo, helperGiteaRepo, helperGiteaURL)); err != nil {
+			t.Fatalf("assert: %v\n%s", err, out)
+		}
+		if got := answeredPassword(t, repo, home, mateShell, helperGiteaRepo); got != helperBotToken {
+			t.Errorf("after the assert the helper answered %q, want the bot token", got)
+		}
+	})
+
+	t.Run("a service with no repository is left alone", func(t *testing.T) {
+		t.Parallel()
+		dir, home := t.TempDir(), t.TempDir()
+		if out, err := gitShell(t, dir, home, nil, "", BuildGitCredentialHelperAssertCommand(dir, helperGiteaRepo, helperGiteaURL)); err != nil {
+			t.Fatalf("assert on a service with no repository failed: %v\n%s", err, out)
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".git")); !os.IsNotExist(err) {
+			t.Errorf("the assert made a repository where there was none (stat err %v)", err)
+		}
+	})
 }

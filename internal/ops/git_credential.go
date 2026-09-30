@@ -156,6 +156,17 @@ func gitCredentialHelperConfigFragment(remoteURL, giteaURL string) string {
 	)
 }
 
+// BuildGitCredentialHelperAssertCommand re-persists the helper origin sync
+// writes, on a repository that already exists. A helper persisted before the
+// Mate's shell could authenticate to its Gitea keeps the old text until
+// git-push-setup syncs origin again; the push-credential step runs this before
+// each delivery, so such a repository heals on its next one. No repository,
+// nothing written: the command never creates one.
+func BuildGitCredentialHelperAssertCommand(workingDir, remoteURL, giteaURL string) string {
+	return fmt.Sprintf("cd %s && if test -d .git; then %s; fi",
+		shellQuote(workingDir), gitCredentialHelperConfigFragment(remoteURL, giteaURL))
+}
+
 // BuildGitTagListCommand lists the remote's version tags (authenticated —
 // works for private repos too) for the release act's next-version
 // suggestion. Output: one `<sha>\trefs/tags/vX.Y.Z` line per tag.
