@@ -2281,32 +2281,40 @@ those pairs ask for (D24), and the repository reconcile cuts the Mate's branch f
 checkout with no commit of its own takes `main`'s tree. The adopt-time reconcile runs where the
 metas are complete.
 
-**What a tier carries (2026-09-30).** A tier is the Mate's project as it runs, written for the person
-who reads and edits it in the group repo: two-space YAML, each service opening on its `hostname` and
-`type`, a header naming the tier, the Mate it was written from and that it is the group's to edit.
-The project block carries the group's name (the org of its repositories; the AI Agent tier keeps the
-Mate's own), the live `corePackage`, and the project's user-set variables — config under
-`envVariables`, secrets under `envSecrets` — and each runtime its own variables under `envSecrets`;
-the platform's own and the control plane's (zcp's key and agents, git, launch and Gitea tokens, the
-Gitea and broker addresses) are never written. The composer decides each variable unattended: a
-value made only of `${...}` references is wiring, kept as written; anything else is a secret when
-the platform flags it sensitive, reads it back masked, or its name or its shape says credential, and
-is written as `<@generateRandomString(<N>)>`, N its live length (16 to 1024; 32 when masked), empty
-when empty, a third party's credential with a line asking for it again. The flag alone is not the
-rule: older secrets read back not sensitive, and a project variable's flag never persisted. Priority
-is dependency order, since the platform creates each priority group only after the one before it is
-created and deployed, and the broker deploys an environment's runtimes in the same order: the
-managed services at 10, a runtime nothing references at 1, and a runtime another references one
-above the longest chain of runtimes referencing it — a reference being a `${host_key}` in its
-zerops.yaml's build or run variables or its own variables, through project variables too; runtimes
-referencing each other share a rank. A managed service keeps its live scale (Small Production's
-production profile replaces a profile-bearing one's), an object storage its size and policy, a type
-with no HA variant stays single-node there; a runtime built from a public repository with no Gitea
-pair (mailpit) is written as it runs on every tier; the group environments' values name their own
-runtimes (`http://medusastage:9000` → `http://medusa:9000`). A read that decides what a tier carries
-fails the pass rather than propose a tier with a gap `main` would keep (`TestGroupPriorities_*`,
-`TestRecipeSecret_Rule`, `TestBuildGroupRecipe_MedusaGolden`,
-`TestComposeGroupRecipeInputs_ReadsTheLiveProject`).
+**What a tier carries (2026-09-30).** A tier is the Mate's project as it runs, written for the
+person who reads and edits it in the group repo: two-space YAML, each service opening on its
+`hostname` and `type`, a header naming the tier, the Mate it was written from and that it is the
+group's to edit. The project block carries the group's name (the org of its repositories; the AI
+Agent tier keeps the Mate's own), the live `corePackage`, and the project's user-set variables —
+config under `envVariables`, secrets under `envSecrets` — and each runtime its own variables under
+`envSecrets`; the platform's own and the control plane's (zcp's key and agents, git, launch and
+Gitea tokens, the Gitea and broker addresses) are never written. The composer decides each variable
+unattended and fails closed: a value of `${name}` references alone is wiring, kept as written, and
+any other value is kept only when no signal marks it secret — the platform's flag, a masked read, a
+credential's name, a secret's shape — and it has a narrow config shape (a number, size or version, a
+phrase of words, an email, a URL or path with no credential, query or fragment, a list of these,
+flags naming no credential), or when its name is public by design (`NEXT_PUBLIC_*`,
+`*_PUBLISHABLE_KEY`) and the platform neither flags nor masks it. Everything else is written as
+`<@generateRandomString(<N>)>`, N its live length (16 to 1024; 32 when masked), empty when empty,
+with a line asking for it again unless the app makes it for itself (`…SECRET`, `…PASSWORD`, `…SALT`,
+`APP_KEY`). The flag alone is not the rule: older secrets read back not sensitive, and a project
+variable's flag never persisted. Priority is dependency order, since the platform creates each
+priority group only after the one before it is created and deployed, and the broker deploys an
+environment's runtimes in the same order: the managed services at 10, a runtime nothing references
+at 1, and a runtime another references one above the longest chain of runtimes referencing it — a
+reference being a `${host_key}` in its zerops.yaml's build or run variables or its own variables,
+through project variables too; runtimes referencing each other share a rank. A managed service keeps
+its live scale (Small Production's production profile replaces a profile-bearing one's), an object
+storage its size and its policy when the platform names it (a custom policy's document can hold a
+secret, so it stays out, said), a type with no HA variant stays single-node there; a standalone
+runtime built from a public repository — no pair records it, no dev/stage sibling runs beside it
+(mailpit) — is written as it runs on every tier, its build URL bare of any credential and absent
+when the URL carried one, while a pair not wired yet holds the whole recipe back; the group
+environments' values name their own runtimes (`http://medusastage:9000` → `http://medusa:9000`). A
+read that decides what a tier carries fails the pass rather than propose a tier with a gap `main`
+would keep (`TestGroupPriorities_*`, `TestRecipeSecret_Rule`, `TestBuildGroupRecipe_FailsClosed`,
+`TestBuildGroupRecipe_MedusaGolden`, `TestComposeGroupRecipeInputs_ReadsTheLiveProject`,
+`TestComposeGroupRecipeInputs_WaitsForEveryPair`).
 
 **Delivery in a wired Mate (2026-09-17).** A Mate whose container carries `GITEA_URL`,
 `MATE_BROKER_URL` and `GITEA_TOKEN` delivers through pull requests, and only a dev/stage pair can:
