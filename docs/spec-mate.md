@@ -2256,7 +2256,7 @@ merge into the seeded one), pushes, and opens the pull request right after the p
 protected on every repository and takes no direct push from anyone; a later pass catches up a Mate
 that pushed before this existed. It proposes the group's recipe — the whole app as the three tiers,
 composed by one policy table (`bundle`), every runtime keeping its `buildFromGit` and
-`zeropsSetup` pair, secrets classified to `REPLACE_ME` — to the group repo, and only what its `main`
+`zeropsSetup` pair, no secret's value in any file — to the group repo, and only what its `main`
 lacks, a tier directory at a time (D30): a group's first recipe whole, a tier `main` lacks on any
 later pass, and nothing once `main` has every tier — no fork, no commit, no pull request, and the
 bot's proposals still open there closed. A proposal is a pull request from the bot's fork, from a
@@ -2280,6 +2280,33 @@ the AI Agent tier with the first Mate's hostnames, the broker lets its bot write
 those pairs ask for (D24), and the repository reconcile cuts the Mate's branch from `main` — a
 checkout with no commit of its own takes `main`'s tree. The adopt-time reconcile runs where the
 metas are complete.
+
+**What a tier carries (2026-09-30).** A tier is the Mate's project as it runs, written for the person
+who reads and edits it in the group repo: two-space YAML, each service opening on its `hostname` and
+`type`, a header naming the tier, the Mate it was written from and that it is the group's to edit.
+The project block carries the group's name (the org of its repositories; the AI Agent tier keeps the
+Mate's own), the live `corePackage`, and the project's user-set variables — config under
+`envVariables`, secrets under `envSecrets` — and each runtime its own variables under `envSecrets`;
+the platform's own and the control plane's (zcp's key and agents, git, launch and Gitea tokens, the
+Gitea and broker addresses) are never written. The composer decides each variable unattended: a
+value made only of `${...}` references is wiring, kept as written; anything else is a secret when
+the platform flags it sensitive, reads it back masked, or its name or its shape says credential, and
+is written as `<@generateRandomString(<N>)>`, N its live length (16 to 1024; 32 when masked), empty
+when empty, a third party's credential with a line asking for it again. The flag alone is not the
+rule: older secrets read back not sensitive, and a project variable's flag never persisted. Priority
+is dependency order, since the platform creates each priority group only after the one before it is
+created and deployed, and the broker deploys an environment's runtimes in the same order: the
+managed services at 10, a runtime nothing references at 1, and a runtime another references one
+above the longest chain of runtimes referencing it — a reference being a `${host_key}` in its
+zerops.yaml's build or run variables or its own variables, through project variables too; runtimes
+referencing each other share a rank. A managed service keeps its live scale (Small Production's
+production profile replaces a profile-bearing one's), an object storage its size and policy, a type
+with no HA variant stays single-node there; a runtime built from a public repository with no Gitea
+pair (mailpit) is written as it runs on every tier; the group environments' values name their own
+runtimes (`http://medusastage:9000` → `http://medusa:9000`). A read that decides what a tier carries
+fails the pass rather than propose a tier with a gap `main` would keep (`TestGroupPriorities_*`,
+`TestRecipeSecret_Rule`, `TestBuildGroupRecipe_MedusaGolden`,
+`TestComposeGroupRecipeInputs_ReadsTheLiveProject`).
 
 **Delivery in a wired Mate (2026-09-17).** A Mate whose container carries `GITEA_URL`,
 `MATE_BROKER_URL` and `GITEA_TOKEN` delivers through pull requests, and only a dev/stage pair can:
