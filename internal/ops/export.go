@@ -3,7 +3,10 @@ package ops
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -21,12 +24,18 @@ func FetchServiceScaling(ctx context.Context, client platform.Client, serviceID 
 	if err != nil {
 		return nil, fmt.Errorf("fetch service scaling: %w", err)
 	}
+	return scalingFromStack(detail), nil
+}
+
+// scalingFromStack maps a service's resolved autoscaling onto the bundle's
+// Scaling, nil when the service exposes none.
+func scalingFromStack(detail *platform.ServiceStack) *bundle.Scaling {
 	a := detail.CurrentAutoscaling
 	if a == nil {
 		a = detail.CustomAutoscaling
 	}
 	if a == nil {
-		return nil, nil //nolint:nilnil // not-found sentinel: no resolved autoscaling → composer emits "scaling unread" warning
+		return nil
 	}
 	return &bundle.Scaling{
 		MinContainers: int(a.HorizontalMinCount),
@@ -38,7 +47,127 @@ func FetchServiceScaling(ctx context.Context, client platform.Client, serviceID 
 		MinDisk:       a.MinDisk,
 		MaxDisk:       a.MaxDisk,
 		CPUMode:       a.CPUMode,
-	}, nil
+	}
+}
+
+// ServiceShape is what the group recipe reads of one live service, in one
+// GetService: its scale, its profile, and the public repository its active
+// version was built from.
+type ServiceShape struct {
+	// Scaling is nil when the service exposes no resolved autoscaling.
+	Scaling *bundle.Scaling
+	Profile string
+	// PublicGitURL is the public repository an import's buildFromGit built
+	// the active version from, "" for any other origin.
+	PublicGitURL string
+	// ExplicitSetup reports that the build named its zeropsSetup — which
+	// the platform does not return — rather than defaulting to the hostname.
+	ExplicitSetup bool
+}
+
+// FetchServiceShape reads a service's ServiceShape.
+func FetchServiceShape(ctx context.Context, client platform.Client, serviceID string) (ServiceShape, error) {
+	detail, err := client.GetService(ctx, serviceID)
+	if err != nil {
+		return ServiceShape{}, fmt.Errorf("fetch service shape: %w", err)
+	}
+	shape := ServiceShape{Scaling: scalingFromStack(detail), Profile: detail.Profile}
+	if av := detail.ActiveAppVersion; av != nil && av.PublicGitSource != nil {
+		shape.PublicGitURL = strings.TrimSpace(av.PublicGitSource.GitURL)
+		shape.ExplicitSetup = av.PublicGitSourceExplicitSet != nil && *av.PublicGitSourceExplicitSet
+	}
+	return shape, nil
+}
+
+// ObjectStorageShape is how an object storage runs: its size and its access
+// policy.
+type ObjectStorageShape struct {
+	// SizeGB is its quota; 0 when neither source names one.
+	SizeGB int
+	// Policy is one of the import's policy names, RawPolicy a custom
+	// policy's document.
+	Policy    string
+	RawPolicy string
+	// PolicyUnread says why no policy was read, "" when one was.
+	PolicyUnread string
+}
+
+// objectStoragePolicies are the policy names the import accepts.
+var objectStoragePolicies = map[string]bool{
+	"private": true, "public-read": true, "public-objects-read": true,
+	"public-write": true, "public-read-write": true, "custom": true,
+}
+
+// FetchObjectStorageShape reads an object storage's size and access policy.
+// The size is its quotaGBytes variable, else the size the platform's export
+// of the service names; the policy is only in that export. The export is the
+// platform's own and not scrubbed, so nothing but these fields is read from
+// it. A custom policy's document names this bucket; the import's own
+// `{{ .BucketName }}` takes its place, so each environment's policy names its
+// own bucket. An unreadable variable is an error — a tier that lands with the
+// wrong size stays wrong — while a policy the export does not give is said in
+// PolicyUnread, never guessed.
+func FetchObjectStorageShape(ctx context.Context, client platform.Client, serviceID, hostname string) (ObjectStorageShape, error) {
+	envs, err := client.GetServiceEnv(ctx, serviceID)
+	if err != nil {
+		return ObjectStorageShape{}, fmt.Errorf("read %s's variables: %w", hostname, err)
+	}
+	var shape ObjectStorageShape
+	var bucket string
+	for _, env := range envs {
+		switch env.Key {
+		case "quotaGBytes":
+			if size, convErr := strconv.Atoi(strings.TrimSpace(env.Content)); convErr == nil && size > 0 {
+				shape.SizeGB = size
+			}
+		case "bucketName":
+			bucket = strings.TrimSpace(env.Content)
+		}
+	}
+
+	exported, err := client.GetServiceStackExport(ctx, serviceID)
+	if err != nil {
+		shape.PolicyUnread = fmt.Sprintf("the platform's export of %s could not be read (%v)", hostname, err)
+		return shape, nil
+	}
+	var doc struct {
+		Services []struct {
+			Hostname               string  `yaml:"hostname"`
+			ObjectStorageSize      float64 `yaml:"objectStorageSize"`
+			ObjectStoragePolicy    string  `yaml:"objectStoragePolicy"`
+			ObjectStorageRawPolicy string  `yaml:"objectStorageRawPolicy"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(exported), &doc); err != nil {
+		shape.PolicyUnread = fmt.Sprintf("the platform's export of %s does not parse (%v)", hostname, err)
+		return shape, nil
+	}
+	for _, svc := range doc.Services {
+		if svc.Hostname != hostname && len(doc.Services) > 1 {
+			continue
+		}
+		if shape.SizeGB == 0 && svc.ObjectStorageSize > 0 {
+			shape.SizeGB = int(svc.ObjectStorageSize)
+		}
+		policy := strings.TrimSpace(svc.ObjectStoragePolicy)
+		switch {
+		case policy == "":
+			shape.PolicyUnread = fmt.Sprintf("the platform's export of %s names no access policy", hostname)
+		case !objectStoragePolicies[policy]:
+			shape.PolicyUnread = fmt.Sprintf("the platform's export of %s names a policy the import does not take (%q)", hostname, policy)
+		default:
+			shape.Policy = policy
+			if policy == "custom" {
+				shape.RawPolicy = svc.ObjectStorageRawPolicy
+				if bucket != "" {
+					shape.RawPolicy = strings.ReplaceAll(shape.RawPolicy, bucket, "{{ .BucketName }}")
+				}
+			}
+		}
+		return shape, nil
+	}
+	shape.PolicyUnread = fmt.Sprintf("the platform's export does not list %s", hostname)
+	return shape, nil
 }
 
 // FetchServiceProfile reads the live scaling-tier profile (autoscalingProfileId)
