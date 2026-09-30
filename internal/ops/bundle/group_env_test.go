@@ -187,6 +187,8 @@ func TestBuildGroupRecipe_FailsClosed(t *testing.T) {
 		{name: "a wired URL whose password defaults to a word", key: "QUEUE_URL", value: "amqp://${queue_user}:${QUEUE_PASS:-marmalade}@queue:5672", secret: "marmalade"},
 		{name: "an opaque ID", key: "STRIPE_PRICE_PRO", value: "price_" + "1Mq7Xz2Lb9Rt4Wv8Kd3Nc6Hs"},
 		{name: "a dash-led base64url seed", key: "COOKIE_SIGNING", value: "-" + "Xq9rT2pLm9Wn4Xc6Yb1Hd0Fs5Jg7Kh2Nc4Vx8Qa1Ze"},
+		{name: "an access key id before a colon", key: "AWS_CREDENTIALS", value: "AK" + "IAIOSFODNN7EXAMPLE:" + "wJalrXUtnFEMI/K7MDENG/bPxRfiCYzq8Lw2Vm", secret: "AK" + "IAIOSFODNN7EXAMPLE"},
+		{name: "a token before a colon", key: "GITLAB_AUTH", value: "gl" + "pat-Xq9rT2pLm9Wn4Xc6Yb1H:x-oauth-basic", secret: "gl" + "pat-Xq9rT2pLm9Wn4Xc6Yb1H"},
 		{name: "a password among JVM options, abbreviated", key: "JAVA_OPTS", value: "-Xmx512m -Dspring.datasource." + "pwd=Jvm-Pa55-w0rd", secret: "Jvm-Pa55-w0rd"},
 		{name: "a public bucket's secret key", key: "S3_PUBLIC_BUCKET_SECRET_KEY", value: "wJalrXUtnFEMI" + "/K7MDENG/bPxRfiCYzq8Lw2Vm"},
 		{name: "a public CDN's private key", key: "CDN_PUBLIC_SIGNING_PRIVATE_KEY", value: "-----BEGIN " + "PRIVATE KEY-----\n" + pgpBody + "\n-----END PRIVATE KEY-----", secret: pgpBody},
@@ -336,6 +338,13 @@ func TestGeneratedSecret_KeepsTheLength(t *testing.T) {
 		{"a pair's short password still gets 16", "admin:pw", "admin:<@generateRandomString(<16>)>"},
 		{"a URL is no pair", "redis://cache:6379", "<@generateRandomString(<18>)>"},
 		{"a second colon is no pair", "a:b:c", "<@generateRandomString(<16>)>"},
+		// A pair keeps its user only when the user is a plain word: an
+		// access key's id, a token or a UUID before the colon is the secret.
+		{"an access key id is no user", "AK" + "IAIOSFODNN7EXAMPLE:" + strings.Repeat("s", 40), "<@generateRandomString(<61>)>"},
+		{"a token is no user", "gl" + "pat-Xq9rT2pLm9Wn4Xc6Yb1H:x-oauth-basic", "<@generateRandomString(<40>)>"},
+		{"a UUID is no user", "3b9e5c1a-7d2f-4e8b-9a6c-0f1e2d3c4b5a:" + strings.Repeat("p", 20), "<@generateRandomString(<57>)>"},
+		{"a user of joined words is no plain word", "admin_user:" + strings.Repeat("p", 20), "<@generateRandomString(<31>)>"},
+		{"a capitalized user is a plain word", "Admin:" + strings.Repeat("p", 20), "Admin:<@generateRandomString(<20>)>"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

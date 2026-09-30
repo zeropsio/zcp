@@ -250,9 +250,9 @@ func recipeLooksSecret(key, value string) bool {
 //     key Laravel takes for AES-256 and what the platform's Laravel recipes
 //     write; the same length behind the prefix would decode to a key of the
 //     wrong size.
-//   - `user:password`, a basic-auth pair like mailpit's MP_UI_AUTH, keeps its
-//     user and has only the password generated: the name is no secret, and a
-//     value without the colon is no pair at all.
+//   - `user:password`, a basic-auth pair like mailpit's MP_UI_AUTH, keeps a
+//     user that is a plain word and has only the password generated: the name
+//     is no secret, and a value without the colon is no pair at all.
 func generatedSecret(value string) string {
 	if value == "" {
 		return ""
@@ -278,18 +278,16 @@ func generator(n int) string {
 	return fmt.Sprintf("<@generateRandomString(<%d>)>", min(max(n, minGeneratedSecret), maxGeneratedSecret))
 }
 
-// recipeBasicAuthUser is the user half of a `user:password` pair: a short
-// name, nothing a URL or a list would open with.
-var recipeBasicAuthUser = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,31}$`)
-
-// basicAuthPair splits a `user:password` value; a URL, a value with spaces or
-// a second colon is not one.
+// basicAuthPair splits a `user:password` value whose user is a plain word
+// (`admin`, `mailpit`): anything else before the colon — an access key's id,
+// a token, a UUID — is as secret as what follows it, and the whole value is
+// generated. A URL, a value with spaces or a second colon is no pair.
 func basicAuthPair(value string) (user, password string, ok bool) {
 	if strings.Contains(value, "://") || strings.ContainsFunc(value, unicode.IsSpace) {
 		return "", "", false
 	}
 	user, password, found := strings.Cut(value, ":")
-	if !found || password == "" || strings.Contains(password, ":") || !recipeBasicAuthUser.MatchString(user) {
+	if !found || password == "" || strings.Contains(password, ":") || !recipePlainWord.MatchString(user) {
 		return "", "", false
 	}
 	return user, password, true
