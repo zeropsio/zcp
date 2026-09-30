@@ -116,6 +116,18 @@ func TestRecipeSecret_Rule(t *testing.T) {
 		{name: "a PIN's length", env: ProjectEnvVar{Key: "PIN_LENGTH", Value: "6"}},
 		{name: "a webhook's route here", env: ProjectEnvVar{Key: "GITHUB_WEBHOOK_PATH", Value: "/hooks/github"}},
 
+		// A query is config only when every key names no credential and every
+		// value is a word, a number or a reference.
+		{name: "a query key naming a password", env: ProjectEnvVar{Key: "DB_URL", Value: "postgresql://db:5432/app?password=hunter"}, wantSecret: true, wantSetAgain: true},
+		{name: "a query key naming an API key", env: ProjectEnvVar{Key: "GEO_URL", Value: "https://geo.example.com/v1?api_key=abc"}, wantSecret: true, wantSetAgain: true},
+		{name: "a query key naming a token", env: ProjectEnvVar{Key: "FEED_URL", Value: "https://feeds.example.com/v1?token=abc"}, wantSecret: true, wantSetAgain: true},
+		{name: "a query key naming a key", env: ProjectEnvVar{Key: "MAPS_URL", Value: "https://maps.example.com/js?key=abc"}, wantSecret: true, wantSetAgain: true},
+		{name: "a query key naming a secret", env: ProjectEnvVar{Key: "HOOK_URL", Value: "https://in.example.com/x?secret=abc"}, wantSecret: true, wantSetAgain: true},
+		{name: "a query key naming a signature", env: ProjectEnvVar{Key: "EXPORT_URL", Value: "https://files.example.com/export?Signature=abc"}, wantSecret: true, wantSetAgain: true},
+		{name: "a query key naming a sig", env: ProjectEnvVar{Key: "BLOB_URL", Value: "https://acme.blob.example.net/c?sv=2024&sig=abc"}, wantSecret: true, wantSetAgain: true},
+		{name: "a query with a reference", env: ProjectEnvVar{Key: "APP_LINK", Value: "https://app.example.com/?tenant=${TENANT_NAME}"}},
+		{name: "a fragment is no config", env: ProjectEnvVar{Key: "APP_LINK", Value: "https://app.example.com/#access_token=abc"}, wantSecret: true, wantSetAgain: true},
+
 		// A credential somebody else issued: generated, and asked for again.
 		{name: "_API_KEY", env: ProjectEnvVar{Key: "STRIPE_API_KEY", Value: fakeStripeKey}, wantSecret: true, wantSetAgain: true},
 		{name: "_TOKEN", env: ProjectEnvVar{Key: "GITHUB_TOKEN", Value: "tok"}, wantSecret: true, wantSetAgain: true},
@@ -207,6 +219,11 @@ func TestBuildGroupRecipe_FailsClosed(t *testing.T) {
 		{name: "a reference whose default is a URL with a password", key: "CACHE_URL", value: "${CACHE_OVERRIDE:-redis://:Cach3-Pa55@cache:6379}", secret: "Cach3-Pa55"},
 		{name: "a wired URL whose password defaults to a word", key: "QUEUE_URL", value: "amqp://${queue_user}:${QUEUE_PASS:-marmalade}@queue:5672", secret: "marmalade"},
 		{name: "an opaque ID", key: "STRIPE_PRICE_PRO", value: "price_" + "1Mq7Xz2Lb9Rt4Wv8Kd3Nc6Hs"},
+		{name: "a token in a query", key: "FEED_URL", value: "https://feeds.example.com/v1?token=feedtoken", secret: "feedtoken"},
+		{name: "a signed URL", key: "EXPORT_URL", value: "https://files.example.com/export?expires=1727712000&sig=sigvalue", secret: "sigvalue"},
+		{name: "a random value in a query", key: "REPORT_URL", value: "https://reports.example.com/v1?session=q8Zr2xLw7Tn4Vb1Kd9Fs", secret: "q8Zr2xLw7Tn4Vb1Kd9Fs"},
+		{name: "a bare user and password beside a star", key: "BASIC_LOGIN", value: "admin:hunter*", secret: "hunter"},
+		{name: "a user and password shaped like an image", key: "SMTP_LOGIN", value: "admin:hunter", secret: "hunter"},
 		{name: "a dash-led base64url seed", key: "COOKIE_SIGNING", value: "-" + "Xq9rT2pLm9Wn4Xc6Yb1Hd0Fs5Jg7Kh2Nc4Vx8Qa1Ze"},
 		{name: "an access key id before a colon", key: "AWS_CREDENTIALS", value: "AK" + "IAIOSFODNN7EXAMPLE:" + "wJalrXUtnFEMI/K7MDENG/bPxRfiCYzq8Lw2Vm", secret: "AK" + "IAIOSFODNN7EXAMPLE"},
 		{name: "a token before a colon", key: "GITLAB_AUTH", value: "gl" + "pat-Xq9rT2pLm9Wn4Xc6Yb1H:x-oauth-basic", secret: "gl" + "pat-Xq9rT2pLm9Wn4Xc6Yb1H"},
@@ -241,6 +258,18 @@ func TestBuildGroupRecipe_FailsClosed(t *testing.T) {
 		{name: "a memory limit", key: "PHP_INI_memory_limit", value: "512M", verbatim: true},
 		{name: "a version", key: "UMAMI_RELEASE_TAG", value: "v3.0.1", verbatim: true},
 		{name: "a seeding switch", key: "DB_SEED", value: "true", verbatim: true},
+		{name: "any origin", key: "CORS_ORIGIN", value: "*", verbatim: true},
+		{name: "a debug scope", key: "DEBUG", value: "medusa:*", verbatim: true},
+		{name: "debug scopes", key: "DEBUG_SCOPES", value: "medusa:*,express:*", verbatim: true},
+		{name: "a wildcard host", key: "ALLOWED_ORIGIN", value: "https://*.example.com", verbatim: true},
+		{name: "a cron line", key: "BACKUP_CRON", value: "0 3 * * *", verbatim: true},
+		{name: "a cron line with steps, ranges and names", key: "REPORT_SCHEDULE", value: "*/15 9-17 * * MON-FRI", verbatim: true},
+		{name: "a cron nickname", key: "CLEANUP_SCHEDULE", value: "@daily", verbatim: true},
+		{name: "a mailbox", key: "EMAIL_FROM", value: "Acme Shop <noreply@acme.example>", verbatim: true},
+		{name: "an image on a registry", key: "WORKER_IMAGE", value: "ghcr.io/acme/worker:1.2.3", verbatim: true},
+		{name: "an official image", key: "BASE_IMAGE", value: "node:22-alpine", verbatim: true},
+		{name: "a database URL with a query", key: "DATABASE_URL", value: "postgresql://${db_user}:${db_password}@${db_hostname}:5432/app?sslmode=require", verbatim: true},
+		{name: "a query of several settings", key: "MONGO_URL", value: "mongodb://${mongo_hostname}:27017/app?authSource=admin&retryWrites=true&w=1", verbatim: true},
 		{name: "a zip code", key: "ZIP_CODE", value: "11000", verbatim: true},
 	}
 	for _, tt := range tests {

@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -30,6 +31,15 @@ import (
 //     a host of DNS labels, and a path of word segments — so a webhook's
 //     `/services/T024BE7LD/…` is no config.
 //   - An absolute path of word segments.
+//   - A URL may carry a query whose every key names no credential and whose
+//     every value is a word, a number or a reference (`?sslmode=require`);
+//     `?password=`, `?key=`, `?token=`, `?sig=` make it no config.
+//   - A glob: words and a standalone `*` (`*`, `medusa:*`, `*.example.com`).
+//   - A cron line (`0 3 * * *`, `*/15 9-17 * * MON-FRI`, `@daily`).
+//   - A mailbox: a phrase and an email address (`Acme <noreply@acme.example>`).
+//   - A container image with its tag (`ghcr.io/acme/worker:1.2.3`); a bare
+//     name's tag opens with a version (`node:22-alpine`), so `admin:hunter`
+//     is none.
 //   - A comma-separated list of the above.
 //   - Command-line flags (`--max-old-space-size=4096`) no flag or value of
 //     which names a credential.
@@ -84,6 +94,22 @@ var recipeScalarShapes = []*regexp.Regexp{
 	regexp.MustCompile(`^[0-9]{1,3}(\.[0-9]{1,6})?%$`),
 	regexp.MustCompile(`^v?[0-9]{1,6}(\.[0-9]{1,6}){1,3}(-[A-Za-z]{1,12}(\.?[0-9]{1,8})?)?$`),
 }
+
+// recipeQueryKey is a URL query's key.
+var recipeQueryKey = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,63}$`)
+
+// recipeQueryNumber is a URL query's number: a count, a switch, a moment.
+var recipeQueryNumber = regexp.MustCompile(`^[0-9]{1,10}$`)
+
+// recipeCronField is one field of a cron line: `*`, a number, a range, a
+// day's or a month's name, with a step, in a comma list.
+var recipeCronField = regexp.MustCompile(`^(?i:(\*|[0-9]{1,2}(-[0-9]{1,2})?|(mon|tue|wed|thu|fri|sat|sun|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)(-(mon|tue|wed|thu|fri|sat|sun|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec))?)(/[0-9]{1,2})?)(,(\*|[0-9]{1,2}(-[0-9]{1,2})?)(/[0-9]{1,2})?)*$`)
+
+// recipeCronNickname is a cron line's nickname.
+var recipeCronNickname = regexp.MustCompile(`^@(yearly|annually|monthly|weekly|daily|midnight|hourly|reboot)$`)
+
+// recipeMailbox is a mailbox: a name and an address in angle brackets.
+var recipeMailbox = regexp.MustCompile(`^"?([^"<>]+?)"? <([^<>\s]+)>$`)
 
 // recipeFlagName is a command-line flag, built from words so that no token a
 // generator opens with a dash reads as one: `--max-old-space-size`, `-v`,
@@ -162,9 +188,10 @@ func isConfigValue(value string) bool {
 }
 
 // isConfigItem reports one setting: a scalar, a phrase, an email address, an
-// address or an absolute path.
+// address, an absolute path, a glob, a cron line, a mailbox or an image.
 func isConfigItem(value string) bool {
-	return matchesAny(recipeScalarShapes, value) || isPhrase(value) || isEmail(value) || isAddress(value) || isAbsolutePath(value)
+	return matchesAny(recipeScalarShapes, value) || isPhrase(value) || isEmail(value) || isAddress(value) ||
+		isAbsolutePath(value) || isGlob(value) || isCron(value) || isMailbox(value) || isImageRef(value)
 }
 
 // isConfigList reports settings separated by commas: CORS origins, hosts,
@@ -263,9 +290,9 @@ func isEmail(value string) bool {
 }
 
 // isAddress reports a URL, or a host with its port, that carries nothing but
-// its place: no query, no fragment, a user made only of references, a host
-// (isHost), a port that is a number or a reference, and a path of word
-// segments.
+// its place: no fragment, a user made only of references, a host (isHost), a
+// port that is a number or a reference, a path of word segments, and a query
+// of settings (isPlainQuery).
 func isAddress(value string) bool {
 	rest, scheme := value, false
 	if name, after, ok := strings.Cut(value, "://"); ok {
@@ -274,7 +301,11 @@ func isAddress(value string) bool {
 		}
 		rest, scheme = after, true
 	}
-	if strings.ContainsAny(rest, "?#") {
+	if strings.Contains(rest, "#") {
+		return false
+	}
+	rest, query, hasQuery := strings.Cut(rest, "?")
+	if hasQuery && !isPlainQuery(query) {
 		return false
 	}
 	authority, path, hasPath := strings.Cut(rest, "/")
@@ -292,6 +323,123 @@ func isAddress(value string) bool {
 		return false
 	}
 	return !hasPath || isPathSegments(path)
+}
+
+// isPlainQuery reports a URL query of settings: every key a word naming no
+// credential — no password, key, token, secret or signature
+// (recipeCredentialName, SIG) — and every value empty, a word, a number or a
+// reference.
+func isPlainQuery(query string) bool {
+	if query == "" {
+		return false
+	}
+	for pair := range strings.SplitSeq(query, "&") {
+		key, value, _ := strings.Cut(pair, "=")
+		if !recipeQueryKey.MatchString(key) || recipeCredentialName(key) || slices.ContainsFunc(recipeNameWords(key), func(w string) bool {
+			return w == "SIG" || w == "SIGNATURE"
+		}) {
+			return false
+		}
+		if value != "" && !isStrictWiring(value) && !recipeQueryNumber.MatchString(value) && !isQueryWord(value) {
+			return false
+		}
+	}
+	return true
+}
+
+// isQueryWord reports a query's value made of words: `require`,
+// `verify-full`, `admin`.
+func isQueryWord(value string) bool {
+	plain := strings.ContainsAny(value, "_-")
+	words := 0
+	for _, token := range recipeTokens(value, "._-") {
+		switch {
+		case token == "":
+		case isWordIn(token, plain):
+			words++
+		case !recipeShortNumber.MatchString(token):
+			return false
+		}
+	}
+	return words > 0
+}
+
+// isGlob reports a pattern of words and a standalone `*` joined by
+// `: . / - _`: `*`, `medusa:*`, `*.example.com`, `https://*.example.com`. A
+// star inside a token (`hunter*`) is no glob.
+func isGlob(value string) bool {
+	if len(value) > maxPhrase || !strings.Contains(value, "*") {
+		return false
+	}
+	plain := strings.ContainsAny(value, "_-")
+	for _, token := range recipeTokens(value, ":./-_") {
+		if token != "" && token != "*" && !isReference(token) && !isWordIn(token, plain) && !recipeShortNumber.MatchString(token) {
+			return false
+		}
+	}
+	return true
+}
+
+// isCron reports a cron line: five or six fields, or a nickname.
+func isCron(value string) bool {
+	if recipeCronNickname.MatchString(value) {
+		return true
+	}
+	fields := strings.Split(value, " ")
+	if len(fields) != 5 && len(fields) != 6 {
+		return false
+	}
+	for _, field := range fields {
+		if !recipeCronField.MatchString(field) {
+			return false
+		}
+	}
+	return true
+}
+
+// isMailbox reports a name and an email address: `Acme <noreply@acme.example>`.
+func isMailbox(value string) bool {
+	m := recipeMailbox.FindStringSubmatch(value)
+	return m != nil && isPhrase(m[1]) && isEmail(m[2])
+}
+
+// isImageRef reports a container image with its tag: a repository of plain
+// words, behind a registry host or not — `ghcr.io/acme/worker:1.2.3`,
+// `acme/worker:latest` — or an official image whose tag opens with a
+// version, `node:22-alpine`, so a bare `admin:hunter` is none. A digest is a
+// hash, and no image here.
+func isImageRef(value string) bool {
+	slash := strings.LastIndexByte(value, '/')
+	colon := strings.LastIndexByte(value, ':')
+	if colon <= slash || strings.ContainsAny(value, "@ ") {
+		return false
+	}
+	name, tag := value[:colon], value[colon+1:]
+	if len(tag) > 128 || !isImagePart(tag) {
+		return false
+	}
+	parts := strings.Split(name, "/")
+	if len(parts) == 1 {
+		return isImagePart(parts[0]) && tag[0] >= '0' && tag[0] <= '9'
+	}
+	if host, port, hasPort := strings.Cut(parts[0], ":"); hasPort || strings.Contains(host, ".") || host == "localhost" {
+		if (hasPort && !recipePort.MatchString(port)) || !isHost(host, false) {
+			return false
+		}
+		parts = parts[1:]
+	}
+	return len(parts) > 0 && !slices.ContainsFunc(parts, func(part string) bool { return !isImagePart(part) })
+}
+
+// isImagePart reports one part of an image — a repository name or a tag —
+// made of plain words and numbers joined by `. _ -`.
+func isImagePart(part string) bool {
+	for _, token := range recipeTokens(part, "._-") {
+		if !recipePlainWord.MatchString(token) && !recipeQueryNumber.MatchString(token) {
+			return false
+		}
+	}
+	return true
 }
 
 // isHost reports a host: DNS labels of words, numbers of up to five digits
