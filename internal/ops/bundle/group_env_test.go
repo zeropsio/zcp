@@ -61,6 +61,15 @@ func TestRecipeSecret_Rule(t *testing.T) {
 		{name: "a publishable key", env: ProjectEnvVar{Key: "STRIPE_PUBLISHABLE_KEY", Value: "pk_" + "live_" + "51Hq0000publishable"}},
 		{name: "a NEXT_PUBLIC_ variable", env: ProjectEnvVar{Key: "NEXT_PUBLIC_SEARCH_KEY", Value: "a1b2c3d4e5f6a7b8"}},
 		{name: "a public key stays public however random", env: ProjectEnvVar{Key: "NEXT_PUBLIC_ANALYTICS_KEY", Value: "phc_q8Zr2xLw7Tn4Vb1Kd9Fs3Hj6Mc0Pa5Ye"}},
+		{name: "a public token shaped like a JWT", env: ProjectEnvVar{Key: "NEXT_PUBLIC_MAPBOX_TOKEN", Value: "pk.ey" + "J1IjoiYWNtZSJ9.c2lnbmF0dXJl"}},
+
+		// Unless the name says secret beside it, or the value is a key.
+		{name: "a public bucket's secret key", env: ProjectEnvVar{Key: "S3_PUBLIC_BUCKET_SECRET_KEY", Value: "q8Zr2xLw7Tn4Vb1Kd9Fs3Hj6Mc0Pa5Ye"}, wantSecret: true, wantSetAgain: true},
+		{name: "a public CDN's private signing key", env: ProjectEnvVar{Key: "CDN_PUBLIC_SIGNING_PRIVATE_KEY", Value: "-----BEGIN " + "PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----"}, wantSecret: true, wantSetAgain: true},
+		{name: "a public name with a password in it", env: ProjectEnvVar{Key: "NEXT_PUBLIC_ADMIN_PASSWORD", Value: "letmein"}, wantSecret: true},
+		{name: "a vendor's secret key under a public name", env: ProjectEnvVar{Key: "NEXT_PUBLIC_STRIPE_KEY", Value: fakeStripeSecret}, wantSecret: true, wantSetAgain: true},
+		{name: "a private key under a public name", env: ProjectEnvVar{Key: "NEXT_PUBLIC_CERT", Value: "-----BEGIN RSA " + "PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----"}, wantSecret: true, wantSetAgain: true},
+		{name: "PUBLICATION is no PUBLIC", env: ProjectEnvVar{Key: "PUBLICATION_TOKEN", Value: "abc"}, wantSecret: true, wantSetAgain: true},
 
 		// The platform's word outranks every other signal but wiring.
 		{name: "the platform's sensitive flag", env: ProjectEnvVar{Key: "CUSTOM_SETTING", Value: "opaque", Sensitive: true}, wantSecret: true, wantSetAgain: true},
@@ -179,6 +188,8 @@ func TestBuildGroupRecipe_FailsClosed(t *testing.T) {
 		{name: "an opaque ID", key: "STRIPE_PRICE_PRO", value: "price_" + "1Mq7Xz2Lb9Rt4Wv8Kd3Nc6Hs"},
 		{name: "a dash-led base64url seed", key: "COOKIE_SIGNING", value: "-" + "Xq9rT2pLm9Wn4Xc6Yb1Hd0Fs5Jg7Kh2Nc4Vx8Qa1Ze"},
 		{name: "a password among JVM options, abbreviated", key: "JAVA_OPTS", value: "-Xmx512m -Dspring.datasource." + "pwd=Jvm-Pa55-w0rd", secret: "Jvm-Pa55-w0rd"},
+		{name: "a public bucket's secret key", key: "S3_PUBLIC_BUCKET_SECRET_KEY", value: "wJalrXUtnFEMI" + "/K7MDENG/bPxRfiCYzq8Lw2Vm"},
+		{name: "a public CDN's private key", key: "CDN_PUBLIC_SIGNING_PRIVATE_KEY", value: "-----BEGIN " + "PRIVATE KEY-----\n" + pgpBody + "\n-----END PRIVATE KEY-----", secret: pgpBody},
 
 		// The medusa fixture's config, as a person wrote it.
 		{name: "medusa's storefront address", key: "APP_URL", value: "https://nextstorestage-${zeropsSubdomainHost}-8000.prg1.zerops.app", verbatim: true},

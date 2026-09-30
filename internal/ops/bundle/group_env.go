@@ -25,8 +25,10 @@ import (
 //     with a random string would cut the storefront off its backend.
 //   - A value the platform flags sensitive or reads back masked (`REDACTED`,
 //     a read without the right to see it) is generated.
-//   - A name public by design — PUBLIC or PUBLISHABLE a word of it — is
-//     written as it is: a browser bundle ships its value anyway.
+//   - A name public by design — PUBLIC or PUBLISHABLE a word of it, and no
+//     SECRET, PASSWORD or PRIVATE beside it — is written as it is: a browser
+//     bundle ships its value anyway. A private key or a vendor's secret key
+//     under it is still generated.
 //   - Anything else is generated when its name says credential
 //     (recipeCredentialName), when its value is shaped like a secret (a
 //     private key, a JWT, a URL carrying a password), or when its value has
@@ -111,9 +113,29 @@ func recipeCredentialName(key string) bool {
 }
 
 // recipePublicName reports a name public by design — PUBLIC or PUBLISHABLE a
-// word of it: `NEXT_PUBLIC_*`, `*_PUBLISHABLE_KEY`.
+// word of it: `NEXT_PUBLIC_*`, `*_PUBLISHABLE_KEY` — that says nothing
+// secret beside it: in `S3_PUBLIC_BUCKET_SECRET_KEY` the value is the
+// secret.
 func recipePublicName(key string) bool {
-	return slices.ContainsFunc(recipeNameWords(key), func(w string) bool { return w == "PUBLIC" || w == "PUBLISHABLE" })
+	words := recipeNameWords(key)
+	if slices.ContainsFunc(words, recipeSecretWord) {
+		return false
+	}
+	return slices.ContainsFunc(words, func(w string) bool { return w == "PUBLIC" || w == "PUBLISHABLE" })
+}
+
+// recipeSecretWords end a name's word that says its value is secret
+// whatever else the name says.
+var recipeSecretWords = []string{"SECRET", "SECRETS", "PASSWORD", "PASSWORDS", "PASSWD", "PASSPHRASE", "PASSPHRASES", "PRIVATEKEY"}
+
+// recipeSecretWord reports a word that says secret: PRIVATE, and SECRET and
+// PASSWORD in any of their forms.
+func recipeSecretWord(word string) bool {
+	switch word {
+	case "PRIVATE", "PASS", "PWD", "PW":
+		return true
+	}
+	return hasAnySuffix(word, recipeSecretWords)
 }
 
 // recipeNameWords splits a variable's name into its words, upper-cased: at
@@ -165,10 +187,13 @@ func recipeAppSecret(key, value string) bool {
 // ends in SECRET: Stripe's webhook secret, an OAuth client's.
 var recipeThirdPartySecretName = regexp.MustCompile(`(WEBHOOK|CLIENT)_?SECRETS?$`)
 
+// recipePrivateKeyShape is a private key, PEM or PGP.
+var recipePrivateKeyShape = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY`)
+
 // recipeSecretShapes are values shaped like a secret whatever their name: a
-// private key (PEM or PGP), a JWT.
+// private key, a JWT.
 var recipeSecretShapes = []*regexp.Regexp{
-	regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY`),
+	recipePrivateKeyShape,
 	regexp.MustCompile(`^eyJ[0-9A-Za-z_-]+\.eyJ[0-9A-Za-z_-]+\.[0-9A-Za-z_-]+$`),
 }
 
@@ -197,7 +222,10 @@ func recipeSecret(env ProjectEnvVar) (secret, setAgain bool) {
 		return env.Sensitive || (recipeCredentialName(env.Key) && !recipePublicName(env.Key)), false
 	}
 	flagged := env.Sensitive || value == maskedValue
-	if !flagged && (recipePublicName(env.Key) || !recipeLooksSecret(env.Key, value)) {
+	// A public name is public only for a value that is no key: a private key
+	// or a vendor's secret under NEXT_PUBLIC_ is a secret in the wrong place.
+	public := recipePublicName(env.Key) && !recipePrivateKeyShape.MatchString(value) && !matchesAny(recipeExternalShapes, value)
+	if !flagged && (public || !recipeLooksSecret(env.Key, value)) {
 		return false, false
 	}
 	return true, !recipeAppSecret(env.Key, value)
