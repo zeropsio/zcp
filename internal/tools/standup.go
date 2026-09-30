@@ -233,16 +233,16 @@ func (d standupDeps) readTier(ctx context.Context, wiring ops.GiteaWiring, progr
 }
 
 // groupOrgs names the org the group repo is in: the one a wired pair's
-// repository names, else every org the bot is a member of.
+// repository names, else every org whose group repository the bot reads.
 func (d standupDeps) groupOrgs(ctx context.Context, wiring ops.GiteaWiring) ([]string, error) {
 	if metas, err := workflow.ListServiceMetas(d.batch.stateDir); err == nil {
 		if org := knownGiteaOrg(metas); org != "" {
 			return []string{org}, nil
 		}
 	}
-	orgs, err := ops.GiteaUserOrgs(ctx, d.batch.httpClient, wiring.GiteaURL, wiring.Token)
+	orgs, err := ops.GiteaGroupOrgs(ctx, d.batch.httpClient, wiring.GiteaURL, wiring.Token)
 	if err != nil {
-		return nil, fmt.Errorf("list the bot's orgs: %w", err)
+		return nil, fmt.Errorf("list the bot's repositories: %w", err)
 	}
 	return orgs, nil
 }

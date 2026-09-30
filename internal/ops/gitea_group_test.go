@@ -90,8 +90,9 @@ type fakeGitea struct {
 	// fakeProposalTitle, the title zcp's recipe proposals carry.
 	titles   map[int]string
 	nextPull int
-	// orgs is what GET /user/orgs answers: the orgs the token's user is a
-	// member of, by name.
+	// orgs are the groups whose `{org}/group` repository the token's user
+	// reads; GET /user/repos answers them beside a repository of another
+	// name, and GET /user/orgs refuses a bot's token as Gitea does.
 	orgs []string
 }
 
@@ -191,13 +192,21 @@ func (f *fakeGitea) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
-	// GET /user/orgs
+	// GET /user/orgs: a bot's token lacks read:organization.
 	case r.Method == http.MethodGet && path == "user/orgs":
-		orgs := []map[string]any{}
-		for _, name := range f.orgs {
-			orgs = append(orgs, map[string]any{"id": len(orgs) + 1, "name": name, "username": name})
+		write(http.StatusForbidden, map[string]string{"message": "token does not have at least one of required scope(s), required=[read:user read:organization]"})
+
+	// GET /user/repos
+	case r.Method == http.MethodGet && path == "user/repos":
+		repos := []map[string]any{}
+		if r.URL.Query().Get("page") == "1" {
+			for _, org := range f.orgs {
+				repos = append(repos,
+					map[string]any{"name": "app", "full_name": org + "/app", "owner": map[string]any{"login": org}},
+					map[string]any{"name": "group", "full_name": org + "/group", "owner": map[string]any{"login": org}})
+			}
 		}
-		write(http.StatusOK, orgs)
+		write(http.StatusOK, repos)
 
 	// GET /repos/{o}/{r}/contents/{path}?ref={ref}
 	case r.Method == http.MethodGet && strings.Contains(path, "/contents/"):

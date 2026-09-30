@@ -71,12 +71,14 @@ func ReadGiteaFile(ctx context.Context, httpClient HTTPDoer, giteaURL, token, fu
 	return string(decoded), true, nil
 }
 
-// GiteaUserOrgs lists the orgs the token's user is a member of, by name. A
-// Mate's bot sits in exactly one group's `read` team (gitea-mate
-// docs/vocabulary.md), so this is how it finds its group before any of its
-// pairs names the org. Gitea spells an org's name `name` (and the older
-// `username`); both are read.
-func GiteaUserOrgs(ctx context.Context, httpClient HTTPDoer, giteaURL, token string) ([]string, error) {
+// GiteaGroupOrgs names the orgs whose group repository the token's user can
+// read. A Mate's bot sits in exactly one group's `read` team (gitea-mate
+// docs/vocabulary.md) and holds write on `{org}/group` (D31), so this is how
+// it finds its group before any of its pairs names the org. It reads the
+// bot's repositories, not its orgs: GET /user/orgs needs read:organization,
+// which a bot's token does not carry (write:repository, write:issue,
+// read:user — refused 403 on the first live stand-up, 2026-09-30).
+func GiteaGroupOrgs(ctx context.Context, httpClient HTTPDoer, giteaURL, token string) ([]string, error) {
 	if httpClient == nil {
 		return nil, fmt.Errorf("no HTTP client configured")
 	}
@@ -84,31 +86,46 @@ func GiteaUserOrgs(ctx context.Context, httpClient HTTPDoer, giteaURL, token str
 	if err != nil {
 		return nil, err
 	}
-	raw, status, err := giteaAPICall(ctx, httpClient, http.MethodGet, apiBase+"/user/orgs?limit=50", token, nil)
-	if err != nil {
-		return nil, err
-	}
-	if status != http.StatusOK {
-		return nil, fmt.Errorf("the Gitea read of this bot's orgs returned status %d", status)
-	}
-	var orgs []struct {
-		Name     string `json:"name"`
-		UserName string `json:"username"`
-	}
-	if err := json.Unmarshal(raw, &orgs); err != nil {
-		return nil, fmt.Errorf("the Gitea orgs response was not valid JSON")
-	}
-	names := make([]string, 0, len(orgs))
-	for _, org := range orgs {
-		name := strings.TrimSpace(org.Name)
-		if name == "" {
-			name = strings.TrimSpace(org.UserName)
+	const pageSize, maxPages = 50, 20
+	var orgs []string
+	seen := map[string]bool{}
+	for page := 1; page <= maxPages; page++ {
+		raw, status, err := giteaAPICall(ctx, httpClient, http.MethodGet,
+			fmt.Sprintf("%s/user/repos?limit=%d&page=%d", apiBase, pageSize, page), token, nil)
+		if err != nil {
+			return nil, err
 		}
-		if name != "" {
-			names = append(names, name)
+		if status != http.StatusOK {
+			return nil, fmt.Errorf("the Gitea read of this bot's repositories returned status %d", status)
+		}
+		var repos []struct {
+			Name     string `json:"name"`
+			FullName string `json:"full_name"` //nolint:tagliatelle // Gitea's wire schema
+			Owner    struct {
+				Login string `json:"login"`
+			} `json:"owner"`
+		}
+		if err := json.Unmarshal(raw, &repos); err != nil {
+			return nil, fmt.Errorf("the Gitea repositories response was not valid JSON")
+		}
+		for _, repo := range repos {
+			if repo.Name != groupRepoName {
+				continue
+			}
+			org := strings.TrimSpace(repo.Owner.Login)
+			if org == "" {
+				org, _, _ = strings.Cut(repo.FullName, "/")
+			}
+			if org != "" && !seen[org] {
+				seen[org] = true
+				orgs = append(orgs, org)
+			}
+		}
+		if len(repos) < pageSize {
+			break
 		}
 	}
-	return names, nil
+	return orgs, nil
 }
 
 // GiteaRepositoryExists reports whether fullName is a repository the token

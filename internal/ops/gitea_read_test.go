@@ -94,10 +94,10 @@ func TestReadGiteaFile_EscapesEachSegment(t *testing.T) {
 	}
 }
 
-// TestGiteaUserOrgs lists the orgs the token's user is a member of — how a
-// Mate's bot, in its group's read team, finds the group before any of its
-// pairs names it.
-func TestGiteaUserOrgs(t *testing.T) {
+// TestGiteaGroupOrgs names the orgs whose group repository the token's user
+// reads — how a Mate's bot finds its group before any of its pairs names it,
+// with a token that cannot list its orgs (the fake refuses GET /user/orgs).
+func TestGiteaGroupOrgs(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
@@ -115,24 +115,24 @@ func TestGiteaUserOrgs(t *testing.T) {
 			fake.orgs = tt.orgs
 			srv := httptest.NewServer(fake)
 			defer srv.Close()
-			got, err := GiteaUserOrgs(context.Background(), srv.Client(), srv.URL, "tok")
+			got, err := GiteaGroupOrgs(context.Background(), srv.Client(), srv.URL, "tok")
 			if err != nil {
-				t.Fatalf("GiteaUserOrgs: %v", err)
+				t.Fatalf("GiteaGroupOrgs: %v", err)
 			}
 			if strings.Join(got, ",") != tt.want {
-				t.Errorf("GiteaUserOrgs = %v, want %s", got, tt.want)
+				t.Errorf("GiteaGroupOrgs = %v, want %s", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestGiteaUserOrgs_AFailedReadIsAnError(t *testing.T) {
+func TestGiteaGroupOrgs_AFailedReadIsAnError(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer srv.Close()
-	if _, err := GiteaUserOrgs(context.Background(), srv.Client(), srv.URL, "tok"); err == nil {
+	if _, err := GiteaGroupOrgs(context.Background(), srv.Client(), srv.URL, "tok"); err == nil {
 		t.Fatal("a 401 must be an error, not a user in no org")
 	}
 }
