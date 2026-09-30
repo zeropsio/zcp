@@ -85,9 +85,15 @@ type fakeGitea struct {
 	closeStatus        int
 	// posters is pull number → the login that opened it; a pull request
 	// missing here was opened by its head repository's owner.
-	posters  map[int]string
+	posters map[int]string
+	// titles is pull number → its title; a pull request missing here carries
+	// fakeProposalTitle, the title zcp's recipe proposals carry.
+	titles   map[int]string
 	nextPull int
 }
+
+// fakeProposalTitle is the title every recipe proposal is opened under.
+const fakeProposalTitle = "Mate: the group's import files"
 
 func newFakeGitea(t *testing.T) *fakeGitea {
 	t.Helper()
@@ -97,6 +103,7 @@ func newFakeGitea(t *testing.T) *fakeGitea {
 		forks:   map[string]string{},
 		pulls:   map[string]int{},
 		posters: map[int]string{},
+		titles:  map[int]string{},
 	}
 }
 
@@ -259,8 +266,12 @@ func (f *fakeGitea) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if login, ok := f.posters[number]; ok {
 					poster = login
 				}
+				title, ok := f.titles[number]
+				if !ok {
+					title = fakeProposalTitle
+				}
 				open = append(open, map[string]any{
-					"number": number, "state": "open",
+					"number": number, "state": "open", "title": title,
 					"user": map[string]any{"login": poster},
 					"head": map[string]any{"ref": ref, "repo": map[string]any{"full_name": repo}},
 					"base": map[string]any{"ref": "main"},
@@ -278,6 +289,7 @@ func (f *fakeGitea) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		owner, ref, _ := strings.Cut(body.Head, ":")
 		f.nextPull++
 		f.pulls[owner+"/group:"+ref] = f.nextPull
+		f.titles[f.nextPull] = body.Title
 		write(http.StatusCreated, map[string]any{"number": f.nextPull,
 			"html_url": "https://gitea.example/acme/group/pulls/" + fmt.Sprint(f.nextPull)})
 
@@ -737,13 +749,16 @@ func TestEnsureGiteaProposalBranch_CutAtTheUpstreamsTip(t *testing.T) {
 
 // A proposal a Mate's bot no longer stands behind is closed, and only its:
 // one cut from an older main, or one whose files main now carries. A person's
-// pull request, or another Mate's, is never touched.
+// pull request, or another Mate's, is never touched, and neither is one the
+// bot opened under a title of its own: a registered Mate writes the group
+// repo (D31), and that is its change, opened when its person asked.
 func TestCloseGiteaPullRequests_OnlyThePostersOthers(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name        string
 		open        map[string]int
 		posters     map[int]string
+		titles      map[int]string
 		keep        string
 		closeStatus int
 		wantClosed  []int
@@ -768,6 +783,13 @@ func TestCloseGiteaPullRequests_OnlyThePostersOthers(t *testing.T) {
 			wantOpen: []int{6},
 		},
 		{
+			name:       "the Mate's own change, under its own title — left open, the proposal closed",
+			open:       map[string]int{"bot/group:recipe/aaa": 4, "acme/group:mate/bot": 8, "bot/group:add-a-mail-catcher": 9},
+			posters:    map[int]string{8: "bot"},
+			titles:     map[int]string{8: "Add a mail catcher to two tiers", 9: "Add a mail catcher to two tiers"},
+			wantClosed: []int{4}, wantOpen: []int{8, 9},
+		},
+		{
 			name:        "a refused close — reported",
 			open:        map[string]int{"bot/group:mate/bot": 3},
 			closeStatus: http.StatusForbidden,
@@ -782,11 +804,12 @@ func TestCloseGiteaPullRequests_OnlyThePostersOthers(t *testing.T) {
 			fake.seed("acme/group", "main", map[string]string{})
 			maps.Copy(fake.pulls, tt.open)
 			maps.Copy(fake.posters, tt.posters)
+			maps.Copy(fake.titles, tt.titles)
 			server := httptest.NewServer(fake)
 			defer server.Close()
 
 			closed, err := CloseGiteaPullRequests(context.Background(), server.Client(), server.URL, "tok",
-				"acme/group", "bot", "main", tt.keep)
+				"acme/group", "bot", fakeProposalTitle, "main", tt.keep)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("err = %v, want one containing %q", err, tt.wantErr)

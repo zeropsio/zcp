@@ -426,12 +426,13 @@ func EnsureGiteaProposalBranch(ctx context.Context, httpClient HTTPDoer, giteaUR
 }
 
 // CloseGiteaPullRequests closes every pull request open on fullName against
-// base that poster opened, except the one from keepHead ("" keeps none), and
-// returns the numbers it closed, sorted. Anybody else's pull request — a
-// person's, another Mate's — is never touched: on the group repo, which only
-// the group's people write, what a Mate's bot opened is that Mate's proposal
-// and zcp's to withdraw.
-func CloseGiteaPullRequests(ctx context.Context, httpClient HTTPDoer, giteaURL, token, fullName, poster, base, keepHead string) ([]int, error) {
+// base that poster opened under title — the one title zcp opens its recipe
+// proposals under — except the one from keepHead ("" keeps none), and returns
+// the numbers it closed, sorted. Nothing else is zcp's to withdraw. A
+// registered Mate writes the group repo (D31), so a pull request its bot
+// opened under any other title is the change its person asked for; and
+// anybody else's — a person's, another Mate's — is never touched.
+func CloseGiteaPullRequests(ctx context.Context, httpClient HTTPDoer, giteaURL, token, fullName, poster, title, base, keepHead string) ([]int, error) {
 	if httpClient == nil {
 		return nil, fmt.Errorf("no HTTP client configured")
 	}
@@ -439,8 +440,8 @@ func CloseGiteaPullRequests(ctx context.Context, httpClient HTTPDoer, giteaURL, 
 	if err != nil {
 		return nil, err
 	}
-	if fullName == "" || poster == "" || base == "" {
-		return nil, fmt.Errorf("closing pull requests needs a repository, a poster and a base")
+	if fullName == "" || poster == "" || title == "" || base == "" {
+		return nil, fmt.Errorf("closing pull requests needs a repository, a poster, a title and a base")
 	}
 	repoRoot := apiBase + "/repos/" + fullName
 	body, status, err := giteaAPICall(ctx, httpClient, http.MethodGet, repoRoot+"/pulls?state=open&limit=50", token, nil)
@@ -452,7 +453,8 @@ func CloseGiteaPullRequests(ctx context.Context, httpClient HTTPDoer, giteaURL, 
 	}
 	var open []struct {
 		giteaPullRequest
-		User struct {
+		Title string `json:"title"`
+		User  struct {
 			Login string `json:"login"`
 		} `json:"user"`
 		Head struct {
@@ -472,7 +474,8 @@ func CloseGiteaPullRequests(ctx context.Context, httpClient HTTPDoer, giteaURL, 
 	}
 	var closed []int
 	for _, pr := range open {
-		if !strings.EqualFold(pr.User.Login, poster) || pr.Base.Ref != base || (keepHead != "" && pr.Head.Ref == keepHead) {
+		if !strings.EqualFold(pr.User.Login, poster) || pr.Title != title || pr.Base.Ref != base ||
+			(keepHead != "" && pr.Head.Ref == keepHead) {
 			continue
 		}
 		_, status, err := giteaAPICall(ctx, httpClient, http.MethodPatch, fmt.Sprintf("%s/pulls/%d", repoRoot, pr.Number), token, payload)

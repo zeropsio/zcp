@@ -70,10 +70,11 @@ type giteaRecipeOutcome struct {
 // next release built production with the dev setup. So a group's first recipe
 // lands whole, a tier main lacks is proposed on any later pass, and a group
 // whose main has every tier gets nothing — no fork, no commit, no pull request
-// — while this bot's own proposals still open there are closed. A tier on main
-// changes only through a pull request somebody chose to open — a person's, or
-// the Mate's own when its person asks, since a registered Mate writes the
-// group repo (D31) — never through this reconcile.
+// — while this bot's own proposals still open there, the requests it opened
+// under giteaRecipeBranchTitle, are closed. A tier on main changes only
+// through a pull request somebody chose to open — a person's, or the Mate's
+// own when its person asks, since a registered Mate writes the group repo
+// (D31) — never through this reconcile, which leaves such a request open.
 //
 // A proposal is cut from main's tip, on a fork branch named after that commit
 // (ops.GiteaRecipeBranch), so its pull request only ever adds files — the kind
@@ -200,7 +201,7 @@ func giteaGroupRecipeOutcome(
 
 	if len(missing) == 0 {
 		outcome.OnMain = true
-		closed, closeErr := ops.CloseGiteaPullRequests(ctx, httpClient, wiring.GiteaURL, wiring.Token, groupRepo, identity.Name, base, "")
+		closed, closeErr := ops.CloseGiteaPullRequests(ctx, httpClient, wiring.GiteaURL, wiring.Token, groupRepo, identity.Name, giteaRecipeBranchTitle, base, "")
 		outcome.Closed = closed
 		switch {
 		case closeErr != nil:
@@ -228,7 +229,7 @@ func giteaGroupRecipeOutcome(
 
 	// Close first: a proposal from an older main is withdrawn before its
 	// replacement opens, so the group never holds two of this Mate's at once.
-	closed, closeErr := ops.CloseGiteaPullRequests(ctx, httpClient, wiring.GiteaURL, wiring.Token, groupRepo, identity.Name, base, branch)
+	closed, closeErr := ops.CloseGiteaPullRequests(ctx, httpClient, wiring.GiteaURL, wiring.Token, groupRepo, identity.Name, giteaRecipeBranchTitle, base, branch)
 	outcome.Closed = closed
 	if closeErr != nil {
 		outcome.Line = fmt.Sprintf("could not close this Mate's earlier recipe proposal on %s (%v) — retrying on the next pass.", groupRepo, closeErr)
