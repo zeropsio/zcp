@@ -37,6 +37,23 @@ func TestRenderStatus_DevModeClose_SurfacesTransience(t *testing.T) {
 	if !strings.Contains(low, "dev-server") && !strings.Contains(low, "dev_server") && !strings.Contains(low, "not durable") {
 		t.Fatalf("dev-mode close must surface transience:\n%s", out)
 	}
+	requireKeptDevServerWording(t, out)
+}
+
+// requireKeptDevServerWording: zcp keeps the dev server an agent started and
+// starts it again after a restart or redeploy (spec-workflows §8 O4), so a
+// durability note says a crash leaves it down — never that a container cycle
+// does.
+func requireKeptDevServerWording(t *testing.T, out string) {
+	t.Helper()
+	for _, stale := range []string{"502s after", "stops after a container cycle"} {
+		if strings.Contains(out, stale) {
+			t.Errorf("the note still says a container cycle takes the dev server down (%q):\n%s", stale, out)
+		}
+	}
+	if !strings.Contains(out, "restart or redeploy") || !strings.Contains(out, "crash") {
+		t.Errorf("the note says zcp brings a kept dev server back after a restart or redeploy, and a crash leaves it down:\n%s", out)
+	}
 }
 
 // TestRenderStatus_ImplicitWebClose_NoTransienceCaveat is the control: a
@@ -85,4 +102,5 @@ func TestRenderStatus_DevModeActive_SurfacesTransience(t *testing.T) {
 	if !strings.Contains(low, "dev_server") && !strings.Contains(low, "dev-mode") {
 		t.Fatalf("active dev-mode session must surface transience:\n%s", out)
 	}
+	requireKeptDevServerWording(t, out)
 }

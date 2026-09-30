@@ -10,6 +10,11 @@ The envelope reports at least one in-scope service with
 `deployed: false` (bootstrapped but never received code). Finish that
 here: establish `zerops.yaml` and the app, deploy, verify.
 
+That includes an adopted service imported without code: ACTIVE, maybe
+with the repository's source already in its working directory, but
+with nothing built, installed or started — its dependencies arrive
+with this first deploy's build.
+
 Flow for each never-deployed runtime:
 
 1. **Establish `zerops.yaml`** — scaffold if absent, refine in place if
@@ -272,7 +277,8 @@ runtimes the web server auto-starts and this checklist does not apply.
 
 - Dev setup block in `zerops.yaml`: **`run.start: zsc noop --silent`**
   (a no-op keepalive), **no** `healthCheck`. You start the real dev
-  process yourself via `zerops_dev_server action=start` after each deploy.
+  process yourself via `zerops_dev_server action=start`; zcp starts it
+  again after later redeploys and restarts, until `action=stop`.
 - Stage setup block (if a dev+stage pair exists): real `start:`
   command **plus** a `healthCheck`. Stage auto-starts on deploy and
   Zerops probes it on its configured interval.
@@ -303,10 +309,14 @@ Client-side pre-flight rejects this with `INVALID_ZEROPS_YML` before any build t
 
 Dev-mode dynamic runtime containers start running `zsc noop --silent`
 after deploy — a no-op keepalive; no dev process is live until you start
-one. The dev server is unsupervised, so
-the URL 502s after any container cycle until restarted: a passing verify
-means "live now", not "durably shipped". For an always-on service use
-simple mode. Action family on `zerops_dev_server`:
+one. Once started, zcp keeps it — one per dev container, the last you
+started: when the dev container restarts or is redeployed, zcp starts
+it again with the same command, working directory and port — a
+deploy's response reports it under `devServer` — until you `stop` it.
+A server that crashes in its container stays down for you to read and
+fix. It is still a dev process: a passing
+verify means "live now", not "durably shipped" — for an always-on
+service use simple mode. Action family on `zerops_dev_server`:
 
 | Action | Use | Args |
 |---|---|---|
@@ -314,7 +324,7 @@ simple mode. Action family on `zerops_dev_server`:
 | `start` | spawn the dev process | `hostname command port healthPath` |
 | `restart` | survives-the-deploy config/code change | `hostname command port healthPath` |
 | `logs` | tail recent for diagnosis | `hostname logLines=40` |
-| `stop` | end of session, free the port | `hostname port` |
+| `stop` | free the port; zcp stops keeping it | `hostname port` |
 
 Args:
 - `command` — the app's dev-server start command (the real long-running

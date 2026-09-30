@@ -264,6 +264,26 @@ func developGoldenScenarios() []goldenScenario {
 			},
 		},
 		{
+			id:          "develop/standup-stage-out-of-scope",
+			description: "A Mate's stand-up: an adopted standard pair imported without code (never deployed, close-mode unset), develop started with the stage half out of scope — what a Mate's develop start does by itself. The dev half's first deploy, no promotion.",
+			envelope: StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvContainer,
+				Services:    fixSnapStandUpPair("appdev", "appstage", false, topology.CloseModeUnset, topology.GitPushUnconfigured),
+				WorkSession: fixStandUpSession("appdev", "appstage"),
+			},
+		},
+		{
+			id:          "develop/standup-dev-deployed-wired",
+			description: "A Mate's stand-up after its dev half deployed, in a Mate wired to its group's Gitea (push configured, close-mode auto) with the stage half still out of scope and never deployed — no delivery, no promotion, no first-deploy branch held open by the stage.",
+			envelope: StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvContainer,
+				Services:    fixSnapStandUpPair("appdev", "appstage", true, topology.CloseModeAuto, topology.GitPushConfigured),
+				WorkSession: fixStandUpSession("appdev", "appstage"),
+			},
+		},
+		{
 			id:          "develop/post-adopt-standard-unset",
 			description: "Adopted standard pair, both halves running, close-mode never picked.",
 			envelope: StateEnvelope{
@@ -817,6 +837,48 @@ func fixSnapGitPushIntegration(devHost, stageHost, typeVersion string, rc topolo
 			Deployed:         true,
 		},
 	}
+}
+
+// fixSnapStandUpPair returns both halves of a standard pair in a Mate's
+// stand-up: adopted without code, the stage half never deployed, the dev half
+// deployed or not as given, both halves carrying the given close-mode and push
+// state (a wired Mate's pair reads gitPush=configured once its repository is
+// wired; buildIntegration stays none — a push to the group's Gitea builds
+// nothing).
+func fixSnapStandUpPair(devHost, stageHost string, devDeployed bool, closeMode topology.CloseDeployMode, gitPush topology.GitPushState) []ServiceSnapshot {
+	return []ServiceSnapshot{
+		{
+			Hostname:         devHost,
+			TypeVersion:      "nodejs@22",
+			RuntimeClass:     topology.RuntimeDynamic,
+			Mode:             topology.ModeStandard,
+			CloseDeployMode:  closeMode,
+			GitPushState:     gitPush,
+			BuildIntegration: topology.BuildIntegrationNone,
+			StageHostname:    stageHost,
+			Bootstrapped:     true,
+			Deployed:         devDeployed,
+		},
+		{
+			Hostname:         stageHost,
+			TypeVersion:      "nodejs@22",
+			RuntimeClass:     topology.RuntimeDynamic,
+			Mode:             topology.ModeStage,
+			CloseDeployMode:  closeMode,
+			GitPushState:     gitPush,
+			BuildIntegration: topology.BuildIntegrationNone,
+			Bootstrapped:     true,
+		},
+	}
+}
+
+// fixStandUpSession is a Mate's stand-up session over one pair: both halves
+// declared, the stage half out of scope, the intent the Mate app sends.
+func fixStandUpSession(devHost, stageHost string) *WorkSessionSummary {
+	ws := fixSession(devHost, stageHost)
+	ws.Intent = "Stand up development of the project."
+	ws.Roles = map[string]string{stageHost: RoleOutOfScope}
+	return ws
 }
 
 // fixSnapManaged returns a managed-service (DB / cache / etc.) snapshot.

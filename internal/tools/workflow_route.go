@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -20,7 +19,7 @@ import (
 func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client, projectID, stateDir, selfHostname string, rt runtime.Info) (*mcp.CallToolResult, any, error) {
 	var liveHostnames []string
 	var unmanagedRuntimes []string
-	liveStatus := make(map[string]string)
+	liveStacks := make(map[string]platform.ServiceStack)
 
 	metas, _ := workflow.ListServiceMetas(stateDir)
 	// Pair-keyed index (spec-workflows.md §8 E8): both halves of a
@@ -30,13 +29,15 @@ func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client
 	metaIdx := workflow.ManagedRuntimeIndex(metas)
 
 	if client != nil && projectID != "" {
-		if svcs, err := ops.ListProjectServices(ctx, client, projectID); err == nil {
+		// The direct read: its active app version names its source, which
+		// is how a runtime imported without code reads as not deployed.
+		if svcs, err := client.ListServicesDirect(ctx, projectID); err == nil {
 			for _, s := range svcs {
 				if s.IsSystem() || (selfHostname != "" && s.Name == selfHostname) {
 					continue
 				}
 				liveHostnames = append(liveHostnames, s.Name)
-				liveStatus[s.Name] = s.Status
+				liveStacks[s.Name] = s
 				typeName := s.ServiceStackTypeInfo.ServiceStackTypeVersionName
 				if !topology.IsManagedService(typeName) {
 					m, ok := metaIdx[s.Name]
@@ -65,7 +66,7 @@ func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client
 		ServiceMetas:      metas,
 		ActiveSessions:    sessions,
 		LiveServices:      liveHostnames,
-		LiveServiceStatus: liveStatus,
+		LiveServiceStacks: liveStacks,
 		UnmanagedRuntimes: unmanagedRuntimes,
 		WorkSession:       ws,
 		Environment:       workflow.DetectEnvironment(rt),

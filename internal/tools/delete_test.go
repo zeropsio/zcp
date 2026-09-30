@@ -75,6 +75,12 @@ func TestDeleteTool_CleansUpServiceMeta(t *testing.T) {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
 
+	// And a dev server zcp keeps on it: a deleted service has no container
+	// for the keeper to bring it back into.
+	if err := workflow.KeepDevServer(stateDir, workflow.KeptDevServer{Hostname: "api", Command: "npm run dev", Port: 3000, Container: "api-1/b/1"}); err != nil {
+		t.Fatalf("KeepDevServer: %v", err)
+	}
+
 	// Verify the meta file exists.
 	metaPath := filepath.Join(stateDir, "services", "api.json")
 	if _, err := os.Stat(metaPath); os.IsNotExist(err) {
@@ -99,6 +105,9 @@ func TestDeleteTool_CleansUpServiceMeta(t *testing.T) {
 	// Service meta file should be removed after successful delete.
 	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
 		t.Error("expected service meta to be deleted after service deletion")
+	}
+	if kept, _ := workflow.KeptDevServerFor(stateDir, "api"); kept != nil {
+		t.Errorf("a deleted service's kept dev server is forgotten, got %+v", kept)
 	}
 }
 

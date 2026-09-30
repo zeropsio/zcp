@@ -102,6 +102,11 @@ type DeployResult struct {
 	// "detached" (GF-12). Empty when the source has no repo yet, or on a
 	// cross-deploy (preflight is self-deploy only).
 	RepoState string `json:"repoState,omitempty"`
+	// DevServer is the dev server zcp keeps on the target (docs/spec-
+	// workflows.md §8 O4), started again right after this deploy replaced
+	// the container it ran in — running or not, with its reason and log
+	// tail. Nil when no dev server is kept there.
+	DevServer *DevServerResult `json:"devServer,omitempty"`
 }
 
 // GitPushResult contains the outcome of a git-push deploy operation.

@@ -1032,8 +1032,9 @@ page painted "Reading your projects…" and an empty menu at every re-read (the 
 **A Mate is named after its bot** (2026-09-17, the owner, on a second Mate the dialog had called
 "Todo - dev 2": "why is it called that and not Todo - Fen?"). The first Mate at _New project_ is
 "Todo - Vera", every later one "Todo - Fen" — the name the person will say — numbered only when
-that name is taken; renaming the bot in the _Add Mate_ dialog renames the environment with it until
-the person edits the name by hand. A stage and a production are named after their role
+that name is taken. The _Add Mate_ dialog asks for a name, a colour and a shape and nothing else:
+the environment is not named in it but follows from the name, `<project> - <name>`. A stage and a
+production are named after their role
 (`proposedEnvironmentName`; `ZeropsEnvironmentCreationDialog.logic.test.ts` "names a Mate after its
 bot, not its role").
 
@@ -2288,10 +2289,25 @@ workflow runs on `main`, which the person's merge moves, and asks the broker for
 promoted runtime (`app` for `appdev`/`appstage`; a workflow naming `appdev` was answered
 `unknown_service`, measured 2026-09-17) — and a wired pair's direct deploys are never redirected
 to a push. The develop session's auto-close note tells the agent to hand the person
-the pull request's link and the next step: a stage and a production from the projects page. Measured
+the pull request's link and the next step: a stage and a production from the projects page — once
+the session delivered, that is deployed a stage half; a stand-up's closes without it. Measured
 missing on Dara's run ("create a todo app" got one simple-mode service, nothing pushed) and on the
 owner's run of the same evening (`gitea_delivery.go`; `TestAWiredMatePlansOnlyStandardPairs`,
 `TestAStageDeployOfAWiredPairDeliversItself`, `TestAWiredPairDeploysDirectlyAndIsNeverSentToPush`).
+
+**A stand-up stops at dev (2026-09-30).** A new Mate's stand-up — "Stand up development of the
+project.", sent once by its person's client — deploys the dev halves it adopted (their build installs
+the packages), starts their dev servers, verifies them, and names the stage as the next step the
+person can ask for: no promotion, so no commit, push or pull request unasked. zcp tells a
+recipe-born Mate's empty services from deployed ones since the Beviro trial of 2026-09-29, so their
+first deploy opens develop's first-deploy branch — which promotes each standard pair to its stage,
+and in a wired Mate a stage deploy is the delivery above. So in a Mate, develop start leaves the
+stage half of an adopted pair whose dev half never deployed out of the session's scope
+(spec-workflows D2f): nothing is asked of the agent, the session closes on the dev halves, and the
+next task's session, its dev half deployed, delivers through the stage as before. A pair a Mate
+created for a task keeps delivering through its stage on its first deploy — "build a todo app" is
+still the whole prompt (`TestHandleDevelopBriefing_MateStandUp_LeavesTheStageOut`,
+`TestScenario_S14_StageLeftOutOfScope`).
 
 **What became of the request (2026-09-19).** A pair records its pull request's number and never
 re-derives it, which is right for the number and wrong for its fate: the merge that ends a Mate's

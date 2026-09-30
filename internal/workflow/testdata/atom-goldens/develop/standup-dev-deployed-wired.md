@@ -1,7 +1,7 @@
 ---
-id: develop/standard-auto-pair
-atomIds: [develop-intro, develop-change-drives-deploy, develop-self-deploy-reproducibility, develop-close-mode-auto, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-strategy-awareness, develop-close-mode-auto-standard]
-description: "Standard dev+stage pair, close-mode auto on both halves, both deployed."
+id: develop/standup-dev-deployed-wired
+atomIds: [develop-intro, develop-git-push-start-from-remote, develop-stage-out-of-scope, develop-change-drives-deploy, develop-self-deploy-reproducibility, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-strategy-awareness]
+description: "A Mate's stand-up after its dev half deployed, in a Mate wired to its group's Gitea (push configured, close-mode auto) with the stage half still out of scope and never deployed — no delivery, no promotion, no first-deploy branch held open by the stage."
 ---
 === develop-intro ===
 ### Development & Deploy
@@ -9,6 +9,53 @@ description: "Standard dev+stage pair, close-mode auto on both halves, both depl
 Infrastructure is provisioned and at least one runtime already has a
 successful first deploy on record. You're in the edit loop: discover
 the current state, implement the user's request, redeploy, verify.
+
+---
+
+=== develop-git-push-start-from-remote ===
+The repo is the source of truth here, and this working copy is not it. A container's `/var/www` survives every session: it can still be sitting on a topic branch that was merged and deleted weeks ago, or on a `main` that is behind by everything anyone else has landed since. Writing code on top of that produces a diff against the wrong base, and the mistake only surfaces at the push — as a conflict, or worse, as a silent revert of someone else's work.
+
+Sync before the first edit, not after — the command depends on whether this pair is wired to the account's own Gitea (a repository the broker gave it; its branch is never `main`, which is protected there).
+
+Not wired to the account's own Gitea — sync by moving the working copy onto whatever the remote's default branch now is:
+
+```
+ssh <push-source-host> "cd /var/www && git fetch origin && git checkout <default-branch> && git reset --hard origin/<default-branch>"
+```
+
+Read the default branch from the remote rather than assuming `main` — `git remote show origin` names it, and a repo created before that convention may still be on `master`. Uncommitted changes in the working copy are the one thing this destroys, so look before resetting (`git status --short`). Local edits that survived a previous session are almost always leftovers from work that already landed; if they are not, commit them to a branch first and say so, rather than carrying them silently into new work.
+
+Wired to the account's own Gitea — there is no command to run here, on purpose: the working copy stays on this Mate's own branch always, and neither checking it out to the base, resetting it, nor merging the base in by hand is the sync. A plain `git merge origin/<base>` run by hand can fail on a false conflict — the base can carry a squash of THIS Mate's own earlier work, which shares no history with the branch it came from, so an ordinary merge reads it as two histories that both add the same files even though nothing really collides. When a pull request of this Mate's own is recorded as merged, zcp folds that landing in for you: the moment a pass learns of the merge, and again before whatever push follows it needs a landing absorbed — a delivery's own commit+push, or an ordinary `strategy="git-push"`. Usually that keeps the false conflict from ever reaching you or the pull request it opens; an old container git, or a landing zcp cannot prove lossless, can still leave it unabsorbed, and the ordinary step can then hit that same shape for real.
+
+Either way, every conflict zcp reports here — from the absorb step itself, or the ordinary step behind an unabsorbed landing — names the exact commands in its own message: never a plain reset, and never the plain `git fetch origin && git merge origin/<base>` on its own, which would only repeat the same conflict. Run what the message says, in the checkout it names, then push or deploy again — that is what resolves it.
+
+Where the remote later refuses the branch you push, the ref is protected: the answer is a pull request a person merges, never a fresh token. The transport classifier names that case directly when it happens.
+
+---
+
+=== develop-stage-out-of-scope ===
+### The stage stays as it is this session
+
+This develop session leaves the stage half of these pairs out of scope:
+
+- `appdev` — its stage `appstage` stays as it is
+
+The work runs on the dev half alone: deploy it, start its dev server and
+verify it. The session closes once the dev half is deployed and verified.
+
+Leave the stage untouched: no deploy, cross-deploy or promotion onto it, and
+no commit or push for it. In a Mate wired to its group's Gitea, a deploy onto
+a stage half is a delivery — a commit, a push and a pull request — so it
+happens only when the person asks for it.
+
+A Mate's stand-up is such a session: when a Mate first deploys services it
+adopted, zcp leaves their stage out on its own, and the stand-up ends at a
+running dev.
+
+When the dev half is verified, end by telling the person what runs on the dev
+half, and that promoting it to the stage is the next step they can ask for.
+If they already asked for it, start a new develop session for it once this
+one closes — with the dev half deployed, its stage is part of the work again.
 
 ---
 
@@ -56,31 +103,6 @@ directories, local env files) and make a baseline commit before making any
 other change. Every self-deploy after that point is then reproducible from
 that commit forward; skipping this step means the first self-deploy is the
 first moment anyone discovers what wasn't tracked.
-
----
-
-=== develop-close-mode-auto ===
-This service is on `closeDeployMode=auto` with no configured git remote. Your delivery pattern is direct `zerops_deploy` calls via zcli — fast, synchronous, the canonical default for tight iteration cycles. `action="close"` itself is a session-teardown call regardless of close-mode; auto-close fires when the deploys you ran during iterations satisfy the green-scope gate.
-
-## How auto-close fires
-
-When auto-close conditions land (every service in scope has a successful deploy + passed verify), ZCP closes the develop session automatically. The deploys that landed during develop iterations ARE the close deploys — there's no separate close-time push, and no special call from the close handler.
-
-The env-specific mechanics (SSH push from `/var/www` for container, `zcli push` from CWD for local) live in the env-scoped deploy guidance fired alongside this atom.
-
-## When you might switch
-
-`auto` is great for "make a change, see it live, repeat." If the workflow grows — multiple contributors landing changes, CI pipelines that should run before deploy, release branches — change the config:
-
-- Configure git-push delivery (`zerops_workflow action="git-push-setup" service="appdev"`) if the repo should become the source of truth: once `gitPush=configured`, delivery is commit + git push (Zerops webhook or GitHub Actions runs the build) and direct deploys answer with the recommended push call instead. Close-mode stays `auto` — it only owns when the session counts as done.
-- Switch close-mode to `manual` if external orchestration owns close decisions. ZCP still records every deploy/verify; auto-close just doesn't fire:
-
-```
-zerops_workflow action="close-mode" closeMode={"appdev":"manual"}
-zerops_workflow action="close-mode" closeMode={"appstage":"manual"}
-```
-
-The default stays auto until you explicitly switch.
 
 ---
 
@@ -223,33 +245,3 @@ zerops_workflow action="build-integration" service="appdev" integration="actions
 Substitute `appdev` with the dev-half hostname (or single-runtime hostname). For a multi-service project, repeat each call once per dev-half service — never per stage-half.
 
 Mixed config across services in one project is fine — each service's dimensions are independent in the envelope.
-
----
-
-=== develop-close-mode-auto-standard ===
-### Closing the task
-
-Deploy dev first, start the dev server, verify, then promote to stage. Run per dev/stage pair in scope:
-
-```
-zerops_deploy targetService="appdev" setup="dev"
-zerops_dev_server action=start hostname="appdev" command="{start-command}" port={port} healthPath="{path}"
-zerops_verify serviceHostname="appdev"
-
-zerops_deploy sourceService="appdev" targetService="appstage" setup="prod"
-zerops_verify serviceHostname="appstage"
-```
-
-Cross-deploy builds the dev source on stage (dev side unchanged); stage has a real `run.start` + `healthCheck`, so it auto-starts (no `zerops_dev_server` on the stage side). The work session closes once both halves have a successful deploy + passing verify (`closeReason=auto-complete`). If the dev server is already running after a code-only change, run `action=status` first; if `running: true`, skip `action=start`.
-
-Commit the dev half over SSH after it verifies and before the cross-deploy
-— not the mount — so the stage receives a commit: the response then
-carries `sha` with `dirty: false` and an `appVersionId`. Cross-deploying
-uncommitted work still succeeds, but the response marks `dirty: true`
-and that stage build isn't reproducible from git alone. To ship an exact
-or older commit without touching the dev working tree, add
-`sha="<commit>"` to the cross-deploy — never on the dev self-deploy
-above. To roll the stage back without a rebuild, re-activate a recorded
-build instead: `zerops_deploy targetService="appstage"
-appVersion="<id>"`, with candidate ids from the status envelope's
-`rollback` block or `zerops_events serviceHostname="appstage"`.

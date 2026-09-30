@@ -328,8 +328,9 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 	if closed, closedAt, reason := workflow.DeriveCloseState(stateDir, ws); closed {
 		note := closedSessionNote(closedAt, reason)
 		// In a wired group the person's next step is theirs to know
-		// (gitea_delivery.go).
-		if giteaWired() {
+		// (gitea_delivery.go) — once the session delivered: a stand-up that
+		// left the stage out opened no pull request to hand over.
+		if giteaWired() && sessionDeployedAStageHalf(stateDir, ws) {
 			note += " " + giteaHandoffNote
 		}
 		return &WorkSessionState{
@@ -349,6 +350,21 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 		Note:     note,
 		Progress: progress,
 	}
+}
+
+// sessionDeployedAStageHalf reports whether ws deployed the stage half of a
+// pair — in a Mate wired to its group's Gitea, the deploy that commits,
+// pushes and opens the pull request a closing note hands over.
+func sessionDeployedAStageHalf(stateDir string, ws *workflow.WorkSession) bool {
+	for _, host := range ws.Services {
+		if !workflow.HasSuccessfulDeployFor(ws, host) {
+			continue
+		}
+		if meta, err := workflow.FindServiceMeta(stateDir, host); err == nil && meta != nil && meta.StageHostname == host {
+			return true
+		}
+	}
+	return false
 }
 
 const autoCompleteSessionNote = "All declared services deployed + verified — scope is green. Keep deploying into this session for more changes (nothing is lost). Call zerops_workflow action=\"close\" workflow=\"develop\" when this task is done, or action=\"start\" to begin a different task."

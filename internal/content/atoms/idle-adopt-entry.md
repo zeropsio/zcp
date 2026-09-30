@@ -4,7 +4,7 @@ priority: 1
 phases: [idle]
 idleScenarios: [adopt]
 title: "Adopt existing unmanaged services"
-references-fields: [workflow.ServiceSnapshot.Bootstrapped, workflow.BootstrapRouteOption.AdoptServices, ops.ServiceInfo.AdoptionState]
+references-fields: [workflow.ServiceSnapshot.Bootstrapped, workflow.ServiceSnapshot.Deployed, workflow.BootstrapRouteOption.AdoptServices, ops.ServiceInfo.AdoptionState, ops.ServiceInfo.Deployed]
 ---
 
 Per-service `adoptionState` in `zerops_discover` output classifies each
@@ -41,10 +41,19 @@ Service-scoped tools (`workflow="develop"`, `zerops_deploy`,
 That gate is structural backstop, not the primary path — read the
 warning, fire adopt directly.
 
+**Read `deployed` before you describe what runs.** Each runtime says
+whether code was ever deployed into it — `deployed` in
+`zerops_discover`, `deployed=` on the status service line. `false`
+means never: a service imported without code reads ACTIVE like a
+running app, and its working directory may already hold the
+repository's source, yet nothing is built, installed or started.
+Adopting it tracks it as it is — still empty; the develop workflow's
+first deploy fills it.
+
 Services in project, `not bootstrapped`. Two primary paths, both
 legitimate; existing services stay independent either way:
 
-1. **Adopt the listed services** — attach ZCP tracking to running
+1. **Adopt the listed services** — attach ZCP tracking to the existing
    services without changing their code, config, or scale.
 2. **Create new services alongside** — pick non-colliding hostnames
    and bootstrap normally; existing services keep running untouched.

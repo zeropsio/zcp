@@ -301,6 +301,52 @@ func TestRenderServiceLine_BasePrefixHint(t *testing.T) {
 	}
 }
 
+// TestRenderServiceLine_UntrackedRuntimeSaysWhetherDeployed pins the status
+// line of a runtime zcp does not track yet: it says deployed=true|false, the
+// same key a tracked runtime carries, so a runtime imported without code —
+// ACTIVE like any other — is not read as a running app before adoption (the
+// Beviro trial, 2026-09-29). Managed services never carry the key.
+func TestRenderServiceLine_UntrackedRuntimeSaysWhetherDeployed(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		svc     ServiceSnapshot
+		want    string
+		wantNot string
+	}{
+		{
+			name:    "imported without code",
+			svc:     ServiceSnapshot{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Status: "ACTIVE"},
+			want:    "appdev (nodejs@22) — not bootstrapped, deployed=false",
+			wantNot: "deployed=true",
+		},
+		{
+			name:    "a running app nobody adopted yet",
+			svc:     ServiceSnapshot{Hostname: "api", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Status: "ACTIVE", Deployed: true},
+			want:    "api (nodejs@22) — not bootstrapped, deployed=true",
+			wantNot: "deployed=false",
+		},
+		{
+			name:    "managed",
+			svc:     ServiceSnapshot{Hostname: "db", TypeVersion: "postgresql@16", RuntimeClass: topology.RuntimeManaged, Status: "ACTIVE"},
+			want:    "db (postgresql@16) — managed",
+			wantNot: "deployed=",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := renderServiceLine(tt.svc)
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("line %q, want it to contain %q", got, tt.want)
+			}
+			if strings.Contains(got, tt.wantNot) {
+				t.Errorf("line %q must not contain %q", got, tt.wantNot)
+			}
+		})
+	}
+}
+
 func TestRenderStatus_DeterministicArgs(t *testing.T) {
 	t.Parallel()
 

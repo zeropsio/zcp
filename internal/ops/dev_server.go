@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +37,9 @@ type DevServerResult struct {
 	// LogFile is the absolute path to the log file on the target
 	// container, so the agent can tail it further if needed.
 	LogFile string `json:"logFile,omitempty"`
+	// PID is the process a start/restart spawned, as its spawn acknowledged
+	// it; zero when unknown.
+	PID int `json:"pid,omitempty"`
 	// URL is the consumer-vantage address of the probed dev server —
 	// http://<hostname>:<port><healthPath>, reachable from the agent's
 	// container over the project-private network when the server binds
@@ -120,6 +124,11 @@ const (
 	// spawned is dead — a foreign/stale listener already owns the port.
 	reasonPortInUse = "port_in_use"
 )
+
+// ReasonHealthProbeTimeout is the start/restart Reason when the health probe
+// got no ready answer within the wait — the process may still be starting (a
+// dev server compiling on its first request), unlike a refused connection.
+const ReasonHealthProbeTimeout = "health_probe_timeout"
 
 const (
 	// defaultDevServerWait is how long the start probe waits for a
@@ -326,6 +335,131 @@ func devServerNotRunningErr(hostname, status string) error {
 		fmt.Sprintf("dev server target %q is in %s — a dev server needs a RUNNING container to attach to", hostname, status),
 		"Deploy the service (zerops_deploy) to bring it RUNNING, then start the dev server. If a previous deploy failed, read zerops_events to see why before redeploying.",
 	)
+}
+
+// containerIdentityCmd prints the container's hostname, the kernel's boot id
+// and its init's start time (field 22 of /proc/1/stat, counted after the
+// parenthesised command name, which may hold spaces). A redeploy is a new
+// container; a restart starts a new init — whose start time moves when the
+// container shares its host's kernel, and whose boot id moves when it boots
+// its own. A crash of the dev server changes none of the three.
+const containerIdentityCmd = `printf '%s %s %s\n' "$(hostname)" "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo -)" "$(sed 's/^.*) //' /proc/1/stat 2>/dev/null | cut -d' ' -f20)"`
+
+// containerIdentityTimeout bounds the identity read: one round trip, no
+// retries — a container that does not answer is down or being replaced.
+const containerIdentityTimeout = 10 * time.Second
+
+// ContainerIdentity names the life of hostname's container — "<hostname>/<boot
+// id>/<init start time>" — so a kept dev server can tell "its container
+// restarted or was redeployed" (the process is gone and zcp starts it again)
+// from "it crashed" (the agent's to fix). An unreachable container, or an
+// answer without all three parts, is an error: nothing may be concluded from it.
+func ContainerIdentity(ctx context.Context, ssh SSHDeployer, hostname string) (string, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, containerIdentityTimeout)
+	defer cancel()
+	out, err := ssh.ExecSSH(probeCtx, hostname, containerIdentityCmd)
+	if err != nil {
+		return "", fmt.Errorf("container identity of %s: %w", hostname, err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	fields := strings.Fields(lines[len(lines)-1])
+	if len(fields) != 3 {
+		return "", fmt.Errorf("container identity of %s: unreadable answer %q", hostname, strings.TrimSpace(string(out)))
+	}
+	if _, convErr := strconv.ParseUint(fields[2], 10, 64); convErr != nil {
+		return "", fmt.Errorf("container identity of %s: init start time %q: %w", hostname, fields[2], convErr)
+	}
+	return strings.Join(fields, "/"), nil
+}
+
+// portListeningCmd prints "listening" when a TCP socket listens on port in the
+// container's own socket table — /proc/net/tcp and tcp6, a local :PORT (hex)
+// with remote port 0000 in state 0A (LISTEN) — and "free" otherwise. Nothing
+// is asked of the server (an HTTP request would make a dev server compile) and
+// no tool a minimal image may lack is needed.
+func portListeningCmd(port int) string {
+	return fmt.Sprintf(`if grep -Eqs ':%04X [0-9A-Fa-f]+:0000 0A' /proc/net/tcp /proc/net/tcp6; then echo listening; else echo free; fi`, port)
+}
+
+// PortListening reports whether something already listens on port inside
+// hostname's container — what a bring-back checks before it spawns, so a
+// server the agent (or another bring-back) already started is never doubled.
+func PortListening(ctx context.Context, ssh SSHDeployer, hostname string, port int) (bool, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, containerIdentityTimeout)
+	defer cancel()
+	out, err := ssh.ExecSSH(probeCtx, hostname, portListeningCmd(port))
+	if err != nil {
+		return false, fmt.Errorf("port %d listener on %s: %w", port, hostname, err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	switch strings.TrimSpace(lines[len(lines)-1]) {
+	case "listening":
+		return true, nil
+	case "free":
+		return false, nil
+	}
+	return false, fmt.Errorf("port %d listener on %s: unreadable answer %q", port, hostname, strings.TrimSpace(string(out)))
+}
+
+// KillSpawnedDevServer stops what one dev-server spawn started — pid, as its
+// ack reported it (DevServerResult.PID) — and only while the pidfile next to
+// logFile (default log when empty) still holds that pid: a later start
+// overwrites the pidfile, and its process is not this caller's to stop. The
+// spawn ran it under setsid, so pid leads its own process group and the whole
+// group is signalled: a runner that does not pass SIGTERM on (npm, sh -c)
+// would leave its listener up. Never the bare pid — with its group gone, pid
+// can only name a process that reused it. An unknown pid (0) stops nothing.
+func KillSpawnedDevServer(ctx context.Context, ssh SSHDeployer, hostname, logFile string, pid int) error {
+	if pid <= 0 {
+		return nil
+	}
+	if logFile == "" {
+		logFile = defaultLogFilePattern
+	}
+	want := strconv.Itoa(pid)
+	cmd := fmt.Sprintf(`if [ "$(cat %s 2>/dev/null)" = %s ]; then kill -TERM -%s 2>/dev/null; fi; true`,
+		shellQuote(pidFileFor(logFile)), shellQuote(want), want)
+	killCtx, cancel := context.WithTimeout(ctx, containerIdentityTimeout)
+	defer cancel()
+	if _, err := ssh.ExecSSH(killCtx, hostname, cmd); err != nil {
+		return fmt.Errorf("kill spawned dev server on %s: %w", hostname, err)
+	}
+	return nil
+}
+
+// SpawnedDevServerAlive reports whether the process one dev-server spawn
+// started — pid, as its ack reported it (DevServerResult.PID) — is alive while
+// the pidfile next to logFile (default log when empty) still names it: a dev
+// server that is still starting, not yet listening, is alive. A pidfile left
+// from an earlier container life, or a later start's, says nothing about it,
+// and an unknown pid (0) is no process, read without a call.
+func SpawnedDevServerAlive(ctx context.Context, ssh SSHDeployer, hostname, logFile string, pid int) (bool, error) {
+	if pid <= 0 {
+		return false, nil
+	}
+	if logFile == "" {
+		logFile = defaultLogFilePattern
+	}
+	want := strconv.Itoa(pid)
+	cmd := fmt.Sprintf(`if [ "$(cat %s 2>/dev/null)" = %s ] && kill -0 %s 2>/dev/null; then echo alive; else echo dead; fi`,
+		shellQuote(pidFileFor(logFile)), shellQuote(want), want)
+	probeCtx, cancel := context.WithTimeout(ctx, livenessCheckTimeout)
+	defer cancel()
+	out, err := ssh.ExecSSH(probeCtx, hostname, cmd)
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(string(out), "alive"), nil
+}
+
+// DevServerStopPattern is the pattern a stop's kill matches processes by:
+// processMatch when given, else the command's first token past any leading
+// KEY=VAL assignments. "" when neither names one.
+func DevServerStopPattern(processMatch, command string) string {
+	if match := strings.TrimSpace(processMatch); match != "" {
+		return match
+	}
+	return firstShellToken(command)
 }
 
 // DevServerRunning reports whether a dev-server process is currently

@@ -599,10 +599,11 @@ func planHasBuildFromGit(plan *ServicePlan) bool {
 // Existing services keep their code and configuration — no hello-world was deployed.
 func buildAdoptionTransitionMessage(state *WorkflowState) string {
 	var sb strings.Builder
-	sb.WriteString(bootstrapCompleteMsg + " Services adopted — existing code and configuration preserved.\n\n## Services\n\n")
+	sb.WriteString(bootstrapCompleteMsg + " Services adopted as they are — code and configuration untouched, nothing deployed.\n\n## Services\n\n")
 	writeServiceList(&sb, state.Bootstrap.Plan)
 	sb.WriteString("\nBefore moving on, check each service's `repo` block in this response's envelope (`services[].repo` — the same block `zerops_workflow action=\"status\"` carries): `provenance: initialized` means that tree came back uncommitted, and it still needs a `.gitignore` and a baseline commit over SSH.\n")
-	sb.WriteString("\nNext: `zerops_workflow action=\"start\" workflow=\"develop\"` — develop reads each service's existing code and runs the iterate-edit-deploy loop. Platform invariants surface via the develop-active atoms on the first call.\n")
+	sb.WriteString("\nA service the envelope shows with deployed=false holds no deployed code — it was imported without any, even if source already sits in its working directory — so nothing is built or running there until its first deploy.\n")
+	sb.WriteString("\nNext: `zerops_workflow action=\"start\" workflow=\"develop\"` — develop takes each service from where it is: the first deploy for one with deployed=false, the iterate-edit-deploy loop for the rest. Platform invariants surface via the develop-active atoms on the first call.\n")
 
 	return sb.String()
 }

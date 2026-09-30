@@ -152,6 +152,17 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 
 	srv.AddReceivingMiddleware(s.observe())
 	s.registerTools() //nolint:contextcheck // registerTools wires a lazy background schema provider (schemaCache.Get(context.Background())); no request context applies at startup wiring time
+
+	// A dev server kept on this project needs its keeper running, and a
+	// redeploy of this container drops the keeper's unit (tools/
+	// dev_server_keep.go). Best-effort and off the startup path.
+	if rtInfo.InContainer && sshDeployer != nil && stateDir != "" {
+		go func() {
+			if err := tools.EnsureDevServerKeeper(ctx, platform.NewSystemUnits(), stateDir); err != nil {
+				fmt.Fprintf(os.Stderr, "zcp: dev-server keeper: %v\n", err)
+			}
+		}()
+	}
 	return s
 }
 
@@ -264,8 +275,13 @@ func (s *Server) registerTools() {
 		// dev_server depends on the SSH deployer — it's the lifecycle
 		// primitive for background dev servers on target containers.
 		// Skipped in local-only mode where SSH to Zerops siblings is
-		// not available.
-		tools.RegisterDevServer(s.server, s.client, httpClient, projectID, s.sshDeployer, stateDir)
+		// not available. In a container a started dev server is kept, and
+		// the keeper that brings it back runs as a unit on this container.
+		var units ops.UnitRegistrar
+		if s.rtInfo.InContainer {
+			units = platform.NewSystemUnits()
+		}
+		tools.RegisterDevServer(s.server, s.client, httpClient, projectID, s.sshDeployer, stateDir, units)
 	} else {
 		tools.RegisterDeployLocal(s.server, s.client, httpClient, projectID, s.authInfo, s.logFetcher, stateDir, wfEngine, recipeProbe)
 	}

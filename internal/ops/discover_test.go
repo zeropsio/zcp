@@ -110,6 +110,63 @@ func TestDiscover_FiltersBuildContainersFromDirectList(t *testing.T) {
 	}
 }
 
+// TestDiscover_RuntimeDeployedFlag pins the per-runtime answer to "was code
+// ever deployed here?". A startWithoutCode import leaves a runtime ACTIVE with
+// an ACTIVE placeholder app version (source NONE, no build), so the status
+// alone read as "active and deployed" (the Beviro trial, 2026-09-29): every
+// runtime now says deployed=true|false, read off the direct list's active
+// version; managed services and the control plane carry no flag at all.
+func TestDiscover_RuntimeDeployedFlag(t *testing.T) {
+	t.Parallel()
+	runtime := func(id, name, typ string, active *platform.ActiveAppVersionDigest) platform.ServiceStack {
+		return platform.ServiceStack{ID: id, Name: name, ProjectID: "proj-1", Status: "ACTIVE",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: typ, ServiceStackTypeCategoryName: "USER"},
+			ActiveAppVersion:     active}
+	}
+	placeholder := &platform.ActiveAppVersionDigest{ID: "av-none", Source: platform.AppVersionSourceNone}
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "p", Status: statusActive}).
+		WithServicesDirect([]platform.ServiceStack{
+			runtime("s1", "appdev", "alpine/nodejs@24", placeholder),
+			runtime("s2", "appstage", "alpine/nodejs@24", &platform.ActiveAppVersionDigest{ID: "av-cli", Source: "CLI", Built: true}),
+			runtime("s3", "mailpit", "alpine@3.24", placeholder),
+			runtime("s4", "worker", "alpine/nodejs@24", nil),
+			runtime("s5", "db", "postgresql:single@17", nil),
+			runtime("s6", "zcp", "zcp@1", &platform.ActiveAppVersionDigest{ID: "av-zcp", Source: "GIT", Built: true}),
+		})
+
+	result, err := Discover(context.Background(), mock, "proj-1", "", false, false, false)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	want := map[string]string{
+		"appdev":   "false",
+		"appstage": "true",
+		"mailpit":  "false",
+		"worker":   "false",
+		"db":       "absent",
+		"zcp":      "absent",
+	}
+	for _, svc := range result.Services {
+		got := "absent"
+		if svc.Deployed != nil {
+			got = fmt.Sprintf("%v", *svc.Deployed)
+		}
+		if got != want[svc.Hostname] {
+			t.Errorf("%s: deployed = %s, want %s", svc.Hostname, got, want[svc.Hostname])
+		}
+	}
+
+	// The agent reads JSON: an empty runtime says so explicitly.
+	blob, err := json.Marshal(result.Services[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(blob), `"deployed":false`) {
+		t.Errorf("empty runtime JSON must carry \"deployed\":false, got %s", blob)
+	}
+}
+
 // TestDiscover_ModeNotSerializedToAgent pins the variant-migration contract:
 // the deprecated HA `mode` field is internal-only (json:"-") and MUST NOT
 // appear in the agent-facing discover JSON. The type variant

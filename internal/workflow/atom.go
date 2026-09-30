@@ -161,6 +161,15 @@ type AxisVector struct {
 	// cheatsheets — the F7 "70% irrelevant guidance" fix. Open value set:
 	// typos never match a live service (same as RuntimeBases).
 	ManagedTypes []string
+	// StageScopes scopes the atom by where a standard pair's stage half
+	// stands in the develop session (see StageScope). Service-scoped: read
+	// per service from its StageHostname and the work session's roles, so
+	// an atom that promotes to or delivers through the stage half
+	// (`[in-scope]`, or `[in-scope, none]` when it also serves services with
+	// no stage half) stays silent for a pair whose stage the session left out
+	// of scope, and one that explains that (`[out-of-scope]`) reaches only
+	// such a pair. Empty = no gate.
+	StageScopes []StageScope
 	// MultiService toggles single-render aggregation for atoms whose body
 	// needs per-service iteration only inside discrete `{services-list:
 	// TEMPLATE}` directives, not for the whole body. Default ""
@@ -174,6 +183,24 @@ type AxisVector struct {
 	// primaryHostnames picker (same contract as service-agnostic atoms).
 	MultiService MultiServiceMode
 }
+
+// StageScope is where a service's paired stage half stands in the develop
+// session — the value the `stageScope:` axis matches.
+type StageScope string
+
+const (
+	// StageScopeInScope — the service is a standard pair's dev half and its
+	// stage half is part of the work: required or deferred in the session,
+	// not listed in it, or there is no session.
+	StageScopeInScope StageScope = "in-scope"
+	// StageScopeOutOfScope — the service is a standard pair's dev half and
+	// the session left its stage half out of scope (RoleOutOfScope): the
+	// work runs on the dev half alone and the stage stays as it is.
+	StageScopeOutOfScope StageScope = "out-of-scope"
+	// StageScopeNone — the service is not a pair's dev half; it has no stage
+	// half to be in or out of a session.
+	StageScopeNone StageScope = "none"
+)
 
 // MultiServiceMode is the closed enum for the AxisVector.MultiService
 // scalar axis. Empty value = legacy per-service render. `aggregate` =
@@ -221,6 +248,7 @@ var validAtomFrontmatterKeys = map[string]struct{}{
 	"deployHistory":        {},
 	"exportStatus":         {},
 	"managedTypes":         {},
+	"stageScope":           {},
 	"multiService":         {},
 	"reference":            {},
 	"references-fields":    {},
@@ -253,6 +281,7 @@ var listAxisKeys = map[string]struct{}{
 	"deployHistory":        {},
 	"exportStatus":         {},
 	"managedTypes":         {},
+	"stageScope":           {},
 	"references-fields":    {},
 	"references-atoms":     {},
 	"pointer-atoms":        {},
@@ -355,6 +384,11 @@ var validAtomEnumValues = map[string]map[string]struct{}{
 		"failed": {},
 		"ok":     {},
 	},
+	"stageScope": {
+		"in-scope":     {},
+		"out-of-scope": {},
+		"none":         {},
+	},
 }
 
 // validScalarEnumValues maps scalar (non-list) frontmatter keys to their
@@ -394,7 +428,7 @@ var validScalarEnumValues = map[string]map[string]struct{}{
 func validateAtomFrontmatter(fields map[string]string) error {
 	for key := range fields {
 		if _, ok := validAtomFrontmatterKeys[key]; !ok {
-			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, runtimeBases, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, deployHistory, exportStatus, managedTypes, multiService, reference, references-fields, references-atoms, pointer-atoms, pinned-by-scenario, coverageExempt)", key)
+			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, runtimeBases, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, deployHistory, exportStatus, managedTypes, stageScope, multiService, reference, references-fields, references-atoms, pointer-atoms, pinned-by-scenario, coverageExempt)", key)
 		}
 	}
 	for key, raw := range fields {
@@ -538,6 +572,7 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 			DeployHistories:      parseYAMLList(fields["deployHistory"]),
 			ExportStatuses:       parseExportStatuses(fields["exportStatus"]),
 			ManagedTypes:         parseYAMLList(fields["managedTypes"]),
+			StageScopes:          parseStageScopes(fields["stageScope"]),
 			MultiService:         MultiServiceMode(strings.TrimSpace(fields["multiService"])),
 		},
 		ReferencesFields:  parseYAMLList(fields["references-fields"]),
@@ -740,6 +775,21 @@ func parseDeployStates(raw string) []DeployState {
 	out := make([]DeployState, 0, len(values))
 	for _, v := range values {
 		out = append(out, DeployState(v))
+	}
+	return out
+}
+
+// parseStageScopes reads the optional `stageScope:` frontmatter field. Closed
+// enum validated up front by validateAtomFrontmatter; this parser just types
+// the strings.
+func parseStageScopes(raw string) []StageScope {
+	values := parseYAMLList(raw)
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]StageScope, 0, len(values))
+	for _, v := range values {
+		out = append(out, StageScope(v))
 	}
 	return out
 }

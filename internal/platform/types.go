@@ -96,6 +96,36 @@ type ActiveAppVersionDigest struct {
 	Created                    string               `json:"created,omitempty"`
 	Source                     string               `json:"source,omitempty"`
 	PublicGitSource            *AppVersionGitSource `json:"publicGitSource,omitempty"`
+	// Built reports that the version carries a build — the other half, with
+	// Source, of the startWithoutCode marker. Full-DTO reads only, like Source.
+	Built bool `json:"built,omitempty"`
+}
+
+// AppVersionSourceNone is the source the platform stamps on the app version a
+// `startWithoutCode: true` import leaves ACTIVE: no code was ever deployed.
+const AppVersionSourceNone = "NONE"
+
+// IsStartWithoutCode reports the placeholder app version a `startWithoutCode:
+// true` import leaves ACTIVE — source NONE and no build. Its container runs,
+// but nothing was ever deployed into it (live-verified 2026-09-29: every
+// runtime of a Mate added from its group's recipe carried one, sequence 1,
+// until its first real deploy made it BACKUP). An id-only digest (the
+// Elasticsearch list) names no source and never reads as the placeholder.
+func (d *ActiveAppVersionDigest) IsStartWithoutCode() bool {
+	return d != nil && d.Source == AppVersionSourceNone && !d.Built
+}
+
+// HasDeployedCode reports whether code was ever deployed into the service:
+// it has an active app version and that version is not the startWithoutCode
+// placeholder. Neither Status (ACTIVE either way) nor the mere presence of an
+// app version can tell an empty runtime from a deployed one. The placeholder is
+// recognised only on a full-DTO read (ListServicesDirect, GetService); on the
+// Elasticsearch list an active version reads as deployed code.
+//
+// Meaningful for runtimes only — a managed service never has an app version.
+func (s *ServiceStack) HasDeployedCode() bool {
+	v := s.ActiveAppVersion
+	return v != nil && v.ID != "" && !v.IsStartWithoutCode()
 }
 
 // ServiceTypeInfo contains service type details.

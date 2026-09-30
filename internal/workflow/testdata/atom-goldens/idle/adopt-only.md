@@ -34,7 +34,7 @@ path when bootstrap surfaces a hostname collision.
 | Route | Present when | Carries | Dispatch / rule |
 |---|---|---|---|
 | `resume` | Snapshot has `resumable: true` | `resumeSession`, `resumeServices` | Pick first unless intentionally overriding: `route="resume" sessionId="<resumeSession>"`. |
-| `adopt` | Runtime services lack bootstrap records (`not bootstrapped`) | `adoptServices[]` | Attach ZCP tracking to running services — no infra change. Use when the user's intent matches the listed `adoptServices[]`. To add NEW services alongside (instead of adopting these), use `classic`. |
+| `adopt` | Runtime services lack bootstrap records (`not bootstrapped`) | `adoptServices[]` | Attach ZCP tracking to existing services — no infra change, and no deploy: one with `deployed=false` stays empty until develop's first deploy. Use when the user's intent matches the listed `adoptServices[]`. To add NEW services alongside (instead of adopting these), use `classic`. |
 | `recipe` | Up to three recipe matches | `recipeSlug`, `confidence`, `collisions[]` | `route="recipe" recipeSlug="<value from routeOptions[].recipeSlug>"`. Copy the slug verbatim from the discover response — corpus slugs don't carry a `zerops-` prefix even when users name a recipe by its branded form (`"zerops-laravel-minimal"`). Collisions recover by runtime rename or same-type managed `resolution: EXISTS`; switch routes only for different-type managed collision or independent infra. |
 | `classic` | Always available | none | `route="classic"` for manual planning. Default path for creating new services in any project state — fresh project or alongside existing ones. |
 
@@ -87,10 +87,19 @@ Service-scoped tools (`workflow="develop"`, `zerops_deploy`,
 That gate is structural backstop, not the primary path — read the
 warning, fire adopt directly.
 
+**Read `deployed` before you describe what runs.** Each runtime says
+whether code was ever deployed into it — `deployed` in
+`zerops_discover`, `deployed=` on the status service line. `false`
+means never: a service imported without code reads ACTIVE like a
+running app, and its working directory may already hold the
+repository's source, yet nothing is built, installed or started.
+Adopting it tracks it as it is — still empty; the develop workflow's
+first deploy fills it.
+
 Services in project, `not bootstrapped`. Two primary paths, both
 legitimate; existing services stay independent either way:
 
-1. **Adopt the listed services** — attach ZCP tracking to running
+1. **Adopt the listed services** — attach ZCP tracking to the existing
    services without changing their code, config, or scale.
 2. **Create new services alongside** — pick non-colliding hostnames
    and bootstrap normally; existing services keep running untouched.

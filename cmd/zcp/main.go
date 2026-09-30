@@ -66,6 +66,9 @@ func cliDispatch() map[string]func(rest []string, cfg telemetry.Config) int {
 	return map[string]func(rest []string, cfg telemetry.Config) int{
 		"init":    func(rest []string, _ telemetry.Config) int { return runInitCmd(rest) },
 		"service": func(rest []string, _ telemetry.Config) int { return runServiceCmd(rest) },
+		"dev-server": func(rest []string, _ telemetry.Config) int {
+			return runDevServerCmd(rest)
+		},
 		"version": func(_ []string, _ telemetry.Config) int { printVersion(); return 0 },
 		"update":  func(_ []string, _ telemetry.Config) int { return runUpdate() },
 		"mate":    func(rest []string, _ telemetry.Config) int { return runMateCmd(rest) },

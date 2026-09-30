@@ -1,7 +1,7 @@
 ---
-id: develop/first-deploy-recipe-implicit-standard
-atomIds: [develop-first-deploy-intro, develop-env-var-model, develop-change-drives-deploy, develop-deploy-modes, develop-env-cheatsheet-sql, develop-env-var-channels, develop-first-deploy-env-vars, develop-first-deploy-scaffold-yaml, develop-http-diagnostic, develop-implicit-webserver, develop-platform-rules-common, develop-reserved-env-names, develop-self-deploy-reproducibility, develop-deploy-files-self-deploy, develop-first-deploy-write-app, develop-knowledge-pointers, develop-auto-close-semantics, develop-first-deploy-execute, develop-verify-matrix, develop-first-deploy-asset-pipeline-container, develop-first-deploy-promote-stage, develop-first-deploy-verify, develop-strategy-awareness]
-description: "develop-active, mode=standard pair, php-nginx implicit-webserver runtime + db, never-deployed; bootstrap arrived via recipe route."
+id: develop/standup-stage-out-of-scope
+atomIds: [develop-first-deploy-intro, develop-env-var-model, develop-stage-out-of-scope, develop-strategy-review, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-first-deploy-env-vars, develop-first-deploy-scaffold-yaml, develop-http-diagnostic, develop-nodejs-greenfield-buildhint, develop-platform-rules-common, develop-reserved-env-names, develop-self-deploy-reproducibility, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-first-deploy-write-app, develop-knowledge-pointers, develop-auto-close-semantics, develop-first-deploy-execute, develop-verify-matrix, develop-first-deploy-verify, develop-platform-rules-container]
+description: "A Mate's stand-up: an adopted standard pair imported without code (never deployed, close-mode unset), develop started with the stage half out of scope — what a Mate's develop start does by itself. The dev half's first deploy, no promotion."
 ---
 === develop-first-deploy-intro ===
 ### You're in the develop first-deploy branch
@@ -77,6 +77,52 @@ When destination == source the value resolves to the literal string `${db_hostna
 
 ---
 
+=== develop-stage-out-of-scope ===
+### The stage stays as it is this session
+
+This develop session leaves the stage half of these pairs out of scope:
+
+- `appdev` — its stage `appstage` stays as it is
+
+The work runs on the dev half alone: deploy it, start its dev server and
+verify it. The session closes once the dev half is deployed and verified.
+
+Leave the stage untouched: no deploy, cross-deploy or promotion onto it, and
+no commit or push for it. In a Mate wired to its group's Gitea, a deploy onto
+a stage half is a delivery — a commit, a push and a pull request — so it
+happens only when the person asks for it.
+
+A Mate's stand-up is such a session: when a Mate first deploys services it
+adopted, zcp leaves their stage out on its own, and the stand-up ends at a
+running dev.
+
+When the dev half is verified, end by telling the person what runs on the dev
+half, and that promoting it to the stage is the next step they can ask for.
+If they already asked for it, start a new develop session for it once this
+one closes — with the dev half deployed, its stage is part of the work again.
+
+---
+
+=== develop-strategy-review ===
+### DECISION — pick a close-mode now (auto-close stays BLOCKED until set)
+
+Close-mode is `unset` on the listed services — auto-close stays blocked no matter how much you deploy + verify. Set it per in-scope service; it can precede the first deploy. This is the one call that unblocks auto-close:
+
+```
+zerops_workflow action="close-mode" closeMode={"appdev":"auto"}
+```
+
+Swap `auto` for the close-mode you want:
+
+- `auto` — agent runs `zerops_deploy` directly via zcli; auto-close fires once scope-services are green. Fast for tight iteration.
+- `manual` — **you** drive every deploy; ZCP records evidence, never deploys, auto-close stays open until you call `action="close"`.
+
+Delivery is a SEPARATE dimension from close-mode: to deliver via git push, run `action="git-push-setup"` (then `zerops_deploy strategy="git-push"`); CI wiring is `action="build-integration"`. Both work under either close-mode — close-mode only owns the auto-close gate + iteration cadence, not how you deliver.
+
+close-mode does NOT change what `action="close"` does (always session-teardown) — it selects the per-mode iteration guidance and drives the auto-close gate.
+
+---
+
 === develop-change-drives-deploy ===
 ### Every code change must reach a durable state
 
@@ -94,21 +140,6 @@ target is deployed + verified, the work session auto-closes.
 
 === develop-deploy-modes ===
 **Deploy modes — self-deploy vs cross-deploy** — pull on demand: `zerops_knowledge uri="zerops://atoms/develop-deploy-modes"`
-
----
-
-=== develop-env-cheatsheet-sql ===
-### SQL database env keys
-
-- **Postgres / MariaDB / MySQL** — `connectionString` is
-  `protocol://${user}:${password}@$appdev:${port}` and **omits the
-  db name**; append `/${db_dbName}` for Prisma / Drizzle / sqlx /
-  SQLAlchemy / Sequelize (worked example in the env-var-model atom).
-- **Prisma `migrate dev` P3014** — shadow DB needs DDL the regular user
-  lacks: use `prisma db push` for fresh schemas, or pass the
-  `${db_superUser}:${db_superUserPassword}` URL for that one call.
-- **Elevated DDL** — `superUser`/`superUserPassword`, only when DDL
-  needs them.
 
 ---
 
@@ -212,33 +243,10 @@ default to
 
 ---
 
-=== develop-implicit-webserver ===
-### Implicit-Webserver Runtime (`php-apache`, `php-nginx`)
+=== develop-nodejs-greenfield-buildhint ===
+### Node.js — `npm install`, not `npm ci`
 
-Apache or nginx is bundled into the runtime image — **no manual `start:` and no `zerops_dev_server` cycling**. After deploy, the web server is already running and serves disk contents; before first deploy the runtime container exists but no web server has been provisioned yet (deploy is the moment that lands files + activates the server). **Do not SSH in to start a server** — there is no `{start-command}` to run.
-
-**`zerops.yaml` differences vs. dynamic runtimes:**
-
-- Omit `run.start` — leave the field out entirely.
-- Omit `run.ports` — port 80 is fixed; Zerops handles it.
-- Set `run.documentRoot` to the web-serving subtree. Laravel / Symfony /
-  composer apps use `public`; root-serving apps omit it or set `.`.
-
-**Deploy flow (both strategies):**
-
-1. Write or edit application files.
-2. Run the strategy-specific deploy (see the active strategy atom).
-3. Verify as a web-facing service via `zerops_verify`.
-
-**When 404/403 follows successful deploy:**
-
-- Wrong `documentRoot` — the web server points at a directory that lacks
-  the expected entrypoint.
-- `.htaccess` / rewrite rules not shipped — `deployFiles` must include
-  the files the web server needs, not just the PHP sources.
-
-`zerops_logs` surfaces Apache / nginx errors for routing / permission
-triage; there is no app process to crash.
+Fresh Node scaffold with no committed `package-lock.json`: `npm install` in `build.buildCommands`. `npm ci` fails with `EUSAGE` until a lockfile is committed.
 
 ---
 
@@ -300,6 +308,45 @@ When a self-deploying service uses a narrower deployFiles pattern (e.g. `[./out]
 4. On subsequent self-deploys, `zerops_deploy` finds no source to upload — the target is unrecoverable without a manual re-push from elsewhere.
 
 Client-side pre-flight rejects this with `INVALID_ZEROPS_YML` before any build triggers, so this failure mode cannot reach Zerops. (When `gitPush=configured`, direct deploys answer with the recommended push call instead of deploying, so this risk class applies only to the direct-deploy paths that remain.)
+
+---
+
+=== develop-dynamic-runtime-start-container ===
+### Dynamic-runtime dev server
+
+Dev-mode dynamic runtime containers start running `zsc noop --silent`
+after deploy — a no-op keepalive; no dev process is live until you start
+one. Once started, zcp keeps it — one per dev container, the last you
+started: when the dev container restarts or is redeployed, zcp starts
+it again with the same command, working directory and port — a
+deploy's response reports it under `devServer` — until you `stop` it.
+A server that crashes in its container stays down for you to read and
+fix. It is still a dev process: a passing
+verify means "live now", not "durably shipped" — for an always-on
+service use simple mode. Action family on `zerops_dev_server`:
+
+| Action | Use | Args |
+|---|---|---|
+| `status` | check before `start` (idempotent) — avoids duplicate listener | `hostname port healthPath` |
+| `start` | spawn the dev process | `hostname command port healthPath` |
+| `restart` | survives-the-deploy config/code change | `hostname command port healthPath` |
+| `logs` | tail recent for diagnosis | `hostname logLines=40` |
+| `stop` | free the port; zcp stops keeping it | `hostname port` |
+
+Args:
+- `command` — the app's dev-server start command (the real long-running
+  process, e.g. `npm run dev`). NOT the `zsc noop --silent` keepalive that
+  sits in the dev block's `run.start`.
+- `port` — `run.ports[0].port`.
+- `healthPath` — app-owned (`/api/health`, `/status`) or `/`.
+
+Response carries `running`, `healthStatus`, `url` (the hostname-vantage
+address to reach the server — the probe runs localhost inside the
+container, so the app must bind `0.0.0.0`, not loopback), `reason`, and
+`logTail` — read these before making another call.
+
+Don't hand-roll `ssh appdev "cmd &"`: the SSH session ends with
+the call and kills the process. Always go through `zerops_dev_server`.
 
 ---
 
@@ -424,71 +471,6 @@ To make an already-public service internal-only, call `zerops_subdomain action="
 
 ---
 
-=== develop-first-deploy-asset-pipeline-container ===
-### Frontend asset pipeline
-
-`php-nginx` / `php-apache` services with a frontend build pipeline
-(Laravel+Vite, Symfony+Encore, …) typically OMIT `npm run build` from dev
-`buildCommands`. Dev assumes HMR via Vite over SSH, not a production asset
-rebuild on every `zerops_deploy`.
-
-**Consequence:** after first deploy, `public/build/manifest.json` is
-missing. Vite helpers throw HTTP 500 ("Vite manifest not found"), so
-`zerops_verify` fails before any framework bug.
-
-**After the first `zerops_deploy` lands, BEFORE `zerops_verify`:**
-
-```
-ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null appdev \
-  'cd /var/www && npm run build'
-```
-
-The build writes `public/build/manifest.json` in the dev container;
-SSHFS propagates it without redeploy. PHP-FPM reads it on next request —
-no restart needed.
-
-**For iterative frontend work, start Vite via the dev-server primitive** (one durable lifecycle per service — survives this MCP call, restarts cleanly with `action=status` / `action=restart`):
-
-```
-zerops_dev_server action=start hostname="appdev" command="npm run dev" port=5173 healthPath="/"
-```
-
-Vite drops `public/build/hot`; helpers route assets through it. The dev-server primitive tracks the process via the runtime container's lifecycle, so backgrounding is not your concern. New containers start on every `zerops_deploy`; zcp starts the dev server it keeps again in the new one — the deploy response's `devServer` says whether it came up.
-
-**Do NOT add `npm run build` to dev `buildCommands`.** It defeats
-HMR-first dev setup: every push rebuilds assets (~20–30 s penalty).
-
----
-
-=== develop-first-deploy-promote-stage ===
-### Promote the first deploy to stage
-
-Standard mode pairs dev + stage. After each dev runtime verifies,
-cross-deploy it to its paired stage:
-
-```
-zerops_deploy sourceService="appdev" targetService="appstage" setup="prod"
-zerops_verify serviceHostname="appstage"
-```
-
-Cross-deploy builds the dev source on stage; dev side unchanged.
-Auto-close fires once both halves carry a successful deploy +
-passing verify.
-
-Commit the dev half over SSH before this cross-deploy — not the mount —
-so the stage receives a commit: the response then carries `sha` with
-`dirty: false` and an `appVersionId`. Cross-deploying uncommitted work
-still succeeds, but the response marks `dirty: true` and that stage
-build isn't reproducible from git alone. To ship an exact or older
-commit without touching the dev working tree, add `sha="<commit>"` to
-the cross-deploy — never on a self-deploy. To roll the stage back
-without a rebuild, re-activate a recorded build instead: `zerops_deploy
-targetService="appstage" appVersion="<id>"`, with candidate ids
-from the status envelope's `rollback` block or `zerops_events
-serviceHostname="appstage"`.
-
----
-
 === develop-first-deploy-verify ===
 ### Before verify on dev-mode dynamic runtimes
 
@@ -525,55 +507,9 @@ Run for each runtime that hasn't been deployed:
 
 ```
 zerops_verify serviceHostname="appdev"
-zerops_verify serviceHostname="appstage"
 ```
 
 ---
 
-=== develop-strategy-awareness ===
-### Deploy config — recorded dimensions + how delivery derives
-
-Each runtime service records three deploy-config dimensions — the
-rendered Services block shows them as
-`closeMode=auto|manual|unset gitPush=unconfigured|configured|broken buildIntegration=none|webhook|actions`:
-
-- `closeMode` — who owns "done". `auto` lets the work session close
-  itself once every in-scope service has a successful deploy + passing
-  verify; `manual` yields close decisions to you / external
-  orchestration. `unset` is the bootstrap-written placeholder that
-  develop converts on first use.
-- `gitPush` — capability state for push delivery. `configured`
-  means the last `git-push-setup` probe **proved end-to-end auth**: the
-  supplied token authenticates against the remote URL, the push source carries
-  `GIT_TOKEN` (sensitive), and the working tree's git config has its
-  `origin` synced. `broken` means a previously-configured token stopped
-  working (e.g. PAT rotation) — re-run setup before pushing.
-- `buildIntegration` — the ZCP-managed CI shape that was picked. `actions`
-  (GitHub Actions workflow + secrets), `webhook` (Zerops dashboard OAuth),
-  or `none`. Requires `gitPush=configured`. The flag records the choice
-  and the handoff shape (workflow YAML body / dashboard URL); workflow
-  commit, secrets landing, and OAuth completion happen outside ZCP's
-  reach and are not verified by this flag. Treat as "this is the
-  integration shape we wired", not "the build trigger is confirmed live".
-
-**The delivery mechanism is DERIVED, not chosen separately:** when
-`gitPush=configured` (and closeMode is not `manual`), delivery is
-commit + git push — direct `zerops_deploy` self/cross calls on that pair
-answer `push-delivery-required` with the recommended push call. Otherwise
-delivery is the direct `zerops_deploy` path. Want push delivery? Configure
-the capability; there is no separate mode switch.
-
-Change any dimension without closing the session:
-
-- `close-mode` is **per-pair** under the hood (one record per dev/stage pair) but accepts a multi-entry map: one call sets close-mode for any subset of services. Passing both halves of a pair with the SAME value is accepted (canonical write once). Passing both halves with DIFFERENT values is rejected with an explicit conflict diagnostic — pick one value for the pair.
-- `git-push-setup` and `build-integration` are **per-pair**: capability is stamped on the dev half's record and shared by both halves. `git-push-setup` rejects stage-half input with `INVALID_PARAMETER` (it mutates push-side state — would write to the wrong target). `build-integration` is permissive: pair-keyed lookup resolves either half to the dev record and the response carries `pushSource`/`buildTarget`/`topologyNote` so the redirect is visible. Either way: prefer passing the dev half directly.
-
-```
-zerops_workflow action="close-mode" closeMode={"appdev":"auto"}
-zerops_workflow action="git-push-setup" service="appdev" remoteUrl="..."
-zerops_workflow action="build-integration" service="appdev" integration="actions"
-```
-
-Substitute `appdev` with the dev-half hostname (or single-runtime hostname). For a multi-service project, repeat each call once per dev-half service — never per stage-half.
-
-Mixed config across services in one project is fine — each service's dimensions are independent in the envelope.
+=== develop-platform-rules-container ===
+**Platform rules — mount & SSH usage** — pull on demand: `zerops_knowledge uri="zerops://atoms/develop-platform-rules-container"`

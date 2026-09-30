@@ -51,6 +51,16 @@ func TestAppVersionEnvVars_LifecycleStates(t *testing.T) {
 			svc:  runtimeSvc("app2", "av-live"),
 			want: 2,
 		},
+		{
+			name: "runtime imported startWithoutCode — its placeholder version is never read",
+			svc: platform.ServiceStack{
+				ID:                   "app3",
+				Name:                 "app",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+				ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-empty", Source: platform.AppVersionSourceNone},
+			},
+			want: 0,
+		},
 	}
 
 	for _, tt := range tests {
@@ -58,13 +68,47 @@ func TestAppVersionEnvVars_LifecycleStates(t *testing.T) {
 			t.Parallel()
 			mock := platform.NewMock().
 				WithAppVersionUserData("av-live", yaml).
-				WithAppVersionUserData("av-managed", yaml) // seeded but must NOT be read for managed
+				WithAppVersionUserData("av-managed", yaml). // seeded but must NOT be read for managed
+				WithAppVersionUserData("av-empty", yaml)    // seeded but must NOT be read for a placeholder
 			got, err := AppVersionEnvVars(context.Background(), mock, tt.svc)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if len(got) != tt.want {
 				t.Errorf("got %d yaml-baked vars, want %d (%v)", len(got), tt.want, got)
+			}
+		})
+	}
+}
+
+// TestIsRuntimeNeverDeployed pins the lifecycle predicate the preflight and
+// the env layers share: a runtime is never-deployed until a real deploy lands,
+// and the app version a startWithoutCode import leaves ACTIVE is not one.
+func TestIsRuntimeNeverDeployed(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		typ    string
+		active *platform.ActiveAppVersionDigest
+		want   bool
+	}{
+		{name: "managed dep is never a never-deployed runtime", typ: "postgresql@16", active: nil, want: false},
+		{name: "runtime with no active version", typ: "nodejs@22", active: nil, want: true},
+		{name: "runtime holding the startWithoutCode placeholder", typ: "nodejs@22", active: &platform.ActiveAppVersionDigest{ID: "av-1", Source: platform.AppVersionSourceNone}, want: true},
+		{name: "runtime with a deployed version", typ: "nodejs@22", active: &platform.ActiveAppVersionDigest{ID: "av-2", Source: "CLI", Built: true}, want: false},
+		{name: "runtime read off the ES list (id only)", typ: "nodejs@22", active: &platform.ActiveAppVersionDigest{ID: "av-3"}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			svc := platform.ServiceStack{
+				Name:                 "app",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: tt.typ},
+				ActiveAppVersion:     tt.active,
+			}
+			if got := IsRuntimeNeverDeployed(svc); got != tt.want {
+				t.Errorf("IsRuntimeNeverDeployed = %v, want %v", got, tt.want)
 			}
 		})
 	}

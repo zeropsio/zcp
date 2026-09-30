@@ -192,8 +192,8 @@ Like `routes`, declaring `steps` implicitly scopes an atom to
 
 | Value | Meaning |
 |---|---|
-| `never-deployed` | ServiceMeta is complete (bootstrap finished) but `FirstDeployedAt` is empty. The first-deploy branch atoms gate on this state. |
-| `deployed` | ServiceMeta has `FirstDeployedAt` stamped. The edit-loop branch atoms gate on this state. |
+| `never-deployed` | ServiceMeta is complete (bootstrap finished) and no code deploy is on record. The first-deploy branch atoms gate on this state. |
+| `deployed` | A code deploy is on record (`workflow.DeriveDeployed`): `FirstDeployedAt` stamped, a successful deploy in the work session, or — for an adopted or recipe-`buildFromGit` runtime — the platform shows it ACTIVE with deployed code. ACTIVE alone is not deployed: a runtime imported `startWithoutCode` is ACTIVE holding a placeholder app version (source `NONE`, no build), so adopting it leaves it `never-deployed` (`platform.ServiceStack.HasDeployedCode`). The edit-loop branch atoms gate on this state. |
 
 **Empty = any state.** Non-bootstrapped services are skipped for this axis entirely — they have no tracked deploy state, and gating first-deploy atoms on them would surface scaffold guidance for pure-adoption services bootstrap never touched.
 
@@ -207,7 +207,7 @@ Example: `develop-ready-to-deploy` atom describes recovery for services stuck in
 
 ### 3.10 Service-scoped axis conjunction
 
-The eight service-scoped axes (`modes`, `closeDeployModes`, `gitPushStates`, `buildIntegrations`, `runtimes`, `runtimeBases`, `deployStates`, `serviceStatus`) evaluate **together per service** (`synthesize.go::serviceSatisfiesAxes`): an atom fires only when a single service in the envelope satisfies EVERY declared service-scoped axis. Axis independence (ANY service satisfies X while a DIFFERENT service satisfies Y) would fire atoms whose `{hostname}` substitution references a service the atom isn't semantically about — e.g. an atom scoped `runtimes=[dynamic], deployStates=[never-deployed]` must NOT surface when service A is a deployed dynamic runtime and service B is a never-deployed managed dep, since no single service is both dynamic AND never-deployed.
+The nine service-scoped axes (`modes`, `closeDeployModes`, `gitPushStates`, `buildIntegrations`, `runtimes`, `runtimeBases`, `deployStates`, `serviceStatus`, `stageScope`) evaluate **together per service** (`synthesize.go::serviceSatisfiesAxes`): an atom fires only when a single service in the envelope satisfies EVERY declared service-scoped axis. Axis independence (ANY service satisfies X while a DIFFERENT service satisfies Y) would fire atoms whose `{hostname}` substitution references a service the atom isn't semantically about — e.g. an atom scoped `runtimes=[dynamic], deployStates=[never-deployed]` must NOT surface when service A is a deployed dynamic runtime and service B is a never-deployed managed dep, since no single service is both dynamic AND never-deployed.
 
 Envelope-wide axes (`phases`, `environments`, `routes`, `steps`, `idleScenarios`, `exportStatus`, `envelopeDeployStates`, `managedTypes`) match the envelope directly — conjunction only applies to the service-scoped group.
 
@@ -241,7 +241,19 @@ Gates the atom to projects that contain a managed service of a listed type (e.g.
 
 **Empty = any project.** Matches the envelope directly — no per-service conjunction.
 
-### 3.15 `multiService` (scalar attribute, optional)
+### 3.15 `stageScope` (service-scoped, optional)
+
+Where a standard pair's stage half stands in the develop session, read per service from its `StageHostname` and the work session's roles (`synthesize.go::stageScopeOf`). Closed enum:
+
+| Value | Meaning |
+|---|---|
+| `in-scope` | The service is a pair's dev half and its stage half is part of the work — required or deferred in the session, not listed in it, or there is no session. |
+| `out-of-scope` | The service is a pair's dev half and the session left its stage half out of scope (`RoleOutOfScope`, "leave the stage as it is"): the work runs on the dev half alone. |
+| `none` | The service is not a pair's dev half. |
+
+**Empty = no gate.** An atom that promotes to or delivers through the stage half declares `[in-scope]` (or `[in-scope, none]` when it also serves services with no stage half, as `develop-git-push-delivery` does), so a session that left the stage out gets no promotion or delivery guidance for it; `develop-stage-out-of-scope` declares `[out-of-scope]` and says what such a session does instead. A Mate's stand-up is one: develop start leaves the stage of an adopted, never-deployed pair out of scope (`docs/spec-workflows.md` §8, D2f).
+
+### 3.16 `multiService` (scalar attribute, optional)
 
 Scalar (not a list axis), closed enum `{"" , aggregate}`. The default empty value (`MultiServicePerService`) renders the atom once per matching service with `{hostname}` substituted from that service. `aggregate` (`MultiServiceAggregate`) renders the atom **once**, regardless of how many services match — for atoms whose body addresses the scope as a whole rather than a single service. Validated via `validScalarEnumValues` in `internal/workflow/atom.go`.
 
@@ -283,7 +295,8 @@ canonicalization rationale.
 | `serviceStatus` | no | Service-scoped (§3.9). Combines with other service-scoped axes under §3.10 conjunction. |
 | `exportStatus` | no | Envelope-scoped (§3.11). Closed enum of seven export sub-statuses. Only meaningful with `phases: [export-active]`. |
 | `managedTypes` | no | Envelope-scoped (§3.14). Managed-dep-type gate; platform strings, not a closed enum. |
-| `multiService` | no | Scalar attribute (§3.15). `aggregate` renders the atom once for the whole scope. |
+| `stageScope` | no | Service-scoped (§3.15). `in-scope` / `out-of-scope` / `none` — where the pair's stage half stands in the develop session. |
+| `multiService` | no | Scalar attribute (§3.16). `aggregate` renders the atom once for the whole scope. |
 | `references-fields` | no | List of Go struct fields in `pkg.Type.Field` form (e.g. `ops.DeployResult.Status`) cited by the atom body. Validated: parser enforces the shape regex, `TestAtomReferenceFieldIntegrity` (in `internal/workflow/`) resolves each entry against `internal/{ops,tools,platform,workflow}/*.go` via AST scan. Part of the authoring contract (§11). |
 | `references-atoms` | no | List of atom IDs the body has a CONTENT dependency on — its body relies on the target's body being present in the SAME rendered payload. A content dependency MUST target an INLINE atom. Validated by `TestAtomReferencesAtomsIntegrity` (exists) + `TestAtomCrossRefContract` (target is inline). Part of the authoring contract (§11). See §4.6. |
 | `reference` | no | Delivery attribute, strict-validated `{true,false}`. `false` (default) = **inline**: `Synthesize` composes the body into the response. `true` = **pointer**: the body is deferred — `Synthesize` emits a one-line stub carrying the canonical pull URI, and the agent fetches it on demand. A `reference: true` atom MUST be envelope-substitution-free (`{hostname}`/`{stage-hostname}`/`{project-name}`) because the pull fetch returns the raw body with no live envelope. See §4.6. |

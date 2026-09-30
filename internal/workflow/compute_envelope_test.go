@@ -196,10 +196,12 @@ func TestComputeEnvelope_ServicesBootstrapped(t *testing.T) {
 func TestComputeEnvelope_ServiceDeployedFlag(t *testing.T) {
 	t.Parallel()
 
+	deployedVersion := &platform.ActiveAppVersionDigest{ID: "av-2", Source: "CLI", Built: true}
 	tests := []struct {
 		name         string
 		meta         *ServiceMeta
 		svcStatus    string
+		svcActive    *platform.ActiveAppVersionDigest
 		recordDeploy bool
 		wantDeployed bool
 	}{
@@ -235,7 +237,25 @@ func TestComputeEnvelope_ServiceDeployedFlag(t *testing.T) {
 				BootstrapSession: "",
 			},
 			svcStatus:    "ACTIVE",
+			svcActive:    deployedVersion,
 			wantDeployed: true,
+		},
+		{
+			// The Beviro trial (2026-09-29): a Mate's recipe runtimes are
+			// imported startWithoutCode, ACTIVE with a placeholder version;
+			// adopting them must not read them as deployed, or develop skips
+			// the first deploy and the agent treats empty containers as apps.
+			name: "adopted + ACTIVE holding only the startWithoutCode placeholder = not deployed",
+			meta: &ServiceMeta{
+				Hostname:         "appdev",
+				Mode:             topology.PlanModeStandard,
+				StageHostname:    "appstage",
+				BootstrappedAt:   fixedTime.Format(time.RFC3339),
+				BootstrapSession: "",
+			},
+			svcStatus:    "ACTIVE",
+			svcActive:    &platform.ActiveAppVersionDigest{ID: "av-1", Source: platform.AppVersionSourceNone},
+			wantDeployed: false,
 		},
 		{
 			name: "adopted + READY_TO_DEPLOY = not deployed",
@@ -290,9 +310,10 @@ func TestComputeEnvelope_ServiceDeployedFlag(t *testing.T) {
 					ServiceStackTypeVersionName:  "nodejs@22",
 					ServiceStackTypeCategoryName: "USER",
 				},
+				ActiveAppVersion: tt.svcActive,
 			}
 			mock := platform.NewMock().
-				WithServices([]platform.ServiceStack{svc}).
+				WithServicesDirect([]platform.ServiceStack{svc}).
 				WithProject(&platform.Project{ID: "p1", Name: "demo"})
 
 			env, err := ComputeEnvelope(context.Background(), mock, dir, "p1", runtime.Info{}, fixedTime)
@@ -884,9 +905,66 @@ func TestDeriveDeployed_ProvisionedFromGit(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := DeriveDeployed("appdev", tc.status, tc.meta, nil); got != tc.want {
+			live := &platform.ServiceStack{Name: "appdev", Status: tc.status}
+			if got := DeriveDeployed("appdev", live, tc.meta, nil); got != tc.want {
 				t.Errorf("DeriveDeployed = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestComputeEnvelope_ReadsDirectList pins that the envelope reads services
+// off the DIRECT list: it is the only read that carries the active version's
+// source, which tells an empty startWithoutCode runtime from a deployed one,
+// and it is lag-free — a service the ES index has not caught up with yet is
+// still in the envelope.
+func TestComputeEnvelope_ReadsDirectList(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "demo"}).
+		WithServices(nil). // ES list not indexed yet
+		WithServicesDirect([]platform.ServiceStack{{
+			ID: "s1", Name: "appdev", Status: "ACTIVE",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"},
+		}})
+	env, err := ComputeEnvelope(context.Background(), mock, t.TempDir(), "p1", runtime.Info{}, fixedTime)
+	if err != nil {
+		t.Fatalf("ComputeEnvelope: %v", err)
+	}
+	if len(env.Services) != 1 || env.Services[0].Hostname != "appdev" {
+		t.Fatalf("envelope must read the direct list, got %+v", env.Services)
+	}
+}
+
+// TestComputeEnvelope_UntrackedRuntimeDeployedFromPlatform pins deployed for a
+// runtime zcp does not track yet: with no record of its own, the platform's
+// active version is the whole answer, so an adoptable service the recipe
+// imported without code reads deployed=false before anyone adopts it.
+func TestComputeEnvelope_UntrackedRuntimeDeployedFromPlatform(t *testing.T) {
+	t.Parallel()
+	svc := func(name, typ string, active *platform.ActiveAppVersionDigest) platform.ServiceStack {
+		return platform.ServiceStack{ID: name, Name: name, Status: "ACTIVE",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: typ, ServiceStackTypeCategoryName: "USER"},
+			ActiveAppVersion:     active}
+	}
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "demo"}).
+		WithServicesDirect([]platform.ServiceStack{
+			svc("appdev", "alpine/nodejs@24", &platform.ActiveAppVersionDigest{ID: "av-1", Source: platform.AppVersionSourceNone}),
+			svc("api", "alpine/nodejs@24", &platform.ActiveAppVersionDigest{ID: "av-2", Source: "CLI", Built: true}),
+			svc("db", "postgresql:single@17", nil),
+		})
+	env, err := ComputeEnvelope(context.Background(), mock, t.TempDir(), "p1", runtime.Info{}, fixedTime)
+	if err != nil {
+		t.Fatalf("ComputeEnvelope: %v", err)
+	}
+	want := map[string]bool{"appdev": false, "api": true, "db": false}
+	for _, s := range env.Services {
+		if s.Bootstrapped {
+			t.Fatalf("%s: no meta, must not be bootstrapped", s.Hostname)
+		}
+		if s.Deployed != want[s.Hostname] {
+			t.Errorf("%s: Deployed = %v, want %v", s.Hostname, s.Deployed, want[s.Hostname])
+		}
 	}
 }

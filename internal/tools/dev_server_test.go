@@ -105,7 +105,7 @@ func TestDevServerStart_Success_EnablesSubdomainOnce(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDevServer(srv, mock, okHTTP, "proj-1", devServerStartSuccessSSH(), dir)
+	RegisterDevServer(srv, mock, okHTTP, "proj-1", devServerStartSuccessSSH(), dir, nil)
 
 	result := callTool(t, srv, "zerops_dev_server", map[string]any{
 		"action": "start", "hostname": "appdev",
@@ -139,7 +139,7 @@ func TestDevServerStart_Success_EnablesSubdomainOnce(t *testing.T) {
 	// Second start on the same hostname: the stamp from the first call
 	// must block a second auto-enable (PA-2).
 	srv2 := mcp.NewServer(&mcp.Implementation{Name: "test2", Version: "0.1"}, nil)
-	RegisterDevServer(srv2, mock, okHTTP, "proj-1", devServerStartSuccessSSH(), dir)
+	RegisterDevServer(srv2, mock, okHTTP, "proj-1", devServerStartSuccessSSH(), dir, nil)
 	result2 := callTool(t, srv2, "zerops_dev_server", map[string]any{
 		"action": "start", "hostname": "appdev",
 		"command": "npm run start:dev", "port": 3000,

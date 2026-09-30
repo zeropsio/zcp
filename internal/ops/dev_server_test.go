@@ -1260,3 +1260,202 @@ func TestDevServer_FirstShellToken(t *testing.T) {
 		}
 	}
 }
+
+// TestContainerIdentity pins the container-life read the dev server keeper
+// compares: the container's hostname, the kernel's boot id and its init's
+// start time, one SSH round trip. A restart starts a new init (and, in a
+// container that boots its own kernel, a new boot id); a redeploy is a new
+// container.
+func TestContainerIdentity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		output  string
+		err     error
+		want    string
+		wantErr bool
+	}{
+		{name: "hostname, boot id and init start time", output: "appdev-1-376 5f0c-boot 8123456\n", want: "appdev-1-376/5f0c-boot/8123456"},
+		{name: "no boot id to read", output: "appdev-1-376 - 8123456\n", want: "appdev-1-376/-/8123456"},
+		{name: "noise before the answer", output: "Welcome\nappdev-1-376 5f0c-boot 8123456\n", want: "appdev-1-376/5f0c-boot/8123456"},
+		{name: "no init start time", output: "appdev-1-376 5f0c-boot \n", wantErr: true},
+		{name: "nothing", output: "", wantErr: true},
+		{name: "ssh failed", err: errors.New("exit status 255"), wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ssh := &scriptSSH{queue: []scriptStep{{output: tt.output, err: tt.err}}}
+			got, err := ContainerIdentity(context.Background(), ssh, "appdev")
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("want an error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ContainerIdentity: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("ContainerIdentity = %q, want %q", got, tt.want)
+			}
+			if len(ssh.calls) != 1 || ssh.calls[0].hostname != "appdev" || ssh.calls[0].background {
+				t.Fatalf("want one foreground ssh call to appdev, got %+v", ssh.calls)
+			}
+			for _, want := range []string{"/proc/1/stat", "boot_id"} {
+				if !strings.Contains(ssh.calls[0].command, want) {
+					t.Errorf("the identity reads %s: %q", want, ssh.calls[0].command)
+				}
+			}
+		})
+	}
+}
+
+// TestPortListening pins the listener read a bring-back makes before it
+// spawns: the container's own socket table, no HTTP request (a GET would make
+// a dev server compile), no tool that a minimal image may lack.
+func TestPortListening(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		output  string
+		err     error
+		want    bool
+		wantErr bool
+	}{
+		{name: "listening", output: "listening\n", want: true},
+		{name: "not listening", output: "free\n", want: false},
+		{name: "ssh failed", err: errors.New("exit status 255"), wantErr: true},
+		{name: "no answer", output: "", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ssh := &scriptSSH{queue: []scriptStep{{output: tt.output, err: tt.err}}}
+			got, err := PortListening(context.Background(), ssh, "appdev", 3000)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("want an error, got %v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("PortListening: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("PortListening = %v, want %v", got, tt.want)
+			}
+			cmd := ssh.calls[0].command
+			for _, want := range []string{"/proc/net/tcp", ":0BB8 ", " 0A"} {
+				if !strings.Contains(cmd, want) {
+					t.Errorf("the read looks for a LISTEN socket on port 3000 (%q): %q", want, cmd)
+				}
+			}
+		})
+	}
+}
+
+// TestKillSpawnedDevServer stops exactly what one spawn started — its process
+// group, which the spawn's setsid made that pid lead, so a runner that does not
+// pass SIGTERM on (npm, sh -c) leaves no listener behind: only while the
+// pidfile still holds that spawn's pid (a later start overwrites it), and never
+// on a pid it does not know.
+func TestKillSpawnedDevServer(t *testing.T) {
+	t.Parallel()
+
+	ssh := &scriptSSH{queue: []scriptStep{{output: ""}}}
+	if err := KillSpawnedDevServer(context.Background(), ssh, "appdev", "", 4242); err != nil {
+		t.Fatalf("KillSpawnedDevServer: %v", err)
+	}
+	cmd := ssh.calls[0].command
+	for _, want := range []string{"/tmp/zcp-dev-server.log.pid", `= '4242'`, "kill -TERM -4242"} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("kill only the spawn's own pid while the pidfile holds it (%q): %q", want, cmd)
+		}
+	}
+	if strings.Contains(cmd, "pkill") {
+		t.Errorf("never a pattern kill: %q", cmd)
+	}
+	if strings.Contains(cmd, "kill -TERM 4242") {
+		t.Errorf("never the bare pid: with the group gone it can only name a process that reused it: %q", cmd)
+	}
+
+	none := &scriptSSH{}
+	if err := KillSpawnedDevServer(context.Background(), none, "appdev", "", 0); err != nil || len(none.calls) != 0 {
+		t.Errorf("an unknown pid kills nothing: err=%v calls=%v", err, none.calls)
+	}
+}
+
+// TestDevServer_Start_ReportsSpawnPID: a start reports the pid its spawn
+// acknowledged, so a caller can later stop exactly that process.
+func TestDevServer_Start_ReportsSpawnPID(t *testing.T) {
+	t.Parallel()
+	ssh := &scriptSSH{queue: []scriptStep{
+		{output: "zcp-dev-server-spawned pid=4242"},
+		{output: "OK 200 12"},
+		{output: "ready"},
+		{output: "alive\n"},
+	}}
+	result, err := ExecuteDevServer(context.Background(), ssh, nil, "", DevServerParams{
+		Action: "start", Hostname: "appdev", Command: "npm run dev", Port: 3000,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteDevServer: %v", err)
+	}
+	if result.PID != 4242 {
+		t.Errorf("PID = %d, want 4242", result.PID)
+	}
+}
+
+// TestDevServerStopPattern is the pattern a stop's kill matches processes by —
+// what a caller compares a kept command against to know whether a stop hits it.
+func TestDevServerStopPattern(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		processMatch string
+		command      string
+		want         string
+	}{
+		{processMatch: "vite", command: "npm run dev", want: "vite"},
+		{command: "npm run dev", want: "npm"},
+		{command: "env PORT=3000 node server.js", want: "env"},
+		{command: "PORT=3000 node server.js", want: "node"},
+		{want: ""},
+	}
+	for _, tt := range tests {
+		if got := DevServerStopPattern(tt.processMatch, tt.command); got != tt.want {
+			t.Errorf("DevServerStopPattern(%q, %q) = %q, want %q", tt.processMatch, tt.command, got, tt.want)
+		}
+	}
+}
+
+// TestSpawnedDevServerAlive reads whether the process one spawn started still
+// lives — exactly that pid, and only while the pidfile still names it: a
+// pidfile left from an earlier container life, or a later start's, says
+// nothing about it. A pid the spawn never reported is no process, read without
+// a call.
+func TestSpawnedDevServerAlive(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		output string
+		want   bool
+	}{{"alive\n", true}, {"dead\n", false}} {
+		ssh := &scriptSSH{queue: []scriptStep{{output: tt.output}}}
+		got, err := SpawnedDevServerAlive(context.Background(), ssh, "appdev", "/tmp/web.log", 4242)
+		if err != nil || got != tt.want {
+			t.Errorf("SpawnedDevServerAlive(%q) = %v, %v; want %v", tt.output, got, err, tt.want)
+		}
+		cmd := ssh.calls[0].command
+		for _, want := range []string{"/tmp/web.log.pid", `= '4242'`, "kill -0 4242"} {
+			if !strings.Contains(cmd, want) {
+				t.Errorf("reads exactly the spawn's pid while the pidfile names it (%q): %q", want, cmd)
+			}
+		}
+	}
+
+	none := &scriptSSH{}
+	if got, err := SpawnedDevServerAlive(context.Background(), none, "appdev", "/tmp/web.log", 0); got || err != nil || len(none.calls) != 0 {
+		t.Errorf("an unreported pid is no process: got %v, %v, calls=%v", got, err, none.calls)
+	}
+}

@@ -14,6 +14,11 @@ The envelope reports at least one in-scope service with
 `deployed: false` (bootstrapped but never received code). Finish that
 here: establish `zerops.yaml` and the app, deploy, verify.
 
+That includes an adopted service imported without code: ACTIVE, maybe
+with the repository's source already in its working directory, but
+with nothing built, installed or started — its dependencies arrive
+with this first deploy's build.
+
 Flow for each never-deployed runtime:
 
 1. **Establish `zerops.yaml`** — scaffold if absent, refine in place if

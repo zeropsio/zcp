@@ -76,6 +76,7 @@ func startDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams) (*D
 
 	spawnOut, spawnErr := spawnDevProcess(ctx, ssh, p.Hostname, p.Command, workDir, logFile)
 	spawnAckSeen := strings.Contains(string(spawnOut), spawnAckMarker)
+	result.PID = spawnAckPID(string(spawnOut))
 
 	if spawnErr != nil {
 		result.LogTail = fetchLogTailBounded(ctx, ssh, p.Hostname, logFile, defaultLogTailLines)
@@ -171,7 +172,10 @@ func startDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams) (*D
 		// the verdict: a liveness-probe transport error or ambiguous output
 		// falls through to the probe-success verdict (don't manufacture a
 		// failure from a flaky liveness check).
-		if livenessOut, livenessErr := ssh.ExecSSH(ctx, p.Hostname, livenessCheckCmd(pidFileFor(logFile))); livenessErr == nil && strings.Contains(string(livenessOut), "dead") {
+		livenessCtx, cancelLiveness := context.WithTimeout(ctx, livenessCheckTimeout)
+		livenessOut, livenessErr := ssh.ExecSSH(livenessCtx, p.Hostname, livenessCheckCmd(pidFileFor(logFile)))
+		cancelLiveness()
+		if livenessErr == nil && strings.Contains(string(livenessOut), "dead") {
 			result.Running = false
 			result.Reason = reasonPortInUse
 			// result.LogTail was already fetched above (PHASE 3) — it carries
@@ -290,6 +294,24 @@ func spawnDevProcess(ctx context.Context, ssh SSHDeployer, hostname, command, wo
 	return ssh.ExecSSHBackground(ctx, hostname, script, spawnTimeout)
 }
 
+// spawnAckPID reads the pid the spawn's ack line reports ("zcp-dev-server-
+// spawned pid=NNN"); 0 when there is none.
+func spawnAckPID(out string) int {
+	_, after, found := strings.Cut(out, spawnAckMarker+" pid=")
+	if !found {
+		return 0
+	}
+	digits := after
+	if end := strings.IndexFunc(after, func(r rune) bool { return r < '0' || r > '9' }); end >= 0 {
+		digits = after[:end]
+	}
+	pid, err := strconv.Atoi(digits)
+	if err != nil {
+		return 0
+	}
+	return pid
+}
+
 // pidFileFor derives a pidfile path from the log file path by appending
 // ".pid". Keeps the pair co-located so a single `rm` call clears both
 // at spawn time.
@@ -395,7 +417,7 @@ func applyProbeFailure(result *DevServerResult, probeLine string, deadlineHit bo
 	result.Running = false
 	switch {
 	case deadlineHit:
-		result.Reason = "health_probe_timeout"
+		result.Reason = ReasonHealthProbeTimeout
 	case probeLine == "":
 		result.Reason = "health_probe_no_output"
 	case strings.HasPrefix(probeLine, "FAIL "):

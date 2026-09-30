@@ -188,6 +188,7 @@ func mapActiveAppVersion(av *output.GetAppVersion) *ActiveAppVersionDigest {
 		ID:      av.Id.TypedString().String(),
 		Created: av.Created.Format(time.RFC3339Nano),
 		Source:  av.Source.String(),
+		Built:   av.Build != nil,
 	}
 	if av.GithubIntegration != nil {
 		if setup, ok := av.GithubIntegration.ZeropsYamlSetup.Get(); ok {

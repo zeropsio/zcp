@@ -1566,6 +1566,56 @@ func TestSynthesize_MultiMatchRendersOncePerService(t *testing.T) {
 	}
 }
 
+// TestSynthesize_StageScopeAxis pins the stageScope: axis. A standard pair's
+// dev half reads out-of-scope only when the develop session left its stage
+// half out of scope (RC-B); with the stage required, deferred, not listed, or
+// no session at all it reads in-scope. A service that is not a pair's dev
+// half reads none — so an atom declaring [in-scope, none] still reaches a
+// simple-mode service.
+func TestSynthesize_StageScopeAxis(t *testing.T) {
+	t.Parallel()
+
+	devHalf := ServiceSnapshot{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", Bootstrapped: true}
+	simple := ServiceSnapshot{Hostname: "api", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeSimple, Bootstrapped: true}
+	session := func(roles map[string]string, services ...string) *WorkSessionSummary {
+		return &WorkSessionSummary{Intent: "work", Services: services, Roles: roles}
+	}
+	tests := []struct {
+		name    string
+		svc     ServiceSnapshot
+		session *WorkSessionSummary
+		want    StageScope
+	}{
+		{name: "stage left out of the session", svc: devHalf, session: session(map[string]string{"appstage": RoleOutOfScope}, "appdev", "appstage"), want: StageScopeOutOfScope},
+		{name: "stage required", svc: devHalf, session: session(nil, "appdev", "appstage"), want: StageScopeInScope},
+		{name: "stage deferred", svc: devHalf, session: session(map[string]string{"appstage": RoleDeferred}, "appdev", "appstage"), want: StageScopeInScope},
+		{name: "stage not listed", svc: devHalf, session: session(nil, "appdev"), want: StageScopeInScope},
+		{name: "no session", svc: devHalf, want: StageScopeInScope},
+		{name: "not a pair's dev half", svc: simple, session: session(nil, "api"), want: StageScopeNone},
+	}
+	atomFor := func(scopes ...StageScope) KnowledgeAtom {
+		return KnowledgeAtom{ID: "stage-scope-" + string(scopes[0]), Axes: AxisVector{Phases: []Phase{PhaseDevelopActive}, StageScopes: scopes}, Body: "stage scope " + string(scopes[0]) + " for {hostname}"}
+	}
+	corpus := []KnowledgeAtom{atomFor(StageScopeInScope), atomFor(StageScopeOutOfScope), atomFor(StageScopeNone)}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := StateEnvelope{Phase: PhaseDevelopActive, Environment: EnvContainer, Services: []ServiceSnapshot{tt.svc}, WorkSession: tt.session}
+			matches, err := Synthesize(env, corpus)
+			if err != nil {
+				t.Fatalf("Synthesize: %v", err)
+			}
+			got := make([]string, 0, len(matches))
+			for _, m := range matches {
+				got = append(got, m.AtomID)
+			}
+			if len(got) != 1 || got[0] != "stage-scope-"+string(tt.want) {
+				t.Errorf("matched %v, want only stage-scope-%s", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestSynthesize_RuntimeBasesAxis verifies the per-runtime-base axis filter
 // (e.g. `runtimeBases: [nodejs]`) matches services whose canonical bare
 // runtime base equals one of the listed values. Composite-form TypeVersions

@@ -9,6 +9,7 @@
 package workflow
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -910,6 +911,81 @@ func TestScenario_S13_GitPushDeliveryGating(t *testing.T) {
 					if m.AtomID == f {
 						t.Errorf("S13 %s: %s fired — GitPushState gate broken", tc.gps, f)
 					}
+				}
+			}
+		})
+	}
+}
+
+// TestScenario_S14_StageLeftOutOfScope pins the stageScope gate. A develop
+// session that left a standard pair's stage half out of scope (RC-B — and a
+// Mate's stand-up, whose develop start does it by itself) gets no guidance
+// that promotes to or delivers through that stage, in the first-deploy
+// branch and after the dev half deployed, whatever the close-mode or push
+// state; it gets develop-stage-out-of-scope instead. Once the dev half has
+// deployed, the never-deployed stage it left out no longer holds the session
+// in the first-deploy branch either ("deploy each never-deployed runtime").
+// The same envelopes with the stage required keep today's guidance and never
+// see that atom.
+func TestScenario_S14_StageLeftOutOfScope(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+	stageAtoms := []string{
+		"develop-first-deploy-promote-stage",
+		"develop-standard-unset-promote-stage",
+		"develop-standard-unset-iterate",
+		"develop-close-mode-auto-standard",
+		"develop-git-push-delivery",
+	}
+	pair := func(deployed bool, closeMode topology.CloseDeployMode, gitPush topology.GitPushState) []ServiceSnapshot {
+		return []ServiceSnapshot{
+			{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: closeMode, GitPushState: gitPush, Bootstrapped: true, Deployed: deployed},
+			{Hostname: "appstage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, CloseDeployMode: closeMode, GitPushState: gitPush, Bootstrapped: true},
+		}
+	}
+	tests := []struct {
+		name      string
+		services  []ServiceSnapshot
+		stageAtom string // what the same envelope renders with the stage required
+	}{
+		{name: "first deploy", services: pair(false, topology.CloseModeUnset, topology.GitPushUnconfigured), stageAtom: "develop-first-deploy-promote-stage"},
+		{name: "dev deployed, close-mode unset", services: pair(true, topology.CloseModeUnset, topology.GitPushUnconfigured), stageAtom: "develop-standard-unset-promote-stage"},
+		{name: "dev deployed, close-mode auto", services: pair(true, topology.CloseModeAuto, topology.GitPushUnconfigured), stageAtom: "develop-close-mode-auto-standard"},
+		{name: "dev deployed, push configured", services: pair(true, topology.CloseModeAuto, topology.GitPushConfigured), stageAtom: "develop-git-push-delivery"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			session := func(roles map[string]string) *WorkSessionSummary {
+				return &WorkSessionSummary{Intent: "Stand up development of the project.", Services: []string{"appdev", "appstage"}, Roles: roles}
+			}
+			out, err := Synthesize(StateEnvelope{Phase: PhaseDevelopActive, Environment: EnvContainer, Services: tt.services, WorkSession: session(map[string]string{"appstage": RoleOutOfScope})}, corpus)
+			if err != nil {
+				t.Fatalf("Synthesize (stage out of scope): %v", err)
+			}
+			requireAtomIDsContain(t, "S14 stage out of scope", out, "develop-stage-out-of-scope")
+			forbidden := stageAtoms
+			if tt.services[0].Deployed {
+				forbidden = append(append([]string(nil), stageAtoms...), "develop-first-deploy-intro")
+			}
+			for _, m := range out {
+				if slices.Contains(forbidden, m.AtomID) {
+					t.Errorf("S14 %s: %s fired for a pair whose stage the session left out", tt.name, m.AtomID)
+				}
+			}
+
+			in, err := Synthesize(StateEnvelope{Phase: PhaseDevelopActive, Environment: EnvContainer, Services: tt.services, WorkSession: session(nil)}, corpus)
+			if err != nil {
+				t.Fatalf("Synthesize (stage required): %v", err)
+			}
+			requireAtomIDsContain(t, "S14 stage required", in, tt.stageAtom)
+			for _, m := range in {
+				if m.AtomID == "develop-stage-out-of-scope" {
+					t.Errorf("S14 %s: develop-stage-out-of-scope fired with the stage required", tt.name)
 				}
 			}
 		})

@@ -92,6 +92,7 @@ func TestLocalAutoAdopt_OneRuntime_LocalStageLinked(t *testing.T) {
 					ServiceStackTypeVersionName:  "nodejs@22",
 					ServiceStackTypeCategoryName: "USER",
 				},
+				ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-1", Source: "CLI", Built: true},
 			},
 		})
 
@@ -177,6 +178,36 @@ func TestLocalAutoAdopt_OneRuntime_ReadyToDeploy_NoStamp(t *testing.T) {
 	}
 	if result.Meta.FirstDeployedAt != "" {
 		t.Errorf("FirstDeployedAt stamped for non-ACTIVE runtime; got %q", result.Meta.FirstDeployedAt)
+	}
+}
+
+// TestLocalAutoAdopt_OneRuntime_StartedWithoutCode_NoStamp: a stage imported
+// startWithoutCode is ACTIVE with nothing in it — linking it must leave the
+// first deploy ahead, not stamp one that never happened.
+func TestLocalAutoAdopt_OneRuntime_StartedWithoutCode_NoStamp(t *testing.T) {
+	dir := t.TempDir()
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "myproject"}).
+		WithServicesDirect([]platform.ServiceStack{
+			{
+				ID: "rt-1", Name: "apistage", Status: "ACTIVE",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeVersionName:  "nodejs@22",
+					ServiceStackTypeCategoryName: "USER",
+				},
+				ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-1", Source: platform.AppVersionSourceNone},
+			},
+		})
+
+	result, err := LocalAutoAdopt(context.Background(), mock, "p1", dir)
+	if err != nil {
+		t.Fatalf("LocalAutoAdopt: %v", err)
+	}
+	if result.Meta.StageHostname != "apistage" {
+		t.Errorf("StageHostname = %q, want apistage", result.Meta.StageHostname)
+	}
+	if result.Meta.FirstDeployedAt != "" {
+		t.Errorf("FirstDeployedAt stamped for a stage holding only its startWithoutCode placeholder; got %q", result.Meta.FirstDeployedAt)
 	}
 }
 

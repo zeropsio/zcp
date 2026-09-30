@@ -4,6 +4,7 @@ priority: 3
 phases: [develop-active]
 deployStates: [deployed]
 modes: [standard]
+stageScope: [in-scope]
 runtimes: [dynamic, implicit-webserver]
 closeDeployModes: [unset]
 environments: [container]
