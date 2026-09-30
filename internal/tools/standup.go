@@ -44,6 +44,11 @@ const (
 	// standupGitWait bounds the wait for the Git variables the broker writes.
 	standupGitWait = 3 * time.Minute
 	standupGitPoll = 5 * time.Second
+	// standupRuntimeWait bounds the wait for the runtimes the browser imports
+	// right before the person signs the agent in: the first turn can arrive
+	// while they are still being created.
+	standupRuntimeWait = 5 * time.Minute
+	standupRuntimePoll = 5 * time.Second
 	// standupBatchMax is the most targets one batch carries: past five the
 	// platform's build queue may fall back to serial scheduling
 	// (zerops_deploy_batch's own advice).
@@ -65,6 +70,8 @@ type standupDeps struct {
 	liveEnvPath string
 	gitWait     time.Duration
 	gitPoll     time.Duration
+	runtimeWait time.Duration
+	runtimePoll time.Duration
 }
 
 // RegisterStandup registers zerops_standup. The server registers it only in a
@@ -91,6 +98,8 @@ func RegisterStandup(
 		liveEnvPath: mate.LiveEnvStorePath,
 		gitWait:     standupGitWait,
 		gitPoll:     standupGitPoll,
+		runtimeWait: standupRuntimeWait,
+		runtimePoll: standupRuntimePoll,
 	})
 }
 
@@ -259,12 +268,12 @@ type standupPair struct {
 	wired      string
 	branch     string
 	// failed is what stopped the pair before any deploy, exactly; next is
-	// the model's call for it.
-	failed, next string
-	devDeploy    *standupDeploy
-	stageDeploy  *standupDeploy
-	devResult    *ops.DeployResult
-	devServer    *standupDevServer
+	// the model's call for it; failedHost is the half it is about, when one.
+	failed, next, failedHost string
+	devDeploy                *standupDeploy
+	stageDeploy              *standupDeploy
+	devResult                *ops.DeployResult
+	devServer                *standupDevServer
 }
 
 // stoodUp is a pair whose two halves both run code.
@@ -288,7 +297,7 @@ func (d standupDeps) preparePairs(ctx context.Context, wiring ops.GiteaWiring, s
 	for _, p := range src.tier.Pairs {
 		pairs = append(pairs, &standupPair{pair: p, repository: src.org + "/" + p.RepoName})
 	}
-	live, err := d.liveServices(ctx)
+	live, err := d.awaitRuntimes(ctx, src.tier, progress)
 	if err != nil {
 		for _, sp := range pairs {
 			sp.fail(fmt.Sprintf("could not list this project's services: %v", err), "Retry zerops_standup; if it persists, check the API with zerops_discover.")
@@ -304,7 +313,7 @@ func (d standupDeps) preparePairs(ctx context.Context, wiring ops.GiteaWiring, s
 	var adoptedNow []workflow.BootstrapTarget
 	for _, sp := range pairs {
 		sp.dev, sp.stage = live[sp.pair.Dev.Hostname], live[sp.pair.Stage.Hostname]
-		if !d.presentAndRunning(sp) {
+		if !d.presentAndRunning(sp, src) {
 			continue
 		}
 		if target, now := d.adopt(sp, managedDependencies(src.tier, live)); now {
@@ -328,6 +337,47 @@ func (d standupDeps) preparePairs(ctx context.Context, wiring ops.GiteaWiring, s
 	}
 	wg.Wait()
 	return pairs, live
+}
+
+// awaitRuntimes reads the project's services until every pair's halves are
+// there — the dev half running (startWithoutCode), the stage half created —
+// or the wait is over. The browser imports the runtimes right before the
+// person signs the agent in, so the stand-up can be asked for while they are
+// still being created; what is still missing after the wait is reported by
+// presentAndRunning.
+func (d standupDeps) awaitRuntimes(ctx context.Context, tier workflow.MateTier, progress *standupProgress) (map[string]*platform.ServiceStack, error) {
+	deadline := time.Now().Add(d.runtimeWait)
+	for {
+		live, err := d.liveServices(ctx)
+		if err != nil {
+			return nil, err
+		}
+		pending := runtimesNotUp(tier, live)
+		if len(pending) == 0 || !time.Now().Before(deadline) {
+			return live, nil
+		}
+		progress.say("waiting for the import to create " + strings.Join(pending, ", "))
+		select {
+		case <-ctx.Done():
+			return live, nil
+		case <-time.After(d.runtimePoll):
+		}
+	}
+}
+
+// runtimesNotUp names every half the stand-up still waits for: a dev half not
+// there or not running yet, a stage half not there.
+func runtimesNotUp(tier workflow.MateTier, live map[string]*platform.ServiceStack) []string {
+	var pending []string
+	for _, p := range tier.Pairs {
+		if dev := live[p.Dev.Hostname]; dev == nil || !dev.IsLive() {
+			pending = append(pending, p.Dev.Hostname)
+		}
+		if live[p.Stage.Hostname] == nil {
+			pending = append(pending, p.Stage.Hostname)
+		}
+	}
+	return pending
 }
 
 // liveServices reads the project's services straight from the database — the
@@ -382,24 +432,38 @@ func (d standupDeps) settle(ctx context.Context, tier workflow.MateTier, live ma
 	return true
 }
 
-// presentAndRunning stops a pair whose halves the import did not create, or
-// whose dev half is not running: the repository is checked out INTO the dev
-// half, so it must be up, and a runtime imported without startWithoutCode
-// is not.
-func (d standupDeps) presentAndRunning(sp *standupPair) bool {
-	const next = "Check the project with zerops_discover. If the runtimes are there under other names, adopt them by hand: zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\"."
+// presentAndRunning stops a pair whose halves the import did not create
+// within the wait, or whose dev half is not running: the repository is
+// checked out INTO the dev half, so it must be up, and a runtime imported
+// without startWithoutCode is not. A missing half is the browser's import
+// refused or not finished; the model imports it from the tier with zcp's own
+// import, shaped the way the browser imports it.
+func (d standupDeps) presentAndRunning(sp *standupPair, src standupSource) bool {
+	p := sp.pair
 	for _, half := range []struct {
-		name string
-		svc  *platform.ServiceStack
-	}{{sp.pair.Dev.Hostname, sp.dev}, {sp.pair.Stage.Hostname, sp.stage}} {
-		if half.svc == nil {
-			sp.fail(fmt.Sprintf("%s is not in this project: the recipe's runtimes were not imported under the tier's hostnames, or their import failed", half.name), next)
-			return false
+		rt  workflow.MateTierRuntime
+		svc *platform.ServiceStack
+		dev bool
+	}{{p.Dev, sp.dev, true}, {p.Stage, sp.stage, false}} {
+		if half.svc != nil {
+			continue
 		}
+		shape := "a stage half is imported with no build, waiting for its first deploy"
+		entry := fmt.Sprintf("services: [{hostname: %s, type: %s}]", half.rt.Hostname, half.rt.Type)
+		if half.dev {
+			shape = "a dev half is imported running and empty, its build taken out"
+			entry = fmt.Sprintf("services: [{hostname: %s, type: %s, startWithoutCode: true}]", half.rt.Hostname, half.rt.Type)
+		}
+		sp.failedHost = half.rt.Hostname
+		sp.fail(fmt.Sprintf("%s is not in this project after %s: the runtimes are imported by the browser right before the sign-in, and this one's import was refused or has not finished", half.rt.Hostname, d.runtimeWait),
+			fmt.Sprintf("Import it from the tier with zerops_import content=%q (%s; add its envSecrets and scaling from %s's %s entry), then call zerops_standup again.",
+				entry, shape, src.groupRepo, workflow.MateTierImportPath))
+		return false
 	}
 	if !sp.dev.IsLive() {
-		sp.fail(fmt.Sprintf("%s is %s, not running: a dev half is imported running and empty (startWithoutCode: true) so its repository can be checked out into it", sp.pair.Dev.Hostname, sp.dev.Status),
-			fmt.Sprintf("Start it (zerops_manage action=\"start\" serviceHostname=%q) or wait for its import to finish, then call zerops_standup again.", sp.pair.Dev.Hostname))
+		sp.failedHost = p.Dev.Hostname
+		sp.fail(fmt.Sprintf("%s is %s, not running, after %s: a dev half is imported running and empty (startWithoutCode: true) so its repository can be checked out into it", p.Dev.Hostname, sp.dev.Status, d.runtimeWait),
+			fmt.Sprintf("Start it (zerops_manage action=\"start\" serviceHostname=%q) or wait for its import to finish, then call zerops_standup again.", p.Dev.Hostname))
 		return false
 	}
 	return true
@@ -468,6 +532,13 @@ func (d standupDeps) recordReflog(targets []workflow.BootstrapTarget) {
 // the checkout lands in — what the adopt route's provision does.
 func (d standupDeps) mountDevHalf(ctx context.Context, sp *standupPair) {
 	host := sp.pair.Dev.Hostname
+	// A dev half the import only just started may not take SSH yet, and
+	// every step from here on is SSH.
+	if err := ops.WaitSSHReady(ctx, d.batch.sshDeployer, host); err != nil {
+		sp.fail(fmt.Sprintf("%s runs but does not answer SSH: %v", host, err),
+			fmt.Sprintf("Check it with zerops_logs serviceHostname=%q, then call zerops_standup again.", host))
+		return
+	}
 	if d.mounter != nil {
 		if _, err := ops.MountService(ctx, d.batch.client, d.batch.projectID, d.mounter, host); err != nil {
 			sp.fail(fmt.Sprintf("could not mount %s: %v — its deploy reads zerops.yaml there", host, err),

@@ -295,6 +295,31 @@ type standupFixture struct {
 	env            map[string]string
 	events         []platform.AppVersionEvent
 	services       []platform.ServiceStack
+	// importing, when set, answers the service list as the browser's
+	// runtime import is creating it.
+	importing *importingClient
+}
+
+// importingClient is the platform while the browser's runtime import is still
+// running: its first lists hold no runtime yet, the next a dev half still
+// starting and a stage half not created, and only then the whole project.
+type importingClient struct {
+	*platform.Mock
+	mu    sync.Mutex
+	reads int
+	// stages are the lists answered in turn; the last one stays.
+	stages [][]platform.ServiceStack
+}
+
+func (c *importingClient) ListServicesDirect(ctx context.Context, projectID string) ([]platform.ServiceStack, error) {
+	c.mu.Lock()
+	stage := c.stages[min(c.reads, len(c.stages)-1)]
+	c.reads++
+	c.mu.Unlock()
+	if stage == nil {
+		return c.Mock.ListServicesDirect(ctx, projectID)
+	}
+	return stage, nil
 }
 
 func newStandupFixture(t *testing.T) *standupFixture {
@@ -347,9 +372,13 @@ func newStandupFixture(t *testing.T) *standupFixture {
 func (f *standupFixture) run(t *testing.T) (*mcp.CallToolResult, standupResponse) {
 	t.Helper()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	var client platform.Client = f.mock
+	if f.importing != nil {
+		client = f.importing
+	}
 	registerStandup(srv, standupDeps{
 		batch: batchDeployer{
-			client:      f.mock,
+			client:      client,
 			httpClient:  standupHTTP{gitea: f.srv.Client(), host: strings.TrimPrefix(f.srv.URL, "https://")},
 			projectID:   "p1",
 			sshDeployer: f.ssh,
@@ -361,6 +390,8 @@ func (f *standupFixture) run(t *testing.T) (*mcp.CallToolResult, standupResponse
 		liveEnvPath: writeLiveEnvFile(t, f.env),
 		gitWait:     50 * time.Millisecond,
 		gitPoll:     10 * time.Millisecond,
+		runtimeWait: 200 * time.Millisecond,
+		runtimePoll: 5 * time.Millisecond,
 	})
 	result := callTool(t, srv, "zerops_standup", map[string]any{})
 	var body standupResponse
@@ -524,6 +555,7 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 		// otherwise the per-service state after a partial stand-up.
 		wantStandUp string
 		want        map[string]string // hostname → substring of its failure or reason
+		wantNext    map[string]string // hostname → substring of its next step
 		wantPushes  []string
 	}{
 		{
@@ -582,13 +614,26 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 			},
 		},
 		{
-			name:        "a dev half the import did not create",
+			name:        "a dev half the import did not create, after the wait",
 			setup:       func(f *standupFixture) { f.mock.WithServices(withoutService(f.services, "nextstoredev")) },
 			wantStandUp: standupPartial,
-			want:        map[string]string{"nextstoredev": "not in this project"},
+			want:        map[string]string{"nextstoredev": "not in this project after"},
+			wantNext: map[string]string{
+				"nextstoredev":   `zerops_import content="services: [{hostname: nextstoredev, type: nodejs@22, startWithoutCode: true}]"`,
+				"nextstorestage": "zerops_import",
+			},
 			wantPushes: []string{
 				"medusadev → svc-medusadev (medusadev)",
 				"medusadev → svc-medusastage (medusaprod)",
+			},
+		},
+		{
+			name:        "a stage half the import did not create, after the wait",
+			setup:       func(f *standupFixture) { f.mock.WithServices(withoutService(f.services, "medusastage")) },
+			wantStandUp: standupFailed,
+			want:        map[string]string{"medusastage": "not in this project after"},
+			wantNext: map[string]string{
+				"medusastage": `zerops_import content="services: [{hostname: medusastage, type: nodejs@22}]"`,
 			},
 		},
 		{
@@ -640,6 +685,11 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 				}
 				if s.Next == "" {
 					t.Errorf("%s has no next step for the model", host)
+				}
+			}
+			for host, want := range tt.wantNext {
+				if next := body.service(t, host).Next; !strings.Contains(next, want) {
+					t.Errorf("%s's next step = %q, want %q", host, next, want)
 				}
 			}
 			if got := f.ssh.pushes(); !slices.Equal(got, tt.wantPushes) {
@@ -695,5 +745,35 @@ func TestStandupProgress_TheAnswerNeverFollowsANotificationAtOnce(t *testing.T) 
 	}
 	if !slices.Equal(got, []float64{1, 2}) {
 		t.Errorf("progress = %v, want it to grow by one per notification", got)
+	}
+}
+
+// TestStandup_WaitsForTheRuntimesTheBrowserIsImporting: the browser imports
+// the runtimes just before the person signs the agent in, so the first turn
+// can arrive while they are still being created. The stand-up waits — for
+// every dev half to run and every stage half to exist — and then stands the
+// project up as if they had been there all along.
+func TestStandup_WaitsForTheRuntimesTheBrowserIsImporting(t *testing.T) {
+	t.Parallel()
+	f := newStandupFixture(t)
+	noRuntimes := withoutService(withoutService(withoutService(withoutService(f.services,
+		"medusadev"), "medusastage"), "nextstoredev"), "nextstorestage")
+	starting := slices.Clone(withoutService(f.services, "nextstorestage"))
+	for i := range starting {
+		if starting[i].Name == "medusadev" {
+			starting[i].Status = "CREATING"
+		}
+	}
+	f.importing = &importingClient{Mock: f.mock, stages: [][]platform.ServiceStack{noRuntimes, noRuntimes, starting, nil}}
+
+	result, body := f.run(t)
+	if result.IsError || body.StandUp != standupReady {
+		t.Fatalf("stand-up after the import = %s", getTextContent(t, result))
+	}
+	if f.importing.reads < 4 {
+		t.Errorf("the service list was read %d times, want it read until the import finished", f.importing.reads)
+	}
+	if len(f.ssh.pushes()) != 4 {
+		t.Errorf("deploys = %v, want both pairs deployed", f.ssh.pushes())
 	}
 }

@@ -156,6 +156,9 @@ func standupStageService(sp *standupPair) standupService {
 	}
 	byHand := fmt.Sprintf("zerops_deploy sourceService=%q targetService=%q setup=%q", p.Dev.Hostname, p.Stage.Hostname, p.Stage.Setup)
 	switch d := sp.stageDeploy; {
+	case sp.failed != "" && sp.failedHost == p.Stage.Hostname:
+		s.Failed = sp.failed
+		s.Next = sp.next
 	case sp.failed != "":
 		s.Deploy = &standupDeploy{Status: standupNotDeployed, Reason: p.Dev.Hostname + " did not stand up, and the stage is built from it"}
 		s.Next = sp.next
