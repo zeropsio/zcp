@@ -1,0 +1,171 @@
+#zeropsPreprocessor=on
+# The AI Agent tier. The project a Zerops Mate works in: every runtime as a
+# dev/stage pair, with the managed services they share.
+#
+# zcp wrote this file from the Mate "medusa-juno". It is the group's now: a
+# person may edit it, and zcp never proposes over a tier the group repo already
+# carries.
+#
+# Priority is the order services are created in, each wave deployed before the
+# next starts: the managed services first, then every runtime before the
+# runtimes that reference it.
+
+project:
+  name: medusa-juno
+  corePackage: LIGHT
+  envVariables:
+    API_URL: https://medusastage-${zeropsSubdomainHost}-9000.prg1.zerops.app
+    APP_URL: https://nextstorestage-${zeropsSubdomainHost}-8000.prg1.zerops.app
+    MEDUSA_INTERNAL_URL: http://medusastage:9000
+    STOREFRONT_INTERNAL_URL: http://nextstorestage:8000
+    STORE_PUBLISHABLE_KEY: ${medusastage_CHANNEL_PUBLISHABLE_KEY}
+    STRIPE_PUBLISHABLE_KEY: ""
+    SUPERADMIN_EMAIL: admin@example.com
+  envSecrets:
+    COOKIE_SECRET: <@generateRandomString(<40>)>
+    JWT_SECRET: <@generateRandomString(<48>)>
+    RELOAD_SECRET: <@generateRandomString(<20>)>
+    # Set by hand in medusa-juno; set it again here.
+    SENDGRID_API_KEY: <@generateRandomString(<64>)>
+    STRIPE_API_KEY: ""
+    STRIPE_WEBHOOK_SECRET: ""
+    SUPERADMIN_PASSWORD: <@generateRandomString(<16>)>
+
+services:
+  - hostname: db
+    type: postgresql@17
+    priority: 10
+    profile: oltp-hobby
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 3
+      minRam: 0.25
+      maxRam: 4
+      minDisk: 1
+      maxDisk: 20
+
+  - hostname: redis
+    type: valkey@7.2
+    priority: 10
+    profile: hobby
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 2
+      minRam: 0.25
+      maxRam: 2
+      minDisk: 1
+      maxDisk: 5
+
+  - hostname: search
+    type: meilisearch@1.20
+    priority: 10
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 3
+      minRam: 0.5
+      maxRam: 4
+      minDisk: 1
+      maxDisk: 20
+
+  - hostname: storage
+    type: object-storage
+    priority: 10
+    objectStorageSize: 5
+    objectStoragePolicy: public-read
+
+  - hostname: mailpit
+    type: alpine@3.21
+    priority: 3
+    buildFromGit: https://github.com/zerops-recipe-apps/mailpit-app
+    enableSubdomainAccess: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 2
+      minRam: 0.25
+      maxRam: 1
+    envSecrets:
+      MP_UI_AUTH: <@generateRandomString(<21>)>
+
+  - hostname: medusadev
+    type: nodejs@22
+    priority: 2
+    zeropsSetup: medusadev
+    buildFromGit: https://gitea.example.com/medusa/medusadev
+    enableSubdomainAccess: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 5
+      minRam: 1
+      maxRam: 8
+      minDisk: 1
+      maxDisk: 20
+    envSecrets:
+      MEDUSA_WORKER_MODE: shared
+
+  - hostname: medusastage
+    type: nodejs@22
+    priority: 2
+    zeropsSetup: medusaprod
+    buildFromGit: https://gitea.example.com/medusa/medusadev
+    enableSubdomainAccess: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 5
+      minRam: 1
+      maxRam: 8
+      minDisk: 1
+      maxDisk: 20
+    envSecrets:
+      ADMIN_CORS: https://medusastage-${zeropsSubdomainHost}-9000.prg1.zerops.app
+      # Set by hand in medusa-juno; set it again here.
+      MEDUSA_ADMIN_TOKEN: <@generateRandomString(<28>)>
+      MEDUSA_WORKER_MODE: server
+
+  - hostname: nextstoredev
+    type: nodejs@22
+    priority: 1
+    zeropsSetup: nextstoredev
+    buildFromGit: https://gitea.example.com/medusa/nextstoredev
+    enableSubdomainAccess: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 5
+      minRam: 1
+      maxRam: 4
+      minDisk: 1
+      maxDisk: 10
+
+  - hostname: nextstorestage
+    type: nodejs@22
+    priority: 1
+    zeropsSetup: nextstoreprod
+    buildFromGit: https://gitea.example.com/medusa/nextstoredev
+    enableSubdomainAccess: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 5
+      minRam: 1
+      maxRam: 4
+      minDisk: 1
+      maxDisk: 10
+    envSecrets:
+      # Set by hand in medusa-juno; set it again here.
+      OPENAI_API_KEY: <@generateRandomString(<32>)>
