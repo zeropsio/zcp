@@ -2,7 +2,11 @@
 // This file is compiled only during testing — it does not exist in production builds.
 package init
 
-import "github.com/zeropsio/zcp/internal/mate"
+import (
+	"time"
+
+	"github.com/zeropsio/zcp/internal/mate"
+)
 
 // Command runner overrides.
 
@@ -43,6 +47,9 @@ func SetMateEnsureInstalled(fn func(mate.EnsureOptions) (mate.Result, error)) {
 	mateEnsureInstalled = fn
 }
 func ResetMateEnsureInstalled() { mateEnsureInstalled = mate.EnsureInstalled }
+
+func SetMateLockWait(d time.Duration) { mateLockWait = d }
+func ResetMateLockWait()              { mateLockWait = defaultMateLockWait }
 
 func SetMateUnitFilePath(path string) { mateUnitFilePath = path }
 func ResetMateUnitFilePath()          { mateUnitFilePath = mate.UnitFilePath }

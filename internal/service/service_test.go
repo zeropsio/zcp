@@ -2,11 +2,13 @@ package service_test
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/service"
@@ -203,6 +205,11 @@ func installFakeMateBundle(t *testing.T, advertisesBasePath bool) string {
 	if err := os.Symlink(filepath.Join("versions", version), current); err != nil {
 		t.Fatalf("symlink current: %v", err)
 	}
+	// The release is what is installed: no network, nothing to change.
+	service.SetMateEnsureFunc(func(mate.EnsureOptions) (mate.Result, error) {
+		return mate.Result{Action: mate.ActionNone, From: version, To: version}, nil
+	})
+	t.Cleanup(service.ResetMateEnsureFunc)
 	return home
 }
 
@@ -479,5 +486,73 @@ func TestStart_Mate_GuardFailsOpenOnUnreadableStore(t *testing.T) {
 	}
 	if !ran {
 		t.Error("mate must launch when the store cannot be read")
+	}
+}
+
+// TestStart_Mate_InstallsBeforeItStarts: a Mate's unit starts at boot before
+// `zcp init` updates its bundle, so it served the old release and was
+// restarted onto the new one — two starts, ~10 s down each. It now brings the
+// bundle to the release under the install lock `zcp init` shares, then starts
+// what is installed: whichever of the two runs first installs and the other
+// finds nothing to do. Nothing it meets ever keeps the server down: a failed
+// install or a lock held past the wait starts what is installed.
+func TestStart_Mate_InstallsBeforeItStarts(t *testing.T) {
+	// Not parallel — mutates runFunc, HOME and ZCP_MATE_ENABLED.
+	t.Setenv("ZCP_MATE_ENABLED", "1")
+	tests := []struct {
+		name       string
+		ensureErr  error
+		lockedAway bool
+		wantEnsure bool
+	}{
+		{name: "the release is installed under the lock, then started", wantEnsure: true},
+		{name: "an install that fails still starts what is installed", ensureErr: errors.New("registry down"), wantEnsure: true},
+		{name: "a lock held past the wait starts what is installed", lockedAway: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			installFakeMateBundle(t, true)
+			service.SetMateLockWait(200 * time.Millisecond)
+			t.Cleanup(service.ResetMateLockWait)
+			if tt.lockedAway {
+				release, err := mate.LockInstall(0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(release)
+			}
+			var order []string
+			service.SetMateEnsureFunc(func(opts mate.EnsureOptions) (mate.Result, error) {
+				if _, err := mate.LockInstall(0); !errors.Is(err, mate.ErrInstallLockBusy) {
+					t.Errorf("the install ran without the lock held: %v", err)
+				}
+				if !opts.Refresh {
+					t.Error("a start reads the release manifest afresh, as a boot does")
+				}
+				order = append(order, "ensure")
+				return mate.Result{Action: mate.ActionUpdated, From: "0.0.9", To: "0.1.0"}, tt.ensureErr
+			})
+			service.SetRunFunc(func(string, []string, []string) error {
+				if release, err := mate.LockInstall(0); err == nil {
+					release()
+				} else if !tt.lockedAway {
+					t.Error("the server started with the install lock still held")
+				}
+				order = append(order, "run")
+				return nil
+			})
+			t.Cleanup(service.ResetRunFunc)
+
+			if err := service.Start("mate"); err != nil {
+				t.Fatalf("Start(mate): %v", err)
+			}
+			want := []string{"run"}
+			if tt.wantEnsure {
+				want = []string{"ensure", "run"}
+			}
+			if !slices.Equal(order, want) {
+				t.Errorf("order = %v, want %v", order, want)
+			}
+		})
 	}
 }

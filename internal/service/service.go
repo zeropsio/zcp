@@ -44,6 +44,9 @@ type execConfig struct {
 	// non-nil error aborts Start without running anything. Only mate sets one —
 	// nginx and vscode always launch.
 	guard func() error
+	// prepare runs after guard and before the binary is resolved: what the
+	// service needs on disk before it starts.
+	prepare func()
 }
 
 // services returns the exec configuration of every supervised service.
@@ -82,6 +85,7 @@ func services() map[string]execConfig {
 			argsFn:     mateArgv,
 			extraEnvFn: mateExtraEnv,
 			guard:      mateGuard,
+			prepare:    mateInstallBeforeStart,
 		},
 	}
 }
@@ -212,6 +216,56 @@ func mergeEnvLines(store, file []string) []string {
 }
 
 // runFunc starts a service and waits for it to exit. Tests override this.
+// mateEnsure brings the installed bundle to the release; package-level so
+// tests stub the network.
+var mateEnsure = mate.EnsureInstalled
+
+// defaultMateLockWait bounds the wait for `zcp init`'s install: longer than
+// an install's own bounds (the manifest fetch, the download and npm install,
+// the smoke test), so a live install is waited out and a hung one is not.
+const defaultMateLockWait = 4 * time.Minute
+
+var mateLockWait = defaultMateLockWait
+
+// mateInstallBeforeStart brings the bundle to the release before the server
+// starts, under the install lock `zcp init` shares (mate.LockInstall). The
+// unit starts at boot on its own, before `zcp init` updates the bundle; it
+// served the old release and `zcp init` restarted it onto the new one — two
+// starts, each ~10 s down. Now whichever runs first installs and the other
+// finds nothing to do. Nothing here ever keeps the server down: a lock held
+// past the wait, or an install that fails, starts what is installed.
+func mateInstallBeforeStart() {
+	release, err := mate.LockInstall(mateLockWait)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[zcp] service mate: %v — starting what is installed\n", err)
+		return
+	}
+	defer release()
+	result, err := mateEnsure(mate.EnsureOptions{Refresh: true})
+	switch {
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "[zcp] service mate: bring the bundle to the release: %v — starting what is installed\n", err)
+	case result.Warning != "":
+		fmt.Fprintf(os.Stderr, "[zcp] service mate: %s\n", result.Warning)
+	case result.Action == mate.ActionUpdated:
+		fmt.Fprintf(os.Stderr, "[zcp] service mate: updated mate %s -> %s before starting\n", result.From, result.To)
+	case result.Action == mate.ActionInstalled:
+		fmt.Fprintf(os.Stderr, "[zcp] service mate: installed mate %s before starting\n", result.To)
+	}
+}
+
+// SetMateEnsureFunc stubs the install a mate start runs; for tests.
+func SetMateEnsureFunc(fn func(mate.EnsureOptions) (mate.Result, error)) { mateEnsure = fn }
+
+// ResetMateEnsureFunc restores the real install.
+func ResetMateEnsureFunc() { mateEnsure = mate.EnsureInstalled }
+
+// SetMateLockWait bounds a mate start's wait on the install lock; for tests.
+func SetMateLockWait(d time.Duration) { mateLockWait = d }
+
+// ResetMateLockWait restores the default wait.
+func ResetMateLockWait() { mateLockWait = defaultMateLockWait }
+
 var runFunc = runCommand
 
 // SetMateStorePath / ResetMateStorePath point the guard's live-env-store lookup at
@@ -247,6 +301,10 @@ func Start(name string) error {
 		if err := cfg.guard(); err != nil {
 			return err
 		}
+	}
+
+	if cfg.prepare != nil {
+		cfg.prepare()
 	}
 
 	// Raise the systemd unit's TasksMax before launching. `zcp service start

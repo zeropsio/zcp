@@ -9,6 +9,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -365,9 +366,20 @@ func TestRunMateUpdate_InstallsAndRestartsWhenUnitPresent(t *testing.T) {
 	mateUnitFilePath = unitPath
 	t.Cleanup(func() { mateUnitFilePath = origUnitPath })
 
+	// The install and the restart run under the install lock the unit's own
+	// start takes, so the start this restart causes finds nothing to install.
 	var restartedUnit string
+	heldAtRestart := false
 	origRunner := mateRestartUnit
-	mateRestartUnit = func(unit string) error { restartedUnit = unit; return nil }
+	mateRestartUnit = func(unit string) error {
+		restartedUnit = unit
+		release, err := mate.LockInstall(0)
+		if err == nil {
+			release()
+		}
+		heldAtRestart = errors.Is(err, mate.ErrInstallLockBusy)
+		return nil
+	}
 	t.Cleanup(func() { mateRestartUnit = origRunner })
 
 	stdout := captureStdout(t, func() {
@@ -378,6 +390,14 @@ func TestRunMateUpdate_InstallsAndRestartsWhenUnitPresent(t *testing.T) {
 
 	if want := "zerops@mate.service"; restartedUnit != want {
 		t.Errorf("restarted unit = %q, want %q", restartedUnit, want)
+	}
+	if !heldAtRestart {
+		t.Error("the restart must be issued with the install lock held")
+	}
+	if release, err := mate.LockInstall(0); err != nil {
+		t.Errorf("the update must release the install lock: %v", err)
+	} else {
+		release()
 	}
 	var got struct {
 		Action    string `json:"action"`

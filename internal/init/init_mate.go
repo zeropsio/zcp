@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -17,6 +18,13 @@ import (
 // may reach the network; production is mate.EnsureInstalled (bounded timeouts
 // throughout).
 var mateEnsureInstalled = mate.EnsureInstalled
+
+// defaultMateLockWait bounds init's wait on the install lock the unit's own
+// start may hold (mate.LockInstall): longer than an install's own bounds, so
+// a live install is waited out and a hung one is not.
+const defaultMateLockWait = 4 * time.Minute
+
+var mateLockWait = defaultMateLockWait
 
 // mateUnitFilePath is where `zsc unit create` lands the unit. Package-level so
 // tests can point the existence check at a temp path instead of /usr/lib.
@@ -111,6 +119,20 @@ func enableMate(rt runtime.Info) error {
 	if rt.ProjectID == "" {
 		return errors.New("no projectId in the container environment — mate has no Zerops project to bind to")
 	}
+
+	// The install and the restart decision run under the install lock the
+	// unit's own start takes (`zcp service start mate`): a unit that started
+	// first has installed the release and this finds nothing to do; one that
+	// starts while this installs waits, then starts the new release once — so
+	// a restart here only ever stops a server on the old release, or a start
+	// still waiting on the lock. A lock held past the wait never fails the
+	// container start: the step goes on without it.
+	release, lockErr := mate.LockInstall(mateLockWait)
+	if lockErr != nil {
+		fmt.Fprintf(os.Stderr, "    ! %v — installing without it\n", lockErr)
+		release = func() {}
+	}
+	defer release()
 
 	// A boot reads the release manifest afresh: the cache is an hour old at
 	// most, and a restart inside that hour kept the previous Mate build for

@@ -35,6 +35,10 @@ var mateUnitFilePath = mate.UnitFilePath
 // so tests can stub the shell-out.
 var mateRestartUnit = defaultMateRestartUnit
 
+// mateUpdateLockWait bounds `zcp mate update`'s wait on the install lock:
+// longer than an install's own bounds, so a live install is waited out.
+const mateUpdateLockWait = 4 * time.Minute
+
 func defaultMateRestartUnit(unit string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), restartTimeout)
 	defer cancel()
@@ -165,6 +169,18 @@ func runMateUpdate(args []string) int {
 	if !rt.MateEnabled {
 		return failMateUpdate(asJSON, "ZCP_MATE_ENABLED is off — mate is not managed on this container")
 	}
+
+	// The install and the restart run under the install lock the unit's own
+	// start takes (mate.LockInstall): the start this restart causes waits,
+	// then finds nothing to install. A lock held past the wait still updates.
+	release, lockErr := mate.LockInstall(mateUpdateLockWait)
+	if lockErr != nil {
+		if !asJSON {
+			fmt.Fprintf(os.Stderr, "%v — updating without it\n", lockErr)
+		}
+		release = func() {}
+	}
+	defer release()
 
 	result, err := mate.EnsureInstalled(mate.EnsureOptions{Force: force, Refresh: true})
 	if err != nil {
