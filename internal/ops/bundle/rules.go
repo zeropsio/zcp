@@ -93,7 +93,7 @@ func managedEntryWithRules(m ManagedServiceEntry, launchPromote, keepNonHA bool)
 	entry := map[string]any{
 		"hostname": m.Hostname,
 		"type":     finalType,
-		"priority": 10,
+		"priority": managedPriority,
 	}
 	if modeField != "" {
 		entry["mode"] = modeField

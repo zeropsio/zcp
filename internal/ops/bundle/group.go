@@ -206,6 +206,8 @@ func BuildGroupRecipe(
 
 	var warnings []string
 	warnings = append(warnings, groupSetupWarnings(runtimes, stageSetups)...)
+	priorities, priorityWarnings := groupPriorities(groupApps(runtimes), inputs.ProjectEnvs)
+	warnings = append(warnings, priorityWarnings...)
 
 	layout := recipe.Layout{
 		Name:  inputs.Name,
@@ -220,7 +222,7 @@ func BuildGroupRecipe(
 			}
 			continue
 		}
-		body, tierWarnings, err := composeGroupTierYAML(inputs, runtimes, managed, policy, stageSetups, classifications)
+		body, tierWarnings, err := composeGroupTierYAML(inputs, runtimes, managed, policy, stageSetups, priorities, classifications)
 		if err != nil {
 			return recipe.Layout{}, nil, fmt.Errorf("group recipe %q: tier %q: %w", inputs.Name, policy.title, err)
 		}
@@ -326,11 +328,19 @@ func composeGroupTierYAML(
 	managed []ManagedServiceEntry,
 	policy groupTierPolicy,
 	stageSetups map[string]string,
+	priorities map[string]int,
 	classifications map[string]topology.SecretClassification,
 ) (string, []string, error) {
 	projectEnvs, warnings := composeProjectEnvVariables(inputs.ProjectEnvs, classifications)
 
-	services := make([]yamlItem, 0, 2*len(runtimes)+len(managed))
+	// Every entry carries its priority, and the file lists the services in
+	// the order the platform creates them: highest first, a pair's halves
+	// together, the composer's own order kept among equals.
+	type rankedItem struct {
+		priority int
+		item     yamlItem
+	}
+	ranked := make([]rankedItem, 0, 2*len(runtimes)+len(managed))
 	for _, r := range runtimes {
 		halves := []struct{ hostname, setup string }{}
 		if policy.pairs {
@@ -350,12 +360,18 @@ func composeGroupTierYAML(
 		for _, half := range halves {
 			entry, entryWarnings := groupRuntimeEntry(r, half.hostname, half.setup, policy, classifications)
 			warnings = append(warnings, entryWarnings...)
-			services = append(services, yamlItem{fields: orderedFields(entry, serviceKeyOrder)})
+			entry["priority"] = priorities[r.DevHostname]
+			ranked = append(ranked, rankedItem{priorities[r.DevHostname], yamlItem{fields: orderedFields(entry, serviceKeyOrder)}})
 		}
 	}
 	for _, m := range managed {
 		entry := managedEntryWithRules(m, policy.promoteHA, false /*keepNonHA*/)
-		services = append(services, yamlItem{fields: orderedFields(entry, serviceKeyOrder)})
+		ranked = append(ranked, rankedItem{managedPriority, yamlItem{fields: orderedFields(entry, serviceKeyOrder)}})
+	}
+	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].priority > ranked[j].priority })
+	services := make([]yamlItem, 0, len(ranked))
+	for _, r := range ranked {
+		services = append(services, r.item)
 	}
 
 	project := []yamlField{{key: "name", value: groupTierProjectName(inputs, policy)}}
@@ -383,7 +399,27 @@ func groupTierHeader(inputs GroupRecipeInputs, policy groupTierPolicy) []string 
 		"The " + policy.title + " tier. " + policy.summary,
 		fmt.Sprintf("zcp wrote this file from the Mate %q. It is the group's now: a person may edit it, and zcp never proposes over a tier the group repo already carries.",
 			firstNonBlank(inputs.MateProjectName, inputs.Name)),
+		"Priority is the order services are created in, each wave deployed before the next starts: the managed services first, then every runtime before the runtimes that reference it.",
 	}
+}
+
+// groupApps is what the priorities rank: every runtime pair, by any name it
+// goes by, with the values that reference what it needs up first — its
+// zerops.yaml's variables and its own service variables.
+func groupApps(runtimes []GroupRuntime) []groupApp {
+	apps := make([]groupApp, 0, len(runtimes))
+	for _, r := range runtimes {
+		sources := zeropsYAMLEnvValues(r.ZeropsYAMLBody)
+		for _, env := range r.ServiceEnvs {
+			sources = append(sources, env.Value)
+		}
+		apps = append(apps, groupApp{
+			key:       r.DevHostname,
+			hostnames: []string{r.DevHostname, r.StageHostname, GroupPromotedHostname(r.DevHostname)},
+			sources:   sources,
+		})
+	}
+	return apps
 }
 
 // groupRuntimeEntry composes one runtime's services[] entry under a policy.
