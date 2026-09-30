@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -314,7 +315,7 @@ func handleGitPushSetup(
 	}
 
 	if rt.InContainer {
-		return confirmGitPushSetupContainer(ctx, client, httpClient, sshDeployer, projectID, stateDir, rt.GiteaURL, input, meta)
+		return confirmGitPushSetupContainer(ctx, client, httpClient, sshDeployer, projectID, stateDir, liveGiteaURL(rt), input, meta)
 	}
 	return confirmGitPushSetupLocal(ctx, stateDir, input, meta)
 }
@@ -1326,4 +1327,16 @@ func deliveryDecisionForMeta(meta *workflow.ServiceMeta, giteaURL string) topolo
 		RemoteURL:        meta.RemoteURL,
 		GiteaURL:         giteaURL,
 	})
+}
+
+// liveGiteaURL is GITEA_URL as it stands now — the value a delivery reads
+// (giteaEnvLookup) — with the one read at start-up as the fallback. The broker
+// may write it after zcp started; git-push-setup reading only the start-up
+// value would persist the helper the Mate's shell cannot answer, undoing the
+// delivery's re-assert.
+func liveGiteaURL(rt runtime.Info) string {
+	if live := ops.ReadGiteaWiring(giteaEnvLookup(mate.LiveEnvStorePath)).GiteaURL; live != "" {
+		return live
+	}
+	return rt.GiteaURL
 }

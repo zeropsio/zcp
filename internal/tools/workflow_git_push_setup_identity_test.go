@@ -418,6 +418,34 @@ func TestGitPushSetupContainer_GiteaHost_SeedsBotIdentity(t *testing.T) {
 	})
 }
 
+// TestGitPushSetupContainer_ReadsTheLiveGiteaURL: a zcp that started before
+// the broker wrote GITEA_URL holds none in its start-up runtime, while a
+// delivery reads the live value. A git-push-setup run then must read the live
+// value too, or it rewrites the helper the delivery just re-asserted back to
+// one the Mate's shell cannot answer. Not parallel: it sets the environment.
+func TestGitPushSetupContainer_ReadsTheLiveGiteaURL(t *testing.T) {
+	const giteaURL = "https://web-2ff4-3000.prg1.zerops.app"
+	t.Setenv("GITEA_URL", giteaURL)
+	stateDir := t.TempDir()
+	writeFirstTimeConfigMeta(t, stateDir)
+
+	ssh := &containerSSHStub{}
+	httpDoer := &stubGitHubUserHTTP{status: 200, body: `{"login":"mate-p1","id":7}`}
+	client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
+
+	result, _, _ := handleGitPushSetup(
+		context.Background(), client, httpDoer, ssh, "test-project",
+		WorkflowInput{Service: "appdev", RemoteURL: giteaURL + "/acme/api", GitToken: "gitea_bot_token"},
+		stateDir, runtime.Info{InContainer: true, GitHostKnown: true},
+	)
+	if result.IsError {
+		t.Fatalf("expected success, got error: %s", extractText(result))
+	}
+	if !originSyncHelperFallsBackToBotToken(t, ssh.commands) {
+		t.Errorf("origin sync must persist the helper the Mate's shell can answer, from the live GITEA_URL: %v", ssh.commands)
+	}
+}
+
 // originSyncHelperFallsBackToBotToken reports whether the origin sync
 // git-push-setup ran persisted a helper that answers from GITEA_TOKEN — the
 // bot's token the Mate's own shell carries.
