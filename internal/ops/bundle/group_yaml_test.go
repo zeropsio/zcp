@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -147,4 +148,41 @@ func headerComment(lines []string) []string {
 		out = append(out, strings.TrimSpace(strings.TrimPrefix(line, "#")))
 	}
 	return out
+}
+
+// The platform's import may read a tier as YAML 1.1, where `yes`, `on`, `y`,
+// `~`, `1:30`, `0123` and a date are no strings: a value the recipe writes as
+// it is must come back as the same string, so every scalar a YAML 1.1 reader
+// would reinterpret is quoted — and nothing else is.
+func TestTierDocument_QuotesWhatYAML11Reinterprets(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		value  string
+		quoted bool
+	}{
+		{"yes", true}, {"Yes", true}, {"NO", true}, {"on", true}, {"OFF", true},
+		{"y", true}, {"Y", true}, {"n", true}, {"N", true}, {"true", true}, {"False", true},
+		{"~", true}, {"null", true}, {"Null", true}, {"NULL", true}, {"", true},
+		{"1:30", true}, {"190:20:30", true}, {"0123", true}, {"0o17", true}, {"0x1F", true},
+		{"0b101", true}, {"1_000", true}, {"1.5", true}, {".inf", true}, {"-.Inf", true}, {".NaN", true},
+		{"<<", true}, {"=", true}, {"2026-09-30", true}, {"2026-09-30T12:00:00Z", true},
+		{"production", false}, {"https://api.example.com/v1", false}, {"yesterday", false},
+		{"only", false}, {"Europe/Prague", false}, {"v3.0.1", false}, {"medusa:*", false},
+	}
+	fields := make([]yamlField, 0, len(tests))
+	for i, tt := range tests {
+		fields = append(fields, yamlField{key: fmt.Sprintf("V%02d", i), value: tt.value})
+	}
+	body, err := tierDocument{project: []yamlField{{key: "name", value: "p"}, {key: "envVariables", value: fields}}}.render()
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	vars := mappingValue(mappingValue(tierMapping(t, body), "project"), "envVariables")
+	for i, tt := range tests {
+		node := mappingValue(vars, fmt.Sprintf("V%02d", i))
+		quoted := node.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle) != 0
+		if node.Value != tt.value || quoted != tt.quoted {
+			t.Errorf("%q is written as %q (quoted %v), want quoted %v", tt.value, node.Value, quoted, tt.quoted)
+		}
+	}
 }

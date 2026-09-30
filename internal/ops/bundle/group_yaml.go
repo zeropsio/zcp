@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -187,13 +188,18 @@ func fieldsNode(fields []yamlField) *yaml.Node {
 
 // valueNode builds a scalar or a nested mapping. Every string is tagged a
 // string, so "123", "true" or "" stay strings where YAML would read a number,
-// a boolean or a null.
+// a boolean or a null — and a string a YAML 1.1 reader would read as
+// something else is quoted too (yaml11Reinterprets).
 func valueNode(value any) *yaml.Node {
 	switch v := value.(type) {
 	case []yamlField:
 		return fieldsNode(v)
 	case string:
-		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v}
+		node := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v}
+		if yaml11Reinterprets(v) {
+			node.Style = yaml.DoubleQuotedStyle
+		}
+		return node
 	case int:
 		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.Itoa(v)}
 	case float64:
@@ -206,6 +212,27 @@ func valueNode(value any) *yaml.Node {
 	default:
 		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: fmt.Sprint(v)}
 	}
+}
+
+// yaml11Scalars are the plain scalars a YAML 1.1 reader resolves to
+// something other than a string: a boolean in any case (`yes`, `On`, `n`), a
+// null, an integer in any base or in base 60 (`1:30`), a float, a
+// timestamp, the merge key and the value key. yaml.v3 speaks YAML 1.2 and
+// quotes only what 1.2 would reinterpret; the platform's reader may be 1.1.
+var yaml11Scalars = []*regexp.Regexp{
+	regexp.MustCompile(`^(?i:y|n|yes|no|true|false|on|off|~|null)$`),
+	regexp.MustCompile(`^[-+]?(0b[01_]+|0o?[0-7_]+|0x[0-9a-fA-F_]+|[0-9][0-9_]*(:[0-5]?[0-9])*)$`),
+	regexp.MustCompile(`^[-+]?([0-9][0-9_]*)?\.[0-9_]+([eE][-+]?[0-9]+)?$`),
+	regexp.MustCompile(`^[-+]?[0-9][0-9_]*(:[0-5]?[0-9])+\.[0-9_]*$`),
+	regexp.MustCompile(`^[-+]?\.(?i:inf)$|^\.(?i:nan)$`),
+	regexp.MustCompile(`^[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}`),
+	regexp.MustCompile(`^(<<|=|)$`),
+}
+
+// yaml11Reinterprets reports a string a YAML 1.1 reader would not read back
+// as the same string when written plain.
+func yaml11Reinterprets(value string) bool {
+	return slices.ContainsFunc(yaml11Scalars, func(re *regexp.Regexp) bool { return re.MatchString(value) })
 }
 
 // encodeNode writes a node with two-space indentation.
