@@ -757,3 +757,55 @@ func TestDefaultSmokeTestInstall_ResolvesAddonsAsTheServerDoes(t *testing.T) {
 		})
 	}
 }
+
+// TestGiteaToken answers git's credential request for the Mate's Gitea with
+// the bot token as the live env store holds it now — the broker rotates it,
+// and a process's own environment keeps the value it started with — and
+// answers nothing for any other host.
+func TestGiteaToken(t *testing.T) {
+	env := map[string]string{"GITEA_URL": "https://gitea.example.net", "GITEA_TOKEN": "fresh-" + "token"}
+	ported := map[string]string{"GITEA_URL": "https://gitea.example.net:3000", "GITEA_TOKEN": "fresh-" + "token"}
+	tests := []struct {
+		name  string
+		env   map[string]string
+		stdin string
+		want  string
+	}{
+		{"the Gitea's host", env, "protocol=https\nhost=gitea.example.net\n\n", "fresh-token"},
+		{"the Gitea's host, any case", env, "protocol=https\nhost=Gitea.Example.NET\n\n", "fresh-token"},
+		{"the Gitea on its port", ported, "protocol=https\nhost=gitea.example.net:3000\n\n", "fresh-token"},
+		{"the Gitea's host on another port", ported, "protocol=https\nhost=gitea.example.net\n\n", ""},
+		{"another host", env, "protocol=https\nhost=github.com\n\n", ""},
+		{"no host named", env, "protocol=https\n\n", ""},
+		{"no Gitea on this container", map[string]string{"GITEA_TOKEN": "fresh-" + "token"}, "protocol=https\nhost=gitea.example.net\n\n", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mate.GiteaToken(strings.NewReader(tt.stdin), func(k string) string { return tt.env[k] })
+			if got != tt.want {
+				t.Errorf("GiteaToken = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestLiveLookup: a key the live env store holds wins over this process's
+// environment, which still answers what the store lacks.
+func TestLiveLookup(t *testing.T) {
+	store := filepath.Join(t.TempDir(), "env.json")
+	if err := os.WriteFile(store, []byte(`{"GITEA_TOKEN":"rotated","EMPTY":""}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GITEA_TOKEN", "at-start")
+	t.Setenv("ONLY_ENV", "env")
+	t.Setenv("EMPTY", "env-empty")
+	lookup := mate.LiveLookup(store)
+	for key, want := range map[string]string{"GITEA_TOKEN": "rotated", "ONLY_ENV": "env", "EMPTY": "env-empty", "NEITHER": ""} {
+		if got := lookup(key); got != want {
+			t.Errorf("lookup(%s) = %q, want %q", key, got, want)
+		}
+	}
+	if got := mate.LiveLookup(filepath.Join(t.TempDir(), "absent.json"))("GITEA_TOKEN"); got != "at-start" {
+		t.Errorf("without a store, lookup = %q, want the process env", got)
+	}
+}

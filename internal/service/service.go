@@ -239,7 +239,7 @@ var mateSetupBoot = matesetup.Boot
 // none of them. The import runs in this process, for as long as the server
 // does; a restart cut short finds what it left by looking.
 func mateLaunchSetup() {
-	lookup := liveLookup(mateStorePath)
+	lookup := mate.LiveLookup(mateStorePath)
 	path := mate.DefaultStatusFilePath()
 	planSet := strings.TrimSpace(lookup(matesetup.EnvRuntimes)) != ""
 	if err := matesetup.MarkLaunch(path, planSet, time.Now()); err != nil {
@@ -247,25 +247,6 @@ func mateLaunchSetup() {
 	}
 	if planSet {
 		go mateSetupBoot(context.Background(), path, lookup)
-	}
-}
-
-// liveLookup reads a key from the live env store at storePath, falling back
-// to this process's environment (the dev loop, where the store may be absent).
-func liveLookup(storePath string) func(string) string {
-	live := map[string]string{}
-	if lines, err := mate.LoadLiveEnv(storePath); err == nil {
-		for _, line := range lines {
-			if key, value, ok := strings.Cut(line, "="); ok {
-				live[key] = value
-			}
-		}
-	}
-	return func(key string) string {
-		if v, ok := live[key]; ok && v != "" {
-			return v
-		}
-		return os.Getenv(key)
 	}
 }
 

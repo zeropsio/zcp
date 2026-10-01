@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"maps"
 	"net/url"
 	"os"
 	"os/exec"
@@ -223,13 +224,14 @@ const (
 )
 
 // gitShell runs a shell command in dir as a session carrying only env — a
-// HOME of its own and no system config, so nothing of the machine running the
-// test answers a credential.
+// HOME of its own, no system config and no zcp to ask (unless env's PATH
+// brings one), so nothing of the machine running the test answers a
+// credential.
 func gitShell(t *testing.T, dir, home string, env map[string]string, stdin, script string) (string, error) {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "sh", "-c", script)
 	cmd.Dir = dir
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0"}
+	cmd.Env = []string{"PATH=" + fakeZcpPath(t, "exit 127"), "HOME=" + home, "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0"}
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
@@ -317,6 +319,56 @@ func TestPersistedCredentialHelper_TokenByShellAndHost(t *testing.T) {
 			}
 			if got := answeredPassword(t, repo, home, tt.env, ask); got != tt.want {
 				t.Errorf("asked for %s, the helper answered %q, want %q", ask, got, tt.want)
+			}
+		})
+	}
+}
+
+// fakeZcpPath is a PATH whose `zcp` is script, ahead of everything else, so a
+// helper test never reaches a zcp installed on the machine running it.
+func fakeZcpPath(t *testing.T, script string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "zcp"), []byte("#!/bin/sh\n"+script+"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir + ":" + os.Getenv("PATH")
+}
+
+// TestPersistedCredentialHelper_ReadsTheRotatedToken: the broker rotates the
+// bot token on the zcp service, and the Mate's shell keeps the value it
+// started with until a restart — so the Gitea helper asks `zcp mate
+// git-token` for the token as the container holds it now, handing it the
+// request (the host) on stdin, and falls back to the shell's own value only
+// where no zcp answers. A dev service's session keeps its service secret.
+func TestPersistedCredentialHelper_ReadsTheRotatedToken(t *testing.T) {
+	t.Parallel()
+	requireGit(t)
+	const rotated = "the-rotated-bot-token"
+	answers := `[ "$1 $2" = "mate git-token" ] || exit 1; grep -q '^host=gitea.example.invalid$' && printf %s ` + rotated
+	tests := []struct {
+		name string
+		zcp  string
+		env  map[string]string
+		want string
+	}{
+		{"the Mate's shell gets the token as it is now", answers, map[string]string{"GITEA_TOKEN": helperBotToken}, rotated},
+		{"no zcp to ask: the shell's own value", "exit 127", map[string]string{"GITEA_TOKEN": helperBotToken}, helperBotToken},
+		{"a zcp that predates the verb: the shell's own value", `echo "usage: zcp mate <status|update>" >&2; exit 1`, map[string]string{"GITEA_TOKEN": helperBotToken}, helperBotToken},
+		{"zcp declines: nothing", "cat >/dev/null; exit 0", map[string]string{"GITEA_TOKEN": helperBotToken}, ""},
+		{"the dev service's session keeps its service secret", answers, map[string]string{"GIT_TOKEN": helperGitToken, "GITEA_TOKEN": helperBotToken}, helperGitToken},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			repo, home := t.TempDir(), t.TempDir()
+			if out, err := gitShell(t, repo, home, nil, "", BuildGitOriginSyncCommand(repo, helperGiteaRepo, helperGiteaURL)); err != nil {
+				t.Fatalf("origin sync: %v\n%s", err, out)
+			}
+			env := map[string]string{"PATH": fakeZcpPath(t, tt.zcp)}
+			maps.Copy(env, tt.env)
+			if got := answeredPassword(t, repo, home, env, helperGiteaRepo); got != tt.want {
+				t.Errorf("the helper answered %q, want %q", got, tt.want)
 			}
 		})
 	}

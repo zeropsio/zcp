@@ -459,3 +459,54 @@ func TestRunMateUpdate_RestartFailure_ReturnsNonZero(t *testing.T) {
 		t.Errorf("runMateCmd(update) = %d, want 1 when the restart fails", got)
 	}
 }
+
+// TestRunMateGitToken: `zcp mate git-token` is what the Gitea credential
+// helper asks on every fetch and push from the Mate's shell — it prints the
+// bot token as the live env store holds it now, for the Gitea's host only,
+// and nothing else on stdout.
+func TestRunMateGitToken(t *testing.T) {
+	store := filepath.Join(t.TempDir(), "env.json")
+	if err := os.WriteFile(store, []byte(`{"GITEA_URL":"https://gitea.example.invalid","GITEA_TOKEN":"rotated"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GITEA_TOKEN", "at-start")
+	tests := []struct {
+		name  string
+		stdin string
+		want  string
+	}{
+		{"the Gitea", "protocol=https\nhost=gitea.example.invalid\n\n", "rotated"},
+		{"another host", "protocol=https\nhost=github.com\n\n", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out strings.Builder
+			if code := runMateGitToken(strings.NewReader(tt.stdin), &out, store); code != 0 {
+				t.Fatalf("exit %d", code)
+			}
+			if out.String() != tt.want {
+				t.Errorf("stdout = %q, want %q", out.String(), tt.want)
+			}
+		})
+	}
+}
+
+// TestIsMateGitToken: the helper's verb is answered before the CLI's
+// telemetry, whose one-time notice goes to stdout and whose flush would hold
+// every git operation.
+func TestIsMateGitToken(t *testing.T) {
+	tests := []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"mate", "git-token"}, true},
+		{[]string{"mate", "status"}, false},
+		{[]string{"mate"}, false},
+		{nil, false},
+	}
+	for _, tt := range tests {
+		if got := isMateGitToken(tt.args); got != tt.want {
+			t.Errorf("isMateGitToken(%q) = %v, want %v", tt.args, got, tt.want)
+		}
+	}
+}

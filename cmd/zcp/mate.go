@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -64,6 +65,25 @@ func runMateCmd(args []string) int {
 		log.Print("usage: zcp mate <status|update> [--json] [--force] [--refresh]")
 		return 1
 	}
+}
+
+// isMateGitToken is `zcp mate git-token`, which run answers before the CLI's
+// telemetry: the Gitea credential helper (ops.giteaCredentialHelperShell)
+// runs it on every fetch and push from the Mate's shell, and reads its whole
+// stdout as the password — the telemetry's one-time notice on stdout, or its
+// flush, would break or hold every one of them.
+func isMateGitToken(args []string) bool {
+	return len(args) >= 2 && args[0] == "mate" && args[1] == "git-token"
+}
+
+// runMateGitToken prints the Mate's Gitea bot token as the live env store at
+// storePath holds it now, when the credential request on stdin names the
+// Gitea's host (mate.GiteaToken); nothing otherwise. Always exit 0: a zcp that
+// answers declines with nothing, and only a missing or older zcp sends the
+// helper to its fallback.
+func runMateGitToken(stdin io.Reader, stdout io.Writer, storePath string) int {
+	_, _ = io.WriteString(stdout, mate.GiteaToken(stdin, mate.LiveLookup(storePath)))
+	return 0
 }
 
 // mateVerbStatus names the `zcp mate status` subcommand as a constant rather

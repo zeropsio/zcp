@@ -18,6 +18,7 @@ import (
 	"github.com/zeropsio/zcp/internal/content"
 	zcpinit "github.com/zeropsio/zcp/internal/init"
 	"github.com/zeropsio/zcp/internal/knowledge"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -48,6 +49,9 @@ func main() {
 // session_end), preserving the original code's behavior where an
 // unrecognized first argument still starts the MCP server.
 func run(args []string) int {
+	if isMateGitToken(args) {
+		return runMateGitToken(os.Stdin, os.Stdout, mate.LiveEnvStorePath)
+	}
 	if len(args) > 0 {
 		if dispatch, ok := cliDispatch()[args[0]]; ok {
 			return runCLI(args, dispatch)
