@@ -136,9 +136,12 @@ func (z *ZeropsClient) directGet(ctx context.Context, u, entity string) ([]byte,
 	if status >= http.StatusMultipleChoices {
 		var apiErrResp directProcessErrorResponse
 		if err := json.Unmarshal(raw, &apiErrResp); err != nil {
-			return nil, withCause(NewPlatformError(ErrAPIError,
+			pe := withCause(NewPlatformError(ErrAPIError,
 				fmt.Sprintf("%s: malformed %d response", entity, status),
 				"Retry; if it persists the platform API changed — report it"), err)
+			// A gateway's 5xx page in front of the API: the platform's side.
+			pe.serverSide = status >= http.StatusInternalServerError
+			return nil, pe
 		}
 		apiErrResp.Error.HttpStatusCode = status
 		return nil, mapSDKError(apiErrResp.Error, entity)

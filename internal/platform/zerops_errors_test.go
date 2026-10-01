@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -521,5 +522,68 @@ func TestIsTransient(t *testing.T) {
 				t.Errorf("IsTransient(%v) = %v, want %v", tt.err, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestIsTransient_GatewayAnswers: a gateway in front of the API answers 5xx
+// with an HTML page, not the platform's JSON error. Whatever the body, every
+// 5xx through every read the boot import makes is worth sending again; a
+// JSON 4xx is not.
+func TestIsTransient_GatewayAnswers(t *testing.T) {
+	t.Parallel()
+	answers := []struct {
+		name   string
+		status int
+		ctype  string
+		body   string
+		want   bool
+	}{
+		{"502 HTML", http.StatusBadGateway, "text/html", "<html><body>Bad Gateway</body></html>", true},
+		{"503 HTML", http.StatusServiceUnavailable, "text/html", "<html>Service Unavailable</html>", true},
+		{"504 empty", http.StatusGatewayTimeout, "text/plain", "", true},
+		{"500 JSON", http.StatusInternalServerError, "application/json", `{"error":{"code":"internalServerError","message":"boom"}}`, true},
+		{"422 JSON", http.StatusUnprocessableEntity, "application/json", `{"error":{"code":"projectImportInvalidYaml","message":"invalid yaml"}}`, false},
+	}
+	calls := []struct {
+		name string
+		do   func(*ZeropsClient) error
+	}{
+		{"ImportServices", func(z *ZeropsClient) error {
+			_, err := z.ImportServices(context.Background(), "proj-1", "services: []")
+			return err
+		}},
+		{"GetProcess", func(z *ZeropsClient) error { _, err := z.GetProcess(context.Background(), "proc-1"); return err }},
+		{"GetProjectProcessesDirect", func(z *ZeropsClient) error {
+			_, err := z.GetProjectProcessesDirect(context.Background(), "proj-1")
+			return err
+		}},
+		{"ListServicesDirect", func(z *ZeropsClient) error {
+			_, err := z.ListServicesDirect(context.Background(), "proj-1")
+			return err
+		}},
+	}
+	for _, a := range answers {
+		for _, c := range calls {
+			t.Run(a.name+"/"+c.name, func(t *testing.T) {
+				t.Parallel()
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", a.ctype)
+					w.WriteHeader(a.status)
+					_, _ = w.Write([]byte(a.body))
+				}))
+				t.Cleanup(srv.Close)
+				z, err := NewZeropsClient("fake-token", srv.URL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = c.do(z)
+				if err == nil {
+					t.Fatal("no error")
+				}
+				if got := IsTransient(err); got != a.want {
+					t.Errorf("IsTransient(%v) = %v, want %v", err, got, a.want)
+				}
+			})
+		}
 	}
 }
