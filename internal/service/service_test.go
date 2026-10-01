@@ -354,9 +354,13 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 			home := installFakeMateBundle(t, true)
 			service.SetMateStorePath(writeLiveEnvStore(t, tt.store))
 			t.Cleanup(service.ResetMateStorePath)
+			// The boot import runs until the server is up: one that held the
+			// launch would never let it start.
 			booted := make(chan string, 1)
+			serverUp := make(chan struct{})
 			service.SetMateSetupBoot(func(_ context.Context, path string, lookup func(string) string) {
 				booted <- path + " " + lookup("MATE_SETUP_RUNTIMES")
+				<-serverUp
 			})
 			t.Cleanup(service.ResetMateSetupBoot)
 			statusPath := filepath.Join(home, ".zcp", "state", "mate-status.json")
@@ -365,12 +369,21 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 			service.SetRunFunc(func(_ string, _ []string, extraEnv []string) error {
 				gotEnv = extraEnv
 				atLaunch, _ = mate.ReadStatus(statusPath)
+				close(serverUp)
 				return nil
 			})
 			t.Cleanup(func() { service.ResetRunFunc() })
 
-			if err := service.Start("mate"); err != nil {
-				t.Fatalf("Start(mate): %v", err)
+			started := make(chan error, 1)
+			go func() { started <- service.Start("mate") }()
+			select {
+			case err := <-started:
+				if err != nil {
+					t.Fatalf("Start(mate): %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				close(serverUp)
+				t.Fatal("the server never started: the launch waited on the boot import")
 			}
 			if !slices.Contains(gotEnv, "ZCP_STATUS_FILE="+statusPath) {
 				t.Errorf("launch env %q must name the status file %s", gotEnv, statusPath)
