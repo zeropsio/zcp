@@ -62,6 +62,33 @@ func (s *standupStatus) begin() {
 	})
 }
 
+// beat rewrites the file every interval until the returned stop, so the
+// file says the stand-up is alive (mate.StandupStale); stop waits for it.
+func (s *standupStatus) beat(interval time.Duration) func() {
+	if s == nil {
+		return func() {}
+	}
+	if interval <= 0 {
+		interval = mate.StandupBeat
+	}
+	quit, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-quit:
+				return
+			case <-time.After(interval):
+				s.update(func(*mate.StandupStatus) {})
+			}
+		}
+	}()
+	return func() {
+		close(quit)
+		<-done
+	}
+}
+
 func (s *standupStatus) phase(phase string) {
 	s.update(func(st *mate.StandupStatus) { st.Phase = phase })
 }

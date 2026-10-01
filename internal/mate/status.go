@@ -57,6 +57,16 @@ const (
 	ServiceFailed    = "failed"
 )
 
+// A running stand-up rewrites the file at least every StandupBeat, which
+// moves the top-level updatedAt. A stand-up section that says running in a
+// file whose updatedAt is older than StandupStale is stale: the process
+// running it died (the zcp MCP server under an agent can go down without a
+// restart of the Mate), and a reader takes it as failed.
+const (
+	StandupBeat  = 15 * time.Second
+	StandupStale = 2 * time.Minute
+)
+
 // Stand-up states and phases.
 const (
 	StandupIdle    = "idle"

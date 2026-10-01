@@ -1369,3 +1369,36 @@ func TestStandupTrackDeploys_NamesTheStepAndItsProcess(t *testing.T) {
 		t.Errorf("steps seen = %v, want %v", seen, want)
 	}
 }
+
+// TestStandupStatus_BeatsWhileRunning: a running stand-up rewrites the file
+// at least every beat, so the server can read a running section the file has
+// not moved for in two minutes as a stand-up that died (mate.StandupStale);
+// once it ends it stops.
+func TestStandupStatus_BeatsWhileRunning(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "status.json")
+	status := newStandupStatus(path)
+	status.begin()
+	stop := status.beat(5 * time.Millisecond)
+	writes := func(d time.Duration) int {
+		seen := map[time.Time]bool{}
+		deadline := time.Now().Add(d)
+		for time.Now().Before(deadline) {
+			if info, err := os.Stat(path); err == nil {
+				seen[info.ModTime()] = true
+			}
+			time.Sleep(time.Millisecond)
+		}
+		return len(seen)
+	}
+	if n := writes(150 * time.Millisecond); n < 4 {
+		t.Errorf("the file was written %d times in 150 ms while running, want a beat every 5 ms", n)
+	}
+	stop()
+	if n := writes(60 * time.Millisecond); n != 1 {
+		t.Errorf("the file was written %d times after the stand-up ended, want none", n-1)
+	}
+	if mate.StandupBeat != 15*time.Second || mate.StandupStale != 2*time.Minute {
+		t.Errorf("beat %s / stale %s, want 15s / 2m", mate.StandupBeat, mate.StandupStale)
+	}
+}

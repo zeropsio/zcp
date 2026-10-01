@@ -86,6 +86,9 @@ type standupDeps struct {
 	bootWait   time.Duration
 	bootPoll   time.Duration
 	trackPoll  time.Duration
+	// beat is how often a running stand-up rewrites the file (0 is
+	// mate.StandupBeat).
+	beat time.Duration
 }
 
 // RegisterStandup registers zerops_standup. The server registers it only in a
@@ -147,7 +150,9 @@ func registerStandup(srv *mcp.Server, d standupDeps) {
 // holds.
 func (d standupDeps) run(ctx context.Context, progress *standupProgress) *mcp.CallToolResult {
 	progress.st().begin()
+	stopBeat := progress.st().beat(d.beat)
 	result := d.stand(ctx, progress)
+	stopBeat()
 	if result.IsError {
 		progress.st().end(refusalText(result))
 	} else {
