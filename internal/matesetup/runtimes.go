@@ -262,16 +262,20 @@ func decodeBase64(s string) ([]byte, error) {
 // end of its own.
 func (im Importer) Run(ctx context.Context, encoded string) {
 	im = im.withDefaults()
+	hostnames, entries, err := DecodePlan(encoded)
+	// A plan that lists nothing ends as none whatever an earlier run
+	// recorded: v9.187.0 settled it as failed, and this rewrites that.
+	if err == nil && len(hostnames) == 0 {
+		if rec, ok := readSettled(im.StatusPath); !ok || rec.State != mate.RuntimesNone {
+			im.settleNone()
+		}
+		return
+	}
 	if Settled(im.StatusPath) {
 		return
 	}
-	hostnames, entries, err := DecodePlan(encoded)
 	if err != nil {
 		im.finish(nil, err.Error(), true)
-		return
-	}
-	if len(hostnames) == 0 {
-		im.settleNone()
 		return
 	}
 	prev, _ := mate.ReadStatus(im.StatusPath)

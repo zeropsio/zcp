@@ -959,3 +959,33 @@ func TestBoot_AnEmptyPlanNeedsNoKey(t *testing.T) {
 		t.Errorf("runtimes = %s %q, want none", got.State, got.Error)
 	}
 }
+
+// TestBoot_AnEmptyPlanOverridesAFailedRecord: v9.187.0 settled an empty plan
+// as failed ("lists no services"). Whatever the settled record says, an
+// empty plan's outcome is none: the next launch rewrites the record and the
+// section, with no file surgery on the Mate.
+func TestBoot_AnEmptyPlanOverridesAFailedRecord(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "status.json")
+	record := `{"state":"failed","error":"failed: MATE_SETUP_RUNTIMES lists no services","endedAt":"2026-10-01T18:00:00Z","services":null}`
+	if err := os.WriteFile(matesetup.SettledPath(path), []byte(record), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := mate.UpdateRuntimes(path, func(r *mate.RuntimesStatus) {
+		r.State, r.Error = mate.RuntimesFailed, "MATE_SETUP_RUNTIMES lists no services"
+	}); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{matesetup.EnvRuntimes: base64.StdEncoding.EncodeToString([]byte("services: []\n"))}
+	for launch := range 2 {
+		if err := matesetup.MarkLaunch(path, true, t0); err != nil {
+			t.Fatal(err)
+		}
+		matesetup.Boot(context.Background(), path, func() func(string) string { return func(k string) string { return env[k] } })
+		if got := readStatus(t, path).Runtimes; got.State != mate.RuntimesNone || got.Error != "" {
+			t.Errorf("after launch %d: runtimes = %s %q, want none", launch+1, got.State, got.Error)
+		}
+	}
+	if !matesetup.Settled(path) {
+		t.Error("the rewritten record does not read as settled")
+	}
+}
