@@ -4,6 +4,7 @@ package platform
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
 	"strings"
@@ -491,5 +492,34 @@ func TestMapSDKError_PreservesCause(t *testing.T) {
 	}
 	if mapped := mapSDKError(context.DeadlineExceeded, ""); !errors.Is(mapped, context.DeadlineExceeded) {
 		t.Errorf("errors.Is(mapped, context.DeadlineExceeded) = false; want true")
+	}
+}
+
+// TestIsTransient tells a call worth sending again — the network, a timeout,
+// the rate limit, the platform's own 5xx — from one the platform refused for
+// what it carried, which a retry only repeats.
+func TestIsTransient(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"5xx", mapSDKError(apiError.Error{HttpStatusCode: 502, ErrorCode: "badGateway", Message: "bad gateway"}, ""), true},
+		{"429", mapSDKError(apiError.Error{HttpStatusCode: http.StatusTooManyRequests, ErrorCode: "rateLimited"}, ""), true},
+		{"422", mapSDKError(apiError.Error{HttpStatusCode: 422, ErrorCode: "projectImportInvalidYaml", Message: "invalid yaml"}, ""), false},
+		{"403", mapSDKError(apiError.Error{HttpStatusCode: http.StatusForbidden, ErrorCode: "forbidden"}, ""), false},
+		{"network", NewPlatformError(ErrNetworkError, "connection reset", ""), true},
+		{"timeout", NewPlatformError(ErrAPITimeout, "timed out", ""), true},
+		{"wrapped 5xx", fmt.Errorf("import: %w", mapSDKError(apiError.Error{HttpStatusCode: 503, ErrorCode: "unavailable"}, "")), true},
+		{"not a platform error", errors.New("boom"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsTransient(tt.err); got != tt.want {
+				t.Errorf("IsTransient(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
 	}
 }

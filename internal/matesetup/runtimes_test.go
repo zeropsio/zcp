@@ -285,6 +285,34 @@ func TestRun_Failures(t *testing.T) {
 	}
 }
 
+// TestRun_ImportRetries: a call that failed on the way is sent again; one
+// the platform refused for what it carried is not — it would answer the same.
+func TestRun_ImportRetries(t *testing.T) {
+	tests := []struct {
+		name        string
+		errs        []error
+		wantImports int
+		wantState   string
+	}{
+		{"a call that failed on the way is retried", []error{platform.NewPlatformError(platform.ErrNetworkError, "connection reset", "")}, 2, mate.RuntimesDone},
+		{"a refused import is not", []error{platform.NewPlatformError(platform.ErrAPIError, "invalid yaml", "")}, 1, mate.RuntimesFailed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "status.json")
+			api := newFake()
+			api.importErr = tt.errs
+			importer(api, path).Run(context.Background(), plan())
+			if len(api.imports) != tt.wantImports {
+				t.Errorf("imports = %d, want %d", len(api.imports), tt.wantImports)
+			}
+			if got := readStatus(t, path).Runtimes.State; got != tt.wantState {
+				t.Errorf("state = %s, want %s", got, tt.wantState)
+			}
+		})
+	}
+}
+
 // TestRun_ACallThatFailedButCreated_IsNotSentAgain: an import call that
 // failed on its way back after the platform took it is not sent a second
 // time — the retry looks first.

@@ -94,7 +94,9 @@ func mapAPIError(apiErr apiError.Error, entityType string) error {
 	}
 
 	if code >= 500 {
-		return withAPICode(withSubcode(NewPlatformError(ErrAPIError, msg, "Zerops API server error — retry later"), errCode), errCode, meta)
+		pe := withAPICode(withSubcode(NewPlatformError(ErrAPIError, msg, "Zerops API server error — retry later"), errCode), errCode, meta)
+		pe.serverSide = true
+		return pe
 	}
 
 	// Client error (4xx) — tell LLM to fix input. When the server sent

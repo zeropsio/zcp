@@ -275,12 +275,14 @@ func (im Importer) importMissing(ctx context.Context, entries []map[string]any, 
 	}
 }
 
-// retryable is an import call worth sending again: anything but a key the
-// platform does not accept for it.
+// retryable is an import call worth sending again: the network, a timeout,
+// the platform's own 5xx (platform.IsTransient), or an error that is not the
+// platform's answer at all. An import the platform refused for what it
+// carried, or for the key, gets the same answer every time.
 func retryable(err error) bool {
 	var pe *platform.PlatformError
 	if errors.As(err, &pe) {
-		return pe.Code != platform.ErrAuthTokenExpired && pe.Code != platform.ErrPermissionDenied
+		return platform.IsTransient(err)
 	}
 	return true
 }
