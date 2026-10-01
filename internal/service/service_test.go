@@ -287,9 +287,47 @@ func TestStart_Mate_MergesEnvFile(t *testing.T) {
 	if err := service.Start("mate"); err != nil {
 		t.Fatalf("Start(mate): %v", err)
 	}
-	want := []string{"T3CODE_ZEROPS_PROJECT_ID=nTV3oMB2SS634ImDJnQckg", "T3CODE_ZEROPS_API_HOST=api.app-prg1.zerops.io"}
+	want := []string{"T3CODE_ZEROPS_PROJECT_ID=nTV3oMB2SS634ImDJnQckg", "T3CODE_ZEROPS_API_HOST=api.app-prg1.zerops.io", "T3CODE_BASE_PATH=/mate"}
 	if !slices.Equal(gotEnv, want) {
 		t.Errorf("merged env:\n got %q\nwant %q", gotEnv, want)
+	}
+}
+
+// TestStart_Mate_BasePathRidesTheEnv: the server learns its public prefix
+// from its environment whatever the --base-path probe answered — a probe that
+// could not answer (one of twenty boots, a cold first node start) launched a
+// server whose assets did not resolve.
+func TestStart_Mate_BasePathRidesTheEnv(t *testing.T) {
+	// Not parallel — mutates runFunc, HOME and ZCP_MATE_ENABLED.
+	t.Setenv("ZCP_MATE_ENABLED", "1")
+	tests := []struct {
+		name string
+		help string
+	}{
+		{"help advertises the flag", "#!/bin/sh\necho '  --base-path   Public path prefix'\n"},
+		{"help cannot answer", "#!/bin/sh\nexit 1\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := installFakeMateBundle(t, true)
+			bin := filepath.Join(home, ".zcp", "mate", "current", "node_modules", ".bin", mate.BinName)
+			if err := os.WriteFile(bin, []byte(tt.help), 0o700); err != nil {
+				t.Fatalf("write fake mate: %v", err)
+			}
+			var gotEnv []string
+			service.SetRunFunc(func(_ string, _ []string, extraEnv []string) error {
+				gotEnv = extraEnv
+				return nil
+			})
+			t.Cleanup(func() { service.ResetRunFunc() })
+
+			if err := service.Start("mate"); err != nil {
+				t.Fatalf("Start(mate): %v", err)
+			}
+			if !slices.Contains(gotEnv, "T3CODE_BASE_PATH=/mate") {
+				t.Errorf("launch env %q must carry T3CODE_BASE_PATH=/mate", gotEnv)
+			}
+		})
 	}
 }
 

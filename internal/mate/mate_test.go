@@ -157,6 +157,51 @@ func TestSupportsBasePath(t *testing.T) {
 	}
 }
 
+// TestBasePathSupport tells "the help ran and lacks the flag" from "the help
+// could not answer": a just-installed bundle's first node start under boot
+// load ran past the probe's timeout on 1 of 20 boots, and that read as a
+// bundle without --base-path.
+func TestBasePathSupport(t *testing.T) {
+	dir := t.TempDir()
+	advertises := writeFakeBin(t, filepath.Join(dir, "with"), "#!/bin/sh\necho '  --base-path   Public path prefix'\n")
+	silent := writeFakeBin(t, filepath.Join(dir, "without"), "#!/bin/sh\necho '  --base-dir   Data directory'\n")
+	broken := writeFakeBin(t, filepath.Join(dir, "broken"), "#!/bin/sh\nexit 1\n")
+	slow := writeFakeBin(t, filepath.Join(dir, "slow"), "#!/bin/sh\nsleep 5\necho '  --base-path   Public path prefix'\n")
+	mate.SetHelpTimeout(300 * time.Millisecond)
+	t.Cleanup(mate.ResetHelpTimeout)
+
+	tests := []struct {
+		name        string
+		bin         string
+		want        bool
+		wantUnknown bool
+	}{
+		{"help advertises the flag", advertises, true, false},
+		{"help does not advertise it", silent, false, false},
+		{"binary fails", broken, false, true},
+		{"binary does not exist", filepath.Join(dir, "absent"), false, true},
+		{"help runs past the timeout", slow, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := mate.BasePathSupport(tt.bin)
+			if got != tt.want || (err != nil) != tt.wantUnknown {
+				t.Errorf("BasePathSupport(%s) = %v, %v; want %v, unknown=%v", tt.name, got, err, tt.want, tt.wantUnknown)
+			}
+		})
+	}
+}
+
+// TestLaunchEnvLines: the server's public prefix rides its environment on
+// every launch — an older bundle ignores the variable, a newer one reads it
+// whatever the --base-path probe answered.
+func TestLaunchEnvLines(t *testing.T) {
+	got := mate.LaunchEnvLines()
+	if !slices.Contains(got, "T3CODE_BASE_PATH=/mate") {
+		t.Errorf("LaunchEnvLines() = %q, want it to carry T3CODE_BASE_PATH=/mate", got)
+	}
+}
+
 func TestEnvLines(t *testing.T) {
 	tests := []struct {
 		name           string
