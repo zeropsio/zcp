@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -872,5 +873,41 @@ func TestMarkLaunch_RepairsTheSectionFromTheSettledRecord(t *testing.T) {
 				t.Errorf("runtimes = %s %q ended %q, want %s carrying %q, with its end", got.State, got.Error, got.EndedAt, tt.wantState, tt.wantError)
 			}
 		})
+	}
+}
+
+// TestSettledRecord_ATruncatedRecordIsNotSettled: a record that does not
+// parse (a write a crash cut short) is no proof the import settled: the
+// launch treats it as a repair — the section runs again, and the run that
+// ends it writes a whole record.
+func TestSettledRecord_ATruncatedRecordIsNotSettled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "status.json")
+	api := newFake()
+	importer(api, path).Run(context.Background(), plan())
+	record, err := os.ReadFile(matesetup.SettledPath(path))
+	if err != nil {
+		t.Fatalf("no settled record: %v", err)
+	}
+	if err := os.WriteFile(matesetup.SettledPath(path), record[:len(record)/2], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if matesetup.Settled(path) {
+		t.Error("a truncated record reads as settled")
+	}
+	if err := matesetup.MarkLaunch(path, true, t0); err != nil {
+		t.Fatal(err)
+	}
+	if got := readStatus(t, path).Runtimes.State; got != mate.RuntimesPending {
+		t.Errorf("after the launch = %s, want pending (to run again)", got)
+	}
+	importer(api, path).Run(context.Background(), plan())
+	if !matesetup.Settled(path) || readStatus(t, path).Runtimes.State != mate.RuntimesDone {
+		t.Errorf("the next run did not settle again: settled=%v state=%s", matesetup.Settled(path), readStatus(t, path).Runtimes.State)
+	}
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp") {
+			t.Errorf("left behind %s", e.Name())
+		}
 	}
 }

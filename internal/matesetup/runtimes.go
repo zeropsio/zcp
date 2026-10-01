@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -100,8 +101,9 @@ const sinceSlack = time.Minute
 // and every agent under it go down with the unit), so it is marked failed:
 // nothing else ever would.
 func MarkLaunch(path string, planSet bool, now time.Time) error {
+	// A record that does not parse is no proof: the section runs again
+	// (pending), and the run that ends it writes a whole record.
 	rec, settled := readSettled(path)
-	settled = settled || Settled(path)
 	if err := mate.UpdateStatus(path, func(s *mate.Status) {
 		switch {
 		case settled:
@@ -136,12 +138,13 @@ func MarkLaunch(path string, planSet bool, now time.Time) error {
 // import settled — done, or refused by the platform — and must never run
 // again: a later launch with the plan still in the env would otherwise bring
 // back a service the person deleted. Under the home, it survives restarts.
-func settledPath(statusPath string) string { return statusPath + ".settled" }
+func SettledPath(statusPath string) string { return statusPath + ".settled" }
 
-// Settled reports a boot import that settled for good.
+// Settled reports a boot import that settled for good: a record that
+// parses. One a crash cut short proves nothing, and the import runs again.
 func Settled(statusPath string) bool {
-	_, err := os.Stat(settledPath(statusPath))
-	return err == nil
+	_, ok := readSettled(statusPath)
+	return ok
 }
 
 // settledRecord is how the import ended, as the settled record keeps it:
@@ -161,17 +164,42 @@ type settledRecord struct {
 func (im Importer) settle(rec settledRecord) {
 	body, err := json.Marshal(rec)
 	if err == nil {
-		err = os.WriteFile(settledPath(im.StatusPath), body, 0o600)
+		err = writeAtomic(SettledPath(im.StatusPath), body)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[zcp] mate setup: record the settled import: %v\n", err)
 	}
 }
 
+// writeAtomic lands body at path whole or not at all: a temporary file in the
+// same directory, synced, then renamed over path.
+func writeAtomic(path string, body []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create a temporary record: %w", err)
+	}
+	name := tmp.Name()
+	_, err = tmp.Write(body)
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(name, path)
+	}
+	if err != nil {
+		_ = os.Remove(name)
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
 // readSettled reads the settled record; false when there is none to read.
 func readSettled(statusPath string) (settledRecord, bool) {
 	var rec settledRecord
-	body, err := os.ReadFile(settledPath(statusPath))
+	body, err := os.ReadFile(SettledPath(statusPath))
 	if err != nil || json.Unmarshal(body, &rec) != nil || rec.State == "" {
 		return settledRecord{}, false
 	}
