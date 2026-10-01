@@ -53,6 +53,12 @@ type fakeAPI struct {
 	isolation      []string
 	isolationReads int
 	readsAtImport  int
+	// taken names services another import creates first; takenCode is the
+	// code the platform answers this import with for them.
+	taken     map[string]bool
+	takenCode string
+	// takenWhole answers the whole call with this error after creating.
+	takenWhole error
 }
 
 func (f *fakeAPI) GetProjectEnv(context.Context, string) ([]platform.ProjectEnvVar, error) {
@@ -122,6 +128,13 @@ func (f *fakeAPI) ImportServices(_ context.Context, _ string, body string) (*pla
 		if !strings.Contains(body, "hostname: "+host) {
 			continue
 		}
+		if f.taken[host] {
+			// Another import created it first: the platform answers the
+			// name taken, and the service is there.
+			f.services = append(f.services, platform.ServiceStack{ID: "id-" + host, Name: host, Status: "ACTIVE"})
+			result.ServiceStacks = append(result.ServiceStacks, platform.ImportedServiceStack{Name: host, Error: &platform.APIError{Code: f.takenCode, Message: "service stack name is not available"}})
+			continue
+		}
 		if msg, ok := f.refuse[host]; ok {
 			result.ServiceStacks = append(result.ServiceStacks, platform.ImportedServiceStack{Name: host, Error: &platform.APIError{Code: "serviceStackTypeNotFound", Message: msg}})
 			continue
@@ -136,6 +149,9 @@ func (f *fakeAPI) ImportServices(_ context.Context, _ string, body string) (*pla
 	}
 	if failWith != nil {
 		return nil, failWith
+	}
+	if f.takenWhole != nil {
+		return nil, f.takenWhole
 	}
 	return result, nil
 }
@@ -668,5 +684,40 @@ func TestRun_ATimedOutImportIsFollowedAgain(t *testing.T) {
 	importer(api, path).Run(context.Background(), plan())
 	if got := readStatus(t, path).Runtimes; got.State != mate.RuntimesDone || len(api.imports) != 1 {
 		t.Errorf("next launch = %s with %d imports, want done with the one import", got.State, len(api.imports))
+	}
+}
+
+// TestRun_ANameTakenIsAServiceThatExists: a quick restart can send the
+// import while the earlier one's services are being created; the platform
+// answers that the name is taken, and that is the service existing, never a
+// failure.
+func TestRun_ANameTakenIsAServiceThatExists(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*fakeAPI)
+	}{
+		{"per service, name unavailable", func(f *fakeAPI) {
+			f.taken, f.takenCode = map[string]bool{"appstage": true}, "serviceStackNameUnavailable"
+		}},
+		{"per service, already exists", func(f *fakeAPI) {
+			f.taken, f.takenCode = map[string]bool{"appstage": true}, "serviceStackAlreadyExists"
+		}},
+		{"the whole call, name unavailable", func(f *fakeAPI) {
+			f.taken, f.takenCode = map[string]bool{"appdev": true, "appstage": true}, "serviceStackNameUnavailable"
+			pe := platform.NewPlatformError(platform.ErrAPIError, "service stack name is not available", "")
+			pe.APICode = "serviceStackNameUnavailable"
+			f.takenWhole = pe
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "status.json")
+			api := newFake()
+			tt.setup(api)
+			importer(api, path).Run(context.Background(), plan())
+			if got := readStatus(t, path).Runtimes; got.State != mate.RuntimesDone {
+				t.Errorf("runtimes = %s %q [%s], want done", got.State, got.Error, states(got))
+			}
+		})
 	}
 }

@@ -249,7 +249,7 @@ func (im Importer) Run(ctx context.Context, encoded string) {
 			return
 		}
 		for _, ss := range result.ServiceStacks {
-			if ss.Error != nil {
+			if ss.Error != nil && !nameTaken(ss.Error.Code) {
 				importErrs[ss.Name] = oneLine(apiErrorText(ss.Error))
 			}
 			for _, p := range ss.Processes {
@@ -360,6 +360,12 @@ func (im Importer) importMissing(ctx context.Context, entries []map[string]any, 
 		result, err := im.API.ImportServices(ctx, im.ProjectID, string(body))
 		if err == nil {
 			return result, nil
+		}
+		var pe *platform.PlatformError
+		if errors.As(err, &pe) && nameTaken(pe.APICode) {
+			// An earlier launch's import got there first: what it
+			// created is followed like this one's.
+			return &platform.ImportResult{}, nil
 		}
 		if attempt >= len(im.Backoff) || !retryable(err) {
 			return nil, err
@@ -599,6 +605,13 @@ func missingHosts(hostnames []string, live []platform.ServiceStack) []string {
 		}
 	}
 	return missing
+}
+
+// nameTaken is the platform answering that a service of that name is
+// already there — an earlier launch's import of the same plan, not a failure.
+func nameTaken(code string) bool {
+	c := strings.ToLower(code)
+	return strings.Contains(c, "nameunavailable") || strings.Contains(c, "alreadyexist") || strings.Contains(c, "nametaken")
 }
 
 func apiErrorText(e *platform.APIError) string {
