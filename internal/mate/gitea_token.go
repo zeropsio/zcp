@@ -43,10 +43,7 @@ func GiteaToken(stdin io.Reader, lookup func(string) string) string {
 	if err != nil || gitea.Host == "" {
 		return ""
 	}
-	want := strings.ToLower(gitea.Host)
-	if gitea.Port() == "443" {
-		want = strings.ToLower(gitea.Hostname())
-	}
+	want := hostPort(gitea.Host, gitea.Scheme)
 	host := ""
 	scanner := bufio.NewScanner(stdin)
 	for scanner.Scan() {
@@ -55,11 +52,23 @@ func GiteaToken(stdin io.Reader, lookup func(string) string) string {
 			break
 		}
 		if v, ok := strings.CutPrefix(line, "host="); ok {
-			host = strings.ToLower(v)
+			host = v
 		}
 	}
-	if host == "" || host != want {
+	if host == "" || hostPort(host, gitea.Scheme) != want {
 		return ""
 	}
 	return lookup("GITEA_TOKEN")
+}
+
+// hostPort is host lower-cased with the scheme's own port dropped, so
+// "gitea.example:443" and "gitea.example" are one https host — git names the
+// port when the remote URL does.
+func hostPort(host, scheme string) string {
+	host = strings.ToLower(host)
+	defaultPort := ":443"
+	if scheme == "http" {
+		defaultPort = ":80"
+	}
+	return strings.TrimSuffix(host, defaultPort)
 }

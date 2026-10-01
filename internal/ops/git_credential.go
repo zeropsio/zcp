@@ -35,10 +35,12 @@ const gitCredentialHelperShell = `!f() { test "$1" = get && { echo username=oaut
 // with a restart. So the helper asks `zcp mate git-token` for the token as
 // the container's live env store holds it now, handing it git's request on
 // stdin (mate.GiteaToken answers only the Gitea's own host), and falls back
-// to $GITEA_TOKEN only where no zcp answers — a container without one, or one
-// that predates the verb. Only this host's helper reads the bot's token: a
-// remote anywhere else never receives it.
-const giteaCredentialHelperShell = `!f() { test "$1" = get && { t=$GIT_TOKEN; test -n "$t" || t=$(zcp mate git-token 2>/dev/null) || t=$GITEA_TOKEN; echo username=oauth2; echo "password=$t"; }; }; f`
+// to $GITEA_TOKEN where zcp does not answer — a container without one, one
+// that predates the verb, or a request it declines. With no token anywhere
+// it answers nothing at all, never an empty password, so git goes on to its
+// next helper. Only this host's helper reads the bot's token: a remote
+// anywhere else never receives it.
+const giteaCredentialHelperShell = `!f() { test "$1" = get && { t=$GIT_TOKEN; test -n "$t" || t=$(zcp mate git-token 2>/dev/null) || t=$GITEA_TOKEN; test -n "$t" && { echo username=oauth2; echo "password=$t"; }; }; }; f`
 
 // gitCredentialHelperArgs returns the `-c` git arguments that make ONE git
 // invocation authenticate via the session-env helper. The leading empty

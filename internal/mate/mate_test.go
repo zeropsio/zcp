@@ -777,6 +777,8 @@ func TestGiteaToken(t *testing.T) {
 		{"the Gitea's host", env, "protocol=https\nhost=gitea.example.net\n\n", "fresh-token"},
 		{"the Gitea's host, any case", env, "protocol=https\nhost=Gitea.Example.NET\n\n", "fresh-token"},
 		{"the Gitea on its port", ported, "protocol=https\nhost=gitea.example.net:3000\n\n", "fresh-token"},
+		{"the Gitea's host with https's own port", env, "protocol=https\nhost=gitea.example.net:443\n\n", "fresh-token"},
+		{"a GITEA_URL naming https's own port", map[string]string{"GITEA_URL": "https://gitea.example.net:443", "GITEA_TOKEN": "fresh-" + "token"}, "protocol=https\nhost=gitea.example.net\n\n", "fresh-token"},
 		{"the Gitea's host on another port", ported, "protocol=https\nhost=gitea.example.net\n\n", ""},
 		{"another host", env, "protocol=https\nhost=github.com\n\n", ""},
 		{"no host named", env, "protocol=https\n\n", ""},

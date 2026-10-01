@@ -78,11 +78,14 @@ func isMateGitToken(args []string) bool {
 
 // runMateGitToken prints the Mate's Gitea bot token as the live env store at
 // storePath holds it now, when the credential request on stdin names the
-// Gitea's host (mate.GiteaToken); nothing otherwise. Always exit 0: a zcp that
-// answers declines with nothing, and only a missing or older zcp sends the
-// helper to its fallback.
+// Gitea's host (mate.GiteaToken). Declining prints nothing and exits 1, so
+// the helper falls back as it did before — never to an empty password.
 func runMateGitToken(stdin io.Reader, stdout io.Writer, storePath string) int {
-	_, _ = io.WriteString(stdout, mate.GiteaToken(stdin, mate.LiveLookup(storePath)))
+	token := mate.GiteaToken(stdin, mate.LiveLookup(storePath))
+	if token == "" {
+		return 1
+	}
+	_, _ = io.WriteString(stdout, token)
 	return 0
 }
 

@@ -245,6 +245,14 @@ func gitShell(t *testing.T, dir, home string, env map[string]string, stdin, scri
 // password they answered ("" for none).
 func answeredPassword(t *testing.T, repo, home string, env map[string]string, remoteURL string) string {
 	t.Helper()
+	password, _ := answeredCredential(t, repo, home, env, remoteURL)
+	return password
+}
+
+// answeredCredential is answeredPassword and whether a password was answered
+// at all — an empty one is still an answer git sends.
+func answeredCredential(t *testing.T, repo, home string, env map[string]string, remoteURL string) (string, bool) {
+	t.Helper()
 	u, err := url.Parse(remoteURL)
 	if err != nil {
 		t.Fatalf("parse %q: %v", remoteURL, err)
@@ -254,10 +262,10 @@ func answeredPassword(t *testing.T, repo, home string, env map[string]string, re
 		"git credential fill")
 	for line := range strings.SplitSeq(out, "\n") {
 		if v, ok := strings.CutPrefix(line, "password="); ok {
-			return v
+			return v, true
 		}
 	}
-	return ""
+	return "", false
 }
 
 func requireGit(t *testing.T) {
@@ -355,7 +363,8 @@ func TestPersistedCredentialHelper_ReadsTheRotatedToken(t *testing.T) {
 		{"the Mate's shell gets the token as it is now", answers, map[string]string{"GITEA_TOKEN": helperBotToken}, rotated},
 		{"no zcp to ask: the shell's own value", "exit 127", map[string]string{"GITEA_TOKEN": helperBotToken}, helperBotToken},
 		{"a zcp that predates the verb: the shell's own value", `echo "usage: zcp mate <status|update>" >&2; exit 1`, map[string]string{"GITEA_TOKEN": helperBotToken}, helperBotToken},
-		{"zcp declines: nothing", "cat >/dev/null; exit 0", map[string]string{"GITEA_TOKEN": helperBotToken}, ""},
+		{"zcp declines: the shell's own value", "cat >/dev/null; exit 1", map[string]string{"GITEA_TOKEN": helperBotToken}, helperBotToken},
+		{"no token anywhere: no password at all", "cat >/dev/null; exit 1", nil, ""},
 		{"the dev service's session keeps its service secret", answers, map[string]string{"GIT_TOKEN": helperGitToken, "GITEA_TOKEN": helperBotToken}, helperGitToken},
 	}
 	for _, tt := range tests {
@@ -367,8 +376,9 @@ func TestPersistedCredentialHelper_ReadsTheRotatedToken(t *testing.T) {
 			}
 			env := map[string]string{"PATH": fakeZcpPath(t, tt.zcp)}
 			maps.Copy(env, tt.env)
-			if got := answeredPassword(t, repo, home, env, helperGiteaRepo); got != tt.want {
-				t.Errorf("the helper answered %q, want %q", got, tt.want)
+			got, answered := answeredCredential(t, repo, home, env, helperGiteaRepo)
+			if got != tt.want || answered != (tt.want != "") {
+				t.Errorf("the helper answered %q (answered=%v), want %q", got, answered, tt.want)
 			}
 		})
 	}

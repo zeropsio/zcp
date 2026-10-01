@@ -470,19 +470,23 @@ func TestRunMateGitToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("GITEA_TOKEN", "at-start")
+	// Declining is a non-zero exit with nothing on stdout: the helper then
+	// falls back as it did before, and never sends an empty password.
 	tests := []struct {
-		name  string
-		stdin string
-		want  string
+		name     string
+		stdin    string
+		want     string
+		wantCode int
 	}{
-		{"the Gitea", "protocol=https\nhost=gitea.example.invalid\n\n", "rotated"},
-		{"another host", "protocol=https\nhost=github.com\n\n", ""},
+		{"the Gitea", "protocol=https\nhost=gitea.example.invalid\n\n", "rotated", 0},
+		{"the Gitea with https's own port", "protocol=https\nhost=gitea.example.invalid:443\n\n", "rotated", 0},
+		{"another host", "protocol=https\nhost=github.com\n\n", "", 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var out strings.Builder
-			if code := runMateGitToken(strings.NewReader(tt.stdin), &out, store); code != 0 {
-				t.Fatalf("exit %d", code)
+			if code := runMateGitToken(strings.NewReader(tt.stdin), &out, store); code != tt.wantCode {
+				t.Fatalf("exit %d, want %d", code, tt.wantCode)
 			}
 			if out.String() != tt.want {
 				t.Errorf("stdout = %q, want %q", out.String(), tt.want)
