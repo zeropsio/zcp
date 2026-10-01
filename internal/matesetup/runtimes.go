@@ -462,9 +462,14 @@ func touches(p *platform.Process, serviceID string) bool {
 }
 
 // liveState names a running process's phase: a build process by its
-// appVersion's phase, anything else as the service being created.
+// appVersion's phase, a deploy as deploying, anything else (stack.create, the
+// import's own) as the service being created.
 func liveState(p *platform.Process) string {
-	if p.ActionName != "stack.build" {
+	switch p.ActionName {
+	case "stack.deploy":
+		return mate.ServiceDeploying
+	case "stack.build":
+	default:
 		return mate.ServiceCreating
 	}
 	if p.AppVersion != nil && p.AppVersion.Status == platform.BuildStatusDeploying {
