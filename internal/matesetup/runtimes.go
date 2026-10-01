@@ -61,6 +61,12 @@ type Importer struct {
 	// import waits is the one it uses. API is used when Fresh is nil or
 	// answers nil.
 	Fresh func() API
+	// SelfServiceID is the zcp service this runs in (its serviceId). Nothing
+	// is imported until its own deploy has finished; "" skips that wait.
+	SelfServiceID string
+	// OwnDeployPoll is the time between two looks at zcp's own deploy
+	// (default DefaultOwnDeployPoll).
+	OwnDeployPoll time.Duration
 	// IsolationPoll is the wait before the next look at a project not yet
 	// closed off, by how long it has been waited for (default IsolationPoll).
 	IsolationPoll func(waited time.Duration) time.Duration
@@ -78,8 +84,9 @@ func IsolationPoll(waited time.Duration) time.Duration {
 
 // Defaults for a production Importer.
 const (
-	DefaultPoll    = 3 * time.Second
-	DefaultTimeout = 20 * time.Minute
+	DefaultOwnDeployPoll = 5 * time.Second
+	DefaultPoll          = 3 * time.Second
+	DefaultTimeout       = 20 * time.Minute
 )
 
 // DefaultBackoff is three retries of a failed import call over a minute.
@@ -287,7 +294,7 @@ func (im Importer) Run(ctx context.Context, encoded string) {
 	}
 	missing := missingHosts(hostnames, live)
 	if len(missing) > 0 {
-		if !im.awaitClosedOff(ctx) {
+		if !im.awaitOwnDeploy(ctx) || !im.awaitClosedOff(ctx) {
 			return
 		}
 		if live, err = im.listWithin(ctx); err != nil {
@@ -357,6 +364,9 @@ func (im Importer) withDefaults() Importer {
 	if im.IsolationPoll == nil {
 		im.IsolationPoll = IsolationPoll
 	}
+	if im.OwnDeployPoll <= 0 {
+		im.OwnDeployPoll = DefaultOwnDeployPoll
+	}
 	return im
 }
 
@@ -402,6 +412,61 @@ func (im Importer) listWithin(ctx context.Context) ([]platform.ServiceStack, err
 	ctx, cancel := context.WithTimeout(ctx, im.Timeout)
 	defer cancel()
 	return im.listUntil(ctx)
+}
+
+// awaitOwnDeploy waits until zcp's own deploy has finished — its service
+// reads ACTIVE and no live process remains on it (ops.ProjectActivity) — with
+// the runtimes section pending and saying why. A services import sent into
+// the project while that deploy still ran left zcp's app version without its
+// user data, so the next restart ran no init and refused to start mate.
+// False when the context ended first; a look that fails is one more look.
+func (im Importer) awaitOwnDeploy(ctx context.Context) bool {
+	if im.SelfServiceID == "" {
+		return true
+	}
+	said := false
+	for {
+		if im.ownDeployDone(ctx) {
+			return true
+		}
+		if !said {
+			im.write(func(r *mate.RuntimesStatus) {
+				r.State, r.Error = mate.RuntimesPending, mate.RuntimesWaitingOwnDeploy
+			})
+			fmt.Fprintf(os.Stderr, "[zcp] mate setup: %s\n", mate.RuntimesWaitingOwnDeploy)
+			said = true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(im.OwnDeployPoll):
+		}
+	}
+}
+
+// ownDeployDone reads zcp's own service: ACTIVE, with nothing live on it.
+func (im Importer) ownDeployDone(ctx context.Context) bool {
+	api := im.api()
+	services, err := api.ListServicesDirect(ctx, im.ProjectID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[zcp] mate setup: read the project's services: %v\n", err)
+		return false
+	}
+	active := false
+	for _, s := range services {
+		if s.ID == im.SelfServiceID {
+			active = s.IsLive()
+		}
+	}
+	if !active {
+		return false
+	}
+	activity, err := ops.ProjectActivity(ctx, api, im.ProjectID, map[string]string{im.SelfServiceID: "zcp"})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[zcp] mate setup: read the project's processes: %v\n", err)
+		return false
+	}
+	return len(activity) == 0
 }
 
 // awaitClosedOff waits until the project reads closed off, with the runtimes
@@ -789,7 +854,7 @@ func Boot(ctx context.Context, statusPath string, env func() func(string) string
 	if strings.TrimSpace(encoded) == "" {
 		return
 	}
-	im := Importer{StatusPath: statusPath, ProjectID: lookup("projectId")}.withDefaults()
+	im := Importer{StatusPath: statusPath, ProjectID: lookup("projectId"), SelfServiceID: lookup("serviceId")}.withDefaults()
 	if hostnames, _, err := DecodePlan(encoded); err == nil && len(hostnames) == 0 {
 		// Nothing to import needs no key and no project to act on.
 		im.Run(ctx, encoded)

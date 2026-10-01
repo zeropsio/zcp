@@ -1252,6 +1252,12 @@ func TestStandup_WaitsForTheContainersImport(t *testing.T) {
 			wantWaited: true,
 		},
 		{
+			name:       "an import waiting for zcp's own deploy is waited for",
+			runtimes:   mate.RuntimesStatus{State: mate.RuntimesPending, Error: mate.RuntimesWaitingOwnDeploy},
+			finishWith: &mate.RuntimesStatus{State: mate.RuntimesDone},
+			wantWaited: true,
+		},
+		{
 			name:     "a finished import is not waited for",
 			runtimes: mate.RuntimesStatus{State: mate.RuntimesDone},
 		},
