@@ -291,11 +291,12 @@ func TestRun_Failures(t *testing.T) {
 			name: "the key is refused",
 			plan: plan(),
 			setup: func(f *fakeAPI) {
-				f.importErr = []error{platform.NewPlatformError(platform.ErrPermissionDenied, "forbidden", "")}
+				forbidden := platform.NewPlatformError(platform.ErrPermissionDenied, "forbidden", "")
+				f.importErr = []error{forbidden, forbidden, forbidden}
 			},
 			// Nothing was imported, so every listed service is failed.
 			wantDetail: "appdev=failed,appstage=failed",
-			wantError:  "the import was refused: forbidden",
+			wantError:  "forbidden",
 		},
 	}
 	for _, tt := range tests {
@@ -329,7 +330,7 @@ func TestRun_ImportRetries(t *testing.T) {
 		wantState   string
 	}{
 		{"a call that failed on the way is retried", []error{platform.NewPlatformError(platform.ErrNetworkError, "connection reset", "")}, 2, mate.RuntimesDone},
-		{"a refused import is not", []error{platform.NewPlatformError(platform.ErrAPIError, "invalid yaml", "")}, 1, mate.RuntimesFailed},
+		{"a refused import is not", []error{refusal("invalid yaml")}, 1, mate.RuntimesFailed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -622,7 +623,7 @@ func TestRun_ASettledImportIsNeverRepeated(t *testing.T) {
 		{
 			name: "the whole import refused",
 			first: func(f *fakeAPI) {
-				f.importErr = []error{platform.NewPlatformError(platform.ErrAPIError, "invalid yaml", "")}
+				f.importErr = []error{refusal("invalid yaml")}
 			},
 			wantFirst: mate.RuntimesFailed, wantRelaunch: mate.RuntimesFailed, wantImports: 1, wantFinal: mate.RuntimesFailed,
 		},
@@ -717,6 +718,53 @@ func TestRun_ANameTakenIsAServiceThatExists(t *testing.T) {
 			importer(api, path).Run(context.Background(), plan())
 			if got := readStatus(t, path).Runtimes; got.State != mate.RuntimesDone {
 				t.Errorf("runtimes = %s %q [%s], want done", got.State, got.Error, states(got))
+			}
+		})
+	}
+}
+
+// refusal is the platform refusing an import for what it carried: a 4xx
+// with the platform's own error code.
+func refusal(msg string) error {
+	pe := platform.NewPlatformError(platform.ErrAPIError, msg, "")
+	pe.APICode = "projectImportInvalidYaml"
+	return pe
+}
+
+// TestRun_OnlyARealRefusalSettles: an import settles for good only on the
+// platform's own refusal of what it carried. A key the platform does not
+// take (401, 403 — rotated, or not granted yet) or an answer whose outcome is
+// unknown (EOF, a body that does not decode, a cancelled request) is sent
+// again, and runs again on the next launch.
+func TestRun_OnlyARealRefusalSettles(t *testing.T) {
+	tests := []struct {
+		name         string
+		err          error
+		wantAttempts int
+		wantNext     int // imports the next launch sends
+	}{
+		{"a 4xx refusal", refusal("invalid yaml"), 1, 0},
+		{"a 403", platform.NewPlatformError(platform.ErrPermissionDenied, "forbidden", ""), 3, 1},
+		{"a 401", platform.NewPlatformError(platform.ErrAuthTokenExpired, "unauthorized", ""), 3, 1},
+		{"an EOF", errors.New("unexpected EOF"), 3, 1},
+		{"a body that does not decode", platform.NewPlatformError(platform.ErrAPIError, "invalid character '<'", ""), 3, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "status.json")
+			api := newFake()
+			api.importErr = []error{tt.err, tt.err, tt.err}
+			importer(api, path).Run(context.Background(), plan())
+			if len(api.imports) != tt.wantAttempts {
+				t.Errorf("attempts = %d, want %d", len(api.imports), tt.wantAttempts)
+			}
+			if err := matesetup.MarkLaunch(path, true, t0); err != nil {
+				t.Fatal(err)
+			}
+			before := len(api.imports)
+			importer(api, path).Run(context.Background(), plan())
+			if got := len(api.imports) - before; got != tt.wantNext {
+				t.Errorf("the next launch sent %d imports, want %d", got, tt.wantNext)
 			}
 		})
 	}

@@ -245,7 +245,11 @@ func (im Importer) Run(ctx context.Context, encoded string) {
 	if len(missing) > 0 {
 		result, err := im.importMissing(ctx, entries, hostnames, missing)
 		if err != nil {
-			im.finish(hostnames, fmt.Sprintf("the import was refused: %v", oneLine(err.Error())), !retryable(err))
+			why := "the import failed"
+			if refused(err) {
+				why = "the import was refused"
+			}
+			im.finish(hostnames, fmt.Sprintf("%s: %v", why, oneLine(err.Error())), refused(err))
 			return
 		}
 		for _, ss := range result.ServiceStacks {
@@ -373,16 +377,21 @@ func (im Importer) importMissing(ctx context.Context, entries []map[string]any, 
 	}
 }
 
-// retryable is an import call worth sending again: the network, a timeout,
-// the platform's own 5xx (platform.IsTransient), or an error that is not the
-// platform's answer at all. An import the platform refused for what it
-// carried, or for the key, gets the same answer every time.
-func retryable(err error) bool {
+// retryable is an import call worth sending again: anything but the
+// platform's own refusal of what it carried.
+func retryable(err error) bool { return !refused(err) }
+
+// refused is the platform refusing the import for what it carried: a 4xx it
+// answered with its own error code. Nothing else settles the import for good:
+// a 401 or 403 is a key that may be rotated or not granted yet, and an EOF, a
+// body that does not decode, a cancelled request or any error that is not
+// the platform's answer leaves the outcome unknown — followed by looking.
+func refused(err error) bool {
 	var pe *platform.PlatformError
-	if errors.As(err, &pe) {
-		return platform.IsTransient(err)
+	if !errors.As(err, &pe) || platform.IsTransient(err) {
+		return false
 	}
-	return true
+	return pe.Code == platform.ErrAPIError && pe.APICode != ""
 }
 
 // follow looks at the project every Poll until the listed services settle
