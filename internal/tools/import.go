@@ -91,6 +91,9 @@ func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, e
 		if blocked := requireWorkflowContext(engine, stateDir, recipeProbe); blocked != nil {
 			return blocked, nil, nil
 		}
+		if blocked := refuseOpenMate(ctx, client, projectID, rt); blocked != nil {
+			return blocked, nil, nil
+		}
 		if input.Override.Bool() {
 			if blocked, gateErr := gateOverrideOnFailedHistory(ctx, client, projectID, input); gateErr != nil {
 				return convertError(gateErr, WithRecoveryStatus()), nil, nil
@@ -112,6 +115,33 @@ func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, e
 		}), nil, nil
 	})
 }
+
+// refuseOpenMate refuses an import into a Mate's project that is not closed
+// off yet (envIsolation other than "service"): its runtimes would read the
+// zcp service's variables, the Mate's own key among them, and closing it off
+// after they exist restarts them. The person's press closes it off; a press
+// whose tab closed first leaves it to Finish setup. Only a Mate, and only a
+// project that says it is open: one whose variables cannot be read, or do not
+// carry the mode, imports as before.
+func refuseOpenMate(ctx context.Context, client platform.Client, projectID string, rt runtime.Info) *mcp.CallToolResult {
+	if !rt.MateEnabled {
+		return nil
+	}
+	envs, err := client.GetProjectEnv(ctx, projectID)
+	if err != nil {
+		return nil
+	}
+	if mode := ops.ProjectIsolation(envs); mode == "" || mode == ops.IsolationService {
+		return nil
+	}
+	return convertError(platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+		openMateRefusal,
+		"Nothing was imported. Tell the person to press Finish setup on this Mate in the app, then import again."))
+}
+
+// openMateRefusal is what an import into an open Mate is told, and what the
+// stand-up tells the model in place of an import.
+const openMateRefusal = "The project is not closed off yet; Finish setup in the app closes it. Until then nothing is imported into it: its runtimes would read this Mate's key, and closing it off once they exist restarts them."
 
 // gateOverrideOnFailedHistory enforces docs/spec-workflows.md §8 "Recovery
 // classification" R1/R2: when override=true would REPLACE a service whose

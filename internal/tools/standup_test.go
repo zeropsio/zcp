@@ -1402,3 +1402,35 @@ func TestStandupStatus_BeatsWhileRunning(t *testing.T) {
 		t.Errorf("beat %s / stale %s, want 15s / 2m", mate.StandupBeat, mate.StandupStale)
 	}
 }
+
+// TestStandup_NeverAsksForAnImportIntoAnOpenProject: a half missing from a
+// Mate whose project is not closed off yet is not handed to the model as an
+// import — the import would refuse — but as the Finish setup that closes it.
+func TestStandup_NeverAsksForAnImportIntoAnOpenProject(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		isolation string
+		want      string
+		wantNot   string
+	}{
+		{"open", "none", "Finish setup", "zerops_import"},
+		{"closed off", "service", "zerops_import", "Finish setup"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newStandupFixture(t)
+			f.mock.WithProjectEnv([]platform.ProjectEnvVar{{Key: "envIsolation", Content: tt.isolation, Type: platform.ProjectEnvSystem}})
+			f.mock.WithServices(withoutService(f.services, "nextstorestage"))
+			result, body := f.run(t)
+			if result.IsError {
+				t.Fatalf("stand-up: %s", getTextContent(t, result))
+			}
+			got := body.service(t, "nextstorestage")
+			if !strings.Contains(got.Next, tt.want) || strings.Contains(got.Next, tt.wantNot) {
+				t.Errorf("nextstorestage.next = %q, want it to say %q and not %q", got.Next, tt.want, tt.wantNot)
+			}
+		})
+	}
+}

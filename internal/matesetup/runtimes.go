@@ -293,7 +293,7 @@ func (im Importer) awaitClosedOff(ctx context.Context) bool {
 	start := time.Now()
 	said := false
 	for {
-		if envs, err := im.API.GetProjectEnv(ctx, im.ProjectID); err == nil && closedOff(envs) {
+		if envs, err := im.API.GetProjectEnv(ctx, im.ProjectID); err == nil && ops.ProjectClosedOff(envs) {
 			return true
 		}
 		if !said {
@@ -309,19 +309,6 @@ func (im Importer) awaitClosedOff(ctx context.Context) bool {
 		case <-time.After(im.IsolationPoll(time.Since(start))):
 		}
 	}
-}
-
-// closedOff reports a project whose envIsolation is "service" — the
-// platform may follow it with per-service exceptions ("service
-// service@zcp"), which keep the project closed off.
-func closedOff(envs []platform.ProjectEnvVar) bool {
-	for _, e := range envs {
-		if e.Key == "envIsolation" {
-			fields := strings.Fields(e.Content)
-			return len(fields) > 0 && fields[0] == "service"
-		}
-	}
-	return false
 }
 
 // listUntil reads the project's services, retrying a failed read each poll

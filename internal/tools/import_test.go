@@ -245,3 +245,42 @@ func TestImportTool_WithWorkSession_Succeeds(t *testing.T) {
 		t.Errorf("unexpected IsError with develop marker: %s", getTextContent(t, result))
 	}
 }
+
+// TestImportTool_RefusesAnOpenMate: in a Mate whose project is not closed off
+// yet, runtimes would read the zcp service's variables (the Mate's key among
+// them), and closing it off after they exist restarts them — so the import
+// refuses, naming what closes it. A Mate closed off, a project that does not
+// say, and a container that is no Mate import as before.
+func TestImportTool_RefusesAnOpenMate(t *testing.T) {
+	t.Parallel()
+	iso := func(v string) []platform.ProjectEnvVar {
+		return []platform.ProjectEnvVar{{Key: "envIsolation", Content: v, Type: platform.ProjectEnvSystem}}
+	}
+	tests := []struct {
+		name       string
+		mate       bool
+		envs       []platform.ProjectEnvVar
+		wantRefuse bool
+	}{
+		{"an open Mate", true, iso("none"), true},
+		{"a Mate closed off", true, iso("service"), false},
+		{"a Mate whose project does not say", true, nil, false},
+		{"an open project outside a Mate", false, iso("none"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := platform.NewMock().
+				WithProjectEnv(tt.envs).
+				WithImportResult(&platform.ImportResult{ProjectID: "proj-1", ServiceStacks: []platform.ImportedServiceStack{{ID: "svc-1", Name: "api"}}})
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{MateEnabled: tt.mate})
+			result := callTool(t, srv, "zerops_import", map[string]any{"content": "services:\n  - hostname: api\n    type: nodejs@20\n"})
+			text := getTextContent(t, result)
+			refused := result.IsError && strings.Contains(text, "not closed off") && strings.Contains(text, "Finish setup")
+			if refused != tt.wantRefuse {
+				t.Errorf("refused = %v, want %v: %s", refused, tt.wantRefuse, text)
+			}
+		})
+	}
+}

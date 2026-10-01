@@ -350,10 +350,11 @@ func (d standupDeps) preparePairs(ctx context.Context, wiring ops.GiteaWiring, s
 		}
 	}
 
+	open := d.projectOpen(ctx, src.tier, live)
 	var adoptedNow []workflow.BootstrapTarget
 	for _, sp := range pairs {
 		sp.dev, sp.stage = live[sp.pair.Dev.Hostname], live[sp.pair.Stage.Hostname]
-		if !d.presentAndRunning(sp, src, bootFailed) {
+		if !d.presentAndRunning(sp, src, bootFailed, open) {
 			continue
 		}
 		if target, now := d.adopt(sp, managedDependencies(src.tier, live)); now {
@@ -488,7 +489,28 @@ func (d standupDeps) settle(ctx context.Context, tier workflow.MateTier, live ma
 // without startWithoutCode is not. A missing half is the browser's import
 // refused or not finished; the model imports it from the tier with zcp's own
 // import, shaped the way the browser imports it.
-func (d standupDeps) presentAndRunning(sp *standupPair, src standupSource, bootFailed map[string]string) bool {
+// projectOpen reports, when a half is missing, a project that says it is not
+// closed off yet: nothing may be imported into it (refuseOpenMate), so the
+// stand-up never asks the model to.
+func (d standupDeps) projectOpen(ctx context.Context, tier workflow.MateTier, live map[string]*platform.ServiceStack) bool {
+	missing := false
+	for _, p := range tier.Pairs {
+		if live[p.Dev.Hostname] == nil || live[p.Stage.Hostname] == nil {
+			missing = true
+		}
+	}
+	if !missing {
+		return false
+	}
+	envs, err := d.batch.client.GetProjectEnv(ctx, d.batch.projectID)
+	if err != nil {
+		return false
+	}
+	mode := ops.ProjectIsolation(envs)
+	return mode != "" && mode != ops.IsolationService
+}
+
+func (d standupDeps) presentAndRunning(sp *standupPair, src standupSource, bootFailed map[string]string, open bool) bool {
 	p := sp.pair
 	for _, half := range []struct {
 		rt  workflow.MateTierRuntime
@@ -510,6 +532,11 @@ func (d standupDeps) presentAndRunning(sp *standupPair, src standupSource, bootF
 			why = "the container's import of the runtimes failed on it: " + reason
 		} else if reason := bootFailed[""]; reason != "" {
 			why = "the container's import of the runtimes failed: " + reason
+		}
+		if open {
+			sp.fail(fmt.Sprintf("%s is not in this project after %s: %s", half.rt.Hostname, d.runtimeWait, why),
+				openMateRefusal+" Then call zerops_standup again.")
+			return false
 		}
 		sp.fail(fmt.Sprintf("%s is not in this project after %s: %s", half.rt.Hostname, d.runtimeWait, why),
 			fmt.Sprintf("Import it from the tier with zerops_import content=%q (%s; add its envSecrets and scaling from %s's %s entry), then call zerops_standup again.",
