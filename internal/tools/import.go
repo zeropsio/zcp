@@ -3,9 +3,12 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/mate"
+	"github.com/zeropsio/zcp/internal/matesetup"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -79,6 +82,12 @@ func importInputSchema() *jsonschema.Schema {
 // errors come back with structured apiMeta via the error surface
 // established by the validation-plumbing plan.
 func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info) {
+	registerImport(srv, client, projectID, engine, stateDir, recipeProbe, rt, mate.LiveEnvStorePath)
+}
+
+// registerImport is RegisterImport reading the container's live env store
+// at liveEnvPath (refuseOpenMate).
+func registerImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info, liveEnvPath string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_import",
 		Description: "REQUIRES active workflow context (zerops_workflow bootstrap/develop). Import services from YAML into the project. An optional project.envVariables block applies project-level vars before services are created; other project.* fields are rejected. The Zerops API validates fields, modes, types, and hostnames server-side and returns structured apiMeta on the error response when anything is wrong. Blocks until all processes complete; returns final statuses (FINISHED/FAILED).",
@@ -91,7 +100,7 @@ func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, e
 		if blocked := requireWorkflowContext(engine, stateDir, recipeProbe); blocked != nil {
 			return blocked, nil, nil
 		}
-		if blocked := refuseOpenMate(ctx, client, projectID, rt); blocked != nil {
+		if blocked := refuseOpenMate(ctx, client, projectID, rt, liveEnvPath); blocked != nil {
 			return blocked, nil, nil
 		}
 		if input.Override.Bool() {
@@ -120,11 +129,12 @@ func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, e
 // off yet (envIsolation other than "service"): its runtimes would read the
 // zcp service's variables, the Mate's own key among them, and closing it off
 // after they exist restarts them. The person's press closes it off; a press
-// whose tab closed first leaves it to Finish setup. Only a Mate, and only a
-// project that says it is open: one whose variables cannot be read, or do not
-// carry the mode, imports as before.
-func refuseOpenMate(ctx context.Context, client platform.Client, projectID string, rt runtime.Info) *mcp.CallToolResult {
-	if !rt.MateEnabled {
+// whose tab closed first leaves it to Finish setup. Only a Mate the new press
+// made — its zcp carries MATE_SETUP_RUNTIMES in the live env store (an older
+// Mate behaves as before) — and only a project that says it is open: one
+// whose variables cannot be read, or do not carry the mode, imports as before.
+func refuseOpenMate(ctx context.Context, client platform.Client, projectID string, rt runtime.Info, liveEnvPath string) *mcp.CallToolResult {
+	if !newFlowMate(rt, liveEnvPath) {
 		return nil
 	}
 	mode, err := ops.ReadProjectIsolation(ctx, client, projectID)
@@ -134,6 +144,13 @@ func refuseOpenMate(ctx context.Context, client platform.Client, projectID strin
 	return convertError(platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 		openMateRefusal,
 		"Nothing was imported. Tell the person to press Finish setup on this Mate in the app, then import again."))
+}
+
+// newFlowMate is a Mate the new press made: its zcp carries the runtimes
+// plan (matesetup.EnvRuntimes) in the live env store. Every setup interlock
+// applies to these only.
+func newFlowMate(rt runtime.Info, liveEnvPath string) bool {
+	return rt.MateEnabled && strings.TrimSpace(mate.LiveLookup(liveEnvPath)(matesetup.EnvRuntimes)) != ""
 }
 
 // openMateRefusal is what an import into an open Mate is told, and what the

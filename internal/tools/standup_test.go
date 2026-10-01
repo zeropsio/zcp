@@ -1411,16 +1411,21 @@ func TestStandup_NeverAsksForAnImportIntoAnOpenProject(t *testing.T) {
 	tests := []struct {
 		name      string
 		isolation string
+		plan      bool
 		want      string
 		wantNot   string
 	}{
-		{"open", "none", "Finish setup", "zerops_import"},
-		{"closed off", "service", "zerops_import", "Finish setup"},
+		{"open", "none", true, "Finish setup", "zerops_import"},
+		{"closed off", "service", true, "zerops_import", "Finish setup"},
+		{"open, a Mate made before the new press", "none", false, "zerops_import", "Finish setup"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			f := newStandupFixture(t)
+			if tt.plan {
+				f.env["MATE_SETUP_RUNTIMES"] = "c2VydmljZXM6IFtd"
+			}
 			f.mock.WithProjectEnv([]platform.ProjectEnvVar{{Key: "envIsolation", Content: tt.isolation, Type: platform.ProjectEnvSystem}})
 			f.mock.WithServices(withoutService(f.services, "nextstorestage"))
 			result, body := f.run(t)

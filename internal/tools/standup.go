@@ -499,7 +499,7 @@ func (d standupDeps) projectOpen(ctx context.Context, tier workflow.MateTier, li
 			missing = true
 		}
 	}
-	if !missing {
+	if !missing || !newFlowMate(d.batch.rtInfo, d.liveEnvPath) {
 		return false
 	}
 	mode, err := ops.ReadProjectIsolation(ctx, d.batch.client, d.batch.projectID)
