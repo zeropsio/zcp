@@ -109,7 +109,7 @@ func MarkLaunch(path string, planSet bool, now time.Time) error {
 		case settled:
 			// A crash between the record and the section leaves the section
 			// importing or pending: put it back as the import ended.
-			if done := s.Runtimes.State == mate.RuntimesDone || s.Runtimes.State == mate.RuntimesFailed; !done && rec.State != "" {
+			if ended := s.Runtimes.State == rec.State; !ended && rec.State != "" {
 				s.Runtimes.State, s.Runtimes.Error, s.Runtimes.EndedAt = rec.State, rec.Error, rec.EndedAt
 				if len(rec.Services) > 0 {
 					s.Runtimes.Services = rec.Services
@@ -207,7 +207,8 @@ func readSettled(statusPath string) (settledRecord, bool) {
 }
 
 // DecodePlan reads MATE_SETUP_RUNTIMES: the hostnames it lists, in order, and
-// its services as import entries.
+// its services as import entries. A plan that lists none is valid: the press
+// always sets the plan, empty when there is nothing to import.
 func DecodePlan(encoded string) ([]string, []map[string]any, error) {
 	raw, err := decodeBase64(strings.TrimSpace(encoded))
 	if err != nil {
@@ -226,9 +227,6 @@ func DecodePlan(encoded string) ([]string, []map[string]any, error) {
 			return nil, nil, fmt.Errorf("%s: service %d has no hostname", EnvRuntimes, i+1)
 		}
 		hostnames = append(hostnames, host)
-	}
-	if len(hostnames) == 0 {
-		return nil, nil, fmt.Errorf("%s lists no services", EnvRuntimes)
 	}
 	return hostnames, doc.Services, nil
 }
@@ -270,6 +268,10 @@ func (im Importer) Run(ctx context.Context, encoded string) {
 	hostnames, entries, err := DecodePlan(encoded)
 	if err != nil {
 		im.finish(nil, err.Error(), true)
+		return
+	}
+	if len(hostnames) == 0 {
+		im.settleNone()
 		return
 	}
 	prev, _ := mate.ReadStatus(im.StatusPath)
@@ -583,6 +585,17 @@ func (im Importer) finishWith(hostnames []string, live []platform.ServiceStack, 
 	fmt.Fprintf(os.Stderr, "[zcp] mate setup: runtimes %s\n", strings.Join(stateLine(services), ", "))
 }
 
+// settleNone ends a plan that lists nothing to import: none, for good, with
+// no look at the project and no wait for it to be closed off.
+func (im Importer) settleNone() {
+	at := stamp(im.Now())
+	im.settle(settledRecord{State: mate.RuntimesNone, EndedAt: at})
+	im.write(func(r *mate.RuntimesStatus) {
+		*r = mate.RuntimesStatus{State: mate.RuntimesNone, StartedAt: at, EndedAt: at}
+	})
+	fmt.Fprintf(os.Stderr, "[zcp] mate setup: the runtimes plan lists nothing to import\n")
+}
+
 // finish ends the run failed with reason, before anything could be followed.
 func (im Importer) finish(hostnames []string, reason string, settles bool) {
 	now := im.Now()
@@ -773,6 +786,11 @@ func Boot(ctx context.Context, statusPath string, env func() func(string) string
 		return
 	}
 	im := Importer{StatusPath: statusPath, ProjectID: lookup("projectId")}.withDefaults()
+	if hostnames, _, err := DecodePlan(encoded); err == nil && len(hostnames) == 0 {
+		// Nothing to import needs no key and no project to act on.
+		im.Run(ctx, encoded)
+		return
+	}
 	switch {
 	case lookup("ZCP_API_KEY") == "":
 		im.finish(nil, "ZCP_API_KEY is not on this service, so the runtimes cannot be imported with the Mate's key", false)

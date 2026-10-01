@@ -911,3 +911,51 @@ func TestSettledRecord_ATruncatedRecordIsNotSettled(t *testing.T) {
 		}
 	}
 }
+
+// TestRun_AnEmptyPlanSettlesAsNone: the press always sets the plan, empty
+// when the tier has no runtimes it can import ("Finish setup" on a Mate whose
+// runtimes cannot be recovered). An empty plan is nothing to import, not a
+// failure: it settles as none at once — no look at the project, no wait for
+// the closed-off tag — and stays so on every later launch.
+func TestRun_AnEmptyPlanSettlesAsNone(t *testing.T) {
+	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+	tests := []struct {
+		name string
+		plan string
+	}{
+		{"an empty list", b64("services: []\n")},
+		{"no list", b64("services:\n")},
+		{"an empty document", b64("{}\n")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "status.json")
+			if err := matesetup.MarkLaunch(path, true, t0); err != nil {
+				t.Fatal(err)
+			}
+			// No API: an empty plan never reaches the platform.
+			matesetup.Importer{StatusPath: path, ProjectID: "proj", Now: func() time.Time { return t0 }}.Run(context.Background(), tt.plan)
+			got := readStatus(t, path).Runtimes
+			if got.State != mate.RuntimesNone || got.Error != "" {
+				t.Errorf("runtimes = %s %q, want none", got.State, got.Error)
+			}
+			if err := matesetup.MarkLaunch(path, true, t0); err != nil {
+				t.Fatal(err)
+			}
+			if got := readStatus(t, path).Runtimes.State; got != mate.RuntimesNone || !matesetup.Settled(path) {
+				t.Errorf("the next launch = %s (settled=%v), want none for good", got, matesetup.Settled(path))
+			}
+		})
+	}
+}
+
+// TestBoot_AnEmptyPlanNeedsNoKey: an empty plan settles as none even where
+// the key or the project id is missing — there is nothing to act on.
+func TestBoot_AnEmptyPlanNeedsNoKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "status.json")
+	env := map[string]string{matesetup.EnvRuntimes: base64.StdEncoding.EncodeToString([]byte("services: []\n"))}
+	matesetup.Boot(context.Background(), path, func() func(string) string { return func(k string) string { return env[k] } })
+	if got := readStatus(t, path).Runtimes; got.State != mate.RuntimesNone || got.Error != "" {
+		t.Errorf("runtimes = %s %q, want none", got.State, got.Error)
+	}
+}
