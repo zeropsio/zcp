@@ -2,11 +2,14 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
+	"net/url"
 	"strings"
 
 	"github.com/zeropsio/zerops-go/dto/input/body"
 	"github.com/zeropsio/zerops-go/dto/input/path"
 	"github.com/zeropsio/zerops-go/dto/input/query"
+	"github.com/zeropsio/zerops-go/dto/output"
 	"github.com/zeropsio/zerops-go/types"
 	"github.com/zeropsio/zerops-go/types/uuid"
 )
@@ -105,17 +108,29 @@ func (z *ZeropsClient) DeleteService(ctx context.Context, serviceID string) (*Pr
 // Process
 // ---------------------------------------------------------------------------
 
+// GetProcess reads one process by id — the read every process poll ends on.
+// Hand-rolled on the SDK's authorized transport for the same reason as
+// GetProjectProcessesDirect: the typed decode drops the DTO's `error`
+// subfield, which is where a failed import's reason lives when PublicMeta
+// carries none, so the model reading zerops_import's results was told FAILED
+// and nothing else.
 func (z *ZeropsClient) GetProcess(ctx context.Context, processID string) (*Process, error) {
-	pathParam := path.ProcessId{Id: uuid.ProcessId(processID)}
-	resp, err := z.handler.GetProcess(ctx, pathParam)
+	raw, err := z.directGet(ctx, "/api/rest/public/process/"+url.PathEscape(processID), "process")
 	if err != nil {
-		return nil, mapSDKError(err, "process")
+		return nil, err
 	}
-	out, err := resp.Output()
-	if err != nil {
-		return nil, mapSDKError(err, "process")
+	var out output.Process
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, withCause(NewPlatformError(ErrAPIError,
+			"process: malformed response",
+			"Retry; if it persists the platform API changed — report it"), err)
 	}
+	var rawErr struct {
+		Error *processErrorCode `json:"error"`
+	}
+	_ = json.Unmarshal(raw, &rawErr) // best-effort, as in GetProjectProcessesDirect
 	proc := mapProcess(out)
+	foldProcessError(&proc, rawErr.Error)
 	return &proc, nil
 }
 
