@@ -30,6 +30,12 @@ type LiveOp struct {
 	ProcessID string `json:"processId"`
 }
 
+// ProjectProcessReader is the one read ProjectActivity needs; platform.Client
+// satisfies it.
+type ProjectProcessReader interface {
+	GetProjectProcessesDirect(ctx context.Context, projectID string) ([]platform.Process, error)
+}
+
 // ProjectActivity returns hostname -> the FULL set of its LIVE operations: every
 // process with status PENDING/RUNNING/ROLLBACKING/CANCELING that references the
 // service's serviceStackId. Idle services are absent (no empty slices), so a
@@ -57,7 +63,7 @@ type LiveOp struct {
 //
 // Single owner: the discover steer, the adopt gate, and the wait action all read
 // this, so "is it busy / what is in flight" is answered one way.
-func ProjectActivity(ctx context.Context, client platform.Client, projectID string, idToHost map[string]string) (map[string][]LiveOp, error) {
+func ProjectActivity(ctx context.Context, client ProjectProcessReader, projectID string, idToHost map[string]string) (map[string][]LiveOp, error) {
 	processes, err := client.GetProjectProcessesDirect(ctx, projectID)
 	if err != nil {
 		return nil, err

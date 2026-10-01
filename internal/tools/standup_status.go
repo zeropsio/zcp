@@ -280,7 +280,9 @@ func (d standupDeps) awaitBootImport(ctx context.Context, progress *standupProgr
 		// A pending section that says why it is pending (it waits for the
 		// project to be closed off, or cannot read it) is not about to import.
 		startingAfterTag := d.closedOffSeen && r.Error == mate.RuntimesWaitingClosedOff
-		inFlight := (r.State == mate.RuntimesPending && (r.Error == "" || startingAfterTag)) || r.State == mate.RuntimesImporting
+		// Waiting for zcp's own deploy ends on its own, soon: in flight.
+		ownDeploy := r.Error == mate.RuntimesWaitingOwnDeploy
+		inFlight := (r.State == mate.RuntimesPending && (r.Error == "" || startingAfterTag || ownDeploy)) || r.State == mate.RuntimesImporting
 		if !inFlight || !time.Now().Before(deadline) {
 			failed := map[string]string{}
 			for _, s := range r.Services {
