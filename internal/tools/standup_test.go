@@ -392,10 +392,15 @@ type importingClient struct {
 	reads int
 	// stages are the lists answered in turn; the last one stays.
 	stages [][]platform.ServiceStack
+	// firstRead is when the list was first read.
+	firstRead time.Time
 }
 
 func (c *importingClient) ListServicesDirect(ctx context.Context, projectID string) ([]platform.ServiceStack, error) {
 	c.mu.Lock()
+	if c.firstRead.IsZero() {
+		c.firstRead = time.Now()
+	}
 	stage := c.stages[min(c.reads, len(c.stages)-1)]
 	c.reads++
 	c.mu.Unlock()
@@ -1262,35 +1267,37 @@ func TestStandup_WaitsForTheContainersImport(t *testing.T) {
 			if err := mate.UpdateStatus(f.statusPath, func(s *mate.Status) { s.Runtimes = tt.runtimes }); err != nil {
 				t.Fatal(err)
 			}
+			// The project already lists every half — what the stand-up
+			// waits for is the file saying the import is over, not the list.
 			present := f.services
-			if tt.finishWith != nil || tt.wantFail != "" {
+			if tt.wantFail != "" {
 				present = withoutService(f.services, "nextstorestage")
 			}
 			f.importing = &importingClient{Mock: f.mock, stages: [][]platform.ServiceStack{present}}
-			finished := make(chan time.Time, 1)
+			var finishedAt time.Time
+			finished := make(chan struct{})
 			if tt.finishWith != nil {
 				go func() {
+					defer close(finished)
 					time.Sleep(80 * time.Millisecond)
-					f.importing.mu.Lock()
-					f.importing.stages = [][]platform.ServiceStack{nil}
-					f.importing.mu.Unlock()
+					finishedAt = time.Now()
 					_ = mate.UpdateStatus(f.statusPath, func(s *mate.Status) { s.Runtimes = *tt.finishWith })
-					finished <- time.Now()
 				}()
+			} else {
+				close(finished)
 			}
 			start := time.Now()
 			result, body := f.run(t)
+			<-finished
 			if result.IsError {
 				t.Fatalf("stand-up: %s", getTextContent(t, result))
 			}
 			if tt.wantWaited {
-				select {
-				case at := <-finished:
-					if time.Since(start) < at.Sub(start) {
-						t.Error("the stand-up answered before the import finished")
-					}
-				default:
-					t.Error("the stand-up answered before the import finished")
+				f.importing.mu.Lock()
+				firstRead := f.importing.firstRead
+				f.importing.mu.Unlock()
+				if firstRead.IsZero() || firstRead.Before(finishedAt) {
+					t.Errorf("the stand-up read the project at +%s, before the import finished at +%s", firstRead.Sub(start), finishedAt.Sub(start))
 				}
 				if got := body.service(t, "nextstorestage"); got.Failed != "" {
 					t.Errorf("nextstorestage after the wait = %+v", got)
