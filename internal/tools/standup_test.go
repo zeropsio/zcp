@@ -1256,6 +1256,10 @@ func TestStandup_WaitsForTheContainersImport(t *testing.T) {
 			runtimes: mate.RuntimesStatus{State: mate.RuntimesDone},
 		},
 		{
+			name:     "an import that cannot read the project is not waited for",
+			runtimes: mate.RuntimesStatus{State: mate.RuntimesPending, Error: "could not read the project (unauthorized)"},
+		},
+		{
 			name:     "a failed import names its reason for the missing half",
 			runtimes: mate.RuntimesStatus{State: mate.RuntimesFailed, Services: []mate.RuntimeService{{Hostname: "nextstorestage", State: mate.ServiceFailed, Error: "serviceStackTypeNotFound: no such type"}}},
 			wantFail: "serviceStackTypeNotFound: no such type",

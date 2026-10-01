@@ -486,7 +486,7 @@ func TestBoot_WithoutWhatItActsWith(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "status.json")
-			matesetup.Boot(context.Background(), path, func(k string) string { return tt.env[k] })
+			matesetup.Boot(context.Background(), path, func() func(string) string { return func(k string) string { return tt.env[k] } })
 			got, err := mate.ReadStatus(path)
 			if (err == nil) != tt.wantFile {
 				t.Fatalf("status file written = %v, want %v", err == nil, tt.wantFile)
@@ -771,5 +771,68 @@ func TestRun_OnlyARealRefusalSettles(t *testing.T) {
 				t.Errorf("the next launch sent %d imports, want %d", got, tt.wantNext)
 			}
 		})
+	}
+}
+
+// TestRun_AnUnreadableProjectSaysSo: a look at the project that fails is
+// never read as "not closed off yet": the runtimes section says the project
+// could not be read, and why.
+func TestRun_AnUnreadableProjectSaysSo(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "status.json")
+	api := newFake()
+	api.isolation = []string{"<error>"}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		importer(api, path).Run(ctx, plan())
+	}()
+	var got mate.RuntimesStatus
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if st, err := mate.ReadStatus(path); err == nil && st.Runtimes.Error != "" {
+			got = st.Runtimes
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if got.State != mate.RuntimesPending || !strings.Contains(got.Error, "could not read the project") || !strings.Contains(got.Error, "project read failed") {
+		t.Errorf("runtimes = %s %q, want pending saying the project could not be read and why", got.State, got.Error)
+	}
+	if len(api.imports) != 0 {
+		t.Errorf("imported %d times into a project it could not read", len(api.imports))
+	}
+}
+
+// TestFreshAPI_FollowsTheKey: the boot import asks the live env store for
+// the Mate's key at every look, so a key rotated while it waits is the one
+// the next look uses; an unchanged key keeps its client.
+func TestFreshAPI_FollowsTheKey(t *testing.T) {
+	keys := []string{"k" + "1", "k" + "1", "k" + "2", "k" + "2"}
+	look := 0
+	env := func() func(string) string {
+		key := keys[min(look, len(keys)-1)]
+		look++
+		return func(k string) string {
+			if k == "ZCP_API_KEY" {
+				return key
+			}
+			return ""
+		}
+	}
+	var built []string
+	fresh := matesetup.FreshAPI(env, func(token, _ string) (matesetup.API, error) {
+		built = append(built, token)
+		return newFake(), nil
+	})
+	for range keys {
+		if fresh() == nil {
+			t.Fatal("no client")
+		}
+	}
+	if !slices.Equal(built, []string{"k1", "k2"}) {
+		t.Errorf("clients built for %v, want one per key: [k1 k2]", built)
 	}
 }

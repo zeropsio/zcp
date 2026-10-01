@@ -246,13 +246,15 @@ func mateLaunchSetup() {
 		fmt.Fprintf(os.Stderr, "[zcp] service mate: %v\n", err)
 	}
 	if planSet {
-		go mateSetupBoot(context.Background(), path, lookup)
+		go mateSetupBoot(context.Background(), path, func() func(string) string { return mate.LiveLookup(mateStorePath) })
 	}
 }
 
 // SetMateSetupBoot / ResetMateSetupBoot stand in for the boot import; for tests.
-func SetMateSetupBoot(fn func(context.Context, string, func(string) string)) { mateSetupBoot = fn }
-func ResetMateSetupBoot()                                                    { mateSetupBoot = matesetup.Boot }
+func SetMateSetupBoot(fn func(context.Context, string, func() func(string) string)) {
+	mateSetupBoot = fn
+}
+func ResetMateSetupBoot() { mateSetupBoot = matesetup.Boot }
 
 // runFunc starts a service and waits for it to exit. Tests override this.
 // mateEnsure brings the installed bundle to the release; package-level so

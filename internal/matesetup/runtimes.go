@@ -54,6 +54,11 @@ type Importer struct {
 	Backoff []time.Duration
 	// Now is the clock; tests fix it.
 	Now func() time.Time
+	// Fresh, when set, is the client for each look — built from the key as
+	// the live env store holds it then (FreshAPI), so a key rotated while the
+	// import waits is the one it uses. API is used when Fresh is nil or
+	// answers nil.
+	Fresh func() API
 	// IsolationPoll is the wait before the next look at a project not yet
 	// closed off, by how long it has been waited for (default IsolationPoll).
 	IsolationPoll func(waited time.Duration) time.Duration
@@ -283,6 +288,43 @@ func (im Importer) withDefaults() Importer {
 	return im
 }
 
+// api is the client for this look (Fresh, else API).
+func (im Importer) api() API {
+	if im.Fresh != nil {
+		if api := im.Fresh(); api != nil {
+			return api
+		}
+	}
+	return im.API
+}
+
+// FreshAPI is Importer.Fresh over the container's environment: env gives the
+// live env store as it is now, and a client is built again only when the
+// key in it changed. A key that is gone, or a client that cannot be built,
+// answers nil, and the importer keeps the one it has.
+func FreshAPI(env func() func(string) string, build func(token, apiHost string) (API, error)) func() API {
+	var (
+		token string
+		api   API
+	)
+	return func() API {
+		lookup := env()
+		current := lookup("ZCP_API_KEY")
+		if current == "" {
+			return api
+		}
+		if current != token || api == nil {
+			built, err := build(current, mate.ResolveAPIHost(lookup("ZCP_API_HOST")))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[zcp] mate setup: build the API client: %v\n", err)
+				return api
+			}
+			token, api = current, built
+		}
+		return api
+	}
+}
+
 // listWithin is listUntil bounded by Timeout.
 func (im Importer) listWithin(ctx context.Context) ([]platform.ServiceStack, error) {
 	ctx, cancel := context.WithTimeout(ctx, im.Timeout)
@@ -295,17 +337,24 @@ func (im Importer) listWithin(ctx context.Context) ([]platform.ServiceStack, err
 // failed read is one more look, not an answer.
 func (im Importer) awaitClosedOff(ctx context.Context) bool {
 	start := time.Now()
-	said := false
+	said := ""
 	for {
-		if closed, err := ops.ReadProjectClosedOff(ctx, im.API, im.ProjectID); err == nil && closed {
+		closed, err := ops.ReadProjectClosedOff(ctx, im.api(), im.ProjectID)
+		if err == nil && closed {
 			return true
 		}
-		if !said {
+		line := mate.RuntimesWaitingClosedOff
+		if err != nil {
+			// A look that failed says nothing about the project: never read
+			// it as "not closed off yet".
+			line = oneLine(fmt.Sprintf("could not read the project (%v)", err))
+		}
+		if line != said {
 			im.write(func(r *mate.RuntimesStatus) {
-				r.State, r.Error = mate.RuntimesPending, mate.RuntimesWaitingClosedOff
+				r.State, r.Error = mate.RuntimesPending, line
 			})
-			fmt.Fprintf(os.Stderr, "[zcp] mate setup: %s\n", mate.RuntimesWaitingClosedOff)
-			said = true
+			fmt.Fprintf(os.Stderr, "[zcp] mate setup: %s\n", line)
+			said = line
 		}
 		select {
 		case <-ctx.Done():
@@ -319,7 +368,7 @@ func (im Importer) awaitClosedOff(ctx context.Context) bool {
 // until the context ends.
 func (im Importer) listUntil(ctx context.Context) ([]platform.ServiceStack, error) {
 	for {
-		live, err := im.API.ListServicesDirect(ctx, im.ProjectID)
+		live, err := im.api().ListServicesDirect(ctx, im.ProjectID)
 		if err == nil {
 			return live, nil
 		}
@@ -348,7 +397,7 @@ func (im Importer) importMissing(ctx context.Context, entries []map[string]any, 
 			return nil, fmt.Errorf("render the import: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "[zcp] mate setup: importing %s\n", strings.Join(missing, ", "))
-		result, err := im.API.ImportServices(ctx, im.ProjectID, string(body))
+		result, err := im.api().ImportServices(ctx, im.ProjectID, string(body))
 		if err == nil {
 			return result, nil
 		}
@@ -367,7 +416,7 @@ func (im Importer) importMissing(ctx context.Context, entries []map[string]any, 
 			return nil, err
 		case <-time.After(im.Backoff[attempt]):
 		}
-		live, listErr := im.API.ListServicesDirect(ctx, im.ProjectID)
+		live, listErr := im.api().ListServicesDirect(ctx, im.ProjectID)
 		if listErr != nil {
 			continue
 		}
@@ -400,8 +449,8 @@ func (im Importer) follow(ctx context.Context, hostnames []string, since time.Ti
 	var last []mate.RuntimeService
 	lastWrite := im.Now()
 	for {
-		live, liveErr := im.API.ListServicesDirect(ctx, im.ProjectID)
-		procs, procErr := im.API.GetProjectProcessesDirect(ctx, im.ProjectID)
+		live, liveErr := im.api().ListServicesDirect(ctx, im.ProjectID)
+		procs, procErr := im.api().GetProjectProcessesDirect(ctx, im.ProjectID)
 		if liveErr == nil && procErr == nil {
 			procs = im.withExpected(ctx, procs, expected)
 			services, settled := ServiceStates(hostnames, live, procs, importErrs, since.Add(-sinceSlack))
@@ -438,7 +487,7 @@ func (im Importer) withExpected(ctx context.Context, procs []platform.Process, e
 		if seen[id] {
 			continue
 		}
-		if p, err := im.API.GetProcess(ctx, id); err == nil && p != nil {
+		if p, err := im.api().GetProcess(ctx, id); err == nil && p != nil {
 			procs = append(procs, *p)
 		}
 	}
@@ -650,30 +699,32 @@ func parseStamp(s string) time.Time {
 }
 
 // Boot is the boot import as the mate launch runs it, beside the server: the
-// plan, the Mate's key and its project from the container's environment
-// (lookup reads the live env store first), then Run. No plan, nothing to do.
+// plan, the Mate's key and its project from the container's environment —
+// env reads the live env store as it is at each call, so a rotated key is
+// picked up at the next look (FreshAPI) — then Run. No plan, nothing to do.
 // A plan without the key or the project to act on is a failed import that
 // says which is missing.
-func Boot(ctx context.Context, statusPath string, lookup func(string) string) {
+func Boot(ctx context.Context, statusPath string, env func() func(string) string) {
+	lookup := env()
 	encoded := lookup(EnvRuntimes)
 	if strings.TrimSpace(encoded) == "" {
 		return
 	}
 	im := Importer{StatusPath: statusPath, ProjectID: lookup("projectId")}.withDefaults()
-	token := lookup("ZCP_API_KEY")
 	switch {
-	case token == "":
+	case lookup("ZCP_API_KEY") == "":
 		im.finish(nil, "ZCP_API_KEY is not on this service, so the runtimes cannot be imported with the Mate's key", false)
 		return
 	case im.ProjectID == "":
 		im.finish(nil, "projectId is not in this container's environment", false)
 		return
 	}
-	client, err := platform.NewZeropsClient(token, mate.ResolveAPIHost(lookup("ZCP_API_HOST")))
-	if err != nil {
-		im.finish(nil, fmt.Sprintf("could not build the API client: %v", err), false)
+	im.Fresh = FreshAPI(env, func(token, apiHost string) (API, error) {
+		return platform.NewZeropsClient(token, apiHost)
+	})
+	if im.API = im.Fresh(); im.API == nil {
+		im.finish(nil, "could not build the API client", false)
 		return
 	}
-	im.API = client
 	im.Run(ctx, encoded)
 }

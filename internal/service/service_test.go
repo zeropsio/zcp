@@ -358,8 +358,8 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 			// launch would never let it start.
 			booted := make(chan string, 1)
 			serverUp := make(chan struct{})
-			service.SetMateSetupBoot(func(_ context.Context, path string, lookup func(string) string) {
-				booted <- path + " " + lookup("MATE_SETUP_RUNTIMES")
+			service.SetMateSetupBoot(func(_ context.Context, path string, env func() func(string) string) {
+				booted <- path + " " + env()("MATE_SETUP_RUNTIMES")
 				<-serverUp
 			})
 			t.Cleanup(service.ResetMateSetupBoot)
