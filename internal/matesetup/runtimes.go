@@ -293,7 +293,7 @@ func (im Importer) awaitClosedOff(ctx context.Context) bool {
 	start := time.Now()
 	said := false
 	for {
-		if envs, err := im.API.GetProjectEnv(ctx, im.ProjectID); err == nil && ops.ProjectClosedOff(envs) {
+		if mode, err := ops.ReadProjectIsolation(ctx, im.API, im.ProjectID); err == nil && mode == ops.IsolationService {
 			return true
 		}
 		if !said {

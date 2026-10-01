@@ -127,11 +127,8 @@ func refuseOpenMate(ctx context.Context, client platform.Client, projectID strin
 	if !rt.MateEnabled {
 		return nil
 	}
-	envs, err := client.GetProjectEnv(ctx, projectID)
-	if err != nil {
-		return nil
-	}
-	if mode := ops.ProjectIsolation(envs); mode == "" || mode == ops.IsolationService {
+	mode, err := ops.ReadProjectIsolation(ctx, client, projectID)
+	if err != nil || mode == "" || mode == ops.IsolationService {
 		return nil
 	}
 	return convertError(platform.NewPlatformError(platform.ErrPrerequisiteMissing,

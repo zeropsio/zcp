@@ -502,12 +502,8 @@ func (d standupDeps) projectOpen(ctx context.Context, tier workflow.MateTier, li
 	if !missing {
 		return false
 	}
-	envs, err := d.batch.client.GetProjectEnv(ctx, d.batch.projectID)
-	if err != nil {
-		return false
-	}
-	mode := ops.ProjectIsolation(envs)
-	return mode != "" && mode != ops.IsolationService
+	mode, err := ops.ReadProjectIsolation(ctx, d.batch.client, d.batch.projectID)
+	return err == nil && mode != "" && mode != ops.IsolationService
 }
 
 func (d standupDeps) presentAndRunning(sp *standupPair, src standupSource, bootFailed map[string]string, open bool) bool {
