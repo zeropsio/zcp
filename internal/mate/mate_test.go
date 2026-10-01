@@ -157,6 +157,57 @@ func TestSupportsBasePath(t *testing.T) {
 	}
 }
 
+// TestBasePathSupport tells "the help ran and lacks the flag" from "the help
+// could not answer": a just-installed bundle's first node start under boot
+// load ran past the probe's timeout on 1 of 20 boots, and that read as a
+// bundle without --base-path.
+func TestBasePathSupport(t *testing.T) {
+	dir := t.TempDir()
+	advertises := writeFakeBin(t, filepath.Join(dir, "with"), "#!/bin/sh\necho '  --base-path   Public path prefix'\n")
+	silent := writeFakeBin(t, filepath.Join(dir, "without"), "#!/bin/sh\necho '  --base-dir   Data directory'\n")
+	broken := writeFakeBin(t, filepath.Join(dir, "broken"), "#!/bin/sh\nexit 1\n")
+	slow := writeFakeBin(t, filepath.Join(dir, "slow"), "#!/bin/sh\nsleep 5\necho '  --base-path   Public path prefix'\n")
+
+	tests := []struct {
+		name        string
+		bin         string
+		timeout     time.Duration // 0 = the default
+		want        bool
+		wantUnknown bool
+	}{
+		{"help advertises the flag", advertises, 0, true, false},
+		{"help does not advertise it", silent, 0, false, false},
+		{"binary fails", broken, 0, false, true},
+		{"binary does not exist", filepath.Join(dir, "absent"), 0, false, true},
+		{"help runs past the timeout", slow, 300 * time.Millisecond, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.timeout > 0 {
+				mate.SetHelpTimeout(tt.timeout)
+				t.Cleanup(mate.ResetHelpTimeout)
+			}
+			got, err := mate.BasePathSupport(tt.bin)
+			if got != tt.want || (err != nil) != tt.wantUnknown {
+				t.Errorf("BasePathSupport(%s) = %v, %v; want %v, unknown=%v", tt.name, got, err, tt.want, tt.wantUnknown)
+			}
+		})
+	}
+}
+
+// TestLaunchEnvLines: the server's public prefix rides its environment on
+// every launch — an older bundle ignores the variable, a newer one reads it
+// whatever the --base-path probe answered — and so does the status file the
+// server reads the setup from.
+func TestLaunchEnvLines(t *testing.T) {
+	t.Setenv("HOME", "/home/zerops")
+	got := mate.LaunchEnvLines()
+	want := []string{"T3CODE_BASE_PATH=/mate", "ZCP_STATUS_FILE=/home/zerops/.zcp/state/mate-status.json"}
+	if !slices.Equal(got, want) {
+		t.Errorf("LaunchEnvLines() = %q, want %q", got, want)
+	}
+}
+
 func TestEnvLines(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -707,5 +758,59 @@ func TestDefaultSmokeTestInstall_ResolvesAddonsAsTheServerDoes(t *testing.T) {
 				t.Fatalf("DefaultSmokeTestInstall() error = %v, want it to name %s", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestGiteaToken answers git's credential request for the Mate's Gitea with
+// the bot token as the live env store holds it now — the broker rotates it,
+// and a process's own environment keeps the value it started with — and
+// answers nothing for any other host.
+func TestGiteaToken(t *testing.T) {
+	env := map[string]string{"GITEA_URL": "https://gitea.example.net", "GITEA_TOKEN": "fresh-" + "token"}
+	ported := map[string]string{"GITEA_URL": "https://gitea.example.net:3000", "GITEA_TOKEN": "fresh-" + "token"}
+	tests := []struct {
+		name  string
+		env   map[string]string
+		stdin string
+		want  string
+	}{
+		{"the Gitea's host", env, "protocol=https\nhost=gitea.example.net\n\n", "fresh-token"},
+		{"the Gitea's host, any case", env, "protocol=https\nhost=Gitea.Example.NET\n\n", "fresh-token"},
+		{"the Gitea on its port", ported, "protocol=https\nhost=gitea.example.net:3000\n\n", "fresh-token"},
+		{"the Gitea's host with https's own port", env, "protocol=https\nhost=gitea.example.net:443\n\n", "fresh-token"},
+		{"a GITEA_URL naming https's own port", map[string]string{"GITEA_URL": "https://gitea.example.net:443", "GITEA_TOKEN": "fresh-" + "token"}, "protocol=https\nhost=gitea.example.net\n\n", "fresh-token"},
+		{"the Gitea's host on another port", ported, "protocol=https\nhost=gitea.example.net\n\n", ""},
+		{"another host", env, "protocol=https\nhost=github.com\n\n", ""},
+		{"no host named", env, "protocol=https\n\n", ""},
+		{"no Gitea on this container", map[string]string{"GITEA_TOKEN": "fresh-" + "token"}, "protocol=https\nhost=gitea.example.net\n\n", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mate.GiteaToken(strings.NewReader(tt.stdin), func(k string) string { return tt.env[k] })
+			if got != tt.want {
+				t.Errorf("GiteaToken = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestLiveLookup: a key the live env store holds wins over this process's
+// environment, which still answers what the store lacks.
+func TestLiveLookup(t *testing.T) {
+	store := filepath.Join(t.TempDir(), "env.json")
+	if err := os.WriteFile(store, []byte(`{"GITEA_TOKEN":"rotated","EMPTY":""}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GITEA_TOKEN", "at-start")
+	t.Setenv("ONLY_ENV", "env")
+	t.Setenv("EMPTY", "env-empty")
+	lookup := mate.LiveLookup(store)
+	for key, want := range map[string]string{"GITEA_TOKEN": "rotated", "ONLY_ENV": "env", "EMPTY": "env-empty", "NEITHER": ""} {
+		if got := lookup(key); got != want {
+			t.Errorf("lookup(%s) = %q, want %q", key, got, want)
+		}
+	}
+	if got := mate.LiveLookup(filepath.Join(t.TempDir(), "absent.json"))("GITEA_TOKEN"); got != "at-start" {
+		t.Errorf("without a store, lookup = %q, want the process env", got)
 	}
 }

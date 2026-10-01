@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -287,9 +288,122 @@ func TestStart_Mate_MergesEnvFile(t *testing.T) {
 	if err := service.Start("mate"); err != nil {
 		t.Fatalf("Start(mate): %v", err)
 	}
-	want := []string{"T3CODE_ZEROPS_PROJECT_ID=nTV3oMB2SS634ImDJnQckg", "T3CODE_ZEROPS_API_HOST=api.app-prg1.zerops.io"}
+	want := []string{"T3CODE_ZEROPS_PROJECT_ID=nTV3oMB2SS634ImDJnQckg", "T3CODE_ZEROPS_API_HOST=api.app-prg1.zerops.io", "T3CODE_BASE_PATH=/mate",
+		"ZCP_STATUS_FILE=" + filepath.Join(home, ".zcp", "state", "mate-status.json")}
 	if !slices.Equal(gotEnv, want) {
 		t.Errorf("merged env:\n got %q\nwant %q", gotEnv, want)
+	}
+}
+
+// TestStart_Mate_BasePathRidesTheEnv: the server learns its public prefix
+// from its environment whatever the --base-path probe answered — a probe that
+// could not answer (one of twenty boots, a cold first node start) launched a
+// server whose assets did not resolve.
+func TestStart_Mate_BasePathRidesTheEnv(t *testing.T) {
+	// Not parallel — mutates runFunc, HOME and ZCP_MATE_ENABLED.
+	t.Setenv("ZCP_MATE_ENABLED", "1")
+	tests := []struct {
+		name string
+		help string
+	}{
+		{"help advertises the flag", "#!/bin/sh\necho '  --base-path   Public path prefix'\n"},
+		{"help cannot answer", "#!/bin/sh\nexit 1\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := installFakeMateBundle(t, true)
+			bin := filepath.Join(home, ".zcp", "mate", "current", "node_modules", ".bin", mate.BinName)
+			if err := os.WriteFile(bin, []byte(tt.help), 0o700); err != nil {
+				t.Fatalf("write fake mate: %v", err)
+			}
+			var gotEnv []string
+			service.SetRunFunc(func(_ string, _ []string, extraEnv []string) error {
+				gotEnv = extraEnv
+				return nil
+			})
+			t.Cleanup(func() { service.ResetRunFunc() })
+
+			if err := service.Start("mate"); err != nil {
+				t.Fatalf("Start(mate): %v", err)
+			}
+			if !slices.Contains(gotEnv, "T3CODE_BASE_PATH=/mate") {
+				t.Errorf("launch env %q must carry T3CODE_BASE_PATH=/mate", gotEnv)
+			}
+		})
+	}
+}
+
+// TestStart_Mate_LaunchStartsTheSetup: every launch names the status file to
+// the server and writes it before the server starts, and a launch whose
+// container carries a runtimes plan starts the boot import beside the server
+// — never before it.
+func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
+	// Not parallel — mutates runFunc, HOME, the store path and the boot seam.
+	t.Setenv("ZCP_MATE_ENABLED", "1")
+	tests := []struct {
+		name         string
+		store        map[string]string
+		wantRuntimes string
+		wantBoot     bool
+	}{
+		{"no runtimes plan", map[string]string{"PATH": "/usr/bin"}, mate.RuntimesNone, false},
+		{"a runtimes plan", map[string]string{"PATH": "/usr/bin", "MATE_SETUP_RUNTIMES": "c2VydmljZXM6IFtd"}, mate.RuntimesPending, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := installFakeMateBundle(t, true)
+			service.SetMateStorePath(writeLiveEnvStore(t, tt.store))
+			t.Cleanup(service.ResetMateStorePath)
+			// The boot import runs until the server is up: one that held the
+			// launch would never let it start.
+			booted := make(chan string, 1)
+			serverUp := make(chan struct{})
+			service.SetMateSetupBoot(func(_ context.Context, path string, env func() func(string) string) {
+				booted <- path + " " + env()("MATE_SETUP_RUNTIMES")
+				<-serverUp
+			})
+			t.Cleanup(service.ResetMateSetupBoot)
+			statusPath := filepath.Join(home, ".zcp", "state", "mate-status.json")
+			var gotEnv []string
+			var atLaunch mate.Status
+			service.SetRunFunc(func(_ string, _ []string, extraEnv []string) error {
+				gotEnv = extraEnv
+				atLaunch, _ = mate.ReadStatus(statusPath)
+				close(serverUp)
+				return nil
+			})
+			t.Cleanup(func() { service.ResetRunFunc() })
+
+			started := make(chan error, 1)
+			go func() { started <- service.Start("mate") }()
+			select {
+			case err := <-started:
+				if err != nil {
+					t.Fatalf("Start(mate): %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				close(serverUp)
+				t.Fatal("the server never started: the launch waited on the boot import")
+			}
+			if !slices.Contains(gotEnv, "ZCP_STATUS_FILE="+statusPath) {
+				t.Errorf("launch env %q must name the status file %s", gotEnv, statusPath)
+			}
+			if atLaunch.Runtimes.State != tt.wantRuntimes {
+				t.Errorf("runtimes at launch = %q, want %q", atLaunch.Runtimes.State, tt.wantRuntimes)
+			}
+			select {
+			case got := <-booted:
+				if !tt.wantBoot {
+					t.Errorf("boot import started without a plan: %s", got)
+				} else if got != statusPath+" "+tt.store["MATE_SETUP_RUNTIMES"] {
+					t.Errorf("boot import got %q", got)
+				}
+			case <-time.After(2 * time.Second):
+				if tt.wantBoot {
+					t.Error("boot import never started")
+				}
+			}
+		})
 	}
 }
 

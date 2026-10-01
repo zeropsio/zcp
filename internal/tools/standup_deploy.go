@@ -12,6 +12,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -255,6 +256,28 @@ func (d standupDeps) deployAll(ctx context.Context, pairs []*standupPair, live m
 		halves[p.Stage.Hostname] = standupHalf{pair: sp,
 			target: ops.DeployBatchTarget{SourceService: p.Dev.Hostname, TargetService: p.Stage.Hostname, Setup: p.Stage.Setup, SHA: "HEAD"}}
 	}
+	// The second call is the stages': every pair still standing ran code in
+	// its dev half when the call began.
+	phase := mate.PhaseStage
+	standing := 0
+	for _, sp := range pairs {
+		if sp.failed != "" {
+			continue
+		}
+		standing++
+		if !sp.devRanBefore {
+			phase = mate.PhaseDevelopment
+		}
+	}
+	if standing == 0 {
+		phase = mate.PhaseDevelopment
+	}
+	progress.st().phase(phase)
+	for host, h := range halves {
+		if h.pair.failed == "" {
+			progress.st().step(host, mate.StepBuild, mate.StepPending, "", "")
+		}
+	}
 	reads, unread := standupReads(tier, standupBodies(projectRootFromState(d.batch.stateDir), pairs), projectEnvs)
 	after := standupAfter(tier, reads, unread)
 	done := make(map[string]chan struct{}, len(halves))
@@ -278,16 +301,21 @@ func (d standupDeps) deployAll(ctx context.Context, pairs []*standupPair, live m
 			// by hand — is left as it is, whatever it waits for.
 			if svc := live[host]; svc != nil && svc.HasDeployedCode() {
 				h.record(&standupDeploy{Status: standupAlreadyDeployed, URL: ops.ResolveSubdomainURL(ctx, d.batch.client, d.batch.projectID, svc)})
+				progress.st().step(host, mate.StepVerify, mate.StepDone, "", "")
 				return
 			}
 			if held := h.held(halves, after[host]); held != nil {
 				h.record(held)
+				if held.Status != standupQueued {
+					progress.st().step(host, mate.StepBuild, mate.StepFailed, "", held.Reason)
+				}
 				return
 			}
 			select {
 			case slots <- struct{}{}:
 			case <-ctx.Done():
 				h.record(&standupDeploy{Status: standupNotDeployed, Reason: fmt.Sprintf("the stand-up was cancelled before it deployed: %v", ctx.Err())})
+				progress.st().step(host, mate.StepBuild, mate.StepFailed, "", "the stand-up was cancelled before it deployed")
 				return
 			}
 			defer func() { <-slots }()
@@ -386,18 +414,23 @@ func (d standupDeps) deployHalves(ctx context.Context, halves []standupHalf, pro
 	byTarget := map[string]standupHalf{}
 	var targets []ops.DeployBatchTarget
 	for _, h := range halves {
-		svc := live[h.target.TargetService]
+		host := h.target.TargetService
+		svc := live[host]
 		if svc != nil && svc.HasDeployedCode() {
 			h.record(&standupDeploy{Status: standupAlreadyDeployed, URL: ops.ResolveSubdomainURL(ctx, d.batch.client, d.batch.projectID, svc)})
+			progress.st().step(host, mate.StepVerify, mate.StepDone, "", "")
 			continue
 		}
 		if blocked := d.batch.gate([]ops.DeployBatchTarget{h.target}); blocked != nil {
 			h.record(&standupDeploy{Status: standupDeployFailed, Reason: "refused before the build: " + refusalText(blocked)})
+			progress.st().step(host, mate.StepBuild, mate.StepFailed, "", "refused before the build: "+refusalText(blocked))
 			continue
 		}
 		resolved, refusal := d.batch.preflight(ctx, h.target)
 		if refusal != nil {
-			h.record(&standupDeploy{Status: standupDeployFailed, Reason: "refused before the build: " + refusalText(refusal.result())})
+			reason := "refused before the build: " + refusalText(refusal.result())
+			h.record(&standupDeploy{Status: standupDeployFailed, Reason: reason})
+			progress.st().step(host, mate.StepBuild, mate.StepFailed, "", reason)
 			continue
 		}
 		byTarget[resolved.TargetService] = h
@@ -411,11 +444,17 @@ func (d standupDeps) deployHalves(ctx context.Context, halves []standupHalf, pro
 			names = append(names, t.TargetService)
 		}
 		progress.say("deploying " + strings.Join(names, ", "))
+		for _, name := range names {
+			progress.st().step(name, mate.StepBuild, mate.StepRunning, "", "")
+		}
+		stopTracking := d.trackDeploys(ctx, names, live, progress.st())
 		result := d.batch.deploy(ctx, progress.callback(), batch, false)
+		stopTracking()
 		for _, entry := range result.Entries {
 			h := byTarget[entry.Target.TargetService]
 			deploy := standupDeployFrom(entry)
 			h.record(deploy)
+			recordStandupStep(progress.st(), entry, deploy)
 			if h.dev {
 				h.pair.devResult = entry.Result
 			}
@@ -428,6 +467,22 @@ func (d standupDeps) deployHalves(ctx context.Context, halves []standupHalf, pro
 				}
 			}
 		}
+	}
+}
+
+// recordStandupStep writes how one half's deploy ended: verified, failed at
+// the step that failed, or still building past the poll.
+func recordStandupStep(status *standupStatus, entry ops.DeployBatchEntryResult, deploy *standupDeploy) {
+	host := entry.Target.TargetService
+	switch {
+	case deploy.Status == standupDeployed:
+		status.step(host, mate.StepVerify, mate.StepDone, "", "")
+	case deploy.Status == standupInFlight:
+		status.step(host, mate.StepBuild, mate.StepRunning, "", "")
+	case entry.Result != nil:
+		status.step(host, standupStepForPhase(entry.Result.FailedPhase), mate.StepFailed, "", deploy.Reason)
+	default:
+		status.step(host, mate.StepBuild, mate.StepFailed, "", deploy.Reason)
 	}
 }
 

@@ -97,30 +97,15 @@ type directProcessErrorResponse struct {
 // Process.FailReason wherever the PublicMeta path (mapProcess) yielded
 // none.
 func (z *ZeropsClient) GetProjectProcessesDirect(ctx context.Context, projectID string) ([]Process, error) {
-	u := fmt.Sprintf("/api/rest/public/project/%s/process?limit=%d", projectID, directListLimit)
-	sdkResp := sdkBase.Get(ctx, z.env, u)
-	if sdkResp.Err != nil {
-		return nil, mapSDKError(sdkResp.Err, "process")
-	}
-
-	status := sdkResp.HttpResponse.StatusCode
-	raw := sdkResp.ResponseData.Bytes()
-
-	if status >= http.StatusMultipleChoices {
-		var apiErrResp directProcessErrorResponse
-		if err := json.Unmarshal(raw, &apiErrResp); err != nil {
-			return nil, withCause(NewPlatformError(ErrAPIError,
-				fmt.Sprintf("project processes: malformed %d response", status),
-				"Retry; if it persists the platform API changed — report it"), err)
-		}
-		apiErrResp.Error.HttpStatusCode = status
-		return nil, mapSDKError(apiErrResp.Error, "process")
+	raw, err := z.directGet(ctx, fmt.Sprintf("/api/rest/public/project/%s/process?limit=%d", projectID, directListLimit), "process")
+	if err != nil {
+		return nil, err
 	}
 
 	var out output.ProcessList
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, withCause(NewPlatformError(ErrAPIError,
-			fmt.Sprintf("project processes: malformed %d response", status),
+			"project processes: malformed response",
 			"Retry; if it persists the platform API changed — report it"), err)
 	}
 
@@ -130,14 +115,49 @@ func (z *ZeropsClient) GetProjectProcessesDirect(ctx context.Context, projectID 
 	processes := make([]Process, 0, len(out.List))
 	for i, p := range out.List {
 		proc := mapProcess(p)
-		if proc.FailReason == nil && i < len(rawErrs.List) && rawErrs.List[i].Error != nil && rawErrs.List[i].Error.Code != "" {
-			fr := rawErrs.List[i].Error.Code
-			if rawErrs.List[i].Error.Message != "" {
-				fr += ": " + rawErrs.List[i].Error.Message
-			}
-			proc.FailReason = &fr
+		if i < len(rawErrs.List) {
+			foldProcessError(&proc, rawErrs.List[i].Error)
 		}
 		processes = append(processes, proc)
 	}
 	return processes, nil
+}
+
+// directGet reads one public-API path on the SDK's authorized transport and
+// returns the raw body of a 2xx answer; a non-2xx answer maps to the
+// platform's error for entity.
+func (z *ZeropsClient) directGet(ctx context.Context, u, entity string) ([]byte, error) {
+	sdkResp := sdkBase.Get(ctx, z.env, u)
+	if sdkResp.Err != nil {
+		return nil, mapSDKError(sdkResp.Err, entity)
+	}
+	status := sdkResp.HttpResponse.StatusCode
+	raw := sdkResp.ResponseData.Bytes()
+	if status >= http.StatusMultipleChoices {
+		var apiErrResp directProcessErrorResponse
+		if err := json.Unmarshal(raw, &apiErrResp); err != nil {
+			pe := withCause(NewPlatformError(ErrAPIError,
+				fmt.Sprintf("%s: malformed %d response", entity, status),
+				"Retry; if it persists the platform API changed — report it"), err)
+			// A gateway's 5xx page in front of the API: the platform's side.
+			pe.serverSide = status >= http.StatusInternalServerError
+			return nil, pe
+		}
+		apiErrResp.Error.HttpStatusCode = status
+		return nil, mapSDKError(apiErrResp.Error, entity)
+	}
+	return raw, nil
+}
+
+// foldProcessError puts a process DTO's `error` (code, then ": " and its
+// message) into FailReason wherever the PublicMeta path left none.
+func foldProcessError(proc *Process, e *processErrorCode) {
+	if proc.FailReason != nil || e == nil || e.Code == "" {
+		return
+	}
+	fr := e.Code
+	if e.Message != "" {
+		fr += ": " + e.Message
+	}
+	proc.FailReason = &fr
 }

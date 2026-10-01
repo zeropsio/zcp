@@ -187,8 +187,11 @@ const (
 // the step degrades when it expires.
 const installTimeout = 3 * time.Minute
 
-// helpTimeout bounds the --base-path capability probe (one node startup).
-const helpTimeout = 10 * time.Second
+// defaultHelpTimeout bounds the --base-path capability probe (one node
+// startup). A probe that runs past it answers "unknown", never "absent".
+const defaultHelpTimeout = 10 * time.Second
+
+var helpTimeout = defaultHelpTimeout
 
 // smokeTimeout bounds the post-stage probes EnsureInstalled runs before it lets
 // a newly staged version go live: `mate --version` plus the native-addon import.
@@ -678,18 +681,49 @@ func ServeArgv(bin string, withBasePath bool) []string {
 }
 
 // SupportsBasePath reports whether the installed bundle advertises
-// --base-path, by reading `serve --help`. Any failure (missing binary,
-// non-zero exit, timeout) answers false: the argv then omits the flag, which
-// still starts.
+// --base-path, by reading `serve --help`. A probe that could not answer
+// (missing binary, non-zero exit, timeout) answers false: the argv then omits
+// the flag, which still starts — and the server still learns its prefix from
+// LaunchEnvLines.
 func SupportsBasePath(bin string) bool {
+	supported, _ := BasePathSupport(bin)
+	return supported
+}
+
+// BasePathSupport is SupportsBasePath telling its two "no"s apart: false with
+// a nil error is a help that ran and does not name the flag; an error is a
+// probe that could not answer at all. The second is what a just-installed
+// bundle's first node start under boot load looks like — measured on one of
+// twenty boots of a fleet roll, where the unit's and `zcp init`'s probes both
+// ran past helpTimeout in the same ten seconds — and it says nothing about
+// the bundle.
+func BasePathSupport(bin string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), helpTimeout)
 	defer cancel()
 
 	out, err := exec.CommandContext(ctx, bin, "serve", "--help").CombinedOutput()
 	if err != nil {
-		return false
+		return false, fmt.Errorf("%s serve --help: %w", bin, err)
 	}
-	return strings.Contains(string(out), "--base-path")
+	return strings.Contains(string(out), "--base-path"), nil
+}
+
+// EnvBasePath is the server's public prefix as its environment states it —
+// the same setting as --base-path (the flag wins when both are given, with
+// the same value). Both arrived in one mate release, and an older server
+// reads only the variables it declares, so the variable is safe to set on
+// every launch where the flag is not.
+const EnvBasePath = "T3CODE_BASE_PATH"
+
+// LaunchEnvLines is what a mate launch adds to the server's environment on
+// top of the live env store and the identity contract: its public prefix,
+// whatever the --base-path probe answered, and the status file it reads a
+// new Mate's setup from (status.go).
+func LaunchEnvLines() []string {
+	return []string{
+		EnvBasePath + "=" + BasePath,
+		EnvStatusFile + "=" + DefaultStatusFilePath(),
+	}
 }
 
 // allowedOriginPattern matches one entry of ZCP_MATE_ALLOWED_ORIGINS: scheme,

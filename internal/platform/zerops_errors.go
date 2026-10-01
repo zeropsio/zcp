@@ -50,7 +50,30 @@ func mapSDKError(err error, entityType string) error {
 		return withCause(NewPlatformError(ErrNetworkError, errStr, "Check API host and network"), err)
 	}
 
-	return withCause(NewPlatformError(ErrAPIError, errStr, ""), err)
+	pe := withCause(NewPlatformError(ErrAPIError, errStr, ""), err)
+	// A non-JSON answer reaches here as the SDK's "<status line>: <body>" —
+	// a gateway's 502/503/504 page among them. A 5xx is the platform's side
+	// whatever its body (IsTransient).
+	if code := leadingStatus(errStr); code >= http.StatusInternalServerError {
+		pe.serverSide = true
+	}
+	return pe
+}
+
+// leadingStatus reads the HTTP status the SDK's non-JSON error starts with
+// ("502 Bad Gateway: …"); 0 when it starts with none.
+func leadingStatus(s string) int {
+	if len(s) < 4 || s[3] != ' ' {
+		return 0
+	}
+	code := 0
+	for _, c := range s[:3] {
+		if c < '0' || c > '9' {
+			return 0
+		}
+		code = code*10 + int(c-'0')
+	}
+	return code
 }
 
 // withCause attaches the underlying error so errors.Is/As keep working
@@ -94,7 +117,9 @@ func mapAPIError(apiErr apiError.Error, entityType string) error {
 	}
 
 	if code >= 500 {
-		return withAPICode(withSubcode(NewPlatformError(ErrAPIError, msg, "Zerops API server error — retry later"), errCode), errCode, meta)
+		pe := withAPICode(withSubcode(NewPlatformError(ErrAPIError, msg, "Zerops API server error — retry later"), errCode), errCode, meta)
+		pe.serverSide = true
+		return pe
 	}
 
 	// Client error (4xx) — tell LLM to fix input. When the server sent

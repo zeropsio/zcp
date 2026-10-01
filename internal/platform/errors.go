@@ -186,6 +186,25 @@ type PlatformError struct {
 	// (the Subcode* catalog above) — empty for every call site that hasn't
 	// been split. Copied verbatim into ErrorWire.Subcode / wire.Event.ErrorSubcode.
 	Subcode string
+	// serverSide marks the platform's own 5xx answer (mapAPIError), for
+	// IsTransient.
+	serverSide bool
+}
+
+// IsTransient reports an error worth sending the same call again for: the
+// network, a timeout, the rate limit, or the platform's own 5xx. A call the
+// platform refused for what it carried (a 4xx), or for the key it came with,
+// is not: a retry only repeats the answer.
+func IsTransient(err error) bool {
+	var pe *PlatformError
+	if !errors.As(err, &pe) {
+		return false
+	}
+	switch pe.Code {
+	case ErrNetworkError, ErrAPITimeout, ErrAPIRateLimited:
+		return true
+	}
+	return pe.serverSide
 }
 
 // APIMetaItem mirrors one element of the Zerops API's `error.meta[]` array.

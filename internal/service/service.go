@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/mate"
+	"github.com/zeropsio/zcp/internal/matesetup"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
@@ -85,7 +86,7 @@ func services() map[string]execConfig {
 			argsFn:     mateArgv,
 			extraEnvFn: mateExtraEnv,
 			guard:      mateGuard,
-			prepare:    mateInstallBeforeStart,
+			prepare:    mateLaunchSetupThenInstall,
 		},
 	}
 }
@@ -143,13 +144,17 @@ func mateFlagEnabled(storePath string) bool {
 //
 // --base-path is a capability, not a preference: the mate CLI rejects an unknown
 // flag fatally, so a bundle predating it would crash-loop this unit at every
-// boot. The probe costs one node startup at launch, and the omission is logged
-// because a base-path-less mate answers but serves root-absolute assets that the
-// cookie gate then redirects — a failure that otherwise looks like "the page
-// loads but nothing works".
+// boot. The probe costs one node startup at launch. What it cannot settle the
+// environment does: the server reads the same prefix from T3CODE_BASE_PATH
+// (mate.LaunchEnvLines), so a probe that could not answer — a cold first start
+// of a just-installed bundle under boot load ran past its timeout — no longer
+// launches a server whose assets do not resolve.
 func mateArgv(binary string) []string {
-	supported := mate.SupportsBasePath(binary)
-	if !supported {
+	supported, err := mate.BasePathSupport(binary)
+	switch {
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "[zcp] service mate: could not read the bundle's serve --help (%v); omitting --base-path, the server reads %s from %s\n", err, mate.BasePath, mate.EnvBasePath)
+	case !supported:
 		fmt.Fprintf(os.Stderr, "[zcp] service mate: installed bundle does not advertise --base-path; omitting it (mate answers under %s/ but its assets will not resolve)\n", mate.BasePath)
 	}
 	return mate.ServeArgv(binary, supported)
@@ -168,7 +173,7 @@ func mateArgv(binary string) []string {
 // pairing behaviour, which is a diagnosable state. A unit that refuses to
 // launch is not.
 func mateExtraEnv() []string {
-	return mergeMateEnv(mate.LiveEnvStorePath, mate.EnvFilePath())
+	return append(mergeMateEnv(mate.LiveEnvStorePath, mate.EnvFilePath()), mate.LaunchEnvLines()...)
 }
 
 // mergeMateEnv reads and merges the live env store and the T3CODE_* env file
@@ -214,6 +219,42 @@ func mergeEnvLines(store, file []string) []string {
 	}
 	return append(merged, file...)
 }
+
+// mateLaunchSetupThenInstall readies a launch: the status file first, with
+// the boot import of a new Mate's runtimes started beside everything that
+// follows — it never holds the server's start — then the bundle.
+func mateLaunchSetupThenInstall() {
+	mateLaunchSetup()
+	mateInstallBeforeStart()
+}
+
+// mateSetupBoot is the boot import (matesetup.Boot); package-level so tests
+// stand in for it.
+var mateSetupBoot = matesetup.Boot
+
+// mateLaunchSetup writes the status file the server reads (ZCP_STATUS_FILE,
+// mate.LaunchEnvLines) and starts the boot import when the container carries
+// a runtimes plan. The plan, the Mate's key and its project come from the
+// live env store, as the guard's flag does: a unit's own environment carries
+// none of them. The import runs in this process, for as long as the server
+// does; a restart cut short finds what it left by looking.
+func mateLaunchSetup() {
+	lookup := mate.LiveLookup(mateStorePath)
+	path := mate.DefaultStatusFilePath()
+	planSet := strings.TrimSpace(lookup(matesetup.EnvRuntimes)) != ""
+	if err := matesetup.MarkLaunch(path, planSet, time.Now()); err != nil {
+		fmt.Fprintf(os.Stderr, "[zcp] service mate: %v\n", err)
+	}
+	if planSet {
+		go mateSetupBoot(context.Background(), path, func() func(string) string { return mate.LiveLookup(mateStorePath) })
+	}
+}
+
+// SetMateSetupBoot / ResetMateSetupBoot stand in for the boot import; for tests.
+func SetMateSetupBoot(fn func(context.Context, string, func() func(string) string)) {
+	mateSetupBoot = fn
+}
+func ResetMateSetupBoot() { mateSetupBoot = matesetup.Boot }
 
 // runFunc starts a service and waits for it to exit. Tests override this.
 // mateEnsure brings the installed bundle to the release; package-level so

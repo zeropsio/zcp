@@ -3,9 +3,12 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/mate"
+	"github.com/zeropsio/zcp/internal/matesetup"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -79,6 +82,12 @@ func importInputSchema() *jsonschema.Schema {
 // errors come back with structured apiMeta via the error surface
 // established by the validation-plumbing plan.
 func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info) {
+	registerImport(srv, client, projectID, engine, stateDir, recipeProbe, rt, mate.LiveEnvStorePath)
+}
+
+// registerImport is RegisterImport reading the container's live env store
+// at liveEnvPath (refuseOpenMate).
+func registerImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info, liveEnvPath string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_import",
 		Description: "REQUIRES active workflow context (zerops_workflow bootstrap/develop). Import services from YAML into the project. An optional project.envVariables block applies project-level vars before services are created; other project.* fields are rejected. The Zerops API validates fields, modes, types, and hostnames server-side and returns structured apiMeta on the error response when anything is wrong. Blocks until all processes complete; returns final statuses (FINISHED/FAILED).",
@@ -89,6 +98,9 @@ func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, e
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ImportInput) (*mcp.CallToolResult, any, error) {
 		if blocked := requireWorkflowContext(engine, stateDir, recipeProbe); blocked != nil {
+			return blocked, nil, nil
+		}
+		if blocked := refuseOpenMate(ctx, client, projectID, rt, liveEnvPath); blocked != nil {
 			return blocked, nil, nil
 		}
 		if input.Override.Bool() {
@@ -112,6 +124,43 @@ func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, e
 		}), nil, nil
 	})
 }
+
+// refuseOpenMate refuses an import into a Mate's project that is not closed
+// off yet: its runtimes would read the zcp service's variables, the Mate's
+// own key among them, and closing it off after they exist restarts them. The
+// person's press closes it off and then tags the project ops.ClosedOffTag; a
+// press whose tab closed first leaves it to Finish setup. Only a Mate the new
+// press made — its zcp carries MATE_SETUP_RUNTIMES in the live env store; an
+// older Mate behaves as before. A project that cannot be read is refused
+// too, saying so: whether it is closed off is not known.
+func refuseOpenMate(ctx context.Context, client platform.Client, projectID string, rt runtime.Info, liveEnvPath string) *mcp.CallToolResult {
+	if !newFlowMate(rt, liveEnvPath) {
+		return nil
+	}
+	closed, err := ops.ReadProjectClosedOff(ctx, client, projectID)
+	switch {
+	case err != nil:
+		return convertError(platform.NewPlatformError(platform.ErrAPIError,
+			fmt.Sprintf("Could not read the project (%v), so whether it is closed off is not known; nothing was imported.", err),
+			"Retry the import; if it persists, check the API with zerops_discover."))
+	case closed:
+		return nil
+	}
+	return convertError(platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+		openMateRefusal,
+		"Nothing was imported. Tell the person to press Finish setup on this Mate in the app, then import again."))
+}
+
+// newFlowMate is a Mate the new press made: its zcp carries the runtimes
+// plan (matesetup.EnvRuntimes) in the live env store. Every setup interlock
+// applies to these only.
+func newFlowMate(rt runtime.Info, liveEnvPath string) bool {
+	return rt.MateEnabled && strings.TrimSpace(mate.LiveLookup(liveEnvPath)(matesetup.EnvRuntimes)) != ""
+}
+
+// openMateRefusal is what an import into an open Mate is told, and what the
+// stand-up tells the model in place of an import.
+const openMateRefusal = "The project is not closed off yet; Finish setup in the app closes it. Until then nothing is imported into it: its runtimes would read this Mate's key, and closing it off once they exist restarts them."
 
 // gateOverrideOnFailedHistory enforces docs/spec-workflows.md §8 "Recovery
 // classification" R1/R2: when override=true would REPLACE a service whose

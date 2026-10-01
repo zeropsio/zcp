@@ -6,6 +6,7 @@ package mate
 import (
 	"context"
 	"net/http"
+	"time"
 )
 
 // EnsureInstalled seam overrides — tests stub these so the download, npm
@@ -38,3 +39,7 @@ func SetResolveDesiredRelease(fn func(opts EnsureOptions) (Manifest, error)) {
 	resolveDesiredRelease = fn
 }
 func ResetResolveDesiredRelease() { resolveDesiredRelease = defaultResolveDesiredRelease }
+
+// SetHelpTimeout/ResetHelpTimeout bound the --base-path probe in tests.
+func SetHelpTimeout(d time.Duration) { helpTimeout = d }
+func ResetHelpTimeout()              { helpTimeout = defaultHelpTimeout }

@@ -4,6 +4,7 @@ package tools
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -243,5 +244,60 @@ func TestImportTool_WithWorkSession_Succeeds(t *testing.T) {
 	result := callTool(t, srv, "zerops_import", map[string]any{"content": "services:\n  - hostname: api\n    type: nodejs@20\n"})
 	if result.IsError {
 		t.Errorf("unexpected IsError with develop marker: %s", getTextContent(t, result))
+	}
+}
+
+// TestImportTool_RefusesAnOpenMate: in a Mate made by the new press (its zcp
+// carries MATE_SETUP_RUNTIMES) whose project is not closed off yet, runtimes
+// would read the zcp service's variables (the Mate's key among them), and
+// closing it off after they exist restarts them — so the import refuses,
+// naming what closes it. A Mate closed off, an older Mate (no plan), a
+// project that does not say, and a container that is no Mate import as
+// before.
+func TestImportTool_RefusesAnOpenMate(t *testing.T) {
+	t.Parallel()
+	tagged := &platform.Project{ID: "proj-1", Tags: []string{"mate", ops.ClosedOffTag}}
+	open := &platform.Project{ID: "proj-1", Tags: []string{"mate"}}
+	tests := []struct {
+		name    string
+		mate    bool
+		plan    bool
+		project *platform.Project // nil: the read fails
+		want    string            // what the refusal says; "" imports
+	}{
+		{"an open new-flow Mate", true, true, open, "not closed off yet; Finish setup"},
+		{"a new-flow Mate closed off", true, true, tagged, ""},
+		{"a new-flow Mate whose project cannot be read", true, true, nil, "Could not read the project"},
+		{"an open Mate made before the new press", true, false, open, ""},
+		{"an open project outside a Mate", false, true, open, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := platform.NewMock().
+				WithImportResult(&platform.ImportResult{ProjectID: "proj-1", ServiceStacks: []platform.ImportedServiceStack{{ID: "svc-1", Name: "api"}}})
+			if tt.project != nil {
+				mock.WithProject(tt.project)
+			} else {
+				mock.WithError("GetProject", errors.New("unauthorized"))
+			}
+			env := map[string]string{"PATH": "/usr/bin"}
+			if tt.plan {
+				env["MATE_SETUP_RUNTIMES"] = "c2VydmljZXM6IFtd"
+			}
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			registerImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{MateEnabled: tt.mate}, writeLiveEnvFile(t, env))
+			result := callTool(t, srv, "zerops_import", map[string]any{"content": "services:\n  - hostname: api\n    type: nodejs@20\n"})
+			text := getTextContent(t, result)
+			if tt.want == "" {
+				if result.IsError {
+					t.Errorf("refused: %s", text)
+				}
+				return
+			}
+			if !result.IsError || !strings.Contains(text, tt.want) {
+				t.Errorf("want a refusal saying %q, got: %s", tt.want, text)
+			}
+		})
 	}
 }
