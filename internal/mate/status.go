@@ -57,11 +57,12 @@ const (
 	ServiceFailed    = "failed"
 )
 
-// A running stand-up rewrites the file at least every StandupBeat, which
-// moves the top-level updatedAt. A stand-up section that says running in a
-// file whose updatedAt is older than StandupStale is stale: the process
-// running it died (the zcp MCP server under an agent can go down without a
-// restart of the Mate), and a reader takes it as failed.
+// A running stand-up rewrites its section at least every StandupBeat, which
+// moves standup.updatedAt. A stand-up section that says running with an
+// updatedAt older than StandupStale is stale: the process running it died
+// (the zcp MCP server under an agent can go down without a restart of the
+// Mate), and a reader takes it as failed. Each section carries its own
+// writer's clock; the top-level updatedAt moves with any write.
 const (
 	StandupBeat  = 15 * time.Second
 	StandupStale = 2 * time.Minute
@@ -100,7 +101,9 @@ type Status struct {
 
 // RuntimesStatus is the boot import's section.
 type RuntimesStatus struct {
-	State     string           `json:"state"`
+	State string `json:"state"`
+	// UpdatedAt is when the boot import last wrote this section.
+	UpdatedAt string           `json:"updatedAt"`
 	StartedAt string           `json:"startedAt"`
 	EndedAt   string           `json:"endedAt"`
 	Error     string           `json:"error"`
@@ -117,7 +120,10 @@ type RuntimeService struct {
 
 // StandupStatus is the stand-up's section.
 type StandupStatus struct {
-	State     string           `json:"state"`
+	State string `json:"state"`
+	// UpdatedAt is when the stand-up last wrote this section; a running
+	// section older than StandupStale is stale.
+	UpdatedAt string           `json:"updatedAt"`
 	Phase     string           `json:"phase"`
 	StartedAt string           `json:"startedAt"`
 	EndedAt   string           `json:"endedAt"`
@@ -212,6 +218,22 @@ func UpdateStatus(path string, change func(*Status)) error {
 		return fmt.Errorf("status file: rename onto %s: %w", path, err)
 	}
 	return nil
+}
+
+// UpdateRuntimes changes the boot import's section, moving its clock.
+func UpdateRuntimes(path string, change func(*RuntimesStatus)) error {
+	return UpdateStatus(path, func(s *Status) {
+		change(&s.Runtimes)
+		s.Runtimes.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	})
+}
+
+// UpdateStandup changes the stand-up's section, moving its clock.
+func UpdateStandup(path string, change func(*StandupStatus)) error {
+	return UpdateStatus(path, func(s *Status) {
+		change(&s.Standup)
+		s.Standup.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	})
 }
 
 // normalizeStatus stamps the schema and fills what no writer has set yet.

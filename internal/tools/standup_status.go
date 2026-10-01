@@ -44,7 +44,7 @@ func (s *standupStatus) update(change func(*mate.StandupStatus)) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := mate.UpdateStatus(s.path, func(st *mate.Status) { change(&st.Standup) }); err != nil {
+	if err := mate.UpdateStandup(s.path, change); err != nil {
 		fmt.Fprintf(os.Stderr, "zcp: stand-up status: %v\n", err)
 	}
 }

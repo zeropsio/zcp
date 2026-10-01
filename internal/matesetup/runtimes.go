@@ -102,13 +102,15 @@ func MarkLaunch(path string, planSet bool, now time.Time) error {
 		switch {
 		case settled:
 		case !planSet:
-			s.Runtimes = mate.RuntimesStatus{State: mate.RuntimesNone}
+			s.Runtimes = mate.RuntimesStatus{State: mate.RuntimesNone, UpdatedAt: stamp(now)}
 		case s.Runtimes.State != mate.RuntimesImporting:
 			s.Runtimes.State, s.Runtimes.Error, s.Runtimes.EndedAt = mate.RuntimesPending, "", ""
+			s.Runtimes.UpdatedAt = stamp(now)
 		}
 		if s.Standup.State == mate.StandupRunning {
 			s.Standup.State = mate.StandupFailed
 			s.Standup.EndedAt = stamp(now)
+			s.Standup.UpdatedAt = stamp(now)
 			s.Standup.Error = "the stand-up was stopped by a restart of the Mate's server"
 		}
 	}); err != nil {
@@ -496,7 +498,7 @@ func (im Importer) finish(hostnames []string, reason string, settles bool) {
 
 // write changes the runtimes section; a failed write is logged, never fatal.
 func (im Importer) write(change func(*mate.RuntimesStatus)) {
-	if err := mate.UpdateStatus(im.StatusPath, func(s *mate.Status) { change(&s.Runtimes) }); err != nil {
+	if err := mate.UpdateRuntimes(im.StatusPath, change); err != nil {
 		fmt.Fprintf(os.Stderr, "[zcp] mate setup: %v\n", err)
 	}
 }

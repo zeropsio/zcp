@@ -40,8 +40,8 @@ func TestUpdateStatus_WritesSchemaV1(t *testing.T) {
 		keys    []string
 		state   string
 	}{
-		{"runtimes", []string{"endedAt", "error", "services", "startedAt", "state"}, "none"},
-		{"standup", []string{"endedAt", "error", "phase", "services", "startedAt", "state"}, "idle"},
+		{"runtimes", []string{"endedAt", "error", "services", "startedAt", "state", "updatedAt"}, "none"},
+		{"standup", []string{"endedAt", "error", "phase", "services", "startedAt", "state", "updatedAt"}, "idle"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.section, func(t *testing.T) {
@@ -203,6 +203,52 @@ func TestStatusFilePath(t *testing.T) {
 			t.Setenv(mate.EnvStatusFile, tt.env)
 			if got := mate.StatusFilePath(); got != tt.want {
 				t.Errorf("StatusFilePath() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestUpdateSection_OneClockPerWriter: each section carries the time its own
+// writer last wrote it — the stand-up's is what tells a live stand-up from a
+// dead one — and a write of one section never moves the other's.
+func TestUpdateSection_OneClockPerWriter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "status.json")
+	if err := mate.UpdateRuntimes(path, func(r *mate.RuntimesStatus) { r.State = mate.RuntimesImporting }); err != nil {
+		t.Fatal(err)
+	}
+	if err := mate.UpdateStandup(path, func(s *mate.StandupStatus) { s.State = mate.StandupRunning }); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	if err := mate.UpdateStatus(path, func(s *mate.Status) { s.Runtimes.UpdatedAt, s.Standup.UpdatedAt = old, old }); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name        string
+		write       func() error
+		wantRuntime bool // runtimes.updatedAt moved
+		wantStandup bool
+	}{
+		{"the boot import writes", func() error { return mate.UpdateRuntimes(path, func(*mate.RuntimesStatus) {}) }, true, false},
+		{"the stand-up writes", func() error { return mate.UpdateStandup(path, func(*mate.StandupStatus) {}) }, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := mate.UpdateStatus(path, func(s *mate.Status) { s.Runtimes.UpdatedAt, s.Standup.UpdatedAt = old, old }); err != nil {
+				t.Fatal(err)
+			}
+			if err := tt.write(); err != nil {
+				t.Fatal(err)
+			}
+			st, err := mate.ReadStatus(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if moved := st.Runtimes.UpdatedAt != old; moved != tt.wantRuntime {
+				t.Errorf("runtimes.updatedAt moved = %v, want %v", moved, tt.wantRuntime)
+			}
+			if moved := st.Standup.UpdatedAt != old; moved != tt.wantStandup {
+				t.Errorf("standup.updatedAt moved = %v, want %v", moved, tt.wantStandup)
 			}
 		})
 	}
