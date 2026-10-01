@@ -200,12 +200,6 @@ func TestRun_ImportsWhatIsMissing_AndFollowsItToTheEnd(t *testing.T) {
 			existing: []string{"appdev", "appstage"}, wantImports: 0,
 			wantState: mate.RuntimesDone, wantDetail: "appdev=running,appstage=running",
 		},
-		{
-			name:      "a finished import is left as it ended",
-			existing:  []string{"appdev", "appstage"},
-			prior:     &mate.RuntimesStatus{State: mate.RuntimesFailed, Error: "appstage: earlier"},
-			wantState: mate.RuntimesFailed, wantDetail: "",
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -428,7 +422,6 @@ func TestMarkLaunch(t *testing.T) {
 	}{
 		{"no plan", nil, false, mate.RuntimesNone, mate.StandupIdle},
 		{"a plan, first boot", nil, true, mate.RuntimesPending, mate.StandupIdle},
-		{"a plan an earlier boot finished", &mate.Status{Runtimes: mate.RuntimesStatus{State: mate.RuntimesDone}}, true, mate.RuntimesDone, mate.StandupIdle},
 		{"a plan whose import a restart cut", &mate.Status{Runtimes: mate.RuntimesStatus{State: mate.RuntimesImporting}}, true, mate.RuntimesImporting, mate.StandupIdle},
 		{"a stand-up the restart stopped", &mate.Status{Standup: mate.StandupStatus{State: mate.StandupRunning}}, false, mate.RuntimesNone, mate.StandupFailed},
 		{"a finished stand-up", &mate.Status{Standup: mate.StandupStatus{State: mate.StandupDone}}, false, mate.RuntimesNone, mate.StandupDone},
@@ -574,5 +567,106 @@ func TestIsolationPoll(t *testing.T) {
 		if got := matesetup.IsolationPoll(tt.waited); got != tt.want {
 			t.Errorf("IsolationPoll(%s) = %s, want %s", tt.waited, got, tt.want)
 		}
+	}
+}
+
+// deleteService has the person delete a service from the project.
+func (f *fakeAPI) deleteService(host string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.services = slices.DeleteFunc(f.services, func(s platform.ServiceStack) bool { return s.Name == host })
+}
+
+// TestRun_ASettledImportIsNeverRepeated: once the boot import settled — done,
+// or refused by the platform — no later launch imports again, so a service
+// the person deleted stays deleted. Only an import a passing failure or the
+// timeout stopped runs again on the next launch.
+func TestRun_ASettledImportIsNeverRepeated(t *testing.T) {
+	transient := platform.NewPlatformError(platform.ErrNetworkError, "connection reset", "")
+	tests := []struct {
+		name         string
+		first        func(*fakeAPI)
+		between      func(*fakeAPI)
+		wantFirst    string
+		wantRelaunch string // the runtimes state the next launch's mark leaves
+		wantImports  int    // over both launches
+		wantFinal    string
+	}{
+		{
+			name:      "done, then the person deletes a service",
+			between:   func(f *fakeAPI) { f.deleteService("appstage") },
+			wantFirst: mate.RuntimesDone, wantRelaunch: mate.RuntimesDone, wantImports: 1, wantFinal: mate.RuntimesDone,
+		},
+		{
+			name:      "a service refused by the platform",
+			first:     func(f *fakeAPI) { f.refuse = map[string]string{"appstage": "service stack type not found"} },
+			between:   func(f *fakeAPI) { f.refuse = nil },
+			wantFirst: mate.RuntimesFailed, wantRelaunch: mate.RuntimesFailed, wantImports: 1, wantFinal: mate.RuntimesFailed,
+		},
+		{
+			name: "the whole import refused",
+			first: func(f *fakeAPI) {
+				f.importErr = []error{platform.NewPlatformError(platform.ErrAPIError, "invalid yaml", "")}
+			},
+			wantFirst: mate.RuntimesFailed, wantRelaunch: mate.RuntimesFailed, wantImports: 1, wantFinal: mate.RuntimesFailed,
+		},
+		{
+			name:      "a passing failure runs again",
+			first:     func(f *fakeAPI) { f.importErr = []error{transient, transient, transient} },
+			wantFirst: mate.RuntimesFailed, wantRelaunch: mate.RuntimesPending, wantImports: 4, wantFinal: mate.RuntimesDone,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "status.json")
+			api := newFake()
+			if tt.first != nil {
+				tt.first(api)
+			}
+			importer(api, path).Run(context.Background(), plan())
+			if got := readStatus(t, path).Runtimes.State; got != tt.wantFirst {
+				t.Fatalf("first launch = %s, want %s", got, tt.wantFirst)
+			}
+			if tt.between != nil {
+				tt.between(api)
+			}
+			if err := matesetup.MarkLaunch(path, true, t0); err != nil {
+				t.Fatal(err)
+			}
+			if got := readStatus(t, path).Runtimes.State; got != tt.wantRelaunch {
+				t.Errorf("after the next launch's mark = %s, want %s", got, tt.wantRelaunch)
+			}
+			importer(api, path).Run(context.Background(), plan())
+			if len(api.imports) != tt.wantImports {
+				t.Errorf("imports over both launches = %d, want %d", len(api.imports), tt.wantImports)
+			}
+			if got := readStatus(t, path).Runtimes.State; got != tt.wantFinal {
+				t.Errorf("after the next launch = %s, want %s", got, tt.wantFinal)
+			}
+		})
+	}
+}
+
+// TestRun_ATimedOutImportIsFollowedAgain: an import the 20-minute bound cut
+// is failed, and the next launch follows it again rather than leaving it so.
+func TestRun_ATimedOutImportIsFollowedAgain(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "status.json")
+	api := newFake()
+	api.runFor = 1 << 30
+	im := importer(api, path)
+	im.Timeout = 50 * time.Millisecond
+	im.Run(context.Background(), plan())
+	if got := readStatus(t, path).Runtimes; got.State != mate.RuntimesFailed || !strings.Contains(got.Error, "in flight") {
+		t.Fatalf("first launch = %s %q, want failed in flight", got.State, got.Error)
+	}
+	api.mu.Lock()
+	api.runFor = 0
+	api.mu.Unlock()
+	if err := matesetup.MarkLaunch(path, true, t0); err != nil {
+		t.Fatal(err)
+	}
+	importer(api, path).Run(context.Background(), plan())
+	if got := readStatus(t, path).Runtimes; got.State != mate.RuntimesDone || len(api.imports) != 1 {
+		t.Errorf("next launch = %s with %d imports, want done with the one import", got.State, len(api.imports))
 	}
 }

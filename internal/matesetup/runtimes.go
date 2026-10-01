@@ -89,19 +89,22 @@ const heartbeat = 30 * time.Second
 // not the platform's.
 const sinceSlack = time.Minute
 
-// MarkLaunch is the status a mate launch starts from. The runtimes section
-// goes to pending when a plan is set — unless an earlier boot already
-// finished with it — and to none when no plan is. A stand-up the file says
-// is running was stopped by this restart (the server and every agent under
-// it go down with the unit), so it is marked failed: nothing else ever would.
+// MarkLaunch is the status a mate launch starts from. A boot import that
+// settled (Settled) is left exactly as it ended: it never runs again. One a
+// passing failure or the timeout stopped goes back to pending, to run again;
+// so does a plan not run yet. No plan, and nothing settled, is none. A
+// stand-up the file says is running was stopped by this restart (the server
+// and every agent under it go down with the unit), so it is marked failed:
+// nothing else ever would.
 func MarkLaunch(path string, planSet bool, now time.Time) error {
+	settled := Settled(path)
 	if err := mate.UpdateStatus(path, func(s *mate.Status) {
-		terminal := s.Runtimes.State == mate.RuntimesDone || s.Runtimes.State == mate.RuntimesFailed
 		switch {
-		case !planSet && !terminal:
+		case settled:
+		case !planSet:
 			s.Runtimes = mate.RuntimesStatus{State: mate.RuntimesNone}
-		case planSet && s.Runtimes.State != mate.RuntimesImporting && !terminal:
-			s.Runtimes.State = mate.RuntimesPending
+		case s.Runtimes.State != mate.RuntimesImporting:
+			s.Runtimes.State, s.Runtimes.Error, s.Runtimes.EndedAt = mate.RuntimesPending, "", ""
 		}
 		if s.Standup.State == mate.StandupRunning {
 			s.Standup.State = mate.StandupFailed
@@ -112,6 +115,25 @@ func MarkLaunch(path string, planSet bool, now time.Time) error {
 		return fmt.Errorf("mark the launch in the status file: %w", err)
 	}
 	return nil
+}
+
+// settledPath is zcp's own record, beside the status file, that the boot
+// import settled — done, or refused by the platform — and must never run
+// again: a later launch with the plan still in the env would otherwise bring
+// back a service the person deleted. Under the home, it survives restarts.
+func settledPath(statusPath string) string { return statusPath + ".settled" }
+
+// Settled reports a boot import that settled for good.
+func Settled(statusPath string) bool {
+	_, err := os.Stat(settledPath(statusPath))
+	return err == nil
+}
+
+// settle records that the boot import settled; a failed write is logged.
+func (im Importer) settle(why string) {
+	if err := os.WriteFile(settledPath(im.StatusPath), []byte(stamp(im.Now())+" "+why+"\n"), 0o600); err != nil {
+		fmt.Fprintf(os.Stderr, "[zcp] mate setup: record the settled import: %v\n", err)
+	}
 }
 
 // DecodePlan reads MATE_SETUP_RUNTIMES: the hostnames it lists, in order, and
@@ -171,16 +193,19 @@ func decodeBase64(s string) ([]byte, error) {
 // later — so the wait has no end of its own.
 func (im Importer) Run(ctx context.Context, encoded string) {
 	im = im.withDefaults()
+	if Settled(im.StatusPath) {
+		return
+	}
 	hostnames, entries, err := DecodePlan(encoded)
 	if err != nil {
-		im.finish(nil, err.Error())
+		im.finish(nil, err.Error(), true)
 		return
 	}
 	prev, _ := mate.ReadStatus(im.StatusPath)
 
 	live, err := im.listWithin(ctx)
 	if err != nil {
-		im.finish(nil, fmt.Sprintf("could not read the project's services: %v", err))
+		im.finish(nil, fmt.Sprintf("could not read the project's services: %v", err), false)
 		return
 	}
 	missing := missingHosts(hostnames, live)
@@ -189,7 +214,7 @@ func (im Importer) Run(ctx context.Context, encoded string) {
 			return
 		}
 		if live, err = im.listWithin(ctx); err != nil {
-			im.finish(nil, fmt.Sprintf("could not read the project's services: %v", err))
+			im.finish(nil, fmt.Sprintf("could not read the project's services: %v", err), false)
 			return
 		}
 		missing = missingHosts(hostnames, live)
@@ -199,16 +224,11 @@ func (im Importer) Run(ctx context.Context, encoded string) {
 	defer cancel()
 
 	since := parseStamp(prev.Runtimes.StartedAt)
-	if len(missing) == 0 {
-		switch {
-		case prev.Runtimes.State == mate.RuntimesDone || prev.Runtimes.State == mate.RuntimesFailed:
-			return
-		case prev.Runtimes.State != mate.RuntimesImporting || since.IsZero():
-			// Every listed service was there at the first look: nothing to
-			// import, nothing of this boot's to follow.
-			im.finishWith(hostnames, live, nil, nil, im.Now())
-			return
-		}
+	if len(missing) == 0 && since.IsZero() {
+		// Every listed service was there at the first look: nothing to
+		// import, nothing of an earlier launch's to follow.
+		im.finishWith(hostnames, live, nil, nil, im.Now())
+		return
 	}
 
 	if since.IsZero() {
@@ -225,7 +245,7 @@ func (im Importer) Run(ctx context.Context, encoded string) {
 	if len(missing) > 0 {
 		result, err := im.importMissing(ctx, entries, hostnames, missing)
 		if err != nil {
-			im.finish(hostnames, fmt.Sprintf("the import was refused: %v", oneLine(err.Error())))
+			im.finish(hostnames, fmt.Sprintf("the import was refused: %v", oneLine(err.Error())), !retryable(err))
 			return
 		}
 		for _, ss := range result.ServiceStacks {
@@ -446,11 +466,15 @@ func (im Importer) finishWith(hostnames []string, live []platform.ServiceStack, 
 		r.EndedAt = stamp(now)
 		r.Services = services
 	})
+	im.settle(strings.Join(stateLine(services), ", "))
 	fmt.Fprintf(os.Stderr, "[zcp] mate setup: runtimes %s\n", strings.Join(stateLine(services), ", "))
 }
 
 // finish ends the run failed with reason, before anything could be followed.
-func (im Importer) finish(hostnames []string, reason string) {
+func (im Importer) finish(hostnames []string, reason string, settles bool) {
+	if settles {
+		im.settle("failed: " + oneLine(reason))
+	}
 	now := im.Now()
 	im.write(func(r *mate.RuntimesStatus) {
 		r.State = mate.RuntimesFailed
@@ -630,15 +654,15 @@ func Boot(ctx context.Context, statusPath string, lookup func(string) string) {
 	token := lookup("ZCP_API_KEY")
 	switch {
 	case token == "":
-		im.finish(nil, "ZCP_API_KEY is not on this service, so the runtimes cannot be imported with the Mate's key")
+		im.finish(nil, "ZCP_API_KEY is not on this service, so the runtimes cannot be imported with the Mate's key", false)
 		return
 	case im.ProjectID == "":
-		im.finish(nil, "projectId is not in this container's environment")
+		im.finish(nil, "projectId is not in this container's environment", false)
 		return
 	}
 	client, err := platform.NewZeropsClient(token, mate.ResolveAPIHost(lookup("ZCP_API_HOST")))
 	if err != nil {
-		im.finish(nil, fmt.Sprintf("could not build the API client: %v", err))
+		im.finish(nil, fmt.Sprintf("could not build the API client: %v", err), false)
 		return
 	}
 	im.API = client
