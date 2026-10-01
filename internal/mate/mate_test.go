@@ -167,23 +167,26 @@ func TestBasePathSupport(t *testing.T) {
 	silent := writeFakeBin(t, filepath.Join(dir, "without"), "#!/bin/sh\necho '  --base-dir   Data directory'\n")
 	broken := writeFakeBin(t, filepath.Join(dir, "broken"), "#!/bin/sh\nexit 1\n")
 	slow := writeFakeBin(t, filepath.Join(dir, "slow"), "#!/bin/sh\nsleep 5\necho '  --base-path   Public path prefix'\n")
-	mate.SetHelpTimeout(300 * time.Millisecond)
-	t.Cleanup(mate.ResetHelpTimeout)
 
 	tests := []struct {
 		name        string
 		bin         string
+		timeout     time.Duration // 0 = the default
 		want        bool
 		wantUnknown bool
 	}{
-		{"help advertises the flag", advertises, true, false},
-		{"help does not advertise it", silent, false, false},
-		{"binary fails", broken, false, true},
-		{"binary does not exist", filepath.Join(dir, "absent"), false, true},
-		{"help runs past the timeout", slow, false, true},
+		{"help advertises the flag", advertises, 0, true, false},
+		{"help does not advertise it", silent, 0, false, false},
+		{"binary fails", broken, 0, false, true},
+		{"binary does not exist", filepath.Join(dir, "absent"), 0, false, true},
+		{"help runs past the timeout", slow, 300 * time.Millisecond, false, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.timeout > 0 {
+				mate.SetHelpTimeout(tt.timeout)
+				t.Cleanup(mate.ResetHelpTimeout)
+			}
 			got, err := mate.BasePathSupport(tt.bin)
 			if got != tt.want || (err != nil) != tt.wantUnknown {
 				t.Errorf("BasePathSupport(%s) = %v, %v; want %v, unknown=%v", tt.name, got, err, tt.want, tt.wantUnknown)
