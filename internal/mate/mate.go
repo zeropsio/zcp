@@ -717,9 +717,13 @@ const EnvBasePath = "T3CODE_BASE_PATH"
 
 // LaunchEnvLines is what a mate launch adds to the server's environment on
 // top of the live env store and the identity contract: its public prefix,
-// whatever the --base-path probe answered.
+// whatever the --base-path probe answered, and the status file it reads a
+// new Mate's setup from (status.go).
 func LaunchEnvLines() []string {
-	return []string{EnvBasePath + "=" + BasePath}
+	return []string{
+		EnvBasePath + "=" + BasePath,
+		EnvStatusFile + "=" + DefaultStatusFilePath(),
+	}
 }
 
 // allowedOriginPattern matches one entry of ZCP_MATE_ALLOWED_ORIGINS: scheme,
