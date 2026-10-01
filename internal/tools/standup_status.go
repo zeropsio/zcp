@@ -279,7 +279,8 @@ func (d standupDeps) awaitBootImport(ctx context.Context, progress *standupProgr
 		r := st.Runtimes
 		// A pending section that says why it is pending (it waits for the
 		// project to be closed off, or cannot read it) is not about to import.
-		inFlight := (r.State == mate.RuntimesPending && r.Error == "") || r.State == mate.RuntimesImporting
+		startingAfterTag := d.closedOffSeen && r.Error == mate.RuntimesWaitingClosedOff
+		inFlight := (r.State == mate.RuntimesPending && (r.Error == "" || startingAfterTag)) || r.State == mate.RuntimesImporting
 		if !inFlight || !time.Now().Before(deadline) {
 			failed := map[string]string{}
 			for _, s := range r.Services {

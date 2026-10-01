@@ -1470,3 +1470,40 @@ func TestStandup_AnImportWaitingToBeClosedOffAnswersAtOnce(t *testing.T) {
 		t.Error("nothing is touched while the project is not closed off")
 	}
 }
+
+// TestStandup_TheTagLandedWhileTheImportStillSaysWaiting: the container's
+// import looks for the closed-off tag once a minute at most, so its last line
+// can still say it waits after the press has tagged the project. The
+// stand-up reads the tag itself: tagged, it says the import is starting and
+// waits for it as for an import in flight, then stands the project up.
+func TestStandup_TheTagLandedWhileTheImportStillSaysWaiting(t *testing.T) {
+	t.Parallel()
+	f := newStandupFixture(t)
+	f.env["MATE_SETUP_RUNTIMES"] = "c2VydmljZXM6IFtd"
+	f.mock.WithProject(&platform.Project{ID: "p1", Tags: []string{"mate", ops.ClosedOffTag}})
+	if err := mate.UpdateRuntimes(f.statusPath, func(r *mate.RuntimesStatus) {
+		r.State, r.Error = mate.RuntimesPending, mate.RuntimesWaitingClosedOff
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.importing = &importingClient{Mock: f.mock, stages: [][]platform.ServiceStack{f.services}}
+	var finishedAt time.Time
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		time.Sleep(80 * time.Millisecond)
+		finishedAt = time.Now()
+		_ = mate.UpdateRuntimes(f.statusPath, func(r *mate.RuntimesStatus) { r.State, r.Error = mate.RuntimesDone, "" })
+	}()
+	result, body := f.run(t)
+	<-finished
+	if result.IsError || body.StandUp != standupDevelopment {
+		t.Fatalf("stand-up = %s", getTextContent(t, result))
+	}
+	f.importing.mu.Lock()
+	firstRead := f.importing.firstRead
+	f.importing.mu.Unlock()
+	if firstRead.Before(finishedAt) {
+		t.Error("the stand-up read the project before the import it found starting had finished")
+	}
+}
