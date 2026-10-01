@@ -35,9 +35,9 @@ type API interface {
 	GetProjectProcessesDirect(ctx context.Context, projectID string) ([]platform.Process, error)
 	GetProcess(ctx context.Context, processID string) (*platform.Process, error)
 	ImportServices(ctx context.Context, projectID, yamlContent string) (*platform.ImportResult, error)
-	// GetProjectEnv reads the project's variables, envIsolation among them
-	// (a SYSTEM variable; GET /project/{id} does not carry it).
-	GetProjectEnv(ctx context.Context, projectID string) ([]platform.ProjectEnvVar, error)
+	// GetProject reads the project, its tags among them (the closed-off tag,
+	// ops.ClosedOffTag).
+	GetProject(ctx context.Context, projectID string) (*platform.Project, error)
 }
 
 // Importer imports the plan's missing services and tracks them to the end.
@@ -186,13 +186,14 @@ func decodeBase64(s string) ([]byte, error) {
 // is never imported again, and an import a restart interrupted is followed
 // from where the file left it.
 //
-// Nothing is imported into a project that is not closed off (envIsolation
-// "service"): runtimes run code, and with isolation off they read the zcp
-// service's variables, the Mate's key among them; closing the project off
-// after they exist restarts them. The press closes it off once the
-// container recipe's own project-env write (which resets it) has landed; a
-// press whose tab closed first leaves that to "Finish setup", however much
-// later — so the wait has no end of its own.
+// Nothing is imported into a project that is not closed off: runtimes run
+// code, and with env isolation off they read the zcp service's variables,
+// the Mate's key among them; closing the project off after they exist
+// restarts them. The press closes it off once the container recipe's own
+// project-env write (which resets it) has landed, reads it back, and tags
+// the project ops.ClosedOffTag; a press whose tab closed first leaves that
+// to "Finish setup", however much later — so the wait for the tag has no
+// end of its own.
 func (im Importer) Run(ctx context.Context, encoded string) {
 	im = im.withDefaults()
 	if Settled(im.StatusPath) {
@@ -299,7 +300,7 @@ func (im Importer) awaitClosedOff(ctx context.Context) bool {
 	start := time.Now()
 	said := false
 	for {
-		if mode, err := ops.ReadProjectIsolation(ctx, im.API, im.ProjectID); err == nil && mode == ops.IsolationService {
+		if closed, err := ops.ReadProjectClosedOff(ctx, im.API, im.ProjectID); err == nil && closed {
 			return true
 		}
 		if !said {

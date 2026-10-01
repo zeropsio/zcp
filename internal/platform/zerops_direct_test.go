@@ -182,3 +182,30 @@ func TestGetProcess_NotFound_IsAPlatformError(t *testing.T) {
 		t.Fatal("GetProcess on a 404 returned no error")
 	}
 }
+
+// TestGetProject_CarriesTags: the project read carries its tags — the press
+// writes mate:closed-off there once it has closed the project off, and a
+// Mate reads it with its own key.
+func TestGetProject_CarriesTags(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/rest/public/project/proj-1" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"proj-1","clientId":"c1","name":"probe","status":"ACTIVE","mode":"LIGHT","tagList":["mate","mate:closed-off"],"primaryInstanceLocation":{"id":"eu-central"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	z, err := NewZeropsClient("fake-token", srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := z.GetProject(context.Background(), "proj-1")
+	if err != nil {
+		t.Fatalf("GetProject: %v", err)
+	}
+	if len(p.Tags) != 2 || p.Tags[1] != "mate:closed-off" {
+		t.Errorf("Tags = %q, want [mate mate:closed-off]", p.Tags)
+	}
+}

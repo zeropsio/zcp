@@ -21,6 +21,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/mate"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -1409,15 +1410,15 @@ func TestStandupStatus_BeatsWhileRunning(t *testing.T) {
 func TestStandup_NeverAsksForAnImportIntoAnOpenProject(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name      string
-		isolation string
-		plan      bool
-		want      string
-		wantNot   string
+		name    string
+		tags    []string
+		plan    bool
+		want    string
+		wantNot string
 	}{
-		{"open", "none", true, "Finish setup", "zerops_import"},
-		{"closed off", "service", true, "zerops_import", "Finish setup"},
-		{"open, a Mate made before the new press", "none", false, "zerops_import", "Finish setup"},
+		{"open", []string{"mate"}, true, "Finish setup", "zerops_import"},
+		{"closed off", []string{"mate", ops.ClosedOffTag}, true, "zerops_import", "Finish setup"},
+		{"open, a Mate made before the new press", []string{"mate"}, false, "zerops_import", "Finish setup"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1426,7 +1427,7 @@ func TestStandup_NeverAsksForAnImportIntoAnOpenProject(t *testing.T) {
 			if tt.plan {
 				f.env["MATE_SETUP_RUNTIMES"] = "c2VydmljZXM6IFtd"
 			}
-			f.mock.WithProjectEnv([]platform.ProjectEnvVar{{Key: "envIsolation", Content: tt.isolation, Type: platform.ProjectEnvSystem}})
+			f.mock.WithProject(&platform.Project{ID: "p1", Tags: tt.tags})
 			f.mock.WithServices(withoutService(f.services, "nextstorestage"))
 			result, body := f.run(t)
 			if result.IsError {

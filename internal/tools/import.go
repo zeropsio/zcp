@@ -126,19 +126,24 @@ func registerImport(srv *mcp.Server, client platform.Client, projectID string, e
 }
 
 // refuseOpenMate refuses an import into a Mate's project that is not closed
-// off yet (envIsolation other than "service"): its runtimes would read the
-// zcp service's variables, the Mate's own key among them, and closing it off
-// after they exist restarts them. The person's press closes it off; a press
-// whose tab closed first leaves it to Finish setup. Only a Mate the new press
-// made — its zcp carries MATE_SETUP_RUNTIMES in the live env store (an older
-// Mate behaves as before) — and only a project that says it is open: one
-// whose variables cannot be read, or do not carry the mode, imports as before.
+// off yet: its runtimes would read the zcp service's variables, the Mate's
+// own key among them, and closing it off after they exist restarts them. The
+// person's press closes it off and then tags the project ops.ClosedOffTag; a
+// press whose tab closed first leaves it to Finish setup. Only a Mate the new
+// press made — its zcp carries MATE_SETUP_RUNTIMES in the live env store; an
+// older Mate behaves as before. A project that cannot be read is refused
+// too, saying so: whether it is closed off is not known.
 func refuseOpenMate(ctx context.Context, client platform.Client, projectID string, rt runtime.Info, liveEnvPath string) *mcp.CallToolResult {
 	if !newFlowMate(rt, liveEnvPath) {
 		return nil
 	}
-	mode, err := ops.ReadProjectIsolation(ctx, client, projectID)
-	if err != nil || mode == "" || mode == ops.IsolationService {
+	closed, err := ops.ReadProjectClosedOff(ctx, client, projectID)
+	switch {
+	case err != nil:
+		return convertError(platform.NewPlatformError(platform.ErrAPIError,
+			fmt.Sprintf("Could not read the project (%v), so whether it is closed off is not known; nothing was imported.", err),
+			"Retry the import; if it persists, check the API with zerops_discover."))
+	case closed:
 		return nil
 	}
 	return convertError(platform.NewPlatformError(platform.ErrPrerequisiteMissing,

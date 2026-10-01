@@ -13,6 +13,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/matesetup"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -47,9 +48,10 @@ type fakeAPI struct {
 	refuse map[string]string
 	// failProcess names services whose create process ends FAILED.
 	failProcess map[string]string
-	// isolation is envIsolation as each read answers it, the last one
-	// staying; empty is "service". isolationReads counts the reads, and
-	// readsAtImport is that count when the first import was sent.
+	// isolation is the project as each read answers it — "tagged" with the
+	// closed-off tag, "open" without, "<error>" — the last one staying;
+	// empty is "tagged". isolationReads counts the reads, and readsAtImport
+	// is that count when the first import was sent.
 	isolation      []string
 	isolationReads int
 	readsAtImport  int
@@ -61,18 +63,21 @@ type fakeAPI struct {
 	takenWhole error
 }
 
-func (f *fakeAPI) GetProjectEnv(context.Context, string) ([]platform.ProjectEnvVar, error) {
+func (f *fakeAPI) GetProject(_ context.Context, id string) (*platform.Project, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	value := "service"
+	value := "tagged"
 	if len(f.isolation) > 0 {
 		value = f.isolation[min(f.isolationReads, len(f.isolation)-1)]
 	}
 	f.isolationReads++
-	if value == "<error>" {
-		return nil, errors.New("project env read failed")
+	switch value {
+	case "<error>":
+		return nil, errors.New("project read failed")
+	case "tagged":
+		return &platform.Project{ID: id, Tags: []string{"mate", ops.ClosedOffTag}}, nil
 	}
-	return []platform.ProjectEnvVar{{Key: "zeropsSubdomainHost", Content: "x"}, {Key: "envIsolation", Content: value, Type: platform.ProjectEnvSystem}}, nil
+	return &platform.Project{ID: id, Tags: []string{"mate"}}, nil
 }
 
 func (f *fakeAPI) ListServicesDirect(context.Context, string) ([]platform.ServiceStack, error) {
@@ -508,10 +513,9 @@ func TestRun_ImportsOnlyIntoAProjectClosedOff(t *testing.T) {
 		wantReadsMin int
 		wantState    string
 	}{
-		{"closed off from the start", nil, []string{"service"}, 1, 1, mate.RuntimesDone},
-		{"closed off after a while", nil, []string{"none", "none", "<error>", "none", "service"}, 1, 5, mate.RuntimesDone},
-		{"closed off with a per-service override", nil, []string{"service service@zcp"}, 1, 1, mate.RuntimesDone},
-		{"nothing missing never waits", []string{"appdev", "appstage"}, []string{"none"}, 0, 0, mate.RuntimesDone},
+		{"closed off from the start", nil, []string{"tagged"}, 1, 1, mate.RuntimesDone},
+		{"closed off after a while", nil, []string{"open", "open", "<error>", "open", "tagged"}, 1, 5, mate.RuntimesDone},
+		{"nothing missing never waits", []string{"appdev", "appstage"}, []string{"open"}, 0, 0, mate.RuntimesDone},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -541,7 +545,7 @@ func TestRun_ImportsOnlyIntoAProjectClosedOff(t *testing.T) {
 func TestRun_WaitingToBeClosedOff_SaysSo(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "status.json")
 	api := newFake()
-	api.isolation = []string{"none"}
+	api.isolation = []string{"open"}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {

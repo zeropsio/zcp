@@ -489,9 +489,9 @@ func (d standupDeps) settle(ctx context.Context, tier workflow.MateTier, live ma
 // without startWithoutCode is not. A missing half is the browser's import
 // refused or not finished; the model imports it from the tier with zcp's own
 // import, shaped the way the browser imports it.
-// projectOpen reports, when a half is missing, a project that says it is not
-// closed off yet: nothing may be imported into it (refuseOpenMate), so the
-// stand-up never asks the model to.
+// projectOpen reports, when a half is missing in a Mate the new press made,
+// a project not tagged closed off yet: nothing may be imported into it
+// (refuseOpenMate), so the stand-up never asks the model to.
 func (d standupDeps) projectOpen(ctx context.Context, tier workflow.MateTier, live map[string]*platform.ServiceStack) bool {
 	missing := false
 	for _, p := range tier.Pairs {
@@ -502,8 +502,12 @@ func (d standupDeps) projectOpen(ctx context.Context, tier workflow.MateTier, li
 	if !missing || !newFlowMate(d.batch.rtInfo, d.liveEnvPath) {
 		return false
 	}
-	mode, err := ops.ReadProjectIsolation(ctx, d.batch.client, d.batch.projectID)
-	return err == nil && mode != "" && mode != ops.IsolationService
+	closed, err := ops.ReadProjectClosedOff(ctx, d.batch.client, d.batch.projectID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zcp: stand-up: %v\n", err)
+		return false
+	}
+	return !closed
 }
 
 func (d standupDeps) presentAndRunning(sp *standupPair, src standupSource, bootFailed map[string]string, open bool) bool {
