@@ -47,6 +47,26 @@ type fakeAPI struct {
 	refuse map[string]string
 	// failProcess names services whose create process ends FAILED.
 	failProcess map[string]string
+	// isolation is envIsolation as each read answers it, the last one
+	// staying; empty is "service". isolationReads counts the reads, and
+	// readsAtImport is that count when the first import was sent.
+	isolation      []string
+	isolationReads int
+	readsAtImport  int
+}
+
+func (f *fakeAPI) GetProjectEnv(context.Context, string) ([]platform.ProjectEnvVar, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	value := "service"
+	if len(f.isolation) > 0 {
+		value = f.isolation[min(f.isolationReads, len(f.isolation)-1)]
+	}
+	f.isolationReads++
+	if value == "<error>" {
+		return nil, errors.New("project env read failed")
+	}
+	return []platform.ProjectEnvVar{{Key: "zeropsSubdomainHost", Content: "x"}, {Key: "envIsolation", Content: value, Type: platform.ProjectEnvSystem}}, nil
 }
 
 func (f *fakeAPI) ListServicesDirect(context.Context, string) ([]platform.ServiceStack, error) {
@@ -86,6 +106,9 @@ func (f *fakeAPI) GetProcess(_ context.Context, id string) (*platform.Process, e
 func (f *fakeAPI) ImportServices(_ context.Context, _ string, body string) (*platform.ImportResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if len(f.imports) == 0 {
+		f.readsAtImport = f.isolationReads
+	}
 	f.imports = append(f.imports, body)
 	var failWith error
 	if len(f.importErr) > 0 {
@@ -123,8 +146,9 @@ func importer(api matesetup.API, path string) matesetup.Importer {
 	return matesetup.Importer{
 		API: api, ProjectID: "proj", StatusPath: path,
 		Poll: time.Millisecond, Timeout: 5 * time.Second,
-		Backoff: []time.Duration{time.Millisecond, time.Millisecond},
-		Now:     func() time.Time { return t0.Add(time.Second) },
+		Backoff:       []time.Duration{time.Millisecond, time.Millisecond},
+		IsolationPoll: func(time.Duration) time.Duration { return time.Millisecond },
+		Now:           func() time.Time { return t0.Add(time.Second) },
 	}
 }
 
@@ -456,5 +480,99 @@ func TestBoot_WithoutWhatItActsWith(t *testing.T) {
 				t.Errorf("runtimes = %s %q, want failed carrying %q", got.Runtimes.State, got.Runtimes.Error, tt.wantError)
 			}
 		})
+	}
+}
+
+// TestRun_ImportsOnlyIntoAProjectClosedOff: runtimes run code, and in a
+// project whose env isolation is off they read the zcp service's variables —
+// the Mate's key among them — while closing it off after they exist restarts
+// them. So nothing is imported until the project reads closed off; the wait
+// says so in the status and has no end of its own (a later "Finish setup"
+// closes it). A plan with nothing missing never waits.
+func TestRun_ImportsOnlyIntoAProjectClosedOff(t *testing.T) {
+	tests := []struct {
+		name         string
+		existing     []string
+		isolation    []string
+		wantImports  int
+		wantReadsMin int
+		wantState    string
+	}{
+		{"closed off from the start", nil, []string{"service"}, 1, 1, mate.RuntimesDone},
+		{"closed off after a while", nil, []string{"none", "none", "<error>", "none", "service"}, 1, 5, mate.RuntimesDone},
+		{"closed off with a per-service override", nil, []string{"service service@zcp"}, 1, 1, mate.RuntimesDone},
+		{"nothing missing never waits", []string{"appdev", "appstage"}, []string{"none"}, 0, 0, mate.RuntimesDone},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "status.json")
+			api := newFake()
+			api.isolation = tt.isolation
+			for _, h := range tt.existing {
+				api.services = append(api.services, platform.ServiceStack{ID: "id-" + h, Name: h, Status: "ACTIVE"})
+			}
+			importer(api, path).Run(context.Background(), plan())
+			if len(api.imports) != tt.wantImports {
+				t.Fatalf("imports = %d, want %d", len(api.imports), tt.wantImports)
+			}
+			if tt.wantImports > 0 && api.readsAtImport < tt.wantReadsMin {
+				t.Errorf("imported after %d isolation reads, want only after the read that found it closed off (%d)", api.readsAtImport, tt.wantReadsMin)
+			}
+			if got := readStatus(t, path).Runtimes; got.State != tt.wantState {
+				t.Errorf("state = %s (%q), want %s", got.State, got.Error, tt.wantState)
+			}
+		})
+	}
+}
+
+// TestRun_WaitingToBeClosedOff_SaysSo: while the project is open, the
+// runtimes section is pending with the reason, and nothing is imported —
+// however long it stays open.
+func TestRun_WaitingToBeClosedOff_SaysSo(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "status.json")
+	api := newFake()
+	api.isolation = []string{"none"}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		importer(api, path).Run(ctx, plan())
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	var got mate.RuntimesStatus
+	for time.Now().Before(deadline) {
+		if st, err := mate.ReadStatus(path); err == nil && st.Runtimes.Error != "" {
+			got = st.Runtimes
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+	if got.State != mate.RuntimesPending || !strings.Contains(got.Error, "closed off") {
+		t.Errorf("while open: %s %q, want pending saying it waits to be closed off", got.State, got.Error)
+	}
+	if len(api.imports) != 0 {
+		t.Errorf("imported %d times into a project that never closed off", len(api.imports))
+	}
+}
+
+// TestIsolationPoll: a look every 10 s for the first half hour, then every
+// minute, for as long as it takes.
+func TestIsolationPoll(t *testing.T) {
+	tests := []struct {
+		waited time.Duration
+		want   time.Duration
+	}{
+		{0, 10 * time.Second},
+		{29 * time.Minute, 10 * time.Second},
+		{30 * time.Minute, time.Minute},
+		{48 * time.Hour, time.Minute},
+	}
+	for _, tt := range tests {
+		if got := matesetup.IsolationPoll(tt.waited); got != tt.want {
+			t.Errorf("IsolationPoll(%s) = %s, want %s", tt.waited, got, tt.want)
+		}
 	}
 }

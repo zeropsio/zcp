@@ -35,6 +35,9 @@ type API interface {
 	GetProjectProcessesDirect(ctx context.Context, projectID string) ([]platform.Process, error)
 	GetProcess(ctx context.Context, processID string) (*platform.Process, error)
 	ImportServices(ctx context.Context, projectID, yamlContent string) (*platform.ImportResult, error)
+	// GetProjectEnv reads the project's variables, envIsolation among them
+	// (a SYSTEM variable; GET /project/{id} does not carry it).
+	GetProjectEnv(ctx context.Context, projectID string) ([]platform.ProjectEnvVar, error)
 }
 
 // Importer imports the plan's missing services and tracks them to the end.
@@ -51,7 +54,23 @@ type Importer struct {
 	Backoff []time.Duration
 	// Now is the clock; tests fix it.
 	Now func() time.Time
+	// IsolationPoll is the wait before the next look at a project not yet
+	// closed off, by how long it has been waited for (default IsolationPoll).
+	IsolationPoll func(waited time.Duration) time.Duration
 }
+
+// IsolationPoll looks every 10 s for the first half hour — the press closes
+// the project off within about 90 s of the container's import — then every
+// minute, for as long as it takes: a later "Finish setup" closes it.
+func IsolationPoll(waited time.Duration) time.Duration {
+	if waited < 30*time.Minute {
+		return 10 * time.Second
+	}
+	return time.Minute
+}
+
+// waitingClosedOff is the runtimes section's line while the import waits.
+const waitingClosedOff = "waiting for the project to be closed off"
 
 // Defaults for a production Importer.
 const (
@@ -142,11 +161,16 @@ func decodeBase64(s string) ([]byte, error) {
 // missing by looking, so a restart repeats nothing: a service already there
 // is never imported again, and an import a restart interrupted is followed
 // from where the file left it.
+//
+// Nothing is imported into a project that is not closed off (envIsolation
+// "service"): runtimes run code, and with isolation off they read the zcp
+// service's variables, the Mate's key among them; closing the project off
+// after they exist restarts them. The press closes it off once the
+// container recipe's own project-env write (which resets it) has landed; a
+// press whose tab closed first leaves that to "Finish setup", however much
+// later — so the wait has no end of its own.
 func (im Importer) Run(ctx context.Context, encoded string) {
 	im = im.withDefaults()
-	ctx, cancel := context.WithTimeout(ctx, im.Timeout)
-	defer cancel()
-
 	hostnames, entries, err := DecodePlan(encoded)
 	if err != nil {
 		im.finish(nil, err.Error())
@@ -154,12 +178,25 @@ func (im Importer) Run(ctx context.Context, encoded string) {
 	}
 	prev, _ := mate.ReadStatus(im.StatusPath)
 
-	live, err := im.listUntil(ctx)
+	live, err := im.listWithin(ctx)
 	if err != nil {
 		im.finish(nil, fmt.Sprintf("could not read the project's services: %v", err))
 		return
 	}
 	missing := missingHosts(hostnames, live)
+	if len(missing) > 0 {
+		if !im.awaitClosedOff(ctx) {
+			return
+		}
+		if live, err = im.listWithin(ctx); err != nil {
+			im.finish(nil, fmt.Sprintf("could not read the project's services: %v", err))
+			return
+		}
+		missing = missingHosts(hostnames, live)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, im.Timeout)
+	defer cancel()
 
 	since := parseStamp(prev.Runtimes.StartedAt)
 	if len(missing) == 0 {
@@ -216,7 +253,55 @@ func (im Importer) withDefaults() Importer {
 	if im.Now == nil {
 		im.Now = time.Now
 	}
+	if im.IsolationPoll == nil {
+		im.IsolationPoll = IsolationPoll
+	}
 	return im
+}
+
+// listWithin is listUntil bounded by Timeout.
+func (im Importer) listWithin(ctx context.Context) ([]platform.ServiceStack, error) {
+	ctx, cancel := context.WithTimeout(ctx, im.Timeout)
+	defer cancel()
+	return im.listUntil(ctx)
+}
+
+// awaitClosedOff waits until the project reads closed off, with the runtimes
+// section pending and saying why; false when the context ended first. A
+// failed read is one more look, not an answer.
+func (im Importer) awaitClosedOff(ctx context.Context) bool {
+	start := time.Now()
+	said := false
+	for {
+		if envs, err := im.API.GetProjectEnv(ctx, im.ProjectID); err == nil && closedOff(envs) {
+			return true
+		}
+		if !said {
+			im.write(func(r *mate.RuntimesStatus) {
+				r.State, r.Error = mate.RuntimesPending, waitingClosedOff
+			})
+			fmt.Fprintf(os.Stderr, "[zcp] mate setup: %s\n", waitingClosedOff)
+			said = true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(im.IsolationPoll(time.Since(start))):
+		}
+	}
+}
+
+// closedOff reports a project whose envIsolation is "service" — the
+// platform may follow it with per-service exceptions ("service
+// service@zcp"), which keep the project closed off.
+func closedOff(envs []platform.ProjectEnvVar) bool {
+	for _, e := range envs {
+		if e.Key == "envIsolation" {
+			fields := strings.Fields(e.Content)
+			return len(fields) > 0 && fields[0] == "service"
+		}
+	}
+	return false
 }
 
 // listUntil reads the project's services, retrying a failed read each poll
