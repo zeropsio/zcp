@@ -20,6 +20,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -378,6 +379,8 @@ type standupFixture struct {
 	importing *importingClient
 	// building, when set, is the platform with a stage build still running.
 	building *buildingClient
+	// statusPath is the setup status file the stand-up writes its section of.
+	statusPath string
 }
 
 // importingClient is the platform while the browser's runtime import is still
@@ -412,6 +415,7 @@ func newStandupFixture(t *testing.T) *standupFixture {
 	f.gitea.tier = strings.ReplaceAll(standupTierTemplate, "GITEA", f.srv.URL)
 	f.root = t.TempDir()
 	f.stateDir = filepath.Join(f.root, ".zcp", "state")
+	f.statusPath = filepath.Join(f.root, "mate-status.json")
 	f.mounter = &standupMounter{}
 	f.env = map[string]string{"GITEA_URL": f.srv.URL, "MATE_BROKER_URL": f.srv.URL, "GITEA_TOKEN": giteaBotToken}
 	// The branch cut puts main's files in each dev half; the mount shows them.
@@ -475,6 +479,10 @@ func (f *standupFixture) run(t *testing.T) (*mcp.CallToolResult, standupResponse
 		gitPoll:     10 * time.Millisecond,
 		runtimeWait: 200 * time.Millisecond,
 		runtimePoll: 5 * time.Millisecond,
+		statusPath:  f.statusPath,
+		bootWait:    2 * time.Second,
+		bootPoll:    5 * time.Millisecond,
+		trackPoll:   5 * time.Millisecond,
 	})
 	result := callTool(t, srv, "zerops_standup", map[string]any{})
 	var body standupResponse
@@ -1126,5 +1134,231 @@ func TestStandup_ReturnsOnceDevelopmentIsUp(t *testing.T) {
 				t.Error("the build still in flight was not waited for")
 			}
 		})
+	}
+}
+
+// standupSection reads the stand-up's section of the status file as
+// "host=step/state" per service, sorted.
+func (f *standupFixture) standupSection(t *testing.T) (mate.StandupStatus, []string) {
+	t.Helper()
+	st, err := mate.ReadStatus(f.statusPath)
+	if err != nil {
+		t.Fatalf("read the status file: %v", err)
+	}
+	rows := make([]string, 0, len(st.Standup.Services))
+	for _, e := range st.Standup.Services {
+		rows = append(rows, e.Hostname+"="+e.Step+"/"+e.State)
+	}
+	slices.Sort(rows)
+	return st.Standup, rows
+}
+
+// TestStandup_WritesItsProgressForTheRunCard: each call writes the stand-up
+// section of the status file the mate server relays to the run card — the
+// phase, every half it touches with its step and state, and how the call
+// ended with what failed.
+func TestStandup_WritesItsProgressForTheRunCard(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		setup     func(f *standupFixture)
+		calls     int
+		wantState string
+		wantPhase string
+		wantRows  []string
+		wantError string
+	}{
+		{
+			name:      "the first call deploys development, the stages wait",
+			calls:     1,
+			wantState: mate.StandupDone, wantPhase: mate.PhaseDevelopment,
+			wantRows: []string{"medusadev=verify/done", "medusastage=build/pending", "nextstoredev=verify/done", "nextstorestage=build/pending"},
+		},
+		{
+			name:      "the second call deploys the stages",
+			calls:     2,
+			wantState: mate.StandupDone, wantPhase: mate.PhaseStage,
+			wantRows: []string{"medusadev=verify/done", "medusastage=verify/done", "nextstoredev=verify/done", "nextstorestage=verify/done"},
+		},
+		{
+			name:      "a failed build fails its half and the call",
+			setup:     func(f *standupFixture) { f.failBuild("svc-medusadev") },
+			calls:     1,
+			wantState: mate.StandupFailed, wantPhase: mate.PhaseDevelopment,
+			wantRows:  []string{"medusadev=build/failed", "medusastage=build/failed", "nextstoredev=verify/done", "nextstorestage=build/pending"},
+			wantError: "medusadev: the deploy ended BUILD_FAILED",
+		},
+		{
+			name:      "a refusal fails the call with its reason",
+			setup:     func(f *standupFixture) { f.env = map[string]string{} },
+			calls:     1,
+			wantState: mate.StandupFailed, wantPhase: mate.PhaseDevelopment,
+			wantError: "Git access has not reached this Mate",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newStandupFixture(t)
+			if tt.setup != nil {
+				tt.setup(f)
+			}
+			for call := range tt.calls {
+				f.run(t)
+				if call == 0 {
+					f.devsDeployed()
+				}
+			}
+			section, rows := f.standupSection(t)
+			if section.State != tt.wantState || section.Phase != tt.wantPhase {
+				t.Errorf("stand-up = %s/%s, want %s/%s (%q)", section.State, section.Phase, tt.wantState, tt.wantPhase, section.Error)
+			}
+			if !slices.Equal(rows, tt.wantRows) {
+				t.Errorf("services =\n  %s\nwant\n  %s", strings.Join(rows, "\n  "), strings.Join(tt.wantRows, "\n  "))
+			}
+			if !strings.Contains(section.Error, tt.wantError) {
+				t.Errorf("error = %q, want it to carry %q", section.Error, tt.wantError)
+			}
+			if section.StartedAt == "" || section.EndedAt == "" {
+				t.Errorf("startedAt/endedAt = %q/%q", section.StartedAt, section.EndedAt)
+			}
+		})
+	}
+}
+
+// TestStandup_WaitsForTheContainersImport: the container imports a new
+// Mate's runtimes at boot (MATE_SETUP_RUNTIMES); a stand-up that starts while
+// that import runs waits for it instead of reporting the halves missing, and
+// a halt it ended in reaches the model with the import's own reason.
+func TestStandup_WaitsForTheContainersImport(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		runtimes   mate.RuntimesStatus
+		finishWith *mate.RuntimesStatus
+		wantWaited bool
+		wantFail   string
+	}{
+		{
+			name:       "an import in flight is waited for",
+			runtimes:   mate.RuntimesStatus{State: mate.RuntimesImporting, Services: []mate.RuntimeService{{Hostname: "nextstorestage", State: mate.ServiceCreating}}},
+			finishWith: &mate.RuntimesStatus{State: mate.RuntimesDone},
+			wantWaited: true,
+		},
+		{
+			name:     "a finished import is not waited for",
+			runtimes: mate.RuntimesStatus{State: mate.RuntimesDone},
+		},
+		{
+			name:     "a failed import names its reason for the missing half",
+			runtimes: mate.RuntimesStatus{State: mate.RuntimesFailed, Services: []mate.RuntimeService{{Hostname: "nextstorestage", State: mate.ServiceFailed, Error: "serviceStackTypeNotFound: no such type"}}},
+			wantFail: "serviceStackTypeNotFound: no such type",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newStandupFixture(t)
+			if err := mate.UpdateStatus(f.statusPath, func(s *mate.Status) { s.Runtimes = tt.runtimes }); err != nil {
+				t.Fatal(err)
+			}
+			present := f.services
+			if tt.finishWith != nil || tt.wantFail != "" {
+				present = withoutService(f.services, "nextstorestage")
+			}
+			f.importing = &importingClient{Mock: f.mock, stages: [][]platform.ServiceStack{present}}
+			finished := make(chan time.Time, 1)
+			if tt.finishWith != nil {
+				go func() {
+					time.Sleep(80 * time.Millisecond)
+					f.importing.mu.Lock()
+					f.importing.stages = [][]platform.ServiceStack{nil}
+					f.importing.mu.Unlock()
+					_ = mate.UpdateStatus(f.statusPath, func(s *mate.Status) { s.Runtimes = *tt.finishWith })
+					finished <- time.Now()
+				}()
+			}
+			start := time.Now()
+			result, body := f.run(t)
+			if result.IsError {
+				t.Fatalf("stand-up: %s", getTextContent(t, result))
+			}
+			if tt.wantWaited {
+				select {
+				case at := <-finished:
+					if time.Since(start) < at.Sub(start) {
+						t.Error("the stand-up answered before the import finished")
+					}
+				default:
+					t.Error("the stand-up answered before the import finished")
+				}
+				if got := body.service(t, "nextstorestage"); got.Failed != "" {
+					t.Errorf("nextstorestage after the wait = %+v", got)
+				}
+			}
+			if tt.wantFail != "" {
+				if got := body.service(t, "nextstorestage"); !strings.Contains(got.Failed, tt.wantFail) {
+					t.Errorf("nextstorestage.failed = %q, want it to carry %q", got.Failed, tt.wantFail)
+				}
+			}
+			if !tt.wantWaited && time.Since(start) > time.Second {
+				t.Errorf("the stand-up waited %s on an import it should not wait for", time.Since(start))
+			}
+		})
+	}
+}
+
+// trackingClient is the platform while a batch deploys: medusadev's build
+// process builds, then deploys, then ends.
+type trackingClient struct {
+	*platform.Mock
+	mu    sync.Mutex
+	reads int
+}
+
+func (c *trackingClient) GetProjectProcessesDirect(context.Context, string) ([]platform.Process, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reads++
+	ref := []platform.ServiceStackRef{{ID: "svc-medusadev"}}
+	switch {
+	case c.reads <= 2:
+		return []platform.Process{{ID: "proc-build", ActionName: "stack.build", Status: "RUNNING", ServiceStacks: ref, AppVersion: &platform.ProcessAppVersion{Status: "BUILDING"}}}, nil
+	case c.reads <= 4:
+		return []platform.Process{{ID: "proc-build", ActionName: "stack.build", Status: "RUNNING", ServiceStacks: ref, AppVersion: &platform.ProcessAppVersion{Status: "DEPLOYING"}}}, nil
+	}
+	return nil, nil
+}
+
+// TestStandupTrackDeploys_NamesTheStepAndItsProcess: while a half deploys,
+// the status names its step and the process behind it — build, then deploy,
+// then verify once the process has ended and the deploy has not returned.
+func TestStandupTrackDeploys_NamesTheStepAndItsProcess(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "status.json")
+	client := &trackingClient{Mock: platform.NewMock()}
+	d := standupDeps{batch: batchDeployer{client: client, projectID: "p1"}, trackPoll: 5 * time.Millisecond}
+	status := newStandupStatus(path)
+	var seen []string
+	stop := d.trackDeploys(context.Background(), []string{"medusadev"},
+		map[string]*platform.ServiceStack{"medusadev": {ID: "svc-medusadev", Name: "medusadev"}}, status)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if st, err := mate.ReadStatus(path); err == nil && len(st.Standup.Services) == 1 {
+			e := st.Standup.Services[0]
+			row := e.Step + "/" + e.State + "/" + e.ProcessID
+			if len(seen) == 0 || seen[len(seen)-1] != row {
+				seen = append(seen, row)
+			}
+			if e.Step == mate.StepVerify {
+				break
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	stop()
+	want := []string{"build/running/proc-build", "deploy/running/proc-build", "verify/running/proc-build"}
+	if !slices.Equal(seen, want) {
+		t.Errorf("steps seen = %v, want %v", seen, want)
 	}
 }

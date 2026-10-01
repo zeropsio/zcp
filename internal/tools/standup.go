@@ -55,6 +55,10 @@ const (
 	// platform's build queue may fall back to serial scheduling
 	// (zerops_deploy_batch's own advice).
 	standupBatchMax = 5
+	// standupBootWait bounds the wait for the container's own import of the
+	// runtimes (MATE_SETUP_RUNTIMES) — the import's own bound.
+	standupBootWait = 20 * time.Minute
+	standupBootPoll = 5 * time.Second
 	// standupReflogIntent heads the stand-up's entry in AGENTS.md's reflog.
 	standupReflogIntent = "Stand up development from the group's recipe"
 )
@@ -74,6 +78,14 @@ type standupDeps struct {
 	gitPoll     time.Duration
 	runtimeWait time.Duration
 	runtimePoll time.Duration
+	// statusPath is the setup status file the stand-up writes its section of
+	// and reads the boot import's from ("" writes and waits on nothing);
+	// bootWait/bootPoll bound the wait for that import, trackPoll the looks
+	// at a batch's processes (standup_status.go).
+	statusPath string
+	bootWait   time.Duration
+	bootPoll   time.Duration
+	trackPoll  time.Duration
 }
 
 // RegisterStandup registers zerops_standup. The server registers it only in a
@@ -102,6 +114,10 @@ func RegisterStandup(
 		gitPoll:     standupGitPoll,
 		runtimeWait: standupRuntimeWait,
 		runtimePoll: standupRuntimePoll,
+		statusPath:  mate.StatusFilePath(),
+		bootWait:    standupBootWait,
+		bootPoll:    standupBootPoll,
+		trackPoll:   standupTrackPoll,
 	})
 }
 
@@ -118,6 +134,7 @@ func registerStandup(srv *mcp.Server, d standupDeps) {
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, _ StandupInput) (*mcp.CallToolResult, any, error) {
 		progress := newStandupProgress(buildProgressCallback(ctx, req))
+		progress.status = newStandupStatus(d.statusPath)
 		result := d.run(ctx, progress)
 		progress.quiesce(ctx)
 		return result, nil, nil
@@ -129,6 +146,18 @@ func registerStandup(srv *mcp.Server, d standupDeps) {
 // fallback; past that, the answer is the per-service report, whatever it
 // holds.
 func (d standupDeps) run(ctx context.Context, progress *standupProgress) *mcp.CallToolResult {
+	progress.st().begin()
+	result := d.stand(ctx, progress)
+	if result.IsError {
+		progress.st().end(refusalText(result))
+	} else {
+		progress.st().end("")
+	}
+	return result
+}
+
+// stand is the stand-up's work; run reports how it ended.
+func (d standupDeps) stand(ctx context.Context, progress *standupProgress) *mcp.CallToolResult {
 	wiring := d.awaitGitAccess(ctx, progress)
 	if !wiring.Ready() {
 		return standupRefusal(platform.ErrPrerequisiteMissing,
@@ -302,6 +331,7 @@ func (d standupDeps) preparePairs(ctx context.Context, wiring ops.GiteaWiring, s
 	for _, p := range src.tier.Pairs {
 		pairs = append(pairs, &standupPair{pair: p, repository: src.org + "/" + p.RepoName})
 	}
+	bootFailed := d.awaitBootImport(ctx, progress)
 	live, err := d.awaitRuntimes(ctx, src.tier, progress)
 	if err != nil {
 		for _, sp := range pairs {
@@ -318,7 +348,7 @@ func (d standupDeps) preparePairs(ctx context.Context, wiring ops.GiteaWiring, s
 	var adoptedNow []workflow.BootstrapTarget
 	for _, sp := range pairs {
 		sp.dev, sp.stage = live[sp.pair.Dev.Hostname], live[sp.pair.Stage.Hostname]
-		if !d.presentAndRunning(sp, src) {
+		if !d.presentAndRunning(sp, src, bootFailed) {
 			continue
 		}
 		if target, now := d.adopt(sp, managedDependencies(src.tier, live)); now {
@@ -341,6 +371,16 @@ func (d standupDeps) preparePairs(ctx context.Context, wiring ops.GiteaWiring, s
 		wg.Go(func() { d.wire(ctx, wiring, sp, progress) })
 	}
 	wg.Wait()
+	for _, sp := range pairs {
+		if sp.failed == "" {
+			continue
+		}
+		host := sp.failedHost
+		if host == "" {
+			host = sp.pair.Dev.Hostname
+		}
+		progress.st().step(host, mate.StepBuild, mate.StepFailed, "", sp.failed)
+	}
 	return pairs, live
 }
 
@@ -443,7 +483,7 @@ func (d standupDeps) settle(ctx context.Context, tier workflow.MateTier, live ma
 // without startWithoutCode is not. A missing half is the browser's import
 // refused or not finished; the model imports it from the tier with zcp's own
 // import, shaped the way the browser imports it.
-func (d standupDeps) presentAndRunning(sp *standupPair, src standupSource) bool {
+func (d standupDeps) presentAndRunning(sp *standupPair, src standupSource, bootFailed map[string]string) bool {
 	p := sp.pair
 	for _, half := range []struct {
 		rt  workflow.MateTierRuntime
@@ -460,7 +500,13 @@ func (d standupDeps) presentAndRunning(sp *standupPair, src standupSource) bool 
 			entry = fmt.Sprintf("services: [{hostname: %s, type: %s, startWithoutCode: true}]", half.rt.Hostname, half.rt.Type)
 		}
 		sp.failedHost = half.rt.Hostname
-		sp.fail(fmt.Sprintf("%s is not in this project after %s: the runtimes are imported by the browser right before the sign-in, and this one's import was refused or has not finished", half.rt.Hostname, d.runtimeWait),
+		why := "the runtimes are imported when the Mate is made, and this one's import was refused or has not finished"
+		if reason := bootFailed[half.rt.Hostname]; reason != "" {
+			why = "the container's import of the runtimes failed on it: " + reason
+		} else if reason := bootFailed[""]; reason != "" {
+			why = "the container's import of the runtimes failed: " + reason
+		}
+		sp.fail(fmt.Sprintf("%s is not in this project after %s: %s", half.rt.Hostname, d.runtimeWait, why),
 			fmt.Sprintf("Import it from the tier with zerops_import content=%q (%s; add its envSecrets and scaling from %s's %s entry), then call zerops_standup again.",
 				entry, shape, src.groupRepo, workflow.MateTierImportPath))
 		return false
@@ -618,6 +664,9 @@ type standupProgress struct {
 	n    float64
 	last time.Time
 	send ops.ProgressCallback
+	// status is the stand-up's section of the setup status file, nil when
+	// there is none to write.
+	status *standupStatus
 }
 
 // standupProgressGap is the least time between the last notification and the
@@ -637,6 +686,14 @@ func (p *standupProgress) say(message string) {
 	p.n++
 	p.last = time.Now()
 	p.send(message, p.n, 0)
+}
+
+// st is the stream's status writer; nil-safe like the stream.
+func (p *standupProgress) st() *standupStatus {
+	if p == nil {
+		return nil
+	}
+	return p.status
 }
 
 // quiesce holds the result until standupProgressGap has passed since the last
