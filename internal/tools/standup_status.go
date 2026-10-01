@@ -245,13 +245,26 @@ func standupBuildOp(liveOps []ops.LiveOp) (standupOp, bool) {
 	return standupOp{}, false
 }
 
+// importWaitsClosedOff reports the container's import waiting for the
+// project to be closed off (mate.RuntimesWaitingClosedOff): it waits with no
+// end of its own, so the stand-up answers the Finish-setup line at once
+// instead of waiting for an import that cannot start.
+func (d standupDeps) importWaitsClosedOff() bool {
+	if d.statusPath == "" {
+		return false
+	}
+	st, err := mate.ReadStatus(d.statusPath)
+	return err == nil && st.Runtimes.State == mate.RuntimesPending && st.Runtimes.Error == mate.RuntimesWaitingClosedOff
+}
+
 // awaitBootImport waits while the boot import of this Mate's runtimes is in
 // flight (pending or importing in the status file), so the stand-up never
 // finds a half missing that is being imported, and never tells the model to
-// import what the container is importing. The import always ends its section
-// (done or failed, its own timeout included) and every launch resets one a
-// restart cut short, so the wait ends with it; bootWait bounds it all the
-// same. Returns what the import says failed, by hostname ("" for the import
+// import what the container is importing — but not while it only waits for
+// the project to be closed off, which has no end of its own. The import
+// always ends its section (done or failed, its own timeout included) and
+// every launch resets one a restart cut short, so the wait ends with it;
+// bootWait bounds it all the same. Returns what the import says failed, by hostname ("" for the import
 // as a whole).
 func (d standupDeps) awaitBootImport(ctx context.Context, progress *standupProgress) map[string]string {
 	if d.statusPath == "" {
@@ -264,7 +277,7 @@ func (d standupDeps) awaitBootImport(ctx context.Context, progress *standupProgr
 			return nil
 		}
 		r := st.Runtimes
-		inFlight := r.State == mate.RuntimesPending || r.State == mate.RuntimesImporting
+		inFlight := (r.State == mate.RuntimesPending && r.Error != mate.RuntimesWaitingClosedOff) || r.State == mate.RuntimesImporting
 		if !inFlight || !time.Now().Before(deadline) {
 			failed := map[string]string{}
 			for _, s := range r.Services {

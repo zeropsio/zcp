@@ -69,9 +69,6 @@ func IsolationPoll(waited time.Duration) time.Duration {
 	return time.Minute
 }
 
-// waitingClosedOff is the runtimes section's line while the import waits.
-const waitingClosedOff = "waiting for the project to be closed off"
-
 // Defaults for a production Importer.
 const (
 	DefaultPoll    = 3 * time.Second
@@ -305,9 +302,9 @@ func (im Importer) awaitClosedOff(ctx context.Context) bool {
 		}
 		if !said {
 			im.write(func(r *mate.RuntimesStatus) {
-				r.State, r.Error = mate.RuntimesPending, waitingClosedOff
+				r.State, r.Error = mate.RuntimesPending, mate.RuntimesWaitingClosedOff
 			})
-			fmt.Fprintf(os.Stderr, "[zcp] mate setup: %s\n", waitingClosedOff)
+			fmt.Fprintf(os.Stderr, "[zcp] mate setup: %s\n", mate.RuntimesWaitingClosedOff)
 			said = true
 		}
 		select {

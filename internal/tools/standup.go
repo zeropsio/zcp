@@ -163,6 +163,10 @@ func (d standupDeps) run(ctx context.Context, progress *standupProgress) *mcp.Ca
 
 // stand is the stand-up's work; run reports how it ended.
 func (d standupDeps) stand(ctx context.Context, progress *standupProgress) *mcp.CallToolResult {
+	if d.importWaitsClosedOff() {
+		return standupRefusal(platform.ErrPrerequisiteMissing, openMateRefusal,
+			"Nothing was touched. Tell the person to press Finish setup on this Mate in the app; the container then imports the runtimes, and zerops_standup stands them up.")
+	}
 	wiring := d.awaitGitAccess(ctx, progress)
 	if !wiring.Ready() {
 		return standupRefusal(platform.ErrPrerequisiteMissing,

@@ -44,6 +44,12 @@ const (
 	RuntimesFailed    = "failed"
 )
 
+// RuntimesWaitingClosedOff is the runtimes section's error line while it is
+// pending only because the project is not closed off yet: the import waits
+// for that with no end of its own, so a reader (the stand-up) tells it apart
+// from an import about to start.
+const RuntimesWaitingClosedOff = "waiting for the project to be closed off"
+
 // A runtime service's state: creating while its import process runs,
 // building/deploying while a build it was imported with runs, running once
 // the import is done with it (a stage half imported with no build waits for

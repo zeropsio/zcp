@@ -1440,3 +1440,29 @@ func TestStandup_NeverAsksForAnImportIntoAnOpenProject(t *testing.T) {
 		})
 	}
 }
+
+// TestStandup_AnImportWaitingToBeClosedOffAnswersAtOnce: the container's
+// import waits, with no end of its own, for the project to be closed off;
+// a stand-up that finds it so answers the Finish-setup line at once rather
+// than waiting out its own bounds for an import that cannot start.
+func TestStandup_AnImportWaitingToBeClosedOffAnswersAtOnce(t *testing.T) {
+	t.Parallel()
+	f := newStandupFixture(t)
+	if err := mate.UpdateRuntimes(f.statusPath, func(r *mate.RuntimesStatus) {
+		r.State, r.Error = mate.RuntimesPending, mate.RuntimesWaitingClosedOff
+	}); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	result, _ := f.run(t)
+	text := getTextContent(t, result)
+	if !result.IsError || !strings.Contains(text, "Finish setup") {
+		t.Errorf("want the Finish-setup refusal, got: %s", text)
+	}
+	if took := time.Since(start); took > 2*standupProgressGap {
+		t.Errorf("answered after %s, want at once", took)
+	}
+	if len(f.ssh.pushes()) != 0 || len(f.gitea.asked) != 0 {
+		t.Error("nothing is touched while the project is not closed off")
+	}
+}
