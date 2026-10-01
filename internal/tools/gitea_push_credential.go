@@ -24,7 +24,9 @@ import (
 // giteaEnsurePushCredential keeps the copy at the current token, and it runs
 // where the copy is used: before a delivery and before a git-push to the
 // group's Gitea. The Gitea reconcile cannot be the one to notice — it runs
-// when bootstrap or adopt completes, never in the develop loop.
+// when bootstrap or adopt completes, never in the develop loop. The same step
+// re-asserts the repository's persisted credential helper, so a pair wired
+// before the Mate's own shell could authenticate heals on its next delivery.
 
 // giteaEnsurePushCredential brings a wired pair's push credential to this
 // Mate's current Gitea token and proves a fresh session authenticates with it
@@ -52,6 +54,7 @@ func giteaEnsurePushCredential(
 	if topology.ClassifyGitHost(meta.RemoteURL, wiring.GiteaURL) != topology.GitHostGitea {
 		return nil
 	}
+	giteaAssertCredentialHelper(ctx, sshDeployer, meta.Hostname, meta.RemoteURL, wiring.GiteaURL)
 	marked := meta.GitPushState == topology.GitPushBroken
 	serviceID, held, known := giteaHeldPushToken(ctx, client, projectID, meta.Hostname)
 	current := known && subtle.ConstantTimeCompare([]byte(held), []byte(wiring.Token)) == 1
@@ -81,6 +84,17 @@ func giteaEnsurePushCredential(
 		giteaMarkPushWorking(stateDir, meta)
 	}
 	return nil
+}
+
+// giteaAssertCredentialHelper re-persists the push source's credential helper
+// in the form the Mate's own shell can answer. A pair git-push-setup wired
+// before that form existed keeps a helper that reads GIT_TOKEN alone — a
+// variable only the dev service's sessions carry — so a git fetch the model
+// types in its own shell on the mount is refused until this runs. Best-effort:
+// ZCP's own git carries its helper per command, so a failure here stops
+// nothing, and the next delivery tries again.
+func giteaAssertCredentialHelper(ctx context.Context, sshDeployer ops.SSHDeployer, hostname, remoteURL, giteaURL string) {
+	_, _ = sshDeployer.ExecSSH(ctx, hostname, ops.BuildGitCredentialHelperAssertCommand("/var/www", remoteURL, giteaURL))
 }
 
 // giteaHeldPushToken is the copy of the token the push source holds, with the

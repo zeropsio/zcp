@@ -2,6 +2,10 @@ package ops
 
 import (
 	"fmt"
+	"net/url"
+	"strings"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // gitCredentialHelperShell is the inline git credential helper that replaced
@@ -21,6 +25,14 @@ import (
 // "store"/"erase" actions fall through silently — there is nothing to
 // persist; the platform env IS the store.
 const gitCredentialHelperShell = `!f() { test "$1" = get && { echo username=oauth2; echo "password=$GIT_TOKEN"; }; }; f`
+
+// giteaCredentialHelperShell is the helper persisted for a remote on the
+// Mate's own Gitea. The dev service's sessions answer from GIT_TOKEN as above;
+// the Mate's shell, which runs git on the same repository through the mount,
+// carries no GIT_TOKEN — the bot's token reaches it as GITEA_TOKEN — so the
+// helper falls back to that. Only this host's helper reads GITEA_TOKEN: a
+// remote anywhere else never receives the bot's token.
+const giteaCredentialHelperShell = `!f() { test "$1" = get && { echo username=oauth2; echo "password=${GIT_TOKEN:-$GITEA_TOKEN}"; }; }; f`
 
 // gitCredentialHelperArgs returns the `-c` git arguments that make ONE git
 // invocation authenticate via the session-env helper. The leading empty
@@ -87,14 +99,14 @@ func BuildGitSessionAuthProbeCommand(remoteURL string) string {
 // TOCTOU window.
 // Auth: the SESSION env credential helper — reconstruction only runs for
 // pairs whose GIT_TOKEN service secret already exists.
-func BuildGitReconstructCommand(workingDir, remoteURL string, identity GitIdentity) string {
+func BuildGitReconstructCommand(workingDir, remoteURL, giteaURL string, identity GitIdentity) string {
 	quoted := shellQuote(remoteURL)
 	return fmt.Sprintf(
 		`cd %s && if test ! -d .git; then git init -q -b main && %s && git remote add origin %s && %s && GIT_TERMINAL_PROMPT=0 git %s fetch -q origin HEAD && git update-ref refs/heads/main FETCH_HEAD && git reset -q FETCH_HEAD; fi`,
 		shellQuote(workingDir),
 		gitIdentityEnsureFragmentFor(identity),
 		quoted,
-		gitCredentialHelperConfigFragment(remoteURL),
+		gitCredentialHelperConfigFragment(remoteURL, giteaURL),
 		gitCredentialHelperArgs(),
 	)
 }
@@ -117,24 +129,116 @@ func SelfBuildTarget(pushSource, buildTarget string) bool {
 // remote's host (`credential.https://<host>.helper` — a GLOBAL helper
 // would answer for ANY https host, including an untrusted second remote;
 // url-scoping is parity with the retired .netrc `machine <host>` line).
-// parseGitHost stays the single host-derivation owner.
 //
 // Persisting the helper serves git invocations OUTSIDE ZCP's own commands
-// (manual `ssh <host> git push`, user tooling) — ZCP's own operations carry
-// the helper per-invocation via gitCredentialHelperArgs and do not depend
-// on this config state. Because the helper lives in .git/config, it rides
-// the `-g` artifact into replacement containers exactly like the deploy
-// identity does.
+// (manual `ssh <host> git push`, the Mate's own shell on the mount, user
+// tooling) — ZCP's own operations carry the helper per-invocation via
+// gitCredentialHelperArgs and do not depend on this config state. Because
+// the helper lives in .git/config, it rides the `-g` artifact into
+// replacement containers exactly like the deploy identity does.
+//
+// The helper's text depends on the host: a remote on the Mate's Gitea
+// (giteaURL, "" on a container with no Gitea wiring) gets the helper that
+// also answers the Mate's shell (giteaCredentialHelperShell); every other
+// host answers GIT_TOKEN only. The Gitea helper's scope carries the
+// Gitea's port when it is not 443 (giteaCredentialScope). A remote whose host cannot be a scope (an
+// IPv6 literal, a name with an underscore, metacharacters) gets no helper at
+// all: parseGitHost's github.com default is never a scope, since a helper
+// stored there would answer github.com with this remote's token.
 //
 // The trailing `rm -f ~/.netrc` is the one-way migration off the
 // ephemeral-.netrc era: any stray fail-open residue dies the first time
 // the single owner re-asserts wiring.
-func gitCredentialHelperConfigFragment(remoteURL string) string {
-	host := parseGitHost(remoteURL)
-	return fmt.Sprintf("git config %s %s && rm -f ~/.netrc",
-		shellQuote("credential.https://"+host+".helper"),
-		shellQuote(gitCredentialHelperShell),
+func gitCredentialHelperConfigFragment(remoteURL, giteaURL string) string {
+	return gitCredentialHelperWriteFragment(remoteURL, giteaURL) + " && rm -f ~/.netrc"
+}
+
+// gitCredentialHelperWriteFragment is the helper write alone — the no-op `:` when
+// the remote's host is no scope to write it under.
+func gitCredentialHelperWriteFragment(remoteURL, giteaURL string) string {
+	scope, ok := gitCredentialScopeHost(remoteURL)
+	if !ok {
+		return ":"
+	}
+	helper := gitCredentialHelperShell
+	if giteaScope, onGitea := giteaCredentialScope(remoteURL, giteaURL, scope); onGitea {
+		scope, helper = giteaScope, giteaCredentialHelperShell
+	}
+	return fmt.Sprintf("git config %s %s",
+		shellQuote("credential.https://"+scope+".helper"),
+		shellQuote(helper),
 	)
+}
+
+// giteaCredentialScope is the scope the Gitea helper is stored under — the
+// Gitea's host, with its port when it names one other than 443, since git
+// matches a scope's port exactly — and whether remoteURL is on the Mate's
+// Gitea at all. host is the scope host the remote already resolved to: the
+// helper that falls back to the bot's token is written only when it and the
+// forge classification name the same host, on the Gitea's own port.
+func giteaCredentialScope(remoteURL, giteaURL, host string) (string, bool) {
+	if topology.ClassifyGitHost(remoteURL, giteaURL) != topology.GitHostGitea {
+		return "", false
+	}
+	remote, err := url.Parse(remoteURL)
+	if err != nil || remote.Scheme != httpsScheme {
+		return "", false
+	}
+	gitea, err := url.Parse(giteaURL)
+	if err != nil || !strings.EqualFold(remote.Hostname(), host) || !strings.EqualFold(gitea.Hostname(), host) {
+		return "", false
+	}
+	port := httpsPort(remote)
+	if port != httpsPort(gitea) {
+		return "", false
+	}
+	if port == defaultHTTPSPort {
+		return host, true
+	}
+	return host + ":" + port, true
+}
+
+// The persisted helper's scope is always https (credential.https://…); a
+// Gitea remote over any other scheme gets the plain helper.
+const (
+	httpsScheme      = "https"
+	defaultHTTPSPort = "443"
+)
+
+// httpsPort is the port an https URL connects to.
+func httpsPort(u *url.URL) string {
+	if port := u.Port(); port != "" {
+		return port
+	}
+	return defaultHTTPSPort
+}
+
+// gitCredentialScopeHost is the host a persisted helper is stored under, and
+// whether the remote has one: parseGitHost's answer only when it is the
+// remote's own host rather than its default.
+func gitCredentialScopeHost(remoteURL string) (string, bool) {
+	host := parseGitHost(remoteURL)
+	if host != defaultGitHost {
+		return host, true
+	}
+	if u, err := url.Parse(remoteURL); err == nil && strings.Contains(remoteURL, "://") {
+		return host, strings.EqualFold(u.Hostname(), defaultGitHost)
+	}
+	return host, strings.HasPrefix(strings.ToLower(remoteURL), defaultGitHost+"/")
+}
+
+// BuildGitCredentialHelperAssertCommand re-persists the helper origin sync
+// writes, on a repository that already exists. A helper persisted before the
+// Mate's shell could authenticate to its Gitea keeps the old text until
+// git-push-setup syncs origin again; the push-credential step runs this before
+// each delivery, so such a repository heals on its next one. No repository,
+// nothing written: the command never creates one. It writes the helper and
+// nothing else — the one-way ~/.netrc cleanup stays with origin sync and
+// reconstruction, since nothing ZCP runs writes that file any more and one
+// there now is the user's own.
+func BuildGitCredentialHelperAssertCommand(workingDir, remoteURL, giteaURL string) string {
+	return fmt.Sprintf("cd %s && if test -d .git; then %s; fi",
+		shellQuote(workingDir), gitCredentialHelperWriteFragment(remoteURL, giteaURL))
 }
 
 // BuildGitTagListCommand lists the remote's version tags (authenticated —

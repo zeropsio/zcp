@@ -73,6 +73,18 @@ func probeCount(commands []string) int {
 	return n
 }
 
+// helperAsserted reports whether the step re-persisted the repository's
+// credential helper in the form the Mate's own shell can answer — the heal for
+// a pair whose helper was written before that form existed.
+func helperAsserted(commands []string) bool {
+	for _, cmd := range commands {
+		if strings.Contains(cmd, "credential.https://") && strings.Contains(cmd, "GITEA_TOKEN") && !strings.Contains(cmd, "git remote") {
+			return true
+		}
+	}
+	return false
+}
+
 // TestGiteaEnsurePushCredential is the step's table: a copy that is the live
 // token costs nothing; a rotated or missing one is rewritten and proven with a
 // fresh session before anything pushes; a pair an earlier refusal marked is
@@ -91,6 +103,7 @@ func TestGiteaEnsurePushCredential(t *testing.T) {
 		writeFails bool
 
 		wantHeld   string
+		wantHelper bool // the repository's persisted helper re-asserted for the Mate's shell
 		wantWrites int
 		wantProbes int
 		wantState  topology.GitPushState
@@ -98,36 +111,36 @@ func TestGiteaEnsurePushCredential(t *testing.T) {
 	}{
 		{
 			name: "the copy is the current token", held: giteaBotToken, state: topology.GitPushConfigured,
-			wantHeld: giteaBotToken, wantState: topology.GitPushConfigured,
+			wantHeld: giteaBotToken, wantHelper: true, wantState: topology.GitPushConfigured,
 		},
 		{
 			name: "the broker rotated the token", held: rotatedAwayGitToken, state: topology.GitPushConfigured,
-			wantHeld: giteaBotToken, wantWrites: 1, wantProbes: 1, wantState: topology.GitPushConfigured,
+			wantHeld: giteaBotToken, wantHelper: true, wantWrites: 1, wantProbes: 1, wantState: topology.GitPushConfigured,
 		},
 		{
 			name: "the push source holds no copy", state: topology.GitPushConfigured,
-			wantHeld: giteaBotToken, wantWrites: 1, wantProbes: 1, wantState: topology.GitPushConfigured,
+			wantHeld: giteaBotToken, wantHelper: true, wantWrites: 1, wantProbes: 1, wantState: topology.GitPushConfigured,
 		},
 		{
 			name: "a pair an earlier refusal marked heals once its credential works", held: giteaBotToken, state: topology.GitPushBroken,
-			wantHeld: giteaBotToken, wantProbes: 1, wantState: topology.GitPushConfigured,
+			wantHeld: giteaBotToken, wantHelper: true, wantProbes: 1, wantState: topology.GitPushConfigured,
 		},
 		{
 			name: "a marked pair still refused stays marked and says so", held: giteaBotToken, state: topology.GitPushBroken,
 			probeFails: true,
-			wantHeld:   giteaBotToken, wantProbes: 1, wantState: topology.GitPushBroken,
+			wantHeld:   giteaBotToken, wantHelper: true, wantProbes: 1, wantState: topology.GitPushBroken,
 			wantErr: "refuses this Mate's current token",
 		},
 		{
 			name: "the current token does not authenticate either", held: rotatedAwayGitToken, state: topology.GitPushConfigured,
 			probeFails: true,
-			wantHeld:   giteaBotToken, wantWrites: 1, wantProbes: gitPushSessionAuthAttempts, wantState: topology.GitPushBroken,
+			wantHeld:   giteaBotToken, wantHelper: true, wantWrites: 1, wantProbes: gitPushSessionAuthAttempts, wantState: topology.GitPushBroken,
 			wantErr: "refuses this Mate's current token",
 		},
 		{
 			name: "the platform refuses the write", held: rotatedAwayGitToken, state: topology.GitPushConfigured,
 			writeFails: true,
-			wantHeld:   "", wantState: topology.GitPushBroken,
+			wantHeld:   "", wantHelper: true, wantState: topology.GitPushBroken,
 			wantErr: "writing this Mate's current Gitea token onto appdev failed",
 		},
 		{
@@ -187,6 +200,9 @@ func TestGiteaEnsurePushCredential(t *testing.T) {
 			}
 			if got := mock.CallCounts["CreateServiceEnvVar"]; got != tt.wantWrites && !tt.writeFails {
 				t.Errorf("GIT_TOKEN writes = %d, want %d", got, tt.wantWrites)
+			}
+			if got := helperAsserted(ssh.commands); got != tt.wantHelper {
+				t.Errorf("persisted helper re-asserted = %v, want %v (commands %q)", got, tt.wantHelper, ssh.commands)
 			}
 			if got := probeCount(ssh.commands); got != tt.wantProbes {
 				t.Errorf("fresh-session probes = %d, want %d (commands %q)", got, tt.wantProbes, ssh.commands)
@@ -359,6 +375,9 @@ func TestGitPushDeploy_BringsItsCredentialToTheCurrentTokenFirst(t *testing.T) {
 			}
 			if ssh.probeCalls == 0 && tt.held != giteaBotToken {
 				t.Error("a rewritten credential must be proven with a fresh session before the push")
+			}
+			if ssh.helperCalls != 1 {
+				t.Errorf("the push source's persisted helper must be re-asserted once, got %d", ssh.helperCalls)
 			}
 			if meta, _ := workflow.FindServiceMeta(stateDir, "appdev"); meta.GitPushState != tt.wantState {
 				t.Errorf("state = %q, want %q", meta.GitPushState, tt.wantState)

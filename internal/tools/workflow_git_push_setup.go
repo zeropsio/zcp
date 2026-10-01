@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -314,7 +315,7 @@ func handleGitPushSetup(
 	}
 
 	if rt.InContainer {
-		return confirmGitPushSetupContainer(ctx, client, httpClient, sshDeployer, projectID, stateDir, rt.GiteaURL, input, meta)
+		return confirmGitPushSetupContainer(ctx, client, httpClient, sshDeployer, projectID, stateDir, liveGiteaURL(rt), input, meta)
 	}
 	return confirmGitPushSetupLocal(ctx, stateDir, input, meta)
 }
@@ -560,7 +561,7 @@ func confirmGitPushSetupContainer(
 	rotation := meta.GitPushState == topology.GitPushConfigured &&
 		topology.CanonicalRepoURL(meta.RemoteURL) == topology.CanonicalRepoURL(input.RemoteURL)
 	if rotation && input.GitToken == "" {
-		return gitPushConfiguredRecall(ctx, sshDeployer, input, meta), nil, nil
+		return gitPushConfiguredRecall(ctx, sshDeployer, giteaURL, input, meta), nil, nil
 	}
 
 	// Token required in container mode (first configuration).
@@ -636,7 +637,7 @@ func confirmGitPushSetupContainer(
 			}
 		}
 
-		originCmd := ops.BuildGitOriginSyncCommand("/var/www", input.RemoteURL)
+		originCmd := ops.BuildGitOriginSyncCommand("/var/www", input.RemoteURL, giteaURL)
 		if _, originErr := sshDeployer.ExecSSH(ctx, pushHost, originCmd); originErr != nil {
 			// Same stderr swallow lived here (B6-N1) — surface it too, else
 			// shipping the probe fix just re-creates the bug one branch lower.
@@ -702,7 +703,7 @@ func confirmGitPushSetupContainer(
 	reconstructed := false
 	reconstructDivergence := ""
 	if needsReconstruct {
-		divergence, reconErr := gitPushReconstruct(ctx, sshDeployer, pushHost, input.RemoteURL, identity)
+		divergence, reconErr := gitPushReconstruct(ctx, sshDeployer, pushHost, input.RemoteURL, giteaURL, identity)
 		if reconErr != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrSSHDeployFailed,
@@ -1126,8 +1127,8 @@ func gitPushSessionAuthVerify(ctx context.Context, sshDeployer ops.SSHDeployer, 
 // summary ("" = clean). identity is the identity to fill (set-if-absent)
 // during the reconstruction's init — a GitHub-derived identity when the
 // caller has one (F3), or ops.DeployGitIdentity as the robot fallback.
-func gitPushReconstruct(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost, remoteURL string, identity ops.GitIdentity) (string, error) {
-	reconCmd := ops.BuildGitReconstructCommand("/var/www", remoteURL, identity)
+func gitPushReconstruct(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost, remoteURL, giteaURL string, identity ops.GitIdentity) (string, error) {
+	reconCmd := ops.BuildGitReconstructCommand("/var/www", remoteURL, giteaURL, identity)
 	if _, reconErr := sshDeployer.ExecSSH(ctx, pushHost, reconCmd); reconErr != nil {
 		return "", reconErr
 	}
@@ -1145,7 +1146,7 @@ func gitPushReconstruct(ctx context.Context, sshDeployer ops.SSHDeployer, pushHo
 // the working tree). No gitToken is available on this path (that's what
 // makes it "token-less"), so reconstruction always falls back to the
 // robot identity — deriving from GitHub needs a PAT (F3 item 4).
-func gitPushConfiguredRecall(ctx context.Context, sshDeployer ops.SSHDeployer, input WorkflowInput, meta *workflow.ServiceMeta) *mcp.CallToolResult {
+func gitPushConfiguredRecall(ctx context.Context, sshDeployer ops.SSHDeployer, giteaURL string, input WorkflowInput, meta *workflow.ServiceMeta) *mcp.CallToolResult {
 	presentOut, presentErr := sshDeployer.ExecSSH(ctx, meta.Hostname, "test -d /var/www/.git && echo present || echo absent")
 	if presentErr != nil {
 		// Fail CLOSED: "already-configured" promises working wiring; with
@@ -1158,7 +1159,7 @@ func gitPushConfiguredRecall(ctx context.Context, sshDeployer ops.SSHDeployer, i
 		), WithRecoveryStatus())
 	}
 	if strings.Contains(string(presentOut), "absent") {
-		divergence, reconErr := gitPushReconstruct(ctx, sshDeployer, meta.Hostname, meta.RemoteURL, ops.DeployGitIdentity)
+		divergence, reconErr := gitPushReconstruct(ctx, sshDeployer, meta.Hostname, meta.RemoteURL, giteaURL, ops.DeployGitIdentity)
 		if reconErr != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrSSHDeployFailed,
@@ -1326,4 +1327,16 @@ func deliveryDecisionForMeta(meta *workflow.ServiceMeta, giteaURL string) topolo
 		RemoteURL:        meta.RemoteURL,
 		GiteaURL:         giteaURL,
 	})
+}
+
+// liveGiteaURL is GITEA_URL as it stands now — the value a delivery reads
+// (giteaEnvLookup) — with the one read at start-up as the fallback. The broker
+// may write it after zcp started; git-push-setup reading only the start-up
+// value would persist the helper the Mate's shell cannot answer, undoing the
+// delivery's re-assert.
+func liveGiteaURL(rt runtime.Info) string {
+	if live := ops.ReadGiteaWiring(giteaEnvLookup(mate.LiveEnvStorePath)).GiteaURL; live != "" {
+		return live
+	}
+	return rt.GiteaURL
 }
