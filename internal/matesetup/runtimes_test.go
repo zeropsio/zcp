@@ -335,7 +335,7 @@ func TestRun_ImportRetries(t *testing.T) {
 		wantState   string
 	}{
 		{"a call that failed on the way is retried", []error{platform.NewPlatformError(platform.ErrNetworkError, "connection reset", "")}, 2, mate.RuntimesDone},
-		{"a refused import is not", []error{refusal("invalid yaml")}, 1, mate.RuntimesFailed},
+		{"a refused import is not", []error{refusal()}, 1, mate.RuntimesFailed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -627,7 +627,7 @@ func TestRun_ASettledImportIsNeverRepeated(t *testing.T) {
 		{
 			name: "the whole import refused",
 			first: func(f *fakeAPI) {
-				f.importErr = []error{refusal("invalid yaml")}
+				f.importErr = []error{refusal()}
 			},
 			wantFirst: mate.RuntimesFailed, wantRelaunch: mate.RuntimesFailed, wantImports: 1, wantFinal: mate.RuntimesFailed,
 		},
@@ -729,8 +729,8 @@ func TestRun_ANameTakenIsAServiceThatExists(t *testing.T) {
 
 // refusal is the platform refusing an import for what it carried: a 4xx
 // with the platform's own error code.
-func refusal(msg string) error {
-	pe := platform.NewPlatformError(platform.ErrAPIError, msg, "")
+func refusal() error {
+	pe := platform.NewPlatformError(platform.ErrAPIError, "invalid yaml", "")
 	pe.APICode = "projectImportInvalidYaml"
 	return pe
 }
@@ -747,7 +747,7 @@ func TestRun_OnlyARealRefusalSettles(t *testing.T) {
 		wantAttempts int
 		wantNext     int // imports the next launch sends
 	}{
-		{"a 4xx refusal", refusal("invalid yaml"), 1, 0},
+		{"a 4xx refusal", refusal(), 1, 0},
 		{"a 403", platform.NewPlatformError(platform.ErrPermissionDenied, "forbidden", ""), 3, 1},
 		{"a 401", platform.NewPlatformError(platform.ErrAuthTokenExpired, "unauthorized", ""), 3, 1},
 		{"an EOF", errors.New("unexpected EOF"), 3, 1},
@@ -834,5 +834,43 @@ func TestFreshAPI_FollowsTheKey(t *testing.T) {
 	}
 	if !slices.Equal(built, []string{"k1", "k2"}) {
 		t.Errorf("clients built for %v, want one per key: [k1 k2]", built)
+	}
+}
+
+// TestMarkLaunch_RepairsTheSectionFromTheSettledRecord: the record that the
+// import settled is written before the section that says so; a launch that
+// finds the record but a section still importing or pending (a crash between
+// the two writes) puts the section back as the import ended.
+func TestMarkLaunch_RepairsTheSectionFromTheSettledRecord(t *testing.T) {
+	tests := []struct {
+		name      string
+		setup     func(*fakeAPI)
+		torn      string
+		wantState string
+		wantError string
+	}{
+		{"done, section left importing", nil, mate.RuntimesImporting, mate.RuntimesDone, ""},
+		{"done, section left pending", nil, mate.RuntimesPending, mate.RuntimesDone, ""},
+		{"refused, section left importing", func(f *fakeAPI) { f.importErr = []error{refusal()} }, mate.RuntimesImporting, mate.RuntimesFailed, "invalid yaml"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "status.json")
+			api := newFake()
+			if tt.setup != nil {
+				tt.setup(api)
+			}
+			importer(api, path).Run(context.Background(), plan())
+			if err := mate.UpdateRuntimes(path, func(r *mate.RuntimesStatus) { r.State, r.Error, r.EndedAt = tt.torn, "", "" }); err != nil {
+				t.Fatal(err)
+			}
+			if err := matesetup.MarkLaunch(path, true, t0); err != nil {
+				t.Fatal(err)
+			}
+			got := readStatus(t, path).Runtimes
+			if got.State != tt.wantState || !strings.Contains(got.Error, tt.wantError) || got.EndedAt == "" {
+				t.Errorf("runtimes = %s %q ended %q, want %s carrying %q, with its end", got.State, got.Error, got.EndedAt, tt.wantState, tt.wantError)
+			}
+		})
 	}
 }

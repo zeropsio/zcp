@@ -9,6 +9,7 @@ package matesetup
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -99,10 +100,20 @@ const sinceSlack = time.Minute
 // and every agent under it go down with the unit), so it is marked failed:
 // nothing else ever would.
 func MarkLaunch(path string, planSet bool, now time.Time) error {
-	settled := Settled(path)
+	rec, settled := readSettled(path)
+	settled = settled || Settled(path)
 	if err := mate.UpdateStatus(path, func(s *mate.Status) {
 		switch {
 		case settled:
+			// A crash between the record and the section leaves the section
+			// importing or pending: put it back as the import ended.
+			if done := s.Runtimes.State == mate.RuntimesDone || s.Runtimes.State == mate.RuntimesFailed; !done && rec.State != "" {
+				s.Runtimes.State, s.Runtimes.Error, s.Runtimes.EndedAt = rec.State, rec.Error, rec.EndedAt
+				if len(rec.Services) > 0 {
+					s.Runtimes.Services = rec.Services
+				}
+				s.Runtimes.UpdatedAt = stamp(now)
+			}
 		case !planSet:
 			s.Runtimes = mate.RuntimesStatus{State: mate.RuntimesNone, UpdatedAt: stamp(now)}
 		case s.Runtimes.State != mate.RuntimesImporting:
@@ -133,11 +144,38 @@ func Settled(statusPath string) bool {
 	return err == nil
 }
 
-// settle records that the boot import settled; a failed write is logged.
-func (im Importer) settle(why string) {
-	if err := os.WriteFile(settledPath(im.StatusPath), []byte(stamp(im.Now())+" "+why+"\n"), 0o600); err != nil {
+// settledRecord is how the import ended, as the settled record keeps it:
+// the section's end, so a launch can put a section a crash left torn back
+// (MarkLaunch).
+type settledRecord struct {
+	State    string                `json:"state"`
+	Error    string                `json:"error"`
+	EndedAt  string                `json:"endedAt"`
+	Services []mate.RuntimeService `json:"services"`
+}
+
+// settle records that the boot import settled, before the section says so:
+// a crash between the two leaves a record MarkLaunch repairs the section
+// from, never a section that settled with no record. A failed write is
+// logged.
+func (im Importer) settle(rec settledRecord) {
+	body, err := json.Marshal(rec)
+	if err == nil {
+		err = os.WriteFile(settledPath(im.StatusPath), body, 0o600)
+	}
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "[zcp] mate setup: record the settled import: %v\n", err)
 	}
+}
+
+// readSettled reads the settled record; false when there is none to read.
+func readSettled(statusPath string) (settledRecord, bool) {
+	var rec settledRecord
+	body, err := os.ReadFile(settledPath(statusPath))
+	if err != nil || json.Unmarshal(body, &rec) != nil || rec.State == "" {
+		return settledRecord{}, false
+	}
+	return rec, true
 }
 
 // DecodePlan reads MATE_SETUP_RUNTIMES: the hostnames it lists, in order, and
@@ -503,30 +541,26 @@ func (im Importer) finishWith(hostnames []string, live []platform.ServiceStack, 
 			failures = append(failures, s.Hostname+": "+s.Error)
 		}
 	}
-	now := im.Now()
+	rec := settledRecord{State: mate.RuntimesDone, EndedAt: stamp(im.Now()), Services: services}
+	if len(failures) > 0 {
+		rec.State, rec.Error = mate.RuntimesFailed, oneLine(strings.Join(failures, "; "))
+	}
+	im.settle(rec)
 	im.write(func(r *mate.RuntimesStatus) {
-		r.State = mate.RuntimesDone
-		r.Error = ""
-		if len(failures) > 0 {
-			r.State = mate.RuntimesFailed
-			r.Error = oneLine(strings.Join(failures, "; "))
-		}
+		r.State, r.Error, r.EndedAt, r.Services = rec.State, rec.Error, rec.EndedAt, rec.Services
 		if r.StartedAt == "" {
-			r.StartedAt = stamp(now)
+			r.StartedAt = rec.EndedAt
 		}
-		r.EndedAt = stamp(now)
-		r.Services = services
 	})
-	im.settle(strings.Join(stateLine(services), ", "))
 	fmt.Fprintf(os.Stderr, "[zcp] mate setup: runtimes %s\n", strings.Join(stateLine(services), ", "))
 }
 
 // finish ends the run failed with reason, before anything could be followed.
 func (im Importer) finish(hostnames []string, reason string, settles bool) {
-	if settles {
-		im.settle("failed: " + oneLine(reason))
-	}
 	now := im.Now()
+	if settles {
+		im.settle(settledRecord{State: mate.RuntimesFailed, Error: oneLine(reason), EndedAt: stamp(now)})
+	}
 	im.write(func(r *mate.RuntimesStatus) {
 		r.State = mate.RuntimesFailed
 		r.Error = oneLine(reason)
