@@ -110,3 +110,66 @@ func TestHostScalingChanges(t *testing.T) {
 		t.Errorf("an unchanged block reports %+v", got)
 	}
 }
+
+// TestSpliceHostScaling_RefusesWhatItCannotSpliceSafely: a tier file
+// someone edited by hand can hold shapes the splice does not read — a flow
+// mapping, a comment after the header, a comment at column 0 inside the
+// entry or the block. Splicing past one could write a second
+// verticalAutoscaling key; the splice refuses, naming why, and never does.
+func TestSpliceHostScaling_RefusesWhatItCannotSpliceSafely(t *testing.T) {
+	t.Parallel()
+	entry := func(lines ...string) string {
+		return "services:\n  - hostname: search\n    type: meilisearch:single@1.44\n" + strings.Join(lines, "\n") + "\n  - hostname: db\n    type: postgresql:single@18\n"
+	}
+	tests := []struct {
+		name string
+		main string
+		want string
+	}{
+		{"a flow mapping", entry("    verticalAutoscaling: {minRam: 1}"), "flow"},
+		{"a comment after the header", entry("    verticalAutoscaling: # sized by hand", "      minRam: 1"), "comment"},
+		{"a column-0 comment inside the entry", entry("# kept small on purpose", "    verticalAutoscaling:", "      minRam: 1"), "comment"},
+		{"a column-0 comment inside the block", entry("    verticalAutoscaling:", "      minRam: 1", "# no more than this", "      maxRam: 48"), "comment"},
+		{"two blocks already", entry("    verticalAutoscaling:", "      minRam: 1", "    verticalAutoscaling:", "      minRam: 2"), "more than one"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := SpliceHostScaling(tt.main, composedTier, "search")
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("SpliceHostScaling = %v, want a refusal naming %q; result:\n%s", err, tt.want, got)
+			}
+			if got != tt.main {
+				t.Errorf("a refused splice changed the file:\n%s", got)
+			}
+		})
+	}
+}
+
+// TestHostScalingChanges_ComparesValues: 2, 2.0 and "2" are one value, and a
+// comment is not one; only a value that differs is a change.
+func TestHostScalingChanges_ComparesValues(t *testing.T) {
+	t.Parallel()
+	block := func(lines ...string) string {
+		return "services:\n  - hostname: search\n    type: meilisearch:single@1.44\n    verticalAutoscaling:\n" + strings.Join(lines, "\n") + "\n"
+	}
+	tests := []struct {
+		name string
+		main string
+		want []ScalingChange
+	}{
+		{"2.0 is 2", block("      cpuMode: SHARED", "      minRam: 2.0", "      maxRam: 48", "      minFreeRamGB: 0.50"), nil},
+		{`"2" is 2`, block(`      cpuMode: "SHARED"`, `      minRam: "2"`, "      maxRam: 48", "      minFreeRamGB: 0.5"), nil},
+		{"a trailing comment is no value", block("      cpuMode: SHARED", "      minRam: 2 # raised", "      maxRam: 48", "      minFreeRamGB: 0.5"), nil},
+		{"a value that differs", block("      cpuMode: SHARED", "      minRam: 1.0", "      maxRam: 48", "      minFreeRamGB: 0.5"), []ScalingChange{{Key: "minRam", From: "1", To: "2"}}},
+	}
+	composed := block("      cpuMode: SHARED", "      minRam: 2", "      maxRam: 48", "      minFreeRamGB: 0.5")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := HostScalingChanges(tt.main, composed, "search"); !slices.Equal(got, tt.want) {
+				t.Errorf("HostScalingChanges = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}

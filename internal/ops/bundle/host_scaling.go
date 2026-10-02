@@ -1,9 +1,13 @@
 package bundle
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // A Mate that changes a service's scale after its group's recipe is on main
@@ -24,7 +28,10 @@ type ScalingChange struct {
 // SpliceHostScaling returns mainBody with host's verticalAutoscaling block
 // replaced by composedBody's (inserted when main's entry has none). A host
 // either body does not name, or a composed entry with no block, leaves
-// mainBody as it is.
+// mainBody as it is. A shape the splice does not read safely in main's
+// entry — a flow mapping, a comment on or inside the block or at a column
+// inside the entry, a second block — is refused with the reason, and main is
+// never written with a second verticalAutoscaling key.
 func SpliceHostScaling(mainBody, composedBody, host string) (string, error) {
 	mainLines := strings.Split(mainBody, "\n")
 	start, end := hostEntryRange(mainLines, host)
@@ -34,6 +41,9 @@ func SpliceHostScaling(mainBody, composedBody, host string) (string, error) {
 	block := hostScalingBlock(strings.Split(composedBody, "\n"), host)
 	if len(block) == 0 {
 		return mainBody, nil
+	}
+	if err := spliceSafe(mainLines, start, end, host); err != nil {
+		return mainBody, err
 	}
 	fieldIndent := indentOf(mainLines[start]) + 2
 	block = reindent(block, fieldIndent-indentOf(block[0]))
@@ -56,6 +66,63 @@ func SpliceHostScaling(mainBody, composedBody, host string) (string, error) {
 	out = append(out, mainLines[to:]...)
 	return strings.Join(out, "\n"), nil
 }
+
+// spliceSafe refuses an entry whose shape the splice does not read: the
+// lines it would keep or replace must be exactly the block layout the
+// composer writes.
+func spliceSafe(lines []string, start, end int, host string) error {
+	field := indentOf(lines[start]) + 2
+	headers := 0
+	inBlock := false
+	lastContent := start
+	for i := start + 1; i < end; i++ {
+		if !isComment(lines[i]) && strings.TrimSpace(lines[i]) != "" {
+			lastContent = i
+		}
+	}
+	for i := start + 1; i <= lastContent; i++ {
+		line := lines[i]
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case trimmed == "":
+			continue
+		case isComment(line):
+			if inBlock {
+				return fmt.Errorf("%s's verticalAutoscaling holds a comment (line %d), which a rewrite of the block would drop — edit it by hand", host, i+1)
+			}
+			if indentOf(line) < field {
+				return fmt.Errorf("%s's entry holds a comment at column %d (line %d), which the splice cannot place — edit it by hand", host, indentOf(line), i+1)
+			}
+			continue
+		}
+		if indentOf(line) == field {
+			inBlock = false
+			if key, rest, ok := strings.Cut(trimmed, ":"); ok && key == "verticalAutoscaling" {
+				headers++
+				rest = strings.TrimSpace(rest)
+				switch {
+				case strings.HasPrefix(rest, "{"):
+					return fmt.Errorf("%s's verticalAutoscaling is a flow mapping (line %d), which the splice does not rewrite — edit it by hand", host, i+1)
+				case strings.HasPrefix(rest, "#"):
+					return fmt.Errorf("%s's verticalAutoscaling carries a comment on its header (line %d), which a rewrite would drop — edit it by hand", host, i+1)
+				case rest != "":
+					return fmt.Errorf("%s's verticalAutoscaling has an inline value (line %d) — edit it by hand", host, i+1)
+				}
+				inBlock = true
+			}
+			continue
+		}
+		if inBlock && strings.Contains(line, " #") {
+			return fmt.Errorf("%s's verticalAutoscaling holds a comment (line %d), which a rewrite of the block would drop — edit it by hand", host, i+1)
+		}
+	}
+	if headers > 1 {
+		return fmt.Errorf("%s's entry has more than one verticalAutoscaling — edit it by hand", host)
+	}
+	return nil
+}
+
+func isComment(line string) bool { return strings.HasPrefix(strings.TrimSpace(line), "#") }
 
 // HostScalingChanges names, key by key in key order, what replacing main's
 // block for host with the composed one changes.
@@ -96,12 +163,20 @@ func hostEntryRange(lines []string, host string) (int, int) {
 			continue
 		}
 		dash := len(m[1])
+		// A comment never ends an entry: a hand-written one at column 0
+		// inside it would otherwise cut the entry short (spliceSafe refuses
+		// it). Comment lines right before the next item stay outside.
+		end := len(lines)
 		for j := i + 1; j < len(lines); j++ {
-			if strings.TrimSpace(lines[j]) != "" && indentOf(lines[j]) <= dash {
-				return i, j
+			if strings.TrimSpace(lines[j]) != "" && !isComment(lines[j]) && indentOf(lines[j]) <= dash {
+				end = j
+				break
 			}
 		}
-		return i, len(lines)
+		for end > i+1 && (isComment(lines[end-1]) && indentOf(lines[end-1]) <= dash || strings.TrimSpace(lines[end-1]) == "") {
+			end--
+		}
+		return i, end
 	}
 	return -1, -1
 }
@@ -117,7 +192,7 @@ func scalingBlockRange(lines []string, start, end int) (int, int) {
 		}
 		to := i + 1
 		for j := i + 1; j < end; j++ {
-			if strings.TrimSpace(lines[j]) == "" {
+			if strings.TrimSpace(lines[j]) == "" || isComment(lines[j]) {
 				continue
 			}
 			if indentOf(lines[j]) <= field {
@@ -143,16 +218,38 @@ func hostScalingBlock(lines []string, host string) []string {
 	return append([]string(nil), lines[from:to]...)
 }
 
-// scalingValues reads a block's `key: value` lines.
+// scalingValues reads a block as YAML, each value normalized so 2, 2.0 and
+// "2" are one value and a comment is none.
 func scalingValues(block []string) map[string]string {
 	values := map[string]string{}
-	for _, line := range block[min(1, len(block)):] {
-		key, value, ok := strings.Cut(strings.TrimSpace(line), ":")
-		if ok && key != "" {
-			values[key] = strings.TrimSpace(value)
-		}
+	if len(block) == 0 {
+		return values
+	}
+	var doc map[string]map[string]any
+	if err := yaml.Unmarshal([]byte(strings.Join(reindent(block, -indentOf(block[0])), "\n")), &doc); err != nil {
+		return values
+	}
+	for key, value := range doc["verticalAutoscaling"] {
+		values[key] = normalizedScalingValue(value)
 	}
 	return values
+}
+
+// normalizedScalingValue is a value's canonical text: a number however it
+// was written, a string as itself.
+func normalizedScalingValue(v any) string {
+	switch n := v.(type) {
+	case int:
+		return strconv.Itoa(n)
+	case float64:
+		return strconv.FormatFloat(n, 'f', -1, 64)
+	case string:
+		if f, err := strconv.ParseFloat(n, 64); err == nil {
+			return strconv.FormatFloat(f, 'f', -1, 64)
+		}
+		return n
+	}
+	return fmt.Sprint(v)
 }
 
 func indentOf(line string) int { return len(line) - len(strings.TrimLeft(line, " ")) }
