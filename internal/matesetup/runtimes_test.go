@@ -14,7 +14,6 @@ import (
 
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/matesetup"
-	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -49,10 +48,10 @@ type fakeAPI struct {
 	refuse map[string]string
 	// failProcess names services whose create process ends FAILED.
 	failProcess map[string]string
-	// isolation is the project as each read answers it — "tagged" with the
-	// closed-off tag, "open" without, "<error>" — the last one staying;
-	// empty is "tagged". isolationReads counts the reads, and readsAtImport
-	// is that count when the first import was sent.
+	// isolation is the project as each ask of HQ answers it — "closed" off,
+	// "open", "<error>" — the last one staying; empty is "closed".
+	// isolationReads counts the asks, and readsAtImport is that count when
+	// the first import was sent.
 	isolation      []string
 	isolationReads int
 	readsAtImport  int
@@ -64,21 +63,20 @@ type fakeAPI struct {
 	takenWhole error
 }
 
-func (f *fakeAPI) GetProject(_ context.Context, id string) (*platform.Project, error) {
+// closedOff is HQ answering whether the Mate's project is closed off
+// (hq.ClosedOffReader).
+func (f *fakeAPI) closedOff(context.Context) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	value := "tagged"
+	value := "closed"
 	if len(f.isolation) > 0 {
 		value = f.isolation[min(f.isolationReads, len(f.isolation)-1)]
 	}
 	f.isolationReads++
-	switch value {
-	case "<error>":
-		return nil, errors.New("project read failed")
-	case "tagged":
-		return &platform.Project{ID: id, Tags: []string{"mate", ops.ClosedOffTag}}, nil
+	if value == "<error>" {
+		return false, errors.New("HQ did not answer")
 	}
-	return &platform.Project{ID: id, Tags: []string{"mate"}}, nil
+	return value == "closed", nil
 }
 
 func (f *fakeAPI) ListServicesDirect(context.Context, string) ([]platform.ServiceStack, error) {
@@ -164,9 +162,9 @@ func (f *fakeAPI) ImportServices(_ context.Context, _ string, body string) (*pla
 
 func newFake() *fakeAPI { return &fakeAPI{runFor: 2, started: map[string]int{}} }
 
-func importer(api matesetup.API, path string) matesetup.Importer {
+func importer(api *fakeAPI, path string) matesetup.Importer {
 	return matesetup.Importer{
-		API: api, ProjectID: "proj", StatusPath: path,
+		API: api, ClosedOff: api.closedOff, ProjectID: "proj", StatusPath: path,
 		Poll: time.Millisecond, Timeout: 5 * time.Second,
 		Backoff:       []time.Duration{time.Millisecond, time.Millisecond},
 		IsolationPoll: func(time.Duration) time.Duration { return time.Millisecond },
@@ -514,8 +512,8 @@ func TestRun_ImportsOnlyIntoAProjectClosedOff(t *testing.T) {
 		wantReadsMin int
 		wantState    string
 	}{
-		{"closed off from the start", nil, []string{"tagged"}, 1, 1, mate.RuntimesDone},
-		{"closed off after a while", nil, []string{"open", "open", "<error>", "open", "tagged"}, 1, 5, mate.RuntimesDone},
+		{"closed off from the start", nil, []string{"closed"}, 1, 1, mate.RuntimesDone},
+		{"closed off after a while", nil, []string{"open", "open", "<error>", "open", "closed"}, 1, 5, mate.RuntimesDone},
 		{"nothing missing never waits", []string{"appdev", "appstage"}, []string{"open"}, 0, 0, mate.RuntimesDone},
 	}
 	for _, tt := range tests {
@@ -775,9 +773,9 @@ func TestRun_OnlyARealRefusalSettles(t *testing.T) {
 	}
 }
 
-// TestRun_AnUnreadableProjectSaysSo: a look at the project that fails is
-// never read as "not closed off yet": the runtimes section says the project
-// could not be read, and why.
+// TestRun_AnUnreadableProjectSaysSo: an ask of HQ that fails is never read
+// as "not closed off yet": the runtimes section says HQ could not be asked,
+// and why.
 func TestRun_AnUnreadableProjectSaysSo(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "status.json")
 	api := newFake()
@@ -799,8 +797,8 @@ func TestRun_AnUnreadableProjectSaysSo(t *testing.T) {
 	}
 	cancel()
 	<-done
-	if got.State != mate.RuntimesPending || !strings.Contains(got.Error, "could not read the project") || !strings.Contains(got.Error, "project read failed") {
-		t.Errorf("runtimes = %s %q, want pending saying the project could not be read and why", got.State, got.Error)
+	if got.State != mate.RuntimesPending || !strings.Contains(got.Error, "could not ask HQ") || !strings.Contains(got.Error, "HQ did not answer") {
+		t.Errorf("runtimes = %s %q, want pending saying HQ could not be asked and why", got.State, got.Error)
 	}
 	if len(api.imports) != 0 {
 		t.Errorf("imported %d times into a project it could not read", len(api.imports))
@@ -916,7 +914,7 @@ func TestSettledRecord_ATruncatedRecordIsNotSettled(t *testing.T) {
 // when the tier has no runtimes it can import ("Finish setup" on a Mate whose
 // runtimes cannot be recovered). An empty plan is nothing to import, not a
 // failure: it settles as none at once — no look at the project, no wait for
-// the closed-off tag — and stays so on every later launch.
+// it to be closed off — and stays so on every later launch.
 func TestRun_AnEmptyPlanSettlesAsNone(t *testing.T) {
 	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
 	tests := []struct {

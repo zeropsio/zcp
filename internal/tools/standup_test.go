@@ -21,7 +21,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/mate"
-	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -382,6 +381,8 @@ type standupFixture struct {
 	building *buildingClient
 	// statusPath is the setup status file the stand-up writes its section of.
 	statusPath string
+	// closedOff is what HQ answers: the Mate's project closed off.
+	closedOff bool
 }
 
 // importingClient is the platform while the browser's runtime import is still
@@ -486,6 +487,7 @@ func (f *standupFixture) run(t *testing.T) (*mcp.CallToolResult, standupResponse
 		runtimeWait: 200 * time.Millisecond,
 		runtimePoll: 5 * time.Millisecond,
 		statusPath:  f.statusPath,
+		closedOff:   func(context.Context) (bool, error) { return f.closedOff, nil },
 		bootWait:    2 * time.Second,
 		bootPoll:    5 * time.Millisecond,
 		trackPoll:   5 * time.Millisecond,
@@ -1415,14 +1417,14 @@ func TestStandup_NeverAsksForAnImportIntoAnOpenProject(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name    string
-		tags    []string
+		closed  bool
 		plan    bool
 		want    string
 		wantNot string
 	}{
-		{"open", []string{"mate"}, true, "Finish setup", "zerops_import"},
-		{"closed off", []string{"mate", ops.ClosedOffTag}, true, "zerops_import", "Finish setup"},
-		{"open, a Mate made before the new press", []string{"mate"}, false, "zerops_import", "Finish setup"},
+		{"open", false, true, "Finish setup", "zerops_import"},
+		{"closed off", true, true, "zerops_import", "Finish setup"},
+		{"open, a Mate made before the new press", false, false, "zerops_import", "Finish setup"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1431,7 +1433,7 @@ func TestStandup_NeverAsksForAnImportIntoAnOpenProject(t *testing.T) {
 			if tt.plan {
 				f.env["MATE_SETUP_RUNTIMES"] = "c2VydmljZXM6IFtd"
 			}
-			f.mock.WithProject(&platform.Project{ID: "p1", Tags: tt.tags})
+			f.closedOff = tt.closed
 			f.mock.WithServices(withoutService(f.services, "nextstorestage"))
 			result, body := f.run(t)
 			if result.IsError {
@@ -1471,16 +1473,16 @@ func TestStandup_AnImportWaitingToBeClosedOffAnswersAtOnce(t *testing.T) {
 	}
 }
 
-// TestStandup_TheTagLandedWhileTheImportStillSaysWaiting: the container's
-// import looks for the closed-off tag once a minute at most, so its last line
-// can still say it waits after the press has tagged the project. The
-// stand-up reads the tag itself: tagged, it says the import is starting and
-// waits for it as for an import in flight, then stands the project up.
-func TestStandup_TheTagLandedWhileTheImportStillSaysWaiting(t *testing.T) {
+// TestStandup_ClosedOffWhileTheImportStillSaysWaiting: the container's
+// import asks HQ once a minute at most, so its last line can still say it
+// waits after the press has closed the project off. The stand-up asks HQ
+// itself: closed off, it says the import is starting and waits for it as for
+// an import in flight, then stands the project up.
+func TestStandup_ClosedOffWhileTheImportStillSaysWaiting(t *testing.T) {
 	t.Parallel()
 	f := newStandupFixture(t)
 	f.env["MATE_SETUP_RUNTIMES"] = "c2VydmljZXM6IFtd"
-	f.mock.WithProject(&platform.Project{ID: "p1", Tags: []string{"mate", ops.ClosedOffTag}})
+	f.closedOff = true
 	if err := mate.UpdateRuntimes(f.statusPath, func(r *mate.RuntimesStatus) {
 		r.State, r.Error = mate.RuntimesPending, mate.RuntimesWaitingClosedOff
 	}); err != nil {

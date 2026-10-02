@@ -12,6 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -86,9 +87,11 @@ type standupDeps struct {
 	bootWait   time.Duration
 	bootPoll   time.Duration
 	trackPoll  time.Duration
-	// closedOffSeen is a call that read the closed-off tag itself while the
-	// import's line still said it waited for it: that import is starting,
-	// and awaitBootImport waits for it.
+	// closedOff asks HQ whether the Mate's project is closed off (its birth).
+	closedOff hq.ClosedOffReader
+	// closedOffSeen is a call that asked HQ itself while the import's line
+	// still said it waited for the project to be closed off: that import is
+	// starting, and awaitBootImport waits for it.
 	closedOffSeen bool
 	// beat is how often a running stand-up rewrites the file (0 is
 	// mate.StandupBeat).
@@ -122,6 +125,7 @@ func RegisterStandup(
 		runtimeWait: standupRuntimeWait,
 		runtimePoll: standupRuntimePoll,
 		statusPath:  mate.StatusFilePath(),
+		closedOff:   hqClosedOff(),
 		bootWait:    standupBootWait,
 		bootPoll:    standupBootPoll,
 		trackPoll:   standupTrackPoll,
@@ -168,9 +172,9 @@ func (d standupDeps) run(ctx context.Context, progress *standupProgress) *mcp.Ca
 // stand is the stand-up's work; run reports how it ended.
 func (d standupDeps) stand(ctx context.Context, progress *standupProgress) *mcp.CallToolResult {
 	if d.importWaitsClosedOff() {
-		// The import looks for the tag once a minute at most, so its line can
-		// trail the press: read the tag itself before saying Finish setup.
-		closed, err := ops.ReadProjectClosedOff(ctx, d.batch.client, d.batch.projectID)
+		// The import asks HQ once a minute at most, so its line can trail the
+		// press: ask HQ itself before saying Finish setup.
+		closed, err := d.closedOff(ctx)
 		if err != nil || !closed {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "zcp: stand-up: %v\n", err)
@@ -508,7 +512,7 @@ func (d standupDeps) settle(ctx context.Context, tier workflow.MateTier, live ma
 // refused or not finished; the model imports it from the tier with zcp's own
 // import, shaped the way the browser imports it.
 // projectOpen reports, when a half is missing in a Mate the new press made,
-// a project not tagged closed off yet: nothing may be imported into it
+// a project HQ does not hold closed off yet: nothing may be imported into it
 // (refuseOpenMate), so the stand-up never asks the model to.
 func (d standupDeps) projectOpen(ctx context.Context, tier workflow.MateTier, live map[string]*platform.ServiceStack) bool {
 	missing := false
@@ -520,7 +524,7 @@ func (d standupDeps) projectOpen(ctx context.Context, tier workflow.MateTier, li
 	if !missing || !newFlowMate(d.batch.rtInfo, d.liveEnvPath) {
 		return false
 	}
-	closed, err := ops.ReadProjectClosedOff(ctx, d.batch.client, d.batch.projectID)
+	closed, err := d.closedOff(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "zcp: stand-up: %v\n", err)
 		return false

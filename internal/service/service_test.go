@@ -289,7 +289,8 @@ func TestStart_Mate_MergesEnvFile(t *testing.T) {
 		t.Fatalf("Start(mate): %v", err)
 	}
 	want := []string{"T3CODE_ZEROPS_PROJECT_ID=nTV3oMB2SS634ImDJnQckg", "T3CODE_ZEROPS_API_HOST=api.app-prg1.zerops.io", "T3CODE_BASE_PATH=/mate",
-		"ZCP_STATUS_FILE=" + filepath.Join(home, ".zcp", "state", "mate-status.json")}
+		"ZCP_STATUS_FILE=" + filepath.Join(home, ".zcp", "state", "mate-status.json"),
+		"T3CODE_ZEROPS_HQ_ENROLLMENT=" + filepath.Join(home, ".zcp", "hq", "enrollment.json")}
 	if !slices.Equal(gotEnv, want) {
 		t.Errorf("merged env:\n got %q\nwant %q", gotEnv, want)
 	}
@@ -363,6 +364,13 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 				<-serverUp
 			})
 			t.Cleanup(service.ResetMateSetupBoot)
+			// Every launch keeps the Mate enrolled with its HQ, beside the
+			// server, over the live env store as it is at each attempt.
+			kept := make(chan string, 1)
+			service.SetMateHQKeep(func(_ context.Context, env func() func(string) string) {
+				kept <- env()("PATH")
+			})
+			t.Cleanup(func() { service.SetMateHQKeep(keepNothing) })
 			statusPath := filepath.Join(home, ".zcp", "state", "mate-status.json")
 			var gotEnv []string
 			var atLaunch mate.Status
@@ -402,6 +410,17 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 				if tt.wantBoot {
 					t.Error("boot import never started")
 				}
+			}
+			select {
+			case got := <-kept:
+				if got != tt.store["PATH"] {
+					t.Errorf("HQ enrollment read the env %q, want the live store's", got)
+				}
+			case <-time.After(2 * time.Second):
+				t.Error("the launch never started keeping the Mate enrolled with HQ")
+			}
+			if !slices.Contains(gotEnv, "T3CODE_ZEROPS_HQ_ENROLLMENT="+filepath.Join(home, ".zcp", "hq", "enrollment.json")) {
+				t.Errorf("launch env %q must name the HQ enrollment the server links with", gotEnv)
 			}
 		})
 	}

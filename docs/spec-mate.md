@@ -388,7 +388,7 @@ installed it degrades like any other install failure (MD-1).
 
 | Check | Rule |
 |---|---|
-| `contract` | must equal `mate.SupportedContract` (today `1` = C-1…C-6 in §2.8). A manifest declaring a contract zcp does not know is refused with a message naming both numbers — the one case where an old zcp deliberately stays on the mate it has. |
+| `contract` | must equal `mate.SupportedContract` (today `1` = C-1…C-7 in §2.8). A manifest declaring a contract zcp does not know is refused with a message naming both numbers — the one case where an old zcp deliberately stays on the mate it has. |
 | `version` | must be ≥ `mate.MinimumMateVersion`, the oldest release zcp still drives (moves only when a contract fact changes). A manifest below it is refused. |
 | `sha256` | the downloaded tarball must match it — damage detection, nothing more. |
 
@@ -449,6 +449,14 @@ at every start cost 58 s cold, measured, see the mate ledger; the argv always ru
 Only non-secret identifiers are written; a token never enters `~/.zcp/mate.env` (mode 0600),
 rewritten every boot so a unit's frozen ExecStart never has to change. A missing/unreadable env
 file is reported and mate starts anyway — diagnosable, unlike a unit that refuses to launch.
+
+Every launch adds three more on top (`mate.LaunchEnvLines`), whatever init wrote:
+
+| Key | Value |
+|---|---|
+| `T3CODE_BASE_PATH` | `mate.BasePath` (§2.7) |
+| `ZCP_STATUS_FILE` | the status file a new Mate's setup is read from (`mate.DefaultStatusFilePath`) |
+| `T3CODE_ZEROPS_HQ_ENROLLMENT` | the file zcp keeps the Mate's HQ enrollment in (`hq.EnrollmentPath`, `~/.zcp/hq/enrollment.json`, mode 0600): the HQ address and the credential the server opens its link to HQ with. It names a path, never the credential. zcp enrolls by itself in a Mate container and keeps enrolling, retrying whatever is not possible yet (`hq.Keep`); until the file exists the server's link stays quiet and its HQ state is unknown |
 
 ### 2.4 nginx — three locations, all outside the cookie gate, all behind the gate
 
@@ -575,10 +583,11 @@ mate would reject is either a bump or a capability probe (`--base-path` is the p
 |---|---|---|
 | C-1 | The artifact is `zerops-mate-<version>.tgz`, a GitHub release asset on `zeropsio/mate`, whose npm `bin` entry is `mate` at `node_modules/.bin/mate` (`mate.BinName`), and whose release publishes `stable.json` beside it (§2.1c) | fork's `cli.ts pack` + release workflow |
 | C-2 | `serve` accepts `--mode web --host --port --base-dir --no-browser --auto-bootstrap-project-from-cwd` with the working directory as a trailing **positional**. **An unknown flag is fatal**, so every flag added later reaches production only behind a capability probe — `--base-path` is the precedent and stays one (§2.2) | fork's `cli/config.ts` |
-| C-3 | `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}` keep their meaning, and a non-empty `PROJECT_ID` remains the sole Zerops-environment signal (§2.3, §3.1) | fork's `ZeropsEnvironment` |
+| C-3 | `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}` keep their meaning, and a non-empty `PROJECT_ID` remains the sole Zerops-environment signal (§2.3, §3.1). `T3CODE_ZEROPS_HQ_ENROLLMENT` names the HQ enrollment file and nothing else; it is additive — an older mate ignores it, and a launch without it leaves the server's link to HQ quiet | fork's `ZeropsEnvironment` |
 | C-4 | Liveness is `GET {basePath}/.well-known/t3/environment` → `200 application/json` carrying `basePath` (§2.5) | fork's environment descriptor |
 | C-5 | The server binds loopback only and never claims a declared platform port (§2.4) | zcp's `ServeArgv`, fork's `--host` |
 | C-6 | **`/mate` is baked into the released artifact, not chosen by zcp.** The release workflow builds the bundled web client with `VITE_BASE_PATH=/mate`, and `pack` refuses a tarball without `dist/client/index.html`. `mate.BasePath` must equal it; moving the prefix is a coordinated two-repo change | fork's release workflow + `mate.BasePath` |
+| C-7 | `~/.zcp/hq/outcome.json`, beside the HQ enrollment, is zcp's last word on enrolling: `{state: enrolled\|no_hq\|refused, code?, at}`, written by its keep loop in a single rename after every attempt that says something about this Mate (HQ or Zerops not answering leaves it as it was). The server reads it from the directory `T3CODE_ZEROPS_HQ_ENROLLMENT` names, only to say why a new Mate's stand-up waits (`/setup.json`: `no_hq`, `not_enrolled` with HQ's `code`); a missing, unreadable or unknown document is plain `not_enrolled`. Additive: an older zcp writes none | zcp's `hq.SaveOutcome`, fork's `ZeropsHqLink` |
 
 The fork's release workflow triggers only on stable `v<major>.<minor>.<patch>` tags, so GitHub's
 "latest release" *is* the stable channel — nightlies never produce one.
@@ -1868,19 +1877,18 @@ are stopped (`thread.session.stop` for every thread whose session runs on it, wa
 a running turn would otherwise go on with the token it holds), the CLI logs out (`claude auth
 logout` / `codex logout`, removing the credential file if it remains), the flag is deleted (with
 `ZCP_AGENT_AUTH_TYPE_<S>` when it says `oauth`) and the feed re-checks. Every step after the token
-check is best-effort. Threads stay. The signer tag stays too: the Mate's key cannot write tags, a tag
-without a credential speaks for nobody, and the next sign-in replaces it.
+check is best-effort. Threads stay. Who signed it in is not touched: the server lets that record go
+once the credential's absence lasts (§10.5), a record without a credential speaks for nobody, and
+the next sign-in replaces it.
 
 The Zerops panel's agents card stays whenever the feed is available: per agent who signed it in and
 the actions — Switch account and Sign out for one's own login, Use my account and Sign out for
 someone else's, none for a project token.
 
-The signer record (D6) is written by the client of the person in `startedBy`, from the snapshot's
-state — a `succeeded` login they started whose `authorizedBy` is not them — not from a transition one
-screen happened to watch (an older server that names no `startedBy` falls back to the success the
-client watched happen). One owner per conversation view writes it, whichever door the sign-in used
-(the panel's card, the thread's band, the empty conversation) and after a reload; a failed write is
-retried on its own (2 s / 5 s / 15 s) and surfaced with a retry. A finished login never overrides the
+The signer record (D6) is the server's own: the login walker keeps the person in `startedBy` the
+moment a sign-in it walked succeeds, before anything else hears of the success (§10.5). No client
+writes it, and the feed's `authorizedBy` and the logins' `signedInBy` are read from it. A finished
+login never overrides the
 verified status in a row: the login's recheck resets the agent's `providerAuth` to `unknown`, a
 `succeeded` login shows "Confirming" until the check answers and the verified status after, and
 `failed` steps aside once that says signed in. A credential whose check answered `unknown` is checked
@@ -1907,7 +1915,7 @@ again after 15 s, then 1 min, then every 5 min, instead of sitting at "Checking�
 | MA-5 | The login walker turns the CLI's output into `login` phases with `url`/`code` from the recorded lines (Codex device URL + code; Claude menu → oauth URL), and cancel ends the session. `zeropsAgentLoginWalker.test.ts`, `zeropsAgentLoginOutputParser.test.ts`, `ZeropsAgentLogin.test.ts`. |
 | MA-13 | Live: moving the credential aside flips the feed within ~0.5 s and `providerAuth` to `unauthenticated`; restoring it returns `authorized`/`authenticated`; the public `/mate/` renders the hosted-static landing. `verified.md` S7-3 + follow-up rows. |
 | MA-8 | `submitCode` types the code then a separate Enter, only into a paste-code login at its prompt, and the code never reaches the published state. `ZeropsAgentLogin.test.ts` — "submitCode types the code, then Enter…", "…is refused when no login waits for a code", "the code never reaches the published login state". |
-| MA-9 | The signer is recorded from state by the person in `startedBy`, once per login, retried on its own; a finished login never overrides the verified status in a row. `useZeropsAgentSigner.test.ts` (`agentSignersToRecord`, "writes once per login", "tried again on its own"); `agentLogin.test.ts` (`classifyAgentRowLogin`). |
+| MA-9 | The signer is the person whose session started the sign-in this server walked to success, kept before anything else hears of it and across a restart; a credential's absence lets it go only once it lasts; a finished login never overrides the verified status in a row. `ZeropsAgentLogin.test.ts` — "keeps who signed in last, and lets it go with the credential", "a credential absent for one reading, then there again: its sign-in is kept", "a sign-in made while its credential reads absent outlives that absence"; `zeropsSignIns.test.ts`; `agentLogin.test.ts` (`classifyAgentRowLogin`). |
 | MA-11 | Sign-out refuses a token agent, then cancels the login, stops that agent's live sessions, logs the CLI out, deletes the flag and re-checks, in that order, best-effort. `ZeropsAgentSignOut.test.ts` (`threadsToStopForAgent`, call order). |
 | MA-12 | A turn starts only on an agent that is signed in, then only for its signer (D6); the client offers exactly the turns the server accepts. `ZeropsProjectSigners.test.ts` (`turnRefusal`); `agentAvailability.test.ts` (mirrors its rows). |
 | MA-10 | The platform flag decides signed-in for every surface; the CLI check only refines a set flag to "sign in again"; every provider list the server sends carries that answer. `packages/shared/src/zeropsAgentAuth.test.ts`; `zeropsAgentProviderOverlay.test.ts`; `agentLogin.test.ts` (`agentAuthLabel / agentAuthAction`). |
@@ -1990,7 +1998,7 @@ that only the broker deploys to.
 | D3  | Group membership is authoritative in **tags on the org's Gitea project**, which only `OWNER`/`ADMIN` can write — the platform enforces it.                                                                                                                                                                                       |
 | D4  | The broker is **its own repository and Go module**, `zeropsio/gitea-mate`, with its own Zerops client; the plan's `zcp gitea broker` was not built. The recipe composer lives in zcp and runs inside a Mate (§10.10).                                                                                                          |
 | D5  | A `READ_ONLY` person **sees every Mate listed and opens none**: the door refuses with `zerops_read_only`. Opening needs `BASIC_USER` or above on the Mate's project.                                                                                                                                                             |
-| D6  | **Only the person who signed an agent in runs it** (§10.5), recorded as a project tag the Mate's own key cannot forge; no backward compatibility for unrecorded logins.                                                                                                                                                         |
+| D6  | **Only the person who signed an agent in runs it** (§10.5), recorded by the Mate's server as the person whose session started the sign-in it saw succeed; no backward compatibility for unrecorded logins.                                                                                                                       |
 | D8  | A Mate releases only while its group's **release switch** is on — a registry flag, owner-only, off by default; the broker checks it for a tag a bot pushed.                                                                                                                                                                     |
 | D10 | Gitea site admin = org `OWNER` only; `ADMIN`s get teams by role.                                                                                                                                                                                                                                                               |
 | D11 | The creator of a Mate is its project's `OWNER`; org owners and admins keep their reach; _Assign_ (a project-role override to `OWNER`) hands a Mate over.                                                                                                                                                                       |
@@ -2081,17 +2089,25 @@ separate 4 Gitea sign-ins a minute.
 
 ### 10.5 Who runs an agent (D6)
 
-When an agent's sign-in succeeds the app writes `mate:signer:{agent}:{userId}` onto the Mate's
-project as the person (`withMateSignerTag`); the Mate's key cannot write tags, so neither it nor its
-agent can forge the record. The server reads the tag with its own key (`ZeropsProjectSigners.ts`),
-refuses `orchestration.dispatchCommand`'s turn-starting commands from any session but the signer's,
-and signs the agent out when its signer is no longer an `ACTIVE` member — a member list it cannot
-read signs nobody out. The card names the signer in place of the composer for everyone else. The
-snapshot's `latest` is what was last published, and a record written after the login lands is seen
-within `SIGNER_RECHECK_INTERVAL` (35 s) by the server and at once by the person who wrote it (a
-local signer store, 0.11.4). Said out loud: the gate stops turns; everyone who can open a Mate can
-copy its login file from the terminal. D6 keeps a colleague from running someone else's agent by
-habit, and records who signed it in; it does not claim to stop theft.
+When a sign-in the Mate's server walked succeeds, the server keeps who started it — the Zerops user
+behind that door session — before anything else hears of the success, in `~/.mate/signed-in.json`
+beside the logins' homes (`zeropsSignIns.ts`). The document is read once, at start: a restart keeps
+the record, and a rewrite under a running server changes nothing. An API key login has no sign-in
+to walk: the session that stores its key signs it in, and its stored key is its credential. That
+record is the gate's (`ZeropsProjectSigners.ts`): the server refuses
+`orchestration.dispatchCommand`'s turn-starting commands from any session but the signer's, holds a
+turn while a code being checked would change the answer (up to 30 s), and signs the agent out when
+its signer is no longer an `ACTIVE` member — a member list it cannot read signs nobody out. A credential that goes takes its record with it once
+its absence lasts (`CREDENTIAL_GONE_AFTER`, 10 s), never on a moment's: a CLI that removes its
+credential before it writes the new one reads absent for an instant. A login with no record —
+signed in before the record existed, from a terminal, or copied in — runs for nobody until somebody
+signs it in through Mate. Forging a record takes access to the container, and that access already
+holds the login's credential. The Mate reports its signers to its HQ in its summary
+(`MateSummary.signers`), and HQ hands them on to whoever may observe the Mate for the menu's
+"signed in by"; HQ keeps no signer of its own, and nobody writes one there. The card names the
+signer in place of the composer for everyone else. Said out loud: the gate stops turns; everyone
+who can open a Mate can copy its login file from the terminal. D6 keeps a colleague from running
+someone else's agent by habit, and records who signed it in; it does not claim to stop theft.
 
 ### 10.6 The registry and groups
 
@@ -2105,7 +2121,10 @@ Mate's membership at birth; registering a Mate then widens the broker's token in
 `BASIC_USER` on the Mate's project (`brokerGrant.ts`; a failed grant after the registry write is
 reported and has no retry yet). Group reach on a Mate's own token narrows by itself and widens only
 on a person's action (`planGroupReach`, `useZeropsGroupReach`). Per-project tags (`mate`,
-`mate:g:`, `mate:role:`, `mate:name:`, `mate:bot:`) stay display hints. The budget is measured:
+`mate:g:`, `mate:role:`, `mate:name:`, `mate:bot:`) stay display hints. Who signed an agent in,
+who asked for a Mate's stand-up and whether its project is closed off are no tags — any member can
+write a tag by API: the first is the Mate's own record (§10.5), the other two the Mate's record at
+its HQ (§10.10). The budget is measured:
 65 534 bytes of tag JSON per project, about 2 500 entries.
 
 ### 10.7 A Mate's project
@@ -2389,14 +2408,23 @@ The order:
 2. It imports the project with the recipe's `project:` block and the managed services only.
 3. It adds the `zcp` container through the platform's development-container recipe.
 4. It lowers the container's token, drops the delegation, grants the broker and registers the Mate.
-5. When `zcp` answers, it closes the project off, and the sign-in is offered.
+5. When `zcp` answers, it closes the project off and records that at the Mate's HQ
+   (`POST /api/mates/{projectId}/closed-off`, once the Mate's record exists there), and the sign-in
+   is offered. zcp's runtime import and `zerops_standup` read closed-off from HQ with the Mate's own
+   enrollment (`hq.ReadClosedOff`); an HQ that cannot be asked holds the import, never opens it.
 6. It imports the runtimes in one wave: dev halves `startWithoutCode: true` (running and empty, the
    checkout target), stage halves with no build (`READY_TO_DEPLOY`), public-build utilities with
    their build, which the platform runs.
 7. The broker writes the Gitea URL, the broker URL and the bot token onto `zcp`.
-8. The person signs the agent in meanwhile.
-9. Their client sends "Stand up development of the project."; the Mate's AGENTS.md sends that
-   message to `zerops_standup` first. The tool:
+8. The person signs the agent in meanwhile; the Mate's server keeps who did (§10.5).
+9. The Mate's server sends "Stand up development of the project." into the main conversation as
+   the person its HQ names as the stand-up's asker (`standupRequestedBy`, written by the press with
+   `POST /api/mates/{projectId}/standup` as the Mate's record is born), once that person signed an
+   agent in here (`ZeropsSetup.ts`). Until the link to HQ brings the Mate nobody is known to have
+   asked, and nothing is settled on that; HQ naming nobody settles it as none only 5 min after the
+   server is up. No client sends it. While it waits, `/setup.json` says why where the server
+   knows: `no_hq`, `not_enrolled` (with HQ's refusal `code`), `not_linked`, `awaiting_request`
+   (C-7). The Mate's AGENTS.md sends that message to `zerops_standup` first. The tool:
    - waits, bounded, for the Git variables (3 min) and for the runtimes (5 min: every dev half
      running and answering SSH, every stage half created), and for whatever the import still has in
      flight on them and on the managed services;
@@ -2669,7 +2697,7 @@ the first live release is still to run.
 | MB-2  | The client mints, connects and deletes in that order, and deletes even when the connect threw; the mint carries no grants and no flags. From the fork's slice 0.7 the mint checks no role, and the delete is `deleteThrowaway` with the minting token: not cancelled by the exchange's abort, never clearing, refreshing or borrowing the current session, refusing any name that is not a throwaway's. From slice 2.4 that mint is an `account-write` that a closed verification window does not hold up, and a mint that grants a project stays a `project-write`. `doorThrowaway.test.ts` — "mints, connects and deletes, in that order", "deletes even when the connect threw, and re-throws what threw", "sweeps every stale throwaway in one pass"; `zeropsThrowaway.test.ts` — "mints with no grants and no flags, under the name it was given"; slice 0.7 adds a mint during a renewal proceeding, an abort after the mint still deleting, a delete's `401` after sign-out and a new sign-in leaving the new session alone, and a `BASIC_USER` and an overridden `READ_ONLY` member minting; slice 2.4 adds "a door throwaway mints while project writes are closed; a project-granting mint is refused" and a rights-less mint whose answer is lost reading as uncertain. |
 | MB-3  | A session ends when the Mate's own re-check says so, and nothing renews a Zerops session. `ZeropsMembershipWatch.test.ts` — "leaves sessions that did not come from the Zerops door alone"; `credentialRenewal.ts`.                                                                                                                                                                                 |
 | MB-4  | The two role functions answer every fixture identically, and the fixture covers every outcome. `zeropsRoles.test.ts` — "carries every case the Go twin replays"; gitea-mate `TestComputeAgainstFixtures`, `TestFixturesCoverEveryOutcome`, `TestReleaseWithoutProduction`.                                                                                                                         |
-| MB-5  | Only the recorded signer's session starts a turn on an OAuth-signed agent; a signer the org no longer knows is signed out; an unreadable member list signs nobody out. `ZeropsProjectSigners.test.ts` — "gates the one command that spends a subscription", "signs out the agent whose signer the org no longer knows", "signs nobody out when the member list could not be read"; `agentOwnership.test.ts` — "says only the signer runs somebody else's agent". |
+| MB-5  | Only the recorded signer's session starts a turn on an OAuth-signed agent; a signer the org no longer knows is signed out; an unreadable member list signs nobody out. `ZeropsProjectSigners.test.ts` — "goes by who this server saw sign the login in, and nobody else", "signs out the agent whose signer the org no longer knows", "signs nobody out when the member list could not be read"; `agentOwnership.test.ts` — "says only the signer runs somebody else's agent". |
 | MB-6  | The registry round-trips and is stable, and registering a Mate writes the registry entry first and then the broker's grant — a failed registry write gives the broker nothing. `groupRegistry.test.ts` — "round-trips a registry it read", "is stable, so a registry that has not moved writes the same document"; `brokerGrant.test.ts` — "writes the registry entry, then gives the broker the Mate's project", "stops at a registry write that failed and gives the broker nothing". |
 | MB-7  | Isolation moves the key onto the container and never deletes an entry without re-reading its id; a project with no container loses the key outright. `projectIsolation.test.ts` — "closes a Mate's project and moves its key onto the container", "never deletes without re-reading the entry's id first", "drops the key outright where there is no container to move it to".                     |
 | MB-8  | A registered Mate's access is delivered by a pass, once, with no restart; older token generations wait for the grace and one generation is never revoked; there is no credential route. gitea-mate `TestPassDeliversAMatesAccessOnceAndNeverRestarts`, `TestOlderTokenGenerationsWaitForTheGrace`, `TestOneGenerationIsNeverRevoked`, `TestThereIsNoCredentialRoute`.                                 |

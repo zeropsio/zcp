@@ -197,12 +197,16 @@ func TestBasePathSupport(t *testing.T) {
 
 // TestLaunchEnvLines: the server's public prefix rides its environment on
 // every launch — an older bundle ignores the variable, a newer one reads it
-// whatever the --base-path probe answered — and so does the status file the
-// server reads the setup from.
+// whatever the --base-path probe answered — and so do the status file the
+// server reads the setup from and the HQ enrollment it links with.
 func TestLaunchEnvLines(t *testing.T) {
 	t.Setenv("HOME", "/home/zerops")
 	got := mate.LaunchEnvLines()
-	want := []string{"T3CODE_BASE_PATH=/mate", "ZCP_STATUS_FILE=/home/zerops/.zcp/state/mate-status.json"}
+	want := []string{
+		"T3CODE_BASE_PATH=/mate",
+		"ZCP_STATUS_FILE=/home/zerops/.zcp/state/mate-status.json",
+		"T3CODE_ZEROPS_HQ_ENROLLMENT=/home/zerops/.zcp/hq/enrollment.json",
+	}
 	if !slices.Equal(got, want) {
 		t.Errorf("LaunchEnvLines() = %q, want %q", got, want)
 	}

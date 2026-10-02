@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -15,8 +16,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/matesetup"
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
@@ -233,11 +236,12 @@ func mateLaunchSetupThenInstall() {
 var mateSetupBoot = matesetup.Boot
 
 // mateLaunchSetup writes the status file the server reads (ZCP_STATUS_FILE,
-// mate.LaunchEnvLines) and starts the boot import when the container carries
-// a runtimes plan. The plan, the Mate's key and its project come from the
-// live env store, as the guard's flag does: a unit's own environment carries
-// none of them. The import runs in this process, for as long as the server
-// does; a restart cut short finds what it left by looking.
+// mate.LaunchEnvLines), starts keeping the Mate enrolled with its HQ, and
+// starts the boot import when the container carries a runtimes plan. The
+// plan, the Mate's key and its project come from the live env store, as the
+// guard's flag does: a unit's own environment carries none of them. Both run
+// in this process, for as long as the server does; a restart cut short finds
+// what it left by looking.
 func mateLaunchSetup() {
 	lookup := mate.LiveLookup(mateStorePath)
 	path := mate.DefaultStatusFilePath()
@@ -245,10 +249,66 @@ func mateLaunchSetup() {
 	if err := matesetup.MarkLaunch(path, planSet, time.Now()); err != nil {
 		fmt.Fprintf(os.Stderr, "[zcp] service mate: %v\n", err)
 	}
+	env := func() func(string) string { return mate.LiveLookup(mateStorePath) }
+	go mateHQKeep(context.Background(), env)
 	if planSet {
-		go mateSetupBoot(context.Background(), path, func() func(string) string { return mate.LiveLookup(mateStorePath) })
+		go mateSetupBoot(context.Background(), path, env)
 	}
 }
+
+// mateHQKeep keeps the Mate enrolled with its org's official HQ (hq.Keep);
+// package-level so tests stand in for it.
+var mateHQKeep = keepEnrolled
+
+// SetMateHQKeep stands in for the HQ enrollment; for tests.
+func SetMateHQKeep(fn func(context.Context, func() func(string) string)) { mateHQKeep = fn }
+
+// hqCallTimeout bounds each call to HQ while enrolling.
+const hqCallTimeout = 15 * time.Second
+
+// keepEnrolled is hq.Keep over the container's environment: each attempt
+// builds the client from the live env store as it is then, so a rotated key
+// is the one it uses, and asks the key's own record which org it is in. Each
+// attempt that says something about this Mate leaves its outcome beside the
+// enrollment.
+func keepEnrolled(ctx context.Context, env func() func(string) string) {
+	hq.Keep(ctx, func(ctx context.Context) (hq.Result, error) {
+		lookup := env()
+		key, projectID := lookup("ZCP_API_KEY"), lookup("projectId")
+		if key == "" || projectID == "" {
+			return hq.Result{}, errors.New("ZCP_API_KEY or projectId is not in this container's environment")
+		}
+		client, err := platform.NewZeropsClient(key, mate.ResolveAPIHost(lookup("ZCP_API_HOST")))
+		if err != nil {
+			return hq.Result{}, fmt.Errorf("build the API client: %w", err)
+		}
+		info, err := client.GetUserInfo(ctx)
+		if err != nil {
+			return hq.Result{}, fmt.Errorf("read the key's organization: %w", err)
+		}
+		return hq.Enroller{
+			Zerops:    client,
+			HTTP:      &http.Client{Timeout: hqCallTimeout},
+			OrgID:     info.ID,
+			ProjectID: projectID,
+			Path:      hq.EnrollmentPath(),
+		}.Enroll(ctx)
+	}, hq.KeepOptions{
+		Log: logHQ,
+		// The Mate server says from it why its setup waits (spec-mate §2.8).
+		Record: func(err error) {
+			o, recorded := hq.OutcomeOf(err, time.Now().UTC())
+			if !recorded {
+				return
+			}
+			if err := hq.SaveOutcome(hq.OutcomePath(), o); err != nil {
+				logHQ(err.Error())
+			}
+		},
+	})
+}
+
+func logHQ(line string) { fmt.Fprintf(os.Stderr, "[zcp] hq: %s\n", line) }
 
 // SetMateSetupBoot / ResetMateSetupBoot stand in for the boot import; for tests.
 func SetMateSetupBoot(fn func(context.Context, string, func() func(string) string)) {

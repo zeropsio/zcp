@@ -32,33 +32,40 @@ func EnrollmentPath() string {
 // SaveEnrollment writes e to path, readable by its owner only, replacing
 // any earlier one in a single rename.
 func SaveEnrollment(path string, e Enrollment) error {
+	if err := saveOwnerOnly(path, e); err != nil {
+		return fmt.Errorf("hq enrollment: %w", err)
+	}
+	return nil
+}
+
+// saveOwnerOnly writes v as JSON to path in a directory only its owner may
+// enter, replacing any earlier file in a single rename: a reader sees the old
+// document or the new one, never a torn one.
+func saveOwnerOnly(path string, v any) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("hq enrollment: %w", err)
+		return err
 	}
 	if err := os.Chmod(dir, 0o700); err != nil {
-		return fmt.Errorf("hq enrollment: %w", err)
+		return err
 	}
-	body, err := json.Marshal(e)
+	body, err := json.Marshal(v)
 	if err != nil {
-		return fmt.Errorf("hq enrollment: %w", err)
+		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".enrollment-*")
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*")
 	if err != nil {
-		return fmt.Errorf("hq enrollment: %w", err)
+		return err
 	}
 	defer os.Remove(tmp.Name())
 	if _, err := tmp.Write(body); err != nil {
 		tmp.Close()
-		return fmt.Errorf("hq enrollment: %w", err)
+		return err
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("hq enrollment: %w", err)
+		return err
 	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		return fmt.Errorf("hq enrollment: %w", err)
-	}
-	return nil
+	return os.Rename(tmp.Name(), path)
 }
 
 // LoadEnrollment reads the enrollment at path; found is false when there is

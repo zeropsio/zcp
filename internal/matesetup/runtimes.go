@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -20,6 +21,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -37,14 +39,14 @@ type API interface {
 	GetProjectProcessesDirect(ctx context.Context, projectID string) ([]platform.Process, error)
 	GetProcess(ctx context.Context, processID string) (*platform.Process, error)
 	ImportServices(ctx context.Context, projectID, yamlContent string) (*platform.ImportResult, error)
-	// GetProject reads the project, its tags among them (the closed-off tag,
-	// ops.ClosedOffTag).
-	GetProject(ctx context.Context, projectID string) (*platform.Project, error)
 }
 
 // Importer imports the plan's missing services and tracks them to the end.
 type Importer struct {
-	API        API
+	API API
+	// ClosedOff asks HQ whether the project is closed off (the Mate's birth,
+	// written by the client that set it up): nothing is imported before.
+	ClosedOff  hq.ClosedOffReader
 	ProjectID  string
 	StatusPath string
 	// Poll is the time between two looks at the project while the import's
@@ -81,6 +83,9 @@ const (
 	DefaultPoll    = 3 * time.Second
 	DefaultTimeout = 20 * time.Minute
 )
+
+// hqTimeout bounds each ask of HQ whether the project is closed off.
+const hqTimeout = 15 * time.Second
 
 // DefaultBackoff is three retries of a failed import call over a minute.
 var DefaultBackoff = []time.Duration{5 * time.Second, 15 * time.Second, 45 * time.Second}
@@ -256,10 +261,10 @@ func decodeBase64(s string) ([]byte, error) {
 // code, and with env isolation off they read the zcp service's variables,
 // the Mate's key among them; closing the project off after they exist
 // restarts them. The press closes it off once the container recipe's own
-// project-env write (which resets it) has landed, reads it back, and tags
-// the project ops.ClosedOffTag; a press whose tab closed first leaves that
-// to "Finish setup", however much later — so the wait for the tag has no
-// end of its own.
+// project-env write (which resets it) has landed, reads it back, and records
+// it in HQ as the Mate's birth; a press whose tab closed first leaves that
+// to "Finish setup", however much later — so the wait for it has no end of
+// its own. The import asks HQ (ClosedOff) with the Mate's credential.
 func (im Importer) Run(ctx context.Context, encoded string) {
 	im = im.withDefaults()
 	hostnames, entries, err := DecodePlan(encoded)
@@ -411,7 +416,7 @@ func (im Importer) awaitClosedOff(ctx context.Context) bool {
 	start := time.Now()
 	said := ""
 	for {
-		closed, err := ops.ReadProjectClosedOff(ctx, im.api(), im.ProjectID)
+		closed, err := im.ClosedOff(ctx)
 		if err == nil && closed {
 			return true
 		}
@@ -419,7 +424,7 @@ func (im Importer) awaitClosedOff(ctx context.Context) bool {
 		if err != nil {
 			// A look that failed says nothing about the project: never read
 			// it as "not closed off yet".
-			line = oneLine(fmt.Sprintf("could not read the project (%v)", err))
+			line = oneLine(fmt.Sprintf("could not ask HQ whether the project is closed off (%v)", err))
 		}
 		if line != said {
 			im.write(func(r *mate.RuntimesStatus) {
@@ -806,6 +811,7 @@ func Boot(ctx context.Context, statusPath string, env func() func(string) string
 	im.Fresh = FreshAPI(env, func(token, apiHost string) (API, error) {
 		return platform.NewZeropsClient(token, apiHost)
 	})
+	im.ClosedOff = hq.ReadClosedOff(&http.Client{Timeout: hqTimeout}, hq.EnrollmentPath())
 	if im.API = im.Fresh(); im.API == nil {
 		im.finish(nil, "could not build the API client", false)
 		return

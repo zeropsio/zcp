@@ -35,6 +35,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/schema"
 )
@@ -715,14 +716,20 @@ func BasePathSupport(bin string) (bool, error) {
 // every launch where the flag is not.
 const EnvBasePath = "T3CODE_BASE_PATH"
 
+// EnvHQEnrollment names, to the server, the file the Mate's HQ enrollment is
+// kept in (hq.EnrollmentPath): the HQ address and the credential it opens
+// its link to HQ with. The file may not exist yet; zcp keeps enrolling.
+const EnvHQEnrollment = "T3CODE_ZEROPS_HQ_ENROLLMENT"
+
 // LaunchEnvLines is what a mate launch adds to the server's environment on
 // top of the live env store and the identity contract: its public prefix,
-// whatever the --base-path probe answered, and the status file it reads a
-// new Mate's setup from (status.go).
+// whatever the --base-path probe answered, the status file it reads a new
+// Mate's setup from (status.go), and its HQ enrollment.
 func LaunchEnvLines() []string {
 	return []string{
 		EnvBasePath + "=" + BasePath,
 		EnvStatusFile + "=" + DefaultStatusFilePath(),
+		EnvHQEnrollment + "=" + hq.EnrollmentPath(),
 	}
 }
 
