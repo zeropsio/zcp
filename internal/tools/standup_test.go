@@ -1,11 +1,10 @@
 // Tests for: tools/standup.go — zerops_standup, a new Mate's stand-up from
-// its group's recipe. Fakes only: a broker and a Gitea on httptest, an SSH
-// stub that answers the way a healthy container would, the platform mock.
+// its application's recipe. Fakes only: HQ on httptest, an SSH stub that
+// answers the way a healthy container would, the platform mock.
 package tools
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -29,7 +28,7 @@ import (
 )
 
 // standupTierTemplate is a real group's AI Agent tier (the Beviro trial,
-// 2026-09-29) with GITEA standing for the fake Gitea's origin: two pairs
+// 2026-09-29) with HQ standing for the fake HQ's origin: two pairs
 // whose setups are named after them, no priority between them — their order
 // is what the storefront's build reads (standupZeropsYAML) — a public-build
 // mailpit and a managed database.
@@ -39,20 +38,20 @@ project:
 services:
   - hostname: nextstoredev
     type: nodejs@22
-    buildFromGit: GITEA/beviro/nextstoredev
+    buildFromGit: HQ/git/app-1/nextstoredev.git
     zeropsSetup: nextstoredev
   - hostname: nextstorestage
     type: nodejs@22
-    buildFromGit: GITEA/beviro/nextstoredev
+    buildFromGit: HQ/git/app-1/nextstoredev.git
     zeropsSetup: nextstoreprod
     enableSubdomainAccess: true
   - hostname: medusadev
     type: nodejs@22
-    buildFromGit: GITEA/beviro/medusadev
+    buildFromGit: HQ/git/app-1/medusadev.git
     zeropsSetup: medusadev
   - hostname: medusastage
     type: nodejs@22
-    buildFromGit: GITEA/beviro/medusadev
+    buildFromGit: HQ/git/app-1/medusadev.git
     zeropsSetup: medusaprod
     enableSubdomainAccess: true
   - hostname: mailpit
@@ -98,35 +97,31 @@ func standupZeropsYAML(pair string) string {
 `, pair, buildEnv)
 }
 
-// standupCredential is the Mate credential the stand-up's pairs deliver to
-// HQ with.
+// standupCredential is the Mate credential the stand-up reads HQ with and
+// its pairs deliver to HQ with.
 const standupCredential = "standup-mate-credential"
 
-// standupGitea is the group's Gitea and the Mate's HQ in one TLS server —
-// two origins in production; the code never assumes they are one host.
-type standupGitea struct {
+// standupHQ is the Mate's HQ: its application, the recipe on its recipe
+// repository's main, and the repositories there.
+type standupHQ struct {
 	mu sync.Mutex
-	// tier is the group repo's AI Agent tier on main, "" when main lacks it.
+	// appID is the application HQ holds the Mate in, "" for none.
+	appID string
+	// tier is the AI Agent tier on main, "" when main lacks it.
 	tier string
-	// orgs is what the bot's org list answers.
-	orgs []string
-	// repos are the service repositories that exist, as org/name.
+	// repos are the repositories the application has.
 	repos []string
 	// asked is every repository HQ was asked for, in order.
 	asked []string
 	// changeOpens counts changes opened in HQ — a stand-up opens none.
 	changeOpens int
-	// read is every group-repo file read, by path.
-	read []string
+	// tierReads counts reads of the tier.
+	tierReads int
 }
 
-func (g *standupGitea) start(t *testing.T) *httptest.Server {
+func (g *standupHQ) start(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if auth := r.Header.Get("Authorization"); auth != "token "+giteaBotToken && auth != "Mate "+standupCredential {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
 		g.mu.Lock()
 		defer g.mu.Unlock()
 		write := func(status int, body any) {
@@ -134,41 +129,46 @@ func (g *standupGitea) start(t *testing.T) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(body)
 		}
 		path := r.URL.Path
-		switch {
-		case path == "/api/v1/user":
-			write(http.StatusOK, map[string]any{"login": "mate-p1", "id": 7})
-		case path == "/api/v1/user/orgs":
-			// A bot's token lacks read:organization (measured 2026-09-30).
-			write(http.StatusForbidden, map[string]string{"message": "token does not have at least one of required scope(s), required=[read:user read:organization]"})
-		case path == "/api/v1/user/repos":
-			repos := []map[string]any{}
-			for _, org := range g.orgs {
-				repos = append(repos, map[string]any{"name": "group", "full_name": org + "/group", "owner": map[string]any{"login": org}})
-			}
-			write(http.StatusOK, repos)
-		case strings.HasPrefix(path, "/api/v1/repos/beviro/group/contents/"):
-			file := strings.TrimPrefix(path, "/api/v1/repos/beviro/group/contents/")
-			g.read = append(g.read, file)
-			if file != workflow.MateTierImportPath || g.tier == "" || r.URL.Query().Get("ref") != "main" {
-				write(http.StatusNotFound, map[string]string{"message": "The target couldn't be found."})
+		if repo, ok := strings.CutPrefix(path, "/git/"+g.appID+"/"); ok && g.appID != "" {
+			if user, password, _ := r.BasicAuth(); user != hq.GitUser || password != standupCredential {
+				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
-			write(http.StatusOK, map[string]any{"type": "file", "encoding": "base64",
-				"content": base64.StdEncoding.EncodeToString([]byte(g.tier))})
-		case strings.HasPrefix(path, "/api/v1/repos/") && strings.Count(strings.TrimPrefix(path, "/api/v1/repos/"), "/") == 1:
-			if slices.Contains(g.repos, strings.TrimPrefix(path, "/api/v1/repos/")) {
-				write(http.StatusOK, map[string]any{"full_name": strings.TrimPrefix(path, "/api/v1/repos/")})
+			name, _, _ := strings.Cut(repo, ".git/")
+			if !slices.Contains(g.repos, name) {
+				w.WriteHeader(http.StatusNotFound)
 				return
 			}
-			write(http.StatusNotFound, map[string]string{"message": "not found"})
-		case path == "/api/mate/repos":
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Header.Get("Authorization") != "Mate "+standupCredential {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch path {
+		case "/api/mate/self":
+			var app any
+			if g.appID != "" {
+				app = g.appID
+			}
+			write(http.StatusOK, map[string]any{"projectId": "p1", "name": "Wren", "face": "f", "standupRequestedBy": nil,
+				"closedOff": true, "appId": app, "changes": []any{}})
+		case "/api/mate/recipe/" + hq.RecipeTierMate:
+			g.tierReads++
+			if g.tier == "" {
+				write(http.StatusOK, map[string]string{"state": hq.RecipeAbsent})
+				return
+			}
+			write(http.StatusOK, map[string]string{"state": hq.RecipePresent, "importYaml": g.tier, "mainHead": standupHead})
+		case "/api/mate/repos":
 			var body struct {
 				Name string `json:"name"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			g.asked = append(g.asked, body.Name)
-			write(http.StatusOK, map[string]any{"appId": "app-1", "name": body.Name})
-		case path == "/api/mate/changes":
+			write(http.StatusOK, map[string]any{"appId": g.appID, "name": body.Name})
+		case "/api/mate/changes":
 			g.changeOpens++
 			write(http.StatusNotFound, map[string]string{"code": "repo_not_found", "reason": "repo_not_found"})
 		default:
@@ -341,29 +341,29 @@ func (m *standupMounter) ListMountDirs(_ context.Context, _ string) ([]string, e
 func (m *standupMounter) HasUnit(_ context.Context, _ string) (bool, error) { return false, nil }
 func (m *standupMounter) CleanupUnit(_ context.Context, _ string) error     { return nil }
 
-// standupHTTP sends Gitea's and the broker's calls to the fake and answers
-// every other request — an L7 readiness probe — with 200.
+// standupHTTP sends HQ's calls to the fake and answers every other request —
+// an L7 readiness probe — with 200.
 type standupHTTP struct {
-	gitea *http.Client
-	host  string
+	hq   *http.Client
+	host string
 }
 
 func (h standupHTTP) Do(req *http.Request) (*http.Response, error) {
 	if req.URL.Host == h.host {
-		return h.gitea.Do(req)
+		return h.hq.Do(req)
 	}
 	return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: http.Header{}}, nil
 }
 
 // standupFixture is a Mate's project the moment its person has signed the
-// agent in: the tier on the group repo's main, the services the browser
-// imported (dev halves running and empty, stage halves waiting for a first
-// deploy), the Gitea variables on the container.
+// agent in: the tier on the recipe repository's main, the services the
+// browser imported (dev halves running and empty, stage halves waiting for a
+// first deploy), the Mate enrolled with its HQ.
 type standupFixture struct {
 	root, stateDir string
 	// enrollmentPath is the Mate's enrollment with the fake's HQ.
 	enrollmentPath string
-	gitea          *standupGitea
+	hq             *standupHQ
 	srv            *httptest.Server
 	mock           *platform.Mock
 	ssh            *standupSSH
@@ -412,16 +412,16 @@ func (c *importingClient) ListServicesDirect(ctx context.Context, projectID stri
 func newStandupFixture(t *testing.T) *standupFixture {
 	t.Helper()
 	f := &standupFixture{
-		gitea: &standupGitea{orgs: []string{"beviro"}, repos: []string{"beviro/medusadev", "beviro/nextstoredev"}},
-		ssh:   &standupSSH{collide: map[string]bool{}},
+		hq:  &standupHQ{appID: "app-1", repos: []string{"medusadev", "nextstoredev"}},
+		ssh: &standupSSH{collide: map[string]bool{}},
 	}
-	f.srv = f.gitea.start(t)
-	f.gitea.tier = strings.ReplaceAll(standupTierTemplate, "GITEA", f.srv.URL)
+	f.srv = f.hq.start(t)
+	f.hq.tier = strings.ReplaceAll(standupTierTemplate, "HQ", f.srv.URL)
 	f.root = t.TempDir()
 	f.stateDir = filepath.Join(f.root, ".zcp", "state")
 	f.statusPath = filepath.Join(f.root, "mate-status.json")
 	f.mounter = &standupMounter{}
-	f.env = map[string]string{"GITEA_URL": f.srv.URL, "MATE_BROKER_URL": f.srv.URL, "GITEA_TOKEN": giteaBotToken}
+	f.env = map[string]string{}
 	f.enrollmentPath = filepath.Join(f.root, "enrollment.json")
 	if err := hq.SaveEnrollment(f.enrollmentPath, hq.Enrollment{HQ: f.srv.URL, HQProjectID: "hq1", ProjectID: "p1", Credential: standupCredential}); err != nil {
 		t.Fatal(err)
@@ -474,7 +474,7 @@ func (f *standupFixture) run(t *testing.T) (*mcp.CallToolResult, standupResponse
 	registerStandup(srv, standupDeps{
 		batch: batchDeployer{
 			client:      client,
-			httpClient:  standupHTTP{gitea: f.srv.Client(), host: strings.TrimPrefix(f.srv.URL, "https://")},
+			httpClient:  standupHTTP{hq: f.srv.Client(), host: strings.TrimPrefix(f.srv.URL, "https://")},
 			projectID:   "p1",
 			sshDeployer: f.ssh,
 			authInfo:    &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
@@ -483,8 +483,8 @@ func (f *standupFixture) run(t *testing.T) (*mcp.CallToolResult, standupResponse
 		},
 		mounter:        f.mounter,
 		liveEnvPath:    writeLiveEnvFile(t, f.env),
-		gitWait:        50 * time.Millisecond,
-		gitPoll:        10 * time.Millisecond,
+		enrollWait:     50 * time.Millisecond,
+		enrollPoll:     10 * time.Millisecond,
 		runtimeWait:    200 * time.Millisecond,
 		runtimePoll:    5 * time.Millisecond,
 		statusPath:     f.statusPath,
@@ -534,7 +534,7 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 	if body.StandUp != standupReady {
 		t.Errorf("standUp = %q, want %q: %s", body.StandUp, standupReady, getTextContent(t, result))
 	}
-	if body.GroupRepo != "beviro/group" {
+	if body.GroupRepo != recipeRepo {
 		t.Errorf("groupRepo = %q", body.GroupRepo)
 	}
 
@@ -549,8 +549,8 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 	}
 
 	// HQ was asked for the repositories the recipe names.
-	if !slices.Equal(f.gitea.asked, []string{"medusadev", "nextstoredev"}) && !slices.Equal(f.gitea.asked, []string{"nextstoredev", "medusadev"}) {
-		t.Errorf("HQ asked for %v, want medusadev and nextstoredev", f.gitea.asked)
+	if !slices.Equal(f.hq.asked, []string{"medusadev", "nextstoredev"}) && !slices.Equal(f.hq.asked, []string{"nextstoredev", "medusadev"}) {
+		t.Errorf("HQ asked for %v, want medusadev and nextstoredev", f.hq.asked)
 	}
 	for _, pair := range [][3]string{{"medusadev", "medusastage", "medusaprod"}, {"nextstoredev", "nextstorestage", "nextstoreprod"}} {
 		meta, _ := workflow.ReadServiceMeta(f.stateDir, pair[0])
@@ -587,8 +587,8 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 	}
 
 	// Nothing is delivered: the stage runs main as it is.
-	if f.ssh.ran("HEAD:refs/heads/mate/") || f.gitea.changeOpens != 0 {
-		t.Errorf("a stand-up must not push or open a change (pushed=%v, changes=%d)", f.ssh.ran("HEAD:refs/heads/mate/"), f.gitea.changeOpens)
+	if f.ssh.ran("HEAD:refs/heads/mate/") || f.hq.changeOpens != 0 {
+		t.Errorf("a stand-up must not push or open a change (pushed=%v, changes=%d)", f.ssh.ran("HEAD:refs/heads/mate/"), f.hq.changeOpens)
 	}
 
 	dev := body.service(t, "medusadev")
@@ -614,10 +614,10 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 	}
 	// The group's own environments are the broker's: only the Mate's tier
 	// is read, never the stage's or production's.
-	if slices.ContainsFunc(f.gitea.read, func(path string) bool { return path != workflow.MateTierImportPath }) {
-		t.Errorf("group repo reads = %v, want only the AI Agent tier", f.gitea.read)
+	if f.hq.tierReads != 2 {
+		t.Errorf("the tier was read %d times over two calls, want once a call", f.hq.tierReads)
 	}
-	assertNoSecretOnDisk(t, f.stateDir, giteaBotToken)
+	assertNoSecretOnDisk(t, f.stateDir, standupCredential)
 	assertNoSecretOnDisk(t, f.stateDir, standupCredential)
 
 	agents, _ := os.ReadFile(filepath.Join(f.root, "AGENTS.md"))
@@ -643,14 +643,14 @@ func TestStandup_ASecondCallContinuesAndSkipsWhatIsDone(t *testing.T) {
 		}
 	}
 	f.mock.WithServices(deployed)
-	asked, pushes := len(f.gitea.asked), len(f.ssh.pushes())
+	asked, pushes := len(f.hq.asked), len(f.ssh.pushes())
 
 	result, body := f.run(t)
 	if result.IsError || body.StandUp != standupReady {
 		t.Fatalf("second call: %s", getTextContent(t, result))
 	}
-	if len(f.gitea.asked) != asked || len(f.ssh.pushes()) != pushes {
-		t.Errorf("a second call asked the broker %d more times and deployed %d more times", len(f.gitea.asked)-asked, len(f.ssh.pushes())-pushes)
+	if len(f.hq.asked) != asked || len(f.ssh.pushes()) != pushes {
+		t.Errorf("a second call asked the broker %d more times and deployed %d more times", len(f.hq.asked)-asked, len(f.ssh.pushes())-pushes)
 	}
 	dev := body.service(t, "medusadev")
 	if dev.Adopted != standupAlready || dev.Wired != standupAlready || dev.Deploy == nil || dev.Deploy.Status != standupAlreadyDeployed {
@@ -677,23 +677,28 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 		wantPushes   []string
 	}{
 		{
-			name:    "Git access never arrives",
-			setup:   func(f *standupFixture) { f.env = map[string]string{"GITEA_URL": f.srv.URL} },
-			wantErr: []string{"PREREQUISITE_MISSING", "MATE_BROKER_URL", "GITEA_TOKEN", "route=\\\"adopt\\\""},
+			name:    "the Mate is never enrolled",
+			setup:   func(f *standupFixture) { f.enrollmentPath = filepath.Join(f.root, "no-enrollment.json") },
+			wantErr: []string{"PREREQUISITE_MISSING", "not enrolled with its HQ", "route=\\\"adopt\\\""},
+		},
+		{
+			name:    "HQ holds the Mate in no application",
+			setup:   func(f *standupFixture) { f.hq.appID = "" },
+			wantErr: []string{"PREREQUISITE_MISSING", "no application"},
 		},
 		{
 			name:    "main has no AI Agent tier",
-			setup:   func(f *standupFixture) { f.gitea.tier = "" },
-			wantErr: []string{"beviro/group", "0 — AI Agent/import.yaml"},
+			setup:   func(f *standupFixture) { f.hq.tier = "" },
+			wantErr: []string{"group has no 0 — AI Agent/import.yaml on main", "not merged yet"},
 		},
 		{
 			name:    "a tier with no pair",
-			setup:   func(f *standupFixture) { f.gitea.tier = "services:\n  - hostname: db\n    type: postgresql@17\n" },
+			setup:   func(f *standupFixture) { f.hq.tier = "services:\n  - hostname: db\n    type: postgresql@17\n" },
 			wantErr: []string{"INVALID_IMPORT_YML", "db (managed)"},
 		},
 		{
 			name:    "a tier that does not read",
-			setup:   func(f *standupFixture) { f.gitea.tier = "services: [\n" },
+			setup:   func(f *standupFixture) { f.hq.tier = "services: [\n" },
 			wantErr: []string{"INVALID_IMPORT_YML"},
 		},
 		{
@@ -726,10 +731,10 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 		},
 		{
 			name:        "the recipe names a repository that is not there",
-			setup:       func(f *standupFixture) { f.gitea.repos = []string{"beviro/medusadev"} },
+			setup:       func(f *standupFixture) { f.hq.repos = []string{"medusadev"} },
 			wantStandUp: standupPartial,
 			want: map[string]string{
-				"nextstoredev":   "beviro/nextstoredev is not on Gitea",
+				"nextstoredev":   "app-1/nextstoredev is not in HQ",
 				"nextstorestage": "nextstoredev did not stand up",
 				"medusastage":    standupQueued,
 			},
@@ -739,11 +744,11 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 			name: "a pair that does not stand up holds only the stages below it",
 			setup: func(f *standupFixture) {
 				f.devsDeployed()
-				f.gitea.repos = []string{"beviro/nextstoredev"}
+				f.hq.repos = []string{"nextstoredev"}
 			},
 			wantStandUp: standupPartial,
 			want: map[string]string{
-				"medusadev":      "beviro/medusadev is not on Gitea",
+				"medusadev":      "app-1/medusadev is not in HQ",
 				"nextstorestage": "waits for medusastage, which did not stand up",
 			},
 		},
@@ -1201,10 +1206,10 @@ func TestStandup_WritesItsProgressForTheRunCard(t *testing.T) {
 		},
 		{
 			name:      "a refusal fails the call with its reason",
-			setup:     func(f *standupFixture) { f.env = map[string]string{} },
+			setup:     func(f *standupFixture) { f.enrollmentPath = filepath.Join(f.root, "no-enrollment.json") },
 			calls:     1,
 			wantState: mate.StandupFailed, wantPhase: mate.PhaseDevelopment,
-			wantError: "Git access has not reached this Mate",
+			wantError: "not enrolled with its HQ",
 		},
 	}
 	for _, tt := range tests {
@@ -1471,7 +1476,7 @@ func TestStandup_AnImportWaitingToBeClosedOffAnswersAtOnce(t *testing.T) {
 	if took := time.Since(start); took > 2*standupProgressGap {
 		t.Errorf("answered after %s, want at once", took)
 	}
-	if len(f.ssh.pushes()) != 0 || len(f.gitea.asked) != 0 {
+	if len(f.ssh.pushes()) != 0 || len(f.hq.asked) != 0 {
 		t.Error("nothing is touched while the project is not closed off")
 	}
 }

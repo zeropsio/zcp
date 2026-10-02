@@ -147,24 +147,11 @@ type ServiceMeta struct {
 	// any other file ZCP writes) — it lives where git-push-setup put it, a
 	// sensitive service env on the push source.
 	HQ *HQRepoRef `json:"hq,omitempty"`
-
-	// Gitea is the pair's repository on the account's own Gitea, as the
-	// group recipe (gitea_recipe_reconcile.go) reads it to name the group
-	// repo. Since a pair's code is delivered to HQ nothing records it; the
-	// recipe moves to HQ with T10.
-	Gitea *GiteaRepoRef `json:"gitea,omitempty"`
 }
 
 // SetRepoBaseline records the adopt-time baseline marker for this meta.
 func (m *ServiceMeta) SetRepoBaseline(appVersionID string, provenance topology.RepoProvenance) {
 	m.Repo = &topology.Repo{BaselineAppVersion: appVersionID, Provenance: provenance}
-}
-
-// GiteaRepoRef is a pair's repository on the account's Gitea, as the group
-// recipe reads it.
-type GiteaRepoRef struct {
-	FullName      string `json:"fullName"`                // "{org}/{name}"
-	DefaultBranch string `json:"defaultBranch,omitempty"` // the base a pull request targets
 }
 
 // HQRepoRef is what a pair needs to keep working on its repository in HQ

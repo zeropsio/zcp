@@ -102,10 +102,9 @@ func reconcileMateRepositories(
 	sshDeployer ops.SSHDeployer,
 	rt runtime.Info,
 	stateDir string,
-	liveEnvPath string,
 ) []string {
 	lines := reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir)
-	if line := reconcileGiteaGroupRecipe(ctx, client, httpClient, rt, stateDir, liveEnvPath); line != "" {
+	if line := reconcileGroupRecipe(ctx, client, httpClient, rt, stateDir); line != "" {
 		lines = append(lines, "the group's recipe: "+line)
 	}
 	return lines

@@ -1,4 +1,4 @@
-// Tests for: tools/gitea_recipe_reconcile.go — the setup block A2 names for
+// Tests for: tools/hq_recipe_inputs.go — the setup block A2 names for
 // each runtime.
 //
 // A2 composes unattended, on a pair that may never have deployed: the classic
@@ -98,7 +98,7 @@ func TestComposeGroupRecipeInputs_SetupName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stateDir := t.TempDir()
-			writeGiteaWiredPairMeta(t, stateDir)
+			writeHQWiredPairMeta(t, stateDir)
 			if err := workflow.UpdateServiceMeta(stateDir, "appdev", func(m *workflow.ServiceMeta) error {
 				// A pair that has never deployed has neither half's setup.
 				m.PrimarySetupName = tt.recordedSetup
@@ -112,7 +112,7 @@ func TestComposeGroupRecipeInputs_SetupName(t *testing.T) {
 
 			metas := []*workflow.ServiceMeta{meta}
 			inputs, _, err := composeGroupRecipeInputs(
-				context.Background(), recipeReconcileClient(), "p1", "acme", mountRoot, testGiteaURL, metas, metas,
+				context.Background(), recipeReconcileClient(), "p1", "acme", mountRoot, testHQAddress, labApp, metas, metas,
 			)
 			if err != nil {
 				t.Fatalf("a pair that has never deployed must still compose: %v", err)
@@ -167,7 +167,7 @@ func TestComposeGroupRecipeInputs_JoinerWithoutStageSetup_BuildsTheYAMLsOtherSet
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stateDir := t.TempDir()
-			writeGiteaWiredPairMeta(t, stateDir)
+			writeHQWiredPairMeta(t, stateDir)
 			if err := workflow.UpdateServiceMeta(stateDir, "appdev", func(m *workflow.ServiceMeta) error {
 				m.PrimarySetupName = tt.recordedDev
 				m.StageSetupName = ""
@@ -180,7 +180,7 @@ func TestComposeGroupRecipeInputs_JoinerWithoutStageSetup_BuildsTheYAMLsOtherSet
 
 			metas := []*workflow.ServiceMeta{meta}
 			inputs, _, err := composeGroupRecipeInputs(
-				context.Background(), recipeReconcileClient(), "p1", "acme", mountRoot, testGiteaURL, metas, metas,
+				context.Background(), recipeReconcileClient(), "p1", "acme", mountRoot, testHQAddress, labApp, metas, metas,
 			)
 			if err != nil {
 				t.Fatalf("composeGroupRecipeInputs: %v", err)

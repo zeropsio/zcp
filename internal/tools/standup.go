@@ -23,11 +23,12 @@ import (
 
 // A new Mate stands up from its recipe in one zcp call (docs/spec-mate.md,
 // D32). By the time the person's client sends "Stand up development of the
-// project.", their browser has imported the Mate's project from the group's
-// AI Agent tier — managed services, then zcp, then the runtimes, every dev
-// half running and empty (startWithoutCode) and every stage half waiting for
-// its first deploy (READY_TO_DEPLOY) — and the broker is writing this
-// container's Git variables. What is left is zcp's: read the tier, adopt each
+// project.", their browser has imported the Mate's project from the
+// application's AI Agent tier — managed services, then zcp, then the
+// runtimes, every dev half running and empty (startWithoutCode) and every
+// stage half waiting for its first deploy (READY_TO_DEPLOY) — and `zcp
+// service mate` is enrolling the Mate with its HQ. What is left is zcp's:
+// read the tier from HQ, adopt each
 // pair, put the repository's main into its dev half on the Mate's branch,
 // deploy every dev half at once and answer once they stand, then — on the
 // model's second call — each stage once its dev half and the stages above it
@@ -40,13 +41,15 @@ import (
 // recorded nowhere zcp can read — or, when something fails, with exactly what
 // failed and the next call for it: the model is always the backup.
 //
-// It touches its own project only. The group's stage and production are the
-// broker's, and the tier read is the Mate's own, `0 — AI Agent`.
+// It touches its own project only. The application's stage and production
+// are HQ's, and the tier read is the Mate's own, `0 — AI Agent`.
 
 const (
-	// standupGitWait bounds the wait for the Git variables the broker writes.
-	standupGitWait = 3 * time.Minute
-	standupGitPoll = 5 * time.Second
+	// standupEnrollWait bounds the wait for the Mate's enrollment with its
+	// HQ, which `zcp service mate` keeps (hq.Keep): a new Mate's first turn
+	// can come before it.
+	standupEnrollWait = 3 * time.Minute
+	standupEnrollPoll = 5 * time.Second
 	// standupRuntimeWait bounds the wait for the runtimes the browser imports
 	// right before the person signs the agent in: the first turn can arrive
 	// while they are still being created.
@@ -65,18 +68,18 @@ const (
 )
 
 // StandupInput is zerops_standup's input: none — the stand-up reads everything
-// it needs from the project, the container and the group's repository.
+// it needs from the project, the container and HQ.
 type StandupInput struct{}
 
 // standupDeps is what a stand-up needs: the batch deploy it shares with
 // zerops_deploy_batch (and through it the client, SSH, auth and state), the
-// mounter, and where and how long to wait for the Git variables.
+// mounter, and how long to wait for the Mate's enrollment.
 type standupDeps struct {
 	batch       batchDeployer
 	mounter     ops.Mounter
 	liveEnvPath string
-	gitWait     time.Duration
-	gitPoll     time.Duration
+	enrollWait  time.Duration
+	enrollPoll  time.Duration
 	runtimeWait time.Duration
 	runtimePoll time.Duration
 	// statusPath is the setup status file the stand-up writes its section of
@@ -89,8 +92,9 @@ type standupDeps struct {
 	trackPoll  time.Duration
 	// closedOff asks HQ whether the Mate's project is closed off (its birth).
 	closedOff hq.ClosedOffReader
-	// enrollmentPath is the Mate's enrollment with its HQ (hq.EnrollmentPath),
-	// which the pairs it adopts are wired to deliver to.
+	// enrollmentPath is the Mate's enrollment with its HQ (hq.EnrollmentPath):
+	// where the stand-up reads the tier, and what the pairs it adopts are
+	// wired to deliver to.
 	enrollmentPath string
 	// closedOffSeen is a call that asked HQ itself while the import's line
 	// still said it waited for the project to be closed off: that import is
@@ -103,7 +107,7 @@ type standupDeps struct {
 
 // RegisterStandup registers zerops_standup. The server registers it only in a
 // Mate — a container with ZCP_MATE_ENABLED and an SSH deployer — since only a
-// Mate has a group's recipe to stand up from (docs/spec-mate.md §2.0).
+// Mate has an application's recipe to stand up from (docs/spec-mate.md §2.0).
 func RegisterStandup(
 	srv *mcp.Server,
 	client platform.Client,
@@ -123,8 +127,8 @@ func RegisterStandup(
 		},
 		mounter:        mounter,
 		liveEnvPath:    mate.LiveEnvStorePath,
-		gitWait:        standupGitWait,
-		gitPoll:        standupGitPoll,
+		enrollWait:     standupEnrollWait,
+		enrollPoll:     standupEnrollPoll,
 		runtimeWait:    standupRuntimeWait,
 		runtimePoll:    standupRuntimePoll,
 		statusPath:     mate.StatusFilePath(),
@@ -139,7 +143,7 @@ func RegisterStandup(
 func registerStandup(srv *mcp.Server, d standupDeps) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_standup",
-		Description: "Stands up this Mate's development from the group repo's AI Agent tier: adopts each dev/stage pair, " +
+		Description: "Stands up this Mate's development from the recipe's AI Agent tier: adopts each dev/stage pair, " +
 			"checks main out into each dev half, deploys dev halves, then stages on a second call in build order, reports each service's next step. " +
 			"Call it first when the person's message is \"Stand up development of the project.\" Idempotent: call again after a fix.",
 		Annotations: &mcp.ToolAnnotations{
@@ -156,10 +160,10 @@ func registerStandup(srv *mcp.Server, d standupDeps) {
 	})
 }
 
-// run is the whole stand-up. A refusal before anything is touched — no Git
-// access, no tier, a tier with no pair — is an error result naming the
-// fallback; past that, the answer is the per-service report, whatever it
-// holds.
+// run is the whole stand-up. A refusal before anything is touched — no
+// enrollment with HQ, no tier, a tier with no pair — is an error result
+// naming the fallback; past that, the answer is the per-service report,
+// whatever it holds.
 func (d standupDeps) run(ctx context.Context, progress *standupProgress) *mcp.CallToolResult {
 	progress.st().begin()
 	stopBeat := progress.st().beat(d.beat)
@@ -189,19 +193,18 @@ func (d standupDeps) stand(ctx context.Context, progress *standupProgress) *mcp.
 		progress.say("the project is closed off; the container's import of the runtimes is starting")
 		d.closedOffSeen = true
 	}
-	wiring := d.awaitGitAccess(ctx, progress)
-	if !wiring.Ready() {
+	hqc, enrolled := d.awaitEnrollment(ctx, progress)
+	if !enrolled {
 		return standupRefusal(platform.ErrPrerequisiteMissing,
-			fmt.Sprintf("Git access has not reached this Mate: %s is not on this service after %s. The broker writes the three once it has made this Mate's Gitea bot, and the stand-up needs them to check the recipe's repositories out.",
-				strings.Join(wiring.MissingKeys(), ", "), d.gitWait),
-			"Nothing was touched. Call zerops_standup again in a few minutes. To carry on without it, adopt the pairs with zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\" — their repositories are wired and checked out once the variables land, and a first deploy follows.")
+			fmt.Sprintf("This Mate is not enrolled with its HQ after %s. zcp enrolls it once HQ answers, and the stand-up needs HQ to read the recipe and to check its repositories out.", d.enrollWait),
+			"Nothing was touched. Call zerops_standup again in a few minutes. To carry on without it, adopt the pairs with zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\" — their repositories are wired and checked out once the Mate is enrolled, and a first deploy follows.")
 	}
-	src, refusal := d.readTier(ctx, wiring, progress)
+	src, refusal := d.readTier(ctx, hqc, progress)
 	if refusal != nil {
 		return refusal
 	}
 
-	pairs, live := d.preparePairs(ctx, wiring, src, progress)
+	pairs, live := d.preparePairs(ctx, hqc, src, progress)
 	d.deployAll(ctx, pairs, live, src.tier.ProjectEnvs, progress)
 	d.observeDevServers(pairs)
 
@@ -210,103 +213,68 @@ func (d standupDeps) stand(ctx context.Context, progress *standupProgress) *mcp.
 	return jsonResult(resp)
 }
 
-// awaitGitAccess reads the container's Git variables — from the live env
-// store, which the platform rewrites within seconds of the broker's write
-// (mate.LiveLookup) — until all three are there or the wait is over.
-func (d standupDeps) awaitGitAccess(ctx context.Context, progress *standupProgress) ops.GiteaWiring {
-	deadline := time.Now().Add(d.gitWait)
+// awaitEnrollment opens the Mate's enrollment with its HQ, which `zcp service
+// mate` writes once HQ answers (hq.Keep), until it is there or the wait is
+// over.
+func (d standupDeps) awaitEnrollment(ctx context.Context, progress *standupProgress) (hq.Client, bool) {
+	deadline := time.Now().Add(d.enrollWait)
 	for {
-		wiring := ops.ReadGiteaWiring(mate.LiveLookup(d.liveEnvPath))
-		if wiring.Ready() || !time.Now().Before(deadline) {
-			return wiring
+		hqc, err := hq.Open(d.batch.httpClient, d.enrollmentPath)
+		if err == nil {
+			return hqc, true
 		}
-		progress.say("waiting for this Mate's Git access (" + strings.Join(wiring.MissingKeys(), ", ") + " not on this service yet)")
+		if !time.Now().Before(deadline) {
+			return hq.Client{}, false
+		}
+		progress.say("waiting for this Mate's enrollment with its HQ")
 		select {
 		case <-ctx.Done():
-			return wiring
-		case <-time.After(d.gitPoll):
+			return hq.Client{}, false
+		case <-time.After(d.enrollPoll):
 		}
 	}
 }
 
-// standupSource is the tier a stand-up works from and where it came from.
+// standupSource is the tier a stand-up works from and where it came from:
+// the recipe repository of the application appID.
 type standupSource struct {
-	org       string
+	appID     string
 	groupRepo string
 	tier      workflow.MateTier
 }
 
-// readTier finds the group repo — its org is the one a wired pair names, or
-// else the one the bot is a member of (its group's `read` team) — and reads
-// and parses the AI Agent tier on its main.
-func (d standupDeps) readTier(ctx context.Context, wiring ops.GiteaWiring, progress *standupProgress) (standupSource, *mcp.CallToolResult) {
+// readTier reads the AI Agent tier on main of the recipe repository of the
+// application HQ holds the Mate in, and parses it.
+func (d standupDeps) readTier(ctx context.Context, hqc hq.Client, progress *standupProgress) (standupSource, *mcp.CallToolResult) {
 	const fallback = "Nothing was touched. Carry on with zcp's own tools: zerops_discover, then adopt the pairs with zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\", then deploy each dev half and its stage."
 	progress.say("reading the group's recipe")
-	orgs, err := d.groupOrgs(ctx, wiring)
+	state, err := hqc.Self(ctx)
 	if err != nil {
 		return standupSource{}, standupRefusal(platform.ErrAPIError,
-			fmt.Sprintf("Could not read which group this Mate belongs to on Gitea: %v.", err), fallback)
+			fmt.Sprintf("Could not read which application HQ holds this Mate in: %v.", err), fallback)
 	}
-	if len(orgs) == 0 {
+	if state.AppID == nil {
 		return standupSource{}, standupRefusal(platform.ErrPrerequisiteMissing,
-			"This Mate's Gitea bot belongs to no group yet, so there is no group repo to read the recipe from — the broker adds it to its group's team once the Mate is registered.", fallback)
+			"HQ holds this Mate in no application yet, so there is no recipe repository to read the recipe from.", fallback)
 	}
-	var (
-		found   []standupSource
-		bodies  []string
-		without []string
-	)
-	for _, org := range orgs {
-		groupRepo := org + "/group"
-		body, ok, err := ops.ReadGiteaFile(ctx, d.batch.httpClient, wiring.GiteaURL, wiring.Token, groupRepo, giteaProtectedBase, workflow.MateTierImportPath)
-		if err != nil {
-			return standupSource{}, standupRefusal(platform.ErrAPIError,
-				fmt.Sprintf("Could not read %s@%s:%s: %v.", groupRepo, giteaProtectedBase, workflow.MateTierImportPath, err), fallback)
-		}
-		if !ok {
-			without = append(without, groupRepo)
-			continue
-		}
-		found = append(found, standupSource{org: org, groupRepo: groupRepo})
-		bodies = append(bodies, body)
+	src := standupSource{appID: *state.AppID, groupRepo: recipeRepo}
+	read, err := hqc.RecipeTier(ctx, hq.RecipeTierMate)
+	if err != nil {
+		return standupSource{}, standupRefusal(platform.ErrAPIError,
+			fmt.Sprintf("Could not read %s@%s:%s from HQ: %v.", src.groupRepo, hqBase, workflow.MateTierImportPath, err), fallback)
 	}
-	switch len(found) {
-	case 0:
+	if read.State != hq.RecipePresent {
 		return standupSource{}, standupRefusal(platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("%s has no %s on %s: the project's recipe is not merged yet, so there is nothing to stand up from.",
-				strings.Join(without, ", "), workflow.MateTierImportPath, giteaProtectedBase), fallback)
-	case 1:
-	default:
-		repos := make([]string, 0, len(found))
-		for _, f := range found {
-			repos = append(repos, f.groupRepo)
-		}
-		return standupSource{}, standupRefusal(platform.ErrPrerequisiteMissing,
-			fmt.Sprintf("This Mate's Gitea bot is in more than one group with an AI Agent tier (%s), so which recipe is this project's is not known.", strings.Join(repos, ", ")), fallback)
+				src.groupRepo, workflow.MateTierImportPath, hqBase), fallback)
 	}
-	src := found[0]
-	tier, err := workflow.ParseMateTier(bodies[0], wiring.GiteaURL, src.org)
+	tier, err := workflow.ParseMateTier(read.ImportYAML, hqc.Address(), src.appID)
 	if err != nil {
 		return standupSource{}, standupRefusal(platform.ErrInvalidImportYml,
-			fmt.Sprintf("%s@%s:%s cannot be stood up: %v.", src.groupRepo, giteaProtectedBase, workflow.MateTierImportPath, err), fallback)
+			fmt.Sprintf("%s@%s:%s cannot be stood up: %v.", src.groupRepo, hqBase, workflow.MateTierImportPath, err), fallback)
 	}
 	src.tier = tier
 	return src, nil
-}
-
-// groupOrgs names the org the group repo is in: the one a wired pair's
-// repository names, else every org whose group repository the bot reads.
-func (d standupDeps) groupOrgs(ctx context.Context, wiring ops.GiteaWiring) ([]string, error) {
-	if metas, err := workflow.ListServiceMetas(d.batch.stateDir); err == nil {
-		if org := knownGiteaOrg(metas); org != "" {
-			return []string{org}, nil
-		}
-	}
-	orgs, err := ops.GiteaGroupOrgs(ctx, d.batch.httpClient, wiring.GiteaURL, wiring.Token)
-	if err != nil {
-		return nil, fmt.Errorf("list the bot's repositories: %w", err)
-	}
-	return orgs, nil
 }
 
 // standupRefusal is a stand-up that stopped before touching anything: an
@@ -324,7 +292,7 @@ func standupRefusal(code, message, suggestion string) *mcp.CallToolResult {
 // standupPair is one pair's way through the stand-up.
 type standupPair struct {
 	pair       workflow.MateTierPair
-	repository string // org/name
+	repository string // appId/name
 	dev, stage *platform.ServiceStack
 	adopted    string // standupNow | standupAlready
 	wired      string
@@ -357,10 +325,10 @@ func (p *standupPair) fail(what, next string) {
 // services settled and present, adopted, its dev half mounted, its
 // repository checked out on the Mate's branch. A pair that cannot get there
 // is stopped with what failed; the others go on.
-func (d standupDeps) preparePairs(ctx context.Context, wiring ops.GiteaWiring, src standupSource, progress *standupProgress) ([]*standupPair, map[string]*platform.ServiceStack) {
+func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standupSource, progress *standupProgress) ([]*standupPair, map[string]*platform.ServiceStack) {
 	pairs := make([]*standupPair, 0, len(src.tier.Pairs))
 	for _, p := range src.tier.Pairs {
-		pairs = append(pairs, &standupPair{pair: p, repository: src.org + "/" + p.RepoName})
+		pairs = append(pairs, &standupPair{pair: p, repository: src.appID + "/" + p.RepoName})
 	}
 	bootFailed := d.awaitBootImport(ctx, progress)
 	live, err := d.awaitRuntimes(ctx, src.tier, progress)
@@ -400,7 +368,7 @@ func (d standupDeps) preparePairs(ctx context.Context, wiring ops.GiteaWiring, s
 		if sp.failed != "" {
 			continue
 		}
-		wg.Go(func() { d.wire(ctx, wiring, sp, progress) })
+		wg.Go(func() { d.wire(ctx, hqc, src.appID, sp, progress) })
 	}
 	wg.Wait()
 	for _, sp := range pairs {
@@ -667,10 +635,10 @@ func (d standupDeps) mountDevHalf(ctx context.Context, sp *standupPair) {
 // branch — the repository of the recipe's name in HQ, git-push to it, main
 // fetched and the branch cut from it (wireHQPair, the reconcile's own
 // wiring) — unless an earlier pass did. A repository the recipe names that
-// the group's Gitea does not have is refused before HQ is asked: HQ makes
-// what it is asked for. It holds the pair's checkout throughout
+// the application appID does not have is refused before HQ is asked for it:
+// HQ makes what it is asked for. It holds the pair's checkout throughout
 // (holdPairCheckout): a pass meeting it held leaves the pair to it.
-func (d standupDeps) wire(ctx context.Context, wiring ops.GiteaWiring, sp *standupPair, progress *standupProgress) {
+func (d standupDeps) wire(ctx context.Context, hqc hq.Client, appID string, sp *standupPair, progress *standupProgress) {
 	host := sp.pair.Dev.Hostname
 	release, err := holdPairCheckout(ctx, d.batch.stateDir, host)
 	if err != nil {
@@ -688,20 +656,14 @@ func (d standupDeps) wire(ctx context.Context, wiring ops.GiteaWiring, sp *stand
 		return
 	}
 	progress.say(fmt.Sprintf("checking %s out into %s", sp.repository, host))
-	exists, err := ops.GiteaRepositoryExists(ctx, d.batch.httpClient, wiring.GiteaURL, wiring.Token, sp.repository)
+	exists, err := hqc.RepoExists(ctx, appID, sp.pair.RepoName)
 	if err != nil {
-		sp.fail(fmt.Sprintf("could not read %s on Gitea: %v", sp.repository, err), "Call zerops_standup again; it continues from here.")
+		sp.fail(fmt.Sprintf("could not read %s in HQ: %v", sp.repository, err), "Call zerops_standup again; it continues from here.")
 		return
 	}
 	if !exists {
-		sp.fail(fmt.Sprintf("%s is not on Gitea: the recipe names a repository the group does not have, so there is no code to stand %s up from", sp.repository, host),
-			"Tell the person the recipe's buildFromGit for this pair names a repository that does not exist; the group repo's AI Agent tier needs fixing before this pair can stand up.")
-		return
-	}
-	hqc, err := hq.Open(d.batch.httpClient, d.enrollmentPath)
-	if err != nil {
-		sp.fail(fmt.Sprintf("checking %s out into %s failed: this Mate is not enrolled with its HQ yet, so it has no repository to deliver to", sp.repository, host),
-			"Call zerops_standup again once the Mate is enrolled; it continues from here.")
+		sp.fail(fmt.Sprintf("%s is not in HQ: the recipe names a repository the application does not have, so there is no code to stand %s up from", sp.repository, host),
+			"Tell the person the recipe's buildFromGit for this pair names a repository that does not exist; the recipe repository's AI Agent tier needs fixing before this pair can stand up.")
 		return
 	}
 	outcome := rewireHQPair(ctx, d.batch.client, d.batch.httpClient, d.batch.sshDeployer, d.batch.rtInfo, d.batch.stateDir, hqc, meta, sp.pair.RepoName)

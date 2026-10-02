@@ -1526,15 +1526,11 @@ func TestMergeExistingMetaKeepsThePairsRepositoryRecords(t *testing.T) {
 		GitPushState: topology.GitPushConfigured,
 		RemoteURL:    "https://hq.acme.example/git/a1/todoapp.git",
 		HQ:           &HQRepoRef{AppID: "a1", Repo: "todoapp", Branch: "mate/p1", Change: 1},
-		Gitea:        &GiteaRepoRef{FullName: "acme/todoapp", DefaultBranch: "main"},
 	}
 	meta := &ServiceMeta{Hostname: "todoapp", StageHostname: "todoappstage", Mode: topology.PlanModeStandard}
 	mergeExistingMeta(meta, existing)
 	if meta.HQ == nil || meta.HQ.Repo != "todoapp" || meta.HQ.Change != 1 {
 		t.Fatalf("an expansion keeps the pair's HQ record, got %+v", meta.HQ)
-	}
-	if meta.Gitea == nil || meta.Gitea.FullName != "acme/todoapp" {
-		t.Fatalf("an expansion keeps the Gitea record the group recipe reads, got %+v", meta.Gitea)
 	}
 	if meta.GitPushState != topology.GitPushConfigured || meta.RemoteURL != existing.RemoteURL {
 		t.Fatalf("the push state travels with it, got %q %q", meta.GitPushState, meta.RemoteURL)

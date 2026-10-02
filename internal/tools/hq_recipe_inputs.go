@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/ops/inventory"
@@ -23,9 +24,10 @@ import (
 // The platform is the authority on what exists, how it scales and what it
 // holds; the metas are the authority on which repository and which setup
 // block a pair builds from — neither is derivable from the other, which is
-// why both are read. group is the group's slug, the org of its repositories:
-// the recipe's name, and the stage and production projects are named after
-// it.
+// why both are read. group names the recipe, and the stage and production
+// projects are named after it (recipeName). Every pair builds from its
+// repository in the application appID of the HQ at address: its
+// buildFromGit is that repository's address there.
 //
 // A read that decides what a tier carries — the project's variables, a
 // pair's own, an object storage's size, a runtime's origin — fails the pass
@@ -38,7 +40,7 @@ import (
 func composeGroupRecipeInputs(
 	ctx context.Context,
 	client platform.Client,
-	projectID, group, mountRoot, giteaURL string,
+	projectID, group, mountRoot, address, appID string,
 	metas, wired []*workflow.ServiceMeta,
 ) (bundle.GroupRecipeInputs, []string, error) {
 	discovered, err := ops.Discover(ctx, client, projectID, "", false, false, false)
@@ -53,7 +55,7 @@ func composeGroupRecipeInputs(
 	if err != nil {
 		return bundle.GroupRecipeInputs{}, nil, fmt.Errorf("could not read the project's variables: %w", err)
 	}
-	waits, names, leftOut := groupRecipeWaits(discovered.Services, metas, wired, giteaURL)
+	waits, names, leftOut := groupRecipeWaits(discovered.Services, metas, wired, address, appID)
 	if len(waits) > 0 {
 		return bundle.GroupRecipeInputs{}, waits, fmt.Errorf("pairs not wired yet: %s", strings.Join(names, ", "))
 	}
@@ -101,7 +103,7 @@ func composeGroupRecipeInputs(
 			DevHostname:      m.Hostname,
 			StageHostname:    m.StageHostname,
 			ServiceType:      svc.Type,
-			RepoURL:          m.RemoteURL,
+			RepoURL:          hq.RepoURLAt(address, appID, m.HQ.Repo),
 			SetupName:        firstNonEmptySetup(m.PrimarySetupName, m.StageSetupName, m.Hostname),
 			StageSetupName:   m.StageSetupName,
 			ZeropsYAMLBody:   yamlBody,
@@ -152,74 +154,22 @@ func composeGroupRecipeInputs(
 	return inputs, warnings, nil
 }
 
-// knownGiteaOrg is the group's org on its Gitea as a pair's record names it,
-// "" while none does.
-func knownGiteaOrg(metas []*workflow.ServiceMeta) string {
-	for _, m := range metas {
-		if m == nil || m.Gitea == nil {
-			continue
-		}
-		if org, _, ok := strings.Cut(m.Gitea.FullName, "/"); ok && org != "" {
-			return org
-		}
-	}
-	return ""
-}
-
-// giteaPairNeedsRepository reports whether the recipe waits for a pair to
-// have its Gitea repository: a finished pair with no Gitea record and no
-// remote of the user's own. A pair is in the recipe exactly when it carries a
-// Gitea record (FullName) and a configured git-push. giteaURL is this Mate's
-// Gitea and org the group's org there when a pair's record names it, ""
-// otherwise. Since pairs deliver to HQ nothing records a Gitea repository;
-// the recipe moves to HQ with T10.
-func giteaPairNeedsRepository(m *workflow.ServiceMeta, giteaURL, org string) bool {
-	if m == nil || !m.IsComplete() {
-		return false
-	}
-	if m.Gitea != nil && m.Gitea.FullName != "" && m.GitPushState == topology.GitPushConfigured {
-		return false
-	}
-	return m.RemoteURL == "" || m.Gitea != nil || giteaRemoteIsThePairs(m.RemoteURL, giteaURL, m.Hostname, org)
-}
-
-// giteaRemoteIsThePairs reports whether remote can be the pair's repository
-// on this Mate's Gitea: named after the pair's hostname, and in the group's
-// org when org is known. A remote that fails any of those is one the user
-// chose.
-func giteaRemoteIsThePairs(remote, giteaURL, hostname, org string) bool {
-	if topology.ClassifyGitHost(remote, giteaURL) != topology.GitHostGitea {
-		return false
-	}
-	path := canonicalGitRepository(remote)
-	if u, err := url.Parse(path); err == nil && u.Host != "" {
-		path = u.Path
-	} else if i := strings.LastIndex(path, ":"); i >= 0 {
-		path = path[i+1:]
-	}
-	segments := strings.Split(strings.Trim(path, "/"), "/")
-	if len(segments) < 2 || !strings.EqualFold(segments[len(segments)-1], hostname) {
-		return false
-	}
-	return org == "" || strings.EqualFold(segments[len(segments)-2], org)
-}
-
 // groupRecipeWaits sorts the live runtimes no wired pair holds. The recipe
 // waits for what a later pass brings — a finished pair the repository pass
-// will still wire (its own giteaPairNeedsRepository), or a dev/stage pair
-// zcp has not adopted, both `<stem>dev` and `<stem>stage` running with no
-// pair recorded — since a tier proposed without it would stay without it
-// (D30), and written as utilities its halves landed in Small Production with
-// no setup. What no pass will wire is left out and said, so it never holds
-// the group's first recipe back for good: a pair pushing to a repository of
-// its own, or one whose bootstrap never finished. Every other runtime is
+// will still wire (hqPairNeedsRepository), one wired in another application
+// than the recipe's, which a pass wires in this one, or a dev/stage pair zcp
+// has not adopted, both `<stem>dev` and `<stem>stage` running with no pair
+// recorded — since a tier proposed without it would stay without it (D30),
+// and written as utilities its halves landed in Small Production with no
+// setup. What no pass will wire is left out and said, so it never holds the
+// group's first recipe back for good: a pair pushing to a repository of its
+// own, or one whose bootstrap never finished. Every other runtime is
 // standalone, a utility or left out by groupRecipeUtility. It returns the
 // warnings of what it waits for, their pairs' names, and the warnings of
 // what it leaves out.
-func groupRecipeWaits(services []ops.ServiceInfo, metas, wired []*workflow.ServiceMeta, giteaURL string) (waits, names, leftOut []string) {
+func groupRecipeWaits(services []ops.ServiceInfo, metas, wired []*workflow.ServiceMeta, address, appID string) (waits, names, leftOut []string) {
 	paired := workflow.ManagedRuntimeIndex(wired)
 	known := workflow.ManagedRuntimeIndex(metas)
-	org := knownGiteaOrg(metas)
 	live := map[string]bool{}
 	var runtimes []string
 	for _, svc := range services {
@@ -236,11 +186,17 @@ func groupRecipeWaits(services []ops.ServiceInfo, metas, wired []*workflow.Servi
 		switch {
 		case paired[host] != nil:
 		case meta != nil && said[meta.Hostname]:
-		case meta != nil && giteaPairNeedsRepository(meta, giteaURL, org):
+		case meta != nil && hqPairWired(meta) && meta.HQ.AppID != appID:
 			said[meta.Hostname] = true
 			names = append(names, meta.Hostname)
 			waits = append(waits, fmt.Sprintf(
-				"the recipe waits for the pair %q: the repository pass has not given it its Gitea repository yet, and a tier proposed without it would stay without it on the group repo",
+				"the recipe waits for the pair %q: its repository is in another application of HQ than the recipe's, and the next pass wires it in this one",
+				meta.Hostname))
+		case meta != nil && hqPairNeedsRepository(meta, address):
+			said[meta.Hostname] = true
+			names = append(names, meta.Hostname)
+			waits = append(waits, fmt.Sprintf(
+				"the recipe waits for the pair %q: the repository pass has not given it its repository in HQ yet, and a tier proposed without it would stay without it on the group repository",
 				meta.Hostname))
 		case meta != nil && !meta.IsComplete():
 			said[meta.Hostname] = true
@@ -249,7 +205,7 @@ func groupRecipeWaits(services []ops.ServiceInfo, metas, wired []*workflow.Servi
 		case meta != nil:
 			said[meta.Hostname] = true
 			leftOut = append(leftOut, fmt.Sprintf(
-				"pair %q is not in the recipe: it pushes to a repository of its own, not the group's Gitea, which the recipe does not name", meta.Hostname))
+				"pair %q is not in the recipe: it pushes to a repository of its own, not this Mate's HQ, which the recipe does not name", meta.Hostname))
 		default:
 			dev, stage, ok := unadoptedPair(host, live, known)
 			if !ok || said[dev] {
@@ -258,7 +214,7 @@ func groupRecipeWaits(services []ops.ServiceInfo, metas, wired []*workflow.Servi
 			said[dev] = true
 			names = append(names, dev)
 			waits = append(waits, fmt.Sprintf(
-				"the recipe waits for %s: they run as a dev/stage pair zcp has not adopted — adopt them so the repository pass can give the pair its repository; a tier proposed without them would stay without them on the group repo",
+				"the recipe waits for %s: they run as a dev/stage pair zcp has not adopted — adopt them so the repository pass can give the pair its repository; a tier proposed without them would stay without them on the group repository",
 				quotedList([]string{dev, stage})))
 		}
 	}
@@ -300,16 +256,12 @@ func quotedList(hosts []string) string {
 }
 
 // isControlPlaneEnv reports a variable that is the Mate's wiring, never the
-// app's: zcp's own key and agents, a git or launch token, the Gitea bot's
-// token and the addresses it reaches Gitea and the broker by. A group's
-// environment gets its own, so none of them is copied — not even as a
-// generated secret.
+// app's: zcp's own key and agents, a git or launch token — GIT_TOKEN on a
+// dev half is the Mate's HQ credential — and the Gitea bot's token. A
+// group's environment gets its own, so none of them is copied — not even as
+// a generated secret.
 func isControlPlaneEnv(key string) bool {
-	switch key {
-	case ops.GiteaTokenEnvKey, ops.GiteaURLEnvKey, ops.MateBrokerURLEnvKey:
-		return true
-	}
-	return topology.IsClassifyInfrastructure(key)
+	return key == ops.GiteaTokenEnvKey || topology.IsClassifyInfrastructure(key)
 }
 
 // groupRecipeProjectEnvs is the project's variables the recipe carries: the
@@ -378,7 +330,7 @@ func groupRecipeUtility(ctx context.Context, client platform.Client, svc ops.Ser
 	}
 	if !isPublicGitHost(shape.PublicGitURL) {
 		return nil, []string{fmt.Sprintf(
-			"runtime %q is not in the recipe: it has no Gitea repository yet and was not built from a public one", svc.Hostname)}, nil
+			"runtime %q is not in the recipe: it has no repository in HQ yet and was not built from a public one", svc.Hostname)}, nil
 	}
 	envs, err := groupRecipeServiceEnvs(ctx, client, svc)
 	if err != nil {

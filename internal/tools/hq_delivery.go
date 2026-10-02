@@ -8,7 +8,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/zeropsio/zcp/internal/hq"
-	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -129,6 +128,9 @@ func stageNameFor(devHostname string) string {
 type hqDelivery struct {
 	Change *changeRef
 	Line   string
+	// shipped: the delivery went as far as shipping its change, which the
+	// group's recipe follows.
+	shipped bool
 }
 
 // deliverHQPair is how a wired pair's work reaches its application without
@@ -145,6 +147,26 @@ type hqDelivery struct {
 // Otherwise a line for the deploy's next actions, a failed delivery included
 // — the deploy itself succeeded either way.
 func deliverHQPair(
+	ctx context.Context,
+	client platform.Client,
+	httpClient ops.HTTPDoer,
+	sshDeployer ops.SSHDeployer,
+	rt runtime.Info,
+	stateDir, target string,
+) *hqDelivery {
+	delivery := deliverHeldHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, target)
+	// The recipe reads the project and HQ, never the checkout, so it runs
+	// once the delivery has let go of it.
+	if delivery != nil && delivery.shipped {
+		if line := reconcileGroupRecipe(ctx, client, httpClient, rt, stateDir); line != "" {
+			delivery.Line += " The group's recipe: " + line
+		}
+	}
+	return delivery
+}
+
+// deliverHeldHQPair is the delivery itself, holding the pair's checkout.
+func deliverHeldHQPair(
 	ctx context.Context,
 	client platform.Client,
 	httpClient ops.HTTPDoer,
@@ -267,9 +289,7 @@ func deliverHQPair(
 		result.Line = fmt.Sprintf("%s runs, but its code has not reached its repository %q in HQ: %s. Fix the cause, then deploy %s again — the change follows that deploy.",
 			target, repo, shipped.line, target)
 	}
-	if line := reconcileGiteaGroupRecipe(ctx, client, httpClient, rt, stateDir, mate.LiveEnvStorePath); line != "" {
-		result.Line += " The group's recipe: " + line
-	}
+	result.shipped = true
 	return result
 }
 

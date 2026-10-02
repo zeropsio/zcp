@@ -1,4 +1,4 @@
-// Tests for: tools/gitea_recipe_inputs.go — what the recipe reconcile reads
+// Tests for: tools/hq_recipe_inputs.go — what the recipe reconcile reads
 // of the Mate's live project: the group's name, the project's core package
 // and variables, each pair's own variables, each managed service as it runs,
 // and the runtimes built from a public repository.
@@ -14,7 +14,6 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -89,12 +88,12 @@ func medusaLikeProject(extra ...platform.ServiceStack) *platform.Mock {
 
 func TestComposeGroupRecipeInputs_ReadsTheLiveProject(t *testing.T) {
 	stateDir := t.TempDir()
-	writeGiteaWiredPairMeta(t, stateDir)
+	writeHQWiredPairMeta(t, stateDir)
 	metas, err := workflow.ListServiceMetas(stateDir)
 	if err != nil {
 		t.Fatalf("ListServiceMetas: %v", err)
 	}
-	inputs, warnings, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(), "p1", "acme", t.TempDir(), testGiteaURL, metas, metas)
+	inputs, warnings, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(), "p1", "acme", t.TempDir(), testHQAddress, labApp, metas, metas)
 	if err != nil {
 		t.Fatalf("composeGroupRecipeInputs: %v", err)
 	}
@@ -175,10 +174,10 @@ func TestComposeGroupRecipeInputs_ReadFailures(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stateDir := t.TempDir()
-			writeGiteaWiredPairMeta(t, stateDir)
+			writeHQWiredPairMeta(t, stateDir)
 			metas, _ := workflow.ListServiceMetas(stateDir)
 			client := medusaLikeProject().WithError(tt.method, errors.New("upstream timeout"))
-			_, warnings, err := composeGroupRecipeInputs(context.Background(), client, "p1", "acme", t.TempDir(), testGiteaURL, metas, metas)
+			_, warnings, err := composeGroupRecipeInputs(context.Background(), client, "p1", "acme", t.TempDir(), testHQAddress, labApp, metas, metas)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("err = %v, want one naming %q", err, tt.wantErr)
@@ -195,9 +194,31 @@ func TestComposeGroupRecipeInputs_ReadFailures(t *testing.T) {
 	}
 }
 
-// testGiteaURL is the Mate's Gitea in these tests: the wired pair's remote is
-// on it.
-const testGiteaURL = "https://gitea.example"
+// testHQAddress is the Mate's HQ in these tests: the wired pair's
+// repository is there.
+const testHQAddress = "https://hq.example"
+
+// writeHQWiredPairMeta seeds a pair the repository pass has already given its
+// repository in HQ, both halves deployed: the state the recipe starts from.
+func writeHQWiredPairMeta(t *testing.T, stateDir string) {
+	t.Helper()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeStandard,
+		StageHostname:    "appstage",
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-09-16",
+		GitPushState:     topology.GitPushConfigured,
+		RemoteURL:        testHQAddress + "/git/" + labApp + "/appdev.git",
+		PrimarySetupName: "api",
+		// Both halves deployed: the group tiers build the stage half's setup,
+		// and a stage setup nothing records is withheld rather than guessed.
+		StageSetupName: "prod",
+		HQ:             &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Branch: "mate/" + labMate},
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+}
 
 // The recipe waits only for what a later pass brings: a finished pair the
 // repository pass will still wire, or a dev/stage pair zcp has not adopted.
@@ -236,6 +257,11 @@ func TestComposeGroupRecipeInputs_WaitsOnlyForWhatALaterPassBrings(t *testing.T)
 	}{
 		{name: "a finished pair the repository pass will wire", meta: workerPair("2026-09-30", ""), extra: workers,
 			wantWait: []string{`"workerdev"`, "repository pass"}},
+		{name: "a pair wired in another application", meta: func() *workflow.ServiceMeta {
+			m := workerPair("2026-09-30", testHQAddress+"/git/app-0/workerdev.git")
+			m.HQ = &workflow.HQRepoRef{AppID: "app-0", Repo: "workerdev", Branch: "mate/" + labMate}
+			return m
+		}(), extra: workers, wantWait: []string{`"workerdev"`, "another application"}},
 		{name: "a dev/stage pair zcp has not adopted", extra: workers,
 			wantWait: []string{`"workerdev"`, `"workerstage"`, "adopt"}},
 		{name: "a pair pushing to its own repository is left out", meta: workerPair("2026-09-30", "https://github.com/acme/worker.git"), extra: workers,
@@ -252,7 +278,7 @@ func TestComposeGroupRecipeInputs_WaitsOnlyForWhatALaterPassBrings(t *testing.T)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stateDir := t.TempDir()
-			writeGiteaWiredPairMeta(t, stateDir)
+			writeHQWiredPairMeta(t, stateDir)
 			wired, err := workflow.ListServiceMetas(stateDir)
 			if err != nil {
 				t.Fatalf("ListServiceMetas: %v", err)
@@ -261,7 +287,7 @@ func TestComposeGroupRecipeInputs_WaitsOnlyForWhatALaterPassBrings(t *testing.T)
 			if tt.meta != nil {
 				metas = append(slices.Clone(wired), tt.meta)
 			}
-			inputs, warnings, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(tt.extra...), "p1", "acme", t.TempDir(), testGiteaURL, metas, wired)
+			inputs, warnings, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(tt.extra...), "p1", "acme", t.TempDir(), testHQAddress, labApp, metas, wired)
 			if len(tt.wantWait) > 0 {
 				if err == nil {
 					t.Fatalf("composed while a pair waits: utilities %+v", inputs.Utilities)
@@ -303,28 +329,25 @@ func TestComposeGroupRecipeInputs_WaitsOnlyForWhatALaterPassBrings(t *testing.T)
 }
 
 // Through the reconcile: while a pair waits for its repository nothing is
-// forked, committed or proposed, the outcome's warnings say which pair, and
-// its line says the recipe is proposed on a later pass.
-func TestReconcileGiteaGroupRecipe_WaitsForAnUnwiredPair(t *testing.T) {
-	stateDir := t.TempDir()
-	writeGiteaWiredPairMeta(t, stateDir)
-	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{Hostname: "workerdev", StageHostname: "workerstage",
-		Mode: topology.PlanModeStandard, BootstrapSession: "test", BootstrappedAt: "2026-09-30"}); err != nil {
-		t.Fatalf("WriteServiceMeta: %v", err)
-	}
-	fake := newFakeGroupGitea()
-	srv := fake.start(t)
-	env := map[string]string{"GITEA_URL": srv.URL, "MATE_BROKER_URL": srv.URL, "GITEA_TOKEN": giteaBotToken}
-	client := medusaLikeProject(
+// proposed, the outcome's warnings say which pair, and its line says the
+// recipe is proposed on a later pass.
+func TestGroupRecipe_WaitsForAnUnwiredPair(t *testing.T) {
+	lab := newHQLab(t)
+	lab.mock = medusaLikeProject(
 		publicBuildRuntime("svc-workerdev", "workerdev", "nodejs@22", "https://github.com/zerops-recipe-apps/medusa-worker"),
 		publicBuildRuntime("svc-workerstage", "workerstage", "nodejs@22", "https://github.com/zerops-recipe-apps/medusa-worker"),
 	)
+	lab.ssh.mock = lab.mock
+	lab.wire()
+	if err := workflow.WriteServiceMeta(lab.stateDir, &workflow.ServiceMeta{Hostname: "workerdev", StageHostname: "workerstage",
+		Mode: topology.PlanModeStandard, BootstrapSession: "test", BootstrappedAt: "2026-09-30"}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
 
-	outcome := giteaGroupRecipeOutcome(context.Background(), client, srv.Client(),
-		runtime.Info{InContainer: true, ProjectID: "p1"}, stateDir, writeLiveEnvFile(t, env))
-	if fake.forkPosts != 0 || fake.commits != 0 || fake.pullPosts != 0 || outcome.PullNumber != 0 {
-		t.Errorf("forks %d, commits %d, pull requests %d (#%d): want nothing proposed while a pair waits",
-			fake.forkPosts, fake.commits, fake.pullPosts, outcome.PullNumber)
+	outcome := lab.proposeRecipe(lab.mock)
+
+	if outcome.Change != 0 || lab.hq.changeIn(recipeRepo, 1) != nil {
+		t.Errorf("outcome %+v: want nothing proposed while a pair waits", outcome)
 	}
 	if !warningsHave(outcome.Warnings, `"workerdev"`) {
 		t.Errorf("warnings %v do not name the pair the recipe waits for", outcome.Warnings)
@@ -357,24 +380,30 @@ func warningsHave(warnings []string, substr string) bool {
 }
 
 // Through the reconcile itself: the proposal it writes names the group's
-// environments after the group, carries the project's variables with every
-// secret generated, and brings the public-build mail catcher along.
-func TestReconcileGiteaGroupRecipe_ProposesTheLiveProject(t *testing.T) {
-	stateDir := t.TempDir()
-	writeGiteaWiredPairMeta(t, stateDir)
-	fake := newFakeGroupGitea()
-	srv := fake.start(t)
-	env := map[string]string{"GITEA_URL": srv.URL, "MATE_BROKER_URL": srv.URL, "GITEA_TOKEN": giteaBotToken}
+// environments after the application, carries the project's variables with
+// every secret generated, and brings the public-build mail catcher along —
+// and no tier carries a credential, the Mate's HQ credential on the dev
+// half's GIT_TOKEN least of all.
+func TestGroupRecipe_ProposesTheLiveProject(t *testing.T) {
+	lab := newHQLab(t)
+	lab.mock = medusaLikeProject()
+	lab.ssh.mock = lab.mock
+	lab.wire()
+	if err := workflow.UpdateServiceMeta(lab.stateDir, "appdev", func(m *workflow.ServiceMeta) error {
+		m.PrimarySetupName, m.StageSetupName = "api", "prod"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 
-	outcome := giteaGroupRecipeOutcome(context.Background(), medusaLikeProject(), srv.Client(),
-		runtime.Info{InContainer: true, ProjectID: "p1"}, stateDir, writeLiveEnvFile(t, env))
-	if outcome.PullNumber == 0 {
+	outcome := lab.proposeRecipe(lab.mock)
+	if outcome.Change == 0 {
 		t.Fatalf("nothing proposed: %+v", outcome)
 	}
-	_, files := fake.proposal(t)
+	files := lab.hq.recipeFiles(recipeBranch(outcome.Change))
 	stage := files["3 — Stage/import.yaml"]
 	for _, want := range []string{
-		"name: acme stage",
+		"name: " + recipeName(labApp) + " stage",
 		"API_URL: https://app-${zeropsSubdomainHost}-3000.prg1.zerops.app",
 		"JWT_SECRET: <@generateRandomString(<25>)>",
 		"hostname: mailpit",
@@ -386,7 +415,7 @@ func TestReconcileGiteaGroupRecipe_ProposesTheLiveProject(t *testing.T) {
 		}
 	}
 	for path, body := range files {
-		for _, secret := range []string{"live-jwt-value-0123456789", "live-zcp-key", "live-gitea-token", "live-git-token", "admin:pw"} {
+		for _, secret := range []string{"live-jwt-value-0123456789", "live-zcp-key", "live-gitea-token", "live-git-token", "admin:pw", labCredential} {
 			if strings.Contains(body, secret) {
 				t.Errorf("%s carries %q", path, secret)
 			}

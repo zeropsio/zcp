@@ -217,16 +217,12 @@ func mergeExistingMeta(meta, existing *ServiceMeta) {
 	meta.GitPushState = existing.GitPushState
 	meta.RemoteURL = existing.RemoteURL
 	meta.BuildIntegration = existing.BuildIntegration
-	// The pair's repository records (HQ's repository, the Mate's branch, its
-	// change; the Gitea one the group recipe reads) travel with the push
-	// state they belong to: without them an expanded pair reads as never
-	// wired, and the group recipe is never re-proposed (Dara's todoapp,
-	// 2026-09-17).
+	// The pair's repository record (HQ's repository, the Mate's branch, its
+	// change) travels with the push state it belongs to: without it an
+	// expanded pair reads as never wired, and the group recipe is never
+	// re-proposed (Dara's todoapp, 2026-09-17).
 	if meta.HQ == nil {
 		meta.HQ = existing.HQ
-	}
-	if meta.Gitea == nil {
-		meta.Gitea = existing.Gitea
 	}
 
 	if existing.PrimarySetupName != "" {

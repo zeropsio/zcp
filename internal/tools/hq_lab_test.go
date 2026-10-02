@@ -285,7 +285,7 @@ func (f *fakeHQ) ensureRepo(ctx context.Context, app, name string) {
 	for _, kv := range [][2]string{{"http.receivepack", "true"}, {"receive.denyNonFastForwards", "true"}, {"receive.denyDeletes", "true"}} {
 		f.git(ctx, dir, "config", kv[0], kv[1])
 	}
-	hook := "#!/bin/sh\nwhile read old new ref; do grep -qxF \"$ref\" \"$FAKE_HQ_REFS\" || { echo \"$ref is not an open change of this Mate\" >&2; exit 1; }; done\n"
+	hook := "#!/bin/sh\nrepo=$(basename \"$(pwd)\")\nwhile read old new ref; do grep -qxF \"$repo $ref\" \"$FAKE_HQ_REFS\" || { echo \"$ref is not an open change of this Mate\" >&2; exit 1; }; done\n"
 	if err := os.WriteFile(filepath.Join(dir, "hooks", "pre-receive"), []byte(hook), 0o755); err != nil {
 		f.t.Fatal(err)
 	}
@@ -294,13 +294,13 @@ func (f *fakeHQ) ensureRepo(ctx context.Context, app, name string) {
 
 func (f *fakeHQ) repoDir(app, name string) string { return filepath.Join(f.root, app, name+".git") }
 
-// writeRefs writes the branches a push may move: the open changes'. f.mu is
-// held, or the fake is not serving yet.
+// writeRefs writes the branches a push may move, by repository: the open
+// changes'. f.mu is held, or the fake is not serving yet.
 func (f *fakeHQ) writeRefs() {
 	var refs []string
 	for _, c := range f.changes {
 		if c.State == hq.ChangeOpen {
-			refs = append(refs, fmt.Sprintf("refs/heads/mate/%s/%d", c.MateProjectID, c.Number))
+			refs = append(refs, fmt.Sprintf("%s.git refs/heads/mate/%s/%d", c.Repo, c.MateProjectID, c.Number))
 		}
 	}
 	if err := os.WriteFile(f.refsFile, []byte(strings.Join(refs, "\n")+"\n"), 0o600); err != nil {
@@ -334,8 +334,10 @@ func (f *fakeHQ) git(ctx context.Context, dir string, args ...string) string {
 
 // merge squashes the Mate's change #1 in appdev onto `main`, the way HQ's
 // merge does, and records it merged; it answers the squash.
-func (f *fakeHQ) merge() string {
-	const repo, number = "appdev", 1
+func (f *fakeHQ) merge() string { return f.mergeChange("appdev", 1) }
+
+// mergeChange squashes the Mate's change number in repo onto `main`.
+func (f *fakeHQ) mergeChange(repo string, number int) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	change := f.find(f.appID, repo, number, hq.ChangeOpen)
@@ -352,11 +354,21 @@ func (f *fakeHQ) merge() string {
 	return squash
 }
 
-// close closes the Mate's change number in appdev without merging it.
-func (f *fakeHQ) close(number int) {
+// seed makes repo in the Mate's application, the way HQ makes one asked for.
+func (f *fakeHQ) seed(repo string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.find(f.appID, "appdev", number, hq.ChangeOpen).State = hq.ChangeClosed
+	f.ensureRepo(f.t.Context(), f.appID, repo)
+}
+
+// close closes the Mate's change number in appdev without merging it.
+func (f *fakeHQ) close(number int) { f.closeChange("appdev", number) }
+
+// closeChange closes the Mate's change number in repo without merging it.
+func (f *fakeHQ) closeChange(repo string, number int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.find(f.appID, repo, number, hq.ChangeOpen).State = hq.ChangeClosed
 	f.writeRefs()
 }
 
@@ -384,10 +396,14 @@ func (f *fakeHQ) setDown(down bool) {
 
 // change is the Mate's change number in appdev of the application it was
 // first in.
-func (f *fakeHQ) change(number int) *hq.Change {
+func (f *fakeHQ) change(number int) *hq.Change { return f.changeIn("appdev", number) }
+
+// changeIn is the Mate's change number in repo of the application it was
+// first in.
+func (f *fakeHQ) changeIn(repo string, number int) *hq.Change {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if c := f.find(labApp, "appdev", number, ""); c != nil {
+	if c := f.find(labApp, repo, number, ""); c != nil {
 		copied := *c
 		return &copied
 	}
@@ -462,6 +478,8 @@ func newHQLab(t *testing.T) *hqLab {
 	t.Helper()
 	fake := newFakeHQ(t)
 	t.Setenv("HOME", t.TempDir())
+	// zcp's own git against HQ trusts the fake's certificate.
+	t.Setenv("GIT_SSL_CAINFO", fake.caFile)
 	if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: fake.srv.URL, HQProjectID: "hq1", ProjectID: labMate, Credential: labCredential}); err != nil {
 		t.Fatal(err)
 	}
@@ -567,17 +585,22 @@ func requireGitForLab(t *testing.T) {
 // way an earlier merge of HQ's would have.
 func (f *fakeHQ) landOnMain(repo string, files map[string]string) {
 	f.t.Helper()
+	f.seed(repo)
 	clone := filepath.Join(f.t.TempDir(), "other")
 	f.git(f.t.Context(), "", "clone", "-q", f.repoDir(f.appID, repo), clone)
 	for name, body := range files {
-		if err := os.WriteFile(filepath.Join(clone, name), []byte(body), 0o600); err != nil {
+		path := filepath.Join(clone, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			f.t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			f.t.Fatal(err)
 		}
 	}
 	f.git(f.t.Context(), clone, "add", "-A")
 	f.git(f.t.Context(), clone, "-c", "user.name=other", "-c", "user.email=other@example.invalid", "commit", "-qm", "Another Mate's work")
 	allowed := filepath.Join(f.t.TempDir(), "main-only")
-	if err := os.WriteFile(allowed, []byte("refs/heads/main\n"), 0o600); err != nil {
+	if err := os.WriteFile(allowed, []byte(repo+".git refs/heads/main\n"), 0o600); err != nil {
 		f.t.Fatal(err)
 	}
 	cmd := exec.CommandContext(f.t.Context(), "git", "-C", clone, "push", "-q", "origin", "main")

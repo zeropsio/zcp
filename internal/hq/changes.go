@@ -2,6 +2,8 @@ package hq
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -56,6 +58,32 @@ func (c Client) EnsureRepo(ctx context.Context, name string) (Repo, error) {
 	return repo, err
 }
 
+// RepoExists reports whether HQ keeps the repository repo of the application
+// appID, without making it: git's own first ask of a clone, as the Mate —
+// found, or not found. Any other answer is an error, never "absent".
+func (c Client) RepoExists(ctx context.Context, appID, repo string) (bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.RepoURL(appID, repo)+"/info/refs?service=git-upload-pack", nil)
+	if err != nil {
+		return false, fmt.Errorf("hq git %s: %w", repo, err)
+	}
+	req.SetBasicAuth(GitUser, c.Credential())
+	resp, err := c.call.http.Do(req)
+	if err != nil {
+		return false, &UnavailableError{Err: fmt.Errorf("hq git %s: %w", repo, err)}
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, answerLimit))
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	case http.StatusServiceUnavailable:
+		return false, &UnavailableError{Err: fmt.Errorf("hq git %s: HQ is not active", repo)}
+	}
+	return false, fmt.Errorf("hq git %s: HQ answered %d", repo, resp.StatusCode)
+}
+
 func (c Client) authorization() string { return "Mate " + c.enrollment.Credential }
 
 // Address is the HQ's own address, without a trailing slash.
@@ -69,8 +97,12 @@ func (c Client) ProjectID() string { return c.enrollment.ProjectID }
 func (c Client) Credential() string { return c.enrollment.Credential }
 
 // RepoURL is where git reaches the repository repo of the application appID.
-func (c Client) RepoURL(appID, repo string) string {
-	return c.Address() + "/git/" + url.PathEscape(appID) + "/" + url.PathEscape(repo) + ".git"
+func (c Client) RepoURL(appID, repo string) string { return RepoURLAt(c.Address(), appID, repo) }
+
+// RepoURLAt is where git reaches the repository repo of the application
+// appID at the HQ whose address is address.
+func RepoURLAt(address, appID, repo string) string {
+	return strings.TrimRight(address, "/") + "/git/" + url.PathEscape(appID) + "/" + url.PathEscape(repo) + ".git"
 }
 
 // ChangeURL is a change's own address at HQ, which HQ leads into the client:
