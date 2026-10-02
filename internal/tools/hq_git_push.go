@@ -29,7 +29,7 @@ func handleHQGitPush(
 	rt runtime.Info,
 	projectID, stateDir, hostname, workingDir, remote, dirtyWarn string,
 	recordAttempt func(string, topology.FailureClass),
-) (*mcp.CallToolResult, any, error) {
+) *mcp.CallToolResult {
 	meta, _ := workflow.FindServiceMeta(stateDir, hostname)
 	hqc, enrolled := openHQ(httpClient)
 	if !enrolled || !hqPairWired(meta) {
@@ -38,7 +38,7 @@ func handleHQGitPush(
 			platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("git-push from %s did not run: it has no repository in this Mate's HQ yet.", hostname),
 			"Deploy the pair directly (strategy \"ssh\") to run the code; the push goes to its change once HQ gives the pair its repository.",
-		), WithRecoveryStatus()), nil, nil
+		), WithRecoveryStatus())
 	}
 
 	// What became of the change on record is news independent of this
@@ -59,7 +59,7 @@ func handleHQGitPush(
 	if refusal := hqPushSyncRefusal(string(output), hostname, landedCommit); refusal != nil {
 		recordAttempt("hq landing absorb: "+refusal.Message, topology.FailureClassConfig)
 		refusal.Message = withLearned(refusal.Message)
-		return convertError(refusal, WithRecoveryStatus()), nil, nil
+		return convertError(refusal, WithRecoveryStatus())
 	}
 	ahead, found := ops.DeliveryAhead(string(output))
 	if err != nil || !found {
@@ -71,14 +71,14 @@ func handleHQGitPush(
 				platform.ErrSSHDeployFailed,
 				withLearned(fmt.Sprintf("git-push from %s has not reached HQ: HQ could not be reached (%s). The delivery is kept and finishes by itself once HQ answers.", hostname, detail)),
 				"Nothing for the person to do; the next stage deploy, push or pass finishes it.",
-			), WithRecoveryStatus()), nil, nil
+			), WithRecoveryStatus())
 		}
 		recordAttempt("taking main in failed: "+detail, topology.FailureClassNetwork)
 		return convertError(platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
 			withLearned(fmt.Sprintf("git-push from %s has not reached HQ: taking %q in failed (%s).", hostname, hqBase, detail)),
 			"Fix the cause named above, then push again.",
-		), WithRecoveryStatus()), nil, nil
+		), WithRecoveryStatus())
 	}
 
 	shipped := shipChange(ctx, sshDeployer, stateDir, hqc, meta, changeTitle(stateDir, meta), ahead)
@@ -92,7 +92,7 @@ func handleHQGitPush(
 			platform.ErrSSHDeployFailed,
 			withLearned(fmt.Sprintf("git-push from %s has not reached HQ: %s.", hostname, shipped.line)),
 			next,
-		), WithRecoveryStatus()), nil, nil
+		), WithRecoveryStatus())
 	}
 
 	result := &ops.GitPushResult{Status: "PUSHED", RemoteURL: remote}
@@ -122,7 +122,7 @@ func handleHQGitPush(
 		Warnings:         warnings,
 		WorkSessionState: sessionAnnotations(stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
-	}), nil, nil
+	})
 }
 
 // hqPushSyncRefusal is the refusal of a push whose sync stopped by name — a

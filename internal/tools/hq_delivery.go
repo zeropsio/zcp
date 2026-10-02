@@ -155,13 +155,27 @@ func deliverHQPair(
 	if sshDeployer == nil || !rt.InContainer {
 		return nil
 	}
+	delivers := func(m *workflow.ServiceMeta) bool {
+		return hqPairOnItsBranch(m) && m.StageHostname != "" && target == m.StageHostname
+	}
 	meta, _ := workflow.FindServiceMeta(stateDir, target)
-	if !hqPairWired(meta) || meta.HQ.Branch == "" || !hqPairPushes(meta.GitPushState) ||
-		meta.StageHostname == "" || target != meta.StageHostname {
+	if !delivers(meta) {
 		return nil
 	}
 	hqc, enrolled := openHQ(httpClient)
 	if !enrolled {
+		return nil
+	}
+	release, err := holdPairCheckout(ctx, stateDir, meta.Hostname)
+	if err != nil {
+		return &hqDelivery{Line: fmt.Sprintf(
+			"%s runs, but its code has not reached HQ: %s. Nothing of it was committed or pushed; the next stage deploy delivers it.",
+			target, pairHeldReason(meta.Hostname, err))}
+	}
+	defer release()
+	// Whoever held the checkout may have moved the record: a delivery it
+	// finished, a change it learned of.
+	if meta, _ = workflow.FindServiceMeta(stateDir, target); !delivers(meta) {
 		return nil
 	}
 
@@ -286,6 +300,12 @@ func deliveryRefusalLine(output, target, repo, hostname, landedCommit string) st
 			target, repo, ops.DeliveryUnignored(output), hostname, target)
 	}
 	return ""
+}
+
+// hqPairOnItsBranch reports whether a pair is wired through: its repository
+// in HQ, the Mate's branch checked out, and a state that lets it push.
+func hqPairOnItsBranch(m *workflow.ServiceMeta) bool {
+	return hqPairWired(m) && m.HQ.Branch != "" && hqPairPushes(m.GitPushState)
 }
 
 // hqPairPushes reports whether a wired pair's state lets it push: set up, or

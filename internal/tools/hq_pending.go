@@ -100,8 +100,9 @@ func waitFor(ctx context.Context, d time.Duration) error {
 // wired pair with a delivery owed is kept current the way a reconcile pass
 // keeps it — wired again where HQ now holds the Mate, its change's outcome
 // learned, its owed delivery finished on a clean checkout of the Mate's
-// branch. It answers how many are still owed, and the lines worth saying;
-// HQ not answering says nothing.
+// branch. A pair another process runs git on is left to it for this round.
+// It answers how many are still owed, and the lines worth saying; HQ not
+// answering says nothing.
 func FinishPendingDeliveries(
 	ctx context.Context,
 	client platform.Client,
@@ -123,15 +124,26 @@ func FinishPendingDeliveries(
 	}
 	self := lazySelf(ctx, hqc)
 	for _, m := range metas {
-		if !hqPairWired(m) || m.HQ.Pending == nil {
+		if !owes(m) {
 			continue
 		}
-		if line, _ := keepHQPairCurrent(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, self, m); line != "" {
-			lines = append(lines, m.Hostname+": "+line)
+		if release, err := workflow.LockPair(ctx, stateDir, m.Hostname, 0); err == nil {
+			// Whoever held the checkout last may have finished it.
+			if fresh, _ := workflow.FindServiceMeta(stateDir, m.Hostname); owes(fresh) {
+				if line, _ := keepHQPairCurrent(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, self, fresh); line != "" {
+					lines = append(lines, m.Hostname+": "+line)
+				}
+			}
+			release()
 		}
-		if fresh, _ := workflow.FindServiceMeta(stateDir, m.Hostname); hqPairWired(fresh) && fresh.HQ.Pending != nil {
+		if fresh, _ := workflow.FindServiceMeta(stateDir, m.Hostname); owes(fresh) {
 			owed++
 		}
 	}
 	return owed, lines
+}
+
+// owes reports whether a pair has a delivery owed to HQ.
+func owes(m *workflow.ServiceMeta) bool {
+	return hqPairWired(m) && m.HQ.Pending != nil
 }

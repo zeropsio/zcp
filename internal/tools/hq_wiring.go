@@ -165,14 +165,14 @@ func reconcileHQRepositories(
 		if !hqAttemptDue(state, now) {
 			continue
 		}
-		var outcome string
-		var wired bool
-		if hqPairNeedsRepository(m, address) {
-			attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, m, hqRepoNameOf(m))
-			outcome, wired = attempt.line, attempt.wired
-		} else {
-			outcome, wired = keepHQPairCurrent(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, self, m)
+		// A pair another process runs git on is left to it, and no attempt
+		// is recorded: it stays due for the next pass.
+		release, err := workflow.LockPair(ctx, stateDir, m.Hostname, 0)
+		if err != nil {
+			continue
 		}
+		outcome, wired := passHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, self, address, m.Hostname)
+		release()
 		// The attempt is recorded even when it had nothing to say: a wired
 		// pair with nothing open is the ORDINARY state, and without the
 		// backoff every agent tool call would ask HQ about it.
@@ -182,6 +182,30 @@ func reconcileHQRepositories(
 		}
 	}
 	return report
+}
+
+// passHQPair is one pair's turn of a pass, on its record as it is once the
+// pass holds its checkout: wired, or kept current.
+func passHQPair(
+	ctx context.Context,
+	client platform.Client,
+	httpClient ops.HTTPDoer,
+	sshDeployer ops.SSHDeployer,
+	rt runtime.Info,
+	stateDir string,
+	hqc hq.Client,
+	self func() (hq.MateState, error),
+	address, hostname string,
+) (string, bool) {
+	m, _ := workflow.FindServiceMeta(stateDir, hostname)
+	switch {
+	case hqPairNeedsRepository(m, address):
+		attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, m, hqRepoNameOf(m))
+		return attempt.line, attempt.wired
+	case hqPairWired(m):
+		return keepHQPairCurrent(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, self, m)
+	}
+	return "", false
 }
 
 // lazySelf reads the Mate's own state from HQ at most once, when first asked:

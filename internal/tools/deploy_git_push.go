@@ -508,6 +508,18 @@ func handleGitPush(
 	// change — refused here, before git runs, so a rejection can never read
 	// as a reason to force-push over it.
 	if hqRemoteOfThisMate(effectiveRemote) {
+		pair := pairKey(stateDir, hostname)
+		release, err := holdPairCheckout(ctx, stateDir, pair)
+		if err != nil {
+			reason := pairHeldReason(pair, err)
+			recordAttempt(reason, topology.FailureClassOther)
+			return convertError(platform.NewPlatformError(
+				platform.ErrSSHDeployFailed,
+				fmt.Sprintf("git-push from %s did not run: %s. Nothing was pushed.", hostname, reason),
+				"Push again once it is done.",
+			), WithRecoveryStatus()), nil, nil
+		}
+		defer release()
 		if refusal := hqPushGuard(ctx, client, httpClient, sshDeployer, rt, stateDir, hostname, effectiveRemote, input.Branch); refusal != nil {
 			recordAttempt(refusal.Message, topology.FailureClassConfig)
 			return convertError(refusal, WithRecoveryStatus()), nil, nil
@@ -637,7 +649,7 @@ func handleGitPush(
 	// opened when there is something to deliver, and HEAD pushed to the
 	// change's branch — the one ref HQ takes from the Mate.
 	if hqRemoteOfThisMate(effectiveRemote) {
-		return handleHQGitPush(ctx, client, httpClient, sshDeployer, rt, projectID, stateDir, hostname, workingDir, effectiveRemote, dirtyWarn, recordAttempt)
+		return handleHQGitPush(ctx, client, httpClient, sshDeployer, rt, projectID, stateDir, hostname, workingDir, effectiveRemote, dirtyWarn, recordAttempt), nil, nil
 	}
 
 	// pushedAt anchors the build-watch discovery: integration builds

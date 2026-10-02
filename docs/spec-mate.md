@@ -2416,6 +2416,12 @@ pair to re-submit.
   A round only finishes on a clean checkout of the Mate's branch and says nothing while HQ is away
   — the enrollment's keep is what logs that. The next delivery, git-push or reconcile pass finishes
   it too, whichever comes first.
+- **One process at a time on a checkout.** Every step that runs git on a pair's checkout — a
+  delivery, a git-push, a stand-up's wiring, a pass, a round of `zcp service mate` — holds the pair's
+  lock (`workflow.LockPair`, a file lock in the state directory keyed by the pair's dev hostname) for
+  its whole sequence, and reads the pair's record afresh once it holds it. A pass and a round leave a
+  pair held elsewhere to their next turn, recording no attempt; an agent's step waits up to 2 min and
+  then runs no git and says why.
 - **A Mate HQ now holds in another application** is wired there on its next delivery or pass: the
   repository of the same name in the new application, made if new, `origin` pointed at it and the
   branch joined onto its `main`; its change in the old application stays where it is.
@@ -2435,11 +2441,13 @@ pair to re-submit.
   tells the agent to hand the person the change's link and the next step — once the session
   delivered, that is deployed a stage half; a stand-up's closes without it.
 
-`hq_delivery.go`, `hq_change.go`, `hq_wiring.go`, `hq_pending.go`, `hq_push_credential.go`,
-`hq_git_push.go`, `ops/delivery_git.go`, `ops/delivery_absorb.go`, `internal/hq/changes.go`;
+`hq_delivery.go`, `hq_change.go`, `hq_wiring.go`, `hq_pending.go`, `hq_pair_lock.go`,
+`hq_push_credential.go`, `hq_git_push.go`, `workflow/pair_lock.go`, `ops/delivery_git.go`, `ops/delivery_absorb.go`, `internal/hq/changes.go`;
 `TestAStageDeployOfAWiredPairDeliversItself`, `TestAStageDeployAbsorbsTheMatesOwnMergedChange`,
 `TestAStageDeployWithNothingBeyondMainOpensNoChange`, `TestADeliveryHQCouldNotReachIsFinishedByAPass`,
 `TestFinishPendingDeliveries_OnceHQAnswers`, `TestKeepFinishingDeliveries_BacksOffWhileOneIsOwed`,
+`TestTwoFinishesOfOnePairRunGitOnce`, `TestAPassSkipsAPairHeldElsewhere`,
+`TestADeliveryWaitsForItsPairsCheckout`, `TestLockPair`,
 `TestADeliveryWaitsOutAStandby`, `TestADeliveryFollowsTheMateToAnotherApplication`,
 `TestADeliveryBringsTheCredentialToTheCurrentOne`, `TestADeliveryRefusedByItsGitSaysWhatToDo`,
 `TestReconcileHQRepositories_*`, `TestGitPushToHQ_*`, `TestAMateDeliveringThroughHQPlansOnlyStandardPairs`,

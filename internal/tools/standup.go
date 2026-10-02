@@ -668,15 +668,22 @@ func (d standupDeps) mountDevHalf(ctx context.Context, sp *standupPair) {
 // fetched and the branch cut from it (wireHQPair, the reconcile's own
 // wiring) — unless an earlier pass did. A repository the recipe names that
 // the group's Gitea does not have is refused before HQ is asked: HQ makes
-// what it is asked for.
+// what it is asked for. It holds the pair's checkout throughout
+// (holdPairCheckout): a pass meeting it held leaves the pair to it.
 func (d standupDeps) wire(ctx context.Context, wiring ops.GiteaWiring, sp *standupPair, progress *standupProgress) {
 	host := sp.pair.Dev.Hostname
+	release, err := holdPairCheckout(ctx, d.batch.stateDir, host)
+	if err != nil {
+		sp.fail(fmt.Sprintf("checking %s out into %s did not run: %s", sp.repository, host, pairHeldReason(host, err)), "Call zerops_standup again; it continues from here.")
+		return
+	}
+	defer release()
 	meta, _ := workflow.FindServiceMeta(d.batch.stateDir, host)
 	if meta == nil {
 		sp.fail(fmt.Sprintf("%s has no record after its adoption", host), "Call zerops_standup again.")
 		return
 	}
-	if hqPairWired(meta) && meta.HQ.Branch != "" && hqPairPushes(meta.GitPushState) {
+	if hqPairOnItsBranch(meta) {
 		sp.wired, sp.branch = standupAlready, meta.HQ.Branch
 		return
 	}

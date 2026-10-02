@@ -405,10 +405,16 @@ type labSSH struct {
 	home     string
 	caFile   string
 	commands []string
+	// pause, when set, is called before each command runs: a test holds a
+	// command mid-way with it.
+	pause func(command string)
 }
 
 func (s *labSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
 	s.commands = append(s.commands, command)
+	if s.pause != nil {
+		s.pause(command)
+	}
 	dir, ok := s.dirs[hostname]
 	if !ok {
 		return nil, fmt.Errorf("no host %s in the lab", hostname)
