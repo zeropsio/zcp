@@ -836,6 +836,7 @@ func TestADeliveryBringsTheWorkflowToThisZcps(t *testing.T) {
 	tests := []struct {
 		name      string
 		existing  string
+		services  []platform.ServiceStack
 		wantWrite bool
 		want      []string
 		wantNot   []string
@@ -845,6 +846,17 @@ func TestADeliveryBringsTheWorkflowToThisZcps(t *testing.T) {
 			wantWrite: true,
 			want:      []string{"uses: " + giteaBrokerDeployAction, "workflow_dispatch", "npm ci\n          npm test", "# The project's own."},
 			wantNot:   []string{"actions/deploy@v1", "no test command configured", "environment: stage"},
+		},
+		{
+			// The kept `npm test` runs on a runner with no Node until the
+			// replacement sets the pair's own up before it (run 5's N2).
+			name: "the replacement sets up the pair's runtime before the kept Test step", existing: oldGiteaWorkflow,
+			services: []platform.ServiceStack{{
+				ID: "svc-appdev", Name: "appdev",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+			}},
+			wantWrite: true,
+			want:      []string{"uses: actions/setup-node@v4\n        with:\n          node-version: \"22\"\n      - name: Test\n        # The project's own."},
 		},
 		{
 			name: "a missing file is written", existing: "",
@@ -878,9 +890,19 @@ func TestADeliveryBringsTheWorkflowToThisZcps(t *testing.T) {
 				}
 				return "ok"
 			}}
-			if d := deliverGiteaPair(context.Background(), platform.NewMock(), gitea.Client(), ssh,
+			client := platform.NewMock().WithServices(tt.services)
+			if d := deliverGiteaPair(context.Background(), client, gitea.Client(), ssh,
 				runtime.Info{InContainer: true, ProjectID: "proj-1"}, stateDir, "appstage"); d == nil {
 				t.Fatal("want a delivery")
+			}
+			// The pair's type is read (from the direct list) only to write a
+			// file: a current one costs a stage deploy no extra service list.
+			// The push credential's own lookup reads the search list and is
+			// not this one.
+			if !tt.wantWrite {
+				if n := client.CallCounts["ListServicesDirect"]; n != 0 {
+					t.Errorf("a current workflow was left alone, yet the services were listed directly %d times", n)
+				}
 			}
 
 			written, committed := "", -1

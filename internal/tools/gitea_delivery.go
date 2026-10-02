@@ -207,7 +207,7 @@ func deliverGiteaPair(
 			target, repo, err, meta.Hostname)}
 	}
 
-	refreshGiteaWorkflow(ctx, sshDeployer, meta.Hostname)
+	refreshGiteaWorkflow(ctx, client, sshDeployer, rt.ProjectID, meta.Hostname)
 
 	output, err := sshDeployer.ExecSSH(ctx, meta.Hostname,
 		ops.BuildGiteaDeliveryCommand(giteaPairWorkingDir, branch, giteaBaseOf(meta), giteaCommitMessage(stateDir, meta),
@@ -455,16 +455,17 @@ func giteaAbsorbBeforePush(
 // zcp owns the triggers and the deploy step; the project owns its Test step. So
 // a file that already names this zcp's deploy action is left exactly as it is
 // — whatever a person or the agent made of it — and one that does not is
-// written again with its own Test step kept. Best-effort: a delivery without it
+// written again with its own Test step kept, behind the setup of the pair's
+// runtime (its type is read only then, never for a file that is current). Best-effort: a delivery without it
 // still lands the code, and the next one tries again.
-func refreshGiteaWorkflow(ctx context.Context, sshDeployer ops.SSHDeployer, hostname string) {
+func refreshGiteaWorkflow(ctx context.Context, client platform.Client, sshDeployer ops.SSHDeployer, projectID, hostname string) {
 	existing, err := sshDeployer.ExecSSH(ctx, hostname,
 		ops.BuildReadRepoFileCommand(giteaPairWorkingDir, giteaWorkflowFilePath))
 	if err != nil || giteaWorkflowCurrent(string(existing)) {
 		return
 	}
 	_, _ = sshDeployer.ExecSSH(ctx, hostname, ops.BuildWriteRepoFileCommand(
-		giteaPairWorkingDir, giteaWorkflowFilePath, giteaWorkflowKeepingTests(string(existing), ""),
+		giteaPairWorkingDir, giteaWorkflowFilePath, giteaWorkflowKeepingTests(string(existing), giteaServiceType(ctx, client, projectID, hostname)),
 	))
 }
 

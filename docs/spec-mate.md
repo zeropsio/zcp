@@ -2290,7 +2290,15 @@ person asks, since a registered Mate writes the group repo and may merge it (D31
 withdraws only the proposals it opened, all under one title, and never such a request, and
 `group-recipe` tells the agent as much when `main` already carries every tier. Gitea is a forge
 kind matched on the `GITEA_URL` host; a Gitea remote gets a `.gitea/workflows` file that deploys through
-`zeropsio/gitea-mate/actions/deploy@v1` with the job's token and no secret. zcp's own key is never
+`zeropsio/gitea-mate/actions/deploy@v4` with the job's token and no secret. The group's runner has no
+language runtime, so the file sets up the pair's own — the dev half's Zerops type, read from the direct
+service list, at that version — before the Test step, which stays a no-op until the project fills it
+in; only where a setup action works on the runner as it stands: Node.js, Go and Java (a `.tar.gz`
+build). Bun and Deno (their actions extract a `.zip`, and the runner has no `unzip`), Python (its
+builds expect the hosted runners' `/opt/hostedtoolcache`) and PHP (installed through apt on the
+releases it lists) get a Test step whose comment says no setup action works and shows what does — the
+distribution's packages, at the distribution's version, or the language's own installer — and any
+other type a generic example (`TestGiteaWorkflowYAML_SetsUpTheServicesRuntime`). zcp's own key is never
 handed out: no `ZCP_API_KEY` in a build-integration secret, `GITEA_TOKEN` masked on every value
 dump, the one `zcli push` of a self-deploy given the key through its environment and never
 `zcli login`. A Mate joining from the recipe has its parts and no live proof: _Add Mate_ imports

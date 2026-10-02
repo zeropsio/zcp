@@ -11,12 +11,16 @@ package tools
 
 import (
 	"context"
+	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -55,7 +59,10 @@ func TestReconcileGiteaRepositories_EmitsTheWorkflow(t *testing.T) {
 	fake := newFakeGitea()
 	srv := fake.start(t)
 	ssh := giteaReconcileSSH()
-	client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
+	client := platform.NewMock().WithServices([]platform.ServiceStack{{
+		ID: "svc-appdev", Name: "appdev",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+	}})
 
 	reconcileGiteaRepositories(
 		context.Background(), client, srv.Client(), ssh,
@@ -77,6 +84,10 @@ func TestReconcileGiteaRepositories_EmitsTheWorkflow(t *testing.T) {
 	for _, want := range []string{
 		"on:", "push:", "branches: [main]",
 		"actions/checkout@v4",
+		// The runner has no language runtime: the pair's own is set up at
+		// its version before the project's tests (run 5's N2).
+		"uses: actions/setup-node@v4",
+		`node-version: "22"`,
 		"uses: zeropsio/gitea-mate/actions/deploy@v4",
 		// D27: the broker starts the same workflow for a release, a new
 		// environment and whatever fell behind, and says what for.
@@ -143,5 +154,141 @@ func TestReconcileGiteaRepositories_WorkflowIsIdempotent(t *testing.T) {
 	}
 	if !after.ModTime().Equal(stale) {
 		t.Errorf("an unchanged workflow was rewritten, dirtying the pair's tree")
+	}
+}
+
+// giteaDeployStepToday is the workflow's deploy step, byte for byte. The
+// broker grants a job its environment's key only for this workflow's deploy
+// action, so whatever the template learns about a project's runtime, this
+// step never moves.
+const giteaDeployStepToday = `      - name: Deploy with zcli push
+        # The job asks the account's broker, which hands it the environment's
+        # deploy token only for the commit protected state wants there, and
+        # only to the default branch's workflow. No secret and no Zerops key
+        # anywhere in this file or this repository.
+        uses: zeropsio/gitea-mate/actions/deploy@v4
+        with:
+          environment: ${{ inputs.environment }}
+          service: ${{ inputs.service }}
+`
+
+type giteaWorkflowStepDoc struct {
+	Name string         `yaml:"name"`
+	Uses string         `yaml:"uses"`
+	Run  string         `yaml:"run"`
+	With map[string]any `yaml:"with"`
+}
+
+func parseGiteaWorkflowSteps(t *testing.T, body string) []giteaWorkflowStepDoc {
+	t.Helper()
+	var doc struct {
+		Jobs struct {
+			Deploy struct {
+				Steps []giteaWorkflowStepDoc `yaml:"steps"`
+			} `yaml:"deploy"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(body), &doc); err != nil {
+		t.Fatalf("the workflow is not YAML: %v\n%s", err, body)
+	}
+	return doc.Jobs.Deploy.Steps
+}
+
+// TestGiteaWorkflowYAML_SetsUpTheServicesRuntime pins run 5's N2: the group's
+// runner is a bare Ubuntu with no language runtime, so a Mate that filled the
+// Test step in with `npm test` failed both deploys (exit 127) until it was
+// told. Where a setup action works on the runner the workflow sets the
+// service's runtime up, at its version, before Test. Where none does, the Test
+// step says so and shows what works there — the distribution's packages —
+// and never points at an action that fails on the runner. The Test step stays
+// a no-op either way, and the deploy step never changes.
+func TestGiteaWorkflowYAML_SetsUpTheServicesRuntime(t *testing.T) {
+	t.Parallel()
+	// The setup actions a comment must never offer: each fails on the runner
+	// as it stands (no unzip, no /opt/hostedtoolcache, an apt it does not list).
+	brokenOnTheRunner := []string{"setup-python", "setup-php", "setup-bun", "setup-deno"}
+	genericExample := []string{"no language runtime installed", "- uses: actions/setup-node@v4", "node-version:"}
+	tests := []struct {
+		serviceType string
+		wantUses    string
+		wantWith    map[string]string
+		wantComment []string
+	}{
+		{serviceType: "nodejs@22", wantUses: "actions/setup-node@v4", wantWith: map[string]string{"node-version": "22"}},
+		{serviceType: "ubuntu/nodejs@24", wantUses: "actions/setup-node@v4", wantWith: map[string]string{"node-version": "24"}},
+		{serviceType: "go@1", wantUses: "actions/setup-go@v5", wantWith: map[string]string{"go-version": "1.x", "cache": "false"}},
+		{serviceType: "go@1.22", wantUses: "actions/setup-go@v5", wantWith: map[string]string{"go-version": "1.22.x", "cache": "false"}},
+		{serviceType: "java@21", wantUses: "actions/setup-java@v4", wantWith: map[string]string{"distribution": "temurin", "java-version": "21"}},
+		// A runtime whose setup action fails on the runner: the
+		// distribution's own packages, said to be the distribution's version.
+		{serviceType: "python@3.12", wantComment: []string{"no language runtime installed", "apt-get install -y python3", "the distribution's version"}},
+		{serviceType: "php-nginx@8.4", wantComment: []string{"no language runtime installed", "apt-get install -y php-cli", "the distribution's version"}},
+		{serviceType: "php-apache@8.3", wantComment: []string{"apt-get install -y php-cli"}},
+		{serviceType: "bun@1.2", wantComment: []string{"no language runtime installed", "apt-get install -y unzip", "bun.sh/install"}},
+		{serviceType: "deno@2", wantComment: []string{"no language runtime installed", "apt-get install -y unzip", "deno.land/install.sh"}},
+		// Nothing specific to say: the generic example.
+		{serviceType: "", wantComment: genericExample},
+		{serviceType: "nodejs@latest", wantComment: genericExample},
+		{serviceType: "postgresql@16", wantComment: genericExample},
+	}
+	for _, tt := range tests {
+		t.Run(tt.serviceType, func(t *testing.T) {
+			t.Parallel()
+			body := giteaWorkflowYAML(tt.serviceType)
+			steps := parseGiteaWorkflowSteps(t, body)
+			if len(steps) < 3 || steps[0].Uses != "actions/checkout@v4" {
+				t.Fatalf("want checkout, then the project's steps, then the deploy:\n%s", body)
+			}
+
+			test := steps[1]
+			if tt.wantUses != "" {
+				setup := steps[1]
+				if setup.Uses != tt.wantUses {
+					t.Fatalf("the step after checkout uses %q, want %q:\n%s", setup.Uses, tt.wantUses, body)
+				}
+				got := map[string]string{}
+				for k, v := range setup.With {
+					got[k] = fmt.Sprint(v)
+				}
+				if !maps.Equal(got, tt.wantWith) {
+					t.Errorf("the setup step's inputs = %v, want %v", got, tt.wantWith)
+				}
+				test = steps[2]
+			} else {
+				for _, s := range steps {
+					if strings.Contains(s.Uses, "setup-") {
+						t.Errorf("a runtime with no working setup gets no setup step, got %q:\n%s", s.Uses, body)
+					}
+				}
+				comment := giteaWorkflowStep(body, giteaWorkflowTestStep)
+				// The comment's prose, as one line: wrapping is not what is pinned.
+				prose := strings.Join(strings.Fields(strings.ReplaceAll(comment, "#", " ")), " ")
+				for _, want := range tt.wantComment {
+					if !strings.Contains(prose, want) {
+						t.Errorf("the Test step's comment must say %q:\n%s", want, comment)
+					}
+				}
+				for _, broken := range brokenOnTheRunner {
+					if strings.Contains(comment, broken) {
+						t.Errorf("the Test step's comment offers %q, which fails on the runner:\n%s", broken, comment)
+					}
+				}
+				note := giteaTestsNote(tt.serviceType)
+				for _, broken := range brokenOnTheRunner {
+					if strings.Contains(note, broken) {
+						t.Errorf("the confirm's note offers %q, which fails on the runner: %s", broken, note)
+					}
+				}
+			}
+			if test.Name != giteaWorkflowTestStep || test.Run != `echo "no test command configured"` {
+				t.Errorf("the Test step stays the no-op, got %+v:\n%s", test, body)
+			}
+			if got := giteaWorkflowStep(body, "Deploy with zcli push"); got != giteaDeployStepToday {
+				t.Errorf("the deploy step moved:\n%s\nwant:\n%s", got, giteaDeployStepToday)
+			}
+			if last := steps[len(steps)-1]; last.Uses != giteaBrokerDeployAction {
+				t.Errorf("the deploy is the last step, got %+v", last)
+			}
+		})
 	}
 }
