@@ -286,7 +286,7 @@ func TestImportTool_RefusesAnOpenMate(t *testing.T) {
 				env["MATE_SETUP_RUNTIMES"] = "c2VydmljZXM6IFtd"
 			}
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			registerImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{MateEnabled: tt.mate}, writeLiveEnvFile(t, env))
+			registerImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{MateEnabled: tt.mate}, writeLiveEnvFile(t, env), nil)
 			result := callTool(t, srv, "zerops_import", map[string]any{"content": "services:\n  - hostname: api\n    type: nodejs@20\n"})
 			text := getTextContent(t, result)
 			if tt.want == "" {

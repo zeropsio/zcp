@@ -48,7 +48,7 @@ func mutatingToolRegistrySnapshot() *mcp.Server {
 
 	RegisterProcess(srv, client, projectID)
 	RegisterManage(srv, client, projectID)
-	RegisterScale(srv, client, projectID)
+	RegisterScale(srv, client, projectID, nil)
 	RegisterDelete(srv, client, projectID, "", mounter, rt)
 	RegisterSubdomain(srv, client, nil, projectID, "")
 	RegisterEnv(srv, client, projectID, "")
