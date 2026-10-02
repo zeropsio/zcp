@@ -2,6 +2,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -600,5 +601,40 @@ func TestVerifyTool_PushSourceRedirect(t *testing.T) {
 				t.Errorf("note = %q, want it to say %q", resp.Note, tt.wantNote)
 			}
 		})
+	}
+}
+
+// TestVerifyPublicAccess_ADevServerServesTheDevHalf: both verify paths tell
+// ops which runtimes a dev server serves — a dev-mode runtime, the dev half
+// of a standard pair, whatever its dev server's live state — so their HTTP
+// probes give a page its first compile; a stage or a simple runtime starts
+// its own app and gets the one wait.
+func TestVerifyPublicAccess_ADevServerServesTheDevHalf(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for _, meta := range []*workflow.ServiceMeta{
+		{Hostname: "appdev", Mode: topology.PlanModeDev, BootstrapSession: "s", BootstrappedAt: "2026-06-01"},
+		{Hostname: "shopdev", StageHostname: "shopstage", Mode: topology.PlanModeStandard, BootstrapSession: "s", BootstrappedAt: "2026-06-01"},
+		{Hostname: "api", Mode: topology.PlanModeSimple, BootstrapSession: "s", BootstrappedAt: "2026-06-01"},
+	} {
+		if err := workflow.WriteServiceMeta(dir, meta); err != nil {
+			t.Fatalf("WriteServiceMeta: %v", err)
+		}
+	}
+	runtimeType := platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}
+	hosts := []string{"appdev", "shopdev", "shopstage", "api"}
+	services := make([]platform.ServiceStack, 0, len(hosts))
+	for _, h := range hosts {
+		services = append(services, platform.ServiceStack{ID: "svc-" + h, Name: h, ServiceStackTypeInfo: runtimeType, Status: serviceStatusRunning})
+	}
+	mock := platform.NewMock().WithServices(services)
+	all := publicAccessResolver(dir)
+	for host, want := range map[string]bool{"appdev": true, "shopdev": true, "shopstage": false, "api": false} {
+		if got := all(host).DevServer; got != want {
+			t.Errorf("all services: %s DevServer = %v, want %v", host, got, want)
+		}
+		if got := publicAccessInputForHost(context.Background(), mock, nil, "proj-1", dir, host).DevServer; got != want {
+			t.Errorf("one service: %s DevServer = %v, want %v", host, got, want)
+		}
 	}
 }

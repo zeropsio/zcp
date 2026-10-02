@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -237,7 +238,7 @@ func checkHTTPRoot(ctx context.Context, httpClient HTTPDoer, url string) CheckRe
 // observed subdomain state (on/enabling) — not Listener — drives its
 // branch, so a running dev server is reflected there regardless of this
 // limitation.
-func checkHTTPInternal(ctx context.Context, httpClient HTTPDoer, svc *platform.ServiceStack, deferredStart bool) CheckResult {
+func checkHTTPInternal(ctx context.Context, probe httpProbe, svc *platform.ServiceStack, deferredStart bool) CheckResult {
 	name := checkNameHTTPInternal
 	if deferredStart {
 		return CheckResult{Name: name, Status: CheckSkip, Detail: "dev runtime has no process yet — start it with zerops_dev_server, then verify"}
@@ -247,7 +248,7 @@ func checkHTTPInternal(ctx context.Context, httpClient HTTPDoer, svc *platform.S
 		return CheckResult{Name: name, Status: CheckSkip, Detail: "no HTTP port configured"}
 	}
 	url := "http://" + net.JoinHostPort(svc.Name, strconv.Itoa(port.Port)) + "/"
-	return probeHTTP(ctx, httpClient, url, name)
+	return probe.probe(ctx, url, name)
 }
 
 // buildHTTPPublicChecks implements PA-4's http_public rule set
@@ -256,7 +257,7 @@ func checkHTTPInternal(ctx context.Context, httpClient HTTPDoer, svc *platform.S
 // suppressed by a stale intent), then domains-present, then the off-state
 // rule keyed by intent. listener is !DeferredStart (see checkHTTPInternal's
 // doc-comment for the caveat on how DeferredStart is computed).
-func buildHTTPPublicChecks(ctx context.Context, client platform.Client, httpClient HTTPDoer, projectID string, svc *platform.ServiceStack, intent topology.PublicAccessIntent, obs PublicAccessObservation, listener bool) []CheckResult {
+func buildHTTPPublicChecks(ctx context.Context, client platform.Client, probe httpProbe, projectID string, svc *platform.ServiceStack, intent topology.PublicAccessIntent, obs PublicAccessObservation, listener bool) []CheckResult {
 	name := checkNameHTTPRoot
 	switch {
 	case obs.Observed.Subdomain == topology.SubdomainOn:
@@ -267,7 +268,7 @@ func buildHTTPPublicChecks(ctx context.Context, client platform.Client, httpClie
 		if probeURL == "" {
 			return []CheckResult{{Name: name, Status: CheckSkip, Detail: "cannot resolve subdomain URL"}}
 		}
-		check := checkHTTPRoot(ctx, httpClient, probeURL+"/")
+		check := probe.probe(ctx, probeURL+"/", checkNameHTTPRoot)
 		if check.HTTPStatus > 0 {
 			bodyText, consoleErrors := renderHTTPRoot(ctx, probeURL+"/")
 			check.BodyText = bodyText
@@ -277,7 +278,7 @@ func buildHTTPPublicChecks(ctx context.Context, client platform.Client, httpClie
 	case obs.Observed.Subdomain == topology.SubdomainEnabling:
 		return []CheckResult{{Name: name, Status: CheckPending, Detail: "subdomain is being enabled"}}
 	case intent == topology.PublicAccessDomain || len(obs.Domains) > 0:
-		return publicDomainChecks(ctx, httpClient, obs.Domains)
+		return publicDomainChecks(ctx, probe.doer, obs.Domains)
 	case intent == topology.PublicAccessNone:
 		return []CheckResult{{Name: name, Status: CheckSkip, Detail: "internal-only by intent"}}
 	case intent == topology.PublicAccessAuto && !listener:
@@ -358,16 +359,26 @@ func publicDomainChecks(ctx context.Context, httpClient HTTPDoer, routes []Publi
 // shape checks (recipe's feature-sweep, bootstrap's /status curl) live
 // in the workflow that knows the path.
 func probeHTTP(ctx context.Context, httpClient HTTPDoer, url, name string) CheckResult {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	check, _ := probeHTTPWithin(ctx, httpClient, url, name, probeWait)
+	return check
+}
+
+// probeWait is how long one probe waits for an answer.
+const probeWait = 5 * time.Second
+
+// probeHTTPWithin is probeHTTP with its own wait; timedOut reports a request
+// that got no answer within it (probeTimedOut).
+func probeHTTPWithin(ctx context.Context, httpClient HTTPDoer, url, name string, wait time.Duration) (check CheckResult, timedOut bool) {
+	ctx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("request failed: %v", err)}
+		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("request failed: %v", err)}, false
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("request failed: %v", err)}
+		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("request failed: %v", err)}, probeTimedOut(err)
 	}
 	defer resp.Body.Close()
 	// Read up to httpRootBodyReadCap bytes. Detail still truncates to 200
@@ -387,7 +398,7 @@ func probeHTTP(ctx context.Context, httpClient HTTPDoer, url, name string) Check
 			Status:     CheckPass,
 			HTTPStatus: resp.StatusCode,
 			Detail:     "GET / probed only — a specific route you added (e.g. a new endpoint) is NOT covered by this check; curl it to confirm before reporting it works",
-		}
+		}, false
 	}
 	// 4xx — server reachable but root path not served (404), auth-gated
 	// (401), or rejecting GET (405). Fail with the status + body excerpt
@@ -401,7 +412,65 @@ func probeHTTP(ctx context.Context, httpClient HTTPDoer, url, name string) Check
 	if resp.StatusCode < 500 {
 		detail += " (server reachable but root path not serving a 2xx/3xx — verify a real endpoint or accept as cosmetic)"
 	}
-	return CheckResult{Name: name, Status: CheckFail, Detail: detail, HTTPStatus: resp.StatusCode}
+	return CheckResult{Name: name, Status: CheckFail, Detail: detail, HTTPStatus: resp.StatusCode}, false
+}
+
+// probeTimedOut reports a request that got no answer in time — the probe's
+// own deadline or the client's timeout — as against one refused or reset.
+func probeTimedOut(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var timeout interface{ Timeout() bool }
+	return errors.As(err, &timeout) && timeout.Timeout()
+}
+
+// Dev-server first compile: a dev server (Next's, Vite's, Nuxt's) compiles a
+// page on the first request for it, which outlasts probeWait on a large app —
+// the storefront of a Medusa recipe answered its first GET / after well over
+// five seconds (2026-10-02), and verify failed a dev half whose page was a
+// compile away from serving. A patient probe asks again a request that got no
+// answer, each wait twice the last, until devServerFirstCompile has passed;
+// the compile goes on while nobody waits, and the next request is answered
+// once it is done. Only a request with no answer is asked again: an answer
+// of any status, or a refusal, is the server's word.
+const devServerFirstCompile = 90 * time.Second
+
+// httpProbe asks one URL. A patient one is for a runtime a dev server serves
+// (PublicAccessInput.DevServer): first is its first wait, ceiling the most it
+// waits in all; any other waits first once.
+type httpProbe struct {
+	doer           HTTPDoer
+	patient        bool
+	first, ceiling time.Duration
+}
+
+// newHTTPProbe is the probe verify uses for a service: patient when a dev
+// server serves it.
+func newHTTPProbe(doer HTTPDoer, devServer bool) httpProbe {
+	return httpProbe{doer: doer, patient: devServer, first: probeWait, ceiling: devServerFirstCompile}
+}
+
+func (p httpProbe) probe(ctx context.Context, url, name string) CheckResult {
+	wait := p.first
+	if wait <= 0 {
+		wait = probeWait
+	}
+	start := time.Now()
+	for {
+		check, timedOut := probeHTTPWithin(ctx, p.doer, url, name, wait)
+		waited := time.Since(start)
+		if !timedOut || !p.patient || ctx.Err() != nil || waited >= p.ceiling {
+			if p.patient && timedOut {
+				check.Detail += fmt.Sprintf(" — no answer within %s, the wait a dev server's first compile is given", waited.Round(time.Second))
+			}
+			if p.patient && check.Status == CheckPass && waited > p.first {
+				check.Detail = fmt.Sprintf("answered after %s: the dev server compiled the page on its first request. ", waited.Round(100*time.Millisecond)) + check.Detail
+			}
+			return check
+		}
+		wait = min(2*wait, p.ceiling-waited)
+	}
 }
 
 // truncateBody returns a string-truncated body with "..." if over max bytes.
