@@ -418,11 +418,28 @@ func wireGiteaPair(
 	// Written before the first push, content-idempotent, and reported rather
 	// than fatal: a pair whose container refused the write still has its
 	// repository, and the next pass writes it again.
+	//
+	// A file that already deploys through this zcp's action is the
+	// project's, exactly as refreshGiteaWorkflow treats it: a pair adopted
+	// from the group's recipe has main checked out, workflow included, and
+	// the first delivery's `git add -A` would commit any rewrite of it — a
+	// filled-in Test step reverted to the no-op, a setup step swapped for
+	// another. Only a missing or earlier file is written, keeping its Test
+	// step.
 	workflowNote := ""
-	if _, emitErr := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildWriteRepoFileCommand(
-		giteaPairWorkingDir, giteaWorkflowFilePath, giteaWorkflowYAML(giteaServiceType(ctx, client, rt.ProjectID, m.Hostname)),
-	)); emitErr != nil {
-		workflowNote = fmt.Sprintf("; %s could not be written (%v) — nothing deploys the group's stage until it is there", giteaWorkflowFilePath, emitErr)
+	existing, readErr := sshDeployer.ExecSSH(ctx, m.Hostname,
+		ops.BuildReadRepoFileCommand(giteaPairWorkingDir, giteaWorkflowFilePath))
+	switch {
+	case readErr != nil:
+		workflowNote = fmt.Sprintf("; %s could not be read (%v) — nothing deploys the group's stage until it is there", giteaWorkflowFilePath, readErr)
+	case giteaWorkflowCurrent(string(existing)):
+	default:
+		if _, emitErr := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildWriteRepoFileCommand(
+			giteaPairWorkingDir, giteaWorkflowFilePath,
+			giteaWorkflowKeepingTests(string(existing), giteaServiceType(ctx, client, rt.ProjectID, m.Hostname)),
+		)); emitErr != nil {
+			workflowNote = fmt.Sprintf("; %s could not be written (%v) — nothing deploys the group's stage until it is there", giteaWorkflowFilePath, emitErr)
+		}
 	}
 
 	line := fmt.Sprintf("repository %s wired; this Mate works on %q and lands on %q through a pull request (never pushing %s directly)", repo.FullName, branch, base, base) + workflowNote

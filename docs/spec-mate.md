@@ -2298,7 +2298,10 @@ build). Bun and Deno (their actions extract a `.zip`, and the runner has no `unz
 builds expect the hosted runners' `/opt/hostedtoolcache`) and PHP (installed through apt on the
 releases it lists) get a Test step whose comment says no setup action works and shows what does — the
 distribution's packages, at the distribution's version, or the language's own installer — and any
-other type a generic example (`TestGiteaWorkflowYAML_SetsUpTheServicesRuntime`). zcp's own key is never
+other type a generic example. Wiring writes the file only where it is missing or names an earlier
+deploy action, its Test step kept; a file that names this zcp's is the project's, never rewritten
+(`TestGiteaWorkflowYAML_SetsUpTheServicesRuntime`,
+`TestReconcileGiteaRepositories_WiringWritesTheWorkflowOnlyWhereItIsNotCurrent`). zcp's own key is never
 handed out: no `ZCP_API_KEY` in a build-integration secret, `GITEA_TOKEN` masked on every value
 dump, the one `zcli push` of a self-deploy given the key through its environment and never
 `zcli login`. A Mate joining from the recipe has its parts and no live proof: _Add Mate_ imports

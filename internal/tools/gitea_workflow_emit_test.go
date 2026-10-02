@@ -11,6 +11,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -288,6 +289,126 @@ func TestGiteaWorkflowYAML_SetsUpTheServicesRuntime(t *testing.T) {
 			}
 			if last := steps[len(steps)-1]; last.Uses != giteaBrokerDeployAction {
 				t.Errorf("the deploy is the last step, got %+v", last)
+			}
+		})
+	}
+}
+
+// giteaCurrentFilledInWorkflow is a workflow that already deploys through
+// this zcp's action, whose project set its own runtime up and filled its Test
+// step in — what a Mate joining an existing group checks out from main.
+const giteaCurrentFilledInWorkflow = `name: Zerops deploy
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Test
+        run: npm ci && npm test
+      - name: Deploy with zcli push
+        uses: zeropsio/gitea-mate/actions/deploy@v4
+`
+
+// TestReconcileGiteaRepositories_WiringWritesTheWorkflowOnlyWhereItIsNotCurrent
+// — wiring reads what the pair's checkout already carries before it writes. A
+// pair adopted from the group's recipe checks main out, workflow included, and
+// the first delivery's `git add -A` would commit any rewrite of it: so a file
+// that already deploys through this zcp's action is the project's and is left
+// byte-identical, and only a missing or earlier one is written. The pair's
+// type is read from the direct service list, which a just-imported stand-up
+// is already on; a failed read writes the plain variant.
+func TestReconcileGiteaRepositories_WiringWritesTheWorkflowOnlyWhereItIsNotCurrent(t *testing.T) {
+	nodeDev := []platform.ServiceStack{{
+		ID: "svc-appdev", Name: "appdev",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+	}}
+	// The search index has not caught the import's type up yet.
+	laggingSearch := []platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}}
+	tests := []struct {
+		name      string
+		existing  string
+		client    *platform.Mock
+		wantWrite bool
+		want      []string
+		wantNot   []string
+	}{
+		{
+			name: "a current file is the project's", existing: giteaCurrentFilledInWorkflow,
+			client: platform.NewMock().WithServices(laggingSearch).WithServicesDirect(nodeDev),
+		},
+		{
+			name: "a current file is left alone even when the type cannot be read", existing: giteaCurrentFilledInWorkflow,
+			client: platform.NewMock().WithServices(laggingSearch).WithError("ListServicesDirect", errors.New("api down")),
+		},
+		{
+			name: "a missing file is written, set up from the direct list", existing: "",
+			client:    platform.NewMock().WithServices(laggingSearch).WithServicesDirect(nodeDev),
+			wantWrite: true,
+			want:      []string{"- name: Set up Node.js\n", "\n        uses: actions/setup-node@v4\n", "\n          node-version: \"22\"\n", "uses: " + giteaBrokerDeployAction},
+		},
+		{
+			name: "a failed read writes the plain variant", existing: "",
+			client:    platform.NewMock().WithServices(nodeDev).WithError("ListServicesDirect", errors.New("api down")),
+			wantWrite: true,
+			want:      []string{"no language runtime installed", "uses: " + giteaBrokerDeployAction},
+			wantNot:   []string{"- name: Set up"},
+		},
+		{
+			name: "an earlier zcp's file is replaced, its Test step kept", existing: oldGiteaWorkflow,
+			client:    platform.NewMock().WithServices(laggingSearch).WithServicesDirect(nodeDev),
+			wantWrite: true,
+			want:      []string{"- name: Set up Node.js\n", "# The project's own.", "uses: " + giteaBrokerDeployAction},
+			wantNot:   []string{"actions/deploy@v1"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stateDir := t.TempDir()
+			writeGiteaPairMeta(t, stateDir)
+			fake := newFakeGitea()
+			srv := fake.start(t)
+			ssh := giteaReconcileSSH()
+			healthy := ssh.dispatch
+			ssh.dispatch = func(cmd string) ([]byte, error) {
+				if strings.Contains(cmd, "cat ") && strings.Contains(cmd, giteaWorkflowFilePath) {
+					return []byte(tt.existing), nil
+				}
+				return healthy(cmd)
+			}
+
+			reconcileGiteaRepositories(
+				context.Background(), tt.client, srv.Client(), ssh,
+				runtime.Info{InContainer: true, ProjectID: "p1"}, stateDir,
+				writeLiveEnvFile(t, map[string]string{
+					"GITEA_URL": srv.URL, "MATE_BROKER_URL": srv.URL, "GITEA_TOKEN": giteaBotToken,
+				}),
+			)
+
+			written := ""
+			for _, cmd := range ssh.commands {
+				if strings.Contains(cmd, "base64 -d") && strings.Contains(cmd, giteaWorkflowFilePath) {
+					written = decodeWrittenFile(t, cmd)
+				}
+			}
+			if (written != "") != tt.wantWrite {
+				t.Fatalf("workflow written = %v, want %v:\n%s", written != "", tt.wantWrite, written)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(written, want) {
+					t.Errorf("the workflow written misses %q:\n%s", want, written)
+				}
+			}
+			for _, not := range tt.wantNot {
+				if strings.Contains(written, not) {
+					t.Errorf("the workflow written carries %q:\n%s", not, written)
+				}
 			}
 		})
 	}
