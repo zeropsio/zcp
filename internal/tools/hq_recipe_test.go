@@ -65,7 +65,7 @@ func recipeBranch(number int) string { return fmt.Sprintf("mate/%s/%d", labMate,
 // the Mate was first in, path to body.
 func (f *fakeHQ) recipeFiles(ref string) map[string]string {
 	f.t.Helper()
-	dir := f.repoDir(labApp, recipeRepo)
+	dir := f.repoDir(labApp, hq.RecipeRepo)
 	files := map[string]string{}
 	for path := range strings.SplitSeq(f.git(f.t.Context(), dir, "ls-tree", "-r", "-z", "--name-only", ref), "\x00") {
 		if path != "" {
@@ -78,13 +78,13 @@ func (f *fakeHQ) recipeFiles(ref string) map[string]string {
 // recipeHead is the commit ref is at in the recipe repository.
 func (f *fakeHQ) recipeHead(ref string) string {
 	f.t.Helper()
-	return f.git(f.t.Context(), f.repoDir(labApp, recipeRepo), "rev-parse", ref)
+	return f.git(f.t.Context(), f.repoDir(labApp, hq.RecipeRepo), "rev-parse", ref)
 }
 
 // recipeHolds reports whether ref holds ancestor in the recipe repository.
 func (f *fakeHQ) recipeHolds(ancestor, ref string) bool {
 	f.t.Helper()
-	return f.git(f.t.Context(), f.repoDir(labApp, recipeRepo), "merge-base", ancestor, ref) == ancestor
+	return f.git(f.t.Context(), f.repoDir(labApp, hq.RecipeRepo), "merge-base", ancestor, ref) == ancestor
 }
 
 // handWrittenTiers is a group whose people wrote every tier themselves —
@@ -145,7 +145,7 @@ func added(main, branch map[string]string) []string {
 // credential is nowhere on disk.
 func TestGroupRecipe_ProposedAsTheMatesChange(t *testing.T) {
 	lab := newRecipeLab(t)
-	lab.hq.seed(recipeRepo)
+	lab.hq.seed(hq.RecipeRepo)
 	mainBefore := lab.hq.recipeHead("main")
 
 	outcome := lab.proposeRecipe(lab.mock)
@@ -156,26 +156,28 @@ func TestGroupRecipe_ProposedAsTheMatesChange(t *testing.T) {
 	if want := lab.hq.srv.URL + "/changes/" + labApp + "/group/1"; outcome.ChangeURL != want || !strings.Contains(outcome.Line, want) {
 		t.Errorf("change address = %q in %q, want %q", outcome.ChangeURL, outcome.Line, want)
 	}
-	if change := lab.hq.changeIn(recipeRepo, 1); change == nil || change.Title != recipeChangeTitle || change.Body != "" {
-		t.Fatalf("change #1 in the recipe repository = %+v, want it titled %q with no description", change, recipeChangeTitle)
+	if change := lab.hq.changeIn(hq.RecipeRepo, 1); change == nil || change.Title != hq.RecipeProposalTitle || change.Body != "" {
+		t.Fatalf("change #1 in the recipe repository = %+v, want it titled %q with no description", change, hq.RecipeProposalTitle)
 	}
 	if lab.hq.recipeHead("main") != mainBefore {
 		t.Error("zcp moved the recipe repository's main")
 	}
 	main, branch := lab.hq.recipeFiles("main"), lab.hq.recipeFiles(recipeBranch(1))
 	assertOnlyAdds(t, main, branch)
-	want := []string{
-		"0 — AI Agent/README.md", "0 — AI Agent/import.yaml",
-		"3 — Stage/README.md", "3 — Stage/import.yaml",
-		"4 — Small Production/README.md", "4 — Small Production/import.yaml",
-		"README.md",
+	// Every tier at the path HQ reads it from, its README beside it, and the
+	// root README: HQ's recipe repository is born with an empty tree.
+	want := make([]string, 0, 1+2*len(hq.RecipeTierPaths))
+	want = append(want, "README.md")
+	for _, path := range hq.RecipeTierPaths {
+		want = append(want, path, strings.TrimSuffix(path, "import.yaml")+"README.md")
 	}
+	slices.Sort(want)
 	if got := added(main, branch); !slices.Equal(got, want) {
 		t.Errorf("the proposal adds %v, want %v", got, want)
 	}
-	for _, tier := range []string{"0 — AI Agent", "3 — Stage", "4 — Small Production"} {
-		if repo := lab.hq.srv.URL + "/git/" + labApp + "/appdev"; !strings.Contains(branch[tier+"/import.yaml"], "buildFromGit: "+repo) {
-			t.Errorf("%s builds the pair from somewhere else than %s:\n%s", tier, repo, branch[tier+"/import.yaml"])
+	for _, path := range hq.RecipeTierPaths {
+		if repo := lab.hq.srv.URL + "/git/" + labApp + "/appdev"; !strings.Contains(branch[path], "buildFromGit: "+repo) {
+			t.Errorf("%s builds the pair from somewhere else than %s:\n%s", path, repo, branch[path])
 		}
 	}
 	assertNoSecretOnDisk(t, lab.stateDir, labCredential)
@@ -200,13 +202,13 @@ func TestGroupRecipe_ProposesOnlyWhatMainLacks(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			lab := newRecipeLab(t)
-			lab.hq.landOnMain(recipeRepo, tt.main)
+			lab.hq.landOnMain(hq.RecipeRepo, tt.main)
 
 			outcome := lab.proposeRecipe(lab.mock)
 
 			if tt.wantProposed == nil {
-				if !outcome.OnMain || outcome.Line != "" || lab.hq.changeIn(recipeRepo, 1) != nil {
-					t.Errorf("outcome = %+v, change %+v; want nothing proposed and nothing said", outcome, lab.hq.changeIn(recipeRepo, 1))
+				if !outcome.OnMain || outcome.Line != "" || lab.hq.changeIn(hq.RecipeRepo, 1) != nil {
+					t.Errorf("outcome = %+v, change %+v; want nothing proposed and nothing said", outcome, lab.hq.changeIn(hq.RecipeRepo, 1))
 				}
 				return
 			}
@@ -245,7 +247,7 @@ func TestGroupRecipe_FollowsTheProjectOnTheSameChange(t *testing.T) {
 	if !changed.Committed || changed.Created || !strings.Contains(changed.Line, "change #1") {
 		t.Fatalf("a changed recipe: %+v, want change #1 updated", changed)
 	}
-	if lab.hq.changeIn(recipeRepo, 2) != nil {
+	if lab.hq.changeIn(hq.RecipeRepo, 2) != nil {
 		t.Error("a changed recipe opened a second change")
 	}
 	if !lab.hq.recipeHolds(firstHead, recipeBranch(1)) {
@@ -269,11 +271,11 @@ func TestGroupRecipe_MainMovedUnderAnOpenProposal(t *testing.T) {
 	}
 	firstHead := lab.hq.recipeHead(recipeBranch(1))
 	production := handWrittenTiers()["4 — Small Production/import.yaml"]
-	lab.hq.landOnMain(recipeRepo, map[string]string{"4 — Small Production/import.yaml": production})
+	lab.hq.landOnMain(hq.RecipeRepo, map[string]string{"4 — Small Production/import.yaml": production})
 
 	second := lab.proposeRecipe(lab.mock)
 
-	if !second.Committed || second.Created || second.Change != 1 || lab.hq.changeIn(recipeRepo, 2) != nil {
+	if !second.Committed || second.Created || second.Change != 1 || lab.hq.changeIn(hq.RecipeRepo, 2) != nil {
 		t.Fatalf("second pass: %+v, want change #1 moved forward", second)
 	}
 	if !lab.hq.recipeHolds(firstHead, recipeBranch(1)) || !lab.hq.recipeHolds(lab.hq.recipeHead("main"), recipeBranch(1)) {
@@ -295,7 +297,7 @@ func TestGroupRecipe_AProposalMainOvertookAddsNothing(t *testing.T) {
 		t.Fatalf("first pass: %+v", first)
 	}
 	firstHead := lab.hq.recipeHead(recipeBranch(1))
-	lab.hq.landOnMain(recipeRepo, handWrittenTiers())
+	lab.hq.landOnMain(hq.RecipeRepo, handWrittenTiers())
 
 	second := lab.proposeRecipe(lab.mock)
 
@@ -323,8 +325,8 @@ func TestGroupRecipe_OpensNothingMainAlreadyHas(t *testing.T) {
 		settle     func(*fakeHQ)
 		wantChange bool
 	}{
-		{name: "Core landed it", settle: func(f *fakeHQ) { f.mergeChange(recipeRepo, 1) }},
-		{name: "a person closed it unmerged", settle: func(f *fakeHQ) { f.closeChange(recipeRepo, 1) }, wantChange: true},
+		{name: "Core landed it", settle: func(f *fakeHQ) { f.mergeChange(hq.RecipeRepo, 1) }},
+		{name: "a person closed it unmerged", settle: func(f *fakeHQ) { f.closeChange(hq.RecipeRepo, 1) }, wantChange: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -336,7 +338,7 @@ func TestGroupRecipe_OpensNothingMainAlreadyHas(t *testing.T) {
 
 			next := lab.proposeRecipe(lab.mock)
 
-			if opened := lab.hq.changeIn(recipeRepo, 2) != nil; opened != tt.wantChange || next.Created != tt.wantChange {
+			if opened := lab.hq.changeIn(hq.RecipeRepo, 2) != nil; opened != tt.wantChange || next.Created != tt.wantChange {
 				t.Errorf("the next pass opened a change: %v, want %v (%+v)", opened, tt.wantChange, next)
 			}
 			if !tt.wantChange && next.Line != "" {
@@ -368,7 +370,7 @@ func TestHandleGroupRecipe_Table(t *testing.T) {
 		},
 		{
 			name:     "main already carries every tier",
-			setup:    func(l *hqLab) { l.hq.landOnMain(recipeRepo, handWrittenTiers()) },
+			setup:    func(l *hqLab) { l.hq.landOnMain(hq.RecipeRepo, handWrittenTiers()) },
 			wantText: []string{`"onMain":true`, "already carries every tier", "A person changes a tier in HQ"},
 		},
 		{
@@ -421,7 +423,7 @@ func TestHandleGroupRecipe_Table(t *testing.T) {
 					t.Errorf("result is missing %q:\n%s", want, text)
 				}
 			}
-			if lab.hq.changeIn(recipeRepo, 2) != nil {
+			if lab.hq.changeIn(hq.RecipeRepo, 2) != nil {
 				t.Error("asking twice opened a second change")
 			}
 		})
@@ -442,4 +444,58 @@ func resultText(t *testing.T, res *mcp.CallToolResult) string {
 		}
 	}
 	return b.String()
+}
+
+// TestRecipeSlug is main's group-slug rule (client-runtime groupRegistry.ts
+// groupSlugBase) for the application's name: lowercase letters, digits and
+// dashes, starting with a letter, 2 to 30 long, never ending on a dash.
+func TestRecipeSlug(t *testing.T) {
+	t.Parallel()
+	tests := []struct{ name, want string }{
+		{"Acme", "acme"},
+		{"Acme Corp", "acme-corp"},
+		{"  Acme   Corp  ", "acme-corp"},
+		{"Acme / Corp!", "acme-corp"},
+		{"Ácme Čorp", "acme-corp"},
+		{"2024 Launch", "group-2024-launch"},
+		{"42", "group-42"},
+		{"", "group"},
+		{"!!!", "group"},
+		{"A", "group"},
+		{"ab", "ab"},
+		{strings.Repeat("a", 40), strings.Repeat("a", 30)},
+		{strings.Repeat("ab ", 12), "ab-ab-ab-ab-ab-ab-ab-ab-ab-ab"},
+	}
+	for _, tt := range tests {
+		if got := recipeSlug(tt.name); got != tt.want {
+			t.Errorf("recipeSlug(%q) = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+// TestGroupRecipe_NamedAfterTheApplication: the stage and production tiers
+// name their projects after the application HQ holds the Mate in, by its
+// name's slug — by its id while HQ names it nothing.
+func TestGroupRecipe_NamedAfterTheApplication(t *testing.T) {
+	tests := []struct {
+		name    string
+		appName string
+		want    string
+	}{
+		{"named", "Acme Corp", "name: acme-corp stage"},
+		{"no name yet", "", "name: " + labApp + " stage"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lab := newRecipeLab(t)
+			lab.hq.appName = tt.appName
+
+			outcome := lab.proposeRecipe(lab.mock)
+
+			stage := lab.hq.recipeFiles(recipeBranch(outcome.Change))[hq.RecipeTierPaths[hq.RecipeTierStage]]
+			if !strings.Contains(stage, tt.want) {
+				t.Errorf("the Stage tier does not say %q:\n%s", tt.want, stage)
+			}
+		})
+	}
 }

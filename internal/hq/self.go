@@ -23,6 +23,8 @@ type MateState struct {
 	ClosedOff bool `json:"closedOff"`
 	// AppID is the application HQ holds the Mate in, nil for none.
 	AppID *string `json:"appId"`
+	// AppName is that application's name, nil while HQ names it nothing.
+	AppName *string `json:"appName"`
 	// Changes are, in each of that application's repositories, the Mate's
 	// latest changes, newest first: its open one, if any, is the newest.
 	Changes []MateChange `json:"changes"`

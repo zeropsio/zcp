@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -262,6 +263,10 @@ func TestComposeGroupRecipeInputs_WaitsOnlyForWhatALaterPassBrings(t *testing.T)
 			m.HQ = &workflow.HQRepoRef{AppID: "app-0", Repo: "workerdev", Branch: "mate/" + labMate}
 			return m
 		}(), extra: workers, wantWait: []string{`"workerdev"`, "another application"}},
+		{name: "a pair named after the recipe repository is left out", meta: &workflow.ServiceMeta{Hostname: "group", StageHostname: "groupstage",
+			Mode: topology.PlanModeStandard, BootstrapSession: "test", BootstrappedAt: "2026-09-30"},
+			extra:       []platform.ServiceStack{public("group"), public("groupstage")},
+			wantLeftOut: []string{`"group"`, "Rename the service"}, wantUtilities: []string{"mailpit"}},
 		{name: "a dev/stage pair zcp has not adopted", extra: workers,
 			wantWait: []string{`"workerdev"`, `"workerstage"`, "adopt"}},
 		{name: "a pair pushing to its own repository is left out", meta: workerPair("2026-09-30", "https://github.com/acme/worker.git"), extra: workers,
@@ -346,7 +351,7 @@ func TestGroupRecipe_WaitsForAnUnwiredPair(t *testing.T) {
 
 	outcome := lab.proposeRecipe(lab.mock)
 
-	if outcome.Change != 0 || lab.hq.changeIn(recipeRepo, 1) != nil {
+	if outcome.Change != 0 || lab.hq.changeIn(hq.RecipeRepo, 1) != nil {
 		t.Errorf("outcome %+v: want nothing proposed while a pair waits", outcome)
 	}
 	if !warningsHave(outcome.Warnings, `"workerdev"`) {
@@ -403,7 +408,7 @@ func TestGroupRecipe_ProposesTheLiveProject(t *testing.T) {
 	files := lab.hq.recipeFiles(recipeBranch(outcome.Change))
 	stage := files["3 — Stage/import.yaml"]
 	for _, want := range []string{
-		"name: " + recipeName(labApp) + " stage",
+		"name: " + labApp + " stage",
 		"API_URL: https://app-${zeropsSubdomainHost}-3000.prg1.zerops.app",
 		"JWT_SECRET: <@generateRandomString(<25>)>",
 		"hostname: mailpit",

@@ -156,7 +156,9 @@ func composeGroupRecipeInputs(
 
 // groupRecipeWaits sorts the live runtimes no wired pair holds. The recipe
 // waits for what a later pass brings — a finished pair the repository pass
-// will still wire (hqPairNeedsRepository), one wired in another application
+// will still wire (hqPairNeedsRepository) — but never one named after the
+// recipe repository, which no pass wires (reservedRepository) — one wired in
+// another application
 // than the recipe's, which a pass wires in this one, or a dev/stage pair zcp
 // has not adopted, both `<stem>dev` and `<stem>stage` running with no pair
 // recorded — since a tier proposed without it would stay without it (D30),
@@ -186,6 +188,10 @@ func groupRecipeWaits(services []ops.ServiceInfo, metas, wired []*workflow.Servi
 		switch {
 		case paired[host] != nil:
 		case meta != nil && said[meta.Hostname]:
+		case meta != nil && strings.EqualFold(meta.Hostname, hq.RecipeRepo):
+			said[meta.Hostname] = true
+			_, remedy := reservedRepository(meta.Hostname, meta.Hostname)
+			leftOut = append(leftOut, fmt.Sprintf("pair %q is not in the recipe: it gets no repository in HQ. %s", meta.Hostname, remedy))
 		case meta != nil && hqPairWired(meta) && meta.HQ.AppID != appID:
 			said[meta.Hostname] = true
 			names = append(names, meta.Hostname)

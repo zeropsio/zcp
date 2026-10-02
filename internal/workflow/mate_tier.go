@@ -21,11 +21,6 @@ import (
 // same file to know which pairs to adopt, wire and deploy. This file is that
 // read — pure, no I/O.
 
-// MateTierImportPath is where the recipe repository keeps the AI Agent tier,
-// exactly as the recipe layout names it (internal/recipe:
-// `<index> — <title>`).
-const MateTierImportPath = "0 — AI Agent/import.yaml"
-
 // ErrMateTierUnreadable is a tier that is not a services document at all.
 var ErrMateTierUnreadable = errors.New("the AI Agent tier does not read as an import")
 

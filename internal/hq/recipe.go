@@ -6,13 +6,33 @@ import (
 	"net/url"
 )
 
-// The application's recipe (SPEC §3.2c): one directory per tier on `main` of
-// its recipe repository, each with the whole-project import.yaml that
-// creates it. HQ answers a tier by the client's name for it.
+// The application's recipe (SPEC §3.2c; @t3tools/shared/hqRecipe, which
+// these mirror): one directory per tier on `main` of its recipe repository,
+// each with the whole-project import.yaml that creates it. HQ answers a tier
+// by its name.
 
-// RecipeTierMate is the AI Agent tier, `0 — AI Agent/import.yaml`: the
-// project a Mate of the application is.
-const RecipeTierMate = "mate"
+// RecipeRepo is an application's recipe repository, beside its services':
+// the name is reserved for it.
+const RecipeRepo = "group"
+
+// RecipeProposalTitle is the exact title of a Mate's recipe proposal: zcp
+// writes it, the client knows a proposal by it.
+const RecipeProposalTitle = "Mate: the group's import files"
+
+// The tiers, by the name HQ answers them by: a Mate's, a stage's, a
+// production's.
+const (
+	RecipeTierMate       = "mate"
+	RecipeTierStage      = "stage"
+	RecipeTierProduction = "production"
+)
+
+// RecipeTierPaths are each tier's import file in the recipe repository.
+var RecipeTierPaths = map[string]string{
+	RecipeTierMate:       "0 — AI Agent/import.yaml",
+	RecipeTierStage:      "3 — Stage/import.yaml",
+	RecipeTierProduction: "4 — Small Production/import.yaml",
+}
 
 // The states a tier is in on `main`.
 const (

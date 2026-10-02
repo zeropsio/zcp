@@ -376,3 +376,44 @@ func TestAbsorbLandedChangeOnCheckout_OnlyOnACleanCheckoutOfTheMatesBranch(t *te
 		})
 	}
 }
+
+// TestWireHQPair_TheRecipeRepositoryIsNoServicesRepository: HQ answers a
+// repository named `group` with the application's recipe repository, so zcp
+// never asks HQ for it on a pair's behalf — not for a dev half named so, nor
+// for a recipe naming it — and says the one thing to do.
+func TestWireHQPair_TheRecipeRepositoryIsNoServicesRepository(t *testing.T) {
+	tests := []struct {
+		name       string
+		hostname   string
+		repoName   string
+		wantRemedy string
+	}{
+		{name: "a dev half named group", hostname: "group", repoName: "group", wantRemedy: `Rename the service "group"`},
+		{name: "a recipe naming group", hostname: "appdev", repoName: "group", wantRemedy: "Fix the recipe"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lab := newHQLab(t)
+			if err := workflow.WriteServiceMeta(lab.stateDir, &workflow.ServiceMeta{
+				Hostname: tt.hostname, Mode: topology.PlanModeStandard, StageHostname: tt.hostname + "stage",
+				BootstrapSession: "test", BootstrappedAt: "2026-10-02",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			m, _ := workflow.FindServiceMeta(lab.stateDir, tt.hostname)
+			hqc, _ := openHQ(lab.hq.srv.Client())
+
+			outcome := rewireHQPair(t.Context(), lab.mock, lab.hq.srv.Client(), lab.ssh, lab.rt, lab.stateDir, hqc, m, tt.repoName)
+
+			if outcome.wired || !strings.Contains(outcome.remedy, tt.wantRemedy) || !strings.Contains(outcome.line, "recipe repository") {
+				t.Errorf("outcome = %+v, want a refusal whose remedy says %q", outcome, tt.wantRemedy)
+			}
+			if lab.hq.repos[labApp+"/group"] {
+				t.Error("HQ was asked for the recipe repository on a pair's behalf")
+			}
+			if meta, _ := workflow.FindServiceMeta(lab.stateDir, tt.hostname); meta.HQ != nil {
+				t.Errorf("the pair was recorded wired: %+v", meta.HQ)
+			}
+		})
+	}
+}

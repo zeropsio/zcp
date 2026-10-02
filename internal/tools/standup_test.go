@@ -117,6 +117,9 @@ type standupHQ struct {
 	changeOpens int
 	// tierReads counts reads of the tier.
 	tierReads int
+	// tierRefusal, when set, is HQ's refusal of the tier read: its status,
+	// code and reason.
+	tierRefusal *hq.RefusedError
 }
 
 func (g *standupHQ) start(t *testing.T) *httptest.Server {
@@ -156,6 +159,10 @@ func (g *standupHQ) start(t *testing.T) *httptest.Server {
 				"closedOff": true, "appId": app, "changes": []any{}})
 		case "/api/mate/recipe/" + hq.RecipeTierMate:
 			g.tierReads++
+			if refusal := g.tierRefusal; refusal != nil {
+				write(refusal.Status, map[string]string{"code": refusal.Code, "reason": refusal.Reason})
+				return
+			}
 			if g.tier == "" {
 				write(http.StatusOK, map[string]string{"state": hq.RecipeAbsent})
 				return
@@ -534,7 +541,7 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 	if body.StandUp != standupReady {
 		t.Errorf("standUp = %q, want %q: %s", body.StandUp, standupReady, getTextContent(t, result))
 	}
-	if body.GroupRepo != recipeRepo {
+	if body.GroupRepo != hq.RecipeRepo {
 		t.Errorf("groupRepo = %q", body.GroupRepo)
 	}
 
@@ -684,6 +691,20 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 		{
 			name:    "HQ holds the Mate in no application",
 			setup:   func(f *standupFixture) { f.hq.appID = "" },
+			wantErr: []string{"PREREQUISITE_MISSING", "no application"},
+		},
+		{
+			name: "a tier past HQ's read bound",
+			setup: func(f *standupFixture) {
+				f.hq.tierRefusal = &hq.RefusedError{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Reason: "recipe_too_large"}
+			},
+			wantErr: []string{"INVALID_IMPORT_YML", "larger than HQ reads"},
+		},
+		{
+			name: "HQ lets the Mate go between its state and the tier",
+			setup: func(f *standupFixture) {
+				f.hq.tierRefusal = &hq.RefusedError{Status: http.StatusForbidden, Code: "forbidden", Reason: "mate_not_in_app"}
+			},
 			wantErr: []string{"PREREQUISITE_MISSING", "no application"},
 		},
 		{

@@ -388,6 +388,9 @@ func wireHQPair(
 	m *workflow.ServiceMeta,
 	repoName string,
 ) hqWiringOutcome {
+	if line, remedy := reservedRepository(m.Hostname, repoName); line != "" {
+		return hqWiringOutcome{line: line, remedy: remedy}
+	}
 	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
 	repo, err := hqc.EnsureRepo(callCtx, repoName)
 	cancel()
@@ -461,6 +464,23 @@ func wireHQPair(
 		line += fmt.Sprintf("; this Mate moved to another application, and its change #%d stays in the one it was opened in", left)
 	}
 	return hqWiringOutcome{line: line, wired: true}
+}
+
+// reservedRepository is why the pair hostname gets no repository repoName in
+// HQ, with the one thing to do about it; "" when it may have one. HQ answers
+// a repository named hq.RecipeRepo with the application's recipe repository,
+// whoever asks, so that name is reserved here: a pair wired to it would push
+// its code into the recipe.
+func reservedRepository(hostname, repoName string) (line, remedy string) {
+	switch {
+	case strings.EqualFold(hostname, hq.RecipeRepo):
+		remedy = fmt.Sprintf("Rename the service %q: %q is the application's recipe repository, so no service may be named after it.", hostname, hq.RecipeRepo)
+	case strings.EqualFold(repoName, hq.RecipeRepo):
+		remedy = fmt.Sprintf("Fix the recipe: its buildFromGit for %s names %q, the application's recipe repository, which builds no service.", hostname, hq.RecipeRepo)
+	default:
+		return "", ""
+	}
+	return fmt.Sprintf("%s gets no repository in HQ: %q is the application's recipe repository. %s", hostname, hq.RecipeRepo, remedy), remedy
 }
 
 // wiredHQRecord is the pair's HQ record once it is wired to repo on branch.

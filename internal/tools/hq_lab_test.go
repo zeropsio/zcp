@@ -47,8 +47,10 @@ type fakeHQ struct {
 	srv      *httptest.Server
 	caFile   string
 
-	mu          sync.Mutex
-	appID       string
+	mu    sync.Mutex
+	appID string
+	// appName is the application's name HQ answers, "" for none.
+	appName     string
 	repos       map[string]bool
 	changes     []hq.Change
 	attachments map[string][]byte
@@ -237,6 +239,9 @@ func (f *fakeHQ) self(ctx context.Context) map[string]any {
 		return state
 	}
 	state["appId"] = f.appID
+	if f.appName != "" {
+		state["appName"] = f.appName
+	}
 	var mine []hq.MateChange
 	for _, c := range f.changes {
 		if c.AppID != f.appID {

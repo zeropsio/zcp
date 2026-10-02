@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -253,25 +254,34 @@ func (d standupDeps) readTier(ctx context.Context, hqc hq.Client, progress *stan
 		return standupSource{}, standupRefusal(platform.ErrAPIError,
 			fmt.Sprintf("Could not read which application HQ holds this Mate in: %v.", err), fallback)
 	}
+	inNoApplication := standupRefusal(platform.ErrPrerequisiteMissing,
+		"HQ holds this Mate in no application yet, so there is no recipe repository to read the recipe from.", fallback)
 	if state.AppID == nil {
-		return standupSource{}, standupRefusal(platform.ErrPrerequisiteMissing,
-			"HQ holds this Mate in no application yet, so there is no recipe repository to read the recipe from.", fallback)
+		return standupSource{}, inNoApplication
 	}
-	src := standupSource{appID: *state.AppID, groupRepo: recipeRepo}
+	src := standupSource{appID: *state.AppID, groupRepo: hq.RecipeRepo}
+	path := hq.RecipeTierPaths[hq.RecipeTierMate]
 	read, err := hqc.RecipeTier(ctx, hq.RecipeTierMate)
-	if err != nil {
+	var refused *hq.RefusedError
+	switch {
+	case errors.As(err, &refused) && refused.Reason == "mate_not_in_app":
+		return standupSource{}, inNoApplication
+	case errors.As(err, &refused) && refused.Code == "too_large":
+		return standupSource{}, standupRefusal(platform.ErrInvalidImportYml,
+			fmt.Sprintf("%s@%s:%s is larger than HQ reads (%s), so it cannot be stood up from.", src.groupRepo, hqBase, path, hqRefusalWords(refused)), fallback)
+	case err != nil:
 		return standupSource{}, standupRefusal(platform.ErrAPIError,
-			fmt.Sprintf("Could not read %s@%s:%s from HQ: %v.", src.groupRepo, hqBase, workflow.MateTierImportPath, err), fallback)
+			fmt.Sprintf("Could not read %s@%s:%s from HQ: %v.", src.groupRepo, hqBase, path, err), fallback)
 	}
 	if read.State != hq.RecipePresent {
 		return standupSource{}, standupRefusal(platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("%s has no %s on %s: the project's recipe is not merged yet, so there is nothing to stand up from.",
-				src.groupRepo, workflow.MateTierImportPath, hqBase), fallback)
+				src.groupRepo, path, hqBase), fallback)
 	}
 	tier, err := workflow.ParseMateTier(read.ImportYAML, hqc.Address(), src.appID)
 	if err != nil {
 		return standupSource{}, standupRefusal(platform.ErrInvalidImportYml,
-			fmt.Sprintf("%s@%s:%s cannot be stood up: %v.", src.groupRepo, hqBase, workflow.MateTierImportPath, err), fallback)
+			fmt.Sprintf("%s@%s:%s cannot be stood up: %v.", src.groupRepo, hqBase, path, err), fallback)
 	}
 	src.tier = tier
 	return src, nil
@@ -534,7 +544,7 @@ func (d standupDeps) presentAndRunning(sp *standupPair, src standupSource, bootF
 		}
 		sp.fail(fmt.Sprintf("%s is not in this project after %s: %s", half.rt.Hostname, d.runtimeWait, why),
 			fmt.Sprintf("Import it from the tier with zerops_import content=%q (%s; add its envSecrets and scaling from %s's %s entry), then call zerops_standup again.",
-				entry, shape, src.groupRepo, workflow.MateTierImportPath))
+				entry, shape, src.groupRepo, hq.RecipeTierPaths[hq.RecipeTierMate]))
 		return false
 	}
 	if !sp.dev.IsLive() {
