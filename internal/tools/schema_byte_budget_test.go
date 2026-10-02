@@ -88,7 +88,11 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// Raised +62 (18497→18559) for the picture a description shows:
 		// `description` names the one way to put a zerops_browser screenshot
 		// in it, ![what it shows](shot-N).
-		"zerops_workflow":    18559,
+		// Raised +138 (18559→18697) for `scaling`, action="group-recipe"'s
+		// one new input: a Mate proposes a service's scale into the group
+		// recipe's tiers. The steer naming the call reaches the Mate in
+		// zerops_scale's answer, not here.
+		"zerops_workflow":    18697,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services
