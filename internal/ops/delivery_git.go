@@ -182,6 +182,33 @@ func BuildChangePushCommand(workingDir, branch string) string {
 		shellQuote(workingDir), hqCredentialHelperArgs(), shellQuote("HEAD:refs/heads/"+branch))
 }
 
+// BuildTakeChangeInCommand takes the branch of the Mate's open change, as HQ
+// holds it now, into the checkout before it is pushed there. HQ takes a
+// change's branch only forward, and the branch can hold a commit the checkout
+// lacks — one Core wrote there, or a checkout lost and made again — which
+// would refuse every later push for good. A merge, as with `main`: nothing is
+// rewritten, and a collision only a person or the agent can settle leaves the
+// checkout exactly as it was, named by the delivery's conflict marker
+// (DeliveryConflict). A branch HQ does not have yet, or one HEAD already
+// holds, is nothing to take in.
+func BuildTakeChangeInCommand(workingDir, branch string) string {
+	ref := shellQuote("refs/heads/" + branch)
+	tracking := shellQuote("origin/" + branch)
+	return strings.Join([]string{
+		"cd " + shellQuote(workingDir),
+		fmt.Sprintf("{ GIT_TERMINAL_PROMPT=0 git %s ls-remote --exit-code --heads origin %s >/dev/null; held=$?;"+
+			" if [ $held -eq 2 ]; then exit 0; fi; [ $held -eq 0 ]; }", hqCredentialHelperArgs(), ref),
+		fmt.Sprintf("GIT_TERMINAL_PROMPT=0 git %s fetch --no-tags -q origin %s",
+			hqCredentialHelperArgs(), shellQuote("+refs/heads/"+branch+":refs/remotes/origin/"+branch)),
+		fmt.Sprintf("(git merge-base --is-ancestor %s HEAD"+
+			" || git merge --no-edit -q %s"+
+			" || (conflicts=$(git diff --name-only --diff-filter=U | tr '\\n' ' ');"+
+			" git merge --abort >/dev/null 2>&1;"+
+			` echo "%s$conflicts"; exit 4))`,
+			tracking, tracking, deliveryConflictMarker),
+	}, " && ")
+}
+
 // DeliveryUnignored reads the dependency directories a delivery refused to
 // commit out of its output, space-separated; empty when it refused none.
 func DeliveryUnignored(output string) string { return markedLine(output, deliveryUnignoredMarker) }

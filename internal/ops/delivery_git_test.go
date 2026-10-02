@@ -925,3 +925,112 @@ func TestGitRemoteUnavailable(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildTakeChangeInCommand: HQ's branch of an open change may hold a
+// commit the Mate's checkout lacks — a merge Core made there, a checkout that
+// was lost and cloned again. HQ takes a change's branch only forward, so the
+// Mate's push would be refused for good; the change's branch is taken in
+// first, as `main` is, and a collision leaves the checkout exactly as it was.
+func TestBuildTakeChangeInCommand(t *testing.T) {
+	if testing.Short() {
+		t.Skip("exercises a real git repository")
+	}
+	for _, tc := range []struct {
+		name string
+		// atHQ is what lands on the change's branch at HQ after the Mate's
+		// push, by file and content; nil leaves the branch as the Mate pushed it.
+		atHQ map[string]string
+		// branch is the change whose branch is taken in.
+		branch string
+		// inTree is what the Mate wrote since its push.
+		inTree       map[string]string
+		wantMerged   bool
+		wantConflict string
+	}{
+		{
+			name:       "a commit HQ added is taken in",
+			atHQ:       map[string]string{"core.txt": "what Core wrote\n"},
+			branch:     labChange1,
+			inTree:     map[string]string{"todo.js": "todos\n"},
+			wantMerged: true,
+		},
+		{
+			name:   "a branch the checkout already holds is left as it is",
+			branch: labChange1,
+			inTree: map[string]string{"todo.js": "todos\n"},
+		},
+		{
+			name:   "a change HQ has no branch of yet is nothing to take in",
+			branch: labChange2,
+			inTree: map[string]string{"todo.js": "todos\n"},
+		},
+		{
+			name:         "the same line, two ways — the Mate is told, and nothing moves",
+			atHQ:         map[string]string{"index.js": "what Core wrote\n"},
+			branch:       labChange1,
+			inTree:       map[string]string{"index.js": "the Mate's line\n"},
+			wantConflict: "index.js",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pair := mateBranchLab(t, nil)
+			root := filepath.Dir(pair)
+			remote := filepath.Join(root, "remote.git")
+			runGit(t, remote, "config", "receive.denyNonFastForwards", "true")
+			runShell(t, BuildMateBranchCommand(pair, labBranch))
+			writeLabFile(t, filepath.Join(pair, "index.js"), "the app\n")
+			deliverInLab(t, pair)
+
+			if tc.atHQ != nil {
+				hq := filepath.Join(root, "hq")
+				runGit(t, root, "clone", "-q", "-b", labChange1, remote, "hq")
+				runGit(t, hq, "config", "user.email", "hq@hq.invalid")
+				runGit(t, hq, "config", "user.name", "HQ")
+				for name, content := range tc.atHQ {
+					writeLabFile(t, filepath.Join(hq, name), content)
+				}
+				commitAll(t, hq, "Core's own write")
+				runGit(t, hq, "push", "-q", "origin", labChange1)
+			}
+			for name, content := range tc.inTree {
+				writeLabFile(t, filepath.Join(pair, name), content)
+			}
+			commitAll(t, pair, "The Mate's next work")
+			before := runGit(t, pair, "rev-parse", "HEAD")
+
+			out, err := exec.CommandContext(t.Context(), "sh", "-c", //nolint:gosec // test-only, the command under test against a t.TempDir repository
+				BuildTakeChangeInCommand(pair, tc.branch)).CombinedOutput()
+
+			if tc.wantConflict != "" {
+				if err == nil {
+					t.Fatalf("a conflict must stop it:\n%s", out)
+				}
+				if got := DeliveryConflict(string(out)); !strings.Contains(got, tc.wantConflict) {
+					t.Fatalf("DeliveryConflict = %q, want %q; output:\n%s", got, tc.wantConflict, out)
+				}
+				if got := runGit(t, pair, "rev-parse", "HEAD"); got != before {
+					t.Errorf("HEAD moved: %s → %s", before, got)
+				}
+				if state := runGit(t, pair, "status", "--porcelain=v1", "--untracked-files=no"); state != "" {
+					t.Errorf("the checkout must be left whole: %q", state)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("take in: %v\n%s", err, out)
+			}
+			after := runGit(t, pair, "rev-parse", "HEAD")
+			if moved := after != before; moved != tc.wantMerged {
+				t.Fatalf("HEAD moved = %v, want %v:\n%s", moved, tc.wantMerged, out)
+			}
+			// Forward from HQ's branch: the push HQ refused before goes through.
+			runShell(t, BuildChangePushCommand(pair, tc.branch))
+			for name, content := range tc.atHQ {
+				got, readErr := os.ReadFile(filepath.Join(pair, name))
+				if readErr != nil || string(got) != content {
+					t.Errorf("%s in the Mate's tree = %q (%v), want %q", name, got, readErr, content)
+				}
+			}
+		})
+	}
+}

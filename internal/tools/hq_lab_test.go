@@ -404,6 +404,35 @@ func (f *fakeHQ) mergeChange(repo string, number int) string {
 	return squash
 }
 
+// writeToChange is a commit HQ itself adds on the Mate's open change number in
+// repo, the way Core's import heals a change whose repository it rewrote:
+// `main` merged into the change, and files written on top when files names
+// any. It answers the change's new head.
+func (f *fakeHQ) writeToChange(repo string, number int, files map[string]string) string {
+	f.t.Helper()
+	clone := filepath.Join(f.t.TempDir(), "core")
+	branch := fmt.Sprintf("mate/%s/%d", labMate, number)
+	f.git(f.t.Context(), "", "clone", "-q", "-b", branch, f.repoDir(f.appID, repo), clone)
+	identity := []string{"-c", "user.name=HQ", "-c", "user.email=hq@hq.invalid"}
+	f.git(f.t.Context(), clone, append(identity, "merge", "-q", "--no-ff", "--no-edit", "origin/main")...)
+	for name, body := range files {
+		path := filepath.Join(clone, name)
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+	if len(files) > 0 {
+		f.git(f.t.Context(), clone, "add", "-A")
+		f.git(f.t.Context(), clone, append(identity, "commit", "-qm", "Core's own write")...)
+	}
+	cmd := exec.CommandContext(f.t.Context(), "git", "-C", clone, "push", "-q", "origin", "HEAD:refs/heads/"+branch)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "FAKE_HQ_REFS="+f.refsFile)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		f.t.Fatalf("write to change #%d: %v\n%s", number, err, out)
+	}
+	return f.git(f.t.Context(), clone, "rev-parse", "HEAD")
+}
+
 // seed makes repo in the Mate's application, the way HQ makes one asked for.
 func (f *fakeHQ) seed(repo string) {
 	f.mu.Lock()

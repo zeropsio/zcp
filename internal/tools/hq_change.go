@@ -100,8 +100,9 @@ type shipOutcome struct {
 }
 
 // shipChange carries the work in the pair's checkout — committed, with `main`
-// taken in, ahead of `main` by ahead commits — to its change: the open one, or
-// the next number opened with title, and HEAD pushed to its branch. Nothing
+// taken in, ahead of `main` by ahead commits — to its change: the open one, its
+// branch as HQ holds it taken in too, or the next number opened with title; and
+// HEAD pushed to its branch. Nothing
 // is opened for a checkout `main` already has (ahead == 0). An HQ that cannot
 // be reached leaves the delivery recorded as pending, for the next delivery,
 // push or pass to finish (SPEC §3.2a); a refusal is said, and drops it.
@@ -142,6 +143,11 @@ func shipChange(
 	recordChange(stateDir, m, change.Number)
 
 	branch := hqc.ChangeBranch(change.Number)
+	if !opened.Created {
+		if stopped, ok := takeChangeIn(ctx, sshDeployer, stateDir, m, change.Number, branch, title); !ok {
+			return stopped
+		}
+	}
 	output, err := pushChangeBranch(ctx, sshDeployer, m.Hostname, branch)
 	if err != nil {
 		switch refusal := ops.ChangePushRefusal(string(output)); {
@@ -179,6 +185,32 @@ func shipChange(
 		Described:       described,
 		DescriptionNote: note,
 	}}
+}
+
+// takeChangeIn takes the open change's branch, as HQ holds it now, into the
+// pair's checkout before HEAD is pushed there (ops.BuildTakeChangeInCommand):
+// HQ takes a change's branch only forward, and a commit on it the checkout
+// lacks — Core's own, or a checkout lost and made again — would refuse every
+// later push. ok is false with what stopped the delivery: a collision only
+// the agent can settle, an HQ that could not be reached (the delivery kept),
+// or a read that failed.
+func takeChangeIn(ctx context.Context, sshDeployer ops.SSHDeployer, stateDir string, m *workflow.ServiceMeta, number int, branch, title string) (shipOutcome, bool) {
+	output, err := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildTakeChangeInCommand(hqPairWorkingDir, branch))
+	if err == nil {
+		return shipOutcome{}, true
+	}
+	switch conflict := ops.DeliveryConflict(string(output)); {
+	case conflict != "":
+		clearPendingDelivery(stateDir, m)
+		return shipOutcome{line: fmt.Sprintf(
+			"change #%d has moved on in HQ and this Mate's work changes the same lines (%s) — in %s's checkout run `git fetch origin && git merge origin/%s` and resolve it",
+			number, conflict, m.Hostname, branch)}, false
+	case ops.GitRemoteUnavailable(string(output)):
+		recordPendingDelivery(stateDir, m, title)
+		return shipOutcome{pending: true, line: fmt.Sprintf("HQ could not be reached to read change #%d (%s)", number, gitPushErrorDetail(err, output))}, false
+	}
+	clearPendingDelivery(stateDir, m)
+	return shipOutcome{line: fmt.Sprintf("taking change #%d's branch in failed (%s)", number, gitPushErrorDetail(err, output))}, false
 }
 
 // pushChangeWaitBudget bounds how long a push waits out an HQ that answers

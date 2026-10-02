@@ -352,3 +352,58 @@ func TestDeliverHQPair_LearnsAMergeMainNeverSaw(t *testing.T) {
 		t.Errorf("the delivery does not say what became of #3:\n%s", d.Line)
 	}
 }
+
+// TestDeliverHQPair_TakesInWhatHQAddedToTheChange: HQ's branch of an open
+// change can hold a commit the Mate's checkout lacks — the merge Core's
+// import makes on a change it healed, or a checkout lost and made again. HQ
+// takes a change's branch only forward, so a delivery takes that branch in
+// before it pushes, and goes on with the same change.
+func TestDeliverHQPair_TakesInWhatHQAddedToTheChange(t *testing.T) {
+	lab := newHQLab(t)
+	pair := lab.fromMain("appdev")
+	healed := lab.hq.writeToChange("appdev", 3, nil)
+	lab.write(map[string]string{"notes.js": "the work since the switch\n"})
+
+	d := lab.deliver()
+
+	if d == nil || d.Change == nil || d.Change.Number != 3 || d.Change.Created {
+		t.Fatalf("the delivery must go on with change #3: %+v", d)
+	}
+	head := lab.remoteHead("mate/" + labMate + "/3")
+	if head != lab.git("rev-parse", "HEAD") {
+		t.Errorf("change #3 is at %q, want the checkout's HEAD", head)
+	}
+	for _, kept := range []string{healed, pair.head} {
+		if !lab.descends(labApp, kept, "mate/"+labMate+"/3") {
+			t.Errorf("change #3 lost %s", kept)
+		}
+	}
+}
+
+// TestDeliverHQPair_SaysAChangeHQMovedThatCollides: what HQ wrote on the
+// change and the Mate's work change the same lines. Nothing is pushed, the
+// checkout stays as it was, and the line says how to settle it.
+func TestDeliverHQPair_SaysAChangeHQMovedThatCollides(t *testing.T) {
+	lab := newHQLab(t)
+	lab.fromMain("appdev")
+	lab.hq.writeToChange("appdev", 3, map[string]string{"due.js": "what Core wrote\n"})
+	lab.write(map[string]string{"due.js": "the Mate's line\n"})
+	pushedBefore := lab.remoteHead("mate/" + labMate + "/3")
+
+	d := lab.deliver()
+
+	if d == nil || d.Change != nil {
+		t.Fatalf("a collision must stop the delivery: %+v", d)
+	}
+	for _, want := range []string{"change #3", "due.js", "git merge origin/mate/" + labMate + "/3"} {
+		if !strings.Contains(d.Line, want) {
+			t.Errorf("the line does not say %q:\n%s", want, d.Line)
+		}
+	}
+	if got := lab.remoteHead("mate/" + labMate + "/3"); got != pushedBefore {
+		t.Errorf("something was pushed: %s → %s", pushedBefore, got)
+	}
+	if state := lab.git("status", "--porcelain=v1", "--untracked-files=no"); state != "" {
+		t.Errorf("the checkout must be left whole: %q", state)
+	}
+}
