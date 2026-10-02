@@ -46,6 +46,8 @@ type fakeGroupGitea struct {
 	pullPosts   int
 	// lastCommitPaths names what the most recent commit carried.
 	lastCommitPaths []string
+	// fileReadRefs names the ref of each file read.
+	fileReadRefs []string
 }
 
 type fakeGroupPull struct {
@@ -278,6 +280,7 @@ func (f *fakeGroupGitea) serveFileReads(r *http.Request, path string, write func
 	if ref == "" {
 		ref = "main"
 	}
+	f.fileReadRefs = append(f.fileReadRefs, ref)
 	files, ok := f.resolve(repo, ref)
 	body, found := files[file]
 	if !ok || !found {
@@ -306,8 +309,8 @@ func (f *fakeGroupGitea) serveContents(r *http.Request, path string, write func(
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	target := body.Branch
 	current := f.branches[repo][body.Branch]
-	// What Gitea 1.27 answers for a create of a file that exists, or an
-	// update that names no sha or not the file's current blob: 422.
+	// Strict to the contents API: a create of a file that exists, or an
+	// update that names no sha or not the file's current blob, is a 422.
 	for _, file := range body.Files {
 		existing, exists := current[file.Path]
 		if (file.Operation == "create") == exists || (file.Operation == "update" && file.SHA != giteaBlobSHAForTest(existing)) {

@@ -31,16 +31,21 @@ func recipeScalingTitle(host string) string {
 	return "Mate: " + host + "'s scale in the group recipe"
 }
 
-// recipeScalingTier is one tier file a scaling proposal changes.
+// recipeScalingTier is one tier file on main that names a scaling
+// proposal's host: what the proposal writes to it — host's block replaced,
+// or main's own body when nothing changes or the splice refused (why, in
+// refused) — and the keys that change.
 type recipeScalingTier struct {
 	path    string
-	body    string // the file with host's block replaced
+	body    string
 	changes []bundle.ScalingChange
+	refused string
 }
 
 // planRecipeScaling composes the recipe from this Mate's project and, for
 // each tier file on main that names host, what replacing host's
-// verticalAutoscaling block with the composed one would change.
+// verticalAutoscaling block with the composed one would change. Tiers are
+// read at main's head, the commit a proposal branch is cut from.
 func planRecipeScaling(
 	ctx context.Context,
 	client platform.Client,
@@ -57,24 +62,51 @@ func planRecipeScaling(
 		if !strings.HasSuffix(file.Path, "/import.yaml") || !slices.Contains(comp.main.Paths, file.Path) {
 			continue
 		}
-		mainBody, found, err := ops.ReadGiteaFile(ctx, httpClient, comp.wiring.GiteaURL, comp.wiring.Token, comp.groupRepo, comp.base, file.Path)
+		mainBody, found, err := ops.ReadGiteaFile(ctx, httpClient, comp.wiring.GiteaURL, comp.wiring.Token, comp.groupRepo, comp.main.Head, file.Path)
 		if err != nil {
 			return comp, nil, giteaRecipeOutcome{GroupRepo: comp.groupRepo, Line: fmt.Sprintf("could not read %s@%s:%s (%v)", comp.groupRepo, comp.base, file.Path, err)}, false
 		}
 		if !found || !bundle.TierNamesHost(mainBody, host) {
 			continue
 		}
-		changes := bundle.HostScalingChanges(mainBody, file.Body, host)
-		if len(changes) == 0 {
-			continue
+		tier := recipeScalingTier{path: file.Path, body: mainBody}
+		if changes := bundle.HostScalingChanges(mainBody, file.Body, host); len(changes) > 0 {
+			spliced, err := bundle.SpliceHostScaling(mainBody, file.Body, host)
+			switch {
+			case err != nil:
+				tier.refused = err.Error()
+			case spliced != mainBody:
+				tier.body, tier.changes = spliced, changes
+			}
 		}
-		spliced, err := bundle.SpliceHostScaling(mainBody, file.Body, host)
-		if err != nil || spliced == mainBody {
-			continue
-		}
-		tiers = append(tiers, recipeScalingTier{path: file.Path, body: spliced, changes: changes})
+		tiers = append(tiers, tier)
 	}
 	return comp, tiers, giteaRecipeOutcome{GroupRepo: comp.groupRepo}, true
+}
+
+// changedTiers reads the tiers a proposal changes as "Tier: key old → new".
+func changedTiers(tiers []recipeScalingTier) []string {
+	var out []string
+	for _, tier := range tiers {
+		if len(tier.changes) > 0 {
+			out = append(out, tierTitle(tier.path)+": "+scalingChangeText(tier.changes))
+		}
+	}
+	return out
+}
+
+// refusedTiers reads the tiers left as main has them, and why.
+func refusedTiers(tiers []recipeScalingTier) string {
+	var out []string
+	for _, tier := range tiers {
+		if tier.refused != "" {
+			out = append(out, tierTitle(tier.path)+" ("+tier.refused+")")
+		}
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	return " Left as main has it: " + strings.Join(out, "; ") + "."
 }
 
 // groupRecipeScalingSteer is what the scale tool (and an import override)
@@ -89,12 +121,9 @@ func groupRecipeScalingSteer(
 	stateDir, liveEnvPath, host string,
 ) string {
 	comp, tiers, _, ok := planRecipeScaling(ctx, client, httpClient, rt, stateDir, liveEnvPath, host)
-	if !ok || len(tiers) == 0 {
+	parts := changedTiers(tiers)
+	if !ok || len(parts) == 0 {
 		return ""
-	}
-	parts := make([]string, 0, len(tiers))
-	for _, tier := range tiers {
-		parts = append(parts, tierTitle(tier.path)+": "+scalingChangeText(tier.changes))
 	}
 	return fmt.Sprintf("The group recipe on %s@%s still writes %s differently (%s). To carry this scale into the recipe the group's next Mates and environments are made from, call zerops_workflow action=\"group-recipe\" scaling=%q — it proposes only %s's verticalAutoscaling, floors applied, as a pull request the person reviews.",
 		comp.groupRepo, comp.base, host, strings.Join(parts, "; "), host, host)
@@ -144,32 +173,38 @@ func handleGroupRecipeScaling(
 			"The scaling proposal was not made: "+reason,
 			"Retry once the Mate's Gitea variables have landed and a pair has its repository."), WithRecoveryStatus()), nil, nil
 	}
-	if len(tiers) == 0 {
+	wiring := comp.wiring
+	branch := ops.GiteaRecipeBranch(comp.main.Head) + "-scaling-" + host
+	title := recipeScalingTitle(host)
+	changed := changedTiers(tiers)
+	if len(changed) == 0 {
+		// An open proposal for host went stale: main already says it.
+		if _, err := ops.CloseGiteaPullRequests(ctx, httpClient, wiring.GiteaURL, wiring.Token, comp.groupRepo, comp.bot, title, comp.base, ""); err != nil {
+			return scalingProposalFailed(fmt.Sprintf("could not close the earlier proposal for %s (%v)", host, err)), nil, nil
+		}
 		return jsonResult(map[string]any{
 			"groupRepo": comp.groupRepo,
-			"message": fmt.Sprintf("The group recipe on %s@%s already writes %s as this Mate runs it (floors applied), or names no %s — nothing to propose.",
-				comp.groupRepo, comp.base, host, host),
+			"message": fmt.Sprintf("The group recipe on %s@%s already writes %s as this Mate runs it (floors applied), or names no %s — nothing to propose.%s",
+				comp.groupRepo, comp.base, host, host, refusedTiers(tiers)),
 		}), nil, nil
 	}
 
-	wiring := comp.wiring
 	fork, err := ops.EnsureGiteaFork(ctx, httpClient, wiring.GiteaURL, wiring.Token, comp.groupRepo, comp.bot)
 	if err != nil {
 		return scalingProposalFailed(fmt.Sprintf("could not fork %s (%v)", comp.groupRepo, err)), nil, nil
 	}
-	branch := ops.GiteaRecipeBranch(comp.main.Head) + "-scaling-" + host
-	title := recipeScalingTitle(host)
 	if _, err := ops.CloseGiteaPullRequests(ctx, httpClient, wiring.GiteaURL, wiring.Token, comp.groupRepo, comp.bot, title, comp.base, branch); err != nil {
 		return scalingProposalFailed(fmt.Sprintf("could not close the earlier proposal for %s (%v)", host, err)), nil, nil
 	}
 	if _, err := ops.EnsureGiteaProposalBranch(ctx, httpClient, wiring.GiteaURL, wiring.Token, fork, branch, comp.base, comp.main.Head); err != nil {
 		return scalingProposalFailed(fmt.Sprintf("could not cut %s@%s (%v)", fork, branch, err)), nil, nil
 	}
+	// Every tier that names host is written as this proposal has it — a
+	// branch reused from an earlier proposal on the same head would
+	// otherwise keep that proposal's scale on a tier this one leaves alone.
 	files := make([]recipe.File, 0, len(tiers))
-	changed := make([]string, 0, len(tiers))
 	for _, tier := range tiers {
 		files = append(files, recipe.File{Path: tier.path, Body: tier.body})
-		changed = append(changed, tierTitle(tier.path)+": "+scalingChangeText(tier.changes))
 	}
 	if _, err := ops.PublishGiteaFiles(ctx, httpClient, wiring.GiteaURL, wiring.Token, fork, branch, comp.base,
 		"recipe: "+host+"'s scale, from "+comp.inputs.MateProjectName, files); err != nil {
@@ -185,8 +220,8 @@ func handleGroupRecipeScaling(
 		"branch":      branch,
 		"tiers":       changed,
 		"pullRequest": number,
-		"message": fmt.Sprintf("Proposed %s's scale to %s as pull request #%d: it changes only %s's verticalAutoscaling (%s). The person reviews and merges it like any recipe change.",
-			host, comp.groupRepo, number, host, strings.Join(changed, "; ")),
+		"message": fmt.Sprintf("Proposed %s's scale to %s as pull request #%d: it changes only %s's verticalAutoscaling (%s). The person reviews and merges it like any recipe change.%s",
+			host, comp.groupRepo, number, host, strings.Join(changed, "; "), refusedTiers(tiers)),
 	}
 	if number != 0 {
 		result["pullRequestUrl"] = fmt.Sprintf("%s/%s/pulls/%d", strings.TrimRight(wiring.GiteaURL, "/"), comp.groupRepo, number)

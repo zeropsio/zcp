@@ -127,6 +127,96 @@ func TestGroupRecipeScaling_SteersAndProposesOneHostsBlock(t *testing.T) {
 	if result.IsError || fake.pullPosts != before {
 		t.Errorf("a host the recipe already has as it runs opened a pull request: %s", getTextContent(t, result))
 	}
+
+	// Scaled back to what the recipe says: the open proposal went stale and
+	// is closed.
+	result, _, _ = handleGroupRecipeScaling(ctx, scalingRecipeClient(1, 0.25), srv.Client(), rt, stateDir, envPath, "search")
+	if result.IsError || fake.pulls[body.PullRequest].open {
+		t.Errorf("nothing to propose left proposal #%d open: %s", body.PullRequest, getTextContent(t, result))
+	}
+}
+
+// TestGroupRecipeScaling_ProposesFromMainsHeadEveryTierFresh is a second
+// proposal for the same host on the same main: the branch carries every
+// tier as this proposal writes it — a tier the first proposal changed and
+// this one does not is main's again — read at the head the branch is cut
+// from; a tier whose block the splice cannot rewrite is left as main has it,
+// and the answer says why.
+func TestGroupRecipeScaling_ProposesFromMainsHeadEveryTierFresh(t *testing.T) {
+	stateDir := t.TempDir()
+	writeGiteaWiredPairMeta(t, stateDir)
+	fake := newFakeGroupGitea()
+	srv := fake.start(t)
+	envPath := writeLiveEnvFile(t, map[string]string{"GITEA_URL": srv.URL, "MATE_BROKER_URL": srv.URL, "GITEA_TOKEN": giteaBotToken})
+	rt := runtime.Info{InContainer: true, ProjectID: "p1"}
+	ctx := context.Background()
+	if line := reconcileGiteaGroupRecipe(ctx, scalingRecipeClient(1, 0.25), srv.Client(), rt, stateDir, envPath); !strings.Contains(line, "#11") {
+		t.Fatalf("the first recipe was not proposed: %q", line)
+	}
+	fake.merge(11)
+
+	// The group sized search by hand on Stage, and wrote a note on its
+	// Small Production block.
+	const stage, production = "3 — Stage/import.yaml", "4 — Small Production/import.yaml"
+	editSearch := func(path string, edit func(string) string) {
+		lines := strings.Split(fake.branches[fakeGroupRepo]["main"][path], "\n")
+		start, end := hostEntryLines(lines, "search")
+		for i := start; i < end; i++ {
+			lines[i] = edit(lines[i])
+		}
+		fake.branches[fakeGroupRepo]["main"][path] = strings.Join(lines, "\n")
+	}
+	editSearch(stage, func(line string) string {
+		line = strings.Replace(line, "minRam: 2", "minRam: 8", 1)
+		return strings.Replace(line, "minFreeRamGB: 0.5", "minFreeRamGB: 1", 1)
+	})
+	editSearch(production, func(line string) string {
+		if strings.TrimSpace(line) == "verticalAutoscaling:" {
+			return line + " # sized for launch"
+		}
+		return line
+	})
+	main := maps.Clone(fake.branches[fakeGroupRepo]["main"])
+
+	propose := func(ram float64) (map[string]string, string) {
+		t.Helper()
+		result, _, _ := handleGroupRecipeScaling(ctx, scalingRecipeClient(ram, 1), srv.Client(), rt, stateDir, envPath, "search")
+		if result.IsError {
+			t.Fatalf("scaling proposal: %s", getTextContent(t, result))
+		}
+		var body struct {
+			PullRequest int `json:"pullRequest"`
+		}
+		_ = json.Unmarshal([]byte(getTextContent(t, result)), &body)
+		pr := fake.pulls[body.PullRequest]
+		return fake.branches[pr.headRepo][pr.branch], getTextContent(t, result)
+	}
+	first, _ := propose(4)
+	if !strings.Contains(first[stage], "minRam: 4") {
+		t.Fatalf("the first proposal does not lower Stage's search to 4:\n%s", first[stage])
+	}
+	fake.fileReadRefs = nil
+	second, answer := propose(8)
+	if second[stage] != main[stage] {
+		t.Errorf("Stage still carries the first proposal's scale:\n%s", second[stage])
+	}
+	if !strings.Contains(second["0 — AI Agent/import.yaml"], "minRam: 8") {
+		t.Errorf("the AI Agent tier does not carry the second proposal's scale")
+	}
+	if second[production] != main[production] {
+		t.Errorf("Small Production's hand-written block was rewritten:\n%s", second[production])
+	}
+	if !strings.Contains(answer, "Small Production") || !strings.Contains(answer, "comment") {
+		t.Errorf("answer = %s, want it to say why Small Production was left", answer)
+	}
+	for _, ref := range fake.fileReadRefs {
+		if ref != fakeGroupHead(main) {
+			t.Errorf("a tier was read at %q, not at main's head %q", ref, fakeGroupHead(main))
+		}
+	}
+	if len(fake.fileReadRefs) == 0 {
+		t.Error("no tier was read")
+	}
 }
 
 // hostEntryLines finds host's services[] item in a tier file, by the same
