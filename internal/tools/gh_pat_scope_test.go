@@ -48,36 +48,14 @@ func TestGhPATScopeRecommendation_PushOnlyIsMinimal(t *testing.T) {
 	}
 }
 
-// TestGitTokenRecommendation_Gitea_NobodyMintsOne pins guide 2.3: on the
-// account's own Gitea the Mate authenticates as its own bot with the token
-// already in $GITEA_TOKEN. Every other forge's guidance ends in "go here and
-// create a token" — said to a person about a Gitea it is a wild goose chase
-// (the bot's token is minted by the broker for the Mate, and a person has no
-// page to mint one on).
-func TestGitTokenRecommendation_Gitea_NobodyMintsOne(t *testing.T) {
+// TestGitTokenRecommendation_SelfHostedMintsItsOwn: a remote on a host zcp
+// does not know is a self-hosted forge, where a person mints a token on the
+// forge itself — never at github.com.
+func TestGitTokenRecommendation_SelfHostedMintsItsOwn(t *testing.T) {
 	t.Parallel()
-	const giteaURL = "https://web-2ff4-3000.prg1.zerops.app"
-	const remote = giteaURL + "/acme/api"
-
-	for _, actions := range []bool{false, true} {
-		got := gitTokenRecommendation(remote, giteaURL, "acme/api", actions)
-		for _, want := range []string{"GITEA_TOKEN", "never", "bot"} {
-			if !strings.Contains(got, want) {
-				t.Errorf("gitea recommendation (actions=%v) missing %q: %s", actions, want, got)
-			}
-		}
-		for _, unwanted := range []string{ghPATSettingsURL, "github.com", "Create or edit it at"} {
-			if strings.Contains(got, unwanted) {
-				t.Errorf("gitea recommendation (actions=%v) must not send anyone token shopping (%q): %s", actions, unwanted, got)
-			}
-		}
-	}
-
-	// The same host with no GITEA_URL is an unidentified self-hosted forge:
-	// the honest guidance is still "mint one, here".
-	unknown := gitTokenRecommendation(remote, "", "acme/api", false)
-	if !strings.Contains(unknown, "/user/settings/applications") {
-		t.Errorf("an unidentified host must keep the mint-your-own guidance: %s", unknown)
+	got := gitTokenRecommendation("https://git.acme.io/acme/api", "acme/api", false)
+	if !strings.Contains(got, "https://git.acme.io/user/settings/applications") || strings.Contains(got, ghPATSettingsURL) {
+		t.Errorf("an unidentified host must keep the mint-your-own guidance on its own host: %s", got)
 	}
 }
 

@@ -240,8 +240,6 @@ func deliverHeldHQPair(
 			target, repo, err, meta.Hostname)}
 	}
 
-	refreshGiteaWorkflow(ctx, sshDeployer, meta.Hostname)
-
 	title := changeTitle(stateDir, meta)
 	if pending := meta.HQ.Pending; pending != nil && workSessionIntent(stateDir) == "" {
 		title = pending.Title
@@ -359,73 +357,6 @@ func manualAbsorbSequence(hostname, landedCommit string, proven bool) string {
 	return fmt.Sprintf(
 		"In %s's checkout run `git merge %s^1`, resolve it and commit, then %s, then `git fetch origin && git merge origin/%s`",
 		hostname, landedCommit, absorbStep, hqBase)
-}
-
-// refreshGiteaWorkflow brings a wired pair's workflow to the one this zcp
-// deploys through: wiring writes the file once and never runs again for a
-// wired pair, so a repository wired by an earlier zcp kept that zcp's
-// workflow for good. Every delivery passes through here, and its commit
-// carries the file.
-//
-// zcp owns the triggers and the deploy step; the project owns its Test step.
-// So a file that already names this zcp's deploy action is left exactly as it
-// is, and one that does not is written again with its own Test step kept.
-// Best-effort: a delivery without it still lands the code, and the next one
-// tries again.
-func refreshGiteaWorkflow(ctx context.Context, sshDeployer ops.SSHDeployer, hostname string) {
-	existing, err := sshDeployer.ExecSSH(ctx, hostname,
-		ops.BuildReadRepoFileCommand(hqPairWorkingDir, giteaWorkflowFilePath))
-	if err != nil || giteaWorkflowCurrent(string(existing)) {
-		return
-	}
-	_, _ = sshDeployer.ExecSSH(ctx, hostname, ops.BuildWriteRepoFileCommand(
-		hqPairWorkingDir, giteaWorkflowFilePath, giteaWorkflowKeepingTests(string(existing)),
-	))
-}
-
-// giteaWorkflowCurrent reports whether a workflow deploys through the action
-// this zcp writes.
-func giteaWorkflowCurrent(workflow string) bool {
-	return strings.Contains(workflow, "uses: "+giteaBrokerDeployAction)
-}
-
-// giteaWorkflowKeepingTests is this zcp's workflow with the Test step of the
-// one it replaces — the one part of the file that is the project's own. A
-// file with no such step, or one laid out differently, gets the template's.
-func giteaWorkflowKeepingTests(existing string) string {
-	fresh := giteaWorkflowYAML()
-	kept, template := giteaWorkflowStep(existing, giteaWorkflowTestStep), giteaWorkflowStep(fresh, giteaWorkflowTestStep)
-	if kept == "" || template == "" {
-		return fresh
-	}
-	return strings.Replace(fresh, template, kept, 1)
-}
-
-// giteaWorkflowTestStep is the name of the step a project fills in.
-const giteaWorkflowTestStep = "Test"
-
-// giteaWorkflowStep is one step of a workflow zcp wrote, from its `- name:`
-// line up to the next step, newline included; "" when the file has none at
-// the indentation zcp writes.
-func giteaWorkflowStep(workflow, name string) string {
-	const stepPrefix = "      - "
-	lines := strings.SplitAfter(workflow, "\n")
-	start := -1
-	for i, line := range lines {
-		if start < 0 {
-			if strings.TrimRight(line, "\r\n") == stepPrefix+"name: "+name {
-				start = i
-			}
-			continue
-		}
-		if strings.HasPrefix(line, stepPrefix) || (strings.TrimSpace(line) != "" && !strings.HasPrefix(line, "       ")) {
-			return strings.Join(lines[start:i], "")
-		}
-	}
-	if start < 0 {
-		return ""
-	}
-	return strings.Join(lines[start:], "")
 }
 
 // hqRemoteOfThisMate reports whether a remote is a repository on this Mate's

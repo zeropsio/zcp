@@ -493,7 +493,7 @@ func confirmGitPushSetupLocal(
 
 	// Local mode: ZCP runs on the user's own machine, which has no Mate
 	// forge of its own.
-	localDelivery := deliveryDecisionForMeta(meta, "")
+	localDelivery := deliveryDecisionForMeta(meta)
 	body := map[string]any{
 		"status":                    "configured",
 		"service":                   input.Service,
@@ -568,7 +568,7 @@ func confirmGitPushSetupContainer(
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"Container git-push-setup requires gitToken (fine-grained PAT) — the handler verifies the token against the remote before writing project state.",
-			fmt.Sprintf("Re-call: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=%q gitToken=<TOKEN>. For git-push only use %s For the CI track use %s", input.Service, input.RemoteURL, gitTokenRecommendation(input.RemoteURL, "", "", false), gitTokenRecommendation(input.RemoteURL, "", "", true)),
+			fmt.Sprintf("Re-call: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=%q gitToken=<TOKEN>. For git-push only use %s For the CI track use %s", input.Service, input.RemoteURL, gitTokenRecommendation(input.RemoteURL, "", false), gitTokenRecommendation(input.RemoteURL, "", true)),
 		), WithRecoveryStatus()), nil, nil
 	}
 
@@ -975,7 +975,7 @@ func gitPushContainerConfiguredResponse(
 	identity ops.GitIdentity, emailSeeded, nameSeeded, emailPreserved, namePreserved bool, identityWarning string,
 	remoteState *gitPushRemoteStateWire,
 ) map[string]any {
-	delivery := deliveryDecisionForMeta(meta, "")
+	delivery := deliveryDecisionForMeta(meta)
 	resp := map[string]any{
 		"status":                    "configured",
 		"service":                   input.Service,
@@ -1297,13 +1297,12 @@ func gitPushWalkthroughSteps(rt runtime.Info, service string) []gitPushWalkthrou
 // (topology.RecommendDelivery) keyed on the same meta the launch earn-probe
 // reads — the host-only `gitlab→webhook else actions` heuristic this replaced
 // drifted from the full git-push × build-integration × stage matrix.
-func deliveryDecisionForMeta(meta *workflow.ServiceMeta, giteaURL string) topology.DeliveryDecision {
+func deliveryDecisionForMeta(meta *workflow.ServiceMeta) topology.DeliveryDecision {
 	return topology.RecommendDelivery(topology.DeliveryInputs{
 		GitPushState:     meta.GitPushState,
 		BuildIntegration: meta.BuildIntegration,
 		Verified:         meta.BuildIntegrationVerifiedAt != "",
 		HasStage:         meta.StageHostname != "",
 		RemoteURL:        meta.RemoteURL,
-		GiteaURL:         giteaURL,
 	})
 }

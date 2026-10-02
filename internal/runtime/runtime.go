@@ -34,15 +34,6 @@ type Info struct {
 	// step (internal/init) and the nginx renderer cannot drift.
 	// Spec: docs/spec-mate.md §2.
 	MateEnabled bool
-
-	// GiteaURL is GITEA_URL verbatim — the origin of the account's own Gitea,
-	// written onto the `zcp` service when the Mate was made. It is the ONLY
-	// thing that makes a remote recognisable as that Gitea
-	// (topology.ClassifyGitHost takes it as a parameter), so it is read once
-	// here and passed down rather than reached for from inside a classifier.
-	// Empty outside a Mate, and empty in a container the app has not written
-	// it onto yet.
-	GiteaURL string
 }
 
 // Detect reads Zerops container env vars and returns runtime info.
@@ -58,7 +49,6 @@ func Detect() Info { return DetectFrom(os.Getenv) }
 func DetectFrom(getenv func(string) string) Info {
 	authoring := getenv("ZCP_AUTHORING") == "1"
 	mateEnabled := EnvEnabled(getenv("ZCP_MATE_ENABLED"))
-	giteaURL := getenv("GITEA_URL")
 	serviceID := getenv("serviceId")
 	if serviceID == "" {
 		return Info{Authoring: authoring, MateEnabled: mateEnabled}
@@ -70,7 +60,6 @@ func DetectFrom(getenv func(string) string) Info {
 		ProjectID:   getenv("projectId"),
 		Authoring:   authoring,
 		MateEnabled: mateEnabled,
-		GiteaURL:    giteaURL,
 	}
 }
 

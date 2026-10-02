@@ -103,7 +103,7 @@ func recipeRoleKind(hostname, zeropsSetup string) RecipeRuntimeRoleKind {
 }
 
 // stageHostnameSuffix and devHostnameSuffix are how zcp names a pair's
-// halves: `appdev` and `appstage` (giteaStageNameFor, GroupPromotedHostname).
+// halves: `appdev` and `appstage` (stageNameFor, GroupPromotedHostname).
 const (
 	stageHostnameSuffix = "stage"
 	devHostnameSuffix   = "dev"

@@ -456,17 +456,7 @@ func wireHQPair(
 	}
 	m.HQ, _ = wiredHQRecord(m.HQ, repo, branch)
 
-	// A3: the workflow that ships this repository's code has to BE in the
-	// repository. Written before the first push, content-idempotent, and
-	// reported rather than fatal: a pair whose container refused the write
-	// still has its repository, and the next pass writes it again.
-	workflowNote := ""
-	if _, emitErr := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildWriteRepoFileCommand(
-		hqPairWorkingDir, giteaWorkflowFilePath, giteaWorkflowYAML(),
-	)); emitErr != nil {
-		workflowNote = fmt.Sprintf("; %s could not be written (%v)", giteaWorkflowFilePath, emitErr)
-	}
-	line := fmt.Sprintf("repository %q wired in HQ; this Mate works on %q and lands on \"main\" through a change (never pushing main directly)", repo.Name, branch) + workflowNote
+	line := fmt.Sprintf("repository %q wired in HQ; this Mate works on %q and lands on \"main\" through a change (never pushing main directly)", repo.Name, branch)
 	if left != 0 {
 		line += fmt.Sprintf("; this Mate moved to another application, and its change #%d stays in the one it was opened in", left)
 	}

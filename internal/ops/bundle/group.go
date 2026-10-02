@@ -107,7 +107,7 @@ type GroupRecipeInputs struct {
 	// default.
 	CorePackage string
 	// Utilities are the runtimes the project builds from a public repository
-	// and no Gitea pair — a mailpit, an adminer.
+	// and no pair — a mailpit, an adminer.
 	Utilities []GroupUtility
 	// HAIncapable names the managed services whose type the platform ships no
 	// `:ha` variant of: the tier that promotes the rest keeps them single-node.
@@ -115,7 +115,7 @@ type GroupRecipeInputs struct {
 }
 
 // GroupUtility is a runtime the project builds from a public repository and
-// no Gitea pair: a utility such as mailpit, which no Mate develops. Every tier
+// no pair: a utility such as mailpit, which no Mate develops. Every tier
 // writes it as the project runs it — its own hostname, its public build, its
 // own scale — with no tier's transform: there is no pair to promote and no
 // service repository to name.
