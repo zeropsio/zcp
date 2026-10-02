@@ -127,8 +127,13 @@ func isComment(line string) bool { return strings.HasPrefix(strings.TrimSpace(li
 // HostScalingChanges names, key by key in key order, what replacing main's
 // block for host with the composed one changes.
 func HostScalingChanges(mainBody, composedBody, host string) []ScalingChange {
+	composed := hostScalingBlock(strings.Split(composedBody, "\n"), host)
+	if len(composed) == 0 {
+		// No composed block is a scale nobody read, not one to remove.
+		return nil
+	}
 	before := scalingValues(hostScalingBlock(strings.Split(mainBody, "\n"), host))
-	after := scalingValues(hostScalingBlock(strings.Split(composedBody, "\n"), host))
+	after := scalingValues(composed)
 	keys := map[string]bool{}
 	for k := range before {
 		keys[k] = true

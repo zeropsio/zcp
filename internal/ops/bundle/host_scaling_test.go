@@ -109,6 +109,10 @@ func TestHostScalingChanges(t *testing.T) {
 	if got := HostScalingChanges(composedTier, composedTier, "search"); len(got) != 0 {
 		t.Errorf("an unchanged block reports %+v", got)
 	}
+	// A composed entry with no block is a scale nobody read: no change.
+	if got := HostScalingChanges(mainTier, "services:\n  - hostname: search\n    type: meilisearch:single@1.44\n", "search"); len(got) != 0 {
+		t.Errorf("a composed entry with no block reports %+v", got)
+	}
 }
 
 // TestSpliceHostScaling_RefusesWhatItCannotSpliceSafely: a tier file

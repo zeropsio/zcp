@@ -39,10 +39,10 @@ func TestBuildGroupRecipe_SearchEnginesGetAResourceFloor(t *testing.T) {
 			want:    map[string]string{"cpuMode": "SHARED", "minRam": "2", "maxRam": "2", "minFreeRamGB": "0.5"},
 		},
 		{
-			name:    "a scale that could not be read still gets the floor",
+			name:    "a search engine whose scale could not be read: nothing written",
 			typ:     "typesense@27.1",
 			scaling: nil,
-			want:    map[string]string{"minRam": "2", "minFreeRamGB": "0.5"},
+			want:    map[string]string{},
 		},
 		{
 			name:    "not a search engine: untouched",

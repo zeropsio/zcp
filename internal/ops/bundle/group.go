@@ -624,10 +624,13 @@ func managedVertical(m ManagedServiceEntry, policy groupTierPolicy) map[string]a
 	if policy.promoteHA && topology.IsProfileBearing(m.Type) {
 		return nil
 	}
-	shape := map[string]any{}
-	if m.Scaling != nil {
-		projectScaling(shape, m.Scaling)
+	if m.Scaling == nil {
+		// A scale that could not be read writes no block: a floor alone
+		// would read as the whole scale and drop the rest.
+		return nil
 	}
+	shape := map[string]any{}
+	projectScaling(shape, m.Scaling)
 	vertical, _ := shape["verticalAutoscaling"].(map[string]any)
 	return ApplyResourceFloor(m.Type, vertical)
 }

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"slices"
 	"strings"
@@ -29,6 +30,19 @@ func scalingRecipeClient(searchRAM, searchFree float64) *platform.Mock {
 		WithProject(&platform.Project{ID: "p1", Name: "acme-mate-1", Status: "ACTIVE"}).
 		WithServicesDirect(services).
 		WithServices(services)
+}
+
+// unreadService is a project whose one service's detail cannot be read.
+type unreadService struct {
+	*platform.Mock
+	id string
+}
+
+func (u unreadService) GetService(ctx context.Context, id string) (*platform.ServiceStack, error) {
+	if id == u.id {
+		return nil, errors.New("service detail read failed")
+	}
+	return u.Mock.GetService(ctx, id)
 }
 
 // TestGroupRecipeScaling_SteersAndProposesOneHostsBlock is a Mate changing a
@@ -65,6 +79,7 @@ func TestGroupRecipeScaling_SteersAndProposesOneHostsBlock(t *testing.T) {
 		{"the live scale floors to what the recipe says", scalingRecipeClient(1, 0.25), "search", nil},
 		{"a host whose block the recipe already has", scalingRecipeClient(1, 0.25), "db", nil},
 		{"a host the recipe does not name", scalingRecipeClient(1, 0.25), "cache", nil},
+		{"a scale that could not be read", unreadService{scalingRecipeClient(4, 1), "svc-search"}, "search", nil},
 		{"raised past the recipe", scalingRecipeClient(4, 1), "search", []string{"minRam 2 → 4", "minFreeRamGB 0.5 → 1", `action="group-recipe" scaling="search"`}},
 	}
 	for _, tt := range tests {
