@@ -1585,7 +1585,7 @@ target, and leave an appVersion whose version name is that revision's sha.** Sha
 |---|---|---|
 | GitHub Actions running `zcli push` with `ZEROPS_TOKEN_PROD` (§10) / `BuildIntegration=actions` | built | version name: `BuildIntegration=actions`'s setup-aware zcli workflow (`tools/workflow_build_integration.go`) passes `--version-name "${GITHUB_REF_NAME} ${GITHUB_SHA::7}"` in a bash step (GF-10; the compact wrapper-action variant, `zeropsio/actions`, cannot express it). The §10 launch-production tag-triggered template (`tools/workflow_launch_production.go`, `ZEROPS_TOKEN_PROD`) does NOT yet — separate template, GF-10 not extended there. |
 | GitLab webhook → platform pulls (`BuildIntegration=webhook`) | built | none — the appVersion DTO carries no sha (verified 2026-09-14); source is unknown to zcp unless the platform adds it |
-| A Mate's HQ deploying the application's environments from its own archive of a commit | designed, not built (2026-10-02); it replaces the Gitea Actions shape verified live 2026-09-14, retired with the Gitea; zcp writes no workflow into a Mate's repositories (`spec-mate.md §10.10`) | version name `main <sha7>`, once built |
+| A Mate's HQ deploying the application's environments from its own archive of a commit | built for stages, live 2026-10-02 (`spec-mate.md §10.8`); production moves to HQ next. It replaces the Gitea Actions shape verified live 2026-09-14, retired with the Gitea; zcp writes no workflow into a Mate's repositories | version name `main <sha7>` (live: `main 48b289b`) |
 | user's own CI outside zcp | supported, opaque | unknown unless it sets the version name |
 | zcp-owned webhook relay | **not needed**; removed from the plan | — |
 
