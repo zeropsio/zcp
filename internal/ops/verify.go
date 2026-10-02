@@ -107,6 +107,10 @@ type Recovery = topology.Recovery
 type PublicAccessInput struct {
 	Record        topology.PublicAccessRecord
 	DeferredStart bool
+	// DevServer is a runtime a dev server serves — a dev-mode dynamic
+	// runtime, whatever its dev server's live state: its HTTP probes give a
+	// page its first compile (devServerFirstCompile).
+	DevServer bool
 }
 
 // defaultPublicAccessInput is what meta-less callers (Verify, VerifyAll, and
@@ -313,8 +317,12 @@ func verifyService(
 	if needHTTP {
 		wg.Go(func() {
 			listener := !publicAccess.DeferredStart
+			// A dev server compiles a page on its first request: the
+			// internal probe goes first and is given that compile, so the
+			// public one finds the page compiled.
+			probe := newHTTPProbe(httpClient, publicAccess.DevServer && rc == RuntimeDynamic)
 			var checks []CheckResult
-			checks = append(checks, checkHTTPInternal(ctx, httpClient, svc, publicAccess.DeferredStart))
+			checks = append(checks, checkHTTPInternal(ctx, probe, svc, publicAccess.DeferredStart))
 
 			obs, obsErr := ObservePublicAccess(ctx, client, projectID, svc)
 			if obsErr != nil {
@@ -324,8 +332,9 @@ func verifyService(
 					Detail: fmt.Sprintf("observe public access: %v", obsErr),
 				})
 			} else {
-				checks = append(checks, buildHTTPPublicChecks(ctx, client, httpClient, projectID, svc, publicAccess.Record.Intent, obs, listener)...)
+				checks = append(checks, buildHTTPPublicChecks(ctx, client, probe, projectID, svc, publicAccess.Record.Intent, obs, listener)...)
 			}
+			hostRefusedInside(checks)
 			mu.Lock()
 			httpChecks = checks
 			mu.Unlock()
@@ -340,6 +349,36 @@ func verifyService(
 
 	result.Status = aggregateStatus(result.Checks)
 	return result, nil
+}
+
+// hostRefusedInside reads an internal answer of 4xx beside a public answer
+// of 2xx/3xx for the same path: the server is reached and serves, and only
+// the Host it was asked under differs — the service's hostname inside, its
+// subdomain outside — which a dev server's host check refuses (Vite's
+// allowedHosts answers 403, measured on a Medusa dev half 2026-10-02). It is
+// advisory (CheckInfo), the answer kept as it came: a service reaching this
+// one by its hostname gets the same refusal. A 5xx is the server's own
+// failure, and a 4xx with no public answer has nothing to set it against;
+// both stay failed.
+func hostRefusedInside(checks []CheckResult) {
+	internal, public := -1, -1
+	for i := range checks {
+		switch checks[i].Name {
+		case checkNameHTTPInternal:
+			internal = i
+		case checkNameHTTPRoot:
+			public = i
+		}
+	}
+	if internal < 0 || public < 0 || checks[public].Status != CheckPass {
+		return
+	}
+	in := &checks[internal]
+	if in.Status != CheckFail || in.HTTPStatus < 400 || in.HTTPStatus >= 500 {
+		return
+	}
+	in.Status = CheckInfo
+	in.Detail = fmt.Sprintf("HTTP %d on the internal address while the public address serves the same path: the server answers, and refuses the service's hostname as the Host (a dev server's host check, e.g. Vite's allowedHosts). A service calling this one by its hostname gets the same answer; allow the hostname in the server's host list if one must.", in.HTTPStatus)
 }
 
 // replaceCheck overwrites the named check in-place with the replacement.
