@@ -145,9 +145,10 @@ func reconcileHQRepositories(
 		return nil
 	}
 	address := hqc.Address()
+	fromMain := mainGiteaFrom(metas)
 	pending := make([]*workflow.ServiceMeta, 0, len(metas))
 	for _, m := range metas {
-		if hqPairNeedsRepository(m, address) || hqPairWired(m) {
+		if hqPairNeedsRepository(m, address, fromMain) || hqPairWired(m) {
 			pending = append(pending, m)
 		}
 	}
@@ -170,7 +171,7 @@ func reconcileHQRepositories(
 		if err != nil {
 			continue
 		}
-		outcome, wired := passHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, self, address, m.Hostname)
+		outcome, wired := passHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, self, address, fromMain, m.Hostname)
 		release()
 		// The attempt is recorded even when it had nothing to say: a wired
 		// pair with nothing open is the ORDINARY state, and without the
@@ -194,12 +195,14 @@ func passHQPair(
 	stateDir string,
 	hqc hq.Client,
 	self func() (hq.MateState, error),
-	address, hostname string,
+	address string,
+	fromMain mainGitea,
+	hostname string,
 ) (string, bool) {
 	m, _ := workflow.FindServiceMeta(stateDir, hostname)
 	switch {
-	case hqPairNeedsRepository(m, address):
-		attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, m, hqRepoNameOf(m))
+	case hqPairNeedsRepository(m, address, fromMain):
+		attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, m, hqRepoNameOf(m, fromMain))
 		return attempt.line, attempt.wired
 	case hqPairWired(m):
 		return keepHQPairCurrent(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, self, m)
@@ -303,10 +306,14 @@ func recordHQAttempt(stateDir, hostname string, prior hqPairState, at time.Time,
 }
 
 // hqRepoNameOf is the repository a pair is wired to: the one its record
-// names — a stand-up's comes from the group recipe — else its dev hostname.
-func hqRepoNameOf(m *workflow.ServiceMeta) string {
+// names — a stand-up's comes from the group recipe — or the one main's zcp
+// wired it to on the old Gitea, else its dev hostname.
+func hqRepoNameOf(m *workflow.ServiceMeta, fromMain mainGitea) string {
 	if hqPairWired(m) {
 		return m.HQ.Repo
+	}
+	if name, ok := fromMain.repository(m); ok {
+		return name
 	}
 	return m.Hostname
 }
@@ -325,10 +332,11 @@ func hqPairWired(m *workflow.ServiceMeta) bool {
 //
 // A remote with no HQ record may be a wiring that stopped half-way —
 // git-push-setup stamps the remote before the branch step runs — and is
-// retried when it is this pair's repository on this Mate's HQ (address); any
-// other remote is the user's own. Deciding that before HQ is asked matters:
-// HQ makes the repository it is asked for.
-func hqPairNeedsRepository(m *workflow.ServiceMeta, address string) bool {
+// retried when it is this pair's repository on this Mate's HQ (address); the
+// remote main's zcp set on the old Gitea moves to HQ (fromMain); any other
+// remote is the user's own. Deciding that before HQ is asked matters: HQ
+// makes the repository it is asked for.
+func hqPairNeedsRepository(m *workflow.ServiceMeta, address string, fromMain mainGitea) bool {
 	if m == nil || !m.IsComplete() {
 		return false
 	}
@@ -337,7 +345,7 @@ func hqPairNeedsRepository(m *workflow.ServiceMeta, address string) bool {
 	}
 	// A pair the user already pointed at a remote of their own is theirs.
 	// ZCP does not move a working repository to HQ behind their back.
-	return m.RemoteURL == "" || m.HQ != nil || hqRemoteIsThePairs(m.RemoteURL, address, m.Hostname)
+	return m.RemoteURL == "" || m.HQ != nil || hqRemoteIsThePairs(m.RemoteURL, address, m.Hostname) || fromMain.owns(m)
 }
 
 // hqRemoteIsThePairs reports whether remote can be the repository HQ hands
@@ -374,9 +382,11 @@ type hqWiringOutcome struct {
 // git-push to it, the Mate's branch cut from its `main`, the HQ record, the
 // workflow file. repoName is the pair's dev hostname for a pair zcp
 // bootstrapped, and the repository the group's recipe names for a pair a
-// stand-up adopted from it (standup.go). A pair whose Mate HQ now holds in
-// another application is wired again there: the repository of the same name
-// in the new application, its change in the old one left where it is.
+// stand-up adopted from it (standup.go), or the one main's zcp wired the pair
+// to on the old Gitea, which HQ's import brought under the same name
+// (hq_main_gitea.go). A pair whose Mate HQ now holds in another application
+// is wired again there: the repository of the same name in the new
+// application, its change in the old one left where it is.
 func wireHQPair(
 	ctx context.Context,
 	client platform.Client,
@@ -405,13 +415,25 @@ func wireHQPair(
 	}
 	remote := hqc.RepoURL(repo.AppID, repo.Name)
 	// A remote on this Mate's HQ is ours to point again — a wiring that
-	// stopped half-way, or the application the Mate left; any other one the
-	// user chose, and git-push-setup would rewrite it.
-	if m.RemoteURL != "" && !sameGitRepository(m.RemoteURL, remote) && !ops.IsHQRemote(m.RemoteURL, hqc.Address()) {
+	// stopped half-way, or the application the Mate left — and so is the one
+	// main's zcp set on the old Gitea; any other one the user chose, and
+	// git-push-setup would rewrite it.
+	fromMain := mainGiteaOf(stateDir).owns(m)
+	if m.RemoteURL != "" && !sameGitRepository(m.RemoteURL, remote) && !ops.IsHQRemote(m.RemoteURL, hqc.Address()) && !fromMain {
 		return hqWiringOutcome{
 			line: fmt.Sprintf("%s already pushes to %s, not to its repository %q in HQ — that remote is left as the user's own.",
 				m.Hostname, topology.RedactRepoURLCredentials(m.RemoteURL), repo.Name),
 			usersOwn: true,
+		}
+	}
+
+	// The helper main persisted for the old Gitea's host answers GIT_TOKEN,
+	// which is about to be the Mate credential, and the old remote stays as
+	// zerops-original-origin: it goes first, so HQ's credential is never
+	// handed to the old Gitea.
+	if fromMain {
+		if _, err := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildDropCredentialHelperCommand(hqPairWorkingDir, m.RemoteURL)); err != nil {
+			return hqWiringOutcome{line: fmt.Sprintf("repository %q is ready in HQ, but %s's credential helper for main's Gitea could not be removed (%v) — retrying on the next pass.", repo.Name, m.Hostname, err)}
 		}
 	}
 
@@ -447,19 +469,27 @@ func wireHQPair(
 		}
 		return hqWiringOutcome{line: fmt.Sprintf("%s (%v) — a push would have nothing to send, or nothing HQ could merge; retrying on the next pass.", prefix, branchErr)}
 	}
-	var left int
+	var (
+		left     int
+		recorded *workflow.HQRepoRef
+	)
 	if err := workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
 		if !existed {
 			return fmt.Errorf("meta for %q vanished", m.Hostname)
 		}
 		meta.HQ, left = wiredHQRecord(meta.HQ, repo, branch)
+		carryMainGitea(meta.HQ, meta.MainGitea)
+		meta.MainGitea, recorded = nil, meta.HQ
 		return nil
 	}); err != nil {
 		return hqWiringOutcome{line: fmt.Sprintf("repository %q is wired but recording it failed (%v) — the next pass re-reads it.", repo.Name, err)}
 	}
-	m.HQ, _ = wiredHQRecord(m.HQ, repo, branch)
+	m.HQ, m.MainGitea = recorded, nil
 
 	line := fmt.Sprintf("repository %q wired in HQ; this Mate works on %q and lands on \"main\" through a change (never pushing main directly)", repo.Name, branch)
+	if fromMain {
+		line += "; it moved off main's Gitea, which stays as the remote zerops-original-origin"
+	}
 	if left != 0 {
 		line += fmt.Sprintf("; this Mate moved to another application, and its change #%d stays in the one it was opened in", left)
 	}

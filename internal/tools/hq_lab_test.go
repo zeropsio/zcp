@@ -284,15 +284,20 @@ func (f *fakeHQ) find(app, repo string, number int, state string) *hq.Change {
 // ensureRepo makes the bare repository app/name, `main` born with one commit
 // of the empty tree, the way HQ makes one.
 func (f *fakeHQ) ensureRepo(ctx context.Context, app, name string) {
-	key := app + "/" + name
-	if f.repos[key] {
+	if f.repos[app+"/"+name] {
 		return
 	}
-	dir := f.repoDir(app, name)
-	f.git(ctx, "", "init", "--bare", "-q", "-b", "main", dir)
+	dir := f.initRepo(ctx, app, name)
 	tree := f.git(ctx, dir, "hash-object", "-w", "-t", "tree", "/dev/null")
 	seed := f.git(ctx, dir, "-c", "user.name=HQ", "-c", "user.email=hq@hq.invalid", "commit-tree", tree, "-m", "Initial commit")
 	f.git(ctx, dir, "update-ref", "refs/heads/main", seed)
+}
+
+// initRepo makes the bare repository app/name with no branch yet, keeping
+// HQ's ref rules, and answers its directory.
+func (f *fakeHQ) initRepo(ctx context.Context, app, name string) string {
+	dir := f.repoDir(app, name)
+	f.git(ctx, "", "init", "--bare", "-q", "-b", "main", dir)
 	for _, kv := range [][2]string{{"http.receivepack", "true"}, {"receive.denyNonFastForwards", "true"}, {"receive.denyDeletes", "true"}} {
 		f.git(ctx, dir, "config", kv[0], kv[1])
 	}
@@ -300,7 +305,39 @@ func (f *fakeHQ) ensureRepo(ctx context.Context, app, name string) {
 	if err := os.WriteFile(filepath.Join(dir, "hooks", "pre-receive"), []byte(hook), 0o755); err != nil {
 		f.t.Fatal(err)
 	}
-	f.repos[key] = true
+	f.repos[app+"/"+name] = true
+	return dir
+}
+
+// importRepo is HQ's import of a repository main's Gitea held, the way the
+// migration brings one: from's `main` as the repository's `main`, and each
+// open pull request of the Mate's as its open change, numbered as it was,
+// its branch at the request's head.
+func (f *fakeHQ) importRepo(repo, from string, pulls map[int]string) {
+	f.t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	dir := f.initRepo(f.t.Context(), f.appID, repo)
+	refspecs := append(make([]string, 0, 1+len(pulls)), "main:refs/heads/main")
+	allowed := append(make([]string, 0, 1+len(pulls)), repo+".git refs/heads/main")
+	now := time.Now().UTC().Format(time.RFC3339)
+	for number, head := range pulls {
+		ref := fmt.Sprintf("refs/heads/mate/%s/%d", labMate, number)
+		refspecs = append(refspecs, head+":"+ref)
+		allowed = append(allowed, repo+".git "+ref)
+		f.changes = append(f.changes, hq.Change{AppID: f.appID, Repo: repo, Number: number, MateProjectID: labMate,
+			Title: fmt.Sprintf("Pull request #%d", number), State: hq.ChangeOpen, OpenedAt: now, UpdatedAt: now, Mergeability: "unknown"})
+	}
+	refs := filepath.Join(f.t.TempDir(), "import")
+	if err := os.WriteFile(refs, []byte(strings.Join(allowed, "\n")+"\n"), 0o600); err != nil {
+		f.t.Fatal(err)
+	}
+	cmd := exec.CommandContext(f.t.Context(), "git", append([]string{"-C", from, "push", "-q", dir}, refspecs...)...) //nolint:gosec // G204: a test's own git
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "FAKE_HQ_REFS="+refs)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		f.t.Fatalf("import %s: %v\n%s", repo, err, out)
+	}
+	f.writeRefs()
 }
 
 func (f *fakeHQ) repoDir(app, name string) string { return filepath.Join(f.root, app, name+".git") }
@@ -347,7 +384,8 @@ func (f *fakeHQ) git(ctx context.Context, dir string, args ...string) string {
 // merge does, and records it merged; it answers the squash.
 func (f *fakeHQ) merge() string { return f.mergeChange("appdev", 1) }
 
-// mergeChange squashes the Mate's change number in repo onto `main`.
+// mergeChange squashes the Mate's change number in repo onto `main`: one
+// commit on `main` holding the merge of `main` and the change's head.
 func (f *fakeHQ) mergeChange(repo string, number int) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -357,8 +395,9 @@ func (f *fakeHQ) mergeChange(repo string, number int) string {
 		f.t.Fatalf("no open change #%d with a head in %s", number, repo)
 	}
 	dir := f.repoDir(f.appID, repo)
+	tree := f.git(f.t.Context(), dir, "merge-tree", "--write-tree", "main", *head)
 	squash := f.git(f.t.Context(), dir, "-c", "user.name=HQ", "-c", "user.email=hq@hq.invalid",
-		"commit-tree", *head+"^{tree}", "-p", "main", "-m", fmt.Sprintf("%s (#%d)", change.Title, number))
+		"commit-tree", tree, "-p", "main", "-m", fmt.Sprintf("%s (#%d)", change.Title, number))
 	f.git(f.t.Context(), dir, "update-ref", "refs/heads/main", squash)
 	change.State, change.Head, change.MergedSha, change.LandedHead = hq.ChangeMerged, head, &squash, head
 	f.writeRefs()

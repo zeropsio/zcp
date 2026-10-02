@@ -147,6 +147,12 @@ type ServiceMeta struct {
 	// any other file ZCP writes) — it lives where git-push-setup put it, a
 	// sensitive service env on the push source.
 	HQ *HQRepoRef `json:"hq,omitempty"`
+
+	// MainGitea is the pair's repository on its organization's Gitea as
+	// main's zcp recorded it, on disk as "gitea": kept through every write
+	// until the pair moves to HQ, which reads it and clears it
+	// (tools/hq_main_gitea.go). Migration-only: it goes with the migration.
+	MainGitea *MainGiteaRepo `json:"gitea,omitempty"`
 }
 
 // SetRepoBaseline records the adopt-time baseline marker for this meta.
@@ -216,6 +222,25 @@ type LandedChange struct {
 	// BuildAbsorbLandedChangeCommand, i.e. what this Mate's own checkout was
 	// at the moment of the landing.
 	Head string `json:"head"`
+}
+
+// MainGiteaRepo is what a pair's move from main's Gitea to HQ reads of
+// main's record: the repository; its pull request, whose number HQ's import
+// kept as its change's; a merge of a pull request the checkout has not
+// absorbed yet — the same squash and head, now on HQ's `main`; and the
+// Mate's words kept for a pull request.
+type MainGiteaRepo struct {
+	FullName          string                      `json:"fullName"` // "{org}/{name}"
+	PullRequest       int                         `json:"pullRequest,omitempty"`
+	Landed            *LandedChange               `json:"landed,omitempty"`
+	ChangeDescription *MainGiteaChangeDescription `json:"changeDescription,omitempty"`
+}
+
+// MainGiteaChangeDescription is main's kept description: for the pull request
+// numbered, or the next one when 0.
+type MainGiteaChangeDescription struct {
+	Text        string `json:"text"`
+	PullRequest int    `json:"pullRequest,omitempty"`
 }
 
 // PendingDelivery is a delivery waiting for HQ to answer.

@@ -440,3 +440,73 @@ func TestBuildGitCredentialHelperAssertCommand(t *testing.T) {
 		}
 	})
 }
+
+// TestBuildDropCredentialHelperCommand: a pair whose GIT_TOKEN is about to
+// answer another host first loses the helper persisted for its old remote's
+// host, so the old remote — kept as zerops-original-origin — is never handed
+// the new credential. Any other host's helper stays.
+func TestBuildDropCredentialHelperCommand(t *testing.T) {
+	t.Parallel()
+	requireGit(t)
+
+	devSession := map[string]string{"GIT_TOKEN": helperGitToken}
+	tests := []struct {
+		name  string
+		seed  string
+		old   string
+		ask   string
+		after bool // whether the old host is still answered
+	}{
+		{
+			name: "the old host's helper is gone",
+			seed: "git init -q && git config 'credential.https://gitea.example.invalid.helper' " + shellQuote(helperOldHelper),
+			old:  "https://gitea.example.invalid/acme/appdev.git",
+			ask:  "https://gitea.example.invalid/acme/appdev.git",
+		},
+		{
+			name: "under the port the old host named",
+			seed: "git init -q && git config 'credential.https://gitea.example.invalid:3000.helper' " + shellQuote(helperOldHelper),
+			old:  "https://gitea.example.invalid:3000/acme/appdev.git",
+			ask:  "https://gitea.example.invalid:3000/acme/appdev.git",
+		},
+		{
+			name:  "another host's helper stays",
+			seed:  "git init -q && git config 'credential.https://hq.example.invalid.helper' " + shellQuote(helperOldHelper),
+			old:   "https://gitea.example.invalid/acme/appdev.git",
+			ask:   helperHQRepo,
+			after: true,
+		},
+		{
+			name: "no helper for the old host: nothing to do",
+			seed: "git init -q",
+			old:  "https://gitea.example.invalid/acme/appdev.git",
+			ask:  "https://gitea.example.invalid/acme/appdev.git",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			repo, home := t.TempDir(), t.TempDir()
+			if out, err := gitShell(t, repo, home, nil, "", tt.seed); err != nil {
+				t.Fatalf("seed: %v\n%s", err, out)
+			}
+			if out, err := gitShell(t, repo, home, nil, "", BuildDropCredentialHelperCommand(repo, tt.old)); err != nil {
+				t.Fatalf("drop: %v\n%s", err, out)
+			}
+			if _, _, answered := answeredCredential(t, repo, home, devSession, tt.ask); answered != tt.after {
+				t.Errorf("%s answered = %v, want %v", tt.ask, answered, tt.after)
+			}
+		})
+	}
+
+	t.Run("a service with no repository is left alone", func(t *testing.T) {
+		t.Parallel()
+		dir, home := t.TempDir(), t.TempDir()
+		if out, err := gitShell(t, dir, home, nil, "", BuildDropCredentialHelperCommand(dir, "https://gitea.example.invalid/acme/appdev.git")); err != nil {
+			t.Fatalf("drop on a service with no repository failed: %v\n%s", err, out)
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".git")); !os.IsNotExist(err) {
+			t.Errorf("the drop made a repository where there was none (stat err %v)", err)
+		}
+	})
+}
