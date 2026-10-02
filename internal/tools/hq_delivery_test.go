@@ -4,11 +4,15 @@
 package tools
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -405,5 +409,46 @@ func TestAWiredPairDeploysDirectlyAndIsNeverSentToPush(t *testing.T) {
 		if w := repoDeliveryDivergenceWarning(stateDir, target); w != "" {
 			t.Errorf("%s: no push-by-hand warning on a wired pair, got %q", target, w)
 		}
+	}
+}
+
+// refusingPushSSH answers a change's push the way git reports HQ refusing
+// it — a ref HQ refused carries HQ's own reason — and everything else as a
+// healthy container would.
+type refusingPushSSH struct{ reason string }
+
+func (s refusingPushSSH) ExecSSH(_ context.Context, host, command string) ([]byte, error) {
+	if !strings.Contains(command, "push -u origin") {
+		return []byte("ok"), nil
+	}
+	out := " ! [remote rejected] HEAD -> mate/p-mate/1 (" + s.reason + ")\nerror: failed to push some refs\n"
+	return []byte(out), &platform.SSHExecError{Hostname: host, Output: out, Err: errors.New("exit status 1")}
+}
+
+func (s refusingPushSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
+// TestShipChange_AChangeSettledBeforeItsPushIsOwedAgain: a change merged or
+// closed between its opening and its push is refused per ref with HQ's
+// reason; the number is forgotten and the delivery stays owed, so the next
+// delivery, push or pass opens the next change.
+func TestShipChange_AChangeSettledBeforeItsPushIsOwedAgain(t *testing.T) {
+	for _, reason := range []string{"change_closed", "unknown_change"} {
+		t.Run(reason, func(t *testing.T) {
+			lab := newHQLab(t)
+			lab.wire()
+			hqc, err := hq.Open(lab.hq.srv.Client(), hq.EnrollmentPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			shipped := shipChange(t.Context(), refusingPushSSH{reason: reason}, lab.stateDir, hqc, lab.meta(), "Add a footer", 1)
+			if !shipped.pending || shipped.ref != nil || !strings.Contains(shipped.line, reason) {
+				t.Fatalf("shipped = %+v, want the delivery owed again", shipped)
+			}
+			if record := lab.meta().HQ; record.Change != 0 || record.Pending == nil || record.Pending.Title != "Add a footer" {
+				t.Errorf("the pair's record = %+v, want no change and the delivery pending", record)
+			}
+		})
 	}
 }
