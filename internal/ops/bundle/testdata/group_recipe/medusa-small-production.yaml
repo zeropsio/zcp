@@ -64,7 +64,7 @@ services:
     type: nodejs@22
     priority: 2
     zeropsSetup: medusaprod
-    buildFromGit: https://gitea.example.com/medusa/medusadev
+    buildFromGit: https://hq.example.com/git/app-1/medusadev
     enableSubdomainAccess: true
     minContainers: 2
     maxContainers: 2
@@ -86,7 +86,7 @@ services:
     type: nodejs@22
     priority: 1
     zeropsSetup: nextstoreprod
-    buildFromGit: https://gitea.example.com/medusa/nextstoredev
+    buildFromGit: https://hq.example.com/git/app-1/nextstoredev
     enableSubdomainAccess: true
     minContainers: 2
     maxContainers: 2

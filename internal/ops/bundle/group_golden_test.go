@@ -104,7 +104,7 @@ func medusaInputs() GroupRecipeInputs {
 		Runtimes: []GroupRuntime{
 			{
 				DevHostname: "medusadev", StageHostname: "medusastage", ServiceType: "nodejs@22",
-				RepoURL:   "https://gitea.example.com/medusa/medusadev.git",
+				RepoURL:   "https://hq.example.com/git/app-1/medusadev.git",
 				SetupName: "medusadev", StageSetupName: "medusaprod", ZeropsYAMLBody: medusaYAML,
 				SubdomainEnabled: true,
 				Scaling:          &Scaling{MinContainers: 1, MaxContainers: 1, CPUMode: "SHARED", MinCPU: 1, MaxCPU: 5, MinRAM: 1, MaxRAM: 8, MinDisk: 1, MaxDisk: 20},
@@ -119,7 +119,7 @@ func medusaInputs() GroupRecipeInputs {
 			},
 			{
 				DevHostname: "nextstoredev", StageHostname: "nextstorestage", ServiceType: "nodejs@22",
-				RepoURL:   "https://gitea.example.com/medusa/nextstoredev",
+				RepoURL:   "https://hq.example.com/git/app-1/nextstoredev",
 				SetupName: "nextstoredev", ZeropsYAMLBody: nextstoreYAML,
 				SubdomainEnabled: true,
 				Scaling:          &Scaling{MinContainers: 1, MaxContainers: 1, CPUMode: "SHARED", MinCPU: 1, MaxCPU: 5, MinRAM: 1, MaxRAM: 4, MinDisk: 1, MaxDisk: 10},

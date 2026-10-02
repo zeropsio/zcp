@@ -1,7 +1,7 @@
 ---
 id: develop/standup-dev-deployed-wired
 atomIds: [develop-intro, develop-git-push-start-from-remote, develop-stage-out-of-scope, develop-change-drives-deploy, develop-self-deploy-reproducibility, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-strategy-awareness]
-description: "A Mate's stand-up after its dev half deployed, in a Mate wired to its group's Gitea (push configured, close-mode auto) with the stage half still out of scope and never deployed — no delivery, no promotion, no first-deploy branch held open by the stage."
+description: "A Mate's stand-up after its dev half deployed, in a Mate wired to its HQ (push configured, close-mode auto) with the stage half still out of scope and never deployed — no delivery, no promotion, no first-deploy branch held open by the stage."
 ---
 === develop-intro ===
 ### Development & Deploy
