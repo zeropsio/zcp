@@ -1729,6 +1729,10 @@ Mate's own Zerops key never leaves its container. The app writes no credential a
 for none; `POST /mate/credential` is gone. Contract: `gitea-mate/docs/broker-api.md`, *A Mate's
 Gitea access*; measurements in the mate ledger (2026-09-16, 2026-09-17).
 
+Since 2026-10-02 none of this delivers code: a Mate delivers its work to its HQ, as a change, with
+the credential its enrollment holds (§10.10, *Delivery to HQ*). The three variables are read only by
+the group recipe and the stand-up, which move to HQ next.
+
 ## 7. The fork
 
 Zerops Mate is a **hard fork** of T3 Code (MIT), frozen at `upstream/main` `f94a0d646` on 2026-08-28 (fork tag
@@ -2283,16 +2287,15 @@ until the session is there it says "Signing you in to Gitea…" and nothing is c
 
 ### 10.10 zcp inside a Mate
 
-zcp reads `GITEA_URL`, `MATE_BROKER_URL` and `GITEA_TOKEN` from the container's live env store,
-which the platform rewrites within seconds of a service write, and waits with backoff before that —
-no restart. As soon as a dev pair exists it asks the broker for the pair's repository, wires the
-push, puts the pair on a branch that descends from the repository's `main` (a fresh history cannot
-merge into the seeded one), pushes, and opens the pull request right after the push — `main` is
-protected on every repository and takes no direct push from anyone; a later pass catches up a Mate
-that pushed before this existed. It proposes the group's recipe — the whole app as the three tiers,
-composed by one policy table (`bundle`), every runtime keeping its `buildFromGit` and
-`zeropsSetup` pair, no secret's value in any file — to the group repo, and only what its `main`
-lacks, a tier directory at a time (D30): a group's first recipe whole, a tier `main` lacks on any
+As soon as a dev pair exists, zcp gives it a repository in the application HQ holds the Mate in and
+puts the pair on a branch that descends from that repository's `main` (a fresh history cannot merge
+into the seeded one); a pair's work reaches `main` only as a change a person merges (*Delivery to
+HQ*, below). For the group recipe and the stand-up zcp still reads `GITEA_URL`, `MATE_BROKER_URL` and
+`GITEA_TOKEN` from the container's live env store, which the platform rewrites within seconds of a
+service write, and waits with backoff before that — no restart. It proposes the group's recipe —
+the whole app as the three tiers, composed by one policy table (`bundle`), every runtime keeping
+its `buildFromGit` and `zeropsSetup` pair, no secret's value in any file — to the group repo, and
+only what its `main` lacks, a tier directory at a time (D30): a group's first recipe whole, a tier `main` lacks on any
 later pass, and nothing once `main` has every tier — no fork, no commit, no pull request, and the
 bot's proposals still open there closed. A proposal is a pull request from the bot's fork, from a
 branch cut at `main`'s tip and named after that commit (`recipe/{12 hex}`, the fork synced from the
@@ -2311,10 +2314,10 @@ kind matched on the `GITEA_URL` host; a Gitea remote gets a `.gitea/workflows` f
 handed out: no `ZCP_API_KEY` in a build-integration secret, `GITEA_TOKEN` masked on every value
 dump, the one `zcli push` of a self-deploy given the key through its environment and never
 `zcli login`. A Mate joining from the recipe has its parts and no live proof: _Add Mate_ imports
-the AI Agent tier with the first Mate's hostnames, the broker lets its bot write the repositories
-those pairs ask for (D24), and the repository reconcile cuts the Mate's branch from `main` — a
-checkout with no commit of its own takes `main`'s tree. The adopt-time reconcile runs where the
-metas are complete.
+the AI Agent tier with the first Mate's hostnames, every Mate of an application reaches all of its
+repositories in HQ (a hostname names one repository there), and the repository reconcile cuts the
+Mate's branch from `main` — a checkout with no commit of its own takes `main`'s tree. The adopt-time
+reconcile runs where the metas are complete.
 
 **What a tier carries (2026-09-30).** A tier is the Mate's project as it runs, written for the
 person who reads and edits it in the group repo: two-space YAML, each service opening on its
@@ -2363,26 +2366,79 @@ would keep (`TestGroupPriorities_*`, `TestBuildGroupRecipe_PriorityFollowsBuildR
 `TestBuildGroupRecipe_MedusaGolden`, `TestComposeGroupRecipeInputs_ReadsTheLiveProject`,
 `TestComposeGroupRecipeInputs_WaitsOnlyForWhatALaterPassBrings`).
 
-**Delivery in a wired Mate (2026-09-17).** A Mate whose container carries `GITEA_URL`,
-`MATE_BROKER_URL` and `GITEA_TOKEN` delivers through pull requests, and only a dev/stage pair can:
-the dev half is the checkout that pushes, the stage half the verified basis a production is promoted
-from. So zcp's classic route refuses a plan that gives such a Mate a runtime with no stage half
-(`bootstrapMode` simple or dev), naming the standard pair to re-submit. A deploy onto a wired pair's
-stage half delivers it with nothing asked of the agent or the person — "build a todo app" is the
-whole prompt (the owner, of a prompt that had to name a git-push deploy: "no person is ever going to
-say this"): zcp commits the dev half's tree as deployed, in the work session's words, pushes the
-Mate's branch, opens or finds the pull request, and proposes whatever tiers of the recipe the group
-repo's `main` still lacks, whose stage and production build the stage half's setup; a dependency directory nobody ignored stops the commit and
-is named. A push to the group's Gitea is watched for no build and offers no integration — its
-workflow runs on `main`, which the person's merge moves, and asks the broker for the pair's
-promoted runtime (`app` for `appdev`/`appstage`; a workflow naming `appdev` was answered
-`unknown_service`, measured 2026-09-17) — and a wired pair's direct deploys are never redirected
-to a push. The develop session's auto-close note tells the agent to hand the person
-the pull request's link and the next step: a stage and a production from the projects page — once
-the session delivered, that is deployed a stage half; a stand-up's closes without it. Measured
-missing on Dara's run ("create a todo app" got one simple-mode service, nothing pushed) and on the
-owner's run of the same evening (`gitea_delivery.go`; `TestAWiredMatePlansOnlyStandardPairs`,
-`TestAStageDeployOfAWiredPairDeliversItself`, `TestAWiredPairDeploysDirectlyAndIsNeverSentToPush`).
+**Delivery to HQ (2026-10-02, SPEC §3.2a).** A Mate enrolled with its org's official HQ delivers
+through changes, and only a dev/stage pair can: the dev half is the checkout that pushes, the stage
+half the verified basis a production is promoted from. So zcp's classic route refuses a plan that
+gives such a Mate a runtime with no stage half (`bootstrapMode` simple or dev), naming the standard
+pair to re-submit.
+
+- **The repository** is `<appId>/<name>` in the application HQ holds the Mate in, the name the dev
+  hostname (or the one a recipe names). zcp asks for it — `POST /api/mate/repos {name}`, idempotent,
+  `main` born with one commit of the empty tree — and wires the pair: `git-push-setup` to
+  `https://<HQ>/git/<appId>/<repo>.git` with the Mate credential, the Mate's local branch
+  `mate/<project id>` cut from `main` (`ops.BuildMateBranchCommand`: a pair fresh from `zcp init`
+  takes `main`'s tree, a pair with history of its own is joined onto HQ's empty seed, anything else
+  is refused with its remedy), and the pair's record `ServiceMeta.HQ {appId, repo, branch}`. A remote
+  that is not this HQ's is the user's own and left alone. One repository per pair is enforced by that
+  record; a pair the stand-up adopted is wired to the recipe's name, and wired again to it.
+- **A deploy onto a wired pair's stage half delivers it** with nothing asked of the agent or the
+  person — "build a todo app" is the whole prompt (the owner, of a prompt that had to name a git-push
+  deploy: "no person is ever going to say this"). In the dev half's checkout zcp commits the tree as
+  deployed, in the work session's words; an unignored `node_modules`, `vendor` or `.venv` stops it
+  before anything is staged. It fetches, absorbs a squash of the Mate's own landed change (below),
+  takes `main` in by merge — never a rebase, so history only moves forward and no force can lose a
+  commit — and a collision only a person can settle leaves the checkout whole and is named with the
+  exact commands. Then, only when the checkout is ahead of `main`, it opens the change — `POST
+  /api/mate/changes {repo, title}` answers the Mate's open change in that repository or opens the
+  next number (one open change per Mate per repository) — and pushes HEAD to its branch
+  `mate/<project id>/<n>`, the one ref HQ takes from the Mate: only its own open change, only
+  forward; nobody deletes a branch and `main` moves only by HQ's merge. A change still titled
+  `Mate: <hostname>` takes the task's words (`PATCH`). Nothing differing from `main` opens nothing.
+  A delivery never fails the deploy: every outcome is a line in its next actions.
+- **The result** keeps the shape the chat card decodes: `pullRequest {repo, branch, base, number,
+  created, url, described?, descriptionNote?}`, its `url` the change's address at HQ,
+  `https://<HQ>/changes/<appId>/<repo>/<n>`, which HQ leads into the client; the line tells the
+  agent to give the person that link.
+- **What became of the change** (merged with `mergedSha` and `landedHead`, closed) is read fresh
+  from the Mate's own state, `GET /api/mate/self`, by every delivery, push, `describe-change` and
+  reconcile pass — no merge passes through this process, so nothing waits to be told. A merged
+  change records its landing (`ServiceMeta.HQ.Landed`) and the next delivery folds the squash in as
+  a real merge, proven lossless first (`ops.BuildAbsorbLandedChangeCommand`); a pass that learns of
+  it also folds it into a clean checkout on the Mate's branch right away. The record's number is
+  cleared once the change is no longer open, so the next delivery opens the next one.
+- **HQ not answering.** Every 503 is "try again": the client waits out `Retry-After` within 20 s (a
+  deploy runs two HQs side by side for about that long), and a push HQ's standby answers 503 —
+  which git prints without the header — is tried again within the same bound. A delivery HQ did not
+  refuse but could not be reached for is recorded as pending (`ServiceMeta.HQ.Pending`, its title
+  kept), its work committed in the checkout; the next delivery, git-push or reconcile pass finishes
+  it once HQ answers — a pass only on a clean checkout of the Mate's branch — with nobody asked.
+- **A Mate HQ now holds in another application** is wired there on its next delivery or pass: the
+  repository of the same name in the new application, made if new, `origin` pointed at it and the
+  branch joined onto its `main`; its change in the old application stays where it is.
+- **The credential.** The dev service holds the Mate credential as its `GIT_TOKEN` service secret,
+  which the per-command credential helper presents as the user `mate`. The enrollment is the
+  credential's one home, and a re-enrollment replaces it, so before every delivery, push and pending
+  finish zcp compares the copy with the enrollment's (constant time), rewrites it and proves a fresh
+  session with it; a credential HQ refuses marks the pair `broken`, healed once a session
+  authenticates. The helper persisted in `.git/config` for HQ's host answers the dev service from
+  `GIT_TOKEN` and the Mate's own shell from `zcp hq git-credential`, which reads the enrollment at
+  each request and answers for the enrolled HQ only.
+- A push to HQ is watched for no build and offers no integration, and a wired pair's direct deploys
+  are never redirected to a push. `zerops_deploy strategy="git-push"` to HQ delivers committed work
+  the same way — `main` taken in, the change opened, HEAD pushed to its branch — and a branch of its
+  own choosing, `main` included, is refused before git runs. The develop session's auto-close note
+  tells the agent to hand the person the change's link and the next step — once the session
+  delivered, that is deployed a stage half; a stand-up's closes without it.
+
+`hq_delivery.go`, `hq_change.go`, `hq_wiring.go`, `hq_push_credential.go`, `hq_git_push.go`,
+`ops/delivery_git.go`, `ops/delivery_absorb.go`, `internal/hq/changes.go`;
+`TestAStageDeployOfAWiredPairDeliversItself`, `TestAStageDeployAbsorbsTheMatesOwnMergedChange`,
+`TestAStageDeployWithNothingBeyondMainOpensNoChange`, `TestADeliveryHQCouldNotReachIsFinishedByAPass`,
+`TestADeliveryWaitsOutAStandby`, `TestADeliveryFollowsTheMateToAnotherApplication`,
+`TestADeliveryBringsTheCredentialToTheCurrentOne`, `TestADeliveryRefusedByItsGitSaysWhatToDo`,
+`TestReconcileHQRepositories_*`, `TestGitPushToHQ_*`, `TestAMateDeliveringThroughHQPlansOnlyStandardPairs`,
+`TestBuildDeliveryCommand_*`, `TestBuildMateBranchCommand_*`, `TestClient_*`, `TestGitCredential_*`,
+`TestPersistedCredentialHelper_*` — against a fake HQ that serves real git with HQ's ref rules.
 
 **A new Mate stands up from its recipe in one call (D32, 2026-09-30).** Adding Wren to Beviro —
 whose recipe is `0 — AI Agent/import.yaml` on `main` of `{slug}/group` — runs like this.
@@ -2395,8 +2451,8 @@ Who holds what:
   the one-time delegation, grants the broker, registers the Mate, closes the project off once
   `zcp` answers (per-service env isolation, `ZCP_API_KEY` a sensitive variable on `zcp`), and
   imports the runtimes.
-- **The broker** makes the Mate's Gitea bot, gives it the project's repositories and writes the
-  Git variables onto `zcp` (§6.6, §10.8).
+- **The broker** makes the Mate's Gitea bot and writes the Git variables onto `zcp`, which the
+  stand-up reads the recipe with (§6.6, §10.8); **HQ** gives each pair its repository.
 - **zcp**, with its lowered token and the bot's Git token, stands the Mate's development up in its
   own project and nowhere else — the group's stage and production are the broker's, and it reads
   no tier but `0 — AI Agent`.
@@ -2437,9 +2493,10 @@ The order:
      higher of its halves'; managed services and public builds are skipped, and so, by name, is a
      runtime with no partner or a repository outside the group's org (`workflow.ParseMateTier`);
    - adopts each pair exactly as the adopt route records it, plus the tier's setups
-     (`workflow.AdoptPair`), mounts the dev half and checks the recipe's repository out onto the
-     Mate's branch through the reconcile's own wiring — asked for the repository the recipe names,
-     which must exist on Gitea first, since the broker creates what it is asked for;
+     (`workflow.AdoptPair`), mounts the dev half and wires it, through the reconcile's own wiring, to
+     the repository of the recipe's name in HQ — refused first when the group's Gitea does not have
+     that repository; until the recipe's repositories are in HQ the checkout takes what HQ's
+     repository holds;
    - deploys each half as soon as what it needs stands, at most five at once, over two calls. What
      orders the halves is what each build reads of the others, read from each half's own setup in
      its pair's zerops.yaml as the recipe writer reads it: a storefront's stage build pre-rendering
@@ -2500,10 +2557,10 @@ their start-up migrations and seed at deploy, and would run them against it at t
 **A stand-up stops at dev (2026-09-30).** A new Mate's stand-up done by the model — the fallback
 of D32, when `zerops_standup` stops short — deploys the dev halves it adopted (their build installs
 the packages), starts their dev servers, verifies them, and names the stage as the next step the
-person can ask for: no promotion, so no commit, push or pull request unasked. zcp tells a
+person can ask for: no promotion, so no commit, change or push unasked. zcp tells a
 recipe-born Mate's empty services from deployed ones since the Beviro trial of 2026-09-29, so their
 first deploy opens develop's first-deploy branch — which promotes each standard pair to its stage,
-and in a wired Mate a stage deploy is the delivery above. So in a Mate, develop start leaves the
+and in a Mate delivering through HQ a stage deploy is the delivery above. So in a Mate, develop start leaves the
 stage half of an adopted pair whose dev half never deployed out of the session's scope
 (spec-workflows D2f): nothing is asked of the agent, the session closes on the dev halves, and the
 next task's session, its dev half deployed, delivers through the stage as before. A pair a Mate
@@ -2511,97 +2568,53 @@ created for a task keeps delivering through its stage on its first deploy — "b
 still the whole prompt (`TestHandleDevelopBriefing_MateStandUp_LeavesTheStageOut`,
 `TestScenario_S14_StageLeftOutOfScope`).
 
-**What became of the request (2026-09-19).** A pair records its pull request's number and never
-re-derives it, which is right for the number and wrong for its fate: the merge that ends a Mate's
-work is made in Gitea's own UI, by a colleague, by a script, or by the app's *Merge* — and none of
-those passes through this process. A design that waited to be told would be correct for one of the
-four and silently wrong for the rest, so nothing is pushed at the agent: a reconcile pass asks
-Gitea what became of the recorded request, on the same per-pair backoff as every other question
-(`giteaPairNeedsPullRequestOutcome`, `readGiteaPairPullRequestOutcome`). A request no longer open
-has its number forgotten, so the next delivery opens the next request instead of pushing at a
-closed one, and nothing downstream keeps reporting a merged request as the one the Mate waits in.
-Merged and closed-without-merging are reported apart — work delivered against work refused — and
-an open one is the ordinary state and says nothing. The branch itself needs no instruction: every
-delivery already takes the base in before pushing (`BuildGiteaDeliveryCommand`).
-`TestReconcile_TellsTheMateWhatBecameOfItsPullRequest`,
-`TestReconcile_AsksAboutASettledRequestOnABackoff`, `TestReadGiteaPullRequestOutcome`.
+**A change's description (2026-09-29; in HQ since 2026-10-02).** A change opens with the task as
+its title and nothing more — the task is all zcp knows — while the person reviews it by what it says
+(§5.4: the review shows what the change does in the Mate's words, right after the verdict). So the
+Mate writes it: `zerops_workflow action="describe-change" service=… description=…` — markdown, at
+most 20000 characters and no NUL, which no text in HQ keeps — sets the body of the pair's open change
+(`PATCH /api/mate/changes/:repo/:n {body}`), the one on record or the open one the Mate's state names,
+and replaces what was there; the title stays the task's. The words are kept on the pair first
+(`ServiceMeta.HQ.ChangeDescription`), so none are lost: with no change open, or HQ not answering,
+they wait for the change the pair opens or reaches next, and the delivery or push that does puts
+them on. Words never reach a change they were not written for: a change on record that merged or
+closed before they reached it is named to the Mate and nothing is kept, and words kept for a change
+that is gone are dropped rather than inherited by the next one. Describing never opens a change. A
+delivery or a push that leaves a change open asks for the description — what it does and why, how it
+was checked, and again whenever it grows — or says the words it kept are on it now.
+`hq_change_description.go`; `TestDescribeChange`, `TestDescribeChange_KeptWordsGoOntoTheNextChange`,
+`TestDescribeChange_Refusals`, `TestWorkflowTool_DescribeChangeReachesItsHandler`.
 
-**A change's description (2026-09-29).** A Mate's pull request opens with the task as its title and
-nothing more — the task is all zcp knows — while the person reviews the change by what it says (§5.4:
-the review shows what the change does in the Mate's words, right after the verdict). So the Mate
-writes it: `zerops_workflow action="describe-change" service=… description=…` — markdown, at most
-20000 characters, since the app reads every open request's body once a minute in every tab — sets
-the body of the request open from the pair's branch, the one on record or one a person opened from
-the Git tab, and replaces what was there; the title stays the task's. The words are kept on the pair
-first (`ServiceMeta.Gitea.ChangeDescription`), so none are lost: with no request open they wait for
-the one the pair opens next, and the delivery, push or reconcile pass that opens or finds it puts
-them on (`openGiteaPairPullRequest`). Words never reach a request they were not written for: a
-request on record that merged or closed before they reached it is named to the Mate and nothing is
-kept, and words kept for a request that is gone are dropped rather than inherited by the next
-change. Describing never opens a request. A delivery or a push that leaves a request open asks for
-the description — what the change does and why, how it was checked, and again whenever it grows,
-since the Mate keeps working on top of an open change and a link to try it can go stale — or says
-the words it kept are on it now. The bot's token (`write:repository,read:user`) may edit a body
-(measured on Gitea 1.27.2). `gitea_change_description.go`; `TestDescribeChange`,
-`TestDescribeChange_Refusals`, `TestOpenGiteaPairPullRequest_PutsTheKeptDescription`,
-`TestADeliveryPutsTheKeptDescriptionOnItsRequest`, `TestGiteaPushNextActions_AsksForTheDescription`,
-`TestEditGiteaPullRequestBody`, `TestFindGiteaPullRequest`; live `TestE2E_GiteaBackboneLive`.
+**A change's pictures (2026-09-29; in HQ since 2026-10-02).** The pictures that prove a change
+are the screenshots `zerops_browser` takes, and each is kept as one of the Mate's pictures
+(`workflow.KeepPicture`, under the state dir) and named in the tool's result — `screenshot.picture`,
+`shot-3`, an id never given twice; the newest twenty are kept, and every one a kept description
+names. A description shows one as `![what it shows](shot-3)`: `describe-change` sends each picture
+it names to HQ as the change's attachment (`POST /api/mate/changes/:repo/:n/attachments`, the PNG as
+the body, at most 20 MiB, once per change, the address remembered with the picture) and publishes it
+as `<img alt width height src>` at `https://<HQ>/api/apps/<appId>/changes/<repo>/<n>/attachments/<id>`,
+which the client reads as the person — the width and height the picture's shape at 720 pixels wide
+at most, so a reader reserves its box before the bytes arrive. Never a body with a broken picture: a
+picture the Mate does not keep is refused before anything is written, and one HQ will not keep
+writes nothing and keeps the words. `TestDescribeChange_Pictures`, `TestKeepBrowserPicture`,
+`TestKeepPicture_*`, `TestPictureRefs`.
 
-**A change's pictures (2026-09-29).** The pictures that prove a change are the screenshots
-`zerops_browser` takes, and each is now kept as one of the Mate's pictures (`workflow.KeepPicture`,
-under the state dir) and named in the tool's result — `screenshot.picture`, `shot-3`, an id never
-given twice; the newest twenty are kept, and every one a kept description names. A description shows
-one as `![what it shows](shot-3)`: `describe-change` attaches each picture it names to the pull
-request (`POST …/issues/{n}/assets`, once per request, the address remembered with the picture) and
-publishes it as `<img alt width height src>` — the width and height the picture's shape at 720 pixels
-wide at most, about Gitea's pull-request column, since Gitea's stylesheet caps an image at the column
-but never sets `height: auto` and the picture's own height would stretch it there; the app reserves
-the same box before the bytes arrive. Never a body with a broken picture: a picture the Mate does not
-keep is refused before anything is written, and a token that cannot attach — a bot generation minted
-before gitea-mate gave bots `write:issue` (`403 required=[write:issue]`) — writes nothing and keeps the
-words, which go on, pictures and all, with the next delivery once the token can. The app reads a
-picture through the broker, `GET /person/attachments/{uuid}` with the person's own token (gitea-mate
-`docs/broker-api.md`): Gitea answers a browser's preflight of its own `/attachments/{uuid}` with a
-`303` to sign in, so the app cannot read it there, and a token in the query string lands in Gitea's
-request log. Measured end to end on a lab Gitea 1.27.2 (2026-09-29): a kept 1280×720 screenshot
-attached once across two describes, published as `<img … width="720" height="405" …>`, and read back
-through the broker from another origin in Chrome byte for byte, while Gitea's own route failed at the
-preflight. `TestDescribeChange_Pictures`, `TestOpenGiteaPairPullRequest_PutsTheKeptPictures`,
-`TestKeepBrowserPicture`, `TestKeepPicture_*`, `TestPictureRefs`, `TestAttachGiteaPicture`.
-
-**A wired pair's push credential follows the Mate's token (2026-09-29).** A wired pair pushes with a
-copy of this Mate's bot token — `git-push-setup` writes it onto the push source as `GIT_TOKEN` — and
-the broker rotates the token itself: a new generation as `GITEA_TOKEN`, the older ones revoked ten
-minutes later (the scope that lets a bot attach pictures is one such rotation, for every Mate at
-once). Before a delivery and before a git-push to the group's Gitea, zcp reads the push source's copy
-and, when it is not the live token, writes the live one and proves it with a fresh session before
-anything pushes (`giteaEnsurePushCredential`); the Gitea reconcile cannot be the one to notice, since
-it runs when bootstrap or adopt completes and never in the develop loop. A push Gitea refuses for its
-credential marks the pair `broken`, the way a plain git-push always has, and the next delivery or push
-checks the credential again and clears the mark once a fresh session authenticates; a pair still
-refused does not push and is told this Mate's token is the broker's to deliver.
-`TestGiteaEnsurePushCredential`, `TestADeliveryBringsItsCredentialToTheCurrentTokenFirst`,
-`TestADeliveryRefusedForItsCredentialMarksThePair`,
-`TestGitPushDeploy_BringsItsCredentialToTheCurrentTokenFirst`.
-
-**A wired Mate's production is the group's (2026-09-23).** Asked "muzes to dat na
-produkci?", a wired Mate started launch-production and answered from inside its launch gate, while
+**A Mate's production is its application's (2026-09-23; through HQ since 2026-10-02).** Asked
+"muzes to dat na produkci?", a wired Mate started launch-production and answered from inside its launch gate, while
 its group already had a production with `055a7e8 Mate: weatherdev (#4)` merged and waiting for
 _Release_. launch-production creates its own production project on a user-owned remote and stages
 its own token; it has no case for a group's production, which the person adds from the projects page
-and which runs what a release tag on the group repo lists (D16, D27, D28). So in a Mate that
-`giteaWired()` reads as wired, `handleLaunchProduction` refuses before scope, state or any mutation,
-with the blocker `wired_mate_production_is_the_groups` and a next step that says what is true of
-this Mate's own pairs — never "nothing open" read as "merged": every recorded pull request is first
-asked of Gitea (`giteaLearnLanding`, the delivery's own fresh read, since the reconcile pass is on a
-backoff), then one still open is named — "merge #N on `<repo>` first" — a merge recorded or just
-learned points at the projects page, and no request at all or one closed without merging says to
-deliver through the stage half first. The classic route is untouched. The `idle-launch-entry` atom
-branches on "wired to the account's own Gitea" the same way and tells the agent not to start the
-workflow. `gitea_delivery.go`; `TestHandleLaunchProduction_GiteaWiring_RefusesBeforeAnyStep`,
-`TestLaunchProduction_WiredMateRefusesAndNamesTheProjectsPage`,
-`TestLaunchProductionNextStep_AFreshlyMergedRequestIsNotNamedAsOpen`,
-`TestLaunchProductionNextStep_NoRequestOrClosedWithoutMergingSaysDeliverFirst`; golden
+and which runs what a release tag on the group repo lists (D16, D27, D28). So in a Mate
+enrolled with its HQ (`hqWired()`), `handleLaunchProduction` refuses before scope, state or any
+mutation, with the blocker `wired_mate_production_is_the_groups` and a next step that says what is
+true of this Mate's own pairs — never "nothing open" read as "merged": every recorded change is first
+read fresh from the Mate's own state in HQ, then one still open is named — "merge `<host>`'s change
+#N on `<repo>` first" — a merge recorded or just learned points at the projects page, and no change
+at all or one closed without merging says to deliver through the stage half first. The classic route
+is untouched. The `idle-launch-entry` atom branches on "delivers through its HQ" the same way and
+tells the agent not to start the workflow. `hq_delivery.go`;
+`TestHandleLaunchProduction_HQWiring_RefusesBeforeAnyStep`,
+`TestLaunchProduction_AMateDeliveringThroughHQRefusesAndSaysWhatIsTrue`; golden
 `idle/bootstrapped-with-managed`. No zcp tool tags the group repo: `action="release"` pushes a tag to
 the pair's own checkout remote, so the release switch (D8) gates nothing an agent can reach today.
 
@@ -2716,13 +2729,13 @@ the first live release is still to run.
 | MB-23 | A stage and a production run no agent unless the person says so; only a dev environment is a Mate by default. `createEnvironment.test.ts` "gives $role an agent". |
 | MB-24 | A new birth carries its own group writes — the registry, the broker's grant, the deploy token, the declaration — as its `tags` and `registry` steps (§4.4), so an organization switch, leaving the page or a reload after create-accepted never strands them. A stage or a production half-made by a birth on another device or by an older build is finished by an account worker acting only on complete known inputs (the fork's slice 4.7; until then the projects page finishes it on its next read). Either way the declaration write declares nothing twice and reuses a branch or request an earlier attempt left. `zeropsBirths.host.test.tsx` "org switch after create-accepted still finishes tags and registry"; `groupEnvironments.test.ts` "halfMadeGroupEnvironments"; `addGroupEnvironment.test.ts` "declares nothing twice…", "reuses the branch it left…", "reuses the request it left…". |
 | MB-25 | A second registered Mate asking for a service repository of its group joins it with write, and `POST /mate/repository` refuses the group repository whether it exists or not — it makes and joins service repositories, and a registered Mate's write on the group repository is the rights loop's (D31), which the refusal says without sending the Mate to a fork; an owner's _Add Mate_ registers the Mate with the two writes the card's _Register in {group}_ makes, as its birth's first steps, and a Mate made from the recipe is sent to the group's code on Gitea. gitea-mate `TestASecondMateJoinsAServiceRepositoryOfItsGroup`, `TestRepositoryRefusals`; `brokerGrant.test.ts` "registerMateInGroup"; `creationHandoff.test.ts` "sends a Mate made from the recipe to the group's code on Gitea". |
-| MB-26 | A deploy onto a wired pair's stage half commits, pushes and opens the pull request with nothing asked of the agent; a dependency directory nobody ignored stops the commit; a push to the group's Gitea watches for no build and offers no integration; a wired pair's direct deploys are never redirected; a group's stage and production build the stage half's setup — the one a deploy of the stage half recorded, else the one setup the pair's zerops.yaml declares beside the dev one, else its only setup — and a tier that would build a stage setup nothing names is withheld until one does, never given the dev setup (a joining Mate records no stage setup, and production built the dev loop's `zsc noop`, 2026-09-26); the delivery brings the repository's workflow to the one this zcp deploys through — a file that already names that deploy action is the project's and is left as it is, an earlier one is replaced with its own Test step kept (wiring writes the file once, so nothing else would ever move it) — and gives a request still called `Mate: {hostname}` the task's words; it takes the repository's base in before it pushes, by merge and never by rebase, so a group's second Mate stays mergeable after the first lands, and a collision only a person can settle leaves the checkout whole and is named. A pull request is merged by **squash**: its title is the task, so `main` is one commit per task delivered. A squash shares no history with the branch that became it, so before the take-the-base-in merge runs, a delivery first absorbs its OWN pull request's landing — the recorded merge/squash commit and the branch tip it merged — as a real merge, never a rebase, never a force, proven lossless by `git merge-tree --write-tree` first, or — whenever that fast path fails for any reason, unavailable subcommand included — a portable plumbing fallback (a real 3-way merge into a TEMPORARY index, never the working one) that works on any git, accepted only on an exact tree match so soundness never depends on which mechanism computed it — the conflict handler is a brace group (`|| { …; exit 4; }`), never a nested subshell (`|| (…; exit 4)`, which only exits ITSELF, so the absorb's remaining `; `-joined steps ran anyway and a real S^1 conflict got silently pushed as merged, live-reproduced and fixed 2026-09-23); unprovable (a rebase-merge, or a merge commit resolved by hand differently from a mechanical one — neither the fast path nor the fallback can verify it) falls through to the ordinary take-the-base-in merge unchanged but marked, and a genuine conflict on either merge still aborts and is named — the absorb's own S^1 conflict under its own marker, distinct from the ordinary step's, because the recovery differs: proven lossless, `merge S^1`, resolve and commit, then `merge -s ours S`, then take the base in; unprovable, the same first step but a PLAIN `merge S` in place of `-s ours` — nothing verified S's real content, so recording it merged without touching the tree would risk silently discarding whatever that content was, while a plain merge (merge-base(HEAD, S) is exactly S^1 once its own step lands) is a real three-way merge whose conflicts, if any, are resolved on their own merits; never the plain fetch+merge alone either way, which would recreate the very conflict on an unabsorbed landing. Uncommitted changes touching what the S^1 merge would touch make git refuse to even start it, with no unmerged file to name — checked proactively and marked with its own dedicated, contentless marker so a caller can never read that silence as "no conflict" and push anyway; the fix is to commit first. The unprovable mark lets an ordinary-step conflict behind it get the same manual sequence rather than the plain advice that just failed; the pull request's "merged" line never claims WHEN it is absorbed, since it may be the very call about to do it. A delivery reads its own recorded pull request's outcome directly rather than depending on a reconcile pass (backoff-gated), so the very first delivery after a merge is never caught unabsorbed; the write that records or clears what a pull request's outcome answered is guarded against a concurrent pass having already moved the pair onto a newer request; a reconcile pass that reads the same merge also tries the absorb on the pair's checkout right away, best-effort, only when it is safe to (clean tree, on the Mate's own branch). A wired pair's git-push deploy never aims at the repository's protected base, whatever tracked ref it carries: it pushes to the Mate's own branch, which is the only branch it may write. That direct `strategy="git-push"` — not a delivery, and the manual path the launch-live incident's PR #2 came through — absorbs the same way before its own push: Gitea computes a pull request's mergeability itself, independent of whether zcp's push succeeds, so a pull request this push opens or touches right after (giteaPullRequestAfterPush) would show the false conflict to a person before any stage delivery ever ran without it; a genuine conflict there still blocks the push outright and is reported, never silently swallowed. zcp `TestAStageDeployOfAWiredPairDeliversItself`, `TestADeliveryBringsTheWorkflowToThisZcps`, `TestBuildGiteaDeliveryCommand_TakesTheBaseInBeforeItPushes`, `TestBuildGiteaDeliveryCommand_AbsorbsASquashLanding`, `TestBuildGiteaDeliveryCommand_AbsorbsASquashLanding_AColleaguesWorkSurvives`, `TestBuildGiteaDeliveryCommand_UnprovableLandingFallsThroughToTheOrdinaryMerge`, `TestBuildGiteaDeliveryCommand_ARealConflictAfterTheAbsorbedLandingStillAborts`, `TestAStageDeployAbsorbsAFreshMergeWithoutWaitingForAReconcilePass`, `TestAbsorbLandedPullRequestOnCheckout_OnlyOnACleanCheckoutOfTheMatesBranch`, `TestReconcile_TellsTheMateWhatBecameOfItsPullRequest`, `TestGitPushDeploy_AbsorbsALandingBeforeItPushes`, `TestGitPushDeploy_AbsorbConflictBlocksThePush`, `TestBuildGiteaDeliveryCommand_ARealS1ConflictAbortsTheWholeChain`, `TestBuildGiteaAbsorbAndSyncCommand_ARealS1ConflictAbortsCleanly`, `TestAStageDeployAbsorbConflictGivesTheManualAbsorbSequence`, `TestAStageDeployUnprovableConflictGivesTheManualAbsorbSequenceToo`, `TestGitPushDeploy_AbsorbConflictGivesTheManualAbsorbSequence`, `TestGitPushDeploy_UnprovableConflictGivesTheManualAbsorbSequenceToo`, `TestRecordGiteaLanding_SkipsAStaleNumber`, `TestClearGiteaPullRequest_SkipsAStaleNumber`, `TestBuildAbsorbLandedPullRequestCommand_FallsBackToPortablePlumbingWhenMergeTreeFails`, `TestBuildAbsorbLandedPullRequestCommand_UncommittedChangesBlockTheMerge`, `TestGitPushDeploy_DirtyTreeBlocksThePushWithACommitFirstMessage`, `TestAStageDeployDirtyTreeGivesACommitFirstMessage`, `TestDefaultPushBranch`; fork `giteaClient.test.ts` "squashes by default", `TestAWiredPairDeploysDirectlyAndIsNeverSentToPush`, `TestBuildGiteaDeliveryCommand_CommitsAndPushesTheDeployedTree`, `TestGitPushDeploy_OpensThePullRequest`, `TestBuildGroupRecipe_GroupEnvironmentsBuildTheStageHalfsSetup`, `TestBuildGroupRecipe_StageSetup_ResolvedOrWithheld`, `TestComposeGroupRecipeInputs_JoinerWithoutStageSetup_BuildsTheYAMLsOtherSetup`. |
+| MB-26 | A deploy onto a wired pair's stage half commits, opens the change and pushes it with nothing asked of the agent; a dependency directory nobody ignored stops the commit; a change is opened only for a checkout ahead of `main` once `main` is taken in, and HEAD is pushed to its branch `mate/<project id>/<n>`, never to `main`; a push to HQ watches for no build and offers no integration; a wired pair's direct deploys are never redirected; a group's stage and production build the stage half's setup — the one a deploy of the stage half recorded, else the one setup the pair's zerops.yaml declares beside the dev one, else its only setup — and a tier that would build a stage setup nothing names is withheld until one does, never given the dev setup (a joining Mate records no stage setup, and production built the dev loop's `zsc noop`, 2026-09-26); the delivery brings the repository's workflow file to the one this zcp writes, a file naming that deploy action left as it is, and gives a change still called `Mate: {hostname}` the task's words; it takes `main` in before it pushes, by merge and never by rebase, so a second Mate stays mergeable after the first lands, and a collision only a person can settle leaves the checkout whole and is named. HQ merges a change by **squash**: its title is the task, so `main` is one commit per task delivered. A squash shares no history with the branch that became it, so before the take-`main`-in merge runs, a delivery first absorbs its OWN change's landing — the squash (`mergedSha`) and the head it squashed (`landedHead`), read fresh from the Mate's state in HQ — as a real merge, never a rebase, never a force, proven lossless by `git merge-tree --write-tree` first, or — whenever that fast path fails for any reason — a portable plumbing fallback (a real 3-way merge into a TEMPORARY index), accepted only on an exact tree match; the conflict handler is a brace group (`|| { …; exit 4; }`), never a nested subshell (live-reproduced and fixed 2026-09-23); unprovable falls through to the ordinary merge unchanged but marked, and a genuine conflict on either merge aborts and is named — the absorb's own S^1 conflict under its own marker, because the recovery differs: proven lossless, `merge S^1`, resolve and commit, then `merge -s ours S`, then take `main` in; unprovable, the same first step but a PLAIN `merge S`. Uncommitted changes touching what the S^1 merge would touch are checked first and marked with their own marker, so silence never reads as "no conflict"; the fix is to commit first. A pass that learns of the merge also folds it into a clean checkout on the Mate's own branch right away, and the write that records or clears a change's outcome is guarded against a concurrent pass having moved the pair onto a newer change. A wired pair's `strategy="git-push"` to HQ absorbs and takes `main` in the same way before it pushes to its change, and a genuine conflict there blocks the push and is reported. zcp `TestAStageDeployOfAWiredPairDeliversItself`, `TestAStageDeployAbsorbsTheMatesOwnMergedChange`, `TestAStageDeployWithNothingBeyondMainOpensNoChange`, `TestADeliveryRefusedByItsGitSaysWhatToDo`, `TestGitPushToHQ_DeliversCommittedWorkAsTheChange`, `TestGitPushToHQ_ABranchOfItsOwnIsRefused`, `TestBuildDeliveryCommand_CommitsTheDeployedTreeAndSaysHowFarAhead`, `TestBuildDeliveryCommand_TakesMainInBeforeAnythingIsPushed`, `TestBuildDeliveryCommand_AbsorbsASquashLanding`, `TestBuildDeliveryCommand_AbsorbsASquashLanding_AColleaguesWorkSurvives`, `TestBuildDeliveryCommand_UnprovableLandingFallsThroughToTheOrdinaryMerge`, `TestBuildDeliveryCommand_ARealConflictAfterTheAbsorbedLandingStillAborts`, `TestBuildDeliveryCommand_ARealS1ConflictAbortsTheWholeChain`, `TestBuildDeliverySyncCommand_ARealS1ConflictAbortsCleanly`, `TestBuildAbsorbLandedChangeCommand_FallsBackToPortablePlumbingWhenMergeTreeFails`, `TestBuildAbsorbLandedChangeCommand_UncommittedChangesBlockTheMerge`, `TestBuildGroupRecipe_GroupEnvironmentsBuildTheStageHalfsSetup`, `TestBuildGroupRecipe_StageSetup_ResolvedOrWithheld`, `TestComposeGroupRecipeInputs_JoinerWithoutStageSetup_BuildsTheYAMLsOtherSetup`. |
 | MB-27 | A second Mate joins its group's service repository and works from `main` (live, 2026-09-17); a recipe pull request is opened only for a branch ahead of `main`, and one Gitea calls empty is closed by the broker, never retried; a job's deploy takes a tier's name for the group's only environment of that tier; _Add Mate_ begins the Mate's birth — its registration and its hand-off — as soon as the project exists, a failed later step included. zcp `TestReconcileGiteaGroupRecipe_OpensNothingMainAlreadyHas`; gitea-mate `TestAnEmptyRecipePullRequestIsClosedNotRetried`, `TestDeployTakesATiersNameForItsOnlyEnvironment`; `brokerGrant.test.ts` "registerMateInGroup"; ledger _The whole chain through the UI, from a wiped org_. |
 | MB-30 | A release lists what each production repository's `main` holds, stage or no stage, and shows the commits it would carry; the offer carries the entries the tag will list, and no refusal names a stage at all (D28). A Mate's open pull request is offered in its own conversation, as _Review_ at the composer's top, and merging from its review is Gitea's, as the person, onto the head the review showed; the Mate's branch absorbs the merged `main` losslessly, never by rebase, by its own next delivery at the latest (MB-26) — a pass that reads the merge tries the same absorb on the checkout right away, best-effort, when it is safe to. `release.test.ts` — "a release lists what is merged", "carries the entries the tag would list, so the verb tags what the offer showed"; `groupDeploys.test.ts` — "what a release has to read"; `mateNextStep.test.ts` — "$case" (its cases include "its own change, waiting for the person's review", "the newest where it has two, so the strip is stable"); `ZeropsNextStepBanner.test.tsx` — "opens the change's review from the button that was pressed"; `giteaClient.test.ts` — "merge sends the shown head and squash, so `main` is one commit per task", "throws Gitea's own status and message on anything else". |
-| MB-31 | In a wired Mate launch-production refuses before it reads a scope or writes anything, and its next step names only a pull request Gitea says is still open; a merged one points at the projects page, and none, or one closed without merging, says to deliver through the stage half first; an unwired Mate's route is unchanged. zcp `TestHandleLaunchProduction_GiteaWiring_RefusesBeforeAnyStep` (the handler, wired and unwired, from the environment: no SSH read, admin client, staged token or state file before the refusal), `TestLaunchProduction_WiredMateRefusesAndNamesTheProjectsPage`, `TestLaunchProductionNextStep_AFreshlyMergedRequestIsNotNamedAsOpen`, `TestLaunchProductionNextStep_NoRequestOrClosedWithoutMergingSaysDeliverFirst` (the next step). |
+| MB-31 | In a Mate enrolled with its HQ launch-production refuses before it reads a scope or writes anything, and its next step names only a change the Mate's fresh state says is still open; a merged one points at the projects page, and none, or one closed without merging, says to deliver through the stage half first; a Mate not delivering through HQ keeps its route. zcp `TestHandleLaunchProduction_HQWiring_RefusesBeforeAnyStep` (the handler, enrolled and not: no SSH read, admin client, staged token or state file before the refusal), `TestLaunchProduction_AMateDeliveringThroughHQRefusesAndSaysWhatIsTrue` (the next step). |
 | MB-32 | A project's flow and its one next step are one derivation the projects page, the left menu and a Mate's conversation all draw (D29): worst first, a failed deploy the next step — production's before a stage's — a failed stage never hiding a release, and a failed production keeping the release that might clear it; production "After the first merge" with nothing to press while `main` is empty; a preview only the stage half beside its own dev half; a group stage drawn only where one exists; the conversation's step from the flow — its own mergeable change, as _Review_ at the composer's top, and nothing of the project's. The page lays it out one way: a _Next steps_ item carries its row's own verb (_Review_, _Review release_, _+ Add production_), a _Review_ opening the review and nothing merging or releasing from the page, and a step with no verb to press is not listed; a cell holds at most two lines, a row one verb at the end of the cell it acts on (and _Review release_ beside a failed production); an empty step is a muted word, never a dashed place; _Add stage_ and _Add production_ are the project menu's, never a footer link; a Mate opens from its chip, its tile or its card. The left menu draws production as one chip on the project's heading, a stage only where there is no production, and dots no heading — a folded one shows its busy Mates' faces. `groupFlow.test.ts` — "takes the worst step first: $case", "reads production as $case", "offers Add production only where $case → $addable", "still ranks a failed production above the release", "names production's failure before a stage's, and keeps the release a failed stage does not block", `pairPreviewRoute` "is $case"; `mateNextStep.test.ts` — "$case" (its cases include "its own change, waiting for the person's review", "another Mate's change", "its own change that does not merge"); `OverviewView.test.tsx` — "carries the step's verb %s on each strip item, the row's own verb", "leaves a step with no verb to press out of the strip", "never holds more than two lines in a cell: %s", "puts the verb in the cell it belongs to", "still offers the release beside a broken production, not just the build (D28)", "draws a group stage under main only where one exists — never an empty slot", "reads production as coming after the first merge, with nothing to press", "opens any Mate a row names into its conversation, by a real button in reading order", "opens a tile's Mate from the whole tile, with no Open button beside it"; `ProjectsView.test.tsx` — "names the next step in its header, without the verb", "keeps Add stage and Add production in the group menu: no footer links", "draws each Mate as a row that carries its Preview on its first line"; `flowSteps.test.tsx` — "says its word in the muted hand, never dashed: %s", "holds its verbs at the cell's end, in order"; `projectsView.logic.test.ts` — "says %s awaits somebody: %s"; `SidebarZeropsTree.test.tsx` — "never dots a project for the production it does not have"; `SidebarProductionChip.logic.test.ts` — "$state" (its cases include "no production, only stage"), "draws no chip where there is neither a production nor a stage"; `SidebarProjects.logic.test.ts` — "headingFaces — who a folded project's heading shows (M15)"; `ZeropsReviewDoors.test.tsx` — "every door opens the review and never acts itself (R1)". |
 | MB-33 | A Mate proposes only the recipe tiers the group repo's `main` lacks (D30): a tier directory `main` has any file in is left whole, the group's first recipe lands whole, a top-level file `main` has is never proposed. The proposal is made from a fork branch cut at `main`'s tip and named after that commit, the fork synced from the group repo first, so its pull request only adds; an open proposal follows the project while `main` stays put, and one `main` moved under is closed and cut again from the new tip. A group whose `main` has every tier gets no fork, commit or pull request, the bot's proposals still open there — the requests it opened under the proposal's title — are closed, a person's never, nor one the Mate opened itself (D31), and the agent's `group-recipe` answers that `main` already carries every tier and that a change to one is a pull request the Mate may merge when its person asks (D31). zcp `TestMissing_ATierTheRepositoryHas_IsLeftWhole`, `TestReconcileGiteaGroupRecipe_ProposesOnlyWhatMainLacks`, `TestReconcileGiteaGroupRecipe_MainMovedUnderAnOpenProposal_ReplacedFromTheNewMain`, `TestReconcileGiteaGroupRecipe_IdempotentThenUpdates`, `TestHandleGroupRecipe_Table`, `TestReadGiteaBranchFiles_TipAndItsTree`, `TestEnsureGiteaProposalBranch_CutAtTheUpstreamsTip`, `TestCloseGiteaPullRequests_OnlyThePostersOthers`. |
-| MB-34 | A Mate's description of its change is its pull request's body: set on the request open from the pair's branch — on record or found, never opened by describing — kept on the pair while none is open and put on the one the pair opens next, and never put on a request it was not written for (one that merged or closed first is named to the Mate and nothing is kept; words kept for a request that is gone are dropped); every delivery or push that leaves a request open asks for it. The pictures it names are the Mate's own kept screenshots, attached to the request once each and published as `<img alt width height src>`; a picture not kept is refused before anything is written, and a token that cannot attach writes nothing and keeps the words. A wired pair's push credential is brought to the Mate's live token before a delivery or a git-push, and a credential refusal marks the pair, which heals once a fresh session authenticates. zcp `TestDescribeChange`, `TestDescribeChange_Refusals`, `TestOpenGiteaPairPullRequest_PutsTheKeptDescription`, `TestADeliveryPutsTheKeptDescriptionOnItsRequest`, `TestGiteaPushNextActions_AsksForTheDescription`, `TestEditGiteaPullRequestBody`, `TestFindGiteaPullRequest`, `TestWorkflowTool_DescribeChangeReachesItsHandler`, `TestDescribeChange_Pictures`, `TestOpenGiteaPairPullRequest_PutsTheKeptPictures`, `TestKeepBrowserPicture`, `TestAttachGiteaPicture`, `TestGiteaEnsurePushCredential`, `TestADeliveryRefusedForItsCredentialMarksThePair`, `TestGitPushDeploy_BringsItsCredentialToTheCurrentTokenFirst`; `e2e/gitea_backbone_live_test.go` (tag-gated). |
+| MB-34 | A Mate's description of its change is its change's body in HQ: set on the pair's open change — on record or named by the Mate's state, never opened by describing — kept on the pair while none is open or HQ does not answer and put on the one the pair reaches next, and never put on a change it was not written for (one that merged or closed first is named to the Mate and nothing is kept; words kept for a change that is gone are dropped); every delivery or push that leaves a change open asks for it. The pictures it names are the Mate's own kept screenshots, attached to the change once each and published as `<img alt width height src>` at HQ's address; a picture not kept is refused before anything is written, and one HQ will not keep writes nothing and keeps the words. A wired pair's push credential is brought to the enrollment's before a delivery, a git-push or a pending finish, and a credential refusal marks the pair, which heals once a fresh session authenticates. zcp `TestDescribeChange`, `TestDescribeChange_KeptWordsGoOntoTheNextChange`, `TestDescribeChange_Refusals`, `TestWorkflowTool_DescribeChangeReachesItsHandler`, `TestDescribeChange_Pictures`, `TestKeepBrowserPicture`, `TestADeliveryBringsTheCredentialToTheCurrentOne`. |
 | MB-35 | A new Mate stands up from its group's AI Agent tier in one call (D32): every pair built from the group's repositories is read by zcp's naming, not its setups' names, adopted as the adopt route records it with the tier's setups, checked out onto the Mate's branch from the repository the tier names (never one the broker would have to create), and deployed every dev half at once, the first call answering once they stand with the stages queued, and on the second call each stage from its dev half once what its build reads stands (with no reads, every stage above it by priority); a stage never called for stays `READY_TO_DEPLOY` — with nothing committed, pushed or proposed; the runtimes the browser is still importing are waited for, bounded; a refusal before anything is touched names the adopt route, a pair that fails stops alone with the model's next step and holds only the halves whose builds read it, which say what they waited for, and a second call skips what is done. Registered in a Mate only, and a Mate's AGENTS.md sends "Stand up development of the project." to it first. zcp `TestStandup_StandsUpEveryPairFromTheRecipe`, `TestStandupAfter_EveryDevHalfStartsAtOnce`, `TestStandupReads_FromTheRecipe`, `TestStandupReads_EveryRouteTheWriterCounts`, `TestStandup_ReturnsOnceDevelopmentIsUp`, `TestStandup_ASecondCallContinuesAndSkipsWhatIsDone`, `TestStandup_TheModelIsTheBackup`, `TestStandup_WaitsForTheRuntimesTheBrowserIsImporting`, `TestParseMateTier`, `TestParseRecipeImportShape_RolesFollowTheHostnameConvention`, `TestAdoptPair_RecordsWhatTheAdoptRouteRecords`, `TestServer_StandupToolGating`, `TestBuildAgentsMD_Container_StandUpRoutesToTheTool`; integration `TestStandup_OverMCP_ABotInNoGroupIsRefusedAndNothingIsTouched`. |
 | MB-28 | A pull request belongs to the Mate whose branch it is (zcp's `mate/{login}`) or whose bot opened it, a person's own is listed after the Mates and never dropped, a group repo's is a recipe change whoever opened it, and a roll-back is offered only to an earlier approved release, its _Roll back to this_ opening the roll back's review. `projectFlow.test.ts` — "whose pull request it is", "puts each Mate's under it, newest first, and the rest after the Mates", "is a recipe change on the group repo, whoever opened it"; `release.test.ts` — "a release's row"; `ZeropsReviewDoors.test.tsx` — "Roll back to this opens the roll back's review, from the row pressed"; `SidebarZeropsTree.test.tsx` "the project's flow under it"; `ZeropsGitPanel.test.tsx` "is this Mate's repositories and nothing of the project's". |
 | MB-29 | A deploy token reaches a job only when the job is proved, runs the default branch's workflow from the repository itself, holds the commit protected state wants on that environment, and its runner has run nothing but such jobs since it was made; a superseded or already-live commit gets no token and no failure; the job pushes the commit's tree (`--workspace-state clean`), never the working directory. gitea-mate `internal/server/deploy_test.go`, `internal/pipeline/grant_test.go`, `internal/pipeline/runner_test.go`, `actions/deploy` script test; zcp `workflow_build_integration_test.go`. |
