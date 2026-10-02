@@ -21,7 +21,7 @@ import (
 const deliveryBase = "main"
 
 // BuildMateBranchCommand puts the pair's working copy on the Mate's own local
-// branch, DESCENDING from the repository's `main`.
+// branch, SHARING its history with the repository's `main`.
 //
 // HQ makes a repository with one commit of an empty tree on `main`, while zcp
 // git-initialises the pair with a history of its own. A change whose history
@@ -33,7 +33,9 @@ const deliveryBase = "main"
 // different code (5 and 1 of the recipes, measured 2026-09-24). The states,
 // each decided from facts and each with one action:
 //
-//   - HEAD already descends from the base → only the branch is named;
+//   - HEAD shares history with the base — descends from it, or is a history
+//     the base has since moved past, as a pair main's Gitea wired holds →
+//     only the branch is named, and the delivery takes the base in;
 //   - HEAD is only the `zcp init` marker (a parentless empty tree) → the
 //     branch is cut from the base, so whatever the base carries stays in the
 //     branch and the working copy. Refused by name if a change is staged (the
@@ -51,8 +53,9 @@ const deliveryBase = "main"
 // Every refusal changes nothing; MateBranchRefusal reads which one it was and
 // MateBranchRefusalRemedy what to do about it.
 //
-// Idempotent: a branch that already descends from the base is left exactly
-// where it is, so a later pass cannot rewrite the shas under an open change.
+// Idempotent: a branch that already shares history with the base is left
+// exactly where it is, so a later pass cannot rewrite the shas under an open
+// change.
 //
 // Auth rides HQ's session credential helper, like every other remote-reading
 // command here: the Mate credential reaches git over an anonymous pipe, never
@@ -75,7 +78,7 @@ func BuildMateBranchCommand(workingDir, branch string) string {
 			`old=$(git rev-parse -q --verify "$ref" || true); ` +
 			`if [ "$cur" != "$ref" ] && [ -n "$old" ]; then ` + refuse("ZCP_BRANCH_ELSEWHERE") + `; fi; ` +
 			`isseed=; if [ "$(git rev-list --count FETCH_HEAD)" = 1 ] && [ "$(git rev-parse "FETCH_HEAD^{tree}")" = "$(git hash-object -t tree /dev/null)" ]; then isseed=1; fi; ` +
-			`if git merge-base --is-ancestor FETCH_HEAD HEAD 2>/dev/null; then ` +
+			`if git merge-base FETCH_HEAD HEAD >/dev/null 2>&1; then ` +
 			`[ "$cur" = "$ref" ] || git checkout -q -b "$b"; ` +
 			`elif [ "$(git rev-parse "HEAD^{tree}")" = "$(git hash-object -t tree /dev/null)" ] && ! git rev-parse -q --verify "HEAD^" >/dev/null; then ` +
 			`if ! git diff --cached --quiet; then ` + refuse("ZCP_STAGED_CHANGES") + `; fi; ` +

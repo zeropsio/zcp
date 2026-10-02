@@ -145,6 +145,10 @@ const (
 	branchFromBase
 	// branchRefused: named in the output, and nothing moved.
 	branchRefused
+	// branchNamed: a history the base moved past is named where it is — its
+	// commits and its working copy untouched, for the delivery to take the
+	// base in.
+	branchNamed
 )
 
 type mateBranchCase struct {
@@ -288,6 +292,20 @@ func mateBranchCases() []mateBranchCase {
 			refusal: "ZCP_BRANCH_ELSEWHERE",
 		},
 		{
+			name: "a history main left behind is named where it is, its work kept",
+			base: landedBase,
+			seed: func(t *testing.T, dir string) {
+				t.Helper()
+				runGit(t, dir, "fetch", "-q", "origin", "main")
+				runGit(t, dir, "checkout", "-q", "-b", "mate/mate-p-mate", "FETCH_HEAD~1")
+				writeLabFile(t, filepath.Join(dir, "todo.js"), "this Mate's open work\n")
+				commitAll(t, dir, "Add todos")
+				writeLabFile(t, filepath.Join(dir, "todo.js"), "not committed yet\n")
+			},
+			want:      branchNamed,
+			wantFiles: map[string]string{"todo.js": "not committed yet\n"},
+		},
+		{
 			name: "a base with landed code and an unrelated pair history",
 			base: landedBase,
 			seed: func(t *testing.T, dir string) {
@@ -360,7 +378,8 @@ func mateBranchCases() []mateBranchCase {
 
 // TestBuildMateBranchCommand_DescendsFromMain is the table the wiring
 // owes. Whatever local history the pair has, it ends on its own branch
-// descending from `origin/main` — or it is refused by name and nothing moved.
+// sharing its history with `origin/main` — or it is refused by name and
+// nothing moved.
 // A pair joined onto HQ's seed keeps its tree and its working copy
 // byte for byte: the seed is a placeholder, and the pair's code is not zcp's
 // to rewrite (the rebase this replaced lost a hand-resolved merge in
@@ -391,6 +410,20 @@ func TestBuildMateBranchCommand_DescendsFromMain(t *testing.T) {
 				if got, want := runGit(t, pair, "rev-parse", "HEAD"), runGit(t, pair, "rev-parse", "origin/main"); got != want {
 					t.Errorf("a marker-only pair must branch AT main: HEAD %s, main %s", got, want)
 				}
+			case branchNamed:
+				if err != nil {
+					t.Fatalf("command failed: %v\noutput:\n%s", err, out)
+				}
+				if got := runGit(t, pair, "rev-parse", "--abbrev-ref", "HEAD"); got != labBranch {
+					t.Errorf("HEAD is on %q, want %s", got, labBranch)
+				}
+				if got := runGit(t, pair, "rev-parse", "HEAD"); got != before.head {
+					t.Errorf("the history moved: HEAD %s → %s", before.head, got)
+				}
+				if got := runGit(t, pair, "status", "--porcelain"); got != before.status {
+					t.Errorf("the working copy changed:\nbefore:\n%s\nafter:\n%s", before.status, got)
+				}
+				runGit(t, pair, "merge-base", "origin/main", "HEAD")
 			case branchJoined:
 				assertOnMateBranch(t, pair, string(out), err)
 				if got := runGit(t, pair, "rev-parse", "HEAD^{tree}"); got != before.tree {
@@ -641,7 +674,7 @@ func TestBuildMateBranchCommand_Shape(t *testing.T) {
 		"echo username=mate",
 		"fetch --no-tags origin 'main'",
 		"b='mate/p-mate'",
-		"git merge-base --is-ancestor FETCH_HEAD HEAD",
+		"git merge-base FETCH_HEAD HEAD",
 		`commit-tree "HEAD^{tree}" -p HEAD -p FETCH_HEAD`,
 		"git symbolic-ref HEAD",
 	} {
