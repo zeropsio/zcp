@@ -147,7 +147,7 @@ func TestActionsConfirm_GiteaRemote_EmitsBrokerWorkflow(t *testing.T) {
 // writing it would take the setup out of the repository.
 func TestActionsConfirm_GiteaRemote_SetsUpTheServicesRuntime(t *testing.T) {
 	t.Parallel()
-	const giteaURL = "https://web-2ff4-3000.prg1.zerops.app"
+	const giteaURL = "https://gitea.example.test"
 	for _, service := range []string{"api", "apistage"} {
 		t.Run(service, func(t *testing.T) {
 			t.Parallel()
