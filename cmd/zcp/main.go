@@ -16,6 +16,7 @@ import (
 	"github.com/zeropsio/zcp/cmd/zcp/analyze"
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/content"
+	"github.com/zeropsio/zcp/internal/hq"
 	zcpinit "github.com/zeropsio/zcp/internal/init"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/mate"
@@ -51,6 +52,9 @@ func main() {
 func run(args []string) int {
 	if isMateGitToken(args) {
 		return runMateGitToken(os.Stdin, os.Stdout, mate.LiveEnvStorePath)
+	}
+	if isHQGitCredential(args) {
+		return runHQGitCredential(args[2:], os.Stdin, os.Stdout, hq.EnrollmentPath())
 	}
 	if len(args) > 0 {
 		if dispatch, ok := cliDispatch()[args[0]]; ok {

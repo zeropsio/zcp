@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/hq"
@@ -117,5 +119,65 @@ func TestCLIDispatch_HQ_IsAVerb(t *testing.T) {
 	t.Parallel()
 	if _, ok := cliDispatch()["hq"]; !ok {
 		t.Fatal(`"hq" is not a CLI verb: zcp hq would start the MCP server instead`)
+	}
+}
+
+// TestRunHQGitCredential: `zcp hq git-credential` is the credential helper
+// git runs on every fetch and push to HQ from the Mate's shell — it prints the
+// Mate credential under HQ's git user, for the enrolled HQ only, and nothing
+// else on stdout. Declining exits non-zero with nothing printed, so a helper
+// chain goes on to its next answer and never sends an empty password.
+func TestRunHQGitCredential(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "enrollment.json")
+	if err := hq.SaveEnrollment(path, hq.Enrollment{HQ: "https://hq.example", ProjectID: "p1", Credential: "secret"}); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name     string
+		args     []string
+		stdin    string
+		want     string
+		wantCode int
+	}{
+		{"get for the HQ", []string{"get"}, "protocol=https\nhost=hq.example\n\n", "username=mate\npassword=secret\n", 0},
+		{"get for another host", []string{"get"}, "protocol=https\nhost=github.com\n\n", "", 1},
+		{"store keeps nothing", []string{"store"}, "protocol=https\nhost=hq.example\nusername=mate\npassword=secret\n\n", "", 0},
+		{"erase keeps nothing", []string{"erase"}, "protocol=https\nhost=hq.example\n\n", "", 0},
+		{"no action", nil, "", "", 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var out strings.Builder
+			if code := runHQGitCredential(tt.args, strings.NewReader(tt.stdin), &out, path); code != tt.wantCode {
+				t.Fatalf("exit %d, want %d", code, tt.wantCode)
+			}
+			if out.String() != tt.want {
+				t.Errorf("stdout = %q, want %q", out.String(), tt.want)
+			}
+		})
+	}
+}
+
+// TestIsHQGitCredential: the helper's verb is answered before the CLI's
+// telemetry, whose one-time notice goes to stdout and whose flush would hold
+// every git operation.
+func TestIsHQGitCredential(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"hq", "git-credential", "get"}, true},
+		{[]string{"hq", "git-credential"}, true},
+		{[]string{"hq", "status"}, false},
+		{[]string{"hq"}, false},
+		{nil, false},
+	}
+	for _, tt := range tests {
+		if got := isHQGitCredential(tt.args); got != tt.want {
+			t.Errorf("isHQGitCredential(%q) = %v, want %v", tt.args, got, tt.want)
+		}
 	}
 }
