@@ -918,6 +918,10 @@ order:
 - `harden` — its project closed off (§3 B-1…B-3) before anyone is admitted;
 - `health` — the Mate answering.
 
+(Not reconciled with the rebuild: `tags` and `registry` are main's Gitea registry; the rebuild's HQ
+holds the structure (§10.6), and the client merges this text was checked against on 2026-10-02 say
+nothing of the birth's steps.)
+
 The record carries what each step needs — the organization the project was created in, the Gitea
 project, the group — so an organization switch, leaving the projects page or a reload never strands
 a step. A group write that fails, or is still not through at the top of the retry ladder, is said
@@ -1010,6 +1014,9 @@ What _Create_ does, in order (`submitZeropsNewProject`, `ZeropsNewProjectWizard.
 - **The registry.** The group is written on the Gitea project before anything is created. The
   Mate's membership and the broker's `BASIC_USER` on its project are its birth's `tags` and
   `registry` steps (§4.4, §10.6), begun the moment the project is accepted.
+- (Not reconciled with the rebuild: the two steps above are main's; the rebuild's HQ replaces the
+  Gitea project (§10.1), and the client merges this text was checked against on 2026-10-02 say
+  nothing of _New project_.)
 - **The project and its container in one call** (`createProjectWithZeropsMate`): the two calls
   traced from the GUI, `POST /client/{id}/project` (`mode:"LIGHT"`) then
   `PUT /project/{id}/first-class-recipe/development-container` with the platform's own import YAML
@@ -1363,8 +1370,9 @@ visually quieter without being hidden.
 
 **A project's flow is one derivation (D29, 2026-09-23).** `groupFlow` (client-runtime, pure) takes
 what the surfaces already hold — the group tree's members, the account's project flow (§10.11) and
-the platform's pushed deployments — and returns the project's Mates, its open code pull requests
-(recipe changes apart, never a step), `main`, its stages, its production and its one next step. The
+the platform's pushed deployments — and returns the project's Mates, its open changes (since
+2026-10-02 a Mate's changes in HQ, from HQ's structure stream; recipe changes apart, never a step),
+`main`, its stages, its production and its one next step. The
 projects page and the left menu feed it through the one input (`groupFlowInputOf`) and the one
 gate on _Add production_ (`productionAddable`), lay out what it returns and decide nothing of their
 own.
@@ -1386,15 +1394,25 @@ line, the production chip's menu, the projects page, a change's, a project's and
 (_Review release_ for a release), the Git tab, the release rows' _Roll back to this_, the crew board
 — and every door opens the same review, a dialog over the conversation (`ZeropsReviewProvider`,
 `openReview`): the verdict first, what the change does in the Mate's words, its files and their
-diffs read from Gitea, its checks by name, where to try it, and one button that says what it will
-do — _Merge_, _Land_, _Release v0.1.57_, _Roll back to v0.1.55_ — beside what that does. Nothing
+diffs, where to try it, and one button that says what it will
+do — _Merge_, _Land_, _Release v0.1.57_, _Roll back to v0.1.55_ — beside what that does. Since
+2026-10-02 a change's files with their diffs, its commits and how it merges are HQ's one detail of
+the change, read when the review opens and kept per head and per `main`, and a change in HQ runs no
+checks: the checks are gone from the review, the rows and the menu. Nothing
 merges, lands, releases or rolls back from a row, a banner or a page: the one-click merges of the
 banner, the projects page and the Git tab, and the roll back that asked nothing, are gone. The
-button is off while the verdict says why (checks failing or still running, a conflict with `main`, a
-head whose files are not shown yet); the focus and ⌘↵ reach it only while it is safe, never for
-_Release_ or _Roll back_; and a merge takes only the head the review showed.
+button is off while the verdict says why (a conflict with `main`, a head whose files are not shown
+yet); the focus and ⌘↵ reach it only while it is safe, never for _Release_ or _Roll back_; and a
+merge takes only the head the review showed. A change merges and closes in HQ, as the person, only
+where HQ's rule offers it (`merge_change`: Basic user or above on one of the application's projects;
+`close_change`: the same, or the organization's owner or admin): _Merge_ says "Merging into main" ·
+"Squashing N commits into one" while it runs and "Merged into main" once done, and a refusal comes
+back in HQ's words, "Not merged", tried again only by a deliberate press; a quiet _Close without
+merging_ in the review's foot asks "Close #N without merging?" before it closes. Nothing is polled:
+HQ's stream brings the change's new state. A change's conversation (people's comments) and the
+pictures of its description are HQ's too.
 A Mate's conversation offers only what is that Mate's, at the composer's top: its own mergeable
-code pull request (MB-30), read from the flow's open changes, so the strip and the page cannot
+change (MB-30), read from the flow's open changes, so the strip and the page cannot
 disagree about one — offered as _Review_, never as a merge, for the merge is the review's own
 button, where the change is read first. A release carries every Mate's merges and a production is
 the project's, so both stay with the project — its production chip in the left menu, and the
@@ -1978,10 +1996,10 @@ deletion (S5-5).
 **Since 2026-10-02 the org's HQ carries what an org's Gitea and its broker carried** (§10.1). Zerops
 roles stay the one source (§10.3), a Mate's own door and its signer stay as they are (§10.4, §10.5),
 and zcp reaches HQ with its enrollment (§6.6, §10.10). What HQ already holds: the structure
-(applications and the projects attached to them), the repositories, a Mate's changes and their
-merge, the recipe and its landing. What moves to it next: environments, their deploy tokens and
-deploys, the release, and the client surfaces that still read Gitea. The Gitea and the broker
-(§10.8, §10.9) are described as they ran until then. The rest of this section's history follows.
+(applications and the projects attached to them), the repositories, a Mate's changes, their review,
+merge and close, the recipe and its landing, an application's environments, their deploy tokens and
+the stages' deploys (§10.8). What moves to it next: production and the release, and the client
+surfaces that still read Gitea (§10.11). The rest of this section's history follows.
 
 Landed 2026-09-16 to 2026-09-17 as mate 0.11.0–0.11.5, zcp v9.176.0 and gitea-mate v1–v2.1. This
 section records the decisions as they landed and the invariants that hold them; where each slice
@@ -2027,8 +2045,8 @@ that only the broker deploys to.
 | D11 | The creator of a Mate is its project's `OWNER`; org owners and admins keep their reach; _Assign_ (a project-role override to `OWNER`) hands a Mate over.                                                                                                                                                                       |
 | D12 | Every Mate keeps its own dev/stage pair; group stages are projects of the group's.                                                                                                                                                                                                                                              |
 | D13 | The recipe lives in the group repo (in HQ since 2026-10-02: the application's recipe repository, `group`, §10.10) as the published layout (`0 — AI Agent`, `3 — Stage`, `4 — Small Production`, each a whole-project `import.yaml`), never in a code repository; `main` is protected to the group's releasers.                                                                                                |
-| D15 | **The broker holds the only deploy key** and deploys only what protected state allows; workflows orchestrate by calling it. No deploy secret in Gitea or a repository. **Changed by D27:** the broker still decides and still holds every key, but it no longer deploys — a job does, with the environment's key in its memory for one `zcli push`. Superseded 2026-10-02: the broker is retired; deploys of an application's environments move to HQ next. |
-| D16 | Any number of stages per group, each fed by a branch or a mix of branches merged into `env/{name}` by the broker; the default follows `main`; production's source is `release`. Superseded 2026-10-02: the broker's `env/{name}` merges are retired; environments move to HQ next. |
+| D15 | **The broker holds the only deploy key** and deploys only what protected state allows; workflows orchestrate by calling it. No deploy secret in Gitea or a repository. **Changed by D27:** the broker still decides and still holds every key, but it no longer deploys — a job does, with the environment's key in its memory for one `zcli push`. Superseded 2026-10-02: the broker is retired; HQ deploys an application's stages itself, from its own archive of a commit, with the deploy token it keeps (§10.8); production moves to HQ next. |
+| D16 | Any number of stages per group, each fed by a branch or a mix of branches merged into `env/{name}` by the broker; the default follows `main`; production's source is `release`. Superseded 2026-10-02: the broker's `env/{name}` merges are retired; an environment is HQ's record, a stage following `main` (§10.8). |
 | D17 | **No brief.** _New project_ asks for the name and nothing else (the owner, 2026-09-16); a creation's generated hand-off is composed into the composer and never sent by itself.                                                                                                                                                 |
 | D18 | Gitea is made **with the org's first _New project_**, in the same run as the first Mate; nothing happens at sign-up and there is no pool. Superseded 2026-10-02: the org's HQ takes the Gitea project's place, set up by an admin or owner (§10.1). |
 | D19 | The account's Gitea is the only forge Mate drives. Superseded 2026-10-02: the org's HQ is where a Mate delivers (§10.10); a remote of the user's own stays theirs. |
@@ -2037,8 +2055,8 @@ that only the broker deploys to.
 | D22 | **A Gitea serves every app origin** (2026-09-17, the owner: "didn't you just make it use Mate's logged-in user's token?"). Under D21 every browser call carries a bearer in a header and no cookie, so an origin allowlist proves nothing and only pinned a Gitea to the origin that made it. Gitea's `[cors]` and the broker's `POST /person/token` answer `*` (credentials off); the import sends no origin list; one Gitea serves mate.zerops.io, a developer's localhost and the shells. Gitea's own-page sign-in is untouched, its consent page on the origin that made the Gitea (`MATE_APP_URL`, a redirect target). Retired with the Gitea on 2026-10-02. |
 | D23 | **The group repo takes merges from anyone with write, and a Mate's recipe proposal lands by itself** (2026-09-17, the owner, on a first recipe that sat as PR #1 waiting for a releaser: "they all should be able to merge on the import yaml repo"). `main` on the group repo keeps no merge whitelist — the `write` and `release` teams merge — and the broker merges a pull request a registered Mate's bot opened against it on the next pass, nudged by the hook that announces it. What sets the releasers apart is the `v*` tag protection; a person's pull request stays theirs to merge. **Narrowed by D30:** the broker lands a Mate's proposal by itself only when it only adds files, and a Mate proposes only the tiers `main` lacks. **Narrowed by D31:** every registered Mate writes the group repo too, so a person's pull request, like a Mate's change to a file `main` carries, is merged by a person with write or by a Mate its person asks. Superseded 2026-10-02: in HQ a person merges a change, and Core lands a Mate's recipe change by itself when it only adds files and closes one that adds nothing (§10.10). |
 | D24 | **A group's Mates share its service repositories** (2026-09-17, the owner asking for a run that ends with two Mates, a stage and a production, all wired). The AI Agent tier's `buildFromGit` names the same repository for every Mate the recipe creates, and the broker's `POST /mate/repository` answered `409 taken` to every bot but the one that made it, so no second Mate could push. A registered Mate of the group asking for a service repository that exists is made a collaborator with write — its own branch, its own pull requests, `main` behind them; the group repository stays refused by name, made yet or not. An owner's _Add Mate_ registers the Mate at birth, as _New project_ does. **Narrowed by D31:** the refusal stands but no longer keeps a Mate off the group repository — every registered Mate writes it as a collaborator the rights loop makes, and `POST /mate/repository` only refuses to make or join it as a service repository. Holds in HQ: every Mate of an application reaches all of its repositories, each pushing only its own change's branch (§10.10). |
-| D26 | **The Git tab is the Mate's; the project's flow is the left menu's and the projects screen's; Gitea's overview is the footer's** (2026-09-17, the owner: "this seems like git for the whole project, shouldn't it be git for this Mate and have project git somewhere else … the left menu … a list of open PRs of each Mate between mates and the stage/prod", and earlier "at the bar down I imagine a 'gitea' button, where I'll see overview of all repos I have access to and their open PR; in the menu I imagine each group as a timeline: mates, their open PRs, stage, production"). One provider reads every project's flow for the account; a Mate's tab shows its own branch and pull request and nothing of the project's. |
-| D27 | **A job deploys, with `zcli push`; the broker decides and hands over the key** (2026-09-18, the owner reading a tier's `buildFromGit` and then the broker's own upload: "the gitea runner should literally just do zcli push, the whole process must be as standard as possible"). Every deploy of a group environment is a job of the service repository's workflow on the group's runner: it checks the commit out and runs `zcli push` with the tier's setup, so the build's log is the job's log and nothing re-implements zcli. The broker keeps deciding: a push to `main` starts the job by itself; a release, a new environment and the catch-up pass dispatch it (`workflow_dispatch`); the job asks `POST /deploy/grant`, and the broker hands it the environment's **deploy token** only when the job is proved, runs the default branch's workflow, holds exactly the commit protected state wants there, and sits on a runner that has run nothing but such jobs since it was made (§10.8). The token is one per environment — `BASIC_USER` on that project and nothing else — minted by the app as the person who adds the environment and kept as a secret variable on the broker's service: a token cannot mint a token (ledger 2026-09-15), so it cannot be one per job. Production is built from the release's commits; promoting the stage's artifact is gone. Supersedes the second half of D15 and rewrites MB-14. Superseded 2026-10-02: the broker and its jobs are retired; deploys move to HQ next. |
+| D26 | **The Git tab is the Mate's; the project's flow is the left menu's and the projects screen's; Gitea's overview is the footer's** (2026-09-17, the owner: "this seems like git for the whole project, shouldn't it be git for this Mate and have project git somewhere else … the left menu … a list of open PRs of each Mate between mates and the stage/prod", and earlier "at the bar down I imagine a 'gitea' button, where I'll see overview of all repos I have access to and their open PR; in the menu I imagine each group as a timeline: mates, their open PRs, stage, production"). One provider reads every project's flow for the account; a Mate's tab shows its own branch and pull request and nothing of the project's. Since 2026-10-02 the Git tab reads the Mate's change from HQ (§10.11); the footer's Gitea overview is not reconciled here. |
+| D27 | **A job deploys, with `zcli push`; the broker decides and hands over the key** (2026-09-18, the owner reading a tier's `buildFromGit` and then the broker's own upload: "the gitea runner should literally just do zcli push, the whole process must be as standard as possible"). Every deploy of a group environment is a job of the service repository's workflow on the group's runner: it checks the commit out and runs `zcli push` with the tier's setup, so the build's log is the job's log and nothing re-implements zcli. The broker keeps deciding: a push to `main` starts the job by itself; a release, a new environment and the catch-up pass dispatch it (`workflow_dispatch`); the job asks `POST /deploy/grant`, and the broker hands it the environment's **deploy token** only when the job is proved, runs the default branch's workflow, holds exactly the commit protected state wants there, and sits on a runner that has run nothing but such jobs since it was made (§10.8). The token is one per environment — `BASIC_USER` on that project and nothing else — minted by the app as the person who adds the environment and kept as a secret variable on the broker's service: a token cannot mint a token (ledger 2026-09-15), so it cannot be one per job. Production is built from the release's commits; promoting the stage's artifact is gone. Supersedes the second half of D15 and rewrites MB-14. Superseded 2026-10-02: the broker and its jobs are retired; HQ deploys a stage itself, with the environment's deploy token, which no job ever holds (§10.8); production moves to HQ next. |
 | D28 | **A release lists what is merged, and a stage is never what it waits on** (2026-09-18, the owner asking for a second project — "this time we can have just one mate and one prod" — and then, watching Release do nothing while a stage deployed: "I hope that even with stage prod release is not tied to stage in any way"). The candidate is each production service's repository at its default branch, whether or not the group has a stage: a group may be Mates and a production with nothing in between, and one that has a stage has it as a place that runs `main` too, not a gate the tag waits behind. The person's merge is the review, the tag is still the approval, and the broker still deploys only what the tag lists. Holding production until a stage has the commit is said once and explicitly, as `requireOnStage`. The offer shows what pressing it would carry — the commits `main` has that the production is not running, which with squash merges is one line per task. Release moves to HQ next; the decision stands. |
 | D29 | **The UI is built around the flow** (2026-09-23, the owner, after a walk of the projects page as KRLS — 9 of 10 groups said "Nothing needs you here.", the only two things that needed the person, a merge and a release, sat ~4000 px down, the menu and the page disagreed about what one production ran, and "put it on production" sent the Mate into launch-production: "these are extremely important findings the whole UI should be built around"). Every surface draws a project in the one order its code travels — **Mates (each with its preview) → pull requests → `main` → production** — and a group stage as an optional side branch of `main`, drawn only where one exists and never as an empty slot. **Preview** is the stage half of a Mate's own dev/stage pair (§10.10), the one place a change runs before its pull request; **stage** is a group stage project and nothing else. A project has **one next step**, derived by the client and drawn by every surface, never decided by one. The environments and the releases are the person's, on the projects page and — since 2026-09-29 — in the left menu's production chip, whose _Review_ opens the release's review; the Mate's part ends at the pull request and the recipe, and the copy says so where the verb is ("Production is added here, not by the Mate."). A Mate's conversation offers the next step from the project's flow, not from the agent's text, so "dej to na produkci" gets the right button even while the agent's answer is wrong; zcp's launch-production refuses in a wired Mate, so the agent's answer is right too (§10.10). §5.4, §10.11. |
 | D30 | **A Mate's recipe proposal only adds** (2026-09-26: the medusa group's second Mate, which had joined the group's existing repositories, proposed its own composition of every tier over the hand-written ones — project env, secrets and the storage policy dropped, a `mailpit` added, production naming the dev setups — the broker merged it, and the next release built production's storefront with the dev setup, a 502; the first Mate had done the same the day before). Every Mate composes the whole app from its own project, so a proposal over a tier `main` carries is one Mate's view replacing the group's. zcp proposes only the tiers `main` lacks, from a branch cut at `main`'s tip, so its pull request only ever adds files, and closes its bot's proposals once `main` has every tier; the broker merges a Mate's proposal by itself only when every file it changes is added, and one that modifies, removes or renames a file `main` carries waits for a person with write. A tier on `main` changes only through a person's pull request. §10.10. **Narrowed by D31:** a tier on `main` still changes only through a pull request, and a registered Mate may open one and merge it when its person asks; the automation stays additive and withdraws only its own proposals. Holds in HQ: zcp proposes only the tiers `main` lacks as the Mate's change, which only adds, and Core lands it (§10.10). |
@@ -2177,149 +2195,59 @@ primer). `planProjectIsolation` also deletes a key outright from a stage or prod
 that has no container to move it to. The Mate's server reads its
 key from zcp's own env store, captured at first boot (ledger 2026-09-16).
 
-### 10.8 Gitea and the broker
+### 10.8 HQ
 
-**Retiring.** HQ replaces all of this (§10.1): its structure, repositories, changes, merge and the
-recipe's landing are built; environments, their deploy tokens and deploys, and the release move to it
-next. No zcp of 2026-10-02 or later reads the Gitea or asks the broker. Below is how they ran.
+**The project** (§10.1): Core, its Postgres and a volume for the bare repositories, at the
+project's own domain. Only the leading Core answers; a standby, or a Zerops HQ cannot read, answers
+`503` with `Retry-After`, which every caller takes for "try again". Core's API is JSON over HTTP;
+its contracts are the fork's `@t3tools/shared` (`hqChanges`, `hqRecipe`, `mateLink`), and who may do
+what is `zeropsPermissions.ts`'s `can` over the role function (§10.3).
 
-**Made by the app** with the first _New project_: the Gitea project (tagged `mate:tool:gitea`), the
-broker's token `mate-broker` (org `READ_ONLY`, `BASIC_USER` on the Gitea project), the import
-document gitea-mate owns (`import/gitea-project.yaml`, a byte-identical copy in the client asserted
-by `giteaRecipe.test.ts`), placeholders filled: the region, the org and project ids, the app's URL
-(where the consent page of Gitea's own sign-in lives), the broker's token. No origin list: Gitea's
-`[cors]` and the broker's `POST /person/token` answer every origin (D22). The OIDC seed and the
-webhook secret are generated inside the import. The project keeps the platform's default isolation, which is what stops a runner
-job reading Gitea's admin token. `web` builds Gitea from a pinned, checksummed release; `broker` is a
-static `go build`; both from gitea-mate's `main`. Gitea's start script serves only once the `zerops`
-login source exists: the platform re-runs the boot until `admin-init.sh` could add it (the broker's
-secret resolved, its discovery answering), because a Gitea without the source serves nobody and no
-later boot comes by itself (measured 2026-09-17).
+**A Mate's side** (`Authorization: Mate <credential>`, §6.6): its enrollment (`POST
+/api/mate/challenge`, `POST /api/mate/credential`), its own state (`GET /api/mate/self`: its record,
+the application HQ holds it in and that application's name, its changes there); a repository of
+its application, made or joined (`POST /api/mate/repos`); its change in a repository, one open at a
+time (`POST /api/mate/changes`, `PATCH …/:repo/:n`, `POST …/attachments`); a tier of the recipe
+(`GET /api/mate/recipe/:tier`); git over HTTPS at `/git/<appId>/<repo>.git` as the user `mate`,
+which takes a Mate's push only on the branch of its own open change, only forward. §10.10 is what
+zcp does with it.
 
-**The broker** is stateless — no database, cache or queue: the registry, the group repo's `main`,
-the commit statuses it writes and the sha in each app version's name are its state, so a restart is
-safe and the next pass catches up. Its Zerops token reaches the org read-only, the Gitea project,
-every registered Mate's project and every stage and production; since D27 it deploys nothing with
-it and reads with it — the environments' deploy tokens (below) are the deploy keys. Its Gitea
-admin pair arrives by reference from `web`, or from `web`'s variables through the Zerops API when
-the reference has not resolved or Gitea refuses it (v2.1: the broker can boot before Gitea's first
-boot publishes the token).
+**A person's side** (`Authorization: Bearer <session>`, from the door, §10.4): the structure
+(`GET /api/structure`, and its stream over a WebSocket ticket) — applications, the projects attached
+to them as Mates, stages and productions, each application's changes and environments, as the
+reader sees them in Zerops; an application made (`POST /api/apps`) and a project attached (`POST
+/api/apps/:id/projects`); a change read, commented on, merged (`{expectedHead}`, a squash onto `main`
+named `{title} (#{n})`) and closed; a tier of the recipe (`GET /api/apps/:appId/recipe/:tier`).
+Core lands a Mate's recipe change by itself when it only adds files, and closes one that adds
+nothing (§10.10).
 
-Endpoints (`broker-api.md`): `POST /mate/repository` (a Mate, with its bot's Gitea token: a
-service repository in the bot's org, the bot as collaborator, the canonical clone URL); `POST
-/deploy/grant` and `POST /deploy/{id}/result` (a job's token, proven by `GET
-/repos/{claimed}/actions/jobs/{taskId}`, never `GET /repos/{claimed}` alone); `POST /hooks/gitea` (HMAC); `POST /person/token` (a person,
-by a `gitea-signin` throwaway: their Gitea account made true, a token that acts as them — §10.9);
-the OIDC provider (§10.9). No endpoint takes a Zerops key; there is no poke.
+**Environments** (since 2026-10-02). A stage or a production attached to an application is its
+environment, recorded with the attach — named as the attach asks or after its project, following
+`main` (a stage) or `release` (a production), in the order declared — with no pull request. Its
+**deploy token** — `NO_ACCESS` in the org, `BASIC_USER` on the environment's project alone — is
+minted by the client of whoever attaches it (a token cannot mint a token) and handed over with `PUT
+/api/apps/:appId/environments/:name/deploy-token`; HQ keeps it only once Zerops says it reaches
+exactly that project, never answers it back, and the structure says only `keyHeld`, and `keyInvalid`
+once a deploy finds it no longer answers or reaches more. **A stage's deploys** are Core's: when
+`main` moves, every stage following it gets the services its stage tier builds from the repository
+whose `main` moved — the exact commit's archive, its zerops.yaml, the tier's setup, a version named
+`main <7 hex>`, deployed with the environment's own token; a deploy is live only once the service
+runs that commit, and an HTTP service then gets its subdomain. One queue per environment, the newest
+commit winning; a build's own failure is final until a developer's _Run again_ (`POST
+/api/apps/:appId/environments/:name/redeploy`); HQ's own refusals, and a deploy still running after
+20 min, are asked again by the next pass; a catch-up at takeover and every 5 min. A changed tier
+adds what it declares to the environments built from it, and reports, never applies, a change to a
+service the project has. An application's environments and deploys go to whoever reads its
+changes. Live on 2026-10-02 (`mate-rig-a`): the stage deploying 3 s after the merge and live at
+63–81 s, its version `main 48b289b`, its own subdomain answering. Production and the release move
+to HQ next.
 
-**The rights loop** — every `MIRROR_INTERVAL` (3 min), after every sign-in and on webhooks, a pure
-plan then an applier: a Gitea org, teams `read`/`write`/`release` and the group repo (`main`
-taking no direct push and merges from anyone with write, `env/*` the broker's) per registered group;
-membership, admin and restricted flags from the role function; departed people disabled and their
-tokens deleted; one restricted bot per Mate in its group's readers and a collaborator with write on
-its group repo (D31; taken back when the Mate leaves the group, kept by a retired bot), its token
-`mate/{bot}/{n}` — generation n+1 minted when none is live, older generations revoked only once the
-newest is ten minutes old and never on a pass that mints; the Mate's `GITEA_URL`,
-`MATE_BROKER_URL` and `GITEA_TOKEN` written onto its `zcp` service, create or update, never a
-restart (D20); every person's `mate-app/*` token older than
-`APP_TOKEN_TTL` (12 h) retired, never counted against the cap. **A bad or partial read writes nothing**, and a plan that would take away more than
-`MIRROR_CAP` (10) people, tokens or memberships stops and reports.
+### 10.9 A person in HQ
 
-**Deploys** from protected state only: a stage deploys the head of its sources, merged into
-`env/{name}` when there are several (a conflict keeps the last good merge and reports); production
-deploys the commits listed by the newest `v*` tag on the group repo whose pusher had production
-rights when it arrived — recorded as the commit status `mate/release: approved` or `refused`, read
-back from the statuses and never the tag list, so a refused tag stays refused across a restart and a
-`/deploy/grant`; for a bot's tag, the group's switch (D8).
-
-**A job performs every deploy** (D27). The service repository's workflow runs on a push to its
-default branch and on `workflow_dispatch` (inputs `environment`, `service`, `sha`); the broker
-dispatches it, on the default branch, for a release, for an environment that has just been declared
-and for whatever a pass finds behind — once per commit while that commit's status is pending and
-younger than twenty minutes. The job checks the commit out, runs the project's tests and asks `POST
-/deploy/grant` with the sha it holds; a job started by a push names no environment and is granted
-whatever its branch feeds, one environment at a time. The broker answers the environment's deploy
-token, the service's id, the tier's setup and the version's name **only** when, in this order: the job
-is proved; its head is the repository's default branch and not a fork's (a branch's own workflow
-file is unreviewed code and gets nothing); the sha is the one protected state wants there now (an
-older one is `superseded`, no failure); `requireOnStage` is met; nothing younger holds a grant for the
-same commit; the runner is trusted (below); the environment has a token. The job then runs `zcli push
---setup … --version-name … --workspace-state clean` — the commit's tree and nothing a test left in
-the working directory — with the token in that one process's environment and a throwaway `HOME`, and
-reports `POST /deploy/{id}/result`. Versions are named by the sha (production's also by tag and
-tagger); results are commit statuses: `pending` at the grant, `success` or `failure` at the result,
-and a pass that finds the sha live writes `success` for a job that died silent. The platform
-builds, as after any `zcli push`; production is built from the release's commits. When the group
-repo's recipe changes, the delta is imported into each environment of that tier before anything
-deploys there; a changed environment declaration is reported, never applied. The broker never
-executes repository code and no longer moves any; the one `git` it runs merges refs with
-`core.hooksPath=/dev/null`.
-
-**Deploy tokens**: one integration token per stage and production, `deploy-{environment}` —
-`NO_ACCESS` in the org, `BASIC_USER` on the environment's project — minted by the app as the person
-at _Add stage_ / _Add production_ (and by the projects page's repair for an environment that has
-none) and written as the secret variable `MATE_DEPLOY_TOKEN_{hex of the project id}` on the broker's
-service, which the broker reads through the API at every grant. A container reads only its own
-service's variables (ledger 2026-09-16), so no job can; the value reaches a job for the length of one
-`zcli push`. It is long-lived because nothing but a person can mint or regenerate a token; the
-person who made it owns it (the leaver flow replaces it like a Mate's key).
-
-**Runners**: one service per group in the Gitea project, imported from `import/runner.yaml` on the
-group's first `workflow_job`, registered at org scope, woken on `queued` and stopped after
-`RUNNER_QUIET_PERIOD` (15 min), deleted with the group; host mode, zcli installed, no credential at
-rest; labels route jobs and only the registration scope isolates them. **A runner is trusted only
-while it has run nothing but default-branch jobs**: jobs share one container and are root in it, so
-a branch's own workflow could leave a process behind that reads the next job's token. At every
-grant the broker reads the org's runs from Gitea (`GET /orgs/{org}/actions/runs`): a run started
-since the runner service was created whose head is not its repository's default branch, or is a
-fork's, taints the runner — the grant answers `runner_tainted`, the runner is deleted and imported
-afresh by the next queued job, and the pass dispatches the deploy again.
-
-### 10.9 Sign in to Gitea, and Gitea as the person
-
-**Retiring** with the Gitea: a person reaches HQ through its door (§10.4). Below is how it ran.
-
-**Sign-in** (OIDC, the broker as Gitea's only provider): Gitea → the broker's `/oidc/authorize` →
-the app's consent route → a throwaway `gitea-signin:{gitea host}:{nonce}` minted as the person →
-`POST /oidc/complete` (the six-step check of `broker-api.md`: the token's own id, its record read
-from **the receiver's** org, `NO_ACCESS` with no grants and no flags, the name for this Gitea, five
-minutes by the API's clock, an `ACTIVE` creator) → a code → Gitea's callback → `POST /token` → an
-ES256 id token with `sub`, `email`, `groups`. Gitea maps `org:owner` to site admin and
-`g:{slug}:…` to teams at every sign-in; the username is `u-{userId}`, never the e-mail's local part.
-Codes live in memory; a broker restart means signing in again.
-
-**As the person** (D21, mate 0.11.6, gitea-mate v3): the app drives Gitea from the browser with
-a token that acts as the person, so Gitea enforces the mirrored rights on every call. The token
-comes from the broker, not from Gitea's pages: the Git surface, the moment it knows the account's
-Gitea, mints a `gitea-signin` throwaway as the person and calls `POST /person/token`
-(`giteaSession.ts` → `acquireGiteaPersonToken`); the broker checks the throwaway, refuses anyone
-who is not an active member, makes the person's account exist (`u-{id}`, bound to the OIDC source
-with `login_name` = the Zerops user id, no password — measured on 1.27.2), runs one pass of the
-rights loop when it had to create it, and mints the token with the site admin's basic auth
-(`mate-app/{stamp}`, scopes `read:user read:organization write:repository write:issue`).
-
-**The session** is one per account lifetime and Gitea, held in memory and forgotten when the
-account closes (from the fork's slice 0.1); one acquisition per Gitea is in flight, and its mint
-follows §10.4's rules: a verification window that has closed does not hold it up. From slice 0.13 it is a machine (`forge/giteaSession.ts`) whose every wait
-has an exit. A broker answering that Gitea is still setting up is asked again at 5 s rising to 60 s,
-and a broker that does not answer at 10 s rising to 60 s; before each of those mints the client sends
-one credential-less request to the broker origin and mints only when anything answers. A refusal —
-Gitea saying no, answered `424 gitea_refused` with Gitea's words, since the platform's edge
-replaces a `502` with its own page — is shown in Gitea's words and asked again every 5 minutes
-while the tab is visible and a surface wants the session. A `401` on any request re-acquires while
-requests wait up to 10 s and then retry once; a third `401` in 10 minutes refuses with "Gitea keeps
-refusing this sign-in." The token is renewed before the broker's `expiresIn` runs out (at the
-larger of 60 s or a tenth of it) only while a surface wants it, and is otherwise dropped at expiry
-and acquired again on the next want. Facts that depend on the session wait while it is acquired and
-keep their last value through the first two failed acquisitions, then show the cause; a `401` never
-empties them. The rights loop retires the tokens after twelve hours.
-
-Gitea's `[cors]` and the route answer every origin (`*`, credentials off): each call carries a
-bearer and no cookie, so the origin proves nothing, and one Gitea serves mate.zerops.io, a
-developer's localhost and the shells alike (D22; measured on 1.27.2, 2026-09-17). What the app reads
-and does (`giteaClient.ts`): repositories, branches, contents, pull requests and their merge,
-Actions runs, jobs, logs and reruns, commit statuses, tags. The Git tab (§10.11) is where it shows;
-until the session is there it says "Signing you in to Gitea…" and nothing is clickable.
+A person comes into HQ through its door with a throwaway, as into a Mate (§10.4): `mate-door:{HQ
+project id}:{nonce}` at `POST /api/door`, answered with a session for HQ's API, the throwaway deleted
+after. There is no Gitea account and no Gitea sign-in: what the client reads of a Mate's changes —
+the rows, the review's detail, the comments, the pictures — is HQ's, as the person (§5.4, §10.11).
 
 ### 10.10 zcp inside a Mate
 
@@ -2695,39 +2623,49 @@ the pair's own checkout remote, so the release switch (D8) gates nothing an agen
 `buildFromGit` + `zeropsSetup` becomes `startWithoutCode` with the source map kept, because the
 platform cannot clone a private repository and refuses a setup without a source — tag it into the
 group, widen the broker's token with it, and write the declaration (a commit for a releaser, a pull
-request otherwise). _Add Mate_ reads the AI Agent tier the same way.
+request otherwise). _Add Mate_ reads the AI Agent tier the same way. Since 2026-10-02 the three read
+their tier through the organization's official HQ, as the person (`GET
+/api/apps/:appId/recipe/:tier`), keyed by the application: HQ answers present or absent, a tier this
+build finds no service in is unreadable, and the recipe is loading — never absent — until HQ is
+open; a landing of the recipe's proposal reads it again. HQ keeps an application's environments
+itself (§10.8); the client's declaration on the group repo and the broker's grant above are main's,
+and whether the rebuild's _Add stage_ / _Add production_ still write them is not stated by the
+client merges this text was checked against (2026-10-02).
 
 The **Git tab** — a right-panel kind `git` beside `diff`, `browser` and `data` — is the Mate's
 own leg of the project's flow and nothing else (D26): per codebase — the dev half of each pair, or
 the single service a pair grew from (zcp's expansion keeps the dev hostname: `todoapp` with
 `todoappstage`, mate 0.11.12); the stage half is deployed to and never a checkout (0.11.10) — one
 block with the checkout's branch and counts from the Mate server's `subscribeVcsStatus`, and from
-Gitea, as the person, the pull request open from that branch, its checks and the environment that
-takes it on merge; the remote's health from a live `git ls-remote` through the server
-(`ZeropsGitRemoteProbe`); one verb — _Push_, _Update from main_, _Open pull request_, or _Review_,
-which opens the change's review (§5.4), whose _Merge_ merges; the tab merges nothing itself.
+HQ (since 2026-10-02) the Mate's newest change in that repository — its open one, or the one that
+landed last — with its commits from HQ's detail of it; the remote's health from a live `git
+ls-remote` through the server (`ZeropsGitRemoteProbe`); one verb — _Push_, _Update from main_ or
+_Review_, which opens the change's review (§5.4), whose _Merge_ merges; the tab merges nothing
+itself, reads nothing from Gitea, and offers no _Open pull request_: a Mate's push opens its change.
 Checkout actions run as the agent's user for the Mate's owner only. It infers nothing from
 another source.
 
 **Open, for decision: §6 and this tab disagree.** §6.3 keeps a second commit pipeline off on Zerops,
 and §6's "What S3 does not do" says mate never touches a remote and never commits or pushes outside
 a checkpoint ref. This tab's _Update from main_ pulls into the checkout through the Mate server
-(`useVcsPullAction`), and _Open pull request_ — as the _Merge_ of the review its _Review_ opens —
-runs in Gitea as the person; _Push_ is listed above, but the tab renders no Push verb, because the
+(`useVcsPullAction`), and the _Merge_ of the review its _Review_ opens runs in HQ as the person;
+_Push_ is listed above, but the tab renders no Push verb, because the
 push is the agent's. Which rule governs a Mate's own checkout, §6's or this tab's, is undecided;
 neither section changes until it is.
 
 The **project's flow** (`projectFlow.ts`, mate 0.11.16) is read once for the whole account
-(`ZeropsProjectFlowProvider`, every sixty seconds and at once after a verb) and, since D29, drawn
+(`ZeropsProjectFlowProvider`, every sixty seconds and at once after a verb; since 2026-10-02 its
+changes come down HQ's structure stream, never polled, and the Gitea group forge reads only
+releases) and, since D29, drawn
 through `groupFlow` (§5.4) in three places, in the one order: Mates → pull requests → `main` →
 production, a group stage a side branch of `main`. The **left menu** shows each project as its
 heading and its Mates (2026-09-29). On the heading, production is one chip — the release it serves,
 whether it is healthy, what waits to go out — whose menu holds the stages, the public links, what
 waits with _Review_ (the release's review) and, while production is in trouble, the fix; a stage is
 the chip only where the group has no production, and a group with neither has no chip. Under the
-heading the Mates, under each its open code pull requests (zcp's branch `mate/{login}` or the bot
-that opened it says whose; more than three fold behind a count; _Review_ on each, whatever Gitea
-says), a person's own after the Mates. A recipe change is never a Mate's row there. No heading
+heading the Mates, under each its open changes (HQ records which Mate opened each, and only Mates
+open changes; more than three fold behind a count; _Review_ on each). A recipe change — a change in
+the application's recipe repository — is never a Mate's row there. No heading
 carries a dot: a folded project's heading shows the faces of its Mates that need somebody, stopped
 on an error, finished unseen or work.
 The **projects screen** has two views of the same flows, the projects that wait on somebody
@@ -2758,7 +2696,8 @@ with "Production is added here, not by the Mate." as its tooltip, never a row as
 tier. A **Gitea overview**
 (`/gitea`, the footer's Gitea button) lists every repository the person can reach and the pull
 requests open on it, across the account. What an environment runs is the sha in the app version's
-name, read from Zerops; what is open and what was released is Gitea's.
+name, read from Zerops; what is open is HQ's (since 2026-10-02), and what was released is still
+Gitea's. The Gitea overview above is not reconciled with the rebuild.
 
 **Release** (`release.ts`): per service, what the stage runs against what production runs, read in
 the release's review before anything is tagged; its button (_Release v0.1.57_) creates a tag
@@ -2769,7 +2708,7 @@ review, which names the version it goes back to and the tag it makes, and its bu
 v0.1.55_) creates a new tag carrying that release's message verbatim; a tag name is never reused and
 `/deploy` takes no ref. Neither button takes the focus or ⌘↵, and the review follows its tag until
 production runs it — "Released", "Rolled back", or the failure and its fix. Built and unit-tested;
-the first live release is still to run.
+the first live release is still to run. The release moves to HQ next.
 
 ### Invariants
 
@@ -2786,7 +2725,7 @@ the first live release is still to run.
 | MB-9  | A read that fails or comes back partial writes nothing, and a plan over the cap is reported, not applied. gitea-mate `TestAReadThatFailsWritesNothing`, `TestSearchProjectsRefusesAPartialPage`, `TestAPlanOverTheCapIsReportedNotApplied`.                                                                                                                                                         |
 | MB-10 | Production deploys the newest approved tag read from the statuses, a refused tag stays refused on redelivery and after a restart, a release is judged on its pusher, a deploy proves its caller, and the loop catches up. gitea-mate `TestNewestApprovedReadsTheStatusesNotTheTagList`, `TestARefusedTagStaysRefusedAcrossBothPaths`, `TestAReleaseIsJudgedOnItsPusher`, `TestDeployStatusProvesItsCaller`, `TestTheLoopCatchesUp`. Retiring with the broker (2026-10-02): production deploys move to HQ next. |
 | MB-11 | A tier is imported only after conversion, and a release tag carries only full shas. `recipeTierImport.test.ts`; `recipeTier.test.ts`; `release.test.ts` — "drops anything that is not a full sha rather than writing a tag the broker refuses", "round-trips: what it writes is what it reads".                                                                                                    |
-| MB-12 | The Git tab offers one verb per block from the checkout's facts and never answers with the production; an open pull request's verb is _Review_, whatever Gitea says of it — the review, never the tab, merges (§5.4). `gitTab.test.ts` — "a dev pair with no repository yet says so, and offers nothing", "an unpushed branch offers Push, and only Push", "never answers with the production, whose source is a release", "offers the review of an open pull request whatever Gitea says of it (%s)". |
+| MB-12 | The Git tab offers one verb per block from the checkout's facts and never answers with the production; an open pull request's verb is _Review_, whatever Gitea says of it — the review, never the tab, merges (§5.4). `gitTab.test.ts` — "a dev pair with no repository yet says so, and offers nothing", "an unpushed branch offers Push, and only Push", "never answers with the production, whose source is a release", "offers the review of an open pull request whatever Gitea says of it (%s)". Since 2026-10-02 the block reads the Mate's newest change in the repository from HQ, open or landed last, and offers no _Open pull request_: a Mate's push opens its change. |
 | MB-13 | The Gitea import document the app sends is gitea-mate's, byte for byte. `giteaRecipe.test.ts`. Retiring with the Gitea (2026-10-02). |
 | MB-14 | zcp hands its key to no forge and no app container, and writes no workflow into a Mate's repositories in HQ (2026-10-02: the `.gitea` workflow and its refresh are gone; deploys from HQ are HQ's). zcp `workflow_build_integration_citoken_test.go`, `deploy_ssh_test.go`.                                                                                                                                             |
 | MB-16 | The app's Gitea session is acquired from the broker by a throwaway named for that Gitea, once per Gitea however many surfaces ask, kept in memory for one account lifetime and forgotten when the account closes (the fork's slice 0.1). From slice 0.13: a `401` re-acquires, and a third `401` in 10 minutes refuses; a refusal is asked again every 5 minutes while the tab is visible and a surface wants it; "Gitea still setting up" and "broker unreachable" are separate waits, each re-mint preceded by a credential-less request to the broker, and nothing is minted while the broker does not answer; `expiresIn` is honoured and the token renewed only while wanted; dependent facts keep their values through a `401` and show the cause after two failed acquisitions. Refusal retries stay at or under 12 an hour and Gitea mints at or under 4 a minute per tab. `giteaSession.test.ts` — "acquires a token from the broker by throwaway, once, and keeps it for the tab", "sign-out, another person signs in on the same tab: no Gitea request carries the first person's token" (slice 0.1), and until slice 0.13 replaces them, "says what Gitea refused, in Gitea's words, and does not retry it", "names a refusal in the person's terms and does not retry it by itself" and "forgets the session on the first 401 Gitea answers, so the surface acquires again", which pin today's no-retry and forget-on-first-`401` behaviour; `forge/giteaSession.test.ts` (slice 0.13) — the session machine's transition table in the fork's `docs/internals/zerops/client-state-model.md`; `giteaBroker.test.ts` — "asks the broker with the throwaway as the bearer, and keeps what it answers"; gitea-mate `TestAPersonGetsATokenThatActsAsThemAndAnAccountBoundToTheSource`, `TestAPersonWhoIsNotAnActiveMemberGetsNothing`, `TestStaleAppTokensAreRetiredAndNeverCounted`, `TestAGiteaRefusalIsAnsweredInItsWordsNotAsStillSettingUp`. Retiring with the Gitea (2026-10-02): a person reaches HQ through its door (§10.4). |
@@ -2794,9 +2733,9 @@ the first live release is still to run.
 | MB-19 | A recipe pull request a registered Mate's bot opened on the group repo is merged by the rights loop when every file it changes is added — one that modifies, removes or renames a file `main` carries waits for a person with write, who merges it or asks a Mate to (D30, D31) — and nobody else's is; `main` on the group repo keeps no merge whitelist and takes no direct push. Every registered Mate's bot is a collaborator with write on the group repo from the pass that makes it, a Mate registered before D31 from its next pass with no token minted; a bot whose Mate leaves the group loses it, and a deleted Mate's bot keeps it, retired (D31). gitea-mate `TestAMatesRecipePullRequestIsMergedAndNobodyElses`, `TestAMatesRecipePullRequestIsMergedByThePass`, `TestAMatesRecipePullRequestNudgesTheLoop`, `TestAMatesRecipeMergesOnlyWhenItAddsFiles`, `TestAMatesRecipeThatRewritesATierWaitsForAPerson`, `TestGroupRepoProtections`, `TestEveryRegisteredMateWritesItsGroupRepo`, `TestPlanBuildsAGroupFromNothing`, `TestPassBuildsAndThenChangesNothing`, `TestAMateServedBeforeD31WritesItsGroupRepoOnTheNextPass`, `TestABotWhoseMateLeftTheGroupLosesItsWriteOnTheGroupRepo`, `TestAProjectMissingFromSearchAndNotFoundTwiceIsExcludedAndItsBotRetired`, `TestCollaborators`. Superseded 2026-10-02: in HQ Core lands a Mate's recipe change by itself when it only adds files, a person merges one that changes a file, and Core closes one that adds nothing; live 2026-10-02, `group` #1 landed by Core right after the adopt pass proposed it. |
 | MB-20 | A re-read of the inventory keeps what the reads hold: no published state loses a member or goes back to unread, and the page paints from the list already read. `runtime.test.ts` "re-reads an organization's inventory on a fresh receiver and keeps what it holds"; `ZeropsProjectsPage.test.ts` "keeps an empty organization's invitation up while its list is re-read". |
 | MB-21 | A tier reads whatever its indentation, and a `buildFromGit` that opens an item converts to `startWithoutCode` with its dash kept; the import's project block is rewritten at the recipe's own indentation, one mapping. `recipeTier.test.ts` "reads four-space items and converts a build that opens its item", "replaces the name at the block's own indentation and keeps the rest of the block". |
-| MB-22 | The Git tab's _Open pull request_ runs in Gitea as the person, onto the repository's default branch the block carries, and its _Review_ opens the change's review, whose _Merge_ runs in Gitea as the person; the forge is read again once the verb settles. `gitTab.test.ts` "carries the repository's default branch, main until Gitea says"; `ZeropsReviewDoors.test.tsx` "every door opens the review and never acts itself (R1)". |
+| MB-22 | The Git tab's _Open pull request_ runs in Gitea as the person, onto the repository's default branch the block carries, and its _Review_ opens the change's review, whose _Merge_ runs in Gitea as the person; the forge is read again once the verb settles. `gitTab.test.ts` "carries the repository's default branch, main until Gitea says"; `ZeropsReviewDoors.test.tsx` "every door opens the review and never acts itself (R1)". Superseded 2026-10-02: there is no _Open pull request_, and the review's _Merge_ and _Close without merging_ run in HQ as the person, offered by HQ's rule; HQ's stream brings the change back, nothing is read again (§5.4). |
 | MB-23 | A stage and a production run no agent unless the person says so; only a dev environment is a Mate by default. `createEnvironment.test.ts` "gives $role an agent". |
-| MB-24 | A new birth carries its own group writes — the registry, the broker's grant, the deploy token, the declaration — as its `tags` and `registry` steps (§4.4), so an organization switch, leaving the page or a reload after create-accepted never strands them. A stage or a production half-made by a birth on another device or by an older build is finished by an account worker acting only on complete known inputs (the fork's slice 4.7; until then the projects page finishes it on its next read). Either way the declaration write declares nothing twice and reuses a branch or request an earlier attempt left. `zeropsBirths.host.test.tsx` "org switch after create-accepted still finishes tags and registry"; `groupEnvironments.test.ts` "halfMadeGroupEnvironments"; `addGroupEnvironment.test.ts` "declares nothing twice…", "reuses the branch it left…", "reuses the request it left…". |
+| MB-24 | A new birth carries its own group writes — the registry, the broker's grant, the deploy token, the declaration — as its `tags` and `registry` steps (§4.4), so an organization switch, leaving the page or a reload after create-accepted never strands them. A stage or a production half-made by a birth on another device or by an older build is finished by an account worker acting only on complete known inputs (the fork's slice 4.7; until then the projects page finishes it on its next read). Either way the declaration write declares nothing twice and reuses a branch or request an earlier attempt left. `zeropsBirths.host.test.tsx` "org switch after create-accepted still finishes tags and registry"; `groupEnvironments.test.ts` "halfMadeGroupEnvironments"; `addGroupEnvironment.test.ts` "declares nothing twice…", "reuses the branch it left…", "reuses the request it left…". Not reconciled with the rebuild: the registry, the broker's grant and the declaration are main's; the client merges this text was checked against (2026-10-02) say nothing of the birth's steps. |
 | MB-25 | A second registered Mate asking for a service repository of its group joins it with write, and `POST /mate/repository` refuses the group repository whether it exists or not — it makes and joins service repositories, and a registered Mate's write on the group repository is the rights loop's (D31), which the refusal says without sending the Mate to a fork; an owner's _Add Mate_ registers the Mate with the two writes the card's _Register in {group}_ makes, as its birth's first steps, and a Mate made from the recipe is sent to the group's code on Gitea. gitea-mate `TestASecondMateJoinsAServiceRepositoryOfItsGroup`, `TestRepositoryRefusals`; `brokerGrant.test.ts` "registerMateInGroup"; `creationHandoff.test.ts` "sends a Mate made from the recipe to the group's code on Gitea". Superseded 2026-10-02: in HQ a Mate's `POST /api/mate/repos` makes or joins the application's repository of that name, and zcp never asks for `group` on a pair's behalf (§10.10). |
 | MB-26 | A deploy onto a wired pair's stage half commits, opens the change and pushes it with nothing asked of the agent; a dependency directory nobody ignored stops the commit; a change is opened only for a checkout ahead of `main` once `main` is taken in, and HEAD is pushed to its branch `mate/<project id>/<n>`, never to `main`; a push to HQ watches for no build and offers no integration; a wired pair's direct deploys are never redirected; a group's stage and production build the stage half's setup — the one a deploy of the stage half recorded, else the one setup the pair's zerops.yaml declares beside the dev one, else its only setup — and a tier that would build a stage setup nothing names is withheld until one does, never given the dev setup (a joining Mate records no stage setup, and production built the dev loop's `zsc noop`, 2026-09-26); the delivery brings the repository's workflow file to the one this zcp writes, a file naming that deploy action left as it is, and gives a change still called `Mate: {hostname}` the task's words; it takes `main` in before it pushes, by merge and never by rebase, so a second Mate stays mergeable after the first lands, and a collision only a person can settle leaves the checkout whole and is named. HQ merges a change by **squash**: its title is the task, so `main` is one commit per task delivered. A squash shares no history with the branch that became it, so before the take-`main`-in merge runs, a delivery first absorbs its OWN change's landing — the squash (`mergedSha`) and the head it squashed (`landedHead`), read fresh from the Mate's state in HQ — as a real merge, never a rebase, never a force, proven lossless by `git merge-tree --write-tree` first, or — whenever that fast path fails for any reason — a portable plumbing fallback (a real 3-way merge into a TEMPORARY index), accepted only on an exact tree match; the conflict handler is a brace group (`|| { …; exit 4; }`), never a nested subshell (live-reproduced and fixed 2026-09-23); unprovable falls through to the ordinary merge unchanged but marked, and a genuine conflict on either merge aborts and is named — the absorb's own S^1 conflict under its own marker, because the recovery differs: proven lossless, `merge S^1`, resolve and commit, then `merge -s ours S`, then take `main` in; unprovable, the same first step but a PLAIN `merge S`. Uncommitted changes touching what the S^1 merge would touch are checked first and marked with their own marker, so silence never reads as "no conflict"; the fix is to commit first. A pass that learns of the merge also folds it into a clean checkout on the Mate's own branch right away, and the write that records or clears a change's outcome is guarded against a concurrent pass having moved the pair onto a newer change. A wired pair's `strategy="git-push"` to HQ absorbs and takes `main` in the same way before it pushes to its change, and a genuine conflict there blocks the push and is reported. zcp `TestAStageDeployOfAWiredPairDeliversItself`, `TestAStageDeployAbsorbsTheMatesOwnMergedChange`, `TestAStageDeployWithNothingBeyondMainOpensNoChange`, `TestADeliveryRefusedByItsGitSaysWhatToDo`, `TestGitPushToHQ_DeliversCommittedWorkAsTheChange`, `TestGitPushToHQ_ABranchOfItsOwnIsRefused`, `TestBuildDeliveryCommand_CommitsTheDeployedTreeAndSaysHowFarAhead`, `TestBuildDeliveryCommand_TakesMainInBeforeAnythingIsPushed`, `TestBuildDeliveryCommand_AbsorbsASquashLanding`, `TestBuildDeliveryCommand_AbsorbsASquashLanding_AColleaguesWorkSurvives`, `TestBuildDeliveryCommand_UnprovableLandingFallsThroughToTheOrdinaryMerge`, `TestBuildDeliveryCommand_ARealConflictAfterTheAbsorbedLandingStillAborts`, `TestBuildDeliveryCommand_ARealS1ConflictAbortsTheWholeChain`, `TestBuildDeliverySyncCommand_ARealS1ConflictAbortsCleanly`, `TestBuildAbsorbLandedChangeCommand_FallsBackToPortablePlumbingWhenMergeTreeFails`, `TestBuildAbsorbLandedChangeCommand_UncommittedChangesBlockTheMerge`, `TestBuildGroupRecipe_GroupEnvironmentsBuildTheStageHalfsSetup`, `TestBuildGroupRecipe_StageSetup_ResolvedOrWithheld`, `TestComposeGroupRecipeInputs_JoinerWithoutStageSetup_BuildsTheYAMLsOtherSetup`. |
 | MB-27 | A second Mate joins its group's service repository and works from `main` (live, 2026-09-17); a recipe pull request is opened only for a branch ahead of `main`, and one Gitea calls empty is closed by the broker, never retried; a job's deploy takes a tier's name for the group's only environment of that tier; _Add Mate_ begins the Mate's birth — its registration and its hand-off — as soon as the project exists, a failed later step included. zcp `TestGroupRecipe_OpensNothingMainAlreadyHas` (in HQ: a landed proposal leaves nothing to open); gitea-mate `TestAnEmptyRecipePullRequestIsClosedNotRetried`, `TestDeployTakesATiersNameForItsOnlyEnvironment`; `brokerGrant.test.ts` "registerMateInGroup"; ledger _The whole chain through the UI, from a wiped org_. |
@@ -2806,8 +2745,8 @@ the first live release is still to run.
 | MB-33 | A Mate proposes only the recipe tiers `main` of the application's recipe repository in HQ lacks (D30): a tier directory `main` has any file in is left whole, the group's first recipe lands whole, a top-level file `main` has is never proposed. The proposal is the Mate's own change in `group`, titled exactly "Mate: the group's import files" with no description, its branch `main`'s tree with the missing files written over it, so it only adds; it moves forward only — a changed composition on its head, with `main` as a second parent once `main` moved — and one `main` has overtaken is brought to `main`'s tree and adds nothing. A group whose `main` has every tier gets no change opened, and the agent's `group-recipe` answers that `main` already carries every tier. Every `buildFromGit` is the pair's repository in HQ. zcp `TestMissing_ATierTheRepositoryHas_IsLeftWhole`, `TestGroupRecipe_ProposedAsTheMatesChange`, `TestGroupRecipe_ProposesOnlyWhatMainLacks`, `TestGroupRecipe_FollowsTheProjectOnTheSameChange`, `TestGroupRecipe_MainMovedUnderAnOpenProposal`, `TestGroupRecipe_AProposalMainOvertookAddsNothing`, `TestGroupRecipe_OpensNothingMainAlreadyHas`, `TestHandleGroupRecipe_Table`. |
 | MB-34 | A Mate's description of its change is its change's body in HQ: set on the pair's open change — on record or named by the Mate's state, never opened by describing — kept on the pair while none is open or HQ does not answer and put on the one the pair reaches next, and never put on a change it was not written for (one that merged or closed first is named to the Mate and nothing is kept; words kept for a change that is gone are dropped); every delivery or push that leaves a change open asks for it. The pictures it names are the Mate's own kept screenshots, attached to the change once each and published as `<img alt width height src>` at HQ's address; a picture not kept is refused before anything is written, and one HQ will not keep writes nothing and keeps the words. A wired pair's push credential is brought to the enrollment's before a delivery, a git-push or a pending finish, and a credential refusal marks the pair, which heals once a fresh session authenticates. zcp `TestDescribeChange`, `TestDescribeChange_KeptWordsGoOntoTheNextChange`, `TestDescribeChange_Refusals`, `TestWorkflowTool_DescribeChangeReachesItsHandler`, `TestDescribeChange_Pictures`, `TestKeepBrowserPicture`, `TestADeliveryBringsTheCredentialToTheCurrentOne`. |
 | MB-35 | A new Mate stands up from its application's AI Agent tier, read from HQ, in one call (D32): every pair built from the application's repositories in HQ is read by zcp's naming, not its setups' names, adopted as the adopt route records it with the tier's setups, checked out onto the Mate's branch from the repository the tier names (never one HQ would have to make), and deployed every dev half at once, the first call answering once they stand with the stages queued, and on the second call each stage from its dev half once what its build reads stands (with no reads, every stage above it by priority); a stage never called for stays `READY_TO_DEPLOY` — with nothing committed, pushed or proposed; the runtimes the browser is still importing are waited for, bounded; a refusal before anything is touched names the adopt route, a pair that fails stops alone with the model's next step and holds only the halves whose builds read it, which say what they waited for, and a second call skips what is done. Registered in a Mate only, and a Mate's AGENTS.md sends "Stand up development of the project." to it first. zcp `TestStandup_StandsUpEveryPairFromTheRecipe`, `TestStandupAfter_EveryDevHalfStartsAtOnce`, `TestStandupReads_FromTheRecipe`, `TestStandupReads_EveryRouteTheWriterCounts`, `TestStandup_ReturnsOnceDevelopmentIsUp`, `TestStandup_ASecondCallContinuesAndSkipsWhatIsDone`, `TestStandup_TheModelIsTheBackup`, `TestStandup_WaitsForTheRuntimesTheBrowserIsImporting`, `TestParseMateTier`, `TestParseMateTier_PairsOnlyRepositoriesOfThisApplication`, `TestParseRecipeImportShape_RolesFollowTheHostnameConvention`, `TestAdoptPair_RecordsWhatTheAdoptRouteRecords`, `TestServer_StandupToolGating`, `TestBuildAgentsMD_Container_StandUpRoutesToTheTool`; integration `TestStandup_OverMCP_AMateInNoApplicationIsRefusedAndNothingIsTouched`. |
-| MB-28 | A pull request belongs to the Mate whose branch it is (zcp's `mate/{login}`) or whose bot opened it, a person's own is listed after the Mates and never dropped, a group repo's is a recipe change whoever opened it, and a roll-back is offered only to an earlier approved release, its _Roll back to this_ opening the roll back's review. `projectFlow.test.ts` — "whose pull request it is", "puts each Mate's under it, newest first, and the rest after the Mates", "is a recipe change on the group repo, whoever opened it"; `release.test.ts` — "a release's row"; `ZeropsReviewDoors.test.tsx` — "Roll back to this opens the roll back's review, from the row pressed"; `SidebarZeropsTree.test.tsx` "the project's flow under it"; `ZeropsGitPanel.test.tsx` "is this Mate's repositories and nothing of the project's". |
-| MB-29 | A deploy token reaches a job only when the job is proved, runs the default branch's workflow from the repository itself, holds the commit protected state wants on that environment, and its runner has run nothing but such jobs since it was made; a superseded or already-live commit gets no token and no failure; the job pushes the commit's tree (`--workspace-state clean`), never the working directory. gitea-mate `internal/server/deploy_test.go`, `internal/pipeline/grant_test.go`, `internal/pipeline/runner_test.go`, `actions/deploy` script test; zcp `workflow_build_integration_test.go`. Retiring with the broker (2026-10-02): deploy tokens move to HQ next. |
+| MB-28 | A pull request belongs to the Mate whose branch it is (zcp's `mate/{login}`) or whose bot opened it, a person's own is listed after the Mates and never dropped, a group repo's is a recipe change whoever opened it, and a roll-back is offered only to an earlier approved release, its _Roll back to this_ opening the roll back's review. `projectFlow.test.ts` — "whose pull request it is", "puts each Mate's under it, newest first, and the rest after the Mates", "is a recipe change on the group repo, whoever opened it"; `release.test.ts` — "a release's row"; `ZeropsReviewDoors.test.tsx` — "Roll back to this opens the roll back's review, from the row pressed"; `SidebarZeropsTree.test.tsx` "the project's flow under it"; `ZeropsGitPanel.test.tsx` "is this Mate's repositories and nothing of the project's". Since 2026-10-02 a change in HQ is the Mate's that opened it (only Mates open changes), and a change in the application's recipe repository is a recipe change (`RECIPE_REPO`), the proposal known by zcp's exact title. |
+| MB-29 | A deploy token reaches a job only when the job is proved, runs the default branch's workflow from the repository itself, holds the commit protected state wants on that environment, and its runner has run nothing but such jobs since it was made; a superseded or already-live commit gets no token and no failure; the job pushes the commit's tree (`--workspace-state clean`), never the working directory. gitea-mate `internal/server/deploy_test.go`, `internal/pipeline/grant_test.go`, `internal/pipeline/runner_test.go`, `actions/deploy` script test; zcp `workflow_build_integration_test.go`. Superseded 2026-10-02: HQ keeps an environment's deploy token and deploys with it itself; no job holds one (§10.8). |
 | MB-17 | A Gitea and its broker answer every browser origin, since every call carries a bearer and no cookie: the import sends no origin list and `POST /person/token` answers `*`. `giteaRecipe.test.ts` — "sends no origin list: a Gitea answers every origin, since every call carries a bearer"; gitea-mate `TestGiteaProjectImportCarriesNoOriginList`, `TestPersonTokenAnswersEveryOrigin`. Retiring with the Gitea (2026-10-02). |
 | MB-15 | Live: from an emptied org, one _New project_ yields Gitea, the registry, a Mate on its lowered key, and the three variables delivered by the loop with nothing restarted; a merge deploys a stage through the webhook. Ledger 2026-09-16 _The backbone's first live run_, _A real Mate through the backbone_; 2026-09-17 _D20 driven end to end_. History: the Gitea backbone's live runs. |
 
