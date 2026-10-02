@@ -224,6 +224,10 @@ func giteaReconcileSSH() *containerSSHStub {
 			if strings.Contains(cmd, "cur_email=$(git config user.email)") {
 				return []byte("ZCP_EMAIL_SEEDED\nZCP_NAME_SEEDED\n"), nil
 			}
+			// A fresh checkout carries no workflow: the read prints nothing.
+			if strings.Contains(cmd, "cat ") && strings.Contains(cmd, giteaWorkflowFilePath) {
+				return nil, nil
+			}
 			return []byte("ok"), nil
 		},
 	}

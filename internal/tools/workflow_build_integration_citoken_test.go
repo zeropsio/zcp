@@ -2,9 +2,11 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -133,6 +135,58 @@ func TestActionsConfirm_GiteaRemote_EmitsBrokerWorkflow(t *testing.T) {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("gitea confirm must not carry %q: %s", forbidden, body)
 		}
+	}
+}
+
+// TestActionsConfirm_GiteaRemote_SetsUpTheServicesRuntime — the workflow the
+// confirm hands the agent is the one wiring writes: it sets up the pair's dev
+// half's runtime before the Test step, so the agent fills the step in with a
+// command the runner can run (run 5's N2). Asked by the stage hostname it is
+// still the dev half's: a pair whose halves differ in type (a Node dev, a
+// static stage) would otherwise hand the agent a file without the setup, and
+// writing it would take the setup out of the repository.
+func TestActionsConfirm_GiteaRemote_SetsUpTheServicesRuntime(t *testing.T) {
+	t.Parallel()
+	const giteaURL = "https://gitea.example.test"
+	for _, service := range []string{"api", "apistage"} {
+		t.Run(service, func(t *testing.T) {
+			t.Parallel()
+			stateDir := t.TempDir()
+			if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+				Hostname:         "api",
+				Mode:             topology.PlanModeStandard,
+				StageHostname:    "apistage",
+				GitPushState:     topology.GitPushConfigured,
+				RemoteURL:        giteaURL + "/acme/api",
+				BootstrapSession: "test",
+				BootstrappedAt:   "2026-09-16",
+			}); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+			client := platform.NewMock().WithServices([]platform.ServiceStack{
+				{ID: "svc-api", Name: "api", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+				{ID: "svc-apistage", Name: "apistage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "static@1.0"}},
+			})
+
+			result, _, _ := handleBuildIntegration(context.Background(), client, nil, "p1", WorkflowInput{
+				Service:     service,
+				Integration: string(topology.BuildIntegrationActions),
+			}, stateDir, runtime.Info{InContainer: true, GitHostKnown: true, GiteaURL: giteaURL})
+			if result.IsError {
+				t.Fatalf("expected declared, got error: %s", getTextContent(t, result))
+			}
+			var body struct {
+				WorkflowFile struct {
+					Content string `json:"content"`
+				} `json:"workflowFile"`
+			}
+			if err := json.Unmarshal([]byte(getTextContent(t, result)), &body); err != nil {
+				t.Fatalf("the confirm is not JSON: %v", err)
+			}
+			if want := giteaWorkflowYAML("nodejs@22"); body.WorkflowFile.Content != want {
+				t.Errorf("the confirm's workflow is not the one for the dev half's runtime:\n%s\nwant:\n%s", body.WorkflowFile.Content, want)
+			}
+		})
 	}
 }
 
