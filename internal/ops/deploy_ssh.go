@@ -497,7 +497,7 @@ func deployFromCommitPrep(
 
 // versionNameFor is the --version-name a zcp-driven working-tree build
 // passes (GF-10, docs/spec-workflows.md §12.6), the name the platform keeps
-// on the app version and the Mate app and the broker read back: a label and
+// on the app version and the Mate app and HQ read back: a label and
 // the commit's short sha, exactly two tokens — "main 7e2d4c1". The label is
 // the branch HEAD is on, or "HEAD" when it is on none (detached; a branch
 // name with whitespace, which git refuses anyway, counts as none) — git

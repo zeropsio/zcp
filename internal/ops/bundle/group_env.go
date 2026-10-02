@@ -14,8 +14,8 @@ import (
 //
 // The recipe composes unattended — a reconcile, with nobody to classify a
 // variable the way the export and launch flows ask the agent to — and what it
-// writes lands in a repository the whole group reads, merged by the broker
-// without a person when the proposal only adds files. So the composer decides
+// writes lands in a repository the whole group reads, landed by Core without
+// a person when the proposal only adds files. So the composer decides
 // every variable itself, and it fails closed: a value is written as it is
 // only when nothing says secret and the value has a config shape.
 //

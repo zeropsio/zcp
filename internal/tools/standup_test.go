@@ -619,7 +619,7 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 	if body.Envelope == nil {
 		t.Error("the stand-up changes the project; its answer carries the envelope")
 	}
-	// The group's own environments are the broker's: only the Mate's tier
+	// The group's own environments are HQ's: only the Mate's tier
 	// is read, never the stage's or production's.
 	if f.hq.tierReads != 2 {
 		t.Errorf("the tier was read %d times over two calls, want once a call", f.hq.tierReads)
@@ -657,7 +657,7 @@ func TestStandup_ASecondCallContinuesAndSkipsWhatIsDone(t *testing.T) {
 		t.Fatalf("second call: %s", getTextContent(t, result))
 	}
 	if len(f.hq.asked) != asked || len(f.ssh.pushes()) != pushes {
-		t.Errorf("a second call asked the broker %d more times and deployed %d more times", len(f.hq.asked)-asked, len(f.ssh.pushes())-pushes)
+		t.Errorf("a second call asked HQ %d more times and deployed %d more times", len(f.hq.asked)-asked, len(f.ssh.pushes())-pushes)
 	}
 	dev := body.service(t, "medusadev")
 	if dev.Adopted != standupAlready || dev.Wired != standupAlready || dev.Deploy == nil || dev.Deploy.Status != standupAlreadyDeployed {

@@ -56,8 +56,8 @@ type GroupRuntime struct {
 	StageHostname string
 	// ServiceType is the platform type tag, e.g. "nodejs@22".
 	ServiceType string
-	// RepoURL is the service repository's canonical clone URL — the one the
-	// broker returned for this pair (A1, recorded on ServiceMeta.RemoteURL).
+	// RepoURL is the pair's repository in HQ, the address its buildFromGit
+	// names (hq.RepoURLAt).
 	RepoURL string
 	// SetupName is the `setup:` block the dev half resolves at build time.
 	SetupName string
@@ -216,7 +216,7 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 		case strings.TrimSpace(r.ServiceType) == "":
 			return recipe.Layout{}, nil, fmt.Errorf("group recipe %q: runtime %q: ServiceType required", inputs.Name, r.DevHostname)
 		case strings.TrimSpace(r.RepoURL) == "":
-			return recipe.Layout{}, nil, fmt.Errorf("group recipe %q: runtime %q: RepoURL required (chain to the broker's repository call)", inputs.Name, r.DevHostname)
+			return recipe.Layout{}, nil, fmt.Errorf("group recipe %q: runtime %q: RepoURL required (the pair's repository in HQ)", inputs.Name, r.DevHostname)
 		case strings.TrimSpace(r.SetupName) == "":
 			return recipe.Layout{}, nil, fmt.Errorf("group recipe %q: runtime %q: SetupName required", inputs.Name, r.DevHostname)
 		}
@@ -735,8 +735,8 @@ func groupTierProjectName(inputs GroupRecipeInputs, policy groupTierPolicy) stri
 
 // GroupPromotedHostname strips the pair's mode suffix: `apidev`/`apistage` →
 // `api`. A shared environment has one runtime per app, not a pair — and it is
-// the name a pair's workflow asks the broker to deploy (measured 2026-09-17:
-// a workflow naming `appdev` asked a stage whose runtime is `app`).
+// the name a stage's or production's runtime has (measured 2026-09-17: a
+// deploy naming `appdev` asked a stage whose runtime is `app`).
 func GroupPromotedHostname(hostname string) string {
 	for _, suffix := range []string{"-dev", "-stage", "stage", "dev"} {
 		if trimmed, ok := strings.CutSuffix(hostname, suffix); ok && trimmed != "" {
