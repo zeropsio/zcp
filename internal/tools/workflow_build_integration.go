@@ -408,7 +408,11 @@ const giteaWorkflowFilePath = ".gitea/workflows/zerops.yml"
 // the head of a stage's source, what an approved release tag lists for
 // production — and the action runs `zcli push` with it. No key is ever in the
 // workflow, the repository or Gitea.
-const giteaBrokerDeployAction = "zeropsio/gitea-mate/actions/deploy@v4"
+const giteaBrokerDeployAction = giteaBrokerDeployActionPath + "@v4"
+
+// giteaBrokerDeployActionPath is the deploy action without its version: a
+// workflow naming it at any version deploys through the broker.
+const giteaBrokerDeployActionPath = "zeropsio/gitea-mate/actions/deploy"
 
 // giteaConfirmResponse builds the confirm body for a remote on the account's
 // own Gitea (guide 2.3 + 5.4). It is deliberately much smaller than the

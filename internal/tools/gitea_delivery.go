@@ -450,30 +450,96 @@ func giteaAbsorbBeforePush(
 // earlier zcp kept that zcp's workflow for good (2026-09-18: two Mates still
 // naming the broker's old deploy action after D27, and nothing that would ever
 // change it). Every delivery passes through here, and its commit carries the
-// file.
-//
-// zcp owns the triggers and the deploy step; the project owns its Test step. So
-// a file that already names this zcp's deploy action is left exactly as it is
-// — whatever a person or the agent made of it — and one that does not is
-// written again with its own Test step kept, behind the setup of the pair's
-// runtime (its type is read only then, never for a file that is current). Best-effort: a delivery without it
-// still lands the code, and the next one tries again.
+// file. What it may rewrite is giteaWorkflowReplacement's to say, the same
+// rule wiring follows. Best-effort: a delivery without it still lands the
+// code, and the next one tries again.
 func refreshGiteaWorkflow(ctx context.Context, client platform.Client, sshDeployer ops.SSHDeployer, projectID, hostname string) {
 	existing, err := sshDeployer.ExecSSH(ctx, hostname,
 		ops.BuildReadRepoFileCommand(giteaPairWorkingDir, giteaWorkflowFilePath))
-	if err != nil || giteaWorkflowCurrent(string(existing)) {
+	if err != nil {
+		return
+	}
+	body, ok := giteaWorkflowReplacement(ctx, client, projectID, hostname, string(existing))
+	if !ok {
 		return
 	}
 	_, _ = sshDeployer.ExecSSH(ctx, hostname, ops.BuildWriteRepoFileCommand(
-		giteaPairWorkingDir, giteaWorkflowFilePath, giteaWorkflowKeepingTests(string(existing), giteaServiceType(ctx, client, projectID, hostname)),
-	))
+		giteaPairWorkingDir, giteaWorkflowFilePath, body))
 }
 
-// giteaWorkflowCurrent reports whether a workflow deploys through the action
-// this zcp writes.
-func giteaWorkflowCurrent(workflow string) bool {
-	return strings.Contains(workflow, "uses: "+giteaBrokerDeployAction)
+// giteaWorkflowReplacement is what zcp writes over a pair's workflow, read as
+// existing ("" when there is none), and false when the file is the project's
+// and stays exactly as it is. zcp owns the triggers, the setup and the deploy
+// step; the project owns its Test step and anything it changed. So zcp writes
+// only:
+//   - where there is no file;
+//   - over the untouched file an earlier zcp wrote — the one every group
+//     wired before the runtime setup carries, byte for byte — which is still
+//     zcp's own and gains the setup (run 5's N2: a Mate joining such a group
+//     filled the Test step in with `npm test` and failed with exit 127);
+//   - over a file naming an earlier version of the broker's deploy action,
+//     with that file's own Test step kept.
+//
+// Everything else stays as it is: a file naming this zcp's action, whatever a
+// person or the agent made of it, and a workflow of the project's own that
+// does not deploy through the broker at all. The pair's type is read only
+// when a file is about to be written.
+func giteaWorkflowReplacement(ctx context.Context, client platform.Client, projectID, hostname, existing string) (string, bool) {
+	switch {
+	case strings.TrimSpace(existing) == "", existing == giteaWorkflowBeforeRuntimeSetup:
+		return giteaWorkflowYAML(giteaServiceType(ctx, client, projectID, hostname)), true
+	case strings.Contains(existing, giteaBrokerDeployActionPath+"@") && !strings.Contains(existing, "uses: "+giteaBrokerDeployAction):
+		return giteaWorkflowKeepingTests(existing, giteaServiceType(ctx, client, projectID, hostname)), true
+	}
+	return "", false
 }
+
+// giteaWorkflowBeforeRuntimeSetup is the workflow zcp wrote from D27 until the
+// runtime setup, byte for byte. Frozen here for one comparison only: a file
+// that is exactly this was never touched by the project, so it is still zcp's
+// and is brought up to the setup (giteaWorkflowReplacement). Never edit it — a
+// changed byte means no live repository matches it any more.
+const giteaWorkflowBeforeRuntimeSetup = `name: Zerops deploy
+on:
+  push:
+    branches: [main]
+  # The account's broker starts this for a release, for a new environment and
+  # for whatever falls behind; the inputs say what for.
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: The environment to deploy. Empty deploys whatever this branch feeds.
+        required: false
+        default: ""
+      service:
+        description: The service of that environment. Empty deploys every one this repository builds.
+        required: false
+        default: ""
+      sha:
+        description: The commit to deploy. Empty deploys the branch's head.
+        required: false
+        default: ""
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+      - name: Test
+        # Replace with this project's own test command; the deploy step
+        # below runs only if this one passes.
+        run: echo "no test command configured"
+      - name: Deploy with zcli push
+        # The job asks the account's broker, which hands it the environment's
+        # deploy token only for the commit protected state wants there, and
+        # only to the default branch's workflow. No secret and no Zerops key
+        # anywhere in this file or this repository.
+        uses: zeropsio/gitea-mate/actions/deploy@v4
+        with:
+          environment: ${{ inputs.environment }}
+          service: ${{ inputs.service }}
+`
 
 // giteaWorkflowKeepingTests is this zcp's workflow with the Test step of the
 // one it replaces — the one part of the file that is the project's own. A file

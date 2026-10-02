@@ -859,6 +859,30 @@ func TestADeliveryBringsTheWorkflowToThisZcps(t *testing.T) {
 			want:      []string{"uses: actions/setup-node@v4\n        with:\n          node-version: \"22\"\n      - name: Test\n        # The project's own."},
 		},
 		{
+			name: "the untouched pre-setup file zcp wrote is upgraded with the pair's runtime", existing: giteaWorkflowAsZcpWroteIt,
+			services: []platform.ServiceStack{{
+				ID: "svc-appdev", Name: "appdev",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+			}},
+			wantWrite: true,
+			want:      []string{"- name: Set up Node.js\n", "uses: " + giteaBrokerDeployAction},
+		},
+		{
+			name:     "the pre-setup file with its Test step filled in is the project's",
+			existing: strings.Replace(giteaWorkflowAsZcpWroteIt, `run: echo "no test command configured"`, "run: npm ci && npm test", 1),
+			services: []platform.ServiceStack{{
+				ID: "svc-appdev", Name: "appdev",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+			}},
+		},
+		{
+			name: "a hand-written workflow that does not deploy through the broker is the project's", existing: giteaHandWrittenWorkflow,
+			services: []platform.ServiceStack{{
+				ID: "svc-appdev", Name: "appdev",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+			}},
+		},
+		{
 			name: "a missing file is written", existing: "",
 			wantWrite: true,
 			want:      []string{"uses: " + giteaBrokerDeployAction, "no test command configured"},

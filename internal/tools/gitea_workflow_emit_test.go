@@ -328,6 +328,63 @@ jobs:
         uses: zeropsio/gitea-mate/actions/deploy@v4
 `
 
+// giteaWorkflowAsZcpWroteIt is the workflow every zcp from D27 until the
+// runtime setup wrote, byte for byte — what every live group's repository
+// carries. A copy of its own, so a drift of the frozen one in the code shows.
+const giteaWorkflowAsZcpWroteIt = `name: Zerops deploy
+on:
+  push:
+    branches: [main]
+  # The account's broker starts this for a release, for a new environment and
+  # for whatever falls behind; the inputs say what for.
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: The environment to deploy. Empty deploys whatever this branch feeds.
+        required: false
+        default: ""
+      service:
+        description: The service of that environment. Empty deploys every one this repository builds.
+        required: false
+        default: ""
+      sha:
+        description: The commit to deploy. Empty deploys the branch's head.
+        required: false
+        default: ""
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+      - name: Test
+        # Replace with this project's own test command; the deploy step
+        # below runs only if this one passes.
+        run: echo "no test command configured"
+      - name: Deploy with zcli push
+        # The job asks the account's broker, which hands it the environment's
+        # deploy token only for the commit protected state wants there, and
+        # only to the default branch's workflow. No secret and no Zerops key
+        # anywhere in this file or this repository.
+        uses: zeropsio/gitea-mate/actions/deploy@v4
+        with:
+          environment: ${{ inputs.environment }}
+          service: ${{ inputs.service }}
+`
+
+// giteaHandWrittenWorkflow is a project's own workflow that does not deploy
+// through the broker at all.
+const giteaHandWrittenWorkflow = `name: CI
+on: [push]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make test
+`
+
 // TestReconcileGiteaRepositories_WiringWritesTheWorkflowOnlyWhereItIsNotCurrent
 // — wiring reads what the pair's checkout already carries before it writes. A
 // pair adopted from the group's recipe checks main out, workflow included, and
@@ -344,12 +401,14 @@ func TestReconcileGiteaRepositories_WiringWritesTheWorkflowOnlyWhereItIsNotCurre
 	// The search index has not caught the import's type up yet.
 	laggingSearch := []platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}}
 	tests := []struct {
-		name      string
-		existing  string
-		client    *platform.Mock
-		wantWrite bool
-		want      []string
-		wantNot   []string
+		name       string
+		existing   string
+		readErr    error
+		client     *platform.Mock
+		wantWrite  bool
+		want       []string
+		wantNot    []string
+		wantReport string
 	}{
 		{
 			name: "a current file is the project's", existing: giteaCurrentFilledInWorkflow,
@@ -373,6 +432,34 @@ func TestReconcileGiteaRepositories_WiringWritesTheWorkflowOnlyWhereItIsNotCurre
 			wantNot:   []string{"- name: Set up"},
 		},
 		{
+			// Every live group carries it: untouched, it is still zcp's own,
+			// and a Mate joining the group gets the setup (run 5's N2).
+			name: "the untouched pre-setup file zcp wrote is upgraded", existing: giteaWorkflowAsZcpWroteIt,
+			client:    platform.NewMock().WithServices(laggingSearch).WithServicesDirect(nodeDev),
+			wantWrite: true,
+			want:      []string{"- name: Set up Node.js\n", "\n        uses: actions/setup-node@v4\n", "uses: " + giteaBrokerDeployAction},
+		},
+		{
+			name:     "the pre-setup file with its Test step filled in is the project's",
+			existing: strings.Replace(giteaWorkflowAsZcpWroteIt, `run: echo "no test command configured"`, `run: echo "no test command configurex"`, 1),
+			client:   platform.NewMock().WithServices(laggingSearch).WithServicesDirect(nodeDev),
+		},
+		{
+			name: "the pre-setup file with a setup step added is the project's",
+			existing: strings.Replace(giteaWorkflowAsZcpWroteIt, "      - name: Test\n",
+				"      - uses: actions/setup-node@v4\n      - name: Test\n", 1),
+			client: platform.NewMock().WithServices(laggingSearch).WithServicesDirect(nodeDev),
+		},
+		{
+			name: "a hand-written workflow that does not deploy through the broker is the project's", existing: giteaHandWrittenWorkflow,
+			client: platform.NewMock().WithServices(laggingSearch).WithServicesDirect(nodeDev),
+		},
+		{
+			name: "a file that cannot be read is not written", readErr: errors.New("connection reset"),
+			client:     platform.NewMock().WithServices(laggingSearch).WithServicesDirect(nodeDev),
+			wantReport: "could not be read",
+		},
+		{
 			name: "an earlier zcp's file is replaced, its Test step kept", existing: oldGiteaWorkflow,
 			client:    platform.NewMock().WithServices(laggingSearch).WithServicesDirect(nodeDev),
 			wantWrite: true,
@@ -390,12 +477,12 @@ func TestReconcileGiteaRepositories_WiringWritesTheWorkflowOnlyWhereItIsNotCurre
 			healthy := ssh.dispatch
 			ssh.dispatch = func(cmd string) ([]byte, error) {
 				if strings.Contains(cmd, "cat ") && strings.Contains(cmd, giteaWorkflowFilePath) {
-					return []byte(tt.existing), nil
+					return []byte(tt.existing), tt.readErr
 				}
 				return healthy(cmd)
 			}
 
-			reconcileGiteaRepositories(
+			report := reconcileGiteaRepositories(
 				context.Background(), tt.client, srv.Client(), ssh,
 				runtime.Info{InContainer: true, ProjectID: "p1"}, stateDir,
 				writeLiveEnvFile(t, map[string]string{
@@ -411,6 +498,13 @@ func TestReconcileGiteaRepositories_WiringWritesTheWorkflowOnlyWhereItIsNotCurre
 			}
 			if (written != "") != tt.wantWrite {
 				t.Fatalf("workflow written = %v, want %v:\n%s", written != "", tt.wantWrite, written)
+			}
+			// The type is read only to write: a file left alone costs no list.
+			if n := tt.client.CallCounts["ListServicesDirect"]; !tt.wantWrite && n != 0 {
+				t.Errorf("no workflow was written, yet the services were listed directly %d times", n)
+			}
+			if tt.wantReport != "" && !strings.Contains(strings.Join(report, "\n"), tt.wantReport) {
+				t.Errorf("the pass's report misses %q:\n%s", tt.wantReport, strings.Join(report, "\n"))
 			}
 			for _, want := range tt.want {
 				if !strings.Contains(written, want) {

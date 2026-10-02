@@ -419,24 +419,20 @@ func wireGiteaPair(
 	// than fatal: a pair whose container refused the write still has its
 	// repository, and the next pass writes it again.
 	//
-	// A file that already deploys through this zcp's action is the
-	// project's, exactly as refreshGiteaWorkflow treats it: a pair adopted
+	// What may be written over a file the checkout already carries is
+	// giteaWorkflowReplacement's to say, as on every delivery: a pair adopted
 	// from the group's recipe has main checked out, workflow included, and
 	// the first delivery's `git add -A` would commit any rewrite of it — a
 	// filled-in Test step reverted to the no-op, a setup step swapped for
-	// another. Only a missing or earlier file is written, keeping its Test
-	// step.
+	// another, a workflow of the project's own replaced.
 	workflowNote := ""
 	existing, readErr := sshDeployer.ExecSSH(ctx, m.Hostname,
 		ops.BuildReadRepoFileCommand(giteaPairWorkingDir, giteaWorkflowFilePath))
-	switch {
-	case readErr != nil:
+	if readErr != nil {
 		workflowNote = fmt.Sprintf("; %s could not be read (%v) — nothing deploys the group's stage until it is there", giteaWorkflowFilePath, readErr)
-	case giteaWorkflowCurrent(string(existing)):
-	default:
+	} else if body, write := giteaWorkflowReplacement(ctx, client, rt.ProjectID, m.Hostname, string(existing)); write {
 		if _, emitErr := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildWriteRepoFileCommand(
-			giteaPairWorkingDir, giteaWorkflowFilePath,
-			giteaWorkflowKeepingTests(string(existing), giteaServiceType(ctx, client, rt.ProjectID, m.Hostname)),
+			giteaPairWorkingDir, giteaWorkflowFilePath, body,
 		)); emitErr != nil {
 			workflowNote = fmt.Sprintf("; %s could not be written (%v) — nothing deploys the group's stage until it is there", giteaWorkflowFilePath, emitErr)
 		}

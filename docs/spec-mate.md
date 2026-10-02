@@ -2299,10 +2299,13 @@ builds expect the hosted runners' `/opt/hostedtoolcache`) and PHP (installed thr
 releases it lists) get a Test step whose comment says no setup action works and shows what does — the
 distribution's packages, at the distribution's version, or the language's own installer — and a type
 zcp cannot read or has no word on gets the general rule: a setup action that downloads a `.tar.gz`
-build works, anything else comes from the distribution's packages or the language's own installer. Wiring writes the file only where it is missing or names an earlier
-deploy action, its Test step kept; a file that names this zcp's is the project's, never rewritten
+build works, anything else comes from the distribution's packages or the language's own installer. Wiring and every delivery write the file only where it is missing, is exactly the untouched file an
+earlier zcp wrote (which gains the setup), or names an earlier version of the broker's deploy action
+(its Test step kept); a file naming this zcp's action, whatever was made of it, and a workflow of the
+project's own that does not deploy through the broker are the project's, never rewritten
 (`TestGiteaWorkflowYAML_SetsUpTheServicesRuntime`,
-`TestReconcileGiteaRepositories_WiringWritesTheWorkflowOnlyWhereItIsNotCurrent`). zcp's own key is never
+`TestReconcileGiteaRepositories_WiringWritesTheWorkflowOnlyWhereItIsNotCurrent`,
+`TestADeliveryBringsTheWorkflowToThisZcps`). zcp's own key is never
 handed out: no `ZCP_API_KEY` in a build-integration secret, `GITEA_TOKEN` masked on every value
 dump, the one `zcli push` of a self-deploy given the key through its environment and never
 `zcli login`. A Mate joining from the recipe has its parts and no live proof: _Add Mate_ imports
