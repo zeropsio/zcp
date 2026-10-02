@@ -453,8 +453,9 @@ type importResponse struct {
 	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`
 }
 
-// overrideRecipeSteer asks steer once per service the override replaced and
-// keeps what it said.
+// overrideRecipeSteer asks steer once per service the override replaced
+// whose every process finished — a failed or canceled change landed nothing
+// — and keeps what it said.
 func overrideRecipeSteer(ctx context.Context, steer GroupRecipeSteer, result *ops.ImportResult) []string {
 	var lines, asked []string
 	for _, p := range result.Processes {
@@ -462,6 +463,12 @@ func overrideRecipeSteer(ctx context.Context, steer GroupRecipeSteer, result *op
 			continue
 		}
 		asked = append(asked, p.Service)
+		landed := !slices.ContainsFunc(result.Processes, func(q ops.ImportProcessOutput) bool {
+			return q.Service == p.Service && q.Status != platform.ProcessStatusFinished
+		})
+		if !landed {
+			continue
+		}
 		if line := steer(ctx, p.Service); line != "" {
 			lines = append(lines, line)
 		}

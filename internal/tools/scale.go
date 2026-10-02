@@ -101,7 +101,9 @@ func RegisterScale(srv *mcp.Server, client platform.Client, projectID string, st
 			result.NextActions = "Scaling did not confirm within the poll window — verify with zerops_discover; the change may still be applying."
 		} else {
 			result.NextActions = nextActionScaleSuccess
-			if steer != nil {
+			// Only a change that landed is the recipe's business: a failed or
+			// canceled process changed nothing.
+			if steer != nil && result.Process != nil && result.Process.Status == platform.ProcessStatusFinished {
 				resp.GroupRecipe = steer(ctx, input.ServiceHostname)
 			}
 		}

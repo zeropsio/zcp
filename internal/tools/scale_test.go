@@ -192,27 +192,31 @@ func TestScaleTool_EmptyServiceHostname(t *testing.T) {
 // TestScaleTool_SteersTheGroupRecipe: once a Mate's scale change lands, the
 // answer carries the group recipe's steer — what the recipe on main writes
 // differently and the call that proposes it — and nothing when the recipe
-// would not change or the scale did not land.
+// would not change or the scale did not land — refused, or its process
+// failed or was canceled.
 func TestScaleTool_SteersTheGroupRecipe(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name      string
 		steer     string
 		failScale bool
+		process   string
 		want      string
 		wantAsked bool
 	}{
-		{"the recipe differs", "The group recipe on acme/group@main still writes api differently", false, "The group recipe on acme/group@main still writes api differently", true},
-		{"the recipe already says it", "", false, "", true},
-		{"the scale failed", "never asked", true, "", false},
+		{"the recipe differs", "The group recipe on acme/group@main still writes api differently", false, statusFinished, "The group recipe on acme/group@main still writes api differently", true},
+		{"the recipe already says it", "", false, statusFinished, "", true},
+		{"the scale failed", "never asked", true, statusFinished, "", false},
+		{"the scale's process failed", "never asked", false, platform.ProcessStatusFailed, "", false},
+		{"the scale's process was canceled", "never asked", false, platform.ProcessStatusCanceled, "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			mock := platform.NewMock().
 				WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api", Mode: "NON_HA"}}).
-				WithAutoscalingProcess(&platform.Process{ID: "proc-scale-1", ActionName: "scale", Status: statusFinished}).
-				WithProcess(&platform.Process{ID: "proc-scale-1", ActionName: "scale", Status: statusFinished})
+				WithAutoscalingProcess(&platform.Process{ID: "proc-scale-1", ActionName: "scale", Status: tt.process}).
+				WithProcess(&platform.Process{ID: "proc-scale-1", ActionName: "scale", Status: tt.process})
 			if tt.failScale {
 				mock.WithError("SetAutoscaling", platform.NewPlatformError(platform.ErrAPIError, "refused", ""))
 			}
