@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -230,22 +231,31 @@ func TestGroupRecipeScaling_ProposesFromMainsHeadEveryTierFresh(t *testing.T) {
 // additive one never write over each other — the one that finds the other
 // open leaves it as it is and says which.
 func TestGroupRecipeScaling_OneOpenChangeInTheRecipeRepository(t *testing.T) {
-	t.Run("the additive reconcile leaves a scaling proposal alone", func(t *testing.T) {
-		lab := newScalingLab(t)
-		if answer, text := lab.proposeScaling(scalingRecipeClient(4, 1), "search"); answer == nil || answer.Change != 2 {
-			t.Fatalf("scaling proposal = %s", text)
-		}
-		head := lab.hq.recipeHead(recipeBranch(2))
+	// The open change's title comes with the Mate's state; an HQ from before
+	// titles answers it only when asked to open one.
+	for _, untitled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("the additive reconcile leaves a scaling proposal alone (HQ without titles: %v)", untitled), func(t *testing.T) {
+			lab := newScalingLab(t)
+			if answer, text := lab.proposeScaling(scalingRecipeClient(4, 1), "search"); answer == nil || answer.Change != 2 {
+				t.Fatalf("scaling proposal = %s", text)
+			}
+			lab.hq.setUntitled(untitled)
+			head := lab.hq.recipeHead(recipeBranch(2))
+			opens := lab.hq.callCount("POST /api/mate/changes")
 
-		outcome := lab.proposeRecipe(scalingRecipeClient(4, 1))
+			outcome := lab.proposeRecipe(scalingRecipeClient(4, 1))
 
-		if lab.hq.recipeHead(recipeBranch(2)) != head || outcome.Committed {
-			t.Errorf("the additive reconcile wrote over the scaling proposal: %+v", outcome)
-		}
-		if change := lab.hq.changeIn(hq.RecipeRepo, 2); change.Title != scalingTitle {
-			t.Errorf("change #2 retitled %q", change.Title)
-		}
-	})
+			if lab.hq.recipeHead(recipeBranch(2)) != head || outcome.Committed {
+				t.Errorf("the additive reconcile wrote over the scaling proposal: %+v", outcome)
+			}
+			if change := lab.hq.changeIn(hq.RecipeRepo, 2); change.Title != scalingTitle {
+				t.Errorf("change #2 retitled %q", change.Title)
+			}
+			if asked := lab.hq.callCount("POST /api/mate/changes") - opens; asked != map[bool]int{false: 0, true: 1}[untitled] {
+				t.Errorf("the reconcile asked HQ to open a change %d times", asked)
+			}
+		})
+	}
 	t.Run("a scaling proposal waits for the open additive one", func(t *testing.T) {
 		// main carries only the Stage tier, which names search, so the
 		// additive proposal of the other tiers is open.

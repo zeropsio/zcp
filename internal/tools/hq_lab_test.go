@@ -59,8 +59,10 @@ type fakeHQ struct {
 	unavailable int
 	standbyOn   func(*http.Request) bool
 	// down: HQ does not answer at all — every connection is dropped.
-	down  bool
-	calls []string
+	down bool
+	// untitled: HQ from before the Mate's state named its changes' titles.
+	untitled bool
+	calls    []string
 }
 
 func newFakeHQ(t *testing.T) *fakeHQ {
@@ -251,7 +253,11 @@ func (f *fakeHQ) self(ctx context.Context) map[string]any {
 		if c.State == hq.ChangeOpen {
 			head = f.branchHead(ctx, c.AppID, c.Repo, c.Number)
 		}
-		mine = append(mine, hq.MateChange{Repo: c.Repo, Number: c.Number, State: c.State, Head: head, MergedSha: c.MergedSha, LandedHead: c.LandedHead})
+		change := hq.MateChange{Repo: c.Repo, Number: c.Number, State: c.State, Head: head, MergedSha: c.MergedSha, LandedHead: c.LandedHead}
+		if !f.untitled {
+			change.Title = &c.Title
+		}
+		mine = append(mine, change)
 	}
 	slices.SortFunc(mine, func(a, b hq.MateChange) int {
 		if a.Repo != b.Repo {
@@ -382,6 +388,27 @@ func (f *fakeHQ) moveMate(app string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.appID = app
+}
+
+// setUntitled makes HQ one from before a change's title came with the Mate's
+// state.
+func (f *fakeHQ) setUntitled(untitled bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.untitled = untitled
+}
+
+// callCount is how many times HQ was called as call, "METHOD /path".
+func (f *fakeHQ) callCount(call string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, c := range f.calls {
+		if c == call {
+			n++
+		}
+	}
+	return n
 }
 
 // standby makes the next n requests on matches meet a standby — any request,

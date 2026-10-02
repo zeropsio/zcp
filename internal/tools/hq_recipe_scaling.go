@@ -202,9 +202,9 @@ func handleGroupRecipeScaling(
 	if written.other != nil && len(changed) > 0 {
 		return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
 			fmt.Sprintf("The scaling proposal was not made: this Mate's change #%d in the recipe repository %q (%q) is open, and HQ keeps one open change per Mate per repository.",
-				written.other.Number, hq.RecipeRepo, written.other.Title),
-			fmt.Sprintf("Retry once change #%d is merged or closed (%s).", written.other.Number,
-				comp.hqc.ChangeURL(comp.appID, hq.RecipeRepo, written.other.Number))), WithRecoveryStatus()), nil, nil
+				written.other.number, hq.RecipeRepo, written.other.title),
+			fmt.Sprintf("Retry once change #%d is merged or closed (%s).", written.other.number,
+				comp.hqc.ChangeURL(comp.appID, hq.RecipeRepo, written.other.number))), WithRecoveryStatus()), nil, nil
 	}
 	if written.number != 0 {
 		result["change"] = written.number

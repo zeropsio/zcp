@@ -32,8 +32,11 @@ type MateState struct {
 
 // MateChange is one of the Mate's own changes, as it reads its outcome.
 type MateChange struct {
-	Repo       string  `json:"repo"`
-	Number     int     `json:"number"`
+	Repo   string `json:"repo"`
+	Number int    `json:"number"`
+	// Title is the change's title; nil from an HQ older than titles in the
+	// Mate's state.
+	Title      *string `json:"title"`
 	State      string  `json:"state"`
 	Head       *string `json:"head"`
 	MergedSha  *string `json:"mergedSha"`

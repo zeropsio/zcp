@@ -154,7 +154,7 @@ func groupRecipeOutcome(
 		outcome.Change, outcome.ChangeURL = 0, ""
 		if !outcome.OnMain {
 			outcome.Line = fmt.Sprintf("what main of the recipe repository %q lacks (%s) waits for this Mate's change #%d there (%q) to be merged or closed: HQ keeps one open change per Mate per repository",
-				hq.RecipeRepo, strings.Join(outcome.Proposed, ", "), written.other.Number, written.other.Title)
+				hq.RecipeRepo, strings.Join(outcome.Proposed, ", "), written.other.number, written.other.title)
 		}
 		return outcome
 	}
@@ -281,7 +281,14 @@ type recipeWrite struct {
 	number  int
 	created bool
 	pushed  bool
-	other   *hq.Change
+	other   *otherRecipeChange
+}
+
+// otherRecipeChange is the Mate's open change in the recipe repository that
+// a write is not for: its number and its title.
+type otherRecipeChange struct {
+	number int
+	title  string
 }
 
 // recipeFiles answers what a proposal writes over main's tree, path to body,
@@ -329,18 +336,12 @@ func writeRecipeChange(ctx context.Context, hqc hq.Client, appID string, open *h
 		return recipeWrite{}, nil
 	}
 
-	// HQ answers the Mate's open change rather than opening a second one,
-	// so asking is how a write learns whether the open one is its own.
-	opened, err := hqc.OpenChange(ctx, hq.RecipeRepo, title)
-	if err != nil {
-		return recipeWrite{}, fmt.Errorf("could not open the Mate's change in the recipe repository %q (%w)", hq.RecipeRepo, err)
+	write, err := ownRecipeChange(ctx, hqc, open, title)
+	if err != nil || write.other != nil {
+		return write, err
 	}
-	if !opened.Created && opened.Change.Title != title {
-		return recipeWrite{other: &opened.Change}, nil
-	}
-	write := recipeWrite{number: opened.Change.Number, created: opened.Created}
 	head := ""
-	if !opened.Created {
+	if !write.created {
 		if head, _, err = scratch.Fetch(ctx, hqc.ChangeBranch(write.number)); err != nil {
 			return recipeWrite{}, fmt.Errorf("could not read change #%d of the recipe repository %q (%w)", write.number, hq.RecipeRepo, err)
 		}
@@ -362,6 +363,32 @@ func writeRecipeChange(ctx context.Context, hqc hq.Client, appID string, open *h
 	}
 	write.pushed = true
 	return write, nil
+}
+
+// ownRecipeChange is the Mate's change titled title in the recipe repository
+// a write goes on: open, the Mate's open change there, when its title is
+// title; opened when none is open; and the open one as the other change when
+// its title is another.
+func ownRecipeChange(ctx context.Context, hqc hq.Client, open *hq.MateChange, title string) (recipeWrite, error) {
+	if open != nil && open.Title != nil {
+		if *open.Title != title {
+			return recipeWrite{other: &otherRecipeChange{number: open.Number, title: *open.Title}}, nil
+		}
+		return recipeWrite{number: open.Number}, nil
+	}
+	// No open change, or an HQ whose state names no title: HQ updates are
+	// deferred, so a Mate meets an HQ from before titles for a while. HQ
+	// answers the Mate's open change rather than opening a second one, so
+	// asking to open is how such a write learns whether the open one is its
+	// own.
+	opened, err := hqc.OpenChange(ctx, hq.RecipeRepo, title)
+	if err != nil {
+		return recipeWrite{}, fmt.Errorf("could not open the Mate's change in the recipe repository %q (%w)", hq.RecipeRepo, err)
+	}
+	if !opened.Created && opened.Change.Title != title {
+		return recipeWrite{other: &otherRecipeChange{number: opened.Change.Number, title: opened.Change.Title}}, nil
+	}
+	return recipeWrite{number: opened.Change.Number, created: opened.Created}, nil
 }
 
 // recipeParents are the parents of the commit that brings the change's
