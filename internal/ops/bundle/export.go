@@ -80,6 +80,10 @@ func BuildExport(
 // Returns a warning when the snapshot is nil (scaling unreadable) so the silent
 // revert-to-defaults the omission used to cause is now visible. Launch reuses
 // this then applies its named production transforms (see launch.go).
+// platformDefaultMinFreeRAMGB is the free-memory buffer the platform keeps
+// when none is set (64 MB).
+const platformDefaultMinFreeRAMGB = 0.0625
+
 func projectScaling(entry map[string]any, s *Scaling) string {
 	if s == nil {
 		return "scaling shape unread from the live service — the re-import will use platform defaults for containers/CPU/RAM/disk"
@@ -111,6 +115,14 @@ func projectScaling(entry map[string]any, s *Scaling) string {
 	}
 	if s.MaxDisk > 0 {
 		va["maxDisk"] = s.MaxDisk
+	}
+	// The platform's own default buffer would only write noise into every
+	// service; a buffer someone set is how the service runs.
+	if s.MinFreeRAMGB > 0 && s.MinFreeRAMGB != platformDefaultMinFreeRAMGB {
+		va["minFreeRamGB"] = s.MinFreeRAMGB
+	}
+	if s.MinFreeRAMPercent > 0 {
+		va["minFreeRamPercent"] = s.MinFreeRAMPercent
 	}
 	if len(va) > 0 {
 		entry["verticalAutoscaling"] = va

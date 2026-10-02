@@ -47,6 +47,9 @@ func scalingFromStack(detail *platform.ServiceStack) *bundle.Scaling {
 		MinDisk:       a.MinDisk,
 		MaxDisk:       a.MaxDisk,
 		CPUMode:       a.CPUMode,
+
+		MinFreeRAMGB:      a.MinFreeRAMGB,
+		MinFreeRAMPercent: a.MinFreeRAMPercent,
 	}
 }
 

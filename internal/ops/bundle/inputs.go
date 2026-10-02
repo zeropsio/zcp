@@ -65,6 +65,11 @@ type Scaling struct {
 	MaxRAM        float64
 	MinDisk       float64
 	MaxDisk       float64
+	// MinFreeRAMGB / MinFreeRAMPercent are the free-memory buffer the service
+	// keeps before it scales up — what lets a memory spike land before the
+	// autoscaler reacts.
+	MinFreeRAMGB      float64
+	MinFreeRAMPercent float64
 	// CPUMode is the live SHARED/DEDICATED setting. Carried so export reproduces
 	// it (a DEDICATED service must not silently revert to SHARED on re-import)
 	// and launch can warn when its DEDICATED prod policy overrides a SHARED source.
