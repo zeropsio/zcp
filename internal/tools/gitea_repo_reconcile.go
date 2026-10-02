@@ -420,7 +420,7 @@ func wireGiteaPair(
 	// repository, and the next pass writes it again.
 	workflowNote := ""
 	if _, emitErr := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildWriteRepoFileCommand(
-		giteaPairWorkingDir, giteaWorkflowFilePath, giteaWorkflowYAML(),
+		giteaPairWorkingDir, giteaWorkflowFilePath, giteaWorkflowYAML(""),
 	)); emitErr != nil {
 		workflowNote = fmt.Sprintf("; %s could not be written (%v) — nothing deploys the group's stage until it is there", giteaWorkflowFilePath, emitErr)
 	}

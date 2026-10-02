@@ -300,7 +300,7 @@ func actionsConfirmResponse(
 	// nothing else about the GitHub track applies to it: no repo secret to
 	// set, no Zerops token to convey, no zcli to install, no `gh` to run.
 	if topology.ClassifyGitHost(meta.RemoteURL, rt.GiteaURL) == topology.GitHostGitea {
-		return giteaConfirmResponse(hostname, meta, stateDir, repoDriftWarning)
+		return giteaConfirmResponse(hostname, "", meta, stateDir, repoDriftWarning)
 	}
 
 	serviceID := actionsLookupServiceID(ctx, client, projectID, buildHost)
@@ -422,7 +422,7 @@ const giteaBrokerDeployAction = "zeropsio/gitea-mate/actions/deploy@v4"
 // confusion measured on a live Mate, which read the group's pipeline as the
 // route to its own stage and declared that half unreachable.
 func giteaConfirmResponse(
-	hostname string,
+	hostname, serviceType string,
 	meta *workflow.ServiceMeta,
 	stateDir, repoDriftWarning string,
 ) *mcp.CallToolResult {
@@ -438,7 +438,7 @@ func giteaConfirmResponse(
 			"path":        giteaWorkflowFilePath,
 			"variant":     "gitea-broker-deploy",
 			"description": "Runs on the group's runner: it checks the commit out, runs the tests and deploys with `zcli push`. No repository secret and no Zerops credential in the file — the job proves itself to the account's broker with its own token, which dies when the job ends, and the broker hands it the environment's deploy token for that one push, only to the default branch's workflow and only for the commit protected state wants.",
-			"content":     giteaWorkflowYAML(),
+			"content":     giteaWorkflowYAML(serviceType),
 		},
 		"deploysWhat": fmt.Sprintf(
 			"Whatever this repository's default branch feeds in the group's environments — for this pair, the %q service of the group's stage, another Zerops project. NOT this Mate's own stage half: promotion inside this project stays a ZCP deploy.",
@@ -462,7 +462,7 @@ func giteaConfirmResponse(
 // push` through the broker's action. It names no environment of its own: a
 // push's job deploys whatever its branch feeds, and a dispatched one is told.
 // There is no credential for the workflow to get wrong or to leak.
-func giteaWorkflowYAML() string {
+func giteaWorkflowYAML(serviceType string) string {
 	return fmt.Sprintf(`name: Zerops deploy
 on:
   push:

@@ -853,7 +853,7 @@ func TestADeliveryBringsTheWorkflowToThisZcps(t *testing.T) {
 		},
 		{
 			name:      "a file that names this zcp's deploy action is the project's, whatever else it says",
-			existing:  strings.Replace(giteaWorkflowYAML(), `run: echo "no test command configured"`, "run: make test", 1) + "# a person's note\n",
+			existing:  strings.Replace(giteaWorkflowYAML(""), `run: echo "no test command configured"`, "run: make test", 1) + "# a person's note\n",
 			wantWrite: false,
 		},
 	}

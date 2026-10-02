@@ -464,7 +464,7 @@ func refreshGiteaWorkflow(ctx context.Context, sshDeployer ops.SSHDeployer, host
 		return
 	}
 	_, _ = sshDeployer.ExecSSH(ctx, hostname, ops.BuildWriteRepoFileCommand(
-		giteaPairWorkingDir, giteaWorkflowFilePath, giteaWorkflowKeepingTests(string(existing)),
+		giteaPairWorkingDir, giteaWorkflowFilePath, giteaWorkflowKeepingTests(string(existing), ""),
 	))
 }
 
@@ -477,8 +477,8 @@ func giteaWorkflowCurrent(workflow string) bool {
 // giteaWorkflowKeepingTests is this zcp's workflow with the Test step of the
 // one it replaces — the one part of the file that is the project's own. A file
 // with no such step, or one laid out differently, gets the template's.
-func giteaWorkflowKeepingTests(existing string) string {
-	fresh := giteaWorkflowYAML()
+func giteaWorkflowKeepingTests(existing, serviceType string) string {
+	fresh := giteaWorkflowYAML(serviceType)
 	kept, template := giteaWorkflowStep(existing, giteaWorkflowTestStep), giteaWorkflowStep(fresh, giteaWorkflowTestStep)
 	if kept == "" || template == "" {
 		return fresh
