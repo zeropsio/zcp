@@ -172,6 +172,7 @@ type changeFilesBody struct {
 		Operation string `json:"operation"`
 		Path      string `json:"path"`
 		Content   string `json:"content"`
+		SHA       string `json:"sha"`
 	} `json:"files"`
 }
 
@@ -268,28 +269,7 @@ func (f *fakeGitea) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// POST /repos/{o}/{r}/contents
 	case r.Method == http.MethodPost && strings.HasSuffix(path, "/contents"):
-		repo := strings.TrimSuffix(strings.TrimPrefix(path, "repos/"), "/contents")
-		var body changeFilesBody
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			write(http.StatusBadRequest, map[string]string{"message": err.Error()})
-			return
-		}
-		target := body.Branch
-		if body.NewBranch != "" {
-			f.seed(repo, body.NewBranch, maps2(f.files[repo][body.Branch]))
-			target = body.NewBranch
-		}
-		files := f.files[repo][target]
-		for _, file := range body.Files {
-			_, exists := files[file.Path]
-			if (file.Operation == "create") == exists {
-				write(http.StatusUnprocessableEntity, map[string]string{
-					"message": fmt.Sprintf("operation %q on path %q (exists=%v)", file.Operation, file.Path, exists)})
-				return
-			}
-			files[file.Path] = decodeB64(f.t, file.Content)
-		}
-		write(http.StatusCreated, map[string]any{"commit": map[string]string{"sha": "deadbeef"}})
+		f.serveChangeFiles(r, path, write)
 
 	// GET|POST /repos/{o}/{r}/pulls
 	case strings.HasSuffix(path, "/pulls"):
@@ -865,4 +845,37 @@ func TestCloseGiteaPullRequests_OnlyThePostersOthers(t *testing.T) {
 			}
 		})
 	}
+}
+
+// serveChangeFiles answers the multi-file commit, strict to the contents
+// API: a create of a file that exists, or an update that names no sha or
+// not the file's current blob, is a 422.
+func (f *fakeGitea) serveChangeFiles(r *http.Request, path string, write func(int, any)) {
+	repo := strings.TrimSuffix(strings.TrimPrefix(path, "repos/"), "/contents")
+	var body changeFilesBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		write(http.StatusBadRequest, map[string]string{"message": err.Error()})
+		return
+	}
+	target := body.Branch
+	if body.NewBranch != "" {
+		f.seed(repo, body.NewBranch, maps2(f.files[repo][body.Branch]))
+		target = body.NewBranch
+	}
+	files := f.files[repo][target]
+	for _, file := range body.Files {
+		_, exists := files[file.Path]
+		if (file.Operation == "create") == exists {
+			write(http.StatusUnprocessableEntity, map[string]string{
+				"message": fmt.Sprintf("operation %q on path %q (exists=%v)", file.Operation, file.Path, exists)})
+			return
+		}
+		if file.Operation == "update" && file.SHA != gitBlobSHA(files[file.Path]) {
+			write(http.StatusUnprocessableEntity, map[string]string{
+				"message": fmt.Sprintf("ErrSHAOrCommitIDNotProvided: update of %q names sha %q", file.Path, file.SHA)})
+			return
+		}
+		files[file.Path] = decodeB64(f.t, file.Content)
+	}
+	write(http.StatusCreated, map[string]any{"commit": map[string]string{"sha": "deadbeef"}})
 }

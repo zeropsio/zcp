@@ -300,10 +300,21 @@ func (f *fakeGroupGitea) serveContents(r *http.Request, path string, write func(
 			Operation string `json:"operation"`
 			Path      string `json:"path"`
 			Content   string `json:"content"`
+			SHA       string `json:"sha"`
 		} `json:"files"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	target := body.Branch
+	current := f.branches[repo][body.Branch]
+	// What Gitea 1.27 answers for a create of a file that exists, or an
+	// update that names no sha or not the file's current blob: 422.
+	for _, file := range body.Files {
+		existing, exists := current[file.Path]
+		if (file.Operation == "create") == exists || (file.Operation == "update" && file.SHA != giteaBlobSHAForTest(existing)) {
+			write(http.StatusUnprocessableEntity, map[string]string{"message": "ErrSHAOrCommitIDNotProvided or file exists: " + file.Path})
+			return true
+		}
+	}
 	if body.NewBranch != "" {
 		f.branches[repo][body.NewBranch] = maps.Clone(f.branches[repo][body.Branch])
 		target = body.NewBranch

@@ -164,10 +164,14 @@ func PublishGiteaFiles(
 		}
 	}
 
+	// An update names the blob it replaces, as the contents API documents
+	// (1.27.2 measured accepting one without it; the sha is what the API
+	// checks the change against).
 	type changeFile struct {
 		Operation string `json:"operation"`
 		Path      string `json:"path"`
 		Content   string `json:"content"`
+		SHA       string `json:"sha,omitempty"`
 	}
 	changes := make([]changeFile, 0, len(files))
 	for _, file := range files {
@@ -175,15 +179,15 @@ func PublishGiteaFiles(
 		if present && blob == gitBlobSHA(file.Body) {
 			continue
 		}
-		operation := "create"
-		if present {
-			operation = "update"
-		}
-		changes = append(changes, changeFile{
-			Operation: operation,
+		change := changeFile{
+			Operation: "create",
 			Path:      file.Path,
 			Content:   base64.StdEncoding.EncodeToString([]byte(file.Body)),
-		})
+		}
+		if present {
+			change.Operation, change.SHA = "update", blob
+		}
+		changes = append(changes, change)
 	}
 	if len(changes) == 0 {
 		return false, nil
