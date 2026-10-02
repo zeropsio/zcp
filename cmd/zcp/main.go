@@ -212,6 +212,13 @@ func runUpdate() int {
 	return 0
 }
 
+// logStartup names the build once as serving starts, on stderr — the log a
+// Mate's container and an MCP client keep — so which zcp ran is read there
+// rather than guessed from the release it should have been.
+func logStartup(w io.Writer, version, commit, built string) {
+	fmt.Fprintf(w, "zcp %s (%s, %s) serving, pid %d\n", version, commit, built, os.Getpid())
+}
+
 // setupCrashLog opens ~/.zcp/serve.log for append, creating the directory if
 // needed. Returns nil if the log cannot be created (non-fatal).
 func setupCrashLog() io.WriteCloser {
@@ -298,6 +305,7 @@ func runServe() int {
 	// stdout is handed to the transport explicitly.
 	mcpStdout := os.Stdout
 	os.Stdout = os.Stderr
+	logStartup(os.Stderr, server.Version, server.Commit, server.Built)
 
 	crashLog := setupCrashLog()
 	startedAt := time.Now()
