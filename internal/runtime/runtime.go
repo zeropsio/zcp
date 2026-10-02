@@ -51,19 +51,23 @@ type Info struct {
 // ZCP_AUTHORING and ZCP_MATE_ENABLED gates are read regardless of container
 // detection (authoring runs in both envs; mate is acted on only in a container,
 // but one read here keeps the value with a single home).
-func Detect() Info {
-	authoring := os.Getenv("ZCP_AUTHORING") == "1"
-	mateEnabled := EnvEnabled(os.Getenv("ZCP_MATE_ENABLED"))
-	giteaURL := os.Getenv("GITEA_URL")
-	serviceID := os.Getenv("serviceId")
+func Detect() Info { return DetectFrom(os.Getenv) }
+
+// DetectFrom is Detect over the environment getenv reads: a process whose own
+// environment is not the container's — a unit's — hands it the container's.
+func DetectFrom(getenv func(string) string) Info {
+	authoring := getenv("ZCP_AUTHORING") == "1"
+	mateEnabled := EnvEnabled(getenv("ZCP_MATE_ENABLED"))
+	giteaURL := getenv("GITEA_URL")
+	serviceID := getenv("serviceId")
 	if serviceID == "" {
 		return Info{Authoring: authoring, MateEnabled: mateEnabled}
 	}
 	return Info{
 		InContainer: true,
-		ServiceName: os.Getenv("hostname"),
+		ServiceName: getenv("hostname"),
 		ServiceID:   serviceID,
-		ProjectID:   os.Getenv("projectId"),
+		ProjectID:   getenv("projectId"),
 		Authoring:   authoring,
 		MateEnabled: mateEnabled,
 		GiteaURL:    giteaURL,

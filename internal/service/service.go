@@ -21,6 +21,7 @@ import (
 	"github.com/zeropsio/zcp/internal/matesetup"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/tools"
 )
 
 // ErrMateDisabled is returned by Start("mate") when ZCP_MATE_ENABLED is off. Named
@@ -236,12 +237,12 @@ func mateLaunchSetupThenInstall() {
 var mateSetupBoot = matesetup.Boot
 
 // mateLaunchSetup writes the status file the server reads (ZCP_STATUS_FILE,
-// mate.LaunchEnvLines), starts keeping the Mate enrolled with its HQ, and
-// starts the boot import when the container carries a runtimes plan. The
-// plan, the Mate's key and its project come from the live env store, as the
-// guard's flag does: a unit's own environment carries none of them. Both run
-// in this process, for as long as the server does; a restart cut short finds
-// what it left by looking.
+// mate.LaunchEnvLines), starts keeping the Mate enrolled with its HQ and
+// finishing the deliveries its agents owe HQ, and starts the boot import when
+// the container carries a runtimes plan. The plan, the Mate's key and its
+// project come from the live env store, as the guard's flag does: a unit's
+// own environment carries none of them. All run in this process, for as long
+// as the server does; a restart cut short finds what it left by looking.
 func mateLaunchSetup() {
 	lookup := mate.LiveLookup(mateStorePath)
 	path := mate.DefaultStatusFilePath()
@@ -251,6 +252,7 @@ func mateLaunchSetup() {
 	}
 	env := func() func(string) string { return mate.LiveLookup(mateStorePath) }
 	go mateHQKeep(context.Background(), env)
+	go mateDeliveryKeep(context.Background(), env)
 	if planSet {
 		go mateSetupBoot(context.Background(), path, env)
 	}
@@ -263,7 +265,7 @@ var mateHQKeep = keepEnrolled
 // SetMateHQKeep stands in for the HQ enrollment; for tests.
 func SetMateHQKeep(fn func(context.Context, func() func(string) string)) { mateHQKeep = fn }
 
-// hqCallTimeout bounds each call to HQ while enrolling.
+// hqCallTimeout bounds each call to HQ.
 const hqCallTimeout = 15 * time.Second
 
 // keepEnrolled is hq.Keep over the container's environment: each attempt
@@ -274,13 +276,13 @@ const hqCallTimeout = 15 * time.Second
 func keepEnrolled(ctx context.Context, env func() func(string) string) {
 	hq.Keep(ctx, func(ctx context.Context) (hq.Result, error) {
 		lookup := env()
-		key, projectID := lookup("ZCP_API_KEY"), lookup("projectId")
-		if key == "" || projectID == "" {
-			return hq.Result{}, errors.New("ZCP_API_KEY or projectId is not in this container's environment")
+		projectID := lookup("projectId")
+		if projectID == "" {
+			return hq.Result{}, errors.New("projectId is not in this container's environment")
 		}
-		client, err := platform.NewZeropsClient(key, mate.ResolveAPIHost(lookup("ZCP_API_HOST")))
+		client, err := apiClientOf(lookup)
 		if err != nil {
-			return hq.Result{}, fmt.Errorf("build the API client: %w", err)
+			return hq.Result{}, err
 		}
 		info, err := client.GetUserInfo(ctx)
 		if err != nil {
@@ -306,6 +308,45 @@ func keepEnrolled(ctx context.Context, env func() func(string) string) {
 			}
 		},
 	})
+}
+
+// mateDeliveryKeep finishes the deliveries the Mate's agents owe HQ
+// (tools.KeepFinishingDeliveries); package-level so tests stand in for it.
+var mateDeliveryKeep = keepDelivering
+
+// SetMateDeliveryKeep stands in for the delivery keep; for tests.
+func SetMateDeliveryKeep(fn func(context.Context, func() func(string) string)) {
+	mateDeliveryKeep = fn
+}
+
+// keepDelivering is tools.KeepFinishingDeliveries over the pairs the Mate's
+// agents keep (mate.AgentStateDir): each round builds its client and reads
+// the container from the live env store as it is then, as keepEnrolled does.
+func keepDelivering(ctx context.Context, env func() func(string) string) {
+	httpClient := &http.Client{Timeout: hqCallTimeout}
+	sshDeployer := platform.NewSystemSSHDeployer()
+	tools.KeepFinishingDeliveries(ctx, func(ctx context.Context) (int, []string) {
+		lookup := env()
+		client, err := apiClientOf(lookup)
+		if err != nil {
+			return 0, []string{"deliveries: " + err.Error()}
+		}
+		return tools.FinishPendingDeliveries(ctx, client, httpClient, sshDeployer, runtime.DetectFrom(lookup), mate.AgentStateDir)
+	}, tools.DeliveryKeepOptions{Log: logHQ})
+}
+
+// apiClientOf is a client of the Zerops API over the Mate's key as the live
+// env store holds it now, so a rotated key is the one it uses.
+func apiClientOf(lookup func(string) string) (*platform.ZeropsClient, error) {
+	key := lookup("ZCP_API_KEY")
+	if key == "" {
+		return nil, errors.New("ZCP_API_KEY is not in this container's environment")
+	}
+	client, err := platform.NewZeropsClient(key, mate.ResolveAPIHost(lookup("ZCP_API_HOST")))
+	if err != nil {
+		return nil, fmt.Errorf("build the API client: %w", err)
+	}
+	return client, nil
 }
 
 func logHQ(line string) { fmt.Fprintf(os.Stderr, "[zcp] hq: %s\n", line) }

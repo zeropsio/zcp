@@ -160,3 +160,34 @@ func TestDetect_MateDisabled_ByDefault(t *testing.T) {
 		t.Error("MateEnabled = true with ZCP_MATE_ENABLED unset, want false")
 	}
 }
+
+// TestDetectFrom_ReadsOnlyTheGivenEnvironment: a process whose own
+// environment is not the container's — a unit's — detects the container from
+// the environment it is handed, and from nothing else.
+func TestDetectFrom_ReadsOnlyTheGivenEnvironment(t *testing.T) {
+	t.Setenv("serviceId", "from-the-process")
+	t.Setenv("projectId", "from-the-process")
+	tests := []struct {
+		name string
+		env  map[string]string
+		want Info
+	}{
+		{
+			name: "the container's environment",
+			env:  map[string]string{"serviceId": "svc1", "hostname": "zcp", "projectId": "proj1"},
+			want: Info{InContainer: true, ServiceName: "zcp", ServiceID: "svc1", ProjectID: "proj1"},
+		},
+		{
+			name: "no serviceId in it",
+			env:  map[string]string{"hostname": "zcp", "projectId": "proj1"},
+			want: Info{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := DetectFrom(func(key string) string { return tt.env[key] }); got != tt.want {
+				t.Errorf("DetectFrom = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
