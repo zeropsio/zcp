@@ -378,11 +378,20 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 				delivering <- env()("PATH")
 			})
 			t.Cleanup(func() { service.SetMateDeliveryKeep(keepNothing) })
+			// And seeds the server's sign-ins from the project's signer tags
+			// before the server starts, over the same live store.
+			seeded := ""
+			service.SetMateSeedSignIns(func(_ context.Context, lookup func(string) string) {
+				seeded = lookup("PATH")
+			})
+			t.Cleanup(func() { service.SetMateSeedSignIns(seedNothing) })
 			statusPath := filepath.Join(home, ".zcp", "state", "mate-status.json")
 			var gotEnv []string
 			var atLaunch mate.Status
+			var seededAtLaunch string
 			service.SetRunFunc(func(_ string, _ []string, extraEnv []string) error {
 				gotEnv = extraEnv
+				seededAtLaunch = seeded
 				atLaunch, _ = mate.ReadStatus(statusPath)
 				close(serverUp)
 				return nil
@@ -399,6 +408,9 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				close(serverUp)
 				t.Fatal("the server never started: the launch waited on the boot import")
+			}
+			if seededAtLaunch != tt.store["PATH"] {
+				t.Errorf("the sign-in seed ran over %q before the server started, want the live store's", seededAtLaunch)
 			}
 			if !slices.Contains(gotEnv, "ZCP_STATUS_FILE="+statusPath) {
 				t.Errorf("launch env %q must name the status file %s", gotEnv, statusPath)

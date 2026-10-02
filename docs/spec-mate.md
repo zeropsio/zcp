@@ -2139,7 +2139,10 @@ separate 4 Gitea sign-ins a minute.
 When a sign-in the Mate's server walked succeeds, the server keeps who started it — the Zerops user
 behind that door session — before anything else hears of the success, in `~/.mate/signed-in.json`
 beside the logins' homes (`zeropsSignIns.ts`). The document is read once, at start: a restart keeps
-the record, and a rewrite under a running server changes nothing. An API key login has no sign-in
+the record, and a rewrite under a running server changes nothing. A Mate migrated from main, whose
+project still carries the `mate:signer:{key}:{userId}` tags and which has no document, gets it
+written from them by `zcp service mate` before its server first starts — once, never again, each
+sign-in dated by the seed (`mate.SeedSignIns`). An API key login has no sign-in
 to walk: the session that stores its key signs it in, and its stored key is its credential. That
 record is the gate's (`ZeropsProjectSigners.ts`): the server refuses
 `orchestration.dispatchCommand`'s turn-starting commands from any session but the signer's, holds a

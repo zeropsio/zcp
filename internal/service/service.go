@@ -237,7 +237,8 @@ func mateLaunchSetupThenInstall() {
 var mateSetupBoot = matesetup.Boot
 
 // mateLaunchSetup writes the status file the server reads (ZCP_STATUS_FILE,
-// mate.LaunchEnvLines), starts keeping the Mate enrolled with its HQ and
+// mate.LaunchEnvLines), seeds the server's sign-ins from the project's signer
+// tags once (mate.SeedSignIns), starts keeping the Mate enrolled with its HQ and
 // finishing the deliveries its agents owe HQ, and starts the boot import when
 // the container carries a runtimes plan. The plan, the Mate's key and its
 // project come from the live env store, as the guard's flag does: a unit's
@@ -251,6 +252,7 @@ func mateLaunchSetup() {
 		fmt.Fprintf(os.Stderr, "[zcp] service mate: %v\n", err)
 	}
 	env := func() func(string) string { return mate.LiveLookup(mateStorePath) }
+	mateSeedSignIns(context.Background(), lookup)
 	go mateHQKeep(context.Background(), env)
 	go mateDeliveryKeep(context.Background(), env)
 	if planSet {
@@ -308,6 +310,37 @@ func keepEnrolled(ctx context.Context, env func() func(string) string) {
 			}
 		},
 	})
+}
+
+// mateSeedSignIns seeds the server's sign-ins before it starts
+// (seedSignIns); package-level so tests stand in for it.
+var mateSeedSignIns = seedSignIns
+
+// SetMateSeedSignIns stands in for the sign-in seed; for tests.
+func SetMateSeedSignIns(fn func(context.Context, func(string) string)) { mateSeedSignIns = fn }
+
+// seedSignIns writes the server's sign-in store from the Mate project's
+// signer tags, read with the Mate's key, when the store is absent and was
+// never seeded (mate.SeedSignIns): a Mate migrated from main keeps who signed
+// its logins in. A failure is said and the launch goes on; the next launch
+// asks again.
+func seedSignIns(ctx context.Context, lookup func(string) string) {
+	_, err := mate.SeedSignIns(mate.SignInsPath(), mate.SignInsSeededPath(), func() ([]string, error) {
+		client, err := apiClientOf(lookup)
+		if err != nil {
+			return nil, err
+		}
+		ctx, cancel := context.WithTimeout(ctx, hqCallTimeout)
+		defer cancel()
+		project, err := client.GetProject(ctx, lookup("projectId"))
+		if err != nil {
+			return nil, err
+		}
+		return project.Tags, nil
+	}, time.Now())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[zcp] service mate: sign-ins: %v\n", err)
+	}
 }
 
 // mateDeliveryKeep finishes the deliveries the Mate's agents owe HQ
