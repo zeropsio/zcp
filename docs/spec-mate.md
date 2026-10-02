@@ -2410,13 +2410,18 @@ pair to re-submit.
   deploy runs two HQs side by side for about that long), and a push HQ's standby answers 503 —
   which git prints without the header — is tried again within the same bound. A delivery HQ did not
   refuse but could not be reached for is recorded as pending (`ServiceMeta.HQ.Pending`, its title
-  kept), its work committed in the checkout; the next delivery, git-push or reconcile pass finishes
-  it once HQ answers — a pass only on a clean checkout of the Mate's branch — with nobody asked.
+  kept), its work committed in the checkout. `zcp service mate` finishes it once HQ answers, with
+  nobody asked: beside the enrollment's keep it runs rounds over the pairs the Mate's agents keep
+  (`/var/www/.zcp/state`) every 30 s, and while a delivery stays owed every 5 s doubling to 5 min.
+  A round only finishes on a clean checkout of the Mate's branch and says nothing while HQ is away
+  — the enrollment's keep is what logs that. The next delivery, git-push or reconcile pass finishes
+  it too, whichever comes first.
 - **A Mate HQ now holds in another application** is wired there on its next delivery or pass: the
   repository of the same name in the new application, made if new, `origin` pointed at it and the
   branch joined onto its `main`; its change in the old application stays where it is.
 - **The credential.** The dev service holds the Mate credential as its `GIT_TOKEN` service secret,
-  which the per-command credential helper presents as the user `mate`. The enrollment is the
+  which the per-command credential helper presents as the user `mate`: the dev container now holds
+  the Mate's HQ credential, as it held the Gitea bot token before. The enrollment is the
   credential's one home, and a re-enrollment replaces it, so before every delivery, push and pending
   finish zcp compares the copy with the enrollment's (constant time), rewrites it and proves a fresh
   session with it; a credential HQ refuses marks the pair `broken`, healed once a session
@@ -2430,10 +2435,11 @@ pair to re-submit.
   tells the agent to hand the person the change's link and the next step — once the session
   delivered, that is deployed a stage half; a stand-up's closes without it.
 
-`hq_delivery.go`, `hq_change.go`, `hq_wiring.go`, `hq_push_credential.go`, `hq_git_push.go`,
-`ops/delivery_git.go`, `ops/delivery_absorb.go`, `internal/hq/changes.go`;
+`hq_delivery.go`, `hq_change.go`, `hq_wiring.go`, `hq_pending.go`, `hq_push_credential.go`,
+`hq_git_push.go`, `ops/delivery_git.go`, `ops/delivery_absorb.go`, `internal/hq/changes.go`;
 `TestAStageDeployOfAWiredPairDeliversItself`, `TestAStageDeployAbsorbsTheMatesOwnMergedChange`,
 `TestAStageDeployWithNothingBeyondMainOpensNoChange`, `TestADeliveryHQCouldNotReachIsFinishedByAPass`,
+`TestFinishPendingDeliveries_OnceHQAnswers`, `TestKeepFinishingDeliveries_BacksOffWhileOneIsOwed`,
 `TestADeliveryWaitsOutAStandby`, `TestADeliveryFollowsTheMateToAnotherApplication`,
 `TestADeliveryBringsTheCredentialToTheCurrentOne`, `TestADeliveryRefusedByItsGitSaysWhatToDo`,
 `TestReconcileHQRepositories_*`, `TestGitPushToHQ_*`, `TestAMateDeliveringThroughHQPlansOnlyStandardPairs`,
