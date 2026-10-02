@@ -396,15 +396,22 @@ func waitForS3Key(fake *fakeS3, key string, timeout time.Duration) ([]byte, bool
 }
 
 // readPIDFile reads an int pid from a pidfile the wrapper wrote, waiting
-// for it to appear first.
+// for it to be written whole first: `echo $$ >file` creates the file before
+// it writes the line, so a file that exists can still be empty.
 func readPIDFile(t *testing.T, path string, timeout time.Duration) int {
 	t.Helper()
-	if !waitForFile(path, timeout) {
-		t.Fatalf("pidfile %s never appeared", path)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read pidfile %s: %v", path, err)
+	var data []byte
+	deadline := time.Now().Add(timeout)
+	for {
+		var err error
+		data, err = os.ReadFile(path)
+		if err == nil && strings.HasSuffix(string(data), "\n") {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("pidfile %s never written whole (%q, %v)", path, data, err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
 	if err != nil {
@@ -527,7 +534,14 @@ func assertUploadedTreeDigest(t *testing.T, fake *fakeS3, prefix, want string) {
 // child still produces a bundle, because the supervisor's trap runs the
 // upload regardless of how the child ended. The stub is told to hang
 // (STUB_MODE=hang) so the test can kill it deterministically instead of
-// racing a natural exit.
+// racing a natural exit — once it hangs: child.pid is written before the
+// stub even starts, and a kill inside the stub's preamble could stop the
+// writer of its capture window's manifest.json (a non-atomic heredoc) with
+// the file still empty while its provider.jsonl had a secret redacted, so
+// the manifest rewrite fails and done.json is withheld, fail-closed (main
+// CI, 2026-10-02). The real evaluator writes its manifests by rename
+// (internal/capture SessionManifest.write), so it never leaves one empty.
+// grandchild.pid is the stub's last write before it hangs.
 func TestWrapper_ChildKilled_StillUploadsDone(t *testing.T) {
 	requireShAndCurl(t)
 
@@ -535,6 +549,7 @@ func TestWrapper_ChildKilled_StillUploadsDone(t *testing.T) {
 	cmd := h.start(t, map[string]string{"STUB_MODE": "hang"})
 
 	childPID := readPIDFile(t, filepath.Join(h.rundir, "child.pid"), 10*time.Second)
+	readPIDFile(t, filepath.Join(h.rundir, "grandchild.pid"), 10*time.Second)
 
 	if err := syscall.Kill(childPID, syscall.SIGKILL); err != nil {
 		t.Fatalf("kill -9 child (pid %d): %v", childPID, err)
