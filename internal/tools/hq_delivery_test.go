@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -158,14 +159,14 @@ func TestADeliveryHQCouldNotReachIsFinishedByAPass(t *testing.T) {
 	}
 
 	// A pass while HQ is still away changes nothing and says nothing.
-	elapseHQBackoff(t, lab.stateDir, "appdev")
+	elapseHQBackoff(t, lab.stateDir)
 	if report := lab.wire(); len(report) != 0 {
 		t.Errorf("a pass while HQ is away says %q", report)
 	}
 
 	lab.hq.setDown(false)
 	_ = workflow.DeleteWorkSession(lab.stateDir, os.Getpid())
-	elapseHQBackoff(t, lab.stateDir, "appdev")
+	elapseHQBackoff(t, lab.stateDir)
 	report := lab.wire()
 	if len(report) != 1 || !strings.Contains(report[0], "is done") || !strings.Contains(report[0], "change #1") {
 		t.Fatalf("report = %q, want the pending delivery done", report)
@@ -309,5 +310,100 @@ func TestADeliveryRefusedByItsGitSaysWhatToDo(t *testing.T) {
 				t.Errorf("nothing may be committed before the refusal")
 			}
 		})
+	}
+}
+
+// oldGiteaWorkflow is what zcp wrote before D27: the broker's deploy action
+// at v1, naming its environment, with a Test step the project filled in.
+const oldGiteaWorkflow = `name: Zerops deploy
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        # The project's own.
+        run: |
+          npm ci
+          npm test
+      - name: Deploy through the broker
+        uses: zeropsio/gitea-mate/actions/deploy@v1
+        with:
+          environment: stage
+          service: app
+`
+
+// TestADeliveryBringsTheWorkflowToThisZcps: wiring writes the workflow once,
+// so a repository wired by an earlier zcp kept its workflow for good; every
+// delivery brings it to the one this zcp writes — keeping the project's own
+// Test step — and its change carries the file. A file that already names this
+// zcp's deploy action is the project's, whatever else it says.
+func TestADeliveryBringsTheWorkflowToThisZcps(t *testing.T) {
+	tests := []struct {
+		name     string
+		existing string
+		want     []string
+		wantNot  []string
+	}{
+		{
+			name: "an earlier zcp's workflow is replaced, its Test step kept", existing: oldGiteaWorkflow,
+			want:    []string{"uses: " + giteaBrokerDeployAction, "workflow_dispatch", "npm ci\n          npm test", "# The project's own."},
+			wantNot: []string{"actions/deploy@v1", "no test command configured", "environment: stage"},
+		},
+		{
+			name:     "a file that names this zcp's deploy action is the project's",
+			existing: strings.Replace(giteaWorkflowYAML(), `run: echo "no test command configured"`, "run: make test", 1) + "# a person's note\n",
+			want:     []string{"run: make test", "# a person's note"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lab := newHQLab(t)
+			lab.wire()
+			lab.write(map[string]string{giteaWorkflowFilePath: tt.existing, "index.js": "the app\n"})
+
+			if d := lab.deliver(); d == nil || d.Change == nil {
+				t.Fatalf("want a delivery, got %+v", d)
+			}
+			delivered := lab.git("show", "HEAD:"+giteaWorkflowFilePath)
+			for _, want := range tt.want {
+				if !strings.Contains(delivered, want) {
+					t.Errorf("the delivered workflow misses %q:\n%s", want, delivered)
+				}
+			}
+			for _, not := range tt.wantNot {
+				if strings.Contains(delivered, not) {
+					t.Errorf("the delivered workflow still carries %q:\n%s", not, delivered)
+				}
+			}
+		})
+	}
+}
+
+// TestAWiredPairDeploysDirectlyAndIsNeverSentToPush: nothing builds a Mate's
+// services from its change, so a wired pair's direct deploy proceeds and is
+// never told to push instead — its stage deploy delivers by itself.
+func TestAWiredPairDeploysDirectlyAndIsNeverSentToPush(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeStandard, StageHostname: "appstage",
+		BootstrapSession: "test", BootstrappedAt: "2026-10-02", FirstDeployedAt: "2026-10-02T09:00:00Z",
+		GitPushState: topology.GitPushConfigured, RemoteURL: "https://hq.example/git/a1/appdev.git",
+		BuildIntegration: topology.BuildIntegrationActions,
+		HQ:               &workflow.HQRepoRef{AppID: "a1", Repo: "appdev", Branch: "mate/p1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"appdev", "appstage"} {
+		if r := repoDeliveryRedirect(stateDir, target, "", false); r != nil {
+			t.Errorf("%s: a wired pair's direct deploy must proceed", target)
+		}
+		if w := repoDeliveryDivergenceWarning(stateDir, target); w != "" {
+			t.Errorf("%s: no push-by-hand warning on a wired pair, got %q", target, w)
+		}
 	}
 }
