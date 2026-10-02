@@ -361,6 +361,24 @@ func (f *fakeGroupGitea) servePulls(r *http.Request, path string, write func(int
 	return true
 }
 
+// giteaBotToken is the Mate's Gitea bot token the recipe reads the group repo
+// with.
+const giteaBotToken = "gitea-bot-token-value"
+
+// writeGiteaPairMeta seeds one bootstrapped pair with no Gitea repository.
+func writeGiteaPairMeta(t *testing.T, stateDir string) {
+	t.Helper()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeStandard,
+		StageHostname:    "appstage",
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-09-16",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+}
+
 // writeGiteaWiredPairMeta seeds a pair that already HAS its repository (A1
 // ran) — the state A2 starts from.
 func writeGiteaWiredPairMeta(t *testing.T, stateDir string) {
@@ -378,7 +396,7 @@ func writeGiteaWiredPairMeta(t *testing.T, stateDir string) {
 		// and a stage setup nothing records is withheld rather than guessed.
 		StageSetupName: "prod",
 		Gitea: &workflow.GiteaRepoRef{
-			FullName: "acme/appdev", Branch: "mate/mate-p1", DefaultBranch: "main",
+			FullName: "acme/appdev", DefaultBranch: "main",
 		},
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
@@ -461,7 +479,7 @@ func TestReconcileGiteaGroupRecipe_Table(t *testing.T) {
 			if fake.pullPosts != tc.wantPullPosts {
 				t.Errorf("pull-request POSTs = %d, want %d", fake.pullPosts, tc.wantPullPosts)
 			}
-			assertNoTokenOnDisk(t, stateDir)
+			assertNoSecretOnDisk(t, stateDir, giteaBotToken)
 		})
 	}
 }
@@ -525,7 +543,7 @@ func TestReconcileGiteaGroupRecipe_IdempotentThenUpdates(t *testing.T) {
 	if _, wrote := proposal["environments.yaml"]; wrote {
 		t.Error("zcp wrote environments.yaml into the group repo")
 	}
-	assertNoTokenOnDisk(t, stateDir)
+	assertNoSecretOnDisk(t, stateDir, giteaBotToken)
 }
 
 // assertOnlyAdds fails unless branch is main plus files main does not have:
@@ -888,7 +906,7 @@ func TestHandleGroupRecipe_Table(t *testing.T) {
 			if fake.pullPosts != tc.wantPulls {
 				t.Errorf("pull-request POSTs = %d, want %d across %d passes", fake.pullPosts, tc.wantPulls, 1+boolToInt(tc.twice))
 			}
-			assertNoTokenOnDisk(t, stateDir)
+			assertNoSecretOnDisk(t, stateDir, giteaBotToken)
 		})
 	}
 }

@@ -92,12 +92,12 @@ func TestAdoptPair_KeepsWhatAnEarlierPassRecorded(t *testing.T) {
 		StageHostname:    "medusastage",
 		CloseDeployMode:  topology.CloseModeUnset,
 		GitPushState:     topology.GitPushConfigured,
-		RemoteURL:        "https://gitea.acme.example/beviro/medusadev",
+		RemoteURL:        "https://hq.acme.example/git/a1/medusadev.git",
 		BuildIntegration: topology.BuildIntegrationNone,
 		BootstrappedAt:   "2026-09-30",
 		FirstDeployedAt:  "2026-09-30T10:00:00Z",
 		PrimarySetupName: "chosen",
-		Gitea:            &GiteaRepoRef{FullName: "beviro/medusadev", Branch: "mate/mate-p1", DefaultBranch: "main"},
+		HQ:               &HQRepoRef{AppID: "a1", Repo: "medusadev", Branch: "mate/p1"},
 	}
 	if err := WriteServiceMeta(stateDir, earlier); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -107,7 +107,7 @@ func TestAdoptPair_KeepsWhatAnEarlierPassRecorded(t *testing.T) {
 	}
 	got, _ := ReadServiceMeta(stateDir, "medusadev")
 	if got.BootstrappedAt != "2026-09-30" || got.FirstDeployedAt == "" || got.GitPushState != topology.GitPushConfigured ||
-		got.RemoteURL == "" || got.Gitea == nil || got.PrimarySetupName != "chosen" || got.StageSetupName != "medusaprod" {
+		got.RemoteURL == "" || got.HQ == nil || got.PrimarySetupName != "chosen" || got.StageSetupName != "medusaprod" {
 		t.Errorf("a second adoption lost what the pair earned: %+v", got)
 	}
 }

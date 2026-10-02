@@ -471,12 +471,12 @@ func runDeploySSHZCLIPush(
 	}
 	_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 
-	// A wired pair's stage deploy is its delivery (gitea_delivery.go).
-	var pullRequest *giteaPullRequestRef
+	// A wired pair's stage deploy is its delivery (hq_delivery.go).
+	var change *changeRef
 	if result != nil && result.Status == statusDeployed {
-		if delivery := deliverGiteaPair(ctx, client, httpClient, sshDeployer, rtInfo, stateDir, input.TargetService); delivery != nil {
+		if delivery := deliverHQPair(ctx, client, httpClient, sshDeployer, rtInfo, stateDir, input.TargetService); delivery != nil {
 			result.NextActions = strings.TrimSpace(result.NextActions + " " + delivery.Line)
-			pullRequest = delivery.PullRequest
+			change = delivery.Change
 		}
 	}
 
@@ -490,7 +490,7 @@ func runDeploySSHZCLIPush(
 	// signal inline. Wrap to match.
 	return jsonResult(deploySSHResponse{
 		DeployResult:     result,
-		PullRequest:      pullRequest,
+		PullRequest:      change,
 		WorkSessionState: sessionAnnotations(stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
 	}), nil, nil
@@ -501,10 +501,10 @@ func runDeploySSHZCLIPush(
 // container deploys get the same F5 surface local deploys already have.
 type deploySSHResponse struct {
 	*ops.DeployResult
-	// PullRequest is the request a wired pair's stage deploy delivered its
-	// code through — absent everywhere else.
-	PullRequest      *giteaPullRequestRef `json:"pullRequest,omitempty"`
-	WorkSessionState *WorkSessionState    `json:"workSessionState,omitempty"`
+	// PullRequest is the change in HQ a wired pair's stage deploy delivered
+	// its code through — absent everywhere else. Named as the card decodes it.
+	PullRequest      *changeRef        `json:"pullRequest,omitempty"`
+	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
 	// Envelope is the post-mutation lifecycle state (docs/spec-mate.md §1.3).
 	// Absent when its computation failed — the rest of the response is
 	// unaffected.

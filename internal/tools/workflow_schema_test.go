@@ -235,7 +235,7 @@ func TestWorkflowInput_UnmarshalsConfirmLaunch_StringTrue(t *testing.T) {
 
 // TestWorkflowTool_DescribeChangeReachesItsHandler: the published schema takes
 // a change's description, and action="describe-change" is dispatched to its
-// handler — which, in a container with no Gitea wiring, says so rather than
+// handler — which, with no change to describe here, says so rather than
 // failing as an unknown action or an unexpected property.
 func TestWorkflowTool_DescribeChangeReachesItsHandler(t *testing.T) {
 	t.Parallel()
@@ -258,7 +258,7 @@ func TestWorkflowTool_DescribeChangeReachesItsHandler(t *testing.T) {
 			text += tc.Text
 		}
 	}
-	if !result.IsError || !strings.Contains(text, "PREREQUISITE_MISSING") || !strings.Contains(text, "group's Gitea") {
-		t.Errorf("want the handler's refusal for a Mate with no Gitea, got isError=%v:\n%s", result.IsError, text)
+	if !result.IsError || strings.Contains(text, "Unknown action") || strings.Contains(text, "unexpected") || !strings.Contains(text, "change") {
+		t.Errorf("want the handler's own refusal, got isError=%v:\n%s", result.IsError, text)
 	}
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -19,6 +20,16 @@ import (
 
 // giteaRecipeBranchTitle heads the pull request the recipe lands through.
 const giteaRecipeBranchTitle = "Mate: the group's import files"
+
+// giteaPairMountRoot is where the Mate mounts each pair's working directory,
+// one per hostname (ops.MountService). It is how the recipe reads a pair's
+// files without an SSH round trip.
+const giteaPairMountRoot = "/var/www"
+
+// giteaProtectedBase is the group repo's protected branch the recipe is
+// proposed onto, and the one a stand-up reads the recipe from; the fallback
+// when a pair's record names no default branch.
+const giteaProtectedBase = "main"
 
 // giteaRecipeOutcome is what one pass did. The reconcile reads Line (empty
 // when there is nothing worth saying on a bootstrap response); the agent-facing
@@ -143,7 +154,7 @@ func giteaGroupRecipeOutcome(
 	}
 	sort.Slice(wired, func(i, j int) bool { return wired[i].Hostname < wired[j].Hostname })
 
-	wiring := ops.ReadGiteaWiring(giteaEnvLookup(liveEnvPath))
+	wiring := ops.ReadGiteaWiring(mate.LiveLookup(liveEnvPath))
 	if !wiring.Ready() {
 		// A1's reconcile already reports which variable is missing, on the
 		// same pass, so Line stays empty — but a person who asked deserves
@@ -296,26 +307,6 @@ func pullNumbers(numbers []int) string {
 		out = append(out, fmt.Sprintf("#%d", number))
 	}
 	return strings.Join(out, ", ")
-}
-
-// reconcileGitea runs both Gitea reconciles, in the one order that works: a
-// pair gets its repository (A1), and only then can the recipe name what builds
-// it (A2). Every bootstrap and adopt pass calls this; both halves are silent
-// when there is nothing to do.
-func reconcileGitea(
-	ctx context.Context,
-	client platform.Client,
-	httpClient ops.HTTPDoer,
-	sshDeployer ops.SSHDeployer,
-	rt runtime.Info,
-	stateDir string,
-	liveEnvPath string,
-) []string {
-	lines := reconcileGiteaRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, liveEnvPath)
-	if line := reconcileGiteaGroupRecipe(ctx, client, httpClient, rt, stateDir, liveEnvPath); line != "" {
-		lines = append(lines, line)
-	}
-	return lines
 }
 
 // handleGroupRecipe is the agent's way to ask for the export outright

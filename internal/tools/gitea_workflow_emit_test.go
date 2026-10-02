@@ -1,92 +1,41 @@
-// Tests for: A3 — the workflow that ships a Mate's code to the group's stage
-// has to be IN the repository the Mate pushes.
+// Tests for: A3 — the workflow that ships a Mate's code has to be IN the
+// repository the Mate pushes.
 //
 // `.gitea/workflows/zerops.yml` was only ever emitted as text by
 // `zerops_workflow action="build-integration" integration="actions"`, which
 // nothing in A1 or A2 calls. So a real Mate's repository never carried it and
-// the runner path never ran (measured 2026-09-16). A1 now writes it into the
-// pair's working tree when it wires the repository, before anything is
-// pushed.
+// the runner path never ran (measured 2026-09-16). The wiring now writes it
+// into the pair's working tree when it wires the repository, before anything
+// is pushed.
 package tools
 
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/runtime"
 )
 
-// runContainerCommandsIn replays the commands an SSH stub recorded against a
-// real directory, standing in for the pair's working tree: the container's
-// /var/www is rewritten to dir so the file the command writes can be read
-// back. Commands that are not writes are skipped — this is about what landed
-// in the tree, not about re-running git.
-func runContainerCommandsIn(t *testing.T, dir string, commands []string) {
-	t.Helper()
-	for _, cmd := range commands {
-		if !strings.Contains(cmd, giteaWorkflowFilePath) {
-			continue
-		}
-		runShellIn(t, strings.Replace(cmd, "cd '"+giteaPairWorkingDir+"'", "cd '"+dir+"'", 1))
-	}
-}
+// TestReconcileHQRepositories_EmitsTheWorkflow pins A3: after the wiring the
+// workflow file is IN the tree, and it carries no credential of any kind.
+func TestReconcileHQRepositories_EmitsTheWorkflow(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
 
-func runShellIn(t *testing.T, command string) {
-	t.Helper()
-	out, err := exec.CommandContext(t.Context(), "sh", "-c", command).CombinedOutput()
+	raw, err := os.ReadFile(filepath.Join(lab.pair, giteaWorkflowFilePath))
 	if err != nil {
-		t.Fatalf("command failed: %v\ncommand: %s\noutput:\n%s", err, command, out)
-	}
-}
-
-// TestReconcileGiteaRepositories_EmitsTheWorkflow pins A3: after A1 wires the
-// repository the workflow file is IN the tree, and it carries no credential
-// of any kind — the job asks the account's broker with its own token, which
-// is the entire reason this path exists.
-func TestReconcileGiteaRepositories_EmitsTheWorkflow(t *testing.T) {
-	stateDir := t.TempDir()
-	writeGiteaPairMeta(t, stateDir)
-	fake := newFakeGitea()
-	srv := fake.start(t)
-	ssh := giteaReconcileSSH()
-	client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
-
-	reconcileGiteaRepositories(
-		context.Background(), client, srv.Client(), ssh,
-		runtime.Info{InContainer: true, ProjectID: "p1"}, stateDir,
-		writeLiveEnvFile(t, map[string]string{
-			"GITEA_URL": srv.URL, "MATE_BROKER_URL": srv.URL, "GITEA_TOKEN": giteaBotToken,
-		}),
-	)
-
-	tree := t.TempDir()
-	runContainerCommandsIn(t, tree, ssh.commands)
-	raw, err := os.ReadFile(filepath.Join(tree, giteaWorkflowFilePath))
-	if err != nil {
-		t.Fatalf("A1 must leave the workflow in the pair's tree: %v\ncommands:\n%s",
-			err, strings.Join(ssh.commands, "\n"))
+		t.Fatalf("the wiring must leave the workflow in the pair's tree: %v\ncommands:\n%s",
+			err, strings.Join(lab.ssh.commands, "\n"))
 	}
 	body := string(raw)
-
 	for _, want := range []string{
 		"on:", "push:", "branches: [main]",
 		"actions/checkout@v4",
 		"uses: zeropsio/gitea-mate/actions/deploy@v4",
-		// D27: the broker starts the same workflow for a release, a new
-		// environment and whatever fell behind, and says what for.
 		"workflow_dispatch:",
 		"ref: ${{ inputs.sha || github.sha }}",
-		// A push's job names no environment and no service: it deploys
-		// whatever its branch feeds, and the broker knows which service of
-		// the group's stage this repository builds (the pair's promoted
-		// runtime — measured 2026-09-17, when a workflow naming the dev half
-		// was answered unknown_service).
 		"environment: ${{ inputs.environment }}",
 		"service: ${{ inputs.service }}",
 	} {
@@ -94,9 +43,6 @@ func TestReconcileGiteaRepositories_EmitsTheWorkflow(t *testing.T) {
 			t.Errorf("the workflow is missing %q:\n%s", want, body)
 		}
 	}
-	// The whole point of the Gitea track: no repository secret and no Zerops
-	// token in the file — the job is handed one environment's key by the
-	// broker for one push (MB-14, MB-29).
 	for _, forbidden := range []string{"secrets.", "ZEROPS_TOKEN", "actions/deploy@v1"} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("the workflow must carry no %q:\n%s", forbidden, body)
@@ -104,29 +50,15 @@ func TestReconcileGiteaRepositories_EmitsTheWorkflow(t *testing.T) {
 	}
 }
 
-// TestReconcileGiteaRepositories_WorkflowIsIdempotent — the emit is content
-// idempotent. A rewrite of identical bytes would show up as a modified file
-// in the pair's `git status` and in the deploy's dirty-tree warning, telling
-// the Mate it has work to commit that it does not.
-func TestReconcileGiteaRepositories_WorkflowIsIdempotent(t *testing.T) {
-	stateDir := t.TempDir()
-	writeGiteaPairMeta(t, stateDir)
-	fake := newFakeGitea()
-	srv := fake.start(t)
-	ssh := giteaReconcileSSH()
-	client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
+// TestReconcileHQRepositories_WorkflowIsIdempotent — the emit is content
+// idempotent. A rewrite of identical bytes would show up as a modified file in
+// the pair's `git status` and in the deploy's dirty-tree warning, telling the
+// Mate it has work to commit that it does not.
+func TestReconcileHQRepositories_WorkflowIsIdempotent(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
 
-	reconcileGiteaRepositories(
-		context.Background(), client, srv.Client(), ssh,
-		runtime.Info{InContainer: true, ProjectID: "p1"}, stateDir,
-		writeLiveEnvFile(t, map[string]string{
-			"GITEA_URL": srv.URL, "MATE_BROKER_URL": srv.URL, "GITEA_TOKEN": giteaBotToken,
-		}),
-	)
-
-	tree := t.TempDir()
-	runContainerCommandsIn(t, tree, ssh.commands)
-	path := filepath.Join(tree, giteaWorkflowFilePath)
+	path := filepath.Join(lab.pair, giteaWorkflowFilePath)
 	first, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("stat: %v", err)
@@ -135,8 +67,18 @@ func TestReconcileGiteaRepositories_WorkflowIsIdempotent(t *testing.T) {
 	if err := os.Chtimes(path, stale, stale); err != nil {
 		t.Fatalf("chtimes: %v", err)
 	}
-
-	runContainerCommandsIn(t, tree, ssh.commands)
+	var write string
+	for _, cmd := range lab.ssh.commands {
+		if strings.Contains(cmd, giteaWorkflowFilePath) && !strings.Contains(cmd, "cat ") {
+			write = cmd
+		}
+	}
+	if write == "" {
+		t.Fatal("the wiring wrote no workflow")
+	}
+	if out, err := lab.ssh.ExecSSH(context.Background(), "appdev", write); err != nil {
+		t.Fatalf("write again: %v\n%s", err, out)
+	}
 	after, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("stat after: %v", err)

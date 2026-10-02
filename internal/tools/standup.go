@@ -89,6 +89,9 @@ type standupDeps struct {
 	trackPoll  time.Duration
 	// closedOff asks HQ whether the Mate's project is closed off (its birth).
 	closedOff hq.ClosedOffReader
+	// enrollmentPath is the Mate's enrollment with its HQ (hq.EnrollmentPath),
+	// which the pairs it adopts are wired to deliver to.
+	enrollmentPath string
 	// closedOffSeen is a call that asked HQ itself while the import's line
 	// still said it waited for the project to be closed off: that import is
 	// starting, and awaitBootImport waits for it.
@@ -118,17 +121,18 @@ func RegisterStandup(
 			client: client, httpClient: httpClient, projectID: projectID, sshDeployer: sshDeployer,
 			authInfo: authInfo, logFetcher: logFetcher, rtInfo: rtInfo, stateDir: stateDir,
 		},
-		mounter:     mounter,
-		liveEnvPath: mate.LiveEnvStorePath,
-		gitWait:     standupGitWait,
-		gitPoll:     standupGitPoll,
-		runtimeWait: standupRuntimeWait,
-		runtimePoll: standupRuntimePoll,
-		statusPath:  mate.StatusFilePath(),
-		closedOff:   hqClosedOff(),
-		bootWait:    standupBootWait,
-		bootPoll:    standupBootPoll,
-		trackPoll:   standupTrackPoll,
+		mounter:        mounter,
+		liveEnvPath:    mate.LiveEnvStorePath,
+		gitWait:        standupGitWait,
+		gitPoll:        standupGitPoll,
+		runtimeWait:    standupRuntimeWait,
+		runtimePoll:    standupRuntimePoll,
+		statusPath:     mate.StatusFilePath(),
+		closedOff:      hqClosedOff(),
+		enrollmentPath: hq.EnrollmentPath(),
+		bootWait:       standupBootWait,
+		bootPoll:       standupBootPoll,
+		trackPoll:      standupTrackPoll,
 	})
 }
 
@@ -208,11 +212,11 @@ func (d standupDeps) stand(ctx context.Context, progress *standupProgress) *mcp.
 
 // awaitGitAccess reads the container's Git variables — from the live env
 // store, which the platform rewrites within seconds of the broker's write
-// (giteaEnvLookup) — until all three are there or the wait is over.
+// (mate.LiveLookup) — until all three are there or the wait is over.
 func (d standupDeps) awaitGitAccess(ctx context.Context, progress *standupProgress) ops.GiteaWiring {
 	deadline := time.Now().Add(d.gitWait)
 	for {
-		wiring := ops.ReadGiteaWiring(giteaEnvLookup(d.liveEnvPath))
+		wiring := ops.ReadGiteaWiring(mate.LiveLookup(d.liveEnvPath))
 		if wiring.Ready() || !time.Now().Before(deadline) {
 			return wiring
 		}
@@ -660,10 +664,11 @@ func (d standupDeps) mountDevHalf(ctx context.Context, sp *standupPair) {
 }
 
 // wire puts the recipe's repository into the pair's dev half on the Mate's
-// branch — the broker's repository, git-push to it, main fetched and the
-// branch cut from it (wireGiteaPair, the reconcile's own wiring) — unless an
-// earlier pass did. A repository the recipe names that Gitea does not have is
-// refused before the broker is asked: the broker creates what it is asked for.
+// branch — the repository of the recipe's name in HQ, git-push to it, main
+// fetched and the branch cut from it (wireHQPair, the reconcile's own
+// wiring) — unless an earlier pass did. A repository the recipe names that
+// the group's Gitea does not have is refused before HQ is asked: HQ makes
+// what it is asked for.
 func (d standupDeps) wire(ctx context.Context, wiring ops.GiteaWiring, sp *standupPair, progress *standupProgress) {
 	host := sp.pair.Dev.Hostname
 	meta, _ := workflow.FindServiceMeta(d.batch.stateDir, host)
@@ -671,8 +676,8 @@ func (d standupDeps) wire(ctx context.Context, wiring ops.GiteaWiring, sp *stand
 		sp.fail(fmt.Sprintf("%s has no record after its adoption", host), "Call zerops_standup again.")
 		return
 	}
-	if giteaWiredPair(meta) && meta.Gitea.Branch != "" && giteaPairPushes(meta.GitPushState) {
-		sp.wired, sp.branch = standupAlready, meta.Gitea.Branch
+	if hqPairWired(meta) && meta.HQ.Branch != "" && hqPairPushes(meta.GitPushState) {
+		sp.wired, sp.branch = standupAlready, meta.HQ.Branch
 		return
 	}
 	progress.say(fmt.Sprintf("checking %s out into %s", sp.repository, host))
@@ -686,9 +691,13 @@ func (d standupDeps) wire(ctx context.Context, wiring ops.GiteaWiring, sp *stand
 			"Tell the person the recipe's buildFromGit for this pair names a repository that does not exist; the group repo's AI Agent tier needs fixing before this pair can stand up.")
 		return
 	}
-	prior := readGiteaPairState(d.batch.stateDir, host)
-	outcome := wireGiteaPair(ctx, d.batch.client, d.batch.httpClient, d.batch.sshDeployer, d.batch.rtInfo, d.batch.stateDir, wiring, meta, sp.pair.RepoName)
-	recordGiteaAttempt(d.batch.stateDir, host, prior, time.Now().UTC(), outcome.line, outcome.wired)
+	hqc, err := hq.Open(d.batch.httpClient, d.enrollmentPath)
+	if err != nil {
+		sp.fail(fmt.Sprintf("checking %s out into %s failed: this Mate is not enrolled with its HQ yet, so it has no repository to deliver to", sp.repository, host),
+			"Call zerops_standup again once the Mate is enrolled; it continues from here.")
+		return
+	}
+	outcome := rewireHQPair(ctx, d.batch.client, d.batch.httpClient, d.batch.sshDeployer, d.batch.rtInfo, d.batch.stateDir, hqc, meta, sp.pair.RepoName)
 	if !outcome.wired {
 		next := "Call zerops_standup again; it continues from here."
 		if outcome.remedy != "" {
@@ -698,8 +707,8 @@ func (d standupDeps) wire(ctx context.Context, wiring ops.GiteaWiring, sp *stand
 		return
 	}
 	sp.wired = standupNow
-	if wired, _ := workflow.FindServiceMeta(d.batch.stateDir, host); wired != nil && wired.Gitea != nil {
-		sp.branch = wired.Gitea.Branch
+	if wired, _ := workflow.FindServiceMeta(d.batch.stateDir, host); hqPairWired(wired) {
+		sp.branch = wired.HQ.Branch
 	}
 }
 

@@ -35,12 +35,6 @@ type Info struct {
 	// Spec: docs/spec-mate.md §2.
 	MateEnabled bool
 
-	// GitHostKnown is true when GITEA_URL is set: this environment has a git
-	// host and a token of its own. Gates the git-host paragraph in the
-	// emitted agent context, so a container without one is never told about
-	// variables it does not have.
-	GitHostKnown bool
-
 	// GiteaURL is GITEA_URL verbatim — the origin of the account's own Gitea,
 	// written onto the `zcp` service when the Mate was made. It is the ONLY
 	// thing that makes a remote recognisable as that Gitea
@@ -66,14 +60,13 @@ func Detect() Info {
 		return Info{Authoring: authoring, MateEnabled: mateEnabled}
 	}
 	return Info{
-		InContainer:  true,
-		ServiceName:  os.Getenv("hostname"),
-		ServiceID:    serviceID,
-		ProjectID:    os.Getenv("projectId"),
-		Authoring:    authoring,
-		MateEnabled:  mateEnabled,
-		GitHostKnown: giteaURL != "",
-		GiteaURL:     giteaURL,
+		InContainer: true,
+		ServiceName: os.Getenv("hostname"),
+		ServiceID:   serviceID,
+		ProjectID:   os.Getenv("projectId"),
+		Authoring:   authoring,
+		MateEnabled: mateEnabled,
+		GiteaURL:    giteaURL,
 	}
 }
 

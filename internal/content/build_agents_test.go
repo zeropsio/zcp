@@ -533,8 +533,8 @@ func TestAgentsLocal_NoContainerPaths(t *testing.T) {
 //
 // The group block is unconditional and says how to LOOK — reach is a
 // property of the container's own token, and a flag mirroring it here
-// would be a second copy free to drift. The git-host block is gated: a
-// container without GITEA_URL is never told about variables it lacks.
+// would be a second copy free to drift. The git-host block is a Mate's: only
+// a Mate delivers its code to HQ.
 func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -542,10 +542,10 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 		rt          runtime.Info
 		wantGitHost bool
 	}{
-		{name: "no git host", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}},
+		{name: "not a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}},
 		{
-			name:        "git host",
-			rt:          runtime.Info{InContainer: true, ServiceName: "zcp", GitHostKnown: true},
+			name:        "a Mate",
+			rt:          runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true},
 			wantGitHost: true,
 		},
 	} {
@@ -562,7 +562,7 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 					t.Errorf("container AGENTS.md missing group guidance %q", want)
 				}
 			}
-			if got := strings.Contains(out, "$GITEA_TOKEN"); got != tc.wantGitHost {
+			if got := strings.Contains(out, "zcp hq git-credential"); got != tc.wantGitHost {
 				t.Errorf("git-host paragraph present = %v, want %v", got, tc.wantGitHost)
 			}
 		})
@@ -580,7 +580,7 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 // promotion in the ZCP workflow.
 func TestBuildAgentsMD_Container_PipelineScopedToOtherProjects(t *testing.T) {
 	t.Parallel()
-	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp", GitHostKnown: true}, false)
+	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, false)
 	if err != nil {
 		t.Fatalf("BuildAgentsMD: %v", err)
 	}
@@ -597,7 +597,6 @@ func TestBuildAgentsMD_Container_PipelineScopedToOtherProjects(t *testing.T) {
 		"Code reaches the group's other projects through the repository's pipeline",
 		"`zerops_deploy sourceService=",
 		"is not the group's stage project",
-		"What ships code to the group's other projects is `.gitea/workflows/`",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("container AGENTS.md missing in-project scoping %q", want)
@@ -605,33 +604,34 @@ func TestBuildAgentsMD_Container_PipelineScopedToOtherProjects(t *testing.T) {
 	}
 }
 
-// The git host is the account's own Gitea, and ZCP knows it as one — guide
-// 2.3. Told only "an access token minted for you alone", a Mate reads its
-// host as a generic self-hosted forge: it goes looking for a settings page to
-// mint a token on, and it has no idea a repository comes from the broker
-// rather than from it. The paragraph must name the forge, the broker, and
-// whose commits these are.
-func TestBuildAgentsMD_Container_GitHostIsGitea(t *testing.T) {
+// The git host is this Mate's HQ, and ZCP knows it as one (SPEC §3.2a). Told
+// only "an access token minted for you alone", a Mate reads its host as a
+// generic forge: it goes looking for a settings page to mint a token on, and
+// pushes by hand to a branch HQ refuses. The paragraph names the host, the
+// user git signs in as, where the credential comes from, and that a change is
+// delivered by the stage deploy — never by a push of its own choosing.
+func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 	t.Parallel()
-	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp", GitHostKnown: true}, false)
+	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, false)
 	if err != nil {
 		t.Fatalf("BuildAgentsMD: %v", err)
 	}
 	for _, want := range []string{
-		"$GITEA_URL",
-		"$GITEA_TOKEN",
-		"$MATE_BROKER_URL",
-		"write:repository",
-		"read:user",
+		"HQ",
+		"the user `mate`",
+		"zcp hq git-credential",
+		"`$GIT_TOKEN`",
+		"mate/<project id>/<number>",
+		`action="describe-change"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("git-host paragraph missing %q", want)
 		}
 	}
-	// GITEA_REPO was retired with the broker (docs/vocabulary.md, "A Mate's
-	// environment"): a Mate asks for its repository, it is not handed one.
-	if strings.Contains(out, "GITEA_REPO") {
-		t.Errorf("git-host paragraph still names the retired GITEA_REPO:\n%s", out)
+	for _, retired := range []string{"$GITEA_URL", "$GITEA_TOKEN", "$MATE_BROKER_URL", "zcp mate git-token", "pull request"} {
+		if strings.Contains(out, retired) {
+			t.Errorf("git-host paragraph still names %q", retired)
+		}
 	}
 }
 
@@ -639,8 +639,8 @@ func TestBuildAgentsMD_Container_GitHostIsGitea(t *testing.T) {
 // must not be told it does.
 func TestBuildAgentsMD_Local_HasNoMateContext(t *testing.T) {
 	t.Parallel()
-	out, _ := BuildAgentsMD(runtime.Info{GitHostKnown: true}, false)
-	for _, unwanted := range []string{"zcli project list", "$GITEA_TOKEN"} {
+	out, _ := BuildAgentsMD(runtime.Info{MateEnabled: true}, false)
+	for _, unwanted := range []string{"zcli project list", "zcp hq git-credential"} {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("local AGENTS.md leaked %q", unwanted)
 		}
@@ -663,7 +663,7 @@ func TestBuildAgentsMD_Container_StandUpRoutesToTheTool(t *testing.T) {
 		want bool
 	}{
 		{name: "a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, want: true},
-		{name: "a container without the flag", rt: runtime.Info{InContainer: true, ServiceName: "zcp", GitHostKnown: true}},
+		{name: "a container without the flag", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}},
 		{name: "local, flag set", rt: runtime.Info{MateEnabled: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -226,12 +225,12 @@ func gitPushBuildIntegrationConfigured(stateDir, targetService string) bool {
 // (judge review, item 5): a destination is worth recording a DeployAttempt
 // for, success or failure, only when something could later resolve it — a
 // wired BuildIntegration's build watch, or its manual record-deploy
-// fallback. Nothing ever builds from a wired pair's own Gitea branch
-// (spec-mate.md §6), so that destination is never trackable regardless of
+// fallback. Nothing ever builds from a wired pair's change in HQ (SPEC
+// §3.2a), so that destination is never trackable regardless of
 // BuildIntegration.
 func gitPushDestinationTrackable(stateDir, targetService, inputRemote string) bool {
 	effectiveRemote := resolveEffectiveRemote(stateDir, targetService, inputRemote)
-	return !giteaRemoteOfThisMate(effectiveRemote) && gitPushBuildIntegrationConfigured(stateDir, targetService)
+	return !hqRemoteOfThisMate(effectiveRemote) && gitPushBuildIntegrationConfigured(stateDir, targetService)
 }
 
 // trackedRefOrDefault is the single owner of the GF-7 "main" fallback
@@ -251,72 +250,27 @@ func trackedRefOrDefault(meta *workflow.ServiceMeta) string {
 // resolveTrackedBranch resolves the branch a container-mode git-push
 // transmits to: an explicit inputBranch always wins (back-compat with the
 // pre-GF-7 `branch` input), else the target's recorded tracked ref (GF-7),
-// else the Mate's own Gitea branch, else "main".
-//
-// The Gitea step sits between TrackedRef and the "main" fallback because on
-// the account's own Gitea `main` is protected on every repository and a
-// direct push is refused by a pre-receive hook (docs/vocabulary.md,
-// "protected branches"): there the branch to push is the Mate's own,
-// recorded on the pair when the broker gave it the repository (A5, guide
-// 1.5). Falling through to `main` there would make every delivery fail at
-// the remote, and the failure reads like a credential fault — the one
-// diagnosis that leads an agent to rotate a perfectly good token.
+// else "main". A push to this Mate's HQ goes to its change's branch instead,
+// which zcp picks (handleHQGitPush).
 func resolveTrackedBranch(stateDir, targetService, inputBranch string) string {
-	meta, _ := workflow.FindServiceMeta(stateDir, targetService)
-	return notTheProtectedBase(meta, resolveAskedBranch(meta, inputBranch))
-}
-
-// resolveAskedBranch is what was asked for, before the protected base is ruled
-// out: the caller's branch, the recorded tracked ref (GF-7), the Mate's own
-// branch, then `main`.
-func resolveAskedBranch(meta *workflow.ServiceMeta, inputBranch string) string {
-	switch {
-	case inputBranch != "":
+	if inputBranch != "" {
 		return inputBranch
-	case meta != nil && meta.TrackedRef != "":
-		return meta.TrackedRef
-	case meta != nil && meta.Gitea != nil && meta.Gitea.Branch != "":
-		return meta.Gitea.Branch
 	}
-	return defaultTrackedRef
+	meta, _ := workflow.FindServiceMeta(stateDir, targetService)
+	return trackedRefOrDefault(meta)
 }
 
-// notTheProtectedBase keeps a wired pair off the branch it may never push to.
-//
-// Every repository on the account's Gitea protects its default branch, and a
-// Mate lands on it through a pull request — but a pair wired before it had a
-// branch kept `main` as its tracked ref, and nothing since replaced it. Every
-// git-push deploy of such a pair therefore aimed at `main`, which Gitea
-// rejects as non-fast-forward the moment anybody merges, leaving the agent to
-// find its own way around (the owner, 2026-09-18: "it keeps running into this
-// as well"). Asked for the base or defaulted to it, a wired pair pushes to its
-// own branch; a pair with no Gitea has no other branch and keeps what it was
-// given.
-func notTheProtectedBase(meta *workflow.ServiceMeta, branch string) string {
-	if meta == nil || meta.Gitea == nil || meta.Gitea.Branch == "" {
-		return branch
-	}
-	base := meta.Gitea.DefaultBranch
-	if base == "" {
-		base = defaultTrackedRef
-	}
-	if branch != base {
-		return branch
-	}
-	return meta.Gitea.Branch
-}
-
-// giteaPushGuard decides whether a pair whose remote is this Mate's Gitea may
-// push. A pair not yet recorded as wired — its wiring stopped half-way, with
-// the remote stamped and no branch — has its wiring retried once, here, and is
-// refused while it stays incomplete: pushing it would aim at the protected
-// base (test - Gita, 2026-09-24). A refusal the retry cannot change is told
-// its remedy, after which the next push wires the pair. A remote on this Gitea
-// that is not the pair's repository is the user's own and pushes as one,
-// without the broker being asked — it would create the pair's repository
-// (giteaRemoteIsThePairs). A wired pair asked to push the base itself is
-// refused and told its own branch. Nil when the push may go ahead.
-func giteaPushGuard(
+// hqPushGuard decides whether a pair whose remote is this Mate's HQ may push.
+// A pair not yet recorded as wired — its wiring stopped half-way, with the
+// remote stamped and no branch — has its wiring retried once, here, and is
+// refused while it stays incomplete. A refusal the retry cannot change is
+// told its remedy, after which the next push wires the pair. A remote on this
+// HQ that is not the pair's repository is the user's own and pushes as one,
+// without HQ being asked — it would make the pair's repository
+// (hqRemoteIsThePairs). A wired pair is refused a branch of its own choosing:
+// HQ takes its push only on its change's branch, and `main` moves only by
+// HQ's merge. Nil when the push may go ahead.
+func hqPushGuard(
 	ctx context.Context,
 	client platform.Client,
 	httpClient ops.HTTPDoer,
@@ -325,42 +279,48 @@ func giteaPushGuard(
 	stateDir, hostname, remote, askedBranch string,
 ) *platform.PlatformError {
 	meta, _ := workflow.FindServiceMeta(stateDir, hostname)
-	if meta == nil {
+	hqc, enrolled := openHQ(httpClient)
+	if meta == nil || !enrolled {
 		return nil
 	}
-	if meta.Gitea == nil {
-		metas, _ := workflow.ListServiceMetas(stateDir)
-		giteaURL := ops.ReadGiteaWiring(giteaEnvLookup(mate.LiveEnvStorePath)).GiteaURL
-		if !giteaRemoteIsThePairs(remote, giteaURL, hostname, knownGiteaOrg(metas)) {
+	if !hqPairWired(meta) {
+		if !hqRemoteIsThePairs(remote, hqc.Address(), hostname) {
 			return nil
 		}
-		attempt := rewireGiteaPair(ctx, client, httpClient, sshDeployer, rt, stateDir, mate.LiveEnvStorePath, meta)
+		attempt := rewireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, meta, hostname)
 		if attempt.usersOwn {
 			return nil
 		}
 		if !attempt.wired {
-			suggestion := "Do not push to main or force-push. Deploy the pair directly (strategy \"ssh\") to run the code; every git-push retries the wiring, and once it completes the push goes to this Mate's own branch and its pull request."
+			suggestion := "Do not push to main or force-push. Deploy the pair directly (strategy \"ssh\") to run the code; every git-push retries the wiring, and once it completes the push goes to this Mate's change."
 			if attempt.remedy != "" {
-				suggestion = attempt.remedy + " Do not push to main or force-push; the git-push after the remedy wires the pair and goes to this Mate's own branch and its pull request."
+				suggestion = attempt.remedy + " Do not push to main or force-push; the git-push after the remedy wires the pair and goes to this Mate's change."
 			}
 			return platform.NewPlatformError(
 				platform.ErrPrerequisiteMissing,
-				fmt.Sprintf("git-push from %s did not run: wiring incomplete — %s Nothing was pushed; the repository's main is protected and takes no direct push.", hostname, attempt.line),
+				fmt.Sprintf("git-push from %s did not run: wiring incomplete — %s Nothing was pushed; the repository's main moves only by HQ's merge.", hostname, attempt.line),
 				suggestion,
 			)
 		}
-		if meta, _ = workflow.FindServiceMeta(stateDir, hostname); meta == nil || meta.Gitea == nil {
+		if meta, _ = workflow.FindServiceMeta(stateDir, hostname); !hqPairWired(meta) {
 			return nil
 		}
 	}
-	if base := giteaBaseOf(meta); askedBranch == base {
+	switch askedBranch {
+	case "":
+		return nil
+	case hqBase:
 		return platform.NewPlatformError(
 			platform.ErrInvalidParameter,
-			fmt.Sprintf("git-push from %s to %q did not run: %q is the protected base of %s and takes no direct push.", hostname, base, base, meta.Gitea.FullName),
-			fmt.Sprintf("Push without a branch, or with branch=%q — this Mate's own branch; the person lands it on %q through the pull request.", meta.Gitea.Branch, base),
+			fmt.Sprintf("git-push from %s to %q did not run: %q of %q moves only by HQ's merge and takes no push.", hostname, hqBase, hqBase, meta.HQ.Repo),
+			fmt.Sprintf("Push without a branch — the push goes to this Mate's change, and the person lands it on %q by merging it.", hqBase),
 		)
 	}
-	return nil
+	return platform.NewPlatformError(
+		platform.ErrInvalidParameter,
+		fmt.Sprintf("git-push from %s to %q did not run: HQ takes this Mate's push only on its change's branch, which zcp picks.", hostname, askedBranch),
+		"Push without a branch — the push goes to this Mate's change.",
+	)
 }
 
 // gitPushEnvRefPreflight validates the run.envVariables refs of the named
@@ -485,7 +445,7 @@ func handleGitPush(
 	// (transport-layer failure to reach the remote).
 	//
 	// GF-13, extended to the failure side (judge review, item 5): a
-	// destination nothing can ever resolve — a Gitea remote (nothing builds
+	// destination nothing can ever resolve — a change in HQ (nothing builds
 	// from a Mate's branch) or no BuildIntegration wired — must not record
 	// a FAILED attempt either, for the identical reason GF-13 already
 	// blocked the success side from recording an in-flight one there: no
@@ -523,11 +483,11 @@ func handleGitPush(
 		)), nil, nil
 	}
 
-	// A wired pair pushes with a copy of this Mate's Gitea token, which the
-	// broker rotates: bring the copy to the current token first — which also
-	// heals a pair an earlier refusal marked, before the pre-flight below
-	// would refuse it (gitea_push_credential.go).
-	if refusal := giteaPushCredentialPreflight(ctx, client, sshDeployer, projectID, stateDir, input); refusal != nil {
+	// A wired pair pushes with a copy of this Mate's HQ credential, which a
+	// re-enrollment replaces: bring the copy to the current credential first
+	// — which also heals a pair an earlier refusal marked, before the
+	// pre-flight below would refuse it (hq_push_credential.go).
+	if refusal := hqPushCredentialPreflight(ctx, client, httpClient, sshDeployer, projectID, stateDir, input); refusal != nil {
 		recordAttempt(refusal.Message, topology.FailureClassCredential)
 		return convertError(refusal, WithRecoveryStatus()), nil, nil
 	}
@@ -544,11 +504,11 @@ func handleGitPush(
 	}
 	effectiveRemote := resolveEffectiveRemote(stateDir, input.TargetService, input.RemoteURL)
 
-	// A pair on this Mate's Gitea pushes only once it is wired, and never to
-	// the protected base — refused here, before git runs, so a rejection can
-	// never read as a reason to force-push over it.
-	if giteaRemoteOfThisMate(effectiveRemote) {
-		if refusal := giteaPushGuard(ctx, client, httpClient, sshDeployer, rt, stateDir, hostname, effectiveRemote, input.Branch); refusal != nil {
+	// A pair on this Mate's HQ pushes only once it is wired, and only to its
+	// change — refused here, before git runs, so a rejection can never read
+	// as a reason to force-push over it.
+	if hqRemoteOfThisMate(effectiveRemote) {
+		if refusal := hqPushGuard(ctx, client, httpClient, sshDeployer, rt, stateDir, hostname, effectiveRemote, input.Branch); refusal != nil {
 			recordAttempt(refusal.Message, topology.FailureClassConfig)
 			return convertError(refusal, WithRecoveryStatus()), nil, nil
 		}
@@ -673,63 +633,11 @@ func handleGitPush(
 		}
 	}
 
-	// A push onto a wired pair's own Gitea branch can open or touch a pull
-	// request right after it (giteaPullRequestAfterPush below) — and Gitea
-	// computes that request's mergeability itself, independent of whether
-	// THIS push succeeds. So a landing of this Mate's own earlier pull
-	// request (a squash shares no history with the branch it came from) has
-	// to be absorbed BEFORE this push, or the request looks broken to
-	// whoever looks at it before the next stage delivery ever runs
-	// (gitea_delivery.go's deliverGiteaPair, which does the same absorb as
-	// part of its own commit+push). A REAL conflict here — not the false
-	// squash-vs-history one — stops the push outright: pushing on top of a
-	// checkout the sync left mid-way is never right.
-	var giteaLearnedNote string
-	if giteaRemoteOfThisMate(effectiveRemote) {
-		meta, _ := workflow.FindServiceMeta(stateDir, hostname)
-		absorb := giteaAbsorbBeforePush(ctx, httpClient, sshDeployer, stateDir, hostname, workingDir, meta)
-		giteaLearnedNote = absorb.LearnedNote
-		// giteaLearnedNote (news about a PREVIOUSLY recorded pull request,
-		// independent of whether THIS absorb found anything to do) is
-		// folded into every return from here, error included — it must not
-		// only reach the success response's warnings; nothing else would
-		// ever say it once the number is off meta.Gitea.PullRequest.
-		if absorb.Dirty {
-			recordAttempt("gitea landing absorb: uncommitted changes block taking in the landed pull request", topology.FailureClassConfig)
-			msg := fmt.Sprintf("git-push from %s has not reached %s: uncommitted changes in %s's checkout block taking in this Mate's own landed pull request.",
-				hostname, meta.Gitea.FullName, hostname)
-			if giteaLearnedNote != "" {
-				msg += " " + giteaLearnedNote
-			}
-			return convertError(platform.NewPlatformError(
-				platform.ErrSSHDeployFailed, msg,
-				fmt.Sprintf("Commit the changes in %s's checkout, then push again.", hostname),
-			), WithRecoveryStatus()), nil, nil
-		}
-		if absorb.Conflict != "" {
-			var detail, sequence string
-			switch {
-			case absorb.IsAbsorbConflict:
-				detail = fmt.Sprintf("a real conflict inside absorbing this Mate's own earlier pull request — %s changes the same lines (%s)", giteaBaseOf(meta), absorb.Conflict)
-				sequence = giteaManualAbsorbSequence(hostname, absorb.LandedCommit, giteaBaseOf(meta), true)
-			case absorb.Unprovable:
-				detail = fmt.Sprintf("%s has moved on and %s changes the same lines (%s) — this may be this Mate's own squashed pull request, which this container's git could not prove safe to fold in automatically", giteaBaseOf(meta), branch, absorb.Conflict)
-				sequence = giteaManualAbsorbSequence(hostname, absorb.LandedCommit, giteaBaseOf(meta), false)
-			default:
-				detail = fmt.Sprintf("%s has moved on and %s changes the same lines (%s)", giteaBaseOf(meta), branch, absorb.Conflict)
-				sequence = fmt.Sprintf("In %s's checkout run `git fetch origin && git merge origin/%s`, resolve it", hostname, giteaBaseOf(meta))
-			}
-			recordAttempt(fmt.Sprintf("gitea landing absorb conflict: %s", detail), topology.FailureClassConfig)
-			msg := fmt.Sprintf("git-push from %s has not reached %s: %s.", hostname, meta.Gitea.FullName, detail)
-			if giteaLearnedNote != "" {
-				msg += " " + giteaLearnedNote
-			}
-			return convertError(platform.NewPlatformError(
-				platform.ErrSSHDeployFailed,
-				msg,
-				sequence+", then push again.",
-			), WithRecoveryStatus()), nil, nil
-		}
+	// A push to this Mate's HQ is a delivery of committed work: its change
+	// opened when there is something to deliver, and HEAD pushed to the
+	// change's branch — the one ref HQ takes from the Mate.
+	if hqRemoteOfThisMate(effectiveRemote) {
+		return handleHQGitPush(ctx, client, httpClient, sshDeployer, rt, projectID, stateDir, hostname, workingDir, effectiveRemote, dirtyWarn, recordAttempt)
 	}
 
 	// pushedAt anchors the build-watch discovery: integration builds
@@ -800,12 +708,6 @@ func handleGitPush(
 		result.Message = fmt.Sprintf("Nothing to push from %s — remote is up to date", hostname)
 	}
 
-	// Opened as soon as the push lands: the push is what put the Mate's branch
-	// on the account's Gitea, and `main` there takes no direct push from
-	// anyone. Idempotent: a second push finds the open one.
-	pullRequest := giteaPullRequestAfterPush(ctx, httpClient, stateDir, hostname, effectiveRemote)
-	giteaRemote := giteaRemoteOfThisMate(effectiveRemote)
-
 	// C2 closure (audit-prerelease-internal-testing-2026-04-29): the
 	// pre-fix path stamped attempt.SucceededAt = time.Now() right here,
 	// which RecordDeployAttempt then propagated to FirstDeployedAt via
@@ -819,22 +721,22 @@ func handleGitPush(
 	// zerops_events. The result.NextActions text below names that bridge.
 	//
 	// That placeholder is only honest when SOMETHING can later resolve it
-	// (the build watch below, or its manual record-deploy fallback). Three
+	// (the build watch below, or its manual record-deploy fallback). Two
 	// outcomes have no such resolver — nothing was transmitted
-	// (statusNothingToPush), the destination is this Mate's own Gitea
-	// branch (nothing ever builds from it — gitea_delivery.go), or the
-	// target has no ZCP-managed BuildIntegration wired at all — and
-	// recording it there left a permanent, unexplained "failed deploy"
-	// (Success:false, no Reason) on the push source forever. A git-push
-	// that no build follows is delivery, not a deploy of that service, so
-	// those three cases record nothing (GF-13, docs/spec-workflows.md §12.6).
-	trackable := result.Status != statusNothingToPush && !giteaRemote && gitPushBuildIntegrationConfigured(stateDir, input.TargetService)
+	// (statusNothingToPush), or the target has no ZCP-managed
+	// BuildIntegration wired at all — and recording it there left a
+	// permanent, unexplained "failed deploy" (Success:false, no Reason) on the
+	// push source forever. A git-push that no build follows is delivery, not
+	// a deploy of that service, so those cases record nothing (GF-13,
+	// docs/spec-workflows.md §12.6). A push to this Mate's HQ never reaches
+	// here (handleHQGitPush).
+	trackable := result.Status != statusNothingToPush && gitPushBuildIntegrationConfigured(stateDir, input.TargetService)
 	if trackable {
 		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 	}
 
-	switch {
-	case result.Status == statusNothingToPush && !giteaRemote:
+	switch result.Status {
+	case statusNothingToPush:
 		// Nothing was transmitted, so no integration build will fire — skip the
 		// build watch (it would emit a false "Push landed…" nextActions). A
 		// dirty tree is the usual cause: the dirtyWarn below already names the
@@ -844,10 +746,6 @@ func handleGitPush(
 		} else {
 			result.NextActions = "Working tree is clean and the remote already has this HEAD — nothing to deploy."
 		}
-	case giteaRemote:
-		// The group's workflow runs on main, which the person's merge moves:
-		// nothing builds from a Mate's branch (gitea_delivery.go).
-		result.NextActions = giteaPushNextActions(pullRequest, hostname)
 	default:
 		// L1 build watch (spec-git-delivery-target §6.1): the push IS the
 		// deploy, so follow the integration-triggered build to terminal the
@@ -869,20 +767,12 @@ func handleGitPush(
 	if dirtyWarn != "" {
 		warnings = append(warnings, dirtyWarn)
 	}
-	// News about a PREVIOUSLY recorded pull request this push's own absorb
-	// step learned ("pull request #N is merged…") — independent of this
-	// push's own outcome, and the last place anything would ever say it
-	// once the number is gone from meta (giteaAbsorbBeforePush).
-	if giteaLearnedNote != "" {
-		warnings = append(warnings, giteaLearnedNote)
-	}
-	if warn := trackTriggerMissingWarning(stateDir, hostname); warn != "" && !giteaRemote {
+	if warn := trackTriggerMissingWarning(stateDir, hostname); warn != "" {
 		warnings = append(warnings, warn)
 	}
 
 	return jsonResult(deployGitPushResponse{
 		GitPushResult:    result,
-		PullRequest:      pullRequest,
 		Warnings:         warnings,
 		WorkSessionState: sessionAnnotations(stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
@@ -896,11 +786,11 @@ func handleGitPush(
 // want.
 type deployGitPushResponse struct {
 	*ops.GitPushResult
-	// PullRequest is the request this push's branch lands through on the
-	// account's own Gitea — absent everywhere else.
-	PullRequest      *giteaPullRequestRef `json:"pullRequest,omitempty"`
-	Warnings         []string             `json:"warnings,omitempty"`
-	WorkSessionState *WorkSessionState    `json:"workSessionState,omitempty"`
+	// PullRequest is the change in this Mate's HQ the push's work lands
+	// through — absent everywhere else. Named as the card decodes it.
+	PullRequest      *changeRef        `json:"pullRequest,omitempty"`
+	Warnings         []string          `json:"warnings,omitempty"`
+	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
 	// Envelope is the post-mutation lifecycle state (docs/spec-mate.md §1.3).
 	// Absent when its computation failed — the rest of the response is
 	// unaffected.

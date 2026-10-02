@@ -1,10 +1,9 @@
-// Tests for: ops/gitea_branch.go — a Mate's branch must descend from the
-// repository's protected `main`. Run against a temp BARE repository standing
-// in for Gitea: the broker's `main` is born with an initial commit, zcp
-// git-initialises the pair with a history of its own, and a branch that does
-// not descend from that `main` makes Gitea refuse `merge` and `squash` ("The
-// merge head and base do not share a common history" — measured 2026-09-16),
-// leaving `rebase` the only way a pull request can land.
+// Tests for: ops/delivery_git.go — a Mate's branch must descend from the
+// repository's `main`, and a delivery commits the deployed tree, takes `main`
+// in and says how far ahead it is before anything is pushed. Run against a
+// temp BARE repository standing in for HQ: HQ makes `main` with one commit of
+// the empty tree, zcp git-initialises the pair with a history of its own, and
+// a change that shares no history with `main` cannot be squashed onto it.
 package ops
 
 import (
@@ -15,26 +14,32 @@ import (
 	"testing"
 )
 
-// brokerSeed is what the broker's `auto_init` leaves on `main`: one
-// parentless commit adding README.md, mode 100644.
-func brokerSeed(t *testing.T, dir string) {
+// The Mate's local branch in a lab, and the branches of its first two changes
+// at HQ.
+const (
+	labBranch  = "mate/p-mate"
+	labChange1 = "mate/p-mate/1"
+	labChange2 = "mate/p-mate/2"
+)
+
+// hqSeed is what HQ leaves on a repository's `main` when it makes one: one
+// parentless commit of the empty tree.
+func hqSeed(t *testing.T, dir string) {
 	t.Helper()
-	writeLabFile(t, filepath.Join(dir, "README.md"), "the broker's README\n")
-	runGit(t, dir, "add", "-A")
-	runGit(t, dir, "commit", "-qm", "Initial commit")
+	runGit(t, dir, "commit", "-q", "--allow-empty", "-m", "Initial commit")
 }
 
-// giteaBranchLab builds a bare "Gitea" whose `main` carries the broker's
-// seeded README, plus a pair repository wired to it as `origin`. seedPair
-// runs inside the pair and decides what local history it has.
-func giteaBranchLab(t *testing.T, seedPair func(t *testing.T, dir string)) (pairDir string) {
+// mateBranchLab builds a bare "HQ" whose `main` carries HQ's seed, plus a
+// pair repository wired to it as `origin`. seedPair runs inside the pair and
+// decides what local history it has.
+func mateBranchLab(t *testing.T, seedPair func(t *testing.T, dir string)) (pairDir string) {
 	t.Helper()
-	return giteaBranchLabOn(t, brokerSeed, seedPair)
+	return mateBranchLabOn(t, hqSeed, seedPair)
 }
 
-// giteaBranchLabOn is giteaBranchLab with the base's history chosen too:
+// mateBranchLabOn is mateBranchLab with the base's history chosen too:
 // seedBase runs in a clone whose `main` is then pushed as the remote's.
-func giteaBranchLabOn(t *testing.T, seedBase, seedPair func(t *testing.T, dir string)) (pairDir string) {
+func mateBranchLabOn(t *testing.T, seedBase, seedPair func(t *testing.T, dir string)) (pairDir string) {
 	t.Helper()
 	root := t.TempDir()
 	remote := filepath.Join(root, "remote.git")
@@ -42,8 +47,8 @@ func giteaBranchLabOn(t *testing.T, seedBase, seedPair func(t *testing.T, dir st
 
 	seed := filepath.Join(root, "seed")
 	runGit(t, root, "init", "-q", "-b", "main", "seed")
-	runGit(t, seed, "config", "user.email", "broker@example.invalid")
-	runGit(t, seed, "config", "user.name", "broker")
+	runGit(t, seed, "config", "user.email", "hq@hq.invalid")
+	runGit(t, seed, "config", "user.name", "HQ")
 	seedBase(t, seed)
 	runGit(t, seed, "remote", "add", "origin", remote)
 	runGit(t, seed, "push", "-q", "origin", "main")
@@ -57,6 +62,14 @@ func giteaBranchLabOn(t *testing.T, seedBase, seedPair func(t *testing.T, dir st
 		seedPair(t, pairDir)
 	}
 	return pairDir
+}
+
+// deliverInLab delivers the pair's first change, "Build the app", and pushes
+// it to that change's branch, the way zcp does once the change is open.
+func deliverInLab(t *testing.T, pair string) {
+	t.Helper()
+	runShell(t, BuildDeliveryCommand(pair, "Build the app", "", ""))
+	runShell(t, BuildChangePushCommand(pair, labChange1))
 }
 
 func runGit(t *testing.T, dir string, args ...string) string {
@@ -102,20 +115,10 @@ func runShell(t *testing.T, command string) {
 	}
 }
 
-// commitAll commits the pair's whole tree; mode, when set, is forced on
-// README.md in the index — a recipe authored through a mount that stamps +x
-// adds its README as 100755 (nodejs-hello-world-app, measured 2026-09-24).
-func commitAll(t *testing.T, dir, message, readmeMode string) {
+// commitAll commits the pair's whole tree.
+func commitAll(t *testing.T, dir, message string) {
 	t.Helper()
-	if readmeMode == "+x" {
-		if err := os.Chmod(filepath.Join(dir, "README.md"), 0o755); err != nil {
-			t.Fatalf("chmod README.md: %v", err)
-		}
-	}
 	runGit(t, dir, "add", "-A")
-	if readmeMode != "" {
-		runGit(t, dir, "update-index", "--chmod="+readmeMode, "README.md")
-	}
 	runGit(t, dir, "commit", "-qm", message)
 }
 
@@ -132,39 +135,39 @@ func zcpInitMarker(t *testing.T, dir string) {
 // with no commits at all.
 const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
-// giteaBranchOutcome is what a branch step row expects.
-type giteaBranchOutcome int
+// mateBranchOutcome is what a branch step row expects.
+type mateBranchOutcome int
 
 const (
 	// branchJoined: the pair's tree and working copy are untouched.
-	branchJoined giteaBranchOutcome = iota
+	branchJoined mateBranchOutcome = iota
 	// branchFromBase: a marker-only pair now holds the base's tree.
 	branchFromBase
 	// branchRefused: named in the output, and nothing moved.
 	branchRefused
 )
 
-type giteaBranchCase struct {
+type mateBranchCase struct {
 	name string
-	// base builds the remote's `main`; nil is the broker's seed.
+	// base builds the remote's `main`; nil is HQ's seed.
 	base func(t *testing.T, dir string)
 	seed func(t *testing.T, dir string)
-	want giteaBranchOutcome
+	want mateBranchOutcome
 	// refusal is the state a refused row names, with what it names.
 	refusal string
 	// wantFiles is path → content expected in the working tree after.
 	wantFiles map[string]string
 }
 
-func giteaBranchCases() []giteaBranchCase {
-	return []giteaBranchCase{
+func mateBranchCases() []mateBranchCase {
+	return []mateBranchCase{
 		{
-			name: "local commits keep the pair's README over the seed's",
+			name: "local commits are joined onto the seed, the pair's files kept",
 			seed: func(t *testing.T, dir string) {
 				t.Helper()
 				writeLabFile(t, filepath.Join(dir, "README.md"), "the pair's README\n")
 				writeLabFile(t, filepath.Join(dir, "index.js"), "the app\n")
-				commitAll(t, dir, "the first page", "")
+				commitAll(t, dir, "the first page")
 			},
 			want: branchJoined,
 			wantFiles: map[string]string{
@@ -173,43 +176,23 @@ func giteaBranchCases() []giteaBranchCase {
 			},
 		},
 		{
-			name: "a README added as 100755 against the seed's 100644",
-			seed: func(t *testing.T, dir string) {
-				t.Helper()
-				writeLabFile(t, filepath.Join(dir, "README.md"), "# hello world\n")
-				writeLabFile(t, filepath.Join(dir, "index.js"), "the app\n")
-				commitAll(t, dir, "init", "+x")
-			},
-			want:      branchJoined,
-			wantFiles: map[string]string{"README.md": "# hello world\n"},
-		},
-		{
-			name: "the same README bytes, only the mode differs",
-			seed: func(t *testing.T, dir string) {
-				t.Helper()
-				writeLabFile(t, filepath.Join(dir, "README.md"), "the broker's README\n")
-				commitAll(t, dir, "init", "+x")
-			},
-			want: branchJoined,
-		},
-		{
 			name: "a two-root history with a hand-resolved merge",
 			seed: func(t *testing.T, dir string) {
 				t.Helper()
 				writeLabFile(t, filepath.Join(dir, "app.txt"), "base\n")
-				commitAll(t, dir, "root one", "")
+				commitAll(t, dir, "root one")
 				runGit(t, dir, "checkout", "-q", "-b", "feat")
 				writeLabFile(t, filepath.Join(dir, "app.txt"), "feat\n")
-				commitAll(t, dir, "feat", "")
+				commitAll(t, dir, "feat")
 				runGit(t, dir, "checkout", "-q", "main")
 				writeLabFile(t, filepath.Join(dir, "app.txt"), "main\n")
-				commitAll(t, dir, "main", "")
+				commitAll(t, dir, "main")
 				// The conflict is settled by hand, to neither side.
 				cmd := exec.CommandContext(t.Context(), "git", "merge", "-q", "feat")
 				cmd.Dir = dir
 				_ = cmd.Run()
 				writeLabFile(t, filepath.Join(dir, "app.txt"), "resolved\n")
-				commitAll(t, dir, "merge feat", "")
+				commitAll(t, dir, "merge feat")
 				runGit(t, dir, "branch", "-q", "-D", "feat")
 				// A second root, merged in: the recipe shape.
 				runGit(t, dir, "checkout", "-q", "--orphan", "other")
@@ -232,7 +215,7 @@ func giteaBranchCases() []giteaBranchCase {
 			seed: func(t *testing.T, dir string) {
 				t.Helper()
 				writeLabFile(t, filepath.Join(dir, "zerops.yaml"), "zerops: []\n")
-				commitAll(t, dir, "init", "")
+				commitAll(t, dir, "init")
 				writeLabFile(t, filepath.Join(dir, "zerops.yaml"), "zerops: [edited]\n")
 			},
 			want:      branchJoined,
@@ -245,28 +228,26 @@ func giteaBranchCases() []giteaBranchCase {
 				zcpInitMarker(t, dir)
 				writeLabFile(t, filepath.Join(dir, "README.md"), "written, never committed\n")
 			},
-			want:      branchJoined,
+			want:      branchFromBase,
 			wantFiles: map[string]string{"README.md": "written, never committed\n"},
 		},
 		{
-			name:      "the zcp-init marker alone",
-			seed:      zcpInitMarker,
-			want:      branchFromBase,
-			wantFiles: map[string]string{"README.md": "the broker's README\n"},
+			name: "the zcp-init marker alone",
+			seed: zcpInitMarker,
+			want: branchFromBase,
 		},
 		{
-			name:      "a pair with no local commits",
-			seed:      nil,
-			want:      branchFromBase,
-			wantFiles: map[string]string{"README.md": "the broker's README\n"},
+			name: "a pair with no local commits",
+			seed: nil,
+			want: branchFromBase,
 		},
 		{
 			name: "a branch an earlier failed pass left HEAD on is joined in place",
 			seed: func(t *testing.T, dir string) {
 				t.Helper()
 				writeLabFile(t, filepath.Join(dir, "index.js"), "the app\n")
-				commitAll(t, dir, "init", "")
-				runGit(t, dir, "checkout", "-q", "-b", "mate/mate-p1")
+				commitAll(t, dir, "init")
+				runGit(t, dir, "checkout", "-q", "-b", labBranch)
 			},
 			want:      branchJoined,
 			wantFiles: map[string]string{"index.js": "the app\n"},
@@ -276,7 +257,7 @@ func giteaBranchCases() []giteaBranchCase {
 			seed: func(t *testing.T, dir string) {
 				t.Helper()
 				writeLabFile(t, filepath.Join(dir, "index.js"), "the app\n")
-				commitAll(t, dir, "init", "")
+				commitAll(t, dir, "init")
 				writeLabFile(t, filepath.Join(dir, "index.js"), "staged\n")
 				runGit(t, dir, "add", "index.js")
 			},
@@ -285,12 +266,7 @@ func giteaBranchCases() []giteaBranchCase {
 		},
 		{
 			name: "a marker-only pair with a staged file is refused cleanly",
-			base: func(t *testing.T, dir string) {
-				t.Helper()
-				brokerSeed(t, dir)
-				writeLabFile(t, filepath.Join(dir, "app.js"), "the group's app\n")
-				commitAll(t, dir, "landed", "")
-			},
+			base: landedBase,
 			seed: func(t *testing.T, dir string) {
 				t.Helper()
 				zcpInitMarker(t, dir)
@@ -305,52 +281,57 @@ func giteaBranchCases() []giteaBranchCase {
 			seed: func(t *testing.T, dir string) {
 				t.Helper()
 				writeLabFile(t, filepath.Join(dir, "index.js"), "the app\n")
-				commitAll(t, dir, "init", "")
-				runGit(t, dir, "branch", "mate/mate-p1")
+				commitAll(t, dir, "init")
+				runGit(t, dir, "branch", labBranch)
 			},
 			want:    branchRefused,
 			refusal: "ZCP_BRANCH_ELSEWHERE",
 		},
 		{
 			name: "a base with landed code and an unrelated pair history",
-			base: func(t *testing.T, dir string) {
-				t.Helper()
-				brokerSeed(t, dir)
-				writeLabFile(t, filepath.Join(dir, "app.js"), "the first Mate's work\n")
-				commitAll(t, dir, "landed", "")
-			},
+			base: landedBase,
 			seed: func(t *testing.T, dir string) {
 				t.Helper()
 				writeLabFile(t, filepath.Join(dir, "app.js"), "this pair's work\n")
-				commitAll(t, dir, "init", "")
+				commitAll(t, dir, "init")
 			},
 			want:    branchRefused,
 			refusal: "ZCP_BASE_NOT_SEED",
 		},
 		{
-			name: "a one-commit base that is more than a README",
+			name: "a one-commit base that holds code",
 			base: func(t *testing.T, dir string) {
 				t.Helper()
 				writeLabFile(t, filepath.Join(dir, "README.md"), "readme\n")
 				writeLabFile(t, filepath.Join(dir, "app.js"), "code\n")
-				commitAll(t, dir, "everything at once", "")
+				commitAll(t, dir, "everything at once")
 			},
 			seed: func(t *testing.T, dir string) {
 				t.Helper()
 				writeLabFile(t, filepath.Join(dir, "index.js"), "the app\n")
-				commitAll(t, dir, "init", "")
+				commitAll(t, dir, "init")
+			},
+			want:    branchRefused,
+			refusal: "ZCP_BASE_NOT_SEED",
+		},
+		{
+			name: "a one-commit base of only a README is no seed of HQ's",
+			base: func(t *testing.T, dir string) {
+				t.Helper()
+				writeLabFile(t, filepath.Join(dir, "README.md"), "readme\n")
+				commitAll(t, dir, "Initial commit")
+			},
+			seed: func(t *testing.T, dir string) {
+				t.Helper()
+				writeLabFile(t, filepath.Join(dir, "index.js"), "the app\n")
+				commitAll(t, dir, "init")
 			},
 			want:    branchRefused,
 			refusal: "ZCP_BASE_NOT_SEED",
 		},
 		{
 			name: "a marker-only pair against a populated main branches from main",
-			base: func(t *testing.T, dir string) {
-				t.Helper()
-				brokerSeed(t, dir)
-				writeLabFile(t, filepath.Join(dir, "app.js"), "the group's app\n")
-				commitAll(t, dir, "landed", "")
-			},
+			base: landedBase,
 			seed: func(t *testing.T, dir string) {
 				t.Helper()
 				zcpInitMarker(t, dir)
@@ -358,19 +339,13 @@ func giteaBranchCases() []giteaBranchCase {
 			},
 			want: branchFromBase,
 			wantFiles: map[string]string{
-				"app.js":    "the group's app\n",
-				"README.md": "the broker's README\n",
+				"app.js":    "the first Mate's work\n",
 				"notes.txt": "untracked, not on main\n",
 			},
 		},
 		{
 			name: "a marker-only pair whose untracked file main would overwrite",
-			base: func(t *testing.T, dir string) {
-				t.Helper()
-				brokerSeed(t, dir)
-				writeLabFile(t, filepath.Join(dir, "app.js"), "the group's app\n")
-				commitAll(t, dir, "landed", "")
-			},
+			base: landedBase,
 			seed: func(t *testing.T, dir string) {
 				t.Helper()
 				zcpInitMarker(t, dir)
@@ -383,30 +358,29 @@ func giteaBranchCases() []giteaBranchCase {
 	}
 }
 
-// TestBuildGiteaMateBranchCommand_DescendsFromMain is the table the wiring
+// TestBuildMateBranchCommand_DescendsFromMain is the table the wiring
 // owes. Whatever local history the pair has, it ends on its own branch
 // descending from `origin/main` — or it is refused by name and nothing moved.
-// A pair joined onto the broker's seed keeps its tree and its working copy
+// A pair joined onto HQ's seed keeps its tree and its working copy
 // byte for byte: the seed is a placeholder, and the pair's code is not zcp's
 // to rewrite (the rebase this replaced lost a hand-resolved merge in
-// wasp-hello-world-app and could not settle a README mode clash in five
-// recipes — measured 2026-09-24).
-func TestBuildGiteaMateBranchCommand_DescendsFromMain(t *testing.T) {
+// wasp-hello-world-app — measured 2026-09-24).
+func TestBuildMateBranchCommand_DescendsFromMain(t *testing.T) {
 	if testing.Short() {
 		t.Skip("exercises a real git repository")
 	}
-	for _, tt := range giteaBranchCases() {
+	for _, tt := range mateBranchCases() {
 		t.Run(tt.name, func(t *testing.T) {
 			base := tt.base
 			if base == nil {
-				base = brokerSeed
+				base = hqSeed
 			}
-			pair := giteaBranchLabOn(t, base, tt.seed)
+			pair := mateBranchLabOn(t, base, tt.seed)
 			before := snapshotPair(t, pair)
 
 			//nolint:gosec // test-only, the command under test against a t.TempDir repository
 			out, err := exec.CommandContext(t.Context(), "sh", "-c",
-				BuildGiteaMateBranchCommand(pair, "mate/mate-p1", "main")).CombinedOutput()
+				BuildMateBranchCommand(pair, labBranch)).CombinedOutput()
 
 			assertLabFiles(t, pair, tt.wantFiles)
 			switch tt.want {
@@ -432,12 +406,12 @@ func TestBuildGiteaMateBranchCommand_DescendsFromMain(t *testing.T) {
 }
 
 // landedBase is a base another Mate's work has already landed on: the
-// broker's seed and real code on top.
+// HQ's seed and real code on top.
 func landedBase(t *testing.T, dir string) {
 	t.Helper()
-	brokerSeed(t, dir)
+	hqSeed(t, dir)
 	writeLabFile(t, filepath.Join(dir, "app.js"), "the first Mate's work\n")
-	commitAll(t, dir, "landed", "")
+	commitAll(t, dir, "landed")
 }
 
 // runRemedyShell runs a remedy's commands in the pair, as the agent would.
@@ -446,11 +420,11 @@ func runRemedyShell(t *testing.T, pair, command string) {
 	runShell(t, "cd "+shellQuote(pair)+" && "+command)
 }
 
-// TestGiteaBranchRefusalRemedy_TheNextAttemptWires: a refusal the agent is
+// TestMateBranchRefusalRemedy_TheNextAttemptWires: a refusal the agent is
 // only told to wait out is a pair stuck for good — the push guard refuses
 // every push until the wiring completes. Each refusal names one remedy, and
 // once it is done the very next attempt puts the pair on its branch.
-func TestGiteaBranchRefusalRemedy_TheNextAttemptWires(t *testing.T) {
+func TestMateBranchRefusalRemedy_TheNextAttemptWires(t *testing.T) {
 	if testing.Short() {
 		t.Skip("exercises a real git repository")
 	}
@@ -470,7 +444,7 @@ func TestGiteaBranchRefusalRemedy_TheNextAttemptWires(t *testing.T) {
 			seed: func(t *testing.T, dir string) {
 				t.Helper()
 				writeLabFile(t, filepath.Join(dir, "app.js"), "this pair's work\n")
-				commitAll(t, dir, "init", "")
+				commitAll(t, dir, "init")
 			},
 			refusal: "ZCP_BASE_NOT_SEED",
 			remedy:  []string{"git fetch origin 'main' && git merge --allow-unrelated-histories --no-edit FETCH_HEAD", "resolve", "commit"},
@@ -490,14 +464,14 @@ func TestGiteaBranchRefusalRemedy_TheNextAttemptWires(t *testing.T) {
 			seed: func(t *testing.T, dir string) {
 				t.Helper()
 				writeLabFile(t, filepath.Join(dir, "index.js"), "the app\n")
-				commitAll(t, dir, "init", "")
-				runGit(t, dir, "branch", "mate/mate-p1")
+				commitAll(t, dir, "init")
+				runGit(t, dir, "branch", labBranch)
 			},
 			refusal: "ZCP_BRANCH_ELSEWHERE",
-			remedy:  []string{"git checkout 'mate/mate-p1'"},
+			remedy:  []string{"git checkout 'mate/p-mate'"},
 			apply: func(t *testing.T, pair string) {
 				t.Helper()
-				runRemedyShell(t, pair, "git checkout -q 'mate/mate-p1'")
+				runRemedyShell(t, pair, "git checkout -q 'mate/p-mate'")
 			},
 		},
 		{
@@ -537,20 +511,20 @@ func TestGiteaBranchRefusalRemedy_TheNextAttemptWires(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			base := tc.base
 			if base == nil {
-				base = brokerSeed
+				base = hqSeed
 			}
-			pair := giteaBranchLabOn(t, base, tc.seed)
-			command := BuildGiteaMateBranchCommand(pair, "mate/mate-p1", "main")
+			pair := mateBranchLabOn(t, base, tc.seed)
+			command := BuildMateBranchCommand(pair, labBranch)
 
 			out, err := exec.CommandContext(t.Context(), "sh", "-c", command).CombinedOutput()
 			if err == nil {
 				t.Fatalf("want a refusal, the command succeeded:\n%s", out)
 			}
-			refusal := GiteaBranchRefusal(string(out))
+			refusal := MateBranchRefusal(string(out))
 			if refusal != tc.refusal {
-				t.Fatalf("GiteaBranchRefusal = %q, want %q; output:\n%s", refusal, tc.refusal, out)
+				t.Fatalf("MateBranchRefusal = %q, want %q; output:\n%s", refusal, tc.refusal, out)
 			}
-			remedy := GiteaBranchRefusalRemedy(refusal, "mate/mate-p1", "main")
+			remedy := MateBranchRefusalRemedy(refusal, labBranch)
 			for _, want := range tc.remedy {
 				if !strings.Contains(remedy, want) {
 					t.Errorf("the remedy for %s must name %q:\n%s", refusal, want, remedy)
@@ -582,7 +556,7 @@ func snapshotPair(t *testing.T, pair string) pairSnapshot {
 		tree:    tree,
 		head:    gitOr(t, pair, "rev-parse", "HEAD"),
 		headRef: gitOr(t, pair, "symbolic-ref", "HEAD"),
-		branch:  gitOr(t, pair, "rev-parse", "-q", "--verify", "refs/heads/mate/mate-p1"),
+		branch:  gitOr(t, pair, "rev-parse", "-q", "--verify", "refs/heads/"+labBranch+""),
 		status:  runGit(t, pair, "status", "--porcelain"),
 	}
 }
@@ -606,8 +580,8 @@ func assertRefusedNothingMoved(t *testing.T, pair string, before pairSnapshot, r
 	if err == nil {
 		t.Fatalf("want a refusal, the command succeeded:\n%s", out)
 	}
-	if got := GiteaBranchRefusal(out); got != refusal {
-		t.Errorf("GiteaBranchRefusal = %q, want %q; output:\n%s", got, refusal, out)
+	if got := MateBranchRefusal(out); got != refusal {
+		t.Errorf("MateBranchRefusal = %q, want %q; output:\n%s", got, refusal, out)
 	}
 	if after := snapshotPair(t, pair); after != before {
 		t.Errorf("a refusal moved something:\nbefore: %+v\nafter:  %+v", before, after)
@@ -619,31 +593,31 @@ func assertOnMateBranch(t *testing.T, pair, out string, err error) {
 	if err != nil {
 		t.Fatalf("command failed: %v\noutput:\n%s", err, out)
 	}
-	if got := runGit(t, pair, "rev-parse", "--abbrev-ref", "HEAD"); got != "mate/mate-p1" {
-		t.Errorf("HEAD is on %q, want mate/mate-p1", got)
+	if got := runGit(t, pair, "rev-parse", "--abbrev-ref", "HEAD"); got != labBranch {
+		t.Errorf("HEAD is on %q, want %s", got, labBranch)
 	}
-	// The whole point: Gitea's merge and squash need a shared history.
+	// The whole point: HQ's squash needs a shared history.
 	if err := exec.CommandContext(t.Context(), "git", "-C", pair, "merge-base", "--is-ancestor", "origin/main", "HEAD").Run(); err != nil {
 		t.Errorf("the branch does not descend from origin/main: %v\n%s",
 			err, runGit(t, pair, "log", "--oneline", "--all"))
 	}
 }
 
-// TestBuildGiteaMateBranchCommand_Idempotent pins the reconcile property: a
+// TestBuildMateBranchCommand_Idempotent pins the reconcile property: a
 // second pass on a branch already based on `main` rewrites no commit — a
 // rebase that ran unconditionally would change every sha under an open pull
 // request on every pass.
-func TestBuildGiteaMateBranchCommand_Idempotent(t *testing.T) {
+func TestBuildMateBranchCommand_Idempotent(t *testing.T) {
 	if testing.Short() {
 		t.Skip("exercises a real git repository")
 	}
-	pair := giteaBranchLab(t, func(t *testing.T, dir string) {
+	pair := mateBranchLab(t, func(t *testing.T, dir string) {
 		t.Helper()
 		writeLabFile(t, filepath.Join(dir, "index.js"), "the app\n")
 		runGit(t, dir, "add", "-A")
 		runGit(t, dir, "commit", "-qm", "the first page")
 	})
-	cmd := BuildGiteaMateBranchCommand(pair, "mate/mate-p1", "main")
+	cmd := BuildMateBranchCommand(pair, labBranch)
 	runShell(t, cmd)
 	first := runGit(t, pair, "rev-parse", "HEAD")
 	runShell(t, cmd)
@@ -652,20 +626,21 @@ func TestBuildGiteaMateBranchCommand_Idempotent(t *testing.T) {
 	}
 }
 
-// TestBuildGiteaMateBranchCommand_Shape pins the pieces that cannot be seen
-// from the outcome: the fetch authenticates through the session credential
-// helper (the bot token never reaches argv), the base is fetched BEFORE the
+// TestBuildMateBranchCommand_Shape pins the pieces that cannot be seen from
+// the outcome: the fetch authenticates through HQ's session credential
+// helper (the credential never reaches argv), `main` is fetched BEFORE the
 // branch is decided, and the join is plumbing — no porcelain that replays,
 // rewrites or runs the pair's hooks.
-func TestBuildGiteaMateBranchCommand_Shape(t *testing.T) {
+func TestBuildMateBranchCommand_Shape(t *testing.T) {
 	t.Parallel()
 
-	cmd := BuildGiteaMateBranchCommand("/var/www", "mate/bot", "trunk")
+	cmd := BuildMateBranchCommand("/var/www", "mate/p-mate")
 	for _, want := range []string{
 		"cd '/var/www'",
 		"credential.helper=",
-		"fetch --no-tags origin 'trunk'",
-		"b='mate/bot'",
+		"echo username=mate",
+		"fetch --no-tags origin 'main'",
+		"b='mate/p-mate'",
 		"git merge-base --is-ancestor FETCH_HEAD HEAD",
 		`commit-tree "HEAD^{tree}" -p HEAD -p FETCH_HEAD`,
 		"git symbolic-ref HEAD",
@@ -687,31 +662,36 @@ func TestBuildGiteaMateBranchCommand_Shape(t *testing.T) {
 	}
 
 	// A hostile branch name is quoted, not interpolated.
-	if hostile := BuildGiteaMateBranchCommand("/var/www", "a'; rm -rf /; '", "main"); strings.Contains(hostile, "; rm -rf /; git") {
+	if hostile := BuildMateBranchCommand("/var/www", "a'; rm -rf /; '"); strings.Contains(hostile, "; rm -rf /; git") {
 		t.Errorf("branch name escaped its quoting:\n%s", hostile)
-	}
-
-	// An empty branch or base falls back to the protected default rather than
-	// emitting a refspec git cannot parse.
-	fallback := BuildGiteaMateBranchCommand("/var/www", "", "")
-	if !strings.Contains(fallback, "origin 'main'") || !strings.Contains(fallback, "b='main'") {
-		t.Errorf("empty branch/base must fall back to main:\n%s", fallback)
 	}
 }
 
-// TestBuildGiteaDeliveryCommand_CommitsAndPushesTheDeployedTree is how a wired
-// pair's work reaches its group with nobody saying how (2026-09-17, the owner:
-// "no person is ever going to say this" of a prompt that had to name a
-// git-push deploy): the tree as deployed is committed with the task's words and
-// pushed to the Mate's own branch; a dependency directory nobody ignored stops
-// it before anything is staged; a second delivery of the same tree sends
-// nothing new.
-func TestBuildGiteaDeliveryCommand_CommitsAndPushesTheDeployedTree(t *testing.T) {
+// TestBuildDeliveryCommand_CommitsTheDeployedTreeAndSaysHowFarAhead is how a
+// wired pair's work reaches its application with nobody saying how
+// (2026-09-17, the owner: "no person is ever going to say this" of a prompt
+// that had to name a git-push deploy): the tree as deployed is committed with
+// the task's words, and the delivery says how far ahead of `main` that leaves
+// it — what a change is opened for — before it is pushed to the change's
+// branch; a dependency directory nobody ignored stops it before anything is
+// staged; a second delivery of the same tree commits nothing new.
+func TestBuildDeliveryCommand_CommitsTheDeployedTreeAndSaysHowFarAhead(t *testing.T) {
 	if testing.Short() {
 		t.Skip("exercises a real git repository")
 	}
-	pair := giteaBranchLab(t, nil)
-	runShell(t, BuildGiteaMateBranchCommand(pair, "mate/mate-p1", "main"))
+	pair := mateBranchLab(t, nil)
+	runShell(t, BuildMateBranchCommand(pair, labBranch))
+
+	// Cut from main and nothing written: nothing to open a change for.
+	out, err := exec.CommandContext(t.Context(), "sh", "-c", //nolint:gosec // test-only, the command under test against a t.TempDir repository
+		BuildDeliveryCommand(pair, "Build a todo app", "", "")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("a delivery of nothing: %v\n%s", err, out)
+	}
+	if ahead, found := DeliveryAhead(string(out)); !found || ahead != 0 {
+		t.Fatalf("DeliveryAhead = %d, %v; want 0 — nothing differs from main\n%s", ahead, found, out)
+	}
+
 	writeLabFile(t, filepath.Join(pair, "index.js"), "the app\n")
 	if err := os.MkdirAll(filepath.Join(pair, "node_modules", "express"), 0o755); err != nil {
 		t.Fatal(err)
@@ -719,56 +699,70 @@ func TestBuildGiteaDeliveryCommand_CommitsAndPushesTheDeployedTree(t *testing.T)
 	writeLabFile(t, filepath.Join(pair, "node_modules", "express", "index.js"), "a dependency\n")
 
 	// No .gitignore: the dependencies would ride along, so nothing is staged.
-	//nolint:gosec // test-only, the command under test against a t.TempDir repository
-	out, err := exec.CommandContext(t.Context(), "sh", "-c",
-		BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Build a todo app", "", "")).CombinedOutput()
+	out, err = exec.CommandContext(t.Context(), "sh", "-c", //nolint:gosec // test-only, the command under test against a t.TempDir repository
+		BuildDeliveryCommand(pair, "Build a todo app", "", "")).CombinedOutput()
 	if err == nil {
 		t.Fatalf("a tree with an unignored node_modules must not be delivered:\n%s", out)
 	}
-	if got := GiteaDeliveryUnignored(string(out)); got != "node_modules" {
-		t.Fatalf("GiteaDeliveryUnignored = %q, want node_modules; output:\n%s", got, out)
+	if got := DeliveryUnignored(string(out)); got != "node_modules" {
+		t.Fatalf("DeliveryUnignored = %q, want node_modules; output:\n%s", got, out)
 	}
 	if staged := runGit(t, pair, "diff", "--cached", "--name-only"); staged != "" {
 		t.Fatalf("nothing may be staged before the refusal, got %q", staged)
 	}
+	if _, found := DeliveryAhead(string(out)); found {
+		t.Errorf("a refused delivery must not say how far ahead it is:\n%s", out)
+	}
 
 	writeLabFile(t, filepath.Join(pair, ".gitignore"), "node_modules/\n")
-	runShell(t, BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Build a todo app", "", ""))
+	out, err = exec.CommandContext(t.Context(), "sh", "-c", //nolint:gosec // test-only, the command under test against a t.TempDir repository
+		BuildDeliveryCommand(pair, "Build a todo app", "", "")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("delivery: %v\n%s", err, out)
+	}
+	if ahead, found := DeliveryAhead(string(out)); !found || ahead != 1 {
+		t.Fatalf("DeliveryAhead = %d, %v; want the one commit of the task\n%s", ahead, found, out)
+	}
 	remote := filepath.Join(filepath.Dir(pair), "remote.git")
-	if got := runGit(t, remote, "log", "-1", "--format=%s", "mate/mate-p1"); got != "Build a todo app" {
-		t.Errorf("the branch's head commit is %q, want the task's words", got)
+	if branches := runGit(t, remote, "branch", "--list", "mate/*"); branches != "" {
+		t.Fatalf("a delivery pushes nothing before its change is open, the remote has %q", branches)
 	}
-	files := runGit(t, remote, "ls-tree", "-r", "--name-only", "mate/mate-p1")
+	runShell(t, BuildChangePushCommand(pair, labChange1))
+	if got := runGit(t, remote, "log", "-1", "--format=%s", labChange1); got != "Build a todo app" {
+		t.Errorf("the change's head commit is %q, want the task's words", got)
+	}
+	files := runGit(t, remote, "ls-tree", "-r", "--name-only", labChange1)
 	if !strings.Contains(files, "index.js") || !strings.Contains(files, ".gitignore") || strings.Contains(files, "node_modules") {
-		t.Errorf("the branch carries %q; want the app and its .gitignore, never node_modules", files)
+		t.Errorf("the change carries %q; want the app and its .gitignore, never node_modules", files)
 	}
-	if err := exec.CommandContext(t.Context(), "git", "-C", remote, "merge-base", "--is-ancestor", "main", "mate/mate-p1").Run(); err != nil {
+	if err := exec.CommandContext(t.Context(), "git", "-C", remote, "merge-base", "--is-ancestor", "main", labChange1).Run(); err != nil {
 		t.Errorf("the delivered branch must descend from main: %v", err)
 	}
+	if got := runGit(t, pair, "rev-parse", "--abbrev-ref", "@{upstream}"); got != "origin/"+labChange1 {
+		t.Errorf("the local branch's upstream is %q, want the change's branch", got)
+	}
 
-	head := runGit(t, remote, "rev-parse", "mate/mate-p1")
-	//nolint:gosec // test-only, the command under test against a t.TempDir repository
-	out, err = exec.CommandContext(t.Context(), "sh", "-c",
-		BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Build a todo app", "", "")).CombinedOutput()
+	head := runGit(t, pair, "rev-parse", "HEAD")
+	out, err = exec.CommandContext(t.Context(), "sh", "-c", //nolint:gosec // test-only, the command under test against a t.TempDir repository
+		BuildDeliveryCommand(pair, "Build a todo app", "", "")).CombinedOutput()
 	if err != nil {
 		t.Fatalf("a second delivery of the same tree: %v\n%s", err, out)
 	}
-	if again := runGit(t, remote, "rev-parse", "mate/mate-p1"); again != head {
+	if again := runGit(t, pair, "rev-parse", "HEAD"); again != head {
 		t.Errorf("a clean tree must add no commit: %s → %s", head, again)
 	}
-	if GiteaDeliveryUpToDate(string(out)) != true {
-		t.Errorf("a second delivery must read as up to date:\n%s", out)
+	if ahead, _ := DeliveryAhead(string(out)); ahead != 1 {
+		t.Errorf("DeliveryAhead = %d after a second delivery, want 1 still", ahead)
 	}
 }
 
-// A second Mate merging first is the ordinary state of a group, and until
-// 2026-09-18 it was fatal: a Mate's branch was cut from `main` when its
-// repository was wired and never caught up, so the first merge killed every
-// other open pull request — Gitea simply stopped offering Merge, with nothing
-// said (the owner, on todo/appdev #3). A delivery now takes the base in before
-// it pushes, so the branch stays mergeable and the Mate's own tree carries
-// everybody's work.
-func TestBuildGiteaDeliveryCommand_TakesTheBaseInBeforeItPushes(t *testing.T) {
+// A second Mate merging first is the ordinary state of an application, and
+// until 2026-09-18 it was fatal: a Mate's branch was cut from `main` when its
+// repository was wired and never caught up, so the first merge stranded every
+// other open change (the owner, on todo/appdev #3). A delivery takes `main`
+// in before anything is pushed, so the change stays mergeable and the Mate's
+// own tree carries everybody's work.
+func TestBuildDeliveryCommand_TakesMainInBeforeAnythingIsPushed(t *testing.T) {
 	if testing.Short() {
 		t.Skip("exercises a real git repository")
 	}
@@ -798,20 +792,20 @@ func TestBuildGiteaDeliveryCommand_TakesTheBaseInBeforeItPushes(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			pair := giteaBranchLab(t, nil)
+			pair := mateBranchLab(t, nil)
 			root := filepath.Dir(pair)
 			remote := filepath.Join(root, "remote.git")
-			runShell(t, BuildGiteaMateBranchCommand(pair, "mate/mate-p1", "main"))
+			runShell(t, BuildMateBranchCommand(pair, labBranch))
 			writeLabFile(t, filepath.Join(pair, "index.js"), "the app\n")
-			runShell(t, BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Build the app", "", ""))
+			deliverInLab(t, pair)
 
-			// This Mate's work is merged, the way a person merges it, and then
-			// another Mate lands its own on top — the ordinary life of a group.
+			// This Mate's work is merged, and then another Mate lands its own
+			// on top — the ordinary life of an application.
 			other := filepath.Join(root, "other")
 			runGit(t, root, "clone", "-q", remote, "other")
 			runGit(t, other, "config", "user.email", "other@example.invalid")
 			runGit(t, other, "config", "user.name", "other")
-			runGit(t, other, "merge", "-q", "--no-edit", "origin/mate/mate-p1")
+			runGit(t, other, "merge", "-q", "--no-edit", "origin/"+labChange1)
 			runGit(t, other, "push", "-q", "origin", "main")
 			for name, content := range tc.onMain {
 				writeLabFile(t, filepath.Join(other, name), content)
@@ -823,16 +817,18 @@ func TestBuildGiteaDeliveryCommand_TakesTheBaseInBeforeItPushes(t *testing.T) {
 			for name, content := range tc.inTree {
 				writeLabFile(t, filepath.Join(pair, name), content)
 			}
-			//nolint:gosec // test-only, the command under test against a t.TempDir repository
-			out, err := exec.CommandContext(t.Context(), "sh", "-c",
-				BuildGiteaDeliveryCommand(pair, "mate/mate-p1", "main", "Add a feature", "", "")).CombinedOutput()
+			out, err := exec.CommandContext(t.Context(), "sh", "-c", //nolint:gosec // test-only, the command under test against a t.TempDir repository
+				BuildDeliveryCommand(pair, "Add a feature", "", "")).CombinedOutput()
 
 			if tc.wantConflict != "" {
 				if err == nil {
 					t.Fatalf("a conflict must stop the delivery:\n%s", out)
 				}
-				if got := GiteaDeliveryConflict(string(out)); !strings.Contains(got, tc.wantConflict) {
-					t.Fatalf("GiteaDeliveryConflict = %q, want %q; output:\n%s", got, tc.wantConflict, out)
+				if got := DeliveryConflict(string(out)); !strings.Contains(got, tc.wantConflict) {
+					t.Fatalf("DeliveryConflict = %q, want %q; output:\n%s", got, tc.wantConflict, out)
+				}
+				if _, found := DeliveryAhead(string(out)); found {
+					t.Errorf("a delivery stopped by a conflict must not say how far ahead it is:\n%s", out)
 				}
 				if state := runGit(t, pair, "status", "--porcelain=v1", "--untracked-files=no"); strings.Contains(state, "UU") {
 					t.Errorf("the checkout must be left whole, not half-merged: %q", state)
@@ -843,13 +839,14 @@ func TestBuildGiteaDeliveryCommand_TakesTheBaseInBeforeItPushes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("delivery: %v\n%s", err, out)
 			}
-			if GiteaDeliveryConflict(string(out)) != "" {
+			if DeliveryConflict(string(out)) != "" {
 				t.Fatalf("no conflict was expected:\n%s", out)
 			}
-			// Mergeable again: the branch now contains main.
+			runShell(t, BuildChangePushCommand(pair, labChange2))
+			// Mergeable again: the change now contains main.
 			if err := exec.CommandContext(t.Context(), "git", "-C", remote,
-				"merge-base", "--is-ancestor", "main", "mate/mate-p1").Run(); err != nil {
-				t.Errorf("the delivered branch must contain main: %v", err)
+				"merge-base", "--is-ancestor", "main", labChange2).Run(); err != nil {
+				t.Errorf("the delivered change must contain main: %v", err)
 			}
 			// And the Mate's own checkout carries the other Mate's work, so
 			// its next task is written against what is really on main.
@@ -860,5 +857,38 @@ func TestBuildGiteaDeliveryCommand_TakesTheBaseInBeforeItPushes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestChangePushRefusal reads HQ's per-ref refusal out of git's report, and
+// TestGitRemoteUnavailable a remote that could not serve the push now.
+func TestChangePushRefusal(t *testing.T) {
+	t.Parallel()
+	for output, want := range map[string]string{
+		"To https://hq.example/git/a1/appdev.git\n ! [remote rejected] HEAD -> mate/p-mate/3 (change_closed)\nerror: failed to push some refs": "change_closed",
+		" ! [remote rejected] HEAD -> mate/p-mate/3 (unknown_change)":                                                                          "unknown_change",
+		" ! [rejected]        HEAD -> mate/p-mate/3 (non-fast-forward)":                                                                        "non-fast-forward",
+		"To https://hq.example/git/a1/appdev.git\n * [new branch]      HEAD -> mate/p-mate/3":                                                  "",
+		"Everything up-to-date": "",
+	} {
+		if got := ChangePushRefusal(output); got != want {
+			t.Errorf("ChangePushRefusal(%q) = %q, want %q", output, got, want)
+		}
+	}
+}
+
+func TestGitRemoteUnavailable(t *testing.T) {
+	t.Parallel()
+	for output, want := range map[string]bool{
+		"fatal: unable to access 'https://hq.example/git/a1/appdev.git/': The requested URL returned error: 503":    true,
+		"fatal: unable to access 'https://hq.example/git/a1/appdev.git/': Failed to connect to hq.example port 443": true,
+		"fatal: unable to access 'https://hq.example/git/a1/appdev.git/': Could not resolve host: hq.example":       true,
+		"fatal: unable to access 'https://hq.example/git/a1/appdev.git/': The requested URL returned error: 403":    false,
+		"fatal: Authentication failed for 'https://hq.example/git/a1/appdev.git/'":                                  false,
+		" ! [remote rejected] HEAD -> mate/p-mate/3 (change_closed)":                                                false,
+	} {
+		if got := GitRemoteUnavailable(output); got != want {
+			t.Errorf("GitRemoteUnavailable(%q) = %v, want %v", output, got, want)
+		}
 	}
 }

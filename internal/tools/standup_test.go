@@ -20,6 +20,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -97,8 +98,12 @@ func standupZeropsYAML(pair string) string {
 `, pair, buildEnv)
 }
 
-// standupGitea is the broker and the group's Gitea in one TLS server — two
-// origins in production; the code never assumes they are one host.
+// standupCredential is the Mate credential the stand-up's pairs deliver to
+// HQ with.
+const standupCredential = "standup-mate-credential"
+
+// standupGitea is the group's Gitea and the Mate's HQ in one TLS server —
+// two origins in production; the code never assumes they are one host.
 type standupGitea struct {
 	mu sync.Mutex
 	// tier is the group repo's AI Agent tier on main, "" when main lacks it.
@@ -107,19 +112,18 @@ type standupGitea struct {
 	orgs []string
 	// repos are the service repositories that exist, as org/name.
 	repos []string
-	// asked is every repository the broker was asked for, in order.
+	// asked is every repository HQ was asked for, in order.
 	asked []string
-	// pullCreates counts pull requests opened — a stand-up opens none.
-	pullCreates int
+	// changeOpens counts changes opened in HQ — a stand-up opens none.
+	changeOpens int
 	// read is every group-repo file read, by path.
 	read []string
-	url  string
 }
 
 func (g *standupGitea) start(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "token "+giteaBotToken {
+		if auth := r.Header.Get("Authorization"); auth != "token "+giteaBotToken && auth != "Mate "+standupCredential {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -157,29 +161,20 @@ func (g *standupGitea) start(t *testing.T) *httptest.Server {
 				return
 			}
 			write(http.StatusNotFound, map[string]string{"message": "not found"})
-		case path == "/mate/repository":
+		case path == "/api/mate/repos":
 			var body struct {
 				Name string `json:"name"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			g.asked = append(g.asked, body.Name)
-			write(http.StatusOK, map[string]any{"fullName": "beviro/" + body.Name,
-				"cloneUrl": g.url + "/beviro/" + body.Name, "defaultBranch": "main", "created": false})
-		case strings.Contains(path, "/branches/"):
-			w.WriteHeader(http.StatusNotFound)
-		case strings.HasSuffix(path, "/pulls"):
-			if r.Method == http.MethodPost {
-				// No branch is ever pushed here, and Gitea opens no pull
-				// request from a branch it does not have.
-				write(http.StatusNotFound, map[string]string{"message": "head branch does not exist"})
-				return
-			}
-			write(http.StatusOK, []any{})
+			write(http.StatusOK, map[string]any{"appId": "app-1", "name": body.Name})
+		case path == "/api/mate/changes":
+			g.changeOpens++
+			write(http.StatusNotFound, map[string]string{"code": "repo_not_found", "reason": "repo_not_found"})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
-	g.url = srv.URL
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -366,6 +361,8 @@ func (h standupHTTP) Do(req *http.Request) (*http.Response, error) {
 // deploy), the Gitea variables on the container.
 type standupFixture struct {
 	root, stateDir string
+	// enrollmentPath is the Mate's enrollment with the fake's HQ.
+	enrollmentPath string
 	gitea          *standupGitea
 	srv            *httptest.Server
 	mock           *platform.Mock
@@ -425,6 +422,10 @@ func newStandupFixture(t *testing.T) *standupFixture {
 	f.statusPath = filepath.Join(f.root, "mate-status.json")
 	f.mounter = &standupMounter{}
 	f.env = map[string]string{"GITEA_URL": f.srv.URL, "MATE_BROKER_URL": f.srv.URL, "GITEA_TOKEN": giteaBotToken}
+	f.enrollmentPath = filepath.Join(f.root, "enrollment.json")
+	if err := hq.SaveEnrollment(f.enrollmentPath, hq.Enrollment{HQ: f.srv.URL, HQProjectID: "hq1", ProjectID: "p1", Credential: standupCredential}); err != nil {
+		t.Fatal(err)
+	}
 	// The branch cut puts main's files in each dev half; the mount shows them.
 	for _, pair := range []string{"medusa", "nextstore"} {
 		dir := filepath.Join(f.root, pair+"dev")
@@ -480,17 +481,18 @@ func (f *standupFixture) run(t *testing.T) (*mcp.CallToolResult, standupResponse
 			rtInfo:      runtime.Info{InContainer: true, MateEnabled: true, ProjectID: "p1", ServiceName: "zcp"},
 			stateDir:    f.stateDir,
 		},
-		mounter:     f.mounter,
-		liveEnvPath: writeLiveEnvFile(t, f.env),
-		gitWait:     50 * time.Millisecond,
-		gitPoll:     10 * time.Millisecond,
-		runtimeWait: 200 * time.Millisecond,
-		runtimePoll: 5 * time.Millisecond,
-		statusPath:  f.statusPath,
-		closedOff:   func(context.Context) (bool, error) { return f.closedOff, nil },
-		bootWait:    2 * time.Second,
-		bootPoll:    5 * time.Millisecond,
-		trackPoll:   5 * time.Millisecond,
+		mounter:        f.mounter,
+		liveEnvPath:    writeLiveEnvFile(t, f.env),
+		gitWait:        50 * time.Millisecond,
+		gitPoll:        10 * time.Millisecond,
+		runtimeWait:    200 * time.Millisecond,
+		runtimePoll:    5 * time.Millisecond,
+		statusPath:     f.statusPath,
+		closedOff:      func(context.Context) (bool, error) { return f.closedOff, nil },
+		enrollmentPath: f.enrollmentPath,
+		bootWait:       2 * time.Second,
+		bootPoll:       5 * time.Millisecond,
+		trackPoll:      5 * time.Millisecond,
 	})
 	result := callTool(t, srv, "zerops_standup", map[string]any{})
 	var body standupResponse
@@ -546,9 +548,9 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 		t.Errorf("deploys =\n  %s\nwant\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
 	}
 
-	// The broker was asked for the repositories the recipe names.
+	// HQ was asked for the repositories the recipe names.
 	if !slices.Equal(f.gitea.asked, []string{"medusadev", "nextstoredev"}) && !slices.Equal(f.gitea.asked, []string{"nextstoredev", "medusadev"}) {
-		t.Errorf("broker asked for %v, want medusadev and nextstoredev", f.gitea.asked)
+		t.Errorf("HQ asked for %v, want medusadev and nextstoredev", f.gitea.asked)
 	}
 	for _, pair := range [][3]string{{"medusadev", "medusastage", "medusaprod"}, {"nextstoredev", "nextstorestage", "nextstoreprod"}} {
 		meta, _ := workflow.ReadServiceMeta(f.stateDir, pair[0])
@@ -559,8 +561,8 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 		if meta.PrimarySetupName != pair[0] || meta.StageSetupName != pair[2] {
 			t.Errorf("%s setups = %q/%q", pair[0], meta.PrimarySetupName, meta.StageSetupName)
 		}
-		if meta.Gitea == nil || meta.Gitea.FullName != "beviro/"+pair[0] || meta.Gitea.Branch != "mate/mate-p1" || meta.GitPushState != topology.GitPushConfigured {
-			t.Errorf("%s not wired: gitea=%+v gitPush=%s", pair[0], meta.Gitea, meta.GitPushState)
+		if meta.HQ == nil || meta.HQ.Repo != pair[0] || meta.HQ.Branch != "mate/p1" || meta.GitPushState != topology.GitPushConfigured {
+			t.Errorf("%s not wired: hq=%+v gitPush=%s", pair[0], meta.HQ, meta.GitPushState)
 		}
 		// No work session records a stand-up's deploys, so the durable
 		// first-deploy mark is stamped directly.
@@ -585,8 +587,8 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 	}
 
 	// Nothing is delivered: the stage runs main as it is.
-	if f.ssh.ran("HEAD:refs/heads/mate/") || f.gitea.pullCreates != 0 {
-		t.Errorf("a stand-up must not push or open a pull request (pushed=%v, pulls=%d)", f.ssh.ran("HEAD:refs/heads/mate/"), f.gitea.pullCreates)
+	if f.ssh.ran("HEAD:refs/heads/mate/") || f.gitea.changeOpens != 0 {
+		t.Errorf("a stand-up must not push or open a change (pushed=%v, changes=%d)", f.ssh.ran("HEAD:refs/heads/mate/"), f.gitea.changeOpens)
 	}
 
 	dev := body.service(t, "medusadev")
@@ -615,7 +617,8 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 	if slices.ContainsFunc(f.gitea.read, func(path string) bool { return path != workflow.MateTierImportPath }) {
 		t.Errorf("group repo reads = %v, want only the AI Agent tier", f.gitea.read)
 	}
-	assertNoTokenOnDisk(t, f.stateDir)
+	assertNoSecretOnDisk(t, f.stateDir, giteaBotToken)
+	assertNoSecretOnDisk(t, f.stateDir, standupCredential)
 
 	agents, _ := os.ReadFile(filepath.Join(f.root, "AGENTS.md"))
 	if !strings.Contains(string(agents), "medusadev") || !strings.Contains(string(agents), "ZEROPS:REFLOG") {

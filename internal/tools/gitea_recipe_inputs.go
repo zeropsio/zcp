@@ -152,6 +152,58 @@ func composeGroupRecipeInputs(
 	return inputs, warnings, nil
 }
 
+// knownGiteaOrg is the group's org on its Gitea as a pair's record names it,
+// "" while none does.
+func knownGiteaOrg(metas []*workflow.ServiceMeta) string {
+	for _, m := range metas {
+		if m == nil || m.Gitea == nil {
+			continue
+		}
+		if org, _, ok := strings.Cut(m.Gitea.FullName, "/"); ok && org != "" {
+			return org
+		}
+	}
+	return ""
+}
+
+// giteaPairNeedsRepository reports whether the recipe waits for a pair to
+// have its Gitea repository: a finished pair with no Gitea record and no
+// remote of the user's own. A pair is in the recipe exactly when it carries a
+// Gitea record (FullName) and a configured git-push. giteaURL is this Mate's
+// Gitea and org the group's org there when a pair's record names it, ""
+// otherwise. Since pairs deliver to HQ nothing records a Gitea repository;
+// the recipe moves to HQ with T10.
+func giteaPairNeedsRepository(m *workflow.ServiceMeta, giteaURL, org string) bool {
+	if m == nil || !m.IsComplete() {
+		return false
+	}
+	if m.Gitea != nil && m.Gitea.FullName != "" && m.GitPushState == topology.GitPushConfigured {
+		return false
+	}
+	return m.RemoteURL == "" || m.Gitea != nil || giteaRemoteIsThePairs(m.RemoteURL, giteaURL, m.Hostname, org)
+}
+
+// giteaRemoteIsThePairs reports whether remote can be the pair's repository
+// on this Mate's Gitea: named after the pair's hostname, and in the group's
+// org when org is known. A remote that fails any of those is one the user
+// chose.
+func giteaRemoteIsThePairs(remote, giteaURL, hostname, org string) bool {
+	if topology.ClassifyGitHost(remote, giteaURL) != topology.GitHostGitea {
+		return false
+	}
+	path := canonicalGitRepository(remote)
+	if u, err := url.Parse(path); err == nil && u.Host != "" {
+		path = u.Path
+	} else if i := strings.LastIndex(path, ":"); i >= 0 {
+		path = path[i+1:]
+	}
+	segments := strings.Split(strings.Trim(path, "/"), "/")
+	if len(segments) < 2 || !strings.EqualFold(segments[len(segments)-1], hostname) {
+		return false
+	}
+	return org == "" || strings.EqualFold(segments[len(segments)-2], org)
+}
+
 // groupRecipeWaits sorts the live runtimes no wired pair holds. The recipe
 // waits for what a later pass brings — a finished pair the repository pass
 // will still wire (its own giteaPairNeedsRepository), or a dev/stage pair

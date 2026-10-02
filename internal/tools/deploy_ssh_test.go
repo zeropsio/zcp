@@ -1351,7 +1351,7 @@ func TestDeployTool_AdoptionGate_GitPush_BlocksUnadopted(t *testing.T) {
 
 // stubSSHWithCommands dispatches on command content for fine-grained test control.
 // Pre-flight order in handleGitPush: committed-code check → GIT_TOKEN check →
-// (Gitea-wired only) absorb/sync → push.
+// push. A push to this Mate's HQ takes its own route (hq_git_push_test.go).
 type stubSSHWithCommands struct {
 	committedOutput []byte // output for committed-code check command ("1" = has commits, "0" = no)
 	committedErr    error
@@ -1361,25 +1361,16 @@ type stubSSHWithCommands struct {
 	yamlErr         error
 	statusOutput    []byte // output for `git status --porcelain` (dirty-tree probe); nil/empty = clean
 	statusErr       error
-	// absorbOutput/absorbErr answer ops.BuildGiteaAbsorbAndSyncCommand — the
-	// pre-push landing sync a Gitea-wired pair's git-push runs, giteaAbsorbBeforePush.
-	// nil output on a Gitea-wired test defaults to a clean "ok" (no conflict).
-	absorbOutput []byte
-	absorbErr    error
-	pushOutput   []byte // output for the actual push command
-	pushErr      error
+	pushOutput      []byte // output for the actual push command
+	pushErr         error
 
-	committedCalls int   // committed-code check invocation counter
-	tokenCalls     int   // GIT_TOKEN check invocation counter
-	yamlCalls      int   // zerops.yaml cat invocation counter
-	statusCalls    int   // dirty-tree probe invocation counter
-	absorbCalls    int   // absorb/sync invocation counter
-	probeCalls     int   // fresh-session credential probe counter
-	probeErr       error // what the probe answers; nil = the credential works
-	helperCalls    int   // persisted credential helper re-asserts
-	pushCalls      int   // push invocation counter
+	committedCalls int // committed-code check invocation counter
+	tokenCalls     int // GIT_TOKEN check invocation counter
+	yamlCalls      int // zerops.yaml cat invocation counter
+	statusCalls    int // dirty-tree probe invocation counter
+	pushCalls      int // push invocation counter
 	// commands records every command this stub saw, in order — for tests
-	// that assert on the SEQUENCE (e.g. absorb runs before push).
+	// that assert on the SEQUENCE.
 	commands []string
 }
 
@@ -1406,38 +1397,6 @@ func (s *stubSSHWithCommands) ExecSSH(_ context.Context, _ string, command strin
 	if strings.Contains(command, "zerops.yaml") || strings.Contains(command, "zerops.yml") {
 		s.yamlCalls++
 		return s.yamlContent, s.yamlErr
-	}
-	// BuildGiteaAbsorbAndSyncCommand fetches (`fetch --no-tags -q origin`)
-	// but never pushes — that substring is unique to it and to
-	// BuildGiteaDeliveryCommand (a different handler path), so it never
-	// collides with BuildGitPushCommand's `push -u origin` below. Checked
-	// BEFORE the dirty-tree probe below: the absorb command embeds its OWN
-	// `git status --porcelain` guard (BuildAbsorbLandedPullRequestCommand's
-	// dirty-checkout check), which would otherwise mis-route the WHOLE
-	// absorb command into the probe branch.
-	if strings.Contains(command, "fetch --no-tags -q origin") {
-		s.absorbCalls++
-		out := s.absorbOutput
-		if out == nil {
-			out = []byte("ok")
-		}
-		return out, s.absorbErr
-	}
-	// The fresh-session credential probe (`ls-remote`) a wired pair's push
-	// credential step runs — a probe, never a push.
-	if strings.Contains(command, "ls-remote") {
-		s.probeCalls++
-		if s.probeErr != nil {
-			return []byte("fatal: Authentication failed"), s.probeErr
-		}
-		return []byte("ok"), nil
-	}
-	// The push credential step re-persists the repository's url-scoped
-	// credential helper (`git config credential.https://<host>.helper`) — a
-	// config write, never a push. The push carries its helper as `-c`.
-	if strings.Contains(command, "credential.https://") {
-		s.helperCalls++
-		return nil, nil
 	}
 	// Dirty-tree probe (`git status --porcelain`) — MUST precede the push
 	// fallthrough, else the porcelain command mis-routes to the push branch
@@ -1843,10 +1802,8 @@ func TestDeployTool_GitPush_DoesNotStampDeployed(t *testing.T) {
 }
 
 // TestDeployTool_GitPush_NoFutureBuild_NeverRecordsDanglingAttempt pins the
-// fix for the observed-live bug: a Gitea-wired pair's git-push (nothing ever
-// builds from a Mate's branch — gitea_delivery.go) and a push to a remote
-// with no BuildIntegration wired (nothing rebuilds the target either) both
-// used to unconditionally record an in-flight workflow.DeployAttempt (no
+// fix for the observed-live bug: a push to a remote with no
+// BuildIntegration wired (nothing rebuilds the target) used to unconditionally record an in-flight workflow.DeployAttempt (no
 // SucceededAt, no Error, no FailureClass) under deploys.<pushSource> before
 // even knowing whether anything would ever resolve it. Neither case has a
 // completion mechanism — no build watch runs, no record-deploy bridge is
@@ -1864,21 +1821,7 @@ func TestDeployTool_GitPush_NoFutureBuild_NeverRecordsDanglingAttempt(t *testing
 		name      string
 		remoteURL string
 		setup     func(t *testing.T)
-		// wired records the pair's Gitea repository: a push to this Mate's
-		// Gitea runs only for a wired pair.
-		wired bool
 	}{
-		{
-			name:      "gitea remote of this Mate",
-			remoteURL: "https://gitea.example/acme/appdev",
-			setup: func(t *testing.T) {
-				t.Helper()
-				t.Setenv("GITEA_URL", "https://gitea.example")
-				t.Setenv("MATE_BROKER_URL", "https://gitea.example")
-				t.Setenv("GITEA_TOKEN", "bot-token")
-			},
-			wired: true,
-		},
 		{
 			name:      "no build integration wired on a user remote",
 			remoteURL: "https://github.com/example/repo",
@@ -1892,14 +1835,6 @@ func TestDeployTool_GitPush_NoFutureBuild_NeverRecordsDanglingAttempt(t *testing
 			setupAdoptedService(t, stateDir, "appdev", "")
 			markGitPushConfigured(t, stateDir, "appdev")
 			tt.setup(t)
-			if tt.wired {
-				if err := workflow.UpsertServiceMeta(stateDir, "appdev", func(m *workflow.ServiceMeta, _ bool) error {
-					m.Gitea = &workflow.GiteaRepoRef{FullName: "acme/appdev", Branch: "mate/mate-p1", DefaultBranch: "main"}
-					return nil
-				}); err != nil {
-					t.Fatalf("UpsertServiceMeta: %v", err)
-				}
-			}
 
 			ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "ship it", []string{"appdev"})
 			if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
@@ -1940,8 +1875,8 @@ func TestDeployTool_GitPush_NoFutureBuild_NeverRecordsDanglingAttempt(t *testing
 
 // TestDeployTool_GitPush_UntrackableDestination_FailureRecordsNoDanglingAttempt
 // is item 5 of the judge's review: a genuine PRE-FLIGHT failure (never even
-// reaches the push) for a destination nothing will ever resolve — a Gitea
-// remote, or no BuildIntegration wired — must not record a failed
+// reaches the push) for a destination nothing will ever resolve — no
+// BuildIntegration wired — must not record a failed
 // DeployAttempt either. GF-13 already stopped the SUCCESS side from leaving
 // a permanent, unexplained placeholder there; recording the FAILURE side
 // left the exact same kind of placeholder, since nothing later records a
@@ -1953,16 +1888,6 @@ func TestDeployTool_GitPush_UntrackableDestination_FailureRecordsNoDanglingAttem
 		remoteURL string
 		setup     func(t *testing.T)
 	}{
-		{
-			name:      "gitea remote of this Mate",
-			remoteURL: "https://gitea.example/acme/appdev",
-			setup: func(t *testing.T) {
-				t.Helper()
-				t.Setenv("GITEA_URL", "https://gitea.example")
-				t.Setenv("MATE_BROKER_URL", "https://gitea.example")
-				t.Setenv("GITEA_TOKEN", "bot-token")
-			},
-		},
 		{
 			name:      "no build integration wired on a user remote",
 			remoteURL: "https://github.com/example/repo",

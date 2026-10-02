@@ -19,7 +19,7 @@ import (
 //   - NO disk writes: the ephemeral-.netrc pattern stays retired
 func TestBuildGitWritePushProbeCommand_Shape(t *testing.T) {
 	t.Parallel()
-	cmd := BuildGitWritePushProbeCommand("/var/www", "https://github.com/example/app.git", "ghp_secret")
+	cmd := BuildGitWritePushProbeCommand("/var/www", "https://github.com/example/app.git", "", "ghp_secret")
 
 	requirements := []struct {
 		name, substr string
@@ -47,12 +47,37 @@ func TestBuildGitWritePushProbeCommand_Shape(t *testing.T) {
 	}
 }
 
+// TestBuildGitWritePushProbeCommand_UserByRemote: HQ's git reads the user
+// `mate` with the Mate credential, so a probe of a repository on the Mate's
+// HQ presents that user; any other remote keeps the helper's usual one.
+func TestBuildGitWritePushProbeCommand_UserByRemote(t *testing.T) {
+	t.Parallel()
+	const hq = "https://hq.example"
+	for _, tt := range []struct {
+		remote, hqURL, user string
+	}{
+		{hq + "/git/a1/appdev.git", hq, "username=mate"},
+		{"https://hq.example:443/git/a1/appdev.git", hq, "username=mate"},
+		{"https://github.com/example/app.git", hq, "username=oauth2"},
+		{hq + "/git/a1/appdev.git", "", "username=oauth2"},
+		{"https://hq.example:8443/git/a1/appdev.git", hq, "username=oauth2"},
+	} {
+		cmd := BuildGitWritePushProbeCommand("/var/www", tt.remote, tt.hqURL, "secret")
+		if !strings.Contains(cmd, tt.user) {
+			t.Errorf("probe of %s (HQ %q) must present %s:\n%s", tt.remote, tt.hqURL, tt.user, cmd)
+		}
+		if session := BuildGitSessionAuthProbeCommand(tt.remote, tt.hqURL); !strings.Contains(session, tt.user) {
+			t.Errorf("session probe of %s (HQ %q) must present %s:\n%s", tt.remote, tt.hqURL, tt.user, session)
+		}
+	}
+}
+
 // TestBuildGitWritePushProbeCommand_TokenShellQuoted ensures shell-metacharacters
 // in the token can't break out of the command (POSIX single-quote escaping).
 func TestBuildGitWritePushProbeCommand_TokenShellQuoted(t *testing.T) {
 	t.Parallel()
 	maliciousToken := `tok' && rm -rf / && echo 'oops`
-	cmd := BuildGitWritePushProbeCommand("/var/www", "https://github.com/example/app.git", maliciousToken)
+	cmd := BuildGitWritePushProbeCommand("/var/www", "https://github.com/example/app.git", "", maliciousToken)
 
 	// The quoted token must appear (both branches carry it) and the raw
 	// metacharacter sequence must never appear unquoted.

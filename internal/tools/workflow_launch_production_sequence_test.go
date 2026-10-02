@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -597,16 +598,16 @@ func (s *countingLaunchSSH) ExecSSH(ctx context.Context, host, command string) (
 	return s.launchSSHStub.ExecSSH(ctx, host, command)
 }
 
-// TestHandleLaunchProduction_GiteaWiring_RefusesBeforeAnyStep pins the
-// handler itself, not the refusal helper: handleLaunchProduction reads the
-// container's Gitea wiring (giteaWired) and, when wired, refuses a
+// TestHandleLaunchProduction_HQWiring_RefusesBeforeAnyStep pins the handler
+// itself, not the refusal helper: handleLaunchProduction reads whether the
+// Mate delivers through HQ (hqWired) and, when it does, refuses a
 // complete publish call before scope, the source-control gate or the
 // mutation pipeline — no SSH read, no admin client built, no launch token
 // staged, no state file written. The same call on an unwired container
 // still launches, so the classic route is unchanged.
 //
-// Not parallel: the wiring is read from the process environment (t.Setenv).
-func TestHandleLaunchProduction_GiteaWiring_RefusesBeforeAnyStep(t *testing.T) {
+// Not parallel: the enrollment is read from the process's HOME (t.Setenv).
+func TestHandleLaunchProduction_HQWiring_RefusesBeforeAnyStep(t *testing.T) {
 	tests := []struct {
 		name  string
 		wired bool
@@ -616,18 +617,11 @@ func TestHandleLaunchProduction_GiteaWiring_RefusesBeforeAnyStep(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			wiring := map[string]string{
-				ops.GiteaURLEnvKey:      "",
-				ops.MateBrokerURLEnvKey: "",
-				ops.GiteaTokenEnvKey:    "",
-			}
+			t.Setenv("HOME", t.TempDir())
 			if tt.wired {
-				wiring[ops.GiteaURLEnvKey] = "https://git.example"
-				wiring[ops.MateBrokerURLEnvKey] = "https://broker.example"
-				wiring[ops.GiteaTokenEnvKey] = giteaBotToken
-			}
-			for key, value := range wiring {
-				t.Setenv(key, value)
+				if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: "https://hq.example", ProjectID: "p1", Credential: "c"}); err != nil {
+					t.Fatal(err)
+				}
 			}
 
 			stateDir := withTempState(t)

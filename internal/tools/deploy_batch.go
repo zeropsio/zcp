@@ -199,9 +199,9 @@ func (d batchDeployer) preflight(ctx context.Context, t ops.DeployBatchTarget) (
 
 // deploy runs the targets as one batch and applies each entry's post-deploy
 // steps: its deploy attempt, the dev server zcp keeps on it, its public
-// access. deliver adds the Gitea delivery of a wired pair's stage half
-// (gitea_delivery.go) — the stand-up's first stage deploy builds `main` as
-// it is and has nothing to deliver.
+// access. deliver adds the HQ delivery of a wired pair's stage half
+// (hq_delivery.go) — the stand-up's first stage deploy builds `main` as it
+// is and has nothing to deliver.
 func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallback, targets []ops.DeployBatchTarget, deliver bool) *ops.DeployBatchResult {
 	pollFn := func(c context.Context, r *ops.DeployResult, cb ops.ProgressCallback, lf platform.LogFetcher, s ops.SSHDeployer) {
 		pollDeployBuild(c, d.client, d.projectID, r, cb, lf, s, d.stateDir)
@@ -274,14 +274,14 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 	if !deliver {
 		return result
 	}
-	// A wired pair's stage deploy is its delivery (gitea_delivery.go),
-	// after the attempts are recorded.
+	// A wired pair's stage deploy is its delivery (hq_delivery.go), after
+	// the attempts are recorded.
 	for i := range result.Entries {
 		entry := &result.Entries[i]
 		if entry.Result == nil || entry.Result.Status != statusDeployed {
 			continue
 		}
-		if delivery := deliverGiteaPair(ctx, d.client, d.httpClient, d.sshDeployer, d.rtInfo, d.stateDir, entry.Target.TargetService); delivery != nil {
+		if delivery := deliverHQPair(ctx, d.client, d.httpClient, d.sshDeployer, d.rtInfo, d.stateDir, entry.Target.TargetService); delivery != nil {
 			entry.Result.NextActions = strings.TrimSpace(entry.Result.NextActions + " " + delivery.Line)
 		}
 	}

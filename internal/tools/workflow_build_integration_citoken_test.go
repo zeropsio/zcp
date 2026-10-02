@@ -101,7 +101,7 @@ func TestActionsConfirm_GiteaRemote_EmitsBrokerWorkflow(t *testing.T) {
 	result, _, _ := handleBuildIntegration(context.Background(), nil, nil, "", WorkflowInput{
 		Service:     "api",
 		Integration: string(topology.BuildIntegrationActions),
-	}, stateDir, runtime.Info{InContainer: true, GitHostKnown: true, GiteaURL: giteaURL})
+	}, stateDir, runtime.Info{InContainer: true, GiteaURL: giteaURL})
 	if result.IsError {
 		t.Fatalf("expected declared, got error: %s", getTextContent(t, result))
 	}

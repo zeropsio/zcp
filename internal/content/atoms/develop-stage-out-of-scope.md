@@ -18,9 +18,9 @@ The work runs on the dev half alone: deploy it, start its dev server and
 verify it. The session closes once the dev half is deployed and verified.
 
 Leave the stage untouched: no deploy, cross-deploy or promotion onto it, and
-no commit or push for it. In a Mate wired to its group's Gitea, a deploy onto
-a stage half is a delivery — a commit, a push and a pull request — so it
-happens only when the person asks for it.
+no commit or push for it. In a Mate delivering through its HQ, a deploy onto
+a stage half is a delivery — a commit, a change and a push — so it happens
+only when the person asks for it.
 <!-- axis-k-keep: signal-#1 — the stand-up's whole point is that nothing reaches the stage or the repository unasked -->
 
 A Mate's stand-up is such a session: when a Mate first deploys services it

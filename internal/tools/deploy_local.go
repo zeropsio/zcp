@@ -327,11 +327,11 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 	}
 	if closed, closedAt, reason := workflow.DeriveCloseState(stateDir, ws); closed {
 		note := closedSessionNote(closedAt, reason)
-		// In a wired group the person's next step is theirs to know
-		// (gitea_delivery.go) — once the session delivered: a stand-up that
-		// left the stage out opened no pull request to hand over.
-		if giteaWired() && sessionDeployedAStageHalf(stateDir, ws) {
-			note += " " + giteaHandoffNote
+		// In a Mate delivering through HQ the person's next step is theirs to
+		// know (hq_delivery.go) — once the session delivered: a stand-up
+		// that left the stage out opened no change to hand over.
+		if hqWired() && sessionDeployedAStageHalf(stateDir, ws) {
+			note += " " + hqHandoffNote
 		}
 		return &WorkSessionState{
 			Status:      "auto-closed",
@@ -353,8 +353,8 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 }
 
 // sessionDeployedAStageHalf reports whether ws deployed the stage half of a
-// pair — in a Mate wired to its group's Gitea, the deploy that commits,
-// pushes and opens the pull request a closing note hands over.
+// pair — in a Mate delivering through HQ, the deploy that commits, opens the
+// change and pushes it, which a closing note hands over.
 func sessionDeployedAStageHalf(stateDir string, ws *workflow.WorkSession) bool {
 	for _, host := range ws.Services {
 		if !workflow.HasSuccessfulDeployFor(ws, host) {

@@ -15,12 +15,12 @@ import (
 // A Mate's pictures: every screenshot zerops_browser takes is kept here for a
 // while, under an id the tool's result names ("shot-3"), so the Mate can show
 // it in its change's description as ![what it shows](shot-3). The description
-// is published as its pull request's body, and the pictures it names go with
-// it as the request's attachments; the store remembers where Gitea serves each
-// one, so a picture goes onto a request once.
+// is published as its change's body in HQ, and the pictures it names go with
+// it as the change's attachments; the store remembers where HQ serves each
+// one, so a picture goes onto a change once.
 //
 // Kept: the newest PictureKeep, and every picture a kept description names —
-// words waiting for a request to carry them must find their pictures there.
+// words waiting for a change to carry them must find their pictures there.
 // An id is never given twice: the next one only ever grows.
 
 // PictureKeep is how many of the newest pictures are kept.
@@ -43,8 +43,8 @@ type Picture struct {
 	Width   int    `json:"width,omitempty"`
 	Height  int    `json:"height,omitempty"`
 	TakenAt string `json:"takenAt,omitempty"`
-	// Uploads is where Gitea serves the picture, by the pull request it was
-	// attached to ("{org}/{repo}#{number}").
+	// Uploads is where HQ serves the picture, by the change it was attached
+	// to ("{appId}/{repo}#{number}").
 	Uploads map[string]string `json:"uploads,omitempty"`
 }
 
@@ -122,8 +122,8 @@ func KeptPicture(stateDir, id string) (Picture, []byte, error) {
 	return found, png, err
 }
 
-// RecordPictureUpload remembers that the picture id is served at url on the
-// pull request target ("{org}/{repo}#{number}").
+// RecordPictureUpload remembers that the picture id is served at url for the
+// change target ("{appId}/{repo}#{number}").
 func RecordPictureUpload(stateDir, id, target, url string) error {
 	return withPictures(stateDir, func(index *pictureIndex) error {
 		for i := range index.Pictures {
@@ -149,10 +149,10 @@ func prunePictures(stateDir string, index *pictureIndex) {
 	named := map[string]bool{}
 	if metas, err := ListServiceMetas(stateDir); err == nil {
 		for _, m := range metas {
-			if m == nil || m.Gitea == nil || m.Gitea.ChangeDescription == nil {
+			if m == nil || m.HQ == nil || m.HQ.ChangeDescription == nil {
 				continue
 			}
-			for _, id := range PictureRefs(m.Gitea.ChangeDescription.Text) {
+			for _, id := range PictureRefs(m.HQ.ChangeDescription.Text) {
 				named[id] = true
 			}
 		}

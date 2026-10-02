@@ -210,18 +210,23 @@ func TestBuildGitTagPushCommand_NoInlineIdentity(t *testing.T) {
 
 // The persisted helper answers two shells. The dev service's own sessions
 // carry GIT_TOKEN, the service secret git-push-setup writes. The Mate's shell
-// runs git on the same repository through the mount, and carries the bot's
-// token as GITEA_TOKEN only — so on a remote on the Mate's Gitea the helper
-// falls back to it. Every other host answers GIT_TOKEN alone: the bot's token
-// is never sent anywhere but the Mate's own Gitea.
+// runs git on the same repository through the mount and carries no GIT_TOKEN
+// — on a remote on the Mate's HQ the helper asks `zcp hq git-credential`,
+// which answers from the enrollment. Every other host answers GIT_TOKEN alone:
+// the Mate credential is never sent anywhere but the Mate's own HQ.
 const (
-	helperGiteaURL   = "https://gitea.example.invalid"
-	helperBotToken   = "the-mates-bot-token"
+	helperHQURL      = "https://hq.example.invalid"
+	helperCredential = "the-mate-credential"
 	helperGitToken   = "the-service-secret"
 	helperOldHelper  = `!f() { test "$1" = get && { echo username=oauth2; echo "password=$GIT_TOKEN"; }; }; f`
-	helperGiteaRepo  = helperGiteaURL + "/acme/appdev.git"
+	helperHQRepo     = helperHQURL + "/git/a1/appdev.git"
 	helperGitHubRepo = "https://github.com/acme/appdev.git"
 )
+
+// zcpAnswering is a `zcp` that answers `zcp hq git-credential get` with the
+// Mate credential once git's request on stdin names a host, the way
+// runHQGitCredential does for the enrolled HQ.
+const zcpAnswering = `[ "$1 $2 $3" = "hq git-credential get" ] || exit 1; grep -q '^host=' || exit 1; printf 'username=mate\npassword=%s\n' ` + helperCredential
 
 // gitShell runs a shell command in dir as a session carrying only env — a
 // HOME of its own, no system config and no zcp to ask (unless env's PATH
@@ -240,18 +245,11 @@ func gitShell(t *testing.T, dir, home string, env map[string]string, stdin, scri
 	return string(out), err
 }
 
-// answeredPassword asks the repository's configured helpers for a credential
-// to remoteURL, the way a `git fetch` in that shell would, and returns the
-// password they answered ("" for none).
-func answeredPassword(t *testing.T, repo, home string, env map[string]string, remoteURL string) string {
-	t.Helper()
-	password, _ := answeredCredential(t, repo, home, env, remoteURL)
-	return password
-}
-
-// answeredCredential is answeredPassword and whether a password was answered
-// at all — an empty one is still an answer git sends.
-func answeredCredential(t *testing.T, repo, home string, env map[string]string, remoteURL string) (string, bool) {
+// answeredCredential asks the repository's configured helpers for a
+// credential to remoteURL, the way a `git fetch` in that shell would, and
+// returns the user and password they answered, and whether a password was
+// answered at all — an empty one is still an answer git sends.
+func answeredCredential(t *testing.T, repo, home string, env map[string]string, remoteURL string) (user, password string, answered bool) {
 	t.Helper()
 	u, err := url.Parse(remoteURL)
 	if err != nil {
@@ -261,11 +259,14 @@ func answeredCredential(t *testing.T, repo, home string, env map[string]string, 
 		"protocol="+u.Scheme+"\nhost="+u.Host+"\npath="+strings.TrimPrefix(u.Path, "/")+"\n\n",
 		"git credential fill")
 	for line := range strings.SplitSeq(out, "\n") {
+		if v, ok := strings.CutPrefix(line, "username="); ok {
+			user = v
+		}
 		if v, ok := strings.CutPrefix(line, "password="); ok {
-			return v, true
+			password, answered = v, true
 		}
 	}
-	return "", false
+	return user, password, answered
 }
 
 func requireGit(t *testing.T) {
@@ -275,58 +276,63 @@ func requireGit(t *testing.T) {
 	}
 }
 
-// TestPersistedCredentialHelper_TokenByShellAndHost runs origin sync on a real
+// TestPersistedCredentialHelper_ByShellAndHost runs origin sync on a real
 // repository and asks the helper it persisted for a credential, from the dev
 // service's session and from the Mate's shell.
-func TestPersistedCredentialHelper_TokenByShellAndHost(t *testing.T) {
+func TestPersistedCredentialHelper_ByShellAndHost(t *testing.T) {
 	t.Parallel()
 	requireGit(t)
 
 	devSession := map[string]string{"GIT_TOKEN": helperGitToken}
-	mateShell := map[string]string{"GITEA_TOKEN": helperBotToken}
-	both := map[string]string{"GIT_TOKEN": helperGitToken, "GITEA_TOKEN": helperBotToken}
+	mateShell := map[string]string{"PATH": fakeZcpPath(t, zcpAnswering)}
+	both := map[string]string{"GIT_TOKEN": helperGitToken, "PATH": fakeZcpPath(t, zcpAnswering)}
 
 	const (
-		ipv6Gitea       = "https://[fd00::1]"
-		underscoreGitea = "https://my_gitea.example.com"
-		portGitea       = "https://gitea.example.invalid:3000"
+		ipv6HQ       = "https://[fd00::1]"
+		underscoreHQ = "https://my_hq.example.com"
+		portHQ       = "https://hq.example.invalid:3000"
 	)
 	tests := []struct {
 		name     string
 		remote   string
-		giteaURL string
+		hqURL    string
 		env      map[string]string
 		ask      string // the URL git asks a credential for; "" = the remote
 		want     string
+		wantUser string
 	}{
-		{"the Mate's shell on its Gitea answers the bot token", helperGiteaRepo, helperGiteaURL, mateShell, "", helperBotToken},
-		{"the dev service on the Gitea answers its service secret", helperGiteaRepo, helperGiteaURL, devSession, "", helperGitToken},
-		{"the service secret wins where both are set", helperGiteaRepo, helperGiteaURL, both, "", helperGitToken},
-		{"github.com never gets the bot token", helperGitHubRepo, helperGiteaURL, mateShell, "", ""},
-		{"github.com answers the service secret", helperGitHubRepo, helperGiteaURL, both, "", helperGitToken},
-		{"another host never gets the bot token", "https://code.example.invalid/acme/appdev.git", helperGiteaURL, mateShell, "", ""},
-		{"a Mate with no Gitea wiring falls back to nothing", helperGiteaRepo, "", mateShell, "", ""},
-		{"a Gitea on an IPv6 literal never answers github.com", ipv6Gitea + "/acme/appdev.git", ipv6Gitea, mateShell, helperGitHubRepo, ""},
-		{"a Gitea whose name has an underscore never answers github.com", underscoreGitea + "/acme/appdev.git", underscoreGitea, mateShell, helperGitHubRepo, ""},
-		{"a remote whose host is no credential scope answers github.com nothing, even in the dev service", ipv6Gitea + "/acme/appdev.git", ipv6Gitea, devSession, helperGitHubRepo, ""},
-		{"a Gitea on its own port answers the Mate's shell", portGitea + "/acme/appdev.git", portGitea, mateShell, "", helperBotToken},
-		{"a Gitea on its own port answers the dev service", portGitea + "/acme/appdev.git", portGitea, devSession, "", helperGitToken},
-		{"the Gitea's host on another port never gets the bot token", portGitea + "/acme/appdev.git", helperGiteaURL, mateShell, "", ""},
-		{"the Gitea's port stated as the default is the default", helperGiteaURL + ":443/acme/appdev.git", helperGiteaURL, mateShell, helperGiteaRepo, helperBotToken},
+		{"the Mate's shell on its HQ answers the Mate credential", helperHQRepo, helperHQURL, mateShell, "", helperCredential, "mate"},
+		{"the dev service on the HQ answers its service secret", helperHQRepo, helperHQURL, devSession, "", helperGitToken, "mate"},
+		{"the service secret wins where both are there", helperHQRepo, helperHQURL, both, "", helperGitToken, "mate"},
+		{"github.com never gets the Mate credential", helperGitHubRepo, helperHQURL, mateShell, "", "", "oauth2"},
+		{"github.com answers the service secret", helperGitHubRepo, helperHQURL, both, "", helperGitToken, "oauth2"},
+		{"another host never gets the Mate credential", "https://code.example.invalid/acme/appdev.git", helperHQURL, mateShell, "", "", "oauth2"},
+		{"a Mate not enrolled with an HQ asks nothing of zcp", helperHQRepo, "", mateShell, "", "", "oauth2"},
+		{"an HQ on an IPv6 literal never answers github.com", ipv6HQ + "/git/a1/appdev.git", ipv6HQ, mateShell, helperGitHubRepo, "", ""},
+		{"an HQ whose name has an underscore never answers github.com", underscoreHQ + "/git/a1/appdev.git", underscoreHQ, mateShell, helperGitHubRepo, "", ""},
+		{"a remote whose host is no credential scope answers github.com nothing, even in the dev service", ipv6HQ + "/git/a1/appdev.git", ipv6HQ, devSession, helperGitHubRepo, "", ""},
+		{"an HQ on its own port answers the Mate's shell", portHQ + "/git/a1/appdev.git", portHQ, mateShell, "", helperCredential, "mate"},
+		{"an HQ on its own port answers the dev service", portHQ + "/git/a1/appdev.git", portHQ, devSession, "", helperGitToken, "mate"},
+		{"the HQ's host on another port never gets the Mate credential", portHQ + "/git/a1/appdev.git", helperHQURL, mateShell, "", "", "oauth2"},
+		{"the HQ's port stated as the default is the default", helperHQURL + ":443/git/a1/appdev.git", helperHQURL, mateShell, helperHQRepo, helperCredential, "mate"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			repo, home := t.TempDir(), t.TempDir()
-			if out, err := gitShell(t, repo, home, nil, "", BuildGitOriginSyncCommand(repo, tt.remote, tt.giteaURL)); err != nil {
+			if out, err := gitShell(t, repo, home, nil, "", BuildGitOriginSyncCommand(repo, tt.remote, tt.hqURL)); err != nil {
 				t.Fatalf("origin sync: %v\n%s", err, out)
 			}
 			ask := tt.ask
 			if ask == "" {
 				ask = tt.remote
 			}
-			if got := answeredPassword(t, repo, home, tt.env, ask); got != tt.want {
+			user, got, _ := answeredCredential(t, repo, home, tt.env, ask)
+			if got != tt.want {
 				t.Errorf("asked for %s, the helper answered %q, want %q", ask, got, tt.want)
+			}
+			if tt.want != "" && user != tt.wantUser {
+				t.Errorf("asked for %s, the helper answered the user %q, want %q", ask, user, tt.wantUser)
 			}
 		})
 	}
@@ -343,40 +349,35 @@ func fakeZcpPath(t *testing.T, script string) string {
 	return dir + ":" + os.Getenv("PATH")
 }
 
-// TestPersistedCredentialHelper_ReadsTheRotatedToken: the broker rotates the
-// bot token on the zcp service, and the Mate's shell keeps the value it
-// started with until a restart — so the Gitea helper asks `zcp mate
-// git-token` for the token as the container holds it now, handing it the
-// request (the host) on stdin, and falls back to the shell's own value only
-// where no zcp answers. A dev service's session keeps its service secret.
-func TestPersistedCredentialHelper_ReadsTheRotatedToken(t *testing.T) {
+// TestPersistedCredentialHelper_TheMatesShellAsksZcp: a re-enrollment rotates
+// the Mate credential, and only the enrollment holds it — so the HQ helper
+// asks `zcp hq git-credential` for it as it is now, handing it the request
+// (the host) on stdin, and answers nothing where no zcp answers: never an
+// empty password. A dev service's session keeps its service secret.
+func TestPersistedCredentialHelper_TheMatesShellAsksZcp(t *testing.T) {
 	t.Parallel()
 	requireGit(t)
-	const rotated = "the-rotated-bot-token"
-	answers := `[ "$1 $2" = "mate git-token" ] || exit 1; grep -q '^host=gitea.example.invalid$' && printf %s ` + rotated
 	tests := []struct {
 		name string
 		zcp  string
 		env  map[string]string
 		want string
 	}{
-		{"the Mate's shell gets the token as it is now", answers, map[string]string{"GITEA_TOKEN": helperBotToken}, rotated},
-		{"no zcp to ask: the shell's own value", "exit 127", map[string]string{"GITEA_TOKEN": helperBotToken}, helperBotToken},
-		{"a zcp that predates the verb: the shell's own value", `echo "usage: zcp mate <status|update>" >&2; exit 1`, map[string]string{"GITEA_TOKEN": helperBotToken}, helperBotToken},
-		{"zcp declines: the shell's own value", "cat >/dev/null; exit 1", map[string]string{"GITEA_TOKEN": helperBotToken}, helperBotToken},
-		{"no token anywhere: no password at all", "cat >/dev/null; exit 1", nil, ""},
-		{"the dev service's session keeps its service secret", answers, map[string]string{"GIT_TOKEN": helperGitToken, "GITEA_TOKEN": helperBotToken}, helperGitToken},
+		{"zcp answers the credential as it is now", zcpAnswering, nil, helperCredential},
+		{"no zcp to ask: no password at all", "exit 127", nil, ""},
+		{"zcp declines: no password at all", "cat >/dev/null; exit 1", nil, ""},
+		{"the dev service's session keeps its service secret", zcpAnswering, map[string]string{"GIT_TOKEN": helperGitToken}, helperGitToken},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			repo, home := t.TempDir(), t.TempDir()
-			if out, err := gitShell(t, repo, home, nil, "", BuildGitOriginSyncCommand(repo, helperGiteaRepo, helperGiteaURL)); err != nil {
+			if out, err := gitShell(t, repo, home, nil, "", BuildGitOriginSyncCommand(repo, helperHQRepo, helperHQURL)); err != nil {
 				t.Fatalf("origin sync: %v\n%s", err, out)
 			}
 			env := map[string]string{"PATH": fakeZcpPath(t, tt.zcp)}
 			maps.Copy(env, tt.env)
-			got, answered := answeredCredential(t, repo, home, env, helperGiteaRepo)
+			_, got, answered := answeredCredential(t, repo, home, env, helperHQRepo)
 			if got != tt.want || answered != (tt.want != "") {
 				t.Errorf("the helper answered %q (answered=%v), want %q", got, answered, tt.want)
 			}
@@ -391,22 +392,22 @@ func TestBuildGitCredentialHelperAssertCommand(t *testing.T) {
 	t.Parallel()
 	requireGit(t)
 
-	t.Run("an old helper on the Gitea host answers the Mate's shell again", func(t *testing.T) {
+	t.Run("an old helper on the HQ host answers the Mate's shell again", func(t *testing.T) {
 		t.Parallel()
 		repo, home := t.TempDir(), t.TempDir()
 		if out, err := gitShell(t, repo, home, nil, "",
-			"git init -q && git config 'credential.https://gitea.example.invalid.helper' "+shellQuote(helperOldHelper)); err != nil {
+			"git init -q && git config 'credential.https://hq.example.invalid.helper' "+shellQuote(helperOldHelper)); err != nil {
 			t.Fatalf("seed: %v\n%s", err, out)
 		}
-		mateShell := map[string]string{"GITEA_TOKEN": helperBotToken}
-		if got := answeredPassword(t, repo, home, mateShell, helperGiteaRepo); got != "" {
+		mateShell := map[string]string{"PATH": fakeZcpPath(t, zcpAnswering)}
+		if _, got, _ := answeredCredential(t, repo, home, mateShell, helperHQRepo); got != "" {
 			t.Fatalf("the old helper answered %q; the seed does not reproduce the failure", got)
 		}
-		if out, err := gitShell(t, repo, home, nil, "", BuildGitCredentialHelperAssertCommand(repo, helperGiteaRepo, helperGiteaURL)); err != nil {
+		if out, err := gitShell(t, repo, home, nil, "", BuildGitCredentialHelperAssertCommand(repo, helperHQRepo, helperHQURL)); err != nil {
 			t.Fatalf("assert: %v\n%s", err, out)
 		}
-		if got := answeredPassword(t, repo, home, mateShell, helperGiteaRepo); got != helperBotToken {
-			t.Errorf("after the assert the helper answered %q, want the bot token", got)
+		if _, got, _ := answeredCredential(t, repo, home, mateShell, helperHQRepo); got != helperCredential {
+			t.Errorf("after the assert the helper answered %q, want the Mate credential", got)
 		}
 	})
 
@@ -420,7 +421,7 @@ func TestBuildGitCredentialHelperAssertCommand(t *testing.T) {
 		if out, err := gitShell(t, repo, home, nil, "", "git init -q"); err != nil {
 			t.Fatalf("seed: %v\n%s", err, out)
 		}
-		if out, err := gitShell(t, repo, home, nil, "", BuildGitCredentialHelperAssertCommand(repo, helperGiteaRepo, helperGiteaURL)); err != nil {
+		if out, err := gitShell(t, repo, home, nil, "", BuildGitCredentialHelperAssertCommand(repo, helperHQRepo, helperHQURL)); err != nil {
 			t.Fatalf("assert: %v\n%s", err, out)
 		}
 		if _, err := os.Stat(netrc); err != nil {
@@ -431,7 +432,7 @@ func TestBuildGitCredentialHelperAssertCommand(t *testing.T) {
 	t.Run("a service with no repository is left alone", func(t *testing.T) {
 		t.Parallel()
 		dir, home := t.TempDir(), t.TempDir()
-		if out, err := gitShell(t, dir, home, nil, "", BuildGitCredentialHelperAssertCommand(dir, helperGiteaRepo, helperGiteaURL)); err != nil {
+		if out, err := gitShell(t, dir, home, nil, "", BuildGitCredentialHelperAssertCommand(dir, helperHQRepo, helperHQURL)); err != nil {
 			t.Fatalf("assert on a service with no repository failed: %v\n%s", err, out)
 		}
 		if _, err := os.Stat(filepath.Join(dir, ".git")); !os.IsNotExist(err) {
