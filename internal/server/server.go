@@ -293,10 +293,11 @@ func (s *Server) registerTools() {
 	}
 	tools.RegisterExport(s.server, s.client, projectID)
 	tools.RegisterManage(s.server, s.client, projectID)
-	tools.RegisterScale(s.server, s.client, projectID)
+	recipeSteer := tools.NewGroupRecipeSteer(s.client, httpClient, s.rtInfo, stateDir)
+	tools.RegisterScale(s.server, s.client, projectID, recipeSteer)
 	tools.RegisterEnv(s.server, s.client, projectID, s.rtInfo.ServiceName)
 
-	tools.RegisterImport(s.server, s.client, projectID, wfEngine, stateDir, recipeProbe, s.rtInfo)
+	tools.RegisterImportSteered(s.server, s.client, projectID, wfEngine, stateDir, recipeProbe, s.rtInfo, recipeSteer)
 	tools.RegisterDelete(s.server, s.client, projectID, stateDir, s.mounter, s.rtInfo)
 	tools.RegisterSubdomain(s.server, s.client, httpClient, projectID, stateDir)
 	tools.RegisterMount(s.server, s.client, projectID, s.mounter, s.rtInfo, stateDir, wfEngine, recipeProbe)

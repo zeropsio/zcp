@@ -98,6 +98,17 @@ func (s *Scratch) Paths(ctx context.Context, rev string) ([]string, error) {
 	return paths, nil
 }
 
+// File is path as rev holds it, byte for byte; found is false when rev holds
+// no such file.
+func (s *Scratch) File(ctx context.Context, rev, path string) (body string, found bool, err error) {
+	entry, err := s.git(ctx, nil, "ls-tree", "-z", rev, "--", path)
+	if err != nil || entry == "" {
+		return "", false, err
+	}
+	body, err = s.gitRaw(ctx, s.env, nil, "cat-file", "blob", rev+":"+path)
+	return body, err == nil, err
+}
+
 // Tree is rev's tree.
 func (s *Scratch) Tree(ctx context.Context, rev string) (string, error) {
 	return s.git(ctx, nil, "rev-parse", "--verify", rev+"^{tree}")
@@ -164,6 +175,12 @@ func (s *Scratch) git(ctx context.Context, stdin *strings.Reader, args ...string
 }
 
 func (s *Scratch) gitEnv(ctx context.Context, env []string, stdin *strings.Reader, args ...string) (string, error) {
+	out, err := s.gitRaw(ctx, env, stdin, args...)
+	return strings.TrimSpace(out), err
+}
+
+// gitRaw is gitEnv answering git's output as it wrote it.
+func (s *Scratch) gitRaw(ctx context.Context, env []string, stdin *strings.Reader, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = s.dir
 	cmd.Env = env
@@ -179,7 +196,7 @@ func (s *Scratch) gitEnv(ctx context.Context, env []string, stdin *strings.Reade
 		}
 		return "", &gitError{args: args[0], said: said, err: err}
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	return stdout.String(), nil
 }
 
 // gitError is git refusing or failing, in its own words.

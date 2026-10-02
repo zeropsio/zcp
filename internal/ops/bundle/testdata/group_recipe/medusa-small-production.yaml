@@ -49,10 +49,11 @@ services:
       cpuMode: SHARED
       minCpu: 1
       maxCpu: 3
-      minRam: 0.5
+      minRam: 2
       maxRam: 4
       minDisk: 1
       maxDisk: 20
+      minFreeRamGB: 0.5
 
   - hostname: storage
     type: object-storage

@@ -213,6 +213,7 @@ func publicAccessInputForHost(ctx context.Context, client platform.Client, ssh o
 	if err != nil || meta == nil {
 		return defaultPublicAccessInput()
 	}
+	devServer := servedByDevServer(meta, host)
 	deferredStart := false
 	if svc, lookupErr := ops.LookupService(ctx, client, projectID, host); lookupErr == nil && svc != nil {
 		class := topology.RuntimeClassFor(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName)
@@ -223,7 +224,15 @@ func publicAccessInputForHost(ctx context.Context, client platform.Client, ssh o
 			}
 		}
 	}
-	return ops.PublicAccessInput{Record: meta.PublicAccessFor(host), DeferredStart: deferredStart}
+	return ops.PublicAccessInput{Record: meta.PublicAccessFor(host), DeferredStart: deferredStart, DevServer: devServer}
+}
+
+// servedByDevServer reports a host whose mode leaves a dynamic runtime to a
+// dev server (topology.IsDeferredStart's mode half) — whatever that server's
+// live state; ops gives its HTTP probes a page's first compile when the
+// runtime is dynamic.
+func servedByDevServer(meta *workflow.ServiceMeta, host string) bool {
+	return topology.IsDeferredStart(meta.ModeFor(host), topology.RuntimeDynamic)
 }
 
 // publicAccessResolver builds a per-hostname ops.PublicAccessResolver for
@@ -249,7 +258,7 @@ func publicAccessResolver(stateDir string) ops.PublicAccessResolver {
 		if meta == nil {
 			return defaultPublicAccessInput()
 		}
-		return ops.PublicAccessInput{Record: meta.PublicAccessFor(hostname)}
+		return ops.PublicAccessInput{Record: meta.PublicAccessFor(hostname), DevServer: servedByDevServer(meta, hostname)}
 	}
 }
 

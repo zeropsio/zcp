@@ -618,16 +618,78 @@ func groupStoragePolicyWarnings(managed []ManagedServiceEntry) []string {
 // dev-sized database's bounds beside it would cap production. An object
 // storage has none; its size is objectStorageSize.
 func managedVertical(m ManagedServiceEntry, policy groupTierPolicy) map[string]any {
-	if m.Scaling == nil || RulesForType(m.Type).RequiresObjectStorageSize {
+	if RulesForType(m.Type).RequiresObjectStorageSize {
 		return nil
 	}
 	if policy.promoteHA && topology.IsProfileBearing(m.Type) {
 		return nil
 	}
+	if m.Scaling == nil {
+		// A scale that could not be read writes no block: a floor alone
+		// would read as the whole scale and drop the rest.
+		return nil
+	}
 	shape := map[string]any{}
 	projectScaling(shape, m.Scaling)
 	vertical, _ := shape["verticalAutoscaling"].(map[string]any)
+	return ApplyResourceFloor(m.Type, vertical)
+}
+
+// resourceFloor is the least a kind of service is written with in a group
+// recipe: the minimal viable resources it needs to come up and do its work
+// on a fresh project, not a size for its load.
+type resourceFloor struct {
+	minRAM       float64
+	minFreeRAMGB float64
+}
+
+// resourceFloors are the kinds that get a floor, by canonical base name. A
+// search engine reindexes in a burst that grows memory faster than vertical
+// autoscaling reacts — a Meilisearch stood up from a group recipe at 1 GB ran
+// out of memory reindexing — so it needs room up front and a buffer. Every
+// other kind keeps the source's numbers: runtimes are sized by their recipe
+// and their dev halves should stay light, a database's production scale is
+// its profile, an object storage has a size rather than memory, and no other
+// kind has failed for want of a floor.
+var resourceFloors = map[string]resourceFloor{
+	"meilisearch":   {minRAM: 2, minFreeRAMGB: 0.5},
+	"elasticsearch": {minRAM: 2, minFreeRAMGB: 0.5},
+	"typesense":     {minRAM: 2, minFreeRAMGB: 0.5},
+}
+
+// ApplyResourceFloor raises a service's vertical scale to its kind's floor
+// (resourceFloors): each value the max of the source and the floor, maxRam
+// raised only when it would fall below minRam. It never lowers a value, and a
+// kind with no floor is returned as it came.
+func ApplyResourceFloor(serviceType string, vertical map[string]any) map[string]any {
+	floor, ok := resourceFloors[topology.CanonicalBaseName(serviceType)]
+	if !ok {
+		return vertical
+	}
+	if vertical == nil {
+		vertical = map[string]any{}
+	}
+	if scalingNumber(vertical["minRam"]) < floor.minRAM {
+		vertical["minRam"] = floor.minRAM
+	}
+	if maxRAM, ok := vertical["maxRam"]; ok && scalingNumber(maxRAM) < scalingNumber(vertical["minRam"]) {
+		vertical["maxRam"] = vertical["minRam"]
+	}
+	if scalingNumber(vertical["minFreeRamGB"]) < floor.minFreeRAMGB {
+		vertical["minFreeRamGB"] = floor.minFreeRAMGB
+	}
 	return vertical
+}
+
+// scalingNumber reads a vertical scale value as a number; 0 when absent.
+func scalingNumber(v any) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case int:
+		return float64(n)
+	}
+	return 0
 }
 
 // stageHalfEnvs is what a group environment's runtime carries of the pair's

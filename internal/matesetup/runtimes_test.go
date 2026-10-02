@@ -168,6 +168,7 @@ func importer(api *fakeAPI, path string) matesetup.Importer {
 		Poll: time.Millisecond, Timeout: 5 * time.Second,
 		Backoff:       []time.Duration{time.Millisecond, time.Millisecond},
 		IsolationPoll: func(time.Duration) time.Duration { return time.Millisecond },
+		OwnDeployPoll: time.Millisecond,
 		Now:           func() time.Time { return t0.Add(time.Second) },
 	}
 }
@@ -985,5 +986,104 @@ func TestBoot_AnEmptyPlanOverridesAFailedRecord(t *testing.T) {
 	}
 	if !matesetup.Settled(path) {
 		t.Error("the rewritten record does not read as settled")
+	}
+}
+
+// ownDeployAPI is the project while zcp's own first deploy still runs: the
+// zcp service reads `status` and its stack.build process stays live until
+// the look `doneAt`; an import sent before that is recorded as overlapping.
+type ownDeployAPI struct {
+	*fakeAPI
+	status      string
+	doneAt      int
+	overlapping int
+}
+
+func (o *ownDeployAPI) ownLive() bool { return o.looks < o.doneAt }
+
+func (o *ownDeployAPI) ListServicesDirect(ctx context.Context, id string) ([]platform.ServiceStack, error) {
+	live, err := o.fakeAPI.ListServicesDirect(ctx, id)
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	status := "ACTIVE"
+	if o.ownLive() {
+		status = o.status
+	}
+	return append(live, platform.ServiceStack{ID: "id-zcp", Name: "zcp", Status: status}), err
+}
+
+func (o *ownDeployAPI) GetProjectProcessesDirect(ctx context.Context, id string) ([]platform.Process, error) {
+	procs, err := o.fakeAPI.GetProjectProcessesDirect(ctx, id)
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	status := platform.ProcessStatusFinished
+	if o.ownLive() {
+		status = platform.ProcessStatusRunning
+	}
+	return append(procs, platform.Process{ID: "proc-own", ActionName: "stack.build", Status: status, Created: stampAt(0),
+		ServiceStacks: []platform.ServiceStackRef{{ID: "id-zcp", Name: "zcp"}}}), err
+}
+
+func (o *ownDeployAPI) ImportServices(ctx context.Context, id, body string) (*platform.ImportResult, error) {
+	o.mu.Lock()
+	if o.ownLive() {
+		o.overlapping++
+	}
+	o.mu.Unlock()
+	return o.fakeAPI.ImportServices(ctx, id, body)
+}
+
+// TestRun_NothingIsImportedWhileZcpsOwnDeployRuns: a services import sent
+// into the project while zcp's own first deploy was still running left
+// zcp's app version without its user data, and the next restart ran no init
+// and refused mate. The boot import waits — runtimes pending, saying why —
+// until the zcp service reads ACTIVE with no live process on it.
+func TestRun_NothingIsImportedWhileZcpsOwnDeployRuns(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+	}{
+		{"the service is still being created", "CREATING"},
+		{"the service reads active while its build process runs", "ACTIVE"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "status.json")
+			api := &ownDeployAPI{fakeAPI: newFake(), status: tt.status, doneAt: 6}
+			im := importer(api.fakeAPI, path)
+			im.API = api
+			im.SelfServiceID = "id-zcp"
+			var sawWaiting bool
+			stop := make(chan struct{})
+			watched := make(chan struct{})
+			go func() {
+				defer close(watched)
+				for {
+					if st, err := mate.ReadStatus(path); err == nil && st.Runtimes.State == mate.RuntimesPending && st.Runtimes.Error == mate.RuntimesWaitingOwnDeploy {
+						sawWaiting = true
+					}
+					select {
+					case <-stop:
+						return
+					case <-time.After(time.Millisecond):
+					}
+				}
+			}()
+			im.Run(context.Background(), plan())
+			close(stop)
+			<-watched
+			if api.overlapping != 0 {
+				t.Errorf("%d imports were sent while zcp's own deploy ran", api.overlapping)
+			}
+			if len(api.imports) != 1 {
+				t.Errorf("imports = %d, want 1 once the deploy ended", len(api.imports))
+			}
+			if got := readStatus(t, path).Runtimes.State; got != mate.RuntimesDone {
+				t.Errorf("runtimes = %s, want done", got)
+			}
+			if !sawWaiting {
+				t.Error("the runtimes section never said it waits for zcp's own deploy")
+			}
+		})
 	}
 }

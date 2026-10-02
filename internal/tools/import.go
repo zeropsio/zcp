@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -85,13 +86,20 @@ func importInputSchema() *jsonschema.Schema {
 // errors come back with structured apiMeta via the error surface
 // established by the validation-plumbing plan.
 func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info) {
-	registerImport(srv, client, projectID, engine, stateDir, recipeProbe, rt, mate.LiveEnvStorePath, hqClosedOff())
+	registerImport(srv, client, projectID, engine, stateDir, recipeProbe, rt, mate.LiveEnvStorePath, hqClosedOff(), nil)
+}
+
+// RegisterImportSteered is RegisterImport for a Mate: steer is asked, for
+// each service an override replaced, once the import landed — an override
+// writes the scale its YAML names (GroupRecipeSteer).
+func RegisterImportSteered(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info, steer GroupRecipeSteer) {
+	registerImport(srv, client, projectID, engine, stateDir, recipeProbe, rt, mate.LiveEnvStorePath, hqClosedOff(), steer)
 }
 
 // registerImport is RegisterImport reading the container's live env store
 // at liveEnvPath and asking closedOff whether the Mate's project is closed
 // off (refuseOpenMate).
-func registerImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info, liveEnvPath string, closedOff hq.ClosedOffReader) {
+func registerImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info, liveEnvPath string, closedOff hq.ClosedOffReader, steer GroupRecipeSteer) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_import",
 		Description: "REQUIRES active workflow context (zerops_workflow bootstrap/develop). Import services from YAML into the project. An optional project.envVariables block applies project-level vars before services are created; other project.* fields are rejected. The Zerops API validates fields, modes, types, and hostnames server-side and returns structured apiMeta on the error response when anything is wrong. Blocks until all processes complete; returns final statuses (FINISHED/FAILED).",
@@ -122,10 +130,14 @@ func registerImport(srv *mcp.Server, client platform.Client, projectID string, e
 		onProgress := buildProgressCallback(ctx, req)
 		pollImportProcesses(ctx, client, result, onProgress)
 
-		return jsonResult(importResponse{
+		resp := importResponse{
 			ImportResult: result,
 			Envelope:     freshEnvelope(ctx, stateDir, client, projectID, rt),
-		}), nil, nil
+		}
+		if input.Override.Bool() && steer != nil {
+			resp.GroupRecipe = overrideRecipeSteer(ctx, steer, result)
+		}
+		return jsonResult(resp), nil, nil
 	})
 }
 
@@ -444,8 +456,34 @@ func pollImportProcesses(
 // envelope. docs/spec-mate.md §1.3.
 type importResponse struct {
 	*ops.ImportResult
+	// GroupRecipe is the group recipe's steer for each service an override
+	// replaced (GroupRecipeSteer); absent when there is nothing to say.
+	GroupRecipe []string `json:"groupRecipe,omitempty"`
 	// Envelope is the post-mutation lifecycle state (docs/spec-mate.md §1.3).
 	// Absent when its computation failed — the rest of the response is
 	// unaffected.
 	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`
+}
+
+// overrideRecipeSteer asks steer once per service the override replaced
+// whose every process finished — a failed or canceled change landed nothing
+// — and keeps what it said.
+func overrideRecipeSteer(ctx context.Context, steer GroupRecipeSteer, result *ops.ImportResult) []string {
+	var lines, asked []string
+	for _, p := range result.Processes {
+		if p.Service == "" || slices.Contains(asked, p.Service) {
+			continue
+		}
+		asked = append(asked, p.Service)
+		landed := !slices.ContainsFunc(result.Processes, func(q ops.ImportProcessOutput) bool {
+			return q.Service == p.Service && q.Status != platform.ProcessStatusFinished
+		})
+		if !landed {
+			continue
+		}
+		if line := steer(ctx, p.Service); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }

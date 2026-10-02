@@ -130,3 +130,20 @@ func TestLogShutdown_EmitsSessionEndWithShutdownReasonAndDroppedCount(t *testing
 		})
 	}
 }
+
+// TestLogStartup_NamesTheVersionOnce: a serving zcp says which build it is,
+// once, on its log — the first thing to read when a Mate misbehaves.
+func TestLogStartup_NamesTheVersionOnce(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	logStartup(&buf, "9.188.0", "abc1234", "2026-10-02T10:00:00Z")
+	got := buf.String()
+	if strings.Count(got, "\n") != 1 {
+		t.Errorf("startup log = %q, want one line", got)
+	}
+	for _, want := range []string{"9.188.0", "abc1234", "2026-10-02T10:00:00Z"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("startup log = %q, want it to carry %q", got, want)
+		}
+	}
+}

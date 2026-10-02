@@ -383,8 +383,10 @@ type standupFixture struct {
 	importing *importingClient
 	// building, when set, is the platform with a stage build still running.
 	building *buildingClient
-	// statusPath is the setup status file the stand-up writes its section of.
+	// statusPath is the setup status file the stand-up writes its section of;
+	// status is its writer, one for the fixture as one MCP server holds one.
 	statusPath string
+	status     *standupStatus
 	// closedOff is what HQ answers: the Mate's project closed off.
 	closedOff bool
 }
@@ -427,6 +429,9 @@ func newStandupFixture(t *testing.T) *standupFixture {
 	f.root = t.TempDir()
 	f.stateDir = filepath.Join(f.root, ".zcp", "state")
 	f.statusPath = filepath.Join(f.root, "mate-status.json")
+	f.status = newStandupStatus(f.statusPath)
+	f.status.beatEvery = 5 * time.Millisecond
+	t.Cleanup(f.status.stopCarry)
 	f.mounter = &standupMounter{}
 	f.env = map[string]string{}
 	f.enrollmentPath = filepath.Join(f.root, "enrollment.json")
@@ -495,6 +500,7 @@ func (f *standupFixture) run(t *testing.T) (*mcp.CallToolResult, standupResponse
 		runtimeWait:    200 * time.Millisecond,
 		runtimePoll:    5 * time.Millisecond,
 		statusPath:     f.statusPath,
+		status:         f.status,
 		closedOff:      func(context.Context) (bool, error) { return f.closedOff, nil },
 		enrollmentPath: f.enrollmentPath,
 		bootWait:       2 * time.Second,
@@ -1190,10 +1196,12 @@ func (f *standupFixture) standupSection(t *testing.T) (mate.StandupStatus, []str
 	return st.Standup, rows
 }
 
-// TestStandup_WritesItsProgressForTheRunCard: each call writes the stand-up
+// TestStandup_WritesItsProgressForTheRunCard: the calls write the stand-up
 // section of the status file the mate server relays to the run card — the
-// phase, every half it touches with its step and state, and how the call
-// ended with what failed.
+// phase, every half they touch with its step and state, and how the
+// stand-up ended with what failed. A first call that leaves the stages
+// queued for the second leaves the section running: the stand-up is one
+// from its first call until its stages have returned.
 func TestStandup_WritesItsProgressForTheRunCard(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -1204,24 +1212,26 @@ func TestStandup_WritesItsProgressForTheRunCard(t *testing.T) {
 		wantPhase string
 		wantRows  []string
 		wantError string
+		// wantEnded is a section that says when the stand-up ended.
+		wantEnded bool
 	}{
 		{
-			name:      "the first call deploys development, the stages wait",
+			name:      "the first call deploys development and the stand-up runs on for the stages",
 			calls:     1,
-			wantState: mate.StandupDone, wantPhase: mate.PhaseDevelopment,
+			wantState: mate.StandupRunning, wantPhase: mate.PhaseStage,
 			wantRows: []string{"medusadev=verify/done", "medusastage=build/pending", "nextstoredev=verify/done", "nextstorestage=build/pending"},
 		},
 		{
 			name:      "the second call deploys the stages",
 			calls:     2,
-			wantState: mate.StandupDone, wantPhase: mate.PhaseStage,
+			wantState: mate.StandupDone, wantPhase: mate.PhaseStage, wantEnded: true,
 			wantRows: []string{"medusadev=verify/done", "medusastage=verify/done", "nextstoredev=verify/done", "nextstorestage=verify/done"},
 		},
 		{
 			name:      "a failed build fails its half and the call",
 			setup:     func(f *standupFixture) { f.failBuild("svc-medusadev") },
 			calls:     1,
-			wantState: mate.StandupFailed, wantPhase: mate.PhaseDevelopment,
+			wantState: mate.StandupFailed, wantPhase: mate.PhaseDevelopment, wantEnded: true,
 			wantRows:  []string{"medusadev=build/failed", "medusastage=build/failed", "nextstoredev=verify/done", "nextstorestage=build/pending"},
 			wantError: "medusadev: the deploy ended BUILD_FAILED",
 		},
@@ -1229,7 +1239,7 @@ func TestStandup_WritesItsProgressForTheRunCard(t *testing.T) {
 			name:      "a refusal fails the call with its reason",
 			setup:     func(f *standupFixture) { f.enrollmentPath = filepath.Join(f.root, "no-enrollment.json") },
 			calls:     1,
-			wantState: mate.StandupFailed, wantPhase: mate.PhaseDevelopment,
+			wantState: mate.StandupFailed, wantPhase: mate.PhaseDevelopment, wantEnded: true,
 			wantError: "not enrolled with its HQ",
 		},
 	}
@@ -1240,9 +1250,12 @@ func TestStandup_WritesItsProgressForTheRunCard(t *testing.T) {
 			if tt.setup != nil {
 				tt.setup(f)
 			}
+			var startedAt string
 			for call := range tt.calls {
 				f.run(t)
 				if call == 0 {
+					first, _ := f.standupSection(t)
+					startedAt = first.StartedAt
 					f.devsDeployed()
 				}
 			}
@@ -1256,10 +1269,98 @@ func TestStandup_WritesItsProgressForTheRunCard(t *testing.T) {
 			if !strings.Contains(section.Error, tt.wantError) {
 				t.Errorf("error = %q, want it to carry %q", section.Error, tt.wantError)
 			}
-			if section.StartedAt == "" || section.EndedAt == "" {
-				t.Errorf("startedAt/endedAt = %q/%q", section.StartedAt, section.EndedAt)
+			if section.StartedAt == "" || (section.EndedAt != "") != tt.wantEnded {
+				t.Errorf("startedAt/endedAt = %q/%q, want ended %v", section.StartedAt, section.EndedAt, tt.wantEnded)
+			}
+			if section.StartedAt != startedAt {
+				t.Errorf("startedAt = %q, want the first call's %q: the stand-up is one over its calls", section.StartedAt, startedAt)
 			}
 		})
+	}
+}
+
+// TestStandup_TheRecordNeverSaysDoneBetweenItsCalls samples the section from
+// the first call's start until the second call has returned: it says running
+// throughout, never done between the development and the stages.
+func TestStandup_TheRecordNeverSaysDoneBetweenItsCalls(t *testing.T) {
+	t.Parallel()
+	f := newStandupFixture(t)
+	var (
+		mu     sync.Mutex
+		states []string
+	)
+	sample := func() {
+		if st, err := mate.ReadStatus(f.statusPath); err == nil {
+			mu.Lock()
+			if n := len(states); n == 0 || states[n-1] != st.Standup.State {
+				states = append(states, st.Standup.State)
+			}
+			mu.Unlock()
+		}
+	}
+	stop := make(chan struct{})
+	sampled := make(chan struct{})
+	go func() {
+		defer close(sampled)
+		for {
+			sample()
+			select {
+			case <-stop:
+				return
+			case <-time.After(time.Millisecond):
+			}
+		}
+	}()
+	f.run(t)
+	f.devsDeployed()
+	time.Sleep(50 * time.Millisecond) // the model starts the dev servers
+	f.run(t)
+	close(stop)
+	<-sampled
+	sample()
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Equal(states, []string{mate.StandupRunning, mate.StandupDone}) {
+		t.Errorf("the stand-up's state went %v, want running until the stages returned, then done", states)
+	}
+}
+
+// TestStandup_ACarriedStandUpEndsWhenNoStageCallComes: a first call whose
+// stages wait for a second keeps the stand-up running — and alive, its
+// section rewritten — until that call begins; one that never comes ends it
+// after the wait as the development it stood up.
+func TestStandup_ACarriedStandUpEndsWhenNoStageCallComes(t *testing.T) {
+	t.Parallel()
+	f := newStandupFixture(t)
+	f.status.carryWait = 150 * time.Millisecond
+	f.run(t)
+	first, _ := f.standupSection(t)
+	if first.State != mate.StandupRunning {
+		t.Fatalf("after the first call the stand-up is %s, want running", first.State)
+	}
+	beats := map[time.Time]bool{}
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if info, err := os.Stat(f.statusPath); err == nil {
+			beats[info.ModTime()] = true
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if len(beats) < 3 {
+		t.Errorf("the section was written %d times while it waited for the stage call, want a beat every 5 ms", len(beats))
+	}
+	var section mate.StandupStatus
+	var rows []string
+	for end := time.Now().Add(2 * time.Second); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+		if section, rows = f.standupSection(t); section.State != mate.StandupRunning {
+			break
+		}
+	}
+	if section.State != mate.StandupDone || section.Phase != mate.PhaseDevelopment || section.EndedAt == "" || section.Error != "" {
+		t.Errorf("with no stage call the stand-up ended %s/%s at %q (%q), want done/development", section.State, section.Phase, section.EndedAt, section.Error)
+	}
+	if want := []string{"medusadev=verify/done", "medusastage=build/pending", "nextstoredev=verify/done", "nextstorestage=build/pending"}; !slices.Equal(rows, want) {
+		t.Errorf("services = %v, want %v", rows, want)
 	}
 }
 
@@ -1279,6 +1380,12 @@ func TestStandup_WaitsForTheContainersImport(t *testing.T) {
 		{
 			name:       "an import in flight is waited for",
 			runtimes:   mate.RuntimesStatus{State: mate.RuntimesImporting, Services: []mate.RuntimeService{{Hostname: "nextstorestage", State: mate.ServiceCreating}}},
+			finishWith: &mate.RuntimesStatus{State: mate.RuntimesDone},
+			wantWaited: true,
+		},
+		{
+			name:       "an import waiting for zcp's own deploy is waited for",
+			runtimes:   mate.RuntimesStatus{State: mate.RuntimesPending, Error: mate.RuntimesWaitingOwnDeploy},
 			finishWith: &mate.RuntimesStatus{State: mate.RuntimesDone},
 			wantWaited: true,
 		},

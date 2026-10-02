@@ -10,7 +10,9 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -640,5 +642,53 @@ func TestImport_NonOverrideImportNotGated(t *testing.T) {
 	})
 	if result.IsError {
 		t.Errorf("non-override import should pass: %s", getTextContent(t, result))
+	}
+}
+
+// TestImport_OverrideSteersTheGroupRecipe: an import override replaces a
+// service with the scale its YAML names, so once it lands the answer carries
+// the group recipe's steer for each service it replaced; a plain import
+// creates services and asks nothing.
+func TestImport_OverrideSteersTheGroupRecipe(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		override bool
+		want     []string
+	}{
+		{"an override", true, []string{"steer for api"}},
+		{"a plain import", false, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{{ID: "s1", Name: "api", Status: platform.ServiceStatusActive}}).
+				WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-1", ServiceStackID: "s1", Status: "ACTIVE", Created: "2026-05-05T10:00:00Z"}}).
+				WithImportResult(&platform.ImportResult{ProjectID: "proj-1", ServiceStacks: []platform.ImportedServiceStack{
+					{ID: "s1", Name: "api", Processes: []platform.Process{{ID: "p-1", ActionName: "serviceStackImport", Status: serviceStatusRunning}}},
+				}}).
+				WithProcess(&platform.Process{ID: "p-1", Status: statusFinished})
+			var asked []string
+			steer := func(_ context.Context, host string) string {
+				asked = append(asked, host)
+				return "steer for " + host
+			}
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterImportSteered(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{}, steer)
+			result := callTool(t, srv, "zerops_import", map[string]any{
+				"content": "services:\n  - hostname: api\n    type: nodejs@22\n", "override": tt.override,
+			})
+			if result.IsError {
+				t.Fatalf("import: %s", getTextContent(t, result))
+			}
+			var parsed struct {
+				GroupRecipe []string `json:"groupRecipe"`
+			}
+			_ = json.Unmarshal([]byte(getTextContent(t, result)), &parsed)
+			if !slices.Equal(parsed.GroupRecipe, tt.want) {
+				t.Errorf("groupRecipe = %q (asked %v), want %q", parsed.GroupRecipe, asked, tt.want)
+			}
+		})
 	}
 }

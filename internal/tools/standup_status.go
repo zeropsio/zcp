@@ -24,12 +24,27 @@ import (
 
 // standupStatus writes the stand-up's section. A nil one, or one with no
 // path, writes nothing: a container without the file is an older shape, and
-// the stand-up does not need it to run.
+// the stand-up does not need it to run. One MCP server holds one, across its
+// calls: the stand-up is one from its first call until its stages return.
 type standupStatus struct {
 	path string
 	mu   sync.Mutex
 	now  func() time.Time
+	// beatEvery is how often a running stand-up rewrites the file (0 is
+	// mate.StandupBeat); carryWait how long one whose stages wait for the
+	// second call stays running without it (0 is standupStageWait).
+	beatEvery, carryWait time.Duration
+	// carryMu guards carry, the stop of the beat that keeps a stand-up
+	// running between its calls.
+	carryMu sync.Mutex
+	carry   func()
 }
+
+// standupStageWait bounds how long a stand-up whose stages are queued stays
+// running without the call that builds them. The model is told to make that
+// call in the same turn, once it has started the dev servers: minutes. One
+// that never comes ends the stand-up as the development it stood up.
+const standupStageWait = 15 * time.Minute
 
 func newStandupStatus(path string) *standupStatus {
 	if path == "" {
@@ -51,22 +66,45 @@ func (s *standupStatus) update(change func(*mate.StandupStatus)) {
 
 func (s *standupStatus) stamp() string { return s.now().UTC().Format(time.RFC3339) }
 
-// begin starts a call's section afresh: a call reports the halves it touches.
+// begin starts a call's section: afresh, a call reporting the halves it
+// touches — unless the stand-up waits for this call to build its stages
+// (carried), when the call goes on with it: the same start, the same halves,
+// running throughout.
 func (s *standupStatus) begin() {
 	if s == nil {
 		return
 	}
-	at := s.stamp()
+	s.stopCarry()
+	now := s.now()
+	at := now.UTC().Format(time.RFC3339)
 	s.update(func(st *mate.StandupStatus) {
+		if carried(*st, now) {
+			st.State, st.Error = mate.StandupRunning, ""
+			return
+		}
 		*st = mate.StandupStatus{State: mate.StandupRunning, Phase: mate.PhaseDevelopment, StartedAt: at}
 	})
 }
 
+// carried is a section a first call left running for the stages, still
+// alive: its beat stops only when the call that builds them begins.
+func carried(st mate.StandupStatus, now time.Time) bool {
+	if st.State != mate.StandupRunning || st.Phase != mate.PhaseStage || st.EndedAt != "" {
+		return false
+	}
+	updated, err := time.Parse(time.RFC3339, st.UpdatedAt)
+	return err == nil && now.Sub(updated) <= mate.StandupStale
+}
+
 // beat rewrites the file every interval until the returned stop, so the
 // file says the stand-up is alive (mate.StandupStale); stop waits for it.
+// An interval of 0 is the status's own (beatEvery, else mate.StandupBeat).
 func (s *standupStatus) beat(interval time.Duration) func() {
 	if s == nil {
 		return func() {}
+	}
+	if interval <= 0 {
+		interval = s.beatEvery
 	}
 	if interval <= 0 {
 		interval = mate.StandupBeat
@@ -122,6 +160,62 @@ func (s *standupStatus) step(host, step, state, processID, errLine string) {
 			e.ProcessID = processID
 		}
 	})
+}
+
+// awaitStages closes a call that stood development up with the stages
+// queued for the next: the stand-up is not over, so its section stays
+// running, in the stage phase, and alive — beaten — until the call that
+// builds the stages begins (begin stops the beat) or carryWait passes, when
+// it ends as the development it stood up.
+func (s *standupStatus) awaitStages() {
+	if s == nil {
+		return
+	}
+	s.update(func(st *mate.StandupStatus) {
+		st.State, st.Phase, st.EndedAt, st.Error = mate.StandupRunning, mate.PhaseStage, "", ""
+	})
+	wait := s.carryWait
+	if wait <= 0 {
+		wait = standupStageWait
+	}
+	stopBeat := s.beat(0)
+	quit, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		select {
+		case <-quit:
+			stopBeat()
+		case <-time.After(wait):
+			stopBeat()
+			at := s.stamp()
+			s.update(func(st *mate.StandupStatus) {
+				if st.State == mate.StandupRunning && st.Phase == mate.PhaseStage {
+					st.State, st.Phase, st.EndedAt = mate.StandupDone, mate.PhaseDevelopment, at
+				}
+			})
+		}
+	}()
+	s.carryMu.Lock()
+	s.carry = func() {
+		close(quit)
+		<-done
+	}
+	s.carryMu.Unlock()
+}
+
+// stopCarry stops the beat that keeps a stand-up running between its calls,
+// and waits for it; nothing when none runs.
+func (s *standupStatus) stopCarry() {
+	if s == nil {
+		return
+	}
+	s.carryMu.Lock()
+	stop := s.carry
+	s.carry = nil
+	s.carryMu.Unlock()
+	if stop != nil {
+		stop()
+	}
 }
 
 // end closes the call: failed with errLine when the call refused, else done
@@ -280,7 +374,9 @@ func (d standupDeps) awaitBootImport(ctx context.Context, progress *standupProgr
 		// A pending section that says why it is pending (it waits for the
 		// project to be closed off, or cannot read it) is not about to import.
 		startingAfterTag := d.closedOffSeen && r.Error == mate.RuntimesWaitingClosedOff
-		inFlight := (r.State == mate.RuntimesPending && (r.Error == "" || startingAfterTag)) || r.State == mate.RuntimesImporting
+		// Waiting for zcp's own deploy ends on its own, soon: in flight.
+		ownDeploy := r.Error == mate.RuntimesWaitingOwnDeploy
+		inFlight := (r.State == mate.RuntimesPending && (r.Error == "" || startingAfterTag || ownDeploy)) || r.State == mate.RuntimesImporting
 		if !inFlight || !time.Now().Before(deadline) {
 			failed := map[string]string{}
 			for _, s := range r.Services {

@@ -6,6 +6,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 // ScaleInput is the input type for zerops_scale.
@@ -27,8 +28,32 @@ type ScaleInput struct {
 	MinFreeCPUPercent *float64 `json:"minFreeCpuPercent,omitempty" jsonschema:"Free CPU threshold as percentage of total capacity across ALL cores (0-100). DEDICATED CPU mode only — ignored in SHARED mode. Default: 0 (disabled)."`
 }
 
-// RegisterScale registers the zerops_scale tool.
-func RegisterScale(srv *mcp.Server, client platform.Client, projectID string) {
+// GroupRecipeSteer is what a tool that changed a service's scale asks once
+// the change landed: the group recipe's steer for that host
+// (groupRecipeScalingSteer), "" when there is nothing to say. Nil outside a
+// Mate.
+type GroupRecipeSteer func(ctx context.Context, host string) string
+
+// NewGroupRecipeSteer is the steer for a Mate's container; nil anywhere else.
+func NewGroupRecipeSteer(client platform.Client, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) GroupRecipeSteer {
+	if !rt.MateEnabled || httpClient == nil {
+		return nil
+	}
+	return func(ctx context.Context, host string) string {
+		return groupRecipeScalingSteer(ctx, client, httpClient, rt, stateDir, host)
+	}
+}
+
+// scaleResponse is the scale result and, once it landed, the group recipe's
+// steer for the host.
+type scaleResponse struct {
+	*ops.ScaleResult
+	GroupRecipe string `json:"groupRecipe,omitempty"`
+}
+
+// RegisterScale registers the zerops_scale tool. steer, when set, is asked
+// once a scale change landed (GroupRecipeSteer).
+func RegisterScale(srv *mcp.Server, client platform.Client, projectID string, steer GroupRecipeSteer) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_scale",
 		Description: "Scale a service: adjust CPU, RAM, disk, and container autoscaling (verticalAutoscaling only — does NOT set the PostgreSQL/Valkey `profile`/`profileOverrides`). Blocks until completion (FINISHED/FAILED). Constraints: deployment variant (`:single`/`:ha`) immutable; Docker has no autoscaling; CPU mode changeable once/hour; managed services support vertical only, container count fixed by variant (`:single`=1, `:ha`=3). See zerops_knowledge query=\"scaling\".",
@@ -70,11 +95,17 @@ func RegisterScale(srv *mcp.Server, client platform.Client, projectID string) {
 			result.Process, timedOut = pollManageProcess(ctx, client, result.Process, onProgress)
 			result.TimedOut = timedOut
 		}
+		resp := scaleResponse{ScaleResult: result}
 		if result.TimedOut {
 			result.NextActions = "Scaling did not confirm within the poll window — verify with zerops_discover; the change may still be applying."
 		} else {
 			result.NextActions = nextActionScaleSuccess
+			// Only a change that landed is the recipe's business: a failed or
+			// canceled process changed nothing.
+			if steer != nil && result.Process != nil && result.Process.Status == platform.ProcessStatusFinished {
+				resp.GroupRecipe = steer(ctx, input.ServiceHostname)
+			}
 		}
-		return jsonResult(result), nil, nil
+		return jsonResult(resp), nil, nil
 	})
 }

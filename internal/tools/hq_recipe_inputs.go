@@ -307,7 +307,7 @@ func groupRecipeServiceEnvs(ctx context.Context, client platform.Client, svc ops
 func groupRecipeManaged(ctx context.Context, client platform.Client, svc ops.ServiceInfo) (bundle.ManagedServiceEntry, []string, error) {
 	entry := bundle.ManagedServiceEntry{Hostname: svc.Hostname, Type: svc.Type, Mode: svc.Mode}
 	if shape, err := ops.FetchServiceShape(ctx, client, svc.ServiceID); err == nil {
-		entry.Profile, entry.Scaling = shape.Profile, shape.Scaling
+		entry.Profile, entry.ProfileOverrides, entry.Scaling = shape.Profile, shape.ProfileOverrides, shape.Scaling
 	}
 	if !bundle.RulesForType(svc.Type).RequiresObjectStorageSize {
 		return entry, nil, nil

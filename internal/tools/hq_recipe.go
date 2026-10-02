@@ -121,82 +121,48 @@ func groupRecipeOutcome(
 	rt runtime.Info,
 	stateDir string,
 ) recipeOutcome {
-	if !rt.InContainer || client == nil || httpClient == nil {
-		return recipeOutcome{Blocked: "the group recipe is a Mate's act — there is no Mate environment here"}
+	comp, early, ok := composeGroupRecipe(ctx, client, httpClient, rt, stateDir)
+	if !ok {
+		return early
 	}
-	hqc, enrolled := openHQ(httpClient)
-	if !enrolled {
-		return recipeOutcome{Blocked: "this Mate is not enrolled with its HQ yet, so there is no recipe repository to propose to"}
-	}
-	metas, err := workflow.ListServiceMetas(stateDir)
-	if err != nil || len(metas) == 0 {
-		return recipeOutcome{Blocked: "no service has been bootstrapped yet, so there is nothing to export"}
-	}
-	if !slices.ContainsFunc(metas, func(m *workflow.ServiceMeta) bool { return m.IsComplete() && hqPairWired(m) }) {
-		return recipeOutcome{Blocked: "no pair has its repository in HQ yet — the recipe names what builds each runtime, so it waits for them"}
-	}
-
-	repo, err := hqc.EnsureRepo(ctx, hq.RecipeRepo)
-	if err != nil {
-		return recipeOutcome{Line: fmt.Sprintf("the group recipe is not proposed yet (could not reach the recipe repository %q in HQ: %v) — retrying on the next pass.", hq.RecipeRepo, err)}
-	}
-	// Only pairs the repository pass has given a repository in the recipe's
-	// application: a runtime with none has no buildFromGit to name.
-	var wired []*workflow.ServiceMeta
-	for _, m := range metas {
-		if m.IsComplete() && hqPairWired(m) && m.HQ.AppID == repo.AppID {
-			wired = append(wired, m)
-		}
-	}
-	sort.Slice(wired, func(i, j int) bool { return wired[i].Hostname < wired[j].Hostname })
-
-	// The Mate's state names the application, and its own change in the
-	// recipe repository when one is open: what the proposal moves forward
-	// rather than opens again.
-	state, err := hqc.Self(ctx)
-	if err != nil {
-		return recipeOutcome{Line: fmt.Sprintf("could not read this Mate's changes in HQ to propose the recipe (%v) — retrying on the next pass.", err)}
-	}
-	var outcome recipeOutcome
-	inputs, readWarnings, err := composeGroupRecipeInputs(ctx, client, rt.ProjectID, recipeName(state.AppName, repo.AppID),
-		recipePairMountRoot, hqc.Address(), repo.AppID, metas, wired)
-	outcome.Warnings = append(outcome.Warnings, readWarnings...)
-	if err != nil {
-		outcome.Line = fmt.Sprintf("the group recipe is not proposed yet (%v) — retrying on the next pass.", err)
-		return outcome
-	}
-	// This composes unattended, with nobody to classify a variable the way the
-	// export and launch flows ask the agent to, so the composer decides each
-	// one itself: config as written, a secret as a generator — never its value.
-	layout, warnings, err := bundle.BuildGroupRecipe(inputs)
-	if err != nil {
-		outcome.Line = fmt.Sprintf("the group recipe does not compose yet (%v).", err)
-		return outcome
-	}
-	outcome.Warnings = append(outcome.Warnings, warnings...)
-	files, err := recipe.Build(layout)
-	if err != nil {
-		outcome.Line = fmt.Sprintf("the group recipe does not compose yet (%v).", err)
-		return outcome
-	}
-
-	open := openRecipeChange(state)
+	outcome := recipeOutcome{Warnings: comp.warnings}
+	open := openRecipeChange(comp.state)
 	if open != nil {
 		outcome.Change = open.Number
-		outcome.ChangeURL = hqc.ChangeURL(repo.AppID, hq.RecipeRepo, open.Number)
+		outcome.ChangeURL = comp.hqc.ChangeURL(comp.appID, hq.RecipeRepo, open.Number)
 	}
-	proposed, err := proposeRecipe(ctx, hqc, repo.AppID, open, files, "recipe: the tiers "+hq.RecipeRepo+" lacks, from "+inputs.MateProjectName)
+	var missing []recipe.File
+	written, err := writeRecipeChange(ctx, comp.hqc, comp.appID, open, hq.RecipeProposalTitle,
+		"recipe: the tiers "+hq.RecipeRepo+" lacks, from "+comp.inputs.MateProjectName,
+		func(_ context.Context, _ *hq.Scratch, _ string, paths []string) (map[string]string, error) {
+			missing = recipe.Missing(comp.files, paths)
+			added := make(map[string]string, len(missing))
+			for _, file := range missing {
+				added[file.Path] = file.Body
+			}
+			return added, nil
+		})
 	if err != nil {
 		outcome.Line = err.Error() + " — retrying on the next pass."
 		return outcome
 	}
-	outcome.Proposed = recipeEntries(proposed.missing)
-	outcome.OnMain = len(proposed.missing) == 0
-	outcome.Committed = proposed.pushed
-	if proposed.number != 0 {
-		outcome.Change, outcome.Created = proposed.number, proposed.created
-		outcome.ChangeURL = hqc.ChangeURL(repo.AppID, hq.RecipeRepo, proposed.number)
-		outcome.Branch = hqc.ChangeBranch(proposed.number)
+	outcome.Proposed = recipeEntries(missing)
+	outcome.OnMain = len(missing) == 0
+	if written.other != nil {
+		// The Mate's open change there is another proposal of its own, and
+		// HQ keeps one per repository: it is left as it is.
+		outcome.Change, outcome.ChangeURL = 0, ""
+		if !outcome.OnMain {
+			outcome.Line = fmt.Sprintf("what main of the recipe repository %q lacks (%s) waits for this Mate's change #%d there (%q) to be merged or closed: HQ keeps one open change per Mate per repository",
+				hq.RecipeRepo, strings.Join(outcome.Proposed, ", "), written.other.Number, written.other.Title)
+		}
+		return outcome
+	}
+	outcome.Committed = written.pushed
+	if written.number != 0 {
+		outcome.Change, outcome.Created = written.number, written.created
+		outcome.ChangeURL = comp.hqc.ChangeURL(comp.appID, hq.RecipeRepo, written.number)
+		outcome.Branch = comp.hqc.ChangeBranch(written.number)
 	}
 	switch {
 	case outcome.Created:
@@ -211,6 +177,90 @@ func groupRecipeOutcome(
 	return outcome
 }
 
+// groupRecipeComposition is what the additive reconcile and a scaling
+// proposal both know before they touch the recipe repository: HQ, the
+// application, the Mate's state there, and the recipe composed from this
+// Mate's project.
+type groupRecipeComposition struct {
+	hqc      hq.Client
+	appID    string
+	state    hq.MateState
+	inputs   bundle.GroupRecipeInputs
+	files    []recipe.File
+	warnings []string
+}
+
+// composeGroupRecipe composes the application's recipe from this Mate's live
+// project. ok is false when something stops it, with the outcome saying
+// what (Blocked, or a Line for the reconcile).
+func composeGroupRecipe(
+	ctx context.Context,
+	client platform.Client,
+	httpClient ops.HTTPDoer,
+	rt runtime.Info,
+	stateDir string,
+) (groupRecipeComposition, recipeOutcome, bool) {
+	if !rt.InContainer || client == nil || httpClient == nil {
+		return groupRecipeComposition{}, recipeOutcome{Blocked: "the group recipe is a Mate's act — there is no Mate environment here"}, false
+	}
+	hqc, enrolled := openHQ(httpClient)
+	if !enrolled {
+		return groupRecipeComposition{}, recipeOutcome{Blocked: "this Mate is not enrolled with its HQ yet, so there is no recipe repository to propose to"}, false
+	}
+	metas, err := workflow.ListServiceMetas(stateDir)
+	if err != nil || len(metas) == 0 {
+		return groupRecipeComposition{}, recipeOutcome{Blocked: "no service has been bootstrapped yet, so there is nothing to export"}, false
+	}
+	if !slices.ContainsFunc(metas, func(m *workflow.ServiceMeta) bool { return m.IsComplete() && hqPairWired(m) }) {
+		return groupRecipeComposition{}, recipeOutcome{Blocked: "no pair has its repository in HQ yet — the recipe names what builds each runtime, so it waits for them"}, false
+	}
+
+	repo, err := hqc.EnsureRepo(ctx, hq.RecipeRepo)
+	if err != nil {
+		return groupRecipeComposition{}, recipeOutcome{Line: fmt.Sprintf("the group recipe is not proposed yet (could not reach the recipe repository %q in HQ: %v) — retrying on the next pass.", hq.RecipeRepo, err)}, false
+	}
+	// Only pairs the repository pass has given a repository in the recipe's
+	// application: a runtime with none has no buildFromGit to name.
+	var wired []*workflow.ServiceMeta
+	for _, m := range metas {
+		if m.IsComplete() && hqPairWired(m) && m.HQ.AppID == repo.AppID {
+			wired = append(wired, m)
+		}
+	}
+	sort.Slice(wired, func(i, j int) bool { return wired[i].Hostname < wired[j].Hostname })
+
+	// The Mate's state names the application, and its own change in the
+	// recipe repository when one is open: what a proposal moves forward
+	// rather than opens again.
+	state, err := hqc.Self(ctx)
+	if err != nil {
+		return groupRecipeComposition{}, recipeOutcome{Line: fmt.Sprintf("could not read this Mate's changes in HQ to propose the recipe (%v) — retrying on the next pass.", err)}, false
+	}
+	var outcome recipeOutcome
+	inputs, readWarnings, err := composeGroupRecipeInputs(ctx, client, rt.ProjectID, recipeName(state.AppName, repo.AppID),
+		recipePairMountRoot, hqc.Address(), repo.AppID, metas, wired)
+	outcome.Warnings = append(outcome.Warnings, readWarnings...)
+	if err != nil {
+		outcome.Line = fmt.Sprintf("the group recipe is not proposed yet (%v) — retrying on the next pass.", err)
+		return groupRecipeComposition{}, outcome, false
+	}
+	// This composes unattended, with nobody to classify a variable the way the
+	// export and launch flows ask the agent to, so the composer decides each
+	// one itself: config as written, a secret as a generator — never its value.
+	layout, warnings, err := bundle.BuildGroupRecipe(inputs)
+	if err != nil {
+		outcome.Line = fmt.Sprintf("the group recipe does not compose yet (%v).", err)
+		return groupRecipeComposition{}, outcome, false
+	}
+	outcome.Warnings = append(outcome.Warnings, warnings...)
+	files, err := recipe.Build(layout)
+	if err != nil {
+		outcome.Line = fmt.Sprintf("the group recipe does not compose yet (%v).", err)
+		return groupRecipeComposition{}, outcome, false
+	}
+	return groupRecipeComposition{hqc: hqc, appID: repo.AppID, state: state, inputs: inputs, files: files, warnings: outcome.Warnings}, outcome, true
+}
+
 // openRecipeChange is the Mate's open change in the recipe repository, nil
 // when none is open.
 func openRecipeChange(state hq.MateState) *hq.MateChange {
@@ -222,83 +272,96 @@ func openRecipeChange(state hq.MateState) *hq.MateChange {
 	return nil
 }
 
-// recipeProposal is what proposing the recipe did: the files main lacks, the
-// change that carries them (0 when none is), whether this call opened it,
-// and whether anything was pushed.
-type recipeProposal struct {
-	missing []recipe.File
+// recipeWrite is what a write to the Mate's change in the recipe repository
+// did: the change that carries it (0 when none is), whether this call opened
+// it, whether anything was pushed, and — when the Mate's open change there is
+// another of its proposals, under another title — that change, left as it
+// is: HQ keeps one open change per Mate per repository.
+type recipeWrite struct {
 	number  int
 	created bool
 	pushed  bool
+	other   *hq.Change
 }
 
-// proposeRecipe brings the Mate's change in the recipe repository to main's
-// tree plus the files main lacks, opening the change when there is something
-// to propose and none is open, and pushing its branch forward when what it
-// holds differs. An error reads as the line's cause.
-func proposeRecipe(ctx context.Context, hqc hq.Client, appID string, open *hq.MateChange, files []recipe.File, message string) (recipeProposal, error) {
+// recipeFiles answers what a proposal writes over main's tree, path to body,
+// from main as the scratch fetched it (its head, and the paths it holds).
+type recipeFiles func(ctx context.Context, scratch *hq.Scratch, main string, paths []string) (map[string]string, error)
+
+// writeRecipeChange brings the Mate's change titled title in the recipe
+// repository to main's tree with what files writes over it, opening the
+// change when that differs from main and none is open, and pushing its
+// branch forward when what it holds differs. The branch only moves forward:
+// a commit on its head, with main as a second parent once main has moved;
+// written as main has it, the change adds nothing. A Mate's open change
+// there under another title is another proposal of its own, and it is left
+// as it is (recipeWrite.other). An error reads as the line's cause.
+func writeRecipeChange(ctx context.Context, hqc hq.Client, appID string, open *hq.MateChange, title, message string, files recipeFiles) (recipeWrite, error) {
 	scratch, err := hqc.OpenScratch(ctx, appID, hq.RecipeRepo)
 	if err != nil {
-		return recipeProposal{}, fmt.Errorf("could not prepare the recipe's scratch repository (%w)", err)
+		return recipeWrite{}, fmt.Errorf("could not prepare the recipe's scratch repository (%w)", err)
 	}
 	defer scratch.Close()
 	main, found, err := scratch.Fetch(ctx, hqBase)
 	switch {
 	case err != nil:
-		return recipeProposal{}, fmt.Errorf("could not read %q of the recipe repository %q to see which tiers it lacks (%w)", hqBase, hq.RecipeRepo, err)
+		return recipeWrite{}, fmt.Errorf("could not read %q of the recipe repository %q (%w)", hqBase, hq.RecipeRepo, err)
 	case !found:
-		return recipeProposal{}, fmt.Errorf("the recipe repository %q has no %q yet, so there is nothing to propose the recipe to", hq.RecipeRepo, hqBase)
+		return recipeWrite{}, fmt.Errorf("the recipe repository %q has no %q yet, so there is nothing to propose the recipe to", hq.RecipeRepo, hqBase)
 	}
 	paths, err := scratch.Paths(ctx, main)
 	if err != nil {
-		return recipeProposal{}, fmt.Errorf("could not read %q of the recipe repository %q (%w)", hqBase, hq.RecipeRepo, err)
+		return recipeWrite{}, fmt.Errorf("could not read %q of the recipe repository %q (%w)", hqBase, hq.RecipeRepo, err)
 	}
-	proposal := recipeProposal{missing: recipe.Missing(files, paths)}
-	if open == nil && len(proposal.missing) == 0 {
-		return proposal, nil
+	written, err := files(ctx, scratch, main, paths)
+	if err != nil {
+		return recipeWrite{}, err
+	}
+	tree, err := scratch.TreeWith(ctx, main, written)
+	if err != nil {
+		return recipeWrite{}, fmt.Errorf("could not compose the recipe's tree (%w)", err)
+	}
+	mainTree, err := scratch.Tree(ctx, main)
+	if err != nil {
+		return recipeWrite{}, fmt.Errorf("could not read %q of the recipe repository %q (%w)", hqBase, hq.RecipeRepo, err)
+	}
+	if open == nil && tree == mainTree {
+		return recipeWrite{}, nil
 	}
 
-	head := ""
-	if open != nil {
-		proposal.number = open.Number
-		if head, _, err = scratch.Fetch(ctx, hqc.ChangeBranch(open.Number)); err != nil {
-			return recipeProposal{}, fmt.Errorf("could not read change #%d of the recipe repository %q (%w)", proposal.number, hq.RecipeRepo, err)
-		}
-	}
-	added := make(map[string]string, len(proposal.missing))
-	for _, file := range proposal.missing {
-		added[file.Path] = file.Body
-	}
-	tree, err := scratch.TreeWith(ctx, main, added)
+	// HQ answers the Mate's open change rather than opening a second one,
+	// so asking is how a write learns whether the open one is its own.
+	opened, err := hqc.OpenChange(ctx, hq.RecipeRepo, title)
 	if err != nil {
-		return recipeProposal{}, fmt.Errorf("could not compose the recipe's tree (%w)", err)
+		return recipeWrite{}, fmt.Errorf("could not open the Mate's change in the recipe repository %q (%w)", hq.RecipeRepo, err)
+	}
+	if !opened.Created && opened.Change.Title != title {
+		return recipeWrite{other: &opened.Change}, nil
+	}
+	write := recipeWrite{number: opened.Change.Number, created: opened.Created}
+	head := ""
+	if !opened.Created {
+		if head, _, err = scratch.Fetch(ctx, hqc.ChangeBranch(write.number)); err != nil {
+			return recipeWrite{}, fmt.Errorf("could not read change #%d of the recipe repository %q (%w)", write.number, hq.RecipeRepo, err)
+		}
 	}
 	parents, err := recipeParents(ctx, scratch, head, main, tree)
 	if err != nil {
-		return recipeProposal{}, fmt.Errorf("could not read change #%d of the recipe repository %q (%w)", proposal.number, hq.RecipeRepo, err)
+		return recipeWrite{}, fmt.Errorf("could not read change #%d of the recipe repository %q (%w)", write.number, hq.RecipeRepo, err)
 	}
 	if parents == nil {
-		return proposal, nil
-	}
-
-	if open == nil {
-		opened, err := hqc.OpenChange(ctx, hq.RecipeRepo, hq.RecipeProposalTitle)
-		if err != nil {
-			return recipeProposal{}, fmt.Errorf("could not open the Mate's change in the recipe repository %q (%w)", hq.RecipeRepo, err)
-		}
-		proposal.number, proposal.created = opened.Change.Number, opened.Created
+		return write, nil
 	}
 	commit, err := scratch.Commit(ctx, hq.CommitSpec{Tree: tree, Parents: parents, Message: message,
 		Name: ops.DeployGitIdentity.Name, Email: ops.DeployGitIdentity.Email})
 	if err != nil {
-		return recipeProposal{}, fmt.Errorf("could not commit the recipe (%w)", err)
+		return recipeWrite{}, fmt.Errorf("could not commit the recipe (%w)", err)
 	}
-	branch := hqc.ChangeBranch(proposal.number)
-	if err := scratch.Push(ctx, commit, branch); err != nil {
-		return recipeProposal{}, fmt.Errorf("could not push the recipe to change #%d of the recipe repository %q (%w)", proposal.number, hq.RecipeRepo, err)
+	if err := scratch.Push(ctx, commit, hqc.ChangeBranch(write.number)); err != nil {
+		return recipeWrite{}, fmt.Errorf("could not push the recipe to change #%d of the recipe repository %q (%w)", write.number, hq.RecipeRepo, err)
 	}
-	proposal.pushed = true
-	return proposal, nil
+	write.pushed = true
+	return write, nil
 }
 
 // recipeParents are the parents of the commit that brings the change's

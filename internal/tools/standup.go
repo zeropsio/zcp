@@ -101,9 +101,9 @@ type standupDeps struct {
 	// still said it waited for the project to be closed off: that import is
 	// starting, and awaitBootImport waits for it.
 	closedOffSeen bool
-	// beat is how often a running stand-up rewrites the file (0 is
-	// mate.StandupBeat).
-	beat time.Duration
+	// status writes the stand-up's section of statusPath: one per server,
+	// across its calls (registerStandup makes it when none is given).
+	status *standupStatus
 }
 
 // RegisterStandup registers zerops_standup. The server registers it only in a
@@ -142,6 +142,9 @@ func RegisterStandup(
 }
 
 func registerStandup(srv *mcp.Server, d standupDeps) {
+	if d.status == nil {
+		d.status = newStandupStatus(d.statusPath)
+	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_standup",
 		Description: "Stands up this Mate's development from the recipe's AI Agent tier: adopts each dev/stage pair, " +
@@ -154,7 +157,7 @@ func registerStandup(srv *mcp.Server, d standupDeps) {
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, _ StandupInput) (*mcp.CallToolResult, any, error) {
 		progress := newStandupProgress(buildProgressCallback(ctx, req))
-		progress.status = newStandupStatus(d.statusPath)
+		progress.status = d.status
 		result := d.run(ctx, progress)
 		progress.quiesce(ctx)
 		return result, nil, nil
@@ -165,21 +168,27 @@ func registerStandup(srv *mcp.Server, d standupDeps) {
 // enrollment with HQ, no tier, a tier with no pair — is an error result
 // naming the fallback; past that, the answer is the per-service report,
 // whatever it holds.
+// A call that stood development up with the stages queued leaves the
+// stand-up running for the call that builds them (awaitStages).
 func (d standupDeps) run(ctx context.Context, progress *standupProgress) *mcp.CallToolResult {
 	progress.st().begin()
-	stopBeat := progress.st().beat(d.beat)
-	result := d.stand(ctx, progress)
+	stopBeat := progress.st().beat(0)
+	result, standUp := d.stand(ctx, progress)
 	stopBeat()
-	if result.IsError {
+	switch {
+	case result.IsError:
 		progress.st().end(refusalText(result))
-	} else {
+	case standUp == standupDevelopment:
+		progress.st().awaitStages()
+	default:
 		progress.st().end("")
 	}
 	return result
 }
 
-// stand is the stand-up's work; run reports how it ended.
-func (d standupDeps) stand(ctx context.Context, progress *standupProgress) *mcp.CallToolResult {
+// stand is the stand-up's work and the report's standUp ("" for a
+// refusal); run reports how it ended.
+func (d standupDeps) stand(ctx context.Context, progress *standupProgress) (*mcp.CallToolResult, string) {
 	if d.importWaitsClosedOff() {
 		// The import asks HQ once a minute at most, so its line can trail the
 		// press: ask HQ itself before saying Finish setup.
@@ -189,7 +198,7 @@ func (d standupDeps) stand(ctx context.Context, progress *standupProgress) *mcp.
 				fmt.Fprintf(os.Stderr, "zcp: stand-up: %v\n", err)
 			}
 			return standupRefusal(platform.ErrPrerequisiteMissing, openMateRefusal,
-				"Nothing was touched. Tell the person to press Finish setup on this Mate in the app; the container then imports the runtimes, and zerops_standup stands them up.")
+				"Nothing was touched. Tell the person to press Finish setup on this Mate in the app; the container then imports the runtimes, and zerops_standup stands them up."), ""
 		}
 		progress.say("the project is closed off; the container's import of the runtimes is starting")
 		d.closedOffSeen = true
@@ -198,11 +207,11 @@ func (d standupDeps) stand(ctx context.Context, progress *standupProgress) *mcp.
 	if !enrolled {
 		return standupRefusal(platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("This Mate is not enrolled with its HQ after %s. zcp enrolls it once HQ answers, and the stand-up needs HQ to read the recipe and to check its repositories out.", d.enrollWait),
-			"Nothing was touched. Call zerops_standup again in a few minutes. To carry on without it, adopt the pairs with zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\" — their repositories are wired and checked out once the Mate is enrolled, and a first deploy follows.")
+			"Nothing was touched. Call zerops_standup again in a few minutes. To carry on without it, adopt the pairs with zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\" — their repositories are wired and checked out once the Mate is enrolled, and a first deploy follows."), ""
 	}
 	src, refusal := d.readTier(ctx, hqc, progress)
 	if refusal != nil {
-		return refusal
+		return refusal, ""
 	}
 
 	pairs, live := d.preparePairs(ctx, hqc, src, progress)
@@ -211,7 +220,7 @@ func (d standupDeps) stand(ctx context.Context, progress *standupProgress) *mcp.
 
 	resp := buildStandupResponse(src, pairs, live)
 	resp.Envelope = freshEnvelope(ctx, d.batch.stateDir, d.batch.client, d.batch.projectID, d.batch.rtInfo)
-	return jsonResult(resp)
+	return jsonResult(resp), resp.StandUp
 }
 
 // awaitEnrollment opens the Mate's enrollment with its HQ, which `zcp service

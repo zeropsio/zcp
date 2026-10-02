@@ -47,6 +47,9 @@ func scalingFromStack(detail *platform.ServiceStack) *bundle.Scaling {
 		MinDisk:       a.MinDisk,
 		MaxDisk:       a.MaxDisk,
 		CPUMode:       a.CPUMode,
+
+		MinFreeRAMGB:      a.MinFreeRAMGB,
+		MinFreeRAMPercent: a.MinFreeRAMPercent,
 	}
 }
 
@@ -57,6 +60,8 @@ type ServiceShape struct {
 	// Scaling is nil when the service exposes no resolved autoscaling.
 	Scaling *bundle.Scaling
 	Profile string
+	// ProfileOverrides are a profile-bearing service's overridden settings.
+	ProfileOverrides map[string]any
 	// PublicGitURL is the public repository an import's buildFromGit built
 	// the active version from, "" for any other origin.
 	PublicGitURL string
@@ -71,7 +76,7 @@ func FetchServiceShape(ctx context.Context, client platform.Client, serviceID st
 	if err != nil {
 		return ServiceShape{}, fmt.Errorf("fetch service shape: %w", err)
 	}
-	shape := ServiceShape{Scaling: scalingFromStack(detail), Profile: detail.Profile}
+	shape := ServiceShape{Scaling: scalingFromStack(detail), Profile: detail.Profile, ProfileOverrides: detail.ProfileOverrides}
 	if av := detail.ActiveAppVersion; av != nil && av.PublicGitSource != nil {
 		shape.PublicGitURL = strings.TrimSpace(av.PublicGitSource.GitURL)
 		shape.ExplicitSetup = av.PublicGitSourceExplicitSet != nil && *av.PublicGitSourceExplicitSet

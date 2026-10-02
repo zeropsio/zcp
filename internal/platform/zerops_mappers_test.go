@@ -3,6 +3,7 @@
 package platform
 
 import (
+	"maps"
 	"regexp"
 	"testing"
 	"time"
@@ -421,6 +422,31 @@ func TestMapActiveAppVersion_Built(t *testing.T) {
 			}
 			if got := result.IsStartWithoutCode(); got != tt.wantPlaceholder {
 				t.Errorf("IsStartWithoutCode() = %v, want %v", got, tt.wantPlaceholder)
+			}
+		})
+	}
+}
+
+// TestMapFullServiceStack_ProfileOverrides: a profile-bearing service's
+// overrides (Valkey's maxmemory-policy) are part of how it runs and are read
+// as the platform returns them; none read as none.
+func TestMapFullServiceStack_ProfileOverrides(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   types.MapNull
+		want map[string]any
+	}{
+		{"set", types.NewMapNull(map[string]any{"maxmemory-policy": "noeviction"}), map[string]any{"maxmemory-policy": "noeviction"}},
+		{"null", types.MapNull{}, nil},
+		{"empty", types.NewMapNull(map[string]any{}), nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := mapFullServiceStack(output.ServiceStack{AutoscalingProfileOverrides: tt.in}).ProfileOverrides
+			if !maps.Equal(got, tt.want) {
+				t.Errorf("ProfileOverrides = %v, want %v", got, tt.want)
 			}
 		})
 	}

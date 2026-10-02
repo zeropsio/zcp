@@ -3,6 +3,7 @@
 package eval
 
 import (
+	"bufio"
 	"context"
 	"os"
 	"os/exec"
@@ -23,8 +24,14 @@ func TestProcessIdentity_LinuxReadsProcOfCapturedChild(t *testing.T) {
 	// The trailing builtin keeps the shell from exec'ing sleep in its own
 	// place (dash does that for a script's last command), so the pid the test
 	// reads stays the shell: its /proc/<pid>/exe is the candidate binary and
-	// no exec runs while /proc/<pid>/environ is read.
-	const childScript = "sleep 30; :"
+	// no exec runs while /proc/<pid>/environ is read. The builtin echo first
+	// says the shell runs: cmd.Start returns when the vfork'd child releases
+	// its parent, which the kernel does inside execve, before the new image's
+	// environment is in place — /proc/<pid>/environ then reads empty and the
+	// child unobservable (Release v9.188.0, attempt 1). A zcp the reader
+	// observes in production has written its mcp/zcp-<pid>.jsonl, so it is
+	// long past its exec; the test waits for the same.
+	const childScript = "echo ready; sleep 30; :"
 
 	shPath, err := exec.LookPath("sh")
 	if err != nil {
@@ -36,17 +43,12 @@ func TestProcessIdentity_LinuxReadsProcOfCapturedChild(t *testing.T) {
 	}
 
 	t.Run("child with the window env is counted", func(t *testing.T) {
-		cmd := exec.CommandContext(t.Context(), shPath, "-c", childScript)
-		cmd.Env = append(os.Environ(),
+		cmd := startRunningChild(t, shPath, childScript, append(os.Environ(),
 			"ZCP_CAPTURE_SESSION_ID="+windowID,
 			"projectId=proj-linux-test",
 			"serviceId=svc-linux-test",
 			"ZCP_AUTO_UPDATE=0",
-		)
-		if err := cmd.Start(); err != nil {
-			t.Fatalf("start child: %v", err)
-		}
-		t.Cleanup(func() { _ = cmd.Process.Kill() })
+		))
 
 		rec := observeOneProcess(cmd.Process.Pid, windowID, shDigest)
 		if rec.Classification != processIdentityCounted {
@@ -67,12 +69,7 @@ func TestProcessIdentity_LinuxReadsProcOfCapturedChild(t *testing.T) {
 	})
 
 	t.Run("child without the window env is unobservable", func(t *testing.T) {
-		cmd := exec.CommandContext(t.Context(), shPath, "-c", childScript)
-		cmd.Env = os.Environ()
-		if err := cmd.Start(); err != nil {
-			t.Fatalf("start child: %v", err)
-		}
-		t.Cleanup(func() { _ = cmd.Process.Kill() })
+		cmd := startRunningChild(t, shPath, childScript, os.Environ())
 
 		rec := observeOneProcess(cmd.Process.Pid, windowID, shDigest)
 		if rec.Classification != processIdentityUnobserved {
@@ -88,12 +85,7 @@ func TestProcessIdentity_LinuxReadsProcOfCapturedChild(t *testing.T) {
 		if err := os.MkdirAll(mcpDir, 0o700); err != nil {
 			t.Fatalf("mkdir mcp dir: %v", err)
 		}
-		cmd := exec.CommandContext(t.Context(), shPath, "-c", childScript)
-		cmd.Env = append(os.Environ(), "ZCP_CAPTURE_SESSION_ID="+windowID, "projectId=proj-linux-test")
-		if err := cmd.Start(); err != nil {
-			t.Fatalf("start child: %v", err)
-		}
-		t.Cleanup(func() { _ = cmd.Process.Kill() })
+		cmd := startRunningChild(t, shPath, childScript, append(os.Environ(), "ZCP_CAPTURE_SESSION_ID="+windowID, "projectId=proj-linux-test"))
 		pid := cmd.Process.Pid
 		jsonlPath := mcpDir + "/zcp-" + strconv.Itoa(pid) + ".jsonl"
 		if err := os.WriteFile(jsonlPath, nil, 0o600); err != nil {
@@ -113,4 +105,29 @@ func TestProcessIdentity_LinuxReadsProcOfCapturedChild(t *testing.T) {
 			t.Fatalf("second observeProcessIdentity call = %+v, want no re-observation of an already-seen pid", again)
 		}
 	})
+}
+
+// startRunningChild starts sh -c script with env and returns once the shell
+// runs it — its first line read back — so its exec is over and
+// /proc/<pid>/environ holds env. The child is killed at the test's end.
+func startRunningChild(t *testing.T, shPath, script string, env []string) *exec.Cmd {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), shPath, "-c", script)
+	cmd.Env = env
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start child: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	line, err := bufio.NewReader(stdout).ReadString('\n')
+	if err != nil || line != "ready\n" {
+		t.Fatalf("child never said it runs: %q, %v", line, err)
+	}
+	return cmd
 }

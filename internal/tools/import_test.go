@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -282,7 +283,7 @@ func TestImportTool_RefusesAnOpenMate(t *testing.T) {
 			}
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 			closedOff := func(context.Context) (bool, error) { return tt.closed, tt.askErr }
-			registerImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{MateEnabled: tt.mate}, writeLiveEnvFile(t, env), closedOff)
+			registerImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{MateEnabled: tt.mate}, writeLiveEnvFile(t, env), closedOff, nil)
 			result := callTool(t, srv, "zerops_import", map[string]any{"content": "services:\n  - hostname: api\n    type: nodejs@20\n"})
 			text := getTextContent(t, result)
 			if tt.want == "" {
@@ -293,6 +294,42 @@ func TestImportTool_RefusesAnOpenMate(t *testing.T) {
 			}
 			if !result.IsError || !strings.Contains(text, tt.want) {
 				t.Errorf("want a refusal saying %q, got: %s", tt.want, text)
+			}
+		})
+	}
+}
+
+// TestOverrideRecipeSteer_AsksOnlyForWhatLanded: an override's steer speaks
+// for a service only once its every process finished — a failed or
+// canceled change landed nothing the recipe could carry.
+func TestOverrideRecipeSteer_AsksOnlyForWhatLanded(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		processes []ops.ImportProcessOutput
+		wantAsked []string
+	}{
+		{"finished", []ops.ImportProcessOutput{{Service: "search", Status: platform.ProcessStatusFinished}}, []string{"search"}},
+		{"failed", []ops.ImportProcessOutput{{Service: "search", Status: platform.ProcessStatusFailed}}, nil},
+		{"canceled", []ops.ImportProcessOutput{{Service: "search", Status: platform.ProcessStatusCanceled}}, nil},
+		{"still running", []ops.ImportProcessOutput{{Service: "search", Status: platform.ProcessStatusRunning}}, nil},
+		{"one of a service's processes failed", []ops.ImportProcessOutput{
+			{Service: "search", Status: platform.ProcessStatusFinished},
+			{Service: "search", Status: platform.ProcessStatusFailed},
+			{Service: "db", Status: platform.ProcessStatusFinished},
+		}, []string{"db"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var asked []string
+			steer := func(_ context.Context, host string) string {
+				asked = append(asked, host)
+				return host + " differs"
+			}
+			got := overrideRecipeSteer(context.Background(), steer, &ops.ImportResult{Processes: tt.processes})
+			if !slices.Equal(asked, tt.wantAsked) || len(got) != len(tt.wantAsked) {
+				t.Errorf("asked %v (said %v), want %v", asked, got, tt.wantAsked)
 			}
 		})
 	}
