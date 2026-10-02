@@ -74,8 +74,13 @@ var giteaRuntimeAdvice = map[string]giteaNoSetupAdvice{
 const giteaFromTheDistribution = "install the distribution's packages in a step above the Test step — the distribution's version, not the service's"
 
 var giteaPHPAdvice = giteaNoSetupAdvice{"PHP", giteaFromTheDistribution, []string{
-	"sudo apt-get update && sudo apt-get install -y php-cli composer",
+	"sudo apt-get update && sudo apt-get install -y php-cli php-mbstring php-xml php-curl php-zip unzip composer",
 }}
+
+// giteaGeneralRuntimeRule is what the Test step says when zcp has nothing
+// specific for the service's type — it could not read it, or has no word on
+// it: which setup actions work on the runner, and what to do for the rest.
+const giteaGeneralRuntimeRule = "The runner has no language runtime installed. A setup action that downloads a .tar.gz build works on it (setup-node, setup-go, setup-java); for any other language use the distribution's packages through sudo apt-get, or the language's own installer, in a step above the Test step"
 
 // giteaNoSetupAdvice names a language, how it gets onto the runner, and the
 // commands that put it there, each a `run:` step of its own above Test.
@@ -147,12 +152,17 @@ func giteaWorkflowSetupAndTestSteps(serviceType string) string {
 			b.WriteString(noTest)
 			return b.String()
 		}
-		return head + `        # The runner has no language runtime installed: add the setup step
-        # for the project's language above this one first, for example
-        #   - uses: actions/setup-node@v4
+		var b strings.Builder
+		b.WriteString(head)
+		for _, line := range wrapComment(giteaGeneralRuntimeRule+". For example:", 70) {
+			fmt.Fprintf(&b, "        # %s\n", line)
+		}
+		b.WriteString(`        #   - uses: actions/setup-node@v4
         #     with:
         #       node-version: "22"
-` + noTest
+`)
+		b.WriteString(noTest)
+		return b.String()
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "      - name: Set up %s\n", setup.label)
@@ -200,7 +210,7 @@ func giteaTestsNote(serviceType string) string {
 	if advice, known := giteaRuntimeAdvice[topology.TypeFamily(serviceType)]; known {
 		return fmt.Sprintf("%s %s: `%s`.", fill, advice.sentence(), strings.Join(advice.commands, "`, then `"))
 	}
-	return fill + " The runner has no language runtime installed: add the setup step for the project's language above the Test step, as its comment shows, before calling that language's tools."
+	return fill + " " + giteaGeneralRuntimeRule + "."
 }
 
 // wrapComment breaks prose into lines of at most width characters, at spaces.

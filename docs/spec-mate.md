@@ -2297,8 +2297,9 @@ in; only where a setup action works on the runner as it stands: Node.js, Go and 
 build). Bun and Deno (their actions extract a `.zip`, and the runner has no `unzip`), Python (its
 builds expect the hosted runners' `/opt/hostedtoolcache`) and PHP (installed through apt on the
 releases it lists) get a Test step whose comment says no setup action works and shows what does — the
-distribution's packages, at the distribution's version, or the language's own installer — and any
-other type a generic example. Wiring writes the file only where it is missing or names an earlier
+distribution's packages, at the distribution's version, or the language's own installer — and a type
+zcp cannot read or has no word on gets the general rule: a setup action that downloads a `.tar.gz`
+build works, anything else comes from the distribution's packages or the language's own installer. Wiring writes the file only where it is missing or names an earlier
 deploy action, its Test step kept; a file that names this zcp's is the project's, never rewritten
 (`TestGiteaWorkflowYAML_SetsUpTheServicesRuntime`,
 `TestReconcileGiteaRepositories_WiringWritesTheWorkflowOnlyWhereItIsNotCurrent`). zcp's own key is never

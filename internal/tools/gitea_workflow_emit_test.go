@@ -208,12 +208,19 @@ func TestGiteaWorkflowYAML_SetsUpTheServicesRuntime(t *testing.T) {
 	// The setup actions a comment must never offer: each fails on the runner
 	// as it stands (no unzip, no /opt/hostedtoolcache, an apt it does not list).
 	brokenOnTheRunner := []string{"setup-python", "setup-php", "setup-bun", "setup-deno"}
-	genericExample := []string{"no language runtime installed", "- uses: actions/setup-node@v4", "node-version:"}
+	// With no specific advice: the general rule — a .tar.gz setup action
+	// works, anything else comes from the distribution or its own installer.
+	genericExample := []string{
+		"no language runtime installed", ".tar.gz", "setup-node, setup-go, setup-java",
+		"sudo apt-get", "own installer", "- uses: actions/setup-node@v4", "node-version:",
+	}
+	genericNote := []string{"no language runtime installed", ".tar.gz", "setup-node, setup-go, setup-java", "sudo apt-get", "own installer"}
 	tests := []struct {
 		serviceType string
 		wantUses    string
 		wantWith    map[string]string
 		wantComment []string
+		wantNote    []string
 	}{
 		{serviceType: "nodejs@22", wantUses: "actions/setup-node@v4", wantWith: map[string]string{"node-version": "22"}},
 		{serviceType: "ubuntu/nodejs@24", wantUses: "actions/setup-node@v4", wantWith: map[string]string{"node-version": "24"}},
@@ -223,14 +230,14 @@ func TestGiteaWorkflowYAML_SetsUpTheServicesRuntime(t *testing.T) {
 		// A runtime whose setup action fails on the runner: the
 		// distribution's own packages, said to be the distribution's version.
 		{serviceType: "python@3.12", wantComment: []string{"no language runtime installed", "apt-get install -y python3", "the distribution's version"}},
-		{serviceType: "php-nginx@8.4", wantComment: []string{"no language runtime installed", "apt-get install -y php-cli", "the distribution's version"}},
-		{serviceType: "php-apache@8.3", wantComment: []string{"apt-get install -y php-cli"}},
+		{serviceType: "php-nginx@8.4", wantComment: []string{"no language runtime installed", "apt-get install -y php-cli php-mbstring php-xml php-curl php-zip unzip composer", "the distribution's version"}},
+		{serviceType: "php-apache@8.3", wantComment: []string{"apt-get install -y php-cli php-mbstring php-xml php-curl php-zip unzip composer"}},
 		{serviceType: "bun@1.2", wantComment: []string{"no language runtime installed", "apt-get install -y unzip", "bun.sh/install"}},
 		{serviceType: "deno@2", wantComment: []string{"no language runtime installed", "apt-get install -y unzip", "deno.land/install.sh"}},
 		// Nothing specific to say: the generic example.
-		{serviceType: "", wantComment: genericExample},
-		{serviceType: "nodejs@latest", wantComment: genericExample},
-		{serviceType: "postgresql@16", wantComment: genericExample},
+		{serviceType: "", wantComment: genericExample, wantNote: genericNote},
+		{serviceType: "nodejs@latest", wantComment: genericExample, wantNote: genericNote},
+		{serviceType: "postgresql@16", wantComment: genericExample, wantNote: genericNote},
 	}
 	for _, tt := range tests {
 		t.Run(tt.serviceType, func(t *testing.T) {
@@ -275,6 +282,11 @@ func TestGiteaWorkflowYAML_SetsUpTheServicesRuntime(t *testing.T) {
 					}
 				}
 				note := giteaTestsNote(tt.serviceType)
+				for _, want := range tt.wantNote {
+					if !strings.Contains(note, want) {
+						t.Errorf("the confirm's note must say %q: %s", want, note)
+					}
+				}
 				for _, broken := range brokenOnTheRunner {
 					if strings.Contains(note, broken) {
 						t.Errorf("the confirm's note offers %q, which fails on the runner: %s", broken, note)
