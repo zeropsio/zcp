@@ -38,8 +38,12 @@ type ManagedServiceEntry struct {
 	// verbatim (identity snapshot, R7); empty for non-profile types and
 	// when the source profile could not be read. Launch ignores it and
 	// applies the production-default tier instead.
-	Profile     string
-	QuotaGBytes int // populated for object-storage; 0 → composer defaults to 1
+	Profile string
+	// ProfileOverrides are the profile's overridden settings as the source
+	// runs them (Valkey's maxmemory-policy); written wherever the profile a
+	// tier writes takes them (profileOverridesFor).
+	ProfileOverrides map[string]any
+	QuotaGBytes      int // populated for object-storage; 0 → composer defaults to 1
 	// ObjectStoragePolicy is an object storage's live access policy (private,
 	// public-read, …, custom). Only a policy the platform names is written: a
 	// custom one's document can hold a secret, and is never read. Empty emits

@@ -61,7 +61,11 @@ type ServiceStack struct {
 	// "oltp-hobby", "oltp-staging", "staging". Read only from the FULL
 	// GetService DTO; the lighter list (EsServiceStack) does not carry it,
 	// so a service surfaced only via ListServices has an empty Profile.
-	Profile            string                  `json:"autoscalingProfileId,omitempty"`
+	Profile string `json:"autoscalingProfileId,omitempty"`
+	// ProfileOverrides are the profile's overridden settings (Valkey's
+	// maxmemory-policy, a custom PostgreSQL's config), as the full DTO
+	// returns them; nil when none are set.
+	ProfileOverrides   map[string]any          `json:"autoscalingProfileOverrides,omitempty"`
 	SubdomainAccess    bool                    `json:"subdomainAccess,omitempty"`
 	Ports              []Port                  `json:"ports,omitempty"`
 	CustomAutoscaling  *CustomAutoscaling      `json:"customAutoscaling,omitempty"`

@@ -165,6 +165,7 @@ func mapFullServiceStack(s output.ServiceStack) ServiceStack {
 		Status:             s.Status.String(),
 		Mode:               stringNullValue(s.Mode),
 		Profile:            stringNullValue(s.AutoscalingProfileId),
+		ProfileOverrides:   mapNullValue(s.AutoscalingProfileOverrides),
 		SubdomainAccess:    s.SubdomainAccess.Native(),
 		Ports:              mapServicePorts(s.Ports),
 		CustomAutoscaling:  customAutoscaling,
@@ -404,4 +405,13 @@ func buildAutoscalingBody(params AutoscalingParams) body.Autoscaling {
 	}
 
 	return result
+}
+
+// mapNullValue is a nullable map's entries, nil when it is null or empty.
+func mapNullValue(m types.MapNull) map[string]any {
+	value, ok := m.Get()
+	if !ok || len(value) == 0 {
+		return nil
+	}
+	return value.Native()
 }

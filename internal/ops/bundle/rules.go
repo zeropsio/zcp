@@ -100,6 +100,9 @@ func managedEntryWithRules(m ManagedServiceEntry, launchPromote, keepNonHA bool)
 	}
 	if prof := managedProfile(finalType, m.Profile, launchPromote); prof != "" {
 		entry["profile"] = prof
+		if overrides := profileOverridesFor(finalType, prof, m); len(overrides) > 0 {
+			entry["profileOverrides"] = overrides
+		}
 	}
 	if rules.RequiresObjectStorageSize {
 		size := m.QuotaGBytes
@@ -121,6 +124,21 @@ func managedEntryWithRules(m ManagedServiceEntry, launchPromote, keepNonHA bool)
 var namedObjectStoragePolicies = map[string]bool{
 	"private": true, "public-read": true, "public-objects-read": true,
 	"public-write": true, "public-read-write": true,
+}
+
+// profileOverridesFor is what of the source's profile overrides the entry
+// writes with profile: all of them while the profile is the source's own;
+// under another profile only a Valkey's, since every Valkey profile takes
+// the same keys (maxmemory-policy) while a PostgreSQL's overrides belong to
+// its custom profile alone.
+func profileOverridesFor(serviceType, profile string, m ManagedServiceEntry) map[string]any {
+	if len(m.ProfileOverrides) == 0 {
+		return nil
+	}
+	if profile == m.Profile || topology.CanonicalBaseName(serviceType) == "valkey" {
+		return m.ProfileOverrides
+	}
+	return nil
 }
 
 // managedProfile resolves the scaling-tier `profile` value for a managed
