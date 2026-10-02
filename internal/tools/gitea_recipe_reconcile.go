@@ -122,90 +122,18 @@ func giteaGroupRecipeOutcome(
 	stateDir string,
 	liveEnvPath string,
 ) giteaRecipeOutcome {
-	if !rt.InContainer || client == nil || httpClient == nil {
-		return giteaRecipeOutcome{Blocked: "the group recipe is a Mate's act — there is no Mate environment here"}
+	comp, early, ok := composeGroupRecipe(ctx, client, httpClient, rt, stateDir, liveEnvPath)
+	if !ok {
+		return early
 	}
-	metas, err := workflow.ListServiceMetas(stateDir)
-	if err != nil || len(metas) == 0 {
-		return giteaRecipeOutcome{Blocked: "no service has been bootstrapped yet, so there is nothing to export"}
-	}
-	// Only pairs A1 has already given a repository: the group repo's org comes
-	// from one of them, and a runtime with no repository has no buildFromGit
-	// to name.
-	wired := make([]*workflow.ServiceMeta, 0, len(metas))
-	for _, m := range metas {
-		if m != nil && m.IsComplete() && m.Gitea != nil && m.Gitea.FullName != "" && m.RemoteURL != "" {
-			wired = append(wired, m)
-		}
-	}
-	if len(wired) == 0 {
-		return giteaRecipeOutcome{Blocked: "no pair has its Gitea repository yet — the recipe names what builds each runtime, so it waits for them"}
-	}
-	sort.Slice(wired, func(i, j int) bool { return wired[i].Hostname < wired[j].Hostname })
-
-	wiring := ops.ReadGiteaWiring(giteaEnvLookup(liveEnvPath))
-	if !wiring.Ready() {
-		// A1's reconcile already reports which variable is missing, on the
-		// same pass, so Line stays empty — but a person who asked deserves
-		// the reason.
-		return giteaRecipeOutcome{Blocked: "waiting for Gitea (" + strings.Join(wiring.MissingKeys(), ", ") + " not on this service yet)"}
-	}
-	groupRepo := ops.GroupRepoFullName(wired[0].Gitea.FullName)
-	if groupRepo == "" {
-		return giteaRecipeOutcome{Blocked: "the pair's repository does not name an org, so the group repo cannot be derived"}
-	}
-
-	identity, err := ops.DeriveGiteaIdentity(ctx, httpClient, wiring.GiteaURL, wiring.Token)
-	if err != nil {
-		return giteaRecipeOutcome{Line: fmt.Sprintf("the group recipe is not proposed yet (could not read this Mate's bot identity: %v) — retrying on the next pass.", err)}
-	}
-	if identity.Name == "" {
-		return giteaRecipeOutcome{Blocked: "the Gitea bot has no login, so there is no fork to propose from"}
-	}
-	outcome := giteaRecipeOutcome{GroupRepo: groupRepo}
-
-	// The group's slug is the org of its repositories: the recipe's name, and
-	// what the stage and production projects are named after.
-	group, _, _ := strings.Cut(groupRepo, "/")
-	inputs, readWarnings, err := composeGroupRecipeInputs(ctx, client, rt.ProjectID, group, giteaPairMountRoot, wiring.GiteaURL, metas, wired)
-	outcome.Warnings = append(outcome.Warnings, readWarnings...)
-	if err != nil {
-		outcome.Line = fmt.Sprintf("the group recipe is not proposed yet (%v) — retrying on the next pass.", err)
-		return outcome
-	}
-	// This composes unattended, with nobody to classify a variable the way the
-	// export and launch flows ask the agent to, so the composer decides each
-	// one itself: config as written, a secret as a generator — never its value.
-	layout, warnings, err := bundle.BuildGroupRecipe(inputs)
-	if err != nil {
-		outcome.Line = fmt.Sprintf("the group recipe does not compose yet (%v).", err)
-		return outcome
-	}
-	outcome.Warnings = append(outcome.Warnings, warnings...)
-	files, err := recipe.Build(layout)
-	if err != nil {
-		outcome.Line = fmt.Sprintf("the group recipe does not compose yet (%v).", err)
-		return outcome
-	}
-
-	base := wired[0].Gitea.DefaultBranch
-	if base == "" {
-		base = giteaProtectedBase
-	}
-	main, err := ops.ReadGiteaBranchFiles(ctx, httpClient, wiring.GiteaURL, wiring.Token, groupRepo, base)
-	if err != nil {
-		outcome.Line = fmt.Sprintf("could not read %s@%s to see which tiers it lacks (%v) — retrying on the next pass.", groupRepo, base, err)
-		return outcome
-	}
-	if main.Head == "" {
-		outcome.Line = fmt.Sprintf("the group repo %s has no %s yet, so there is nothing to propose the recipe to — retrying on the next pass.", groupRepo, base)
-		return outcome
-	}
+	outcome := giteaRecipeOutcome{GroupRepo: comp.groupRepo, Warnings: comp.warnings}
+	wiring, groupRepo, base, inputs, files := comp.wiring, comp.groupRepo, comp.base, comp.inputs, comp.files
+	main := comp.main
 	missing := recipe.Missing(files, main.Paths)
 
 	if len(missing) == 0 {
 		outcome.OnMain = true
-		closed, closeErr := ops.CloseGiteaPullRequests(ctx, httpClient, wiring.GiteaURL, wiring.Token, groupRepo, identity.Name, giteaRecipeBranchTitle, base, "")
+		closed, closeErr := ops.CloseGiteaPullRequests(ctx, httpClient, wiring.GiteaURL, wiring.Token, groupRepo, comp.bot, giteaRecipeBranchTitle, base, "")
 		outcome.Closed = closed
 		switch {
 		case closeErr != nil:
@@ -222,7 +150,7 @@ func giteaGroupRecipeOutcome(
 	// serves whether or not the broker has made the bot a writer — a broker
 	// from before D31 never does — and it keeps zcp's recipe/ branches out of
 	// the group repo's own.
-	fork, err := ops.EnsureGiteaFork(ctx, httpClient, wiring.GiteaURL, wiring.Token, groupRepo, identity.Name)
+	fork, err := ops.EnsureGiteaFork(ctx, httpClient, wiring.GiteaURL, wiring.Token, groupRepo, comp.bot)
 	if err != nil {
 		outcome.Line = fmt.Sprintf("could not fork %s to propose the recipe (%v) — the project is unaffected; retrying on the next pass.", groupRepo, err)
 		return outcome
@@ -233,7 +161,7 @@ func giteaGroupRecipeOutcome(
 
 	// Close first: a proposal from an older main is withdrawn before its
 	// replacement opens, so the group never holds two of this Mate's at once.
-	closed, closeErr := ops.CloseGiteaPullRequests(ctx, httpClient, wiring.GiteaURL, wiring.Token, groupRepo, identity.Name, giteaRecipeBranchTitle, base, branch)
+	closed, closeErr := ops.CloseGiteaPullRequests(ctx, httpClient, wiring.GiteaURL, wiring.Token, groupRepo, comp.bot, giteaRecipeBranchTitle, base, branch)
 	outcome.Closed = closed
 	if closeErr != nil {
 		outcome.Line = fmt.Sprintf("could not close this Mate's earlier recipe proposal on %s (%v) — retrying on the next pass.", groupRepo, closeErr)
@@ -273,6 +201,116 @@ func giteaGroupRecipeOutcome(
 		outcome.Line += fmt.Sprintf("; this Mate's earlier proposal %s, cut from an older %s, is closed", pullNumbers(closed), base)
 	}
 	return outcome
+}
+
+// groupRecipeComposition is what both the additive reconcile and a scaling
+// proposal know before they touch the group repo: the recipe composed from
+// this Mate's project, and the group repo's main as it is.
+type groupRecipeComposition struct {
+	wiring    ops.GiteaWiring
+	groupRepo string
+	bot       string
+	base      string
+	inputs    bundle.GroupRecipeInputs
+	files     []recipe.File
+	main      ops.GiteaBranchFiles
+	warnings  []string
+}
+
+// composeGroupRecipe composes the group's recipe from this Mate's live
+// project and reads the group repo's main. ok is false when something stops
+// it, with the outcome saying what (Blocked, or a Line for the reconcile).
+func composeGroupRecipe(
+	ctx context.Context,
+	client platform.Client,
+	httpClient ops.HTTPDoer,
+	rt runtime.Info,
+	stateDir string,
+	liveEnvPath string,
+) (groupRecipeComposition, giteaRecipeOutcome, bool) {
+	if !rt.InContainer || client == nil || httpClient == nil {
+		return groupRecipeComposition{}, giteaRecipeOutcome{Blocked: "the group recipe is a Mate's act — there is no Mate environment here"}, false
+	}
+	metas, err := workflow.ListServiceMetas(stateDir)
+	if err != nil || len(metas) == 0 {
+		return groupRecipeComposition{}, giteaRecipeOutcome{Blocked: "no service has been bootstrapped yet, so there is nothing to export"}, false
+	}
+	// Only pairs A1 has already given a repository: the group repo's org comes
+	// from one of them, and a runtime with no repository has no buildFromGit
+	// to name.
+	wired := make([]*workflow.ServiceMeta, 0, len(metas))
+	for _, m := range metas {
+		if m != nil && m.IsComplete() && m.Gitea != nil && m.Gitea.FullName != "" && m.RemoteURL != "" {
+			wired = append(wired, m)
+		}
+	}
+	if len(wired) == 0 {
+		return groupRecipeComposition{}, giteaRecipeOutcome{Blocked: "no pair has its Gitea repository yet — the recipe names what builds each runtime, so it waits for them"}, false
+	}
+	sort.Slice(wired, func(i, j int) bool { return wired[i].Hostname < wired[j].Hostname })
+
+	wiring := ops.ReadGiteaWiring(giteaEnvLookup(liveEnvPath))
+	if !wiring.Ready() {
+		// A1's reconcile already reports which variable is missing, on the
+		// same pass, so Line stays empty — but a person who asked deserves
+		// the reason.
+		return groupRecipeComposition{}, giteaRecipeOutcome{Blocked: "waiting for Gitea (" + strings.Join(wiring.MissingKeys(), ", ") + " not on this service yet)"}, false
+	}
+	groupRepo := ops.GroupRepoFullName(wired[0].Gitea.FullName)
+	if groupRepo == "" {
+		return groupRecipeComposition{}, giteaRecipeOutcome{Blocked: "the pair's repository does not name an org, so the group repo cannot be derived"}, false
+	}
+
+	identity, err := ops.DeriveGiteaIdentity(ctx, httpClient, wiring.GiteaURL, wiring.Token)
+	if err != nil {
+		return groupRecipeComposition{}, giteaRecipeOutcome{Line: fmt.Sprintf("the group recipe is not proposed yet (could not read this Mate's bot identity: %v) — retrying on the next pass.", err)}, false
+	}
+	if identity.Name == "" {
+		return groupRecipeComposition{}, giteaRecipeOutcome{Blocked: "the Gitea bot has no login, so there is no fork to propose from"}, false
+	}
+	outcome := giteaRecipeOutcome{GroupRepo: groupRepo}
+
+	// The group's slug is the org of its repositories: the recipe's name, and
+	// what the stage and production projects are named after.
+	group, _, _ := strings.Cut(groupRepo, "/")
+	inputs, readWarnings, err := composeGroupRecipeInputs(ctx, client, rt.ProjectID, group, giteaPairMountRoot, wiring.GiteaURL, metas, wired)
+	outcome.Warnings = append(outcome.Warnings, readWarnings...)
+	if err != nil {
+		outcome.Line = fmt.Sprintf("the group recipe is not proposed yet (%v) — retrying on the next pass.", err)
+		return groupRecipeComposition{}, outcome, false
+	}
+	// This composes unattended, with nobody to classify a variable the way the
+	// export and launch flows ask the agent to, so the composer decides each
+	// one itself: config as written, a secret as a generator — never its value.
+	layout, warnings, err := bundle.BuildGroupRecipe(inputs)
+	if err != nil {
+		outcome.Line = fmt.Sprintf("the group recipe does not compose yet (%v).", err)
+		return groupRecipeComposition{}, outcome, false
+	}
+	outcome.Warnings = append(outcome.Warnings, warnings...)
+	files, err := recipe.Build(layout)
+	if err != nil {
+		outcome.Line = fmt.Sprintf("the group recipe does not compose yet (%v).", err)
+		return groupRecipeComposition{}, outcome, false
+	}
+
+	base := wired[0].Gitea.DefaultBranch
+	if base == "" {
+		base = giteaProtectedBase
+	}
+	main, err := ops.ReadGiteaBranchFiles(ctx, httpClient, wiring.GiteaURL, wiring.Token, groupRepo, base)
+	if err != nil {
+		outcome.Line = fmt.Sprintf("could not read %s@%s to see which tiers it lacks (%v) — retrying on the next pass.", groupRepo, base, err)
+		return groupRecipeComposition{}, outcome, false
+	}
+	if main.Head == "" {
+		outcome.Line = fmt.Sprintf("the group repo %s has no %s yet, so there is nothing to propose the recipe to — retrying on the next pass.", groupRepo, base)
+		return groupRecipeComposition{}, outcome, false
+	}
+	return groupRecipeComposition{
+		wiring: wiring, groupRepo: groupRepo, bot: identity.Name, base: base,
+		inputs: inputs, files: files, main: main, warnings: outcome.Warnings,
+	}, outcome, true
 }
 
 // recipeEntries names what a set of recipe files adds, the way a person reads

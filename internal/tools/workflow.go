@@ -68,6 +68,7 @@ type WorkflowInput struct {
 	BuildTarget string                     `json:"buildTarget,omitempty" jsonschema:"Optional for action=build-integration: pair hostname CI should build to, overriding the standard-pair default (stage receives builds). Set to the dev/push-source hostname to wire CI directly on it."`
 	GitToken    string                     `json:"gitToken,omitempty"    jsonschema:"Fine-grained PAT for action=git-push-setup confirm step (container env only). Required when remoteUrl is set in container mode. Handler probes the token against the remote BEFORE writing the service-scope secret or restarting — failed probe leaves project state untouched. Never echoed back in any response or state file."`
 	TrackedRef  string                     `json:"trackedRef,omitempty"  jsonschema:"Optional tracked ref for action=git-push-setup confirm (the branch stage/prod builds from). Overrides auto-detection; omit to let ZCP detect it. Recorded once."`
+	Scaling     string                     `json:"scaling,omitempty"     jsonschema:"For action=group-recipe: propose this service hostname's scale into the group recipe's tiers."`
 	Description string                     `json:"description,omitempty" jsonschema:"Markdown for action=describe-change: what the change does and why, how you checked it, and ![what it shows](shot-N) for a zerops_browser screenshot — the person reviews it by this. Replaces the request's description."`
 	Force       FlexBool                   `json:"force,omitempty"       jsonschema:"Discard-and-replace flag for action=start workflow=develop. Required when the active session's services include a CloseDeployMode ∈ {manual, unset} and the new intent differs — auto-close cannot fire on those services, so the prior session needs an explicit close (or a force-discard via this flag) before a fresh session takes over (deploy-decomp P6 §3.4 Scenario D)."`
 
@@ -517,6 +518,11 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "set-default-setup":
 		return handleSetDefaultSetup(ctx, client, projectID, input, stateDir)
 	case "group-recipe":
+		// scaling=<host>: propose that host's scale into the tiers on main
+		// (gitea_recipe_scaling.go).
+		if input.Scaling != "" {
+			return handleGroupRecipeScaling(ctx, client, httpClient, rt, stateDir, mate.LiveEnvStorePath, input.Scaling)
+		}
 		// A2: ask for the group's recipe export outright. The same reconcile
 		// that runs on every bootstrap/adopt pass, reported to whoever asked.
 		return handleGroupRecipe(ctx, client, httpClient, rt, stateDir, mate.LiveEnvStorePath)

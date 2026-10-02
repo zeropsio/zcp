@@ -46,6 +46,8 @@ type fakeGroupGitea struct {
 	pullPosts   int
 	// lastCommitPaths names what the most recent commit carried.
 	lastCommitPaths []string
+	// fileReadRefs names the ref of each file read.
+	fileReadRefs []string
 }
 
 type fakeGroupPull struct {
@@ -173,7 +175,7 @@ func (f *fakeGroupGitea) start(t *testing.T) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(body)
 		}
 		for _, serve := range []func(*http.Request, string, func(int, any)) bool{
-			f.serveRepos, f.serveRefs, f.serveContents, f.servePulls,
+			f.serveRepos, f.serveRefs, f.serveFileReads, f.serveContents, f.servePulls,
 		} {
 			if serve(r, path, write) {
 				return
@@ -268,6 +270,27 @@ func (f *fakeGroupGitea) serveRefs(r *http.Request, path string, write func(int,
 }
 
 // serveContents answers the multi-file commit.
+// serveFileReads answers a GET of one file's contents at a ref.
+func (f *fakeGroupGitea) serveFileReads(r *http.Request, path string, write func(int, any)) bool {
+	if r.Method != http.MethodGet || !strings.Contains(path, "/contents/") {
+		return false
+	}
+	repo, file, _ := strings.Cut(strings.TrimPrefix(path, "repos/"), "/contents/")
+	ref := r.URL.Query().Get("ref")
+	if ref == "" {
+		ref = "main"
+	}
+	f.fileReadRefs = append(f.fileReadRefs, ref)
+	files, ok := f.resolve(repo, ref)
+	body, found := files[file]
+	if !ok || !found {
+		write(http.StatusNotFound, map[string]string{"message": "not found"})
+		return true
+	}
+	write(http.StatusOK, map[string]any{"type": "file", "encoding": "base64", "content": base64.StdEncoding.EncodeToString([]byte(body))})
+	return true
+}
+
 func (f *fakeGroupGitea) serveContents(r *http.Request, path string, write func(int, any)) bool {
 	if r.Method != http.MethodPost || !strings.HasSuffix(path, "/contents") {
 		return false
@@ -280,10 +303,21 @@ func (f *fakeGroupGitea) serveContents(r *http.Request, path string, write func(
 			Operation string `json:"operation"`
 			Path      string `json:"path"`
 			Content   string `json:"content"`
+			SHA       string `json:"sha"`
 		} `json:"files"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	target := body.Branch
+	current := f.branches[repo][body.Branch]
+	// Strict to the contents API: a create of a file that exists, or an
+	// update that names no sha or not the file's current blob, is a 422.
+	for _, file := range body.Files {
+		existing, exists := current[file.Path]
+		if (file.Operation == "create") == exists || (file.Operation == "update" && file.SHA != giteaBlobSHAForTest(existing)) {
+			write(http.StatusUnprocessableEntity, map[string]string{"message": "ErrSHAOrCommitIDNotProvided or file exists: " + file.Path})
+			return true
+		}
+	}
 	if body.NewBranch != "" {
 		f.branches[repo][body.NewBranch] = maps.Clone(f.branches[repo][body.Branch])
 		target = body.NewBranch

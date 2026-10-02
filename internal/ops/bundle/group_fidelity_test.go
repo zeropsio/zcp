@@ -119,7 +119,8 @@ func TestBuildGroupRecipe_ObjectStorageAsItRuns(t *testing.T) {
 	}
 }
 
-// A managed service scales the way it runs. Small Production is the one
+// A managed service scales the way it runs (a search engine's floor aside —
+// group_floors_test.go). Small Production is the one
 // tier that decides a database's scale instead — the production profile — so
 // a profile-bearing service takes that profile there and no dev-sized bounds
 // beside it; a service with no profile keeps its own bounds on every tier.
@@ -128,23 +129,23 @@ func TestBuildGroupRecipe_ManagedScalingAsItRuns(t *testing.T) {
 	in := groupInputsFixture()
 	in.ManagedServices = []ManagedServiceEntry{
 		{Hostname: "db", Type: "postgresql@16", Profile: "oltp-hobby", Scaling: &Scaling{CPUMode: "SHARED", MinCPU: 1, MaxCPU: 3, MinRAM: 0.5, MaxRAM: 4, MinDisk: 1, MaxDisk: 20, MinContainers: 1, MaxContainers: 1}},
-		{Hostname: "search", Type: "meilisearch@1.20", Scaling: &Scaling{CPUMode: "SHARED", MinRAM: 0.25, MaxRAM: 2}},
+		{Hostname: "queue", Type: "nats@2.10", Scaling: &Scaling{CPUMode: "SHARED", MinRAM: 0.25, MaxRAM: 2}},
 	}
 	layout, _, err := BuildGroupRecipe(in)
 	if err != nil {
 		t.Fatalf("BuildGroupRecipe: %v", err)
 	}
 	dbLive := map[string]string{"cpuMode": "SHARED", "minCpu": "1", "maxCpu": "3", "minRam": "0.5", "maxRam": "4", "minDisk": "1", "maxDisk": "20"}
-	searchLive := map[string]string{"cpuMode": "SHARED", "minRam": "0.25", "maxRam": "2"}
+	queueLive := map[string]string{"cpuMode": "SHARED", "minRam": "0.25", "maxRam": "2"}
 	tests := []struct {
-		tier        string
-		dbProfile   string
-		dbScaling   map[string]string
-		searchScale map[string]string
+		tier       string
+		dbProfile  string
+		dbScaling  map[string]string
+		queueScale map[string]string
 	}{
-		{"AI Agent", "oltp-hobby", dbLive, searchLive},
-		{"Stage", "oltp-hobby", dbLive, searchLive},
-		{"Small Production", "oltp-staging", nil, searchLive},
+		{"AI Agent", "oltp-hobby", dbLive, queueLive},
+		{"Stage", "oltp-hobby", dbLive, queueLive},
+		{"Small Production", "oltp-staging", nil, queueLive},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tier, func(t *testing.T) {
@@ -157,11 +158,11 @@ func TestBuildGroupRecipe_ManagedScalingAsItRuns(t *testing.T) {
 			if got := scalarMap(mappingValue(db, "verticalAutoscaling")); !maps.Equal(got, tt.dbScaling) {
 				t.Errorf("db verticalAutoscaling = %v, want %v", got, tt.dbScaling)
 			}
-			search := serviceNode(t, body, "search")
-			if got := scalarMap(mappingValue(search, "verticalAutoscaling")); !maps.Equal(got, tt.searchScale) {
-				t.Errorf("search verticalAutoscaling = %v, want %v", got, tt.searchScale)
+			queue := serviceNode(t, body, "queue")
+			if got := scalarMap(mappingValue(queue, "verticalAutoscaling")); !maps.Equal(got, tt.queueScale) {
+				t.Errorf("queue verticalAutoscaling = %v, want %v", got, tt.queueScale)
 			}
-			for _, managed := range []string{"db", "search"} {
+			for _, managed := range []string{"db", "queue"} {
 				for _, absent := range []string{"minContainers", "maxContainers"} {
 					if mappingValue(serviceNode(t, body, managed), absent) != nil {
 						t.Errorf("%s carries %s: a managed service's containers are its mode's", managed, absent)

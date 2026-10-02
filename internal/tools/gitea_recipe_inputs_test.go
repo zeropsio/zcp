@@ -46,6 +46,7 @@ func medusaLikeProject(extra ...platform.ServiceStack) *platform.Mock {
 	runtime := liveRuntime
 	mailpit := publicBuildRuntime("svc-mailpit", "mailpit", "alpine@3.21", "https://github.com/zerops-recipe-apps/mailpit-app")
 	db := platform.ServiceStack{ID: "svc-db", Name: "db", Status: "ACTIVE", Profile: "oltp-hobby",
+		ProfileOverrides:     map[string]any{"max_connections": "200"},
 		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@17", ServiceStackTypeCategoryName: "USER"},
 		CurrentAutoscaling:   &platform.CustomAutoscaling{CPUMode: "SHARED", MinRAM: 0.25, MaxRAM: 4}}
 	storage := platform.ServiceStack{ID: "svc-storage", Name: "storage", Status: "ACTIVE",
@@ -131,8 +132,9 @@ func TestComposeGroupRecipeInputs_ReadsTheLiveProject(t *testing.T) {
 	for _, m := range inputs.ManagedServices {
 		managed[m.Hostname] = m
 	}
-	if db := managed["db"]; db.Profile != "oltp-hobby" || db.Scaling == nil || db.Scaling.MaxRAM != 4 {
-		t.Errorf("db = %+v, want its profile and its scale", db)
+	if db := managed["db"]; db.Profile != "oltp-hobby" || db.Scaling == nil || db.Scaling.MaxRAM != 4 ||
+		db.ProfileOverrides["max_connections"] != "200" {
+		t.Errorf("db = %+v, want its profile, its overrides and its scale", db)
 	}
 	if st := managed["storage"]; st.QuotaGBytes != 5 || st.ObjectStoragePolicy != "public-read" {
 		t.Errorf("storage = %+v, want 5 GB and public-read", st)
