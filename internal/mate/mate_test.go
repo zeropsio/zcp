@@ -769,19 +769,19 @@ func TestDefaultSmokeTestInstall_ResolvesAddonsAsTheServerDoes(t *testing.T) {
 // environment, which still answers what the store lacks.
 func TestLiveLookup(t *testing.T) {
 	store := filepath.Join(t.TempDir(), "env.json")
-	if err := os.WriteFile(store, []byte(`{"GITEA_TOKEN":"rotated","EMPTY":""}`), 0o600); err != nil {
+	if err := os.WriteFile(store, []byte(`{"ROTATED":"rotated","EMPTY":""}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("GITEA_TOKEN", "at-start")
+	t.Setenv("ROTATED", "at-start")
 	t.Setenv("ONLY_ENV", "env")
 	t.Setenv("EMPTY", "env-empty")
 	lookup := mate.LiveLookup(store)
-	for key, want := range map[string]string{"GITEA_TOKEN": "rotated", "ONLY_ENV": "env", "EMPTY": "env-empty", "NEITHER": ""} {
+	for key, want := range map[string]string{"ROTATED": "rotated", "ONLY_ENV": "env", "EMPTY": "env-empty", "NEITHER": ""} {
 		if got := lookup(key); got != want {
 			t.Errorf("lookup(%s) = %q, want %q", key, got, want)
 		}
 	}
-	if got := mate.LiveLookup(filepath.Join(t.TempDir(), "absent.json"))("GITEA_TOKEN"); got != "at-start" {
+	if got := mate.LiveLookup(filepath.Join(t.TempDir(), "absent.json"))("ROTATED"); got != "at-start" {
 		t.Errorf("without a store, lookup = %q, want the process env", got)
 	}
 }

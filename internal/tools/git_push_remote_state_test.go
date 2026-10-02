@@ -150,25 +150,25 @@ func TestGitPushSetup_RemoteState_Unrelated(t *testing.T) {
 	}
 }
 
-// TestGitPushRemoteStateWarning_AGiteaRemoteIsNeverOfferedAForce: the
+// TestGitPushRemoteStateWarning_AnHQRemoteIsNeverOfferedAForce: the
 // probe-time warning names the same options a rejection does, so on this
-// Mate's Gitea — a branch shared through a pull request, a protected base —
-// it offers only the two ways to take the remote in.
-func TestGitPushRemoteStateWarning_AGiteaRemoteIsNeverOfferedAForce(t *testing.T) {
+// Mate's HQ — a branch only its change takes, `main` moved only by HQ's
+// merge — it offers only the two ways to take the remote in.
+func TestGitPushRemoteStateWarning_AnHQRemoteIsNeverOfferedAForce(t *testing.T) {
 	t.Parallel()
 	state := &gitPushRemoteStateWire{Ref: "mate/mate-p1", State: "diverged"}
 	for _, tc := range []struct {
-		name        string
-		giteaRemote bool
-		want        []string
-		absent      []string
+		name     string
+		hqRemote bool
+		want     []string
+		absent   []string
 	}{
-		{name: "this Mate's Gitea", giteaRemote: true, want: []string{"rebase", "merge"}, absent: []string{"replace-remote", "--force"}},
+		{name: "this Mate's HQ", hqRemote: true, want: []string{"rebase", "merge"}, absent: []string{"replace-remote", "--force"}},
 		{name: "the user's own remote", want: []string{"rebase", "merge", "replace-remote", "--force-with-lease"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			warn := gitPushRemoteStateWarning(state, tc.giteaRemote)
+			warn := gitPushRemoteStateWarning(state, tc.hqRemote)
 			for _, want := range tc.want {
 				if !strings.Contains(warn, want) {
 					t.Errorf("warning must name %q: %s", want, warn)

@@ -69,7 +69,7 @@ func TestAStageDeployOfAWiredPairDeliversItself(t *testing.T) {
 			t.Errorf("the line misses %q:\n%s", want, delivery.Line)
 		}
 	}
-	for _, never := range []string{"git-push", "build-integration", "pull request", "Gitea"} {
+	for _, never := range []string{"git-push", "build-integration", "pull request"} {
 		if strings.Contains(delivery.Line, never) {
 			t.Errorf("the line must not say %q:\n%s", never, delivery.Line)
 		}

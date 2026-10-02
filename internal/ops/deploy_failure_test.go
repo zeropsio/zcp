@@ -497,9 +497,9 @@ func TestClassifyDeployFailure_Transport(t *testing.T) {
 			// the ref. NOT auth: a fresh PAT can never fix it, and the standing
 			// "auth rejected -> re-run git-push-setup with a fresh PAT" advice
 			// sends the agent round a token-minting loop. The fix is a branch
-			// and a pull request. Measured on a live Gitea whose `main` was
-			// protected with the agent off the push whitelist.
-			name: "git-protected-branch-gitea-push-git",
+			// and a pull request. Measured on a user's own self-hosted forge
+			// whose `main` was protected with the agent off the push whitelist.
+			name: "git-protected-branch-self-hosted-push-git",
 			input: FailureInput{
 				Phase:    PhaseTransport,
 				Strategy: "git-push",

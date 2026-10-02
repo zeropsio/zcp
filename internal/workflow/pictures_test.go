@@ -112,7 +112,7 @@ func TestPictureRefs(t *testing.T) {
 		{"![a](shot-3) then ![b](shot-12) and ![c](shot-3)", []string{"shot-3", "shot-12"}},
 		{"![spaced]( shot-4 )", []string{"shot-4"}},
 		{"![](shot-5)", []string{"shot-5"}},
-		{"![a link to it is not a picture](https://gitea.example.invalid/x.png)", nil},
+		{"![a link to it is not a picture](https://example.invalid/x.png)", nil},
 		{"[a link](shot-3)", nil},
 		{"![not an id](shot-03)", nil},
 		{"![not an id](shot-3.png)", nil},

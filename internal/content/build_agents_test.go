@@ -571,7 +571,7 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 
 // The pipeline rule covers the group's OTHER projects only. Measured on a
 // live Mate: told "code reaches another environment through the pipeline"
-// and "what ships the code is .gitea/workflows/", the agent read its own
+// and "what ships the code is the repository's workflow", the agent read its own
 // in-project stage half as that other environment — it declared appstage
 // unreachable without CI, proposed wiring a webhook, and demoted appstage
 // to "the sandbox half" until the user asked for the dev→stage
@@ -628,7 +628,7 @@ func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 			t.Errorf("git-host paragraph missing %q", want)
 		}
 	}
-	for _, retired := range []string{"$GITEA_URL", "$GITEA_TOKEN", "$MATE_BROKER_URL", "zcp mate git-token", "pull request"} {
+	for _, retired := range []string{"zcp mate git-token", "pull request"} {
 		if strings.Contains(out, retired) {
 			t.Errorf("git-host paragraph still names %q", retired)
 		}
