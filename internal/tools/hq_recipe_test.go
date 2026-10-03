@@ -358,6 +358,7 @@ func TestHandleGroupRecipe_Table(t *testing.T) {
 		twice    bool
 		wantErr  bool
 		wantText []string
+		notText  []string
 	}{
 		{
 			name:     "proposed",
@@ -368,10 +369,19 @@ func TestHandleGroupRecipe_Table(t *testing.T) {
 			twice:    true,
 			wantText: []string{"already proposed", "change #1", "/changes/" + labApp + "/group/1"},
 		},
+		// E2E F15: told that zcp "never proposes over" a tier on main, the agent
+		// reported a scale it was asked to carry into the recipe as blocked. A
+		// tier on main takes a service's scale through the scaling proposal.
 		{
-			name:     "main already carries every tier",
-			setup:    func(l *hqLab) { l.hq.landOnMain(hq.RecipeRepo, handWrittenTiers()) },
-			wantText: []string{`"onMain":true`, "already carries every tier", "A person changes a tier in HQ"},
+			name:  "main already carries every tier",
+			setup: func(l *hqLab) { l.hq.landOnMain(hq.RecipeRepo, handWrittenTiers()) },
+			wantText: []string{
+				`"onMain":true`, "already carries every tier",
+				`call zerops_workflow action=\"group-recipe\" with scaling set to the service's hostname`,
+				"as a change the person reviews",
+				"anything else in a tier on main",
+			},
+			notText: []string{"never proposes over"},
 		},
 		{
 			name: "not enrolled with HQ",
@@ -421,6 +431,11 @@ func TestHandleGroupRecipe_Table(t *testing.T) {
 			for _, want := range tt.wantText {
 				if !strings.Contains(text, want) {
 					t.Errorf("result is missing %q:\n%s", want, text)
+				}
+			}
+			for _, absent := range tt.notText {
+				if strings.Contains(text, absent) {
+					t.Errorf("result says %q:\n%s", absent, text)
 				}
 			}
 			if lab.hq.changeIn(hq.RecipeRepo, 2) != nil {

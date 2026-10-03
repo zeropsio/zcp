@@ -526,7 +526,7 @@ func handleGroupRecipe(
 		result["message"] = strings.ToUpper(outcome.Line[:1]) + outcome.Line[1:] + "."
 	case outcome.OnMain:
 		result["message"] = fmt.Sprintf(
-			"Main of the recipe repository %q already carries every tier of the recipe, so nothing is proposed: a tier on main is the group's, and zcp never proposes over it. A person changes a tier in HQ.",
+			"Main of the recipe repository %q already carries every tier of the recipe, so no tier is proposed: zcp adds only the tiers main lacks. To carry a service's scale into the tiers on main, call zerops_workflow action=\"group-recipe\" with scaling set to the service's hostname: it proposes only that service's verticalAutoscaling, floors applied, as a change the person reviews. A person changes anything else in a tier on main in HQ.",
 			hq.RecipeRepo)
 	default:
 		result["message"] = fmt.Sprintf(
