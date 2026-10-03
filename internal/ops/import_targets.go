@@ -3,6 +3,7 @@ package ops
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -56,6 +57,40 @@ func IdentifyOverrideTargets(
 	for _, h := range yamlHostnames {
 		if existing[h] {
 			out = append(out, h)
+		}
+	}
+	return out, nil
+}
+
+// zcpTypePrefix is every version of the zcp container's service type.
+const zcpTypePrefix = "zcp@"
+
+// ImportedZcpServices returns the hostnames of the import YAML's services
+// whose type is a zcp container (`zcp@…`). Used by tools.RegisterImport: a
+// Mate's project holds one zcp service, the Mate's own (spec-mate §6.6). A
+// service whose hostname or type is not a string is none of them, so the
+// Import call produces its own structured error for it.
+func ImportedZcpServices(content, filePath string) ([]string, error) {
+	yamlContent, err := resolveInput(content, filePath)
+	if err != nil {
+		return nil, err
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(yamlContent), &doc); err != nil {
+		return nil, platform.NewPlatformError(
+			platform.ErrInvalidImportYml,
+			fmt.Sprintf("invalid YAML: %v", err),
+			"Check YAML syntax",
+		)
+	}
+	servicesList, _ := doc["services"].([]any)
+	var out []string
+	for _, svc := range servicesList {
+		svcMap, _ := svc.(map[string]any)
+		hostname, _ := svcMap["hostname"].(string)
+		serviceType, _ := svcMap["type"].(string)
+		if hostname != "" && strings.HasPrefix(strings.TrimSpace(serviceType), zcpTypePrefix) {
+			out = append(out, hostname)
 		}
 	}
 	return out, nil

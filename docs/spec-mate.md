@@ -1800,7 +1800,8 @@ a named service Zerops no longer has gives its place to the next. zcp records th
 outcome (C-7), says it once, and stops enrolling until it starts anew (`hq.Keep`). An older zcp
 that names no service is enrolled as before, unless it would revoke the credential of the Mate the
 record names. The client refuses *Set up Mate* and *Finish setup* on a project holding several zcp
-services, naming them, and a Mate's tier that declares one.
+services, naming them, and a Mate's tier that declares one; inside a Mate's container
+`zerops_import` refuses a document that declares a `zcp@` service, naming it, and imports nothing.
 
 Until 2026-10-02 a Mate's Gitea bot token reached its container through the org's broker, as
 `GITEA_URL`, `MATE_BROKER_URL` and `GITEA_TOKEN` on its `zcp` service (D20). zcp reads none of them
