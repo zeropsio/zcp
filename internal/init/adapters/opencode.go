@@ -99,7 +99,7 @@ func (OpenCode) Validate(env Env) ([]string, error) {
 // despite this rule).
 //
 // A file ZCP cannot merge — JSONC comments, a non-object root, a non-object
-// `mcp` — is refused and left byte-for-byte, never overwritten.
+// `mcp`, a duplicated key — is refused and left byte-for-byte, never overwritten.
 func (OpenCode) ContainerInit(env Env) error {
 	if env.Home == "" {
 		return fmt.Errorf("opencode adapter: Env.Home is empty")
@@ -227,8 +227,9 @@ type jsonMember struct {
 }
 
 // decodeJSONObject splits a JSON object into its members in document order.
-// Anything but exactly one object — comments, an array, trailing data — is an
-// error.
+// Anything but exactly one object — comments, an array, trailing data, a key
+// that appears twice — is an error. OpenCode keeps the LAST of a duplicated
+// key, so editing the first would leave the one it reads unchanged.
 func decodeJSONObject(raw []byte) ([]jsonMember, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	tok, err := dec.Token()
@@ -248,6 +249,9 @@ func decodeJSONObject(raw []byte) ([]jsonMember, error) {
 		var value json.RawMessage
 		if err := dec.Decode(&value); err != nil {
 			return nil, fmt.Errorf("decode %q: %w", key, err)
+		}
+		if _, dup := lookupMember(members, key); dup {
+			return nil, fmt.Errorf("key %q appears more than once", key)
 		}
 		members = append(members, jsonMember{key: key, value: value})
 	}

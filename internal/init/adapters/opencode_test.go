@@ -310,6 +310,10 @@ func TestOpenCode_ContainerInit_RefusesUnreadable(t *testing.T) {
 		{name: "comments", initial: "// mine\n{\"model\":\"a/b\"}\n"},
 		{name: "array root", initial: `[1,2]`},
 		{name: "mcp not an object", initial: `{"mcp":[]}`},
+		// OpenCode keeps the LAST of a duplicated key; editing the first would
+		// leave the one it reads without zerops.
+		{name: "duplicate top-level key", initial: `{"mcp":{},"model":"a/b","mcp":{"x":{"type":"local","command":["x"]}}}`},
+		{name: "duplicate permission key", initial: `{"permission":{"*":"ask","*":"deny"}}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
