@@ -8,6 +8,10 @@ import (
 	"time"
 )
 
+// ErrOtherProject is HQ answering the kept credential for another project:
+// not this Mate's, so it is enrolled anew.
+var ErrOtherProject = errors.New("hq holds the credential for another project")
+
 // KeepOptions paces Keep; a zero field takes its default.
 type KeepOptions struct {
 	// Retry is the wait after a failed attempt, doubling up to RetryMax;
@@ -16,24 +20,36 @@ type KeepOptions struct {
 	// Recheck is the wait after an enrollment HQ knows, before asking again;
 	// 10 min.
 	Recheck time.Duration
+	// Rediscover is how long the kept HQ may go without answering before the
+	// member list is read again for the official HQ; 10 min.
+	Rediscover time.Duration
 	// Log, when set, hears each outcome that differs from the one before.
 	Log func(string)
 	// Record, when set, hears every attempt's outcome: nil once enrolled.
 	Record func(error)
 }
 
-// Keep keeps this Mate enrolled with its org's official HQ until ctx ends:
-// it enrolls now, then asks again every Recheck, which enrolls anew whenever
-// HQ no longer knows the credential (revoked, or another HQ became the
-// official one). What is not possible yet is retried with a growing wait,
-// never fatal: no official HQ, a Mate HQ holds no record of yet
-// (not_a_mate: the client writes it after the project exists), HQ or Zerops
-// not answering.
-func Keep(ctx context.Context, attempt func(context.Context) (Result, error), opts KeepOptions) {
+// Keep keeps this Mate enrolled with its org's official HQ until ctx ends.
+// It asks the kept enrollment's HQ alone whether it still knows the
+// credential (recheck), now and every Recheck; it enrolls — reading the org's
+// member list for the official HQ — only with no enrollment kept, when HQ no
+// longer knows the credential (revoked, or another project's), or when the
+// kept HQ has not answered for Rediscover: an HQ that is no longer the
+// official one answers 503 for good, a deploy's handover for seconds (R6).
+// What is not possible yet is retried with a growing wait, never fatal: no
+// official HQ, a Mate HQ holds no record of yet (not_a_mate: the client
+// writes it after the project exists), HQ or Zerops not answering.
+func Keep(ctx context.Context, enroll, recheck func(context.Context) (Result, error), opts KeepOptions) {
 	opts = opts.withDefaults()
 	retry := opts.Retry
 	said := ""
+	enrolling := false
+	answered := time.Now()
 	for {
+		attempt := recheck
+		if enrolling {
+			attempt = enroll
+		}
 		res, err := attempt(ctx)
 		if opts.Record != nil {
 			opts.Record(err)
@@ -42,13 +58,17 @@ func Keep(ctx context.Context, attempt func(context.Context) (Result, error), op
 		if res.KeyUnnamed != "" {
 			line += "; HQ was not told its key's id: " + res.KeyUnnamed
 		}
-		if err != nil {
+		switch {
+		case err == nil:
+			enrolling, answered, retry = false, time.Now(), opts.Retry
+		case !enrolling && (needsEnrollment(err) || time.Since(answered) >= opts.Rediscover):
+			// Enrolled anew at once: the kept enrollment no longer holds.
+			enrolling, wait, line = true, 0, "enrolling anew: "+describe(err)
+		default:
 			// Up to a quarter more, so the Mates of an org do not all knock at once.
 			wait = retry + rand.N(retry/4+1) //nolint:gosec // G404: jitter, not a secret
 			retry = min(2*retry, opts.RetryMax)
 			line = "not enrolled yet: " + describe(err)
-		} else {
-			retry = opts.Retry
 		}
 		if line != said && opts.Log != nil {
 			opts.Log(line)
@@ -60,6 +80,36 @@ func Keep(ctx context.Context, attempt func(context.Context) (Result, error), op
 		case <-time.After(wait):
 		}
 	}
+}
+
+// needsEnrollment is a recheck saying the kept enrollment no longer holds:
+// none is kept, or its HQ no longer knows the credential as this project's.
+func needsEnrollment(err error) bool {
+	return errors.Is(err, ErrNotEnrolled) || errors.Is(err, ErrOtherProject) ||
+		refusedAs(err, "mate_credential_required")
+}
+
+// Recheck asks the HQ the kept enrollment names — and only it, never the
+// member list — whether it still knows the credential as this project's, and
+// tells it the id of this container's key where that changed (nameKey).
+// ErrNotEnrolled with no enrollment kept for this project.
+func (e Enroller) Recheck(ctx context.Context) (Result, error) {
+	kept, found, err := LoadEnrollment(e.Path)
+	if err != nil {
+		return Result{}, err
+	}
+	if !found || kept.ProjectID != e.ProjectID {
+		return Result{}, ErrNotEnrolled
+	}
+	hq := hqClient{http: e.HTTP, address: kept.HQ}
+	projectID, err := hq.whoami(ctx, kept.Credential)
+	if err != nil {
+		return Result{}, fmt.Errorf("ask %s: %w", kept.HQ, err)
+	}
+	if projectID != e.ProjectID {
+		return Result{}, ErrOtherProject
+	}
+	return Result{HQ: kept.HQ, KeyUnnamed: e.nameKey(ctx, hq, kept)}, nil
 }
 
 func describe(err error) string {
@@ -82,6 +132,9 @@ func (o KeepOptions) withDefaults() KeepOptions {
 	}
 	if o.Recheck == 0 {
 		o.Recheck = 10 * time.Minute
+	}
+	if o.Rediscover == 0 {
+		o.Rediscover = 10 * time.Minute
 	}
 	return o
 }

@@ -1775,7 +1775,12 @@ S3 tries to watch the mount for git state.
 
 A Mate reaches its HQ with the credential its enrollment holds, and nothing else: `zcp service
 mate` keeps it enrolled (`hq.Keep`, C-7), and zcp opens the enrollment at each use, so a
-re-enrollment's credential is the one it uses. Everything zcp does with HQ goes through it — a
+re-enrollment's credential is the one it uses. Kept enrolled is the kept HQ asked alone every 10 min
+whether it still knows the credential (`Enroller.Recheck`); the org's member list is read again for
+the official HQ only with no enrollment kept, when HQ refuses the credential (`401
+mate_credential_required`, or names another project for it), or when the kept HQ has not answered
+for 10 min — an HQ that lost the anchor answers `503 not_active` for good, a deploy's handover for
+seconds (R6). Everything zcp does with HQ goes through it — a
 pair's work delivered as a change (§10.10, *Delivery to HQ*), the recipe proposed and its AI Agent
 tier read for the stand-up, a repository the tier names checked before HQ is asked for it — over
 HQ's Mate API (`Authorization: Mate <credential>`) and git over HTTPS as the user `mate`. The dev
