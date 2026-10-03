@@ -1113,3 +1113,38 @@ func TestSessionAnnotations_WiredMate_HandoffOnlyAfterADelivery(t *testing.T) {
 		})
 	}
 }
+
+// TestAPushHandOverSaysTheRequestMayBeMergedAtAnyMoment: a push that leaves a
+// request open asks for its description and tells the agent the person may
+// merge it at any moment; a push with no request open has nothing to merge.
+func TestAPushHandOverSaysTheRequestMayBeMergedAtAnyMoment(t *testing.T) {
+	open := &giteaPullRequestRef{Repo: "acme/appdev", Branch: "mate/mate-p1", Base: "main", Number: 3,
+		URL: "https://gitea.example.invalid/acme/appdev/pulls/3"}
+	tests := []struct {
+		name    string
+		pr      *giteaPullRequestRef
+		want    []string
+		wantNot []string
+	}{
+		{name: "no request open", wantNot: []string{"at any moment", "describe-change"}},
+		{
+			name: "a request open", pr: open,
+			want: []string{`action="describe-change" service="appdev"`, "may merge it at any moment", `what "main" still lacks`},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := giteaPushNextActions(tt.pr, "appdev")
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("next actions miss %q:\n%s", want, got)
+				}
+			}
+			for _, unwanted := range tt.wantNot {
+				if strings.Contains(got, unwanted) {
+					t.Errorf("next actions must not say %q:\n%s", unwanted, got)
+				}
+			}
+		})
+	}
+}

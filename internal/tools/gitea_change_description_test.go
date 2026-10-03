@@ -483,6 +483,9 @@ func TestADeliveryPutsTheKeptDescriptionOnItsRequest(t *testing.T) {
 	if !strings.Contains(delivery.Line, "carries the description you wrote") {
 		t.Errorf("the line must say the kept words are on the request:\n%s", delivery.Line)
 	}
+	if !strings.Contains(delivery.Line, "may merge it at any moment") {
+		t.Errorf("the line must say the person may merge the request at any moment:\n%s", delivery.Line)
+	}
 	if got := keptDescription(t, stateDir, "appdev"); got != nil {
 		t.Errorf("the words are on the request, yet still kept: %+v", got)
 	}
