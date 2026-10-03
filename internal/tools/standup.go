@@ -91,13 +91,11 @@ type standupDeps struct {
 	bootWait   time.Duration
 	bootPoll   time.Duration
 	trackPoll  time.Duration
-	// closedOff asks HQ whether the Mate's project is closed off (its birth).
-	closedOff hq.ClosedOffReader
 	// enrollmentPath is the Mate's enrollment with its HQ (hq.EnrollmentPath):
 	// where the stand-up reads the tier, and what the pairs it adopts are
 	// wired to deliver to.
 	enrollmentPath string
-	// closedOffSeen is a call that asked HQ itself while the import's line
+	// closedOffSeen is a call that read Zerops itself while the import's line
 	// still said it waited for the project to be closed off: that import is
 	// starting, and awaitBootImport waits for it.
 	closedOffSeen bool
@@ -133,7 +131,6 @@ func RegisterStandup(
 		runtimeWait:    standupRuntimeWait,
 		runtimePoll:    standupRuntimePoll,
 		statusPath:     mate.StatusFilePath(),
-		closedOff:      hqClosedOff(),
 		enrollmentPath: hq.EnrollmentPath(),
 		bootWait:       standupBootWait,
 		bootPoll:       standupBootPoll,
@@ -190,8 +187,8 @@ func (d standupDeps) run(ctx context.Context, progress *standupProgress) *mcp.Ca
 // refusal); run reports how it ended.
 func (d standupDeps) stand(ctx context.Context, progress *standupProgress) (*mcp.CallToolResult, string) {
 	if d.importWaitsClosedOff() {
-		// The import asks HQ once a minute at most, so its line can trail the
-		// press: ask HQ itself before saying Finish setup.
+		// The import reads the project once a minute at most, so its line can
+		// trail the press: read Zerops itself before saying Finish setup.
 		closed, err := d.closedOff(ctx)
 		if err != nil || !closed {
 			if err != nil {
@@ -496,6 +493,12 @@ func (d standupDeps) settle(ctx context.Context, tier workflow.MateTier, live ma
 	return true
 }
 
+// closedOff reads from Zerops whether the Mate's project is closed off
+// (ops.ProjectClosedOff), as the import gate does (refuseOpenMate).
+func (d standupDeps) closedOff(ctx context.Context) (bool, error) {
+	return ops.ProjectClosedOff(ctx, d.batch.client, d.batch.projectID)
+}
+
 // presentAndRunning stops a pair whose halves the import did not create
 // within the wait, or whose dev half is not running: the repository is
 // checked out INTO the dev half, so it must be up, and a runtime imported
@@ -503,7 +506,7 @@ func (d standupDeps) settle(ctx context.Context, tier workflow.MateTier, live ma
 // refused or not finished; the model imports it from the tier with zcp's own
 // import, shaped the way the browser imports it.
 // projectOpen reports, when a half is missing in a Mate the new press made,
-// a project HQ does not hold closed off yet: nothing may be imported into it
+// a project Zerops does not read closed off yet: nothing may be imported into it
 // (refuseOpenMate), so the stand-up never asks the model to.
 func (d standupDeps) projectOpen(ctx context.Context, tier workflow.MateTier, live map[string]*platform.ServiceStack) bool {
 	missing := false

@@ -963,8 +963,9 @@ first made — and offers _Remove_ instead (`runEnvironmentCreation.ts:204-220`,
 
 **After the press the container does the rest**, with a browser open or none: zcp enrolls the Mate
 with its HQ, which is its Git access, from its boot on (zcp `internal/service/service.go:256-259`,
-`internal/hq/enroll.go:62-67`), imports the tier's runtimes only once HQ says the project is closed
-off (`internal/matesetup/runtimes.go:45-49`, `:477-508`), and the Mate's server starts the stand-up
+`internal/hq/enroll.go:62-67`), imports the tier's runtimes only once Zerops reads the project
+closed off — HQ's mark is a receipt (`internal/ops/closed_off.go`, `internal/matesetup/runtimes.go`
+`awaitClosedOff`), and the Mate's server starts the stand-up
 once HQ names who asked (`hqMateBirth.ts:1-6`). Any browser reads where that stands off `GET
 /mate/setup.json` — `container`, `git`, `runtimes`, `signin`, `standup` — and an older Mate's off
 `/mate/healthz` (`mateSetup.ts:1-26`). **Nothing connects to a Mate before its project is closed
@@ -2496,8 +2497,10 @@ The order:
 4. It lowers the container's token, drops the delegation, grants the broker and registers the Mate.
 5. When `zcp` answers, it closes the project off and records that at the Mate's HQ
    (`POST /api/mates/{projectId}/closed-off`, once the Mate's record exists there), and the sign-in
-   is offered. zcp's runtime import and `zerops_standup` read closed-off from HQ with the Mate's own
-   enrollment (`hq.ReadClosedOff`); an HQ that cannot be asked holds the import, never opens it.
+   is offered. HQ's mark is a receipt: zcp's runtime import, `zerops_import` and `zerops_standup`
+   read closed-off from Zerops with the Mate's own key — `envIsolation`'s first word `service` and
+   no `ZCP_API_KEY` left project-wide (`ops.ProjectClosedOff`); a read that fails, or one without
+   `envIsolation` yet, holds the import, never opens it.
 6. It imports the runtimes in one wave: dev halves `startWithoutCode: true` (running and empty, the
    checkout target), stage halves with no build (`READY_TO_DEPLOY`), public-build utilities with
    their build, which the platform runs.

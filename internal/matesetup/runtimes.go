@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,7 +20,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -33,9 +31,11 @@ import (
 const EnvRuntimes = "MATE_SETUP_RUNTIMES"
 
 // API is the part of the platform client the boot import uses: the lag-free
-// project reads and the import itself.
+// project reads, the project's variables it reads closed off from
+// (ops.ProjectClosedOff), and the import itself.
 type API interface {
 	ListServicesDirect(ctx context.Context, projectID string) ([]platform.ServiceStack, error)
+	GetProjectEnv(ctx context.Context, projectID string) ([]platform.ProjectEnvVar, error)
 	GetProjectProcessesDirect(ctx context.Context, projectID string) ([]platform.Process, error)
 	GetProcess(ctx context.Context, processID string) (*platform.Process, error)
 	ImportServices(ctx context.Context, projectID, yamlContent string) (*platform.ImportResult, error)
@@ -43,10 +43,7 @@ type API interface {
 
 // Importer imports the plan's missing services and tracks them to the end.
 type Importer struct {
-	API API
-	// ClosedOff asks HQ whether the project is closed off (the Mate's birth,
-	// written by the client that set it up): nothing is imported before.
-	ClosedOff  hq.ClosedOffReader
+	API        API
 	ProjectID  string
 	StatusPath string
 	// Poll is the time between two looks at the project while the import's
@@ -90,9 +87,6 @@ const (
 	DefaultPoll          = 3 * time.Second
 	DefaultTimeout       = 20 * time.Minute
 )
-
-// hqTimeout bounds each ask of HQ whether the project is closed off.
-const hqTimeout = 15 * time.Second
 
 // DefaultBackoff is three retries of a failed import call over a minute.
 var DefaultBackoff = []time.Duration{5 * time.Second, 15 * time.Second, 45 * time.Second}
@@ -474,14 +468,15 @@ func (im Importer) ownDeployDone(ctx context.Context) bool {
 	return len(activity) == 0
 }
 
-// awaitClosedOff waits until the project reads closed off, with the runtimes
-// section pending and saying why; false when the context ended first. A
-// failed read is one more look, not an answer.
+// awaitClosedOff waits until Zerops reads the project closed off
+// (ops.ProjectClosedOff) — never HQ's mark of it (audit N1) — with the
+// runtimes section pending and saying why; false when the context ended
+// first. A failed read is one more look, not an answer.
 func (im Importer) awaitClosedOff(ctx context.Context) bool {
 	start := time.Now()
 	said := ""
 	for {
-		closed, err := im.ClosedOff(ctx)
+		closed, err := ops.ProjectClosedOff(ctx, im.api(), im.ProjectID)
 		if err == nil && closed {
 			return true
 		}
@@ -489,7 +484,7 @@ func (im Importer) awaitClosedOff(ctx context.Context) bool {
 		if err != nil {
 			// A look that failed says nothing about the project: never read
 			// it as "not closed off yet".
-			line = oneLine(fmt.Sprintf("could not ask HQ whether the project is closed off (%v)", err))
+			line = oneLine(fmt.Sprintf("could not read whether the project is closed off (%v)", err))
 		}
 		if line != said {
 			im.write(func(r *mate.RuntimesStatus) {
@@ -876,7 +871,6 @@ func Boot(ctx context.Context, statusPath string, env func() func(string) string
 	im.Fresh = FreshAPI(env, func(token, apiHost string) (API, error) {
 		return platform.NewZeropsClient(token, apiHost)
 	})
-	im.ClosedOff = hq.ReadClosedOff(&http.Client{Timeout: hqTimeout}, hq.EnrollmentPath())
 	if im.API = im.Fresh(); im.API == nil {
 		im.finish(nil, "could not build the API client", false)
 		return

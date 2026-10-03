@@ -48,9 +48,11 @@ type fakeAPI struct {
 	refuse map[string]string
 	// failProcess names services whose create process ends FAILED.
 	failProcess map[string]string
-	// isolation is the project as each ask of HQ answers it — "closed" off,
-	// "open", "<error>" — the last one staying; empty is "closed".
-	// isolationReads counts the asks, and readsAtImport is that count when
+	// isolation is the project's variables as each read of them answers —
+	// "closed" (envIsolation service), "open" (none), "keyed" (service, with
+	// ZCP_API_KEY still project-wide), "unread" (no envIsolation yet: the
+	// read trails), "<error>" — the last one staying; empty is "closed".
+	// isolationReads counts the reads, and readsAtImport is that count when
 	// the first import was sent.
 	isolation      []string
 	isolationReads int
@@ -63,9 +65,9 @@ type fakeAPI struct {
 	takenWhole error
 }
 
-// closedOff is HQ answering whether the Mate's project is closed off
-// (hq.ClosedOffReader).
-func (f *fakeAPI) closedOff(context.Context) (bool, error) {
+// GetProjectEnv is Zerops answering the project's variables, where whether
+// it is closed off is read (ops.ProjectClosedOff).
+func (f *fakeAPI) GetProjectEnv(context.Context, string) ([]platform.ProjectEnvVar, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	value := "closed"
@@ -73,10 +75,21 @@ func (f *fakeAPI) closedOff(context.Context) (bool, error) {
 		value = f.isolation[min(f.isolationReads, len(f.isolation)-1)]
 	}
 	f.isolationReads++
-	if value == "<error>" {
-		return false, errors.New("HQ did not answer")
+	isolation := func(content string) platform.ProjectEnvVar {
+		return platform.ProjectEnvVar{ID: "e-iso", Key: "envIsolation", Content: content, Type: platform.ProjectEnvSystem}
 	}
-	return value == "closed", nil
+	key := platform.ProjectEnvVar{ID: "e-key", Key: "ZCP_API_KEY", Content: "k", Type: platform.ProjectEnvUser}
+	switch value {
+	case "<error>":
+		return nil, errors.New("Zerops did not answer")
+	case "open":
+		return []platform.ProjectEnvVar{isolation("none"), key}, nil
+	case "keyed":
+		return []platform.ProjectEnvVar{isolation("service service@zcp"), key}, nil
+	case "unread":
+		return []platform.ProjectEnvVar{key}, nil
+	}
+	return []platform.ProjectEnvVar{isolation("service service@zcp")}, nil
 }
 
 func (f *fakeAPI) ListServicesDirect(context.Context, string) ([]platform.ServiceStack, error) {
@@ -164,7 +177,7 @@ func newFake() *fakeAPI { return &fakeAPI{runFor: 2, started: map[string]int{}} 
 
 func importer(api *fakeAPI, path string) matesetup.Importer {
 	return matesetup.Importer{
-		API: api, ClosedOff: api.closedOff, ProjectID: "proj", StatusPath: path,
+		API: api, ProjectID: "proj", StatusPath: path,
 		Poll: time.Millisecond, Timeout: 5 * time.Second,
 		Backoff:       []time.Duration{time.Millisecond, time.Millisecond},
 		IsolationPoll: func(time.Duration) time.Duration { return time.Millisecond },
@@ -501,9 +514,11 @@ func TestBoot_WithoutWhatItActsWith(t *testing.T) {
 // TestRun_ImportsOnlyIntoAProjectClosedOff: runtimes run code, and in a
 // project whose env isolation is off they read the zcp service's variables —
 // the Mate's key among them — while closing it off after they exist restarts
-// them. So nothing is imported until the project reads closed off; the wait
-// says so in the status and has no end of its own (a later "Finish setup"
-// closes it). A plan with nothing missing never waits.
+// them. So nothing is imported until Zerops reads the project closed off —
+// isolated per service, its key no longer project-wide — whatever HQ holds
+// of the Mate's birth (audit N1); the wait says so in the status and has no
+// end of its own (a later "Finish setup" closes it). A read that fails or
+// trails is one more look. A plan with nothing missing never waits.
 func TestRun_ImportsOnlyIntoAProjectClosedOff(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -515,6 +530,8 @@ func TestRun_ImportsOnlyIntoAProjectClosedOff(t *testing.T) {
 	}{
 		{"closed off from the start", nil, []string{"closed"}, 1, 1, mate.RuntimesDone},
 		{"closed off after a while", nil, []string{"open", "open", "<error>", "open", "closed"}, 1, 5, mate.RuntimesDone},
+		{"isolated once its key left the project", nil, []string{"keyed", "keyed", "closed"}, 1, 3, mate.RuntimesDone},
+		{"a read that trails the project's birth", nil, []string{"unread", "closed"}, 1, 2, mate.RuntimesDone},
 		{"nothing missing never waits", []string{"appdev", "appstage"}, []string{"open"}, 0, 0, mate.RuntimesDone},
 	}
 	for _, tt := range tests {
@@ -774,9 +791,9 @@ func TestRun_OnlyARealRefusalSettles(t *testing.T) {
 	}
 }
 
-// TestRun_AnUnreadableProjectSaysSo: an ask of HQ that fails is never read
-// as "not closed off yet": the runtimes section says HQ could not be asked,
-// and why.
+// TestRun_AnUnreadableProjectSaysSo: a read of the project that fails is
+// never read as "not closed off yet": the runtimes section says the project
+// could not be read, and why.
 func TestRun_AnUnreadableProjectSaysSo(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "status.json")
 	api := newFake()
@@ -798,8 +815,8 @@ func TestRun_AnUnreadableProjectSaysSo(t *testing.T) {
 	}
 	cancel()
 	<-done
-	if got.State != mate.RuntimesPending || !strings.Contains(got.Error, "could not ask HQ") || !strings.Contains(got.Error, "HQ did not answer") {
-		t.Errorf("runtimes = %s %q, want pending saying HQ could not be asked and why", got.State, got.Error)
+	if got.State != mate.RuntimesPending || !strings.Contains(got.Error, "could not read whether the project is closed off") || !strings.Contains(got.Error, "Zerops did not answer") {
+		t.Errorf("runtimes = %s %q, want pending saying the project could not be read and why", got.State, got.Error)
 	}
 	if len(api.imports) != 0 {
 		t.Errorf("imported %d times into a project it could not read", len(api.imports))

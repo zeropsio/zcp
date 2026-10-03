@@ -253,37 +253,47 @@ func TestImportTool_WithWorkSession_Succeeds(t *testing.T) {
 // carries MATE_SETUP_RUNTIMES) whose project is not closed off yet, runtimes
 // would read the zcp service's variables (the Mate's key among them), and
 // closing it off after they exist restarts them — so the import refuses,
-// naming what closes it. A Mate closed off, an older Mate (no plan), a
-// project that does not say, and a container that is no Mate import as
-// before.
+// naming what closes it. Whether it is closed off is Zerops's to say (audit
+// N1): its envIsolation `service` and no ZCP_API_KEY project-wide, whatever
+// HQ holds of the Mate's birth, which the import never asks. A project
+// Zerops cannot be read about is refused too. A Mate closed off, an older
+// Mate (no plan), and a container that is no Mate import as before.
 func TestImportTool_RefusesAnOpenMate(t *testing.T) {
 	t.Parallel()
+	isolation := func(content string) platform.ProjectEnvVar {
+		return platform.ProjectEnvVar{ID: "e-iso", Key: "envIsolation", Content: content, Type: platform.ProjectEnvSystem}
+	}
+	key := platform.ProjectEnvVar{ID: "e-key", Key: "ZCP_API_KEY", Content: "k", Type: platform.ProjectEnvUser}
 	tests := []struct {
-		name   string
-		mate   bool
-		plan   bool
-		closed bool
-		askErr error  // HQ not answering
-		want   string // what the refusal says; "" imports
+		name    string
+		mate    bool
+		plan    bool
+		env     []platform.ProjectEnvVar
+		readErr error  // Zerops not answering
+		want    string // what the refusal says; "" imports
 	}{
-		{"an open new-flow Mate", true, true, false, nil, "not closed off yet; Finish setup"},
-		{"a new-flow Mate closed off", true, true, true, nil, ""},
-		{"a new-flow Mate HQ cannot be asked about", true, true, false, errors.New("unreachable"), "Could not ask HQ"},
-		{"an open Mate made before the new press", true, false, false, nil, ""},
-		{"an open project outside a Mate", false, true, false, nil, ""},
+		{"an open new-flow Mate", true, true, []platform.ProjectEnvVar{isolation("none")}, nil, "not closed off yet; Finish setup"},
+		{"a new-flow Mate closed off", true, true, []platform.ProjectEnvVar{isolation("service service@zcp")}, nil, ""},
+		{"a new-flow Mate with its key project-wide", true, true, []platform.ProjectEnvVar{isolation("service"), key}, nil, "not closed off yet; Finish setup"},
+		{"a new-flow Mate Zerops cannot be read about", true, true, nil, errors.New("unreachable"), "Could not read whether the project is closed off"},
+		{"an open Mate made before the new press", true, false, []platform.ProjectEnvVar{isolation("none")}, nil, ""},
+		{"an open project outside a Mate", false, true, []platform.ProjectEnvVar{isolation("none")}, nil, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			mock := platform.NewMock().
-				WithImportResult(&platform.ImportResult{ProjectID: "proj-1", ServiceStacks: []platform.ImportedServiceStack{{ID: "svc-1", Name: "api"}}})
+				WithImportResult(&platform.ImportResult{ProjectID: "proj-1", ServiceStacks: []platform.ImportedServiceStack{{ID: "svc-1", Name: "api"}}}).
+				WithProjectEnv(tt.env)
+			if tt.readErr != nil {
+				mock = mock.WithError("GetProjectEnv", tt.readErr)
+			}
 			env := map[string]string{"PATH": "/usr/bin"}
 			if tt.plan {
 				env["MATE_SETUP_RUNTIMES"] = "c2VydmljZXM6IFtd"
 			}
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			closedOff := func(context.Context) (bool, error) { return tt.closed, tt.askErr }
-			registerImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{MateEnabled: tt.mate}, writeLiveEnvFile(t, env), closedOff, nil)
+			registerImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{MateEnabled: tt.mate}, writeLiveEnvFile(t, env), nil)
 			result := callTool(t, srv, "zerops_import", map[string]any{"content": "services:\n  - hostname: api\n    type: nodejs@20\n"})
 			text := getTextContent(t, result)
 			if tt.want == "" {
