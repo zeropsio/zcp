@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -260,15 +261,21 @@ func deliverGiteaPair(
 		clearGiteaLanding(stateDir, meta)
 	}
 
-	result := &giteaDelivery{PullRequest: openGiteaPairPullRequest(ctx, httpClient, wiring, stateDir, meta)}
-	if pr := result.PullRequest; pr != nil {
+	pr, prErr := openGiteaPairPullRequest(ctx, httpClient, wiring, stateDir, meta)
+	result := &giteaDelivery{PullRequest: pr}
+	switch {
+	case pr != nil:
 		result.Line = fmt.Sprintf(
 			"Delivered: %s's code is on %s of %s, and pull request #%d (%s) carries it to %q. %s Tell the person that link — the code reaches the group's stage when they merge it. %s",
 			meta.Hostname, branch, repo, pr.Number, pr.URL, pr.Base, giteaDescribeLine(pr, meta.Hostname), giteaMergeAnyMoment(pr.Base))
-	} else {
+	case prErr == nil || errors.Is(prErr, ops.ErrNothingToPropose):
 		result.Line = fmt.Sprintf(
-			"Delivered: %s's code is on %s of %s. No pull request is open onto %q — Gitea opens one only for a branch that carries something %q lacks, so there is nothing for the person to merge; the next stage deploy asks again.",
+			"Delivered: %s's code is on %s of %s. No pull request is open onto %q — zcp opens one only for a branch that carries something %q lacks, so there is nothing for the person to merge; the next stage deploy asks again.",
 			meta.Hostname, branch, repo, giteaBaseOf(meta), giteaBaseOf(meta))
+	default:
+		result.Line = fmt.Sprintf(
+			"Delivered: %s's code is on %s of %s, but its pull request onto %q could not be opened (%v); it is tried again on the next stage deploy or reconcile pass.",
+			meta.Hostname, branch, repo, giteaBaseOf(meta), prErr)
 	}
 	if line := reconcileGiteaGroupRecipe(ctx, client, httpClient, rt, stateDir, mate.LiveEnvStorePath); line != "" {
 		result.Line += " The group's recipe: " + line
@@ -596,15 +603,19 @@ func giteaRemoteOfThisMate(remoteURL string) bool {
 	return wiring.Ready() && topology.ClassifyGitHost(remoteURL, wiring.GiteaURL) == topology.GitHostGitea
 }
 
-// giteaPushNextActions answers a push from hostname to the account's Gitea.
+// giteaPushNextActions answers a push from hostname to the account's Gitea,
+// given what opening its request answered (openGiteaPairPullRequest).
 // The group's workflow runs on main, which the person's merge moves, so there
 // is no build to watch and no integration to offer: the Mate's own services
 // change only through a direct deploy, and deploying the stage half pushes by
 // itself. A request left open asks for its description and says the person
 // may merge it at any moment.
-func giteaPushNextActions(pr *giteaPullRequestRef, hostname string) string {
+func giteaPushNextActions(pr *giteaPullRequestRef, openErr error, hostname string) string {
+	if pr == nil && openErr != nil && !errors.Is(openErr, ops.ErrNothingToPropose) {
+		return fmt.Sprintf("Pushed to this Mate's branch on the group's Gitea, but its pull request could not be opened (%v); it is tried again on the next stage deploy or push. Nothing builds from the branch: deploy the pair directly to run the code.", openErr)
+	}
 	if pr == nil {
-		return "Pushed to this Mate's branch on the group's Gitea; no pull request is open (Gitea opens one only for a branch that carries something main lacks). Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes and asks for the request again."
+		return "Pushed to this Mate's branch on the group's Gitea; no pull request is open (zcp opens one only for a branch that carries something main lacks). Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes and asks for the request again."
 	}
 	return fmt.Sprintf("Pushed to %s on the group's Gitea; pull request #%d (%s) carries it to %q, and the person merges it. %s %s Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes, and updates the request while it is open.",
 		pr.Branch, pr.Number, pr.URL, pr.Base, giteaDescribeLine(pr, hostname), giteaMergeAnyMoment(pr.Base))

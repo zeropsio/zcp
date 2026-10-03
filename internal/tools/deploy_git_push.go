@@ -803,7 +803,7 @@ func handleGitPush(
 	// Opened as soon as the push lands: the push is what put the Mate's branch
 	// on the account's Gitea, and `main` there takes no direct push from
 	// anyone. Idempotent: a second push finds the open one.
-	pullRequest := giteaPullRequestAfterPush(ctx, httpClient, stateDir, hostname, effectiveRemote)
+	pullRequest, pullRequestErr := giteaPullRequestAfterPush(ctx, httpClient, stateDir, hostname, effectiveRemote)
 	giteaRemote := giteaRemoteOfThisMate(effectiveRemote)
 
 	// C2 closure (audit-prerelease-internal-testing-2026-04-29): the
@@ -847,7 +847,7 @@ func handleGitPush(
 	case giteaRemote:
 		// The group's workflow runs on main, which the person's merge moves:
 		// nothing builds from a Mate's branch (gitea_delivery.go).
-		result.NextActions = giteaPushNextActions(pullRequest, hostname)
+		result.NextActions = giteaPushNextActions(pullRequest, pullRequestErr, hostname)
 	default:
 		// L1 build watch (spec-git-delivery-target §6.1): the push IS the
 		// deploy, so follow the integration-triggered build to terminal the

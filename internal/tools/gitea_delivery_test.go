@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/mate"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -1123,10 +1126,20 @@ func TestAPushHandOverSaysTheRequestMayBeMergedAtAnyMoment(t *testing.T) {
 	tests := []struct {
 		name    string
 		pr      *giteaPullRequestRef
+		openErr error
 		want    []string
 		wantNot []string
 	}{
-		{name: "no request open", wantNot: []string{"at any moment", "describe-change"}},
+		{
+			name: "nothing to propose", openErr: ops.ErrNothingToPropose,
+			want:    []string{"no pull request is open", "zcp opens one only"},
+			wantNot: []string{"at any moment", "describe-change", "could not be opened"},
+		},
+		{
+			name: "gitea refused the create", openErr: errors.New("the Gitea pull-request create returned status 500"),
+			want:    []string{"could not be opened", "status 500", "tried again"},
+			wantNot: []string{"at any moment", "describe-change", "no pull request is open"},
+		},
 		{
 			name: "a request open", pr: open,
 			want: []string{`action="describe-change" service="appdev"`, "may merge it at any moment", `what "main" still lacks`},
@@ -1134,7 +1147,7 @@ func TestAPushHandOverSaysTheRequestMayBeMergedAtAnyMoment(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := giteaPushNextActions(tt.pr, "appdev")
+			got := giteaPushNextActions(tt.pr, tt.openErr, "appdev")
 			for _, want := range tt.want {
 				if !strings.Contains(got, want) {
 					t.Errorf("next actions miss %q:\n%s", want, got)
@@ -1143,6 +1156,87 @@ func TestAPushHandOverSaysTheRequestMayBeMergedAtAnyMoment(t *testing.T) {
 			for _, unwanted := range tt.wantNot {
 				if strings.Contains(got, unwanted) {
 					t.Errorf("next actions must not say %q:\n%s", unwanted, got)
+				}
+			}
+		})
+	}
+}
+
+// TestAPairsRequestNothingToProposeIsNotAFailure: a branch whose diff against
+// main is empty owes no request — the ordinary state right after the person
+// merged — and the reconcile says nothing of it, the delivery says there is
+// nothing to merge; only a request Gitea refused to open is reported as one
+// that could not be, and retried.
+func TestAPairsRequestNothingToProposeIsNotAFailure(t *testing.T) {
+	tests := []struct {
+		name             string
+		compareDiff      string
+		pullCreateStatus int
+		wantReconcile    []string
+		wantDelivery     []string
+		wantNotDelivery  []string
+	}{
+		{
+			name:            "nothing to propose",
+			wantDelivery:    []string{"No pull request is open", "zcp opens one only", "nothing for the person to merge"},
+			wantNotDelivery: []string{"could not be opened"},
+		},
+		{
+			name:             "gitea refuses the create",
+			compareDiff:      "diff --git a/app.js b/app.js\n",
+			pullCreateStatus: http.StatusInternalServerError,
+			wantReconcile:    []string{"no pull request could be opened", "status 500", "retrying on the next pass"},
+			wantDelivery:     []string{"could not be opened", "status 500", "tried again"},
+			wantNotDelivery:  []string{"nothing for the person to merge"},
+		},
+		{
+			name:          "a change to propose",
+			compareDiff:   "diff --git a/app.js b/app.js\n",
+			wantReconcile: []string{"opened as pull request #3"},
+			wantDelivery:  []string{"pull request #3"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newFakeGitea()
+			fake.branchExists = true
+			fake.compareDiff = &tt.compareDiff
+			fake.pullCreateStatus = tt.pullCreateStatus
+			gitea := fake.start(t)
+			t.Setenv("GITEA_URL", gitea.URL)
+			t.Setenv("MATE_BROKER_URL", gitea.URL)
+			t.Setenv("GITEA_TOKEN", giteaBotToken)
+
+			stateDir := t.TempDir()
+			writeWiredGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git")
+			meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
+			wiring := ops.ReadGiteaWiring(giteaEnvLookup(mate.LiveEnvStorePath))
+			line := reconcileGiteaPairPullRequest(context.Background(), gitea.Client(), stateDir, wiring, meta)
+			if len(tt.wantReconcile) == 0 && line != "" {
+				t.Errorf("reconcile = %q, want nothing to say", line)
+			}
+			for _, want := range tt.wantReconcile {
+				if !strings.Contains(line, want) {
+					t.Errorf("reconcile misses %q:\n%s", want, line)
+				}
+			}
+
+			stateDir = t.TempDir()
+			writeWiredGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git")
+			ssh := &scriptedSSH{respond: func(_, _ string) string { return "ok" }}
+			delivery := deliverGiteaPair(context.Background(), platform.NewMock(), gitea.Client(), ssh,
+				runtime.Info{InContainer: true, ProjectID: "proj-1"}, stateDir, "appstage")
+			if delivery == nil {
+				t.Fatal("want a delivery")
+			}
+			for _, want := range tt.wantDelivery {
+				if !strings.Contains(delivery.Line, want) {
+					t.Errorf("delivery misses %q:\n%s", want, delivery.Line)
+				}
+			}
+			for _, unwanted := range tt.wantNotDelivery {
+				if strings.Contains(delivery.Line, unwanted) {
+					t.Errorf("delivery must not say %q:\n%s", unwanted, delivery.Line)
 				}
 			}
 		})

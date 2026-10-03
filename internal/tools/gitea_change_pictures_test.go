@@ -145,7 +145,7 @@ func TestOpenGiteaPairPullRequest_PutsTheKeptPictures(t *testing.T) {
 			keepForTest(t, stateDir, &workflow.ChangeDescription{Text: "![The list](" + id + ")"})
 			meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
 
-			ref := openGiteaPairPullRequest(context.Background(), gitea.Client(),
+			ref, _ := openGiteaPairPullRequest(context.Background(), gitea.Client(),
 				ops.GiteaWiring{GiteaURL: gitea.URL, BrokerURL: gitea.URL, Token: giteaBotToken}, stateDir, meta)
 			if ref == nil || ref.Number != 3 {
 				t.Fatalf("ref = %+v, want #3", ref)

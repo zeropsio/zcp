@@ -448,7 +448,7 @@ func wireGiteaPair(
 	// already pushed. The request's real triggers are the git-push deploy and
 	// the catch-up pass; both share this owner, and both record the number.
 	m.Gitea = &workflow.GiteaRepoRef{FullName: repo.FullName, Branch: branch, DefaultBranch: base}
-	if ref := openGiteaPairPullRequest(ctx, httpClient, wiring, stateDir, m); ref != nil {
+	if ref, _ := openGiteaPairPullRequest(ctx, httpClient, wiring, stateDir, m); ref != nil {
 		verb := "tracked by"
 		if ref.Created {
 			verb = "opened as"
