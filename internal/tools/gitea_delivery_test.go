@@ -1067,7 +1067,7 @@ func (s *scriptedSSH) ExecSSHBackground(_ context.Context, host, command string,
 // TestSessionAnnotations_WiredMate_HandoffOnlyAfterADelivery pins the closing
 // note of a wired Mate: it names the pull request to review only when the
 // session delivered — deployed a pair's stage half, the deploy that commits,
-// pushes and opens the request. A stand-up leaves the stage out of scope and
+// pushes and opens the request — and a request is open to review. A stand-up leaves the stage out of scope and
 // delivers nothing; told to hand over a request's link, the Mate would have
 // to open one nobody asked for.
 func TestSessionAnnotations_WiredMate_HandoffOnlyAfterADelivery(t *testing.T) {
@@ -1079,10 +1079,14 @@ func TestSessionAnnotations_WiredMate_HandoffOnlyAfterADelivery(t *testing.T) {
 		name        string
 		roles       map[string]string
 		deployed    []string
+		pullRequest int
 		wantHandoff bool
 	}{
 		{name: "a stand-up: the stage left out, nothing delivered", roles: map[string]string{"appstage": workflow.RoleOutOfScope}, deployed: []string{"appdev"}},
-		{name: "a task delivered through the stage", deployed: []string{"appdev", "appstage"}, wantHandoff: true},
+		{name: "a task delivered through the stage", deployed: []string{"appdev", "appstage"}, pullRequest: 3, wantHandoff: true},
+		// The person merged while the Mate worked, and the delivery had
+		// nothing left to propose: no request to hand over.
+		{name: "delivered with nothing left to propose", deployed: []string{"appdev", "appstage"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1094,6 +1098,10 @@ func TestSessionAnnotations_WiredMate_HandoffOnlyAfterADelivery(t *testing.T) {
 				Mode:            topology.PlanModeStandard,
 				CloseDeployMode: topology.CloseModeAuto,
 				BootstrappedAt:  now,
+				Gitea: &workflow.GiteaRepoRef{
+					FullName: "acme/appdev", Branch: "mate/mate-p1", DefaultBranch: "main",
+					PullRequest: tt.pullRequest,
+				},
 			}); err != nil {
 				t.Fatalf("WriteServiceMeta: %v", err)
 			}
