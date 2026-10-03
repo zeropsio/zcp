@@ -927,10 +927,11 @@ plan's (`planEnvironmentCreation`, `createEnvironment.ts:250-287`), in order:
   (`runEnvironmentCreation.ts:195-202`, `:396-406`). Where HQ is not open in the tab the mark is
   not written, and _Finish setup_ writes it (`matePress.ts:634-638`, `:673-676`).
 - `register` — the registration in the organization's HQ (MB-24): a Mate's record attached to its
-  application with its name and face, or a record in no application (`POST /api/mates`), then its
-  birth — who asked for its stand-up, and that its project is closed off (`POST
-  /api/mates/{projectId}/standup`, `…/closed-off`); a stage or a production attached as its tier,
-  with its deploy key (§10.11) (`matePress.ts:477-515`, `hqMateBirth.ts:19-27`).
+  application with its name and face, or a record in no application (`POST /api/mates`), with who
+  asks for its stand-up in the same write — an attach that closes the Mate's birth intent takes the
+  ask the intent was recorded with (`POST /api/births`, `standUp`), any other carries its own
+  (`standUp`), so the record and its ask never part; a stage or a production attached as its tier,
+  with its deploy key (§10.11) (`matePress.ts` `pressRegistration`, HQ `structure.ts`).
 - `share-reach` — the group's other Mates' keys extended to `READ_ONLY` on the new project where the
   person may edit them; best-effort, said on its step, the group-reach reconcile covering the rest
   (`runEnvironmentCreation.ts:407-419`, `matePress.ts:534-623`).
@@ -963,15 +964,16 @@ first made — and offers _Remove_ instead (`runEnvironmentCreation.ts:204-220`,
 
 **After the press the container does the rest**, with a browser open or none: zcp enrolls the Mate
 with its HQ, which is its Git access, from its boot on (zcp `internal/service/service.go:256-259`,
-`internal/hq/enroll.go:62-67`), imports the tier's runtimes only once HQ says the project is closed
-off (`internal/matesetup/runtimes.go:45-49`, `:477-508`), and the Mate's server starts the stand-up
-once HQ names who asked (`hqMateBirth.ts:1-6`). Any browser reads where that stands off `GET
-/mate/setup.json` — `container`, `git`, `runtimes`, `signin`, `standup` — and an older Mate's off
-`/mate/healthz` (`mateSetup.ts:1-26`). **Nothing connects to a Mate before its project is closed
-off**: auto-connect wants a Mate only once its health reads `ready`, and holds one whose container
-carries the press's marker while HQ does not hold its project closed off (`autoConnect.ts:44-49`,
-`:71-80`, `closeOffGate` `:103-121`); _Finish setup_ is what clears it (`interruptedPresses`,
-`matePress.ts:991-1009`).
+`internal/hq/enroll.go:62-67`), imports the tier's runtimes only once Zerops reads the project
+closed off — HQ's mark is a receipt (`internal/ops/closed_off.go`, `internal/matesetup/runtimes.go`
+`awaitClosedOff`), and the Mate's server starts the stand-up once HQ's record names who asked, or
+settles it as none at once where it names nobody (`ZeropsSetup.ts`). Any browser reads where that
+stands off `GET /mate/setup.json` — `container`, `git`, `runtimes`, `signin`, `standup` — and an
+older Mate's off `/mate/healthz` (`mateSetup.ts:1-26`). **Nothing connects to a Mate before its
+project is closed off**: auto-connect wants a Mate only once its health reads `ready`, and holds
+one whose container carries the press's marker while HQ does not hold its project closed off
+(`autoConnect.ts:44-49`, `:71-80`, `closeOffGate` `:103-121`); _Finish setup_ is what clears it
+(`interruptedPresses`, `matePress.ts:991-1009`).
 `runEnvironmentCreation.test.ts` — "closes off before the registration", "keeps a Mate closed off
 and running when its registration is refused", "stops a stage's press at a refused registration: it
 has no close-off to keep", "reads no process, and closes off in two reads two seconds apart",
@@ -2496,8 +2498,10 @@ The order:
 4. It lowers the container's token, drops the delegation, grants the broker and registers the Mate.
 5. When `zcp` answers, it closes the project off and records that at the Mate's HQ
    (`POST /api/mates/{projectId}/closed-off`, once the Mate's record exists there), and the sign-in
-   is offered. zcp's runtime import and `zerops_standup` read closed-off from HQ with the Mate's own
-   enrollment (`hq.ReadClosedOff`); an HQ that cannot be asked holds the import, never opens it.
+   is offered. HQ's mark is a receipt: zcp's runtime import, `zerops_import` and `zerops_standup`
+   read closed-off from Zerops with the Mate's own key — `envIsolation`'s first word `service` and
+   no `ZCP_API_KEY` left project-wide (`ops.ProjectClosedOff`); a read that fails, or one without
+   `envIsolation` yet, holds the import, never opens it.
 6. It imports the runtimes in one wave: dev halves `startWithoutCode: true` (running and empty, the
    checkout target), stage halves with no build (`READY_TO_DEPLOY`), public-build utilities with
    their build, which the platform runs.
@@ -2505,13 +2509,13 @@ The order:
    reads the recipe and the recipe's repositories with.
 8. The person signs the agent in meanwhile; the Mate's server keeps who did (§10.5).
 9. The Mate's server sends "Stand up development of the project." into the main conversation as
-   the person its HQ names as the stand-up's asker (`standupRequestedBy`, written by the press with
-   `POST /api/mates/{projectId}/standup` as the Mate's record is born), once that person signed an
-   agent in here (`ZeropsSetup.ts`). Until the link to HQ brings the Mate nobody is known to have
-   asked, and nothing is settled on that; HQ naming nobody settles it as none only 5 min after the
-   server is up. No client sends it. While it waits, `/setup.json` says why where the server
-   knows: `no_hq`, `not_enrolled` (with HQ's refusal `code`), `not_linked`, `awaiting_request`
-   (C-7). The Mate's AGENTS.md sends that message to `zerops_standup` first. The tool:
+   the person its HQ names as the stand-up's asker (`standupRequestedBy`, written in the same write
+   as the Mate's record), once that person signed an agent in here (`ZeropsSetup.ts`). Until the
+   link to HQ brings the Mate nobody is known to have asked, and nothing is settled on that; HQ's
+   record naming nobody settles it as none at once. No client sends it. While it waits,
+   `/setup.json` says why where the server knows: `no_hq`, `not_enrolled` (with HQ's refusal
+   `code`), `not_linked` (C-7). The Mate's AGENTS.md sends that message to `zerops_standup` first.
+   The tool:
    - waits, bounded, for the Mate's enrollment with HQ (3 min) and for the runtimes (5 min: every dev half
      running and answering SSH, every stage half created), and for whatever the import still has in
      flight on them and on the managed services;

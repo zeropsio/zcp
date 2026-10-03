@@ -3,14 +3,11 @@ package tools
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/matesetup"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -86,20 +83,19 @@ func importInputSchema() *jsonschema.Schema {
 // errors come back with structured apiMeta via the error surface
 // established by the validation-plumbing plan.
 func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info) {
-	registerImport(srv, client, projectID, engine, stateDir, recipeProbe, rt, mate.LiveEnvStorePath, hqClosedOff(), nil)
+	registerImport(srv, client, projectID, engine, stateDir, recipeProbe, rt, mate.LiveEnvStorePath, nil)
 }
 
 // RegisterImportSteered is RegisterImport for a Mate: steer is asked, for
 // each service an override replaced, once the import landed — an override
 // writes the scale its YAML names (GroupRecipeSteer).
 func RegisterImportSteered(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info, steer GroupRecipeSteer) {
-	registerImport(srv, client, projectID, engine, stateDir, recipeProbe, rt, mate.LiveEnvStorePath, hqClosedOff(), steer)
+	registerImport(srv, client, projectID, engine, stateDir, recipeProbe, rt, mate.LiveEnvStorePath, steer)
 }
 
 // registerImport is RegisterImport reading the container's live env store
-// at liveEnvPath and asking closedOff whether the Mate's project is closed
-// off (refuseOpenMate).
-func registerImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info, liveEnvPath string, closedOff hq.ClosedOffReader, steer GroupRecipeSteer) {
+// at liveEnvPath (refuseOpenMate).
+func registerImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info, liveEnvPath string, steer GroupRecipeSteer) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_import",
 		Description: "REQUIRES active workflow context (zerops_workflow bootstrap/develop). Import services from YAML into the project. An optional project.envVariables block applies project-level vars before services are created; other project.* fields are rejected. The Zerops API validates fields, modes, types, and hostnames server-side and returns structured apiMeta on the error response when anything is wrong. Blocks until all processes complete; returns final statuses (FINISHED/FAILED).",
@@ -112,7 +108,7 @@ func registerImport(srv *mcp.Server, client platform.Client, projectID string, e
 		if blocked := requireWorkflowContext(engine, stateDir, recipeProbe); blocked != nil {
 			return blocked, nil, nil
 		}
-		if blocked := refuseOpenMate(ctx, closedOff, rt, liveEnvPath); blocked != nil {
+		if blocked := refuseOpenMate(ctx, client, projectID, rt, liveEnvPath); blocked != nil {
 			return blocked, nil, nil
 		}
 		if input.Override.Bool() {
@@ -144,35 +140,28 @@ func registerImport(srv *mcp.Server, client platform.Client, projectID string, e
 // refuseOpenMate refuses an import into a Mate's project that is not closed
 // off yet: its runtimes would read the zcp service's variables, the Mate's
 // own key among them, and closing it off after they exist restarts them. The
-// person's press closes it off and records it in HQ as the Mate's birth; a
-// press whose tab closed first leaves it to Finish setup. Only a Mate the new
-// press made — its zcp carries MATE_SETUP_RUNTIMES in the live env store; an
-// older Mate behaves as before. HQ not answering is refused too, saying so:
-// whether the project is closed off is not known.
-func refuseOpenMate(ctx context.Context, closedOff hq.ClosedOffReader, rt runtime.Info, liveEnvPath string) *mcp.CallToolResult {
+// person's press closes it off; a press whose tab closed first leaves it to
+// Finish setup. Whether it is closed off is read from Zerops
+// (ops.ProjectClosedOff), never from HQ's mark (audit N1). Only a Mate the
+// new press made — its zcp carries MATE_SETUP_RUNTIMES in the live env
+// store; an older Mate behaves as before. A read that fails is refused too,
+// saying so: whether the project is closed off is not known.
+func refuseOpenMate(ctx context.Context, client platform.Client, projectID string, rt runtime.Info, liveEnvPath string) *mcp.CallToolResult {
 	if !newFlowMate(rt, liveEnvPath) {
 		return nil
 	}
-	closed, err := closedOff(ctx)
+	closed, err := ops.ProjectClosedOff(ctx, client, projectID)
 	switch {
 	case err != nil:
 		return convertError(platform.NewPlatformError(platform.ErrAPIError,
-			fmt.Sprintf("Could not ask HQ whether the project is closed off (%v); nothing was imported.", err),
-			"Retry the import; if it persists, run `zcp hq status` to see whether this Mate is enrolled with its HQ."))
+			fmt.Sprintf("Could not read whether the project is closed off (%v); nothing was imported.", err),
+			"Retry the import."))
 	case closed:
 		return nil
 	}
 	return convertError(platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 		openMateRefusal,
 		"Nothing was imported. Tell the person to press Finish setup on this Mate in the app, then import again."))
-}
-
-// hqAskTimeout bounds one ask of HQ whether the project is closed off.
-const hqAskTimeout = 15 * time.Second
-
-// hqClosedOff asks the HQ this Mate enrolled with (hq.EnrollmentPath).
-func hqClosedOff() hq.ClosedOffReader {
-	return hq.ReadClosedOff(&http.Client{Timeout: hqAskTimeout}, hq.EnrollmentPath())
 }
 
 // newFlowMate is a Mate the new press made: its zcp carries the runtimes

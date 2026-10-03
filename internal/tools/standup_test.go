@@ -387,7 +387,8 @@ type standupFixture struct {
 	// status is its writer, one for the fixture as one MCP server holds one.
 	statusPath string
 	status     *standupStatus
-	// closedOff is what HQ answers: the Mate's project closed off.
+	// closedOff is the Mate's project as Zerops reads it: envIsolation
+	// `service`, else `none` (ops.ProjectClosedOff).
 	closedOff bool
 }
 
@@ -483,6 +484,11 @@ func (f *standupFixture) run(t *testing.T) (*mcp.CallToolResult, standupResponse
 	if f.building != nil {
 		client = f.building
 	}
+	isolation := "none"
+	if f.closedOff {
+		isolation = "service"
+	}
+	f.mock.WithProjectEnv([]platform.ProjectEnvVar{{ID: "e-iso", Key: "envIsolation", Content: isolation, Type: platform.ProjectEnvSystem}})
 	registerStandup(srv, standupDeps{
 		batch: batchDeployer{
 			client:      client,
@@ -501,7 +507,6 @@ func (f *standupFixture) run(t *testing.T) (*mcp.CallToolResult, standupResponse
 		runtimePoll:    5 * time.Millisecond,
 		statusPath:     f.statusPath,
 		status:         f.status,
-		closedOff:      func(context.Context) (bool, error) { return f.closedOff, nil },
 		enrollmentPath: f.enrollmentPath,
 		bootWait:       2 * time.Second,
 		bootPoll:       5 * time.Millisecond,
@@ -1610,10 +1615,10 @@ func TestStandup_AnImportWaitingToBeClosedOffAnswersAtOnce(t *testing.T) {
 }
 
 // TestStandup_ClosedOffWhileTheImportStillSaysWaiting: the container's
-// import asks HQ once a minute at most, so its last line can still say it
-// waits after the press has closed the project off. The stand-up asks HQ
-// itself: closed off, it says the import is starting and waits for it as for
-// an import in flight, then stands the project up.
+// import reads the project once a minute at most, so its last line can still
+// say it waits after the press has closed the project off. The stand-up reads
+// Zerops itself: closed off, it says the import is starting and waits for it
+// as for an import in flight, then stands the project up.
 func TestStandup_ClosedOffWhileTheImportStillSaysWaiting(t *testing.T) {
 	t.Parallel()
 	f := newStandupFixture(t)
