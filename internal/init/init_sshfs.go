@@ -16,6 +16,10 @@ var sshfsMountBase = defaultSSHFSMountBase
 // RunSSHFS reads ZCP_SSHFS_HOSTNAMES env (comma-separated) and creates
 // SSHFS mounts for each hostname via zsc unit create.
 // Skips gracefully if the env var is not set.
+//
+// A per-hostname failure never fails the command: `zcp init sshfs` is a
+// run.init command whose exit code gates the container start, and one
+// unmountable service (stopped, deleted) must not keep the control plane down.
 func RunSSHFS() error {
 	raw := os.Getenv("ZCP_SSHFS_HOSTNAMES")
 	if raw == "" {
@@ -30,7 +34,7 @@ func RunSSHFS() error {
 		}
 		fmt.Fprintf(os.Stderr, "  → SSHFS mount: %s\n", hostname)
 		if err := mountSSHFS(hostname); err != nil {
-			return fmt.Errorf("sshfs mount %s: %w", hostname, err)
+			fmt.Fprintf(os.Stderr, "  ! sshfs mount %s: %v\n    (continuing — /var/www/%s stays unmounted)\n", hostname, err, hostname)
 		}
 	}
 	fmt.Fprintln(os.Stderr, "  ✓ SSHFS init complete")
@@ -38,10 +42,20 @@ func RunSSHFS() error {
 }
 
 // mountSSHFS creates a directory and a zsc unit for one SSHFS mount.
+//
+// A mount left behind by a service that is now stopped answers stat with
+// "transport endpoint is not connected", so MkdirAll fails with "file exists".
+// That mount point is lazily unmounted and the mkdir retried once. sshfs runs
+// as root under `sudo zsc`, so the unmount needs sudo too.
 func mountSSHFS(hostname string) error {
 	mountPath := filepath.Join(sshfsMountBase, hostname)
 	if err := os.MkdirAll(mountPath, 0755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", mountPath, err)
+		if umountErr := commandRunner("sudo", "umount", "-l", mountPath); umountErr != nil {
+			return fmt.Errorf("mkdir %s: %w (lazy unmount: %w)", mountPath, err, umountErr)
+		}
+		if err := os.MkdirAll(mountPath, 0755); err != nil {
+			return fmt.Errorf("mkdir %s after lazy unmount: %w", mountPath, err)
+		}
 	}
 
 	unitName := "sshfs-" + hostname
