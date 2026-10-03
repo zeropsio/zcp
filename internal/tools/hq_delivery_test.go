@@ -132,7 +132,7 @@ func TestAStageDeployWithNothingBeyondMainOpensNoChange(t *testing.T) {
 	if delivery == nil || delivery.Change != nil {
 		t.Fatalf("want a delivery with no change, got %+v", delivery)
 	}
-	if !strings.Contains(delivery.Line, "nothing differs from it, so no change is open") {
+	if !strings.Contains(delivery.Line, "nothing to deliver: main already has this") {
 		t.Errorf("line:\n%s", delivery.Line)
 	}
 	if lab.hq.change(2) != nil {
@@ -372,7 +372,7 @@ func TestShipChange_AChangeSettledBeforeItsPushIsOwedAgain(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			shipped := shipChange(t.Context(), refusingPushSSH{reason: reason}, lab.stateDir, hqc, lab.meta(), "Add a footer", 1)
+			shipped := shipChange(t.Context(), refusingPushSSH{reason: reason}, lab.stateDir, hqc, lab.meta(), "Add a footer")
 			if !shipped.pending || shipped.ref != nil || !strings.Contains(shipped.line, reason) {
 				t.Fatalf("shipped = %+v, want the delivery owed again", shipped)
 			}
@@ -380,5 +380,54 @@ func TestShipChange_AChangeSettledBeforeItsPushIsOwedAgain(t *testing.T) {
 				t.Errorf("the pair's record = %+v, want no change and the delivery pending", record)
 			}
 		})
+	}
+}
+
+func TestAStageDeployAfterASquashWithNoNewWorkReportsNothingToDeliver(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	lab.write(map[string]string{"index.js": "app\n"})
+	lab.deliver()
+	main := lab.hq.merge()
+	d := lab.deliver()
+	if d == nil || d.Change != nil || !strings.Contains(d.Line, "nothing to deliver: main already has this") {
+		t.Fatalf("delivery = %+v", d)
+	}
+	if lab.hq.change(2) != nil {
+		t.Fatal("opened an empty change")
+	}
+	if got := lab.git("rev-parse", "HEAD"); got != main {
+		t.Fatalf("HEAD = %s, want main %s", got, main)
+	}
+	if !strings.Contains(d.Line, "starts from main") {
+		t.Fatalf("fresh base wasn't reported: %s", d.Line)
+	}
+}
+
+// A legacy delivery could have cleared the local landing while retaining its
+// pre-squash history. HQ's latest landing remains the authoritative base.
+func TestAStageDeliveryStartsFromHQsLandingWhenTheLocalRecordWasAlreadyCleared(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	lab.write(map[string]string{"index.js": "app\n"})
+	lab.deliver()
+	main := lab.hq.merge()
+	if err := workflow.UpsertServiceMeta(lab.stateDir, "appdev", func(m *workflow.ServiceMeta, _ bool) error {
+		m.HQ.Change = 0
+		m.HQ.Landed = nil
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	lab.write(map[string]string{"footer.js": "footer\n"})
+	d := lab.deliver()
+	if d == nil || d.Change == nil || d.Change.Number != 2 {
+		t.Fatalf("delivery = %+v", d)
+	}
+	if parent := lab.git("rev-parse", "HEAD^1"); parent != main {
+		t.Fatalf("next change's parent = %s, want main %s", parent, main)
+	}
+	if !strings.Contains(d.Line, "starts from main") {
+		t.Fatalf("fresh start wasn't reported: %s", d.Line)
 	}
 }

@@ -230,9 +230,9 @@ func TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange(t *testing.T)
 			if meta.HQ.Change != 0 || (meta.HQ.Landed != nil) != tt.wantLanded {
 				t.Errorf("the pair's record = %+v", meta.HQ)
 			}
-			// The pass folds a squash into the clean checkout right away.
-			if tt.wantLanded && !strings.Contains(lab.git("log", "--format=%H"), *lab.hq.change(1).MergedSha) {
-				t.Errorf("the pass must fold the squash into the checkout")
+			// A pass records the landing; the explicit delivery moves the checkout.
+			if tt.wantLanded && strings.Contains(lab.git("log", "--format=%H"), *lab.hq.change(1).MergedSha) {
+				t.Errorf("the pass must leave the checkout unchanged")
 			}
 		})
 	}
@@ -342,15 +342,14 @@ func TestBootstrapClose_WiresTheRepository(t *testing.T) {
 	assertNoSecretOnDisk(t, stateDir, labCredential)
 }
 
-// TestAbsorbLandedChangeOnCheckout_OnlyOnACleanCheckoutOfTheMatesBranch: the
-// pass that learns of a merge folds it into the checkout only when that is
-// safe — a clean tree on the Mate's own branch — and otherwise leaves the
-// checkout exactly as it was; the next delivery is the one that reports.
-func TestAbsorbLandedChangeOnCheckout_OnlyOnACleanCheckoutOfTheMatesBranch(t *testing.T) {
+// A pass records a landing without changing even a clean checkout.
+// Only an explicit delivery starts the next change from main and reports it.
+func TestHQPass_RecordsALandingWithoutChangingTheCheckout(t *testing.T) {
 	for _, tt := range []struct {
 		name  string
 		upset func(*hqLab)
 	}{
+		{name: "clean checkout", upset: func(*hqLab) {}},
 		{name: "work not committed", upset: func(l *hqLab) { l.write(map[string]string{"index.js": "an edit\n"}) }},
 		{name: "another branch checked out", upset: func(l *hqLab) { l.git("checkout", "-q", "-b", "elsewhere") }},
 	} {

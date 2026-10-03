@@ -247,6 +247,7 @@ func deliverHeldHQPair(
 			if note := hqLearnLanding(stateDir, meta, state); note != "" {
 				news = append(news, note)
 			}
+			deliveryLanding(stateDir, meta, state)
 		}
 	}
 
@@ -267,7 +268,10 @@ func deliverHeldHQPair(
 	if line := deliveryRefusalLine(string(output), target, repo, meta.Hostname, landedCommit); line != "" {
 		return &hqDelivery{Line: line}
 	}
-	ahead, found := ops.DeliveryAhead(string(output))
+	if base := ops.DeliveryFreshBase(string(output)); base != "" {
+		news = append(news, "The next change starts from main at "+base+"; prior history is kept under refs/zcp/landed/"+landedCommit)
+	}
+	_, found := ops.DeliveryAhead(string(output))
 	if err != nil || !found {
 		if ops.GitRemoteUnavailable(string(output)) {
 			recordPendingDelivery(stateDir, meta, title)
@@ -286,7 +290,7 @@ func deliverHeldHQPair(
 			target, repo, hqBase, gitPushErrorDetail(err, output), target)}
 	}
 
-	shipped := shipChange(ctx, sshDeployer, stateDir, hqc, meta, title, ahead)
+	shipped := shipChange(ctx, sshDeployer, stateDir, hqc, meta, title)
 	result := &hqDelivery{Change: shipped.ref}
 	switch {
 	case shipped.ref != nil:
@@ -295,8 +299,8 @@ func deliverHeldHQPair(
 			meta.Hostname, shipped.ref.Branch, repo, shipped.ref.Number, shipped.ref.URL, hqBase, describeLine(shipped.ref, meta.Hostname), hqBase)
 	case shipped.upToDate:
 		result.Line = fmt.Sprintf(
-			"Delivered: %s's code is in its repository %q in HQ as it is on %q — nothing differs from it, so no change is open; the next stage deploy asks again.",
-			meta.Hostname, repo, hqBase)
+			"%s runs; nothing to deliver: main already has this. No change was opened or updated in its repository %q in HQ.",
+			target, repo)
 	case shipped.pending:
 		result.Line = fmt.Sprintf(
 			"%s runs; its code is committed in %s's checkout, but %s. The delivery is kept and finishes by itself once HQ answers — on the next stage deploy, push or pass; nothing for the person to do.",

@@ -257,11 +257,9 @@ func keepHQPairCurrent(
 	var lines []string
 	if note := hqLearnLanding(stateDir, m, state); note != "" {
 		lines = append(lines, note)
-		if m.HQ.Landed != nil {
-			absorbLandedChangeOnCheckout(ctx, sshDeployer, m)
-		}
 	}
 	if m.HQ.Pending != nil {
+		deliveryLanding(stateDir, m, state)
 		if line := finishPendingDelivery(ctx, client, sshDeployer, rt, stateDir, hqc, m); line != "" {
 			lines = append(lines, line)
 		}

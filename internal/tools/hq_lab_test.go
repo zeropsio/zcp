@@ -174,10 +174,15 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Repo  string `json:"repo"`
 			Title string `json:"title"`
+			Tree  string `json:"tree"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		if !f.repos[f.appID+"/"+in.Repo] {
 			refuse(http.StatusNotFound, "repo_not_found", "repo_not_found")
+			return
+		}
+		if in.Tree != "" && in.Tree == f.git(r.Context(), f.repoDir(f.appID, in.Repo), "rev-parse", "main^{tree}") {
+			writeHQJSON(w, http.StatusOK, hq.OpenedChange{Reason: "nothing_to_deliver"})
 			return
 		}
 		if open := f.find(f.appID, in.Repo, 0, hq.ChangeOpen); open != nil {

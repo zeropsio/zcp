@@ -11,8 +11,8 @@ import (
 // delivery commits the tree as deployed, takes `main` in — a squash of this
 // Mate's own earlier change absorbed first (delivery_absorb.go) — and reports
 // how far ahead of `main` that leaves it. HQ takes a Mate's push only on the
-// branch of its own open change, `mate/<project id>/<number>`, so zcp opens
-// the change from that report and only then pushes HEAD there
+// branch of its own open change, `mate/<project id>/<number>`. HQ decides from
+// the candidate tree hash whether a change is needed before zcp pushes HEAD there
 // (BuildChangePushCommand). `main` moves only by HQ's merge: nothing here ever
 // pushes it.
 
@@ -101,7 +101,7 @@ const deliveryUnignoredMarker = "ZCP_UNIGNORED:"
 const deliveryConflictMarker = "ZCP_MERGE_CONFLICT:"
 
 // deliveryAheadMarker prefixes how many commits the checkout's HEAD has that
-// `main` does not, once `main` is taken in: what a change is opened for.
+// `main` does not, once `main` is taken in; this is not a content verdict.
 const deliveryAheadMarker = "ZCP_AHEAD:"
 
 // BuildDeliveryCommand readies a wired pair's working tree, as it was deployed,
@@ -128,7 +128,7 @@ func BuildDeliveryCommand(workingDir, message, landedCommit, landedHead string) 
 		"git add -A",
 		fmt.Sprintf("(git diff --cached --quiet || git commit -q -m %s)", shellQuote(message)),
 	}
-	steps = append(steps, deliverySyncSteps(landedCommit, landedHead)...)
+	steps = append(steps, deliverySyncSteps(landedCommit, landedHead, message)...)
 	return strings.Join(steps, " && ")
 }
 
@@ -136,11 +136,11 @@ func BuildDeliveryCommand(workingDir, message, landedCommit, landedHead string) 
 // a landing of its own change — WITHOUT committing anything of the agent's:
 // the exact fetch/absorb/take-`main`-in sequence BuildDeliveryCommand runs
 // after its commit, with the same report of how far ahead HEAD is. A push of
-// committed work runs it before opening the change; a pass that just learned a
-// change merged runs it so the Mate's next task starts on current code. A
+// committed work runs it before asking HQ for a change; an owed delivery runs
+// the same steps when it finishes. A
 // conflict aborts and leaves the checkout exactly as it was.
 func BuildDeliverySyncCommand(workingDir, landedCommit, landedHead string) string {
-	steps := append([]string{"cd " + shellQuote(workingDir)}, deliverySyncSteps(landedCommit, landedHead)...)
+	steps := append([]string{"cd " + shellQuote(workingDir)}, deliverySyncSteps(landedCommit, landedHead, "Work after the landed change")...)
 	return strings.Join(steps, " && ")
 }
 
@@ -154,7 +154,7 @@ func BuildDeliverySyncCommand(workingDir, landedCommit, landedHead string) strin
 // behind the moment somebody else merges. A merge and not a rebase: history
 // only moves forward, so a push built on this stays an ordinary one, HQ takes
 // a change's branch only forward, and no force can lose a commit.
-func deliverySyncSteps(landedCommit, landedHead string) []string {
+func deliverySyncSteps(landedCommit, landedHead, message string) []string {
 	remoteBase := shellQuote("origin/" + deliveryBase)
 	return []string{
 		fmt.Sprintf("GIT_TERMINAL_PROMPT=0 git %s fetch --no-tags -q origin", hqCredentialHelperArgs()),
@@ -169,6 +169,7 @@ func deliverySyncSteps(landedCommit, landedHead string) []string {
 			" git merge --abort >/dev/null 2>&1;"+
 			` echo "%s$conflicts"; exit 4))`,
 			remoteBase, remoteBase, remoteBase, deliveryConflictMarker),
+		freshDeliveryBase(landedCommit, landedHead, message),
 		fmt.Sprintf(`{ ahead=$(git rev-list --count %s 2>/dev/null) || ahead=$(git rev-list --count HEAD); echo "%s$ahead"; }`,
 			shellQuote("origin/"+deliveryBase+"..HEAD"), deliveryAheadMarker),
 	}

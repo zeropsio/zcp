@@ -156,14 +156,19 @@ type Change struct {
 type OpenedChange struct {
 	Change  Change `json:"change"`
 	Created bool   `json:"created"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 // OpenChange is the Mate's open change in repo, or the next number opened
 // with title. An open change keeps its title: retitling it is EditChange's.
-func (c Client) OpenChange(ctx context.Context, repo, title string) (OpenedChange, error) {
+func (c Client) OpenChange(ctx context.Context, repo, title string, tree ...string) (OpenedChange, error) {
 	var opened OpenedChange
+	body := map[string]string{"repo": repo, "title": title}
+	if len(tree) != 0 {
+		body["tree"] = tree[0]
+	}
 	err := c.call.json(ctx, http.MethodPost, "/api/mate/changes", c.authorization(),
-		map[string]string{"repo": repo, "title": title}, &opened)
+		body, &opened)
 	return opened, err
 }
 
