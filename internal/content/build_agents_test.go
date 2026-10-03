@@ -695,3 +695,55 @@ func TestBuildAgentsMD_Container_StandUpRoutesToTheTool(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildAgentsMD_Container_GitHostSaysWhereTheCodeLives pins where a Mate's
+// code lives. Measured on a live Mate in an empty project: asked to build a
+// small app, make "the deploy workflow's Test step" run the tests and open a
+// pull request, it looked for GitHub credentials for two minutes and asked
+// the person for a GitHub repository and an access token instead of
+// bootstrapping — nothing it read said the project's repository is on the
+// group's Gitea, that bootstrap makes it, or what "the deploy workflow"
+// names. AGENTS.md is in context from the first turn whatever the project
+// holds, so an empty project reads this block too. A container without a
+// git host, and a local install, are told none of it.
+func TestBuildAgentsMD_Container_GitHostSaysWhereTheCodeLives(t *testing.T) {
+	t.Parallel()
+	wants := []string{
+		"live in its repository on the group's Gitea (`$GITEA_URL`)",
+		"On an empty project, bootstrap",
+		"`.gitea/workflows/zerops.yml`",
+		`"The deploy workflow", "CI", "the Test step" and "a pull request" in the person's message mean that repository and that workflow`,
+		"never ask the person for a GitHub",
+	}
+	for _, tc := range []struct {
+		name string
+		rt   runtime.Info
+		want bool
+	}{
+		{name: "a Mate with a git host", rt: runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true, GitHostKnown: true}, want: true},
+		{name: "a container with a git host", rt: runtime.Info{InContainer: true, ServiceName: "zcp", GitHostKnown: true}, want: true},
+		{name: "a Mate without a git host", rt: runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}},
+		{name: "a container without a git host", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}},
+		{name: "local, git host set", rt: runtime.Info{GitHostKnown: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := BuildAgentsMD(tc.rt, false)
+			if err != nil {
+				t.Fatalf("BuildAgentsMD: %v", err)
+			}
+			for _, want := range wants {
+				if got := strings.Contains(out, want); got != tc.want {
+					t.Errorf("%q present = %v, want %v", want, got, tc.want)
+				}
+			}
+			if !tc.want {
+				for _, unwanted := range []string{"Gitea", "$GITEA_URL", ".gitea/workflows"} {
+					if strings.Contains(out, unwanted) {
+						t.Errorf("AGENTS.md without a git host names %q", unwanted)
+					}
+				}
+			}
+		})
+	}
+}
