@@ -195,9 +195,17 @@ func TestOpenCode_ContainerInit_WritesConfig(t *testing.T) {
 			want:    `{"permission":{"bash":"ask","*":"deny","edit":{"*.md":"allow"},"zerops_*":"allow"},"mcp":{"zerops":` + zerops + `}}`,
 		},
 		{
-			name:    "an existing zerops_* rule is overwritten where it stands",
+			// The user's own zerops_* rule is their decision: value and place stay.
+			name:    "a user's zerops_* rule is left alone",
 			initial: `{"permission":{"zerops_*":"ask","*":"deny"}}`,
-			want:    `{"permission":{"zerops_*":"allow","*":"deny"},"mcp":{"zerops":` + zerops + `}}`,
+			want:    `{"permission":{"zerops_*":"ask","*":"deny"},"mcp":{"zerops":` + zerops + `}}`,
+		},
+		{
+			// Narrower zerops_ rules must still win (last match wins), so
+			// zerops_* goes in right before the first of them — after "*".
+			name:    "zerops_* lands before the user's narrower zerops_ rules",
+			initial: `{"permission":{"*":"ask","zerops_zerops_delete":"deny","bash":"ask","zerops_zerops_import":"ask"}}`,
+			want:    `{"permission":{"*":"ask","zerops_*":"allow","zerops_zerops_delete":"deny","bash":"ask","zerops_zerops_import":"ask"},"mcp":{"zerops":` + zerops + `}}`,
 		},
 		{
 			// A blanket action is the user's whole policy; turning it into an
@@ -242,6 +250,7 @@ func TestOpenCode_ContainerInit_Rerun(t *testing.T) {
 	}{
 		{name: "fresh"},
 		{name: "with user content", initial: `{"model":"a/b","mcp":{"x":{"type":"local","command":["x"]}},"permission":{"*":"ask"}}`},
+		{name: "with narrower zerops rules", initial: `{"permission":{"*":"ask","zerops_zerops_delete":"deny"}}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

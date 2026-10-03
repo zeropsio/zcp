@@ -90,12 +90,13 @@ func (OpenCode) Validate(env Env) ([]string, error) {
 // pre-approves zcp's tools with permission["zerops_*"] = "allow" — the
 // counterpart of Claude's `mcp__zerops__*` allow and Cursor's `Mcp(zerops:*)`.
 //
-// The permission rule is appended after the user's own rules (or overwritten
-// where a "zerops_*" key already stands); a blanket string permission such as
-// "ask" is the user's whole policy and is left untouched. Inside a Mate the
-// session's own ruleset is evaluated after the config's, so the Mate's runtime
-// mode still decides there (measured: a supervised session's "*": "ask" asks
-// for zerops_zerops_discover despite this rule).
+// The rule never overrules the user (see withZeropsAllow); a blanket string
+// permission such as "ask" is the user's whole policy and is left untouched.
+// Rules in an opencode.jsonc beside this file merge AFTER it, so a "*": "ask"
+// there still overrides this rule. Inside a Mate the session's own ruleset is
+// evaluated after the config's, so the Mate's runtime mode still decides there
+// (measured: a supervised session's "*": "ask" asks for zerops_zerops_discover
+// despite this rule).
 //
 // A file ZCP cannot merge — JSONC comments, a non-object root, a non-object
 // `mcp` — is refused and left byte-for-byte, never overwritten.
@@ -140,8 +141,7 @@ func (OpenCode) ContainerInit(env Env) error {
 				return fmt.Errorf("parse %s: permission: %w", configPath, err)
 			}
 		}
-		rules = upsertMember(rules, openCodePermissionKey, json.RawMessage(`"allow"`))
-		if doc, err = upsertObjectMember(doc, "permission", rules); err != nil {
+		if doc, err = upsertObjectMember(doc, "permission", withZeropsAllow(rules)); err != nil {
 			return fmt.Errorf("encode %s: %w", configPath, err)
 		}
 	}
@@ -159,6 +159,28 @@ func (OpenCode) ContainerInit(env Env) error {
 		return fmt.Errorf("write %s: %w", configPath, err)
 	}
 	return nil
+}
+
+// withZeropsAllow adds the "zerops_*": "allow" rule to a permission object
+// without overruling the user. OpenCode applies rules in key order, the last
+// match winning, so:
+//
+//   - a "zerops_*" key the user already has is their decision — its value
+//     and place are left alone;
+//   - otherwise the rule goes in right BEFORE the user's first narrower
+//     "zerops_…" rule, so a "zerops_zerops_delete": "deny" still wins;
+//   - with no such rule it goes last, so it beats a catch-all "*".
+func withZeropsAllow(rules []jsonMember) []jsonMember {
+	allow := jsonMember{key: openCodePermissionKey, value: json.RawMessage(`"allow"`)}
+	if _, ok := lookupMember(rules, openCodePermissionKey); ok {
+		return rules
+	}
+	for i, r := range rules {
+		if strings.HasPrefix(r.key, "zerops_") {
+			return append(rules[:i:i], append([]jsonMember{allow}, rules[i:]...)...)
+		}
+	}
+	return append(rules, allow)
 }
 
 // openCodeServerEntry is OpenCode's local (stdio) MCP server shape: the
