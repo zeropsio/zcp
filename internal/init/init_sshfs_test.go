@@ -1,6 +1,7 @@
 package init_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -149,5 +150,80 @@ func TestRunSSHFS_SkipsEmptyHostnames(t *testing.T) {
 	}
 	if count != 2 {
 		t.Errorf("expected 2 mounts (app, worker), got %d", count)
+	}
+}
+
+func TestRunSSHFS_MountFailure_ContinuesAndSucceeds(t *testing.T) {
+	// Not parallel — mutates env and commandRunner.
+	// `zcp init sshfs` is a run.init command: its exit code gates the
+	// container start, so one unmountable service (stopped, deleted) must
+	// never keep the control plane down.
+	mountBase := t.TempDir()
+	zcpinit.SetSSHFSMountBase(mountBase)
+	t.Cleanup(func() { zcpinit.ResetSSHFSMountBase() })
+	t.Setenv("ZCP_SSHFS_HOSTNAMES", "listmonk,app")
+
+	var unitNames []string
+	zcpinit.SetCommandRunner(func(_ string, args ...string) error {
+		// args: -E zsc unit create <unitName> <cmd>
+		if len(args) >= 5 && args[4] == "sshfs-listmonk" {
+			return errors.New("zsc unit create failed")
+		}
+		if len(args) >= 5 {
+			unitNames = append(unitNames, args[4])
+		}
+		return nil
+	})
+	t.Cleanup(func() { zcpinit.ResetCommandRunner() })
+
+	if err := zcpinit.RunSSHFS(); err != nil {
+		t.Fatalf("RunSSHFS() must not fail on a per-hostname mount error, got: %v", err)
+	}
+	if len(unitNames) != 1 || unitNames[0] != "sshfs-app" {
+		t.Errorf("hostnames after the failed one must still mount, got units %v", unitNames)
+	}
+}
+
+func TestRunSSHFS_StaleMountPoint_UnmountsAndRetries(t *testing.T) {
+	// Not parallel — mutates env and commandRunner.
+	// A FUSE mount left behind by a service that is now stopped answers
+	// stat with "transport endpoint is not connected", so MkdirAll fails
+	// with "file exists". A regular file at the mount path reproduces the
+	// same MkdirAll failure without FUSE.
+	mountBase := t.TempDir()
+	zcpinit.SetSSHFSMountBase(mountBase)
+	t.Cleanup(func() { zcpinit.ResetSSHFSMountBase() })
+	t.Setenv("ZCP_SSHFS_HOSTNAMES", "listmonk")
+
+	mountPath := filepath.Join(mountBase, "listmonk")
+	if err := os.WriteFile(mountPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var executed []string
+	zcpinit.SetCommandRunner(func(name string, args ...string) error {
+		cmd := strings.Join(append([]string{name}, args...), " ")
+		executed = append(executed, cmd)
+		if cmd == "sudo umount -l "+mountPath {
+			return os.Remove(mountPath)
+		}
+		return nil
+	})
+	t.Cleanup(func() { zcpinit.ResetCommandRunner() })
+
+	if err := zcpinit.RunSSHFS(); err != nil {
+		t.Fatalf("RunSSHFS() error: %v", err)
+	}
+	if len(executed) != 2 {
+		t.Fatalf("expected lazy unmount then unit create, got %v", executed)
+	}
+	if executed[0] != "sudo umount -l "+mountPath {
+		t.Errorf("first command: got %q, want lazy unmount of %s", executed[0], mountPath)
+	}
+	if !strings.Contains(executed[1], "unit create sshfs-listmonk") {
+		t.Errorf("second command: got %q, want unit create", executed[1])
+	}
+	if info, err := os.Stat(mountPath); err != nil || !info.IsDir() {
+		t.Errorf("mount path should be a directory after retry: %v", err)
 	}
 }
