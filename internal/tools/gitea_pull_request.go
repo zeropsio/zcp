@@ -344,12 +344,14 @@ func clearGiteaPullRequest(stateDir string, m *workflow.ServiceMeta, number int)
 func recordGiteaLanding(stateDir string, m *workflow.ServiceMeta, number int, commit, head string) {
 	m.Gitea.PullRequest = 0
 	m.Gitea.Landed = &workflow.LandedPullRequest{Commit: commit, Head: head}
+	m.Gitea.LastLanded = commit
 	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
 		if !existed || meta.Gitea == nil || meta.Gitea.PullRequest != number {
 			return nil
 		}
 		meta.Gitea.PullRequest = 0
 		meta.Gitea.Landed = &workflow.LandedPullRequest{Commit: commit, Head: head}
+		meta.Gitea.LastLanded = commit
 		return nil
 	})
 }

@@ -92,8 +92,9 @@ func giteaLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, 
 // said to merge it):
 //   - a request still open after the fresh read → name it, tell the person
 //     to merge it;
-//   - a merge recorded in Landed, or just learned by the fresh read → the
-//     code is on the group's main; point to the projects page;
+//   - a merge recorded in Landed or LastLanded (which outlives the absorb
+//     that clears Landed), or just learned by the fresh read → the code is
+//     on the group's main; point to the projects page;
 //   - no request at all (never pushed, no repository yet) or one closed
 //     without merging → nothing of this pair's work has reached main; tell
 //     the person to deliver through the stage half first.
@@ -112,7 +113,7 @@ func giteaLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer,
 			switch {
 			case m.Gitea.PullRequest != 0:
 				open = append(open, fmt.Sprintf("%s's pull request #%d on %s", m.Hostname, m.Gitea.PullRequest, m.Gitea.FullName))
-			case m.Gitea.Landed != nil:
+			case m.Gitea.Landed != nil || m.Gitea.LastLanded != "":
 				merged = true
 			}
 		}

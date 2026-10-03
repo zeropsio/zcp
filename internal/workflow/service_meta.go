@@ -180,6 +180,12 @@ type GiteaRepoRef struct {
 	// with the branch that became it, so the ordinary take-the-base-in merge
 	// alone reads it as two histories that both add the same files.
 	Landed *LandedPullRequest `json:"landed,omitempty"`
+	// LastLanded is the merge commit of the pair's most recent merged
+	// request: recorded with Landed, and never cleared — the absorb that
+	// clears Landed leaves the work on the base all the same. It is how
+	// production knows this pair's work reached the group's repository once
+	// no request and no pending landing are left to say so.
+	LastLanded string `json:"lastLanded,omitempty"`
 	// ChangeDescription is what the Mate wrote about its change while no
 	// pull request could take it yet — none was open, or Gitea refused the
 	// edit. It is there only until a request carries it, and never longer

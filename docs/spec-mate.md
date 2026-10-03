@@ -2595,9 +2595,11 @@ application/json` and `{"total_commits":…}`; the cross-fork `owner:branch` sha
 empty diff is nothing to propose (`ops.ErrNothingToPropose`), never a failure and never a request
 `#0`. No pass opens a request from a branch whose landing still waits to be absorbed, since that
 branch still holds the squashed history; the next delivery or push opens it, for what `main` still
-lacks. Every hand-over of a request, after asking for its description, tells the agent the person
-may merge it at any moment and that the next stage deploy folds the merge in.
-`TestEnsureGiteaPullRequest`, `TestAStageDeployAfterThePersonMergedProposesOnlyWhatMainLacks`,
+lacks. The pair keeps its last merge (`GiteaRepoRef.LastLanded`) after the absorb clears the
+pending landing, so launching production still knows its work is on `main` when no request is left
+to say so. Every hand-over of a request, after asking for its description, tells the agent the
+person may merge it at any moment and that the next stage deploy folds the merge in.
+`TestProductionKnowsMergedWorkAfterTheMergeIsAbsorbed`, `TestEnsureGiteaPullRequest`, `TestAStageDeployAfterThePersonMergedProposesOnlyWhatMainLacks`,
 `TestReconcileGitea_OpensThePullRequestOnceTheBranchIsThere`,
 `TestReconcileGiteaGroupRecipe_AnEmptyDiffProposesNothing`,
 `TestGroupRecipeScaling_AnEmptyDiffProposesNothing`.

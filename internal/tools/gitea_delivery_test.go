@@ -1242,3 +1242,40 @@ func TestAPairsRequestNothingToProposeIsNotAFailure(t *testing.T) {
 		})
 	}
 }
+
+// TestProductionKnowsMergedWorkAfterTheMergeIsAbsorbed: the person merged
+// the Mate's request, the next stage deploy absorbed it and had nothing new
+// to propose, so the pair records neither a request nor a landing — and its
+// work is still on the group's main. Production must not ask to deliver it
+// again.
+func TestProductionKnowsMergedWorkAfterTheMergeIsAbsorbed(t *testing.T) {
+	fake := newFakeGitea()
+	fake.branchExists = true
+	fake.pullState = "closed"
+	fake.pullMerged = true
+	fake.pullMergeCommit = "squash-sha"
+	fake.pullMergeHead = "branch-tip-sha"
+	empty := ""
+	fake.compareDiff = &empty
+	gitea := fake.start(t)
+	t.Setenv("GITEA_URL", gitea.URL)
+	t.Setenv("MATE_BROKER_URL", gitea.URL)
+	t.Setenv("GITEA_TOKEN", giteaBotToken)
+
+	stateDir := t.TempDir()
+	writeLandedGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git")
+	ssh := &scriptedSSH{respond: func(_, _ string) string { return "ok" }}
+	if delivery := deliverGiteaPair(context.Background(), platform.NewMock(), gitea.Client(), ssh,
+		runtime.Info{InContainer: true, ProjectID: "proj-1"}, stateDir, "appstage"); delivery == nil || delivery.PullRequest != nil {
+		t.Fatalf("want a delivery with no request, got %+v", delivery)
+	}
+	meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
+	if meta.Gitea.PullRequest != 0 || meta.Gitea.Landed != nil {
+		t.Fatalf("the pair should record neither a request nor a pending landing: %+v", meta.Gitea)
+	}
+
+	got := giteaLaunchProductionNextStep(context.Background(), gitea.Client(), stateDir)
+	if strings.Contains(got, "none of this Mate's work") || !strings.Contains(got, "production is added and released") {
+		t.Errorf("production step = %q, want the merged work known", got)
+	}
+}
