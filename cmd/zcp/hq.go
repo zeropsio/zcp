@@ -18,6 +18,7 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 // hqTimeout bounds one `zcp hq` run end to end: a member-list read, HQ's
@@ -69,6 +70,8 @@ func defaultHQService(ctx context.Context) (hqService, error) {
 		HTTP:      &http.Client{Timeout: hqCallTimeout},
 		OrgID:     info.ClientID,
 		ProjectID: info.ProjectID,
+		// The container's own zcp service: HQ holds one per project as its Mate.
+		ServiceID: runtime.Detect().ServiceID,
 		Path:      hq.EnrollmentPath(),
 	}, nil
 }

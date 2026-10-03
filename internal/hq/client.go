@@ -86,15 +86,19 @@ func (c hqClient) challenge(ctx context.Context, projectID string) (string, erro
 	return out.Nonce, err
 }
 
-// credential presents the nonce, naming the id of the container's key where
-// it has one; an HQ that does not know the field ignores it.
-func (c hqClient) credential(ctx context.Context, projectID, nonce, keyTokenID string) (string, error) {
+// credential presents the nonce, naming the id of the container's key and
+// its own service where it has them; an HQ that does not know a field
+// ignores it.
+func (c hqClient) credential(ctx context.Context, projectID, nonce, keyTokenID, serviceID string) (string, error) {
 	var out struct {
 		Credential string `json:"credential"`
 	}
 	in := map[string]string{"projectId": projectID, "nonce": nonce}
 	if keyTokenID != "" {
 		in["keyTokenId"] = keyTokenID
+	}
+	if serviceID != "" {
+		in["serviceId"] = serviceID
 	}
 	err := c.json(ctx, http.MethodPost, "/api/mate/credential", "", in, &out)
 	return out.Credential, err

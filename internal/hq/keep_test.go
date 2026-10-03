@@ -283,3 +283,63 @@ func TestRecheck_AsksTheKeptHQAloneNeverTheMemberList(t *testing.T) {
 		})
 	}
 }
+
+// One Mate per project: HQ refusing this container because another zcp
+// service of its project is the Mate ends Keep from any attempt — a kept
+// Mate's recheck, its enrollment anew, a new Mate's enrollment once its HQ
+// answers again — said once, recorded, and never asked again in a loop.
+func TestKeep_NotThisProjectsMate_SaysSoOnceAndStops(t *testing.T) {
+	t.Parallel()
+	refused := &RefusedError{Status: 409, Code: NotThisProjectsMate}
+	revoked := &RefusedError{Status: 401, Code: "mate_credential_required"}
+	silent := &UnavailableError{Code: "not_active"}
+	tests := []struct {
+		name            string
+		recheck, enroll []error
+		want            []string
+	}{
+		{"refused rechecking", []error{refused}, []error{nil}, []string{"recheck"}},
+		{"refused enrolling a kept Mate anew", []error{revoked}, []error{refused}, []string{"recheck", "enroll"}},
+		{"refused enrolling a new Mate once HQ answers", []error{ErrNotEnrolled}, []error{silent, refused}, []string{"recheck", "enroll", "enroll"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var made, said []string
+			var recorded []error
+			attempt := func(kind string, answers []error) func(context.Context) (Result, error) {
+				asked := 0
+				return func(context.Context) (Result, error) {
+					made = append(made, kind)
+					asked++
+					return Result{}, answers[min(asked, len(answers))-1]
+				}
+			}
+			ended := make(chan struct{})
+			go func() {
+				defer close(ended)
+				Keep(t.Context(), attempt("enroll", tt.enroll), attempt("recheck", tt.recheck), KeepOptions{
+					Retry: time.Millisecond, RetryMax: time.Millisecond, NewMateRetryMax: time.Millisecond,
+					Recheck: time.Millisecond, Rediscover: time.Hour,
+					Log:    func(line string) { said = append(said, line) },
+					Record: func(err error) { recorded = append(recorded, err) },
+				})
+			}()
+			select {
+			case <-ended:
+			case <-time.After(5 * time.Second):
+				t.Fatal("Keep went on after HQ said another service is the project's Mate")
+			}
+			if !slices.Equal(made, tt.want) {
+				t.Errorf("attempts = %v, want %v", made, tt.want)
+			}
+			if len(recorded) != len(tt.want) || !errors.Is(recorded[len(recorded)-1], refused) {
+				t.Errorf("recorded %v, want the refusal last", recorded)
+			}
+			want := "not enrolled: another zcp service of this project is its Mate; this one stops enrolling"
+			if len(said) == 0 || said[len(said)-1] != want || slices.Index(said, want) != len(said)-1 {
+				t.Errorf("said %q, want %q once, last", said, want)
+			}
+		})
+	}
+}

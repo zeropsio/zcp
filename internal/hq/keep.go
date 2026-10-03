@@ -12,6 +12,10 @@ import (
 // not this Mate's, so it is enrolled anew.
 var ErrOtherProject = errors.New("hq holds the credential for another project")
 
+// NotThisProjectsMate is HQ's refusal of a zcp service other than the one
+// the Mate's record names: a project holds one Mate.
+const NotThisProjectsMate = "not_this_projects_mate"
+
 // KeepOptions paces Keep; a zero field takes its default.
 type KeepOptions struct {
 	// Retry is the wait after a failed attempt, doubling up to RetryMax;
@@ -46,7 +50,10 @@ type KeepOptions struct {
 // within a minute of HQ answering. What is not possible yet is retried with a
 // growing wait, never fatal: no official HQ, a Mate HQ holds no record of yet
 // (not_a_mate: the client writes it after the project exists), HQ or Zerops
-// not answering.
+// not answering. One answer ends it, from any attempt — a recheck, an
+// enrollment, a new Mate's: HQ refusing this container because another zcp
+// service of its project is the Mate (NotThisProjectsMate) — said once and
+// recorded, never asked again until zcp starts anew.
 func Keep(ctx context.Context, enroll, recheck func(context.Context) (Result, error), opts KeepOptions) {
 	opts = opts.withDefaults()
 	retry := opts.Retry
@@ -72,6 +79,12 @@ func Keep(ctx context.Context, enroll, recheck func(context.Context) (Result, er
 		res, err := attempt(ctx)
 		if opts.Record != nil {
 			opts.Record(err)
+		}
+		if refusedAs(err, NotThisProjectsMate) {
+			if opts.Log != nil {
+				opts.Log("not enrolled: " + describe(err) + "; this one stops enrolling")
+			}
+			return
 		}
 		wait, line := opts.Recheck, "enrolled with "+res.HQ
 		if res.KeyUnnamed != "" {
@@ -144,6 +157,9 @@ func describe(err error) string {
 	}
 	if refusedAs(err, "not_a_mate") {
 		return "HQ holds no record of this Mate yet"
+	}
+	if refusedAs(err, NotThisProjectsMate) {
+		return "another zcp service of this project is its Mate"
 	}
 	return err.Error()
 }

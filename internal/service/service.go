@@ -287,12 +287,7 @@ func keepEnrolled(ctx context.Context, env func() func(string) string) {
 		if err != nil {
 			return hq.Enroller{}, err
 		}
-		e := hq.Enroller{
-			Zerops:    client,
-			HTTP:      &http.Client{Timeout: hqCallTimeout},
-			ProjectID: projectID,
-			Path:      hq.EnrollmentPath(),
-		}
+		e := mateEnroller(lookup, client)
 		if withOrg {
 			info, err := client.GetUserInfo(ctx)
 			if err != nil {
@@ -327,6 +322,19 @@ func keepEnrolled(ctx context.Context, env func() func(string) string) {
 			}
 		},
 	})
+}
+
+// mateEnroller is the enroller of the Mate in this container, over its live
+// environment: its project, and its own zcp service, which HQ holds as the
+// project's one Mate. Its org is an enrollment's to read (keepEnrolled).
+func mateEnroller(lookup func(string) string, client hq.Zerops) hq.Enroller {
+	return hq.Enroller{
+		Zerops:    client,
+		HTTP:      &http.Client{Timeout: hqCallTimeout},
+		ProjectID: lookup("projectId"),
+		ServiceID: lookup("serviceId"),
+		Path:      hq.EnrollmentPath(),
+	}
 }
 
 // mateSeedSignIns seeds the server's sign-ins before it starts
