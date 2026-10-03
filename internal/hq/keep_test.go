@@ -104,10 +104,12 @@ func TestKeep_SaysWhyHQWasNotToldTheKeysID(t *testing.T) {
 type calls struct {
 	mu   sync.Mutex
 	made []string
-	// recheck answers each recheck in turn, the last one staying.
-	recheck []error
-	done    chan struct{}
-	want    int
+	// recheck answers each recheck in turn, the last one staying; enrollment
+	// each enrollment, likewise, none enrolling.
+	recheck    []error
+	enrollment []error
+	done       chan struct{}
+	want       int
 }
 
 func (c *calls) record(kind string) {
@@ -119,22 +121,32 @@ func (c *calls) record(kind string) {
 	}
 }
 
+// answer is the nth answer of kind, the last one staying; none is nil.
+func (c *calls) answer(kind string, answers []error) error {
+	c.record(kind)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(answers) == 0 {
+		return nil
+	}
+	n := 0
+	for _, made := range c.made {
+		if made == kind {
+			n++
+		}
+	}
+	return answers[min(n-1, len(answers)-1)]
+}
+
 func (c *calls) enroll(context.Context) (Result, error) {
-	c.record("enroll")
+	if err := c.answer("enroll", c.enrollment); err != nil {
+		return Result{}, err
+	}
 	return Result{HQ: "https://hq.example"}, nil
 }
 
 func (c *calls) rechecked(context.Context) (Result, error) {
-	c.record("recheck")
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	rechecks := 0
-	for _, kind := range c.made {
-		if kind == "recheck" {
-			rechecks++
-		}
-	}
-	if err := c.recheck[min(rechecks-1, len(c.recheck)-1)]; err != nil {
+	if err := c.answer("recheck", c.recheck); err != nil {
 		return Result{}, err
 	}
 	return Result{HQ: "https://hq.example"}, nil
@@ -149,23 +161,50 @@ func (c *calls) rechecked(context.Context) (Result, error) {
 func TestKeep_RediscoversOnlyWhenHQRefusesOrStaysSilent(t *testing.T) {
 	t.Parallel()
 	silent := &UnavailableError{Code: "not_active"}
+	noHQ := &NoHQError{Official: Official{Verdict: VerdictNone}}
 	tests := []struct {
 		name       string
 		recheck    []error
+		enrollment []error
 		rediscover time.Duration
 		want       []string
 	}{
-		{"an enrollment HQ knows", []error{nil}, time.Hour, []string{"recheck", "recheck", "recheck", "recheck"}},
-		{"no enrollment kept", []error{ErrNotEnrolled, nil}, time.Hour, []string{"recheck", "enroll", "recheck", "recheck"}},
-		{"HQ refuses the credential", []error{nil, &RefusedError{Status: 401, Code: "mate_credential_required"}, nil}, time.Hour, []string{"recheck", "recheck", "enroll", "recheck"}},
-		{"a credential HQ holds for another project", []error{nil, ErrOtherProject, nil}, time.Hour, []string{"recheck", "recheck", "enroll", "recheck"}},
-		{"HQ silent within the bound", []error{nil, silent}, time.Hour, []string{"recheck", "recheck", "recheck", "recheck"}},
-		{"HQ silent past the bound", []error{nil, silent}, time.Millisecond, []string{"recheck", "recheck", "enroll", "recheck"}},
+		{"an enrollment HQ knows", []error{nil}, nil, time.Hour, []string{"recheck", "recheck", "recheck", "recheck"}},
+		{"no enrollment kept", []error{ErrNotEnrolled, nil}, nil, time.Hour, []string{"recheck", "enroll", "recheck", "recheck"}},
+		{"HQ refuses the credential", []error{nil, &RefusedError{Status: 401, Code: "mate_credential_required"}, nil}, nil, time.Hour, []string{"recheck", "recheck", "enroll", "recheck"}},
+		{"a credential HQ holds for another project", []error{nil, ErrOtherProject, nil}, nil, time.Hour, []string{"recheck", "recheck", "enroll", "recheck"}},
+		{"HQ silent within the bound", []error{nil, silent}, nil, time.Hour, []string{"recheck", "recheck", "recheck", "recheck"}},
+		{"HQ silent past the bound", []error{nil, silent}, nil, time.Millisecond, []string{"recheck", "recheck", "enroll", "recheck"}},
+		// During an outage the member list is read at most once per bound: an enrollment the
+		// official HQ cannot serve goes back to rechecking, its clock reset.
+		{"an enrollment HQ cannot serve, back to rechecking", []error{nil, silent}, []error{silent}, time.Millisecond, []string{"recheck", "recheck", "enroll", "recheck", "enroll"}},
+		{"an enrollment refused otherwise, enrolling again", []error{ErrNotEnrolled}, []error{noHQ}, time.Hour, []string{"recheck", "enroll", "enroll", "enroll"}},
 	}
+	// A new Mate — nothing kept to recheck — whose HQ does not answer tries again on the usual
+	// backoff, capped at a minute: an hour's backoff here is cut to NewMateRetryMax.
+	t.Run("nothing kept and HQ down, enrolling at most once a minute", func(t *testing.T) {
+		t.Parallel()
+		want := []string{"recheck", "enroll", "enroll", "enroll"}
+		c := &calls{recheck: []error{ErrNotEnrolled}, enrollment: []error{silent}, done: make(chan struct{}), want: len(want)}
+		go Keep(t.Context(), c.enroll, c.rechecked, KeepOptions{
+			Retry: time.Hour, RetryMax: time.Hour, NewMateRetryMax: 5 * time.Millisecond,
+			Recheck: time.Hour, Rediscover: time.Hour,
+		})
+		select {
+		case <-c.done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("a new Mate waited past NewMateRetryMax to enroll again")
+		}
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if got := c.made[:len(want)]; !slices.Equal(got, want) {
+			t.Errorf("attempts = %v, want %v", got, want)
+		}
+	})
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			c := &calls{recheck: tt.recheck, done: make(chan struct{}), want: len(tt.want)}
+			c := &calls{recheck: tt.recheck, enrollment: tt.enrollment, done: make(chan struct{}), want: len(tt.want)}
 			go Keep(t.Context(), c.enroll, c.rechecked, KeepOptions{
 				Retry: 20 * time.Millisecond, RetryMax: 20 * time.Millisecond,
 				Recheck: 5 * time.Millisecond, Rediscover: tt.rediscover,

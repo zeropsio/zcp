@@ -23,6 +23,9 @@ type KeepOptions struct {
 	// Rediscover is how long the kept HQ may go without answering before the
 	// member list is read again for the official HQ; 10 min.
 	Rediscover time.Duration
+	// NewMateRetryMax caps the wait between a new Mate's enrollments — with
+	// nothing kept to recheck — while its HQ does not answer; 60 s.
+	NewMateRetryMax time.Duration
 	// Log, when set, hears each outcome that differs from the one before.
 	Log func(string)
 	// Record, when set, hears every attempt's outcome: nil once enrolled.
@@ -36,15 +39,31 @@ type KeepOptions struct {
 // longer knows the credential (revoked, or another project's), or when the
 // kept HQ has not answered for Rediscover: an HQ that is no longer the
 // official one answers 503 for good, a deploy's handover for seconds (R6).
-// What is not possible yet is retried with a growing wait, never fatal: no
-// official HQ, a Mate HQ holds no record of yet (not_a_mate: the client
-// writes it after the project exists), HQ or Zerops not answering.
+// An enrollment the official HQ cannot serve goes back to rechecking the kept
+// one, the clock reset, so an outage reads the member list at most once per
+// Rediscover; a new Mate's — nothing kept to recheck — is tried again on the
+// backoff capped at NewMateRetryMax, so a Mate born in an outage enrolls
+// within a minute of HQ answering. What is not possible yet is retried with a
+// growing wait, never fatal: no official HQ, a Mate HQ holds no record of yet
+// (not_a_mate: the client writes it after the project exists), HQ or Zerops
+// not answering.
 func Keep(ctx context.Context, enroll, recheck func(context.Context) (Result, error), opts KeepOptions) {
 	opts = opts.withDefaults()
 	retry := opts.Retry
 	said := ""
-	enrolling := false
+	// enrolling: the next attempt is an enrollment; newMate: it is one with
+	// nothing kept to recheck.
+	enrolling, newMate := false, false
+	// answered is when the HQ question last settled: an answer, or an
+	// enrollment HQ could not serve.
 	answered := time.Now()
+	// backoff is the next retry's wait: up to a quarter more, so the Mates of
+	// an org do not all knock at once.
+	backoff := func() time.Duration {
+		wait := retry + rand.N(retry/4+1) //nolint:gosec // G404: jitter, not a secret
+		retry = min(2*retry, opts.RetryMax)
+		return wait
+	}
 	for {
 		attempt := recheck
 		if enrolling {
@@ -58,17 +77,23 @@ func Keep(ctx context.Context, enroll, recheck func(context.Context) (Result, er
 		if res.KeyUnnamed != "" {
 			line += "; HQ was not told its key's id: " + res.KeyUnnamed
 		}
+		var unavailable *UnavailableError
 		switch {
 		case err == nil:
 			enrolling, answered, retry = false, time.Now(), opts.Retry
+		case enrolling && newMate && errors.As(err, &unavailable):
+			// A new Mate's: tried again soon, never on the outage clock.
+			wait, line = min(backoff(), opts.NewMateRetryMax), "HQ not answering: "+describe(err)
+		case enrolling && errors.As(err, &unavailable):
+			// The official HQ could not serve it: back to rechecking, the clock reset.
+			enrolling, answered = false, time.Now()
+			wait, line = backoff(), "HQ not answering: "+describe(err)
 		case !enrolling && (needsEnrollment(err) || time.Since(answered) >= opts.Rediscover):
 			// Enrolled anew at once: the kept enrollment no longer holds.
-			enrolling, wait, line = true, 0, "enrolling anew: "+describe(err)
+			enrolling, newMate = true, errors.Is(err, ErrNotEnrolled)
+			wait, line = 0, "enrolling anew: "+describe(err)
 		default:
-			// Up to a quarter more, so the Mates of an org do not all knock at once.
-			wait = retry + rand.N(retry/4+1) //nolint:gosec // G404: jitter, not a secret
-			retry = min(2*retry, opts.RetryMax)
-			line = "not enrolled yet: " + describe(err)
+			wait, line = backoff(), "not enrolled yet: "+describe(err)
 		}
 		if line != said && opts.Log != nil {
 			opts.Log(line)
@@ -135,6 +160,9 @@ func (o KeepOptions) withDefaults() KeepOptions {
 	}
 	if o.Rediscover == 0 {
 		o.Rediscover = 10 * time.Minute
+	}
+	if o.NewMateRetryMax == 0 {
+		o.NewMateRetryMax = time.Minute
 	}
 	return o
 }
