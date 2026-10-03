@@ -712,3 +712,19 @@ func TestContainerAdapters_UnusableHomePath_DegradesNotFatal(t *testing.T) {
 		t.Errorf("init must complete; got:\n%s", out)
 	}
 }
+
+// TestRegisteredAdapters_EveryMateAgent pins that `zcp init` configures the
+// zerops MCP server for every agent a Zerops Mate can drive — an agent missing
+// here runs in a Mate without Zerops tools.
+func TestRegisteredAdapters_EveryMateAgent(t *testing.T) {
+	t.Parallel()
+	registered := map[string]bool{}
+	for _, name := range zcpinit.RegisteredAdapterNames() {
+		registered[name] = true
+	}
+	for _, want := range []string{"claude-code", "codex", "gemini", "antigravity", "cursor", "grok", "opencode"} {
+		if !registered[want] {
+			t.Errorf("adapter %q not registered; got %v", want, zcpinit.RegisteredAdapterNames())
+		}
+	}
+}

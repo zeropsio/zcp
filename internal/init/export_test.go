@@ -57,3 +57,14 @@ func ResetMateUnitFilePath()          { mateUnitFilePath = mate.UnitFilePath }
 // SetMateBasePathSupport stubs the --base-path probe enableMate reports from.
 func SetMateBasePathSupport(fn func(string) (bool, error)) { mateBasePathSupport = fn }
 func ResetMateBasePathSupport()                            { mateBasePathSupport = mate.BasePathSupport }
+
+// RegisteredAdapterNames lists the container adapters `zcp init` dispatches,
+// in dispatch order.
+func RegisteredAdapterNames() []string {
+	adapters := registeredAdapters()
+	names := make([]string, 0, len(adapters))
+	for _, a := range adapters {
+		names = append(names, a.Name())
+	}
+	return names
+}
