@@ -591,12 +591,24 @@ func GiteaBranchExists(ctx context.Context, httpClient HTTPDoer, giteaURL, token
 // giteaBranchProposes reports whether head carries anything base lacks: the
 // merge-base diff Gitea's compare answers with ?output=diff is the diff a
 // pull request from head would show, so an empty one is an empty request.
-// known is false when Gitea did not answer.
+// A Gitea before 1.27 ignores output and answers its JSON comparison, never
+// empty; there the commits ahead decide, as they did before the diff. known
+// is false when Gitea did not answer.
 func giteaBranchProposes(ctx context.Context, httpClient HTTPDoer, repoRoot, token, base, head string) (proposes, known bool) {
 	body, status, err := giteaAPICall(ctx, httpClient, http.MethodGet,
 		repoRoot+"/compare/"+url.PathEscape(base)+"..."+url.PathEscape(head)+"?output=diff", token, nil)
 	if err != nil || status != http.StatusOK {
 		return false, false
 	}
-	return len(bytes.TrimSpace(body)) > 0, true
+	body = bytes.TrimSpace(body)
+	if !bytes.HasPrefix(body, []byte("{")) {
+		return len(body) > 0, true
+	}
+	var compare struct {
+		TotalCommits *int `json:"total_commits"` //nolint:tagliatelle // Gitea's wire schema
+	}
+	if json.Unmarshal(body, &compare) != nil || compare.TotalCommits == nil {
+		return false, false
+	}
+	return *compare.TotalCommits > 0, true
 }

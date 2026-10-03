@@ -2588,11 +2588,13 @@ was merged between the push that opened it and the stage deploy that followed, t
 the squash and took `main` in, and opened #8 — ahead of `main` by those merges alone, so empty —
 which the agent then set out to verify. A request is opened only for a branch whose merge-base diff
 against `main` is not empty (Gitea's compare with `?output=diff`, the diff the request would show),
-never on a commit count, and no pass opens one from a branch whose landing still waits to be
-absorbed, since that branch still holds the squashed history; the next delivery or push opens it,
-for what `main` still lacks. Every hand-over of a request, after asking for its description, tells
-the agent the person may merge it at any moment and that the next stage deploy folds the merge in.
-`TestEnsureGiteaPullRequest`, `TestAStageDeployAfterThePersonMergedProposesOnlyWhatMainLacks`,
+never on a commit count — save on a Gitea before 1.27, which ignores `output` and answers its JSON
+comparison, where zero commits ahead still opens nothing — and no pass opens one from a branch
+whose landing still waits to be absorbed, since that branch still holds the squashed history; the
+next delivery or push opens it, for what `main` still lacks. Every hand-over of a request, after
+asking for its description, tells the agent the person may merge it at any moment and that the next
+stage deploy folds the merge in. `TestEnsureGiteaPullRequest`,
+`TestAStageDeployAfterThePersonMergedProposesOnlyWhatMainLacks`,
 `TestReconcileGitea_OpensThePullRequestOnceTheBranchIsThere`.
 
 **A wired Mate's production is the group's (2026-09-23).** Asked "muzes to dat na

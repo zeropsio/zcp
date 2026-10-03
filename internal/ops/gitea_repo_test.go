@@ -200,7 +200,10 @@ func TestEnsureGiteaPullRequest(t *testing.T) {
 		createCode int
 		// compare is what Gitea's merge-base diff of the branch answers, raw;
 		// nil leaves the compare unanswered.
-		compare     *string
+		compare *string
+		// compareJSON is what a Gitea before 1.27 answers the compare with:
+		// it ignores output=diff and sends the JSON comparison.
+		compareJSON *string
 		wantNumber  int
 		wantCreated bool
 		wantPosts   int
@@ -257,6 +260,20 @@ func TestEnsureGiteaPullRequest(t *testing.T) {
 			wantNumber: 7, wantCreated: true, wantPosts: 1,
 		},
 		{
+			// A Gitea before 1.27 answers the compare with its JSON
+			// comparison, never empty: the commits ahead decide there.
+			name:        "an older gitea's comparison, nothing ahead",
+			openList:    `[]`,
+			compareJSON: strPtr(`{"total_commits":0,"commits":[]}`),
+		},
+		{
+			name:        "an older gitea's comparison, commits ahead",
+			openList:    `[]`,
+			compareJSON: strPtr(`{"total_commits":2,"commits":[]}`),
+			createCode:  http.StatusCreated,
+			wantNumber:  7, wantCreated: true, wantPosts: 1,
+		},
+		{
 			name:       "gitea refuses the create",
 			openList:   `[]`,
 			createCode: http.StatusUnprocessableEntity,
@@ -278,6 +295,11 @@ func TestEnsureGiteaPullRequest(t *testing.T) {
 				if r.URL.Path == "/api/v1/repos/acme/api/compare/main...mate/mate-p1" &&
 					tt.compare != nil && r.URL.Query().Get("output") == "diff" {
 					_, _ = w.Write([]byte(*tt.compare))
+					return
+				}
+				if r.URL.Path == "/api/v1/repos/acme/api/compare/main...mate/mate-p1" && tt.compareJSON != nil {
+					w.Header().Set("Content-Type", "application/json;charset=utf-8")
+					_, _ = w.Write([]byte(*tt.compareJSON))
 					return
 				}
 				if r.URL.Path != "/api/v1/repos/acme/api/pulls" {
