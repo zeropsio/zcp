@@ -931,7 +931,7 @@ plan's (`planEnvironmentCreation`, `createEnvironment.ts:250-287`), in order:
   (`runEnvironmentCreation.ts:195-202`, `:396-406`). Where HQ is not open in the tab the mark is
   not written, and _Finish setup_ writes it (`matePress.ts:634-638`, `:673-676`).
 - `register` — the registration in the organization's HQ (MB-24): a Mate's record attached to its
-  application with its name and face, or a record in no application (`POST /api/mates`), with who
+  application with its face, or a record in no application (`POST /api/mates`), with who
   asks for its stand-up in the same write — an attach that closes the Mate's birth intent takes the
   ask the intent was recorded with (`POST /api/births`, `standUp`), any other carries its own
   (`standUp`), so the record and its ask never part; a stage or a production attached as its tier,
@@ -1055,7 +1055,7 @@ sees HQ's gate in place of the product (`ZeropsHqGate.tsx:1-5`):
   rule). `VSCODE_PASSWORD` is generated client-side (`crypto.getRandomValues`, rejection-sampled)
   and sent once; a second container in the same project is named `zcp1`.
 - **Then the press** (§4.4), from the moment the platform takes the project: `close-off`,
-  `register` — the Mate attached to the application with the name and face the dialog asked, its
+  `register` — the Mate attached to the application with the face the dialog asked, its
   birth recorded closed off and no stand-up asked, since a new project has no code to stand up —
   `share-reach`, `await-ready` (`ZeropsNewProjectHost.tsx:20-26`, `:276-313`). Superseded
   2026-10-02: main's birth carried the Mate's membership and the broker's grant as its `tags` and
@@ -1097,14 +1097,23 @@ header's reload glyph and nothing else. Before that the clock re-took the leases
 they read, and the page painted "Reading your projects…" and an empty menu at every re-read (the
 owner's run, 2026-09-17: "it does this full refresh, that's crazy bad").
 
-**A Mate is named after its bot** (2026-09-17, the owner, on a second Mate the dialog had called
-"Todo - dev 2": "why is it called that and not Todo - Fen?"). The first Mate at _New project_ is
-"Todo - Vera", every later one "Todo - Fen" — the name the person will say — numbered only when
-that name is taken. The _Add Mate_ dialog asks for a name, a colour and a shape and nothing else:
-the environment is not named in it but follows from the name, `<project> - <name>`. A stage and a
-production are named after their role
-(`proposedEnvironmentName`; `ZeropsEnvironmentCreationDialog.logic.test.ts` "names a Mate after its
-bot, not its role").
+**A Mate's name is its Zerops project's name** (D3, 2026-10-03, the owner: Zerops is the source of
+truth, HQ stores only what Zerops lacks, and a name's source is Zerops). The _Add Mate_ dialog asks
+for a name, a colour and a shape and nothing else, and the Mate's project is created under that
+name, whole — "Fen", never `<project> - <name>`; the first Mate at _New project_ likewise. HQ holds
+no name of a Mate or of a Mate on its way (HQ migration `0030`), only its face, its place and its
+birth; every surface names a Mate by its project, and the names taken on the account are the Mates'
+projects'. _Rename Mate_ renames the project (`PUT /project/{id}` through the client's one writer
+of a project's record, its tags put back as a fresh read holds them), offered where the platform
+takes it — effective `OWNER` or `ADMIN` there; a rename in the Zerops GUI reaches the client by the
+organization's project updates. A stage and a production are offered `<project> - stage` and
+`<project> - production`, numbered once taken — a suggestion the person may change, here or in
+Zerops, that nothing reads back; they have that one name, an agent in one going by it, and every
+surface names them whole, never cutting the project's name off as a prefix. An application's title
+stays HQ's (`proposedEnvironmentName`; `ZeropsEnvironmentCreationDialog.logic.test.ts`
+"proposedEnvironmentName", `newProjectBirth.test.ts` "named as its Mate is"; HQ `structure.test.ts`
+"a Mate goes by its project's name in Zerops, renamed there as it is"). Supersedes the 2026-09-17
+rule "A Mate is named after its bot": "Todo - Fen" and its `<project> - <name>`.
 
 ### 4.8 Landing in the thread
 
