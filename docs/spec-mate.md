@@ -673,11 +673,12 @@ removed, including standalone entry. Effective project roles (including override
 organization permissions) determine operation access. Sessions come from the throwaway door (§10.4),
 use `zerops-user:<id>` subjects, and revoke themselves via `POST /api/auth/logout` without
 administrative scopes. A session holds no credential of the person's and has no membership window:
-the server re-reads the member list and the project's `userRoles` with its own key every
-`T3CODE_ZEROPS_ROLE_RECHECK_SECONDS` (default 300 s; from the fork's server slice S.0 a configured
-value above 300 s is clamped to 300 s), ends every session whose answer is no longer `open` (§3.3),
-tolerates one failed pass and ends every Zerops session on the second consecutive one, and ends any
-session older than 24 hours. Ending a session closes its sockets; the client opens a new one with a
+the server asks who the project lets in — HQ's relay while it holds, else the member list and the
+project's `userRoles` read with its own key (§10.4) — every `T3CODE_ZEROPS_ROLE_RECHECK_SECONDS`
+(default 300 s; from the fork's server slice S.0 a configured value above 300 s is clamped to 300 s)
+and when HQ relays a different answer, ends every session whose answer is no longer `open` (§3.3),
+ends every Zerops session once it has not known for two intervals, and ends any session older than
+24 hours. Ending a session closes its sockets; the client opens a new one with a
 fresh throwaway, on every rejection and with backoff (from the fork's slice 0.9b). From mate 0.11.81 the client keeps a Mate's session per account across loads and presents it again only where a fresh one would go, once the Mate confirms it still holds it with every scope the client asks for (D33). The client's
 credential renewer (`credentialRenewal.ts`) is reserved for a door that re-presents a credential;
 the throwaway door does not, so nothing renews a Zerops session. The GUI closes connections and
@@ -759,12 +760,15 @@ A session from the throwaway door (§10.4) holds no credential of the person's, 
 expires with a Zerops token and there is nothing to re-present. Its validity is the server's own
 re-check, `ZeropsMembershipWatch`: every `T3CODE_ZEROPS_ROLE_RECHECK_SECONDS` (default 300 s; from
 the fork's slice S.0 a configured value above 300 s is clamped to 300 s, so the bound below holds
-whatever `mate.env` sets) it re-reads the org's member list and the project's `userRoles` with the
-Mate's key, runs the role function (§10.3), and ends every Zerops session whose answer is no longer
-`open`. One pass costs two reads however many people are connected. One failed pass changes
-nothing; a second consecutive failure ends every Zerops session, because by then the server has not
-known who belongs for two intervals. A session older than `T3CODE_ZEROPS_SESSION_MAX_AGE_SECONDS`
-(default 24 hours) ends at the next pass whatever the read said. A removed member or a lowered role
+whatever `mate.env` sets), and at once when HQ relays a different answer, it asks who the project
+lets in — HQ's relay while it holds (§10.4), else the org's member list and the project's
+`userRoles` read with the Mate's key — by the role function (§10.3), and ends every Zerops session
+whose answer is no longer `open`. One pass asks once however many people are connected. A pass that
+cannot say changes nothing while the last answer is under two intervals old; past that it ends every
+Zerops session, because by then the server has not known who belongs for two intervals — at once
+after a lapsed relay, which held one interval already. A session older than
+`T3CODE_ZEROPS_SESSION_MAX_AGE_SECONDS` (default 24 hours) ends at the next pass whatever the read
+said. A removed member or a lowered role
 loses access within two re-check intervals plus one pass.
 
 The end reaches open sockets. `/ws` verifies the session once at the upgrade; for the socket's
@@ -1771,7 +1775,12 @@ S3 tries to watch the mount for git state.
 
 A Mate reaches its HQ with the credential its enrollment holds, and nothing else: `zcp service
 mate` keeps it enrolled (`hq.Keep`, C-7), and zcp opens the enrollment at each use, so a
-re-enrollment's credential is the one it uses. Everything zcp does with HQ goes through it — a
+re-enrollment's credential is the one it uses. Kept enrolled is the kept HQ asked alone every 10 min
+whether it still knows the credential (`Enroller.Recheck`); the org's member list is read again for
+the official HQ only with no enrollment kept, when HQ refuses the credential (`401
+mate_credential_required`, or names another project for it), or when the kept HQ has not answered
+for 10 min — an HQ that lost the anchor answers `503 not_active` for good, a deploy's handover for
+seconds (R6). Everything zcp does with HQ goes through it — a
 pair's work delivered as a change (§10.10, *Delivery to HQ*), the recipe proposed and its AI Agent
 tier read for the stand-up, a repository the tier names checked before HQ is asked for it — over
 HQ's Mate API (`Authorization: Mate <credential>`) and git over HTTPS as the user `mate`. The dev
@@ -2131,13 +2140,28 @@ server reads the member list and the project's `userRoles`, and the role functio
 (`403 zerops_project_membership_required`). The flag check is load-bearing: a token minted through a
 delegation names the delegating person, so a flagged token is never a throwaway, whoever made it.
 
+**Who the project lets in, relayed (R6).** HQ relays Zerops's access, aged; a Mate trusts it at most
+5 min from HQ's Zerops read, then reads Zerops itself. HQ reads the org's member list and its
+projects' `userRoles` for its own roles anyway, and sends down each Mate's link `access`: whom the
+Mate's project opens for and whom it lists, by the same role function over every row of the member
+list (`@t3tools/shared/mateAccess`), and how long before it was sent Zerops answered that view —
+whole after every view it reads, nothing for a project its view lacks, nothing past the link's
+64 KiB frame bound (logged once per Mate) (`apps/hq/src/mateAccess.ts`). While the relay holds, the
+door lets in a creator it opens for without reading the member list; whomever it lists or leaves
+out, the Mate's own read decides, with the refusals above. With no relay that holds — before HQ
+links, under an HQ older than the relay, in an org with no official HQ — the Mate reads the member
+list itself, as it always did (`ZeropsProjectAccess.ts`).
+
 **HQ's door** (since 2026-10-02) takes the same throwaway, named for HQ — `mate-door:{HQ project id}:{nonce}`
 — at `POST /api/door` and answers a session for HQ's API; the client deletes the throwaway after. The
 Gitea sign-in this section budgets (§10.9) retires with the Gitea.
 
-**No membership window.** `ZeropsMembershipWatch` re-reads the member list and `userRoles` with the
-Mate's key on a timer and ends the sessions whose answer changed; a read that fails keeps them one
-more interval. Nothing renews (`credentialRenewal.ts` keeps the contract, no client supplies a
+**No membership window.** `ZeropsMembershipWatch` asks who the project lets in — HQ's relay while it
+holds, else the member list and `userRoles` read with the Mate's key — on a timer and at once when
+HQ relays a different answer, and ends the sessions whose answer changed; a pass that cannot say
+keeps them while the last answer is under two intervals old, and ends them at once once a relay
+lapsed, which held one interval already. Nothing renews (`credentialRenewal.ts` keeps the contract,
+no client supplies a
 Zerops credential); the client opens a new session with a fresh throwaway when it holds no kept session its Mate still confirms (D33). The
 minimum server a client connects to is 0.11.0 (`serverCompatibility.ts`).
 

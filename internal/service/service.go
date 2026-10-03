@@ -272,31 +272,48 @@ const hqCallTimeout = 15 * time.Second
 
 // keepEnrolled is hq.Keep over the container's environment: each attempt
 // builds the client from the live env store as it is then, so a rotated key
-// is the one it uses, and asks the key's own record which org it is in. Each
-// attempt that says something about this Mate leaves its outcome beside the
-// enrollment.
+// is the one it uses. An enrollment asks the key's own record which org it is
+// in, to read that org's member list for the official HQ; a recheck asks the
+// kept enrollment's HQ alone (R6). Each attempt that says something about
+// this Mate leaves its outcome beside the enrollment.
 func keepEnrolled(ctx context.Context, env func() func(string) string) {
-	hq.Keep(ctx, func(ctx context.Context) (hq.Result, error) {
+	enroller := func(ctx context.Context, withOrg bool) (hq.Enroller, error) {
 		lookup := env()
 		projectID := lookup("projectId")
 		if projectID == "" {
-			return hq.Result{}, errors.New("projectId is not in this container's environment")
+			return hq.Enroller{}, errors.New("projectId is not in this container's environment")
 		}
 		client, err := apiClientOf(lookup)
 		if err != nil {
-			return hq.Result{}, err
+			return hq.Enroller{}, err
 		}
-		info, err := client.GetUserInfo(ctx)
-		if err != nil {
-			return hq.Result{}, fmt.Errorf("read the key's organization: %w", err)
-		}
-		return hq.Enroller{
+		e := hq.Enroller{
 			Zerops:    client,
 			HTTP:      &http.Client{Timeout: hqCallTimeout},
-			OrgID:     info.ID,
 			ProjectID: projectID,
 			Path:      hq.EnrollmentPath(),
-		}.Enroll(ctx)
+		}
+		if withOrg {
+			info, err := client.GetUserInfo(ctx)
+			if err != nil {
+				return hq.Enroller{}, fmt.Errorf("read the key's organization: %w", err)
+			}
+			e.OrgID = info.ID
+		}
+		return e, nil
+	}
+	hq.Keep(ctx, func(ctx context.Context) (hq.Result, error) {
+		e, err := enroller(ctx, true)
+		if err != nil {
+			return hq.Result{}, err
+		}
+		return e.Enroll(ctx)
+	}, func(ctx context.Context) (hq.Result, error) {
+		e, err := enroller(ctx, false)
+		if err != nil {
+			return hq.Result{}, err
+		}
+		return e.Recheck(ctx)
 	}, hq.KeepOptions{
 		Log: logHQ,
 		// The Mate server says from it why its setup waits (spec-mate §2.8).

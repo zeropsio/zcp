@@ -78,7 +78,7 @@ func TestKeep_RecordsEachAttemptsOutcome(t *testing.T) {
 	seen := make(chan error, 4)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	go Keep(ctx, a.attempt, KeepOptions{
+	go Keep(ctx, a.attempt, a.attempt, KeepOptions{
 		Retry:   time.Millisecond,
 		Recheck: time.Hour,
 		Record:  func(err error) { seen <- err },
