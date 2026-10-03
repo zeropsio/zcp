@@ -91,8 +91,9 @@ func giteaLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, 
 // said to merge it):
 //   - a request still open after the fresh read → name it, tell the person
 //     to merge it;
-//   - a merge recorded in Landed, or just learned by the fresh read → the
-//     code is on the group's main; point to the projects page;
+//   - a merge recorded in Landed or LastLanded (which outlives the absorb
+//     that clears Landed), or just learned by the fresh read → the code is
+//     on the group's main; point to the projects page;
 //   - no request at all (never pushed, no repository yet) or one closed
 //     without merging → nothing of this pair's work has reached main; tell
 //     the person to deliver through the stage half first.
@@ -111,7 +112,7 @@ func giteaLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer,
 			switch {
 			case m.Gitea.PullRequest != 0:
 				open = append(open, fmt.Sprintf("%s's pull request #%d on %s", m.Hostname, m.Gitea.PullRequest, m.Gitea.FullName))
-			case m.Gitea.Landed != nil:
+			case m.Gitea.Landed != nil || m.Gitea.LastLanded != "":
 				merged = true
 			}
 		}
@@ -180,16 +181,21 @@ func deliverGiteaPair(
 	// since the last merge — the passes are backoff-gated (giteaAttemptDue)
 	// and a delivery must not wait on one to learn a fresh merge.
 	//
-	// The learned line ("pull request #N is merged…") is folded onto
-	// whatever this delivery itself reports, success or failure — it is
-	// news about the OLD request, independent of this attempt's own
-	// outcome, and PullRequest is now 0 (or Landed, not PullRequest) so no
-	// later pass would ever say it otherwise.
+	// The learned line ("pull request #N is merged…") opens whatever this
+	// delivery itself reports, success or failure — it is news about the OLD
+	// request, which came first, independent of this attempt's own outcome,
+	// and PullRequest is now 0 (or Landed, not PullRequest) so no later pass
+	// would ever say it otherwise. A delivery that opened the next request
+	// itself drops the line's promise of one.
 	if note := giteaLearnLanding(ctx, httpClient, stateDir, wiring, meta); note != "" {
 		defer func() {
-			if delivery != nil {
-				delivery.Line = strings.TrimSpace(delivery.Line + " " + note)
+			if delivery == nil {
+				return
 			}
+			if delivery.PullRequest != nil {
+				note = giteaOutcomeAfterOpen(note)
+			}
+			delivery.Line = strings.TrimSpace(sentenceOf(note) + " " + delivery.Line)
 		}()
 	}
 
@@ -260,15 +266,21 @@ func deliverGiteaPair(
 		clearGiteaLanding(stateDir, meta)
 	}
 
-	result := &giteaDelivery{PullRequest: openGiteaPairPullRequest(ctx, httpClient, wiring, stateDir, meta)}
-	if pr := result.PullRequest; pr != nil {
+	pr, prErr := openGiteaPairPullRequest(ctx, httpClient, wiring, stateDir, meta)
+	result := &giteaDelivery{PullRequest: pr}
+	switch {
+	case pr != nil:
 		result.Line = fmt.Sprintf(
-			"Delivered: %s's code is on %s of %s, and pull request #%d (%s) carries it to %q. %s Tell the person that link — the code reaches the group's stage when they merge it.",
-			meta.Hostname, branch, repo, pr.Number, pr.URL, pr.Base, giteaDescribeLine(pr, meta.Hostname))
-	} else {
+			"Delivered: %s's code is on %s of %s, and pull request #%d (%s) carries it to %q. %s Tell the person that link — the code reaches the group's stage when they merge it. %s",
+			meta.Hostname, branch, repo, pr.Number, pr.URL, pr.Base, giteaDescribeLine(pr, meta.Hostname), giteaMergeAnyMoment(pr.Base))
+	case !giteaPullRequestFailed(prErr):
 		result.Line = fmt.Sprintf(
-			"Delivered: %s's code is on %s of %s. No pull request is open onto %q yet — Gitea opens one only for a branch that differs from it; the next stage deploy asks again.",
-			meta.Hostname, branch, repo, giteaBaseOf(meta))
+			"Delivered: %s's code is on %s of %s. No pull request is open onto %q — zcp opens one only for a branch that carries something %q lacks, so there is nothing for the person to merge; the next stage deploy asks again.",
+			meta.Hostname, branch, repo, giteaBaseOf(meta), giteaBaseOf(meta))
+	default:
+		result.Line = fmt.Sprintf(
+			"Delivered: %s's code is on %s of %s, but its pull request onto %q could not be opened (%v); it is tried again on the next stage deploy or reconcile pass.",
+			meta.Hostname, branch, repo, giteaBaseOf(meta), prErr)
 	}
 	if line := reconcileGiteaGroupRecipe(ctx, client, httpClient, rt, stateDir, mate.LiveEnvStorePath); line != "" {
 		result.Line += " The group's recipe: " + line
@@ -378,6 +390,11 @@ type giteaAbsorbOutcome struct {
 	// about that OLD request, independent of whether THIS absorb found
 	// anything to do. "" when there was nothing to say.
 	LearnedNote string
+	// Absorbed is true when a recorded landing is folded into the checkout
+	// cleanly. The landing is kept until the push that follows lands it on
+	// the remote: the caller forgets it then (clearGiteaLanding), never
+	// before, so a failed push leaves it for the next one.
+	Absorbed bool
 }
 
 // giteaAbsorbBeforePush is what a wired pair's push OTHER than a delivery
@@ -393,7 +410,8 @@ type giteaAbsorbOutcome struct {
 // Learns a fresh landing itself (giteaLearnLanding) — never waits on the
 // backoff-gated reconcile pass — then runs ops.BuildGiteaAbsorbAndSyncCommand
 // on the checkout. A clean run (nothing to absorb, or absorbed without a
-// conflict) clears the landing. A REAL conflict — either inside the absorb's
+// conflict) answers Absorbed, and the caller clears the landing once its push
+// lands. A REAL conflict — either inside the absorb's
 // own S^1 merge, or the ordinary take-the-base-in step that follows it —
 // leaves the checkout exactly as the absorb's own abort left it (the
 // caller must not push on top of that) and is reported in full. Any other
@@ -440,8 +458,7 @@ func giteaAbsorbBeforePush(
 	if err != nil {
 		return giteaAbsorbOutcome{LearnedNote: note}
 	}
-	clearGiteaLanding(stateDir, meta)
-	return giteaAbsorbOutcome{LearnedNote: note}
+	return giteaAbsorbOutcome{LearnedNote: note, Absorbed: true}
 }
 
 // refreshGiteaWorkflow brings a wired pair's workflow to the one this zcp
@@ -596,17 +613,33 @@ func giteaRemoteOfThisMate(remoteURL string) bool {
 	return wiring.Ready() && topology.ClassifyGitHost(remoteURL, wiring.GiteaURL) == topology.GitHostGitea
 }
 
-// giteaPushNextActions answers a push from hostname to the account's Gitea.
+// giteaPushNextActions answers a push from hostname to the account's Gitea,
+// given what opening its request answered (openGiteaPairPullRequest).
 // The group's workflow runs on main, which the person's merge moves, so there
 // is no build to watch and no integration to offer: the Mate's own services
 // change only through a direct deploy, and deploying the stage half pushes by
-// itself. A request left open asks for its description.
-func giteaPushNextActions(pr *giteaPullRequestRef, hostname string) string {
-	if pr == nil {
-		return "Pushed to this Mate's branch on the group's Gitea; no pull request is open yet (Gitea opens one only for a branch that differs from main). Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes and asks for the request again."
+// itself. A request left open asks for its description and says the person
+// may merge it at any moment.
+func giteaPushNextActions(pr *giteaPullRequestRef, openErr error, hostname string) string {
+	if pr == nil && giteaPullRequestFailed(openErr) {
+		return fmt.Sprintf("Pushed to this Mate's branch on the group's Gitea, but its pull request could not be opened (%v); it is tried again on the next stage deploy or push. Nothing builds from the branch: deploy the pair directly to run the code.", openErr)
 	}
-	return fmt.Sprintf("Pushed to %s on the group's Gitea; pull request #%d (%s) carries it to %q, and the person merges it. %s Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes and updates the request by itself.",
-		pr.Branch, pr.Number, pr.URL, pr.Base, giteaDescribeLine(pr, hostname))
+	if pr == nil {
+		return "Pushed to this Mate's branch on the group's Gitea; no pull request is open (zcp opens one only for a branch that carries something main lacks). Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes and asks for the request again."
+	}
+	return fmt.Sprintf("Pushed to %s on the group's Gitea; pull request #%d (%s) carries it to %q. %s %s Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes, and updates the request while it is open.",
+		pr.Branch, pr.Number, pr.URL, pr.Base, giteaDescribeLine(pr, hostname), giteaMergeAnyMoment(pr.Base))
+}
+
+// giteaMergeAnyMoment is what the agent needs the moment it hands a request
+// over: the person sees it at once, at the top of the Mate's conversation,
+// and may merge it while the agent is still working (2026-10-03: #7 merged
+// before the stage deploy that followed its push, and the agent spent its
+// next turns working out what had happened).
+func giteaMergeAnyMoment(base string) string {
+	return fmt.Sprintf(
+		"The person may merge it at any moment, before you finish — that is the hand-over, not something to check or undo: the next stage deploy folds the merge in and opens a new request only for what %q still lacks.",
+		base)
 }
 
 // giteaHandoffNote is what the person needs from the Mate's closing message

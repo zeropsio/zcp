@@ -378,7 +378,7 @@ func TestOpenGiteaPairPullRequest_PutsTheKeptDescription(t *testing.T) {
 				keepForTest(t, stateDir, tt.kept)
 			}
 			wiring := ops.GiteaWiring{GiteaURL: gitea.URL, BrokerURL: gitea.URL, Token: giteaBotToken}
-			ref := openGiteaPairPullRequest(context.Background(), gitea.Client(), wiring, stateDir, meta)
+			ref, _ := openGiteaPairPullRequest(context.Background(), gitea.Client(), wiring, stateDir, meta)
 			if ref == nil {
 				t.Fatal("want a pull request")
 			}
@@ -442,7 +442,7 @@ func TestGiteaPushNextActions_AsksForTheDescription(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := giteaPushNextActions(tt.pr, "appdev")
+			got := giteaPushNextActions(tt.pr, nil, "appdev")
 			if tt.wantNone {
 				if strings.Contains(got, "describe-change") {
 					t.Errorf("with no request open there is nothing to describe yet:\n%s", got)
@@ -482,6 +482,9 @@ func TestADeliveryPutsTheKeptDescriptionOnItsRequest(t *testing.T) {
 	}
 	if !strings.Contains(delivery.Line, "carries the description you wrote") {
 		t.Errorf("the line must say the kept words are on the request:\n%s", delivery.Line)
+	}
+	if !strings.Contains(delivery.Line, "may merge it at any moment") {
+		t.Errorf("the line must say the person may merge the request at any moment:\n%s", delivery.Line)
 	}
 	if got := keptDescription(t, stateDir, "appdev"); got != nil {
 		t.Errorf("the words are on the request, yet still kept: %+v", got)

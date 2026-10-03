@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -211,6 +212,13 @@ func handleGroupRecipeScaling(
 		return scalingProposalFailed(fmt.Sprintf("could not write the proposal to %s (%v)", fork, err)), nil, nil
 	}
 	number, _, err := ops.EnsureGiteaPullRequest(ctx, httpClient, wiring.GiteaURL, wiring.Token, comp.groupRepo, fork, branch, comp.base, title)
+	if errors.Is(err, ops.ErrNothingToPropose) {
+		return jsonResult(map[string]any{
+			"groupRepo": comp.groupRepo,
+			"message": fmt.Sprintf("The group recipe on %s@%s already carries %s's scale as this proposal writes it — nothing to propose.%s",
+				comp.groupRepo, comp.base, host, refusedTiers(tiers)),
+		}), nil, nil
+	}
 	if err != nil {
 		return scalingProposalFailed(fmt.Sprintf("the proposal is on %s@%s but opening its pull request failed (%v)", fork, branch, err)), nil, nil
 	}

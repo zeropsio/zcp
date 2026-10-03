@@ -2582,6 +2582,28 @@ refused does not push and is told this Mate's token is the broker's to deliver.
 `TestADeliveryRefusedForItsCredentialMarksThePair`,
 `TestGitPushDeploy_BringsItsCredentialToTheCurrentTokenFirst`.
 
+**A merge may come at any moment (2026-10-03).** A request is drawn at the top of its Mate's
+conversation as soon as it opens, and the person may merge it while the agent is still working: #7
+was merged between the push that opened it and the stage deploy that followed, that deploy absorbed
+the squash and took `main` in, and opened #8 — ahead of `main` by those merges alone, so empty —
+which the agent then set out to verify. A request is opened only for a branch whose merge-base diff
+against `main` is not empty (Gitea's compare with `?output=diff`, the diff the request would show),
+never on a commit count. A Gitea before 1.27 ignores `output` and answers its JSON comparison; there
+the commits ahead decide, and zero opens nothing. Measured 2026-10-03 on 1.27.2: with `output=diff`
+the compare answers `200 text/plain` and the raw diff, empty for `main...main`; without it, `200
+application/json` and `{"total_commits":…}`; the cross-fork `owner:branch` shape is not probed. An
+empty diff is nothing to propose (`ops.ErrNothingToPropose`), never a failure and never a request
+`#0`. No pass opens a request from a branch whose landing still waits to be absorbed, since that
+branch still holds the squashed history; the next delivery or push opens it, for what `main` still
+lacks. The pair keeps its last merge (`GiteaRepoRef.LastLanded`) after the absorb clears the
+pending landing, so launching production still knows its work is on `main` when no request is left
+to say so. Every hand-over of a request, after asking for its description, tells the agent the
+person may merge it at any moment and that the next stage deploy folds the merge in.
+`TestProductionKnowsMergedWorkAfterTheMergeIsAbsorbed`, `TestEnsureGiteaPullRequest`, `TestAStageDeployAfterThePersonMergedProposesOnlyWhatMainLacks`,
+`TestReconcileGitea_OpensThePullRequestOnceTheBranchIsThere`,
+`TestReconcileGiteaGroupRecipe_AnEmptyDiffProposesNothing`,
+`TestGroupRecipeScaling_AnEmptyDiffProposesNothing`.
+
 **A wired Mate's production is the group's (2026-09-23).** Asked "muzes to dat na
 produkci?", a wired Mate started launch-production and answered from inside its launch gate, while
 its group already had a production with `055a7e8 Mate: weatherdev (#4)` merged and waiting for

@@ -195,13 +195,20 @@ func TestEnsureGiteaPullRequest(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		openList    string
-		createCode  int
+		name       string
+		openList   string
+		createCode int
+		// compare is what Gitea 1.27.2's merge-base diff of the branch
+		// answers, raw, as text/plain; nil leaves the compare unanswered.
+		compare *string
+		// compareJSON is what a Gitea before 1.27 answers the compare with:
+		// it ignores output=diff and sends the JSON comparison.
+		compareJSON *string
 		wantNumber  int
 		wantCreated bool
 		wantPosts   int
 		wantErr     bool
+		wantNothing bool
 	}{
 		{
 			name:        "none open yet",
@@ -239,6 +246,68 @@ func TestEnsureGiteaPullRequest(t *testing.T) {
 			wantPosts:  1,
 		},
 		{
+			// The person merged the Mate's request while it worked: its next
+			// delivery absorbed the squash and took main in, so the branch is
+			// ahead by merges and carries nothing main lacks.
+			name:        "the branch is ahead only by merges of what main has",
+			openList:    `[]`,
+			compare:     strPtr(""),
+			wantNothing: true,
+		},
+		{
+			name:        "a diff of whitespace alone",
+			openList:    `[]`,
+			compare:     strPtr("\n  \n"),
+			wantNothing: true,
+		},
+		{
+			// The body is read capped at 1 MiB: a larger diff arrives cut,
+			// and is still a change to propose.
+			name:       "a diff larger than the read cap",
+			openList:   `[]`,
+			compare:    strPtr("diff --git a/big.txt b/big.txt\n" + strings.Repeat("+x\n", 1<<20)),
+			createCode: http.StatusCreated,
+			wantNumber: 7, wantCreated: true, wantPosts: 1,
+		},
+		{
+			name:       "the branch carries a change main lacks",
+			openList:   `[]`,
+			compare:    strPtr("diff --git a/app.js b/app.js\n"),
+			createCode: http.StatusCreated,
+			wantNumber: 7, wantCreated: true, wantPosts: 1,
+		},
+		{
+			// A Gitea before 1.27 answers the compare with its JSON
+			// comparison, never empty: the commits ahead decide there.
+			name:        "an older gitea's comparison, nothing ahead",
+			openList:    `[]`,
+			compareJSON: strPtr(`{"total_commits":0,"commits":[]}`),
+			wantNothing: true,
+		},
+		{
+			name:        "an older gitea's comparison, commits ahead",
+			openList:    `[]`,
+			compareJSON: strPtr(`{"total_commits":2,"commits":[]}`),
+			createCode:  http.StatusCreated,
+			wantNumber:  7, wantCreated: true, wantPosts: 1,
+		},
+		{
+			// A comparison zcp cannot read is a compare not answered: an
+			// unproposed change costs more than an empty request.
+			name:        "a truncated comparison",
+			openList:    `[]`,
+			compareJSON: strPtr(`{"total_commits":`),
+			createCode:  http.StatusCreated,
+			wantNumber:  7, wantCreated: true, wantPosts: 1,
+		},
+		{
+			name:        "a comparison without its count",
+			openList:    `[]`,
+			compareJSON: strPtr(`{"commits":[]}`),
+			createCode:  http.StatusCreated,
+			wantNumber:  7, wantCreated: true, wantPosts: 1,
+		},
+		{
 			name:       "gitea refuses the create",
 			openList:   `[]`,
 			createCode: http.StatusUnprocessableEntity,
@@ -255,6 +324,17 @@ func TestEnsureGiteaPullRequest(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "token bot-token" {
 					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				if r.URL.Path == "/api/v1/repos/acme/api/compare/main...mate/mate-p1" &&
+					tt.compare != nil && r.URL.Query().Get("output") == "diff" {
+					w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+					_, _ = w.Write([]byte(*tt.compare))
+					return
+				}
+				if r.URL.Path == "/api/v1/repos/acme/api/compare/main...mate/mate-p1" && tt.compareJSON != nil {
+					w.Header().Set("Content-Type", "application/json;charset=utf-8")
+					_, _ = w.Write([]byte(*tt.compareJSON))
 					return
 				}
 				if r.URL.Path != "/api/v1/repos/acme/api/pulls" {
@@ -281,6 +361,15 @@ func TestEnsureGiteaPullRequest(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("expected an error, got number=%d created=%v", number, created)
+				}
+				return
+			}
+			if tt.wantNothing {
+				if !errors.Is(err, ErrNothingToPropose) || number != 0 || created {
+					t.Fatalf("= (%d, %v, %v), want nothing to propose", number, created, err)
+				}
+				if posts != 0 {
+					t.Errorf("POST /pulls count = %d, want none", posts)
 				}
 				return
 			}

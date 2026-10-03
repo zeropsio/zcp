@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -89,24 +90,28 @@ func workSessionIntent(stateDir string) string {
 // openGiteaPairPullRequest opens the pair's request when none is open, finds
 // the open one when there is, and records its number on the pair either way —
 // then puts on it the description the Mate kept for its change, if any
-// (putKeptChangeDescription). Returns nil when there is nothing to report —
-// no wiring, no repository, or a Gitea that could not answer. Never an error:
-// every caller is a best-effort hook on a path that has already succeeded,
-// and a request that could not be opened is retried by the next reconcile
-// pass.
+// (putKeptChangeDescription). Three answers besides the request:
+// errNoGiteaPairRequest when there is nothing to ask — no wiring, no
+// repository;
+// ops.ErrNothingToPropose when the branch carries nothing its base lacks, the
+// ordinary state right after the person merged, which no caller reports as a
+// failure; any other error when Gitea could not open it. The error is for
+// the line only: every caller is a best-effort hook on a path that has
+// already succeeded, and a request that could not be opened is retried by
+// the next delivery, push or reconcile pass.
 func openGiteaPairPullRequest(
 	ctx context.Context,
 	httpClient ops.HTTPDoer,
 	wiring ops.GiteaWiring,
 	stateDir string,
 	m *workflow.ServiceMeta,
-) *giteaPullRequestRef {
+) (*giteaPullRequestRef, error) {
 	if httpClient == nil || !wiring.Ready() || m == nil || m.Gitea == nil {
-		return nil
+		return nil, errNoGiteaPairRequest
 	}
 	repo, branch := m.Gitea.FullName, m.Gitea.Branch
 	if repo == "" || branch == "" {
-		return nil
+		return nil, errNoGiteaPairRequest
 	}
 	base := m.Gitea.DefaultBranch
 	if base == "" {
@@ -117,8 +122,11 @@ func openGiteaPairPullRequest(
 	number, created, err := ops.EnsureGiteaPullRequest(
 		ctx, httpClient, wiring.GiteaURL, wiring.Token, repo, repo, branch, base, title,
 	)
-	if err != nil || number == 0 {
-		return nil
+	if err != nil {
+		return nil, err
+	}
+	if number == 0 {
+		return nil, errGiteaPullRequestUnread
 	}
 	if !created {
 		// A request opened before any session named the work still reads "Mate:
@@ -138,8 +146,22 @@ func openGiteaPairPullRequest(
 		URL:             giteaPullRequestURL(wiring.GiteaURL, repo, number),
 		Described:       described,
 		DescriptionNote: note,
-	}
+	}, nil
 }
+
+// errNoGiteaPairRequest is a pair with no request to ask Gitea about: not
+// wired, no repository, or a push to a remote that is not the group's Gitea.
+var errNoGiteaPairRequest = errors.New("no Gitea pull request to ask about")
+
+// giteaPullRequestFailed reports whether opening a pair's request failed,
+// rather than having nothing to ask or nothing to propose.
+func giteaPullRequestFailed(err error) bool {
+	return err != nil && !errors.Is(err, errNoGiteaPairRequest) && !errors.Is(err, ops.ErrNothingToPropose)
+}
+
+// errGiteaPullRequestUnread is a create that raced another and whose request
+// could not be read back.
+var errGiteaPullRequestUnread = errors.New("a concurrent create opened it, and it could not be read back")
 
 // giteaPullRequestURL is where a person opens a request on the account's
 // Gitea.
@@ -173,17 +195,17 @@ func giteaPullRequestAfterPush(
 	ctx context.Context,
 	httpClient ops.HTTPDoer,
 	stateDir, hostname, remoteURL string,
-) *giteaPullRequestRef {
+) (*giteaPullRequestRef, error) {
 	meta, _ := workflow.FindServiceMeta(stateDir, hostname)
 	if meta == nil || meta.Gitea == nil || meta.Gitea.FullName == "" {
-		return nil
+		return nil, errNoGiteaPairRequest
 	}
 	wiring := ops.ReadGiteaWiring(giteaEnvLookup(mate.LiveEnvStorePath))
 	if !wiring.Ready() {
-		return nil
+		return nil, errNoGiteaPairRequest
 	}
 	if topology.ClassifyGitHost(remoteURL, wiring.GiteaURL) != topology.GitHostGitea {
-		return nil
+		return nil, errNoGiteaPairRequest
 	}
 	return openGiteaPairPullRequest(ctx, httpClient, wiring, stateDir, meta)
 }
@@ -219,10 +241,15 @@ func reconcileGiteaPairPullRequest(
 		// The ordinary state between bootstrap and the first deploy.
 		return ""
 	}
-	ref := openGiteaPairPullRequest(ctx, httpClient, wiring, stateDir, m)
+	ref, err := openGiteaPairPullRequest(ctx, httpClient, wiring, stateDir, m)
+	if ref == nil && !giteaPullRequestFailed(err) {
+		// Nothing to propose: the ordinary state right after the person
+		// merged.
+		return ""
+	}
 	if ref == nil {
-		return fmt.Sprintf("%s is on %s but no pull request could be opened onto %q — retrying on the next pass.",
-			m.Gitea.Branch, m.Gitea.FullName, giteaBaseOf(m))
+		return fmt.Sprintf("%s is on %s but no pull request could be opened onto %q (%v) — retrying on the next pass.",
+			m.Gitea.Branch, m.Gitea.FullName, giteaBaseOf(m), err)
 	}
 	verb := "tracked by"
 	if ref.Created {
@@ -284,13 +311,26 @@ func readGiteaPairPullRequestOutcome(
 		// giteaAbsorbBeforePush), and saying "its next delivery" there would
 		// be wrong the moment this one already did. Just the fact.
 		return fmt.Sprintf(
-			"pull request #%d is merged — this Mate's work is on %q now; its next change opens a new request",
+			"pull request #%d is merged — this Mate's work is on %q now"+giteaMergedNextClause,
 			number, base)
 	}
 	clearGiteaPullRequest(stateDir, m, number)
 	return fmt.Sprintf(
-		"pull request #%d was closed without merging — nothing of it is on %q; the next change opens a new request",
+		"pull request #%d was closed without merging — nothing of it is on %q"+giteaClosedNextClause,
 		number, base)
+}
+
+// The clauses an outcome line ends on, promising the request a later change
+// opens — dropped by a caller that has just opened it (giteaOutcomeAfterOpen).
+const (
+	giteaMergedNextClause = "; its next change opens a new request"
+	giteaClosedNextClause = "; the next change opens a new request"
+)
+
+// giteaOutcomeAfterOpen is an outcome line said in the same call that opened
+// or found the next request: it no longer promises one.
+func giteaOutcomeAfterOpen(note string) string {
+	return strings.TrimSuffix(strings.TrimSuffix(note, giteaMergedNextClause), giteaClosedNextClause)
 }
 
 // clearGiteaPullRequest forgets the number a pair recorded, in memory and on
@@ -329,12 +369,14 @@ func clearGiteaPullRequest(stateDir string, m *workflow.ServiceMeta, number int)
 func recordGiteaLanding(stateDir string, m *workflow.ServiceMeta, number int, commit, head string) {
 	m.Gitea.PullRequest = 0
 	m.Gitea.Landed = &workflow.LandedPullRequest{Commit: commit, Head: head}
+	m.Gitea.LastLanded = commit
 	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
 		if !existed || meta.Gitea == nil || meta.Gitea.PullRequest != number {
 			return nil
 		}
 		meta.Gitea.PullRequest = 0
 		meta.Gitea.Landed = &workflow.LandedPullRequest{Commit: commit, Head: head}
+		meta.Gitea.LastLanded = commit
 		return nil
 	})
 }

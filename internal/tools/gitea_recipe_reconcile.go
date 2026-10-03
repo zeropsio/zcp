@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -181,6 +182,14 @@ func giteaGroupRecipeOutcome(
 
 	number, created, err := ops.EnsureGiteaPullRequest(ctx, httpClient, wiring.GiteaURL, wiring.Token,
 		groupRepo, fork, branch, base, giteaRecipeBranchTitle)
+	if errors.Is(err, ops.ErrNothingToPropose) {
+		// The diff the request would show is empty: main already carries
+		// what the branch adds. Nothing to propose, nothing to report.
+		if len(closed) > 0 {
+			outcome.Line = fmt.Sprintf("%s@%s already carries what this Mate would propose, so this Mate's earlier proposal %s is closed", groupRepo, base, pullNumbers(closed))
+		}
+		return outcome
+	}
 	if err != nil {
 		outcome.Line = fmt.Sprintf("the recipe is on %s@%s but proposing it to %s failed (%v) — retrying on the next pass.", fork, branch, groupRepo, err)
 		return outcome
@@ -194,8 +203,11 @@ func giteaGroupRecipeOutcome(
 	case created:
 		outcome.Line = fmt.Sprintf("what %s@%s lacks of the group recipe (%s) is proposed as pull request #%d (from %s@%s); it only adds files, so a tier the group already has is never touched",
 			groupRepo, base, strings.Join(outcome.Proposed, ", "), number, fork, branch)
-	case committed:
+	case committed && number != 0:
 		outcome.Line = fmt.Sprintf("the group recipe changed; pull request #%d on %s carries the update", number, groupRepo)
+	case committed:
+		// A create that raced and could not be re-read.
+		outcome.Line = fmt.Sprintf("the recipe is on %s@%s but its pull request to %s could not be read back — retrying on the next pass.", fork, branch, groupRepo)
 	}
 	if len(closed) > 0 && outcome.Line != "" {
 		outcome.Line += fmt.Sprintf("; this Mate's earlier proposal %s, cut from an older %s, is closed", pullNumbers(closed), base)

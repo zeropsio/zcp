@@ -210,6 +210,7 @@ func TestReconcileGitea_OpensThePullRequestOnceTheBranchIsThere(t *testing.T) {
 	tests := []struct {
 		name         string
 		branchExists bool
+		landed       bool
 		wantCreates  int
 		wantNumber   int
 		wantReport   []string
@@ -223,6 +224,14 @@ func TestReconcileGitea_OpensThePullRequestOnceTheBranchIsThere(t *testing.T) {
 			name: "the Mate has not pushed yet", branchExists: false,
 			wantCreates: 0, wantNumber: 0,
 		},
+		{
+			// The person merged the Mate's request while it worked: the
+			// branch on the remote still holds the squashed history until a
+			// delivery absorbs the landing, and a request opened from it would
+			// offer the merged work again.
+			name: "the branch still holds a merged request", branchExists: true, landed: true,
+			wantCreates: 0, wantNumber: 0,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -232,6 +241,14 @@ func TestReconcileGitea_OpensThePullRequestOnceTheBranchIsThere(t *testing.T) {
 
 			stateDir := t.TempDir()
 			writeWiredGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git")
+			if tt.landed {
+				if err := workflow.UpsertServiceMeta(stateDir, "appdev", func(meta *workflow.ServiceMeta, _ bool) error {
+					meta.Gitea.Landed = &workflow.LandedPullRequest{Commit: "squash-sha", Head: "branch-tip-sha"}
+					return nil
+				}); err != nil {
+					t.Fatalf("UpsertServiceMeta: %v", err)
+				}
+			}
 			envPath := writeLiveEnvFile(t, map[string]string{
 				"GITEA_URL": gitea.URL, "MATE_BROKER_URL": gitea.URL, "GITEA_TOKEN": giteaBotToken,
 			})

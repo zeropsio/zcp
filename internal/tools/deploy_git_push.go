@@ -685,10 +685,14 @@ func handleGitPush(
 	// squash-vs-history one — stops the push outright: pushing on top of a
 	// checkout the sync left mid-way is never right.
 	var giteaLearnedNote string
+	var giteaAbsorbedMeta *workflow.ServiceMeta
 	if giteaRemoteOfThisMate(effectiveRemote) {
 		meta, _ := workflow.FindServiceMeta(stateDir, hostname)
 		absorb := giteaAbsorbBeforePush(ctx, httpClient, sshDeployer, stateDir, hostname, workingDir, meta)
 		giteaLearnedNote = absorb.LearnedNote
+		if absorb.Absorbed {
+			giteaAbsorbedMeta = meta
+		}
 		// giteaLearnedNote (news about a PREVIOUSLY recorded pull request,
 		// independent of whether THIS absorb found anything to do) is
 		// folded into every return from here, error included — it must not
@@ -787,6 +791,12 @@ func handleGitPush(
 		), WithFailureClassification(classification)), nil, nil
 	}
 
+	// The push landed the absorbed landing on the remote: only now is this
+	// pair done with it. A failed push above returned with it still recorded.
+	if giteaAbsorbedMeta != nil {
+		clearGiteaLanding(stateDir, giteaAbsorbedMeta)
+	}
+
 	result := &ops.GitPushResult{
 		Status:    "PUSHED",
 		RemoteURL: effectiveRemote,
@@ -803,7 +813,7 @@ func handleGitPush(
 	// Opened as soon as the push lands: the push is what put the Mate's branch
 	// on the account's Gitea, and `main` there takes no direct push from
 	// anyone. Idempotent: a second push finds the open one.
-	pullRequest := giteaPullRequestAfterPush(ctx, httpClient, stateDir, hostname, effectiveRemote)
+	pullRequest, pullRequestErr := giteaPullRequestAfterPush(ctx, httpClient, stateDir, hostname, effectiveRemote)
 	giteaRemote := giteaRemoteOfThisMate(effectiveRemote)
 
 	// C2 closure (audit-prerelease-internal-testing-2026-04-29): the
@@ -847,7 +857,7 @@ func handleGitPush(
 	case giteaRemote:
 		// The group's workflow runs on main, which the person's merge moves:
 		// nothing builds from a Mate's branch (gitea_delivery.go).
-		result.NextActions = giteaPushNextActions(pullRequest, hostname)
+		result.NextActions = giteaPushNextActions(pullRequest, pullRequestErr, hostname)
 	default:
 		// L1 build watch (spec-git-delivery-target §6.1): the push IS the
 		// deploy, so follow the integration-triggered build to terminal the

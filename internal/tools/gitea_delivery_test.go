@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/mate"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -339,8 +342,80 @@ func TestAStageDeployAbsorbsAFreshMergeWithoutWaitingForAReconcilePass(t *testin
 	// The OLD request's fate (#4 merged) is news independent of this
 	// delivery's own outcome — nothing else would ever say it once the
 	// number is off meta.Gitea.PullRequest.
-	if !strings.Contains(delivery.Line, "pull request #4 is merged") {
-		t.Errorf("the delivery must fold in what it learned about the old request:\n%s", delivery.Line)
+	if !strings.HasPrefix(delivery.Line, "Pull request #4 is merged") {
+		t.Errorf("the delivery must open with what it learned about the old request:\n%s", delivery.Line)
+	}
+}
+
+// TestAStageDeployAfterThePersonMergedProposesOnlyWhatMainLacks: the person
+// may merge a Mate's request the moment it shows, while the agent is still
+// working. The next stage deploy absorbs that merge and takes main in, so its
+// branch is ahead of main by merges alone unless the agent changed something
+// since — a request opened for those merges is empty, and the agent read the
+// one it was told about as work to verify (2026-10-03, PR #8 after #7).
+func TestAStageDeployAfterThePersonMergedProposesOnlyWhatMainLacks(t *testing.T) {
+	tests := []struct {
+		name        string
+		compareDiff string
+		wantCreates int
+		wantLine    []string
+		wantNotLine []string
+	}{
+		{
+			name: "nothing changed since the merge", compareDiff: "",
+			wantCreates: 0,
+			wantLine:    []string{"Pull request #4 is merged", "its next change opens a new request", "No pull request is open"},
+			wantNotLine: []string{"pull request #3"},
+		},
+		{
+			// The request this delivery opened is the new one: the note
+			// about #4 does not promise another.
+			name: "the agent changed something since", compareDiff: "diff --git a/app.js b/app.js\n",
+			wantCreates: 1,
+			wantLine:    []string{"Pull request #4 is merged", "pull request #3"},
+			wantNotLine: []string{"its next change opens a new request"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newFakeGitea()
+			fake.branchExists = true
+			fake.pullState = "closed"
+			fake.pullMerged = true
+			fake.pullMergeCommit = "squash-sha"
+			fake.pullMergeHead = "branch-tip-sha"
+			fake.compareDiff = &tt.compareDiff
+			gitea := fake.start(t)
+
+			stateDir := t.TempDir()
+			writeLandedGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git")
+			t.Setenv("GITEA_URL", gitea.URL)
+			t.Setenv("MATE_BROKER_URL", gitea.URL)
+			t.Setenv("GITEA_TOKEN", giteaBotToken)
+
+			ssh := &scriptedSSH{respond: func(_, _ string) string { return "ok" }}
+			delivery := deliverGiteaPair(context.Background(), platform.NewMock(), gitea.Client(), ssh,
+				runtime.Info{InContainer: true, ProjectID: "proj-1"}, stateDir, "appstage")
+			if delivery == nil {
+				t.Fatal("want a delivery")
+			}
+			if fake.pullCreates != tt.wantCreates {
+				t.Errorf("pull requests created = %d, want %d", fake.pullCreates, tt.wantCreates)
+			}
+			if !strings.HasPrefix(delivery.Line, "Pull request #4 is merged") {
+				t.Errorf("the line must open with what became of #4:\n%s", delivery.Line)
+			}
+			for _, want := range tt.wantLine {
+				if !strings.Contains(delivery.Line, want) {
+					t.Errorf("the line misses %q:\n%s", want, delivery.Line)
+				}
+			}
+			for _, unwanted := range tt.wantNotLine {
+				if strings.Contains(delivery.Line, unwanted) {
+					t.Errorf("the line must not name %q:\n%s", unwanted, delivery.Line)
+				}
+			}
+		})
 	}
 }
 
@@ -992,7 +1067,7 @@ func (s *scriptedSSH) ExecSSHBackground(_ context.Context, host, command string,
 // TestSessionAnnotations_WiredMate_HandoffOnlyAfterADelivery pins the closing
 // note of a wired Mate: it names the pull request to review only when the
 // session delivered — deployed a pair's stage half, the deploy that commits,
-// pushes and opens the request. A stand-up leaves the stage out of scope and
+// pushes and opens the request — and a request is open to review. A stand-up leaves the stage out of scope and
 // delivers nothing; told to hand over a request's link, the Mate would have
 // to open one nobody asked for.
 func TestSessionAnnotations_WiredMate_HandoffOnlyAfterADelivery(t *testing.T) {
@@ -1004,10 +1079,14 @@ func TestSessionAnnotations_WiredMate_HandoffOnlyAfterADelivery(t *testing.T) {
 		name        string
 		roles       map[string]string
 		deployed    []string
+		pullRequest int
 		wantHandoff bool
 	}{
 		{name: "a stand-up: the stage left out, nothing delivered", roles: map[string]string{"appstage": workflow.RoleOutOfScope}, deployed: []string{"appdev"}},
-		{name: "a task delivered through the stage", deployed: []string{"appdev", "appstage"}, wantHandoff: true},
+		{name: "a task delivered through the stage", deployed: []string{"appdev", "appstage"}, pullRequest: 3, wantHandoff: true},
+		// The person merged while the Mate worked, and the delivery had
+		// nothing left to propose: no request to hand over.
+		{name: "delivered with nothing left to propose", deployed: []string{"appdev", "appstage"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1019,6 +1098,10 @@ func TestSessionAnnotations_WiredMate_HandoffOnlyAfterADelivery(t *testing.T) {
 				Mode:            topology.PlanModeStandard,
 				CloseDeployMode: topology.CloseModeAuto,
 				BootstrappedAt:  now,
+				Gitea: &workflow.GiteaRepoRef{
+					FullName: "acme/appdev", Branch: "mate/mate-p1", DefaultBranch: "main",
+					PullRequest: tt.pullRequest,
+				},
 			}); err != nil {
 				t.Fatalf("WriteServiceMeta: %v", err)
 			}
@@ -1043,6 +1126,222 @@ func TestSessionAnnotations_WiredMate_HandoffOnlyAfterADelivery(t *testing.T) {
 			}
 			if gotHandoff := strings.Contains(got.Note, giteaHandoffNote); gotHandoff != tt.wantHandoff {
 				t.Errorf("handoff in the closing note = %v, want %v: %q", gotHandoff, tt.wantHandoff, got.Note)
+			}
+		})
+	}
+}
+
+// TestAPushHandOverSaysTheRequestMayBeMergedAtAnyMoment: a push that leaves a
+// request open asks for its description and tells the agent the person may
+// merge it at any moment; a push with no request open has nothing to merge.
+func TestAPushHandOverSaysTheRequestMayBeMergedAtAnyMoment(t *testing.T) {
+	open := &giteaPullRequestRef{Repo: "acme/appdev", Branch: "mate/mate-p1", Base: "main", Number: 3,
+		URL: "https://gitea.example.invalid/acme/appdev/pulls/3"}
+	tests := []struct {
+		name    string
+		pr      *giteaPullRequestRef
+		openErr error
+		want    []string
+		wantNot []string
+	}{
+		{
+			name: "nothing to propose", openErr: ops.ErrNothingToPropose,
+			want:    []string{"no pull request is open", "zcp opens one only"},
+			wantNot: []string{"at any moment", "describe-change", "could not be opened"},
+		},
+		{
+			name: "gitea refused the create", openErr: errors.New("the Gitea pull-request create returned status 500"),
+			want:    []string{"could not be opened", "status 500", "tried again"},
+			wantNot: []string{"at any moment", "describe-change", "no pull request is open"},
+		},
+		{
+			name: "a request open", pr: open,
+			want:    []string{`action="describe-change" service="appdev"`, "may merge it at any moment", `what "main" still lacks`},
+			wantNot: []string{"and the person merges it"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := giteaPushNextActions(tt.pr, tt.openErr, "appdev")
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("next actions miss %q:\n%s", want, got)
+				}
+			}
+			for _, unwanted := range tt.wantNot {
+				if strings.Contains(got, unwanted) {
+					t.Errorf("next actions must not say %q:\n%s", unwanted, got)
+				}
+			}
+		})
+	}
+}
+
+// TestAPairsRequestNothingToProposeIsNotAFailure: a branch whose diff against
+// main is empty owes no request — the ordinary state right after the person
+// merged — and the reconcile says nothing of it, the delivery says there is
+// nothing to merge; only a request Gitea refused to open is reported as one
+// that could not be, and retried.
+func TestAPairsRequestNothingToProposeIsNotAFailure(t *testing.T) {
+	tests := []struct {
+		name             string
+		compareDiff      string
+		pullCreateStatus int
+		wantReconcile    []string
+		wantDelivery     []string
+		wantNotDelivery  []string
+	}{
+		{
+			name:            "nothing to propose",
+			wantDelivery:    []string{"No pull request is open", "zcp opens one only", "nothing for the person to merge"},
+			wantNotDelivery: []string{"could not be opened"},
+		},
+		{
+			name:             "gitea refuses the create",
+			compareDiff:      "diff --git a/app.js b/app.js\n",
+			pullCreateStatus: http.StatusInternalServerError,
+			wantReconcile:    []string{"no pull request could be opened", "status 500", "retrying on the next pass"},
+			wantDelivery:     []string{"could not be opened", "status 500", "tried again"},
+			wantNotDelivery:  []string{"nothing for the person to merge"},
+		},
+		{
+			name:          "a change to propose",
+			compareDiff:   "diff --git a/app.js b/app.js\n",
+			wantReconcile: []string{"opened as pull request #3"},
+			wantDelivery:  []string{"pull request #3"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newFakeGitea()
+			fake.branchExists = true
+			fake.compareDiff = &tt.compareDiff
+			fake.pullCreateStatus = tt.pullCreateStatus
+			gitea := fake.start(t)
+			t.Setenv("GITEA_URL", gitea.URL)
+			t.Setenv("MATE_BROKER_URL", gitea.URL)
+			t.Setenv("GITEA_TOKEN", giteaBotToken)
+
+			stateDir := t.TempDir()
+			writeWiredGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git")
+			meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
+			wiring := ops.ReadGiteaWiring(giteaEnvLookup(mate.LiveEnvStorePath))
+			line := reconcileGiteaPairPullRequest(context.Background(), gitea.Client(), stateDir, wiring, meta)
+			if len(tt.wantReconcile) == 0 && line != "" {
+				t.Errorf("reconcile = %q, want nothing to say", line)
+			}
+			for _, want := range tt.wantReconcile {
+				if !strings.Contains(line, want) {
+					t.Errorf("reconcile misses %q:\n%s", want, line)
+				}
+			}
+
+			stateDir = t.TempDir()
+			writeWiredGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git")
+			ssh := &scriptedSSH{respond: func(_, _ string) string { return "ok" }}
+			delivery := deliverGiteaPair(context.Background(), platform.NewMock(), gitea.Client(), ssh,
+				runtime.Info{InContainer: true, ProjectID: "proj-1"}, stateDir, "appstage")
+			if delivery == nil {
+				t.Fatal("want a delivery")
+			}
+			for _, want := range tt.wantDelivery {
+				if !strings.Contains(delivery.Line, want) {
+					t.Errorf("delivery misses %q:\n%s", want, delivery.Line)
+				}
+			}
+			for _, unwanted := range tt.wantNotDelivery {
+				if strings.Contains(delivery.Line, unwanted) {
+					t.Errorf("delivery must not say %q:\n%s", unwanted, delivery.Line)
+				}
+			}
+		})
+	}
+}
+
+// TestProductionKnowsMergedWorkAfterTheMergeIsAbsorbed: the person merged
+// the Mate's request, the next stage deploy absorbed it and had nothing new
+// to propose, so the pair records neither a request nor a landing — and its
+// work is still on the group's main. Production must not ask to deliver it
+// again.
+func TestProductionKnowsMergedWorkAfterTheMergeIsAbsorbed(t *testing.T) {
+	fake := newFakeGitea()
+	fake.branchExists = true
+	fake.pullState = "closed"
+	fake.pullMerged = true
+	fake.pullMergeCommit = "squash-sha"
+	fake.pullMergeHead = "branch-tip-sha"
+	empty := ""
+	fake.compareDiff = &empty
+	gitea := fake.start(t)
+	t.Setenv("GITEA_URL", gitea.URL)
+	t.Setenv("MATE_BROKER_URL", gitea.URL)
+	t.Setenv("GITEA_TOKEN", giteaBotToken)
+
+	stateDir := t.TempDir()
+	writeLandedGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git")
+	ssh := &scriptedSSH{respond: func(_, _ string) string { return "ok" }}
+	if delivery := deliverGiteaPair(context.Background(), platform.NewMock(), gitea.Client(), ssh,
+		runtime.Info{InContainer: true, ProjectID: "proj-1"}, stateDir, "appstage"); delivery == nil || delivery.PullRequest != nil {
+		t.Fatalf("want a delivery with no request, got %+v", delivery)
+	}
+	meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
+	if meta.Gitea.PullRequest != 0 || meta.Gitea.Landed != nil {
+		t.Fatalf("the pair should record neither a request nor a pending landing: %+v", meta.Gitea)
+	}
+
+	got := giteaLaunchProductionNextStep(context.Background(), gitea.Client(), stateDir)
+	if strings.Contains(got, "none of this Mate's work") || !strings.Contains(got, "production is added and released") {
+		t.Errorf("production step = %q, want the merged work known", got)
+	}
+}
+
+// TestGitPushDeploy_KeepsTheLandingUntilThePushLands: the absorb before a
+// push folds the landing into the checkout, but only the push puts it on the
+// remote — a push that fails keeps the landing for the next one to absorb,
+// and a push that lands forgets it.
+func TestGitPushDeploy_KeepsTheLandingUntilThePushLands(t *testing.T) {
+	tests := []struct {
+		name       string
+		pushErr    error
+		wantLanded bool
+	}{
+		{name: "the push fails", pushErr: errors.New("ssh appdev: exit status 1"), wantLanded: true},
+		{name: "the push lands"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newFakeGitea()
+			fake.branchExists = true
+			fake.pullState = "closed"
+			fake.pullMerged = true
+			fake.pullMergeCommit = "squash-sha"
+			fake.pullMergeHead = "branch-tip-sha"
+			gitea := fake.start(t)
+
+			stateDir := t.TempDir()
+			writeLandedGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git")
+			t.Setenv("GITEA_URL", gitea.URL)
+			t.Setenv("MATE_BROKER_URL", gitea.URL)
+			t.Setenv("GITEA_TOKEN", giteaBotToken)
+
+			ssh := &stubSSHWithCommands{tokenOutput: []byte("1"), committedOutput: []byte("1"),
+				pushOutput: []byte("fatal: unable to access"), pushErr: tt.pushErr}
+			if tt.pushErr == nil {
+				ssh.pushOutput = []byte("ok")
+			}
+			authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterDeploySSH(srv, platform.NewMock(), gitea.Client(), "proj-1", ssh, authInfo, nil,
+				runtime.Info{InContainer: true, ProjectID: "proj-1", GiteaURL: gitea.URL},
+				stateDir, testDeployEngine(t), nil)
+			callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev", "strategy": "git-push"})
+
+			if ssh.absorbCalls != 1 || ssh.pushCalls != 1 {
+				t.Fatalf("absorb=%d push=%d, want one of each", ssh.absorbCalls, ssh.pushCalls)
+			}
+			meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
+			if got := meta.Gitea.Landed != nil; got != tt.wantLanded {
+				t.Errorf("landing kept = %v, want %v (%+v)", got, tt.wantLanded, meta.Gitea.Landed)
 			}
 		})
 	}

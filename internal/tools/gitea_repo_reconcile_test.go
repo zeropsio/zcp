@@ -60,6 +60,12 @@ type fakeGitea struct {
 	// pullReads counts those reads, so a settled pair can be shown to ask
 	// once per backoff window rather than once per pass.
 	pullReads int
+	// compareDiff is what the merge-base diff of the Mate's branch against
+	// main answers, raw — "" when it carries nothing main lacks. nil leaves
+	// the compare unanswered, which proposes as before.
+	compareDiff *string
+	// pullCreateStatus, when set, is what Gitea answers a create instead.
+	pullCreateStatus int
 	// pullBodies is every description a request was given, in order, and
 	// pullBodyPaths the request each went to. pullEditStatus, when set, is
 	// what Gitea answers every edit instead, and nothing is recorded then;
@@ -134,6 +140,9 @@ func (f *fakeGitea) start(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusCreated)
 			_, _ = fmt.Fprintf(w, `{"id":%d,"name":%q,"uuid":%q,"browser_download_url":"https://gitea.example.invalid/attachments/%s"}`,
 				len(f.attachments), header.Filename, uuid, uuid)
+		case strings.Contains(r.URL.Path, "/compare/") && f.compareDiff != nil && r.URL.Query().Get("output") == "diff":
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = w.Write([]byte(*f.compareDiff))
 		case strings.Contains(r.URL.Path, "/branches/"):
 			if !f.branchExists {
 				// Gitea 1.27.2 answers a branch it cannot resolve with 404.
@@ -188,6 +197,10 @@ func (f *fakeGitea) start(t *testing.T) *httptest.Server {
 				}
 				_ = json.NewDecoder(r.Body).Decode(&created)
 				f.pullTitles = append(f.pullTitles, created.Title)
+				if f.pullCreateStatus != 0 {
+					w.WriteHeader(f.pullCreateStatus)
+					return
+				}
 				w.WriteHeader(http.StatusCreated)
 				_, _ = w.Write([]byte(`{"number":3,"state":"open"}`))
 				return

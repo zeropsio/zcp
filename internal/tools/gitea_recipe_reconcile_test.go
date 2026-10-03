@@ -32,6 +32,9 @@ import (
 type fakeGroupGitea struct {
 	// compareUnanswered makes Gitea not answer the compare.
 	compareUnanswered bool
+	// compareEmpty makes the compare answer an empty diff, whatever the
+	// branches hold — main already carries what the fork branch would add.
+	compareEmpty bool
 	// branches is repo → branch → path → body.
 	branches map[string]map[string]map[string]string
 	// pulls is every pull request on acme/group, by number; nextPull is the
@@ -170,6 +173,12 @@ func (f *fakeGroupGitea) start(t *testing.T) *httptest.Server {
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/")
 		write := func(status int, body any) {
+			if raw, ok := body.(rawBody); ok {
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(raw))
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(status)
 			_ = json.NewEncoder(w).Encode(body)
@@ -333,6 +342,9 @@ func (f *fakeGroupGitea) serveContents(r *http.Request, path string, write func(
 	return true
 }
 
+// rawBody is an answer written as it is, not as JSON — the compare's diff.
+type rawBody string
+
 // servePulls answers the compare and the group repo's pull requests: the
 // open list, a create, a close.
 func (f *fakeGroupGitea) servePulls(r *http.Request, path string, write func(int, any)) bool {
@@ -342,17 +354,21 @@ func (f *fakeGroupGitea) servePulls(r *http.Request, path string, write func(int
 			write(http.StatusNotFound, map[string]string{"message": "no compare"})
 			return true
 		}
+		if f.compareEmpty {
+			write(http.StatusOK, rawBody(""))
+			return true
+		}
 		_, spec, _ := strings.Cut(path, "/compare/")
 		baseRef, head, _ := strings.Cut(spec, "...")
 		owner, branch, _ := strings.Cut(head, ":")
 		base, headFiles := f.branches[fakeGroupRepo][baseRef], f.branches[owner+"/group"][branch]
-		ahead := 0
+		var diff strings.Builder
 		for p, body := range headFiles {
 			if base[p] != body {
-				ahead = 1
+				diff.WriteString("diff --git a/" + p + " b/" + p + "\n")
 			}
 		}
-		write(http.StatusOK, map[string]any{"total_commits": ahead, "commits": []any{}})
+		write(http.StatusOK, rawBody(diff.String()))
 	case r.Method == http.MethodPatch && strings.Contains(path, "/pulls/"):
 		_, number, _ := strings.Cut(path, "/pulls/")
 		var body struct {
@@ -1003,5 +1019,31 @@ func TestReconcileGiteaGroupRecipe_OpensNothingMainAlreadyHas(t *testing.T) {
 				t.Errorf("a merged recipe is nothing to report on a pass, got %q", report)
 			}
 		})
+	}
+}
+
+// TestReconcileGiteaGroupRecipe_AnEmptyDiffProposesNothing: when Gitea's
+// compare answers an empty diff, nothing is proposed and nothing is reported —
+// never "pull request #0 … carries the update", never a failure.
+func TestReconcileGiteaGroupRecipe_AnEmptyDiffProposesNothing(t *testing.T) {
+	stateDir := t.TempDir()
+	writeGiteaWiredPairMeta(t, stateDir)
+	fake := newFakeGroupGitea()
+	fake.compareEmpty = true
+	srv := fake.start(t)
+	envPath := writeLiveEnvFile(t, map[string]string{
+		"GITEA_URL": srv.URL, "MATE_BROKER_URL": srv.URL, "GITEA_TOKEN": giteaBotToken,
+	})
+	rt := runtime.Info{InContainer: true, ProjectID: "p1"}
+
+	outcome := giteaGroupRecipeOutcome(context.Background(), recipeReconcileClient(), srv.Client(), rt, stateDir, envPath)
+	if fake.pullPosts != 0 {
+		t.Errorf("pull requests opened = %d, want none", fake.pullPosts)
+	}
+	if outcome.PullNumber != 0 || outcome.PullURL != "" {
+		t.Errorf("outcome names pull request #%d (%s), want none", outcome.PullNumber, outcome.PullURL)
+	}
+	if outcome.Line != "" {
+		t.Errorf("report = %q, want nothing to say", outcome.Line)
 	}
 }

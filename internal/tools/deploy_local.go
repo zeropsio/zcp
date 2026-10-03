@@ -328,9 +328,10 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 	if closed, closedAt, reason := workflow.DeriveCloseState(stateDir, ws); closed {
 		note := closedSessionNote(closedAt, reason)
 		// In a wired group the person's next step is theirs to know
-		// (gitea_delivery.go) — once the session delivered: a stand-up that
-		// left the stage out opened no pull request to hand over.
-		if giteaWired() && sessionDeployedAStageHalf(stateDir, ws) {
+		// (gitea_delivery.go) — once the session delivered and a request is
+		// open: a stand-up that left the stage out opened none, and neither
+		// did a delivery with nothing left to propose after a merge.
+		if giteaWired() && sessionHandsOverARequest(stateDir, ws) {
 			note += " " + giteaHandoffNote
 		}
 		return &WorkSessionState{
@@ -352,15 +353,17 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 	}
 }
 
-// sessionDeployedAStageHalf reports whether ws deployed the stage half of a
+// sessionHandsOverARequest reports whether ws deployed the stage half of a
 // pair — in a Mate wired to its group's Gitea, the deploy that commits,
-// pushes and opens the pull request a closing note hands over.
-func sessionDeployedAStageHalf(stateDir string, ws *workflow.WorkSession) bool {
+// pushes and opens the pull request a closing note hands over — and that
+// pair has a request open to hand over.
+func sessionHandsOverARequest(stateDir string, ws *workflow.WorkSession) bool {
 	for _, host := range ws.Services {
 		if !workflow.HasSuccessfulDeployFor(ws, host) {
 			continue
 		}
-		if meta, err := workflow.FindServiceMeta(stateDir, host); err == nil && meta != nil && meta.StageHostname == host {
+		meta, err := workflow.FindServiceMeta(stateDir, host)
+		if err == nil && meta != nil && meta.StageHostname == host && meta.Gitea != nil && meta.Gitea.PullRequest != 0 {
 			return true
 		}
 	}

@@ -258,10 +258,14 @@ func knownGiteaOrg(metas []*workflow.ServiceMeta) string {
 // giteaPairNeedsPullRequest reports whether a pair A1 already wired is still
 // missing the request its branch lands through. Stateful like the repository:
 // the number is recorded on the pair, so a Mate that has one asks Gitea
-// nothing on any later pass.
+// nothing on any later pass. Not while a merged request's landing waits to be
+// absorbed: the branch on the remote still holds the squashed history until
+// the next delivery or push folds the merge in, and a request opened from it
+// would offer the person the work they just merged — that push opens the
+// next request itself, for whatever main still lacks.
 func giteaPairNeedsPullRequest(m *workflow.ServiceMeta) bool {
 	return m != nil && m.IsComplete() && m.Gitea != nil &&
-		m.Gitea.FullName != "" && m.Gitea.Branch != "" && m.Gitea.PullRequest == 0
+		m.Gitea.FullName != "" && m.Gitea.Branch != "" && m.Gitea.PullRequest == 0 && m.Gitea.Landed == nil
 }
 
 // giteaPairNeedsPullRequestOutcome reports whether a pair that has both a
@@ -444,7 +448,7 @@ func wireGiteaPair(
 	// already pushed. The request's real triggers are the git-push deploy and
 	// the catch-up pass; both share this owner, and both record the number.
 	m.Gitea = &workflow.GiteaRepoRef{FullName: repo.FullName, Branch: branch, DefaultBranch: base}
-	if ref := openGiteaPairPullRequest(ctx, httpClient, wiring, stateDir, m); ref != nil {
+	if ref, _ := openGiteaPairPullRequest(ctx, httpClient, wiring, stateDir, m); ref != nil {
 		verb := "tracked by"
 		if ref.Created {
 			verb = "opened as"
