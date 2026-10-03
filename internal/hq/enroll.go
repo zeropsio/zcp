@@ -49,6 +49,11 @@ type Enroller struct {
 	HTTP      *http.Client
 	OrgID     string
 	ProjectID string
+	// ServiceID is this container's own zcp service (its serviceId), named
+	// to HQ at the enrollment: a project holds one Mate, and HQ refuses any
+	// zcp service but the one the Mate's record names
+	// (not_this_projects_mate). Empty names none, as an older zcp did.
+	ServiceID string
 	// Path is the enrollment file (EnrollmentPath in a container).
 	Path string
 	// Poll paces the retries; zero is 500 ms.
@@ -138,11 +143,11 @@ func (e Enroller) Status(ctx context.Context) Status {
 	return Status{HQ: official, Enrolled: known}
 }
 
-// present presents the nonce, naming the key's id, until HQ sees it in the
-// project's env, at most mismatchTries times.
+// present presents the nonce, naming the key's id and the container's
+// service, until HQ sees it in the project's env, at most mismatchTries times.
 func (e Enroller) present(ctx context.Context, hq hqClient, nonce, key string) (string, error) {
 	for try := 1; ; try++ {
-		credential, err := hq.credential(ctx, e.ProjectID, nonce, key)
+		credential, err := hq.credential(ctx, e.ProjectID, nonce, key, e.ServiceID)
 		if err == nil || try == mismatchTries || !refusedAs(err, "env_mismatch") {
 			return credential, err
 		}

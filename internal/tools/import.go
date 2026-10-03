@@ -111,6 +111,9 @@ func registerImport(srv *mcp.Server, client platform.Client, projectID string, e
 		if blocked := refuseOpenMate(ctx, client, projectID, rt, liveEnvPath); blocked != nil {
 			return blocked, nil, nil
 		}
+		if blocked := refuseSecondMate(rt, input); blocked != nil {
+			return blocked, nil, nil
+		}
 		if input.Override.Bool() {
 			if blocked, gateErr := gateOverrideOnFailedHistory(ctx, client, projectID, input); gateErr != nil {
 				return convertError(gateErr, WithRecoveryStatus()), nil, nil
@@ -162,6 +165,23 @@ func refuseOpenMate(ctx context.Context, client platform.Client, projectID strin
 	return convertError(platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 		openMateRefusal,
 		"Nothing was imported. Tell the person to press Finish setup on this Mate in the app, then import again."))
+}
+
+// refuseSecondMate refuses an import into a Mate's project that declares a
+// zcp service: the project holds one, this container, and a second would be
+// a second Mate HQ refuses to enroll (spec-mate §6.6). A document that does
+// not read is left to the import's own error.
+func refuseSecondMate(rt runtime.Info, input ImportInput) *mcp.CallToolResult {
+	if !rt.MateEnabled {
+		return nil
+	}
+	hostnames, err := ops.ImportedZcpServices(input.Content, input.FilePath)
+	if err != nil || len(hostnames) == 0 {
+		return nil
+	}
+	return convertError(platform.NewPlatformError(platform.ErrInvalidImportYml,
+		fmt.Sprintf("This import declares a zcp service (%s); a project holds one Mate, and this project's is this container. Nothing was imported.", strings.Join(hostnames, ", ")),
+		"Remove the zcp service from the import, then import again."))
 }
 
 // newFlowMate is a Mate the new press made: its zcp carries the runtimes

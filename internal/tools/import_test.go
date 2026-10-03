@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -304,6 +306,56 @@ func TestImportTool_RefusesAnOpenMate(t *testing.T) {
 			}
 			if !result.IsError || !strings.Contains(text, tt.want) {
 				t.Errorf("want a refusal saying %q, got: %s", tt.want, text)
+			}
+		})
+	}
+}
+
+// A Mate's project holds one zcp service, the Mate's own container (spec-mate
+// §6.6): an import into it that declares another — inline or from a file —
+// is refused naming it, and nothing is imported. Outside a Mate a zcp service
+// imports as any other.
+func TestImportTool_RefusesAZcpServiceIntoAMate(t *testing.T) {
+	t.Parallel()
+	const zcpYAML = "services:\n  - hostname: api\n    type: nodejs@20\n  - hostname: helper\n    type: zcp@1\n"
+	tests := []struct {
+		name   string
+		mate   bool
+		input  map[string]any
+		refuse bool
+	}{
+		{"a zcp service into a Mate", true, map[string]any{"content": zcpYAML}, true},
+		{"a zcp service from a file into a Mate", true, map[string]any{"filePath": "FILE"}, true},
+		{"a runtime into a Mate", true, map[string]any{"content": "services:\n  - hostname: api\n    type: nodejs@20\n"}, false},
+		{"a zcp service outside a Mate", false, map[string]any{"content": zcpYAML}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if tt.input["filePath"] == "FILE" {
+				path := filepath.Join(t.TempDir(), "import.yaml")
+				if err := os.WriteFile(path, []byte(zcpYAML), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				tt.input = map[string]any{"filePath": path}
+			}
+			mock := platform.NewMock().
+				WithImportResult(&platform.ImportResult{ProjectID: "proj-1", ServiceStacks: []platform.ImportedServiceStack{{ID: "svc-1", Name: "api"}}})
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			registerImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{MateEnabled: tt.mate}, writeLiveEnvFile(t, map[string]string{"PATH": "/usr/bin"}), nil)
+			result := callTool(t, srv, "zerops_import", tt.input)
+			text := getTextContent(t, result)
+			if !tt.refuse {
+				if result.IsError {
+					t.Errorf("refused: %s", text)
+				}
+				return
+			}
+			if !result.IsError || !strings.Contains(text, "helper") || !strings.Contains(text, "holds one Mate") {
+				t.Errorf("want a refusal naming helper, got: %s", text)
+			}
+			if mock.CallCounts["ImportServices"] != 0 {
+				t.Error("a refused import reached the platform")
 			}
 		})
 	}

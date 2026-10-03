@@ -125,6 +125,10 @@ type hqStub struct {
 	// /api/mate/key); an older HQ answers it 404. refuseKey is its no.
 	keyCall   bool
 	refuseKey string
+	// mateService is the zcp service the Mate's record names: HQ refuses any
+	// other's enrollment (one Mate per project). serviceIDs is every one named.
+	mateService string
+	serviceIDs  []string
 }
 
 func newHQStub(z *zeropsStub) *hqStub {
@@ -147,6 +151,7 @@ func (h *hqStub) handler(w http.ResponseWriter, r *http.Request) {
 		ProjectID  string `json:"projectId"`
 		Nonce      string `json:"nonce"`
 		KeyTokenID string `json:"keyTokenId"`
+		ServiceID  string `json:"serviceId"`
 	}
 	switch r.Method + " " + r.URL.Path {
 	case "POST /api/mate/challenge":
@@ -171,6 +176,11 @@ func (h *hqStub) handler(w http.ResponseWriter, r *http.Request) {
 		}
 		if value, _ := h.zerops.challengeValue(); value != body.Nonce {
 			answer(http.StatusUnauthorized, map[string]string{"code": "env_mismatch"})
+			return
+		}
+		h.serviceIDs = append(h.serviceIDs, body.ServiceID)
+		if h.mateService != "" && body.ServiceID != h.mateService {
+			answer(http.StatusConflict, map[string]string{"code": "not_this_projects_mate"})
 			return
 		}
 		delete(h.nonces, body.Nonce)
@@ -332,6 +342,50 @@ func TestEnroll_Known_TellsHQTheKeysIDUntilItTookIt(t *testing.T) {
 			}
 			if !r.enroller.Status(context.Background()).Enrolled {
 				t.Error("a key HQ did not take left the Mate not enrolled")
+			}
+		})
+	}
+}
+
+// One Mate per project (spec-mate §6.6): the container names its own zcp
+// service, and HQ refuses any but the one the Mate's record names.
+func TestEnroll_NamesItsService_RefusedWhereAnotherIsTheMate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		serviceID   string
+		mateService string
+		wantNamed   string
+		wantCode    string
+	}{
+		{"the Mate's own service", "svc-zcp", "svc-zcp", "svc-zcp", ""},
+		{"a Mate no service is recorded for yet", "svc-zcp", "", "svc-zcp", ""},
+		{"another service of the project", "svc-zcp", "svc-other", "svc-zcp", "not_this_projects_mate"},
+		{"a container that knows no service id", "", "", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			r.enroller.ServiceID = tt.serviceID
+			r.hq.mateService = tt.mateService
+
+			_, err := r.enroller.Enroll(context.Background())
+			if tt.wantCode == "" && err != nil {
+				t.Fatalf("Enroll: %v", err)
+			}
+			if tt.wantCode != "" && !refusedAs(err, tt.wantCode) {
+				t.Fatalf("Enroll error = %v, want HQ's refusal %s", err, tt.wantCode)
+			}
+			if want := []string{tt.wantNamed}; !slices.Equal(r.hq.serviceIDs, want) {
+				t.Errorf("services named = %q, want %q", r.hq.serviceIDs, want)
+			}
+			if _, left := r.zerops.challengeValue(); left {
+				t.Error("the challenge env outlived the enrollment")
+			}
+			if tt.serviceID == "" && slices.ContainsFunc(r.hq.bodies, func(b string) bool { return strings.Contains(b, "serviceId") }) {
+				t.Errorf("a service id was sent where the container knows none: %v", r.hq.bodies)
 			}
 		})
 	}

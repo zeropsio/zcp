@@ -1790,6 +1790,19 @@ HQ's Mate API (`Authorization: Mate <credential>`) and git over HTTPS as the use
 container now holds the Mate's HQ credential as its `GIT_TOKEN`, as it held the Gitea bot token
 before.
 
+**One Mate per project (audit D2, 2026-10-03).** A Mate is a `zcp@1` service, and HQ keys a Mate
+by its project — its record, its credential, its overview — so a project holds one. The Mate's
+record at HQ names its zcp service: the one the client that set it up found there already (*Set up
+Mate*, *Finish setup*), else the first that enrolls naming itself. zcp names its own service with
+each enrollment (`hq.Enroller.ServiceID`, the container's `serviceId`). HQ refuses any other zcp
+service of the project `409 not_this_projects_mate` and never revokes the Mate's credential for it;
+a named service Zerops no longer has gives its place to the next. zcp records the refusal as its
+outcome (C-7), says it once, and stops enrolling until it starts anew (`hq.Keep`). An older zcp
+that names no service is enrolled as before, unless it would revoke the credential of the Mate the
+record names. The client refuses *Set up Mate* and *Finish setup* on a project holding several zcp
+services, naming them, and a Mate's tier that declares one; inside a Mate's container
+`zerops_import` refuses a document that declares a `zcp@` service, naming it, and imports nothing.
+
 Until 2026-10-02 a Mate's Gitea bot token reached its container through the org's broker, as
 `GITEA_URL`, `MATE_BROKER_URL` and `GITEA_TOKEN` on its `zcp` service (D20). zcp reads none of them
 now; `GITEA_TOKEN` stays masked on every value dump and out of every recipe tier while a container
