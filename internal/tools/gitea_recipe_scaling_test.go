@@ -263,10 +263,11 @@ func TestGroupRecipeScaling_AnEmptyDiffProposesNothing(t *testing.T) {
 	envPath := writeLiveEnvFile(t, map[string]string{"GITEA_URL": srv.URL, "MATE_BROKER_URL": srv.URL, "GITEA_TOKEN": giteaBotToken})
 	rt := runtime.Info{InContainer: true, ProjectID: "p1"}
 	ctx := context.Background()
-	if line := reconcileGiteaGroupRecipe(ctx, scalingRecipeClient(1, 0.25), srv.Client(), rt, stateDir, envPath); !strings.Contains(line, "#11") {
-		t.Fatalf("the first recipe was not proposed: %q", line)
+	first := giteaGroupRecipeOutcome(ctx, scalingRecipeClient(1, 0.25), srv.Client(), rt, stateDir, envPath)
+	if first.PullNumber == 0 {
+		t.Fatalf("the first recipe was not proposed: %q", first.Line)
 	}
-	fake.merge(11)
+	fake.merge(first.PullNumber)
 	posts := fake.pullPosts
 	fake.compareEmpty = true
 
