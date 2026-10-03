@@ -19,6 +19,10 @@ type Enrollment struct {
 	HQProjectID string `json:"hqProjectId"`
 	ProjectID   string `json:"projectId"`
 	Credential  string `json:"credential"`
+	// KeyTokenID is the id of this container's key once HQ took it under the
+	// credential (PUT /api/mate/key); empty until then, and after each new
+	// enrollment.
+	KeyTokenID string `json:"keyTokenId,omitempty"`
 }
 
 // EnrollmentPath is where the enrollment lives: beside mate.env under the

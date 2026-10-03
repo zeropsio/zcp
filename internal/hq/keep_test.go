@@ -16,6 +16,8 @@ type attempts struct {
 	made    []time.Time
 	done    chan struct{}
 	want    int
+	// keyUnnamed is each enrollment's KeyUnnamed.
+	keyUnnamed string
 }
 
 func (a *attempts) attempt(context.Context) (Result, error) {
@@ -29,7 +31,7 @@ func (a *attempts) attempt(context.Context) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{HQ: "https://hq.example", Changed: len(a.made) == 1}, nil
+	return Result{HQ: "https://hq.example", Changed: len(a.made) == 1, KeyUnnamed: a.keyUnnamed}, nil
 }
 
 func TestKeep_RetriesWhatIsNotYetPossible_RechecksWhatHolds(t *testing.T) {
@@ -74,5 +76,21 @@ func TestKeep_RetriesWhatIsNotYetPossible_RechecksWhatHolds(t *testing.T) {
 				t.Errorf("gap before the third attempt = %s, want at least %s", gap, tt.wantGapAtLeast)
 			}
 		})
+	}
+}
+
+func TestKeep_SaysWhyHQWasNotToldTheKeysID(t *testing.T) {
+	t.Parallel()
+	said := make(chan string, 1)
+	a := &attempts{answers: []error{nil}, keyUnnamed: "hq refused: 409 key_not_its_own", done: make(chan struct{}), want: 1}
+	go Keep(t.Context(), a.attempt, KeepOptions{Recheck: time.Hour, Log: func(line string) { said <- line }})
+
+	select {
+	case line := <-said:
+		if want := "enrolled with https://hq.example; HQ was not told its key's id: hq refused: 409 key_not_its_own"; line != want {
+			t.Errorf("said %q, want %q", line, want)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Keep said nothing")
 	}
 }

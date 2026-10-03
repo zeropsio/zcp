@@ -39,6 +39,9 @@ func Keep(ctx context.Context, attempt func(context.Context) (Result, error), op
 			opts.Record(err)
 		}
 		wait, line := opts.Recheck, "enrolled with "+res.HQ
+		if res.KeyUnnamed != "" {
+			line += "; HQ was not told its key's id: " + res.KeyUnnamed
+		}
 		if err != nil {
 			// Up to a quarter more, so the Mates of an org do not all knock at once.
 			wait = retry + rand.N(retry/4+1) //nolint:gosec // G404: jitter, not a secret

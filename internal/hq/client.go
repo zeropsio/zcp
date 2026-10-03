@@ -86,12 +86,17 @@ func (c hqClient) challenge(ctx context.Context, projectID string) (string, erro
 	return out.Nonce, err
 }
 
-func (c hqClient) credential(ctx context.Context, projectID, nonce string) (string, error) {
+// credential presents the nonce, naming the id of the container's key where
+// it has one; an HQ that does not know the field ignores it.
+func (c hqClient) credential(ctx context.Context, projectID, nonce, keyTokenID string) (string, error) {
 	var out struct {
 		Credential string `json:"credential"`
 	}
-	err := c.json(ctx, http.MethodPost, "/api/mate/credential", "",
-		map[string]string{"projectId": projectID, "nonce": nonce}, &out)
+	in := map[string]string{"projectId": projectID, "nonce": nonce}
+	if keyTokenID != "" {
+		in["keyTokenId"] = keyTokenID
+	}
+	err := c.json(ctx, http.MethodPost, "/api/mate/credential", "", in, &out)
 	return out.Credential, err
 }
 
@@ -101,6 +106,12 @@ func (c hqClient) whoami(ctx context.Context, credential string) (string, error)
 	}
 	err := c.json(ctx, http.MethodGet, "/api/mate/whoami", "Mate "+credential, nil, &out)
 	return out.ProjectID, err
+}
+
+// keepKey names the id of the container's key under credential.
+func (c hqClient) keepKey(ctx context.Context, credential, keyTokenID string) error {
+	return c.json(ctx, http.MethodPut, "/api/mate/key", "Mate "+credential,
+		map[string]string{"keyTokenId": keyTokenID}, nil)
 }
 
 func (c hqClient) json(ctx context.Context, method, path, authorization string, in, out any) error {
@@ -162,6 +173,10 @@ func (c hqClient) sendOnce(ctx context.Context, method, path, authorization, con
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, answerLimit))
 	if err != nil {
 		return 0, &UnavailableError{Err: fmt.Errorf("hq %s: %w", path, err)}
+	}
+	// A 204 answers with nothing to decode.
+	if resp.StatusCode == http.StatusNoContent {
+		return 0, nil
 	}
 	if resp.StatusCode != http.StatusOK {
 		var refusal struct {

@@ -24,8 +24,11 @@ const envPolls = 40
 const mismatchTries = 3
 
 // Zerops is what enrollment asks of the platform, with this container's own
-// key: the org's member list, and its own project's env.
+// key: the org's member list, its own project's env, and the key's own record.
 type Zerops interface {
+	// GetUserInfo is /user/info: for an integration token, its UserID is the
+	// token's own id — the one HQ reads the token by (its ownToken).
+	GetUserInfo(ctx context.Context) (*platform.UserInfo, error)
 	ListOrgMembers(ctx context.Context, orgID string) ([]platform.OrgMember, error)
 	GetProjectEnv(ctx context.Context, projectID string) ([]platform.ProjectEnvVar, error)
 	CreateProjectEnv(ctx context.Context, projectID, key, content string, sensitive bool) (*platform.Process, error)
@@ -57,25 +60,33 @@ type Enroller struct {
 type Result struct {
 	HQ      string `json:"hq"`
 	Changed bool   `json:"changed"`
+	// KeyUnnamed is why HQ was not told the id of this container's key: empty
+	// once HQ took it, and with an HQ older than the call.
+	KeyUnnamed string `json:"keyUnnamed,omitempty"`
 }
 
 // Enroll proves the Mate's project to the official HQ and keeps the
 // credential HQ issues: HQ hands out a challenge, this container writes its
 // nonce into its own project's env with its own key, HQ reads it back with
 // its own. The env variable is removed again whatever HQ answered. A
-// credential HQ still knows is kept as it is.
+// credential HQ still knows is kept as it is, and HQ is told the id of this
+// container's key under it until HQ took it.
 func (e Enroller) Enroll(ctx context.Context) (Result, error) {
 	official, err := e.official(ctx)
 	if err != nil {
 		return Result{}, err
 	}
 	hq := hqClient{http: e.HTTP, address: official.Address}
-	known, err := e.known(ctx, hq)
+	kept, known, err := e.known(ctx, hq)
 	if err != nil {
 		return Result{}, err
 	}
 	if known {
-		return Result{HQ: official.Address}, nil
+		return Result{HQ: official.Address, KeyUnnamed: e.nameKey(ctx, hq, kept)}, nil
+	}
+	key, err := e.keyTokenID(ctx)
+	if err != nil {
+		return Result{}, err
 	}
 	if err := e.removeChallenge(ctx, 1); err != nil {
 		return Result{}, err
@@ -87,7 +98,7 @@ func (e Enroller) Enroll(ctx context.Context) (Result, error) {
 	if _, err := e.Zerops.CreateProjectEnv(ctx, e.ProjectID, ChallengeEnv, nonce, false); err != nil {
 		return Result{}, fmt.Errorf("write %s: %w", ChallengeEnv, err)
 	}
-	credential, err := e.present(ctx, hq, nonce)
+	credential, err := e.present(ctx, hq, nonce, key)
 	removeErr := e.removeChallenge(context.WithoutCancel(ctx), envPolls)
 	if err != nil {
 		return Result{}, errors.Join(err, removeErr)
@@ -120,18 +131,18 @@ func (e Enroller) Status(ctx context.Context) Status {
 	if err != nil {
 		return Status{HQ: Official{Verdict: VerdictUnknown}, Error: err.Error()}
 	}
-	known, err := e.known(ctx, hqClient{http: e.HTTP, address: official.Address})
+	_, known, err := e.known(ctx, hqClient{http: e.HTTP, address: official.Address})
 	if err != nil {
 		return Status{HQ: official, Error: err.Error()}
 	}
 	return Status{HQ: official, Enrolled: known}
 }
 
-// present presents the nonce until HQ sees it in the project's env, at most
-// mismatchTries times.
-func (e Enroller) present(ctx context.Context, hq hqClient, nonce string) (string, error) {
+// present presents the nonce, naming the key's id, until HQ sees it in the
+// project's env, at most mismatchTries times.
+func (e Enroller) present(ctx context.Context, hq hqClient, nonce, key string) (string, error) {
 	for try := 1; ; try++ {
-		credential, err := hq.credential(ctx, e.ProjectID, nonce)
+		credential, err := hq.credential(ctx, e.ProjectID, nonce, key)
 		if err == nil || try == mismatchTries || !refusedAs(err, "env_mismatch") {
 			return credential, err
 		}
@@ -143,18 +154,55 @@ func (e Enroller) present(ctx context.Context, hq hqClient, nonce string) (strin
 	}
 }
 
-// known reports whether the kept enrollment is with hq and HQ still knows
+// known is the kept enrollment, and whether it is with hq and HQ still knows
 // its credential as this project's.
-func (e Enroller) known(ctx context.Context, hq hqClient) (bool, error) {
+func (e Enroller) known(ctx context.Context, hq hqClient) (Enrollment, bool, error) {
 	kept, found, err := LoadEnrollment(e.Path)
 	if err != nil || !found || kept.HQ != hq.address || kept.ProjectID != e.ProjectID {
-		return false, err
+		return kept, false, err
 	}
 	projectID, err := hq.whoami(ctx, kept.Credential)
 	if refusedAs(err, "mate_credential_required") {
-		return false, nil
+		return kept, false, nil
 	}
-	return err == nil && projectID == e.ProjectID, err
+	return kept, err == nil && projectID == e.ProjectID, err
+}
+
+// nameKey tells HQ the id of this container's key under the kept credential,
+// and records it once HQ took it. An HQ older than the call answers 404:
+// nothing to tell it. Whatever else stops it is the reason it returns, never
+// the enrollment's failure.
+func (e Enroller) nameKey(ctx context.Context, hq hqClient, kept Enrollment) string {
+	key, err := e.keyTokenID(ctx)
+	if err != nil {
+		return err.Error()
+	}
+	if key == kept.KeyTokenID {
+		return ""
+	}
+	err = hq.keepKey(ctx, kept.Credential, key)
+	var refused *RefusedError
+	if errors.As(err, &refused) && refused.Status == http.StatusNotFound {
+		return ""
+	}
+	if err != nil {
+		return err.Error()
+	}
+	kept.KeyTokenID = key
+	if err := SaveEnrollment(e.Path, kept); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+// keyTokenID is the id of this container's own key, read with the key itself:
+// never its value.
+func (e Enroller) keyTokenID(ctx context.Context) (string, error) {
+	info, err := e.Zerops.GetUserInfo(ctx)
+	if err != nil {
+		return "", fmt.Errorf("read the key's id: %w", err)
+	}
+	return info.UserID, nil
 }
 
 // official is the org's official HQ, or a NoHQError.

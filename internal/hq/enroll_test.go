@@ -1,12 +1,15 @@
 package hq
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -114,6 +117,14 @@ type hqStub struct {
 	// lagging answers env_mismatch this many times before reading the env.
 	lagging int
 	calls   []string
+	// bodies is every request body HQ was sent.
+	bodies []string
+	// keyIDs is every key id the Mate named, at its enrollment or since.
+	keyIDs []string
+	// keyCall is an HQ that takes a key id named after the enrollment (PUT
+	// /api/mate/key); an older HQ answers it 404. refuseKey is its no.
+	keyCall   bool
+	refuseKey string
 }
 
 func newHQStub(z *zeropsStub) *hqStub {
@@ -124,14 +135,18 @@ func (h *hqStub) handler(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.calls = append(h.calls, r.Method+" "+r.URL.Path)
+	raw, _ := io.ReadAll(r.Body)
+	h.bodies = append(h.bodies, string(raw))
+	r.Body = io.NopCloser(bytes.NewReader(raw))
 	w.Header().Set("Content-Type", "application/json")
 	answer := func(status int, body any) {
 		w.WriteHeader(status)
 		writeJSON(w, body)
 	}
 	var body struct {
-		ProjectID string `json:"projectId"`
-		Nonce     string `json:"nonce"`
+		ProjectID  string `json:"projectId"`
+		Nonce      string `json:"nonce"`
+		KeyTokenID string `json:"keyTokenId"`
 	}
 	switch r.Method + " " + r.URL.Path {
 	case "POST /api/mate/challenge":
@@ -159,6 +174,9 @@ func (h *hqStub) handler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		delete(h.nonces, body.Nonce)
+		if body.KeyTokenID != "" {
+			h.keyIDs = append(h.keyIDs, body.KeyTokenID)
+		}
 		credential := fmt.Sprintf("credential-%d", len(h.credential)+1)
 		for c, p := range h.credential {
 			if p == body.ProjectID {
@@ -174,6 +192,22 @@ func (h *hqStub) handler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		answer(http.StatusOK, map[string]string{"projectId": project})
+	case "PUT /api/mate/key":
+		if !h.keyCall {
+			answer(http.StatusNotFound, map[string]string{"code": "not_found"})
+			return
+		}
+		if _, ok := h.credential[strings.TrimPrefix(r.Header.Get("Authorization"), "Mate ")]; !ok {
+			answer(http.StatusUnauthorized, map[string]string{"code": "mate_credential_required"})
+			return
+		}
+		if h.refuseKey != "" {
+			answer(http.StatusConflict, map[string]string{"code": h.refuseKey})
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		h.keyIDs = append(h.keyIDs, body.KeyTokenID)
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		answer(http.StatusNotFound, map[string]string{"code": "not_found"})
 	}
@@ -238,6 +272,89 @@ func TestEnroll_OfficialHQ_ProvesThroughUnmarkedEnvAndKeepsCredential(t *testing
 	}
 	if _, left := r.zerops.challengeValue(); left {
 		t.Error("the challenge env outlived the enrollment")
+	}
+}
+
+func TestEnroll_FreshEnrollment_NamesTheKeysOwnID(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+
+	mustEnroll(t, r)
+	if want := []string{"u-zcp"}; !slices.Equal(r.hq.keyIDs, want) {
+		t.Errorf("key ids named = %v, want %v: the id /user/info gives the container's key", r.hq.keyIDs, want)
+	}
+}
+
+func TestEnroll_Known_TellsHQTheKeysIDUntilItTookIt(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		keyCall      bool
+		refuseKey    string
+		wantPuts     int
+		wantRecorded string
+		wantUnnamed  bool
+	}{
+		{"HQ takes it, and is not asked again", true, "", 1, "u-zcp", false},
+		{"an older HQ, without the call", false, "", 2, "", false},
+		{"HQ refuses it", true, "key_not_its_own", 2, "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			r.hq.keyCall, r.hq.refuseKey = tt.keyCall, tt.refuseKey
+			mustEnroll(t, r)
+			r.hq.calls = nil
+
+			for pass := 1; pass <= 2; pass++ {
+				got, err := r.enroller.Enroll(context.Background())
+				if err != nil || got.Changed {
+					t.Fatalf("pass %d: Enroll = %+v, %v; want the enrollment kept", pass, got, err)
+				}
+				if (got.KeyUnnamed != "") != tt.wantUnnamed {
+					t.Errorf("pass %d: KeyUnnamed = %q, want unnamed %v", pass, got.KeyUnnamed, tt.wantUnnamed)
+				}
+			}
+			puts := 0
+			for _, call := range r.hq.calls {
+				if call == "PUT /api/mate/key" {
+					puts++
+				}
+			}
+			if puts != tt.wantPuts {
+				t.Errorf("PUT /api/mate/key %d times, want %d (calls %v)", puts, tt.wantPuts, r.hq.calls)
+			}
+			saved, _, _ := LoadEnrollment(r.path)
+			if saved.KeyTokenID != tt.wantRecorded {
+				t.Errorf("recorded key id %q, want %q", saved.KeyTokenID, tt.wantRecorded)
+			}
+			if !r.enroller.Status(context.Background()).Enrolled {
+				t.Error("a key HQ did not take left the Mate not enrolled")
+			}
+		})
+	}
+}
+
+func TestEnroll_NamesTheKeysID_NeverItsValue(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.hq.keyCall = true
+
+	mustEnroll(t, r)
+	mustEnroll(t, r)
+	if len(r.hq.keyIDs) != 2 {
+		t.Fatalf("key ids named = %v, want one at the enrollment and one after", r.hq.keyIDs)
+	}
+	saved, err := os.ReadFile(r.path)
+	if err != nil {
+		t.Fatalf("read the enrollment: %v", err)
+	}
+	for _, sent := range append(r.hq.bodies, string(saved)) {
+		if strings.Contains(sent, "zcp-key") {
+			t.Errorf("the key's value left the container: %s", sent)
+		}
 	}
 }
 
