@@ -323,6 +323,88 @@ func TestOpenCode_ContainerInit_RefusesUnreadable(t *testing.T) {
 	}
 }
 
+// TestOpenCode_ContainerInit_KeepsFileMode pins that opencode.json — which can
+// hold provider API keys — never widens: an existing mode is kept, a new file
+// is owner-only.
+func TestOpenCode_ContainerInit_KeepsFileMode(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		existing os.FileMode // 0 = no file
+		want     os.FileMode
+	}{
+		{name: "new file is owner-only", want: 0o600},
+		{name: "0600 with a secret stays 0600", existing: 0o600, want: 0o600},
+		{name: "0644 stays 0644", existing: 0o644, want: 0o644},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			path := openCodeConfigPath(home)
+			if tt.existing != 0 {
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				secret := `{"provider":{"anthropic":{"options":{"apiKey":"sk-test"}}}}`
+				if err := os.WriteFile(path, []byte(secret), tt.existing); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(path, tt.existing); err != nil { // umask-proof
+					t.Fatal(err)
+				}
+			}
+			if err := adapters.NewOpenCode().ContainerInit(newOpenCodeEnv(t, home)); err != nil {
+				t.Fatalf("ContainerInit: %v", err)
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := info.Mode().Perm(); got != tt.want {
+				t.Errorf("mode = %o, want %o", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestOpenCode_ContainerInit_WritesThroughSymlink pins that a symlinked
+// opencode.json (dotfiles repo, mounted config) stays a link and its TARGET
+// gets the zerops server.
+func TestOpenCode_ContainerInit_WritesThroughSymlink(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	target := filepath.Join(t.TempDir(), "dotfiles", "opencode.json")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte(`{"model":"a/b"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := openCodeConfigPath(home)
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := adapters.NewOpenCode().ContainerInit(newOpenCodeEnv(t, home)); err != nil {
+		t.Fatalf("ContainerInit: %v", err)
+	}
+
+	info, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("opencode.json is no longer a symlink (mode %v)", info.Mode())
+	}
+	if got := readFile(t, target); !strings.Contains(got, `"zerops"`) || !strings.Contains(got, `"model": "a/b"`) {
+		t.Errorf("symlink target did not get the merged config:\n%s", got)
+	}
+}
+
 func TestOpenCode_ContainerInit_EmptyHomeReturnsError(t *testing.T) {
 	t.Parallel()
 	env := newOpenCodeEnv(t, t.TempDir())

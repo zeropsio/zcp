@@ -155,7 +155,7 @@ func (OpenCode) ContainerInit(env Env) error {
 		return fmt.Errorf("format %s: %w", configPath, err)
 	}
 	out.WriteByte('\n')
-	if err := atomicWrite(configPath, out.Bytes()); err != nil {
+	if err := writeConfigPreservingMode(configPath, out.Bytes()); err != nil {
 		return fmt.Errorf("write %s: %w", configPath, err)
 	}
 	return nil
