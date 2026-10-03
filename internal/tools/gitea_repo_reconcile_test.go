@@ -139,6 +139,7 @@ func (f *fakeGitea) start(t *testing.T) *httptest.Server {
 			_, _ = fmt.Fprintf(w, `{"id":%d,"name":%q,"uuid":%q,"browser_download_url":"https://gitea.example.invalid/attachments/%s"}`,
 				len(f.attachments), header.Filename, uuid, uuid)
 		case strings.Contains(r.URL.Path, "/compare/") && f.compareDiff != nil && r.URL.Query().Get("output") == "diff":
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			_, _ = w.Write([]byte(*f.compareDiff))
 		case strings.Contains(r.URL.Path, "/branches/"):
 			if !f.branchExists {

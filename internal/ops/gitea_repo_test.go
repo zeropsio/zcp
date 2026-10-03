@@ -198,8 +198,8 @@ func TestEnsureGiteaPullRequest(t *testing.T) {
 		name       string
 		openList   string
 		createCode int
-		// compare is what Gitea's merge-base diff of the branch answers, raw;
-		// nil leaves the compare unanswered.
+		// compare is what Gitea 1.27.2's merge-base diff of the branch
+		// answers, raw, as text/plain; nil leaves the compare unanswered.
 		compare *string
 		// compareJSON is what a Gitea before 1.27 answers the compare with:
 		// it ignores output=diff and sends the JSON comparison.
@@ -208,6 +208,7 @@ func TestEnsureGiteaPullRequest(t *testing.T) {
 		wantCreated bool
 		wantPosts   int
 		wantErr     bool
+		wantNothing bool
 	}{
 		{
 			name:        "none open yet",
@@ -248,9 +249,25 @@ func TestEnsureGiteaPullRequest(t *testing.T) {
 			// The person merged the Mate's request while it worked: its next
 			// delivery absorbed the squash and took main in, so the branch is
 			// ahead by merges and carries nothing main lacks.
-			name:     "the branch is ahead only by merges of what main has",
-			openList: `[]`,
-			compare:  strPtr(""),
+			name:        "the branch is ahead only by merges of what main has",
+			openList:    `[]`,
+			compare:     strPtr(""),
+			wantNothing: true,
+		},
+		{
+			name:        "a diff of whitespace alone",
+			openList:    `[]`,
+			compare:     strPtr("\n  \n"),
+			wantNothing: true,
+		},
+		{
+			// The body is read capped at 1 MiB: a larger diff arrives cut,
+			// and is still a change to propose.
+			name:       "a diff larger than the read cap",
+			openList:   `[]`,
+			compare:    strPtr("diff --git a/big.txt b/big.txt\n" + strings.Repeat("+x\n", 1<<20)),
+			createCode: http.StatusCreated,
+			wantNumber: 7, wantCreated: true, wantPosts: 1,
 		},
 		{
 			name:       "the branch carries a change main lacks",
@@ -265,11 +282,28 @@ func TestEnsureGiteaPullRequest(t *testing.T) {
 			name:        "an older gitea's comparison, nothing ahead",
 			openList:    `[]`,
 			compareJSON: strPtr(`{"total_commits":0,"commits":[]}`),
+			wantNothing: true,
 		},
 		{
 			name:        "an older gitea's comparison, commits ahead",
 			openList:    `[]`,
 			compareJSON: strPtr(`{"total_commits":2,"commits":[]}`),
+			createCode:  http.StatusCreated,
+			wantNumber:  7, wantCreated: true, wantPosts: 1,
+		},
+		{
+			// A comparison zcp cannot read is a compare not answered: an
+			// unproposed change costs more than an empty request.
+			name:        "a truncated comparison",
+			openList:    `[]`,
+			compareJSON: strPtr(`{"total_commits":`),
+			createCode:  http.StatusCreated,
+			wantNumber:  7, wantCreated: true, wantPosts: 1,
+		},
+		{
+			name:        "a comparison without its count",
+			openList:    `[]`,
+			compareJSON: strPtr(`{"commits":[]}`),
 			createCode:  http.StatusCreated,
 			wantNumber:  7, wantCreated: true, wantPosts: 1,
 		},
@@ -294,6 +328,7 @@ func TestEnsureGiteaPullRequest(t *testing.T) {
 				}
 				if r.URL.Path == "/api/v1/repos/acme/api/compare/main...mate/mate-p1" &&
 					tt.compare != nil && r.URL.Query().Get("output") == "diff" {
+					w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 					_, _ = w.Write([]byte(*tt.compare))
 					return
 				}
@@ -326,6 +361,15 @@ func TestEnsureGiteaPullRequest(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("expected an error, got number=%d created=%v", number, created)
+				}
+				return
+			}
+			if tt.wantNothing {
+				if !errors.Is(err, ErrNothingToPropose) || number != 0 || created {
+					t.Fatalf("= (%d, %v, %v), want nothing to propose", number, created, err)
+				}
+				if posts != 0 {
+					t.Errorf("POST /pulls count = %d, want none", posts)
 				}
 				return
 			}

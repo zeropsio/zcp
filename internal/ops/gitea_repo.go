@@ -96,6 +96,12 @@ var (
 	// `mate` entry of the registry, so the broker will not act for it. At
 	// sign-up this resolves itself when the app registers the group.
 	ErrNotRegistered = errors.New("gitea: the Mate's project is not registered with the broker")
+
+	// ErrNothingToPropose is EnsureGiteaPullRequest's answer for a branch
+	// that carries nothing its base lacks: no request is open and none is
+	// owed. Not a failure — the ordinary state right after the person merged
+	// — so a caller says nothing to propose rather than reporting it.
+	ErrNothingToPropose = errors.New("gitea: the branch carries nothing its base lacks")
 )
 
 // MateRepository is the broker's answer to POST /mate/repository.
@@ -224,6 +230,10 @@ type giteaPullRequest struct {
 // reports the branch alone, with the fork beside it, in the open list — so the
 // match is on both, never on the ref alone: two Mates fork one group repo and
 // their branches can share a name.
+//
+// A branch with nothing to propose answers ErrNothingToPropose, never a zero
+// number with no error, which stays the one shape of a create that raced and
+// could not be re-read.
 func EnsureGiteaPullRequest(ctx context.Context, httpClient HTTPDoer, giteaURL, token, fullName, headRepo, head, base, title string) (number int, created bool, err error) {
 	if httpClient == nil {
 		return 0, false, fmt.Errorf("no HTTP client configured")
@@ -265,7 +275,7 @@ func EnsureGiteaPullRequest(ctx context.Context, httpClient HTTPDoer, giteaURL, 
 	// answer keeps the old behaviour, since an unproposed change costs more
 	// than an empty request.
 	if proposes, known := giteaBranchProposes(ctx, httpClient, repoRoot, token, base, createHead); known && !proposes {
-		return 0, false, nil
+		return 0, false, ErrNothingToPropose
 	}
 	payload, err := json.Marshal(map[string]string{"head": createHead, "base": base, "title": title})
 	if err != nil {
@@ -593,7 +603,13 @@ func GiteaBranchExists(ctx context.Context, httpClient HTTPDoer, giteaURL, token
 // pull request from head would show, so an empty one is an empty request.
 // A Gitea before 1.27 ignores output and answers its JSON comparison, never
 // empty; there the commits ahead decide, as they did before the diff. known
-// is false when Gitea did not answer.
+// is false when Gitea did not answer, or answered JSON it cannot read.
+//
+// Measured 2026-10-03 on Gitea 1.27.2: with output=diff, 200 text/plain and
+// the raw diff (empty for main...main); without it, 200 application/json and
+// {"total_commits":…}. The body tells the two apart — a diff never opens
+// with "{" — since giteaAPICall reads no headers. The body is read capped
+// (giteaAPICall), which leaves a large diff non-empty.
 func giteaBranchProposes(ctx context.Context, httpClient HTTPDoer, repoRoot, token, base, head string) (proposes, known bool) {
 	body, status, err := giteaAPICall(ctx, httpClient, http.MethodGet,
 		repoRoot+"/compare/"+url.PathEscape(base)+"..."+url.PathEscape(head)+"?output=diff", token, nil)

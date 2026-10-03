@@ -251,3 +251,34 @@ func hostEntryLines(lines []string, host string) (int, int) {
 	}
 	return 0, 0
 }
+
+// TestGroupRecipeScaling_AnEmptyDiffProposesNothing: a scale the compare
+// answers with an empty diff is nothing to propose — not a failure, and never
+// "pull request #0".
+func TestGroupRecipeScaling_AnEmptyDiffProposesNothing(t *testing.T) {
+	stateDir := t.TempDir()
+	writeGiteaWiredPairMeta(t, stateDir)
+	fake := newFakeGroupGitea()
+	srv := fake.start(t)
+	envPath := writeLiveEnvFile(t, map[string]string{"GITEA_URL": srv.URL, "MATE_BROKER_URL": srv.URL, "GITEA_TOKEN": giteaBotToken})
+	rt := runtime.Info{InContainer: true, ProjectID: "p1"}
+	ctx := context.Background()
+	if line := reconcileGiteaGroupRecipe(ctx, scalingRecipeClient(1, 0.25), srv.Client(), rt, stateDir, envPath); !strings.Contains(line, "#11") {
+		t.Fatalf("the first recipe was not proposed: %q", line)
+	}
+	fake.merge(11)
+	posts := fake.pullPosts
+	fake.compareEmpty = true
+
+	result, _, _ := handleGroupRecipeScaling(ctx, scalingRecipeClient(4, 1), srv.Client(), rt, stateDir, envPath, "search")
+	answer := getTextContent(t, result)
+	if result.IsError {
+		t.Fatalf("an empty diff is not a failure: %s", answer)
+	}
+	if fake.pullPosts != posts {
+		t.Errorf("pull requests opened = %d, want none", fake.pullPosts-posts)
+	}
+	if !strings.Contains(answer, "nothing to propose") || strings.Contains(answer, "#0") {
+		t.Errorf("answer = %s, want nothing to propose", answer)
+	}
+}
