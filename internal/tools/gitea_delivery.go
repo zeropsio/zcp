@@ -386,6 +386,11 @@ type giteaAbsorbOutcome struct {
 	// about that OLD request, independent of whether THIS absorb found
 	// anything to do. "" when there was nothing to say.
 	LearnedNote string
+	// Absorbed is true when a recorded landing is folded into the checkout
+	// cleanly. The landing is kept until the push that follows lands it on
+	// the remote: the caller forgets it then (clearGiteaLanding), never
+	// before, so a failed push leaves it for the next one.
+	Absorbed bool
 }
 
 // giteaAbsorbBeforePush is what a wired pair's push OTHER than a delivery
@@ -401,7 +406,8 @@ type giteaAbsorbOutcome struct {
 // Learns a fresh landing itself (giteaLearnLanding) — never waits on the
 // backoff-gated reconcile pass — then runs ops.BuildGiteaAbsorbAndSyncCommand
 // on the checkout. A clean run (nothing to absorb, or absorbed without a
-// conflict) clears the landing. A REAL conflict — either inside the absorb's
+// conflict) answers Absorbed, and the caller clears the landing once its push
+// lands. A REAL conflict — either inside the absorb's
 // own S^1 merge, or the ordinary take-the-base-in step that follows it —
 // leaves the checkout exactly as the absorb's own abort left it (the
 // caller must not push on top of that) and is reported in full. Any other
@@ -448,8 +454,7 @@ func giteaAbsorbBeforePush(
 	if err != nil {
 		return giteaAbsorbOutcome{LearnedNote: note}
 	}
-	clearGiteaLanding(stateDir, meta)
-	return giteaAbsorbOutcome{LearnedNote: note}
+	return giteaAbsorbOutcome{LearnedNote: note, Absorbed: true}
 }
 
 // refreshGiteaWorkflow brings a wired pair's workflow to the one this zcp

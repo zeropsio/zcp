@@ -685,10 +685,14 @@ func handleGitPush(
 	// squash-vs-history one — stops the push outright: pushing on top of a
 	// checkout the sync left mid-way is never right.
 	var giteaLearnedNote string
+	var giteaAbsorbedMeta *workflow.ServiceMeta
 	if giteaRemoteOfThisMate(effectiveRemote) {
 		meta, _ := workflow.FindServiceMeta(stateDir, hostname)
 		absorb := giteaAbsorbBeforePush(ctx, httpClient, sshDeployer, stateDir, hostname, workingDir, meta)
 		giteaLearnedNote = absorb.LearnedNote
+		if absorb.Absorbed {
+			giteaAbsorbedMeta = meta
+		}
 		// giteaLearnedNote (news about a PREVIOUSLY recorded pull request,
 		// independent of whether THIS absorb found anything to do) is
 		// folded into every return from here, error included — it must not
@@ -785,6 +789,12 @@ func handleGitPush(
 			fmt.Sprintf("git-push from %s failed: %s", hostname, detail),
 			"See the git error above and `failureClassification` for the specific fix. Common cases: non-fast-forward pushes are classified as GIT_PUSH_NON_FAST_FORWARD, not this generic error; protected branch (the ref was refused by a pre-receive hook, NOT a credential fault) → push a topic branch and open a pull request, and do not rotate the token; auth rejected → re-run zerops_workflow action=\"git-push-setup\" with a fresh PAT; GIT_TOKEN missing → restart the runtime via zerops_manage action=\"restart\" then retry.",
 		), WithFailureClassification(classification)), nil, nil
+	}
+
+	// The push landed the absorbed landing on the remote: only now is this
+	// pair done with it. A failed push above returned with it still recorded.
+	if giteaAbsorbedMeta != nil {
+		clearGiteaLanding(stateDir, giteaAbsorbedMeta)
 	}
 
 	result := &ops.GitPushResult{

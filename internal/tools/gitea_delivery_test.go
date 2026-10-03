@@ -1279,3 +1279,55 @@ func TestProductionKnowsMergedWorkAfterTheMergeIsAbsorbed(t *testing.T) {
 		t.Errorf("production step = %q, want the merged work known", got)
 	}
 }
+
+// TestGitPushDeploy_KeepsTheLandingUntilThePushLands: the absorb before a
+// push folds the landing into the checkout, but only the push puts it on the
+// remote — a push that fails keeps the landing for the next one to absorb,
+// and a push that lands forgets it.
+func TestGitPushDeploy_KeepsTheLandingUntilThePushLands(t *testing.T) {
+	tests := []struct {
+		name       string
+		pushErr    error
+		wantLanded bool
+	}{
+		{name: "the push fails", pushErr: errors.New("ssh appdev: exit status 1"), wantLanded: true},
+		{name: "the push lands"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newFakeGitea()
+			fake.branchExists = true
+			fake.pullState = "closed"
+			fake.pullMerged = true
+			fake.pullMergeCommit = "squash-sha"
+			fake.pullMergeHead = "branch-tip-sha"
+			gitea := fake.start(t)
+
+			stateDir := t.TempDir()
+			writeLandedGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git")
+			t.Setenv("GITEA_URL", gitea.URL)
+			t.Setenv("MATE_BROKER_URL", gitea.URL)
+			t.Setenv("GITEA_TOKEN", giteaBotToken)
+
+			ssh := &stubSSHWithCommands{tokenOutput: []byte("1"), committedOutput: []byte("1"),
+				pushOutput: []byte("fatal: unable to access"), pushErr: tt.pushErr}
+			if tt.pushErr == nil {
+				ssh.pushOutput = []byte("ok")
+			}
+			authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterDeploySSH(srv, platform.NewMock(), gitea.Client(), "proj-1", ssh, authInfo, nil,
+				runtime.Info{InContainer: true, ProjectID: "proj-1", GiteaURL: gitea.URL},
+				stateDir, testDeployEngine(t), nil)
+			callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev", "strategy": "git-push"})
+
+			if ssh.absorbCalls != 1 || ssh.pushCalls != 1 {
+				t.Fatalf("absorb=%d push=%d, want one of each", ssh.absorbCalls, ssh.pushCalls)
+			}
+			meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
+			if got := meta.Gitea.Landed != nil; got != tt.wantLanded {
+				t.Errorf("landing kept = %v, want %v (%+v)", got, tt.wantLanded, meta.Gitea.Landed)
+			}
+		})
+	}
+}
