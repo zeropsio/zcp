@@ -195,9 +195,12 @@ func TestEnsureGiteaPullRequest(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		openList    string
-		createCode  int
+		name       string
+		openList   string
+		createCode int
+		// compare is what Gitea's merge-base diff of the branch answers, raw;
+		// nil leaves the compare unanswered.
+		compare     *string
 		wantNumber  int
 		wantCreated bool
 		wantPosts   int
@@ -239,6 +242,21 @@ func TestEnsureGiteaPullRequest(t *testing.T) {
 			wantPosts:  1,
 		},
 		{
+			// The person merged the Mate's request while it worked: its next
+			// delivery absorbed the squash and took main in, so the branch is
+			// ahead by merges and carries nothing main lacks.
+			name:     "the branch is ahead only by merges of what main has",
+			openList: `[]`,
+			compare:  strPtr(""),
+		},
+		{
+			name:       "the branch carries a change main lacks",
+			openList:   `[]`,
+			compare:    strPtr("diff --git a/app.js b/app.js\n"),
+			createCode: http.StatusCreated,
+			wantNumber: 7, wantCreated: true, wantPosts: 1,
+		},
+		{
 			name:       "gitea refuses the create",
 			openList:   `[]`,
 			createCode: http.StatusUnprocessableEntity,
@@ -255,6 +273,11 @@ func TestEnsureGiteaPullRequest(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "token bot-token" {
 					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				if r.URL.Path == "/api/v1/repos/acme/api/compare/main...mate/mate-p1" &&
+					tt.compare != nil && r.URL.Query().Get("output") == "diff" {
+					_, _ = w.Write([]byte(*tt.compare))
 					return
 				}
 				if r.URL.Path != "/api/v1/repos/acme/api/pulls" {

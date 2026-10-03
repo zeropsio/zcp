@@ -263,12 +263,12 @@ func deliverGiteaPair(
 	result := &giteaDelivery{PullRequest: openGiteaPairPullRequest(ctx, httpClient, wiring, stateDir, meta)}
 	if pr := result.PullRequest; pr != nil {
 		result.Line = fmt.Sprintf(
-			"Delivered: %s's code is on %s of %s, and pull request #%d (%s) carries it to %q. %s Tell the person that link — the code reaches the group's stage when they merge it.",
-			meta.Hostname, branch, repo, pr.Number, pr.URL, pr.Base, giteaDescribeLine(pr, meta.Hostname))
+			"Delivered: %s's code is on %s of %s, and pull request #%d (%s) carries it to %q. %s Tell the person that link — the code reaches the group's stage when they merge it. %s",
+			meta.Hostname, branch, repo, pr.Number, pr.URL, pr.Base, giteaDescribeLine(pr, meta.Hostname), giteaMergeAnyMoment(pr.Base))
 	} else {
 		result.Line = fmt.Sprintf(
-			"Delivered: %s's code is on %s of %s. No pull request is open onto %q yet — Gitea opens one only for a branch that differs from it; the next stage deploy asks again.",
-			meta.Hostname, branch, repo, giteaBaseOf(meta))
+			"Delivered: %s's code is on %s of %s. No pull request is open onto %q — Gitea opens one only for a branch that carries something %q lacks, so there is nothing for the person to merge; the next stage deploy asks again.",
+			meta.Hostname, branch, repo, giteaBaseOf(meta), giteaBaseOf(meta))
 	}
 	if line := reconcileGiteaGroupRecipe(ctx, client, httpClient, rt, stateDir, mate.LiveEnvStorePath); line != "" {
 		result.Line += " The group's recipe: " + line
@@ -600,13 +600,25 @@ func giteaRemoteOfThisMate(remoteURL string) bool {
 // The group's workflow runs on main, which the person's merge moves, so there
 // is no build to watch and no integration to offer: the Mate's own services
 // change only through a direct deploy, and deploying the stage half pushes by
-// itself. A request left open asks for its description.
+// itself. A request left open asks for its description and says the person
+// may merge it at any moment.
 func giteaPushNextActions(pr *giteaPullRequestRef, hostname string) string {
 	if pr == nil {
-		return "Pushed to this Mate's branch on the group's Gitea; no pull request is open yet (Gitea opens one only for a branch that differs from main). Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes and asks for the request again."
+		return "Pushed to this Mate's branch on the group's Gitea; no pull request is open (Gitea opens one only for a branch that carries something main lacks). Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes and asks for the request again."
 	}
-	return fmt.Sprintf("Pushed to %s on the group's Gitea; pull request #%d (%s) carries it to %q, and the person merges it. %s Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes and updates the request by itself.",
-		pr.Branch, pr.Number, pr.URL, pr.Base, giteaDescribeLine(pr, hostname))
+	return fmt.Sprintf("Pushed to %s on the group's Gitea; pull request #%d (%s) carries it to %q, and the person merges it. %s %s Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes, and updates the request while it is open.",
+		pr.Branch, pr.Number, pr.URL, pr.Base, giteaDescribeLine(pr, hostname), giteaMergeAnyMoment(pr.Base))
+}
+
+// giteaMergeAnyMoment is what the agent needs the moment it hands a request
+// over: the person sees it at once, at the top of the Mate's conversation,
+// and may merge it while the agent is still working (2026-10-03: #7 merged
+// before the stage deploy that followed its push, and the agent spent its
+// next turns working out what had happened).
+func giteaMergeAnyMoment(base string) string {
+	return fmt.Sprintf(
+		"The person may merge it at any moment, before you finish — that is the hand-over, not something to check or undo: the next stage deploy folds the merge in and opens a new request only for what %q still lacks.",
+		base)
 }
 
 // giteaHandoffNote is what the person needs from the Mate's closing message

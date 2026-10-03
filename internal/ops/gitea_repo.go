@@ -257,11 +257,14 @@ func EnsureGiteaPullRequest(ctx context.Context, httpClient HTTPDoer, giteaURL, 
 	// marks it "empty", answers every merge 405 "Please try again later", and
 	// the broker retried one every three minutes for as long as it was open
 	// (the owner's run, 2026-09-17: the recipe re-proposed after a stage
-	// deploy with nothing new to say). Nothing is proposed when the compare
-	// says the branch is not ahead; a compare Gitea does not answer keeps the
-	// old behaviour, since an unproposed change costs more than an empty
-	// request.
-	if ahead, known := giteaBranchAhead(ctx, httpClient, repoRoot, token, base, createHead); known && ahead == 0 {
+	// deploy with nothing new to say). So does a branch ahead by merges
+	// alone — a delivery after the person merged absorbs the squash and takes
+	// main in, and with nothing changed since that is all it carries
+	// (2026-10-03: PR #8 opened right after #7 merged). Nothing is proposed
+	// when the diff the request would show is empty; a compare Gitea does not
+	// answer keeps the old behaviour, since an unproposed change costs more
+	// than an empty request.
+	if proposes, known := giteaBranchProposes(ctx, httpClient, repoRoot, token, base, createHead); known && !proposes {
 		return 0, false, nil
 	}
 	payload, err := json.Marshal(map[string]string{"head": createHead, "base": base, "title": title})
@@ -585,20 +588,15 @@ func GiteaBranchExists(ctx context.Context, httpClient HTTPDoer, giteaURL, token
 	}
 }
 
-// giteaBranchAhead is how many commits head carries that base does not, from
-// Gitea's compare (GET /repos/{o}/{r}/compare/{base}...{head}); known is false
-// when Gitea did not answer it, and the caller decides without it.
-func giteaBranchAhead(ctx context.Context, httpClient HTTPDoer, repoRoot, token, base, head string) (ahead int, known bool) {
+// giteaBranchProposes reports whether head carries anything base lacks: the
+// merge-base diff Gitea's compare answers with ?output=diff is the diff a
+// pull request from head would show, so an empty one is an empty request.
+// known is false when Gitea did not answer.
+func giteaBranchProposes(ctx context.Context, httpClient HTTPDoer, repoRoot, token, base, head string) (proposes, known bool) {
 	body, status, err := giteaAPICall(ctx, httpClient, http.MethodGet,
-		repoRoot+"/compare/"+url.PathEscape(base)+"..."+url.PathEscape(head), token, nil)
+		repoRoot+"/compare/"+url.PathEscape(base)+"..."+url.PathEscape(head)+"?output=diff", token, nil)
 	if err != nil || status != http.StatusOK {
-		return 0, false
+		return false, false
 	}
-	var compare struct {
-		TotalCommits *int `json:"total_commits"` //nolint:tagliatelle // Gitea's wire schema
-	}
-	if json.Unmarshal(body, &compare) != nil || compare.TotalCommits == nil {
-		return 0, false
-	}
-	return *compare.TotalCommits, true
+	return len(bytes.TrimSpace(body)) > 0, true
 }

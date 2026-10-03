@@ -170,6 +170,12 @@ func (f *fakeGroupGitea) start(t *testing.T) *httptest.Server {
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/")
 		write := func(status int, body any) {
+			if raw, ok := body.(rawBody); ok {
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(raw))
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(status)
 			_ = json.NewEncoder(w).Encode(body)
@@ -333,6 +339,9 @@ func (f *fakeGroupGitea) serveContents(r *http.Request, path string, write func(
 	return true
 }
 
+// rawBody is an answer written as it is, not as JSON — the compare's diff.
+type rawBody string
+
 // servePulls answers the compare and the group repo's pull requests: the
 // open list, a create, a close.
 func (f *fakeGroupGitea) servePulls(r *http.Request, path string, write func(int, any)) bool {
@@ -346,13 +355,13 @@ func (f *fakeGroupGitea) servePulls(r *http.Request, path string, write func(int
 		baseRef, head, _ := strings.Cut(spec, "...")
 		owner, branch, _ := strings.Cut(head, ":")
 		base, headFiles := f.branches[fakeGroupRepo][baseRef], f.branches[owner+"/group"][branch]
-		ahead := 0
+		var diff strings.Builder
 		for p, body := range headFiles {
 			if base[p] != body {
-				ahead = 1
+				diff.WriteString("diff --git a/" + p + " b/" + p + "\n")
 			}
 		}
-		write(http.StatusOK, map[string]any{"total_commits": ahead, "commits": []any{}})
+		write(http.StatusOK, rawBody(diff.String()))
 	case r.Method == http.MethodPatch && strings.Contains(path, "/pulls/"):
 		_, number, _ := strings.Cut(path, "/pulls/")
 		var body struct {

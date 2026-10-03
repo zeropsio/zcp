@@ -344,6 +344,72 @@ func TestAStageDeployAbsorbsAFreshMergeWithoutWaitingForAReconcilePass(t *testin
 	}
 }
 
+// TestAStageDeployAfterThePersonMergedProposesOnlyWhatMainLacks: the person
+// may merge a Mate's request the moment it shows, while the agent is still
+// working. The next stage deploy absorbs that merge and takes main in, so its
+// branch is ahead of main by merges alone unless the agent changed something
+// since — a request opened for those merges is empty, and the agent read the
+// one it was told about as work to verify (2026-10-03, PR #8 after #7).
+func TestAStageDeployAfterThePersonMergedProposesOnlyWhatMainLacks(t *testing.T) {
+	tests := []struct {
+		name        string
+		compareDiff string
+		wantCreates int
+		wantLine    []string
+		wantNotLine []string
+	}{
+		{
+			name: "nothing changed since the merge", compareDiff: "",
+			wantCreates: 0,
+			wantLine:    []string{"pull request #4 is merged", "No pull request is open"},
+			wantNotLine: []string{"pull request #3"},
+		},
+		{
+			name: "the agent changed something since", compareDiff: "diff --git a/app.js b/app.js\n",
+			wantCreates: 1,
+			wantLine:    []string{"pull request #4 is merged", "pull request #3"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newFakeGitea()
+			fake.branchExists = true
+			fake.pullState = "closed"
+			fake.pullMerged = true
+			fake.pullMergeCommit = "squash-sha"
+			fake.pullMergeHead = "branch-tip-sha"
+			fake.compareDiff = &tt.compareDiff
+			gitea := fake.start(t)
+
+			stateDir := t.TempDir()
+			writeLandedGiteaPairMeta(t, stateDir, gitea.URL+"/acme/appdev.git")
+			t.Setenv("GITEA_URL", gitea.URL)
+			t.Setenv("MATE_BROKER_URL", gitea.URL)
+			t.Setenv("GITEA_TOKEN", giteaBotToken)
+
+			ssh := &scriptedSSH{respond: func(_, _ string) string { return "ok" }}
+			delivery := deliverGiteaPair(context.Background(), platform.NewMock(), gitea.Client(), ssh,
+				runtime.Info{InContainer: true, ProjectID: "proj-1"}, stateDir, "appstage")
+			if delivery == nil {
+				t.Fatal("want a delivery")
+			}
+			if fake.pullCreates != tt.wantCreates {
+				t.Errorf("pull requests created = %d, want %d", fake.pullCreates, tt.wantCreates)
+			}
+			for _, want := range tt.wantLine {
+				if !strings.Contains(delivery.Line, want) {
+					t.Errorf("the line misses %q:\n%s", want, delivery.Line)
+				}
+			}
+			for _, unwanted := range tt.wantNotLine {
+				if strings.Contains(delivery.Line, unwanted) {
+					t.Errorf("the line must not name %q:\n%s", unwanted, delivery.Line)
+				}
+			}
+		})
+	}
+}
+
 // TestGitPushDeploy_AbsorbsALandingBeforeItPushes is the manual-push half of
 // the squash-landing fix: PR #2 in the live incident was opened by exactly
 // this path — an ordinary `zerops_deploy strategy="git-push"` on the dev
