@@ -147,6 +147,10 @@ func (Codex) ContainerInit(env Env) error {
 //     API host and every call authenticates against the wrong region.
 //   - PATH / HOME — required so zcp serve can locate child binaries
 //     (ssh, zcli, git) and resolve config paths.
+//   - ZCP_MATE_ENABLED / ZCP_AUTHORING — the gates runtime.Detect()
+//     reads. Stripped, a gate reads as off: under Codex a Mate's
+//     zcp serve ran without ZCP_MATE_ENABLED, so a scale never said
+//     its group recipe still wrote the old one (E2E F15, 2026-10-03).
 //
 // startup_timeout_sec is generous (30s) because the ZCP binary loads
 // recipe + atom corpus at boot. tool_timeout_sec covers the longest
@@ -165,6 +169,9 @@ func codexMCPServerEntry() map[string]any {
 			"projectId",
 			// API host/region derivation (auth.containerAPIDefaults).
 			"zeropsSubdomain",
+			// The gates runtime.Detect reads.
+			"ZCP_MATE_ENABLED",
+			"ZCP_AUTHORING",
 			// Process basics for subprocess execution.
 			"PATH",
 			"HOME",
