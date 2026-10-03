@@ -1780,7 +1780,10 @@ whether it still knows the credential (`Enroller.Recheck`); the org's member lis
 the official HQ only with no enrollment kept, when HQ refuses the credential (`401
 mate_credential_required`, or names another project for it), or when the kept HQ has not answered
 for 10 min — an HQ that lost the anchor answers `503 not_active` for good, a deploy's handover for
-seconds (R6). Everything zcp does with HQ goes through it — a
+seconds (R6). An enrollment the official HQ cannot serve goes back to rechecking the kept one with
+that clock reset, so an HQ outage reads the member list at most once per 10 min; a new Mate's, with
+nothing kept, is tried again on the usual backoff capped at 60 s, so a Mate born in an outage
+enrolls within a minute of HQ answering. Everything zcp does with HQ goes through it — a
 pair's work delivered as a change (§10.10, *Delivery to HQ*), the recipe proposed and its AI Agent
 tier read for the stand-up, a repository the tier names checked before HQ is asked for it — over
 HQ's Mate API (`Authorization: Mate <credential>`) and git over HTTPS as the user `mate`. The dev
