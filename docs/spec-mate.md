@@ -2319,13 +2319,34 @@ once a deploy finds it no longer answers or reaches more. **A stage's deploys** 
 `main` moves, every stage following it gets the services its stage tier builds from the repository
 whose `main` moved — the exact commit's archive, its zerops.yaml, the tier's setup, a version named
 `main <7 hex>`, deployed with the environment's own token; a deploy is live only once the service
-runs that commit, and an HTTP service then gets its subdomain. One queue per environment, the newest
-commit winning; a build's own failure is final until a developer's _Run again_ (`POST
-/api/apps/:appId/environments/:name/redeploy`); HQ's own refusals, and a deploy still running after
-20 min, are asked again by the next pass; a catch-up at takeover and every 5 min. A changed tier
-adds what it declares to the environments built from it, and reports, never applies, a change to a
-service the project has. An application's environments and deploys go to whoever reads its
-changes. Live on 2026-10-02 (`mate-rig-a`): the stage deploying 3 s after the merge and live at
+runs that commit, and an HTTP service then gets its subdomain. **Deploys are jobs** (the deploy-jobs
+design, 2026-10-03): nothing deploys on a timer, and nothing is tried twice. An event — `main`
+moved, a release, a developer's _Run again_ (`POST /api/apps/:appId/environments/:name/redeploy`)
+or _Add {service}_ (`…/services`), an environment added, a deploy key kept, an import's hold —
+writes its rollout in its own write, and the request that made it runs it before it answers:
+planned into jobs once, then each environment's next job submitted where none builds, and the
+answer says where each stands (`deploys`: building with its process, queued behind the build under
+way, or refused, skipped or live, with HQ's words why); a deploy that did not go through never
+undoes the merge or the release. A job is made per environment, service and commit — none while a
+job of that commit is under way or HQ last put it live there, and `skipped`, saying so, where the
+commit carries no `zerops.yaml` with the tier's setup or its build failed there and no release or
+person asks again. One build at a time per environment; a newer job supersedes only one still
+queued, and what waits is submitted once the build ends. A job is `queued → submitting → building
+→ live`, or ends `failed` (the build's own, final until a person asks again), `refused` (what did
+not go through at its one try — Zerops not answering, git failing, a key missing, dead or reaching
+more than its project — with HQ's words why), `skipped` or `superseded`. A lost answer is never
+submitted again: HQ reads the version it made, and follows a build by its process (else its
+version) 75 min at most. A Core taking the lead follows what builds, refuses a submission whose
+version it never heard ("HQ restarted before Zerops answered"), submits what waits and runs the
+rollouts left unplanned. A service running a version HQ did not put there, while no job of HQ's is
+under way, is said to the reader — with _Deploy {sha} again_ for whoever may _Run again_ while its
+newest job is of HQ's live commit, and the service in Zerops — and never overwritten. A recipe
+merge's delta imports only the services its tier change added (audit D2), follows its own import's
+processes to their end and only then asks for their deploys; a service a person deleted comes back
+only by _Add {service}_, and a changed declaration of a service the project has is reported, never
+applied. Every request to Zerops is asked once, a read too: what does not answer is its caller's
+answer, and a handle HQ follows is read again on its own cadence. An application's environments and their newest jobs (20, and each
+service's newest live one past them) go to whoever reads its changes. Live on 2026-10-02 (`mate-rig-a`): the stage deploying 3 s after the merge and live at
 63–81 s, its version `main 48b289b`, its own subdomain answering. Production and the release move
 to HQ next.
 
