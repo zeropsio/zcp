@@ -483,12 +483,14 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 
 // groupTierHeader is what a tier says about itself above its project: what
 // the tier is, that zcp wrote it and from which Mate, and that it is the
-// group's to change — zcp proposes only the tiers the group repo's main
-// lacks (D30), so a person's edit is never written over.
+// group's to change — zcp adds only a whole tier the group repo's main lacks
+// (D30), and into one main carries proposes nothing but a service's scale
+// (D34), as a change a person reviews, so a person's edit is never written
+// over.
 func groupTierHeader(inputs GroupRecipeInputs, policy groupTierPolicy) []string {
 	return []string{
 		"The " + policy.title + " tier. " + policy.summary,
-		fmt.Sprintf("zcp wrote this file from the Mate %q. It is the group's now: a person may edit it, and zcp never proposes over a tier the group repo already carries.",
+		fmt.Sprintf("zcp wrote this file from the Mate %q. It is the group's now: a person may edit it. zcp adds only a whole tier the group repo lacks; into a tier it already carries, zcp proposes only a service's scale (group-recipe scaling=<hostname>), as a change a person reviews.",
 			firstNonBlank(inputs.MateProjectName, inputs.Name)),
 		"Priority is the order services are created in, each wave deployed before the next starts: the managed services first, then every runtime before the runtimes whose build reads it.",
 	}
