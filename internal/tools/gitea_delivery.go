@@ -182,16 +182,21 @@ func deliverGiteaPair(
 	// since the last merge — the passes are backoff-gated (giteaAttemptDue)
 	// and a delivery must not wait on one to learn a fresh merge.
 	//
-	// The learned line ("pull request #N is merged…") is folded onto
-	// whatever this delivery itself reports, success or failure — it is
-	// news about the OLD request, independent of this attempt's own
-	// outcome, and PullRequest is now 0 (or Landed, not PullRequest) so no
-	// later pass would ever say it otherwise.
+	// The learned line ("pull request #N is merged…") opens whatever this
+	// delivery itself reports, success or failure — it is news about the OLD
+	// request, which came first, independent of this attempt's own outcome,
+	// and PullRequest is now 0 (or Landed, not PullRequest) so no later pass
+	// would ever say it otherwise. A delivery that opened the next request
+	// itself drops the line's promise of one.
 	if note := giteaLearnLanding(ctx, httpClient, stateDir, wiring, meta); note != "" {
 		defer func() {
-			if delivery != nil {
-				delivery.Line = strings.TrimSpace(delivery.Line + " " + note)
+			if delivery == nil {
+				return
 			}
+			if delivery.PullRequest != nil {
+				note = giteaOutcomeAfterOpen(note)
+			}
+			delivery.Line = strings.TrimSpace(sentenceOf(note) + " " + delivery.Line)
 		}()
 	}
 
@@ -623,7 +628,7 @@ func giteaPushNextActions(pr *giteaPullRequestRef, openErr error, hostname strin
 	if pr == nil {
 		return "Pushed to this Mate's branch on the group's Gitea; no pull request is open (zcp opens one only for a branch that carries something main lacks). Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes and asks for the request again."
 	}
-	return fmt.Sprintf("Pushed to %s on the group's Gitea; pull request #%d (%s) carries it to %q, and the person merges it. %s %s Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes, and updates the request while it is open.",
+	return fmt.Sprintf("Pushed to %s on the group's Gitea; pull request #%d (%s) carries it to %q. %s %s Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes, and updates the request while it is open.",
 		pr.Branch, pr.Number, pr.URL, pr.Base, giteaDescribeLine(pr, hostname), giteaMergeAnyMoment(pr.Base))
 }
 

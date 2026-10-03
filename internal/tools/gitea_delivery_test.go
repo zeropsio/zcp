@@ -342,8 +342,8 @@ func TestAStageDeployAbsorbsAFreshMergeWithoutWaitingForAReconcilePass(t *testin
 	// The OLD request's fate (#4 merged) is news independent of this
 	// delivery's own outcome — nothing else would ever say it once the
 	// number is off meta.Gitea.PullRequest.
-	if !strings.Contains(delivery.Line, "pull request #4 is merged") {
-		t.Errorf("the delivery must fold in what it learned about the old request:\n%s", delivery.Line)
+	if !strings.HasPrefix(delivery.Line, "Pull request #4 is merged") {
+		t.Errorf("the delivery must open with what it learned about the old request:\n%s", delivery.Line)
 	}
 }
 
@@ -364,13 +364,16 @@ func TestAStageDeployAfterThePersonMergedProposesOnlyWhatMainLacks(t *testing.T)
 		{
 			name: "nothing changed since the merge", compareDiff: "",
 			wantCreates: 0,
-			wantLine:    []string{"pull request #4 is merged", "No pull request is open"},
+			wantLine:    []string{"Pull request #4 is merged", "its next change opens a new request", "No pull request is open"},
 			wantNotLine: []string{"pull request #3"},
 		},
 		{
+			// The request this delivery opened is the new one: the note
+			// about #4 does not promise another.
 			name: "the agent changed something since", compareDiff: "diff --git a/app.js b/app.js\n",
 			wantCreates: 1,
-			wantLine:    []string{"pull request #4 is merged", "pull request #3"},
+			wantLine:    []string{"Pull request #4 is merged", "pull request #3"},
+			wantNotLine: []string{"its next change opens a new request"},
 		},
 	}
 	for _, tt := range tests {
@@ -398,6 +401,9 @@ func TestAStageDeployAfterThePersonMergedProposesOnlyWhatMainLacks(t *testing.T)
 			}
 			if fake.pullCreates != tt.wantCreates {
 				t.Errorf("pull requests created = %d, want %d", fake.pullCreates, tt.wantCreates)
+			}
+			if !strings.HasPrefix(delivery.Line, "Pull request #4 is merged") {
+				t.Errorf("the line must open with what became of #4:\n%s", delivery.Line)
 			}
 			for _, want := range tt.wantLine {
 				if !strings.Contains(delivery.Line, want) {
@@ -1142,7 +1148,8 @@ func TestAPushHandOverSaysTheRequestMayBeMergedAtAnyMoment(t *testing.T) {
 		},
 		{
 			name: "a request open", pr: open,
-			want: []string{`action="describe-change" service="appdev"`, "may merge it at any moment", `what "main" still lacks`},
+			want:    []string{`action="describe-change" service="appdev"`, "may merge it at any moment", `what "main" still lacks`},
+			wantNot: []string{"and the person merges it"},
 		},
 	}
 	for _, tt := range tests {

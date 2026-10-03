@@ -299,13 +299,26 @@ func readGiteaPairPullRequestOutcome(
 		// giteaAbsorbBeforePush), and saying "its next delivery" there would
 		// be wrong the moment this one already did. Just the fact.
 		return fmt.Sprintf(
-			"pull request #%d is merged — this Mate's work is on %q now; its next change opens a new request",
+			"pull request #%d is merged — this Mate's work is on %q now"+giteaMergedNextClause,
 			number, base)
 	}
 	clearGiteaPullRequest(stateDir, m, number)
 	return fmt.Sprintf(
-		"pull request #%d was closed without merging — nothing of it is on %q; the next change opens a new request",
+		"pull request #%d was closed without merging — nothing of it is on %q"+giteaClosedNextClause,
 		number, base)
+}
+
+// The clauses an outcome line ends on, promising the request a later change
+// opens — dropped by a caller that has just opened it (giteaOutcomeAfterOpen).
+const (
+	giteaMergedNextClause = "; its next change opens a new request"
+	giteaClosedNextClause = "; the next change opens a new request"
+)
+
+// giteaOutcomeAfterOpen is an outcome line said in the same call that opened
+// or found the next request: it no longer promises one.
+func giteaOutcomeAfterOpen(note string) string {
+	return strings.TrimSuffix(strings.TrimSuffix(note, giteaMergedNextClause), giteaClosedNextClause)
 }
 
 // clearGiteaPullRequest forgets the number a pair recorded, in memory and on
