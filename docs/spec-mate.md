@@ -1771,6 +1771,18 @@ A Zerops user with a Claude or ChatGPT subscription signs the agent CLI in **fro
 credential-shaped enters a thread, a feed or the ledger. Two halves: the **agent-auth feed** (what the
 container knows about each agent's login) and the **login session** (how the user gets there).
 
+**Agents Mate signs nobody in to** (2026-10-03, the owner: "all of them should still work with everything
+we've been doing"). Cursor, OpenCode, Grok and Antigravity sign in through their own CLI or the Zerops GUI,
+never through mate, and stay outside the feed. A Mate whose only ready agent is one of them works like any
+other: one shared readiness test — installed, enabled, available, ready, signed in (`authenticated`), at least
+one model — lifts the sign-in screen in its conversation and Crew tab, its stand-up starts on that instance
+(the asker's own Claude Code or Codex sign-in first, the conversation's own instance next), and its first
+browser to find the agent ready writes the project tag `mate:runs:<driver>`, which makes its maker
+(`mate:by:`, else `mate:standup:`) its owner for every reader. A crew runs on an agent whose adapter carries
+the thread profile (Claude Code, Codex, Grok, OpenCode); Cursor and Antigravity are refused until their gate
+is seen live, since zcp pre-approves the Zerops tools in Cursor's project config. zcp gives OpenCode the
+`zerops` MCP server in `~/.config/opencode/opencode.json`, with `zerops_*` allowed.
+
 ### 8.1 The agent-auth feed
 
 `subscribeZeropsAgentAuth` (stream, snapshot-typed) publishes, per agent (`claude-code`, `codex`;
