@@ -18,8 +18,8 @@ import (
 // `main` moves only by HQ's merge, so the change is not a courtesy — it is
 // the ONLY way the pair's code reaches it. HQ takes the Mate's push only on
 // the branch of its own open change, so the change is opened first — and
-// only when there is something to deliver, the checkout ahead of `main` once
-// `main` is taken in — and HEAD is pushed to its branch then. A Mate has at
+// only when HQ says the candidate tree differs from `main` — and HEAD is
+// pushed to its branch then. A Mate has at
 // most one open change per repository: opening answers the open one, or the
 // next number. Its number is recorded on the pair; what became of it is read
 // from the Mate's own state in HQ.
@@ -90,7 +90,7 @@ type shipOutcome struct {
 	// line is what happened when the work did not reach a change: "" when
 	// it did, or when there was nothing to deliver (upToDate).
 	line string
-	// upToDate: the checkout has nothing `main` lacks, so no change is open.
+	// upToDate: HQ says main already has the delivered tree; no change was opened or updated.
 	upToDate bool
 	// pending: HQ could not be reached; the delivery is recorded as owed.
 	pending bool
@@ -99,11 +99,9 @@ type shipOutcome struct {
 	unchanged bool
 }
 
-// shipChange carries the work in the pair's checkout — committed, with `main`
-// taken in, ahead of `main` by ahead commits — to its change: the open one, its
-// branch as HQ holds it taken in too, or the next number opened with title; and
-// HEAD pushed to its branch. Nothing
-// is opened for a checkout `main` already has (ahead == 0). An HQ that cannot
+// shipChange asks HQ whether the committed tree differs from main. If it does,
+// the open change's branch is taken in, or a new change opened, and HEAD is
+// pushed to it. Nothing is opened for a tree HQ says main already has. An HQ that cannot
 // be reached leaves the delivery recorded as pending, for the next delivery,
 // push or pass to finish (SPEC §3.2a); a refusal is said, and drops it.
 func shipChange(
@@ -113,14 +111,14 @@ func shipChange(
 	hqc hq.Client,
 	m *workflow.ServiceMeta,
 	title string,
-	ahead int,
 ) shipOutcome {
-	if ahead == 0 {
-		clearPendingDelivery(stateDir, m)
-		return shipOutcome{upToDate: true}
+	treeOutput, treeErr := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildDeliveryTreeCommand(hqPairWorkingDir))
+	if treeErr != nil {
+		return shipOutcome{line: fmt.Sprintf("reading the delivered tree failed (%s)", gitPushErrorDetail(treeErr, treeOutput))}
 	}
+	tree := strings.TrimSpace(string(treeOutput))
 	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
-	opened, err := hqc.OpenChange(callCtx, m.HQ.Repo, title)
+	opened, err := hqc.OpenChange(callCtx, m.HQ.Repo, title, tree)
 	cancel()
 	if err != nil {
 		if hq.IsUnavailable(err) {
@@ -129,6 +127,11 @@ func shipChange(
 		}
 		clearPendingDelivery(stateDir, m)
 		return shipOutcome{line: fmt.Sprintf("HQ refused to open a change on %q (%v)", m.HQ.Repo, err)}
+	}
+	if opened.Reason == "nothing_to_deliver" {
+		clearPendingDelivery(stateDir, m)
+		clearLanding(stateDir, m)
+		return shipOutcome{upToDate: true, line: "nothing to deliver: main already has this"}
 	}
 	change := opened.Change
 	if !opened.Created && change.Title == changeFallbackTitle(m) && title != change.Title {
@@ -295,6 +298,32 @@ func hqLearnLanding(stateDir string, m *workflow.ServiceMeta, state hq.MateState
 	return fmt.Sprintf("change #%d was closed without merging — nothing of it is on %q; the next change opens a new one", number, hqBase)
 }
 
+// deliveryLanding recovers the base of a legacy checkout whose local landing
+// was cleared by an earlier delivery. HQ owns the landing. An open change is
+// never cut; only an explicit delivery (or its owed continuation) uses this.
+func deliveryLanding(stateDir string, m *workflow.ServiceMeta, state hq.MateState) {
+	if m.HQ.Change != 0 || m.HQ.Landed != nil {
+		return
+	}
+	var latest *hq.MateChange
+	for i := range state.Changes {
+		c := &state.Changes[i]
+		if c.Repo != m.HQ.Repo {
+			continue
+		}
+		if c.State == hq.ChangeOpen {
+			return
+		}
+		if c.State == hq.ChangeMerged && c.MergedSha != nil && c.LandedHead != nil &&
+			(latest == nil || c.Number > latest.Number) {
+			latest = c
+		}
+	}
+	if latest != nil {
+		recordLanding(stateDir, m, 0, *latest.MergedSha, *latest.LandedHead)
+	}
+}
+
 // clearChange forgets the number a pair recorded, in memory and on disk, once
 // HQ says the change is no longer open without merging. number is the change
 // the read was FOR: the disk write applies only while the fresh meta still
@@ -403,25 +432,35 @@ func finishPendingDelivery(
 	}
 	landedCommit, landedHead := landingOf(m)
 	output, err := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildDeliverySyncCommand(hqPairWorkingDir, landedCommit, landedHead))
-	ahead, found := ops.DeliveryAhead(string(output))
+	_, found := ops.DeliveryAhead(string(output))
 	if err != nil || !found {
 		return ""
 	}
-	shipped := shipChange(ctx, sshDeployer, stateDir, hqc, m, m.HQ.Pending.Title, ahead)
+	fresh := ""
+	if base := ops.DeliveryFreshBase(string(output)); base != "" {
+		fresh = "The next change starts from main at " + base + "; prior history is kept under refs/zcp/landed/" + landedCommit
+	}
+	say := func(line string) string {
+		if fresh == "" {
+			return line
+		}
+		return strings.TrimSpace(line + ". " + fresh)
+	}
+	shipped := shipChange(ctx, sshDeployer, stateDir, hqc, m, m.HQ.Pending.Title)
 	switch {
 	case shipped.ref != nil:
-		return fmt.Sprintf("the delivery HQ could not be reached for is done: %s is on %s, and change #%d (%s) carries it to %q",
-			m.Hostname, shipped.ref.Branch, shipped.ref.Number, shipped.ref.URL, hqBase)
+		return say(fmt.Sprintf("the delivery HQ could not be reached for is done: %s is on %s, and change #%d (%s) carries it to %q",
+			m.Hostname, shipped.ref.Branch, shipped.ref.Number, shipped.ref.URL, hqBase))
 	case shipped.pending:
-		return ""
+		return fresh
 	case shipped.upToDate:
-		return ""
+		return say("the delivery HQ could not be reached for is done: " + shipped.line)
 	}
-	return "the delivery HQ could not be reached for did not complete: " + shipped.line
+	return say("the delivery HQ could not be reached for did not complete: " + shipped.line)
 }
 
 // checkoutOnMateBranch reports whether the pair's checkout is clean and on the
-// Mate's own branch — the one state a pass may take `main` into it, silently.
+// Mate's own branch — the state an owed delivery can finish on.
 func checkoutOnMateBranch(ctx context.Context, sshDeployer ops.SSHDeployer, m *workflow.ServiceMeta) bool {
 	if sshDeployer == nil || m == nil || m.HQ == nil || m.HQ.Branch == "" {
 		return false
@@ -437,21 +476,6 @@ func checkoutOnMateBranch(ctx context.Context, sshDeployer ops.SSHDeployer, m *w
 // gitCurrentBranchCmd reads the branch name workingDir's HEAD is on.
 func gitCurrentBranchCmd(workingDir string) string {
 	return fmt.Sprintf(`git -C %s rev-parse --abbrev-ref HEAD 2>/dev/null`, ops.ShellQuote(workingDir))
-}
-
-// absorbLandedChangeOnCheckout is the point where a pass that just learned a
-// change merged folds that landing into the pair's own checkout right there
-// — so the Mate's NEXT task starts on current code instead of waiting for its
-// next delivery to notice (MB-26). Best-effort and silent: a dirty tree, a
-// checkout not on the Mate's own branch, an SSH failure, or a real conflict
-// all leave the checkout exactly as it was — the delivery is the
-// authoritative path and reports any real conflict there.
-func absorbLandedChangeOnCheckout(ctx context.Context, sshDeployer ops.SSHDeployer, m *workflow.ServiceMeta) {
-	if !checkoutOnMateBranch(ctx, sshDeployer, m) {
-		return
-	}
-	landedCommit, landedHead := landingOf(m)
-	_, _ = sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildDeliverySyncCommand(hqPairWorkingDir, landedCommit, landedHead))
 }
 
 // landingOf is the landing a pair records — S and H of the absorb — or two

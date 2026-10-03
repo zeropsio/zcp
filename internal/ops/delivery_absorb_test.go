@@ -8,6 +8,7 @@
 package ops
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -498,5 +499,58 @@ func TestBuildAbsorbLandedChangeCommand_UncommittedChangesBlockTheMerge(t *testi
 	body, readErr := os.ReadFile(filepath.Join(pair, "index.js"))
 	if readErr != nil || string(body) != "an uncommitted edit\n" {
 		t.Errorf("the uncommitted edit must survive untouched, got %q (%v)", body, readErr)
+	}
+}
+
+func TestBuildDeliveryCommand_StartsTheNextChangeFromMainAndKeepsPriorHistory(t *testing.T) {
+	for _, newer := range []bool{false, true} {
+		t.Run(fmt.Sprint(newer), func(t *testing.T) {
+			pair := mateBranchLab(t, nil)
+			root := filepath.Dir(pair)
+			remote := filepath.Join(root, "remote.git")
+			runShell(t, BuildMateBranchCommand(pair, labBranch))
+			writeLabFile(t, filepath.Join(pair, "index.js"), "app\n")
+			deliverInLab(t, pair)
+			landedHead := runGit(t, remote, "rev-parse", labChange1)
+			other := filepath.Join(root, "other")
+			runGit(t, root, "clone", "-q", remote, "other")
+			runGit(t, other, "config", "user.email", "other@example.invalid")
+			runGit(t, other, "config", "user.name", "other")
+			runGit(t, other, "merge", "-q", "--squash", "origin/"+labChange1)
+			runGit(t, other, "commit", "-q", "-m", "First task")
+			runGit(t, other, "push", "-q", "origin", "main")
+			main := runGit(t, remote, "rev-parse", "main")
+			if newer {
+				writeLabFile(t, filepath.Join(pair, "next.js"), "next\n")
+			}
+			//nolint:gosec // test-only command against a t.TempDir repository
+			out, err := exec.CommandContext(t.Context(), "sh", "-c", BuildDeliveryCommand(pair, "Next task", main, landedHead)).CombinedOutput()
+			if err != nil {
+				t.Fatalf("delivery: %v\n%s", err, out)
+			}
+			want := 0
+			if newer {
+				want = 1
+			}
+			if ahead, found := DeliveryAhead(string(out)); !found || ahead != want {
+				t.Fatalf("ahead = %d, %v, want %d\n%s", ahead, found, want, out)
+			}
+			head := runGit(t, pair, "rev-parse", "HEAD")
+			if newer {
+				if parent := runGit(t, pair, "rev-parse", "HEAD^1"); parent != main {
+					t.Fatalf("next task's parent = %s, want main %s", parent, main)
+				}
+				if got := runGit(t, pair, "log", "-1", "--format=%s"); got != "Next task" {
+					t.Errorf("task = %q", got)
+				}
+			} else if head != main {
+				t.Fatalf("empty delivery's HEAD = %s, want main %s", head, main)
+			}
+			archive := runGit(t, pair, "rev-parse", "refs/zcp/landed/"+main)
+			runGit(t, pair, "merge-base", "--is-ancestor", landedHead, archive)
+			if !strings.Contains(string(out), "ZCP_FRESH_BASE:") {
+				t.Errorf("fresh start must be reported: %s", out)
+			}
+		})
 	}
 }

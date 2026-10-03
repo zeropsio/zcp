@@ -2,6 +2,7 @@ package hq
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -272,5 +273,21 @@ func TestClient_Addresses(t *testing.T) {
 				t.Errorf("%s: got %q, want %q", address, got, want)
 			}
 		}
+	}
+}
+
+func TestClient_OpenChange_KeepsHQsNothingToDeliverVerdict(t *testing.T) {
+	t.Parallel()
+	client, _ := answering(t, `{"change":null,"created":false,"reason":"nothing_to_deliver"}`)
+	opened, err := client.OpenChange(t.Context(), "appdev", "Next task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(opened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"reason":"nothing_to_deliver"`) {
+		t.Fatalf("HQ verdict lost: %s", raw)
 	}
 }

@@ -46,6 +46,7 @@ func handleHQGitPush(
 	var learned string
 	if state, err := hqc.Self(ctx); err == nil {
 		learned = hqLearnLanding(stateDir, meta, state)
+		deliveryLanding(stateDir, meta, state)
 	}
 	withLearned := func(msg string) string {
 		if learned == "" {
@@ -61,7 +62,10 @@ func handleHQGitPush(
 		refusal.Message = withLearned(refusal.Message)
 		return convertError(refusal, WithRecoveryStatus())
 	}
-	ahead, found := ops.DeliveryAhead(string(output))
+	if base := ops.DeliveryFreshBase(string(output)); base != "" {
+		learned = withLearned("The next change starts from main at " + base + "; prior history is kept under refs/zcp/landed/" + landedCommit)
+	}
+	_, found := ops.DeliveryAhead(string(output))
 	if err != nil || !found {
 		detail := gitPushErrorDetail(err, output)
 		if ops.GitRemoteUnavailable(string(output)) {
@@ -81,7 +85,7 @@ func handleHQGitPush(
 		), WithRecoveryStatus())
 	}
 
-	shipped := shipChange(ctx, sshDeployer, stateDir, hqc, meta, changeTitle(stateDir, meta), ahead)
+	shipped := shipChange(ctx, sshDeployer, stateDir, hqc, meta, changeTitle(stateDir, meta))
 	if shipped.ref == nil && !shipped.upToDate {
 		recordAttempt("change not shipped: "+shipped.line, topology.FailureClassNetwork)
 		next := "Fix the cause named above, then push again."
@@ -99,7 +103,7 @@ func handleHQGitPush(
 	switch {
 	case shipped.upToDate:
 		result.Status = statusNothingToPush
-		result.Message = fmt.Sprintf("Nothing to push from %s — nothing differs from %q in HQ", hostname, hqBase)
+		result.Message = fmt.Sprintf("Nothing to push from %s — %s", hostname, shipped.line)
 	case shipped.unchanged:
 		result.Status, result.Branch = statusNothingToPush, shipped.ref.Branch
 		result.Message = fmt.Sprintf("Nothing to push from %s — change #%d in HQ already carries this HEAD", hostname, shipped.ref.Number)
