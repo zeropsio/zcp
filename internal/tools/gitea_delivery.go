@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -274,7 +273,7 @@ func deliverGiteaPair(
 		result.Line = fmt.Sprintf(
 			"Delivered: %s's code is on %s of %s, and pull request #%d (%s) carries it to %q. %s Tell the person that link — the code reaches the group's stage when they merge it. %s",
 			meta.Hostname, branch, repo, pr.Number, pr.URL, pr.Base, giteaDescribeLine(pr, meta.Hostname), giteaMergeAnyMoment(pr.Base))
-	case prErr == nil || errors.Is(prErr, ops.ErrNothingToPropose):
+	case !giteaPullRequestFailed(prErr):
 		result.Line = fmt.Sprintf(
 			"Delivered: %s's code is on %s of %s. No pull request is open onto %q — zcp opens one only for a branch that carries something %q lacks, so there is nothing for the person to merge; the next stage deploy asks again.",
 			meta.Hostname, branch, repo, giteaBaseOf(meta), giteaBaseOf(meta))
@@ -622,7 +621,7 @@ func giteaRemoteOfThisMate(remoteURL string) bool {
 // itself. A request left open asks for its description and says the person
 // may merge it at any moment.
 func giteaPushNextActions(pr *giteaPullRequestRef, openErr error, hostname string) string {
-	if pr == nil && openErr != nil && !errors.Is(openErr, ops.ErrNothingToPropose) {
+	if pr == nil && giteaPullRequestFailed(openErr) {
 		return fmt.Sprintf("Pushed to this Mate's branch on the group's Gitea, but its pull request could not be opened (%v); it is tried again on the next stage deploy or push. Nothing builds from the branch: deploy the pair directly to run the code.", openErr)
 	}
 	if pr == nil {

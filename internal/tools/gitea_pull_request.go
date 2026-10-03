@@ -90,8 +90,9 @@ func workSessionIntent(stateDir string) string {
 // openGiteaPairPullRequest opens the pair's request when none is open, finds
 // the open one when there is, and records its number on the pair either way —
 // then puts on it the description the Mate kept for its change, if any
-// (putKeptChangeDescription). Three answers besides the request: nil and no
-// error when there is nothing to ask — no wiring, no repository;
+// (putKeptChangeDescription). Three answers besides the request:
+// errNoGiteaPairRequest when there is nothing to ask — no wiring, no
+// repository;
 // ops.ErrNothingToPropose when the branch carries nothing its base lacks, the
 // ordinary state right after the person merged, which no caller reports as a
 // failure; any other error when Gitea could not open it. The error is for
@@ -106,11 +107,11 @@ func openGiteaPairPullRequest(
 	m *workflow.ServiceMeta,
 ) (*giteaPullRequestRef, error) {
 	if httpClient == nil || !wiring.Ready() || m == nil || m.Gitea == nil {
-		return nil, nil
+		return nil, errNoGiteaPairRequest
 	}
 	repo, branch := m.Gitea.FullName, m.Gitea.Branch
 	if repo == "" || branch == "" {
-		return nil, nil
+		return nil, errNoGiteaPairRequest
 	}
 	base := m.Gitea.DefaultBranch
 	if base == "" {
@@ -146,6 +147,16 @@ func openGiteaPairPullRequest(
 		Described:       described,
 		DescriptionNote: note,
 	}, nil
+}
+
+// errNoGiteaPairRequest is a pair with no request to ask Gitea about: not
+// wired, no repository, or a push to a remote that is not the group's Gitea.
+var errNoGiteaPairRequest = errors.New("no Gitea pull request to ask about")
+
+// giteaPullRequestFailed reports whether opening a pair's request failed,
+// rather than having nothing to ask or nothing to propose.
+func giteaPullRequestFailed(err error) bool {
+	return err != nil && !errors.Is(err, errNoGiteaPairRequest) && !errors.Is(err, ops.ErrNothingToPropose)
 }
 
 // errGiteaPullRequestUnread is a create that raced another and whose request
@@ -187,14 +198,14 @@ func giteaPullRequestAfterPush(
 ) (*giteaPullRequestRef, error) {
 	meta, _ := workflow.FindServiceMeta(stateDir, hostname)
 	if meta == nil || meta.Gitea == nil || meta.Gitea.FullName == "" {
-		return nil, nil
+		return nil, errNoGiteaPairRequest
 	}
 	wiring := ops.ReadGiteaWiring(giteaEnvLookup(mate.LiveEnvStorePath))
 	if !wiring.Ready() {
-		return nil, nil
+		return nil, errNoGiteaPairRequest
 	}
 	if topology.ClassifyGitHost(remoteURL, wiring.GiteaURL) != topology.GitHostGitea {
-		return nil, nil
+		return nil, errNoGiteaPairRequest
 	}
 	return openGiteaPairPullRequest(ctx, httpClient, wiring, stateDir, meta)
 }
@@ -231,8 +242,9 @@ func reconcileGiteaPairPullRequest(
 		return ""
 	}
 	ref, err := openGiteaPairPullRequest(ctx, httpClient, wiring, stateDir, m)
-	if errors.Is(err, ops.ErrNothingToPropose) {
-		// The ordinary state right after the person merged.
+	if ref == nil && !giteaPullRequestFailed(err) {
+		// Nothing to propose: the ordinary state right after the person
+		// merged.
 		return ""
 	}
 	if ref == nil {
