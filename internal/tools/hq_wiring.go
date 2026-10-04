@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -92,6 +94,26 @@ func hqAddress() string {
 		return ""
 	}
 	return strings.TrimRight(kept.HQ, "/")
+}
+
+// hqRepositoryActions are the public zerops_workflow actions that choose a
+// pair's repository, its credential or what builds from it.
+var hqRepositoryActions = map[string]bool{"git-push-setup": true, "build-integration": true}
+
+// hqRepositoryActionRefusal is a Mate's answer to hqRepositoryActions: in a
+// Mate all three are HQ's. zcp
+// wires each pair to its repository in HQ itself (wireHQPair), keeps the
+// push credential current from the enrollment (hqEnsurePushCredential), and
+// Core deploys the application's environments from the repository's commits
+// — so a remote, a token or a CI chosen here would only diverge from HQ's
+// record. A remote of the user's own a pair already pushes to is left alone
+// (hqPairNeedsRepository); this action does not move it either.
+func hqRepositoryActionRefusal(action string) *mcp.CallToolResult {
+	return convertError(platform.NewPlatformError(
+		platform.ErrInvalidUsage,
+		fmt.Sprintf("%s does not run in a Mate: each pair's repository in HQ, the credential it pushes with and what builds from it are HQ's, and nothing here chooses them.", action),
+		"ZCP wires a bootstrapped pair to its repository in HQ on the next bootstrap or adopt pass, and deploying the pair's stage half delivers its work. A push that HQ refuses is checked against this Mate's current HQ credential again on the next push — no token is to be asked for or made up. A pair already pushing to a remote of the user's own keeps it; moving it is the person's call, not this action's.",
+	), WithRecoveryStatus())
 }
 
 // hqMateBranch is the Mate's local branch in a pair's checkout: mate/<its
