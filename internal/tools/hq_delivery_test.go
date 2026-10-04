@@ -64,7 +64,7 @@ func TestAStageDeployOfAWiredPairDeliversItself(t *testing.T) {
 	if delivery.Change.URL != wantURL || delivery.Change.Number != 1 || delivery.Change.Branch != "mate/p-mate/1" || !delivery.Change.Created {
 		t.Errorf("change = %+v, want #1 at %s", delivery.Change, wantURL)
 	}
-	for _, want := range []string{wantURL, "change #1", `zerops_workflow action="describe-change" service="appdev"`, "Tell the person that link"} {
+	for _, want := range []string{wantURL, "change #1", `zerops_workflow action="describe-change" service="appdev"`, "Tell the person that link", "may merge it at any moment", "next stage deploy folds the merge in"} {
 		if !strings.Contains(delivery.Line, want) {
 			t.Errorf("the line misses %q:\n%s", want, delivery.Line)
 		}
@@ -101,6 +101,12 @@ func TestAStageDeployAbsorbsTheMatesOwnMergedChange(t *testing.T) {
 	}
 	if !strings.Contains(delivery.Line, "Change #1 is merged") {
 		t.Errorf("the delivery must say what it learned of change #1:\n%s", delivery.Line)
+	}
+	if old, next := strings.Index(delivery.Line, "Change #1 is merged"), strings.Index(delivery.Line, "Delivered:"); old > next {
+		t.Errorf("the previous merge must be reported before the next delivery:\n%s", delivery.Line)
+	}
+	if strings.Contains(delivery.Line, "; its next change opens a new one") {
+		t.Errorf("the delivery already opened change #2, so it must not promise another:\n%s", delivery.Line)
 	}
 	if !lab.descends(labApp, squash, "mate/p-mate/2") {
 		t.Errorf("change #2 must take the squash in as a real merge")

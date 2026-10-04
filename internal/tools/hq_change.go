@@ -292,10 +292,21 @@ func hqLearnLanding(stateDir string, m *workflow.ServiceMeta, state hq.MateState
 		recordLanding(stateDir, m, number, *found.MergedSha, *found.LandedHead)
 		// Never claims WHEN it is absorbed — the caller may be the very
 		// delivery about to do it. Just the fact.
-		return fmt.Sprintf("change #%d is merged — this Mate's work is on %q now; its next change opens a new one", number, hqBase)
+		return fmt.Sprintf("change #%d is merged — this Mate's work is on %q now"+hqMergedNextClause, number, hqBase)
 	}
 	clearChange(stateDir, m, number)
-	return fmt.Sprintf("change #%d was closed without merging — nothing of it is on %q; the next change opens a new one", number, hqBase)
+	return fmt.Sprintf("change #%d was closed without merging — nothing of it is on %q"+hqClosedNextClause, number, hqBase)
+}
+
+// A read promises the next change; a delivery that just opened it no longer
+// needs that promise in its news about the previous one.
+const (
+	hqMergedNextClause = "; its next change opens a new one"
+	hqClosedNextClause = "; the next change opens a new one"
+)
+
+func changeOutcomeAfterOpen(note string) string {
+	return strings.TrimSuffix(strings.TrimSuffix(note, hqMergedNextClause), hqClosedNextClause)
 }
 
 // deliveryLanding recovers the base of a legacy checkout whose local landing

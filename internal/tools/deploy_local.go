@@ -328,9 +328,9 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 	if closed, closedAt, reason := workflow.DeriveCloseState(stateDir, ws); closed {
 		note := closedSessionNote(closedAt, reason)
 		// In a Mate delivering through HQ the person's next step is theirs to
-		// know (hq_delivery.go) — once the session delivered: a stand-up
-		// that left the stage out opened no change to hand over.
-		if hqWired() && sessionDeployedAStageHalf(stateDir, ws) {
+		// know (hq_delivery.go) — once the session delivered and a change
+		// remains open to hand over. A stand-up or an empty delivery has none.
+		if hqWired() && sessionHandsOverAChange(stateDir, ws) {
 			note += " " + hqHandoffNote
 		}
 		return &WorkSessionState{
@@ -352,16 +352,15 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 	}
 }
 
-// sessionDeployedAStageHalf reports whether ws deployed the stage half of a
-// pair — in a Mate delivering through HQ, the deploy that commits, opens the
-// change and pushes it, which a closing note hands over.
-func sessionDeployedAStageHalf(stateDir string, ws *workflow.WorkSession) bool {
+// sessionHandsOverAChange reports whether ws deployed a pair's stage half
+// and that pair still records an open change for the closing note to hand over.
+func sessionHandsOverAChange(stateDir string, ws *workflow.WorkSession) bool {
 	for _, host := range ws.Services {
 		if !workflow.HasSuccessfulDeployFor(ws, host) {
 			continue
 		}
 		meta, err := workflow.FindServiceMeta(stateDir, host)
-		if err == nil && meta != nil && meta.StageHostname == host {
+		if err == nil && meta != nil && meta.StageHostname == host && hqPairWired(meta) && meta.HQ.Change != 0 {
 			return true
 		}
 	}

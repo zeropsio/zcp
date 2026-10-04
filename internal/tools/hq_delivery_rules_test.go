@@ -67,6 +67,14 @@ func TestLaunchProduction_AMateDeliveringThroughHQRefusesAndSaysWhatIsTrue(t *te
 	}{
 		{name: "nothing delivered", want: []string{"wired_mate_production_is_the_groups", "stage half first"}},
 		{name: "a change still open is named", settle: func(*hqLab) {}, want: []string{"#1", "appdev", "merge"}},
+		{name: "HQ's open change is named after its local number is lost", settle: func(lab *hqLab) {
+			if err := workflow.UpsertServiceMeta(lab.stateDir, "appdev", func(m *workflow.ServiceMeta, _ bool) error {
+				m.HQ.Change = 0
+				return nil
+			}); err != nil {
+				lab.t.Fatal(err)
+			}
+		}, want: []string{"#1", "appdev", "merge"}},
 		{name: "a change merged since the last pass is not named as open", settle: func(lab *hqLab) { lab.hq.merge() },
 			want: []string{"projects page"}, wantNone: []string{"#1", "merge ", "stage half first"}},
 		{name: "a change closed without merging means deliver first", settle: func(lab *hqLab) { lab.hq.close(1) },
@@ -108,10 +116,12 @@ func TestSessionAnnotations_HandoffOnlyAfterADelivery(t *testing.T) {
 		name        string
 		roles       map[string]string
 		deployed    []string
+		change      int
 		wantHandoff bool
 	}{
 		{name: "a stand-up: the stage left out, nothing delivered", roles: map[string]string{"appstage": workflow.RoleOutOfScope}, deployed: []string{"appdev"}},
-		{name: "a task delivered through the stage", deployed: []string{"appdev", "appstage"}, wantHandoff: true},
+		{name: "a task delivered through the stage", deployed: []string{"appdev", "appstage"}, change: 1, wantHandoff: true},
+		{name: "a delivery with nothing beyond main", deployed: []string{"appdev", "appstage"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -120,6 +130,7 @@ func TestSessionAnnotations_HandoffOnlyAfterADelivery(t *testing.T) {
 			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 				Hostname: "appdev", StageHostname: "appstage", Mode: topology.PlanModeStandard,
 				CloseDeployMode: topology.CloseModeAuto, BootstrappedAt: now,
+				HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Change: tt.change},
 			}); err != nil {
 				t.Fatalf("WriteServiceMeta: %v", err)
 			}
@@ -146,5 +157,34 @@ func TestSessionAnnotations_HandoffOnlyAfterADelivery(t *testing.T) {
 				t.Errorf("handoff in the closing note = %v, want %v: %q", gotHandoff, tt.wantHandoff, got.Note)
 			}
 		})
+	}
+}
+
+// HQ owns the merged history after the checkout has absorbed its landing.
+// Non-parallel: the lab redirects HOME and writes the enrollment there.
+func TestProductionKnowsMergedWorkAfterTheMergeIsAbsorbed(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	lab.write(map[string]string{"index.js": "the app\n"})
+	lab.deliver()
+	lab.hq.merge()
+	if d := lab.deliver(); d == nil || d.Change != nil || lab.meta().HQ.Landed != nil {
+		t.Fatalf("want an absorbed landing and nothing new to propose, got %+v", d)
+	}
+	text := hqLaunchProductionNextStep(t.Context(), lab.hq.srv.Client(), lab.stateDir)
+	if !strings.Contains(text, "projects page") || strings.Contains(text, "stage half first") || strings.Contains(text, "merge ") {
+		t.Fatalf("the guidance forgot the work HQ has merged: %s", text)
+	}
+}
+
+// An unavailable authority is unknown, never evidence that no work landed.
+// Non-parallel: the lab redirects HOME and writes the enrollment there.
+func TestProductionGuidance_HQUnavailableIsUnknown(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	lab.hq.setDown(true)
+	text := hqLaunchProductionNextStep(t.Context(), lab.hq.srv.Client(), lab.stateDir)
+	if !strings.Contains(text, "could not read") || !strings.Contains(text, "Ask again") || strings.Contains(text, "none of this Mate's work") {
+		t.Fatalf("HQ's failure must be visible, with a manual next step: %s", text)
 	}
 }

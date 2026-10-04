@@ -2781,6 +2781,29 @@ picture the Mate does not keep is refused before anything is written, and one HQ
 writes nothing and keeps the words. `TestDescribeChange_Pictures`, `TestKeepBrowserPicture`,
 `TestKeepPicture_*`, `TestPictureRefs`.
 
+**A merge may come at any moment (2026-10-03; delivered through HQ).** A change appears in
+its Mate's conversation as soon as it opens, and the person may merge it while the agent still
+works. Every stage delivery and git-push that leaves one open asks for its description, then tells
+the agent that the person may merge it at any moment; the next stage deploy folds that merge in
+and opens a change only for what `main` still lacks. News of the previous change precedes the new
+delivery's result, including a failed result, and a result that already opened the next change
+no longer promises one. A closing session hands over a change only where its successfully
+deployed stage half still records an open one. Nothing beyond `main` is a normal outcome,
+never a failed proposal or change `#0`: HQ compares the candidate tree with `main` before it
+allocates a number (§10.10, *Delivery to HQ*), and the additive and scaling recipe paths keep
+Core's same empty-change rule. A pending landing remains recorded until its push succeeds.
+Production guidance reads the Mate's changes from HQ even after that push cleared the local
+landing; an unreadable HQ is a visible unknown, with a manual ask again.
+This preserves upstream's empty-diff, hand-over and remembered-merge decisions. Its
+Gitea-specific compare (`?output=diff`, with a JSON commit-count fallback before Gitea 1.27)
+and `GiteaRepoRef.LastLanded` are replaced by HQ's tree comparison and authoritative change
+history, rather than restored as a second forge or a local copy of HQ's history.
+`TestAStageDeployAfterASquashWithNoNewWorkReportsNothingToDeliver`,
+`TestAStageDeployAbsorbsTheMatesOwnMergedChange`, `TestAStageDeployOfAWiredPairDeliversItself`,
+`TestGitPushToHQ_DeliversCommittedWorkAsTheChange`, `TestSessionAnnotations_HandoffOnlyAfterADelivery`,
+`TestProductionKnowsMergedWorkAfterTheMergeIsAbsorbed`, `TestProductionGuidance_HQUnavailableIsUnknown`,
+`TestGroupRecipe_OpensNothingMainAlreadyHas`, `TestGroupRecipeScaling_ProposesFromMainsHeadEveryTierFresh`.
+
 **A Mate's production is its application's (2026-09-23; through HQ since 2026-10-02).** Asked
 "muzes to dat na produkci?", a wired Mate started launch-production and answered from inside its launch gate, while
 its group already had a production with `055a7e8 Mate: weatherdev (#4)` merged and waiting for
@@ -2790,9 +2813,10 @@ and which runs what a release tag on the group repo lists (D16, D27, D28). So in
 enrolled with its HQ (`hqWired()`), `handleLaunchProduction` refuses before scope, state or any
 mutation, with the blocker `wired_mate_production_is_the_groups` and a next step that says what is
 true of this Mate's own pairs — never "nothing open" read as "merged": every recorded change is first
-read fresh from the Mate's own state in HQ, then one still open is named — "merge `<host>`'s change
-#N on `<repo>` first" — a merge recorded or just learned points at the projects page, and no change
-at all or one closed without merging says to deliver through the stage half first. The classic route
+read fresh from the Mate's own state in HQ, then one still open is named (even if its local
+number was lost) — "merge `<host>`'s change #N on `<repo>` first" — a merge HQ holds,
+even after the local landing was absorbed, points at the projects page, and no change at all
+or one closed without merging says to deliver through the stage half first. The classic route
 is untouched. The `idle-launch-entry` atom branches on "delivers through its HQ" the same way and
 tells the agent not to start the workflow. `hq_delivery.go`;
 `TestHandleLaunchProduction_HQWiring_RefusesBeforeAnyStep`,
@@ -2981,6 +3005,7 @@ the first live release is still to run. The release moves to HQ next.
 | MB-36 | A kept Mate session is presented only after the descriptor names the expected project and its environment and the Mate confirms it with every scope the client asks for; one the Mate ended or one short of a scope is forgotten and a throwaway opens a new one; no word keeps it and mints; it never waits on the mint pace; the account's close, a refused stored login and a displaced session each end it at its Mate (D33). `keptSessions.test.ts` (client runtime and web), `identityExchange.test.ts`, `exchangeDriver.test.ts`, `signIn.guards.test.tsx`. |
 | MB-37 | A group recipe writes each search engine at no less than 2 GB `minRam` and 0.5 GB `minFreeRamGB` on every tier and never lowers a value; an unread scale writes no block; `profileOverrides` and the free-memory buffer are carried; a scaling proposal is the Mate's change in the recipe repository in HQ, written over `main`, rewriting only that host's block in every tier naming it; it refuses a block it cannot splice safely, moves forward on the same change for the same host, brings a stale one to `main`'s tree when nothing differs, and is refused while the Mate's additive proposal is open there, which in turn leaves an open scaling proposal alone; the steer speaks only after a change that finished (D34). `group_floors_test.go`, `host_scaling_test.go`, `group_profile_overrides_test.go`, `scale_test.go`; zcp `TestGroupRecipeScaling_SteersAndProposesOneHostsBlock`, `TestGroupRecipeScaling_ProposesFromMainsHeadEveryTierFresh`, `TestGroupRecipeScaling_OneOpenChangeInTheRecipeRepository`, `TestScratch_File`. |
 | MB-38 | A Mate reads from its first turn, even on an empty project, that its code and changes live in its application's HQ, bootstrap comes first and ZCP wires the pair's repository once the service stands, Core deploys the application's environments, and the person is never asked for a GitHub or other repository, URL or token. The block is Mate-only; a plain container or local install reads none of it. This keeps upstream's repository-first guidance while replacing its Gitea workflow with HQ's jobs (§10.8). zcp `TestBuildAgentsMD_Container_GitHostSaysWhereTheCodeLives`. |
+| MB-39 | A person may merge an open HQ change while the agent works; stage deliveries and git-pushes tell the agent that the next stage deploy absorbs it and proposes only what main lacks. A delivery reports the previous change before the next one, without promising a change it already opened; a closing session hands over only an open change. Production guidance reads merged history from HQ after the local landing was absorbed, and a failed read stays unknown with a manual ask again. This retains upstream's merge-any-moment and empty-proposal decisions on HQ's tree comparison (§10.10). zcp `TestAStageDeployAbsorbsTheMatesOwnMergedChange`, `TestAStageDeployOfAWiredPairDeliversItself`, `TestGitPushToHQ_DeliversCommittedWorkAsTheChange`, `TestSessionAnnotations_HandoffOnlyAfterADelivery`, `TestProductionKnowsMergedWorkAfterTheMergeIsAbsorbed`, `TestProductionGuidance_HQUnavailableIsUnknown`. |
 | MB-28 | A pull request belongs to the Mate whose branch it is (zcp's `mate/{login}`) or whose bot opened it, a person's own is listed after the Mates and never dropped, a group repo's is a recipe change whoever opened it, and a roll-back is offered only to an earlier approved release, its _Roll back to this_ opening the roll back's review. `projectFlow.test.ts` — "whose pull request it is", "puts each Mate's under it, newest first, and the rest after the Mates", "is a recipe change on the group repo, whoever opened it"; `release.test.ts` — "a release's row"; `ZeropsReviewDoors.test.tsx` — "Roll back to this opens the roll back's review, from the row pressed"; `SidebarZeropsTree.test.tsx` "the project's flow under it"; `ZeropsGitPanel.test.tsx` "is this Mate's repositories and nothing of the project's". Since 2026-10-02 a change in HQ is the Mate's that opened it (only Mates open changes), and a change in the application's recipe repository is a recipe change (`RECIPE_REPO`), the proposal known by zcp's exact title. |
 | MB-29 | A deploy token reaches a job only when the job is proved, runs the default branch's workflow from the repository itself, holds the commit protected state wants on that environment, and its runner has run nothing but such jobs since it was made; a superseded or already-live commit gets no token and no failure; the job pushes the commit's tree (`--workspace-state clean`), never the working directory. gitea-mate `internal/server/deploy_test.go`, `internal/pipeline/grant_test.go`, `internal/pipeline/runner_test.go`, `actions/deploy` script test; zcp `workflow_build_integration_test.go`. Superseded 2026-10-02: HQ keeps an environment's deploy token and deploys with it itself; no job holds one (§10.8). |
 | MB-17 | A Gitea and its broker answer every browser origin, since every call carries a bearer and no cookie: the import sends no origin list and `POST /person/token` answers `*`. `giteaRecipe.test.ts` — "sends no origin list: a Gitea answers every origin, since every call carries a bearer"; gitea-mate `TestGiteaProjectImportCarriesNoOriginList`, `TestPersonTokenAnswersEveryOrigin`. Retiring with the Gitea (2026-10-02). |

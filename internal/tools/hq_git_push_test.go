@@ -65,6 +65,9 @@ func TestGitPushToHQ_DeliversCommittedWorkAsTheChange(t *testing.T) {
 	if !strings.Contains(text, "merges it") {
 		t.Errorf("the push must say the person merges the change:\n%s", text)
 	}
+	if !strings.Contains(text, "may merge it at any moment") || !strings.Contains(text, "next stage deploy folds the merge in") {
+		t.Errorf("the push must prepare the agent for a merge while it still works:\n%s", text)
+	}
 	if loaded, err := workflow.LoadWorkSession(lab.stateDir, os.Getpid()); err == nil && len(loaded.Deploys["appdev"]) != 0 {
 		t.Errorf("a push to HQ is no deploy, recorded %+v", loaded.Deploys["appdev"])
 	}

@@ -75,8 +75,8 @@ func hqLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, sta
 // "nothing open means merged":
 //   - a change still open after the fresh read → name it, tell the person to
 //     merge it;
-//   - a merge recorded, or just learned by the fresh read → the code is on
-//     main; point to the projects page;
+//   - a merge in HQ, even after its local landing was absorbed → the code
+//     is on main; point to the projects page;
 //   - no change at all, or one closed without merging → nothing of this
 //     pair's work has reached main; deliver through the stage half first.
 func hqLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, stateDir string) string {
@@ -91,16 +91,23 @@ func hqLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, st
 			if !hqPairWired(m) {
 				continue
 			}
-			if m.HQ.Change != 0 {
-				if state, err := self(); err == nil {
-					hqLearnLanding(stateDir, m, state)
+			state, err := self()
+			if err != nil {
+				return fmt.Sprintf("This Mate could not read its changes from HQ (%v), so whether its work reached main is unknown. Ask again once HQ can be reached; production is added and released from Mate's projects page.", err)
+			}
+			if state.AppID == nil || *state.AppID != m.HQ.AppID {
+				continue
+			}
+			hqLearnLanding(stateDir, m, state)
+			// HQ keeps the merged history after a delivery clears Landed.
+			// Read it there, rather than keeping a second last-merge record.
+			for _, change := range state.Changes {
+				if change.Repo == m.HQ.Repo && change.State == hq.ChangeMerged {
+					merged = true
 				}
 			}
-			switch {
-			case m.HQ.Change != 0:
-				open = append(open, fmt.Sprintf("%s's change #%d on %q", m.Hostname, m.HQ.Change, m.HQ.Repo))
-			case m.HQ.Landed != nil:
-				merged = true
+			if number := openChangeIn(state, m.HQ.Repo); number != 0 {
+				open = append(open, fmt.Sprintf("%s's change #%d on %q", m.Hostname, number, m.HQ.Repo))
 			}
 		}
 	}
@@ -204,13 +211,18 @@ func deliverHeldHQPair(
 	defer release()
 	// A stage deploy is a delivery whether or not a pass has run since the
 	// last merge — the passes are backoff-gated — so the Mate's own state is
-	// read fresh here. What it says about the OLD change is folded onto
-	// whatever this delivery itself reports, success or failure: nothing else
-	// would ever say it once the number is off the pair.
+	// read fresh here. What it says about the OLD change precedes whatever
+	// this delivery itself reports, success or failure: nothing else would
+	// ever say it once the number is off the pair.
 	var news []string
 	defer func() {
 		if delivery != nil && len(news) > 0 {
-			delivery.Line = strings.TrimSpace(delivery.Line + " " + sentenceOf(strings.Join(news, "; ")))
+			if delivery.Change != nil {
+				for i, note := range news {
+					news[i] = changeOutcomeAfterOpen(note)
+				}
+			}
+			delivery.Line = strings.TrimSpace(sentenceOf(strings.Join(news, "; ")) + " " + delivery.Line)
 		}
 	}()
 
@@ -295,8 +307,8 @@ func deliverHeldHQPair(
 	switch {
 	case shipped.ref != nil:
 		result.Line = fmt.Sprintf(
-			"Delivered: %s's code is on %s of its repository %q in HQ, and change #%d (%s) carries it to %q. %s Tell the person that link — the code lands on %q when they merge it.",
-			meta.Hostname, shipped.ref.Branch, repo, shipped.ref.Number, shipped.ref.URL, hqBase, describeLine(shipped.ref, meta.Hostname), hqBase)
+			"Delivered: %s's code is on %s of its repository %q in HQ, and change #%d (%s) carries it to %q. %s Tell the person that link — the code lands on %q when they merge it. %s",
+			meta.Hostname, shipped.ref.Branch, repo, shipped.ref.Number, shipped.ref.URL, hqBase, describeLine(shipped.ref, meta.Hostname), hqBase, hqMergeAnyMoment(hqBase))
 	case shipped.upToDate:
 		result.Line = fmt.Sprintf(
 			"%s runs; nothing to deliver: main already has this. No change was opened or updated in its repository %q in HQ.",
@@ -395,8 +407,14 @@ func hqPushNextActions(ref *changeRef, hostname string) string {
 	if ref == nil {
 		return "Nothing differs from main in HQ, so no change is open. Nothing builds from HQ: deploy the pair directly to run the code — deploying its stage half delivers and asks for the change again."
 	}
-	return fmt.Sprintf("Pushed to %s in HQ; change #%d (%s) carries it to %q, and the person merges it. %s Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes and updates the change by itself.",
-		ref.Branch, ref.Number, ref.URL, ref.Base, describeLine(ref, hostname))
+	return fmt.Sprintf("Pushed to %s in HQ; change #%d (%s) carries it to %q, and the person merges it. %s %s Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes and updates the change while it is open.",
+		ref.Branch, ref.Number, ref.URL, ref.Base, describeLine(ref, hostname), hqMergeAnyMoment(ref.Base))
+}
+
+// hqMergeAnyMoment prepares the agent for a person merging the change from
+// the conversation before the agent has finished working.
+func hqMergeAnyMoment(base string) string {
+	return fmt.Sprintf("The person may merge it at any moment, before you finish — that is the hand-over, not something to check or undo: the next stage deploy folds the merge in and opens a new change only for what %q still lacks.", base)
 }
 
 // hqHandoffNote is what the person needs from the Mate's closing message in a
