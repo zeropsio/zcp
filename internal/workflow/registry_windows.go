@@ -81,11 +81,11 @@ func unlockFile(f *os.File) {
 	_, _, _ = procUnlockFileEx.Call(f.Fd(), 0, 1, 0, uintptr(unsafe.Pointer(&ol)))
 }
 
-// IsProcessAlive reports whether the SAME process that recorded recordedStart is
+// isProcessAlive reports whether the SAME process that recorded recordedStart is
 // still running as pid (two-state; see the unix sibling for the contract). A
 // recycled PID (different creation time) is dead; an empty recordedStart trusts
 // the bare PID; an unreadable creation time biases alive.
-func IsProcessAlive(pid int, recordedStart string) bool {
+func isProcessAlive(pid int, recordedStart string) bool {
 	if pid <= 0 {
 		return false
 	}

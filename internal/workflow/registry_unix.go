@@ -54,14 +54,14 @@ func unlockFile(f *os.File) {
 	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 }
 
-// IsProcessAlive reports whether the SAME process that recorded recordedStart is
+// isProcessAlive reports whether the SAME process that recorded recordedStart is
 // still running as pid. Two-state: a PID that exists but whose start-time no
 // longer matches recordedStart is a RECYCLED PID → dead (defeats the
 // operator-wedge / stale-session class). An empty recordedStart (legacy session,
 // or a platform without start-time support) trusts the bare PID. If the PID
 // exists but its start-time is unreadable, bias ALIVE — never prune a live
 // session over an unreadable clock.
-func IsProcessAlive(pid int, recordedStart string) bool {
+func isProcessAlive(pid int, recordedStart string) bool {
 	if pid <= 0 {
 		return false
 	}
