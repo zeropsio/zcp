@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"testing"
 
@@ -1346,58 +1345,5 @@ func TestServiceMeta_Repo_NilByDefault(t *testing.T) {
 	meta := NewServiceMeta("proj", topology.PlanModeLocalStage)
 	if meta.Repo != nil {
 		t.Errorf("Repo = %+v, want nil for a meta with no adopt baseline recorded", meta.Repo)
-	}
-}
-
-// TestServiceMeta_KeepsMainsGiteaRecordUntilTheMove: a pair main's zcp wired
-// to its organization's Gitea carries that record on disk as "gitea". It is
-// read, and it survives every write that is not the pair's move to HQ — the
-// move is what reads it (tools/hq_main_gitea.go).
-func TestServiceMeta_KeepsMainsGiteaRecordUntilTheMove(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "services"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	asMainWroteIt := `{
-  "hostname": "appdev",
-  "stageHostname": "appstage",
-  "gitPushState": "configured",
-  "remoteUrl": "https://gitea.example.invalid/acme/appdev.git",
-  "gitea": {
-    "fullName": "acme/appdev",
-    "branch": "mate/mate-p1",
-    "defaultBranch": "main",
-    "requestedAt": "2026-09-30T10:00:00Z",
-    "pullRequest": 3,
-    "landed": {"commit": "s1", "head": "h1"},
-    "changeDescription": {"text": "Adds todos.", "pullRequest": 3}
-  }
-}`
-	if err := os.WriteFile(filepath.Join(dir, "services", "appdev.json"), []byte(asMainWroteIt), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	want := &MainGiteaRepo{
-		FullName:          "acme/appdev",
-		PullRequest:       3,
-		Landed:            &LandedChange{Commit: "s1", Head: "h1"},
-		ChangeDescription: &MainGiteaChangeDescription{Text: "Adds todos.", PullRequest: 3},
-	}
-
-	got, err := ReadServiceMeta(dir, "appdev")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(got.MainGitea, want) {
-		t.Fatalf("main's record = %+v, want %+v", got.MainGitea, want)
-	}
-	if err := UpdateServiceMeta(dir, "appdev", func(m *ServiceMeta) error {
-		m.TrackedRef = "main"
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if again, _ := ReadServiceMeta(dir, "appdev"); !reflect.DeepEqual(again.MainGitea, want) {
-		t.Errorf("after another write main's record = %+v, want it kept", again.MainGitea)
 	}
 }

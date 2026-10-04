@@ -172,7 +172,6 @@ func composeGroupRecipeInputs(
 func groupRecipeWaits(services []ops.ServiceInfo, metas, wired []*workflow.ServiceMeta, address, appID string) (waits, names, leftOut []string) {
 	paired := workflow.ManagedRuntimeIndex(wired)
 	known := workflow.ManagedRuntimeIndex(metas)
-	fromMain := mainGiteaFrom(metas)
 	live := map[string]bool{}
 	var runtimes []string
 	for _, svc := range services {
@@ -199,7 +198,7 @@ func groupRecipeWaits(services []ops.ServiceInfo, metas, wired []*workflow.Servi
 			waits = append(waits, fmt.Sprintf(
 				"the recipe waits for the pair %q: its repository is in another application of HQ than the recipe's, and the next pass wires it in this one",
 				meta.Hostname))
-		case meta != nil && hqPairNeedsRepository(meta, address, fromMain):
+		case meta != nil && hqPairNeedsRepository(meta, address):
 			said[meta.Hostname] = true
 			names = append(names, meta.Hostname)
 			waits = append(waits, fmt.Sprintf(

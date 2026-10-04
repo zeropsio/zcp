@@ -272,30 +272,6 @@ func BuildGitCredentialHelperAssertCommand(workingDir, remoteURL, hqURL string) 
 		shellQuote(workingDir), gitCredentialHelperWriteFragment(remoteURL, hqURL))
 }
 
-// BuildDropCredentialHelperCommand removes the helper persisted for
-// remoteURL's host before the pair's GIT_TOKEN answers for another remote:
-// origin sync keeps the old remote as zerops-original-origin, and a helper
-// left for its host would hand it the new credential. Both scopes a helper
-// can be stored under go — the host, and the host with the port an https
-// remote names other than 443. No repository, or no such helper: nothing to
-// do.
-func BuildDropCredentialHelperCommand(workingDir, remoteURL string) string {
-	host, ok := gitCredentialScopeHost(remoteURL)
-	if !ok {
-		return ":"
-	}
-	scopes := []string{host}
-	if u, err := url.Parse(remoteURL); err == nil && strings.EqualFold(u.Scheme, httpsScheme) && httpsPort(u) != defaultHTTPSPort {
-		scopes = append(scopes, host+":"+httpsPort(u))
-	}
-	unset := make([]string, 0, len(scopes))
-	for _, scope := range scopes {
-		unset = append(unset, fmt.Sprintf("{ git config --unset-all %s || test $? = 5; }",
-			shellQuote("credential.https://"+scope+".helper")))
-	}
-	return fmt.Sprintf("cd %s && if test -d .git; then %s; fi", shellQuote(workingDir), strings.Join(unset, " && "))
-}
-
 // BuildGitTagListCommand lists the remote's version tags (authenticated —
 // works for private repos too) for the release act's next-version
 // suggestion. Output: one `<sha>\trefs/tags/vX.Y.Z` line per tag.

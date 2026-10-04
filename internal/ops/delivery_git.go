@@ -34,7 +34,7 @@ const deliveryBase = "main"
 // each decided from facts and each with one action:
 //
 //   - HEAD shares history with the base — descends from it, or is a history
-//     the base has since moved past, as a pair main's Gitea wired holds →
+//     the base has since moved past →
 //     only the branch is named, and the delivery takes the base in;
 //   - HEAD is only the `zcp init` marker (a parentless empty tree) → the
 //     branch is cut from the base, so whatever the base carries stays in the

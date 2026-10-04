@@ -187,15 +187,8 @@ func deliverHeldHQPair(
 	delivers := func(m *workflow.ServiceMeta) bool {
 		return hqPairOnItsBranch(m) && m.StageHostname != "" && target == m.StageHostname
 	}
-	// A pair main's zcp wired to the old Gitea moves to HQ at its first
-	// delivery: nothing else has to run on a migrated Mate before its work
-	// reaches HQ (hq_main_gitea.go).
-	fromMain := mainGiteaOf(stateDir)
-	moves := func(m *workflow.ServiceMeta) bool {
-		return m != nil && m.StageHostname != "" && target == m.StageHostname && fromMain.owns(m)
-	}
 	meta, _ := workflow.FindServiceMeta(stateDir, target)
-	if !delivers(meta) && !moves(meta) {
+	if !delivers(meta) {
 		return nil
 	}
 	hqc, enrolled := openHQ(httpClient)
@@ -227,18 +220,8 @@ func deliverHeldHQPair(
 	}()
 
 	// Whoever held the checkout may have moved the record: a delivery it
-	// finished, a change it learned of, the move off main's Gitea.
+	// finished, a change it learned of.
 	meta, _ = workflow.FindServiceMeta(stateDir, target)
-	if moves(meta) {
-		attempt := rewireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, meta, hqRepoNameOf(meta, fromMain))
-		if !attempt.wired {
-			return &hqDelivery{Line: fmt.Sprintf(
-				"%s runs, but its code has not reached HQ: moving %s off main's Gitea did not complete — %s",
-				target, meta.Hostname, attempt.line)}
-		}
-		news = append(news, attempt.line)
-		meta, _ = workflow.FindServiceMeta(stateDir, target)
-	}
 	if !delivers(meta) {
 		return nil
 	}
