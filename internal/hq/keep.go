@@ -24,9 +24,6 @@ type KeepOptions struct {
 	// Recheck is the wait after an enrollment HQ knows, before asking again;
 	// 10 min.
 	Recheck time.Duration
-	// Rediscover is how long the kept HQ may go without answering before the
-	// member list is read again for the official HQ; 10 min.
-	Rediscover time.Duration
 	// NewMateRetryMax caps the wait between a new Mate's enrollments — with
 	// nothing kept to recheck — while its HQ does not answer; 60 s.
 	NewMateRetryMax time.Duration
@@ -41,29 +38,28 @@ type KeepOptions struct {
 // credential (recheck), now and every Recheck; it enrolls — reading the org's
 // member list for the official HQ — only with no enrollment kept, when HQ no
 // longer knows the credential (revoked, or another project's), or when the
-// kept HQ has not answered for Rediscover: an HQ that is no longer the
-// official one answers 503 for good, a deploy's handover for seconds (R6).
-// An enrollment the official HQ cannot serve goes back to rechecking the kept
-// one, the clock reset, so an outage reads the member list at most once per
-// Rediscover; a new Mate's — nothing kept to recheck — is tried again on the
-// backoff capped at NewMateRetryMax, so a Mate born in an outage enrolls
-// within a minute of HQ answering. What is not possible yet is retried with a
-// growing wait, never fatal: no official HQ, a Mate HQ holds no record of yet
-// (not_a_mate: the client writes it after the project exists), HQ or Zerops
-// not answering. One answer ends it, from any attempt — a recheck, an
+// member list names an official HQ other than the kept one (moved). That list
+// is read while the kept HQ does not answer, on the retry's backoff: an HQ
+// that lost the anchor answers 503 for good, a deploy's handover for seconds,
+// and only the anchor tells the two apart — never how long the silence
+// lasted. While the anchor names the kept HQ still, the kept HQ is asked
+// again on the backoff, however long it stays silent. A new Mate's
+// enrollment — nothing kept to recheck — is tried again on the backoff capped
+// at NewMateRetryMax, so a Mate born in an outage enrolls within a minute of
+// HQ answering. What is not possible yet is retried with a growing wait,
+// never fatal: no official HQ, a Mate HQ holds no record of yet (not_a_mate:
+// the client writes it after the project exists), HQ or Zerops not
+// answering. One answer ends it, from any attempt — a recheck, an
 // enrollment, a new Mate's: HQ refusing this container because another zcp
 // service of its project is the Mate (NotThisProjectsMate) — said once and
 // recorded, never asked again until zcp starts anew.
-func Keep(ctx context.Context, enroll, recheck func(context.Context) (Result, error), opts KeepOptions) {
+func Keep(ctx context.Context, enroll, recheck func(context.Context) (Result, error), moved func(context.Context) (bool, error), opts KeepOptions) {
 	opts = opts.withDefaults()
 	retry := opts.Retry
 	said := ""
 	// enrolling: the next attempt is an enrollment; newMate: it is one with
 	// nothing kept to recheck.
 	enrolling, newMate := false, false
-	// answered is when the HQ question last settled: an answer, or an
-	// enrollment HQ could not serve.
-	answered := time.Now()
 	// backoff is the next retry's wait: up to a quarter more, so the Mates of
 	// an org do not all knock at once.
 	backoff := func() time.Duration {
@@ -93,20 +89,27 @@ func Keep(ctx context.Context, enroll, recheck func(context.Context) (Result, er
 		var unavailable *UnavailableError
 		switch {
 		case err == nil:
-			enrolling, answered, retry = false, time.Now(), opts.Retry
+			enrolling, retry = false, opts.Retry
 		case enrolling && newMate && errors.As(err, &unavailable):
 			// A new Mate's: tried again soon, never on the outage clock.
 			wait, line = min(backoff(), opts.NewMateRetryMax), "HQ not answering: "+describe(err)
-		case enrolling && errors.As(err, &unavailable):
-			// The official HQ could not serve it: back to rechecking, the clock reset.
-			enrolling, answered = false, time.Now()
-			wait, line = backoff(), "HQ not answering: "+describe(err)
-		case !enrolling && (needsEnrollment(err) || time.Since(answered) >= opts.Rediscover):
+		case enrolling:
+			wait, line = backoff(), "not enrolled yet: "+describe(err)
+		case needsEnrollment(err):
 			// Enrolled anew at once: the kept enrollment no longer holds.
 			enrolling, newMate = true, errors.Is(err, ErrNotEnrolled)
 			wait, line = 0, "enrolling anew: "+describe(err)
 		default:
-			wait, line = backoff(), "not enrolled yet: "+describe(err)
+			// The kept HQ did not answer: the anchor says whether it is still the one.
+			switch elsewhere, anchorErr := moved(ctx); {
+			case anchorErr != nil:
+				wait, line = backoff(), "HQ not answering: "+describe(err)+"; the official HQ not read: "+anchorErr.Error()
+			case elsewhere:
+				enrolling, newMate = true, false
+				wait, line = 0, "enrolling anew: the org names another official HQ"
+			default:
+				wait, line = backoff(), "HQ not answering: "+describe(err)
+			}
 		}
 		if line != said && opts.Log != nil {
 			opts.Log(line)
@@ -150,6 +153,30 @@ func (e Enroller) Recheck(ctx context.Context) (Result, error) {
 	return Result{HQ: kept.HQ, KeyUnnamed: e.nameKey(ctx, hq, kept)}, nil
 }
 
+// Moved is whether the org's member list names an official HQ other than
+// the one the kept enrollment is with — the one answer that moves a Mate
+// whose kept HQ does not answer. No official HQ, or an unclear one, moves it
+// nowhere: there is nothing to enroll with. ErrNotEnrolled with no
+// enrollment kept for this project.
+func (e Enroller) Moved(ctx context.Context) (bool, error) {
+	kept, found, err := LoadEnrollment(e.Path)
+	if err != nil {
+		return false, err
+	}
+	if !found || kept.ProjectID != e.ProjectID {
+		return false, ErrNotEnrolled
+	}
+	official, err := e.official(ctx)
+	var noHQ *NoHQError
+	if errors.As(err, &noHQ) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return official.Address != kept.HQ, nil
+}
+
 func describe(err error) string {
 	var noHQ *NoHQError
 	if errors.As(err, &noHQ) {
@@ -173,9 +200,6 @@ func (o KeepOptions) withDefaults() KeepOptions {
 	}
 	if o.Recheck == 0 {
 		o.Recheck = 10 * time.Minute
-	}
-	if o.Rediscover == 0 {
-		o.Rediscover = 10 * time.Minute
 	}
 	if o.NewMateRetryMax == 0 {
 		o.NewMateRetryMax = time.Minute

@@ -293,9 +293,10 @@ const hqCallTimeout = 15 * time.Second
 
 // keepEnrolled is hq.Keep over the container's environment: each attempt
 // builds the client from the live env store as it is then, so a rotated key
-// is the one it uses. An enrollment asks the key's own record which org it is
-// in, to read that org's member list for the official HQ; a recheck asks the
-// kept enrollment's HQ alone (R6). Each attempt that says something about
+// is the one it uses. An enrollment, and the anchor read while the kept HQ
+// does not answer, ask the key's own record which org it is in, to read that
+// org's member list for the official HQ; a recheck asks the kept
+// enrollment's HQ alone (R6). Each attempt that says something about
 // this Mate leaves its outcome beside the enrollment.
 func keepEnrolled(ctx context.Context, env func() func(string) string) {
 	seedInput := ""
@@ -331,6 +332,12 @@ func keepEnrolled(ctx context.Context, env func() func(string) string) {
 			return hq.Result{}, err
 		}
 		return e.Recheck(ctx)
+	}, func(ctx context.Context) (bool, error) {
+		e, err := enroller(ctx, true)
+		if err != nil {
+			return false, err
+		}
+		return e.Moved(ctx)
 	}, hq.KeepOptions{
 		Log: logHQ,
 		// The Mate server says from it why its setup waits (spec-mate §2.8).
