@@ -523,11 +523,15 @@ func EnsureInstalled(opts EnsureOptions) (Result, error) {
 
 	if manifestErr != nil {
 		if instErr == nil {
+			warning := fmt.Sprintf("mate release manifest unreachable, keeping installed %s: %v", installed, manifestErr)
+			if VersionOlder(installed, MinimumMateVersion) {
+				warning += fmt.Sprintf(" — %s is below the minimum %s this zcp drives, and is replaced once the manifest answers", installed, MinimumMateVersion)
+			}
 			return Result{
 				Action:  ActionNone,
 				From:    installed,
 				To:      installed,
-				Warning: fmt.Sprintf("mate release manifest unreachable, keeping installed %s: %v", installed, manifestErr),
+				Warning: warning,
 			}, nil
 		}
 		return Result{}, fmt.Errorf("resolve desired mate release: %w", manifestErr)

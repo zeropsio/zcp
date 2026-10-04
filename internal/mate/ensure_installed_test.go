@@ -23,7 +23,7 @@ import (
 // desiredVersion is the version resolveDesiredRelease's stub reports —
 // standing in for whatever the real release manifest would name, since
 // these tests never reach the network for it (see newEnsureRig).
-const desiredVersion = "0.9.0"
+const desiredVersion = "0.13.2"
 
 // ensureRig gives each test a private HOME and counts how many times
 // EnsureInstalled reached the manifest/download/npm/smoke seams, so "no
@@ -273,6 +273,38 @@ func TestEnsureInstalled_SmokeFailure_LeavesCurrentUnchanged(t *testing.T) {
 	}
 	if rig.npmCalls != 1 {
 		t.Errorf("npm must still have run once before the smoke test, got %d", rig.npmCalls)
+	}
+}
+
+// TestEnsureInstalled_UnreachableManifest_NamesAnInstalledVersionBelowTheMinimum:
+// an unreachable manifest keeps whatever is installed serving (MD-10), and a
+// version below the minimum this zcp drives is said in the warning, rather
+// than kept silently.
+func TestEnsureInstalled_UnreachableManifest_NamesAnInstalledVersionBelowTheMinimum(t *testing.T) {
+	tests := []struct {
+		installed string
+		wantBelow bool
+	}{
+		{installed: "0.12.3", wantBelow: true},
+		{installed: mate.MinimumMateVersion},
+	}
+	for _, tt := range tests {
+		t.Run(tt.installed, func(t *testing.T) {
+			rig := newEnsureRig(t)
+			rig.manifestErr = errors.New("fetch mate release manifest: HTTP 504")
+			seedInstalledVersion(t, tt.installed)
+
+			got, err := mate.EnsureInstalled(mate.EnsureOptions{})
+			if err != nil {
+				t.Fatalf("EnsureInstalled(): %v", err)
+			}
+			if got.Action != mate.ActionNone || got.To != tt.installed || !strings.Contains(got.Warning, "keeping installed "+tt.installed) {
+				t.Fatalf("want the installed %s kept with a warning, got %+v", tt.installed, got)
+			}
+			if below := strings.Contains(got.Warning, "below the minimum "+mate.MinimumMateVersion); below != tt.wantBelow {
+				t.Errorf("warning names the minimum = %v, want %v: %q", below, tt.wantBelow, got.Warning)
+			}
+		})
 	}
 }
 

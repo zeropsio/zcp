@@ -22,7 +22,7 @@ import (
 // pinnedTestVersion stands in for whatever the release manifest names, in
 // tests that stub mateEnsureInstalled directly and so never resolve a real
 // manifest — an arbitrary version label, not a pin.
-const pinnedTestVersion = "0.8.1"
+const pinnedTestVersion = "0.13.0"
 
 // mateRig is one container-mode init with every outside effect captured: the
 // commands run, whether the bundle installer fired, and where the unit file
