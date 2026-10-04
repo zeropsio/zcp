@@ -1480,7 +1480,9 @@ func TestStandupTrackDeploys_NamesTheStepAndItsProcess(t *testing.T) {
 // TestStandupStatus_CarriedByItsProcess: a call goes on with a section left
 // running for its stages only when this MCP server left it — the section names
 // the process by its PID and start time, and a call stamps its own; a section
-// another process left, or one that names none, is started afresh.
+// another process left, or one that names none, is started afresh. Every call
+// stamps its own start, so a reader tells the call that goes on with a
+// section from the one that started it.
 func TestStandupStatus_CarriedByItsProcess(t *testing.T) {
 	t.Parallel()
 	self := mate.StandupProcess{PID: os.Getpid(), Start: workflow.CurrentProcessStartTime()}
@@ -1504,13 +1506,19 @@ func TestStandupStatus_CarriedByItsProcess(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			newStandupStatus(path).begin()
+			status := newStandupStatus(path)
+			call := time.Date(2026, 1, 1, 0, 30, 0, 0, time.UTC)
+			status.now = func() time.Time { return call }
+			status.begin()
 			st, err := mate.ReadStatus(path)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if carried := st.Standup.StartedAt == left; carried != tt.carried {
 				t.Errorf("carried = %v (startedAt %q, phase %s), want %v", carried, st.Standup.StartedAt, st.Standup.Phase, tt.carried)
+			}
+			if want := call.Format(time.RFC3339); st.Standup.CallStartedAt != want {
+				t.Errorf("callStartedAt = %q, want this call's %q", st.Standup.CallStartedAt, want)
 			}
 			if st.Standup.State != mate.StandupRunning || st.Standup.Process == nil || *st.Standup.Process != self {
 				t.Errorf("the call wrote %s by %+v, want running by this process %+v", st.Standup.State, st.Standup.Process, self)

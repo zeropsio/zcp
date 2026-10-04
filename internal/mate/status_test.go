@@ -67,8 +67,9 @@ func TestUpdateStatus_WritesSchemaV1(t *testing.T) {
 	}
 }
 
-// TestUpdateStatus_ServiceEntries pins the per-service wire names, and the
-// stand-up's process the mate server reads its liveness by.
+// TestUpdateStatus_ServiceEntries pins the per-service wire names, the
+// stand-up's process the mate server reads its liveness by, and the start of
+// the call it matches a section to.
 func TestUpdateStatus_ServiceEntries(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "status.json")
 	err := mate.UpdateStatus(path, func(s *mate.Status) {
@@ -77,6 +78,7 @@ func TestUpdateStatus_ServiceEntries(t *testing.T) {
 		s.Standup.State = mate.StandupRunning
 		s.Standup.Services = []mate.StandupService{{Hostname: "appdev", Step: mate.StepBuild, State: mate.StepRunning, ProcessID: "p2", At: "2026-10-01T10:00:00Z"}}
 		s.Standup.Process = &mate.StandupProcess{PID: 42, Start: "1234"}
+		s.Standup.CallStartedAt = "2026-10-01T10:05:00Z"
 	})
 	if err != nil {
 		t.Fatalf("UpdateStatus: %v", err)
@@ -87,12 +89,16 @@ func TestUpdateStatus_ServiceEntries(t *testing.T) {
 			Services []map[string]any `json:"services"`
 		} `json:"runtimes"`
 		Standup struct {
-			Services []map[string]any `json:"services"`
-			Process  map[string]any   `json:"process"`
+			Services      []map[string]any `json:"services"`
+			Process       map[string]any   `json:"process"`
+			CallStartedAt string           `json:"callStartedAt"`
 		} `json:"standup"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("parse: %v", err)
+	}
+	if doc.Standup.CallStartedAt != "2026-10-01T10:05:00Z" {
+		t.Errorf("standup.callStartedAt = %q, want the call's start", doc.Standup.CallStartedAt)
 	}
 	tests := []struct {
 		name  string

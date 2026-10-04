@@ -2838,7 +2838,9 @@ setup step says `failed` (`process_gone`). Nothing ages a section: no heartbeat,
 window. A first call that leaves the stages queued ends with the section still `running`, in the
 `stage` phase, its stages `build`/`pending`; a second call of the same MCP server goes on with that
 section — the same `startedAt`, the same halves — and ends it `done` or `failed`; a call of another
-process starts afresh. zcp never ends a carried section by itself: it cannot see the agent's turn
+process starts afresh. Every call stamps its own start (`callStartedAt`), so the Mate server's relay
+matches the section to the call now running it — the stage call's card shows the stage phase, and a
+stage call whose process died is judged as its own. zcp never ends a carried section by itself: it cannot see the agent's turn
 end, and the Mate server can. A stand-up whose own turn ended while its section still waits in the
 `stage` phase, no half running, ended without the second call: the server's setup step says
 `failed` (`stage_not_built`) — development stands, the stages were not built — and a later call

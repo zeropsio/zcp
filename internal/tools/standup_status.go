@@ -54,7 +54,7 @@ func (s *standupStatus) update(change func(*mate.StandupStatus)) {
 func (s *standupStatus) stamp() string { return s.now().UTC().Format(time.RFC3339) }
 
 // begin starts a call's section, naming this process as the one running
-// it: afresh, a call reporting the halves it touches — unless the stand-up
+// it and stamping the call's start: afresh, a call reporting the halves it touches — unless the stand-up
 // waits for this call to build its stages (carried), when the call goes on
 // with it: the same start, the same halves, running throughout.
 func (s *standupStatus) begin() {
@@ -65,10 +65,10 @@ func (s *standupStatus) begin() {
 	at := s.stamp()
 	s.update(func(st *mate.StandupStatus) {
 		if carried(*st, self) {
-			st.State, st.Error = mate.StandupRunning, ""
+			st.State, st.Error, st.CallStartedAt = mate.StandupRunning, "", at
 			return
 		}
-		*st = mate.StandupStatus{State: mate.StandupRunning, Phase: mate.PhaseDevelopment, StartedAt: at, Process: &self}
+		*st = mate.StandupStatus{State: mate.StandupRunning, Phase: mate.PhaseDevelopment, StartedAt: at, Process: &self, CallStartedAt: at}
 	})
 }
 
