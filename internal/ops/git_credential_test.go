@@ -440,3 +440,60 @@ func TestBuildGitCredentialHelperAssertCommand(t *testing.T) {
 		}
 	})
 }
+
+// TestSessionGitTokenDigest_IsGitsBlobHash: the digest a fresh session prints
+// of its GIT_TOKEN is git's blob hash of it, which SecretDigest computes the
+// same — so a credential's arrival is checked without it on any command line.
+func TestSessionGitTokenDigest_IsGitsBlobHash(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	for _, token := range []string{"the-mate-credential", "", "with spaces and ünïcode"} {
+		cmd := exec.CommandContext(t.Context(), "sh", "-c", BuildSessionGitTokenDigestCommand()) //nolint:gosec // G204: the command under test
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "GIT_TOKEN=" + token}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if got := strings.TrimSpace(string(out)); got != SecretDigest(token) {
+			t.Errorf("session digest of %q = %q, want %q", token, got, SecretDigest(token))
+		}
+	}
+	if strings.Contains(BuildSessionGitTokenDigestCommand(), "the-mate-credential") {
+		t.Error("the command must not carry the credential")
+	}
+}
+
+// TestGitCredentialRefused: a remote refusing the credential — git's own
+// "Authentication failed" for a 401, or a 401/403 status — and nothing else.
+func TestGitCredentialRefused(t *testing.T) {
+	t.Parallel()
+	for output, want := range map[string]bool{
+		"fatal: Authentication failed for 'https://hq.example/git/a1/appdev.git/'":                                  true,
+		"fatal: unable to access 'https://hq.example/git/a1/appdev.git/': The requested URL returned error: 403":    true,
+		"fatal: unable to access 'https://hq.example/git/a1/appdev.git/': The requested URL returned error: 401":    true,
+		"fatal: unable to access 'https://hq.example/git/a1/appdev.git/': The requested URL returned error: 502":    false,
+		"fatal: unable to access 'https://hq.example/git/a1/appdev.git/': Failed to connect to hq.example port 443": false,
+		"ZCP_HQ_NO_ANSWER: no answer within 15s":                                                                    false,
+		"remote: Repository not found.\nfatal: repository 'https://hq.example/git/a1/appdev.git/' not found":        false,
+	} {
+		if got := GitCredentialRefused(output); got != want {
+			t.Errorf("GitCredentialRefused(%q) = %v, want %v", output, got, want)
+		}
+	}
+}
+
+// TestBuildGitSessionAuthProbeCommand_BoundedAgainstHQ: the probe of a remote
+// on this Mate's HQ runs under the bound every git against HQ runs under; a
+// remote of the user's own is probed as before.
+func TestBuildGitSessionAuthProbeCommand_BoundedAgainstHQ(t *testing.T) {
+	t.Parallel()
+	const hq = "https://hq.example"
+	if got := BuildGitSessionAuthProbeCommand(hq+"/git/a1/appdev.git", hq); !strings.Contains(got, "http.lowSpeedTime=10") || !strings.Contains(got, hqNoAnswerMarker) {
+		t.Errorf("the probe against HQ is not bounded:\n%s", got)
+	}
+	if got := BuildGitSessionAuthProbeCommand("https://github.com/o/r.git", hq); strings.Contains(got, "lowSpeed") {
+		t.Errorf("a probe of the user's own remote changed:\n%s", got)
+	}
+}

@@ -1,6 +1,8 @@
 package ops
 
 import (
+	"crypto/sha1" //nolint:gosec // G505: git's object id, matched against git's own (SecretDigest)
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"strings"
@@ -92,11 +94,41 @@ func BuildGitAuthedLsRemoteCommand(remoteURL, ref string) string {
 // Fails loud (no `|| true`): a non-zero exit IS the signal the env value
 // has not propagated yet (caller retries within the ~5-10s zembed window)
 // or the write landed wrong.
+//
+// Against a remote on the Mate's HQ it runs under HQ's bounds (hqGit), so a
+// delivery's proof fails fast like its every other step.
 func BuildGitSessionAuthProbeCommand(remoteURL, hqURL string) string {
+	if IsHQRemote(remoteURL, hqURL) {
+		return hqGit(hqCredentialHelperArgs() + " ls-remote " + shellQuote(remoteURL) + " HEAD")
+	}
 	return fmt.Sprintf(
 		"GIT_TERMINAL_PROMPT=0 git %s ls-remote %s HEAD",
 		gitCredentialHelperArgsFor(remoteURL, hqURL), shellQuote(remoteURL),
 	)
+}
+
+// BuildSessionGitTokenDigestCommand prints git's blob hash of the session's
+// $GIT_TOKEN — what SecretDigest computes of a credential — so whether a
+// credential written onto a service has reached its fresh sessions is read
+// without the credential on any command line, and without asking the remote.
+func BuildSessionGitTokenDigestCommand() string {
+	return `printf %s "$GIT_TOKEN" | git hash-object --stdin`
+}
+
+// SecretDigest is git's blob hash of value: what
+// BuildSessionGitTokenDigestCommand prints for a session whose GIT_TOKEN is
+// value. A digest to compare, never to keep.
+func SecretDigest(value string) string {
+	sum := sha1.Sum(fmt.Appendf(nil, "blob %d\x00%s", len(value), value)) //nolint:gosec // G401: git's object id, matched against git's own, not a protection
+	return hex.EncodeToString(sum[:])
+}
+
+// GitCredentialRefused reports whether a git command's output says the remote
+// refused its credential: git's own "Authentication failed" for a 401, or a
+// 401 or 403 it reports. Not reached, a 5xx or a missing repository is not.
+func GitCredentialRefused(output string) bool {
+	return strings.Contains(output, "Authentication failed") ||
+		strings.Contains(output, "returned error: 401") || strings.Contains(output, "returned error: 403")
 }
 
 // BuildGitReconstructCommand rebuilds a missing /var/www/.git from the
