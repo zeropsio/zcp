@@ -389,8 +389,10 @@ type hqWiringOutcome struct {
 
 // wireHQPair gives one pair its repository in HQ and its own branch: the
 // repository repoName in the application HQ holds the Mate in (made if new),
-// git-push to it, the Mate's branch cut from its `main`, the HQ record, the
-// workflow file. repoName is the pair's dev hostname for a pair zcp
+// git-push to it, the Mate's branch cut from its `main`, and the HQ record —
+// nothing builds from the repository on the Mate's side: Core deploys the
+// application's environments from its commits. repoName is the pair's dev
+// hostname for a pair zcp
 // bootstrapped, and the repository the group's recipe names for a pair a
 // stand-up adopted from it (standup.go). A pair whose Mate HQ now holds in another application
 // is wired again there: the repository of the same name in the new
