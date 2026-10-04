@@ -2581,14 +2581,20 @@ pair to re-submit.
   the explicit delivery uses HQ's latest recorded landing as its base, so a legacy checkout
   follows the same transition. The record's number is
   cleared once the change is no longer open, so the next delivery opens the next one.
-- **HQ not answering fails the delivery, fast (D35).** Each step of a delivery HQ serves — taking
-  `main` in, opening the change, taking its branch in, pushing it — is tried at most three times,
-  1 s and 3 s apart, and only while HQ could not serve it: not reached, or any 5xx (a standby's 503,
-  the balancer's 502 for an HQ that is down). A refusal — a 4xx, a ref HQ rejects by name, a change
-  merged or closed before its push — fails at once. The delivery's HQ client sends each call once
-  (`hq.Client.Once`), so the client's own 20 s wait on a 503 never stacks under the tries. After the
-  last try the stage deploy's line (the deploy itself stands) or the git-push's error names the step,
-  HQ's address and the last error, says the work stays committed in the dev half's checkout and that
+- **HQ not answering fails the delivery, fast (D35).** Each step of a delivery HQ serves — proving
+  the pair's credential, taking `main` in, opening the change, taking its branch in, pushing it — is
+  tried at most three times, 1 s and 3 s apart, and only while HQ could not serve it: not reached at
+  once, or any 5xx (a standby's 503, the balancer's 502 for an HQ that is down). A refusal — a 4xx, a
+  ref HQ rejects by name, a change merged or closed before its push — fails at once. Every try is
+  bounded: an API call connects within 5 s, TLS included, and is answered within 10 s
+  (`hq.Client.Bounded`; `Once` sends it once, so the client's own 20 s wait on a 503 never stacks
+  under the tries); git against HQ runs under `timeout` for 15 s (`ops.HQGitBound` — git has no
+  connect setting, and curl would wait 300 s) with a 10 s stall bound passed per command. A try left
+  unanswered past its bound ends the step at once, so an HQ that drops every packet costs a step 5 s
+  or 15 s, and even a 5xx at the last moment of every try ends a step within a minute. After the last
+  try the stage deploy's line (the deploy itself stands) or the git-push's error reads "HQ at <addr>
+  is not answering: <step> failed after 3 tries (the last: …)" — a 5xx as "HQ answered 502 (not
+  serving)", never as a refusal — says the work stays committed in the dev half's checkout and that
   the next delivery — the stage deploy, or the push, again — sends it, and tells the agent to tell
   the person HQ is not answering; zcp writes one line per failed delivery to its stderr. Nothing is
   recorded as owed and nothing tries again in the background, neither `zcp service mate` nor a
@@ -2609,9 +2615,11 @@ pair to re-submit.
   which the per-command credential helper presents as the user `mate`: the dev container now holds
   the Mate's HQ credential, as it held the Gitea bot token before. The enrollment is the
   credential's one home, and a re-enrollment replaces it, so before every delivery and push zcp
-  compares the copy with the enrollment's (constant time), rewrites it and proves a fresh
-  session with it; a credential HQ refuses marks the pair `broken`, healed once a session
-  authenticates. The helper persisted in `.git/config` for HQ's host answers the dev service from
+  compares the copy with the enrollment's (constant time) and rewrites it. A rewritten copy is waited
+  for, up to 15 s, until a fresh session holds it — read as git's blob hash of the session's
+  `GIT_TOKEN`, so the credential is on no command line and HQ is not asked — and a fresh session then
+  proves it against HQ as a delivery step. Only HQ refusing it (401/403) marks the pair `broken`,
+  healed once a session authenticates; HQ not answering the proof marks nothing. The helper persisted in `.git/config` for HQ's host answers the dev service from
   `GIT_TOKEN` and the Mate's own shell from `zcp hq git-credential`, which reads the enrollment at
   each request and answers for the enrolled HQ only.
 - A push to HQ is watched for no build and offers no integration, and a wired pair's direct deploys
@@ -2627,7 +2635,11 @@ pair to re-submit.
 `TestAStageDeployWithNothingBeyondMainOpensNoChange`, `TestADeliveryHQCannotReachFailsFast`,
 `TestADeliveryTriesHQOnlyWhileItCannotServe`, `TestDeliveryRetry_TriesOnlyWhileHQCannotServe`,
 `TestHQUnavailable_OnlyUnreachableOr5xx`, `TestShipChange_AChangeSettledBeforeItsPushFailsAtOnce`,
-`TestUpsertServiceMeta_LegacyPendingDelivery_IsDropped`, `TestAPassSkipsAPairHeldElsewhere`,
+`TestUpsertServiceMeta_LegacyPendingDelivery_IsDropped`, `TestHQNotServingWords`, `TestHQAnswerOf`,
+`TestDeliveryBounds_AStepEndsWellUnderAMinute`, `TestADeliveryToAnHQThatNeverAcceptsEndsWithinItsBound`,
+`TestADeliveryProvesItsCredentialFailingFast`, `TestClient_Bounded_EndsATryHQDoesNotAnswer`,
+`TestHQGit_AnHQThatNeverAcceptsEndsWithinTheBound`, `TestSessionGitTokenDigest_IsGitsBlobHash`,
+`TestAPassSkipsAPairHeldElsewhere`,
 `TestADeliveryWaitsForItsPairsCheckout`, `TestLockPair`,
 `TestADeliveryWaitsOutAStandby`, `TestADeliveryFollowsTheMateToAnotherApplication`,
 `TestADeliveryBringsTheCredentialToTheCurrentOne`, `TestADeliveryRefusedByItsGitSaysWhatToDo`,
