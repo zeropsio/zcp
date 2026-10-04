@@ -237,29 +237,29 @@ func TestWithRegistryLock_ConcurrentAccess(t *testing.T) {
 func TestIsProcessAlive_CurrentProcess(t *testing.T) {
 	t.Parallel()
 	// Empty recordedStart trusts the bare PID; matched recordedStart confirms identity.
-	if !IsProcessAlive(os.Getpid(), "") {
+	if !isProcessAlive(os.Getpid(), "") {
 		t.Error("current process should be alive (bare-PID path)")
 	}
-	if !IsProcessAlive(os.Getpid(), CurrentProcessStartTime()) {
+	if !isProcessAlive(os.Getpid(), CurrentProcessStartTime()) {
 		t.Error("current process should be alive (matched-start path)")
 	}
 }
 
 func TestIsProcessAlive_DeadProcess(t *testing.T) {
 	t.Parallel()
-	if IsProcessAlive(9999999, "") {
+	if isProcessAlive(9999999, "") {
 		t.Error("PID 9999999 should not be alive")
 	}
 }
 
 func TestIsProcessAlive_ZeroPID(t *testing.T) {
 	t.Parallel()
-	if IsProcessAlive(0, "") {
+	if isProcessAlive(0, "") {
 		t.Error("PID 0 should not be considered alive")
 	}
 }
 
-// TestIsProcessAlive_RecycledPID pins the two-state contract: a live PID whose
+// TestisProcessAlive_RecycledPID pins the two-state contract: a live PID whose
 // recorded start-time does NOT match the running process is reported dead — the
 // PID was recycled by the OS to a different process, so the original session is
 // gone. This is the defense against an operator-wedge where a stale registry
@@ -268,7 +268,7 @@ func TestIsProcessAlive_RecycledPID(t *testing.T) {
 	t.Parallel()
 	// Our own PID is alive, but a start-time that cannot belong to us means a
 	// different process now owns this PID number.
-	if IsProcessAlive(os.Getpid(), "0.0-not-our-start-time") {
+	if isProcessAlive(os.Getpid(), "0.0-not-our-start-time") {
 		t.Error("a live PID with a mismatched recorded start-time must be reported dead (recycled)")
 	}
 }

@@ -31,9 +31,12 @@ type UserInfo struct {
 
 // Project represents a Zerops project.
 type Project struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Status        string `json:"status"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	// Description is the project's own description; a launch marks the
+	// project it creates with it (bundle.LaunchMarker). Read by ListProjects.
+	Description   string `json:"description,omitempty"`
 	SubdomainHost string `json:"subdomainHost,omitempty"` // e.g. "1df2.prg1.zerops.app"
 	// Mode is the project core tier the platform reports: LIGHT | SERIOUS
 	// (| LEGACY). The launch read-back verifies the emitted

@@ -202,7 +202,7 @@ func CurrentWorkSession(stateDir string) (*WorkSession, error) {
 	if err != nil || ws == nil {
 		return ws, err
 	}
-	// Bias-alive on an unreadable clock (mirrors IsProcessAlive): treat the file
+	// Bias-alive on an unreadable clock (mirrors isProcessAlive): treat the file
 	// as foreign ONLY when our own start-time is readable AND differs. A transient
 	// read failure (CurrentProcessStartTime()=="") must NOT discard our live
 	// session — that would drop in-flight work and silently no-op Record* calls.
@@ -687,7 +687,7 @@ func CleanStaleWorkSessions(stateDir string) {
 		if ws != nil {
 			recordedStart = ws.StartTime
 		}
-		if IsProcessAlive(pid, recordedStart) {
+		if isProcessAlive(pid, recordedStart) {
 			continue
 		}
 		_ = os.Remove(filepath.Join(dir, entry.Name()))
