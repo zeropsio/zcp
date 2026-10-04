@@ -519,8 +519,8 @@ func infraPhaseForPID(stateDir string) Phase {
 		// predecessor's bootstrap entry whose PID was recycled to THIS
 		// process does not foreground a ghost infra phase over the real work
 		// session (parity with ClassifySessions / checkHostnameLocks / the P6
-		// identity story). isProcessAlive biases alive on an unreadable clock.
-		if s.PID != pid || !isProcessAlive(s.PID, s.StartTime) {
+		// identity story). IsProcessAlive biases alive on an unreadable clock.
+		if s.PID != pid || !IsProcessAlive(s.PID, s.StartTime) {
 			continue
 		}
 		if s.Workflow == WorkflowBootstrap {

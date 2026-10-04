@@ -260,7 +260,7 @@ func (e *Engine) aliveSessionIDs() map[string]bool {
 	}
 	alive := make(map[string]bool, len(sessions))
 	for _, s := range sessions {
-		if isProcessAlive(s.PID, s.StartTime) {
+		if IsProcessAlive(s.PID, s.StartTime) {
 			alive[s.SessionID] = true
 		}
 	}

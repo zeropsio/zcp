@@ -237,24 +237,24 @@ func TestWithRegistryLock_ConcurrentAccess(t *testing.T) {
 func TestIsProcessAlive_CurrentProcess(t *testing.T) {
 	t.Parallel()
 	// Empty recordedStart trusts the bare PID; matched recordedStart confirms identity.
-	if !isProcessAlive(os.Getpid(), "") {
+	if !IsProcessAlive(os.Getpid(), "") {
 		t.Error("current process should be alive (bare-PID path)")
 	}
-	if !isProcessAlive(os.Getpid(), CurrentProcessStartTime()) {
+	if !IsProcessAlive(os.Getpid(), CurrentProcessStartTime()) {
 		t.Error("current process should be alive (matched-start path)")
 	}
 }
 
 func TestIsProcessAlive_DeadProcess(t *testing.T) {
 	t.Parallel()
-	if isProcessAlive(9999999, "") {
+	if IsProcessAlive(9999999, "") {
 		t.Error("PID 9999999 should not be alive")
 	}
 }
 
 func TestIsProcessAlive_ZeroPID(t *testing.T) {
 	t.Parallel()
-	if isProcessAlive(0, "") {
+	if IsProcessAlive(0, "") {
 		t.Error("PID 0 should not be considered alive")
 	}
 }
@@ -268,7 +268,7 @@ func TestIsProcessAlive_RecycledPID(t *testing.T) {
 	t.Parallel()
 	// Our own PID is alive, but a start-time that cannot belong to us means a
 	// different process now owns this PID number.
-	if isProcessAlive(os.Getpid(), "0.0-not-our-start-time") {
+	if IsProcessAlive(os.Getpid(), "0.0-not-our-start-time") {
 		t.Error("a live PID with a mismatched recorded start-time must be reported dead (recycled)")
 	}
 }

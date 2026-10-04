@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -24,16 +25,30 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// launchMutationStaleAfter is the threshold beyond which a "launching"
-// state-file entry with empty TargetProjectID is considered abandoned
-// (the original mutation crashed). Below this threshold, a concurrent
-// retry is refused to prevent silent-double-mutation (FIX 1 PR 2).
-//
-// 10 minutes covers normal mutation latency (CreateAndImportProject +
-// async process polling typically settles in 2-3 min). Stale recovery
-// after that window allows the user to retry without an explicit reset
-// when the prior call genuinely crashed.
-const launchMutationStaleAfter = 10 * time.Minute
+// launchesInFlight holds, by launchID, the new-project launches whose
+// mutation runs in this process: a `launching` state this process wrote is
+// held while its call runs here, and its call has ended once it is not.
+var launchesInFlight sync.Map
+
+// thisLaunchOwner names this process as the one running a launch.
+func thisLaunchOwner() *launchOwner {
+	return &launchOwner{PID: os.Getpid(), Start: workflow.CurrentProcessStartTime()}
+}
+
+// launchHeld is whether the call that wrote a `launching` state still runs:
+// in this process while its mutation holds the launch, in another while that
+// process lives. A state that names no process is held by none.
+func launchHeld(state *launchState) bool {
+	owner := state.Owner
+	if owner == nil {
+		return false
+	}
+	if self := thisLaunchOwner(); *owner == *self {
+		_, held := launchesInFlight.Load(state.LaunchID)
+		return held
+	}
+	return workflow.IsProcessAlive(owner.PID, owner.Start)
+}
 
 // handleLaunchProduction orchestrates the launch-production workflow per
 // plans/archive/production-lifecycle-2026-05-11.md §8.1. Stateless multi-call
@@ -296,11 +311,12 @@ func handleLaunchProduction(
 	// Four resume branches based on (Status, TargetProjectID):
 	//
 	//   1. launching + TargetProjectID=="" — silent-double-mutation P0
-	//      lock. Mutation crashed between state-file persist and
-	//      CreateAndImportProject success; a blind retry would create
-	//      a SECOND project under the same name. Refuse with a
-	//      timeout-gated retry hint (allow only when state is stale
-	//      i.e. >launchMutationStaleAfter ago).
+	//      lock. The call that wrote it is mid-mutation, or ended between
+	//      the state-file persist and recording what CreateAndImportProject
+	//      did; a blind retry would create a SECOND project under the same
+	//      name. Refused while that call runs (launchHeld), however long it
+	//      takes; once it is gone, its handle is read first — the project
+	//      by its name (readEndedLaunch).
 	//
 	//   2. failed + TargetProjectID=="" — safe to retry (delegated:
 	//      confirmLaunch reuses the staged token when staging was
@@ -328,23 +344,17 @@ func handleLaunchProduction(
 			// the normal status machine below the resume gate.
 			switch existing.Status {
 			case topology.LaunchStatusLaunching:
-				// P0 silent-double-mutation lock. Fresh `launching` state
-				// without a target project ID = mutation in progress
-				// elsewhere (or just crashed). Refuse blindly retrying.
-				if time.Since(existing.LastUpdate) < launchMutationStaleAfter {
-					return convertError(platform.NewPlatformError(
-						platform.ErrAPIError,
-						fmt.Sprintf(
-							"launch-production already in progress (status=launching, lastUpdate=%s); refusing concurrent mutation",
-							existing.LastUpdate.UTC().Format("2006-01-02T15:04:05Z"),
-						),
-						`Another zerops_workflow invocation is mid-mutation. Wait for it to finish (action="status" surfaces progress) or run action="reset" workflow="launch-production" if the prior call is genuinely dead and you want to retry from scratch.`,
-					), WithRecoveryStatus()), nil, nil
+				// P0 silent-double-mutation lock: the call that wrote it
+				// still runs — refuse a concurrent mutation.
+				if launchHeld(existing) {
+					return launchInProgressResponse(existing), nil, nil
 				}
-				// Stale (>launchMutationStaleAfter): the original call
-				// crashed long ago; allow fall-through so the user can
-				// retry. The state file gets overwritten as part of
-				// executeLaunchMutation.
+				// That call ended before recording what Zerops did: read its
+				// handle. Nothing created falls through to the mutation, which
+				// overwrites the state file.
+				if resp := readEndedLaunch(ctx, client, projectID, stateDir, existing, input.LaunchKey, apiHost, corpus); resp != nil {
+					return resp, nil, nil
+				}
 			case topology.LaunchStatusFailed:
 				// Failed before target project was created → safe to
 				// retry. Fall through to mutation gate.
@@ -357,14 +367,7 @@ func handleLaunchProduction(
 			// TargetProjectID populated → project exists in Zerops.
 			if existing.Status == topology.LaunchStatusFailed {
 				// Refuse destructive retry; point at reset.
-				return convertError(platform.NewPlatformError(
-					platform.ErrAPIError,
-					fmt.Sprintf(
-						"launch-production for %q is in terminal failed state with targetProjectId=%s; cannot blindly retry — orphan project may exist",
-						existing.TargetProjectName, existing.TargetProjectID,
-					),
-					`Clean up + retry: action="reset" workflow="launch-production" productionProjectName="`+existing.TargetProjectName+`" — the launch token resolves from the staged `+ops.LaunchTokenEnvKey+` secret (no launchKey re-send), and the diagnose-before-destruct refusal lists exactly what gets deleted: the orphan production project AND the state file. Then re-run start with the SAME productionProjectName. (When the staged secret is gone, pass launchKey=<the launch token> explicitly; without any token, reset only clears local state and leaves the billable orphan for manual dashboard deletion.)`,
-				), WithRecoveryStatus()), nil, nil
+				return launchOrphanResponse(existing), nil, nil
 			}
 			// launched / launching-with-project / configuring-pipeline —
 			// current idempotent resume. The pipeline re-check resolves
@@ -560,6 +563,95 @@ func handleLaunchProduction(
 	return executeLaunchMutation(ctx, projectID, client, sshDeployer, rt, input, sourceEnvs, classifications, corpus, stateDir, launchID, apiHost)
 }
 
+// launchInProgressResponse refuses a mutation while the call that wrote a
+// `launching` state still runs.
+func launchInProgressResponse(state *launchState) *mcp.CallToolResult {
+	return convertError(platform.NewPlatformError(
+		platform.ErrAPIError,
+		fmt.Sprintf(
+			"launch-production already in progress: zcp process %d is running it (status=launching, lastUpdate=%s); refusing concurrent mutation",
+			state.Owner.PID, state.LastUpdate.UTC().Format("2006-01-02T15:04:05Z"),
+		),
+		`Another zerops_workflow invocation is mid-mutation. Wait for it to finish (action="status" surfaces progress); the launch is free again the moment that call ends.`,
+	), WithRecoveryStatus())
+}
+
+// launchOrphanResponse refuses a blind retry of a failed launch whose
+// production project exists, pointing at reset.
+func launchOrphanResponse(state *launchState) *mcp.CallToolResult {
+	return convertError(platform.NewPlatformError(
+		platform.ErrAPIError,
+		fmt.Sprintf(
+			"launch-production for %q is in terminal failed state with targetProjectId=%s; cannot blindly retry — orphan project may exist",
+			state.TargetProjectName, state.TargetProjectID,
+		),
+		`Clean up + retry: action="reset" workflow="launch-production" productionProjectName="`+state.TargetProjectName+`" — the launch token resolves from the staged `+ops.LaunchTokenEnvKey+` secret (no launchKey re-send), and the diagnose-before-destruct refusal lists exactly what gets deleted: the orphan production project AND the state file. Then re-run start with the SAME productionProjectName. (When the staged secret is gone, pass launchKey=<the launch token> explicitly; without any token, reset only clears local state and leaves the billable orphan for manual dashboard deletion.)`,
+	), WithRecoveryStatus())
+}
+
+// readEndedLaunch reads the handle of a launch whose call ended between
+// writing `launching` and recording what CreateAndImportProject did: the
+// production project, by its name, with the staged launch token. nil when
+// nothing can have been created — no token staged (staging precedes the
+// create) or no project of that name — so the launch runs again. One project
+// of the name is the launch's: recorded as its orphan, the state failed, and
+// the reset refusal returned. More than one is refused naming them, nothing
+// recorded. The project search trails a create by seconds (ES-backed).
+func readEndedLaunch(
+	ctx context.Context,
+	client platform.Client,
+	projectID, stateDir string,
+	state *launchState,
+	launchKey, apiHost string,
+	corpus []workflow.KnowledgeAtom,
+) *mcp.CallToolResult {
+	token, err := resolveLaunchWindowToken(ctx, client, projectID, state, launchKey)
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrAPIError,
+			fmt.Sprintf("the call that launched %q ended before it recorded whether the production project was created, and the staged launch token could not be read to find out: %v", state.TargetProjectName, err),
+			"Re-call once the source project's env can be read; nothing is created before then.",
+		), WithRecoveryStatus())
+	}
+	if token == "" {
+		return nil
+	}
+	admin, err := projectAdminClientFactory(token, apiHost)
+	if err != nil {
+		return launchFailedAuthResponse(corpus, err)
+	}
+	defer admin.Close()
+	projects, err := admin.ListProjects(ctx)
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrAPIError,
+			fmt.Sprintf("the call that launched %q ended before it recorded whether the production project was created, and the projects could not be read to find out: %v", state.TargetProjectName, err),
+			"Re-call once Zerops answers; nothing is created before then.",
+		), WithRecoveryStatus())
+	}
+	var named []string
+	for _, p := range projects {
+		if p.Name == state.TargetProjectName {
+			named = append(named, p.ID)
+		}
+	}
+	switch len(named) {
+	case 0:
+		return nil
+	case 1:
+		state.TargetProjectID = named[0]
+		state.Status = topology.LaunchStatusFailed
+		state.LastError = "the call that created the production project ended before it recorded its import"
+		_ = writeLaunchState(stateDir, state)
+		return launchOrphanResponse(state)
+	}
+	return convertError(platform.NewPlatformError(
+		platform.ErrAPIError,
+		fmt.Sprintf("the call that launched %q ended before it recorded whether the production project was created, and %d projects carry that name: %s", state.TargetProjectName, len(named), strings.Join(named, ", ")),
+		`Delete the one this launch created in the Zerops dashboard if it is among them, then action="reset" workflow="launch-production" productionProjectName="`+state.TargetProjectName+`" and launch again.`,
+	), WithRecoveryStatus())
+}
+
 // launchSourceDriftResponse builds the structured refusal response
 // for the P-LP-3 active-compare gate. The response carries:
 //   - status="failed"
@@ -671,6 +763,14 @@ func executeLaunchMutation(
 	launchID string,
 	apiHost string,
 ) (*mcp.CallToolResult, any, error) {
+	// Held in this process for as long as this call runs: a second call
+	// here is refused, and once this one returns, a `launching` state it
+	// left reads as ended (launchHeld).
+	if _, held := launchesInFlight.LoadOrStore(launchID, struct{}{}); held {
+		return launchInProgressResponse(&launchState{Owner: thisLaunchOwner(), LastUpdate: time.Now()}), nil, nil
+	}
+	defer launchesInFlight.Delete(launchID)
+
 	// Admin-client construction per D-3/D-5: the explicit-launchKey path
 	// constructs it here at the function head, UNCHANGED — the value is
 	// already the user's consented credential, so there is nothing to
@@ -906,6 +1006,7 @@ func executeLaunchMutation(
 		Status:                topology.LaunchStatusLaunching,
 		TokenAcquisition:      stringIf(mintedName != "", tokenAcquisitionDelegated),
 		MintedTokenName:       mintedName,
+		Owner:                 thisLaunchOwner(),
 		// Persist the prod-side runtime identities (one per promoted
 		// runtime) so the pipeline check matches imported services by
 		// prod hostname, and a resume can re-run the check (LAUNCH-1).
@@ -946,8 +1047,10 @@ func executeLaunchMutation(
 			"CreateAndImportProject failed: %v"), nil, nil
 	}
 
-	// Success — record imported services in state.
+	// Success — the project is the launch's handle: recorded before the next
+	// call to Zerops, so a call that ends from here on leaves it behind.
 	state.TargetProjectID = result.ProjectID
+	_ = writeLaunchState(stateDir, state)
 
 	// A.10: grant launching clientUser ADMIN on the new project. For the
 	// canonical INTEGRATION token this ALWAYS fails ("Insufficient

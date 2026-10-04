@@ -60,7 +60,7 @@ func TestKeep_RetriesWhatIsNotYetPossible_RechecksWhatHolds(t *testing.T) {
 			ended := make(chan struct{})
 			go func() {
 				defer close(ended)
-				Keep(ctx, a.attempt, a.attempt, KeepOptions{Retry: 2 * time.Millisecond, RetryMax: 8 * time.Millisecond, Recheck: 50 * time.Millisecond})
+				Keep(ctx, a.attempt, a.attempt, stays, KeepOptions{Retry: 2 * time.Millisecond, RetryMax: 8 * time.Millisecond, Recheck: 50 * time.Millisecond})
 			}()
 			select {
 			case <-a.done:
@@ -86,7 +86,7 @@ func TestKeep_SaysWhyHQWasNotToldTheKeysID(t *testing.T) {
 	t.Parallel()
 	said := make(chan string, 1)
 	a := &attempts{answers: []error{nil}, keyUnnamed: "hq refused: 409 key_not_its_own", done: make(chan struct{}), want: 1}
-	go Keep(t.Context(), a.attempt, a.attempt, KeepOptions{Recheck: time.Hour, Log: func(line string) { said <- line }})
+	go Keep(t.Context(), a.attempt, a.attempt, stays, KeepOptions{Recheck: time.Hour, Log: func(line string) { said <- line }})
 
 	select {
 	case line := <-said:
@@ -98,19 +98,28 @@ func TestKeep_SaysWhyHQWasNotToldTheKeysID(t *testing.T) {
 	}
 }
 
-// calls records which of Keep's two attempts ran, in order: the whole
-// enrollment (the member list read to find the official HQ) or the recheck
-// of the kept one (its HQ alone).
+// stays is an anchor read that names the kept HQ still.
+func stays(context.Context) (bool, error) { return false, nil }
+
+// calls records which of Keep's reads ran, in order: the whole enrollment
+// (the member list read to find the official HQ), the recheck of the kept one
+// (its HQ alone), or the anchor read asking whether the member list names
+// another HQ than the kept one.
 type calls struct {
 	mu   sync.Mutex
 	made []string
 	// recheck answers each recheck in turn, the last one staying; enrollment
-	// each enrollment, likewise, none enrolling.
+	// each enrollment, likewise, none enrolling; moved each anchor read, none
+	// naming another HQ.
 	recheck    []error
 	enrollment []error
+	moved      []error
 	done       chan struct{}
 	want       int
 }
+
+// errMoved, as an anchor read's answer, is the member list naming another HQ.
+var errMoved = errors.New("moved")
 
 func (c *calls) record(kind string) {
 	c.mu.Lock()
@@ -152,13 +161,23 @@ func (c *calls) rechecked(context.Context) (Result, error) {
 	return Result{HQ: "https://hq.example"}, nil
 }
 
-// TestKeep_RediscoversOnlyWhenHQRefusesOrStaysSilent: once enrolled, Keep
-// asks only the kept enrollment's HQ (R6). It reads the member list for the
-// official HQ again only with no enrollment kept, when HQ no longer knows
-// the credential (401 mate_credential_required, or it names another
-// project), or when HQ has not answered for Rediscover — an HQ that lost the
-// anchor answers 503 for good; a deploy's handover answers it for seconds.
-func TestKeep_RediscoversOnlyWhenHQRefusesOrStaysSilent(t *testing.T) {
+func (c *calls) anchor(context.Context) (bool, error) {
+	err := c.answer("anchor", c.moved)
+	if errors.Is(err, errMoved) {
+		return true, nil
+	}
+	return false, err
+}
+
+// TestKeep_EnrollsAnewOnlyOnHQsRefusalOrAnotherOfficialHQ: once enrolled,
+// Keep asks only the kept enrollment's HQ (R6). It enrolls anew only with no
+// enrollment kept, when HQ no longer knows the credential (401
+// mate_credential_required, or it names another project), or when the org's
+// member list names an official HQ other than the kept one — read while the
+// kept HQ does not answer, on the retry's backoff. However long the kept HQ
+// stays silent, an anchor that still names it keeps it: silence is not an
+// answer that the HQ moved.
+func TestKeep_EnrollsAnewOnlyOnHQsRefusalOrAnotherOfficialHQ(t *testing.T) {
 	t.Parallel()
 	silent := &UnavailableError{Code: "not_active"}
 	noHQ := &NoHQError{Official: Official{Verdict: VerdictNone}}
@@ -166,19 +185,20 @@ func TestKeep_RediscoversOnlyWhenHQRefusesOrStaysSilent(t *testing.T) {
 		name       string
 		recheck    []error
 		enrollment []error
-		rediscover time.Duration
+		moved      []error
 		want       []string
 	}{
-		{"an enrollment HQ knows", []error{nil}, nil, time.Hour, []string{"recheck", "recheck", "recheck", "recheck"}},
-		{"no enrollment kept", []error{ErrNotEnrolled, nil}, nil, time.Hour, []string{"recheck", "enroll", "recheck", "recheck"}},
-		{"HQ refuses the credential", []error{nil, &RefusedError{Status: 401, Code: "mate_credential_required"}, nil}, nil, time.Hour, []string{"recheck", "recheck", "enroll", "recheck"}},
-		{"a credential HQ holds for another project", []error{nil, ErrOtherProject, nil}, nil, time.Hour, []string{"recheck", "recheck", "enroll", "recheck"}},
-		{"HQ silent within the bound", []error{nil, silent}, nil, time.Hour, []string{"recheck", "recheck", "recheck", "recheck"}},
-		{"HQ silent past the bound", []error{nil, silent}, nil, time.Millisecond, []string{"recheck", "recheck", "enroll", "recheck"}},
-		// During an outage the member list is read at most once per bound: an enrollment the
-		// official HQ cannot serve goes back to rechecking, its clock reset.
-		{"an enrollment HQ cannot serve, back to rechecking", []error{nil, silent}, []error{silent}, time.Millisecond, []string{"recheck", "recheck", "enroll", "recheck", "enroll"}},
-		{"an enrollment refused otherwise, enrolling again", []error{ErrNotEnrolled}, []error{noHQ}, time.Hour, []string{"recheck", "enroll", "enroll", "enroll"}},
+		{"an enrollment HQ knows", []error{nil}, nil, nil, []string{"recheck", "recheck", "recheck", "recheck"}},
+		{"no enrollment kept", []error{ErrNotEnrolled, nil}, nil, nil, []string{"recheck", "enroll", "recheck", "recheck"}},
+		{"HQ refuses the credential", []error{nil, &RefusedError{Status: 401, Code: "mate_credential_required"}, nil}, nil, nil, []string{"recheck", "recheck", "enroll", "recheck"}},
+		{"a credential HQ holds for another project", []error{nil, ErrOtherProject, nil}, nil, nil, []string{"recheck", "recheck", "enroll", "recheck"}},
+		{"HQ silent, the anchor naming it still", []error{nil, silent}, nil, nil, []string{"recheck", "recheck", "anchor", "recheck", "anchor", "recheck", "anchor"}},
+		{"HQ silent, the anchor unreadable", []error{nil, silent}, nil, []error{errors.New("read org members: 503")}, []string{"recheck", "recheck", "anchor", "recheck", "anchor"}},
+		{"HQ silent, the anchor naming another HQ", []error{nil, silent, nil}, nil, []error{errMoved}, []string{"recheck", "recheck", "anchor", "enroll", "recheck"}},
+		// The HQ the anchor names now cannot serve the enrollment yet: enrolled again on the
+		// backoff, the kept one never rechecked in between.
+		{"another HQ, not answering yet", []error{nil, silent, nil}, []error{silent, nil}, []error{errMoved}, []string{"recheck", "recheck", "anchor", "enroll", "enroll", "recheck"}},
+		{"an enrollment refused otherwise, enrolling again", []error{ErrNotEnrolled}, []error{noHQ}, nil, []string{"recheck", "enroll", "enroll", "enroll"}},
 	}
 	// A new Mate — nothing kept to recheck — whose HQ does not answer tries again on the usual
 	// backoff, capped at a minute: an hour's backoff here is cut to NewMateRetryMax.
@@ -186,9 +206,9 @@ func TestKeep_RediscoversOnlyWhenHQRefusesOrStaysSilent(t *testing.T) {
 		t.Parallel()
 		want := []string{"recheck", "enroll", "enroll", "enroll"}
 		c := &calls{recheck: []error{ErrNotEnrolled}, enrollment: []error{silent}, done: make(chan struct{}), want: len(want)}
-		go Keep(t.Context(), c.enroll, c.rechecked, KeepOptions{
+		go Keep(t.Context(), c.enroll, c.rechecked, c.anchor, KeepOptions{
 			Retry: time.Hour, RetryMax: time.Hour, NewMateRetryMax: 5 * time.Millisecond,
-			Recheck: time.Hour, Rediscover: time.Hour,
+			Recheck: time.Hour,
 		})
 		select {
 		case <-c.done:
@@ -204,10 +224,10 @@ func TestKeep_RediscoversOnlyWhenHQRefusesOrStaysSilent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			c := &calls{recheck: tt.recheck, enrollment: tt.enrollment, done: make(chan struct{}), want: len(tt.want)}
-			go Keep(t.Context(), c.enroll, c.rechecked, KeepOptions{
+			c := &calls{recheck: tt.recheck, enrollment: tt.enrollment, moved: tt.moved, done: make(chan struct{}), want: len(tt.want)}
+			go Keep(t.Context(), c.enroll, c.rechecked, c.anchor, KeepOptions{
 				Retry: 20 * time.Millisecond, RetryMax: 20 * time.Millisecond,
-				Recheck: 5 * time.Millisecond, Rediscover: tt.rediscover,
+				Recheck: 5 * time.Millisecond,
 			})
 			select {
 			case <-c.done:
@@ -284,6 +304,47 @@ func TestRecheck_AsksTheKeptHQAloneNeverTheMemberList(t *testing.T) {
 	}
 }
 
+// TestMoved_IsTheMemberListNamingAnotherHQ: what moves a Mate whose kept HQ
+// does not answer is the org's member list naming another official HQ, never
+// how long the kept one has been silent. No official HQ, or an unclear one,
+// moves it nowhere: there is nothing to enroll with.
+func TestMoved_IsTheMemberListNamingAnotherHQ(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		enroll  bool
+		arrange func(r *rig)
+		want    bool
+		wantErr func(error) bool
+	}{
+		{"the anchor names the kept HQ", true, func(*rig) {}, false, nil},
+		{"the anchor names another HQ", true, func(r *rig) {
+			r.zerops.members[1].FullName = anchorPrefix + "hq2:https://elsewhere.example"
+		}, true, nil},
+		{"no anchor", true, func(r *rig) { r.zerops.members = r.zerops.members[:1] }, false, nil},
+		{"the member list unreadable", true, func(r *rig) { r.enroller.OrgID = "org-unknown" }, false,
+			func(err error) bool { return err != nil }},
+		{"nothing kept", false, func(*rig) {}, false, func(err error) bool { return errors.Is(err, ErrNotEnrolled) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			if tt.enroll {
+				mustEnroll(t, r)
+			}
+			tt.arrange(r)
+			got, err := r.enroller.Moved(context.Background())
+			if tt.wantErr == nil && err != nil || tt.wantErr != nil && !tt.wantErr(err) {
+				t.Fatalf("Moved error = %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Moved = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // One Mate per project: HQ refusing this container because another zcp
 // service of its project is the Mate ends Keep from any attempt — a kept
 // Mate's recheck, its enrollment anew, a new Mate's enrollment once its HQ
@@ -318,11 +379,11 @@ func TestKeep_NotThisProjectsMate_SaysSoOnceAndStops(t *testing.T) {
 			ended := make(chan struct{})
 			go func() {
 				defer close(ended)
-				Keep(t.Context(), attempt("enroll", tt.enroll), attempt("recheck", tt.recheck), KeepOptions{
+				Keep(t.Context(), attempt("enroll", tt.enroll), attempt("recheck", tt.recheck), stays, KeepOptions{
 					Retry: time.Millisecond, RetryMax: time.Millisecond, NewMateRetryMax: time.Millisecond,
-					Recheck: time.Millisecond, Rediscover: time.Hour,
-					Log:    func(line string) { said = append(said, line) },
-					Record: func(err error) { recorded = append(recorded, err) },
+					Recheck: time.Millisecond,
+					Log:     func(line string) { said = append(said, line) },
+					Record:  func(err error) { recorded = append(recorded, err) },
 				})
 			}()
 			select {

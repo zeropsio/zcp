@@ -81,6 +81,19 @@ type launchState struct {
 	// (D-7) uses THIS, never the platform's returned DTO. Non-secret
 	// (dashboard-visible name only, never the token value).
 	MintedTokenName string `json:"mintedTokenName,omitempty"`
+	// Owner is the zcp process whose call wrote a `launching` state before
+	// the production project was recorded: while it runs the launch is held,
+	// once it is gone the next call reads the launch's handle (the project by
+	// its name) before mutating. Absent from a state no such call wrote.
+	Owner *launchOwner `json:"owner,omitempty"`
+}
+
+// launchOwner names a process the way the work sessions do: its PID and its
+// start time, which tells the process from a later one under the same PID
+// ("" where the platform cannot read it, which trusts the bare PID).
+type launchOwner struct {
+	PID   int    `json:"pid"`
+	Start string `json:"start"`
 }
 
 // launchRuntimeProd is one promoted runtime's production-side identity +

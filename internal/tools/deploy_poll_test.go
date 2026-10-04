@@ -1,9 +1,11 @@
 package tools
 
 import (
+	"context"
 	"testing"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -233,5 +235,45 @@ func TestResolveDeployTargetTopology_EmptyArgs(t *testing.T) {
 	gotMode, gotClass = resolveDeployTargetTopology(t.TempDir(), "", "nodejs@22")
 	if gotMode != "" || gotClass != "" {
 		t.Errorf("empty target: got (%q, %q), want (\"\", \"\")", gotMode, gotClass)
+	}
+}
+
+// TestPollDeployBuild_NamesTheBuildItFollowed: a deploy result names the
+// build's appVersion whatever the poll ends with — failed, or given up on
+// while the build runs — so the client follows that build, not whatever
+// else runs on the service.
+func TestPollDeployBuild_NamesTheBuildItFollowed(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		status       string
+		giveUp       bool
+		wantStatus   string
+		wantTimedOut bool
+	}{
+		{"the build failed", "BUILD_FAILED", false, "BUILD_FAILED", false},
+		{"the poll gave up while it builds", "BUILDING", true, "BUILD_TRIGGERED", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := platform.NewMock().WithAppVersionEvents([]platform.AppVersionEvent{{
+				ID: "av-ours", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: tt.status, Sequence: 1,
+			}})
+			ctx := t.Context()
+			if tt.giveUp {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, 50*time.Millisecond)
+				defer cancel()
+			}
+			result := &ops.DeployResult{Status: "BUILD_TRIGGERED", TargetService: "app", TargetServiceID: "svc-1"}
+			pollDeployBuild(ctx, client, "proj-1", result, nil, nil, nil, "")
+			if result.AppVersionID != "av-ours" {
+				t.Errorf("AppVersionID = %q, want av-ours", result.AppVersionID)
+			}
+			if result.Status != tt.wantStatus || result.TimedOut != tt.wantTimedOut {
+				t.Errorf("status = %s timedOut = %v, want %s %v", result.Status, result.TimedOut, tt.wantStatus, tt.wantTimedOut)
+			}
+		})
 	}
 }

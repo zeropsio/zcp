@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -1310,61 +1309,6 @@ func TestExecuteLaunchMutation_DelegatedRetry_UsesStagedToken_ZeroDelegationCall
 	}
 	if got := sourceClient.CallCounts["ListOwnTokenDelegations"] - listBefore; got != 0 {
 		t.Errorf("retry must resolve the staged token — list call delta: got %d want 0", got)
-	}
-}
-
-// TestExecuteLaunchMutation_DelegatedRetry_StaleLaunching_UsesStagedToken
-// pins the stale-`launching` equivalent: a genuinely-stuck Launching
-// state (past launchMutationStaleAfter) with the token already staged
-// also resolves via the staged value on retry.
-func TestExecuteLaunchMutation_DelegatedRetry_StaleLaunching_UsesStagedToken(t *testing.T) {
-	stateDir := withTempState(t)
-	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
-	sourceClient := pLP3MockClient()
-
-	svc, err := ops.LookupService(context.Background(), sourceClient, "source-project-id", "app")
-	if err != nil {
-		t.Fatalf("lookup app service: %v", err)
-	}
-	if _, err := ops.EnvSetService(context.Background(), sourceClient, svc.ID, ops.LaunchTokenEnvKey, sentinelMintedToken, true); err != nil {
-		t.Fatalf("pre-stage token: %v", err)
-	}
-
-	launchID := generateLaunchID("source-project-id", "myapp-prod")
-	seed := &launchState{
-		LaunchID:              launchID,
-		SourceProjectID:       "source-project-id",
-		TargetProjectName:     "myapp-prod",
-		TargetServiceHostname: "app",
-		Status:                topology.LaunchStatusLaunching,
-		TokenAcquisition:      "delegated",
-		MintedTokenName:       "zcp-launch-myapp-prod",
-	}
-	if err := writeLaunchState(stateDir, seed); err != nil {
-		t.Fatalf("seed state: %v", err)
-	}
-	seed.LastUpdate = time.Now().Add(-2 * launchMutationStaleAfter)
-	if err := writeRawLaunchStateForTest(t, stateDir, seed); err != nil {
-		t.Fatalf("rewrite stale state: %v", err)
-	}
-
-	mockAdmin := happyMockAdmin()
-	defer installMockAdminFactory(t, mockAdmin)()
-
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
-		delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
-	if err != nil {
-		t.Fatalf("handleLaunchProduction: %v", err)
-	}
-	resp := decodeLaunchResp(t, []byte(extractText(result)))
-	if resp.Status != topology.LaunchStatusLaunched {
-		t.Fatalf("status: got %q want launched\n%s", resp.Status, extractText(result))
-	}
-	if got := sourceClient.CallCounts["MintDelegatedLaunchToken"]; got != 0 {
-		t.Errorf("stale-launching retry must resolve the staged token — mint calls: got %d want 0", got)
-	}
-	if got := sourceClient.CallCounts["ListOwnTokenDelegations"]; got != 0 {
-		t.Errorf("stale-launching retry must resolve the staged token — list calls: got %d want 0", got)
 	}
 }
 

@@ -108,7 +108,7 @@ func ListSessions(stateDir string) ([]SessionEntry, error) {
 // ClassifySessions splits sessions into alive (PID running) and dead (PID not running).
 func ClassifySessions(sessions []SessionEntry) (alive, dead []SessionEntry) {
 	for _, s := range sessions {
-		if isProcessAlive(s.PID, s.StartTime) {
+		if IsProcessAlive(s.PID, s.StartTime) {
 			alive = append(alive, s)
 		} else {
 			dead = append(dead, s)
@@ -308,7 +308,7 @@ func pruneDeadSessions(sessions []SessionEntry) []SessionEntry {
 	cutoff := time.Now().Add(-24 * time.Hour)
 	alive := sessions[:0]
 	for _, s := range sessions {
-		if !isProcessAlive(s.PID, s.StartTime) {
+		if !IsProcessAlive(s.PID, s.StartTime) {
 			continue
 		}
 		if t, err := time.Parse(time.RFC3339, s.CreatedAt); err == nil && t.Before(cutoff) {
