@@ -31,20 +31,7 @@ type standupStatus struct {
 	path string
 	mu   sync.Mutex
 	now  func() time.Time
-	// carryWait is how long a stand-up whose stages wait for the second
-	// call stays running without it (0 is standupStageWait).
-	carryWait time.Duration
-	// carryMu guards carry, the stop of the wait that keeps a stand-up
-	// running between its calls.
-	carryMu sync.Mutex
-	carry   func()
 }
-
-// standupStageWait bounds how long a stand-up whose stages are queued stays
-// running without the call that builds them. The model is told to make that
-// call in the same turn, once it has started the dev servers: minutes. One
-// that never comes ends the stand-up as the development it stood up.
-const standupStageWait = 15 * time.Minute
 
 func newStandupStatus(path string) *standupStatus {
 	if path == "" {
@@ -74,7 +61,6 @@ func (s *standupStatus) begin() {
 	if s == nil {
 		return
 	}
-	s.stopCarry()
 	self := mate.StandupProcess{PID: os.Getpid(), Start: workflow.CurrentProcessStartTime()}
 	at := s.stamp()
 	s.update(func(st *mate.StandupStatus) {
@@ -131,55 +117,13 @@ func (s *standupStatus) step(host, step, state, processID, errLine string) {
 
 // awaitStages closes a call that stood development up with the stages
 // queued for the next: the stand-up is not over, so its section stays
-// running, in the stage phase, until the call that builds the stages begins
-// (begin stops the wait) or carryWait passes, when it ends as the
-// development it stood up.
+// running, in the stage phase, until the call that builds the stages begins.
+// zcp cannot see the agent's turn end; the mate server can, and a turn that
+// ends without that call is the server's to read as the stages not built.
 func (s *standupStatus) awaitStages() {
-	if s == nil {
-		return
-	}
 	s.update(func(st *mate.StandupStatus) {
 		st.State, st.Phase, st.EndedAt, st.Error = mate.StandupRunning, mate.PhaseStage, "", ""
 	})
-	wait := s.carryWait
-	if wait <= 0 {
-		wait = standupStageWait
-	}
-	quit, done := make(chan struct{}), make(chan struct{})
-	go func() {
-		defer close(done)
-		select {
-		case <-quit:
-		case <-time.After(wait):
-			at := s.stamp()
-			s.update(func(st *mate.StandupStatus) {
-				if st.State == mate.StandupRunning && st.Phase == mate.PhaseStage {
-					st.State, st.Phase, st.EndedAt = mate.StandupDone, mate.PhaseDevelopment, at
-				}
-			})
-		}
-	}()
-	s.carryMu.Lock()
-	s.carry = func() {
-		close(quit)
-		<-done
-	}
-	s.carryMu.Unlock()
-}
-
-// stopCarry stops the wait that keeps a stand-up running between its calls,
-// and waits for it; nothing when none runs.
-func (s *standupStatus) stopCarry() {
-	if s == nil {
-		return
-	}
-	s.carryMu.Lock()
-	stop := s.carry
-	s.carry = nil
-	s.carryMu.Unlock()
-	if stop != nil {
-		stop()
-	}
 }
 
 // end closes the call: failed with errLine when the call refused, else done

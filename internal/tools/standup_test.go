@@ -1328,34 +1328,6 @@ func TestStandup_TheRecordNeverSaysDoneBetweenItsCalls(t *testing.T) {
 	}
 }
 
-// TestStandup_ACarriedStandUpEndsWhenNoStageCallComes: a first call whose
-// stages wait for a second keeps the stand-up running until that call
-// begins; one that never comes ends it after the wait as the development it
-// stood up.
-func TestStandup_ACarriedStandUpEndsWhenNoStageCallComes(t *testing.T) {
-	t.Parallel()
-	f := newStandupFixture(t)
-	f.status.carryWait = 150 * time.Millisecond
-	f.run(t)
-	first, _ := f.standupSection(t)
-	if first.State != mate.StandupRunning {
-		t.Fatalf("after the first call the stand-up is %s, want running", first.State)
-	}
-	var section mate.StandupStatus
-	var rows []string
-	for end := time.Now().Add(2 * time.Second); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
-		if section, rows = f.standupSection(t); section.State != mate.StandupRunning {
-			break
-		}
-	}
-	if section.State != mate.StandupDone || section.Phase != mate.PhaseDevelopment || section.EndedAt == "" || section.Error != "" {
-		t.Errorf("with no stage call the stand-up ended %s/%s at %q (%q), want done/development", section.State, section.Phase, section.EndedAt, section.Error)
-	}
-	if want := []string{"medusadev=verify/done", "medusastage=build/pending", "nextstoredev=verify/done", "nextstorestage=build/pending"}; !slices.Equal(rows, want) {
-		t.Errorf("services = %v, want %v", rows, want)
-	}
-}
-
 // TestStandup_WaitsForTheContainersImport: the container imports a new
 // Mate's runtimes at boot (MATE_SETUP_RUNTIMES); a stand-up that starts while
 // that import runs waits for it instead of reporting the halves missing, and
