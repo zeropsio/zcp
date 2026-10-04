@@ -72,6 +72,52 @@ func TestLaunchResume_LaunchingWithoutProject_ReadsItsHandle(t *testing.T) {
 		{"no process named, nothing staged", func(*testing.T) *launchOwner { return nil },
 			false, false, nil, "delegation-unavailable", "", topology.LaunchStatusLaunching, false},
 	}
+	// The pre-mint state names no stage service: a call that ended with it on disk ended
+	// before the full state write, so before the create — it launches again, with the token
+	// a prior attempt staged, minting nothing.
+	t.Run("its process gone before the full state write", func(t *testing.T) {
+		stateDir := withTempState(t)
+		installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+		sourceClient := pLP3MockClient()
+		svc, err := ops.LookupService(context.Background(), sourceClient, "source-project-id", "app")
+		if err != nil {
+			t.Fatalf("lookup app service: %v", err)
+		}
+		if _, err := ops.EnvSetService(context.Background(), sourceClient, svc.ID, ops.LaunchTokenEnvKey, sentinelMintedToken, true); err != nil {
+			t.Fatalf("pre-stage token: %v", err)
+		}
+		launchID := generateLaunchID("source-project-id", "myapp-prod")
+		if err := writeLaunchState(stateDir, &launchState{
+			LaunchID:          launchID,
+			SourceProjectID:   "source-project-id",
+			TargetProjectName: "myapp-prod",
+			Status:            topology.LaunchStatusLaunching,
+			TokenAcquisition:  "delegated",
+			MintedTokenName:   "zcp-launch-myapp-prod",
+			Owner:             goneProcess(t),
+		}); err != nil {
+			t.Fatalf("seed state: %v", err)
+		}
+		mockAdmin := happyMockAdmin().WithProjects([]platform.Project{{ID: "unrelated-id", Name: "other"}})
+		defer setProjectAdminClientFactory(func(string, string) (platform.ProjectAdminClient, error) {
+			return keptOpen{mockAdmin}, nil
+		})()
+
+		if _, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
+			delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), ""); err != nil {
+			t.Fatalf("handleLaunchProduction: %v", err)
+		}
+		state, err := readLaunchState(stateDir, launchID)
+		if err != nil {
+			t.Fatalf("read state: %v", err)
+		}
+		if state.Status != topology.LaunchStatusLaunched || state.TargetProjectID != "new-prod-id" {
+			t.Errorf("state = %s / %q, want launched / new-prod-id", state.Status, state.TargetProjectID)
+		}
+		if got := sourceClient.CallCounts["MintDelegatedLaunchToken"]; got != 0 {
+			t.Errorf("minted %d launch tokens, want none", got)
+		}
+	})
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stateDir := withTempState(t)
