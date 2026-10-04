@@ -569,8 +569,25 @@ func launchOrphanResponse(state *launchState) *mcp.CallToolResult {
 	), WithRecoveryStatus())
 }
 
+// createRefused is whether CreateAndImportProject's error is an answer that
+// nothing was created: Zerops refusing what it carried (a 4xx, the rate
+// limit among them), or a failure before any request went out (not a
+// PlatformError). The network, a timeout, a cancelled call or Zerops' own
+// 5xx leave it unknown.
+func createRefused(err error) bool {
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		return true
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	return pe.Code == platform.ErrAPIRateLimited || !platform.IsTransient(err)
+}
+
 // readEndedLaunch reads the handle of a launch whose call ended between
-// writing `launching` and recording what CreateAndImportProject did: the
+// writing `launching` and recording what CreateAndImportProject did, or
+// whose create Zerops did not answer (createRefused): the
 // production project, by its name, with the staged launch token. nil when
 // nothing can have been created — no token staged (staging precedes the
 // create) or no project of that name — so the launch runs again. One project
@@ -991,6 +1008,30 @@ func executeLaunchMutation(
 
 	// Mutation: CreateAndImportProject. This is the irreversible step.
 	result, err := admin.CreateAndImportProject(ctx, launchBundle.ImportYAML)
+	if err != nil && !createRefused(err) {
+		// Unanswered: the project may exist. The launch stays `launching`, and
+		// the next call reads its handle (readEndedLaunch) before creating
+		// anything.
+		state.LastError = "Zerops did not answer whether it created the production project: " + formatPlatformErrorForAudit(err)
+		_ = writeLaunchState(stateDir, state)
+		_ = appendAuditLog(stateDir, launchAuditEntry{
+			LaunchID:          launchID,
+			Action:            "create-and-import",
+			SourceProjectID:   sourceProjectID,
+			TargetProjectName: input.ProductionProjectName,
+			SourceCommitSHA:   launchBundle.SourceSnapshot.GitCommitSHA,
+			SourceYAMLSHA256:  launchBundle.SourceSnapshot.ZeropsYAMLSHA256,
+			Classifications:   classifications,
+			HAOptOut:          input.KeepNonHA,
+			Result:            "unknown",
+			ErrorMessage:      state.LastError,
+		})
+		return convertError(platform.NewPlatformError(
+			platform.ErrAPIError,
+			fmt.Sprintf("Zerops did not answer whether it created the production project %q: %s", input.ProductionProjectName, formatPlatformErrorForAudit(err)),
+			"Re-call the same publish: it first looks the project up by its name, records it if Zerops made it, and launches again only if it did not.",
+		), WithRecoveryStatus()), nil, nil
+	}
 	if err != nil {
 		state.Status = topology.LaunchStatusFailed
 		state.LastError = formatPlatformErrorForAudit(err)

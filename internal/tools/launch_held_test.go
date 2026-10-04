@@ -219,3 +219,79 @@ func TestExecuteLaunchMutation_RecordsTheProjectBeforeAnythingElse(t *testing.T)
 		after.release()
 	}
 }
+
+// TestExecuteLaunchMutation_UnansweredCreate_ReadsItsHandleNext: a create
+// Zerops did not answer — the network, a timeout, its own 5xx — may have made
+// the project. The launch stays `launching` and says so, and the next call
+// reads its handle before creating anything; a create Zerops refused (4xx)
+// made nothing and fails as before.
+func TestExecuteLaunchMutation_UnansweredCreate_ReadsItsHandleNext(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus topology.LaunchProductionStatus
+		wantText   string
+	}{
+		{"the network failed", platform.NewPlatformError(platform.ErrNetworkError, "connection reset", ""),
+			topology.LaunchStatusLaunching, "did not answer"},
+		{"the call timed out", platform.NewPlatformError(platform.ErrAPITimeout, "API request timed out", ""),
+			topology.LaunchStatusLaunching, "did not answer"},
+		{"Zerops refused it", &platform.PlatformError{Code: platform.ErrInvalidParameter, Message: "projectNameInvalid", APICode: "projectNameInvalid"},
+			topology.LaunchStatusFailed, "CreateAndImportProject failed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stateDir := withTempState(t)
+			installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+			sourceClient := pLP3MockClient()
+			launchID := generateLaunchID("source-project-id", "myapp-prod")
+			failing := platform.NewMockProjectAdminClient().WithImportError(tt.err)
+			restore := setProjectAdminClientFactory(func(string, string) (platform.ProjectAdminClient, error) {
+				return keptOpen{failing}, nil
+			})
+			input := delegatedPublishInput()
+			input.ConfirmLaunch = false
+			input.LaunchKey = sentinelMintedToken
+
+			result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
+				input, stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
+			restore()
+			if err != nil {
+				t.Fatalf("handleLaunchProduction: %v", err)
+			}
+			if text := extractText(result); !strings.Contains(text, tt.wantText) {
+				t.Errorf("response lacks %q:\n%s", tt.wantText, text)
+			}
+			state, err := readLaunchState(stateDir, launchID)
+			if err != nil {
+				t.Fatalf("read state: %v", err)
+			}
+			if state.Status != tt.wantStatus || state.TargetProjectID != "" {
+				t.Fatalf("state = %s / %q, want %s with no project", state.Status, state.TargetProjectID, tt.wantStatus)
+			}
+			if tt.wantStatus != topology.LaunchStatusLaunching {
+				return
+			}
+
+			// The next call: Zerops had made the project after all.
+			found := happyMockAdmin().WithProjects([]platform.Project{{ID: "made-id", Name: "myapp-prod"}})
+			defer setProjectAdminClientFactory(func(string, string) (platform.ProjectAdminClient, error) {
+				return keptOpen{found}, nil
+			})()
+			if _, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,
+				input, stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), ""); err != nil {
+				t.Fatalf("next handleLaunchProduction: %v", err)
+			}
+			if found.CapturedImportYAML != "" {
+				t.Error("the next call created the production project again")
+			}
+			state, err = readLaunchState(stateDir, launchID)
+			if err != nil {
+				t.Fatalf("read state: %v", err)
+			}
+			if state.Status != topology.LaunchStatusFailed || state.TargetProjectID != "made-id" {
+				t.Errorf("state = %s / %q, want failed / made-id", state.Status, state.TargetProjectID)
+			}
+		})
+	}
+}
