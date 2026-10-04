@@ -160,3 +160,73 @@ func TestSeedSignIns_StoreCreatedDuringHQReadIsPreserved(t *testing.T) {
 		t.Fatalf("store changed: %s, %v", raw, err)
 	}
 }
+
+// TestSeedSignInsForEnrollment_EmptyAnswerReadsAgainOnTheNextStart pins that HQ
+// answering without signers is not final: a later start reads HQ once more,
+// while the same start does not read it again.
+func TestSeedSignInsForEnrollment_EmptyAnswerReadsAgainOnTheNextStart(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name      string
+		mark      string
+		signers   map[string]string
+		wantCalls int
+		wantStore bool
+		wantState string
+	}{
+		{
+			name:      "an earlier start's empty answer: HQ now has signers",
+			mark:      `{"state":"empty","input":"in","start":"earlier","at":"2026-10-04T09:00:00Z"}`,
+			signers:   map[string]string{"codex": "u-bo"},
+			wantCalls: 1,
+			wantStore: true,
+			wantState: "seeded",
+		},
+		{
+			name:      "a marker from before starts were recorded: read once",
+			mark:      `{"state":"empty","input":"in","at":"2026-10-04T09:00:00Z"}`,
+			signers:   map[string]string{"claude-code": "u-ada"},
+			wantCalls: 1,
+			wantStore: true,
+			wantState: "seeded",
+		},
+		{
+			name:      "an earlier start's empty answer: HQ still has none",
+			mark:      `{"state":"empty","input":"in","start":"earlier","at":"2026-10-04T09:00:00Z"}`,
+			wantCalls: 1,
+			wantState: "empty",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			store, mark := filepath.Join(dir, "signed-in.json"), filepath.Join(dir, "seed")
+			writeFile(t, mark, tt.mark)
+			calls := 0
+			read := func() (map[string]string, error) { calls++; return tt.signers, nil }
+
+			wrote, err := mate.SeedSignInsForEnrollment(store, mark, "in", read, now)
+			if err != nil || wrote != tt.wantStore {
+				t.Fatalf("seed = %v, %v; want wrote %v", wrote, err, tt.wantStore)
+			}
+			kept, err := mate.ReadSignInsSeedStatus(mark)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kept.State != tt.wantState || kept.Start == "" || kept.Start == "earlier" {
+				t.Errorf("marker = %+v, want state %q stamped with this start", kept, tt.wantState)
+			}
+			if _, err := mate.SeedSignInsForEnrollment(store, mark, "in", read, now); err != nil {
+				t.Fatalf("the same start again: %v", err)
+			}
+			if calls != tt.wantCalls {
+				t.Errorf("HQ reads = %d, want %d", calls, tt.wantCalls)
+			}
+			if _, err := os.Stat(store); (err == nil) != tt.wantStore {
+				t.Errorf("store written = %v, want %v", err == nil, tt.wantStore)
+			}
+		})
+	}
+}

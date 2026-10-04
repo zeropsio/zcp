@@ -8,13 +8,15 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 // The Mate server keeps each login's signer in ~/.mate/signed-in.json.
-// zcp seeds an absent store once after enrollment with HQ.
+// zcp seeds an absent store after enrollment with HQ: once when HQ names
+// signers, again on a later start while HQ named none.
 
 // SignIn is one login's sign-in as the server's store keeps it: who, and
 // when (epoch ms).
@@ -46,12 +48,19 @@ func SignInsSeededPath() string {
 
 // SignInsSeedStatus is one completed seed input. Input is an opaque fingerprint
 // of the enrollment, never its credential. A failed input is not tried again.
+// Start names the process start that recorded it; an "empty" answer is final
+// for that start only.
 type SignInsSeedStatus struct {
 	State string    `json:"state"`
 	Input string    `json:"input,omitempty"`
+	Start string    `json:"start,omitempty"`
 	At    time.Time `json:"at"`
 	Error string    `json:"error,omitempty"`
 }
+
+// thisStart identifies this process's start, so an "empty" seed is read again
+// by the next start and never twice by the same one.
+var thisStart = strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 
 // ReadSignInsSeedStatus reads the completed attempt, including legacy markers.
 func ReadSignInsSeedStatus(path string) (SignInsSeedStatus, error) {
@@ -85,9 +94,11 @@ func SeedSignIns(storePath, markPath string, readSigners func() (map[string]stri
 // per failed enrollment input, and retains the outcome. Success remains final
 // even if the store is later removed. A changed enrollment is new input; a
 // restart or recheck of the same credential is not. Legacy failures have no
-// input and therefore permit one attempt with an enrolled credential.
+// input and therefore permit one attempt with an enrolled credential. HQ
+// answering without signers is final for this start only: the next start
+// reads HQ once more.
 func SeedSignInsForEnrollment(storePath, markPath, input string, readSigners func() (map[string]string, error), now time.Time) (bool, error) {
-	status := SignInsSeedStatus{Input: input, At: now.UTC()}
+	status := SignInsSeedStatus{Input: input, Start: thisStart, At: now.UTC()}
 	finish := func(state string, reason error) error {
 		status.State = state
 		if reason != nil {
@@ -103,11 +114,17 @@ func SeedSignInsForEnrollment(storePath, markPath, input string, readSigners fun
 	}
 	kept, err := ReadSignInsSeedStatus(markPath)
 	if err == nil {
-		if kept.State != "failed" {
+		switch kept.State {
+		case "failed":
+			if kept.Input == input {
+				return false, errors.New(kept.Error)
+			}
+		case "empty":
+			if kept.Start == thisStart {
+				return false, nil
+			}
+		default:
 			return false, nil
-		}
-		if kept.Input == input {
-			return false, errors.New(kept.Error)
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return false, err

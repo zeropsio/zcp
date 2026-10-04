@@ -188,3 +188,32 @@ func TestMateLaunchSetup_UnenrolledDoesNotSeed(t *testing.T) {
 		t.Fatalf("seed ran %d times before enrollment", calls)
 	}
 }
+
+// TestSeedSignIns_EmptyAnswerReadsHQOncePerStart pins the launch seed and the
+// keep's first seed of one start to a single HQ read while HQ names no signers.
+func TestSeedSignIns_EmptyAnswerReadsHQOncePerStart(t *testing.T) {
+	// non-parallel: HOME is process-wide.
+	t.Setenv("HOME", t.TempDir())
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_, _ = w.Write([]byte(`{"projectId":"p-mate"}`))
+	}))
+	defer srv.Close()
+	if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: srv.URL, ProjectID: "p-mate", Credential: "test-credential"}); err != nil {
+		t.Fatal(err)
+	}
+	lookup := func(string) string { return "p-mate" }
+	seedSignIns(context.Background(), lookup)
+	seedSignIns(context.Background(), lookup)
+	if calls != 1 {
+		t.Errorf("HQ calls = %d, want 1", calls)
+	}
+	if _, err := os.Stat(mate.SignInsPath()); !os.IsNotExist(err) {
+		t.Errorf("an answer without signers wrote a store: %v", err)
+	}
+	kept, err := mate.ReadSignInsSeedStatus(mate.SignInsSeededPath())
+	if err != nil || kept.State != "empty" || kept.Start == "" {
+		t.Errorf("marker = %+v, %v; want empty stamped with this start", kept, err)
+	}
+}

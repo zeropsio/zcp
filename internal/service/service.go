@@ -403,7 +403,8 @@ func SetMateSeedSignIns(fn func(context.Context, func(string) string)) { mateSee
 // seedSignIns reads the signers with one snapshot of the enrolled credential.
 // Failure is retained for that input, reported by mate status, and never fatal
 // to launch or the link. A changed enrollment permits a new attempt; removing
-// the marker and restarting the unit is the operator's manual "again".
+// the marker and restarting the unit is the operator's manual "again". HQ
+// naming no signers is read once more by the unit's next start.
 func seedSignIns(ctx context.Context, lookup func(string) string) {
 	client, err := hq.Open(&http.Client{Timeout: hqCallTimeout}, hq.EnrollmentPath())
 	if err != nil {
