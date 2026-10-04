@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/cgi" //nolint:gosec // G504: the fake serves git's own http-backend through CGI, in a test
 	"net/http/httptest"
@@ -448,6 +449,20 @@ func (f *fakeHQ) answerWith(status int, code string, n int, on func(*http.Reques
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failing, f.failStatus, f.failCode, f.failOn = n, status, code, on
+}
+
+// neverAccept makes HQ's address one whose listener never accepts: the
+// kernel completes the TCP handshake into its backlog and TLS never starts,
+// as for an HQ that drops every packet. HQ does not come back.
+func (f *fakeHQ) neverAccept() {
+	f.t.Helper()
+	address := f.srv.Listener.Addr().String()
+	f.srv.Close()
+	listener, err := (&net.ListenConfig{}).Listen(f.t.Context(), "tcp", address)
+	if err != nil {
+		f.t.Fatalf("listen again on %s: %v", address, err)
+	}
+	f.t.Cleanup(func() { _ = listener.Close() })
 }
 
 // setDown makes HQ stop answering, or answer again.

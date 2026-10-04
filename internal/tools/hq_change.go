@@ -119,11 +119,11 @@ func shipChange(
 		opened hq.OpenedChange
 		err    error
 	)
-	tries := deliveryRetry.run(ctx, func() bool {
+	tries := deliveryRetry.run(ctx, func() hqAnswer {
 		callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
 		opened, err = hqc.OpenChange(callCtx, m.HQ.Repo, title, tree)
 		cancel()
-		return hqUnavailable(err)
+		return hqCallAnswer(err)
 	})
 	if err != nil {
 		if hqUnavailable(err) {
@@ -219,13 +219,13 @@ func pushChangeBranch(ctx context.Context, sshDeployer ops.SSHDeployer, hostname
 
 // gitAgainstHQ runs command — git that reaches HQ — in hostname's checkout,
 // tried again as deliveryRetry paces it while its output says HQ could not
-// serve it (ops.GitRemoteUnavailable: not reached, or a 5xx). Every such
+// serve it (hqGitAnswer: not reached at once, or a 5xx). Every such
 // command is safe to run again: a commit already made is not made twice, and
 // a fetch, a merge already taken in or a push already sent changes nothing.
 func gitAgainstHQ(ctx context.Context, sshDeployer ops.SSHDeployer, hostname, command string) (output []byte, tries int, err error) {
-	tries = deliveryRetry.run(ctx, func() bool {
+	tries = deliveryRetry.run(ctx, func() hqAnswer {
 		output, err = sshDeployer.ExecSSH(ctx, hostname, command)
-		return err != nil && ops.GitRemoteUnavailable(string(output))
+		return hqGitAnswer(err, output)
 	})
 	return output, tries, err
 }

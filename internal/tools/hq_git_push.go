@@ -41,9 +41,9 @@ func handleHQGitPush(
 			"Deploy the pair directly (strategy \"ssh\") to run the code; the push goes to its change once HQ gives the pair its repository.",
 		), WithRecoveryStatus())
 	}
-	// The push paces its own tries (deliveryRetry), so no call waits HQ out
-	// beneath them.
-	hqc = hqc.Once()
+	// The push paces and bounds its own tries (deliveryRetry), so no call
+	// waits HQ out beneath them.
+	hqc = deliveryClient(hqc)
 	failed := func(pe *platform.PlatformError) *mcp.CallToolResult {
 		logDeliveryFailure(hostname, pe.Message)
 		return convertError(pe, WithRecoveryStatus())

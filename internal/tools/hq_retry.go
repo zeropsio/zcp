@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/ops"
 )
 
 // A delivery fails fast (spec-mate §10.10; the owner, 2026-10-04: HQ should
@@ -18,9 +19,25 @@ import (
 // only masks it). Each step of a delivery HQ serves — taking `main` in,
 // opening the change, taking its branch in, pushing it — is tried at most
 // three times, a short wait apart, and only while HQ could not serve it: not
-// reached at all, or a 5xx. A refusal fails at once. Nothing tries again once
+// reached at once, or a 5xx. A refusal fails at once, and so does a try HQ
+// left unanswered past its bound (deliveryBounds, ops.HQGitBound): an HQ that
+// drops packets costs a step one bound, never three. Nothing tries again once
 // the call has returned: the work stays committed in the pair's checkout, and
 // the next delivery sends it.
+
+// hqAnswer is what one try of a delivery step met.
+type hqAnswer int
+
+const (
+	// hqAnswered: HQ served the try, or refused it — final either way.
+	hqAnswered hqAnswer = iota
+	// hqNotServing: HQ was not reached at once, or answered a 5xx; tried
+	// again.
+	hqNotServing
+	// hqSilent: HQ left the try unanswered past its bound; final, since
+	// another try would only spend the bound again.
+	hqSilent
+)
 
 // hqRetry paces the tries of one delivery step against HQ: one try more than
 // it has waits.
@@ -33,13 +50,25 @@ type hqRetry struct {
 // 3 s apart. A var so tests do not wait it out.
 var deliveryRetry = hqRetry{waits: []time.Duration{time.Second, 3 * time.Second}, pause: waitFor}
 
-// run calls try until it answers that HQ served it — or refused it — or the
-// tries are spent, or ctx ends during a wait. try answers whether HQ could
-// not serve it. tries is how many ran.
-func (r hqRetry) run(ctx context.Context, try func() (unavailable bool)) (tries int) {
+// deliveryBounds bound each try of a delivery's API call to HQ: connected
+// within connect, TLS included, and answered within answer
+// (hq.Client.Bounded). git against HQ is bounded by ops.HQGitBound. A var so
+// tests narrow it.
+var deliveryBounds = struct{ connect, answer time.Duration }{5 * time.Second, 10 * time.Second}
+
+// deliveryClient is hqc as a delivery calls HQ: each call sent once, so no
+// 503 wait stacks beneath the tries, and bounded by deliveryBounds.
+func deliveryClient(hqc hq.Client) hq.Client {
+	return hqc.Once().Bounded(deliveryBounds.connect, deliveryBounds.answer)
+}
+
+// run calls try until HQ answers it — served or refused — or leaves it
+// unanswered past its bound, or the tries are spent, or ctx ends during a
+// wait. tries is how many ran.
+func (r hqRetry) run(ctx context.Context, try func() hqAnswer) (tries int) {
 	for {
 		tries++
-		if !try() || tries > len(r.waits) {
+		if try() != hqNotServing || tries > len(r.waits) {
 			return tries
 		}
 		if r.pause(ctx, r.waits[tries-1]) != nil {
@@ -68,22 +97,55 @@ func hqUnavailable(err error) bool {
 	return hq.IsUnavailable(err) || errors.As(err, &refused) && refused.Status >= http.StatusInternalServerError
 }
 
+// hqCallAnswer is what a try of an API call to HQ met, err its outcome.
+func hqCallAnswer(err error) hqAnswer {
+	var noAnswer *hq.NoAnswerError
+	switch {
+	case errors.As(err, &noAnswer):
+		return hqSilent
+	case hqUnavailable(err):
+		return hqNotServing
+	}
+	return hqAnswered
+}
+
+// hqGitAnswer is what a try of a git command against HQ met, err and output
+// its outcome.
+func hqGitAnswer(err error, output []byte) hqAnswer {
+	if err == nil {
+		return hqAnswered
+	}
+	if _, silent := ops.HQGitNoAnswer(string(output)); silent {
+		return hqSilent
+	}
+	if ops.GitRemoteUnavailable(string(output)) {
+		return hqNotServing
+	}
+	return hqAnswered
+}
+
 // hqNotAnsweringLine says which step HQ at address could not serve, after how
 // many tries, and the last answer (hqNotServingWords, gitNotServingWords).
 func hqNotAnsweringLine(address, step string, tries int, last string) string {
+	if tries == 1 {
+		return fmt.Sprintf("HQ at %s is not answering: %s failed after 1 try (the last: %s)", address, step, last)
+	}
 	return fmt.Sprintf("HQ at %s is not answering: %s failed after %d tries (the last: %s)", address, step, tries, last)
 }
 
 // hqNotServingWords is the last answer of an API call HQ could not serve, in
 // words that never read as a refusal: a 5xx is "HQ answered 502 (not
-// serving)" — the client calls a 5xx other than 503 a RefusedError — and no
-// answer at all says what stopped it.
+// serving)" — the client calls a 5xx other than 503 a RefusedError — a bound
+// that ended the try names itself, and no answer at all says what stopped it.
 func hqNotServingWords(err error) string {
 	var (
 		refused     *hq.RefusedError
+		noAnswer    *hq.NoAnswerError
 		unavailable *hq.UnavailableError
 	)
 	switch {
+	case errors.As(err, &noAnswer):
+		return noAnswer.Words()
 	case errors.As(err, &refused) && refused.Status >= http.StatusInternalServerError:
 		return notServing(refused.Status)
 	case errors.As(err, &unavailable) && unavailable.Err == nil:
@@ -97,9 +159,13 @@ func hqNotServingWords(err error) string {
 // gitStatus5xx is the 5xx git reports a remote answered.
 var gitStatus5xx = regexp.MustCompile(`returned error: (5\d\d)`)
 
-// gitNotServingWords is hqNotServingWords for a git command against HQ: a 5xx
-// git reports is HQ not serving, and anything else is git's own words.
+// gitNotServingWords is hqNotServingWords for a git command against HQ: the
+// bound that ended it names itself, a 5xx git reports is HQ not serving, and
+// anything else is git's own words.
 func gitNotServingWords(err error, output []byte) string {
+	if words, silent := ops.HQGitNoAnswer(string(output)); silent {
+		return words
+	}
 	if m := gitStatus5xx.FindSubmatch(output); m != nil {
 		status, _ := strconv.Atoi(string(m[1]))
 		return notServing(status)

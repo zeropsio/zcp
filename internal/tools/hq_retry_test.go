@@ -13,26 +13,36 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/ops"
 )
 
 // TestDeliveryRetry_TriesOnlyWhileHQCannotServe: three tries at most, one
 // wait between each two, and none after a try HQ answered — served or
-// refused; a context that ends during a wait ends the tries there.
+// refused — or after one HQ left unanswered past its bound, which a wait
+// would only spend again; a context that ends during a wait ends the tries
+// there.
 func TestDeliveryRetry_TriesOnlyWhileHQCannotServe(t *testing.T) {
 	t.Parallel()
+	const (
+		answered   = hqAnswered
+		notServing = hqNotServing
+		silent     = hqSilent
+	)
 	tests := []struct {
-		name        string
-		unavailable []bool // what each try answers; past the end, false
-		cancelled   bool   // the context ends at the first wait
-		wantTries   int
-		wantWaits   []time.Duration
+		name      string
+		answers   []hqAnswer // what each try meets; past the end, answered
+		cancelled bool       // the context ends at the first wait
+		wantTries int
+		wantWaits []time.Duration
 	}{
-		{"HQ away throughout", []bool{true, true, true, true}, false, 3, []time.Duration{time.Second, 3 * time.Second}},
+		{"HQ not serving throughout", []hqAnswer{notServing, notServing, notServing, notServing}, false, 3, []time.Duration{time.Second, 3 * time.Second}},
 		{"served at once", nil, false, 1, nil},
-		{"refused at once", []bool{false}, false, 1, nil},
-		{"served on the second try", []bool{true, false}, false, 2, []time.Duration{time.Second}},
-		{"served on the third try", []bool{true, true, false}, false, 3, []time.Duration{time.Second, 3 * time.Second}},
-		{"the call is cancelled while it waits", []bool{true, true, true}, true, 1, []time.Duration{time.Second}},
+		{"refused at once", []hqAnswer{answered}, false, 1, nil},
+		{"served on the second try", []hqAnswer{notServing, answered}, false, 2, []time.Duration{time.Second}},
+		{"served on the third try", []hqAnswer{notServing, notServing, answered}, false, 3, []time.Duration{time.Second, 3 * time.Second}},
+		{"silent past its bound at once", []hqAnswer{silent, notServing}, false, 1, nil},
+		{"silent on the second try", []hqAnswer{notServing, silent, notServing}, false, 2, []time.Duration{time.Second}},
+		{"the call is cancelled while it waits", []hqAnswer{notServing, notServing, notServing}, true, 1, []time.Duration{time.Second}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -49,9 +59,12 @@ func TestDeliveryRetry_TriesOnlyWhileHQCannotServe(t *testing.T) {
 				},
 			}
 			tried := 0
-			tries := retry.run(t.Context(), func() bool {
+			tries := retry.run(t.Context(), func() hqAnswer {
 				tried++
-				return tried <= len(tt.unavailable) && tt.unavailable[tried-1]
+				if tried > len(tt.answers) {
+					return answered
+				}
+				return tt.answers[tried-1]
 			})
 			if tries != tt.wantTries || tried != tt.wantTries {
 				t.Errorf("tries = %d (ran %d), want %d", tries, tried, tt.wantTries)
@@ -111,6 +124,9 @@ func TestHQNotServingWords(t *testing.T) {
 		{"not reached", &hq.UnavailableError{Err: errors.New("hq /api/mate/changes: dial tcp: connection refused")}, "", "no answer (hq /api/mate/changes: dial tcp: connection refused)"},
 		{"git meets a 502", gitFailed, "fatal: unable to access 'https://hq.example/git/a/appdev.git/': The requested URL returned error: 502\n", "HQ answered 502 (not serving)"},
 		{"git meets a 503", gitFailed, "error: RPC failed; HTTP 503 curl 22 The requested URL returned error: 503\n", "HQ answered 503 (not serving)"},
+		{"no connection within the bound", &hq.UnavailableError{Err: &hq.NoAnswerError{Path: "/api/mate/changes", Within: 5 * time.Second}}, "", "no connection within 5s"},
+		{"no answer within the bound", &hq.UnavailableError{Err: &hq.NoAnswerError{Path: "/api/mate/changes", Connected: true, Within: 10 * time.Second}}, "", "no answer within 10s"},
+		{"git ended by its bound", gitFailed, "ZCP_HQ_NO_ANSWER: no answer within 15s\n", "no answer within 15s"},
 		{"git reaches nothing", gitFailed, "fatal: unable to access 'https://hq.example/git/a/appdev.git/': Could not resolve host: hq.example\n", "fatal: unable to access 'https://hq.example/git/a/appdev.git/': Could not resolve host: hq.example"},
 	}
 	for _, tt := range tests {
@@ -127,5 +143,66 @@ func TestHQNotServingWords(t *testing.T) {
 				t.Errorf("an HQ that does not serve never reads as refusing: %q", got)
 			}
 		})
+	}
+}
+
+// TestHQAnswerOf: a try of a delivery step met HQ answering — served, or
+// refused, both final — HQ not serving it, which is tried again, or HQ silent
+// past the try's bound, which ends the step.
+func TestHQAnswerOf(t *testing.T) {
+	t.Parallel()
+	gitFailed := errors.New("exit status 128")
+	tests := []struct {
+		name   string
+		err    error
+		output string // git's, when the try ran git
+		git    bool
+		want   hqAnswer
+	}{
+		{"an API call served", nil, "", false, hqAnswered},
+		{"an API call refused", &hq.RefusedError{Status: 403, Code: "forbidden"}, "", false, hqAnswered},
+		{"an API call meets a 502", &hq.RefusedError{Status: 502}, "", false, hqNotServing},
+		{"an API call meets a standby", &hq.UnavailableError{Code: "not_active"}, "", false, hqNotServing},
+		{"an API call reaches nothing", &hq.UnavailableError{Err: errors.New("connection refused")}, "", false, hqNotServing},
+		{"an API call silent past its bound", &hq.UnavailableError{Err: &hq.NoAnswerError{Within: 5 * time.Second}}, "", false, hqSilent},
+		{"git served", nil, "", true, hqAnswered},
+		{"git refused", gitFailed, "fatal: unable to access 'https://hq/x.git/': The requested URL returned error: 403", true, hqAnswered},
+		{"git meets a 502", gitFailed, "fatal: unable to access 'https://hq/x.git/': The requested URL returned error: 502", true, hqNotServing},
+		{"git reaches nothing", gitFailed, "fatal: unable to access 'https://hq/x.git/': Failed to connect to hq port 443", true, hqNotServing},
+		{"git silent past its bound", gitFailed, "ZCP_HQ_NO_ANSWER: no answer within 15s", true, hqSilent},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := hqCallAnswer(tt.err)
+			if tt.git {
+				got = hqGitAnswer(tt.err, []byte(tt.output))
+			}
+			if got != tt.want {
+				t.Errorf("answer = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestDeliveryBounds_AStepEndsWellUnderAMinute pins the bounds a delivery
+// step runs under: an HQ dropping every packet costs a step one bound — 5 s
+// for an API call, HQGitBound for git — and even an HQ answering 5xx at the
+// last moment of every try ends a step within a minute.
+func TestDeliveryBounds_AStepEndsWellUnderAMinute(t *testing.T) {
+	t.Parallel()
+	var waits time.Duration
+	for _, wait := range deliveryRetry.waits {
+		waits += wait
+	}
+	tries := len(deliveryRetry.waits) + 1
+	if deliveryBounds.connect > 5*time.Second || ops.HQGitBound > 15*time.Second {
+		t.Errorf("an HQ that drops every packet costs an API step %s and a git step %s, want at most 5s and 15s",
+			deliveryBounds.connect, ops.HQGitBound)
+	}
+	for name, bound := range map[string]time.Duration{"an API call": deliveryBounds.answer, "git": ops.HQGitBound} {
+		if worst := bound*time.Duration(tries) + waits; worst >= time.Minute {
+			t.Errorf("a step of %s ends within %s at worst, want under a minute", name, worst)
+		}
 	}
 }

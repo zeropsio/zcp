@@ -174,8 +174,9 @@ func deliverHQPair(
 		logDeliveryFailure(target, delivery.Line)
 	}
 	// The recipe reads the project and HQ, never the checkout, so it runs
-	// once the delivery has let go of it.
-	if delivery != nil && delivery.shipped {
+	// once the delivery has let go of it — and not after a failed one, which
+	// would only ask HQ again; the next pass or delivery proposes it.
+	if delivery != nil && delivery.shipped && !delivery.failed {
 		if line := reconcileGroupRecipe(ctx, client, httpClient, rt, stateDir); line != "" {
 			delivery.Line += " The group's recipe: " + line
 		}
@@ -206,9 +207,9 @@ func deliverHeldHQPair(
 	if !enrolled {
 		return nil
 	}
-	// The delivery paces its own tries (deliveryRetry), so no call waits HQ
-	// out beneath them.
-	hqc = hqc.Once()
+	// The delivery paces and bounds its own tries (deliveryRetry), so no
+	// call waits HQ out beneath them.
+	hqc = deliveryClient(hqc)
 	release, err := holdPairCheckout(ctx, stateDir, meta.Hostname)
 	if err != nil {
 		return notDelivered(fmt.Sprintf(

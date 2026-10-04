@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -203,6 +204,59 @@ func TestADeliveryHQCannotReachFailsFast(t *testing.T) {
 	}
 	if head := lab.remoteHead("mate/p-mate/1"); head != lab.git("rev-parse", "HEAD") {
 		t.Errorf("change #1's branch is at %q, want the checkout's HEAD", head)
+	}
+}
+
+// TestADeliveryToAnHQThatNeverAcceptsEndsWithinItsBound: an HQ that drops
+// every packet costs a delivery step one bound — not curl's 300 s, nor three
+// bounds: no answer within it ends the step, said as HQ not answering. git
+// meets it taking main in; an API call meets it opening the change.
+//
+// Non-parallel: it narrows the delivery's bounds.
+func TestADeliveryToAnHQThatNeverAcceptsEndsWithinItsBound(t *testing.T) {
+	prevBounds, prevGit := deliveryBounds, ops.HQGitBound
+	deliveryBounds.connect, deliveryBounds.answer, ops.HQGitBound = 200*time.Millisecond, time.Second, time.Second
+	t.Cleanup(func() { deliveryBounds, ops.HQGitBound = prevBounds, prevGit })
+	tests := []struct {
+		name    string
+		deliver func(lab *hqLab) string
+		want    string
+	}{
+		{"taking main in", func(lab *hqLab) string {
+			d := lab.deliver()
+			if d == nil || d.Change != nil {
+				t.Fatalf("delivery = %+v, want it failed", d)
+			}
+			return d.Line
+		}, ` is not answering: taking "main" in failed after 1 try (the last: no answer within 1s)`},
+		{"opening the change", func(lab *hqLab) string {
+			hqc, err := hq.Open(lab.hq.srv.Client(), hq.EnrollmentPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			return shipChange(t.Context(), lab.ssh, lab.stateDir, deliveryClient(hqc), lab.meta(), "Add a footer").line
+		}, " is not answering: opening its change failed after 1 try (the last: no connection within 200ms)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lab := newHQLab(t)
+			lab.wire()
+			lab.write(map[string]string{"footer.js": "the footer\n"})
+			address := lab.hq.srv.URL
+			lab.hq.neverAccept()
+
+			start := time.Now()
+			line := tt.deliver(lab)
+			if took := time.Since(start); took > 5*time.Second {
+				t.Errorf("the step took %s, want it ended by its bound", took)
+			}
+			if want := "HQ at " + address + tt.want; !strings.Contains(line, want) {
+				t.Errorf("the line misses %q:\n%s", want, line)
+			}
+			if len(lab.waits) != 0 {
+				t.Errorf("waits = %v, want none after a try HQ left unanswered", lab.waits)
+			}
+		})
 	}
 }
 
