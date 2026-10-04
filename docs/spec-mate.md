@@ -679,8 +679,15 @@ project's `userRoles` read with its own key (§10.4) — every `T3CODE_ZEROPS_RO
 (default 300 s; from the fork's server slice S.0 a configured value above 300 s is clamped to 300 s)
 and when HQ relays a different answer, ends every session whose answer is no longer `open` (§3.3),
 ends every Zerops session once it has not known for two intervals, and ends any session older than
-24 hours. Ending a session closes its sockets; the client opens a new one with a
-fresh throwaway, on every rejection and with backoff (from the fork's slice 0.9b). From mate 0.11.81 the client keeps a Mate's session per account across loads and presents it again only where a fresh one would go, once the Mate confirms it still holds it with every scope the client asks for (D33). The client's
+24 hours. Ending a session closes its sockets.
+
+**Entering a Mate is one attempt (2026-10-05).** A connect — the throwaway, the exchange, the socket
+— is tried once. A failed one ends visibly: the Mate reads as not connected, with why, and offers
+_Try again_. A new attempt comes from the person's _Try again_, or from a prerequisite that changed
+— new credentials, a different descriptor — never from a timer, a tab coming back into view or the
+network waking; there is no retry ladder and no persisted cap. Setup that cannot be read inside
+Zerops reads as unavailable, refused or invalid, never as absent, and a stopped observation is not
+re-read on its own. From mate 0.11.81 the client keeps a Mate's session per account across loads and presents it again only where a fresh one would go, once the Mate confirms it still holds it with every scope the client asks for (D33). The client's
 credential renewer (`credentialRenewal.ts`) is reserved for a door that re-presents a credential;
 the throwaway door does not, so nothing renews a Zerops session. The GUI closes connections and
 clears account memory immediately on logout, retaining only account-scoped personal context for
@@ -777,9 +784,10 @@ life the upgrade races its handler against the session's own end — its deadlin
 `clientRemoved` change naming it — and ends the connection when either arrives (MS1-4a). A session
 with no stored deadline is left alone rather than closed on a guess.
 
-The client does not renew. When its socket is rejected it mints a fresh throwaway and exchanges
-again, and the door answers with the current role — on every rejection, with backoff, from the
-fork's slice 0.9b. `credentialRenewal.ts` keeps its contract for a door that re-presents a
+The client does not renew. When its socket is rejected the Mate reads as not connected, and the
+person's _Try again_ mints a fresh throwaway and exchanges again, the door answering with the
+current role (superseded 2026-10-05: from the fork's slice 0.9b it did so by itself on every
+rejection, with backoff — see _Entering a Mate is one attempt_). `credentialRenewal.ts` keeps its contract for a door that re-presents a
 credential; the throwaway door does not, so nothing renews a Zerops session (MB-3).
 `revokeBySubject(userId)` revokes every live session for one user immediately (an ops-path
 primitive) — a no-op on an unknown subject, counted once per session however often it is called.
@@ -1453,8 +1461,8 @@ banner, the projects page and the Git tab, and the roll back that asked nothing,
 button is off while the verdict says why (a conflict with `main`, a head whose files are not shown
 yet); the focus and ⌘↵ reach it only while it is safe, never for _Release_ or _Roll back_; and a
 merge takes only the head the review showed. A change merges and closes in HQ, as the person, only
-where HQ's rule offers it (`merge_change`: Basic user or above on one of the application's projects;
-`close_change`: the same, or the organization's owner or admin): _Merge_ says "Merging into main" ·
+where HQ's stream offers it (`can.merge_change`, `can.close_change` on the change's application,
+§10.8 _Offers_; the client computes neither): _Merge_ says "Merging into main" ·
 "Squashing N commits into one" while it runs and "Merged into main" once done, and a refusal comes
 back in HQ's words, "Not merged", tried again only by a deliberate press; a quiet _Close without
 merging_ in the review's foot asks "Close #N without merging?" before it closes. Nothing is polled:
@@ -1488,8 +1496,8 @@ a group that already has a production and feeds the release offer, not `groupFlo
 knows `main` has code only from a merged code pull request still in the recent list. Until it is
 wired, "After the first merge" is never drawn, the flow's own _Add production_ misses code a recipe
 planted at birth or a merge that has scrolled off that list, and the project's menu offers _Add
-production_ as the stop-gap wherever the role is still creatable and the person may create
-projects. The conversation's gate is the page's, with "some Mate in the project is up" taken as met,
+production_ as the stop-gap wherever the person may create projects (`mayCreateProjects`) and the
+application has none; HQ's refusal of the attach, if it refuses, is shown in its words. The conversation's gate is the page's, with "some Mate in the project is up" taken as met,
 since the conversation runs no health probes.
 
 ### 5.5 Subscriptions are flow-controlled — a raw probe must `Ack`
@@ -2163,11 +2171,22 @@ gitea-mate's `internal/roles/fixtures.json` that both suites replay whole. Input
 `read`/`write`/`release` (`write` = `BASIC_USER` or above on **any** of the group's projects, since
 a Mate's creator owns only their Mate; `release` = `BASIC_USER` on production, or org `ADMIN`/`OWNER`
 until production exists, because the recipe is merged before it), per Mate `open`/`listed`/`hidden`,
-and the OIDC `groups` claim (`org:owner`, `g:{slug}:read|write|release`). Consumers: the app's list
-and verbs, the door (§10.4), the broker's teams, admin flag and claims. A change to the rule is a
-change to the fixture first, in both repositories. Since 2026-10-02 HQ's Core is a consumer too (who
-may do what in HQ, `zeropsPermissions.ts`); gitea-mate's copy, the broker's teams and the OIDC
-claims retire with the Gitea.
+and the OIDC `groups` claim (`org:owner`, `g:{slug}:read|write|release`). Consumers: the door
+(§10.4), the broker's teams, admin flag and claims. A change to the rule is a change to the fixture
+first, in both repositories. Since 2026-10-02 HQ's Core is a consumer too (who may do what in HQ,
+`can`); gitea-mate's copy, the broker's teams and the OIDC claims retire with the Gitea.
+
+**One owner, one verdict (2026-10-05).** Who may do what in HQ is computed once, by HQ, from the
+inputs it owns — `can` lives in `apps/hq`, and no client package imports it, `roleAtLeast`,
+`asOrgRole` or `zeropsRoleAnswer` (a lint rule with no exception list); `Decision`, `REASONS` and
+`Reason` stay shared as the wire contract. HQ answers what a person may do in its stream (§10.8,
+_Offers_), and the client draws that. It keeps two predicates over Zerops' own facts, for the
+moments before HQ can answer: `mayBearHq` (org role `ADMIN` or above — who may make the org's HQ)
+and `mayCreateProjects` (Zerops' own flag), both in `zeropsRoles.ts`. A Zerops service operation —
+start, stop, restart, remove — gets no client verdict: it is offered where HQ says `observe_mate`,
+and Zerops' refusal is shown in its own words. The Mate server's door still reads the role function
+itself (`zeropsRoleAnswer`, §10.4); one shared table pins that HQ's `observe_mate` and the door
+agree on who opens a Mate.
 
 ### 10.4 The door: `POST /api/auth/zerops-throwaway`
 
@@ -2286,7 +2305,7 @@ someone else's agent by habit, and records who signed it in; it does not claim t
 
 **Since 2026-10-02** HQ's structure is the registry: an application, the projects attached to it as
 Mates, stages and productions, read and changed through HQ's API (`/api/structure`, `/api/apps`,
-`/api/apps/{id}/projects`) by the people the role function lets. What follows is the Gitea-era
+`/api/apps/{id}/projects`) by the people HQ's `can` lets (§10.3). What follows is the Gitea-era
 registry it replaces.
 
 Tags on the org's Gitea project: `mate:gn:{groupId}:{slug}` names a group,
@@ -2370,6 +2389,29 @@ named `{title} (#{n})`) and closed; a tier of the recipe (`GET /api/apps/:appId/
 Core lands a Mate's recipe change by itself when it only adds files, and closes one that adds
 nothing (§10.10).
 
+**Offers** (2026-10-05). HQ answers what the reader may do in the same stream that carries the
+structure, never through a per-request endpoint: `structure.read(userId)` already decides `read_*`
+per entity, per subscriber, per tick, and decides the write verbs beside it. Each streamed entity
+carries `can: Record<verb, Decision>` — the shared `Decision`, so a refusal reads in the same words
+(`hqRefusalWords`) as the write's own — and the record is open: a verb this build does not know
+decodes as unknown and never breaks the snapshot. The organization carries `create_app`,
+`rename_app`, `delete_app`; an application the change verbs (`read_change`, `comment_change`,
+`merge_change`, `close_change`, and every other verb a change offers, a redeploy included) and
+`release`; an environment `keep_deploy_token`; a Mate's project `observe_mate`, `edit_mate_record`,
+`detach` and `moveTo: {[appId | "new"]: kinds[]}`; a readable project HQ holds nowhere
+`create_mate_record`. An offer and the write it offers are one computation — the same target
+builders, the same `can`, pinned by one table per verb and role, a person who cannot see production
+and a suspended or demoted member included — and the write's own refusal still wins. A reader HQ
+refuses an application's environments is told so, never handed an empty list. A Zerops role change
+reaches the offers at the roles view's freshness, merged into the stream (`roles.views`), not only
+at the 30 s recheck; the stream carries the time the view answered (`rolesAnsweredAt`), which the
+client shows and never compares with its own clock. Nothing extra is read per subscriber: the
+offers reuse the rows already read, `moveTo` is computed once per Mate, and keyed diffs keep an
+unchanged offer off the wire. A verb is drawn in one of four states: **allowed**; **refused**, with
+HQ's reason; **unknown** — no snapshot yet, the entity absent, or the verb unknown to this build;
+**unavailable** since a time, while HQ's socket is down — an HQ-enforced verb is then off, saying
+"HQ unavailable since …", while a Zerops-enforced control keeps working.
+
 **Environments** (since 2026-10-02). A stage or a production attached to an application is its
 environment, recorded with the attach — named as the attach asks or after its project, following
 `main` (a stage) or `release` (a production), in the order declared — with no pull request. Its
@@ -2409,8 +2451,8 @@ only by _Add {service}_, and a changed declaration of a service the project has 
 applied. Every request to Zerops is asked once, a read too: what does not answer is its caller's
 answer, and a handle HQ follows is read again on its own cadence. An application's environments and their newest jobs (20, and each
 service's newest live one past them) go to whoever reads its changes. Live on 2026-10-02 (`mate-rig-a`): the stage deploying 3 s after the merge and live at
-63–81 s, its version `main 48b289b`, its own subdomain answering. Production and the release move
-to HQ next.
+63–81 s, its version `main 48b289b`, its own subdomain answering. A production follows `release`
+(§10.11).
 
 ### 10.9 A person in HQ
 
@@ -3008,7 +3050,8 @@ drawn — its chip in a row, the whole tile, its card. A project's rows are why 
 not offered when it is not, what a release would carry, the releases with _Roll back to this_ —
 which opens the roll back's review — and the recipe changes last.
 A project's menu adds a Mate and a stage (_Add stage — optional_) while its
-adds are offered, and a production while the role is creatable and the person may create projects;
+adds are offered, and a production while the application has none and the person may create projects
+(`mayCreateProjects`, Zerops' own flag; HQ's refusal of the attach is shown in its words);
 nothing else on the page adds a stage, and _Add production_ is otherwise only the next step's verb,
 with "Production is added here, not by the Mate." as its tooltip, never a row asking for a missing
 tier. The **Git page** (`/git`, _Git_ in the account menu) lists every application whose changes
@@ -3026,19 +3069,31 @@ button) listed every Gitea repository the person could reach and the pull reques
 newest first", "names each change by its number and its Mate, under its repository's row";
 `ZeropsGitPage.logic.test.ts` — "leaves out an application whose changes the person may not read",
 "names why a read did not answer, beside what was read". What an environment runs is the sha in the
-app version's name, read from Zerops; what is open is HQ's (since 2026-10-02), and what was released
-is still Gitea's.
+app version's name, read from Zerops; what is open and what was released are HQ's.
 
-**Release** (`release.ts`): per service, what the stage runs against what production runs, read in
-the release's review before anything is tagged; its button (_Release v0.1.57_) creates a tag
-`v{semver}` on the group repo as the person, its message listing each service's full sha and
-nothing that is not one; the broker judges it on the pusher's production rights (§10.8). A
+**Release** (HQ's `releases.ts`): per service, what the stage runs against what production runs,
+read in the release's review before anything is asked; its button (_Release v0.1.57_) asks HQ for
+the release the person was offered — the recipe repository's `main` head read with the offer, each
+production service at a commit of its repository's `main`. HQ checks it under the recipe
+repository's lock for whoever `can` lets `release`, tags it (`v{semver}`, its message the release's
+lines), records it approved and writes the rollout that deploys it to production
+(`cause='release'`, §10.8) in the same write; a refusal is only an answer — no tag, no record. A
 **rollback** is a release: _Roll back to this_ on an earlier approved release opens the roll back's
-review, which names the version it goes back to and the tag it makes, and its button (_Roll back to
-v0.1.55_) creates a new tag carrying that release's message verbatim; a tag name is never reused and
-`/deploy` takes no ref. Neither button takes the focus or ⌘↵, and the review follows its tag until
-production runs it — "Released", "Rolled back", or the failure and its fix. Built and unit-tested;
-the first live release is still to run. The release moves to HQ next.
+review, which names the version it goes back to and the release it makes, and its button (_Roll back
+to v0.1.55_) asks for a new release listing that release's entries as they were; a name is never
+reused. Neither button takes the focus or ⌘↵.
+
+**A release ends when HQ's rollout ends (2026-10-05).** Every rollout HQ follows ends — a job is
+followed 75 min at most and then refused (§10.8). So HQ derives, and stores nothing new: the stream
+carries each application's newest release rollout `{id, cause, ref, planned, ended, endedAt,
+leftOut}`, where `ended` follows a left-out service to its own job (`left.job`) — a service whose
+commit is building elsewhere keeps the release running — and a release that made no rollout (a
+snapshot of what production already runs) is ended when made. The review follows that until it
+ends — "Released", "Rolled back", or the failure and its fix — and _Release_ is offered again only
+then. The client holds no clock for it: there is no in-flight window and no 30-minute cutoff (the
+cutoff re-enabled _Release_ while HQ still followed a build, and a second release superseded the
+first). A first deploy is HQ's job's to decide too: the client infers nothing from builds it sees,
+and a build HQ did not make is followed by its Zerops process (`GET /process/{id}`) until it ends.
 
 ### Invariants
 
