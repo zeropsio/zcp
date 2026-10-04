@@ -11,6 +11,7 @@ import (
 	"net/http/httptrace"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -178,49 +179,56 @@ func (c hqClient) send(ctx context.Context, method, path, authorization, content
 	}
 }
 
-// errNotConnected ends a try that has no connection within its bound.
-var errNotConnected = errors.New("not connected")
-
 // bounded is ctx bounded for one try as the client is (Client.Bounded): the
 // connect bound runs until net/http reports the connection made, TLS
-// included; the answer bound covers the whole try.
-func (c hqClient) bounded(ctx context.Context) (context.Context, context.CancelFunc) {
+// included — connected says whether it has — and the answer bound covers the
+// whole try.
+func (c hqClient) bounded(ctx context.Context) (try context.Context, connected *atomic.Bool, release context.CancelFunc) {
+	connected = &atomic.Bool{}
+	if c.connect == 0 && c.answer == 0 {
+		return ctx, connected, func() {}
+	}
 	cancelAnswer := context.CancelFunc(func() {})
 	if c.answer > 0 {
 		ctx, cancelAnswer = context.WithTimeout(ctx, c.answer)
 	}
-	if c.connect == 0 {
-		return ctx, cancelAnswer
+	ctx, cancel := context.WithCancel(ctx)
+	stopConnect := func() bool { return false }
+	if c.connect > 0 {
+		stopConnect = time.AfterFunc(c.connect, cancel).Stop
 	}
-	ctx, cancel := context.WithCancelCause(ctx)
-	timer := time.AfterFunc(c.connect, func() { cancel(errNotConnected) })
-	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { timer.Stop() }})
-	return ctx, func() {
-		timer.Stop()
-		cancel(nil)
+	try = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) {
+		connected.Store(true)
+		stopConnect()
+	}})
+	return try, connected, func() {
+		stopConnect()
+		cancel()
 		cancelAnswer()
 	}
 }
 
 // unanswered is what ended a try whose call failed with err: a bound of the
-// client's (NoAnswerError), or err when the caller's own ctx ended it or
-// nothing did.
-func (c hqClient) unanswered(caller, try context.Context, path string, err error) error {
+// client's (NoAnswerError) — no connection made, or no answer once it was —
+// or err when the caller's own ctx ended it or no bound did.
+func (c hqClient) unanswered(caller, try context.Context, connected *atomic.Bool, path string, err error) error {
 	switch {
-	case caller.Err() != nil:
+	case caller.Err() != nil || try.Err() == nil || c.connect == 0 && c.answer == 0:
 		return err
-	case errors.Is(context.Cause(try), errNotConnected):
-		return &NoAnswerError{Path: path, Within: c.connect}
-	case errors.Is(try.Err(), context.DeadlineExceeded):
-		return &NoAnswerError{Path: path, Connected: true, Within: c.answer}
+	case !connected.Load():
+		within := c.connect
+		if within == 0 || c.answer > 0 && c.answer < within {
+			within = c.answer
+		}
+		return &NoAnswerError{Path: path, Within: within}
 	}
-	return err
+	return &NoAnswerError{Path: path, Connected: true, Within: c.answer}
 }
 
 // sendOnce is one try; wait is how long to wait before the next, 0 when the
 // answer is final.
 func (c hqClient) sendOnce(caller context.Context, method, path, authorization, contentType string, body []byte, out any) (time.Duration, error) {
-	ctx, release := c.bounded(caller)
+	ctx, connected, release := c.bounded(caller)
 	defer release()
 	var reader io.Reader
 	if body != nil {
@@ -238,12 +246,12 @@ func (c hqClient) sendOnce(caller context.Context, method, path, authorization, 
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return 0, &UnavailableError{Err: c.unanswered(caller, ctx, path, fmt.Errorf("hq %s: %w", path, err))}
+		return 0, &UnavailableError{Err: c.unanswered(caller, ctx, connected, path, fmt.Errorf("hq %s: %w", path, err))}
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, answerLimit))
 	if err != nil {
-		return 0, &UnavailableError{Err: c.unanswered(caller, ctx, path, fmt.Errorf("hq %s: %w", path, err))}
+		return 0, &UnavailableError{Err: c.unanswered(caller, ctx, connected, path, fmt.Errorf("hq %s: %w", path, err))}
 	}
 	// A 204 answers with nothing to decode.
 	if resp.StatusCode == http.StatusNoContent {

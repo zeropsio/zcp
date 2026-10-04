@@ -68,15 +68,15 @@ func (c Client) Bounded(connect, answer time.Duration) Client {
 // 500 is HQ serving; a 5xx is a RefusedError (503 an UnavailableError), and
 // no answer an UnavailableError, as any call's would be.
 func (c Client) Serving(ctx context.Context) error {
-	tryCtx, release := c.call.bounded(ctx)
+	try, connected, release := c.call.bounded(ctx)
 	defer release()
-	req, err := http.NewRequestWithContext(tryCtx, http.MethodHead, c.Address()+"/", nil)
+	req, err := http.NewRequestWithContext(try, http.MethodHead, c.Address()+"/", nil)
 	if err != nil {
 		return fmt.Errorf("hq /: %w", err)
 	}
 	resp, err := c.call.http.Do(req)
 	if err != nil {
-		return &UnavailableError{Err: c.call.unanswered(ctx, tryCtx, "/", fmt.Errorf("hq /: %w", err))}
+		return &UnavailableError{Err: c.call.unanswered(ctx, try, connected, "/", fmt.Errorf("hq /: %w", err))}
 	}
 	_ = resp.Body.Close()
 	switch {
