@@ -126,7 +126,10 @@ func TestHQNotServingWords(t *testing.T) {
 		{"git meets a 503", gitFailed, "error: RPC failed; HTTP 503 curl 22 The requested URL returned error: 503\n", "HQ answered 503 (not serving)"},
 		{"no connection within the bound", &hq.UnavailableError{Err: &hq.NoAnswerError{Path: "/api/mate/changes", Within: 5 * time.Second}}, "", "no connection within 5s"},
 		{"no answer within the bound", &hq.UnavailableError{Err: &hq.NoAnswerError{Path: "/api/mate/changes", Connected: true, Within: 10 * time.Second}}, "", "no answer within 10s"},
-		{"git ended by its bound", gitFailed, "ZCP_HQ_NO_ANSWER: no answer within 15s\n", "no answer within 15s"},
+		{"a preflight with no connection", &hqPreflightError{err: &hq.UnavailableError{Err: &hq.NoAnswerError{Path: "/", Within: 5 * time.Second}}}, "", "no connection within 5s"},
+		{"a preflight meeting a 502", &hqPreflightError{err: &hq.RefusedError{Status: 502}}, "", "HQ answered 502 (not serving)"},
+		{"git ended by its bound", gitFailed, "ZCP_HQ_NO_ANSWER: no answer within 4m0s\n", "no answer within 4m0s"},
+		{"git stalled", gitFailed, "error: RPC failed; curl 28 Operation too slow. Less than 1 bytes/sec transferred the last 10 seconds\n", "no progress for 10s"},
 		{"git reaches nothing", gitFailed, "fatal: unable to access 'https://hq.example/git/a/appdev.git/': Could not resolve host: hq.example\n", "fatal: unable to access 'https://hq.example/git/a/appdev.git/': Could not resolve host: hq.example"},
 	}
 	for _, tt := range tests {
@@ -164,7 +167,10 @@ func TestHQAnswerOf(t *testing.T) {
 		{"an API call meets a 502", &hq.RefusedError{Status: 502}, "", false, hqNotServing},
 		{"an API call meets a standby", &hq.UnavailableError{Code: "not_active"}, "", false, hqNotServing},
 		{"an API call reaches nothing", &hq.UnavailableError{Err: errors.New("connection refused")}, "", false, hqNotServing},
-		{"an API call silent past its bound", &hq.UnavailableError{Err: &hq.NoAnswerError{Within: 5 * time.Second}}, "", false, hqSilent},
+		{"an API call with no connection within its bound", &hq.UnavailableError{Err: &hq.NoAnswerError{Within: 5 * time.Second}}, "", false, hqNotServing},
+		{"an API call connected and silent past its bound", &hq.UnavailableError{Err: &hq.NoAnswerError{Connected: true, Within: 10 * time.Second}}, "", false, hqSilent},
+		{"the preflight finding HQ not connecting", &hqPreflightError{err: &hq.UnavailableError{Err: &hq.NoAnswerError{Within: 5 * time.Second}}}, "", true, hqNotServing},
+		{"git stalled", gitFailed, "error: RPC failed; curl 28 Operation too slow. Less than 1 bytes/sec transferred the last 10 seconds", true, hqNotServing},
 		{"git served", nil, "", true, hqAnswered},
 		{"git refused", gitFailed, "fatal: unable to access 'https://hq/x.git/': The requested URL returned error: 403", true, hqAnswered},
 		{"git meets a 502", gitFailed, "fatal: unable to access 'https://hq/x.git/': The requested URL returned error: 502", true, hqNotServing},
@@ -185,24 +191,29 @@ func TestHQAnswerOf(t *testing.T) {
 	}
 }
 
-// TestDeliveryBounds_AStepEndsWellUnderAMinute pins the bounds a delivery
-// step runs under: an HQ dropping every packet costs a step one bound — 5 s
-// for an API call, HQGitBound for git — and even an HQ answering 5xx at the
-// last moment of every try ends a step within a minute.
-func TestDeliveryBounds_AStepEndsWellUnderAMinute(t *testing.T) {
+// TestDeliveryBounds_FailFastOnConnectNotOnLength pins the bounds a delivery
+// step runs under: an HQ that does not connect costs a step at most three
+// preflights and their waits, well under a minute, and so does an API call HQ
+// answers 5xx at the last moment of every try; a git transfer HQ keeps
+// feeding is bounded by its stall, with a generous cap that stays under the
+// SSH runner's 5 min.
+func TestDeliveryBounds_FailFastOnConnectNotOnLength(t *testing.T) {
 	t.Parallel()
 	var waits time.Duration
 	for _, wait := range deliveryRetry.waits {
 		waits += wait
 	}
 	tries := len(deliveryRetry.waits) + 1
-	if deliveryBounds.connect > 5*time.Second || ops.HQGitBound > 15*time.Second {
-		t.Errorf("an HQ that drops every packet costs an API step %s and a git step %s, want at most 5s and 15s",
-			deliveryBounds.connect, ops.HQGitBound)
+	if deliveryBounds.connect > 5*time.Second {
+		t.Errorf("a preflight may take %s, want at most 5s", deliveryBounds.connect)
 	}
-	for name, bound := range map[string]time.Duration{"an API call": deliveryBounds.answer, "git": ops.HQGitBound} {
-		if worst := bound*time.Duration(tries) + waits; worst >= time.Minute {
-			t.Errorf("a step of %s ends within %s at worst, want under a minute", name, worst)
-		}
+	if notConnecting := deliveryBounds.connect*time.Duration(tries) + waits; notConnecting >= 30*time.Second {
+		t.Errorf("an HQ that does not connect costs a step %s, want well under a minute", notConnecting)
+	}
+	if worst := deliveryBounds.answer*time.Duration(tries) + waits; worst >= time.Minute {
+		t.Errorf("an API step ends within %s at worst, want under a minute", worst)
+	}
+	if ops.HQGitBound < 2*time.Minute || ops.HQGitBound >= 5*time.Minute {
+		t.Errorf("git's cap is %s, want a generous one under the SSH runner's 5 min", ops.HQGitBound)
 	}
 }

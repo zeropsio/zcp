@@ -19,11 +19,12 @@ import (
 // only masks it). Each step of a delivery HQ serves — taking `main` in,
 // opening the change, taking its branch in, pushing it — is tried at most
 // three times, a short wait apart, and only while HQ could not serve it: not
-// reached at once, or a 5xx. A refusal fails at once, and so does a try HQ
-// left unanswered past its bound (deliveryBounds, ops.HQGitBound): an HQ that
-// drops packets costs a step one bound, never three. Nothing tries again once
-// the call has returned: the work stays committed in the pair's checkout, and
-// the next delivery sends it.
+// reached at once — no connection within the bound, git's preflight among
+// them — a transfer HQ stopped feeding, or a 5xx. A refusal fails at once,
+// and so does a try HQ connected for and then left unanswered past its bound
+// (deliveryBounds, ops.HQGitBound). Nothing tries again once the call has
+// returned: the work stays committed in the pair's checkout, and the next
+// delivery sends it.
 
 // hqAnswer is what one try of a delivery step met.
 type hqAnswer int
@@ -52,8 +53,10 @@ var deliveryRetry = hqRetry{waits: []time.Duration{time.Second, 3 * time.Second}
 
 // deliveryBounds bound each try of a delivery's API call to HQ: connected
 // within connect, TLS included, and answered within answer
-// (hq.Client.Bounded). git against HQ is bounded by ops.HQGitBound. A var so
-// tests narrow it.
+// (hq.Client.Bounded). A try of git against HQ is preceded by a preflight
+// bounded by connect both ways (hq.Client.Serving): git has no connect bound
+// of its own, and its transfer is bounded by its stall (ops.HQGitBound). A
+// var so tests narrow it.
 var deliveryBounds = struct{ connect, answer time.Duration }{5 * time.Second, 10 * time.Second}
 
 // deliveryClient is hqc as a delivery calls HQ: each call sent once, so no
@@ -97,11 +100,13 @@ func hqUnavailable(err error) bool {
 	return hq.IsUnavailable(err) || errors.As(err, &refused) && refused.Status >= http.StatusInternalServerError
 }
 
-// hqCallAnswer is what a try of an API call to HQ met, err its outcome.
+// hqCallAnswer is what a try of an API call to HQ met, err its outcome: no
+// connection within the bound is HQ not reached, tried again; connected and
+// no answer within it is HQ silent.
 func hqCallAnswer(err error) hqAnswer {
 	var noAnswer *hq.NoAnswerError
 	switch {
-	case errors.As(err, &noAnswer):
+	case errors.As(err, &noAnswer) && noAnswer.Connected:
 		return hqSilent
 	case hqUnavailable(err):
 		return hqNotServing
@@ -110,7 +115,8 @@ func hqCallAnswer(err error) hqAnswer {
 }
 
 // hqGitAnswer is what a try of a git command against HQ met, err and output
-// its outcome.
+// its outcome: its preflight finding HQ not serving, a stall or a 5xx is HQ
+// not serving, tried again; git's safety cap ending it is HQ silent.
 func hqGitAnswer(err error, output []byte) hqAnswer {
 	if err == nil {
 		return hqAnswered
@@ -118,10 +124,26 @@ func hqGitAnswer(err error, output []byte) hqAnswer {
 	if _, silent := ops.HQGitNoAnswer(string(output)); silent {
 		return hqSilent
 	}
-	if ops.GitRemoteUnavailable(string(output)) {
+	if gitHQUnavailable(err, output) {
 		return hqNotServing
 	}
 	return hqAnswered
+}
+
+// hqPreflightError is a try of a git command against HQ that never ran git:
+// its preflight (hq.Client.Serving) found HQ not serving.
+type hqPreflightError struct{ err error }
+
+func (e *hqPreflightError) Error() string {
+	return "HQ did not answer before git ran: " + e.err.Error()
+}
+func (e *hqPreflightError) Unwrap() error { return e.err }
+
+// gitHQUnavailable reports whether a try of a git command against HQ met HQ
+// unable to serve it: its preflight, or git's own output, says so.
+func gitHQUnavailable(err error, output []byte) bool {
+	var preflight *hqPreflightError
+	return errors.As(err, &preflight) || ops.GitRemoteUnavailable(string(output))
 }
 
 // hqNotAnsweringLine says which step HQ at address could not serve, after how
@@ -163,8 +185,15 @@ var gitStatus5xx = regexp.MustCompile(`returned error: (5\d\d)`)
 // bound that ended it names itself, a 5xx git reports is HQ not serving, and
 // anything else is git's own words.
 func gitNotServingWords(err error, output []byte) string {
+	var preflight *hqPreflightError
+	if errors.As(err, &preflight) {
+		return hqNotServingWords(preflight.err)
+	}
 	if words, silent := ops.HQGitNoAnswer(string(output)); silent {
 		return words
+	}
+	if ops.HQGitStalled(string(output)) {
+		return ops.HQGitStallWords()
 	}
 	if m := gitStatus5xx.FindSubmatch(output); m != nil {
 		status, _ := strconv.Atoi(string(m[1]))

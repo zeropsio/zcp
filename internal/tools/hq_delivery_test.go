@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
-	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -150,10 +149,11 @@ func TestAStageDeployWithNothingBeyondMainOpensNoChange(t *testing.T) {
 
 // TestADeliveryHQCannotReachFailsFast: HQ not answering at all fails the
 // delivery within the call — taking main in tried three times, 1 s and 3 s
-// apart — saying the step, HQ's address, the last error and the way on. The
-// work stays committed in the checkout, nothing asks HQ again once the call
-// has returned, and the next delivery once HQ answers sends it (spec-mate
-// §10.10).
+// apart, each try's preflight finding HQ not answering, so git never runs
+// against it — saying the step, HQ's address, the last error and the way on.
+// The work is committed in the checkout first, nothing asks HQ again once the
+// call has returned, and the next delivery once HQ answers sends it
+// (spec-mate §10.10).
 func TestADeliveryHQCannotReachFailsFast(t *testing.T) {
 	lab := newHQLab(t)
 	lab.wire()
@@ -161,15 +161,18 @@ func TestADeliveryHQCannotReachFailsFast(t *testing.T) {
 	lab.write(map[string]string{"footer.js": "the footer\n"})
 
 	lab.hq.setDown(true)
-	const fetch = "GET /git/" + labApp + "/appdev.git/info/refs"
-	fetches := lab.hq.callCount(fetch)
+	const (
+		preflight = "HEAD /"
+		fetch     = "GET /git/" + labApp + "/appdev.git/info/refs"
+	)
+	preflights, fetches := lab.hq.callCount(preflight), lab.hq.callCount(fetch)
 	delivery := lab.deliver()
 	if delivery == nil || delivery.Change != nil {
 		t.Fatalf("want a failed delivery, got %+v", delivery)
 	}
 	for _, want := range []string{
 		"appstage runs, but its code has not reached HQ",
-		"HQ at " + lab.hq.srv.URL + ` is not answering: taking "main" in failed after 3 tries (the last: fatal: unable to access`,
+		"HQ at " + lab.hq.srv.URL + ` is not answering: taking "main" in failed after 3 tries (the last: no answer (hq /: `,
 		"the work stays committed in appdev's checkout, and deploying appstage again delivers it",
 		"tell the person HQ is not answering",
 	} {
@@ -177,8 +180,11 @@ func TestADeliveryHQCannotReachFailsFast(t *testing.T) {
 			t.Errorf("the line misses %q:\n%s", want, delivery.Line)
 		}
 	}
-	if got := lab.hq.callCount(fetch) - fetches; got != 3 {
-		t.Errorf("HQ was asked for main %d times, want 3", got)
+	if got := lab.hq.callCount(preflight) - preflights; got != 3 {
+		t.Errorf("HQ was preflighted %d times, want 3", got)
+	}
+	if got := lab.hq.callCount(fetch) - fetches; got != 0 {
+		t.Errorf("git asked HQ for main %d times, want none past a failed preflight", got)
 	}
 	if want := []time.Duration{time.Second, 3 * time.Second}; !slices.Equal(lab.waits, want) {
 		t.Errorf("waits = %v, want %v", lab.waits, want)
@@ -207,16 +213,17 @@ func TestADeliveryHQCannotReachFailsFast(t *testing.T) {
 	}
 }
 
-// TestADeliveryToAnHQThatNeverAcceptsEndsWithinItsBound: an HQ that drops
-// every packet costs a delivery step one bound — not curl's 300 s, nor three
-// bounds: no answer within it ends the step, said as HQ not answering. git
+// TestADeliveryToAnHQThatNeverAcceptsEndsWithinItsBound: an HQ that never
+// accepts a connection costs a delivery step three tries of the connect
+// bound and their waits — never curl's 300 s, never git's cap: the preflight
+// before git, and an API call's own connect bound, end each try. git's step
 // meets it taking main in; an API call meets it opening the change.
 //
 // Non-parallel: it narrows the delivery's bounds.
 func TestADeliveryToAnHQThatNeverAcceptsEndsWithinItsBound(t *testing.T) {
-	prevBounds, prevGit := deliveryBounds, ops.HQGitBound
-	deliveryBounds.connect, deliveryBounds.answer, ops.HQGitBound = 200*time.Millisecond, time.Second, time.Second
-	t.Cleanup(func() { deliveryBounds, ops.HQGitBound = prevBounds, prevGit })
+	prevBounds := deliveryBounds
+	deliveryBounds.connect, deliveryBounds.answer = 200*time.Millisecond, time.Second
+	t.Cleanup(func() { deliveryBounds = prevBounds })
 	tests := []struct {
 		name    string
 		deliver func(lab *hqLab) string
@@ -228,14 +235,14 @@ func TestADeliveryToAnHQThatNeverAcceptsEndsWithinItsBound(t *testing.T) {
 				t.Fatalf("delivery = %+v, want it failed", d)
 			}
 			return d.Line
-		}, ` is not answering: taking "main" in failed after 1 try (the last: no answer within 1s)`},
+		}, ` is not answering: taking "main" in failed after 3 tries (the last: no connection within 200ms)`},
 		{"opening the change", func(lab *hqLab) string {
 			hqc, err := hq.Open(lab.hq.srv.Client(), hq.EnrollmentPath())
 			if err != nil {
 				t.Fatal(err)
 			}
 			return shipChange(t.Context(), lab.ssh, lab.stateDir, deliveryClient(hqc), lab.meta(), "Add a footer").line
-		}, " is not answering: opening its change failed after 1 try (the last: no connection within 200ms)"},
+		}, " is not answering: opening its change failed after 3 tries (the last: no connection within 200ms)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -253,8 +260,8 @@ func TestADeliveryToAnHQThatNeverAcceptsEndsWithinItsBound(t *testing.T) {
 			if want := "HQ at " + address + tt.want; !strings.Contains(line, want) {
 				t.Errorf("the line misses %q:\n%s", want, line)
 			}
-			if len(lab.waits) != 0 {
-				t.Errorf("waits = %v, want none after a try HQ left unanswered", lab.waits)
+			if want := []time.Duration{time.Second, 3 * time.Second}; !slices.Equal(lab.waits, want) {
+				t.Errorf("waits = %v, want %v", lab.waits, want)
 			}
 		})
 	}

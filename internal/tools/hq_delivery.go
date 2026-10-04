@@ -283,7 +283,19 @@ func deliverHeldHQPair(
 	}
 
 	title := changeTitle(stateDir, meta)
-	output, tries, err := gitAgainstHQ(ctx, sshDeployer, meta.Hostname,
+	// The deployed tree is committed before anything reaches HQ, so the work
+	// is the checkout's own whether or not HQ then answers; the delivery
+	// command after it commits nothing more.
+	committed, err := sshDeployer.ExecSSH(ctx, meta.Hostname, ops.BuildDeliveryCommitCommand(hqPairWorkingDir, title))
+	if line := deliveryRefusalLine(string(committed), target, repo, meta.Hostname, landedCommit); line != "" {
+		return notDelivered(line)
+	}
+	if err != nil {
+		return notDelivered(fmt.Sprintf(
+			"%s runs, but its code has not reached its repository %q in HQ: committing it in %s's checkout failed (%s). Fix the cause, then deploy %s again — the change follows that deploy.",
+			target, repo, meta.Hostname, gitPushErrorDetail(err, committed), target))
+	}
+	output, tries, err := gitAgainstHQ(ctx, sshDeployer, hqc, meta.Hostname,
 		ops.BuildDeliveryCommand(hqPairWorkingDir, title, landedCommit, landedHead))
 	if line := deliveryRefusalLine(string(output), target, repo, meta.Hostname, landedCommit); line != "" {
 		return notDelivered(line)
@@ -293,7 +305,7 @@ func deliverHeldHQPair(
 	}
 	_, found := ops.DeliveryAhead(string(output))
 	if err != nil || !found {
-		if ops.GitRemoteUnavailable(string(output)) {
+		if gitHQUnavailable(err, output) {
 			return notDelivered(hqUnreachableDelivery(target, meta.Hostname,
 				hqNotAnsweringLine(hqc.Address(), fmt.Sprintf("taking %q in", hqBase), tries, gitNotServingWords(err, output))))
 		}

@@ -96,7 +96,7 @@ func hqEnsurePushCredential(
 			return err
 		}
 	}
-	output, tries, err := gitAgainstHQ(ctx, sshDeployer, meta.Hostname, ops.BuildGitSessionAuthProbeCommand(meta.RemoteURL, hqc.Address()))
+	output, tries, err := gitAgainstHQ(ctx, sshDeployer, hqc, meta.Hostname, ops.BuildGitSessionAuthProbeCommand(meta.RemoteURL, hqc.Address()))
 	switch {
 	case hqGitAnswer(err, output) != hqAnswered:
 		return &hqNotAnsweringError{line: hqNotAnsweringLine(hqc.Address(), fmt.Sprintf("proving %s's credential", meta.Hostname), tries, gitNotServingWords(err, output))}

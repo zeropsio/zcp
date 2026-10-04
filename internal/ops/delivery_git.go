@@ -21,14 +21,17 @@ import (
 // merge moves.
 const deliveryBase = "main"
 
-// HQGitBound bounds one git command against HQ in all, so a delivery fails
-// fast even when HQ drops packets (spec-mate §10.10): git has no setting for
-// its connect, which curl leaves at 300 s, so `timeout` ends it there — a
-// container without `timeout` runs git bounded by the stall alone. A var so
-// tests narrow it.
+// HQGitBound is the safety cap on one git command against HQ in all: a
+// transfer HQ keeps feeding is legitimate work however long it takes, so what
+// bounds it is the stall (hqGitStallSeconds) — and a delivery checks that HQ
+// connects before git runs (spec-mate §10.10). The cap catches the rest, a
+// connect HQ stops answering between that check and git among them, which
+// curl would wait 300 s for; it stays under the SSH runner's 5 min, so git
+// ends itself before the session is cut. A container without `timeout` runs
+// git bounded by the stall alone. A var so tests narrow it.
 //
 //nolint:gochecknoglobals // tuning knob, initialized; test-narrowed
-var HQGitBound = 15 * time.Second
+var HQGitBound = 4 * time.Minute
 
 // hqGitStallSeconds ends a transfer HQ stops feeding, with git's own words:
 // below 1 byte/s for this long.
@@ -51,11 +54,18 @@ func hqGit(args string) string {
 }
 
 // HQGitNoAnswer reads, out of a git command's output, that HQGitBound ended
-// it: words says so ("no answer within 15s").
+// it: words says so ("no answer within 4m0s").
 func HQGitNoAnswer(output string) (words string, ok bool) {
 	words = markedLine(output, hqNoAnswerMarker)
 	return words, words != ""
 }
+
+// HQGitStalled reports whether a git command's output says the stall bound
+// ended its transfer: HQ stopped feeding it.
+func HQGitStalled(output string) bool { return strings.Contains(output, "Operation too slow") }
+
+// HQGitStallWords says the stall bound: what a stalled transfer met.
+func HQGitStallWords() string { return fmt.Sprintf("no progress for %ds", hqGitStallSeconds) }
 
 // BuildMateBranchCommand puts the pair's working copy on the Mate's own local
 // branch, SHARING its history with the repository's `main`.
@@ -156,7 +166,21 @@ const deliveryAheadMarker = "ZCP_AHEAD:"
 // ordinary take-`main`-in merge, so a squash of this Mate's own history does
 // not read as two unrelated histories that both add the same files (MB-26).
 func BuildDeliveryCommand(workingDir, message, landedCommit, landedHead string) string {
-	steps := []string{ //nolint:prealloc // clearer as a literal; one known append follows, not a growth loop
+	return strings.Join(append(deliveryCommitSteps(workingDir, message), deliverySyncSteps(landedCommit, landedHead, message)...), " && ")
+}
+
+// BuildDeliveryCommitCommand is BuildDeliveryCommand's commit alone — an
+// unignored dependency directory refused, the tree committed in message's
+// words — with nothing that reaches HQ, so a delivery commits its work before
+// it checks that HQ connects: the work is the checkout's own whether or not HQ
+// then answers. BuildDeliveryCommand after it commits nothing more.
+func BuildDeliveryCommitCommand(workingDir, message string) string {
+	return strings.Join(deliveryCommitSteps(workingDir, message), " && ")
+}
+
+// deliveryCommitSteps are the steps of a delivery's commit.
+func deliveryCommitSteps(workingDir, message string) []string {
+	return []string{
 		"cd " + shellQuote(workingDir),
 		gitIdentityEnsureFragment(),
 		`{ unignored=""; for d in node_modules vendor .venv; do if [ -d "$d" ] && ! git check-ignore -q "$d"; then unignored="$unignored $d"; fi; done; ` +
@@ -164,8 +188,6 @@ func BuildDeliveryCommand(workingDir, message, landedCommit, landedHead string) 
 		"git add -A",
 		fmt.Sprintf("(git diff --cached --quiet || git commit -q -m %s)", shellQuote(message)),
 	}
-	steps = append(steps, deliverySyncSteps(landedCommit, landedHead, message)...)
-	return strings.Join(steps, " && ")
 }
 
 // BuildDeliverySyncCommand catches a pair's own checkout up with `main` — and
@@ -286,12 +308,12 @@ func ChangePushRefusal(output string) string {
 }
 
 // GitRemoteUnavailable reports whether a git command's output says the remote
-// could not serve it now — not reached at all, no answer within HQGitBound, or
-// a 5xx such as HQ's standby 503 (git prints the status without the
+// could not serve it now — not reached at all, no answer within HQGitBound, a
+// transfer it stopped feeding, or a 5xx such as HQ's standby 503 (git prints the status without the
 // Retry-After) — rather than refused it.
 func GitRemoteUnavailable(output string) bool {
 	_, silent := HQGitNoAnswer(output)
-	return silent || strings.Contains(output, "returned error: 5") ||
+	return silent || HQGitStalled(output) || strings.Contains(output, "returned error: 5") ||
 		(strings.Contains(output, "unable to access") && !strings.Contains(output, "returned error: 4"))
 }
 

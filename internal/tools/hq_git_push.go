@@ -64,7 +64,7 @@ func handleHQGitPush(
 	}
 
 	landedCommit, landedHead := landingOf(meta)
-	output, tries, err := gitAgainstHQ(ctx, sshDeployer, hostname, ops.BuildDeliverySyncCommand(workingDir, landedCommit, landedHead))
+	output, tries, err := gitAgainstHQ(ctx, sshDeployer, hqc, hostname, ops.BuildDeliverySyncCommand(workingDir, landedCommit, landedHead))
 	if refusal := hqPushSyncRefusal(string(output), hostname, landedCommit); refusal != nil {
 		recordAttempt("hq landing absorb: "+refusal.Message, topology.FailureClassConfig)
 		refusal.Message = withLearned(refusal.Message)
@@ -76,7 +76,7 @@ func handleHQGitPush(
 	_, found := ops.DeliveryAhead(string(output))
 	if err != nil || !found {
 		detail := gitPushErrorDetail(err, output)
-		if ops.GitRemoteUnavailable(string(output)) {
+		if gitHQUnavailable(err, output) {
 			recordAttempt("HQ unavailable: "+detail, topology.FailureClassNetwork)
 			return failed(platform.NewPlatformError(
 				platform.ErrSSHDeployFailed,

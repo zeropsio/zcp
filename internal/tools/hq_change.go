@@ -153,7 +153,7 @@ func shipChange(
 			return stopped
 		}
 	}
-	output, tries, err := pushChangeBranch(ctx, sshDeployer, m.Hostname, branch)
+	output, tries, err := pushChangeBranch(ctx, sshDeployer, hqc, m.Hostname, branch)
 	if err != nil {
 		switch refusal := ops.ChangePushRefusal(string(output)); {
 		case refusal == "change_closed" || refusal == "unknown_change":
@@ -161,7 +161,7 @@ func shipChange(
 			// opens the next one.
 			clearChange(stateDir, m, change.Number)
 			return shipOutcome{line: fmt.Sprintf("change #%d was merged or closed before its branch was pushed (%s); the next delivery opens the next change", change.Number, refusal)}
-		case ops.GitRemoteUnavailable(string(output)):
+		case gitHQUnavailable(err, output):
 			return shipOutcome{unreachable: true, line: hqNotAnsweringLine(hqc.Address(), "pushing "+branch, tries, gitNotServingWords(err, output))}
 		}
 		if cls := classifyTransportError(err, deployStrategyGitPush); cls != nil && cls.Category == topology.FailureClassCredential {
@@ -196,7 +196,7 @@ func shipChange(
 // the agent can settle, an HQ that could not serve the read after its tries,
 // or a read that failed.
 func takeChangeIn(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client, m *workflow.ServiceMeta, number int, branch string) (shipOutcome, bool) {
-	output, tries, err := gitAgainstHQ(ctx, sshDeployer, m.Hostname, ops.BuildTakeChangeInCommand(hqPairWorkingDir, branch))
+	output, tries, err := gitAgainstHQ(ctx, sshDeployer, hqc, m.Hostname, ops.BuildTakeChangeInCommand(hqPairWorkingDir, branch))
 	if err == nil {
 		return shipOutcome{}, true
 	}
@@ -205,7 +205,7 @@ func takeChangeIn(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Clien
 		return shipOutcome{line: fmt.Sprintf(
 			"change #%d has moved on in HQ and this Mate's work changes the same lines (%s) — in %s's checkout run `git fetch origin && git merge origin/%s` and resolve it",
 			number, conflict, m.Hostname, branch)}, false
-	case ops.GitRemoteUnavailable(string(output)):
+	case gitHQUnavailable(err, output):
 		return shipOutcome{unreachable: true, line: hqNotAnsweringLine(hqc.Address(), fmt.Sprintf("reading change #%d", number), tries, gitNotServingWords(err, output))}, false
 	}
 	return shipOutcome{line: fmt.Sprintf("taking change #%d's branch in failed (%s)", number, gitPushErrorDetail(err, output))}, false
@@ -213,17 +213,25 @@ func takeChangeIn(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Clien
 
 // pushChangeBranch pushes the checkout's HEAD to branch, tried again while HQ
 // cannot serve it.
-func pushChangeBranch(ctx context.Context, sshDeployer ops.SSHDeployer, hostname, branch string) (output []byte, tries int, err error) {
-	return gitAgainstHQ(ctx, sshDeployer, hostname, ops.BuildChangePushCommand(hqPairWorkingDir, branch))
+func pushChangeBranch(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client, hostname, branch string) (output []byte, tries int, err error) {
+	return gitAgainstHQ(ctx, sshDeployer, hqc, hostname, ops.BuildChangePushCommand(hqPairWorkingDir, branch))
 }
 
 // gitAgainstHQ runs command — git that reaches HQ — in hostname's checkout,
-// tried again as deliveryRetry paces it while its output says HQ could not
-// serve it (hqGitAnswer: not reached at once, or a 5xx). Every such
-// command is safe to run again: a commit already made is not made twice, and
-// a fetch, a merge already taken in or a push already sent changes nothing.
-func gitAgainstHQ(ctx context.Context, sshDeployer ops.SSHDeployer, hostname, command string) (output []byte, tries int, err error) {
+// tried again as deliveryRetry paces it while HQ could not serve it
+// (hqGitAnswer). Each try first checks that HQ connects and serves
+// (hq.Client.Serving, bounded by deliveryBounds.connect), since git has no
+// connect bound of its own; a try whose check fails runs no git and returns
+// an hqPreflightError. Every such command is safe to run again: a commit
+// already made is not made twice, and a fetch, a merge already taken in or a
+// push already sent changes nothing.
+func gitAgainstHQ(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client, hostname, command string) (output []byte, tries int, err error) {
+	preflight := hqc.Bounded(deliveryBounds.connect, deliveryBounds.connect)
 	tries = deliveryRetry.run(ctx, func() hqAnswer {
+		if serving := preflight.Serving(ctx); serving != nil {
+			output, err = nil, &hqPreflightError{err: serving}
+			return hqNotServing
+		}
 		output, err = sshDeployer.ExecSSH(ctx, hostname, command)
 		return hqGitAnswer(err, output)
 	})
