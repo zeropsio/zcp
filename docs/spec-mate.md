@@ -49,6 +49,18 @@ by the ownership table below.
    mate; mate adds no dependency to zcp. zcp knows mate as a unit it installs and supervises (§2),
    as a reader of the envelope it already emits (§1), and as two CLI subcommands mate spawns. `zcp
    studio watch` is the Zerops Studio extension's transport; mate does not consume it.
+4. **Recover automatically; never let a clock or a hidden fix stand in for an owner's answer**
+   (the owner, 2026-10-05: "problém mám s automatickými opakováními jako třeba to, že se na FE
+   nastavilo a čekalo, že něco proběhne do 30 min, nebo že se magicky dělo něco v Gitee — ne to, že
+   se něco automaticky opakuje a vyrovnává se stavem, který vzniká, a je to jeho legitimní řešení,
+   jako že se automaticky obnoví session"). Wanted, in the client, the server and zcp alike:
+   recovery with clear logic — renewing a session, reconnecting, re-subscribing, re-reading, running
+   an idempotent step again after a transient failure (the network, a timeout, a 5xx, the network
+   back, a tab woken) — bounded by a backoff and a cap, visible while it runs ("Reconnecting…"),
+   and ending, once spent, in a visible failure with a manual _Try again_. Forbidden: a clock
+   standing in for an owner's answer ("after 30 min assume it ended"); a side effect nobody asked
+   for — a timer that silently compares and fixes, the Gitea era's magic; retrying a definitive
+   refusal; and repeating a non-idempotent side effect without first reading its own handle.
 
 Every fact has one owner and one path to the client:
 
@@ -681,13 +693,14 @@ and when HQ relays a different answer, ends every session whose answer is no lon
 ends every Zerops session once it has not known for two intervals, and ends any session older than
 24 hours. Ending a session closes its sockets.
 
-**Entering a Mate is one attempt (2026-10-05).** A connect — the throwaway, the exchange, the socket
-— is tried once. A failed one ends visibly: the Mate reads as not connected, with why, and offers
-_Try again_. A new attempt comes from the person's _Try again_, or from a prerequisite that changed
-— new credentials, a different descriptor — never from a timer, a tab coming back into view or the
-network waking; there is no retry ladder and no persisted cap. Setup that cannot be read inside
-Zerops reads as unavailable, refused or invalid, never as absent, and a stopped observation is not
-re-read on its own. From mate 0.11.81 the client keeps a Mate's session per account across loads and presents it again only where a fresh one would go, once the Mate confirms it still holds it with every scope the client asks for (D33). The client's
+**Entering a Mate recovers by itself, and a refusal ends it (2026-10-05, §0 rule 4).** A connect —
+the throwaway, the exchange, the socket — that fails transiently (the network, a timeout, a 5xx, a
+rejected socket) is tried again automatically on a bounded ladder, also when the network comes back
+or the tab wakes, and the Mate reads as "Reconnecting…" meanwhile. A definitive refusal — the door
+saying the person may not enter, a server below the floor — is not retried: it ends visibly, with
+why, and offers _Try again_; so does a ladder that is spent. A changed prerequisite — new
+credentials, a different descriptor — starts a fresh attempt. Setup that cannot be read inside
+Zerops reads as unavailable, refused or invalid, never as absent. From mate 0.11.81 the client keeps a Mate's session per account across loads and presents it again only where a fresh one would go, once the Mate confirms it still holds it with every scope the client asks for (D33). The client's
 credential renewer (`credentialRenewal.ts`) is reserved for a door that re-presents a credential;
 the throwaway door does not, so nothing renews a Zerops session. The GUI closes connections and
 clears account memory immediately on logout, retaining only account-scoped personal context for
@@ -784,10 +797,10 @@ life the upgrade races its handler against the session's own end — its deadlin
 `clientRemoved` change naming it — and ends the connection when either arrives (MS1-4a). A session
 with no stored deadline is left alone rather than closed on a guess.
 
-The client does not renew. When its socket is rejected the Mate reads as not connected, and the
-person's _Try again_ mints a fresh throwaway and exchanges again, the door answering with the
-current role (superseded 2026-10-05: from the fork's slice 0.9b it did so by itself on every
-rejection, with backoff — see _Entering a Mate is one attempt_). `credentialRenewal.ts` keeps its contract for a door that re-presents a
+The client does not renew. When its socket is rejected it mints a fresh throwaway and exchanges
+again, and the door answers with the current role — on a bounded ladder while the failure is
+transient, ending visibly with _Try again_ on a refusal or once spent (see _Entering a Mate
+recovers by itself_ in the current account contract). `credentialRenewal.ts` keeps its contract for a door that re-presents a
 credential; the throwaway door does not, so nothing renews a Zerops session (MB-3).
 `revokeBySubject(userId)` revokes every live session for one user immediately (an ops-path
 primitive) — a no-op on an unknown subject, counted once per session however often it is called.
@@ -933,33 +946,32 @@ plan's (`planEnvironmentCreation`, `createEnvironment.ts:250-287`), in order:
   `project:` block; then `import-managed` — a Mate's managed services alone — or `import-recipe` — a
   stage's or a production's tier, whole. A Mate's project is created with the `mate` tag, a stage's
   or a production's with none: where it stands is HQ's to say (`createEnvironment.ts:347-355`).
-- `import-container` — the zcp container, holding the key the person mints for it, and the tier's
-  runtimes for zcp to import on boot (`MATE_SETUP_RUNTIMES`).
+- `register` — the registration in the organization's HQ (MB-24), for a Mate before its container:
+  a Mate's record attached to its application with its face, or a record in no application (`POST
+  /api/mates`), with who asks for its stand-up in the same write — an attach that closes the Mate's
+  birth intent takes the ask the intent was recorded with (`POST /api/births`, `standUp`), any other
+  carries its own (`standUp`), so the record and its ask never part; a stage or a production
+  attached as its tier, with its deploy key (§10.11), after its import (`createEnvironment.ts`
+  `planEnvironmentCreation`, `matePress.ts` `pressRegistration`, HQ `structure.ts`).
+- `import-container` — the zcp container, holding the key the person mints for it — a key that
+  holds only its own project; the agent sees the application's stage and production through HQ
+  (`zerops_observe`, §10.8), never through a key on a sibling — and the tier's runtimes for zcp to
+  import on boot (`MATE_SETUP_RUNTIMES`).
 - `close-off` — `envIsolation` written `service` wherever a read says anything else, then the
   project marked closed off at HQ once two reads two seconds apart say `service`
-  (`runEnvironmentCreation.ts:195-202`, `:396-406`). Where HQ is not open in the tab the mark is
-  not written, and _Finish setup_ writes it (`matePress.ts:634-638`, `:673-676`).
-- `register` — the registration in the organization's HQ (MB-24): a Mate's record attached to its
-  application with its face, or a record in no application (`POST /api/mates`), with who
-  asks for its stand-up in the same write — an attach that closes the Mate's birth intent takes the
-  ask the intent was recorded with (`POST /api/births`, `standUp`), any other carries its own
-  (`standUp`), so the record and its ask never part; a stage or a production attached as its tier,
-  with its deploy key (§10.11) (`matePress.ts` `pressRegistration`, HQ `structure.ts`).
-- `share-reach` — the group's other Mates' keys extended to `READ_ONLY` on the new project where the
-  person may edit them; best-effort, said on its step, the group-reach reconcile covering the rest
-  (`runEnvironmentCreation.ts:407-419`, `matePress.ts:534-623`).
+  (`runEnvironmentCreation.ts`). Where HQ is not open in the tab the mark is not written, and
+  _Finish setup_ writes it (`matePress.ts`).
 - `await-ready` — for a Mate, the hand-off: the press returns; for a stage or a production, the wait
   for every service `ACTIVE`, at most 600 s, read every 5 s (`runEnvironmentCreation.ts:222-224`,
   `:441-462`).
 
-The registration is part of every creation: there is no environment made without one, and a
-creation is not done until HQ holds the record. The close-off comes before it, so a registration HQ
-refuses stops the press at `register` — a Mate's as a stage's or a production's — with HQ's refusal
-on the step; a Mate's project it already made stays closed off, and _Try again_ (or an owner's
-_Finish setup_) resumes there (`runEnvironmentCreation.ts`).
+The registration is part of every creation: there is no environment made without one. A Mate's
+registration comes before its container, so a press that stops after it leaves a Mate HQ holds,
+which any browser's _Finish setup_ completes; a registration HQ refuses stops the press there, for
+a Mate and a stage or a production alike, with HQ's refusal on the step.
 _Finish setup_ — on a half-made Mate's ⋯ menu, by an owner or an admin, in any browser — runs the
-same steps from the container on: `import-container` where the project has none, `close-off`,
-`register`, `share-reach`, `await-ready`; a Mate made before the
+same steps: `register` where HQ holds no record of it, `import-container` where the project has
+none, `close-off`, `await-ready`; a Mate made before the
 press first has its key lowered from `ADMIN` and moved off the project's variables (`hardenMate`)
 (`matePress.ts:828-858`, `:912-959`). A pool project a registration claimed goes the same way once
 the inventory lists it — hardened, closed off, nothing registered; a registration that answers
@@ -972,7 +984,7 @@ setup_ runs per project across the browser's tabs, under the Web Lock `mate:pres
 (`mateLocks.ts:23`); one that finds it held says "Its setup is already running in another tab."
 (`matePress.ts:731-744`). The close-off's mark and the registration are each tried up to four times,
 two seconds apart. A press that stopped at `import-container`, `close-off` or `register` resumes
-there with _Try again_, on the same project (`share-reach` never stops one); one that stopped at its
+there with _Try again_, on the same project; one that stopped at its
 project or at a services import is not resumed — a second import is refused for the hostnames the
 first made — and offers _Remove_ instead (`runEnvironmentCreation.ts:204-220`,
 `matePress.ts:812-824`, `mateComing.ts:18-20`).
@@ -989,8 +1001,8 @@ project is closed off**: auto-connect wants a Mate only once its health reads `r
 one whose container carries the press's marker while HQ does not hold its project closed off
 (`autoConnect.ts:44-49`, `:71-80`, `closeOffGate` `:103-121`); _Finish setup_ is what clears it
 (`interruptedPresses`, `matePress.ts:991-1009`).
-`runEnvironmentCreation.test.ts` — "closes off before the registration", "keeps a Mate closed off
-and running when its registration is refused", "stops a stage's press at a refused registration: it
+`runEnvironmentCreation.test.ts` — "registers a Mate before its container, and closes it off after",
+"stops a Mate before its container when its registration is refused", "stops a stage's press at a refused registration: it
 has no close-off to keep", "reads no process, and closes off in two reads two seconds apart",
 "resumes at the step that stopped, on the project the first press made"; `matePress.test.ts` —
 "settles a press that stopped with Try again, which resumes it at the step that stopped", "runs none
@@ -1068,7 +1080,7 @@ sees HQ's gate in place of the product (`ZeropsHqGate.tsx:1-5`):
 - **Then the press** (§4.4), from the moment the platform takes the project: `close-off`,
   `register` — the Mate attached to the application with the face the dialog asked, its
   birth recorded closed off and no stand-up asked, since a new project has no code to stand up —
-  `share-reach`, `await-ready` (`ZeropsNewProjectHost.tsx:20-26`, `:276-313`). Superseded
+  `await-ready` (`ZeropsNewProjectHost.tsx:20-26`, `:276-313`). Superseded
   2026-10-02: main's birth carried the Mate's membership and the broker's grant as its `tags` and
   `registry` steps, and its `harden` closed the project off.
 - **The dialog stays on the press** until the project is marked closed off and its registration
@@ -1561,13 +1573,11 @@ slice.
   there. Same trust-boundary shape as that broker and as the browser stream (§5.6): the broker
   executes what the client asks, so the fixed destination and the closed path list are what keep an XSS in a rendered cell from becoming a localhost SSRF.
 - **Degrade, never crash.** The session carries a status: `idle`, `starting`, `ready`,
-  `unsupported`, `unavailable`. A child that exits before printing a ready line is `unsupported`
-  when zcp reports an unknown subcommand; a child that prints nothing within a bounded wait is
-  killed and reported `unavailable`, which is also what a zcp without `studio` at all yields.
-  `unavailable` carries a sanitized one-line reason — the raw stderr never reaches a client, it
-  carries container paths. `unsupported` holds for the server's lifetime; `unavailable` is retried
-  by the next call, never by a timer. Both states are visible in the panel, never a toast and
-  never a respawn loop.
+  `unavailable`. A console that fails to start — a child that exits before printing a ready line,
+  or prints nothing within a bounded wait and is killed — reads `unavailable` with zcp's reason,
+  sanitized to one line (the raw stderr never reaches a client, it carries container paths), and
+  the panel offers _Try again_. The next request spawns again; nothing respawns on its own. The
+  state is visible in the panel, never a toast.
 - **Read-only in this slice.** `--allow-writes` is not passed, no write token is minted, and every
   mutating route is refused by the console itself. Writes arrive later the way the console already
   expects them (`spec-dataconsole.md` §5): a confirm in the Mate UI, and a write token that lives in
@@ -1578,7 +1588,8 @@ slice.
 
 This stays inside §0 rule 3. zcp learns nothing about mate here: the console is a CLI subcommand
 mate spawns, not a layer zcp grows for it, and it is not configured through `zcp init` or the unit
-contract (§2.8) — an old zcp reports `unsupported`.
+contract (§2.8). Every zcp the fleet runs has the `console` command; one without it fails to start
+the console like any other cause, and reads `unavailable`.
 
 ### Invariants
 
@@ -2316,8 +2327,8 @@ group's release switch and `mate:leaving:{userId}` marks (`groupRegistry.ts`, gi
 `OWNER`/`ADMIN`, which is the whole access control. _New project_ writes the group and the first
 Mate's membership at birth; registering a Mate then widens the broker's token in place with
 `BASIC_USER` on the Mate's project (`brokerGrant.ts`; a failed grant after the registry write is
-reported and has no retry yet). Group reach on a Mate's own token narrows by itself and widens only
-on a person's action (`planGroupReach`, `useZeropsGroupReach`). Per-project tags (`mate`,
+reported and has no retry yet). Group reach on a Mate's own token is gone since 2026-10-05: a Mate's
+key holds only its own project, and its agent sees stage and production through HQ (§10.8). Per-project tags (`mate`,
 `mate:g:`, `mate:role:`, `mate:name:`, `mate:bot:`) stay display hints. Who signed an agent in,
 who asked for a Mate's stand-up and whether its project is closed off are no tags — any member can
 write a tag by API: the first is the Mate's own record (§10.5), the other two the Mate's record at
@@ -2332,8 +2343,8 @@ own project) → `drop-container-delegation` (the one-use _can create projects_ 
 platform-made key carries, deleted) → `isolate-project-env` (`envIsolation: service`; `ZCP_API_KEY`
 moved from the project onto the `zcp` service as a sensitive variable and deleted from the project;
 `sshIsolation` untouched; every service restarted, `zcp` last — a running process keeps what it
-captured at start) → `import-recipe` where a tier applies. The group-reach reconcile (`useZeropsGroupReach`) lowers
-the key of any Mate from any page; the delegation and the isolation run only as creation steps,
+captured at start) → `import-recipe` where a tier applies. A Mate's key holds only its own project, and nothing widens
+it to a sibling (§10.8, `zerops_observe`); the delegation and the isolation run only as creation steps,
 which the wizard's one-call path (§4.7) skips — a Mate made by _New project_ keeps its delegation
 and runs `envIsolation: none` with its key at project level (measured 2026-09-17; open in the
 primer). `planProjectIsolation` also deletes a key outright from a stage or production project
@@ -2728,7 +2739,7 @@ Who holds what:
 
 - **The person's browser, as the person**, reads the recipe and builds the project: it imports the
   `project:` block and the managed services, adds the `zcp` container, lowers the container's
-  token (`BASIC_USER` on its project, `READ_ONLY` on the project's other environments), drops
+  token (`BASIC_USER` on its project, and on nothing else), drops
   the one-time delegation, grants the broker, registers the Mate, closes the project off once
   `zcp` answers (per-service env isolation, `ZCP_API_KEY` a sensitive variable on `zcp`), and
   imports the runtimes.
