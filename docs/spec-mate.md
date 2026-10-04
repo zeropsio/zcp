@@ -2299,6 +2299,25 @@ time (`POST /api/mate/changes`, `PATCH …/:repo/:n`, `POST …/attachments`); a
 which takes a Mate's push only on the branch of its own open change, only forward. §10.10 is what
 zcp does with it.
 
+**A Mate's environment observation** (ADR 0003; parity 84, 260, 275). `zerops_observe` is
+registered only in a Mate's container, with no SSH requirement. It uses the enrollment's Mate
+credential: `action="environments"` reads `GET /api/mate/environments`; `action="status"` reads
+`GET /api/mate/environments/:projectId`; `action="logs"` reads
+`GET /api/mate/environments/:projectId/services/:serviceId/logs?limit=`, 1–100 entries (default
+100), each message at most 4,096 characters. The first call supplies environment project IDs,
+the second service IDs. No application ID or Zerops credential is accepted from the model.
+HQ resolves the Mate's current placement by ID on each call and permits only environments of
+that application that every active person able to operate the Mate may read in Zerops. These
+permission facts are read for the call, never served from the outage fallback. HQ opens and checks
+the environment's deploy key against its one-project Basic user scope before reading services,
+active-version IDs and names, or the platform's signed log backend. No env, raw service DTO,
+deploy key or signed log address is returned. A missing or widened key is a visible refusal;
+an unavailable read is a failure, not an empty answer. Each observation attempts once, including
+a `503`; it ends visibly and asks the agent to call again manually. No sibling grants are minted
+or synchronized; legacy grants still require separate manual removal. Tests: the fork's
+`observation.test.ts`, `zerops/observationHttp.test.ts`; zcp `TestObserve_*`,
+`TestServer_ObserveToolGating`, `TestAnnotations_ObserveTool`.
+
 **A person's side** (`Authorization: Bearer <session>`, from the door, §10.4): the structure
 (`GET /api/structure`, and its stream over a WebSocket ticket) — applications, the projects attached
 to them as Mates, stages and productions, each application's changes and environments, as the
