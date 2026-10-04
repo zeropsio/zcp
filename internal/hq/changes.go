@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // A Mate's changes in HQ (@t3tools/shared/hqChanges, which zcp reads as the
@@ -48,6 +49,16 @@ func Open(httpClient Doer, path string) (Client, error) {
 // delivery, which fails fast rather than waiting HQ out.
 func (c Client) Once() Client {
 	c.call.once = true
+	return c
+}
+
+// Bounded is this client ending each try of a call that has no connection
+// within connect, TLS included, or no answer within answer, as an
+// UnavailableError carrying a NoAnswerError — for a caller that fails fast
+// rather than leave a call to the Doer's own, longer, timeouts. The connect
+// bound reads the connection from net/http's trace.
+func (c Client) Bounded(connect, answer time.Duration) Client {
+	c.call.connect, c.call.answer = connect, answer
 	return c
 }
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"strconv"
 	"strings"
 	"time"
@@ -48,6 +49,26 @@ func (u *UnavailableError) Error() string {
 
 func (u *UnavailableError) Unwrap() error { return u.Err }
 
+// NoAnswerError is a call HQ did not answer within a bounded client's bounds
+// (Client.Bounded): no connection within the connect bound — TLS included —
+// or, connected, no answer within the answer bound. An UnavailableError
+// carries it.
+type NoAnswerError struct {
+	Path      string
+	Connected bool
+	Within    time.Duration
+}
+
+func (e *NoAnswerError) Error() string { return "hq " + e.Path + ": " + e.Words() }
+
+// Words is what the call met, without the path: "no connection within 5s".
+func (e *NoAnswerError) Words() string {
+	if !e.Connected {
+		return fmt.Sprintf("no connection within %s", e.Within)
+	}
+	return fmt.Sprintf("no answer within %s", e.Within)
+}
+
 // IsUnavailable reports whether err is HQ not serving now: a delivery it
 // stopped waits for the next pass rather than failing.
 func IsUnavailable(err error) bool {
@@ -69,6 +90,9 @@ type hqClient struct {
 	pause func(ctx context.Context, d time.Duration) error
 	// once: a 503 is answered at once, never waited out (Client.Once).
 	once bool
+	// connect and answer bound each try (Client.Bounded); 0 leaves it to
+	// the caller's context and the Doer.
+	connect, answer time.Duration
 }
 
 // A 503 is waited out for at most unavailableBudget in all, each wait its
@@ -154,9 +178,50 @@ func (c hqClient) send(ctx context.Context, method, path, authorization, content
 	}
 }
 
+// errNotConnected ends a try that has no connection within its bound.
+var errNotConnected = errors.New("not connected")
+
+// bounded is ctx bounded for one try as the client is (Client.Bounded): the
+// connect bound runs until net/http reports the connection made, TLS
+// included; the answer bound covers the whole try.
+func (c hqClient) bounded(ctx context.Context) (context.Context, context.CancelFunc) {
+	cancelAnswer := context.CancelFunc(func() {})
+	if c.answer > 0 {
+		ctx, cancelAnswer = context.WithTimeout(ctx, c.answer)
+	}
+	if c.connect == 0 {
+		return ctx, cancelAnswer
+	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	timer := time.AfterFunc(c.connect, func() { cancel(errNotConnected) })
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { timer.Stop() }})
+	return ctx, func() {
+		timer.Stop()
+		cancel(nil)
+		cancelAnswer()
+	}
+}
+
+// unanswered is what ended a try whose call failed with err: a bound of the
+// client's (NoAnswerError), or err when the caller's own ctx ended it or
+// nothing did.
+func (c hqClient) unanswered(caller, try context.Context, path string, err error) error {
+	switch {
+	case caller.Err() != nil:
+		return err
+	case errors.Is(context.Cause(try), errNotConnected):
+		return &NoAnswerError{Path: path, Within: c.connect}
+	case errors.Is(try.Err(), context.DeadlineExceeded):
+		return &NoAnswerError{Path: path, Connected: true, Within: c.answer}
+	}
+	return err
+}
+
 // sendOnce is one try; wait is how long to wait before the next, 0 when the
 // answer is final.
-func (c hqClient) sendOnce(ctx context.Context, method, path, authorization, contentType string, body []byte, out any) (time.Duration, error) {
+func (c hqClient) sendOnce(caller context.Context, method, path, authorization, contentType string, body []byte, out any) (time.Duration, error) {
+	ctx, release := c.bounded(caller)
+	defer release()
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
@@ -173,12 +238,12 @@ func (c hqClient) sendOnce(ctx context.Context, method, path, authorization, con
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return 0, &UnavailableError{Err: fmt.Errorf("hq %s: %w", path, err)}
+		return 0, &UnavailableError{Err: c.unanswered(caller, ctx, path, fmt.Errorf("hq %s: %w", path, err))}
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, answerLimit))
 	if err != nil {
-		return 0, &UnavailableError{Err: fmt.Errorf("hq %s: %w", path, err)}
+		return 0, &UnavailableError{Err: c.unanswered(caller, ctx, path, fmt.Errorf("hq %s: %w", path, err))}
 	}
 	// A 204 answers with nothing to decode.
 	if resp.StatusCode == http.StatusNoContent {

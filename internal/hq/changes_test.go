@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -282,6 +283,82 @@ func TestClient_Once_LeavesTheWaitToTheCaller(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestClient_Bounded_EndsATryHQDoesNotAnswer: a client bounded for a caller
+// that fails fast ends a call that has no connection within the connect bound
+// — an HQ that never accepts it — or no answer within the answer bound, as
+// HQ unavailable with no answer; an HQ that answers in time answers.
+func TestClient_Bounded_EndsATryHQDoesNotAnswer(t *testing.T) {
+	t.Parallel()
+	const connect, answer = 200 * time.Millisecond, 400 * time.Millisecond
+	tests := []struct {
+		name          string
+		hq            func(t *testing.T) (address string, doer Doer)
+		wantConnected bool
+		wantWithin    time.Duration
+		wantServed    bool
+	}{
+		{"never accepts", neverAccepting, false, connect, false},
+		{"accepts and never answers", func(t *testing.T) (string, Doer) {
+			t.Helper()
+			release := make(chan struct{})
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+			t.Cleanup(srv.Close)
+			t.Cleanup(func() { close(release) })
+			return srv.URL, srv.Client()
+		}, true, answer, false},
+		{"answers", func(t *testing.T) (string, Doer) {
+			t.Helper()
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{"appId":"a1","name":"appdev"}`)
+			}))
+			t.Cleanup(srv.Close)
+			return srv.URL, srv.Client()
+		}, false, 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			address, doer := tt.hq(t)
+			path := filepath.Join(t.TempDir(), "enrollment.json")
+			if err := SaveEnrollment(path, Enrollment{HQ: address, ProjectID: "p-mate", Credential: "good"}); err != nil {
+				t.Fatal(err)
+			}
+			client, err := Open(doer, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			start := time.Now()
+			_, err = client.Once().Bounded(connect, answer).EnsureRepo(context.Background(), "appdev")
+			if took := time.Since(start); took > 2*time.Second {
+				t.Errorf("the call took %s, want it ended by its bound", took)
+			}
+			if tt.wantServed {
+				if err != nil {
+					t.Fatalf("err = %v, want the answer", err)
+				}
+				return
+			}
+			var noAnswer *NoAnswerError
+			if !IsUnavailable(err) || !errors.As(err, &noAnswer) || noAnswer.Connected != tt.wantConnected || noAnswer.Within != tt.wantWithin {
+				t.Fatalf("err = %v, want unavailable with no answer (connected=%v, within %s)", err, tt.wantConnected, tt.wantWithin)
+			}
+		})
+	}
+}
+
+// neverAccepting is an HQ address whose listener never accepts: the kernel
+// completes the TCP handshake into its backlog, and TLS never starts.
+func neverAccepting(t *testing.T) (string, Doer) {
+	t.Helper()
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	return "https://" + listener.Addr().String(), &http.Client{}
 }
 
 func TestClient_Unreachable_IsUnavailableAtOnce(t *testing.T) {
