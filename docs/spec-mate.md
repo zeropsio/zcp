@@ -272,11 +272,8 @@ now-off flag has to remove — so a container that never had mate prints not one
 1. **Refuse without a project.** `runtime.Info.ProjectID` empty ⇒ degrade — a non-empty project id
    is the sole signal the server binds to a Zerops project.
 2. **Bundle** — `mate.EnsureInstalled` (below) in full.
-3. **Capability note.** `mate.SupportsBasePath` reads `serve --help` once; unadvertised ⇒ logged to
-   stderr (§2.2) — such a bundle answers under `BasePath` but its root-absolute assets hit the
-   cookie gate instead.
-4. **Environment.** `~/.zcp/mate.env` rewritten (mode 0600) every boot — §2.3.
-5. **Unit.** `mate.UnitFilePath` absent ⇒ `sudo -E zsc unit create mate "zcp service start mate"`.
+3. **Environment.** `~/.zcp/mate.env` rewritten (mode 0600) every boot — §2.3.
+4. **Unit.** `mate.UnitFilePath` absent ⇒ `sudo -E zsc unit create mate "zcp service start mate"`.
 
 The step is **best-effort** (`step.degraded`): a release 404, an unset/mismatched digest, or an npm
 dependency failure names the cause but `zcp init` still exits successfully — it is a `run.init`
@@ -413,21 +410,22 @@ published the tarball and `stable.json`; every container picks it up at its next
 
 ### 2.2 The supervised process
 
-`zcp service start mate` runs `mate.ServeArgv(bin, withBasePath)` — never `npx` (resolving the package
+`zcp service start mate` runs `mate.ServeArgv(bin)` — never `npx` (resolving the package
 at every start cost 58 s cold, measured, see the mate ledger; the argv always runs the local bundle):
 
 ```
-~/.zcp/mate/node_modules/.bin/mate serve --mode web --host 127.0.0.1 --port 3773 [--base-path /mate] \
+~/.zcp/mate/node_modules/.bin/mate serve --mode web --host 127.0.0.1 --port 3773 \
   --base-dir ~/.t3 --no-browser --auto-bootstrap-project-from-cwd /var/www
 ```
 
 - `--auto-bootstrap-project-from-cwd` is **boolean**; the workspace (`/var/www`) is a trailing
   **positional** — writing it as the flag's value bootstraps the unit's launch directory instead.
   `--base-dir` (`~/.t3`) keeps thread history across a restart; a redeploy starts it empty.
-- **`--base-path` is a capability, not a preference**: passed only when `mate.SupportsBasePath(bin)`
-  is true — the CLI treats an unknown flag as a fatal parse error, and the fork reports the same
-  version string with and without it, so it cannot be gated by version. Omitting it degrades safely
-  (only assets miss) and is logged at both `zcp init` and the unit's journal.
+- **No flag depends on the bundle.** The CLI treats an unknown flag as a fatal parse error, and a
+  launch may start a bundle nothing vetted — a kept dev build, or the installed one after an install
+  failed. So the public prefix is not passed as `--base-path`: it rides `T3CODE_BASE_PATH`
+  (`mate.LaunchEnvLines`, §2.3), the same setting, which every release since v0.1.0 reads. Nothing
+  runs `serve --help` before a launch.
 - **An explicit `--auto-bootstrap-project-from-cwd` wins over the `serve` command's own opt-out.**
   Upstream's `serve` command sets a headless startup presentation that, left to itself, forces
   auto-bootstrap off; the fork's config resolution checks the explicit flag *first*, so zcp's
@@ -467,7 +465,7 @@ three live inside one `{{- if .MateEnabled}}` region.
 
 | Location | Behaviour |
 |---|---|
-| `{BasePath}/` (`/mate/`) | Proxies to `http://127.0.0.1:3773/` — **trailing slash strips the prefix**, so mate's routes stay at the loopback root and only URLs it *emits* (`--base-path`) carry it. Websocket upgrade headers, `proxy_read_timeout 86400s`. Outside the cookie gate: mate owns its own auth (§3). |
+| `{BasePath}/` (`/mate/`) | Proxies to `http://127.0.0.1:3773/` — **trailing slash strips the prefix**, so mate's routes stay at the loopback root and only URLs it *emits* (`T3CODE_BASE_PATH`) carry it. Websocket upgrade headers, `proxy_read_timeout 86400s`. Outside the cookie gate: mate owns its own auth (§3). |
 | `~ ^/(abs)?proxy/3773(/|$)` | `return 404`. code-server's `/proxy/<port>/`/`/absproxy/<port>/` reach any loopback port for whoever holds the container cookie — a second door, closed; evaluated before `location /`. Closed **only while mate is enabled**: with the flag off nothing of ours listens on 3773 and the port is an ordinary user port. |
 | `= {BasePath}/healthz` | Serves `mate.InitMarkerPath` verbatim, `application/json`, `no-store`; falls back to `{"initComplete":false,"initAt":null}` with no marker yet. No proxy, no process — answers even when nginx is all that's up. |
 
@@ -557,8 +555,8 @@ between the two for long.
 
 ### 2.7 Base path on the mate side
 
-nginx strips the prefix (§2.4); the server learns its **public** prefix from `--base-path` /
-`T3CODE_BASE_PATH` and joins it onto every absolute URL it emits (assets, `/ws`, well-known,
+nginx strips the prefix (§2.4); the server learns its **public** prefix from `T3CODE_BASE_PATH`
+(zcp passes no `--base-path`, §2.2) and joins it onto every absolute URL it emits (assets, `/ws`, well-known,
 `pairUrl`). The web bundle bakes the same prefix at build time (`VITE_BASE_PATH`) into
 `index.html`, the manifest, and the router's `basepath` — a default build is byte-shape identical
 to upstream. `ExecutionEnvironmentDescriptor.basePath` is **optional**: an older server stating
@@ -578,13 +576,14 @@ zcp and mate ship from two repositories on two schedules, and the coupling betwe
 of facts below — none of which either side can change alone. The facts are numbered as **contract
 1**: a release declares the contract it satisfies in `stable.json` (§2.1c), zcp carries
 `SupportedContract`, and a release declaring a number zcp does not know is refused rather than
-installed. Changing any fact below is a contract bump on both sides; adding a flag that an older
-mate would reject is either a bump or a capability probe (`--base-path` is the precedent).
+installed. Changing any fact below is a contract bump on both sides; so is a flag zcp starts passing that a
+release at or above `MinimumMateVersion` would reject — a setting older releases may lack rides the
+environment instead, never a probed flag (§2.2).
 
 | # | The fact | Owned by |
 |---|---|---|
 | C-1 | The artifact is `zerops-mate-<version>.tgz`, a GitHub release asset on `zeropsio/mate`, whose npm `bin` entry is `mate` at `node_modules/.bin/mate` (`mate.BinName`), and whose release publishes `stable.json` beside it (§2.1c) | fork's `cli.ts pack` + release workflow |
-| C-2 | `serve` accepts `--mode web --host --port --base-dir --no-browser --auto-bootstrap-project-from-cwd` with the working directory as a trailing **positional**. **An unknown flag is fatal**, so every flag added later reaches production only behind a capability probe — `--base-path` is the precedent and stays one (§2.2) | fork's `cli/config.ts` |
+| C-2 | `serve` accepts `--mode web --host --port --base-path --base-dir --no-browser --auto-bootstrap-project-from-cwd` with the working directory as a trailing **positional**. **An unknown flag is fatal**, so zcp passes only flags every release it drives accepts; it sets the prefix through `T3CODE_BASE_PATH`, not `--base-path` (§2.2) | fork's `cli/config.ts` |
 | C-3 | `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}` keep their meaning, and a non-empty `PROJECT_ID` remains the sole Zerops-environment signal (§2.3, §3.1). `T3CODE_ZEROPS_HQ_ENROLLMENT` names the HQ enrollment file and nothing else; it is additive — an older mate ignores it, and a launch without it leaves the server's link to HQ quiet | fork's `ZeropsEnvironment` |
 | C-4 | Liveness is `GET {basePath}/.well-known/t3/environment` → `200 application/json` carrying `basePath` (§2.5) | fork's environment descriptor |
 | C-5 | The server binds loopback only and never claims a declared platform port (§2.4) | zcp's `ServeArgv`, fork's `--host` |
@@ -604,7 +603,7 @@ actively refused today (C-1's `pack` assertion), so it would be a fork-side chan
 | ID | Invariant |
 |---|---|
 | MD-1 | The init step never fails the container start, degrading instead — for any install, download, integrity or unit-removal failure. `TestRun_Mate_InstallFailures_Degrade`, `TestRun_Mate_NoProjectID_Degrades`, `TestRun_MateDisabled_UnitRemoveFails_Degrades`. |
-| MD-2 | `--base-path` is passed only when the installed bundle's `serve --help` advertises it. `TestServeArgv`, `TestSupportsBasePath`, `TestStart_Mate_Argv`. |
+| MD-2 | `ServeArgv` carries no flag whose support depends on the installed bundle, and no launch runs `serve --help`; the public prefix rides `T3CODE_BASE_PATH` on every launch. `TestServeArgv`, `TestStart_Mate_Argv`, `TestStart_Mate_BasePathRidesTheEnv`. |
 | MD-3 | The env contract carries only non-secret identifiers; an absent `ZCP_MATE_ALLOWED_ORIGINS` leaves that key unwritten. `TestEnvLines`, `TestRun_Mate_WritesEnvContract`, `TestRun_Mate_WritesAllowedOrigins_WhenConfigured`. |
 | MD-4 | With the flag ON, `/mate/` and `/mate/healthz` render outside the cookie gate and code-server's `/proxy/3773/`/`/absproxy/3773/` are closed. `TestRunNginx_MateOutsideCookieGate`, `TestRunNginx_ClosesCodeServerProxyDoorToMate`. |
 | MD-5 | `{BasePath}/healthz` answers before AND after the first `zcp init` completes, as parseable JSON, whether or not a step degraded. `TestRunNginx_HealthzServesTheInitMarker`, `TestRunNginx_HealthzFallbackIsValidJSON`, `TestRun_WritesInitCompleteMarker`, `TestRun_Mate_DegradedStepStillMarksInitComplete`. |

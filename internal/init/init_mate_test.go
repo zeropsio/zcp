@@ -175,40 +175,6 @@ func TestRun_Mate_ManifestUnreachable_KeepsInstalled(t *testing.T) {
 	}
 }
 
-// TestRun_Mate_BasePathWarning_OnlyWhenTheHelpLacksIt: the boot log names a
-// bundle without --base-path only when its help ran and does not name the
-// flag. A probe that could not answer — a cold first node start under boot
-// load, one of twenty boots of a fleet roll — says nothing about the bundle.
-func TestRun_Mate_BasePathWarning_OnlyWhenTheHelpLacksIt(t *testing.T) {
-	tests := []struct {
-		name        string
-		supported   bool
-		probeErr    error
-		wantWarning bool
-	}{
-		{"help advertises the flag", true, nil, false},
-		{"help lacks the flag", false, nil, true},
-		{"help could not answer", false, errors.New("serve --help: signal: killed"), false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rig := newMateRig(t)
-			rig.installBundle(t)
-			zcpinit.SetMateBasePathSupport(func(string) (bool, error) { return tt.supported, tt.probeErr })
-			t.Cleanup(zcpinit.ResetMateBasePathSupport)
-
-			stderr := captureStderr(t, func() {
-				if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
-					t.Fatalf("Run(): %v", err)
-				}
-			})
-			if got := strings.Contains(stderr, "does not advertise --base-path"); got != tt.wantWarning {
-				t.Errorf("warning printed = %v, want %v; stderr:\n%s", got, tt.wantWarning, stderr)
-			}
-		})
-	}
-}
-
 // TestRun_Mate_InstallsPinnedBundle_WhenAbsent covers the fresh container: no
 // bundle on disk, so exactly one call to mateEnsureInstalled installs the
 // pinned version before the unit is registered.

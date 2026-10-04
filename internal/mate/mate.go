@@ -63,10 +63,10 @@ const (
 	LoopbackHost = "127.0.0.1"
 
 	// BasePath is the public path prefix nginx publishes mate under on the
-	// container's 8080 origin, and the value passed to the server as
-	// `--base-path` so the URLs it emits (assets, /ws, well-known) carry the
-	// prefix. Both the nginx template and ServeArgv read this constant, so
-	// moving the prefix is one edit.
+	// container's 8080 origin, and the value the server reads from
+	// EnvBasePath so the URLs it emits (assets, /ws, well-known) carry the
+	// prefix. Both the nginx template and LaunchEnvLines read this constant,
+	// so moving the prefix is one edit.
 	BasePath = "/mate"
 
 	// UnitName is the `zsc unit create` name; systemd renders it as
@@ -193,15 +193,9 @@ const (
 // the step degrades when it expires.
 const installTimeout = 3 * time.Minute
 
-// defaultHelpTimeout bounds the --base-path capability probe (one node
-// startup). A probe that runs past it answers "unknown", never "absent".
-const defaultHelpTimeout = 10 * time.Second
-
-var helpTimeout = defaultHelpTimeout
-
 // smokeTimeout bounds the post-stage probes EnsureInstalled runs before it lets
 // a newly staged version go live: `mate --version` plus the native-addon import.
-// Two node startups, same order of magnitude as helpTimeout.
+// Two node startups.
 const smokeTimeout = 15 * time.Second
 
 // Prefix is the npm prefix mate lives under. It lives under the service user's
@@ -659,66 +653,31 @@ func pruneOldVersions(liveVersion string) {
 
 // ServeArgv is the supervised command (argv[0] included) for the mate server.
 //
-// withBasePath is a CAPABILITY, not a preference: the mate CLI treats an unknown
-// flag as a fatal parse error, so a bundle that predates --base-path would
-// crash-loop the unit at every container boot if the flag were passed blind.
-// Dropping it degrades in the safe direction — the server boots and answers
-// under BasePath, only its root-absolute assets miss.
+// It carries no flag whose support depends on the installed bundle: the mate
+// CLI treats an unknown flag as a fatal parse error, and a launch may start a
+// bundle nothing has vetted — a kept dev build, or what is installed after an
+// install failed. The public prefix rides EnvBasePath instead
+// (LaunchEnvLines), which every mate release since v0.1.0 reads.
 //
 // The working directory is a POSITIONAL argument and
 // --auto-bootstrap-project-from-cwd is a boolean flag (apps/server/src/cli/
 // config.ts): the directory must never be written as that flag's value.
-func ServeArgv(bin string, withBasePath bool) []string {
-	argv := []string{
+func ServeArgv(bin string) []string {
+	return []string{
 		bin, "serve",
 		"--mode", "web",
 		"--host", LoopbackHost,
 		"--port", strconv.Itoa(ServePort),
-	}
-	if withBasePath {
-		argv = append(argv, "--base-path", BasePath)
-	}
-	return append(argv,
 		"--base-dir", BaseDir(),
 		"--no-browser",
 		"--auto-bootstrap-project-from-cwd",
 		WorkspaceDir,
-	)
-}
-
-// SupportsBasePath reports whether the installed bundle advertises
-// --base-path, by reading `serve --help`. A probe that could not answer
-// (missing binary, non-zero exit, timeout) answers false: the argv then omits
-// the flag, which still starts — and the server still learns its prefix from
-// LaunchEnvLines.
-func SupportsBasePath(bin string) bool {
-	supported, _ := BasePathSupport(bin)
-	return supported
-}
-
-// BasePathSupport is SupportsBasePath telling its two "no"s apart: false with
-// a nil error is a help that ran and does not name the flag; an error is a
-// probe that could not answer at all. The second is what a just-installed
-// bundle's first node start under boot load looks like — measured on one of
-// twenty boots of a fleet roll, where the unit's and `zcp init`'s probes both
-// ran past helpTimeout in the same ten seconds — and it says nothing about
-// the bundle.
-func BasePathSupport(bin string) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), helpTimeout)
-	defer cancel()
-
-	out, err := exec.CommandContext(ctx, bin, "serve", "--help").CombinedOutput()
-	if err != nil {
-		return false, fmt.Errorf("%s serve --help: %w", bin, err)
 	}
-	return strings.Contains(string(out), "--base-path"), nil
 }
 
 // EnvBasePath is the server's public prefix as its environment states it —
-// the same setting as --base-path (the flag wins when both are given, with
-// the same value). Both arrived in one mate release, and an older server
-// reads only the variables it declares, so the variable is safe to set on
-// every launch where the flag is not.
+// the same setting as the CLI's --base-path, which zcp does not pass. Both
+// arrived in one mate release, before v0.1.0.
 const EnvBasePath = "T3CODE_BASE_PATH"
 
 // EnvHQEnrollment names, to the server, the file the Mate's HQ enrollment is
@@ -727,9 +686,9 @@ const EnvBasePath = "T3CODE_BASE_PATH"
 const EnvHQEnrollment = "T3CODE_ZEROPS_HQ_ENROLLMENT"
 
 // LaunchEnvLines is what a mate launch adds to the server's environment on
-// top of the live env store and the identity contract: its public prefix,
-// whatever the --base-path probe answered, the status file it reads a new
-// Mate's setup from (status.go), and its HQ enrollment.
+// top of the live env store and the identity contract: its public prefix, the
+// status file it reads a new Mate's setup from (status.go), and its HQ
+// enrollment.
 func LaunchEnvLines() []string {
 	return []string{
 		EnvBasePath + "=" + BasePath,
