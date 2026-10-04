@@ -290,7 +290,6 @@ func resolveDelegatedLaunchToken(
 		Status:            topology.LaunchStatusLaunching,
 		TokenAcquisition:  tokenAcquisitionDelegated,
 		MintedTokenName:   mintedName,
-		Owner:             thisLaunchOwner(),
 	}
 	if err := writeLaunchState(stateDir, preMint); err != nil {
 		auditReject("write pre-mint launch state: " + err.Error())

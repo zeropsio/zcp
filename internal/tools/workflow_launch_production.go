@@ -10,7 +10,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -24,31 +23,6 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
-
-// launchesInFlight holds, by launchID, the new-project launches whose
-// mutation runs in this process: a `launching` state this process wrote is
-// held while its call runs here, and its call has ended once it is not.
-var launchesInFlight sync.Map
-
-// thisLaunchOwner names this process as the one running a launch.
-func thisLaunchOwner() *launchOwner {
-	return &launchOwner{PID: os.Getpid(), Start: workflow.CurrentProcessStartTime()}
-}
-
-// launchHeld is whether the call that wrote a `launching` state still runs:
-// in this process while its mutation holds the launch, in another while that
-// process lives. A state that names no process is held by none.
-func launchHeld(state *launchState) bool {
-	owner := state.Owner
-	if owner == nil {
-		return false
-	}
-	if self := thisLaunchOwner(); *owner == *self {
-		_, held := launchesInFlight.Load(state.LaunchID)
-		return held
-	}
-	return workflow.IsProcessAlive(owner.PID, owner.Start)
-}
 
 // handleLaunchProduction orchestrates the launch-production workflow per
 // plans/archive/production-lifecycle-2026-05-11.md §8.1. Stateless multi-call
@@ -298,6 +272,21 @@ func handleLaunchProduction(
 	// the target project, idempotent resume returns the current state
 	// instead of re-importing.
 	launchID := generateLaunchID(projectID, input.ProductionProjectName)
+	// One call at a time per launch, from reading its state to its last write
+	// (launchLock): a second call — here or in another zcp process — is
+	// refused while this one runs, however long it takes.
+	lock, err := tryLaunchLock(stateDir, launchID)
+	if errors.Is(err, errLaunchHeld) {
+		return launchInProgressResponse(), nil, nil
+	}
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrAPIError,
+			fmt.Sprintf("take the launch's lock: %v", err),
+			"Check that .zcp/state/"+launchLockDir+"/ is writable.",
+		), WithRecoveryStatus()), nil, nil
+	}
+	defer lock.release()
 	existing, err := readLaunchState(stateDir, launchID)
 	if err != nil && !errors.Is(err, ErrLaunchStateMissing) {
 		return convertError(platform.NewPlatformError(
@@ -310,13 +299,13 @@ func handleLaunchProduction(
 	// Phase-aware resume (FIX 1 PR 2 — eval root-cause review 2026-05-19).
 	// Four resume branches based on (Status, TargetProjectID):
 	//
-	//   1. launching + TargetProjectID=="" — silent-double-mutation P0
-	//      lock. The call that wrote it is mid-mutation, or ended between
-	//      the state-file persist and recording what CreateAndImportProject
-	//      did; a blind retry would create a SECOND project under the same
-	//      name. Refused while that call runs (launchHeld), however long it
-	//      takes; once it is gone, its handle is read first — the project
-	//      by its name (readEndedLaunch).
+	//   1. launching + TargetProjectID=="" — silent-double-mutation P0.
+	//      This call holds the launch's lock, so the call that wrote it
+	//      ended between the state-file persist and recording what
+	//      CreateAndImportProject did (or Zerops did not answer it); a
+	//      blind retry would create a SECOND project under the same name.
+	//      Its handle is read first — the project by its name
+	//      (readEndedLaunch).
 	//
 	//   2. failed + TargetProjectID=="" — safe to retry (delegated:
 	//      confirmLaunch reuses the staged token when staging was
@@ -344,14 +333,9 @@ func handleLaunchProduction(
 			// the normal status machine below the resume gate.
 			switch existing.Status {
 			case topology.LaunchStatusLaunching:
-				// P0 silent-double-mutation lock: the call that wrote it
-				// still runs — refuse a concurrent mutation.
-				if launchHeld(existing) {
-					return launchInProgressResponse(existing), nil, nil
-				}
-				// That call ended before recording what Zerops did: read its
-				// handle. Nothing created falls through to the mutation, which
-				// overwrites the state file.
+				// The call that wrote it ended before recording what Zerops
+				// did: read its handle. Nothing created falls through to the
+				// mutation, which overwrites the state file.
 				if resp := readEndedLaunch(ctx, client, projectID, stateDir, existing, input.LaunchKey, apiHost, corpus); resp != nil {
 					return resp, nil, nil
 				}
@@ -563,15 +547,11 @@ func handleLaunchProduction(
 	return executeLaunchMutation(ctx, projectID, client, sshDeployer, rt, input, sourceEnvs, classifications, corpus, stateDir, launchID, apiHost)
 }
 
-// launchInProgressResponse refuses a mutation while the call that wrote a
-// `launching` state still runs.
-func launchInProgressResponse(state *launchState) *mcp.CallToolResult {
+// launchInProgressResponse refuses a call while another holds the launch.
+func launchInProgressResponse() *mcp.CallToolResult {
 	return convertError(platform.NewPlatformError(
 		platform.ErrAPIError,
-		fmt.Sprintf(
-			"launch-production already in progress: zcp process %d is running it (status=launching, lastUpdate=%s); refusing concurrent mutation",
-			state.Owner.PID, state.LastUpdate.UTC().Format("2006-01-02T15:04:05Z"),
-		),
+		"launch-production already in progress: another call holds this launch; refusing concurrent mutation",
 		`Another zerops_workflow invocation is mid-mutation. Wait for it to finish (action="status" surfaces progress); the launch is free again the moment that call ends.`,
 	), WithRecoveryStatus())
 }
@@ -763,14 +743,6 @@ func executeLaunchMutation(
 	launchID string,
 	apiHost string,
 ) (*mcp.CallToolResult, any, error) {
-	// Held in this process for as long as this call runs: a second call
-	// here is refused, and once this one returns, a `launching` state it
-	// left reads as ended (launchHeld).
-	if _, held := launchesInFlight.LoadOrStore(launchID, struct{}{}); held {
-		return launchInProgressResponse(&launchState{Owner: thisLaunchOwner(), LastUpdate: time.Now()}), nil, nil
-	}
-	defer launchesInFlight.Delete(launchID)
-
 	// Admin-client construction per D-3/D-5: the explicit-launchKey path
 	// constructs it here at the function head, UNCHANGED — the value is
 	// already the user's consented credential, so there is nothing to
@@ -1006,7 +978,6 @@ func executeLaunchMutation(
 		Status:                topology.LaunchStatusLaunching,
 		TokenAcquisition:      stringIf(mintedName != "", tokenAcquisitionDelegated),
 		MintedTokenName:       mintedName,
-		Owner:                 thisLaunchOwner(),
 		// Persist the prod-side runtime identities (one per promoted
 		// runtime) so the pipeline check matches imported services by
 		// prod hostname, and a resume can re-run the check (LAUNCH-1).

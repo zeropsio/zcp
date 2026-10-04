@@ -2,8 +2,7 @@ package tools
 
 import (
 	"context"
-	"os"
-	"os/exec"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -11,17 +10,17 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
-	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// goneProcess is the PID of a process that has ended.
-func goneProcess(t *testing.T) *launchOwner {
+// holdLaunch holds the launch's lock the way another call mutating it does,
+// until the test ends.
+func holdLaunch(t *testing.T, stateDir, launchID string) {
 	t.Helper()
-	cmd := exec.CommandContext(t.Context(), "true")
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("run a process to end: %v", err)
+	held, err := tryLaunchLock(stateDir, launchID)
+	if err != nil {
+		t.Fatalf("hold the launch: %v", err)
 	}
-	return &launchOwner{PID: cmd.Process.Pid, Start: "gone"}
+	t.Cleanup(held.release)
 }
 
 // keptOpen is one admin mock behind every client the factory builds: each
@@ -32,19 +31,19 @@ type keptOpen struct {
 
 func (keptOpen) Close() {}
 
-// TestLaunchResume_LaunchingWithoutProject_ReadsItsHandle: a `launching`
-// state with no production project recorded is held while the call that
-// wrote it runs — in another zcp process while that process lives, in this
-// one while its mutation holds the launch — however long ago it was written.
-// Once that call is gone, the next one reads its handle before mutating: the
-// production project by its name, with the staged launch token. A project of
-// that name is recorded as the launch's orphan (reset cleans it up), never
-// created a second time; none, and the launch runs again.
+// TestLaunchResume_LaunchingWithoutProject_ReadsItsHandle: a launch is held
+// by its lock while a call mutates it — in this zcp process or another, the
+// lock going with the call or the process that held it — however long ago
+// its state was written; a second call is refused. Once no call holds it, a
+// `launching` state with no production project recorded is one whose call
+// ended before recording what Zerops did: the next call reads its handle
+// before mutating — the production project by its name, with the staged
+// launch token. A project of that name is recorded as the launch's orphan
+// (reset cleans it up), never created a second time; none, and the launch
+// runs again.
 func TestLaunchResume_LaunchingWithoutProject_ReadsItsHandle(t *testing.T) {
-	self := &launchOwner{PID: os.Getpid(), Start: workflow.CurrentProcessStartTime()}
 	tests := []struct {
 		name     string
-		owner    func(t *testing.T) *launchOwner
 		held     bool
 		staged   bool
 		projects []platform.Project
@@ -55,27 +54,20 @@ func TestLaunchResume_LaunchingWithoutProject_ReadsItsHandle(t *testing.T) {
 		wantStatus topology.LaunchProductionStatus
 		wantImport bool
 	}{
-		{"another live zcp process runs it", func(*testing.T) *launchOwner { return &launchOwner{PID: os.Getppid()} },
-			false, true, nil, "in progress", "", topology.LaunchStatusLaunching, false},
-		{"this process runs it", func(*testing.T) *launchOwner { return self },
-			true, true, nil, "in progress", "", topology.LaunchStatusLaunching, false},
-		{"this process, its call ended, nothing created", func(*testing.T) *launchOwner { return self },
-			false, true, nil, "", "new-prod-id", topology.LaunchStatusLaunched, true},
-		{"its process gone, nothing created", goneProcess,
-			false, true, nil, "", "new-prod-id", topology.LaunchStatusLaunched, true},
-		{"its process gone, the project created", goneProcess,
-			false, true, []platform.Project{{ID: "orphan-id", Name: "myapp-prod"}, {ID: "other-id", Name: "other"}},
+		{"another call holds it", true, true, nil, "in progress", "", topology.LaunchStatusLaunching, false},
+		{"its call ended, nothing created", false, true, nil, "", "new-prod-id", topology.LaunchStatusLaunched, true},
+		{"its call ended, the project created", false, true,
+			[]platform.Project{{ID: "orphan-id", Name: "myapp-prod"}, {ID: "other-id", Name: "other"}},
 			"orphan-id", "orphan-id", topology.LaunchStatusFailed, false},
-		{"its process gone, two projects of the name", goneProcess,
-			false, true, []platform.Project{{ID: "first-id", Name: "myapp-prod"}, {ID: "second-id", Name: "myapp-prod"}},
+		{"its call ended, two projects of the name", false, true,
+			[]platform.Project{{ID: "first-id", Name: "myapp-prod"}, {ID: "second-id", Name: "myapp-prod"}},
 			"second-id", "", topology.LaunchStatusLaunching, false},
-		{"no process named, nothing staged", func(*testing.T) *launchOwner { return nil },
-			false, false, nil, "delegation-unavailable", "", topology.LaunchStatusLaunching, false},
+		{"its call ended, nothing staged", false, false, nil, "delegation-unavailable", "", topology.LaunchStatusLaunching, false},
 	}
 	// The pre-mint state names no stage service: a call that ended with it on disk ended
 	// before the full state write, so before the create — it launches again, with the token
 	// a prior attempt staged, minting nothing.
-	t.Run("its process gone before the full state write", func(t *testing.T) {
+	t.Run("its call ended before the full state write", func(t *testing.T) {
 		stateDir := withTempState(t)
 		installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 		sourceClient := pLP3MockClient()
@@ -94,7 +86,6 @@ func TestLaunchResume_LaunchingWithoutProject_ReadsItsHandle(t *testing.T) {
 			Status:            topology.LaunchStatusLaunching,
 			TokenAcquisition:  "delegated",
 			MintedTokenName:   "zcp-launch-myapp-prod",
-			Owner:             goneProcess(t),
 		}); err != nil {
 			t.Fatalf("seed state: %v", err)
 		}
@@ -141,7 +132,6 @@ func TestLaunchResume_LaunchingWithoutProject_ReadsItsHandle(t *testing.T) {
 				Status:                topology.LaunchStatusLaunching,
 				TokenAcquisition:      "delegated",
 				MintedTokenName:       "zcp-launch-myapp-prod",
-				Owner:                 tt.owner(t),
 			}
 			if err := writeLaunchState(stateDir, seed); err != nil {
 				t.Fatalf("seed state: %v", err)
@@ -152,8 +142,7 @@ func TestLaunchResume_LaunchingWithoutProject_ReadsItsHandle(t *testing.T) {
 				t.Fatalf("seed state: %v", err)
 			}
 			if tt.held {
-				launchesInFlight.Store(launchID, struct{}{})
-				defer launchesInFlight.Delete(launchID)
+				holdLaunch(t, stateDir, launchID)
 			}
 			mockAdmin := happyMockAdmin().WithProjects(tt.projects)
 			defer setProjectAdminClientFactory(func(string, string) (platform.ProjectAdminClient, error) {
@@ -197,10 +186,16 @@ func TestExecuteLaunchMutation_RecordsTheProjectBeforeAnythingElse(t *testing.T)
 	launchID := generateLaunchID("source-project-id", "myapp-prod")
 	mockAdmin := happyMockAdmin()
 	var recorded string
+	heldMidway := false
 	mockAdmin.OnGrantSelfRole = func() {
 		state, err := readLaunchState(stateDir, launchID)
 		if err == nil {
 			recorded = state.TargetProjectID
+		}
+		other, err := tryLaunchLock(stateDir, launchID)
+		heldMidway = errors.Is(err, errLaunchHeld)
+		if err == nil {
+			other.release()
 		}
 	}
 	defer installMockAdminFactory(t, mockAdmin)()
@@ -214,5 +209,13 @@ func TestExecuteLaunchMutation_RecordsTheProjectBeforeAnythingElse(t *testing.T)
 	}
 	if recorded != "new-prod-id" {
 		t.Errorf("state's target project when the next call went out = %q, want new-prod-id", recorded)
+	}
+	if !heldMidway {
+		t.Error("a second call could take the launch while the mutation ran")
+	}
+	if after, err := tryLaunchLock(stateDir, launchID); err != nil {
+		t.Errorf("the launch is still held after its call returned: %v", err)
+	} else {
+		after.release()
 	}
 }
