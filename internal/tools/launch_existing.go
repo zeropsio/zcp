@@ -132,11 +132,11 @@ func executeExistingProjectMutation(
 	stateDir string,
 	launchID string,
 	apiHost string,
-) (*mcp.CallToolResult, any, error) {
+) *mcp.CallToolResult {
 	// 1. Construct project-scoped client from the user-supplied token.
 	target, err := existingProdTokenClientFactory(input.ExistingProdToken, apiHost)
 	if err != nil {
-		return launchFailedAuthResponse(corpus, err), nil, nil
+		return launchFailedAuthResponse(corpus, err)
 	}
 
 	// 2. Token scope validation. Errors return structured codes that
@@ -150,7 +150,7 @@ func executeExistingProjectMutation(
 			Result:            "failure",
 			ErrorMessage:      "existing-project token scope validation: " + scopeErr.Error(),
 		})
-		return convertError(scopeErr, WithRecoveryStatus()), nil, nil
+		return convertError(scopeErr, WithRecoveryStatus())
 	}
 
 	// 3. Read + validate source state, compute the bundle (carries
@@ -160,7 +160,7 @@ func executeExistingProjectMutation(
 	// in launch-audit-log.json (writeAudit=true).
 	source, _, blocker := readAndValidateSourceState(ctx, sourceClient, sshDeployer, rt, corpus, input, sourceProjectID, stateDir, launchID, true)
 	if blocker != nil {
-		return blocker, nil, nil
+		return blocker
 	}
 	_ = source // legacy single-runtime auditFail side-effects; per-runtime sources are read in composeLaunchBundleInputs.
 
@@ -173,7 +173,7 @@ func executeExistingProjectMutation(
 		sourceProjectID, stateDir, launchID, resolved,
 	)
 	if gateResult.Response != nil {
-		return gateResult.Response, nil, nil
+		return gateResult.Response
 	}
 
 	bundleInputs, composeWarnings, composeErr := composeLaunchBundleInputs(
@@ -195,10 +195,9 @@ func executeExistingProjectMutation(
 			Result:            "failure",
 			ErrorMessage:      "compose bundle inputs: " + composeErr.Error(),
 		})
-		//nolint:nilerr // composeErr surfaces via the structured launchFailedResponse; returning nil as the third value is the MCP-success boundary contract (payload reaches client)
 		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
 			"compose-inputs-failed",
-			"Launch bundle input composition failed: "+composeErr.Error()), nil, nil
+			"Launch bundle input composition failed: "+composeErr.Error())
 	}
 	launchBundle, err := ops.BuildLaunchBundle(bundleInputs, classifications)
 	if launchBundle != nil {
@@ -214,13 +213,11 @@ func executeExistingProjectMutation(
 			ErrorMessage:      "bundle compose: " + err.Error(),
 		})
 		// Graceful refusal — bundle-compose error is packaged into the
-		// MCP tool response (third return is success at the boundary
-		// so the structured payload reaches the client). Mirrors the
-		// new-project path's executeLaunchMutation pattern.
-		//nolint:nilerr // err is surfaced via the structured response
+		// MCP tool response so the structured payload reaches the client.
+		// Mirrors the new-project path's executeLaunchMutation pattern.
 		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
 			"bundle-compose-failed",
-			"Launch bundle composition failed: "+err.Error()), nil, nil
+			"Launch bundle composition failed: "+err.Error())
 	}
 	if len(launchBundle.Errors) > 0 {
 		_ = appendAuditLog(stateDir, launchAuditEntry{
@@ -233,7 +230,7 @@ func executeExistingProjectMutation(
 		})
 		return launchFailedResponse(corpus, topology.BlockerCategorySchema,
 			"schema-validation-failed",
-			fmt.Sprintf("Import yaml schema validation failed: %v", launchBundle.Errors)), nil, nil
+			fmt.Sprintf("Import yaml schema validation failed: %v", launchBundle.Errors))
 	}
 
 	// 4. Hostname conflict preflight against target's current services.
@@ -242,7 +239,7 @@ func executeExistingProjectMutation(
 	// via ops" — single cache/retry/instrumentation site).
 	existingServices, err := ops.ListProjectServices(ctx, target, input.ExistingProjectID)
 	if err != nil {
-		return convertError(fmt.Errorf("existing-project preflight: list services: %w", err), WithRecoveryStatus()), nil, nil
+		return convertError(fmt.Errorf("existing-project preflight: list services: %w", err), WithRecoveryStatus())
 	}
 
 	// P4 — existing-project conflict resolution. Detect hostname
@@ -264,7 +261,7 @@ func executeExistingProjectMutation(
 		// No audit on the read-side conflict-prompt; the agent
 		// will re-call with strategies populated and the publish
 		// audit fires on the actual mutation.
-		return existingProjectConflictPromptResponse(corpus, input, unresolvedConflicts), nil, nil
+		return existingProjectConflictPromptResponse(corpus, input, unresolvedConflicts)
 	}
 	// Replace-flagged conflicts require ConfirmDestructive ack.
 	if missing := missingDestructiveAckForReplaces(resolvedConflicts, input.ConfirmDestructive); len(missing) > 0 {
@@ -278,7 +275,7 @@ func executeExistingProjectMutation(
 		})
 		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
 			"existing-project-replace-needs-ack",
-			fmt.Sprintf("MergeStrategy=replace for %v requires confirmDestructive with operation=\"launch-production-replace\" and acknowledgedTargets including those hostnames.", missing)), nil, nil
+			fmt.Sprintf("MergeStrategy=replace for %v requires confirmDestructive with operation=\"launch-production-replace\" and acknowledgedTargets including those hostnames.", missing))
 	}
 	// Apply resolutions: skip drops the entry, replace sets Override=true on
 	// the runtime so the composer emits `override: true`. Recompose when
@@ -288,10 +285,9 @@ func executeExistingProjectMutation(
 	if changed {
 		launchBundle, err = ops.BuildLaunchBundle(bundleInputs, classifications)
 		if err != nil {
-			//nolint:nilerr // wrapped into structured response
 			return launchFailedResponse(corpus, topology.BlockerCategoryOther,
 				"bundle-recompose-after-merge-failed",
-				"Re-composing bundle after merge-resolution failed: "+err.Error()), nil, nil
+				"Re-composing bundle after merge-resolution failed: "+err.Error())
 		}
 	}
 
@@ -312,7 +308,7 @@ func executeExistingProjectMutation(
 		})
 		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
 			"launch-token-stage-failed",
-			launchTokenStageFailedMessage(stageErr, stageHost, "")), nil, nil
+			launchTokenStageFailedMessage(stageErr, stageHost, ""))
 	}
 
 	// Pre-mutation state persistence — same shape as new-project path
@@ -355,7 +351,7 @@ func executeExistingProjectMutation(
 		ctx, target, stateDir, launchID, sourceProjectID, input, composerEnvs, classifications,
 	)
 	if mutationResp != nil {
-		return mutationResp, nil, nil
+		return mutationResp
 	}
 	launchBundle.Warnings = append(launchBundle.Warnings, emitWarnings...)
 
@@ -371,12 +367,12 @@ func executeExistingProjectMutation(
 			Result:            "failure",
 			ErrorMessage:      fmt.Sprintf("ImportServices: %v", err),
 		})
-		return convertError(fmt.Errorf("existing-project services import: %w", err), WithRecoveryStatus()), nil, nil
+		return convertError(fmt.Errorf("existing-project services import: %w", err), WithRecoveryStatus())
 	}
 	if importResult == nil {
 		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
 			"import-services-empty",
-			"Existing-project import returned nil result — platform import failed silently."), nil, nil
+			"Existing-project import returned nil result — platform import failed silently.")
 	}
 
 	// 7. Record imported services + finalize. ExistingProjectID is the
@@ -433,9 +429,9 @@ func executeExistingProjectMutation(
 			ErrorMessage:      state.LastError,
 		})
 		if outcome == launchFinalizeImportError {
-			return launchOrphanProjectResponse(state, input.ExistingProjectID), nil, nil
+			return launchOrphanProjectResponse(state, input.ExistingProjectID)
 		}
-		return launchFirstDeployFailedResponse(state, input.ExistingProjectID), nil, nil
+		return launchFirstDeployFailedResponse(state, input.ExistingProjectID)
 	}
 
 	_ = appendAuditLog(stateDir, launchAuditEntry{
@@ -448,7 +444,7 @@ func executeExistingProjectMutation(
 	})
 
 	recordProdLaunchBackRefs(stateDir, state, resolved)
-	return launchLaunchedResponse(corpus, state, stateDir), nil, nil
+	return launchLaunchedResponse(corpus, state, stateDir)
 }
 
 // projectEnvEmission is one (Key, Value, Sensitive) tuple that the

@@ -555,7 +555,7 @@ func handleLaunchProduction(
 	// Existing-project mutation path takes priority — the user has
 	// explicitly identified the target project via ExistingProjectID.
 	if hasExistingPair {
-		return executeExistingProjectMutation(ctx, projectID, client, sshDeployer, rt, input, sourceEnvs, classifications, corpus, stateDir, launchID, apiHost)
+		return executeExistingProjectMutation(ctx, projectID, client, sshDeployer, rt, input, sourceEnvs, classifications, corpus, stateDir, launchID, apiHost), nil, nil
 	}
 
 	// Mutation pipeline (new-project path) — LaunchKey or ConfirmLaunch
