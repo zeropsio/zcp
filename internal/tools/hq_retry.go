@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
@@ -66,11 +68,46 @@ func hqUnavailable(err error) bool {
 	return hq.IsUnavailable(err) || errors.As(err, &refused) && refused.Status >= http.StatusInternalServerError
 }
 
-// hqUnreachableLine says which step HQ at address could not serve, after how
-// many tries, and the last answer.
-func hqUnreachableLine(address, step string, tries int, last string) string {
-	return fmt.Sprintf("HQ at %s could not be reached to %s (%d tries; the last: %s)", address, step, tries, last)
+// hqNotAnsweringLine says which step HQ at address could not serve, after how
+// many tries, and the last answer (hqNotServingWords, gitNotServingWords).
+func hqNotAnsweringLine(address, step string, tries int, last string) string {
+	return fmt.Sprintf("HQ at %s is not answering: %s failed after %d tries (the last: %s)", address, step, tries, last)
 }
+
+// hqNotServingWords is the last answer of an API call HQ could not serve, in
+// words that never read as a refusal: a 5xx is "HQ answered 502 (not
+// serving)" — the client calls a 5xx other than 503 a RefusedError — and no
+// answer at all says what stopped it.
+func hqNotServingWords(err error) string {
+	var (
+		refused     *hq.RefusedError
+		unavailable *hq.UnavailableError
+	)
+	switch {
+	case errors.As(err, &refused) && refused.Status >= http.StatusInternalServerError:
+		return notServing(refused.Status)
+	case errors.As(err, &unavailable) && unavailable.Err == nil:
+		return notServing(http.StatusServiceUnavailable)
+	case errors.As(err, &unavailable):
+		return "no answer (" + unavailable.Err.Error() + ")"
+	}
+	return err.Error()
+}
+
+// gitStatus5xx is the 5xx git reports a remote answered.
+var gitStatus5xx = regexp.MustCompile(`returned error: (5\d\d)`)
+
+// gitNotServingWords is hqNotServingWords for a git command against HQ: a 5xx
+// git reports is HQ not serving, and anything else is git's own words.
+func gitNotServingWords(err error, output []byte) string {
+	if m := gitStatus5xx.FindSubmatch(output); m != nil {
+		status, _ := strconv.Atoi(string(m[1]))
+		return notServing(status)
+	}
+	return gitPushErrorDetail(err, output)
+}
+
+func notServing(status int) string { return fmt.Sprintf("HQ answered %d (not serving)", status) }
 
 // hqNotAnswering is what follows a delivery HQ could not serve: where the
 // work is, the one way it goes on, and that the person hears of an HQ not

@@ -127,7 +127,7 @@ func shipChange(
 	})
 	if err != nil {
 		if hqUnavailable(err) {
-			return shipOutcome{unreachable: true, line: hqUnreachableLine(hqc.Address(), "open its change", tries, err.Error())}
+			return shipOutcome{unreachable: true, line: hqNotAnsweringLine(hqc.Address(), "opening its change", tries, hqNotServingWords(err))}
 		}
 		return shipOutcome{line: fmt.Sprintf("HQ refused to open a change on %q (%v)", m.HQ.Repo, err)}
 	}
@@ -162,7 +162,7 @@ func shipChange(
 			clearChange(stateDir, m, change.Number)
 			return shipOutcome{line: fmt.Sprintf("change #%d was merged or closed before its branch was pushed (%s); the next delivery opens the next change", change.Number, refusal)}
 		case ops.GitRemoteUnavailable(string(output)):
-			return shipOutcome{unreachable: true, line: hqUnreachableLine(hqc.Address(), "push "+branch, tries, gitPushErrorDetail(err, output))}
+			return shipOutcome{unreachable: true, line: hqNotAnsweringLine(hqc.Address(), "pushing "+branch, tries, gitNotServingWords(err, output))}
 		}
 		if cls := classifyTransportError(err, deployStrategyGitPush); cls != nil && cls.Category == topology.FailureClassCredential {
 			hqMarkPushRefused(stateDir, m)
@@ -206,7 +206,7 @@ func takeChangeIn(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Clien
 			"change #%d has moved on in HQ and this Mate's work changes the same lines (%s) — in %s's checkout run `git fetch origin && git merge origin/%s` and resolve it",
 			number, conflict, m.Hostname, branch)}, false
 	case ops.GitRemoteUnavailable(string(output)):
-		return shipOutcome{unreachable: true, line: hqUnreachableLine(hqc.Address(), fmt.Sprintf("read change #%d", number), tries, gitPushErrorDetail(err, output))}, false
+		return shipOutcome{unreachable: true, line: hqNotAnsweringLine(hqc.Address(), fmt.Sprintf("reading change #%d", number), tries, gitNotServingWords(err, output))}, false
 	}
 	return shipOutcome{line: fmt.Sprintf("taking change #%d's branch in failed (%s)", number, gitPushErrorDetail(err, output))}, false
 }

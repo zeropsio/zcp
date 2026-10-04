@@ -168,7 +168,7 @@ func TestADeliveryHQCannotReachFailsFast(t *testing.T) {
 	}
 	for _, want := range []string{
 		"appstage runs, but its code has not reached HQ",
-		"HQ at " + lab.hq.srv.URL + ` could not be reached to take "main" in (3 tries; the last: `,
+		"HQ at " + lab.hq.srv.URL + ` is not answering: taking "main" in failed after 3 tries (the last: fatal: unable to access`,
 		"the work stays committed in appdev's checkout, and deploying appstage again delivers it",
 		"tell the person HQ is not answering",
 	} {
@@ -206,31 +206,38 @@ func TestADeliveryHQCannotReachFailsFast(t *testing.T) {
 	}
 }
 
-// TestADeliveryTriesHQOnlyWhileItCannotServe: opening the change is tried
-// again only while HQ cannot serve it — a standby's 503, or the balancer's
-// 502 for an HQ that is down — three times at most, 1 s and 3 s apart; a
-// refusal fails at once, and an HQ that answers on a later try delivers.
+// TestADeliveryTriesHQOnlyWhileItCannotServe: opening the change, or
+// pushing its branch, is tried again only while HQ cannot serve it — a
+// standby's 503, or the balancer's 502 or 504 for an HQ that is down — three
+// times at most, 1 s and 3 s apart, and said as HQ not serving; a refusal
+// fails at once, and an HQ that answers on a later try delivers.
 func TestADeliveryTriesHQOnlyWhileItCannotServe(t *testing.T) {
-	opening := func(r *http.Request) bool {
-		return r.Method == http.MethodPost && r.URL.Path == "/api/mate/changes"
-	}
+	const (
+		open = "POST /api/mate/changes"
+		push = "POST /git/" + labApp + "/appdev.git/git-receive-pack"
+	)
 	tests := []struct {
 		name      string
+		call      string // the request HQ fails, "METHOD /path"
 		status    int
 		code      string
 		failing   int
-		wantOpens int
+		wantCalls int
 		wantWaits []time.Duration
-		wantLine  string // after HQ's address, when it names it
+		wantLine  string // after HQ's address, when it starts " is not"
 		delivered bool
 	}{
-		{"a standby throughout", http.StatusServiceUnavailable, "not_active", 3, 3,
-			[]time.Duration{time.Second, 3 * time.Second}, " could not be reached to open its change (3 tries; the last: hq unavailable: not_active)", false},
-		{"the balancer's 502 throughout", http.StatusBadGateway, "", 3, 3,
-			[]time.Duration{time.Second, 3 * time.Second}, " could not be reached to open its change (3 tries; the last: hq refused: 502", false},
-		{"a refusal", http.StatusForbidden, "forbidden", 1, 1,
+		{"a standby throughout", open, http.StatusServiceUnavailable, "not_active", 3, 3,
+			[]time.Duration{time.Second, 3 * time.Second}, " is not answering: opening its change failed after 3 tries (the last: HQ answered 503 (not serving))", false},
+		{"the balancer's 502 throughout", open, http.StatusBadGateway, "", 3, 3,
+			[]time.Duration{time.Second, 3 * time.Second}, " is not answering: opening its change failed after 3 tries (the last: HQ answered 502 (not serving))", false},
+		{"the balancer's 504 throughout", open, http.StatusGatewayTimeout, "", 3, 3,
+			[]time.Duration{time.Second, 3 * time.Second}, " is not answering: opening its change failed after 3 tries (the last: HQ answered 504 (not serving))", false},
+		{"a 502 to the push throughout", push, http.StatusBadGateway, "", 3, 3,
+			[]time.Duration{time.Second, 3 * time.Second}, " is not answering: pushing mate/p-mate/1 failed after 3 tries (the last: HQ answered 502 (not serving))", false},
+		{"a refusal", open, http.StatusForbidden, "forbidden", 1, 1,
 			nil, `HQ refused to open a change on "appdev"`, false},
-		{"answered on the second try", http.StatusServiceUnavailable, "not_active", 1, 2,
+		{"answered on the second try", open, http.StatusServiceUnavailable, "not_active", 1, 2,
 			[]time.Duration{time.Second}, "Delivered", true},
 	}
 	for _, tt := range tests {
@@ -238,21 +245,27 @@ func TestADeliveryTriesHQOnlyWhileItCannotServe(t *testing.T) {
 			lab := newHQLab(t)
 			lab.wire()
 			lab.write(map[string]string{"index.js": "the app\n"})
-			lab.hq.answerWith(tt.status, tt.code, tt.failing, opening)
+			lab.hq.answerWith(tt.status, tt.code, tt.failing, func(r *http.Request) bool {
+				return r.Method+" "+r.URL.Path == tt.call
+			})
+			before := lab.hq.callCount(tt.call)
 
 			delivery := lab.deliver()
 			if delivery == nil || (delivery.Change != nil) != tt.delivered {
 				t.Fatalf("delivery = %+v, want delivered=%v", delivery, tt.delivered)
 			}
-			if got := lab.hq.callCount("POST /api/mate/changes"); got != tt.wantOpens {
-				t.Errorf("HQ was asked to open the change %d times, want %d", got, tt.wantOpens)
+			if got := lab.hq.callCount(tt.call) - before; got != tt.wantCalls {
+				t.Errorf("HQ was asked %s %d times, want %d", tt.call, got, tt.wantCalls)
 			}
 			if !slices.Equal(lab.waits, tt.wantWaits) {
 				t.Errorf("waits = %v, want %v", lab.waits, tt.wantWaits)
 			}
 			want := tt.wantLine
-			if strings.HasPrefix(want, " could not") {
+			if strings.HasPrefix(want, " is not") {
 				want = "HQ at " + lab.hq.srv.URL + want
+			}
+			if strings.Contains(delivery.Line, "hq refused: 5") {
+				t.Errorf("an HQ that does not serve never reads as refusing:\n%s", delivery.Line)
 			}
 			if !strings.Contains(delivery.Line, want) {
 				t.Errorf("the line misses %q:\n%s", want, delivery.Line)

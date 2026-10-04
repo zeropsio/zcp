@@ -81,7 +81,7 @@ func handleHQGitPush(
 			return failed(platform.NewPlatformError(
 				platform.ErrSSHDeployFailed,
 				withLearned(fmt.Sprintf("git-push from %s has not reached HQ: %s.", hostname,
-					hqUnreachableLine(hqc.Address(), fmt.Sprintf("take %q in", hqBase), tries, detail))),
+					hqNotAnsweringLine(hqc.Address(), fmt.Sprintf("taking %q in", hqBase), tries, gitNotServingWords(err, output)))),
 				hqNotAnswering(hostname, "pushing again"),
 			))
 		}

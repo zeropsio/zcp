@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,6 +88,43 @@ func TestHQUnavailable_OnlyUnreachableOr5xx(t *testing.T) {
 			t.Parallel()
 			if got := hqUnavailable(tt.err); got != tt.want {
 				t.Errorf("hqUnavailable(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestHQNotServingWords: the last answer of a step HQ could not serve is said
+// as HQ not serving — a 5xx as "HQ answered 502 (not serving)", over the API
+// or through git — and never as HQ refusing.
+func TestHQNotServingWords(t *testing.T) {
+	t.Parallel()
+	gitFailed := errors.New("exit status 128")
+	tests := []struct {
+		name   string
+		err    error
+		output string // git's, when the step ran git
+		want   string
+	}{
+		{"the balancer's 502", &hq.RefusedError{Status: 502}, "", "HQ answered 502 (not serving)"},
+		{"a 504 wrapped", fmt.Errorf("open: %w", &hq.RefusedError{Status: 504, Code: "timeout"}), "", "HQ answered 504 (not serving)"},
+		{"a standby's 503", &hq.UnavailableError{Code: "not_active"}, "", "HQ answered 503 (not serving)"},
+		{"not reached", &hq.UnavailableError{Err: errors.New("hq /api/mate/changes: dial tcp: connection refused")}, "", "no answer (hq /api/mate/changes: dial tcp: connection refused)"},
+		{"git meets a 502", gitFailed, "fatal: unable to access 'https://hq.example/git/a/appdev.git/': The requested URL returned error: 502\n", "HQ answered 502 (not serving)"},
+		{"git meets a 503", gitFailed, "error: RPC failed; HTTP 503 curl 22 The requested URL returned error: 503\n", "HQ answered 503 (not serving)"},
+		{"git reaches nothing", gitFailed, "fatal: unable to access 'https://hq.example/git/a/appdev.git/': Could not resolve host: hq.example\n", "fatal: unable to access 'https://hq.example/git/a/appdev.git/': Could not resolve host: hq.example"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := hqNotServingWords(tt.err)
+			if tt.output != "" {
+				got = gitNotServingWords(tt.err, []byte(tt.output))
+			}
+			if got != tt.want {
+				t.Errorf("words = %q, want %q", got, tt.want)
+			}
+			if strings.Contains(got, "hq refused") {
+				t.Errorf("an HQ that does not serve never reads as refusing: %q", got)
 			}
 		})
 	}

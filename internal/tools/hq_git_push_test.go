@@ -98,7 +98,7 @@ func TestGitPushToHQ_HQNotAnsweringFailsFast(t *testing.T) {
 	}
 	for _, want := range []string{
 		"git-push from appdev has not reached HQ",
-		"HQ at " + lab.hq.srv.URL + ` could not be reached to take \"main\" in (3 tries; the last: `,
+		"HQ at " + lab.hq.srv.URL + ` is not answering: taking \"main\" in failed after 3 tries (the last: `,
 		"the work stays committed in appdev's checkout, and pushing again delivers it",
 		"tell the person HQ is not answering",
 	} {

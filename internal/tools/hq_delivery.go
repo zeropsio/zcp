@@ -281,7 +281,7 @@ func deliverHeldHQPair(
 	if err != nil || !found {
 		if ops.GitRemoteUnavailable(string(output)) {
 			return notDelivered(hqUnreachableDelivery(target, meta.Hostname,
-				hqUnreachableLine(hqc.Address(), fmt.Sprintf("take %q in", hqBase), tries, gitPushErrorDetail(err, output))))
+				hqNotAnsweringLine(hqc.Address(), fmt.Sprintf("taking %q in", hqBase), tries, gitNotServingWords(err, output))))
 		}
 		if cls := classifyTransportError(err, deployStrategyGitPush); cls != nil && cls.Category == topology.FailureClassCredential {
 			hqMarkPushRefused(stateDir, meta)
@@ -316,7 +316,7 @@ func deliverHeldHQPair(
 }
 
 // hqUnreachableDelivery is a stage deploy's line for a delivery HQ could not
-// serve after its tries, why naming the step (hqUnreachableLine).
+// serve after its tries, why naming the step (hqNotAnsweringLine).
 func hqUnreachableDelivery(target, hostname, why string) string {
 	return fmt.Sprintf("%s runs, but its code has not reached HQ: %s. %s",
 		target, why, hqNotAnswering(hostname, "deploying "+target+" again"))
