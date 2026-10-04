@@ -502,6 +502,10 @@ type labSSH struct {
 	// pause, when set, is called before each command runs: a test holds a
 	// command mid-way with it.
 	pause func(command string)
+	// sessionToken, when set, is the GIT_TOKEN a session running command
+	// sees, given the platform's current one: a test makes a written secret
+	// reach sessions late with it.
+	sessionToken func(command, current string) string
 }
 
 func (s *labSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
@@ -515,9 +519,13 @@ func (s *labSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte,
 	}
 	cmd := exec.CommandContext(ctx, "sh", "-c", strings.ReplaceAll(command, "/var/www", dir)) //nolint:gosec // G204: the commands under test, in a temp checkout
 	cmd.Dir = dir
+	token := s.gitToken(ctx, "svc-"+hostname)
+	if s.sessionToken != nil {
+		token = s.sessionToken(command, token)
+	}
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"), "HOME=" + s.home, "GIT_CONFIG_NOSYSTEM=1", "GIT_SSL_CAINFO=" + s.caFile,
-		"GIT_TOKEN=" + s.gitToken(ctx, "svc-"+hostname),
+		"GIT_TOKEN=" + token,
 	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -566,14 +574,15 @@ func newHQLab(t *testing.T) *hqLab {
 	}
 	lab := &hqLab{t: t, hq: fake, stateDir: t.TempDir(), pair: t.TempDir(),
 		rt: runtime.Info{InContainer: true, ProjectID: labMate}}
-	prevAttempts, prevDelay, prevRetry := gitPushSessionAuthAttempts, gitPushSessionAuthDelay, deliveryRetry
+	prevAttempts, prevDelay, prevRetry, prevPropagation := gitPushSessionAuthAttempts, gitPushSessionAuthDelay, deliveryRetry, credentialPropagation
 	gitPushSessionAuthAttempts, gitPushSessionAuthDelay = 2, 0
 	deliveryRetry = hqRetry{waits: prevRetry.waits, pause: func(_ context.Context, d time.Duration) error {
 		lab.waits = append(lab.waits, d)
 		return nil
 	}}
+	credentialPropagation.every, credentialPropagation.within = 10*time.Millisecond, 300*time.Millisecond
 	t.Cleanup(func() {
-		gitPushSessionAuthAttempts, gitPushSessionAuthDelay, deliveryRetry = prevAttempts, prevDelay, prevRetry
+		gitPushSessionAuthAttempts, gitPushSessionAuthDelay, deliveryRetry, credentialPropagation = prevAttempts, prevDelay, prevRetry, prevPropagation
 	})
 	lab.git("init", "-q", "-b", "main")
 	tree := lab.git("mktree")

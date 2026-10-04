@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -264,9 +265,21 @@ func deliverHeldHQPair(
 	repo := meta.HQ.Repo
 	landedCommit, landedHead := landingOf(meta)
 	if err := hqEnsurePushCredential(ctx, client, sshDeployer, rt.ProjectID, stateDir, hqc, meta); err != nil {
+		var (
+			notAnswering *hqNotAnsweringError
+			refused      *hqCredentialRefusedError
+		)
+		switch {
+		case errors.As(err, &notAnswering):
+			return notDelivered(hqUnreachableDelivery(target, meta.Hostname, notAnswering.line))
+		case errors.As(err, &refused):
+			return notDelivered(fmt.Sprintf(
+				"%s runs, but its code has not reached its repository %q in HQ: %v. %s is marked as refused; the next stage deploy checks its credential against this Mate's current HQ credential again and delivers once it works — if HQ keeps refusing it, tell the person: this Mate's credential is HQ's to issue.",
+				target, repo, err, meta.Hostname))
+		}
 		return notDelivered(fmt.Sprintf(
-			"%s runs, but its code has not reached its repository %q in HQ: %v. %s is marked as refused; the next stage deploy checks its credential against this Mate's current HQ credential again and delivers once it works — if HQ keeps refusing it, tell the person: this Mate's credential is HQ's to issue.",
-			target, repo, err, meta.Hostname))
+			"%s runs, but its code has not reached its repository %q in HQ: %v. Fix the cause, then deploy %s again — the change follows that deploy.",
+			target, repo, err, target))
 	}
 
 	title := changeTitle(stateDir, meta)

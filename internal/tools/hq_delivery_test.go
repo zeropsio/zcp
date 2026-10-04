@@ -407,6 +407,106 @@ func TestADeliveryBringsTheCredentialToTheCurrentOne(t *testing.T) {
 	}
 }
 
+// TestADeliveryProvesItsCredentialFailingFast: proving the pair's push
+// credential is a delivery step like any other. HQ not serving the proof is
+// tried three times and said as HQ not answering, and marks nothing — the
+// credential was never refused; only HQ refusing it (401/403) marks the pair
+// refused, at once. A credential zcp rewrote is waited for until a fresh
+// session holds it — asked of the container, never of HQ — and HQ is asked
+// for the proof once it does.
+func TestADeliveryProvesItsCredentialFailingFast(t *testing.T) {
+	const (
+		proof   = "GET /git/" + labApp + "/appdev.git/info/refs"
+		revoked = "a-credential-hq-revoked"
+	)
+	tests := []struct {
+		name       string
+		stale      bool // the push source holds a credential HQ revoked
+		marked     bool // an earlier refusal marked the pair
+		lateReads  int  // session reads that still see the revoked credential; -1: always
+		status     int  // what HQ answers the proof, 0 for served
+		wantProofs int  // -1: not counted
+		wantState  topology.GitPushState
+		wantLine   []string
+		neverLine  string
+	}{
+		{"HQ not serving the proof of a rewritten credential", true, false, 0, http.StatusBadGateway, 3, topology.GitPushConfigured,
+			[]string{" is not answering: proving appdev's credential failed after 3 tries (the last: HQ answered 502 (not serving))", "deploying appstage again delivers it", "tell the person HQ is not answering"},
+			"refus"},
+		{"HQ not serving the proof of a marked pair", false, true, 0, http.StatusServiceUnavailable, 3, topology.GitPushBroken,
+			[]string{" is not answering: proving appdev's credential failed after 3 tries (the last: HQ answered 503 (not serving))"},
+			"refuses this Mate"},
+		{"HQ refusing the credential", false, true, 0, http.StatusForbidden, 1, topology.GitPushBroken,
+			[]string{"HQ refuses this Mate's current credential for appdev", "marked as refused"},
+			"not answering"},
+		{"HQ taking the credential again", false, true, 0, 0, -1, topology.GitPushConfigured,
+			[]string{"Delivered"},
+			"refus"},
+		{"a rewritten credential reaching sessions late", true, false, 2, 0, -1, topology.GitPushConfigured,
+			[]string{"Delivered"},
+			"refus"},
+		{"a rewritten credential never reaching sessions", true, false, -1, 0, 0, topology.GitPushConfigured,
+			[]string{"the credential written onto appdev has not reached its sessions within 300ms", "deploy appstage again"},
+			"refus"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lab := newHQLab(t)
+			lab.wire()
+			if tt.stale {
+				lab.mock.WithServiceEnv("svc-appdev", []platform.ServiceEnvVar{{ID: "ud-git-token", Key: "GIT_TOKEN", Content: "a-credential-hq-revoked", Sensitive: true}})
+			}
+			if tt.marked {
+				if err := workflow.UpdateServiceMeta(lab.stateDir, "appdev", func(m *workflow.ServiceMeta) error {
+					m.GitPushState = topology.GitPushBroken
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.status != 0 {
+				lab.hq.answerWith(tt.status, "", 99, func(r *http.Request) bool { return r.Method+" "+r.URL.Path == proof })
+			}
+			if tt.lateReads != 0 {
+				late := tt.lateReads
+				lab.ssh.sessionToken = func(command, current string) string {
+					if !strings.Contains(command, "hash-object --stdin") || late == 0 {
+						return current
+					}
+					late--
+					return revoked
+				}
+			}
+			lab.write(map[string]string{"index.js": "the app\n"})
+			before := lab.hq.callCount(proof)
+
+			delivery := lab.deliver()
+			if delivery == nil {
+				t.Fatal("want a delivery")
+			}
+			for _, want := range tt.wantLine {
+				if strings.HasPrefix(want, " is not") {
+					want = "HQ at " + lab.hq.srv.URL + want
+				}
+				if !strings.Contains(delivery.Line, want) {
+					t.Errorf("the line misses %q:\n%s", want, delivery.Line)
+				}
+			}
+			if strings.Contains(delivery.Line, tt.neverLine) {
+				t.Errorf("the line must not say %q:\n%s", tt.neverLine, delivery.Line)
+			}
+			if tt.wantProofs >= 0 {
+				if got := lab.hq.callCount(proof) - before; got != tt.wantProofs {
+					t.Errorf("HQ was asked for the proof %d times, want %d", got, tt.wantProofs)
+				}
+			}
+			if state := lab.meta().GitPushState; state != tt.wantState {
+				t.Errorf("the pair's git-push state = %q, want %q", state, tt.wantState)
+			}
+		})
+	}
+}
+
 // TestADeliveryRefusedByItsGitSaysWhatToDo: a delivery its git stops by name
 // leaves the checkout whole, pushes nothing, opens nothing, and says the one
 // thing to do — never a force.

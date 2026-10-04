@@ -5,6 +5,8 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -27,13 +29,34 @@ import (
 // pair wired before the Mate's own shell could authenticate heals on its next
 // delivery.
 
+// hqCredentialRefusedError is HQ refusing the pair's push credential (401 or
+// 403): the pair is marked refused.
+type hqCredentialRefusedError struct{ message string }
+
+func (e *hqCredentialRefusedError) Error() string { return e.message }
+
+// hqNotAnsweringError is a delivery step HQ could not serve after its tries,
+// line saying so (hqNotAnsweringLine).
+type hqNotAnsweringError struct{ line string }
+
+func (e *hqNotAnsweringError) Error() string { return e.line }
+
+// credentialPropagation paces the wait for a credential zcp wrote onto a push
+// source to reach its fresh sessions — the platform's env store reaches them
+// within seconds (zembed) — which is asked of the container, never of HQ. A
+// var so tests narrow it.
+var credentialPropagation = struct{ every, within time.Duration }{time.Second, 15 * time.Second}
+
 // hqEnsurePushCredential brings a wired pair's push credential to this Mate's
 // current credential and proves a fresh session authenticates with it before
 // anything pushes. A copy that already is the current credential costs two
-// reads. A pair an earlier refusal marked (GitPushBroken) is checked again
-// and healed the moment its credential works. A credential that still does
-// not work marks the pair and is returned as an error, never silently: the
-// caller does not push.
+// reads. A credential zcp rewrites is waited for until a fresh session holds
+// it, then proved once. A pair an earlier refusal marked (GitPushBroken) is
+// checked again and healed the moment its credential works. The proof is a
+// delivery step (deliveryRetry): HQ not serving it is an
+// hqNotAnsweringError and marks nothing; HQ refusing the credential marks
+// the pair and is an hqCredentialRefusedError; anything else is said and
+// marks nothing. The caller does not push on any error.
 //
 // A pair that is not wired, or a remote of the user's own, is left alone. A
 // push source whose variables cannot be read is left alone too, while the
@@ -58,28 +81,48 @@ func hqEnsurePushCredential(
 		return nil
 	}
 
-	var proveErr error
 	if known && !current {
 		if _, err := ops.EnvSetService(ctx, client, serviceID, ops.GitTokenEnvKey, hqc.Credential(), true); err != nil {
-			hqMarkPushRefused(stateDir, meta)
 			return fmt.Errorf("writing this Mate's current HQ credential onto %s failed (%w)", meta.Hostname, err)
 		}
-		// A fresh session sees the new secret within seconds (zembed), so the
-		// probe waits across that window the way git-push-setup does.
-		proveErr = gitPushSessionAuthVerify(ctx, sshDeployer, meta.Hostname, meta.RemoteURL, hqc.Address())
-	} else {
-		// Nothing was written, so there is no window to wait out: one fresh
-		// session answers whether the credential works now.
-		_, proveErr = sshDeployer.ExecSSH(ctx, meta.Hostname, ops.BuildGitSessionAuthProbeCommand(meta.RemoteURL, hqc.Address()))
+		if err := awaitSessionCredential(ctx, sshDeployer, meta.Hostname, hqc.Credential()); err != nil {
+			return err
+		}
 	}
-	if proveErr != nil {
+	output, tries, err := gitAgainstHQ(ctx, sshDeployer, meta.Hostname, ops.BuildGitSessionAuthProbeCommand(meta.RemoteURL, hqc.Address()))
+	switch {
+	case hqGitAnswer(err, output) != hqAnswered:
+		return &hqNotAnsweringError{line: hqNotAnsweringLine(hqc.Address(), fmt.Sprintf("proving %s's credential", meta.Hostname), tries, gitNotServingWords(err, output))}
+	case err != nil && ops.GitCredentialRefused(string(output)):
 		hqMarkPushRefused(stateDir, meta)
-		return errors.New(withSSHStderr(fmt.Sprintf("HQ refuses this Mate's current credential for %s", meta.Hostname), proveErr))
+		return &hqCredentialRefusedError{message: withSSHStderr(fmt.Sprintf("HQ refuses this Mate's current credential for %s", meta.Hostname), err)}
+	case err != nil:
+		return errors.New(withSSHStderr(fmt.Sprintf("proving %s's credential with HQ failed", meta.Hostname), err))
 	}
 	if marked {
 		hqMarkPushWorking(stateDir, meta)
 	}
 	return nil
+}
+
+// awaitSessionCredential waits, as credentialPropagation paces it, until a
+// fresh session on hostname holds credential as its GIT_TOKEN — compared by
+// digest, so the credential is on no command line.
+func awaitSessionCredential(ctx context.Context, sshDeployer ops.SSHDeployer, hostname, credential string) error {
+	want := ops.SecretDigest(credential)
+	deadline := time.Now().Add(credentialPropagation.within)
+	for {
+		out, err := sshDeployer.ExecSSH(ctx, hostname, ops.BuildSessionGitTokenDigestCommand())
+		if err == nil && strings.TrimSpace(string(out)) == want {
+			return nil
+		}
+		if time.Now().Add(credentialPropagation.every).After(deadline) {
+			return fmt.Errorf("the credential written onto %s has not reached its sessions within %s", hostname, credentialPropagation.within)
+		}
+		if err := waitFor(ctx, credentialPropagation.every); err != nil {
+			return fmt.Errorf("waiting for the credential written onto %s to reach its sessions: %w", hostname, err)
+		}
+	}
 }
 
 // heldPushCredential is the copy of the credential the push source holds,
@@ -146,12 +189,35 @@ func hqPushCredentialPreflight(
 	if !enrolled || !ops.IsHQRemote(resolveEffectiveRemote(stateDir, input.TargetService, input.RemoteURL), hqc.Address()) {
 		return nil
 	}
-	if err := hqEnsurePushCredential(ctx, client, sshDeployer, projectID, stateDir, hqc, meta); err != nil {
-		return platform.NewPlatformError(
+	err := hqEnsurePushCredential(ctx, client, sshDeployer, projectID, stateDir, hqc, meta)
+	if err == nil {
+		return nil
+	}
+	var (
+		notAnswering *hqNotAnsweringError
+		refused      *hqCredentialRefusedError
+		failure      *platform.PlatformError
+	)
+	switch {
+	case errors.As(err, &notAnswering):
+		failure = platform.NewPlatformError(
+			platform.ErrSSHDeployFailed,
+			fmt.Sprintf("git-push from %s did not run: %s.", input.TargetService, notAnswering.line),
+			hqNotAnswering(meta.Hostname, "pushing again"),
+		)
+	case errors.As(err, &refused):
+		failure = platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("git-push from %s did not run: %v. %s is marked as refused.", input.TargetService, err, meta.Hostname),
 			"The next push checks the credential against this Mate's current HQ credential again. If HQ keeps refusing it, tell the person: this Mate's credential is HQ's to issue, and no token is to be asked for or made up.",
 		)
+	default:
+		failure = platform.NewPlatformError(
+			platform.ErrSSHDeployFailed,
+			fmt.Sprintf("git-push from %s did not run: %v.", input.TargetService, err),
+			"Fix the cause named above, then push again.",
+		)
 	}
-	return nil
+	logDeliveryFailure(input.TargetService, failure.Message)
+	return failure
 }

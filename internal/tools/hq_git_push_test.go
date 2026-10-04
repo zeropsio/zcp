@@ -4,12 +4,15 @@
 package tools
 
 import (
+	"net/http"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -111,6 +114,41 @@ func TestGitPushToHQ_HQNotAnsweringFailsFast(t *testing.T) {
 	text = getTextContent(t, callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev", "strategy": "git-push"}))
 	if !strings.Contains(text, `"status":"PUSHED"`) || lab.remoteHead("mate/p-mate/1") != lab.git("rev-parse", "HEAD") {
 		t.Errorf("pushing again once HQ answers must deliver the commit:\n%s", text)
+	}
+}
+
+// TestGitPushToHQ_CredentialProofHQNotAnsweringMarksNothing: a push whose
+// credential proof HQ does not serve is the tool's error, said as HQ not
+// answering — never as a refusal, and the pair's state is left as it was.
+func TestGitPushToHQ_CredentialProofHQNotAnsweringMarksNothing(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	lab.mock.WithServiceEnv("svc-appdev", []platform.ServiceEnvVar{{ID: "ud-git-token", Key: "GIT_TOKEN", Content: "a-credential-hq-revoked", Sensitive: true}})
+	lab.write(map[string]string{"index.js": "the app\n"})
+	lab.commit("the app")
+	lab.hq.answerWith(http.StatusBadGateway, "", 99, func(r *http.Request) bool {
+		return r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/info/refs")
+	})
+
+	result := callTool(t, lab.gitPushTool(), "zerops_deploy", map[string]any{"targetService": "appdev", "strategy": "git-push"})
+	text := getTextContent(t, result)
+	if !result.IsError {
+		t.Fatalf("want the tool's error:\n%s", text)
+	}
+	for _, want := range []string{
+		"git-push from appdev did not run",
+		"HQ at " + lab.hq.srv.URL + " is not answering: proving appdev's credential failed after 3 tries (the last: HQ answered 502 (not serving))",
+		"pushing again delivers it",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the error misses %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "refus") {
+		t.Errorf("an HQ that does not serve the proof never reads as refusing:\n%s", text)
+	}
+	if state := lab.meta().GitPushState; state != topology.GitPushConfigured {
+		t.Errorf("the pair's git-push state = %q, want it left configured", state)
 	}
 }
 
