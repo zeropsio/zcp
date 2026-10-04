@@ -695,11 +695,12 @@ ends every Zerops session once it has not known for two intervals, and ends any 
 
 **Entering a Mate recovers by itself, and a refusal ends it (2026-10-05, §0 rule 4).** A connect —
 the throwaway, the exchange, the socket — that fails transiently (the network, a timeout, a 5xx, a
-rejected socket) is tried again automatically on a bounded ladder, also when the network comes back
-or the tab wakes, and the Mate reads as "Reconnecting…" meanwhile. A definitive refusal — the door
-saying the person may not enter, a server below the floor — is not retried: it ends visibly, with
-why, and offers _Try again_; so does a ladder that is spent. A changed prerequisite — new
-credentials, a different descriptor — starts a fresh attempt. Setup that cannot be read inside
+rejected socket) is tried again automatically on a bounded ladder, 2, 4, 8, 15 and 30 s apart, and
+the Mate reads as "Reconnecting…" meanwhile. Five consecutive failures end the run visibly, with
+why, and offer _Try again_. A wake, the network coming back, a change of presence, descriptor or
+role, or the container turning ready starts a new bounded run. A definitive refusal — the door
+saying the person may not enter, a server below the floor — is never retried: it ends visibly,
+with why, and offers _Try again_. Setup that cannot be read inside
 Zerops reads as unavailable, refused or invalid, never as absent. From mate 0.11.81 the client keeps a Mate's session per account across loads and presents it again only where a fresh one would go, once the Mate confirms it still holds it with every scope the client asks for (D33). The client's
 credential renewer (`credentialRenewal.ts`) is reserved for a door that re-presents a credential;
 the throwaway door does not, so nothing renews a Zerops session. The GUI closes connections and
