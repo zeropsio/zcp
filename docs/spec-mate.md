@@ -2740,8 +2740,25 @@ is untouched. The `idle-launch-entry` atom branches on "delivers through its HQ"
 tells the agent not to start the workflow. `hq_delivery.go`;
 `TestHandleLaunchProduction_HQWiring_RefusesBeforeAnyStep`,
 `TestLaunchProduction_AMateDeliveringThroughHQRefusesAndSaysWhatIsTrue`; golden
-`idle/bootstrapped-with-managed`. No zcp tool tags the group repo: `action="release"` pushes a tag to
-the pair's own checkout remote, so the release switch (D8) gates nothing an agent can reach today.
+`idle/bootstrapped-with-managed`. No zcp tool tags an HQ release; Core does so for the person.
+Outside HQ, `action="release"` keeps tagging the pair's own checkout remote.
+
+**An agent's release request in HQ.** `zerops_workflow action="release"` returns
+`status="release-person-required"` when this Mate is enrolled with HQ, or the named pair has a
+recorded HQ repository. This happens before service/bootstrap requirements, git-push prerequisites,
+freshness checks, tag reads or tag writes; `releaseVersion` does not authorize an agent to tag HQ.
+The result tells the agent to ask the person to open this Mate's application on Mate's projects
+page, choose _Review release_, review what it carries, and press _Release_ with the version shown.
+The pipeline note says Core deploys production from approved releases, and explicitly says this
+tool has not checked production setup or release readiness. `ProdLaunches` is not evidence of either
+in HQ. The handoff conditionally points to _Add production_ when missing and _Merge_ for any
+still-open changes the person wants included; a blocked review names its unmet requirements in Mate.
+It never recommends launch-production or tag-consuming CI for HQ.
+`TestHandleRelease_HQExplainsProductionWithoutLegacyPipelineAdvice` covers both missing and stale
+legacy launch records. Nothing has been released by this tool.
+Outside HQ the existing source-side release route stays
+available. `TestHandleRelease_HQHandsOffBeforeLegacyPreflight`,
+`TestHandleRelease_AWiredPairHandsOff`.
 
 ### 10.11 Environments, the Git tab, release
 

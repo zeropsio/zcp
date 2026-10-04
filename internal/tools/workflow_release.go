@@ -25,7 +25,8 @@ var releaseTagRe = regexp.MustCompile(`^v(\d+)\.(\d+)\.(\d+)$`)
 // releaseFirstVersion seeds the suggestion on a tag-less repo.
 const releaseFirstVersion = "v1.0.0"
 
-// handleRelease is the source-side release act (spec-git-delivery-target
+// handleRelease hands an HQ release to a person in Mate before any source
+// preflight. Outside HQ it is the source-side release act (spec-git-delivery-target
 // §7, Karel's "ten člověk řekne, že chce release"): verify the working
 // tree is clean and HEAD is on the remote (the P-LP-11 read, reused),
 // derive the next semver from the remote's existing v* tags, and — once
@@ -47,6 +48,9 @@ func handleRelease(
 	stateDir string,
 	rt runtime.Info,
 ) (*mcp.CallToolResult, any, error) {
+	if hqWired() {
+		return hqReleaseHandoff(), nil, nil
+	}
 	if input.Service == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -54,6 +58,10 @@ func handleRelease(
 			"Pass service=<push-source hostname> (the pair whose repo feeds production)."), WithRecoveryStatus()), nil, nil
 	}
 	meta, err := workflow.FindServiceMeta(stateDir, input.Service)
+	// A recorded HQ repository stays HQ-owned even if enrollment is missing.
+	if hqPairWired(meta) {
+		return hqReleaseHandoff(), nil, nil
+	}
 	//nolint:nilerr // meta read failures surface as the structured adopt-required tool result, not a Go error (MCP contract)
 	if err != nil || meta == nil || !meta.IsComplete() {
 		return convertError(platform.NewPlatformError(
@@ -148,6 +156,17 @@ func handleRelease(
 		"pipeline": releasePipelineNote(meta),
 		"nextStep": "The tag is on the remote and the production pipeline owns the rest. ZCP holds no production access — confirm the deploy in the production dashboard (or the repo's Actions runs for the tag workflow), then smoke-test.",
 	}), nil, nil
+}
+
+// hqReleaseHandoff ends the agent's release request visibly. A Mate cannot
+// push release tags; Core makes the application's release for the person.
+func hqReleaseHandoff() *mcp.CallToolResult {
+	return jsonResult(map[string]string{
+		"status":   "release-person-required",
+		"message":  "A release is a person's action in Mate. HQ Core creates the application's release; this tool cannot push release tags to HQ.",
+		"pipeline": "HQ Core deploys production from the application's approved releases. Production setup and release readiness are read in Mate; this tool has not checked them.",
+		"nextStep": "Tell the person: open this Mate's application on Mate's projects page. If production is missing, choose Add production. For any changes you want included that are still open, review them and press Merge. Then choose Review release, review what it carries, and press Release with the version shown. If the review is blocked, Mate names what needs doing first. Nothing has been released by this tool.",
+	})
 }
 
 // releaseTagSuggestion reads the remote's v* tags (authenticated — works

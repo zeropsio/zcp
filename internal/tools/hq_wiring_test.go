@@ -266,11 +266,9 @@ func TestRecordLandingAndClearChange_SkipAStaleNumber(t *testing.T) {
 	}
 }
 
-// TestHandleRelease_AWiredPairIsRefused: a wired pair's work lands on main
-// only through its change, so a release — which tags what main holds — is
-// compared against main and refused while the checkout is ahead of it; no
-// tag is pushed. Not parallel: it stubs the package-level push-proof reader.
-func TestHandleRelease_AWiredPairIsRefused(t *testing.T) {
+// A wired pair hands release to the person even when its checkout is ahead
+// of main. Non-parallel: stubs the package-level push-proof reader.
+func TestHandleRelease_AWiredPairHandsOff(t *testing.T) {
 	lab := newHQLab(t)
 	lab.wire()
 
@@ -282,19 +280,14 @@ func TestHandleRelease_AWiredPairIsRefused(t *testing.T) {
 	}
 	t.Cleanup(func() { launchPushProofReader = prev })
 
-	ssh := &containerSSHStub{dispatch: func(string) ([]byte, error) { return []byte("ok"), nil }}
+	ssh := &containerSSHStub{}
 	result, _, _ := handleRelease(context.Background(), ssh,
 		WorkflowInput{Service: "appdev", ReleaseVersion: "v1.0.0"}, lab.stateDir, runtime.Info{InContainer: true})
-	if askedRef != "main" {
-		t.Errorf("freshness compared against %q, want main", askedRef)
+	if askedRef != "" || len(ssh.commands) != 0 {
+		t.Errorf("HQ release ran legacy preflight: ref=%q SSH=%v", askedRef, ssh.commands)
 	}
-	if result == nil || !result.IsError {
-		t.Fatalf("release of a wired pair ahead of main must be refused, got %+v", result)
-	}
-	for _, cmd := range ssh.commands {
-		if strings.Contains(cmd, "git tag") {
-			t.Errorf("no tag may be pushed, but ran:\n%s", cmd)
-		}
+	if result == nil || result.IsError || !strings.Contains(extractText(result), "release-person-required") {
+		t.Fatalf("expected person handoff, got %+v", result)
 	}
 }
 
