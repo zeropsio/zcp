@@ -56,8 +56,9 @@ by the ownership table below.
    jako že se automaticky obnoví session"). Wanted, in the client, the server and zcp alike:
    recovery with clear logic — renewing a session, reconnecting, re-subscribing, re-reading, running
    an idempotent step again after a transient failure (the network, a timeout, a 5xx, the network
-   back, a tab woken) — bounded by a backoff and a cap, visible while it runs ("Reconnecting…"),
-   and ending, once spent, in a visible failure with a manual _Try again_. Forbidden: a clock
+   back, a tab woken) — bounded in rate, not in count (a backoff up to a steady cap), paused while
+   nothing needs it, visible while it runs ("Reconnecting…", with a way to try now), and ended
+   only by a definitive refusal, visibly, with a manual _Try again_. Forbidden: a clock
    standing in for an owner's answer ("after 30 min assume it ended"); a side effect nobody asked
    for — a timer that silently compares and fixes, the Gitea era's magic; retrying a definitive
    refusal; and repeating a non-idempotent side effect without first reading its own handle.
@@ -695,12 +696,13 @@ ends every Zerops session once it has not known for two intervals, and ends any 
 
 **Entering a Mate recovers by itself, and a refusal ends it (2026-10-05, §0 rule 4).** A connect —
 the throwaway, the exchange, the socket — that fails transiently (the network, a timeout, a 5xx, a
-rejected socket) is tried again automatically on a bounded ladder, 2, 4, 8, 15 and 30 s apart, and
-the Mate reads as "Reconnecting…" meanwhile. Five consecutive failures end the run visibly, with
-why, and offer _Try again_. A wake, the network coming back, a change of presence, descriptor or
-role, or the container turning ready starts a new bounded run. A definitive refusal — the door
-saying the person may not enter, a server below the floor — is never retried: it ends visibly,
-with why, and offers _Try again_. Setup that cannot be read inside
+rejected socket) is tried again automatically, bounded in rate rather than in count: 2, 4, 8, 15 and
+30 s apart, then steady at the cap — 60 s for the Mate the person has open, 5 min for a Mate in the
+background. Meanwhile the Mate reads "Reconnecting — next try in …" with _Try again now_. The
+retries pause while the tab is hidden or nothing needs that Mate; a wake or the network coming back
+releases the wait at once, and so does a change of presence, descriptor or role, or the container
+turning ready. Only a definitive refusal — the door saying the person may not enter, a server
+below the floor — ends it: never retried, it ends visibly, with why, and offers _Try again_. Setup that cannot be read inside
 Zerops reads as unavailable, refused or invalid, never as absent. From mate 0.11.81 the client keeps a Mate's session per account across loads and presents it again only where a fresh one would go, once the Mate confirms it still holds it with every scope the client asks for (D33). The client's
 credential renewer (`credentialRenewal.ts`) is reserved for a door that re-presents a credential;
 the throwaway door does not, so nothing renews a Zerops session. The GUI closes connections and
@@ -799,8 +801,8 @@ life the upgrade races its handler against the session's own end — its deadlin
 with no stored deadline is left alone rather than closed on a guess.
 
 The client does not renew. When its socket is rejected it mints a fresh throwaway and exchanges
-again, and the door answers with the current role — on a bounded ladder while the failure is
-transient, ending visibly with _Try again_ on a refusal or once spent (see _Entering a Mate
+again, and the door answers with the current role — retried at a bounded rate while the failure is
+transient, ending visibly with _Try again_ only on a refusal (see _Entering a Mate
 recovers by itself_ in the current account contract). `credentialRenewal.ts` keeps its contract for a door that re-presents a
 credential; the throwaway door does not, so nothing renews a Zerops session (MB-3).
 `revokeBySubject(userId)` revokes every live session for one user immediately (an ops-path
