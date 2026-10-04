@@ -2585,13 +2585,17 @@ pair to re-submit.
   the pair's credential, taking `main` in, opening the change, taking its branch in, pushing it — is
   tried at most three times, 1 s and 3 s apart, and only while HQ could not serve it: not reached at
   once, or any 5xx (a standby's 503, the balancer's 502 for an HQ that is down). A refusal — a 4xx, a
-  ref HQ rejects by name, a change merged or closed before its push — fails at once. Every try is
-  bounded: an API call connects within 5 s, TLS included, and is answered within 10 s
-  (`hq.Client.Bounded`; `Once` sends it once, so the client's own 20 s wait on a 503 never stacks
-  under the tries); git against HQ runs under `timeout` for 15 s (`ops.HQGitBound` — git has no
-  connect setting, and curl would wait 300 s) with a 10 s stall bound passed per command. A try left
-  unanswered past its bound ends the step at once, so an HQ that drops every packet costs a step 5 s
-  or 15 s, and even a 5xx at the last moment of every try ends a step within a minute. After the last
+  ref HQ rejects by name, a change merged or closed before its push — fails at once. Fail fast is
+  about an HQ that does not connect, never a transfer that makes progress. An API call connects
+  within 5 s, TLS included, and is answered within 10 s (`hq.Client.Bounded`; `Once` sends it once,
+  so the client's own 20 s wait on a 503 never stacks under the tries). git has no connect setting —
+  curl would wait 300 s — so each try of a git command against HQ first checks that HQ connects and
+  serves (`hq.Client.Serving`, 5 s), and a failed check runs no git; git's transfer is then bounded by
+  a 10 s stall passed per command, with `timeout` 4 min (`ops.HQGitBound`) as a safety net under the
+  SSH runner's own 5 min. No connection, a stall or a 5xx is tried again; connected and silent past a
+  bound ends the step. An HQ that does not connect costs a step about 19 s; a big first push or a slow
+  link runs as long as it keeps moving. The stage deploy's delivery commits the deployed tree before
+  any check, so the work is the checkout's own whether or not HQ answers. After the last
   try the stage deploy's line (the deploy itself stands) or the git-push's error reads "HQ at <addr>
   is not answering: <step> failed after 3 tries (the last: …)" — a 5xx as "HQ answered 502 (not
   serving)", never as a refusal — says the work stays committed in the dev half's checkout and that
@@ -2638,7 +2642,9 @@ pair to re-submit.
 `TestADeliveryTriesHQOnlyWhileItCannotServe`, `TestDeliveryRetry_TriesOnlyWhileHQCannotServe`,
 `TestHQUnavailable_OnlyUnreachableOr5xx`, `TestShipChange_AChangeSettledBeforeItsPushFailsAtOnce`,
 `TestUpsertServiceMeta_LegacyPendingDelivery_IsDropped`, `TestHQNotServingWords`, `TestHQAnswerOf`,
-`TestDeliveryBounds_AStepEndsWellUnderAMinute`, `TestADeliveryToAnHQThatNeverAcceptsEndsWithinItsBound`,
+`TestDeliveryBounds_FailFastOnConnectNotOnLength`, `TestADeliveryToAnHQThatNeverAcceptsEndsWithinItsBound`,
+`TestClient_Serving_IsAPreflight`, `TestHQGit_ATransferIsBoundedByItsStallNotItsLength`,
+`TestBuildDeliveryCommitCommand_CommitsWithoutHQ`,
 `TestADeliveryProvesItsCredentialFailingFast`, `TestClient_Bounded_EndsATryHQDoesNotAnswer`,
 `TestHQGit_AnHQThatNeverAcceptsEndsWithinTheBound`, `TestSessionGitTokenDigest_IsGitsBlobHash`,
 `TestAPassSkipsAPairHeldElsewhere`,
