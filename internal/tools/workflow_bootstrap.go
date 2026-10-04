@@ -140,8 +140,8 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			return bootstrapResult(ctx, resp, engine, client, projectID, rt), nil, nil
 		}
 		if input.Plan != nil {
-			// A Mate delivering through HQ plans pairs only (hq_delivery.go).
-			if pe := hqPairPlanError(input.Plan, hqWired()); pe != nil {
+			// A Mate plans pairs only (hq_delivery.go).
+			if pe := hqPairPlanError(input.Plan, rt.MateEnabled); pe != nil {
 				return convertError(pe, WithRecoveryStatus()), nil, nil
 			}
 			resp, err := engine.BootstrapCompletePlan(input.Plan, schemas, nil)

@@ -25,8 +25,9 @@ var releaseTagRe = regexp.MustCompile(`^v(\d+)\.(\d+)\.(\d+)$`)
 // releaseFirstVersion seeds the suggestion on a tag-less repo.
 const releaseFirstVersion = "v1.0.0"
 
-// handleRelease hands an HQ release to a person in Mate before any source
-// preflight. Outside HQ it is the source-side release act (spec-git-delivery-target
+// handleRelease hands a release to the person in a Mate — and for a pair
+// whose HQ repository is on record — before any source preflight. Otherwise
+// it is the source-side release act (spec-git-delivery-target
 // §7, Karel's "ten člověk řekne, že chce release"): verify the working
 // tree is clean and HEAD is on the remote (the P-LP-11 read, reused),
 // derive the next semver from the remote's existing v* tags, and — once
@@ -48,7 +49,7 @@ func handleRelease(
 	stateDir string,
 	rt runtime.Info,
 ) (*mcp.CallToolResult, any, error) {
-	if hqWired() {
+	if rt.MateEnabled {
 		return hqReleaseHandoff(), nil, nil
 	}
 	if input.Service == "" {
@@ -58,7 +59,7 @@ func handleRelease(
 			"Pass service=<push-source hostname> (the pair whose repo feeds production)."), WithRecoveryStatus()), nil, nil
 	}
 	meta, err := workflow.FindServiceMeta(stateDir, input.Service)
-	// A recorded HQ repository stays HQ-owned even if enrollment is missing.
+	// A recorded HQ repository stays HQ's outside a Mate too.
 	if hqPairWired(meta) {
 		return hqReleaseHandoff(), nil, nil
 	}

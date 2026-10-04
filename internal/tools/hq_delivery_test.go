@@ -29,6 +29,45 @@ func startSession(t *testing.T, stateDir, intent string) {
 	t.Cleanup(func() { _ = workflow.DeleteWorkSession(stateDir, os.Getpid()) })
 }
 
+// TestAWiredPairWithoutItsEnrollmentSaysNothingWasDelivered: a pair's HQ
+// repository on record makes its stage deploy a delivery, and a delivery
+// needs the Mate's enrollment to speak to HQ. Without one — gone, or not
+// readable — the deploy still runs, and its answer says the work did not
+// reach HQ and why, rather than nothing at all.
+// Non-parallel: the lab redirects HOME and writes the enrollment there.
+func TestAWiredPairWithoutItsEnrollmentSaysNothingWasDelivered(t *testing.T) {
+	for _, tt := range []struct {
+		enrollment string
+		want       string
+	}{
+		{enrollment: "missing", want: "no HQ enrollment yet"},
+		{enrollment: "unreadable", want: "HQ enrollment cannot be read"},
+	} {
+		t.Run(tt.enrollment, func(t *testing.T) {
+			lab := newHQLab(t)
+			lab.wire()
+			lab.write(map[string]string{"index.js": "the app\n"})
+			if err := os.Remove(hq.EnrollmentPath()); err != nil {
+				t.Fatal(err)
+			}
+			enrollAs(t, tt.enrollment)
+
+			d := lab.deliver()
+			if d == nil || !d.failed || d.Change != nil {
+				t.Fatalf("want a delivery that says it did not reach HQ, got %+v", d)
+			}
+			for _, want := range []string{"appstage", "has not reached HQ", tt.want} {
+				if !strings.Contains(d.Line, want) {
+					t.Errorf("the line misses %q: %s", want, d.Line)
+				}
+			}
+			if lab.hq.change(1) != nil {
+				t.Errorf("nothing reaches HQ without the enrollment")
+			}
+		})
+	}
+}
+
 // TestAStageDeployOfAWiredPairDeliversItself is the owner's run of
 // 2026-09-17: "build a todo app" has to end with a change without the person
 // saying how code travels. The stage half's deploy commits the dev half's

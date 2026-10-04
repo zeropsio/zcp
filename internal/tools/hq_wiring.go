@@ -59,8 +59,8 @@ type hqPairState struct {
 const hqCallTimeout = 30 * time.Second
 
 // openHQ is a client of the HQ this Mate enrolled with (hq.EnrollmentPath),
-// over httpClient; false when the Mate is not enrolled yet — it then delivers
-// nothing, the way a Mate without its forge wiring did.
+// over httpClient; false when the Mate is not enrolled yet, or its enrollment
+// cannot be read (hqEnrollmentProblem says which).
 func openHQ(httpClient ops.HTTPDoer) (hq.Client, bool) {
 	if httpClient == nil {
 		return hq.Client{}, false
@@ -69,11 +69,19 @@ func openHQ(httpClient ops.HTTPDoer) (hq.Client, bool) {
 	return client, err == nil
 }
 
-// hqWired reports whether this Mate delivers through HQ: it holds an
-// enrollment with its org's official HQ.
-func hqWired() bool {
+// hqEnrollmentProblem says why this Mate cannot speak to its HQ, "" when it
+// holds an enrollment it can read. Being a Mate (runtime.Info.MateEnabled) is
+// what makes HQ the authority; the enrollment is only how zcp reaches it, so
+// work that needs HQ says this rather than taking zcp's standalone path.
+func hqEnrollmentProblem() string {
 	_, found, err := hq.LoadEnrollment(hq.EnrollmentPath())
-	return err == nil && found
+	switch {
+	case err != nil:
+		return fmt.Sprintf("this Mate's HQ enrollment cannot be read (%v)", err)
+	case !found:
+		return "this Mate holds no HQ enrollment yet — its own service (zcp service mate) keeps enrolling it"
+	}
+	return ""
 }
 
 // hqAddress is the address of the HQ this Mate enrolled with, "" when it has

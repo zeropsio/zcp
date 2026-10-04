@@ -16,8 +16,7 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// A Mate enrolled with its HQ delivers through changes, and only a dev/stage
-// pair can: the dev half is the checkout that pushes, the stage half the
+// A Mate delivers through changes in its HQ, and only a dev/stage pair can: the dev half is the checkout that pushes, the stage half the
 // verified basis a production is promoted from. The rules below were each
 // measured missing on 2026-09-17, when "create a todo app" on a fresh Mate
 // got bootstrapMode simple — one service, nothing pushed, no change, and the
@@ -29,11 +28,12 @@ import (
 //   - a push to HQ is watched for no build and offers no integration, and a
 //     wired pair's direct deploys are never redirected.
 
-// hqPairPlanError refuses a classic-route plan that gives a Mate delivering
-// through HQ a runtime with no stage half. Nil when the Mate does not deliver
-// through HQ, or every runtime is a standard pair.
-func hqPairPlanError(plan []workflow.BootstrapTarget, wired bool) *platform.PlatformError {
-	if !wired {
+// hqPairPlanError refuses a classic-route plan that gives a Mate a runtime
+// with no stage half — enrolled with its HQ or not yet: the pairs it plans now
+// are the pairs it delivers through. mate is runtime.Info.MateEnabled. Nil
+// outside a Mate, or when every runtime is a standard pair.
+func hqPairPlanError(plan []workflow.BootstrapTarget, mate bool) *platform.PlatformError {
+	if !mate {
 		return nil
 	}
 	for _, target := range plan {
@@ -51,14 +51,14 @@ func hqPairPlanError(plan []workflow.BootstrapTarget, wired bool) *platform.Plat
 }
 
 // hqLaunchProductionRefusal refuses the whole launch-production workflow in a
-// Mate that delivers through HQ: launch-production creates and imports its
-// OWN production project on a user-owned remote (workflow_launch_production.go)
-// — it has no case for an application's production, which the person adds
-// from the projects page. wired is the caller's own hqWired() read — no
-// second detector. nil when the Mate does not deliver through HQ, so the
-// classic route is untouched.
-func hqLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, stateDir string, wired bool) *mcp.CallToolResult {
-	if !wired {
+// Mate, enrolled with its HQ or not yet: launch-production creates and
+// imports its OWN production project on a user-owned remote
+// (workflow_launch_production.go) — it has no case for an application's
+// production, which the person adds from the projects page. mate is
+// runtime.Info.MateEnabled. nil outside a Mate, so the classic route is
+// untouched.
+func hqLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, stateDir string, mate bool) *mcp.CallToolResult {
+	if !mate {
 		return nil
 	}
 	return launchFailedResponse(nil, topology.BlockerCategoryOther, "wired_mate_production_is_the_groups",
@@ -80,7 +80,13 @@ func hqLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, sta
 //     is on main; point to the projects page;
 //   - no change at all, or one closed without merging → nothing of this
 //     pair's work has reached main; deliver through the stage half first.
+//
+// A Mate that cannot reach HQ at all — no enrollment yet, or one it cannot
+// read — knows none of the three, and says so.
 func hqLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, stateDir string) string {
+	if problem := hqEnrollmentProblem(); problem != "" {
+		return fmt.Sprintf("Whether this Mate's work reached main is HQ's to say, and %s. Ask again once it is enrolled; production is added and released from Mate's projects page.", problem)
+	}
 	var open []string
 	merged := false
 	if metas, err := workflow.ListServiceMetas(stateDir); err == nil {
@@ -157,8 +163,10 @@ func notDelivered(line string) *hqDelivery {
 // whatever tiers of the group's recipe its repo still lacks. The dev half's
 // deploys are the loop and deliver nothing.
 //
-// Nil when there is nothing to deliver: a Mate not enrolled with an HQ, no
-// wired pair behind the target, not its stage half, not in a container.
+// Nil when there is nothing to deliver: no wired pair behind the target, not
+// its stage half, not in a container. A wired pair whose Mate cannot reach HQ
+// — no enrollment, or one it cannot read — is a delivery that failed, and
+// says why.
 // Otherwise a line for the deploy's next actions, a failed delivery included
 // — the deploy itself succeeded either way, and a failed delivery is also a
 // line on stderr.
@@ -206,7 +214,13 @@ func deliverHeldHQPair(
 	}
 	hqc, enrolled := openHQ(httpClient)
 	if !enrolled {
-		return nil
+		reason := hqEnrollmentProblem()
+		if reason == "" {
+			reason = "this deploy has no HTTP client to reach HQ with"
+		}
+		return notDelivered(fmt.Sprintf(
+			"%s runs, but its code has not reached HQ: %s. Nothing of it was committed or pushed; the next stage deploy delivers it.",
+			target, reason))
 	}
 	// The delivery paces and bounds its own tries (deliveryRetry), so no
 	// call waits HQ out beneath them.
