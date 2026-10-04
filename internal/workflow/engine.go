@@ -84,7 +84,7 @@ func NewEngine(baseDir string, env Environment, kp knowledge.Provider) *Engine {
 		if s.PID == os.Getpid() {
 			continue
 		}
-		if isProcessAlive(s.PID, s.StartTime) {
+		if IsProcessAlive(s.PID, s.StartTime) {
 			continue
 		}
 		candidates = append(candidates, s)
@@ -785,7 +785,7 @@ func (e *Engine) Resume(sessionID string) (*WorkflowState, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resume: %w", err)
 	}
-	if isProcessAlive(state.PID, state.StartTime) {
+	if IsProcessAlive(state.PID, state.StartTime) {
 		return nil, fmt.Errorf("resume: session %s still active (PID %d)", sessionID, state.PID)
 	}
 	if err := e.claimSession(sessionID, state); err != nil {
@@ -828,7 +828,7 @@ func (e *Engine) checkHostnameLocks(targets []BootstrapTarget) error {
 			// Incomplete meta from another session — check if alive (pair-aware
 			// (pid,startTime), so a recycled PID doesn't read as a live locker).
 			s, inRegistry := sessionByID[meta.BootstrapSession]
-			if inRegistry && isProcessAlive(s.PID, s.StartTime) {
+			if inRegistry && IsProcessAlive(s.PID, s.StartTime) {
 				return fmt.Errorf("service %q is being bootstrapped by session %s (PID %d) — finish or reset that session first",
 					hostname, meta.BootstrapSession, s.PID)
 			}
