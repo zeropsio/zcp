@@ -60,6 +60,34 @@ type statusDoer struct {
 	status int
 }
 
+func TestClient_SignersInput_ChangesOnlyWithItsAuthority(t *testing.T) {
+	t.Parallel()
+	base := Enrollment{HQ: "https://hq.test", ProjectID: "p-mate", Credential: "private-credential"}
+	client := Client{enrollment: base}
+	want := client.SignersInput()
+	if len(want) != 64 || strings.Contains(want, base.Credential) {
+		t.Fatalf("input must be an opaque SHA-256 fingerprint")
+	}
+	for _, tt := range []struct {
+		name       string
+		enrollment Enrollment
+		changed    bool
+	}{
+		{"same", base, false},
+		{"key named", Enrollment{HQ: base.HQ, ProjectID: base.ProjectID, Credential: base.Credential, KeyTokenID: "key-id"}, false},
+		{"credential", Enrollment{HQ: base.HQ, ProjectID: base.ProjectID, Credential: "rotated"}, true},
+		{"HQ", Enrollment{HQ: "https://new.test", ProjectID: base.ProjectID, Credential: base.Credential}, true},
+		{"project", Enrollment{HQ: base.HQ, ProjectID: "other", Credential: base.Credential}, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := (Client{enrollment: tt.enrollment}).SignersInput(); (got != want) != tt.changed {
+				t.Errorf("input changed = %v, want %v", got != want, tt.changed)
+			}
+		})
+	}
+}
+
 func (d statusDoer) Do(req *http.Request) (*http.Response, error) {
 	resp, err := d.Doer.Do(req)
 	if resp != nil {

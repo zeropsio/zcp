@@ -14,7 +14,7 @@ import (
 )
 
 // The Mate server keeps each login's signer in ~/.mate/signed-in.json.
-// Before it starts, zcp seeds an absent store once from HQ's project record.
+// zcp seeds an absent store once after enrollment with HQ.
 
 // SignIn is one login's sign-in as the server's store keeps it: who, and
 // when (epoch ms).
@@ -39,31 +39,82 @@ func SignInsPath() string {
 	return filepath.Join(runtime.HomeDir(), ".mate", "signed-in.json")
 }
 
-// SignInsSeededPath records the seed attempt: empty for success or no need,
-// otherwise the failure reason retained until an explicit reset.
+// SignInsSeededPath records the seed's outcome, without a credential.
 func SignInsSeededPath() string {
 	return filepath.Join(runtime.HomeDir(), ".zcp", "state", "mate-sign-ins-seeded")
 }
 
-// SeedSignIns writes an absent store from HQ's login-to-user map once.
-// A present store is preserved without reading HQ. A failed attempt keeps its
-// reason in markPath and is never automatically retried; removing the marker
-// explicitly permits another attempt on the next launch.
-func SeedSignIns(storePath, markPath string, readSigners func() (map[string]string, error), now time.Time) (bool, error) {
-	if exists(storePath) {
-		return false, mark(markPath)
+// SignInsSeedStatus is one completed seed input. Input is an opaque fingerprint
+// of the enrollment, never its credential. A failed input is not tried again.
+type SignInsSeedStatus struct {
+	State string    `json:"state"`
+	Input string    `json:"input,omitempty"`
+	At    time.Time `json:"at"`
+	Error string    `json:"error,omitempty"`
+}
+
+// ReadSignInsSeedStatus reads the completed attempt, including legacy markers.
+func ReadSignInsSeedStatus(path string) (SignInsSeedStatus, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return SignInsSeedStatus{}, fmt.Errorf("read the sign-in seed attempt: %w", err)
 	}
-	if raw, err := os.ReadFile(markPath); err == nil {
-		if len(raw) != 0 {
-			return false, errors.New(string(raw))
+	if len(raw) == 0 {
+		return SignInsSeedStatus{State: "seeded"}, nil
+	}
+	if !json.Valid(raw) {
+		// The previous writer kept only a failure's reason, before enrollment.
+		return SignInsSeedStatus{State: "failed", Error: string(raw)}, nil
+	}
+	var status SignInsSeedStatus
+	if err := json.Unmarshal(raw, &status); err != nil {
+		return SignInsSeedStatus{}, fmt.Errorf("decode the sign-in seed attempt: %w", err)
+	}
+	if status.State == "" {
+		return SignInsSeedStatus{}, errors.New("sign-in seed attempt has no state")
+	}
+	return status, nil
+}
+
+// SeedSignIns is the one-time seed without a changing enrollment input.
+func SeedSignIns(storePath, markPath string, readSigners func() (map[string]string, error), now time.Time) (bool, error) {
+	return SeedSignInsForEnrollment(storePath, markPath, "", readSigners, now)
+}
+
+// SeedSignInsForEnrollment preserves any existing store, reads HQ at most once
+// per failed enrollment input, and retains the outcome. Success remains final
+// even if the store is later removed. A changed enrollment is new input; a
+// restart or recheck of the same credential is not. Legacy failures have no
+// input and therefore permit one attempt with an enrolled credential.
+func SeedSignInsForEnrollment(storePath, markPath, input string, readSigners func() (map[string]string, error), now time.Time) (bool, error) {
+	status := SignInsSeedStatus{Input: input, At: now.UTC()}
+	finish := func(state string, reason error) error {
+		status.State = state
+		if reason != nil {
+			status.Error = reason.Error()
 		}
-		return false, nil
+		if err := saveSeedStatus(markPath, status); err != nil {
+			return errors.Join(reason, err)
+		}
+		return reason
+	}
+	if exists(storePath) {
+		return false, finish("preserved", nil)
+	}
+	kept, err := ReadSignInsSeedStatus(markPath)
+	if err == nil {
+		if kept.State != "failed" {
+			return false, nil
+		}
+		if kept.Input == input {
+			return false, errors.New(kept.Error)
+		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return false, fmt.Errorf("read the sign-in seed attempt: %w", err)
+		return false, err
 	}
 	signers, err := readSigners()
 	if err != nil {
-		return false, recordSeedFailure(markPath, fmt.Errorf("read the Mate's signers from HQ: %w", err))
+		return false, finish("failed", fmt.Errorf("read the Mate's signers from HQ: %w", err))
 	}
 	signIns := make(map[string]SignIn)
 	for key, user := range signers {
@@ -72,24 +123,41 @@ func SeedSignIns(storePath, markPath string, readSigners func() (map[string]stri
 		}
 	}
 	if len(signIns) == 0 {
-		return false, mark(markPath)
+		return false, finish("empty", nil)
 	}
 	if err := writeAtomically(storePath, signIns); err != nil {
-		return false, recordSeedFailure(markPath, err)
+		if errors.Is(err, fs.ErrExist) && exists(storePath) {
+			return false, finish("preserved", nil)
+		}
+		return false, finish("failed", err)
 	}
-	return true, mark(markPath)
+	return true, finish("seeded", nil)
 }
 
-// recordSeedFailure keeps a failed attempt's reason so only an explicit reset
-// can ask HQ and write the store again.
-func recordSeedFailure(path string, reason error) error {
+func saveSeedStatus(path string, status SignInsSeedStatus) error {
+	raw, err := json.Marshal(status)
+	if err != nil {
+		return fmt.Errorf("encode the sign-in seed outcome: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return errors.Join(reason, fmt.Errorf("record the failed sign-in seed: %w", err))
+		return fmt.Errorf("record the sign-in seed outcome: %w", err)
 	}
-	if err := os.WriteFile(path, []byte(reason.Error()), 0o600); err != nil {
-		return errors.Join(reason, fmt.Errorf("record the failed sign-in seed: %w", err))
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".sign-in-seed-*")
+	if err != nil {
+		return fmt.Errorf("record the sign-in seed outcome: %w", err)
 	}
-	return reason
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(raw); err != nil {
+		tmp.Close()
+		return fmt.Errorf("record the sign-in seed outcome: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("record the sign-in seed outcome: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("record the sign-in seed outcome: %w", err)
+	}
+	return nil
 }
 
 // isSignerKey is a login the server records a signer for: a driver's
@@ -103,17 +171,8 @@ func exists(path string) bool {
 	return !errors.Is(err, fs.ErrNotExist)
 }
 
-func mark(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("mark the sign-ins seeded: %w", err)
-	}
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
-		return fmt.Errorf("mark the sign-ins seeded: %w", err)
-	}
-	return nil
-}
-
-// writeAtomically writes the store whole or not at all, as the server does.
+// writeAtomically publishes an absent store whole, without replacing a store
+// the server wrote while HQ was answering.
 func writeAtomically(path string, signIns map[string]SignIn) error {
 	raw, err := json.Marshal(signIns)
 	if err != nil {
@@ -134,7 +193,7 @@ func writeAtomically(path string, signIns map[string]SignIn) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("write the sign-ins: %w", err)
 	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	if err := os.Link(tmp.Name(), path); err != nil {
 		return fmt.Errorf("write the sign-ins: %w", err)
 	}
 	return nil

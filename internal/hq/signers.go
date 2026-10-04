@@ -2,10 +2,20 @@ package hq
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 )
+
+// SignersInput identifies the authority used by this client's signer read.
+// Naming a Zerops key does not change it; replacing HQ, project or credential
+// does. Only the digest is persisted beside a failed seed, never the credential.
+func (c Client) SignersInput() string {
+	input := strings.Join([]string{c.enrollment.HQ, c.enrollment.ProjectID, c.enrollment.Credential}, "\x00")
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(input)))
+}
 
 // Signers reads the enrolled project's signer metadata from HQ once, without
 // retrying an unavailable answer. HQ omits signers when its record is empty.

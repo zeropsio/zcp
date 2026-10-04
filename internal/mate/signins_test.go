@@ -142,3 +142,21 @@ func writeFile(t *testing.T, path, body string) {
 		t.Fatal(err)
 	}
 }
+
+func TestSeedSignIns_StoreCreatedDuringHQReadIsPreserved(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store, mark := filepath.Join(dir, "signed-in.json"), filepath.Join(dir, "seed")
+	own := `{"codex":{"by":"u-own","at":1}}`
+	wrote, err := mate.SeedSignIns(store, mark, func() (map[string]string, error) {
+		writeFile(t, store, own)
+		return map[string]string{"codex": "u-hq"}, nil
+	}, time.Now())
+	if err != nil || wrote {
+		t.Fatalf("seed = %v, %v; want preserved", wrote, err)
+	}
+	raw, err := os.ReadFile(store)
+	if err != nil || string(raw) != own {
+		t.Fatalf("store changed: %s, %v", raw, err)
+	}
+}
