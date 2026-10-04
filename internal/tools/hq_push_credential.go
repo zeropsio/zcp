@@ -43,15 +43,17 @@ func (e *hqNotAnsweringError) Error() string { return e.line }
 
 // credentialPropagation paces the wait for a credential zcp wrote onto a push
 // source to reach its fresh sessions — the platform's env store reaches them
-// within seconds (zembed) — which is asked of the container, never of HQ. A
-// var so tests narrow it.
+// within seconds (zembed) — which is asked of the container, never of HQ, and
+// bounded from the renewal. A var so tests narrow it.
 var credentialPropagation = struct{ every, within time.Duration }{time.Second, 15 * time.Second}
 
 // hqEnsurePushCredential brings a wired pair's push credential to this Mate's
 // current credential and proves a fresh session authenticates with it before
 // anything pushes. A copy that already is the current credential costs two
-// reads. A credential zcp rewrites is waited for until a fresh session holds
-// it, then proved once. A pair an earlier refusal marked (GitPushBroken) is
+// reads. A credential zcp renews — in this call, or in one whose renewal the
+// record keeps (CredentialRenewedAt) within credentialPropagation.within —
+// is waited for until a fresh session holds it, bounded from the renewal,
+// then proved once. A pair an earlier refusal marked (GitPushBroken) is
 // checked again and healed the moment its credential works. The proof is a
 // delivery step (deliveryRetry): HQ not serving it is an
 // hqNotAnsweringError and marks nothing; HQ refusing the credential marks
@@ -77,7 +79,8 @@ func hqEnsurePushCredential(
 	marked := meta.GitPushState == topology.GitPushBroken
 	serviceID, held, known := heldPushCredential(ctx, client, projectID, meta.Hostname)
 	current := known && subtle.ConstantTimeCompare([]byte(held), []byte(hqc.Credential())) == 1
-	if !marked && (current || !known) {
+	renewedAt, renewing := credentialRenewal(stateDir, meta)
+	if !marked && !renewing && (current || !known) {
 		return nil
 	}
 
@@ -85,7 +88,11 @@ func hqEnsurePushCredential(
 		if _, err := ops.EnvSetService(ctx, client, serviceID, ops.GitTokenEnvKey, hqc.Credential(), true); err != nil {
 			return fmt.Errorf("writing this Mate's current HQ credential onto %s failed (%w)", meta.Hostname, err)
 		}
-		if err := awaitSessionCredential(ctx, sshDeployer, meta.Hostname, hqc.Credential()); err != nil {
+		renewedAt, renewing = time.Now().UTC(), true
+		recordCredentialRenewal(stateDir, meta, renewedAt.Format(time.RFC3339Nano))
+	}
+	if renewing {
+		if err := awaitSessionCredential(ctx, sshDeployer, meta.Hostname, hqc.Credential(), renewedAt.Add(credentialPropagation.within)); err != nil {
 			return err
 		}
 	}
@@ -95,32 +102,70 @@ func hqEnsurePushCredential(
 		return &hqNotAnsweringError{line: hqNotAnsweringLine(hqc.Address(), fmt.Sprintf("proving %s's credential", meta.Hostname), tries, gitNotServingWords(err, output))}
 	case err != nil && ops.GitCredentialRefused(string(output)):
 		hqMarkPushRefused(stateDir, meta)
-		return &hqCredentialRefusedError{message: withSSHStderr(fmt.Sprintf("HQ refuses this Mate's current credential for %s", meta.Hostname), err)}
+		recordCredentialRenewal(stateDir, meta, "")
+		refusal := fmt.Sprintf("HQ refuses this Mate's current credential for %s", meta.Hostname)
+		if renewing {
+			refusal = fmt.Sprintf("HQ refuses this Mate's credential for %s (after waiting for a just-renewed credential to take effect: %s's sessions hold it)", meta.Hostname, meta.Hostname)
+		}
+		return &hqCredentialRefusedError{message: withSSHStderr(refusal, err)}
 	case err != nil:
 		return errors.New(withSSHStderr(fmt.Sprintf("proving %s's credential with HQ failed", meta.Hostname), err))
 	}
+	recordCredentialRenewal(stateDir, meta, "")
 	if marked {
 		hqMarkPushWorking(stateDir, meta)
 	}
 	return nil
 }
 
-// awaitSessionCredential waits, as credentialPropagation paces it, until a
-// fresh session on hostname holds credential as its GIT_TOKEN — compared by
-// digest, so the credential is on no command line.
-func awaitSessionCredential(ctx context.Context, sshDeployer ops.SSHDeployer, hostname, credential string) error {
+// credentialRenewal is the renewal of the pair's credential the record keeps
+// when it is still within credentialPropagation.within: renewing is true
+// while a delivery should wait for it to take effect. A renewal past the
+// window is forgotten.
+func credentialRenewal(stateDir string, meta *workflow.ServiceMeta) (renewedAt time.Time, renewing bool) {
+	if meta.HQ.CredentialRenewedAt == "" {
+		return time.Time{}, false
+	}
+	renewedAt, err := time.Parse(time.RFC3339Nano, meta.HQ.CredentialRenewedAt)
+	if err != nil || time.Since(renewedAt) >= credentialPropagation.within {
+		recordCredentialRenewal(stateDir, meta, "")
+		return time.Time{}, false
+	}
+	return renewedAt, true
+}
+
+// recordCredentialRenewal keeps at (RFC3339Nano) as the pair's credential
+// renewal, in memory and on disk; "" forgets it. Best-effort on disk: a
+// renewal not kept costs a later delivery its wait, nothing else.
+func recordCredentialRenewal(stateDir string, meta *workflow.ServiceMeta, at string) {
+	if meta.HQ.CredentialRenewedAt == at {
+		return
+	}
+	meta.HQ.CredentialRenewedAt = at
+	_ = workflow.UpsertServiceMeta(stateDir, meta.Hostname, func(m *workflow.ServiceMeta, existed bool) error {
+		if !existed || m.HQ == nil || m.HQ.CredentialRenewedAt == at {
+			return workflow.ErrSkipWrite
+		}
+		m.HQ.CredentialRenewedAt = at
+		return nil
+	})
+}
+
+// awaitSessionCredential waits, as credentialPropagation paces it and until
+// deadline, for a fresh session on hostname to hold credential as its
+// GIT_TOKEN — compared by digest, so the credential is on no command line.
+func awaitSessionCredential(ctx context.Context, sshDeployer ops.SSHDeployer, hostname, credential string, deadline time.Time) error {
 	want := ops.SecretDigest(credential)
-	deadline := time.Now().Add(credentialPropagation.within)
 	for {
 		out, err := sshDeployer.ExecSSH(ctx, hostname, ops.BuildSessionGitTokenDigestCommand())
 		if err == nil && strings.TrimSpace(string(out)) == want {
 			return nil
 		}
 		if time.Now().Add(credentialPropagation.every).After(deadline) {
-			return fmt.Errorf("the credential written onto %s has not reached its sessions within %s", hostname, credentialPropagation.within)
+			return fmt.Errorf("the credential renewed onto %s has not reached its sessions within %s of its renewal", hostname, credentialPropagation.within)
 		}
 		if err := waitFor(ctx, credentialPropagation.every); err != nil {
-			return fmt.Errorf("waiting for the credential written onto %s to reach its sessions: %w", hostname, err)
+			return fmt.Errorf("waiting for the credential renewed onto %s to reach its sessions: %w", hostname, err)
 		}
 	}
 }

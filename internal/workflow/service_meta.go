@@ -190,6 +190,12 @@ type HQRepoRef struct {
 	// inheriting the last one's words would tell the person about work that
 	// is not in it.
 	ChangeDescription *ChangeDescription `json:"changeDescription,omitempty"`
+	// CredentialRenewedAt is when zcp last wrote the Mate's current HQ
+	// credential onto the push source, RFC3339 with nanoseconds — kept until a
+	// fresh session proves it, or the wait for it to reach the sessions has
+	// passed — so a delivery right after a renewal waits for it to take
+	// effect rather than read the old one's refusal as HQ's.
+	CredentialRenewedAt string `json:"credentialRenewedAt,omitempty"`
 }
 
 // ChangeDescription is a Mate's description of its change, kept for the
