@@ -8,8 +8,8 @@ import (
 	"github.com/zeropsio/zcp/internal/service"
 )
 
-// keepNothing stands in for the HQ enrollment and the delivery keep every
-// mate launch starts: no test reaches out to Zerops or an HQ.
+// keepNothing stands in for the HQ enrollment keep every mate launch starts:
+// no test reaches out to Zerops or an HQ.
 func keepNothing(context.Context, func() func(string) string) {}
 
 // seedNothing stands in for the sign-in seed every mate launch runs: no test
@@ -20,7 +20,6 @@ func prepareNothing(context.Context, func(string) string) error { return nil }
 
 func TestMain(m *testing.M) {
 	service.SetMateHQKeep(keepNothing)
-	service.SetMateDeliveryKeep(keepNothing)
 	service.SetMateSeedSignIns(seedNothing)
 	service.SetMateHQPrepare(prepareNothing)
 	os.Exit(m.Run())

@@ -1,11 +1,9 @@
 // Tests for: one process at a time runs git on a pair's checkout
-// (workflow.LockPair) — the zcp of an agent delivering or pushing, a pass,
-// and `zcp service mate` finishing an owed delivery (hq_pending.go).
+// (workflow.LockPair) — the zcp of an agent delivering or pushing, and a pass.
 package tools
 
 import (
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,11 +23,6 @@ func (l *hqLab) owedDelivery() {
 	l.hq.setDown(false)
 }
 
-// finishRound is one round of `zcp service mate` finishing owed deliveries.
-func (l *hqLab) finishRound() (int, []string) {
-	return FinishPendingDeliveries(l.t.Context(), l.mock, l.hq.srv.Client(), l.ssh, l.rt, l.stateDir)
-}
-
 // holdPair holds the pair's checkout the way another process would.
 func (l *hqLab) holdPair() func() {
 	l.t.Helper()
@@ -38,42 +31,6 @@ func (l *hqLab) holdPair() func() {
 		l.t.Fatalf("hold the pair: %v", err)
 	}
 	return release
-}
-
-// TestTwoFinishesOfOnePairRunGitOnce: while one finish of an owed delivery
-// runs git on the pair's checkout, another skips the pair — no git of its
-// own, nothing said, the delivery still owed — and the first finishes it.
-func TestTwoFinishesOfOnePairRunGitOnce(t *testing.T) {
-	lab := newHQLab(t)
-	lab.owedDelivery()
-	inGit, goOn := make(chan struct{}), make(chan struct{})
-	var paused atomic.Bool
-	lab.ssh.pause = func(string) {
-		if paused.CompareAndSwap(false, true) {
-			close(inGit)
-			<-goOn
-		}
-	}
-	first := make(chan []string, 1)
-	go func() {
-		_, lines := lab.finishRound()
-		first <- lines
-	}()
-	<-inGit
-	ran := len(lab.ssh.commands)
-
-	owed, lines := lab.finishRound()
-	if owed != 1 || len(lines) != 0 || len(lab.ssh.commands) != ran {
-		t.Errorf("the second finish = %d owed, %q, %d commands; want it to skip the pair: still owed, nothing said, no git",
-			owed, lines, len(lab.ssh.commands)-ran)
-	}
-	close(goOn)
-	if lines := <-first; len(lines) != 1 || !strings.Contains(lines[0], "is done") {
-		t.Fatalf("the first finish said %q, want the delivery done", lines)
-	}
-	if lab.hq.change(1) == nil || lab.hq.change(2) != nil {
-		t.Errorf("want change #1 opened once")
-	}
 }
 
 // TestAPassSkipsAPairHeldElsewhere: a pass meeting a pair another process

@@ -21,7 +21,6 @@ import (
 	"github.com/zeropsio/zcp/internal/matesetup"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
-	"github.com/zeropsio/zcp/internal/tools"
 )
 
 // ErrMateDisabled is returned by Start("mate") when ZCP_MATE_ENABLED is off. Named
@@ -238,9 +237,8 @@ var mateSetupBoot = matesetup.Boot
 
 // mateLaunchSetup writes the status file the server reads (ZCP_STATUS_FILE,
 // mate.LaunchEnvLines), enrolls before seeding the server's absent sign-ins,
-// and starts keeping the Mate enrolled with its HQ and
-// finishing the deliveries its agents owe HQ, and starts the boot import when
-// the container carries a runtimes plan. The plan, the Mate's key and its
+// and starts keeping the Mate enrolled with its HQ, and starts the boot import
+// when the container carries a runtimes plan. The plan, the Mate's key and its
 // project come from the live env store, as the guard's flag does: a unit's
 // own environment carries none of them. All run in this process, for as long
 // as the server does; a restart cut short finds what it left by looking.
@@ -261,7 +259,6 @@ func mateLaunchSetup() {
 		logHQ("launch enrollment: " + err.Error() + "; starting the Mate without a sign-in seed")
 	}
 	go mateHQKeep(context.Background(), env)
-	go mateDeliveryKeep(context.Background(), env)
 	if planSet {
 		go mateSetupBoot(context.Background(), path, env)
 	}
@@ -419,31 +416,6 @@ func seedSignIns(ctx context.Context, lookup func(string) string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[zcp] service mate: sign-ins: %v; failed input retained in %s (reported by `zcp mate status --json`); a changed enrollment permits one new attempt; to try again manually, remove the marker and start the Mate service again\n", err, mate.SignInsSeededPath())
 	}
-}
-
-// mateDeliveryKeep finishes the deliveries the Mate's agents owe HQ
-// (tools.KeepFinishingDeliveries); package-level so tests stand in for it.
-var mateDeliveryKeep = keepDelivering
-
-// SetMateDeliveryKeep stands in for the delivery keep; for tests.
-func SetMateDeliveryKeep(fn func(context.Context, func() func(string) string)) {
-	mateDeliveryKeep = fn
-}
-
-// keepDelivering is tools.KeepFinishingDeliveries over the pairs the Mate's
-// agents keep (mate.AgentStateDir): each round builds its client and reads
-// the container from the live env store as it is then, as keepEnrolled does.
-func keepDelivering(ctx context.Context, env func() func(string) string) {
-	httpClient := &http.Client{Timeout: hqCallTimeout}
-	sshDeployer := platform.NewSystemSSHDeployer()
-	tools.KeepFinishingDeliveries(ctx, func(ctx context.Context) (int, []string) {
-		lookup := env()
-		client, err := apiClientOf(lookup)
-		if err != nil {
-			return 0, []string{"deliveries: " + err.Error()}
-		}
-		return tools.FinishPendingDeliveries(ctx, client, httpClient, sshDeployer, runtime.DetectFrom(lookup), mate.AgentStateDir)
-	}, tools.DeliveryKeepOptions{Log: logHQ})
 }
 
 // apiClientOf is a client of the Zerops API over the Mate's key as the live
