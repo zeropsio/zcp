@@ -531,22 +531,34 @@ func TestAgentsLocal_NoContainerPaths(t *testing.T) {
 // hand-rolled three curls against its git host's API before it could say
 // where its own work ships to.
 //
-// The group block is unconditional and says how to LOOK — reach is a
-// property of the container's own token, and a flag mirroring it here
-// would be a second copy free to drift. The git-host block is a Mate's: only
-// a Mate delivers its code to HQ.
+// Reach differs by what the container is. Outside a Mate the block says how
+// to LOOK — reach is a property of the container's own token, and a flag
+// mirroring it here would be a second copy free to drift. A Mate's token
+// reaches no other project: its application's stage and production are
+// observed through HQ (zerops_observe), and its other Mates not at all. The
+// git-host block is a Mate's: only a Mate delivers its code to HQ.
 func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name        string
-		rt          runtime.Info
-		wantGitHost bool
+		name      string
+		rt        runtime.Info
+		want      []string
+		wantNever []string
 	}{
-		{name: "not a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}},
 		{
-			name:        "a Mate",
-			rt:          runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true},
-			wantGitHost: true,
+			name:      "not a Mate",
+			rt:        runtime.Info{InContainer: true, ServiceName: "zcp"},
+			want:      []string{"zcli project list", "what it may do there is the token's"},
+			wantNever: []string{"zerops_observe", "zcp hq git-credential", "HQ", "Your group", "403"},
+		},
+		{
+			name: "a Mate",
+			rt:   runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true},
+			want: []string{
+				"`zerops_observe`", `action="environments"`, `action="status" projectId=`, `action="logs"`,
+				"reaches none of them", "other Mates", "zcp hq git-credential",
+			},
+			wantNever: []string{"zcli project list", "READ them", "403", "grants"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -555,52 +567,67 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 			if err != nil {
 				t.Fatalf("BuildAgentsMD: %v", err)
 			}
-			// Group guidance is always present in a container, and never
-			// claims a reach it has not verified.
-			for _, want := range []string{"zcli project list", "READ them but not write", "403"} {
+			for _, want := range tc.want {
 				if !strings.Contains(out, want) {
-					t.Errorf("container AGENTS.md missing group guidance %q", want)
+					t.Errorf("container AGENTS.md missing %q", want)
 				}
 			}
-			if got := strings.Contains(out, "zcp hq git-credential"); got != tc.wantGitHost {
-				t.Errorf("git-host paragraph present = %v, want %v", got, tc.wantGitHost)
+			for _, never := range tc.wantNever {
+				if strings.Contains(out, never) {
+					t.Errorf("container AGENTS.md must not say %q", never)
+				}
 			}
 		})
 	}
 }
 
-// The pipeline rule covers the group's OTHER projects only. Measured on a
-// live Mate: told "code reaches another environment through the pipeline"
-// and "what ships the code is the repository's workflow", the agent read its own
-// in-project stage half as that other environment — it declared appstage
-// unreachable without CI, proposed wiring a webhook, and demoted appstage
-// to "the sandbox half" until the user asked for the dev→stage
-// cross-deploy the develop workflow had prescribed all along. Both blocks
-// must scope the pipeline to other projects and keep the in-project
-// promotion in the ZCP workflow.
+// The pipeline rule covers OTHER projects only. Measured on a live Mate: told
+// "code reaches another environment through the pipeline" and "what ships the
+// code is the repository's workflow", the agent read its own in-project stage
+// half as that other environment — it declared appstage unreachable without
+// CI, proposed wiring a webhook, and demoted appstage to "the sandbox half"
+// until the user asked for the dev→stage cross-deploy the develop workflow
+// had prescribed all along. Both variants must scope the pipeline to other
+// projects and keep the in-project promotion in the ZCP workflow.
 func TestBuildAgentsMD_Container_PipelineScopedToOtherProjects(t *testing.T) {
 	t.Parallel()
-	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, false)
-	if err != nil {
-		t.Fatalf("BuildAgentsMD: %v", err)
-	}
-	for _, unscoped := range []string{
-		"Code reaches another environment",
-		"What ships the code is",
-		"typically its stage and production",
+	for _, tc := range []struct {
+		name string
+		rt   runtime.Info
+		want []string
+	}{
+		{
+			name: "not a Mate",
+			rt:   runtime.Info{InContainer: true, ServiceName: "zcp"},
+			want: []string{"Code reaches another project through the repository's pipeline", "it is not a separate stage project"},
+		},
+		{
+			name: "a Mate",
+			rt:   runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true},
+			want: []string{"Code reaches stage and production only through the repository", "it is not the application's stage"},
+		},
 	} {
-		if strings.Contains(out, unscoped) {
-			t.Errorf("container AGENTS.md keeps unscoped pipeline wording %q", unscoped)
-		}
-	}
-	for _, want := range []string{
-		"Code reaches the group's other projects through the repository's pipeline",
-		"`zerops_deploy sourceService=",
-		"is not the group's stage project",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("container AGENTS.md missing in-project scoping %q", want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := BuildAgentsMD(tc.rt, false)
+			if err != nil {
+				t.Fatalf("BuildAgentsMD: %v", err)
+			}
+			for _, unscoped := range []string{
+				"Code reaches another environment",
+				"What ships the code is",
+				"typically its stage and production",
+			} {
+				if strings.Contains(out, unscoped) {
+					t.Errorf("container AGENTS.md keeps unscoped pipeline wording %q", unscoped)
+				}
+			}
+			for _, want := range append(tc.want, "`zerops_deploy sourceService=") {
+				if !strings.Contains(out, want) {
+					t.Errorf("container AGENTS.md missing in-project scoping %q", want)
+				}
+			}
+		})
 	}
 }
 
@@ -640,7 +667,7 @@ func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 func TestBuildAgentsMD_Local_HasNoMateContext(t *testing.T) {
 	t.Parallel()
 	out, _ := BuildAgentsMD(runtime.Info{MateEnabled: true}, false)
-	for _, unwanted := range []string{"zcli project list", "zcp hq git-credential"} {
+	for _, unwanted := range []string{"zcli project list", "zerops_observe", "zcp hq git-credential"} {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("local AGENTS.md leaked %q", unwanted)
 		}
