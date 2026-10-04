@@ -2823,12 +2823,20 @@ The order:
 
 The stand-up's section of the status file (`ZCP_STATUS_FILE`, `standup`) is one stand-up over its
 two calls: `running` from the first call's start until the second has returned, never `done` between
-them. A first call that leaves the stages queued ends with the section still `running`, in the
-`stage` phase, its stages `build`/`pending`, and keeps beating it; the second call goes on with that
-section — the same `startedAt`, the same halves — and ends it `done` or `failed`. A second call that
-does not come within 15 minutes ends it `done` in the `development` phase, the stages still pending.
+them. The section names the zcp MCP server running it (`process`: its PID and start time, the
+handle the work sessions use); a `running` section whose process is provably gone — the PID absent,
+or reused by a process with another start time — is a stand-up that died, and the Mate server's
+setup step says `failed` (`process_gone`). Nothing ages a section: no heartbeat, no staleness
+window. A first call that leaves the stages queued ends with the section still `running`, in the
+`stage` phase, its stages `build`/`pending`; a second call of the same MCP server goes on with that
+section — the same `startedAt`, the same halves — and ends it `done` or `failed`; a call of another
+process starts afresh. zcp never ends a carried section by itself: it cannot see the agent's turn
+end, and the Mate server can. A stand-up whose own turn ended while its section still waits in the
+`stage` phase, no half running, ended without the second call: the server's setup step says
+`failed` (`stage_not_built`) — development stands, the stages were not built — and a later call
+that builds them moves the section on, its own `done` or `failed` again zcp's word.
 `TestStandup_WritesItsProgressForTheRunCard`, `TestStandup_TheRecordNeverSaysDoneBetweenItsCalls`,
-`TestStandup_ACarriedStandUpEndsWhenNoStageCallComes`.
+`TestStandupStatus_CarriedByItsProcess`; mate `zeropsSetupSteps.test.ts`.
 
 The model is the backup:
 

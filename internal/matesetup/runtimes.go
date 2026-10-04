@@ -131,7 +131,6 @@ func MarkLaunch(path string, planSet bool, now time.Time) error {
 		if s.Standup.State == mate.StandupRunning {
 			s.Standup.State = mate.StandupFailed
 			s.Standup.EndedAt = stamp(now)
-			s.Standup.UpdatedAt = stamp(now)
 			s.Standup.Error = "the stand-up was stopped by a restart of the Mate's server"
 		}
 	}); err != nil {
