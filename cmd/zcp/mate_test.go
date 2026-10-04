@@ -189,6 +189,35 @@ func TestRunMateStatus_NothingInstalled_ReportsLatest(t *testing.T) {
 	}
 }
 
+func TestRunMateStatus_ReportsTheSignInSeedFailure(t *testing.T) {
+	// non-parallel: HOME and stdout are process-wide.
+	t.Setenv("HOME", t.TempDir())
+	manifestAndTarballServer(t)
+	if err := os.MkdirAll(filepath.Dir(mate.SignInsSeededPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mate.SignInsSeededPath(), []byte(`{"state":"failed","input":"opaque","at":"2026-10-04T10:00:00Z","error":"HQ unavailable"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout := captureStdout(t, func() {
+		if runMateCmd([]string{"status", "--json"}) != 0 {
+			t.Fatal("status failed")
+		}
+	})
+	var got struct {
+		SignIns struct {
+			State string `json:"state"`
+			Error string `json:"error"`
+		} `json:"signIns"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.SignIns.State != "failed" || got.SignIns.Error != "HQ unavailable" {
+		t.Fatalf("seed failure not reported: %s", stdout)
+	}
+}
+
 func TestRunMateStatus_JSON_ReportsUpdateAvailable(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

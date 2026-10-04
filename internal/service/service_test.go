@@ -378,10 +378,22 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 				delivering <- env()("PATH")
 			})
 			t.Cleanup(func() { service.SetMateDeliveryKeep(keepNothing) })
-			// And seeds the server's sign-ins from the project's signer tags
-			// before the server starts, over the same live store.
+			// Enrollment finishes before the seed, over the same live store.
+			enrolled := false
+			service.SetMateHQPrepare(func(_ context.Context, lookup func(string) string) error {
+				if lookup("PATH") != tt.store["PATH"] {
+					t.Error("launch enrollment did not read the live store")
+				}
+				enrolled = true
+				return nil
+			})
+			t.Cleanup(func() { service.SetMateHQPrepare(prepareNothing) })
+			// The seed is ready before the server reads its signer store once.
 			seeded := ""
 			service.SetMateSeedSignIns(func(_ context.Context, lookup func(string) string) {
+				if !enrolled {
+					t.Error("seed ran before enrollment finished")
+				}
 				seeded = lookup("PATH")
 			})
 			t.Cleanup(func() { service.SetMateSeedSignIns(seedNothing) })
@@ -450,6 +462,26 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 				t.Errorf("launch env %q must name the HQ enrollment the server links with", gotEnv)
 			}
 		})
+	}
+}
+
+func TestStart_Mate_EnrollmentFailureStillStartsTheServer(t *testing.T) {
+	// non-parallel: HOME and the launch seams are process-wide.
+	t.Setenv("ZCP_MATE_ENABLED", "1")
+	installFakeMateBundle(t, true)
+	service.SetMateHQPrepare(func(context.Context, func(string) string) error { return errors.New("HQ unavailable") })
+	t.Cleanup(func() { service.SetMateHQPrepare(prepareNothing) })
+	seeded := false
+	service.SetMateSeedSignIns(func(context.Context, func(string) string) { seeded = true })
+	t.Cleanup(func() { service.SetMateSeedSignIns(seedNothing) })
+	started := false
+	service.SetRunFunc(func(string, []string, []string) error { started = true; return nil })
+	t.Cleanup(service.ResetRunFunc)
+	if err := service.Start("mate"); err != nil {
+		t.Fatal(err)
+	}
+	if !started || seeded {
+		t.Fatalf("started = %v, seeded without enrollment = %v", started, seeded)
 	}
 }
 

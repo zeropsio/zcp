@@ -87,7 +87,7 @@ func TestSeedSignIns_ReadsHQAndLeavesAnAbsentAnswerVisible(t *testing.T) {
 				if !os.IsNotExist(readErr) {
 					t.Errorf("absent HQ answer wrote store: %s, %v", raw, readErr)
 				}
-				if !strings.Contains(string(output), tt.wantReason) || !strings.Contains(string(output), "remove") || !strings.Contains(string(output), mate.SignInsSeededPath()) {
+				if !strings.Contains(string(output), tt.wantReason) || (tt.enrolled && (!strings.Contains(string(output), "remove") || !strings.Contains(string(output), mate.SignInsSeededPath()))) {
 					t.Errorf("failure needs its reason and manual again: %s", output)
 				}
 			default:
@@ -100,5 +100,91 @@ func TestSeedSignIns_ReadsHQAndLeavesAnAbsentAnswerVisible(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSeedSignIns_ChangedEnrollmentRetriesOnlyTheFailedInput(t *testing.T) {
+	// non-parallel: HOME is process-wide.
+	for _, legacy := range []bool{false, true} {
+		t.Run(map[bool]string{false: "credential changes", true: "legacy failed marker"}[legacy], func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if r.Header.Get("Authorization") == "Mate first" {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_, _ = w.Write([]byte(`{"code":"not_active"}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"projectId":"p-mate","signers":{"codex":"u-bo"}}`))
+			}))
+			defer srv.Close()
+			save := func(credential string) {
+				t.Helper()
+				if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: srv.URL, ProjectID: "p-mate", Credential: credential}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			lookup := func(string) string { return "p-mate" }
+			if legacy {
+				if err := os.MkdirAll(filepath.Dir(mate.SignInsSeededPath()), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(mate.SignInsSeededPath(), []byte("read the Mate's signers from HQ: not enrolled with HQ yet"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				save("first")
+				seedSignIns(context.Background(), lookup)
+				seedSignIns(context.Background(), lookup)
+				if calls != 1 {
+					t.Fatalf("same failed enrollment made %d calls, want 1", calls)
+				}
+			}
+			save("second")
+			seedSignIns(context.Background(), lookup)
+			seedSignIns(context.Background(), lookup)
+			raw, err := os.ReadFile(mate.SignInsPath())
+			if err != nil {
+				t.Fatalf("fresh enrolled input did not recover the seed: %v", err)
+			}
+			if !strings.Contains(string(raw), "u-bo") {
+				t.Errorf("store = %s", raw)
+			}
+			want := 2
+			if legacy {
+				want = 1
+			}
+			if calls != want {
+				t.Errorf("HQ calls = %d, want %d", calls, want)
+			}
+		})
+	}
+}
+
+func TestSeedSignIns_NoEnrollmentLeavesTheAttemptUnspent(t *testing.T) {
+	// non-parallel: HOME is process-wide.
+	t.Setenv("HOME", t.TempDir())
+	seedSignIns(context.Background(), func(string) string { return "p-mate" })
+	if _, err := os.Stat(mate.SignInsSeededPath()); !os.IsNotExist(err) {
+		t.Fatalf("an unenrolled launch spent the seed attempt: %v", err)
+	}
+}
+
+func TestMateLaunchSetup_UnenrolledDoesNotSeed(t *testing.T) {
+	// non-parallel: HOME and the launch seam are process-wide.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("ZCP_API_KEY", "")
+	t.Setenv("projectId", "")
+	old := mateSeedSignIns
+	t.Cleanup(func() { mateSeedSignIns = old })
+	oldPrepare := mateHQPrepare
+	mateHQPrepare = prepareEnrollment
+	t.Cleanup(func() { mateHQPrepare = oldPrepare })
+	calls := 0
+	mateSeedSignIns = func(context.Context, func(string) string) { calls++ }
+	mateLaunchSetup()
+	if calls != 0 {
+		t.Fatalf("seed ran %d times before enrollment", calls)
 	}
 }

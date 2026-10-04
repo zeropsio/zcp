@@ -351,7 +351,9 @@ new zcp: the unit's start, still on the old zcp, keeps the installed release.
 `zerops@mate` when the unit is registered, so an update needs no container restart. It is what the
 web client's "Update" verb ends in (§2.9). **`zcp mate status --json`** answers
 `{installed, latest, contract, updateAvailable}` from the same resolver, using the manifest cache
-(§2.1c) — the one reader of "is there a newer mate" in the whole product.
+(§2.1c) — the one reader of "is there a newer mate" in the whole product. It also reports the
+completed sign-in seed as `signIns: {state, input?, at, error?}` (§10.5); `input` is an opaque
+enrollment fingerprint, never the credential. The text status names the same state and reason.
 
 ### 2.1b Disabling — the reverse direction
 
@@ -2247,12 +2249,20 @@ beside the logins' homes (`zeropsSignIns.ts`). The document is read once, at sta
 the record, and a rewrite under a running server changes nothing. A Mate migrated from main, whose
 signer facts have been ported to HQ and which has no document, gets it written from the enrolled
 HQ's `GET /api/mate/self` signer map by `zcp service mate` before its server first starts — once,
-never again, each sign-in dated by the seed (`mate.SeedSignIns`). Both the enrollment and HQ's
-answer must name the container's project id. An existing document is preserved without asking HQ.
-An absent HQ answer leaves the store untouched and logs the reason; the attempt marker keeps the
-failure visible on later launches without retrying. To ask again explicitly, remove
-`~/.zcp/state/mate-sign-ins-seeded` and start the Mate service again. HQ omits the signer map when
-its ported record is empty. An API key login has no sign-in
+each sign-in dated by the seed (`mate.SeedSignInsForEnrollment`). Launch makes one enrollment
+attempt before the signer read; each has a bounded request context. Failure of either always
+continues to the server's start and its independent link to HQ. No seed attempt is spent without
+an enrollment. Both the enrollment and HQ's answer must name the container's project id. An
+existing document is preserved without asking HQ, including one written while HQ was answering.
+A completed seed is never repeated, even after its store disappears. An absent HQ answer leaves
+the store untouched, logs the reason, and records `failed` with the enrollment's opaque input
+fingerprint in `~/.zcp/state/mate-sign-ins-seeded`; `zcp mate status --json` reports that outcome.
+The same failed input is not retried on a launch or enrollment recheck. A successful enrollment
+with a changed HQ, project or credential permits one new attempt; naming its key is not a change.
+A legacy failure marker has no enrolled input and permits one enrolled attempt. To ask again
+explicitly, remove the marker and start the Mate service again. A seed completed after the server
+has started is read on its next manual restart, since the server reads its store only at startup.
+HQ omits the signer map when its ported record is empty. An API key login has no sign-in
 to walk: the session that stores its key signs it in, and its stored key is its credential. That
 record is the gate's (`ZeropsProjectSigners.ts`): the server refuses
 `orchestration.dispatchCommand`'s turn-starting commands from any session but the signer's, holds a

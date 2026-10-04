@@ -77,12 +77,13 @@ const mateVerbStatus = "status"
 // from the same resolver DesiredRelease() and the manifest cache — never a
 // fresh install.
 type mateStatusResult struct {
-	Installed       string `json:"installed,omitempty"`
-	Latest          string `json:"latest,omitempty"`
-	Contract        int    `json:"contract"`
-	UpdateAvailable bool   `json:"updateAvailable"`
-	CheckedAt       string `json:"checkedAt"`
-	Error           string `json:"error,omitempty"`
+	Installed       string                  `json:"installed,omitempty"`
+	Latest          string                  `json:"latest,omitempty"`
+	Contract        int                     `json:"contract"`
+	UpdateAvailable bool                    `json:"updateAvailable"`
+	CheckedAt       string                  `json:"checkedAt"`
+	Error           string                  `json:"error,omitempty"`
+	SignIns         *mate.SignInsSeedStatus `json:"signIns,omitempty"`
 }
 
 // runMateStatus answers what zcp knows about the installed and latest mate
@@ -96,6 +97,11 @@ func runMateStatus(args []string) int {
 	result := mateStatusResult{
 		Contract:  mate.SupportedContract,
 		CheckedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if seed, err := mate.ReadSignInsSeedStatus(mate.SignInsSeededPath()); err == nil {
+		result.SignIns = &seed
+	} else if !os.IsNotExist(err) {
+		result.SignIns = &mate.SignInsSeedStatus{State: "failed", Error: err.Error()}
 	}
 
 	if installed, err := mate.InstalledVersion(); err == nil {
@@ -140,6 +146,13 @@ func printMateStatus(result mateStatusResult, asJSON bool) {
 		fmt.Fprintf(os.Stdout, "mate: installed %s, %s available\n", installed, result.Latest)
 	default:
 		fmt.Fprintf(os.Stdout, "mate: installed %s, latest %s\n", installed, result.Latest)
+	}
+	if result.SignIns != nil {
+		fmt.Fprintf(os.Stdout, "sign-in seed: %s", result.SignIns.State)
+		if result.SignIns.Error != "" {
+			fmt.Fprintf(os.Stdout, ": %s", result.SignIns.Error)
+		}
+		fmt.Fprintln(os.Stdout)
 	}
 }
 
