@@ -2457,7 +2457,10 @@ queued, and what waits is submitted once the build ends. A job is `queued → su
 not go through at its one try — Zerops not answering, git failing, a key missing, dead or reaching
 more than its project — with HQ's words why), `skipped` or `superseded`. A lost answer is never
 submitted again: HQ reads the version it made, and follows a build by its process (else its
-version) 75 min at most. A Core taking the lead follows what builds, refuses a submission whose
+version) 75 min at most. HQ records its archive's upload once it answered and only then asks for
+the build: a version still waiting for its archive whose upload went unanswered was never asked to
+build and is refused at once; one HQ uploaded is refused as never taken only when it still waits 1
+min after that upload — never measured from before it, so a slow upload is not refused. A Core taking the lead follows what builds, refuses a submission whose
 version it never heard ("HQ restarted before Zerops answered"), submits what waits and runs the
 rollouts left unplanned. A service running a version HQ did not put there, while no job of HQ's is
 under way, is said to the reader — with _Deploy {sha} again_ for whoever may _Run again_ while its
