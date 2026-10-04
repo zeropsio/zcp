@@ -21,6 +21,7 @@ type MockProjectAdminClient struct {
 	listServicesErr    error
 	project            *Project
 	projectErr         error
+	projects           []Project
 	serviceEnvKeys     map[string][]EnvKey // keyed by serviceID
 	serviceEnvErr      error
 	projectEnvKeys     map[string][]EnvKey // keyed by projectID
@@ -43,6 +44,9 @@ type MockProjectAdminClient struct {
 	CapturedGrantSelfRoleProject string
 	CapturedGrantSelfRoleCode    string
 	grantSelfRoleErr             error
+	// OnGrantSelfRole, when set, runs as GrantSelfRole is called: a test
+	// reads what the caller recorded before that call went out.
+	OnGrantSelfRole func()
 
 	// F7 bring-up management capture/config.
 	DeletedServiceIDs []string
@@ -79,6 +83,9 @@ func (m *MockProjectAdminClient) ClientUserID() string {
 // GrantSelfRole implements ProjectAdminClient. Mock captures the call
 // args; configurable error via WithGrantSelfRoleError.
 func (m *MockProjectAdminClient) GrantSelfRole(_ context.Context, projectID, roleCode string) error {
+	if m.OnGrantSelfRole != nil {
+		m.OnGrantSelfRole()
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.Closed {
@@ -203,6 +210,24 @@ func (m *MockProjectAdminClient) WithProject(p *Project) *MockProjectAdminClient
 	defer m.mu.Unlock()
 	m.project = p
 	return m
+}
+
+// WithProjects configures what ListProjects returns.
+func (m *MockProjectAdminClient) WithProjects(projects []Project) *MockProjectAdminClient {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.projects = projects
+	return m
+}
+
+// ListProjects implements ProjectAdminClient.
+func (m *MockProjectAdminClient) ListProjects(_ context.Context) ([]Project, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Closed {
+		return nil, ErrClientClosed
+	}
+	return m.projects, nil
 }
 
 // GetProject implements ProjectAdminClient.

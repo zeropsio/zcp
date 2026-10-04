@@ -44,6 +44,12 @@ type ProjectAdminClient interface {
 	// further calls.
 	ListServices(ctx context.Context, projectID string) ([]ServiceStack, error)
 
+	// ListProjects lists the projects of the token's organization it can
+	// read (read-only): a launch whose call ended before it recorded what
+	// CreateAndImportProject did finds the project it created by its name.
+	// An ES-backed search: a project created seconds ago may be missing.
+	ListProjects(ctx context.Context) ([]Project, error)
+
 	// GetProject reads the target project (read-only) — notably SubdomainHost,
 	// needed to build a service's zerops.app subdomain URL in prod-ops status
 	// (the per-service ServiceStack carries SubdomainAccess + Ports, but the
@@ -430,6 +436,15 @@ func (p *projectAdminClient) ListServices(ctx context.Context, projectID string)
 		return nil, ErrClientClosed
 	}
 	return p.zerops.ListServices(ctx, projectID)
+}
+
+// ListProjects implements ProjectAdminClient — the organization the
+// admin client was built for.
+func (p *projectAdminClient) ListProjects(ctx context.Context) ([]Project, error) {
+	if p.zerops == nil {
+		return nil, ErrClientClosed
+	}
+	return p.zerops.ListProjects(ctx, p.clientID)
 }
 
 // GetProject implements ProjectAdminClient — thin delegation to the wrapped

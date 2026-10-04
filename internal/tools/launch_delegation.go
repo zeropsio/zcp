@@ -176,7 +176,7 @@ const tokenAcquisitionDelegated = "delegated"
 // does not block an immediate retry — Failed+no-target-project is
 // already the existing "safe to retry" resume branch (handleLaunchProduction).
 // Best-effort: a write failure here just leaves the pre-mint Launching
-// state to age out past launchMutationStaleAfter.
+// state, which the next call reads as ended once this one returns.
 //
 // The abort must retain the D-7 forensics the pre-mint write recorded:
 // TokenAcquisition is always "delegated" (this helper is delegated-path-
@@ -290,6 +290,7 @@ func resolveDelegatedLaunchToken(
 		Status:            topology.LaunchStatusLaunching,
 		TokenAcquisition:  tokenAcquisitionDelegated,
 		MintedTokenName:   mintedName,
+		Owner:             thisLaunchOwner(),
 	}
 	if err := writeLaunchState(stateDir, preMint); err != nil {
 		auditReject("write pre-mint launch state: " + err.Error())
