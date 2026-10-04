@@ -2615,11 +2615,13 @@ pair to re-submit.
   which the per-command credential helper presents as the user `mate`: the dev container now holds
   the Mate's HQ credential, as it held the Gitea bot token before. The enrollment is the
   credential's one home, and a re-enrollment replaces it, so before every delivery and push zcp
-  compares the copy with the enrollment's (constant time) and rewrites it. A rewritten copy is waited
-  for, up to 15 s, until a fresh session holds it — read as git's blob hash of the session's
-  `GIT_TOKEN`, so the credential is on no command line and HQ is not asked — and a fresh session then
-  proves it against HQ as a delivery step. Only HQ refusing it (401/403) marks the pair `broken`,
-  healed once a session authenticates; HQ not answering the proof marks nothing. The helper persisted in `.git/config` for HQ's host answers the dev service from
+  compares the copy with the enrollment's (constant time) and rewrites it, keeping the renewal's time
+  on the pair's record (`HQ.CredentialRenewedAt`) until a proof succeeds or 15 s pass. Within those
+  15 s — in the renewing call or a later one — a delivery waits until a fresh session holds the
+  renewed copy, read as git's blob hash of the session's `GIT_TOKEN`, so the credential is on no
+  command line and HQ is not asked; outside them nothing waits. A fresh session then proves it against
+  HQ as a delivery step. Only HQ refusing it (401/403) marks the pair `broken`, healed once a session
+  authenticates, and a refusal after the wait says so; HQ not answering the proof marks nothing. The helper persisted in `.git/config` for HQ's host answers the dev service from
   `GIT_TOKEN` and the Mate's own shell from `zcp hq git-credential`, which reads the enrollment at
   each request and answers for the enrolled HQ only.
 - A push to HQ is watched for no build and offers no integration, and a wired pair's direct deploys
