@@ -2236,6 +2236,11 @@ separate 4 Gitea sign-ins a minute.
 
 ### 10.5 Who runs an agent (D6)
 
+A Zerops project carries only the exact `mate` marker; every Mate metadata fact lives in Mate HQ,
+keyed by project id. ZCP filters `project.tags` in create-and-import YAML at the API boundary,
+retaining only that marker and reporting that dropped facts must be stored in HQ. Platform tag
+transport decoding remains native.
+
 When a sign-in the Mate's server walked succeeds, the server keeps who started it — the Zerops user
 behind that door session — before anything else hears of the success, in `~/.mate/signed-in.json`
 beside the logins' homes (`zeropsSignIns.ts`). The document is read once, at start: a restart keeps

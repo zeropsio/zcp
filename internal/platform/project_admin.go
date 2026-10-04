@@ -375,15 +375,20 @@ func (p *projectAdminClient) GrantSelfRole(ctx context.Context, projectID string
 // CreateAndImportProject implements ProjectAdminClient. The import API
 // takes ONLY the yaml body — every create-time dimension (name, tags,
 // corePackage, location, envVariables) lives in the yaml the composer
-// emits. The old CreateOpts param was accepted and DISCARDED, which is
-// exactly how input.Region got silently dropped (F3).
+// emits. Project tags are filtered to the exact mate marker: all Mate
+// metadata belongs in HQ, keyed by project id. The old CreateOpts param was
+// accepted and DISCARDED, which is how input.Region got silently dropped (F3).
 func (p *projectAdminClient) CreateAndImportProject(ctx context.Context, yaml string) (*ImportResult, error) {
 	if p.zerops == nil {
 		return nil, ErrClientClosed
 	}
+	filtered, err := markerOnlyProjectTags(yaml)
+	if err != nil {
+		return nil, fmt.Errorf("create and import project: %w", err)
+	}
 	pathParam := path.ClientId{Id: uuid.ClientId(p.clientID)}
 	bodyParam := body.ProjectImport{
-		Yaml: zgotypes.Text(yaml),
+		Yaml: zgotypes.Text(filtered),
 	}
 	resp, err := p.zerops.handler.PostClientProjectImport(ctx, pathParam, bodyParam)
 	if err != nil {
