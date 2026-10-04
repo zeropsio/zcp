@@ -35,7 +35,7 @@ report. That reading contract is what this spec owns.
 
 ## 0. Boundaries
 
-Three rules bound every later section. A section that describes another mechanism is superseded
+Four rules bound every later section. A section that describes another mechanism is superseded
 by the ownership table below.
 
 1. **Identity is the client's.** The user's Zerops token exists only in the client. The client
