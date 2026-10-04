@@ -3,11 +3,14 @@ package tools
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -42,11 +45,18 @@ func (keptOpen) Close() {}
 // (reset cleans it up), never created a second time; none, and the launch
 // runs again.
 func TestLaunchResume_LaunchingWithoutProject_ReadsItsHandle(t *testing.T) {
+	launchID := generateLaunchID("source-project-id", "myapp-prod")
+	marked := func(id string) platform.Project {
+		return platform.Project{ID: id, Name: "myapp-prod", Description: bundle.LaunchMarker(launchID)}
+	}
+	unmarked := platform.Project{ID: "someone-elses-id", Name: "myapp-prod", Description: "our shop"}
 	tests := []struct {
-		name     string
-		held     bool
-		staged   bool
-		projects []platform.Project
+		name   string
+		held   bool
+		staged bool
+		// createSent: the call that ended had sent the create.
+		createSent bool
+		projects   []platform.Project
 		// wantText is in the response; wantTarget the target project the
 		// state records after it; wantStatus the state's status.
 		wantText   string
@@ -54,15 +64,18 @@ func TestLaunchResume_LaunchingWithoutProject_ReadsItsHandle(t *testing.T) {
 		wantStatus topology.LaunchProductionStatus
 		wantImport bool
 	}{
-		{"another call holds it", true, true, nil, "in progress", "", topology.LaunchStatusLaunching, false},
-		{"its call ended, nothing created", false, true, nil, "", "new-prod-id", topology.LaunchStatusLaunched, true},
-		{"its call ended, the project created", false, true,
-			[]platform.Project{{ID: "orphan-id", Name: "myapp-prod"}, {ID: "other-id", Name: "other"}},
+		{"another call holds it", true, true, false, nil, "in progress", "", topology.LaunchStatusLaunching, false},
+		{"its call ended before the create", false, true, false, nil, "", "new-prod-id", topology.LaunchStatusLaunched, true},
+		{"its call ended before the create, a project of the name not its own", false, true, false,
+			[]platform.Project{unmarked}, "", "new-prod-id", topology.LaunchStatusLaunched, true},
+		{"its create made the project", false, true, true,
+			[]platform.Project{marked("orphan-id"), unmarked, {ID: "other-id", Name: "other"}},
 			"orphan-id", "orphan-id", topology.LaunchStatusFailed, false},
-		{"its call ended, two projects of the name", false, true,
-			[]platform.Project{{ID: "first-id", Name: "myapp-prod"}, {ID: "second-id", Name: "myapp-prod"}},
-			"second-id", "", topology.LaunchStatusLaunching, false},
-		{"its call ended, nothing staged", false, false, nil, "delegation-unavailable", "", topology.LaunchStatusLaunching, false},
+		{"its create sent, no project of its own found", false, true, true, nil,
+			"may have created", "", topology.LaunchStatusLaunching, false},
+		{"its create sent, only a project of the name not its own", false, true, true,
+			[]platform.Project{unmarked}, "someone-elses-id", "", topology.LaunchStatusLaunching, false},
+		{"its call ended, nothing staged", false, false, false, nil, "delegation-unavailable", "", topology.LaunchStatusLaunching, false},
 	}
 	// The pre-mint state names no stage service: a call that ended with it on disk ended
 	// before the full state write, so before the create — it launches again, with the token
@@ -78,7 +91,6 @@ func TestLaunchResume_LaunchingWithoutProject_ReadsItsHandle(t *testing.T) {
 		if _, err := ops.EnvSetService(context.Background(), sourceClient, svc.ID, ops.LaunchTokenEnvKey, sentinelMintedToken, true); err != nil {
 			t.Fatalf("pre-stage token: %v", err)
 		}
-		launchID := generateLaunchID("source-project-id", "myapp-prod")
 		if err := writeLaunchState(stateDir, &launchState{
 			LaunchID:          launchID,
 			SourceProjectID:   "source-project-id",
@@ -123,7 +135,6 @@ func TestLaunchResume_LaunchingWithoutProject_ReadsItsHandle(t *testing.T) {
 					t.Fatalf("pre-stage token: %v", err)
 				}
 			}
-			launchID := generateLaunchID("source-project-id", "myapp-prod")
 			seed := &launchState{
 				LaunchID:              launchID,
 				SourceProjectID:       "source-project-id",
@@ -132,6 +143,7 @@ func TestLaunchResume_LaunchingWithoutProject_ReadsItsHandle(t *testing.T) {
 				Status:                topology.LaunchStatusLaunching,
 				TokenAcquisition:      "delegated",
 				MintedTokenName:       "zcp-launch-myapp-prod",
+				CreateSent:            tt.createSent,
 			}
 			if err := writeLaunchState(stateDir, seed); err != nil {
 				t.Fatalf("seed state: %v", err)
@@ -266,15 +278,18 @@ func TestExecuteLaunchMutation_UnansweredCreate_ReadsItsHandleNext(t *testing.T)
 			if err != nil {
 				t.Fatalf("read state: %v", err)
 			}
-			if state.Status != tt.wantStatus || state.TargetProjectID != "" {
-				t.Fatalf("state = %s / %q, want %s with no project", state.Status, state.TargetProjectID, tt.wantStatus)
+			if state.Status != tt.wantStatus || state.TargetProjectID != "" || !state.CreateSent {
+				t.Fatalf("state = %s / %q / create sent %v, want %s with no project, its create sent",
+					state.Status, state.TargetProjectID, state.CreateSent, tt.wantStatus)
 			}
 			if tt.wantStatus != topology.LaunchStatusLaunching {
 				return
 			}
 
 			// The next call: Zerops had made the project after all.
-			found := happyMockAdmin().WithProjects([]platform.Project{{ID: "made-id", Name: "myapp-prod"}})
+			found := happyMockAdmin().WithProjects([]platform.Project{
+				{ID: "made-id", Name: "myapp-prod", Description: bundle.LaunchMarker(launchID)},
+			})
 			defer setProjectAdminClientFactory(func(string, string) (platform.ProjectAdminClient, error) {
 				return keptOpen{found}, nil
 			})()
@@ -293,5 +308,38 @@ func TestExecuteLaunchMutation_UnansweredCreate_ReadsItsHandleNext(t *testing.T)
 				t.Errorf("state = %s / %q, want failed / made-id", state.Status, state.TargetProjectID)
 			}
 		})
+	}
+}
+
+// TestExecuteLaunchMutation_CreateNotSentUnrecorded: the launch records that
+// its create is going out before it sends it; where that record cannot be
+// written, nothing is created.
+func TestExecuteLaunchMutation_CreateNotSentUnrecorded(t *testing.T) {
+	stateDir := withTempState(t)
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+	launchProdDir := filepath.Join(stateDir, launchStateDir)
+	if err := os.MkdirAll(launchProdDir, 0o755); err != nil {
+		t.Fatalf("seed launch-production dir: %v", err)
+	}
+	if err := os.Chmod(launchProdDir, 0o500); err != nil {
+		t.Fatalf("chmod launch-production dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(launchProdDir, 0o755) })
+	mockAdmin := happyMockAdmin()
+	defer installMockAdminFactory(t, mockAdmin)()
+	input := delegatedPublishInput()
+	input.ConfirmLaunch = false
+	input.LaunchKey = sentinelMintedToken
+
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", pLP3MockClient(), nil, nil,
+		input, stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
+	if err != nil {
+		t.Fatalf("handleLaunchProduction: %v", err)
+	}
+	if text := extractText(result); !strings.Contains(text, "launch-state-write-failed") {
+		t.Errorf("response must refuse on the unwritten record:\n%s", text)
+	}
+	if mockAdmin.CapturedImportYAML != "" {
+		t.Error("created the production project with no record of the create")
 	}
 }

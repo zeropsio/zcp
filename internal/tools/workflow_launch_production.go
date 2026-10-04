@@ -436,6 +436,7 @@ func handleLaunchProduction(
 				)
 				bundleInputs.CorePackage = input.CorePackage
 				bundleInputs.Location = input.Region
+				bundleInputs.LaunchID = launchID
 				if composeErr == nil {
 					if b, bundleErr := ops.BuildLaunchBundle(bundleInputs, classifications); bundleErr == nil {
 						current = b.SourceSnapshot
@@ -587,13 +588,15 @@ func createRefused(err error) bool {
 
 // readEndedLaunch reads the handle of a launch whose call ended between
 // writing `launching` and recording what CreateAndImportProject did, or
-// whose create Zerops did not answer (createRefused): the
-// production project, by its name, with the staged launch token. nil when
-// nothing can have been created — no token staged (staging precedes the
-// create) or no project of that name — so the launch runs again. One project
-// of the name is the launch's: recorded as its orphan, the state failed, and
-// the reset refusal returned. More than one is refused naming them, nothing
-// recorded. The project search trails a create by seconds (ES-backed).
+// whose create Zerops did not answer (createRefused): its production project,
+// found with the staged launch token by its name AND the launch's own marker
+// (bundle.LaunchMarker, the description it creates the project with) — never
+// by name alone, for a launch key may read every project of its org. One
+// such project is recorded as the launch's orphan, the state failed, and the
+// reset refusal returned. None found: nil — the launch runs again — unless
+// its create was sent (CreateSent), when the project may exist unseen yet
+// (the search trails a create by seconds) or under a marker someone changed:
+// refused, naming any project of the name it cannot tell, never adopted.
 func readEndedLaunch(
 	ctx context.Context,
 	client platform.Client,
@@ -611,6 +614,9 @@ func readEndedLaunch(
 		), WithRecoveryStatus())
 	}
 	if token == "" {
+		if state.CreateSent {
+			return launchMaybeCreatedResponse(state, nil)
+		}
 		return nil
 	}
 	admin, err := projectAdminClientFactory(token, apiHost)
@@ -626,26 +632,44 @@ func readEndedLaunch(
 			"Re-call once Zerops answers; nothing is created before then.",
 		), WithRecoveryStatus())
 	}
-	var named []string
+	marker := bundle.LaunchMarker(state.LaunchID)
+	var own, others []string
 	for _, p := range projects {
-		if p.Name == state.TargetProjectName {
-			named = append(named, p.ID)
+		switch {
+		case p.Name != state.TargetProjectName:
+		case p.Description == marker:
+			own = append(own, p.ID)
+		default:
+			others = append(others, p.ID)
 		}
 	}
-	switch len(named) {
-	case 0:
-		return nil
-	case 1:
-		state.TargetProjectID = named[0]
+	switch {
+	case len(own) == 1:
+		state.TargetProjectID = own[0]
 		state.Status = topology.LaunchStatusFailed
 		state.LastError = "the call that created the production project ended before it recorded its import"
 		_ = writeLaunchState(stateDir, state)
 		return launchOrphanResponse(state)
+	case len(own) > 1:
+		return launchMaybeCreatedResponse(state, append(own, others...))
+	case state.CreateSent:
+		return launchMaybeCreatedResponse(state, others)
+	}
+	return nil
+}
+
+// launchMaybeCreatedResponse refuses to create again a production project
+// an ended launch may have created: it names the projects of the name it
+// cannot tell for the launch's own, and adopts none of them.
+func launchMaybeCreatedResponse(state *launchState, unidentified []string) *mcp.CallToolResult {
+	seen := "no project of this launch is listed yet"
+	if len(unidentified) > 0 {
+		seen = fmt.Sprintf("projects named %q that cannot be told for this launch's own: %s", state.TargetProjectName, strings.Join(unidentified, ", "))
 	}
 	return convertError(platform.NewPlatformError(
 		platform.ErrAPIError,
-		fmt.Sprintf("the call that launched %q ended before it recorded whether the production project was created, and %d projects carry that name: %s", state.TargetProjectName, len(named), strings.Join(named, ", ")),
-		`Delete the one this launch created in the Zerops dashboard if it is among them, then action="reset" workflow="launch-production" productionProjectName="`+state.TargetProjectName+`" and launch again.`,
+		fmt.Sprintf("a launch may have created the production project %q — its call ended after sending the create, before recording it; %s", state.TargetProjectName, seen),
+		`Check Zerops for the project. Re-call shortly if it is not listed yet: a project it made is found and recorded. To start over, delete the project this launch made in the Zerops dashboard if there is one, then action="reset" workflow="launch-production" productionProjectName="`+state.TargetProjectName+`".`,
 	), WithRecoveryStatus())
 }
 
@@ -830,6 +854,7 @@ func executeLaunchMutation(
 	)
 	bundleInputs.CorePackage = input.CorePackage
 	bundleInputs.Location = input.Region
+	bundleInputs.LaunchID = launchID
 	if composeErr != nil {
 		_ = appendAuditLog(stateDir, launchAuditEntry{
 			LaunchID:          launchID,
@@ -995,15 +1020,27 @@ func executeLaunchMutation(
 		Status:                topology.LaunchStatusLaunching,
 		TokenAcquisition:      stringIf(mintedName != "", tokenAcquisitionDelegated),
 		MintedTokenName:       mintedName,
+		CreateSent:            true,
 		// Persist the prod-side runtime identities (one per promoted
 		// runtime) so the pipeline check matches imported services by
 		// prod hostname, and a resume can re-run the check (LAUNCH-1).
 		RuntimeProds: runtimeProdsFromBundleInputs(bundleInputs),
 	}
+	// Written before the create goes out, or nothing is created: a call that
+	// ends from here on leaves CreateSent behind, and the next call reads the
+	// launch's project before creating anything (readEndedLaunch).
 	if err := writeLaunchState(stateDir, state); err != nil {
-		// Non-fatal — proceed with the mutation, but warn.
-		launchBundle.Warnings = append(launchBundle.Warnings,
-			fmt.Sprintf("write launch state: %v (proceeding; resume after restart may not work)", err))
+		_ = appendAuditLog(stateDir, launchAuditEntry{
+			LaunchID:          launchID,
+			Action:            "publish-rejected",
+			SourceProjectID:   sourceProjectID,
+			TargetProjectName: input.ProductionProjectName,
+			Result:            "failure",
+			ErrorMessage:      "write launch state before the create: " + err.Error(),
+		})
+		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
+			"launch-state-write-failed",
+			fmt.Sprintf("Recording the launch before creating the production project failed: %v. Nothing was created; the launch token stays staged — re-call once the state directory is writable.", err)), nil, nil
 	}
 
 	// Mutation: CreateAndImportProject. This is the irreversible step.

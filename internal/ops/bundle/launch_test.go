@@ -313,6 +313,27 @@ func TestBuildLaunch_CorePackageSerious(t *testing.T) {
 	}
 }
 
+// TestBuildLaunch_ProjectCarriesTheLaunchsMarker: the production project
+// names the launch that created it in its description, so a call that
+// ended before recording the create can tell that project from any other
+// of the same name.
+func TestBuildLaunch_ProjectCarriesTheLaunchsMarker(t *testing.T) {
+	t.Parallel()
+	inputs := launchInputsWith(launchYAMLNoDBRef, nil)
+	inputs.LaunchID = "b0d8bfe7a6f9a264"
+	b, err := BuildLaunch(inputs, nil)
+	if err != nil {
+		t.Fatalf("BuildLaunch: %v", err)
+	}
+	want := "description: " + LaunchMarker("b0d8bfe7a6f9a264")
+	if !strings.Contains(b.ImportYAML, want) {
+		t.Errorf("launch-new project block must carry %q; yaml:\n%s", want, b.ImportYAML)
+	}
+	if LaunchMarker("b0d8bfe7a6f9a264") == LaunchMarker("0000000000000000") {
+		t.Error("two launches carry the same marker")
+	}
+}
+
 // TestBuildLaunch_CorePackageLightOverride pins the explicit cheaper
 // choice: LIGHT is allowed (recommendation stays SERIOUS, but the user
 // owns the trade-off) and must land verbatim.

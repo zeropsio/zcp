@@ -222,10 +222,12 @@ func (z *ZeropsClient) ListProjects(ctx context.Context, clientID string) ([]Pro
 
 	projects := make([]Project, 0, len(out.Items))
 	for _, p := range out.Items {
+		description, _ := p.Description.Get()
 		projects = append(projects, Project{
-			ID:     p.Id.TypedString().String(),
-			Name:   p.Name.String(),
-			Status: p.Status.String(),
+			ID:          p.Id.TypedString().String(),
+			Name:        p.Name.String(),
+			Status:      p.Status.String(),
+			Description: description.Native(),
 		})
 	}
 	return projects, nil
