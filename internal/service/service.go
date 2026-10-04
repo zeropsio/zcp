@@ -86,7 +86,7 @@ func services() map[string]execConfig {
 		// container, and it is what a hand-delivered dev build replaces.
 		"mate": {
 			binary:     mate.BinPath(),
-			argsFn:     mateArgv,
+			argsFn:     mate.ServeArgv,
 			extraEnvFn: mateExtraEnv,
 			guard:      mateGuard,
 			prepare:    mateLaunchSetupThenInstall,
@@ -141,26 +141,6 @@ func mateFlagEnabled(storePath string) bool {
 		}
 	}
 	return false
-}
-
-// mateArgv builds the serve command for the bundle actually installed here.
-//
-// --base-path is a capability, not a preference: the mate CLI rejects an unknown
-// flag fatally, so a bundle predating it would crash-loop this unit at every
-// boot. The probe costs one node startup at launch. What it cannot settle the
-// environment does: the server reads the same prefix from T3CODE_BASE_PATH
-// (mate.LaunchEnvLines), so a probe that could not answer — a cold first start
-// of a just-installed bundle under boot load ran past its timeout — no longer
-// launches a server whose assets do not resolve.
-func mateArgv(binary string) []string {
-	supported, err := mate.BasePathSupport(binary)
-	switch {
-	case err != nil:
-		fmt.Fprintf(os.Stderr, "[zcp] service mate: could not read the bundle's serve --help (%v); omitting --base-path, the server reads %s from %s\n", err, mate.BasePath, mate.EnvBasePath)
-	case !supported:
-		fmt.Fprintf(os.Stderr, "[zcp] service mate: installed bundle does not advertise --base-path; omitting it (mate answers under %s/ but its assets will not resolve)\n", mate.BasePath)
-	}
-	return mate.ServeArgv(binary, supported)
 }
 
 // mateExtraEnv builds mate's process environment: the container's live env store

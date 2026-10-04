@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -598,31 +597,31 @@ func (s *countingLaunchSSH) ExecSSH(ctx context.Context, host, command string) (
 	return s.launchSSHStub.ExecSSH(ctx, host, command)
 }
 
-// TestHandleLaunchProduction_HQWiring_RefusesBeforeAnyStep pins the handler
-// itself, not the refusal helper: handleLaunchProduction reads whether the
-// Mate delivers through HQ (hqWired) and, when it does, refuses a
+// TestHandleLaunchProduction_AMateRefusesBeforeAnyStep pins the handler
+// itself, not the refusal helper: in a Mate (runtime.Info.MateEnabled) —
+// enrolled with its HQ or not yet — handleLaunchProduction refuses a
 // complete publish call before scope, the source-control gate or the
 // mutation pipeline — no SSH read, no admin client built, no launch token
-// staged, no state file written. The same call on an unwired container
-// still launches, so the classic route is unchanged.
+// staged, no state file written. The same call in a container that is not a
+// Mate still launches, an enrollment file on its disk notwithstanding, so the
+// classic route is unchanged.
 //
 // Not parallel: the enrollment is read from the process's HOME (t.Setenv).
-func TestHandleLaunchProduction_HQWiring_RefusesBeforeAnyStep(t *testing.T) {
+func TestHandleLaunchProduction_AMateRefusesBeforeAnyStep(t *testing.T) {
 	tests := []struct {
-		name  string
-		wired bool
+		name       string
+		mate       bool
+		enrollment string
 	}{
-		{name: "wired Mate refuses", wired: true},
-		{name: "unwired container launches", wired: false},
+		{name: "an enrolled Mate refuses", mate: true, enrollment: "kept"},
+		{name: "a Mate not enrolled yet refuses", mate: true, enrollment: "missing"},
+		{name: "a container that is not a Mate launches", enrollment: "missing"},
+		{name: "a container that is not a Mate launches whatever is on its disk", enrollment: "kept"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
-			if tt.wired {
-				if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: "https://hq.example", ProjectID: "p1", Credential: "c"}); err != nil {
-					t.Fatal(err)
-				}
-			}
+			enrollAs(t, tt.enrollment)
 
 			stateDir := withTempState(t)
 			installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
@@ -662,28 +661,28 @@ func TestHandleLaunchProduction_HQWiring_RefusesBeforeAnyStep(t *testing.T) {
 			}}}
 
 			result, _, err := handleLaunchProduction(context.Background(), "source-id", mockClient, nil, nil,
-				completeLaunchInput(), stateDir, runtime.Info{InContainer: true, ServiceName: "zcp"}, ssh, "")
+				completeLaunchInput(), stateDir, runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: tt.mate}, ssh, "")
 			if err != nil {
 				t.Fatalf("handleLaunchProduction: %v", err)
 			}
 			text := extractText(result)
 			_, stateErr := os.Stat(filepath.Join(stateDir, launchStateDir))
 
-			if !tt.wired {
+			if !tt.mate {
 				if resp := decodeLaunchResp(t, []byte(text)); resp.Status != topology.LaunchStatusLaunched {
-					t.Fatalf("an unwired container keeps zcp's own launch-production: status %q\n%s", resp.Status, text)
+					t.Fatalf("a container that is not a Mate keeps zcp's own launch-production: status %q\n%s", resp.Status, text)
 				}
 				if mockAdmin.CapturedImportYAML == "" || stateErr != nil {
-					t.Fatalf("an unwired launch imports and records its state: import %q, state dir err %v", mockAdmin.CapturedImportYAML, stateErr)
+					t.Fatalf("a launch outside a Mate imports and records its state: import %q, state dir err %v", mockAdmin.CapturedImportYAML, stateErr)
 				}
 				if ssh.calls == 0 || adminBuilt == 0 || mockClient.CallCounts["CreateServiceEnvVar"] == 0 {
-					t.Fatalf("an unwired launch reads source, builds the admin client and stages the token: ssh %d, admin %d, env writes %d", ssh.calls, adminBuilt, mockClient.CallCounts["CreateServiceEnvVar"])
+					t.Fatalf("a launch outside a Mate reads source, builds the admin client and stages the token: ssh %d, admin %d, env writes %d", ssh.calls, adminBuilt, mockClient.CallCounts["CreateServiceEnvVar"])
 				}
 				return
 			}
 
 			if !strings.Contains(text, "wired_mate_production_is_the_groups") {
-				t.Fatalf("a wired Mate's handler refuses launch-production, got:\n%s", text)
+				t.Fatalf("a Mate's handler refuses launch-production, got:\n%s", text)
 			}
 			if ssh.calls != 0 {
 				t.Errorf("refusal must precede the source-control gate: %d SSH execs", ssh.calls)

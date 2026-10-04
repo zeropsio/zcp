@@ -152,12 +152,10 @@ func handleLaunchProduction(
 			Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}},
 		}
 	}
-	// The production of a Mate delivering through HQ belongs to its
-	// application, never to this workflow (hq_delivery.go,
-	// plans/backlog/mate-wired-production-intent-misroutes-to-launch.md).
-	// Refuses unconditionally, ahead of scope/state/mutation — nothing below
-	// has a case for an application's production either.
-	if refusal := hqLaunchProductionRefusal(ctx, httpClient, stateDir, hqWired()); refusal != nil {
+	// A Mate's production belongs to its application, never to this workflow
+	// (hq_delivery.go). Refuses unconditionally, ahead of scope/state/mutation
+	// — nothing below has a case for an application's production either.
+	if refusal := hqLaunchProductionRefusal(ctx, httpClient, stateDir, rt.MateEnabled); refusal != nil {
 		return refusal, nil, nil
 	}
 

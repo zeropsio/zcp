@@ -327,10 +327,11 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 	}
 	if closed, closedAt, reason := workflow.DeriveCloseState(stateDir, ws); closed {
 		note := closedSessionNote(closedAt, reason)
-		// In a Mate delivering through HQ the person's next step is theirs to
-		// know (hq_delivery.go) — once the session delivered and a change
-		// remains open to hand over. A stand-up or an empty delivery has none.
-		if hqWired() && sessionHandsOverAChange(stateDir, ws) {
+		// The person's next step is theirs to know (hq_delivery.go) once the
+		// session delivered a pair whose HQ repository is on record and a
+		// change remains open to hand over. A stand-up or an empty delivery
+		// has none.
+		if sessionHandsOverAChange(stateDir, ws) {
 			note += " " + hqHandoffNote
 		}
 		return &WorkSessionState{

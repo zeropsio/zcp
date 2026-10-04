@@ -144,7 +144,8 @@ func shallowCloneGuard(ctx context.Context, sshDeployer ops.SSHDeployer, pushHos
 //
 // service param is required and resolves via FindServiceMeta (pair-keyed).
 // Stage-hostname targets are rejected with the same source-of-push remediation
-// as the deploy handlers.
+// as the deploy handlers. A Mate never reaches it (hqRepositoryActions); zcp's
+// own HQ wiring confirms through confirmGitPushSetupContainer.
 func handleGitPushSetup(
 	ctx context.Context,
 	client platform.Client,

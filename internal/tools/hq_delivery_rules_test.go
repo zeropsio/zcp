@@ -5,11 +5,14 @@ package tools
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -21,7 +24,7 @@ func TestAMateDeliveringThroughHQPlansOnlyStandardPairs(t *testing.T) {
 	pair := []workflow.BootstrapTarget{{Runtime: workflow.RuntimeTarget{DevHostname: "appdev", ExplicitStage: "appstage", Type: "nodejs@22", BootstrapMode: topology.PlanModeStandard}}}
 
 	if pe := hqPairPlanError(simple, false); pe != nil {
-		t.Fatalf("a Mate not delivering through HQ keeps zcp's own rules, got %q", pe.Message)
+		t.Fatalf("a container that is not a Mate keeps zcp's own rules, got %q", pe.Message)
 	}
 	if pe := hqPairPlanError(pair, true); pe != nil {
 		t.Fatalf("a standard pair passes, got %q", pe.Message)
@@ -46,6 +49,104 @@ func TestAMateDeliveringThroughHQPlansOnlyStandardPairs(t *testing.T) {
 	}
 }
 
+// enrollAs leaves this test's HQ enrollment missing, unreadable, or kept.
+// Callers redirect HOME first.
+func enrollAs(t *testing.T, state string) {
+	t.Helper()
+	switch state {
+	case "missing":
+	case "unreadable":
+		if err := os.MkdirAll(filepath.Dir(hq.EnrollmentPath()), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(hq.EnrollmentPath(), []byte("{not json"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	case "kept":
+		if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: "https://hq.example", ProjectID: "p1", Credential: "c"}); err != nil {
+			t.Fatal(err)
+		}
+	default:
+		t.Fatalf("unknown enrollment state %q", state)
+	}
+}
+
+// TestBootstrapPlan_AMatePlansOnlyPairsWhateverItsEnrollment: being a Mate,
+// not holding an enrollment, is what makes every runtime a pair. A Mate whose
+// enrollment is still missing or cannot be read plans the same pairs it will
+// deliver through once it has one; a container that is not a Mate keeps zcp's
+// own plans, an enrollment file on its disk notwithstanding.
+//
+// Not parallel: the enrollment is read from the process's HOME (t.Setenv).
+func TestBootstrapPlan_AMatePlansOnlyPairsWhateverItsEnrollment(t *testing.T) {
+	tests := []struct {
+		name       string
+		mate       bool
+		enrollment string
+		wantRefuse bool
+	}{
+		{name: "a Mate not enrolled yet", mate: true, enrollment: "missing", wantRefuse: true},
+		{name: "a Mate whose enrollment cannot be read", mate: true, enrollment: "unreadable", wantRefuse: true},
+		{name: "an enrolled Mate", mate: true, enrollment: "kept", wantRefuse: true},
+		{name: "not a Mate, an enrollment on disk", enrollment: "kept"},
+		{name: "not a Mate", enrollment: "missing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			enrollAs(t, tt.enrollment)
+			dir := t.TempDir()
+			engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+			if _, err := engine.BootstrapStartWithRoute("proj-1", "a todo app", workflow.BootstrapRouteClassic, ""); err != nil {
+				t.Fatalf("BootstrapStartWithRoute(classic): %v", err)
+			}
+			input := WorkflowInput{Step: workflow.StepDiscover, Plan: []workflow.BootstrapTarget{{Runtime: workflow.RuntimeTarget{
+				DevHostname: "todoapp", Type: "nodejs@22", BootstrapMode: topology.PlanModeSimple,
+			}}}}
+			rt := runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: tt.mate}
+			result, _, err := handleBootstrapComplete(context.Background(), engine, platform.NewMock(), nil, nil, input, nil, "proj-1", dir, nil, nil, rt)
+			if err != nil {
+				t.Fatalf("handleBootstrapComplete: %v", err)
+			}
+			text := extractText(result)
+			if refused := strings.Contains(text, "dev/stage pair"); refused != tt.wantRefuse {
+				t.Fatalf("refused as a Mate's plan = %v, want %v:\n%s", refused, tt.wantRefuse, text)
+			}
+		})
+	}
+}
+
+// TestLaunchProduction_AMateWithoutItsEnrollmentSaysSo: whether this Mate's
+// work reached main is HQ's to say. With no enrollment to ask it with — none
+// yet, or one that cannot be read — the refusal says that, never that
+// nothing was delivered.
+//
+// Not parallel: the enrollment is read from the process's HOME (t.Setenv).
+func TestLaunchProduction_AMateWithoutItsEnrollmentSaysSo(t *testing.T) {
+	tests := []struct {
+		enrollment string
+		want       []string
+	}{
+		{enrollment: "missing", want: []string{"no HQ enrollment yet", "Ask again"}},
+		{enrollment: "unreadable", want: []string{"HQ enrollment cannot be read", "Ask again"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.enrollment, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			enrollAs(t, tt.enrollment)
+			text := resultText(t, hqLaunchProductionRefusal(context.Background(), nil, t.TempDir(), true))
+			for _, want := range append(tt.want, "wired_mate_production_is_the_groups") {
+				if !strings.Contains(text, want) {
+					t.Errorf("the refusal misses %q: %s", want, text)
+				}
+			}
+			if strings.Contains(text, "none of this Mate's work") {
+				t.Errorf("a missing enrollment is not evidence that nothing was delivered: %s", text)
+			}
+		})
+	}
+}
+
 // TestLaunchProduction_AMateDeliveringThroughHQRefusesAndSaysWhatIsTrue: an
 // application's production is a project the person adds from the projects
 // page, so a Mate delivering through HQ refuses launch-production outright,
@@ -55,7 +156,7 @@ func TestAMateDeliveringThroughHQPlansOnlyStandardPairs(t *testing.T) {
 // open.
 func TestLaunchProduction_AMateDeliveringThroughHQRefusesAndSaysWhatIsTrue(t *testing.T) {
 	if refusal := hqLaunchProductionRefusal(context.Background(), nil, t.TempDir(), false); refusal != nil {
-		t.Fatalf("a Mate not delivering through HQ keeps zcp's own launch-production, got %q", resultText(t, refusal))
+		t.Fatalf("a container that is not a Mate keeps zcp's own launch-production, got %q", resultText(t, refusal))
 	}
 	tests := []struct {
 		name string
@@ -106,12 +207,13 @@ func TestLaunchProduction_AMateDeliveringThroughHQRefusesAndSaysWhatIsTrue(t *te
 
 // TestSessionAnnotations_HandoffOnlyAfterADelivery: a session that delivered
 // through the stage half closes by handing the person the change; a stand-up
-// that left the stage out delivered nothing to hand over.
+// that left the stage out delivered nothing to hand over. The pair's record
+// of its change is the whole condition: the container holds no enrollment
+// here, and a change on record is still the person's to review.
+//
+// Not parallel: HOME is redirected so no enrollment is found (t.Setenv).
 func TestSessionAnnotations_HandoffOnlyAfterADelivery(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: "https://hq.example", ProjectID: "p1", Credential: "c"}); err != nil {
-		t.Fatal(err)
-	}
 	tests := []struct {
 		name        string
 		roles       map[string]string

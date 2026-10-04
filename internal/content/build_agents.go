@@ -56,26 +56,26 @@ func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 			return "", fmt.Errorf("read agents_container.md: %w", err)
 		}
 		preamble = strings.ReplaceAll(tmpl, "{{.SelfHostname}}", rt.ServiceName)
-		// What this Mate holds, said once, so an agent does not have to dump
-		// its environment to discover it.
+		// What this container reaches beyond its own project, said once, so
+		// an agent does not have to dump its environment to discover it.
 		//
-		// The group block is unconditional and deliberately says how to LOOK
-		// rather than what is there: a container's reach is a property of its
-		// own token, which the client widens to the group, and any flag here
-		// mirroring that would be a second copy free to drift from it. So the
-		// agent verifies it the only way that cannot be stale — by listing
-		// what its token answers for.
+		// Outside a Mate the block says how to LOOK rather than what is
+		// there: reach is a property of the container's own token, and any
+		// flag here mirroring it would be a second copy free to drift from it.
+		// A Mate's token reaches no other project; its application's stage
+		// and production are HQ's to show (zerops_observe, docs/spec-mate.md
+		// §10.8), so its block names that tool instead.
 		//
-		// The stand-up and git-host blocks are a Mate's: only there is
+		// The stand-up and git-host blocks are a Mate's too: only there is
 		// zerops_standup a tool (docs/spec-mate.md D32), and only a Mate
-		// delivers its code to HQ, so both are gated on the flag that makes
-		// the container one.
+		// delivers its code to HQ.
 		for _, block := range []struct {
 			include bool
 			name    string
 		}{
 			{rt.MateEnabled, "agents_standup.md"},
-			{true, "agents_group.md"},
+			{!rt.MateEnabled, "agents_group.md"},
+			{rt.MateEnabled, "agents_application.md"},
 			{rt.MateEnabled, "agents_git_host.md"},
 		} {
 			if !block.include {
