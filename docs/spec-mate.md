@@ -1378,7 +1378,8 @@ Zerops session, 401/403/404, project mismatch, stale beyond 60 s, or 30 min past
 only the `Platform` region is absent — the recognized call shell remains. The one allowlisted
 exception is a resolved `deploy` whose status is `BUILD_TRIGGERED` (git-push delivery returns at
 push time): it may keep the overlay below its own verdict line until the platform settles or the
-ceiling passes. A reopened resolved thread therefore shows exactly what the agent reported; a
+ceiling passes. A deploy whose build poll gave up (`timedOut`) names the build it followed
+(`appVersionId`), so that overlay follows exactly that build. A reopened resolved thread therefore shows exactly what the agent reported; a
 reopened recognized call that never resolved shows a quiet pending shell without a Platform region
 or verdict.
 

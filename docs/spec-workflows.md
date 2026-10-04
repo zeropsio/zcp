@@ -907,7 +907,10 @@ which trips when the repo's `.git` is a `gitdir:` pointer file. The temp
 directory is removed after the push. Omitting `sha` ships the source working tree.
 
 Deploy responses carry `SHA`, `AppVersionID` and `Dirty`; Work Session deploy
-attempts retain these fields when a session is present. No automatic Git tag is
+attempts retain these fields when a session is present. `AppVersionID` names the
+build the poll followed whatever it ended with — deployed, failed, or given up on
+while the build runs (`timedOut`, status still `BUILD_TRIGGERED`) — so a reader
+follows exactly that build. No automatic Git tag is
 created, read, moved or synchronized for a deploy. Tags belong to the user's
 release workflow.
 
