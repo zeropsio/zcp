@@ -67,6 +67,8 @@ type hqClient struct {
 	address string
 	// pause waits out a 503's Retry-After; nil waits on a timer.
 	pause func(ctx context.Context, d time.Duration) error
+	// once: a 503 is answered at once, never waited out (Client.Once).
+	once bool
 }
 
 // A 503 is waited out for at most unavailableBudget in all, each wait its
@@ -137,12 +139,12 @@ const answerLimit = 1 << 20
 
 // send is one request with body of contentType ("" for none), its answer
 // decoded into out — sent again after each 503's Retry-After until
-// unavailableBudget is spent.
+// unavailableBudget is spent, unless the client sends each call once.
 func (c hqClient) send(ctx context.Context, method, path, authorization, contentType string, body []byte, out any) error {
 	waited := time.Duration(0)
 	for {
 		wait, err := c.sendOnce(ctx, method, path, authorization, contentType, body, out)
-		if wait == 0 || waited+wait > unavailableBudget {
+		if wait == 0 || c.once || waited+wait > unavailableBudget {
 			return err
 		}
 		waited += wait

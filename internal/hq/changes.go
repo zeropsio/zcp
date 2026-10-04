@@ -43,6 +43,14 @@ func Open(httpClient Doer, path string) (Client, error) {
 	return Client{call: hqClient{http: httpClient, address: kept.HQ}, enrollment: kept}, nil
 }
 
+// Once is this client sending each call once: a 503 is UnavailableError at
+// once rather than waited out, for a caller that paces its own tries — a
+// delivery, which fails fast rather than waiting HQ out.
+func (c Client) Once() Client {
+	c.call.once = true
+	return c
+}
+
 // Repo is a repository HQ keeps for an application, served at
 // `/git/<appId>/<name>.git`.
 type Repo struct {

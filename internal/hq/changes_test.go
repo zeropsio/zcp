@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -226,6 +227,58 @@ func TestClient_Unavailable_IsTryAgain(t *testing.T) {
 			}
 			if !reflect.DeepEqual(pauses, tt.wantPauses) {
 				t.Errorf("pauses = %v, want %v", pauses, tt.wantPauses)
+			}
+		})
+	}
+}
+
+// TestClient_Once_LeavesTheWaitToTheCaller: a client for a caller that paces
+// its own tries — a delivery, which fails fast — sends each call once: a
+// standby's 503 is unavailable at once, never waited out, and every other
+// answer reads as it does for any client.
+func TestClient_Once_LeavesTheWaitToTheCaller(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		status  int
+		body    string
+		wantErr func(error) bool
+	}{
+		{"a standby is unavailable at once", http.StatusServiceUnavailable, `{"code":"not_active"}`,
+			func(err error) bool {
+				var unavailable *UnavailableError
+				return errors.As(err, &unavailable) && unavailable.Code == "not_active"
+			}},
+		{"the leader answers", http.StatusOK, `{"appId":"a1","name":"appdev"}`, nil},
+		{"a refusal is final", http.StatusForbidden, `{"code":"forbidden"}`,
+			func(err error) bool {
+				var refused *RefusedError
+				return errors.As(err, &refused) && refused.Status == http.StatusForbidden
+			}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var asked atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				asked.Add(1)
+				w.Header().Set("Retry-After", "5")
+				w.WriteHeader(tt.status)
+				_, _ = io.WriteString(w, tt.body)
+			}))
+			t.Cleanup(srv.Close)
+			client := enrolledClient(t, srv).Once()
+			client.call.pause = func(context.Context, time.Duration) error {
+				t.Error("a client that tries once waits for nothing")
+				return nil
+			}
+
+			_, err := client.EnsureRepo(context.Background(), "appdev")
+			if tt.wantErr == nil && err != nil || tt.wantErr != nil && !tt.wantErr(err) {
+				t.Fatalf("err = %v", err)
+			}
+			if asked.Load() != 1 {
+				t.Errorf("HQ was asked %d times, want once", asked.Load())
 			}
 		})
 	}
