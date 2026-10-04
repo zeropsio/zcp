@@ -695,3 +695,53 @@ func TestBuildAgentsMD_Container_StandUpRoutesToTheTool(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildAgentsMD_Container_GitHostSaysWhereTheCodeLives pins where a Mate's
+// code lives. Measured on a live Mate in an empty project: asked to build a
+// small app, make "the deploy workflow's Test step" run the tests and open a
+// pull request, it looked for GitHub credentials for two minutes and asked
+// the person for a GitHub repository and an access token instead of
+// bootstrapping — nothing it read named the project's repository or said
+// bootstrap makes it. The rebuild puts that repository in HQ. AGENTS.md is in context from the first turn whatever the project
+// holds, so an empty project reads this block too. A container without a
+// Mate flag, and a local install, are told none of it.
+func TestBuildAgentsMD_Container_GitHostSaysWhereTheCodeLives(t *testing.T) {
+	t.Parallel()
+	wants := []string{
+		"live in its repository in the application's HQ",
+		"On an empty project, bootstrap",
+		"ZCP wires the pair's repository",
+		"Core deploys the application's environments",
+		"never ask the person for a GitHub",
+	}
+	for _, tc := range []struct {
+		name string
+		rt   runtime.Info
+		want bool
+	}{
+		{name: "a Mate, even before it has a repository", rt: runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, want: true},
+		{name: "a plain container", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}},
+		{name: "local", rt: runtime.Info{}},
+		{name: "local with the Mate flag", rt: runtime.Info{MateEnabled: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := BuildAgentsMD(tc.rt, false)
+			if err != nil {
+				t.Fatalf("BuildAgentsMD: %v", err)
+			}
+			for _, want := range wants {
+				if got := strings.Contains(out, want); got != tc.want {
+					t.Errorf("%q present = %v, want %v", want, got, tc.want)
+				}
+			}
+			if !tc.want {
+				for _, unwanted := range []string{"Gitea", "$GITEA_URL", ".gitea/workflows"} {
+					if strings.Contains(out, unwanted) {
+						t.Errorf("AGENTS.md without a git host names %q", unwanted)
+					}
+				}
+			}
+		})
+	}
+}

@@ -1868,6 +1868,22 @@ A Zerops user with a Claude or ChatGPT subscription signs the agent CLI in **fro
 credential-shaped enters a thread, a feed or the ledger. Two halves: the **agent-auth feed** (what the
 container knows about each agent's login) and the **login session** (how the user gets there).
 
+**Agents Mate signs nobody in to** (2026-10-03, the owner: "all of them should still work with everything
+we've been doing"). Cursor, OpenCode, Grok and Antigravity sign in through their own CLI or the Zerops GUI,
+never through mate, and stay outside the feed. A Mate whose only ready agent is one of them works like any
+other: one shared readiness test — installed, enabled, available, ready, signed in (`authenticated`), at least
+one model — lifts the sign-in screen in its conversation and Crew tab, its stand-up starts on that instance
+(the asker's own Claude Code or Codex sign-in first, the conversation's own instance next), and its first
+browser to find the agent ready records which driver runs. In the upstream Gitea backbone that was
+the project tag `mate:runs:<driver>`, with its maker (`mate:by:`, else `mate:standup:`)
+as owner. In the rebuild a project tag proves no owner: HQ holds the maker and stand-up
+records (§10.6, §10.10), while the Mate holds Claude Code and Codex signers (§10.5).
+The shared readiness test still applies to every agent. A crew runs on an agent whose adapter carries
+the thread profile (Claude Code, Codex, Grok, OpenCode); Cursor and Antigravity are refused until their gate
+is seen live, since zcp pre-approves the Zerops tools in Cursor's project config. zcp gives OpenCode the
+`zerops` MCP server in `~/.config/opencode/opencode.json`, adding `zerops_*` as allowed
+only where it does not overrule the user's permission rules (`TestOpenCode_*`).
+
 ### 8.1 The agent-auth feed
 
 `subscribeZeropsAgentAuth` (stream, snapshot-typed) publishes, per agent (`claude-code`, `codex`;
@@ -2425,6 +2441,28 @@ repositories in HQ (a hostname names one repository there), and the repository r
 Mate's branch from `main` — a checkout with no commit of its own takes `main`'s tree. The adopt-time
 reconcile runs where the metas are complete.
 
+**The retired Gitea workflow decision (2026-10-03).** The upstream backbone's
+`zeropsio/gitea-mate/actions/deploy@v4` workflow set up tests as follows. This applies
+only to that backbone; the rebuild keeps Core's deploy jobs (§10.8), and zcp emits
+no Gitea workflow or broker credential in an HQ repository.
+
+The group's runner has no
+language runtime, so the file sets up the pair's own — the dev half's Zerops type, read from the direct
+service list, at that version — before the Test step, which stays a no-op until the project fills it
+in; only where a setup action works on the runner as it stands: Node.js, Go and Java (a `.tar.gz`
+build). Bun and Deno (their actions extract a `.zip`, and the runner has no `unzip`), Python (its
+builds expect the hosted runners' `/opt/hostedtoolcache`) and PHP (installed through apt on the
+releases it lists) get a Test step whose comment says no setup action works and shows what does — the
+distribution's packages, at the distribution's version, or the language's own installer — and a type
+zcp cannot read or has no word on gets the general rule: a setup action that downloads a `.tar.gz`
+build works, anything else comes from the distribution's packages or the language's own installer. Wiring and every delivery write the file only where it is missing, is exactly the untouched file an
+earlier zcp wrote (which gains the setup), or names an earlier version of the broker's deploy action
+(its Test step kept); a file naming this zcp's action, whatever was made of it, and a workflow of the
+project's own that does not deploy through the broker are the project's, never rewritten
+(`TestGiteaWorkflowYAML_SetsUpTheServicesRuntime`,
+`TestReconcileGiteaRepositories_WiringWritesTheWorkflowOnlyWhereItIsNotCurrent`,
+`TestADeliveryBringsTheWorkflowToThisZcps`).
+
 **What a tier carries (2026-09-30).** A tier is the Mate's project as it runs, written for the
 person who reads and edits it in the recipe repository: two-space YAML, each service opening on its
 `hostname` and `type`, a header naming the tier, the Mate it was written from and that it is the
@@ -2942,6 +2980,7 @@ the first live release is still to run. The release moves to HQ next.
 | MB-35 | A new Mate stands up from its application's AI Agent tier, read from HQ, in one call (D32): every pair built from the application's repositories in HQ is read by zcp's naming, not its setups' names, adopted as the adopt route records it with the tier's setups, checked out onto the Mate's branch from the repository the tier names (never one HQ would have to make), and deployed every dev half at once, the first call answering once they stand with the stages queued, and on the second call each stage from its dev half once what its build reads stands (with no reads, every stage above it by priority); a stage never called for stays `READY_TO_DEPLOY` — with nothing committed, pushed or proposed; the runtimes the browser is still importing are waited for, bounded; a refusal before anything is touched names the adopt route, a pair that fails stops alone with the model's next step and holds only the halves whose builds read it, which say what they waited for, and a second call skips what is done. Registered in a Mate only, and a Mate's AGENTS.md sends "Stand up development of the project." to it first. zcp `TestStandup_StandsUpEveryPairFromTheRecipe`, `TestStandupAfter_EveryDevHalfStartsAtOnce`, `TestStandupReads_FromTheRecipe`, `TestStandupReads_EveryRouteTheWriterCounts`, `TestStandup_ReturnsOnceDevelopmentIsUp`, `TestStandup_ASecondCallContinuesAndSkipsWhatIsDone`, `TestStandup_TheModelIsTheBackup`, `TestStandup_WaitsForTheRuntimesTheBrowserIsImporting`, `TestParseMateTier`, `TestParseMateTier_PairsOnlyRepositoriesOfThisApplication`, `TestParseRecipeImportShape_RolesFollowTheHostnameConvention`, `TestAdoptPair_RecordsWhatTheAdoptRouteRecords`, `TestServer_StandupToolGating`, `TestBuildAgentsMD_Container_StandUpRoutesToTheTool`; integration `TestStandup_OverMCP_AMateInNoApplicationIsRefusedAndNothingIsTouched`. |
 | MB-36 | A kept Mate session is presented only after the descriptor names the expected project and its environment and the Mate confirms it with every scope the client asks for; one the Mate ended or one short of a scope is forgotten and a throwaway opens a new one; no word keeps it and mints; it never waits on the mint pace; the account's close, a refused stored login and a displaced session each end it at its Mate (D33). `keptSessions.test.ts` (client runtime and web), `identityExchange.test.ts`, `exchangeDriver.test.ts`, `signIn.guards.test.tsx`. |
 | MB-37 | A group recipe writes each search engine at no less than 2 GB `minRam` and 0.5 GB `minFreeRamGB` on every tier and never lowers a value; an unread scale writes no block; `profileOverrides` and the free-memory buffer are carried; a scaling proposal is the Mate's change in the recipe repository in HQ, written over `main`, rewriting only that host's block in every tier naming it; it refuses a block it cannot splice safely, moves forward on the same change for the same host, brings a stale one to `main`'s tree when nothing differs, and is refused while the Mate's additive proposal is open there, which in turn leaves an open scaling proposal alone; the steer speaks only after a change that finished (D34). `group_floors_test.go`, `host_scaling_test.go`, `group_profile_overrides_test.go`, `scale_test.go`; zcp `TestGroupRecipeScaling_SteersAndProposesOneHostsBlock`, `TestGroupRecipeScaling_ProposesFromMainsHeadEveryTierFresh`, `TestGroupRecipeScaling_OneOpenChangeInTheRecipeRepository`, `TestScratch_File`. |
+| MB-38 | A Mate reads from its first turn, even on an empty project, that its code and changes live in its application's HQ, bootstrap comes first and ZCP wires the pair's repository once the service stands, Core deploys the application's environments, and the person is never asked for a GitHub or other repository, URL or token. The block is Mate-only; a plain container or local install reads none of it. This keeps upstream's repository-first guidance while replacing its Gitea workflow with HQ's jobs (§10.8). zcp `TestBuildAgentsMD_Container_GitHostSaysWhereTheCodeLives`. |
 | MB-28 | A pull request belongs to the Mate whose branch it is (zcp's `mate/{login}`) or whose bot opened it, a person's own is listed after the Mates and never dropped, a group repo's is a recipe change whoever opened it, and a roll-back is offered only to an earlier approved release, its _Roll back to this_ opening the roll back's review. `projectFlow.test.ts` — "whose pull request it is", "puts each Mate's under it, newest first, and the rest after the Mates", "is a recipe change on the group repo, whoever opened it"; `release.test.ts` — "a release's row"; `ZeropsReviewDoors.test.tsx` — "Roll back to this opens the roll back's review, from the row pressed"; `SidebarZeropsTree.test.tsx` "the project's flow under it"; `ZeropsGitPanel.test.tsx` "is this Mate's repositories and nothing of the project's". Since 2026-10-02 a change in HQ is the Mate's that opened it (only Mates open changes), and a change in the application's recipe repository is a recipe change (`RECIPE_REPO`), the proposal known by zcp's exact title. |
 | MB-29 | A deploy token reaches a job only when the job is proved, runs the default branch's workflow from the repository itself, holds the commit protected state wants on that environment, and its runner has run nothing but such jobs since it was made; a superseded or already-live commit gets no token and no failure; the job pushes the commit's tree (`--workspace-state clean`), never the working directory. gitea-mate `internal/server/deploy_test.go`, `internal/pipeline/grant_test.go`, `internal/pipeline/runner_test.go`, `actions/deploy` script test; zcp `workflow_build_integration_test.go`. Superseded 2026-10-02: HQ keeps an environment's deploy token and deploys with it itself; no job holds one (§10.8). |
 | MB-17 | A Gitea and its broker answer every browser origin, since every call carries a bearer and no cookie: the import sends no origin list and `POST /person/token` answers `*`. `giteaRecipe.test.ts` — "sends no origin list: a Gitea answers every origin, since every call carries a bearer"; gitea-mate `TestGiteaProjectImportCarriesNoOriginList`, `TestPersonTokenAnswersEveryOrigin`. Retiring with the Gitea (2026-10-02). |

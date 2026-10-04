@@ -360,7 +360,8 @@ func sessionDeployedAStageHalf(stateDir string, ws *workflow.WorkSession) bool {
 		if !workflow.HasSuccessfulDeployFor(ws, host) {
 			continue
 		}
-		if meta, err := workflow.FindServiceMeta(stateDir, host); err == nil && meta != nil && meta.StageHostname == host {
+		meta, err := workflow.FindServiceMeta(stateDir, host)
+		if err == nil && meta != nil && meta.StageHostname == host {
 			return true
 		}
 	}

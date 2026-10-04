@@ -335,3 +335,73 @@ func atomicWrite(path string, data []byte) error {
 	}
 	return nil
 }
+
+// writeConfigPreservingMode is atomicWrite for a config that can carry a
+// secret — code-server's config.yaml (its login password), OpenCode's
+// opencode.json (provider API keys). Unlike atomicWrite, which always chmods
+// 0644 and renames over the path:
+//
+//   - an existing file keeps its exact mode; a brand-new one is 0600;
+//   - a symlinked path is resolved and written THROUGH to its target (temp
+//     file beside the target, rename onto the target, the target's mode
+//     kept), so the link survives — a symlinked config is a deliberate
+//     operator choice (dotfiles, secrets mounted from elsewhere) that a
+//     rename onto the link path would silently destroy;
+//   - a symlink that cannot be resolved (broken, permission denied along
+//     the chain) skips the write with a stderr warning and a nil error —
+//     on any doubt about a file this sensitive, skip.
+func writeConfigPreservingMode(path string, data []byte) error {
+	target := path
+	mode := os.FileMode(0o600)
+
+	fi, err := os.Lstat(path)
+	switch {
+	case err == nil && fi.Mode()&os.ModeSymlink != 0:
+		resolved, evalErr := filepath.EvalSymlinks(path)
+		if evalErr != nil {
+			fmt.Fprintf(os.Stderr, "    (warning: %s is a symlink that could not be resolved, skipping: %v)\n", path, evalErr)
+			return nil
+		}
+		targetInfo, statErr := os.Stat(resolved)
+		if statErr != nil {
+			fmt.Fprintf(os.Stderr, "    (warning: symlink target %s unreadable, skipping: %v)\n", resolved, statErr)
+			return nil
+		}
+		target = resolved
+		mode = targetInfo.Mode().Perm()
+	case err == nil:
+		mode = fi.Mode().Perm()
+	case os.IsNotExist(err):
+		// brand-new file — default 0600 set above.
+	default:
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+
+	dir := filepath.Dir(target)
+	if err := EnsureDir(dir); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".adapter-*")
+	if err != nil {
+		return fmt.Errorf("create temp in %s: %w", dir, err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("write temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Chmod(tmpName, mode); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, target); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("rename %s: %w", target, err)
+	}
+	return nil
+}
