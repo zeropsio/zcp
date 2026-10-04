@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"testing"
 
@@ -1349,55 +1348,45 @@ func TestServiceMeta_Repo_NilByDefault(t *testing.T) {
 	}
 }
 
-// TestServiceMeta_KeepsMainsGiteaRecordUntilTheMove: a pair main's zcp wired
-// to its organization's Gitea carries that record on disk as "gitea". It is
-// read, and it survives every write that is not the pair's move to HQ — the
-// move is what reads it (tools/hq_main_gitea.go).
-func TestServiceMeta_KeepsMainsGiteaRecordUntilTheMove(t *testing.T) {
+// TestUpsertServiceMeta_LegacyPendingDelivery_IsDropped: a pair record from
+// before deliveries failed fast may still name a delivery owed to HQ
+// (`hq.pending`). It reads as it did otherwise, and its next write leaves the
+// owed delivery out: nothing finishes it any more, and its work is committed
+// in the checkout, which the pair's next delivery sends (spec-mate §10.10).
+func TestUpsertServiceMeta_LegacyPendingDelivery_IsDropped(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "services"), 0o755); err != nil {
+	legacy := `{"hostname":"appdev","mode":"standard","stageHostname":"appstage","bootstrapSession":"s","bootstrappedAt":"2026-10-02",` +
+		`"hq":{"appId":"app-1","repo":"appdev","branch":"mate/p-mate","change":3,"pending":{"title":"Add a footer","since":"2026-10-03T10:00:00Z"}}}`
+	path := filepath.Join(dir, "services", "appdev.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	asMainWroteIt := `{
-  "hostname": "appdev",
-  "stageHostname": "appstage",
-  "gitPushState": "configured",
-  "remoteUrl": "https://gitea.example.invalid/acme/appdev.git",
-  "gitea": {
-    "fullName": "acme/appdev",
-    "branch": "mate/mate-p1",
-    "defaultBranch": "main",
-    "requestedAt": "2026-09-30T10:00:00Z",
-    "pullRequest": 3,
-    "landed": {"commit": "s1", "head": "h1"},
-    "changeDescription": {"text": "Adds todos.", "pullRequest": 3}
-  }
-}`
-	if err := os.WriteFile(filepath.Join(dir, "services", "appdev.json"), []byte(asMainWroteIt), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
 		t.Fatal(err)
-	}
-	want := &MainGiteaRepo{
-		FullName:          "acme/appdev",
-		PullRequest:       3,
-		Landed:            &LandedChange{Commit: "s1", Head: "h1"},
-		ChangeDescription: &MainGiteaChangeDescription{Text: "Adds todos.", PullRequest: 3},
 	}
 
-	got, err := ReadServiceMeta(dir, "appdev")
+	meta, err := ReadServiceMeta(dir, "appdev")
+	if err != nil || meta == nil || meta.HQ == nil || meta.HQ.Repo != "appdev" || meta.HQ.Change != 3 {
+		t.Fatalf("the legacy record reads as %+v, %v; want its HQ record", meta, err)
+	}
+	if err := UpsertServiceMeta(dir, "appdev", func(m *ServiceMeta, _ bool) error {
+		m.HQ.Change = 4
+		return nil
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	var raw struct {
+		HQ map[string]json.RawMessage `json:"hq"`
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(got.MainGitea, want) {
-		t.Fatalf("main's record = %+v, want %+v", got.MainGitea, want)
-	}
-	if err := UpdateServiceMeta(dir, "appdev", func(m *ServiceMeta) error {
-		m.TrackedRef = "main"
-		return nil
-	}); err != nil {
+	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatal(err)
 	}
-	if again, _ := ReadServiceMeta(dir, "appdev"); !reflect.DeepEqual(again.MainGitea, want) {
-		t.Errorf("after another write main's record = %+v, want it kept", again.MainGitea)
+	if _, kept := raw.HQ["pending"]; kept || string(raw.HQ["change"]) != "4" {
+		t.Errorf("the record after its next write = %s; want the owed delivery gone and the write applied", data)
 	}
 }

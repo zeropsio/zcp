@@ -147,12 +147,6 @@ type ServiceMeta struct {
 	// any other file ZCP writes) — it lives where git-push-setup put it, a
 	// sensitive service env on the push source.
 	HQ *HQRepoRef `json:"hq,omitempty"`
-
-	// MainGitea is the pair's repository on its organization's Gitea as
-	// main's zcp recorded it, on disk as "gitea": kept through every write
-	// until the pair moves to HQ, which reads it and clears it
-	// (tools/hq_main_gitea.go). Migration-only: it goes with the migration.
-	MainGitea *MainGiteaRepo `json:"gitea,omitempty"`
 }
 
 // SetRepoBaseline records the adopt-time baseline marker for this meta.
@@ -189,10 +183,6 @@ type HQRepoRef struct {
 	// it, so the ordinary take-`main`-in merge alone reads it as two
 	// histories that both add the same files (MB-26).
 	Landed *LandedChange `json:"landed,omitempty"`
-	// Pending is a delivery HQ did not refuse but could not be reached for —
-	// its change not opened, or its branch not pushed — which a later pass
-	// finishes once HQ answers (SPEC §3.2a). nil when none waits.
-	Pending *PendingDelivery `json:"pending,omitempty"`
 	// ChangeDescription is what the Mate wrote about its change while no
 	// change could take it yet — none was open, or HQ did not take the edit.
 	// It is there only until a change carries it, and never longer than the
@@ -200,6 +190,12 @@ type HQRepoRef struct {
 	// inheriting the last one's words would tell the person about work that
 	// is not in it.
 	ChangeDescription *ChangeDescription `json:"changeDescription,omitempty"`
+	// CredentialRenewedAt is when zcp last wrote the Mate's current HQ
+	// credential onto the push source, RFC3339 with nanoseconds — kept until a
+	// fresh session proves it, or the wait for it to reach the sessions has
+	// passed — so a delivery right after a renewal waits for it to take
+	// effect rather than read the old one's refusal as HQ's.
+	CredentialRenewedAt string `json:"credentialRenewedAt,omitempty"`
 }
 
 // ChangeDescription is a Mate's description of its change, kept for the
@@ -222,34 +218,6 @@ type LandedChange struct {
 	// BuildAbsorbLandedChangeCommand, i.e. what this Mate's own checkout was
 	// at the moment of the landing.
 	Head string `json:"head"`
-}
-
-// MainGiteaRepo is what a pair's move from main's Gitea to HQ reads of
-// main's record: the repository; its pull request, whose number HQ's import
-// kept as its change's; a merge of a pull request the checkout has not
-// absorbed yet — the same squash and head, now on HQ's `main`; and the
-// Mate's words kept for a pull request.
-type MainGiteaRepo struct {
-	FullName          string                      `json:"fullName"` // "{org}/{name}"
-	PullRequest       int                         `json:"pullRequest,omitempty"`
-	Landed            *LandedChange               `json:"landed,omitempty"`
-	ChangeDescription *MainGiteaChangeDescription `json:"changeDescription,omitempty"`
-}
-
-// MainGiteaChangeDescription is main's kept description: for the pull request
-// numbered, or the next one when 0.
-type MainGiteaChangeDescription struct {
-	Text        string `json:"text"`
-	PullRequest int    `json:"pullRequest,omitempty"`
-}
-
-// PendingDelivery is a delivery waiting for HQ to answer.
-type PendingDelivery struct {
-	// Title is the change's title as the delivery named it: the work session
-	// that named it may be over by the pass that finishes it.
-	Title string `json:"title"`
-	// Since is when the delivery could not reach HQ, RFC3339.
-	Since string `json:"since"`
 }
 
 // PublicAccessFor returns the persisted public-access record for hostname —

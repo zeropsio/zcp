@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -48,6 +50,26 @@ func (u *UnavailableError) Error() string {
 
 func (u *UnavailableError) Unwrap() error { return u.Err }
 
+// NoAnswerError is a call HQ did not answer within a bounded client's bounds
+// (Client.Bounded): no connection within the connect bound — TLS included —
+// or, connected, no answer within the answer bound. An UnavailableError
+// carries it.
+type NoAnswerError struct {
+	Path      string
+	Connected bool
+	Within    time.Duration
+}
+
+func (e *NoAnswerError) Error() string { return "hq " + e.Path + ": " + e.Words() }
+
+// Words is what the call met, without the path: "no connection within 5s".
+func (e *NoAnswerError) Words() string {
+	if !e.Connected {
+		return fmt.Sprintf("no connection within %s", e.Within)
+	}
+	return fmt.Sprintf("no answer within %s", e.Within)
+}
+
 // IsUnavailable reports whether err is HQ not serving now: a delivery it
 // stopped waits for the next pass rather than failing.
 func IsUnavailable(err error) bool {
@@ -67,6 +89,11 @@ type hqClient struct {
 	address string
 	// pause waits out a 503's Retry-After; nil waits on a timer.
 	pause func(ctx context.Context, d time.Duration) error
+	// once: a 503 is answered at once, never waited out (Client.Once).
+	once bool
+	// connect and answer bound each try (Client.Bounded); 0 leaves it to
+	// the caller's context and the Doer.
+	connect, answer time.Duration
 }
 
 // A 503 is waited out for at most unavailableBudget in all, each wait its
@@ -137,12 +164,12 @@ const answerLimit = 1 << 20
 
 // send is one request with body of contentType ("" for none), its answer
 // decoded into out — sent again after each 503's Retry-After until
-// unavailableBudget is spent.
+// unavailableBudget is spent, unless the client sends each call once.
 func (c hqClient) send(ctx context.Context, method, path, authorization, contentType string, body []byte, out any) error {
 	waited := time.Duration(0)
 	for {
 		wait, err := c.sendOnce(ctx, method, path, authorization, contentType, body, out)
-		if wait == 0 || waited+wait > unavailableBudget {
+		if wait == 0 || c.once || waited+wait > unavailableBudget {
 			return err
 		}
 		waited += wait
@@ -152,9 +179,57 @@ func (c hqClient) send(ctx context.Context, method, path, authorization, content
 	}
 }
 
+// bounded is ctx bounded for one try as the client is (Client.Bounded): the
+// connect bound runs until net/http reports the connection made, TLS
+// included — connected says whether it has — and the answer bound covers the
+// whole try.
+func (c hqClient) bounded(ctx context.Context) (try context.Context, connected *atomic.Bool, release context.CancelFunc) {
+	connected = &atomic.Bool{}
+	if c.connect == 0 && c.answer == 0 {
+		return ctx, connected, func() {}
+	}
+	cancelAnswer := context.CancelFunc(func() {})
+	if c.answer > 0 {
+		ctx, cancelAnswer = context.WithTimeout(ctx, c.answer)
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	stopConnect := func() bool { return false }
+	if c.connect > 0 {
+		stopConnect = time.AfterFunc(c.connect, cancel).Stop
+	}
+	try = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) {
+		connected.Store(true)
+		stopConnect()
+	}})
+	return try, connected, func() {
+		stopConnect()
+		cancel()
+		cancelAnswer()
+	}
+}
+
+// unanswered is what ended a try whose call failed with err: a bound of the
+// client's (NoAnswerError) — no connection made, or no answer once it was —
+// or err when the caller's own ctx ended it or no bound did.
+func (c hqClient) unanswered(caller, try context.Context, connected *atomic.Bool, path string, err error) error {
+	switch {
+	case caller.Err() != nil || try.Err() == nil || c.connect == 0 && c.answer == 0:
+		return err
+	case !connected.Load():
+		within := c.connect
+		if within == 0 || c.answer > 0 && c.answer < within {
+			within = c.answer
+		}
+		return &NoAnswerError{Path: path, Within: within}
+	}
+	return &NoAnswerError{Path: path, Connected: true, Within: c.answer}
+}
+
 // sendOnce is one try; wait is how long to wait before the next, 0 when the
 // answer is final.
-func (c hqClient) sendOnce(ctx context.Context, method, path, authorization, contentType string, body []byte, out any) (time.Duration, error) {
+func (c hqClient) sendOnce(caller context.Context, method, path, authorization, contentType string, body []byte, out any) (time.Duration, error) {
+	ctx, connected, release := c.bounded(caller)
+	defer release()
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
@@ -171,12 +246,12 @@ func (c hqClient) sendOnce(ctx context.Context, method, path, authorization, con
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return 0, &UnavailableError{Err: fmt.Errorf("hq %s: %w", path, err)}
+		return 0, &UnavailableError{Err: c.unanswered(caller, ctx, connected, path, fmt.Errorf("hq %s: %w", path, err))}
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, answerLimit))
 	if err != nil {
-		return 0, &UnavailableError{Err: fmt.Errorf("hq %s: %w", path, err)}
+		return 0, &UnavailableError{Err: c.unanswered(caller, ctx, connected, path, fmt.Errorf("hq %s: %w", path, err))}
 	}
 	// A 204 answers with nothing to decode.
 	if resp.StatusCode == http.StatusNoContent {

@@ -262,8 +262,7 @@ func resolveTrackedBranch(stateDir, targetService, inputBranch string) string {
 
 // hqPushGuard decides whether a pair whose remote is this Mate's HQ may push.
 // A pair not yet recorded as wired — its wiring stopped half-way, with the
-// remote stamped and no branch, or still on the remote main's zcp set on the
-// old Gitea — has its wiring retried once, here, and is refused while it
+// remote stamped and no branch — has its wiring retried once, here, and is refused while it
 // stays incomplete. A refusal the retry cannot change is
 // told its remedy, after which the next push wires the pair. A remote on this
 // HQ that is not the pair's repository is the user's own and pushes as one,
@@ -285,14 +284,10 @@ func hqPushGuard(
 		return nil
 	}
 	if !hqPairWired(meta) {
-		repoName, fromMain := mainGiteaOf(stateDir).repository(meta)
-		if !fromMain {
-			if !hqRemoteIsThePairs(remote, hqc.Address(), hostname) {
-				return nil
-			}
-			repoName = hostname
+		if !hqRemoteIsThePairs(remote, hqc.Address(), hostname) {
+			return nil
 		}
-		attempt := rewireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, meta, repoName)
+		attempt := rewireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, meta, hostname)
 		if attempt.usersOwn {
 			return nil
 		}
@@ -508,15 +503,11 @@ func handleGitPush(
 		workingDir = "/var/www"
 	}
 	effectiveRemote := resolveEffectiveRemote(stateDir, input.TargetService, input.RemoteURL)
-	// A pair still on the remote main's zcp set moves to HQ before it pushes:
-	// nothing pushes to the old Gitea (hq_main_gitea.go).
-	meta, _ := workflow.FindServiceMeta(stateDir, hostname)
-	fromMain := mainGiteaOf(stateDir).owns(meta) && sameGitRepository(effectiveRemote, meta.RemoteURL)
 
 	// A pair on this Mate's HQ pushes only once it is wired, and only to its
 	// change — refused here, before git runs, so a rejection can never read
 	// as a reason to force-push over it.
-	if hqRemoteOfThisMate(effectiveRemote) || fromMain {
+	if hqRemoteOfThisMate(effectiveRemote) {
 		pair := pairKey(stateDir, hostname)
 		release, err := holdPairCheckout(ctx, stateDir, pair)
 		if err != nil {
@@ -532,9 +523,6 @@ func handleGitPush(
 		if refusal := hqPushGuard(ctx, client, httpClient, sshDeployer, rt, stateDir, hostname, effectiveRemote, input.Branch); refusal != nil {
 			recordAttempt(refusal.Message, topology.FailureClassConfig)
 			return convertError(refusal, WithRecoveryStatus()), nil, nil
-		}
-		if fromMain {
-			effectiveRemote = resolveEffectiveRemote(stateDir, input.TargetService, "")
 		}
 	}
 	branch := resolveTrackedBranch(stateDir, input.TargetService, input.Branch)

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // The git a Mate's delivery runs in its pair's checkout (SPEC §3.2a). The Mate
@@ -20,6 +21,52 @@ import (
 // merge moves.
 const deliveryBase = "main"
 
+// HQGitBound is the safety cap on one git command against HQ in all: a
+// transfer HQ keeps feeding is legitimate work however long it takes, so what
+// bounds it is the stall (hqGitStallSeconds) — and a delivery checks that HQ
+// connects before git runs (spec-mate §10.10). The cap catches the rest, a
+// connect HQ stops answering between that check and git among them, which
+// curl would wait 300 s for; it stays under the SSH runner's 5 min, so git
+// ends itself before the session is cut. A container without `timeout` runs
+// git bounded by the stall alone. A var so tests narrow it.
+//
+//nolint:gochecknoglobals // tuning knob, initialized; test-narrowed
+var HQGitBound = 4 * time.Minute
+
+// hqGitStallSeconds ends a transfer HQ stops feeding, with git's own words:
+// below 1 byte/s for this long.
+const hqGitStallSeconds = 10
+
+// hqNoAnswerMarker begins the line a git command against HQ prints when
+// HQGitBound ended it.
+const hqNoAnswerMarker = "ZCP_HQ_NO_ANSWER:"
+
+// hqGit is `git <args>` against HQ — args already shell-quoted, the
+// credential helper among them — bounded by HQGitBound and the stall bound,
+// keeping git's exit status. A bound that ended it says hqNoAnswerMarker on
+// stderr: GNU timeout answers 124, BusyBox's the TERM it sent.
+func hqGit(args string) string {
+	seconds := max(1, int(HQGitBound/time.Second))
+	return fmt.Sprintf(`{ if command -v timeout >/dev/null 2>&1; then bound="timeout %d"; else bound=; fi; `+
+		`GIT_TERMINAL_PROMPT=0 $bound git -c http.lowSpeedLimit=1 -c http.lowSpeedTime=%d %s; rc=$?; `+
+		`if [ $rc -eq 124 ] || [ $rc -eq 143 ]; then echo "%s no answer within %ds" >&2; fi; (exit $rc); }`,
+		seconds, hqGitStallSeconds, args, hqNoAnswerMarker, seconds)
+}
+
+// HQGitNoAnswer reads, out of a git command's output, that HQGitBound ended
+// it: words says so ("no answer within 4m0s").
+func HQGitNoAnswer(output string) (words string, ok bool) {
+	words = markedLine(output, hqNoAnswerMarker)
+	return words, words != ""
+}
+
+// HQGitStalled reports whether a git command's output says the stall bound
+// ended its transfer: HQ stopped feeding it.
+func HQGitStalled(output string) bool { return strings.Contains(output, "Operation too slow") }
+
+// HQGitStallWords says the stall bound: what a stalled transfer met.
+func HQGitStallWords() string { return fmt.Sprintf("no progress for %ds", hqGitStallSeconds) }
+
 // BuildMateBranchCommand puts the pair's working copy on the Mate's own local
 // branch, SHARING its history with the repository's `main`.
 //
@@ -34,7 +81,7 @@ const deliveryBase = "main"
 // each decided from facts and each with one action:
 //
 //   - HEAD shares history with the base — descends from it, or is a history
-//     the base has since moved past, as a pair main's Gitea wired holds →
+//     the base has since moved past →
 //     only the branch is named, and the delivery takes the base in;
 //   - HEAD is only the `zcp init` marker (a parentless empty tree) → the
 //     branch is cut from the base, so whatever the base carries stays in the
@@ -71,8 +118,7 @@ func BuildMateBranchCommand(workingDir, branch string) string {
 	return strings.Join([]string{
 		"cd " + shellQuote(workingDir),
 		gitIdentityEnsureFragment(),
-		fmt.Sprintf("GIT_TERMINAL_PROMPT=0 git %s fetch --no-tags origin %s",
-			hqCredentialHelperArgs(), shellQuote(deliveryBase)),
+		hqGit(fmt.Sprintf("%s fetch --no-tags origin %s", hqCredentialHelperArgs(), shellQuote(deliveryBase))),
 		gitHeadEnsureFragment(),
 		"{ b=" + shellQuote(branch) + `; ref="refs/heads/$b"; cur=$(git symbolic-ref -q HEAD || true); ` +
 			`old=$(git rev-parse -q --verify "$ref" || true); ` +
@@ -120,7 +166,21 @@ const deliveryAheadMarker = "ZCP_AHEAD:"
 // ordinary take-`main`-in merge, so a squash of this Mate's own history does
 // not read as two unrelated histories that both add the same files (MB-26).
 func BuildDeliveryCommand(workingDir, message, landedCommit, landedHead string) string {
-	steps := []string{ //nolint:prealloc // clearer as a literal; one known append follows, not a growth loop
+	return strings.Join(append(deliveryCommitSteps(workingDir, message), deliverySyncSteps(landedCommit, landedHead, message)...), " && ")
+}
+
+// BuildDeliveryCommitCommand is BuildDeliveryCommand's commit alone — an
+// unignored dependency directory refused, the tree committed in message's
+// words — with nothing that reaches HQ, so a delivery commits its work before
+// it checks that HQ connects: the work is the checkout's own whether or not HQ
+// then answers. BuildDeliveryCommand after it commits nothing more.
+func BuildDeliveryCommitCommand(workingDir, message string) string {
+	return strings.Join(deliveryCommitSteps(workingDir, message), " && ")
+}
+
+// deliveryCommitSteps are the steps of a delivery's commit.
+func deliveryCommitSteps(workingDir, message string) []string {
+	return []string{
 		"cd " + shellQuote(workingDir),
 		gitIdentityEnsureFragment(),
 		`{ unignored=""; for d in node_modules vendor .venv; do if [ -d "$d" ] && ! git check-ignore -q "$d"; then unignored="$unignored $d"; fi; done; ` +
@@ -128,8 +188,6 @@ func BuildDeliveryCommand(workingDir, message, landedCommit, landedHead string) 
 		"git add -A",
 		fmt.Sprintf("(git diff --cached --quiet || git commit -q -m %s)", shellQuote(message)),
 	}
-	steps = append(steps, deliverySyncSteps(landedCommit, landedHead, message)...)
-	return strings.Join(steps, " && ")
 }
 
 // BuildDeliverySyncCommand catches a pair's own checkout up with `main` — and
@@ -157,7 +215,7 @@ func BuildDeliverySyncCommand(workingDir, landedCommit, landedHead string) strin
 func deliverySyncSteps(landedCommit, landedHead, message string) []string {
 	remoteBase := shellQuote("origin/" + deliveryBase)
 	return []string{
-		fmt.Sprintf("GIT_TERMINAL_PROMPT=0 git %s fetch --no-tags -q origin", hqCredentialHelperArgs()),
+		hqGit(hqCredentialHelperArgs() + " fetch --no-tags -q origin"),
 		BuildAbsorbLandedChangeCommand(landedCommit, landedHead),
 		// Already contains `main` → nothing to do. Otherwise merge it, and a
 		// collision only a person or the agent can settle leaves the checkout
@@ -179,8 +237,8 @@ func deliverySyncSteps(landedCommit, landedHead, message string) []string {
 // the Mate's open change — never to `main`, which only HQ's merge moves —
 // and makes it the local branch's upstream.
 func BuildChangePushCommand(workingDir, branch string) string {
-	return fmt.Sprintf("cd %s && GIT_TERMINAL_PROMPT=0 git %s push -u origin %s 2>&1",
-		shellQuote(workingDir), hqCredentialHelperArgs(), shellQuote("HEAD:refs/heads/"+branch))
+	return fmt.Sprintf("cd %s && %s 2>&1",
+		shellQuote(workingDir), hqGit(hqCredentialHelperArgs()+" push -u origin "+shellQuote("HEAD:refs/heads/"+branch)))
 }
 
 // BuildTakeChangeInCommand takes the branch of the Mate's open change, as HQ
@@ -197,10 +255,9 @@ func BuildTakeChangeInCommand(workingDir, branch string) string {
 	tracking := shellQuote("origin/" + branch)
 	return strings.Join([]string{
 		"cd " + shellQuote(workingDir),
-		fmt.Sprintf("{ GIT_TERMINAL_PROMPT=0 git %s ls-remote --exit-code --heads origin %s >/dev/null; held=$?;"+
-			" if [ $held -eq 2 ]; then exit 0; fi; [ $held -eq 0 ]; }", hqCredentialHelperArgs(), ref),
-		fmt.Sprintf("GIT_TERMINAL_PROMPT=0 git %s fetch --no-tags -q origin %s",
-			hqCredentialHelperArgs(), shellQuote("+refs/heads/"+branch+":refs/remotes/origin/"+branch)),
+		fmt.Sprintf("{ %s >/dev/null; held=$?;"+
+			" if [ $held -eq 2 ]; then exit 0; fi; [ $held -eq 0 ]; }", hqGit(hqCredentialHelperArgs()+" ls-remote --exit-code --heads origin "+ref)),
+		hqGit(hqCredentialHelperArgs() + " fetch --no-tags -q origin " + shellQuote("+refs/heads/"+branch+":refs/remotes/origin/"+branch)),
 		fmt.Sprintf("(git merge-base --is-ancestor %s HEAD"+
 			" || git merge --no-edit -q %s"+
 			" || (conflicts=$(git diff --name-only --diff-filter=U | tr '\\n' ' ');"+
@@ -251,11 +308,12 @@ func ChangePushRefusal(output string) string {
 }
 
 // GitRemoteUnavailable reports whether a git command's output says the remote
-// could not serve it now — not reached at all, or a 5xx such as HQ's standby
-// 503 (git prints the status without the Retry-After) — rather than refused
-// it: a delivery stopped by it is pending, never failed.
+// could not serve it now — not reached at all, no answer within HQGitBound, a
+// transfer it stopped feeding, or a 5xx such as HQ's standby 503 (git prints the status without the
+// Retry-After) — rather than refused it.
 func GitRemoteUnavailable(output string) bool {
-	return strings.Contains(output, "returned error: 5") ||
+	_, silent := HQGitNoAnswer(output)
+	return silent || HQGitStalled(output) || strings.Contains(output, "returned error: 5") ||
 		(strings.Contains(output, "unable to access") && !strings.Contains(output, "returned error: 4"))
 }
 

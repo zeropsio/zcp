@@ -4,12 +4,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
-	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -92,8 +89,8 @@ type shipOutcome struct {
 	line string
 	// upToDate: HQ says main already has the delivered tree; no change was opened or updated.
 	upToDate bool
-	// pending: HQ could not be reached; the delivery is recorded as owed.
-	pending bool
+	// unreachable: HQ could not serve a step after its tries (hq_retry.go).
+	unreachable bool
 	// unchanged: the change's branch already carried HEAD, so the push sent
 	// nothing.
 	unchanged bool
@@ -101,9 +98,10 @@ type shipOutcome struct {
 
 // shipChange asks HQ whether the committed tree differs from main. If it does,
 // the open change's branch is taken in, or a new change opened, and HEAD is
-// pushed to it. Nothing is opened for a tree HQ says main already has. An HQ that cannot
-// be reached leaves the delivery recorded as pending, for the next delivery,
-// push or pass to finish (SPEC §3.2a); a refusal is said, and drops it.
+// pushed to it. Nothing is opened for a tree HQ says main already has. A step
+// HQ cannot serve is tried as deliveryRetry paces it, then said; a refusal is
+// said at once. Either way the work stays committed in the checkout, for the
+// next delivery to send.
 func shipChange(
 	ctx context.Context,
 	sshDeployer ops.SSHDeployer,
@@ -117,19 +115,23 @@ func shipChange(
 		return shipOutcome{line: fmt.Sprintf("reading the delivered tree failed (%s)", gitPushErrorDetail(treeErr, treeOutput))}
 	}
 	tree := strings.TrimSpace(string(treeOutput))
-	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
-	opened, err := hqc.OpenChange(callCtx, m.HQ.Repo, title, tree)
-	cancel()
+	var (
+		opened hq.OpenedChange
+		err    error
+	)
+	tries := deliveryRetry.run(ctx, func() hqAnswer {
+		callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
+		opened, err = hqc.OpenChange(callCtx, m.HQ.Repo, title, tree)
+		cancel()
+		return hqCallAnswer(err)
+	})
 	if err != nil {
-		if hq.IsUnavailable(err) {
-			recordPendingDelivery(stateDir, m, title)
-			return shipOutcome{pending: true, line: fmt.Sprintf("HQ could not be reached to open its change (%v)", err)}
+		if hqUnavailable(err) {
+			return shipOutcome{unreachable: true, line: hqNotAnsweringLine(hqc.Address(), "opening its change", tries, hqNotServingWords(err))}
 		}
-		clearPendingDelivery(stateDir, m)
 		return shipOutcome{line: fmt.Sprintf("HQ refused to open a change on %q (%v)", m.HQ.Repo, err)}
 	}
 	if opened.Reason == "nothing_to_deliver" {
-		clearPendingDelivery(stateDir, m)
 		clearLanding(stateDir, m)
 		return shipOutcome{upToDate: true, line: "nothing to deliver: main already has this"}
 	}
@@ -147,36 +149,32 @@ func shipChange(
 
 	branch := hqc.ChangeBranch(change.Number)
 	if !opened.Created {
-		if stopped, ok := takeChangeIn(ctx, sshDeployer, stateDir, m, change.Number, branch, title); !ok {
+		if stopped, ok := takeChangeIn(ctx, sshDeployer, hqc, m, change.Number, branch); !ok {
 			return stopped
 		}
 	}
-	output, err := pushChangeBranch(ctx, sshDeployer, m.Hostname, branch)
+	output, tries, err := pushChangeBranch(ctx, sshDeployer, hqc, m.Hostname, branch)
 	if err != nil {
 		switch refusal := ops.ChangePushRefusal(string(output)); {
 		case refusal == "change_closed" || refusal == "unknown_change":
 			// It settled between the open and the push: the next delivery
 			// opens the next one.
 			clearChange(stateDir, m, change.Number)
-			recordPendingDelivery(stateDir, m, title)
-			return shipOutcome{pending: true, line: fmt.Sprintf("change #%d was merged or closed before its branch was pushed (%s)", change.Number, refusal)}
-		case ops.GitRemoteUnavailable(string(output)):
-			recordPendingDelivery(stateDir, m, title)
-			return shipOutcome{pending: true, line: fmt.Sprintf("HQ could not be reached to push %s (%s)", branch, gitPushErrorDetail(err, output))}
+			return shipOutcome{line: fmt.Sprintf("change #%d was merged or closed before its branch was pushed (%s); the next delivery opens the next change", change.Number, refusal)}
+		case gitHQUnavailable(err, output):
+			return shipOutcome{unreachable: true, line: hqNotAnsweringLine(hqc.Address(), "pushing "+branch, tries, gitNotServingWords(err, output))}
 		}
 		if cls := classifyTransportError(err, deployStrategyGitPush); cls != nil && cls.Category == topology.FailureClassCredential {
 			hqMarkPushRefused(stateDir, m)
 			return shipOutcome{line: fmt.Sprintf("HQ refused %s's push credential (%s). %s is marked as refused; the next stage deploy checks its credential against this Mate's current HQ credential again and delivers once it works — if HQ keeps refusing it, tell the person: this Mate's credential is HQ's to issue",
 				m.Hostname, gitPushErrorDetail(err, output), m.Hostname)}
 		}
-		clearPendingDelivery(stateDir, m)
 		return shipOutcome{line: fmt.Sprintf("pushing %s failed (%s)", branch, gitPushErrorDetail(err, output))}
 	}
 
 	// The push landed — whatever the landing needed (an absorb, or nothing),
-	// this delivery is done with it, and with any delivery still owed.
+	// this delivery is done with it.
 	clearLanding(stateDir, m)
-	clearPendingDelivery(stateDir, m)
 	described, note := putKeptChangeDescription(ctx, hqc, stateDir, m, change.Number)
 	return shipOutcome{unchanged: strings.Contains(string(output), "Everything up-to-date"), ref: &changeRef{
 		Repo:            m.HQ.Repo,
@@ -195,52 +193,49 @@ func shipChange(
 // HQ takes a change's branch only forward, and a commit on it the checkout
 // lacks — Core's own, or a checkout lost and made again — would refuse every
 // later push. ok is false with what stopped the delivery: a collision only
-// the agent can settle, an HQ that could not be reached (the delivery kept),
+// the agent can settle, an HQ that could not serve the read after its tries,
 // or a read that failed.
-func takeChangeIn(ctx context.Context, sshDeployer ops.SSHDeployer, stateDir string, m *workflow.ServiceMeta, number int, branch, title string) (shipOutcome, bool) {
-	output, err := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildTakeChangeInCommand(hqPairWorkingDir, branch))
+func takeChangeIn(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client, m *workflow.ServiceMeta, number int, branch string) (shipOutcome, bool) {
+	output, tries, err := gitAgainstHQ(ctx, sshDeployer, hqc, m.Hostname, ops.BuildTakeChangeInCommand(hqPairWorkingDir, branch))
 	if err == nil {
 		return shipOutcome{}, true
 	}
 	switch conflict := ops.DeliveryConflict(string(output)); {
 	case conflict != "":
-		clearPendingDelivery(stateDir, m)
 		return shipOutcome{line: fmt.Sprintf(
 			"change #%d has moved on in HQ and this Mate's work changes the same lines (%s) — in %s's checkout run `git fetch origin && git merge origin/%s` and resolve it",
 			number, conflict, m.Hostname, branch)}, false
-	case ops.GitRemoteUnavailable(string(output)):
-		recordPendingDelivery(stateDir, m, title)
-		return shipOutcome{pending: true, line: fmt.Sprintf("HQ could not be reached to read change #%d (%s)", number, gitPushErrorDetail(err, output))}, false
+	case gitHQUnavailable(err, output):
+		return shipOutcome{unreachable: true, line: hqNotAnsweringLine(hqc.Address(), fmt.Sprintf("reading change #%d", number), tries, gitNotServingWords(err, output))}, false
 	}
-	clearPendingDelivery(stateDir, m)
 	return shipOutcome{line: fmt.Sprintf("taking change #%d's branch in failed (%s)", number, gitPushErrorDetail(err, output))}, false
 }
 
-// pushChangeWaitBudget bounds how long a push waits out an HQ that answers
-// 503 — a standby while a deploy runs two HQs side by side for about 20 s,
-// which git reports without the Retry-After — before the delivery is pending.
-// Package-level so a test does not wait it out.
-var (
-	pushChangeWaitBudget = 20 * time.Second
-	pushChangeWait       = 5 * time.Second
-)
+// pushChangeBranch pushes the checkout's HEAD to branch, tried again while HQ
+// cannot serve it.
+func pushChangeBranch(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client, hostname, branch string) (output []byte, tries int, err error) {
+	return gitAgainstHQ(ctx, sshDeployer, hqc, hostname, ops.BuildChangePushCommand(hqPairWorkingDir, branch))
+}
 
-// pushChangeBranch pushes the checkout's HEAD to branch, trying again while
-// HQ answers 503, within pushChangeWaitBudget.
-func pushChangeBranch(ctx context.Context, sshDeployer ops.SSHDeployer, hostname, branch string) ([]byte, error) {
-	waited := time.Duration(0)
-	for {
-		output, err := sshDeployer.ExecSSH(ctx, hostname, ops.BuildChangePushCommand(hqPairWorkingDir, branch))
-		if err == nil || !strings.Contains(string(output), "returned error: 503") || waited+pushChangeWait > pushChangeWaitBudget {
-			return output, err
+// gitAgainstHQ runs command — git that reaches HQ — in hostname's checkout,
+// tried again as deliveryRetry paces it while HQ could not serve it
+// (hqGitAnswer). Each try first checks that HQ connects and serves
+// (hq.Client.Serving, bounded by deliveryBounds.connect), since git has no
+// connect bound of its own; a try whose check fails runs no git and returns
+// an hqPreflightError. Every such command is safe to run again: a commit
+// already made is not made twice, and a fetch, a merge already taken in or a
+// push already sent changes nothing.
+func gitAgainstHQ(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client, hostname, command string) (output []byte, tries int, err error) {
+	preflight := hqc.Bounded(deliveryBounds.connect, deliveryBounds.connect)
+	tries = deliveryRetry.run(ctx, func() hqAnswer {
+		if serving := preflight.Serving(ctx); serving != nil {
+			output, err = nil, &hqPreflightError{err: serving}
+			return hqNotServing
 		}
-		waited += pushChangeWait
-		select {
-		case <-ctx.Done():
-			return output, err
-		case <-time.After(pushChangeWait):
-		}
-	}
+		output, err = sshDeployer.ExecSSH(ctx, hostname, command)
+		return hqGitAnswer(err, output)
+	})
+	return output, tries, err
 }
 
 // recordChange stamps the change's number on the pair, in memory and on disk.
@@ -311,7 +306,7 @@ func changeOutcomeAfterOpen(note string) string {
 
 // deliveryLanding recovers the base of a legacy checkout whose local landing
 // was cleared by an earlier delivery. HQ owns the landing. An open change is
-// never cut; only an explicit delivery (or its owed continuation) uses this.
+// never cut; only an explicit delivery uses this.
 func deliveryLanding(stateDir string, m *workflow.ServiceMeta, state hq.MateState) {
 	if m.HQ.Change != 0 || m.HQ.Landed != nil {
 		return
@@ -384,109 +379,6 @@ func clearLanding(stateDir string, m *workflow.ServiceMeta) {
 		meta.HQ.Landed = nil
 		return nil
 	})
-}
-
-// recordPendingDelivery records that the pair owes a delivery HQ could not be
-// reached for, under title — kept from the first time it could not.
-func recordPendingDelivery(stateDir string, m *workflow.ServiceMeta, title string) {
-	if m.HQ.Pending != nil {
-		return
-	}
-	pending := &workflow.PendingDelivery{Title: title, Since: time.Now().UTC().Format(time.RFC3339)}
-	m.HQ.Pending = pending
-	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
-		if !existed || meta.HQ == nil || meta.HQ.Pending != nil {
-			return workflow.ErrSkipWrite
-		}
-		meta.HQ.Pending = pending
-		return nil
-	})
-}
-
-// clearPendingDelivery forgets a delivery owed, once one has reached HQ or HQ
-// refused it.
-func clearPendingDelivery(stateDir string, m *workflow.ServiceMeta) {
-	if m.HQ.Pending == nil {
-		return
-	}
-	m.HQ.Pending = nil
-	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
-		if !existed || meta.HQ == nil || meta.HQ.Pending == nil {
-			return workflow.ErrSkipWrite
-		}
-		meta.HQ.Pending = nil
-		return nil
-	})
-}
-
-// finishPendingDelivery finishes a delivery HQ could not be reached for,
-// without anyone asking (SPEC §3.2a): on a clean checkout of the Mate's
-// branch it takes `main` in — and a landing of its own change — and ships
-// what it then holds as the change, the way the delivery would have. A
-// checkout with work not committed, or on another branch, is left as it is:
-// the next delivery commits it and finishes the owed one with it. Returns
-// the line worth saying, "" while HQ still does not answer.
-func finishPendingDelivery(
-	ctx context.Context,
-	client platform.Client,
-	sshDeployer ops.SSHDeployer,
-	rt runtime.Info,
-	stateDir string,
-	hqc hq.Client,
-	m *workflow.ServiceMeta,
-) string {
-	if !checkoutOnMateBranch(ctx, sshDeployer, m) {
-		return ""
-	}
-	if err := hqEnsurePushCredential(ctx, client, sshDeployer, rt.ProjectID, stateDir, hqc, m); err != nil {
-		return ""
-	}
-	landedCommit, landedHead := landingOf(m)
-	output, err := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildDeliverySyncCommand(hqPairWorkingDir, landedCommit, landedHead))
-	_, found := ops.DeliveryAhead(string(output))
-	if err != nil || !found {
-		return ""
-	}
-	fresh := ""
-	if base := ops.DeliveryFreshBase(string(output)); base != "" {
-		fresh = "The next change starts from main at " + base + "; prior history is kept under refs/zcp/landed/" + landedCommit
-	}
-	say := func(line string) string {
-		if fresh == "" {
-			return line
-		}
-		return strings.TrimSpace(line + ". " + fresh)
-	}
-	shipped := shipChange(ctx, sshDeployer, stateDir, hqc, m, m.HQ.Pending.Title)
-	switch {
-	case shipped.ref != nil:
-		return say(fmt.Sprintf("the delivery HQ could not be reached for is done: %s is on %s, and change #%d (%s) carries it to %q",
-			m.Hostname, shipped.ref.Branch, shipped.ref.Number, shipped.ref.URL, hqBase))
-	case shipped.pending:
-		return fresh
-	case shipped.upToDate:
-		return say("the delivery HQ could not be reached for is done: " + shipped.line)
-	}
-	return say("the delivery HQ could not be reached for did not complete: " + shipped.line)
-}
-
-// checkoutOnMateBranch reports whether the pair's checkout is clean and on the
-// Mate's own branch — the state an owed delivery can finish on.
-func checkoutOnMateBranch(ctx context.Context, sshDeployer ops.SSHDeployer, m *workflow.ServiceMeta) bool {
-	if sshDeployer == nil || m == nil || m.HQ == nil || m.HQ.Branch == "" {
-		return false
-	}
-	status, err := sshDeployer.ExecSSH(ctx, m.Hostname, gitStatusPorcelainCmd(hqPairWorkingDir))
-	if err != nil || strings.TrimSpace(string(status)) != "" {
-		return false
-	}
-	branch, err := sshDeployer.ExecSSH(ctx, m.Hostname, gitCurrentBranchCmd(hqPairWorkingDir))
-	return err == nil && strings.TrimSpace(string(branch)) == m.HQ.Branch
-}
-
-// gitCurrentBranchCmd reads the branch name workingDir's HEAD is on.
-func gitCurrentBranchCmd(workingDir string) string {
-	return fmt.Sprintf(`git -C %s rev-parse --abbrev-ref HEAD 2>/dev/null`, ops.ShellQuote(workingDir))
 }
 
 // landingOf is the landing a pair records — S and H of the absorb — or two

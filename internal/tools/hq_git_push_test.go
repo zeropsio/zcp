@@ -4,12 +4,15 @@
 package tools
 
 import (
+	"net/http"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -76,6 +79,76 @@ func TestGitPushToHQ_DeliversCommittedWorkAsTheChange(t *testing.T) {
 	text = getTextContent(t, callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev", "strategy": "git-push"}))
 	if !strings.Contains(text, `"status":"NOTHING_TO_PUSH"`) || lab.hq.change(2) != nil {
 		t.Errorf("a second push of the same HEAD must find change #1 and push nothing:\n%s", text)
+	}
+}
+
+// TestGitPushToHQ_HQNotAnsweringFailsFast: a push HQ cannot serve fails as
+// the tool's error within the call, after three tries, saying the step, HQ's
+// address and the way on; the commit stays in the checkout, and pushing again
+// once HQ answers delivers it.
+func TestGitPushToHQ_HQNotAnsweringFailsFast(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	lab.write(map[string]string{"index.js": "the app\n"})
+	lab.commit("the app")
+	srv := lab.gitPushTool()
+
+	lab.hq.setDown(true)
+	result := callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev", "strategy": "git-push"})
+	text := getTextContent(t, result)
+	if !result.IsError {
+		t.Fatalf("a push HQ could not serve must be the tool's error:\n%s", text)
+	}
+	for _, want := range []string{
+		"git-push from appdev has not reached HQ",
+		"HQ at " + lab.hq.srv.URL + ` is not answering: taking \"main\" in failed after 3 tries (the last: `,
+		"the work stays committed in appdev's checkout, and pushing again delivers it",
+		"tell the person HQ is not answering",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the error misses %q:\n%s", want, text)
+		}
+	}
+
+	lab.hq.setDown(false)
+	text = getTextContent(t, callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev", "strategy": "git-push"}))
+	if !strings.Contains(text, `"status":"PUSHED"`) || lab.remoteHead("mate/p-mate/1") != lab.git("rev-parse", "HEAD") {
+		t.Errorf("pushing again once HQ answers must deliver the commit:\n%s", text)
+	}
+}
+
+// TestGitPushToHQ_CredentialProofHQNotAnsweringMarksNothing: a push whose
+// credential proof HQ does not serve is the tool's error, said as HQ not
+// answering — never as a refusal, and the pair's state is left as it was.
+func TestGitPushToHQ_CredentialProofHQNotAnsweringMarksNothing(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	lab.mock.WithServiceEnv("svc-appdev", []platform.ServiceEnvVar{{ID: "ud-git-token", Key: "GIT_TOKEN", Content: "a-credential-hq-revoked", Sensitive: true}})
+	lab.write(map[string]string{"index.js": "the app\n"})
+	lab.commit("the app")
+	lab.hq.answerWith(http.StatusBadGateway, "", 99, func(r *http.Request) bool {
+		return r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/info/refs")
+	})
+
+	result := callTool(t, lab.gitPushTool(), "zerops_deploy", map[string]any{"targetService": "appdev", "strategy": "git-push"})
+	text := getTextContent(t, result)
+	if !result.IsError {
+		t.Fatalf("want the tool's error:\n%s", text)
+	}
+	for _, want := range []string{
+		"git-push from appdev did not run",
+		"HQ at " + lab.hq.srv.URL + " is not answering: proving appdev's credential failed after 3 tries (the last: HQ answered 502 (not serving))",
+		"pushing again delivers it",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the error misses %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "refus") {
+		t.Errorf("an HQ that does not serve the proof never reads as refusing:\n%s", text)
+	}
+	if state := lab.meta().GitPushState; state != topology.GitPushConfigured {
+		t.Errorf("the pair's git-push state = %q, want it left configured", state)
 	}
 }
 

@@ -441,72 +441,59 @@ func TestBuildGitCredentialHelperAssertCommand(t *testing.T) {
 	})
 }
 
-// TestBuildDropCredentialHelperCommand: a pair whose GIT_TOKEN is about to
-// answer another host first loses the helper persisted for its old remote's
-// host, so the old remote — kept as zerops-original-origin — is never handed
-// the new credential. Any other host's helper stays.
-func TestBuildDropCredentialHelperCommand(t *testing.T) {
+// TestSessionGitTokenDigest_IsGitsBlobHash: the digest a fresh session prints
+// of its GIT_TOKEN is git's blob hash of it, which SecretDigest computes the
+// same — so a credential's arrival is checked without it on any command line.
+func TestSessionGitTokenDigest_IsGitsBlobHash(t *testing.T) {
 	t.Parallel()
-	requireGit(t)
-
-	devSession := map[string]string{"GIT_TOKEN": helperGitToken}
-	tests := []struct {
-		name  string
-		seed  string
-		old   string
-		ask   string
-		after bool // whether the old host is still answered
-	}{
-		{
-			name: "the old host's helper is gone",
-			seed: "git init -q && git config 'credential.https://gitea.example.invalid.helper' " + shellQuote(helperOldHelper),
-			old:  "https://gitea.example.invalid/acme/appdev.git",
-			ask:  "https://gitea.example.invalid/acme/appdev.git",
-		},
-		{
-			name: "under the port the old host named",
-			seed: "git init -q && git config 'credential.https://gitea.example.invalid:3000.helper' " + shellQuote(helperOldHelper),
-			old:  "https://gitea.example.invalid:3000/acme/appdev.git",
-			ask:  "https://gitea.example.invalid:3000/acme/appdev.git",
-		},
-		{
-			name:  "another host's helper stays",
-			seed:  "git init -q && git config 'credential.https://hq.example.invalid.helper' " + shellQuote(helperOldHelper),
-			old:   "https://gitea.example.invalid/acme/appdev.git",
-			ask:   helperHQRepo,
-			after: true,
-		},
-		{
-			name: "no helper for the old host: nothing to do",
-			seed: "git init -q",
-			old:  "https://gitea.example.invalid/acme/appdev.git",
-			ask:  "https://gitea.example.invalid/acme/appdev.git",
-		},
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			repo, home := t.TempDir(), t.TempDir()
-			if out, err := gitShell(t, repo, home, nil, "", tt.seed); err != nil {
-				t.Fatalf("seed: %v\n%s", err, out)
-			}
-			if out, err := gitShell(t, repo, home, nil, "", BuildDropCredentialHelperCommand(repo, tt.old)); err != nil {
-				t.Fatalf("drop: %v\n%s", err, out)
-			}
-			if _, _, answered := answeredCredential(t, repo, home, devSession, tt.ask); answered != tt.after {
-				t.Errorf("%s answered = %v, want %v", tt.ask, answered, tt.after)
-			}
-		})
+	for _, token := range []string{"the-mate-credential", "", "with spaces and ünïcode"} {
+		cmd := exec.CommandContext(t.Context(), "sh", "-c", BuildSessionGitTokenDigestCommand()) //nolint:gosec // G204: the command under test
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "GIT_TOKEN=" + token}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if got := strings.TrimSpace(string(out)); got != SecretDigest(token) {
+			t.Errorf("session digest of %q = %q, want %q", token, got, SecretDigest(token))
+		}
 	}
+	if strings.Contains(BuildSessionGitTokenDigestCommand(), "the-mate-credential") {
+		t.Error("the command must not carry the credential")
+	}
+}
 
-	t.Run("a service with no repository is left alone", func(t *testing.T) {
-		t.Parallel()
-		dir, home := t.TempDir(), t.TempDir()
-		if out, err := gitShell(t, dir, home, nil, "", BuildDropCredentialHelperCommand(dir, "https://gitea.example.invalid/acme/appdev.git")); err != nil {
-			t.Fatalf("drop on a service with no repository failed: %v\n%s", err, out)
+// TestGitCredentialRefused: a remote refusing the credential — git's own
+// "Authentication failed" for a 401, or a 401/403 status — and nothing else.
+func TestGitCredentialRefused(t *testing.T) {
+	t.Parallel()
+	for output, want := range map[string]bool{
+		"fatal: Authentication failed for 'https://hq.example/git/a1/appdev.git/'":                                  true,
+		"fatal: unable to access 'https://hq.example/git/a1/appdev.git/': The requested URL returned error: 403":    true,
+		"fatal: unable to access 'https://hq.example/git/a1/appdev.git/': The requested URL returned error: 401":    true,
+		"fatal: unable to access 'https://hq.example/git/a1/appdev.git/': The requested URL returned error: 502":    false,
+		"fatal: unable to access 'https://hq.example/git/a1/appdev.git/': Failed to connect to hq.example port 443": false,
+		"ZCP_HQ_NO_ANSWER: no answer within 15s":                                                                    false,
+		"remote: Repository not found.\nfatal: repository 'https://hq.example/git/a1/appdev.git/' not found":        false,
+	} {
+		if got := GitCredentialRefused(output); got != want {
+			t.Errorf("GitCredentialRefused(%q) = %v, want %v", output, got, want)
 		}
-		if _, err := os.Stat(filepath.Join(dir, ".git")); !os.IsNotExist(err) {
-			t.Errorf("the drop made a repository where there was none (stat err %v)", err)
-		}
-	})
+	}
+}
+
+// TestBuildGitSessionAuthProbeCommand_BoundedAgainstHQ: the probe of a remote
+// on this Mate's HQ runs under the bound every git against HQ runs under; a
+// remote of the user's own is probed as before.
+func TestBuildGitSessionAuthProbeCommand_BoundedAgainstHQ(t *testing.T) {
+	t.Parallel()
+	const hq = "https://hq.example"
+	if got := BuildGitSessionAuthProbeCommand(hq+"/git/a1/appdev.git", hq); !strings.Contains(got, "http.lowSpeedTime=10") || !strings.Contains(got, hqNoAnswerMarker) {
+		t.Errorf("the probe against HQ is not bounded:\n%s", got)
+	}
+	if got := BuildGitSessionAuthProbeCommand("https://github.com/o/r.git", hq); strings.Contains(got, "lowSpeed") {
+		t.Errorf("a probe of the user's own remote changed:\n%s", got)
+	}
 }

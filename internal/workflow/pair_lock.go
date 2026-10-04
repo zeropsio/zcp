@@ -17,9 +17,8 @@ var ErrPairBusy = errors.New("another process is running git on the pair's check
 // sequences on one checkout — a delivery's commit and another's merge of
 // `main` — can leave it half-merged, and git's own index.lock only catches
 // the moment they overlap. It is an exclusive file lock beside the pair's
-// meta, so it holds across the zcp of every agent and `zcp service mate`,
-// and between two holders in one process too: a holder must never take it
-// again while it has it.
+// meta, so it holds across the zcp of every agent, and between two holders
+// in one process too: a holder must never take it again while it has it.
 //
 // A holder waits up to wait for another to let go (0: not at all), then
 // gives up with ErrPairBusy; ctx ending gives up sooner. release lets go.

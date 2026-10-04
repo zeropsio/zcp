@@ -371,13 +371,6 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 				kept <- env()("PATH")
 			})
 			t.Cleanup(func() { service.SetMateHQKeep(keepNothing) })
-			// And keeps finishing the deliveries its agents owe HQ, over
-			// the same live store.
-			delivering := make(chan string, 1)
-			service.SetMateDeliveryKeep(func(_ context.Context, env func() func(string) string) {
-				delivering <- env()("PATH")
-			})
-			t.Cleanup(func() { service.SetMateDeliveryKeep(keepNothing) })
 			// Enrollment finishes before the seed, over the same live store.
 			enrolled := false
 			service.SetMateHQPrepare(func(_ context.Context, lookup func(string) string) error {
@@ -449,14 +442,6 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 				}
 			case <-time.After(2 * time.Second):
 				t.Error("the launch never started keeping the Mate enrolled with HQ")
-			}
-			select {
-			case got := <-delivering:
-				if got != tt.store["PATH"] {
-					t.Errorf("the delivery keep read the env %q, want the live store's", got)
-				}
-			case <-time.After(2 * time.Second):
-				t.Error("the launch never started finishing the deliveries owed to HQ")
 			}
 			if !slices.Contains(gotEnv, "T3CODE_ZEROPS_HQ_ENROLLMENT="+filepath.Join(home, ".zcp", "hq", "enrollment.json")) {
 				t.Errorf("launch env %q must name the HQ enrollment the server links with", gotEnv)

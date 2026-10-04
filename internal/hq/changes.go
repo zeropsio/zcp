@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // A Mate's changes in HQ (@t3tools/shared/hqChanges, which zcp reads as the
@@ -41,6 +42,50 @@ func Open(httpClient Doer, path string) (Client, error) {
 		return Client{}, ErrNotEnrolled
 	}
 	return Client{call: hqClient{http: httpClient, address: kept.HQ}, enrollment: kept}, nil
+}
+
+// Once is this client sending each call once: a 503 is UnavailableError at
+// once rather than waited out, for a caller that paces its own tries — a
+// delivery, which fails fast rather than waiting HQ out.
+func (c Client) Once() Client {
+	c.call.once = true
+	return c
+}
+
+// Bounded is this client ending each try of a call that has no connection
+// within connect, TLS included, or no answer within answer, as an
+// UnavailableError carrying a NoAnswerError — for a caller that fails fast
+// rather than leave a call to the Doer's own, longer, timeouts. The connect
+// bound reads the connection from net/http's trace.
+func (c Client) Bounded(connect, answer time.Duration) Client {
+	c.call.connect, c.call.answer = connect, answer
+	return c
+}
+
+// Serving asks whether HQ connects and serves at its address now — one HEAD
+// of its root under the client's bounds, the preflight a caller runs before
+// git against HQ, which has no connect bound of its own. Any answer below
+// 500 is HQ serving; a 5xx is a RefusedError (503 an UnavailableError), and
+// no answer an UnavailableError, as any call's would be.
+func (c Client) Serving(ctx context.Context) error {
+	try, connected, release := c.call.bounded(ctx)
+	defer release()
+	req, err := http.NewRequestWithContext(try, http.MethodHead, c.Address()+"/", nil)
+	if err != nil {
+		return fmt.Errorf("hq /: %w", err)
+	}
+	resp, err := c.call.http.Do(req)
+	if err != nil {
+		return &UnavailableError{Err: c.call.unanswered(ctx, try, connected, "/", fmt.Errorf("hq /: %w", err))}
+	}
+	_ = resp.Body.Close()
+	switch {
+	case resp.StatusCode == http.StatusServiceUnavailable:
+		return &UnavailableError{}
+	case resp.StatusCode >= http.StatusInternalServerError:
+		return &RefusedError{Status: resp.StatusCode}
+	}
+	return nil
 }
 
 // Repo is a repository HQ keeps for an application, served at
