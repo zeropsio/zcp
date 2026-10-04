@@ -2775,9 +2775,14 @@ still-open changes the person wants included; a blocked review names its unmet r
 It never recommends launch-production or tag-consuming CI for HQ.
 `TestHandleRelease_HQExplainsProductionWithoutLegacyPipelineAdvice` covers both missing and stale
 legacy launch records. Nothing has been released by this tool.
-Outside HQ the existing source-side release route stays
-available. `TestHandleRelease_HQHandsOffBeforeLegacyPreflight`,
-`TestHandleRelease_AWiredPairHandsOff`.
+Outside HQ the source-side release route verifies a clean tree and pushed HEAD. Pass `service`
+without `releaseVersion` to receive `status="release-prompt"`, the next `vX.Y.Z` suggestion derived
+from remote tags, and the exact confirmation call. After the user confirms, re-call with
+`releaseVersion` to tag and push that verified HEAD; the tag fires the production pipeline.
+The input schema keeps the HQ/outside-HQ distinction and call prerequisites concise; the release
+results carry the full walkthrough when requested, rather than paying for it on every `tools/list`.
+`TestHandleRelease_HQHandsOffBeforeLegacyPreflight`, `TestHandleRelease_AWiredPairHandsOff`, and
+`TestHandleRelease_PromptSuggestsNextVersion` cover these routes.
 
 ### 10.11 Environments, the Git tab, release
 

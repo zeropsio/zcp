@@ -92,7 +92,10 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// one new input: a Mate proposes a service's scale into the group
 		// recipe's tiers. The steer naming the call reaches the Mate in
 		// zerops_scale's answer, not here.
-		"zerops_workflow":    18697,
+		// Lowered 18697→18662: release walkthroughs live in the on-demand
+		// release prompt/handoff and docs/spec-mate.md §10.10; the schema
+		// retains the HQ boundary and confirmation prerequisites.
+		"zerops_workflow":    18662,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services
