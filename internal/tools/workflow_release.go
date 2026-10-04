@@ -164,7 +164,8 @@ func hqReleaseHandoff() *mcp.CallToolResult {
 	return jsonResult(map[string]string{
 		"status":   "release-person-required",
 		"message":  "A release is a person's action in Mate. HQ Core creates the application's release; this tool cannot push release tags to HQ.",
-		"nextStep": "Tell the person: open this Mate's application on Mate's projects page, choose Review release, review what it carries, then press Release with the version shown. Nothing has been released by this tool.",
+		"pipeline": "HQ Core deploys production from the application's approved releases. Production setup and release readiness are read in Mate; this tool has not checked them.",
+		"nextStep": "Tell the person: open this Mate's application on Mate's projects page. If production is missing, choose Add production. For any changes you want included that are still open, review them and press Merge. Then choose Review release, review what it carries, and press Release with the version shown. If the review is blocked, Mate names what needs doing first. Nothing has been released by this tool.",
 	})
 }
 

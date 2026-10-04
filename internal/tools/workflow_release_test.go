@@ -250,3 +250,47 @@ func TestHandleRelease_HQHandsOffBeforeLegacyPreflight(t *testing.T) {
 		})
 	}
 }
+
+// Non-parallel: isolates the enrollment path via HOME.
+func TestHandleRelease_HQExplainsProductionWithoutLegacyPipelineAdvice(t *testing.T) {
+	for _, launches := range []struct {
+		name string
+		refs []workflow.ProdLaunchRef
+	}{
+		{name: "no legacy production launch"},
+		{name: "stale legacy production launch", refs: []workflow.ProdLaunchRef{{ProdProjectID: "old-prod", ProdHostname: "weather"}}},
+	} {
+		t.Run(launches.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: "https://hq.example", ProjectID: "p1", Credential: "test-credential"}); err != nil {
+				t.Fatal(err)
+			}
+			stateDir := t.TempDir()
+			seedReleaseMeta(t, stateDir, launches.refs)
+			result, _, err := handleRelease(context.Background(), nil, WorkflowInput{Service: "weather"}, stateDir, runtime.Info{InContainer: true})
+			if err != nil || result == nil || result.IsError {
+				t.Fatalf("expected person handoff, got result=%+v err=%v", result, err)
+			}
+			var body map[string]string
+			text := extractText(result)
+			if err := json.Unmarshal([]byte(text), &body); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"HQ Core", "approved releases", "has not checked"} {
+				if !strings.Contains(body["pipeline"], want) {
+					t.Errorf("pipeline missing %q: %s", want, body["pipeline"])
+				}
+			}
+			for _, want := range []string{"Add production", "Merge", "Review release", "Release"} {
+				if !strings.Contains(body["nextStep"], want) {
+					t.Errorf("nextStep missing %q: %s", want, body["nextStep"])
+				}
+			}
+			for _, unwanted := range []string{"No production launch is recorded", "launch-production", "CI", "Actions", "releaseVersion", "re-call", "git tag"} {
+				if strings.Contains(text, unwanted) {
+					t.Errorf("HQ handoff gives legacy recovery advice %q: %s", unwanted, text)
+				}
+			}
+		})
+	}
+}
