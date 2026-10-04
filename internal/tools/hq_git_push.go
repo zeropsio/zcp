@@ -20,7 +20,8 @@ import (
 // pushes to never shows a false conflict), the change opened when the
 // checkout is ahead of `main`, and HEAD pushed to its branch. A REAL conflict
 // stops it: pushing on top of a checkout the sync left mid-way is never
-// right. Nothing builds from the change.
+// right. Nothing builds from the change. A push that does not reach HQ is
+// the tool's error, and a line on stderr.
 func handleHQGitPush(
 	ctx context.Context,
 	client platform.Client,
@@ -40,6 +41,13 @@ func handleHQGitPush(
 			"Deploy the pair directly (strategy \"ssh\") to run the code; the push goes to its change once HQ gives the pair its repository.",
 		), WithRecoveryStatus())
 	}
+	// The push paces its own tries (deliveryRetry), so no call waits HQ out
+	// beneath them.
+	hqc = hqc.Once()
+	failed := func(pe *platform.PlatformError) *mcp.CallToolResult {
+		logDeliveryFailure(hostname, pe.Message)
+		return convertError(pe, WithRecoveryStatus())
+	}
 
 	// What became of the change on record is news independent of this
 	// push's own outcome, and folded into every answer from here.
@@ -56,11 +64,11 @@ func handleHQGitPush(
 	}
 
 	landedCommit, landedHead := landingOf(meta)
-	output, err := sshDeployer.ExecSSH(ctx, hostname, ops.BuildDeliverySyncCommand(workingDir, landedCommit, landedHead))
+	output, tries, err := gitAgainstHQ(ctx, sshDeployer, hostname, ops.BuildDeliverySyncCommand(workingDir, landedCommit, landedHead))
 	if refusal := hqPushSyncRefusal(string(output), hostname, landedCommit); refusal != nil {
 		recordAttempt("hq landing absorb: "+refusal.Message, topology.FailureClassConfig)
 		refusal.Message = withLearned(refusal.Message)
-		return convertError(refusal, WithRecoveryStatus())
+		return failed(refusal)
 	}
 	if base := ops.DeliveryFreshBase(string(output)); base != "" {
 		learned = withLearned("The next change starts from main at " + base + "; prior history is kept under refs/zcp/landed/" + landedCommit)
@@ -69,34 +77,34 @@ func handleHQGitPush(
 	if err != nil || !found {
 		detail := gitPushErrorDetail(err, output)
 		if ops.GitRemoteUnavailable(string(output)) {
-			recordPendingDelivery(stateDir, meta, changeTitle(stateDir, meta))
 			recordAttempt("HQ unavailable: "+detail, topology.FailureClassNetwork)
-			return convertError(platform.NewPlatformError(
+			return failed(platform.NewPlatformError(
 				platform.ErrSSHDeployFailed,
-				withLearned(fmt.Sprintf("git-push from %s has not reached HQ: HQ could not be reached (%s). The delivery is kept and finishes by itself once HQ answers.", hostname, detail)),
-				"Nothing for the person to do; the next stage deploy, push or pass finishes it.",
-			), WithRecoveryStatus())
+				withLearned(fmt.Sprintf("git-push from %s has not reached HQ: %s.", hostname,
+					hqUnreachableLine(hqc.Address(), fmt.Sprintf("take %q in", hqBase), tries, detail))),
+				hqNotAnswering(hostname, "pushing again"),
+			))
 		}
 		recordAttempt("taking main in failed: "+detail, topology.FailureClassNetwork)
-		return convertError(platform.NewPlatformError(
+		return failed(platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
 			withLearned(fmt.Sprintf("git-push from %s has not reached HQ: taking %q in failed (%s).", hostname, hqBase, detail)),
 			"Fix the cause named above, then push again.",
-		), WithRecoveryStatus())
+		))
 	}
 
 	shipped := shipChange(ctx, sshDeployer, stateDir, hqc, meta, changeTitle(stateDir, meta))
 	if shipped.ref == nil && !shipped.upToDate {
 		recordAttempt("change not shipped: "+shipped.line, topology.FailureClassNetwork)
 		next := "Fix the cause named above, then push again."
-		if shipped.pending {
-			next = "Nothing for the person to do; the delivery is kept and the next stage deploy, push or pass finishes it once HQ answers."
+		if shipped.unreachable {
+			next = hqNotAnswering(hostname, "pushing again")
 		}
-		return convertError(platform.NewPlatformError(
+		return failed(platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
 			withLearned(fmt.Sprintf("git-push from %s has not reached HQ: %s.", hostname, shipped.line)),
 			next,
-		), WithRecoveryStatus())
+		))
 	}
 
 	result := &ops.GitPushResult{Status: "PUSHED", RemoteURL: remote}

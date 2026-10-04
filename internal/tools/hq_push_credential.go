@@ -22,10 +22,10 @@ import (
 // after that every push and fetch the dev container made would be refused.
 //
 // hqEnsurePushCredential keeps the copy at the current credential, and it
-// runs where the copy is used: before a delivery, before a git-push to HQ,
-// and before a pass finishes a delivery owed. The same step re-asserts the
-// repository's persisted credential helper, so a pair wired before the Mate's
-// own shell could authenticate heals on its next delivery.
+// runs where the copy is used: before a delivery and before a git-push to HQ.
+// The same step re-asserts the repository's persisted credential helper, so a
+// pair wired before the Mate's own shell could authenticate heals on its next
+// delivery.
 
 // hqEnsurePushCredential brings a wired pair's push credential to this Mate's
 // current credential and proves a fresh session authenticates with it before

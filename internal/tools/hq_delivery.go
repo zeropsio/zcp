@@ -138,6 +138,13 @@ type hqDelivery struct {
 	// shipped: the delivery went as far as shipping its change, which the
 	// group's recipe follows.
 	shipped bool
+	// failed: the work did not reach HQ.
+	failed bool
+}
+
+// notDelivered is a delivery whose work did not reach HQ, said in line.
+func notDelivered(line string) *hqDelivery {
+	return &hqDelivery{Line: line, failed: true}
 }
 
 // deliverHQPair is how a wired pair's work reaches its application without
@@ -152,7 +159,8 @@ type hqDelivery struct {
 // Nil when there is nothing to deliver: a Mate not enrolled with an HQ, no
 // wired pair behind the target, not its stage half, not in a container.
 // Otherwise a line for the deploy's next actions, a failed delivery included
-// — the deploy itself succeeded either way.
+// — the deploy itself succeeded either way, and a failed delivery is also a
+// line on stderr.
 func deliverHQPair(
 	ctx context.Context,
 	client platform.Client,
@@ -162,6 +170,9 @@ func deliverHQPair(
 	stateDir, target string,
 ) *hqDelivery {
 	delivery := deliverHeldHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, target)
+	if delivery != nil && delivery.failed {
+		logDeliveryFailure(target, delivery.Line)
+	}
 	// The recipe reads the project and HQ, never the checkout, so it runs
 	// once the delivery has let go of it.
 	if delivery != nil && delivery.shipped {
@@ -195,11 +206,14 @@ func deliverHeldHQPair(
 	if !enrolled {
 		return nil
 	}
+	// The delivery paces its own tries (deliveryRetry), so no call waits HQ
+	// out beneath them.
+	hqc = hqc.Once()
 	release, err := holdPairCheckout(ctx, stateDir, meta.Hostname)
 	if err != nil {
-		return &hqDelivery{Line: fmt.Sprintf(
+		return notDelivered(fmt.Sprintf(
 			"%s runs, but its code has not reached HQ: %s. Nothing of it was committed or pushed; the next stage deploy delivers it.",
-			target, pairHeldReason(meta.Hostname, err))}
+			target, pairHeldReason(meta.Hostname, err)))
 	}
 	defer release()
 	// A stage deploy is a delivery whether or not a pass has run since the
@@ -230,9 +244,9 @@ func deliverHeldHQPair(
 		case state.AppID != nil && *state.AppID != meta.HQ.AppID:
 			attempt := rewireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, meta, meta.HQ.Repo)
 			if !attempt.wired {
-				return &hqDelivery{Line: fmt.Sprintf(
+				return notDelivered(fmt.Sprintf(
 					"%s runs, but its code has not reached HQ: HQ holds this Mate in another application now, and wiring %s's repository there did not complete — %s",
-					target, meta.Hostname, attempt.line)}
+					target, meta.Hostname, attempt.line))
 			}
 			news = append(news, attempt.line)
 			if meta, _ = workflow.FindServiceMeta(stateDir, target); !hqPairWired(meta) {
@@ -249,19 +263,16 @@ func deliverHeldHQPair(
 	repo := meta.HQ.Repo
 	landedCommit, landedHead := landingOf(meta)
 	if err := hqEnsurePushCredential(ctx, client, sshDeployer, rt.ProjectID, stateDir, hqc, meta); err != nil {
-		return &hqDelivery{Line: fmt.Sprintf(
+		return notDelivered(fmt.Sprintf(
 			"%s runs, but its code has not reached its repository %q in HQ: %v. %s is marked as refused; the next stage deploy checks its credential against this Mate's current HQ credential again and delivers once it works — if HQ keeps refusing it, tell the person: this Mate's credential is HQ's to issue.",
-			target, repo, err, meta.Hostname)}
+			target, repo, err, meta.Hostname))
 	}
 
 	title := changeTitle(stateDir, meta)
-	if pending := meta.HQ.Pending; pending != nil && workSessionIntent(stateDir) == "" {
-		title = pending.Title
-	}
-	output, err := sshDeployer.ExecSSH(ctx, meta.Hostname,
+	output, tries, err := gitAgainstHQ(ctx, sshDeployer, meta.Hostname,
 		ops.BuildDeliveryCommand(hqPairWorkingDir, title, landedCommit, landedHead))
 	if line := deliveryRefusalLine(string(output), target, repo, meta.Hostname, landedCommit); line != "" {
-		return &hqDelivery{Line: line}
+		return notDelivered(line)
 	}
 	if base := ops.DeliveryFreshBase(string(output)); base != "" {
 		news = append(news, "The next change starts from main at "+base+"; prior history is kept under refs/zcp/landed/"+landedCommit)
@@ -269,20 +280,18 @@ func deliverHeldHQPair(
 	_, found := ops.DeliveryAhead(string(output))
 	if err != nil || !found {
 		if ops.GitRemoteUnavailable(string(output)) {
-			recordPendingDelivery(stateDir, meta, title)
-			return &hqDelivery{Line: fmt.Sprintf(
-				"%s runs; its code is committed in %s's checkout, but HQ could not be reached (%s). The delivery is kept and finishes by itself once HQ answers — on the next stage deploy, push or pass; nothing for the person to do.",
-				target, meta.Hostname, gitPushErrorDetail(err, output))}
+			return notDelivered(hqUnreachableDelivery(target, meta.Hostname,
+				hqUnreachableLine(hqc.Address(), fmt.Sprintf("take %q in", hqBase), tries, gitPushErrorDetail(err, output))))
 		}
 		if cls := classifyTransportError(err, deployStrategyGitPush); cls != nil && cls.Category == topology.FailureClassCredential {
 			hqMarkPushRefused(stateDir, meta)
-			return &hqDelivery{Line: fmt.Sprintf(
+			return notDelivered(fmt.Sprintf(
 				"%s runs, but its code has not reached its repository %q in HQ: HQ refused %s's credential (%s). %s is marked as refused; the next stage deploy checks its credential against this Mate's current HQ credential again and delivers once it works — if HQ keeps refusing it, tell the person: this Mate's credential is HQ's to issue.",
-				target, repo, meta.Hostname, gitPushErrorDetail(err, output), meta.Hostname)}
+				target, repo, meta.Hostname, gitPushErrorDetail(err, output), meta.Hostname))
 		}
-		return &hqDelivery{Line: fmt.Sprintf(
+		return notDelivered(fmt.Sprintf(
 			"%s runs, but its code has not reached its repository %q in HQ: committing it and taking %q in failed (%s). Fix the cause, then deploy %s again — the change follows that deploy.",
-			target, repo, hqBase, gitPushErrorDetail(err, output), target)}
+			target, repo, hqBase, gitPushErrorDetail(err, output), target))
 	}
 
 	shipped := shipChange(ctx, sshDeployer, stateDir, hqc, meta, title)
@@ -296,16 +305,21 @@ func deliverHeldHQPair(
 		result.Line = fmt.Sprintf(
 			"%s runs; nothing to deliver: main already has this. No change was opened or updated in its repository %q in HQ.",
 			target, repo)
-	case shipped.pending:
-		result.Line = fmt.Sprintf(
-			"%s runs; its code is committed in %s's checkout, but %s. The delivery is kept and finishes by itself once HQ answers — on the next stage deploy, push or pass; nothing for the person to do.",
-			target, meta.Hostname, shipped.line)
+	case shipped.unreachable:
+		result.Line, result.failed = hqUnreachableDelivery(target, meta.Hostname, shipped.line), true
 	default:
-		result.Line = fmt.Sprintf("%s runs, but its code has not reached its repository %q in HQ: %s. Fix the cause, then deploy %s again — the change follows that deploy.",
-			target, repo, shipped.line, target)
+		result.Line, result.failed = fmt.Sprintf("%s runs, but its code has not reached its repository %q in HQ: %s. Fix the cause, then deploy %s again — the change follows that deploy.",
+			target, repo, shipped.line, target), true
 	}
 	result.shipped = true
 	return result
+}
+
+// hqUnreachableDelivery is a stage deploy's line for a delivery HQ could not
+// serve after its tries, why naming the step (hqUnreachableLine).
+func hqUnreachableDelivery(target, hostname, why string) string {
+	return fmt.Sprintf("%s runs, but its code has not reached HQ: %s. %s",
+		target, why, hqNotAnswering(hostname, "deploying "+target+" again"))
 }
 
 // deliveryRefusalLine is the line for a delivery its git refused by name — a

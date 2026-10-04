@@ -183,10 +183,6 @@ type HQRepoRef struct {
 	// it, so the ordinary take-`main`-in merge alone reads it as two
 	// histories that both add the same files (MB-26).
 	Landed *LandedChange `json:"landed,omitempty"`
-	// Pending is a delivery HQ did not refuse but could not be reached for —
-	// its change not opened, or its branch not pushed — which a later pass
-	// finishes once HQ answers (SPEC §3.2a). nil when none waits.
-	Pending *PendingDelivery `json:"pending,omitempty"`
 	// ChangeDescription is what the Mate wrote about its change while no
 	// change could take it yet — none was open, or HQ did not take the edit.
 	// It is there only until a change carries it, and never longer than the
@@ -216,15 +212,6 @@ type LandedChange struct {
 	// BuildAbsorbLandedChangeCommand, i.e. what this Mate's own checkout was
 	// at the moment of the landing.
 	Head string `json:"head"`
-}
-
-// PendingDelivery is a delivery waiting for HQ to answer.
-type PendingDelivery struct {
-	// Title is the change's title as the delivery named it: the work session
-	// that named it may be over by the pass that finishes it.
-	Title string `json:"title"`
-	// Since is when the delivery could not reach HQ, RFC3339.
-	Since string `json:"since"`
 }
 
 // PublicAccessFor returns the persisted public-access record for hostname —

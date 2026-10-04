@@ -1347,3 +1347,46 @@ func TestServiceMeta_Repo_NilByDefault(t *testing.T) {
 		t.Errorf("Repo = %+v, want nil for a meta with no adopt baseline recorded", meta.Repo)
 	}
 }
+
+// TestUpsertServiceMeta_LegacyPendingDelivery_IsDropped: a pair record from
+// before deliveries failed fast may still name a delivery owed to HQ
+// (`hq.pending`). It reads as it did otherwise, and its next write leaves the
+// owed delivery out: nothing finishes it any more, and its work is committed
+// in the checkout, which the pair's next delivery sends (spec-mate §10.10).
+func TestUpsertServiceMeta_LegacyPendingDelivery_IsDropped(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	legacy := `{"hostname":"appdev","mode":"standard","stageHostname":"appstage","bootstrapSession":"s","bootstrappedAt":"2026-10-02",` +
+		`"hq":{"appId":"app-1","repo":"appdev","branch":"mate/p-mate","change":3,"pending":{"title":"Add a footer","since":"2026-10-03T10:00:00Z"}}}`
+	path := filepath.Join(dir, "services", "appdev.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	meta, err := ReadServiceMeta(dir, "appdev")
+	if err != nil || meta == nil || meta.HQ == nil || meta.HQ.Repo != "appdev" || meta.HQ.Change != 3 {
+		t.Fatalf("the legacy record reads as %+v, %v; want its HQ record", meta, err)
+	}
+	if err := UpsertServiceMeta(dir, "appdev", func(m *ServiceMeta, _ bool) error {
+		m.HQ.Change = 4
+		return nil
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	var raw struct {
+		HQ map[string]json.RawMessage `json:"hq"`
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, kept := raw.HQ["pending"]; kept || string(raw.HQ["change"]) != "4" {
+		t.Errorf("the record after its next write = %s; want the owed delivery gone and the write applied", data)
+	}
+}

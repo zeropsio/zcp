@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -146,50 +147,123 @@ func TestAStageDeployWithNothingBeyondMainOpensNoChange(t *testing.T) {
 	}
 }
 
-// TestADeliveryHQCouldNotReachIsFinishedByAPass: a delivery HQ did not
-// refuse, only could not be reached for, is kept as pending, and the next
-// pass finishes it once HQ answers — no one has to deploy again (SPEC
-// §3.2a, §6.2.3).
-func TestADeliveryHQCouldNotReachIsFinishedByAPass(t *testing.T) {
+// TestADeliveryHQCannotReachFailsFast: HQ not answering at all fails the
+// delivery within the call — taking main in tried three times, 1 s and 3 s
+// apart — saying the step, HQ's address, the last error and the way on. The
+// work stays committed in the checkout, nothing asks HQ again once the call
+// has returned, and the next delivery once HQ answers sends it (spec-mate
+// §10.10).
+func TestADeliveryHQCannotReachFailsFast(t *testing.T) {
 	lab := newHQLab(t)
 	lab.wire()
 	startSession(t, lab.stateDir, "Add a footer")
 	lab.write(map[string]string{"footer.js": "the footer\n"})
 
 	lab.hq.setDown(true)
+	const fetch = "GET /git/" + labApp + "/appdev.git/info/refs"
+	fetches := lab.hq.callCount(fetch)
 	delivery := lab.deliver()
-	if delivery == nil || delivery.Change != nil || !strings.Contains(delivery.Line, "finishes by itself once HQ answers") {
-		t.Fatalf("want a pending delivery, got %+v", delivery)
+	if delivery == nil || delivery.Change != nil {
+		t.Fatalf("want a failed delivery, got %+v", delivery)
 	}
-	if pending := lab.meta().HQ.Pending; pending == nil || pending.Title != "Add a footer" {
-		t.Fatalf("the pending delivery = %+v, want it titled with the task", pending)
+	for _, want := range []string{
+		"appstage runs, but its code has not reached HQ",
+		"HQ at " + lab.hq.srv.URL + ` could not be reached to take "main" in (3 tries; the last: `,
+		"the work stays committed in appdev's checkout, and deploying appstage again delivers it",
+		"tell the person HQ is not answering",
+	} {
+		if !strings.Contains(delivery.Line, want) {
+			t.Errorf("the line misses %q:\n%s", want, delivery.Line)
+		}
+	}
+	if got := lab.hq.callCount(fetch) - fetches; got != 3 {
+		t.Errorf("HQ was asked for main %d times, want 3", got)
+	}
+	if want := []time.Duration{time.Second, 3 * time.Second}; !slices.Equal(lab.waits, want) {
+		t.Errorf("waits = %v, want %v", lab.waits, want)
 	}
 	if got := lab.git("log", "-1", "--format=%s"); got != "Add a footer" {
 		t.Errorf("the work is committed in the checkout even while HQ is away, HEAD reads %q", got)
 	}
 
-	// A pass while HQ is still away changes nothing and says nothing.
-	elapseHQBackoff(t, lab.stateDir)
-	if report := lab.wire(); len(report) != 0 {
-		t.Errorf("a pass while HQ is away says %q", report)
+	// Nothing asks HQ again once the call has returned.
+	asked := lab.hq.callTotal()
+	time.Sleep(200 * time.Millisecond)
+	if got := lab.hq.callTotal(); got != asked {
+		t.Errorf("HQ was asked %d more times after the delivery returned", got-asked)
 	}
 
 	lab.hq.setDown(false)
-	_ = workflow.DeleteWorkSession(lab.stateDir, os.Getpid())
-	elapseHQBackoff(t, lab.stateDir)
-	report := lab.wire()
-	if len(report) != 1 || !strings.Contains(report[0], "is done") || !strings.Contains(report[0], "change #1") {
-		t.Fatalf("report = %q, want the pending delivery done", report)
+	again := lab.deliver()
+	if again == nil || again.Change == nil || again.Change.Number != 1 {
+		t.Fatalf("the next delivery = %+v, want change #1", again)
 	}
-	change := lab.hq.change(1)
-	if change == nil || change.Title != "Add a footer" {
-		t.Fatalf("change #1 = %+v, want it opened under the delivery's own title", change)
+	if change := lab.hq.change(1); change == nil || change.Title != "Add a footer" {
+		t.Errorf("change #1 = %+v, want it titled with the task", change)
 	}
 	if head := lab.remoteHead("mate/p-mate/1"); head != lab.git("rev-parse", "HEAD") {
 		t.Errorf("change #1's branch is at %q, want the checkout's HEAD", head)
 	}
-	if hqRecord := lab.meta().HQ; hqRecord.Pending != nil || hqRecord.Change != 1 {
-		t.Errorf("the pair's record = %+v, want change #1 and nothing pending", hqRecord)
+}
+
+// TestADeliveryTriesHQOnlyWhileItCannotServe: opening the change is tried
+// again only while HQ cannot serve it — a standby's 503, or the balancer's
+// 502 for an HQ that is down — three times at most, 1 s and 3 s apart; a
+// refusal fails at once, and an HQ that answers on a later try delivers.
+func TestADeliveryTriesHQOnlyWhileItCannotServe(t *testing.T) {
+	opening := func(r *http.Request) bool {
+		return r.Method == http.MethodPost && r.URL.Path == "/api/mate/changes"
+	}
+	tests := []struct {
+		name      string
+		status    int
+		code      string
+		failing   int
+		wantOpens int
+		wantWaits []time.Duration
+		wantLine  string // after HQ's address, when it names it
+		delivered bool
+	}{
+		{"a standby throughout", http.StatusServiceUnavailable, "not_active", 3, 3,
+			[]time.Duration{time.Second, 3 * time.Second}, " could not be reached to open its change (3 tries; the last: hq unavailable: not_active)", false},
+		{"the balancer's 502 throughout", http.StatusBadGateway, "", 3, 3,
+			[]time.Duration{time.Second, 3 * time.Second}, " could not be reached to open its change (3 tries; the last: hq refused: 502", false},
+		{"a refusal", http.StatusForbidden, "forbidden", 1, 1,
+			nil, `HQ refused to open a change on "appdev"`, false},
+		{"answered on the second try", http.StatusServiceUnavailable, "not_active", 1, 2,
+			[]time.Duration{time.Second}, "Delivered", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lab := newHQLab(t)
+			lab.wire()
+			lab.write(map[string]string{"index.js": "the app\n"})
+			lab.hq.answerWith(tt.status, tt.code, tt.failing, opening)
+
+			delivery := lab.deliver()
+			if delivery == nil || (delivery.Change != nil) != tt.delivered {
+				t.Fatalf("delivery = %+v, want delivered=%v", delivery, tt.delivered)
+			}
+			if got := lab.hq.callCount("POST /api/mate/changes"); got != tt.wantOpens {
+				t.Errorf("HQ was asked to open the change %d times, want %d", got, tt.wantOpens)
+			}
+			if !slices.Equal(lab.waits, tt.wantWaits) {
+				t.Errorf("waits = %v, want %v", lab.waits, tt.wantWaits)
+			}
+			want := tt.wantLine
+			if strings.HasPrefix(want, " could not") {
+				want = "HQ at " + lab.hq.srv.URL + want
+			}
+			if !strings.Contains(delivery.Line, want) {
+				t.Errorf("the line misses %q:\n%s", want, delivery.Line)
+			}
+			if tt.wantLine != "Delivered" && tt.status >= 500 && !strings.Contains(delivery.Line, "tell the person HQ is not answering") {
+				t.Errorf("an HQ that could not serve the delivery must be named to the person:\n%s", delivery.Line)
+			}
+			if tt.status < 500 && strings.Contains(delivery.Line, "not answering") {
+				t.Errorf("a refusal is HQ answering, never HQ not answering:\n%s", delivery.Line)
+			}
+		})
 	}
 }
 
@@ -350,26 +424,30 @@ func TestAWiredPairDeploysDirectlyAndIsNeverSentToPush(t *testing.T) {
 
 // refusingPushSSH answers a change's push the way git reports HQ refusing
 // it — a ref HQ refused carries HQ's own reason — and everything else as a
-// healthy container would.
-type refusingPushSSH struct{ reason string }
+// healthy container would. pushes counts the pushes it was sent.
+type refusingPushSSH struct {
+	reason string
+	pushes int
+}
 
-func (s refusingPushSSH) ExecSSH(_ context.Context, host, command string) ([]byte, error) {
+func (s *refusingPushSSH) ExecSSH(_ context.Context, host, command string) ([]byte, error) {
 	if !strings.Contains(command, "push -u origin") {
 		return []byte("ok"), nil
 	}
+	s.pushes++
 	out := " ! [remote rejected] HEAD -> mate/p-mate/1 (" + s.reason + ")\nerror: failed to push some refs\n"
 	return []byte(out), &platform.SSHExecError{Hostname: host, Output: out, Err: errors.New("exit status 1")}
 }
 
-func (s refusingPushSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
+func (s *refusingPushSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
 	return s.ExecSSH(ctx, host, command)
 }
 
-// TestShipChange_AChangeSettledBeforeItsPushIsOwedAgain: a change merged or
+// TestShipChange_AChangeSettledBeforeItsPushFailsAtOnce: a change merged or
 // closed between its opening and its push is refused per ref with HQ's
-// reason; the number is forgotten and the delivery stays owed, so the next
-// delivery, push or pass opens the next change.
-func TestShipChange_AChangeSettledBeforeItsPushIsOwedAgain(t *testing.T) {
+// reason — a refusal, so the push is not tried again; the number is
+// forgotten, so the next delivery opens the next change.
+func TestShipChange_AChangeSettledBeforeItsPushFailsAtOnce(t *testing.T) {
 	for _, reason := range []string{"change_closed", "unknown_change"} {
 		t.Run(reason, func(t *testing.T) {
 			lab := newHQLab(t)
@@ -378,12 +456,16 @@ func TestShipChange_AChangeSettledBeforeItsPushIsOwedAgain(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			shipped := shipChange(t.Context(), refusingPushSSH{reason: reason}, lab.stateDir, hqc, lab.meta(), "Add a footer")
-			if !shipped.pending || shipped.ref != nil || !strings.Contains(shipped.line, reason) {
-				t.Fatalf("shipped = %+v, want the delivery owed again", shipped)
+			ssh := &refusingPushSSH{reason: reason}
+			shipped := shipChange(t.Context(), ssh, lab.stateDir, hqc, lab.meta(), "Add a footer")
+			if shipped.unreachable || shipped.ref != nil || !strings.Contains(shipped.line, reason) || !strings.Contains(shipped.line, "the next delivery opens the next change") {
+				t.Fatalf("shipped = %+v, want a refusal that names the next delivery", shipped)
 			}
-			if record := lab.meta().HQ; record.Change != 0 || record.Pending == nil || record.Pending.Title != "Add a footer" {
-				t.Errorf("the pair's record = %+v, want no change and the delivery pending", record)
+			if ssh.pushes != 1 {
+				t.Errorf("the refused push ran %d times, want once", ssh.pushes)
+			}
+			if record := lab.meta().HQ; record.Change != 0 {
+				t.Errorf("the pair's record = %+v, want no change", record)
 			}
 		})
 	}

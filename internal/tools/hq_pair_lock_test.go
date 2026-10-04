@@ -10,19 +10,6 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// owedDelivery leaves the lab's pair with a delivery owed: HQ was away for
-// it, and answers again.
-func (l *hqLab) owedDelivery() {
-	l.t.Helper()
-	l.wire()
-	l.write(map[string]string{"footer.js": "the footer\n"})
-	l.hq.setDown(true)
-	if d := l.deliver(); d == nil || d.Change != nil {
-		l.t.Fatalf("want a pending delivery, got %+v", d)
-	}
-	l.hq.setDown(false)
-}
-
 // holdPair holds the pair's checkout the way another process would.
 func (l *hqLab) holdPair() func() {
 	l.t.Helper()
@@ -38,8 +25,6 @@ func (l *hqLab) holdPair() func() {
 // backoff does not grow — and takes it on the pass after.
 func TestAPassSkipsAPairHeldElsewhere(t *testing.T) {
 	lab := newHQLab(t)
-	lab.owedDelivery()
-	elapseHQBackoff(t, lab.stateDir)
 	release := lab.holdPair()
 	ran := len(lab.ssh.commands)
 
@@ -51,8 +36,8 @@ func TestAPassSkipsAPairHeldElsewhere(t *testing.T) {
 	}
 	release()
 
-	if lines := lab.wire(); len(lines) != 1 || !strings.Contains(lines[0], "is done") {
-		t.Fatalf("the pass after said %q, want the delivery done", lines)
+	if lines := lab.wire(); len(lines) != 1 || !strings.Contains(lines[0], "wired in HQ") {
+		t.Fatalf("the pass after said %q, want the pair wired", lines)
 	}
 }
 

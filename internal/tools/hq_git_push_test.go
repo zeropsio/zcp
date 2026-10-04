@@ -79,6 +79,41 @@ func TestGitPushToHQ_DeliversCommittedWorkAsTheChange(t *testing.T) {
 	}
 }
 
+// TestGitPushToHQ_HQNotAnsweringFailsFast: a push HQ cannot serve fails as
+// the tool's error within the call, after three tries, saying the step, HQ's
+// address and the way on; the commit stays in the checkout, and pushing again
+// once HQ answers delivers it.
+func TestGitPushToHQ_HQNotAnsweringFailsFast(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	lab.write(map[string]string{"index.js": "the app\n"})
+	lab.commit("the app")
+	srv := lab.gitPushTool()
+
+	lab.hq.setDown(true)
+	result := callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev", "strategy": "git-push"})
+	text := getTextContent(t, result)
+	if !result.IsError {
+		t.Fatalf("a push HQ could not serve must be the tool's error:\n%s", text)
+	}
+	for _, want := range []string{
+		"git-push from appdev has not reached HQ",
+		"HQ at " + lab.hq.srv.URL + ` could not be reached to take \"main\" in (3 tries; the last: `,
+		"the work stays committed in appdev's checkout, and pushing again delivers it",
+		"tell the person HQ is not answering",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the error misses %q:\n%s", want, text)
+		}
+	}
+
+	lab.hq.setDown(false)
+	text = getTextContent(t, callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev", "strategy": "git-push"}))
+	if !strings.Contains(text, `"status":"PUSHED"`) || lab.remoteHead("mate/p-mate/1") != lab.git("rev-parse", "HEAD") {
+		t.Errorf("pushing again once HQ answers must deliver the commit:\n%s", text)
+	}
+}
+
 // TestGitPushToHQ_ABranchOfItsOwnIsRefused: HQ takes the Mate's push only on
 // its change's branch, and main moves only by HQ's merge — refused before git
 // runs, so a rejection can never read as a reason to force-push.

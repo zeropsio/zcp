@@ -112,9 +112,9 @@ func reconcileMateRepositories(
 
 // reconcileHQRepositories gives every bootstrapped pair on this Mate its
 // repository in HQ and its own branch to work on, and keeps every wired pair
-// current: a delivery HQ could not be reached for is finished, the change on
-// record is asked what became of it, and a pair whose Mate HQ now holds in
-// another application is wired there. It is a RECONCILE, not a one-shot step:
+// current: the change on record is asked what became of it, and a pair whose
+// Mate HQ now holds in another application is wired there. It delivers
+// nothing: a delivery is the agent's call, and fails within it. It is a RECONCILE, not a one-shot step:
 // it runs on every bootstrap and adopt pass, does nothing for a pair with
 // nothing to do, and backs off per pair.
 //
@@ -226,9 +226,8 @@ func lazySelf(ctx context.Context, hqc hq.Client) func() (hq.MateState, error) {
 }
 
 // keepHQPairCurrent is one wired pair's turn of a pass: wired again in the
-// application HQ holds the Mate in now, if that moved; a pending delivery
-// finished; and what became of its change on record. wired is whether the
-// pass wired it again.
+// application HQ holds the Mate in now, if that moved, and what became of its
+// change on record. wired is whether the pass wired it again.
 func keepHQPairCurrent(
 	ctx context.Context,
 	client platform.Client,
@@ -252,17 +251,7 @@ func keepHQPairCurrent(
 		attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, m, m.HQ.Repo)
 		return attempt.line, attempt.wired
 	}
-	var lines []string
-	if note := hqLearnLanding(stateDir, m, state); note != "" {
-		lines = append(lines, note)
-	}
-	if m.HQ.Pending != nil {
-		deliveryLanding(stateDir, m, state)
-		if line := finishPendingDelivery(ctx, client, sshDeployer, rt, stateDir, hqc, m); line != "" {
-			lines = append(lines, line)
-		}
-	}
-	return strings.Join(lines, "; "), false
+	return hqLearnLanding(stateDir, m, state), false
 }
 
 // rewireHQPair runs the wiring for one pair now, outside the backoff, and
@@ -490,7 +479,7 @@ func reservedRepository(hostname, repoName string) (line, remedy string) {
 // Wired again to the same repository it keeps everything; wired to another —
 // the Mate moved to another application — its change and the landing of one
 // stay with the old application (left is the change left there, 0 for none),
-// while a delivery still owed and words kept for the next change come along.
+// while words kept for the next change come along.
 func wiredHQRecord(prior *workflow.HQRepoRef, repo hq.Repo, branch string) (record *workflow.HQRepoRef, left int) {
 	wiredAt := time.Now().UTC().Format(time.RFC3339)
 	if prior != nil && prior.AppID == repo.AppID && prior.Repo == repo.Name {
@@ -501,7 +490,6 @@ func wiredHQRecord(prior *workflow.HQRepoRef, repo hq.Repo, branch string) (reco
 	record = &workflow.HQRepoRef{AppID: repo.AppID, Repo: repo.Name, Branch: branch, WiredAt: wiredAt}
 	if prior != nil {
 		left = prior.Change
-		record.Pending = prior.Pending
 		if prior.ChangeDescription != nil && prior.ChangeDescription.Change == 0 {
 			record.ChangeDescription = prior.ChangeDescription
 		}
