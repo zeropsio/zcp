@@ -12,24 +12,21 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// A Mate's tier is the group repo's `0 — AI Agent/import.yaml` (D13): the
-// whole project a Mate of the group is, every runtime a dev/stage pair built
-// from one of the group's repositories, beside the managed services they share
-// and whatever the platform builds from a public repository. A new Mate's
-// browser imports it with the dev halves empty and the stage halves waiting
-// for their first deploy; zcp's stand-up reads the same file to know which
-// pairs to adopt, wire and deploy. This file is that read — pure, no I/O.
-
-// MateTierImportPath is where a group repo keeps the AI Agent tier, exactly as
-// the recipe layout names it (internal/recipe: `<index> — <title>`).
-const MateTierImportPath = "0 — AI Agent/import.yaml"
+// A Mate's tier is the recipe repository's `0 — AI Agent/import.yaml`: the
+// whole project a Mate of the application is, every runtime a dev/stage pair
+// built from one of the application's repositories in HQ, beside the managed
+// services they share and whatever the platform builds from a public
+// repository. A new Mate's browser imports it with the dev halves empty and
+// the stage halves waiting for their first deploy; zcp's stand-up reads the
+// same file to know which pairs to adopt, wire and deploy. This file is that
+// read — pure, no I/O.
 
 // ErrMateTierUnreadable is a tier that is not a services document at all.
 var ErrMateTierUnreadable = errors.New("the AI Agent tier does not read as an import")
 
 // ErrMateTierNoPairs is a tier that reads but names no dev/stage pair built
-// from the group's repositories — nothing a Mate could stand up.
-var ErrMateTierNoPairs = errors.New("the AI Agent tier names no dev/stage pair built from the group's repositories")
+// from the application's repositories — nothing a Mate could stand up.
+var ErrMateTierNoPairs = errors.New("the AI Agent tier names no dev/stage pair built from the application's repositories")
 
 // MateTierRuntime is one half of a pair as the tier declares it.
 type MateTierRuntime struct {
@@ -44,13 +41,14 @@ type MateTierRuntime struct {
 	Envs map[string]string
 }
 
-// MateTierPair is a dev/stage pair built from one of the group's repositories.
+// MateTierPair is a dev/stage pair built from one of the application's
+// repositories.
 type MateTierPair struct {
 	// Repository is the halves' buildFromGit, canonical
 	// (topology.CanonicalRepoURL).
 	Repository string
-	// RepoName is the repository's name in the group's org — what the broker
-	// is asked for.
+	// RepoName is the repository's name in the application — what HQ is
+	// asked for.
 	RepoName string
 	Dev      MateTierRuntime
 	Stage    MateTierRuntime
@@ -68,17 +66,18 @@ type MateTierSkipReason string
 const (
 	// MateTierSkipManaged is a managed service: the platform created it.
 	MateTierSkipManaged MateTierSkipReason = "managed"
-	// MateTierSkipPlatformBuild builds from a repository outside the group's
-	// Gitea — a public one, since the platform clones only those — so the
+	// MateTierSkipPlatformBuild builds from a repository outside the Mate's
+	// HQ — a public one, since the platform clones only those — so the
 	// platform built it at import.
 	MateTierSkipPlatformBuild MateTierSkipReason = "platform-build"
 	// MateTierSkipNoRepository is a runtime that names no repository.
 	MateTierSkipNoRepository MateTierSkipReason = "no-repository"
-	// MateTierSkipForeign builds from the group's Gitea, but from another
-	// org's repository, which the group's broker neither gives nor joins.
+	// MateTierSkipForeign builds from the Mate's HQ, but from another
+	// application's repository, which HQ neither gives nor joins it.
 	MateTierSkipForeign MateTierSkipReason = "foreign-repository"
-	// MateTierSkipUnpaired builds from a group repository and has no partner:
-	// no stage half, no dev half, or more than one candidate for either.
+	// MateTierSkipUnpaired builds from an application repository and has no
+	// partner: no stage half, no dev half, or more than one candidate for
+	// either.
 	MateTierSkipUnpaired MateTierSkipReason = "unpaired"
 )
 
@@ -101,9 +100,10 @@ type MateTier struct {
 	ProjectEnvs map[string]string
 }
 
-// ParseMateTier reads a group's AI Agent tier. giteaURL is the group's Gitea
-// (GITEA_URL) and org the group's org on it: a runtime is a pair's half only
-// when it builds from a repository of that org there.
+// ParseMateTier reads an application's AI Agent tier. address is the Mate's
+// HQ and appID the application HQ holds it in: a runtime is a pair's half
+// only when it builds from a repository of that application there,
+// `<address>/git/<appID>/<repo>`.
 //
 // Pairs are formed per repository by zcp's naming convention, never by a
 // setup's name — a group names its setups after the pair (`medusadev`,
@@ -116,7 +116,7 @@ type MateTier struct {
 // An error only when the document is not a services list, or when it names
 // no pair at all (ErrMateTierNoPairs, with Skipped still filled so the caller
 // can say what the tier holds instead).
-func ParseMateTier(importYAML, giteaURL, org string) (MateTier, error) {
+func ParseMateTier(importYAML, address, appID string) (MateTier, error) {
 	var doc recipeImportDoc
 	if err := yaml.Unmarshal([]byte(importYAML), &doc); err != nil {
 		return MateTier{}, fmt.Errorf("%w: %w", ErrMateTierUnreadable, err)
@@ -147,11 +147,13 @@ func ParseMateTier(importYAML, giteaURL, org string) (MateTier, error) {
 			skip.Reason = MateTierSkipManaged
 		case source == "":
 			skip.Reason = MateTierSkipNoRepository
-		case topology.ClassifyGitHost(source, giteaURL) != topology.GitHostGitea:
-			skip.Reason = MateTierSkipPlatformBuild
 		default:
-			repoOrg, _ := giteaRepoPath(source)
-			if !strings.EqualFold(repoOrg, org) {
+			app, _, onHQ := hqRepoOf(source, address)
+			if !onHQ {
+				skip.Reason = MateTierSkipPlatformBuild
+				break
+			}
+			if app != appID {
 				skip.Reason = MateTierSkipForeign
 				break
 			}
@@ -166,7 +168,7 @@ func ParseMateTier(importYAML, giteaURL, org string) (MateTier, error) {
 
 	for _, repo := range order {
 		members := byRepo[repo]
-		_, name := giteaRepoPath(repo)
+		_, name, _ := hqRepoOf(repo, address)
 		runtimes := make([]recipeImportService, len(members))
 		for i, m := range members {
 			runtimes[i] = m.svc
@@ -285,16 +287,22 @@ func serviceEnvs(svc recipeImportService) map[string]string {
 	return envs
 }
 
-// giteaRepoPath is the org and name a repository URL on Gitea names — its
-// last two path segments, so a Gitea served under a path prefix reads too.
-func giteaRepoPath(repoURL string) (org, name string) {
+// hqRepoOf is the application and repository a repository URL names on the
+// HQ at address — `<address>/git/<appID>/<repo>`, https, on HQ's own host and
+// port — and whether it names one there at all.
+func hqRepoOf(repoURL, address string) (appID, repo string, ok bool) {
 	u, err := url.Parse(topology.CanonicalRepoURL(repoURL))
-	if err != nil {
-		return "", ""
+	if err != nil || !strings.EqualFold(u.Scheme, "https") {
+		return "", "", false
 	}
-	segments := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(segments) < 2 {
-		return "", ""
+	hq, err := url.Parse(strings.TrimRight(address, "/"))
+	if err != nil || !strings.EqualFold(hq.Scheme, "https") || !strings.EqualFold(u.Host, hq.Host) {
+		return "", "", false
 	}
-	return segments[len(segments)-2], segments[len(segments)-1]
+	rest, under := strings.CutPrefix(u.Path, hq.Path+"/git/")
+	segments := strings.Split(rest, "/")
+	if !under || len(segments) != 2 || segments[0] == "" || segments[1] == "" {
+		return "", "", false
+	}
+	return segments[0], segments[1], true
 }

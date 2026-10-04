@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -86,7 +87,7 @@ type standupService struct {
 func buildStandupResponse(src standupSource, pairs []*standupPair, live map[string]*platform.ServiceStack) standupResponse {
 	resp := standupResponse{
 		GroupRepo: src.groupRepo,
-		Tier:      workflow.MateTierImportPath + "@" + giteaProtectedBase,
+		Tier:      hq.RecipeTierPaths[hq.RecipeTierMate] + "@" + hqBase,
 	}
 	stood, devs, queued := 0, 0, 0
 	names := make([]string, 0, len(pairs))
@@ -124,7 +125,7 @@ func buildStandupResponse(src standupSource, pairs []*standupPair, live map[stri
 		resp.Next = standupStoppedNext(stood, len(pairs), queued)
 	}
 	resp.Message = fmt.Sprintf("%d of %d pairs stand and %d of %d dev halves run, from %s's %s (%s).",
-		stood, len(pairs), devs, len(pairs), src.groupRepo, workflow.MateTierImportPath, strings.Join(names, ", "))
+		stood, len(pairs), devs, len(pairs), src.groupRepo, hq.RecipeTierPaths[hq.RecipeTierMate], strings.Join(names, ", "))
 	return resp
 }
 
@@ -275,7 +276,7 @@ func standupSkipReason(s workflow.MateTierSkip) string {
 	case workflow.MateTierSkipNoRepository:
 		return "the tier names no repository for it, so there is no code to stand it up from"
 	case workflow.MateTierSkipForeign:
-		return "it builds from " + s.Source + ", a repository outside the group's org, which this Mate's broker neither gives nor joins"
+		return "it builds from " + s.Source + ", a repository of another application than this Mate's, which HQ neither gives nor joins it"
 	case workflow.MateTierSkipUnpaired:
 		return "it builds from " + s.Source + " with no partner by zcp's naming — a stage half ends in `stage`, and its dev half is the repository's other runtime or the one named like it"
 	case workflow.MateTierSkipManaged, workflow.MateTierSkipPlatformBuild:

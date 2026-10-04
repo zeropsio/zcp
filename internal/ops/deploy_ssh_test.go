@@ -646,7 +646,7 @@ func TestBuildSSHCommand_VersionNameFromHead(t *testing.T) {
 // !dirty ⇒ bare sha; non-empty + dirty ⇒ sha with a "-dirty" suffix.
 // TestVersionName is the name a zcp push of a working tree gives its app
 // version (GF-10): a label and the commit's short sha, two tokens, as the Mate
-// app and the broker read it — the branch HEAD is on, or HEAD when it is on
+// app and HQ read it — the branch HEAD is on, or HEAD when it is on
 // none — with "-dirty" on the sha for uncommitted changes, which both read as
 // no commit.
 func TestVersionName(t *testing.T) {

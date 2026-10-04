@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -41,7 +40,7 @@ func NewGroupRecipeSteer(client platform.Client, httpClient ops.HTTPDoer, rt run
 		return nil
 	}
 	return func(ctx context.Context, host string) string {
-		return groupRecipeScalingSteer(ctx, client, httpClient, rt, stateDir, mate.LiveEnvStorePath, host)
+		return groupRecipeScalingSteer(ctx, client, httpClient, rt, stateDir, host)
 	}
 }
 

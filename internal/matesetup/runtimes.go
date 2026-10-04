@@ -31,15 +31,14 @@ import (
 const EnvRuntimes = "MATE_SETUP_RUNTIMES"
 
 // API is the part of the platform client the boot import uses: the lag-free
-// project reads and the import itself.
+// project reads, the project's variables it reads closed off from
+// (ops.ProjectClosedOff), and the import itself.
 type API interface {
 	ListServicesDirect(ctx context.Context, projectID string) ([]platform.ServiceStack, error)
+	GetProjectEnv(ctx context.Context, projectID string) ([]platform.ProjectEnvVar, error)
 	GetProjectProcessesDirect(ctx context.Context, projectID string) ([]platform.Process, error)
 	GetProcess(ctx context.Context, processID string) (*platform.Process, error)
 	ImportServices(ctx context.Context, projectID, yamlContent string) (*platform.ImportResult, error)
-	// GetProject reads the project, its tags among them (the closed-off tag,
-	// ops.ClosedOffTag).
-	GetProject(ctx context.Context, projectID string) (*platform.Project, error)
 }
 
 // Importer imports the plan's missing services and tracks them to the end.
@@ -263,10 +262,10 @@ func decodeBase64(s string) ([]byte, error) {
 // code, and with env isolation off they read the zcp service's variables,
 // the Mate's key among them; closing the project off after they exist
 // restarts them. The press closes it off once the container recipe's own
-// project-env write (which resets it) has landed, reads it back, and tags
-// the project ops.ClosedOffTag; a press whose tab closed first leaves that
-// to "Finish setup", however much later — so the wait for the tag has no
-// end of its own.
+// project-env write (which resets it) has landed, reads it back, and records
+// it in HQ as the Mate's birth; a press whose tab closed first leaves that
+// to "Finish setup", however much later — so the wait for it has no end of
+// its own. The import asks HQ (ClosedOff) with the Mate's credential.
 func (im Importer) Run(ctx context.Context, encoded string) {
 	im = im.withDefaults()
 	hostnames, entries, err := DecodePlan(encoded)
@@ -469,14 +468,15 @@ func (im Importer) ownDeployDone(ctx context.Context) bool {
 	return len(activity) == 0
 }
 
-// awaitClosedOff waits until the project reads closed off, with the runtimes
-// section pending and saying why; false when the context ended first. A
-// failed read is one more look, not an answer.
+// awaitClosedOff waits until Zerops reads the project closed off
+// (ops.ProjectClosedOff) — never HQ's mark of it (audit N1) — with the
+// runtimes section pending and saying why; false when the context ended
+// first. A failed read is one more look, not an answer.
 func (im Importer) awaitClosedOff(ctx context.Context) bool {
 	start := time.Now()
 	said := ""
 	for {
-		closed, err := ops.ReadProjectClosedOff(ctx, im.api(), im.ProjectID)
+		closed, err := ops.ProjectClosedOff(ctx, im.api(), im.ProjectID)
 		if err == nil && closed {
 			return true
 		}
@@ -484,7 +484,7 @@ func (im Importer) awaitClosedOff(ctx context.Context) bool {
 		if err != nil {
 			// A look that failed says nothing about the project: never read
 			// it as "not closed off yet".
-			line = oneLine(fmt.Sprintf("could not read the project (%v)", err))
+			line = oneLine(fmt.Sprintf("could not read whether the project is closed off (%v)", err))
 		}
 		if line != said {
 			im.write(func(r *mate.RuntimesStatus) {

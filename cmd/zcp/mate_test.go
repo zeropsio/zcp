@@ -189,6 +189,35 @@ func TestRunMateStatus_NothingInstalled_ReportsLatest(t *testing.T) {
 	}
 }
 
+func TestRunMateStatus_ReportsTheSignInSeedFailure(t *testing.T) {
+	// non-parallel: HOME and stdout are process-wide.
+	t.Setenv("HOME", t.TempDir())
+	manifestAndTarballServer(t)
+	if err := os.MkdirAll(filepath.Dir(mate.SignInsSeededPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mate.SignInsSeededPath(), []byte(`{"state":"failed","input":"opaque","at":"2026-10-04T10:00:00Z","error":"HQ unavailable"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout := captureStdout(t, func() {
+		if runMateCmd([]string{"status", "--json"}) != 0 {
+			t.Fatal("status failed")
+		}
+	})
+	var got struct {
+		SignIns struct {
+			State string `json:"state"`
+			Error string `json:"error"`
+		} `json:"signIns"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.SignIns.State != "failed" || got.SignIns.Error != "HQ unavailable" {
+		t.Fatalf("seed failure not reported: %s", stdout)
+	}
+}
+
 func TestRunMateStatus_JSON_ReportsUpdateAvailable(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -457,60 +486,5 @@ func TestRunMateUpdate_RestartFailure_ReturnsNonZero(t *testing.T) {
 
 	if got := runMateCmd([]string{"update"}); got != 1 {
 		t.Errorf("runMateCmd(update) = %d, want 1 when the restart fails", got)
-	}
-}
-
-// TestRunMateGitToken: `zcp mate git-token` is what the Gitea credential
-// helper asks on every fetch and push from the Mate's shell — it prints the
-// bot token as the live env store holds it now, for the Gitea's host only,
-// and nothing else on stdout.
-func TestRunMateGitToken(t *testing.T) {
-	store := filepath.Join(t.TempDir(), "env.json")
-	if err := os.WriteFile(store, []byte(`{"GITEA_URL":"https://gitea.example.invalid","GITEA_TOKEN":"rotated"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("GITEA_TOKEN", "at-start")
-	// Declining is a non-zero exit with nothing on stdout: the helper then
-	// falls back as it did before, and never sends an empty password.
-	tests := []struct {
-		name     string
-		stdin    string
-		want     string
-		wantCode int
-	}{
-		{"the Gitea", "protocol=https\nhost=gitea.example.invalid\n\n", "rotated", 0},
-		{"the Gitea with https's own port", "protocol=https\nhost=gitea.example.invalid:443\n\n", "rotated", 0},
-		{"another host", "protocol=https\nhost=github.com\n\n", "", 1},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var out strings.Builder
-			if code := runMateGitToken(strings.NewReader(tt.stdin), &out, store); code != tt.wantCode {
-				t.Fatalf("exit %d, want %d", code, tt.wantCode)
-			}
-			if out.String() != tt.want {
-				t.Errorf("stdout = %q, want %q", out.String(), tt.want)
-			}
-		})
-	}
-}
-
-// TestIsMateGitToken: the helper's verb is answered before the CLI's
-// telemetry, whose one-time notice goes to stdout and whose flush would hold
-// every git operation.
-func TestIsMateGitToken(t *testing.T) {
-	tests := []struct {
-		args []string
-		want bool
-	}{
-		{[]string{"mate", "git-token"}, true},
-		{[]string{"mate", "status"}, false},
-		{[]string{"mate"}, false},
-		{nil, false},
-	}
-	for _, tt := range tests {
-		if got := isMateGitToken(tt.args); got != tt.want {
-			t.Errorf("isMateGitToken(%q) = %v, want %v", tt.args, got, tt.want)
-		}
 	}
 }

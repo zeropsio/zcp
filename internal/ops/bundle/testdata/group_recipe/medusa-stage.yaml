@@ -3,8 +3,9 @@
 # shape a person shows a client.
 #
 # zcp wrote this file from the Mate "medusa-juno". It is the group's now: a
-# person may edit it, and zcp never proposes over a tier the group repo already
-# carries.
+# person may edit it. zcp adds only a whole tier the group repo lacks; into a
+# tier it already carries, zcp proposes only a service's scale (group-recipe
+# scaling=<hostname>), as a change a person reviews.
 #
 # Priority is the order services are created in, each wave deployed before the
 # next starts: the managed services first, then every runtime before the
@@ -81,7 +82,7 @@ services:
     type: nodejs@22
     priority: 2
     zeropsSetup: medusaprod
-    buildFromGit: https://gitea.example.com/medusa/medusadev
+    buildFromGit: https://hq.example.com/git/app-1/medusadev
     enableSubdomainAccess: true
     minContainers: 1
     maxContainers: 1
@@ -103,7 +104,7 @@ services:
     type: nodejs@22
     priority: 1
     zeropsSetup: nextstoreprod
-    buildFromGit: https://gitea.example.com/medusa/nextstoredev
+    buildFromGit: https://hq.example.com/git/app-1/nextstoredev
     enableSubdomainAccess: true
     minContainers: 1
     maxContainers: 1

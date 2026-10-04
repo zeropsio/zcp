@@ -36,6 +36,19 @@ func lockWithRetry(f *os.File, how int) error {
 	return fmt.Errorf("flock: timeout after %v waiting for registry lock", time.Duration(flockRetries)*flockInterval)
 }
 
+// tryLockExclusive makes one non-blocking attempt at an exclusive flock on
+// the file: false when another open file holds it.
+func tryLockExclusive(f *os.File) (bool, error) {
+	err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, syscall.EWOULDBLOCK):
+		return false, nil
+	}
+	return false, fmt.Errorf("flock: %w", err)
+}
+
 // unlockFile releases the flock.
 func unlockFile(f *os.File) {
 	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)

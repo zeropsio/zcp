@@ -289,7 +289,8 @@ func TestStart_Mate_MergesEnvFile(t *testing.T) {
 		t.Fatalf("Start(mate): %v", err)
 	}
 	want := []string{"T3CODE_ZEROPS_PROJECT_ID=nTV3oMB2SS634ImDJnQckg", "T3CODE_ZEROPS_API_HOST=api.app-prg1.zerops.io", "T3CODE_BASE_PATH=/mate",
-		"ZCP_STATUS_FILE=" + filepath.Join(home, ".zcp", "state", "mate-status.json")}
+		"ZCP_STATUS_FILE=" + filepath.Join(home, ".zcp", "state", "mate-status.json"),
+		"T3CODE_ZEROPS_HQ_ENROLLMENT=" + filepath.Join(home, ".zcp", "hq", "enrollment.json")}
 	if !slices.Equal(gotEnv, want) {
 		t.Errorf("merged env:\n got %q\nwant %q", gotEnv, want)
 	}
@@ -363,11 +364,46 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 				<-serverUp
 			})
 			t.Cleanup(service.ResetMateSetupBoot)
+			// Every launch keeps the Mate enrolled with its HQ, beside the
+			// server, over the live env store as it is at each attempt.
+			kept := make(chan string, 1)
+			service.SetMateHQKeep(func(_ context.Context, env func() func(string) string) {
+				kept <- env()("PATH")
+			})
+			t.Cleanup(func() { service.SetMateHQKeep(keepNothing) })
+			// And keeps finishing the deliveries its agents owe HQ, over
+			// the same live store.
+			delivering := make(chan string, 1)
+			service.SetMateDeliveryKeep(func(_ context.Context, env func() func(string) string) {
+				delivering <- env()("PATH")
+			})
+			t.Cleanup(func() { service.SetMateDeliveryKeep(keepNothing) })
+			// Enrollment finishes before the seed, over the same live store.
+			enrolled := false
+			service.SetMateHQPrepare(func(_ context.Context, lookup func(string) string) error {
+				if lookup("PATH") != tt.store["PATH"] {
+					t.Error("launch enrollment did not read the live store")
+				}
+				enrolled = true
+				return nil
+			})
+			t.Cleanup(func() { service.SetMateHQPrepare(prepareNothing) })
+			// The seed is ready before the server reads its signer store once.
+			seeded := ""
+			service.SetMateSeedSignIns(func(_ context.Context, lookup func(string) string) {
+				if !enrolled {
+					t.Error("seed ran before enrollment finished")
+				}
+				seeded = lookup("PATH")
+			})
+			t.Cleanup(func() { service.SetMateSeedSignIns(seedNothing) })
 			statusPath := filepath.Join(home, ".zcp", "state", "mate-status.json")
 			var gotEnv []string
 			var atLaunch mate.Status
+			var seededAtLaunch string
 			service.SetRunFunc(func(_ string, _ []string, extraEnv []string) error {
 				gotEnv = extraEnv
+				seededAtLaunch = seeded
 				atLaunch, _ = mate.ReadStatus(statusPath)
 				close(serverUp)
 				return nil
@@ -384,6 +420,9 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				close(serverUp)
 				t.Fatal("the server never started: the launch waited on the boot import")
+			}
+			if seededAtLaunch != tt.store["PATH"] {
+				t.Errorf("the sign-in seed ran over %q before the server started, want the live store's", seededAtLaunch)
 			}
 			if !slices.Contains(gotEnv, "ZCP_STATUS_FILE="+statusPath) {
 				t.Errorf("launch env %q must name the status file %s", gotEnv, statusPath)
@@ -403,7 +442,46 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 					t.Error("boot import never started")
 				}
 			}
+			select {
+			case got := <-kept:
+				if got != tt.store["PATH"] {
+					t.Errorf("HQ enrollment read the env %q, want the live store's", got)
+				}
+			case <-time.After(2 * time.Second):
+				t.Error("the launch never started keeping the Mate enrolled with HQ")
+			}
+			select {
+			case got := <-delivering:
+				if got != tt.store["PATH"] {
+					t.Errorf("the delivery keep read the env %q, want the live store's", got)
+				}
+			case <-time.After(2 * time.Second):
+				t.Error("the launch never started finishing the deliveries owed to HQ")
+			}
+			if !slices.Contains(gotEnv, "T3CODE_ZEROPS_HQ_ENROLLMENT="+filepath.Join(home, ".zcp", "hq", "enrollment.json")) {
+				t.Errorf("launch env %q must name the HQ enrollment the server links with", gotEnv)
+			}
 		})
+	}
+}
+
+func TestStart_Mate_EnrollmentFailureStillStartsTheServer(t *testing.T) {
+	// non-parallel: HOME and the launch seams are process-wide.
+	t.Setenv("ZCP_MATE_ENABLED", "1")
+	installFakeMateBundle(t, true)
+	service.SetMateHQPrepare(func(context.Context, func(string) string) error { return errors.New("HQ unavailable") })
+	t.Cleanup(func() { service.SetMateHQPrepare(prepareNothing) })
+	seeded := false
+	service.SetMateSeedSignIns(func(context.Context, func(string) string) { seeded = true })
+	t.Cleanup(func() { service.SetMateSeedSignIns(seedNothing) })
+	started := false
+	service.SetRunFunc(func(string, []string, []string) error { started = true; return nil })
+	t.Cleanup(service.ResetRunFunc)
+	if err := service.Start("mate"); err != nil {
+		t.Fatal(err)
+	}
+	if !started || seeded {
+		t.Fatalf("started = %v, seeded without enrollment = %v", started, seeded)
 	}
 }
 

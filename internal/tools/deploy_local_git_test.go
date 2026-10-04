@@ -231,11 +231,10 @@ func TestHandleLocalGitPush_DoesNotStampDeployed(t *testing.T) {
 // bridge, after the agent observes Status=ACTIVE). No BuildIntegration
 // wired has no resolver, so recording the placeholder there left a
 // permanent, unexplained Success:false "failed deploy" on the push source
-// — same bug class as the container path's, observed live on a Gitea-wired
-// pair. Unlike the container path, a local git-push never targets this
-// Mate's own Gitea — deploy_local_git.go never opens a pull request; there
-// is no Mate on a developer's own machine — so there is no gitea-remote
-// case to gate on here.
+// — same bug class as the container path's, observed live on a Mate's
+// wired pair. Unlike the container path, a local git-push never targets a
+// Mate's HQ — there is no Mate on a developer's own machine — so there is
+// no HQ-remote case to gate on here.
 //
 // The companion NOTHING_TO_PUSH branch is pinned by
 // TestHandleLocalGitPush_NothingToPush_DetectedFromStderr (an end-to-end

@@ -1,3 +1,4 @@
+// Tests for: ops/closed_off.go — whether a Mate's project is closed off, read from Zerops.
 package ops
 
 import (
@@ -8,41 +9,46 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// TestReadProjectClosedOff: a Mate's project is closed off once it carries
-// the tag the press writes after it has closed the project off and read the
-// isolation back — never from the isolation itself, which a new project
-// reads as closed before its recipe opens it.
-func TestReadProjectClosedOff(t *testing.T) {
+// TestProjectClosedOff: a project is closed off when Zerops says so — its
+// envIsolation's first word is `service` (the container recipe's own
+// `service service@zcp` too) and no ZCP_API_KEY is left project-wide, where
+// isolation does not reach. A read that fails, or one that has not caught up
+// with the project's birth (no envIsolation yet), is "not known", never
+// "open" or "closed".
+func TestProjectClosedOff(t *testing.T) {
 	t.Parallel()
+	isolation := func(content string) platform.ProjectEnvVar {
+		return platform.ProjectEnvVar{ID: "e-iso", Key: "envIsolation", Content: content, Type: platform.ProjectEnvSystem}
+	}
+	key := platform.ProjectEnvVar{ID: "e-key", Key: "ZCP_API_KEY", Content: "k", Type: platform.ProjectEnvUser}
 	tests := []struct {
 		name    string
-		project *platform.Project
-		err     error
+		env     []platform.ProjectEnvVar
+		readErr error
 		want    bool
 		wantErr bool
 	}{
-		{"tagged", &platform.Project{ID: "p1", Tags: []string{"mate", ClosedOffTag}}, nil, true, false},
-		{"not tagged", &platform.Project{ID: "p1", Tags: []string{"mate"}}, nil, false, false},
-		{"a tag that only starts the same", &platform.Project{ID: "p1", Tags: []string{ClosedOffTag + "-not"}}, nil, false, false},
-		{"unreadable", nil, errors.New("401"), false, true},
+		{"isolated per service", []platform.ProjectEnvVar{isolation("service")}, nil, true, false},
+		{"the container recipe's own isolation", []platform.ProjectEnvVar{isolation(" service service@zcp ")}, nil, true, false},
+		{"open", []platform.ProjectEnvVar{isolation("none")}, nil, false, false},
+		{"isolated with the key still project-wide", []platform.ProjectEnvVar{isolation("service"), key}, nil, false, false},
+		{"a read that has not caught up", []platform.ProjectEnvVar{key}, nil, false, true},
+		{"a read that failed", nil, errors.New("api down"), false, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			mock := platform.NewMock()
-			if tt.project != nil {
-				mock.WithProject(tt.project)
+			mock := platform.NewMock().WithProjectEnv(tt.env)
+			if tt.readErr != nil {
+				mock = mock.WithError("GetProjectEnv", tt.readErr)
 			}
-			if tt.err != nil {
-				mock.WithError("GetProject", tt.err)
+			got, err := ProjectClosedOff(context.Background(), mock, "proj-1")
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, want an error: %v", err, tt.wantErr)
 			}
-			got, err := ReadProjectClosedOff(context.Background(), mock, "p1")
-			if got != tt.want || (err != nil) != tt.wantErr {
-				t.Errorf("ReadProjectClosedOff = %v, %v; want %v, err=%v", got, err, tt.want, tt.wantErr)
+			if got != tt.want {
+				t.Errorf("closed off = %v, want %v", got, tt.want)
 			}
 		})
-	}
-	if ClosedOffTag != "mate:closed-off" {
-		t.Errorf("ClosedOffTag = %q, the press writes mate:closed-off", ClosedOffTag)
 	}
 }

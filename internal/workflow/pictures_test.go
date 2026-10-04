@@ -43,13 +43,13 @@ func TestKeepPicture_NamesEachPictureOnce(t *testing.T) {
 
 // TestKeepPicture_KeepsTheNewestAndThoseAKeptDescriptionNames: the store keeps
 // the newest twenty, and every picture a kept description names however old
-// it is — those are waiting to go onto a pull request.
+// it is — those are waiting to go onto a change.
 func TestKeepPicture_KeepsTheNewestAndThoseAKeptDescriptionNames(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
 	if err := WriteServiceMeta(stateDir, &ServiceMeta{
 		Hostname: "appdev", StageHostname: "appstage", BootstrapSession: "test", BootstrappedAt: "2026-09-29",
-		Gitea: &GiteaRepoRef{FullName: "acme/appdev", Branch: "mate/mate-p1", ChangeDescription: &ChangeDescription{
+		HQ: &HQRepoRef{AppID: "a1", Repo: "appdev", Branch: "mate/p1", ChangeDescription: &ChangeDescription{
 			Text: "## How I checked it\n\n![The count](shot-2)",
 		}},
 	}); err != nil {
@@ -79,23 +79,23 @@ func TestKeepPicture_KeepsTheNewestAndThoseAKeptDescriptionNames(t *testing.T) {
 	}
 }
 
-// TestRecordPictureUpload: a picture is attached to each pull request once;
-// where Gitea serves it there is remembered with the picture.
+// TestRecordPictureUpload: a picture is attached to each change once; where
+// HQ serves it there is remembered with the picture.
 func TestRecordPictureUpload(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
 	if _, err := KeepPicture(stateDir, fakePNG(1), 800, 600); err != nil {
 		t.Fatal(err)
 	}
-	const url = "https://gitea.example.invalid/attachments/3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4f5a6b"
-	if err := RecordPictureUpload(stateDir, "shot-1", "acme/appdev#9", url); err != nil {
+	const url = "https://hq.example.invalid/api/apps/a1/changes/appdev/9/attachments/3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4f5a6b"
+	if err := RecordPictureUpload(stateDir, "shot-1", "a1/appdev#9", url); err != nil {
 		t.Fatalf("RecordPictureUpload: %v", err)
 	}
 	pic, _, err := KeptPicture(stateDir, "shot-1")
-	if err != nil || pic.Uploads["acme/appdev#9"] != url {
-		t.Errorf("uploads = %v (%v), want the URL recorded for the request", pic.Uploads, err)
+	if err != nil || pic.Uploads["a1/appdev#9"] != url {
+		t.Errorf("uploads = %v (%v), want the URL recorded for the change", pic.Uploads, err)
 	}
-	if err := RecordPictureUpload(stateDir, "shot-7", "acme/appdev#9", url); !errors.Is(err, ErrPictureNotKept) {
+	if err := RecordPictureUpload(stateDir, "shot-7", "a1/appdev#9", url); !errors.Is(err, ErrPictureNotKept) {
 		t.Errorf("recording an upload of a picture nobody keeps = %v", err)
 	}
 }
@@ -112,7 +112,7 @@ func TestPictureRefs(t *testing.T) {
 		{"![a](shot-3) then ![b](shot-12) and ![c](shot-3)", []string{"shot-3", "shot-12"}},
 		{"![spaced]( shot-4 )", []string{"shot-4"}},
 		{"![](shot-5)", []string{"shot-5"}},
-		{"![a link to it is not a picture](https://gitea.example.invalid/x.png)", nil},
+		{"![a link to it is not a picture](https://example.invalid/x.png)", nil},
 		{"[a link](shot-3)", nil},
 		{"![not an id](shot-03)", nil},
 		{"![not an id](shot-3.png)", nil},

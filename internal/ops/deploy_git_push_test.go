@@ -45,9 +45,6 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 				"~/.netrc",
 				"machine ",
 				"trap",
-				// The bot's token is the persisted Gitea helper's fallback
-				// for the Mate's shell, never this push's.
-				"GITEA_TOKEN",
 			},
 		},
 		{
@@ -93,13 +90,13 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 			wantParts: []string{
 				// ZCP's own push runs in the push source's session, so its
 				// inline helper reads $GIT_TOKEN on every host — the username
-				// `oauth2` works for GitHub, GitLab and Gitea tokens alike.
+				// `oauth2` works for GitHub, GitLab and self-hosted forges' tokens alike.
 				// Only the helper persisted into .git/config differs by host
 				// (gitCredentialHelperConfigFragment).
 				"echo username=oauth2",
 				"pass" + "word=$GIT_TOKEN", // in parts: a secret scanner reads the whole as a password
 			},
-			skipParts: []string{"machine ", "~/.netrc", "GITEA_TOKEN"},
+			skipParts: []string{"machine ", "~/.netrc"},
 		},
 		{
 			name:      "remoteURL shell-quoted",

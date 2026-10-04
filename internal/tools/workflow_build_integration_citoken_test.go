@@ -2,11 +2,9 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 
-	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -74,125 +72,8 @@ func TestActionsConfirm_NeverHandsOutTheContainerKey(t *testing.T) {
 	}
 }
 
-// TestActionsConfirm_GiteaRemote_EmitsBrokerWorkflow pins guide 2.3 + 5.4 and
-// D27: on the account's own Gitea the emitted workflow lives at
-// `.gitea/workflows/zerops.yml`, runs on a push to main and on the broker's
-// dispatch, and deploys with `zcli push` through the broker's action — which
-// asks the broker, with the job's own token, for the environment's key. There
-// is nothing to wire: no repository secret and no Zerops token in the file.
-// Default permissions already grant the `actions: read` the broker's proof
-// needs (it reads the job to learn which repository really called it), so the
-// workflow declares none.
-func TestActionsConfirm_GiteaRemote_EmitsBrokerWorkflow(t *testing.T) {
-	t.Parallel()
-	const giteaURL = "https://web-2ff4-3000.prg1.zerops.app"
-
-	stateDir := t.TempDir()
-	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
-		Hostname:         "api",
-		Mode:             topology.PlanModeStandard,
-		StageHostname:    "apistage",
-		GitPushState:     topology.GitPushConfigured,
-		RemoteURL:        giteaURL + "/acme/api",
-		BootstrapSession: "test",
-		BootstrappedAt:   "2026-09-16",
-	}); err != nil {
-		t.Fatalf("WriteServiceMeta: %v", err)
-	}
-
-	result, _, _ := handleBuildIntegration(context.Background(), nil, nil, "", WorkflowInput{
-		Service:     "api",
-		Integration: string(topology.BuildIntegrationActions),
-	}, stateDir, runtime.Info{InContainer: true, GitHostKnown: true, GiteaURL: giteaURL})
-	if result.IsError {
-		t.Fatalf("expected declared, got error: %s", getTextContent(t, result))
-	}
-	body := getTextContent(t, result)
-
-	for _, want := range []string{
-		".gitea/workflows/zerops.yml",
-		"zeropsio/gitea-mate/actions/deploy@v4",
-		"workflow_dispatch:",
-		"environment: ${{ inputs.environment }}",
-		"service: ${{ inputs.service }}",
-		"ref: ${{ inputs.sha || github.sha }}",
-		"actions/checkout@v4",
-		"branches: [main]",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("gitea confirm missing %q: %s", want, body)
-		}
-	}
-	for _, forbidden := range []string{
-		"secrets.",
-		"ZEROPS_TOKEN",
-		"actions/deploy@v1",
-		".github/workflows",
-		"gh secret set",
-		"zeropsio/actions@",
-		"permissions:",
-	} {
-		if strings.Contains(body, forbidden) {
-			t.Errorf("gitea confirm must not carry %q: %s", forbidden, body)
-		}
-	}
-}
-
-// TestActionsConfirm_GiteaRemote_SetsUpTheServicesRuntime — the workflow the
-// confirm hands the agent is the one wiring writes: it sets up the pair's dev
-// half's runtime before the Test step, so the agent fills the step in with a
-// command the runner can run (run 5's N2). Asked by the stage hostname it is
-// still the dev half's: a pair whose halves differ in type (a Node dev, a
-// static stage) would otherwise hand the agent a file without the setup, and
-// writing it would take the setup out of the repository.
-func TestActionsConfirm_GiteaRemote_SetsUpTheServicesRuntime(t *testing.T) {
-	t.Parallel()
-	const giteaURL = "https://gitea.example.test"
-	for _, service := range []string{"api", "apistage"} {
-		t.Run(service, func(t *testing.T) {
-			t.Parallel()
-			stateDir := t.TempDir()
-			if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
-				Hostname:         "api",
-				Mode:             topology.PlanModeStandard,
-				StageHostname:    "apistage",
-				GitPushState:     topology.GitPushConfigured,
-				RemoteURL:        giteaURL + "/acme/api",
-				BootstrapSession: "test",
-				BootstrappedAt:   "2026-09-16",
-			}); err != nil {
-				t.Fatalf("WriteServiceMeta: %v", err)
-			}
-			client := platform.NewMock().WithServices([]platform.ServiceStack{
-				{ID: "svc-api", Name: "api", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
-				{ID: "svc-apistage", Name: "apistage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "static@1.0"}},
-			})
-
-			result, _, _ := handleBuildIntegration(context.Background(), client, nil, "p1", WorkflowInput{
-				Service:     service,
-				Integration: string(topology.BuildIntegrationActions),
-			}, stateDir, runtime.Info{InContainer: true, GitHostKnown: true, GiteaURL: giteaURL})
-			if result.IsError {
-				t.Fatalf("expected declared, got error: %s", getTextContent(t, result))
-			}
-			var body struct {
-				WorkflowFile struct {
-					Content string `json:"content"`
-				} `json:"workflowFile"`
-			}
-			if err := json.Unmarshal([]byte(getTextContent(t, result)), &body); err != nil {
-				t.Fatalf("the confirm is not JSON: %v", err)
-			}
-			if want := giteaWorkflowYAML("nodejs@22"); body.WorkflowFile.Content != want {
-				t.Errorf("the confirm's workflow is not the one for the dev half's runtime:\n%s\nwant:\n%s", body.WorkflowFile.Content, want)
-			}
-		})
-	}
-}
-
-// The same remote host with no GITEA_URL in the environment is an
-// unidentified forge, not the account's Gitea: the GitHub-shaped emission
-// stands, because nothing has told ZCP a broker exists.
+// A remote on a host zcp does not know is an unidentified forge: the
+// GitHub-shaped emission stands.
 func TestActionsConfirm_UnknownHost_KeepsGitHubEmission(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
@@ -216,8 +97,5 @@ func TestActionsConfirm_UnknownHost_KeepsGitHubEmission(t *testing.T) {
 
 	if !strings.Contains(body, ".github/workflows/zerops.yml") {
 		t.Errorf("an unidentified host keeps the GitHub emission: %s", body)
-	}
-	if strings.Contains(body, ".gitea/workflows") {
-		t.Errorf("an unidentified host must not be handed a broker workflow: %s", body)
 	}
 }

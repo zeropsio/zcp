@@ -6,7 +6,12 @@ import (
 	"testing"
 )
 
-const tierGitea = "https://gitea.acme.example"
+// tierHQ is the Mate's HQ in these tests, and tierApp the application HQ
+// holds it in.
+const (
+	tierHQ  = "https://hq.acme.example"
+	tierApp = "app-1"
+)
 
 // beviroTier is the shape of a real group's AI Agent tier (the Beviro trial,
 // 2026-09-29): pairs whose setups are named after the pair rather than
@@ -19,22 +24,22 @@ project:
 services:
   - hostname: medusadev
     type: nodejs@22
-    buildFromGit: https://gitea.acme.example/beviro/medusadev
+    buildFromGit: https://hq.acme.example/git/app-1/medusadev
     zeropsSetup: medusadev
     priority: 5
   - hostname: medusastage
     type: nodejs@22
-    buildFromGit: https://gitea.acme.example/beviro/medusadev
+    buildFromGit: https://hq.acme.example/git/app-1/medusadev
     zeropsSetup: medusaprod
     enableSubdomainAccess: true
     priority: 5
   - hostname: nextstoredev
     type: nodejs@22
-    buildFromGit: https://gitea.acme.example/beviro/nextstoredev.git
+    buildFromGit: https://hq.acme.example/git/app-1/nextstoredev.git
     zeropsSetup: nextstoredev
   - hostname: nextstorestage
     type: static@1.0
-    buildFromGit: https://gitea.acme.example/beviro/nextstoredev/
+    buildFromGit: https://hq.acme.example/git/app-1/nextstoredev/
     zeropsSetup: nextstoreprod
   - hostname: mailpit
     type: alpine@3.20
@@ -64,8 +69,8 @@ func TestParseMateTier(t *testing.T) {
 			name: "a real group's tier: pairs by repository, stage by its suffix, highest priority first",
 			yaml: beviroTier,
 			wantPairs: []pairWant{
-				{repo: tierGitea + "/beviro/medusadev", repoName: "medusadev", dev: "medusadev", devSetup: "medusadev", devType: "nodejs@22", stage: "medusastage", stageSetup: "medusaprod", sType: "nodejs@22", priority: 5},
-				{repo: tierGitea + "/beviro/nextstoredev", repoName: "nextstoredev", dev: "nextstoredev", devSetup: "nextstoredev", devType: "nodejs@22", stage: "nextstorestage", stageSetup: "nextstoreprod", sType: "static@1.0"},
+				{repo: tierHQ + "/git/app-1/medusadev", repoName: "medusadev", dev: "medusadev", devSetup: "medusadev", devType: "nodejs@22", stage: "medusastage", stageSetup: "medusaprod", sType: "nodejs@22", priority: 5},
+				{repo: tierHQ + "/git/app-1/nextstoredev", repoName: "nextstoredev", dev: "nextstoredev", devSetup: "nextstoredev", devType: "nodejs@22", stage: "nextstorestage", stageSetup: "nextstoreprod", sType: "static@1.0"},
 			},
 			wantSkipped: []string{"mailpit:platform-build", "db:managed"},
 		},
@@ -74,38 +79,38 @@ func TestParseMateTier(t *testing.T) {
 			yaml: `services:
   - hostname: api
     type: go@1
-    buildFromGit: https://gitea.acme.example/beviro/api
+    buildFromGit: https://hq.acme.example/git/app-1/api
     zeropsSetup: dev
   - hostname: apistage
     type: go@1
-    buildFromGit: https://gitea.acme.example/beviro/api
+    buildFromGit: https://hq.acme.example/git/app-1/api
     zeropsSetup: prod
 `,
-			wantPairs: []pairWant{{repo: tierGitea + "/beviro/api", repoName: "api", dev: "api", devSetup: "dev", devType: "go@1", stage: "apistage", stageSetup: "prod", sType: "go@1"}},
+			wantPairs: []pairWant{{repo: tierHQ + "/git/app-1/api", repoName: "api", dev: "api", devSetup: "dev", devType: "go@1", stage: "apistage", stageSetup: "prod", sType: "go@1"}},
 		},
 		{
 			name: "one repository building two pairs: each stage takes the runtime named like it",
 			yaml: `services:
   - hostname: workerstage
     type: nodejs@22
-    buildFromGit: https://gitea.acme.example/beviro/mono
+    buildFromGit: https://hq.acme.example/git/app-1/mono
     zeropsSetup: workerprod
   - hostname: apidev
     type: nodejs@22
-    buildFromGit: https://gitea.acme.example/beviro/mono
+    buildFromGit: https://hq.acme.example/git/app-1/mono
     zeropsSetup: apidev
   - hostname: apistage
     type: nodejs@22
-    buildFromGit: https://gitea.acme.example/beviro/mono
+    buildFromGit: https://hq.acme.example/git/app-1/mono
     zeropsSetup: apiprod
   - hostname: workerdev
     type: nodejs@22
-    buildFromGit: https://gitea.acme.example/beviro/mono
+    buildFromGit: https://hq.acme.example/git/app-1/mono
     zeropsSetup: workerdev
 `,
 			wantPairs: []pairWant{
-				{repo: tierGitea + "/beviro/mono", repoName: "mono", dev: "apidev", devSetup: "apidev", devType: "nodejs@22", stage: "apistage", stageSetup: "apiprod", sType: "nodejs@22"},
-				{repo: tierGitea + "/beviro/mono", repoName: "mono", dev: "workerdev", devSetup: "workerdev", devType: "nodejs@22", stage: "workerstage", stageSetup: "workerprod", sType: "nodejs@22"},
+				{repo: tierHQ + "/git/app-1/mono", repoName: "mono", dev: "apidev", devSetup: "apidev", devType: "nodejs@22", stage: "apistage", stageSetup: "apiprod", sType: "nodejs@22"},
+				{repo: tierHQ + "/git/app-1/mono", repoName: "mono", dev: "workerdev", devSetup: "workerdev", devType: "nodejs@22", stage: "workerstage", stageSetup: "workerprod", sType: "nodejs@22"},
 			},
 		},
 		{
@@ -114,37 +119,37 @@ func TestParseMateTier(t *testing.T) {
   - hostname: appdev
     type: php-nginx@8.4
     buildFromGit:
-      url: https://gitea.acme.example/beviro/app
+      url: https://hq.acme.example/git/app-1/app
       ref: main
   - hostname: appstage
     type: php-nginx@8.4
     buildFromGit:
-      url: https://gitea.acme.example/beviro/app
+      url: https://hq.acme.example/git/app-1/app
     zeropsSetup: prod
 `,
-			wantPairs: []pairWant{{repo: tierGitea + "/beviro/app", repoName: "app", dev: "appdev", devSetup: "appdev", devType: "php-nginx@8.4", stage: "appstage", stageSetup: "prod", sType: "php-nginx@8.4"}},
+			wantPairs: []pairWant{{repo: tierHQ + "/git/app-1/app", repoName: "app", dev: "appdev", devSetup: "appdev", devType: "php-nginx@8.4", stage: "appstage", stageSetup: "prod", sType: "php-nginx@8.4"}},
 		},
 		{
 			name: "a pair's priority is its higher half's",
 			yaml: `services:
   - hostname: webdev
     type: nodejs@22
-    buildFromGit: https://gitea.acme.example/beviro/web
+    buildFromGit: https://hq.acme.example/git/app-1/web
   - hostname: webstage
     type: nodejs@22
-    buildFromGit: https://gitea.acme.example/beviro/web
+    buildFromGit: https://hq.acme.example/git/app-1/web
     priority: 3
   - hostname: apidev
     type: nodejs@22
-    buildFromGit: https://gitea.acme.example/beviro/api
+    buildFromGit: https://hq.acme.example/git/app-1/api
     priority: 7
   - hostname: apistage
     type: nodejs@22
-    buildFromGit: https://gitea.acme.example/beviro/api
+    buildFromGit: https://hq.acme.example/git/app-1/api
 `,
 			wantPairs: []pairWant{
-				{repo: tierGitea + "/beviro/api", repoName: "api", dev: "apidev", devSetup: "apidev", devType: "nodejs@22", stage: "apistage", stageSetup: "apistage", sType: "nodejs@22", priority: 7},
-				{repo: tierGitea + "/beviro/web", repoName: "web", dev: "webdev", devSetup: "webdev", devType: "nodejs@22", stage: "webstage", stageSetup: "webstage", sType: "nodejs@22", priority: 3},
+				{repo: tierHQ + "/git/app-1/api", repoName: "api", dev: "apidev", devSetup: "apidev", devType: "nodejs@22", stage: "apistage", stageSetup: "apistage", sType: "nodejs@22", priority: 7},
+				{repo: tierHQ + "/git/app-1/web", repoName: "web", dev: "webdev", devSetup: "webdev", devType: "nodejs@22", stage: "webstage", stageSetup: "webstage", sType: "nodejs@22", priority: 3},
 			},
 		},
 		{
@@ -152,32 +157,32 @@ func TestParseMateTier(t *testing.T) {
 			yaml: `services:
   - hostname: appdev
     type: nodejs@22
-    buildFromGit: https://gitea.acme.example/beviro/app
+    buildFromGit: https://hq.acme.example/git/app-1/app
   - hostname: appstage
     type: nodejs@22
-    buildFromGit: https://gitea.acme.example/beviro/app
+    buildFromGit: https://hq.acme.example/git/app-1/app
   - hostname: lonedev
     type: nodejs@22
-    buildFromGit: https://gitea.acme.example/beviro/lone
+    buildFromGit: https://hq.acme.example/git/app-1/lone
   - hostname: otherdev
     type: nodejs@22
-    buildFromGit: https://gitea.acme.example/someoneelse/other
+    buildFromGit: https://hq.acme.example/git/app-2/other
   - hostname: otherstage
     type: nodejs@22
-    buildFromGit: https://gitea.acme.example/someoneelse/other
+    buildFromGit: https://hq.acme.example/git/app-2/other
   - hostname: bare
     type: nodejs@22
     startWithoutCode: true
   - hostname: aastage
     type: nodejs@22
-    buildFromGit: https://gitea.acme.example/beviro/twin
+    buildFromGit: https://hq.acme.example/git/app-1/twin
   - hostname: bbstage
     type: nodejs@22
-    buildFromGit: https://gitea.acme.example/beviro/twin
+    buildFromGit: https://hq.acme.example/git/app-1/twin
   - hostname: store
     type: object-storage
 `,
-			wantPairs: []pairWant{{repo: tierGitea + "/beviro/app", repoName: "app", dev: "appdev", devSetup: "appdev", devType: "nodejs@22", stage: "appstage", stageSetup: "appstage", sType: "nodejs@22"}},
+			wantPairs: []pairWant{{repo: tierHQ + "/git/app-1/app", repoName: "app", dev: "appdev", devSetup: "appdev", devType: "nodejs@22", stage: "appstage", stageSetup: "appstage", sType: "nodejs@22"}},
 			wantSkipped: []string{
 				"lonedev:unpaired", "otherdev:foreign-repository", "otherstage:foreign-repository",
 				"bare:no-repository", "aastage:unpaired", "bbstage:unpaired", "store:managed",
@@ -187,7 +192,7 @@ func TestParseMateTier(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			tier, err := ParseMateTier(tt.yaml, tierGitea, "beviro")
+			tier, err := ParseMateTier(tt.yaml, tierHQ, tierApp)
 			if err != nil {
 				t.Fatalf("ParseMateTier: %v", err)
 			}
@@ -218,7 +223,7 @@ func TestParseMateTier(t *testing.T) {
 // the repository the platform built it from, so the summary can say so.
 func TestParseMateTier_SkipsCarryWhereTheirCodeComesFrom(t *testing.T) {
 	t.Parallel()
-	tier, err := ParseMateTier(beviroTier, tierGitea, "beviro")
+	tier, err := ParseMateTier(beviroTier, tierHQ, tierApp)
 	if err != nil {
 		t.Fatalf("ParseMateTier: %v", err)
 	}
@@ -253,7 +258,7 @@ func TestParseMateTier_Refusals(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			tier, err := ParseMateTier(tt.yaml, tierGitea, "beviro")
+			tier, err := ParseMateTier(tt.yaml, tierHQ, tierApp)
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
 			}
@@ -271,8 +276,8 @@ func TestParseMateTier_Refusals(t *testing.T) {
 func TestParseMateTier_CarriesTheProjectVariables(t *testing.T) {
 	t.Parallel()
 	body := "project:\n  name: acme\n  envVariables:\n    API_URL: https://${apistage_zeropsSubdomain}\n    DEBUG: true\n" +
-		"services:\n  - hostname: apidev\n    type: nodejs@22\n    buildFromGit: " + tierGitea + "/acme/apidev\n  - hostname: apistage\n    type: nodejs@22\n    buildFromGit: " + tierGitea + "/acme/apidev\n"
-	tier, err := ParseMateTier(body, tierGitea, "acme")
+		"services:\n  - hostname: apidev\n    type: nodejs@22\n    buildFromGit: " + tierHQ + "/git/app-1/apidev\n  - hostname: apistage\n    type: nodejs@22\n    buildFromGit: " + tierHQ + "/git/app-1/apidev\n"
+	tier, err := ParseMateTier(body, tierHQ, tierApp)
 	if err != nil {
 		t.Fatalf("ParseMateTier: %v", err)
 	}
@@ -289,10 +294,10 @@ func TestParseMateTier_CarriesTheProjectVariables(t *testing.T) {
 func TestParseMateTier_CarriesEachHalfsOwnVariables(t *testing.T) {
 	t.Parallel()
 	body := "services:\n" +
-		"  - hostname: storedev\n    type: nodejs@22\n    buildFromGit: " + tierGitea + "/acme/storedev\n" +
-		"  - hostname: storestage\n    type: nodejs@22\n    buildFromGit: " + tierGitea + "/acme/storedev\n" +
+		"  - hostname: storedev\n    type: nodejs@22\n    buildFromGit: " + tierHQ + "/git/app-1/storedev\n" +
+		"  - hostname: storestage\n    type: nodejs@22\n    buildFromGit: " + tierHQ + "/git/app-1/storedev\n" +
 		"    envVariables:\n      API_URL: https://${apistage_zeropsSubdomain}\n    envSecrets:\n      PORT_NUMBER: 8000\n"
-	tier, err := ParseMateTier(body, tierGitea, "acme")
+	tier, err := ParseMateTier(body, tierHQ, tierApp)
 	if err != nil {
 		t.Fatalf("ParseMateTier: %v", err)
 	}
@@ -302,5 +307,56 @@ func TestParseMateTier_CarriesEachHalfsOwnVariables(t *testing.T) {
 	}
 	if len(tier.Pairs[0].Dev.Envs) != 0 {
 		t.Errorf("dev envs = %v, want none", tier.Pairs[0].Dev.Envs)
+	}
+}
+
+// TestParseMateTier_PairsOnlyRepositoriesOfThisApplication: a runtime is a
+// pair's half only when it builds from a repository of the Mate's
+// application on its HQ — `<HQ>/git/<appId>/<repo>`. Another application's
+// repository is foreign; anything else, the platform builds.
+func TestParseMateTier_PairsOnlyRepositoriesOfThisApplication(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		source string
+		want   MateTierSkipReason // "" for a pair
+	}{
+		{"this application's repository", tierHQ + "/git/app-1/web.git", ""},
+		{"another application's", tierHQ + "/git/app-2/web", MateTierSkipForeign},
+		{"HQ's host, outside its git", tierHQ + "/app-1/web", MateTierSkipPlatformBuild},
+		{"another host", "https://elsewhere.example/git/app-1/web", MateTierSkipPlatformBuild},
+		{"HQ's host on another port", "https://hq.acme.example:8443/git/app-1/web", MateTierSkipPlatformBuild},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			body := "services:\n" +
+				"  - hostname: webdev\n    type: nodejs@22\n    buildFromGit: " + tt.source + "\n" +
+				"  - hostname: webstage\n    type: nodejs@22\n    buildFromGit: " + tt.source + "\n" +
+				"  - hostname: apidev\n    type: nodejs@22\n    buildFromGit: " + tierHQ + "/git/app-1/api\n" +
+				"  - hostname: apistage\n    type: nodejs@22\n    buildFromGit: " + tierHQ + "/git/app-1/api\n"
+			tier, err := ParseMateTier(body, tierHQ, tierApp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			paired := false
+			for _, p := range tier.Pairs {
+				if p.Dev.Hostname == "webdev" {
+					paired = true
+					if p.RepoName != "web" {
+						t.Errorf("repository name = %q, want web", p.RepoName)
+					}
+				}
+			}
+			var reason MateTierSkipReason
+			for _, s := range tier.Skipped {
+				if s.Hostname == "webdev" {
+					reason = s.Reason
+				}
+			}
+			if paired != (tt.want == "") || reason != tt.want {
+				t.Errorf("webdev paired=%v skipped as %q, want %q", paired, reason, tt.want)
+			}
+		})
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -336,124 +337,68 @@ func TestGitPushSetupContainer_NonGitHubHost_SkipsDerivation(t *testing.T) {
 	}
 }
 
-// TestGitPushSetupContainer_GiteaHost_SeedsBotIdentity pins guide 2.3: on the
-// account's own Gitea the commits are the MATE's, not a person's — the bot's
-// login and `{login}@mate.invalid`. The same remote host with no GITEA_URL in
-// the environment is just an unidentified forge and derives nothing, which is
-// what keeps the bot's token from being sent at a stranger's server.
-func TestGitPushSetupContainer_GiteaHost_SeedsBotIdentity(t *testing.T) {
-	t.Parallel()
-	const giteaURL = "https://web-2ff4-3000.prg1.zerops.app"
-	const remote = giteaURL + "/acme/api"
-
-	t.Run("gitea known", func(t *testing.T) {
-		t.Parallel()
-		stateDir := t.TempDir()
-		writeFirstTimeConfigMeta(t, stateDir)
-
-		ssh := &containerSSHStub{
-			dispatch: func(cmd string) ([]byte, error) {
-				if strings.Contains(cmd, "cur_email=$(git config user.email)") {
-					return []byte("ZCP_EMAIL_SEEDED\nZCP_NAME_SEEDED\n"), nil
+// TestGitPushSetupContainer_HQRemote_PersistsTheHelperTheMatesShellAnswers:
+// on this Mate's HQ the commits are the Mate's, and no forge is asked who it
+// thinks the token belongs to. Origin sync persists the helper that answers
+// the Mate's own shell from the enrollment (`zcp hq git-credential`), read
+// when git-push-setup runs — an enrollment written after zcp started counts.
+// The same host with no enrollment is just an unidentified forge, and is
+// never answered with the Mate credential. Not parallel: HOME is the
+// enrollment's.
+func TestGitPushSetupContainer_HQRemote_PersistsTheHelperTheMatesShellAnswers(t *testing.T) {
+	const hqURL = "https://hq-30db-8080.prg1.zerops.app"
+	const remote = hqURL + "/git/a1/api.git"
+	for _, tt := range []struct {
+		name     string
+		enrolled bool
+	}{
+		{"enrolled with this HQ", true},
+		{"the same host, not enrolled", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			if tt.enrolled {
+				if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: hqURL, ProjectID: "p1", Credential: "the-mate-credential"}); err != nil {
+					t.Fatal(err)
 				}
-				return []byte("ok"), nil
-			},
-		}
-		httpDoer := &stubGitHubUserHTTP{status: 200, body: `{"login":"mate-p1","id":7}`}
-		client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
-
-		result, _, _ := handleGitPushSetup(
-			context.Background(), client, httpDoer, ssh, "test-project",
-			WorkflowInput{Service: "appdev", RemoteURL: remote, GitToken: "gitea_bot_token"},
-			stateDir, runtime.Info{InContainer: true, GitHostKnown: true, GiteaURL: giteaURL},
-		)
-		if result.IsError {
-			t.Fatalf("expected success, got error: %s", extractText(result))
-		}
-		if httpDoer.callCount != 1 {
-			t.Errorf("expected exactly 1 Gitea /user call, got %d", httpDoer.callCount)
-		}
-		var seedCmd string
-		for _, c := range ssh.commands {
-			if strings.Contains(c, "cur_email=$(git config user.email)") {
-				seedCmd = c
-				break
 			}
-		}
-		if seedCmd == "" {
-			t.Fatalf("seed command never issued; commands: %v", ssh.commands)
-		}
-		if !strings.Contains(seedCmd, "git config user.email 'mate-p1@mate.invalid'") ||
-			!strings.Contains(seedCmd, "git config user.name 'mate-p1'") {
-			t.Errorf("seed command must carry the bot identity: %s", seedCmd)
-		}
-		if helper := originSyncHelperFallsBackToBotToken(t, ssh.commands); !helper {
-			t.Errorf("origin sync on the Mate's Gitea must persist the helper the Mate's shell can answer: %v", ssh.commands)
-		}
-	})
+			stateDir := t.TempDir()
+			writeFirstTimeConfigMeta(t, stateDir)
+			ssh := &containerSSHStub{}
+			httpDoer := &stubGitHubUserHTTP{status: 200, body: `{"login":"someone","id":7}`}
+			client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
 
-	t.Run("same host, no GITEA_URL", func(t *testing.T) {
-		t.Parallel()
-		stateDir := t.TempDir()
-		writeFirstTimeConfigMeta(t, stateDir)
-
-		ssh := &containerSSHStub{}
-		httpDoer := &stubGitHubUserHTTP{status: 200, body: `{"login":"mate-p1","id":7}`}
-		client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
-
-		result, _, _ := handleGitPushSetup(
-			context.Background(), client, httpDoer, ssh, "test-project",
-			WorkflowInput{Service: "appdev", RemoteURL: remote, GitToken: "some_token"},
-			stateDir, runtime.Info{InContainer: true},
-		)
-		if result.IsError {
-			t.Fatalf("expected success, got error: %s", extractText(result))
-		}
-		if httpDoer.callCount != 0 {
-			t.Errorf("an unidentified host must not be asked who it thinks we are; got %d calls", httpDoer.callCount)
-		}
-		if originSyncHelperFallsBackToBotToken(t, ssh.commands) {
-			t.Errorf("an unidentified host must never be answered with the bot's token: %v", ssh.commands)
-		}
-	})
-}
-
-// TestGitPushSetupContainer_ReadsTheLiveGiteaURL: a zcp that started before
-// the broker wrote GITEA_URL holds none in its start-up runtime, while a
-// delivery reads the live value. A git-push-setup run then must read the live
-// value too, or it rewrites the helper the delivery just re-asserted back to
-// one the Mate's shell cannot answer. Not parallel: it sets the environment.
-func TestGitPushSetupContainer_ReadsTheLiveGiteaURL(t *testing.T) {
-	const giteaURL = "https://web-2ff4-3000.prg1.zerops.app"
-	t.Setenv("GITEA_URL", giteaURL)
-	stateDir := t.TempDir()
-	writeFirstTimeConfigMeta(t, stateDir)
-
-	ssh := &containerSSHStub{}
-	httpDoer := &stubGitHubUserHTTP{status: 200, body: `{"login":"mate-p1","id":7}`}
-	client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
-
-	result, _, _ := handleGitPushSetup(
-		context.Background(), client, httpDoer, ssh, "test-project",
-		WorkflowInput{Service: "appdev", RemoteURL: giteaURL + "/acme/api", GitToken: "gitea_bot_token"},
-		stateDir, runtime.Info{InContainer: true, GitHostKnown: true},
-	)
-	if result.IsError {
-		t.Fatalf("expected success, got error: %s", extractText(result))
-	}
-	if !originSyncHelperFallsBackToBotToken(t, ssh.commands) {
-		t.Errorf("origin sync must persist the helper the Mate's shell can answer, from the live GITEA_URL: %v", ssh.commands)
+			result, _, _ := handleGitPushSetup(
+				context.Background(), client, httpDoer, ssh, "test-project",
+				WorkflowInput{Service: "appdev", RemoteURL: remote, GitToken: "the-mate-credential"},
+				stateDir, runtime.Info{InContainer: true},
+			)
+			if result.IsError {
+				t.Fatalf("expected success, got error: %s", extractText(result))
+			}
+			if httpDoer.callCount != 0 {
+				t.Errorf("no forge is asked who the token belongs to; got %d calls", httpDoer.callCount)
+			}
+			for _, c := range ssh.commands {
+				if strings.Contains(c, "cur_email=$(git config user.email)") {
+					t.Errorf("no identity is seeded for this host: %s", c)
+				}
+			}
+			if got := originSyncHelperAsksZcp(t, ssh.commands); got != tt.enrolled {
+				t.Errorf("origin sync persisted the helper that asks zcp = %v, want %v: %v", got, tt.enrolled, ssh.commands)
+			}
+		})
 	}
 }
 
-// originSyncHelperFallsBackToBotToken reports whether the origin sync
-// git-push-setup ran persisted a helper that answers from GITEA_TOKEN — the
-// bot's token the Mate's own shell carries.
-func originSyncHelperFallsBackToBotToken(t *testing.T, commands []string) bool {
+// originSyncHelperAsksZcp reports whether the origin sync git-push-setup ran
+// persisted a helper that asks `zcp hq git-credential` — the Mate credential
+// the Mate's own shell reaches through the enrollment.
+func originSyncHelperAsksZcp(t *testing.T, commands []string) bool {
 	t.Helper()
 	for _, c := range commands {
 		if strings.Contains(c, "git remote add origin") && strings.Contains(c, "credential.https://") {
-			return strings.Contains(c, "GITEA_TOKEN")
+			return strings.Contains(c, "zcp hq git-credential")
 		}
 	}
 	t.Fatalf("origin sync never ran; commands: %v", commands)

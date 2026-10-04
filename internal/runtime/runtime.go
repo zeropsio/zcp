@@ -34,21 +34,6 @@ type Info struct {
 	// step (internal/init) and the nginx renderer cannot drift.
 	// Spec: docs/spec-mate.md §2.
 	MateEnabled bool
-
-	// GitHostKnown is true when GITEA_URL is set: this environment has a git
-	// host and a token of its own. Gates the git-host paragraph in the
-	// emitted agent context, so a container without one is never told about
-	// variables it does not have.
-	GitHostKnown bool
-
-	// GiteaURL is GITEA_URL verbatim — the origin of the account's own Gitea,
-	// written onto the `zcp` service when the Mate was made. It is the ONLY
-	// thing that makes a remote recognisable as that Gitea
-	// (topology.ClassifyGitHost takes it as a parameter), so it is read once
-	// here and passed down rather than reached for from inside a classifier.
-	// Empty outside a Mate, and empty in a container the app has not written
-	// it onto yet.
-	GiteaURL string
 }
 
 // Detect reads Zerops container env vars and returns runtime info.
@@ -57,23 +42,24 @@ type Info struct {
 // ZCP_AUTHORING and ZCP_MATE_ENABLED gates are read regardless of container
 // detection (authoring runs in both envs; mate is acted on only in a container,
 // but one read here keeps the value with a single home).
-func Detect() Info {
-	authoring := os.Getenv("ZCP_AUTHORING") == "1"
-	mateEnabled := EnvEnabled(os.Getenv("ZCP_MATE_ENABLED"))
-	giteaURL := os.Getenv("GITEA_URL")
-	serviceID := os.Getenv("serviceId")
+func Detect() Info { return DetectFrom(os.Getenv) }
+
+// DetectFrom is Detect over the environment getenv reads: a process whose own
+// environment is not the container's — a unit's — hands it the container's.
+func DetectFrom(getenv func(string) string) Info {
+	authoring := getenv("ZCP_AUTHORING") == "1"
+	mateEnabled := EnvEnabled(getenv("ZCP_MATE_ENABLED"))
+	serviceID := getenv("serviceId")
 	if serviceID == "" {
 		return Info{Authoring: authoring, MateEnabled: mateEnabled}
 	}
 	return Info{
-		InContainer:  true,
-		ServiceName:  os.Getenv("hostname"),
-		ServiceID:    serviceID,
-		ProjectID:    os.Getenv("projectId"),
-		Authoring:    authoring,
-		MateEnabled:  mateEnabled,
-		GitHostKnown: giteaURL != "",
-		GiteaURL:     giteaURL,
+		InContainer: true,
+		ServiceName: getenv("hostname"),
+		ServiceID:   serviceID,
+		ProjectID:   getenv("projectId"),
+		Authoring:   authoring,
+		MateEnabled: mateEnabled,
 	}
 }
 

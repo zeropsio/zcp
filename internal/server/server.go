@@ -291,6 +291,9 @@ func (s *Server) registerTools() {
 	} else {
 		tools.RegisterDeployLocal(s.server, s.client, httpClient, projectID, s.authInfo, s.logFetcher, stateDir, wfEngine, recipeProbe)
 	}
+	if s.rtInfo.InContainer && s.rtInfo.MateEnabled {
+		tools.RegisterObserve(s.server, httpClient, projectID)
+	}
 	tools.RegisterExport(s.server, s.client, projectID)
 	tools.RegisterManage(s.server, s.client, projectID)
 	recipeSteer := tools.NewGroupRecipeSteer(s.client, httpClient, s.rtInfo, stateDir)

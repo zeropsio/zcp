@@ -111,6 +111,9 @@ func registerImport(srv *mcp.Server, client platform.Client, projectID string, e
 		if blocked := refuseOpenMate(ctx, client, projectID, rt, liveEnvPath); blocked != nil {
 			return blocked, nil, nil
 		}
+		if blocked := refuseSecondMate(rt, input); blocked != nil {
+			return blocked, nil, nil
+		}
 		if input.Override.Bool() {
 			if blocked, gateErr := gateOverrideOnFailedHistory(ctx, client, projectID, input); gateErr != nil {
 				return convertError(gateErr, WithRecoveryStatus()), nil, nil
@@ -140,27 +143,45 @@ func registerImport(srv *mcp.Server, client platform.Client, projectID string, e
 // refuseOpenMate refuses an import into a Mate's project that is not closed
 // off yet: its runtimes would read the zcp service's variables, the Mate's
 // own key among them, and closing it off after they exist restarts them. The
-// person's press closes it off and then tags the project ops.ClosedOffTag; a
-// press whose tab closed first leaves it to Finish setup. Only a Mate the new
-// press made — its zcp carries MATE_SETUP_RUNTIMES in the live env store; an
-// older Mate behaves as before. A project that cannot be read is refused
-// too, saying so: whether it is closed off is not known.
+// person's press closes it off; a press whose tab closed first leaves it to
+// Finish setup. Whether it is closed off is read from Zerops
+// (ops.ProjectClosedOff), never from HQ's mark (audit N1). Only a Mate the
+// new press made — its zcp carries MATE_SETUP_RUNTIMES in the live env
+// store; an older Mate behaves as before. A read that fails is refused too,
+// saying so: whether the project is closed off is not known.
 func refuseOpenMate(ctx context.Context, client platform.Client, projectID string, rt runtime.Info, liveEnvPath string) *mcp.CallToolResult {
 	if !newFlowMate(rt, liveEnvPath) {
 		return nil
 	}
-	closed, err := ops.ReadProjectClosedOff(ctx, client, projectID)
+	closed, err := ops.ProjectClosedOff(ctx, client, projectID)
 	switch {
 	case err != nil:
 		return convertError(platform.NewPlatformError(platform.ErrAPIError,
-			fmt.Sprintf("Could not read the project (%v), so whether it is closed off is not known; nothing was imported.", err),
-			"Retry the import; if it persists, check the API with zerops_discover."))
+			fmt.Sprintf("Could not read whether the project is closed off (%v); nothing was imported.", err),
+			"Retry the import."))
 	case closed:
 		return nil
 	}
 	return convertError(platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 		openMateRefusal,
 		"Nothing was imported. Tell the person to press Finish setup on this Mate in the app, then import again."))
+}
+
+// refuseSecondMate refuses an import into a Mate's project that declares a
+// zcp service: the project holds one, this container, and a second would be
+// a second Mate HQ refuses to enroll (spec-mate §6.6). A document that does
+// not read is left to the import's own error.
+func refuseSecondMate(rt runtime.Info, input ImportInput) *mcp.CallToolResult {
+	if !rt.MateEnabled {
+		return nil
+	}
+	hostnames, err := ops.ImportedZcpServices(input.Content, input.FilePath)
+	if err != nil || len(hostnames) == 0 {
+		return nil
+	}
+	return convertError(platform.NewPlatformError(platform.ErrInvalidImportYml,
+		fmt.Sprintf("This import declares a zcp service (%s); a project holds one Mate, and this project's is this container. Nothing was imported.", strings.Join(hostnames, ", ")),
+		"Remove the zcp service from the import, then import again."))
 }
 
 // newFlowMate is a Mate the new press made: its zcp carries the runtimes

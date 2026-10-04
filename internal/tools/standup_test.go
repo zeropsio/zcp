@@ -1,11 +1,10 @@
 // Tests for: tools/standup.go — zerops_standup, a new Mate's stand-up from
-// its group's recipe. Fakes only: a broker and a Gitea on httptest, an SSH
-// stub that answers the way a healthy container would, the platform mock.
+// its application's recipe. Fakes only: HQ on httptest, an SSH stub that
+// answers the way a healthy container would, the platform mock.
 package tools
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -20,8 +19,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/mate"
-	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -29,7 +28,7 @@ import (
 )
 
 // standupTierTemplate is a real group's AI Agent tier (the Beviro trial,
-// 2026-09-29) with GITEA standing for the fake Gitea's origin: two pairs
+// 2026-09-29) with HQ standing for the fake HQ's origin: two pairs
 // whose setups are named after them, no priority between them — their order
 // is what the storefront's build reads (standupZeropsYAML) — a public-build
 // mailpit and a managed database.
@@ -39,20 +38,20 @@ project:
 services:
   - hostname: nextstoredev
     type: nodejs@22
-    buildFromGit: GITEA/beviro/nextstoredev
+    buildFromGit: HQ/git/app-1/nextstoredev.git
     zeropsSetup: nextstoredev
   - hostname: nextstorestage
     type: nodejs@22
-    buildFromGit: GITEA/beviro/nextstoredev
+    buildFromGit: HQ/git/app-1/nextstoredev.git
     zeropsSetup: nextstoreprod
     enableSubdomainAccess: true
   - hostname: medusadev
     type: nodejs@22
-    buildFromGit: GITEA/beviro/medusadev
+    buildFromGit: HQ/git/app-1/medusadev.git
     zeropsSetup: medusadev
   - hostname: medusastage
     type: nodejs@22
-    buildFromGit: GITEA/beviro/medusadev
+    buildFromGit: HQ/git/app-1/medusadev.git
     zeropsSetup: medusaprod
     enableSubdomainAccess: true
   - hostname: mailpit
@@ -98,32 +97,34 @@ func standupZeropsYAML(pair string) string {
 `, pair, buildEnv)
 }
 
-// standupGitea is the broker and the group's Gitea in one TLS server — two
-// origins in production; the code never assumes they are one host.
-type standupGitea struct {
+// standupCredential is the Mate credential the stand-up reads HQ with and
+// its pairs deliver to HQ with.
+const standupCredential = "standup-mate-credential"
+
+// standupHQ is the Mate's HQ: its application, the recipe on its recipe
+// repository's main, and the repositories there.
+type standupHQ struct {
 	mu sync.Mutex
-	// tier is the group repo's AI Agent tier on main, "" when main lacks it.
+	// appID is the application HQ holds the Mate in, "" for none.
+	appID string
+	// tier is the AI Agent tier on main, "" when main lacks it.
 	tier string
-	// orgs is what the bot's org list answers.
-	orgs []string
-	// repos are the service repositories that exist, as org/name.
+	// repos are the repositories the application has.
 	repos []string
-	// asked is every repository the broker was asked for, in order.
+	// asked is every repository HQ was asked for, in order.
 	asked []string
-	// pullCreates counts pull requests opened — a stand-up opens none.
-	pullCreates int
-	// read is every group-repo file read, by path.
-	read []string
-	url  string
+	// changeOpens counts changes opened in HQ — a stand-up opens none.
+	changeOpens int
+	// tierReads counts reads of the tier.
+	tierReads int
+	// tierRefusal, when set, is HQ's refusal of the tier read: its status,
+	// code and reason.
+	tierRefusal *hq.RefusedError
 }
 
-func (g *standupGitea) start(t *testing.T) *httptest.Server {
+func (g *standupHQ) start(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "token "+giteaBotToken {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
 		g.mu.Lock()
 		defer g.mu.Unlock()
 		write := func(status int, body any) {
@@ -131,56 +132,56 @@ func (g *standupGitea) start(t *testing.T) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(body)
 		}
 		path := r.URL.Path
-		switch {
-		case path == "/api/v1/user":
-			write(http.StatusOK, map[string]any{"login": "mate-p1", "id": 7})
-		case path == "/api/v1/user/orgs":
-			// A bot's token lacks read:organization (measured 2026-09-30).
-			write(http.StatusForbidden, map[string]string{"message": "token does not have at least one of required scope(s), required=[read:user read:organization]"})
-		case path == "/api/v1/user/repos":
-			repos := []map[string]any{}
-			for _, org := range g.orgs {
-				repos = append(repos, map[string]any{"name": "group", "full_name": org + "/group", "owner": map[string]any{"login": org}})
-			}
-			write(http.StatusOK, repos)
-		case strings.HasPrefix(path, "/api/v1/repos/beviro/group/contents/"):
-			file := strings.TrimPrefix(path, "/api/v1/repos/beviro/group/contents/")
-			g.read = append(g.read, file)
-			if file != workflow.MateTierImportPath || g.tier == "" || r.URL.Query().Get("ref") != "main" {
-				write(http.StatusNotFound, map[string]string{"message": "The target couldn't be found."})
+		if repo, ok := strings.CutPrefix(path, "/git/"+g.appID+"/"); ok && g.appID != "" {
+			if user, password, _ := r.BasicAuth(); user != hq.GitUser || password != standupCredential {
+				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
-			write(http.StatusOK, map[string]any{"type": "file", "encoding": "base64",
-				"content": base64.StdEncoding.EncodeToString([]byte(g.tier))})
-		case strings.HasPrefix(path, "/api/v1/repos/") && strings.Count(strings.TrimPrefix(path, "/api/v1/repos/"), "/") == 1:
-			if slices.Contains(g.repos, strings.TrimPrefix(path, "/api/v1/repos/")) {
-				write(http.StatusOK, map[string]any{"full_name": strings.TrimPrefix(path, "/api/v1/repos/")})
+			name, _, _ := strings.Cut(repo, ".git/")
+			if !slices.Contains(g.repos, name) {
+				w.WriteHeader(http.StatusNotFound)
 				return
 			}
-			write(http.StatusNotFound, map[string]string{"message": "not found"})
-		case path == "/mate/repository":
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Header.Get("Authorization") != "Mate "+standupCredential {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch path {
+		case "/api/mate/self":
+			var app any
+			if g.appID != "" {
+				app = g.appID
+			}
+			write(http.StatusOK, map[string]any{"projectId": "p1", "name": "Wren", "face": "f", "standupRequestedBy": nil,
+				"closedOff": true, "appId": app, "changes": []any{}})
+		case "/api/mate/recipe/" + hq.RecipeTierMate:
+			g.tierReads++
+			if refusal := g.tierRefusal; refusal != nil {
+				write(refusal.Status, map[string]string{"code": refusal.Code, "reason": refusal.Reason})
+				return
+			}
+			if g.tier == "" {
+				write(http.StatusOK, map[string]string{"state": hq.RecipeAbsent})
+				return
+			}
+			write(http.StatusOK, map[string]string{"state": hq.RecipePresent, "importYaml": g.tier, "mainHead": standupHead})
+		case "/api/mate/repos":
 			var body struct {
 				Name string `json:"name"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			g.asked = append(g.asked, body.Name)
-			write(http.StatusOK, map[string]any{"fullName": "beviro/" + body.Name,
-				"cloneUrl": g.url + "/beviro/" + body.Name, "defaultBranch": "main", "created": false})
-		case strings.Contains(path, "/branches/"):
-			w.WriteHeader(http.StatusNotFound)
-		case strings.HasSuffix(path, "/pulls"):
-			if r.Method == http.MethodPost {
-				// No branch is ever pushed here, and Gitea opens no pull
-				// request from a branch it does not have.
-				write(http.StatusNotFound, map[string]string{"message": "head branch does not exist"})
-				return
-			}
-			write(http.StatusOK, []any{})
+			write(http.StatusOK, map[string]any{"appId": g.appID, "name": body.Name})
+		case "/api/mate/changes":
+			g.changeOpens++
+			write(http.StatusNotFound, map[string]string{"code": "repo_not_found", "reason": "repo_not_found"})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
-	g.url = srv.URL
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -347,27 +348,29 @@ func (m *standupMounter) ListMountDirs(_ context.Context, _ string) ([]string, e
 func (m *standupMounter) HasUnit(_ context.Context, _ string) (bool, error) { return false, nil }
 func (m *standupMounter) CleanupUnit(_ context.Context, _ string) error     { return nil }
 
-// standupHTTP sends Gitea's and the broker's calls to the fake and answers
-// every other request — an L7 readiness probe — with 200.
+// standupHTTP sends HQ's calls to the fake and answers every other request —
+// an L7 readiness probe — with 200.
 type standupHTTP struct {
-	gitea *http.Client
-	host  string
+	hq   *http.Client
+	host string
 }
 
 func (h standupHTTP) Do(req *http.Request) (*http.Response, error) {
 	if req.URL.Host == h.host {
-		return h.gitea.Do(req)
+		return h.hq.Do(req)
 	}
 	return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: http.Header{}}, nil
 }
 
 // standupFixture is a Mate's project the moment its person has signed the
-// agent in: the tier on the group repo's main, the services the browser
-// imported (dev halves running and empty, stage halves waiting for a first
-// deploy), the Gitea variables on the container.
+// agent in: the tier on the recipe repository's main, the services the
+// browser imported (dev halves running and empty, stage halves waiting for a
+// first deploy), the Mate enrolled with its HQ.
 type standupFixture struct {
 	root, stateDir string
-	gitea          *standupGitea
+	// enrollmentPath is the Mate's enrollment with the fake's HQ.
+	enrollmentPath string
+	hq             *standupHQ
 	srv            *httptest.Server
 	mock           *platform.Mock
 	ssh            *standupSSH
@@ -384,6 +387,9 @@ type standupFixture struct {
 	// status is its writer, one for the fixture as one MCP server holds one.
 	statusPath string
 	status     *standupStatus
+	// closedOff is the Mate's project as Zerops reads it: envIsolation
+	// `service`, else `none` (ops.ProjectClosedOff).
+	closedOff bool
 }
 
 // importingClient is the platform while the browser's runtime import is still
@@ -416,11 +422,11 @@ func (c *importingClient) ListServicesDirect(ctx context.Context, projectID stri
 func newStandupFixture(t *testing.T) *standupFixture {
 	t.Helper()
 	f := &standupFixture{
-		gitea: &standupGitea{orgs: []string{"beviro"}, repos: []string{"beviro/medusadev", "beviro/nextstoredev"}},
-		ssh:   &standupSSH{collide: map[string]bool{}},
+		hq:  &standupHQ{appID: "app-1", repos: []string{"medusadev", "nextstoredev"}},
+		ssh: &standupSSH{collide: map[string]bool{}},
 	}
-	f.srv = f.gitea.start(t)
-	f.gitea.tier = strings.ReplaceAll(standupTierTemplate, "GITEA", f.srv.URL)
+	f.srv = f.hq.start(t)
+	f.hq.tier = strings.ReplaceAll(standupTierTemplate, "HQ", f.srv.URL)
 	f.root = t.TempDir()
 	f.stateDir = filepath.Join(f.root, ".zcp", "state")
 	f.statusPath = filepath.Join(f.root, "mate-status.json")
@@ -428,7 +434,11 @@ func newStandupFixture(t *testing.T) *standupFixture {
 	f.status.beatEvery = 5 * time.Millisecond
 	t.Cleanup(f.status.stopCarry)
 	f.mounter = &standupMounter{}
-	f.env = map[string]string{"GITEA_URL": f.srv.URL, "MATE_BROKER_URL": f.srv.URL, "GITEA_TOKEN": giteaBotToken}
+	f.env = map[string]string{}
+	f.enrollmentPath = filepath.Join(f.root, "enrollment.json")
+	if err := hq.SaveEnrollment(f.enrollmentPath, hq.Enrollment{HQ: f.srv.URL, HQProjectID: "hq1", ProjectID: "p1", Credential: standupCredential}); err != nil {
+		t.Fatal(err)
+	}
 	// The branch cut puts main's files in each dev half; the mount shows them.
 	for _, pair := range []string{"medusa", "nextstore"} {
 		dir := filepath.Join(f.root, pair+"dev")
@@ -474,27 +484,33 @@ func (f *standupFixture) run(t *testing.T) (*mcp.CallToolResult, standupResponse
 	if f.building != nil {
 		client = f.building
 	}
+	isolation := "none"
+	if f.closedOff {
+		isolation = "service"
+	}
+	f.mock.WithProjectEnv([]platform.ProjectEnvVar{{ID: "e-iso", Key: "envIsolation", Content: isolation, Type: platform.ProjectEnvSystem}})
 	registerStandup(srv, standupDeps{
 		batch: batchDeployer{
 			client:      client,
-			httpClient:  standupHTTP{gitea: f.srv.Client(), host: strings.TrimPrefix(f.srv.URL, "https://")},
+			httpClient:  standupHTTP{hq: f.srv.Client(), host: strings.TrimPrefix(f.srv.URL, "https://")},
 			projectID:   "p1",
 			sshDeployer: f.ssh,
 			authInfo:    &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
 			rtInfo:      runtime.Info{InContainer: true, MateEnabled: true, ProjectID: "p1", ServiceName: "zcp"},
 			stateDir:    f.stateDir,
 		},
-		mounter:     f.mounter,
-		liveEnvPath: writeLiveEnvFile(t, f.env),
-		gitWait:     50 * time.Millisecond,
-		gitPoll:     10 * time.Millisecond,
-		runtimeWait: 200 * time.Millisecond,
-		runtimePoll: 5 * time.Millisecond,
-		statusPath:  f.statusPath,
-		status:      f.status,
-		bootWait:    2 * time.Second,
-		bootPoll:    5 * time.Millisecond,
-		trackPoll:   5 * time.Millisecond,
+		mounter:        f.mounter,
+		liveEnvPath:    writeLiveEnvFile(t, f.env),
+		enrollWait:     50 * time.Millisecond,
+		enrollPoll:     10 * time.Millisecond,
+		runtimeWait:    200 * time.Millisecond,
+		runtimePoll:    5 * time.Millisecond,
+		statusPath:     f.statusPath,
+		status:         f.status,
+		enrollmentPath: f.enrollmentPath,
+		bootWait:       2 * time.Second,
+		bootPoll:       5 * time.Millisecond,
+		trackPoll:      5 * time.Millisecond,
 	})
 	result := callTool(t, srv, "zerops_standup", map[string]any{})
 	var body standupResponse
@@ -536,7 +552,7 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 	if body.StandUp != standupReady {
 		t.Errorf("standUp = %q, want %q: %s", body.StandUp, standupReady, getTextContent(t, result))
 	}
-	if body.GroupRepo != "beviro/group" {
+	if body.GroupRepo != hq.RecipeRepo {
 		t.Errorf("groupRepo = %q", body.GroupRepo)
 	}
 
@@ -550,9 +566,9 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 		t.Errorf("deploys =\n  %s\nwant\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
 	}
 
-	// The broker was asked for the repositories the recipe names.
-	if !slices.Equal(f.gitea.asked, []string{"medusadev", "nextstoredev"}) && !slices.Equal(f.gitea.asked, []string{"nextstoredev", "medusadev"}) {
-		t.Errorf("broker asked for %v, want medusadev and nextstoredev", f.gitea.asked)
+	// HQ was asked for the repositories the recipe names.
+	if !slices.Equal(f.hq.asked, []string{"medusadev", "nextstoredev"}) && !slices.Equal(f.hq.asked, []string{"nextstoredev", "medusadev"}) {
+		t.Errorf("HQ asked for %v, want medusadev and nextstoredev", f.hq.asked)
 	}
 	for _, pair := range [][3]string{{"medusadev", "medusastage", "medusaprod"}, {"nextstoredev", "nextstorestage", "nextstoreprod"}} {
 		meta, _ := workflow.ReadServiceMeta(f.stateDir, pair[0])
@@ -563,8 +579,8 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 		if meta.PrimarySetupName != pair[0] || meta.StageSetupName != pair[2] {
 			t.Errorf("%s setups = %q/%q", pair[0], meta.PrimarySetupName, meta.StageSetupName)
 		}
-		if meta.Gitea == nil || meta.Gitea.FullName != "beviro/"+pair[0] || meta.Gitea.Branch != "mate/mate-p1" || meta.GitPushState != topology.GitPushConfigured {
-			t.Errorf("%s not wired: gitea=%+v gitPush=%s", pair[0], meta.Gitea, meta.GitPushState)
+		if meta.HQ == nil || meta.HQ.Repo != pair[0] || meta.HQ.Branch != "mate/p1" || meta.GitPushState != topology.GitPushConfigured {
+			t.Errorf("%s not wired: hq=%+v gitPush=%s", pair[0], meta.HQ, meta.GitPushState)
 		}
 		// No work session records a stand-up's deploys, so the durable
 		// first-deploy mark is stamped directly.
@@ -589,8 +605,8 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 	}
 
 	// Nothing is delivered: the stage runs main as it is.
-	if f.ssh.ran("HEAD:refs/heads/mate/") || f.gitea.pullCreates != 0 {
-		t.Errorf("a stand-up must not push or open a pull request (pushed=%v, pulls=%d)", f.ssh.ran("HEAD:refs/heads/mate/"), f.gitea.pullCreates)
+	if f.ssh.ran("HEAD:refs/heads/mate/") || f.hq.changeOpens != 0 {
+		t.Errorf("a stand-up must not push or open a change (pushed=%v, changes=%d)", f.ssh.ran("HEAD:refs/heads/mate/"), f.hq.changeOpens)
 	}
 
 	dev := body.service(t, "medusadev")
@@ -614,12 +630,13 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 	if body.Envelope == nil {
 		t.Error("the stand-up changes the project; its answer carries the envelope")
 	}
-	// The group's own environments are the broker's: only the Mate's tier
+	// The group's own environments are HQ's: only the Mate's tier
 	// is read, never the stage's or production's.
-	if slices.ContainsFunc(f.gitea.read, func(path string) bool { return path != workflow.MateTierImportPath }) {
-		t.Errorf("group repo reads = %v, want only the AI Agent tier", f.gitea.read)
+	if f.hq.tierReads != 2 {
+		t.Errorf("the tier was read %d times over two calls, want once a call", f.hq.tierReads)
 	}
-	assertNoTokenOnDisk(t, f.stateDir)
+	assertNoSecretOnDisk(t, f.stateDir, standupCredential)
+	assertNoSecretOnDisk(t, f.stateDir, standupCredential)
 
 	agents, _ := os.ReadFile(filepath.Join(f.root, "AGENTS.md"))
 	if !strings.Contains(string(agents), "medusadev") || !strings.Contains(string(agents), "ZEROPS:REFLOG") {
@@ -644,14 +661,14 @@ func TestStandup_ASecondCallContinuesAndSkipsWhatIsDone(t *testing.T) {
 		}
 	}
 	f.mock.WithServices(deployed)
-	asked, pushes := len(f.gitea.asked), len(f.ssh.pushes())
+	asked, pushes := len(f.hq.asked), len(f.ssh.pushes())
 
 	result, body := f.run(t)
 	if result.IsError || body.StandUp != standupReady {
 		t.Fatalf("second call: %s", getTextContent(t, result))
 	}
-	if len(f.gitea.asked) != asked || len(f.ssh.pushes()) != pushes {
-		t.Errorf("a second call asked the broker %d more times and deployed %d more times", len(f.gitea.asked)-asked, len(f.ssh.pushes())-pushes)
+	if len(f.hq.asked) != asked || len(f.ssh.pushes()) != pushes {
+		t.Errorf("a second call asked HQ %d more times and deployed %d more times", len(f.hq.asked)-asked, len(f.ssh.pushes())-pushes)
 	}
 	dev := body.service(t, "medusadev")
 	if dev.Adopted != standupAlready || dev.Wired != standupAlready || dev.Deploy == nil || dev.Deploy.Status != standupAlreadyDeployed {
@@ -678,23 +695,42 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 		wantPushes   []string
 	}{
 		{
-			name:    "Git access never arrives",
-			setup:   func(f *standupFixture) { f.env = map[string]string{"GITEA_URL": f.srv.URL} },
-			wantErr: []string{"PREREQUISITE_MISSING", "MATE_BROKER_URL", "GITEA_TOKEN", "route=\\\"adopt\\\""},
+			name:    "the Mate is never enrolled",
+			setup:   func(f *standupFixture) { f.enrollmentPath = filepath.Join(f.root, "no-enrollment.json") },
+			wantErr: []string{"PREREQUISITE_MISSING", "not enrolled with its HQ", "route=\\\"adopt\\\""},
+		},
+		{
+			name:    "HQ holds the Mate in no application",
+			setup:   func(f *standupFixture) { f.hq.appID = "" },
+			wantErr: []string{"PREREQUISITE_MISSING", "no application"},
+		},
+		{
+			name: "a tier past HQ's read bound",
+			setup: func(f *standupFixture) {
+				f.hq.tierRefusal = &hq.RefusedError{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Reason: "recipe_too_large"}
+			},
+			wantErr: []string{"INVALID_IMPORT_YML", "larger than HQ reads"},
+		},
+		{
+			name: "HQ lets the Mate go between its state and the tier",
+			setup: func(f *standupFixture) {
+				f.hq.tierRefusal = &hq.RefusedError{Status: http.StatusForbidden, Code: "forbidden", Reason: "mate_not_in_app"}
+			},
+			wantErr: []string{"PREREQUISITE_MISSING", "no application"},
 		},
 		{
 			name:    "main has no AI Agent tier",
-			setup:   func(f *standupFixture) { f.gitea.tier = "" },
-			wantErr: []string{"beviro/group", "0 — AI Agent/import.yaml"},
+			setup:   func(f *standupFixture) { f.hq.tier = "" },
+			wantErr: []string{"group has no 0 — AI Agent/import.yaml on main", "not merged yet"},
 		},
 		{
 			name:    "a tier with no pair",
-			setup:   func(f *standupFixture) { f.gitea.tier = "services:\n  - hostname: db\n    type: postgresql@17\n" },
+			setup:   func(f *standupFixture) { f.hq.tier = "services:\n  - hostname: db\n    type: postgresql@17\n" },
 			wantErr: []string{"INVALID_IMPORT_YML", "db (managed)"},
 		},
 		{
 			name:    "a tier that does not read",
-			setup:   func(f *standupFixture) { f.gitea.tier = "services: [\n" },
+			setup:   func(f *standupFixture) { f.hq.tier = "services: [\n" },
 			wantErr: []string{"INVALID_IMPORT_YML"},
 		},
 		{
@@ -727,10 +763,10 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 		},
 		{
 			name:        "the recipe names a repository that is not there",
-			setup:       func(f *standupFixture) { f.gitea.repos = []string{"beviro/medusadev"} },
+			setup:       func(f *standupFixture) { f.hq.repos = []string{"medusadev"} },
 			wantStandUp: standupPartial,
 			want: map[string]string{
-				"nextstoredev":   "beviro/nextstoredev is not on Gitea",
+				"nextstoredev":   "app-1/nextstoredev is not in HQ",
 				"nextstorestage": "nextstoredev did not stand up",
 				"medusastage":    standupQueued,
 			},
@@ -740,11 +776,11 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 			name: "a pair that does not stand up holds only the stages below it",
 			setup: func(f *standupFixture) {
 				f.devsDeployed()
-				f.gitea.repos = []string{"beviro/nextstoredev"}
+				f.hq.repos = []string{"nextstoredev"}
 			},
 			wantStandUp: standupPartial,
 			want: map[string]string{
-				"medusadev":      "beviro/medusadev is not on Gitea",
+				"medusadev":      "app-1/medusadev is not in HQ",
 				"nextstorestage": "waits for medusastage, which did not stand up",
 			},
 		},
@@ -1206,10 +1242,10 @@ func TestStandup_WritesItsProgressForTheRunCard(t *testing.T) {
 		},
 		{
 			name:      "a refusal fails the call with its reason",
-			setup:     func(f *standupFixture) { f.env = map[string]string{} },
+			setup:     func(f *standupFixture) { f.enrollmentPath = filepath.Join(f.root, "no-enrollment.json") },
 			calls:     1,
 			wantState: mate.StandupFailed, wantPhase: mate.PhaseDevelopment, wantEnded: true,
-			wantError: "Git access has not reached this Mate",
+			wantError: "not enrolled with its HQ",
 		},
 	}
 	for _, tt := range tests {
@@ -1522,14 +1558,14 @@ func TestStandup_NeverAsksForAnImportIntoAnOpenProject(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name    string
-		tags    []string
+		closed  bool
 		plan    bool
 		want    string
 		wantNot string
 	}{
-		{"open", []string{"mate"}, true, "Finish setup", "zerops_import"},
-		{"closed off", []string{"mate", ops.ClosedOffTag}, true, "zerops_import", "Finish setup"},
-		{"open, a Mate made before the new press", []string{"mate"}, false, "zerops_import", "Finish setup"},
+		{"open", false, true, "Finish setup", "zerops_import"},
+		{"closed off", true, true, "zerops_import", "Finish setup"},
+		{"open, a Mate made before the new press", false, false, "zerops_import", "Finish setup"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1538,7 +1574,7 @@ func TestStandup_NeverAsksForAnImportIntoAnOpenProject(t *testing.T) {
 			if tt.plan {
 				f.env["MATE_SETUP_RUNTIMES"] = "c2VydmljZXM6IFtd"
 			}
-			f.mock.WithProject(&platform.Project{ID: "p1", Tags: tt.tags})
+			f.closedOff = tt.closed
 			f.mock.WithServices(withoutService(f.services, "nextstorestage"))
 			result, body := f.run(t)
 			if result.IsError {
@@ -1573,21 +1609,21 @@ func TestStandup_AnImportWaitingToBeClosedOffAnswersAtOnce(t *testing.T) {
 	if took := time.Since(start); took > 2*standupProgressGap {
 		t.Errorf("answered after %s, want at once", took)
 	}
-	if len(f.ssh.pushes()) != 0 || len(f.gitea.asked) != 0 {
+	if len(f.ssh.pushes()) != 0 || len(f.hq.asked) != 0 {
 		t.Error("nothing is touched while the project is not closed off")
 	}
 }
 
-// TestStandup_TheTagLandedWhileTheImportStillSaysWaiting: the container's
-// import looks for the closed-off tag once a minute at most, so its last line
-// can still say it waits after the press has tagged the project. The
-// stand-up reads the tag itself: tagged, it says the import is starting and
-// waits for it as for an import in flight, then stands the project up.
-func TestStandup_TheTagLandedWhileTheImportStillSaysWaiting(t *testing.T) {
+// TestStandup_ClosedOffWhileTheImportStillSaysWaiting: the container's
+// import reads the project once a minute at most, so its last line can still
+// say it waits after the press has closed the project off. The stand-up reads
+// Zerops itself: closed off, it says the import is starting and waits for it
+// as for an import in flight, then stands the project up.
+func TestStandup_ClosedOffWhileTheImportStillSaysWaiting(t *testing.T) {
 	t.Parallel()
 	f := newStandupFixture(t)
 	f.env["MATE_SETUP_RUNTIMES"] = "c2VydmljZXM6IFtd"
-	f.mock.WithProject(&platform.Project{ID: "p1", Tags: []string{"mate", ops.ClosedOffTag}})
+	f.closedOff = true
 	if err := mate.UpdateRuntimes(f.statusPath, func(r *mate.RuntimesStatus) {
 		r.State, r.Error = mate.RuntimesPending, mate.RuntimesWaitingClosedOff
 	}); err != nil {

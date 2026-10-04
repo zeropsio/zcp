@@ -35,6 +35,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/schema"
 )
@@ -172,11 +173,16 @@ func LoadLiveEnv(path string) ([]string, error) {
 // holds any credential.
 const InitMarkerRelPath = ".zcp/state/init-complete"
 
+// AgentStateDir is the state directory of the agents a Mate runs: zcp keeps
+// it under the working directory it serves from, and every agent works in
+// WorkspaceDir — so the pairs' records the zcp of an agent writes are here.
+const AgentStateDir = WorkspaceDir + "/.zcp/state"
+
 // InitMarkerDir / InitMarkerPath are InitMarkerRelPath's ABSOLUTE production
 // forms. nginx has no baseDir to join against, and `zcp init` always runs with
 // baseDir "." from a WorkspaceDir cwd in production, so the two agree.
 const (
-	InitMarkerDir  = WorkspaceDir + "/.zcp/state"
+	InitMarkerDir  = AgentStateDir
 	InitMarkerPath = InitMarkerDir + "/init-complete"
 )
 
@@ -715,14 +721,20 @@ func BasePathSupport(bin string) (bool, error) {
 // every launch where the flag is not.
 const EnvBasePath = "T3CODE_BASE_PATH"
 
+// EnvHQEnrollment names, to the server, the file the Mate's HQ enrollment is
+// kept in (hq.EnrollmentPath): the HQ address and the credential it opens
+// its link to HQ with. The file may not exist yet; zcp keeps enrolling.
+const EnvHQEnrollment = "T3CODE_ZEROPS_HQ_ENROLLMENT"
+
 // LaunchEnvLines is what a mate launch adds to the server's environment on
 // top of the live env store and the identity contract: its public prefix,
-// whatever the --base-path probe answered, and the status file it reads a
-// new Mate's setup from (status.go).
+// whatever the --base-path probe answered, the status file it reads a new
+// Mate's setup from (status.go), and its HQ enrollment.
 func LaunchEnvLines() []string {
 	return []string{
 		EnvBasePath + "=" + BasePath,
 		EnvStatusFile + "=" + DefaultStatusFilePath(),
+		EnvHQEnrollment + "=" + hq.EnrollmentPath(),
 	}
 }
 

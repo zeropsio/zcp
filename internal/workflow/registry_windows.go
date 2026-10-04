@@ -55,6 +55,26 @@ func lockWithRetry(f *os.File, flags uintptr) error {
 	return fmt.Errorf("LockFileEx: timeout after %v waiting for registry lock", time.Duration(flockRetries)*flockInterval)
 }
 
+// tryLockExclusive makes one non-blocking attempt at an exclusive lock via
+// LockFileEx: false when another handle holds it.
+func tryLockExclusive(f *os.File) (bool, error) {
+	var ol syscall.Overlapped
+	r1, _, err := procLockFileEx.Call(
+		f.Fd(),
+		lockfileExclusiveLock|lockfileFailImmediately,
+		0,
+		1, 0,
+		uintptr(unsafe.Pointer(&ol)),
+	)
+	if r1 != 0 {
+		return true, nil
+	}
+	if errno, ok := err.(syscall.Errno); ok && errno == errLockViolation {
+		return false, nil
+	}
+	return false, err
+}
+
 // unlockFile releases the lock via UnlockFileEx.
 func unlockFile(f *os.File) {
 	var ol syscall.Overlapped

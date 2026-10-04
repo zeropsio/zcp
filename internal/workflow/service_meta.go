@@ -138,14 +138,21 @@ type ServiceMeta struct {
 	// fresh (no adopt step ran) or not yet adopted.
 	Repo *topology.Repo `json:"repo,omitempty"`
 
-	// Gitea is the pair's repository on the account's own Gitea, recorded
-	// when the broker gave it (guide 2.1). Absent on every pair whose remote
-	// is not that Gitea — which is every pair outside a Mate. Non-secret: a
-	// repository name, a branch name, and at most the Mate's own words about
-	// its change until a pull request carries them. The bot's token is never
-	// here (nor in any other file ZCP writes) — it lives where git-push-setup
-	// put it, a sensitive service env on the push source.
-	Gitea *GiteaRepoRef `json:"gitea,omitempty"`
+	// HQ is the pair's repository in HQ, recorded when HQ gave it (SPEC
+	// §3.2a): where its code lands through changes. Absent on every pair
+	// whose remote is not this Mate's HQ — which is every pair outside a
+	// Mate. Non-secret: an application id, a repository name, a branch name,
+	// the change on record, and at most the Mate's own words about its change
+	// until the change carries them. The Mate credential is never here (nor in
+	// any other file ZCP writes) — it lives where git-push-setup put it, a
+	// sensitive service env on the push source.
+	HQ *HQRepoRef `json:"hq,omitempty"`
+
+	// MainGitea is the pair's repository on its organization's Gitea as
+	// main's zcp recorded it, on disk as "gitea": kept through every write
+	// until the pair moves to HQ, which reads it and clears it
+	// (tools/hq_main_gitea.go). Migration-only: it goes with the migration.
+	MainGitea *MainGiteaRepo `json:"gitea,omitempty"`
 }
 
 // SetRepoBaseline records the adopt-time baseline marker for this meta.
@@ -153,68 +160,96 @@ func (m *ServiceMeta) SetRepoBaseline(appVersionID string, provenance topology.R
 	m.Repo = &topology.Repo{BaselineAppVersion: appVersionID, Provenance: provenance}
 }
 
-// GiteaRepoRef is what a pair needs to keep working on its Gitea repository
-// across sessions: which repository it is, and which branch this Mate pushes.
-// `main` is protected on every repository (docs/vocabulary.md), so Branch is
-// never `main` — it is `mate/{bot login}`, and the Mate lands through a pull
-// request.
-type GiteaRepoRef struct {
-	FullName      string `json:"fullName"`                // "{org}/{name}"
-	Branch        string `json:"branch"`                  // mate/{bot login} — never main
-	DefaultBranch string `json:"defaultBranch,omitempty"` // the base a pull request targets
-	RequestedAt   string `json:"requestedAt,omitempty"`   // RFC3339, when the broker answered
-	// PullRequest is the number of the request that lands Branch on
-	// DefaultBranch, 0 until one exists. Recorded rather than re-derived: the
-	// branch is pushed long after the repository is wired, so the request has
-	// its own moment, and a pair that has one must never make Gitea answer
-	// about it again on every later pass.
-	PullRequest int `json:"pullRequest,omitempty"`
-	// Landed is the merge that closed PullRequest, recorded the moment a pass
-	// reads Gitea and finds it merged (ReadGiteaPullRequestOutcome) — nil
-	// until then, and cleared once a delivery has absorbed it (or proven it
-	// needed no absorbing) by pushing successfully. It rides between those
-	// two moments so a delivery that runs before the next reconcile pass
-	// (deliverGiteaPair reads the outcome itself rather than depending on
-	// one) still has what BuildAbsorbLandedPullRequestCommand needs: Gitea
-	// squashes by default (MB-26), and a squash commit shares no history
-	// with the branch that became it, so the ordinary take-the-base-in merge
-	// alone reads it as two histories that both add the same files.
-	Landed *LandedPullRequest `json:"landed,omitempty"`
-	// LastLanded is the merge commit of the pair's most recent merged
-	// request: recorded with Landed, and never cleared — the absorb that
-	// clears Landed leaves the work on the base all the same. It is how
-	// production knows this pair's work reached the group's repository once
-	// no request and no pending landing are left to say so.
-	LastLanded string `json:"lastLanded,omitempty"`
+// HQRepoRef is what a pair needs to keep working on its repository in HQ
+// across sessions: which repository it is, which local branch this Mate works
+// on, and its change toward `main`. `main` moves only by HQ's merge, so the
+// Mate's work lands through a change: HQ takes the Mate's push only on the
+// branch of its own open change (`mate/<project id>/<number>`).
+type HQRepoRef struct {
+	// AppID is the HQ application the repository belongs to — the one HQ held
+	// the Mate in when it was wired. A Mate moved to another application is
+	// wired again there (rewire), and its change in the old one stays there.
+	AppID string `json:"appId"`
+	// Repo is the repository's name in that application: the pair's dev
+	// hostname, or the one a recipe names.
+	Repo string `json:"repo"`
+	// Branch is the Mate's local branch in the pair's checkout, mate/<project
+	// id> — never main. Each change's own branch is cut from it at its push.
+	Branch string `json:"branch"`
+	// WiredAt is when the repository was wired, RFC3339.
+	WiredAt string `json:"wiredAt,omitempty"`
+	// Change is the number of the Mate's open change in Repo, 0 until a
+	// delivery opens one. Recorded rather than re-derived: a pass reads what
+	// became of it from the Mate's own state in HQ.
+	Change int `json:"change,omitempty"`
+	// Landed is the squash that merged the recorded change, recorded the
+	// moment a pass reads it merged — nil until then, and cleared once a
+	// delivery has absorbed it (or proven it needed no absorbing) by pushing
+	// successfully. A squash shares no history with the branch that became
+	// it, so the ordinary take-`main`-in merge alone reads it as two
+	// histories that both add the same files (MB-26).
+	Landed *LandedChange `json:"landed,omitempty"`
+	// Pending is a delivery HQ did not refuse but could not be reached for —
+	// its change not opened, or its branch not pushed — which a later pass
+	// finishes once HQ answers (SPEC §3.2a). nil when none waits.
+	Pending *PendingDelivery `json:"pending,omitempty"`
 	// ChangeDescription is what the Mate wrote about its change while no
-	// pull request could take it yet — none was open, or Gitea refused the
-	// edit. It is there only until a request carries it, and never longer
-	// than the request it was written for: the next change is another
-	// change, and inheriting the last one's words would tell the person
-	// about work that is not in it.
+	// change could take it yet — none was open, or HQ did not take the edit.
+	// It is there only until a change carries it, and never longer than the
+	// change it was written for: the next change is another change, and
+	// inheriting the last one's words would tell the person about work that
+	// is not in it.
 	ChangeDescription *ChangeDescription `json:"changeDescription,omitempty"`
 }
 
-// ChangeDescription is a Mate's description of its change, kept for the pull
-// request that will carry it.
+// ChangeDescription is a Mate's description of its change, kept for the
+// change that will carry it.
 type ChangeDescription struct {
 	// Text is the description, in markdown.
 	Text string `json:"text"`
-	// PullRequest is the request it was written for; 0 when it waits for
-	// whichever request the pair opens next.
-	PullRequest int `json:"pullRequest,omitempty"`
+	// Change is the change it was written for; 0 when it waits for whichever
+	// change the pair opens next.
+	Change int `json:"change,omitempty"`
 }
 
-// LandedPullRequest is what a pull request's merge needs recorded before a
-// delivery can absorb it losslessly: the merge/squash commit itself and the
-// branch tip it merged, straight from Gitea's pulls API
-// (merge_commit_sha, head.sha).
-type LandedPullRequest struct {
-	// Commit is Gitea's merge_commit_sha — S in BuildAbsorbLandedPullRequestCommand.
+// LandedChange is what a change's merge needs recorded before a delivery can
+// absorb it losslessly, straight from the Mate's own state in HQ.
+type LandedChange struct {
+	// Commit is the squash on `main` (mergedSha) — S in
+	// BuildAbsorbLandedChangeCommand.
 	Commit string `json:"commit"`
-	// Head is the branch tip Gitea merged — H in BuildAbsorbLandedPullRequestCommand,
-	// i.e. what this Mate's own checkout was at the moment of the landing.
+	// Head is the change's head HQ squashed (landedHead) — H in
+	// BuildAbsorbLandedChangeCommand, i.e. what this Mate's own checkout was
+	// at the moment of the landing.
 	Head string `json:"head"`
+}
+
+// MainGiteaRepo is what a pair's move from main's Gitea to HQ reads of
+// main's record: the repository; its pull request, whose number HQ's import
+// kept as its change's; a merge of a pull request the checkout has not
+// absorbed yet — the same squash and head, now on HQ's `main`; and the
+// Mate's words kept for a pull request.
+type MainGiteaRepo struct {
+	FullName          string                      `json:"fullName"` // "{org}/{name}"
+	PullRequest       int                         `json:"pullRequest,omitempty"`
+	Landed            *LandedChange               `json:"landed,omitempty"`
+	ChangeDescription *MainGiteaChangeDescription `json:"changeDescription,omitempty"`
+}
+
+// MainGiteaChangeDescription is main's kept description: for the pull request
+// numbered, or the next one when 0.
+type MainGiteaChangeDescription struct {
+	Text        string `json:"text"`
+	PullRequest int    `json:"pullRequest,omitempty"`
+}
+
+// PendingDelivery is a delivery waiting for HQ to answer.
+type PendingDelivery struct {
+	// Title is the change's title as the delivery named it: the work session
+	// that named it may be over by the pass that finishes it.
+	Title string `json:"title"`
+	// Since is when the delivery could not reach HQ, RFC3339.
+	Since string `json:"since"`
 }
 
 // PublicAccessFor returns the persisted public-access record for hostname —

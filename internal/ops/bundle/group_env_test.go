@@ -21,7 +21,7 @@ var (
 
 // The group recipe composes unattended, with nobody to classify a variable,
 // and whatever it writes lands in a repository the whole group reads — the
-// broker merges a proposal that only adds files by itself. So the composer
+// Core lands a proposal that only adds files by itself. So the composer
 // decides every variable itself, and it fails closed: a value is written as
 // it is only when nothing says secret — the platform's flag, a masked read, a
 // credential's name, a secret's shape — and it has a narrow config shape.

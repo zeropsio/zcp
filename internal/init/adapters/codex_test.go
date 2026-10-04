@@ -230,6 +230,40 @@ func TestCodex_ContainerInit_EmptyHomeReturnsError(t *testing.T) {
 	}
 }
 
+// TestCodex_MCPEntry_PassesEveryVariableRuntimeDetectionReads pins that
+// Codex hands zcp serve every variable runtime.DetectFrom reads, the gates
+// among them. Codex strips whatever env_vars does not name, so a gate left
+// out reads as off inside the Mate it is on in: under Codex, zcp serve ran
+// without ZCP_MATE_ENABLED, and a scale never told the agent its group
+// recipe still wrote the old one (E2E F15, 2026-10-03, Bea).
+func TestCodex_MCPEntry_PassesEveryVariableRuntimeDetectionReads(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	env := newCodexEnv(t, home)
+	if err := adapters.NewCodex().ContainerInit(env); err != nil {
+		t.Fatal(err)
+	}
+	zerops := loadCodexTOML(t, home)["mcp_servers"].(map[string]any)["zerops"].(map[string]any)
+	passed := map[string]bool{}
+	for _, v := range zerops["env_vars"].([]any) {
+		passed[v.(string)] = true
+	}
+
+	var read []string
+	runtime.DetectFrom(func(key string) string {
+		read = append(read, key)
+		return "1"
+	})
+	if len(read) == 0 {
+		t.Fatal("runtime.DetectFrom read nothing")
+	}
+	for _, key := range read {
+		if !passed[key] {
+			t.Errorf("env_vars must name %q, which runtime.DetectFrom reads (env_vars %v)", key, zerops["env_vars"])
+		}
+	}
+}
+
 // TestCodex_MCPEntry_UsesEnvVarsNotEnv pins the Codex CLI contract:
 // `env_vars = ["NAME"]` is the documented mechanism for forwarding a
 // named environment variable from Codex's calling shell to the MCP

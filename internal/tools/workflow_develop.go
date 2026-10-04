@@ -274,8 +274,8 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 // Mate adopted — every new Mate is born from the recipe, its services
 // imported without code — whose dev half has never been deployed. A stand-up
 // deploys, starts and verifies the dev half; promoting it is a delivery in a
-// Mate wired to its group's Gitea (a commit, a push and a pull request), so it
-// waits for the person to ask. That holds whether zcp auto-included the stage
+// Mate delivering through its HQ (a commit, a change and a push), so it waits
+// for the person to ask. That holds whether zcp auto-included the stage
 // or the agent named it. A pair the Mate created for a task (a classic
 // bootstrap), or one whose dev half already runs deployed code, keeps its
 // stage required: that task's delivery goes through its stage.

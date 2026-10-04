@@ -196,7 +196,7 @@ func TestBuildGroupRecipe_AIAgentTierIsTheMatesProject(t *testing.T) {
 
 // A group's stage and production run what the Mate's stage half runs. A pair
 // records its halves' setups apart — dev and prod — and the group tiers named
-// the dev half's: a stage deployed the dev setup, or the broker refused it for
+// the dev half's: a stage deployed the dev setup, or its deploy refused it for
 // a setup the zerops.yaml did not have (measured 2026-09-17).
 func TestBuildGroupRecipe_GroupEnvironmentsBuildTheStageHalfsSetup(t *testing.T) {
 	t.Parallel()

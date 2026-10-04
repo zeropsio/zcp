@@ -142,8 +142,8 @@ func handleLaunchProduction(
 			"Ensure ZCP is bound to a Zerops project (ZCP_PROJECT_ID or zcp config).",
 		), WithRecoveryStatus()), nil, nil
 	}
-	// The server's own client, threaded in: giteaLaunchProductionRefusal
-	// needs one to freshen a recorded pull request's outcome. Nil only in a
+	// The server's own client, threaded in: hqLaunchProductionRefusal needs
+	// one to freshen a recorded change's outcome. Nil only in a
 	// caller that registered no client at all (workflow_bootstrap.go's
 	// handleBootstrapComplete has the same fallback and the same reason).
 	if httpClient == nil {
@@ -152,11 +152,12 @@ func handleLaunchProduction(
 			Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}},
 		}
 	}
-	// A wired Mate's production belongs to its group, never to this
-	// workflow (gitea_delivery.go, plans/backlog/mate-wired-production-intent-misroutes-to-launch.md).
-	// Refuses unconditionally, ahead of scope/state/mutation — nothing
-	// below has a case for a group's production either.
-	if refusal := giteaLaunchProductionRefusal(ctx, httpClient, stateDir, giteaWired()); refusal != nil {
+	// The production of a Mate delivering through HQ belongs to its
+	// application, never to this workflow (hq_delivery.go,
+	// plans/backlog/mate-wired-production-intent-misroutes-to-launch.md).
+	// Refuses unconditionally, ahead of scope/state/mutation — nothing below
+	// has a case for an application's production either.
+	if refusal := hqLaunchProductionRefusal(ctx, httpClient, stateDir, hqWired()); refusal != nil {
 		return refusal, nil, nil
 	}
 

@@ -127,6 +127,12 @@ const GitTokenEnvKey = "GIT_TOKEN"
 // write access to the group's code repositories.
 const GiteaTokenEnvKey = "GITEA_TOKEN"
 
+// GiteaURLEnvKey is the old Gitea's origin, which main's Mate app wrote onto
+// the `zcp` service beside GITEA_TOKEN. zcp reads it only to recognise the
+// remote main's zcp set on a pair, which then moves to HQ
+// (tools/hq_main_gitea.go).
+const GiteaURLEnvKey = "GITEA_URL"
+
 // LaunchTokenEnvKey is the single owner of the staged launch-token env-var
 // name (single-token launch lifecycle). The launch-production mutation
 // stages the user's integration token (EnvSetService, sensitive=true) as a

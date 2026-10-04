@@ -64,7 +64,7 @@ func TestBuildIntegration_ActionsTemplateUsesTrackedRef(t *testing.T) {
 // TestActionsTemplate_VersionNameSHA pins GF-10 (docs/spec-workflows.md
 // §12.6): the setup-aware zcli push line records the built commit via
 // --version-name "${GITHUB_REF_NAME} ${GITHUB_SHA::7}" — the pushed branch
-// and the short sha, two tokens, as the Mate app and the broker read it — in
+// and the short sha, two tokens, as the Mate app and HQ read it — in
 // a bash step, which the substring expansion needs. The compact
 // wrapper-action variant cannot express it (zeropsio/actions exposes no
 // version-name input) and must not claim to.

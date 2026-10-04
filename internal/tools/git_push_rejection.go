@@ -41,19 +41,18 @@ type GitPushRejectionPayload struct {
 // is a user decision, never zcp's to make.
 const gitPushRejectionMessage = "zcp will not choose for you and will never force-push or merge on your behalf. Read `next` for the three named options (rebase / merge / replace-remote) and their exact commands; surface the choice to the user (replace-remote discards the remote's ahead commits and needs their explicit say-so), then run the one they pick."
 
-// giteaPushRejectionMessage is that suggestion for a remote on this Mate's
-// Gitea, where replace-remote is never offered.
-const giteaPushRejectionMessage = "zcp will not choose for you and will never merge on your behalf. This branch on the group's Gitea is shared through its pull request and the repository's base is protected, so the remote's commits are taken in, never replaced: read `next` for the two named options (rebase / merge) and their exact commands, then run the one the user picks."
+// hqPushRejectionMessage is that suggestion for a remote on this Mate's HQ,
+// where replace-remote is never offered.
+const hqPushRejectionMessage = "zcp will not choose for you and will never merge on your behalf. A change's branch in HQ moves only forward and its main only by HQ's merge, so the remote's commits are taken in, never replaced: read `next` for the two named options (rebase / merge) and their exact commands, then run the one the user picks."
 
 // gitPushReplaceRemote names the one option that overwrites the remote.
 const gitPushReplaceRemote = "replace-remote"
 
 // buildGitPushRejectionOptions builds the named options a
 // GIT_PUSH_NON_FAST_FORWARD refusal offers, none of which zcp executes: three,
-// or — on this Mate's Gitea, where a branch is shared through its pull request
-// and the base is protected — the two that take the remote in, never
-// replace-remote.
-func buildGitPushRejectionOptions(ref string, remoteAhead int, giteaRemote bool) []GitPushRejectionOption {
+// or — on this Mate's HQ, where a branch moves only forward and main only by
+// HQ's merge — the two that take the remote in, never replace-remote.
+func buildGitPushRejectionOptions(ref string, remoteAhead int, hqRemote bool) []GitPushRejectionOption {
 	options := []GitPushRejectionOption{
 		{
 			Name:        "rebase",
@@ -74,7 +73,7 @@ func buildGitPushRejectionOptions(ref string, remoteAhead int, giteaRemote bool)
 			Command: fmt.Sprintf("git push --force-with-lease origin %s", ref),
 		},
 	}
-	if giteaRemote {
+	if hqRemote {
 		options = slices.DeleteFunc(options, func(o GitPushRejectionOption) bool {
 			return o.Name == gitPushReplaceRemote
 		})
@@ -99,7 +98,7 @@ func classifyGitPushNonFastForward(run ops.GitRunner, remoteURL, ref string) *Gi
 		payload.LocalAhead = probe.LocalAhead
 		payload.Unrelated = probe.Unrelated
 	}
-	payload.Next = buildGitPushRejectionOptions(ref, payload.RemoteAhead, giteaRemoteOfThisMate(remoteURL))
+	payload.Next = buildGitPushRejectionOptions(ref, payload.RemoteAhead, hqRemoteOfThisMate(remoteURL))
 	return payload
 }
 
@@ -112,15 +111,15 @@ func newGitPushNonFastForwardError(hostname, detail, remoteURL string) *platform
 	return platform.NewPlatformError(
 		platform.ErrGitPushNonFastForward,
 		fmt.Sprintf("git-push from %s was rejected as non-fast-forward: %s", hostname, detail),
-		gitPushRejectionSuggestion(giteaRemoteOfThisMate(remoteURL)),
+		gitPushRejectionSuggestion(hqRemoteOfThisMate(remoteURL)),
 	)
 }
 
 // gitPushRejectionSuggestion is the suggestion matching the options
 // buildGitPushRejectionOptions offers for the same remote.
-func gitPushRejectionSuggestion(giteaRemote bool) string {
-	if giteaRemote {
-		return giteaPushRejectionMessage
+func gitPushRejectionSuggestion(hqRemote bool) string {
+	if hqRemote {
+		return hqPushRejectionMessage
 	}
 	return gitPushRejectionMessage
 }

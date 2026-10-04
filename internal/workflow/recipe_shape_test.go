@@ -902,11 +902,11 @@ func TestDeriveRecipePlan_PairsSetupsNamedAfterThePair(t *testing.T) {
   - hostname: medusadev
     type: nodejs@22
     zeropsSetup: medusadev
-    buildFromGit: https://gitea.acme.example/beviro/medusadev
+    buildFromGit: https://hq.acme.example/git/app-1/medusadev
   - hostname: medusastage
     type: nodejs@22
     zeropsSetup: medusaprod
-    buildFromGit: https://gitea.acme.example/beviro/medusadev
+    buildFromGit: https://hq.acme.example/git/app-1/medusadev
 `)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -940,14 +940,14 @@ func TestParseRecipeImportShape_ABlockFormBuildAndAPriority(t *testing.T) {
     zeropsSetup: dev
     priority: 5
     buildFromGit:
-      url: https://gitea.acme.example/beviro/api
+      url: https://hq.acme.example/git/app-1/api
       ref: main
 `)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	rt := shape.Runtimes[0]
-	if rt.BuildFromGit != "https://gitea.acme.example/beviro/api" || rt.Priority != 5 {
+	if rt.BuildFromGit != "https://hq.acme.example/git/app-1/api" || rt.Priority != 5 {
 		t.Errorf("runtime = %+v, want the block's url and priority 5", rt)
 	}
 }

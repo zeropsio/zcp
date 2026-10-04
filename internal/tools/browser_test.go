@@ -6,11 +6,14 @@
 package tools
 
 import (
+	"bytes"
+	"encoding/json"
 	"slices"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // TestBrowserToolResult_AppendsImageContentWhenScreenshotPresent pins
@@ -81,5 +84,41 @@ func TestBrowserToolResult_EmptyScreenshotBytesNoImageContent(t *testing.T) {
 
 	if len(tr.Content) != 1 {
 		t.Fatalf("expected 1 content block (text only) when PNG bytes are empty, got %d: %+v", len(tr.Content), tr.Content)
+	}
+}
+
+// TestKeepBrowserPicture: a screenshot zerops_browser takes is kept, and its
+// result names it — the only way the Mate can put it in a description.
+func TestKeepBrowserPicture(t *testing.T) {
+	stateDir := t.TempDir()
+	result := &ops.BrowserBatchResult{
+		URL:        "https://appstage.example.invalid",
+		Screenshot: &ops.BrowserScreenshotResult{PNG: []byte("\x89PNG-browser"), Width: 1280, Height: 720},
+	}
+	keepBrowserPicture(stateDir, result)
+	if result.Screenshot.Picture != "shot-1" {
+		t.Fatalf("picture = %q, want shot-1", result.Screenshot.Picture)
+	}
+	var shown struct {
+		Screenshot struct {
+			Picture string `json:"picture"`
+		} `json:"screenshot"`
+	}
+	if err := json.Unmarshal([]byte(resultText(t, browserToolResult(result))), &shown); err != nil || shown.Screenshot.Picture != "shot-1" {
+		t.Errorf("the result must name the picture: %+v (%v)", shown, err)
+	}
+	if _, png, err := workflow.KeptPicture(stateDir, "shot-1"); err != nil || !bytes.Equal(png, []byte("\x89PNG-browser")) {
+		t.Errorf("the picture is not kept: %v", err)
+	}
+
+	for _, none := range []*ops.BrowserBatchResult{
+		{URL: "https://appstage.example.invalid"},
+		{URL: "https://appstage.example.invalid", Screenshot: &ops.BrowserScreenshotResult{}},
+	} {
+		keepBrowserPicture(stateDir, none)
+	}
+	keepBrowserPicture("", result)
+	if _, _, err := workflow.KeptPicture(stateDir, "shot-2"); err == nil {
+		t.Error("a result with no picture kept one")
 	}
 }

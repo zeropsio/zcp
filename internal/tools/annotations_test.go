@@ -244,6 +244,9 @@ func TestAnnotations_DescriptionKeywords(t *testing.T) {
 		{name: "zerops_verify", keywords: []string{"health", "pass", "fail", "info"}},
 		{name: "zerops_process", keywords: []string{"wait", "cancel", "status"}},
 		{name: "zerops_export", keywords: []string{"export", "yaml", "service"}},
+		// E2E F15: an agent asked to carry a scale into the group recipe read
+		// group-recipe as tiers-only and called the change blocked.
+		{name: "zerops_workflow", keywords: []string{`action="group-recipe" scaling=`}},
 	}
 
 	for _, tt := range tests {
@@ -649,5 +652,20 @@ func TestAnnotations_StandupTool(t *testing.T) {
 	}
 	if len(schema) > 120 {
 		t.Errorf("input schema is %d bytes, want an empty object: %s", len(schema), schema)
+	}
+}
+
+func TestAnnotations_ObserveTool(t *testing.T) {
+	t.Chdir(t.TempDir())
+	tool := listAllTools(t, runtime.Info{InContainer: true, MateEnabled: true})["zerops_observe"]
+	if tool == nil {
+		t.Fatal("zerops_observe should be registered in a Mate")
+	}
+	ann := tool.Annotations
+	if ann == nil || ann.Title != "Observe stage and production" || !ann.ReadOnlyHint || !ann.IdempotentHint || ann.DestructiveHint == nil || *ann.DestructiveHint {
+		t.Fatalf("annotations = %+v", ann)
+	}
+	if len(strings.Fields(tool.Description)) > 60 {
+		t.Fatal("description exceeds 60 words")
 	}
 }

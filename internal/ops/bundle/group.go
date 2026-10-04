@@ -56,8 +56,8 @@ type GroupRuntime struct {
 	StageHostname string
 	// ServiceType is the platform type tag, e.g. "nodejs@22".
 	ServiceType string
-	// RepoURL is the service repository's canonical clone URL — the one the
-	// broker returned for this pair (A1, recorded on ServiceMeta.RemoteURL).
+	// RepoURL is the pair's repository in HQ, the address its buildFromGit
+	// names (hq.RepoURLAt).
 	RepoURL string
 	// SetupName is the `setup:` block the dev half resolves at build time.
 	SetupName string
@@ -107,7 +107,7 @@ type GroupRecipeInputs struct {
 	// default.
 	CorePackage string
 	// Utilities are the runtimes the project builds from a public repository
-	// and no Gitea pair — a mailpit, an adminer.
+	// and no pair — a mailpit, an adminer.
 	Utilities []GroupUtility
 	// HAIncapable names the managed services whose type the platform ships no
 	// `:ha` variant of: the tier that promotes the rest keeps them single-node.
@@ -115,7 +115,7 @@ type GroupRecipeInputs struct {
 }
 
 // GroupUtility is a runtime the project builds from a public repository and
-// no Gitea pair: a utility such as mailpit, which no Mate develops. Every tier
+// no pair: a utility such as mailpit, which no Mate develops. Every tier
 // writes it as the project runs it — its own hostname, its public build, its
 // own scale — with no tier's transform: there is no pair to promote and no
 // service repository to name.
@@ -216,7 +216,7 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 		case strings.TrimSpace(r.ServiceType) == "":
 			return recipe.Layout{}, nil, fmt.Errorf("group recipe %q: runtime %q: ServiceType required", inputs.Name, r.DevHostname)
 		case strings.TrimSpace(r.RepoURL) == "":
-			return recipe.Layout{}, nil, fmt.Errorf("group recipe %q: runtime %q: RepoURL required (chain to the broker's repository call)", inputs.Name, r.DevHostname)
+			return recipe.Layout{}, nil, fmt.Errorf("group recipe %q: runtime %q: RepoURL required (the pair's repository in HQ)", inputs.Name, r.DevHostname)
 		case strings.TrimSpace(r.SetupName) == "":
 			return recipe.Layout{}, nil, fmt.Errorf("group recipe %q: runtime %q: SetupName required", inputs.Name, r.DevHostname)
 		}
@@ -483,12 +483,14 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 
 // groupTierHeader is what a tier says about itself above its project: what
 // the tier is, that zcp wrote it and from which Mate, and that it is the
-// group's to change — zcp proposes only the tiers the group repo's main
-// lacks (D30), so a person's edit is never written over.
+// group's to change — zcp adds only a whole tier the group repo's main lacks
+// (D30), and into one main carries proposes nothing but a service's scale
+// (D34), as a change a person reviews, so a person's edit is never written
+// over.
 func groupTierHeader(inputs GroupRecipeInputs, policy groupTierPolicy) []string {
 	return []string{
 		"The " + policy.title + " tier. " + policy.summary,
-		fmt.Sprintf("zcp wrote this file from the Mate %q. It is the group's now: a person may edit it, and zcp never proposes over a tier the group repo already carries.",
+		fmt.Sprintf("zcp wrote this file from the Mate %q. It is the group's now: a person may edit it. zcp adds only a whole tier the group repo lacks; into a tier it already carries, zcp proposes only a service's scale (group-recipe scaling=<hostname>), as a change a person reviews.",
 			firstNonBlank(inputs.MateProjectName, inputs.Name)),
 		"Priority is the order services are created in, each wave deployed before the next starts: the managed services first, then every runtime before the runtimes whose build reads it.",
 	}
@@ -797,8 +799,8 @@ func groupTierProjectName(inputs GroupRecipeInputs, policy groupTierPolicy) stri
 
 // GroupPromotedHostname strips the pair's mode suffix: `apidev`/`apistage` →
 // `api`. A shared environment has one runtime per app, not a pair — and it is
-// the name a pair's workflow asks the broker to deploy (measured 2026-09-17:
-// a workflow naming `appdev` asked a stage whose runtime is `app`).
+// the name a stage's or production's runtime has (measured 2026-09-17: a
+// deploy naming `appdev` asked a stage whose runtime is `app`).
 func GroupPromotedHostname(hostname string) string {
 	for _, suffix := range []string{"-dev", "-stage", "stage", "dev"} {
 		if trimmed, ok := strings.CutSuffix(hostname, suffix); ok && trimmed != "" {

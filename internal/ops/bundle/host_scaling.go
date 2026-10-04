@@ -11,7 +11,7 @@ import (
 )
 
 // A Mate that changes a service's scale after its group's recipe is on main
-// proposes that change on its own: a pull request that rewrites ONE host's
+// proposes that change on its own: a change that rewrites ONE host's
 // verticalAutoscaling block in each tier file and leaves every other line of
 // the file as main has it. These read and splice the block as text, by the
 // composer's own layout — `- hostname:` items under services, the block a

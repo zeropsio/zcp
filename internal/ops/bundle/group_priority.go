@@ -11,8 +11,7 @@ import (
 // The platform creates a project's services a priority group at a time,
 // highest first, and each group waits until the one before it is created and
 // DEPLOYED (measured 2026-09-29 on two Mates: the data at 10, then the backend
-// pair at 6, then the storefront pair at 5, as three serial waves), and the
-// group's broker deploys an environment's runtimes in the same order. So a
+// pair at 6, then the storefront pair at 5, as three serial waves). So a
 // priority says what has to be up before what: a runtime another runtime
 // references comes up before it.
 //

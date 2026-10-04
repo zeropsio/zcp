@@ -1,5 +1,5 @@
 // Tests for: integration — zerops_standup through the full MCP server, in a
-// Mate's container, against a mock platform and a fake Gitea.
+// Mate's container, against a mock platform and a fake HQ.
 
 package integration_test
 
@@ -12,6 +12,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -19,29 +20,27 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// TestStandup_OverMCP_ABotInNoGroupIsRefusedAndNothingIsTouched calls the
-// stand-up the way the model does on a Mate's first turn. The bot the broker
-// made belongs to no group yet, so there is no recipe to read: the answer is
-// a refusal that names the adopt route, and no service is adopted.
-func TestStandup_OverMCP_ABotInNoGroupIsRefusedAndNothingIsTouched(t *testing.T) {
-	// Non-parallel: t.Chdir (the state dir) and t.Setenv (the Git variables,
-	// read from the process env where no live env store exists).
+// TestStandup_OverMCP_AMateInNoApplicationIsRefusedAndNothingIsTouched calls
+// the stand-up the way the model does on a Mate's first turn. HQ holds the
+// Mate in no application yet, so there is no recipe to read: the answer is a
+// refusal that names the adopt route, and no service is adopted.
+func TestStandup_OverMCP_AMateInNoApplicationIsRefusedAndNothingIsTouched(t *testing.T) {
+	// Non-parallel: t.Chdir (the state dir) and t.Setenv (HOME, where the
+	// Mate's enrollment with its HQ is kept).
 	dir := t.TempDir()
 	t.Chdir(dir)
-	gitea := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/user":
-			_, _ = w.Write([]byte(`{"login":"mate-p1"}`))
-		case "/api/v1/user/repos":
-			_, _ = w.Write([]byte(`[]`))
-		default:
+	t.Setenv("HOME", t.TempDir())
+	fakeHQ := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/mate/self" || r.Header.Get("Authorization") != "Mate the-credential" {
 			w.WriteHeader(http.StatusNotFound)
+			return
 		}
+		_, _ = w.Write([]byte(`{"projectId":"proj-1","name":"Wren","face":"f","standupRequestedBy":null,"closedOff":true,"appId":null,"changes":[]}`))
 	}))
-	defer gitea.Close()
-	t.Setenv("GITEA_URL", gitea.URL)
-	t.Setenv("MATE_BROKER_URL", gitea.URL)
-	t.Setenv("GITEA_TOKEN", "bot-token")
+	defer fakeHQ.Close()
+	if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: fakeHQ.URL, HQProjectID: "hq1", ProjectID: "proj-1", Credential: "the-credential"}); err != nil {
+		t.Fatal(err)
+	}
 
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "proj-1", Name: "beviro-wren"}).
@@ -79,7 +78,7 @@ func TestStandup_OverMCP_ABotInNoGroupIsRefusedAndNothingIsTouched(t *testing.T)
 	if !result.IsError {
 		t.Fatalf("want a refusal, got: %s", text.String())
 	}
-	for _, want := range []string{"PREREQUISITE_MISSING", "belongs to no group", `route=\"adopt\"`} {
+	for _, want := range []string{"PREREQUISITE_MISSING", "no application", `route=\"adopt\"`} {
 		if !strings.Contains(text.String(), want) {
 			t.Errorf("refusal does not say %q: %s", want, text.String())
 		}

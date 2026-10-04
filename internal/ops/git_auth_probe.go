@@ -42,8 +42,8 @@ const gitWriteAuthProbeBranch = "zcp-write-auth-probe"
 // must not stamp the stronger claim.
 //
 // HTTPS-only enforcement + caller responsibility unchanged from the read probe.
-func BuildGitWritePushProbeCommand(workingDir, remoteURL, token string) string {
-	qtok, qhelper, qurl := shellQuote(token), gitCredentialHelperArgs(), shellQuote(remoteURL)
+func BuildGitWritePushProbeCommand(workingDir, remoteURL, hqURL, token string) string {
+	qtok, qhelper, qurl := shellQuote(token), gitCredentialHelperArgsFor(remoteURL, hqURL), shellQuote(remoteURL)
 	return fmt.Sprintf(
 		`cd %s && if git rev-parse --verify -q HEAD >/dev/null 2>&1; then `+
 			`GIT_TOKEN=%s GIT_TERMINAL_PROMPT=0 git %s push --dry-run %s HEAD:refs/heads/%s; `+
@@ -80,7 +80,7 @@ func BuildGitWritePushProbeCommand(workingDir, remoteURL, token string) string {
 //
 // Caller passes workingDir absolute path (e.g. /var/www). remoteURL is
 // shell-quoted.
-func BuildGitOriginSyncCommand(workingDir, remoteURL, giteaURL string) string {
+func BuildGitOriginSyncCommand(workingDir, remoteURL, hqURL string) string {
 	quoted := shellQuote(remoteURL)
 	// Non-destructive (F1b): before pointing origin at the user's repo,
 	// preserve any pre-existing origin (e.g. a recipe-bootstrapped service's
@@ -94,7 +94,7 @@ func BuildGitOriginSyncCommand(workingDir, remoteURL, giteaURL string) string {
 	)
 	return fmt.Sprintf(
 		`cd %s && (test -d .git || git init -q -b main) && %s && %s && (git remote add origin %s 2>/dev/null || git remote set-url origin %s) && %s`,
-		shellQuote(workingDir), gitIdentityEnsureFragment(), preserve, quoted, quoted, gitCredentialHelperConfigFragment(remoteURL, giteaURL),
+		shellQuote(workingDir), gitIdentityEnsureFragment(), preserve, quoted, quoted, gitCredentialHelperConfigFragment(remoteURL, hqURL),
 	)
 }
 

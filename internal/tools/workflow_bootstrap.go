@@ -12,7 +12,6 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/knowledge"
-	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -47,7 +46,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 		schemas = schemaCache.Get(ctx)
 	}
 	// The server's own client, threaded in: the step checker (below) and the
-	// Gitea reconciles both need one, and a handler that built a second
+	// repository reconciles both need one, and a handler that built a second
 	// client of its own could never be pointed at anything else — which is
 	// what left the A1 call site without a test of its own. Nil only in a
 	// caller that registered no client at all.
@@ -112,8 +111,8 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			}
 			// The adopt route is the other pass that reaches a just-written
 			// set of metas, so it is the other place A1 and A2 catch up from.
-			appendGiteaReport(resp, reconcileGitea(
-				ctx, client, httpClient, sshDeployer, rt, stateDir, mate.LiveEnvStorePath))
+			appendRepositoryReport(resp, reconcileMateRepositories(
+				ctx, client, httpClient, sshDeployer, rt, stateDir))
 			if needsStacks(resp) {
 				populateStacks(ctx, resp, schemaCache)
 			}
@@ -141,8 +140,8 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			return bootstrapResult(ctx, resp, engine, client, projectID, rt), nil, nil
 		}
 		if input.Plan != nil {
-			// A wired Mate plans pairs only (gitea_delivery.go).
-			if pe := giteaPairPlanError(input.Plan, giteaWired()); pe != nil {
+			// A Mate delivering through HQ plans pairs only (hq_delivery.go).
+			if pe := hqPairPlanError(input.Plan, hqWired()); pe != nil {
 				return convertError(pe, WithRecoveryStatus()), nil, nil
 			}
 			resp, err := engine.BootstrapCompletePlan(input.Plan, schemas, nil)
@@ -200,18 +199,17 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 
 	// A1 and A2 (guide 2.1) belong to the same moment, and for the same
 	// reason: until bootstrap closes, a pair's meta is the PARTIAL one
-	// provision wrote — no BootstrappedAt — and every Gitea reconcile skips
-	// an incomplete meta, so a pass at provision saw no pair at all. Measured
-	// on a live Mate 2026-09-16: a classic bootstrap reported nothing about
-	// Gitea at provision and left action="group-recipe" answering "no pair
-	// has its Gitea repository yet" forever. The terminal step is the
-	// earliest honest moment to give a pair its repository; A2 then proposes
-	// the recipe from the repositories A1 just made. Reconcile, not a step:
-	// it does nothing outside a Mate, backs off while the variables have not
-	// landed, and never blocks bootstrap.
+	// provision wrote — no BootstrappedAt — and every repository reconcile
+	// skips an incomplete meta, so a pass at provision saw no pair at all.
+	// Measured on a live Mate 2026-09-16: a classic bootstrap reported nothing
+	// at provision and left action="group-recipe" answering "no pair has its
+	// repository yet" forever. The terminal step is the earliest honest moment
+	// to give a pair its repository; A2 then proposes the recipe from the
+	// repositories A1 just made. Reconcile, not a step: it does nothing
+	// outside a Mate, backs off per pair, and never blocks bootstrap.
 	if resp != nil && resp.Current == nil {
-		appendGiteaReport(resp, reconcileGitea(
-			ctx, client, httpClient, sshDeployer, rt, stateDir, mate.LiveEnvStorePath))
+		appendRepositoryReport(resp, reconcileMateRepositories(
+			ctx, client, httpClient, sshDeployer, rt, stateDir))
 	}
 
 	populateRuntimeURLs(ctx, client, projectID, engine, resp)

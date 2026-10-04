@@ -275,7 +275,7 @@ func developGoldenScenarios() []goldenScenario {
 		},
 		{
 			id:          "develop/standup-dev-deployed-wired",
-			description: "A Mate's stand-up after its dev half deployed, in a Mate wired to its group's Gitea (push configured, close-mode auto) with the stage half still out of scope and never deployed — no delivery, no promotion, no first-deploy branch held open by the stage.",
+			description: "A Mate's stand-up after its dev half deployed, in a Mate wired to its HQ (push configured, close-mode auto) with the stage half still out of scope and never deployed — no delivery, no promotion, no first-deploy branch held open by the stage.",
 			envelope: StateEnvelope{
 				Phase:       PhaseDevelopActive,
 				Environment: EnvContainer,
@@ -843,8 +843,7 @@ func fixSnapGitPushIntegration(devHost, stageHost, typeVersion string, rc topolo
 // stand-up: adopted without code, the stage half never deployed, the dev half
 // deployed or not as given, both halves carrying the given close-mode and push
 // state (a wired Mate's pair reads gitPush=configured once its repository is
-// wired; buildIntegration stays none — a push to the group's Gitea builds
-// nothing).
+// wired; buildIntegration stays none — a push to HQ builds nothing).
 func fixSnapStandUpPair(devHost, stageHost string, devDeployed bool, closeMode topology.CloseDeployMode, gitPush topology.GitPushState) []ServiceSnapshot {
 	return []ServiceSnapshot{
 		{

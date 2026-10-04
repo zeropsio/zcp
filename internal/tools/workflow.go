@@ -18,7 +18,6 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -54,7 +53,7 @@ type WorkflowInput struct {
 	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, develop, export, or launch-production."`
 
 	// Multi-action fields.
-	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start (workflow=bootstrap is two-phase: first call without route returns kind=\"route-menu\" with ranked options, second call with route=<chosen> commits the session and returns kind=\"session-active\"; agents key off the kind field instead of guessing from field presence), complete, skip, status, close, reset, iterate, resume, list, route, close-mode (set per-pair CloseDeployMode auto/manual), git-push-setup (verify + configure git-push capability — pass service + remoteUrl + gitToken in container mode; handler probes auth BEFORE writing project state), build-integration (wire ZCP-managed CI — pass service + integration), group-recipe (Mate only: propose the recipe tiers the group repo lacks, returning the pull request), describe-change (Mate only: set the description of a pair's pull request — pass description, and service if several pairs), adopt-local, set-default-setup (write the target service's PrimarySetupName/StageSetupName — resolves requiresSetupInput blockers; pass targetService + setup), record-deploy (stamp FirstDeployedAt for an externally-deployed service — zcli/CI/CD bridge; pass targetService), release (source-side release act: verifies clean tree + pushed HEAD, suggests the next vX.Y.Z from the remote tags, then tags + pushes — the tag fires the production pipeline; pass service, then re-call with releaseVersion after the user confirms)."`
+	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start (workflow=bootstrap is two-phase: first call without route returns kind=\"route-menu\" with ranked options, second call with route=<chosen> commits the session and returns kind=\"session-active\"; agents key off the kind field instead of guessing from field presence), complete, skip, status, close, reset, iterate, resume, list, route, close-mode (set per-pair CloseDeployMode auto/manual), git-push-setup (verify + configure git-push capability — pass service + remoteUrl + gitToken in container mode; handler probes auth BEFORE writing project state), build-integration (wire ZCP-managed CI — pass service + integration), group-recipe (Mate only: propose the recipe tiers HQ lacks, returning the change), describe-change (Mate only: set the description of a pair's change in HQ — pass description, and service if several pairs), adopt-local, set-default-setup (write the target service's PrimarySetupName/StageSetupName — resolves requiresSetupInput blockers; pass targetService + setup), record-deploy (stamp FirstDeployedAt for an externally-deployed service — zcli/CI/CD bridge; pass targetService), release (HQ: hand off to the person in Mate; outside HQ: tag + push user-confirmed releaseVersion from a clean, pushed source; pass service and omit releaseVersion for guidance)."`
 	Intent      string                     `json:"intent,omitempty"      jsonschema:"User intent description for start action (what you want to accomplish)."`
 	Attestation string                     `json:"attestation,omitempty" jsonschema:"Description of what was verified or accomplished (required for complete actions)."`
 	Step        string                     `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (discover, provision, close)."`
@@ -207,11 +206,12 @@ type WorkflowInput struct {
 	// per promoted runtime (gap plan P2.1 — HA consent: 2 recommended,
 	// 1 allowed with explicit consent, more for load).
 	RuntimeScaling map[string]launchRuntimeScaling `json:"runtimeScaling,omitempty" jsonschema:"Launch-production only: per-runtime consented container counts {hostname:{minContainers,maxContainers}}. Default (no entry) applies the production HA floor of 2."`
-	// ReleaseVersion confirms the version for action="release" (the §7
+	// ReleaseVersion applies only outside HQ; an HQ release is always handed
+	// to the person in Mate. It confirms action="release" (the §7
 	// source-side release act): vMAJOR.MINOR.PATCH, tagged at the
 	// verified pushed HEAD. Empty → the handler returns release-prompt
 	// with the suggested next version derived from the remote's tags.
-	ReleaseVersion string `json:"releaseVersion,omitempty" jsonschema:"Release action only: the version tag to create (vMAJOR.MINOR.PATCH). Omit to get a release-prompt with the suggested next version; confirm with the user before re-calling with the value."`
+	ReleaseVersion string `json:"releaseVersion,omitempty" jsonschema:"Release action outside HQ only (HQ always hands off to the person in Mate): the version tag to create (vMAJOR.MINOR.PATCH). Omit to get a release-prompt with the suggested next version; confirm with the user before re-calling with the value."`
 	// PipelineTagRegex overrides the default tag-trigger regex
 	// (^v\\d+\\.\\d+\\.\\d+$, the Zerops-documented production
 	// recommendation). Surface only — the value is embedded in the
@@ -345,7 +345,7 @@ func patchFlexBoolProperty(s *jsonschema.Schema, key string) {
 func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HTTPDoer, projectID string, schemaCache *schema.Cache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info, apiHost string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
-		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (entry point for ANY new or adopted project, INCLUDING projects starting from a Zerops recipe — pass intent describing your stack and the recipe match surfaces as a route option), develop (all development, deployment, fixing, investigating), export (turn a deployed service into a re-importable git repo with import.yaml + buildFromGit), launch-production (PROMOTE an existing working dev/stage Zerops project to a SEPARATE production Zerops project — bundle composition with HA managed deps + production runtime scaling + tag-trigger CD pipeline guidance + delegated-mint-first token trust model (a one-time platform delegation lets ZCP mint the launch token itself with no value crossing the conversation; an explicit launchKey is the fallback); trigger phrases the agent should route here: \"launch production\", \"deploy to prod\", \"promote to production\", \"make a production project\", \"create production environment\", \"transfer to prod\", \"go live\", \"udělej produkční projekt\", \"přesuň to na produkci\", \"nasaď to na prod\" — requires existing source dev/stage, NOT for greenfield-from-scratch which goes through workflow=\"bootstrap\"). Deploy configuration is split into three orthogonal actions: action=\"close-mode\" closeMode={hostname:value} sets the per-pair CloseDeployMode (auto/manual); action=\"git-push-setup\" service=hostname remoteUrl=URL gitToken=PAT (container) probes auth + writes GIT_TOKEN as a service-scope secret on the push source + syncs origin + stamps GitPushState=configured (probe-first: failed probe = NO state mutation); action=\"build-integration\" service=hostname integration=webhook|actions|none wires the ZCP-managed CI integration. Inside a Zerops Mate, action=\"group-recipe\" proposes the recipe tiers the group repo's main lacks, composed from this project (tier directories with a whole-project import.yaml each), and returns the pull request — or says main already carries every tier. After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route|close-mode|git-push-setup|build-integration|group-recipe\".",
+		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (entry point for ANY new or adopted project, INCLUDING projects starting from a Zerops recipe — pass intent describing your stack and the recipe match surfaces as a route option), develop (all development, deployment, fixing, investigating), export (turn a deployed service into a re-importable git repo with import.yaml + buildFromGit), launch-production (PROMOTE an existing working dev/stage Zerops project to a SEPARATE production Zerops project — bundle composition with HA managed deps + production runtime scaling + tag-trigger CD pipeline guidance + delegated-mint-first token trust model (a one-time platform delegation lets ZCP mint the launch token itself with no value crossing the conversation; an explicit launchKey is the fallback); trigger phrases the agent should route here: \"launch production\", \"deploy to prod\", \"promote to production\", \"make a production project\", \"create production environment\", \"transfer to prod\", \"go live\", \"udělej produkční projekt\", \"přesuň to na produkci\", \"nasaď to na prod\" — requires existing source dev/stage, NOT for greenfield-from-scratch which goes through workflow=\"bootstrap\"). Deploy configuration is split into three orthogonal actions: action=\"close-mode\" closeMode={hostname:value} sets the per-pair CloseDeployMode (auto/manual); action=\"git-push-setup\" service=hostname remoteUrl=URL gitToken=PAT (container) probes auth + writes GIT_TOKEN as a service-scope secret on the push source + syncs origin + stamps GitPushState=configured (probe-first: failed probe = NO state mutation); action=\"build-integration\" service=hostname integration=webhook|actions|none wires the ZCP-managed CI integration. Inside a Zerops Mate, action=\"group-recipe\" proposes the recipe tiers the recipe repository's main in HQ lacks, composed from this project (tier directories with a whole-project import.yaml each), and returns the change — or says main already carries every tier; action=\"group-recipe\" scaling=<hostname> proposes that service's current scale into the tiers main already carries, as a change the person reviews. After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route|close-mode|git-push-setup|build-integration|group-recipe\".",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Workflow orchestration",
 			ReadOnlyHint:   false,
@@ -519,17 +519,17 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleSetDefaultSetup(ctx, client, projectID, input, stateDir)
 	case "group-recipe":
 		// scaling=<host>: propose that host's scale into the tiers on main
-		// (gitea_recipe_scaling.go).
+		// (hq_recipe_scaling.go).
 		if input.Scaling != "" {
-			return handleGroupRecipeScaling(ctx, client, httpClient, rt, stateDir, mate.LiveEnvStorePath, input.Scaling)
+			return handleGroupRecipeScaling(ctx, client, httpClient, rt, stateDir, input.Scaling)
 		}
 		// A2: ask for the group's recipe export outright. The same reconcile
 		// that runs on every bootstrap/adopt pass, reported to whoever asked.
-		return handleGroupRecipe(ctx, client, httpClient, rt, stateDir, mate.LiveEnvStorePath)
+		return handleGroupRecipe(ctx, client, httpClient, rt, stateDir)
 	case "describe-change":
 		// The Mate's words about its change, which the person reviews it by:
-		// its pull request's description (gitea_change_description.go).
-		return handleDescribeChange(ctx, httpClient, stateDir, mate.LiveEnvStorePath, input)
+		// its change's description in HQ (hq_change_description.go).
+		return handleDescribeChange(ctx, httpClient, stateDir, input)
 	default:
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -67,28 +66,6 @@ func runMateCmd(args []string) int {
 	}
 }
 
-// isMateGitToken is `zcp mate git-token`, which run answers before the CLI's
-// telemetry: the Gitea credential helper (ops.giteaCredentialHelperShell)
-// runs it on every fetch and push from the Mate's shell, and reads its whole
-// stdout as the password — the telemetry's one-time notice on stdout, or its
-// flush, would break or hold every one of them.
-func isMateGitToken(args []string) bool {
-	return len(args) >= 2 && args[0] == "mate" && args[1] == "git-token"
-}
-
-// runMateGitToken prints the Mate's Gitea bot token as the live env store at
-// storePath holds it now, when the credential request on stdin names the
-// Gitea's host (mate.GiteaToken). Declining prints nothing and exits 1, so
-// the helper falls back as it did before — never to an empty password.
-func runMateGitToken(stdin io.Reader, stdout io.Writer, storePath string) int {
-	token := mate.GiteaToken(stdin, mate.LiveLookup(storePath))
-	if token == "" {
-		return 1
-	}
-	_, _ = io.WriteString(stdout, token)
-	return 0
-}
-
 // mateVerbStatus names the `zcp mate status` subcommand as a constant rather
 // than a repeated literal: cmd/zcp/capture.go and cmd/zcp/telemetry_cmd.go
 // each already switch on their own unrelated "status" verb in this same
@@ -100,12 +77,13 @@ const mateVerbStatus = "status"
 // from the same resolver DesiredRelease() and the manifest cache — never a
 // fresh install.
 type mateStatusResult struct {
-	Installed       string `json:"installed,omitempty"`
-	Latest          string `json:"latest,omitempty"`
-	Contract        int    `json:"contract"`
-	UpdateAvailable bool   `json:"updateAvailable"`
-	CheckedAt       string `json:"checkedAt"`
-	Error           string `json:"error,omitempty"`
+	Installed       string                  `json:"installed,omitempty"`
+	Latest          string                  `json:"latest,omitempty"`
+	Contract        int                     `json:"contract"`
+	UpdateAvailable bool                    `json:"updateAvailable"`
+	CheckedAt       string                  `json:"checkedAt"`
+	Error           string                  `json:"error,omitempty"`
+	SignIns         *mate.SignInsSeedStatus `json:"signIns,omitempty"`
 }
 
 // runMateStatus answers what zcp knows about the installed and latest mate
@@ -119,6 +97,11 @@ func runMateStatus(args []string) int {
 	result := mateStatusResult{
 		Contract:  mate.SupportedContract,
 		CheckedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if seed, err := mate.ReadSignInsSeedStatus(mate.SignInsSeededPath()); err == nil {
+		result.SignIns = &seed
+	} else if !os.IsNotExist(err) {
+		result.SignIns = &mate.SignInsSeedStatus{State: "failed", Error: err.Error()}
 	}
 
 	if installed, err := mate.InstalledVersion(); err == nil {
@@ -163,6 +146,13 @@ func printMateStatus(result mateStatusResult, asJSON bool) {
 		fmt.Fprintf(os.Stdout, "mate: installed %s, %s available\n", installed, result.Latest)
 	default:
 		fmt.Fprintf(os.Stdout, "mate: installed %s, latest %s\n", installed, result.Latest)
+	}
+	if result.SignIns != nil {
+		fmt.Fprintf(os.Stdout, "sign-in seed: %s", result.SignIns.State)
+		if result.SignIns.Error != "" {
+			fmt.Fprintf(os.Stdout, ": %s", result.SignIns.Error)
+		}
+		fmt.Fprintln(os.Stdout)
 	}
 }
 

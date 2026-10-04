@@ -254,7 +254,7 @@ func (z *ZeropsClient) GetProject(ctx context.Context, projectID string) (*Proje
 		SubdomainHost: subdomainHost,
 		Mode:          string(out.Mode),
 		LocationID:    out.PrimaryInstanceLocation.Id.Native(),
-		Tags:          append([]string(nil), out.TagList...),
+		Tags:          []string(out.TagList),
 	}, nil
 }
 

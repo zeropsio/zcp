@@ -16,9 +16,9 @@ import (
 	"github.com/zeropsio/zcp/cmd/zcp/analyze"
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/content"
+	"github.com/zeropsio/zcp/internal/hq"
 	zcpinit "github.com/zeropsio/zcp/internal/init"
 	"github.com/zeropsio/zcp/internal/knowledge"
-	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -49,8 +49,8 @@ func main() {
 // session_end), preserving the original code's behavior where an
 // unrecognized first argument still starts the MCP server.
 func run(args []string) int {
-	if isMateGitToken(args) {
-		return runMateGitToken(os.Stdin, os.Stdout, mate.LiveEnvStorePath)
+	if isHQGitCredential(args) {
+		return runHQGitCredential(args[2:], os.Stdin, os.Stdout, hq.EnrollmentPath())
 	}
 	if len(args) > 0 {
 		if dispatch, ok := cliDispatch()[args[0]]; ok {
@@ -76,6 +76,7 @@ func cliDispatch() map[string]func(rest []string, cfg telemetry.Config) int {
 		"version": func(_ []string, _ telemetry.Config) int { printVersion(); return 0 },
 		"update":  func(_ []string, _ telemetry.Config) int { return runUpdate() },
 		"mate":    func(rest []string, _ telemetry.Config) int { return runMateCmd(rest) },
+		"hq":      func(rest []string, _ telemetry.Config) int { return runHQCmd(rest) },
 		"eval": func(rest []string, _ telemetry.Config) int {
 			// Preserve main's capture-scoped eval path: try the scoped-capture
 			// wrapper first, fall through to plain runEval when not handled.

@@ -197,7 +197,7 @@ func TestBuildGroupRecipe_HAIncapableStaysSingle(t *testing.T) {
 	}
 }
 
-// A runtime the project builds from a public repository and no Gitea pair —
+// A runtime the project builds from a public repository and no pair —
 // a utility such as mailpit — is written as the project runs it on every
 // tier: its own hostname, its public build, its own scale, no tier's
 // transform. It takes its place in the dependency order like any runtime: one

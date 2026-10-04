@@ -11,7 +11,6 @@ type DeliveryInputs struct {
 	Verified         bool   // meta.BuildIntegrationVerifiedAt != "" (earned proof)
 	HasStage         bool   // meta.StageHostname != ""
 	RemoteURL        string // forge detection: gitlab → webhook, else actions
-	GiteaURL         string // the process's GITEA_URL — what makes a Gitea remote recognisable
 }
 
 // DeliveryDecision is the recommendation RecommendDelivery returns. Recommended
@@ -41,17 +40,9 @@ type DeliveryDecision struct {
 func RecommendDelivery(in DeliveryInputs) DeliveryDecision {
 	ciFamily := BuildIntegrationActions
 	ciWhy := "GitHub Actions — the agent can land the workflow file + repo secret via `gh` without leaving the terminal"
-	switch ClassifyGitHost(in.RemoteURL, in.GiteaURL) {
-	case GitHostGitLab:
+	if ClassifyGitHost(in.RemoteURL) == GitHostGitLab {
 		ciFamily = BuildIntegrationWebhook
 		ciWhy = "the Zerops dashboard OAuth webhook — GitLab has no equivalent CLI-driven secret wiring"
-	case GitHostGitea:
-		// Gitea Actions IS the actions family — the same workflow shape in
-		// `.gitea/workflows/`. What differs is who deploys: the account's
-		// broker, off protected branches and tags, with the job's own token.
-		// There is no secret to wire and no Zerops token anywhere in it.
-		ciWhy = "a `.gitea/workflows/` workflow that deploys with `zcli push` on a key the account's broker hands the job — no secret to wire and no Zerops token in the repository; the broker grants only what protected state approved"
-	case GitHostGitHub, GitHostUnknown:
 	}
 
 	// 1. git-push not configured — no family is meaningful until push works.

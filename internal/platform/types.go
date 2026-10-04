@@ -43,9 +43,8 @@ type Project struct {
 	// LocationID is the region code of the primary instance location
 	// (e.g. "eu-central") — read-back counterpart of project.location.
 	LocationID string `json:"locationId,omitempty"`
-	// Tags are the project's tags (tagList) — a Mate's setup reads its
-	// mate:closed-off there.
-	Tags []string `json:"tagList,omitempty"`
+	// Tags is the project's tag list.
+	Tags []string `json:"tags,omitempty"`
 }
 
 // ServiceStack represents a Zerops service.
