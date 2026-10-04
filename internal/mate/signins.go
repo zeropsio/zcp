@@ -8,19 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
-// Who signed each of the Mate's logins in (spec-mate §10.5) is the Mate
-// server's own record, its sign-in store (apps/server/src/zerops/
-// zeropsSignIns.ts): `~/.mate/signed-in.json`, `{"<signer key>": {"by":
-// "<Zerops user id>", "at": <epoch ms>}}`. On main the record was the Mate
-// project's tags, `mate:signer:{key}:{userId}`; a Mate migrated from main has
-// only those, so before its server first starts zcp writes the store from
-// them — once, and never again.
+// The Mate server keeps each login's signer in ~/.mate/signed-in.json.
+// Before it starts, zcp seeds an absent store once from HQ's project record.
 
 // SignIn is one login's sign-in as the server's store keeps it: who, and
 // when (epoch ms).
@@ -28,9 +22,6 @@ type SignIn struct {
 	By string `json:"by"`
 	At int64  `json:"at"`
 }
-
-// signerTagPrefix starts a signer tag: `mate:signer:{key}:{userId}`.
-const signerTagPrefix = "mate:signer:"
 
 // signerKeyOther is a login other than a driver's default: `<driver>-<slug>`
 // (apps/server/src/zerops/zeropsLoginIds.ts).
@@ -48,55 +39,57 @@ func SignInsPath() string {
 	return filepath.Join(runtime.HomeDir(), ".mate", "signed-in.json")
 }
 
-// SignInsSeededPath marks that zcp has seeded the store, or found no need to.
+// SignInsSeededPath records the seed attempt: empty for success or no need,
+// otherwise the failure reason retained until an explicit reset.
 func SignInsSeededPath() string {
 	return filepath.Join(runtime.HomeDir(), ".zcp", "state", "mate-sign-ins-seeded")
 }
 
-// SeedSignIns writes the server's sign-in store at storePath from the Mate
-// project's signer tags, which readTags reads, when there is no store and
-// markPath says it never seeded: answers whether it wrote. A store present,
-// or tags that name no login the server reads, write nothing; either way the
-// mark is set and it never asks again. Tags it could not read leave
-// everything as it was, for the next launch to ask.
-func SeedSignIns(storePath, markPath string, readTags func() ([]string, error), now time.Time) (bool, error) {
-	if exists(markPath) {
-		return false, nil
-	}
+// SeedSignIns writes an absent store from HQ's login-to-user map once.
+// A present store is preserved without reading HQ. A failed attempt keeps its
+// reason in markPath and is never automatically retried; removing the marker
+// explicitly permits another attempt on the next launch.
+func SeedSignIns(storePath, markPath string, readSigners func() (map[string]string, error), now time.Time) (bool, error) {
 	if exists(storePath) {
 		return false, mark(markPath)
 	}
-	tags, err := readTags()
-	if err != nil {
-		return false, fmt.Errorf("read the Mate's signer tags: %w", err)
+	if raw, err := os.ReadFile(markPath); err == nil {
+		if len(raw) != 0 {
+			return false, errors.New(string(raw))
+		}
+		return false, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return false, fmt.Errorf("read the sign-in seed attempt: %w", err)
 	}
-	signIns := signInsFromTags(tags, now)
+	signers, err := readSigners()
+	if err != nil {
+		return false, recordSeedFailure(markPath, fmt.Errorf("read the Mate's signers from HQ: %w", err))
+	}
+	signIns := make(map[string]SignIn)
+	for key, user := range signers {
+		if isSignerKey(key) && user != "" && len(user) <= signerUserMax {
+			signIns[key] = SignIn{By: user, At: now.UnixMilli()}
+		}
+	}
 	if len(signIns) == 0 {
 		return false, mark(markPath)
 	}
 	if err := writeAtomically(storePath, signIns); err != nil {
-		return false, err
+		return false, recordSeedFailure(markPath, err)
 	}
 	return true, mark(markPath)
 }
 
-// signInsFromTags reads the signer tags as the server read them on main
-// (ZeropsProjectSigners.parseSignerTags): a login it knows, a user id, the
-// last tag winning; anything else is left out.
-func signInsFromTags(tags []string, now time.Time) map[string]SignIn {
-	signIns := map[string]SignIn{}
-	for _, tag := range tags {
-		rest, ok := strings.CutPrefix(tag, signerTagPrefix)
-		if !ok {
-			continue
-		}
-		key, user, ok := strings.Cut(rest, ":")
-		if !ok || !isSignerKey(key) || user == "" || len(user) > signerUserMax {
-			continue
-		}
-		signIns[key] = SignIn{By: user, At: now.UnixMilli()}
+// recordSeedFailure keeps a failed attempt's reason so only an explicit reset
+// can ask HQ and write the store again.
+func recordSeedFailure(path string, reason error) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return errors.Join(reason, fmt.Errorf("record the failed sign-in seed: %w", err))
 	}
-	return signIns
+	if err := os.WriteFile(path, []byte(reason.Error()), 0o600); err != nil {
+		return errors.Join(reason, fmt.Errorf("record the failed sign-in seed: %w", err))
+	}
+	return reason
 }
 
 // isSignerKey is a login the server records a signer for: a driver's
