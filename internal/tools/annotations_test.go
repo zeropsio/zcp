@@ -654,3 +654,18 @@ func TestAnnotations_StandupTool(t *testing.T) {
 		t.Errorf("input schema is %d bytes, want an empty object: %s", len(schema), schema)
 	}
 }
+
+func TestAnnotations_ObserveTool(t *testing.T) {
+	t.Chdir(t.TempDir())
+	tool := listAllTools(t, runtime.Info{InContainer: true, MateEnabled: true})["zerops_observe"]
+	if tool == nil {
+		t.Fatal("zerops_observe should be registered in a Mate")
+	}
+	ann := tool.Annotations
+	if ann == nil || ann.Title != "Observe stage and production" || !ann.ReadOnlyHint || !ann.IdempotentHint || ann.DestructiveHint == nil || *ann.DestructiveHint {
+		t.Fatalf("annotations = %+v", ann)
+	}
+	if len(strings.Fields(tool.Description)) > 60 {
+		t.Fatal("description exceeds 60 words")
+	}
+}
