@@ -2746,12 +2746,18 @@ The order:
 
 The stand-up's section of the status file (`ZCP_STATUS_FILE`, `standup`) is one stand-up over its
 two calls: `running` from the first call's start until the second has returned, never `done` between
-them. A first call that leaves the stages queued ends with the section still `running`, in the
-`stage` phase, its stages `build`/`pending`, and keeps beating it; the second call goes on with that
-section — the same `startedAt`, the same halves — and ends it `done` or `failed`. A second call that
-does not come within 15 minutes ends it `done` in the `development` phase, the stages still pending.
+them. The section names the zcp MCP server running it (`process`: its PID and start time, the
+handle the work sessions use); a `running` section whose process is provably gone — the PID absent,
+or reused by a process with another start time — is a stand-up that died, and the Mate server's
+setup step says `failed` (`process_gone`). Nothing ages a section: no heartbeat, no staleness
+window. A first call that leaves the stages queued ends with the section still `running`, in the
+`stage` phase, its stages `build`/`pending`; a second call of the same MCP server goes on with that
+section — the same `startedAt`, the same halves — and ends it `done` or `failed`; a call of another
+process starts afresh. A second call that does not come within 15 minutes ends it `done` in the
+`development` phase, the stages still pending.
 `TestStandup_WritesItsProgressForTheRunCard`, `TestStandup_TheRecordNeverSaysDoneBetweenItsCalls`,
-`TestStandup_ACarriedStandUpEndsWhenNoStageCallComes`.
+`TestStandupStatus_CarriedByItsProcess`, `TestStandup_ACarriedStandUpEndsWhenNoStageCallComes`;
+mate `zeropsSetupSteps.test.ts`.
 
 The model is the backup:
 

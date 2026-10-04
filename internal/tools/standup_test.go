@@ -431,8 +431,6 @@ func newStandupFixture(t *testing.T) *standupFixture {
 	f.stateDir = filepath.Join(f.root, ".zcp", "state")
 	f.statusPath = filepath.Join(f.root, "mate-status.json")
 	f.status = newStandupStatus(f.statusPath)
-	f.status.beatEvery = 5 * time.Millisecond
-	t.Cleanup(f.status.stopCarry)
 	f.mounter = &standupMounter{}
 	f.env = map[string]string{}
 	f.enrollmentPath = filepath.Join(f.root, "enrollment.json")
@@ -1331,9 +1329,9 @@ func TestStandup_TheRecordNeverSaysDoneBetweenItsCalls(t *testing.T) {
 }
 
 // TestStandup_ACarriedStandUpEndsWhenNoStageCallComes: a first call whose
-// stages wait for a second keeps the stand-up running — and alive, its
-// section rewritten — until that call begins; one that never comes ends it
-// after the wait as the development it stood up.
+// stages wait for a second keeps the stand-up running until that call
+// begins; one that never comes ends it after the wait as the development it
+// stood up.
 func TestStandup_ACarriedStandUpEndsWhenNoStageCallComes(t *testing.T) {
 	t.Parallel()
 	f := newStandupFixture(t)
@@ -1342,17 +1340,6 @@ func TestStandup_ACarriedStandUpEndsWhenNoStageCallComes(t *testing.T) {
 	first, _ := f.standupSection(t)
 	if first.State != mate.StandupRunning {
 		t.Fatalf("after the first call the stand-up is %s, want running", first.State)
-	}
-	beats := map[time.Time]bool{}
-	deadline := time.Now().Add(100 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		if info, err := os.Stat(f.statusPath); err == nil {
-			beats[info.ModTime()] = true
-		}
-		time.Sleep(time.Millisecond)
-	}
-	if len(beats) < 3 {
-		t.Errorf("the section was written %d times while it waited for the stage call, want a beat every 5 ms", len(beats))
 	}
 	var section mate.StandupStatus
 	var rows []string
@@ -1518,36 +1505,45 @@ func TestStandupTrackDeploys_NamesTheStepAndItsProcess(t *testing.T) {
 	}
 }
 
-// TestStandupStatus_BeatsWhileRunning: a running stand-up rewrites the file
-// at least every beat, so the server can read a running section the file has
-// not moved for in two minutes as a stand-up that died (mate.StandupStale);
-// once it ends it stops.
-func TestStandupStatus_BeatsWhileRunning(t *testing.T) {
+// TestStandupStatus_CarriedByItsProcess: a call goes on with a section left
+// running for its stages only when this MCP server left it — the section names
+// the process by its PID and start time, and a call stamps its own; a section
+// another process left, or one that names none, is started afresh.
+func TestStandupStatus_CarriedByItsProcess(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "status.json")
-	status := newStandupStatus(path)
-	status.begin()
-	stop := status.beat(5 * time.Millisecond)
-	writes := func(d time.Duration) int {
-		seen := map[time.Time]bool{}
-		deadline := time.Now().Add(d)
-		for time.Now().Before(deadline) {
-			if info, err := os.Stat(path); err == nil {
-				seen[info.ModTime()] = true
+	self := mate.StandupProcess{PID: os.Getpid(), Start: workflow.CurrentProcessStartTime()}
+	tests := []struct {
+		name    string
+		process *mate.StandupProcess
+		carried bool
+	}{
+		{"this process left it", &self, true},
+		{"another process left it", &mate.StandupProcess{PID: os.Getpid() + 1, Start: self.Start}, false},
+		{"this PID, reused by another process", &mate.StandupProcess{PID: self.PID, Start: "0.0-not-this-process"}, false},
+		{"it names no process", nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "status.json")
+			const left = "2026-01-01T00:00:00Z"
+			if err := mate.UpdateStandup(path, func(st *mate.StandupStatus) {
+				*st = mate.StandupStatus{State: mate.StandupRunning, Phase: mate.PhaseStage, StartedAt: left, Process: tt.process}
+			}); err != nil {
+				t.Fatal(err)
 			}
-			time.Sleep(time.Millisecond)
-		}
-		return len(seen)
-	}
-	if n := writes(150 * time.Millisecond); n < 4 {
-		t.Errorf("the file was written %d times in 150 ms while running, want a beat every 5 ms", n)
-	}
-	stop()
-	if n := writes(60 * time.Millisecond); n != 1 {
-		t.Errorf("the file was written %d times after the stand-up ended, want none", n-1)
-	}
-	if mate.StandupBeat != 15*time.Second || mate.StandupStale != 2*time.Minute {
-		t.Errorf("beat %s / stale %s, want 15s / 2m", mate.StandupBeat, mate.StandupStale)
+			newStandupStatus(path).begin()
+			st, err := mate.ReadStatus(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if carried := st.Standup.StartedAt == left; carried != tt.carried {
+				t.Errorf("carried = %v (startedAt %q, phase %s), want %v", carried, st.Standup.StartedAt, st.Standup.Phase, tt.carried)
+			}
+			if st.Standup.State != mate.StandupRunning || st.Standup.Process == nil || *st.Standup.Process != self {
+				t.Errorf("the call wrote %s by %+v, want running by this process %+v", st.Standup.State, st.Standup.Process, self)
+			}
+		})
 	}
 }
 
