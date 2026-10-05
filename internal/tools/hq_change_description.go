@@ -121,7 +121,7 @@ func handleDescribeChange(
 	// The change on record is only as fresh as the last read of the Mate's
 	// state, and words are never put on one that merged or closed in
 	// between: they were written for it, and the next change is another.
-	state, stateErr := hqc.Self(ctx)
+	state, stateErr := describeSelf(ctx, hqc, meta)
 	if stateErr == nil {
 		if learned := hqLearnLanding(stateDir, meta, state); learned != "" {
 			return jsonResult(changeDescriptionResult{
@@ -144,6 +144,9 @@ func handleDescribeChange(
 		}
 	}
 
+	if number == 0 && stateErr != nil {
+		return jsonResult(changeDescriptionResult{Service: meta.Hostname, Message: describeStateUnknown(hqc.Address(), meta.Hostname, stateErr)}), nil, nil
+	}
 	if number == 0 {
 		// Words describe the work a change carries, and the change the next
 		// delivery opens carries whatever the pair holds then: nothing is
@@ -180,10 +183,10 @@ func handleDescribeChange(
 			return convertError(fmt.Errorf("HQ did not take the description of change #%d (%w), and it could not be kept either: %w",
 				number, err, keepErr), WithRecoveryStatus()), nil, nil
 		}
-		if away {
+		if away != describeServed {
 			return jsonResult(changeDescriptionResult{
 				Service: meta.Hostname, PullRequest: number, PullRequestURL: url, Kept: true,
-				Message: describeNotLanded(hqc.Address(), number, tries, err),
+				Message: describeNotLanded(hqc.Address(), number, tries, away, err),
 			}), nil, nil
 		}
 		return jsonResult(changeDescriptionResult{

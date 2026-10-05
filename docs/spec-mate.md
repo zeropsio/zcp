@@ -2961,8 +2961,11 @@ and a describe that met the roll once left the change a draft. Its calls are tri
 wait apart for about a minute in all, while HQ is not reached (refused, reset, no connection within
 the bound) or answers 502, 503 or 504 — never on HQ's own refusal, a 4xx or a 500, nor on a try HQ
 connected for and left unanswered; when the minute is spent, the answer says plainly that the
-description did not land and the change is still a draft, the words kept. A delivery still fails
-fast (D35). `hq_describe_retry.go`; `TestDescribeChange_WaitsOutARollingDeploy`, `TestDescribeTransient`;
+description did not land and the change is still a draft, the words kept — or, when a try may have
+reached HQ (a connection dropped after the words were sent, a balancer's 502 or 504), that it may
+not have landed, since HQ has no read of a change's words to check. With no change on record, the
+read of the Mate's own state that names the open one is tried the same way, and HQ staying away is
+said as not knowing, never as "no change is open". A delivery still fails fast (D35). `hq_describe_retry.go`; `TestDescribeChange_WaitsOutARollingDeploy`, `TestDescribeTransient`;
 `hq_change_description.go`; `TestDescribeChange`, `TestDescribeChange_KeptWordsMeetThePushAfterThem`,
 `TestDescribeChange_Refusals`, `TestWorkflowTool_DescribeChangeReachesItsHandler`.
 

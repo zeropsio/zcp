@@ -53,7 +53,14 @@ func TestDescribeChange_WaitsOutARollingDeploy(t *testing.T) {
 			wantDescribed: true, wantTries: 3, wantText: []string{`"described":true`},
 		},
 		{
+			// A connection dropped after the words were sent may have
+			// carried them: the answer never says they did not land.
 			name: "HQ drops every connection for the whole minute", hq: func(lab *hqLab) { lab.hq.setDown(true) },
+			wantTries: 8,
+			wantText:  []string{`"described":false`, `"kept":true`, "may not have landed", "may still be a draft", "8 tries", "describe-change again"},
+		},
+		{
+			name: "HQ refuses every connection for the whole minute", hq: func(lab *hqLab) { lab.hq.srv.Close() },
 			wantTries: 8,
 			wantText:  []string{`"described":false`, `"kept":true`, "did not land", "still a draft", "not asked to review", "8 tries"},
 		},
@@ -127,6 +134,79 @@ func TestDescribeTransient(t *testing.T) {
 			t.Parallel()
 			if got := describeTransient(tt.err); got != tt.want {
 				t.Errorf("describeTransient(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestDescribeChange_ReadsItsChangeThroughTheRoll: with no change on record,
+// the Mate's own state names the open one — and a read of it that meets the
+// roll is tried again as the description is, never answered with "no change
+// is open".
+func TestDescribeChange_ReadsItsChangeThroughTheRoll(t *testing.T) {
+	isSelf := func(r *http.Request) bool { return r.URL.Path == "/api/mate/self" }
+	tests := []struct {
+		name          string
+		hq            func(lab *hqLab)
+		wantDescribed bool
+		wantText      []string
+		wantNot       string
+	}{
+		{
+			name: "the read meets a 502 twice", hq: func(lab *hqLab) { lab.hq.answerWith(http.StatusBadGateway, "", 2, isSelf) },
+			wantDescribed: true, wantText: []string{`"described":true`, `"pullRequest":1`},
+		},
+		{
+			name: "HQ stays away", hq: func(lab *hqLab) { lab.hq.srv.Close() },
+			wantText: []string{`"described":false`, "is unknown", "describe-change again"}, wantNot: "No change is open",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lab := deliveredLab(t)
+			clearChange(lab.stateDir, lab.meta(), 1)
+			tt.hq(lab)
+			text, isError := lab.describe("appdev", describedWords)
+			if isError {
+				t.Fatalf("want an answer, got an error:\n%s", text)
+			}
+			for _, want := range tt.wantText {
+				if !strings.Contains(text, want) {
+					t.Errorf("the answer misses %q:\n%s", want, text)
+				}
+			}
+			if tt.wantNot != "" && strings.Contains(text, tt.wantNot) {
+				t.Errorf("the answer says %q:\n%s", tt.wantNot, text)
+			}
+			if body := lab.hq.change(1).Body; (body != "") != tt.wantDescribed {
+				t.Errorf("change #1's body = %q, want described=%v", body, tt.wantDescribed)
+			}
+		})
+	}
+}
+
+// TestHQNotReached: which tries HQ did not serve surely never carried the
+// words to it.
+func TestHQNotReached(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"connection refused", &hq.UnavailableError{Err: fmt.Errorf("hq /x: %w", syscall.ECONNREFUSED)}, true},
+		{"no connection within the bound", &hq.UnavailableError{Err: &hq.NoAnswerError{Path: "/x", Within: time.Second}}, true},
+		{"a standby's 503", &hq.UnavailableError{Code: "not_active"}, true},
+		{"a 503 that names nothing", &hq.UnavailableError{}, false},
+		{"connection reset", &hq.UnavailableError{Err: fmt.Errorf("hq /x: %w", syscall.ECONNRESET)}, false},
+		{"502", &hq.RefusedError{Status: http.StatusBadGateway}, false},
+		{"504", &hq.RefusedError{Status: http.StatusGatewayTimeout}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := hqNotReached(tt.err); got != tt.want {
+				t.Errorf("hqNotReached(%v) = %v, want %v", tt.err, got, tt.want)
 			}
 		})
 	}
