@@ -279,20 +279,13 @@ func addressKept(pic Picture, current map[string]bool, now time.Time) bool {
 // skipped: its words could never go onto a change either. Only a directory
 // that cannot be read fails it.
 func readablePairs(stateDir string) ([]*ServiceMeta, error) {
-	dir := filepath.Join(stateDir, "services")
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
+	dir, names, err := serviceMetaFiles(stateDir)
 	if err != nil {
-		return nil, fmt.Errorf("read the pairs: %w", err)
+		return nil, err
 	}
 	var metas []*ServiceMeta
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+	for _, name := range names {
+		data, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			continue
 		}

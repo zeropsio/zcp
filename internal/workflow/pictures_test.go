@@ -365,7 +365,7 @@ func TestKeepPicture_UnreadablePairRecords(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name     string
-		spoil   func(t *testing.T, servicesDir string)
+		spoil    func(t *testing.T, servicesDir string)
 		wantKept []string
 	}{
 		{

@@ -708,31 +708,43 @@ func ReadServiceMeta(baseDir, hostname string) (*ServiceMeta, error) {
 // ListServiceMetas reads all service metadata files from baseDir/services/.
 // Returns an empty slice if the directory does not exist or is empty.
 func ListServiceMetas(baseDir string) ([]*ServiceMeta, error) {
-	dir := filepath.Join(baseDir, "services")
-	entries, err := os.ReadDir(dir)
+	dir, names, err := serviceMetaFiles(baseDir)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("list services dir: %w", err)
+		return nil, err
 	}
-
 	var metas []*ServiceMeta
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-		data, readErr := os.ReadFile(filepath.Join(dir, entry.Name()))
+	for _, name := range names {
+		data, readErr := os.ReadFile(filepath.Join(dir, name))
 		if readErr != nil {
-			return nil, fmt.Errorf("read service meta %s: %w", entry.Name(), readErr)
+			return nil, fmt.Errorf("read service meta %s: %w", name, readErr)
 		}
 		meta, unmarshalErr := parseMeta(data)
 		if unmarshalErr != nil {
-			return nil, fmt.Errorf("unmarshal service meta %s: %w", entry.Name(), unmarshalErr)
+			return nil, fmt.Errorf("unmarshal service meta %s: %w", name, unmarshalErr)
 		}
 		metas = append(metas, meta)
 	}
 	return metas, nil
+}
+
+// serviceMetaFiles is the services directory and the name of every pair
+// record in it; none when the directory does not exist yet.
+func serviceMetaFiles(baseDir string) (string, []string, error) {
+	dir := filepath.Join(baseDir, "services")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return dir, nil, nil
+		}
+		return dir, nil, fmt.Errorf("list services dir: %w", err)
+	}
+	var names []string
+	for _, entry := range entries {
+		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".json" {
+			names = append(names, entry.Name())
+		}
+	}
+	return dir, names, nil
 }
 
 // PruneServiceMetas removes service meta files that don't match any live
