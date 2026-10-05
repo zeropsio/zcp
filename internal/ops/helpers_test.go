@@ -196,6 +196,40 @@ func TestParseSince(t *testing.T) {
 	}
 }
 
+// TestParseEnvPairs_RefusalNamesNoValue: a malformed entry is named by its
+// place, never by what it holds — an entry without "=" is often a secret
+// pasted alone, and the refusal reaches the agent and the person's screen.
+func TestParseEnvPairs_RefusalNamesNoValue(t *testing.T) {
+	t.Parallel()
+	secret := "s3cr3t-" + "value-9f2c41"
+	tests := []struct {
+		name      string
+		input     []string
+		wantEntry string
+	}{
+		{name: "a secret pasted alone", input: []string{secret}, wantEntry: "entry 1"},
+		{name: "after good entries", input: []string{"A=1", "B=2", "TOKEN " + secret}, wantEntry: "entry 3"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := parseEnvPairs(tt.input)
+			pe, ok := err.(*platform.PlatformError)
+			if !ok {
+				t.Fatalf("expected *PlatformError, got %T: %v", err, err)
+			}
+			for _, said := range []string{pe.Error(), pe.Message, pe.Suggestion, pe.Diagnostic} {
+				if strings.Contains(said, secret) {
+					t.Errorf("the refusal repeats the value: %q", said)
+				}
+			}
+			if !strings.Contains(pe.Message, tt.wantEntry) {
+				t.Errorf("message = %q, want it to name %s", pe.Message, tt.wantEntry)
+			}
+		})
+	}
+}
+
 func TestParseEnvPairs(t *testing.T) {
 	t.Parallel()
 

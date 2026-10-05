@@ -3,6 +3,8 @@ package ops
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -400,6 +402,152 @@ func TestEnvSet_Project_PreprocessorSyntaxError(t *testing.T) {
 	}
 	if len(mock.calls) != 0 {
 		t.Errorf("expansion failure should prevent API calls, got %d calls", len(mock.calls))
+	}
+}
+
+// TestEnvSet_Project_PlainValuesStoredAsGiven: only a value holding a
+// preprocessor expression (<@…>) is expanded, each on its own; every other
+// value is stored byte for byte — a password with "<" or a snippet of HTML
+// is no expression, alone or next to one.
+func TestEnvSet_Project_PlainValuesStoredAsGiven(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		input []string
+		plain map[string]string // key → the value it must be stored as
+	}{
+		{name: "a password with <", input: []string{"DB_PASSWORD=Xy<9z"}, plain: map[string]string{"DB_PASSWORD": "Xy<9z"}},
+		{name: "html", input: []string{"BANNER=<html>"}, plain: map[string]string{"BANNER": "<html>"}},
+		{name: "a > and a <", input: []string{"CMP=a>b<c"}, plain: map[string]string{"CMP": "a>b<c"}},
+		// No <@, no preprocessor: what reads as escaping or a modifier in an
+		// import YAML is stored as written.
+		{name: "a backslash before <", input: []string{"PW=a\\<b"}, plain: map[string]string{"PW": "a\\<b"}},
+		{name: "a doubled backslash", input: []string{"PATH_ON_WIN=C:\\\\x"}, plain: map[string]string{"PATH_ON_WIN": "C:\\\\x"}},
+		{name: "a modifier outside <@…>", input: []string{"HASHED=<secret|sha256>"}, plain: map[string]string{"HASHED": "<secret|sha256>"}},
+		{
+			name:  "plain values next to an expression",
+			input: []string{"DB_PASSWORD=Xy<9z", "APP_KEY=<@generateRandomString(<16>)>", "BANNER=<html>"},
+			plain: map[string]string{"DB_PASSWORD": "Xy<9z", "BANNER": "<html>"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := &countingProjectEnvMock{Client: platform.NewMock()}
+			if _, err := EnvSet(context.Background(), mock, "proj-1", "", true, tt.input); err != nil {
+				t.Fatalf("EnvSet: %v", err)
+			}
+			if len(mock.calls) != len(tt.input) {
+				t.Fatalf("want %d calls, got %d", len(tt.input), len(mock.calls))
+			}
+			for _, call := range mock.calls {
+				if want, isPlain := tt.plain[call.Key]; isPlain && call.Value != want {
+					t.Errorf("%s stored as %q, want %q", call.Key, call.Value, want)
+				}
+				if call.Key == "APP_KEY" && len(call.Value) != 16 {
+					t.Errorf("APP_KEY = %q, want 16 expanded characters", call.Value)
+				}
+			}
+		})
+	}
+}
+
+// TestEnvSet_Project_ExpressionsShareOneStore: the values holding <@…>
+// expand together, in the order given, so a key pair's other half and a
+// variable set by one entry reach the next — while a plain value between
+// them is stored as given.
+func TestEnvSet_Project_ExpressionsShareOneStore(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		input []string
+		check func(t *testing.T, got map[string]string)
+	}{
+		{
+			name:  "a key pair",
+			input: []string{"JWT_PUB=<@generateRSA2048Key(<jwt>)>", "BANNER=<html>", "JWT_PRIV=<@getVar(jwtPrivate)>"},
+			check: func(t *testing.T, got map[string]string) {
+				t.Helper()
+				if !strings.Contains(got["JWT_PUB"], "PUBLIC KEY") || !strings.Contains(got["JWT_PRIV"], "PRIVATE KEY") {
+					t.Errorf("want both halves of the pair, got %q / %q", got["JWT_PUB"], got["JWT_PRIV"])
+				}
+				if got["BANNER"] != "<html>" {
+					t.Errorf("BANNER = %q, want <html>", got["BANNER"])
+				}
+			},
+		},
+		{
+			name:  "a variable chain",
+			input: []string{"TOKEN=<@generateRandomStringVar(<tok>, <24>)>", "PW=Xy<9z", "TOKEN_HASH=<@getVar(tok)|sha256>"},
+			check: func(t *testing.T, got map[string]string) {
+				t.Helper()
+				sum := sha256.Sum256([]byte(got["TOKEN"]))
+				if len(got["TOKEN"]) != 24 || got["TOKEN_HASH"] != hex.EncodeToString(sum[:]) {
+					t.Errorf("TOKEN_HASH = %q, want the sha256 of TOKEN %q", got["TOKEN_HASH"], got["TOKEN"])
+				}
+				if got["PW"] != "Xy<9z" {
+					t.Errorf("PW = %q, want Xy<9z", got["PW"])
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := &countingProjectEnvMock{Client: platform.NewMock()}
+			if _, err := EnvSet(context.Background(), mock, "proj-1", "", true, tt.input); err != nil {
+				t.Fatalf("EnvSet: %v", err)
+			}
+			got := map[string]string{}
+			for _, c := range mock.calls {
+				got[c.Key] = c.Value
+			}
+			tt.check(t, got)
+		})
+	}
+}
+
+// TestEnvSet_PreprocessorErrorQuotesNoValue: a failing expression is named by
+// its key with zParser's reason, never by what it holds — neither its own
+// value nor another entry's reaches the error the agent and the UI show.
+func TestEnvSet_PreprocessorErrorQuotesNoValue(t *testing.T) {
+	t.Parallel()
+	secret := "s3cr3t-" + "value-71be0a"
+	tests := []struct {
+		name    string
+		input   []string
+		wantKey string
+	}{
+		{name: "another entry's secret", input: []string{"API_SECRET=" + secret, "APP_KEY=<@nosuchfn(<1>)>"}, wantKey: "APP_KEY"},
+		{name: "a secret in the failing entry", input: []string{"TOKEN=" + secret + "<@nosuchfn(<1>)>"}, wantKey: "TOKEN"},
+		{name: "a secret with < before a failing entry", input: []string{"API_SECRET=" + secret + "<x", "ZCP_BROKEN_EXPR=<@nosuchfn(<1>)>"}, wantKey: "ZCP_BROKEN_EXPR"},
+		{
+			name:    "an expression's secret before the failing one",
+			input:   []string{"A_SET=<@setVar(<k>, <" + secret + ">)>", "B_BROKEN_EXPR=<@getVar(k)|nosuchfn>"},
+			wantKey: "B_BROKEN_EXPR",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := &countingProjectEnvMock{Client: platform.NewMock()}
+			_, err := EnvSet(context.Background(), mock, "proj-1", "", true, tt.input)
+			pe, ok := err.(*platform.PlatformError)
+			if !ok {
+				t.Fatalf("expected *PlatformError, got %T: %v", err, err)
+			}
+			for _, said := range []string{pe.Error(), pe.Message, pe.Suggestion, pe.Diagnostic} {
+				if strings.Contains(said, secret) {
+					t.Errorf("the error repeats a value: %q", said)
+				}
+			}
+			if !strings.Contains(pe.Message, "expansion of "+tt.wantKey+" failed") || !strings.Contains(pe.Message, "nosuchfn") {
+				t.Errorf("message = %q, want it to name %s and zParser's reason", pe.Message, tt.wantKey)
+			}
+			if len(mock.calls) != 0 {
+				t.Errorf("a failed expansion stored %d values", len(mock.calls))
+			}
+		})
 	}
 }
 

@@ -152,12 +152,14 @@ type envPair struct {
 // Splits on first '=' only (value may contain '=').
 func parseEnvPairs(vars []string) ([]envPair, error) {
 	pairs := make([]envPair, 0, len(vars))
-	for _, v := range vars {
+	for i, v := range vars {
 		key, value, ok := strings.Cut(v, "=")
 		if !ok {
+			// Named by its place, never by what it holds: an entry with no
+			// '=' is often a secret pasted alone.
 			return nil, platform.NewPlatformError(
 				platform.ErrInvalidEnvFormat,
-				fmt.Sprintf("Invalid format '%s', expected KEY=value", v),
+				fmt.Sprintf("Invalid format in entry %d, expected KEY=value", i+1),
 				"Format: KEY=value (split on first '=')",
 			)
 		}

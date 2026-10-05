@@ -3,6 +3,7 @@ package ops
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1365,5 +1366,50 @@ func TestGenerateDotenv_ConcurrentInvocations_Serialize(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "APP_NAME=concurrent-test") {
 		t.Errorf(".env should contain expected value after concurrent writes; got:\n%s", string(body))
+	}
+}
+
+// TestExpandRefs_DepthErrorNamesTheRef: a chain of references too deep to
+// follow is named by the reference it stopped at, never by a value — a
+// value half expanded holds the secrets resolved into it.
+func TestExpandRefs_DepthErrorNamesTheRef(t *testing.T) {
+	t.Parallel()
+	secret := "s3cr3t-" + "value-5aa1"
+	tests := []struct {
+		name    string
+		links   int // how many vars the chain runs through
+		wantErr bool
+	}{
+		{name: "a chain within the bound", links: maxRefExpansionDepth - 1},
+		{name: "a chain past the bound", links: maxRefExpansionDepth + 4, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			db := platform.ServiceStack{ID: "svc-db", Name: "db"}
+			envs := make([]platform.ServiceEnvVar, 0, tt.links+1)
+			for i := range tt.links {
+				envs = append(envs, platform.ServiceEnvVar{Key: fmt.Sprintf("v%d", i), Content: fmt.Sprintf("%s-%d ${v%d}", secret, i, i+1)})
+			}
+			envs = append(envs, platform.ServiceEnvVar{Key: fmt.Sprintf("v%d", tt.links), Content: "end"})
+			r := &refExpander{
+				classifier:   NewEnvRefClassifier([]platform.ServiceStack{db}),
+				serviceIndex: map[string]platform.ServiceStack{"db": db},
+				cache:        map[string][]platform.ServiceEnvVar{"db": envs},
+			}
+			_, _, err := r.expandRefs(context.Background(), "${db_v0}", "", map[string]bool{}, 0)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, want error %v", err, tt.wantErr)
+			}
+			if err == nil {
+				return
+			}
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("the error repeats a value: %v", err)
+			}
+			if !strings.Contains(err.Error(), "db.v") {
+				t.Errorf("the error does not name the reference it stopped at: %v", err)
+			}
+		})
 	}
 }
