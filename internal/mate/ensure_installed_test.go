@@ -23,7 +23,7 @@ import (
 // desiredVersion is the version resolveDesiredRelease's stub reports —
 // standing in for whatever the real release manifest would name, since
 // these tests never reach the network for it (see newEnsureRig).
-const desiredVersion = "0.13.2"
+const desiredVersion = "0.14.2"
 
 // ensureRig gives each test a private HOME and counts how many times
 // EnsureInstalled reached the manifest/download/npm/smoke seams, so "no

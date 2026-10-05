@@ -401,7 +401,7 @@ installed it degrades like any other install failure (MD-1).
 | Check | Rule |
 |---|---|
 | `contract` | must equal `mate.SupportedContract` (today `1` = C-1…C-7 in §2.8). A manifest declaring a contract zcp does not know is refused with a message naming both numbers — the one case where an old zcp deliberately stays on the mate it has. |
-| `version` | must be ≥ `mate.MinimumMateVersion`, the oldest release zcp still drives (moves only when a contract fact changes; 0.13.0, the first release that keeps a link to HQ — a Mate is HQ's whatever its enrollment, §10.10). A manifest below it is refused, and so is a cached one on read: the cache holds what an earlier zcp checked against its own floor. |
+| `version` | must be ≥ `mate.MinimumMateVersion`, the oldest release zcp still drives (moves only when a contract fact changes; 0.14.0, the first release that judges a stand-up by its zcp process instead of a heartbeat, and keeps a link to HQ — a Mate is HQ's whatever its enrollment, §10.10). A manifest below it is refused, and so is a cached one on read: the cache holds what an earlier zcp checked against its own floor. |
 | `sha256` | the downloaded tarball must match it — damage detection, nothing more. |
 
 **There is no trust chain, by decision (2026-09-09).** The container installs zcp from a GitHub

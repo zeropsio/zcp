@@ -26,9 +26,9 @@ import (
 func validManifestJSON(t *testing.T, overrides map[string]any) []byte {
 	t.Helper()
 	body := map[string]any{
-		"version":     "0.13.2",
-		"asset":       "zerops-mate-0.13.2.tgz",
-		"url":         "https://github.com/zeropsio/mate/releases/download/v0.13.2/zerops-mate-0.13.2.tgz",
+		"version":     "0.14.2",
+		"asset":       "zerops-mate-0.14.2.tgz",
+		"url":         "https://github.com/zeropsio/mate/releases/download/v0.14.2/zerops-mate-0.14.2.tgz",
 		"sha256":      strings.Repeat("a", 64),
 		"size":        21690443,
 		"contract":    mate.SupportedContract,
@@ -64,8 +64,8 @@ func TestDesiredRelease_FetchesValidManifest_AndCaches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DesiredRelease(): %v", err)
 	}
-	if got.Version != "0.13.2" || got.Contract != mate.SupportedContract {
-		t.Errorf("DesiredRelease() = %+v, want version 0.13.2 contract %d", got, mate.SupportedContract)
+	if got.Version != "0.14.2" || got.Contract != mate.SupportedContract {
+		t.Errorf("DesiredRelease() = %+v, want version 0.14.2 contract %d", got, mate.SupportedContract)
 	}
 	if requests != 1 {
 		t.Fatalf("expected exactly one fetch, got %d", requests)
@@ -168,13 +168,20 @@ func TestDesiredRelease_RefusesInvalidManifest(t *testing.T) {
 			wantIn:    "0.12.3",
 		},
 		{
+			// 0.14.0 is the first release that judges a stand-up by its zcp
+			// process, the heartbeat this zcp no longer writes.
+			name:      "a release before process liveness",
+			overrides: map[string]any{"version": "0.13.11"},
+			wantIn:    "0.13.11",
+		},
+		{
 			name:      "sha256 not 64 hex characters",
 			overrides: map[string]any{"sha256": "not-a-digest"},
 			wantIn:    "sha256",
 		},
 		{
 			name:      "url is not https",
-			overrides: map[string]any{"url": "http://github.com/zeropsio/mate/releases/download/v0.13.2/zerops-mate-0.13.2.tgz"},
+			overrides: map[string]any{"url": "http://github.com/zeropsio/mate/releases/download/v0.14.2/zerops-mate-0.14.2.tgz"},
 			wantIn:    "https",
 		},
 	}
@@ -236,8 +243,8 @@ func TestDesiredRelease_CacheBelowTheMinimumIsNotTrusted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DesiredRelease(): %v", err)
 	}
-	if got.Version != "0.13.2" || requests != 2 {
-		t.Errorf("DesiredRelease() = %s after %d requests, want the fetched 0.13.2, never the cached 0.12.3", got.Version, requests)
+	if got.Version != "0.14.2" || requests != 2 {
+		t.Errorf("DesiredRelease() = %s after %d requests, want the fetched 0.14.2, never the cached 0.12.3", got.Version, requests)
 	}
 }
 

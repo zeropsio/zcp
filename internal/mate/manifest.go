@@ -22,10 +22,11 @@ const (
 
 	// MinimumMateVersion is the oldest mate release this zcp still drives.
 	// It moves only when a contract fact changes, never for a routine
-	// release. 0.13.0 is the first release that keeps a link to HQ
-	// (EnvHQEnrollment): zcp treats a Mate as HQ's whatever its enrollment,
-	// and a server before it cannot be one.
-	MinimumMateVersion = "0.13.0"
+	// release. 0.14.0 is the first release that judges a stand-up by its
+	// zcp process (PID + start) instead of the heartbeat this zcp no longer
+	// writes; it also keeps a link to HQ (EnvHQEnrollment), so zcp treats a
+	// Mate as HQ's whatever its enrollment.
+	MinimumMateVersion = "0.14.0"
 
 	// defaultManifestURL is GitHub's own "latest release" redirect for the
 	// fork's stable release asset. The fork's release workflow triggers only

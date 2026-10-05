@@ -57,7 +57,7 @@ func writeFakeBin(t *testing.T, path, body string) {
 
 // manifestVersion is the release every test in this file resolves toward —
 // arbitrary, standing in for whatever the real release manifest would name.
-const manifestVersion = "0.13.2"
+const manifestVersion = "0.14.2"
 
 // manifestAndTarballServer serves a valid stable.json at /stable.json for
 // manifestVersion, plus the tarball body it names, both real loopback HTTPS
@@ -221,7 +221,7 @@ func TestRunMateStatus_ReportsTheSignInSeedFailure(t *testing.T) {
 func TestRunMateStatus_JSON_ReportsUpdateAvailable(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	seedInstalledBundle(t, home, "0.13.0")
+	seedInstalledBundle(t, home, "0.14.0")
 	manifestAndTarballServer(t)
 
 	stdout := captureStdout(t, func() {
@@ -241,8 +241,8 @@ func TestRunMateStatus_JSON_ReportsUpdateAvailable(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &got); err != nil {
 		t.Fatalf("unmarshal status JSON %q: %v", stdout, err)
 	}
-	if got.Installed != "0.13.0" || got.Latest != manifestVersion || !got.UpdateAvailable {
-		t.Errorf("status = %+v, want installed=0.13.0 latest=0.13.2 updateAvailable=true", got)
+	if got.Installed != "0.14.0" || got.Latest != manifestVersion || !got.UpdateAvailable {
+		t.Errorf("status = %+v, want installed=0.14.0 latest=0.14.2 updateAvailable=true", got)
 	}
 	if got.Contract != mate.SupportedContract {
 		t.Errorf("status.Contract = %d, want %d", got.Contract, mate.SupportedContract)
@@ -261,24 +261,24 @@ func TestRunMateStatus_Refresh_BypassesManifestCache(t *testing.T) {
 		args       []string
 		wantLatest string
 	}{
-		{"no refresh: reports the warm cache", []string{"status", "--json"}, "0.13.1"},
-		{"--refresh: bypasses the cache", []string{"status", "--json", "--refresh"}, "0.13.2"},
+		{"no refresh: reports the warm cache", []string{"status", "--json"}, "0.14.1"},
+		{"--refresh: bypasses the cache", []string{"status", "--json", "--refresh"}, "0.14.2"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
-			seedInstalledBundle(t, home, "0.13.0")
+			seedInstalledBundle(t, home, "0.14.0")
 
-			// Warm the manifest cache at 0.13.1.
-			manifestServerForVersion(t, "0.13.1")
+			// Warm the manifest cache at 0.14.1.
+			manifestServerForVersion(t, "0.14.1")
 			if got := runMateCmd([]string{"status", "--json"}); got != 0 {
 				t.Fatalf("warm cache: runMateCmd(status --json) = %d, want 0", got)
 			}
 
 			// Point the manifest URL at a server answering a newer version —
-			// only --refresh should reach it; a warm cache answers 0.13.1.
-			manifestServerForVersion(t, "0.13.2")
+			// only --refresh should reach it; a warm cache answers 0.14.1.
+			manifestServerForVersion(t, "0.14.2")
 
 			stdout := captureStdout(t, func() {
 				if got := runMateCmd(tt.args); got != 0 {
@@ -302,7 +302,7 @@ func TestRunMateStatus_Refresh_BypassesManifestCache(t *testing.T) {
 func TestRunMateStatus_ManifestUnreachable_ExitsZeroWithError(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	seedInstalledBundle(t, home, "0.13.0")
+	seedInstalledBundle(t, home, "0.14.0")
 	t.Setenv("ZCP_MATE_MANIFEST_URL", "http://127.0.0.1:1/stable.json") // nothing listens here
 
 	stdout := captureStdout(t, func() {
@@ -319,8 +319,8 @@ func TestRunMateStatus_ManifestUnreachable_ExitsZeroWithError(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &got); err != nil {
 		t.Fatalf("unmarshal status JSON %q: %v", stdout, err)
 	}
-	if got.Installed != "0.13.0" {
-		t.Errorf("status.Installed = %q, want 0.13.0", got.Installed)
+	if got.Installed != "0.14.0" {
+		t.Errorf("status.Installed = %q, want 0.14.0", got.Installed)
 	}
 	if got.UpdateAvailable {
 		t.Error("status.UpdateAvailable must be false when the manifest is unreachable")
@@ -437,7 +437,7 @@ func TestRunMateUpdate_InstallsAndRestartsWhenUnitPresent(t *testing.T) {
 		t.Fatalf("unmarshal update JSON %q: %v", stdout, err)
 	}
 	if got.Action != string(mate.ActionInstalled) || got.To != manifestVersion || !got.Restarted {
-		t.Errorf("update result = %+v, want action=installed to=0.13.2 restarted=true", got)
+		t.Errorf("update result = %+v, want action=installed to=0.14.2 restarted=true", got)
 	}
 }
 
