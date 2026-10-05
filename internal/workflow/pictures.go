@@ -19,12 +19,20 @@ import (
 // it as the change's attachments; the store remembers where HQ serves each
 // one, so a picture goes onto a change once.
 //
-// Kept: the newest PictureKeep, and every picture a kept description names —
-// words waiting for a change to carry them must find their pictures there.
+// Kept: every picture for PictureKeepFor after it is taken — a change's
+// "before" is often taken hours, or a whole step, ahead of its description,
+// so the bound is time, not a count of the newest — while the store holds at
+// most PictureStoreBytes on disk, past which the oldest go first; and, beyond
+// both, every picture a kept description names: words waiting for a change to
+// carry them must find their pictures there. The newest is always kept. One
+// store per state dir, shared by every zcp process on it under its own lock.
 // An id is never given twice: the next one only ever grows.
 
-// PictureKeep is how many of the newest pictures are kept.
-const PictureKeep = 20
+// PictureKeepFor is how long a picture is kept after it is taken.
+const PictureKeepFor = 7 * 24 * time.Hour
+
+// PictureStoreBytes bounds the pictures on disk: past it, the oldest go first.
+const PictureStoreBytes int64 = 256 << 20
 
 const (
 	picturesDir      = "pictures"
@@ -43,6 +51,8 @@ type Picture struct {
 	Width   int    `json:"width,omitempty"`
 	Height  int    `json:"height,omitempty"`
 	TakenAt string `json:"takenAt,omitempty"`
+	// Bytes is the picture's size on disk.
+	Bytes int64 `json:"bytes,omitempty"`
 	// Uploads is where HQ serves the picture, by the change it was attached
 	// to ("{appId}/{repo}#{number}").
 	Uploads map[string]string `json:"uploads,omitempty"`
@@ -81,6 +91,33 @@ func ReplacePictureRefs(text string, replace func(alt, id string) string) string
 // KeepPicture keeps png as the next picture, with its size in pixels, and
 // forgets what the store no longer keeps.
 func KeepPicture(stateDir string, png []byte, width, height int) (Picture, error) {
+	return keepPicture(stateDir, png, width, height, time.Now(), defaultPictureBounds())
+}
+
+// pictureBounds is how long and how much the store keeps.
+type pictureBounds struct {
+	keepFor  time.Duration
+	maxBytes int64
+}
+
+func defaultPictureBounds() pictureBounds {
+	return pictureBounds{keepFor: PictureKeepFor, maxBytes: PictureStoreBytes}
+}
+
+// KeptPictures is the id of every picture the store keeps, oldest first.
+func KeptPictures(stateDir string) ([]string, error) {
+	var ids []string
+	err := withPictures(stateDir, func(index *pictureIndex) error {
+		for _, pic := range index.Pictures {
+			ids = append(ids, pic.ID)
+		}
+		return nil
+	})
+	return ids, err
+}
+
+// keepPicture is KeepPicture taken at now, within bounds.
+func keepPicture(stateDir string, png []byte, width, height int, now time.Time, bounds pictureBounds) (Picture, error) {
 	var kept Picture
 	err := withPictures(stateDir, func(index *pictureIndex) error {
 		if index.Next < 1 {
@@ -88,14 +125,14 @@ func KeepPicture(stateDir string, png []byte, width, height int) (Picture, error
 		}
 		kept = Picture{
 			ID: pictureIDPrefix + strconv.Itoa(index.Next), Width: width, Height: height,
-			TakenAt: time.Now().UTC().Format(time.RFC3339),
+			TakenAt: now.UTC().Format(time.RFC3339), Bytes: int64(len(png)),
 		}
 		if err := os.WriteFile(picturePath(stateDir, kept.ID), png, 0o600); err != nil {
 			return fmt.Errorf("keep picture %s: %w", kept.ID, err)
 		}
 		index.Next++
 		index.Pictures = append(index.Pictures, kept)
-		prunePictures(stateDir, index)
+		prunePictures(stateDir, index, now, bounds)
 		return nil
 	})
 	return kept, err
@@ -140,12 +177,11 @@ func RecordPictureUpload(stateDir, id, target, url string) error {
 	})
 }
 
-// prunePictures forgets every picture past the newest PictureKeep that no kept
-// description names — its entry and its file.
-func prunePictures(stateDir string, index *pictureIndex) {
-	if len(index.Pictures) <= PictureKeep {
-		return
-	}
+// prunePictures forgets every picture the store no longer keeps — its entry
+// and its file: one taken longer than bounds.keepFor before now, and, newest
+// to oldest, every one past bounds.maxBytes; never the newest, nor one a kept
+// description names.
+func prunePictures(stateDir string, index *pictureIndex, now time.Time, bounds pictureBounds) {
 	named := map[string]bool{}
 	if metas, err := ListServiceMetas(stateDir); err == nil {
 		for _, m := range metas {
@@ -157,16 +193,53 @@ func prunePictures(stateDir string, index *pictureIndex) {
 			}
 		}
 	}
-	oldest := len(index.Pictures) - PictureKeep
-	kept := make([]Picture, 0, PictureKeep+len(named))
+	keep := make([]bool, len(index.Pictures))
+	var held int64
+	full := false
+	for i := len(index.Pictures) - 1; i >= 0; i-- {
+		pic := index.Pictures[i]
+		size := pictureBytes(stateDir, pic)
+		if named[pic.ID] {
+			keep[i] = true
+			continue
+		}
+		newest := i == len(index.Pictures)-1
+		if !newest && (full || pictureExpired(pic, now, bounds.keepFor) || held+size > bounds.maxBytes) {
+			full = full || held+size > bounds.maxBytes
+			continue
+		}
+		keep[i] = true
+		held += size
+	}
+	kept := make([]Picture, 0, len(index.Pictures))
 	for i, pic := range index.Pictures {
-		if i >= oldest || named[pic.ID] {
+		if keep[i] {
 			kept = append(kept, pic)
 			continue
 		}
 		_ = os.Remove(picturePath(stateDir, pic.ID))
 	}
 	index.Pictures = kept
+}
+
+// pictureBytes is pic's size on disk: as kept, or as its file says for a
+// picture kept before the store recorded sizes.
+func pictureBytes(stateDir string, pic Picture) int64 {
+	if pic.Bytes > 0 {
+		return pic.Bytes
+	}
+	if info, err := os.Stat(picturePath(stateDir, pic.ID)); err == nil {
+		return info.Size()
+	}
+	return 0
+}
+
+// pictureExpired reports whether pic was taken longer than keepFor before
+// now. A picture whose time cannot be read is not expired: the byte bound
+// still holds it.
+func pictureExpired(pic Picture, now time.Time, keepFor time.Duration) bool {
+	taken, err := time.Parse(time.RFC3339, pic.TakenAt)
+	return err == nil && now.Sub(taken) > keepFor
 }
 
 // withPictures runs fn on the store's index under the store's own lock — a

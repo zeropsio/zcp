@@ -2982,16 +2982,23 @@ the next one. Describing never opens a change, and with none open there is nothi
 **A change's pictures (2026-09-29; in HQ since 2026-10-02).** The pictures that prove a change
 are the screenshots `zerops_browser` takes, and each is kept as one of the Mate's pictures
 (`workflow.KeepPicture`, under the state dir) and named in the tool's result — `screenshot.picture`,
-`shot-3`, an id never given twice; the newest twenty are kept, and every one a kept description
-names. A description shows one as `![what it shows](shot-3)`: `describe-change` sends each picture
+`shot-3`, an id never given twice, with how long it is kept (`screenshot.keptFor`). The bound is
+time and bytes, not a count: a picture is kept for a week after it is taken
+(`workflow.PictureKeepFor`) — a change's "before" is often taken hours, or a whole step, ahead of
+its description (run 12: 30 pictures taken over seven hours, refused under a newest-twenty rule) —
+while the store holds at most 256 MiB (`workflow.PictureStoreBytes`), past which the oldest go
+first; the newest is always kept, and every one a kept description names outlives both. One store
+per state dir, shared under its own lock by every zcp process of the Mate (its conversation,
+helpers, subagents). A description shows one as `![what it shows](shot-3)`: `describe-change` sends each picture
 it names to HQ as the change's attachment (`POST /api/mate/changes/:repo/:n/attachments`, the PNG as
 the body, at most 20 MiB, once per change, the address remembered with the picture) and publishes it
 as `<img alt width height src>` at `https://<HQ>/api/apps/<appId>/changes/<repo>/<n>/attachments/<id>`,
 which the client reads as the person — the width and height the picture's shape at 720 pixels wide
 at most, so a reader reserves its box before the bytes arrive. Never a body with a broken picture: a
-picture the Mate does not keep is refused before anything is written, and one HQ will not keep
+picture the Mate does not keep is refused before anything is written — the refusal names the
+pictures it does keep and how long one is kept — and one HQ will not keep
 writes nothing and keeps the words. `TestDescribeChange_Pictures`, `TestKeepBrowserPicture`,
-`TestKeepPicture_*`, `TestPictureRefs`.
+`TestKeepPicture_*`, `TestDescribeChange_MissingPictureNamesWhatIsKept`, `TestPictureRefs`.
 
 **A merge may come at any moment (2026-10-03; delivered through HQ).** A change appears in
 its Mate's conversation as soon as it opens, and the person may merge it while the agent still

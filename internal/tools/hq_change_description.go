@@ -7,7 +7,9 @@ import (
 	"html"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -190,9 +192,9 @@ func describeTextRefusal(stateDir, text string) *platform.PlatformError {
 	if missing := missingPictures(stateDir, text); len(missing) > 0 {
 		return platform.NewPlatformError(
 			platform.ErrInvalidParameter,
-			fmt.Sprintf("The description shows %s, and this Mate keeps no such picture — the newest %d screenshots are kept, and every one a kept description shows.",
-				strings.Join(missing, ", "), workflow.PictureKeep),
-			"Take the screenshot again with zerops_browser screenshot=true and use the picture its result names, or leave the picture out.",
+			fmt.Sprintf("The description shows %s, and this Mate keeps no such picture. %s",
+				strings.Join(missing, ", "), keptPicturesSentence(stateDir)),
+			"Show a picture it keeps, or take the screenshot again with zerops_browser screenshot=true and show the picture its result names — or leave the picture out.",
 		)
 	}
 	return nil
@@ -385,6 +387,17 @@ func pictureTag(alt, url string, width, height int) string {
 	return fmt.Sprintf(`<img alt="%s" width="%d" height="%d" src="%s">`, html.EscapeString(alt), width, height, html.EscapeString(url))
 }
 
+// keptPicturesSentence says which pictures this Mate keeps and for how long.
+func keptPicturesSentence(stateDir string) string {
+	rule := fmt.Sprintf("each for %s after it is taken (past %d MiB of pictures the oldest go first), and every one a kept description shows",
+		pictureKeepWords(), workflow.PictureStoreBytes>>20)
+	ids, err := workflow.KeptPictures(stateDir)
+	if err != nil || len(ids) == 0 {
+		return "It keeps no picture now; it keeps a screenshot " + rule + "."
+	}
+	return "It keeps " + keptPicturesWords(ids) + ", " + rule + "."
+}
+
 // missingPictures is the pictures text shows that this Mate does not keep.
 func missingPictures(stateDir, text string) []string {
 	var missing []string
@@ -484,4 +497,53 @@ func sentenceOf(line string) string {
 		return ""
 	}
 	return strings.ToUpper(line[:1]) + line[1:] + "."
+}
+
+// keptPicturesShown is how many runs of kept pictures a refusal names: the
+// newest, so the list stays a line however many are kept.
+const keptPicturesShown = 8
+
+// keptPicturesWords names the kept pictures ids lists (oldest first) as runs
+// — "shot-4, shot-50 to shot-52" — the newest keptPicturesShown of them, with
+// how many older ones there are besides.
+func keptPicturesWords(ids []string) string {
+	type run struct{ first, last, count int }
+	var runs []run
+	for _, id := range ids {
+		n, err := strconv.Atoi(strings.TrimPrefix(id, "shot-"))
+		if err != nil {
+			continue
+		}
+		if len(runs) > 0 && runs[len(runs)-1].last == n-1 {
+			runs[len(runs)-1].last = n
+			runs[len(runs)-1].count++
+			continue
+		}
+		runs = append(runs, run{first: n, last: n, count: 1})
+	}
+	var words []string
+	if len(runs) > keptPicturesShown {
+		older := 0
+		for _, r := range runs[:len(runs)-keptPicturesShown] {
+			older += r.count
+		}
+		words = append(words, fmt.Sprintf("%d older pictures", older))
+		runs = runs[len(runs)-keptPicturesShown:]
+	}
+	for _, r := range runs {
+		switch r.count {
+		case 1:
+			words = append(words, fmt.Sprintf("shot-%d", r.first))
+		case 2:
+			words = append(words, fmt.Sprintf("shot-%d, shot-%d", r.first, r.last))
+		default:
+			words = append(words, fmt.Sprintf("shot-%d to shot-%d", r.first, r.last))
+		}
+	}
+	return strings.Join(words, ", ")
+}
+
+// pictureKeepWords is how long a picture is kept, in days.
+func pictureKeepWords() string {
+	return fmt.Sprintf("%d days", int(workflow.PictureKeepFor/(24*time.Hour)))
 }

@@ -5,6 +5,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -268,7 +269,7 @@ func TestDescribeChange_Refusals(t *testing.T) {
 		{name: "more than a page", pairs: []string{"appdev"}, description: strings.Repeat("a", changeDescriptionMaxRunes+1),
 			wantText: []string{"INVALID_PARAMETER", "20000"}},
 		{name: "a picture this Mate does not keep", pairs: []string{"appdev"}, description: "![gone](shot-7)",
-			wantText: []string{"INVALID_PARAMETER", "shot-7", "zerops_browser"}},
+			wantText: []string{"INVALID_PARAMETER", "shot-7", "keeps no picture", "zerops_browser"}},
 		{name: "two pairs and no service", pairs: []string{"appdev", "apidev"}, description: describedWords,
 			wantText: []string{"SERVICE_REQUIRED", `service=\"apidev\"`, `service=\"appdev\"`}},
 		{name: "a service that is no pair", pairs: []string{"appdev"}, service: "db", description: describedWords,
@@ -329,6 +330,70 @@ func TestDescribeChange_Refusals(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestDescribeChange_MissingPictureNamesWhatIsKept: a refusal for a picture
+// this Mate does not keep says which it does keep — the newest by id, the
+// runs of them in one — and how long one is kept, so the Mate picks a kept
+// one or retakes the screenshot instead of guessing.
+func TestDescribeChange_MissingPictureNamesWhatIsKept(t *testing.T) {
+	tests := []struct {
+		name     string
+		takes    int
+		named    []string // ids the description shows
+		wantText []string
+	}{
+		{name: "a run of kept pictures", takes: 3, named: []string{"shot-2", "shot-9"},
+			wantText: []string{"shot-9", "keeps shot-1 to shot-3", "7 days", "zerops_browser screenshot=true"}},
+		{name: "one kept picture", takes: 1, named: []string{"shot-4"},
+			wantText: []string{"shot-4", "keeps shot-1,", "7 days"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lab := deliveredLab(t)
+			for i := range tt.takes {
+				keptScreenshot(t, lab.stateDir, fmt.Appendf(nil, "\x89PNG-%d", i), 800, 600)
+			}
+			var words strings.Builder
+			for _, id := range tt.named {
+				words.WriteString("![a page](" + id + ")\n")
+			}
+			text, isError := lab.describe("", words.String())
+			if !isError {
+				t.Fatalf("want a refusal, got:\n%s", text)
+			}
+			for _, want := range tt.wantText {
+				if !strings.Contains(text, want) {
+					t.Errorf("the refusal misses %q:\n%s", want, text)
+				}
+			}
+		})
+	}
+}
+
+// TestKeptPicturesWords: the kept ids read as runs, oldest first, and a long
+// list keeps its newest runs.
+func TestKeptPicturesWords(t *testing.T) {
+	t.Parallel()
+	many := []string{}
+	for i := 1; i <= 40; i += 2 {
+		many = append(many, fmt.Sprintf("shot-%d", i))
+	}
+	tests := []struct {
+		ids  []string
+		want string
+	}{
+		{nil, ""},
+		{[]string{"shot-5"}, "shot-5"},
+		{[]string{"shot-4", "shot-5"}, "shot-4, shot-5"},
+		{[]string{"shot-4", "shot-50", "shot-51", "shot-52", "shot-69"}, "shot-4, shot-50 to shot-52, shot-69"},
+		{many, "12 older pictures, shot-25, shot-27, shot-29, shot-31, shot-33, shot-35, shot-37, shot-39"},
+	}
+	for _, tt := range tests {
+		if got := keptPicturesWords(tt.ids); got != tt.want {
+			t.Errorf("keptPicturesWords(%v) = %q, want %q", tt.ids, got, tt.want)
+		}
 	}
 }
 
