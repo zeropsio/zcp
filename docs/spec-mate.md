@@ -2956,6 +2956,13 @@ not answer: they wait for the change they were written for. Words never reach a 
 written for: a change on record that merged or closed before they reached it is named to the Mate
 and nothing is kept, and words kept for a change that is gone are dropped rather than inherited by
 the next one. Describing never opens a change, and with none open there is nothing to describe yet.
+A describe waits out an HQ that is away for a moment (2026-10-06): HQ's Core rolls for about 20 s,
+and a describe that met the roll once left the change a draft. Its calls are tried again, a growing
+wait apart for about a minute in all, while HQ is not reached (refused, reset, no connection within
+the bound) or answers 502, 503 or 504 — never on HQ's own refusal, a 4xx or a 500, nor on a try HQ
+connected for and left unanswered; when the minute is spent, the answer says plainly that the
+description did not land and the change is still a draft, the words kept. A delivery still fails
+fast (D35). `hq_describe_retry.go`; `TestDescribeChange_WaitsOutARollingDeploy`, `TestDescribeTransient`;
 `hq_change_description.go`; `TestDescribeChange`, `TestDescribeChange_KeptWordsMeetThePushAfterThem`,
 `TestDescribeChange_Refusals`, `TestWorkflowTool_DescribeChangeReachesItsHandler`.
 

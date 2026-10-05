@@ -216,14 +216,16 @@ func TestDescribeChange_PictureStoreUnreadable(t *testing.T) {
 
 // TestDescribeChange_AttachRefusedForNow: HQ refusing an attachment for now
 // (429, a 5xx) is not a picture it will never take: the words are kept for
-// the next delivery, as when HQ does not answer.
+// the next delivery, as when HQ does not answer — or, for a 502 a rolling
+// deploy answers, the describe tries again and they land.
 func TestDescribeChange_AttachRefusedForNow(t *testing.T) {
 	tests := []struct {
-		name   string
-		status int
+		name      string
+		status    int
+		described bool
 	}{
 		{name: "too many requests", status: http.StatusTooManyRequests},
-		{name: "a server error", status: http.StatusBadGateway},
+		{name: "a server error", status: http.StatusBadGateway, described: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -235,6 +237,12 @@ func TestDescribeChange_AttachRefusedForNow(t *testing.T) {
 			lab.hq.mu.Unlock()
 			words := "![The page](" + id + ")"
 			text, _ := lab.describeTitled("", "", words)
+			if tt.described {
+				if !strings.Contains(text, `"described":true`) || lab.hq.change(1).Body == "" {
+					t.Errorf("want the describe tried again and landed, got:\n%s", text)
+				}
+				return
+			}
 			if !strings.Contains(text, `"kept":true`) || !strings.Contains(text, "goes onto #1") {
 				t.Errorf("want the words kept for the next delivery, got:\n%s", text)
 			}

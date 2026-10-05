@@ -559,8 +559,8 @@ type hqLab struct {
 	ssh      *labSSH
 	rt       runtime.Info
 	// waits are the waits between a delivery step's tries, recorded rather
-	// than waited out.
-	waits []time.Duration
+	// than waited out; describeWaits a describe's.
+	waits, describeWaits []time.Duration
 }
 
 func newHQLab(t *testing.T) *hqLab {
@@ -575,14 +575,20 @@ func newHQLab(t *testing.T) *hqLab {
 	lab := &hqLab{t: t, hq: fake, stateDir: t.TempDir(), pair: t.TempDir(),
 		rt: runtime.Info{InContainer: true, ProjectID: labMate}}
 	prevAttempts, prevDelay, prevRetry, prevPropagation := gitPushSessionAuthAttempts, gitPushSessionAuthDelay, deliveryRetry, credentialPropagation
+	prevDescribeRetry := describeRetry
 	gitPushSessionAuthAttempts, gitPushSessionAuthDelay = 2, 0
 	deliveryRetry = hqRetry{waits: prevRetry.waits, pause: func(_ context.Context, d time.Duration) error {
 		lab.waits = append(lab.waits, d)
 		return nil
 	}}
+	describeRetry = hqRetry{waits: prevDescribeRetry.waits, pause: func(_ context.Context, d time.Duration) error {
+		lab.describeWaits = append(lab.describeWaits, d)
+		return nil
+	}}
 	credentialPropagation.every, credentialPropagation.within = 10*time.Millisecond, 300*time.Millisecond
 	t.Cleanup(func() {
 		gitPushSessionAuthAttempts, gitPushSessionAuthDelay, deliveryRetry, credentialPropagation = prevAttempts, prevDelay, prevRetry, prevPropagation
+		describeRetry = prevDescribeRetry
 	})
 	lab.git("init", "-q", "-b", "main")
 	tree := lab.git("mktree")

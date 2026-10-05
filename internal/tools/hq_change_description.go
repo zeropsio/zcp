@@ -152,7 +152,7 @@ func handleDescribeChange(
 	keepErr := keepChangeDescription(stateDir, meta, text, title, number)
 
 	url := hqc.ChangeURL(meta.HQ.AppID, meta.HQ.Repo, number)
-	if err := putChangeDescription(ctx, hqc, stateDir, meta, number, text, title); err != nil {
+	if tries, away, err := putDescriptionRetried(ctx, hqc, stateDir, meta, number, text, title); err != nil {
 		var gone *picturesGoneError
 		if errors.As(err, &gone) {
 			forgetChangeDescription(stateDir, meta, text)
@@ -174,6 +174,12 @@ func handleDescribeChange(
 		if keepErr != nil {
 			return convertError(fmt.Errorf("HQ did not take the description of change #%d (%w), and it could not be kept either: %w",
 				number, err, keepErr), WithRecoveryStatus()), nil, nil
+		}
+		if away {
+			return jsonResult(changeDescriptionResult{
+				Service: meta.Hostname, PullRequest: number, PullRequestURL: url, Kept: true,
+				Message: describeNotLanded(hqc.Address(), number, tries, err),
+			}), nil, nil
 		}
 		return jsonResult(changeDescriptionResult{
 			Service:        meta.Hostname,

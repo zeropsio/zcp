@@ -131,7 +131,7 @@ func TestDescribeChange(t *testing.T) {
 				return lab
 			},
 			wantKept: &workflow.ChangeDescription{Text: describedWords, Change: 1}, wantChange: 1,
-			wantText: []string{`"described":false`, `"kept":true`, "did not take", "next delivery"},
+			wantText: []string{`"described":false`, `"kept":true`, "did not land", "still a draft"},
 		},
 	}
 	for _, tt := range tests {
