@@ -151,6 +151,30 @@ func TestExpand_UnknownFunction(t *testing.T) {
 	}
 }
 
+// TestExpand_ErrorQuotesNoInput: an expansion's error carries zParser's
+// reason, never the input — a value is often a secret.
+func TestExpand_ErrorQuotesNoInput(t *testing.T) {
+	t.Parallel()
+	secret := "s3cr3t-" + "value-0c9d"
+	tests := []string{
+		secret + "<@nosuchfn(<1>)>",
+		"<@nosuchfn(<" + secret + ">)>",
+	}
+	for _, in := range tests {
+		_, err := Expand(context.Background(), in)
+		if err == nil {
+			t.Fatalf("Expand(%q): want an error", in)
+		}
+		if strings.Contains(err.Error(), secret) || !strings.Contains(err.Error(), "nosuchfn") {
+			t.Errorf("Expand error = %q, want zParser's reason without the input", err)
+		}
+	}
+	_, err := Batch(context.Background(), []string{"A", "B"}, map[string]string{"A": secret, "B": "<@nosuchfn(<1>)>"})
+	if err == nil || strings.Contains(err.Error(), secret) {
+		t.Errorf("Batch error = %v, want one without another entry's value", err)
+	}
+}
+
 func TestBatch_SimpleKeys(t *testing.T) {
 	t.Parallel()
 	keys := []string{"A", "B", "C"}

@@ -132,25 +132,20 @@ func expand(ctx context.Context, input string, _ map[string]string) (string, err
 		parser.WithMultilineOutputHandling(parser.MultilinePreserved),
 	)
 	if err := p.Parse(ctx); err != nil {
-		return "", wrapParseError(input, err)
+		return "", wrapParseError(err)
 	}
 	return out.String(), nil
 }
 
 // wrapParseError converts zParser's errors into something the MCP layer can
-// surface cleanly. The underlying metaError carries line/char info that is
-// noisy for single-value expansion — we include a short context excerpt
-// from the input instead.
-func wrapParseError(input string, err error) error {
-	excerpt := input
-	const maxExcerpt = 80
-	if len(excerpt) > maxExcerpt {
-		excerpt = excerpt[:maxExcerpt] + "..."
-	}
+// surface cleanly: zParser's reason, never the input — a value is often a
+// secret, and the error reaches the agent and the person's screen. The
+// caller names the entry that failed.
+func wrapParseError(err error) error {
 	// Deadline exceeded surfaces as a wrapped context error — preserve that
 	// so callers can distinguish timeout from syntax error.
 	if errors.Is(err, context.DeadlineExceeded) {
-		return fmt.Errorf("preprocess %q: timeout (%s)", excerpt, DefaultTimeout)
+		return fmt.Errorf("preprocess: timeout (%s)", DefaultTimeout)
 	}
-	return fmt.Errorf("preprocess %q: %w", excerpt, err)
+	return fmt.Errorf("preprocess: %w", err)
 }
