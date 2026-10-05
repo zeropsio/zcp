@@ -133,6 +133,11 @@ type StandupStatus struct {
 	// a running section whose process is provably gone — its PID absent, or
 	// reused by a process with another start time — is a stand-up that died.
 	Process *StandupProcess `json:"process,omitempty"`
+	// CallStartedAt is when the call now running it began: StartedAt for
+	// the call that started it, later for a call that goes on with it (the
+	// stage call of a section a first call left waiting). A reader matches
+	// the section to that call by it.
+	CallStartedAt string `json:"callStartedAt,omitempty"`
 }
 
 // StandupProcess names a process the way the work sessions do: its PID and
