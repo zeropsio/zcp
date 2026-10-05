@@ -69,7 +69,7 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			"Do NOT use [\"eval\",...] — it is stripped; dedicated commands produce structured output. " +
 			"Pass screenshot=true to capture a screenshot after your commands run — returned as " +
 			"an image content block alongside the text result, not inlined into it, and kept as a picture the " +
-			"result names (screenshot.picture, e.g. \"shot-3\"): write ![what it shows](shot-3) in a " +
+			"result names (screenshot.picture, e.g. \"shot-3\") for as long as screenshot.keptFor says: write ![what it shows](shot-3) in a " +
 			"zerops_workflow action=\"describe-change\" description to show it to the person. " +
 			"Returns: steps[] (each with errorKind on failure), errorsOutput (from [errors]), " +
 			"consoleOutput (from [console]), networkOutput (4xx/5xx requests from [network requests], " +
@@ -113,6 +113,7 @@ func keepBrowserPicture(stateDir string, result *ops.BrowserBatchResult) {
 		return
 	}
 	shot.Picture = pic.ID
+	shot.KeptFor = pictureKeepWords()
 }
 
 // browserToolResult builds the zerops_browser CallToolResult: the JSON

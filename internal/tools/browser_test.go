@@ -102,10 +102,14 @@ func TestKeepBrowserPicture(t *testing.T) {
 	var shown struct {
 		Screenshot struct {
 			Picture string `json:"picture"`
+			KeptFor string `json:"keptFor"`
 		} `json:"screenshot"`
 	}
 	if err := json.Unmarshal([]byte(resultText(t, browserToolResult(result))), &shown); err != nil || shown.Screenshot.Picture != "shot-1" {
 		t.Errorf("the result must name the picture: %+v (%v)", shown, err)
+	}
+	if shown.Screenshot.KeptFor != "up to 7 days" {
+		t.Errorf("keptFor = %q, want the result to say how long the picture is kept (up to 7 days)", shown.Screenshot.KeptFor)
 	}
 	if _, png, err := workflow.KeptPicture(stateDir, "shot-1"); err != nil || !bytes.Equal(png, []byte("\x89PNG-browser")) {
 		t.Errorf("the picture is not kept: %v", err)

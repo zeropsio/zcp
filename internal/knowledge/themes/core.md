@@ -49,22 +49,22 @@ services[]:                            # REQUIRED
 ```
 
 ### Preprocessor Functions
-Enable with `#zeropsPreprocessor=on` as first line. Syntax: `<@function(<args>)>`, chain modifiers with `|`: `<@generateRandomString(<32>)|sha256>`.
+Enable with `#zeropsPreprocessor=on` as first line. Syntax: `<@function(<args>)>`, chain modifiers with `|`: `<@generateRandomString(<32>)|sha256>`. Write a space after each comma between arguments (`<@f(<a>, <b>)>`): without it the preprocessor fails.
 
 **Functions:**
 - `<@generateRandomString(<len>)>` -- random alphanumeric string
 - `<@generateRandomBytes(<len>)>` -- random bytes (binary)
-- `<@generateRandomInt(<min>,<max>)>` -- random integer in range
-- `<@pickRandom(<opt1>,<opt2>,...)>` -- pick random from options
-- `<@setVar(<name>,<content>)>` / `<@getVar(<name>)>` -- store and retrieve variables
-- `<@generateRandomStringVar(<name>,<len>)>` -- generate + store string variable
-- `<@generateJWT(<secret>,<payload>)>` -- JWT token generation
-- `<@getDateTime(<format>,[<tz>])>` -- formatted datetime
+- `<@generateRandomInt(<min>, <max>)>` -- random integer in range
+- `<@pickRandom(<opt1>, <opt2>, ...)>` -- pick random from options
+- `<@setVar(<name>, <content>)>` / `<@getVar(<name>)>` -- store and retrieve variables
+- `<@generateRandomStringVar(<name>, <len>)>` -- generate + store string variable
+- `<@generateJWT(<secret>, <payload>)>` -- JWT token generation
+- `<@getDateTime(<format>, [<tz>])>` -- formatted datetime
 - `<@generateED25519Key(<name>)>`, `<@generateRSA2048Key(<name>)>`, `<@generateRSA4096Key(<name>)>` -- key pairs (stores pubKey/privKey)
 
 **Modifiers** (applied with `|`): `sha256`, `sha512`, `bcrypt`, `argon2id` (hashing) | `toHex`, `toString` (encoding) | `upper`, `lower`, `title` (case) | `noop` (testing)
 
-**Rules:** Functions return strings. Two-phase processing: preprocessing then YAML parsing. Values generated once at import -- fixed after, not regenerated. Escape special characters: `\<`, `\>`, `\|` (double-escape `\\` for backslash)
+**Rules:** Functions return strings. Two-phase processing: preprocessing then YAML parsing. Values generated once at import -- fixed after, not regenerated. Escape special characters where the preprocessor reads them — an import YAML with `#zeropsPreprocessor=on`, and a `zerops_env` value holding a `<@…>` expression: `\<`, `\>`, `\|` (double-escape `\\` for backslash). A `zerops_env` value without `<@` — and so a `project.envVariables` value in `zerops_import` — is stored exactly as written: no escaping there.
 
 **Always-available** `${...}` functions: `${random(length)}`, `${randomInt(min,max)}`, `${sha256(value)}`, `${bcrypt(value,rounds)}`, `${argon2id(value)}`, `${jwt(algo,secret,payload)}`, `${generateRSAKeyPair(bits)}`, `${generateEd25519KeyPair()}`
 

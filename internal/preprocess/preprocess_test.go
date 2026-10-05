@@ -151,6 +151,61 @@ func TestExpand_UnknownFunction(t *testing.T) {
 	}
 }
 
+// TestExpand_ErrorQuotesNoInput: an expansion's error carries zParser's
+// reason, never the input — a value is often a secret.
+func TestExpand_ErrorQuotesNoInput(t *testing.T) {
+	t.Parallel()
+	secret := "s3cr3t-" + "value-0c9d"
+	tests := []string{
+		secret + "<@nosuchfn(<1>)>",
+		"<@nosuchfn(<" + secret + ">)>",
+	}
+	for _, in := range tests {
+		_, err := Expand(context.Background(), in)
+		if err == nil {
+			t.Fatalf("Expand(%q): want an error", in)
+		}
+		if strings.Contains(err.Error(), secret) || !strings.Contains(err.Error(), "nosuchfn") {
+			t.Errorf("Expand error = %q, want zParser's reason without the input", err)
+		}
+	}
+	_, err := Batch(context.Background(), []string{"A", "B"}, map[string]string{"A": secret, "B": "<@nosuchfn(<1>)>"})
+	if err == nil || strings.Contains(err.Error(), secret) {
+		t.Errorf("Batch error = %v, want one without another entry's value", err)
+	}
+}
+
+// TestExpand_CommaWithoutSpace: zParser v2.1.2 panics on a call whose
+// argument follows its comma directly — <@generateRandomInt(<10>,<50>)>.
+// The panic is caught and answered as an error that says how to write it,
+// never the input; the process lives. With the space, the call expands.
+func TestExpand_CommaWithoutSpace(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		in      string
+		wantErr bool
+	}{
+		{in: "<@generateRandomInt(<10>,<50>)>", wantErr: true},
+		{in: "<@setVar(<k>,<v-91f2>)><@getVar(k)>", wantErr: true},
+		{in: "<@pickRandom(<a>,\\<b>)>", wantErr: true},
+		{in: "<@generateRandomInt(<10>, <50>)>"},
+		{in: "<@setVar(<k>, <v-91f2>)><@getVar(k)>"},
+	}
+	for _, tt := range tests {
+		got, err := Expand(context.Background(), tt.in)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("Expand(%q) = %q, %v; want error %v", tt.in, got, err, tt.wantErr)
+			continue
+		}
+		if err != nil && (!strings.Contains(err.Error(), "space after") || strings.Contains(err.Error(), "v-91f2")) {
+			t.Errorf("Expand(%q) error = %q, want how to write it and no input", tt.in, err)
+		}
+	}
+	if _, err := Batch(context.Background(), []string{"A"}, map[string]string{"A": "<@generateRandomInt(<1>,<2>)>"}); err == nil {
+		t.Error("Batch: want an error for the comma without a space")
+	}
+}
+
 func TestBatch_SimpleKeys(t *testing.T) {
 	t.Parallel()
 	keys := []string{"A", "B", "C"}

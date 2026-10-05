@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -212,8 +213,9 @@ func EnvSet(
 	// time. Gives recipe-creation workflows a single source of truth for
 	// shared-secret values: the workspace setup and the published deliverable
 	// run the exact same expression, so a bug caught at workspace time
-	// can't reappear at deploy time. Keys are batched into one parse so
-	// setVar/getVar correlate across variables in a single call.
+	// can't reappear at deploy time. Only the values holding <@…> are
+	// expanded, together in the order given; every other value is stored
+	// as given.
 	if err := expandPairs(ctx, pairs); err != nil {
 		return nil, err
 	}
@@ -543,29 +545,60 @@ func rejectEncodingPrefixedSecrets(pairs []envPair, originalVariables []string) 
 	return nil
 }
 
-// expandPairs runs each pair's value through the zParser-backed preprocess
-// wrapper in one batch, so setVar/getVar correlations work across variables
-// in the same call. Pairs with no preprocessor syntax pass through untouched.
-// Batching means one shared variable store and one parse — cheaper, and
-// matches how the platform's own preprocessor handles multi-key imports.
+// expandPairs expands the pairs whose value holds a preprocessor expression
+// (<@…>) through zParser together, in the order given, so setVar/getVar and
+// a key pair's other half (generateRSA2048Key's <name>Private) span entries,
+// as in the platform's own import. Every other value is left byte for byte
+// as given — a password with "<" or a snippet of HTML is no expression, and
+// zParser would eat its brackets or the batch's delimiter with them. A
+// failure names the entry by its key, never by a value.
 func expandPairs(ctx context.Context, pairs []envPair) error {
-	keys := make([]string, len(pairs))
-	inputs := make(map[string]string, len(pairs))
+	var keys []string
+	inputs := map[string]string{}
+	at := map[string]int{}
 	for i, p := range pairs {
-		// Use the index as the batch key — pair keys may repeat (shouldn't,
-		// but we don't want to silently drop duplicates at this layer).
-		batchKey := fmt.Sprintf("%d", i)
-		keys[i] = batchKey
+		if !strings.Contains(p.Value, "<@") {
+			continue
+		}
+		// The index is the batch key — pair keys may repeat.
+		batchKey := strconv.Itoa(i)
+		keys = append(keys, batchKey)
 		inputs[batchKey] = p.Value
+		at[batchKey] = i
+	}
+	if len(keys) == 0 {
+		return nil
 	}
 	expanded, err := preprocess.Batch(ctx, keys, inputs)
 	if err != nil {
+		named := keys
+		if failed := failingExpression(ctx, keys, inputs); failed != "" {
+			named = []string{failed}
+		}
+		names := make([]string, len(named))
+		for i, k := range named {
+			names[i] = pairs[at[k]].Key
+		}
+		name := strings.Join(names, ", ")
 		return platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("preprocessor expansion failed: %v", err),
-			"Check your <@...> syntax, or omit it for literal values")
+			fmt.Sprintf("preprocessor expansion of %s failed: %v", name, err),
+			"Check the <@...> syntax in "+name+", or omit it for a literal value")
 	}
-	for i := range pairs {
-		pairs[i].Value = expanded[keys[i]]
+	for _, k := range keys {
+		pairs[at[k]].Value = expanded[k]
 	}
 	return nil
+}
+
+// failingExpression is the batch key of the first expression a batch fails
+// at — the shortest failing prefix of keys, in order, since a later entry
+// may read what an earlier one set — or "" when no prefix fails alone. Run
+// only once the whole batch failed.
+func failingExpression(ctx context.Context, keys []string, inputs map[string]string) string {
+	for n := 1; n <= len(keys); n++ {
+		if _, err := preprocess.Batch(ctx, keys[:n], inputs); err != nil {
+			return keys[n-1]
+		}
+	}
+	return ""
 }

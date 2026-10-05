@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"html"
 	"math"
+	"net/http"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -57,9 +60,25 @@ type changeDescriptionResult struct {
 	Message        string `json:"message"`
 }
 
-// errCannotAttach is a picture HQ would not keep for a change: nothing is
-// written then, never a description with a broken picture.
+// errCannotAttach is a picture HQ will never keep for a change — larger than
+// it takes, or refused for what it is: nothing is written then, never a
+// description with a broken picture, and words that show it are dropped,
+// since they could never go on. HQ refusing for now (429, a 5xx) is not one.
 var errCannotAttach = errors.New("a picture could not be attached")
+
+// picturesGoneError is pictures a description shows that are no longer kept
+// for the change it goes onto — pruned since the words were checked, or kept
+// only as the address of another change's attachment. Such words can never
+// go on: they are refused, never kept.
+type picturesGoneError struct{ ids []string }
+
+func (e *picturesGoneError) Error() string {
+	verb := "is"
+	if len(e.ids) > 1 {
+		verb = "are"
+	}
+	return fmt.Sprintf("%s %s no longer kept, so it cannot be shown on this change", strings.Join(e.ids, ", "), verb)
+}
 
 // handleDescribeChange is zerops_workflow action="describe-change": the
 // Mate's description of its change, set as the description of the pair's
@@ -79,7 +98,7 @@ func handleDescribeChange(
 		), WithRecoveryStatus()), nil, nil
 	}
 	text := strings.TrimSpace(input.Description)
-	if refusal := describeTextRefusal(stateDir, text); refusal != nil {
+	if refusal := describeTextRefusal(text); refusal != nil {
 		return convertError(refusal, WithRecoveryStatus()), nil, nil
 	}
 	title := strings.TrimSpace(input.Title)
@@ -89,6 +108,9 @@ func handleDescribeChange(
 	meta, refusal := pairToDescribe(stateDir, input.Service)
 	if refusal != nil {
 		return refusal, nil, nil
+	}
+	if refusal := describePicturesRefusal(stateDir, text, pictureTargetOf(meta, meta.HQ.Change)); refusal != nil {
+		return convertError(refusal, WithRecoveryStatus()), nil, nil
 	}
 
 	// The change on record is only as fresh as the last read of the Mate's
@@ -131,12 +153,22 @@ func handleDescribeChange(
 
 	url := hqc.ChangeURL(meta.HQ.AppID, meta.HQ.Repo, number)
 	if err := putChangeDescription(ctx, hqc, stateDir, meta, number, text, title); err != nil {
+		var gone *picturesGoneError
+		if errors.As(err, &gone) {
+			forgetChangeDescription(stateDir, meta, text)
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				fmt.Sprintf("Nothing was written onto change #%d: %v. %s", number, err, keptPicturesSentence(stateDir, pictureTargetOf(meta, number))),
+				pictureRetakeSuggestion,
+			), WithRecoveryStatus()), nil, nil
+		}
 		if errors.Is(err, errCannotAttach) {
+			forgetChangeDescription(stateDir, meta, text)
 			return convertError(platform.NewPlatformError(
 				platform.ErrPrerequisiteMissing,
-				fmt.Sprintf("Nothing was written onto change #%d: %v. The description is kept, and goes onto #%d with %s unless that delivery changes its work.",
-					number, err, number, nextDeliveryOf(meta)),
-				"Describe the change again without that picture to put the words on it now.",
+				fmt.Sprintf("Nothing was written onto change #%d: %v. HQ will not take that picture, so the description is dropped: words that show it could never go on.",
+					number, err),
+				"Describe the change again without that picture, or with another screenshot of the same thing.",
 			), WithRecoveryStatus()), nil, nil
 		}
 		if keepErr != nil {
@@ -163,9 +195,9 @@ func handleDescribeChange(
 }
 
 // describeTextRefusal refuses words no description can carry: none, longer
-// than HQ keeps, a NUL — which no text in HQ keeps — or a picture this Mate
-// does not keep. Nil for words that can go on.
-func describeTextRefusal(stateDir, text string) *platform.PlatformError {
+// than HQ keeps, or a NUL — which no text in HQ keeps. Nil for words that can
+// go on; their pictures are checked for the change (describePicturesRefusal).
+func describeTextRefusal(text string) *platform.PlatformError {
 	if text == "" {
 		return platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -187,15 +219,33 @@ func describeTextRefusal(stateDir, text string) *platform.PlatformError {
 			"Keep it to what the change does and why, and how you checked it — logs and long output belong in the conversation, not in the review.",
 		)
 	}
-	if missing := missingPictures(stateDir, text); len(missing) > 0 {
-		return platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			fmt.Sprintf("The description shows %s, and this Mate keeps no such picture — the newest %d screenshots are kept, and every one a kept description shows.",
-				strings.Join(missing, ", "), workflow.PictureKeep),
-			"Take the screenshot again with zerops_browser screenshot=true and use the picture its result names, or leave the picture out.",
-		)
-	}
 	return nil
+}
+
+// describePicturesRefusal refuses words that show a picture the change target
+// (workflow.PictureTarget) cannot show — none kept, or one kept only as the
+// address of another change's attachment — or, as itself, a store that cannot
+// be read. Nil when every picture can go on.
+func describePicturesRefusal(stateDir, text, target string) error {
+	missing, err := missingPictures(stateDir, text, target)
+	if err != nil {
+		return fmt.Errorf("read this Mate's pictures: %w", err)
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return platform.NewPlatformError(
+		platform.ErrInvalidParameter,
+		fmt.Sprintf("The description shows %s, and this Mate keeps no such picture. %s",
+			strings.Join(missing, ", "), keptPicturesSentence(stateDir, target)),
+		pictureRetakeSuggestion,
+	)
+}
+
+// pictureTargetOf is how the picture store names change number of m's
+// repository.
+func pictureTargetOf(m *workflow.ServiceMeta, number int) string {
+	return workflow.PictureTarget(m.HQ.AppID, m.HQ.Repo, number)
 }
 
 // describeTitleRefusal refuses a title no change can carry: more than one
@@ -334,13 +384,29 @@ func changeBody(ctx context.Context, hqc hq.Client, stateDir string, m *workflow
 	if len(ids) == 0 {
 		return text, nil
 	}
-	target := fmt.Sprintf("%s/%s#%d", m.HQ.AppID, m.HQ.Repo, number)
-	tags := make(map[string]func(alt string) string, len(ids))
+	target := pictureTargetOf(m, number)
+	// Every picture is read before any is attached: the words go on whole
+	// or not at all. One already on this change needs only its address.
+	pics := make(map[string]workflow.Picture, len(ids))
+	pngs := make(map[string][]byte, len(ids))
+	var gone []string
 	for _, id := range ids {
 		pic, png, err := workflow.KeptPicture(stateDir, id)
-		if err != nil {
-			return "", fmt.Errorf("%s is no longer kept, so it cannot be shown: take the screenshot again", id)
+		if err != nil && !errors.Is(err, workflow.ErrPictureNotKept) {
+			return "", fmt.Errorf("read picture %s: %w", id, err)
 		}
+		if err != nil || (png == nil && pic.Uploads[target] == "") {
+			gone = append(gone, id)
+			continue
+		}
+		pics[id], pngs[id] = pic, png
+	}
+	if len(gone) > 0 {
+		return "", &picturesGoneError{ids: gone}
+	}
+	tags := make(map[string]func(alt string) string, len(ids))
+	for _, id := range ids {
+		pic, png := pics[id], pngs[id]
 		url := pic.Uploads[target]
 		if url == "" {
 			if len(png) > changePictureMaxBytes {
@@ -350,7 +416,7 @@ func changeBody(ctx context.Context, hqc hq.Client, stateDir string, m *workflow
 			kept, err := hqc.Attach(callCtx, m.HQ.Repo, number, png)
 			cancel()
 			var refused *hq.RefusedError
-			if errors.As(err, &refused) {
+			if errors.As(err, &refused) && refusedForGood(refused) {
 				return "", fmt.Errorf("%w: HQ refused %s (%s)", errCannotAttach, id, hqRefusalWords(refused))
 			}
 			if err != nil {
@@ -385,15 +451,45 @@ func pictureTag(alt, url string, width, height int) string {
 	return fmt.Sprintf(`<img alt="%s" width="%d" height="%d" src="%s">`, html.EscapeString(alt), width, height, html.EscapeString(url))
 }
 
-// missingPictures is the pictures text shows that this Mate does not keep.
-func missingPictures(stateDir, text string) []string {
+// pictureRetakeSuggestion is what to do about a picture this Mate does not
+// keep.
+const pictureRetakeSuggestion = "Show a picture it keeps, or take the screenshot again with zerops_browser screenshot=true and show the picture its result names — or leave the picture out."
+
+// refusedForGood reports whether HQ's refusal of an attachment is one it
+// will repeat: a 4xx other than a timeout or too many requests.
+func refusedForGood(refused *hq.RefusedError) bool {
+	return refused.Status >= 400 && refused.Status < 500 &&
+		refused.Status != http.StatusRequestTimeout && refused.Status != http.StatusTooManyRequests
+}
+
+// keptPicturesSentence says which pictures this Mate keeps for the change
+// target, and for how long.
+func keptPicturesSentence(stateDir, target string) string {
+	rule := fmt.Sprintf("each for %s after it is taken (past %d MiB of pictures the oldest go first), every one a kept description shows, and one already on a change for that change",
+		pictureKeepWords(), workflow.PictureStoreBytes>>20)
+	ids, err := workflow.KeptPictures(stateDir, target)
+	if err != nil || len(ids) == 0 {
+		return "It keeps no picture now; it keeps a screenshot " + rule + "."
+	}
+	return "It keeps " + keptPicturesWords(ids) + ", " + rule + "."
+}
+
+// missingPictures is the pictures text shows that the change target cannot
+// show: none kept, or one whose file is gone and whose address is another
+// change's. Any other failure to read the store is an error, never a
+// picture gone.
+func missingPictures(stateDir, text, target string) ([]string, error) {
 	var missing []string
 	for _, id := range workflow.PictureRefs(text) {
-		if _, _, err := workflow.KeptPicture(stateDir, id); err != nil {
+		pic, png, err := workflow.KeptPicture(stateDir, id)
+		if err != nil && !errors.Is(err, workflow.ErrPictureNotKept) {
+			return nil, err
+		}
+		if err != nil || (png == nil && pic.Uploads[target] == "") {
 			missing = append(missing, id)
 		}
 	}
-	return missing
+	return missing, nil
 }
 
 // putKeptChangeDescription puts what the pair keeps onto change number — the
@@ -420,8 +516,10 @@ func putKeptChangeDescription(ctx context.Context, hqc hq.Client, stateDir strin
 		return false, "", true
 	}
 	err = putChangeDescription(ctx, hqc, stateDir, m, number, kept.Text, kept.Title)
-	if errors.Is(err, errCannotAttach) {
-		return false, err.Error(), false
+	var gone *picturesGoneError
+	if errors.As(err, &gone) || errors.Is(err, errCannotAttach) {
+		forgetChangeDescription(stateDir, m, kept.Text)
+		return false, "The description you wrote is dropped, not on it: " + err.Error() + ".", false
 	}
 	return err == nil, "", false
 }
@@ -458,7 +556,7 @@ func nextDeliveryOf(m *workflow.ServiceMeta) string {
 // call, that they did.
 func describeLine(ref *changeRef, hostname string) string {
 	if ref.DescriptionNote != "" {
-		return fmt.Sprintf(`The description you wrote is kept, not on it yet: %s. Describe it again without that picture with zerops_workflow action="describe-change" service=%q to put the words on now.`,
+		return fmt.Sprintf(`%s Describe it again with zerops_workflow action="describe-change" service=%q, without that picture or with one this Mate keeps.`,
 			ref.DescriptionNote, hostname)
 	}
 	if ref.Described {
@@ -484,4 +582,58 @@ func sentenceOf(line string) string {
 		return ""
 	}
 	return strings.ToUpper(line[:1]) + line[1:] + "."
+}
+
+// keptPicturesShown is how many runs of kept pictures a refusal names: the
+// newest, so the list stays a line however many are kept.
+const keptPicturesShown = 8
+
+// keptPicturesWords names the kept pictures ids lists (oldest first) as runs
+// — "shot-4, shot-50 to shot-52" — the newest keptPicturesShown of them, with
+// how many older ones there are besides.
+func keptPicturesWords(ids []string) string {
+	type run struct{ first, last, count int }
+	var runs []run
+	for _, id := range ids {
+		n, err := strconv.Atoi(strings.TrimPrefix(id, "shot-"))
+		if err != nil {
+			continue
+		}
+		if len(runs) > 0 && runs[len(runs)-1].last == n-1 {
+			runs[len(runs)-1].last = n
+			runs[len(runs)-1].count++
+			continue
+		}
+		runs = append(runs, run{first: n, last: n, count: 1})
+	}
+	var words []string
+	if len(runs) > keptPicturesShown {
+		older := 0
+		for _, r := range runs[:len(runs)-keptPicturesShown] {
+			older += r.count
+		}
+		noun := "pictures"
+		if older == 1 {
+			noun = "picture"
+		}
+		words = append(words, fmt.Sprintf("%d older %s", older, noun))
+		runs = runs[len(runs)-keptPicturesShown:]
+	}
+	for _, r := range runs {
+		switch r.count {
+		case 1:
+			words = append(words, fmt.Sprintf("shot-%d", r.first))
+		case 2:
+			words = append(words, fmt.Sprintf("shot-%d, shot-%d", r.first, r.last))
+		default:
+			words = append(words, fmt.Sprintf("shot-%d to shot-%d", r.first, r.last))
+		}
+	}
+	return strings.Join(words, ", ")
+}
+
+// pictureKeepWords is how long a picture is kept at most, in days: the byte
+// bound can prune it sooner.
+func pictureKeepWords() string {
+	return fmt.Sprintf("up to %d days", int(workflow.PictureKeepFor/(24*time.Hour)))
 }

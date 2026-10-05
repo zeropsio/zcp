@@ -119,6 +119,42 @@ services:
 // project-env channel (EnvSet) before service creation, eliminating the
 // historical 2-step "set project envs, then import services" workflow.
 // See plans/multi-runtime-audit-followup.md §5 Fix B1.
+// TestImport_ProjectEnvVariables_ExpressionsShareOneStore: project
+// envVariables go through zerops_env set's path, in key order, so a variable
+// one sets reaches the next, and a key pair's other half is there.
+func TestImport_ProjectEnvVariables_ExpressionsShareOneStore(t *testing.T) {
+	t.Parallel()
+	mock := importMock()
+	content := `project:
+  envVariables:
+    A_JWT_PUB: <@generateRSA2048Key(<jwt>)>
+    B_JWT_PRIV: <@getVar(jwtPrivate)>
+    C_TOKEN: <@generateRandomStringVar(<tok>, <24>)>
+    D_TOKEN_UPPER: <@getVar(tok)|upper>
+    E_PLAIN: Xy<9z
+services:
+  - hostname: api
+    type: nodejs@22
+    mode: NON_HA
+`
+	if _, err := Import(context.Background(), mock, "proj-1", content, "", false); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	got := map[string]string{}
+	for _, c := range mock.CapturedProjectEnvCreations {
+		got[c.Key] = c.Content
+	}
+	if !strings.Contains(got["A_JWT_PUB"], "PUBLIC KEY") || !strings.Contains(got["B_JWT_PRIV"], "PRIVATE KEY") {
+		t.Errorf("want both halves of the key pair, got %q / %q", got["A_JWT_PUB"], got["B_JWT_PRIV"])
+	}
+	if got["D_TOKEN_UPPER"] != strings.ToUpper(got["C_TOKEN"]) || len(got["C_TOKEN"]) != 24 {
+		t.Errorf("D_TOKEN_UPPER = %q, want C_TOKEN %q in upper case", got["D_TOKEN_UPPER"], got["C_TOKEN"])
+	}
+	if got["E_PLAIN"] != "Xy<9z" {
+		t.Errorf("E_PLAIN = %q, want Xy<9z", got["E_PLAIN"])
+	}
+}
+
 func TestImport_ProjectEnvVariablesOnly_AppliedInline(t *testing.T) {
 	t.Parallel()
 

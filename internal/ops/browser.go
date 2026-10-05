@@ -155,6 +155,9 @@ type BrowserScreenshotResult struct {
 	// ("shot-3") — how a change's description shows it, as
 	// ![what it shows](shot-3). Set by the tools layer, which keeps it.
 	Picture string `json:"picture,omitempty"`
+	// KeptFor is how long the picture is kept after it is taken ("7 days"),
+	// so the Mate knows how long it has to show it. Set with Picture.
+	KeptFor string `json:"keptFor,omitempty"`
 }
 
 // NetworkRequest is one entry from BrowserBatchResult.NetworkOutput.
