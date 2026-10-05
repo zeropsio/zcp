@@ -49,17 +49,17 @@ services[]:                            # REQUIRED
 ```
 
 ### Preprocessor Functions
-Enable with `#zeropsPreprocessor=on` as first line. Syntax: `<@function(<args>)>`, chain modifiers with `|`: `<@generateRandomString(<32>)|sha256>`.
+Enable with `#zeropsPreprocessor=on` as first line. Syntax: `<@function(<args>)>`, chain modifiers with `|`: `<@generateRandomString(<32>)|sha256>`. Write a space after each comma between arguments (`<@f(<a>, <b>)>`): without it the preprocessor fails.
 
 **Functions:**
 - `<@generateRandomString(<len>)>` -- random alphanumeric string
 - `<@generateRandomBytes(<len>)>` -- random bytes (binary)
-- `<@generateRandomInt(<min>,<max>)>` -- random integer in range
-- `<@pickRandom(<opt1>,<opt2>,...)>` -- pick random from options
-- `<@setVar(<name>,<content>)>` / `<@getVar(<name>)>` -- store and retrieve variables
-- `<@generateRandomStringVar(<name>,<len>)>` -- generate + store string variable
-- `<@generateJWT(<secret>,<payload>)>` -- JWT token generation
-- `<@getDateTime(<format>,[<tz>])>` -- formatted datetime
+- `<@generateRandomInt(<min>, <max>)>` -- random integer in range
+- `<@pickRandom(<opt1>, <opt2>, ...)>` -- pick random from options
+- `<@setVar(<name>, <content>)>` / `<@getVar(<name>)>` -- store and retrieve variables
+- `<@generateRandomStringVar(<name>, <len>)>` -- generate + store string variable
+- `<@generateJWT(<secret>, <payload>)>` -- JWT token generation
+- `<@getDateTime(<format>, [<tz>])>` -- formatted datetime
 - `<@generateED25519Key(<name>)>`, `<@generateRSA2048Key(<name>)>`, `<@generateRSA4096Key(<name>)>` -- key pairs (stores pubKey/privKey)
 
 **Modifiers** (applied with `|`): `sha256`, `sha512`, `bcrypt`, `argon2id` (hashing) | `toHex`, `toString` (encoding) | `upper`, `lower`, `title` (case) | `noop` (testing)

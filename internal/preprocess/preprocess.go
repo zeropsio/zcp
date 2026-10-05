@@ -131,10 +131,30 @@ func expand(ctx context.Context, input string, _ map[string]string) (string, err
 		parser.WithMaxFunctionCount(MaxFunctionCount),
 		parser.WithMultilineOutputHandling(parser.MultilinePreserved),
 	)
-	if err := p.Parse(ctx); err != nil {
+	if err := parse(ctx, p); err != nil {
 		return "", wrapParseError(err)
 	}
 	return out.String(), nil
+}
+
+// errParserPanic is zParser failing by a panic rather than an error. v2.1.2
+// panics on a call whose next argument follows its comma directly —
+// <@generateRandomInt(<10>,<50>)> — where <@generateRandomInt(<10>, <50>)>
+// expands. The form is not rewritten: the platform's import runs the same
+// zParser, so a value zcp accepted could still fail there.
+var errParserPanic = errors.New("the preprocessor could not read this expression; write a space after each comma between arguments, as in <@generateRandomInt(<10>, <50>)>")
+
+// parse runs p, answering a panic inside zParser as errParserPanic: one bad
+// value must never take the whole zcp process — and the agent's MCP server —
+// down with it. The panic's own words stay out: they say nothing the agent
+// can act on.
+func parse(ctx context.Context, p *parser.Parser) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = errParserPanic
+		}
+	}()
+	return p.Parse(ctx)
 }
 
 // wrapParseError converts zParser's errors into something the MCP layer can
