@@ -27,8 +27,9 @@ import (
 // carry them must find their pictures there. The newest is always kept. A
 // picture already on a change outlives its file: the store keeps where HQ
 // serves it, so the Mate can describe that change again with it — only
-// another change needs the file. One store per state dir, shared by every zcp
-// process on it under its own lock.
+// another change needs the file — while that change is a pair's current one,
+// and for PictureAddressKeepFor at most. One store per state dir, shared by
+// every zcp process on it under its own lock; reading it writes nothing.
 // An id is never given twice: the next one only ever grows.
 
 // PictureKeepFor is how long a picture is kept after it is taken.
@@ -36,6 +37,16 @@ const PictureKeepFor = 7 * 24 * time.Hour
 
 // PictureStoreBytes bounds the pictures on disk: past it, the oldest go first.
 const PictureStoreBytes int64 = 256 << 20
+
+// PictureAddressKeepFor bounds how long the address of a picture whose file
+// is gone is kept, however long its change stays open.
+const PictureAddressKeepFor = 90 * 24 * time.Hour
+
+// PictureTarget is how the store names a change a picture went onto: its
+// application, repository and number ("{appId}/{repo}#{number}").
+func PictureTarget(appID, repo string, number int) string {
+	return fmt.Sprintf("%s/%s#%d", appID, repo, number)
+}
 
 const (
 	picturesDir      = "pictures"
@@ -105,13 +116,14 @@ func defaultPictureBounds() pictureBounds {
 	return pictureBounds{keepFor: PictureKeepFor, maxBytes: PictureStoreBytes}
 }
 
-// KeptPictures is the id of every picture the store keeps, oldest first —
-// every one KeptPicture finds.
-func KeptPictures(stateDir string) ([]string, error) {
+// KeptPictures is the id of every picture the store keeps for the change
+// target (PictureTarget), oldest first: each one on disk, and each whose file
+// is gone that is already on that change. "" is no change: those on disk.
+func KeptPictures(stateDir, target string) ([]string, error) {
 	var ids []string
-	err := withPictures(stateDir, func(index *pictureIndex) error {
+	err := readPictures(stateDir, func(index *pictureIndex) error {
 		for _, pic := range index.Pictures {
-			if _, onDisk := pictureFileSize(stateDir, pic.ID); onDisk || len(pic.Uploads) > 0 {
+			if _, onDisk := pictureFileSize(stateDir, pic.ID); onDisk || (target != "" && pic.Uploads[target] != "") {
 				ids = append(ids, pic.ID)
 			}
 		}
@@ -149,7 +161,7 @@ func keepPicture(stateDir string, png []byte, width, height int, now time.Time, 
 func KeptPicture(stateDir, id string) (Picture, []byte, error) {
 	var found Picture
 	var png []byte
-	err := withPictures(stateDir, func(index *pictureIndex) error {
+	err := readPictures(stateDir, func(index *pictureIndex) error {
 		for _, pic := range index.Pictures {
 			if pic.ID != id {
 				continue
@@ -188,17 +200,26 @@ func RecordPictureUpload(stateDir, id, target, url string) error {
 // longer than bounds.keepFor before now, and, newest to oldest, every one past
 // bounds.maxBytes of files on disk; never the newest, nor one a kept
 // description names. A forgotten picture loses its file, and its entry too
-// unless a change carries it (Uploads); an entry whose file is already gone
-// is forgotten the same way. Nothing is pruned while the pairs' records
-// cannot be read: which pictures a kept description names is unknown then.
+// unless it is on a pair's current change and younger than
+// PictureAddressKeepFor (its address is all that is left then); an entry
+// whose file is already gone is forgotten the same way. Nothing is pruned
+// while the pairs' directory cannot be read: which pictures a kept
+// description names is unknown then.
 func prunePictures(stateDir string, index *pictureIndex, now time.Time, bounds pictureBounds) {
-	metas, err := ListServiceMetas(stateDir)
+	metas, err := readablePairs(stateDir)
 	if err != nil {
 		return
 	}
 	named := map[string]bool{}
+	current := map[string]bool{}
 	for _, m := range metas {
-		if m == nil || m.HQ == nil || m.HQ.ChangeDescription == nil {
+		if m.HQ == nil {
+			continue
+		}
+		if m.HQ.Change != 0 {
+			current[PictureTarget(m.HQ.AppID, m.HQ.Repo, m.HQ.Change)] = true
+		}
+		if m.HQ.ChangeDescription == nil {
 			continue
 		}
 		for _, id := range PictureRefs(m.HQ.ChangeDescription.Text) {
@@ -230,13 +251,56 @@ func prunePictures(stateDir string, index *pictureIndex, now time.Time, bounds p
 	for i, pic := range index.Pictures {
 		if !keepFile[i] {
 			_ = os.Remove(picturePath(stateDir, pic.ID))
-			if len(pic.Uploads) == 0 {
+			if !addressKept(pic, current, now) {
 				continue
 			}
 		}
 		kept = append(kept, pic)
 	}
 	index.Pictures = kept
+}
+
+// addressKept reports whether the entry of pic, whose file is gone, is kept
+// for its address: it is on a current change, and not older than
+// PictureAddressKeepFor.
+func addressKept(pic Picture, current map[string]bool, now time.Time) bool {
+	if pictureExpired(pic, now, PictureAddressKeepFor) {
+		return false
+	}
+	for target := range pic.Uploads {
+		if current[target] {
+			return true
+		}
+	}
+	return false
+}
+
+// readablePairs is every pair record that parses. One that does not is
+// skipped: its words could never go onto a change either. Only a directory
+// that cannot be read fails it.
+func readablePairs(stateDir string) ([]*ServiceMeta, error) {
+	dir := filepath.Join(stateDir, "services")
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read the pairs: %w", err)
+	}
+	var metas []*ServiceMeta
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		if meta, err := parseMeta(data); err == nil && meta != nil {
+			metas = append(metas, meta)
+		}
+	}
+	return metas, nil
 }
 
 // pictureFileSize is the size of the picture id's file, and whether it is on
@@ -257,6 +321,34 @@ func pictureExpired(pic Picture, now time.Time, keepFor time.Duration) bool {
 	return err == nil && now.Sub(taken) > keepFor
 }
 
+// readPictures runs fn on the store's index under the store's lock, and
+// writes nothing: a read never fails for a store it cannot write.
+func readPictures(stateDir string, fn func(*pictureIndex) error) error {
+	return withFileLock(filepath.Join(stateDir, picturesLockName), func() error {
+		index, err := loadPictureIndex(stateDir)
+		if err != nil {
+			return err
+		}
+		return fn(&index)
+	})
+}
+
+// loadPictureIndex reads the store's index; none yet is an empty one.
+func loadPictureIndex(stateDir string) (pictureIndex, error) {
+	var index pictureIndex
+	data, err := os.ReadFile(filepath.Join(stateDir, picturesDir, picturesIndex))
+	if errors.Is(err, os.ErrNotExist) {
+		return index, nil
+	}
+	if err != nil {
+		return index, fmt.Errorf("pictures index: %w", err)
+	}
+	if err := json.Unmarshal(data, &index); err != nil {
+		return index, fmt.Errorf("pictures index: %w", err)
+	}
+	return index, nil
+}
+
 // withPictures runs fn on the store's index under the store's own lock — a
 // state-dir flock distinct from every other, so processes sharing the state
 // dir never interleave — and writes the index back when fn succeeded.
@@ -265,14 +357,9 @@ func withPictures(stateDir string, fn func(*pictureIndex) error) error {
 		return fmt.Errorf("pictures dir: %w", err)
 	}
 	return withFileLock(filepath.Join(stateDir, picturesLockName), func() error {
-		var index pictureIndex
-		path := filepath.Join(stateDir, picturesDir, picturesIndex)
-		if data, err := os.ReadFile(path); err == nil {
-			if jsonErr := json.Unmarshal(data, &index); jsonErr != nil {
-				return fmt.Errorf("pictures index: %w", jsonErr)
-			}
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("pictures index: %w", err)
+		index, err := loadPictureIndex(stateDir)
+		if err != nil {
+			return err
 		}
 		if err := fn(&index); err != nil {
 			return err
@@ -281,6 +368,7 @@ func withPictures(stateDir string, fn func(*pictureIndex) error) error {
 		if err != nil {
 			return fmt.Errorf("pictures index: %w", err)
 		}
+		path := filepath.Join(stateDir, picturesDir, picturesIndex)
 		tmp := path + ".tmp"
 		if err := os.WriteFile(tmp, data, 0o600); err != nil {
 			return fmt.Errorf("pictures index: %w", err)

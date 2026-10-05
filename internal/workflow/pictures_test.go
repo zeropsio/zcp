@@ -123,7 +123,7 @@ func TestKeepPicture_ForgetsByAgeAndSize(t *testing.T) {
 					t.Fatalf("keep picture %d: %v", i+1, err)
 				}
 			}
-			kept, err := KeptPictures(stateDir)
+			kept, err := KeptPictures(stateDir, "")
 			if err != nil {
 				t.Fatalf("KeptPictures: %v", err)
 			}
@@ -145,49 +145,78 @@ func TestKeepPicture_ForgetsByAgeAndSize(t *testing.T) {
 	}
 }
 
-// TestKeepPicture_PrunedPictureKeepsItsAddress: a picture already on a change
-// is still served by HQ when its file is pruned, and a push makes the change
-// a draft that the Mate describes again with the same picture. So the store
-// forgets its file but keeps where HQ serves it; one never attached goes
-// entirely.
-func TestKeepPicture_PrunedPictureKeepsItsAddress(t *testing.T) {
-	t.Parallel()
-	stateDir := t.TempDir()
-	start := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	bounds := pictureBounds{keepFor: 48 * time.Hour, maxBytes: 1 << 20}
-	for i := 1; i <= 2; i++ {
-		if _, err := keepPicture(stateDir, fakePNG(i), 800, 600, start, bounds); err != nil {
-			t.Fatalf("keep picture %d: %v", i, err)
-		}
+// writePair writes a pair whose current change in HQ is appdev#change of
+// application a1, with words kept for it when described is not "".
+func writePair(t *testing.T, stateDir string, change int, described string) {
+	t.Helper()
+	ref := &HQRepoRef{AppID: "a1", Repo: "appdev", Branch: "mate/p1", Change: change}
+	if described != "" {
+		ref.ChangeDescription = &ChangeDescription{Text: described, Change: change}
 	}
-	url := "https://hq.example.invalid/api/apps/a1/changes/appdev/1/attachments/att-1"
-	if err := RecordPictureUpload(stateDir, "shot-1", "a1/appdev#1", url); err != nil {
-		t.Fatalf("RecordPictureUpload: %v", err)
-	}
-	if _, err := keepPicture(stateDir, fakePNG(3), 800, 600, start.Add(72*time.Hour), bounds); err != nil {
-		t.Fatalf("keep picture 3: %v", err)
-	}
-
-	pic, png, err := KeptPicture(stateDir, "shot-1")
-	if err != nil || png != nil || pic.Uploads["a1/appdev#1"] != url {
-		t.Errorf("shot-1 = %+v, %q, %v; want its address kept without its bytes", pic, png, err)
-	}
-	if _, statErr := os.Stat(filepath.Join(stateDir, "pictures", "shot-1.png")); !os.IsNotExist(statErr) {
-		t.Errorf("shot-1's file is still there (%v)", statErr)
-	}
-	if _, _, err := KeptPicture(stateDir, "shot-2"); !errors.Is(err, ErrPictureNotKept) {
-		t.Errorf("shot-2, never attached, is still kept (%v)", err)
-	}
-	if kept, err := KeptPictures(stateDir); err != nil || !slices.Equal(kept, []string{"shot-1", "shot-3"}) {
-		t.Errorf("kept %v (%v), want [shot-1 shot-3]", kept, err)
+	if err := WriteServiceMeta(stateDir, &ServiceMeta{
+		Hostname: "appdev", StageHostname: "appstage", BootstrapSession: "test", BootstrappedAt: "2026-09-29", HQ: ref,
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
 	}
 }
 
-// TestKeepPicture_EntryWithoutItsFile: a process that died between removing
-// a file and writing the index leaves an entry with no picture. It is not
-// kept — read, listed or counted — unless HQ serves it, and the next prune
-// drops it.
-func TestKeepPicture_EntryWithoutItsFile(t *testing.T) {
+// TestKeepPicture_PrunedPictureKeepsItsAddress: a picture already on a change
+// is still served by HQ when its file is pruned, and a push makes the change
+// a draft that the Mate describes again with the same picture. So the store
+// forgets its file but keeps where HQ serves it — while that change is a
+// pair's current one, and for PictureAddressKeepFor at most. One never
+// attached goes entirely.
+func TestKeepPicture_PrunedPictureKeepsItsAddress(t *testing.T) {
+	t.Parallel()
+	start := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	bounds := pictureBounds{keepFor: 48 * time.Hour, maxBytes: 1 << 20}
+	url := "https://hq.example.invalid/api/apps/a1/changes/appdev/1/attachments/att-1"
+	tests := []struct {
+		name          string
+		currentChange int           // the pair's current change, 0 for none
+		pruneAfter    time.Duration // when the picture that prunes is taken
+		wantAddress   bool
+	}{
+		{name: "its change is the pair's current one", currentChange: 1, pruneAfter: 72 * time.Hour, wantAddress: true},
+		{name: "the pair moved on to another change", currentChange: 2, pruneAfter: 72 * time.Hour},
+		{name: "the pair has no change now", pruneAfter: 72 * time.Hour},
+		{name: "older than an address is kept", currentChange: 1, pruneAfter: PictureAddressKeepFor + time.Hour},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			stateDir := t.TempDir()
+			writePair(t, stateDir, tt.currentChange, "")
+			for i := 1; i <= 2; i++ {
+				if _, err := keepPicture(stateDir, fakePNG(i), 800, 600, start, bounds); err != nil {
+					t.Fatalf("keep picture %d: %v", i, err)
+				}
+			}
+			if err := RecordPictureUpload(stateDir, "shot-1", PictureTarget("a1", "appdev", 1), url); err != nil {
+				t.Fatalf("RecordPictureUpload: %v", err)
+			}
+			if _, err := keepPicture(stateDir, fakePNG(3), 800, 600, start.Add(tt.pruneAfter), bounds); err != nil {
+				t.Fatalf("keep picture 3: %v", err)
+			}
+
+			pic, png, err := KeptPicture(stateDir, "shot-1")
+			if got := err == nil && png == nil && pic.Uploads[PictureTarget("a1", "appdev", 1)] == url; got != tt.wantAddress {
+				t.Errorf("shot-1 = %+v, %q, %v; want its address kept without its bytes: %v", pic, png, err, tt.wantAddress)
+			}
+			if _, statErr := os.Stat(filepath.Join(stateDir, "pictures", "shot-1.png")); !os.IsNotExist(statErr) {
+				t.Errorf("shot-1's file is still there (%v)", statErr)
+			}
+			if _, _, err := KeptPicture(stateDir, "shot-2"); !errors.Is(err, ErrPictureNotKept) {
+				t.Errorf("shot-2, never attached, is still kept (%v)", err)
+			}
+		})
+	}
+}
+
+// TestKeptPictures_ForTheChange: the pictures kept for a change are those on
+// disk and those whose address is that change's; another change's address
+// shows nothing on this one.
+func TestKeptPictures_ForTheChange(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
 	for i := 1; i <= 3; i++ {
@@ -195,7 +224,63 @@ func TestKeepPicture_EntryWithoutItsFile(t *testing.T) {
 			t.Fatalf("KeepPicture %d: %v", i, err)
 		}
 	}
-	if err := RecordPictureUpload(stateDir, "shot-2", "a1/appdev#1", "https://hq.example.invalid/att-2"); err != nil {
+	if err := RecordPictureUpload(stateDir, "shot-1", PictureTarget("a1", "appdev", 3), "https://hq.example.invalid/att-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(stateDir, "pictures", "shot-1.png")); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		target string
+		want   []string
+	}{
+		{target: PictureTarget("a1", "appdev", 3), want: []string{"shot-1", "shot-2", "shot-3"}},
+		{target: PictureTarget("a1", "appdev", 9), want: []string{"shot-2", "shot-3"}},
+		{target: "", want: []string{"shot-2", "shot-3"}},
+	}
+	for _, tt := range tests {
+		if kept, err := KeptPictures(stateDir, tt.target); err != nil || !slices.Equal(kept, tt.want) {
+			t.Errorf("KeptPictures(%q) = %v (%v), want %v", tt.target, kept, err, tt.want)
+		}
+	}
+}
+
+// TestKeptPicture_ReadsWithoutWriting: reading a picture writes nothing — a
+// store it cannot write (a full disk, a read-only mount) still answers.
+func TestKeptPicture_ReadsWithoutWriting(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	if _, err := KeepPicture(stateDir, fakePNG(1), 800, 600); err != nil {
+		t.Fatalf("KeepPicture: %v", err)
+	}
+	dir := filepath.Join(stateDir, "pictures")
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	if _, png, err := KeptPicture(stateDir, "shot-1"); err != nil || !bytes.Equal(png, fakePNG(1)) {
+		t.Errorf("KeptPicture = %q, %v; want the picture from a store it cannot write", png, err)
+	}
+	if kept, err := KeptPictures(stateDir, ""); err != nil || !slices.Equal(kept, []string{"shot-1"}) {
+		t.Errorf("KeptPictures = %v, %v; want [shot-1]", kept, err)
+	}
+}
+
+// TestKeepPicture_EntryWithoutItsFile: a process that died between removing
+// a file and writing the index leaves an entry with no picture. It is not
+// kept — read, listed or counted — unless HQ serves it on the pair's current
+// change, and the next prune drops it.
+func TestKeepPicture_EntryWithoutItsFile(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	writePair(t, stateDir, 1, "")
+	for i := 1; i <= 3; i++ {
+		if _, err := KeepPicture(stateDir, fakePNG(i), 800, 600); err != nil {
+			t.Fatalf("KeepPicture %d: %v", i, err)
+		}
+	}
+	target := PictureTarget("a1", "appdev", 1)
+	if err := RecordPictureUpload(stateDir, "shot-2", target, "https://hq.example.invalid/att-2"); err != nil {
 		t.Fatalf("RecordPictureUpload: %v", err)
 	}
 	for _, id := range []string{"shot-1", "shot-2"} {
@@ -212,20 +297,23 @@ func TestKeepPicture_EntryWithoutItsFile(t *testing.T) {
 			t.Errorf("KeptPicture(%s) = %v, want kept %v", tt.id, err, tt.kept)
 		}
 	}
-	if kept, err := KeptPictures(stateDir); err != nil || !slices.Equal(kept, []string{"shot-2", "shot-3"}) {
+	if kept, err := KeptPictures(stateDir, target); err != nil || !slices.Equal(kept, []string{"shot-2", "shot-3"}) {
 		t.Errorf("kept %v (%v), want [shot-2 shot-3]", kept, err)
 	}
 	if _, err := KeepPicture(stateDir, fakePNG(4), 800, 600); err != nil {
 		t.Fatalf("KeepPicture 4: %v", err)
 	}
-	var index pictureIndex
-	if err := withPictures(stateDir, func(i *pictureIndex) error { index = *i; return nil }); err != nil {
+	var ids []string
+	if err := readPictures(stateDir, func(i *pictureIndex) error {
+		for _, pic := range i.Pictures {
+			ids = append(ids, pic.ID)
+		}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
-	for _, pic := range index.Pictures {
-		if pic.ID == "shot-1" {
-			t.Errorf("the prune kept shot-1's entry with no file and no address")
-		}
+	if !slices.Equal(ids, []string{"shot-2", "shot-3", "shot-4"}) {
+		t.Errorf("index holds %v after a prune, want [shot-2 shot-3 shot-4]", ids)
 	}
 }
 
@@ -262,33 +350,65 @@ func TestKeepPicture_CountsTheBytesOnDisk(t *testing.T) {
 			if _, err := keepPicture(stateDir, fakePNG(2), 800, 600, time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC), bounds); err != nil {
 				t.Fatalf("keepPicture: %v", err)
 			}
-			if kept, err := KeptPictures(stateDir); err != nil || !slices.Equal(kept, tt.wantKept) {
+			if kept, err := KeptPictures(stateDir, ""); err != nil || !slices.Equal(kept, tt.wantKept) {
 				t.Errorf("kept %v (%v), want %v", kept, err, tt.wantKept)
 			}
 		})
 	}
 }
 
-// TestKeepPicture_NoPruneWhenTheDescriptionsCannotBeRead: the pictures a kept
-// description names are known only from the pairs' records; when one cannot
-// be read, nothing is pruned rather than a named picture.
-func TestKeepPicture_NoPruneWhenTheDescriptionsCannotBeRead(t *testing.T) {
+// TestKeepPicture_UnreadablePairRecords: a pair record that cannot be parsed
+// is skipped — its words could never go on anyway — and the prune goes on
+// for the rest; only a pairs' directory that cannot be read at all stops
+// it, since what a kept description names is unknown then.
+func TestKeepPicture_UnreadablePairRecords(t *testing.T) {
 	t.Parallel()
-	stateDir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(stateDir, "services"), 0o755); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name     string
+		spoil   func(t *testing.T, servicesDir string)
+		wantKept []string
+	}{
+		{
+			name: "an unparseable record",
+			spoil: func(t *testing.T, dir string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(dir, "webdev.json"), []byte("{not json"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantKept: []string{"shot-1", "shot-3"},
+		},
+		{
+			name: "a directory that cannot be read",
+			spoil: func(t *testing.T, dir string) {
+				t.Helper()
+				if err := os.Chmod(dir, 0o000); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+			},
+			wantKept: []string{"shot-1", "shot-2", "shot-3"},
+		},
 	}
-	if err := os.WriteFile(filepath.Join(stateDir, "services", "appdev.json"), []byte("{not json"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	bounds := pictureBounds{keepFor: 48 * time.Hour, maxBytes: 1}
-	for i := 1; i <= 3; i++ {
-		if _, err := keepPicture(stateDir, fakePNG(i), 800, 600, time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), bounds); err != nil {
-			t.Fatalf("keep picture %d: %v", i, err)
-		}
-	}
-	if kept, err := KeptPictures(stateDir); err != nil || !slices.Equal(kept, []string{"shot-1", "shot-2", "shot-3"}) {
-		t.Errorf("kept %v (%v), want every picture while the descriptions cannot be read", kept, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if os.Geteuid() == 0 {
+				t.Skip("root reads any directory")
+			}
+			stateDir := t.TempDir()
+			writePair(t, stateDir, 1, "![The count](shot-1)")
+			tt.spoil(t, filepath.Join(stateDir, "services"))
+			bounds := pictureBounds{keepFor: 48 * time.Hour, maxBytes: 1}
+			for i := 1; i <= 3; i++ {
+				if _, err := keepPicture(stateDir, fakePNG(i), 800, 600, time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), bounds); err != nil {
+					t.Fatalf("keep picture %d: %v", i, err)
+				}
+			}
+			if kept, err := KeptPictures(stateDir, ""); err != nil || !slices.Equal(kept, tt.wantKept) {
+				t.Errorf("kept %v (%v), want %v", kept, err, tt.wantKept)
+			}
+		})
 	}
 }
 
@@ -323,7 +443,7 @@ func TestKeepPicture_OneStoreForEveryProcess(t *testing.T) {
 		}
 		seen[id] = true
 	}
-	kept, err := KeptPictures(stateDir)
+	kept, err := KeptPictures(stateDir, "")
 	if err != nil || len(kept) != takers*each || len(seen) != takers*each {
 		t.Errorf("kept %d pictures of %d given (%v), want all %d", len(kept), len(seen), err, takers*each)
 	}

@@ -2988,9 +2988,12 @@ time and bytes, not a count: a picture is kept for a week after it is taken
 its description (run 12: 30 pictures taken over seven hours, refused under a newest-twenty rule) —
 while the store holds at most 256 MiB (`workflow.PictureStoreBytes`), past which the oldest go
 first (counting the files on disk); the newest is always kept, and every one a kept description
-names outlives both — nothing is pruned while a pair's record cannot be read. A picture already on a
-change outlives its file: its entry keeps the address HQ serves it at, so a change made a draft by a
-push is described again with the same picture; only another change needs the file. One store
+names outlives both — a pair record that does not parse is skipped, and nothing is pruned while the
+pairs' directory cannot be read. A picture already on a change outlives its file: its entry keeps the
+address HQ serves it at while that change is a pair's current one (90 days at most), so a change made
+a draft by a push is described again with the same picture; only another change needs the file, and
+a refusal lists only the pictures the change being described can show. Reading the store writes
+nothing. One store
 per state dir, shared under its own lock by every zcp process of the Mate (its conversation,
 helpers, subagents). A description shows one as `![what it shows](shot-3)`: `describe-change` sends each picture
 it names to HQ as the change's attachment (`POST /api/mate/changes/:repo/:n/attachments`, the PNG as

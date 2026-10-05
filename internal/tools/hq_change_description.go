@@ -431,7 +431,7 @@ const pictureRetakeSuggestion = "Show a picture it keeps, or take the screenshot
 func keptPicturesSentence(stateDir string) string {
 	rule := fmt.Sprintf("each for %s after it is taken (past %d MiB of pictures the oldest go first), every one a kept description shows, and one already on a change for that change",
 		pictureKeepWords(), workflow.PictureStoreBytes>>20)
-	ids, err := workflow.KeptPictures(stateDir)
+	ids, err := workflow.KeptPictures(stateDir, "")
 	if err != nil || len(ids) == 0 {
 		return "It keeps no picture now; it keeps a screenshot " + rule + "."
 	}
