@@ -82,6 +82,10 @@ func handleDescribeChange(
 	if refusal := describeTextRefusal(stateDir, text); refusal != nil {
 		return convertError(refusal, WithRecoveryStatus()), nil, nil
 	}
+	title := strings.TrimSpace(input.Title)
+	if refusal := describeTitleRefusal(title); refusal != nil {
+		return convertError(refusal, WithRecoveryStatus()), nil, nil
+	}
 	meta, refusal := pairToDescribe(stateDir, input.Service)
 	if refusal != nil {
 		return refusal, nil, nil
@@ -113,21 +117,20 @@ func handleDescribeChange(
 		}
 	}
 
-	keepErr := keepChangeDescription(stateDir, meta, text, number)
-	if keepErr != nil && number == 0 {
-		return convertError(keepErr, WithRecoveryStatus()), nil, nil
-	}
 	if number == 0 {
+		// Words describe the work a change carries, and the change the next
+		// delivery opens carries whatever the pair holds then: nothing is
+		// kept for it.
 		return jsonResult(changeDescriptionResult{
 			Service: meta.Hostname,
-			Kept:    true,
-			Message: fmt.Sprintf("No change is open from %s yet, so the description is kept: it goes onto the change %s opens.",
+			Message: fmt.Sprintf("No change is open from %s yet, so there is nothing to describe: %s opens it as a draft. Describe it once it holds the work — the person is asked to review it only then.",
 				meta.Hostname, nextDeliveryOf(meta)),
 		}), nil, nil
 	}
+	keepErr := keepChangeDescription(stateDir, meta, text, title, number)
 
 	url := hqc.ChangeURL(meta.HQ.AppID, meta.HQ.Repo, number)
-	if err := putChangeDescription(ctx, hqc, stateDir, meta, number, text); err != nil {
+	if err := putChangeDescription(ctx, hqc, stateDir, meta, number, text, title); err != nil {
 		if errors.Is(err, errCannotAttach) {
 			return convertError(platform.NewPlatformError(
 				platform.ErrPrerequisiteMissing,
@@ -154,7 +157,7 @@ func handleDescribeChange(
 		PullRequest:    number,
 		PullRequestURL: url,
 		Described:      true,
-		Message: fmt.Sprintf("Change #%d carries this description now — the person reviews the change by it in the app. Describe it again whenever the change grows.",
+		Message: fmt.Sprintf("Change #%d carries this description now and asks for the person's review — they review it by these words in the app. A push that moves it makes it a draft again, until you describe it again.",
 			number),
 	}), nil, nil
 }
@@ -191,6 +194,26 @@ func describeTextRefusal(stateDir, text string) *platform.PlatformError {
 				strings.Join(missing, ", "), workflow.PictureKeep),
 			"Take the screenshot again with zerops_browser screenshot=true and use the picture its result names, or leave the picture out.",
 		)
+	}
+	return nil
+}
+
+// describeTitleRefusal refuses a title no change can carry: more than one
+// line, a NUL, or longer than HQ keeps. Nil for "" — no title given — and for
+// one that can go on.
+func describeTitleRefusal(title string) *platform.PlatformError {
+	switch {
+	case strings.ContainsRune(title, 0):
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			"The title holds a NUL character, which no title keeps.", "Pass the title without it.")
+	case strings.ContainsAny(title, "\r\n"):
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			"The title is more than one line; a change's title is one line.",
+			"Say what this repository's change does in a few words; the rest belongs in the description.")
+	case utf8.RuneCountInString(title) > changeTitleRunes:
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("The title is %d characters long; a change's title holds at most %d.", utf8.RuneCountInString(title), changeTitleRunes),
+			"Say what this repository's change does in a few words; the rest belongs in the description.")
 	}
 	return nil
 }
@@ -260,11 +283,10 @@ func pairToDescribe(stateDir, service string) (*workflow.ServiceMeta, *mcp.CallT
 	), WithRecoveryStatus())
 }
 
-// keepChangeDescription records the words on the pair, in memory and on
-// disk, for the change they were written for (0: the one the pair opens
-// next).
-func keepChangeDescription(stateDir string, m *workflow.ServiceMeta, text string, number int) error {
-	kept := &workflow.ChangeDescription{Text: text, Change: number}
+// keepChangeDescription records the words — and the title given with them —
+// on the pair, in memory and on disk, for the change they were written for.
+func keepChangeDescription(stateDir string, m *workflow.ServiceMeta, text, title string, number int) error {
+	kept := &workflow.ChangeDescription{Text: text, Title: title, Change: number}
 	if err := workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
 		if !existed || meta.HQ == nil {
 			return fmt.Errorf("%s no longer has its repository in HQ", m.Hostname)
@@ -279,18 +301,24 @@ func keepChangeDescription(stateDir string, m *workflow.ServiceMeta, text string
 }
 
 // putChangeDescription sets text as change number's description — its
-// pictures attached to the change first (changeBody) — and, once HQ took it,
-// forgets the words the pair kept, unless newer ones were kept meanwhile,
-// which stay for the next put. Nothing is written when a picture could not
-// be attached: never a description with a broken picture.
-func putChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, m *workflow.ServiceMeta, number int, text string) error {
+// pictures attached to the change first (changeBody) — and title, when one is
+// given, as its title, in one edit: HQ asks the person to review the change
+// from then, at the head it has. Once HQ took it, the words the pair kept are
+// forgotten, unless newer ones were kept meanwhile, which stay for the next
+// put. Nothing is written when a picture could not be attached: never a
+// description with a broken picture.
+func putChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, m *workflow.ServiceMeta, number int, text, title string) error {
 	body, err := changeBody(ctx, hqc, stateDir, m, number, text)
 	if err != nil {
 		return err
 	}
+	edit := hq.ChangeEdit{Body: &body}
+	if title != "" {
+		edit.Title = &title
+	}
 	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
 	defer cancel()
-	if _, err := hqc.EditChange(callCtx, m.HQ.Repo, number, hq.ChangeEdit{Body: &body}); err != nil {
+	if _, err := hqc.EditChange(callCtx, m.HQ.Repo, number, edit); err != nil {
 		return err
 	}
 	forgetChangeDescription(stateDir, m, text)
@@ -369,26 +397,33 @@ func missingPictures(stateDir, text string) []string {
 }
 
 // putKeptChangeDescription puts what the pair keeps onto change number — the
-// one a delivery or a push has just opened or found — and reports whether it
-// did, or, when a picture could not go with it, why not (the words stay
-// kept). Read fresh from disk: the caller's copy of the pair can predate a
-// describe that landed while it worked. Words kept for another change are
-// dropped: that change is gone, and this one carries another.
-func putKeptChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, m *workflow.ServiceMeta, number int) (described bool, note string) {
+// one a delivery or a push has just reached — and reports whether it did, or,
+// when a picture could not go with it, why not (the words stay kept). Read
+// fresh from disk: the caller's copy of the pair can predate a describe that
+// landed while it worked. Words go on only while the push that reached the
+// change moved nothing: they describe the change as it was when they were
+// written, so a push that moved it — or opened it — drops them (stale), and
+// the change stays a draft until the Mate describes it again. Words kept for
+// another change are dropped too: that change is gone.
+func putKeptChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, m *workflow.ServiceMeta, number int, moved bool) (described bool, note string, stale bool) {
 	fresh, err := workflow.FindServiceMeta(stateDir, m.Hostname)
 	if err != nil || fresh == nil || fresh.HQ == nil || fresh.HQ.ChangeDescription == nil {
-		return false, ""
+		return false, "", false
 	}
 	kept := *fresh.HQ.ChangeDescription
 	if kept.Change != 0 && kept.Change != number {
 		forgetChangeDescription(stateDir, m, kept.Text)
-		return false, ""
+		return false, "", false
 	}
-	err = putChangeDescription(ctx, hqc, stateDir, m, number, kept.Text)
+	if moved {
+		forgetChangeDescription(stateDir, m, kept.Text)
+		return false, "", true
+	}
+	err = putChangeDescription(ctx, hqc, stateDir, m, number, kept.Text, kept.Title)
 	if errors.Is(err, errCannotAttach) {
-		return false, err.Error()
+		return false, err.Error(), false
 	}
-	return err == nil, ""
+	return err == nil, "", false
 }
 
 // forgetChangeDescription drops the words the pair keeps, in memory and on
@@ -417,20 +452,30 @@ func nextDeliveryOf(m *workflow.ServiceMeta) string {
 }
 
 // describeLine is what a push or a delivery that leaves a change open says
-// of its description: the person reviews the change by it, and the Mate keeps
-// working on top of an open change, so it describes the change as it grows —
-// or, when the words it kept went on with this call, that they did.
+// of its description: the person reviews the change by it, and is asked to
+// only once the Mate describes it at what it holds — so a change this call
+// moved is a draft until then — or, when the words it kept went on with this
+// call, that they did.
 func describeLine(ref *changeRef, hostname string) string {
 	if ref.DescriptionNote != "" {
 		return fmt.Sprintf(`The description you wrote is kept, not on it yet: %s. Describe it again without that picture with zerops_workflow action="describe-change" service=%q to put the words on now.`,
 			ref.DescriptionNote, hostname)
 	}
 	if ref.Described {
-		return fmt.Sprintf(`It carries the description you wrote; rewrite it with zerops_workflow action="describe-change" service=%q description="…" whenever the change grows.`,
+		return fmt.Sprintf(`It carries the description you wrote, and asks for the person's review. A push that moves it makes it a draft again: describe it again then with zerops_workflow action="describe-change" service=%q title="…" description="…".`,
 			hostname)
 	}
-	return fmt.Sprintf(`Describe it for the person's review with zerops_workflow action="describe-change" service=%q description="…" — what it does and why, how you checked it, and the zerops_browser screenshots that show it as ![what it shows](shot-N) — and again whenever it grows.`,
+	ask := fmt.Sprintf(`zerops_workflow action="describe-change" service=%q title="…" description="…" — as its title, what this repository's change does in a few words; then what it does and why, how you checked it, and the zerops_browser screenshots that show it as ![what it shows](shot-N)`,
 		hostname)
+	if ref.Draft {
+		stale := ""
+		if ref.staleDescription {
+			stale = "The description you wrote for it before this push is not on it: it describes the change as it was. "
+		}
+		return fmt.Sprintf("%sChange #%d is a draft until you describe it as it is now: the person is not asked to review it before. Once its work is done — not while you still change it — describe it with %s. Every push that moves it makes it a draft again, until you describe it again.",
+			stale, ref.Number, ask)
+	}
+	return fmt.Sprintf("Describe it for the person's review with %s — and again after every push that moves it.", ask)
 }
 
 // sentenceOf makes one of the outcome lines a sentence of its own.

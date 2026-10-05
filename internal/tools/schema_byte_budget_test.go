@@ -95,7 +95,10 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// Lowered 18697→18662: release walkthroughs live in the on-demand
 		// release prompt/handoff and docs/spec-mate.md §10.10; the schema
 		// retains the HQ boundary and confirmation prerequisites.
-		"zerops_workflow":    18662,
+		// Raised +246 (18662→18908) for `title`, action="describe-change"'s
+		// one new input: each repository's change gets its own title, and
+		// `description` says that describing is what asks for the review.
+		"zerops_workflow":    18908,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services

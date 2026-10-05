@@ -41,6 +41,13 @@ type changeRef struct {
 	// DescriptionNote says why the kept description did not go on — its
 	// pictures could not be attached — and is "" otherwise.
 	DescriptionNote string `json:"descriptionNote,omitempty"`
+	// Draft is true when this call moved the change — opened it, or pushed
+	// work onto it — and no description describes it yet: HQ asks the person
+	// to review it only once the Mate describes it at its head.
+	Draft bool `json:"draft,omitempty"`
+	// staleDescription: words the Mate kept for the change were dropped, as
+	// this call moved the change past what they describe.
+	staleDescription bool
 }
 
 // changeTitle heads the change a pair's work lands through: the task in the
@@ -200,16 +207,20 @@ func shipChange(
 	// The push landed — whatever the landing needed (an absorb, or nothing),
 	// this delivery is done with it.
 	clearLanding(stateDir, m)
-	described, note := putKeptChangeDescription(ctx, hqc, stateDir, m, change.Number)
-	return shipOutcome{unchanged: strings.Contains(string(output), "Everything up-to-date"), ref: &changeRef{
-		Repo:            m.HQ.Repo,
-		Branch:          branch,
-		Base:            hqBase,
-		Number:          change.Number,
-		Created:         opened.Created,
-		URL:             hqc.ChangeURL(m.HQ.AppID, m.HQ.Repo, change.Number),
-		Described:       described,
-		DescriptionNote: note,
+	unchanged := strings.Contains(string(output), "Everything up-to-date")
+	moved := opened.Created || !unchanged
+	described, note, stale := putKeptChangeDescription(ctx, hqc, stateDir, m, change.Number, moved)
+	return shipOutcome{unchanged: unchanged, ref: &changeRef{
+		Repo:             m.HQ.Repo,
+		Branch:           branch,
+		Base:             hqBase,
+		Number:           change.Number,
+		Created:          opened.Created,
+		URL:              hqc.ChangeURL(m.HQ.AppID, m.HQ.Repo, change.Number),
+		Described:        described,
+		DescriptionNote:  note,
+		Draft:            moved,
+		staleDescription: stale,
 	}}
 }
 
