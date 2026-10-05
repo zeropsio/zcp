@@ -109,6 +109,11 @@ func handleDescribeChange(
 	if refusal != nil {
 		return refusal, nil, nil
 	}
+	meta, release, refusal := holdPairToDescribe(ctx, stateDir, meta)
+	if refusal != nil {
+		return refusal, nil, nil
+	}
+	defer release()
 	if refusal := describePicturesRefusal(stateDir, text, pictureTargetOf(meta, meta.HQ.Change)); refusal != nil {
 		return convertError(refusal, WithRecoveryStatus()), nil, nil
 	}
@@ -376,6 +381,9 @@ func putChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, m
 	defer cancel()
 	if _, err := hqc.EditChange(callCtx, m.HQ.Repo, number, edit); err != nil {
 		return err
+	}
+	if title != "" {
+		forgetZcpTitle(stateDir, m)
 	}
 	forgetChangeDescription(stateDir, m, text)
 	return nil

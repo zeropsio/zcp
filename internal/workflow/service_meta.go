@@ -190,6 +190,11 @@ type HQRepoRef struct {
 	// inheriting the last one's words would tell the person about work that
 	// is not in it.
 	ChangeDescription *ChangeDescription `json:"changeDescription,omitempty"`
+	// ZcpTitle is the title zcp last gave a change of the pair — it opened
+	// it with it, or retitled it to it — while that title is zcp's: a
+	// delivery retitles the change only while HQ still holds it. Dropped once
+	// the Mate names the change.
+	ZcpTitle *ZcpTitle `json:"zcpTitle,omitempty"`
 	// CredentialRenewedAt is when zcp last wrote the Mate's current HQ
 	// credential onto the push source, RFC3339 with nanoseconds — kept until a
 	// fresh session proves it, or the wait for it to reach the sessions has
@@ -208,6 +213,12 @@ type ChangeDescription struct {
 	// Change is the change it was written for; 0 when it waits for whichever
 	// change the pair opens next.
 	Change int `json:"change,omitempty"`
+}
+
+// ZcpTitle is a title zcp gave the pair's change number Change.
+type ZcpTitle struct {
+	Change int    `json:"change"`
+	Title  string `json:"title"`
 }
 
 // LandedChange is what a change's merge needs recorded before a delivery can

@@ -5,6 +5,9 @@ package tools
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // sessionTask is a task that names more than one repository: the title of
@@ -72,30 +75,76 @@ func TestABareChangeIsTitledByWhatItHolds(t *testing.T) {
 	}
 }
 
-// TestABareChangeFollowsItsWork: a change no description has reached is
-// retitled by each push that moves it, as it holds more; once the Mate has
-// described it, its title is the Mate's, and a push leaves it.
+// TestABareChangeFollowsItsWork: while a change's title is the one zcp gave
+// it, each push that finds the change holding something new retitles it —
+// a description without a title leaves the title zcp's, as it is what a
+// squash lands on main under. Once the Mate names the change, its title is
+// the Mate's, and a push leaves it.
 func TestABareChangeFollowsItsWork(t *testing.T) {
-	lab := newHQLab(t)
-	lab.wire()
-	startSession(t, lab.stateDir, sessionTask)
-	lab.write(map[string]string{"index.js": "the app\n"})
-	lab.deliver()
-
-	lab.write(map[string]string{"footer.js": "the footer\n"})
-	lab.commit("Add a footer")
-	lab.deliver()
-	if change := lab.hq.change(1); change == nil || change.Title != "Add a footer" {
-		t.Fatalf("change #1 = %+v, want it retitled by the Mate's commit", change)
+	tests := []struct {
+		name string
+		// title is the title the describe between the pushes gives, "" for
+		// none.
+		title string
+		want  string
+	}{
+		{name: "described without a title: the title stays zcp's and follows the work", want: "Fix the footer's links"},
+		{name: "named by the Mate: the title is the Mate's", title: "A footer on every page", want: "A footer on every page"},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lab := newHQLab(t)
+			lab.wire()
+			startSession(t, lab.stateDir, sessionTask)
+			lab.write(map[string]string{"index.js": "the app\n"})
+			lab.deliver()
 
+			lab.write(map[string]string{"footer.js": "the footer\n"})
+			lab.commit("Add a footer")
+			lab.deliver()
+			if change := lab.hq.change(1); change == nil || change.Title != "Add a footer" {
+				t.Fatalf("change #1 = %+v, want it retitled by the Mate's commit", change)
+			}
+
+			if text, isError := lab.describeTitled("", tt.title, describedWords); isError || !strings.Contains(text, `"described":true`) {
+				t.Fatalf("describe: %s", text)
+			}
+			lab.write(map[string]string{"footer.js": "the footer, fixed\n"})
+			lab.commit("Fix the footer's links")
+			lab.deliver()
+			if change := lab.hq.change(1); change == nil || change.Title != tt.want {
+				t.Errorf("change #1 = %+v, want it titled %q", change, tt.want)
+			}
+		})
+	}
+}
+
+// TestDescribeChange_WaitsForTheDeliveryOnItsPair: a describe from one chat
+// and a delivery from another never interleave — a delivery reads whether
+// the change's title is still zcp's and then retitles it, and a describe
+// landing in between would be written over. A describe holds the pair as a
+// delivery does, waits for one in flight, and writes nothing when the pair
+// stays held.
+func TestDescribeChange_WaitsForTheDeliveryOnItsPair(t *testing.T) {
+	lab := deliveredLab(t)
+	prev := hqPairLockWait
+	hqPairLockWait = 50 * time.Millisecond
+	t.Cleanup(func() { hqPairLockWait = prev })
+	release, err := workflow.LockPair(t.Context(), lab.stateDir, "appdev", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, _ := lab.describeTitled("", "A footer on every page", describedWords)
+	for _, want := range []string{"Nothing was written", "held its checkout", "describe-change"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the answer misses %q:\n%s", want, text)
+		}
+	}
+	if change := lab.hq.change(1); change.Body != "" || change.Title == "A footer on every page" {
+		t.Errorf("a describe wrote onto change #1 while its pair was held: %+v", change)
+	}
+	release()
 	if text, isError := lab.describeTitled("", "A footer on every page", describedWords); isError || !strings.Contains(text, `"described":true`) {
-		t.Fatalf("describe: %s", text)
-	}
-	lab.write(map[string]string{"footer.js": "the footer, fixed\n"})
-	lab.commit("Fix the footer's links")
-	lab.deliver()
-	if change := lab.hq.change(1); change == nil || change.Title != "A footer on every page" {
-		t.Errorf("change #1 = %+v, want the title the Mate gave it", change)
+		t.Errorf("once the pair is let go, the describe lands:\n%s", text)
 	}
 }

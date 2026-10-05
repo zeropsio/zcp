@@ -210,17 +210,21 @@ func shipChange(
 		return shipOutcome{upToDate: true, line: "nothing to deliver: main already has this"}
 	}
 	change := opened.Change
-	if !opened.Created && change.Body == "" && title != change.Title {
-		// No description has reached the change, so its title is still
-		// zcp's, and follows what the change holds now. Once the Mate
-		// describes it, the title is the Mate's. Best-effort: the change is
-		// there either way, and the next delivery asks again.
+	recordChange(stateDir, m, change.Number)
+	switch {
+	case opened.Created:
+		recordZcpTitle(stateDir, m, change.Number, title)
+	case title != change.Title && zcpTitled(m, change):
+		// The title is still zcp's, so it follows what the change holds
+		// now. Best-effort: the change is there either way, and the next
+		// delivery asks again.
 		retitle := title
 		editCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
-		_, _ = hqc.EditChange(editCtx, m.HQ.Repo, change.Number, hq.ChangeEdit{Title: &retitle})
+		if _, err := hqc.EditChange(editCtx, m.HQ.Repo, change.Number, hq.ChangeEdit{Title: &retitle}); err == nil {
+			recordZcpTitle(stateDir, m, change.Number, title)
+		}
 		cancel()
 	}
-	recordChange(stateDir, m, change.Number)
 
 	branch := hqc.ChangeBranch(change.Number)
 	if !opened.Created {
@@ -344,6 +348,45 @@ func gitAgainstHQ(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Clien
 		return hqGitAnswer(err, output)
 	})
 	return output, tries, err
+}
+
+// zcpTitled reports whether change's title is still the one zcp gave it: the
+// one the pair records zcp gave that change — any other is the Mate's —
+// or, with none recorded (a change opened before the record), zcp's own
+// "Mate: appdev", or any title of a change no description has reached.
+func zcpTitled(m *workflow.ServiceMeta, change hq.Change) bool {
+	if given := m.HQ.ZcpTitle; given != nil && given.Change == change.Number {
+		return change.Title == given.Title
+	}
+	return change.Title == changeFallbackTitle(m.Hostname) || change.Body == ""
+}
+
+// recordZcpTitle records title as the one zcp gave the pair's change number,
+// in memory and on disk. Best-effort on disk: a record lost reads as a change
+// opened before the record.
+func recordZcpTitle(stateDir string, m *workflow.ServiceMeta, number int, title string) {
+	given := &workflow.ZcpTitle{Change: number, Title: title}
+	m.HQ.ZcpTitle = given
+	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
+		if !existed || meta.HQ == nil {
+			return workflow.ErrSkipWrite
+		}
+		meta.HQ.ZcpTitle = given
+		return nil
+	})
+}
+
+// forgetZcpTitle drops the record of zcp's title once the Mate has named the
+// change: the title is the Mate's from then on.
+func forgetZcpTitle(stateDir string, m *workflow.ServiceMeta) {
+	m.HQ.ZcpTitle = nil
+	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
+		if !existed || meta.HQ == nil || meta.HQ.ZcpTitle == nil {
+			return workflow.ErrSkipWrite
+		}
+		meta.HQ.ZcpTitle = nil
+		return nil
+	})
 }
 
 // recordChange stamps the change's number on the pair, in memory and on disk.

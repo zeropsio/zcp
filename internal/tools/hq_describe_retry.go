@@ -7,7 +7,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -73,4 +76,26 @@ func describeNotLanded(address string, number, tries int, err error) string {
 		"Change #%d is still a draft — the person is not asked to review it. The words are kept for it: "+
 		`call describe-change again to put them on, and if HQ still does not answer, tell the person HQ is not answering.`,
 		address, tries, hqNotServingWords(err), number)
+}
+
+// holdPairToDescribe holds the pair's checkout for a describe as a delivery
+// holds it (holdPairCheckout), so a describe from one chat and a delivery
+// from another never interleave: a delivery reads whether the change's title
+// is still zcp's and then retitles it, and puts the words the pair keeps, and
+// a describe landing in between would be written over or lost. It answers the
+// pair's record as the holder left it, or — the pair held past the wait —
+// the refusal that says nothing was written.
+func holdPairToDescribe(ctx context.Context, stateDir string, meta *workflow.ServiceMeta) (*workflow.ServiceMeta, func(), *mcp.CallToolResult) {
+	release, err := holdPairCheckout(ctx, stateDir, meta.Hostname)
+	if err != nil {
+		return nil, nil, convertError(platform.NewPlatformError(
+			platform.ErrPrerequisiteMissing,
+			fmt.Sprintf("Nothing was written onto %s's change: %s.", meta.Hostname, pairHeldReason(meta.Hostname, err)),
+			fmt.Sprintf(`Call zerops_workflow action="describe-change" service=%q again once that delivery is done.`, meta.Hostname),
+		), WithRecoveryStatus())
+	}
+	if fresh, _ := workflow.FindServiceMeta(stateDir, meta.Hostname); hqPairWired(fresh) {
+		meta = fresh
+	}
+	return meta, release, nil
 }
