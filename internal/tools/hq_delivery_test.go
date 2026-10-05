@@ -280,7 +280,7 @@ func TestADeliveryToAnHQThatNeverAcceptsEndsWithinItsBound(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			return shipChange(t.Context(), lab.ssh, lab.stateDir, deliveryClient(hqc), lab.meta()).line
+			return shipChange(t.Context(), lab.ssh, lab.stateDir, deliveryClient(hqc), lab.meta(), nil).line
 		}, " is not answering: opening its change failed after 3 tries (the last: no connection within 200ms)"},
 	}
 	for _, tt := range tests {
@@ -702,7 +702,7 @@ func TestShipChange_AChangeSettledBeforeItsPushFailsAtOnce(t *testing.T) {
 				t.Fatal(err)
 			}
 			ssh := &refusingPushSSH{reason: reason}
-			shipped := shipChange(t.Context(), ssh, lab.stateDir, hqc, lab.meta())
+			shipped := shipChange(t.Context(), ssh, lab.stateDir, hqc, lab.meta(), nil)
 			if shipped.unreachable || shipped.ref != nil || !strings.Contains(shipped.line, reason) || !strings.Contains(shipped.line, "the next delivery opens the next change") {
 				t.Fatalf("shipped = %+v, want a refusal that names the next delivery", shipped)
 			}

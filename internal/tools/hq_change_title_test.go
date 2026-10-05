@@ -35,6 +35,26 @@ func TestABareChangeIsTitledByWhatItHolds(t *testing.T) {
 			},
 			want: "Add the product API",
 		},
+		{
+			// R12-15 again: the briefing asks every repository for a
+			// baseline commit first.
+			name: "the baseline commit the briefing asks for",
+			work: func(lab *hqLab) {
+				lab.write(map[string]string{"index.js": "the app\n"})
+				lab.git("add", "-A")
+				lab.git("-c", "user.name=mate", "-c", "user.email=mate@example.invalid", "commit", "-q", "-m", "baseline commit", "-m", "Zcp-Commit: baseline")
+				lab.write(map[string]string{"list.js": "the list\n"})
+			},
+			want: "Add index.js and list.js",
+		},
+		{
+			name: "a baseline commit made before the briefing marked it",
+			work: func(lab *hqLab) {
+				lab.write(map[string]string{"index.js": "the app\n"})
+				lab.commit("baseline commit")
+			},
+			want: "Add index.js",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

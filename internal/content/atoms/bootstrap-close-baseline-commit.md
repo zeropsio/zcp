@@ -21,8 +21,11 @@ the session as finished, check every dev runtime that has files on disk
    SSH — for example:
 
 ```
-ssh {hostname} "cd /var/www && git add -A && git commit -m 'baseline commit'"
+ssh {hostname} "cd /var/www && git add -A && git commit -m 'baseline commit' -m 'Zcp-Commit: baseline'"
 ```
+
+Keep the `Zcp-Commit: baseline` line: it marks the commit as the
+starting point, so no change of yours is ever named after it.
 
 <!-- axis-k-keep: signal-#1 — same mount-vs-container-SSH guardrail as develop-first-deploy-write-app, load-bearing here too -->
 Never run this from the ZCP-side mount — a mount-side `git init`/`git add` leaves root-owned objects that break every later commit on that service.

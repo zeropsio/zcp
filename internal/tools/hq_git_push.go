@@ -51,8 +51,12 @@ func handleHQGitPush(
 
 	// What became of the change on record is news independent of this
 	// push's own outcome, and folded into every answer from here.
-	var learned string
+	var (
+		learned string
+		landed  []string
+	)
 	if state, err := hqc.Self(ctx); err == nil {
+		landed = landedHeads(state, meta.HQ.Repo)
 		learned = hqLearnLanding(stateDir, meta, state)
 		deliveryLanding(stateDir, meta, state)
 	}
@@ -93,7 +97,7 @@ func handleHQGitPush(
 		))
 	}
 
-	shipped := shipChange(ctx, sshDeployer, stateDir, hqc, meta)
+	shipped := shipChange(ctx, sshDeployer, stateDir, hqc, meta, landed)
 	if shipped.ref == nil && !shipped.upToDate {
 		recordAttempt("change not shipped: "+shipped.line, topology.FailureClassNetwork)
 		next := "Fix the cause named above, then push again."

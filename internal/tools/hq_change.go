@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -180,13 +181,14 @@ func shipChange(
 	stateDir string,
 	hqc hq.Client,
 	m *workflow.ServiceMeta,
+	landed []string,
 ) shipOutcome {
 	treeOutput, treeErr := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildDeliveryTreeCommand(hqPairWorkingDir))
 	if treeErr != nil {
 		return shipOutcome{line: fmt.Sprintf("reading the delivered tree failed (%s)", gitPushErrorDetail(treeErr, treeOutput))}
 	}
 	tree := strings.TrimSpace(string(treeOutput))
-	title := changeTitleOf(ctx, sshDeployer, m)
+	title := changeTitleOf(ctx, sshDeployer, m, landed)
 	var (
 		opened hq.OpenedChange
 		err    error
@@ -266,14 +268,32 @@ func shipChange(
 }
 
 // changeTitleOf is the title of the change hostname's checkout holds
-// (changeTitleOfWork), read after the delivery or push before it fetched;
-// "Mate: appdev" when it cannot be read.
-func changeTitleOf(ctx context.Context, sshDeployer ops.SSHDeployer, m *workflow.ServiceMeta) string {
-	output, err := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildChangeWorkCommand(hqPairWorkingDir))
+// (changeTitleOfWork), read after the delivery or push before it fetched,
+// never from history that already landed — landed (landedHeads), and the
+// landing the pair records; "Mate: appdev" when
+// it cannot be read.
+func changeTitleOf(ctx context.Context, sshDeployer ops.SSHDeployer, m *workflow.ServiceMeta, landed []string) string {
+	if m.HQ.Landed != nil && !slices.Contains(landed, m.HQ.Landed.Head) {
+		landed = append(slices.Clip(landed), m.HQ.Landed.Head)
+	}
+	output, err := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildChangeWorkCommand(hqPairWorkingDir, landed))
 	if err != nil {
 		return changeFallbackTitle(m.Hostname)
 	}
 	return changeTitleOfWork(ops.ReadChangeWork(string(output)), m.Hostname)
+}
+
+// landedHeads is each head of repo the Mate's own state says HQ squashed
+// onto `main`: a checkout that took a squash in by an ordinary merge still
+// holds those commits, and a change's title is never read from them.
+func landedHeads(state hq.MateState, repo string) []string {
+	var heads []string
+	for _, c := range state.Changes {
+		if c.Repo == repo && c.State == hq.ChangeMerged && c.LandedHead != nil {
+			heads = append(heads, *c.LandedHead)
+		}
+	}
+	return heads
 }
 
 // takeChangeIn takes the open change's branch, as HQ holds it now, into the

@@ -2984,7 +2984,11 @@ fast (D35). `hq_describe_retry.go`; `TestDescribeChange_WaitsOutARollingDeploy`,
   the same line in every repository the session touched (R12-15, 2026-10-06: a backend and a
   storefront both read the session's long task for seven minutes): the subject of the newest commit
   beyond `main` the Mate wrote — not a merge, not zcp's own (every commit zcp writes carries the
-  trailer `Delivered-by: zcp`), not `zcp init` — else the files that differ from `main` ("Add
+  trailer `Zcp-Commit: delivery`), not `zcp init`, not the baseline commit the briefing asks for
+  (written with `Zcp-Commit: baseline`; before that marker, `baseline commit`, or any commit sitting
+  on the pair's `zcp init` or on the join of the repository's base), and never from history that
+  already landed (`refs/zcp/landed/*` and each `landedHead` of a merged change: a checkout that took
+  a squash in by an ordinary merge still holds its commits) — else the files that differ from `main` ("Add
   index.js and package.json", "Update a.js, b.js and 3 more files"), else `Mate: <hostname>`; a
   push that finds it holding something new retitles it, and once it is described its title is the
   Mate's. Either is cut after the last word that fits 120 characters, with "…". A delivery still

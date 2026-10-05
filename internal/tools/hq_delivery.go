@@ -255,7 +255,9 @@ func deliverHeldHQPair(
 	if !delivers(meta) {
 		return nil
 	}
+	var landed []string
 	if state, err := hqc.Self(ctx); err == nil {
+		landed = landedHeads(state, meta.HQ.Repo)
 		switch {
 		case state.AppID != nil && *state.AppID != meta.HQ.AppID:
 			attempt := rewireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, meta, meta.HQ.Repo)
@@ -334,7 +336,7 @@ func deliverHeldHQPair(
 			target, repo, hqBase, gitPushErrorDetail(err, output), target))
 	}
 
-	shipped := shipChange(ctx, sshDeployer, stateDir, hqc, meta)
+	shipped := shipChange(ctx, sshDeployer, stateDir, hqc, meta, landed)
 	result := &hqDelivery{Change: shipped.ref}
 	switch {
 	case shipped.ref != nil:

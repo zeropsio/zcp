@@ -2,10 +2,12 @@
 package tools
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 )
 
@@ -80,6 +82,34 @@ func TestChangeTitleOfWork(t *testing.T) {
 			}
 			if n := utf8.RuneCountInString(got); n > changeTitleRunes {
 				t.Errorf("title is %d runes, more than %d", n, changeTitleRunes)
+			}
+		})
+	}
+}
+
+// TestLandedHeads: the heads a change's title is never read from are those
+// of the repository's merged changes the Mate's state lists.
+func TestLandedHeads(t *testing.T) {
+	head := func(s string) *string { return &s }
+	state := hq.MateState{Changes: []hq.MateChange{
+		{Repo: "appdev", Number: 3, State: hq.ChangeOpen},
+		{Repo: "appdev", Number: 2, State: hq.ChangeMerged, LandedHead: head("h2")},
+		{Repo: "appdev", Number: 1, State: hq.ChangeClosed},
+		{Repo: "api", Number: 4, State: hq.ChangeMerged, LandedHead: head("h4")},
+		{Repo: "appdev", Number: 0, State: hq.ChangeMerged},
+	}}
+	tests := []struct {
+		repo string
+		want []string
+	}{
+		{"appdev", []string{"h2"}},
+		{"api", []string{"h4"}},
+		{"web", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.repo, func(t *testing.T) {
+			if got := landedHeads(state, tt.repo); !slices.Equal(got, tt.want) {
+				t.Errorf("landedHeads(%q) = %v, want %v", tt.repo, got, tt.want)
 			}
 		})
 	}
