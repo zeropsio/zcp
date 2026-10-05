@@ -188,7 +188,7 @@ func deliveryCommitSteps(workingDir, message string) []string {
 		`{ unignored=""; for d in node_modules vendor .venv; do if [ -d "$d" ] && ! git check-ignore -q "$d"; then unignored="$unignored $d"; fi; done; ` +
 			`if [ -n "$unignored" ]; then echo "` + deliveryUnignoredMarker + `$unignored"; exit 3; fi; }`,
 		"git add -A",
-		fmt.Sprintf("(git diff --cached --quiet || git commit -q -m %s)", shellQuote(message)),
+		fmt.Sprintf("(git diff --cached --quiet || git commit -q -m %s)", shellQuote(zcpCommitMessage(message))),
 	}
 }
 

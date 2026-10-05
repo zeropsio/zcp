@@ -189,7 +189,7 @@ func TestDescribeChange_KeptWordsMeetThePushAfterThem(t *testing.T) {
 		},
 		{
 			name: "a push that moves the change drops them, and the change is a draft again", moreWork: true,
-			wantTitle: "Mate: appdev", wantDraft: true,
+			wantTitle: "Add index.js", wantDraft: true,
 			wantLine: []string{"before this push", "is a draft", `action="describe-change"`, "title="},
 		},
 	}

@@ -296,11 +296,11 @@ func deliverHeldHQPair(
 			target, repo, err, target))
 	}
 
-	title := changeTitle(stateDir, meta)
+	message := deliveryMessage(stateDir, meta)
 	// The deployed tree is committed before anything reaches HQ, so the work
 	// is the checkout's own whether or not HQ then answers; the delivery
 	// command after it commits nothing more.
-	committed, err := sshDeployer.ExecSSH(ctx, meta.Hostname, ops.BuildDeliveryCommitCommand(hqPairWorkingDir, title))
+	committed, err := sshDeployer.ExecSSH(ctx, meta.Hostname, ops.BuildDeliveryCommitCommand(hqPairWorkingDir, message))
 	if line := deliveryRefusalLine(string(committed), target, repo, meta.Hostname, landedCommit); line != "" {
 		return notDelivered(line)
 	}
@@ -310,7 +310,7 @@ func deliverHeldHQPair(
 			target, repo, meta.Hostname, gitPushErrorDetail(err, committed), target))
 	}
 	output, tries, err := gitAgainstHQ(ctx, sshDeployer, hqc, meta.Hostname,
-		ops.BuildDeliveryCommand(hqPairWorkingDir, title, landedCommit, landedHead))
+		ops.BuildDeliveryCommand(hqPairWorkingDir, message, landedCommit, landedHead))
 	if line := deliveryRefusalLine(string(output), target, repo, meta.Hostname, landedCommit); line != "" {
 		return notDelivered(line)
 	}
@@ -334,7 +334,7 @@ func deliverHeldHQPair(
 			target, repo, hqBase, gitPushErrorDetail(err, output), target))
 	}
 
-	shipped := shipChange(ctx, sshDeployer, stateDir, hqc, meta, title)
+	shipped := shipChange(ctx, sshDeployer, stateDir, hqc, meta)
 	result := &hqDelivery{Change: shipped.ref}
 	switch {
 	case shipped.ref != nil:

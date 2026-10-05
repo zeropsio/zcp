@@ -93,7 +93,7 @@ func handleHQGitPush(
 		))
 	}
 
-	shipped := shipChange(ctx, sshDeployer, stateDir, hqc, meta, changeTitle(stateDir, meta))
+	shipped := shipChange(ctx, sshDeployer, stateDir, hqc, meta)
 	if shipped.ref == nil && !shipped.upToDate {
 		recordAttempt("change not shipped: "+shipped.line, topology.FailureClassNetwork)
 		next := "Fix the cause named above, then push again."

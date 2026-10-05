@@ -51,23 +51,22 @@ type changeRef struct {
 	staleDescription bool
 }
 
-// changeTitle heads the change a pair's work lands through: the task in the
-// person's words, the same line the delivery commits under, since that is
-// what a person scans a list of changes for. "Mate: appdev" only when no work
-// session says what the work was (the owner's timeline, 2026-09-17: two
-// Mates' rows read the same words).
-func changeTitle(stateDir string, m *workflow.ServiceMeta) string {
+// deliveryMessage is what a delivery commits the deployed tree under: the
+// task in the person's words, its first line cut to a title's length, or
+// "Mate: appdev" when no work session says what the work was. It is never a
+// change's title (changeTitleOfWork): one session's task is the same line in
+// every repository it touched.
+func deliveryMessage(stateDir string, m *workflow.ServiceMeta) string {
 	if intent := workSessionIntent(stateDir); intent != "" {
 		return intent
 	}
-	return changeFallbackTitle(m)
+	return changeFallbackTitle(m.Hostname)
 }
 
-// changeFallbackTitle is zcp's own words for a change nothing named: what it
-// opens with when no work session is open, and the one title it will replace
-// once a session says what the work is.
-func changeFallbackTitle(m *workflow.ServiceMeta) string {
-	return "Mate: " + m.Hostname
+// changeFallbackTitle is zcp's own words for a change nothing else names:
+// the repository's pair, when what the change holds could not be read.
+func changeFallbackTitle(hostname string) string {
+	return "Mate: " + hostname
 }
 
 // changeTitleRunes bounds a title: HQ keeps at most 120 characters.
@@ -81,13 +80,53 @@ func workSessionIntent(stateDir string) string {
 	if err != nil || ws == nil {
 		return ""
 	}
-	return changeTitleOfIntent(ws.Intent)
+	return cutChangeTitle(ws.Intent)
 }
 
-// changeTitleOfIntent is a task's first line as a change's title: whole while
+// changeTitleOfWork is a bare change's title — pushed, not described yet —
+// from what it holds in its own repository (ops.ChangeWork): the subject of
+// the newest commit the Mate wrote there; else the files that differ from
+// `main`, "Add index.js and package.json"; else, when nothing could be read,
+// "Mate: appdev". Cut at a word to a title's length (cutChangeTitle).
+func changeTitleOfWork(work ops.ChangeWork, hostname string) string {
+	if title := cutChangeTitle(work.Subject); title != "" {
+		return title
+	}
+	if work.Count == 0 || len(work.Files) == 0 {
+		return changeFallbackTitle(hostname)
+	}
+	files := work.Files[0]
+	switch more := work.Count - len(work.Files); {
+	case len(work.Files) == 2 && more == 0:
+		files += " and " + work.Files[1]
+	case len(work.Files) == 2 && more == 1:
+		files += ", " + work.Files[1] + " and 1 more file"
+	case len(work.Files) == 2:
+		files += fmt.Sprintf(", %s and %d more files", work.Files[1], more)
+	}
+	return cutChangeTitle(changeWorkVerb(work.Kinds) + " " + files)
+}
+
+// changeWorkVerb says what the files that differ from `main` underwent, kinds
+// as ops.ChangeWork names them: added, removed, updated — or changed, when
+// they underwent more than one of these.
+func changeWorkVerb(kinds string) string {
+	added, removed, updated := strings.Contains(kinds, "A"), strings.Contains(kinds, "D"), strings.ContainsAny(kinds, "MT")
+	switch {
+	case added && !removed && !updated:
+		return "Add"
+	case removed && !added && !updated:
+		return "Remove"
+	case updated && !added && !removed:
+		return "Update"
+	}
+	return "Change"
+}
+
+// cutChangeTitle is a line as a change's title: its first line, whole while
 // it fits, else cut after the last word that fits — never mid-word — and
 // ended with "…". Only a single word longer than a title is cut inside it.
-func changeTitleOfIntent(text string) string {
+func cutChangeTitle(text string) string {
 	intent, _, _ := strings.Cut(strings.TrimSpace(strings.ReplaceAll(text, "\x00", "")), "\n")
 	intent = strings.TrimSpace(intent)
 	runes := []rune(intent)
@@ -141,13 +180,13 @@ func shipChange(
 	stateDir string,
 	hqc hq.Client,
 	m *workflow.ServiceMeta,
-	title string,
 ) shipOutcome {
 	treeOutput, treeErr := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildDeliveryTreeCommand(hqPairWorkingDir))
 	if treeErr != nil {
 		return shipOutcome{line: fmt.Sprintf("reading the delivered tree failed (%s)", gitPushErrorDetail(treeErr, treeOutput))}
 	}
 	tree := strings.TrimSpace(string(treeOutput))
+	title := changeTitleOf(ctx, sshDeployer, m)
 	var (
 		opened hq.OpenedChange
 		err    error
@@ -169,10 +208,11 @@ func shipChange(
 		return shipOutcome{upToDate: true, line: "nothing to deliver: main already has this"}
 	}
 	change := opened.Change
-	if !opened.Created && change.Title == changeFallbackTitle(m) && title != change.Title {
-		// A change opened before any session named the work still reads
-		// "Mate: appdev" beside every other Mate's. Best-effort: the change
-		// is there either way, and the next delivery asks again.
+	if !opened.Created && change.Body == "" && title != change.Title {
+		// No description has reached the change, so its title is still
+		// zcp's, and follows what the change holds now. Once the Mate
+		// describes it, the title is the Mate's. Best-effort: the change is
+		// there either way, and the next delivery asks again.
 		retitle := title
 		editCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
 		_, _ = hqc.EditChange(editCtx, m.HQ.Repo, change.Number, hq.ChangeEdit{Title: &retitle})
@@ -223,6 +263,17 @@ func shipChange(
 		Draft:            moved,
 		staleDescription: stale,
 	}}
+}
+
+// changeTitleOf is the title of the change hostname's checkout holds
+// (changeTitleOfWork), read after the delivery or push before it fetched;
+// "Mate: appdev" when it cannot be read.
+func changeTitleOf(ctx context.Context, sshDeployer ops.SSHDeployer, m *workflow.ServiceMeta) string {
+	output, err := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildChangeWorkCommand(hqPairWorkingDir))
+	if err != nil {
+		return changeFallbackTitle(m.Hostname)
+	}
+	return changeTitleOfWork(ops.ReadChangeWork(string(output)), m.Hostname)
 }
 
 // takeChangeIn takes the open change's branch, as HQ holds it now, into the

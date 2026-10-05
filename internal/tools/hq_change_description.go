@@ -24,8 +24,8 @@ import (
 // A change's description is what the person reviews a Mate's change by — in
 // the app's review, right after the verdict. It is the body of the change in
 // HQ, and only the Mate writes it (zerops_workflow action="describe-change"):
-// zcp opens the change with the task as its title and nothing more, because
-// the task is all zcp knows. The Mate keeps working on top of an open change,
+// zcp opens the change titled by what it holds and nothing more, because that
+// is all zcp knows. The Mate keeps working on top of an open change,
 // so it rewrites the description as the change grows; a link to try the change
 // can go stale, and the description is where what it does and how it was
 // checked stays true.

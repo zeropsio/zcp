@@ -17,7 +17,7 @@ func freshDeliveryBase(commit, head, message string) string {
 		`if git merge-base --is-ancestor "$landed_head" HEAD && git merge-base --is-ancestor "$landed" origin/main; then ` +
 		`old=$(git rev-parse HEAD) && base=$(git rev-parse origin/main) && tree=$(git rev-parse "HEAD^{tree}") && ` +
 		`if [ "$tree" = "$(git rev-parse "origin/main^{tree}")" ]; then next=$base; ` +
-		`else next=$(git commit-tree "$tree" -p "$base" -m ` + shellQuote(message) + `); fi && ` +
+		`else next=$(git commit-tree "$tree" -p "$base" -m ` + shellQuote(zcpCommitMessage(message)) + `); fi && ` +
 		`git update-ref "refs/zcp/landed/$landed" "$old" && git update-ref HEAD "$next" "$old" && ` +
 		`echo "ZCP_FRESH_BASE:$base"; fi; }`
 }
