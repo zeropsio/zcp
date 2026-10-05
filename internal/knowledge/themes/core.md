@@ -64,7 +64,7 @@ Enable with `#zeropsPreprocessor=on` as first line. Syntax: `<@function(<args>)>
 
 **Modifiers** (applied with `|`): `sha256`, `sha512`, `bcrypt`, `argon2id` (hashing) | `toHex`, `toString` (encoding) | `upper`, `lower`, `title` (case) | `noop` (testing)
 
-**Rules:** Functions return strings. Two-phase processing: preprocessing then YAML parsing. Values generated once at import -- fixed after, not regenerated. Escape special characters: `\<`, `\>`, `\|` (double-escape `\\` for backslash)
+**Rules:** Functions return strings. Two-phase processing: preprocessing then YAML parsing. Values generated once at import -- fixed after, not regenerated. Escape special characters where the preprocessor reads them — an import YAML with `#zeropsPreprocessor=on`, and a `zerops_env` value holding a `<@…>` expression: `\<`, `\>`, `\|` (double-escape `\\` for backslash). A `zerops_env` value without `<@` — and so a `project.envVariables` value in `zerops_import` — is stored exactly as written: no escaping there.
 
 **Always-available** `${...}` functions: `${random(length)}`, `${randomInt(min,max)}`, `${sha256(value)}`, `${bcrypt(value,rounds)}`, `${argon2id(value)}`, `${jwt(algo,secret,payload)}`, `${generateRSAKeyPair(bits)}`, `${generateEd25519KeyPair()}`
 
