@@ -100,8 +100,8 @@ func handleDescribeChange(
 			return jsonResult(changeDescriptionResult{
 				Service: meta.Hostname,
 				Message: sentenceOf(learned) + " The description was not written: the change it was for is no longer open, " +
-					`and the next change is another one. If these words are about work not delivered yet, call zerops_workflow action="describe-change" ` +
-					"again — they are then kept for the change " + nextDeliveryOf(meta) + " opens.",
+					"and the next change is another one. If these words are about work not delivered yet, describe the change " +
+					nextDeliveryOf(meta) + ` opens once it holds that work (zerops_workflow action="describe-change"): it asks for review only then.`,
 			}), nil, nil
 		}
 	}
@@ -134,7 +134,7 @@ func handleDescribeChange(
 		if errors.Is(err, errCannotAttach) {
 			return convertError(platform.NewPlatformError(
 				platform.ErrPrerequisiteMissing,
-				fmt.Sprintf("Nothing was written onto change #%d: %v. The description is kept, and goes onto #%d with %s.",
+				fmt.Sprintf("Nothing was written onto change #%d: %v. The description is kept, and goes onto #%d with %s unless that delivery changes its work.",
 					number, err, number, nextDeliveryOf(meta)),
 				"Describe the change again without that picture to put the words on it now.",
 			), WithRecoveryStatus()), nil, nil
@@ -148,7 +148,7 @@ func handleDescribeChange(
 			PullRequest:    number,
 			PullRequestURL: url,
 			Kept:           true,
-			Message: fmt.Sprintf("HQ did not take the description of change #%d (%v). It is kept, and goes onto #%d with %s; call describe-change again to try now.",
+			Message: fmt.Sprintf("HQ did not take the description of change #%d (%v). It is kept, and goes onto #%d with %s unless that delivery changes its work; call describe-change again to try now.",
 				number, err, number, nextDeliveryOf(meta)),
 		}), nil, nil
 	}
