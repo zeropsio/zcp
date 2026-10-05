@@ -38,8 +38,9 @@ type changeRef struct {
 	// Described is true when this call put the description the Mate kept for
 	// its change onto it (hq_change_description.go).
 	Described bool `json:"described,omitempty"`
-	// DescriptionNote says why the kept description did not go on — its
-	// pictures could not be attached — and is "" otherwise.
+	// DescriptionNote is a sentence saying the description the Mate kept for
+	// the change was dropped, not put on, and why — a picture HQ will never
+	// take, or one no longer kept — and is "" otherwise.
 	DescriptionNote string `json:"descriptionNote,omitempty"`
 	// Draft is true when this call moved the change — opened it, or pushed
 	// work onto it — and no description describes it yet: HQ asks the person

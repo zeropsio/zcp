@@ -434,21 +434,24 @@ func TestDescribeChange_Pictures(t *testing.T) {
 		}
 	})
 
-	t.Run("a picture HQ will not keep publishes nothing and keeps the words", func(t *testing.T) {
+	t.Run("a picture HQ will not keep publishes nothing and drops the words", func(t *testing.T) {
 		lab := deliveredLab(t)
 		id := keptScreenshot(t, lab.stateDir, []byte("not a png at all"), 800, 600)
 		words := "![The count](" + id + ")"
 		text, isError := lab.describe("", words)
-		for _, want := range []string{"PREREQUISITE_MISSING", "Nothing was written onto change #1", "not_png", "without that picture"} {
+		for _, want := range []string{"PREREQUISITE_MISSING", "Nothing was written onto change #1", "not_png", "dropped", "without that picture"} {
 			if !isError || !strings.Contains(text, want) {
 				t.Errorf("want a refusal saying %q, got:\n%s", want, text)
 			}
 		}
+		if strings.Contains(text, "goes onto") {
+			t.Errorf("HQ refuses that picture every time, yet the refusal promises the words go on:\n%s", text)
+		}
 		if body := lab.hq.change(1).Body; body != "" {
 			t.Errorf("a body went onto the change with its picture refused: %q", body)
 		}
-		if kept := lab.meta().HQ.ChangeDescription; kept == nil || kept.Text != words {
-			t.Errorf("kept = %+v, want the words kept", kept)
+		if kept := lab.meta().HQ.ChangeDescription; kept != nil {
+			t.Errorf("kept = %+v, want the words dropped: they could never go on", kept)
 		}
 	})
 }
