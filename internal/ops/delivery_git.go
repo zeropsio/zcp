@@ -44,11 +44,13 @@ const hqNoAnswerMarker = "ZCP_HQ_NO_ANSWER:"
 // hqGit is `git <args>` against HQ — args already shell-quoted, the
 // credential helper among them — bounded by HQGitBound and the stall bound,
 // keeping git's exit status. A bound that ended it says hqNoAnswerMarker on
-// stderr: GNU timeout answers 124, BusyBox's the TERM it sent.
+// stderr: GNU timeout answers 124, BusyBox's the TERM it sent. Git speaks
+// English (LC_ALL=C): its words are read ("Everything up-to-date" says a
+// push moved nothing), and a container's locale would translate them.
 func hqGit(args string) string {
 	seconds := max(1, int(HQGitBound/time.Second))
 	return fmt.Sprintf(`{ if command -v timeout >/dev/null 2>&1; then bound="timeout %d"; else bound=; fi; `+
-		`GIT_TERMINAL_PROMPT=0 $bound git -c http.lowSpeedLimit=1 -c http.lowSpeedTime=%d %s; rc=$?; `+
+		`GIT_TERMINAL_PROMPT=0 LC_ALL=C $bound git -c http.lowSpeedLimit=1 -c http.lowSpeedTime=%d %s; rc=$?; `+
 		`if [ $rc -eq 124 ] || [ $rc -eq 143 ]; then echo "%s no answer within %ds" >&2; fi; (exit $rc); }`,
 		seconds, hqGitStallSeconds, args, hqNoAnswerMarker, seconds)
 }
