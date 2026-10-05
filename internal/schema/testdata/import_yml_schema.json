@@ -363,10 +363,8 @@
                 "type": {
                   "enum": [
                     "alpine/bun@1",
-                    "alpine/bun@1.2",
-                    "alpine/bun@1.2.2",
                     "alpine/bun@1.3",
-                    "alpine/bun@1.3.9",
+                    "alpine/bun@1.4",
                     "alpine/bun@canary",
                     "alpine/bun@latest",
                     "alpine/bun@nightly",
@@ -473,17 +471,17 @@
                     "sharedstorage:ha",
                     "sharedstorage:single",
                     "static",
+                    "swarm",
+                    "swarm-vm",
+                    "swarm-vm@1",
+                    "swarm@1",
                     "typesense:ha@27.1",
                     "typesense:ha@30.2",
                     "typesense:single@27.1",
                     "typesense:single@30.2",
                     "ubuntu/bun@1",
-                    "ubuntu/bun@1.1",
-                    "ubuntu/bun@1.1.34",
-                    "ubuntu/bun@1.2",
-                    "ubuntu/bun@1.2.2",
                     "ubuntu/bun@1.3",
-                    "ubuntu/bun@1.3.9",
+                    "ubuntu/bun@1.4",
                     "ubuntu/bun@canary",
                     "ubuntu/bun@latest",
                     "ubuntu/bun@nightly",
@@ -852,10 +850,8 @@
                 "type": {
                   "enum": [
                     "alpine/bun@1",
-                    "alpine/bun@1.2",
-                    "alpine/bun@1.2.2",
                     "alpine/bun@1.3",
-                    "alpine/bun@1.3.9",
+                    "alpine/bun@1.4",
                     "alpine/bun@canary",
                     "alpine/bun@latest",
                     "alpine/bun@nightly",
@@ -928,12 +924,8 @@
                     "alpine@latest",
                     "static",
                     "ubuntu/bun@1",
-                    "ubuntu/bun@1.1",
-                    "ubuntu/bun@1.1.34",
-                    "ubuntu/bun@1.2",
-                    "ubuntu/bun@1.2.2",
                     "ubuntu/bun@1.3",
-                    "ubuntu/bun@1.3.9",
+                    "ubuntu/bun@1.4",
                     "ubuntu/bun@canary",
                     "ubuntu/bun@latest",
                     "ubuntu/bun@nightly",
@@ -1177,10 +1169,6 @@
                     "nats:ha@2.12",
                     "nats:single@2.10",
                     "nats:single@2.12",
-                    "postgresql:ha@14",
-                    "postgresql:ha@16",
-                    "postgresql:ha@17",
-                    "postgresql:ha@18",
                     "postgresql:single@14",
                     "postgresql:single@16",
                     "postgresql:single@17",
@@ -1591,6 +1579,78 @@
               "properties": {
                 "type": {
                   "enum": [
+                    "postgresql:ha@14",
+                    "postgresql:ha@16",
+                    "postgresql:ha@17",
+                    "postgresql:ha@18"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "maxContainers": false,
+                "minContainers": false,
+                "verticalAutoscaling": {
+                  "properties": {
+                    "cpu": {
+                      "maximum": 8,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "disk": {
+                      "maximum": 250,
+                      "minimum": 1,
+                      "type": "number"
+                    },
+                    "maxCpu": {
+                      "maximum": 8,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "maxDisk": {
+                      "maximum": 250,
+                      "minimum": 1,
+                      "type": "number"
+                    },
+                    "maxRam": {
+                      "maximum": 48,
+                      "minimum": 1,
+                      "type": "number"
+                    },
+                    "minCpu": {
+                      "maximum": 8,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "minDisk": {
+                      "maximum": 250,
+                      "minimum": 1,
+                      "type": "number"
+                    },
+                    "minRam": {
+                      "maximum": 48,
+                      "minimum": 1,
+                      "type": "number"
+                    },
+                    "ram": {
+                      "maximum": 48,
+                      "minimum": 1,
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
                     "seaweedfs:ha@3.85",
                     "seaweedfs:single@3.85",
                     "shared-storage:ha",
@@ -1653,6 +1713,162 @@
                     "ram": {
                       "maximum": 48,
                       "minimum": 0.5,
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "swarm",
+                    "swarm@1"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "maxContainers": {
+                  "maximum": 10,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "minContainers": {
+                  "maximum": 10,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "verticalAutoscaling": {
+                  "properties": {
+                    "cpu": {
+                      "maximum": 8,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "disk": {
+                      "maximum": 250,
+                      "minimum": 1,
+                      "type": "number"
+                    },
+                    "maxCpu": {
+                      "maximum": 8,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "maxDisk": {
+                      "maximum": 250,
+                      "minimum": 1,
+                      "type": "number"
+                    },
+                    "maxRam": {
+                      "maximum": 48,
+                      "minimum": 0.125,
+                      "type": "number"
+                    },
+                    "minCpu": {
+                      "maximum": 8,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "minDisk": {
+                      "maximum": 250,
+                      "minimum": 1,
+                      "type": "number"
+                    },
+                    "minRam": {
+                      "maximum": 48,
+                      "minimum": 0.125,
+                      "type": "number"
+                    },
+                    "ram": {
+                      "maximum": 48,
+                      "minimum": 0.125,
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "swarm-vm",
+                    "swarm-vm@1"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "maxContainers": {
+                  "maximum": 10,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "minContainers": {
+                  "maximum": 10,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "verticalAutoscaling": {
+                  "properties": {
+                    "cpu": {
+                      "maximum": 8,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "disk": {
+                      "maximum": 250,
+                      "minimum": 5,
+                      "type": "number"
+                    },
+                    "maxCpu": {
+                      "maximum": 8,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "maxDisk": {
+                      "maximum": 250,
+                      "minimum": 5,
+                      "type": "number"
+                    },
+                    "maxRam": {
+                      "maximum": 48,
+                      "minimum": 0.25,
+                      "type": "number"
+                    },
+                    "minCpu": {
+                      "maximum": 8,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "minDisk": {
+                      "maximum": 250,
+                      "minimum": 5,
+                      "type": "number"
+                    },
+                    "minRam": {
+                      "maximum": 48,
+                      "minimum": 0.25,
+                      "type": "number"
+                    },
+                    "ram": {
+                      "maximum": 48,
+                      "minimum": 0.25,
                       "type": "number"
                     }
                   }
@@ -1840,10 +2056,8 @@
             "description": "Specifies the service type and version.",
             "enum": [
               "alpine/bun@1",
-              "alpine/bun@1.2",
-              "alpine/bun@1.2.2",
               "alpine/bun@1.3",
-              "alpine/bun@1.3.9",
+              "alpine/bun@1.4",
               "alpine/bun@canary",
               "alpine/bun@latest",
               "alpine/bun@nightly",
@@ -1956,17 +2170,17 @@
               "sharedstorage:ha",
               "sharedstorage:single",
               "static",
+              "swarm",
+              "swarm-vm",
+              "swarm-vm@1",
+              "swarm@1",
               "typesense:ha@27.1",
               "typesense:ha@30.2",
               "typesense:single@27.1",
               "typesense:single@30.2",
               "ubuntu/bun@1",
-              "ubuntu/bun@1.1",
-              "ubuntu/bun@1.1.34",
-              "ubuntu/bun@1.2",
-              "ubuntu/bun@1.2.2",
               "ubuntu/bun@1.3",
-              "ubuntu/bun@1.3.9",
+              "ubuntu/bun@1.4",
               "ubuntu/bun@canary",
               "ubuntu/bun@latest",
               "ubuntu/bun@nightly",
@@ -2209,10 +2423,8 @@
                             {
                               "enum": [
                                 "alpine/bun@1",
-                                "alpine/bun@1.2",
-                                "alpine/bun@1.2.2",
                                 "alpine/bun@1.3",
-                                "alpine/bun@1.3.9",
+                                "alpine/bun@1.4",
                                 "alpine/bun@canary",
                                 "alpine/bun@latest",
                                 "alpine/bun@nightly",
@@ -2263,12 +2475,8 @@
                                 "alpine@3.24",
                                 "alpine@latest",
                                 "ubuntu/bun@1",
-                                "ubuntu/bun@1.1",
-                                "ubuntu/bun@1.1.34",
-                                "ubuntu/bun@1.2",
-                                "ubuntu/bun@1.2.2",
                                 "ubuntu/bun@1.3",
-                                "ubuntu/bun@1.3.9",
+                                "ubuntu/bun@1.4",
                                 "ubuntu/bun@canary",
                                 "ubuntu/bun@latest",
                                 "ubuntu/bun@nightly",
@@ -2329,10 +2537,8 @@
                               "items": {
                                 "enum": [
                                   "alpine/bun@1",
-                                  "alpine/bun@1.2",
-                                  "alpine/bun@1.2.2",
                                   "alpine/bun@1.3",
-                                  "alpine/bun@1.3.9",
+                                  "alpine/bun@1.4",
                                   "alpine/bun@canary",
                                   "alpine/bun@latest",
                                   "alpine/bun@nightly",
@@ -2383,12 +2589,8 @@
                                   "alpine@3.24",
                                   "alpine@latest",
                                   "ubuntu/bun@1",
-                                  "ubuntu/bun@1.1",
-                                  "ubuntu/bun@1.1.34",
-                                  "ubuntu/bun@1.2",
-                                  "ubuntu/bun@1.2.2",
                                   "ubuntu/bun@1.3",
-                                  "ubuntu/bun@1.3.9",
+                                  "ubuntu/bun@1.4",
                                   "ubuntu/bun@canary",
                                   "ubuntu/bun@latest",
                                   "ubuntu/bun@nightly",
@@ -2631,6 +2833,138 @@
                             "properties": {
                               "base": {
                                 "enum": [
+                                  "alpine/bun@1",
+                                  "alpine/bun@1.3",
+                                  "alpine/bun@1.4",
+                                  "alpine/bun@canary",
+                                  "alpine/bun@latest",
+                                  "alpine/bun@nightly",
+                                  "alpine/docker@26",
+                                  "alpine/docker@26.1",
+                                  "alpine/docker@26.1.5",
+                                  "alpine/docker@latest",
+                                  "alpine/dotnet@10",
+                                  "alpine/dotnet@8",
+                                  "alpine/dotnet@9",
+                                  "alpine/dotnet@latest",
+                                  "alpine/elixir@1",
+                                  "alpine/elixir@1.16",
+                                  "alpine/elixir@1.16.3",
+                                  "alpine/elixir@latest",
+                                  "alpine/gleam@1",
+                                  "alpine/gleam@1.5",
+                                  "alpine/gleam@1.5.1",
+                                  "alpine/gleam@latest",
+                                  "alpine/go@1",
+                                  "alpine/go@1.22",
+                                  "alpine/go@latest",
+                                  "alpine/golang@1",
+                                  "alpine/golang@1.22",
+                                  "alpine/golang@latest",
+                                  "alpine/java@17",
+                                  "alpine/java@21",
+                                  "alpine/java@latest",
+                                  "alpine/nodejs@20",
+                                  "alpine/nodejs@22",
+                                  "alpine/nodejs@24",
+                                  "alpine/nodejs@latest",
+                                  "alpine/python@3.11",
+                                  "alpine/python@3.12",
+                                  "alpine/python@latest",
+                                  "alpine/ruby@3.3",
+                                  "alpine/ruby@3.4",
+                                  "alpine/ruby@4.0",
+                                  "alpine/ruby@latest",
+                                  "alpine/rust@1",
+                                  "alpine/rust@latest",
+                                  "alpine/rust@nightly",
+                                  "alpine/rust@stable",
+                                  "alpine/zero@0.1",
+                                  "alpine/zero@latest",
+                                  "alpine/zero@nightly",
+                                  "alpine@3.21",
+                                  "alpine@3.22",
+                                  "alpine@3.23",
+                                  "alpine@3.24",
+                                  "alpine@latest",
+                                  "swarm",
+                                  "swarm-vm",
+                                  "ubuntu/bun@1",
+                                  "ubuntu/bun@1.3",
+                                  "ubuntu/bun@1.4",
+                                  "ubuntu/bun@canary",
+                                  "ubuntu/bun@latest",
+                                  "ubuntu/bun@nightly",
+                                  "ubuntu/deno@2",
+                                  "ubuntu/deno@2.0",
+                                  "ubuntu/deno@2.0.0",
+                                  "ubuntu/deno@latest",
+                                  "ubuntu/dotnet@10",
+                                  "ubuntu/dotnet@8",
+                                  "ubuntu/dotnet@9",
+                                  "ubuntu/dotnet@latest",
+                                  "ubuntu/elixir@1",
+                                  "ubuntu/elixir@1.16",
+                                  "ubuntu/elixir@1.16.2",
+                                  "ubuntu/elixir@latest",
+                                  "ubuntu/gleam@1",
+                                  "ubuntu/gleam@1.5",
+                                  "ubuntu/gleam@1.5.1",
+                                  "ubuntu/gleam@latest",
+                                  "ubuntu/go@1",
+                                  "ubuntu/go@1.22",
+                                  "ubuntu/go@latest",
+                                  "ubuntu/golang@1",
+                                  "ubuntu/golang@1.22",
+                                  "ubuntu/golang@latest",
+                                  "ubuntu/java@17",
+                                  "ubuntu/java@21",
+                                  "ubuntu/java@latest",
+                                  "ubuntu/nodejs@20",
+                                  "ubuntu/nodejs@22",
+                                  "ubuntu/nodejs@24",
+                                  "ubuntu/nodejs@latest",
+                                  "ubuntu/python@3.11",
+                                  "ubuntu/python@3.12",
+                                  "ubuntu/python@3.14",
+                                  "ubuntu/python@latest",
+                                  "ubuntu/ruby@3.3",
+                                  "ubuntu/ruby@3.4",
+                                  "ubuntu/ruby@4.0",
+                                  "ubuntu/ruby@latest",
+                                  "ubuntu/rust@1",
+                                  "ubuntu/rust@latest",
+                                  "ubuntu/rust@nightly",
+                                  "ubuntu/rust@stable",
+                                  "ubuntu/zero@0.1",
+                                  "ubuntu/zero@latest",
+                                  "ubuntu/zero@nightly",
+                                  "ubuntu@22.04",
+                                  "ubuntu@24.04",
+                                  "ubuntu@26.04",
+                                  "ubuntu@latest",
+                                  "zcp@1",
+                                  "zcp@latest"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "base"
+                            ]
+                          },
+                          "then": {
+                            "properties": {
+                              "documentRoot": false,
+                              "routing": false,
+                              "siteConfigPath": false
+                            }
+                          }
+                        },
+                        {
+                          "if": {
+                            "properties": {
+                              "base": {
+                                "enum": [
                                   "alpine/static",
                                   "alpine/static@1.0",
                                   "alpine/static@latest",
@@ -2704,142 +3038,6 @@
                               "routing": false
                             }
                           }
-                        },
-                        {
-                          "if": {
-                            "properties": {
-                              "base": {
-                                "enum": [
-                                  "alpine/bun@1",
-                                  "alpine/bun@1.2",
-                                  "alpine/bun@1.2.2",
-                                  "alpine/bun@1.3",
-                                  "alpine/bun@1.3.9",
-                                  "alpine/bun@canary",
-                                  "alpine/bun@latest",
-                                  "alpine/bun@nightly",
-                                  "alpine/docker@26",
-                                  "alpine/docker@26.1",
-                                  "alpine/docker@26.1.5",
-                                  "alpine/docker@latest",
-                                  "alpine/dotnet@10",
-                                  "alpine/dotnet@8",
-                                  "alpine/dotnet@9",
-                                  "alpine/dotnet@latest",
-                                  "alpine/elixir@1",
-                                  "alpine/elixir@1.16",
-                                  "alpine/elixir@1.16.3",
-                                  "alpine/elixir@latest",
-                                  "alpine/gleam@1",
-                                  "alpine/gleam@1.5",
-                                  "alpine/gleam@1.5.1",
-                                  "alpine/gleam@latest",
-                                  "alpine/go@1",
-                                  "alpine/go@1.22",
-                                  "alpine/go@latest",
-                                  "alpine/golang@1",
-                                  "alpine/golang@1.22",
-                                  "alpine/golang@latest",
-                                  "alpine/java@17",
-                                  "alpine/java@21",
-                                  "alpine/java@latest",
-                                  "alpine/nodejs@20",
-                                  "alpine/nodejs@22",
-                                  "alpine/nodejs@24",
-                                  "alpine/nodejs@latest",
-                                  "alpine/python@3.11",
-                                  "alpine/python@3.12",
-                                  "alpine/python@latest",
-                                  "alpine/ruby@3.3",
-                                  "alpine/ruby@3.4",
-                                  "alpine/ruby@4.0",
-                                  "alpine/ruby@latest",
-                                  "alpine/rust@1",
-                                  "alpine/rust@latest",
-                                  "alpine/rust@nightly",
-                                  "alpine/rust@stable",
-                                  "alpine/zero@0.1",
-                                  "alpine/zero@latest",
-                                  "alpine/zero@nightly",
-                                  "alpine@3.21",
-                                  "alpine@3.22",
-                                  "alpine@3.23",
-                                  "alpine@3.24",
-                                  "alpine@latest",
-                                  "ubuntu/bun@1",
-                                  "ubuntu/bun@1.1",
-                                  "ubuntu/bun@1.1.34",
-                                  "ubuntu/bun@1.2",
-                                  "ubuntu/bun@1.2.2",
-                                  "ubuntu/bun@1.3",
-                                  "ubuntu/bun@1.3.9",
-                                  "ubuntu/bun@canary",
-                                  "ubuntu/bun@latest",
-                                  "ubuntu/bun@nightly",
-                                  "ubuntu/deno@2",
-                                  "ubuntu/deno@2.0",
-                                  "ubuntu/deno@2.0.0",
-                                  "ubuntu/deno@latest",
-                                  "ubuntu/dotnet@10",
-                                  "ubuntu/dotnet@8",
-                                  "ubuntu/dotnet@9",
-                                  "ubuntu/dotnet@latest",
-                                  "ubuntu/elixir@1",
-                                  "ubuntu/elixir@1.16",
-                                  "ubuntu/elixir@1.16.2",
-                                  "ubuntu/elixir@latest",
-                                  "ubuntu/gleam@1",
-                                  "ubuntu/gleam@1.5",
-                                  "ubuntu/gleam@1.5.1",
-                                  "ubuntu/gleam@latest",
-                                  "ubuntu/go@1",
-                                  "ubuntu/go@1.22",
-                                  "ubuntu/go@latest",
-                                  "ubuntu/golang@1",
-                                  "ubuntu/golang@1.22",
-                                  "ubuntu/golang@latest",
-                                  "ubuntu/java@17",
-                                  "ubuntu/java@21",
-                                  "ubuntu/java@latest",
-                                  "ubuntu/nodejs@20",
-                                  "ubuntu/nodejs@22",
-                                  "ubuntu/nodejs@24",
-                                  "ubuntu/nodejs@latest",
-                                  "ubuntu/python@3.11",
-                                  "ubuntu/python@3.12",
-                                  "ubuntu/python@3.14",
-                                  "ubuntu/python@latest",
-                                  "ubuntu/ruby@3.3",
-                                  "ubuntu/ruby@3.4",
-                                  "ubuntu/ruby@4.0",
-                                  "ubuntu/ruby@latest",
-                                  "ubuntu/rust@1",
-                                  "ubuntu/rust@latest",
-                                  "ubuntu/rust@nightly",
-                                  "ubuntu/rust@stable",
-                                  "ubuntu/zero@0.1",
-                                  "ubuntu/zero@latest",
-                                  "ubuntu/zero@nightly",
-                                  "ubuntu@22.04",
-                                  "ubuntu@24.04",
-                                  "ubuntu@26.04",
-                                  "ubuntu@latest",
-                                  "zcp@1",
-                                  "zcp@latest"
-                                ]
-                              }
-                            },
-                            "required": [
-                              "base"
-                            ]
-                          },
-                          "then": {
-                            "properties": {
-                              "documentRoot": false,
-                              "routing": false,
-                              "siteConfigPath": false
-                            }
-                          }
                         }
                       ],
                       "description": "Runtime configuration.",
@@ -2848,10 +3046,8 @@
                           "description": "Sets the base technology for the runtime environment. If you don't specify the run.base attribute, Zerops keeps the current version for your runtime.",
                           "enum": [
                             "alpine/bun@1",
-                            "alpine/bun@1.2",
-                            "alpine/bun@1.2.2",
                             "alpine/bun@1.3",
-                            "alpine/bun@1.3.9",
+                            "alpine/bun@1.4",
                             "alpine/bun@canary",
                             "alpine/bun@latest",
                             "alpine/bun@nightly",
@@ -2925,13 +3121,13 @@
                             "alpine@3.24",
                             "alpine@latest",
                             "static",
+                            "swarm",
+                            "swarm-vm",
+                            "swarm-vm@1",
+                            "swarm@1",
                             "ubuntu/bun@1",
-                            "ubuntu/bun@1.1",
-                            "ubuntu/bun@1.1.34",
-                            "ubuntu/bun@1.2",
-                            "ubuntu/bun@1.2.2",
                             "ubuntu/bun@1.3",
-                            "ubuntu/bun@1.3.9",
+                            "ubuntu/bun@1.4",
                             "ubuntu/bun@canary",
                             "ubuntu/bun@latest",
                             "ubuntu/bun@nightly",
