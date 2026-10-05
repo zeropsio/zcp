@@ -1529,14 +1529,17 @@ review's one button (R5)"; `reviewVerdict.test.ts` — "changeReview: the verdic
 `SidebarZeropsTree.test.tsx` — "offers Review on every change, and never Merge, Ask or a check dot
 from the row", "never dots a project for the production it does not have".
 
-**Open: `main` is not read.** No caller supplies `mainHasCode` or `mainHead`: `groupFlowInputOf`
-leaves both unread for every group, and the default-branch read (`planMainHeadReads`) runs only for
-a group that already has a production and feeds the release offer, not `groupFlow`. So the flow
-knows `main` has code only from a merged code pull request still in the recent list. Until it is
-wired, "After the first merge" is never drawn, the flow's own _Add production_ misses code a recipe
-planted at birth or a merge that has scrolled off that list, and the project's menu offers _Add
-production_ as the stop-gap wherever the person may create projects (`mayCreateProjects`) and the
-application has none; HQ's refusal of the attach, if it refuses, is shown in its words. The conversation's gate is the page's, with "some Mate in the project is up" taken as met,
+**Open: the flow does not read `main`.** Nothing fills `groupFlowInputOf`'s `mainHasCode` or
+`mainHead`, and no default-branch read exists any more: the flow knows `main` has code only from a
+merged code change still in HQ's recent changes for the application (`groupFlow`'s `landedCode`).
+HQ's snapshot does carry each repository's `main` head, but only the release offer reads it
+(`releaseCandidate`: each production runtime at its repository's `main` head, and the recipe
+repository's head the release tags). Until the flow reads it too, "After the first merge" is never
+drawn, and the flow's own _Add production_ misses code a recipe planted at birth or a merge that has
+scrolled off that list. So the project's menu offers _Add production_ as the stop-gap wherever the
+project is not empty, its recipe still has a production to take (`creatableRoles`) and the person
+may create projects (`mayCreateProjects`); HQ's refusal of the attach, if it refuses, is shown in its
+words. The conversation's gate is the page's, with "some Mate in the project is up" taken as met,
 since the conversation runs no health probes.
 
 ### 5.5 Subscriptions are flow-controlled — a raw probe must `Ack`
