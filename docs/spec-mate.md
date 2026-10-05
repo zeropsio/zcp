@@ -655,8 +655,14 @@ else about "is there a newer Mate" is answered by zcp and merely displayed:
 4. **One verb: Update.** Next to that line. It calls `zerops.mate.update` — a Zerops-zone RPC
    gated by `exec:operate`, shaped like upstream's server self-update RPC — whose handler runs
    `zcp mate update --json` through `ZeropsCli`, returns its JSON, and then the client waits for the
-   socket to come back exactly as "Restart to install" does today (`restartAndVerifyMate`), with
-   the descriptor's `serverVersion` as the proof. Running threads stop; the client says so before
+   socket to come back exactly as "Restart to install" does today (`restartAndVerifyMate`). What
+   the update came to is the server it comes back as: the descriptor's version and its `bootId`
+   against those the update was pressed with. Another version is updated; the version it left on
+   another boot is an update that did not take, said, with _Update_ offered again; the same boot is
+   a server not restarted yet, still updating. A server that names no boot is no answer on the
+   version it left. `bootId` is a value of the server process, new at every start and never
+   persisted, optional on the wire — older servers send none — and not part of the zcp↔mate
+   contract (C-1…C-6): zcp neither writes nor reads it. Running threads stop; the client says so before
    the click. There is no container restart in this path.
 5. **One check: Check for updates.** The status behind the line is cache-served twice over —
    zcp keeps the manifest an hour, the server re-reads status hourly — so a release just published
@@ -675,7 +681,7 @@ else about "is there a newer Mate" is answered by zcp and merely displayed:
 
 | ID | Invariant |
 |---|---|
-| MU-1 | The client compares versions in exactly one place, the sign-in floor; the update line and verb render only from the descriptor's `update` field. `ZeropsMateCard.test.tsx`, `versionSkew.test.ts` is gone. |
+| MU-1 | The client compares versions in exactly one place, the sign-in floor; the update line and verb render only from the descriptor's `update` field, and an update's outcome reads only the descriptor's version and `bootId` for equality with those it was pressed with. `ZeropsMateCard.test.tsx`, `versionSkew.test.ts` is gone. |
 | MU-2 | `zerops.mate.update` is offered only inside a Zerops project with `zcp` on PATH and requires `exec:operate`; a failing `zcp mate update` is a successful RPC carrying its JSON, never a transport error. `ZeropsMateUpdate.test.ts`. |
 | MU-3 | The descriptor's `update` field is absent, never fabricated, when `zcp` cannot be run; the card then shows the installed version alone. `ServerEnvironment.test.ts`. |
 
@@ -981,11 +987,28 @@ the inventory lists it — hardened, closed off, nothing registered; a registrat
 `zcpClaimed:false` has no project to set up and opens _New project_, and a missing field reads as
 claimed (`ZeropsProjectsPage.tsx:2034-2083`).
 
-**Nothing is stored.** The tab keeps its presses in memory for as long as its screens need them; a
-reload forgets them, and the listing draws the rest (`matePress.ts:14-17`). One press or _Finish
-setup_ runs per project across the browser's tabs, under the Web Lock `mate:press:<projectId>`
-(`mateLocks.ts:23`); one that finds it held says "Its setup is already running in another tab."
-(`matePress.ts:731-744`). The close-off's mark and the registration are each tried up to four times,
+**Every press holds its project at HQ.** A press — a Mate's, a stage's or a production's — takes
+its project's record at HQ (`hq_press`, keyed by the project: `kind` `mate`, `stage` or
+`production`, the application it makes it into, the press's own id as `owner`, and the container
+import's Zerops process once Zerops answered it) once Zerops accepts the project. It renews the hold
+every minute and at each of its steps; a hold runs five minutes from its last renewal, which a
+hidden tab's throttled timers survive several times over. Holding a press takes Basic user or
+above on the project (`hold_press`) — a reader alone may not, for a held press keeps another's
+_Finish setup_ away. A second press of the same project, in another browser or tab, is refused
+before it writes anything (`press_held`) while the first's hold runs; a hold that ran out is taken
+over. A press that finishes deletes its record, and a stage's or a production's registration ends
+it in the same write; one that stops ends its hold and keeps the record. HQ streams each press to
+whoever reads its project, with how long its hold runs on from that message, so a reader measures
+it on no clock of HQ's. A reader takes a held press for one still at it, and one whose hold ran
+out, or whose container import failed, for half made — _Finish setup_ of its kind, a Mate's for a
+Mate and the registration as its tier for a stage or a production — at once, never by the
+project's age: a stage or a production HQ holds nowhere is placed in its application by its
+press's record, never offered a Mate's _Finish setup_. A hold HQ refuses this person outright
+(not another press's) is never asked again: the press goes on unheld. The record goes with its
+project. The tab keeps its presses in memory only for its screens; a reload forgets them, and HQ's
+records and the listing draw the rest. Within one browser one press or _Finish setup_ runs per
+project across its tabs, under the Web Lock `mate:press:<projectId>` (`mateLocks.ts`); one that finds
+it held says "Its setup is already running in another tab." The close-off's mark and the registration are each tried up to four times,
 two seconds apart. A press that stopped at `import-container`, `close-off` or `register` resumes
 there with _Try again_, on the same project; one that stopped at its
 project or at a services import is not resumed — a second import is refused for the hostnames the
@@ -2404,7 +2427,9 @@ reader sees them in Zerops; an application made (`POST /api/apps`) and a project
 /api/apps/:id/projects`); a change read, commented on, merged (`{expectedHead}`, a squash onto `main`
 named `{title} (#{n})`) and closed; a tier of the recipe (`GET /api/apps/:appId/recipe/:tier`).
 Core lands a Mate's recipe change by itself when it only adds files, and closes one that adds
-nothing (§10.10).
+nothing (§10.10). The structure also lists the account's tools (`tools`, from `hq_tool`): today
+only the old Gitea project (`kind: gitea`), which the client places as a tool — never a plain
+project, never a Mate, never offered _Set up Mate_ — until the Gitea is retired and its record goes.
 
 **Offers** (2026-10-05). HQ answers what the reader may do in the same stream that carries the
 structure, never through a per-request endpoint: `structure.read(userId)` already decides `read_*`
@@ -2427,7 +2452,27 @@ offers reuse the rows already read, `moveTo` is computed once per Mate, and keye
 unchanged offer off the wire. A verb is drawn in one of four states: **allowed**; **refused**, with
 HQ's reason; **unknown** — no snapshot yet, the entity absent, or the verb unknown to this build;
 **unavailable** since a time, while HQ's socket is down — an HQ-enforced verb is then off, saying
-"HQ unavailable since …", while a Zerops-enforced control keeps working.
+"HQ unavailable since …", while a Zerops-enforced control keeps working. On the wire the snapshot
+carries every entity's `can` and `rolesAnsweredAt`; an `org` message moves the organization's
+offers when they change, an application's and its environments' move with the application, and a
+`roles` message moves `rolesAnsweredAt` with every view. Unknown never takes a Zerops-executed verb
+away: against a Core from before its offers, or before HQ answered, a Mate's _Open_, _Start_,
+_Restart_ and _Remove_ stay — the door's and Zerops' to refuse, in their own words — and are hidden
+only where HQ refuses following the Mate; HQ's own verbs (a Mate's face, move and leave, renaming and
+deleting a project, an application's change verbs and release) are drawn not pressable, "HQ has not
+said yet", until it does. A held verb holds through the stream reconnecting, and HQ's offers stand
+while it is only being read again.
+
+**A write that cannot be taken back is decided over roles read for it (2026-10-05).** HQ keeps its
+view of Zerops' members and projects at most 30 s old; a read and a write that can be undone are
+decided over it, a refusal confirmed once more over a fresh read, and while Zerops does not answer
+the last good view serves them for five minutes. A write that cannot be taken back is decided only
+over roles Zerops answers for it, read after it was asked (`decidedFresh`, `roles.ts`): a merge and
+a close of a change, a release and a roll back, a redeploy (_Run again_) and an added service, a
+deploy key kept, an environment attached as a stage or a production, a project moved out of an
+application, a project's deletion (both halves) and an application's. Zerops leaving that read
+unanswered within its 35 s budget refuses the write before anything is written: `503
+zerops_unanswered`, never a write that may have landed, and the client says Zerops did not answer.
 
 **Environments** (since 2026-10-02). A stage or a production attached to an application is its
 environment, recorded with the attach — named as the attach asks or after its project, following
@@ -3114,11 +3159,23 @@ to v0.1.55_) asks for a new release listing that release's entries as they were;
 reused. Neither button takes the focus or ⌘↵.
 
 **A release ends when HQ's rollout ends (2026-10-05).** Every rollout HQ follows ends — a job is
-followed 75 min at most and then refused (§10.8). So HQ derives, and stores nothing new: the stream
-carries each application's newest release rollout `{id, cause, ref, planned, ended, endedAt,
-leftOut}`, where `ended` follows a left-out service to its own job (`left.job`) — a service whose
-commit is building elsewhere keeps the release running — and a release that made no rollout (a
-snapshot of what production already runs) is ended when made. The review follows that until it
+followed 75 min at most and then refused (§10.8). So HQ derives, and stores nothing new: beside each
+production environment the stream carries where its application's newest approved release stands
+there (`ReleaseRollout`: `id`, `tag`, `planned`, `ended`, `landed`, `endedAt`, `leftOut`).
+`ended` once every job it asked for there ended and every job of a commit it found already under
+way — what it left out, followed to that job (`leftOut[].job`) — ended too, so a service whose
+commit is building elsewhere keeps the release running; `landed` where each of those went live and
+its plan left nothing undone. A release with no rollout of its own — made before rollouts were,
+recorded from git, or a snapshot of what production already runs — deploys nothing more: ended as
+it was made, never landed by HQ's word; the client reads it as stalled only where it did not land.
+Beside each environment HQ brought up the stream also carries its **birth** (`EnvironmentBirth`,
+`{ended}`, `births.ts`): from the rollout its attach asked for to its first deploy that ran — every
+deploy key kept and _Run again_ between — ended once those rollouts' jobs ended (a first deploy HQ
+makes ends live only after its subdomain, where one was intended, came on or said why not) and a
+deploy ran, or the environment holds a working key. The client draws "coming up" from it, never from
+the environment's age; an environment HQ did not bring up has none. Both are optional on the wire:
+a Core older than the client sends neither, and its environments read them as not known — never on
+its way, never coming up — and are still shown. The review follows that until it
 ends — "Released", "Rolled back", or the failure and its fix — and _Release_ is offered again only
 then. The client holds no clock for it: there is no in-flight window and no 30-minute cutoff (the
 cutoff re-enabled _Release_ while HQ still followed a build, and a second release superseded the
