@@ -152,3 +152,44 @@ func TestDevServerStart_Success_EnablesSubdomainOnce(t *testing.T) {
 			mock.CallCounts["EnableSubdomainAccess"])
 	}
 }
+
+// TestDevServer_RunningOnlyWhereChecked: a log read checks nothing, so its
+// answer says nothing of whether the server runs — `running` is left out,
+// never a `false` the Mate would read as "it stopped". An action that does
+// check says it.
+func TestDevServer_RunningOnlyWhereChecked(t *testing.T) {
+	tests := []struct {
+		name        string
+		action      string
+		ssh         []scriptStep
+		wantRunning bool
+	}{
+		{name: "a log read", action: "logs", ssh: []scriptStep{{output: "line 1\nline 2"}}},
+		{name: "a start that came up", action: "start", ssh: devServerStartSuccessSSH().queue, wantRunning: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: "ACTIVE",
+					Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}}}}).
+				WithService(&platform.ServiceStack{ID: "svc-1", Name: "appdev", ProjectID: "proj-1"})
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterDevServer(srv, mock, okHTTP, "proj-1", &scriptSSH{queue: tt.ssh}, dir, nil)
+			result := callTool(t, srv, "zerops_dev_server", map[string]any{
+				"action": tt.action, "hostname": "appdev", "command": "npm run start:dev", "port": 3000,
+			})
+			if result.IsError {
+				t.Fatalf("unexpected error: %s", getTextContent(t, result))
+			}
+			var answer map[string]any
+			if err := json.Unmarshal([]byte(getTextContent(t, result)), &answer); err != nil {
+				t.Fatalf("parse result: %v", err)
+			}
+			running, said := answer["running"]
+			if said != tt.wantRunning || (said && running != true) {
+				t.Errorf("running = %v (said %v), want said=%v", running, said, tt.wantRunning)
+			}
+		})
+	}
+}

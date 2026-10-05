@@ -160,6 +160,9 @@ func RegisterDevServer(srv *mcp.Server, client platform.Client, httpClient ops.H
 			resp.PublicAccess = scratch.PublicAccess
 		}
 		finishDevServerKeeping(ctx, ssh, units, stateDir, input, keeping, resp)
+		if input.Action == "logs" {
+			return jsonResult(devServerLogRead{devServerToolResult: resp}), nil, nil
+		}
 		return jsonResult(resp), nil, nil
 	})
 }
@@ -291,4 +294,12 @@ type devServerToolResult struct {
 	// container restarts or is redeployed: true after a successful start or
 	// restart, false after stop, absent otherwise.
 	Kept *bool `json:"kept,omitempty"`
+}
+
+// devServerLogRead is a log read's answer. A log read checks nothing, so it
+// says nothing of whether the server runs: Running, always nil, shadows the
+// embedded result's `running`, which a reader would take for "it stopped".
+type devServerLogRead struct {
+	*devServerToolResult
+	Running *bool `json:"running,omitempty"`
 }
