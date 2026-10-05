@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -72,12 +73,36 @@ func workSessionIntent(stateDir string) string {
 	if err != nil || ws == nil {
 		return ""
 	}
-	intent, _, _ := strings.Cut(strings.TrimSpace(strings.ReplaceAll(ws.Intent, "\x00", "")), "\n")
+	return changeTitleOfIntent(ws.Intent)
+}
+
+// changeTitleOfIntent is a task's first line as a change's title: whole while
+// it fits, else cut after the last word that fits — never mid-word — and
+// ended with "…". Only a single word longer than a title is cut inside it.
+func changeTitleOfIntent(text string) string {
+	intent, _, _ := strings.Cut(strings.TrimSpace(strings.ReplaceAll(text, "\x00", "")), "\n")
 	intent = strings.TrimSpace(intent)
-	if runes := []rune(intent); len(runes) > changeTitleRunes {
-		return strings.TrimSpace(string(runes[:changeTitleRunes-1])) + "…"
+	runes := []rune(intent)
+	if len(runes) <= changeTitleRunes {
+		return intent
 	}
-	return intent
+	cut := runes[:changeTitleRunes-1]
+	if !unicode.IsSpace(runes[len(cut)]) {
+		if at := lastSpace(cut); at > 0 {
+			cut = cut[:at]
+		}
+	}
+	return strings.TrimRightFunc(string(cut), func(r rune) bool { return unicode.IsSpace(r) || unicode.IsPunct(r) }) + "…"
+}
+
+// lastSpace is the index of the last space in runes, -1 for none.
+func lastSpace(runes []rune) int {
+	for i := len(runes) - 1; i >= 0; i-- {
+		if unicode.IsSpace(runes[i]) {
+			return i
+		}
+	}
+	return -1
 }
 
 // shipOutcome is what shipping a pair's work as its change ended in.
