@@ -203,6 +203,8 @@ type HQRepoRef struct {
 type ChangeDescription struct {
 	// Text is the description, in markdown.
 	Text string `json:"text"`
+	// Title is the change's title the Mate gave with it, "" for none.
+	Title string `json:"title,omitempty"`
 	// Change is the change it was written for; 0 when it waits for whichever
 	// change the pair opens next.
 	Change int `json:"change,omitempty"`

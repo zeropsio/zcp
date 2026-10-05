@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -40,6 +41,13 @@ type changeRef struct {
 	// DescriptionNote says why the kept description did not go on — its
 	// pictures could not be attached — and is "" otherwise.
 	DescriptionNote string `json:"descriptionNote,omitempty"`
+	// Draft is true when this call moved the change — opened it, or pushed
+	// work onto it — and no description describes it yet: HQ asks the person
+	// to review it only once the Mate describes it at its head.
+	Draft bool `json:"draft,omitempty"`
+	// staleDescription: words the Mate kept for the change were dropped, as
+	// this call moved the change past what they describe.
+	staleDescription bool
 }
 
 // changeTitle heads the change a pair's work lands through: the task in the
@@ -72,12 +80,36 @@ func workSessionIntent(stateDir string) string {
 	if err != nil || ws == nil {
 		return ""
 	}
-	intent, _, _ := strings.Cut(strings.TrimSpace(strings.ReplaceAll(ws.Intent, "\x00", "")), "\n")
+	return changeTitleOfIntent(ws.Intent)
+}
+
+// changeTitleOfIntent is a task's first line as a change's title: whole while
+// it fits, else cut after the last word that fits — never mid-word — and
+// ended with "…". Only a single word longer than a title is cut inside it.
+func changeTitleOfIntent(text string) string {
+	intent, _, _ := strings.Cut(strings.TrimSpace(strings.ReplaceAll(text, "\x00", "")), "\n")
 	intent = strings.TrimSpace(intent)
-	if runes := []rune(intent); len(runes) > changeTitleRunes {
-		return strings.TrimSpace(string(runes[:changeTitleRunes-1])) + "…"
+	runes := []rune(intent)
+	if len(runes) <= changeTitleRunes {
+		return intent
 	}
-	return intent
+	cut := runes[:changeTitleRunes-1]
+	if !unicode.IsSpace(runes[len(cut)]) {
+		if at := lastSpace(cut); at > 0 {
+			cut = cut[:at]
+		}
+	}
+	return strings.TrimRightFunc(string(cut), func(r rune) bool { return unicode.IsSpace(r) || unicode.IsPunct(r) }) + "…"
+}
+
+// lastSpace is the index of the last space in runes, -1 for none.
+func lastSpace(runes []rune) int {
+	for i := len(runes) - 1; i >= 0; i-- {
+		if unicode.IsSpace(runes[i]) {
+			return i
+		}
+	}
+	return -1
 }
 
 // shipOutcome is what shipping a pair's work as its change ended in.
@@ -175,16 +207,20 @@ func shipChange(
 	// The push landed — whatever the landing needed (an absorb, or nothing),
 	// this delivery is done with it.
 	clearLanding(stateDir, m)
-	described, note := putKeptChangeDescription(ctx, hqc, stateDir, m, change.Number)
-	return shipOutcome{unchanged: strings.Contains(string(output), "Everything up-to-date"), ref: &changeRef{
-		Repo:            m.HQ.Repo,
-		Branch:          branch,
-		Base:            hqBase,
-		Number:          change.Number,
-		Created:         opened.Created,
-		URL:             hqc.ChangeURL(m.HQ.AppID, m.HQ.Repo, change.Number),
-		Described:       described,
-		DescriptionNote: note,
+	unchanged := strings.Contains(string(output), "Everything up-to-date")
+	moved := opened.Created || !unchanged
+	described, note, stale := putKeptChangeDescription(ctx, hqc, stateDir, m, change.Number, moved)
+	return shipOutcome{unchanged: unchanged, ref: &changeRef{
+		Repo:             m.HQ.Repo,
+		Branch:           branch,
+		Base:             hqBase,
+		Number:           change.Number,
+		Created:          opened.Created,
+		URL:              hqc.ChangeURL(m.HQ.AppID, m.HQ.Repo, change.Number),
+		Described:        described,
+		DescriptionNote:  note,
+		Draft:            moved,
+		staleDescription: stale,
 	}}
 }
 

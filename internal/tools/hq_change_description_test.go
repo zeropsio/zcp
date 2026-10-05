@@ -19,7 +19,13 @@ const describedWords = "## What it does\n\nShows how many todos are still open, 
 // describe is zerops_workflow action="describe-change" in the lab.
 func (l *hqLab) describe(service, words string) (text string, isError bool) {
 	l.t.Helper()
-	res, typed, err := handleDescribeChange(context.Background(), l.hq.srv.Client(), l.stateDir, WorkflowInput{Service: service, Description: words})
+	return l.describeTitled(service, "", words)
+}
+
+// describeTitled is describe-change with a title for the change.
+func (l *hqLab) describeTitled(service, title, words string) (text string, isError bool) {
+	l.t.Helper()
+	res, typed, err := handleDescribeChange(context.Background(), l.hq.srv.Client(), l.stateDir, WorkflowInput{Service: service, Title: title, Description: words})
 	if err != nil {
 		l.t.Fatalf("handleDescribeChange: %v", err)
 	}
@@ -47,9 +53,12 @@ func TestDescribeChange(t *testing.T) {
 		// lab builds the state the words meet.
 		lab      func(t *testing.T) *hqLab
 		service  string
+		title    string
 		wantBody string
-		wantKept *workflow.ChangeDescription
-		wantText []string
+		// wantTitle is change #1's title after, "" for the one it opened with.
+		wantTitle string
+		wantKept  *workflow.ChangeDescription
+		wantText  []string
 		// wantChange is the change the pair records after; wantLanded whether
 		// a landing is.
 		wantChange int
@@ -58,22 +67,28 @@ func TestDescribeChange(t *testing.T) {
 		{
 			name: "the open change takes the words at once", lab: deliveredLab,
 			wantBody: describedWords, wantChange: 1,
-			wantText: []string{`"described":true`, `"pullRequest":1`, "/changes/app-1/appdev/1", "whenever the change grows"},
+			wantText: []string{`"described":true`, `"pullRequest":1`, "/changes/app-1/appdev/1", "draft again"},
 		},
 		{
 			name: "the stage half names the pair too", lab: deliveredLab, service: "appstage",
 			wantBody: describedWords, wantChange: 1, wantText: []string{`"described":true`},
 		},
 		{
-			name: "no change yet: kept for the one the next delivery opens",
+			name: "the words name this repository's change by a title of their own", lab: deliveredLab,
+			title: "  Count the open todos above the list  ", wantTitle: "Count the open todos above the list",
+			wantBody: describedWords, wantChange: 1, wantText: []string{`"described":true`},
+		},
+		{
+			// Words describe the work a change carries; the change the next delivery opens carries
+			// whatever the pair holds then, so nothing is kept for it.
+			name: "no change yet: nothing to describe until the next delivery opens it",
 			lab: func(t *testing.T) *hqLab {
 				t.Helper()
 				lab := newHQLab(t)
 				lab.wire()
 				return lab
 			},
-			wantKept: &workflow.ChangeDescription{Text: describedWords},
-			wantText: []string{`"described":false`, `"kept":true`, "next delivery", "appstage"},
+			wantText: []string{`"described":false`, "No change is open", "draft", "appstage"},
 		},
 		{
 			name: "an open change missing from the record is found and described",
@@ -121,7 +136,7 @@ func TestDescribeChange(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			lab := tt.lab(t)
-			text, isError := lab.describe(tt.service, "\n"+describedWords+"\n\n")
+			text, isError := lab.describeTitled(tt.service, tt.title, "\n"+describedWords+"\n\n")
 			if isError {
 				t.Fatalf("want an answer, got an error:\n%s", text)
 			}
@@ -132,6 +147,12 @@ func TestDescribeChange(t *testing.T) {
 			}
 			if change := lab.hq.change(1); change != nil && change.Body != tt.wantBody {
 				t.Errorf("change #1's body = %q, want %q", change.Body, tt.wantBody)
+			}
+			if change := lab.hq.change(1); change != nil && tt.wantTitle != "" && change.Title != tt.wantTitle {
+				t.Errorf("change #1's title = %q, want %q", change.Title, tt.wantTitle)
+			}
+			if strings.Contains(text, `"kept":true`) != (tt.wantKept != nil) {
+				t.Errorf("the answer says kept=%v, want %v:\n%s", tt.wantKept == nil, tt.wantKept != nil, text)
 			}
 			meta := lab.meta()
 			if got := meta.HQ.ChangeDescription; (got == nil) != (tt.wantKept == nil) || got != nil && *got != *tt.wantKept {
@@ -147,28 +168,77 @@ func TestDescribeChange(t *testing.T) {
 	}
 }
 
-// TestDescribeChange_KeptWordsGoOntoTheNextChange: words kept while no change
-// could carry them go onto the one the next delivery opens, and are no longer
-// kept then.
-func TestDescribeChange_KeptWordsGoOntoTheNextChange(t *testing.T) {
+// TestDescribeChange_KeptWordsMeetThePushAfterThem: words HQ did not take
+// wait for the change they were written for, and go on with the next push only
+// while that push sends nothing — the change is still what they describe. A
+// push that moves the change past them drops them: they describe it as it
+// was, so it stays a draft and the Mate is asked to describe it again.
+func TestDescribeChange_KeptWordsMeetThePushAfterThem(t *testing.T) {
+	tests := []struct {
+		name      string
+		moreWork  bool
+		wantBody  string
+		wantTitle string
+		wantDraft bool
+		wantLine  []string
+	}{
+		{
+			name: "a push that sends nothing puts them on", wantBody: describedWords, wantTitle: "Count the open todos",
+			wantLine: []string{"carries the description you wrote"},
+		},
+		{
+			name: "a push that moves the change drops them, and the change is a draft again", moreWork: true,
+			wantTitle: "Mate: appdev", wantDraft: true,
+			wantLine: []string{"before this push", "is a draft", `action="describe-change"`, "title="},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lab := deliveredLab(t)
+			lab.hq.setDown(true)
+			if text, isError := lab.describeTitled("", "Count the open todos", describedWords); isError || !strings.Contains(text, `"kept":true`) {
+				t.Fatalf("want the words kept while HQ does not answer:\n%s", text)
+			}
+			lab.hq.setDown(false)
+			if tt.moreWork {
+				lab.write(map[string]string{"index.js": "the app, grown\n"})
+			}
+			delivery := lab.deliver()
+			if delivery == nil || delivery.Change == nil {
+				t.Fatalf("delivery: %+v", delivery)
+			}
+			if delivery.Change.Described == tt.wantDraft || delivery.Change.Draft != tt.wantDraft {
+				t.Errorf("described=%v draft=%v, want described=%v draft=%v", delivery.Change.Described, delivery.Change.Draft, !tt.wantDraft, tt.wantDraft)
+			}
+			if change := lab.hq.change(1); change == nil || change.Body != tt.wantBody || change.Title != tt.wantTitle {
+				t.Errorf("change #1 = %+v, want body %q and title %q", change, tt.wantBody, tt.wantTitle)
+			}
+			for _, want := range tt.wantLine {
+				if !strings.Contains(delivery.Line, want) {
+					t.Errorf("the line misses %q:\n%s", want, delivery.Line)
+				}
+			}
+			if kept := lab.meta().HQ.ChangeDescription; kept != nil {
+				t.Errorf("the push met the words, yet they are still kept: %+v", kept)
+			}
+		})
+	}
+}
+
+// TestDelivery_OpensADraft: a change opens as a draft — the person is not
+// asked to review it until the Mate describes it — and the delivery says so.
+func TestDelivery_OpensADraft(t *testing.T) {
 	lab := newHQLab(t)
 	lab.wire()
-	if text, isError := lab.describe("", describedWords); isError || !strings.Contains(text, `"kept":true`) {
-		t.Fatalf("want the words kept:\n%s", text)
-	}
 	lab.write(map[string]string{"index.js": "the app\n"})
 	delivery := lab.deliver()
-	if delivery == nil || delivery.Change == nil || !delivery.Change.Described {
-		t.Fatalf("the delivery must put the kept words on its change: %+v", delivery)
+	if delivery == nil || delivery.Change == nil || !delivery.Change.Draft || delivery.Change.Described {
+		t.Fatalf("want a draft change: %+v", delivery)
 	}
-	if change := lab.hq.change(1); change == nil || change.Body != describedWords {
-		t.Errorf("change #1 = %+v, want the kept words as its body", change)
-	}
-	if !strings.Contains(delivery.Line, "carries the description you wrote") {
-		t.Errorf("the line must say the description went on:\n%s", delivery.Line)
-	}
-	if kept := lab.meta().HQ.ChangeDescription; kept != nil {
-		t.Errorf("the words are on the change, yet still kept: %+v", kept)
+	for _, want := range []string{"is a draft", `action="describe-change"`, "title=", "this repository"} {
+		if !strings.Contains(delivery.Line, want) {
+			t.Errorf("the line misses %q:\n%s", want, delivery.Line)
+		}
 	}
 }
 
@@ -181,6 +251,7 @@ func TestDescribeChange_Refusals(t *testing.T) {
 		pairs       []string
 		plainPair   string
 		service     string
+		title       string
 		description string
 		wantText    []string
 	}{
@@ -188,6 +259,12 @@ func TestDescribeChange_Refusals(t *testing.T) {
 			wantText: []string{"PREREQUISITE_MISSING", "not enrolled"}},
 		{name: "no words", pairs: []string{"appdev"}, description: " \n\t ", wantText: []string{"INVALID_PARAMETER", "description"}},
 		{name: "a NUL no description keeps", pairs: []string{"appdev"}, description: "words\x00more", wantText: []string{"INVALID_PARAMETER", "NUL"}},
+		{name: "a title longer than HQ keeps", pairs: []string{"appdev"}, title: strings.Repeat("ä", changeTitleRunes+1), description: describedWords,
+			wantText: []string{"INVALID_PARAMETER", "title", "120"}},
+		{name: "a title of more than one line", pairs: []string{"appdev"}, title: "Count the todos\nand more", description: describedWords,
+			wantText: []string{"INVALID_PARAMETER", "title", "one line"}},
+		{name: "a title holding a NUL", pairs: []string{"appdev"}, title: "Count\x00", description: describedWords,
+			wantText: []string{"INVALID_PARAMETER", "title", "NUL"}},
 		{name: "more than a page", pairs: []string{"appdev"}, description: strings.Repeat("a", changeDescriptionMaxRunes+1),
 			wantText: []string{"INVALID_PARAMETER", "20000"}},
 		{name: "a picture this Mate does not keep", pairs: []string{"appdev"}, description: "![gone](shot-7)",
@@ -230,7 +307,7 @@ func TestDescribeChange_Refusals(t *testing.T) {
 			}
 
 			res, _, err := handleDescribeChange(context.Background(), fake.srv.Client(), stateDir,
-				WorkflowInput{Service: tt.service, Description: tt.description})
+				WorkflowInput{Service: tt.service, Title: tt.title, Description: tt.description})
 			if err != nil {
 				t.Fatalf("handleDescribeChange: %v", err)
 			}
