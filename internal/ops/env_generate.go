@@ -152,9 +152,6 @@ type refExpander struct {
 //     messaging (0 means full success),
 //   - infrastructure / cycle errors that abort the whole operation.
 func (r *refExpander) expandRefs(ctx context.Context, value, sourceService string, visited map[string]bool, depth int) (string, int, error) {
-	if depth > maxRefExpansionDepth {
-		return "", 0, fmt.Errorf("ref expansion depth exceeded (>%d) at %q", maxRefExpansionDepth, value)
-	}
 	matches := FindEnvRefs(value)
 	if len(matches) == 0 {
 		return value, 0, nil
@@ -262,6 +259,11 @@ func (r *refExpander) expandRefs(ctx context.Context, value, sourceService strin
 			continue
 		}
 
+		// Named by the reference, never by its value: a value half
+		// expanded holds the secrets resolved into it.
+		if depth+1 > maxRefExpansionDepth {
+			return "", 0, fmt.Errorf("ref expansion depth exceeded (>%d) at %s", maxRefExpansionDepth, key)
+		}
 		nextVisited := make(map[string]bool, len(visited)+1)
 		for k := range visited {
 			nextVisited[k] = true
