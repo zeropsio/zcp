@@ -463,9 +463,13 @@ func TestPollBuild_Timeout(t *testing.T) {
 	cfg := testConfig()
 	cfg.timeout = 10 * time.Millisecond
 
-	_, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, cfg)
+	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, cfg)
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
+	}
+	// Given up, it still names the build it followed: the client follows it on.
+	if event == nil || event.ID != "av-0" || event.Status != statusBuilding {
+		t.Errorf("event = %+v, want the BUILDING build av-0", event)
 	}
 
 	var pe *platform.PlatformError
@@ -488,9 +492,12 @@ func TestPollBuild_ContextCanceled(t *testing.T) {
 		cancel()
 	}()
 
-	_, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, testConfig())
+	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, testConfig())
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+	if event == nil || event.ID != "av-0" {
+		t.Errorf("event = %+v, want the build av-0 it followed", event)
 	}
 	if err != context.Canceled {
 		t.Errorf("error = %v, want context.Canceled", err)

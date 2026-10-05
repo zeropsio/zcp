@@ -12,8 +12,11 @@ import (
 	"errors"
 	"maps"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/mate"
 )
@@ -23,9 +26,9 @@ import (
 func validManifestJSON(t *testing.T, overrides map[string]any) []byte {
 	t.Helper()
 	body := map[string]any{
-		"version":     "0.9.0",
-		"asset":       "zerops-mate-0.9.0.tgz",
-		"url":         "https://github.com/zeropsio/mate/releases/download/v0.9.0/zerops-mate-0.9.0.tgz",
+		"version":     "0.14.2",
+		"asset":       "zerops-mate-0.14.2.tgz",
+		"url":         "https://github.com/zeropsio/mate/releases/download/v0.14.2/zerops-mate-0.14.2.tgz",
 		"sha256":      strings.Repeat("a", 64),
 		"size":        21690443,
 		"contract":    mate.SupportedContract,
@@ -61,8 +64,8 @@ func TestDesiredRelease_FetchesValidManifest_AndCaches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DesiredRelease(): %v", err)
 	}
-	if got.Version != "0.9.0" || got.Contract != mate.SupportedContract {
-		t.Errorf("DesiredRelease() = %+v, want version 0.9.0 contract %d", got, mate.SupportedContract)
+	if got.Version != "0.14.2" || got.Contract != mate.SupportedContract {
+		t.Errorf("DesiredRelease() = %+v, want version 0.14.2 contract %d", got, mate.SupportedContract)
 	}
 	if requests != 1 {
 		t.Fatalf("expected exactly one fetch, got %d", requests)
@@ -158,13 +161,27 @@ func TestDesiredRelease_RefusesInvalidManifest(t *testing.T) {
 			wantIn:    "0.0.1",
 		},
 		{
+			// 0.13.0 is the first release that keeps a link to HQ
+			// (T3CODE_ZEROPS_HQ_ENROLLMENT): one before it cannot be a Mate.
+			name:      "a release before HQ",
+			overrides: map[string]any{"version": "0.12.3"},
+			wantIn:    "0.12.3",
+		},
+		{
+			// 0.14.0 is the first release that judges a stand-up by its zcp
+			// process, the heartbeat this zcp no longer writes.
+			name:      "a release before process liveness",
+			overrides: map[string]any{"version": "0.13.11"},
+			wantIn:    "0.13.11",
+		},
+		{
 			name:      "sha256 not 64 hex characters",
 			overrides: map[string]any{"sha256": "not-a-digest"},
 			wantIn:    "sha256",
 		},
 		{
 			name:      "url is not https",
-			overrides: map[string]any{"url": "http://github.com/zeropsio/mate/releases/download/v0.9.0/zerops-mate-0.9.0.tgz"},
+			overrides: map[string]any{"url": "http://github.com/zeropsio/mate/releases/download/v0.14.2/zerops-mate-0.14.2.tgz"},
 			wantIn:    "https",
 		},
 	}
@@ -183,6 +200,51 @@ func TestDesiredRelease_RefusesInvalidManifest(t *testing.T) {
 				t.Errorf("DesiredRelease() error = %q, want it to mention %q", err, tt.wantIn)
 			}
 		})
+	}
+}
+
+// TestDesiredRelease_CacheBelowTheMinimumIsNotTrusted: the cache holds what
+// an earlier zcp validated against its own floor. A manifest below this
+// build's MinimumMateVersion is not answered from it — not within the TTL,
+// and not as a refresh's fallback with the manifest unreachable.
+func TestDesiredRelease_CacheBelowTheMinimumIsNotTrusted(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var stale map[string]any
+	if err := json.Unmarshal(validManifestJSON(t, map[string]any{"version": "0.12.3"}), &stale); err != nil {
+		t.Fatal(err)
+	}
+	cache, err := json.Marshal(map[string]any{"fetchedAt": time.Now().UTC(), "manifest": stale})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(mate.Prefix(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mate.Prefix(), "manifest.json"), cache, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reachable := true
+	var requests int
+	client := manifestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		if !reachable {
+			http.Error(w, "gateway timeout", http.StatusGatewayTimeout)
+			return
+		}
+		_, _ = w.Write(validManifestJSON(t, nil))
+	})
+
+	reachable = false
+	if got, err := mate.DesiredRelease(context.Background(), client, mate.ManifestOptions{Refresh: true}); err == nil {
+		t.Fatalf("an unreachable manifest must not fall back to a cache below the minimum, got %+v", got)
+	}
+	reachable = true
+	got, err := mate.DesiredRelease(context.Background(), client, mate.ManifestOptions{})
+	if err != nil {
+		t.Fatalf("DesiredRelease(): %v", err)
+	}
+	if got.Version != "0.14.2" || requests != 2 {
+		t.Errorf("DesiredRelease() = %s after %d requests, want the fetched 0.14.2, never the cached 0.12.3", got.Version, requests)
 	}
 }
 

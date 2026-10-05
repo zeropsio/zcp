@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -59,8 +61,8 @@ type hqPairState struct {
 const hqCallTimeout = 30 * time.Second
 
 // openHQ is a client of the HQ this Mate enrolled with (hq.EnrollmentPath),
-// over httpClient; false when the Mate is not enrolled yet — it then delivers
-// nothing, the way a Mate without its forge wiring did.
+// over httpClient; false when the Mate is not enrolled yet, or its enrollment
+// cannot be read (hqEnrollmentProblem says which).
 func openHQ(httpClient ops.HTTPDoer) (hq.Client, bool) {
 	if httpClient == nil {
 		return hq.Client{}, false
@@ -69,11 +71,19 @@ func openHQ(httpClient ops.HTTPDoer) (hq.Client, bool) {
 	return client, err == nil
 }
 
-// hqWired reports whether this Mate delivers through HQ: it holds an
-// enrollment with its org's official HQ.
-func hqWired() bool {
+// hqEnrollmentProblem says why this Mate cannot speak to its HQ, "" when it
+// holds an enrollment it can read. Being a Mate (runtime.Info.MateEnabled) is
+// what makes HQ the authority; the enrollment is only how zcp reaches it, so
+// work that needs HQ says this rather than taking zcp's standalone path.
+func hqEnrollmentProblem() string {
 	_, found, err := hq.LoadEnrollment(hq.EnrollmentPath())
-	return err == nil && found
+	switch {
+	case err != nil:
+		return fmt.Sprintf("this Mate's HQ enrollment cannot be read (%v)", err)
+	case !found:
+		return "this Mate holds no HQ enrollment yet — its own service (zcp service mate) keeps enrolling it"
+	}
+	return ""
 }
 
 // hqAddress is the address of the HQ this Mate enrolled with, "" when it has
@@ -84,6 +94,26 @@ func hqAddress() string {
 		return ""
 	}
 	return strings.TrimRight(kept.HQ, "/")
+}
+
+// hqRepositoryActions are the public zerops_workflow actions that choose a
+// pair's repository, its credential or what builds from it.
+var hqRepositoryActions = map[string]bool{"git-push-setup": true, "build-integration": true}
+
+// hqRepositoryActionRefusal is a Mate's answer to hqRepositoryActions: in a
+// Mate all three are HQ's. zcp
+// wires each pair to its repository in HQ itself (wireHQPair), keeps the
+// push credential current from the enrollment (hqEnsurePushCredential), and
+// Core deploys the application's environments from the repository's commits
+// — so a remote, a token or a CI chosen here would only diverge from HQ's
+// record. A remote of the user's own a pair already pushes to is left alone
+// (hqPairNeedsRepository); this action does not move it either.
+func hqRepositoryActionRefusal(action string) *mcp.CallToolResult {
+	return convertError(platform.NewPlatformError(
+		platform.ErrInvalidUsage,
+		fmt.Sprintf("%s does not run in a Mate: each pair's repository in HQ, the credential it pushes with and what builds from it are HQ's, and nothing here chooses them.", action),
+		"ZCP wires a bootstrapped pair to its repository in HQ on the next bootstrap or adopt pass, and deploying the pair's stage half delivers its work. A push that HQ refuses is checked against this Mate's current HQ credential again on the next push — no token is to be asked for or made up. A pair already pushing to a remote of the user's own keeps it; moving it is the person's call, not this action's.",
+	), WithRecoveryStatus())
 }
 
 // hqMateBranch is the Mate's local branch in a pair's checkout: mate/<its
@@ -359,8 +389,10 @@ type hqWiringOutcome struct {
 
 // wireHQPair gives one pair its repository in HQ and its own branch: the
 // repository repoName in the application HQ holds the Mate in (made if new),
-// git-push to it, the Mate's branch cut from its `main`, the HQ record, the
-// workflow file. repoName is the pair's dev hostname for a pair zcp
+// git-push to it, the Mate's branch cut from its `main`, and the HQ record —
+// nothing builds from the repository on the Mate's side: Core deploys the
+// application's environments from its commits. repoName is the pair's dev
+// hostname for a pair zcp
 // bootstrapped, and the repository the group's recipe names for a pair a
 // stand-up adopted from it (standup.go). A pair whose Mate HQ now holds in another application
 // is wired again there: the repository of the same name in the new

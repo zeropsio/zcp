@@ -41,7 +41,7 @@ func TestUpdateStatus_WritesSchemaV1(t *testing.T) {
 		state   string
 	}{
 		{"runtimes", []string{"endedAt", "error", "services", "startedAt", "state", "updatedAt"}, "none"},
-		{"standup", []string{"endedAt", "error", "phase", "services", "startedAt", "state", "updatedAt"}, "idle"},
+		{"standup", []string{"endedAt", "error", "phase", "services", "startedAt", "state"}, "idle"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.section, func(t *testing.T) {
@@ -67,7 +67,9 @@ func TestUpdateStatus_WritesSchemaV1(t *testing.T) {
 	}
 }
 
-// TestUpdateStatus_ServiceEntries pins the per-service wire names.
+// TestUpdateStatus_ServiceEntries pins the per-service wire names, the
+// stand-up's process the mate server reads its liveness by, and the start of
+// the call it matches a section to.
 func TestUpdateStatus_ServiceEntries(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "status.json")
 	err := mate.UpdateStatus(path, func(s *mate.Status) {
@@ -75,6 +77,8 @@ func TestUpdateStatus_ServiceEntries(t *testing.T) {
 		s.Runtimes.Services = []mate.RuntimeService{{Hostname: "appdev", State: mate.ServiceCreating, ProcessID: "p1"}}
 		s.Standup.State = mate.StandupRunning
 		s.Standup.Services = []mate.StandupService{{Hostname: "appdev", Step: mate.StepBuild, State: mate.StepRunning, ProcessID: "p2", At: "2026-10-01T10:00:00Z"}}
+		s.Standup.Process = &mate.StandupProcess{PID: 42, Start: "1234"}
+		s.Standup.CallStartedAt = "2026-10-01T10:05:00Z"
 	})
 	if err != nil {
 		t.Fatalf("UpdateStatus: %v", err)
@@ -85,11 +89,16 @@ func TestUpdateStatus_ServiceEntries(t *testing.T) {
 			Services []map[string]any `json:"services"`
 		} `json:"runtimes"`
 		Standup struct {
-			Services []map[string]any `json:"services"`
+			Services      []map[string]any `json:"services"`
+			Process       map[string]any   `json:"process"`
+			CallStartedAt string           `json:"callStartedAt"`
 		} `json:"standup"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("parse: %v", err)
+	}
+	if doc.Standup.CallStartedAt != "2026-10-01T10:05:00Z" {
+		t.Errorf("standup.callStartedAt = %q, want the call's start", doc.Standup.CallStartedAt)
 	}
 	tests := []struct {
 		name  string
@@ -98,6 +107,7 @@ func TestUpdateStatus_ServiceEntries(t *testing.T) {
 	}{
 		{"runtime service", doc.Runtimes.Services[0], map[string]any{"hostname": "appdev", "state": "creating", "processId": "p1", "error": ""}},
 		{"stand-up service", doc.Standup.Services[0], map[string]any{"hostname": "appdev", "step": "build", "state": "running", "processId": "p2", "at": "2026-10-01T10:00:00Z", "error": ""}},
+		{"stand-up process", doc.Standup.Process, map[string]any{"pid": float64(42), "start": "1234"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -208,33 +218,25 @@ func TestStatusFilePath(t *testing.T) {
 	}
 }
 
-// TestUpdateSection_OneClockPerWriter: each section carries the time its own
-// writer last wrote it — the stand-up's is what tells a live stand-up from a
-// dead one — and a write of one section never moves the other's.
-func TestUpdateSection_OneClockPerWriter(t *testing.T) {
+// TestUpdateSection_OnlyTheBootImportMovesItsClock: the runtimes section
+// carries the time the boot import last wrote it, and a stand-up's write
+// never moves it.
+func TestUpdateSection_OnlyTheBootImportMovesItsClock(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "status.json")
-	if err := mate.UpdateRuntimes(path, func(r *mate.RuntimesStatus) { r.State = mate.RuntimesImporting }); err != nil {
-		t.Fatal(err)
-	}
-	if err := mate.UpdateStandup(path, func(s *mate.StandupStatus) { s.State = mate.StandupRunning }); err != nil {
-		t.Fatal(err)
-	}
 	old := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
-	if err := mate.UpdateStatus(path, func(s *mate.Status) { s.Runtimes.UpdatedAt, s.Standup.UpdatedAt = old, old }); err != nil {
-		t.Fatal(err)
-	}
 	tests := []struct {
-		name        string
-		write       func() error
-		wantRuntime bool // runtimes.updatedAt moved
-		wantStandup bool
+		name  string
+		write func() error
+		moved bool
 	}{
-		{"the boot import writes", func() error { return mate.UpdateRuntimes(path, func(*mate.RuntimesStatus) {}) }, true, false},
-		{"the stand-up writes", func() error { return mate.UpdateStandup(path, func(*mate.StandupStatus) {}) }, false, true},
+		{"the boot import writes", func() error { return mate.UpdateRuntimes(path, func(*mate.RuntimesStatus) {}) }, true},
+		{"the stand-up writes", func() error {
+			return mate.UpdateStandup(path, func(s *mate.StandupStatus) { s.State = mate.StandupRunning })
+		}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := mate.UpdateStatus(path, func(s *mate.Status) { s.Runtimes.UpdatedAt, s.Standup.UpdatedAt = old, old }); err != nil {
+			if err := mate.UpdateStatus(path, func(s *mate.Status) { s.Runtimes.UpdatedAt = old }); err != nil {
 				t.Fatal(err)
 			}
 			if err := tt.write(); err != nil {
@@ -244,11 +246,8 @@ func TestUpdateSection_OneClockPerWriter(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if moved := st.Runtimes.UpdatedAt != old; moved != tt.wantRuntime {
-				t.Errorf("runtimes.updatedAt moved = %v, want %v", moved, tt.wantRuntime)
-			}
-			if moved := st.Standup.UpdatedAt != old; moved != tt.wantStandup {
-				t.Errorf("standup.updatedAt moved = %v, want %v", moved, tt.wantStandup)
+			if moved := st.Runtimes.UpdatedAt != old; moved != tt.moved {
+				t.Errorf("runtimes.updatedAt moved = %v, want %v", moved, tt.moved)
 			}
 		})
 	}

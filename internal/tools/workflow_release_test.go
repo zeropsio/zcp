@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -68,6 +67,24 @@ func TestHandleRelease_PromptSuggestsNextVersion(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("release-prompt missing %q; got: %s", want, body)
 		}
+	}
+}
+
+// TestHandleRelease_AnEnrollmentOutsideAMateKeepsTheSourceRelease: being a
+// Mate is what hands a release to the person, never an enrollment file — a
+// container that is not a Mate tags its pushed source as before.
+func TestHandleRelease_AnEnrollmentOutsideAMateKeepsTheSourceRelease(t *testing.T) {
+	// non-parallel: redirects HOME and stubs the package-level push-proof reader.
+	t.Setenv("HOME", t.TempDir())
+	enrollAs(t, "kept")
+	stateDir := t.TempDir()
+	seedReleaseMeta(t, stateDir, nil)
+	stubPushProof(t, LaunchPushProofResult{LocalHead: "abc123def456", RemoteHead: "abc123def456"})
+	ssh := &containerSSHStub{dispatch: func(string) ([]byte, error) { return []byte("ok"), nil }}
+
+	result, _, _ := handleRelease(context.Background(), ssh, WorkflowInput{Service: "weather"}, stateDir, runtime.Info{InContainer: true})
+	if body := extractText(result); result.IsError || !strings.Contains(body, "release-prompt") {
+		t.Fatalf("want the source-side release prompt, got: %s", body)
 	}
 }
 
@@ -186,29 +203,31 @@ func TestHandleRelease_TagsAndPushes(t *testing.T) {
 	}
 }
 
+// A Mate's release is the person's, enrolled with its HQ or not yet; a pair
+// whose HQ repository is on record stays HQ's outside a Mate too.
+//
 // Non-parallel: isolates enrollment with HOME and stubs the push-proof reader.
 func TestHandleRelease_HQHandsOffBeforeLegacyPreflight(t *testing.T) {
 	tests := []struct {
 		name         string
-		enrolled     bool
+		mate         bool
+		enrollment   string
 		pairRecorded bool
 		input        WorkflowInput
 	}{
-		{name: "enrolled without service", enrolled: true},
-		{name: "enrolled without bootstrap", enrolled: true, input: WorkflowInput{Service: "missing"}},
-		{name: "enrolled prompt", enrolled: true, input: WorkflowInput{Service: "weather"}},
-		{name: "enrolled version confirmed", enrolled: true, input: WorkflowInput{Service: "weather", ReleaseVersion: "v1.0.1"}},
-		{name: "enrolled legacy version invalid", enrolled: true, input: WorkflowInput{Service: "weather", ReleaseVersion: "invalid"}},
-		{name: "recorded HQ pair without enrollment", pairRecorded: true, input: WorkflowInput{Service: "weather", ReleaseVersion: "v1.0.1"}},
+		{name: "a Mate without service", mate: true, enrollment: "kept"},
+		{name: "a Mate without bootstrap", mate: true, enrollment: "kept", input: WorkflowInput{Service: "missing"}},
+		{name: "a Mate's prompt", mate: true, enrollment: "kept", input: WorkflowInput{Service: "weather"}},
+		{name: "a Mate's version confirmed", mate: true, enrollment: "kept", input: WorkflowInput{Service: "weather", ReleaseVersion: "v1.0.1"}},
+		{name: "a Mate's legacy version invalid", mate: true, enrollment: "kept", input: WorkflowInput{Service: "weather", ReleaseVersion: "invalid"}},
+		{name: "a Mate not enrolled yet", mate: true, enrollment: "missing", input: WorkflowInput{Service: "weather", ReleaseVersion: "v1.0.1"}},
+		{name: "a Mate whose enrollment cannot be read", mate: true, enrollment: "unreadable", input: WorkflowInput{Service: "weather"}},
+		{name: "a recorded HQ pair outside a Mate", enrollment: "missing", pairRecorded: true, input: WorkflowInput{Service: "weather", ReleaseVersion: "v1.0.1"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
-			if tt.enrolled {
-				if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: "https://hq.example", ProjectID: "p1", Credential: "test-credential"}); err != nil {
-					t.Fatal(err)
-				}
-			}
+			enrollAs(t, tt.enrollment)
 			stateDir := t.TempDir()
 			seedReleaseMeta(t, stateDir, nil)
 			if tt.pairRecorded {
@@ -228,7 +247,7 @@ func TestHandleRelease_HQHandsOffBeforeLegacyPreflight(t *testing.T) {
 			}
 			t.Cleanup(func() { launchPushProofReader = prev })
 			ssh := &containerSSHStub{}
-			result, structured, err := handleRelease(context.Background(), ssh, tt.input, stateDir, runtime.Info{InContainer: true})
+			result, structured, err := handleRelease(context.Background(), ssh, tt.input, stateDir, runtime.Info{InContainer: true, MateEnabled: tt.mate})
 			if err != nil || structured != nil || result == nil || result.IsError {
 				t.Fatalf("expected a person handoff, got result=%+v structured=%+v err=%v", result, structured, err)
 			}
@@ -262,12 +281,9 @@ func TestHandleRelease_HQExplainsProductionWithoutLegacyPipelineAdvice(t *testin
 	} {
 		t.Run(launches.name, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
-			if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: "https://hq.example", ProjectID: "p1", Credential: "test-credential"}); err != nil {
-				t.Fatal(err)
-			}
 			stateDir := t.TempDir()
 			seedReleaseMeta(t, stateDir, launches.refs)
-			result, _, err := handleRelease(context.Background(), nil, WorkflowInput{Service: "weather"}, stateDir, runtime.Info{InContainer: true})
+			result, _, err := handleRelease(context.Background(), nil, WorkflowInput{Service: "weather"}, stateDir, runtime.Info{InContainer: true, MateEnabled: true})
 			if err != nil || result == nil || result.IsError {
 				t.Fatalf("expected person handoff, got result=%+v err=%v", result, err)
 			}

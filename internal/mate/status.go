@@ -22,7 +22,8 @@ import (
 // section.
 //
 // Schema v1. An absent file is an older zcp; a reader ignores fields it does
-// not know; a field is added only with a version bump.
+// not know. A field a reader may ignore is added within the version; one a
+// reader must understand, or a field whose meaning changes, bumps it.
 
 // EnvStatusFile names the status file in the mate server's environment. The
 // launch sets it (LaunchEnvLines); a process that did not inherit it finds
@@ -67,17 +68,6 @@ const (
 	ServiceDeploying = "deploying"
 	ServiceRunning   = "running"
 	ServiceFailed    = "failed"
-)
-
-// A running stand-up rewrites its section at least every StandupBeat, which
-// moves standup.updatedAt. A stand-up section that says running with an
-// updatedAt older than StandupStale is stale: the process running it died
-// (the zcp MCP server under an agent can go down without a restart of the
-// Mate), and a reader takes it as failed. Each section carries its own
-// writer's clock; the top-level updatedAt moves with any write.
-const (
-	StandupBeat  = 15 * time.Second
-	StandupStale = 2 * time.Minute
 )
 
 // Stand-up states and phases.
@@ -132,15 +122,30 @@ type RuntimeService struct {
 
 // StandupStatus is the stand-up's section.
 type StandupStatus struct {
-	State string `json:"state"`
-	// UpdatedAt is when the stand-up last wrote this section; a running
-	// section older than StandupStale is stale.
-	UpdatedAt string           `json:"updatedAt"`
+	State     string           `json:"state"`
 	Phase     string           `json:"phase"`
 	StartedAt string           `json:"startedAt"`
 	EndedAt   string           `json:"endedAt"`
 	Services  []StandupService `json:"services"`
 	Error     string           `json:"error"`
+	// Process is the zcp MCP server that runs the stand-up. The zcp MCP
+	// server under an agent can go down without a restart of the Mate, and
+	// a running section whose process is provably gone — its PID absent, or
+	// reused by a process with another start time — is a stand-up that died.
+	Process *StandupProcess `json:"process,omitempty"`
+	// CallStartedAt is when the call now running it began: StartedAt for
+	// the call that started it, later for a call that goes on with it (the
+	// stage call of a section a first call left waiting). A reader matches
+	// the section to that call by it.
+	CallStartedAt string `json:"callStartedAt,omitempty"`
+}
+
+// StandupProcess names a process the way the work sessions do: its PID and
+// its start time, which tells the process from a later one under the same
+// PID ("" where the platform cannot read it, which trusts the bare PID).
+type StandupProcess struct {
+	PID   int    `json:"pid"`
+	Start string `json:"start"`
 }
 
 // StandupService is one half the stand-up builds, deploys and verifies.
@@ -240,12 +245,9 @@ func UpdateRuntimes(path string, change func(*RuntimesStatus)) error {
 	})
 }
 
-// UpdateStandup changes the stand-up's section, moving its clock.
+// UpdateStandup changes the stand-up's section.
 func UpdateStandup(path string, change func(*StandupStatus)) error {
-	return UpdateStatus(path, func(s *Status) {
-		change(&s.Standup)
-		s.Standup.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	})
+	return UpdateStatus(path, func(s *Status) { change(&s.Standup) })
 }
 
 // normalizeStatus stamps the schema and fills what no writer has set yet.

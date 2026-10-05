@@ -86,7 +86,7 @@ func services() map[string]execConfig {
 		// container, and it is what a hand-delivered dev build replaces.
 		"mate": {
 			binary:     mate.BinPath(),
-			argsFn:     mateArgv,
+			argsFn:     mate.ServeArgv,
 			extraEnvFn: mateExtraEnv,
 			guard:      mateGuard,
 			prepare:    mateLaunchSetupThenInstall,
@@ -141,26 +141,6 @@ func mateFlagEnabled(storePath string) bool {
 		}
 	}
 	return false
-}
-
-// mateArgv builds the serve command for the bundle actually installed here.
-//
-// --base-path is a capability, not a preference: the mate CLI rejects an unknown
-// flag fatally, so a bundle predating it would crash-loop this unit at every
-// boot. The probe costs one node startup at launch. What it cannot settle the
-// environment does: the server reads the same prefix from T3CODE_BASE_PATH
-// (mate.LaunchEnvLines), so a probe that could not answer — a cold first start
-// of a just-installed bundle under boot load ran past its timeout — no longer
-// launches a server whose assets do not resolve.
-func mateArgv(binary string) []string {
-	supported, err := mate.BasePathSupport(binary)
-	switch {
-	case err != nil:
-		fmt.Fprintf(os.Stderr, "[zcp] service mate: could not read the bundle's serve --help (%v); omitting --base-path, the server reads %s from %s\n", err, mate.BasePath, mate.EnvBasePath)
-	case !supported:
-		fmt.Fprintf(os.Stderr, "[zcp] service mate: installed bundle does not advertise --base-path; omitting it (mate answers under %s/ but its assets will not resolve)\n", mate.BasePath)
-	}
-	return mate.ServeArgv(binary, supported)
 }
 
 // mateExtraEnv builds mate's process environment: the container's live env store
@@ -313,9 +293,10 @@ const hqCallTimeout = 15 * time.Second
 
 // keepEnrolled is hq.Keep over the container's environment: each attempt
 // builds the client from the live env store as it is then, so a rotated key
-// is the one it uses. An enrollment asks the key's own record which org it is
-// in, to read that org's member list for the official HQ; a recheck asks the
-// kept enrollment's HQ alone (R6). Each attempt that says something about
+// is the one it uses. An enrollment, and the anchor read while the kept HQ
+// does not answer, ask the key's own record which org it is in, to read that
+// org's member list for the official HQ; a recheck asks the kept
+// enrollment's HQ alone (R6). Each attempt that says something about
 // this Mate leaves its outcome beside the enrollment.
 func keepEnrolled(ctx context.Context, env func() func(string) string) {
 	seedInput := ""
@@ -351,6 +332,12 @@ func keepEnrolled(ctx context.Context, env func() func(string) string) {
 			return hq.Result{}, err
 		}
 		return e.Recheck(ctx)
+	}, func(ctx context.Context) (bool, error) {
+		e, err := enroller(ctx, true)
+		if err != nil {
+			return false, err
+		}
+		return e.Moved(ctx)
 	}, hq.KeepOptions{
 		Log: logHQ,
 		// The Mate server says from it why its setup waits (spec-mate §2.8).

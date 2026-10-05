@@ -62,6 +62,8 @@ var defaultBuildPollConfig = pollConfig{
 
 // PollBuild polls SearchAppVersions for a service until build reaches terminal state.
 // Filters events by serviceStackID and checks the latest for ACTIVE or BUILD_FAILED.
+// A poll that gives up — its timeout, or ctx ending — returns its error beside
+// the build it was following (nil while none showed), so the caller can name it.
 // Skips startWithoutCode events (Source="NONE", no build info) which are pre-existing
 // ACTIVE events that would cause the poll to return immediately without waiting for
 // the actual build.
@@ -129,14 +131,14 @@ func pollBuild(
 		// always at least one poll interval before any response on the wire.
 		elapsed := time.Since(start)
 		if elapsed > cfg.timeout {
-			return nil, platform.NewPlatformError(
+			return latest, platform.NewPlatformError(
 				platform.ErrAPITimeout,
 				fmt.Sprintf("Build for service %s timed out after %s", serviceStackID, cfg.timeout),
 				"Check build status manually with zerops_events",
 			)
 		}
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return latest, err
 		}
 		if onProgress != nil {
 			status := "waiting"
@@ -159,7 +161,7 @@ func pollBuild(
 
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return latest, ctx.Err()
 		case <-time.After(interval):
 		}
 	}

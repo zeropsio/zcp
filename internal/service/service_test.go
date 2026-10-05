@@ -184,8 +184,8 @@ func TestList_ReturnsAllServices(t *testing.T) {
 // installFakeMateBundle lays down a bundle that looks exactly like an
 // `npm install --prefix ~/.zcp/mate/versions/<v> zerops-mate@<version>` result —
 // activated via mate.CurrentLink() the way mate.EnsureInstalled leaves it — with a
-// `mate` whose `serve --help` advertises (or hides) --base-path. Returns HOME.
-func installFakeMateBundle(t *testing.T, advertisesBasePath bool) string {
+// `mate` that leaves a help-ran marker in HOME if anything runs it. Returns HOME.
+func installFakeMateBundle(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -195,11 +195,7 @@ func installFakeMateBundle(t *testing.T, advertisesBasePath bool) string {
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("mkdir bundle: %v", err)
 	}
-	help := "  --base-dir   Data directory"
-	if advertisesBasePath {
-		help = "  --base-path   Public path prefix"
-	}
-	if err := os.WriteFile(filepath.Join(binDir, mate.BinName), []byte("#!/bin/sh\necho '"+help+"'\n"), 0o700); err != nil {
+	if err := os.WriteFile(filepath.Join(binDir, mate.BinName), []byte("#!/bin/sh\n: > '"+filepath.Join(home, "help-ran")+"'\n"), 0o700); err != nil {
 		t.Fatalf("write fake mate: %v", err)
 	}
 	current := filepath.Join(home, ".zcp", "mate", "current")
@@ -215,52 +211,44 @@ func installFakeMateBundle(t *testing.T, advertisesBasePath bool) string {
 }
 
 // TestStart_Mate_Argv locks the whole supervised command: the entry point is the
-// bundle inside the prefix (never `npx`, never a PATH lookup), and --base-path
-// is passed only when the installed bundle advertises it — an unknown flag is
-// a fatal parse error for the mate CLI, so passing it blind would crash-loop the
-// unit at every container boot.
+// bundle inside the prefix (never `npx`, never a PATH lookup), and the argv
+// carries no --base-path — whatever the bundle's `serve --help` would say, and
+// without running it. The prefix rides the launch environment
+// (TestStart_Mate_BasePathRidesTheEnv); a flag the bundle might reject is a
+// fatal parse error for the mate CLI, and would crash-loop the unit at boot.
 func TestStart_Mate_Argv(t *testing.T) {
 	// Not parallel — mutates runFunc, HOME and ZCP_MATE_ENABLED.
 	t.Setenv("ZCP_MATE_ENABLED", "1")
-	tests := []struct {
-		name         string
-		advertises   bool
-		wantBasePath bool
-	}{
-		{"bundle advertises --base-path", true, true},
-		{"bundle predates --base-path", false, false},
+	home := installFakeMateBundle(t)
+	var gotBinary string
+	var gotArgs []string
+	service.SetRunFunc(func(binary string, args []string, _ []string) error {
+		gotBinary, gotArgs = binary, args
+		return nil
+	})
+	t.Cleanup(func() { service.ResetRunFunc() })
+
+	if err := service.Start("mate"); err != nil {
+		t.Fatalf("Start(mate): %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			home := installFakeMateBundle(t, tt.advertises)
-			var gotBinary string
-			var gotArgs []string
-			service.SetRunFunc(func(binary string, args []string, _ []string) error {
-				gotBinary, gotArgs = binary, args
-				return nil
-			})
-			t.Cleanup(func() { service.ResetRunFunc() })
 
-			if err := service.Start("mate"); err != nil {
-				t.Fatalf("Start(mate): %v", err)
-			}
-
-			wantBin := filepath.Join(home, ".zcp", "mate", "current", "node_modules", ".bin", mate.BinName)
-			if gotBinary != wantBin {
-				t.Errorf("binary: got %q, want %q", gotBinary, wantBin)
-			}
-			if slices.Contains(gotArgs, "npx") {
-				t.Error("mate must run the local bundle, never npx")
-			}
-			if hasBasePath := slices.Contains(gotArgs, "--base-path"); hasBasePath != tt.wantBasePath {
-				t.Errorf("--base-path present = %v, want %v (argv %q)", hasBasePath, tt.wantBasePath, gotArgs)
-			}
-			for _, want := range []string{"serve", "--mode", "web", "--host", "127.0.0.1", "--no-browser", "--auto-bootstrap-project-from-cwd", "/var/www"} {
-				if !slices.Contains(gotArgs, want) {
-					t.Errorf("argv must contain %q, got %q", want, gotArgs)
-				}
-			}
-		})
+	wantBin := filepath.Join(home, ".zcp", "mate", "current", "node_modules", ".bin", mate.BinName)
+	if gotBinary != wantBin {
+		t.Errorf("binary: got %q, want %q", gotBinary, wantBin)
+	}
+	if slices.Contains(gotArgs, "npx") {
+		t.Error("mate must run the local bundle, never npx")
+	}
+	if slices.Contains(gotArgs, "--base-path") {
+		t.Errorf("argv must not carry --base-path, the prefix rides the env: %q", gotArgs)
+	}
+	for _, want := range []string{"serve", "--mode", "web", "--host", "127.0.0.1", "--no-browser", "--auto-bootstrap-project-from-cwd", "/var/www"} {
+		if !slices.Contains(gotArgs, want) {
+			t.Errorf("argv must contain %q, got %q", want, gotArgs)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, "help-ran")); err == nil {
+		t.Error("a launch must not run the bundle's serve --help")
 	}
 }
 
@@ -271,7 +259,7 @@ func TestStart_Mate_Argv(t *testing.T) {
 func TestStart_Mate_MergesEnvFile(t *testing.T) {
 	// Not parallel — mutates runFunc, HOME and ZCP_MATE_ENABLED.
 	t.Setenv("ZCP_MATE_ENABLED", "1")
-	home := installFakeMateBundle(t, true)
+	home := installFakeMateBundle(t)
 	envFile := filepath.Join(home, ".zcp", "mate.env")
 	body := "T3CODE_ZEROPS_PROJECT_ID=nTV3oMB2SS634ImDJnQckg\nT3CODE_ZEROPS_API_HOST=api.app-prg1.zerops.io\n"
 	if err := os.WriteFile(envFile, []byte(body), 0o600); err != nil {
@@ -297,40 +285,24 @@ func TestStart_Mate_MergesEnvFile(t *testing.T) {
 }
 
 // TestStart_Mate_BasePathRidesTheEnv: the server learns its public prefix
-// from its environment whatever the --base-path probe answered — a probe that
-// could not answer (one of twenty boots, a cold first node start) launched a
-// server whose assets did not resolve.
+// from its environment on every launch — the one way every mate release since
+// v0.1.0 reads it, and one no bundle can reject.
 func TestStart_Mate_BasePathRidesTheEnv(t *testing.T) {
 	// Not parallel — mutates runFunc, HOME and ZCP_MATE_ENABLED.
 	t.Setenv("ZCP_MATE_ENABLED", "1")
-	tests := []struct {
-		name string
-		help string
-	}{
-		{"help advertises the flag", "#!/bin/sh\necho '  --base-path   Public path prefix'\n"},
-		{"help cannot answer", "#!/bin/sh\nexit 1\n"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			home := installFakeMateBundle(t, true)
-			bin := filepath.Join(home, ".zcp", "mate", "current", "node_modules", ".bin", mate.BinName)
-			if err := os.WriteFile(bin, []byte(tt.help), 0o700); err != nil {
-				t.Fatalf("write fake mate: %v", err)
-			}
-			var gotEnv []string
-			service.SetRunFunc(func(_ string, _ []string, extraEnv []string) error {
-				gotEnv = extraEnv
-				return nil
-			})
-			t.Cleanup(func() { service.ResetRunFunc() })
+	installFakeMateBundle(t)
+	var gotEnv []string
+	service.SetRunFunc(func(_ string, _ []string, extraEnv []string) error {
+		gotEnv = extraEnv
+		return nil
+	})
+	t.Cleanup(func() { service.ResetRunFunc() })
 
-			if err := service.Start("mate"); err != nil {
-				t.Fatalf("Start(mate): %v", err)
-			}
-			if !slices.Contains(gotEnv, "T3CODE_BASE_PATH=/mate") {
-				t.Errorf("launch env %q must carry T3CODE_BASE_PATH=/mate", gotEnv)
-			}
-		})
+	if err := service.Start("mate"); err != nil {
+		t.Fatalf("Start(mate): %v", err)
+	}
+	if !slices.Contains(gotEnv, "T3CODE_BASE_PATH=/mate") {
+		t.Errorf("launch env %q must carry T3CODE_BASE_PATH=/mate", gotEnv)
 	}
 }
 
@@ -352,7 +324,7 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			home := installFakeMateBundle(t, true)
+			home := installFakeMateBundle(t)
 			service.SetMateStorePath(writeLiveEnvStore(t, tt.store))
 			t.Cleanup(service.ResetMateStorePath)
 			// The boot import runs until the server is up: one that held the
@@ -453,7 +425,7 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 func TestStart_Mate_EnrollmentFailureStillStartsTheServer(t *testing.T) {
 	// non-parallel: HOME and the launch seams are process-wide.
 	t.Setenv("ZCP_MATE_ENABLED", "1")
-	installFakeMateBundle(t, true)
+	installFakeMateBundle(t)
 	service.SetMateHQPrepare(func(context.Context, func(string) string) error { return errors.New("HQ unavailable") })
 	t.Cleanup(func() { service.SetMateHQPrepare(prepareNothing) })
 	seeded := false
@@ -477,7 +449,7 @@ func TestStart_Mate_EnrollmentFailureStillStartsTheServer(t *testing.T) {
 func TestStart_Mate_MissingEnvFile_StillStarts(t *testing.T) {
 	// Not parallel — mutates runFunc, HOME and ZCP_MATE_ENABLED.
 	t.Setenv("ZCP_MATE_ENABLED", "1")
-	installFakeMateBundle(t, true)
+	installFakeMateBundle(t)
 	called := false
 	service.SetRunFunc(func(string, []string, []string) error {
 		called = true
@@ -506,7 +478,7 @@ func TestStart_Mate_MissingEnvFile_StillStarts(t *testing.T) {
 func TestStart_Mate_GuardRefusesWhenDisabled(t *testing.T) {
 	// Not parallel — mutates runFunc, HOME, the store path and ZCP_MATE_ENABLED.
 	t.Setenv("ZCP_MATE_ENABLED", "")
-	installFakeMateBundle(t, true)
+	installFakeMateBundle(t)
 	service.SetMateStorePath(writeLiveEnvStore(t, map[string]string{"PATH": "/usr/bin"}))
 	t.Cleanup(service.ResetMateStorePath)
 	called := false
@@ -533,7 +505,7 @@ func TestStart_Mate_GuardRefusesWhenDisabled(t *testing.T) {
 func TestStart_Mate_GuardAllowsWhenEnabled(t *testing.T) {
 	// Not parallel — mutates runFunc, HOME and ZCP_MATE_ENABLED.
 	t.Setenv("ZCP_MATE_ENABLED", "1")
-	installFakeMateBundle(t, true)
+	installFakeMateBundle(t)
 	called := false
 	service.SetRunFunc(func(string, []string, []string) error {
 		called = true
@@ -596,7 +568,7 @@ func writeLiveEnvStore(t *testing.T, entries map[string]string) string {
 // already merges into the child.
 func TestStart_Mate_GuardReadsLiveEnvStore_NotOnlyProcessEnv(t *testing.T) {
 	// Not parallel — package-level run/store hooks and HOME.
-	installFakeMateBundle(t, true)
+	installFakeMateBundle(t)
 	t.Setenv("ZCP_MATE_ENABLED", "") // exactly what systemd hands the unit
 
 	service.SetMateStorePath(writeLiveEnvStore(t, map[string]string{
@@ -622,7 +594,7 @@ func TestStart_Mate_GuardReadsLiveEnvStore_NotOnlyProcessEnv(t *testing.T) {
 // existing: a unit that outlived a failed `zsc unit remove` must not resurrect
 // the server. The store is what `zcp init` read when it tried to remove it.
 func TestStart_Mate_GuardRefusesWhenStoreSaysDisabled(t *testing.T) {
-	installFakeMateBundle(t, true)
+	installFakeMateBundle(t)
 	t.Setenv("ZCP_MATE_ENABLED", "")
 
 	service.SetMateStorePath(writeLiveEnvStore(t, map[string]string{"PATH": "/usr/bin"}))
@@ -648,7 +620,7 @@ func TestStart_Mate_GuardRefusesWhenStoreSaysDisabled(t *testing.T) {
 // `zcp init` that saw the flag on created it, and init is also what removes it
 // — so on a container whose env store is broken, starting beats crash-looping.
 func TestStart_Mate_GuardFailsOpenOnUnreadableStore(t *testing.T) {
-	installFakeMateBundle(t, true)
+	installFakeMateBundle(t)
 	t.Setenv("ZCP_MATE_ENABLED", "")
 
 	service.SetMateStorePath(filepath.Join(t.TempDir(), "absent.json"))
@@ -688,7 +660,7 @@ func TestStart_Mate_InstallsBeforeItStarts(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			installFakeMateBundle(t, true)
+			installFakeMateBundle(t)
 			service.SetMateLockWait(200 * time.Millisecond)
 			t.Cleanup(service.ResetMateLockWait)
 			if tt.lockedAway {

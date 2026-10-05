@@ -21,6 +21,13 @@ const runtimeProductionMinContainers = 2
 // SHARED at the cost of higher per-container price.
 const runtimeProductionCPUMode = "DEDICATED"
 
+// LaunchMarker is the production project's description a launch creates it
+// with: what tells the launch's own project from any other of the same name
+// when the call that created it ended before recording it.
+func LaunchMarker(launchID string) string {
+	return "Created by zcp launch-production " + launchID
+}
+
 // productionDefaultCorePackage is the corePackage the composer emits when
 // the caller does not override: SERIOUS (dedicated core) is the production
 // default per the platform spike A.7 — the schema default is LIGHT, which
@@ -217,6 +224,9 @@ func BuildLaunch(
 			"tags":        composeLaunchTags(inputs.SourceProjectID, inputs.AdditionalTags),
 			"corePackage": corePackage,
 			"location":    location,
+		}
+		if inputs.LaunchID != "" {
+			project["description"] = LaunchMarker(inputs.LaunchID)
 		}
 		if len(projectEnvs) > 0 {
 			project["envVariables"] = projectEnvs

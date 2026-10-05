@@ -255,6 +255,9 @@ type LaunchBundleInputs struct {
 	// blocks). Zero value (VariantExportDev) is invalid for launch
 	// inputs; BuildLaunch normalizes to VariantLaunchNew.
 	Variant Variant
+	// LaunchID names the launch the production project is created by; the
+	// launch-new project block carries it as its description (LaunchMarker).
+	LaunchID string
 	// CorePackage selects the production project's core tier
 	// (project.corePackage): SERIOUS (dedicated core — the production
 	// default + recommendation) or LIGHT (shared core — an explicit

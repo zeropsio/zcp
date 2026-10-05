@@ -119,12 +119,12 @@ func RedactCredentialValue(key, value, serviceType string) (string, bool) {
 // reference this constant so they cannot drift apart.
 const GitTokenEnvKey = "GIT_TOKEN"
 
-// GiteaTokenEnvKey is the single owner of the Mate's Gitea bot-token env-var
-// name. The Mate app writes it (sensitive) onto the `zcp` service when the
-// Mate is made; zcp reads it from its PROCESS environment and never writes it
-// anywhere. It is a credential like every other in credentialValueKeys: the
-// value is masked at every echo site, so a variable dump cannot hand a reader
-// write access to the group's code repositories.
+// GiteaTokenEnvKey is the single owner of the retired Gitea bot-token env-var
+// name. Nothing writes or reads it as a credential any more — a Mate reaches
+// its HQ with its enrollment — but Mates made before HQ still carry the
+// variable on their `zcp` service. So it stays a credential in
+// credentialValueKeys, its value masked at every echo site, and out of every
+// group recipe (hq_recipe_inputs.go), until no Mate carries it.
 const GiteaTokenEnvKey = "GITEA_TOKEN"
 
 // LaunchTokenEnvKey is the single owner of the staged launch-token env-var

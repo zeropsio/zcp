@@ -11,6 +11,7 @@ import (
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // The stand-up reports itself twice: to the model, as the progress stream
@@ -30,21 +31,7 @@ type standupStatus struct {
 	path string
 	mu   sync.Mutex
 	now  func() time.Time
-	// beatEvery is how often a running stand-up rewrites the file (0 is
-	// mate.StandupBeat); carryWait how long one whose stages wait for the
-	// second call stays running without it (0 is standupStageWait).
-	beatEvery, carryWait time.Duration
-	// carryMu guards carry, the stop of the beat that keeps a stand-up
-	// running between its calls.
-	carryMu sync.Mutex
-	carry   func()
 }
-
-// standupStageWait bounds how long a stand-up whose stages are queued stays
-// running without the call that builds them. The model is told to make that
-// call in the same turn, once it has started the dev servers: minutes. One
-// that never comes ends the stand-up as the development it stood up.
-const standupStageWait = 15 * time.Minute
 
 func newStandupStatus(path string) *standupStatus {
 	if path == "" {
@@ -66,65 +53,31 @@ func (s *standupStatus) update(change func(*mate.StandupStatus)) {
 
 func (s *standupStatus) stamp() string { return s.now().UTC().Format(time.RFC3339) }
 
-// begin starts a call's section: afresh, a call reporting the halves it
-// touches — unless the stand-up waits for this call to build its stages
-// (carried), when the call goes on with it: the same start, the same halves,
-// running throughout.
+// begin starts a call's section, naming this process as the one running
+// it and stamping the call's start: afresh, a call reporting the halves it touches — unless the stand-up
+// waits for this call to build its stages (carried), when the call goes on
+// with it: the same start, the same halves, running throughout.
 func (s *standupStatus) begin() {
 	if s == nil {
 		return
 	}
-	s.stopCarry()
-	now := s.now()
-	at := now.UTC().Format(time.RFC3339)
+	self := mate.StandupProcess{PID: os.Getpid(), Start: workflow.CurrentProcessStartTime()}
+	at := s.stamp()
 	s.update(func(st *mate.StandupStatus) {
-		if carried(*st, now) {
-			st.State, st.Error = mate.StandupRunning, ""
+		if carried(*st, self) {
+			st.State, st.Error, st.CallStartedAt = mate.StandupRunning, "", at
 			return
 		}
-		*st = mate.StandupStatus{State: mate.StandupRunning, Phase: mate.PhaseDevelopment, StartedAt: at}
+		*st = mate.StandupStatus{State: mate.StandupRunning, Phase: mate.PhaseDevelopment, StartedAt: at, Process: &self, CallStartedAt: at}
 	})
 }
 
-// carried is a section a first call left running for the stages, still
-// alive: its beat stops only when the call that builds them begins.
-func carried(st mate.StandupStatus, now time.Time) bool {
-	if st.State != mate.StandupRunning || st.Phase != mate.PhaseStage || st.EndedAt != "" {
-		return false
-	}
-	updated, err := time.Parse(time.RFC3339, st.UpdatedAt)
-	return err == nil && now.Sub(updated) <= mate.StandupStale
-}
-
-// beat rewrites the file every interval until the returned stop, so the
-// file says the stand-up is alive (mate.StandupStale); stop waits for it.
-// An interval of 0 is the status's own (beatEvery, else mate.StandupBeat).
-func (s *standupStatus) beat(interval time.Duration) func() {
-	if s == nil {
-		return func() {}
-	}
-	if interval <= 0 {
-		interval = s.beatEvery
-	}
-	if interval <= 0 {
-		interval = mate.StandupBeat
-	}
-	quit, done := make(chan struct{}), make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			select {
-			case <-quit:
-				return
-			case <-time.After(interval):
-				s.update(func(*mate.StandupStatus) {})
-			}
-		}
-	}()
-	return func() {
-		close(quit)
-		<-done
-	}
+// carried is a section a first call of this MCP server left running for the
+// stages: one MCP server holds one stand-up across its calls, and a section
+// another process left is not this stand-up.
+func carried(st mate.StandupStatus, self mate.StandupProcess) bool {
+	return st.State == mate.StandupRunning && st.Phase == mate.PhaseStage && st.EndedAt == "" &&
+		st.Process != nil && *st.Process == self
 }
 
 func (s *standupStatus) phase(phase string) {
@@ -164,58 +117,13 @@ func (s *standupStatus) step(host, step, state, processID, errLine string) {
 
 // awaitStages closes a call that stood development up with the stages
 // queued for the next: the stand-up is not over, so its section stays
-// running, in the stage phase, and alive — beaten — until the call that
-// builds the stages begins (begin stops the beat) or carryWait passes, when
-// it ends as the development it stood up.
+// running, in the stage phase, until the call that builds the stages begins.
+// zcp cannot see the agent's turn end; the mate server can, and a turn that
+// ends without that call is the server's to read as the stages not built.
 func (s *standupStatus) awaitStages() {
-	if s == nil {
-		return
-	}
 	s.update(func(st *mate.StandupStatus) {
 		st.State, st.Phase, st.EndedAt, st.Error = mate.StandupRunning, mate.PhaseStage, "", ""
 	})
-	wait := s.carryWait
-	if wait <= 0 {
-		wait = standupStageWait
-	}
-	stopBeat := s.beat(0)
-	quit, done := make(chan struct{}), make(chan struct{})
-	go func() {
-		defer close(done)
-		select {
-		case <-quit:
-			stopBeat()
-		case <-time.After(wait):
-			stopBeat()
-			at := s.stamp()
-			s.update(func(st *mate.StandupStatus) {
-				if st.State == mate.StandupRunning && st.Phase == mate.PhaseStage {
-					st.State, st.Phase, st.EndedAt = mate.StandupDone, mate.PhaseDevelopment, at
-				}
-			})
-		}
-	}()
-	s.carryMu.Lock()
-	s.carry = func() {
-		close(quit)
-		<-done
-	}
-	s.carryMu.Unlock()
-}
-
-// stopCarry stops the beat that keeps a stand-up running between its calls,
-// and waits for it; nothing when none runs.
-func (s *standupStatus) stopCarry() {
-	if s == nil {
-		return
-	}
-	s.carryMu.Lock()
-	stop := s.carry
-	s.carry = nil
-	s.carryMu.Unlock()
-	if stop != nil {
-		stop()
-	}
 }
 
 // end closes the call: failed with errLine when the call refused, else done

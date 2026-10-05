@@ -25,54 +25,26 @@ import (
 	"github.com/zeropsio/zcp/internal/mate"
 )
 
+// TestServeArgv: the supervised command carries no flag whose support
+// depends on the bundle. The public prefix rides T3CODE_BASE_PATH
+// (LaunchEnvLines) on every launch — the same setting as --base-path, which
+// every mate release since v0.1.0 reads — so no launch path, a kept dev build
+// or an installed bundle started after a failed install included, can hand a
+// bundle a flag it might reject, and nothing has to ask `serve --help` first.
 func TestServeArgv(t *testing.T) {
 	t.Setenv("HOME", "/home/zerops")
-
-	tests := []struct {
-		name         string
-		withBasePath bool
-		want         []string
-	}{
-		{
-			name:         "base path advertised",
-			withBasePath: true,
-			want: []string{
-				"/bundle/mate", "serve",
-				"--mode", "web",
-				"--host", "127.0.0.1",
-				"--port", "3773",
-				"--base-path", "/mate",
-				"--base-dir", "/home/zerops/.t3",
-				"--no-browser",
-				"--auto-bootstrap-project-from-cwd",
-				"/var/www",
-			},
-		},
-		{
-			// An installed bundle that predates --base-path must still start:
-			// the flag is dropped, never passed blind (an unknown flag is a
-			// fatal parse error, and the unit would crash-loop at boot).
-			name:         "base path not advertised",
-			withBasePath: false,
-			want: []string{
-				"/bundle/mate", "serve",
-				"--mode", "web",
-				"--host", "127.0.0.1",
-				"--port", "3773",
-				"--base-dir", "/home/zerops/.t3",
-				"--no-browser",
-				"--auto-bootstrap-project-from-cwd",
-				"/var/www",
-			},
-		},
+	want := []string{
+		"/bundle/mate", "serve",
+		"--mode", "web",
+		"--host", "127.0.0.1",
+		"--port", "3773",
+		"--base-dir", "/home/zerops/.t3",
+		"--no-browser",
+		"--auto-bootstrap-project-from-cwd",
+		"/var/www",
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := mate.ServeArgv("/bundle/mate", tt.withBasePath)
-			if !slices.Equal(got, tt.want) {
-				t.Errorf("ServeArgv:\n got %q\nwant %q", got, tt.want)
-			}
-		})
+	if got := mate.ServeArgv("/bundle/mate"); !slices.Equal(got, want) {
+		t.Errorf("ServeArgv:\n got %q\nwant %q", got, want)
 	}
 }
 
@@ -84,7 +56,7 @@ func TestServeArgv(t *testing.T) {
 // value would make mate bootstrap the unit's launch directory instead.
 func TestServeArgv_CwdIsPositional(t *testing.T) {
 	t.Setenv("HOME", "/home/zerops")
-	argv := mate.ServeArgv("/bundle/mate", true)
+	argv := mate.ServeArgv("/bundle/mate")
 	if argv[len(argv)-1] != "/var/www" {
 		t.Errorf("workspace must be the trailing positional argument, got %q", argv[len(argv)-1])
 	}
@@ -110,88 +82,17 @@ var contract1Flags = map[string]bool{
 }
 
 // TestServeArgv_FlagsAreContract1 replaces the old pinned-release golden
-// (MD-16): every long flag ServeArgv passes, with or without the
-// capability-probed --base-path, must belong to contract1Flags. The mate
-// CLI treats an unknown flag as a fatal parse error, so a flag ServeArgv grew
-// outside the contract would crash-loop the unit at every container boot —
-// this catches that without depending on any particular pinned release.
+// (MD-16): every long flag ServeArgv passes must belong to contract1Flags.
+// The mate CLI treats an unknown flag as a fatal parse error, so a flag
+// ServeArgv grew outside the contract would crash-loop the unit at every
+// container boot — this catches that without depending on any particular
+// pinned release.
 func TestServeArgv_FlagsAreContract1(t *testing.T) {
 	t.Setenv("HOME", "/home/zerops")
-
-	for _, withBasePath := range []bool{true, false} {
-		argv := mate.ServeArgv("/bundle/mate", withBasePath)
-		for _, arg := range argv {
-			if !strings.HasPrefix(arg, "--") {
-				continue
-			}
-			if !contract1Flags[arg] {
-				t.Errorf("ServeArgv(withBasePath=%v) passes %q, which is not in contract 1's flag list", withBasePath, arg)
-			}
+	for _, arg := range mate.ServeArgv("/bundle/mate") {
+		if strings.HasPrefix(arg, "--") && !contract1Flags[arg] {
+			t.Errorf("ServeArgv passes %q, which is not in contract 1's flag list", arg)
 		}
-	}
-}
-
-func TestSupportsBasePath(t *testing.T) {
-	dir := t.TempDir()
-
-	advertises := writeFakeBin(t, filepath.Join(dir, "with"), "#!/bin/sh\necho '  --base-path   Public path prefix'\n")
-	silent := writeFakeBin(t, filepath.Join(dir, "without"), "#!/bin/sh\necho '  --base-dir   Data directory'\n")
-	broken := writeFakeBin(t, filepath.Join(dir, "broken"), "#!/bin/sh\nexit 1\n")
-
-	tests := []struct {
-		name string
-		bin  string
-		want bool
-	}{
-		{"help advertises the flag", advertises, true},
-		{"help does not advertise it", silent, false},
-		{"binary fails", broken, false},
-		{"binary does not exist", filepath.Join(dir, "absent"), false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := mate.SupportsBasePath(tt.bin); got != tt.want {
-				t.Errorf("SupportsBasePath(%s) = %v, want %v", tt.name, got, tt.want)
-			}
-		})
-	}
-}
-
-// TestBasePathSupport tells "the help ran and lacks the flag" from "the help
-// could not answer": a just-installed bundle's first node start under boot
-// load ran past the probe's timeout on 1 of 20 boots, and that read as a
-// bundle without --base-path.
-func TestBasePathSupport(t *testing.T) {
-	dir := t.TempDir()
-	advertises := writeFakeBin(t, filepath.Join(dir, "with"), "#!/bin/sh\necho '  --base-path   Public path prefix'\n")
-	silent := writeFakeBin(t, filepath.Join(dir, "without"), "#!/bin/sh\necho '  --base-dir   Data directory'\n")
-	broken := writeFakeBin(t, filepath.Join(dir, "broken"), "#!/bin/sh\nexit 1\n")
-	slow := writeFakeBin(t, filepath.Join(dir, "slow"), "#!/bin/sh\nsleep 5\necho '  --base-path   Public path prefix'\n")
-
-	tests := []struct {
-		name        string
-		bin         string
-		timeout     time.Duration // 0 = the default
-		want        bool
-		wantUnknown bool
-	}{
-		{"help advertises the flag", advertises, 0, true, false},
-		{"help does not advertise it", silent, 0, false, false},
-		{"binary fails", broken, 0, false, true},
-		{"binary does not exist", filepath.Join(dir, "absent"), 0, false, true},
-		{"help runs past the timeout", slow, 300 * time.Millisecond, false, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.timeout > 0 {
-				mate.SetHelpTimeout(tt.timeout)
-				t.Cleanup(mate.ResetHelpTimeout)
-			}
-			got, err := mate.BasePathSupport(tt.bin)
-			if got != tt.want || (err != nil) != tt.wantUnknown {
-				t.Errorf("BasePathSupport(%s) = %v, %v; want %v, unknown=%v", tt.name, got, err, tt.want, tt.wantUnknown)
-			}
-		})
 	}
 }
 
@@ -596,12 +497,11 @@ func TestLoadLiveEnv(t *testing.T) {
 	}
 }
 
-func writeFakeBin(t *testing.T, path, body string) string {
+func writeFakeBin(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
 		t.Fatalf("write fake binary: %v", err)
 	}
-	return path
 }
 
 // pipeListener lets httptest.Server exercise a real HTTP exchange in

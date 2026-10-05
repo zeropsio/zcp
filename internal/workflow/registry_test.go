@@ -259,7 +259,7 @@ func TestIsProcessAlive_ZeroPID(t *testing.T) {
 	}
 }
 
-// TestIsProcessAlive_RecycledPID pins the two-state contract: a live PID whose
+// TestisProcessAlive_RecycledPID pins the two-state contract: a live PID whose
 // recorded start-time does NOT match the running process is reported dead — the
 // PID was recycled by the OS to a different process, so the original session is
 // gone. This is the defense against an operator-wedge where a stale registry

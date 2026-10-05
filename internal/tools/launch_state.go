@@ -81,6 +81,10 @@ type launchState struct {
 	// (D-7) uses THIS, never the platform's returned DTO. Non-secret
 	// (dashboard-visible name only, never the token value).
 	MintedTokenName string `json:"mintedTokenName,omitempty"`
+	// CreateSent is written the moment before CreateAndImportProject goes
+	// out: a launch whose call ended with it set may have created its
+	// production project, even where the project search does not show it yet.
+	CreateSent bool `json:"createSent,omitempty"`
 }
 
 // launchRuntimeProd is one promoted runtime's production-side identity +

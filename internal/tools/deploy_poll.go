@@ -36,18 +36,23 @@ func pollDeployBuild(
 
 	event, err := ops.PollBuild(ctx, client, projectID, result.TargetServiceID, onProgress)
 	if err != nil {
-		// Timeout or context cancellation — keep original BUILD_TRIGGERED status.
+		// Timeout or context cancellation — keep original BUILD_TRIGGERED status,
+		// naming the build that runs on so the client follows it.
 		result.TimedOut = true
+		if event != nil {
+			result.AppVersionID = event.ID
+			result.BuildStatus = event.Status
+		}
 		return
 	}
 
+	result.AppVersionID = event.ID
 	result.BuildStatus = event.Status
 	result.BuildDuration = calcBuildDuration(event)
 
 	if event.Status == statusActive {
 		result.Status = statusDeployed
 		result.MonitorHint = ""
-		result.AppVersionID = event.ID
 		// Post-deploy message is runtime-class-agnostic and strategy-agnostic
 		// (invariant DS-01, plans/dev-server-canonical-primitive.md):
 		// reports only what the platform told us, no liveness claims, no

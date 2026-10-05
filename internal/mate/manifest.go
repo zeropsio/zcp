@@ -22,8 +22,11 @@ const (
 
 	// MinimumMateVersion is the oldest mate release this zcp still drives.
 	// It moves only when a contract fact changes, never for a routine
-	// release.
-	MinimumMateVersion = "0.8.1"
+	// release. 0.14.0 is the first release that judges a stand-up by its
+	// zcp process (PID + start) instead of the heartbeat this zcp no longer
+	// writes; it also keeps a link to HQ (EnvHQEnrollment), so zcp treats a
+	// Mate as HQ's whatever its enrollment.
+	MinimumMateVersion = "0.14.0"
 
 	// defaultManifestURL is GitHub's own "latest release" redirect for the
 	// fork's stable release asset. The fork's release workflow triggers only
@@ -200,6 +203,9 @@ func fetchManifest(ctx context.Context, client *http.Client) (Manifest, error) {
 	return m, nil
 }
 
+// readManifestCache is the cached manifest while it is fresh and still valid
+// for this build: an earlier zcp validated it against its own floor and
+// contract, which may not be this one's.
 func readManifestCache() (Manifest, bool) {
 	data, err := os.ReadFile(manifestCachePath())
 	if err != nil {
@@ -209,7 +215,7 @@ func readManifestCache() (Manifest, bool) {
 	if err := json.Unmarshal(data, &entry); err != nil {
 		return Manifest{}, false
 	}
-	if time.Since(entry.FetchedAt) > manifestCacheTTL {
+	if time.Since(entry.FetchedAt) > manifestCacheTTL || validateManifest(entry.Manifest) != nil {
 		return Manifest{}, false
 	}
 	return entry.Manifest, true

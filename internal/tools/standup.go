@@ -169,9 +169,7 @@ func registerStandup(srv *mcp.Server, d standupDeps) {
 // stand-up running for the call that builds them (awaitStages).
 func (d standupDeps) run(ctx context.Context, progress *standupProgress) *mcp.CallToolResult {
 	progress.st().begin()
-	stopBeat := progress.st().beat(0)
 	result, standUp := d.stand(ctx, progress)
-	stopBeat()
 	switch {
 	case result.IsError:
 		progress.st().end(refusalText(result))

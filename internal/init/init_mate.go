@@ -19,10 +19,6 @@ import (
 // throughout).
 var mateEnsureInstalled = mate.EnsureInstalled
 
-// mateBasePathSupport is the --base-path probe the boot log reports from.
-// Package-level so tests can stand in for a probe that could not answer.
-var mateBasePathSupport = mate.BasePathSupport
-
 // defaultMateLockWait bounds init's wait on the install lock the unit's own
 // start may hold (mate.LockInstall): longer than an install's own bounds, so
 // a live install is waited out and a hung one is not.
@@ -151,19 +147,6 @@ func enableMate(rt runtime.Info) error {
 	bin := mate.BinPath()
 	if _, err := os.Stat(bin); err != nil {
 		return fmt.Errorf("bundle still absent after %s: %w", result.Action, err)
-	}
-
-	// Reported here rather than left to the journal: a bundle without
-	// --base-path answers under mate.BasePath but emits root-absolute asset
-	// URLs, which the code-server cookie gate then redirects — the page loads
-	// and nothing works, with no error anywhere to point at.
-	//
-	// Only a help that ran and does not name the flag says so: a probe that
-	// could not answer (a cold first node start under boot load) says nothing
-	// about the bundle, and the server reads its prefix from the launch
-	// environment either way (mate.LaunchEnvLines).
-	if supported, probeErr := mateBasePathSupport(bin); probeErr == nil && !supported {
-		fmt.Fprintf(os.Stderr, "    ! the installed mate bundle does not advertise --base-path; mate will answer under %s/ but its assets will not resolve\n", mate.BasePath)
 	}
 
 	unitExisted := mateUnitFileExists()
