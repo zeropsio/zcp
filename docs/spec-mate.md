@@ -996,7 +996,9 @@ hidden tab's throttled timers survive several times over. Holding a press takes 
 above on the project (`hold_press`) — a reader alone may not, for a held press keeps another's
 _Finish setup_ away. A second press of the same project, in another browser or tab, is refused
 before it writes anything (`press_held`) while the first's hold runs; a hold that ran out is taken
-over. A press that finishes deletes its record, and a stage's or a production's registration ends
+over. A press runs until Zerops accepted the container's import and the project is closed off; the
+minutes the container then takes to come up are the platform's, and another browser reads them from
+the container itself ("Coming up"), never from a hold. A press that finishes deletes its record, and a stage's or a production's registration ends
 it in the same write; one that stops ends its hold and keeps the record. HQ streams each press to
 whoever reads its project, with how long its hold runs on from that message, so a reader measures
 it on no clock of HQ's. A reader takes a held press for one still at it, and one whose hold ran
