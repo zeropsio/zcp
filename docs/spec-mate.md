@@ -2987,7 +2987,10 @@ time and bytes, not a count: a picture is kept for a week after it is taken
 (`workflow.PictureKeepFor`) — a change's "before" is often taken hours, or a whole step, ahead of
 its description (run 12: 30 pictures taken over seven hours, refused under a newest-twenty rule) —
 while the store holds at most 256 MiB (`workflow.PictureStoreBytes`), past which the oldest go
-first; the newest is always kept, and every one a kept description names outlives both. One store
+first (counting the files on disk); the newest is always kept, and every one a kept description
+names outlives both — nothing is pruned while a pair's record cannot be read. A picture already on a
+change outlives its file: its entry keeps the address HQ serves it at, so a change made a draft by a
+push is described again with the same picture; only another change needs the file. One store
 per state dir, shared under its own lock by every zcp process of the Mate (its conversation,
 helpers, subagents). A description shows one as `![what it shows](shot-3)`: `describe-change` sends each picture
 it names to HQ as the change's attachment (`POST /api/mate/changes/:repo/:n/attachments`, the PNG as
@@ -2996,7 +2999,8 @@ as `<img alt width height src>` at `https://<HQ>/api/apps/<appId>/changes/<repo>
 which the client reads as the person — the width and height the picture's shape at 720 pixels wide
 at most, so a reader reserves its box before the bytes arrive. Never a body with a broken picture: a
 picture the Mate does not keep is refused before anything is written — the refusal names the
-pictures it does keep and how long one is kept — and one HQ will not keep
+pictures it does keep and how long one is kept; one pruned while the words went on is refused the
+same way and the words are not kept — and one HQ will not keep
 writes nothing and keeps the words. `TestDescribeChange_Pictures`, `TestKeepBrowserPicture`,
 `TestKeepPicture_*`, `TestDescribeChange_MissingPictureNamesWhatIsKept`, `TestPictureRefs`.
 

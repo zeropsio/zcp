@@ -389,6 +389,7 @@ func TestKeptPicturesWords(t *testing.T) {
 		{[]string{"shot-4", "shot-5"}, "shot-4, shot-5"},
 		{[]string{"shot-4", "shot-50", "shot-51", "shot-52", "shot-69"}, "shot-4, shot-50 to shot-52, shot-69"},
 		{many, "12 older pictures, shot-25, shot-27, shot-29, shot-31, shot-33, shot-35, shot-37, shot-39"},
+		{many[:9], "1 older picture, shot-3, shot-5, shot-7, shot-9, shot-11, shot-13, shot-15, shot-17"},
 	}
 	for _, tt := range tests {
 		if got := keptPicturesWords(tt.ids); got != tt.want {
