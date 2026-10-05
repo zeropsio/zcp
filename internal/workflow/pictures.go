@@ -24,8 +24,11 @@ import (
 // so the bound is time, not a count of the newest — while the store holds at
 // most PictureStoreBytes on disk, past which the oldest go first; and, beyond
 // both, every picture a kept description names: words waiting for a change to
-// carry them must find their pictures there. The newest is always kept. One
-// store per state dir, shared by every zcp process on it under its own lock.
+// carry them must find their pictures there. The newest is always kept. A
+// picture already on a change outlives its file: the store keeps where HQ
+// serves it, so the Mate can describe that change again with it — only
+// another change needs the file. One store per state dir, shared by every zcp
+// process on it under its own lock.
 // An id is never given twice: the next one only ever grows.
 
 // PictureKeepFor is how long a picture is kept after it is taken.
@@ -42,7 +45,7 @@ const (
 )
 
 // ErrPictureNotKept is a picture id the store has no picture for: one never
-// taken, or one pruned since.
+// taken, or one pruned since that no change carries.
 var ErrPictureNotKept = errors.New("no such picture is kept")
 
 // Picture is one kept picture.
@@ -51,8 +54,6 @@ type Picture struct {
 	Width   int    `json:"width,omitempty"`
 	Height  int    `json:"height,omitempty"`
 	TakenAt string `json:"takenAt,omitempty"`
-	// Bytes is the picture's size on disk.
-	Bytes int64 `json:"bytes,omitempty"`
 	// Uploads is where HQ serves the picture, by the change it was attached
 	// to ("{appId}/{repo}#{number}").
 	Uploads map[string]string `json:"uploads,omitempty"`
@@ -104,12 +105,15 @@ func defaultPictureBounds() pictureBounds {
 	return pictureBounds{keepFor: PictureKeepFor, maxBytes: PictureStoreBytes}
 }
 
-// KeptPictures is the id of every picture the store keeps, oldest first.
+// KeptPictures is the id of every picture the store keeps, oldest first —
+// every one KeptPicture finds.
 func KeptPictures(stateDir string) ([]string, error) {
 	var ids []string
 	err := withPictures(stateDir, func(index *pictureIndex) error {
 		for _, pic := range index.Pictures {
-			ids = append(ids, pic.ID)
+			if _, onDisk := pictureFileSize(stateDir, pic.ID); onDisk || len(pic.Uploads) > 0 {
+				ids = append(ids, pic.ID)
+			}
 		}
 		return nil
 	})
@@ -125,7 +129,7 @@ func keepPicture(stateDir string, png []byte, width, height int, now time.Time, 
 		}
 		kept = Picture{
 			ID: pictureIDPrefix + strconv.Itoa(index.Next), Width: width, Height: height,
-			TakenAt: now.UTC().Format(time.RFC3339), Bytes: int64(len(png)),
+			TakenAt: now.UTC().Format(time.RFC3339),
 		}
 		if err := os.WriteFile(picturePath(stateDir, kept.ID), png, 0o600); err != nil {
 			return fmt.Errorf("keep picture %s: %w", kept.ID, err)
@@ -139,6 +143,9 @@ func keepPicture(stateDir string, png []byte, width, height int, now time.Time, 
 }
 
 // KeptPicture is the picture id names and its bytes, or ErrPictureNotKept.
+// A picture whose file is gone but which a change carries is found without
+// its bytes (nil): its Uploads say where HQ serves it, and only there can it
+// be shown.
 func KeptPicture(stateDir, id string) (Picture, []byte, error) {
 	var found Picture
 	var png []byte
@@ -148,7 +155,7 @@ func KeptPicture(stateDir, id string) (Picture, []byte, error) {
 				continue
 			}
 			data, err := os.ReadFile(picturePath(stateDir, id))
-			if err != nil {
+			if err != nil && len(pic.Uploads) == 0 {
 				return fmt.Errorf("%s: %w", id, ErrPictureNotKept)
 			}
 			found, png = pic, data
@@ -177,30 +184,38 @@ func RecordPictureUpload(stateDir, id, target, url string) error {
 	})
 }
 
-// prunePictures forgets every picture the store no longer keeps — its entry
-// and its file: one taken longer than bounds.keepFor before now, and, newest
-// to oldest, every one past bounds.maxBytes; never the newest, nor one a kept
-// description names.
+// prunePictures forgets every picture the store no longer keeps: one taken
+// longer than bounds.keepFor before now, and, newest to oldest, every one past
+// bounds.maxBytes of files on disk; never the newest, nor one a kept
+// description names. A forgotten picture loses its file, and its entry too
+// unless a change carries it (Uploads); an entry whose file is already gone
+// is forgotten the same way. Nothing is pruned while the pairs' records
+// cannot be read: which pictures a kept description names is unknown then.
 func prunePictures(stateDir string, index *pictureIndex, now time.Time, bounds pictureBounds) {
+	metas, err := ListServiceMetas(stateDir)
+	if err != nil {
+		return
+	}
 	named := map[string]bool{}
-	if metas, err := ListServiceMetas(stateDir); err == nil {
-		for _, m := range metas {
-			if m == nil || m.HQ == nil || m.HQ.ChangeDescription == nil {
-				continue
-			}
-			for _, id := range PictureRefs(m.HQ.ChangeDescription.Text) {
-				named[id] = true
-			}
+	for _, m := range metas {
+		if m == nil || m.HQ == nil || m.HQ.ChangeDescription == nil {
+			continue
+		}
+		for _, id := range PictureRefs(m.HQ.ChangeDescription.Text) {
+			named[id] = true
 		}
 	}
-	keep := make([]bool, len(index.Pictures))
+	keepFile := make([]bool, len(index.Pictures))
 	var held int64
 	full := false
 	for i := len(index.Pictures) - 1; i >= 0; i-- {
 		pic := index.Pictures[i]
-		size := pictureBytes(stateDir, pic)
+		size, onDisk := pictureFileSize(stateDir, pic.ID)
+		if !onDisk {
+			continue
+		}
 		if named[pic.ID] {
-			keep[i] = true
+			keepFile[i] = true
 			continue
 		}
 		newest := i == len(index.Pictures)-1
@@ -208,30 +223,30 @@ func prunePictures(stateDir string, index *pictureIndex, now time.Time, bounds p
 			full = full || held+size > bounds.maxBytes
 			continue
 		}
-		keep[i] = true
+		keepFile[i] = true
 		held += size
 	}
 	kept := make([]Picture, 0, len(index.Pictures))
 	for i, pic := range index.Pictures {
-		if keep[i] {
-			kept = append(kept, pic)
-			continue
+		if !keepFile[i] {
+			_ = os.Remove(picturePath(stateDir, pic.ID))
+			if len(pic.Uploads) == 0 {
+				continue
+			}
 		}
-		_ = os.Remove(picturePath(stateDir, pic.ID))
+		kept = append(kept, pic)
 	}
 	index.Pictures = kept
 }
 
-// pictureBytes is pic's size on disk: as kept, or as its file says for a
-// picture kept before the store recorded sizes.
-func pictureBytes(stateDir string, pic Picture) int64 {
-	if pic.Bytes > 0 {
-		return pic.Bytes
+// pictureFileSize is the size of the picture id's file, and whether it is on
+// disk at all.
+func pictureFileSize(stateDir, id string) (int64, bool) {
+	info, err := os.Stat(picturePath(stateDir, id))
+	if err != nil {
+		return 0, false
 	}
-	if info, err := os.Stat(picturePath(stateDir, pic.ID)); err == nil {
-		return info.Size()
-	}
-	return 0
+	return info.Size(), true
 }
 
 // pictureExpired reports whether pic was taken longer than keepFor before
