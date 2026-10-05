@@ -428,26 +428,21 @@ func detectSetShadows(ctx context.Context, client platform.Client, projectID str
 }
 
 // formatLayeredShadow renders a single cross-layer shadow as agent-actionable
-// guidance. The winning value is redacted via the single masking owner
-// (RedactCredentialValue) when its key is a ZCP-owned credential — never on
-// the platform Sensitive flag, which is not authoritative. The winning layer
-// is always a runtime's yaml/service value (managed services are excluded
-// from project-set shadow detection), so the "" serviceType is correct: only
-// the ZCP-owned class can mask here. The fix differs by winning layer:
+// guidance: the key and the two places — the project, and the yaml or the
+// service that wins — never the winning value. zerops_env get returns keys,
+// not values, and a warning reaches the agent and the person's screen the
+// same way; the agent reads the value with zerops_discover
+// includeEnvValues=true when it needs it. The fix differs by winning layer:
 // yaml-baked is edit-yaml-and-redeploy (the key is owned by the yaml, spec
 // §2); service userData is change-or-delete the service var.
 func formatLayeredShadow(s ops.LayeredShadow) string {
-	val := s.WinningValue
-	if masked, isCredential := ops.RedactCredentialValue(s.Key, s.WinningValue, ""); isCredential {
-		val = masked
-	}
 	switch s.WinningLayer {
 	case ops.EnvLayerYamlBaked:
-		return fmt.Sprintf("%q set at project scope is shadowed on %s: its zerops.yaml run.envVariables bakes %s=%s (yaml owns the key — spec §2). %s reads the yaml value, not the project one. Edit %s's zerops.yaml and redeploy to change it there.",
-			s.Key, s.Hostname, s.Key, val, s.Hostname, s.Hostname)
+		return fmt.Sprintf("%q set at project scope is shadowed on %s: its zerops.yaml run.envVariables bakes %s (yaml owns the key — spec §2). %s reads the yaml value, not the project one. Edit %s's zerops.yaml and redeploy to change it there.",
+			s.Key, s.Hostname, s.Key, s.Hostname, s.Hostname)
 	case ops.EnvLayerService:
-		return fmt.Sprintf("%q set at project scope is shadowed on %s: a service-level env sets %s=%s (service > project — spec §2). %s reads the service value. Change or delete the service-level %s on %s.",
-			s.Key, s.Hostname, s.Key, val, s.Hostname, s.Key, s.Hostname)
+		return fmt.Sprintf("%q set at project scope is shadowed on %s: a service-level env sets %s (service > project — spec §2). %s reads the service value. Change or delete the service-level %s on %s.",
+			s.Key, s.Hostname, s.Key, s.Hostname, s.Key, s.Hostname)
 	case ops.EnvLayerProject:
 		// Project is the lowest-precedence layer (spec §2) — it can never be the
 		// WINNING/shadowing layer (DetectLayeredShadows only ever sets
