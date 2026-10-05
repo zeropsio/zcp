@@ -239,7 +239,7 @@ func TestDependencyTypes(t *testing.T) {
 			{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "go@1"}, Dependencies: []Dependency{
 				{Hostname: "db", Type: "postgresql@16", Resolution: "CREATE"},
 			}},
-			{Runtime: RuntimeTarget{DevHostname: "apidev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "apistage"}, Dependencies: []Dependency{
+			{Runtime: RuntimeTarget{DevHostname: "apidev", Type: "bun@1.4", BootstrapMode: "standard", ExplicitStage: "apistage"}, Dependencies: []Dependency{
 				{Hostname: "db", Type: "postgresql@16", Resolution: "SHARED"},
 				{Hostname: "cache", Type: "valkey@7.2", Resolution: "CREATE"},
 			}},
@@ -412,7 +412,7 @@ func TestValidateBootstrapTargets_SharedResolution_Success(t *testing.T) {
 			},
 		},
 		{
-			Runtime: RuntimeTarget{DevHostname: "apidev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "apistage"},
+			Runtime: RuntimeTarget{DevHostname: "apidev", Type: "bun@1.4", BootstrapMode: "standard", ExplicitStage: "apistage"},
 			Dependencies: []Dependency{
 				{Hostname: "db", Type: "postgresql@16", Resolution: "SHARED"},
 			},
@@ -560,7 +560,7 @@ func TestValidateBootstrapTargets_MixedModes_Valid(t *testing.T) {
 	t.Parallel()
 	targets := []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"}}, // standard (default)
-		{Runtime: RuntimeTarget{DevHostname: "frontend", Type: "bun@1.2", BootstrapMode: "simple"}},                              // simple
+		{Runtime: RuntimeTarget{DevHostname: "frontend", Type: "bun@1.4", BootstrapMode: "simple"}},                              // simple
 	}
 	_, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 	if err != nil {
@@ -629,7 +629,7 @@ func TestValidateBootstrapTargets_CaseInsensitiveResolution(t *testing.T) {
 					},
 				},
 				{
-					Runtime: RuntimeTarget{DevHostname: "apidev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "apistage"},
+					Runtime: RuntimeTarget{DevHostname: "apidev", Type: "bun@1.4", BootstrapMode: "standard", ExplicitStage: "apistage"},
 					Dependencies: []Dependency{
 						{Hostname: "db", Type: "postgresql@16", Resolution: tt.resolution},
 					},
