@@ -34,7 +34,7 @@ hostnames at `complete-phase`.
 
 Match the framework family: `nodejs@22` / `php-nginx@8.4` / `python@3.14`
 / `go@1` / `rust@stable` / `java@21` / `dotnet@9` / `ruby@3.4` /
-`bun@1.2` / `deno@2` / `elixir@1.16`. Pick the latest from the family
+`bun@1.4` / `deno@2` / `elixir@1.16`. Pick the latest from the family
 your framework uses.
 
 ## Service set per tier
