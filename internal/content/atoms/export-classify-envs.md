@@ -20,7 +20,7 @@ The export bundle's `project.envVariables` block holds the values that re-import
 | `plain-config` | Source uses the var as literal runtime config (LOG_LEVEL, NODE_ENV, FEATURE_FLAGS, …). | The literal value verbatim. |
 | `exclude` | The env is STALE — nothing in the source tree or `zerops.yaml` references it anymore (leftover from a removed feature). Verify with a grep over the source plus the discover response before excluding. | DROPPED entirely — no value, no reference. A warning fires if `zerops.yaml`'s `run.envVariables` still references it. |
 
-`zerops_workflow workflow="export"` returns each unclassified env's key but NOT its value — fetch values via `zerops_discover service="{targetHostname}" includeEnvs=true includeEnvValues=true`, grep them against the source tree, then call back with an `envClassifications` map (key → bucket per env).
+`zerops_workflow workflow="export"` returns each unclassified env's key but NOT its value — fetch values via `zerops_discover service="{targetHostname}" includeEnvs=true includeEnvValues=true`, grep them against the source tree (a key marked `isSensitive` shows no value — classify it by its key and the source), then call back with an `envClassifications` map (key → bucket per env).
 
 Every row carries `suggestedBucket` + `rationale` computed server-side from the env key NAME alone (never the value, per the no-leak invariant). Treat the suggestion as a starting point — the five-bucket detection table above remains authoritative when you override (e.g. a credential-pattern name whose value is plain config, or a plain-named env whose value resolves to a `${db_*}` reference).
 

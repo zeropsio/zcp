@@ -43,7 +43,7 @@ func discoverInputSchema() *jsonschema.Schema {
 			Description: "Filter by service hostname. Omit to list all services in the project. When discovering env vars for multiple services, omit this parameter — one call returns all.",
 		},
 		"includeEnvs":      flexBoolSchema("Include env var keys (service-level and project-level), plus a live runtime's yaml-baked run.envVariables listed once and tagged source=\"zerops.yaml\" (the GUI \"from master\" layer). Returns keys and annotations only — no values."),
-		"includeEnvValues": flexBoolSchema("Also include actual env var values. Use only for troubleshooting when keys-only is insufficient (e.g. empty values, wrong formats, unresolved refs). For .env generation use zerops_env generate-dotenv instead."),
+		"includeEnvValues": flexBoolSchema("Also include actual env var values. Use only for troubleshooting when keys-only is insufficient (e.g. empty values, wrong formats, unresolved refs). Sensitive values are never shown — such a key carries isSensitive=true and a masked value. For .env generation use zerops_env generate-dotenv instead."),
 	})
 }
 
@@ -51,7 +51,7 @@ func discoverInputSchema() *jsonschema.Schema {
 func RegisterDiscover(srv *mcp.Server, client platform.Client, projectID, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_discover",
-		Description: "Discover project and service information. Filter by service hostname or list all. Use includeEnvs=true to read env var keys. Add includeEnvValues=true only when you need actual secret values (troubleshooting).",
+		Description: "Discover project and service information. Filter by service hostname or list all. Use includeEnvs=true to read env var keys. Add includeEnvValues=true only when you need actual values (troubleshooting); sensitive values are never shown.",
 		InputSchema: discoverInputSchema(),
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Discover project and services",
