@@ -22,6 +22,13 @@ http {
         default 0;
     }
 {{- end}}
+{{- if .MateEnabled}}
+
+    upstream mate_backend {
+        server 127.0.0.1:{{.MatePort}};
+        keepalive 16;
+    }
+{{- end}}
 
     server {
         listen 8080;
@@ -116,12 +123,24 @@ http {
         # so mate's own routes stay at the loopback root and only the URLs it EMITS
         # carry the prefix (that is what --base-path does). Verified end to end
         # through nginx and the Zerops L7: mint -> token -> ws ticket -> 101.
-        location {{.MateBasePath}}/ {
-            proxy_pass http://127.0.0.1:{{.MatePort}}/;
+        location = {{.MateBasePath}}/ws {
+            proxy_pass http://mate_backend/ws;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection $connection_upgrade;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 86400s;
+            proxy_send_timeout 86400s;
+        }
+
+        location {{.MateBasePath}}/ {
+            proxy_pass http://mate_backend/;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header Connection "";
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;

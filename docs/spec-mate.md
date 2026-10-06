@@ -471,14 +471,15 @@ Every launch adds three more on top (`mate.LaunchEnvLines`), whatever init wrote
 | `ZCP_STATUS_FILE` | the status file a new Mate's setup is read from (`mate.DefaultStatusFilePath`) |
 | `T3CODE_ZEROPS_HQ_ENROLLMENT` | the file zcp keeps the Mate's HQ enrollment in (`hq.EnrollmentPath`, `~/.zcp/hq/enrollment.json`, mode 0600): the HQ address and the credential the server opens its link to HQ with. It names a path, never the credential. zcp enrolls by itself in a Mate container and keeps enrolling, retrying whatever is not possible yet (`hq.Keep`); until the file exists the server's link stays quiet and its HQ state is unknown |
 
-### 2.4 nginx — three locations, all outside the cookie gate, all behind the gate
+### 2.4 nginx — locations outside the cookie gate, behind the Mate gate
 
 Rendered identically whether or not `VSCODE_PASSWORD` is set, and **only when `MateEnabled`** — all
-three live inside one `{{- if .MateEnabled}}` region.
+locations and the upstream render only inside `{{- if .MateEnabled}}` regions.
 
 | Location | Behaviour |
 |---|---|
-| `{BasePath}/` (`/mate/`) | Proxies to `http://127.0.0.1:3773/` — **trailing slash strips the prefix**, so mate's routes stay at the loopback root and only URLs it *emits* (`T3CODE_BASE_PATH`) carry it. Websocket upgrade headers, `proxy_read_timeout 86400s`. Outside the cookie gate: mate owns its own auth (§3). |
+| `{BasePath}/` (`/mate/`) | Proxies through `mate_backend` to `127.0.0.1:3773` — **trailing slash strips the prefix**, so mate's routes stay at the loopback root and only URLs it *emits* (`T3CODE_BASE_PATH`) carry it. The upstream keeps 16 idle connections per worker; HTTP/1.1 and an empty Connection header allow reuse. Outside the cookie gate: mate owns its own auth (§3). |
+| `= {BasePath}/ws` | Proxies through the same upstream to `/ws`, retaining query parameters, websocket upgrade headers and `proxy_read_timeout 86400s`. |
 | `~ ^/(abs)?proxy/3773(/|$)` | `return 404`. code-server's `/proxy/<port>/`/`/absproxy/<port>/` reach any loopback port for whoever holds the container cookie — a second door, closed; evaluated before `location /`. Closed **only while mate is enabled**: with the flag off nothing of ours listens on 3773 and the port is an ordinary user port. |
 | `= {BasePath}/healthz` | Serves `mate.InitMarkerPath` verbatim, `application/json`, `no-store`; falls back to `{"initComplete":false,"initAt":null}` with no marker yet. No proxy, no process — answers even when nginx is all that's up. |
 
