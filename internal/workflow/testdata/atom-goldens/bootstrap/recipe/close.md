@@ -90,8 +90,11 @@ the session as finished, check every dev runtime that has files on disk
    SSH — for example:
 
 ```
-ssh appdev "cd /var/www && git add -A && git commit -m 'baseline commit'"
+ssh appdev "cd /var/www && git add -A && git commit -m 'baseline commit' -m 'Zcp-Commit: baseline'"
 ```
+
+Keep the `Zcp-Commit: baseline` line: it marks the commit as the
+starting point, so no change of yours is ever named after it.
 
 Never run this from the ZCP-side mount — a mount-side `git init`/`git add` leaves root-owned objects that break every later commit on that service.
 

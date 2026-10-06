@@ -131,7 +131,7 @@ func TestDescribeChange(t *testing.T) {
 				return lab
 			},
 			wantKept: &workflow.ChangeDescription{Text: describedWords, Change: 1}, wantChange: 1,
-			wantText: []string{`"described":false`, `"kept":true`, "did not take", "next delivery"},
+			wantText: []string{`"described":false`, `"kept":true`, "may not have landed", "may still be a draft"},
 		},
 	}
 	for _, tt := range tests {
@@ -189,7 +189,7 @@ func TestDescribeChange_KeptWordsMeetThePushAfterThem(t *testing.T) {
 		},
 		{
 			name: "a push that moves the change drops them, and the change is a draft again", moreWork: true,
-			wantTitle: "Mate: appdev", wantDraft: true,
+			wantTitle: "Add index.js", wantDraft: true,
 			wantLine: []string{"before this push", "is a draft", `action="describe-change"`, "title="},
 		},
 	}

@@ -87,8 +87,8 @@ func TestAStageDeployOfAWiredPairDeliversItself(t *testing.T) {
 		t.Fatalf("want a delivery through a change, got %+v", delivery)
 	}
 	change := lab.hq.change(1)
-	if change == nil || change.Title != "Build a todo app" {
-		t.Fatalf("change #1 in HQ = %+v, want it titled with the task", change)
+	if change == nil || change.Title != "Add .gitignore and index.js" {
+		t.Fatalf("change #1 in HQ = %+v, want it titled by what it holds", change)
 	}
 	head := lab.remoteHead("mate/p-mate/1")
 	if head == "" || head != lab.git("rev-parse", "HEAD") {
@@ -244,8 +244,8 @@ func TestADeliveryHQCannotReachFailsFast(t *testing.T) {
 	if again == nil || again.Change == nil || again.Change.Number != 1 {
 		t.Fatalf("the next delivery = %+v, want change #1", again)
 	}
-	if change := lab.hq.change(1); change == nil || change.Title != "Add a footer" {
-		t.Errorf("change #1 = %+v, want it titled with the task", change)
+	if change := lab.hq.change(1); change == nil || change.Title != "Add footer.js" {
+		t.Errorf("change #1 = %+v, want it titled by what it holds", change)
 	}
 	if head := lab.remoteHead("mate/p-mate/1"); head != lab.git("rev-parse", "HEAD") {
 		t.Errorf("change #1's branch is at %q, want the checkout's HEAD", head)
@@ -280,7 +280,7 @@ func TestADeliveryToAnHQThatNeverAcceptsEndsWithinItsBound(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			return shipChange(t.Context(), lab.ssh, lab.stateDir, deliveryClient(hqc), lab.meta(), "Add a footer").line
+			return shipChange(t.Context(), lab.ssh, lab.stateDir, deliveryClient(hqc), lab.meta(), nil).line
 		}, " is not answering: opening its change failed after 3 tries (the last: no connection within 200ms)"},
 	}
 	for _, tt := range tests {
@@ -702,7 +702,7 @@ func TestShipChange_AChangeSettledBeforeItsPushFailsAtOnce(t *testing.T) {
 				t.Fatal(err)
 			}
 			ssh := &refusingPushSSH{reason: reason}
-			shipped := shipChange(t.Context(), ssh, lab.stateDir, hqc, lab.meta(), "Add a footer")
+			shipped := shipChange(t.Context(), ssh, lab.stateDir, hqc, lab.meta(), nil)
 			if shipped.unreachable || shipped.ref != nil || !strings.Contains(shipped.line, reason) || !strings.Contains(shipped.line, "the next delivery opens the next change") {
 				t.Fatalf("shipped = %+v, want a refusal that names the next delivery", shipped)
 			}

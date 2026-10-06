@@ -54,8 +54,8 @@ func TestGitPushToHQ_DeliversCommittedWorkAsTheChange(t *testing.T) {
 	if !strings.Contains(text, `"status":"PUSHED"`) || !strings.Contains(text, `"pullRequest"`) || !strings.Contains(text, `"branch":"mate/p-mate/1"`) {
 		t.Fatalf("the push must land on change #1:\n%s", text)
 	}
-	if change := lab.hq.change(1); change == nil || change.Title != "Add a due date to each todo." {
-		t.Fatalf("change #1 = %+v, want it titled with the task", change)
+	if change := lab.hq.change(1); change == nil || change.Title != "Add a due date" {
+		t.Fatalf("change #1 = %+v, want it titled by the Mate's commit, never the task", change)
 	}
 	if head := lab.remoteHead("mate/p-mate/1"); head != lab.git("rev-parse", "HEAD") {
 		t.Errorf("change #1's branch is at %q, want the checkout's HEAD", head)

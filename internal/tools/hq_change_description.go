@@ -24,8 +24,8 @@ import (
 // A change's description is what the person reviews a Mate's change by — in
 // the app's review, right after the verdict. It is the body of the change in
 // HQ, and only the Mate writes it (zerops_workflow action="describe-change"):
-// zcp opens the change with the task as its title and nothing more, because
-// the task is all zcp knows. The Mate keeps working on top of an open change,
+// zcp opens the change titled by what it holds and nothing more, because that
+// is all zcp knows. The Mate keeps working on top of an open change,
 // so it rewrites the description as the change grows; a link to try the change
 // can go stale, and the description is where what it does and how it was
 // checked stays true.
@@ -109,6 +109,11 @@ func handleDescribeChange(
 	if refusal != nil {
 		return refusal, nil, nil
 	}
+	meta, release, refusal := holdPairToDescribe(ctx, stateDir, meta)
+	if refusal != nil {
+		return refusal, nil, nil
+	}
+	defer release()
 	if refusal := describePicturesRefusal(stateDir, text, pictureTargetOf(meta, meta.HQ.Change)); refusal != nil {
 		return convertError(refusal, WithRecoveryStatus()), nil, nil
 	}
@@ -116,7 +121,7 @@ func handleDescribeChange(
 	// The change on record is only as fresh as the last read of the Mate's
 	// state, and words are never put on one that merged or closed in
 	// between: they were written for it, and the next change is another.
-	state, stateErr := hqc.Self(ctx)
+	state, stateErr := describeSelf(ctx, hqc, meta)
 	if stateErr == nil {
 		if learned := hqLearnLanding(stateDir, meta, state); learned != "" {
 			return jsonResult(changeDescriptionResult{
@@ -139,6 +144,9 @@ func handleDescribeChange(
 		}
 	}
 
+	if number == 0 && stateErr != nil {
+		return jsonResult(changeDescriptionResult{Service: meta.Hostname, Message: describeStateUnknown(hqc.Address(), meta.Hostname, stateErr)}), nil, nil
+	}
 	if number == 0 {
 		// Words describe the work a change carries, and the change the next
 		// delivery opens carries whatever the pair holds then: nothing is
@@ -152,7 +160,7 @@ func handleDescribeChange(
 	keepErr := keepChangeDescription(stateDir, meta, text, title, number)
 
 	url := hqc.ChangeURL(meta.HQ.AppID, meta.HQ.Repo, number)
-	if err := putChangeDescription(ctx, hqc, stateDir, meta, number, text, title); err != nil {
+	if tries, away, err := putDescriptionRetried(ctx, hqc, stateDir, meta, number, text, title); err != nil {
 		var gone *picturesGoneError
 		if errors.As(err, &gone) {
 			forgetChangeDescription(stateDir, meta, text)
@@ -174,6 +182,12 @@ func handleDescribeChange(
 		if keepErr != nil {
 			return convertError(fmt.Errorf("HQ did not take the description of change #%d (%w), and it could not be kept either: %w",
 				number, err, keepErr), WithRecoveryStatus()), nil, nil
+		}
+		if away != describeServed {
+			return jsonResult(changeDescriptionResult{
+				Service: meta.Hostname, PullRequest: number, PullRequestURL: url, Kept: true,
+				Message: describeNotLanded(hqc.Address(), number, tries, away, err),
+			}), nil, nil
 		}
 		return jsonResult(changeDescriptionResult{
 			Service:        meta.Hostname,
@@ -370,6 +384,9 @@ func putChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, m
 	defer cancel()
 	if _, err := hqc.EditChange(callCtx, m.HQ.Repo, number, edit); err != nil {
 		return err
+	}
+	if title != "" {
+		forgetZcpTitle(stateDir, m)
 	}
 	forgetChangeDescription(stateDir, m, text)
 	return nil
