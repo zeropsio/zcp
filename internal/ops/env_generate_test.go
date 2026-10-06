@@ -1413,3 +1413,72 @@ func TestExpandRefs_DepthErrorNamesTheRef(t *testing.T) {
 		})
 	}
 }
+
+// TestGenerateDotenv_PreviewDiff_SensitiveMasked: the generate-dotenv diff is
+// a presentation surface — a value that comes from a sensitive project var,
+// or that a yaml ref resolves out of a sensitive service var, shows masked on
+// both sides of a modified entry; a plain value shows in clear.
+func TestGenerateDotenv_PreviewDiff_SensitiveMasked(t *testing.T) {
+	t.Parallel()
+
+	const yaml = `zerops:
+  - setup: app
+    run:
+      envVariables:
+        MAIL_PASS: ${mail_PASSWORD}
+        MAIL_USER: ${mail_USER}
+`
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "zerops.yaml"), []byte(yaml), 0644); err != nil {
+		t.Fatalf("write zerops.yaml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".env"), []byte("MAIL_PASS=old\nMAIL_USER=old\nSTRIPE_KEY=old\nAPP_NAME=old\n"), 0600); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	const secret = "person-" + "vault-secret"
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "test", Status: statusActive}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-app", Name: "app", ProjectID: "p1", Status: "RUNNING"},
+			{ID: "svc-mail", Name: "mail", ProjectID: "p1", Status: "RUNNING"},
+		}).
+		WithServiceEnv("svc-mail", []platform.ServiceEnvVar{
+			{ID: "e1", Key: "PASSWORD", Content: secret + "-mail", Sensitive: true},
+			{ID: "e2", Key: "USER", Content: "postmaster"},
+		}).
+		WithProjectEnv([]platform.ProjectEnvVar{
+			{ID: "p1", Key: "STRIPE_KEY", Content: secret, Sensitive: true},
+			{ID: "p2", Key: "APP_NAME", Content: "shop"},
+		})
+
+	result, err := EnvGenerateDotenv(context.Background(), mock, "p1", "app", tmpDir, EnvGenerateDotenvOptions{Preview: true})
+	if err != nil {
+		t.Fatalf("EnvGenerateDotenv: %v", err)
+	}
+	modified := make(map[string]DiffModified, len(result.Diff.Modified))
+	for _, m := range result.Diff.Modified {
+		modified[m.Key] = m
+	}
+	tests := []struct {
+		key    string
+		wantTo string
+	}{
+		{"STRIPE_KEY", "<redacted: sensitive>"},
+		{"MAIL_PASS", "<redacted: sensitive>"},
+		{"APP_NAME", "shop"},
+		{"MAIL_USER", "postmaster"},
+	}
+	for _, tt := range tests {
+		m, ok := modified[tt.key]
+		if !ok {
+			t.Errorf("%s: missing from Diff.Modified %v", tt.key, result.Diff.Modified)
+			continue
+		}
+		if m.To != tt.wantTo {
+			t.Errorf("%s To = %q, want %q", tt.key, m.To, tt.wantTo)
+		}
+		if tt.wantTo == "<redacted: sensitive>" && m.From != tt.wantTo {
+			t.Errorf("%s From = %q, want masked", tt.key, m.From)
+		}
+	}
+}

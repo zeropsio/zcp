@@ -127,12 +127,16 @@ type refExpander struct {
 	classifier   *EnvRefClassifier
 	serviceIndex map[string]platform.ServiceStack
 	cache        map[string][]platform.ServiceEnvVar
-	// projectEnv is the project-level env (key→value), the fallback for a
+	// projectEnv is the project-level env (key→row), the fallback for a
 	// LONE ref inside a sibling's value: project vars inherit into every
 	// container live (independent of isolation — spec §3), so a sibling
 	// value like CONN=${BASE_HOST} resolves against project. The sibling
 	// cache (slim + app-version) alone lacks this layer.
-	projectEnv map[string]string
+	projectEnv map[string]platform.ProjectEnvVar
+	// resolvedSensitive turns true when a ref resolves through a row the
+	// platform holds with sensitive:true — the expanded value then carries
+	// a sensitive value. The caller resets it before each top-level value.
+	resolvedSensitive bool
 }
 
 // expandRefs walks `value` and substitutes resolvable `${...}` refs.
@@ -239,10 +243,11 @@ func (r *refExpander) expandRefs(ctx context.Context, value, sourceService strin
 			r.cache[svcHost] = envs
 		}
 
-		rawVal, found := findEnvValue(r.cache[svcHost], varName)
+		row, found := findEnvRow(r.cache[svcHost], varName)
+		rawVal, sensitive := row.Content, row.Sensitive
 		if !found && projectFallback {
 			if pv, ok := r.projectEnv[varName]; ok {
-				rawVal, found = pv, true
+				rawVal, sensitive, found = pv.Content, pv.Sensitive, true
 			}
 		}
 		if !found {
@@ -257,6 +262,10 @@ func (r *refExpander) expandRefs(ctx context.Context, value, sourceService strin
 				unresolved++
 			}
 			continue
+		}
+
+		if sensitive {
+			r.resolvedSensitive = true
 		}
 
 		// Named by the reference, never by its value: a value half
@@ -376,13 +385,18 @@ func EnvGenerateDotenv(
 	}
 	// The diff is a PRESENTATION surface (preview + post-write echo) — route
 	// its before/after values through the single masking owner so a
-	// credential key never echoes its literal. The .env file render below is
-	// untouched (it must write the real values to disk). serviceType is ""
-	// (.env keys are runtime var names); in practice platformInternalKeys
-	// already denylists the ZCP-owned keys out of the plan, so this is
-	// defense-in-depth keeping every echo site on one owner.
+	// credential key or a sensitive value never echoes its literal. The .env
+	// file render below is untouched (it must write the real values to
+	// disk). serviceType is "" (.env keys are runtime var names); in practice
+	// platformInternalKeys already denylists the ZCP-owned keys out of the
+	// plan, so that class is defense-in-depth keeping every echo site on one
+	// owner.
+	sensitiveKeys := make(map[string]bool, len(plan.Keys))
+	for _, k := range plan.Keys {
+		sensitiveKeys[k.Key] = k.Sensitive
+	}
 	for i := range diff.Modified {
-		if masked, isCred := RedactCredentialValue(diff.Modified[i].Key, diff.Modified[i].To, ""); isCred {
+		if masked, redacted := RedactEnvValue(diff.Modified[i].Key, diff.Modified[i].To, "", sensitiveKeys[diff.Modified[i].Key]); redacted {
 			diff.Modified[i].From = masked
 			diff.Modified[i].To = masked
 		}
@@ -502,14 +516,15 @@ func probeTouchedServices(ctx context.Context, projectID string, services []plat
 	return ""
 }
 
-// findEnvValue returns a key's value and whether it was present. The found
-// bool is load-bearing: a legitimately-empty value ("") must be distinguished
-// from an absent key, or an empty sibling var gets miscounted as unresolved.
-func findEnvValue[T platform.EnvAccessor](envs []T, key string) (string, bool) {
+// findEnvRow returns a key's row and whether it was present. The found bool
+// is load-bearing: a legitimately-empty value ("") must be distinguished from
+// an absent key, or an empty sibling var gets miscounted as unresolved.
+func findEnvRow[T platform.EnvAccessor](envs []T, key string) (T, bool) {
 	for _, e := range envs {
 		if e.GetKey() == key {
-			return e.GetContent(), true
+			return e, true
 		}
 	}
-	return "", false
+	var zero T
+	return zero, false
 }

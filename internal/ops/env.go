@@ -83,29 +83,39 @@ var managedCredentialFieldKeys = map[string]bool{
 	"masterKey":                true,
 }
 
-// RedactCredentialValue masks the value of a credential env var, returning
-// (maskedValue, true) when the value must not be echoed and (value, false)
-// otherwise. Single owner so every value-echo / presentation site masks
-// identically (get/discover renderers, set-echo, layered-shadow message,
-// generate-dotenv preview diff).
+// SensitiveValueMask is what every presentation site shows in place of a
+// value the platform holds with sensitive:true.
+const SensitiveValueMask = "<redacted: sensitive>"
+
+// RedactEnvValue masks the value of an env var that must not reach the
+// agent, returning (maskedValue, true) when the value must not be echoed and
+// (value, false) otherwise. Single owner so every value-echo / presentation
+// site masks identically (get/discover renderers, set-echo, generate-dotenv
+// preview diff).
 //
-// Two classes mask:
+// Three classes mask, the first match naming the mask:
 //   - ZCP-owned credential keys (GIT_TOKEN, ZCP_API_KEY, ZCP_LAUNCH_TOKEN) —
 //     regardless of serviceType.
 //   - Managed-service credential fields (connectionString, password, …) —
 //     only when serviceType is a managed service.
+//   - Any row the platform holds with sensitive:true — a person's own
+//     write-only value. The platform reads it back in clear to a full token,
+//     so zcp is what keeps it from the model.
 //
 // serviceType is the owning service's type version (e.g. "postgresql@18").
 // Pass "" for project-scope or non-service echo sites: only the ZCP-owned
-// class can mask there. Presentation-only — internal value paths (ref
-// resolution, shadow detection, the generate-dotenv .env file render) pass
-// the raw value untouched.
-func RedactCredentialValue(key, value, serviceType string) (string, bool) {
+// and sensitive classes can mask there. Presentation-only — internal value
+// paths (ref resolution, shadow detection, the generate-dotenv .env file
+// render) pass the raw value untouched.
+func RedactEnvValue(key, value, serviceType string, sensitive bool) (string, bool) {
 	if credentialValueKeys[key] {
 		return "<redacted: ZCP-managed credential>", true
 	}
 	if managedCredentialFieldKeys[key] && topology.IsManagedService(serviceType) {
 		return "<redacted: managed-service credential>", true
+	}
+	if sensitive {
+		return SensitiveValueMask, true
 	}
 	return value, false
 }
@@ -166,6 +176,10 @@ type StoredEnv struct {
 	// Replaced is true when the key was upserted (existing entry deleted,
 	// new entry created). False when the key is newly added.
 	Replaced bool `json:"replaced,omitempty"`
+	// Sensitive is the flag the value was written with — every
+	// service-scope set is sensitive, a project-scope set is not. A
+	// presentation site masks a sensitive Value (RedactEnvValue).
+	Sensitive bool `json:"isSensitive,omitempty"`
 }
 
 // EnvDeleteResult contains the result of an env delete operation.
@@ -173,6 +187,10 @@ type EnvDeleteResult struct {
 	Process     *platform.Process `json:"process,omitempty"`
 	NextActions string            `json:"nextActions,omitempty"`
 }
+
+// serviceSetSensitive is the flag a zerops_env service-scope set writes with
+// (spec-zerops-env-lifecycle.md §7); project-scope sets write plain.
+const serviceSetSensitive = true
 
 // EnvSet sets environment variables for a service or project with upsert
 // semantics — existing keys are replaced, new ones are created. BOTH scopes
@@ -269,7 +287,7 @@ func EnvSet(
 			}
 			replaced = true
 		}
-		proc, setErr := client.CreateServiceEnvVar(ctx, svc.ID, p.Key, p.Value, true)
+		proc, setErr := client.CreateServiceEnvVar(ctx, svc.ID, p.Key, p.Value, serviceSetSensitive)
 		if setErr != nil {
 			if hasAPICode(setErr, apiCodeUserDataDuplicateKey) && !replaced {
 				return nil, yamlOwnedKeyError(p.Key, hostname)
@@ -282,7 +300,7 @@ func EnvSet(
 			return nil, setErr
 		}
 		lastProc = proc
-		stored = append(stored, StoredEnv{Key: p.Key, Value: p.Value, Replaced: replaced})
+		stored = append(stored, StoredEnv{Key: p.Key, Value: p.Value, Replaced: replaced, Sensitive: serviceSetSensitive})
 	}
 	return &EnvSetResult{Process: lastProc, Stored: stored}, nil
 }

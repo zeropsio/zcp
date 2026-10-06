@@ -104,6 +104,10 @@ type EnvKey struct {
 	Source   EnvSource
 	Scope    EnvScope
 	Conflict ConflictStatus
+	// Sensitive is true when Value is, or resolves a ref out of, a row the
+	// platform holds with sensitive:true. Presentation sites (the preview
+	// diff) mask it; the .env file render writes it as is.
+	Sensitive bool
 }
 
 // EnvPlan is a typed, formatter-agnostic representation of the
@@ -377,11 +381,12 @@ func buildEnvPlanWith(
 			continue
 		}
 		keys[pe.Key] = EnvKey{
-			Key:      pe.Key,
-			Value:    pe.Content,
-			Source:   SourceProject,
-			Scope:    ScopeShared,
-			Conflict: StatusClean,
+			Key:       pe.Key,
+			Value:     pe.Content,
+			Source:    SourceProject,
+			Scope:     ScopeShared,
+			Conflict:  StatusClean,
+			Sensitive: pe.Sensitive,
 		}
 	}
 	sort.Strings(omittedPlatformKeys)
@@ -424,9 +429,9 @@ func buildEnvPlanWith(
 		}
 		// Project env is the fallback layer for a lone ref inside a
 		// sibling's value (project vars inherit into every container live).
-		projectEnvForRefs := make(map[string]string, len(projectEnvs))
+		projectEnvForRefs := make(map[string]platform.ProjectEnvVar, len(projectEnvs))
 		for _, pe := range projectEnvs {
-			projectEnvForRefs[pe.Key] = pe.Content
+			projectEnvForRefs[pe.Key] = pe
 		}
 		expander := &refExpander{
 			client:       client,
@@ -445,6 +450,7 @@ func buildEnvPlanWith(
 		sort.Strings(yamlKeys)
 		for _, envName := range yamlKeys {
 			rawValue := entry.Run.EnvVariables[envName]
+			expander.resolvedSensitive = false
 			expanded, unresolvedCount, expErr := expander.expandRefs(ctx, rawValue, "", map[string]bool{}, 0)
 			if expErr != nil {
 				return nil, fmt.Errorf("build env plan: %w", expErr)
@@ -465,11 +471,12 @@ func buildEnvPlanWith(
 				conflict = StatusShadowed
 			}
 			keys[envName] = EnvKey{
-				Key:      envName,
-				Value:    expanded,
-				Source:   SourceYAMLSetup,
-				Scope:    scope,
-				Conflict: conflict,
+				Key:       envName,
+				Value:     expanded,
+				Source:    SourceYAMLSetup,
+				Scope:     scope,
+				Conflict:  conflict,
+				Sensitive: expander.resolvedSensitive,
 			}
 		}
 		if len(unresolved) > 0 {

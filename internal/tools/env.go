@@ -211,9 +211,10 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			// the operator references a value as $VAR by name, so the literal
 			// never enters context. To inspect a specific value for diagnosis,
 			// zerops_discover includeEnvValues=true reads them (managed-service
-			// credential fields are masked even there). This action exists so
-			// the agent's natural first attempt (get) succeeds instead of
-			// bouncing through a decision tree of wrong actions.
+			// credential fields and sensitive values are masked even there).
+			// This action exists so the agent's natural first attempt (get)
+			// succeeds instead of bouncing through a decision tree of wrong
+			// actions.
 			if !input.Project.Bool() && input.ServiceHostname == "" {
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,
@@ -250,17 +251,18 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			if setResult.Process != nil {
 				setResult.Process, setTimedOut = pollManageProcess(ctx, client, setResult.Process, onProgress)
 			}
-			// Redact credential-class values in the echo: `stored[]` verifies
-			// WHAT landed, never the secret itself — an unredacted set
-			// response put the raw PAT into the chat transcript (the raw
-			// zerops_env rotation bypass, prod.txt T3). Same single owner
-			// (RedactCredentialValue) as the get/discover renderers.
+			// Redact credential-class and sensitive values in the echo:
+			// `stored[]` verifies WHAT landed, never the secret itself — an
+			// unredacted set response put the raw PAT into the chat transcript
+			// (the raw zerops_env rotation bypass, prod.txt T3). Same single
+			// owner (RedactEnvValue) as the get/discover renderers.
 			storedEcho := make([]ops.StoredEnv, len(setResult.Stored))
 			copy(storedEcho, setResult.Stored)
 			for i := range storedEcho {
 				// A user set is never a managed service's own credential field,
-				// so "" serviceType is correct — only the ZCP-owned class masks.
-				if masked, isCredential := ops.RedactCredentialValue(storedEcho[i].Key, storedEcho[i].Value, ""); isCredential {
+				// so "" serviceType is correct — the ZCP-owned and sensitive
+				// classes mask.
+				if masked, redacted := ops.RedactEnvValue(storedEcho[i].Key, storedEcho[i].Value, "", storedEcho[i].Sensitive); redacted {
 					storedEcho[i].Value = masked
 				}
 			}

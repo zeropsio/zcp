@@ -961,3 +961,116 @@ func suggestionOf(err error) string {
 	}
 	return ""
 }
+
+// TestEnvVarsToMaps_SensitiveRowsNeverEcho pins the vault rule: a row the
+// platform holds with sensitive:true — a person's own project or service
+// value — never has its value echoed at a presentation surface, whatever the
+// token can read. The key stays, annotated isSensitive (also in keys-only
+// mode); isReference / isPlatformInjected stay; a plain row echoes in clear;
+// the ZCP-owned and managed-credential masks keep their own text.
+func TestEnvVarsToMaps_SensitiveRowsNeverEcho(t *testing.T) {
+	t.Parallel()
+
+	project := func(e platform.ProjectEnvVar, includeValues bool) map[string]any {
+		return envVarsToMaps([]platform.ProjectEnvVar{e}, includeValues, "")[0]
+	}
+	service := func(serviceType string, e platform.ServiceEnvVar, includeValues bool) map[string]any {
+		return envVarsToMaps([]platform.ServiceEnvVar{e}, includeValues, serviceType)[0]
+	}
+
+	tests := []struct {
+		name          string
+		render        func(includeValues bool) map[string]any
+		includeValues bool
+		wantValue     any // nil = no value key
+		wantSensitive bool
+		wantRedacted  bool
+		wantReference bool
+	}{
+		{
+			name: "sensitive project var masked",
+			render: func(iv bool) map[string]any {
+				return project(platform.ProjectEnvVar{Key: "STRIPE_KEY", Content: "sk_live_" + "PERSON", Sensitive: true}, iv)
+			},
+			includeValues: true, wantValue: "<redacted: sensitive>", wantSensitive: true, wantRedacted: true,
+		},
+		{
+			name: "sensitive service var masked",
+			render: func(iv bool) map[string]any {
+				return service("nodejs@22", platform.ServiceEnvVar{Key: "MAIL_PASSWORD", Content: "hunter" + "2", Sensitive: true}, iv)
+			},
+			includeValues: true, wantValue: "<redacted: sensitive>", wantSensitive: true, wantRedacted: true,
+		},
+		{
+			name: "sensitive reference keeps isReference",
+			render: func(iv bool) map[string]any {
+				return service("nodejs@22", platform.ServiceEnvVar{Key: "DB_URL", Content: "${db_connectionString}", Sensitive: true}, iv)
+			},
+			includeValues: true, wantValue: "<redacted: sensitive>", wantSensitive: true, wantRedacted: true, wantReference: true,
+		},
+		{
+			name: "sensitive key annotated in keys-only mode",
+			render: func(iv bool) map[string]any {
+				return project(platform.ProjectEnvVar{Key: "STRIPE_KEY", Content: "sk_live_" + "PERSON", Sensitive: true}, iv)
+			},
+			includeValues: false, wantValue: nil, wantSensitive: true,
+		},
+		{
+			name: "plain project var in clear",
+			render: func(iv bool) map[string]any {
+				return project(platform.ProjectEnvVar{Key: "APP_NAME", Content: "shop"}, iv)
+			},
+			includeValues: true, wantValue: "shop",
+		},
+		{
+			name: "plain service var in clear",
+			render: func(iv bool) map[string]any {
+				return service("nodejs@22", platform.ServiceEnvVar{Key: "PORT", Content: "3000"}, iv)
+			},
+			includeValues: true, wantValue: "3000",
+		},
+		{
+			name: "ZCP-owned credential keeps its mask",
+			render: func(iv bool) map[string]any {
+				return project(platform.ProjectEnvVar{Key: GitTokenEnvKey, Content: "ghp_" + "TOKEN"}, iv)
+			},
+			includeValues: true, wantValue: "<redacted: ZCP-managed credential>", wantRedacted: true,
+		},
+		{
+			name: "sensitive ZCP-owned credential keeps its mask and is annotated",
+			render: func(iv bool) map[string]any {
+				return service("nodejs@22", platform.ServiceEnvVar{Key: GitTokenEnvKey, Content: "ghp_" + "TOKEN", Sensitive: true}, iv)
+			},
+			includeValues: true, wantValue: "<redacted: ZCP-managed credential>", wantSensitive: true, wantRedacted: true,
+		},
+		{
+			name: "managed credential keeps its mask",
+			render: func(iv bool) map[string]any {
+				return service("postgresql@18", platform.ServiceEnvVar{Key: "password", Content: "pg" + "SECRET"}, iv)
+			},
+			includeValues: true, wantValue: "<redacted: managed-service credential>", wantRedacted: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := tt.render(tt.includeValues)
+			if got, has := m["value"]; tt.wantValue == nil {
+				if has {
+					t.Errorf("value = %v, want no value key", got)
+				}
+			} else if got != tt.wantValue {
+				t.Errorf("value = %v, want %v", got, tt.wantValue)
+			}
+			if got := m["isSensitive"] == true; got != tt.wantSensitive {
+				t.Errorf("isSensitive = %v, want %v", got, tt.wantSensitive)
+			}
+			if got := m["isCredentialRedacted"] == true; got != tt.wantRedacted {
+				t.Errorf("isCredentialRedacted = %v, want %v", got, tt.wantRedacted)
+			}
+			if got := m["isReference"] == true; got != tt.wantReference {
+				t.Errorf("isReference = %v, want %v", got, tt.wantReference)
+			}
+		})
+	}
+}

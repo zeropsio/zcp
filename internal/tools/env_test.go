@@ -5,6 +5,7 @@ package tools
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -713,5 +714,68 @@ func TestEnvGet_LiveRuntime_ShowsYamlBaked_NoProjectLeak(t *testing.T) {
 	}
 	if appName["source"] != "zerops.yaml" {
 		t.Errorf("APP_NAME source = %v, want zerops.yaml", appName["source"])
+	}
+}
+
+// TestEnvSet_StoredEcho_SensitiveMasked: the set echo verifies WHAT landed,
+// never a sensitive value — a service-scope set is written sensitive:true, so
+// its stored value comes back masked and annotated; a project-scope set is
+// written plain and echoes in clear; a ZCP-owned key keeps its own mask.
+func TestEnvSet_StoredEcho_SensitiveMasked(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		args          map[string]any
+		wantValue     string
+		wantSensitive bool
+	}{
+		{
+			name:          "service scope is sensitive",
+			args:          map[string]any{"serviceHostname": "api", "variables": []any{"API_KEY=" + "person-secret"}},
+			wantValue:     "<redacted: sensitive>",
+			wantSensitive: true,
+		},
+		{
+			name:      "project scope is plain",
+			args:      map[string]any{"project": true, "variables": []any{"APP_NAME=shop"}},
+			wantValue: "shop",
+		},
+		{
+			name:      "ZCP-owned key keeps its mask",
+			args:      map[string]any{"project": true, "variables": []any{"GIT_TOKEN=" + "ghp_x"}},
+			wantValue: "<redacted: ZCP-managed credential>",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterEnv(srv, shadowSetMock(nil, nil), "proj-1", "")
+			args := map[string]any{"action": "set", "skipRestart": true}
+			maps.Copy(args, tt.args)
+			result := callTool(t, srv, "zerops_env", args)
+			if result.IsError {
+				t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
+			}
+			var parsed struct {
+				Stored []map[string]any `json:"stored"`
+			}
+			text := getTextContent(t, result)
+			if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+				t.Fatalf("parse result: %v", err)
+			}
+			if strings.Contains(text, "person-secret") {
+				t.Errorf("the set echo repeats a sensitive value: %s", text)
+			}
+			if len(parsed.Stored) != 1 {
+				t.Fatalf("stored = %v, want one entry", parsed.Stored)
+			}
+			if got := parsed.Stored[0]["value"]; got != tt.wantValue {
+				t.Errorf("stored value = %v, want %v", got, tt.wantValue)
+			}
+			if got := parsed.Stored[0]["isSensitive"] == true; got != tt.wantSensitive {
+				t.Errorf("isSensitive = %v, want %v", got, tt.wantSensitive)
+			}
+		})
 	}
 }

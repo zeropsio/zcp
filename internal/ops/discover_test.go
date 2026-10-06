@@ -1580,3 +1580,70 @@ func TestDiscover_ProjectNotFound(t *testing.T) {
 		t.Fatal("expected error when project not found")
 	}
 }
+
+// TestDiscover_IncludeEnvValues_SensitiveMasked: discover with
+// includeEnvValues=true never echoes a sensitive project or service value —
+// the platform hands it to a full token in clear — while a plain value in the
+// same response stays readable.
+func TestDiscover_IncludeEnvValues_SensitiveMasked(t *testing.T) {
+	t.Parallel()
+
+	const secret = "person-" + "vault-secret"
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "p", Status: statusActive}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		}).
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
+			{ID: "e1", Key: "PORT", Content: "3000"},
+			{ID: "e2", Key: "MAIL_PASSWORD", Content: secret, Sensitive: true},
+		}).
+		WithProjectEnv([]platform.ProjectEnvVar{
+			{ID: "p1", Key: "APP_NAME", Content: "shop"},
+			{ID: "p2", Key: "STRIPE_KEY", Content: secret, Sensitive: true},
+		})
+
+	result, err := Discover(context.Background(), mock, "proj-1", "", true, true, true)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), secret) {
+		t.Errorf("discover echoes a sensitive value: %s", raw)
+	}
+
+	tests := []struct {
+		scope         string
+		envs          []map[string]any
+		key           string
+		wantValue     string
+		wantSensitive bool
+	}{
+		{"project", result.Project.Envs, "STRIPE_KEY", "<redacted: sensitive>", true},
+		{"project", result.Project.Envs, "APP_NAME", "shop", false},
+		{"service", result.Services[0].Envs, "MAIL_PASSWORD", "<redacted: sensitive>", true},
+		{"service", result.Services[0].Envs, "PORT", "3000", false},
+	}
+	for _, tt := range tests {
+		var row map[string]any
+		for _, e := range tt.envs {
+			if e["key"] == tt.key {
+				row = e
+			}
+		}
+		if row == nil {
+			t.Errorf("%s %s: missing", tt.scope, tt.key)
+			continue
+		}
+		if row["value"] != tt.wantValue {
+			t.Errorf("%s %s value = %v, want %v", tt.scope, tt.key, row["value"], tt.wantValue)
+		}
+		if got := row["isSensitive"] == true; got != tt.wantSensitive {
+			t.Errorf("%s %s isSensitive = %v, want %v", tt.scope, tt.key, got, tt.wantSensitive)
+		}
+	}
+}
