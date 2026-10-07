@@ -29,6 +29,12 @@ type EnvInput struct {
 	Project         FlexBool `json:"project,omitempty"`
 	Variables       []string `json:"variables,omitempty"`
 	SkipRestart     FlexBool `json:"skipRestart,omitempty"`
+	// Sensitive is optional: nil lets the set pick per key by name.
+	Sensitive *FlexBool `json:"sensitive,omitempty"`
+	// Key and Reason are request's: the name asked for and one sentence for
+	// the person. Never a value — the person types that into Mate.
+	Key    string `json:"key,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // envInputSchema is the explicit InputSchema for zerops_env. It
@@ -44,26 +50,35 @@ func envInputSchema() *jsonschema.Schema {
 	return objectSchema(map[string]*jsonschema.Schema{
 		"action": {
 			Type:        "string",
-			Enum:        []any{"get", "set", "delete", "generate-dotenv"},
-			Description: "get: return env var keys + ${host_var} refs for a service (serviceHostname) or the project (project=true) — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. generate-dotenv: reads a local zerops.yaml and writes a resolved .env (requires zerops.yaml in the working directory).",
+			Enum:        []any{"get", "set", "delete", "request", "generate-dotenv"},
+			Description: "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. request: ask the person for a value only they have (key, reason); it goes to the vault, never the chat. generate-dotenv: writes a resolved .env from a local zerops.yaml.",
 		},
 		"serviceHostname": {
 			Type:        "string",
-			Description: "Hostname of the service to operate on. Required for get/set/delete unless project=true. For generate-dotenv: deprecated — prefer the setup parameter (see below). Still accepted as a fallback when setup is empty; emits a deprecation warning in the result.",
+			Description: "Service to operate on; required for get/set/delete/request unless project=true. generate-dotenv: deprecated fallback for setup.",
+		},
+		"key": {
+			Type:        "string",
+			Description: "request: the env key asked for (name only).",
+		},
+		"reason": {
+			Type:        "string",
+			Description: "request: one sentence for the person — what it is for, where to find it. Never a value.",
 		},
 		"setup": {
 			Type:        "string",
 			Description: "generate-dotenv: name of the zerops.yaml setup block to render. Recipe / multi-setup yaml uses setup names like 'dev', 'prod', 'worker' that are not always service hostnames. Empty + single-block yaml: auto-pick. Empty + multi-block yaml: refuses with the available names. Empty + zero-block yaml: falls back to serviceHostname.",
 		},
 		"preview": flexBoolSchema("generate-dotenv: dry-run. Builds the plan and returns the diff vs current .env without writing. Use to inspect what would change before committing."),
-		"force":   flexBoolSchema("generate-dotenv: bypass the refuse-on-unowned-edits safety gate. By default ZCP refuses to write when the existing .env has keys not produced by any source (project envVariables, zerops.yaml run.envVariables, .env.local) — those are user-direct edits at risk of being discarded. Set force=true after confirming the unowned keys are safe to drop, or move them to .env.local first."),
-		"project": flexBoolSchema("Set to true to operate on project-level env vars instead of service-level. Valid for get/set/delete."),
+		"force":   flexBoolSchema("generate-dotenv: write even when the existing .env has keys no source produces (user edits that would be dropped). Confirm they are safe to drop, or move them to .env.local first."),
+		"project": flexBoolSchema("true: the project's Shared vault (project env) instead of a service's own."),
 		"variables": {
 			Type:        "array",
 			Items:       &jsonschema.Schema{Type: "string"},
 			Description: "List of env vars. set: KEY=VALUE strings (literal values). delete: KEY names only. Ignored by get and generate-dotenv.",
 		},
-		"skipRestart": flexBoolSchema("set/delete: skip the automatic service restart after the env change. Default false (auto-restart affected services so the new value takes effect). Pass true only if you will redeploy immediately afterwards and the restart would be wasted."),
+		"sensitive":   flexBoolSchema("set/request: true = sensitive (write-only, masked on every read), false = plain. Omitted: by name — SECRET|TOKEN|KEY|PASSWORD|PASS|DSN|PRIVATE|CREDENTIAL → sensitive, else plain."),
+		"skipRestart": flexBoolSchema("set/delete: skip restarting the services that read the key (readers). Pass true only when you deploy right after."),
 	}, "action")
 }
 
@@ -167,8 +182,9 @@ func projectEnvGetResponse(result *ops.DiscoverResult, projectScope bool) *EnvGe
 	return resp
 }
 
-// envChangeResult wraps the underlying set/delete result with the list of
-// services that were auto-restarted so the new env value takes effect.
+// envChangeResult wraps the underlying set/delete result with the readers of
+// each changed key — the services whose deployed run.envVariables reference
+// it — and the readers that were restarted so the new value takes effect.
 //
 // ShadowWarnings carries cross-layer shadows detected on a project-scope set:
 // keys whose stored project value is overridden by a higher layer (yaml-baked
@@ -179,6 +195,7 @@ type envChangeResult struct {
 	Process            *platform.Process   `json:"process,omitempty"`
 	Stored             []ops.StoredEnv     `json:"stored,omitempty"`
 	TimedOut           bool                `json:"timedOut,omitempty"`
+	Readers            map[string][]string `json:"readers,omitempty"`
 	RestartedServices  []string            `json:"restartedServices,omitempty"`
 	RestartWarnings    []string            `json:"restartWarnings,omitempty"`
 	ShadowWarnings     []string            `json:"shadowWarnings,omitempty"`
@@ -194,7 +211,7 @@ type envChangeResult struct {
 func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostname string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_env",
-		Description: "Manage env vars. Actions: get (read), set (upsert), delete, generate-dotenv (write local .env from local zerops.yaml). Scope: service via serviceHostname, or project=true. set expands <@...> values (shared setVar/getVar; |modifiers only there); others stay verbatim, unescaped. base64:/hex: prefixes rejected. Response 'stored' verifies what landed. set/delete auto-restart affected services unless skipRestart=true. For bulk env reads across many services, prefer zerops_discover includeEnvs=true.",
+		Description: "Manage the vault: a service's own (serviceHostname) or the Shared (project=true). Actions: get (keys), set (upsert), delete, request (a value only the person has; never ask in chat), generate-dotenv (local .env). An app reads only what its run.envVariables references: `NAME: ${KEY}` (own, else Shared), `${host_KEY}`. set: sensitive per key, expands <@...>, 'stored' verifies. set/delete restart the key's readers unless skipRestart=true",
 		InputSchema: envInputSchema(),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage environment variables",
@@ -211,9 +228,10 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			// the operator references a value as $VAR by name, so the literal
 			// never enters context. To inspect a specific value for diagnosis,
 			// zerops_discover includeEnvValues=true reads them (managed-service
-			// credential fields are masked even there). This action exists so
-			// the agent's natural first attempt (get) succeeds instead of
-			// bouncing through a decision tree of wrong actions.
+			// credential fields and sensitive values are masked even there).
+			// This action exists so the agent's natural first attempt (get)
+			// succeeds instead of bouncing through a decision tree of wrong
+			// actions.
 			if !input.Project.Bool() && input.ServiceHostname == "" {
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,
@@ -242,7 +260,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			}
 			return jsonResult(projectEnvGetResponse(result, input.Project.Bool())), nil, nil
 		case "set":
-			setResult, err := ops.EnvSet(ctx, client, projectID, input.ServiceHostname, input.Project.Bool(), input.Variables)
+			setResult, err := ops.EnvSet(ctx, client, projectID, input.ServiceHostname, input.Project.Bool(), input.Variables, input.Sensitive.Ptr())
 			if err != nil {
 				return convertError(err), nil, nil
 			}
@@ -250,23 +268,28 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			if setResult.Process != nil {
 				setResult.Process, setTimedOut = pollManageProcess(ctx, client, setResult.Process, onProgress)
 			}
-			// Redact credential-class values in the echo: `stored[]` verifies
-			// WHAT landed, never the secret itself — an unredacted set
-			// response put the raw PAT into the chat transcript (the raw
-			// zerops_env rotation bypass, prod.txt T3). Same single owner
-			// (RedactCredentialValue) as the get/discover renderers.
+			// Redact credential-class and sensitive values in the echo:
+			// `stored[]` verifies WHAT landed, never the secret itself — an
+			// unredacted set response put the raw PAT into the chat transcript
+			// (the raw zerops_env rotation bypass, prod.txt T3). Same single
+			// owner (RedactEnvValue) as the get/discover renderers.
 			storedEcho := make([]ops.StoredEnv, len(setResult.Stored))
 			copy(storedEcho, setResult.Stored)
 			for i := range storedEcho {
 				// A user set is never a managed service's own credential field,
-				// so "" serviceType is correct — only the ZCP-owned class masks.
-				if masked, isCredential := ops.RedactCredentialValue(storedEcho[i].Key, storedEcho[i].Value, ""); isCredential {
+				// so "" serviceType is correct — the ZCP-owned and sensitive
+				// classes mask.
+				if masked, redacted := ops.RedactEnvValue(storedEcho[i].Key, storedEcho[i].Value, "", storedEcho[i].Sensitive); redacted {
 					storedEcho[i].Value = masked
 				}
 			}
 			resp := envChangeResult{Process: setResult.Process, Stored: storedEcho, TimedOut: setTimedOut}
 			resp.ShadowWarnings, resp.ShadowUnverified = detectSetShadows(ctx, client, projectID, input, selfHostname, setResult.Stored)
-			applyAutoRestart(ctx, client, projectID, input, selfHostname, &resp, onProgress)
+			setKeys := make([]string, 0, len(setResult.Stored))
+			for _, st := range setResult.Stored {
+				setKeys = append(setKeys, st.Key)
+			}
+			applyAutoRestart(ctx, client, projectID, input, selfHostname, setKeys, false, &resp, onProgress)
 			return jsonResult(resp), nil, nil
 		case "delete":
 			delResult, err := ops.EnvDelete(ctx, client, projectID, input.ServiceHostname, input.Project.Bool(), input.Variables)
@@ -278,8 +301,17 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 				delResult.Process, delTimedOut = pollManageProcess(ctx, client, delResult.Process, onProgress)
 			}
 			resp := envChangeResult{Process: delResult.Process, TimedOut: delTimedOut}
-			applyAutoRestart(ctx, client, projectID, input, selfHostname, &resp, onProgress)
+			applyAutoRestart(ctx, client, projectID, input, selfHostname, input.Variables, true, &resp, onProgress)
 			return jsonResult(resp), nil, nil
+		case "request":
+			// A request writes nothing: Mate draws a field for the person,
+			// whose value goes straight to the vault — it never enters the
+			// conversation, this result, or any log.
+			req, err := ops.EnvRequest(ctx, client, projectID, input.ServiceHostname, input.Project.Bool(), input.Key, input.Sensitive.Ptr())
+			if err != nil {
+				return convertError(err), nil, nil
+			}
+			return jsonResult(envRequestAnswer(req)), nil, nil
 		case "generate-dotenv":
 			// Setup parameter takes precedence; serviceHostname falls
 			// through with a deprecation warning so existing callers
@@ -304,7 +336,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 		case "":
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter, "Action is required",
-				"Use get, set, delete, or generate-dotenv")), nil, nil
+				"Use get, set, delete, request, or generate-dotenv")), nil, nil
 		default:
 			// Invalid-action errors guided agents toward generate-dotenv in the
 			// past, which fails from arbitrary working directories (see LOG.txt
@@ -312,42 +344,84 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			// meant (get) and at zerops_discover for bulk reads.
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter, "Invalid action '"+input.Action+"'",
-				"Valid actions: get, set, delete, generate-dotenv. To read env vars for a service use get (or zerops_discover includeEnvs=true for all services at once). generate-dotenv is only for writing a local .env file from a local zerops.yaml.")), nil, nil
+				"Valid actions: get, set, delete, request, generate-dotenv. To read env vars for a service use get (or zerops_discover includeEnvs=true for all services at once). generate-dotenv is only for writing a local .env file from a local zerops.yaml.")), nil, nil
 		}
 	})
 }
 
-// applyAutoRestart restarts the services affected by an env change so the new
-// value takes effect. Populates resp with the outcomes. Best-effort — restart
-// failures are reported as warnings; the env change itself has already
-// succeeded by the time this is called.
+// envRequestResult is the answer to action=request: Requested when the
+// person was asked, AlreadySet when the key is in that vault already.
+type envRequestResult struct {
+	Requested   *ops.EnvRequestResult `json:"requested,omitempty"`
+	AlreadySet  *ops.EnvRequestResult `json:"alreadySet,omitempty"`
+	NextActions string                `json:"nextActions"`
+}
+
+func envRequestAnswer(req *ops.EnvRequestResult) envRequestResult {
+	if req.AlreadySet {
+		where := "the Shared vault"
+		if req.Scope == ops.EnvRequestScopeService {
+			where = req.ServiceHostname + "'s vault"
+		}
+		return envRequestResult{
+			AlreadySet: req,
+			NextActions: fmt.Sprintf("%s is already in %s; nothing was asked. Reference it by name (`NAME: ${%s}` in run.envVariables) — its value is never read.",
+				req.Key, where, req.Key),
+		}
+	}
+	return envRequestResult{
+		Requested: req,
+		NextActions: fmt.Sprintf("The person was asked for %s in Mate; it goes straight to the vault, never through the chat. You will hear in a zerops-update note when it is set. Do not ask for the value in the chat; continue with what does not need it, or end your turn.",
+			req.Key),
+	}
+}
+
+// applyAutoRestart restarts the services that read the changed keys so the
+// new value takes effect. Under the strict env model a process reads only
+// the entries of its run.envVariables, so a reader is a runtime whose
+// deployed entries reference the key — `${KEY}` for its own value or the
+// Shared one, through a chain of its entries, or `${host_KEY}` for a
+// service's key (ops.ProjectEnvScopes). Nothing reads it → nothing restarts,
+// and nextActions says how to make a service read it. Populates resp with
+// the readers and the outcomes. Best-effort — a restart failure is a
+// warning; the env change itself has already succeeded.
 func applyAutoRestart(
 	ctx context.Context,
 	client platform.Client,
 	projectID string,
 	input EnvInput,
 	selfHostname string,
+	keys []string,
+	deleting bool,
 	resp *envChangeResult,
 	onProgress ops.ProgressCallback,
 ) {
+	plan := planRestart(ctx, client, projectID, input, selfHostname, keys, deleting)
+	resp.Readers = plan.readers
+	resp.RestartWarnings = append(resp.RestartWarnings, plan.warnings...)
+	unreadHint := nothingReadsHint(plan.unreadKeys, input)
+
 	if input.SkipRestart.Bool() {
 		resp.RestartSkipped = true
-		resp.NextActions = "skipRestart=true — the value lands in the env store (~5-10s) but the RUNNING process keeps its boot env until it restarts. Restart manually (zerops_manage action=restart) or deploy to pick it up."
+		next := "skipRestart=true — the value is stored, but a running process keeps its boot env until it restarts."
+		if len(plan.targets) > 0 {
+			next += fmt.Sprintf(" Restart %s (zerops_manage action=restart) or deploy to pick it up.", strings.Join(targetNames(plan.targets), ", "))
+		}
+		resp.NextActions = joinSentences(next, unreadHint)
 		return
 	}
 
-	targets, warn := resolveRestartTargets(ctx, client, projectID, input, selfHostname)
-	if warn != "" {
-		resp.RestartWarnings = append(resp.RestartWarnings, warn)
-	}
-	if len(targets) == 0 {
-		// No ACTIVE runtime services to restart — the env value is stored and
-		// will be injected at the next service start/deploy.
-		resp.NextActions = "No live services needed restart. The new env value will be injected when a service starts or deploys."
+	if len(plan.targets) == 0 {
+		resp.NextActions = unreadHint
+		if resp.NextActions == "" {
+			resp.NextActions = "No live service reads the changed key(s); nothing restarted. A reader picks the value up when it starts or deploys."
+		}
 		return
 	}
 
-	for _, t := range targets {
+	attempted := 0
+	for _, t := range plan.targets {
+		attempted++
 		proc, err := client.RestartService(ctx, t.id)
 		if err != nil {
 			resp.RestartWarnings = append(resp.RestartWarnings,
@@ -360,21 +434,159 @@ func applyAutoRestart(
 		}
 		resp.RestartedServices = append(resp.RestartedServices, t.hostname)
 	}
+	failed := attempted - len(resp.RestartedServices)
 
+	var outcome string
 	switch {
 	case len(resp.RestartedServices) == 0:
-		resp.NextActions = "Restart failed on all affected services — see restartWarnings."
-	case len(resp.RestartWarnings) > 0:
-		resp.NextActions = fmt.Sprintf("Restarted %d service(s), %d failed — see restartWarnings.", len(resp.RestartedServices), len(resp.RestartWarnings))
+		outcome = "Restart failed on every reader — see restartWarnings."
+	case failed > 0:
+		outcome = fmt.Sprintf("Restarted %d reader(s), %d failed — see restartWarnings.", len(resp.RestartedServices), failed)
 	case len(resp.ShadowWarnings) > 0:
-		resp.NextActions = fmt.Sprintf("Restarted %s, but %d set key(s) are SHADOWED by a higher env layer and are NOT what the container reads — see shadowWarnings.", strings.Join(resp.RestartedServices, ", "), len(resp.ShadowWarnings))
+		outcome = fmt.Sprintf("Restarted %s, but %d set key(s) are SHADOWED by a higher env layer and are NOT what the container reads — see shadowWarnings.", strings.Join(resp.RestartedServices, ", "), len(resp.ShadowWarnings))
 	case len(resp.ShadowUnverified) > 0:
 		// A higher-layer read failed for some service — we cannot confirm the
 		// set isn't silently shadowed there, so do NOT claim "values are live" (E4).
-		resp.NextActions = fmt.Sprintf("Restarted %s — env live where verified, but shadow status is UNVERIFIED for %d service(s) (env layer read failed; retry the env check after `zcli vpn up`).", strings.Join(resp.RestartedServices, ", "), len(resp.ShadowUnverified))
+		outcome = fmt.Sprintf("Restarted %s — env live where verified, but shadow status is UNVERIFIED for %d service(s) (env layer read failed; retry the env check after `zcli vpn up`).", strings.Join(resp.RestartedServices, ", "), len(resp.ShadowUnverified))
+	case plan.uncertain:
+		outcome = fmt.Sprintf("Restarted %s — see restartWarnings for the services whose env could not be read.", strings.Join(resp.RestartedServices, ", "))
+	case deleting:
+		outcome = fmt.Sprintf("Restarted %s — see restartWarnings: the deleted key no longer resolves there.", strings.Join(resp.RestartedServices, ", "))
+	case unreadHint != "":
+		outcome = fmt.Sprintf("Restarted %s — the readers have the new value.", strings.Join(resp.RestartedServices, ", "))
 	default:
-		resp.NextActions = fmt.Sprintf("Restarted %s — env values are live.", strings.Join(resp.RestartedServices, ", "))
+		outcome = fmt.Sprintf("Restarted %s — env values are live.", strings.Join(resp.RestartedServices, ", "))
 	}
+	resp.NextActions = joinSentences(outcome, unreadHint)
+}
+
+// restartPlan is what an env change restarts and why.
+type restartPlan struct {
+	// readers maps each changed key to the services whose deployed entries
+	// read it (all of them, live or not, this session's own included).
+	readers map[string][]string
+	// targets are the readers a restart applies to: live, user runtimes,
+	// never the service running this session — plus, when the env could not
+	// be read, every such runtime that might read it.
+	targets    []restartTarget
+	unreadKeys []string
+	warnings   []string
+	uncertain  bool
+}
+
+// planRestart finds the readers of the changed keys from the project's
+// deployed rows (ops.ReadProjectEnvScopes). keys are the keys a set stored
+// or a delete removed; deleting adds a warning per reader, which now reads
+// the literal `${KEY}`. When the project's env cannot be read at all, every
+// eligible runtime in scope (all of them for a Shared key, the named service
+// for its own) is restarted, as before readers were known.
+func planRestart(ctx context.Context, client platform.Client, projectID string, input EnvInput, selfHostname string, keys []string, deleting bool) restartPlan {
+	plan := restartPlan{readers: map[string][]string{}}
+	services, err := ops.ListProjectServices(ctx, client, projectID)
+	if err != nil {
+		plan.warnings = append(plan.warnings, fmt.Sprintf("could not list services to find the readers: %v — restart the services that read the key manually", err))
+		return plan
+	}
+	owner := ""
+	if !input.Project.Bool() {
+		owner = input.ServiceHostname
+	}
+
+	scopes, err := ops.ReadProjectEnvScopes(ctx, client, projectID, services)
+	if err != nil {
+		plan.uncertain = true
+		plan.warnings = append(plan.warnings, fmt.Sprintf("could not read the project's env to find the readers (%v) — restarted every runtime that might read it", err))
+		for _, svc := range services {
+			if isAutoRestartEligible(svc, selfHostname) && (owner == "" || svc.Name == owner) {
+				plan.targets = append(plan.targets, restartTarget{id: svc.ID, hostname: svc.Name})
+			}
+		}
+		return plan
+	}
+
+	byName := make(map[string]platform.ServiceStack, len(services))
+	for _, svc := range services {
+		byName[svc.Name] = svc
+	}
+	targeted := map[string]bool{}
+	addTarget := func(svc platform.ServiceStack) {
+		if !targeted[svc.Name] {
+			targeted[svc.Name] = true
+			plan.targets = append(plan.targets, restartTarget{id: svc.ID, hostname: svc.Name})
+		}
+	}
+
+	for _, key := range keys {
+		readers := scopes.Readers(ops.VaultKey{Service: owner, Key: key})
+		if readers == nil {
+			readers = []string{}
+		}
+		plan.readers[key] = readers
+		if len(readers) == 0 {
+			plan.unreadKeys = append(plan.unreadKeys, key)
+		}
+		for _, name := range readers {
+			svc := byName[name]
+			switch {
+			case selfHostname != "" && name == selfHostname:
+				plan.warnings = append(plan.warnings, fmt.Sprintf("%s reads %s but runs this session — not restarted; it picks the value up at its next restart or deploy", name, key))
+			case !isAutoRestartEligible(svc, selfHostname):
+				if !svc.IsLive() {
+					plan.warnings = append(plan.warnings, fmt.Sprintf("%s reads %s but is %s (not live) — it picks the value up when it starts", name, key, svc.Status))
+				}
+			default:
+				addTarget(svc)
+			}
+			if deleting {
+				plan.warnings = append(plan.warnings, fmt.Sprintf("%s still references %s: after the delete its entry reaches the app as the literal text ${%s} — remove or repoint the reference in %s's zerops.yaml run.envVariables and deploy", name, key, key, name))
+			}
+		}
+	}
+
+	for _, name := range scopes.Unread {
+		svc := byName[name]
+		if !isAutoRestartEligible(svc, selfHostname) {
+			continue
+		}
+		plan.uncertain = true
+		plan.warnings = append(plan.warnings, fmt.Sprintf("could not read %s's deployed env entries — restarted it in case it reads the key", name))
+		addTarget(svc)
+	}
+	return plan
+}
+
+// nothingReadsHint is the fix for keys no service reads: reference them in
+// run.envVariables and deploy. A service's own key is read as `${KEY}` by
+// that service, as `${host_KEY}` by any other.
+func nothingReadsHint(keys []string, input EnvInput) string {
+	if len(keys) == 0 {
+		return ""
+	}
+	names := strings.Join(keys, ", ")
+	if input.Project.Bool() {
+		return fmt.Sprintf("Nothing reads %s yet — reference it in the run.envVariables of each service that needs it (e.g. `NAME: ${%s}`), then deploy.", names, keys[0])
+	}
+	host := input.ServiceHostname
+	return fmt.Sprintf("Nothing reads %s yet — reference it in %s's run.envVariables (e.g. `NAME: ${%s}`), or from another service as `${%s_%s}`, then deploy.",
+		names, host, keys[0], strings.ReplaceAll(host, "-", "_"), keys[0])
+}
+
+func targetNames(targets []restartTarget) []string {
+	out := make([]string, 0, len(targets))
+	for _, t := range targets {
+		out = append(out, t.hostname)
+	}
+	return out
+}
+
+func joinSentences(parts ...string) string {
+	var kept []string
+	for _, p := range parts {
+		if p != "" {
+			kept = append(kept, p)
+		}
+	}
+	return strings.Join(kept, " ")
 }
 
 // detectSetShadows reports cross-layer shadows for a project-scope set: keys
@@ -459,55 +671,8 @@ type restartTarget struct {
 	hostname string
 }
 
-// resolveRestartTargets returns the services that should be restarted after
-// an env change. Scoping rules:
-//
-//   - Service-level change: just the named service, if ACTIVE.
-//   - Project-level change: all ACTIVE user-runtime services, EXCLUDING the
-//     ZCP service running this code (would kill our own MCP connection) and
-//     managed services (they consume their own generated credentials, not
-//     user-set project envs).
-//
-// Returns a warning string if the target service is not found or not live
-// (so the agent understands why no restart happened).
-func resolveRestartTargets(
-	ctx context.Context,
-	client platform.Client,
-	projectID string,
-	input EnvInput,
-	selfHostname string,
-) ([]restartTarget, string) {
-	services, err := ops.ListProjectServices(ctx, client, projectID)
-	if err != nil {
-		return nil, fmt.Sprintf("could not list services for auto-restart: %v", err)
-	}
-
-	if input.Project.Bool() {
-		var targets []restartTarget
-		for _, svc := range services {
-			if !isAutoRestartEligible(svc, selfHostname) {
-				continue
-			}
-			targets = append(targets, restartTarget{id: svc.ID, hostname: svc.Name})
-		}
-		return targets, ""
-	}
-
-	// Service-level: only the named service.
-	for _, svc := range services {
-		if svc.Name != input.ServiceHostname {
-			continue
-		}
-		if !svc.IsLive() {
-			return nil, fmt.Sprintf("%s is %s (not live) — env stored, will apply on next start", svc.Name, svc.Status)
-		}
-		return []restartTarget{{id: svc.ID, hostname: svc.Name}}, ""
-	}
-	return nil, fmt.Sprintf("service %q not found for auto-restart", input.ServiceHostname)
-}
-
-// isAutoRestartEligible reports whether a service should be restarted after a
-// project-level env change.
+// isAutoRestartEligible reports whether a service that reads a changed key
+// is restarted: live, a user runtime, not the service running this session.
 func isAutoRestartEligible(svc platform.ServiceStack, selfHostname string) bool {
 	if !svc.IsLive() {
 		return false

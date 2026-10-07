@@ -47,22 +47,21 @@ Left-hand keys are what code reads; right-hand tokens resolve at
 container start. Swapping a managed service later is a yaml-only
 edit — code keeps reading `DB_HOST`.
 
-**Project-level vars are different** — vars set at project scope
-(`APP_SECRET`, `JWT_SECRET`, `API_URL` set at project level) auto-
-inherit into every container, runtime and build. No `run.envVariables`
-declaration needed — `process.env.APP_SECRET` works directly.
+**Project-level vars are referenced too.** A value in the project's
+Shared vault (`APP_SECRET`, `JWT_SECRET` set at project level) or a
+service's own vault reaches the process only through a
+`run.envVariables` line — Zerops still injects unreferenced values
+today, but strict isolation stops that. `${KEY}` reads the service's
+own value, else the Shared one.
 
-**Self-shadow trap on project vars only.** Re-declaring a
-project-level var under the same name in `run.envVariables`
-(`API_URL: ${API_URL}`) overrides the auto-inherited value with the
-unresolved literal `${API_URL}` — the interpolator doesn't recurse
-back to project scope on the right-hand side. Symptom: `process.env
-.API_URL` is the literal string. Fix: delete the redundant line.
-
-**Cross-service vars do not have this trap** — without a declaration
-in `run.envVariables` the value isn't in the process env, so there's
-nothing to shadow. Each cross-service alias is a NEW entry under
-your own key.
+**Self-shadow trap.** A line with the same name on both sides
+(`API_URL: ${API_URL}`) reaches the process as the unresolved literal
+`${API_URL}` — for a project-level value too — and so does every other
+line referencing `API_URL`. Until Zerops resolves same-name references,
+the vault value carries a different name than the line the code reads:
+store `APP_SECRET_VALUE` at project level, declare
+`APP_SECRET: ${APP_SECRET_VALUE}`. Each cross-service alias is likewise
+a NEW entry under your own key.
 
 Reference: `zerops_knowledge query=env-var-model`. Atoms:
 `develop-env-var-model`, `develop-reserved-env-names`.

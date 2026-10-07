@@ -60,6 +60,15 @@ func composeProjectEnvVariables(
 
 	for _, env := range envs {
 		bucket := classifications[env.Key]
+		// A sensitive value is a person's write-only secret: no bucket that
+		// would carry the value verbatim gets it — the placeholder does.
+		if env.Sensitive && env.Value != "" && emitsValueVerbatim(bucket) {
+			out[env.Key] = ExternalSecretPlaceholder
+			warnings = append(warnings, fmt.Sprintf(
+				"env %q: sensitive value — set to placeholder %q in target yaml; the person sets the real value in the new project's vault before the runtime depends on it",
+				env.Key, ExternalSecretPlaceholder))
+			continue
+		}
 		switch bucket {
 		case topology.SecretClassInfrastructure, topology.SecretClassExclude:
 			// Infrastructure: resolves at re-import via managed refs.
@@ -79,8 +88,8 @@ func composeProjectEnvVariables(
 					env.Key, ExternalSecretPlaceholder))
 				if isLikelySentinel(env.Value) {
 					warnings = append(warnings, fmt.Sprintf(
-						"env %q: external secret value %q matches a known sentinel/test pattern — verify classification (PlainConfig may be more appropriate; plan §3.4 M4)",
-						env.Key, env.Value))
+						"env %q: external secret value matches a known sentinel/test pattern — verify classification (PlainConfig may be more appropriate; plan §3.4 M4)",
+						env.Key))
 				}
 			}
 		case topology.SecretClassPlainConfig:
@@ -301,4 +310,19 @@ func hashProjectEnvs(envs []ProjectEnvVar) string {
 	}
 	sort.Strings(pairs)
 	return sha256Hex(strings.Join(pairs, "\n"))
+}
+
+// emitsValueVerbatim reports whether a classification bucket carries the
+// source value into the bundle as-is (plain-config, unclassified, or an
+// unknown bucket that falls back to plain-config).
+func emitsValueVerbatim(bucket topology.SecretClassification) bool {
+	switch bucket {
+	case topology.SecretClassInfrastructure, topology.SecretClassExclude,
+		topology.SecretClassAutoSecret, topology.SecretClassExternalSecret:
+		return false
+	case topology.SecretClassPlainConfig, topology.SecretClassUnset:
+		return true
+	default:
+		return true
+	}
 }

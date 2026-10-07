@@ -32,7 +32,7 @@ If you skip an env, the next response re-prompts with the remaining unclassified
 | `plain-config` | Source uses the var as literal runtime config (LOG_LEVEL, NODE_ENV, FEATURE_FLAGS, …). | Literal value verbatim. |
 | `exclude` | The env is STALE — nothing in the source tree or `zerops.yaml` references it anymore (leftover from a removed feature or an earlier framework). Verify with a grep over the source plus the discover response before excluding. | DROPPED entirely — no value, no reference. A warning fires if `zerops.yaml`'s `run.envVariables` still references it. |
 
-`zerops_workflow` returns each unclassified env's key but NOT its value — fetch values via `zerops_discover service="{targetHostname}" includeEnvs=true includeEnvValues=true`, then grep them against the mounted source tree (when accessible) before bucketing.
+`zerops_workflow` returns each unclassified env's key but NOT its value — fetch values via `zerops_discover service="{targetHostname}" includeEnvs=true includeEnvValues=true`, then grep them against the mounted source tree (when accessible) before bucketing. A key marked `isSensitive` shows no value — classify it by its key and the source.
 
 Every row carries `suggestedBucket` + `rationale` computed server-side from the env key NAME alone (never the value, per the no-leak invariant). Treat the suggestion as a starting point — the four-bucket detection table below remains authoritative when you override. Common reasons to override: a credential-pattern match (`*_KEY`, `*_TOKEN`) that's actually plain-config in your app, or a plain-config name (`DB_HOST`) whose value resolves to a managed-service reference (`${db_*}`) and should bucket `infrastructure`.
 

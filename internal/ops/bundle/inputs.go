@@ -10,9 +10,10 @@ package bundle
 type ProjectEnvVar struct {
 	Key   string
 	Value string
-	// Sensitive is the platform's sensitive flag. Only the group recipe reads
-	// it, as one signal among several (recipeSecret); export and launch
-	// classify every variable instead.
+	// Sensitive is the platform's sensitive flag. The group recipe reads it
+	// as one signal among several (recipeSecret); export and launch classify
+	// every variable, and a sensitive one never carries its value into the
+	// bundle whatever its bucket (composeProjectEnvVariables).
 	Sensitive bool
 }
 

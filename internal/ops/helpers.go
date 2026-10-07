@@ -196,7 +196,7 @@ var platformInjectedKeys = map[string]bool{
 // this drives the isPlatformInjected KEY annotation in envVarsToMaps.
 //
 // This is deliberately a SEPARATE axis from managedCredentialFieldKeys
-// (env.go), which masks VALUES and only evaluates inside the includeValues
+// (env.go, RedactEnvValue), which masks VALUES and only evaluates inside the includeValues
 // branch. isPlatformInjected fires unconditionally — including the tool-
 // recommended default keys-only discover mode (includeEnvValues=false,
 // internal/tools/discover.go) — because that is exactly where an agent has no
@@ -306,8 +306,12 @@ func isManagedServiceKey(serviceType, key string) bool {
 // agent has no value to eyeball. A user-set var, on a runtime OR a managed
 // service, stays untagged.
 //
+// A row the platform holds with sensitive:true is annotated isSensitive:
+// true (also in keys-only mode, so the agent knows the key exists and is
+// write-only) and its value is masked.
+//
 // serviceType is the owning service's type version (or "" for project-scope
-// envs), passed through to RedactCredentialValue so a managed service's
+// envs), passed through to RedactEnvValue so a managed service's
 // generated credential fields (connectionString, password, …) are masked at
 // this presentation surface, and to isManagedServiceKey for the
 // isPlatformInjected KEY annotation above (an orthogonal axis — VALUE masking
@@ -320,12 +324,15 @@ func envVarsToMaps[T platform.EnvAccessor](envs []T, includeValues bool, service
 		m := map[string]any{
 			"key": key,
 		}
+		sensitive := e.IsSensitive()
+		if sensitive {
+			m["isSensitive"] = true
+		}
 		if includeValues {
-			if masked, isCredential := RedactCredentialValue(key, content, serviceType); isCredential {
-				m["value"] = masked
+			masked, redacted := RedactEnvValue(key, content, serviceType, sensitive)
+			m["value"] = masked
+			if redacted {
 				m["isCredentialRedacted"] = true
-			} else {
-				m["value"] = content
 			}
 		}
 		if crossRefPattern.MatchString(content) {

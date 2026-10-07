@@ -129,7 +129,7 @@ var loadBearingRules = []loadBearingRule{
 		// VIOLATION shape, this one catches the TEACHING claim.
 		name:          "same-key shadow trap teaching",
 		canonicalAtom: "internal/authoring/recipe/content/briefs/scaffold/platform_principles.md",
-		fingerprintRE: regexp.MustCompile(`\*\*Self-shadow trap on project vars only\.\*\*`),
+		fingerprintRE: regexp.MustCompile(`\*\*Self-shadow trap\.\*\*`),
 	},
 	{
 		// Run-22 R3-C-1, migrated in run-34 Fix A from embedded_rubric.md

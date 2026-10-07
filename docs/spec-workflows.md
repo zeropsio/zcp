@@ -484,7 +484,7 @@ reference for reachability and export/launch analysis.
 
 **Env var security model**:
 - `includeEnvs=true` returns keys and annotations only — SAFE by default.
-- `includeEnvValues=true` opt-in exposes actual values — for troubleshooting only.
+- `includeEnvValues=true` opt-in exposes actual values — for troubleshooting only. A value the platform holds `sensitive:true` is never shown (masked, key annotated `isSensitive`).
 - Session stores NAMES ONLY — never values.
 - Agent uses `${hostname_varName}` references — resolved at container level.
 

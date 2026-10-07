@@ -1455,3 +1455,82 @@ func containsString(haystack, needle string) bool {
 	}
 	return len(needle) == 0
 }
+
+// TestPreflightEnvUnresolved — a `${NAME}` in run.envVariables that nothing
+// resolves (not an entry of the service, its own value, a Shared value, a
+// platform key, nor `${host_KEY}`) reaches the app as the literal text: a
+// broken-at-runtime config, so it FAILs like the other env checks; a read
+// that could not confirm it WARNs (pass + detail), never FAILs.
+func TestPreflightEnvUnresolved(t *testing.T) {
+	t.Parallel()
+	app := platform.ServiceStack{ID: "svc-app", Name: "app", ProjectID: "proj-1", Status: "RUNNING",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+		ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-app"}}
+	db := platform.ServiceStack{ID: "svc-db", Name: "db", ProjectID: "proj-1", Status: "RUNNING",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@17"}}
+	tests := []struct {
+		name       string
+		value      string
+		mock       func(*platform.Mock) *platform.Mock
+		wantStatus string
+		wantDetail []string
+	}{
+		{name: "Shared value", value: "${STRIPE}", wantStatus: statusPass},
+		{name: "own value", value: "${APP_KEY_SECRET}", wantStatus: statusPass},
+		{name: "another entry", value: "${NODE_ENV}-x", wantStatus: statusPass},
+		{name: "platform key on the rows", value: "${hostname}", wantStatus: statusPass},
+		{name: "platform key not on the rows", value: "https://${zeropsSubdomain}", wantStatus: statusPass},
+		{name: "another service's key is the env_refs check's", value: "${db_pasword}", wantStatus: statusPass},
+		{name: "self-shadow is the self-shadow check's", value: "${URL}", wantStatus: statusPass},
+		{name: "literal", value: "plain", wantStatus: statusPass},
+		{name: "nothing resolves", value: "${STRIPE_KEY}", wantStatus: statusFail, wantDetail: []string{"URL: ${STRIPE_KEY}", "literal"}},
+		{
+			name:  "own rows unreadable",
+			value: "${STRIPE_KEY}",
+			mock: func(m *platform.Mock) *platform.Mock {
+				return m.WithError("GetServiceEnv", errors.New("vpn down"))
+			},
+			wantStatus: statusPass,
+			wantDetail: []string{"unverified"},
+		},
+		{
+			name:  "Shared rows unreadable",
+			value: "${STRIPE_KEY}",
+			mock: func(m *platform.Mock) *platform.Mock {
+				return m.WithError("GetProjectEnv", errors.New("vpn down"))
+			},
+			wantStatus: statusPass,
+			wantDetail: []string{"unverified"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			entry := &ops.ZeropsYmlEntry{Setup: "app"}
+			entry.Run.EnvVariables = map[string]string{"URL": tt.value, "NODE_ENV": "production"}
+			mock := platform.NewMock().
+				WithProject(&platform.Project{ID: "proj-1", Name: "test", Status: "ACTIVE"}).
+				WithServices([]platform.ServiceStack{app, db}).
+				WithProjectEnv([]platform.ProjectEnvVar{{ID: "p1", Key: "STRIPE", Content: "x"}}).
+				WithServiceEnv("svc-app", []platform.ServiceEnvVar{
+					{ID: "u1", Key: "hostname", Content: "app", Type: platform.ServiceEnvSystem},
+					{ID: "u2", Key: "APP_KEY_SECRET", Content: "y", Sensitive: true},
+				})
+			if tt.mock != nil {
+				mock = tt.mock(mock)
+			}
+			check := preflightEnvUnresolved(context.Background(), mock, "proj-1", "app", entry)
+			if check.Name != "app_env_unresolved" {
+				t.Errorf("name = %q", check.Name)
+			}
+			if check.Status != tt.wantStatus {
+				t.Errorf("status = %q, want %q (detail: %q)", check.Status, tt.wantStatus, check.Detail)
+			}
+			for _, want := range tt.wantDetail {
+				if !strings.Contains(check.Detail, want) {
+					t.Errorf("detail misses %q: %q", want, check.Detail)
+				}
+			}
+		})
+	}
+}

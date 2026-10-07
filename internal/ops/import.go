@@ -128,7 +128,7 @@ func Import(
 				pairs = append(pairs, fmt.Sprintf("%s=%v", k, v))
 			}
 			sort.Strings(pairs) // deterministic ordering — map iteration is not
-			if _, err := EnvSet(ctx, client, projectID, "", true, pairs); err != nil {
+			if _, err := EnvSet(ctx, client, projectID, "", true, pairs, nil); err != nil {
 				return nil, fmt.Errorf("apply project envVariables from import: %w", err)
 			}
 			projectEnvsSet = make([]string, 0, len(envVarsRaw))

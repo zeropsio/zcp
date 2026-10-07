@@ -36,6 +36,17 @@ type FlexBool bool
 // Bool returns the underlying boolean value.
 func (f FlexBool) Bool() bool { return bool(f) }
 
+// Ptr returns the value of an optional FlexBool field (declared *FlexBool)
+// as *bool: nil when the caller left it out, so the handler can tell
+// "unsaid" from false.
+func (f *FlexBool) Ptr() *bool {
+	if f == nil {
+		return nil
+	}
+	b := bool(*f)
+	return &b
+}
+
 // UnmarshalJSON accepts booleans, stringified booleans, and null/empty.
 // Rejects anything else with an error clear enough for the agent to fix.
 func (f *FlexBool) UnmarshalJSON(data []byte) error {

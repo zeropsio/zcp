@@ -1,13 +1,13 @@
 diff --git a/internal/tools/env.go b/internal/tools/env.go
-index 46d49a35..d6c3d787 100644
+index 957a5280..033935f3 100644
 --- a/internal/tools/env.go
 +++ b/internal/tools/env.go
-@@ -330,7 +330,7 @@ func applyAutoRestart(
- 	resp *envChangeResult,
- 	onProgress ops.ProgressCallback,
- ) {
+@@ -353,7 +353,7 @@ func applyAutoRestart(
+ 	resp.RestartWarnings = append(resp.RestartWarnings, plan.warnings...)
+ 	unreadHint := nothingReadsHint(plan.unreadKeys, input)
+ 
 -	if input.SkipRestart.Bool() {
 +	if true {
  		resp.RestartSkipped = true
- 		resp.NextActions = "skipRestart=true — the value lands in the env store (~5-10s) but the RUNNING process keeps its boot env until it restarts. Restart manually (zerops_manage action=restart) or deploy to pick it up."
- 		return
+ 		next := "skipRestart=true — the value is stored, but a running process keeps its boot env until it restarts."
+ 		if len(plan.targets) > 0 {

@@ -49,11 +49,11 @@ func hasAPICode(err error, code string) bool {
 
 // credentialValueKeys are ZCP-owned credential env-var names whose VALUE must
 // be masked client-side whenever a response would echo it (zerops_discover
-// includeEnvValues=true). The platform does NOT mask these at project scope:
-// a PROJECT env's sensitive flag does not persist (spec-zerops-env-lifecycle.md
-// §7), so a read-only token reads GIT_TOKEN verbatim and any value dump would
-// leak it. Masked regardless of the owning service type. Keys-only listing
-// (includeValues=false) is unaffected.
+// includeEnvValues=true), whatever flag the row carries: a row written
+// before the flag persisted at project scope, or written plain by hand,
+// reads back verbatim (spec-zerops-env-lifecycle.md §7), and any value dump
+// would leak it. Masked regardless of the owning service type. Keys-only
+// listing (includeValues=false) is unaffected.
 var credentialValueKeys = map[string]bool{
 	GitTokenEnvKey:    true,
 	"ZCP_API_KEY":     true,
@@ -83,29 +83,39 @@ var managedCredentialFieldKeys = map[string]bool{
 	"masterKey":                true,
 }
 
-// RedactCredentialValue masks the value of a credential env var, returning
-// (maskedValue, true) when the value must not be echoed and (value, false)
-// otherwise. Single owner so every value-echo / presentation site masks
-// identically (get/discover renderers, set-echo, layered-shadow message,
-// generate-dotenv preview diff).
+// SensitiveValueMask is what every presentation site shows in place of a
+// value the platform holds with sensitive:true.
+const SensitiveValueMask = "<redacted: sensitive>"
+
+// RedactEnvValue masks the value of an env var that must not reach the
+// agent, returning (maskedValue, true) when the value must not be echoed and
+// (value, false) otherwise. Single owner so every value-echo / presentation
+// site masks identically (get/discover renderers, set-echo, generate-dotenv
+// preview diff).
 //
-// Two classes mask:
+// Three classes mask, the first match naming the mask:
 //   - ZCP-owned credential keys (GIT_TOKEN, ZCP_API_KEY, ZCP_LAUNCH_TOKEN) —
 //     regardless of serviceType.
 //   - Managed-service credential fields (connectionString, password, …) —
 //     only when serviceType is a managed service.
+//   - Any row the platform holds with sensitive:true — a person's own
+//     write-only value. The platform reads it back in clear to a full token,
+//     so zcp is what keeps it from the model.
 //
 // serviceType is the owning service's type version (e.g. "postgresql@18").
 // Pass "" for project-scope or non-service echo sites: only the ZCP-owned
-// class can mask there. Presentation-only — internal value paths (ref
-// resolution, shadow detection, the generate-dotenv .env file render) pass
-// the raw value untouched.
-func RedactCredentialValue(key, value, serviceType string) (string, bool) {
+// and sensitive classes can mask there. Presentation-only — internal value
+// paths (ref resolution, shadow detection, the generate-dotenv .env file
+// render) pass the raw value untouched.
+func RedactEnvValue(key, value, serviceType string, sensitive bool) (string, bool) {
 	if credentialValueKeys[key] {
 		return "<redacted: ZCP-managed credential>", true
 	}
 	if managedCredentialFieldKeys[key] && topology.IsManagedService(serviceType) {
 		return "<redacted: managed-service credential>", true
+	}
+	if sensitive {
+		return SensitiveValueMask, true
 	}
 	return value, false
 }
@@ -166,12 +176,42 @@ type StoredEnv struct {
 	// Replaced is true when the key was upserted (existing entry deleted,
 	// new entry created). False when the key is newly added.
 	Replaced bool `json:"replaced,omitempty"`
+	// Sensitive is the flag the value was written with — the caller's,
+	// else the default by name (DefaultSensitive), on either scope. A
+	// presentation site masks a sensitive Value (RedactEnvValue).
+	Sensitive bool `json:"isSensitive,omitempty"`
 }
 
 // EnvDeleteResult contains the result of an env delete operation.
 type EnvDeleteResult struct {
 	Process     *platform.Process `json:"process,omitempty"`
 	NextActions string            `json:"nextActions,omitempty"`
+}
+
+// sensitiveNameParts are the key fragments that make a set default to
+// sensitive when the caller does not say (DefaultSensitive).
+var sensitiveNameParts = []string{"SECRET", "TOKEN", "KEY", "PASSWORD", "PASS", "DSN", "PRIVATE", "CREDENTIAL"}
+
+// DefaultSensitive is the flag a set writes when the caller does not pass
+// one: a key whose name reads as a secret (SECRET, TOKEN, KEY, PASSWORD,
+// PASS, DSN, PRIVATE, CREDENTIAL, any case) is sensitive, any other plain.
+func DefaultSensitive(key string) bool {
+	upper := strings.ToUpper(key)
+	for _, part := range sensitiveNameParts {
+		if strings.Contains(upper, part) {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveSensitive is the flag one key is written with: the caller's, else
+// the default by name.
+func resolveSensitive(key string, sensitive *bool) bool {
+	if sensitive != nil {
+		return *sensitive
+	}
+	return DefaultSensitive(key)
 }
 
 // EnvSet sets environment variables for a service or project with upsert
@@ -185,6 +225,11 @@ type EnvDeleteResult struct {
 // platform exposes CREATE+DELETE only, so the same delete-then-create runs,
 // eliminating projectEnvDuplicateKey errors from the caller's perspective.
 //
+// sensitive is the flag every key is written with; nil picks it per key by
+// name (DefaultSensitive). Every write sends it explicitly — the platform's
+// update without the flag turns a sensitive value plain
+// (spec-zerops-env-lifecycle.md §7), and a replace here is a fresh create.
+//
 // Values are run through zParser preprocessor expansion before being stored,
 // so an agent can write the same <@...> expression a recipe deliverable
 // uses and get byte-for-byte identical output. The Stored slice on the
@@ -197,6 +242,7 @@ func EnvSet(
 	hostname string,
 	isProject bool,
 	variables []string,
+	sensitive *bool,
 ) (*EnvSetResult, error) {
 	if hostname == "" && !isProject {
 		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,
@@ -230,7 +276,7 @@ func EnvSet(
 	}
 
 	if isProject {
-		return setProjectEnvs(ctx, client, projectID, pairs)
+		return setProjectEnvs(ctx, client, projectID, pairs, sensitive)
 	}
 
 	svc, err := resolveService(ctx, client, projectID, hostname)
@@ -269,7 +315,8 @@ func EnvSet(
 			}
 			replaced = true
 		}
-		proc, setErr := client.CreateServiceEnvVar(ctx, svc.ID, p.Key, p.Value, true)
+		flag := resolveSensitive(p.Key, sensitive)
+		proc, setErr := client.CreateServiceEnvVar(ctx, svc.ID, p.Key, p.Value, flag)
 		if setErr != nil {
 			if hasAPICode(setErr, apiCodeUserDataDuplicateKey) && !replaced {
 				return nil, yamlOwnedKeyError(p.Key, hostname)
@@ -282,7 +329,7 @@ func EnvSet(
 			return nil, setErr
 		}
 		lastProc = proc
-		stored = append(stored, StoredEnv{Key: p.Key, Value: p.Value, Replaced: replaced})
+		stored = append(stored, StoredEnv{Key: p.Key, Value: p.Value, Replaced: replaced, Sensitive: flag})
 	}
 	return &EnvSetResult{Process: lastProc, Stored: stored}, nil
 }
@@ -291,7 +338,7 @@ func EnvSet(
 // exposes CREATE + DELETE, so existing keys are delete-then-created; new
 // keys are created directly. Returns the last process plus the full list
 // of stored pairs so the caller can verify what was written.
-func setProjectEnvs(ctx context.Context, client platform.Client, projectID string, pairs []envPair) (*EnvSetResult, error) {
+func setProjectEnvs(ctx context.Context, client platform.Client, projectID string, pairs []envPair, sensitive *bool) (*EnvSetResult, error) {
 	existing, err := client.GetProjectEnv(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -312,7 +359,8 @@ func setProjectEnvs(ctx context.Context, client platform.Client, projectID strin
 			}
 			replaced = true
 		}
-		proc, setErr := client.CreateProjectEnv(ctx, projectID, p.Key, p.Value, false)
+		flag := resolveSensitive(p.Key, sensitive)
+		proc, setErr := client.CreateProjectEnv(ctx, projectID, p.Key, p.Value, flag)
 		if setErr != nil {
 			if replaced {
 				return nil, fmt.Errorf("project env key %q: write failed after the previous value was already removed — re-run zerops_env set to restore it: %w", p.Key, setErr)
@@ -320,7 +368,7 @@ func setProjectEnvs(ctx context.Context, client platform.Client, projectID strin
 			return nil, setErr
 		}
 		lastProc = proc
-		stored = append(stored, StoredEnv{Key: p.Key, Value: p.Value, Replaced: replaced})
+		stored = append(stored, StoredEnv{Key: p.Key, Value: p.Value, Replaced: replaced, Sensitive: flag})
 	}
 	return &EnvSetResult{Process: lastProc, Stored: stored}, nil
 }

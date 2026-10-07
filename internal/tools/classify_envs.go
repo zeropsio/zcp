@@ -115,7 +115,7 @@ func needsClassifyPrompt(classifications map[string]string, envs []platform.Proj
 }
 
 // bundleProjectEnvsFromSource converts the platform-shaped source envs
-// into the lossy bundle composer input (`{Key, Value}` only). Drops envs
+// into the bundle composer input (`{Key, Value, Sensitive}`). Drops envs
 // the classifier marks as Drop (project SYSTEM, etc.) — keeps the
 // composer + SourceSnapshot digest focused on user-controlled values
 // only. Used by both export and launch composers.
@@ -125,7 +125,7 @@ func bundleProjectEnvsFromSource(envs []platform.ProjectEnvVar) []ops.ProjectEnv
 		if envclass.ClassifyProjectEnv(env).Decision != envclass.PromptUser {
 			continue
 		}
-		out = append(out, ops.ProjectEnvVar{Key: env.Key, Value: env.Content})
+		out = append(out, ops.ProjectEnvVar{Key: env.Key, Value: env.Content, Sensitive: env.Sensitive})
 	}
 	return out
 }

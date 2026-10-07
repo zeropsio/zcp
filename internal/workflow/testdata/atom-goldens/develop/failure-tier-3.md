@@ -39,41 +39,59 @@ return errors before any code is delivered.
 ---
 
 === develop-env-var-model ===
-### Where values come from
+### Every value the app reads is a line in its `zerops.yaml`
 
-Project envs auto-inject as OS env vars into every container — app
-code reads them directly via `process.env.KEY`, no `zerops.yaml` line
-required.
-
-`run.envVariables` lines exist for two purposes only:
-
-1. **Rename a cross-service value** — destination on the left,
-   `${hostname_varname}` source on the right. Example:
-   ```yaml
-   run:
-     envVariables:
-       DATABASE_URL: postgresql://${db_user}:${db_password}@${db_hostname}:${db_port}/${db_dbName}
-       REDIS_URL: ${cache_connectionString}
-   ```
-   Reading a sibling's exposed VALUE (managed-service creds, a sibling's
-   own `run.envVariables`) is ALWAYS an explicit `${host_var}` ref — a
-   sibling's bare var never appears on its own; relying on that breaks
-   every isolated project (only `none` mode auto-shares siblings).
-   Reaching another RUNTIME's HTTP endpoint is different: runtimes expose
-   no URL env, so there is no `${api_url}`-style ref — use the internal-DNS
-   literal `http://<hostname>:<port>` (e.g. `API_BASE_URL: http://api:3000`),
-   http never https, over the project's private network.
-2. **Mode flag with a per-setup literal** — `NODE_ENV: development`
-   in `setup: appdev`, `NODE_ENV: production` in `setup: appstage`.
-
-### Self-shadow — never the same name on both sides
+`run.envVariables` is the complete list of what the process reads.
+Values live in the **vault** — the project's **Shared** one
+(`zerops_env project=true`) and each service's own (`serviceHostname=…`)
+— and reach the app only through a line referencing them. Zerops still
+injects unreferenced values today; strict isolation stops that, so never
+rely on it.
 
 ```yaml
-db_hostname: ${db_hostname}   # WRONG — destination == source
-APP_KEY: ${APP_KEY}           # WRONG — re-declaring a project env
+run:
+  envVariables:
+    APP_KEY: ${APP_KEY_SECRET}           # own value, else Shared
+    DATABASE_URL: postgresql://${db_user}:${db_password}@${db_hostname}:${db_port}/${db_dbName}
+    REDIS_URL: ${cache_connectionString} # another service's value
+    API_BASE_URL: http://api:3000        # literal
+    NODE_ENV: production                 # literal mode flag
 ```
 
-When destination == source the value resolves to the literal string `${db_hostname}` (not the resolved value), reaches `process.env` as that literal, and the app fails at connect/parse time.
+- `${KEY}` reads the service's own vault value, else the Shared one.
+- `${host_KEY}` reads another service's value (managed-service
+  credentials, a sibling's entries) — fetch the keys, never guess them.
+- Another runtime's HTTP endpoint has no env ref: use the internal-DNS
+  literal `http://<hostname>:<port>`, http never https.
+- `build.envVariables` is the build's list; there only Shared values and
+  `${host_KEY}` resolve, never the service's own vault value.
+
+A reference nothing provides reaches the app as the literal `${NAME}`
+and fails the deploy preflight — store the value first.
+
+### Name the line what the app reads, the value something else
+
+`APP_KEY: ${APP_KEY}` (same name both sides) reaches the app as the
+literal `${APP_KEY}`, and so does every other line referencing
+`APP_KEY`. Until Zerops resolves same-name references, store
+`APP_KEY_SECRET` and write `APP_KEY: ${APP_KEY_SECRET}`.
+
+### Secrets go in the vault as sensitive
+
+Store a secret with `zerops_env action="set" … sensitive=true` (a
+secret-shaped key name defaults to sensitive). Reads return it masked.
+
+A value only the person has (an API key, a password, a webhook secret)
+is never asked for in the chat: call `zerops_env action="request"
+key="STRIPE_SECRET_KEY" project=true reason="…"` — one sentence on what
+it is for and where to find it. The person types it into Mate, which
+writes it straight to the vault; a note in their next message says it
+is set. Until then continue with what does not need it, or end the
+turn. A key already in that vault is answered `alreadySet` — reference
+it by name.
+
+A set restarts the services whose deployed lines read the key
+(`readers`); nothing reads it → add the line, then deploy.
 
 ---
 
@@ -111,7 +129,8 @@ service="<hostname>" includeEnvs=true` and use those keys verbatim —
 **do not guess alternatives**. The catalog is the authoritative source;
 the host key is `hostname` (never `host`), other keys vary per service
 type. Values are redacted by default — names suffice; pass
-`includeEnvValues=true` only to troubleshoot.
+`includeEnvValues=true` only to troubleshoot. A key reaches the app
+only via a `run.envVariables` line (`DB_HOST: ${db_hostname}`).
 
 Per-service env KEYS come from the live discover catalog above, never a
 cheatsheet menu — use them verbatim. The SQL cheatsheet (SQL dep types
@@ -219,7 +238,7 @@ Fresh Node scaffold with no committed `package-lock.json`: `npm install` in `bui
 
 A self-deploy replaces the dev container with a fresh one. Nothing on the
 old dev container's disk survives that swap except what git carries with
-it — project envs (auto-injected as OS env vars, never a file) and
+it — the vault (values the `zerops.yaml` references, never a file) and
 managed-service data (Postgres, object storage, …) are the other two
 persistence mechanisms, and neither lives on the dev container's
 filesystem either. A file that exists only on today's dev container — an
@@ -229,8 +248,9 @@ container replaces it.
 `zerops_deploy`'s response on a self-deploy carries this as data, not a
 guess: `notCarried` names the git-ignored paths (count, bytes, a sample)
 that will not exist in the new container, and `envFiles` lists any
-`.env`/`.env.*` files found regardless of ignore state — a config file the
-agent should move into `zerops_env`, not carry forward as a workaround.
+`.env`/`.env.*` files found regardless of ignore state — values to
+move into the vault with `zerops_env` (secrets `sensitive=true`)
+and reference from `run.envVariables`, not carry forward as a workaround.
 `repoState` reports whether the source is clean, dirty, mid-merge, mid-
 rebase, or on a detached HEAD at deploy time.
 

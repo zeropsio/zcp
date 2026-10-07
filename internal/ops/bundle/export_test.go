@@ -1029,6 +1029,63 @@ func TestBuildBundle_SentinelExternalSecretFlags(t *testing.T) {
 			if gotEmpty != tt.wantEmpty {
 				t.Errorf("empty-external warning = %v, want %v (warnings=%v)", gotEmpty, tt.wantEmpty, bundle.Warnings)
 			}
+			// A warning reaches the agent and the person's screen: it names
+			// the key, never the value.
+			for _, w := range bundle.Warnings {
+				if tt.value != "" && strings.Contains(w, tt.value) {
+					t.Errorf("warning echoes the value %q: %q", tt.value, w)
+				}
+			}
+		})
+	}
+}
+
+// TestBuildBundle_SensitiveEnvNeverEmitted — a value the platform holds
+// with sensitive:true is a person's write-only secret: whatever bucket it
+// was classified into, the bundle never carries it (the placeholder takes
+// its place) and no warning echoes it.
+func TestBuildBundle_SensitiveEnvNeverEmitted(t *testing.T) {
+	t.Parallel()
+	const secret = "s3cr3t" + "-value-" + "9f2" // built from parts: no literal reads as a credential
+	tests := []struct {
+		name   string
+		bucket topology.SecretClassification
+	}{
+		{"plain-config", topology.SecretClassPlainConfig},
+		{"unclassified", topology.SecretClassUnset},
+		{"unknown bucket", topology.SecretClassification("bogus")},
+		{"external-secret", topology.SecretClassExternalSecret},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			bundle, err := BuildExport(BundleInputs{
+				ProjectName:    "sensitive-demo",
+				TargetHostname: "appdev",
+				ServiceType:    "nodejs@22",
+				SetupName:      "appdev",
+				ZeropsYAMLBody: laravelZeropsYAML,
+				RepoURL:        "https://github.com/example/sensitive-demo.git",
+				ProjectEnvs: []ProjectEnvVar{
+					{Key: "STRIPE_SECRET", Value: secret, Sensitive: true},
+				},
+			}, map[string]topology.SecretClassification{
+				"STRIPE_SECRET": tt.bucket,
+			})
+			if err != nil {
+				t.Fatalf("BuildBundle: %v", err)
+			}
+			if strings.Contains(bundle.ImportYAML, secret) {
+				t.Errorf("import.yaml carries the sensitive value:\n%s", bundle.ImportYAML)
+			}
+			if !strings.Contains(bundle.ImportYAML, ExternalSecretPlaceholder) {
+				t.Errorf("import.yaml lacks the placeholder for the sensitive key:\n%s", bundle.ImportYAML)
+			}
+			for _, w := range bundle.Warnings {
+				if strings.Contains(w, secret) {
+					t.Errorf("warning echoes the sensitive value: %q", w)
+				}
+			}
 		})
 	}
 }

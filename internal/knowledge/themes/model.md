@@ -76,11 +76,10 @@ Source Code
 | Source | When active as OS env vars |
 |--------|---------------------------|
 | Platform-injected (hostname, serviceId, zeropsSubdomain) | At container start |
-| project.envVariables (import.yaml) | At service creation, inherited by all services |
-| run.envVariables (zerops.yaml) | **Only after deploy** processes zerops.yaml |
-| envSecrets (import.yaml per-service) | At container start |
+| run.envVariables (zerops.yaml) — the app's list, referencing vault values | **Only after deploy** processes zerops.yaml |
+| Vault values (project.envVariables / envSecrets) | Only through a run.envVariables line that references them (Zerops still injects unreferenced ones today; strict isolation stops that) |
 
-A `startWithoutCode` service is RUNNING but has only platform and project-level vars. `run.envVariables` (cross-service references like `${hostname_varname}`) do not exist as OS env vars until the zerops.yaml is deployed. Implicit-webserver types (php-nginx, php-apache) auto-serve from the filesystem — the app is reachable but runs without `run.envVariables`.
+A `startWithoutCode` service is RUNNING but has only platform vars (and, until strict isolation, unreferenced vault values). `run.envVariables` (cross-service references like `${hostname_varname}`) do not exist as OS env vars until the zerops.yaml is deployed. Implicit-webserver types (php-nginx, php-apache) auto-serve from the filesystem — the app is reachable but runs without `run.envVariables`.
 
 ## Networking
 
@@ -146,6 +145,6 @@ Non-negotiable rules. Violating any causes failures.
 - Zerops injects env vars as OS env vars. Do NOT create `.env` files — empty values shadow OS vars.
 - Cross-service wiring: `${hostname_varname}` in zerops.yaml `run.envVariables`.
 - import.yaml service level: `envSecrets` ONLY (not `envVariables` — silently dropped by API).
-- Shared secrets (encryption keys, CSRF tokens): MUST be project-level, not per-service envSecrets.
+- Shared secrets (encryption keys, CSRF tokens): MUST be in the Shared vault (project-level), not per-service envSecrets — and referenced in each service's `run.envVariables`.
 - Migrations: `zsc execOnce ${appVersionId} -- <command>` in `initCommands`.
 - Sessions: external store (Valkey, database) when running multiple containers.

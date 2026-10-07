@@ -12,14 +12,12 @@ import "strings"
 // authenticate with password "${API_URL}", etc., and crash with cryptic
 // DNS/auth errors.
 //
-// Failure-mode shape varies by var scope. PROJECT-level vars auto-inherit
-// into every container; a same-key declaration in run.envVariables
-// produces the literal-string shadow above. CROSS-SERVICE vars do not
-// auto-inject under the porter-default isolation — a same-key
-// declaration is technically not a "shadow" (there is no auto-injected
-// value to shadow) but is still invalid because the right-hand-side
-// template cannot resolve to anything useful. Either way the value
-// becomes a literal at runtime; flag both shapes uniformly.
+// The literal is the same whatever the key names — a Shared or the
+// service's own vault value, or another service's — and every other entry
+// of the service referencing the key gets the literal too (live
+// 2026-10-07, spec-zerops-env-lifecycle.md §3b). Until Zerops resolves
+// same-name references, the entry is named what the app reads and the
+// value it references carries a different name.
 //
 // Matching rules:
 //   - Value must be EXACTLY `${KEY}` (optionally with surrounding whitespace
