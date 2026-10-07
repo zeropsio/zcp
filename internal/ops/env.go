@@ -267,6 +267,40 @@ func EnvSet(
 	variables []string,
 	sensitive *bool,
 ) (*EnvSetResult, error) {
+	return envSet(ctx, client, projectID, hostname, isProject, variables, func(key string) bool {
+		return resolveSensitive(key, sensitive)
+	})
+}
+
+// EnvSetEach is EnvSet with a flag per key: the one in flags, else the name
+// rule (DefaultSensitive). All the variables go through one expansion pass,
+// so `<@getVar(…)>` reads what another of them generated.
+func EnvSetEach(
+	ctx context.Context,
+	client platform.Client,
+	projectID string,
+	hostname string,
+	isProject bool,
+	variables []string,
+	flags map[string]bool,
+) (*EnvSetResult, error) {
+	return envSet(ctx, client, projectID, hostname, isProject, variables, func(key string) bool {
+		if flag, ok := flags[key]; ok {
+			return flag
+		}
+		return DefaultSensitive(key)
+	})
+}
+
+func envSet(
+	ctx context.Context,
+	client platform.Client,
+	projectID string,
+	hostname string,
+	isProject bool,
+	variables []string,
+	sensitiveOf func(key string) bool,
+) (*EnvSetResult, error) {
 	if hostname == "" && !isProject {
 		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,
 			"Provide serviceHostname or set project=true", "")
@@ -299,7 +333,7 @@ func EnvSet(
 	}
 
 	if isProject {
-		return setProjectEnvs(ctx, client, projectID, pairs, sensitive)
+		return setProjectEnvs(ctx, client, projectID, pairs, sensitiveOf)
 	}
 
 	svc, err := resolveService(ctx, client, projectID, hostname)
@@ -338,7 +372,7 @@ func EnvSet(
 			}
 			replaced = true
 		}
-		flag := resolveSensitive(p.Key, sensitive)
+		flag := sensitiveOf(p.Key)
 		proc, setErr := client.CreateServiceEnvVar(ctx, svc.ID, p.Key, p.Value, flag)
 		if setErr != nil {
 			if hasAPICode(setErr, apiCodeUserDataDuplicateKey) && !replaced {
@@ -361,7 +395,7 @@ func EnvSet(
 // exposes CREATE + DELETE, so existing keys are delete-then-created; new
 // keys are created directly. Returns the last process plus the full list
 // of stored pairs so the caller can verify what was written.
-func setProjectEnvs(ctx context.Context, client platform.Client, projectID string, pairs []envPair, sensitive *bool) (*EnvSetResult, error) {
+func setProjectEnvs(ctx context.Context, client platform.Client, projectID string, pairs []envPair, sensitiveOf func(key string) bool) (*EnvSetResult, error) {
 	existing, err := client.GetProjectEnv(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -382,7 +416,7 @@ func setProjectEnvs(ctx context.Context, client platform.Client, projectID strin
 			}
 			replaced = true
 		}
-		flag := resolveSensitive(p.Key, sensitive)
+		flag := sensitiveOf(p.Key)
 		proc, setErr := client.CreateProjectEnv(ctx, projectID, p.Key, p.Value, flag)
 		if setErr != nil {
 			if replaced {

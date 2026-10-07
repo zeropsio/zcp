@@ -98,7 +98,7 @@ func RegisterImportSteered(srv *mcp.Server, client platform.Client, projectID st
 func registerImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info, liveEnvPath string, steer GroupRecipeSteer) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_import",
-		Description: "REQUIRES active workflow context (zerops_workflow bootstrap/develop). Import services from YAML into the project. An optional project.envVariables block applies project-level vars before services are created; other project.* fields are rejected. The Zerops API validates fields, modes, types, and hostnames server-side and returns structured apiMeta on the error response when anything is wrong. Blocks until all processes complete; returns final statuses (FINISHED/FAILED).",
+		Description: "REQUIRES active workflow context (zerops_workflow bootstrap/develop). Import services from YAML into the project. project.vault applies the project's values first; other project.* fields are rejected. A secret-shaped name without its own `sensitive` goes in sensitive, project and services alike. The API validates server-side and returns apiMeta on errors. Blocks until all processes complete; returns final statuses (FINISHED/FAILED).",
 		InputSchema: importInputSchema(),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Import services from YAML",
