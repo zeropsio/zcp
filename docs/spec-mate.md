@@ -1623,6 +1623,47 @@ mate spawns, not a layer zcp grows for it, and it is not configured through `zcp
 contract (§2.8). Every zcp the fleet runs has the `console` command; one without it fails to start
 the console like any other cause, and reads `unavailable`.
 
+### 5.8 The vault — a project's variables (2026-10-07)
+
+A Zerops project's variables, in the client: one **Shared** vault per project (the project's env,
+named so because "project" is HQ's word) and one per service (its own variables), each value plain
+or sensitive. A service's zerops.yml `run.envVariables` is what its container reads; the vault holds
+the values those entries reference. Measured live 2026-10-07 (`verified.md`, "The vault's platform").
+
+- **The model.** A deploy activates references: a service's deployed run entries are its variables
+  typed `USER`, not editable, their templates unresolved. A restart activates values: a running
+  process keeps the environment it booted with. Build entries are exposed nowhere, so who reads a
+  value at build is never claimed. `KEY: ${KEY}` reaches the process as the literal text and so does
+  every other reference to `KEY` in that service; a name nothing resolves stays literal.
+- **Who reads a value.** The client works it out from the deployed entries
+  (`data/projections/vaultReferences.ts`): `${KEY}` is the service's own value, else Shared's;
+  `${host_KEY}` another service's; chains run through entries and through plain values holding
+  references. A reader runs the previous value when its newest finished build, deploy, restart or
+  start ended before the value last changed. A value no entry references reads "nothing reads it
+  yet" — the strict model zcp teaches (§10.10), though the platform still injects it today.
+- **Sources.** Shared is `envList` on the project's search row; every service's variables are one
+  `user-data` search by project. Both are live queries (`zeropsQuery`: each write pushes the whole
+  listing again) held only while a surface demands them, with the project's process history for the
+  starts. Navigation never holds them.
+- **Sensitive is write-only.** Zerops answers `REDACTED` even to the value's owner; Mate replaces a
+  sensitive value and never shows one. Every write carries `sensitive` explicitly: a `PUT` without it
+  turns a sensitive value plain. The keys Mate and zcp own (`ZCP_*`, `MATE_*`, `GITEA_*`,
+  `GIT_TOKEN`) are never listed.
+- **Writes.** One `vault-write` operation per value — add, update, remove; edit as text reviews the
+  changes, then applies one per change. It is done once its process finished and the vault shows it;
+  a lost answer is resolved from the vault's own rows, never by adopting a process (anyone's write
+  looks alike). `service-restart` restarts one service.
+- **Where.** A Vault tab in the right panel beside a Mate's conversation (the Mate's project), and a
+  Vault column beside a stage or production page (that environment, restarted by the person). The
+  look is the approved prototype's "Quiet" (artifact "Mate Vault Prototype", round 3): one scope at a
+  time, a _Not live yet_ block of facts and their fixes (restart, unread, missing, self), two-line
+  rows that open in place, what each service reads, a managed service's values read only.
+- **The Mate hears.** The person's vault changes since the agent last spoke — and their own writes
+  from this client until a message carries them — ride the next message as a `<zerops-update>` note
+  naming each key, its scope, plain or sensitive, and what it needs (restart a reader, reference it
+  and deploy, or the literal a removal leaves). Never a value. The composer shows a chip per change;
+  × leaves it untold; the chips alone send.
+
 ### Invariants
 
 | ID | Invariant |
@@ -1640,6 +1681,10 @@ the console like any other cause, and reads `unavailable`.
 | MF-11 | Projected activity order uses orchestration event sequence. Legacy NULL rows use `createdAt`, lifecycle rank `started < updated < completed`, then activity id; newest-window selection and compaction preserve the same order and terminal row. `ProjectionPipeline.test.ts`; `ProjectionSnapshotQuery.test.ts`; `ActivityPayloadProjection.test.ts`. |
 | MF-12 | One browser vocabulary: mate carries no MCP server and no browser of its own; the agent's browser is `zerops_browser` and nothing else. `scripts/mate-boundaries.test.ts` (MA-6); `serve accepts --no-browser`; fork.md delete rows for the preview directories. |
 | MF-13 | The container browser reaches the client only through the mate server: frames over `subscribeZeropsBrowserStream` with forwarded acks (one daemon ack per seq, sent after the client's Ack), input over `zeropsBrowserInput` (operate scope), the daemon port read from `~/.agent-browser/default.stream` and never written, the socket closed on the last unsubscribe. `ZeropsBrowserStream.test.ts` — "connects on first subscriber and disconnects on last", "two subscribers, one stalled: one ack per seq", "an ack or input during reconnect never ends the subscription"; `server.test.ts` — "subscribeZeropsBrowserStream applies flow control (Ack after every Chunk)". |
+| MF-14 | A sensitive value never reaches the client store, the model or a note: a sensitive row keeps no content, every write sends `sensitive`, a vault note names keys. `projectVariables.test.ts`, `vaultWrite.test.ts`, `vaultChanges.test.ts` |
+| MF-15 | A value's readers are the deployed run entries that reference it by the platform's precedence; `KEY: ${KEY}` and a name nothing has read nothing and are flagged. `vaultReferences.test.ts`, `vault.test.ts` |
+| MF-16 | A vault write is done when its process finished and the vault shows it; a lost answer resolves from the vault's rows, never by another's process. `vaultWrite.test.ts` |
+| MF-17 | A change is told to the Mate once: since it last spoke, plus the person's own writes from here until a message carries them; set aside or sent, it is not told again, and a value added and removed untold is no news. `vaultTurnNotes.logic.test.ts` |
 
 ---
 
@@ -3103,6 +3148,16 @@ The input schema keeps the HQ/outside-HQ distinction and call prerequisites conc
 results carry the full walkthrough when requested, rather than paying for it on every `tools/list`.
 `TestHandleRelease_HQHandsOffBeforeLegacyPreflight`, `TestHandleRelease_AWiredPairHandsOff`, and
 `TestHandleRelease_PromptSuggestsNextVersion` cover these routes.
+
+**Variables, strict (2026-10-07).** zcp acts as if the platform's strict env isolation were on,
+though Zerops still injects every value today: a service reads only what its zerops.yml references.
+Because `KEY: ${KEY}` reaches the app as the literal text (measured 2026-10-07), an entry is named
+what the app reads and the value it references carries another name (`APP_KEY: ${APP_KEY_SECRET}`)
+until Zerops resolves same-name references. `zerops_env set` takes `sensitive` (by the key's name
+when left out) on both scopes and restarts only the runtime services whose deployed entries read
+the key — none, and it says the key needs a reference and a deploy instead. A deploy's preflight
+fails a `${NAME}` nothing resolves. No tool output carries a sensitive value; the person's values
+live in the Vault (§5.8).
 
 ### 10.11 Environments, the Git tab, release
 
