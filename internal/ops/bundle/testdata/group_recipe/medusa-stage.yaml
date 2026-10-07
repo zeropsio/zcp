@@ -14,22 +14,21 @@
 project:
   name: medusa stage
   corePackage: LIGHT
-  envVariables:
+  vault:
     API_URL: https://medusa-${zeropsSubdomainHost}-9000.prg1.zerops.app
     APP_URL: https://nextstore-${zeropsSubdomainHost}-8000.prg1.zerops.app
+    COOKIE_SECRET: {value: <@generateRandomString(<40>)>, sensitive: true}
+    JWT_SECRET: {value: <@generateRandomString(<48>)>, sensitive: true}
     MEDUSA_INTERNAL_URL: http://medusa:9000
+    RELOAD_SECRET: {value: <@generateRandomString(<20>)>, sensitive: true}
+    # Set by hand in medusa-juno; set it again here.
+    SENDGRID_API_KEY: {value: <@generateRandomString(<64>)>, sensitive: true}
     STOREFRONT_INTERNAL_URL: http://nextstore:8000
     STORE_PUBLISHABLE_KEY: ${medusa_CHANNEL_PUBLISHABLE_KEY}
+    STRIPE_API_KEY: {value: "", sensitive: true}
     STRIPE_PUBLISHABLE_KEY: ""
+    STRIPE_WEBHOOK_SECRET: {value: "", sensitive: true}
     SUPERADMIN_EMAIL: admin@example.com
-  envSecrets:
-    COOKIE_SECRET: <@generateRandomString(<40>)>
-    JWT_SECRET: <@generateRandomString(<48>)>
-    RELOAD_SECRET: <@generateRandomString(<20>)>
-    # Set by hand in medusa-juno; set it again here.
-    SENDGRID_API_KEY: <@generateRandomString(<64>)>
-    STRIPE_API_KEY: ""
-    STRIPE_WEBHOOK_SECRET: ""
     SUPERADMIN_PASSWORD: <@generateRandomString(<16>)>
 
 services:
@@ -94,10 +93,10 @@ services:
       maxRam: 8
       minDisk: 1
       maxDisk: 20
-    envSecrets:
+    vault:
       ADMIN_CORS: https://medusa-${zeropsSubdomainHost}-9000.prg1.zerops.app
       # Set by hand in medusa-juno; set it again here.
-      MEDUSA_ADMIN_TOKEN: <@generateRandomString(<28>)>
+      MEDUSA_ADMIN_TOKEN: {value: <@generateRandomString(<28>)>, sensitive: true}
       MEDUSA_WORKER_MODE: server
 
   - hostname: nextstore
@@ -116,9 +115,9 @@ services:
       maxRam: 4
       minDisk: 1
       maxDisk: 10
-    envSecrets:
+    vault:
       # Set by hand in medusa-juno; set it again here.
-      OPENAI_API_KEY: <@generateRandomString(<32>)>
+      OPENAI_API_KEY: {value: <@generateRandomString(<32>)>, sensitive: true}
 
   - hostname: mailpit
     type: alpine@3.21
@@ -133,6 +132,6 @@ services:
       maxCpu: 2
       minRam: 0.25
       maxRam: 1
-    envSecrets:
+    vault:
       # Set by hand in medusa-juno; set it again here.
-      MP_UI_AUTH: admin:<@generateRandomString(<16>)>
+      MP_UI_AUTH: {value: 'admin:<@generateRandomString(<16>)>', sensitive: true}

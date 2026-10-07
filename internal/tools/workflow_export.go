@@ -207,11 +207,11 @@ func handleExport(
 	// serviceHostname=X` survives re-import. A read failure (slim /env, or
 	// the yaml-layer fetch on a live runtime) is non-fatal — warn + omit,
 	// never block the export; the warning is the agent-facing signal that
-	// the bundle's envSecrets may be incomplete (a silent omission is the
+	// the bundle's service vault may be incomplete (a silent omission is the
 	// regression this layer closes).
 	serviceUserEnvs, secErr := ops.FetchServiceUserEnvs(ctx, client, svc.ServiceID)
 	if secErr != nil {
-		remoteWarnings = append(remoteWarnings, fmt.Sprintf("read service user envs for %q: %v (service envSecrets omitted from bundle)", svc.Hostname, secErr))
+		remoteWarnings = append(remoteWarnings, fmt.Sprintf("read service user envs for %q: %v (the service vault is left out of the bundle)", svc.Hostname, secErr))
 	}
 
 	// R7: read the live autoscaling shape so the bundle reproduces the deployed

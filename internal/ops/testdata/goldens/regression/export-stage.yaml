@@ -1,8 +1,8 @@
 project:
-    envVariables:
+    name: myapp
+    vault:
         LOG_LEVEL: info
         NODE_ENV: development
-    name: myapp
 services:
     - buildFromGit: https://github.com/example/myapp
       enableSubdomainAccess: true

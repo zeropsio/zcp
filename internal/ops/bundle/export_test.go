@@ -119,13 +119,13 @@ func TestVerifyZeropsYAMLSetup(t *testing.T) {
 	}
 }
 
-func TestComposeProjectEnvVariables(t *testing.T) {
+func TestComposeProjectVault(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name            string
 		envs            []ProjectEnvVar
 		classifications map[string]topology.SecretClassification
-		wantOut         map[string]string
+		wantOut         map[string]vaultValue
 		wantWarnSubstr  []string // each must appear in some warning
 	}{
 		{
@@ -136,7 +136,7 @@ func TestComposeProjectEnvVariables(t *testing.T) {
 			classifications: map[string]topology.SecretClassification{
 				"DB_HOST": topology.SecretClassInfrastructure,
 			},
-			wantOut: map[string]string{},
+			wantOut: map[string]vaultValue{},
 		},
 		{
 			name: "auto-secret emits generateRandomString",
@@ -146,8 +146,8 @@ func TestComposeProjectEnvVariables(t *testing.T) {
 			classifications: map[string]topology.SecretClassification{
 				"APP_KEY": topology.SecretClassAutoSecret,
 			},
-			wantOut: map[string]string{
-				"APP_KEY": "<@generateRandomString(<32>)>",
+			wantOut: map[string]vaultValue{
+				"APP_KEY": {value: "<@generateRandomString(<32>)>", sensitive: true},
 			},
 		},
 		{
@@ -165,8 +165,8 @@ func TestComposeProjectEnvVariables(t *testing.T) {
 			// `<@pickRandom(<a>, <b>, ...)>`. Switched to a literal
 			// REPLACE_ME string with mandatory warning; clearer + always
 			// importable.
-			wantOut: map[string]string{
-				"STRIPE_SECRET": "REPLACE_ME",
+			wantOut: map[string]vaultValue{
+				"STRIPE_SECRET": {value: "REPLACE_ME", sensitive: true},
 			},
 			wantWarnSubstr: []string{`STRIPE_SECRET`, "REPLACE_ME", "Zerops dashboard"},
 		},
@@ -178,8 +178,8 @@ func TestComposeProjectEnvVariables(t *testing.T) {
 			classifications: map[string]topology.SecretClassification{
 				"STRIPE_SECRET": topology.SecretClassExternalSecret,
 			},
-			wantOut: map[string]string{
-				"STRIPE_SECRET": "",
+			wantOut: map[string]vaultValue{
+				"STRIPE_SECRET": {value: "", sensitive: true},
 			},
 			wantWarnSubstr: []string{`STRIPE_SECRET`, "empty external secret"},
 		},
@@ -191,8 +191,8 @@ func TestComposeProjectEnvVariables(t *testing.T) {
 			classifications: map[string]topology.SecretClassification{
 				"LOG_LEVEL": topology.SecretClassPlainConfig,
 			},
-			wantOut: map[string]string{
-				"LOG_LEVEL": "info",
+			wantOut: map[string]vaultValue{
+				"LOG_LEVEL": {value: "info", sensitive: false},
 			},
 		},
 		{
@@ -201,8 +201,8 @@ func TestComposeProjectEnvVariables(t *testing.T) {
 				{Key: "MYSTERY_VAR", Value: "abc"},
 			},
 			classifications: map[string]topology.SecretClassification{},
-			wantOut: map[string]string{
-				"MYSTERY_VAR": "abc",
+			wantOut: map[string]vaultValue{
+				"MYSTERY_VAR": {value: "abc", sensitive: false},
 			},
 			wantWarnSubstr: []string{"MYSTERY_VAR", "not classified"},
 		},
@@ -214,8 +214,8 @@ func TestComposeProjectEnvVariables(t *testing.T) {
 			classifications: map[string]topology.SecretClassification{
 				"WEIRD": topology.SecretClassification("nonsense"),
 			},
-			wantOut: map[string]string{
-				"WEIRD": "z",
+			wantOut: map[string]vaultValue{
+				"WEIRD": {value: "z", sensitive: false},
 			},
 			wantWarnSubstr: []string{"WEIRD", `unknown classification "nonsense"`},
 		},
@@ -223,7 +223,7 @@ func TestComposeProjectEnvVariables(t *testing.T) {
 			name:            "empty input emits empty output and no warnings",
 			envs:            nil,
 			classifications: nil,
-			wantOut:         map[string]string{},
+			wantOut:         map[string]vaultValue{},
 		},
 		{
 			name: "exclude drops the env entirely without warning",
@@ -235,8 +235,8 @@ func TestComposeProjectEnvVariables(t *testing.T) {
 				"APP_KEY":   topology.SecretClassExclude,
 				"LOG_LEVEL": topology.SecretClassPlainConfig,
 			},
-			wantOut: map[string]string{
-				"LOG_LEVEL": "info",
+			wantOut: map[string]vaultValue{
+				"LOG_LEVEL": {value: "info", sensitive: false},
 			},
 		},
 		{
@@ -247,8 +247,57 @@ func TestComposeProjectEnvVariables(t *testing.T) {
 			classifications: map[string]topology.SecretClassification{
 				"MAILGUN_FROM": topology.SecretClassPlainConfig,
 			},
-			wantOut: map[string]string{
-				"MAILGUN_FROM": "Acme Support <support@${zeropsSubdomainHost}>",
+			wantOut: map[string]vaultValue{
+				"MAILGUN_FROM": {value: "Acme Support <support@${zeropsSubdomainHost}>"},
+			},
+		},
+		{
+			name: "a value someone flagged sensitive goes to the placeholder, sensitive",
+			envs: []ProjectEnvVar{
+				{Key: "WEBHOOK_URL", Value: "https://hooks.example.com/abc", Sensitive: true},
+			},
+			classifications: map[string]topology.SecretClassification{
+				"WEBHOOK_URL": topology.SecretClassPlainConfig,
+			},
+			wantOut: map[string]vaultValue{
+				"WEBHOOK_URL": {value: "REPLACE_ME", sensitive: true},
+			},
+			wantWarnSubstr: []string{"WEBHOOK_URL", "sensitive value"},
+		},
+		{
+			name: "a generated admin sign-in password stays readable to the person",
+			envs: []ProjectEnvVar{
+				{Key: "SUPERADMIN_PASSWORD", Value: "old"},
+			},
+			classifications: map[string]topology.SecretClassification{
+				"SUPERADMIN_PASSWORD": topology.SecretClassAutoSecret,
+			},
+			wantOut: map[string]vaultValue{
+				"SUPERADMIN_PASSWORD": {value: "<@generateRandomString(<32>)>", sensitive: false},
+			},
+		},
+		{
+			name: "a generated secret whose name says nothing is still sensitive",
+			envs: []ProjectEnvVar{
+				{Key: "APP_SALT", Value: "old"},
+			},
+			classifications: map[string]topology.SecretClassification{
+				"APP_SALT": topology.SecretClassAutoSecret,
+			},
+			wantOut: map[string]vaultValue{
+				"APP_SALT": {value: "<@generateRandomString(<32>)>", sensitive: true},
+			},
+		},
+		{
+			name: "plain config under a secret-shaped name follows the name rule",
+			envs: []ProjectEnvVar{
+				{Key: "TOKEN_TTL", Value: "3600"},
+			},
+			classifications: map[string]topology.SecretClassification{
+				"TOKEN_TTL": topology.SecretClassPlainConfig,
+			},
+			wantOut: map[string]vaultValue{
+				"TOKEN_TTL": {value: "3600", sensitive: true},
 			},
 		},
 	}
@@ -256,13 +305,13 @@ func TestComposeProjectEnvVariables(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			gotOut, gotWarns := composeProjectEnvVariables(tt.envs, tt.classifications)
+			gotOut, gotWarns := composeProjectVault(tt.envs, tt.classifications)
 			if len(gotOut) != len(tt.wantOut) {
 				t.Errorf("output map size mismatch: got %d entries, want %d (got=%v want=%v)", len(gotOut), len(tt.wantOut), gotOut, tt.wantOut)
 			}
 			for k, want := range tt.wantOut {
 				if gotOut[k] != want {
-					t.Errorf("output[%q] = %q, want %q", k, gotOut[k], want)
+					t.Errorf("output[%q] = %+v, want %+v", k, gotOut[k], want)
 				}
 			}
 			for _, sub := range tt.wantWarnSubstr {
@@ -284,10 +333,10 @@ func TestComposeProjectEnvVariables(t *testing.T) {
 	}
 }
 
-func TestComposeProjectEnvVariables_AutoSecretDirectiveExpands(t *testing.T) {
+func TestComposeProjectVault_AutoSecretDirectiveExpands(t *testing.T) {
 	t.Parallel()
 
-	out, warnings := composeProjectEnvVariables(
+	out, warnings := composeProjectVault(
 		[]ProjectEnvVar{{Key: "APP_KEY", Value: "base64:old"}},
 		map[string]topology.SecretClassification{"APP_KEY": topology.SecretClassAutoSecret},
 	)
@@ -295,7 +344,7 @@ func TestComposeProjectEnvVariables_AutoSecretDirectiveExpands(t *testing.T) {
 		t.Fatalf("expected no warnings, got %v", warnings)
 	}
 
-	expanded, err := preprocess.Expand(context.Background(), out["APP_KEY"])
+	expanded, err := preprocess.Expand(context.Background(), out["APP_KEY"].value)
 	if err != nil {
 		t.Fatalf("auto-secret preprocessor directive should expand via zParser: %v", err)
 	}
@@ -309,7 +358,7 @@ func TestAddPreprocessorHeader(t *testing.T) {
 	tests := []struct {
 		name        string
 		body        string
-		projectEnvs map[string]string
+		projectEnvs map[string]vaultValue
 		wantHeader  bool
 	}{
 		{
@@ -321,25 +370,25 @@ func TestAddPreprocessorHeader(t *testing.T) {
 		{
 			name:        "plain-config envs only — no header",
 			body:        "project:\n  name: x\n",
-			projectEnvs: map[string]string{"LOG_LEVEL": "info"},
+			projectEnvs: map[string]vaultValue{"LOG_LEVEL": {value: "info"}},
 			wantHeader:  false,
 		},
 		{
 			name:        "auto-secret directive — header prepended",
 			body:        "project:\n  name: x\n",
-			projectEnvs: map[string]string{"APP_KEY": "<@generateRandomString(<32>)>"},
+			projectEnvs: map[string]vaultValue{"APP_KEY": {value: "<@generateRandomString(<32>)>"}},
 			wantHeader:  true,
 		},
 		{
 			name:        "auto-secret directive — header prepended (only auto-secret carries preprocessor now)",
 			body:        "project:\n  name: x\n",
-			projectEnvs: map[string]string{"APP_KEY": "<@generateRandomString(<32>)>"},
+			projectEnvs: map[string]vaultValue{"APP_KEY": {value: "<@generateRandomString(<32>)>"}},
 			wantHeader:  true,
 		},
 		{
 			name:        "partial directive without closing )> — no header",
 			body:        "project:\n  name: x\n",
-			projectEnvs: map[string]string{"WEIRD": "<@notADirective"},
+			projectEnvs: map[string]vaultValue{"WEIRD": {value: "<@notADirective"}},
 			wantHeader:  false,
 		},
 	}
@@ -380,8 +429,8 @@ func TestComposeImportYAML_MinimalRuntimeOnly(t *testing.T) {
 	if project["name"] != "demo" {
 		t.Errorf("project.name = %v, want demo", project["name"])
 	}
-	if _, ok := project["envVariables"]; ok {
-		t.Errorf("project.envVariables should be omitted when empty, got %v", project["envVariables"])
+	if _, ok := project["vault"]; ok {
+		t.Errorf("project.vault should be omitted when empty, got %v", project["vault"])
 	}
 
 	services, _ := doc["services"].([]any)
@@ -625,18 +674,25 @@ func TestBuildBundle_HappyPath(t *testing.T) {
 
 	doc := mustUnmarshal(t, bundle.ImportYAML)
 	project, _ := doc["project"].(map[string]any)
-	envs, _ := project["envVariables"].(map[string]any)
-	if _, ok := envs["DB_HOST"]; ok {
+	if _, legacy := project["envVariables"]; legacy {
+		t.Errorf("project carries the deprecated envVariables: %v", project["envVariables"])
+	}
+	vault, _ := project["vault"].(map[string]any)
+	if _, ok := vault["DB_HOST"]; ok {
 		t.Error("DB_HOST should be dropped (infrastructure-derived)")
 	}
-	if envs["APP_KEY"] != "<@generateRandomString(<32>)>" {
-		t.Errorf("APP_KEY = %v, want generateRandomString directive", envs["APP_KEY"])
+	wantSensitive := map[string]string{
+		"APP_KEY":       "<@generateRandomString(<32>)>",
+		"STRIPE_SECRET": "REPLACE_ME",
 	}
-	if envs["LOG_LEVEL"] != "info" {
-		t.Errorf("LOG_LEVEL = %v, want info", envs["LOG_LEVEL"])
+	for key, want := range wantSensitive {
+		item, _ := vault[key].(map[string]any)
+		if item["value"] != want || item["sensitive"] != true {
+			t.Errorf("%s = %v, want {value: %s, sensitive: true}", key, vault[key], want)
+		}
 	}
-	if envs["STRIPE_SECRET"] != "REPLACE_ME" {
-		t.Errorf("STRIPE_SECRET = %v, want literal REPLACE_ME placeholder", envs["STRIPE_SECRET"])
+	if vault["LOG_LEVEL"] != "info" {
+		t.Errorf("LOG_LEVEL = %v, want info", vault["LOG_LEVEL"])
 	}
 }
 
@@ -755,8 +811,8 @@ func TestBuildBundle_NodeShape(t *testing.T) {
 	if _, ok := runtime["mode"]; ok {
 		t.Errorf("runtime entry should omit mode, got %v", runtime["mode"])
 	}
-	envs, _ := doc["project"].(map[string]any)["envVariables"].(map[string]any)
-	if _, ok := envs["MONGO_URI"]; ok {
+	vault, _ := doc["project"].(map[string]any)["vault"].(map[string]any)
+	if _, ok := vault["MONGO_URI"]; ok {
 		t.Error("MONGO_URI should be dropped (infrastructure-derived)")
 	}
 }
@@ -813,8 +869,8 @@ func TestBuildBundle_PHPSecretMidString(t *testing.T) {
 		t.Fatalf("BuildBundle: %v", err)
 	}
 	doc := mustUnmarshal(t, bundle.ImportYAML)
-	envs, _ := doc["project"].(map[string]any)["envVariables"].(map[string]any)
-	got, _ := envs["MAIL_FROM"].(string)
+	vault, _ := doc["project"].(map[string]any)["vault"].(map[string]any)
+	got, _ := vault["MAIL_FROM"].(string)
 	if got != `Acme Support <support@acme.com>` {
 		t.Errorf("MAIL_FROM round-trip: got %q, want literal", got)
 	}
@@ -822,7 +878,7 @@ func TestBuildBundle_PHPSecretMidString(t *testing.T) {
 
 // TestBuildBundle_M2IndirectInfraReference exercises the M2 risk: a
 // project env classified Infrastructure (and therefore dropped from
-// project.envVariables) is referenced by zerops.yaml's run.envVariables
+// the project vault) is referenced by zerops.yaml's run.envVariables
 // via `${ENV_NAME}`. Without the warning, re-import would silently
 // fail to resolve. Per plan §3.4 amendment 12 + Codex Agent A blocker 1.
 func TestBuildBundle_M2IndirectInfraReference(t *testing.T) {
@@ -1187,7 +1243,7 @@ func TestExtractZeropsYAMLRunEnvRefs(t *testing.T) {
 }
 
 // TestIsLikelySentinel pins the conservative allowlist used by
-// composeProjectEnvVariables to flag external-secret mis-classification
+// composeProjectVault to flag external-secret mis-classification
 // candidates. New patterns require a real-app justification per the
 // helper's doc comment.
 func TestIsLikelySentinel(t *testing.T) {

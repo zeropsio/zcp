@@ -162,6 +162,7 @@ func ParseRecipeImportShape(importYAML string) (RecipeImportShape, error) {
 // reads (ParseMateTier) alike.
 type recipeImportDoc struct {
 	Project struct {
+		Vault        importVault    `yaml:"vault"`
 		EnvVariables map[string]any `yaml:"envVariables"`
 	} `yaml:"project"`
 	Services []recipeImportService `yaml:"services"`
@@ -175,8 +176,38 @@ type recipeImportService struct {
 	BuildFromGit recipeGitSource `yaml:"buildFromGit"`
 	Mode         string          `yaml:"mode"`
 	Priority     int             `yaml:"priority"`
+	Vault        importVault     `yaml:"vault"`
 	EnvVariables map[string]any  `yaml:"envVariables"`
 	EnvSecrets   map[string]any  `yaml:"envSecrets"`
+}
+
+// importVault is a `vault:` block's values, each item read in either form
+// the import schema takes — `KEY: value` or `KEY: {value: …, sensitive: …}`.
+// The flag is the platform's to apply; a reader here needs the value.
+type importVault map[string]string
+
+// UnmarshalYAML reads both forms.
+func (v *importVault) UnmarshalYAML(node *yaml.Node) error {
+	var raw map[string]yaml.Node
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	out := make(importVault, len(raw))
+	for key, item := range raw {
+		if item.Kind != yaml.MappingNode {
+			out[key] = item.Value
+			continue
+		}
+		var object struct {
+			Value string `yaml:"value"`
+		}
+		if err := item.Decode(&object); err != nil {
+			return fmt.Errorf("vault %s: %w", key, err)
+		}
+		out[key] = object.Value
+	}
+	*v = out
+	return nil
 }
 
 // recipeGitSource is a service's `buildFromGit`, which a recipe writes either

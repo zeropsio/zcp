@@ -357,16 +357,16 @@ func matchesAny(patterns []*regexp.Regexp, value string) bool {
 	return false
 }
 
-// groupEnvFields writes live variables for a tier, sorted by key: config as
-// written — through promote, which names a group environment's own runtimes
-// (nil keeps it as it is) — secrets generated, each but an app's own with a
-// line saying it has to be set again. It returns the config and the secrets
-// apart — a project keeps them under envVariables and envSecrets, a service
-// carries both under envSecrets, the only channel an import has for its
-// variables.
-func groupEnvFields(envs []ProjectEnvVar, source string, promote func(string) string) (config, secrets []yamlField) {
+// groupVaultFields writes live variables for a tier as a `vault:` block,
+// sorted by key: config as written — through promote, which names a group
+// environment's own runtimes (nil keeps it as it is) — secrets generated,
+// each but an app's own with a line saying it has to be set again. Each
+// value is sensitive per newVaultValue, a generated secret counting as one.
+// The project's vault and each service's own carry the same shape.
+func groupVaultFields(envs []ProjectEnvVar, source string, promote func(string) string) []yamlField {
 	sorted := append([]ProjectEnvVar(nil), envs...)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Key < sorted[j].Key })
+	fields := make([]yamlField, 0, len(sorted))
 	for _, env := range sorted {
 		secret, setAgain := recipeSecret(env)
 		if !secret {
@@ -374,25 +374,14 @@ func groupEnvFields(envs []ProjectEnvVar, source string, promote func(string) st
 			if promote != nil {
 				value = promote(value)
 			}
-			config = append(config, yamlField{key: env.Key, value: value})
+			fields = append(fields, yamlField{key: env.Key, value: newVaultValue(env.Key, value, false)})
 			continue
 		}
-		field := yamlField{key: env.Key, value: generatedSecret(env.Value)}
+		field := yamlField{key: env.Key, value: newVaultValue(env.Key, generatedSecret(env.Value), true)}
 		if setAgain {
 			field.comment = fmt.Sprintf("Set by hand in %s; set it again here.", source)
 		}
-		secrets = append(secrets, field)
+		fields = append(fields, field)
 	}
-	return config, secrets
-}
-
-// serviceSecretFields is a service's envSecrets: its config and its secrets
-// together, sorted by key.
-func serviceSecretFields(envs []ProjectEnvVar, source string, promote func(string) string) []yamlField {
-	config, secrets := groupEnvFields(envs, source, promote)
-	fields := make([]yamlField, 0, len(config)+len(secrets))
-	fields = append(fields, config...)
-	fields = append(fields, secrets...)
-	sort.SliceStable(fields, func(i, j int) bool { return fields[i].key < fields[j].key })
 	return fields
 }

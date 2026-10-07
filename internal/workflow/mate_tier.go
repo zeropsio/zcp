@@ -3,6 +3,7 @@ package workflow
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"sort"
 	"strings"
@@ -37,7 +38,8 @@ type MateTierRuntime struct {
 	Setup    string
 	Priority int
 	// Envs are its own service variables as the tier writes them — its
-	// envVariables and envSecrets — which a build lifts as ${RUNTIME_X}.
+	// vault, or the deprecated envVariables and envSecrets — which a build
+	// lifts as ${RUNTIME_X}.
 	Envs map[string]string
 }
 
@@ -95,7 +97,8 @@ type MateTierSkip struct {
 type MateTier struct {
 	Pairs   []MateTierPair
 	Skipped []MateTierSkip
-	// ProjectEnvs are the project's envVariables, as the tier writes them:
+	// ProjectEnvs are the project's vault (or its deprecated envVariables),
+	// as the tier writes them:
 	// what a build reads through a `${NAME}`.
 	ProjectEnvs map[string]string
 }
@@ -211,12 +214,7 @@ func ParseMateTier(importYAML, address, appID string) (MateTier, error) {
 		}
 		return tier, fmt.Errorf("%w; it holds %s", ErrMateTierNoPairs, strings.Join(held, ", "))
 	}
-	if len(doc.Project.EnvVariables) > 0 {
-		tier.ProjectEnvs = make(map[string]string, len(doc.Project.EnvVariables))
-		for key, value := range doc.Project.EnvVariables {
-			tier.ProjectEnvs[key] = fmt.Sprint(value)
-		}
-	}
+	tier.ProjectEnvs = vaultAndLegacyEnvs(doc.Project.Vault, doc.Project.EnvVariables)
 	return tier, nil
 }
 
@@ -273,17 +271,30 @@ func mateTierRuntime(svc recipeImportService) MateTierRuntime {
 }
 
 // serviceEnvs is a service's own variables as the tier writes them, its
-// envVariables and envSecrets in one map; nil when it has none.
+// vault and the deprecated envVariables and envSecrets in one map; nil when
+// it has none.
 func serviceEnvs(svc recipeImportService) map[string]string {
-	if len(svc.EnvVariables)+len(svc.EnvSecrets) == 0 {
+	return vaultAndLegacyEnvs(svc.Vault, svc.EnvSecrets, svc.EnvVariables)
+}
+
+// vaultAndLegacyEnvs merges a vault with the deprecated blocks a tier written
+// before vault: may still carry — the vault wins a key both hold, a later
+// legacy block an earlier one. Nil when all are empty.
+func vaultAndLegacyEnvs(vault importVault, legacy ...map[string]any) map[string]string {
+	size := len(vault)
+	for _, block := range legacy {
+		size += len(block)
+	}
+	if size == 0 {
 		return nil
 	}
-	envs := make(map[string]string, len(svc.EnvVariables)+len(svc.EnvSecrets))
-	for _, block := range []map[string]any{svc.EnvSecrets, svc.EnvVariables} {
+	envs := make(map[string]string, size)
+	for _, block := range legacy {
 		for key, value := range block {
 			envs[key] = fmt.Sprint(value)
 		}
 	}
+	maps.Copy(envs, vault)
 	return envs
 }
 

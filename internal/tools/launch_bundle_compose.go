@@ -87,7 +87,7 @@ func composeLaunchBundleInputs(
 		// non-fatal (warn + omit) — never blocks the launch.
 		userEnvs, secErr := ops.FetchServiceUserEnvs(ctx, client, runtimeSvc.ServiceID)
 		if secErr != nil {
-			warnings = append(warnings, fmt.Sprintf("read service user envs for %q: %v (service envSecrets omitted from bundle)", r.PushHostname, secErr))
+			warnings = append(warnings, fmt.Sprintf("read service user envs for %q: %v (the service vault is left out of the bundle)", r.PushHostname, secErr))
 		}
 		// R7: reflect the live source scaling into the promoted runtime (the
 		// composer applies the named production transforms). Non-fatal — a read
@@ -148,7 +148,7 @@ func composeLaunchBundleInputs(
 
 // serviceUserEnvsToBundleSecrets converts the runtime's USER-SET service env
 // layer (slim /env USER minus yaml-baked) into the composer's
-// bundle.ProjectEnvVar shape for the runtime entry's envSecrets (GAP0-1).
+// bundle.ProjectEnvVar shape for the runtime entry's vault (GAP0-1).
 // Shared by the export + launch handlers.
 //
 // Infrastructure-classified keys (GIT_TOKEN, ZCP_*) are filtered out: the

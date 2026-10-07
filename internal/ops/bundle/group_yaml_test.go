@@ -60,7 +60,7 @@ func TestBuildGroupRecipe_TierIsWrittenForPeople(t *testing.T) {
 	readingOrder := []string{
 		"hostname", "type", "priority", "mode", "profile", "zeropsSetup", "buildFromGit",
 		"enableSubdomainAccess", "objectStorageSize", "objectStoragePolicy",
-		"minContainers", "maxContainers", "verticalAutoscaling", "envSecrets",
+		"minContainers", "maxContainers", "verticalAutoscaling", "vault",
 	}
 	for _, tier := range layout.Tiers {
 		t.Run(tier.Title, func(t *testing.T) {
@@ -173,11 +173,11 @@ func TestTierDocument_QuotesWhatYAML11Reinterprets(t *testing.T) {
 	for i, tt := range tests {
 		fields = append(fields, yamlField{key: fmt.Sprintf("V%02d", i), value: tt.value})
 	}
-	body, err := tierDocument{project: []yamlField{{key: "name", value: "p"}, {key: "envVariables", value: fields}}}.render()
+	body, err := tierDocument{project: []yamlField{{key: "name", value: "p"}, {key: "vault", value: fields}}}.render()
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	vars := mappingValue(mappingValue(tierMapping(t, body), "project"), "envVariables")
+	vars := mappingValue(mappingValue(tierMapping(t, body), "project"), "vault")
 	for i, tt := range tests {
 		node := mappingValue(vars, fmt.Sprintf("V%02d", i))
 		quoted := node.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle) != 0

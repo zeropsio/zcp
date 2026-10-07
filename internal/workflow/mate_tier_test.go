@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"errors"
+	"maps"
 	"strings"
 	"testing"
 )
@@ -358,5 +359,29 @@ func TestParseMateTier_PairsOnlyRepositoriesOfThisApplication(t *testing.T) {
 				t.Errorf("webdev paired=%v skipped as %q, want %q", paired, reason, tt.want)
 			}
 		})
+	}
+}
+
+// A tier zcp writes carries its values in vaults — the project's and each
+// half's own, plain or `{value, sensitive}` — and those are what a build
+// reads, like the deprecated blocks before them.
+func TestParseMateTier_ReadsTheVaults(t *testing.T) {
+	t.Parallel()
+	body := "project:\n  name: acme\n  vault:\n    API_URL: https://${apistage_zeropsSubdomain}\n    JWT_SECRET: {value: <@generateRandomString(<48>)>, sensitive: true}\n" +
+		"services:\n" +
+		"  - hostname: storedev\n    type: nodejs@22\n    buildFromGit: " + tierHQ + "/git/app-1/storedev\n" +
+		"  - hostname: storestage\n    type: nodejs@22\n    buildFromGit: " + tierHQ + "/git/app-1/storedev\n" +
+		"    vault:\n      STORE_URL: https://${storestage_zeropsSubdomain}\n      STORE_TOKEN: {value: \"${api_TOKEN}\", sensitive: true}\n"
+	tier, err := ParseMateTier(body, tierHQ, tierApp)
+	if err != nil {
+		t.Fatalf("ParseMateTier: %v", err)
+	}
+	wantProject := map[string]string{"API_URL": "https://${apistage_zeropsSubdomain}", "JWT_SECRET": "<@generateRandomString(<48>)>"}
+	if !maps.Equal(tier.ProjectEnvs, wantProject) {
+		t.Errorf("project = %v, want %v", tier.ProjectEnvs, wantProject)
+	}
+	wantStage := map[string]string{"STORE_URL": "https://${storestage_zeropsSubdomain}", "STORE_TOKEN": "${api_TOKEN}"}
+	if got := tier.Pairs[0].Stage.Envs; !maps.Equal(got, wantStage) {
+		t.Errorf("stage = %v, want %v", got, wantStage)
 	}
 }

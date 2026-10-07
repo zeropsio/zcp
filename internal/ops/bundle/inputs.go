@@ -13,14 +13,14 @@ type ProjectEnvVar struct {
 	// Sensitive is the platform's sensitive flag. The group recipe reads it
 	// as one signal among several (recipeSecret); export and launch classify
 	// every variable, and a sensitive one never carries its value into the
-	// bundle whatever its bucket (composeProjectEnvVariables).
+	// bundle whatever its bucket (composeProjectVault).
 	Sensitive bool
 }
 
 // ManagedServiceEntry describes a managed dep to re-import alongside
 // the runtime so connection refs (${db_*}, ${redis_*}, ...) and Local Storage
 // run.volume.hostname mounts resolve in the destination project. Hostname + Type + Mode mirror Discover
-// output; envs + envSecrets are intentionally absent — the platform
+// output; envs and a vault are intentionally absent — the platform
 // regenerates managed credentials on import.
 //
 // QuotaGBytes carries the source object-storage quota (GB, 1-100
@@ -108,7 +108,7 @@ type BundleInputs struct {
 	// RepoURL is the buildFromGit target — live `git remote get-url
 	// origin` resolved by the handler. Empty value is rejected.
 	RepoURL string
-	// ProjectEnvs is the project-level envVariables snapshot. Each
+	// ProjectEnvs is the project vault's snapshot. Each
 	// entry is bucketed via the classifications map at compose time.
 	ProjectEnvs []ProjectEnvVar
 	// ServiceEnvs is the runtime's per-service user-set env layer (the
@@ -116,8 +116,8 @@ type BundleInputs struct {
 	// `zerops_env set serviceHostname=X` writes). The platform stores
 	// these as user data; buildFromGit does NOT rebuild them (they are
 	// not in zerops.yaml), so dropping them silently lost the key on
-	// re-import (GAP0-1). Emitted on the runtime entry as schema-correct
-	// `envSecrets`, bucketed via the same classifications map
+	// re-import (GAP0-1). Emitted as the runtime entry's `vault:`,
+	// bucketed via the same classifications map
 	// (secret-safe default — an unclassified entry emits REPLACE_ME,
 	// never the verbatim value).
 	ServiceEnvs []ProjectEnvVar
@@ -175,7 +175,7 @@ type LaunchRuntimeInput struct {
 	ZeropsYAMLBody string
 	// ServiceEnvs — this runtime's per-service user-set env layer (the
 	// slim service /env USER minus the yaml-baked mirror). Emitted as
-	// `envSecrets` on the runtime entry, bucketed via the bundle
+	// the runtime entry's `vault:`, bucketed via the bundle
 	// classifications map (secret-safe default). See
 	// BundleInputs.ServiceEnvs (GAP0-1).
 	ServiceEnvs []ProjectEnvVar

@@ -48,11 +48,11 @@ type tierDocument struct {
 
 // serviceKeyOrder is the order a service's keys are written in: what the
 // service is, when it is created, what builds it, how it is reached, what it
-// stores, how it scales, and its secrets last.
+// stores, how it scales, and its vault last.
 var serviceKeyOrder = []string{
 	"hostname", "type", "priority", "mode", "profile", "profileOverrides", "zeropsSetup", "buildFromGit",
 	"enableSubdomainAccess", "objectStorageSize", "objectStoragePolicy",
-	"minContainers", "maxContainers", "verticalAutoscaling", "envSecrets",
+	"minContainers", "maxContainers", "verticalAutoscaling", "vault",
 }
 
 // verticalKeyOrder is verticalAutoscaling's: the CPU mode, then each resource
@@ -164,7 +164,11 @@ func fieldsUsePreprocessor(fields []yamlField) bool {
 	for _, f := range fields {
 		switch v := f.value.(type) {
 		case string:
-			if strings.Contains(v, "<@") && strings.Contains(v, ")>") {
+			if usesPreprocessorDirective(v) {
+				return true
+			}
+		case vaultValue:
+			if usesPreprocessorDirective(v.value) {
 				return true
 			}
 		case []yamlField:
@@ -194,6 +198,8 @@ func valueNode(value any) *yaml.Node {
 	switch v := value.(type) {
 	case []yamlField:
 		return fieldsNode(v)
+	case vaultValue:
+		return vaultNode(v)
 	case string:
 		node := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v}
 		if yaml11Reinterprets(v) {

@@ -3,6 +3,8 @@ package bundle
 import (
 	"maps"
 	"math/rand/v2"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -287,11 +289,11 @@ func TestBuildGroupRecipe_FailsClosed(t *testing.T) {
 			for _, tier := range layout.Tiers {
 				project := mappingValue(tierMapping(t, tier.ImportYAML), "project")
 				written := map[string]string{
-					"project": scalarMap(mappingValue(project, "envVariables"))[tt.key] + scalarMap(mappingValue(project, "envSecrets"))[tt.key],
+					"project": scalarMap(mappingValue(project, "vault"))[tt.key],
 				}
 				for _, host := range []string{"apidev", "apistage", "api"} {
 					if service := serviceNodeOrNil(t, tier.ImportYAML, host); service != nil {
-						written[host] = scalarMap(mappingValue(service, "envSecrets"))[tt.key]
+						written[host] = scalarMap(mappingValue(service, "vault"))[tt.key]
 					}
 				}
 				for where, got := range written {
@@ -449,10 +451,11 @@ func TestGeneratedSecret_KeepsTheLength(t *testing.T) {
 	}
 }
 
-// The project's variables go into every tier: config as written, secrets as
-// generators under envSecrets, each with a line saying it was set by hand and
-// has to be set again — but for a secret the app makes for itself, which a
-// fresh environment simply generates anew.
+// The project's variables go into every tier's project vault: config as
+// written, secrets as generators written sensitive — but for an admin's
+// sign-in password, which the person reads in the vault — each with a line
+// saying it was set by hand and has to be set again, but for a secret the app
+// makes for itself, which a fresh environment simply generates anew.
 func TestBuildGroupRecipe_ProjectVariables(t *testing.T) {
 	t.Parallel()
 	in := groupInputsFixture()
@@ -464,6 +467,7 @@ func TestBuildGroupRecipe_ProjectVariables(t *testing.T) {
 		{Key: "STRIPE_API_KEY", Value: "rk_" + "live_" + strings.Repeat("s", 22)},
 		{Key: "STRIPE_PRICE_PRO", Value: "price_" + "1Mq7Xz2Lb9Rt4Wv8Kd3Nc6Hs"},
 		{Key: "STRIPE_WEBHOOK_SECRET", Value: ""},
+		{Key: "SUPERADMIN_PASSWORD", Value: strings.Repeat("p", 20), Sensitive: true},
 	}
 	layout, _, err := BuildGroupRecipe(in)
 	if err != nil {
@@ -473,24 +477,28 @@ func TestBuildGroupRecipe_ProjectVariables(t *testing.T) {
 		t.Run(tier.Title, func(t *testing.T) {
 			t.Parallel()
 			project := mappingValue(tierMapping(t, tier.ImportYAML), "project")
-			vars := scalarMap(mappingValue(project, "envVariables"))
-			wantVars := map[string]string{
+			for _, legacy := range []string{"envVariables", "envSecrets"} {
+				if mappingValue(project, legacy) != nil {
+					t.Errorf("the project carries the deprecated %s", legacy)
+				}
+			}
+			secrets := mappingValue(project, "vault")
+			wantVault := map[string]string{
 				"APP_URL":               "https://app-${zeropsSubdomainHost}.prg1.zerops.app",
 				"STORE_PUBLISHABLE_KEY": "${api_CHANNEL_PUBLISHABLE_KEY}",
 				"SUPERADMIN_EMAIL":      "admin@example.com",
-			}
-			if !maps.Equal(vars, wantVars) {
-				t.Errorf("envVariables = %v, want %v", vars, wantVars)
-			}
-			secrets := mappingValue(project, "envSecrets")
-			wantSecrets := map[string]string{
 				"JWT_SECRET":            "<@generateRandomString(<48>)>",
 				"STRIPE_API_KEY":        "<@generateRandomString(<30>)>",
 				"STRIPE_PRICE_PRO":      "<@generateRandomString(<30>)>",
 				"STRIPE_WEBHOOK_SECRET": "",
+				"SUPERADMIN_PASSWORD":   "<@generateRandomString(<20>)>",
 			}
-			if got := scalarMap(secrets); !maps.Equal(got, wantSecrets) {
-				t.Errorf("envSecrets = %v, want %v", got, wantSecrets)
+			if got := scalarMap(secrets); !maps.Equal(got, wantVault) {
+				t.Errorf("vault = %v, want %v", got, wantVault)
+			}
+			wantSensitive := []string{"JWT_SECRET", "STRIPE_API_KEY", "STRIPE_PRICE_PRO", "STRIPE_WEBHOOK_SECRET"}
+			if got := sensitiveKeys(secrets); !slices.Equal(got, wantSensitive) {
+				t.Errorf("sensitive = %v, want %v", got, wantSensitive)
 			}
 			if !strings.HasPrefix(tier.ImportYAML, preprocessorHeader) {
 				t.Errorf("a generator without the preprocessor's first line")
@@ -510,10 +518,9 @@ func TestBuildGroupRecipe_ProjectVariables(t *testing.T) {
 	}
 }
 
-// A runtime's own variables are service secrets on the platform — the only
-// channel an import has for them — so they all go under envSecrets: config
-// as written, secrets generated. Each half of the AI Agent tier carries its
-// own half's; a group environment runs what the stage half runs.
+// A runtime's own variables go into its own vault: config as written,
+// secrets generated and written sensitive. Each half of the AI Agent tier
+// carries its own half's; a group environment runs what the stage half runs.
 func TestBuildGroupRecipe_ServiceVariables(t *testing.T) {
 	t.Parallel()
 	in := groupInputsFixture()
@@ -553,8 +560,15 @@ func TestBuildGroupRecipe_ServiceVariables(t *testing.T) {
 			if entry == nil {
 				t.Fatalf("no %s", tt.host)
 			}
-			if got := scalarMap(mappingValue(entry, "envSecrets")); !maps.Equal(got, tt.want) {
-				t.Errorf("envSecrets = %v, want %v", got, tt.want)
+			vault := mappingValue(entry, "vault")
+			if got := scalarMap(vault); !maps.Equal(got, tt.want) {
+				t.Errorf("vault = %v, want %v", got, tt.want)
+			}
+			for key := range tt.want {
+				generated := strings.Contains(tt.want[key], "<@")
+				if sensitive := slices.Contains(sensitiveKeys(vault), key); sensitive != generated {
+					t.Errorf("%s sensitive = %v, want %v", key, sensitive, generated)
+				}
 			}
 		})
 	}
@@ -602,9 +616,32 @@ func scalarMap(m *yaml.Node) map[string]string {
 	}
 	out := map[string]string{}
 	for i := 0; i+1 < len(m.Content); i += 2 {
-		out[m.Content[i].Value] = m.Content[i+1].Value
+		value := m.Content[i+1]
+		if value.Kind == yaml.MappingNode {
+			// A vault item's `{value: …, sensitive: …}` form.
+			if inner := mappingValue(value, "value"); inner != nil {
+				out[m.Content[i].Value] = inner.Value
+			}
+			continue
+		}
+		out[m.Content[i].Value] = value.Value
 	}
 	return out
+}
+
+// sensitiveKeys are a vault block's keys written `{…, sensitive: true}`, sorted.
+func sensitiveKeys(m *yaml.Node) []string {
+	if m == nil {
+		return nil
+	}
+	var keys []string
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if flag := mappingValue(m.Content[i+1], "sensitive"); flag != nil && flag.Value == "true" {
+			keys = append(keys, m.Content[i].Value)
+		}
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // keyComment is the comment written above a key of a mapping.

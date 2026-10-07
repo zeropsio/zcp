@@ -9,11 +9,11 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// TestComposeServiceEnvSecrets_Buckets pins the four-category emission for
-// the runtime's user-set service env layer (the slim /env USER layer minus
-// the yaml-baked mirror) (GAP0-1), with the SECRET-safe default for
-// unclassified entries.
-func TestComposeServiceEnvSecrets_Buckets(t *testing.T) {
+// TestComposeServiceVault_Buckets pins the four-category emission for the
+// runtime's user-set service env layer (the slim /env USER layer minus the
+// yaml-baked mirror) into its vault (GAP0-1): a generated value and a
+// placeholder sensitive, the SECRET-safe default for unclassified entries.
+func TestComposeServiceVault_Buckets(t *testing.T) {
 	envs := []ProjectEnvVar{
 		{Key: "PLAIN_CFG", Value: "info"},
 		{Key: "API_KEY", Value: "sk-live-realsecret"},
@@ -30,31 +30,25 @@ func TestComposeServiceEnvSecrets_Buckets(t *testing.T) {
 		"STALE_KEY":   topology.SecretClassExclude,
 		// UNCLASSIFIED_SECRET intentionally absent → secret-safe default.
 	}
-	out, warnings := composeServiceEnvSecrets(envs, cls)
+	out, warnings := composeServiceVault(envs, cls)
 
 	if _, present := out["STALE_KEY"]; present {
-		t.Errorf("exclude-classified service env must be dropped entirely; got %q", out["STALE_KEY"])
+		t.Errorf("exclude-classified service env must be dropped entirely; got %+v", out["STALE_KEY"])
 	}
-
-	if out["PLAIN_CFG"] != "info" {
-		t.Errorf("plain-config should carry verbatim; got %q", out["PLAIN_CFG"])
+	want := map[string]vaultValue{
+		"PLAIN_CFG":   {value: "info"},
+		"API_KEY":     {value: ExternalSecretPlaceholder, sensitive: true},
+		"SESSION_KEY": {value: autoSecretPreprocessor, sensitive: true},
+		// SECRET-safe: an unclassified entry never carries its source value.
+		"UNCLASSIFIED_SECRET": {value: ExternalSecretPlaceholder, sensitive: true},
 	}
-	if out["API_KEY"] != ExternalSecretPlaceholder {
-		t.Errorf("external-secret should be REPLACE_ME; got %q", out["API_KEY"])
-	}
-	if out["SESSION_KEY"] != autoSecretPreprocessor {
-		t.Errorf("auto-secret should be generateRandomString; got %q", out["SESSION_KEY"])
+	for key, w := range want {
+		if out[key] != w {
+			t.Errorf("%s = %+v, want %+v", key, out[key], w)
+		}
 	}
 	if _, present := out["DB_REF"]; present {
-		t.Errorf("infrastructure should be dropped; got %q", out["DB_REF"])
-	}
-	// SECRET-safe: an unclassified SECRET entry must NEVER carry its source
-	// value — it collapses to the placeholder.
-	if out["UNCLASSIFIED_SECRET"] != ExternalSecretPlaceholder {
-		t.Errorf("unclassified SECRET must be REPLACE_ME (secret-safe), never the value; got %q", out["UNCLASSIFIED_SECRET"])
-	}
-	if strings.Contains(strings.Join([]string{out["UNCLASSIFIED_SECRET"]}, ""), "should-never-leak") {
-		t.Error("LEAK: unclassified SECRET value reached the bundle")
+		t.Errorf("infrastructure should be dropped; got %+v", out["DB_REF"])
 	}
 	// Both external-secret and the unclassified one must surface a warning.
 	joined := strings.Join(warnings, "\n")
@@ -65,9 +59,10 @@ func TestComposeServiceEnvSecrets_Buckets(t *testing.T) {
 	}
 }
 
-// TestBuildExport_EmitsServiceEnvSecrets pins that a runtime's service
-// envSecrets land on the runtime entry in the export import.yaml (GAP0-1).
-func TestBuildExport_EmitsServiceEnvSecrets(t *testing.T) {
+// TestBuildExport_EmitsServiceVault pins that a runtime's service values land
+// in the runtime entry's vault in the export import.yaml (GAP0-1), never in
+// the deprecated envSecrets.
+func TestBuildExport_EmitsServiceVault(t *testing.T) {
 	inputs := BundleInputs{
 		ProjectName:    "myproj",
 		TargetHostname: "app",
@@ -83,22 +78,25 @@ func TestBuildExport_EmitsServiceEnvSecrets(t *testing.T) {
 		t.Fatalf("BuildExport: %v", err)
 	}
 	if len(b.Errors) > 0 {
-		t.Fatalf("schema validation errors (envSecrets must be schema-valid): %v", b.Errors)
+		t.Fatalf("schema validation errors (the vault must be schema-valid): %v", b.Errors)
 	}
 	app := runtimeEntryFromYAML(t, b.ImportYAML, "app")
-	es, ok := app["envSecrets"].(map[string]any)
-	if !ok {
-		t.Fatalf("runtime entry missing envSecrets; entry: %+v", app)
+	if _, legacy := app["envSecrets"]; legacy {
+		t.Errorf("runtime entry carries the deprecated envSecrets: %+v", app)
 	}
-	if es["FEATURE_FLAG"] != "on" {
-		t.Errorf("envSecrets FEATURE_FLAG: got %v want on", es["FEATURE_FLAG"])
+	vault, ok := app["vault"].(map[string]any)
+	if !ok {
+		t.Fatalf("runtime entry missing vault; entry: %+v", app)
+	}
+	if vault["FEATURE_FLAG"] != "on" {
+		t.Errorf("vault FEATURE_FLAG: got %v want on", vault["FEATURE_FLAG"])
 	}
 }
 
-// TestBuildLaunch_EmitsPerRuntimeServiceEnvSecrets pins per-runtime
-// envSecrets emission in the launch bundle (GAP0-1) + the secret-safe
-// default for an unclassified SECRET.
-func TestBuildLaunch_EmitsPerRuntimeServiceEnvSecrets(t *testing.T) {
+// TestBuildLaunch_EmitsPerRuntimeServiceVault pins each runtime's vault in
+// the launch bundle (GAP0-1) + the secret-safe default for an unclassified
+// SECRET, written sensitive.
+func TestBuildLaunch_EmitsPerRuntimeServiceVault(t *testing.T) {
 	inputs := launchInputsWith(launchYAMLNoDBRef, nil)
 	inputs.Runtimes[0].ServiceEnvs = []ProjectEnvVar{
 		{Key: "FEATURE_FLAG", Value: "on"},
@@ -119,15 +117,16 @@ func TestBuildLaunch_EmitsPerRuntimeServiceEnvSecrets(t *testing.T) {
 		t.Fatal("LEAK: unclassified SECRET value reached the launch bundle")
 	}
 	app := runtimeEntryFromYAML(t, b.ImportYAML, "app")
-	es, ok := app["envSecrets"].(map[string]any)
+	vault, ok := app["vault"].(map[string]any)
 	if !ok {
-		t.Fatalf("runtime entry missing envSecrets; entry: %+v", app)
+		t.Fatalf("runtime entry missing vault; entry: %+v", app)
 	}
-	if es["FEATURE_FLAG"] != "on" {
-		t.Errorf("FEATURE_FLAG: got %v want on", es["FEATURE_FLAG"])
+	if vault["FEATURE_FLAG"] != "on" {
+		t.Errorf("FEATURE_FLAG: got %v want on", vault["FEATURE_FLAG"])
 	}
-	if es["STRIPE_KEY"] != ExternalSecretPlaceholder {
-		t.Errorf("unclassified SECRET STRIPE_KEY: got %v want %q", es["STRIPE_KEY"], ExternalSecretPlaceholder)
+	stripe, _ := vault["STRIPE_KEY"].(map[string]any)
+	if stripe["value"] != ExternalSecretPlaceholder || stripe["sensitive"] != true {
+		t.Errorf("unclassified SECRET STRIPE_KEY: got %v want {value: %s, sensitive: true}", vault["STRIPE_KEY"], ExternalSecretPlaceholder)
 	}
 }
 

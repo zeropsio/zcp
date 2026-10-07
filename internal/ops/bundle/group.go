@@ -69,7 +69,7 @@ type GroupRuntime struct {
 	// and names the stage half's when no deploy recorded it.
 	ZeropsYAMLBody string
 	// ServiceEnvs is the dev half's user-set service variables, written as
-	// its `envSecrets` — config as written, secrets generated (recipeSecret).
+	// its `vault:` — config as written, secrets generated (recipeSecret).
 	ServiceEnvs []ProjectEnvVar
 	// StageServiceEnvs is the stage half's. The AI Agent tier's stage half
 	// carries them, and so does every group environment, which runs what the
@@ -99,8 +99,8 @@ type GroupRecipeInputs struct {
 	Runtimes        []GroupRuntime
 	ManagedServices []ManagedServiceEntry
 	// ProjectEnvs is the project's user-set variables, the platform's own and
-	// the control plane's already left out: every tier carries them, config
-	// under envVariables and secrets under envSecrets (recipeSecret).
+	// the control plane's already left out: every tier carries them in the
+	// project's `vault:`, config as written, secrets generated (recipeSecret).
 	ProjectEnvs []ProjectEnvVar
 	// CorePackage is the project's live core package. Every tier's project
 	// carries a LIGHT or a SERIOUS; anything else is left to the platform's
@@ -418,8 +418,8 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 		}
 		for _, half := range halves {
 			entry, entryWarnings := groupRuntimeEntry(r, half.hostname, half.setup, policy)
-			if secrets := serviceSecretFields(half.envs, source, promote); len(secrets) > 0 {
-				entry["envSecrets"] = secrets
+			if vault := groupVaultFields(half.envs, source, promote); len(vault) > 0 {
+				entry["vault"] = vault
 			}
 			warnings = append(warnings, entryWarnings...)
 			entry["priority"] = priorities[r.DevHostname]
@@ -462,12 +462,8 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 	if core := strings.TrimSpace(inputs.CorePackage); core == "LIGHT" || core == "SERIOUS" {
 		project = append(project, yamlField{key: "corePackage", value: core})
 	}
-	config, secrets := groupEnvFields(inputs.ProjectEnvs, source, promote)
-	if len(config) > 0 {
-		project = append(project, yamlField{key: "envVariables", value: config})
-	}
-	if len(secrets) > 0 {
-		project = append(project, yamlField{key: "envSecrets", value: secrets})
+	if vault := groupVaultFields(inputs.ProjectEnvs, source, promote); len(vault) > 0 {
+		project = append(project, yamlField{key: "vault", value: vault})
 	}
 
 	body, err := tierDocument{
@@ -573,8 +569,8 @@ func groupUtilityEntry(u GroupUtility, priority int, source string, promote func
 		entry["enableSubdomainAccess"] = true
 	}
 	projectScaling(entry, u.Scaling)
-	if secrets := serviceSecretFields(u.ServiceEnvs, source, promote); len(secrets) > 0 {
-		entry["envSecrets"] = secrets
+	if vault := groupVaultFields(u.ServiceEnvs, source, promote); len(vault) > 0 {
+		entry["vault"] = vault
 	}
 	return entry, comment
 }

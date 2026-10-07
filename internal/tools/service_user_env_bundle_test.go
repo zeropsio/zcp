@@ -1,6 +1,6 @@
 // Tests for: workflow_export.go + launch_bundle_compose.go — the S2
 // read-model migration of the service-scope env carried into a bundle's
-// envSecrets. Since 2026-08 a yaml-baked run.envVariables key is ALSO
+// service vault. Since 2026-08 a yaml-baked run.envVariables key is ALSO
 // mirrored read-only on the slim /env as Type USER (spec
 // docs/spec-zerops-env-lifecycle.md §1/§6), so Type alone can no longer
 // tell a user-set var apart from the yaml-baked mirror there —
@@ -26,7 +26,7 @@ import (
 )
 
 // TestExport_ServiceUserEnv_CarriedNotYamlBaked pins the export path: the
-// composed import.yaml's envSecrets carries the runtime's user-set service
+// composed import.yaml's service vault carries the runtime's user-set service
 // env key (placeholder per classification) and never the yaml-baked
 // mirror or a SYSTEM intrinsic.
 func TestExport_ServiceUserEnv_CarriedNotYamlBaked(t *testing.T) {
@@ -82,16 +82,16 @@ func TestExport_ServiceUserEnv_CarriedNotYamlBaked(t *testing.T) {
 
 	var doc struct {
 		Services []struct {
-			Hostname   string            `yaml:"hostname"`
-			EnvSecrets map[string]string `yaml:"envSecrets"`
+			Hostname string         `yaml:"hostname"`
+			Vault    map[string]any `yaml:"vault"`
 		} `yaml:"services"`
 	}
 	if err := yaml.Unmarshal([]byte(importYaml), &doc); err != nil {
 		t.Fatalf("parse importYaml: %v\nyaml:\n%s", err, importYaml)
 	}
 	var runtimeEntry *struct {
-		Hostname   string            `yaml:"hostname"`
-		EnvSecrets map[string]string `yaml:"envSecrets"`
+		Hostname string         `yaml:"hostname"`
+		Vault    map[string]any `yaml:"vault"`
 	}
 	for i := range doc.Services {
 		if doc.Services[i].Hostname == "appdev" {
@@ -102,20 +102,20 @@ func TestExport_ServiceUserEnv_CarriedNotYamlBaked(t *testing.T) {
 	if runtimeEntry == nil {
 		t.Fatalf("appdev runtime entry not found in importYaml:\n%s", importYaml)
 	}
-	if _, ok := runtimeEntry.EnvSecrets["API_TOKEN"]; !ok {
-		t.Errorf("envSecrets must carry the user-set API_TOKEN, got: %+v", runtimeEntry.EnvSecrets)
+	if _, ok := runtimeEntry.Vault["API_TOKEN"]; !ok {
+		t.Errorf("the vault must carry the user-set API_TOKEN, got: %+v", runtimeEntry.Vault)
 	}
-	if _, ok := runtimeEntry.EnvSecrets["DB_HOST"]; ok {
-		t.Errorf("envSecrets must NOT carry the yaml-baked mirror DB_HOST, got: %+v", runtimeEntry.EnvSecrets)
+	if _, ok := runtimeEntry.Vault["DB_HOST"]; ok {
+		t.Errorf("the vault must NOT carry the yaml-baked mirror DB_HOST, got: %+v", runtimeEntry.Vault)
 	}
-	if _, ok := runtimeEntry.EnvSecrets["zeropsSubdomain"]; ok {
-		t.Errorf("envSecrets must NOT carry the SYSTEM intrinsic zeropsSubdomain, got: %+v", runtimeEntry.EnvSecrets)
+	if _, ok := runtimeEntry.Vault["zeropsSubdomain"]; ok {
+		t.Errorf("the vault must NOT carry the SYSTEM intrinsic zeropsSubdomain, got: %+v", runtimeEntry.Vault)
 	}
 }
 
 // TestLaunchBundle_ServiceUserEnv_CarriedNotYamlBaked pins the launch path
 // at the composeLaunchBundleInputs seam: the runtime's ServiceEnvs (which
-// the composer emits as envSecrets) carries the user-set key and never the
+// the composer emits as the runtime's vault) carries the user-set key and never the
 // yaml-baked mirror or a SYSTEM intrinsic.
 func TestLaunchBundle_ServiceUserEnv_CarriedNotYamlBaked(t *testing.T) {
 	t.Parallel()
@@ -192,7 +192,7 @@ func TestLaunchBundle_ServiceUserEnv_CarriedNotYamlBaked(t *testing.T) {
 // TestExport_ServiceUserEnvFetchError_Warns pins the D3 contract at the
 // export surface: when the user-set layer cannot be derived (here the
 // yaml-layer fetch on a live runtime fails), the bundle must say so — a
-// silent `envSecrets` omission is the exact regression the fix closes.
+// silent service-vault omission is the exact regression the fix closes.
 func TestExport_ServiceUserEnvFetchError_Warns(t *testing.T) {
 	t.Parallel()
 
@@ -244,6 +244,6 @@ func TestExport_ServiceUserEnvFetchError_Warns(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("export must warn that the user-set service env could not be read (envSecrets omitted), got warnings: %v", warnings)
+		t.Errorf("export must warn that the user-set service env could not be read (service vault omitted), got warnings: %v", warnings)
 	}
 }

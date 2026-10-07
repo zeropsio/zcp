@@ -1,13 +1,13 @@
 project:
     corePackage: SERIOUS
-    envVariables:
-        PORT: "3000"
     location: eu-central
     name: api-prod
     tags:
         - env:prod
         - source-project:source-dev-only
         - managed-by:zcp-launch
+    vault:
+        PORT: "3000"
 services:
     - hostname: api
       minContainers: 2

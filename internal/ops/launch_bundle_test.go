@@ -318,7 +318,8 @@ func TestBuildLaunchBundle_DedupesTags(t *testing.T) {
 }
 
 // TestBuildLaunchBundle_ClassifiesEnvs verifies project envs flow through
-// the same composeProjectEnvVariables machinery as export.
+// the same machinery as export into the project vault, a generated value and
+// a placeholder written sensitive.
 func TestBuildLaunchBundle_ClassifiesEnvs(t *testing.T) {
 	t.Parallel()
 	inputs := minimalLaunchInputs()
@@ -342,16 +343,23 @@ func TestBuildLaunchBundle_ClassifiesEnvs(t *testing.T) {
 
 	doc := parseImportYAML(t, bundle.ImportYAML)
 	project, _ := doc["project"].(map[string]any)
-	envs, _ := project["envVariables"].(map[string]any)
+	envs, _ := project["vault"].(map[string]any)
 
 	if envs["LOG_LEVEL"] != "info" {
 		t.Errorf("plain-config: got %v", envs["LOG_LEVEL"])
 	}
-	if envs["JWT_SECRET"] != "<@generateRandomString(<32>)>" {
-		t.Errorf("auto-secret: got %v", envs["JWT_SECRET"])
+	sensitiveValue := func(key string) any {
+		item, _ := envs[key].(map[string]any)
+		if item["sensitive"] != true {
+			t.Errorf("%s: got %v, want it written sensitive", key, envs[key])
+		}
+		return item["value"]
 	}
-	if envs["STRIPE_KEY"] != "REPLACE_ME" {
-		t.Errorf("external-secret: got %v want literal REPLACE_ME (platform rejects JSON-array pickRandom syntax)", envs["STRIPE_KEY"])
+	if got := sensitiveValue("JWT_SECRET"); got != "<@generateRandomString(<32>)>" {
+		t.Errorf("auto-secret: got %v", got)
+	}
+	if got := sensitiveValue("STRIPE_KEY"); got != "REPLACE_ME" {
+		t.Errorf("external-secret: got %v want literal REPLACE_ME (platform rejects JSON-array pickRandom syntax)", got)
 	}
 	if _, ok := envs["DB_HOST"]; ok {
 		t.Error("expected DB_HOST DROPPED as infrastructure")
