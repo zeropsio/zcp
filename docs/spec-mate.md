@@ -1622,8 +1622,11 @@ the values those entries reference.
   `user-data` search by project. Both are live queries (`zeropsQuery`: each write pushes the whole
   listing again) held only while a surface demands them, with the project's process history for the
   starts. Navigation never holds them.
-- **Sensitive is write-only.** Zerops answers `REDACTED` even to the value's owner; Mate replaces a
-  sensitive value and never shows one. Every write carries `sensitive` explicitly: a `PUT` without it
+- **Sensitive is hidden, not lost.** Zerops answers `REDACTED` on every read, even to the value's
+  owner; Mate shows one only when the person presses Show — `GET /project-env/{id}/reveal` or
+  `GET /user-data/{id}/reveal` with their personal access token, which is always in sudo mode (a
+  password session is refused, `403 notInSudoMode`; measured 2026-10-07) — and holds it only in
+  that open row, never in the store, browser storage or a Mate's context. Every write carries `sensitive` explicitly: a `PUT` without it
   turns a sensitive value plain. The keys Mate and zcp own (`ZCP_*`, `MATE_*`, `GITEA_*`,
   `GIT_TOKEN`) are never listed.
 - **Writes.** One `vault-write` operation per value — add, update, remove; edit as text reviews the
@@ -2627,7 +2630,7 @@ person who reads and edits it in the recipe repository: two-space YAML, each ser
 group's to edit. The project block carries the recipe's name (the AI Agent tier keeps the Mate's
 own), the live `corePackage`, and the project's user-set variables in its `vault:` — and each
 runtime its own in its `vault:`; a secret-shaped name and a generated secret written
-`{value, sensitive: true}`, an admin's sign-in password readable; the platform's own and the control plane's (zcp's key and agents, the git token — on
+`{value, sensitive: true}`; the platform's own and the control plane's (zcp's key and agents, the git token — on
 a dev half, the Mate's HQ credential — the launch token and a Gitea token) are never written. The composer decides each variable
 unattended and fails closed: a value of `${name}` references alone is wiring, kept as written, and
 any other value is kept only when no signal marks it secret — the platform's flag, a masked read, a

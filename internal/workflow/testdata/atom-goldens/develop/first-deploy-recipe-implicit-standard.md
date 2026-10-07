@@ -79,11 +79,9 @@ literal `${APP_KEY}`, and so does every other line referencing
 ### Secrets go in the vault as sensitive
 
 Store a secret with `zerops_env action="set" … sensitive=true`; a
-secret-shaped key defaults to sensitive, and reads return it masked.
-Two stay readable unless you say otherwise: a public key
-(`PUBLIC`/`PUBLISHABLE`, shipped to browsers) and an
-`ADMIN`/`SUPERADMIN` password — the person reads their sign-in in the
-vault.
+secret-shaped key defaults to it (not a `PUBLIC`/`PUBLISHABLE` one),
+and reads mask it. Point the person to it in the vault ("Vault → Admin
+sign-in → Password, press Show"), never the value.
 
 A value only the person has (an API key, a password, a webhook secret)
 is never asked for in the chat: call `zerops_env action="request"
