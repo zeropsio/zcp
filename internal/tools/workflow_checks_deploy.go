@@ -32,7 +32,7 @@ func checkDevProdEnvDivergence(doc *ops.ZeropsYmlDoc) []workflow.StepCheck {
 	devEnv := devEntry.Run.EnvVariables
 	prodEnv := prodEntry.Run.EnvVariables
 	// If either side has no run.envVariables block, there is nothing to
-	// compare — the framework's own defaults, OS env vars, or envSecrets
+	// compare — the framework's own defaults, OS env vars, or a vault value
 	// carry the mode signal.
 	if len(devEnv) == 0 || len(prodEnv) == 0 {
 		return nil

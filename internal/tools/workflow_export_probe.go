@@ -197,7 +197,7 @@ func dedupeCandidates(in []string) []string {
 	return out
 }
 
-// readProjectEnvs lists project-level envVariables from the platform
+// readProjectEnvs lists the project vault's values from the platform
 // API and returns the SDK shape verbatim. Type + Sensitive are preserved
 // so downstream callers (envclass.ClassifyProjectEnv, classify-prompt
 // builder, bundle composer) read the same source of truth. Lossy

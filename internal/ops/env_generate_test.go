@@ -1043,7 +1043,7 @@ LOG_LEVEL=debug
 		t.Errorf(".env should contain DB_HOST=db (yaml ref resolved); got:\n%s", got)
 	}
 	// New render header naming the three sources.
-	if !strings.Contains(got, "project envVariables, zerops.yaml setup app") {
+	if !strings.Contains(got, "the project vault, zerops.yaml setup app") {
 		t.Errorf(".env header should reference EnvPlan source list; got:\n%s", got)
 	}
 }

@@ -170,7 +170,7 @@ func prodSetupGuidanceWithBlock(wantName string, availableNames []string, propos
 	b.WriteString("Production readiness checklist before commit:\n")
 	b.WriteString("- Add `run.healthCheck` (httpGet path on the runtime port) — prod-readiness rubric requires it.\n")
 	b.WriteString("- Verify build commands install only prod deps where possible (e.g. `npm ci --omit=dev`).\n")
-	b.WriteString("- Verify start command uses production env (`NODE_ENV=production`, `APP_ENV=production`, etc.) — set via project envVariables or the run block.\n")
+	b.WriteString("- Verify start command uses production env (`NODE_ENV=production`, `APP_ENV=production`, etc.) — set in the run block, or in the project vault referenced from it.\n")
 	return b.String()
 }
 

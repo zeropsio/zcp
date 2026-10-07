@@ -553,7 +553,7 @@ func (d standupDeps) presentAndRunning(sp *standupPair, src standupSource, bootF
 			return false
 		}
 		sp.fail(fmt.Sprintf("%s is not in this project after %s: %s", half.rt.Hostname, d.runtimeWait, why),
-			fmt.Sprintf("Import it from the tier with zerops_import content=%q (%s; add its envSecrets and scaling from %s's %s entry), then call zerops_standup again.",
+			fmt.Sprintf("Import it from the tier with zerops_import content=%q (%s; add its vault and scaling from %s's %s entry), then call zerops_standup again.",
 				entry, shape, src.groupRepo, hq.RecipeTierPaths[hq.RecipeTierMate]))
 		return false
 	}
