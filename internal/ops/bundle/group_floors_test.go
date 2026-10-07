@@ -39,6 +39,12 @@ func TestBuildGroupRecipe_SearchEnginesGetAResourceFloor(t *testing.T) {
 			want:    map[string]string{"cpuMode": "SHARED", "minRam": "2", "maxRam": "2", "minFreeRamGB": "0.5"},
 		},
 		{
+			name:    "typesense has room to reindex on every tier",
+			typ:     "typesense@27.1",
+			scaling: &Scaling{CPUMode: "SHARED", MinRAM: 1, MaxRAM: 4, MinFreeRAMGB: 0.25},
+			want:    map[string]string{"cpuMode": "SHARED", "minRam": "2", "maxRam": "4", "minFreeRamGB": "0.5"},
+		},
+		{
 			name:    "a search engine whose scale could not be read: nothing written",
 			typ:     "typesense@27.1",
 			scaling: nil,
