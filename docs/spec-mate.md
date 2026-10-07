@@ -1413,33 +1413,11 @@ The shell root and semantic step ids stay stable while mutable regions change. C
 enter/update/exit motion is one-shot and bounded to 150–200 ms. Settled cards do not pulse, and
 `prefers-reduced-motion` removes nonessential transitions.
 
-The web sidebar presents the hierarchy the client can prove: a logical project contains its
-connected environment/workspace members, and each member contains its own threads. A Zerops
-topology project name may replace the generic workspace basename, but only when the feed supplies
-it. Environment rows keep their descriptor label as the fallback and never infer a Zerops tag group
-or production role from a hostname. Search remains a flat result mode so keyboard navigation does
-not acquire hidden tree state. True Zerops tag-group and production-lane placement requires those
-identities in a future contract; the web must not manufacture them.
-
-Within that truthful tree, one untouched thread per workspace — defined by both `latestTurn` and
-`latestUserMessageAt` being absent, never by its title — is presented as the small workspace-level
-new-thread shortcut rather than as an empty full-size card. The shortcut opens that exact existing
-thread and remains available when the workspace is collapsed; additional untouched threads remain
-visible so the presentation cannot silently discard data. Live thread cards use content-driven
-height and at most two title lines, while settled and snoozed shelves remain compact single-line
-rows. The workspace toggle and thread shortcut are separate controls, never nested buttons.
-
 Narrow service-map rows preserve the full hostname, type, and mount path with bounded wrapping;
 status and links do not disappear to make room. The terminal drawer's pointer resize seam is also a
 focusable horizontal ARIA separator exposing its current/minimum/maximum height. Arrow Up/Down
 resize it in small steps and Home/End select the bounds through the same clamp path used by pointer
 dragging.
-
-Every workspace row exposes one compact **New thread in …** action. When an untouched shell already
-exists, the action opens that exact shell and the first such shell stays out of the card list; when
-none exists, it creates a draft for that workspace's exact environment/project ref. It never creates
-a second shell while one is available, and additional untouched shells remain visible rather than
-being discarded.
 
 When the active topology supplies a non-empty Zerops project name, that name is the presentation
 identity across the thread header, draft hero, file-panel project label, and active composer
