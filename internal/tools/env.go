@@ -29,6 +29,8 @@ type EnvInput struct {
 	Project         FlexBool `json:"project,omitempty"`
 	Variables       []string `json:"variables,omitempty"`
 	SkipRestart     FlexBool `json:"skipRestart,omitempty"`
+	// Sensitive is optional: nil lets the set pick per key by name.
+	Sensitive *FlexBool `json:"sensitive,omitempty"`
 }
 
 // envInputSchema is the explicit InputSchema for zerops_env. It
@@ -49,21 +51,22 @@ func envInputSchema() *jsonschema.Schema {
 		},
 		"serviceHostname": {
 			Type:        "string",
-			Description: "Hostname of the service to operate on. Required for get/set/delete unless project=true. For generate-dotenv: deprecated — prefer the setup parameter (see below). Still accepted as a fallback when setup is empty; emits a deprecation warning in the result.",
+			Description: "Service to operate on; required for get/set/delete unless project=true. generate-dotenv: deprecated fallback for setup.",
 		},
 		"setup": {
 			Type:        "string",
 			Description: "generate-dotenv: name of the zerops.yaml setup block to render. Recipe / multi-setup yaml uses setup names like 'dev', 'prod', 'worker' that are not always service hostnames. Empty + single-block yaml: auto-pick. Empty + multi-block yaml: refuses with the available names. Empty + zero-block yaml: falls back to serviceHostname.",
 		},
 		"preview": flexBoolSchema("generate-dotenv: dry-run. Builds the plan and returns the diff vs current .env without writing. Use to inspect what would change before committing."),
-		"force":   flexBoolSchema("generate-dotenv: bypass the refuse-on-unowned-edits safety gate. By default ZCP refuses to write when the existing .env has keys not produced by any source (project envVariables, zerops.yaml run.envVariables, .env.local) — those are user-direct edits at risk of being discarded. Set force=true after confirming the unowned keys are safe to drop, or move them to .env.local first."),
-		"project": flexBoolSchema("Set to true to operate on project-level env vars instead of service-level. Valid for get/set/delete."),
+		"force":   flexBoolSchema("generate-dotenv: write even when the existing .env has keys no source produces (user edits that would be dropped). Confirm they are safe to drop, or move them to .env.local first."),
+		"project": flexBoolSchema("true: the project's Shared vault (project env) instead of a service's own. get/set/delete."),
 		"variables": {
 			Type:        "array",
 			Items:       &jsonschema.Schema{Type: "string"},
 			Description: "List of env vars. set: KEY=VALUE strings (literal values). delete: KEY names only. Ignored by get and generate-dotenv.",
 		},
-		"skipRestart": flexBoolSchema("set/delete: skip the automatic service restart after the env change. Default false (auto-restart affected services so the new value takes effect). Pass true only if you will redeploy immediately afterwards and the restart would be wasted."),
+		"sensitive":   flexBoolSchema("set, either scope: true = sensitive (write-only, masked on every read), false = plain. Omitted: by name — SECRET|TOKEN|KEY|PASSWORD|PASS|DSN|PRIVATE|CREDENTIAL → sensitive, else plain."),
+		"skipRestart": flexBoolSchema("set/delete: skip restarting the services that read the key (readers). Pass true only when you deploy right after."),
 	}, "action")
 }
 
@@ -243,7 +246,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			}
 			return jsonResult(projectEnvGetResponse(result, input.Project.Bool())), nil, nil
 		case "set":
-			setResult, err := ops.EnvSet(ctx, client, projectID, input.ServiceHostname, input.Project.Bool(), input.Variables)
+			setResult, err := ops.EnvSet(ctx, client, projectID, input.ServiceHostname, input.Project.Bool(), input.Variables, input.Sensitive.Ptr())
 			if err != nil {
 				return convertError(err), nil, nil
 			}

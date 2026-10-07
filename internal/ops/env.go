@@ -176,8 +176,8 @@ type StoredEnv struct {
 	// Replaced is true when the key was upserted (existing entry deleted,
 	// new entry created). False when the key is newly added.
 	Replaced bool `json:"replaced,omitempty"`
-	// Sensitive is the flag the value was written with — every
-	// service-scope set is sensitive, a project-scope set is not. A
+	// Sensitive is the flag the value was written with — the caller's,
+	// else the default by name (DefaultSensitive), on either scope. A
 	// presentation site masks a sensitive Value (RedactEnvValue).
 	Sensitive bool `json:"isSensitive,omitempty"`
 }
@@ -188,9 +188,31 @@ type EnvDeleteResult struct {
 	NextActions string            `json:"nextActions,omitempty"`
 }
 
-// serviceSetSensitive is the flag a zerops_env service-scope set writes with
-// (spec-zerops-env-lifecycle.md §7); project-scope sets write plain.
-const serviceSetSensitive = true
+// sensitiveNameParts are the key fragments that make a set default to
+// sensitive when the caller does not say (DefaultSensitive).
+var sensitiveNameParts = []string{"SECRET", "TOKEN", "KEY", "PASSWORD", "PASS", "DSN", "PRIVATE", "CREDENTIAL"}
+
+// DefaultSensitive is the flag a set writes when the caller does not pass
+// one: a key whose name reads as a secret (SECRET, TOKEN, KEY, PASSWORD,
+// PASS, DSN, PRIVATE, CREDENTIAL, any case) is sensitive, any other plain.
+func DefaultSensitive(key string) bool {
+	upper := strings.ToUpper(key)
+	for _, part := range sensitiveNameParts {
+		if strings.Contains(upper, part) {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveSensitive is the flag one key is written with: the caller's, else
+// the default by name.
+func resolveSensitive(key string, sensitive *bool) bool {
+	if sensitive != nil {
+		return *sensitive
+	}
+	return DefaultSensitive(key)
+}
 
 // EnvSet sets environment variables for a service or project with upsert
 // semantics — existing keys are replaced, new ones are created. BOTH scopes
@@ -202,6 +224,11 @@ const serviceSetSensitive = true
 // silently drops every other user-set var (proven live). Project-level: the
 // platform exposes CREATE+DELETE only, so the same delete-then-create runs,
 // eliminating projectEnvDuplicateKey errors from the caller's perspective.
+//
+// sensitive is the flag every key is written with; nil picks it per key by
+// name (DefaultSensitive). Every write sends it explicitly — the platform's
+// update without the flag turns a sensitive value plain
+// (spec-zerops-env-lifecycle.md §7), and a replace here is a fresh create.
 //
 // Values are run through zParser preprocessor expansion before being stored,
 // so an agent can write the same <@...> expression a recipe deliverable
@@ -215,6 +242,7 @@ func EnvSet(
 	hostname string,
 	isProject bool,
 	variables []string,
+	sensitive *bool,
 ) (*EnvSetResult, error) {
 	if hostname == "" && !isProject {
 		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,
@@ -248,7 +276,7 @@ func EnvSet(
 	}
 
 	if isProject {
-		return setProjectEnvs(ctx, client, projectID, pairs)
+		return setProjectEnvs(ctx, client, projectID, pairs, sensitive)
 	}
 
 	svc, err := resolveService(ctx, client, projectID, hostname)
@@ -287,7 +315,8 @@ func EnvSet(
 			}
 			replaced = true
 		}
-		proc, setErr := client.CreateServiceEnvVar(ctx, svc.ID, p.Key, p.Value, serviceSetSensitive)
+		flag := resolveSensitive(p.Key, sensitive)
+		proc, setErr := client.CreateServiceEnvVar(ctx, svc.ID, p.Key, p.Value, flag)
 		if setErr != nil {
 			if hasAPICode(setErr, apiCodeUserDataDuplicateKey) && !replaced {
 				return nil, yamlOwnedKeyError(p.Key, hostname)
@@ -300,7 +329,7 @@ func EnvSet(
 			return nil, setErr
 		}
 		lastProc = proc
-		stored = append(stored, StoredEnv{Key: p.Key, Value: p.Value, Replaced: replaced, Sensitive: serviceSetSensitive})
+		stored = append(stored, StoredEnv{Key: p.Key, Value: p.Value, Replaced: replaced, Sensitive: flag})
 	}
 	return &EnvSetResult{Process: lastProc, Stored: stored}, nil
 }
@@ -309,7 +338,7 @@ func EnvSet(
 // exposes CREATE + DELETE, so existing keys are delete-then-created; new
 // keys are created directly. Returns the last process plus the full list
 // of stored pairs so the caller can verify what was written.
-func setProjectEnvs(ctx context.Context, client platform.Client, projectID string, pairs []envPair) (*EnvSetResult, error) {
+func setProjectEnvs(ctx context.Context, client platform.Client, projectID string, pairs []envPair, sensitive *bool) (*EnvSetResult, error) {
 	existing, err := client.GetProjectEnv(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -330,7 +359,8 @@ func setProjectEnvs(ctx context.Context, client platform.Client, projectID strin
 			}
 			replaced = true
 		}
-		proc, setErr := client.CreateProjectEnv(ctx, projectID, p.Key, p.Value, false)
+		flag := resolveSensitive(p.Key, sensitive)
+		proc, setErr := client.CreateProjectEnv(ctx, projectID, p.Key, p.Value, flag)
 		if setErr != nil {
 			if replaced {
 				return nil, fmt.Errorf("project env key %q: write failed after the previous value was already removed — re-run zerops_env set to restore it: %w", p.Key, setErr)
@@ -338,7 +368,7 @@ func setProjectEnvs(ctx context.Context, client platform.Client, projectID strin
 			return nil, setErr
 		}
 		lastProc = proc
-		stored = append(stored, StoredEnv{Key: p.Key, Value: p.Value, Replaced: replaced})
+		stored = append(stored, StoredEnv{Key: p.Key, Value: p.Value, Replaced: replaced, Sensitive: flag})
 	}
 	return &EnvSetResult{Process: lastProc, Stored: stored}, nil
 }

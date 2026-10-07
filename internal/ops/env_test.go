@@ -57,7 +57,7 @@ func TestEnvSet_Service(t *testing.T) {
 			{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
 		})
 
-	result, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"PORT=3000", "HOST=0.0.0.0"})
+	result, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"PORT=3000", "HOST=0.0.0.0"}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -78,10 +78,10 @@ func TestEnvSet_Service_PreservesExistingVars(t *testing.T) {
 			{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
 		})
 
-	if _, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"ALPHA=one"}); err != nil {
+	if _, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"ALPHA=one"}, nil); err != nil {
 		t.Fatalf("set ALPHA: %v", err)
 	}
-	if _, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"BETA=two"}); err != nil {
+	if _, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"BETA=two"}, nil); err != nil {
 		t.Fatalf("set BETA: %v", err)
 	}
 
@@ -111,10 +111,10 @@ func TestEnvSet_Service_UpsertSameKey(t *testing.T) {
 			{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
 		})
 
-	if _, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"K=first"}); err != nil {
+	if _, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"K=first"}, nil); err != nil {
 		t.Fatalf("set first: %v", err)
 	}
-	if _, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"K=second"}); err != nil {
+	if _, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"K=second"}, nil); err != nil {
 		t.Fatalf("set second: %v", err)
 	}
 
@@ -152,7 +152,7 @@ func TestEnvSet_Service_YamlOwnedKey_TranslatesDuplicateKey(t *testing.T) {
 			Message: "UserData key 'FOO' is not unique in service stack frame of reference.",
 		})
 
-	_, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"FOO=bar"})
+	_, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"FOO=bar"}, nil)
 	if err == nil {
 		t.Fatal("expected error for a yaml-owned key")
 	}
@@ -162,42 +162,89 @@ func TestEnvSet_Service_YamlOwnedKey_TranslatesDuplicateKey(t *testing.T) {
 	}
 }
 
-// TestEnvSet_ServiceScope_WritesSensitiveTrue pins the platform's 2026-08
-// userData model requirement (spec-zerops-env-lifecycle.md §7): every
-// service-scope var EnvSet writes lands with sensitive:true — the same
-// masked-secret behavior ZCP has always exposed for its own writes, now an
-// explicit platform-required flag rather than an implicit Type=SECRET.
-func TestEnvSet_ServiceScope_WritesSensitiveTrue(t *testing.T) {
+// TestEnvSet_SensitiveFlag pins what a set writes on both scopes: the
+// caller's explicit flag, else the default by name (a secret-shaped key is
+// sensitive, any other plain). Every write carries the flag — a write
+// without it turns a sensitive value plain (spec-zerops-env-lifecycle.md §7).
+func TestEnvSet_SensitiveFlag(t *testing.T) {
 	t.Parallel()
-
-	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
+	yes, no := true, false
+	tests := []struct {
+		name      string
+		project   bool
+		variable  string
+		sensitive *bool
+		want      bool
+	}{
+		{"service plain by name", false, "NODE_ENV=production", nil, false},
+		{"service secret by name", false, "STRIPE_SECRET=x", nil, true},
+		{"service explicit sensitive", false, "NODE_ENV=production", &yes, true},
+		{"service explicit plain", false, "API_TOKEN=x", &no, false},
+		{"project plain by name", true, "LOG_LEVEL=debug", nil, false},
+		{"project secret by name", true, "APP_KEY=x", nil, true},
+		{"project explicit sensitive", true, "LOG_LEVEL=debug", &yes, true},
+		{"project explicit plain", true, "DB_PASSWORD=x", &no, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api", ProjectID: "proj-1"}})
+			host := "api"
+			if tt.project {
+				host = ""
+			}
+			res, err := EnvSet(context.Background(), mock, "proj-1", host, tt.project, []string{tt.variable}, tt.sensitive)
+			if err != nil {
+				t.Fatalf("EnvSet: %v", err)
+			}
+			if len(res.Stored) != 1 || res.Stored[0].Sensitive != tt.want {
+				t.Errorf("stored = %+v, want sensitive=%v", res.Stored, tt.want)
+			}
+			var written bool
+			if tt.project {
+				if len(mock.CapturedProjectEnvCreations) != 1 {
+					t.Fatalf("project creations = %d, want 1", len(mock.CapturedProjectEnvCreations))
+				}
+				written = mock.CapturedProjectEnvCreations[0].Sensitive
+			} else {
+				envs, _ := mock.GetServiceEnv(context.Background(), "svc-1")
+				if len(envs) != 1 {
+					t.Fatalf("service envs = %d, want 1", len(envs))
+				}
+				written = envs[0].Sensitive
+			}
+			if written != tt.want {
+				t.Errorf("written sensitive = %v, want %v", written, tt.want)
+			}
 		})
+	}
+}
 
-	if _, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"NODE_ENV=production"}); err != nil {
-		t.Fatalf("EnvSet: %v", err)
+// TestDefaultSensitive — the name rule a set falls back on.
+func TestDefaultSensitive(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		key  string
+		want bool
+	}{
+		{"APP_SECRET", true},
+		{"GITHUB_TOKEN", true},
+		{"APP_KEY", true},
+		{"stripe_api_key", true},
+		{"DB_PASSWORD", true},
+		{"SMTP_PASS", true},
+		{"SENTRY_DSN", true},
+		{"PRIVATE_KEY_PEM", true},
+		{"GOOGLE_CREDENTIALS", true},
+		{"NODE_ENV", false},
+		{"LOG_LEVEL", false},
+		{"API_BASE_URL", false},
 	}
-
-	envs, err := mock.GetServiceEnv(context.Background(), "svc-1")
-	if err != nil {
-		t.Fatalf("GetServiceEnv: %v", err)
-	}
-	found := false
-	for _, e := range envs {
-		if e.Key != "NODE_ENV" {
-			continue
+	for _, tt := range tests {
+		if got := DefaultSensitive(tt.key); got != tt.want {
+			t.Errorf("DefaultSensitive(%q) = %v, want %v", tt.key, got, tt.want)
 		}
-		found = true
-		if !e.Sensitive {
-			t.Errorf("NODE_ENV Sensitive = false, want true")
-		}
-		if e.Type != platform.ServiceEnvUser {
-			t.Errorf("NODE_ENV Type = %q, want %q", e.Type, platform.ServiceEnvUser)
-		}
-	}
-	if !found {
-		t.Fatal("NODE_ENV not found in service env after EnvSet")
 	}
 }
 
@@ -221,7 +268,7 @@ func TestEnvSet_ServiceScope_YamlBakedKey_DeleteForbidden_YamlGuidance(t *testin
 		}).
 		WithError("DeleteUserData", forbiddenDeleteError())
 
-	_, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"FOO=bar"})
+	_, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"FOO=bar"}, nil)
 	if err == nil {
 		t.Fatal("expected error for a yaml-baked key hit by delete-then-create")
 	}
@@ -245,7 +292,7 @@ func TestEnvSet_Project(t *testing.T) {
 
 	mock := &countingProjectEnvMock{Client: platform.NewMock()}
 
-	result, err := EnvSet(context.Background(), mock, "proj-1", "", true, []string{"A=1", "B=2", "C=3"})
+	result, err := EnvSet(context.Background(), mock, "proj-1", "", true, []string{"A=1", "B=2", "C=3"}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -281,7 +328,8 @@ func TestEnvSet_Project_PreprocessorExpansion(t *testing.T) {
 	result, err := EnvSet(context.Background(), mock, "proj-1", "", true, []string{
 		"APP_KEY=<@generateRandomString(<32>)>",
 		"PLAIN_VALUE=literal",
-	})
+	}, nil)
+
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -326,7 +374,8 @@ func TestEnvSet_Project_RejectsBase64PrefixedPreprocessor(t *testing.T) {
 
 	_, err := EnvSet(context.Background(), mock, "proj-1", "", true, []string{
 		"APP_KEY=base64:<@generateRandomString(<32>)>",
-	})
+	}, nil)
+
 	if err == nil {
 		t.Fatal("expected error for base64:-prefixed preprocessor expression")
 	}
@@ -349,7 +398,8 @@ func TestEnvSet_Project_AllowsLiteralBase64Value(t *testing.T) {
 
 	_, err := EnvSet(context.Background(), mock, "proj-1", "", true, []string{
 		"APP_KEY=base64:QWxhZGRpbjpPcGVuU2VzYW1lQWxhZGRpbjpPcGVu",
-	})
+	}, nil)
+
 	if err != nil {
 		t.Fatalf("literal base64 value should pass through: %v", err)
 	}
@@ -371,7 +421,8 @@ func TestEnvSet_Project_UpsertExistingKey(t *testing.T) {
 
 	result, err := EnvSet(context.Background(), mock, "proj-1", "", true, []string{
 		"APP_KEY=new-literal-value",
-	})
+	}, nil)
+
 	if err != nil {
 		t.Fatalf("unexpected error on upsert: %v", err)
 	}
@@ -396,7 +447,8 @@ func TestEnvSet_Project_PreprocessorSyntaxError(t *testing.T) {
 
 	_, err := EnvSet(context.Background(), mock, "proj-1", "", true, []string{
 		"APP_KEY=<@thisFunctionDoesNotExist(<32>)>",
-	})
+	}, nil)
+
 	if err == nil {
 		t.Fatal("expected preprocessor error for unknown function")
 	}
@@ -434,7 +486,7 @@ func TestEnvSet_Project_PlainValuesStoredAsGiven(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			mock := &countingProjectEnvMock{Client: platform.NewMock()}
-			if _, err := EnvSet(context.Background(), mock, "proj-1", "", true, tt.input); err != nil {
+			if _, err := EnvSet(context.Background(), mock, "proj-1", "", true, tt.input, nil); err != nil {
 				t.Fatalf("EnvSet: %v", err)
 			}
 			if len(mock.calls) != len(tt.input) {
@@ -495,7 +547,7 @@ func TestEnvSet_Project_ExpressionsShareOneStore(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			mock := &countingProjectEnvMock{Client: platform.NewMock()}
-			if _, err := EnvSet(context.Background(), mock, "proj-1", "", true, tt.input); err != nil {
+			if _, err := EnvSet(context.Background(), mock, "proj-1", "", true, tt.input, nil); err != nil {
 				t.Fatalf("EnvSet: %v", err)
 			}
 			got := map[string]string{}
@@ -531,7 +583,7 @@ func TestEnvSet_PreprocessorErrorQuotesNoValue(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			mock := &countingProjectEnvMock{Client: platform.NewMock()}
-			_, err := EnvSet(context.Background(), mock, "proj-1", "", true, tt.input)
+			_, err := EnvSet(context.Background(), mock, "proj-1", "", true, tt.input, nil)
 			pe, ok := err.(*platform.PlatformError)
 			if !ok {
 				t.Fatalf("expected *PlatformError, got %T: %v", err, err)
@@ -562,7 +614,7 @@ func TestEnvSet_Project_PartialFailure(t *testing.T) {
 		failErr: fmt.Errorf("API timeout"),
 	}
 
-	_, err := EnvSet(context.Background(), mock, "proj-1", "", true, []string{"A=1", "B=2", "C=3"})
+	_, err := EnvSet(context.Background(), mock, "proj-1", "", true, []string{"A=1", "B=2", "C=3"}, nil)
 	if err == nil {
 		t.Fatal("expected error for partial failure")
 	}
@@ -591,7 +643,7 @@ func TestEnvSet_InvalidFormat(t *testing.T) {
 			{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
 		})
 
-	_, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"NOEQUALS"})
+	_, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"NOEQUALS"}, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid format")
 	}

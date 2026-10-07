@@ -718,9 +718,10 @@ func TestEnvGet_LiveRuntime_ShowsYamlBaked_NoProjectLeak(t *testing.T) {
 }
 
 // TestEnvSet_StoredEcho_SensitiveMasked: the set echo verifies WHAT landed,
-// never a sensitive value — a service-scope set is written sensitive:true, so
-// its stored value comes back masked and annotated; a project-scope set is
-// written plain and echoes in clear; a ZCP-owned key keeps its own mask.
+// never a sensitive value — a set is written sensitive when the caller says
+// so (`sensitive`, a FlexBool) or, unsaid, when the key reads as a secret, on
+// either scope; a sensitive stored value comes back masked and annotated, a
+// plain one in clear; a ZCP-owned key keeps its own mask.
 func TestEnvSet_StoredEcho_SensitiveMasked(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -730,20 +731,43 @@ func TestEnvSet_StoredEcho_SensitiveMasked(t *testing.T) {
 		wantSensitive bool
 	}{
 		{
-			name:          "service scope is sensitive",
+			name:          "service secret-shaped key is sensitive",
 			args:          map[string]any{"serviceHostname": "api", "variables": []any{"API_KEY=" + "person-secret"}},
 			wantValue:     "<redacted: sensitive>",
 			wantSensitive: true,
 		},
 		{
-			name:      "project scope is plain",
+			name:      "service plain key is plain",
+			args:      map[string]any{"serviceHostname": "api", "variables": []any{"APP_NAME=shop"}},
+			wantValue: "shop",
+		},
+		{
+			name:          "service explicit sensitive",
+			args:          map[string]any{"serviceHostname": "api", "sensitive": "true", "variables": []any{"APP_NAME=" + "person-secret"}},
+			wantValue:     "<redacted: sensitive>",
+			wantSensitive: true,
+		},
+		{
+			name:      "project plain key is plain",
 			args:      map[string]any{"project": true, "variables": []any{"APP_NAME=shop"}},
 			wantValue: "shop",
 		},
 		{
-			name:      "ZCP-owned key keeps its mask",
-			args:      map[string]any{"project": true, "variables": []any{"GIT_TOKEN=" + "ghp_x"}},
-			wantValue: "<redacted: ZCP-managed credential>",
+			name:          "project secret-shaped key is sensitive",
+			args:          map[string]any{"project": true, "variables": []any{"STRIPE_SECRET=" + "person-secret"}},
+			wantValue:     "<redacted: sensitive>",
+			wantSensitive: true,
+		},
+		{
+			name:      "project explicit plain",
+			args:      map[string]any{"project": true, "sensitive": false, "variables": []any{"PUBLIC_KEY=pk"}},
+			wantValue: "pk",
+		},
+		{
+			name:          "ZCP-owned key keeps its mask",
+			args:          map[string]any{"project": true, "variables": []any{"GIT_TOKEN=" + "ghp_x"}},
+			wantValue:     "<redacted: ZCP-managed credential>",
+			wantSensitive: true,
 		},
 	}
 	for _, tt := range tests {
