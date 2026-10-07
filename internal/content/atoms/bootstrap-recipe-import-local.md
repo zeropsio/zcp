@@ -21,7 +21,7 @@ Submit the YAML you see in the guide via `zerops_import` as-is. After Zerops pul
 ### After services are RUNNING
 
 ```
-1. zerops_env action="get" project=true       # surface project envVariables
+1. zerops_env action="get" project=true       # surface the project vault
 2. zerops_env action="generate-dotenv" setup="<setup-name>"
                                                 # renders .env from project + zerops.yaml + .env.local
 3. Add ".env" + ".env.local" to .gitignore if not already there

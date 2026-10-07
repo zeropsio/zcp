@@ -46,20 +46,18 @@ literal `${APP_KEY}`, and so does every other line referencing
 
 ### Secrets go in the vault as sensitive
 
-Store a secret with `zerops_env action="set" … sensitive=true` (a
-secret-shaped key name defaults to sensitive). Reads return it masked.
-Two secret-shaped names stay readable unless you say otherwise: a public
-key (`PUBLIC`/`PUBLISHABLE`, shipped to browsers anyway) and a password
-the person signs in with (an `ADMIN`/`SUPERADMIN` password) — a
-sensitive value can never be read back, and the vault is where the
-person finds their sign-in.
+Store a secret with `zerops_env action="set" … sensitive=true`; a
+secret-shaped key defaults to sensitive, and reads return it masked.
+Two stay readable unless you say otherwise: a public key
+(`PUBLIC`/`PUBLISHABLE`, shipped to browsers) and an
+`ADMIN`/`SUPERADMIN` password — the person reads their sign-in in the
+vault.
 
 A value only the person has (an API key, a password, a webhook secret)
 is never asked for in the chat: call `zerops_env action="request"
 key="STRIPE_SECRET_KEY" project=true reason="…"` — one sentence on what
 it is for and where to find it. The person types it into Mate, which
-writes it straight to the vault; a note in their next message says it
-is set. Until then continue with what does not need it, or end the
+writes it to the vault; their next message notes it is set. Until then continue with what does not need it, or end the
 turn. A key already in that vault is answered `alreadySet` — reference
 it by name.
 

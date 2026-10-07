@@ -13,7 +13,7 @@ This atom fires across both `classify-prompt` (where `bundle.warnings` is the ac
 
 | Field | What it contains | Why it matters |
 |---|---|---|
-| `bundle.importYaml` | The `zerops-project-import.yaml` body. | Inspect the runtime entry's `buildFromGit:`, `zeropsSetup:`, `enableSubdomainAccess:`, and `project.envVariables`. The `services:` list also carries managed deps so `${db_*}`/`${redis_*}` resolve at re-import. |
+| `bundle.importYaml` | The `zerops-project-import.yaml` body. | Inspect the runtime entry's `buildFromGit:`, `zeropsSetup:`, `enableSubdomainAccess:`, and the project `vault:`. The `services:` list also carries managed deps so `${db_*}`/`${redis_*}` resolve at re-import. |
 | `bundle.zeropsYaml` | The repo's live `zerops.yaml` body, verbatim. | Confirm the chosen `setup:` block matches the runtime you packaged. The `run.envVariables` references must resolve against envs that survived classification. |
 | `bundle.warnings` | Per-env hints from the composer (visible at classify-prompt). | M4 empty externals, sentinel patterns, unset classifications, and M2 indirect references all surface here. Don't publish with an unresolved warning. |
 | `bundle.errors` | Blocking JSON-Schema failures (visible at validation-failed). | Each entry has `path` (JSON pointer) + `message`. Fix each error at its source. |
@@ -33,7 +33,7 @@ When `bundle.errors` is non-empty the handler returns `status="validation-failed
 env "DB_HOST": classified Infrastructure (drops from project.envVariables) but zerops.yaml's run.envVariables references ${DB_HOST} — re-import will fail to resolve. Reclassify as PlainConfig or rewrite zerops.yaml to use managed-service refs (${db_*}/${redis_*}) directly.
 ```
 
-`zerops.yaml` references the project env's name (e.g. `${DB_HOST}`), not the managed-service env's name (`${db_hostname}`). Dropping `DB_HOST` from `project.envVariables` makes the reference unresolvable at re-import. Two fixes:
+`zerops.yaml` references the project env's name (e.g. `${DB_HOST}`), not the managed-service env's name (`${db_hostname}`). Dropping `DB_HOST` from the project vault makes the reference unresolvable at re-import. Two fixes:
 
 1. **Reclassify as `plain-config`** — the value `${db_hostname}` stays in the bundle, Zerops applies it at boot, and the runtime sees `DB_HOST=${db_hostname}` which resolves to the managed db's hostname. Preserves the indirection.
 2. **Rewrite `zerops.yaml`** so `run.envVariables` references managed-service envs directly: `DB_HOST: ${db_hostname}`. This shortens the resolution chain at the cost of editing the live `zerops.yaml` (which is then bundled with the export).
@@ -47,10 +47,10 @@ env "STRIPE_SECRET": empty external secret — review before publish
 env "STRIPE_KEY": external secret value "sk_test_xyz" matches a known sentinel/test pattern — verify classification (PlainConfig may be more appropriate)
 ```
 
-You classified the env `external-secret` but the value is empty or matches a known test/sentinel pattern (`sk_test_*`, `pk_test_*`, `rk_test_*`, `disabled`, `none`, `null`, `false`, `off`, `n/a`, `noop`). Re-import would substitute `<@pickRandom(["REPLACE_ME"])>` for an empty production-like key — likely wrong. Two fixes:
+You classified the env `external-secret` but the value is empty or matches a known test/sentinel pattern (`sk_test_*`, `pk_test_*`, `rk_test_*`, `disabled`, `none`, `null`, `false`, `off`, `n/a`, `noop`). Re-import would substitute `REPLACE_ME` for an empty production-like key — likely wrong. Two fixes:
 
 1. **Reclassify as `plain-config`** — carry the empty / sentinel value verbatim. Re-imported services boot with the same disabled / staging shape.
-2. **Confirm the bucket and edit the bundle**: if a real key SHOULD be set, bucket `external-secret`, accept the `REPLACE_ME` placeholder, and add a "set this env in dashboard before deploy" step to the new project's runbook.
+2. **Confirm the bucket and edit the bundle**: if a real key SHOULD be set, bucket `external-secret`, accept the `REPLACE_ME` placeholder, and add a "set this value in the vault before deploy" step to the new project's runbook.
 
 ### Unclassified env
 
@@ -67,5 +67,5 @@ Whether you're acting on warnings (classify-prompt) or fixing errors (validation
 - runtime entries carry no `mode` (runtimes are always HA — a mode/variant on a runtime is ignored); managed deps encode HA in the type variant (`postgresql:single@18` / `:ha`), and PostgreSQL/Valkey carry their live `profile` tier.
 - `services[].buildFromGit` resolves to a HTTPS or SSH-form remote URL.
 - `services[].zeropsSetup` matches a `setup:` name in the bundled `zerops.yaml`.
-- `project.envVariables` keys are not duplicated.
+- The project `vault:` keys are not duplicated.
 - `#zeropsPreprocessor=on` header is line 1 if any value contains `<@...>`.

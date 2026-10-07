@@ -13,14 +13,14 @@ Procedure is fixed; do NOT rewrite or reorder.
 
 1. **Project-level env vars (if any).**
 
-The recipe's `project.envVariables` (if any) are extracted below as
-ready-to-run `zerops_env` pre-steps — key AND value. Run them BEFORE
-`zerops_import`. The importer itself accepts `project.envVariables`
-inline; it only rejects every OTHER `project.*` key, which is why the
-services YAML below never carries a `project:` block.
+The recipe's project `vault:` (if any) is extracted below as
+ready-to-run `zerops_env` pre-steps — key, value and its sensitive flag.
+Run them BEFORE `zerops_import`. The importer itself accepts
+`project.vault` inline; it only rejects every OTHER `project.*` key,
+which is why the services YAML below never carries a `project:` block.
 
 ```
-zerops_env action="set" scope="project" key="APP_KEY" value="<@generateRandomString(<32>)>"
+zerops_env action="set" scope="project" key="APP_KEY" value="<@generateRandomString(<32>)>" sensitive=true
 ```
 
 Preprocessor directives (`<@...>`) evaluate server-side; pass the literal

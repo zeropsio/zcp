@@ -13,7 +13,7 @@ Local mode ZCP merges env state from three places into the `.env` file your app 
 
 | Channel | Where it lives | Writer | Use for |
 |---|---|---|---|
-| `project.envVariables` | Zerops project state | `zerops_env action=set scope=project` | Shared secrets that match locally and deployed (APP_KEY, JWT_SECRET, third-party tokens) |
+| Project vault | Zerops project state | `zerops_env action=set scope=project` | Shared secrets that match locally and deployed (APP_KEY, JWT_SECRET, third-party tokens) |
 | `zerops.yaml run.envVariables` | git repo, per-service | edit the file | Deployed-only flags (APP_ENV=production), managed-service refs (DATABASE_URL=${db_connectionString}) |
 | `.env.local` | CWD, gitignored | YOU edit it | Per-developer overrides (APP_ENV=local, LOG_LEVEL=debug, override DATABASE_URL to local Postgres) |
 
