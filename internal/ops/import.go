@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // ServiceImportError represents an error for a specific service during import.
@@ -423,7 +424,7 @@ func parseVaultItem(block, key string, raw any) (vaultItem, error) {
 
 // markServiceSecrets writes the name rule into each service's own values:
 // its envSecrets move into its vault, and every vault value whose name says
-// secret (DefaultSensitive) and that carries no flag of its own becomes
+// secret (topology.DefaultSensitive) and that carries no flag of its own becomes
 // `{value, sensitive: true}`. A key in both keeps its vault entry. Reports
 // whether anything changed.
 func markServiceSecrets(doc map[string]any) (bool, error) {
@@ -457,7 +458,7 @@ func markServiceSecrets(doc map[string]any) (bool, error) {
 			if err != nil {
 				return false, err
 			}
-			if item.sensitive != nil || !DefaultSensitive(key) {
+			if item.sensitive != nil || !topology.DefaultSensitive(key) {
 				continue
 			}
 			vault[key] = map[string]any{"value": item.value, "sensitive": true}

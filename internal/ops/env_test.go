@@ -221,42 +221,6 @@ func TestEnvSet_SensitiveFlag(t *testing.T) {
 	}
 }
 
-// TestDefaultSensitive — the name rule a set falls back on.
-func TestDefaultSensitive(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		key  string
-		want bool
-	}{
-		{"APP_SECRET", true},
-		{"GITHUB_TOKEN", true},
-		{"APP_KEY", true},
-		{"stripe_api_key", true},
-		{"DB_PASSWORD", true},
-		{"SMTP_PASS", true},
-		{"SENTRY_DSN", true},
-		{"PRIVATE_KEY_PEM", true},
-		{"GOOGLE_CREDENTIALS", true},
-		{"NODE_ENV", false},
-		{"LOG_LEVEL", false},
-		{"API_BASE_URL", false},
-		// Public by design: a browser bundle ships it.
-		{"STRIPE_PUBLISHABLE_KEY", false},
-		{"NEXT_PUBLIC_STRIPE_KEY", false},
-		{"PUBLIC_SECRET_KEY", true},
-		// A password the person signs in with stays readable to them.
-		{"SUPERADMIN_PASSWORD", false},
-		{"ADMIN_PASS", false},
-		{"GRAFANA_ADMIN_PASSWORD", false},
-		{"ADMIN_API_TOKEN", true},
-	}
-	for _, tt := range tests {
-		if got := DefaultSensitive(tt.key); got != tt.want {
-			t.Errorf("DefaultSensitive(%q) = %v, want %v", tt.key, got, tt.want)
-		}
-	}
-}
-
 // TestEnvSet_ServiceScope_YamlBakedKey_DeleteForbidden_YamlGuidance pins the
 // NEW yaml-baked collision signal (spec §1, [LIVE 08-21]): since 2026-08 a
 // yaml-baked run.envVariables key is ALSO mirrored (read-only) on the slim
