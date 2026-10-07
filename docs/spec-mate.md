@@ -224,11 +224,9 @@ results are far smaller than the prose ones and are nowhere near the cap.
 ### 1.6 Why not `structuredContent`
 
 The Go MCP SDK marshals a non-nil typed handler output (a handler's second return value) into
-the JSON-RPC result's `structuredContent` field, *alongside* the text content. **Claude Code
-replaces the model-facing tool result with `structuredContent` when it is present** — the text
-block never reaches the model. Routing the envelope that way would silently strip every atom of
-guidance a workflow result renders. Measured live; recorded in
-`../z3/docs/internals/zerops/verified.md`, section "S6 PROVE".
+the JSON-RPC result's `structuredContent` field, *alongside* the text content. zcp keeps the
+envelope and all model-facing guidance together in the text content, so a provider's treatment
+of `structuredContent` cannot separate the envelope from that guidance.
 
 So the typed-output slot stays empty at every handler, guarded by
 `TestNoStructuredContentOnToolResults` (which checks named handlers *and* the closures handed
@@ -1607,7 +1605,7 @@ the console like any other cause, and reads `unavailable`.
 A Zerops project's variables, in the client: one **Shared** vault per project (the project's env,
 named so because "project" is HQ's word) and one per service (its own variables), each value plain
 or sensitive. A service's zerops.yml `run.envVariables` is what its container reads; the vault holds
-the values those entries reference. Measured live 2026-10-07 (`verified.md`, "The vault's platform").
+the values those entries reference.
 
 - **The model.** A deploy activates references: a service's deployed run entries are its variables
   typed `USER`, not editable, their templates unresolved. A restart activates values: a running
@@ -1654,7 +1652,7 @@ the values those entries reference. Measured live 2026-10-07 (`verified.md`, "Th
 | MF-5 | The latest envelope per thread survives a container restart. `ZeropsLifecycle.test.ts` — "reads a thread's state back after a restart". |
 | MF-6 | A `zerops_*` result's raw text reaches the client on all three projection routes, capped at 48,000 bytes; over the cap the text is dropped whole, never sliced. `ActivityPayloadProjection.test.ts` — "carries it on the live event path", "carries it on the thread-detail snapshot a reopened thread renders from"; `zeropsActivityResult.test.ts` — "drops the text whole when it exceeds the cap, and says so". |
 | MF-7 | A recognized call whose result cannot decode keeps its call shell and renders the generic tool block inside the result region; an unrecognized call stays a generic row. Quick actions never call a mutating RPC. `ZeropsCallCard.test.tsx` — "keeps the shell for an undecodable terminal result"; `ZeropsQuickActions.test.tsx` — "cannot reach Zerops or the RPC layer at all". |
-| MF-8 | Native typed payloads update the shared model without per-event rereads; membership and entity state are separate; reconnect, overflow or failed registration degrades affected interests and triggers bounded recovery. `data/runtime.test.ts`; `data/platformProtocol.test.ts`; `data/restAdapter.test.ts`. Live observations are recorded in the fork's `verified.md`; no lossless or monotonic guarantee is claimed. |
+| MF-8 | Native typed payloads update the shared model without per-event rereads; membership and entity state are separate; reconnect, overflow or failed registration degrades affected interests and triggers bounded recovery. `data/runtime.test.ts`; `data/platformProtocol.test.ts`; `data/restAdapter.test.ts`. No lossless or monotonic guarantee is claimed. |
 | MF-9 | A recognized call keeps its first call key/id/time/position/row kind and mounted shell through completion. Result-derived `plan:<sessionId>` identity may fold matching calls into the first PLAN anchor; pending association never invents identity and safely detaches on start/reset/ambiguity/mismatch. Every decoded result kind is a visible milestone. `callLifecycle.test.ts`; `MessagesTimeline.logic.test.ts`; `identity.test.ts`; `milestone.test.ts`. |
 | MF-10 | Platform activity is an in-memory, ownership-neutral, "Platform"-labelled optional region read from the §5.1 shared Process projection with direct bootstrap/repair. It publishes observation and failure state, never persists or renders a verdict, and disappears without removing the recognized shell. The only post-result continuation is a `BUILD_TRIGGERED` deploy. `data/activity.test.ts`; `useProjectActivity.test.ts`; `ZeropsDeployActivityCard.test.tsx`. |
 | MF-11 | Projected activity order uses orchestration event sequence. Legacy NULL rows use `createdAt`, lifecycle rank `started < updated < completed`, then activity id; newest-window selection and compaction preserve the same order and terminal row. `ProjectionPipeline.test.ts`; `ProjectionSnapshotQuery.test.ts`; `ActivityPayloadProjection.test.ts`. |
@@ -1849,7 +1847,7 @@ S3 tries to watch the mount for git state.
 | ID | Invariant |
 |---|---|
 | MG-1 | The repository set is the `fuse.sshfs` mount table under `/var/www`, probed with a bounded `stat`; three distinct outcomes; never a `/var/www` scan for `.git`, never a platform call, never `zcp`. `ZeropsRepositorySource.test.ts` — `parseMountTable` (a literal `/proc/mounts` fixture; non-sshfs and outside-`/var/www` lines ignored), "drops a mount whose probe times out and keeps the others", "reports unavailable when the mount table cannot be read and never empties the set on that path", "keeps the 30 s cache and refreshes at turn start". |
-| MG-2 | No git process ever runs against the sshfs mount: every `git` spawn located under a mount is rewritten to `ssh … git -C /var/www …`; every non-git command and every `git` call outside a mount passes through byte-identical. `ZeropsGitSpawner.test.ts` — "hands a non-git command to the inner spawner untouched", "leaves git alone outside every mount", "resolves the host from the -C form and rewrites -C to the remote path", "no git argv ever carries a mount path". Live: verified.md S3 live audit — zero bare git processes, zero argv carrying a `/var/www/<host>` path. |
+| MG-2 | No git process ever runs against the sshfs mount: every `git` spawn located under a mount is rewritten to `ssh … git -C /var/www …`; every non-git command and every `git` call outside a mount passes through byte-identical. `ZeropsGitSpawner.test.ts` — "hands a non-git command to the inner spawner untouched", "leaves git alone outside every mount", "resolves the host from the -C form and rewrites -C to the remote path", "no git argv ever carries a mount path". |
 | MG-3 | Only `GIT_*` and `LC_ALL` cross the wire, `GIT_TRACE2*` is stripped, path-valued flags/env are mapped mount→host, and the two absolute-path-returning argv shapes are mapped host→mount (`--git-common-dir` left alone). `ZeropsGitSpawner.test.ts` — "forwards only GIT_* and LC_ALL, and never the server's own environment", "strips the trace2 event stream, whose file is local and whose watcher never fires", "maps the two argv shapes that return an absolute path", "leaves --git-common-dir alone, because git answers it relatively". |
 | MG-4 | ssh's own exit 255 is reported as a distinct transport failure, never as a git verdict; concurrency is capped per host (4) and unbounded across hosts. `ZeropsGitSpawner.test.ts` — "names an ssh transport failure rather than letting it read as a git verdict", "caps concurrent sessions per host without capping across hosts". |
 | MG-5 | Worktrees, the stacked commit→push→PR action, and background fetch are off on Zerops, enforced at the decider / `GitManager` — never left to a default a client or a `.t3/project` file could override. `ZeropsPolicy.test.ts` — "thread.create persists a null worktree path on Zerops", "project.meta.update forces the default thread env mode to local", "refuses the stacked commit/push/PR action server-side", "never lets a status read fetch from a remote". |
@@ -2097,7 +2095,6 @@ again after 15 s, then 1 min, then every 5 min, instead of sitting at "Checking�
 | MA-3 | The OAuth flag is written non-sensitive and a legacy sensitive row is replaced (`migrated:true`); sign-out deletes it and an `oauth` auth-type row, never a token's. `ZeropsAgentFlag.test.ts` (`planMarkSignedIn`, `planClearSignedIn`). |
 | MA-4 | The agent-auth feed verifies through the agent CLI's own status command and the platform flag, never through the registry's probe; it reaches the registry only through `spi/providerInstances.ts`, to re-probe a picker snapshot that contradicts a changed verified status. `ZeropsAgentAuth.test.ts` — "verification spawns only the CLI status command"; `ZeropsAgentAuthIo.test.ts` — "hands every CHANGE of the verified status to the model picker's reconcile"; `spi/providerInstances.test.ts`; `scripts/mate-zone-architecture.test.ts` (no `provider/**` import from `apps/server/src/zerops/**`). |
 | MA-5 | The login walker turns the CLI's output into `login` phases with `url`/`code` from the recorded lines (Codex device URL + code; Claude menu → oauth URL), and cancel ends the session. `zeropsAgentLoginWalker.test.ts`, `zeropsAgentLoginOutputParser.test.ts`, `ZeropsAgentLogin.test.ts`. |
-| MA-13 | Live: moving the credential aside flips the feed within ~0.5 s and `providerAuth` to `unauthenticated`; restoring it returns `authorized`/`authenticated`; the public `/mate/` renders the hosted-static landing. `verified.md` S7-3 + follow-up rows. |
 | MA-8 | `submitCode` types the code then a separate Enter, only into a paste-code login at its prompt, and the code never reaches the published state. `ZeropsAgentLogin.test.ts` — "submitCode types the code, then Enter…", "…is refused when no login waits for a code", "the code never reaches the published login state". |
 | MA-9 | The signer is the person whose session started the sign-in this server walked to success, kept before anything else hears of it and across a restart; a credential's absence lets it go only once it lasts; a finished login never overrides the verified status in a row. `ZeropsAgentLogin.test.ts` — "keeps who signed in last, and lets it go with the credential", "a credential absent for one reading, then there again: its sign-in is kept", "a sign-in made while its credential reads absent outlives that absence"; `zeropsSignIns.test.ts`; `agentLogin.test.ts` (`classifyAgentRowLogin`). |
 | MA-11 | Sign-out refuses a token agent, then cancels the login, stops that agent's live sessions, logs the CLI out, deletes the flag and re-checks, in that order, best-effort. `ZeropsAgentSignOut.test.ts` (`threadsToStopForAgent`, call order). |
@@ -2144,7 +2141,7 @@ fallback until its Zerops session lands (S5-3).
 
 | ID | Invariant |
 |---|---|
-| MK-1 | The desktop spawns no backend; the bundle is served from disk with the hosted-static gate short-circuiting the primary-environment resolution. `apps/desktop` tests (417), the Electron CDP proof in `verified.md` S5-1. |
+| MK-1 | The desktop spawns no backend; the bundle is served from disk with the hosted-static gate short-circuiting the primary-environment resolution. `apps/desktop` tests (417). |
 | MK-2 | The relay verifies a Zerops token and binds a link to a project + origin; a proof without them, a non-member, or a foreign origin is refused. `infra/relay` `ZeropsAuth`/`ZeropsProjectBinding`/`EnvironmentLinker` tests (152). |
 | MK-3 | The mate server's link proof carries `zeropsProjectId` + `endpointOrigin` in Zerops mode and refuses outside it; origin precedence env → request → refuse. `apps/server/src/cloud/http.test.ts`. |
 | MK-4 | The APNs queue dedupes on `job_id`, leases exclusively, retries with backoff, dead-letters at five, recovers expired leases. `ApnsDeliveryJobStore.test.ts`, `ApnsDeliveryWorker.test.ts`. |
@@ -2165,10 +2162,8 @@ the stages' deploys (§10.8). What moves to it next: production and the release,
 surfaces that still read Gitea (§10.11). The rest of this section's history follows.
 
 Landed 2026-09-16 to 2026-09-17 as mate 0.11.0–0.11.5, zcp v9.176.0 and gitea-mate v1–v2.1. This
-section records the decisions as they landed and the invariants that hold them; where each slice
-stands is the fork's `docs/internals/zerops/primer.md`, the measurements are the fork's ledger
-(2026-09-15 to 2026-09-17), and the names, tags, variables and HTTP contracts the three codebases
-share are `gitea-mate/docs/` (`broker-api.md`, `vocabulary.md`, `roles.md`, `group-repo.md`) —
+section records the decisions as they landed and the invariants that hold them. The names, tags,
+variables and HTTP contracts the three codebases share are `gitea-mate/docs/` (`broker-api.md`, `vocabulary.md`, `roles.md`, `group-repo.md`) —
 nothing here renames what those decide.
 
 ### 10.1 The shape
