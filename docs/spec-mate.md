@@ -471,14 +471,15 @@ Every launch adds three more on top (`mate.LaunchEnvLines`), whatever init wrote
 | `ZCP_STATUS_FILE` | the status file a new Mate's setup is read from (`mate.DefaultStatusFilePath`) |
 | `T3CODE_ZEROPS_HQ_ENROLLMENT` | the file zcp keeps the Mate's HQ enrollment in (`hq.EnrollmentPath`, `~/.zcp/hq/enrollment.json`, mode 0600): the HQ address and the credential the server opens its link to HQ with. It names a path, never the credential. zcp enrolls by itself in a Mate container and keeps enrolling, retrying whatever is not possible yet (`hq.Keep`); until the file exists the server's link stays quiet and its HQ state is unknown |
 
-### 2.4 nginx — three locations, all outside the cookie gate, all behind the gate
+### 2.4 nginx — locations outside the cookie gate, behind the Mate gate
 
 Rendered identically whether or not `VSCODE_PASSWORD` is set, and **only when `MateEnabled`** — all
-three live inside one `{{- if .MateEnabled}}` region.
+locations and the upstream render only inside `{{- if .MateEnabled}}` regions.
 
 | Location | Behaviour |
 |---|---|
-| `{BasePath}/` (`/mate/`) | Proxies to `http://127.0.0.1:3773/` — **trailing slash strips the prefix**, so mate's routes stay at the loopback root and only URLs it *emits* (`T3CODE_BASE_PATH`) carry it. Websocket upgrade headers, `proxy_read_timeout 86400s`. Outside the cookie gate: mate owns its own auth (§3). |
+| `{BasePath}/` (`/mate/`) | Proxies through `mate_backend` to `127.0.0.1:3773` — **trailing slash strips the prefix**, so mate's routes stay at the loopback root and only URLs it *emits* (`T3CODE_BASE_PATH`) carry it. The upstream keeps 16 idle connections per worker; HTTP/1.1 and an empty Connection header allow reuse. Outside the cookie gate: mate owns its own auth (§3). |
+| `= {BasePath}/ws` | Proxies through the same upstream to `/ws`, retaining query parameters, websocket upgrade headers and `proxy_read_timeout 86400s`. |
 | `~ ^/(abs)?proxy/3773(/|$)` | `return 404`. code-server's `/proxy/<port>/`/`/absproxy/<port>/` reach any loopback port for whoever holds the container cookie — a second door, closed; evaluated before `location /`. Closed **only while mate is enabled**: with the flag off nothing of ours listens on 3773 and the port is an ordinary user port. |
 | `= {BasePath}/healthz` | Serves `mate.InitMarkerPath` verbatim, `application/json`, `no-store`; falls back to `{"initComplete":false,"initAt":null}` with no marker yet. No proxy, no process — answers even when nginx is all that's up. |
 
@@ -3161,149 +3162,89 @@ live in the Vault (§5.8).
 
 ### 10.11 Environments, the Git tab, release
 
-_Add stage_ and _Add production_ (mate 0.11.0) create the project from the recipe's tier converted
-to import-ready form — every `buildFromGit` + `zeropsSetup` becomes `startWithoutCode` with the
-source map kept, because the platform cannot clone a private repository and refuses a setup without
-a source. _Add Mate_ reads the AI Agent tier the same way. Since 2026-10-02 the three read their
-tier through the organization's official HQ, as the person (`GET /api/apps/:appId/recipe/:tier`),
-keyed by the application: HQ answers present or absent, a tier this build finds no service in is
-unreadable, and the recipe is loading — never absent — until HQ is open; a landing of the recipe's
-proposal reads it again. A stage's or a production's project carries no tag of ours
-(`createEnvironment.ts:347-355`); its press's `register` step (§4.4) makes it an environment of its
-application in two writes, in an order that never leaves a half-made one
-(`addGroupEnvironment.ts:1-18`, `useEnvironmentCreation.ts:143-178`): the project attached in HQ as
-its stage or production, as the person (`POST /api/apps/{id}/projects`) — HQ records the environment
-with it, its name, its sources and its place in the order, and keeps one production per application
-— then its deploy key, `BASIC_USER` on that project alone, minted by the person's client and handed
-to HQ only where HQ holds none that works (§10.8). There is no pull request and no broker. A stage
-or a production whose attach or key a reload lost, or whose key HQ holds broken, is finished by the
-projects page on its next read with the same two writes (`ZeropsProjectsPage.tsx:1958-1977`,
-`useZeropsGroupEnvironmentReconcile.ts:1-20`). Superseded 2026-10-02: `environments.yaml` in the
-group repo declared each environment — name, tier, project, sources — and the add tagged the project
-into the group, widened the broker's token with it and wrote the declaration (a commit for a
-releaser, a pull request otherwise).
-`addGroupEnvironment.test.ts` — "attaches the project as its tier, then hands HQ the key minted for
-that one project", "mints nothing for an environment whose key HQ holds and finds working", "stops
-at the registry with HQ's refusal, minting nothing"; `runEnvironmentCreation.test.ts` — "registers a
-stage or a production before waiting on its services"; `groupEnvironments.test.ts` — "names a
-production HQ neither places nor holds as an environment, and nothing else";
-`useZeropsGroupEnvironmentReconcile.test.ts` — "a cold load with a half-made environment repairs it
-once, and settles".
+HQ's environment records replace `environments.yaml`: each keeps its name, tier (`stage`,
+`production`), project, sources (branches, or `release`) and order. _Add stage_ and _Add production_
+create the project from the recipe's tier converted to import-ready form — `buildFromGit` +
+`zeropsSetup` becomes `startWithoutCode` with the source map kept — attach it to the application,
+then give HQ an environment-specific token with `BASIC_USER` on that project. HQ deploys it;
+an unfinished attachment/key step says what remains and can be finished. Navigation offers these
+verbs when permissions and the vacant tier slot allow them, otherwise supplies the reason.
+Stage is optional; adding production does not require it. _Add Mate_ reads the AI Agent tier.
+The source map is retained because the platform cannot clone a private repository and refuses a
+setup without a source. Recipe reads are keyed by application and tier: HQ answers present or
+absent; an unreadable tier stays unreadable, and until HQ answers it remains unknown rather than
+absent. A recipe proposal landing revalidates the read. Projects carry only the `mate` marker for
+the Zerops GUI; HQ records own placement, source and press progress. A press interrupted before
+attachment leaves a half-made environment that offers _Finish setup_ for its tier, never a Mate.
+An authoritative refusal ends the attempt until changed input or explicit retry.
 
 The **Git tab** — a right-panel kind `git` beside `diff`, `browser` and `data` — is the Mate's
 own leg of the project's flow and nothing else (D26): per codebase — the dev half of each pair, or
 the single service a pair grew from (zcp's expansion keeps the dev hostname: `todoapp` with
-`todoappstage`, mate 0.11.12); the stage half is deployed to and never a checkout (0.11.10) — one
-block with the checkout's branch and counts from the Mate server's `subscribeVcsStatus`, and from
-HQ (since 2026-10-02) the Mate's newest change in that repository — its open one, or the one that
-landed last — with its commits from HQ's detail of it; the remote's health from a live `git
-ls-remote` through the server (`ZeropsGitRemoteProbe`); one verb — _Push_, _Update from main_ or
-_Review_, which opens the change's review (§5.4), whose _Merge_ merges; the tab merges nothing
-itself, reads nothing from Gitea, and offers no _Open pull request_: a Mate's push opens its change.
-Checkout actions run as the agent's user for the Mate's owner only. It infers nothing from
-another source.
+`todoappstage`); the stage half is deployed to and never a checkout — one block with the checkout's
+branch and counts from the Mate server's `subscribeVcsStatus`, its change and merge destination
+from HQ, and the remote's health from a live `git ls-remote` through the server
+(`ZeropsGitRemoteProbe`). One verb: _Push_ before _Update from main_, or _Review_ for an open
+change; a push opens the change in HQ. A merged change offers none; unread or broken setup says
+why. Checkout actions run as the agent's user for the Mate's owner only; Review applies HQ's
+permissions. No checkout fact proves what stage or production runs (`gitTab.ts`).
 
-**Open, for decision: §6 and this tab disagree.** §6.3 keeps a second commit pipeline off on Zerops,
-and §6's "What S3 does not do" says mate never touches a remote and never commits or pushes outside
-a checkpoint ref. This tab's _Update from main_ pulls into the checkout through the Mate server
-(`useVcsPullAction`), and the _Merge_ of the review its _Review_ opens runs in HQ as the person;
-_Push_ is listed above, but the tab renders no Push verb, because the
-push is the agent's. Which rule governs a Mate's own checkout, §6's or this tab's, is undecided;
-neither section changes until it is.
+The **project's flow** is a state model over the account data layer, shared by projections:
+adapters → reducer → keyed facts → surfaces. HQ streams navigation once per organization with
+revisioned catchup; app detail is demanded while a detail surface draws it. There is no project-flow
+poller or Gitea authority. Sources below are the current client/HQ contracts in
+`docs/internals/zerops/{data-layer,hq-scopes}.md` and `packages/client-runtime/src/data` in Mate:
 
-The **project's flow** (`projectFlow.ts`, mate 0.11.16) is read once for the whole account
-(`ZeropsProjectFlowProvider`, every sixty seconds and at once after a verb; since 2026-10-02 its
-changes come down HQ's structure stream, never polled, and the Gitea group forge reads only
-releases) and, since D29, drawn
-through `groupFlow` (§5.4) in three places, in the one order: Mates → pull requests → `main` →
-production, a group stage a side branch of `main`. The **left menu** shows each project as its
-heading and its Mates (2026-09-29). On the heading, production is one chip — the release it serves,
-whether it is healthy, what waits to go out — whose menu holds the stages, the public links, what
-waits with _Review_ (the release's review) and, while production is in trouble, the fix; a stage is
-the chip only where the group has no production, and a group with neither has no chip. Under the
-heading the Mates, under each its open changes (HQ records which Mate opened each, and only Mates
-open changes; more than three fold behind a count; _Review_ on each). A recipe change — a change in
-the application's recipe repository — is never a Mate's row there. No heading
-carries a dot: a folded project's heading shows the faces of its Mates that need somebody, stopped
-on an error, finished unseen or work.
-The **projects screen** has two views of the same flows, the projects that wait on somebody
-first (_Next step first_, the default; newest and name remain). **Overview**: a _Next steps_ strip
-with one item per project whose step waits on somebody — its words, which jump to the project's
-row, then the row's own verb at the item's end (_Review_ for a change, _Review release_, _+ Add
-production_), the same verb the row acts with — a _Review_ opens the review (§5.4), and nothing
-merges or releases from the strip; a step with no verb to press is not listed. Then one row per
-project with work on it, the four steps as columns (`Mates`, `Pull requests`, `main`,
-`Production`, no arrows), at most two lines to a cell and one verb to a row, at the end of the cell
-it acts on — the one second verb is _Review release_ beside a failed production that has a release
-to offer (D28); a group stage is one line under `main`'s, `↳ ● Deployed e014b0e`. A row opens to the
-Mate cards, the pull requests, the environments and the project's rows; a project with only a Mate
-nobody has spoken to is a tile; the containers no project holds fold into one line of their states
-with _Try again (N)_; the tools are one quiet line at the end. **Projects** (`?view=projects`,
-`&group=` scrolls to its card): every project with work on it as a card, the next step named in its
-header without its verb, its steps side by side with the verb in its step, a "+" beside the `Mates`
-label that adds a Mate, and under the steps only what a release would carry and the project's other
-environments. In both views an empty step says its word in the muted hand (`None open`, `Nothing
-merged`, `Not set up`), never a dashed place, and a Mate opens its conversation from wherever it is
-drawn — its chip in a row, the whole tile, its card. A project's rows are why _Review release_ is
-not offered when it is not, what a release would carry, the releases with _Roll back to this_ —
-which opens the roll back's review — and the recipe changes last.
-A project's menu adds a Mate and a stage (_Add stage — optional_) while its
-adds are offered, and a production while the application has none and the person may create projects
-(`mayCreateProjects`, Zerops' own flag; HQ's refusal of the attach is shown in its words);
-nothing else on the page adds a stage, and _Add production_ is otherwise only the next step's verb,
-with "Production is added here, not by the Mate." as its tooltip, never a row asking for a missing
-tier. The **Git page** (`/git`, _Git_ in the account menu) lists every application whose changes
-the person may read, its repositories and the changes open on each, newest first, across the
-account; a change's title opens the change, a repository's name opens nothing (`routes/git.tsx:7`,
-`SidebarZeropsAccount.logic.ts:85-90`, `ZeropsGitPage.tsx:1-18`). Everything on it is HQ's: each
-application's repositories read as the person (`GET /api/apps/:appId/repos`) together and again
-every minute while the page is open, the changes down HQ's stream; an application whose read fails
-keeps what it read and names why, and never reads as "no repositories"
-(`useZeropsAppRepos.ts:1-17`).
-A repository's row still counts its changes as "open pull requests" (`gitRepositoryLine`,
-`gitOverview.ts:35-39`). Superseded 2026-10-02: a **Gitea overview** (`/gitea`, the footer's Gitea
-button) listed every Gitea repository the person could reach and the pull requests open on it.
-`gitOverview.test.ts` — "lists each application by name, its repositories by name, their changes
-newest first", "names each change by its number and its Mate, under its repository's row";
-`ZeropsGitPage.logic.test.ts` — "leaves out an application whose changes the person may not read",
-"names why a read did not answer, beside what was read". What an environment runs is the sha in the
-app version's name, read from Zerops; what is open and what was released are HQ's.
+| Source | Facts it owns and where they are read |
+| --- | --- |
+| **N — HQ navigation** | Applications, Mate ownership, compact open changes (head present, ready, mergeability), environment sources, keys, offers, bounded jobs with evidence/version handles, production release standing, and each app's compact `app.releaseOffer`. The menu and landing read N only for HQ flow; they never hydrate app detail. |
+| **D — HQ detail** | App-detail: releases/tags, repositories and `main` heads, recipe tiers, settled changes. Change/discussion scopes: review contents and comments; on-demand HQ comparisons: commits carried or replaced. App, stage, production, conversation Git/review and release dialog demand relevant detail; the projects page holds only the application detail it draws. |
+| **Z — Zerops facts** | Services, processes and active versions prove runtime health and what actually runs; whole version identities/commits are resolved on detail demand. HQ retains their deployment evidence in N and its operation scope. A tag, an agent's completed turn or a disappearing process proves no deployment outcome. |
 
-**Release** (HQ's `releases.ts`): per service, what the stage runs against what production runs,
-read in the release's review before anything is asked; its button (_Release v0.1.57_) asks HQ for
-the release the person was offered — the recipe repository's `main` head read with the offer, each
-production service at a commit of its repository's `main`. HQ checks it under the recipe
-repository's lock for whoever `can` lets `release`, tags it (`v{semver}`, its message the release's
-lines), records it approved and writes the rollout that deploys it to production
-(`cause='release'`, §10.8) in the same write; a refusal is only an answer — no tag, no record. A
-**rollback** is a release: _Roll back to this_ on an earlier approved release opens the roll back's
-review, which names the version it goes back to and the release it makes, and its button (_Roll back
-to v0.1.55_) asks for a new release listing that release's entries as they were; a name is never
-reused. Neither button takes the focus or ⌘↵.
+| Change state / evidence | Surfaces and next verb; when none is offered |
+| --- | --- |
+| **Mate branch / change open** — checkout + N; D for review | Menu change row, projects page and app page open _Review_; the conversation offers its Mate's _Review_ when ready, yielding to work/questions/approvals. Inside review, _Merge_ and _Close without merging…_ follow HQ offers. Close ends the change without merging or deploying; its branch remains. Unpushed work offers _Push_ in Git. No Merge for unread/changing head, conflict, ongoing work or denied permission; review says why. |
+| **Merged** — D settled change; N removes its open row and reports stage jobs | Review and conversation history say merged; app/projects flow shows the downstream stage. Merge/Close cease. HQ submits stage jobs for the merged commit; missing environments do not block the merge. A failed deploy leaves it merged. |
+| **Deploying to stage → deployed to stage** — N job + Z active version | Menu stage chip and projects/app stage row show progress; stage page shows the service, commit, steps and outcome. Once deployed it shows the running commit. Failure names why and offers _Run again_ when HQ allows redeploy; no retry over a newer superseding job. |
+| **Waiting for production** — N compact offer; D comparisons on opening detail | When stage holds merged work production does not run, the menu's production chip/heading offers _Review release_ (Release); projects/app/production pages open the same release dialog. No offer without production, new merged contents, permission or usable evidence, or while a release is in flight; the refusal/checking reason is shown. Stage is not a prerequisite. |
+| **Released (tag approved)** — D release record; N production rollout | App/production release list names the tag and approval; the release dialog stays open and follows its deploy. Approval means HQ made the release, not that production runs it. No duplicate Release while that rollout is in flight. |
+| **Deploying to production** — N retained jobs/rollout + Z processes/versions | Menu production chip/heading, projects/app row, production service rows and dialog show building/deploying and the version still serving. Observe the existing operation; closing the dialog does not end it. Elapsed time cannot turn it into success or failure. |
+| **Production runs it** — Z running entries match D tag; N confirms rollout | Production page says _Live_, dialog says _Released_, menu chip names what serves, and app/projects flow clears the waiting work. Earlier approved releases can open _Roll back_; the live release cannot roll back to itself. |
+| **Didn't land** — N/Z retained end, D tag remains | Production/app release rows and dialog name _Deploy failed_ with its reason, or _Deploy status unknown_ when HQ could not confirm the end; say what still serves, or that nothing serves yet. Refused/skipped jobs explain why this request starts no deploy; superseded means a newer release replaced the attempt. Menu shows the problem; _Ask Mate to fix/check it_ opens a conversation draft. _Run again_ on the service requires HQ's redeploy offer; unknown outcome offers no guessed rollback. |
+| **Rollback** — D earlier approved tag, N new rollout, Z running result | App/production release row or release dialog opens _Roll back_ review: what leaves and returns. It releases the earlier tag's entries under a new tag, then follows the same deploying/live/failed/unknown states. No rollback to refused/current tags or without release permission; the review gives the reason. |
 
-**A release ends when HQ's rollout ends (2026-10-05).** Every rollout HQ follows ends — a job is
-followed 75 min at most and then refused (§10.8). So HQ derives, and stores nothing new: beside each
-production environment the stream carries where its application's newest approved release stands
-there (`ReleaseRollout`: `id`, `tag`, `planned`, `ended`, `landed`, `endedAt`, `leftOut`).
-`ended` once every job it asked for there ended and every job of a commit it found already under
-way — what it left out, followed to that job (`leftOut[].job`) — ended too, so a service whose
-commit is building elsewhere keeps the release running; `landed` where each of those went live and
-its plan left nothing undone. A release with no rollout of its own — made before rollouts were,
-recorded from git, or a snapshot of what production already runs — deploys nothing more: ended as
-it was made, never landed by HQ's word; the client reads it as stalled only where it did not land.
-Beside each environment HQ brought up the stream also carries its **birth** (`EnvironmentBirth`,
-`{ended}`, `births.ts`): from the rollout its attach asked for to its first deploy that ran — every
-deploy key kept and _Run again_ between — ended once those rollouts' jobs ended (a first deploy HQ
-makes ends live only after its subdomain, where one was intended, came on or said why not) and a
-deploy ran, or the environment holds a working key. The client draws "coming up" from it, never from
-the environment's age; an environment HQ did not bring up has none. Both are optional on the wire:
-a Core older than the client sends neither, and its environments read them as not known — never on
-its way, never coming up — and are still shown. The review follows that until it
-ends — "Released", "Rolled back", or the failure and its fix — and _Release_ is offered again only
-then. The client holds no clock for it: there is no in-flight window and no 30-minute cutoff (the
-cutoff re-enabled _Release_ while HQ still followed a build, and a second release superseded the
-first). A first deploy is HQ's job's to decide too: the client infers nothing from builds it sees,
-and a build HQ did not make is followed by its Zerops process (`GET /process/{id}`) until it ends.
+**Protocol compatibility (Mate 0.14.26).** Navigation carries `app.releaseOffer`; the menu
+reads it without requesting app-detail. Missing or malformed independent navigation fields decode
+as unknown (`undefined`), retaining readable siblings; they cannot prove no waiting work, no
+permission or a failed deployment. A Core that declares no navigation protocol or a version below
+`HQ_NAVIGATION_PROTOCOL` (currently 1) triggers the client's HQ update notice. This notice names
+protocol compatibility, not an inferred rollout outcome (`hqProtocol.ts`, `hqNavigation.ts`,
+`navigationRecord.ts`, `data/projections/hqNavigation.ts` in Mate).
+
+All writes go through registered operations (`operations/kinds.ts`, `flowWrites.ts`): HQ rechecks
+rights and the shown head/entries at the press. Acceptance, reflected records and deployment
+completion are separate. Lost answers resolve from the original handle/effect, never a blind resend.
+Outages retain stale last-known facts; refusals/unknown reads explain unavailable actions.
+
+**Release** (`apps/hq/src/releases.ts`, client `zerops/release.ts`): the dialog compares each
+production runtime's repository `main` against what production runs and marks its stage standing.
+HQ creates an annotated `v{semver}` tag on the recipe/group repo's shown `main`, listing service
+names and full SHAs only. It checks production release rights, unchanged recipe head, declared
+services, commits on their repositories' `main`, and a name newer than every existing release.
+Refusal creates no tag or record. **Rollback** is a new release of an earlier approved tag's
+entries, with the next patch above every tag; names are never reused. Deploys follow HQ's recorded
+merge/release targets, not an arbitrary ref supplied by the client.
+
+| Invariant | Proof in Mate (scenario paths start at `apps/web/test/scenarios/`; runtime paths at `packages/client-runtime/src/`) |
+| --- | --- |
+| Navigation does not hydrate detail or block behind it. | `apps/hq/src/hqScopes.test.ts`: “navigation shares compact menu changes and filters them before person delivery”; “navigation in the same subscription request does not wait on detail”. |
+| The menu offers Release for landed stage work absent from production, using navigation alone. | `apps/web/test/scenarios/areas/e-env/environments.scenario.ts`, “release review deploys its version to production”. |
+| Merge submits stage deploys; stage shows the actual commit and a permitted retry. | `apps/hq/src/merge.test.ts`: “answers a merge with each stage's deploy of the merged commit, submitted”; `areas/e-env/environments.scenario.ts`: “stage deployment ends with the deployed commit”; “failed stage build says why and offers Run again”. |
+| Only the shown, valid, freshly authorized release is tagged; approval is separate from runtime. | `apps/hq/src/releases.test.ts`: “refuses, and tags and records nothing, whatever it refuses”; `areas/e-env/environments.scenario.ts`: “invalid version prevents releasing production”; “production release result survives reload”. |
+| Failure history persists; time/silence cannot invent an end. | `areas/e-env/failures.scenario.ts`: “failed release stays failed while a colleague starts the next release”; `zerops/releaseFacts.test.ts`: “HQ ends its follow without a landing: the outcome is unknown and the clock stops”. |
+| Rollback makes a new release of earlier commits. | `areas/e-env/environments.scenario.ts`: “rollback deploys the earlier commit as a new release”; `apps/hq/src/releases.test.ts`: “rolls back with a new release of an earlier one's commits, the earlier left as it was”. |
+| Git is only this Mate's checkout/change, with one next verb. | `zerops/gitTab.test.ts`: “an unpushed branch offers Push, and only Push”; “a pushed branch with no change open offers nothing: a Mate's push opens its change”; “a merged change is HQ's business now, and offers nothing”. |
+| Review permission is separate from mutation; a lost answer never blindly repeats a write. | `areas/d-change/review.scenario.ts`: “a reader can review but cannot merge”; `data/operations/flowWrites.test.ts`: “after a lost answer adopts a merge HQ shows landed”. |
 
 ### Invariants
 

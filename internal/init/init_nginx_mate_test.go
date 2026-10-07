@@ -103,10 +103,9 @@ func TestRunNginx_MateProxyStripsThePrefix(t *testing.T) {
 		name     string
 		contains string
 	}{
-		{"proxies to the loopback port with the trailing slash", "proxy_pass http://127.0.0.1:3773/;"},
+		{"proxies through the upstream with the trailing slash", "proxy_pass http://mate_backend/;"},
 		{"HTTP/1.1 for the websocket upgrade", "proxy_http_version 1.1;"},
-		{"forwards the upgrade header", "proxy_set_header Upgrade $http_upgrade;"},
-		{"forwards the connection header", "proxy_set_header Connection $connection_upgrade;"},
+		{"clears the connection header for reuse", `proxy_set_header Connection "";`},
 		{"keeps a long-lived socket open", "proxy_read_timeout 86400s;"},
 	}
 	for _, tt := range tests {
@@ -115,6 +114,30 @@ func TestRunNginx_MateProxyStripsThePrefix(t *testing.T) {
 				t.Errorf("the mate location must contain %q:\n%s", tt.contains, block)
 			}
 		})
+	}
+}
+
+func TestRunNginx_MateKeepaliveAndWebsocket(t *testing.T) {
+	for _, password := range []string{"alnum123token", ""} {
+		conf := renderNginx(t, password, true)
+		upstream := locationBlock(t, conf, "upstream mate_backend {")
+		for _, want := range []string{"server 127.0.0.1:3773;", "keepalive 16;"} {
+			if !strings.Contains(upstream, want) {
+				t.Errorf("mate upstream must contain %q", want)
+			}
+		}
+		ws := locationBlock(t, conf, "location = "+mate.BasePath+"/ws {")
+		for _, want := range []string{
+			"proxy_pass http://mate_backend/ws;",
+			"proxy_http_version 1.1;",
+			"proxy_set_header Upgrade $http_upgrade;",
+			"proxy_set_header Connection $connection_upgrade;",
+			"proxy_read_timeout 86400s;",
+		} {
+			if !strings.Contains(ws, want) {
+				t.Errorf("mate websocket must contain %q", want)
+			}
+		}
 	}
 }
 
@@ -241,7 +264,7 @@ func TestRunNginx_MateDisabled_RendersNoMateSurface(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			conf := renderNginx(t, tt.password, false)
 
-			for _, absent := range []string{mate.BasePath, "3773", mate.InitMarkerPath} {
+			for _, absent := range []string{mate.BasePath, "3773", mate.InitMarkerPath, "mate_backend", "keepalive"} {
 				if strings.Contains(conf, absent) {
 					t.Errorf("with ZCP_MATE_ENABLED unset, config must not contain %q:\n%s", absent, conf)
 				}
