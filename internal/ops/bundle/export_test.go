@@ -265,7 +265,7 @@ func TestComposeProjectVault(t *testing.T) {
 			wantWarnSubstr: []string{"WEBHOOK_URL", "sensitive value"},
 		},
 		{
-			name: "a generated admin sign-in password stays readable to the person",
+			name: "a generated admin sign-in password is a secret the person shows in Mate's vault",
 			envs: []ProjectEnvVar{
 				{Key: "SUPERADMIN_PASSWORD", Value: "old"},
 			},
@@ -273,7 +273,7 @@ func TestComposeProjectVault(t *testing.T) {
 				"SUPERADMIN_PASSWORD": topology.SecretClassAutoSecret,
 			},
 			wantOut: map[string]vaultValue{
-				"SUPERADMIN_PASSWORD": {value: "<@generateRandomString(<32>)>", sensitive: false},
+				"SUPERADMIN_PASSWORD": {value: "<@generateRandomString(<32>)>", sensitive: true},
 			},
 		},
 		{

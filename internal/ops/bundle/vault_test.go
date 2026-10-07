@@ -14,7 +14,8 @@ func TestNewVaultValue_WiringStaysReadable(t *testing.T) {
 		{"DB_PASSWORD", "${db_password}", false, false},
 		{"DB_PASSWORD", "${db_password}", true, false},
 		{"APP_SECRET", "<@generateRandomString(<32>)>", true, true},
-		{"SUPERADMIN_PASSWORD", "<@generateRandomString(<16>)>", true, false},
+		{"SUPERADMIN_PASSWORD", "<@generateRandomString(<16>)>", true, true},
+		{"STRIPE_PUBLISHABLE_KEY", "<@generateRandomString(<16>)>", true, false},
 	}
 	for _, tt := range tests {
 		if got := newVaultValue(tt.key, tt.value, tt.secret).sensitive; got != tt.want {

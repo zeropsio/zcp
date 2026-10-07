@@ -27,23 +27,20 @@ func DefaultSensitive(key string) bool {
 	return false
 }
 
-// ReadableByDesign reports the two secret-shaped names that stay plain unless
-// someone says otherwise, even when zcp generates their value:
-//   - a name public by design — PUBLIC or PUBLISHABLE a word of it and no
-//     SECRET, PASSWORD or PRIVATE beside it — because a browser bundle ships
-//     its value anyway;
-//   - a password a person signs in with — ADMIN or SUPERADMIN beside
-//     PASSWORD or PASS — because a sensitive value is write-only and the
-//     vault is where the person finds it (Mate hides it on screen).
+// ReadableByDesign reports a secret-shaped name that stays plain unless
+// someone says otherwise, even when zcp generates its value: a name public by
+// design — PUBLIC or PUBLISHABLE a word of it and no SECRET, PASSWORD or
+// PRIVATE beside it — because a browser bundle ships its value anyway.
+// Nothing else needs to: a sensitive value is hidden, not lost — Mate's vault
+// shows it to the person who asks (Zerops reveals it to their personal access
+// token, which is always in sudo mode; measured 2026-10-07), so an admin's
+// sign-in password is sensitive like any other.
 func ReadableByDesign(key string) bool {
 	words := strings.FieldsFunc(strings.ToUpper(key), func(r rune) bool { return r == '_' || r == '-' || r == '.' })
 	has := func(set ...string) bool {
 		return slices.ContainsFunc(words, func(word string) bool { return slices.Contains(set, word) })
 	}
-	if has("PUBLIC", "PUBLISHABLE") && !has("SECRET", "PASSWORD", "PRIVATE") {
-		return true
-	}
-	return has("ADMIN", "SUPERADMIN") && has("PASSWORD", "PASS")
+	return has("PUBLIC", "PUBLISHABLE") && !has("SECRET", "PASSWORD", "PRIVATE")
 }
 
 // referenceOnly matches a value made only of `${name}` references.

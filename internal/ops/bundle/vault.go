@@ -23,8 +23,8 @@ type vaultValue struct {
 // newVaultValue is a value as zcp writes it into a vault. The name rule
 // decides (topology.DefaultSensitive); a value zcp itself judged a secret —
 // generated, a placeholder, a value someone flagged sensitive — is sensitive
-// whatever its name, but for a name readable by design, whose generated value
-// the person still has to read (an admin's sign-in password).
+// whatever its name, but for a name readable by design (a public key, which a
+// browser bundle ships anyway).
 // A value made only of references is wiring and stays plain whatever was
 // judged of its key: it holds no secret of its own.
 func newVaultValue(key, value string, secret bool) vaultValue {

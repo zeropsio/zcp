@@ -496,7 +496,7 @@ func TestBuildGroupRecipe_ProjectVariables(t *testing.T) {
 			if got := scalarMap(secrets); !maps.Equal(got, wantVault) {
 				t.Errorf("vault = %v, want %v", got, wantVault)
 			}
-			wantSensitive := []string{"JWT_SECRET", "STRIPE_API_KEY", "STRIPE_PRICE_PRO", "STRIPE_WEBHOOK_SECRET"}
+			wantSensitive := []string{"JWT_SECRET", "STRIPE_API_KEY", "STRIPE_PRICE_PRO", "STRIPE_WEBHOOK_SECRET", "SUPERADMIN_PASSWORD"}
 			if got := sensitiveKeys(secrets); !slices.Equal(got, wantSensitive) {
 				t.Errorf("sensitive = %v, want %v", got, wantSensitive)
 			}

@@ -1042,7 +1042,7 @@ services:
 	want := map[string]bool{
 		"JWT_SECRET":             true,
 		"SMTP_HOST":              false,
-		"SUPERADMIN_PASSWORD":    false,
+		"SUPERADMIN_PASSWORD":    true,
 		"STRIPE_PUBLISHABLE_KEY": false,
 		"LOG_LEVEL":              true,
 		"API_TOKEN":              false,
@@ -1108,7 +1108,7 @@ func TestImport_ServiceSecrets_FollowTheNameRule(t *testing.T) {
 		"DB_PASSWORD":    true,
 		"KEEP_TOKEN":     false,
 		"PORT_NAME":      nil,
-		"ADMIN_PASSWORD": nil,
+		"ADMIN_PASSWORD": true,
 		"LOG_LEVEL":      nil,
 	} {
 		if got := sensitive(key); got != want {

@@ -77,7 +77,7 @@ func envInputSchema() *jsonschema.Schema {
 			Items:       &jsonschema.Schema{Type: "string"},
 			Description: "List of env vars. set: KEY=VALUE strings (literal values). delete: KEY names only. Ignored by get and generate-dotenv.",
 		},
-		"sensitive":   flexBoolSchema("set/request: true = sensitive (write-only, masked on every read), false = plain. Omitted: by name — SECRET|TOKEN|KEY|PASSWORD|PASS|DSN|PRIVATE|CREDENTIAL → sensitive, else plain."),
+		"sensitive":   flexBoolSchema("set/request: true = sensitive (masked; Mate's vault shows it), false = plain. Omitted: by name — SECRET|TOKEN|KEY|PASSWORD|PASS|DSN|PRIVATE|CREDENTIAL → sensitive, else plain."),
 		"skipRestart": flexBoolSchema("set/delete: skip restarting the services that read the key (readers). Pass true only when you deploy right after."),
 	}, "action")
 }
