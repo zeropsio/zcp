@@ -5,7 +5,16 @@
 > `spec-env-handling.md` (ZCP's local-`.env` rendering model) is a **map** that
 > MUST conform to this document. ZCP-vs-this-spec conformance is verified
 > separately (not in this doc).
-> **Date**: 2026-08-21 (service userData model change — `[LIVE 08-21]`): the
+> **Date**: 2026-10-07 (vault model, `[LIVE 2026-10-07]`): Zerops is moving to
+> a **vault** — the project's **Shared** vault and each service's own, import
+> `vault:` at project and service level, `envVariables`/`envSecrets`
+> deprecated — with a service's zerops.yaml `run.envVariables` the canonical
+> list of what its container reads. Strict isolation is not on yet
+> (unreferenced vault values are still injected); **ZCP acts as if it were**
+> — §3b. Also: project-level `sensitive` persists (§7), `ZEROPS_YAML` is gone
+> from the app-version userDataList (§1), and an update without `sensitive`
+> turns a sensitive value plain (§1, §7).
+> Prior revision 2026-08-21 (service userData model change — `[LIVE 08-21]`): the
 > service env type enum collapsed to `USER | SYSTEM`, `sensitive` became a
 > REQUIRED write-side flag (`POST/PUT user-data` 400 `invalidUserInput
 > metadata.sensitive:["field is required"]` without it), pre-existing secrets
@@ -49,7 +58,7 @@ Env is NOT one uniform thing. Two **scopes**, each its own entity, since 2026-08
 - **THREE read surfaces — which one returns yaml-baked is load-bearing:** `[SDK][LIVE 05-28]`
   - `GET service-stack/{id}/env` → `ServiceStackEnvList` (**slim**). What ZCP's `ops.FetchServiceEnv` uses. `[LIVE 08-21]`: `SYSTEM` intrinsics (hostname, serviceId, projectId, appVersionId, appVersionName, zeropsSubdomain, PATH, ZEROPS_*) + `USER` = user-set userData **AND the read-only mirror of yaml-baked `run.envVariables`** (pre-2026-08 the yaml-baked vars were ABSENT here — `[LIVE 05-28]` saw exactly 9 intrinsic `READ_ONLY` keys + user-set).
   - embedded `userData[]` on `GET service-stack/{id}` (**rich, service-scope**) — omitted yaml-baked pre-2026-08 (PENDING-4 original finding); UNVERIFIED since the 2026-08 mirror landed on the slim `/env`.
-  - **`GET app-version/{activeAppVersionId}` → `GetAppVersionUserDataList` (the yaml-baked surface). `[LIVE 05-28]` THIS returns the yaml-baked vars** (`[LIVE 08-21]`: typed `USER` with `editable:false`, listed alongside `SYSTEM` intrinsics; user-set vars NEVER appear here) (`FOO=fromyaml`, `DBREF=${db_hostname}` as a *template*, `SELFREF=${zeropsSubdomain}`, plus `ZEROPS_YAML` = the whole zerops.yaml). **This is what the GUI's "Environment variables from master" reads.** ZCP reads it via `GetAppVersionUserData` / `ops.AppVersionEnvVars` (env-ref validation, generate-dotenv, project-set shadow check, discover/env-get) — the correct source for yaml-baked vars on ANY service (incl. siblings), server-side, no SSH.
+  - **`GET app-version/{activeAppVersionId}` → `GetAppVersionUserDataList` (the yaml-baked surface). `[LIVE 05-28]` THIS returns the yaml-baked vars** (`[LIVE 08-21]`: typed `USER` with `editable:false`, listed alongside `SYSTEM` intrinsics; user-set vars NEVER appear here) (`FOO=fromyaml`, `DBREF=${db_hostname}` as a *template*, `SELFREF=${zeropsSubdomain}`; `[LIVE 05-28]` it also carried `ZEROPS_YAML` = the whole zerops.yaml, **`[LIVE 2026-10-07]` no longer** — the deployed run entries are the `USER`/`editable:false` rows, templates unresolved, and the deployed yaml text is not on this surface). Build entries (`build.envVariables`) are exposed on no surface `[LIVE 2026-10-07]`. **This is what the GUI's "Environment variables from master" reads.** ZCP reads it via `GetAppVersionUserData` / `ops.AppVersionEnvVars` (env-ref validation, generate-dotenv, project-set shadow check, discover/env-get) — the correct source for yaml-baked vars on ANY service (incl. siblings), server-side, no SSH.
 - **GUI categories map (load-bearing for ZCP-vs-platform parity)** `[GUI][LIVE 05-28]`:
 
   | GUI category | Scope / type | Source surface |
@@ -60,6 +69,7 @@ Env is NOT one uniform thing. Two **scopes**, each its own entity, since 2026-08
   | Service "Secret variables" | service user-set `USER` (+ per-var `sensitive` flag; pre-2026-08 type `SECRET`) | `service-stack/{id}/env` (slim) |
   | Service "Generated variables" | service `SYSTEM`/intrinsic (ZEROPS_*, projectId…) | `service-stack/{id}/env` (slim) |
 
+- **Trap — an update without `sensitive` turns a sensitive value plain** `[LIVE 2026-10-07]`: `PUT /project-env/{id}` or `PUT /user-data/{id}` without the field stores the value `sensitive:false` (content readable). Every write sends the flag; ZCP's upsert is delete + create with the flag, never a bare PUT.
 - All env mutations are async (return a `Process`); only GETs are synchronous. Input bodies cannot set `type` (server-assigned) but MUST set `sensitive` (`[LIVE 08-21]`; the pinned SDK `body.UserDataPost`/`UserDataPut` lack the field, so ZCP hand-rolls the POST on the SDK transport and guards the drift with `TestSDKUserDataBody_StillLacksSensitive`). `[SDK]`
 
 ---
@@ -74,7 +84,7 @@ system/platform  >  yaml-baked run.envVariables (ENV)  >  service userData (user
 ```
 
 - Every edge directly tested: system top (E3-ext); **yaml-baked > service-secret** (PENDING-1✓, order-independent — confirms `[DOC-A]` FEAT:317, refutes the earlier userData>yaml inference); **service-userData > project** (live `DUP`; `[GUI]` UI copy "service-level variables take precedence over project-level ones"; `[DOC-A]` FEAT:313); **yaml-baked > project** (mailpit). Transitively consistent.
-- **Two cross-layer key-uniqueness guards** `[LIVE]`: (a) a service env-file using a reserved **system** key → `userDataUseOfSystemKey` 400; (b) a service env on a key already in **yaml `run.envVariables`** → `userDataDuplicateKey` 400 (*"key not unique in service stack frame of reference"*). The yaml var literally **owns the key** — a colliding secret is silently dropped at import, removed on override, or rejected post-hoc; the two values never coexist.
+- **Two cross-layer key-uniqueness guards** `[LIVE]`: (a) a service env-file using a reserved **system** key → `userDataUseOfSystemKey` 400; (b) a service env on a key already in **yaml `run.envVariables`** → `userDataDuplicateKey` 400 (*"key not unique in service stack frame of reference"*; case-insensitive `[LIVE 2026-10-07]`). The yaml var literally **owns the key** — a colliding secret is silently dropped at import, removed on override, or rejected post-hoc; the two values never coexist.
 - **Direct live proof of (b)** `[LIVE 05-28]`: deployed `app` with yaml `run.envVariables: {FOO: fromyaml}` → `PUT service-stack/{id}/user-data/env-file {envFile:"FOO=fromuserdata"}` → **`userDataDuplicateKey` 400** *"UserData key 'FOO' is not unique in service stack frame of reference."* So yaml-baked `> service userData` is not just a precedence ordering — the lower layer **cannot be written at all** for a yaml-owned key. (Refutes any "service-level shadows the yaml var, delete it to fix" model.)
 - **F1 consequence (sharpened):** a yaml-baked shadow (mailpit's `MAIL_MAILER: log`) is fixable **only by editing the yaml** — overriding it via `zerops_env set service` is *structurally impossible* (platform rejects the duplicate key). "Set at service scope" is not just non-durable, it's disallowed → the F1 warning is single-path: edit the yaml + redeploy.
 
@@ -96,10 +106,29 @@ Prefixed aliases observed **under `envIsolation=none`** (eval-zcp's mode) `[LIVE
 - **Under default `envIsolation=service` this auto-injection does NOT happen** `[LIVE PENDING-2✓]`: a service receives NO `<host>_KEY` sibling vars (confirmed in-container + zembed + env-file render). The "every sibling var" behavior above is **`none`-mode only**.
 - **Gating applies to MANAGED vars too, not just user-defined** `[LIVE 05-28]`: on a fresh default-`service` project (`zcp-isotest`: managed `db` + runtime `app`), `app`'s env-file render showed **ZERO `db_*` keys** (`overrideEnvIsolation=service` → 0 `db_*`; `=none` → all 21: `db_hostname`, `db_password`, `db_connectionString`, …). So a runtime service does NOT auto-see a managed DB's connection vars under `service` — it MUST reference `${db_*}` explicitly (or set the DB to `none`, per `[DOC-A]` tip *"set a database service to `envIsolation: none` to expose its connection details without having to manually reference them"*). This closes the one sub-case PENDING-2 left open (it had tested user-defined vars only).
 - **`none` is a publish/SOURCE semantic, directional:** setting service Y to `none` exposes Y's vars to siblings; it does NOT make Y *receive* others'. To make X auto-receive Y's vars without an explicit ref, the SOURCE Y (or the whole project) must be `none`. `[LIVE]`
-- **Project→service inheritance is NOT gated:** `PVAR` + `PROJECT_PVAR` reach a service even under `service` mode; only service→service sharing is gated. `[LIVE]`
+- **Project→service inheritance is NOT gated:** `PVAR` + `PROJECT_PVAR` reach a service even under `service` mode; only service→service sharing is gated. `[LIVE]` Still so `[LIVE 2026-10-07]` for unreferenced Shared and own-service values (non-strict) — strict isolation ends it, and ZCP acts as if it had (§3b).
 - **Explicit refs resolve regardless of isolation:** `BREF=${aaa_AVAR}` resolved to `aval` under `service` even though `aaa_AVAR` is not an injected key — refs resolve at deploy/interpolation, independent of the auto-injection gate. `[LIVE]`
 - The parser treats `_` as the cross-service ref delimiter (`local` vs `external` ref). Service hostnames are `[a-z0-9]` only (dashes/underscores/uppercase rejected `serviceStackNameInvalid`), so no dash→underscore rewrite applies — a dashed hostname cannot exist. `[GUI][LIVE 2026-06-02]`
-- **Unresolved refs stay literal**: `${db_hostname}` to an absent service reaches the process verbatim — no error, no blank (the self-shadow failure class). `[LIVE E7]`
+- **Unresolved refs stay literal**: `${db_hostname}` to an absent service reaches the process verbatim — no error, no blank (the self-shadow failure class). `[LIVE E7]`; any unresolved `${NAME}` likewise `[LIVE 2026-10-07]`.
+
+---
+
+## 3b. Strict isolation (the vault model) — ZCP acts as if it were on
+
+A service's process reads exactly the entries of its zerops.yaml `run.envVariables`; a vault value (Shared, or the service's own) reaches it only through an entry referencing it. Zerops still injects unreferenced values today; ZCP's knowledge, `zerops_env` restarts and deploy preflight act as if it did not. Resolution of `${NAME}` inside an entry of service S `[LIVE 2026-10-07]`:
+
+| Reference | Resolves to |
+|---|---|
+| `R: ${SHARED}` | the Shared value — renames resolve, sensitive values too |
+| `R: ${OWN}` | S's own vault value (own beats Shared) |
+| `R2: ${R}-x` | another entry of S — chains resolve |
+| `${app_hostname}`, `${host_KEY}` | that service's value |
+| `KEY: ${KEY}` | the **literal** `${KEY}` — for a Shared key too — and every other entry of S referencing `KEY` gets the literal as well |
+| `${NAME}` nothing provides | the literal `${NAME}` |
+
+- **Build** `[LIVE 2026-10-07]`: in `build.envVariables`, `${SHARED}` resolves; S's **own** vault value `${OWN}` does NOT (literal) — the build runs in a separate container.
+- Consequence for authoring: an entry is named what the app reads and the vault value it references carries a different name (`APP_KEY: ${APP_KEY_SECRET}`, `DATABASE_URL: ${db_connectionString}`) until Zerops resolves same-name references.
+- ZCP: `ops.ServiceEnvScope` / `ops.EnvKeyReaders` implement the table on the deployed rows; `zerops_env` set/delete restart only the readers of the key; the deploy preflight fails a `${NAME}` nothing resolves (`<host>_env_unresolved`) and a same-name entry (`<host>_env_self_shadow`).
 
 ---
 
@@ -131,7 +160,7 @@ Prefixed aliases observed **under `envIsolation=none`** (eval-zcp's mode) `[LIVE
 | restart service | re-reads merged env.json at boot | yes | yes |
 | sibling change | `<host>_KEY` updates, ~8 s | No | new processes only |
 
-- Platform does NOT auto-restart on env set; ZCP's `zerops_env set` adds the restart. `[DOC-A][LIVE]`
+- Platform does NOT auto-restart on env set; ZCP's `zerops_env set` adds the restart — of the services whose deployed entries read the key (§3b). `[DOC-A][LIVE]` A running process keeps its boot env after a write; a restart applies it, and `stack.restart` keeps the container `[LIVE 2026-10-07]`.
 - **PHP-FPM caveat — reload does NOT re-read env/config; restart does** `[LIVE 05-28]`: for PHP runtimes, `zerops.yaml`-configured `PHP_INI_*` / `PHP_FPM_*` vars are applied by `zerops-zenv` rewriting the FPM config files on `reload`, but zenv does **not** send the FPM master `SIGUSR2` — so the running master keeps its old config; only a `restart` (or a manual `kill -USR2 <fpm-master-pid>`) re-reads them. `getenv()`-style env likewise stays at the PID1 boot environ until restart. Consequence: for PHP, prefer **restart over reload** when an env or `PHP_*` config change must take effect — which is why `zerops_env set` restarts rather than reloads.
 
 ---
@@ -152,13 +181,13 @@ The **single `GET service-stack/{id}/env` (slim)** endpoint that ZCP uses return
 ## 7. Secrets & the `sensitive` flag (2026-08 model)
 
 - **`sensitive` is an explicit, per-variable, REQUIRED write-side flag** on service userData (`POST service-stack/{id}/user-data` `[LIVE 08-21]`; `PUT user-data/{id}` per OpenAPI `RequestUserDataPut`). The platform migrated every pre-existing service secret (old type `SECRET`) to `type:USER, sensitive:false` — e.g. `VSCODE_PASSWORD` and the `ZCP_AGENT_OAUTH_*` flags read back `sensitive:false` after the change. `envSecrets` / `dotEnvSecrets` (import) and the GUI secret editor still create user-set `USER` records; which `sensitive` value a fresh import assigns is UNVERIFIED since the change.
-- **ZCP writes every service-scope SECRET var with `sensitive:true`** (`zerops_env set serviceHostname=…`, git-push-setup `GIT_TOKEN`, launch-production `ZCP_LAUNCH_TOKEN`) — exactly the pre-change behavior, when everything ZCP wrote there was a masked `SECRET`; project-scope writes stay `sensitive:false`. The `ZCP_AGENT_OAUTH_*` flags are the one deliberate exception: `zcp agent mark-oauth` writes them `sensitive:false` (matching the GUI's own writer), because the GUI's `/user-data/search` read path redacts sensitive content even for the org owner — a sensitive flag row would read back as NOT authorized in the GUI though the platform holds it `true`. `ops.MarkAgentOAuth` migrates a pre-existing sensitive row (delete + recreate non-sensitive) on the next call. Plain config belongs in `zerops.yaml run.envVariables` (§2 channel rule).
+- **ZCP writes a secret with `sensitive:true` on either scope**: `zerops_env set` takes an explicit `sensitive` input, else picks by key name (SECRET|TOKEN|KEY|PASSWORD|PASS|DSN|PRIVATE|CREDENTIAL → sensitive, else plain — `ops.DefaultSensitive`); git-push-setup `GIT_TOKEN` and launch-production `ZCP_LAUNCH_TOKEN` always write `sensitive:true`. The `ZCP_AGENT_OAUTH_*` flags are the one deliberate exception: `zcp agent mark-oauth` writes them `sensitive:false` (matching the GUI's own writer), because the GUI's `/user-data/search` read path redacts sensitive content even for the org owner — a sensitive flag row would read back as NOT authorized in the GUI though the platform holds it `true`. `ops.MarkAgentOAuth` migrates a pre-existing sensitive row (delete + recreate non-sensitive) on the next call. Plain config belongs in `zerops.yaml run.envVariables` (§2 channel rule).
 - Precedence "yaml basic/runtime overrides secret" is **VERIFIED** `[LIVE PENDING-1✓]`: the yaml-runtime var wins and the colliding secret never registers (see §2). Confirms `[DOC-A]` FEAT:317. (2026-08: the yaml-baked key is now visibly present on `/env` and rejects set/delete — §1.)
 - **In-container = PLAINTEXT**: `/etc/zerops-zembed/env.json` carried `SECRET` values unmasked — the running app needs the real value `[LIVE]` (pre-2026-08). For a `sensitive:true` record under the new model this is **VERIFIED** `[LIVE 08-22]`: a `zerops_env set` write (`sensitive:true`, no restart) was visible in a FRESH SSH session on the same service ~10 s later (`printf %s "$KEY"` → the plaintext value), and git-push-setup's step-6c fresh-session auth probe (credential helper reading the just-written `GIT_TOKEN`) passed on the first attempt — the delivery path is the env store → fresh-session env, independent of the flag.
 - **API read is PRIVILEGE-GATED** `[LIVE PENDING-3✓]`: on the SAME `GET /service-stack/{id}/env`, an admin/write token gets `content` **verbatim**; a **read-only token gets `content:"REDACTED"`**. Masking is keyed on `sensitive=true` (non-sensitive vars are verbatim for both), applies to `/env` AND the env-file projection, and is server-enforced — the GUI blur is an *additional* layer, not the only one. A low-privilege holder can enumerate that a secret EXISTS (key/type/sensitive/timestamps) but not its value. `GET /user-data/{id}/reveal` returns the decrypted value of a sensitive item and "requires sudo mode" (OpenAPI, `[LIVE 08-21]` spec read).
   - Admin-verbatim re-confirmed `[LIVE 08-21]`: `POST {key:ZCP_PROBE, content:probe, sensitive:true}` → `GET /env` with an owner token → `{key:"ZCP_PROBE", content:"probe", type:"USER", sensitive:true}` (earlier `[LIVE 05-28]` sample read `type:"SECRET"`). Read-only `REDACTED` half is from the earlier pass.
-- **`sensitive` is the only secret marker now** — there is no `SECRET` type any more; it is still caller-chosen, not authoritative about the key's nature (pre-change `[LIVE 05-14]`: `ZCP_API_KEY` → `Sensitive=false`; managed `secretAccessKey` → `Sensitive=true`). ZCP's value masking (`RedactEnvValue`) is key-based for credentials (ZCP-owned keys, managed-service credential fields) AND flag-based for everything else: a `sensitive:true` row is a person's write-only value and never reaches the agent at any presentation site (discover values, the set echo, the generate-dotenv preview diff) — masked `<redacted: sensitive>`, key annotated `isSensitive`. Internal value paths (ref resolution, shadow detection, the `.env` file render) read it raw. Consequence: every `zerops_env set serviceHostname=…` value (written `sensitive:true`) is write-only for the agent too.
-- **Project-level `sensitive=true` did NOT persist** pre-2026-08 (read back `sensitive:false, type:USER`) `[LIVE]`; UNVERIFIED since the change. ZCP keeps project-scope writes `sensitive:false`.
+- **`sensitive` is the only secret marker now** — there is no `SECRET` type any more; it is still caller-chosen, not authoritative about the key's nature (pre-change `[LIVE 05-14]`: `ZCP_API_KEY` → `Sensitive=false`; managed `secretAccessKey` → `Sensitive=true`). ZCP's value masking (`RedactEnvValue`) is key-based for credentials (ZCP-owned keys, managed-service credential fields) AND flag-based for everything else: a `sensitive:true` row is a person's write-only value and never reaches the agent at any presentation site (discover values, the set echo, the generate-dotenv preview diff) — masked `<redacted: sensitive>`, key annotated `isSensitive`. Internal value paths (ref resolution, shadow detection, the `.env` file render) read it raw. Consequence: every value `zerops_env set` writes sensitive is write-only for the agent too.
+- **Project-level `sensitive=true` persists** `[LIVE 2026-10-07]` (import `vault:` and `POST /project/{id}/env`); pre-2026-08 it did not (read back `sensitive:false, type:USER`) `[LIVE]`. ZCP writes project-scope secrets sensitive like service-scope ones.
 
 ---
 
@@ -196,7 +225,7 @@ An **observed sample** (~119 bare on ONE no-config alpine — not a guaranteed u
 
 ## 12. Glossary
 - **userData** — per-service env store (`ServiceStackEnv`/`UserData`); `SYSTEM` intrinsics + `USER` records (user-set, each with a caller-set `sensitive` flag) + since 2026-08 a read-only `USER` mirror of the yaml-baked `run.envVariables` (authoritative yaml-baked surface = app-version userDataList; user-set = slim `USER` minus those keys — §1).
-- **app-version userDataList** — `GetAppVersion(activeAppVersionId).GetAppVersionUserDataList`; the surface that returns **yaml-baked `run.envVariables`** (as templates) + `ZEROPS_YAML`. GUI "from master" source; ZCP reads it via `platform.Client.GetAppVersionUserData` / `ops.AppVersionEnvVars`.
+- **app-version userDataList** — `GetAppVersion(activeAppVersionId).GetAppVersionUserDataList`; the surface that returns **yaml-baked `run.envVariables`** (as templates; `ZEROPS_YAML` too until `[LIVE 2026-10-07]` showed it gone). GUI "from master" source; ZCP reads it via `platform.Client.GetAppVersionUserData` / `ops.AppVersionEnvVars`.
 - **zembed** — in-container daemon owning `/etc/zerops-zembed/env.json`, the flat merged effective env; updated in place on env change.
 - **three read surfaces** — slim `service-stack/{id}/env` (ZCP uses; since 2026-08 it ALSO carries the read-only `USER` mirror of yaml-baked vars) · embedded `userData[]` (missed yaml-baked pre-2026-08; UNVERIFIED since) · `app-version/{id}` userDataList (HAS yaml-baked — the authoritative yaml-baked surface).
 - **bare key vs alias** — `KEY` (winner) vs `PROJECT_KEY` / `<host>_KEY` (scoped copies).
@@ -211,6 +240,9 @@ default; launch bundle sets no `envIsolation`). Therefore **ZCP must always emit
 cross-service wiring as explicit `${host_var}` refs in `run.envVariables`** — never
 rely on `<host>_KEY` auto-injection (none-only). This single rule makes ZCP output
 correct on every project type. Most recipe corpus files already do this.
+The vault model extends the rule to every value (§3b): ZCP output references each
+Shared and own vault value the app reads in `run.envVariables`, never relying on
+unreferenced injection.
 
 **`none`-dependency — RESOLVED (2026-05-28):** ZCP has NO hard code dependency on
 `none` (all sibling/managed env reads go through the API, never container env —

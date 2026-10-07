@@ -49,11 +49,11 @@ func hasAPICode(err error, code string) bool {
 
 // credentialValueKeys are ZCP-owned credential env-var names whose VALUE must
 // be masked client-side whenever a response would echo it (zerops_discover
-// includeEnvValues=true). The platform does NOT mask these at project scope:
-// a PROJECT env's sensitive flag does not persist (spec-zerops-env-lifecycle.md
-// §7), so a read-only token reads GIT_TOKEN verbatim and any value dump would
-// leak it. Masked regardless of the owning service type. Keys-only listing
-// (includeValues=false) is unaffected.
+// includeEnvValues=true), whatever flag the row carries: a row written
+// before the flag persisted at project scope, or written plain by hand,
+// reads back verbatim (spec-zerops-env-lifecycle.md §7), and any value dump
+// would leak it. Masked regardless of the owning service type. Keys-only
+// listing (includeValues=false) is unaffected.
 var credentialValueKeys = map[string]bool{
 	GitTokenEnvKey:    true,
 	"ZCP_API_KEY":     true,
