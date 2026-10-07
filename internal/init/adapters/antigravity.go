@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -21,8 +22,16 @@ import (
 //     directory (~/.gemini/config/.migrated marker).
 //   - ~/.gemini/antigravity-cli/settings.json — CLI settings; specifically
 //     the trustedWorkspaces array so Antigravity skips the first-run
-//     workspace-trust prompt for /var/www.
+//     workspace-trust prompt for /var/www, and the Gemini API-key route
+//     (see ContainerInit).
 type Antigravity struct{}
+
+// antigravityAPIKeyModel is the model label seeded for the Gemini API-key
+// route. agy stores the `/model` choice as this display label, not the
+// model id, and silently falls back to its route default for a label it
+// does not know — so a stale label degrades to agy's own default rather
+// than breaking the session.
+const antigravityAPIKeyModel = "Gemini 3.8 Flash (High)"
 
 // NewAntigravity returns a zero-value Antigravity adapter. Stateless;
 // env knobs flow via Env.
@@ -71,6 +80,14 @@ func (Antigravity) Validate(env Env) ([]string, error) {
 // ~/.gemini/config/mcp_config.json and adds VSCodeWorkDir to
 // ~/.gemini/antigravity-cli/settings.json::trustedWorkspaces.
 // Merge-aware: pre-existing entries / other top-level fields survive.
+//
+// GEMINI_API_KEY alone does not switch agy off the Google sign-in: it
+// reads the key only when settings.json says modelProvider "gemini", and
+// otherwise runs on the signed-in account's quota. ZCP owns that field —
+// set while the env carries a key, deleted when it does not. On the key
+// route agy defaults to a Pro model that a free AI Studio key has no
+// quota for, so the Flash label is seeded unless the user already chose
+// a model.
 func (Antigravity) ContainerInit(env Env) error {
 	if env.Home == "" {
 		return fmt.Errorf("antigravity adapter: Env.Home is empty")
@@ -99,6 +116,14 @@ func (Antigravity) ContainerInit(env Env) error {
 	// shapes Antigravity has accepted for trustedWorkspaces (nil, []any,
 	// or a hand-set scalar path) into an idempotent array.
 	settings["trustedWorkspaces"] = AppendIfMissingString(settings["trustedWorkspaces"], vsDir)
+	if strings.TrimSpace(os.Getenv("GEMINI_API_KEY")) != "" {
+		settings["modelProvider"] = "gemini"
+		if !HasPath(settings, "model") {
+			settings["model"] = antigravityAPIKeyModel
+		}
+	} else {
+		delete(settings, "modelProvider")
+	}
 	if err := SaveJSONFile(settingsPath, settings); err != nil {
 		return fmt.Errorf("write %s: %w", settingsPath, err)
 	}

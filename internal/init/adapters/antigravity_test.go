@@ -2,6 +2,7 @@ package adapters_test
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -340,4 +341,80 @@ func loadAntigravitySettings(t *testing.T, home string) map[string]any {
 		t.Fatalf("load %s: %v", settingsPath, err)
 	}
 	return data
+}
+
+// TestAntigravity_ContainerInit_GeminiAPIKey pins the API-key route: agy
+// ignores GEMINI_API_KEY and keeps asking for a Google sign-in unless
+// settings.json carries modelProvider "gemini", and on that route it
+// defaults to a Pro model a free AI Studio key has no quota for.
+//
+// non-parallel: t.Setenv mutates the process environment.
+func TestAntigravity_ContainerInit_GeminiAPIKey(t *testing.T) {
+	tests := []struct {
+		name         string
+		key          string
+		seed         string
+		wantProvider any
+		wantModel    any
+	}{
+		{
+			name:         "key set, fresh home",
+			key:          "AIza-test-key",
+			wantProvider: "gemini",
+			wantModel:    "Gemini 3.8 Flash (High)",
+		},
+		{
+			name:         "key set, user picked a model",
+			key:          "AIza-test-key",
+			seed:         `{"model":"Gemini 3.1 Pro (High)"}`,
+			wantProvider: "gemini",
+			wantModel:    "Gemini 3.1 Pro (High)",
+		},
+		{
+			name:         "key removed, provider dropped, model kept",
+			seed:         `{"modelProvider":"gemini","model":"Gemini 3.8 Flash (High)"}`,
+			wantProvider: nil,
+			wantModel:    "Gemini 3.8 Flash (High)",
+		},
+		{
+			name:         "blank key counts as absent",
+			key:          "   ",
+			wantProvider: nil,
+			wantModel:    nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("GEMINI_API_KEY", tt.key)
+			home := t.TempDir()
+			if tt.seed != "" {
+				dir := filepath.Join(home, ".gemini", "antigravity-cli")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(tt.seed), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			env := newAntigravityEnv(t, home)
+
+			for range 2 {
+				if err := adapters.NewAntigravity().ContainerInit(env); err != nil {
+					t.Fatalf("ContainerInit: %v", err)
+				}
+			}
+
+			settings := loadAntigravitySettings(t, home)
+			if got := settings["modelProvider"]; got != tt.wantProvider {
+				t.Errorf("modelProvider = %v, want %v", got, tt.wantProvider)
+			}
+			if got := settings["model"]; got != tt.wantModel {
+				t.Errorf("model = %v, want %v", got, tt.wantModel)
+			}
+			trusted, _ := settings["trustedWorkspaces"].([]any)
+			if len(trusted) != 1 || trusted[0] != "/var/www" {
+				t.Errorf("trustedWorkspaces = %v, want [\"/var/www\"]", trusted)
+			}
+		})
+	}
 }
