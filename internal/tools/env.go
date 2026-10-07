@@ -31,6 +31,10 @@ type EnvInput struct {
 	SkipRestart     FlexBool `json:"skipRestart,omitempty"`
 	// Sensitive is optional: nil lets the set pick per key by name.
 	Sensitive *FlexBool `json:"sensitive,omitempty"`
+	// Key and Reason are request's: the name asked for and one sentence for
+	// the person. Never a value — the person types that into Mate.
+	Key    string `json:"key,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // envInputSchema is the explicit InputSchema for zerops_env. It
@@ -46,12 +50,20 @@ func envInputSchema() *jsonschema.Schema {
 	return objectSchema(map[string]*jsonschema.Schema{
 		"action": {
 			Type:        "string",
-			Enum:        []any{"get", "set", "delete", "generate-dotenv"},
-			Description: "get: return env var keys + ${host_var} refs for a service (serviceHostname) or the project (project=true) — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. generate-dotenv: reads a local zerops.yaml and writes a resolved .env (requires zerops.yaml in the working directory).",
+			Enum:        []any{"get", "set", "delete", "request", "generate-dotenv"},
+			Description: "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. request: ask the person for a value only they have (key, reason); it goes to the vault, never the chat. generate-dotenv: writes a resolved .env from a local zerops.yaml.",
 		},
 		"serviceHostname": {
 			Type:        "string",
-			Description: "Service to operate on; required for get/set/delete unless project=true. generate-dotenv: deprecated fallback for setup.",
+			Description: "Service to operate on; required for get/set/delete/request unless project=true. generate-dotenv: deprecated fallback for setup.",
+		},
+		"key": {
+			Type:        "string",
+			Description: "request: the env key asked for (name only).",
+		},
+		"reason": {
+			Type:        "string",
+			Description: "request: one sentence for the person — what it is for, where to find it. Never a value.",
 		},
 		"setup": {
 			Type:        "string",
@@ -59,13 +71,13 @@ func envInputSchema() *jsonschema.Schema {
 		},
 		"preview": flexBoolSchema("generate-dotenv: dry-run. Builds the plan and returns the diff vs current .env without writing. Use to inspect what would change before committing."),
 		"force":   flexBoolSchema("generate-dotenv: write even when the existing .env has keys no source produces (user edits that would be dropped). Confirm they are safe to drop, or move them to .env.local first."),
-		"project": flexBoolSchema("true: the project's Shared vault (project env) instead of a service's own. get/set/delete."),
+		"project": flexBoolSchema("true: the project's Shared vault (project env) instead of a service's own."),
 		"variables": {
 			Type:        "array",
 			Items:       &jsonschema.Schema{Type: "string"},
 			Description: "List of env vars. set: KEY=VALUE strings (literal values). delete: KEY names only. Ignored by get and generate-dotenv.",
 		},
-		"sensitive":   flexBoolSchema("set, either scope: true = sensitive (write-only, masked on every read), false = plain. Omitted: by name — SECRET|TOKEN|KEY|PASSWORD|PASS|DSN|PRIVATE|CREDENTIAL → sensitive, else plain."),
+		"sensitive":   flexBoolSchema("set/request: true = sensitive (write-only, masked on every read), false = plain. Omitted: by name — SECRET|TOKEN|KEY|PASSWORD|PASS|DSN|PRIVATE|CREDENTIAL → sensitive, else plain."),
 		"skipRestart": flexBoolSchema("set/delete: skip restarting the services that read the key (readers). Pass true only when you deploy right after."),
 	}, "action")
 }
@@ -199,7 +211,7 @@ type envChangeResult struct {
 func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostname string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_env",
-		Description: "Manage the vault: a service's own env vars (serviceHostname) or the project's Shared ones (project=true). Actions: get (keys), set (upsert), delete, generate-dotenv (local .env from local zerops.yaml). An app reads only what its run.envVariables references: `NAME: ${KEY}` (own, else Shared), `${host_KEY}` (another service's). set: sensitive per key, expands <@...>, 'stored' verifies. set/delete restart the key's readers unless skipRestart=true",
+		Description: "Manage the vault: a service's own (serviceHostname) or the Shared (project=true). Actions: get (keys), set (upsert), delete, request (a value only the person has; never ask in chat), generate-dotenv (local .env). An app reads only what its run.envVariables references: `NAME: ${KEY}` (own, else Shared), `${host_KEY}`. set: sensitive per key, expands <@...>, 'stored' verifies. set/delete restart the key's readers unless skipRestart=true",
 		InputSchema: envInputSchema(),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage environment variables",
@@ -291,6 +303,15 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			resp := envChangeResult{Process: delResult.Process, TimedOut: delTimedOut}
 			applyAutoRestart(ctx, client, projectID, input, selfHostname, input.Variables, true, &resp, onProgress)
 			return jsonResult(resp), nil, nil
+		case "request":
+			// A request writes nothing: Mate draws a field for the person,
+			// whose value goes straight to the vault — it never enters the
+			// conversation, this result, or any log.
+			req, err := ops.EnvRequest(ctx, client, projectID, input.ServiceHostname, input.Project.Bool(), input.Key, input.Sensitive.Ptr())
+			if err != nil {
+				return convertError(err), nil, nil
+			}
+			return jsonResult(envRequestAnswer(req)), nil, nil
 		case "generate-dotenv":
 			// Setup parameter takes precedence; serviceHostname falls
 			// through with a deprecation warning so existing callers
@@ -315,7 +336,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 		case "":
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter, "Action is required",
-				"Use get, set, delete, or generate-dotenv")), nil, nil
+				"Use get, set, delete, request, or generate-dotenv")), nil, nil
 		default:
 			// Invalid-action errors guided agents toward generate-dotenv in the
 			// past, which fails from arbitrary working directories (see LOG.txt
@@ -323,9 +344,36 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			// meant (get) and at zerops_discover for bulk reads.
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter, "Invalid action '"+input.Action+"'",
-				"Valid actions: get, set, delete, generate-dotenv. To read env vars for a service use get (or zerops_discover includeEnvs=true for all services at once). generate-dotenv is only for writing a local .env file from a local zerops.yaml.")), nil, nil
+				"Valid actions: get, set, delete, request, generate-dotenv. To read env vars for a service use get (or zerops_discover includeEnvs=true for all services at once). generate-dotenv is only for writing a local .env file from a local zerops.yaml.")), nil, nil
 		}
 	})
+}
+
+// envRequestResult is the answer to action=request: Requested when the
+// person was asked, AlreadySet when the key is in that vault already.
+type envRequestResult struct {
+	Requested   *ops.EnvRequestResult `json:"requested,omitempty"`
+	AlreadySet  *ops.EnvRequestResult `json:"alreadySet,omitempty"`
+	NextActions string                `json:"nextActions"`
+}
+
+func envRequestAnswer(req *ops.EnvRequestResult) envRequestResult {
+	if req.AlreadySet {
+		where := "the Shared vault"
+		if req.Scope == ops.EnvRequestScopeService {
+			where = req.ServiceHostname + "'s vault"
+		}
+		return envRequestResult{
+			AlreadySet: req,
+			NextActions: fmt.Sprintf("%s is already in %s; nothing was asked. Reference it by name (`NAME: ${%s}` in run.envVariables) — its value is never read.",
+				req.Key, where, req.Key),
+		}
+	}
+	return envRequestResult{
+		Requested: req,
+		NextActions: fmt.Sprintf("The person was asked for %s in Mate; it goes straight to the vault, never through the chat. You will hear in a zerops-update note when it is set. Do not ask for the value in the chat; continue with what does not need it, or end your turn.",
+			req.Key),
+	}
 }
 
 // applyAutoRestart restarts the services that read the changed keys so the

@@ -48,9 +48,15 @@ literal `${APP_KEY}`, and so does every other line referencing
 
 Store a secret with `zerops_env action="set" … sensitive=true` (a
 secret-shaped key name defaults to sensitive). Reads return it masked.
-The person manages values in Mate's Vault panel or the Zerops dashboard
-— never ask them to paste a secret into the chat; ask them to add it
-there under the name you reference.
+
+A value only the person has (an API key, a password, a webhook secret)
+is never asked for in the chat: call `zerops_env action="request"
+key="STRIPE_SECRET_KEY" project=true reason="…"` — one sentence on what
+it is for and where to find it. The person types it into Mate, which
+writes it straight to the vault; a note in their next message says it
+is set. Until then continue with what does not need it, or end the
+turn. A key already in that vault is answered `alreadySet` — reference
+it by name.
 
 A set restarts the services whose deployed lines read the key
 (`readers`); nothing reads it → add the line, then deploy.
