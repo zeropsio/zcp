@@ -41,7 +41,7 @@ between environments).
 ```
 INPUT CHANNELS (sources of env state)            OUTPUT (sink)
 ────────────────────────────────────             ────────────
- ┌─ project.envVariables                ┐
+ ┌─ project vault                       ┐
  │  Zerops project state, cross-service │
  │  Persistent across deploys           │
  │  Writers: import.yml, zerops_env     │
@@ -64,7 +64,7 @@ every atom must know):
 
 | Use case | Channel |
 |---|---|
-| Same value local + deployed (secrets, API keys, third-party tokens) | **project.envVariables** |
+| Same value local + deployed (secrets, API keys, third-party tokens) | **project vault** |
 | Derived from managed Zerops service (`${db_*}`, `${redis_*}`) | **zerops.yaml run.envVariables** with `${svc_var}` ref |
 | Deployed-only (production feature flag, NODE_ENV=production) | **zerops.yaml run.envVariables** hardcoded |
 | Local-only (APP_ENV=local, debug flags, mock URLs, ZCP-managed-key local override) | **`.env.local`** |
@@ -97,7 +97,7 @@ diff, shell export, future container-review surface).
 
 type EnvSource int
 const (
-    SourceProject            EnvSource = iota // project.envVariables
+    SourceProject            EnvSource = iota // the project vault
     SourceYAMLSetup                            // zerops.yaml run.envVariables, resolved
     SourceLocalOverlay                         // .env.local
     SourceBrownfieldImport                     // brownfield-adopt classification (Theme 3)
@@ -193,7 +193,7 @@ Within `BuildEnvPlan`, sources merge with explicit precedence:
 
 ```
 base layers (lowest to highest):
-  1. project.envVariables
+  1. the project vault
   2. zerops.yaml run.envVariables (selected setup, ${svc_var} resolved)
 overlay (highest, always wins):
   3. .env.local (when present)
@@ -597,8 +597,8 @@ classic-greenfield routes under local-mode bootstrap).
 | Pattern | Class | Channel |
 |---|---|---|
 | URL-scheme: `postgres://`, `redis://`, `mongodb://`, `mysql://`, `amqp://`, `nats://`, `s3://`; hostnames `localhost`, `db`, `redis`, `cache`, common Docker Compose service names; standard ports | managed-service candidate | zerops.yaml `${svc_*}` ref + suggest service in import.yml |
-| `APP_KEY`, `APP_SECRET`, `JWT_*`, `*_KEY`, `*_TOKEN`, `SECRET_*`, `SESSION_*`, `COOKIE_*`, `ENCRYPTION_*` | shared app secret | project.envVariables; preserve existing value (rotation breaks sessions) |
-| `STRIPE_*`, `OPENAI_*`, `ANTHROPIC_*`, `MAILGUN_*`, `SENDGRID_*`, `GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY` | external secret | project.envVariables |
+| `APP_KEY`, `APP_SECRET`, `JWT_*`, `*_KEY`, `*_TOKEN`, `SECRET_*`, `SESSION_*`, `COOKIE_*`, `ENCRYPTION_*` | shared app secret | project vault (sensitive); preserve existing value (rotation breaks sessions) |
+| `STRIPE_*`, `OPENAI_*`, `ANTHROPIC_*`, `MAILGUN_*`, `SENDGRID_*`, `GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY` | external secret | project vault (sensitive) |
 | `NODE_ENV`, `APP_ENV`, `RAILS_ENV`, `ASPNETCORE_ENVIRONMENT`, `GO_ENV`, `DEBUG`, `APP_DEBUG` | mode flag | split: zerops.yaml=production, `.env.local`=local |
 | `LOG_LEVEL=debug`, `MOCK_*`, `LOCAL_*`, `XDEBUG_*` | local-only | `.env.local` |
 | `PORT`, `*_TIMEOUT`, `*_RETRIES`, public URLs | plain config | zerops.yaml + optionally `.env.local` |

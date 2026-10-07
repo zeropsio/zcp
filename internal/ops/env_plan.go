@@ -18,7 +18,7 @@ import (
 type EnvSource int
 
 const (
-	SourceProject          EnvSource = iota // Zerops project envVariables
+	SourceProject          EnvSource = iota // the Zerops project vault
 	SourceYAMLSetup                         // zerops.yaml run.envVariables (refs resolved)
 	SourceLocalOverlay                      // .env.local (user-authored)
 	SourceBrownfieldImport                  // reserved for Theme 3 brownfield-adopt

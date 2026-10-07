@@ -2652,9 +2652,9 @@ project's own that does not deploy through the broker are the project's, never r
 person who reads and edits it in the recipe repository: two-space YAML, each service opening on its
 `hostname` and `type`, a header naming the tier, the Mate it was written from and that it is the
 group's to edit. The project block carries the recipe's name (the AI Agent tier keeps the Mate's
-own), the live `corePackage`, and the project's user-set variables —
-config under `envVariables`, secrets under `envSecrets` — and each runtime its own variables under
-`envSecrets`; the platform's own and the control plane's (zcp's key and agents, the git token — on
+own), the live `corePackage`, and the project's user-set variables in its `vault:` — and each
+runtime its own in its `vault:`; a secret-shaped name and a generated secret written
+`{value, sensitive: true}`, an admin's sign-in password readable; the platform's own and the control plane's (zcp's key and agents, the git token — on
 a dev half, the Mate's HQ credential — the launch token and a Gitea token) are never written. The composer decides each variable
 unattended and fails closed: a value of `${name}` references alone is wiring, kept as written, and
 any other value is kept only when no signal marks it secret — the platform's flag, a masked read, a

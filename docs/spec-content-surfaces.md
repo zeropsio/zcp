@@ -137,7 +137,7 @@ Cross-tier shifts surface implicitly through the contrast between adjacent tier 
 - Cross-codebase contract explanations (→ workerdev README or IG).
 - General Zerops platform facts (→ `zerops_knowledge` guides; cite don't duplicate).
 - Authoring-process language ("recipe author", "during scaffold", "we chose"). Comments speak about the porter's deployed runtime, never about the agent that wrote the yaml.
-- Fabricated yaml field names. Every field-shaped token in a comment must exist as a key path in the yaml below; `project_env_vars` (snake_case) is wrong when the schema uses `project.envVariables` (camelCase, nested).
+- Fabricated yaml field names. Every field-shaped token in a comment must exist as a key path in the yaml below; `project_env_vars` (snake_case) is wrong when the yaml's key is `project.vault`.
 
 **Length**: ≤ 40 indented comment lines per tier; 3–5 lines per service block, max 8.
 
