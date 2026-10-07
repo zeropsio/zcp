@@ -47,15 +47,16 @@ const autoSecretPreprocessor = "<@generateRandomString(<32>)>"
 // same literal "REPLACE_ME" surfaces verbatim to the operator.
 const ExternalSecretPlaceholder = "REPLACE_ME"
 
-// composeProjectEnvVariables applies the classification buckets to the
-// project envVariables snapshot. Returns the rendered map keyed by env
-// name, plus per-env warnings for buckets that need explicit user
-// review.
-func composeProjectEnvVariables(
+// composeProjectVault applies the classification buckets to the project's
+// variables snapshot. Returns the project's `vault:` block keyed by env name
+// — each value sensitive per newVaultValue, a generated value or a
+// placeholder counting as a secret — plus per-env warnings for buckets that
+// need explicit user review.
+func composeProjectVault(
 	envs []ProjectEnvVar,
 	classifications map[string]topology.SecretClassification,
-) (map[string]string, []string) {
-	out := map[string]string{}
+) (map[string]vaultValue, []string) {
+	out := map[string]vaultValue{}
 	var warnings []string
 
 	for _, env := range envs {
@@ -63,7 +64,7 @@ func composeProjectEnvVariables(
 		// A sensitive value is a person's write-only secret: no bucket that
 		// would carry the value verbatim gets it — the placeholder does.
 		if env.Sensitive && env.Value != "" && emitsValueVerbatim(bucket) {
-			out[env.Key] = ExternalSecretPlaceholder
+			out[env.Key] = newVaultValue(env.Key, ExternalSecretPlaceholder, true)
 			warnings = append(warnings, fmt.Sprintf(
 				"env %q: sensitive value — set to placeholder %q in target yaml; the person sets the real value in the new project's vault before the runtime depends on it",
 				env.Key, ExternalSecretPlaceholder))
@@ -75,14 +76,14 @@ func composeProjectEnvVariables(
 			// Exclude: stale env the user chose to drop — emit nothing.
 			continue
 		case topology.SecretClassAutoSecret:
-			out[env.Key] = autoSecretPreprocessor
+			out[env.Key] = newVaultValue(env.Key, autoSecretPreprocessor, true)
 		case topology.SecretClassExternalSecret:
 			if env.Value == "" {
-				out[env.Key] = ""
+				out[env.Key] = newVaultValue(env.Key, "", true)
 				warnings = append(warnings, fmt.Sprintf(
 					"env %q: empty external secret — review before publish (plan §3.4 M4)", env.Key))
 			} else {
-				out[env.Key] = ExternalSecretPlaceholder
+				out[env.Key] = newVaultValue(env.Key, ExternalSecretPlaceholder, true)
 				warnings = append(warnings, fmt.Sprintf(
 					"env %q: external-secret bucket — value set to placeholder %q in target yaml; replace in Zerops dashboard (or via `zerops_env action=set`) before the runtime depends on it",
 					env.Key, ExternalSecretPlaceholder))
@@ -93,13 +94,13 @@ func composeProjectEnvVariables(
 				}
 			}
 		case topology.SecretClassPlainConfig:
-			out[env.Key] = env.Value
+			out[env.Key] = newVaultValue(env.Key, env.Value, false)
 		case topology.SecretClassUnset:
-			out[env.Key] = env.Value
+			out[env.Key] = newVaultValue(env.Key, env.Value, false)
 			warnings = append(warnings, fmt.Sprintf(
 				"env %q: not classified — emitted as plain-config; classify before publish (plan §3.4)", env.Key))
 		default:
-			out[env.Key] = env.Value
+			out[env.Key] = newVaultValue(env.Key, env.Value, false)
 			warnings = append(warnings, fmt.Sprintf(
 				"env %q: unknown classification %q — emitted as plain-config", env.Key, bucket))
 		}
@@ -108,9 +109,9 @@ func composeProjectEnvVariables(
 	return out, warnings
 }
 
-// composeServiceEnvSecrets renders a runtime's per-service user-set env
+// composeServiceVault renders a runtime's per-service user-set env
 // layer (the slim service /env USER layer minus the yaml-baked mirror)
-// into the `envSecrets` map for the runtime's import.yaml entry, applying
+// into the `vault:` block of the runtime's import.yaml entry, applying
 // the same classification buckets as project envs — with one critical
 // difference: the UNSET / unknown default is SECRET-SAFE. These entries
 // are user-set service data (e.g. an API key set via `zerops_env set
@@ -119,11 +120,11 @@ func composeProjectEnvVariables(
 // to the REPLACE_ME placeholder (never the source value). The
 // classify-prompt surfaces these keys so the agent can reclassify (e.g.
 // plain-config for non-secret config) before publish (GAP0-1/GAP0-2).
-func composeServiceEnvSecrets(
+func composeServiceVault(
 	envs []ProjectEnvVar,
 	classifications map[string]topology.SecretClassification,
-) (map[string]string, []string) {
-	out := map[string]string{}
+) (map[string]vaultValue, []string) {
+	out := map[string]vaultValue{}
 	var warnings []string
 
 	for _, env := range envs {
@@ -133,24 +134,24 @@ func composeServiceEnvSecrets(
 			// ref; exclude is a stale env the user chose to drop.
 			continue
 		case topology.SecretClassAutoSecret:
-			out[env.Key] = autoSecretPreprocessor
+			out[env.Key] = newVaultValue(env.Key, autoSecretPreprocessor, true)
 		case topology.SecretClassPlainConfig:
-			out[env.Key] = env.Value
+			out[env.Key] = newVaultValue(env.Key, env.Value, false)
 		case topology.SecretClassExternalSecret:
-			out[env.Key] = ExternalSecretPlaceholder
+			out[env.Key] = newVaultValue(env.Key, ExternalSecretPlaceholder, true)
 			warnings = append(warnings, fmt.Sprintf(
-				"service env %q: external-secret — emitted as placeholder %q in envSecrets; set the real value in the target (Zerops dashboard or `zerops_env action=set serviceHostname=…`) before the runtime depends on it",
+				"service env %q: external-secret — emitted as placeholder %q in its vault; set the real value in the target (Zerops dashboard or `zerops_env action=set serviceHostname=…`) before the runtime depends on it",
 				env.Key, ExternalSecretPlaceholder))
 		case topology.SecretClassUnset:
 			// SECRET-safe: an unclassified user-set service env NEVER
 			// leaks its source value — it collapses to the placeholder.
-			out[env.Key] = ExternalSecretPlaceholder
+			out[env.Key] = newVaultValue(env.Key, ExternalSecretPlaceholder, true)
 			warnings = append(warnings, fmt.Sprintf(
 				"service env %q: user-set but not classified — emitted as placeholder %q (secret-safe default); classify it (plain-config if it is non-secret config) before publish",
 				env.Key, ExternalSecretPlaceholder))
 		default:
 			// Unknown future bucket: stay secret-safe.
-			out[env.Key] = ExternalSecretPlaceholder
+			out[env.Key] = newVaultValue(env.Key, ExternalSecretPlaceholder, true)
 			warnings = append(warnings, fmt.Sprintf(
 				"service env %q: unknown classification %q — emitted as placeholder %q (secret-safe)",
 				env.Key, classifications[env.Key], ExternalSecretPlaceholder))
@@ -160,13 +161,13 @@ func composeServiceEnvSecrets(
 }
 
 // addPreprocessorHeader prepends `#zeropsPreprocessor=on\n` to body when
-// any rendered env value (across the given maps — project envVariables
-// and/or service envSecrets) carries a `<@...>` directive. Header MUST be
-// line 1 or the platform preprocessor skips expansion on import.
-func addPreprocessorHeader(body string, envMaps ...map[string]string) string {
-	for _, m := range envMaps {
+// any rendered vault value (across the given blocks — the project's and/or a
+// service's) carries a `<@...>` directive. Header MUST be line 1 or the
+// platform preprocessor skips expansion on import.
+func addPreprocessorHeader(body string, vaults ...map[string]vaultValue) string {
+	for _, m := range vaults {
 		for _, v := range m {
-			if strings.Contains(v, "<@") && strings.Contains(v, ")>") {
+			if usesPreprocessorDirective(v.value) {
 				return preprocessorHeader + body
 			}
 		}

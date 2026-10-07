@@ -134,7 +134,7 @@ func composeImportYAML(
 	inputs BundleInputs,
 	classifications map[string]topology.SecretClassification,
 ) (string, []string, error) {
-	projectEnvs, warnings := composeProjectEnvVariables(inputs.ProjectEnvs, classifications)
+	projectVault, warnings := composeProjectVault(inputs.ProjectEnvs, classifications)
 
 	zeropsRefs := extractZeropsYAMLRunEnvRefs(inputs.ZeropsYAMLBody)
 	warnings = append(warnings, detectDroppedEnvReferences(inputs.ProjectEnvs, classifications, zeropsRefs)...)
@@ -159,15 +159,15 @@ func composeImportYAML(
 		warnings = append(warnings, w)
 	}
 	// GAP0-1: carry the runtime's per-service user-set env (the slim /env
-	// USER layer minus the yaml-baked mirror) as envSecrets so a key set
+	// USER layer minus the yaml-baked mirror) in its vault so a key set
 	// via `zerops_env set serviceHostname=X` survives re-import
 	// (buildFromGit does not rebuild it — it is not in zerops.yaml).
 	// Secret-safe: unclassified entries emit REPLACE_ME, never the
 	// verbatim value.
-	svcSecrets, svcWarnings := composeServiceEnvSecrets(inputs.ServiceEnvs, classifications)
+	svcVault, svcWarnings := composeServiceVault(inputs.ServiceEnvs, classifications)
 	warnings = append(warnings, svcWarnings...)
-	if len(svcSecrets) > 0 {
-		runtimeEntry["envSecrets"] = svcSecrets
+	if len(svcVault) > 0 {
+		runtimeEntry["vault"] = svcVault
 	}
 
 	services := make([]any, 0, 1+len(inputs.ManagedServices))
@@ -180,8 +180,8 @@ func composeImportYAML(
 	project := map[string]any{
 		"name": inputs.ProjectName,
 	}
-	if len(projectEnvs) > 0 {
-		project["envVariables"] = projectEnvs
+	if len(projectVault) > 0 {
+		project["vault"] = projectVault
 	}
 
 	doc := map[string]any{
@@ -194,7 +194,7 @@ func composeImportYAML(
 		return "", nil, fmt.Errorf("marshal: %w", err)
 	}
 	body := string(out)
-	body = addPreprocessorHeader(body, projectEnvs, svcSecrets)
+	body = addPreprocessorHeader(body, projectVault, svcVault)
 
 	return body, warnings, nil
 }

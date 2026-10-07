@@ -98,7 +98,7 @@ func TestImportYAML_SplitProjectAndService_CarriesRunToken(t *testing.T) {
 			if string(gotService) != string(wantService) {
 				t.Errorf("ServiceImportYAML(%s) mismatch\n--- got ---\n%s\n--- want ---\n%s", tc.name, gotService, wantService)
 			}
-			if !strings.Contains(string(gotService), `ZCP_API_KEY: "run-token-value"`) {
+			if !strings.Contains(string(gotService), `ZCP_API_KEY: {value: "run-token-value", sensitive: true}`) {
 				t.Errorf("ServiceImportYAML(%s) must carry the minted RunToken as ZCP_API_KEY:\n%s", tc.name, gotService)
 			}
 		})

@@ -470,6 +470,42 @@ func TestBootstrapGuide_ProvisionEnvPresteps_ExecutableKV(t *testing.T) {
 	}
 }
 
+// TestBootstrapGuide_ProvisionEnvPresteps_ReadTheProjectVault — a recipe's
+// `project.vault` renders as the same executable pre-steps, each value in
+// either form the schema takes, and a value's own sensitive flag goes with it
+// (a value without one gets the name rule from zerops_env).
+func TestBootstrapGuide_ProvisionEnvPresteps_ReadTheProjectVault(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Route = BootstrapRouteRecipe
+	bs.RecipeMatch = &RecipeMatch{
+		Slug:       "laravel-minimal",
+		Confidence: 0.97,
+		Mode:       topology.PlanModeStandard,
+		ImportYAML: "project:\n  name: laravel-minimal-agent\n  vault:\n    APP_KEY: {value: \"<@generateRandomString(<32>)>\", sensitive: true}\n    ADMIN_PASSWORD: {value: \"<@generateRandomString(<16>)>\", sensitive: false}\n    APP_NAME: Laravel\nservices:\n  - hostname: appdev\n    type: php-nginx@8.4\n",
+	}
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4"}},
+	}}
+
+	guide := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
+
+	for _, want := range []string{
+		`key="APP_KEY" value="<@generateRandomString(<32>)>" sensitive=true`,
+		`key="ADMIN_PASSWORD" value="<@generateRandomString(<16>)>" sensitive=false`,
+		"key=\"APP_NAME\" value=\"Laravel\"\n",
+	} {
+		if !strings.Contains(guide, want) {
+			t.Errorf("provision guide should carry %s, got:\n%s", want, guide)
+		}
+	}
+	for _, block := range fencedBlocks(guide) {
+		if strings.Contains(block, "vault:") && strings.Contains(block, "APP_KEY") {
+			t.Errorf("the project vault must leave the services-only YAML, got:\n%s", block)
+		}
+	}
+}
+
 // fencedBlocks extracts the content of every ``` ... ``` fenced block in s,
 // in order. Used to assert on rendered code/YAML blocks specifically,
 // distinct from inline single-backtick spans in surrounding prose.

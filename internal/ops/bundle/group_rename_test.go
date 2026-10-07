@@ -76,10 +76,10 @@ func TestBuildGroupRecipe_GroupEnvironmentsNameTheirOwnRuntimes(t *testing.T) {
 			t.Parallel()
 			body := tierBody(t, layout.Tiers, tt.tier)
 			project := mappingValue(tierMapping(t, body), "project")
-			if got := scalarMap(mappingValue(project, "envVariables")); !maps.Equal(got, tt.project) {
-				t.Errorf("envVariables = %v, want %v", got, tt.project)
+			if got := scalarMap(mappingValue(project, "vault")); !maps.Equal(got, tt.project) {
+				t.Errorf("vault = %v, want %v", got, tt.project)
 			}
-			secrets := scalarMap(mappingValue(serviceNode(t, body, tt.host), "envSecrets"))
+			secrets := scalarMap(mappingValue(serviceNode(t, body, tt.host), "vault"))
 			if got := secrets["SELF_URL"]; got != tt.selfURL {
 				t.Errorf("%s SELF_URL = %q, want %q", tt.host, got, tt.selfURL)
 			}

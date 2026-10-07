@@ -29,7 +29,7 @@ import (
 //     runtime whose plan intent is `none` (§8 O3 PA-6), keyed by the
 //     recipe's ORIGINAL hostname (checked before any rename above).
 //
-// Everything else (buildFromGit, type, envSecrets, autoscaling, priority, …) is
+// Everything else (buildFromGit, type, vault, autoscaling, priority, …) is
 // preserved verbatim. Empty overrides therefore yield a faithful re-marshal of
 // the recipe — EVERY runtime (workers, second-repo pairs, cross-type stages) is
 // kept, which the deleted slot-matcher could not guarantee.

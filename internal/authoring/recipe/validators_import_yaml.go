@@ -15,7 +15,7 @@ import (
 //
 //  1. **Fabricated yaml field names.** Tier import.yaml preamble
 //     comments referenced `project_env_vars` (snake_case). The actual
-//     schema field is `project.envVariables` (camelCase, nested). A
+//     schema field is `project.vault` (nested). A
 //     porter searching the yaml for `project_env_vars` finds nothing —
 //     the fabrication is structurally invisible (looks like a normal
 //     field name but doesn't exist). Detection: parse the yaml AST to
@@ -60,7 +60,7 @@ var envYAMLAudienceLeakPhrases = []string{
 //   - underscore-separated lowercase: `project_env_vars`,
 //     `vertical_autoscaling`, `min_free_ram_gb`. The shape signals "I
 //     thought this was a yaml field" but yaml uses camelCase.
-//   - dot-separated path: `project.envVariables`, `services.api.mode`.
+//   - dot-separated path: `project.vault`, `services.api.mode`.
 //     The shape names a real key path; cross-check it against the AST.
 //
 // Tokens must contain only `[a-z0-9_.]` (no spaces, no uppercase) and
@@ -146,8 +146,8 @@ func scanFabricatedYAMLFieldNames(path, body string, knownPaths map[string]bool)
 			if knownPaths[tok] {
 				continue
 			}
-			// Suffix-match: a comment naming `envVariables` is fine if
-			// the yaml has `project.envVariables` somewhere.
+			// Suffix-match: a comment naming `vault` is fine if
+			// the yaml has `project.vault` somewhere.
 			if anyPathSuffixMatches(tok, knownPaths) {
 				continue
 			}
@@ -177,7 +177,7 @@ func scanFabricatedYAMLFieldNames(path, body string, knownPaths map[string]bool)
 			vs = append(vs, violation("env-yaml-fabricated-field-name",
 				fmt.Sprintf("%s:%d", path, i+1),
 				fmt.Sprintf(
-					"comment names yaml field %q but no such path exists in the yaml below. If you reference a yaml field in a comment, that path must exist as a key in the yaml AST. Common cause: snake_case (`project_env_vars`) when the schema uses camelCase (`project.envVariables`).",
+					"comment names yaml field %q but no such path exists in the yaml below. If you reference a yaml field in a comment, that path must exist as a key in the yaml AST. Common cause: snake_case (`project_env_vars`) when the yaml's key is `project.vault`.",
 					tok,
 				)))
 		}
@@ -256,9 +256,9 @@ func tokenHasFileExtension(tok string) bool {
 }
 
 // collectYAMLPaths walks a parsed yaml.Node and returns a set of every
-// reachable key path in dot-notation form (`project.envVariables`,
+// reachable key path in dot-notation form (`project.vault`,
 // `services.api.mode`) plus every leaf key on its own
-// (`envVariables`, `mode`) so a comment can reference either form.
+// (`vault`, `mode`) so a comment can reference either form.
 func collectYAMLPaths(n *yaml.Node) map[string]bool {
 	out := map[string]bool{}
 	walkYAMLNode(n, "", out)

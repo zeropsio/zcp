@@ -412,7 +412,7 @@ func TestGroupRecipe_ProposesTheLiveProject(t *testing.T) {
 	for _, want := range []string{
 		"name: " + labApp + " stage",
 		"API_URL: https://app-${zeropsSubdomainHost}-3000.prg1.zerops.app",
-		"JWT_SECRET: <@generateRandomString(<25>)>",
+		"JWT_SECRET: {value: <@generateRandomString(<25>)>, sensitive: true}",
 		"hostname: mailpit",
 		"objectStoragePolicy: public-read",
 		"corePackage: SERIOUS",

@@ -74,8 +74,11 @@ func TestYAMLEmitter_Tier0_Dev(t *testing.T) {
 		t.Errorf("tier 0: missing preprocessor directive at BOF; got first line %q",
 			firstLine(got))
 	}
-	// Secret field emitted at project level.
-	mustContain(t, got, "APP_SECRET: <@generateRandomString(<32>)>")
+	// Secret field emitted in the project vault, sensitive; never the
+	// deprecated project.envVariables.
+	mustContain(t, got, "  vault:\n")
+	mustNotContain(t, got, "envVariables:")
+	mustContain(t, got, "APP_SECRET: {value: <@generateRandomString(<32>)>, sensitive: true}")
 	// Per-tier project var emitted.
 	mustContain(t, got, "DEV_API_URL: ${api_zeropsSubdomainHost}")
 	// Dev services emitted for each runtime codebase (worker always gets its own).
@@ -589,7 +592,7 @@ func firstLine(s string) string {
 
 // TestEmitDeliverableYAML_DeclaresURLConstantsInProjectEnvVars — run-22
 // R3-RC-3 part B. The emitter writes Plan.ProjectEnvVars[envKey(tier)]
-// into the project.envVariables block. Pre-fix this contract was already
+// into the project vault. Pre-fix this contract was already
 // honored end-to-end; the regression class targeted by R3 was the agent
 // not populating ProjectEnvVars. Pin the existing emit so future
 // refactors don't drop it.
@@ -668,7 +671,7 @@ func TestEmitDeliverableYAML_PreservesAppSecretAlongsideURLConstants(t *testing.
 	if err != nil {
 		t.Fatalf("EmitDeliverableYAML: %v", err)
 	}
-	mustContain(t, got, "APP_SECRET: <@generateRandomString(<32>)>")
+	mustContain(t, got, "APP_SECRET: {value: <@generateRandomString(<32>)>, sensitive: true}")
 	mustContain(t, got, "API_URL: https://api-${zeropsSubdomainHost}-3000.prg1.zerops.app")
 }
 
@@ -788,4 +791,25 @@ func TestEmitDeliverableYAML_DevPairTierEmpty_NoSeed(t *testing.T) {
 		t.Fatalf("EmitDeliverableYAML: %v", err)
 	}
 	mustNotContain(t, got, "API_URL: https://apistage-")
+}
+
+// TestEmitDeliverableYAML_SecretShapedProjectValueIsSensitive — a project
+// value whose name reads as a secret is written `{value, sensitive: true}`
+// (the name rule), quoted where YAML's flow form needs it; a public key
+// stays a plain item.
+func TestEmitDeliverableYAML_SecretShapedProjectValueIsSensitive(t *testing.T) {
+	t.Parallel()
+	plan := syntheticShowcasePlan()
+	plan.ProjectEnvVars = map[string]map[string]string{
+		"0": {
+			"SEARCH_API_KEY":         "a,b",
+			"STRIPE_PUBLISHABLE_KEY": "pk_test_123",
+		},
+	}
+	got, err := EmitDeliverableYAML(plan, 0)
+	if err != nil {
+		t.Fatalf("EmitDeliverableYAML: %v", err)
+	}
+	mustContain(t, got, `SEARCH_API_KEY: {value: "a,b", sensitive: true}`)
+	mustContain(t, got, "STRIPE_PUBLISHABLE_KEY: pk_test_123\n")
 }

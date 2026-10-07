@@ -165,7 +165,7 @@ func detectDroppedEnvReferences(
 		case topology.SecretClassInfrastructure:
 			warns = append(warns,
 				"env "+quoteEnvName(env.Key)+
-					": classified Infrastructure (drops from project.envVariables) but zerops.yaml's run.envVariables references ${"+env.Key+"} — re-import will fail to resolve. "+
+					": classified Infrastructure (drops from the project vault) but zerops.yaml's run.envVariables references ${"+env.Key+"} — re-import will fail to resolve. "+
 					"Reclassify as PlainConfig or rewrite zerops.yaml to use managed-service refs (${db_*}/${redis_*}) directly. (plan §3.4 M2)",
 			)
 		case topology.SecretClassExclude:
@@ -190,13 +190,13 @@ func quoteEnvName(name string) string {
 // plus refs embedded in kept project env VALUES. Project envs auto-inject and
 // their refs resolve regardless of isolation (spec §3), so a managed dep wired
 // through a project env (DB_URL=${db_hostname}) is reachable too.
-func unionEnvRefs(zeropsRefs map[string]bool, projectEnvs map[string]string) map[string]bool {
+func unionEnvRefs(zeropsRefs map[string]bool, projectVault map[string]vaultValue) map[string]bool {
 	out := make(map[string]bool, len(zeropsRefs))
 	for r := range zeropsRefs {
 		out[r] = true
 	}
-	for _, v := range projectEnvs {
-		for _, name := range parseDollarBraceRefs(v) {
+	for _, v := range projectVault {
+		for _, name := range parseDollarBraceRefs(v.value) {
 			out[name] = true
 		}
 	}

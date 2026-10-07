@@ -340,8 +340,9 @@ func formatEnvVarsForGuide(envVars map[string][]string) string {
 //
 // At provision the fenced YAML is SERVICES-ONLY (RCO-6): any `project:` key
 // is stripped before rendering, so the "services: section ONLY" instruction
-// and the YAML beneath it always agree. `project.envVariables` are not
-// dropped silently along with the rest of `project:` — they're extracted by
+// and the YAML beneath it always agree. `project.vault` (and the deprecated
+// `project.envVariables`) are not dropped silently along with the rest of
+// `project:` — they're extracted by
 // splitRecipeProjectBlock and rendered as executable `zerops_env` pre-steps
 // (key AND value) ahead of the import instruction, so a recipe-generated
 // secret (e.g. Laravel's APP_KEY) is never lost.
@@ -374,10 +375,14 @@ func formatRecipeImportYAMLForGuide(match *RecipeMatch, step string) string {
 
 			sb.WriteString("Provision the recipe's services from the YAML below (already rewritten with any hostname/resolution choices from your plan):\n\n")
 			if len(envVars) > 0 {
-				sb.WriteString("1. **Project-level env vars.** Set these BEFORE `zerops_import` — extracted from the recipe's `project.envVariables` as executable pre-steps so a generated secret (e.g. Laravel's `APP_KEY`) is never lost:\n\n")
+				sb.WriteString("1. **Project-level env vars.** Set these BEFORE `zerops_import` — extracted from the recipe's project vault as executable pre-steps so a generated secret (e.g. Laravel's `APP_KEY`) is never lost:\n\n")
 				sb.WriteString("```\n")
 				for _, ev := range envVars {
-					fmt.Fprintf(&sb, "zerops_env action=\"set\" scope=\"project\" key=%q value=%q\n", ev.Key, ev.Value)
+					fmt.Fprintf(&sb, "zerops_env action=\"set\" scope=\"project\" key=%q value=%q", ev.Key, ev.Value)
+					if ev.Sensitive != nil {
+						fmt.Fprintf(&sb, " sensitive=%t", *ev.Sensitive)
+					}
+					sb.WriteString("\n")
 				}
 				sb.WriteString("```\n\n")
 				sb.WriteString("Values are passed literally — `zerops_env action=\"set\"` auto-expands `<@...>` generator expressions server-side. Need the actual generated value up front (e.g. a recipe gotcha depends on it)? Expand it via `zerops_preprocess` first.\n\n")
@@ -389,7 +394,7 @@ func formatRecipeImportYAMLForGuide(match *RecipeMatch, step string) string {
 			}
 		} else {
 			sb.WriteString("Provision the recipe's services from the YAML below (already rewritten with any hostname/resolution choices from your plan):\n\n")
-			sb.WriteString("1. If the YAML has a `project:` block with `envVariables`, set those at the project level FIRST: `zerops_env action=\"set\" scope=\"project\" ...`.\n")
+			sb.WriteString("1. If the YAML has a `project:` block with a `vault` (or `envVariables`), set those at the project level FIRST: `zerops_env action=\"set\" scope=\"project\" ...`.\n")
 			sb.WriteString("2. Call `zerops_import` with the `services:` section ONLY — the import tool rejects YAML that includes any other `project.*` key.\n")
 			sb.WriteString("3. Poll `zerops_discover` until every service reports `ACTIVE`. Recipes build from `buildFromGit`, so first provision can take 2–5 minutes while Zerops clones and builds.\n\n")
 		}
@@ -426,19 +431,22 @@ func formatRecipeOwnershipLinkForGuide(match *RecipeMatch) string {
 	return sb.String()
 }
 
-// recipeEnvVar is one project.envVariables entry extracted from a recipe's
-// import YAML by splitRecipeProjectBlock.
+// recipeEnvVar is one project value extracted from a recipe's import YAML by
+// splitRecipeProjectBlock. Sensitive is the item's own flag; nil when it
+// carries none.
 type recipeEnvVar struct {
-	Key   string
-	Value string
+	Key       string
+	Value     string
+	Sensitive *bool
 }
 
 // splitRecipeProjectBlock separates a recipe import YAML's project-level
 // section from the services-only YAML that the provision guide hands to
-// zerops_import (RCO-6). Any project.envVariables are pulled out and
-// returned as key/value pairs — in source order — for rendering as
-// executable zerops_env pre-steps; the `project:` key itself (envVariables
-// or otherwise) is removed entirely from the returned YAML so the fenced
+// zerops_import (RCO-6). The project's vault — and the deprecated
+// envVariables — are pulled out and returned as key/value pairs, each
+// vault item in either form with its own flag, in source order, for
+// rendering as executable zerops_env pre-steps; the `project:` key itself
+// is removed entirely from the returned YAML so the fenced
 // block never disagrees with the "services-only" instruction next to it.
 // Returns the input unchanged (with a nil envVars) when it carries no
 // `project:` key.
@@ -455,12 +463,13 @@ func splitRecipeProjectBlock(recipeYAML string) (servicesOnlyYAML string, envVar
 	if projectNode == nil {
 		return recipeYAML, nil, nil
 	}
-	if envNode := mappingValue(projectNode, "envVariables"); envNode != nil && envNode.Kind == yaml.MappingNode {
+	for _, block := range []string{"vault", "envVariables"} {
+		envNode := mappingValue(projectNode, block)
+		if envNode == nil || envNode.Kind != yaml.MappingNode {
+			continue
+		}
 		for i := 0; i+1 < len(envNode.Content); i += 2 {
-			envVars = append(envVars, recipeEnvVar{
-				Key:   envNode.Content[i].Value,
-				Value: envNode.Content[i+1].Value,
-			})
+			envVars = append(envVars, recipeVaultItem(envNode.Content[i].Value, envNode.Content[i+1]))
 		}
 	}
 	removeMappingKey(root, "project")
@@ -470,6 +479,26 @@ func splitRecipeProjectBlock(recipeYAML string) (servicesOnlyYAML string, envVar
 		return "", nil, fmt.Errorf("services-only YAML marshal: %w", err)
 	}
 	return string(out), envVars, nil
+}
+
+// recipeVaultItem reads one item of a project block: `KEY: value`, or
+// `KEY: {value: …, sensitive: …}`.
+func recipeVaultItem(key string, node *yaml.Node) recipeEnvVar {
+	item := recipeEnvVar{Key: key, Value: node.Value}
+	if node.Kind != yaml.MappingNode {
+		return item
+	}
+	item.Value = ""
+	if value := mappingValue(node, "value"); value != nil {
+		item.Value = value.Value
+	}
+	if flag := mappingValue(node, "sensitive"); flag != nil {
+		var sensitive bool
+		if flag.Decode(&sensitive) == nil {
+			item.Sensitive = &sensitive
+		}
+	}
+	return item
 }
 
 // removeMappingKey deletes a key (and its value) from a yaml.Node mapping.

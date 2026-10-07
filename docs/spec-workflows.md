@@ -1289,13 +1289,14 @@ repo `zerops.yaml`) stay resolvable. Background:
 - **Provision YAML is services-only (RCO-6)** — the provision step-branch
   renders the rewritten YAML WITHOUT any `project:` key: the instruction
   ("call `zerops_import` with the `services:` section ONLY") and the YAML
-  beneath it must agree. `project.envVariables` from the recipe are not
-  dropped silently — they render as EXECUTABLE pre-steps (key AND value,
+  beneath it must agree. The recipe's `project.vault` (or the deprecated
+  `project.envVariables`) is not dropped silently — they render as EXECUTABLE pre-steps (key AND value,
   e.g. `zerops_env action="set" scope="project" ...`), with generator
   expressions (`<@generateRandomString(...)>`) flagged for expansion via
   `zerops_preprocess` first, so generated secrets (Laravel `APP_KEY`) are
-  never lost. Note the importer contract precisely: `ops.Import` accepts
-  `project.envVariables` and rejects every OTHER `project.*` key — content
+  never lost; a vault item's own `sensitive` flag rides along. Note the
+  importer contract precisely: `ops.Import` accepts `project.vault` (and
+  `project.envVariables`) and rejects every OTHER `project.*` key — content
   describing the importer must not overstate the rejection.
 
 - **Structured runtime URLs (RCO-7)** — after a recipe provision, the
@@ -1317,11 +1318,11 @@ repo `zerops.yaml`) stay resolvable. Background:
 | ID | Invariant |
 |----|-----------|
 | RCO-1 | Recipe-route plans are DERIVED, not probe-validated. `BootstrapCompletePlan` refuses a recipe session; `BootstrapCompleteRecipePlan` reconciles any submitted plan into a `RecipeShapeOverrides` (`reconcileRecipeOverrides`) and derives the plan from the recipe shape (`DeriveRecipePlan`) — keeping every runtime verbatim. Any error (managed rename, runtime type mismatch, YAML parse failure) rejects BEFORE persistence, so invalid plans never reach provision. |
-| RCO-2 | Runtime-service hostname rename is the ONLY per-service field the rewrite mutates. `type`, `zeropsSetup`, `buildFromGit`, `priority`, `mode`, `enableSubdomainAccess`, `verticalAutoscaling`, `envVariables`, `envSecrets` — all pass through byte-verbatim. Changing any of these requires `route="classic"`. |
+| RCO-2 | Runtime-service hostname rename is the ONLY per-service field the rewrite mutates. `type`, `zeropsSetup`, `buildFromGit`, `priority`, `mode`, `enableSubdomainAccess`, `verticalAutoscaling`, `vault` (and the deprecated `envVariables`, `envSecrets`) — all pass through byte-verbatim. Changing any of these requires `route="classic"`. |
 | RCO-3 | Managed-service hostnames are IMMUTABLE across the rewrite. A plan `Dependency` whose `Hostname` differs from the recipe's corresponding managed service triggers a rejection at RCO-1. Rationale: the recipe's app repo `zerops.yaml` holds `${hostname_*}` env-var references; a mutable hostname would leave those dangling. Rename is architecturally out of scope for F6. |
 | RCO-4 | `Dependency.Resolution == EXISTS` on a managed dep drops the corresponding service entry from the rewritten YAML entirely. `zerops_import` must not attempt to create a service with an EXISTING hostname (the platform would reject with `serviceStackNameUnavailable`); runtime `${hostname_*}` refs resolve to the pre-existing service automatically. |
 | RCO-5 | Discover step injects the recipe YAML VERBATIM; provision step injects the REWRITTEN YAML (via `RewriteRecipeImportYAMLFromShape(importYAML, overrides)`). Discover is called before the plan exists — the agent uses the canonical shape to confirm or rename. Provision is called after plan submission — the agent executes with plan-driven hostnames. Enforced by the `(b *BootstrapState) buildGuide` discover|provision step-branch (`bootstrap_guide_assembly.go`). |
-| RCO-6 | The provision-step rendered YAML is SERVICES-ONLY — no `project:` key in any fenced block; `project.envVariables` surface as executable key+value pre-steps (with a `zerops_preprocess` note for generator expressions). The importer accepts `project.envVariables` and rejects other `project.*` keys; guidance/atoms must state that contract exactly. |
+| RCO-6 | The provision-step rendered YAML is SERVICES-ONLY — no `project:` key in any fenced block; `project.vault` (or `project.envVariables`) values surface as executable key+value pre-steps carrying each item's own sensitive flag (with a `zerops_preprocess` note for generator expressions). The importer accepts `project.vault` and `project.envVariables` and rejects other `project.*` keys; guidance/atoms must state that contract exactly. |
 | RCO-7 | Post-provision, `action="status"` during close, and terminal close responses carry the structured runtime-URL collection (hostname, role, url, handoff; stage = handoff). URLs are composed from project-level `zeropsSubdomainHost`, resolved at L4 (tools) via `ops.ResolveSubdomainURL`; guidance derives from the collection; resolution failure omits the entry best-effort and never blocks close; the idle dev service (`zsc noop`, 502) is never the handoff URL. |
 
 ### Pipeline
@@ -1376,10 +1377,10 @@ Per-env classification protocol (LLM-driven, no hardcoded heuristics in Go) — 
 
 | Bucket | Detection | Emit shape |
 |---|---|---|
-| `infrastructure` | Value resolves to a managed-service-emitted reference (`${db_*}`, `${redis_*}`, plus per-service variants). Includes compound URLs assembled from `${...}` components. | DROP from `project.envVariables`; `${...}` reference in zerops.yaml resolves at re-import against the (re-imported) managed service. |
-| `auto-secret` | Source/framework convention uses var as local encryption/signing key. | `<@generateRandomString(<32>)>` — re-import gets a fresh secret. |
-| `external-secret` | Third-party SDK call (Stripe, OpenAI, Mailgun, GitHub, …). | `<@pickRandom(["REPLACE_ME"])>` placeholder; new project owner sets the real key. |
-| `plain-config` | Literal runtime config (LOG_LEVEL, NODE_ENV, FEATURE_FLAGS). | Verbatim. |
+| `infrastructure` | Value resolves to a managed-service-emitted reference (`${db_*}`, `${redis_*}`, plus per-service variants). Includes compound URLs assembled from `${...}` components. | DROP from the project vault; `${...}` reference in zerops.yaml resolves at re-import against the (re-imported) managed service. |
+| `auto-secret` | Source/framework convention uses var as local encryption/signing key. | `{value: <@generateRandomString(<32>)>, sensitive: true}` — re-import gets a fresh secret. |
+| `external-secret` | Third-party SDK call (Stripe, OpenAI, Mailgun, GitHub, …). | `{value: REPLACE_ME, sensitive: true}` placeholder; new project owner sets the real key. |
+| `plain-config` | Literal runtime config (LOG_LEVEL, NODE_ENV, FEATURE_FLAGS). | Verbatim (sensitive when the name reads as a secret). |
 
 The handler emits the per-env review table on `classify-prompt`; the agent fetches values separately via `zerops_discover`, classifies, and re-calls with the populated map. Phase 3 redaction: classify-prompt rows carry `key` + `currentBucket` + server-computed `suggestedBucket` + `rationale` — no raw value field. `suggestedBucket` is name-pattern-derived (`envclass.ClassifyProjectEnv.Bias` plus the exact-key `topology.IsClassifyInfrastructure` allowlist for `ZCP_API_KEY` / `ZCP_AGENT_TYPE` / `ZCP_AGENT_TYPES` / `ZCP_AGENTS` / `GIT_TOKEN` / `ZCP_LAUNCH_TOKEN` — the last is the staged single-token launch secret whose bundle-drop is part of P-LP-14); the value never enters the computation.
 

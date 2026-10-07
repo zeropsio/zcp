@@ -4,20 +4,20 @@ priority: 2
 phases: [export-active]
 exportStatus: [classify-prompt]
 environments: [container]
-title: "Classify project envVariables before publishing the export bundle"
+title: "Classify project values before publishing the export bundle"
 ---
 You are at `status="classify-prompt"`. Classify each project env into one of five buckets — `infrastructure`, `auto-secret`, `external-secret`, `plain-config`, `exclude` — before re-calling with `envClassifications` populated.
 
-The export bundle's `project.envVariables` block holds the values that re-imported services see at boot. Each project env needs a bucket so the generator knows whether to drop it (managed services regenerate the value), inject a preprocessor directive (auto-secret or external-secret placeholder), or emit it verbatim. Classification is your job — `zerops_workflow` does NOT auto-bucket.
+The export bundle's project `vault:` block holds the values that re-imported services see at boot. Each project env needs a bucket so the generator knows whether to drop it (managed services regenerate the value), inject a preprocessor directive (auto-secret or external-secret placeholder), or emit it verbatim. Classification is your job — `zerops_workflow` does NOT auto-bucket.
 
 ## The five buckets
 
 | Bucket | Detection signal | Emit in `zerops-project-import.yaml` |
 |---|---|---|
-| `infrastructure` | Value (or a component thereof) comes from a managed-service reference (`${db_*}`, `${redis_*}`, `${mongo_*}`, plus documented per-service prefixes). Includes app-built compound URLs assembled in code from `${...}` components. | DROP from `project.envVariables`. The reference still lives in `zerops.yaml`'s `run.envVariables`, and the re-imported managed service emits a fresh value. |
-| `auto-secret` | Source code or framework convention uses the var as a local encryption / signing key. Even when the encryption call lives inside the framework. | `<@generateRandomString(<32>)>`. Each re-import gets a fresh secret. |
-| `external-secret` | Source calls a third-party SDK using the var (Stripe, OpenAI, Mailgun, GitHub, …). Includes aliased imports and webhook verification secrets. | Comment + `<@pickRandom(["REPLACE_ME"])>`. The new project's owner pastes the real key into the dashboard before deploying. |
-| `plain-config` | Source uses the var as literal runtime config (LOG_LEVEL, NODE_ENV, FEATURE_FLAGS, …). | The literal value verbatim. |
+| `infrastructure` | Value (or a component thereof) comes from a managed-service reference (`${db_*}`, `${redis_*}`, `${mongo_*}`, plus documented per-service prefixes). Includes app-built compound URLs assembled in code from `${...}` components. | DROP from the project vault. The reference still lives in `zerops.yaml`'s `run.envVariables`, and the re-imported managed service emits a fresh value. |
+| `auto-secret` | Source code or framework convention uses the var as a local encryption / signing key. Even when the encryption call lives inside the framework. | `{value: <@generateRandomString(<32>)>, sensitive: true}`. Each re-import gets a fresh secret. |
+| `external-secret` | Source calls a third-party SDK using the var (Stripe, OpenAI, Mailgun, GitHub, …). Includes aliased imports and webhook verification secrets. | `{value: REPLACE_ME, sensitive: true}`. The new project's owner sets the real key in its vault before deploying. |
+| `plain-config` | Source uses the var as literal runtime config (LOG_LEVEL, NODE_ENV, FEATURE_FLAGS, …). | The literal value verbatim (sensitive when its name reads as a secret). |
 | `exclude` | The env is STALE — nothing in the source tree or `zerops.yaml` references it anymore (leftover from a removed feature). Verify with a grep over the source plus the discover response before excluding. | DROPPED entirely — no value, no reference. A warning fires if `zerops.yaml`'s `run.envVariables` still references it. |
 
 `zerops_workflow workflow="export"` returns each unclassified env's key but NOT its value — fetch values via `zerops_discover service="{targetHostname}" includeEnvs=true includeEnvValues=true`, grep them against the source tree (a key marked `isSensitive` shows no value — classify it by its key and the source), then call back with an `envClassifications` map (key → bucket per env).

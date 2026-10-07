@@ -45,10 +45,10 @@ func FetchServiceEnv(ctx context.Context, client platform.Client, serviceID stri
 // slim /env as USER (same Type as a user-set var), so Type alone no longer
 // tells them apart (spec docs/spec-zerops-env-lifecycle.md §1/§6) — the
 // user-set layer is derived by subtraction: exactly what
-// `zerops_env set serviceHostname=X KEY=val` / GUI / import envSecrets
+// `zerops_env set serviceHostname=X KEY=val` / GUI / an import's service vault
 // write. A live runtime whose yaml-baked read FAILS returns the error —
 // NEVER an empty slice with nil error, which would let the yaml-baked
-// mirror's keys leak into export/launch's envSecrets (GAP0-1 regression
+// mirror's keys leak into export/launch's service vault (GAP0-1 regression
 // class). Managed deps and never-deployed runtimes have no yaml layer
 // (AppVersionEnvVars' lifecycle gate returns nil, nil) — no subtraction,
 // every USER/empty-typed slim entry passes through untouched. Never logs

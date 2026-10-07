@@ -4,8 +4,8 @@
 # plus a stage slot that validates the production build path.
 project:
   name: synth-showcase-agent
-  envVariables:
-    APP_SECRET: <@generateRandomString(<32>)>
+  vault:
+    APP_SECRET: {value: <@generateRandomString(<32>)>, sensitive: true}
     DEV_API_URL: ${api_zeropsSubdomainHost}
 
 services:

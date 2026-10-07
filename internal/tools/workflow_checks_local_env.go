@@ -126,7 +126,7 @@ func checkLocalDotenvFresh(
 				Tool:    "zerops_env",
 				Action:  "generate-dotenv",
 				Args:    map[string]string{"setup": plan.Setup},
-				Comment: "Creates .env from project envVariables + zerops.yaml + .env.local overlay.",
+				Comment: "Creates .env from the project vault + zerops.yaml + .env.local overlay.",
 			},
 		}
 	}

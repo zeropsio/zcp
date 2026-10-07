@@ -8,7 +8,7 @@ references-fields: []
 
 ### Launch classify — bucket source envs before production publish
 
-You are at `status="classify-prompt"`. The launch composer needs every source `project.envVariables` entry classified into one of five buckets — `infrastructure`, `auto-secret`, `external-secret`, `plain-config`, `exclude` — before it can emit the production import bundle.
+You are at `status="classify-prompt"`. The launch composer needs every source project vault value classified into one of five buckets — `infrastructure`, `auto-secret`, `external-secret`, `plain-config`, `exclude` — before it can emit the production import bundle.
 
 **Call shape — `action="start"` always.** Launch-production is stateless multi-call narrowing: every advance is another `zerops_workflow action="start" workflow="launch-production"` with the FULL accumulated `inputs` block from the prior response plus `envClassifications`. There is NO classify action. There is NO `action="complete"` step (that's bootstrap). Re-call `action="start"` with the accumulated inputs and the new classification map:
 
@@ -26,10 +26,10 @@ If you skip an env, the next response re-prompts with the remaining unclassified
 
 | Bucket | Detection signal | Emit in production project |
 |---|---|---|
-| `infrastructure` | Value (or component) resolves from a managed-service reference (`${db_*}`, `${redis_*}`, `${mongo_*}`, plus per-service prefixes). Includes app-built compound URLs assembled at runtime from `${...}` components. | DROP from `project.envVariables`. The reference still lives in `zerops.yaml`'s `run.envVariables`; the re-imported managed service emits a fresh value at boot. |
-| `auto-secret` | Source code uses the var as a local encryption / signing key (framework owns the call; rarely visible in app code). | `<@generateRandomString(<32>)>`. Each launch gets a fresh secret. |
-| `external-secret` | Source calls a third-party SDK with the var (Stripe, OpenAI, Mailgun, GitHub, …). Includes aliased imports + webhook verification secrets. | Comment + `<@pickRandom(["REPLACE_ME"])>`. New project's owner pastes the real key into the dashboard before deploy. |
-| `plain-config` | Source uses the var as literal runtime config (LOG_LEVEL, NODE_ENV, FEATURE_FLAGS, …). | Literal value verbatim. |
+| `infrastructure` | Value (or component) resolves from a managed-service reference (`${db_*}`, `${redis_*}`, `${mongo_*}`, plus per-service prefixes). Includes app-built compound URLs assembled at runtime from `${...}` components. | DROP from the project vault. The reference still lives in `zerops.yaml`'s `run.envVariables`; the re-imported managed service emits a fresh value at boot. |
+| `auto-secret` | Source code uses the var as a local encryption / signing key (framework owns the call; rarely visible in app code). | `{value: <@generateRandomString(<32>)>, sensitive: true}`. Each launch gets a fresh secret. |
+| `external-secret` | Source calls a third-party SDK with the var (Stripe, OpenAI, Mailgun, GitHub, …). Includes aliased imports + webhook verification secrets. | `{value: REPLACE_ME, sensitive: true}`. New project's owner sets the real key in its vault before deploy. |
+| `plain-config` | Source uses the var as literal runtime config (LOG_LEVEL, NODE_ENV, FEATURE_FLAGS, …). | Literal value verbatim (sensitive when its name reads as a secret). |
 | `exclude` | The env is STALE — nothing in the source tree or `zerops.yaml` references it anymore (leftover from a removed feature or an earlier framework). Verify with a grep over the source plus the discover response before excluding. | DROPPED entirely — no value, no reference. A warning fires if `zerops.yaml`'s `run.envVariables` still references it. |
 
 `zerops_workflow` returns each unclassified env's key but NOT its value — fetch values via `zerops_discover service="{targetHostname}" includeEnvs=true includeEnvValues=true`, then grep them against the mounted source tree (when accessible) before bucketing. A key marked `isSensitive` shows no value — classify it by its key and the source.
@@ -81,7 +81,7 @@ Literal runtime config. Privacy flag: real emails (`MAIL_FROM_ADDRESS=ops@acme.c
 
 ## Platform-injected tokens
 
-`GIT_TOKEN` and `ZCP_API_KEY` appear in source-project envs but are ZCP-side infrastructure (re-injected by the launch handler for the new project's git push + MCP session). Bucket both as `infrastructure` — they will be DROPPED from `project.envVariables` and the prod project re-receives them via its own launch flow. Do NOT bucket them as `external-secret` (`REPLACE_ME` would break the prod project's first git push).
+`GIT_TOKEN` and `ZCP_API_KEY` appear in source-project envs but are ZCP-side infrastructure (re-injected by the launch handler for the new project's git push + MCP session). Bucket both as `infrastructure` — they will be DROPPED from the project vault and the prod project re-receives them via its own launch flow. Do NOT bucket them as `external-secret` (`REPLACE_ME` would break the prod project's first git push).
 
 ## Common mis-classification traps
 

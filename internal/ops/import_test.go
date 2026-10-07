@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -1007,5 +1009,168 @@ func TestImport_APIError(t *testing.T) {
 	}
 	if pe.Code != platform.ErrAPIError {
 		t.Errorf("expected code %s, got %s", platform.ErrAPIError, pe.Code)
+	}
+}
+
+// TestImport_ProjectVault_AppliedWithEachValuesFlag — the import schema's project `vault:` takes a
+// plain `KEY: value` or `KEY: {value, sensitive}`. zcp applies it like project.envVariables, each
+// value with its own flag: the one written, else the name rule (DefaultSensitive).
+func TestImport_ProjectVault_AppliedWithEachValuesFlag(t *testing.T) {
+	t.Parallel()
+	mock := importMock()
+	content := `project:
+  vault:
+    JWT_SECRET: abc
+    SMTP_HOST: mailpit
+    SUPERADMIN_PASSWORD: pw
+    STRIPE_PUBLISHABLE_KEY:
+      value: pk
+    LOG_LEVEL:
+      value: debug
+      sensitive: true
+    API_TOKEN:
+      value: tok
+      sensitive: false
+services:
+  - hostname: api
+    type: nodejs@22
+`
+	result, err := Import(context.Background(), mock, "proj-1", content, "", false)
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	want := map[string]bool{
+		"JWT_SECRET":             true,
+		"SMTP_HOST":              false,
+		"SUPERADMIN_PASSWORD":    false,
+		"STRIPE_PUBLISHABLE_KEY": false,
+		"LOG_LEVEL":              true,
+		"API_TOKEN":              false,
+	}
+	got := map[string]bool{}
+	for _, c := range mock.CapturedProjectEnvCreations {
+		got[c.Key] = c.Sensitive
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("sensitive by key = %v, want %v", got, want)
+	}
+	wantKeys := []string{"API_TOKEN", "JWT_SECRET", "LOG_LEVEL", "SMTP_HOST", "STRIPE_PUBLISHABLE_KEY", "SUPERADMIN_PASSWORD"}
+	if !reflect.DeepEqual(result.ProjectEnvsSet, wantKeys) {
+		t.Errorf("ProjectEnvsSet = %v, want %v", result.ProjectEnvsSet, wantKeys)
+	}
+	if strings.Contains(mock.CapturedImportYAML, "project:") {
+		t.Errorf("project: must not reach the API, got:\n%s", mock.CapturedImportYAML)
+	}
+}
+
+// TestImport_ServiceSecrets_FollowTheNameRule — an app's own values reach Zerops through the
+// import itself, so zcp writes the name rule into them: a secret-shaped name in `vault:` or
+// `envSecrets` goes in as `{value, sensitive: true}` unless the YAML says otherwise, and
+// `envSecrets` (deprecated) moves into `vault:`.
+func TestImport_ServiceSecrets_FollowTheNameRule(t *testing.T) {
+	t.Parallel()
+	mock := importMock()
+	content := `services:
+  - hostname: api
+    type: nodejs@22
+    vault:
+      APP_SECRET: s1
+      PORT_NAME: web
+      ADMIN_PASSWORD: pw
+      KEEP_TOKEN:
+        value: t
+        sensitive: false
+    envSecrets:
+      DB_PASSWORD: s2
+      LOG_LEVEL: info
+`
+	if _, err := Import(context.Background(), mock, "proj-1", content, "", false); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	var sent map[string]any
+	if err := yaml.Unmarshal([]byte(mock.CapturedImportYAML), &sent); err != nil {
+		t.Fatalf("sent YAML: %v", err)
+	}
+	svc := sent["services"].([]any)[0].(map[string]any)
+	if _, has := svc["envSecrets"]; has {
+		t.Errorf("envSecrets must move into vault, got %v", svc["envSecrets"])
+	}
+	vault := svc["vault"].(map[string]any)
+	sensitive := func(key string) any {
+		item, ok := vault[key].(map[string]any)
+		if !ok {
+			return nil
+		}
+		return item["sensitive"]
+	}
+	for key, want := range map[string]any{
+		"APP_SECRET":     true,
+		"DB_PASSWORD":    true,
+		"KEEP_TOKEN":     false,
+		"PORT_NAME":      nil,
+		"ADMIN_PASSWORD": nil,
+		"LOG_LEVEL":      nil,
+	} {
+		if got := sensitive(key); got != want {
+			t.Errorf("%s sensitive = %v, want %v (vault %v)", key, got, want, vault[key])
+		}
+	}
+	if vault["PORT_NAME"] != "web" || vault["LOG_LEVEL"] != "info" {
+		t.Errorf("plain values stay plain: PORT_NAME=%v LOG_LEVEL=%v", vault["PORT_NAME"], vault["LOG_LEVEL"])
+	}
+}
+
+// TestImport_Rewrite_KeepsThePreprocessorHeader — a YAML zcp rewrites (project block stripped,
+// override, secrets marked) keeps its preprocessor first line, in either spelling the
+// platform reads (`#zeropsPreprocessor=on`, what recipes and zcp's own bundles write, or
+// `#yamlPreprocessor=on`), or every `<@…>` in it would be stored as literal text.
+func TestImport_Rewrite_KeepsThePreprocessorHeader(t *testing.T) {
+	t.Parallel()
+	for _, header := range []string{"#zeropsPreprocessor=on", "#yamlPreprocessor=on"} {
+		mock := importMock()
+		content := header + `
+project:
+  vault:
+    A: b
+services:
+  - hostname: api
+    type: nodejs@22
+    vault:
+      APP_SECRET: <@generateRandomString(<32>)>
+`
+		if _, err := Import(context.Background(), mock, "proj-1", content, "", false); err != nil {
+			t.Fatalf("Import: %v", err)
+		}
+		if !strings.HasPrefix(mock.CapturedImportYAML, header+"\n") {
+			t.Errorf("want %s first, got:\n%s", header, mock.CapturedImportYAML)
+		}
+	}
+}
+
+// TestImport_ServiceSecrets_WiringStaysReadable — a service value made only of references
+// (`DB_PASSWORD: ${db_password}`) holds no secret of its own: zcp leaves it plain.
+func TestImport_ServiceSecrets_WiringStaysReadable(t *testing.T) {
+	t.Parallel()
+	mock := importMock()
+	content := `services:
+  - hostname: api
+    type: nodejs@22
+    vault:
+      DB_PASSWORD: ${db_password}
+      APP_SECRET: s1
+`
+	if _, err := Import(context.Background(), mock, "proj-1", content, "", false); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	var sent map[string]any
+	if err := yaml.Unmarshal([]byte(mock.CapturedImportYAML), &sent); err != nil {
+		t.Fatalf("sent YAML: %v", err)
+	}
+	vault := sent["services"].([]any)[0].(map[string]any)["vault"].(map[string]any)
+	if vault["DB_PASSWORD"] != "${db_password}" {
+		t.Errorf("DB_PASSWORD = %v, want the plain reference", vault["DB_PASSWORD"])
+	}
+	if item, ok := vault["APP_SECRET"].(map[string]any); !ok || item["sensitive"] != true {
+		t.Errorf("APP_SECRET = %v, want sensitive", vault["APP_SECRET"])
 	}
 }

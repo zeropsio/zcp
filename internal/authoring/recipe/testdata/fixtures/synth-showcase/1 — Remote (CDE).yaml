@@ -2,8 +2,8 @@
 
 project:
   name: synth-showcase-remote
-  envVariables:
-    APP_SECRET: <@generateRandomString(<32>)>
+  vault:
+    APP_SECRET: {value: <@generateRandomString(<32>)>, sensitive: true}
 
 services:
   - hostname: apidev

@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // ServiceImportError represents an error for a specific service during import.
@@ -34,7 +36,7 @@ type ImportResult struct {
 	Warnings      []string              `json:"warnings,omitempty"`
 	Summary       string                `json:"summary,omitempty"`
 	NextActions   string                `json:"nextActions,omitempty"`
-	// ProjectEnvsSet lists the keys applied from an inline project.envVariables
+	// ProjectEnvsSet lists the keys applied from an inline project.vault or project.envVariables
 	// block (Fix B1), sorted for deterministic output. Empty when the import
 	// YAML carried no project: block.
 	ProjectEnvsSet []string `json:"projectEnvsSet,omitempty"`
@@ -58,8 +60,8 @@ type ImportProcessOutput struct {
 // hostname format). ZCP's pre-flight does only the things the API does NOT
 // tell the LLM clearly:
 //  1. `envVariables` at service-level silently drops — surfaced as warning.
-//  2. A 'project:' section — WHITELISTED to `envVariables` only (Fix B1):
-//     project.envVariables is applied via the project-env channel (EnvSet)
+//  2. A 'project:' section — WHITELISTED to `vault` and `envVariables` (Fix B1):
+//     project.vault and project.envVariables are applied via the project-env channel (EnvSet)
 //     before service creation, then stripped from the YAML sent to the
 //     API. Any OTHER project.* field (preprocessor, scaling, name, ...)
 //     still hard-rejects with a specific code instead of the generic
@@ -109,36 +111,9 @@ func Import(
 	// Reject-before-mutate: unsupported keys are checked FIRST, before any
 	// EnvSet call, so a rejected import never leaves a partially-applied
 	// project block behind.
-	var projectEnvsSet []string
-	projectBlock, hasProject := doc["project"].(map[string]any)
-	if hasProject {
-		for key := range projectBlock {
-			if key != "envVariables" {
-				return nil, platform.NewPlatformError(
-					platform.ErrImportHasProject,
-					fmt.Sprintf("import YAML project.%s is not supported at import time — zerops_import operates within the existing project", key),
-					"Remove project."+key+" — only project.envVariables is supported inline (applied automatically before services are created). Other project.* fields belong to project creation (zcli or web UI). To set them on the existing project first, use `zerops_env action=\"set\" scope=\"project\" key=\"<KEY>\" value=\"<value>\"` (preprocessor directives like `<@generateRandomString(<32>)>` are passed literally and evaluated server-side).",
-				)
-			}
-		}
-
-		if envVarsRaw, ok := projectBlock["envVariables"].(map[string]any); ok && len(envVarsRaw) > 0 {
-			pairs := make([]string, 0, len(envVarsRaw))
-			for k, v := range envVarsRaw {
-				pairs = append(pairs, fmt.Sprintf("%s=%v", k, v))
-			}
-			sort.Strings(pairs) // deterministic ordering — map iteration is not
-			if _, err := EnvSet(ctx, client, projectID, "", true, pairs, nil); err != nil {
-				return nil, fmt.Errorf("apply project envVariables from import: %w", err)
-			}
-			projectEnvsSet = make([]string, 0, len(envVarsRaw))
-			for k := range envVarsRaw {
-				projectEnvsSet = append(projectEnvsSet, k)
-			}
-			sort.Strings(projectEnvsSet)
-		}
-
-		delete(doc, "project")
+	projectEnvsSet, hasProject, err := applyProjectBlock(ctx, client, projectID, doc)
+	if err != nil {
+		return nil, err
 	}
 
 	// When override is requested, set `override: true` on each service so
@@ -168,11 +143,22 @@ func Import(
 		}
 	}
 
-	// Sole remarshal point: doc was mutated above (project: stripped and/or
-	// override: true injected) — re-serialize once so both mutations land
-	// in the YAML sent to the API. When neither mutation happened, the
-	// original yamlContent passes through byte-for-byte.
-	if hasProject || override {
+	// An app's own values reach Zerops through the import itself, so the
+	// name rule is written into them here: envSecrets (deprecated) moves into
+	// vault, and a secret-shaped name without a flag of its own goes in
+	// sensitive.
+	secretsMarked, err := markServiceSecrets(doc)
+	if err != nil {
+		return nil, err
+	}
+
+	// Sole remarshal point: doc was mutated above (project: stripped,
+	// override: true injected, secrets marked) — re-serialize once so every
+	// mutation lands in the YAML sent to the API, keeping the preprocessor
+	// header, without which every `<@…>` would be stored as literal text.
+	// When nothing changed, the original yamlContent passes through
+	// byte-for-byte.
+	if hasProject || override || secretsMarked {
 		remarshaled, err := yaml.Marshal(doc)
 		if err != nil {
 			return nil, platform.NewPlatformError(
@@ -181,7 +167,7 @@ func Import(
 				"Report this as a zcp bug.",
 			)
 		}
-		yamlContent = string(remarshaled)
+		yamlContent = preprocessorHeader(yamlContent) + string(remarshaled)
 	}
 
 	// Sole retained client-side warning — K1 in the plan: the API accepts
@@ -201,7 +187,7 @@ func Import(
 				}
 				hostname, _ := svcMap["hostname"].(string)
 				warnings = append(warnings, fmt.Sprintf(
-					"service %q: 'envVariables' at service level is silently dropped by the API. Use 'envSecrets' for import-time secrets, or zerops.yaml run.envVariables for runtime config.",
+					"service %q: 'envVariables' at service level is silently dropped by the API. Use 'vault' for the service's own values, or zerops.yaml run.envVariables for runtime config.",
 					hostname,
 				))
 			}
@@ -401,4 +387,165 @@ func resolveInput(content, filePath string) (string, error) {
 		return string(data), nil
 	}
 	return content, nil
+}
+
+// vaultItem is one value of an import `vault:` block: `KEY: value`, or
+// `KEY: {value: …, sensitive: …}` (the import schema's two forms).
+type vaultItem struct {
+	value     string
+	sensitive *bool
+}
+
+func parseVaultItem(block, key string, raw any) (vaultItem, error) {
+	object, ok := raw.(map[string]any)
+	if !ok {
+		if raw == nil {
+			return vaultItem{}, nil
+		}
+		return vaultItem{value: fmt.Sprint(raw)}, nil
+	}
+	value, ok := object["value"]
+	if !ok {
+		return vaultItem{}, platform.NewPlatformError(
+			platform.ErrInvalidImportYml,
+			fmt.Sprintf("%s.%s has no value", block, key),
+			"Write `KEY: value`, or `KEY: {value: …, sensitive: true}`.",
+		)
+	}
+	item := vaultItem{}
+	if value != nil {
+		item.value = fmt.Sprint(value)
+	}
+	if flag, ok := object["sensitive"].(bool); ok {
+		item.sensitive = &flag
+	}
+	return item, nil
+}
+
+// markServiceSecrets writes the name rule into each service's own values:
+// its envSecrets move into its vault, and every vault value whose name says
+// secret (topology.DefaultSensitive) and that carries no flag of its own becomes
+// `{value, sensitive: true}`. A key in both keeps its vault entry. Reports
+// whether anything changed.
+func markServiceSecrets(doc map[string]any) (bool, error) {
+	services, ok := doc["services"].([]any)
+	if !ok {
+		return false, nil
+	}
+	changed := false
+	for _, raw := range services {
+		svc, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		vault, _ := svc["vault"].(map[string]any)
+		if secrets, ok := svc["envSecrets"].(map[string]any); ok {
+			if vault == nil {
+				vault = map[string]any{}
+			}
+			for key, value := range secrets {
+				if _, held := vault[key]; !held {
+					vault[key] = value
+				}
+			}
+			delete(svc, "envSecrets")
+			svc["vault"] = vault
+			changed = true
+		}
+		for key, raw := range vault {
+			hostname, _ := svc["hostname"].(string)
+			item, err := parseVaultItem("services["+hostname+"].vault", key, raw)
+			if err != nil {
+				return false, err
+			}
+			if item.sensitive != nil || !topology.DefaultSensitiveValue(key, item.value) {
+				continue
+			}
+			vault[key] = map[string]any{"value": item.value, "sensitive": true}
+			changed = true
+		}
+	}
+	return changed, nil
+}
+
+// preprocessorHeader is the preprocessor line an import YAML opens with, if
+// it does — `#zeropsPreprocessor=on` or `#yamlPreprocessor=on`, as written —
+// ready to put back in front of a re-serialized document.
+func preprocessorHeader(content string) string {
+	for line := range strings.SplitSeq(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		compact := strings.ReplaceAll(trimmed, " ", "")
+		if strings.EqualFold(compact, "#zeropsPreprocessor=on") || strings.EqualFold(compact, "#yamlPreprocessor=on") {
+			return trimmed + "\n"
+		}
+		return ""
+	}
+	return ""
+}
+
+// applyProjectBlock applies an import's project block — K12 in the
+// validation-plumbing plan, extended by Fix B1 and the vault: only `vault`
+// and `envVariables` are supported at import time, applied through the
+// project-env channel (EnvSetEach) before the block is stripped from the
+// YAML sent to the API. Any other project.* field rejects with the specific
+// IMPORT_HAS_PROJECT code, before anything is written.
+func applyProjectBlock(
+	ctx context.Context,
+	client platform.Client,
+	projectID string,
+	doc map[string]any,
+) ([]string, bool, error) {
+	projectBlock, hasProject := doc["project"].(map[string]any)
+	if !hasProject {
+		return nil, false, nil
+	}
+	var projectEnvsSet []string
+	for key := range projectBlock {
+		if key != "envVariables" && key != "vault" {
+			return nil, false, platform.NewPlatformError(
+				platform.ErrImportHasProject,
+				fmt.Sprintf("import YAML project.%s is not supported at import time — zerops_import operates within the existing project", key),
+				"Remove project."+key+" — only project.vault (and the deprecated project.envVariables) is supported inline (applied automatically before services are created). Other project.* fields belong to project creation (zcli or web UI). To set them on the existing project first, use `zerops_env action=\"set\" scope=\"project\" key=\"<KEY>\" value=\"<value>\"` (preprocessor directives like `<@generateRandomString(<32>)>` are passed literally and evaluated server-side).",
+			)
+		}
+	}
+	// Every value first, then one write pass: a refused item never leaves
+	// half a block behind, and generated values share one expansion store.
+	var pairs []string
+	flags := map[string]bool{}
+	if envVarsRaw, ok := projectBlock["envVariables"].(map[string]any); ok {
+		for k, v := range envVarsRaw {
+			pairs = append(pairs, fmt.Sprintf("%s=%v", k, v))
+		}
+	}
+	if vaultRaw, ok := projectBlock["vault"].(map[string]any); ok {
+		for k, raw := range vaultRaw {
+			item, err := parseVaultItem("project.vault", k, raw)
+			if err != nil {
+				return nil, false, err
+			}
+			pairs = append(pairs, k+"="+item.value)
+			if item.sensitive != nil {
+				flags[k] = *item.sensitive
+			}
+		}
+	}
+	if len(pairs) > 0 {
+		sort.Strings(pairs) // deterministic ordering — map iteration is not
+		if _, err := EnvSetEach(ctx, client, projectID, "", true, pairs, flags); err != nil {
+			return nil, false, fmt.Errorf("apply project values from import: %w", err)
+		}
+		projectEnvsSet = make([]string, 0, len(pairs))
+		for _, pair := range pairs {
+			key, _, _ := strings.Cut(pair, "=")
+			projectEnvsSet = append(projectEnvsSet, key)
+		}
+		sort.Strings(projectEnvsSet)
+	}
+
+	delete(doc, "project")
+	return projectEnvsSet, true, nil
 }

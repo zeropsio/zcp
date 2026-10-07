@@ -239,7 +239,7 @@ func TestBuildGroupRecipe_PublicBuildUtility(t *testing.T) {
 			if got := scalarMap(mappingValue(mailpit, "verticalAutoscaling")); !maps.Equal(got, map[string]string{"cpuMode": "SHARED", "minRam": "0.25"}) {
 				t.Errorf("mailpit verticalAutoscaling = %v, want its own", got)
 			}
-			if got := scalarMap(mappingValue(mailpit, "envSecrets")); got["MP_UI_AUTH"] == "admin:live-mailpit-pass" {
+			if got := scalarMap(mappingValue(mailpit, "vault")); got["MP_UI_AUTH"] == "admin:live-mailpit-pass" {
 				t.Errorf("mailpit's credential reached the recipe")
 			}
 			if strings.Contains(tier.ImportYAML, "live-mailpit-pass") {

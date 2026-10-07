@@ -59,7 +59,7 @@ const legacyDefaultSetupName = "prod"
 //
 //  1. Validate inputs (per-runtime + project-level).
 //  2. Verify each runtime's SetupName exists in its ZeropsYAMLBody.
-//  3. Classify project envs via composeProjectEnvVariables.
+//  3. Classify project envs via composeProjectVault.
 //  4. Loop runtimes — one services[] entry per LaunchRuntimeInput with
 //     startWithoutCode + minContainers (pipeline-first: no buildFromGit
 //     and no zeropsSetup — both are pipelineConfig, which the import API
@@ -68,7 +68,7 @@ const legacyDefaultSetupName = "prod"
 //  5. Append managed deps (deduplicated by hostname so shared infra
 //     across multiple promoted runtimes lands once) with HA promotion
 //     per ServiceTypeRules; opt-out via KeepNonHA.
-//  6. Compose project block — name + tags + envVariables (omitted
+//  6. Compose project block — name + tags + vault (omitted
 //     for VariantLaunchExisting).
 //  7. Marshal yaml + add preprocessor header.
 //  8. Schema-validate; surface errors on bundle.
@@ -137,7 +137,7 @@ func BuildLaunch(
 
 	bundle.Warnings = append(bundle.Warnings, setupAdoptions...)
 
-	projectEnvs, envWarnings := composeProjectEnvVariables(inputs.ProjectEnvs, classifications)
+	projectVault, envWarnings := composeProjectVault(inputs.ProjectEnvs, classifications)
 	bundle.Warnings = append(bundle.Warnings, envWarnings...)
 
 	// Cross-service env refs scan: scan EACH distinct runtime zerops.yaml
@@ -156,7 +156,7 @@ func BuildLaunch(
 	// refs ∪ kept project-env refs so wiring via either surface counts.
 	// The structured per-dep state lands on the bundle; the warning text
 	// derives from it (single owner of the prefix-match).
-	allEnvRefs := unionEnvRefs(zeropsRefs, projectEnvs)
+	allEnvRefs := unionEnvRefs(zeropsRefs, projectVault)
 	bundle.ManagedDeps = ManagedDepReferences(inputs.ManagedServices, allEnvRefs, volumeHosts)
 	bundle.Warnings = append(bundle.Warnings, unreferencedManagedDepWarnings(bundle.ManagedDeps)...)
 
@@ -174,12 +174,12 @@ func BuildLaunch(
 	}
 
 	services := make([]any, 0, len(inputs.Runtimes)+len(inputs.ManagedServices))
-	allServiceSecrets := map[string]string{}
+	allServiceVaults := map[string]vaultValue{}
 	for _, r := range inputs.Runtimes {
 		entry, svcWarnings := runtimeEntryFromInput(r, classifications)
 		bundle.Warnings = append(bundle.Warnings, svcWarnings...)
-		if es, ok := entry["envSecrets"].(map[string]string); ok {
-			maps.Copy(allServiceSecrets, es)
+		if vault, ok := entry["vault"].(map[string]vaultValue); ok {
+			maps.Copy(allServiceVaults, vault)
 		}
 		services = append(services, entry)
 	}
@@ -228,8 +228,8 @@ func BuildLaunch(
 		if inputs.LaunchID != "" {
 			project["description"] = LaunchMarker(inputs.LaunchID)
 		}
-		if len(projectEnvs) > 0 {
-			project["envVariables"] = projectEnvs
+		if len(projectVault) > 0 {
+			project["vault"] = projectVault
 		}
 		doc["project"] = project
 	}
@@ -243,7 +243,7 @@ func BuildLaunch(
 	// services-only yaml may still reference cross-service envs that
 	// need preprocessor preamble (zerops considers preprocessor a
 	// document-level directive, not project-block-scoped).
-	body = addPreprocessorHeader(body, projectEnvs, allServiceSecrets)
+	body = addPreprocessorHeader(body, projectVault, allServiceVaults)
 
 	bundle.ImportYAML = body
 
@@ -260,7 +260,7 @@ func BuildLaunch(
 // runtimeEntryFromInput renders one services[] entry from a per-runtime
 // LaunchRuntimeInput. Centralized so the YAML field shape stays
 // consistent between every promoted runtime in the bundle. classifications
-// buckets the per-runtime ServiceEnvs into the runtime's envSecrets
+// buckets the per-runtime ServiceEnvs into the runtime's vault
 // (GAP0-1); svcWarnings carries any per-env review advisories.
 func runtimeEntryFromInput(r LaunchRuntimeInput, classifications map[string]topology.SecretClassification) (map[string]any, []string) {
 	var warnings []string
@@ -349,10 +349,10 @@ func runtimeEntryFromInput(r LaunchRuntimeInput, classifications map[string]topo
 	va["cpuMode"] = runtimeProductionCPUMode
 	entry["verticalAutoscaling"] = va
 
-	svcSecrets, svcWarnings := composeServiceEnvSecrets(r.ServiceEnvs, classifications)
+	svcVault, svcWarnings := composeServiceVault(r.ServiceEnvs, classifications)
 	warnings = append(warnings, svcWarnings...)
-	if len(svcSecrets) > 0 {
-		entry["envSecrets"] = svcSecrets
+	if len(svcVault) > 0 {
+		entry["vault"] = svcVault
 	}
 	return entry, warnings
 }

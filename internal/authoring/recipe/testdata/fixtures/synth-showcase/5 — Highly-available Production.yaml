@@ -4,8 +4,8 @@
 project:
   name: synth-showcase-ha-prod
   corePackage: SERIOUS
-  envVariables:
-    APP_SECRET: <@generateRandomString(<32>)>
+  vault:
+    APP_SECRET: {value: <@generateRandomString(<32>)>, sensitive: true}
     PROD_API_URL: ${api_zeropsSubdomainHost}
 
 services:

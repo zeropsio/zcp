@@ -177,7 +177,7 @@ type StoredEnv struct {
 	// new entry created). False when the key is newly added.
 	Replaced bool `json:"replaced,omitempty"`
 	// Sensitive is the flag the value was written with — the caller's,
-	// else the default by name (DefaultSensitive), on either scope. A
+	// else the default by name (topology.DefaultSensitive), on either scope. A
 	// presentation site masks a sensitive Value (RedactEnvValue).
 	Sensitive bool `json:"isSensitive,omitempty"`
 }
@@ -188,30 +188,13 @@ type EnvDeleteResult struct {
 	NextActions string            `json:"nextActions,omitempty"`
 }
 
-// sensitiveNameParts are the key fragments that make a set default to
-// sensitive when the caller does not say (DefaultSensitive).
-var sensitiveNameParts = []string{"SECRET", "TOKEN", "KEY", "PASSWORD", "PASS", "DSN", "PRIVATE", "CREDENTIAL"}
-
-// DefaultSensitive is the flag a set writes when the caller does not pass
-// one: a key whose name reads as a secret (SECRET, TOKEN, KEY, PASSWORD,
-// PASS, DSN, PRIVATE, CREDENTIAL, any case) is sensitive, any other plain.
-func DefaultSensitive(key string) bool {
-	upper := strings.ToUpper(key)
-	for _, part := range sensitiveNameParts {
-		if strings.Contains(upper, part) {
-			return true
-		}
-	}
-	return false
-}
-
-// resolveSensitive is the flag one key is written with: the caller's, else
-// the default by name.
-func resolveSensitive(key string, sensitive *bool) bool {
+// resolveSensitive is the flag one value is written with: the caller's, else
+// the default (topology.DefaultSensitiveValue: plain for wiring, else by name).
+func resolveSensitive(key, value string, sensitive *bool) bool {
 	if sensitive != nil {
 		return *sensitive
 	}
-	return DefaultSensitive(key)
+	return topology.DefaultSensitiveValue(key, value)
 }
 
 // EnvSet sets environment variables for a service or project with upsert
@@ -226,7 +209,7 @@ func resolveSensitive(key string, sensitive *bool) bool {
 // eliminating projectEnvDuplicateKey errors from the caller's perspective.
 //
 // sensitive is the flag every key is written with; nil picks it per key by
-// name (DefaultSensitive). Every write sends it explicitly — the platform's
+// name (topology.DefaultSensitive). Every write sends it explicitly — the platform's
 // update without the flag turns a sensitive value plain
 // (spec-zerops-env-lifecycle.md §7), and a replace here is a fresh create.
 //
@@ -243,6 +226,40 @@ func EnvSet(
 	isProject bool,
 	variables []string,
 	sensitive *bool,
+) (*EnvSetResult, error) {
+	return envSet(ctx, client, projectID, hostname, isProject, variables, func(key, value string) bool {
+		return resolveSensitive(key, value, sensitive)
+	})
+}
+
+// EnvSetEach is EnvSet with a flag per key: the one in flags, else the name
+// rule (topology.DefaultSensitive). All the variables go through one expansion pass,
+// so `<@getVar(…)>` reads what another of them generated.
+func EnvSetEach(
+	ctx context.Context,
+	client platform.Client,
+	projectID string,
+	hostname string,
+	isProject bool,
+	variables []string,
+	flags map[string]bool,
+) (*EnvSetResult, error) {
+	return envSet(ctx, client, projectID, hostname, isProject, variables, func(key, value string) bool {
+		if flag, ok := flags[key]; ok {
+			return flag
+		}
+		return topology.DefaultSensitiveValue(key, value)
+	})
+}
+
+func envSet(
+	ctx context.Context,
+	client platform.Client,
+	projectID string,
+	hostname string,
+	isProject bool,
+	variables []string,
+	sensitiveOf func(key, value string) bool,
 ) (*EnvSetResult, error) {
 	if hostname == "" && !isProject {
 		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,
@@ -276,7 +293,7 @@ func EnvSet(
 	}
 
 	if isProject {
-		return setProjectEnvs(ctx, client, projectID, pairs, sensitive)
+		return setProjectEnvs(ctx, client, projectID, pairs, sensitiveOf)
 	}
 
 	svc, err := resolveService(ctx, client, projectID, hostname)
@@ -315,7 +332,7 @@ func EnvSet(
 			}
 			replaced = true
 		}
-		flag := resolveSensitive(p.Key, sensitive)
+		flag := sensitiveOf(p.Key, p.Value)
 		proc, setErr := client.CreateServiceEnvVar(ctx, svc.ID, p.Key, p.Value, flag)
 		if setErr != nil {
 			if hasAPICode(setErr, apiCodeUserDataDuplicateKey) && !replaced {
@@ -338,7 +355,7 @@ func EnvSet(
 // exposes CREATE + DELETE, so existing keys are delete-then-created; new
 // keys are created directly. Returns the last process plus the full list
 // of stored pairs so the caller can verify what was written.
-func setProjectEnvs(ctx context.Context, client platform.Client, projectID string, pairs []envPair, sensitive *bool) (*EnvSetResult, error) {
+func setProjectEnvs(ctx context.Context, client platform.Client, projectID string, pairs []envPair, sensitiveOf func(key, value string) bool) (*EnvSetResult, error) {
 	existing, err := client.GetProjectEnv(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -359,7 +376,7 @@ func setProjectEnvs(ctx context.Context, client platform.Client, projectID strin
 			}
 			replaced = true
 		}
-		flag := resolveSensitive(p.Key, sensitive)
+		flag := sensitiveOf(p.Key, p.Value)
 		proc, setErr := client.CreateProjectEnv(ctx, projectID, p.Key, p.Value, flag)
 		if setErr != nil {
 			if replaced {

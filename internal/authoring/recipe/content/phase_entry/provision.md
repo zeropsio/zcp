@@ -15,10 +15,10 @@ create any of those 6 tiers as live projects**. It creates one workspace.
   `zerops_import content=<yaml>`.
 
 - **Deliverable YAMLs** (6 files, produced at finalize): full `project:`
-  block per tier with `envVariables`, every runtime has
+  block per tier with a `vault:`, every runtime has
   `zeropsSetup: dev|prod` + `buildFromGit` pointing at the published
-  codebase repos, shared secrets use `<@generateRandomString(<32>)>`
-  templates so every end-user's click-deploy gets a fresh value.
+  codebase repos, shared secrets use sensitive
+  `<@generateRandomString(<32>)>` templates so every end-user's click-deploy gets a fresh value.
 
 The workspace yaml you submit here is NOT one of the 6 deliverables. Do
 not try to pass a deliverable yaml to `zerops_import` — the repos don't
@@ -80,7 +80,7 @@ exist yet and it would fail at the clone step.
    - Worker → no URL constant (no public surface)
 
    Then record into the plan so the engine emits them in tier yamls'
-   `project.envVariables` block at finalize:
+   `project.vault` block at finalize:
 
    ```
    zerops_recipe action=update-plan slug=<slug> plan='{
@@ -146,7 +146,7 @@ exist yet and it would fail at the clone step.
   `buildFromGit` pointing at repos that don't exist yet.
 - Do NOT write the workspace yaml to disk. `zerops_import` takes
   `content` inline.
-- Do NOT declare shared secrets in the workspace yaml's `envVariables`
+- Do NOT declare shared secrets in the workspace yaml's `vault`
   (there is no `project:` block in workspace shape). Use `zerops_env
   project=true action=set` after import.
 - Do NOT bake your workspace's real secret value into anything that

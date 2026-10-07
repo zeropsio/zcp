@@ -9,7 +9,7 @@ import (
 // TestServiceUserEnvsToBundleSecrets_DropsInfrastructure pins the F0 bundle-leak
 // fix: infrastructure-classified keys (GIT_TOKEN, ZCP_API_KEY, ...) read from
 // the push-source service's SECRET env layer must NEVER be copied into the
-// export/launch bundle envSecrets — the destination project re-emits its own
+// export/launch bundle's service vault — the destination project re-emits its own
 // equivalents (GIT_TOKEN at git-push-setup, ZCP_* at container init), and the
 // import YAML is agent-visible, so carrying them forward leaks the source's
 // live credential verbatim.
@@ -31,13 +31,13 @@ func TestServiceUserEnvsToBundleSecrets_DropsInfrastructure(t *testing.T) {
 		got[e.Key] = e.Value
 	}
 	if _, leaked := got["GIT_TOKEN"]; leaked {
-		t.Error("GIT_TOKEN leaked into bundle envSecrets — infrastructure keys must be filtered")
+		t.Error("GIT_TOKEN leaked into the bundle's service vault — infrastructure keys must be filtered")
 	}
 	if _, leaked := got["ZCP_API_KEY"]; leaked {
-		t.Error("ZCP_API_KEY leaked into bundle envSecrets — infrastructure keys must be filtered")
+		t.Error("ZCP_API_KEY leaked into the bundle's service vault — infrastructure keys must be filtered")
 	}
 	if _, leaked := got["ZCP_LAUNCH_TOKEN"]; leaked {
-		t.Error("ZCP_LAUNCH_TOKEN (staged launch token) leaked into bundle envSecrets — infrastructure keys must be filtered")
+		t.Error("ZCP_LAUNCH_TOKEN (staged launch token) leaked into the bundle's service vault — infrastructure keys must be filtered")
 	}
 	// GAP0-1 regression: genuine app secrets + plain config still carry.
 	if got["APP_KEY"] != "laravel-app-key" {
@@ -51,7 +51,7 @@ func TestServiceUserEnvsToBundleSecrets_DropsInfrastructure(t *testing.T) {
 // TestServiceUserEnvsToBundleSecrets_AllInfrastructureYieldsNil pins the empty
 // result shape: when every SECRET env is infrastructure-classified the
 // helper returns nil (not an empty slice), matching the no-secrets case so
-// the composer's `len(svcSecrets) > 0` gate skips the envSecrets block.
+// the composer's `len(svcVault) > 0` gate skips the service vault block.
 func TestServiceUserEnvsToBundleSecrets_AllInfrastructureYieldsNil(t *testing.T) {
 	t.Parallel()
 

@@ -10,7 +10,7 @@ YAML generation reference: import.yaml and zerops.yaml schemas, rules, pitfalls,
 project:                               # OPTIONAL (omit in ZCP context)
   name: string                         # REQUIRED if project: exists
   corePackage: LIGHT | SERIOUS         # default LIGHT
-  envVariables: map<string,string>     # project-level vars
+  vault: map<string, value | {value: string, sensitive: bool}>  # the project's Shared vault; sensitive = write-only
   tags: string[]
 
 services[]:                            # REQUIRED
@@ -23,10 +23,9 @@ services[]:                            # REQUIRED
   startWithoutCode: bool               # start without deploy (runtimes only)
   minContainers: 1-10                  # RUNTIME ONLY, default 1 (managed services have fixed containers)
   maxContainers: 1-10                  # RUNTIME ONLY (managed counts fixed by variant: :single=1, :ha=3)
-  envSecrets: map<string,string>       # blurred in GUI by default, editable/deletable
-  dotEnvSecrets: string                # .env format, auto-creates secrets
-  # NOTE: envVariables does NOT exist at service level — only at project level
-  # For non-secret env vars on a service, use zerops_env after import or zerops.yaml run.envVariables
+  vault: map<string, value | {value: string, sensitive: bool}>  # the service's own vault
+  # envVariables / envSecrets / dotEnvSecrets: DEPRECATED at both levels — never write them; write vault
+  # Non-secret config the app reads belongs in zerops.yaml run.envVariables
   buildFromGit: url                    # one-time build from repo — use ONLY with verified URLs (utility recipes like mailpit). Do NOT guess URLs.
   objectStorageSize: 1-100             # GB, object-storage only (changeable in GUI later)
   objectStoragePolicy: private | public-read | public-objects-read | public-write | public-read-write
@@ -64,7 +63,7 @@ Enable with `#zeropsPreprocessor=on` as first line. Syntax: `<@function(<args>)>
 
 **Modifiers** (applied with `|`): `sha256`, `sha512`, `bcrypt`, `argon2id` (hashing) | `toHex`, `toString` (encoding) | `upper`, `lower`, `title` (case) | `noop` (testing)
 
-**Rules:** Functions return strings. Two-phase processing: preprocessing then YAML parsing. Values generated once at import -- fixed after, not regenerated. Escape special characters where the preprocessor reads them — an import YAML with `#zeropsPreprocessor=on`, and a `zerops_env` value holding a `<@…>` expression: `\<`, `\>`, `\|` (double-escape `\\` for backslash). A `zerops_env` value without `<@` — and so a `project.envVariables` value in `zerops_import` — is stored exactly as written: no escaping there.
+**Rules:** Functions return strings. Two-phase processing: preprocessing then YAML parsing. Values generated once at import -- fixed after, not regenerated. Escape special characters where the preprocessor reads them — an import YAML with `#zeropsPreprocessor=on`, and a `zerops_env` value holding a `<@…>` expression: `\<`, `\>`, `\|` (double-escape `\\` for backslash). A `zerops_env` value without `<@` — and so a `project.vault` value in `zerops_import` — is stored exactly as written: no escaping there.
 
 **Always-available** `${...}` functions: `${random(length)}`, `${randomInt(min,max)}`, `${sha256(value)}`, `${bcrypt(value,rounds)}`, `${argon2id(value)}`, `${jwt(algo,secret,payload)}`, `${generateRSAKeyPair(bits)}`, `${generateEd25519KeyPair()}`
 
@@ -131,14 +130,14 @@ zerops[]:
 - **ALWAYS** set `minRam` high enough for initial RAM spikes (autoscaling has ~10-20s reaction time). Dev needs higher than stage/prod (compilation on container)
 - **Activating READY_TO_DEPLOY services**: re-import with `override: true` + `startWithoutCode: true` to transition the service to ACTIVE without deploying code first
 - **ALWAYS** use managed service hostname conventions: `db`, `cache`, `queue`, `search`, `storage`. REASON: standardizes cross-service references
-- **Shared secrets** (encryption/session keys): put in `project.envVariables` when multiple services in the same project share a database — they must share the key or encrypted data becomes unreadable across services. Use preprocessor: `<@generateRandomString(<32>)>`. **Per-service secrets**: put in service-level `envSecrets`. Determine which pattern applies based on what the framework uses the secret for (encryption = shared, API token = per-service). Either way each service's zerops.yaml references it under a different name (`APP_KEY: ${APP_KEY_SECRET}`).
+- **Shared secrets** (encryption/session keys): put in `project.vault` when multiple services in the same project share a database — they must share the key or encrypted data becomes unreadable across services. Write them sensitive with the preprocessor: `APP_KEY_SECRET: {value: <@generateRandomString(<32>)>, sensitive: true}`. **Per-service secrets**: put in the service's own `vault`. Determine which pattern applies based on what the framework uses the secret for (encryption = shared, API token = per-service). Either way each service's zerops.yaml references it under a different name (`APP_KEY: ${APP_KEY_SECRET}`).
 - **ALWAYS** use generic `setup:` names in zerops.yaml (`dev`, `prod`, `worker`). When deploying to a hostname that differs from the setup name, pass `setup="..."` to `zerops_deploy`. REASON: generic names work across all environments; `zeropsSetup` in recipe import.yaml + `--setup` in workspace deploy both handle the mapping
 - **ALWAYS** add `run.healthCheck` and `deploy.readinessCheck` ONLY to stage/prod entries, NEVER to dev. REASON: dev's `run.start` is the `zsc noop --silent` keepalive and the container idles; healthCheck would restart the container during iteration
 - **DEBUG** DEPLOY_FAILED with empty runtime logs by temporarily removing `deploy.readinessCheck` and `run.healthCheck` from the setup, redeploying, then SSH-ing in and curling the health path directly (`ssh {host} "curl -s http://localhost{path}"`). REASON: the framework may be rendering a 500 error page with the full stack trace in the response body while writing nothing to stderr. With checks stripped, the container reaches ACTIVE and stays alive long enough to read the real error. Restore checks after fixing the bug.
 
 ### Environment Variables — the vault and the zerops.yaml
 
-**A service's `run.envVariables` is the complete list of what its process reads.** Values live in the **vault**: the project's **Shared** vault (`project.envVariables` in import.yaml; `zerops_env project=true`) and each service's own (`envSecrets` in import.yaml; `zerops_env serviceHostname=…`), each value plain or sensitive. A vault value reaches the app only through a line that references it. Zerops still injects unreferenced vault values today (non-strict isolation); strict isolation stops that — never rely on it.
+**A service's `run.envVariables` is the complete list of what its process reads.** Values live in the **vault**: the project's **Shared** vault (`project.vault` in import.yaml; `zerops_env project=true`) and each service's own (its `vault` in import.yaml; `zerops_env serviceHostname=…`), each value plain or sensitive. A vault value reaches the app only through a line that references it. Zerops still injects unreferenced vault values today (non-strict isolation); strict isolation stops that — never rely on it.
 
 | What | Where | How the app reads it |
 |------|-------|-----|
@@ -160,7 +159,7 @@ zerops[]:
 
 **Critical rules:**
 - Secrets go in the vault as **sensitive** (write-only; reads return them masked). Never paste a secret into a zerops.yaml or a chat.
-- import.yaml service level: ONLY `envSecrets` and `dotEnvSecrets`. No `envVariables` at service level (project-level only).
+- import.yaml values go in `vault:` — `project.vault` and each service's own — as `KEY: value`, or `KEY: {value: …, sensitive: true}` for a secret. `envVariables`, `envSecrets` and `dotEnvSecrets` are deprecated: never write them (a service-level `envVariables` is silently dropped).
 - Managed services auto-generate connection vars (service-specific) — SQL (postgres/mariadb): hostname, port, user, password, dbName, connectionString; cache (Valkey): hostname, port, password, connectionString (auth REQUIRED — `password` is mandatory, no separate `user`). Do NOT set these in import.yaml.
 - `zeropsSubdomain`: platform-injected full HTTPS URL (e.g. `https://app-1df2-3000.prg1.zerops.app`), created when `enableSubdomainAccess: true`.
 - **Self-URL variable**: most frameworks have an env var that controls absolute URL generation (redirects, signed URLs, mail links, CSRF origin validation). Set it to `${zeropsSubdomain}` in `run.envVariables` so the framework generates correct public URLs. Without it, the framework defaults to `localhost` and any feature producing absolute URLs breaks silently.

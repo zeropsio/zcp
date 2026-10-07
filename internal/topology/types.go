@@ -167,7 +167,7 @@ const (
 	ExportStatusPublishReady ExportStatus = "publish-ready"
 )
 
-// SecretClassification buckets project envVariables and zerops.yaml
+// SecretClassification buckets project vault values and zerops.yaml
 // run.envVariables references into the four-category protocol per plan
 // §3.4. The agent classifies each env via grep + zerops.yaml provenance +
 // framework-convention reasoning, then surfaces the result in a per-env
@@ -188,21 +188,21 @@ const (
 	// resolves to a managed-service-emitted reference (`${db_*}`,
 	// `${redis_*}`, plus documented service-specific prefixes) or an
 	// app-built compound URL assembled from such references. Drops from
-	// import.yaml's project.envVariables; keeps the `${...}` reference
+	// import.yaml's vault; keeps the `${...}` reference
 	// in zerops.yaml so re-imported managed services emit fresh values.
 	SecretClassInfrastructure SecretClassification = "infrastructure"
 	// SecretClassAutoSecret means the source (or framework convention)
 	// uses the var as a local encryption / signing key. Includes Laravel
 	// APP_KEY, Django SECRET_KEY, Rails SECRET_KEY_BASE, Express
 	// session/JWT secrets — even when the encryption call lives inside
-	// the framework. Emits as `<@generateRandomString(<32>)>`
-	// in import.yaml; the atom must warn before regenerating when state,
+	// the framework. Emits as `<@generateRandomString(<32>)>`, sensitive,
+	// in import.yaml's vault; the atom must warn before regenerating when state,
 	// cookies, sessions, or test fixtures depend on the old value.
 	SecretClassAutoSecret SecretClassification = "auto-secret"
 	// SecretClassExternalSecret means the source calls a third-party SDK
 	// (Stripe, OpenAI, GitHub, Mailgun) using the var, including aliased
-	// imports and webhook verification secrets. Emits as a comment +
-	// `<@pickRandom(["REPLACE_ME"])>` placeholder. Empty / sentinel live
+	// imports and webhook verification secrets. Emits as the literal
+	// `REPLACE_ME` placeholder, sensitive. Empty / sentinel live
 	// values (`STRIPE_SECRET=`, `disabled`, `test_xxx`, `sk_test_*`) are
 	// review-required — do NOT blindly substitute REPLACE_ME for an
 	// empty staging key.
@@ -216,7 +216,7 @@ const (
 	// SecretClassExclude means the env is stale — present in the source
 	// project but no longer used by the app (e.g. a leftover APP_KEY
 	// after a refactor removed the consumer). Drops entirely: emitted
-	// into neither project.envVariables nor envSecrets, and no `${...}`
+	// into no vault, and no `${...}`
 	// reference is expected to survive in zerops.yaml. The escape hatch
 	// for the "every env must land in a semantic bucket" trap.
 	SecretClassExclude SecretClassification = "exclude"

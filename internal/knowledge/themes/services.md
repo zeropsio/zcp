@@ -14,14 +14,14 @@ Reference cards for all 14 Zerops managed services. Each card provides type, por
 
 - **Hostname substitution**: In templates below, each service uses a sample hostname (e.g., `db`, `cache`, `search`). Replace it with your actual service hostname. The syntax `${hostname_varname}` is real Zerops cross-service reference syntax — `hostname` must match the target service hostname exactly. Service hostnames are lowercase alphanumeric only (`[a-z0-9]`, no dashes or underscores), so the hostname segment maps verbatim.
 - **Reference**: `${hostname_variablename}` — the hostname segment is the literal service hostname (`[a-z0-9]`)
-- **Vault values** (the project's Shared vault, a service's own — `project.envVariables` / `envSecrets` in import.yaml, `zerops_env`, or the GUI) reach the app only through a `run.envVariables` line: `${KEY}` reads the service's own value, else the Shared one. Name the line what the app reads and the value something else — `KEY: ${KEY}` reaches the app as the literal `${KEY}` until Zerops resolves same-name references (`STRIPE_SECRET_KEY: ${STRIPE_SECRET}`). A changed value reaches a running process at its restart.
-- **import.yaml service level**: ONLY `envSecrets` and `dotEnvSecrets` exist. There is NO `envVariables` at service level (only at project level). Use `envSecrets` only for generated secrets (`<@generateRandomString(...)>`) and real credentials.
+- **Vault values** (the project's Shared vault, a service's own — `project.vault` / a service's `vault` in import.yaml, `zerops_env`, or the GUI) reach the app only through a `run.envVariables` line: `${KEY}` reads the service's own value, else the Shared one. Name the line what the app reads and the value something else — `KEY: ${KEY}` reaches the app as the literal `${KEY}` until Zerops resolves same-name references (`STRIPE_SECRET_KEY: ${STRIPE_SECRET}`). A changed value reaches a running process at its restart.
+- **import.yaml values**: `vault:` at project and service level, each item `KEY: value` or `KEY: {value: …, sensitive: true}`. `envSecrets`, `dotEnvSecrets` and `envVariables` are deprecated — never write them. Put in a service's `vault` only generated secrets (`<@generateRandomString(...)>`) and real credentials.
 - **Hostname = DNS**: use hostname directly for host (`db`, NOT `${db_hostname}`), but use `${db_port}` for port
 - **Internal**: ALWAYS `http://` — NEVER `https://` (SSL at L7 balancer)
 - **Shared vars**: referenced like any vault value — each service that needs one lists it in its `run.envVariables` under a different name
 - **Password sync**: changing DB password in GUI does NOT update env vars (manual sync)
 
-**Wire credentials in zerops.yaml `run.envVariables`** — Managed services auto-generate credentials but they are NOT automatically available to runtime services. Wire them via `run.envVariables` in zerops.yaml (the deploy-time config), like every value the app reads. Use import.yaml `envSecrets` ONLY for generated secrets like `<@generateRandomString(...)>`, and reference those too:
+**Wire credentials in zerops.yaml `run.envVariables`** — Managed services auto-generate credentials but they are NOT automatically available to runtime services. Wire them via `run.envVariables` in zerops.yaml (the deploy-time config), like every value the app reads. Use the service's import.yaml `vault` ONLY for generated secrets like `<@generateRandomString(...)>`, and reference those too:
 
 ```yaml
 # zerops.yaml — wire cross-service references here
@@ -34,8 +34,10 @@ zerops:
         DB_NAME: ${mydb_dbName}
         DB_USER: ${mydb_user}
         DB_PASSWORD: ${mydb_password}
+        APP_SECRET: ${APP_SECRET_KEY}
 ```
 ```yaml
+#zeropsPreprocessor=on
 # import.yaml — only generated secrets here
 services:
   - hostname: mydb
@@ -44,15 +46,15 @@ services:
 
   - hostname: myapp
     type: ubuntu/nodejs@22
-    envSecrets:
-      APP_SECRET: <@generateRandomString(<32>)>
+    vault:
+      APP_SECRET_KEY: {value: <@generateRandomString(<32>)>, sensitive: true}
 ```
 
 Without zerops.yaml wiring, the runtime service has no way to connect to managed services.
 
 ## Service Wiring Templates
 
-Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-service references (both VARS and SECRETS) in zerops.yaml `run.envVariables`. Use import.yaml `envSecrets` ONLY for generated secrets (`<@generateRandomString(...)>`) and real credentials that must exist before first deploy. There is no `envVariables` at service level in import.yaml — using it will silently drop the values. Replace sample hostnames (`db`, `cache`, etc.) with your actual service hostname.
+Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-service references (both VARS and SECRETS) in zerops.yaml `run.envVariables`. Use a service's import.yaml `vault` ONLY for generated secrets (`<@generateRandomString(...)>`) and real credentials that must exist before first deploy. Never write the deprecated `envSecrets` or `envVariables` there (a service-level `envVariables` is silently dropped). Replace sample hostnames (`db`, `cache`, etc.) with your actual service hostname.
 
 ## PostgreSQL
 **Type**: `postgresql:single` / `postgresql:ha` (check live stacks for versions), immutable

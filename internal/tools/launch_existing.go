@@ -472,7 +472,7 @@ type projectEnvEmission struct {
 // REPLACE_ME, PlainConfig → verbatim). The transform is necessary
 // because CreateProjectEnv bypasses the platform preprocessor — the
 // new-project path's `<@generateRandomString(<32>)>` directive in
-// project.envVariables would land here as a literal string. Without
+// project.vault would land here as a literal string. Without
 // the transform, dev/stage secrets leaked verbatim to prod.
 func mutateProjectEnvs(
 	ctx context.Context,
@@ -556,9 +556,9 @@ func mutateProjectEnvs(
 
 // applyClassificationToProjectEnvs walks composer-supplied envs and
 // produces the CreateProjectEnv-shaped emissions for the existing-
-// project mutation path. Mirrors composeProjectEnvVariables (which
-// emits preprocessor directives into the project.envVariables yaml
-// block for the new-project path) but with one critical difference:
+// project mutation path. Mirrors the bundle's project vault (which
+// carries preprocessor directives in the project.vault yaml block for
+// the new-project path) but with one critical difference:
 // CreateProjectEnv bypasses the platform preprocessor, so the
 // auto-secret directive `<@generateRandomString(<32>)>` would land as
 // a literal string. Auto-secret values are therefore generated in-tool

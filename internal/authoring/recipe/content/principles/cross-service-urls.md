@@ -73,7 +73,7 @@ zerops_env project=true action=set \
 
 After the `zerops_env` call above, also record the same constants in
 the recipe plan via `update-plan` so the engine can emit them in the
-tier yamls' `project.envVariables` block. The two channels solve
+tier yamls' `project.vault` block. The two channels solve
 different halves of the same problem:
 
 - **`zerops_env action=set`** populates the live workspace project's
