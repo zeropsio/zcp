@@ -468,8 +468,9 @@ func markServiceSecrets(doc map[string]any) (bool, error) {
 	return changed, nil
 }
 
-// preprocessorHeader is the `#yamlPreprocessor=on` line an import YAML opens
-// with, if it does, ready to put back in front of a re-serialized document.
+// preprocessorHeader is the preprocessor line an import YAML opens with, if
+// it does — `#zeropsPreprocessor=on` or `#yamlPreprocessor=on`, as written —
+// ready to put back in front of a re-serialized document.
 func preprocessorHeader(content string) string {
 	for line := range strings.SplitSeq(content, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -477,8 +478,8 @@ func preprocessorHeader(content string) string {
 			continue
 		}
 		compact := strings.ReplaceAll(trimmed, " ", "")
-		if strings.EqualFold(compact, "#yamlPreprocessor=on") {
-			return "#yamlPreprocessor=on\n"
+		if strings.EqualFold(compact, "#zeropsPreprocessor=on") || strings.EqualFold(compact, "#yamlPreprocessor=on") {
+			return trimmed + "\n"
 		}
 		return ""
 	}

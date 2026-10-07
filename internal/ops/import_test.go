@@ -1121,25 +1121,28 @@ func TestImport_ServiceSecrets_FollowTheNameRule(t *testing.T) {
 }
 
 // TestImport_Rewrite_KeepsThePreprocessorHeader — a YAML zcp rewrites (project block stripped,
-// override, secrets marked) keeps its `#yamlPreprocessor=on` first line, or every `<@…>` in it
-// would be stored as literal text.
+// override, secrets marked) keeps its preprocessor first line, in either spelling the
+// platform reads (`#zeropsPreprocessor=on`, what recipes and zcp's own bundles write, or
+// `#yamlPreprocessor=on`), or every `<@…>` in it would be stored as literal text.
 func TestImport_Rewrite_KeepsThePreprocessorHeader(t *testing.T) {
 	t.Parallel()
-	mock := importMock()
-	content := `#yamlPreprocessor=on
+	for _, header := range []string{"#zeropsPreprocessor=on", "#yamlPreprocessor=on"} {
+		mock := importMock()
+		content := header + `
 project:
-  envVariables:
+  vault:
     A: b
 services:
   - hostname: api
     type: nodejs@22
-    envSecrets:
+    vault:
       APP_SECRET: <@generateRandomString(<32>)>
 `
-	if _, err := Import(context.Background(), mock, "proj-1", content, "", false); err != nil {
-		t.Fatalf("Import: %v", err)
-	}
-	if !strings.HasPrefix(mock.CapturedImportYAML, "#yamlPreprocessor=on\n") {
-		t.Errorf("want the preprocessor header first, got:\n%s", mock.CapturedImportYAML)
+		if _, err := Import(context.Background(), mock, "proj-1", content, "", false); err != nil {
+			t.Fatalf("Import: %v", err)
+		}
+		if !strings.HasPrefix(mock.CapturedImportYAML, header+"\n") {
+			t.Errorf("want %s first, got:\n%s", header, mock.CapturedImportYAML)
+		}
 	}
 }
