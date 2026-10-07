@@ -77,7 +77,7 @@ Source Code
 |--------|---------------------------|
 | Platform-injected (hostname, serviceId, zeropsSubdomain) | At container start |
 | run.envVariables (zerops.yaml) — the app's list, referencing vault values | **Only after deploy** processes zerops.yaml |
-| Vault values (project.envVariables / envSecrets) | Only through a run.envVariables line that references them (Zerops still injects unreferenced ones today; strict isolation stops that) |
+| Vault values (`project.vault` / a service's `vault`) | Only through a run.envVariables line that references them (Zerops still injects unreferenced ones today; strict isolation stops that) |
 
 A `startWithoutCode` service is RUNNING but has only platform vars (and, until strict isolation, unreferenced vault values). `run.envVariables` (cross-service references like `${hostname_varname}`) do not exist as OS env vars until the zerops.yaml is deployed. Implicit-webserver types (php-nginx, php-apache) auto-serve from the filesystem — the app is reachable but runs without `run.envVariables`.
 

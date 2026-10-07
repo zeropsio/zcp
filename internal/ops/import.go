@@ -36,7 +36,7 @@ type ImportResult struct {
 	Warnings      []string              `json:"warnings,omitempty"`
 	Summary       string                `json:"summary,omitempty"`
 	NextActions   string                `json:"nextActions,omitempty"`
-	// ProjectEnvsSet lists the keys applied from an inline project.envVariables
+	// ProjectEnvsSet lists the keys applied from an inline project.vault or project.envVariables
 	// block (Fix B1), sorted for deterministic output. Empty when the import
 	// YAML carried no project: block.
 	ProjectEnvsSet []string `json:"projectEnvsSet,omitempty"`
@@ -60,8 +60,8 @@ type ImportProcessOutput struct {
 // hostname format). ZCP's pre-flight does only the things the API does NOT
 // tell the LLM clearly:
 //  1. `envVariables` at service-level silently drops — surfaced as warning.
-//  2. A 'project:' section — WHITELISTED to `envVariables` only (Fix B1):
-//     project.envVariables is applied via the project-env channel (EnvSet)
+//  2. A 'project:' section — WHITELISTED to `vault` and `envVariables` (Fix B1):
+//     project.vault and project.envVariables are applied via the project-env channel (EnvSet)
 //     before service creation, then stripped from the YAML sent to the
 //     API. Any OTHER project.* field (preprocessor, scaling, name, ...)
 //     still hard-rejects with a specific code instead of the generic
@@ -508,7 +508,7 @@ func applyProjectBlock(
 			return nil, false, platform.NewPlatformError(
 				platform.ErrImportHasProject,
 				fmt.Sprintf("import YAML project.%s is not supported at import time — zerops_import operates within the existing project", key),
-				"Remove project."+key+" — only project.vault and project.envVariables are supported inline (applied automatically before services are created). Other project.* fields belong to project creation (zcli or web UI). To set them on the existing project first, use `zerops_env action=\"set\" scope=\"project\" key=\"<KEY>\" value=\"<value>\"` (preprocessor directives like `<@generateRandomString(<32>)>` are passed literally and evaluated server-side).",
+				"Remove project."+key+" — only project.vault (and the deprecated project.envVariables) is supported inline (applied automatically before services are created). Other project.* fields belong to project creation (zcli or web UI). To set them on the existing project first, use `zerops_env action=\"set\" scope=\"project\" key=\"<KEY>\" value=\"<value>\"` (preprocessor directives like `<@generateRandomString(<32>)>` are passed literally and evaluated server-side).",
 			)
 		}
 	}

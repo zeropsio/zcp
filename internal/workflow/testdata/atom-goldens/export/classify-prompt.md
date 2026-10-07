@@ -160,7 +160,7 @@ When `bundle.errors` is non-empty the handler returns `status="validation-failed
 ### M2 — indirect infrastructure reference
 
 ```
-env "DB_HOST": classified Infrastructure (drops from project.envVariables) but zerops.yaml's run.envVariables references ${DB_HOST} — re-import will fail to resolve. Reclassify as PlainConfig or rewrite zerops.yaml to use managed-service refs (${db_*}/${redis_*}) directly.
+env "DB_HOST": classified Infrastructure (drops from the project vault) but zerops.yaml's run.envVariables references ${DB_HOST} — re-import will fail to resolve. Reclassify as PlainConfig or rewrite zerops.yaml to use managed-service refs (${db_*}/${redis_*}) directly.
 ```
 
 `zerops.yaml` references the project env's name (e.g. `${DB_HOST}`), not the managed-service env's name (`${db_hostname}`). Dropping `DB_HOST` from the project vault makes the reference unresolvable at re-import. Two fixes:
