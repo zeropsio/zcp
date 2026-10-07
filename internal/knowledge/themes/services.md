@@ -14,14 +14,14 @@ Reference cards for all 14 Zerops managed services. Each card provides type, por
 
 - **Hostname substitution**: In templates below, each service uses a sample hostname (e.g., `db`, `cache`, `search`). Replace it with your actual service hostname. The syntax `${hostname_varname}` is real Zerops cross-service reference syntax — `hostname` must match the target service hostname exactly. Service hostnames are lowercase alphanumeric only (`[a-z0-9]`, no dashes or underscores), so the hostname segment maps verbatim.
 - **Reference**: `${hostname_variablename}` — the hostname segment is the literal service hostname (`[a-z0-9]`)
-- **envSecrets** (import.yaml or GUI): injected directly as OS env vars — the app reads them via `getenv()` without any wiring. Do NOT re-reference envSecrets in zerops.yaml `run.envVariables` — `${MY_SECRET}` is NOT a valid reference (it becomes a literal string). The `${...}` syntax is ONLY for cross-service references. Changes to envSecrets require a service **restart** to take effect.
+- **Vault values** (the project's Shared vault, a service's own — `project.envVariables` / `envSecrets` in import.yaml, `zerops_env`, or the GUI) reach the app only through a `run.envVariables` line: `${KEY}` reads the service's own value, else the Shared one. Name the line what the app reads and the value something else — `KEY: ${KEY}` reaches the app as the literal `${KEY}` until Zerops resolves same-name references (`STRIPE_SECRET_KEY: ${STRIPE_SECRET}`). A changed value reaches a running process at its restart.
 - **import.yaml service level**: ONLY `envSecrets` and `dotEnvSecrets` exist. There is NO `envVariables` at service level (only at project level). Use `envSecrets` only for generated secrets (`<@generateRandomString(...)>`) and real credentials.
 - **Hostname = DNS**: use hostname directly for host (`db`, NOT `${db_hostname}`), but use `${db_port}` for port
 - **Internal**: ALWAYS `http://` — NEVER `https://` (SSL at L7 balancer)
-- **Project vars**: auto-inherited by all services — do NOT re-reference (creates shadow)
+- **Shared vars**: referenced like any vault value — each service that needs one lists it in its `run.envVariables` under a different name
 - **Password sync**: changing DB password in GUI does NOT update env vars (manual sync)
 
-**Wire credentials in zerops.yaml `run.envVariables`** — Managed services auto-generate credentials but they are NOT automatically available to runtime services. Wire them via `run.envVariables` in zerops.yaml (the deploy-time config). Use import.yaml `envSecrets` ONLY for generated secrets like `<@generateRandomString(...)>`:
+**Wire credentials in zerops.yaml `run.envVariables`** — Managed services auto-generate credentials but they are NOT automatically available to runtime services. Wire them via `run.envVariables` in zerops.yaml (the deploy-time config), like every value the app reads. Use import.yaml `envSecrets` ONLY for generated secrets like `<@generateRandomString(...)>`, and reference those too:
 
 ```yaml
 # zerops.yaml — wire cross-service references here

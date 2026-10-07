@@ -178,7 +178,7 @@ func TestBrief_Scaffold_TeachesOwnKeyAliasing(t *testing.T) {
 	}
 	mustContain(t, brief.Body, "DB_HOST: ${db_hostname}")
 	mustContain(t, brief.Body, "process.env.DB_HOST")
-	mustContain(t, brief.Body, "Self-shadow trap on project vars only")
+	mustContain(t, brief.Body, "**Self-shadow trap.**")
 	mustContain(t, brief.Body, "API_URL: ${API_URL}")
 	if strings.Contains(brief.Body, "Do NOT declare `DB_HOST: ${db_hostname}") {
 		t.Errorf("brief still carries the run-11 wrong rule banning own-key alias")

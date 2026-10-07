@@ -74,8 +74,8 @@ func TestBrief_TeachesProjectLevelShadowTrap(t *testing.T) {
 		t.Errorf("scaffold brief missing the word `project-level` in shadow teaching")
 	}
 	// Sanity: the trap-section anchor still appears.
-	if !strings.Contains(body, "Self-shadow trap on project vars only") {
-		t.Errorf("scaffold brief missing `Self-shadow trap on project vars only` anchor")
+	if !strings.Contains(body, "**Self-shadow trap.**") {
+		t.Errorf("scaffold brief missing `Self-shadow trap.` anchor")
 	}
 }
 

@@ -16,7 +16,8 @@ service="<hostname>" includeEnvs=true` and use those keys verbatim —
 **do not guess alternatives**. The catalog is the authoritative source;
 the host key is `hostname` (never `host`), other keys vary per service
 type. Values are redacted by default — names suffice; pass
-`includeEnvValues=true` only to troubleshoot.
+`includeEnvValues=true` only to troubleshoot. A key reaches the app
+only via a `run.envVariables` line (`DB_HOST: ${db_hostname}`).
 
 Per-service env KEYS come from the live discover catalog above, never a
 cheatsheet menu — use them verbatim. The SQL cheatsheet (SQL dep types

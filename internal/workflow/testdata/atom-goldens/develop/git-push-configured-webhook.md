@@ -93,7 +93,7 @@ A push rejected because the remote carries commits yours doesn't returns `GIT_PU
 
 A self-deploy replaces the dev container with a fresh one. Nothing on the
 old dev container's disk survives that swap except what git carries with
-it — project envs (auto-injected as OS env vars, never a file) and
+it — the vault (values the `zerops.yaml` references, never a file) and
 managed-service data (Postgres, object storage, …) are the other two
 persistence mechanisms, and neither lives on the dev container's
 filesystem either. A file that exists only on today's dev container — an
@@ -103,8 +103,9 @@ container replaces it.
 `zerops_deploy`'s response on a self-deploy carries this as data, not a
 guess: `notCarried` names the git-ignored paths (count, bytes, a sample)
 that will not exist in the new container, and `envFiles` lists any
-`.env`/`.env.*` files found regardless of ignore state — a config file the
-agent should move into `zerops_env`, not carry forward as a workaround.
+`.env`/`.env.*` files found regardless of ignore state — values to
+move into the vault with `zerops_env` (secrets `sensitive=true`)
+and reference from `run.envVariables`, not carry forward as a workaround.
 `repoState` reports whether the source is clean, dirty, mid-merge, mid-
 rebase, or on a detached HEAD at deploy time.
 
