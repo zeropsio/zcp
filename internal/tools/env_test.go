@@ -804,3 +804,82 @@ func TestEnvSet_StoredEcho_SensitiveMasked(t *testing.T) {
 		})
 	}
 }
+
+// TestEnvTool_Request asks the person for a value: nothing is written, the
+// answer names the key and scope and tells the agent not to ask in the chat;
+// a key already in that vault is referenced by name instead.
+func TestEnvTool_Request(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		args      map[string]any
+		wantField string
+		wantText  []string
+	}{
+		{
+			name:      "shared secret is requested",
+			args:      map[string]any{"action": "request", "key": "STRIPE_SECRET_KEY", "project": true, "reason": "Stripe charges cards — Dashboard › Developers › API keys."},
+			wantField: "requested",
+			wantText:  []string{`"key":"STRIPE_SECRET_KEY"`, `"scope":"shared"`, `"sensitive":true`, "never through the chat", "zerops-update note", "Do not ask for the value in the chat"},
+		},
+		{
+			name:      "service plain value is requested",
+			args:      map[string]any{"action": "request", "key": "SUPPORT_EMAIL", "serviceHostname": "api"},
+			wantField: "requested",
+			wantText:  []string{`"scope":"service"`, `"serviceHostname":"api"`, `"sensitive":false`},
+		},
+		{
+			name:      "a key already in the vault is not asked for",
+			args:      map[string]any{"action": "request", "key": "OPENAI_API_KEY", "project": true},
+			wantField: "alreadySet",
+			wantText:  []string{"already in", "${OPENAI_API_KEY}", "never read"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: statusActive}}).
+				WithProjectEnv([]platform.ProjectEnvVar{{ID: "p1", Key: "OPENAI_API_KEY", Content: "sk-live-secret", Sensitive: true}})
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterEnv(srv, mock, "proj-1", "")
+
+			result := callTool(t, srv, "zerops_env", tt.args)
+			text := getTextContent(t, result)
+			if result.IsError {
+				t.Fatalf("unexpected error: %s", text)
+			}
+			var parsed map[string]any
+			if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if _, ok := parsed[tt.wantField]; !ok {
+				t.Errorf("answer lacks %q: %s", tt.wantField, text)
+			}
+			for _, want := range tt.wantText {
+				if !strings.Contains(text, want) {
+					t.Errorf("answer lacks %q: %s", want, text)
+				}
+			}
+			if strings.Contains(text, "sk-live-secret") {
+				t.Errorf("a request leaked a stored value: %s", text)
+			}
+			if mock.CallCounts["CreateServiceEnvVar"] != 0 || len(mock.CapturedProjectEnvCreations) != 0 {
+				t.Errorf("a request wrote to the platform")
+			}
+		})
+	}
+}
+
+// TestEnvTool_Request_BadKey surfaces the key rule as a tool error.
+func TestEnvTool_Request_BadKey(t *testing.T) {
+	t.Parallel()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterEnv(srv, platform.NewMock(), "proj-1", "")
+
+	result := callTool(t, srv, "zerops_env", map[string]any{"action": "request", "key": "API_KEY=abc", "project": true})
+	if !result.IsError {
+		t.Fatalf("want an error for KEY=value, got: %s", getTextContent(t, result))
+	}
+}
