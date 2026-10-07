@@ -3,6 +3,7 @@ package recipe
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/topology"
@@ -28,7 +29,7 @@ const RecipeAppRepoBase = "https://github.com/zerops-recipe-apps/"
 //
 //   - ShapeDeliverable (finalize, 6 tiers): the published template each
 //     end-user clicks to deploy. Full `project:` block with
-//     `envVariables` (shared secrets as `<@generateRandomString(<32>)>`
+//     `vault:` (shared secrets as sensitive `<@generateRandomString(<32>)>`
 //     templates — evaluated once per end-user), every runtime has
 //     `zeropsSetup: dev|prod` + `buildFromGit` pointing at the published
 //     codebase repos. `${zeropsSubdomainHost}` stays literal for
@@ -137,18 +138,35 @@ func writeProject(b *strings.Builder, plan *Plan, tier Tier) {
 		return
 	}
 
-	b.WriteString("  envVariables:\n")
+	b.WriteString("  vault:\n")
 	if hasSecret {
-		fmt.Fprintf(b, "    %s: <@generateRandomString(<32>)>\n", plan.Research.AppSecretKey)
+		key := plan.Research.AppSecretKey
+		fmt.Fprintf(b, "    %s: %s\n", key, vaultItemYAML(key, "<@generateRandomString(<32>)>", true))
 	}
 	names := sortedKeys(envVars)
 	for _, name := range names {
 		if hasSecret && name == plan.Research.AppSecretKey {
 			continue
 		}
-		fmt.Fprintf(b, "    %s: %s\n", name, envVars[name])
+		fmt.Fprintf(b, "    %s: %s\n", name, vaultItemYAML(name, envVars[name], false))
 	}
 	b.WriteByte('\n')
+}
+
+// vaultItemYAML is one project vault item's value as the tier writes it: the
+// value as it is, or `{value: …, sensitive: true}` when the name reads as a
+// secret (topology.DefaultSensitive) or the value is one the recipe
+// generates (secret) — but for a name readable by design. A flow value is
+// quoted where YAML's flow form would misread it.
+func vaultItemYAML(key, value string, secret bool) string {
+	if !topology.DefaultSensitive(key) && (!secret || topology.ReadableByDesign(key)) {
+		return value
+	}
+	if value == "" || strings.ContainsAny(value, ",[]{}#\"'\n") || strings.Contains(value, ": ") ||
+		strings.TrimSpace(value) != value || strings.ContainsAny(value[:1], "&*!|>%@`") {
+		value = strconv.Quote(value)
+	}
+	return "{value: " + value + ", sensitive: true}"
 }
 
 // rewriteURLsForSingleSlot rewrites slot-named hostnames in URL values

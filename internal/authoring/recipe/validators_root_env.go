@@ -171,7 +171,7 @@ func validateEnvImportComments(_ context.Context, path string, body []byte, inpu
 	// Run-15 F.5 — yaml-AST + audience-voice checks that need the on-
 	// disk yaml body (not the per-fragment EnvComments map). Catches
 	// fabricated field names (snake_case `project_env_vars` when the
-	// schema uses camelCase `project.envVariables`) and authoring-voice
+	// yaml's key is `project.vault`) and authoring-voice
 	// leaks ("recipe author", "during scaffold") inside comment lines.
 	vs = append(vs, validateEnvYAMLImportCommentsExtra(path, body)...)
 	return vs, nil

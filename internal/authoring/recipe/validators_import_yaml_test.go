@@ -10,7 +10,7 @@ import (
 // engine refuses comment tokens that look like yaml field paths but
 // don't appear in the parsed yaml. Run-14 shipped `project_env_vars`
 // (snake_case) preambles when the actual schema field is
-// `project.envVariables` (camelCase) — structurally invisible to a
+// `project.vault` — structurally invisible to a
 // porter searching the yaml.
 func TestImportYamlComments_FabricatedFieldName(t *testing.T) {
 	t.Parallel()
@@ -19,7 +19,7 @@ func TestImportYamlComments_FabricatedFieldName(t *testing.T) {
 # project_env_vars carry shared config across services.
 project:
   name: example
-  envVariables:
+  vault:
     APP_KEY: foo
 services:
   - hostname: api
@@ -46,16 +46,16 @@ services:
 }
 
 // TestImportYamlComments_RealFieldName_Passes is the negative side of
-// the cross-check: a comment naming `project.envVariables` (the real
-// camelCase path) passes silently.
+// the cross-check: a comment naming `project.vault` (the real path)
+// passes silently.
 func TestImportYamlComments_RealFieldName_Passes(t *testing.T) {
 	t.Parallel()
 
-	const yamlBody = `# Stage tier — project.envVariables holds shared config.
-# envVariables propagate to every service in the project.
+	const yamlBody = `# Stage tier — project.vault holds shared config.
+# Every service that references a project.vault value reads it.
 project:
   name: example
-  envVariables:
+  vault:
     APP_KEY: foo
 services:
   - hostname: api
@@ -70,7 +70,7 @@ services:
 		t.Fatalf("validate: %v", err)
 	}
 	if containsCode(vs, "env-yaml-fabricated-field-name") {
-		t.Errorf("real field name `project.envVariables` should pass; got %+v", vs)
+		t.Errorf("real field name `project.vault` should pass; got %+v", vs)
 	}
 }
 

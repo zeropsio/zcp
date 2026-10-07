@@ -353,8 +353,8 @@ Finalize gates reject on these; fix at author-time:
   belongs in tier import.yaml comments, not inside the markers)
 - Env import.yaml comments: no fabricated yaml field names. If a
   comment references a yaml field, the path must exist in the yaml
-  below — `project_env_vars` (snake_case) is wrong when the schema
-  uses `project.envVariables` (camelCase, nested). The validator
+  below — `project_env_vars` (snake_case) is wrong when the yaml's
+  key is `project.vault`. The validator
   parses the yaml AST and refuses missing paths.
 - Env import.yaml comments: porter voice. "recipe author", "during
   scaffold", "we chose", "for the recipe" emit notice — comments

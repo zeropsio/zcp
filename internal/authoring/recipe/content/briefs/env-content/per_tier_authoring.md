@@ -714,8 +714,8 @@ if"*); each names the porter signal that triggers the adapt
 # URLs that frontends and CORS allow-lists consume.
 project:
   name: <recipe-slug>-stage
-  envVariables:
-    APP_SECRET: <@generateRandomString(<32>)>
+  vault:
+    APP_SECRET: {value: <@generateRandomString(<32>)>, sensitive: true}
     API_URL: https://api-stage.example.com
     FRONTEND_URL: https://app-stage.example.com
 ```
@@ -725,15 +725,15 @@ project:
 ```yaml
 # APP_SECRET is generated once at import and shared across api +
 # worker so JWT verification holds across the L7 balancer. Rotate
-# this via the Zerops UI's project envs once you suspect leakage
+# this in the project's vault in the Zerops UI once you suspect leakage
 # — every container picks up the new value on next restart.
 # Replace API_URL and FRONTEND_URL with your own
 # stage hostnames once subdomain access is swapped for a custom
 # domain.
 project:
   name: <recipe-slug>-stage
-  envVariables:
-    APP_SECRET: <@generateRandomString(<32>)>
+  vault:
+    APP_SECRET: {value: <@generateRandomString(<32>)>, sensitive: true}
     API_URL: https://api-stage.example.com
     FRONTEND_URL: https://app-stage.example.com
 ```
