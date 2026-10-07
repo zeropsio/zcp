@@ -1146,3 +1146,31 @@ services:
 		}
 	}
 }
+
+// TestImport_ServiceSecrets_WiringStaysReadable — a service value made only of references
+// (`DB_PASSWORD: ${db_password}`) holds no secret of its own: zcp leaves it plain.
+func TestImport_ServiceSecrets_WiringStaysReadable(t *testing.T) {
+	t.Parallel()
+	mock := importMock()
+	content := `services:
+  - hostname: api
+    type: nodejs@22
+    vault:
+      DB_PASSWORD: ${db_password}
+      APP_SECRET: s1
+`
+	if _, err := Import(context.Background(), mock, "proj-1", content, "", false); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	var sent map[string]any
+	if err := yaml.Unmarshal([]byte(mock.CapturedImportYAML), &sent); err != nil {
+		t.Fatalf("sent YAML: %v", err)
+	}
+	vault := sent["services"].([]any)[0].(map[string]any)["vault"].(map[string]any)
+	if vault["DB_PASSWORD"] != "${db_password}" {
+		t.Errorf("DB_PASSWORD = %v, want the plain reference", vault["DB_PASSWORD"])
+	}
+	if item, ok := vault["APP_SECRET"].(map[string]any); !ok || item["sensitive"] != true {
+		t.Errorf("APP_SECRET = %v, want sensitive", vault["APP_SECRET"])
+	}
+}

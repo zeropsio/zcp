@@ -458,7 +458,7 @@ func markServiceSecrets(doc map[string]any) (bool, error) {
 			if err != nil {
 				return false, err
 			}
-			if item.sensitive != nil || !topology.DefaultSensitive(key) {
+			if item.sensitive != nil || !topology.DefaultSensitiveValue(key, item.value) {
 				continue
 			}
 			vault[key] = map[string]any{"value": item.value, "sensitive": true}

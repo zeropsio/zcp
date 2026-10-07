@@ -25,8 +25,11 @@ type vaultValue struct {
 // generated, a placeholder, a value someone flagged sensitive — is sensitive
 // whatever its name, but for a name readable by design, whose generated value
 // the person still has to read (an admin's sign-in password).
+// A value made only of references is wiring and stays plain whatever was
+// judged of its key: it holds no secret of its own.
 func newVaultValue(key, value string, secret bool) vaultValue {
-	sensitive := topology.DefaultSensitive(key) || (secret && !topology.ReadableByDesign(key))
+	sensitive := !topology.IsReferenceOnly(value) &&
+		(topology.DefaultSensitive(key) || (secret && !topology.ReadableByDesign(key)))
 	return vaultValue{value: value, sensitive: sensitive}
 }
 

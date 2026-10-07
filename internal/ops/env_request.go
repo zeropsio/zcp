@@ -78,7 +78,7 @@ func EnvRequest(
 			"project=true asks for a Shared value; serviceHostname for one service's own.")
 	}
 
-	result := &EnvRequestResult{Key: key, Sensitive: resolveSensitive(key, sensitive)}
+	result := &EnvRequestResult{Key: key, Sensitive: resolveSensitive(key, "", sensitive)}
 	if isProject {
 		result.Scope = EnvRequestScopeShared
 		envs, err := client.GetProjectEnv(ctx, projectID)

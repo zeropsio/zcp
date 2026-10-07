@@ -60,3 +60,26 @@ func TestReadableByDesign(t *testing.T) {
 		}
 	}
 }
+
+// TestDefaultSensitiveValue — a value made only of references is wiring: it holds no secret of
+// its own, so it stays readable whatever its name, and the agent can still read how it is wired.
+func TestDefaultSensitiveValue(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		key, value string
+		want       bool
+	}{
+		{"DB_PASSWORD", "${db_password}", false},
+		{"REDIS_PASS", " ${redis_password} ", false},
+		{"APP_KEY", "${APP_KEY_SECRET}", false},
+		{"DB_PASSWORD", "hunter2", true},
+		{"APP_KEY", "base64:${APP_KEY_SECRET}", true},
+		{"DATABASE_URL", "postgresql://${db_user}:${db_password}@db/db", false},
+		{"API_URL", "${zeropsSubdomainHost}", false},
+	}
+	for _, tt := range tests {
+		if got := DefaultSensitiveValue(tt.key, tt.value); got != tt.want {
+			t.Errorf("DefaultSensitiveValue(%q, %q) = %v, want %v", tt.key, tt.value, got, tt.want)
+		}
+	}
+}

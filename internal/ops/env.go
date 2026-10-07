@@ -188,13 +188,13 @@ type EnvDeleteResult struct {
 	NextActions string            `json:"nextActions,omitempty"`
 }
 
-// resolveSensitive is the flag one key is written with: the caller's, else
-// the default by name.
-func resolveSensitive(key string, sensitive *bool) bool {
+// resolveSensitive is the flag one value is written with: the caller's, else
+// the default (topology.DefaultSensitiveValue: plain for wiring, else by name).
+func resolveSensitive(key, value string, sensitive *bool) bool {
 	if sensitive != nil {
 		return *sensitive
 	}
-	return topology.DefaultSensitive(key)
+	return topology.DefaultSensitiveValue(key, value)
 }
 
 // EnvSet sets environment variables for a service or project with upsert
@@ -227,8 +227,8 @@ func EnvSet(
 	variables []string,
 	sensitive *bool,
 ) (*EnvSetResult, error) {
-	return envSet(ctx, client, projectID, hostname, isProject, variables, func(key string) bool {
-		return resolveSensitive(key, sensitive)
+	return envSet(ctx, client, projectID, hostname, isProject, variables, func(key, value string) bool {
+		return resolveSensitive(key, value, sensitive)
 	})
 }
 
@@ -244,11 +244,11 @@ func EnvSetEach(
 	variables []string,
 	flags map[string]bool,
 ) (*EnvSetResult, error) {
-	return envSet(ctx, client, projectID, hostname, isProject, variables, func(key string) bool {
+	return envSet(ctx, client, projectID, hostname, isProject, variables, func(key, value string) bool {
 		if flag, ok := flags[key]; ok {
 			return flag
 		}
-		return topology.DefaultSensitive(key)
+		return topology.DefaultSensitiveValue(key, value)
 	})
 }
 
@@ -259,7 +259,7 @@ func envSet(
 	hostname string,
 	isProject bool,
 	variables []string,
-	sensitiveOf func(key string) bool,
+	sensitiveOf func(key, value string) bool,
 ) (*EnvSetResult, error) {
 	if hostname == "" && !isProject {
 		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,
@@ -332,7 +332,7 @@ func envSet(
 			}
 			replaced = true
 		}
-		flag := sensitiveOf(p.Key)
+		flag := sensitiveOf(p.Key, p.Value)
 		proc, setErr := client.CreateServiceEnvVar(ctx, svc.ID, p.Key, p.Value, flag)
 		if setErr != nil {
 			if hasAPICode(setErr, apiCodeUserDataDuplicateKey) && !replaced {
@@ -355,7 +355,7 @@ func envSet(
 // exposes CREATE + DELETE, so existing keys are delete-then-created; new
 // keys are created directly. Returns the last process plus the full list
 // of stored pairs so the caller can verify what was written.
-func setProjectEnvs(ctx context.Context, client platform.Client, projectID string, pairs []envPair, sensitiveOf func(key string) bool) (*EnvSetResult, error) {
+func setProjectEnvs(ctx context.Context, client platform.Client, projectID string, pairs []envPair, sensitiveOf func(key, value string) bool) (*EnvSetResult, error) {
 	existing, err := client.GetProjectEnv(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -376,7 +376,7 @@ func setProjectEnvs(ctx context.Context, client platform.Client, projectID strin
 			}
 			replaced = true
 		}
-		flag := sensitiveOf(p.Key)
+		flag := sensitiveOf(p.Key, p.Value)
 		proc, setErr := client.CreateProjectEnv(ctx, projectID, p.Key, p.Value, flag)
 		if setErr != nil {
 			if replaced {

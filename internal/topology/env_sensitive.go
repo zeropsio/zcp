@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -43,4 +44,20 @@ func ReadableByDesign(key string) bool {
 		return true
 	}
 	return has("ADMIN", "SUPERADMIN") && has("PASSWORD", "PASS")
+}
+
+// referenceOnly matches a value made only of `${name}` references.
+var referenceOnly = regexp.MustCompile(`^(\$\{[^}]+\})+$`)
+
+// IsReferenceOnly reports a value made only of `${name}` references: wiring
+// that holds no secret of its own (`DB_PASSWORD: ${db_password}`).
+func IsReferenceOnly(value string) bool {
+	return referenceOnly.MatchString(strings.TrimSpace(value))
+}
+
+// DefaultSensitiveValue is the flag a value gets when nobody says: plain for
+// wiring (IsReferenceOnly), so the agent can still read how a value is wired,
+// else the name rule (DefaultSensitive).
+func DefaultSensitiveValue(key, value string) bool {
+	return !IsReferenceOnly(value) && DefaultSensitive(key)
 }
