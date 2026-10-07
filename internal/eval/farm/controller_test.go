@@ -892,7 +892,7 @@ func TestFarmRun_CreatesShellMintsTokenThenImportsService_InOrder(t *testing.T) 
 
 // capturingImportClient wraps a PlatformClient and records the yaml body of
 // the last successful ImportServiceStack call — tests use it to assert on
-// envSecrets content createRun built into the descriptor (e.g. the
+// vault content createRun built into the descriptor (e.g. the
 // GitHub PAT injection), without needing fakeAccount itself to expose it.
 type capturingImportClient struct {
 	PlatformClient
@@ -998,7 +998,7 @@ func TestFarmRun_RequiredGitHubPAT_PresentInjectsIntoServiceEnv(t *testing.T) {
 	if len(results) != 1 || results[0].Result != ResultPassed {
 		t.Fatalf("results = %+v, want 1 passed entry", results)
 	}
-	if !strings.Contains(capture.lastYAML(), `ZCP_E2E_GITHUB_PAT: "github-pat-value"`) {
+	if !strings.Contains(capture.lastYAML(), `ZCP_E2E_GITHUB_PAT: {value: "github-pat-value", sensitive: true}`) {
 		t.Errorf("service import yaml missing injected PAT env, got:\n%s", capture.lastYAML())
 	}
 }
@@ -1116,7 +1116,7 @@ func TestFarmRun_RequiredGitHubAdminPAT_PresentInjectsIntoServiceEnv(t *testing.
 	if len(results) != 1 || results[0].Result != ResultPassed {
 		t.Fatalf("results = %+v, want 1 passed entry", results)
 	}
-	if !strings.Contains(capture.lastYAML(), `ZCP_E2E_GITHUB_PAT_ADMIN: "github-pat-admin-value"`) {
+	if !strings.Contains(capture.lastYAML(), `ZCP_E2E_GITHUB_PAT_ADMIN: {value: "github-pat-admin-value", sensitive: true}`) {
 		t.Errorf("service import yaml missing injected admin PAT env, got:\n%s", capture.lastYAML())
 	}
 }

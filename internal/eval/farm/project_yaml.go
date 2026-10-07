@@ -112,10 +112,12 @@ func (d RunDescriptor) validateService() error {
 	return nil
 }
 
-// envKV is one ordered envSecrets entry.
+// envKV is one ordered entry of the zcp service's vault. Sensitive marks a
+// credential: written {value, sensitive: true}, write-only on the platform.
 type envKV struct {
-	Key   string
-	Value string
+	Key       string
+	Value     string
+	Sensitive bool
 }
 
 // projectTemplateData is what projectImportYAMLTemplate renders.
@@ -124,19 +126,20 @@ type projectTemplateData struct {
 }
 
 // serviceTemplateData is what serviceImportYAMLTemplate renders.
-// EnvSecretsYAML is pre-rendered in Go (not a template loop) so the byte
-// layout is exactly what buildEnvSecretsYAML produces — no template
+// VaultYAML is pre-rendered in Go (not a template loop) so the byte
+// layout is exactly what buildVaultYAML produces — no template
 // whitespace-trim ambiguity to reason about when authoring the golden
 // files by hand.
 type serviceTemplateData struct {
-	Hostname       string
-	EnvSecretsYAML string
+	Hostname  string
+	VaultYAML string
 }
 
-// buildEnvSecretsYAML renders each entry as "      KEY: "VALUE"\n", in
-// order, with no trailing blank line (the caller's template supplies the
-// newline that follows the block).
-func buildEnvSecretsYAML(entries []envKV) string {
+// buildVaultYAML renders each entry as `      KEY: "VALUE"`, or
+// `      KEY: {value: "VALUE", sensitive: true}` for a credential, in order,
+// with no trailing blank line (the caller's template supplies the newline
+// that follows the block).
+func buildVaultYAML(entries []envKV) string {
 	var b strings.Builder
 	for i, e := range entries {
 		if i > 0 {
@@ -145,6 +148,10 @@ func buildEnvSecretsYAML(entries []envKV) string {
 		b.WriteString("      ")
 		b.WriteString(e.Key)
 		b.WriteString(": ")
+		if e.Sensitive {
+			b.WriteString("{value: " + yamlDQ(e.Value) + ", sensitive: true}")
+			continue
+		}
 		b.WriteString(yamlDQ(e.Value))
 	}
 	return b.String()
@@ -171,42 +178,42 @@ func ProjectImportYAML(d RunDescriptor) ([]byte, error) {
 // (including the minted RunToken as ZCP_API_KEY), and boot sequence
 // (ImportServiceStack, §2.1 step 3). Output is byte-stable for a given
 // descriptor (golden-file tested) — the same descriptor always renders the
-// same bytes, in the fixed envSecrets order FM-12 lists, with LaunchKey
+// same bytes, in the fixed vault order FM-12 lists, with LaunchKey
 // appended only when non-empty.
 func ServiceImportYAML(d RunDescriptor) ([]byte, error) {
 	if err := d.validateService(); err != nil {
 		return nil, err
 	}
 
-	envSecrets := []envKV{
-		{"ZCP_API_KEY", d.RunToken},
-		{"ZCP_VSCODE", "true"},
-		{"ZCP_FARM_BATCH", d.BatchID},
-		{"ZCP_FARM_RUN", d.RunID},
-		{"ZCP_FARM_SCENARIO", d.ScenarioID},
-		{"ZCP_FARM_EVALUATOR_SHA", d.EvaluatorSHA256},
-		{"ZCP_FARM_CANDIDATE_SHA", d.CandidateSHA256},
-		{"ZCP_FARM_SCENARIOS_DIGEST", d.ScenariosDigest},
-		{"ZCP_FARM_WRAPPER_SHA", d.WrapperSHA256},
-		{"ZCP_FARM_S3_URL", d.Sink.URL},
-		{"ZCP_FARM_S3_BUCKET", d.Sink.Bucket},
-		{"ZCP_FARM_S3_KEY", d.Sink.Key},
-		{"ZCP_FARM_S3_SECRET", d.Sink.Secret},
-		{"CLAUDE_CODE_OAUTH_TOKEN", d.OAuthToken},
+	vault := []envKV{
+		{"ZCP_API_KEY", d.RunToken, true},
+		{"ZCP_VSCODE", "true", false},
+		{"ZCP_FARM_BATCH", d.BatchID, false},
+		{"ZCP_FARM_RUN", d.RunID, false},
+		{"ZCP_FARM_SCENARIO", d.ScenarioID, false},
+		{"ZCP_FARM_EVALUATOR_SHA", d.EvaluatorSHA256, false},
+		{"ZCP_FARM_CANDIDATE_SHA", d.CandidateSHA256, false},
+		{"ZCP_FARM_SCENARIOS_DIGEST", d.ScenariosDigest, false},
+		{"ZCP_FARM_WRAPPER_SHA", d.WrapperSHA256, false},
+		{"ZCP_FARM_S3_URL", d.Sink.URL, false},
+		{"ZCP_FARM_S3_BUCKET", d.Sink.Bucket, false},
+		{"ZCP_FARM_S3_KEY", d.Sink.Key, true},
+		{"ZCP_FARM_S3_SECRET", d.Sink.Secret, true},
+		{"CLAUDE_CODE_OAUTH_TOKEN", d.OAuthToken, true},
 	}
 	if d.LaunchKey != "" {
-		envSecrets = append(envSecrets, envKV{"ZCP_E2E_LAUNCH_KEY", d.LaunchKey})
+		vault = append(vault, envKV{"ZCP_E2E_LAUNCH_KEY", d.LaunchKey, true})
 	}
 	if d.GitHubPAT != "" {
-		envSecrets = append(envSecrets, envKV{"ZCP_E2E_GITHUB_PAT", d.GitHubPAT})
+		vault = append(vault, envKV{"ZCP_E2E_GITHUB_PAT", d.GitHubPAT, true})
 	}
 	if d.GitHubAdminPAT != "" {
-		envSecrets = append(envSecrets, envKV{"ZCP_E2E_GITHUB_PAT_ADMIN", d.GitHubAdminPAT})
+		vault = append(vault, envKV{"ZCP_E2E_GITHUB_PAT_ADMIN", d.GitHubAdminPAT, true})
 	}
 
 	data := serviceTemplateData{
-		Hostname:       serviceHostname,
-		EnvSecretsYAML: buildEnvSecretsYAML(envSecrets),
+		Hostname:  serviceHostname,
+		VaultYAML: buildVaultYAML(vault),
 	}
 
 	var buf bytes.Buffer
@@ -236,8 +243,8 @@ var serviceImportYAMLTemplate = template.Must(template.New("serviceImportYAML").
     type: zcp@1
     maxContainers: 1
     verticalAutoscaling: { minRam: 2 }
-    envSecrets:
-{{.EnvSecretsYAML}}
+    vault:
+{{.VaultYAML}}
     zeropsYaml:
       zerops:
         - setup: zcp

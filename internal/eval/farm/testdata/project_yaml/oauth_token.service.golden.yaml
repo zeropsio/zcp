@@ -3,8 +3,8 @@ services:
     type: zcp@1
     maxContainers: 1
     verticalAutoscaling: { minRam: 2 }
-    envSecrets:
-      ZCP_API_KEY: "run-token-value"
+    vault:
+      ZCP_API_KEY: {value: "run-token-value", sensitive: true}
       ZCP_VSCODE: "true"
       ZCP_FARM_BATCH: "batch-2026-09-10"
       ZCP_FARM_RUN: "run-oauth456"
@@ -15,9 +15,9 @@ services:
       ZCP_FARM_WRAPPER_SHA: "wrapper-sha-9999"
       ZCP_FARM_S3_URL: "https://s3.prg1.zerops.app"
       ZCP_FARM_S3_BUCKET: "zcp-farm"
-      ZCP_FARM_S3_KEY: "sink-key-cccc"
-      ZCP_FARM_S3_SECRET: "sink-secret-dddd"
-      CLAUDE_CODE_OAUTH_TOKEN: "oauth-token-value"
+      ZCP_FARM_S3_KEY: {value: "sink-key-cccc", sensitive: true}
+      ZCP_FARM_S3_SECRET: {value: "sink-secret-dddd", sensitive: true}
+      CLAUDE_CODE_OAUTH_TOKEN: {value: "oauth-token-value", sensitive: true}
     zeropsYaml:
       zerops:
         - setup: zcp
