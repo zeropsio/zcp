@@ -507,12 +507,13 @@ func TestEnvSet_ProjectScope_ShadowedByYaml_WarnsNotLive(t *testing.T) {
 }
 
 // TestEnvSet_ProjectScope_NoShadow_Live — a project-scope set of a key NO
-// service bakes is genuinely live after restart; no shadowWarnings, and the
-// success text states the values are live.
+// service bakes, read by a service's entry, is genuinely live after its
+// reader restarts; no shadowWarnings, and the success text states the values
+// are live.
 func TestEnvSet_ProjectScope_NoShadow_Live(t *testing.T) {
 	t.Parallel()
 	mock := shadowSetMock(
-		[]platform.ServiceEnvVar{{Key: "LOG_LEVEL", Content: "info"}},
+		[]platform.ServiceEnvVar{{Key: "LOG_LEVEL", Content: "info"}, {Key: "NEW", Content: "${NEW_VAR}"}},
 		[]platform.ServiceEnvVar{{Key: "PORT", Content: "3000"}},
 	)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
