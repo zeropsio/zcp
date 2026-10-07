@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -195,8 +196,30 @@ var sensitiveNameParts = []string{"SECRET", "TOKEN", "KEY", "PASSWORD", "PASS", 
 // DefaultSensitive is the flag a set writes when the caller does not pass
 // one: a key whose name reads as a secret (SECRET, TOKEN, KEY, PASSWORD,
 // PASS, DSN, PRIVATE, CREDENTIAL, any case) is sensitive, any other plain.
+// Two secret-shaped names stay plain:
+//   - a name public by design — PUBLIC or PUBLISHABLE a word of it and no
+//     SECRET, PASSWORD or PRIVATE beside it — because a browser bundle ships
+//     its value anyway;
+//   - a password a person signs in with — ADMIN or SUPERADMIN beside
+//     PASSWORD or PASS — because a sensitive value is write-only and the
+//     vault is where the person finds it (Mate hides it on screen).
 func DefaultSensitive(key string) bool {
 	upper := strings.ToUpper(key)
+	words := strings.FieldsFunc(upper, func(r rune) bool { return r == '_' || r == '-' || r == '.' })
+	has := func(set ...string) bool {
+		for _, word := range words {
+			if slices.Contains(set, word) {
+				return true
+			}
+		}
+		return false
+	}
+	if has("PUBLIC", "PUBLISHABLE") && !has("SECRET", "PASSWORD", "PRIVATE") {
+		return false
+	}
+	if has("ADMIN", "SUPERADMIN") && has("PASSWORD", "PASS") {
+		return false
+	}
 	for _, part := range sensitiveNameParts {
 		if strings.Contains(upper, part) {
 			return true

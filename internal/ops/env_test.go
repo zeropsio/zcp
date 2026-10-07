@@ -240,6 +240,15 @@ func TestDefaultSensitive(t *testing.T) {
 		{"NODE_ENV", false},
 		{"LOG_LEVEL", false},
 		{"API_BASE_URL", false},
+		// Public by design: a browser bundle ships it.
+		{"STRIPE_PUBLISHABLE_KEY", false},
+		{"NEXT_PUBLIC_STRIPE_KEY", false},
+		{"PUBLIC_SECRET_KEY", true},
+		// A password the person signs in with stays readable to them.
+		{"SUPERADMIN_PASSWORD", false},
+		{"ADMIN_PASS", false},
+		{"GRAFANA_ADMIN_PASSWORD", false},
+		{"ADMIN_API_TOKEN", true},
 	}
 	for _, tt := range tests {
 		if got := DefaultSensitive(tt.key); got != tt.want {
