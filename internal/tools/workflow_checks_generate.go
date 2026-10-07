@@ -10,12 +10,12 @@ import (
 )
 
 // checkEnvSelfShadow detects `key: ${key}` shape in `run.envVariables`
-// (the canonical schema location). Same-key declarations resolve to
-// the literal string `${key}` inside the container. For project-level
-// vars (which auto-inherit) this is a true self-shadow; for
-// cross-service vars (which do not auto-inject under default isolation)
-// the right-hand template has nothing to resolve to. Both shapes are
-// invalid; flag uniformly.
+// (the canonical schema location). A same-key declaration reaches the
+// process as the literal string `${key}` — for a Shared or the service's own
+// vault value too — and every other entry of the service that references
+// key gets the literal as well (live 2026-10-07). Until Zerops resolves
+// same-name references, the entry is named what the app reads and the value
+// it references carries a different name.
 //
 // Returns exactly one StepCheck — pass or fail. Nil entry is a pass
 // (defensive; upstream `_zerops_yml_exists` reports a missing entry).
@@ -39,7 +39,7 @@ func checkEnvSelfShadow(_ context.Context, hostname string, entry *ops.ZeropsYml
 		Name:   hostname + "_env_self_shadow",
 		Status: statusFail,
 		Detail: fmt.Sprintf(
-			"same-key envVariables: %s — each entry has the shape `key: ${key}`, which resolves to the literal string `${key}` inside the container. Project-level vars (`${API_URL}`, `${APP_SECRET}`, ...) auto-inherit into every container; re-declaring under the same key produces the literal shadow above. Cross-service vars (`${db_hostname}`, `${queue_user}`, ...) reach the app only via an alias under a DIFFERENT key (`DB_HOST: ${db_hostname}`). DELETE these lines or rename under your own key. Only valid run.envVariables shapes: renames with keys that DIFFER (`DB_HOST: ${db_hostname}`) or literal mode flags (`NODE_ENV: production`). Full rule set: zerops_knowledge uri=\"zerops://atoms/develop-env-var-model\".",
+			"same-key envVariables: %s — each entry has the shape `key: ${key}`, which reaches the app as the literal string `${key}`, and every other entry referencing key gets the literal too. Until Zerops resolves same-name references, name the entry what the app reads and give the value it references a different name: `APP_KEY: ${APP_KEY_SECRET}` for a vault value (store it under that name with zerops_env), `DB_HOST: ${db_hostname}` for another service's. Full rule set: zerops_knowledge uri=\"zerops://atoms/develop-env-var-model\".",
 			strings.Join(shadows, ", "),
 		),
 	}

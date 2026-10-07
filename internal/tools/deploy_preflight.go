@@ -204,6 +204,7 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	// Validate env var references.
 	if len(entry.Run.EnvVariables) > 0 && client != nil {
 		checks = append(checks, preflightEnvRefs(ctx, client, projectID, targetHostname, entry)...)
+		checks = append(checks, preflightEnvUnresolved(ctx, client, projectID, targetHostname, entry))
 	}
 
 	allPassed := checksAllPassed(checks)
@@ -330,4 +331,65 @@ func preflightEnvRefs(ctx context.Context, client platform.Client, projectID, ho
 	return []workflow.StepCheck{{
 		Name: hostname + "_env_refs", Status: statusPass,
 	}}
+}
+
+// preflightEnvUnresolved flags a `${NAME}` in the target's run.envVariables
+// that nothing resolves — not another of its entries, its own value, a
+// Shared value, nor a platform key — so it reaches the app as the literal
+// text `${NAME}` (live 2026-10-07). Reads the project's actual rows (Shared,
+// the target's own incl. platform intrinsics) so a platform key is never a
+// false positive. `${host_KEY}` references are preflightEnvRefs's and a
+// `KEY: ${KEY}` line is checkEnvSelfShadow's — neither is reported here.
+//
+// A confirmed literal FAILs, like the other run.envVariables checks (a
+// broken-at-runtime config ships green otherwise); a read that fails WARNs
+// (pass + detail), never FAILs.
+func preflightEnvUnresolved(ctx context.Context, client platform.Client, projectID, hostname string, entry *ops.ZeropsYmlEntry) workflow.StepCheck {
+	name := hostname + "_env_unresolved"
+	unverified := func(err error) workflow.StepCheck {
+		return workflow.StepCheck{Name: name, Status: statusPass,
+			Detail: fmt.Sprintf("env rows unavailable (%v) — unresolved ${...} references unverified; retry after `zcli vpn up`", err)}
+	}
+	services, err := ops.ListProjectServices(ctx, client, projectID)
+	if err != nil {
+		return unverified(err)
+	}
+	shared, err := inventory.FetchProjectEnvs(ctx, client, projectID)
+	if err != nil {
+		return unverified(err)
+	}
+	project := ops.ProjectEnvScope{Shared: map[string]bool{}, Hosts: ops.NewEnvRefClassifier(services)}
+	for _, e := range shared {
+		project.Shared[e.Key] = true
+	}
+	scope := ops.ServiceEnvScope{Hostname: hostname, Entries: entry.Run.EnvVariables, Own: map[string]bool{}}
+	for _, svc := range services {
+		if svc.Name != hostname {
+			continue
+		}
+		own, ownErr := ops.FetchServiceEnv(ctx, client, svc.ID)
+		if ownErr != nil {
+			return unverified(ownErr)
+		}
+		for _, e := range own {
+			scope.Own[e.Key] = true
+		}
+	}
+
+	var literals []string
+	for _, r := range scope.Refs(project) {
+		if r.Kind != ops.EnvRefUnresolved {
+			continue
+		}
+		if _, _, isHost := project.Hosts.Classify(r.Name); isHost {
+			continue
+		}
+		literals = append(literals, fmt.Sprintf("%s: ${%s}", r.Entry, r.Name))
+	}
+	if len(literals) == 0 {
+		return workflow.StepCheck{Name: name, Status: statusPass}
+	}
+	return workflow.StepCheck{Name: name, Status: statusFail,
+		Detail: fmt.Sprintf("run.envVariables reference a value nothing provides — %s. Each reaches the app as the literal text, not a value. `${NAME}` reads %s's own value, else the project's Shared one; `${host_KEY}` reads another service's. Store the value first (zerops_env action=set serviceHostname=%q, or project=true for Shared), or fix the name.",
+			strings.Join(literals, "; "), hostname, hostname)}
 }
