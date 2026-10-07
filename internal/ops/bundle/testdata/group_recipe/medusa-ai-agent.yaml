@@ -29,7 +29,7 @@ project:
     STRIPE_PUBLISHABLE_KEY: ""
     STRIPE_WEBHOOK_SECRET: {value: "", sensitive: true}
     SUPERADMIN_EMAIL: admin@example.com
-    SUPERADMIN_PASSWORD: <@generateRandomString(<16>)>
+    SUPERADMIN_PASSWORD: {value: <@generateRandomString(<16>)>, sensitive: true}
 
 services:
   - hostname: db

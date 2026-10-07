@@ -25,10 +25,10 @@ func TestDefaultSensitive(t *testing.T) {
 		{"STRIPE_PUBLISHABLE_KEY", false},
 		{"NEXT_PUBLIC_STRIPE_KEY", false},
 		{"PUBLIC_SECRET_KEY", true},
-		// A password the person signs in with stays readable to them.
-		{"SUPERADMIN_PASSWORD", false},
-		{"ADMIN_PASS", false},
-		{"GRAFANA_ADMIN_PASSWORD", false},
+		// An admin's sign-in password is a secret too: the person shows it in Mate's vault.
+		{"SUPERADMIN_PASSWORD", true},
+		{"ADMIN_PASS", true},
+		{"GRAFANA_ADMIN_PASSWORD", true},
 		{"ADMIN_API_TOKEN", true},
 	}
 	for _, tt := range tests {
@@ -38,8 +38,8 @@ func TestDefaultSensitive(t *testing.T) {
 	}
 }
 
-// TestReadableByDesign — a public name and an admin's sign-in password stay
-// readable even when their value is a secret zcp generates.
+// TestReadableByDesign — a public name stays readable even when its value is a
+// secret zcp generates; an admin's sign-in password does not.
 func TestReadableByDesign(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -48,7 +48,7 @@ func TestReadableByDesign(t *testing.T) {
 	}{
 		{"STRIPE_PUBLISHABLE_KEY", true},
 		{"NEXT_PUBLIC_API_URL", true},
-		{"SUPERADMIN_PASSWORD", true},
+		{"SUPERADMIN_PASSWORD", false},
 		{"PUBLIC_SECRET_KEY", false},
 		{"ADMIN_API_TOKEN", false},
 		{"APP_SALT", false},
