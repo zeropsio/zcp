@@ -546,8 +546,8 @@ func EnsureInstalled(opts EnsureOptions) (Result, error) {
 	}
 
 	state, _ := ReadUpdateState()
-	if !opts.Force && state.FailedVersion == desired.Version && instErr == nil {
-		return Result{Action: ActionNone, From: installed, To: installed, Warning: "keeping last-good; this release failed readiness"}, nil
+	if !opts.Force && state.FailedVersion != "" && !VersionOlder(state.FailedVersion, desired.Version) && instErr == nil {
+		return Result{Action: ActionNone, From: installed, To: installed, Warning: "keeping last-good; waiting for a release newer than the failed version"}, nil
 	}
 	if instErr == nil && installed == desired.Version {
 		return Result{Action: ActionNone, From: installed, To: installed}, nil

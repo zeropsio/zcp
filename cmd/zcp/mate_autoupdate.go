@@ -126,6 +126,9 @@ func runMateUpdateWorker(args []string) int {
 		return failMateUpdate(false, err.Error())
 	}
 	automatic := slices.Contains(args, "--automatic")
+	if !slices.Contains(args, "--force") && state.FailedVersion != "" && !mate.VersionOlder(state.FailedVersion, desired.Version) {
+		return 0
+	}
 	if automatic && !mate.AutomaticUpdateAllowed(installed, state.FailedVersion, desired) {
 		return 0
 	}
