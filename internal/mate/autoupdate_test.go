@@ -201,3 +201,19 @@ func TestRecoverStoppedUpdate_CrashPhase_Result(t *testing.T) {
 		})
 	}
 }
+
+func TestStageRelease_LastGoodCandidate_PreservesVerifiedInstall(t *testing.T) {
+	rig := newEnsureRig(t)
+	seedInstalledVersion(t, "0.14.3")
+	writeFakePackage(t, mate.VersionDir(desiredVersion), desiredVersion)
+	if err := os.Symlink("versions/"+desiredVersion, mate.LastGoodLink()); err != nil {
+		t.Fatal(err)
+	}
+	rig.npmErr = errors.New("registry unavailable")
+	if err := mate.StageRelease(mate.Manifest{Version: desiredVersion}); err != nil {
+		t.Fatalf("destroyed known-good install before staging: %v", err)
+	}
+	if rig.npmCalls != 0 || rig.downloadCalls != 0 || rig.smokeCalls != 1 {
+		t.Fatalf("known-good stage download=%d npm=%d smoke=%d", rig.downloadCalls, rig.npmCalls, rig.smokeCalls)
+	}
+}
