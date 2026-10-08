@@ -17,6 +17,7 @@ func TestAutomaticUpdate_CandidateDecision_Result(t *testing.T) {
 		{"new compatible", "0.14.0", "", "0.14.2", true, true},
 		{"confirmation required", "0.14.0", "", "0.14.2", false, false},
 		{"failed release", "0.14.0", "0.14.2", "0.14.2", true, false},
+		{"below failed release", "0.14.0", "0.14.3", "0.14.2", true, false},
 		{"newer than failed", "0.14.0", "0.14.1", "0.14.2", true, true},
 		{"downgrade", "0.14.2", "", "0.14.0", true, false},
 		{"same", "0.14.2", "", "0.14.2", true, false},
@@ -215,5 +216,27 @@ func TestStageRelease_LastGoodCandidate_PreservesVerifiedInstall(t *testing.T) {
 	}
 	if rig.npmCalls != 0 || rig.downloadCalls != 0 || rig.smokeCalls != 1 {
 		t.Fatalf("known-good stage download=%d npm=%d smoke=%d", rig.downloadCalls, rig.npmCalls, rig.smokeCalls)
+	}
+}
+
+func TestEnsureInstalled_FailedVersionThreshold_Result(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unattended skips lower release", true: "attended override"}[force], func(t *testing.T) {
+			rig := newEnsureRig(t)
+			seedInstalledVersion(t, "0.14.0")
+			if err := mate.WriteUpdateState(mate.UpdateState{Phase: "postponed", FailedVersion: "0.14.3"}); err != nil {
+				t.Fatal(err)
+			}
+			result, err := mate.EnsureInstalled(mate.EnsureOptions{Force: force})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !force && (result.Action != mate.ActionNone || rig.npmCalls != 0) {
+				t.Fatalf("retried release below failed version: %+v npm=%d", result, rig.npmCalls)
+			}
+			if force && result.Action != mate.ActionUpdated {
+				t.Fatalf("attended override=%+v", result)
+			}
+		})
 	}
 }
