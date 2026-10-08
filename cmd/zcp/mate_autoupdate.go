@@ -240,17 +240,30 @@ func mateUpdateWaitReady(version, oldBoot string, deadline time.Time) error {
 	defer cancel()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
+	var lastObservation error
 	for {
+		// One startup connection must not consume the whole readiness budget.
+		// The capability probe uses the same transport bound; only a factual
+		// exact-version/new-boot response can accept the candidate.
+		probeCtx, probeCancel := context.WithTimeout(ctx, time.Second)
 		var r updateReadiness
-		if err := updateRequest(ctx, "readiness", nil, &r); err == nil && r.Protocol == 1 && r.Ready && r.Version == version && r.BootID != "" && r.BootID != oldBoot {
+		if err := updateRequest(probeCtx, "readiness", nil, &r); err != nil {
+			lastObservation = err
+		} else if r.Protocol == 1 && r.Ready && r.Version == version && r.BootID != "" && r.BootID != oldBoot {
 			// C-4 remains required alongside engine/database readiness.
-			if err := mateUpdateEnvironmentReady(ctx); err == nil {
+			err := mateUpdateEnvironmentReady(probeCtx)
+			if err == nil {
+				probeCancel()
 				return nil
 			}
+			lastObservation = err
+		} else {
+			lastObservation = fmt.Errorf("protocol=%d ready=%t version=%q boot=%q", r.Protocol, r.Ready, r.Version, r.BootID)
 		}
+		probeCancel()
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("readiness for %s: %w", version, ctx.Err())
+			return fmt.Errorf("readiness for %s: %w; last observation: %w", version, ctx.Err(), lastObservation)
 		case <-ticker.C:
 		}
 	}
