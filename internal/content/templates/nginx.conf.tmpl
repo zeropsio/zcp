@@ -1,13 +1,13 @@
 worker_processes auto;
 pid /tmp/nginx.pid;
-error_log /var/log/nginx/error.log;
+error_log syslog:server=unix:/dev/log,facility=local1,tag=nginx,severity=error;
 
 events {
     worker_connections 1024;
 }
 
 http {
-    access_log /var/log/nginx/access.log;
+    access_log syslog:server=unix:/dev/log,facility=local1,tag=nginx,severity=info;
     client_max_body_size 0;
     map_hash_bucket_size 128;
 
