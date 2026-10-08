@@ -224,38 +224,58 @@ func TestRunNginx_CacheDirInDefaults(t *testing.T) {
 	}
 }
 
-func TestRunNginx_PreExistingLogFilesGet0644(t *testing.T) {
-	// Not parallel — mutates package-level vars.
-	tmpDir := t.TempDir()
-	logDir := filepath.Join(tmpDir, "log")
-	logFile := filepath.Join(logDir, "error.log")
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
-		t.Fatalf("seed log dir: %v", err)
-	}
-	// Simulate apt's restrictive 0640 install.
-	if err := os.WriteFile(logFile, []byte("x"), 0o640); err != nil {
-		t.Fatalf("seed log file: %v", err)
-	}
-
-	zcpinit.SetNginxOutputPath(filepath.Join(tmpDir, "nginx.conf"))
-	t.Cleanup(func() { zcpinit.ResetNginxOutputPath() })
-	zcpinit.SetNginxDirs([]string{logDir})
-	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
-	zcpinit.SetNginxLogFiles([]string{logFile})
-	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
-	zcpinit.SetNginxOwner(os.Geteuid(), os.Getegid())
-	t.Cleanup(func() { zcpinit.ResetNginxOwner() })
-
-	if err := zcpinit.RunNginxWithRotationPath(filepath.Join(tmpDir, "logrotate-nginx")); err != nil {
-		t.Fatalf("RunNginx() error: %v", err)
-	}
-
-	info, err := os.Stat(logFile)
-	if err != nil {
-		t.Fatalf("stat log file: %v", err)
-	}
-	if perm := info.Mode().Perm(); perm != 0o644 {
-		t.Errorf("log file perms = %o, want 0644 (owner-write, others-read)", perm)
+func TestRunNginx_LegacyLogFilesPreserved(t *testing.T) {
+	// Not parallel — mutates package-level overrides.
+	for _, tt := range []struct {
+		name string
+		mode os.FileMode
+	}{
+		{"legacy distribution permissions", 0o640},
+		{"inaccessible legacy log", 0o000},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			logDir := filepath.Join(tmpDir, "legacy-logs")
+			if err := os.Mkdir(logDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			logFile := filepath.Join(logDir, "error.log")
+			if err := os.WriteFile(logFile, []byte("historical log\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(logFile, tt.mode); err != nil {
+				t.Fatal(err)
+			}
+			zcpinit.SetNginxOutputPath(filepath.Join(tmpDir, "nginx.conf"))
+			t.Cleanup(zcpinit.ResetNginxOutputPath)
+			zcpinit.SetNginxDirs([]string{filepath.Join(tmpDir, "cache")})
+			t.Cleanup(zcpinit.ResetNginxDirs)
+			zcpinit.SetNginxLogFiles([]string{logFile})
+			t.Cleanup(zcpinit.ResetNginxLogFiles)
+			zcpinit.SetNginxOwner(os.Geteuid(), os.Getegid())
+			t.Cleanup(zcpinit.ResetNginxOwner)
+			if err := zcpinit.RunNginxWithRotationPath(filepath.Join(tmpDir, "nginx")); err != nil {
+				t.Fatalf("RunNginx: %v", err)
+			}
+			info, err := os.Stat(logFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm() != tt.mode {
+				t.Errorf("legacy log mode = %o, want %o", info.Mode().Perm(), tt.mode)
+			}
+			// Restore read access only after verifying init left the mode alone.
+			if err := os.Chmod(logFile, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(logFile)
+			if err != nil || string(data) != "historical log\n" {
+				t.Errorf("legacy log changed: %q, %v", data, err)
+			}
+			if slices.Contains(zcpinit.DefaultNginxDirs(), "/var/log/nginx") {
+				t.Error("init must not manage obsolete log directories")
+			}
+		})
 	}
 }
 
