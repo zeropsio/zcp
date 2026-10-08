@@ -490,3 +490,38 @@ func TestIsDevVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestEnsureInstalled_SupervisorRestartPreservesTheInstalledRelease(t *testing.T) {
+	for _, tc := range []struct {
+		name, installed, want string
+		keep                  bool
+	}{
+		{"supervisor keeps older release without confirming a candidate", "0.14.0", "0.14.0", true},
+		{"supervisor keeps newer release", "0.14.3", "0.14.3", true},
+		{"supervisor first installation resolves the release", "", desiredVersion, true},
+		{"attended init retains the explicit upgrade path", "0.14.0", desiredVersion, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newEnsureRig(t)
+			if tc.installed != "" {
+				seedInstalledVersion(t, tc.installed)
+			}
+			result, err := mate.EnsureInstalled(mate.EnsureOptions{KeepInstalled: tc.keep, Refresh: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := mate.InstalledVersion()
+			if err != nil || got != tc.want {
+				t.Fatalf("running version=%q error=%v, want %q", got, err, tc.want)
+			}
+			if tc.keep && tc.installed != "" {
+				if result.Action != mate.ActionNone || result.To != tc.installed {
+					t.Fatalf("restart result=%+v", result)
+				}
+				if rig.manifestCalls != 0 || rig.downloadCalls != 0 {
+					t.Fatalf("ordinary restart reached release network: manifest=%d download=%d", rig.manifestCalls, rig.downloadCalls)
+				}
+			}
+		})
+	}
+}

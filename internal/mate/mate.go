@@ -468,8 +468,12 @@ type Result struct {
 	Warning string
 }
 
-// EnsureOptions steers EnsureInstalled's two behavioural choices.
+// EnsureOptions steers installation and attended update choices.
 type EnsureOptions struct {
+	// KeepInstalled makes ordinary supervisor restarts preserve the current
+	// release after crash recovery. A first installation still resolves the release.
+	KeepInstalled bool
+
 	// Force, when true, lets a dev build be replaced. Default false: a
 	// hand-pushed dev build (eval/scripts/mate-dev-push.sh) is never silently
 	// clobbered by a routine container boot or an unqualified `zcp mate
