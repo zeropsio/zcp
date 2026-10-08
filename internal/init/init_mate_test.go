@@ -707,7 +707,7 @@ func TestRun_Mate_FirstBoot_DoesNotRestartFreshUnit(t *testing.T) {
 // started while init was installing waits for it, then finds nothing to do
 // and starts the new release once — init's restart only ever stops a server
 // that runs the old one, or a start still waiting on the lock. A lock held
-// past the wait never fails the container start: init proceeds without it.
+// past the wait degrades the step and leaves the other updater alone.
 func TestRun_Mate_InstallsUnderTheSharedLock(t *testing.T) {
 	for _, lockedAway := range []bool{false, true} {
 		name := "the lock is free"
@@ -756,11 +756,11 @@ func TestRun_Mate_InstallsUnderTheSharedLock(t *testing.T) {
 			if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
 				t.Fatalf("Run(): %v", err)
 			}
-			if !ensured {
-				t.Error("init must bring the bundle to the release whatever the lock says")
+			if ensured == lockedAway {
+				t.Errorf("ensured=%v, locked away=%v", ensured, lockedAway)
 			}
-			if !restartedHeld {
-				t.Error("the restart must be decided and issued with the lock held")
+			if restartedHeld == lockedAway {
+				t.Errorf("restarted=%v, locked away=%v", restartedHeld, lockedAway)
 			}
 			if !lockedAway && held() {
 				t.Error("init must release the lock when it is done")
