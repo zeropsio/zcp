@@ -76,3 +76,35 @@ func TestSwitchUpdate_Readiness_Result(t *testing.T) {
 		})
 	}
 }
+
+func TestPrepareUpdateBoot_InterruptedSwitch_Result(t *testing.T) {
+	for _, phase := range []string{"switching", "staging", "draining", "updated"} {
+		t.Run(phase, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			seedInstalledVersion(t, "0.14.2")
+			writeFakePackage(t, mate.VersionDir("0.14.0"), "0.14.0")
+			if err := os.Symlink("versions/0.14.0", mate.LastGoodLink()); err != nil {
+				t.Fatal(err)
+			}
+			if err := mate.WriteUpdateState(mate.UpdateState{Phase: phase, Candidate: "0.14.2", Previous: "0.14.0", RunningVersion: "0.14.0"}); err != nil {
+				t.Fatal(err)
+			}
+			skip, err := mate.PrepareUpdateBoot()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, _ := mate.InstalledVersion()
+			want := "0.14.2"
+			if phase == "switching" {
+				want = "0.14.0"
+			}
+			if got != want || skip != (phase == "switching") {
+				t.Fatalf("current=%s skip=%v, want %s %v", got, skip, want, phase == "switching")
+			}
+			state, _ := mate.ReadUpdateState()
+			if phase == "switching" && state.FailedVersion != "0.14.2" {
+				t.Fatalf("failed candidate not retained: %+v", state)
+			}
+		})
+	}
+}
