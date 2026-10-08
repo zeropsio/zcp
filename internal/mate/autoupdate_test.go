@@ -108,3 +108,30 @@ func TestPrepareUpdateBoot_InterruptedSwitch_Result(t *testing.T) {
 		})
 	}
 }
+
+func TestSwitchUpdate_IncompatibleConfirmedFailure_NoRollback(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	seedInstalledVersion(t, "0.14.0")
+	writeFakePackage(t, mate.VersionDir("0.14.2"), "0.14.2")
+	restarts := 0
+	err := mate.SwitchUpdate("0.14.2", "old", mate.SwitchHooks{
+		PreventRollback: true, Restart: func() error { restarts++; return nil },
+		Ready:  func(string, string) error { return errors.New("incompatible candidate failed") },
+		Commit: func() error { return nil }, Cancel: func() error { return nil },
+	})
+	if err == nil {
+		t.Fatal("expected attended recovery error")
+	}
+	current, _ := mate.InstalledVersion()
+	if current != "0.14.2" || restarts != 1 {
+		t.Fatalf("current=%s restarts=%d", current, restarts)
+	}
+	skip, e := mate.PrepareUpdateBoot()
+	if e != nil || skip {
+		t.Fatalf("boot attempted automatic rollback: skip=%v err=%v", skip, e)
+	}
+	current, _ = mate.InstalledVersion()
+	if current != "0.14.2" {
+		t.Fatalf("boot rolled back incompatible release: %s", current)
+	}
+}
