@@ -291,3 +291,32 @@ func TestRunNginx_MateDisabled_RendersNoMateSurface(t *testing.T) {
 		})
 	}
 }
+
+// Not parallel: renderNginx changes package paths and environment.
+func TestRunNginx_LogsUseSystemJournal(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		password string
+		mate     bool
+	}{
+		{"mate with auth", "alnum123token", true},
+		{"mate without auth", "", true},
+		{"editor with auth", "alnum123token", false},
+		{"editor without auth", "", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			conf := renderNginx(t, tt.password, tt.mate)
+			for _, want := range []string{
+				"error_log syslog:server=unix:/dev/log,facility=local1,tag=nginx,severity=error;",
+				"access_log syslog:server=unix:/dev/log,facility=local1,tag=nginx,severity=info;",
+			} {
+				if !strings.Contains(conf, want) {
+					t.Errorf("journal logging must contain %q", want)
+				}
+			}
+			if strings.Contains(conf, "/var/log/nginx") {
+				t.Error("nginx must not depend on rotated file logs")
+			}
+		})
+	}
+}
