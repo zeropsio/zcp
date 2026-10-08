@@ -26,12 +26,10 @@ func renderNginx(t *testing.T, password string, mateEnabled bool) string {
 	outputPath := filepath.Join(tmpDir, "nginx.conf")
 	zcpinit.SetNginxOutputPath(outputPath)
 	zcpinit.SetNginxDirs([]string{filepath.Join(tmpDir, "log")})
-	zcpinit.SetNginxLogFiles(nil)
 	zcpinit.SetNginxOwner(os.Geteuid(), os.Getegid())
 	t.Cleanup(func() {
 		zcpinit.ResetNginxOutputPath()
 		zcpinit.ResetNginxDirs()
-		zcpinit.ResetNginxLogFiles()
 		zcpinit.ResetNginxOwner()
 	})
 	t.Setenv("VSCODE_PASSWORD", password)

@@ -40,7 +40,7 @@ type NginxConfig struct {
 
 // zeropsUID/zeropsGID are the Zerops container service user nginx runs as.
 // `zcp init nginx` runs ONLY in the zcp@1 service type, always via `sudo -E`
-// (root) in run.initCommands — so chowning the nginx dirs and logs to this
+// (root) in run.initCommands — so chowning the nginx cache and temporary dirs to this
 // fixed uid/gid always succeeds and needs no /etc/passwd lookup. (A
 // user.Lookup("zerops") miss during the init phase was the fragility behind
 // the reverted 2026-04 chown attempt; a fixed numeric target removes it.)
@@ -53,14 +53,12 @@ const (
 
 var (
 	defaultNginxOutputPath = "/etc/nginx/nginx.conf"
-	defaultNginxDirs       = []string{"/var/log/nginx", "/var/lib/nginx/tmp", "/var/lib/nginx/body", "/var/lib/nginx/proxy", "/var/lib/nginx/fastcgi", "/var/lib/nginx/uwsgi", "/var/lib/nginx/scgi", "/var/cache/nginx"}
-	defaultNginxLogFiles   = []string{"/var/log/nginx/error.log", "/var/log/nginx/access.log"}
+	defaultNginxDirs       = []string{"/var/lib/nginx/tmp", "/var/lib/nginx/body", "/var/lib/nginx/proxy", "/var/lib/nginx/fastcgi", "/var/lib/nginx/uwsgi", "/var/lib/nginx/scgi", "/var/cache/nginx"}
 
 	nginxOutputPath = defaultNginxOutputPath
 	nginxDirs       = append([]string{}, defaultNginxDirs...)
-	nginxLogFiles   = append([]string{}, defaultNginxLogFiles...)
 
-	// nginxOwnerUID/nginxOwnerGID are the chown target for nginx dirs + logs.
+	// nginxOwnerUID/nginxOwnerGID are the chown target for nginx cache and temporary dirs.
 	// Overridable so tests (which run as a non-root, non-zerops user) chown to
 	// themselves — chowning to self always succeeds, whereas chowning to 2023
 	// would EPERM off the Zerops container.
@@ -106,8 +104,8 @@ func runNginx(logrotatePath string) error {
 
 // createNginxDirs creates the directories nginx needs and gives them the
 // permissions nginx expects in the Zerops container: each dir is owned by the
-// service user nginx runs as (zerops) at 0755, and pre-existing log files
-// (apt installs them root:adm 0640) are chowned to that user at 0644.
+// service user nginx runs as (zerops) at 0755. Logs go to the system journal,
+// so historical log directories and files are neither needed nor touched.
 // Ownership — not world-writable 0777 — is what lets the non-root worker
 // write. `zcp init nginx` runs as root (sudo -E), so the chowns always apply.
 func createNginxDirs() error {
@@ -115,8 +113,8 @@ func createNginxDirs() error {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return fmt.Errorf("mkdir %s: %w", d, err)
 		}
-		// Chmod explicitly so a pre-existing dir (apt-created /var/lib/nginx/*
-		// or the persistent /var/log/nginx) lands at exactly 0755 regardless
+		// Chmod explicitly so a pre-existing dir (apt-created /var/lib/nginx/*)
+		// lands at exactly 0755 regardless
 		// of umask or its prior mode.
 		if err := os.Chmod(d, 0o755); err != nil {
 			return fmt.Errorf("chmod %s: %w", d, err)
@@ -126,20 +124,6 @@ func createNginxDirs() error {
 		}
 	}
 
-	// Pre-existing log files (apt installs nginx with root:adm 0640) must be
-	// owned by the service user so the worker can append; 0644 lets others
-	// read (debugging, log shipper) but only the owner write.
-	for _, f := range nginxLogFiles {
-		if _, err := os.Stat(f); err != nil {
-			continue
-		}
-		if err := os.Chown(f, nginxOwnerUID, nginxOwnerGID); err != nil {
-			return fmt.Errorf("chown %s: %w", f, err)
-		}
-		if err := os.Chmod(f, 0o644); err != nil {
-			return fmt.Errorf("chmod %s: %w", f, err)
-		}
-	}
 	return nil
 }
 

@@ -31,9 +31,6 @@ func ResetNginxDirs()            { nginxDirs = append([]string{}, defaultNginxDi
 
 func DefaultNginxDirs() []string { return append([]string{}, defaultNginxDirs...) }
 
-func SetNginxLogFiles(files []string) { nginxLogFiles = files }
-func ResetNginxLogFiles()             { nginxLogFiles = append([]string{}, defaultNginxLogFiles...) }
-
 // Nginx chown-target overrides — tests run as a non-root, non-zerops user, so
 // they point the chown target at themselves (chown-to-self always succeeds).
 func SetNginxOwner(uid, gid int) { nginxOwnerUID, nginxOwnerGID = uid, gid }
