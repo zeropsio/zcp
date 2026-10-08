@@ -67,7 +67,7 @@ func TestBrowserRun_ExitPaths_NoDetachedProcesses(t *testing.T) {
 			if readErr != nil {
 				t.Fatalf("fixture did not launch: %v, run=%v stderr=%s", readErr, err, stderr)
 			}
-			for _, value := range strings.Fields(string(data)) {
+			for value := range strings.FieldsSeq(string(data)) {
 				pid, convErr := strconv.Atoi(value)
 				if convErr != nil {
 					t.Fatal(convErr)
@@ -105,9 +105,9 @@ func TestBrowserRun_ConcurrentOwner_RefusesAndPreservesOwner(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	_, _, _, err = (execBrowserRunner{}).Run(context.Background(), "[]", time.Second)
+	out, stderr, _, err := (execBrowserRunner{}).Run(context.Background(), "[]", time.Second)
 	if err == nil || !strings.Contains(err.Error(), "already owned") {
-		t.Errorf("concurrent browser must refuse admission, got %v", err)
+		t.Errorf("concurrent browser must refuse admission, got %v stdout=%s stderr=%s", err, out, stderr)
 	}
 	cancel()
 	_ = cmd.Wait()
@@ -143,8 +143,8 @@ func TestBrowserRun_OwnerCrash_CleansOnlyOwnedResidue(t *testing.T) {
 		t.Skip("requires an explicitly selected systemd container")
 	}
 	if os.Getenv("ZCP_BROWSER_CRASH_HELPER") == "1" {
-		_, _, _, _ = (execBrowserRunner{}).Run(context.Background(), "[]", 10*time.Minute)
-		return
+		out, stderr, _, err := (execBrowserRunner{}).Run(context.Background(), "[]", 10*time.Minute)
+		t.Fatalf("crash helper unexpectedly returned: %v stdout=%s stderr=%s", err, out, stderr)
 	}
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
@@ -159,7 +159,7 @@ func TestBrowserRun_OwnerCrash_CleansOnlyOwnedResidue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	helper := exec.Command(executable, "-test.run=^TestBrowserRun_OwnerCrash_CleansOnlyOwnedResidue$")
+	helper := exec.CommandContext(context.Background(), executable, "-test.run=^TestBrowserRun_OwnerCrash_CleansOnlyOwnedResidue$")
 	helper.Env = append(os.Environ(), "ZCP_BROWSER_CRASH_HELPER=1")
 	if err := helper.Start(); err != nil {
 		t.Fatal(err)

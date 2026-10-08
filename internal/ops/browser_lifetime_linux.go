@@ -46,14 +46,14 @@ func managedBrowserCommand(ctx context.Context) (*exec.Cmd, func() error, error)
 	stop := func() error {
 		// Cleanup is independent of the cancelled caller; the deadline bounds I/O,
 		// never serves as evidence that the service or its descendants ended.
-		cctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		defer cancel()
 		state, err := exec.CommandContext(cctx, "sudo", "-n", "systemctl", "show", unit, "--property=LoadState", "--property=ControlGroup").Output()
 		if err != nil {
 			return fmt.Errorf("inspect owned browser service: %w", err)
 		}
 		var group string
-		for _, line := range strings.Split(string(state), "\n") {
+		for line := range strings.SplitSeq(string(state), "\n") {
 			if value, ok := strings.CutPrefix(line, "ControlGroup="); ok {
 				group = value
 			}
